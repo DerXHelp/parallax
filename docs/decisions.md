@@ -91,3 +91,30 @@ Format: `ADR-NNN – Titel` · Datum · WP · Kontext → Entscheidung → Folge
 - **Kontext:** `docs/plan.md` muss eine exakte Kopie bleiben; Doku wird von Hand gepflegt.
 - **Entscheidung:** `.prettierignore` enthält `**/*.md`, außerdem Fixtures (`*.jsonl`) und Lockfile.
 - **Folgen:** Markdown-Formatierung ist Konvention, kein Check.
+
+## ADR-010 – SDK-Fixture-Format v1 (JSONL mit Header und Event-Kinds)
+- **Datum/WP:** 15.10.2026, WP-01
+- **Kontext:** Normalizer-Snapshots (WP-12) und FakeBackend (WP-13) brauchen echte, abspielbare
+  SDK-Streams inklusive Permission-Entscheidungen, Eingaben und Control-Aufrufen – ohne persönliche Daten.
+- **Entscheidung:** Eine Datei pro Szenario `test/fixtures/sdk/<szenario>.jsonl`: Zeile 1 Header
+  `{fixtureVersion:1, scenario, description, sdkVersion, cliVersion, recordedAt, options}`, danach
+  `{seq (1…n lückenlos), tMs, kind, payload}` mit `kind` ∈ `message` (SDKMessage unverändert),
+  `canUseTool`, `decision`, `input`, `control`, `call`, `stderr`, `error`, `abort`, `mark`, `spawn`,
+  `exit`, `process`. Validierung per zod (`scripts/record/format.ts`). Bereinigung mit Platzhaltern
+  (`<HOME>`, `<SCRATCH>`, `<USER>`, `<EMAIL>`, `<ORG>`, `<TOKEN>` …); gestreamte Blöcke werden als Ganzes
+  bereinigt und neu auf die Deltas verteilt. Rohaufzeichnungen nur in `.recordings/` (ignoriert).
+- **Folgen:** Konsumenten ignorieren unbekannte Kinds/Typen. Formatänderungen erhöhen `fixtureVersion`.
+  Details: `docs/sdk-findings.md`, Abschnitt „Fixture-Format“.
+
+## ADR-011 – Recorder-Guards für Live-Läufe
+- **Datum/WP:** 15.10.2026, WP-01
+- **Kontext:** Live-Aufrufe sind nur mit Freigabe und nur über den Abo-Login erlaubt; andere Subagenten
+  dürfen nicht versehentlich Tokens verbrauchen.
+- **Entscheidung:** `pnpm record` startet ein Live-`claude` nur mit `PARALLAX_LIVE=1`, nach erfolgreichem
+  `claude auth status` (`claude.ai`/`firstParty`) und – außer für `auth-probe` – nur nach einem
+  erfolgreichen Auth-Probe. Abbruch und Blockade-Flag (`.recordings/spike-state.json`, Aufhebung nur mit
+  `--unblock`) bei `apiKeySource ≠ none`, Auth-/Billing-Fehlern, `credits_required`, `rejected`,
+  `startup_failure_reason`; Abbruch bei > 2 USD geschätztem Gesamtverbrauch aller Spike-Läufe.
+  Env ohne `ANTHROPIC_API_KEY`/`_AUTH_TOKEN`/`_BASE_URL`. Modell immer `haiku`.
+- **Folgen:** Neu-Aufzeichnungen (z. B. nach SDK-Upgrade) laufen mit denselben Guards; das Budget gilt
+  pro lokalem `spike-state.json` und muss bei einer neuen Freigabe bewusst zurückgesetzt werden.
