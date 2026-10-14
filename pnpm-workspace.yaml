@@ -1,0 +1,21 @@
+# pnpm 12: project settings live here (the "pnpm" block in package.json is ignored since pnpm 11).
+#
+# No registry is configured on purpose. It comes from ~/.npmrc (registry=, auth),
+# `pnpm install --registry <url>` or `pnpm_config_registry` (see README, "Andere Registry / Firmen-Nexus").
+#
+# Deliberately NOT overridden, the secure pnpm defaults stay active:
+#   strictDepBuilds: true       -> install fails if an unapproved package wants to run a build script
+#   minimumReleaseAge: 1440     -> only versions that are at least one day old are resolved
+#   blockExoticSubdeps: true    -> transitive deps must come from the registry (no git/tarball URLs)
+
+# Platform binaries of @anthropic-ai/claude-agent-sdk (~270 MB each) are never installed,
+# Parallax uses the installed `claude` CLI (pathToClaudeCodeExecutable).
+# SDK 0.3.296 declares: -win32-x64, -win32-arm64, -darwin-x64, -darwin-arm64,
+# -linux-x64, -linux-arm64, -linux-x64-musl, -linux-arm64-musl.
+ignoredOptionalDependencies:
+  - '@anthropic-ai/claude-agent-sdk-*'
+
+# Only packages listed with `true` may run install scripts. esbuild needs its postinstall
+# (verifies/links the platform binary from the registry package @esbuild/<platform>).
+allowBuilds:
+  esbuild: true

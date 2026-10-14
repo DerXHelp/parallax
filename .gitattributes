@@ -1,0 +1,29 @@
+# Normalize text files to LF in the repo and in the working tree (independent of core.autocrlf).
+* text=auto eol=lf
+
+# Windows batch files need CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Recorded SDK fixtures: compare as text, never rewrite line endings beyond LF.
+*.jsonl text eol=lf
+
+# Lockfile: generated, keep LF, collapse in diffs.
+pnpm-lock.yaml text eol=lf linguist-generated=true -diff
+
+# Binary assets.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.pdf binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
+*.zip binary

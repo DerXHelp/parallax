@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Isomorphic code used by server and web: no DOM lib, no Node types.
+    "composite": true,
+    "emitDeclarationOnly": true,
+    "rootDir": ".",
+    "outDir": "../../.tsbuild/shared",
+    "tsBuildInfoFile": "../../.tsbuild/shared.tsbuildinfo",
+    "lib": ["ES2024"],
+    "types": []
+  },
+  "include": ["**/*.ts"],
+  "exclude": []
+}

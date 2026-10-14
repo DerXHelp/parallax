@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // rootDir "." makes any import of files outside src/server (e.g. ../web) a compile error.
+    // src/shared is reached through the project reference (compiled declarations).
+    "rootDir": ".",
+    "noEmit": true,
+    "tsBuildInfoFile": "../../.tsbuild/server.tsbuildinfo",
+    "lib": ["ES2024"],
+    "types": ["node"],
+    "paths": {
+      "@shared/*": ["../shared/*"]
+    }
+  },
+  "include": ["**/*.ts"],
+  "references": [{ "path": "../shared" }]
+}

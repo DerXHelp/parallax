@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Solution file: `pnpm typecheck` runs `tsc -b` over all project references.
+  // The paths below are only read by editors and tools (e.g. the shadcn CLI);
+  // each project defines its own paths.
+  "compilerOptions": {
+    "paths": {
+      "@shared/*": ["./src/shared/*"],
+      "@web/*": ["./src/web/*"]
+    }
+  },
+  "files": [],
+  "references": [
+    { "path": "./src/shared" },
+    { "path": "./src/server" },
+    { "path": "./src/web" },
+    { "path": "./tsconfig.tools.json" }
+  ]
+}
