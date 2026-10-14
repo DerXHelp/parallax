@@ -8,8 +8,8 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 | WP | Inhalt | Abhängig | Status | Commit | Ergebnis (eine Zeile) | Follow-ups |
 |---|---|---|---|---|---|---|
 | 00 | Bootstrap: Configs, pnpm-workspace, tsconfig-Referenzen, ESLint/Prettier, Vitest, Vite-Proxy, Tailwind + shadcn-Basis, Gerüst, alle Phase-1-Deps | – | fertig | `07fb0cf` | Gerüst lauffähig, `pnpm check`/`build` grün, keine SDK-Plattform-Binaries | React 19.3.1 nachziehen (≥ 24 h), ESLint 10/TS 7 sobald Plugins bereit; siehe WP-00.md |
-| 01 | SDK-Spike + Recorder: `scripts/record`, Fixtures, `docs/sdk-findings.md` (live, Haiku) | 00 | läuft | – | – | – |
-| 02 | Contracts: `src/shared/{protocol,model,errors,status}` (zod), `AgentBackend`, `architecture.md`, CLAUDE.md v1 | 01 | offen | – | – | – |
+| 01 | SDK-Spike + Recorder: `scripts/record`, Fixtures, `docs/sdk-findings.md` (live, Haiku) | 00 | fertig | `df4baa2` | Abo-Auth über SDK ok (`apiKeySource: none`), 12 Fixtures, Findings zu allen 17 Punkten; 13 Sessions, ~0,22 USD geschätzt | WP-11: echte `buildEnv()`, `.cmd`-Shim-Test, `scripts/README.md` um Recorder ergänzen; WP-13: Spawn-Wrapper muss stderr lesen; Spike-Transkripte/Scratch-Ordner liegen noch (Liste in Findings) |
+| 02 | Contracts: `src/shared/{protocol,model,errors,status}` (zod), `AgentBackend`, `architecture.md`, CLAUDE.md v1 | 01 | läuft (Design) | – | – | – |
 | 10 | Server-Plattform: App, Config, Auth, HTTP/WS, Sync (Seq, Ringpuffer), `JsonStore`, Logger | 02 | offen | – | – | – |
 | 11 | Claude-Integration: `resolveClaude`, Env-Builder, Profil „Standard“, `pnpm preflight` | 02 | offen | – | – | – |
 | 12 | Normalizer + Status: zwei Adapter, Snapshots aller Fixtures, `deriveDisplayStatus` | 01, 02 | offen | – | – | – |
@@ -37,8 +37,18 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 - Erledigt (15.10.2026): Live-Freigabe für WP-01 erteilt (Haiku, Mini-Prompts, Scratch-Ordner,
   Abo-Login, kein API-Key). Bei Auth-Fehler/`credits_required` sofort stoppen und melden.
 
+## Wichtige Befunde aus WP-01 (Details: `docs/sdk-findings.md`)
+- „Immer erlauben“ darf nicht pauschal alle `suggestions` zurückgeben: Das schaltet die Session in
+  `acceptEdits` und schreibt Regeln in `localSettings`. Optionen getrennt anbieten.
+- Ohne `permissionMode` startet die Session hier in `default` (nicht `auto`).
+- `getSessionMessages` liefert Timestamps, aber kein `tool_use_result`; `CLAUDE_CONFIG_DIR` wird pro
+  Aufruf gelesen (Worker isoliert).
+- Session-ID nach `/clear` kommt aus dem nächsten `init`, nicht aus `new_conversation_id`.
+- Untypisierte Messages: `command_lifecycle`, `system/session_title_changed`.
+- Plan-Modus mit Haiku plant auf einem anderen Modell (Sonnet) → Modell pro Assistant-Message zeigen.
+
 ## Nächste Schritte
-1. WP-01 (SDK-Spike + Recorder) läuft.
-2. Danach WP-02 (Contracts, Plan → GP), dann Welle 1a (10, 11, 12, 14) in Worktrees `.worktrees/wp-xx`
+1. WP-02 (Contracts): Design-Schritt (GP in Planer-Rolle schreibt `docs/wp/WP-02.md`), dann Umsetzung.
+2. Danach Welle 1a (10, 11, 12, 14) in Worktrees `.worktrees/wp-xx`
    auf Branches `wp/xx`, jeweils `pnpm install --frozen-lockfile` im Worktree.
 3. Nach ≥ 24 h: `react`/`react-dom` 19.3.1 prüfen und nachziehen (Koordinator, siehe WP-00.md).
