@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    // Node-side tooling: config files, scripts, test setup, fixtures helpers, e2e.
+    // Scripts may import server modules (e.g. resolveClaude); they are type-checked here as well.
+    "noEmit": true,
+    // Config files are loaded by Vite's config loader; local imports carry the .ts extension.
+    "allowImportingTsExtensions": true,
+    "tsBuildInfoFile": "./.tsbuild/tools.tsbuildinfo",
+    "lib": ["ES2024"],
+    "types": ["node"]
+  },
+  "include": ["*.config.ts", "scripts/**/*.ts", "test/**/*.ts", "e2e/**/*.ts"],
+  "exclude": ["node_modules", "dist", ".worktrees", ".claude", ".tsbuild"],
+  "references": [{ "path": "./src/shared" }]
+}

@@ -1,0 +1,44 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+.tsbuild/
+*.tsbuildinfo
+.vite/
+
+# Git worktrees of parallel work packages (also .claude/worktrees from Claude Code)
+.worktrees/
+.claude/worktrees/
+.claude/settings.local.json
+
+# Local dev data (pnpm dev uses --home=.parallax-dev, never %LOCALAPPDATA%\Parallax)
+.parallax-dev/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Playwright artifacts
+playwright-report/
+test-results/
+blob-report/
+playwright/.cache/
+
+# SDK recordings: only sanitized fixtures in test/fixtures/sdk/ are committed.
+# Raw recordings (pnpm record) go to .recordings/. Recordings from the work machine never enter the repo.
+.recordings/
+*.jsonl
+!/test/fixtures/sdk/**/*.jsonl
+
+# Environment files
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+*.swp

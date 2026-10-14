@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+.tsbuild/
+.worktrees/
+.claude/
+.parallax-dev/
+.recordings/
+playwright-report/
+test-results/
+blob-report/
+pnpm-lock.yaml
+# Recorded SDK fixtures are data, not code.
+test/fixtures/**/*.jsonl
+# Documentation is written by hand (docs/plan.md is an exact copy of the plan).
+**/*.md

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // rootDir "." makes any import of files outside src/web (e.g. ../server) a compile error.
+    // src/shared is reached through the project reference (compiled declarations).
+    "rootDir": ".",
+    "noEmit": true,
+    "tsBuildInfoFile": "../../.tsbuild/web.tsbuildinfo",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+    "paths": {
+      "@shared/*": ["../shared/*"],
+      "@web/*": ["./*"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  "references": [{ "path": "../shared" }]
+}
