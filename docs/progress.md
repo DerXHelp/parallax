@@ -7,8 +7,8 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 ## Arbeitspakete
 | WP | Inhalt | Abhängig | Status | Commit | Ergebnis (eine Zeile) | Follow-ups |
 |---|---|---|---|---|---|---|
-| 00 | Bootstrap: Configs, pnpm-workspace, tsconfig-Referenzen, ESLint/Prettier, Vitest, Vite-Proxy, Tailwind + shadcn-Basis, Gerüst, alle Phase-1-Deps | – | fertig | Initial-Commit auf `main` („WP-00: Projektgerüst und Abhängigkeiten“) | Gerüst lauffähig, `pnpm check`/`build` grün, keine SDK-Plattform-Binaries | React 19.3.1 nachziehen (≥ 24 h), ESLint 10/TS 7 sobald Plugins bereit; siehe WP-00.md |
-| 01 | SDK-Spike + Recorder: `scripts/record`, Fixtures, `docs/sdk-findings.md` (live, Haiku) | 00 | offen | – | – | – |
+| 00 | Bootstrap: Configs, pnpm-workspace, tsconfig-Referenzen, ESLint/Prettier, Vitest, Vite-Proxy, Tailwind + shadcn-Basis, Gerüst, alle Phase-1-Deps | – | fertig | `07fb0cf` | Gerüst lauffähig, `pnpm check`/`build` grün, keine SDK-Plattform-Binaries | React 19.3.1 nachziehen (≥ 24 h), ESLint 10/TS 7 sobald Plugins bereit; siehe WP-00.md |
+| 01 | SDK-Spike + Recorder: `scripts/record`, Fixtures, `docs/sdk-findings.md` (live, Haiku) | 00 | läuft | – | – | – |
 | 02 | Contracts: `src/shared/{protocol,model,errors,status}` (zod), `AgentBackend`, `architecture.md`, CLAUDE.md v1 | 01 | offen | – | – | – |
 | 10 | Server-Plattform: App, Config, Auth, HTTP/WS, Sync (Seq, Ringpuffer), `JsonStore`, Logger | 02 | offen | – | – | – |
 | 11 | Claude-Integration: `resolveClaude`, Env-Builder, Profil „Standard“, `pnpm preflight` | 02 | offen | – | – | – |
@@ -33,12 +33,12 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 | 15.10.2026 | 00 | `src/shared/product.ts` angelegt: `PRODUCT_NAME = 'Parallax'`, `PRODUCT_ID = 'parallax'` (Produktname an genau einer Stelle). |
 
 ## Offene Fragen an den Nutzer
-- Keine aus WP-00.
-- Vor WP-01: einmalige Bestätigung des ersten Live-Aufrufs (Haiku, Mini-Prompts, Abo-Login),
-  siehe `docs/plan.md`, „Antworten des Nutzers vor WP-00“, Punkt 3.
+- Keine offenen Fragen.
+- Erledigt (15.10.2026): Live-Freigabe für WP-01 erteilt (Haiku, Mini-Prompts, Scratch-Ordner,
+  Abo-Login, kein API-Key). Bei Auth-Fehler/`credits_required` sofort stoppen und melden.
 
 ## Nächste Schritte
-1. WP-01 (SDK-Spike + Recorder) beauftragen; vorher Live-Freigabe des Nutzers einholen.
+1. WP-01 (SDK-Spike + Recorder) läuft.
 2. Danach WP-02 (Contracts, Plan → GP), dann Welle 1a (10, 11, 12, 14) in Worktrees `.worktrees/wp-xx`
    auf Branches `wp/xx`, jeweils `pnpm install --frozen-lockfile` im Worktree.
 3. Nach ≥ 24 h: `react`/`react-dom` 19.3.1 prüfen und nachziehen (Koordinator, siehe WP-00.md).
