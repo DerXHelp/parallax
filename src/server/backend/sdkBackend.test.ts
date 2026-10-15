@@ -1069,7 +1069,8 @@ describe('SdkBackend – history (A.3, F.15)', () => {
     });
   });
 
-  it('readHistory through the real worker pool (data: URL SDK)', async () => {
+  // A real worker needs real time: a generous limit keeps it stable under parallel load.
+  it('readHistory through the real worker pool (data: URL SDK)', { timeout: 60_000 }, async () => {
     const fakeSdk = `
       const m = (uuid, timestamp, parent) => ({ type: 'user', uuid, session_id: 's', message: { role: 'user', content: 'x' },
         parent_tool_use_id: parent, timestamp, origin: { kind: 'human' } });

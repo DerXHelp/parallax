@@ -182,6 +182,21 @@ Keine Contract-Änderung nötig.
 - Danach keine `node.exe`/`claude.exe` des Worktrees mehr (CIM-Abfrage), alle Worker-Pools und
   Backends werden in `afterEach` entsorgt.
 
+### Nachbesserung: pool-Test lastrobust (nach dem Merge `371d443`)
+
+- Befund: „times out …“ in `history/pool.test.ts` scheiterte im vollen `pnpm check` unter paralleler
+  Last – der 400-ms-Timeout lief auf der Wanduhr und galt schon für den ersten Auftrag, dessen
+  Worker-Start unter Last länger dauerte.
+- Lösung (nur Test, Produktivcode unverändert): die Pool-Timer (Auftrags-Timeout, Leerlauf-Ende)
+  laufen in den Timing-Tests auf einer Fake-Uhr (`vi.useFakeTimers({toFake: ['setTimeout',
+  'clearTimeout']})`), Worker-Start und Nachrichten bleiben echt. Geprüft wird weiter echt: bei
+  399 ms noch offen, bei 400 ms abgelehnt + Worker beendet (`size` 0, neuer `threadId`); Leerlauf
+  genau nach `idleMs`; ein beschäftigter Worker bleibt bis kurz vor dem Timeout. Keine
+  `setTimeout`-Wartezeiten mehr in der Datei; Worker-Tests (auch der echte Pool in
+  `sdkBackend.test.ts`) mit großzügigem Vitest-Test-Timeout von 60 s.
+- Nachweis: Datei 10× hintereinander grün, einmal grün während parallel `pnpm exec vitest run` im
+  selben Worktree lief (der lief ebenfalls grün, 1830 Tests); danach `pnpm check` grün.
+
 ### Stolpersteine
 
 - Ein PowerShell-`[IO.File]::ReadAllText` mit **relativem** Pfad las im .NET-Arbeitsverzeichnis
