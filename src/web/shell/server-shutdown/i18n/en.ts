@@ -21,4 +21,9 @@ export const en = {
   stopping: 'Stopping…',
   notConnected: 'Not connected to the server – it may already be stopped.',
   failed: 'The server could not be stopped.',
+  /** From the "Parallax was updated" view (V2-04): no session list there. */
+  outdatedDescription:
+    'Every Claude session of this server is stopped too – they can be resumed after the restart. Then start Parallax again (parallax.cmd or pnpm start).',
+  manualHint:
+    'If that does not help: end the Parallax server (node.exe) in the Task Manager and start Parallax again.',
 };

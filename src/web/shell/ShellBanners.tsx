@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { makeError, type ErrorPayload } from '@shared/errors';
-import type { ClaudeInstallStatus } from '@shared/model';
+import type { ClaudeInstallStatus, HostState, ProfileSummary } from '@shared/model';
 import { useI18n } from '@web/i18n';
 import { retryConnection } from '@web/state/connection';
 import { useHostRecord, useHostState } from '@web/state/hooks';
@@ -77,23 +77,43 @@ export function setupIssue(claude: ClaudeInstallStatus): ErrorPayload | null {
   return null;
 }
 
+/** The default profile (`defaultProfileId`, else the first one). */
+export function defaultProfileOf(hostState: HostState): ProfileSummary | undefined {
+  return hostState.profiles.find((p) => p.id === hostState.defaultProfileId) ?? hostState.profiles[0];
+}
+
 /**
  * Setup hint (C.5 / B "First-Run"): the default profile cannot run sessions (claude missing, not
  * logged in …, `host.state.setupRequired`) or its CLI is too old (warning only). The translated
  * reason plus a pointer to `pnpm preflight`; the full setup screen (preflight in the UI, path
- * choice, retry) follows in Phase 2.
+ * choice, retry) follows in Phase 2. While the server still tests the profile after its start
+ * (`claude.state === 'checking'`, R3-03) a neutral "checking" line replaces the warning – the
+ * server reports `setupRequired` until the first check is done.
  */
 function SetupHint() {
   const { t, tError } = useI18n();
   const hostState = useHostState();
   if (hostState === null) return null;
-  const profile =
-    hostState.profiles.find((p) => p.id === hostState.defaultProfileId) ?? hostState.profiles[0];
+  const profile = defaultProfileOf(hostState);
+  if (profile?.claude.state === 'checking') {
+    return (
+      <Banner tone="info" data-slot="setup-hint" data-state="checking">
+        <span className="inline-flex flex-wrap gap-x-1.5">
+          <span className="font-medium">{t('shell.setup.checkingTitle')}</span>
+          <span className="text-muted-foreground">{t('shell.setup.checkingDescription')}</span>
+        </span>
+      </Banner>
+    );
+  }
   const issue = profile === undefined ? null : setupIssue(profile.claude);
   const tooOld = profile?.claude.versionStatus === 'too_old';
   if (!hostState.setupRequired && !tooOld) return null;
   return (
-    <Banner tone={hostState.setupRequired ? 'warning' : 'info'} data-slot="setup-hint">
+    <Banner
+      tone={hostState.setupRequired ? 'warning' : 'info'}
+      data-slot="setup-hint"
+      data-state={hostState.setupRequired ? 'required' : 'too-old'}
+    >
       <span className="inline-flex flex-wrap gap-x-1.5">
         <span className="font-medium">{t('shell.setup.title')}</span>
         <span className="text-muted-foreground">

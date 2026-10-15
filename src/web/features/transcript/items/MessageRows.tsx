@@ -66,7 +66,7 @@ function UserBubble({
       data-item-kind="user_message"
       data-queued={queued ? 'true' : undefined}
       className={cn(
-        'bg-secondary/70 grid min-w-0 gap-1.5 rounded-md border px-3 py-2',
+        'bg-secondary/70 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5 rounded-md border px-3 py-2',
         queued && 'border-dashed bg-transparent opacity-70',
       )}
     >
@@ -150,7 +150,7 @@ export const AssistantTextRow = memo(function AssistantTextRow({
     <div
       data-item-kind="assistant_text"
       data-streaming={item.streaming ? 'true' : undefined}
-      className="grid min-w-0 gap-1"
+      className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1"
     >
       <span className="sr-only">{t('transcript.assistant.label')}</span>
       {item.localCommand === null ? null : (

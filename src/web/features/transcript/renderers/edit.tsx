@@ -111,7 +111,7 @@ function DiffBody({
     );
   }
   return (
-    <div className="grid min-w-0 gap-1">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1">
       {replaceAll || editCount > 1 || snippet ? (
         <p className="text-muted-foreground flex flex-wrap gap-x-3 text-2xs">
           {editCount > 1 ? <span>{t('transcript.edit.editCount', { count: editCount })}</span> : null}
@@ -212,7 +212,7 @@ function WritePreview({ toolName, input }: ToolPreviewProps) {
   const rows = useMemo(() => (parsed === null ? null : contentToRows(parsed.content)), [parsed]);
   if (parsed === null || rows === null) return <GenericToolPreview toolName={toolName} input={input} />;
   return (
-    <div className="grid min-w-0 gap-1">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1">
       <p className="text-muted-foreground text-2xs">{t('transcript.edit.written')}</p>
       <DiffView rows={rows} showOldLines={false} />
     </div>

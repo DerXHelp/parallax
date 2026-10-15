@@ -6,7 +6,9 @@ import { formatHash, getHashParam, parseHash, setHashParam } from './hash';
 import { newClientId, newCmdId } from './ids';
 import { pathTail, shortPath } from './path-display';
 import { orderSessions } from './session-order';
+import { sessionTitle } from './session-title';
 import { storageAvailable, storageKey } from './storage';
+import { cliVersionStatus, compareVersions, knownVersion } from './version';
 
 describe('ids', () => {
   it('match the contract schemas', () => {
@@ -104,5 +106,40 @@ describe('orderSessions', () => {
       'idle old',
     ]);
     expect(ordered[0]?.status.kind).toBe('needs-permission');
+  });
+});
+
+describe('sessionTitle (V2-05)', () => {
+  it('falls back to the folder name while the title is empty', () => {
+    expect(sessionTitle({ title: 'Fix the build', cwd: 'D:\\work\\demo' })).toBe('Fix the build');
+    expect(sessionTitle({ title: '', cwd: 'D:\\work\\demo' })).toBe('demo');
+    expect(sessionTitle({ title: '  ', cwd: 'D:\\work\\demo\\' })).toBe('demo');
+    expect(sessionTitle({ title: '', cwd: 'D:\\' })).toBe('D:\\');
+  });
+});
+
+describe('version rule C.7 (R3-01)', () => {
+  it('compares like semver and ignores build metadata', () => {
+    expect(compareVersions('2.1.300', '2.1.296')).toBe(1);
+    expect(compareVersions('2.1.296', '2.1.296')).toBe(0);
+    expect(compareVersions('2.1.99', '2.1.296')).toBe(-1);
+    expect(compareVersions('v2.2.0', '2.1.999')).toBe(1);
+    expect(compareVersions('2.1.296-beta.1', '2.1.296')).toBe(-1);
+    expect(compareVersions('2.1.296+abc', '2.1.296')).toBe(0);
+    expect(compareVersions('2.1', '2.1.296')).toBeNull();
+  });
+
+  it('is too_old only when the CLI is older than the version the SDK expects', () => {
+    expect(cliVersionStatus('2.1.300', '2.1.296')).toBe('ok');
+    expect(cliVersionStatus('2.1.296', '2.1.296')).toBe('ok');
+    expect(cliVersionStatus('2.1.200', '2.1.296')).toBe('too_old');
+    expect(cliVersionStatus(null, '2.1.296')).toBe('unknown');
+    expect(cliVersionStatus('2.1.300', 'unknown')).toBe('unknown');
+    expect(cliVersionStatus('', '2.1.296')).toBe('unknown');
+    expect([knownVersion(null), knownVersion(''), knownVersion(' 2.1.300 ')]).toEqual([
+      null,
+      null,
+      '2.1.300',
+    ]);
   });
 });

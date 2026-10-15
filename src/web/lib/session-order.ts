@@ -1,5 +1,6 @@
 import type { SessionSummary } from '@shared/model';
 import { deriveDisplayStatus, type DisplayStatus } from '@shared/status';
+import { sessionTitle } from './session-title';
 
 /**
  * Sidebar order (Plan "Kleinkram": flat, "waiting for you" first, then activity): by the contract's
@@ -24,6 +25,6 @@ export function orderSessions<T extends { summary: SessionSummary }>(
       const activity =
         Date.parse(b.entry.summary.lastActivityAt) - Date.parse(a.entry.summary.lastActivityAt);
       if (activity !== 0) return activity;
-      return a.entry.summary.title.localeCompare(b.entry.summary.title);
+      return sessionTitle(a.entry.summary).localeCompare(sessionTitle(b.entry.summary));
     });
 }

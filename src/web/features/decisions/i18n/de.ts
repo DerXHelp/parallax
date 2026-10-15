@@ -6,6 +6,10 @@ export const de: typeof en = {
     label: 'Entscheidungen',
     more: { one: '+{count} weitere', other: '+{count} weitere' },
     moreLabel: 'Offene Entscheidungen dieser Session',
+    moreTrigger: {
+      one: '+{count} weitere · Offene Entscheidungen dieser Session',
+      other: '+{count} weitere · Offene Entscheidungen dieser Session',
+    },
     oldest: 'älteste',
     notConnected: 'Keine Verbindung – Antworten sind pausiert.',
     sending: 'Wird gesendet…',
@@ -28,7 +32,7 @@ export const de: typeof en = {
     subagentUnnamed: 'Subagent',
   },
   actions: {
-    shortcutHint: 'Klicken oder {keys} drücken – Eingabe und Leertaste antworten nie.',
+    shortcutHint: 'Klicken oder {keys} drücken – Enter und Leertaste antworten nie.',
   },
   permission: {
     title: '{tool} braucht deine Freigabe',
@@ -108,6 +112,7 @@ export const de: typeof en = {
   },
   expired: {
     badge: 'Abgelaufen',
+    planTitle: 'Plan v{version}',
     description:
       'Parallax wurde neu gestartet, während das offen war – Claude hat angehalten. Setze die Session fort.',
     resume: 'Fortsetzen',

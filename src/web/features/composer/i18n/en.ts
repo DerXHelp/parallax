@@ -51,7 +51,13 @@ export const en = {
   },
   mode: {
     label: 'Permission mode',
+    /** Accessible name of the picker button (one key with the value, R3-17). */
+    trigger: 'Permission mode: {mode}',
     unknown: 'Unknown mode',
+    /** No `init` yet (V2-05): the CLI starts with the mode of its own settings. */
+    notStarted: 'CLI default',
+    notStartedHint:
+      'Not started yet: Claude Code starts with the default mode of its settings – or the mode you pick here.',
     hints: {
       default: 'Claude asks before every change and command.',
       acceptEdits: 'File edits run without asking; commands still ask.',
@@ -65,6 +71,7 @@ export const en = {
   },
   model: {
     label: 'Model',
+    trigger: 'Model: {model}',
     default: 'Default model',
     loading: 'Loading models…',
     unavailable: 'The model list is available while the session runs.',

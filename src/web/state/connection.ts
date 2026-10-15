@@ -89,6 +89,14 @@ export interface ManagedHostConnection extends HostConnection {
   stop(): void;
   /** Skips the backoff wait / re-checks the sign-in (buttons in banners and the auth gate). */
   retryNow(): void;
+  /**
+   * "Stop server" that also works from an outdated window (V2-04, phase `version-mismatch`): there
+   * the normal connection is closed, so a short-lived socket does the handshake (same protocol
+   * version, no subscriptions), sends only `server.shutdown` and ends with the ack or close 4503 –
+   * the host then shows "server stopped". While `open` it is a plain `send`. Rejects with
+   * `ClientCommandError` (protocol differs, refused, no answer within `timeoutMs`) – never hangs.
+   */
+  shutdownServer(timeoutMs?: number): Promise<void>;
   /** Applies queued session ops now instead of on the next animation frame (tests). */
   flush(): void;
 }
@@ -136,6 +144,8 @@ export const HELLO_TIMEOUT_MS = 10_000;
  * host record flags `upgradeRejected` (the server answers HTTP but refuses the WebSocket, V1-15).
  */
 export const UPGRADE_REJECTED_AFTER = 3;
+/** `shutdownServer()` from an outdated window gives up after this (V2-04). */
+export const SHUTDOWN_TIMEOUT_MS = 15_000;
 const MAX_NOTIFICATIONS = 20;
 
 /** rAF while visible; rAF does not run in hidden windows, so a timer backs it up. */
@@ -738,6 +748,84 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
     });
   }
 
+  /** See `ManagedHostConnection.shutdownServer` (V2-04). */
+  function shutdownServer(timeoutMs = SHUTDOWN_TIMEOUT_MS): Promise<void> {
+    if (started && phase === 'open') return send({ name: 'server.shutdown' }).then(() => undefined);
+    if (!started || phase !== 'version-mismatch') {
+      return Promise.reject(new ClientCommandError(makeError('CONNECTION_LOST')));
+    }
+    const own = generation;
+    const socket = options.createTransport();
+    const cmdId = newCmdId();
+    return new Promise<void>((resolve, reject) => {
+      let done = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const stopped = () => {
+        // The server goes down: every window shows "server stopped" (like close 4503).
+        if (own === generation && phase === 'version-mismatch') {
+          setPhase('server-stopped', { error: makeError('SERVER_SHUTTING_DOWN') });
+        }
+      };
+      const finish = (error: ErrorPayload | null) => {
+        if (done) return;
+        done = true;
+        if (timer !== null) clearTimeout(timer);
+        socket.close();
+        if (error === null) {
+          stopped();
+          resolve();
+        } else {
+          reject(new ClientCommandError(error));
+        }
+      };
+      timer = setTimeout(() => {
+        finish(makeError('COMMAND_TIMEOUT', { name: 'server.shutdown' }));
+      }, timeoutMs);
+      const onText = (text: string) => {
+        const parsed = parseServerMessage(text);
+        if (parsed.ok !== true) return;
+        const message = parsed.message;
+        if (message.type === 'hello') {
+          if (message.protocolVersion !== PROTOCOL_VERSION) {
+            finish(
+              makeError('PROTOCOL_VERSION_MISMATCH', {
+                clientProtocol: PROTOCOL_VERSION,
+                serverProtocol: message.protocolVersion,
+                clientBuild: buildId,
+                serverBuild: message.buildId,
+              }),
+            );
+            return;
+          }
+          const hello: ClientMessage = {
+            type: 'clientHello',
+            protocolVersion: PROTOCOL_VERSION,
+            buildId,
+            clientId,
+            presence: presenceOf(store.getState(), hostId),
+          };
+          const cmd: ClientMessage = { type: 'cmd', cmdId, cmd: { name: 'server.shutdown' } };
+          try {
+            socket.send(JSON.stringify(hello));
+            socket.send(JSON.stringify(cmd));
+          } catch {
+            finish(makeError('CONNECTION_LOST'));
+          }
+          return;
+        }
+        if (message.type === 'ack' && message.cmdId === cmdId) finish(message.ok ? null : message.error);
+      };
+      const onClose = (code: number) => {
+        finish(code === WS_CLOSE.SERVER_SHUTDOWN ? null : makeError('CONNECTION_LOST', { code }));
+      };
+      try {
+        socket.connect(onText, onClose);
+      } catch {
+        finish(makeError('CONNECTION_LOST'));
+      }
+    });
+  }
+
   // ---- presence (A.9) ----
 
   function schedulePresence(): void {
@@ -792,6 +880,7 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
       if (!started || phase === 'open' || phase === 'connecting' || phase === 'checking-auth') return;
       void beginAttempt();
     },
+    shutdownServer,
     flush,
   };
 }
@@ -851,6 +940,13 @@ export function listConnections(): ManagedHostConnection[] {
 /** "Retry now" / "Check again" buttons: skips the backoff or re-checks the sign-in. */
 export function retryConnection(hostId: HostId = LOCAL_HOST_ID): void {
   connections.get(hostId)?.retryNow();
+}
+
+/** "Stop server" of the "Parallax was updated" view (V2-04, `ManagedHostConnection.shutdownServer`). */
+export function shutdownServer(hostId: HostId = LOCAL_HOST_ID): Promise<void> {
+  const connection = connections.get(hostId);
+  if (connection === undefined) return Promise.reject(new ClientCommandError(makeError('CONNECTION_LOST')));
+  return connection.shutdownServer();
 }
 
 /** Stand-in while no connection is registered (tests, playground before start): rejects and ignores. */

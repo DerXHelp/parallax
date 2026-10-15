@@ -6,8 +6,11 @@ import type { DisplayStatusKind } from '@shared/status';
 import { useFormat, useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { orderSessions, type OrderedSession } from '@web/lib/session-order';
+import { sessionTitle } from '@web/lib/session-title';
+import { cliVersionStatus, knownVersion } from '@web/lib/version';
 import { useNow } from '@web/state/clock';
 import { useHostState, useSelectedSession, useSummaries, type SummaryEntry } from '@web/state/hooks';
+import { Badge } from '@web/ui/badge';
 import { IconButton } from '@web/ui/icon-button';
 import { StatusIcon } from '@web/ui/status-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
@@ -42,6 +45,8 @@ interface RowProps {
   tabStop: boolean;
   profileColor: ProfileColor | null;
   profileName: string | null;
+  /** Minimum CLI of the SDK (`host.state.sdkClaudeCodeVersion`) for the version rule C.7. */
+  requiredCli: string | null;
   onSelect: (sessionKey: string) => void;
 }
 
@@ -54,12 +59,15 @@ const SessionRow = memo(function SessionRow({
   tabStop,
   profileColor,
   profileName,
+  requiredCli,
   onSelect,
 }: RowProps) {
   const t = useT();
   const format = useFormat();
   const { summary } = entry;
   const relative = format.relative(summary.lastActivityAt, now, 'narrow');
+  const title = sessionTitle(summary);
+  const cliVersion = knownVersion(summary.cliVersion);
   return (
     <li className="min-w-0">
       <Tooltip>
@@ -84,7 +92,7 @@ const SessionRow = memo(function SessionRow({
               />
             )}
             <StatusIcon kind={statusKind} className="shrink-0" />
-            <span className={cn('min-w-0 flex-1 truncate', unread && 'font-semibold')}>{summary.title}</span>
+            <span className={cn('min-w-0 flex-1 truncate', unread && 'font-semibold')}>{title}</span>
             <span className="text-muted-foreground shrink-0 text-2xs tabular-nums">{relative}</span>
             {unread ? (
               <span className="bg-brand size-1.5 shrink-0 rounded-full">
@@ -95,12 +103,22 @@ const SessionRow = memo(function SessionRow({
         </TooltipTrigger>
         <TooltipContent side="right" align="start" className="max-w-96">
           <div className="grid gap-0.5">
-            <span className="font-medium">{summary.title}</span>
+            <span className="font-medium">{title}</span>
             <span>{t(`status.${statusKind}`)}</span>
             <span className="text-muted-foreground font-mono break-all">{summary.cwd}</span>
             {profileName === null ? null : (
               <span className="text-muted-foreground">
                 {t('shell.session.profile')}: {profileName}
+              </span>
+            )}
+            {cliVersion === null ? null : (
+              <span data-slot="row-cli-version" className="text-muted-foreground">
+                {t('shell.session.cliVersion', { version: cliVersion })}
+                {cliVersionStatus(cliVersion, requiredCli) === 'too_old' && requiredCli !== null ? (
+                  <span className="text-destructive block">
+                    {t('shell.session.cliTooOld', { required: requiredCli })}
+                  </span>
+                ) : null}
               </span>
             )}
             {summary.sessionId === null ? null : (
@@ -184,6 +202,18 @@ export function Sidebar() {
       <div className="flex h-9 shrink-0 items-center gap-2 px-3">
         <LayersIcon aria-hidden className="text-brand size-4" />
         <span className="font-semibold tracking-tight">{PRODUCT_NAME}</span>
+        {hostState?.backend === 'fake' ? (
+          // R3-02: never mistake the FakeBackend for the real claude (e.g. a forgotten fake server).
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge variant="warning" data-slot="backend-fake">
+                {t('shell.sidebar.fakeBadge')}
+                <span className="sr-only">{t('shell.sidebar.fakeHint')}</span>
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent>{t('shell.sidebar.fakeHint')}</TooltipContent>
+          </Tooltip>
+        ) : null}
         <span className="flex-1" />
         <IconButton label={t('shell.sidebar.newSession')} data-action="new-session" onClick={openNewSession}>
           <SquarePenIcon aria-hidden />
@@ -227,6 +257,7 @@ export function Sidebar() {
                   tabStop={entry.sessionKey === tabStopKey}
                   profileColor={profile?.color ?? null}
                   profileName={profile?.name ?? null}
+                  requiredCli={knownVersion(hostState?.sdkClaudeCodeVersion ?? null)}
                   onSelect={select}
                 />
               );

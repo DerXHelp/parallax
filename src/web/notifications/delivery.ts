@@ -1,6 +1,7 @@
 import type { NotificationKind } from '@shared/status';
 import { t, type TranslationKey } from '@web/i18n';
-import { dismissNotification, dismissSessionNotifications } from '@web/state/hooks';
+import { sessionTitle } from '@web/lib/session-title';
+import { dismissNotification, dismissSessionNotifications, selectSummary } from '@web/state/hooks';
 import { dismissNotice, showNotice } from '@web/state/notices';
 import { setSelectedSession } from '@web/state/selection';
 import { clientStore, type ClientNotification, type ClientStore, type NoticeTone } from '@web/state/store';
@@ -69,8 +70,11 @@ export function startNotificationDelivery(options: NotificationDeliveryOptions =
   let requests = 0;
 
   function deliver(notification: ClientNotification): void {
-    const { presence } = store.getState();
-    const params = { title: notification.title };
+    const state = store.getState();
+    const { presence } = state;
+    // A session without a title yet (created without a prompt) is named by its folder (V2-05).
+    const summary = notification.title.trim() === '' ? selectSummary(state, notification.sessionKey) : null;
+    const params = { title: summary === null ? notification.title : sessionTitle(summary) };
     const channel = chooseDeliveryChannel({
       focused: presence.focused,
       visible: presence.visible,

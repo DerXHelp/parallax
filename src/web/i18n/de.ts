@@ -18,7 +18,7 @@ export const de: typeof en = {
       shift: 'Umschalt',
       meta: 'Win',
       escape: 'Esc',
-      enter: 'Eingabe',
+      enter: 'Enter',
       space: 'Leertaste',
       tab: 'Tab',
       backspace: 'Rücktaste',
@@ -40,6 +40,9 @@ export const de: typeof en = {
       lastActivity: 'Letzte Aktivität {time}',
       pinned: 'Angeheftet',
       newSession: 'Neue Session',
+      fakeBadge: 'Fake',
+      fakeHint:
+        'Dieser Server läuft mit dem FakeBackend: Sessions bekommen simulierte Antworten, nicht das echte Claude Code.',
     },
     session: {
       loading: 'Session wird geladen…',
@@ -56,6 +59,23 @@ export const de: typeof en = {
       context: 'Kontext',
       contextTokens: '{used} von {max} Tokens · {source}',
       contextSource: { sdk: 'gemessen', estimate: 'geschätzt' },
+      cliVersionLabel: 'Claude-Code-Version',
+      cliVersionShort: 'CLI {version}',
+      cliVersion: 'Claude Code {version}',
+      cliVersionHint: 'Gemeldet von dieser Session bei ihrem letzten Start.',
+      cliTooOld: 'Älter als die Version, die das Agent SDK erwartet ({required}) – aktualisiere Claude Code.',
+    },
+    info: {
+      title: 'Über diesen Server',
+      claude: 'Claude Code {version}',
+      claudeChecking: 'Claude Code: wird geprüft…',
+      claudeMissing: 'Claude Code: nicht gefunden',
+      claudeUnknown: 'Claude Code: Version unbekannt',
+      claudeTooOld: 'Älter als vom Agent SDK erwartet (mindestens {required}).',
+      sdk: 'Agent SDK {version} · erwartet Claude Code {required} oder neuer',
+      parallax: 'Parallax {version}',
+      data: 'Daten: {path}',
+      backendFake: 'FakeBackend – kein echtes Claude Code',
     },
     badges: {
       background: 'Hintergrund-Tasks',
@@ -104,6 +124,9 @@ export const de: typeof en = {
       title: 'Claude Code braucht Aufmerksamkeit',
       description: 'Das Standardprofil kann noch keine Sessions starten. Details liefert „pnpm preflight“.',
       preflight: 'Details: „pnpm preflight“.',
+      checkingTitle: 'Claude Code wird geprüft…',
+      checkingDescription:
+        'Parallax testet das installierte claude (Version und Anmeldung) – das dauert ein paar Sekunden.',
     },
     warnings: {
       title: 'Hinweis des Servers',
@@ -129,7 +152,7 @@ export const de: typeof en = {
         later: 'Nicht jetzt',
         granted: 'Benachrichtigungen sind aktiv.',
         denied:
-          'Benachrichtigungen sind blockiert. Erlaube sie in den Website-Einstellungen von Edge (Schloss-Symbol), um Toasts zu erhalten.',
+          'Benachrichtigungen sind blockiert. Erlaube sie in den Edge-Einstellungen (edge://settings/content/notifications), um Toasts zu erhalten.',
       },
       kinds: {
         permission: '{title} – braucht eine Freigabe',
@@ -187,6 +210,12 @@ export const de: typeof en = {
     versionMismatchTitle: 'Parallax wurde aktualisiert',
     versionMismatchDescription:
       'Dieses Fenster und der Server laufen mit verschiedenen Versionen. Lade neu, um weiterzumachen – bleibt der Hinweis, starte Parallax neu.',
+    versionMismatchStuck:
+      'Nach dem Neuladen immer noch hier? Dann ist der laufende Server älter als dieses Fenster: beende ihn und starte Parallax neu.',
+    invalidMessages: {
+      one: '{count} Nachricht des Servers passte nicht zum Contract und wurde verworfen.',
+      other: '{count} Nachrichten des Servers passten nicht zum Contract und wurden verworfen.',
+    },
     status: {
       connecting: 'Verbinde',
       open: 'Verbunden',

@@ -20,12 +20,21 @@ const NOTICE_ICON_TONE: Readonly<Record<ClientNotice['tone'], string>> = {
 const CARD =
   'bg-popover text-popover-foreground animate-in fade-in-0 slide-in-from-bottom-2 pointer-events-auto flex items-start gap-2 rounded-md border p-2.5 text-xs shadow-lg';
 
-function NoticeCard({ notice, onShow }: { notice: ClientNotice; onShow: (sessionKey: string) => void }) {
+function NoticeCard({
+  notice,
+  shown,
+  onShow,
+}: {
+  notice: ClientNotice;
+  /** The notice's session is already shown in this window: no "Show session" (V2-08). */
+  shown: boolean;
+  onShow: (sessionKey: string) => void;
+}) {
   const { t, tError } = useI18n();
   const Icon = TONE_ICON[notice.tone];
   const text =
     'error' in notice.content ? tError(notice.content.error) : t(notice.content.text, notice.content.params);
-  const sessionKey = notice.sessionKey;
+  const sessionKey = shown ? null : notice.sessionKey;
   return (
     <div
       data-notice={notice.id}
@@ -74,7 +83,7 @@ function NoticeCard({ notice, onShow }: { notice: ClientNotice; onShow: (session
 export function NotificationCenter() {
   const { t } = useI18n();
   const notices = useNotices();
-  const [, select] = useSelectedSession();
+  const [selected, select] = useSelectedSession();
   return (
     <section
       aria-label={t('shell.notifications.region')}
@@ -82,7 +91,12 @@ export function NotificationCenter() {
       className="pointer-events-none fixed right-3 bottom-3 z-40 flex w-80 flex-col gap-2"
     >
       {notices.slice(-MAX_VISIBLE).map((notice) => (
-        <NoticeCard key={notice.id} notice={notice} onShow={select} />
+        <NoticeCard
+          key={notice.id}
+          notice={notice}
+          shown={notice.sessionKey !== null && notice.sessionKey === selected}
+          onShow={select}
+        />
       ))}
     </section>
   );
