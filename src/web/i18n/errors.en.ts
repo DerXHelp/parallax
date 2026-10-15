@@ -75,4 +75,8 @@ export const errorsEn: Record<ErrorCode, string> = {
   CONNECTION_LOST: 'The connection to the server was lost.',
   COMMAND_TIMEOUT: 'The server did not answer in time.',
   INTERNAL_ERROR: 'An unexpected error occurred.',
+  // Contract additions of the R1 server fixes (kept at the end to stay merge-friendly).
+  ROUTE_NOT_FOUND: 'This address does not exist.',
+  PROMPT_NOT_DELIVERED: 'The message was not delivered because the session ended. Send it again if needed.',
+  STORE_VERSION_TOO_NEW: 'The data was written by a newer Parallax version. Update Parallax.',
 };
