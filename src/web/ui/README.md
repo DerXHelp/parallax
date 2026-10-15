@@ -12,7 +12,7 @@ Primitive, **kein Barrel** (`index.ts`). Kompakt: Standardhöhe 28 px, Text `tex
 | `icon-button.tsx` | `IconButton` (Pflicht-`label` = Name + Tooltip, `shortcut`) |
 | `badge.tsx` | `Badge` (default/secondary/outline/success/warning/info/destructive) |
 | `card.tsx` | `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardAction`, `CardContent`, `CardFooter` |
-| `tooltip.tsx` | `TooltipProvider`, `Tooltip`, `TooltipTrigger`, `TooltipContent` |
+| `tooltip.tsx` | `TooltipProvider`, `Tooltip` (nutzt einen vorhandenen Provider, sonst einen eigenen), `TooltipTrigger`, `TooltipContent` |
 | `dropdown-menu.tsx` | `DropdownMenu` + `Trigger`, `Content`, `Item` (`variant="destructive"`), `CheckboxItem`, `RadioGroup`, `RadioItem`, `Label`, `Separator`, `Shortcut`, `Sub`, `SubTrigger`, `SubContent`, `Group`, `Portal` |
 | `popover.tsx` | `Popover`, `PopoverTrigger`, `PopoverAnchor`, `PopoverContent` |
 | `dialog.tsx` | `Dialog` + `Trigger`, `Content` (`showCloseButton`), `Header`, `Footer`, `Title`, `Description`, `Close`, `Overlay`, `Portal` – nur für echte Dialoge, Entscheidungen bleiben nicht-modal |
@@ -27,7 +27,7 @@ Primitive, **kein Barrel** (`index.ts`). Kompakt: Standardhöhe 28 px, Text `tex
 | `kbd.tsx` | `Kbd`, `KbdGroup` (Tastennamen übersetzt: `shortcutKeyLabels` in `shell/shortcuts.ts`) |
 | `progress.tsx`, `gauge.tsx` | `Progress` (Fortschritt), `Gauge` (Pegel, `role="meter"`, Schwellen 70/85 %), `gaugeLevel`, `GAUGE_THRESHOLDS` |
 | `skeleton.tsx`, `spinner.tsx` | `Skeleton`, `Spinner` (`role="status"`, Label per `t()`) |
-| `alert.tsx` | `Alert` (`tone`: info/warning/error/success, `title`, `actions`), `Banner` (Streifen oben) |
+| `alert.tsx` | `Alert` (`tone`: info/warning/error/success, `title`, `actions`), `Banner` (Streifen oben), `TONE_ICON`, `AlertTone` |
 | `status-icon.tsx` | `StatusIcon` (`DisplayStatusKind` → Icon + `t('status.<kind>')`, `showLabel`, `withTooltip`; nie nur Farbe), `STATUS_PRESENTATION`, `STATUS_KINDS` |
 
 Barrierearm: jedes Icon-only-Element hat einen Namen (`label`/`aria-label` aus `t()`), Status

@@ -2,7 +2,7 @@ import { BellDotIcon, LayersIcon } from 'lucide-react';
 import { memo, useMemo, type KeyboardEvent } from 'react';
 import { PRODUCT_NAME } from '@shared/product';
 import type { ProfileColor } from '@shared/model';
-import type { DisplayStatus } from '@shared/status';
+import type { DisplayStatusKind } from '@shared/status';
 import { useFormat, useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { orderSessions, type OrderedSession } from '@web/lib/session-order';
@@ -26,11 +26,18 @@ const PROFILE_STRIPE: Readonly<Record<ProfileColor, string>> = {
   teal: 'bg-profile-teal',
 };
 
+/**
+ * Only primitives and stable references (R1W-05): `entry` keeps its identity while its summary is
+ * unchanged (hooks.ts), so a `summary.upsert` re-renders just that row.
+ */
 interface RowProps {
   entry: SummaryEntry;
-  status: DisplayStatus;
+  statusKind: DisplayStatusKind;
+  unread: boolean;
   now: number;
   selected: boolean;
+  /** Roving tabindex (V1-11): exactly one row of the list is a tab stop. */
+  tabStop: boolean;
   profileColor: ProfileColor | null;
   profileName: string | null;
   onSelect: (sessionKey: string) => void;
@@ -38,9 +45,11 @@ interface RowProps {
 
 const SessionRow = memo(function SessionRow({
   entry,
-  status,
+  statusKind,
+  unread,
   now,
   selected,
+  tabStop,
   profileColor,
   profileName,
   onSelect,
@@ -50,13 +59,14 @@ const SessionRow = memo(function SessionRow({
   const { summary } = entry;
   const relative = format.relative(summary.lastActivityAt, now, 'narrow');
   return (
-    <li>
+    <li className="min-w-0">
       <Tooltip>
         <TooltipTrigger asChild>
           <button
             type="button"
             data-session-row={entry.sessionKey}
             aria-current={selected ? 'true' : undefined}
+            tabIndex={tabStop ? 0 : -1}
             onClick={() => {
               onSelect(entry.sessionKey);
             }}
@@ -71,12 +81,10 @@ const SessionRow = memo(function SessionRow({
                 className={cn('absolute inset-y-1 left-0.5 w-0.5 rounded-full', PROFILE_STRIPE[profileColor])}
               />
             )}
-            <StatusIcon kind={status.kind} />
-            <span className={cn('min-w-0 flex-1 truncate', status.unread && 'font-semibold')}>
-              {summary.title}
-            </span>
+            <StatusIcon kind={statusKind} className="shrink-0" />
+            <span className={cn('min-w-0 flex-1 truncate', unread && 'font-semibold')}>{summary.title}</span>
             <span className="text-muted-foreground shrink-0 text-2xs tabular-nums">{relative}</span>
-            {status.unread ? (
+            {unread ? (
               <span className="bg-brand size-1.5 shrink-0 rounded-full">
                 <span className="sr-only">{t('shell.sidebar.unread')}</span>
               </span>
@@ -86,7 +94,7 @@ const SessionRow = memo(function SessionRow({
         <TooltipContent side="right" align="start" className="max-w-96">
           <div className="grid gap-0.5">
             <span className="font-medium">{summary.title}</span>
-            <span>{t(`status.${status.kind}`)}</span>
+            <span>{t(`status.${statusKind}`)}</span>
             <span className="text-muted-foreground font-mono break-all">{summary.cwd}</span>
             {profileName === null ? null : (
               <span className="text-muted-foreground">
@@ -105,11 +113,15 @@ const SessionRow = memo(function SessionRow({
   );
 });
 
-function focusRow(list: HTMLElement, delta: number): void {
+/** Moves the focus within the list: `delta` rows, or to the first/last row (Home/End). */
+function focusRow(list: HTMLElement, delta: number | 'first' | 'last'): void {
   const rows = [...list.querySelectorAll<HTMLButtonElement>('[data-session-row]')];
   if (rows.length === 0) return;
   const current = rows.findIndex((row) => row === document.activeElement);
-  const next = current < 0 ? 0 : Math.min(rows.length - 1, Math.max(0, current + delta));
+  let next: number;
+  if (delta === 'first') next = 0;
+  else if (delta === 'last') next = rows.length - 1;
+  else next = current < 0 ? 0 : Math.min(rows.length - 1, Math.max(0, current + delta));
   rows[next]?.focus();
 }
 
@@ -149,11 +161,21 @@ export function Sidebar() {
   });
 
   const onListKeyDown = (event: KeyboardEvent<HTMLUListElement>) => {
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      event.preventDefault();
-      focusRow(event.currentTarget, event.key === 'ArrowDown' ? 1 : -1);
-    }
+    const moves: Readonly<Record<string, number | 'first' | 'last'>> = {
+      ArrowDown: 1,
+      ArrowUp: -1,
+      Home: 'first',
+      End: 'last',
+    };
+    const move = moves[event.key];
+    if (move === undefined) return;
+    event.preventDefault();
+    focusRow(event.currentTarget, move);
   };
+  // The selected row is the tab stop; without a visible selection the first row.
+  const tabStopKey = ordered.some((item) => item.entry.sessionKey === selected)
+    ? selected
+    : (ordered[0]?.entry.sessionKey ?? null);
 
   return (
     <aside className="bg-sidebar text-sidebar-foreground border-sidebar-border flex w-64 shrink-0 flex-col border-r">
@@ -177,20 +199,27 @@ export function Sidebar() {
           {t('shell.sidebar.waiting', { count: waiting.length })}
         </button>
       ) : null}
-      <nav aria-label={t('shell.sidebar.label')} className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
+      <nav
+        aria-label={t('shell.sidebar.label')}
+        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-1.5 pb-2"
+      >
         {ordered.length === 0 ? (
           <p className="text-muted-foreground px-2 py-3 text-xs">{t('shell.sidebar.empty')}</p>
         ) : (
-          <ul role="list" className="grid gap-px" onKeyDown={onListKeyDown}>
+          // One column that may shrink below the titles' width: long titles get an ellipsis,
+          // time and unread dot stay visible, no horizontal scrollbar (V1-03).
+          <ul role="list" className="grid grid-cols-[minmax(0,1fr)] gap-px" onKeyDown={onListKeyDown}>
             {ordered.map(({ entry, status }) => {
               const profile = profiles.get(entry.summary.profileId);
               return (
                 <SessionRow
                   key={entry.sessionKey}
                   entry={entry}
-                  status={status}
+                  statusKind={status.kind}
+                  unread={status.unread}
                   now={now}
                   selected={entry.sessionKey === selected}
+                  tabStop={entry.sessionKey === tabStopKey}
                   profileColor={profile?.color ?? null}
                   profileName={profile?.name ?? null}
                   onSelect={select}

@@ -27,16 +27,26 @@ export interface FeatureSlots {
   /** Later (Phase 2): right side panel of a session pane. */
   SidePanel: ComponentType<{ sessionKey: string }>;
   // Feature slots
-  /** WP-16 → WP-15 (plan card via tool_call.decision). */
-  DecisionCard: ComponentType<{
-    sessionKey: string;
-    decisionId: DecisionId;
-    placement: 'transcript' | 'bar';
-  }>;
-  /** WP-15 → WP-16 (plan text, option previews). */
-  Markdown: ComponentType<{ text: string }>;
-  /** WP-15 → WP-16 (diff preview in permission cards). */
-  ToolInputPreview: ComponentType<{ toolName: string; input: JsonValue }>;
+  /**
+   * WP-16 → WP-15 (plan card via tool_call.decision). Rule (architecture §2.3e, ADR-031):
+   * renders open and expired decisions (`useDecision ≠ null`) and returns `null` once resolved.
+   * `placement: 'bar'` is the ONLY operable instance; `placement: 'transcript'` is read-only (plan
+   * text, status, button "Go to decision" → `focusDecision`, decision-focus.ts). After the
+   * resolution WP-15 draws the final state itself from `tool_call.decision.outcome` + `input`.
+   */
+  DecisionCard: ComponentType<DecisionCardSlotProps>;
+  /** WP-15 → WP-16 (plan text, option previews). `sessionKey`: host of blob links (R1W-20). */
+  Markdown: ComponentType<{ text: string; sessionKey?: string }>;
+  /** WP-15 → WP-16 (diff preview in permission cards). `sessionKey`: host of capped inputs (blobs). */
+  ToolInputPreview: ComponentType<{ toolName: string; input: JsonValue; sessionKey?: string }>;
+}
+
+export type DecisionCardPlacement = 'transcript' | 'bar';
+
+export interface DecisionCardSlotProps {
+  sessionKey: string;
+  decisionId: DecisionId;
+  placement: DecisionCardPlacement;
 }
 
 export const DEFAULT_FEATURE_SLOTS: FeatureSlots = {

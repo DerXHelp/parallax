@@ -26,7 +26,8 @@
   --card-foreground: oklch(0.21 0.006 264);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.21 0.006 264);
-  --brand: oklch(0.6 0.14 42);
+  /* Light text colors reach WCAG AA (≥ 4.5:1) on background, sidebar and their /8–/10 tints (V1-05). */
+  --brand: oklch(0.555 0.14 40);
   --brand-foreground: oklch(0.99 0.004 60);
   --primary: var(--brand);
   --primary-foreground: var(--brand-foreground);
@@ -36,12 +37,14 @@
   --muted-foreground: oklch(0.5 0.012 264);
   --accent: oklch(0.94 0.004 264);
   --accent-foreground: oklch(0.21 0.006 264);
-  --destructive: oklch(0.56 0.21 27);
+  --destructive: oklch(0.535 0.2 27);
   --destructive-foreground: oklch(0.99 0 0);
   --border: oklch(0.905 0.004 264);
   --input: oklch(0.87 0.005 264);
-  --ring: oklch(0.6 0.14 42 / 55%);
+  --ring: oklch(0.555 0.14 40 / 55%);
   --scrollbar: oklch(0.21 0.006 264 / 22%);
+  /* Backdrop of modal dialogs. */
+  --overlay: oklch(0.15 0.005 264 / 45%);
 
   --sidebar: oklch(0.972 0.003 264);
   --sidebar-foreground: oklch(0.25 0.006 264);
@@ -53,9 +56,9 @@
   --sidebar-ring: var(--ring);
 
   /* Parallax semantic tokens: session status and context gauge (>= 70 % warning, >= 85 % danger). */
-  --success: oklch(0.56 0.14 150);
-  --warning: oklch(0.66 0.15 70);
-  --info: oklch(0.55 0.16 255);
+  --success: oklch(0.505 0.13 150);
+  --warning: oklch(0.53 0.13 62);
+  --info: oklch(0.515 0.16 255);
   --status-working: var(--info);
   --status-waiting: var(--warning);
   --status-done: var(--success);
@@ -96,6 +99,7 @@
   --input: oklch(1 0 0 / 14%);
   --ring: oklch(0.7 0.13 42 / 60%);
   --scrollbar: oklch(1 0 0 / 16%);
+  --overlay: oklch(0 0 0 / 55%);
 
   --sidebar: oklch(0.172 0.004 264);
   --sidebar-foreground: oklch(0.86 0.005 264);
@@ -144,6 +148,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-overlay: var(--overlay);
 
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);

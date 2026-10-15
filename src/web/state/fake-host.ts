@@ -7,6 +7,7 @@ import type {
   DecisionResponse,
   HostState,
   SessionSummary,
+  ToolCallStatus,
   TranscriptItem,
 } from '@shared/model';
 import type {
@@ -70,6 +71,19 @@ interface ServerSession {
 
 const RING_BUFFER = LIMITS.ringBufferOps;
 
+/** Status of the gated tool call after the answer (playground approximation of the engine). */
+function toolStatusAfter(outcome: DecisionOutcome): ToolCallStatus {
+  switch (outcome.type) {
+    case 'allowed':
+      return 'running';
+    case 'answered':
+    case 'plan_approved':
+      return 'done';
+    default:
+      return 'denied';
+  }
+}
+
 function outcomeFor(response: DecisionResponse): DecisionOutcome {
   switch (response.kind) {
     case 'permission':
@@ -114,6 +128,8 @@ export class FakeHost {
   private readonly options: FakeHostOptions;
   private readonly cleanups: (() => void)[] = [];
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
+  /** Running `streamAssistantText` calls per entry: abort functions (session.interrupt). */
+  private readonly streams = new Map<EntryId, Set<() => void>>();
   private handshaken = false;
   private nextEntry = 100;
 
@@ -224,7 +240,8 @@ export class FakeHost {
 
   /**
    * Streams an assistant text: upsert (streaming) → one `item.delta` per chunk → final upsert.
-   * Returns a cancel function.
+   * Returns a cancel function (stops silently). `session.interrupt` aborts every running stream of
+   * the entry: final upsert with the text so far and `aborted: true`, then `onDone`.
    */
   streamAssistantText(
     entryId: EntryId,
@@ -244,10 +261,25 @@ export class FakeHost {
     this.pushOps(entryId, [{ op: 'item.upsert', item: { ...options.item, text: '', streaming: true } }]);
     let index = 0;
     let cancelled = false;
+    let streamed = '';
+    const active = this.streams.get(entryId) ?? new Set<() => void>();
+    this.streams.set(entryId, active);
+    const abort = () => {
+      if (cancelled) return;
+      cancelled = true;
+      active.delete(abort);
+      this.pushOps(entryId, [
+        { op: 'item.upsert', item: { ...options.item, text: streamed, streaming: false, aborted: true } },
+      ]);
+      options.onDone?.();
+    };
+    active.add(abort);
     const step = () => {
       if (cancelled) return;
       const chunk = chunks[index];
       if (chunk === undefined) {
+        cancelled = true;
+        active.delete(abort);
         this.pushOps(entryId, [
           { op: 'item.upsert', item: { ...options.item, text: options.text, streaming: false } },
         ]);
@@ -255,13 +287,22 @@ export class FakeHost {
         return;
       }
       index++;
+      streamed += chunk;
       this.pushOps(entryId, [{ op: 'item.delta', itemId: options.item.id, field: 'text', append: chunk }]);
       this.later(step, intervalMs);
     };
     this.later(step, intervalMs);
     return () => {
       cancelled = true;
+      active.delete(abort);
     };
+  }
+
+  /** Aborts the running streams of an entry (default answer to `session.interrupt`). */
+  interruptStreams(entryId: EntryId): number {
+    const active = [...(this.streams.get(entryId) ?? [])];
+    for (const abort of active) abort();
+    return active.length;
   }
 
   /** Runs `fn` after `ms` (cleared by dispose). */
@@ -405,6 +446,32 @@ export class FakeHost {
         if (decision.kind !== cmd.response.kind)
           return { ok: false, error: makeError('DECISION_OPTION_UNAVAILABLE') };
         const outcome = outcomeFor(cmd.response);
+        // Like the engine: the outcome lands in the gating tool_call (architecture §2.3e – the
+        // transcript shows the final state from tool_call.decision, the DecisionCard is gone).
+        const toolCall = this.view(cmd.entryId)?.items.find(
+          (item) =>
+            item.kind === 'tool_call' &&
+            (item.decision?.decisionId === decision.id || item.toolUseId === decision.toolUseId),
+        );
+        const toolCallOps: SessionOp[] =
+          toolCall?.kind === 'tool_call'
+            ? [
+                {
+                  op: 'item.upsert',
+                  item: {
+                    ...toolCall,
+                    status: toolStatusAfter(outcome),
+                    decision: {
+                      decisionId: decision.id,
+                      kind: decision.kind,
+                      planVersion: decision.kind === 'plan' ? decision.version : null,
+                      ...toolCall.decision,
+                      outcome,
+                    },
+                  },
+                },
+              ]
+            : [];
         this.pushOps(cmd.entryId, [
           {
             op: 'decision.resolved',
@@ -413,6 +480,7 @@ export class FakeHost {
             byClientId: this.clientHello?.clientId ?? null,
             at: this.now(),
           },
+          ...toolCallOps,
         ]);
         this.syncDecisionCounts(cmd.entryId);
         return this.ok({ outcome });
@@ -448,6 +516,9 @@ export class FakeHost {
         return this.ok({ entryId, messageUuid });
       }
       case 'session.interrupt':
+        if (this.interruptStreams(cmd.entryId) > 0) {
+          this.patchSummary(cmd.entryId, { lastActivityAt: this.now() }, { runState: 'idle' });
+        }
         return this.ok({ stillQueued: [] });
       case 'session.rename':
         this.patchSummary(cmd.entryId, cmd.title === null ? {} : { title: cmd.title, titleSource: 'custom' });
@@ -468,8 +539,15 @@ export class FakeHost {
       case 'session.close':
       case 'session.resume':
         return this.ok();
-      case 'transcript.loadEarlier':
-        return this.ok({ items: [], hasEarlier: false });
+      case 'transcript.loadEarlier': {
+        // The server view keeps every item; snapshots are trimmed to LIMITS.snapshotItems.
+        const view = this.view(cmd.entryId);
+        if (view === null) return { ok: false, error: makeError('ENTRY_NOT_FOUND') };
+        if (view.conversationId !== cmd.conversationId) return this.ok({ items: [], hasEarlier: false });
+        const before = view.items.filter((item) => item.order < cmd.beforeOrder);
+        const items = before.slice(Math.max(0, before.length - cmd.limit));
+        return this.ok({ items, hasEarlier: before.length > items.length });
+      }
       case 'session.getContext':
         return this.ok({ context: sampleContextBreakdown({ detail: cmd.detail }) });
       case 'session.refreshModels':
