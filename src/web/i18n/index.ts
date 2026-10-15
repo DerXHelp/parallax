@@ -111,10 +111,12 @@ export function t(key: TranslationKey, params?: TranslationParams): string {
   return translate(getLanguage(), key, params);
 }
 
+/** Primitive params only (objects/arrays would render as "[object Object]", R1W-15). */
 function errorParams(error: ErrorPayload): TranslationParams {
   const result: Record<string, string | number> = {};
   for (const [name, value] of Object.entries(error.params)) {
-    result[name] = typeof value === 'number' || typeof value === 'string' ? value : String(value);
+    if (typeof value === 'number' || typeof value === 'string') result[name] = value;
+    else if (typeof value === 'boolean') result[name] = String(value);
   }
   return result;
 }

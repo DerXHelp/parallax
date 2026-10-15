@@ -563,3 +563,82 @@ describe('presence and notifications', () => {
     expect(store.getState().notifications).toEqual([]);
   });
 });
+
+describe('robustness (R1 fixes)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('drops a socket that never says hello and retries (R1W-11)', async () => {
+    const { transport, connection, host } = setup({ helloTimeoutMs: 10_000 });
+    connection.start();
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(host()?.phase).toBe('connecting');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(host()).toMatchObject({ phase: 'reconnecting', error: { code: 'CONNECTION_LOST' } });
+    expect(transport.connected).toBe(false);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(transport.connectCount).toBe(2);
+    transport.serverSend(sampleHello());
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(host()?.phase).toBe('open');
+  });
+
+  it('flags upgradeRejected after repeated closes before hello with a valid sign-in (V1-15)', async () => {
+    const { transport, connection, host } = setup({
+      checkAuth: () =>
+        Promise.resolve<AuthCheckResult>({
+          kind: 'authenticated',
+          serverInstanceId: SAMPLE_IDS.serverInstanceId,
+        }),
+    });
+    connection.start();
+    for (let i = 0; i < 3; i++) {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(host()?.upgradeRejected).toBe(false);
+      transport.serverClose(1006);
+      await vi.advanceTimersByTimeAsync((host()?.nextAttemptAt ?? 0) - Date.now());
+    }
+    expect(host()?.upgradeRejected).toBe(true);
+    transport.serverSend(sampleHello());
+    expect(host()).toMatchObject({ phase: 'open', upgradeRejected: false });
+  });
+
+  it('never reloads automatically when the reload guard cannot persist (R1W-12)', () => {
+    const { transport, connection, reload, host } = setup({
+      reloadGuard: { read: () => null, write: () => undefined, available: () => false },
+    });
+    connection.start();
+    transport.serverSend(sampleHello({ buildId: '0.0.1+abc' }));
+    expect(reload).not.toHaveBeenCalled();
+    expect(host()?.phase).toBe('version-mismatch');
+  });
+
+  it('ignores a late snapshot after the release (R1W-18)', async () => {
+    const { transport, connection, session } = setup({ unsubscribeDelayMs: 0 });
+    connection.start();
+    transport.serverSend(sampleHello());
+    const release = connection.subscribe(ENTRY);
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(transport.sentOfType('unsubscribe')).toHaveLength(1);
+    transport.serverSend(sampleSessionSnapshot());
+    expect(session()?.view ?? null).toBeNull();
+  });
+
+  it('creates no empty record for a pending release after a full resync (R1W-18)', async () => {
+    const { transport, connection, session } = setup();
+    connection.start();
+    transport.serverSend(sampleHello());
+    const release = connection.subscribe(ENTRY);
+    transport.serverSend(sampleSessionSnapshot());
+    release(); // the delayed unsubscribe is still pending
+    transport.serverClose(1006);
+    await vi.advanceTimersByTimeAsync(500);
+    transport.serverSend(sampleHello({ serverInstanceId: sampleUuid(77) }));
+    expect(session()).toBeUndefined();
+  });
+});

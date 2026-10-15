@@ -476,3 +476,93 @@ Reihenfolge = Priorität. Kein Contract betroffen (`src/shared/**` bleibt unver�
    Store-Writer-Importe in Features; `--stdin`-Probe.
 9. **R1W-09 (Koordinator + WP-15-Auftrag):** `codeSplitting`-Gruppen in `vite.config.ts`;
    Lazy-Regeln und Chunk-Budget für Markdown/Shiki/Diff in den WP-15-Auftrag.
+
+---
+
+## Umsetzung (Branch `fix/r1-web`, 15.10.2026)
+
+Umgesetzt im Worktree `.worktrees/fix-r1-web` (Koordinator-Freigabe für Root-Configs und
+`src/shared/devPorts.ts`). Details der APIs: `docs/wp/WP-14.md` §2.2/§2.5/§2.10, Regeln:
+`docs/architecture.md` §2.3d–j, ADR-030 … ADR-036.
+
+| Befund | Ergebnis | Umsetzung / Begründung |
+|---|---|---|
+| R1W-01 | erledigt | `watchIgnores(repoRoot)`/`insideDir` in `repo.config.ts` (wurzelverankert, case-insensitiv), in `vite.config.ts` und `vitest.config.ts`; Vitest-`exclude` wurzelrelativ (`dist/**` …). ESLint `globalIgnores`, tsconfig `exclude`, `tsx watch --exclude` geprüft: relativ zur Config/`cwd`, unkritisch. Test `repo.config.test.ts` (Root, statt `test/` – nicht im Besitz). Manuell im Worktree: Vite auf 5181 → Änderung an `i18n/en.ts` → „hot updated“ ohne Reload; `vitest watch` → `RERUN` nach Änderung an `lib/path-display.ts`. Dev-Port je Worktree: `PARALLAX_DEV_WEB_PORT` (ADR-030) |
+| R1W-02 | erledigt | `useSessionSelector`, `useSessionMeta`, `useTopLevelItemIds`, `useChildItemIds`, `useSummarySelector`, reine Selektoren `selectItemTree`/`selectTopLevelItemIds`/`selectSessionMeta`/`selectSessionRecord`; Tests (Referenzgleichheit bei Deltas und neuen Subagent-Items, verwaiste Kinder oben, Meta stabil) |
+| R1W-03 | erledigt | Variante A in architecture §2.3e, WP-14.md §2.5, ADR-031; Helfer `shell/decision-focus.ts` (`focusDecision`, `useDecisionFocusHandler`), Leistenregion `[data-decision-bar]` in `SessionPane`; Platzhalter-Karte gibt nach Auflösung `null` zurück; FakeHost schreibt das Outcome in den `tool_call` |
+| R1W-04 | erledigt | `SessionPane` nur Titel (`useSummarySelector`) + `useSessionMeta` + `useSummariesLoaded`, Slots in `memo`-Wrappern, `SessionHeader` `memo` mit eigener Summary; Render-Zähler-Test (`shell/render-isolation.test.tsx`) |
+| R1W-05 | erledigt | `SessionRow` mit primitiven Props (`statusKind`, `unread`); Test: `summary.upsert` rendert genau eine Zeile |
+| R1W-06 | erledigt | `useEscapeHandler((event) => boolean, enabled, { scope?, scopeRef? })`, `pushEscape(handler, scope)`, `ShortcutDefinition.scopeRef`, `isInScope`; Tests mit zwei Panes |
+| R1W-07 | erledigt | `state/notices.ts` (`showNotice`, `showTextNotice`, `showErrorNotice`, `dismissNotice`, `useNotices`), Anzeige im `NotificationCenter`, `settings.saveFailed` im `SettingsMenu` (ADR-033) |
+| R1W-08 | erledigt | `eslint.config.js`: Feature-Grenzen, keine Feature-Importe im Kern, i18n nur Wörterbücher, Radix nur `ui/`, keine Store-Schreiber in Features (Tests frei); `--stdin`-Probe: alle Querimporte → Fehler, decisions ↔ composer erlaubt (ADR-034) |
+| R1W-09 | erledigt | `codeSplitting`-Gruppen `react`/`vendor` nur `$initial`; Build: `index` 120,6 kB, `react` 218,8 kB, `vendor` 235,6 kB, keine Chunk-Warnung (ADR-035). Lazy-Regel für WP-15 unten |
+| R1W-10 | erledigt | `useNowUntil`: Snapshot = Zahl vergangener Deadlines; Test |
+| R1W-11 | erledigt | Hello-Timeout 10 s (`helloTimeoutMs`) → Socket zu, Backoff; Test |
+| R1W-12 | erledigt | `storageAvailable(kind)`, `ReloadGuard.available?()`; ohne Storage kein Auto-Reload; Test |
+| R1W-13 | erledigt | Countdown mit `aria-live="off"` |
+| R1W-14 | erledigt | `makeSessionKey`/`parseSessionKey` in `hooks.ts`/`connection.ts`, `windowsPathKey` in `EmptyState` |
+| R1W-15 | teilweise | Objekt-/Array-Parameter werden nicht mehr als `[object Object]` interpoliert. **Verworfen:** Begründungs-Texte je `PathIssue`/`PROFILE_*`-Flag – braucht Textdesign für alle Gründe, sinnvoll mit dem Setup-Screen/Profil-Editor (Phase 2) |
+| R1W-16 | erledigt | Alt+Numpad (Windows-Alt-Codes) löst nie aus (`KeyboardEventLike.code`); Test |
+| R1W-17 | erledigt | Text „…bleibt der Hinweis, starte Parallax neu“ (en/de) |
+| R1W-18 | erledigt | `releaseNow` ohne Record → nichts anlegen; `session.snapshot`/`session.unavailable` ohne Abo verwerfen; Tests |
+| R1W-19 | erledigt | Timer-IDs gemerkt und beim Unmount gelöscht, `handled` auf aktuelle IDs beschnitten |
+| R1W-20 | erledigt | `sessionKey?` in `Markdown`/`ToolInputPreview` (+ Platzhalter) |
+| R1W-21 | erledigt | `storageKey(namespace, …parts)` in `lib/storage.ts`; Regel unten |
+| R1W-22 | erledigt (ohne Queue) | FakeHost: Outcome in `tool_call`, Interrupt bricht Streams ab, `loadEarlier` aus der Server-Sicht; Queue bei `priority:'next'` bewusst nicht simuliert → `onCommand` |
+| R1W-23 | teilweise | Ports: `PARALLAX_DEV_WEB_PORT` (nur Playground). **Verworfen:** Dev-CSP im Vite-Server – die Seiten-CSP lebt in `src/server/http/app.ts` (`pageCsp`); eine Kopie in `vite.config.ts` würde auseinanderlaufen. Wunsch: CSP-Direktiven nach `@shared/http`, dann `server.headers` + `html.cspNonce`. Ersatz: Build mit Seiten-CSP geprüft (keine Verletzung) |
+| R1W-24 | erledigt | Token `--overlay`/`bg-overlay`; `Tooltip` nutzt einen vorhandenen `TooltipProvider` (eigener nur standalone); Theme-Test ohne Cast (`FakeMediaQueryList`) |
+| R1W-25 | erledigt | `useResolvedTheme`, `useSessionConnectionStatus`, `useWindowPresence` |
+| R1W-26 | verworfen | Phase 1 kennt nur den Host `local`; Profilauflösung je Host kommt mit dem zweiten Host |
+
+### Finale Hinweise für die Aufträge WP-15/16 (ersetzen die Hinweise oben, wo sie abweichen)
+
+**Beide**
+- Arbeiten im eigenen Worktree mit eigenem Playground-Port: `$env:PARALLAX_DEV_WEB_PORT='5175'`
+  (WP-15) bzw. `'5176'` (WP-16), dann `pnpm dev:web` → `http://127.0.0.1:<port>/#playground`; HMR
+  und `pnpm test:watch` funktionieren im Worktree. `pnpm dev` mit Server nur auf 5173.
+- Session-Daten nur über Hooks (`@web/state/hooks`): `useSessionMeta`, `useSessionSelector`,
+  `useTopLevelItemIds`, `useChildItemIds`, `useItem`, `useDecision(s)`, `useSessionDetail`,
+  `useSummarySelector`. Nie `clientStore`/`updateSession` importieren (ESLint sperrt es außer in
+  Tests), nie `useSessionView`/`useSessionState` in Komponenten (ändern sich mit jedem Delta).
+- Slot-Komponenten zusätzlich mit `memo()` exportieren; Slot-Objekte für `FeatureSlotsProvider`
+  als Modul-Konstanten.
+- Querimporte zwischen den Features sind Lint-Fehler – nur `FeatureSlots`. Radix nur über
+  `@web/ui/*`; fehlt ein Primitive, Komposition in `features/<f>/components/` + Wunsch im Bericht.
+- Hinweise/Fehler nach Aktionen über `showNotice`/`showErrorNotice(errorPayloadOf(e), {
+  sessionKey })` (`@web/state/notices`), keine eigenen Toasts; Validierung inline am Feld.
+- Kürzel nur über `useShortcut` mit `scopeRef` der eigenen Komponente (mehrere Panes); Esc über
+  `useEscapeHandler((event) => …, enabled, { scopeRef })`.
+- Tests: `startScenario()`/`FakeHost` nutzen globale Stores – `running.stop()` und
+  `resetClientStore()` in `afterEach`; der FakeHost beantwortet `decision.respond` inkl.
+  `tool_call.decision.outcome`, `session.interrupt` (Stream-Abbruch) und `transcript.loadEarlier`.
+
+**WP-15 (Transkript)**
+- Liste: `useTopLevelItemIds(key)` + je Zeile `useItem(key, id)`; Agent-Karte:
+  `useChildItemIds(key, toolCall.toolUseId)` (Phase 1 eingeklappt). „Früher laden“:
+  `useSessionMeta(key).hasEarlier` + `loadEarlier(key)` (`@web/state/actions`).
+- Plan-Karte über den Slot `DecisionCard` (`placement: 'transcript'`) **nur solange**
+  `useDecision(key, tool_call.decision.decisionId) ≠ null`; danach Endzustand selbst aus
+  `tool_call.decision.outcome` + `tool_call.input` (Plantext über den eigenen Markdown-Renderer).
+- Bundle: Markdown-Renderer, Shiki und `diff` per `React.lazy`/`import()` hinter dem
+  Klartext-Platzhalter; Shiki über `shiki/core` + `shiki/engine/javascript`
+  (`createJavaScriptRegexEngine`, kein WASM – CSP), Sprachen einzeln per `import()` nur für
+  geschlossene Code-Blöcke; Theme über `useResolvedTheme()`. Abnahme: `pnpm build` ohne
+  Chunk-Warnung, Start-Chunks unverändert (Lazy-Chunks dürfen wachsen), Ausgabe im Bericht.
+- streamdown: `rehypePlugins` explizit **ohne** `rehype-raw`, Links nur `http:`/`https:`, Bilder →
+  Link/Platzhalter, keine Mermaid/KaTeX, Control-Texte über `t()` oder abschalten.
+- `Markdown`/`ToolInputPreview` erhalten optional `sessionKey` (Blob-Links je Host).
+
+**WP-16 (Entscheidungen + Composer)**
+- `DecisionCard`: offen + abgelaufen rendern, nach Auflösung `null`; `placement: 'bar'` einzig
+  bedienbar; `placement: 'transcript'` lesend (Plantext über Slot `Markdown`, Status, Knopf „Zur
+  Entscheidung“ → `focusDecision(sessionKey, decisionId)` aus `@web/shell/decision-focus`). Die
+  Leiste registriert `useDecisionFocusHandler(sessionKey, (id) => { …zeigen + fokussieren…; return
+  true; })` und gibt jeder Karte `data-decision-id` + `tabIndex={-1}`. Nie `role="dialog"`, kein
+  `autoFocus` bei neuen Entscheidungen, Fokus in die Leiste nur durch Nutzeraktion.
+- Esc-Stop nur mit Fokus im eigenen Composer (`scopeRef`) und leerem Eingabefeld; `reportTyping()`
+  bei Eingabe; Senden nur bei `useSessionConnectionStatus(key) === 'open'`.
+- Entwürfe: `storageKey('composer', 'draft', sessionKey)` in localStorage, bei jeder Änderung
+  schreiben (Reload nach neuer `buildId`), bei `summary.remove` löschen; Feature-State in
+  `features/composer/state/`.
+- `DECISION_ALREADY_RESOLVED` (anderes Fenster) als Hinweis über `showErrorNotice`, nicht als
+  Fehlerzustand der Karte.

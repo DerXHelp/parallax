@@ -11,7 +11,7 @@
     "lib": ["ES2024"],
     "types": ["node"]
   },
-  "include": ["*.config.ts", "scripts/**/*.ts", "test/**/*.ts", "e2e/**/*.ts"],
+  "include": ["*.config.ts", "*.config.test.ts", "scripts/**/*.ts", "test/**/*.ts", "e2e/**/*.ts"],
   "exclude": ["node_modules", "dist", ".worktrees", ".claude", ".tsbuild"],
   "references": [{ "path": "./src/shared" }]
 }

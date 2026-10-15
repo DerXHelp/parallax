@@ -34,11 +34,17 @@ function dateFormat(language: Language, options: Intl.DateTimeFormatOptions): In
   return format;
 }
 
+/** German 'narrow' mixes "vor 2 m" and "vor 2 Std." – 'short' is consistent ("vor 2 Min.", V1-13). */
+function effectiveStyle(language: Language, style: Intl.RelativeTimeFormatStyle): Intl.RelativeTimeFormatStyle {
+  return language === 'de' && style === 'narrow' ? 'short' : style;
+}
+
 function relativeFormat(language: Language, style: Intl.RelativeTimeFormatStyle): Intl.RelativeTimeFormat {
-  const key = `${language}|${style}`;
+  const resolved = effectiveStyle(language, style);
+  const key = `${language}|${resolved}`;
   let format = relativeCache.get(key);
   if (format === undefined) {
-    format = new Intl.RelativeTimeFormat(LOCALES[language], { numeric: 'auto', style });
+    format = new Intl.RelativeTimeFormat(LOCALES[language], { numeric: 'auto', style: resolved });
     relativeCache.set(key, format);
   }
   return format;

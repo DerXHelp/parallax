@@ -8,6 +8,7 @@
  */
 import { z } from 'zod';
 import { LIMITS, isoDateTimeSchema, type BlobId } from './common';
+import { DEV_WEB_PORT } from './devPorts';
 import { errorPayloadSchema } from './errors';
 import { PRODUCT_ID } from './product';
 import { WS_PATH } from './protocol';
@@ -47,8 +48,8 @@ export function blobPath(blobId: BlobId): string {
 /** The server binds only here; `localhost` is not accepted as Host. */
 export const LOOPBACK_HOST = '127.0.0.1';
 
-/** Vite dev server (ADR-006, mirrors DEV_WEB_PORT in repo.config.ts). */
-export const DEV_WEB_PORT = 5173;
+/** Vite dev server (ADR-006); defined import-free in devPorts.ts (root configs load it). */
+export { DEV_WEB_PORT };
 
 export const portSchema = z.number().int().min(1).max(65535);
 
