@@ -94,6 +94,9 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 - Bugs aus WP-20a (für 20c): SDK wird im Bundle immer geladen (esbuild hebt statischen Import; `sdkBackend.ts` lazy oder `splitting`); `pnpm start -- --port=…` scheitert an wörtlichem `--` (`args.ts`).
 - Offen für später: `processInfo` per PowerShell braucht unter Last bis ≈23 s (Waisen-Bereinigung beim Start) – schnellere Methode prüfen; Web-Default-Timeout in Vitest statt Limits je Datei; Importkosten `radix-ui` in Tests.
 
+## Nutzer-Freigaben
+- 15.10.2026: Live-Abnahme WP-22 freigegeben (echter Abo-Login; Haiku, Mini-Prompts, Scratch-Ordner, Temp-Home, kein API-Key; bei Auth-Fehler sofort stoppen).
+
 ## Koordinator-Entscheidungen R3/V2 (15.10.2026)
 - V2-01: Parallax-Edge-Profil nie mit Microsoft-Konto anmelden/synchronisieren (Flags/Profil-Präferenzen, keine Policies).
 - R3-02: FakeBackend auf dem echten Datenverzeichnis verboten; Launcher meldet Backend-Abweichung eines laufenden Servers.
