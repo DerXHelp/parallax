@@ -1,10 +1,12 @@
 /**
  * Windows process-tree helpers for the recorder: snapshot via CIM (PowerShell, hidden window,
  * argument array, no shell) and tree kill via `taskkill /T /F`. Only names and ids are read –
- * command lines may contain secrets and are never recorded.
+ * command lines may contain secrets and are never recorded. Spawns go through `runFile` with the
+ * absolute System32 paths of the tools (`systemTool`, R1-04/R1-16: never bare program names).
  */
-import { execFile } from 'node:child_process';
+import path from 'node:path';
 import { z } from 'zod';
+import { runFile, systemTool } from '../../src/server/lib/process';
 
 export interface ProcInfo {
   pid: number;
@@ -26,24 +28,25 @@ const SNAPSHOT_COMMAND =
   '@{n="Created";e={if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().ToString("o") } else { $null }}} ' +
   '| ConvertTo-Json -Compress';
 
-function run(file: string, args: readonly string[], timeoutMs: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      file,
-      args,
-      { windowsHide: true, timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024, encoding: 'utf8' },
-      (error, stdout) => {
-        if (error) reject(new Error(error.message, { cause: error }));
-        else resolve(stdout);
-      },
+const POWERSHELL = path.win32.join('WindowsPowerShell', 'v1.0', 'powershell.exe');
+
+/** Runs a System32 tool; rejects on a start failure, timeout or exit code ≠ 0 (like execFile did). */
+async function run(tool: string, args: readonly string[], timeoutMs: number): Promise<string> {
+  const result = await runFile(systemTool(tool), args, { timeoutMs, maxOutputBytes: 32 * 1024 * 1024 });
+  if (result.timedOut)
+    throw new Error(`${path.win32.basename(tool)} timed out after ${String(timeoutMs)} ms`);
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `${path.win32.basename(tool)} exited with ${String(result.exitCode)}: ${result.stderr.trim().slice(0, 500)}`,
     );
-  });
+  }
+  return result.stdout;
 }
 
 /** All processes of the machine (pid, parent pid, name, creation time). */
 export async function listProcesses(): Promise<ProcInfo[]> {
   const stdout = await run(
-    'powershell.exe',
+    POWERSHELL,
     ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', SNAPSHOT_COMMAND],
     30_000,
   );

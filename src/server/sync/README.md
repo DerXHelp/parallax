@@ -11,7 +11,7 @@ Ringpuffer, Befehle mit `cmdId`/`ack`, Delta-Bündelung, Präsenz. Nachrichtenty
 
 | Datei | Exporte | Inhalt |
 | --- | --- | --- |
-| `hub.ts` | `createSyncHub({ source, instance, validation?, timing?, now?, logger? }) → SyncHub` (`SessionPublisher` + `attach(app)`, `handleConnection`, `inspect`, `dispose`), `HubSocket`, `DEFAULT_HUB_TIMING`, `HUB_LIMITS` | der Hub |
+| `hub.ts` | `createSyncHub({ source, instance, validation?, timing?, now?, logger? }) → SyncHub` (`SessionPublisher` + `attach(app, { authorizeUpgrade })`, `handleConnection`, `inspect`, `dispose`), `HubSocket`, `DEFAULT_HUB_TIMING`, `HUB_LIMITS` | der Hub; die WS-Route prüft jedes Upgrade selbst (`preValidation` + WS-Handler, R1-01) |
 | `memorySource.ts` | `createMemorySessionSource() → MemorySessionSource` | Test-Double für `SessionSource` (Host-State, Summaries, Views, Verlauf für `loadEarlier`, Aufruf-Protokolle, `setHandler`) |
 
 Regeln des Hubs:
@@ -26,7 +26,9 @@ Regeln des Hubs:
   (Abonnenten, laufendes Laden oder Gnadenfrist 60 s nach dem letzten Abo); Antwort auf
   `subscribe` = Replay (`sinceSeq` im Puffer, auch leer) oder Snapshot (≤ 150 Items,
   ≤ `LIMITS.snapshotMaxChars`, das neueste Item bleibt) oder `session.unavailable`.
-  **`loadView` muss alle Ops enthalten, die vor dem Auflösen veröffentlicht wurden.**
+  **`loadView` muss alle Ops enthalten, die vor dem Auflösen veröffentlicht wurden.** Der Snapshot
+  wird aus dem **aktuellen** View gebaut (Ops zwischen `loadView` und Antwort gehen nicht
+  verloren, R1-02).
 - **Deltas:** je `(itemId, field)` gepuffert, nach 40 ms oder vor jeder anderen Op des Eintrags
   als **eine** Op geflusht.
 - **Befehle:** Idempotenz host-weit (LRU 1000, TTL 10 min ab Abschluss); Duplikat während der

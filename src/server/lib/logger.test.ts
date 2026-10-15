@@ -70,6 +70,23 @@ describe('logger redaction', () => {
     expect(redactText('plain text stays')).toBe('plain text stays');
   });
 
+  it('scrubs token-like JSON keys at any depth and inside escaped strings (R1-20)', () => {
+    const { log, lines } = memoryLogger();
+    log.info({ a: { b: { c: { GITHUB_TOKEN: 'ghp_deep_secret_1', note: 'kept' } } } }, 'deep');
+    log.info({ x: { y: { z: { env: { PATH: 'C:\\deep-env-value' } } } } }, 'deep env');
+    log.info('payload {"API_KEY":"escaped_secret_2","client_secret":"escaped_secret_3"}');
+    log.info({ usage: { inputTokens: 12, maxTokens: 200_000 } }, 'numbers stay');
+    const out = lines.join('');
+    for (const value of ['ghp_deep_secret_1', 'deep-env-value', 'escaped_secret_2', 'escaped_secret_3']) {
+      expect(out).not.toContain(value);
+    }
+    expect(out).toContain('kept');
+    expect(out).toContain('"inputTokens":12');
+    expect(redactText('{"maxTokens":"1000","refreshToken":"abc"}')).toBe(
+      `{"maxTokens":"1000","refreshToken":"${REDACTED}"}`,
+    );
+  });
+
   it('keeps the dev login URL readable (codes are only logged in dev mode, by design)', () => {
     const url = 'http://127.0.0.1:5173/#code=tok0000000000000000000000000000000000000001';
     expect(redactText(url)).toBe(url);

@@ -7,10 +7,11 @@ import {
   type FastifyBaseLogger,
   type FastifyError,
   type FastifyInstance,
+  type FastifyRequest,
 } from 'fastify';
 import type { Logger } from 'pino';
 import { LIMITS, blobIdSchema } from '@shared/common';
-import { makeError } from '@shared/errors';
+import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   API_PATHS,
   DEV_AUTH_CODE_TTL_MS,
@@ -26,7 +27,7 @@ import type { ServerConfig, ServerInstance } from '../config';
 import { logger as rootLogger } from '../lib/logger';
 import type { BlobStore } from '../sync/ports';
 import { registerAuthRoutes, type AuthService } from './auth';
-import { checkRequest, requestPath } from './origin';
+import { STATIC_ROUTE, checkRequest, requestPath } from './origin';
 import { replyError, sendError } from './reply';
 
 /**
@@ -35,12 +36,25 @@ import { replyError, sendError } from './reply';
  * hook chain), security headers + CSP (C.10), `/api/health`, auth routes, blobs, the WS route of
  * the hub and the static web UI. Never CORS headers. WP-20 wires it in main.ts:
  * `createApp({ config, instance, auth, blobs, hub })` → `app.listen({ host, port })`.
+ *
+ * The guard classifies by the matched route (`request.routeOptions.url`), not by the URL text
+ * (R1-01, ADR-018); the WS route repeats the whole check itself (second line, `authorizeUpgrade`).
  */
+
+/** Options of `AttachableHub.attach` (the app hands the hub its WS authorization). */
+export interface HubAttachOptions {
+  /**
+   * Second line of the WS guard (R1-01): Host, request target, Origin, Sec-Fetch-Site and cookie
+   * of the upgrade request, independent of the global hook. null = authorized; otherwise the hub
+   * answers the error over HTTP (preValidation) and never upgrades.
+   */
+  authorizeUpgrade(request: FastifyRequest): ErrorPayload | null;
+}
 
 /** What createApp needs from the sync hub (sync/hub.ts). */
 export interface AttachableHub {
   /** Registers the WS route (`GET /api/ws`) on the app. */
-  attach(app: FastifyInstance): void;
+  attach(app: FastifyInstance, options: HubAttachOptions): void;
   closeAll(code: number): void;
 }
 
@@ -121,19 +135,28 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     },
   });
 
-  // ---- guard: Host / Origin / Sec-Fetch-Site / cookie (also for WS upgrades) ----
-  app.addHook('onRequest', (request, reply, done) => {
+  /**
+   * Guard (§5.1) + device cookie for `request`, classified by the route pattern `route` (null =
+   * no route matched). Returns the error to answer, or null.
+   */
+  const authorize = (
+    request: FastifyRequest,
+    route: string | null,
+    upgrade: boolean,
+  ): ErrorPayload | null => {
     const currentPort = port();
     const result = checkRequest(
-      { method: request.method, url: request.url, headers: request.headers },
+      { method: request.method, url: request.url, route, upgrade, headers: request.headers },
       { port: currentPort, dev },
     );
     if (!result.ok) {
       log.warn(
         {
           method: request.method,
-          path: requestPath(request.url),
-          route: result.route,
+          path: requestPath(request.url).slice(0, 200),
+          route,
+          class: result.route,
+          upgrade,
           host: request.headers.host ?? null,
           origin: request.headers.origin ?? null,
           site: request.headers['sec-fetch-site'] ?? null,
@@ -141,11 +164,23 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
         },
         'request rejected',
       );
-      replyError(reply, result.error);
-      return;
+      return result.error;
     }
     if (result.needsCookie && !auth.isAuthenticated(request.headers.cookie, currentPort)) {
-      replyError(reply, makeError('AUTH_REQUIRED'));
+      return makeError('AUTH_REQUIRED');
+    }
+    return null;
+  };
+
+  /** Upgrade request: @fastify/websocket marks it (`request.ws`); the header covers a reordered hook chain. */
+  const isUpgrade = (request: FastifyRequest): boolean => request.ws || request.headers.upgrade !== undefined;
+
+  // ---- guard: Host / request target / Origin / Sec-Fetch-Site / cookie (also for WS upgrades) ----
+  app.addHook('onRequest', (request, reply, done) => {
+    // Routing has already happened: classify by the matched route, never by the URL text (R1-01).
+    const error = authorize(request, request.routeOptions.url ?? null, isUpgrade(request));
+    if (error !== null) {
+      replyError(reply, error);
       return;
     }
     done();
@@ -163,7 +198,8 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
       void reply.header('cross-origin-resource-policy', 'same-origin');
     if (!reply.hasHeader('content-security-policy'))
       void reply.header('content-security-policy', pageCsp(port()));
-    if (requestPath(request.url).startsWith('/api/') && !reply.hasHeader('cache-control')) {
+    // Everything but the static UI (API answers, errors, 404) is never cached.
+    if (request.routeOptions.url !== STATIC_ROUTE && !reply.hasHeader('cache-control')) {
       void reply.header('cache-control', 'no-store');
     }
     done(null, payload);
@@ -180,12 +216,9 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     return sendError(reply, makeError('INTERNAL_ERROR'));
   });
 
-  // Unknown routes: there is no generic NOT_FOUND code in the catalog (report: contract wish).
+  // Unknown routes and missing static files (R1-12, V1-06).
   app.setNotFoundHandler((request, reply) =>
-    sendError(
-      reply,
-      makeError('NOT_IMPLEMENTED', { reason: 'not_found', path: requestPath(request.url).slice(0, 200) }),
-    ),
+    sendError(reply, makeError('ROUTE_NOT_FOUND', { path: requestPath(request.url).slice(0, 200) })),
   );
 
   // ---- routes ----
@@ -224,9 +257,10 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     done();
   });
 
-  options.hub?.attach(app);
   if (options.hub !== undefined) {
     const hub = options.hub;
+    // Second line: the WS route checks the upgrade again, independent of the onRequest hook.
+    hub.attach(app, { authorizeUpgrade: (request) => authorize(request, API_PATHS.ws, true) });
     const off = auth.onRevoked(() => {
       hub.closeAll(WS_CLOSE.AUTH_REVOKED);
     });

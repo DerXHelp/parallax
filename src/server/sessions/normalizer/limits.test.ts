@@ -4,10 +4,18 @@
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from '@shared/common';
 import { sampleItems } from '@shared/samples';
+import * as normalizer from './index';
 import { capInput, capStructured, capText, dedupeStructured, fitToolCall, jsonChars, shareBudget, shrinkCapped } from './limits';
 import { testContext } from './testing/harness';
 
 const ctx = testContext();
+
+describe('public exports', () => {
+  it('re-exports capText/capInput for the engine (WP-13 §6 Nr. 6)', () => {
+    expect(normalizer.capText).toBe(capText);
+    expect(normalizer.capInput).toBe(capInput);
+  });
+});
 
 describe('capText / shrinkCapped', () => {
   it('keeps short texts and stores the full long text as a blob', () => {

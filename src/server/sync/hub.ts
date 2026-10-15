@@ -26,7 +26,8 @@ import {
 } from '@shared/protocol';
 import { applySessionOp, trimItems, type SessionViewState } from '@shared/sync';
 import type { ServerInstance } from '../config';
-import { sendError as sendHttpError } from '../http/reply';
+import type { HubAttachOptions } from '../http/app';
+import { replyError as replyHttpError, sendError as sendHttpError } from '../http/reply';
 import { logger as rootLogger } from '../lib/logger';
 import { CommandError, type ClientPresence, type SessionPublisher, type SessionSource } from './ports';
 
@@ -119,8 +120,12 @@ export interface HubEntryInfo {
 }
 
 export interface SyncHub extends SessionPublisher {
-  /** Registers `GET /api/ws` (WebSocket) on the app and disposes the hub when the app closes. */
-  attach(app: FastifyInstance): void;
+  /**
+   * Registers `GET /api/ws` (WebSocket) on the app and disposes the hub when the app closes. The
+   * route checks every upgrade with `authorizeUpgrade` in `preValidation` and again in the WS
+   * handler (second line besides the app's onRequest guard, R1-01).
+   */
+  attach(app: FastifyInstance, options: HubAttachOptions): void;
   /** Takes over an authenticated WebSocket (called by the WS route; tests pass fakes). */
   handleConnection(socket: HubSocket): void;
   /** Debug/test view of one entry's sync state. */
@@ -602,7 +607,9 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
         `{"type":"session.ops","entryId":${JSON.stringify(entryId)},"ops":[${ops.map((o) => o.json).join(',')}]}`,
       );
     } else {
-      const snapshot = buildSnapshot(entry, view);
+      // R1-02: ops published while `ensureView` settled replaced `entry.view` (and raised the seq);
+      // the snapshot must come from that current view, not from the awaited (older) one.
+      const snapshot = buildSnapshot(entry, entry.view ?? view);
       if (!checkOutgoing(sessionSnapshotSchema, snapshot, `snapshot of ${entryId}`)) {
         removeSubscriber(entry, conn);
         send(conn, { type: 'session.unavailable', entryId, error: makeError('INTERNAL_ERROR') });
@@ -979,13 +986,28 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
         pendingDeltas: entry.deltas.size,
       };
     },
-    attach: (app) => {
+    attach: (app, attachOptions) => {
       app.route({
         method: 'GET',
         url: WS_PATH,
+        // Second line (R1-01): a rejected upgrade gets the HTTP error answer, never a 101.
+        preValidation: (request, reply, done) => {
+          const error = attachOptions.authorizeUpgrade(request);
+          if (error !== null) {
+            replyHttpError(reply, error);
+            return;
+          }
+          done();
+        },
         handler: (_request, reply) =>
           sendHttpError(reply, makeError('INVALID_MESSAGE', { reason: 'upgrade_required' })),
-        wsHandler: (socket) => {
+        wsHandler: (socket, request) => {
+          // Last resort if hooks were ever bypassed: an unauthorized socket never reaches the hub.
+          if (attachOptions.authorizeUpgrade(request) !== null) {
+            log.error('unauthorized WebSocket reached the WS handler – terminated');
+            socket.terminate();
+            return;
+          }
           handleConnection(socket);
         },
       });

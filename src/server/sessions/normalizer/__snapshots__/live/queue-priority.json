@@ -150,13 +150,15 @@
       "seq": 11,
       "type": "context_estimate",
       "totalTokens": 29302,
-      "model": "claude-haiku-5-5"
+      "model": "claude-haiku-5-5",
+      "contextWindow": null
     },
     {
       "seq": 23,
       "type": "context_estimate",
       "totalTokens": 29367,
-      "model": "claude-haiku-5-5"
+      "model": "claude-haiku-5-5",
+      "contextWindow": null
     },
     {
       "seq": 25,
@@ -174,13 +176,15 @@
       "seq": 32,
       "type": "context_estimate",
       "totalTokens": 32835,
-      "model": "claude-haiku-5-5"
+      "model": "claude-haiku-5-5",
+      "contextWindow": null
     },
     {
       "seq": 77,
       "type": "context_estimate",
       "totalTokens": 32999,
-      "model": "claude-haiku-5-5"
+      "model": "claude-haiku-5-5",
+      "contextWindow": null
     },
     {
       "seq": 79,
@@ -256,13 +260,15 @@
       "seq": 90,
       "type": "context_estimate",
       "totalTokens": 33072,
-      "model": "claude-haiku-5-5"
+      "model": "claude-haiku-5-5",
+      "contextWindow": 1000000
     },
     {
       "seq": 99,
       "type": "context_estimate",
       "totalTokens": 33138,
-      "model": "claude-haiku-5-5"
+      "model": "claude-haiku-5-5",
+      "contextWindow": 1000000
     },
     {
       "seq": 103,
@@ -326,13 +332,15 @@
       "seq": 114,
       "type": "context_estimate",
       "totalTokens": 33389,
-      "model": "claude-haiku-5-5"
+      "model": "claude-haiku-5-5",
+      "contextWindow": 1000000
     },
     {
       "seq": 154,
       "type": "context_estimate",
       "totalTokens": 33430,
-      "model": "claude-haiku-5-5"
+      "model": "claude-haiku-5-5",
+      "contextWindow": 1000000
     },
     {
       "seq": 156,
@@ -394,13 +402,15 @@
       "seq": 165,
       "type": "context_estimate",
       "totalTokens": 33840,
-      "model": "claude-haiku-5-5"
+      "model": "claude-haiku-5-5",
+      "contextWindow": 1000000
     },
     {
       "seq": 214,
       "type": "context_estimate",
       "totalTokens": 34051,
-      "model": "claude-haiku-5-5"
+      "model": "claude-haiku-5-5",
+      "contextWindow": 1000000
     },
     {
       "seq": 216,

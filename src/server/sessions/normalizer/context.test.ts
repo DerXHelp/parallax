@@ -92,7 +92,24 @@ describe('normalizeContextUsage', () => {
 });
 
 describe('in-turn estimate', () => {
-  const estimate = { type: 'context_estimate', totalTokens: 50_000, model: 'claude-haiku-5-5' } as const;
+  const estimate = {
+    type: 'context_estimate',
+    totalTokens: 50_000,
+    model: 'claude-haiku-5-5',
+    contextWindow: null,
+  } as const;
+
+  it('falls back to the window carried by the signal (R1-07)', () => {
+    const withWindow = { ...estimate, contextWindow: 200_000 };
+    expect(estimateContextGauge(withWindow, { override: null, lastSdkMaxTokens: null }, AT)?.maxTokens).toBe(200_000);
+    expect(
+      estimateContextGauge(withWindow, { override: null, lastSdkMaxTokens: null, modelContextWindow: null }, AT)
+        ?.maxTokens,
+    ).toBe(200_000);
+    expect(estimateContextGauge(withWindow, { override: 100_000, lastSdkMaxTokens: null }, AT)?.maxTokens).toBe(
+      100_000,
+    );
+  });
 
   it('uses override, then the last SDK maxTokens, then modelUsage.contextWindow', () => {
     expect(estimateContextGauge(estimate, { override: 100_000, lastSdkMaxTokens: 1_000_000, modelContextWindow: 1_000_000 }, AT)).toMatchObject({
@@ -115,6 +132,8 @@ describe('in-turn estimate', () => {
     const resultEvent = fixture.events.find((e) => e.kind === 'message' && JSON.stringify(e.payload).startsWith('{"duration_api_ms"'));
     const window = modelContextWindow(resultEvent?.payload, last.model);
     expect(window).toBe(1_000_000);
+    // auth-probe has one turn: its estimates come before the first result, so they carry no window.
+    expect(estimates.map((s) => s.contextWindow)).toEqual(estimates.map(() => null));
     const gauge = estimateContextGauge(last, { override: null, lastSdkMaxTokens: null, modelContextWindow: window }, AT);
     expect(contextGaugeSchema.parse(gauge)).toStrictEqual(gauge);
     const sdk = normalizeContextUsage(

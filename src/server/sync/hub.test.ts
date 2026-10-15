@@ -188,6 +188,28 @@ describe('handshake', () => {
 });
 
 describe('subscriptions', () => {
+  it('builds the snapshot from the current view: an op published while subscribing is not lost (R1-02)', async () => {
+    const first = connect(1);
+    first.receive({ type: 'subscribe', entryId: ENTRY });
+    await tick();
+    expect(hub.inspect(ENTRY)).toMatchObject({ cached: true, seq: 0 });
+
+    const second = connect(2);
+    second.receive({ type: 'subscribe', entryId: ENTRY });
+    // Same tick, before the subscribe continuation runs (reconnect + synchronous engine handler).
+    hub.publishOps(ENTRY, [upsert(3)]);
+    await tick();
+
+    const snapshot = second.ofType('session.snapshot')[0];
+    expect(snapshot?.seq).toBe(1);
+    expect(snapshot?.items.map((i) => i.order)).toEqual([1, 2, 3]);
+    expect(second.ofType('session.ops')).toEqual([]);
+    // Next live op continues seamlessly after the snapshot.
+    hub.publishOps(ENTRY, [upsert(4)]);
+    expect(second.ofType('session.ops')[0]?.ops.map((o) => o.seq)).toEqual([2]);
+    expect(first.ofType('session.ops').flatMap((m) => m.ops.map((o) => o.seq))).toEqual([1, 2]);
+  });
+
   it('snapshot, then live ops with seq, replay from the ring buffer', async () => {
     const socket = connect();
     socket.receive({ type: 'subscribe', entryId: ENTRY });
