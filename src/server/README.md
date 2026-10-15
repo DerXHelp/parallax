@@ -1,8 +1,10 @@
 # src/server – Node-Server (Fastify)
 
-Einstieg: `main.ts` (wird nach `dist/server.js` gebündelt). `bootstrap.ts` ist ein temporärer
-Stub aus WP-00 und wird in WP-20 durch die echte Verdrahtung ersetzt. Datei-genaue Ownership:
-`docs/architecture.md` §2.1; diese README pflegt der Koordinator.
+Einstieg: `main.ts` (wird nach `dist/server.js` gebündelt; `pnpm dev` startet ihn per `tsx watch`)
+lädt Config und Logging und ruft `startServer()` aus `app/compose.ts` – die Kompositionswurzel,
+die Stores, Backend, SessionManager, SyncHub, App, Shutdown-Rahmen und Lockfile in fester
+Reihenfolge zusammensetzt (`docs/architecture.md` §3.3, Exit-Codes 0/1/3/4/5). Datei-genaue
+Ownership: `docs/architecture.md` §2.1; diese README pflegt der Koordinator.
 
 | Ordner/Datei | Inhalt | Owner-WP |
 | --- | --- | --- |
@@ -14,7 +16,7 @@ Stub aus WP-00 und wird in WP-20 durch die echte Verdrahtung ersetzt. Datei-gena
 | `claude/` | `resolveClaude`, `buildEnv`, `parseProfileArgs`, Profil „Standard“, Preflight-Checks | 11 |
 | `sessions/normalizer/`, `sessions/status/` | Normalizer (zwei Adapter), Statusmaschine | 12 |
 | übrige Dateien in `sessions/`, `backend/` | SessionManager, Broker, `FakeBackend`, `SdkBackend` | 13 |
-| `main.ts`, `bootstrap.ts` | Einstieg, Verdrahtung | 20 |
+| `main.ts`, `app/` | Einstieg, Komposition (`startServer`, `StartupError`), Server-Integrationstest `main.integration.test.ts` | 20 |
 | `launcher/` | Launcher, Lockfile, Edge-Start, „Server beenden“ | 21 |
 
 Regeln: nie aus `src/web` importieren; Logging nur über `lib/logger.ts`; jeder Spawn über
