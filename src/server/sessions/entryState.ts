@@ -74,6 +74,11 @@ export interface SessionManagerOptions {
   contextRefreshDelayMs: number;
   /** Upper bound for closing all sessions at shutdown, then taskkill. Default 15000. */
   shutdownTimeoutMs: number;
+  /**
+   * R3-06: the shutdown waits this long for a still running orphan check of the server start (its
+   * results are written before the stores close); later results are ignored. Default 2000.
+   */
+  orphanShutdownWaitMs: number;
   /** B "Setting": costs one request per turn. Default false. */
   promptSuggestions: boolean;
   /**

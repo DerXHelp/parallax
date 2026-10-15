@@ -28,3 +28,30 @@ export function sleep(ms: number): Promise<void> {
 export function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
+
+export type Settled = { outcome: 'done' } | { outcome: 'failed'; error: unknown } | { outcome: 'timeout' };
+
+/**
+ * Runs `work` (sync or async) and settles within `ms` – never rejects, the timer is cleared as soon
+ * as `work` settles (R3-10: one helper for the bounded cleanup/shutdown steps). A `work` that is
+ * still running after the timeout keeps running; its later result is ignored.
+ */
+export function settleWithin(work: () => unknown, ms: number): Promise<Settled> {
+  return new Promise<Settled>((resolve) => {
+    const timer = setTimeout(() => {
+      resolve({ outcome: 'timeout' });
+    }, ms);
+    Promise.resolve()
+      .then(work)
+      .then(
+        () => {
+          clearTimeout(timer);
+          resolve({ outcome: 'done' });
+        },
+        (error: unknown) => {
+          clearTimeout(timer);
+          resolve({ outcome: 'failed', error });
+        },
+      );
+  });
+}

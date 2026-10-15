@@ -79,6 +79,7 @@ export const DEFAULT_SESSION_MANAGER_OPTIONS: SessionManagerOptions = {
   autoRetry: DEFAULT_AUTO_RETRY,
   contextRefreshDelayMs: 250,
   shutdownTimeoutMs: 15_000,
+  orphanShutdownWaitMs: 2_000,
   promptSuggestions: false,
   aiTitleDelayMs: 2_000,
 };
@@ -182,6 +183,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   let shutdownPromise: Promise<void> | null = null;
   let hostTimer: TimerHandle | null = null;
   let orphans: Promise<void> = Promise.resolve();
+  /** R3-06: set once shutdown() flushed the stores – they close right after (compose.ts). */
+  let storesFlushed = false;
 
   // R2-03: no child-process path – only a verified claude.exe root is ended (follow-up after WP-22).
   const proc: ProcDeps = {
@@ -365,10 +368,23 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     const byEntry = new Map<EntryId, Promise<void>[]>();
     alive.forEach((record, index) => {
       const result = results[index] ?? Promise.resolve<OrphanResult>('unknown');
-      const done = result.then((outcome) => {
-        log.info({ entryId: record.entryId, pid: record.pid, result: outcome }, 'orphan check');
-        if (!keepsOrphanRecord(outcome)) stores.processes.remove(record.entryId, record.pid);
-      });
+      // R3-06: never rejects. A result after the shutdown flushed the stores is ignored (the store
+      // is closing; the record stays and the next start checks it again).
+      const done = result
+        .then((outcome) => {
+          if (storesFlushed) {
+            log.info(
+              { entryId: record.entryId, pid: record.pid, result: outcome },
+              'orphan check after shutdown ignored',
+            );
+            return;
+          }
+          log.info({ entryId: record.entryId, pid: record.pid, result: outcome }, 'orphan check');
+          if (!keepsOrphanRecord(outcome)) stores.processes.remove(record.entryId, record.pid);
+        })
+        .catch((error: unknown) => {
+          log.warn({ err: error, entryId: record.entryId, pid: record.pid }, 'orphan check failed');
+        });
       byEntry.set(record.entryId, [...(byEntry.get(record.entryId) ?? []), done]);
     });
     const all: Promise<void>[] = [];
@@ -475,7 +491,18 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
             });
           }),
         );
+        // R3-06: a still running orphan check of the start may finish now (bounded); its removals
+        // are flushed below, anything later is ignored.
+        const orphanWait: { timer: TimerHandle | null } = { timer: null };
+        await Promise.race([
+          orphans,
+          new Promise<void>((resolve) => {
+            orphanWait.timer = timers.setTimeout(resolve, options.orphanShutdownWaitMs);
+          }),
+        ]);
+        orphanWait.timer?.cancel();
         for (const s of states.values()) s.flush();
+        storesFlushed = true;
         const flushes = await Promise.allSettled([
           stores.registry.flush(),
           stores.transcripts.flush(),

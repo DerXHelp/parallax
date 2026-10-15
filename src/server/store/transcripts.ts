@@ -6,7 +6,7 @@ import type { Logger } from 'pino';
 import { conversationIdSchema, type ConversationId, type EntryId } from '@shared/common';
 import { makeError } from '@shared/errors';
 import type { TranscriptItem } from '@shared/model';
-import { logger as rootLogger } from '../lib/logger';
+import { logger as rootLogger, shouldLogRepeated } from '../lib/logger';
 import { fsErrorCode } from '../lib/paths';
 import { transcriptLogLineSchema, type TranscriptLogLine, type TranscriptStore } from '../sync/ports';
 import { entryDir } from './decisions';
@@ -24,7 +24,10 @@ import { withFsRetry, type StoreWarningSink } from './jsonStore';
  * host warning STORE_WRITE_FAILED (cleared by the next successful write).
  */
 
-/** Like the hub (R0-28): `throw` under Vitest, `log` in dev (main.ts), `off` otherwise. */
+/**
+ * Like the hub (R0-28): module default `throw` under Vitest/NODE_ENV=test, else `off`; the server
+ * passes `config.validation` (default `log`, also in production – R3-05).
+ */
 export type TranscriptValidation = 'off' | 'log' | 'throw';
 
 /** Consecutive failed flushes of one file before the host warning. */
@@ -56,6 +59,8 @@ export interface TranscriptStoreStats {
   appendedLines: number;
   brokenLines: number;
   droppedStreaming: number;
+  /** Lines that failed the schema check (`log` mode: dropped, not written; R3-05). */
+  invalidLines: number;
 }
 
 export interface FileTranscriptStore extends TranscriptStore {
@@ -126,7 +131,12 @@ export function createTranscriptStore(options: TranscriptStoreOptions): FileTran
   const cacheSize = Math.max(1, options.cacheSize ?? 8);
   const files = new Map<string, FileState>();
   const cache = new Map<string, CachedFold>();
-  const stats: TranscriptStoreStats = { appendedLines: 0, brokenLines: 0, droppedStreaming: 0 };
+  const stats: TranscriptStoreStats = {
+    appendedLines: 0,
+    brokenLines: 0,
+    droppedStreaming: 0,
+    invalidLines: 0,
+  };
   const validation = options.validation ?? defaultValidation();
   let timer: NodeJS.Timeout | null = null;
 
@@ -297,7 +307,10 @@ export function createTranscriptStore(options: TranscriptStoreOptions): FileTran
           const issue = parsed.error.issues[0];
           const detail = `${issue?.path.map(String).join('.') ?? ''}: ${issue?.message ?? 'invalid'}`;
           if (validation === 'throw') throw new Error(`TranscriptStore: invalid log line – ${detail}`);
-          log.error({ detail }, 'invalid transcript line dropped');
+          stats.invalidLines += 1;
+          if (shouldLogRepeated(stats.invalidLines)) {
+            log.error({ detail, count: stats.invalidLines }, 'invalid transcript line dropped');
+          }
           return;
         }
       }

@@ -19,7 +19,7 @@ Vite-Dev-Proxy greift), Auth per Einmal-Code und HttpOnly-Cookie, Origin-/Host-/
 
 | Datei | Exporte | Inhalt |
 | --- | --- | --- |
-| `app.ts` | `createApp(options)`, `AttachableHub`, `HubAttachOptions`, `pageCsp(port)`, `BLOB_CSP`, `safeMediaType` | App: Guard-Hook (auch für den WS-Upgrade), Security-Header, Error-/404-Handler (`ROUTE_NOT_FOUND`), `/api/health`, Blob-Route, `/api/attachments` (Phase 1: 501), `@fastify/websocket` (`maxPayload`), `hub.attach(app, { authorizeUpgrade })`, Static, Dev-Login-URL beim `listen` |
+| `app.ts` | `createApp(options)`, `AttachableHub`, `HubAttachOptions`, `safeMediaType` | App: Guard-Hook (auch für den WS-Upgrade), Security-Header (CSP aus `@shared/http`: `pageCsp(port)`, `BLOB_CSP`, R3-14), Error-/404-Handler (`ROUTE_NOT_FOUND`), `/api/health` (mit `backend`, wenn `config.backend` gesetzt ist, R3-02), Blob-Route, `/api/attachments` (Phase 1: 501), `@fastify/websocket` (`maxPayload`), `hub.attach(app, { authorizeUpgrade })`, Static, Dev-Login-URL beim `listen` |
 | `auth.ts` | `createAuthService(options) → AuthService`, `registerAuthRoutes`, `authCookieHeader`, `readCookie`, `AUTH_SECRET_FILE` | Einmal-Codes (`issueAuthCode(ttlMs?)`, `exchangeCode`), Geräte-Cookie (HMAC, Secret `PARALLAX_HOME/auth-secret.json` ohne `.bak`, `rotateSecret`, `onRevoked`), Launcher-Token (`launcherToken`, `verifyLauncherToken`); Routen `POST /api/auth`, `GET /api/auth/status`, `POST /api/launcher/code` |
 | `origin.ts` | `checkRequest`, `classifyRequest`, `isApiRoute`, `requestPath`, `STATIC_ROUTE` | reine Request-Prüfung nach der Tabelle §5.1 (Routen-Muster statt Pfad; `needsCookie` prüft der Aufrufer) |
 | `reply.ts` | `sendError`, `replyError` | HTTP-Fehlerantwort mit Katalog-Status |
@@ -36,7 +36,7 @@ const warnings = createStoreWarnings();
 const auth = await createAuthService({ home: config.home, serverInstanceId: instance.serverInstanceId, warnings });
 const blobs = createBlobStore({ home: config.home });
 const manager = createSessionManager({ /* WP-13 */ });
-const hub = createSyncHub({ source: manager, instance, validation: config.dev ? 'log' : 'off' });
+const hub = createSyncHub({ source: manager, instance, validation: config.validation }); // R3-05: Default log
 manager.attachPublisher(hub); // vor manager.start() (WP-13 §3.5, R1-18)
 const app = await createApp({ config, instance, auth, blobs, hub, webRoot });
 await app.listen({ host: config.host, port: config.port }); // host ist immer 127.0.0.1 (R1-05)

@@ -3,12 +3,12 @@ import { connect } from 'node:net';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { authCookieName, healthResponseSchema } from '@shared/http';
+import { BLOB_CSP, authCookieName, healthResponseSchema, pageCsp } from '@shared/http';
 import { createServerInstance } from '../config';
 import { createBlobStore, type FileBlobStore } from '../store/blobs';
 import { createSyncHub } from '../sync/hub';
 import { createMemorySessionSource } from '../sync/memorySource';
-import { BLOB_CSP, createApp, pageCsp, safeMediaType } from './app';
+import { createApp, safeMediaType } from './app';
 import { createAuthService, type AuthService } from './auth';
 import { makeTempHome, rawRequest, startTestServer, type TestServer } from './testServer';
 
@@ -42,14 +42,20 @@ afterEach(async () => {
   server = null;
 });
 
-async function setup(options: { webRoot?: string; dev?: boolean } = {}): Promise<Fixture> {
+async function setup(
+  options: { webRoot?: string; dev?: boolean; backend?: 'sdk' | 'fake' } = {},
+): Promise<Fixture> {
   const home = await makeTempHome('app-');
   const instance = createServerInstance({ serverVersion: '1.2.3' });
   const auth = await createAuthService({ home, serverInstanceId: instance.serverInstanceId });
   const blobs = createBlobStore({ home });
   const hub = createSyncHub({ source: createMemorySessionSource(), instance, timing: { heartbeatMs: 0 } });
   const app = await createApp({
-    config: { port: PORT, dev: options.dev ?? false },
+    config: {
+      port: PORT,
+      dev: options.dev ?? false,
+      ...(options.backend === undefined ? {} : { backend: options.backend }),
+    },
     instance,
     auth,
     blobs,
@@ -80,6 +86,12 @@ describe('createApp', () => {
       startedAt: expect.any(String) as string,
     });
     expect(res.headers['cache-control']).toBe('no-store');
+  });
+
+  it('reports the backend kind in /api/health (R3-02)', async () => {
+    const { app } = await setup({ backend: 'fake' });
+    const res = await app.inject({ method: 'GET', url: '/api/health', headers: { host: HOST } });
+    expect(healthResponseSchema.parse(res.json()).backend).toBe('fake');
   });
 
   it('sets security headers and never CORS headers', async () => {

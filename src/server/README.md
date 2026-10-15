@@ -16,7 +16,7 @@ Ownership: `docs/architecture.md` §2.1; diese README pflegt der Koordinator.
 | `claude/` | `resolveClaude`, `buildEnv`, `parseProfileArgs`, Profil „Standard“, Preflight-Checks | 11 |
 | `sessions/normalizer/`, `sessions/status/` | Normalizer (zwei Adapter), Statusmaschine | 12 |
 | übrige Dateien in `sessions/`, `backend/` | SessionManager, Broker, `FakeBackend`, `SdkBackend` | 13 |
-| `main.ts`, `app/` | Einstieg, Komposition (`startServer`, `StartupError`), Server-Integrationstest `main.integration.test.ts` | 20 |
+| `main.ts`, `app/` | Einstieg, Komposition (`startServer`, `StartupError`), UI-Snapshot (`webSnapshot.ts`), Crash-Handler (`crash.ts`), Server-Integrationstest `main.integration.test.ts` | 20 |
 | `launcher/` | Launcher, Lockfile, Edge-Start, „Server beenden“ | 21 |
 
 Regeln: nie aus `src/web` importieren; Logging nur über `lib/logger.ts`; jeder Spawn über

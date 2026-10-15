@@ -10,14 +10,18 @@
  * access check of the home). Exit codes (launcher/exitCodes.ts): 0 regular shutdown, 1 failure
  * (also invalid options), 3 data of a newer Parallax, 4 port in use, 5 already running for this
  * PARALLAX_HOME. The reason of a failed start is the LAST line on stderr (the launcher shows it
- * from logs/server.out.log), so nothing is written after it.
+ * from logs/server.out.log), so nothing is written after it. Unexpected errors (unhandled
+ * rejection, uncaught exception) are logged and end the server in order with 1 (app/crash.ts,
+ * R3-06).
  */
 import path from 'node:path';
 import { isatty } from 'node:tty';
 import { fileURLToPath } from 'node:url';
-import { StartupError, startServer } from './app/compose';
+import { StartupError, startServer, type RunningServer } from './app/compose';
+import { installCrashHandlers } from './app/crash';
 import { ConfigError, loadConfig, type ServerConfig } from './config';
 import { SERVER_EXIT_CODES } from './launcher/exitCodes';
+import { settleWithin } from './lib/async';
 import { acquireHomeLock, type HomeLock } from './lib/homeLock';
 import { initLogging, logger, type LoggingHandle } from './lib/logger';
 
@@ -50,7 +54,13 @@ async function main(): Promise<void> {
   try {
     const acquired = await acquireHomeLock(config.home);
     if (acquired.kind === 'busy') {
-      exitWith(SERVER_EXIT_CODES.alreadyRunning, `Another Parallax server already uses ${config.home}.`);
+      exitWith(
+        SERVER_EXIT_CODES.alreadyRunning,
+        acquired.reason === 'access_denied'
+          ? `The lock of ${config.home} (${acquired.pipe}) belongs to another Windows user - another ` +
+              'user runs Parallax with this data folder.'
+          : `Another Parallax server already uses ${config.home}.`,
+      );
       return;
     }
     homeLock = acquired.lock;
@@ -78,11 +88,23 @@ async function main(): Promise<void> {
     return;
   }
 
+  // R3-06: from here on an unexpected error ends the server in order (exit 1), never silently.
+  let running: RunningServer | null = null;
+  const openLog = logging;
+  installCrashHandlers({
+    log: logger,
+    shutdown: () => running?.shutdown ?? null,
+    closeLog: async () => {
+      await settleWithin(() => openLog.close(), 2_000);
+    },
+    exit: (code) => process.exit(code),
+  });
+
   // In the bundle this file is dist/server.js and the built UI dist/web; dev mode uses Vite.
   const webRoot = config.dev ? null : path.join(path.dirname(fileURLToPath(import.meta.url)), 'web');
 
   try {
-    await startServer({ config, webRoot, logging, homeLock });
+    running = await startServer({ config, webRoot, logging, homeLock });
   } catch (error) {
     const exitCode = error instanceof StartupError ? error.exitCode : SERVER_EXIT_CODES.failure;
     const message =

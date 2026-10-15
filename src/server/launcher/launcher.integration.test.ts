@@ -69,14 +69,16 @@ const server = createServer((req, res) => {
   json(res, 404, { code: 'ROUTE_NOT_FOUND', params: {} });
 });
 server.on('error', (error) => { process.stderr.write(String(error.code) + '\\n'); process.exit(error.code === 'EADDRINUSE' ? 4 : 1); });
-server.listen(Number(args.port), '127.0.0.1', () => {
+// A real server needs a moment (stores, recovery) before it listens and writes its lock file.
+const startDelay = Number(process.env.FAKE_SERVER_DELAY_MS ?? '0');
+setTimeout(() => server.listen(Number(args.port), '127.0.0.1', () => {
   const port = server.address().port;
   const lock = { schemaVersion: 1, pid: process.pid, port, serverInstanceId: instanceId, launcherToken: token, startedAt, buildId: 'fake' };
   const file = path.join(args.home, 'server.lock.json');
   writeFileSync(file + '.tmp', JSON.stringify(lock));
   replaceFile(file + '.tmp', file);
   process.stdout.write('fake server listening on ' + port + '\\n');
-});
+}), startDelay);
 `;
 
 // Real processes, git and a real server: generous limits, the machine may be busy (parallel checks).
@@ -112,16 +114,17 @@ interface Harness {
   windows: string[];
 }
 
-async function harness(mode = 'ok'): Promise<Harness> {
-  const home = await mkdtemp(path.join(process.env.PARALLAX_HOME ?? scriptDir, 'wp21-home-'));
-  homes.push(home);
+async function harness(mode = 'ok', options: { home?: string; delayMs?: number } = {}): Promise<Harness> {
+  const home =
+    options.home ?? (await mkdtemp(path.join(process.env.PARALLAX_HOME ?? scriptDir, 'wp21-home-')));
+  if (options.home === undefined) homes.push(home);
   const out: string[] = [];
   const windows: string[] = [];
   const deps = createNodeLauncherDeps({
     repoRoot: process.cwd(),
     home,
     serverScript: fakeServer,
-    env: { ...process.env, FAKE_SERVER_MODE: mode },
+    env: { ...process.env, FAKE_SERVER_MODE: mode, FAKE_SERVER_DELAY_MS: String(options.delayMs ?? 0) },
     out: (line) => out.push(line),
   });
   deps.locateEdge = () => Promise.resolve('C:\\Edge\\msedge.exe');
@@ -181,6 +184,22 @@ describe('launcher with a fake server process', () => {
     expect(h.out.join('\n')).toContain('stale lock file');
     expect(await readServerLock(h.home)).toMatchObject({ kind: 'ok', lock: { pid: third.pid } });
   }, 180_000);
+
+  it('double click: two launchers at once start ONE server and open two windows of it (R3-04)', async () => {
+    const first = await harness('ok', { delayMs: 1_500 });
+    const second = await harness('ok', { home: first.home, delayMs: 1_500 });
+    const [a, b] = await Promise.all([run(first), run(second)]);
+    pids.add(a.pid);
+    pids.add(b.pid);
+    expect([a.mode, b.mode].sort()).toEqual(['existing', 'started']);
+    expect(a.pid).toBe(b.pid);
+    expect(a.port).toBe(b.port);
+    expect([...first.windows, ...second.windows]).toHaveLength(2);
+    expect([...first.out, ...second.out].join('\n')).toContain('by another launcher - waiting for it');
+    // Exactly one server process was started (one "listening" line in its output log).
+    const log = await readFile(serverOutLogPath(first.home), 'utf8');
+    expect(log.match(/fake server listening/g)).toHaveLength(1);
+  }, 120_000);
 
   it('exit code 3 of the server → "update Parallax" with the server output', async () => {
     const h = await harness('exit3');

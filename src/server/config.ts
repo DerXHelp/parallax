@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
 import { BUILD_ID } from '@shared/build';
-import { LOOPBACK_HOST } from '@shared/http';
+import { LOOPBACK_HOST, backendKindSchema, type BackendKind } from '@shared/http';
 import { isWindowsPathInside, windowsPathIssue, windowsPathsEqual } from '@shared/paths';
 import { PRODUCT_ID, PRODUCT_NAME } from '@shared/product';
 import { newUuid } from './lib/ids';
@@ -17,12 +17,16 @@ import { logLevelSchema, type LogLevel } from './lib/logger';
  * Phase 2), so that layer is empty for now.
  *
  * Flags: `--dev`, `--backend=fake|sdk`, `--port=<0..65535>`, `--host=127.0.0.1`, `--home=<dir>`,
- * `--log-level=<level>`. Env: `PARALLAX_HOME`, `PARALLAX_PORT` (0 = any free port),
- * `PARALLAX_HOST`, `PARALLAX_BACKEND`, `PARALLAX_DEV` (`1`/`true`), `PARALLAX_LOG_LEVEL`.
+ * `--log-level=<level>`, `--validate=off|log|throw`. Env: `PARALLAX_HOME`, `PARALLAX_PORT`
+ * (0 = any free port), `PARALLAX_HOST`, `PARALLAX_BACKEND`, `PARALLAX_DEV` (`1`/`true`),
+ * `PARALLAX_LOG_LEVEL`, `PARALLAX_VALIDATE`.
  *
  * The bind address is always 127.0.0.1 (Plan "Sicherheit", A.8; R1-05, ADR-023): `--host` /
  * `PARALLAX_HOST` stay accepted for ADR-006 compatibility, every other value is a ConfigError –
  * on 0.0.0.0 a non-browser client could fake the Host header.
+ *
+ * The FakeBackend never runs on the real data directory or inside it (R3-02, ADR-061): fake
+ * answers, fake session ids and fake PIDs would mix with the real entries – ConfigError.
  */
 
 /** Port of the productive server (`pnpm start`). Dev uses 4712 (DEV_SERVER_PORT in repo.config.ts). */
@@ -30,12 +34,22 @@ export const DEFAULT_PORT = 4711;
 /** Default data directory in dev mode, relative to the working directory (never %LOCALAPPDATA%). */
 export const DEV_HOME_DIR = '.parallax-dev';
 
-export const backendKindSchema = z.enum(['sdk', 'fake']);
-export type BackendKind = z.infer<typeof backendKindSchema>;
+/** From @shared/http (the health answer reports it, R3-02). */
+export { backendKindSchema, type BackendKind };
+
+/**
+ * Schema check of every outgoing value (hub: ops, summaries, host state; transcript lines – R0-28,
+ * R1-16): `throw` fails loudly (tests, E2E), `log` logs, counts and drops the value (default, also
+ * in production – R3-05, ADR-063), `off` sends unchecked.
+ */
+export const validationModeSchema = z.enum(['off', 'log', 'throw']);
+export type ValidationMode = z.infer<typeof validationModeSchema>;
 
 export interface ServerConfig {
   dev: boolean;
   backend: BackendKind;
+  /** Outgoing validation (R3-05). */
+  validation: ValidationMode;
   /** 0 = any free port (tests); the actual port comes from the listening server. */
   port: number;
   /** Bind address: always 127.0.0.1 (LOOPBACK_HOST, R1-05); Host/Origin checks use the same address. */
@@ -103,6 +117,7 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
         host: { type: 'string' },
         home: { type: 'string' },
         'log-level': { type: 'string' },
+        validate: { type: 'string' },
       },
       strict: true,
       allowPositionals: false,
@@ -160,10 +175,26 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
   if (env.VITEST !== undefined && isWindowsPathInside(home, realHome)) {
     throw new ConfigError(`tests must not use the real data directory ${realHome}`);
   }
+  if (backend === 'fake' && isWindowsPathInside(home, realHome)) {
+    throw new ConfigError(
+      `the FakeBackend never uses the real data directory ${realHome} - pass --home=<dir> or ` +
+        'PARALLAX_HOME (e.g. a folder in %TEMP%), or start without --backend=fake/PARALLAX_BACKEND=fake',
+    );
+  }
+
+  // Explicit > env > test runs (Vitest, NODE_ENV=test as set by the E2E servers) fail loudly > log.
+  const validateRaw = flag('validate') ?? nonEmpty(env.PARALLAX_VALIDATE);
+  const validation =
+    validateRaw !== undefined
+      ? parseOrThrow(validationModeSchema, validateRaw, 'validate')
+      : env.VITEST !== undefined || env.NODE_ENV === 'test'
+        ? 'throw'
+        : 'log';
 
   return {
     dev,
     backend,
+    validation,
     port,
     host,
     home,

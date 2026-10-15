@@ -6,14 +6,17 @@ import type { RunFileOptions, RunFileResult } from '../lib/process';
 import { createClaudeIntegration } from './integration';
 import { createMemoryFs } from '../lib/windows';
 import {
+  EDGE_POLICY_KEYS,
   antivirusProducts,
   checkAntivirus,
   checkEdge,
+  checkEdgePolicies,
   checkHomeAccessResult,
   checkNode,
   checkPnpm,
   checkProfileStatus,
   checkRegistry,
+  edgePolicyValues,
   findPnpm,
   formatPreflight,
   pnpmVersionFromUserAgent,
@@ -222,6 +225,55 @@ describe('pnpm', () => {
   });
 });
 
+describe('Edge policies (V2-01)', () => {
+  const v = (name: string, data: string) => ({
+    key: 'HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge',
+    name,
+    data,
+  });
+
+  it('no relevant policy: no line', () => {
+    expect(checkEdgePolicies([])).toBeNull();
+    expect(checkEdgePolicies([v('HomepageLocation', 'https://intranet')])).toBeNull();
+  });
+
+  it('policies that help (sign-in off, sync off) are only info', () => {
+    expect(checkEdgePolicies([v('BrowserSignin', '0x0'), v('SyncDisabled', '0x1')])).toMatchObject({
+      id: 'edge-policies',
+      level: 'info',
+      detail: 'BrowserSignin=0x0, SyncDisabled=0x1',
+    });
+  });
+
+  it.each([
+    ['BrowserSignin', '0x2'],
+    ['ForceSync', '0x1'],
+    ['ImplicitSignInEnabled', '0x1'],
+    ['FeatureFlagOverridesControl', '0x0'],
+    ['UserDataDir', 'D:\\EdgeData'],
+    ['ConfigureOnPremisesAccountAutoSignIn', '0x1'],
+  ])('%s=%s can override the switches → warn', (name, data) => {
+    const check = checkEdgePolicies([v(name, data)]);
+    expect(check).toMatchObject({ level: 'warn' });
+    expect(check?.hint).toContain(name);
+  });
+
+  it('reads machine and user policies with reg query (64-bit view); missing keys have none', async () => {
+    const asked: string[] = [];
+    const values = await edgePolicyValues((key, view) => {
+      asked.push(`${key} ${String(view)}`);
+      return Promise.resolve(
+        key.startsWith('HKCU') ? null : `\r\n${key}\r\n    BrowserSignin    REG_DWORD    0x2\r\n`,
+      );
+    });
+    expect(asked).toEqual([
+      'HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge 64',
+      'HKCU\\SOFTWARE\\Policies\\Microsoft\\Edge 64',
+    ]);
+    expect(values).toEqual([{ key: EDGE_POLICY_KEYS[0], name: 'BrowserSignin', data: '0x2' }]);
+  });
+});
+
 describe('runPreflight', () => {
   const LOCAL = 'C:\\Users\\u\\.local\\bin\\claude.exe';
   const PNPM_EXE = 'C:\\pnpm\\pnpm.exe';
@@ -276,6 +328,7 @@ describe('runPreflight', () => {
       fs,
       runFile,
       regQuery: () => Promise.resolve(null),
+      regKeyQuery: () => Promise.resolve(null),
       antivirus: () => Promise.resolve(['Windows Defender']),
     });
     expect(report.checks.map((check) => [check.id, check.level])).toEqual([
@@ -310,6 +363,7 @@ describe('runPreflight', () => {
       fs,
       runFile,
       regQuery: () => Promise.resolve(null),
+      regKeyQuery: () => Promise.resolve(null),
       antivirus: () => Promise.resolve(['Windows Defender']),
     });
     expect(report.checks.filter((check) => check.level === 'fail').map((check) => check.id)).toEqual([
@@ -333,6 +387,7 @@ describe('runPreflight', () => {
       fs,
       runFile,
       regQuery: () => Promise.resolve(null),
+      regKeyQuery: () => Promise.resolve(null),
       antivirus: () => Promise.resolve(null),
       home: 'D:\\px-data',
       homeAccess: (home) => {

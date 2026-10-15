@@ -25,7 +25,10 @@ pnpm start            # Launcher: baut bei Bedarf, startet den Server unsichtbar
 steht beim Start im Server-Log; Vite leitet `/api` (auch den WebSocket) an Port 4712 weiter.
 `tsx watch` startet den Server bei jeder Änderung neu (Sessions des FakeBackends enden dabei).
 „Server beenden“ beendet im Dev-Modus nur den Server – `tsx watch` und Vite laufen weiter, bis
-`Ctrl+C` oder die nächste Dateiänderung kommt. `pnpm dev:live` nutzt das echte `claude`.
+`Ctrl+C` oder die nächste Dateiänderung kommt. `pnpm dev:live` nutzt das echte `claude`; der
+Vite-Dev-Server liefert die Seite ohne CSP aus und das Dev-Cookie gilt für jede Seite auf
+`127.0.0.1:5173` – `dev:live` daher nur in einem eigenen Edge-Profil öffnen (z. B.
+`msedge --user-data-dir=%TEMP%\px-dev-edge --disable-sync http://127.0.0.1:5173/#code=…`, R3-14).
 
 Die SDK-Plattform-Binaries (~270 MB) werden per `ignoredOptionalDependencies` in
 `pnpm-workspace.yaml` nicht installiert. Install-Skripte darf nur `esbuild` ausführen
@@ -50,7 +53,16 @@ pnpm start --print-url         # Optionen direkt anhängen (pnpm reicht ein `--`
   sich danach von selbst; bei einem Fehler bleibt es mit der Meldung offen.
 - **Läuft Parallax schon,** öffnet ein weiterer Start nur ein zusätzliches Fenster (Erkennung über
   `server.lock.json` + Health-Ping; ein verwaistes Lockfile nach einem Absturz wird ignoriert).
-  Ein laufender Server übernimmt einen neuen Build erst nach „Server beenden“ und erneutem Start.
+  Ein Doppelklick startet trotzdem nur einen Server: der zweite Start wartet („… by another
+  launcher - waiting for it“) und öffnet dann ein Fenster dieses Servers. Läuft der Server mit
+  einem anderen Backend als angefordert (z. B. ein FakeBackend-Server, während `parallax.cmd`
+  ohne Optionen das echte `claude` will), meldet der Launcher das als Fehler statt ein Fenster zu
+  öffnen.
+- **Neuer Build bei laufendem Server:** Ein laufender Server übernimmt einen neuen Build erst nach
+  „Server beenden“ und erneutem Start. Er liefert die UI aus einer beim Start fixierten Kopie
+  (`%LOCALAPPDATA%\Parallax\ui\<build>`); ein `pnpm build`/`pnpm e2e` im selben Checkout ändert
+  also nichts an seinen Fenstern. Die Build-ID hängt nur an Build-Eingaben (Quellen, Configs,
+  Lockfile) – ein reiner Doku-Commit erzwingt keinen Neubau.
 - **Fenster schließen beendet den Server nicht** – die Sessions laufen weiter. Beenden über das
   Zahnrad-Menü → „Server beenden…“: Die Rückfrage nennt die arbeitenden und wartenden Sessions.
 - **Fehlermeldungen:** Port belegt → `--port=<n>` wählen; „written by a newer Parallax“ (Exit-Code
@@ -61,13 +73,36 @@ pnpm start --print-url         # Optionen direkt anhängen (pnpm reicht ein `--`
   ungültige Option), 3 Daten einer neueren Parallax-Version, 4 Port belegt, 5 für dieses
   Datenverzeichnis läuft schon ein Server.
 - Weitere Optionen: `--backend=fake` bzw. `PARALLAX_BACKEND=fake` (FakeBackend, startet kein
-  `claude` – zum Ausprobieren und für Smoke-/E2E-Tests des echten Startpfads), `--no-build` (kein
-  Build-Check). Für den produktiven Einsatz einen eigenen Checkout verwenden, damit
-  Entwicklungs-Neustarts nicht die eigene Arbeit unterbrechen (Plan A.7).
+  `claude` – zum Ausprobieren und für Smoke-/E2E-Tests des echten Startpfads; **nur mit eigenem
+  `--home`/`PARALLAX_HOME`**, auf `%LOCALAPPDATA%\Parallax` verweigert der Server den Start),
+  `--no-build` (kein Build-Check), `--validate=log|throw|off` (Prüfung ausgehender Daten gegen den
+  Contract; Default `log`: ungültige Werte werden geloggt, gezählt und verworfen). Für den
+  produktiven Einsatz einen eigenen Checkout verwenden, damit Entwicklungs-Neustarts nicht die
+  eigene Arbeit unterbrechen (Plan A.7).
 - Ausprobieren ohne die eigenen Daten anzufassen (PowerShell):
   `$env:PARALLAX_BACKEND='fake'; $env:PARALLAX_HOME="$env:TEMP\px-try"; pnpm start`.
 - Startet ein Terminal den Launcher in einem Job-Objekt, das beim Schließen alle Prozesse beendet,
   endet auch der Server – im Zweifel `parallax.cmd` per Doppelklick starten.
+
+### Edge-Profil
+Das App-Fenster nutzt ein eigenes Edge-Profil (`<Datenordner>\edge`), das sich **nie** mit dem
+Microsoft-/Windows-Konto anmeldet und **nie** synchronisiert: Der Launcher startet Edge mit
+`--disable-sync`, `--allow-browser-signin=false` und
+`--disable-features=msImplicitSignin,…` (ohne diese Schalter meldet Edge ein frisches Profil
+implizit mit dem Windows-Konto an und richtet Sync ein; ADR-060). Es werden keine Richtlinien,
+keine Registry-Einträge und keine Admin-Rechte gebraucht. Prüfen lässt es sich in einem
+Parallax-Fenster unter `edge://signin-internals` („Signin Status: Not Signed In“).
+
+- Ein Profil, das eine ältere Parallax-Version schon angemeldet hat, bleibt angemeldet (Sync bleibt
+  trotzdem aus); der Launcher weist darauf hin. Abmelden im Fenster („…“ → Einstellungen →
+  Profile) oder alle Parallax-Fenster schließen und den Ordner `edge` löschen (nur
+  Benachrichtigungs-Freigaben gehen verloren).
+- **Firmenrechner:** Edge-Richtlinien (Gruppenrichtlinie/Intune, `HKLM`/`HKCU\SOFTWARE\Policies\
+  Microsoft\Edge`) gehen Kommandozeilenschaltern vor – z. B. `BrowserSignin=2` (Anmeldung
+  erzwingen), `ForceSync`, `ImplicitSignInEnabled=1`, `FeatureFlagOverridesControl=0` (ignoriert
+  `--disable-features`) oder `UserDataDir`. `pnpm preflight` warnt bei solchen Richtlinien
+  (Prüfung „edge policies“); dann nach dem ersten Start `edge://signin-internals` und
+  `edge://policy` im Parallax-Fenster ansehen.
 
 ## Andere Registry / Firmen-Nexus
 Im Projekt ist **keine Registry** eingetragen; der Lockfile enthält keine Tarball-URLs und
