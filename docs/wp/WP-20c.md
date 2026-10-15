@@ -147,4 +147,25 @@ jede andere Verletzung lässt den Test scheitern.
 
 ### Checks
 
-(siehe unten, nach den Abnahmeläufen ergänzt)
+- **`pnpm e2e` auf dem Endstand 3× grün:** 24/24 in 3,9 min, **24/24 in 5,1 min parallel zu
+  `pnpm exec vitest run`** (139 Dateien / 2543 Tests grün, lief über fast die ganze Dauer), 24/24
+  in 3,7 min. Davor: weitere grüne Volläufe (u. a. 1× parallel zu `pnpm check`); zwei Läufe unter
+  Vitest-Last scheiterten an der Hintergrund-Seite (Entscheidung 3, behoben, danach die
+  Mehrfenster-Dateien 2× wiederholt unter Last grün).
+- `pnpm check` grün (`tsc -b`, ESLint ohne Warnungen, Vitest 139 Dateien / 2543 Tests), 2× (nach dem
+  Merge und auf dem Endstand); `pnpm build` grün (`index` 225,8 kB, `dist/server.js` ohne statischen
+  SDK-Import).
+- Gegenproben: Unit-Tests zu Bug 1, 2, 4 und 5 scheitern ohne den Fix; Bug 3 per E2E (Flake) und
+  Reihenfolge-Test.
+- Keine übrig gebliebenen Prozesse (CIM-Abfrage nach `parallax-e2e`/`wp-20c`/Playwright-Profilen),
+  keine Temp-Ordner `parallax-e2e-*`; im Haupt-Checkout keine Änderung.
+
+### Stolpersteine
+
+- PowerShell `Get-Content`/`Set-Content` ohne `-Encoding` zerstörte UTF-8 (`§`, `–`, BOM) – Datei
+  aus Git wiederhergestellt, Änderungen nur noch mit dem Edit-Werkzeug.
+- Playwright-Attachments mit `body` landen nicht als Datei in `test-results/` – Anhänge über
+  `testInfo.outputPath()` schreiben.
+- Die WS-Frame-Ereignisse einer gestauten Hintergrund-Seite kamen verspätet bzw. gar nicht – erst
+  der Trace (`trace.zip`, Zeitstempel der Aktionen) zeigte, dass der Locator 15 s nichts fand und das
+  `server.shutdown` erst aus dem `afterEach` kam.
