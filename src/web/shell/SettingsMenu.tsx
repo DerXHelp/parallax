@@ -1,4 +1,4 @@
-import { KeyboardIcon, SettingsIcon } from 'lucide-react';
+import { KeyboardIcon, PowerIcon, SettingsIcon } from 'lucide-react';
 import { languageSchema, themeSchema } from '@shared/common';
 import { useT } from '@web/i18n';
 import { showTextNotice } from '@web/state/notices';
@@ -15,6 +15,8 @@ import {
   DropdownMenuTrigger,
 } from '@web/ui/dropdown-menu';
 import { IconButton } from '@web/ui/icon-button';
+import { useShutdownT } from './server-shutdown/i18n';
+import { ServerShutdownDialog, openServerShutdown } from './server-shutdown/ServerShutdownDialog';
 import { HELP_KEYS, openShortcutHelp } from './ShortcutHelp';
 import { shortcutKeyLabels } from './shortcuts';
 
@@ -25,9 +27,10 @@ function save(patch: Parameters<typeof updateSettings>[0]): void {
   });
 }
 
-/** Theme and language (persisted by the server in settings.json, Plan Punkt 5) + shortcut help. */
+/** Theme and language (persisted by the server in settings.json, Plan Punkt 5) + shortcut help + "Stop server". */
 export function SettingsMenu() {
   const t = useT();
+  const shutdownT = useShutdownT();
   const settings = useSettings();
   return (
     <DropdownMenu>
@@ -71,7 +74,14 @@ export function SettingsMenu() {
           {t('settings.shortcuts')}
           <DropdownMenuShortcut>{shortcutKeyLabels(HELP_KEYS, t).join('+')}</DropdownMenuShortcut>
         </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem variant="destructive" onSelect={openServerShutdown}>
+          <PowerIcon aria-hidden />
+          {shutdownT('menuItem')}
+        </DropdownMenuItem>
       </DropdownMenuContent>
+      {/* WP-21: confirmation of "Stop server" (Radix root renders no DOM; the dialog portals out). */}
+      <ServerShutdownDialog />
     </DropdownMenu>
   );
 }

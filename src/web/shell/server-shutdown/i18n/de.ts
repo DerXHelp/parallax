@@ -1,0 +1,23 @@
+import type { en } from './en';
+
+/** German texts of "Stop server" (WP-21; same shape as en.ts). */
+export const de: typeof en = {
+  menuItem: 'Server beenden…',
+  title: 'Parallax-Server beenden?',
+  description:
+    'Alle Claude-Sessions dieses Servers werden gestoppt, und jedes Parallax-Fenster verliert die Verbindung. ' +
+    'Starte Parallax danach neu – die Sessions lassen sich dann fortsetzen.',
+  working: 'Arbeitet ({count})',
+  waiting: 'Wartet auf dich ({count})',
+  waitingHint:
+    'Offene Freigaben, Fragen und Pläne verfallen; ein Plan lässt sich nach dem Neustart freigeben („Fortsetzen“).',
+  idle: {
+    one: '{count} weitere Session im Leerlauf wird geschlossen.',
+    other: '{count} weitere Sessions im Leerlauf werden geschlossen.',
+  },
+  nothingRunning: 'Keine Session läuft – es wird nichts unterbrochen.',
+  confirm: 'Server beenden',
+  stopping: 'Wird beendet…',
+  notConnected: 'Keine Verbindung zum Server – er ist eventuell schon beendet.',
+  failed: 'Der Server konnte nicht beendet werden.',
+};
