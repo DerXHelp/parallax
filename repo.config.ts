@@ -12,8 +12,8 @@ import { z } from 'zod';
 /** Port of the dev server started by `pnpm dev:server` (see package.json --port). */
 export const DEV_SERVER_PORT = 4712;
 
-/** Port of the Vite dev server (proxies /api to DEV_SERVER_PORT). */
-export const DEV_WEB_PORT = 5173;
+/** Port of the Vite dev server (proxies /api to DEV_SERVER_PORT); single source: src/shared/http.ts. */
+export { DEV_WEB_PORT } from './src/shared/http.ts';
 
 /** Git worktrees of parallel work packages; never watched, tested, linted or bundled. */
 export const worktreeGlobs = ['**/.worktrees/**', '**/.claude/worktrees/**'] as const;
