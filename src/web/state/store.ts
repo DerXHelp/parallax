@@ -4,6 +4,7 @@ import type { ErrorPayload } from '@shared/errors';
 import type { HostState, SessionSummary, Settings } from '@shared/model';
 import type { Notification } from '@shared/protocol';
 import type { SessionViewState } from '@shared/sync';
+import type { TranslationKey, TranslationParams } from '@web/i18n';
 
 /**
  * Client state (Zustand, one vanilla store; React reads it through the selector hooks in
@@ -56,6 +57,11 @@ export interface HostRecord {
   error: ErrorPayload | null;
   /** The one-time code from the URL was rejected (auth gate shows AUTH_CODE_INVALID). */
   authCodeRejected: boolean;
+  /**
+   * Signed in, but several WebSocket attempts in a row closed before `hello` (the server answers
+   * HTTP but refuses the upgrade – security software, proxy, Origin check; V1-15). Reset by `hello`.
+   */
+  upgradeRejected: boolean;
   serverInstanceId: string | null;
   serverVersion: string | null;
   hostState: HostState | null;
@@ -83,6 +89,22 @@ export interface ClientNotification extends Notification {
   sessionKey: string;
 }
 
+export type NoticeTone = 'info' | 'success' | 'warning' | 'error';
+
+/** What a local notice says: a translation key (translated when rendered) or an error payload. */
+export type NoticeContent = { text: TranslationKey; params?: TranslationParams } | { error: ErrorPayload };
+
+/** A short-lived hint raised in this window (notices.ts, R1W-07) – never sent to the server. */
+export interface ClientNotice {
+  id: string;
+  tone: NoticeTone;
+  content: NoticeContent;
+  /** Session the hint belongs to ("Show session" action), null = window-wide. */
+  sessionKey: string | null;
+  /** Auto-dismiss after this many ms; null = until dismissed. */
+  durationMs: number | null;
+}
+
 export interface WindowPresence {
   /** `document.hasFocus()`. */
   focused: boolean;
@@ -99,6 +121,8 @@ export interface ClientState {
   selectedSession: string | null;
   presence: WindowPresence;
   notifications: readonly ClientNotification[];
+  /** Local hints of this window (notices.ts), oldest first. */
+  notices: readonly ClientNotice[];
   /** Settings used while no host delivered `host.state` (playground, before connecting). */
   localSettings: Settings;
 }
@@ -114,6 +138,7 @@ export function initialClientState(): ClientState {
     selectedSession: null,
     presence: { focused: true, visible: true, typing: false },
     notifications: [],
+    notices: [],
     localSettings: DEFAULT_SETTINGS,
   };
 }
@@ -127,6 +152,7 @@ export function emptyHostRecord(hostId: HostId): HostRecord {
     nextAttemptAt: null,
     error: null,
     authCodeRejected: false,
+    upgradeRejected: false,
     serverInstanceId: null,
     serverVersion: null,
     hostState: null,

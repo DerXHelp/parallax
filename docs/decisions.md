@@ -212,3 +212,104 @@ Format: `ADR-NNN – Titel` · Datum · WP · Kontext → Entscheidung → Folge
   Welle 1b read-only.
 - **Folgen:** Datei-genaue Ownership in `CLAUDE.md` und `docs/architecture.md` §2.1; keine
   gemeinsam bearbeitete Datei zwischen WP-10/11/12/14 bzw. WP-13/15/16.
+
+## ADR-030 – Watcher-Ignores an der Wurzel verankert, Dev-Port je Worktree per Env
+- **Datum/WP:** 15.10.2026, R1-Fixes Web (R1W-01, R1W-23)
+- **Kontext:** Vite und Vitest geben `server.watch.ignored` an chokidar, das **absolute** Pfade
+  prüft. Das relative Muster `**/.worktrees/**` traf in einem Checkout unter `.worktrees/<wp>`
+  jede Datei: kein HMR, `vitest watch` reagierte nicht – genau dort arbeiten WP-15/16. Außerdem
+  belegten alle Worktrees denselben festen Port 5173 (`strictPort`).
+- **Entscheidung:** `repo.config.ts` liefert `watchIgnores(repoRoot)` – Matcher-Funktionen
+  (`insideDir`, `path.relative`, unter Windows case-insensitiv) für `.worktrees`,
+  `.claude/worktrees`, `dist`, `.tsbuild`, `coverage` **dieses** Checkouts; `vite.config.ts` und
+  `vitest.config.ts` nutzen sie. `worktreeGlobs` bleibt nur für Vitest `test.exclude`
+  (wurzelrelativ). ESLint-`globalIgnores`, tsconfig-`exclude` und `tsx watch --exclude` sind relativ
+  zur Config bzw. `cwd` und blieben unverändert. Der Vite-Port kommt aus `devWebPort()`:
+  `PARALLAX_DEV_WEB_PORT` (zod-geprüft, 1024–65535), sonst `DEV_WEB_PORT` aus dem neuen,
+  importfreien `src/shared/devPorts.ts` (von `@shared/http` re-exportiert – keine Warnungen des
+  Vite-Config-Loaders mehr).
+- **Folgen:** HMR und `vitest watch` funktionieren in jedem Worktree (manuell geprüft). Ein
+  abweichender Port taugt nur für den Playground: der Dev-Server erlaubt mit `--dev` nur die Origin
+  `127.0.0.1:5173` (`allowedOrigins`); `pnpm dev` mit Server läuft weiter auf 5173/4712.
+
+## ADR-031 – `DecisionCard`: eine bedienbare Instanz in der Leiste, Endzustand im Transkript
+- **Datum/WP:** 15.10.2026, R1-Fixes Web (R1W-03, Koordinator-Entscheidung Variante A)
+- **Kontext:** WP-15 rendert die Plan-Karte über den Slot im Transkript, WP-16 dieselbe offene
+  Entscheidung in der Leiste. Offen war, wer nach `decision.resolved` rendert (die Karte bekommt
+  `null`), ob zwei bedienbare Kopien entstehen und wie abgelaufene Pläne aussehen.
+- **Entscheidung:** Variante A (architecture §2.3e): `DecisionCard` rendert offene und abgelaufene
+  Entscheidungen und gibt nach der Auflösung `null` zurück. `placement: 'bar'` ist die einzige
+  bedienbare Instanz; `placement: 'transcript'` zeigt Plantext, Status und „Zur Entscheidung“, das
+  `focusDecision(sessionKey, decisionId)` (`src/web/shell/decision-focus.ts`) aufruft – die Leiste
+  registriert dafür `useDecisionFocusHandler`, sonst fokussiert der Helfer die Karte bzw. die
+  Leistenregion `[data-decision-bar]` des Panes. Den Endzustand zeichnet WP-15 aus
+  `tool_call.decision.outcome` und `tool_call.input`. Kein zusätzliches Slot-Prop.
+- **Folgen:** Keine doppelten Kürzel/Fokus-Konflikte; WP-16 liefert keine „aufgelöst“-Darstellung.
+  Der FakeHost schreibt das Outcome bei `decision.respond` in den `tool_call` (Demos zeigen den
+  Endzustand).
+
+## ADR-032 – Abgeleitete Session-Selektoren statt Store-Form, Render-Isolation in der Shell
+- **Datum/WP:** 15.10.2026, R1-Fixes Web (R1W-02, R1W-04, R1W-05, R1W-10)
+- **Kontext:** `useSessionView`/`useSessionState` ändern sich mit jedem Delta-Frame; für die
+  gruppierte, virtualisierte Liste (Subagent-Items unter der Agent-Karte) und Meta wie `hasEarlier`
+  gab es keinen stabilen Hook, und `SessionPane`/Sidebar renderten bei jedem Delta bzw. jeder
+  Summary alle Slots/Zeilen neu.
+- **Entscheidung:** Hooks `useSessionSelector(key, select, fallback)` und
+  `useSummarySelector(key, select, fallback)` (shallow verglichen), `useSessionMeta(key)`,
+  `useTopLevelItemIds(key)`/`useChildItemIds(key, toolUseId)` über `selectItemTree` (je
+  `view.items` per WeakMap gecacht; Items ohne geladenen Eltern-Tool-Call stehen oben).
+  `SessionPane` liest nur Titel + Meta und rendert die Slots über `memo`-Wrapper, `SessionHeader`
+  liest seine Summary selbst, Sidebar-Zeilen bekommen primitive Props. `useNowUntil` rendert nur
+  noch an Deadlines.
+- **Folgen:** Features koppeln sich nie an `state.sessions[key].view`; WP-14 kann die Store-Form
+  ändern. Render-Zähler-Tests sichern die Isolation (`shell/render-isolation.test.tsx`).
+
+## ADR-033 – Lokale Hinweise über `state/notices.ts`
+- **Datum/WP:** 15.10.2026, R1-Fixes Web (R1W-07, R1W-19)
+- **Kontext:** WP-15/16 brauchen kurzlebige Hinweise (Kopieren, Prompt nicht gesendet,
+  `DECISION_ALREADY_RESOLVED` aus einem anderen Fenster); ohne API baut jedes Feature eine eigene
+  Live-Region. `SettingsMenu` verschluckte Speicherfehler.
+- **Entscheidung:** `showNotice({ text, params? } | { error }, { tone?, sessionKey?, durationMs?,
+  id? })` (+ `showTextNotice`, `showErrorNotice`, `dismissNotice`, `useNotices`) im Client-Store
+  (`ClientState.notices`, max. 5, gleiche `id` ersetzt). Anzeige in der dauerhaft gemounteten Region
+  des `NotificationCenter` neben den Server-`notify`; Übersetzung beim Rendern; Fehler
+  `role="alert"`. Timer der In-App-Benachrichtigungen werden beim Unmount gelöscht.
+- **Folgen:** Eine Hinweisregion je Fenster; die spätere Benachrichtigungs-Arbeit (Phase 2) baut
+  darauf auf. Feature-Demos ohne `AppShell` binden `NotificationCenter` selbst ein.
+
+## ADR-034 – Importgrenzen der Features und von `src/shared` per ESLint
+- **Datum/WP:** 15.10.2026, R1-Fixes Web (R1W-08, R0-22)
+- **Kontext:** „Features importieren einander nie“, „Radix nur in `src/web/ui`“, „nur `state/*`
+  schreibt den Store“ waren Konvention; WP-15 und WP-16 laufen parallel. `import fs from 'fs'` in
+  `src/shared` meldete nur einen Folgefehler mit falscher Meldung.
+- **Entscheidung:** `no-restricted-imports`-Blöcke je Bereich (spätere Blöcke ersetzen die Optionen,
+  daher wiederholen sie die Basis-Muster): Feature-Grenze transcript ↔ decisions/composer, keine
+  Feature-Importe in shell/state/lib/ui/playground, in i18n nur `features/<f>/i18n/{en,de}`, Radix
+  nur in `ui/`, keine Store-Schreiber in Feature-Code (Tests ausgenommen), Node-Builtins mit und
+  ohne `node:` in Web und Shared mit eigenen Meldungen.
+- **Folgen:** Querimporte fallen beim Lint auf, nicht erst in R2. `App.tsx`/`main.tsx` bleiben frei
+  (WP-20 verdrahtet dort). Relative Pfade wie `../decisions` aus einem Unterordner namens
+  `decisions` innerhalb von `features/transcript` würden fälschlich gemeldet – dort `./…` nutzen.
+
+## ADR-035 – Bundle: Start-Chunks, Lazy-Regel, Fonts als Dateien, zod ohne JIT
+- **Datum/WP:** 15.10.2026, R1-Fixes Web (R1W-09, V1-02, V1-09, V1-06)
+- **Kontext:** Ein Chunk mit 569 kB (Warnung), WP-15 bringt Markdown/Shiki/Diff. Vite inlinte die
+  kleinste Font-Untermenge als `data:`-URI (CSP `default-src 'self'` blockiert sie); zod 4 prüft per
+  `new Function('')`, ob JIT erlaubt ist (CSP-Verletzung bei jedem Start); `/favicon.ico` fehlte.
+- **Entscheidung:** `rolldownOptions.output.codeSplitting.groups` `react` (react, react-dom,
+  scheduler) und `vendor` (übriges `node_modules`), beide nur `tags: ['$initial']` – dynamische
+  Importe behalten eigene Chunks; Warnschwelle bleibt 500 kB. `build.assetsInlineLimit: 0`.
+  `src/web/lib/zod-jitless.ts` (`z.config({ jitless: true })`) als erster Import in `main.tsx`
+  (zod entscheidet beim Erzeugen eines Objekt-Schemas). Lokales `public/favicon.svg`.
+- **Folgen:** Start-Bundle `index` ≈ 121 kB, `react` ≈ 219 kB, `vendor` ≈ 236 kB, keine
+  Chunk-Warnung; Build-Konsole ohne CSP-Meldung (geprüft mit der Seiten-CSP). WP-15 lädt
+  Markdown/Shiki (JS-Regex-Engine)/Diff per `import()`.
+
+## ADR-036 – Build-ID nur aus Build-Eingaben
+- **Datum/WP:** 15.10.2026, R1-Fixes Web (V1-14; ergänzt ADR-013)
+- **Kontext:** `resolveBuildId()` wertete `git status`/`git diff` des ganzen Baums aus; eine
+  unversionierte Doku-Datei machte die Build-ID „dirty“ und erzwang Reloads ohne Code-Änderung.
+- **Entscheidung:** Status und Diff nur über `BUILD_INPUT_PATHSPECS` (`src`, `scripts`,
+  `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `*.config.ts`, `tsconfig*.json`).
+- **Folgen:** Doku-Änderungen ändern die Build-ID nicht mehr; neue Build-Eingaben außerhalb dieser
+  Pfade müssen in die Liste aufgenommen werden.

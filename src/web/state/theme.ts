@@ -1,6 +1,7 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { themeSchema, type Theme } from '@shared/common';
 import { STORAGE_KEYS, readStorage, writeStorage } from '@web/lib/storage';
+import { useSettings } from './settings';
 
 /**
  * Theme: Dark (default), Light, System (Plan Punkt 5, ADR-007). Only the class `dark` on `<html>`
@@ -65,6 +66,11 @@ function getSystemDark(): boolean {
 /** `prefers-color-scheme: dark`, live. */
 export function useSystemPrefersDark(): boolean {
   return useSyncExternalStore(subscribeDefault, getSystemDark, () => true);
+}
+
+/** The theme in effect for this window ('dark' | 'light'), e.g. for Shiki's light/dark theme (WP-15). */
+export function useResolvedTheme(): ResolvedTheme {
+  return resolveTheme(useSettings().theme, useSystemPrefersDark());
 }
 
 /** Applies `theme` to `<html>` (and follows the OS while it is 'system'); returns the resolved theme. */

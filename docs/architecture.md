@@ -171,7 +171,7 @@ true })` gefunden – keine zentrale Liste. Jede `features/<f>/playground.tsx` e
 `src/web/playground/types.ts`); Titel sind englischer Entwicklertext ohne `t()`, Daten aus
 `@shared/samples`.
 
-**(d)+(e) Slots statt Querimporte.** `src/web/shell/slots.tsx` (WP-14) exportiert:
+**(d) Slots statt Querimporte.** `src/web/shell/slots.tsx` (WP-14) exportiert:
 ```ts
 export interface FeatureSlots {
   // Shell-Slots (AppShell rendert sie für die gewählte Session)
@@ -181,16 +181,70 @@ export interface FeatureSlots {
   SidePanel: ComponentType<{ sessionKey: string }>;    // später (Phase 2)
   // Feature-Slots (ein Feature nutzt eine Komponente eines anderen, ohne es zu importieren)
   DecisionCard: ComponentType<{ sessionKey: string; decisionId: DecisionId; placement: 'transcript' | 'bar' }>; // WP-16 → WP-15 (Plan-Karte über tool_call.decision)
-  Markdown: ComponentType<{ text: string }>;                                  // WP-15 → WP-16 (Plantext, Options-Previews)
-  ToolInputPreview: ComponentType<{ toolName: string; input: JsonValue }>;    // WP-15 → WP-16 (Diff-Vorschau in Permission-Karten)
+  Markdown: ComponentType<{ text: string; sessionKey?: string }>;                                 // WP-15 → WP-16 (Plantext, Options-Previews)
+  ToolInputPreview: ComponentType<{ toolName: string; input: JsonValue; sessionKey?: string }>;   // WP-15 → WP-16 (Diff-Vorschau in Permission-Karten)
 }
 export function FeatureSlotsProvider(props: { slots: Partial<FeatureSlots>; children: ReactNode }): ReactNode;
 export function useFeatureSlots(): FeatureSlots;  // nicht gesetzte Slots = neutrale Platzhalter von WP-14 (mit t())
 ```
-WP-15 importiert nie aus `features/decisions`, WP-16 nie aus `features/transcript`. WP-20 setzt in
-`App.tsx` einen `FeatureSlotsProvider` mit den echten Komponenten; Playgrounds setzen eigene.
+WP-15 importiert nie aus `features/decisions`, WP-16 nie aus `features/transcript` (ESLint erzwingt
+es, (h)). WP-20 setzt in `App.tsx` einen `FeatureSlotsProvider` mit den echten Komponenten;
+Playgrounds setzen eigene. `sessionKey` an `Markdown`/`ToolInputPreview` (optional, R1W-20) wählt
+den Host für Blob-Links (`/api/blob/:id` je Host); WP-16 reicht ihn immer durch.
+
+**(e) Regel für `DecisionCard` (normativ, R1W-03, ADR-031 – Variante A).**
+- `DecisionCard` rendert **offene und abgelaufene** Entscheidungen (`useDecision(key, id) ≠ null`,
+  `state: 'open' | 'expired'`) und gibt nach der Auflösung (`decision.resolved`) **`null`** zurück.
+- `placement: 'bar'` ist die **einzige bedienbare** Instanz (Antworten, Kürzel mit `scopeRef` der
+  eigenen Leiste, Fokus nur durch Nutzeraktion, nie `autoFocus`, nie `role="dialog"`).
+- `placement: 'transcript'` ist lesend: Plantext (über den Slot `Markdown`), Status (offen/abgelaufen
+  „Fortsetzen & Plan freigeben“) und die Schaltfläche **„Zur Entscheidung“**, die
+  `focusDecision(sessionKey, decisionId)` (`src/web/shell/decision-focus.ts`) aufruft – kein
+  eigener Fokus-Diebstahl, keine zweite bedienbare Kopie.
+- Die Leiste (WP-16) registriert dafür `useDecisionFocusHandler(sessionKey, (id) => …)`: Karte
+  zeigen (z. B. umschalten) und fokussieren, `true` zurückgeben. Ohne Handler fokussiert
+  `focusDecision` die Karte `[data-decision-id="<id>"]` in der Leistenregion
+  `[data-decision-bar="<sessionKey>"]` (rendert `SessionPane`, `tabIndex=-1`) bzw. die Region.
+- **Nach der Auflösung** zeichnet WP-15 den Endzustand selbst aus `tool_call.decision.outcome`
+  (`plan_approved` mit Modus, `plan_revised`, `allowed`/`denied` …) und `tool_call.input`
+  (`input.plan` über den eigenen Markdown-Renderer). WP-16 hat dafür nichts zu liefern.
 
 **(f) Auth-Client.** `src/web/state/auth.ts` (WP-14) setzt den Client-Ablauf aus §5.1 um.
+
+**(g) Abgeleitete Selektoren und Render-Isolation (normativ, R1W-02/04/05, ADR-032).** Features
+lesen Session-Daten nur über die Hooks in `src/web/state/hooks.ts`, nie über `clientStore` oder die
+Store-Form. Listen: `useTopLevelItemIds(key)` (Top-Level-Zeilen; Items mit `parentToolUseId`, deren
+Tool-Call fehlt, erscheinen oben) + `useItem` je Zeile, Kinder einer Agent-Karte
+`useChildItemIds(key, toolUseId)`; Meta `useSessionMeta(key)` (`hasView`, `loading`,
+`unavailable`, `hasEarlier`, `conversationId`); eigene Ableitungen `useSessionSelector(key,
+select, fallback)` bzw. `useSummarySelector(key, select, fallback)` (shallow verglichen, `select`
+rein, teure Ergebnisse je `view.items` per WeakMap cachen). `useSessionView`/`useSessionState`
+ändern sich mit **jedem** Delta – nur für Werkzeuge/Tests. Die Shell rendert die Slots über
+memoisierte Wrapper; `SessionPane` liest nur Titel + Meta, Sidebar-Zeilen bekommen primitive Props.
+
+**(h) Importgrenzen per ESLint (normativ, R1W-08, R0-22, ADR-034).** `eslint.config.js` sperrt:
+Querimporte zwischen `features/transcript` und `features/{decisions,composer}` (relativ und über
+`@web/features/…`), Feature-Importe in `src/web/{shell,state,lib,ui,playground}` (Features hängen
+nur über Slots bzw. `import.meta.glob`), in `src/web/i18n` alles außer `features/<f>/i18n/{en,de}`,
+`radix-ui` außerhalb `src/web/ui`, Store-Schreiber (`clientStore`, `updateHost`, `updateSession`,
+`removeSessions`, `resetClientStore`) in Feature-Code (Tests ausgenommen), Node-Builtins mit und
+ohne `node:` in `src/web` und `src/shared`. `App.tsx`/`main.tsx` dürfen Features importieren (WP-20).
+
+**(i) Lokale Hinweise (normativ, R1W-07, ADR-033).** Kurzlebige Hinweise eines Fensters („kopiert“,
+„Prompt nicht gesendet“, `DECISION_ALREADY_RESOLVED` aus einem anderen Fenster, Einstellung nicht
+gespeichert) nur über `showNotice`/`showTextNotice`/`showErrorNotice` aus `src/web/state/notices.ts`;
+die Shell zeigt sie in der Region des `NotificationCenter` (Fehler `role="alert"`, sonst
+`role="status"`, Übersetzung beim Rendern). Keine eigenen Toast-Regionen in Features;
+Validierungsfehler direkt am Eingabefeld bleiben inline.
+
+**(j) Bundle (normativ, R1W-09, V1-02, V1-09, ADR-035).** Start-Bundle in Chunks `react`, `vendor`
+(nur `$initial`-Module aus `node_modules`) und `index`; die Warnschwelle 500 kB bleibt Wächter.
+Schwere, spät gebrauchte Teile (Markdown-Renderer, Shiki, Diff) lädt WP-15 per `import()`/
+`React.lazy` – sie landen automatisch in eigenen Chunks. Shiki nur mit der JavaScript-Regex-Engine
+(`shiki/core` + `shiki/engine/javascript`, keine Oniguruma-WASM – CSP ohne `'wasm-unsafe-eval'`).
+Assets werden nie als `data:` inlined (`build.assetsInlineLimit: 0`); zod läuft im Web `jitless`
+(`src/web/lib/zod-jitless.ts`, erster Import in `main.tsx`), damit kein `eval`-Probe gegen die CSP
+läuft.
 
 ### 2.4 Weitere Regeln für Pakete der Welle 1
 - Feature-eigener State (z. B. Composer-Entwürfe) liegt in `features/<f>/state/`, Feature-Helfer in
@@ -229,8 +283,9 @@ Transport (WS | Memory) ──▶ ConnectionManager je Host ──parseServerMes
   host.state / summaries.*  ──▶ Host-Store (Summaries je sessionKey)
   session.snapshot / .ops   ──▶ viewStateFromSnapshot / applySeqOps (@shared/sync) ──▶ Session-Store
   ack                       ──▶ offene Befehle (cmdId) → parseCommandResult
-Zustand-Selektoren je Session (useSummary, useDisplayStatus = deriveDisplayStatus, useSessionView,
-useItem, useDecisions) ──▶ Features (Transkript, Entscheidungen, Composer)
+Zustand-Selektoren je Session (useSummary, useDisplayStatus = deriveDisplayStatus, useSessionMeta,
+useSessionSelector, useTopLevelItemIds, useItem, useDecisions; §2.3g) ──▶ Features (Transkript,
+Entscheidungen, Composer); lokale Hinweise über state/notices.ts (§2.3i)
 Features ──useCommand──▶ ConnectionManager.send(cmd) → {type:'cmd', cmdId, cmd}
 ```
 `sessionKey = hostId:entryId` existiert nur im Client (`makeSessionKey`); auf dem Draht steht nur

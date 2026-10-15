@@ -1,3 +1,5 @@
+// Must stay the first import: switches zod's eval-based JIT off before any schema exists (CSP).
+import './lib/zod-jitless';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './index.css';

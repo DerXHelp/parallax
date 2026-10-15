@@ -52,6 +52,9 @@ function ConnectionBanner() {
     >
       <span className="inline-flex flex-wrap items-center gap-x-2">
         <span>{t('connection.reconnecting')}</span>
+        {host.upgradeRejected ? (
+          <span className="text-muted-foreground">{t('connection.upgradeRejected')}</span>
+        ) : null}
         {host.phase === 'reconnecting' ? <RetryCountdown nextAttemptAt={host.nextAttemptAt} /> : null}
       </span>
     </Banner>

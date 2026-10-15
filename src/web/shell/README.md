@@ -16,13 +16,15 @@ Benachrichtigungen, Shortcut-Registry und die `FeatureSlots` für WP-15/16 (arch
 | `EmptyState.tsx` | Willkommen / „keine Session gewählt“, `NewSessionForm` (Ordner + Start, Phase-1-Minimum) |
 | `HostGate.tsx` | „Nicht angemeldet“, „Server beendet“, „nicht erreichbar“ (Countdown), „Verbinde…“, veraltetes Fenster |
 | `ShellBanners.tsx` | Verbindung unterbrochen, Setup-Hinweis (Platzhalter für den Setup-Screen), Server-Warnungen |
-| `NotificationCenter.tsx` | `notify` in-app bzw. als Web Notification (falls erlaubt) |
+| `NotificationCenter.tsx` | `notify` in-app bzw. als Web Notification (falls erlaubt) und die lokalen Hinweise aus `state/notices.ts` |
 | `SettingsMenu.tsx` | Theme, Sprache, Tastenkürzel |
 | `ShortcutHelp.tsx` | `?`-Hilfe (`openShortcutHelp`) |
 | `ConnectionIndicator.tsx` | Verbindungsstatus (Punkt + Text) |
-| `shortcuts.ts` | zentrale Registry: `useShortcut`, `useEscapeHandler`, `shortcuts`, `installShortcutListener`, `parseShortcut`, `shortcutKeyLabels` – keine Strg+Alt-Kürzel |
+| `shortcuts.ts` | zentrale Registry: `useShortcut` (`scope`/`scopeRef`), `useEscapeHandler((event) => boolean, enabled, { scope?, scopeRef? })`, `isInScope`, `shortcuts`, `installShortcutListener`, `parseShortcut`, `shortcutKeyLabels` – keine Strg+Alt-Kürzel, Alt+Numpad nie |
+| `decision-focus.ts` | „Zur Entscheidung“ (architecture §2.3e): `focusDecision(sessionKey, decisionId)`, `useDecisionFocusHandler`, `registerDecisionFocusHandler`, `findDecisionBar` |
 
 Regeln: Kürzel nur über die Registry (keine eigenen `keydown`-Listener auf `window`);
-Entscheidungs-Kürzel mit `scope: 'decision-bar'` (die Leiste liegt in
-`[data-shortcut-scope="decision-bar"]`); Esc über `useEscapeHandler` (neuester Handler zuerst,
-offene Dialoge/Menüs haben Vorrang).
+Entscheidungs-Kürzel mit `scopeRef` der eigenen Leiste (die Leiste liegt in
+`[data-shortcut-scope="decision-bar"][data-decision-bar="<sessionKey>"]`); Esc über
+`useEscapeHandler` mit Scope (neuester Handler zuerst, nur mit Fokus im Scope, offene Dialoge/Menüs
+haben Vorrang). `SessionPane` rendert die Slots über `memo`-Wrapper und liest nur schmale Selektoren.

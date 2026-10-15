@@ -9,26 +9,129 @@ import tseslint from 'typescript-eslint';
 /** Characters that may appear as JSX text without t() (punctuation, separators). */
 const allowedJsxStrings = ['·', '•', '…', '/', '\\', '|', '–', '—', '-', ':', '%', '(', ')', '×', '+'];
 
+// ---- import boundaries (no-restricted-imports; ADR-034) ----
+// A later flat-config block REPLACES the options of an earlier one for the same file, so every
+// block below lists all patterns that apply to its files.
+
+/** Node built-ins, with or without the `node:` prefix (R0-22). */
+const NODE_BUILTINS = [
+  'assert',
+  'async_hooks',
+  'buffer',
+  'child_process',
+  'cluster',
+  'console',
+  'constants',
+  'crypto',
+  'dgram',
+  'diagnostics_channel',
+  'dns',
+  'domain',
+  'events',
+  'fs',
+  'http',
+  'http2',
+  'https',
+  'inspector',
+  'module',
+  'net',
+  'os',
+  'path',
+  'perf_hooks',
+  'process',
+  'punycode',
+  'querystring',
+  'readline',
+  'repl',
+  'stream',
+  'string_decoder',
+  'sys',
+  'timers',
+  'tls',
+  'trace_events',
+  'tty',
+  'url',
+  'util',
+  'v8',
+  'vm',
+  'wasi',
+  'worker_threads',
+  'zlib',
+];
+const nodeBuiltinRegex = String.raw`^(?:node:|(?:${NODE_BUILTINS.join('|')})(?:/|$))`;
+const serverPackageRegex = String.raw`^(?:fastify$|@fastify/|pino(?:-|$)|ws$|@anthropic-ai/)`;
+const webPackageRegex = String.raw`^(?:react|react-dom|radix-ui|@radix-ui/[^/]+|lucide-react|zustand|virtua|shiki|@shikijs/[^/]+|streamdown|react-markdown)(?:/|$)`;
+
 const noServerInWeb = {
   regex: String.raw`^(?:\.\./)+server(?:/|$)|^@server(?:/|$)`,
   message: 'src/web must never import server code (CLAUDE.md: Web ↛ Server). Use @shared contracts.',
 };
 const serverOnlyPackages = {
-  regex: String.raw`^(?:node:|fastify$|@fastify/|pino(?:-|$)|ws$|@anthropic-ai/)`,
+  regex: serverPackageRegex,
   message: 'Server-only module. The web UI talks to the server via the WS/HTTP protocol (@shared).',
+};
+const nodeBuiltinsInWeb = {
+  regex: nodeBuiltinRegex,
+  message: 'Node built-in in web code. The web UI runs in the browser; talk to the server via @shared.',
 };
 const noWebInServer = {
   regex: String.raw`^(?:\.\./)+web(?:/|$)|^@web(?:/|$)`,
   message: 'src/server must never import web code (CLAUDE.md: Server ↛ Web).',
 };
 const webOnlyPackages = {
-  regex: String.raw`^(?:react|react-dom|radix-ui|lucide-react|zustand|virtua|shiki|streamdown|react-markdown)(?:/|$)`,
+  regex: webPackageRegex,
   message: 'Web-only module in server code.',
 };
 const sharedIsLeaf = {
   regex: String.raw`^(?:\.\./)+(?:server|web)(?:/|$)|^@(?:server|web)(?:/|$)`,
   message: 'src/shared is a leaf: it must not import server or web code.',
 };
+const nodeBuiltinsInShared = {
+  regex: nodeBuiltinRegex,
+  message: 'src/shared is isomorphic (server and web): no Node built-ins, with or without "node:".',
+};
+const serverPackagesInShared = {
+  regex: serverPackageRegex,
+  message: 'src/shared is isomorphic (server and web): no server-only packages – only zod.',
+};
+const webPackagesInShared = {
+  regex: webPackageRegex,
+  message: 'src/shared is isomorphic (server and web): no web-only packages – only zod.',
+};
+
+/** Direct Radix imports only in src/web/ui (architecture §2.3b). */
+const radixOnlyInUi = {
+  regex: String.raw`^(?:radix-ui|@radix-ui/)`,
+  message: 'Use the primitives from src/web/ui (radix-ui is imported only there).',
+};
+/** Features never import each other (R1W-08, ADR-017). */
+const featureBoundary = (/** @type {string[]} */ others) => ({
+  regex: String.raw`^(?:@web/features/|(?:\.\./)+(?:features/)?)(?:${others.join('|')})(?:/|$)`,
+  message:
+    'Features never import each other – share components through the FeatureSlots (src/web/shell/slots.tsx).',
+});
+/** Shell, state, lib, ui and playground never import features (WP-20 wires them in App.tsx). */
+const noFeaturesInCore = {
+  regex: String.raw`^(?:@web/|(?:\.\./)+)features(?:/|$)`,
+  message:
+    'Core code never imports features: they plug in through the FeatureSlots (App.tsx); feature demos come via import.meta.glob.',
+};
+/** i18n registers the feature dictionaries and nothing else of a feature. */
+const onlyFeatureDictionaries = {
+  regex: String.raw`^(?:@web/|(?:\.\./)+)features(?!/[a-z0-9-]+/i18n/(?:en|de)$)(?:/|$)`,
+  message: 'src/web/i18n imports only the feature dictionaries (features/<f>/i18n/{en,de}).',
+};
+/** Features read the store through the hooks; only state/* writes it (R1W-08). */
+const noStoreWriters = {
+  regex: String.raw`(?:^@web/|/)state/store$`,
+  importNames: ['clientStore', 'updateHost', 'updateSession', 'removeSessions', 'resetClientStore'],
+  message:
+    'Read client state through @web/state/hooks (useSessionSelector, useSessionMeta …); only src/web/state writes the store.',
+};
+
+const webBase = [noServerInWeb, serverOnlyPackages, nodeBuiltinsInWeb];
+/** @param {object[]} patterns */
+const restrictImports = (patterns) => ({ 'no-restricted-imports': ['error', { patterns }] });
 
 export default defineConfig([
   globalIgnores([
@@ -82,20 +185,54 @@ export default defineConfig([
     rules: { 'no-console': 'error' },
   },
 
-  // Import boundaries (also enforced by tsconfig rootDir + project references).
+  // Import boundaries (also enforced by tsconfig rootDir + project references). Order matters:
+  // the most specific block comes last (it replaces the options of the earlier ones).
   {
     files: ['src/web/**/*.{ts,tsx}'],
-    rules: { 'no-restricted-imports': ['error', { patterns: [noServerInWeb, serverOnlyPackages] }] },
+    rules: restrictImports([...webBase, radixOnlyInUi]),
+  },
+  {
+    files: ['src/web/ui/**/*.{ts,tsx}'],
+    rules: restrictImports([...webBase, noFeaturesInCore]),
+  },
+  {
+    files: ['src/web/{shell,state,lib,playground}/**/*.{ts,tsx}'],
+    rules: restrictImports([...webBase, radixOnlyInUi, noFeaturesInCore]),
+  },
+  {
+    files: ['src/web/i18n/**/*.{ts,tsx}'],
+    rules: restrictImports([...webBase, radixOnlyInUi, onlyFeatureDictionaries]),
+  },
+  {
+    files: ['src/web/features/transcript/**/*.{ts,tsx}'],
+    rules: restrictImports([
+      ...webBase,
+      radixOnlyInUi,
+      noStoreWriters,
+      featureBoundary(['decisions', 'composer']),
+    ]),
+  },
+  {
+    // decisions ↔ composer both belong to WP-16.
+    files: ['src/web/features/{decisions,composer}/**/*.{ts,tsx}'],
+    rules: restrictImports([...webBase, radixOnlyInUi, noStoreWriters, featureBoundary(['transcript'])]),
+  },
+  {
+    // Feature tests may reset/inspect the store (resetClientStore in afterEach).
+    files: ['src/web/features/transcript/**/*.test.{ts,tsx}'],
+    rules: restrictImports([...webBase, radixOnlyInUi, featureBoundary(['decisions', 'composer'])]),
+  },
+  {
+    files: ['src/web/features/{decisions,composer}/**/*.test.{ts,tsx}'],
+    rules: restrictImports([...webBase, radixOnlyInUi, featureBoundary(['transcript'])]),
   },
   {
     files: ['src/server/**/*.ts'],
-    rules: { 'no-restricted-imports': ['error', { patterns: [noWebInServer, webOnlyPackages] }] },
+    rules: restrictImports([noWebInServer, webOnlyPackages]),
   },
   {
     files: ['src/shared/**/*.ts'],
-    rules: {
-      'no-restricted-imports': ['error', { patterns: [sharedIsLeaf, serverOnlyPackages, webOnlyPackages] }],
-    },
+    rules: restrictImports([sharedIsLeaf, nodeBuiltinsInShared, serverPackagesInShared, webPackagesInShared]),
   },
 
   // React (web only). UI strings only via t(): react/jsx-no-literals.
