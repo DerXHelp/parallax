@@ -2,11 +2,14 @@
  * Bundles the server into dist/server.js (ESM, Node >= 22).
  * npm packages stay external and are loaded from node_modules at runtime (pino transports,
  * the Agent SDK and native modules must not be bundled). Only own code and `@shared/*` are bundled.
+ * The build id (same value as the web bundle, see resolveBuildId) is injected via `define`
+ * (read by src/shared/build.ts) and stamped into the bundle's first line.
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
-import { repoAliases } from '../repo.config.ts';
+import { BUILD_ID_DEFINE, repoAliases, resolveBuildId } from '../repo.config.ts';
+import { PRODUCT_NAME } from '../src/shared/product.ts';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const aliases = repoAliases(repoRoot);
@@ -14,6 +17,7 @@ const sharedDir = aliases['@shared'];
 if (sharedDir === undefined) {
   throw new Error('repoAliases() must define @shared');
 }
+const buildId = resolveBuildId(repoRoot);
 
 const result = await build({
   absWorkingDir: repoRoot,
@@ -27,6 +31,8 @@ const result = await build({
   // Only @shared is an alias for the server; @web must never be reachable from here.
   alias: { '@shared': sharedDir },
   tsconfig: 'src/server/tsconfig.json',
+  define: { [BUILD_ID_DEFINE]: JSON.stringify(buildId) },
+  banner: { js: `// ${PRODUCT_NAME} server, build ${buildId}` },
   sourcemap: true,
   legalComments: 'none',
   logLevel: 'info',
@@ -34,4 +40,4 @@ const result = await build({
 });
 
 const outputs = Object.keys(result.metafile.outputs);
-process.stdout.write(`server bundle written: ${outputs.join(', ')}\n`);
+process.stdout.write(`server bundle written: ${outputs.join(', ')} (build ${buildId})\n`);

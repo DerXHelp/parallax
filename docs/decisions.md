@@ -118,3 +118,33 @@ Format: `ADR-NNN – Titel` · Datum · WP · Kontext → Entscheidung → Folge
   Env ohne `ANTHROPIC_API_KEY`/`_AUTH_TOKEN`/`_BASE_URL`. Modell immer `haiku`.
 - **Folgen:** Neu-Aufzeichnungen (z. B. nach SDK-Upgrade) laufen mit denselben Guards; das Budget gilt
   pro lokalem `spike-state.json` und muss bei einer neuen Freigabe bewusst zurückgesetzt werden.
+
+## ADR-012 – „Regel merken“: vier Ziele, Default `session`, der Server baut `updatedPermissions`
+- **Datum/WP:** 15.10.2026, WP-02 (Entscheidung des Koordinators)
+- **Kontext:** Die CLI schlägt in `canUseTool.suggestions` `addRules` (meist Ziel `localSettings`),
+  `addDirectories` und fast immer `setMode acceptEdits` vor. Ungefiltert zurückgegeben schaltet das die
+  Session in `acceptEdits` und schreibt Regeln ins Repo; Regeln verhindern Rückfragen zudem nicht
+  immer (`blockedPath`, F.3). Der Plan („Permission-Karten“) sieht die Ziele session/local/project/user vor.
+- **Entscheidung:** Der Contract bildet alle vier Ziele ab (`RULE_DESTINATIONS = ['session',
+  'localSettings', 'projectSettings', 'userSettings']`, `permissionOffer.ruleDestinations`,
+  `permissionResponse.remember`). UI-Default ist `session`; `projectSettings` (schreibt ins Repo) und
+  `userSettings` (global) kennzeichnet die UI deutlich (WP-16). Der Client sendet nur die **Absicht**
+  (`remember: <Ziel> | null`, `acceptEdits: boolean`); der Server baut `updatedPermissions` selbst aus
+  den gespeicherten `suggestions` (`addRules`/`addDirectories` mit dem gewählten Ziel, `setMode
+  acceptEdits` nur bei `acceptEdits: true` und immer mit `destination: 'session'`). Ziel nicht im
+  Angebot → `DECISION_OPTION_UNAVAILABLE`. Keine Option verspricht „nie wieder fragen“.
+- **Folgen:** XSS oder Fehler im Client können keine Regeln/Modi einschleusen, die die CLI nicht
+  vorgeschlagen hat. `cliArg` ist kein wählbares Ziel. Abbildung tabellengetestet in WP-13.
+
+## ADR-013 – Build-ID per `define` in Web- und Server-Bundle
+- **Datum/WP:** 15.10.2026, WP-02 (Freigabe des Koordinators für die Root-Configs)
+- **Kontext:** Eine neue `buildId` im `hello` soll offene Fenster nach `git pull` neu laden (A.2).
+  Web (Vite) und Server (esbuild) werden in getrennten Prozessen gebaut und brauchen denselben Wert.
+- **Entscheidung:** `resolveBuildId()` in `repo.config.ts`: `PARALLAX_BUILD_ID` (falls gesetzt), sonst
+  `<package.version>+<git-Kurzhash>`, bei unsauberem Arbeitsbaum zusätzlich `.dirty-<8 Hex>` (SHA-256
+  über `git status --porcelain` und `git diff HEAD`). Deterministisch, daher in beiden Builds gleich.
+  `vite.config.ts` (nur `vite build`) und `scripts/build-server.ts` setzen `define
+  __PARALLAX_BUILD_ID__`; `src/shared/build.ts` liest es als `BUILD_ID`, ohne Bundle (Vite-Dev-Server,
+  tsx, Vitest) gilt `'dev'`. Das Server-Bundle trägt die ID zusätzlich in der ersten Zeile.
+- **Folgen:** Kein Zeitstempel, also kein Reload bei identischem Stand. Unversionierte neue Dateien
+  ändern die ID nur über ihren Namen in `git status`. Ohne git: `<version>+nogit`.

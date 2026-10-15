@@ -4,7 +4,14 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 import { PRODUCT_NAME } from './src/shared/product.ts';
-import { DEV_SERVER_PORT, DEV_WEB_PORT, repoAliases, worktreeGlobs } from './repo.config.ts';
+import {
+  BUILD_ID_DEFINE,
+  DEV_SERVER_PORT,
+  DEV_WEB_PORT,
+  repoAliases,
+  resolveBuildId,
+  worktreeGlobs,
+} from './repo.config.ts';
 
 const repoRoot = path.dirname(fileURLToPath(import.meta.url));
 
@@ -16,9 +23,11 @@ function productName(): Plugin {
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   root: path.join(repoRoot, 'src/web'),
   plugins: [react(), tailwindcss(), productName()],
+  // Same build id as the server bundle (scripts/build-server.ts); the dev server keeps 'dev'.
+  define: command === 'build' ? { [BUILD_ID_DEFINE]: JSON.stringify(resolveBuildId(repoRoot)) } : {},
   resolve: {
     alias: repoAliases(repoRoot),
   },
@@ -39,4 +48,4 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: true,
   },
-});
+}));

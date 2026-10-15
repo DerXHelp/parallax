@@ -30,7 +30,8 @@ Eigene Pfade gezielt prüfen: `pnpm exec eslint <pfade>`, `pnpm exec vitest run 
 ## Ordner und Ownership
 | Pfad | Inhalt | Owner |
 |---|---|---|
-| `src/shared/` | Contracts: protocol, model, errors, status (zod), `product.ts` | WP-02 (eingefroren) |
+| `src/shared/` | Contracts: `common`, `errors`, `status`, `model`, `protocol`, `sync`, `build`, `samples` (zod), `product.ts` | WP-02 (eingefroren) |
+| `src/server/{backend/types,backend/fixture,sessions/ports,sync/ports,claude/ports}.ts` | Server-Ports | WP-02 (eingefroren) |
 | `src/server/lib/` | Logger, Pfad-/Prozess-Helfer | WP-10/11 |
 | `src/server/{http,sync,store}/` | App, Auth, HTTP/WS, Sync, JsonStore, Registry | WP-10 |
 | `src/server/claude/` | resolveClaude, buildEnv, Profil „Standard“, Preflight | WP-11 |
@@ -43,6 +44,17 @@ Eigene Pfade gezielt prüfen: `pnpm exec eslint <pfade>`, `pnpm exec vitest run 
 | Root-Configs, `package.json`, Lockfile | Bootstrap | WP-00 / Koordinator |
 
 Jeder Ordner hat eine `README.md` mit Details. Aliase: `@shared/*` (überall), `@web/*` (nur Web).
+
+## Contracts (Kurzregeln, Details `docs/architecture.md`)
+- **Contracts und Ports sind eingefroren:** Änderung nur nach Freigabe des Koordinators (s. „Tabu“).
+- Auf dem Draht nur `entryId`; `sessionKey = hostId:entryId` existiert nur im Client.
+- SDK-Messages normalisiert nur der Server (WP-12); Shared kennt keine SDK-Typen.
+- Fehler: `ErrorPayload {code, params}`; neue Codes nur per Contract-Änderung.
+- IDs: Server `lib/ids.ts` (`newId('en'|'cv'|'dc'|'pf')`), Web `lib/ids.ts`.
+- Ops nur über `applySessionOp` (`@shared/sync`) anwenden – Server-Hub und Web-Store.
+- Status-Anzeige nur über `deriveDisplayStatus` (`@shared/status`).
+- Persistierte Schemas: neue Felder immer mit Default; sonst `schemaVersion` + Migration.
+- Testdaten aus `@shared/samples` (feste IDs/Zeiten) statt eigener Beispielobjekte.
 
 ## Code-Regeln
 - TypeScript strict + `noUncheckedIndexedAccess`; **kein `any`** (auch nicht über `as`).
@@ -67,9 +79,12 @@ Jeder Ordner hat eine `README.md` mit Details. Aliase: `@shared/*` (überall), `
   erlaubt es ausdrücklich. Standard ist das FakeBackend mit Fixtures.
 
 ## Tabu ohne Freigabe
-`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml` und `src/shared/**`. Änderungswünsche
-(neue Abhängigkeit, Contract-Änderung) im Bericht unter „GEWÜNSCHTE ABHÄNGIGKEITEN“ bzw.
-„SCHNITTSTELLEN/CONTRACT-ABWEICHUNGEN“ anfragen. Nichts außerhalb der eigenen Besitz-Pfade ändern.
+`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `src/shared/**` und die Server-Ports
+(`src/server/backend/types.ts`, `backend/fixture.ts`, `sessions/ports.ts`, `sync/ports.ts`,
+`claude/ports.ts`). Änderungswünsche (neue Abhängigkeit, Contract-Änderung) im Bericht unter
+„GEWÜNSCHTE ABHÄNGIGKEITEN“ bzw. „SCHNITTSTELLEN/CONTRACT-ABWEICHUNGEN“ anfragen; erst nach Freigabe
+durch den Koordinator ändern (mit Eintrag im Contract-Changelog). Nichts außerhalb der eigenen
+Besitz-Pfade ändern.
 
 ## Windows
 - Pfade nur über den Pfad-Helfer (case-insensitiv vergleichen, `cwd`-String exakt behalten,
@@ -111,5 +126,6 @@ COMMIT: <hash> <Betreff>
 ## Doku
 - `docs/plan.md` – abgestimmter Plan (bei Widersprüchen gilt „Änderungen nach kritischem Review“).
 - `docs/progress.md` – WP-Tabelle, Contract-Changelog, offene Fragen, nächste Schritte.
-- `docs/decisions.md` – ADRs (nur anhängen). `docs/architecture.md` – Architektur (ab WP-02).
+- `docs/decisions.md` – ADRs (nur anhängen). `docs/architecture.md` – Architektur: Module,
+  Datenfluss, Source of Truth, Sync-Protokoll, Item- und Statusmodell (seit WP-02 gefüllt).
 - `docs/wp/WP-xx.md` – Auftrag und Ergebnis je Arbeitspaket. `docs/sdk-findings.md` (WP-01).
