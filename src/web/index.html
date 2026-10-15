@@ -1,5 +1,9 @@
 <!doctype html>
-<!-- Dark is the default theme: class="dark" on <html>. WP-14 adds Light/System switching. -->
+<!--
+  Dark is the default theme (class="dark"); state/theme.ts applies Light/System before the first
+  render. No inline scripts or styles: the page CSP allows script-src 'self' only (Review C.10).
+  #playground (dev server only) opens the playground, see src/web/playground/README.md.
+-->
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />

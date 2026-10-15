@@ -1,15 +1,20 @@
-import { Layers } from 'lucide-react';
-import { PRODUCT_NAME } from '@shared/product';
+import { AppShell } from './shell/AppShell';
+import { ShellEffects } from './shell/ShellEffects';
+import { FeatureSlotsProvider, type FeatureSlots } from './shell/slots';
 
 /**
- * Minimal app stub from WP-00. WP-14 replaces it with the real shell
- * (WS client, stores, theme, i18n). UI strings only via t() – see CLAUDE.md.
+ * Feature components for the shell and feature slots. WP-20 sets the real components here
+ * (TranscriptView, DecisionBar, Composer, DecisionCard, Markdown, ToolInputPreview); unset slots
+ * show the neutral placeholders of WP-14. Keep it a module-level constant (stable identity).
  */
+export const APP_SLOTS: Partial<FeatureSlots> = {};
+
+/** Root component; the connection is started before the first render (main.tsx → bootApp). */
 export function App() {
   return (
-    <main className="bg-background text-foreground flex h-full items-center justify-center gap-3">
-      <Layers aria-hidden className="text-primary size-6" />
-      <h1 className="font-mono text-xl font-semibold tracking-tight">{PRODUCT_NAME}</h1>
-    </main>
+    <FeatureSlotsProvider slots={APP_SLOTS}>
+      <ShellEffects />
+      <AppShell />
+    </FeatureSlotsProvider>
   );
 }

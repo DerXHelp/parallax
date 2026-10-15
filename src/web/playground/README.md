@@ -1,0 +1,40 @@
+# src/web/playground – Playground-Route (WP-14)
+
+Entwicklungs-Spielwiese ohne Server: Shell und Feature-Komponenten laufen über
+`createMemoryTransport` + `FakeHost` (`src/web/state/fake-host.ts`) mit Daten aus
+`@shared/samples`. Nur im Vite-Dev-Server (`import.meta.env.DEV`), im Build nicht enthalten.
+
+**Öffnen:** `pnpm dev:web` (oder `pnpm dev`) → `http://127.0.0.1:5173/#playground`; Deep-Link
+für Screenshots: `#playground=<demo-id>`, z. B. `#playground=shell-overview`,
+`#playground=shell-streaming`, `#playground=shell-decisions`, `#playground=ui-primitives`,
+Feature-Demos `#playground=transcript/<id>`. Theme und Sprache oben rechts.
+
+| Datei | Inhalt |
+|---|---|
+| `PlaygroundApp.tsx` | Route-UI; findet Feature-Demos per `import.meta.glob('../features/*/playground.tsx', { eager: true })` |
+| `types.ts` | `PlaygroundDemo` (`{ id, title, description?, render() }`), `PlaygroundModule` (`{ demos?, slots? }`) |
+| `scenarios.ts` | Szenarien `overview` (alle 14 Anzeige-Status), `streaming` (Text-Deltas), `decisions` (drei offene Entscheidungen), `empty`, `setup`, `offline`, `signed-out`; `PLAYGROUND_ENTRIES`, `PLAYGROUND_SESSION_KEYS` |
+| `PlaygroundScenario.tsx` | `<PlaygroundScenario scenario="…">` (für Demos), `startScenario()` (Tests) |
+| `demos.tsx` | Demos von WP-14 (Shell-Szenarien, Status-Icons, Primitives) |
+| `route.ts` | `#playground`-Parameter (klein, auch im Build importiert) |
+
+**Feature-Demos (WP-15/16):** `src/web/features/<f>/playground.tsx` exportiert
+`demos: PlaygroundDemo[]` und optional `slots: Partial<FeatureSlots>` (dann zeigen die
+Shell-Demos die echten Komponenten statt der Platzhalter). Titel sind englischer
+Entwicklertext ohne `t()`. Beispiel:
+
+```tsx
+export const demos: PlaygroundDemo[] = [{
+  id: 'streaming',
+  title: 'Transcript – streaming text',
+  render: () => (
+    <PlaygroundScenario scenario="streaming">
+      <TranscriptView sessionKey={PLAYGROUND_SESSION_KEYS.streaming} />
+    </PlaygroundScenario>
+  ),
+}];
+export const slots: Partial<FeatureSlots> = { Transcript: TranscriptView };
+```
+
+Hinweis: In einem Worktree ignoriert der Vite-Watcher die Dateien (`worktreeGlobs` in
+`repo.config.ts`) – nach Änderungen den Dev-Server neu starten.
