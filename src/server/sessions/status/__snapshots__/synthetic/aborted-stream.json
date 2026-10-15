@@ -1,0 +1,48 @@
+{
+  "name": "aborted-stream",
+  "transitions": [
+    {
+      "seq": 0,
+      "event": "initial",
+      "display": "sleeping"
+    },
+    {
+      "seq": 1,
+      "event": "process_starting",
+      "display": "starting"
+    },
+    {
+      "seq": 3,
+      "event": "session_state:running",
+      "display": "working"
+    },
+    {
+      "seq": 25,
+      "event": "session_state:idle",
+      "display": "idle"
+    }
+  ],
+  "facts": {
+    "runState": "idle",
+    "decisions": {
+      "permission": 0,
+      "question": 0,
+      "plan": 0,
+      "oldestKind": null,
+      "expired": 0
+    },
+    "unread": false,
+    "backgroundTasks": 0,
+    "queuedPrompts": 0,
+    "rateLimitedUntil": null,
+    "compacting": false,
+    "retrying": false,
+    "wakeupAt": null,
+    "lastTurn": {
+      "outcome": "interrupted",
+      "endedAt": "2026-10-15T08:00:00.147Z",
+      "durationMs": 1200
+    },
+    "errorCode": null
+  }
+}

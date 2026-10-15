@@ -1,0 +1,124 @@
+[
+  {
+    "seq": 22,
+    "breakdown": {
+      "percentage": 3,
+      "totalTokens": 26702,
+      "maxTokens": 1000000,
+      "source": "sdk",
+      "model": "claude-haiku-5-5",
+      "at": "2026-10-15T08:00:00.000Z",
+      "detail": "summary",
+      "categories": [
+        {
+          "name": "System prompt",
+          "tokens": 3131,
+          "kind": "used"
+        },
+        {
+          "name": "System tools",
+          "tokens": 18050,
+          "kind": "used"
+        },
+        {
+          "name": "MCP server instructions",
+          "tokens": 631,
+          "kind": "used"
+        },
+        {
+          "name": "MCP tools (deferred)",
+          "tokens": 2615,
+          "kind": "deferred"
+        },
+        {
+          "name": "System tools (deferred)",
+          "tokens": 25268,
+          "kind": "deferred"
+        },
+        {
+          "name": "Memory files",
+          "tokens": 344,
+          "kind": "used"
+        },
+        {
+          "name": "Skills",
+          "tokens": 4546,
+          "kind": "used"
+        },
+        {
+          "name": "Autocompact buffer",
+          "tokens": 33000,
+          "kind": "buffer"
+        },
+        {
+          "name": "Free space",
+          "tokens": 940298,
+          "kind": "free"
+        }
+      ],
+      "autoCompactThreshold": 967000,
+      "isAutoCompactEnabled": true
+    }
+  },
+  {
+    "seq": 32,
+    "breakdown": {
+      "percentage": 3,
+      "totalTokens": 26702,
+      "maxTokens": 1000000,
+      "source": "sdk",
+      "model": "claude-haiku-5-5",
+      "at": "2026-10-15T08:00:00.000Z",
+      "detail": "summary",
+      "categories": [
+        {
+          "name": "System prompt",
+          "tokens": 3131,
+          "kind": "used"
+        },
+        {
+          "name": "System tools",
+          "tokens": 18050,
+          "kind": "used"
+        },
+        {
+          "name": "MCP server instructions",
+          "tokens": 631,
+          "kind": "used"
+        },
+        {
+          "name": "MCP tools (deferred)",
+          "tokens": 2615,
+          "kind": "deferred"
+        },
+        {
+          "name": "System tools (deferred)",
+          "tokens": 25268,
+          "kind": "deferred"
+        },
+        {
+          "name": "Memory files",
+          "tokens": 344,
+          "kind": "used"
+        },
+        {
+          "name": "Skills",
+          "tokens": 4546,
+          "kind": "used"
+        },
+        {
+          "name": "Autocompact buffer",
+          "tokens": 33000,
+          "kind": "buffer"
+        },
+        {
+          "name": "Free space",
+          "tokens": 940298,
+          "kind": "free"
+        }
+      ],
+      "autoCompactThreshold": 967000,
+      "isAutoCompactEnabled": true
+    }
+  }
+]

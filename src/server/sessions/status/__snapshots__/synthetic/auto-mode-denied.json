@@ -1,0 +1,53 @@
+{
+  "name": "auto-mode-denied",
+  "transitions": [
+    {
+      "seq": 0,
+      "event": "initial",
+      "display": "sleeping"
+    },
+    {
+      "seq": 1,
+      "event": "process_starting",
+      "display": "starting"
+    },
+    {
+      "seq": 3,
+      "event": "session_state:running",
+      "display": "working"
+    },
+    {
+      "seq": 10,
+      "event": "turn_result",
+      "display": "working+unread"
+    },
+    {
+      "seq": 12,
+      "event": "session_state:idle",
+      "display": "done+unread"
+    }
+  ],
+  "facts": {
+    "runState": "idle",
+    "decisions": {
+      "permission": 0,
+      "question": 0,
+      "plan": 0,
+      "oldestKind": null,
+      "expired": 0
+    },
+    "unread": true,
+    "backgroundTasks": 0,
+    "queuedPrompts": 0,
+    "rateLimitedUntil": null,
+    "compacting": false,
+    "retrying": false,
+    "wakeupAt": null,
+    "lastTurn": {
+      "outcome": "success",
+      "endedAt": "2026-10-15T08:00:00.044Z",
+      "durationMs": 1200
+    },
+    "errorCode": null
+  }
+}
