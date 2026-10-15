@@ -28,6 +28,38 @@ Die SDK-Plattform-Binaries (~270 MB) werden per `ignoredOptionalDependencies` in
 (`allowBuilds`); die pnpm-Defaults `strictDepBuilds`, `minimumReleaseAge` (1 Tag) und
 `blockExoticSubdeps` bleiben aktiv.
 
+## Starten
+Parallax läuft als unsichtbarer Hintergrund-Server mit Edge-App-Fenstern (ohne Installation):
+
+```powershell
+.\parallax.cmd                 # Doppelklick genügt; in PowerShell alternativ .\parallax.ps1
+.\parallax.cmd --port=4800     # anderer Port (auch PARALLAX_PORT), Daten: --home=<dir> / PARALLAX_HOME
+.\parallax.cmd --help          # alle Optionen
+```
+
+- **Erster Start / nach `git pull`:** Der Launcher baut `dist/`, wenn es fehlt oder die Build-ID
+  nicht zum Checkout passt (dauert beim ersten Mal etwa eine Minute), startet den Server
+  unsichtbar im Hintergrund (`node dist/server.js`, Ausgabe in
+  `%LOCALAPPDATA%\Parallax\logs\server.out.log`, Log `parallax.*.log`) und öffnet Edge als
+  App-Fenster mit eigenem Profil (`%LOCALAPPDATA%\Parallax\edge`). Das Konsolenfenster schließt
+  sich danach von selbst; bei einem Fehler bleibt es mit der Meldung offen.
+- **Läuft Parallax schon,** öffnet ein weiterer Start nur ein zusätzliches Fenster (Erkennung über
+  `server.lock.json` + Health-Ping; ein verwaistes Lockfile nach einem Absturz wird ignoriert).
+  Ein laufender Server übernimmt einen neuen Build erst nach „Server beenden“ und erneutem Start.
+- **Fenster schließen beendet den Server nicht** – die Sessions laufen weiter. Beenden über das
+  Zahnrad-Menü → „Server beenden…“: Die Rückfrage nennt die arbeitenden und wartenden Sessions.
+- **Fehlermeldungen:** Port belegt → `--port=<n>` wählen; „written by a newer Parallax“ (Exit-Code
+  3) → Parallax aktualisieren (`git pull`, `pnpm install`), die Daten bleiben unverändert; Server
+  startet nicht → Pfad der Logdatei steht in der Meldung; Edge nicht gefunden → Edge installieren
+  oder `--print-url` (Adresse mit Einmal-Code, 60 s gültig) in einem Chromium-Browser öffnen.
+- Weitere Optionen: `--backend=fake` (ohne Tokens ausprobieren), `--no-build` (kein Build-Check).
+  Für den produktiven Einsatz einen eigenen Checkout verwenden, damit Entwicklungs-Neustarts nicht
+  die eigene Arbeit unterbrechen (Plan A.7).
+- `pnpm start` ruft den Launcher auf, sobald das Script umgestellt ist (Koordinator); der
+  vollständige Ablauf setzt die Server-Verdrahtung aus WP-20 voraus (Lockfile, Exit-Codes).
+- Startet ein Terminal den Launcher in einem Job-Objekt, das beim Schließen alle Prozesse beendet,
+  endet auch der Server – im Zweifel `parallax.cmd` per Doppelklick starten.
+
 ## Andere Registry / Firmen-Nexus
 Im Projekt ist **keine Registry** eingetragen; der Lockfile enthält keine Tarball-URLs und
 funktioniert mit npmjs und einem Nexus-Mirror gleichermaßen.

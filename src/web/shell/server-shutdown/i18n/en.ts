@@ -1,0 +1,24 @@
+/**
+ * English texts of "Stop server" (WP-21; namespace `serverShutdown`). Same syntax as the shell
+ * dictionaries (`{name}` placeholders, `{ one, other }` plurals); `de.ts` has exactly this shape.
+ */
+export const en = {
+  menuItem: 'Stop server…',
+  title: 'Stop the Parallax server?',
+  description:
+    'All Claude sessions of this server are stopped and every Parallax window loses its connection. ' +
+    'Start Parallax again to continue – the sessions can then be resumed.',
+  working: 'Working ({count})',
+  waiting: 'Waiting for you ({count})',
+  waitingHint:
+    'Open permissions, questions and plans expire; a plan can be approved after the restart (“Resume”).',
+  idle: {
+    one: '{count} more idle session will be closed.',
+    other: '{count} more idle sessions will be closed.',
+  },
+  nothingRunning: 'No session is running – nothing will be interrupted.',
+  confirm: 'Stop server',
+  stopping: 'Stopping…',
+  notConnected: 'Not connected to the server – it may already be stopped.',
+  failed: 'The server could not be stopped.',
+};
