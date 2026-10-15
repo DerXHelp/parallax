@@ -1,0 +1,58 @@
+{
+  "scenario": "resume",
+  "transitions": [
+    {
+      "seq": 0,
+      "event": "initial",
+      "display": "sleeping"
+    },
+    {
+      "seq": 2,
+      "event": "process_starting",
+      "display": "starting"
+    },
+    {
+      "seq": 4,
+      "event": "session_state:running",
+      "display": "working"
+    },
+    {
+      "seq": 17,
+      "event": "turn_result",
+      "display": "working+unread"
+    },
+    {
+      "seq": 19,
+      "event": "session_state:idle",
+      "display": "done+unread"
+    },
+    {
+      "seq": 24,
+      "event": "process_exit",
+      "display": "sleeping+unread"
+    }
+  ],
+  "facts": {
+    "runState": "sleeping",
+    "decisions": {
+      "permission": 0,
+      "question": 0,
+      "plan": 0,
+      "oldestKind": null,
+      "expired": 0
+    },
+    "unread": true,
+    "backgroundTasks": 0,
+    "queuedPrompts": 0,
+    "rateLimitedUntil": null,
+    "compacting": false,
+    "retrying": false,
+    "wakeupAt": null,
+    "lastTurn": {
+      "outcome": "success",
+      "endedAt": "2026-10-14T23:21:54.237Z",
+      "durationMs": 3839
+    },
+    "errorCode": null
+  }
+}

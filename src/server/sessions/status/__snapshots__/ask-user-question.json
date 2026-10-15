@@ -1,0 +1,68 @@
+{
+  "scenario": "ask-user-question",
+  "transitions": [
+    {
+      "seq": 0,
+      "event": "initial",
+      "display": "sleeping"
+    },
+    {
+      "seq": 2,
+      "event": "process_starting",
+      "display": "starting"
+    },
+    {
+      "seq": 4,
+      "event": "session_state:running",
+      "display": "working"
+    },
+    {
+      "seq": 44,
+      "event": "decisions_changed",
+      "display": "needs-answer"
+    },
+    {
+      "seq": 45,
+      "event": "decisions_changed",
+      "display": "working"
+    },
+    {
+      "seq": 139,
+      "event": "turn_result",
+      "display": "working+unread"
+    },
+    {
+      "seq": 141,
+      "event": "session_state:idle",
+      "display": "done+unread"
+    },
+    {
+      "seq": 144,
+      "event": "process_exit",
+      "display": "sleeping+unread"
+    }
+  ],
+  "facts": {
+    "runState": "sleeping",
+    "decisions": {
+      "permission": 0,
+      "question": 0,
+      "plan": 0,
+      "oldestKind": null,
+      "expired": 0
+    },
+    "unread": true,
+    "backgroundTasks": 0,
+    "queuedPrompts": 0,
+    "rateLimitedUntil": null,
+    "compacting": false,
+    "retrying": false,
+    "wakeupAt": null,
+    "lastTurn": {
+      "outcome": "success",
+      "endedAt": "2026-10-14T23:07:51.485Z",
+      "durationMs": 10205
+    },
+    "errorCode": null
+  }
+}

@@ -1,0 +1,68 @@
+[
+  {
+    "seq": 103,
+    "breakdown": {
+      "percentage": 3,
+      "totalTokens": 32529,
+      "maxTokens": 1000000,
+      "source": "sdk",
+      "model": "claude-haiku-5-5",
+      "at": "2026-10-15T08:00:00.000Z",
+      "detail": "summary",
+      "categories": [
+        {
+          "name": "System prompt",
+          "tokens": 3396,
+          "kind": "used"
+        },
+        {
+          "name": "System tools",
+          "tokens": 13814,
+          "kind": "used"
+        },
+        {
+          "name": "MCP server instructions",
+          "tokens": 631,
+          "kind": "used"
+        },
+        {
+          "name": "MCP tools (deferred)",
+          "tokens": 32131,
+          "kind": "deferred"
+        },
+        {
+          "name": "System tools (deferred)",
+          "tokens": 26355,
+          "kind": "deferred"
+        },
+        {
+          "name": "Memory files",
+          "tokens": 344,
+          "kind": "used"
+        },
+        {
+          "name": "Skills",
+          "tokens": 7709,
+          "kind": "used"
+        },
+        {
+          "name": "Messages",
+          "tokens": 6635,
+          "kind": "used"
+        },
+        {
+          "name": "Autocompact buffer",
+          "tokens": 33000,
+          "kind": "buffer"
+        },
+        {
+          "name": "Free space",
+          "tokens": 934471,
+          "kind": "free"
+        }
+      ],
+      "autoCompactThreshold": 967000,
+      "isAutoCompactEnabled": true
+    }
+  }
+]

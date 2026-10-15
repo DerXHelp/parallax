@@ -1,0 +1,556 @@
+{
+  "scenario": "permissions",
+  "sessionId": "a81548fd-0d35-40a2-97f8-c4091b6bd31c",
+  "items": [
+    {
+      "id": "86d552fc-47f9-4eaf-ba3f-1f747a4fe5cc",
+      "order": 1,
+      "at": "2026-10-14T23:06:00.970Z",
+      "parentToolUseId": null,
+      "kind": "user_message",
+      "text": {
+        "text": "Do exactly these two steps and nothing else: 1) Use the Write tool to create the file notes.txt containing the single line: alpha 2) Use the Bash tool to run exactly: mkdir -p spike-dir && ls -1 Then reply with exactly: DONE",
+        "truncated": null
+      },
+      "attachments": [],
+      "origin": "human",
+      "slashCommand": null,
+      "priority": null
+    },
+    {
+      "id": "msg_011Cg2y6H6dnwM9fhBSKkzqc:0",
+      "order": 2,
+      "at": "2026-10-14T23:06:04.197Z",
+      "parentToolUseId": null,
+      "kind": "tool_call",
+      "messageId": "msg_011Cg2y6H6dnwM9fhBSKkzqc",
+      "blockIndex": 0,
+      "model": "claude-haiku-5-5",
+      "toolUseId": "toolu_017HddxmWoBefn6egFyGNKD5",
+      "toolName": "Write",
+      "input": {
+        "file_path": "<SCRATCH>\\work\\permissions\\notes.txt",
+        "content": "alpha\n"
+      },
+      "inputTruncated": null,
+      "inputPartial": null,
+      "status": "done",
+      "result": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "text": "File created successfully at: <SCRATCH>\\work\\permissions\\notes.txt (file state is current in your context — no need to Read it back)",
+              "truncated": null
+            }
+          }
+        ],
+        "structured": null,
+        "structuredTruncated": null,
+        "at": "2026-10-14T23:06:04.605Z"
+      },
+      "elapsedSeconds": null,
+      "task": null,
+      "decision": null
+    },
+    {
+      "id": "msg_011Cg2y6H6dnwM9fhBSKkzqc:1",
+      "order": 3,
+      "at": "2026-10-14T23:06:04.236Z",
+      "parentToolUseId": null,
+      "kind": "tool_call",
+      "messageId": "msg_011Cg2y6H6dnwM9fhBSKkzqc",
+      "blockIndex": 1,
+      "model": "claude-haiku-5-5",
+      "toolUseId": "toolu_01TFCa1bkp5TtrSeYxbDMKWU",
+      "toolName": "Bash",
+      "input": {
+        "command": "mkdir -p spike-dir && ls -1",
+        "description": "Create spike-dir and list directory contents"
+      },
+      "inputTruncated": null,
+      "inputPartial": null,
+      "status": "done",
+      "result": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "text": "notes.txt\nspike-dir",
+              "truncated": null
+            }
+          }
+        ],
+        "structured": null,
+        "structuredTruncated": null,
+        "at": "2026-10-14T23:06:12.000Z"
+      },
+      "elapsedSeconds": null,
+      "task": null,
+      "decision": null
+    },
+    {
+      "id": "msg_011Cg2y72Q8CKjD5R3ccn5sA:0",
+      "order": 4,
+      "at": "2026-10-14T23:06:13.371Z",
+      "parentToolUseId": null,
+      "kind": "assistant_text",
+      "messageId": "msg_011Cg2y72Q8CKjD5R3ccn5sA",
+      "blockIndex": 0,
+      "model": "claude-haiku-5-5",
+      "text": "DONE",
+      "streaming": false,
+      "aborted": false,
+      "localCommand": null
+    },
+    {
+      "id": "293fb0f9-4c79-4205-bcae-5d0e2ce2f416",
+      "order": 5,
+      "at": "2026-10-14T23:06:13.566Z",
+      "parentToolUseId": null,
+      "kind": "user_message",
+      "text": {
+        "text": "Do exactly these three steps and nothing else: 1) Use the Edit tool to replace alpha with beta in notes.txt 2) Use the Bash tool to run exactly: mkdir -p spike-dir && ls -1 3) Use the PowerShell tool to run exactly: New-Item -ItemType Directory -Name ps-dir | Out-Null; Get-ChildItem -Name Then reply with exactly: DONE",
+        "truncated": null
+      },
+      "attachments": [],
+      "origin": "human",
+      "slashCommand": null,
+      "priority": null
+    },
+    {
+      "id": "msg_011Cg2y78QXJkHbJqV6jERQ8:0",
+      "order": 6,
+      "at": "2026-10-14T23:06:18.200Z",
+      "parentToolUseId": null,
+      "kind": "thinking",
+      "messageId": "msg_011Cg2y78QXJkHbJqV6jERQ8",
+      "blockIndex": 0,
+      "model": "claude-haiku-5-5",
+      "text": {
+        "text": "I'm wondering if the Edit tool requires reading the file first even though I just created it with Write in this same conversation. I'll just try the edit directly and fall back to reading if it errors out, since the user asked for exactly three steps.\n\n",
+        "truncated": null
+      },
+      "redacted": false,
+      "streaming": false
+    },
+    {
+      "id": "msg_011Cg2y78QXJkHbJqV6jERQ8:1",
+      "order": 7,
+      "at": "2026-10-14T23:06:18.219Z",
+      "parentToolUseId": null,
+      "kind": "tool_call",
+      "messageId": "msg_011Cg2y78QXJkHbJqV6jERQ8",
+      "blockIndex": 1,
+      "model": "claude-haiku-5-5",
+      "toolUseId": "toolu_01CaY674MXJ8Swo6dZJa2a5v",
+      "toolName": "Edit",
+      "input": {
+        "replace_all": false,
+        "file_path": "<SCRATCH>\\work\\permissions\\notes.txt",
+        "old_string": "alpha",
+        "new_string": "beta"
+      },
+      "inputTruncated": null,
+      "inputPartial": null,
+      "status": "done",
+      "result": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "text": "The file <SCRATCH>\\work\\permissions\\notes.txt has been updated successfully. (file state is current in your context — no need to Read it back)",
+              "truncated": null
+            }
+          }
+        ],
+        "structured": null,
+        "structuredTruncated": null,
+        "at": "2026-10-14T23:06:18.496Z"
+      },
+      "elapsedSeconds": null,
+      "task": null,
+      "decision": null
+    },
+    {
+      "id": "msg_011Cg2y78QXJkHbJqV6jERQ8:2",
+      "order": 8,
+      "at": "2026-10-14T23:06:18.233Z",
+      "parentToolUseId": null,
+      "kind": "tool_call",
+      "messageId": "msg_011Cg2y78QXJkHbJqV6jERQ8",
+      "blockIndex": 2,
+      "model": "claude-haiku-5-5",
+      "toolUseId": "toolu_015RDauuikBVWZb2hQWcbLLX",
+      "toolName": "Bash",
+      "input": {
+        "command": "mkdir -p spike-dir && ls -1",
+        "description": "Create spike-dir and list directory contents"
+      },
+      "inputTruncated": null,
+      "inputPartial": null,
+      "status": "done",
+      "result": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "text": "notes.txt\nspike-dir",
+              "truncated": null
+            }
+          }
+        ],
+        "structured": null,
+        "structuredTruncated": null,
+        "at": "2026-10-14T23:06:19.446Z"
+      },
+      "elapsedSeconds": null,
+      "task": null,
+      "decision": null
+    },
+    {
+      "id": "msg_011Cg2y78QXJkHbJqV6jERQ8:3",
+      "order": 9,
+      "at": "2026-10-14T23:06:18.250Z",
+      "parentToolUseId": null,
+      "kind": "tool_call",
+      "messageId": "msg_011Cg2y78QXJkHbJqV6jERQ8",
+      "blockIndex": 3,
+      "model": "claude-haiku-5-5",
+      "toolUseId": "toolu_017DpwfxjvEEf1h117QVTLzZ",
+      "toolName": "PowerShell",
+      "input": {
+        "command": "New-Item -ItemType Directory -Name ps-dir | Out-Null; Get-ChildItem -Name",
+        "description": "Create ps-dir and list directory contents"
+      },
+      "inputTruncated": null,
+      "inputPartial": null,
+      "status": "done",
+      "result": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "text": "ps-dir\r\nspike-dir\r\nnotes.txt",
+              "truncated": null
+            }
+          }
+        ],
+        "structured": null,
+        "structuredTruncated": null,
+        "at": "2026-10-14T23:06:24.258Z"
+      },
+      "elapsedSeconds": null,
+      "task": null,
+      "decision": null
+    },
+    {
+      "id": "msg_011Cg2y7vTUGztmbFVpNZxTu:0",
+      "order": 10,
+      "at": "2026-10-14T23:06:25.473Z",
+      "parentToolUseId": null,
+      "kind": "assistant_text",
+      "messageId": "msg_011Cg2y7vTUGztmbFVpNZxTu",
+      "blockIndex": 0,
+      "model": "claude-haiku-5-5",
+      "text": "DONE",
+      "streaming": false,
+      "aborted": false,
+      "localCommand": null
+    },
+    {
+      "id": "fd0c6b98-75b7-4cf1-90d1-e94a83d28e0f",
+      "order": 11,
+      "at": "2026-10-14T23:06:25.544Z",
+      "parentToolUseId": null,
+      "kind": "user_message",
+      "text": {
+        "text": "Use the Bash tool to run exactly: rm notes.txt",
+        "truncated": null
+      },
+      "attachments": [],
+      "origin": "human",
+      "slashCommand": null,
+      "priority": null
+    },
+    {
+      "id": "msg_011Cg2y81eWHJNm5xWvEJMUa:0",
+      "order": 12,
+      "at": "2026-10-14T23:06:27.149Z",
+      "parentToolUseId": null,
+      "kind": "tool_call",
+      "messageId": "msg_011Cg2y81eWHJNm5xWvEJMUa",
+      "blockIndex": 0,
+      "model": "claude-haiku-5-5",
+      "toolUseId": "toolu_01NFYoKD2fuexwfd7YVkjqfg",
+      "toolName": "Bash",
+      "input": {
+        "command": "rm notes.txt",
+        "description": "Delete notes.txt"
+      },
+      "inputTruncated": null,
+      "inputPartial": null,
+      "status": "error",
+      "result": {
+        "isError": true,
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "text": "The user declined: keep notes.txt. Do not try again; reply with exactly: KEPT",
+              "truncated": null
+            }
+          }
+        ],
+        "structured": null,
+        "structuredTruncated": null,
+        "at": "2026-10-14T23:06:27.360Z"
+      },
+      "elapsedSeconds": null,
+      "task": null,
+      "decision": null
+    },
+    {
+      "id": "msg_011Cg2y89Q5aMJ1Amfyehje5:0",
+      "order": 13,
+      "at": "2026-10-14T23:06:28.438Z",
+      "parentToolUseId": null,
+      "kind": "assistant_text",
+      "messageId": "msg_011Cg2y89Q5aMJ1Amfyehje5",
+      "blockIndex": 0,
+      "model": "claude-haiku-5-5",
+      "text": "KEPT",
+      "streaming": false,
+      "aborted": false,
+      "localCommand": null
+    },
+    {
+      "id": "c319e962-b10d-4dae-b7f9-ce52ff9c6f5b",
+      "order": 14,
+      "at": "2026-10-14T23:06:28.513Z",
+      "parentToolUseId": null,
+      "kind": "user_message",
+      "text": {
+        "text": "Use the Bash tool to run exactly: touch final.txt   Then reply with exactly: DONE",
+        "truncated": null
+      },
+      "attachments": [],
+      "origin": "human",
+      "slashCommand": null,
+      "priority": null
+    },
+    {
+      "id": "msg_011Cg2y8ERwyXp3JnFFi5dvs:0",
+      "order": 15,
+      "at": "2026-10-14T23:06:29.865Z",
+      "parentToolUseId": null,
+      "kind": "tool_call",
+      "messageId": "msg_011Cg2y8ERwyXp3JnFFi5dvs",
+      "blockIndex": 0,
+      "model": "claude-haiku-5-5",
+      "toolUseId": "toolu_01QGg8JT4H4khkjVKDncyDFD",
+      "toolName": "Bash",
+      "input": {
+        "command": "touch final.txt",
+        "description": "Create empty final.txt file"
+      },
+      "inputTruncated": null,
+      "inputPartial": null,
+      "status": "interrupted",
+      "result": {
+        "isError": true,
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "text": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.\n\nNote: The user's next message may contain a correction or preference. Pay close attention — if they explain what went wrong or how they'd prefer you to work, consider saving that to memory for future sessions.",
+              "truncated": null
+            }
+          }
+        ],
+        "structured": null,
+        "structuredTruncated": null,
+        "at": "2026-10-14T23:06:30.043Z"
+      },
+      "elapsedSeconds": null,
+      "task": null,
+      "decision": null
+    },
+    {
+      "id": "dc2689f0-b1cf-4051-9a82-6fe85c4c4722",
+      "order": 16,
+      "at": "2026-10-14T23:06:30.048Z",
+      "parentToolUseId": null,
+      "kind": "system",
+      "event": "interrupted",
+      "forToolUse": true
+    },
+    {
+      "id": "da626c37-1e12-47d5-9702-eb2b8104d6fb",
+      "order": 17,
+      "at": "2026-10-14T23:06:30.098Z",
+      "parentToolUseId": null,
+      "kind": "user_message",
+      "text": {
+        "text": "Reply with exactly: STILL-HERE",
+        "truncated": null
+      },
+      "attachments": [],
+      "origin": "human",
+      "slashCommand": null,
+      "priority": null
+    },
+    {
+      "id": "msg_011Cg2y8MGijRLyQZnk72Pyd:0",
+      "order": 18,
+      "at": "2026-10-14T23:06:31.241Z",
+      "parentToolUseId": null,
+      "kind": "assistant_text",
+      "messageId": "msg_011Cg2y8MGijRLyQZnk72Pyd",
+      "blockIndex": 0,
+      "model": "claude-haiku-5-5",
+      "text": "STILL-HERE",
+      "streaming": false,
+      "aborted": false,
+      "localCommand": null
+    },
+    {
+      "id": "0e8afe99-64fd-42f8-b28c-c5eacdb107cc",
+      "order": 19,
+      "at": "2026-10-14T23:06:31.306Z",
+      "parentToolUseId": null,
+      "kind": "user_message",
+      "text": {
+        "text": "Use the Bash tool to run exactly: mkdir -p accept-dir && ls -1   Then reply with exactly: DONE",
+        "truncated": null
+      },
+      "attachments": [],
+      "origin": "human",
+      "slashCommand": null,
+      "priority": null
+    },
+    {
+      "id": "msg_011Cg2y8TM6KxsXU5uc8vpad:0",
+      "order": 20,
+      "at": "2026-10-14T23:06:32.898Z",
+      "parentToolUseId": null,
+      "kind": "tool_call",
+      "messageId": "msg_011Cg2y8TM6KxsXU5uc8vpad",
+      "blockIndex": 0,
+      "model": "claude-haiku-5-5",
+      "toolUseId": "toolu_01GBMfNNW7gfGY6Waaq2Tuie",
+      "toolName": "Bash",
+      "input": {
+        "command": "mkdir -p accept-dir && ls -1",
+        "description": "Create accept-dir and list directory contents"
+      },
+      "inputTruncated": null,
+      "inputPartial": null,
+      "status": "done",
+      "result": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "text": "accept-dir\nnotes.txt\nps-dir\nspike-dir",
+              "truncated": null
+            }
+          }
+        ],
+        "structured": null,
+        "structuredTruncated": null,
+        "at": "2026-10-14T23:06:34.021Z"
+      },
+      "elapsedSeconds": null,
+      "task": null,
+      "decision": null
+    },
+    {
+      "id": "msg_011Cg2y8e32Ng92CaUtX3d8Z:0",
+      "order": 21,
+      "at": "2026-10-14T23:06:35.215Z",
+      "parentToolUseId": null,
+      "kind": "assistant_text",
+      "messageId": "msg_011Cg2y8e32Ng92CaUtX3d8Z",
+      "blockIndex": 0,
+      "model": "claude-haiku-5-5",
+      "text": "DONE",
+      "streaming": false,
+      "aborted": false,
+      "localCommand": null
+    },
+    {
+      "id": "ea7772b0-3e23-47db-9bf1-f0f35f96d91c",
+      "order": 22,
+      "at": "2026-10-14T23:06:35.281Z",
+      "parentToolUseId": null,
+      "kind": "user_message",
+      "text": {
+        "text": "Use the Bash tool to run exactly: touch after-accept.txt   Then reply with exactly: DONE",
+        "truncated": null
+      },
+      "attachments": [],
+      "origin": "human",
+      "slashCommand": null,
+      "priority": null
+    },
+    {
+      "id": "msg_011Cg2y8jKGkUjc7ULiJpq28:0",
+      "order": 23,
+      "at": "2026-10-14T23:06:36.785Z",
+      "parentToolUseId": null,
+      "kind": "tool_call",
+      "messageId": "msg_011Cg2y8jKGkUjc7ULiJpq28",
+      "blockIndex": 0,
+      "model": "claude-haiku-5-5",
+      "toolUseId": "toolu_012n7X3V9GDNTNcVisgoxu2G",
+      "toolName": "Bash",
+      "input": {
+        "command": "touch after-accept.txt",
+        "description": "Create empty after-accept.txt file"
+      },
+      "inputTruncated": null,
+      "inputPartial": null,
+      "status": "done",
+      "result": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "text": "(Bash completed with no output)",
+              "truncated": null
+            }
+          }
+        ],
+        "structured": null,
+        "structuredTruncated": null,
+        "at": "2026-10-14T23:06:37.614Z"
+      },
+      "elapsedSeconds": null,
+      "task": null,
+      "decision": null
+    },
+    {
+      "id": "msg_011Cg2y8uL2pPBqqgSbL6JLK:0",
+      "order": 24,
+      "at": "2026-10-14T23:06:38.710Z",
+      "parentToolUseId": null,
+      "kind": "assistant_text",
+      "messageId": "msg_011Cg2y8uL2pPBqqgSbL6JLK",
+      "blockIndex": 0,
+      "model": "claude-haiku-5-5",
+      "text": "DONE",
+      "streaming": false,
+      "aborted": false,
+      "localCommand": null
+    }
+  ],
+  "unknownCounts": {}
+}

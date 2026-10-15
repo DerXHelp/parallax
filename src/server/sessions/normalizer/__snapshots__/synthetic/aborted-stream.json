@@ -1,0 +1,237 @@
+{
+  "name": "aborted-stream",
+  "conversations": [
+    "cv_00000000000000000000000000000001"
+  ],
+  "timeline": [
+    "#3 system/session_state_changed: !session_id | !session_state:running",
+    "#4 command_lifecycle/started: upsert 00000000-0000-4000-9000-00000000044c user_message o1 | !prompt_lifecycle:started",
+    "#5 system/init: detail.patch {init} | !init",
+    "#6 stream_event/message_start: !assistant_model | !context_estimate",
+    "#7 stream_event/content_block_start/text: upsert msg_syn_abort_1:0 assistant_text o2 streaming 0ch",
+    "#8 delta msg_syn_abort_1:0 text ×1 (+6ch)",
+    "#9 assistant: upsert msg_syn_abort_1:0 assistant_text o2 aborted 6ch",
+    "#12 stream_event/content_block_start/thinking: upsert msg_syn_abort_2:0 thinking o3 streaming 0ch",
+    "#13-14 delta msg_syn_abort_2:0 thinking ×2 (+49152ch)",
+    "#17 stream_event/content_block_start/tool_use: upsert msg_syn_abort_2:1 tool_call o4 Bash streaming_input",
+    "#18-19 delta msg_syn_abort_2:1 inputPartial ×2 (+16ch)",
+    "#20 stream_event/content_block_start/text: upsert msg_syn_abort_2:2 assistant_text o5 streaming 0ch",
+    "#21 delta msg_syn_abort_2:2 text ×1 (+7ch)",
+    "#23 result/error_during_execution: upsert msg_syn_abort_2:0 thinking o3 final 49152ch | upsert msg_syn_abort_2:1 tool_call o4 Bash interrupted | upsert msg_syn_abort_2:2 assistant_text o5 aborted 7ch | upsert 00000000-0000-4000-9000-000000000015 turn_result o6 interrupted | !turn_result:interrupted",
+    "#24 command_lifecycle/cancelled: !prompt_lifecycle:cancelled",
+    "#25 system/session_state_changed: !session_state:idle"
+  ],
+  "signals": [
+    {
+      "seq": 3,
+      "type": "session_id",
+      "sessionId": "5e550000-0000-4000-8000-000000000001"
+    },
+    {
+      "seq": 3,
+      "type": "session_state",
+      "state": "running"
+    },
+    {
+      "seq": 4,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-00000000044c",
+      "state": "started"
+    },
+    {
+      "seq": 5,
+      "type": "init",
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "cliVersion": "2.1.300",
+      "apiKeySource": "none",
+      "capabilities": [
+        "msg_lifecycle_v1"
+      ]
+    },
+    {
+      "seq": 6,
+      "type": "assistant_model",
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 6,
+      "type": "context_estimate",
+      "totalTokens": 20503,
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 23,
+      "type": "turn_result",
+      "outcome": "interrupted",
+      "durationMs": 1200,
+      "costUsdTotal": 0.001,
+      "error": null,
+      "resultExcerpt": "OK",
+      "userMessageUuids": [],
+      "synthetic": false,
+      "startupFailure": false
+    },
+    {
+      "seq": 24,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-00000000044c",
+      "state": "cancelled"
+    },
+    {
+      "seq": 25,
+      "type": "session_state",
+      "state": "idle"
+    }
+  ],
+  "items": {
+    "cv_00000000000000000000000000000001": [
+      {
+        "id": "00000000-0000-4000-9000-00000000044c",
+        "order": 1,
+        "at": "2026-10-15T07:59:59.937Z",
+        "parentToolUseId": null,
+        "kind": "user_message",
+        "text": {
+          "text": "Count slowly",
+          "truncated": null
+        },
+        "attachments": [],
+        "origin": "human",
+        "slashCommand": null,
+        "priority": "next"
+      },
+      {
+        "id": "msg_syn_abort_1:0",
+        "order": 2,
+        "at": "2026-10-15T08:00:00.007Z",
+        "parentToolUseId": null,
+        "kind": "assistant_text",
+        "messageId": "msg_syn_abort_1",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "text": "1, 2, ",
+        "streaming": false,
+        "aborted": true,
+        "localCommand": null
+      },
+      {
+        "id": "msg_syn_abort_2:0",
+        "order": 3,
+        "at": "2026-10-15T08:00:00.037Z",
+        "parentToolUseId": null,
+        "kind": "thinking",
+        "messageId": "msg_syn_abort_2",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "text": {
+          "text": "«49152 chars, sha256 c4f0fc0f4cb75436»",
+          "truncated": null
+        },
+        "redacted": false,
+        "streaming": false
+      },
+      {
+        "id": "msg_syn_abort_2:1",
+        "order": 4,
+        "at": "2026-10-15T08:00:00.087Z",
+        "parentToolUseId": null,
+        "kind": "tool_call",
+        "messageId": "msg_syn_abort_2",
+        "blockIndex": 1,
+        "model": "claude-haiku-5-5",
+        "toolUseId": "toolu_syn_abort",
+        "toolName": "Bash",
+        "input": {
+          "command": "ls"
+        },
+        "inputTruncated": null,
+        "inputPartial": null,
+        "status": "interrupted",
+        "result": null,
+        "elapsedSeconds": null,
+        "task": null,
+        "decision": null
+      },
+      {
+        "id": "msg_syn_abort_2:2",
+        "order": 5,
+        "at": "2026-10-15T08:00:00.117Z",
+        "parentToolUseId": null,
+        "kind": "assistant_text",
+        "messageId": "msg_syn_abort_2",
+        "blockIndex": 2,
+        "model": "claude-haiku-5-5",
+        "text": "Partial",
+        "streaming": false,
+        "aborted": true,
+        "localCommand": null
+      },
+      {
+        "id": "00000000-0000-4000-9000-000000000015",
+        "order": 6,
+        "at": "2026-10-15T08:00:00.147Z",
+        "parentToolUseId": null,
+        "kind": "turn_result",
+        "outcome": "interrupted",
+        "subtype": "error_during_execution",
+        "terminalReason": "aborted_streaming",
+        "stopReason": null,
+        "durationMs": 1200,
+        "durationApiMs": 1000,
+        "numTurns": 1,
+        "usage": {
+          "input": 2,
+          "output": 10,
+          "cacheRead": 20000,
+          "cacheCreation": 500
+        },
+        "costUsdTotal": 0.001,
+        "costUsdTurn": null,
+        "permissionDenials": 0,
+        "errors": [],
+        "userMessageUuids": [],
+        "synthetic": false
+      }
+    ]
+  },
+  "detail": {
+    "init": {
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "cwd": "D:\\work\\synthetic",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "apiKeySource": "none",
+      "cliVersion": "2.1.300",
+      "tools": [
+        "Bash",
+        "Read",
+        "Write",
+        "Edit",
+        "Agent"
+      ],
+      "slashCommands": [
+        "clear",
+        "compact"
+      ],
+      "terminalSlashCommands": [],
+      "mcpServers": [],
+      "skills": [],
+      "agents": [
+        "general-purpose"
+      ],
+      "plugins": [],
+      "capabilities": [
+        "msg_lifecycle_v1"
+      ],
+      "outputStyle": "default",
+      "fastModeState": "off",
+      "effort": null
+    }
+  },
+  "unknownCounts": {},
+  "ignoredCounts": {
+    "stream/delta:citations_delta": 1
+  }
+}

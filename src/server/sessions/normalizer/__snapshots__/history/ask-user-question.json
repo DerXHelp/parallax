@@ -1,0 +1,106 @@
+{
+  "scenario": "ask-user-question",
+  "sessionId": "8bd89597-a855-4639-b491-86fb5b099719",
+  "items": [
+    {
+      "id": "e508df36-4c1a-426b-b1fe-64ccdac99263",
+      "order": 1,
+      "at": "2026-10-14T23:07:42.673Z",
+      "parentToolUseId": null,
+      "kind": "user_message",
+      "text": {
+        "text": "Use the AskUserQuestion tool exactly once to ask me this single question: \"Which color should the button be?\" with header \"Color\" and exactly two options, \"Red\" and \"Blue\", each with a one-line description and a short markdown preview. After my answer, reply with exactly: CHOSEN <color> NOTE <my note>",
+        "truncated": null
+      },
+      "attachments": [],
+      "origin": "human",
+      "slashCommand": null,
+      "priority": null
+    },
+    {
+      "id": "msg_011Cg2yDnk3P8AFkJwVMRTYv:0",
+      "order": 2,
+      "at": "2026-10-14T23:07:46.239Z",
+      "parentToolUseId": null,
+      "kind": "tool_call",
+      "messageId": "msg_011Cg2yDnk3P8AFkJwVMRTYv",
+      "blockIndex": 0,
+      "model": "claude-haiku-5-5",
+      "toolUseId": "toolu_01K761yDSZUmyYpvtRWzmFfB",
+      "toolName": "AskUserQuestion",
+      "input": {
+        "questions": [
+          {
+            "question": "Which color should the button be?",
+            "header": "Color",
+            "multiSelect": false,
+            "options": [
+              {
+                "label": "Red",
+                "description": "A bold, high-contrast red button.",
+                "preview": "```\n[  Submit  ]  <- red (#D32F2F)\n```"
+              },
+              {
+                "label": "Blue",
+                "description": "A calm, neutral blue button.",
+                "preview": "```\n[  Submit  ]  <- blue (#1976D2)\n```"
+              }
+            ]
+          }
+        ]
+      },
+      "inputTruncated": null,
+      "inputPartial": null,
+      "status": "done",
+      "result": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "text": "The user answered: \"Which color should the button be?\"=\"Blue\" selected preview:\n```\n[  Submit  ]  <- blue (#1976D2)\n``` notes: Spike note: prefer a darker shade. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.",
+              "truncated": null
+            }
+          }
+        ],
+        "structured": null,
+        "structuredTruncated": null,
+        "at": "2026-10-14T23:07:46.344Z"
+      },
+      "elapsedSeconds": null,
+      "task": null,
+      "decision": null
+    },
+    {
+      "id": "msg_011Cg2yDywjTpXKpbbVNMiTr:0",
+      "order": 3,
+      "at": "2026-10-14T23:07:51.415Z",
+      "parentToolUseId": null,
+      "kind": "thinking",
+      "messageId": "msg_011Cg2yDywjTpXKpbbVNMiTr",
+      "blockIndex": 0,
+      "model": "claude-haiku-5-5",
+      "text": {
+        "text": "The instruction is to ask once then respond exactly \"CHOSEN <color> NOTE <my note>\" with color Blue and the note being that spike note about preferring a darker shade — I need to consider whether this note is actually asking me to change my answer, since I'm told to read answers carefully for requests of clarification or changes.\n\n",
+        "truncated": null
+      },
+      "redacted": false,
+      "streaming": false
+    },
+    {
+      "id": "msg_011Cg2yDywjTpXKpbbVNMiTr:1",
+      "order": 4,
+      "at": "2026-10-14T23:07:51.442Z",
+      "parentToolUseId": null,
+      "kind": "assistant_text",
+      "messageId": "msg_011Cg2yDywjTpXKpbbVNMiTr",
+      "blockIndex": 1,
+      "model": "claude-haiku-5-5",
+      "text": "CHOSEN Blue NOTE Spike note: prefer a darker shade. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.",
+      "streaming": false,
+      "aborted": false,
+      "localCommand": null
+    }
+  ],
+  "unknownCounts": {}
+}

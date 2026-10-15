@@ -1,0 +1,223 @@
+{
+  "name": "legacy-cli",
+  "conversations": [
+    "cv_00000000000000000000000000000001"
+  ],
+  "timeline": [
+    "#3 system/init: detail.patch {init} | !session_id | !init",
+    "#4 system/status: upsert 00000000-0000-4000-9000-0000000003e8 user_message o1",
+    "#5 assistant: upsert msg_syn_legacy_1:0 assistant_text o2 final 12ch | !assistant_model",
+    "#6 result/success: upsert 00000000-0000-4000-9000-000000000004 turn_result o3 success | !turn_result:success",
+    "#8 system/init: !init",
+    "#9 assistant: upsert msg_syn_legacy_2:0 assistant_text o4 final 13ch",
+    "#10 result/success: upsert 00000000-0000-4000-9000-0000000003e9 user_message o5 | upsert 00000000-0000-4000-9000-000000000007 turn_result o6 success | !turn_result:success"
+  ],
+  "signals": [
+    {
+      "seq": 3,
+      "type": "session_id",
+      "sessionId": "5e550000-0000-4000-8000-000000000001"
+    },
+    {
+      "seq": 3,
+      "type": "init",
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "cliVersion": "2.1.300",
+      "apiKeySource": "none",
+      "capabilities": []
+    },
+    {
+      "seq": 5,
+      "type": "assistant_model",
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 6,
+      "type": "turn_result",
+      "outcome": "success",
+      "durationMs": 1200,
+      "costUsdTotal": 0.001,
+      "error": null,
+      "resultExcerpt": "OK",
+      "userMessageUuids": [
+        "00000000-0000-4000-9000-0000000003e8"
+      ],
+      "synthetic": false,
+      "startupFailure": false
+    },
+    {
+      "seq": 8,
+      "type": "init",
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "cliVersion": "2.1.300",
+      "apiKeySource": "none",
+      "capabilities": []
+    },
+    {
+      "seq": 10,
+      "type": "turn_result",
+      "outcome": "success",
+      "durationMs": 1200,
+      "costUsdTotal": 0.001,
+      "error": null,
+      "resultExcerpt": "OK",
+      "userMessageUuids": [],
+      "synthetic": false,
+      "startupFailure": false
+    }
+  ],
+  "items": {
+    "cv_00000000000000000000000000000001": [
+      {
+        "id": "00000000-0000-4000-9000-0000000003e8",
+        "order": 1,
+        "at": "2026-10-15T07:59:59.973Z",
+        "parentToolUseId": null,
+        "kind": "user_message",
+        "text": {
+          "text": "Old CLI, first prompt",
+          "truncated": null
+        },
+        "attachments": [],
+        "origin": "human",
+        "slashCommand": null,
+        "priority": "next"
+      },
+      {
+        "id": "msg_syn_legacy_1:0",
+        "order": 2,
+        "at": "2026-10-15T08:00:00.003Z",
+        "parentToolUseId": null,
+        "kind": "assistant_text",
+        "messageId": "msg_syn_legacy_1",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "text": "First answer",
+        "streaming": false,
+        "aborted": false,
+        "localCommand": null
+      },
+      {
+        "id": "00000000-0000-4000-9000-000000000004",
+        "order": 3,
+        "at": "2026-10-15T08:00:00.013Z",
+        "parentToolUseId": null,
+        "kind": "turn_result",
+        "outcome": "success",
+        "subtype": "success",
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 1200,
+        "durationApiMs": 1000,
+        "numTurns": 1,
+        "usage": {
+          "input": 2,
+          "output": 10,
+          "cacheRead": 20000,
+          "cacheCreation": 500
+        },
+        "costUsdTotal": 0.001,
+        "costUsdTurn": null,
+        "permissionDenials": 0,
+        "errors": [],
+        "userMessageUuids": [
+          "00000000-0000-4000-9000-0000000003e8"
+        ],
+        "synthetic": false
+      },
+      {
+        "id": "msg_syn_legacy_2:0",
+        "order": 4,
+        "at": "2026-10-15T08:00:00.006Z",
+        "parentToolUseId": null,
+        "kind": "assistant_text",
+        "messageId": "msg_syn_legacy_2",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "text": "Second answer",
+        "streaming": false,
+        "aborted": false,
+        "localCommand": null
+      },
+      {
+        "id": "00000000-0000-4000-9000-0000000003e9",
+        "order": 5,
+        "at": "2026-10-15T08:00:00.023Z",
+        "parentToolUseId": null,
+        "kind": "user_message",
+        "text": {
+          "text": "Old CLI, second prompt",
+          "truncated": null
+        },
+        "attachments": [],
+        "origin": "human",
+        "slashCommand": null,
+        "priority": "next"
+      },
+      {
+        "id": "00000000-0000-4000-9000-000000000007",
+        "order": 6,
+        "at": "2026-10-15T08:00:00.053Z",
+        "parentToolUseId": null,
+        "kind": "turn_result",
+        "outcome": "success",
+        "subtype": "success",
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 1200,
+        "durationApiMs": 1000,
+        "numTurns": 1,
+        "usage": {
+          "input": 2,
+          "output": 10,
+          "cacheRead": 20000,
+          "cacheCreation": 500
+        },
+        "costUsdTotal": 0.001,
+        "costUsdTurn": 0,
+        "permissionDenials": 0,
+        "errors": [],
+        "userMessageUuids": [],
+        "synthetic": false
+      }
+    ]
+  },
+  "detail": {
+    "init": {
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "cwd": "D:\\work\\synthetic",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "apiKeySource": "none",
+      "cliVersion": "2.1.300",
+      "tools": [
+        "Bash",
+        "Read",
+        "Write",
+        "Edit",
+        "Agent"
+      ],
+      "slashCommands": [
+        "clear",
+        "compact"
+      ],
+      "terminalSlashCommands": [],
+      "mcpServers": [],
+      "skills": [],
+      "agents": [
+        "general-purpose"
+      ],
+      "plugins": [],
+      "capabilities": [],
+      "outputStyle": "default",
+      "fastModeState": "off",
+      "effort": null
+    }
+  },
+  "unknownCounts": {},
+  "ignoredCounts": {}
+}
