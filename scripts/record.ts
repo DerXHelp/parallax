@@ -16,6 +16,7 @@
  * every scenario after a failed auth probe is refused; stops on an API key in use, auth/credit
  * errors or when the estimated spend of all spike runs exceeds the budget (2 USD).
  */
+import { parseAuthStatus } from '../src/server/claude/authStatus';
 import { BUDGET_USD, createRunContext, loadState, saveState, STATE_FILE } from './record/context';
 import { resanitize } from './record/resanitize';
 import { printStats } from './record/stats';
@@ -83,10 +84,10 @@ async function main(argv: readonly string[]): Promise<number> {
   const ctx = await createRunContext();
   out(`record: claude ${ctx.cliVersion}, SDK ${ctx.sdkVersion}, scratch ${ctx.scratchRoot}`);
   out(`record: spent so far ${ctx.spentUsd().toFixed(4)} USD of ${BUDGET_USD} USD`);
-  const auth = ctx.authStatus;
-  if (!auth.loggedIn || auth.authMethod !== 'claude.ai' || auth.apiProvider !== 'firstParty') {
+  const auth = parseAuthStatus(ctx.authStatus);
+  if (auth.state !== 'logged_in' || auth.method !== 'claude.ai' || auth.apiProvider !== 'firstParty') {
     ctx.state.blocked = {
-      reason: `claude auth status: loggedIn=${String(auth.loggedIn)}, authMethod=${auth.authMethod ?? '-'}, apiProvider=${auth.apiProvider ?? '-'}`,
+      reason: `claude auth status: state=${auth.state}, authMethod=${auth.method ?? '-'}, apiProvider=${auth.apiProvider ?? '-'}`,
       at: new Date().toISOString(),
     };
     ctx.save();
