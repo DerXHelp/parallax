@@ -277,7 +277,11 @@ function serverHandle(parts: HandleParts): E2eServer {
       if (lockAfter.kind !== 'missing') throw new Error(`lock file left behind: ${lockAfter.kind}`);
       if (isProcessAlive(ready.pid)) throw new Error(`server PID ${String(ready.pid)} still alive`);
       // A child keeps its ParentProcessId after the parent's exit; younger than the start = ours.
-      const orphans = (await childProcesses(ready.pid)).filter((p) => p.startedAt >= startedAt);
+      const children = await childProcesses(ready.pid);
+      if (children.kind === 'unknown') {
+        throw new Error(`child processes unknown: ${children.reason} ${children.detail}`);
+      }
+      const orphans = children.processes.filter((p) => p.startedAt >= startedAt);
       if (orphans.length > 0) {
         for (const orphan of orphans) await killProcessTree(orphan.pid);
         throw new Error(

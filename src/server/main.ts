@@ -5,11 +5,12 @@
  * `--home=<dir>`, `--log-level=<level>`; env `PARALLAX_HOME`, `PARALLAX_PORT`, `PARALLAX_BACKEND`,
  * `PARALLAX_DEV`, `PARALLAX_LOG_LEVEL`. Without `--backend`: dev → fake, otherwise sdk.
  *
- * Order: config → logging → `startServer()` (app/compose.ts: single instance, stores, engine, hub,
- * app, shutdown frame, listen, lock file). Exit codes (launcher/exitCodes.ts): 0 regular shutdown,
- * 1 failure (also invalid options), 3 data of a newer Parallax, 4 port in use, 5 already running
- * for this PARALLAX_HOME. The reason of a failed start is the LAST line on stderr (the launcher
- * shows it from logs/server.out.log), so nothing is written after it.
+ * Order: config → home lock (R2-05, before anything touches the home) → logging → `startServer()`
+ * (app/compose.ts: single instance, stores, engine, hub, app, shutdown frame, listen, lock file,
+ * access check of the home). Exit codes (launcher/exitCodes.ts): 0 regular shutdown, 1 failure
+ * (also invalid options), 3 data of a newer Parallax, 4 port in use, 5 already running for this
+ * PARALLAX_HOME. The reason of a failed start is the LAST line on stderr (the launcher shows it
+ * from logs/server.out.log), so nothing is written after it.
  */
 import path from 'node:path';
 import { isatty } from 'node:tty';
@@ -17,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { StartupError, startServer } from './app/compose';
 import { ConfigError, loadConfig, type ServerConfig } from './config';
 import { SERVER_EXIT_CODES } from './launcher/exitCodes';
+import { acquireHomeLock, type HomeLock } from './lib/homeLock';
 import { initLogging, logger, type LoggingHandle } from './lib/logger';
 
 /** Writes the line to stderr, then exits (stderr to a pipe may be asynchronous on Windows). */
@@ -41,6 +43,25 @@ async function main(): Promise<void> {
     return;
   }
 
+  // R2-05: the exclusive lock of the data directory BEFORE the log (it lives in the home) and the
+  // first store – a second server on this home (double click, another --port, dev:live) never
+  // opens a file. Busy → 5: the launcher then finds the winner and opens a window there.
+  let homeLock: HomeLock;
+  try {
+    const acquired = await acquireHomeLock(config.home);
+    if (acquired.kind === 'busy') {
+      exitWith(SERVER_EXIT_CODES.alreadyRunning, `Another Parallax server already uses ${config.home}.`);
+      return;
+    }
+    homeLock = acquired.lock;
+  } catch (error) {
+    exitWith(
+      SERVER_EXIT_CODES.failure,
+      `The data folder ${config.home} cannot be locked: ${describe(error)}`,
+    );
+    return;
+  }
+
   // Started by the launcher, stdout goes to logs/server.out.log: the pino file log is enough there
   // (WP-21). Dev (concurrently, no TTY) keeps the pretty console.
   const stdoutIsTty = isatty(1);
@@ -61,7 +82,7 @@ async function main(): Promise<void> {
   const webRoot = config.dev ? null : path.join(path.dirname(fileURLToPath(import.meta.url)), 'web');
 
   try {
-    await startServer({ config, webRoot, logging });
+    await startServer({ config, webRoot, logging, homeLock });
   } catch (error) {
     const exitCode = error instanceof StartupError ? error.exitCode : SERVER_EXIT_CODES.failure;
     const message =
