@@ -18,6 +18,7 @@ Primitive, **kein Barrel** (`index.ts`). Kompakt: Standardhöhe 28 px, Text `tex
 | `dialog.tsx` | `Dialog` + `Trigger`, `Content` (`showCloseButton`), `Header`, `Footer`, `Title`, `Description`, `Close`, `Overlay`, `Portal` – nur für echte Dialoge, Entscheidungen bleiben nicht-modal |
 | `select.tsx` | `Select`, `SelectTrigger` (`size`), `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator` |
 | `collapsible.tsx` | `Collapsible`, `CollapsibleTrigger`, `CollapsibleContent` (ungestylt) |
+| `disclosure.tsx` | `Disclosure` (Chevron-Umschalter als echter `<button>` mit `aria-expanded`, `header`, `actions` neben dem Knopf, `label`; kontrolliert `open`/`onOpenChange` oder `defaultOpen`; Inhalt nur offen gemountet – R2W-08) |
 | `scroll-area.tsx` | `ScrollArea` (`viewportClassName`), `ScrollBar` |
 | `separator.tsx` | `Separator` |
 | `input.tsx`, `textarea.tsx`, `label.tsx` | `Input`, `Textarea` (`field-sizing: content`), `Label` |

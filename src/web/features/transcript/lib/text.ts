@@ -32,6 +32,36 @@ export function countLines(text: string): number {
   return text.endsWith('\n') ? count - 1 : count;
 }
 
+/**
+ * Inline budget of a loaded full text (R2W-06): a multi-MB build log or file would freeze the
+ * renderer (ANSI scan, one huge text node / thousands of line spans). Beyond it the view is clipped.
+ */
+export const INLINE_TEXT_BUDGET = { chars: 1024 * 1024, lines: 20_000 } as const;
+
+export interface ClippedText {
+  text: string;
+  /** True when `text` is only the start of the input. */
+  clipped: boolean;
+}
+
+/** The start of `text` within the budget (cut at a line end when the line budget is hit). */
+export function clipForDisplay(
+  text: string,
+  budget: { chars: number; lines: number } = INLINE_TEXT_BUDGET,
+): ClippedText {
+  let end = Math.min(text.length, budget.chars);
+  let lines = 0;
+  for (let i = 0; i < end; i++) {
+    if (text.charCodeAt(i) !== 10) continue;
+    lines++;
+    if (lines >= budget.lines) {
+      end = i;
+      break;
+    }
+  }
+  return end >= text.length ? { text, clipped: false } : { text: text.slice(0, end), clipped: true };
+}
+
 /** The text parts of a tool result, joined by newlines; the first capped part wins `truncated`. */
 export interface ResultText {
   text: string;

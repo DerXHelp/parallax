@@ -1,13 +1,12 @@
 import { ChevronRightIcon, TriangleAlertIcon } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import type { RuleDestination } from '@shared/common';
+import { LIMITS, type RuleDestination } from '@shared/common';
 import type { PermissionDecision } from '@shared/model';
 import { useT } from '@web/i18n';
-import { cn } from '@web/lib/cn';
 import { useFeatureSlots } from '@web/shell/slots';
 import { Badge } from '@web/ui/badge';
 import { Button } from '@web/ui/button';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@web/ui/collapsible';
+import { Disclosure } from '@web/ui/disclosure';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,8 +20,8 @@ import { isFileChangeTool, ruleLabel, summarizeToolInput } from '../lib/tool-inp
 import { ChoiceMenu, type Choice } from './ChoiceMenu';
 import { DecisionAction, DecisionCardShell, useCardDisabled, useCardRespond } from './card-shell';
 
-/** Max length of a denial message (contract `permissionResponse.deny.message`). */
-const DENY_MESSAGE_MAX = 10_000;
+/** Which denial form is open: with a reason, or with a reason (optional) + stop the turn. */
+type DenyFormMode = 'reason' | 'stop';
 
 /** UI default is `session` (ADR-012); otherwise the first offered destination. */
 export function defaultDestination(destinations: readonly RuleDestination[]): RuleDestination | null {
@@ -51,36 +50,15 @@ function DestinationBadge({ destination }: { destination: RuleDestination }) {
   return null;
 }
 
-function Disclosure({
-  label,
-  defaultOpen,
-  children,
-}: {
-  label: string;
-  defaultOpen: boolean;
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <Collapsible open={open} onOpenChange={setOpen} className="mt-1">
-      <CollapsibleTrigger asChild>
-        <Button variant="ghost" size="sm" className="text-muted-foreground -ml-1 px-1">
-          <ChevronRightIcon aria-hidden className={cn('transition-transform', open && 'rotate-90')} />
-          {label}
-        </Button>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="mt-1">{children}</CollapsibleContent>
-    </Collapsible>
-  );
-}
-
 function DenyForm({
   sessionKey,
   decision,
+  mode,
   onCancel,
 }: {
   sessionKey: string;
   decision: PermissionDecision;
+  mode: DenyFormMode;
   onCancel: () => void;
 }) {
   const t = useT();
@@ -88,25 +66,30 @@ function DenyForm({
   const ref = useRef<HTMLTextAreaElement>(null);
   const respond = useCardRespond();
   const disabled = useCardDisabled();
+  const stop = mode === 'stop';
   useEffect(() => {
-    // Opened by the user ("Deny with a reason…"): moving the focus here is no focus theft.
+    // Opened by the user (a "▾" entry): moving the focus here is no focus theft.
     ref.current?.focus();
-  }, []);
+  }, [mode]);
   const deny = () =>
     respondToDecision(sessionKey, decision, {
       kind: 'permission',
-      response: { behavior: 'deny', message: reason.trim(), interrupt: false },
+      response: { behavior: 'deny', message: reason.trim(), interrupt: stop },
     });
   const id = `deny-reason-${decision.id}`;
+  const hintId = `${id}-stop`;
   return (
-    <div data-slot="deny-form" className="mt-2 grid gap-1.5">
-      <Label htmlFor={id}>{t('decisions.permission.reasonLabel')}</Label>
+    <div data-slot="deny-form" data-mode={mode} className="mt-2 grid gap-1.5">
+      <Label htmlFor={id}>
+        {stop ? t('decisions.permission.reasonOptional') : t('decisions.permission.reasonLabel')}
+      </Label>
       <Textarea
         id={id}
         ref={ref}
         value={reason}
-        maxLength={DENY_MESSAGE_MAX}
+        maxLength={LIMITS.decisionMessageChars}
         placeholder={t('decisions.permission.reasonPlaceholder')}
+        aria-describedby={stop ? hintId : undefined}
         className="max-h-32 min-h-10"
         disabled={disabled}
         onChange={(event) => {
@@ -120,9 +103,19 @@ function DenyForm({
           }
         }}
       />
+      {stop ? (
+        <p id={hintId} className="text-warning flex items-center gap-1 text-2xs">
+          <TriangleAlertIcon aria-hidden className="size-3" />
+          {t('decisions.permission.stopHint')}
+        </p>
+      ) : null}
       <div className="flex flex-wrap gap-1.5">
-        <DecisionAction variant="destructive" onAnswer={deny}>
-          {t('decisions.permission.sendDenial')}
+        <DecisionAction
+          variant="destructive"
+          data-action={stop ? 'deny-stop' : 'deny-reason'}
+          onAnswer={deny}
+        >
+          {stop ? t('decisions.permission.sendDenialAndStop') : t('decisions.permission.sendDenial')}
         </DecisionAction>
         <Button variant="ghost" size="sm" onClick={onCancel}>
           {t('common.cancel')}
@@ -132,17 +125,13 @@ function DenyForm({
   );
 }
 
-function DenyMenu({
-  sessionKey,
-  decision,
-  onReason,
-}: {
-  sessionKey: string;
-  decision: PermissionDecision;
-  onReason: () => void;
-}) {
+/**
+ * "▾" of the deny button: both entries only OPEN a denial form (R2W-05) – a menu item reacts to
+ * Enter/Space (and typeahead), so it must never answer itself; the answer is the form's
+ * `DecisionAction` (pointer or Mod+Enter only).
+ */
+function DenyMenu({ onOpenForm }: { onOpenForm: (mode: DenyFormMode) => void }) {
   const t = useT();
-  const respond = useCardRespond();
   const disabled = useCardDisabled();
   return (
     <DropdownMenu modal={false}>
@@ -158,16 +147,17 @@ function DenyMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem onSelect={onReason}>{t('decisions.permission.denyWithReason')}</DropdownMenuItem>
+        <DropdownMenuItem
+          onSelect={() => {
+            onOpenForm('reason');
+          }}
+        >
+          {t('decisions.permission.denyWithReason')}
+        </DropdownMenuItem>
         <DropdownMenuItem
           variant="destructive"
           onSelect={() => {
-            respond(() =>
-              respondToDecision(sessionKey, decision, {
-                kind: 'permission',
-                response: { behavior: 'deny', message: '', interrupt: true },
-              }),
-            );
+            onOpenForm('stop');
           }}
         >
           {t('decisions.permission.denyAndStop')}
@@ -201,7 +191,7 @@ export function PermissionCard({
   const [destination, setDestination] = useState<RuleDestination | null>(() =>
     defaultDestination(offer.ruleDestinations),
   );
-  const [denyOpen, setDenyOpen] = useState(false);
+  const [denyForm, setDenyForm] = useState<DenyFormMode | null>(null);
   const tool = decision.displayName ?? decision.toolName;
   const summary = summarizeToolInput(decision.toolName, decision.input);
   const fileChange = isFileChangeTool(decision.toolName);
@@ -240,13 +230,7 @@ export function PermissionCard({
       <DecisionAction variant={offer.defaultToNo ? 'default' : 'outline'} data-action="deny" onAnswer={deny}>
         {t('decisions.permission.deny')}
       </DecisionAction>
-      <DenyMenu
-        sessionKey={sessionKey}
-        decision={decision}
-        onReason={() => {
-          setDenyOpen(true);
-        }}
-      />
+      <DenyMenu onOpenForm={setDenyForm} />
     </span>
   );
 
@@ -338,22 +322,26 @@ export function PermissionCard({
         </p>
       ) : null}
       <Disclosure
-        label={fileChange ? t('decisions.permission.showChange') : t('decisions.permission.showInput')}
         defaultOpen={fileChange}
+        className="mt-1"
+        triggerClassName="text-muted-foreground flex-none text-xs"
+        contentClassName="mt-1"
+        header={fileChange ? t('decisions.permission.showChange') : t('decisions.permission.showInput')}
       >
         <div data-slot="tool-input-preview" className="max-h-64 overflow-auto">
           <ToolInputPreview toolName={decision.toolName} input={decision.input} sessionKey={sessionKey} />
         </div>
       </Disclosure>
-      {denyOpen ? (
+      {denyForm === null ? null : (
         <DenyForm
           sessionKey={sessionKey}
           decision={decision}
+          mode={denyForm}
           onCancel={() => {
-            setDenyOpen(false);
+            setDenyForm(null);
           }}
         />
-      ) : null}
+      )}
     </DecisionCardShell>
   );
 }

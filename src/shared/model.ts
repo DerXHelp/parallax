@@ -68,6 +68,7 @@ export const contextBreakdownSchema = contextGaugeSchema.extend({
   categories: z.array(
     z.object({ name: z.string(), tokens: z.number(), kind: z.enum(['used', 'free', 'buffer', 'deferred']) }),
   ),
+  /** Token count (not a percentage) at which the CLI compacts automatically (fixtures: 967 000). */
   autoCompactThreshold: z.number().nullable(),
   isAutoCompactEnabled: z.boolean().nullable(),
 });
@@ -789,7 +790,7 @@ export const permissionResponseSchema = z.discriminatedUnion('behavior', [
   }),
   z.object({
     behavior: z.literal('deny'),
-    message: z.string().max(10_000).default(''),
+    message: z.string().max(LIMITS.decisionMessageChars).default(''),
     interrupt: z.boolean().default(false),
   }),
 ]);
@@ -814,7 +815,10 @@ export const questionResponseSchema = z.discriminatedUnion('behavior', [
       .min(1)
       .max(LIMITS.answersMax),
   }),
-  z.object({ behavior: z.literal('decline'), message: z.string().max(10_000).default('') }),
+  z.object({
+    behavior: z.literal('decline'),
+    message: z.string().max(LIMITS.decisionMessageChars).default(''),
+  }),
 ]);
 export type QuestionResponse = z.infer<typeof questionResponseSchema>;
 
@@ -826,7 +830,7 @@ export const planResponseSchema = z.discriminatedUnion('behavior', [
     editedPlan: z.string().max(LIMITS.planChars).nullable().default(null),
   }),
   /** deny + message. */
-  z.object({ behavior: z.literal('revise'), feedback: z.string().min(1).max(50_000) }),
+  z.object({ behavior: z.literal('revise'), feedback: z.string().min(1).max(LIMITS.planFeedbackChars) }),
   /** C.4 fallback, Phase 3 → NOT_IMPLEMENTED. */
   z.object({ behavior: z.literal('approve_fresh_context'), mode: permissionModeSchema }),
 ]);

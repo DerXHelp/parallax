@@ -1,9 +1,11 @@
-import { HourglassIcon } from 'lucide-react';
+import { CirclePauseIcon, HourglassIcon } from 'lucide-react';
 import { memo } from 'react';
+import type { DecisionId } from '@shared/common';
 import type { ToolCallItem } from '@shared/model';
 import { useI18n, useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { focusDecision } from '@web/shell/decision-focus';
+import { useDecision } from '@web/state/hooks';
 import { Button } from '@web/ui/button';
 import { Disclosure } from '../components/Disclosure';
 import { ModelBadge } from '../components/ModelBadge';
@@ -23,31 +25,58 @@ const TONE_CLASS: Readonly<Record<OutcomeTone, string>> = {
 };
 
 /**
- * Decision of a gated tool call (architecture §2.3e): while open a hint + "Go to decision" (the
- * decision bar of WP-16 is the only operable instance), afterwards the outcome from
- * `tool_call.decision.outcome`.
+ * A decision without outcome: open (tool call `awaiting_decision`) or expired after a server
+ * restart (tool call `interrupted`, ADR-016, R2W-14) – hint + "Go to decision" (the decision bar of
+ * WP-16 is the only operable instance). `useDecision` does not subscribe (the list does).
+ */
+function PendingDecisionLine({
+  item,
+  sessionKey,
+  decisionId,
+}: {
+  item: ToolCallItem;
+  sessionKey: string;
+  decisionId: DecisionId;
+}) {
+  const t = useT();
+  const decision = useDecision(sessionKey, decisionId);
+  const expired = decision?.state === 'expired';
+  if (!expired && item.status !== 'awaiting_decision') return null;
+  const Icon = expired ? CirclePauseIcon : HourglassIcon;
+  return (
+    <div
+      data-slot="decision-line"
+      data-state={expired ? 'expired' : 'open'}
+      className={cn(
+        'ml-5 flex flex-wrap items-center gap-2 text-xs',
+        expired ? 'text-warning' : 'text-status-waiting',
+      )}
+    >
+      <Icon aria-hidden className="size-3.5" />
+      <span>{expired ? t('transcript.tool.decisionExpired') : t('transcript.tool.waitingForDecision')}</span>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => {
+          focusDecision(sessionKey, decisionId);
+        }}
+      >
+        {t('transcript.tool.goToDecision')}
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Decision of a gated tool call (architecture §2.3e): while open or expired a hint + "Go to
+ * decision", afterwards the outcome from `tool_call.decision.outcome`.
  */
 function DecisionLine({ item, sessionKey }: { item: ToolCallItem; sessionKey: string }) {
   const t = useT();
   const ref = item.decision;
   if (ref === null) return null;
   if (ref.outcome === null) {
-    if (item.status !== 'awaiting_decision') return null;
-    return (
-      <div className="text-status-waiting ml-5 flex flex-wrap items-center gap-2 text-xs">
-        <HourglassIcon aria-hidden className="size-3.5" />
-        <span>{t('transcript.tool.waitingForDecision')}</span>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => {
-            focusDecision(sessionKey, ref.decisionId);
-          }}
-        >
-          {t('transcript.tool.goToDecision')}
-        </Button>
-      </div>
-    );
+    return <PendingDecisionLine item={item} sessionKey={sessionKey} decisionId={ref.decisionId} />;
   }
   const { text, tone } = decisionOutcomeText(ref.outcome, t);
   return <p className={cn('ml-5 text-2xs', TONE_CLASS[tone])}>{text}</p>;

@@ -1,14 +1,17 @@
 import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
 import { makeError } from '@shared/errors';
+import type { Decision } from '@shared/model';
+import { sampleDecisions, sampleId } from '@shared/samples';
 import { clientStore, resetClientStore } from '@web/state/store';
 import { DecisionBar } from '../decisions/DecisionBar';
 import { DEMO_ENTRIES, type DemoEntry } from '../decisions/lib/demo-data';
 import { renderWithHost, type Harness } from '../decisions/lib/testing';
 import { resetDecisionBarState } from '../decisions/state/bar-store';
 import { Composer } from './Composer';
-import { draftStorageKey, resetDraftStore } from './state/drafts';
+import { draftStorageKey, resetDraftStore, setDraft } from './state/drafts';
 
 // UI tests with many key strokes: 2.5–6 s in a full `pnpm test`, up to 21 s when several runs load
 // the machine (docs/wp/FLAKES.md). A timed-out test keeps typing into the next one, so keep a margin.
@@ -25,7 +28,10 @@ afterEach(() => {
   localStorage.clear();
 });
 
-function start(entry: DemoEntry, onCommand?: Parameters<typeof renderWithHost>[1]['onCommand']) {
+function start(
+  entry: DemoEntry,
+  options: { onCommand?: Parameters<typeof renderWithHost>[1]['onCommand']; armDelayMs?: number } = {},
+) {
   harness = renderWithHost(
     (key) => (
       <>
@@ -33,7 +39,7 @@ function start(entry: DemoEntry, onCommand?: Parameters<typeof renderWithHost>[1
         <Composer sessionKey={key(entry)} />
       </>
     ),
-    { entries: [entry], onCommand },
+    { entries: [entry], onCommand: options.onCommand, armDelayMs: options.armDelayMs },
   );
   return harness;
 }
@@ -41,6 +47,30 @@ function start(entry: DemoEntry, onCommand?: Parameters<typeof renderWithHost>[1
 function textbox(): HTMLTextAreaElement {
   const element = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message to Claude' });
   return element;
+}
+
+/** The server opens a decision (e.g. while the user types). */
+function openDecision(h: Harness, entry: DemoEntry, decision: Decision) {
+  act(() => {
+    h.host.pushOps(DEMO_ENTRIES[entry], [{ op: 'decision.upsert', decision }]);
+  });
+}
+
+function latePermission(entry: DemoEntry, p: Partial<Parameters<typeof sampleDecisions.permission>[0]> = {}) {
+  return sampleDecisions.permission({
+    entryId: DEMO_ENTRIES[entry],
+    id: sampleId('dc', 0xc01),
+    toolUseId: 'toolu_late_bash',
+    ...p,
+  });
+}
+
+function responses(h: Harness) {
+  return h.commands('decision.respond').map((cmd) => cmd.response);
+}
+
+function prompts(h: Harness) {
+  return h.commands('session.sendPrompt').map((cmd) => [cmd.prompt.text, cmd.priority]);
 }
 
 describe('Composer', () => {
@@ -70,18 +100,16 @@ describe('Composer', () => {
     expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
   });
 
-  it('queues while Claude works and shows the queued messages', async () => {
+  it('queues while Claude works – the queue itself is shown by transcript and header, not here (R2W-04)', async () => {
     const h = start('working');
     const user = userEvent.setup();
-    expect(screen.getByRole('region', { name: 'Queued messages' }).textContent).toContain(
-      'Also add a sequence diagram.',
-    );
-    expect(screen.getByText('2 queued messages')).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Queued messages' })).toBeNull();
+    expect(screen.queryByText('Also add a sequence diagram.')).toBeNull();
     await user.type(textbox(), 'one more{Enter}');
     expect(h.commands('session.sendPrompt').map((cmd) => cmd.priority)).toEqual(['next']);
     await user.type(textbox(), 'urgent');
     await user.click(screen.getByRole('button', { name: 'Send now' }));
-    expect(h.commands('session.sendPrompt').map((cmd) => [cmd.prompt.text, cmd.priority])).toEqual([
+    expect(prompts(h)).toEqual([
       ['one more', 'next'],
       ['urgent', 'now'],
     ]);
@@ -142,9 +170,10 @@ describe('Composer', () => {
   });
 
   it('restores the text and shows a notice when sending fails', async () => {
-    start('idle', (cmd) =>
-      cmd.name === 'session.sendPrompt' ? { ok: false, error: makeError('SESSION_BUSY') } : undefined,
-    );
+    start('idle', {
+      onCommand: (cmd) =>
+        cmd.name === 'session.sendPrompt' ? { ok: false, error: makeError('SESSION_BUSY') } : undefined,
+    });
     const user = userEvent.setup();
     await user.type(textbox(), 'try this{Enter}');
     await waitFor(() => {
@@ -165,27 +194,74 @@ describe('Composer', () => {
     expect(h.commands('session.sendPrompt')).toEqual([]);
     expect(screen.getByText('Not connected')).toBeTruthy();
   });
+
+  it('shows a character counter near the contract limit and blocks above it (R2W-12)', () => {
+    const h = start('idle');
+    expect(document.querySelector('[data-slot="composer-counter"]')).toBeNull();
+    act(() => {
+      setDraft(h.key('idle'), 'x'.repeat(170_000));
+    });
+    expect(screen.getByText('170,000 / 200,000 characters')).toBeTruthy();
+    act(() => {
+      setDraft(h.key('idle'), 'x'.repeat(200_001));
+    });
+    expect(screen.getByRole('alert').textContent).toBe('Too long – at most 200,000 characters.');
+    expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
+  });
 });
 
 describe('Composer with an open decision (Plan: text = "No, instead: …")', () => {
-  it('permission: "Send as answer" denies with the text', async () => {
+  it('permission: Enter denies with the text', async () => {
     const h = start('permission');
     const user = userEvent.setup();
     expect(screen.getByText(/Answering the Bash permission \(Main agent\)/)).toBeTruthy();
     await user.type(textbox(), 'Use pnpm i{Enter}');
-    expect(h.commands('decision.respond').map((cmd) => cmd.response)).toEqual([
+    expect(responses(h)).toEqual([
       { kind: 'permission', response: { behavior: 'deny', message: 'Use pnpm i', interrupt: false } },
     ]);
     expect(h.commands('session.sendPrompt')).toEqual([]);
   });
 
-  it('question: the text declines with a message', async () => {
+  it('several questions: the text skips them with a message', async () => {
     const h = start('question');
     const user = userEvent.setup();
     await user.type(textbox(), 'Use YAML');
+    expect(screen.getByText(/Enter skips them with your text/)).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Send as answer' }));
-    expect(h.commands('decision.respond').map((cmd) => cmd.response)).toEqual([
+    expect(responses(h)).toEqual([
       { kind: 'question', response: { behavior: 'decline', message: 'Use YAML' } },
+    ]);
+  });
+
+  it('one question: the text is the answer ("Other"), not a skip (R2W-13)', async () => {
+    const h = start('idle');
+    const user = userEvent.setup();
+    openDecision(
+      h,
+      'idle',
+      sampleDecisions.question({
+        entryId: DEMO_ENTRIES.idle,
+        id: sampleId('dc', 0xc03),
+        toolUseId: 'toolu_q1',
+      }),
+    );
+    expect(textbox().placeholder).toBe('Answer in your own words…');
+    await user.type(textbox(), 'Green, please{Enter}');
+    expect(responses(h)).toEqual([
+      {
+        kind: 'question',
+        response: {
+          behavior: 'answer',
+          answers: [
+            {
+              question: 'Which color should the button be?',
+              selected: [],
+              otherText: 'Green, please',
+              notes: null,
+            },
+          ],
+        },
+      },
     ]);
   });
 
@@ -193,11 +269,9 @@ describe('Composer with an open decision (Plan: text = "No, instead: …")', () 
     const h = start('plan');
     const user = userEvent.setup();
     await user.type(textbox(), 'Split step 2');
-    const buttons = screen.getAllByRole('button', { name: 'Keep planning with feedback' });
-    const fromComposer = buttons.at(-1);
-    if (fromComposer === undefined) throw new Error('missing');
-    await user.click(fromComposer);
-    expect(h.commands('decision.respond').map((cmd) => cmd.response)).toEqual([
+    // The bar keeps "Keep planning" (R2W-16) – "…with feedback" is the composer's button only.
+    await user.click(screen.getByRole('button', { name: 'Keep planning with feedback' }));
+    expect(responses(h)).toEqual([
       { kind: 'plan', response: { behavior: 'revise', feedback: 'Split step 2' } },
     ]);
   });
@@ -209,9 +283,103 @@ describe('Composer with an open decision (Plan: text = "No, instead: …")', () 
     await user.click(screen.getByRole('button', { name: 'More send options' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Send as new message instead' }));
     expect(h.commands('decision.respond')).toEqual([]);
-    expect(h.commands('session.sendPrompt').map((cmd) => [cmd.prompt.text, cmd.priority])).toEqual([
-      ['after that, run lint', 'next'],
-    ]);
+    expect(prompts(h)).toEqual([['after that, run lint', 'next']]);
     expect(document.querySelector('[data-decision-id]')).not.toBeNull();
+  });
+});
+
+describe('Composer target lock (R2W-01, ADR-040)', () => {
+  it('a decision that appears while typing is NOT answered by Enter – the text is sent as a message', async () => {
+    const h = start('working');
+    const user = userEvent.setup();
+    await user.type(textbox(), 'next, write the tests');
+    openDecision(h, 'working', latePermission('working'));
+    // The bar shows it, the composer says Enter stays a message; the focus stays in the field.
+    expect(document.querySelector('[data-decision-id]')).not.toBeNull();
+    expect(
+      screen.getByText(/The Bash permission \(Main agent\) is open – Enter sends a new message/),
+    ).toBeTruthy();
+    expect(document.activeElement).toBe(textbox());
+    expect(screen.getByRole('button', { name: 'Queue' })).toBeTruthy();
+    await user.keyboard('{Enter}');
+    expect(responses(h)).toEqual([]);
+    expect(prompts(h)).toEqual([['next, write the tests', 'next']]);
+    expect(document.querySelector('[data-decision-id]')).not.toBeNull();
+    // A draft begun while the decision is shown answers it (the lock is fixed at the first key).
+    await user.type(textbox(), 'use pnpm{Enter}');
+    expect(responses(h)).toEqual([
+      { kind: 'permission', response: { behavior: 'deny', message: 'use pnpm', interrupt: false } },
+    ]);
+  });
+
+  it('"Send as answer" answers a decision that appeared while typing – only explicitly', async () => {
+    const h = start('working');
+    const user = userEvent.setup();
+    await user.type(textbox(), 'use pnpm instead');
+    openDecision(h, 'working', latePermission('working'));
+    await user.click(screen.getByRole('button', { name: 'Send as answer' }));
+    expect(responses(h)).toEqual([
+      { kind: 'permission', response: { behavior: 'deny', message: 'use pnpm instead', interrupt: false } },
+    ]);
+    expect(h.commands('session.sendPrompt')).toEqual([]);
+  });
+
+  it("Enter never answers a subagent's request (even when it was shown before typing)", async () => {
+    const h = start('working');
+    const user = userEvent.setup();
+    openDecision(
+      h,
+      'working',
+      latePermission('working', {
+        requester: {
+          kind: 'subagent',
+          agentId: 'agent_explore_1',
+          description: 'Explore the store code',
+          parentToolUseId: 'toolu_demo_agent',
+        },
+      }),
+    );
+    await user.type(textbox(), 'keep going{Enter}');
+    expect(responses(h)).toEqual([]);
+    expect(prompts(h)).toEqual([['keep going', 'next']]);
+    await user.type(textbox(), 'not that folder');
+    await user.click(screen.getByRole('button', { name: 'Send as answer' }));
+    expect(responses(h)).toEqual([
+      { kind: 'permission', response: { behavior: 'deny', message: 'not that folder', interrupt: false } },
+    ]);
+  });
+
+  it('a draft restored after a reload is no answer: Enter sends it as a message', async () => {
+    localStorage.setItem(
+      draftStorageKey(makeSessionKey(LOCAL_HOST_ID, DEMO_ENTRIES.permission)),
+      'written before the reload',
+    );
+    const h = start('permission');
+    const user = userEvent.setup();
+    expect(textbox().value).toBe('written before the reload');
+    await user.click(textbox());
+    await user.keyboard('{Enter}');
+    expect(responses(h)).toEqual([]);
+    expect(prompts(h)).toEqual([['written before the reload', 'next']]);
+  });
+
+  it('a decision shown less than the arm delay before the first key stroke is not the target', async () => {
+    const h = start('permission', { armDelayMs: 60_000 });
+    const user = userEvent.setup();
+    await user.type(textbox(), 'just a message{Enter}');
+    expect(responses(h)).toEqual([]);
+    expect(prompts(h)).toEqual([['just a message', 'next']]);
+  });
+
+  it('"Keep planning" in the bar makes the plan the target of the draft', async () => {
+    const h = start('plan', { armDelayMs: 60_000 });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Keep planning' }));
+    expect(document.activeElement).toBe(textbox());
+    await user.type(textbox(), 'more tests first{Enter}');
+    expect(responses(h)).toEqual([
+      { kind: 'plan', response: { behavior: 'revise', feedback: 'more tests first' } },
+    ]);
+    expect(h.commands('session.sendPrompt')).toEqual([]);
   });
 });

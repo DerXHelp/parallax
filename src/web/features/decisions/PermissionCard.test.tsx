@@ -50,6 +50,16 @@ describe('PermissionCard', () => {
     expect(screen.getByText('Main agent')).toBeTruthy();
   });
 
+  it('answer buttons describe why Enter does nothing (screen readers, R2W-19)', async () => {
+    bar('permission');
+    expect(
+      await screen.findByRole('button', {
+        name: 'Allow once',
+        description: 'Click or press Ctrl+Enter – Enter and Space never answer.',
+      }),
+    ).toBeTruthy();
+  });
+
   it('"Allow once" sends the intent only (no remember, no accept edits) and the card goes away', async () => {
     const h = bar('permission');
     const user = userEvent.setup();
@@ -125,13 +135,44 @@ describe('PermissionCard', () => {
     ]);
   });
 
-  it('"Deny and stop the turn" sends interrupt: true', async () => {
+  it('"Deny and stop the turn…" opens a form; its button sends interrupt: true', async () => {
     const h = bar('permission');
     const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: 'More ways to deny' }));
-    await user.click(await screen.findByRole('menuitem', { name: 'Deny and stop the turn' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Deny and stop the turn…' }));
+    expect(responses(h)).toEqual([]);
+    const reason = await screen.findByRole('textbox', { name: 'Reason for Claude (optional)' });
+    expect(document.activeElement).toBe(reason);
+    expect(screen.getByText('Stops the whole turn – background subagents end too.')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Deny and stop' }));
     expect(responses(h)).toEqual([
       { kind: 'permission', response: { behavior: 'deny', message: '', interrupt: true } },
+    ]);
+  });
+
+  it('Enter on a deny menu item never answers (R2W-05) – Mod+Enter in the form does', async () => {
+    const h = bar('permission');
+    const user = userEvent.setup();
+    const trigger = await screen.findByRole('button', { name: 'More ways to deny' });
+    act(() => {
+      trigger.focus();
+    });
+    await user.keyboard('{Enter}');
+    const item = await screen.findByRole('menuitem', { name: 'Deny and stop the turn…' });
+    act(() => {
+      item.focus();
+    });
+    await user.keyboard('{Enter}');
+    expect(responses(h)).toEqual([]);
+    await user.type(
+      await screen.findByRole('textbox', { name: 'Reason for Claude (optional)' }),
+      'wrong repo',
+    );
+    await user.keyboard('{Enter}');
+    expect(responses(h)).toEqual([]);
+    await user.keyboard('{Control>}{Enter}{/Control}');
+    expect(responses(h)).toEqual([
+      { kind: 'permission', response: { behavior: 'deny', message: 'wrong repo', interrupt: true } },
     ]);
   });
 

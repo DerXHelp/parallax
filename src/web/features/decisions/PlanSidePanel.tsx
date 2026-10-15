@@ -53,7 +53,7 @@ export const PlanSidePanel = memo(function PlanSidePanel({ sessionKey }: { sessi
       data-slot="plan-panel"
       aria-labelledby={headingId}
       tabIndex={-1}
-      className="bg-background flex w-[min(42rem,45%)] min-w-72 shrink-0 flex-col border-l outline-none"
+      className="bg-background focus-visible:ring-ring flex w-[min(42rem,45%)] min-w-72 shrink-0 flex-col border-l outline-none focus-visible:ring-2 focus-visible:ring-inset"
     >
       <header className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
         <FileTextIcon aria-hidden className="text-muted-foreground size-3.5" />

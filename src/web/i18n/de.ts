@@ -64,9 +64,9 @@ export const de: typeof en = {
       },
     },
     permissionMode: {
-      default: 'Fragen',
-      acceptEdits: 'Änderungen annehmen',
-      plan: 'Planen',
+      default: 'Manuell',
+      acceptEdits: 'Edits automatisch',
+      plan: 'Plan',
       auto: 'Auto',
       dontAsk: 'Nicht fragen',
       bypassPermissions: 'Berechtigungen umgehen',
@@ -103,7 +103,9 @@ export const de: typeof en = {
     },
     shortcuts: {
       title: 'Tastenkürzel',
-      description: 'Kürzel greifen nicht, während du in ein Textfeld schreibst (außer Esc).',
+      description:
+        'Kürzel greifen nicht, während du in ein Textfeld schreibst – außer Esc und den mit „auch in Textfeldern“ markierten. Strg+Enter antwortet nur aus den Feldern der Entscheidungsleiste, nie aus dem Eingabefeld.',
+      inInputs: 'auch in Textfeldern',
       help: 'Tastenkürzel anzeigen',
       selectSession: 'Session 1–9 in der Seitenleiste wählen',
       empty: 'Keine Kürzel registriert.',

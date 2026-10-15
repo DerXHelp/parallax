@@ -40,7 +40,8 @@ function findCard(root: HTMLElement | null, decisionId: DecisionId): HTMLElement
  * Nothing here ever takes the focus by itself: a new decision is announced politely
  * (`role="status"`), the focus moves into the bar only through "Go to decision"
  * (`useDecisionFocusHandler`) or the user's own clicks. After an answer given from inside the bar
- * the focus stays in the bar (not on a button of the next decision).
+ * the focus stays in the bar (not on a button of the next decision) – with a visible focus ring
+ * (R2W-19).
  */
 export const DecisionBar = memo(function DecisionBar({ sessionKey }: { sessionKey: string }) {
   const t = useT();
@@ -107,7 +108,7 @@ export const DecisionBar = memo(function DecisionBar({ sessionKey }: { sessionKe
           data-slot="decision-bar"
           aria-label={t('decisions.bar.label')}
           tabIndex={-1}
-          className="px-3 pb-2 outline-none"
+          className="focus-visible:ring-ring rounded-md px-3 pb-2 outline-none focus-visible:ring-2 focus-visible:ring-inset"
           onPointerDownCapture={() => {
             interacting.current = true;
           }}

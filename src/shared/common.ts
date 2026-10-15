@@ -191,6 +191,10 @@ export const LIMITS = {
   planChars: 200_000,
   /** One answer text (`selected` label, `otherText`, `notes`). */
   answerChars: 10_000,
+  /** Message of a decision answer: permission `deny.message`, question `decline.message` (R2W-12). */
+  decisionMessageChars: 10_000,
+  /** Plan feedback `revise.feedback` (R2W-12). */
+  planFeedbackChars: 50_000,
   /** `answers[].question` (key = question text, F.5). */
   questionChars: 2_000,
   /** Answers per question response. */

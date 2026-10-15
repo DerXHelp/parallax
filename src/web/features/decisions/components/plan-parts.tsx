@@ -16,6 +16,7 @@ import {
   openPlanPanel,
   readApproveMode,
   usePlanPanel,
+  usePlanPanelMounted,
   writeApproveMode,
 } from '../state/bar-store';
 import { ChoiceMenu, type Choice } from './ChoiceMenu';
@@ -71,7 +72,8 @@ export function ApproveSplit({
         data-mode={mode}
         onAnswer={approvePlan(sessionKey, decision, mode)}
       >
-        {label(t(`decisions.plan.modesShort.${mode}`))}
+        {/* One label per mode everywhere ("Manual" for default, R2W-03). */}
+        {label(t(`shell.permissionMode.${mode}`))}
       </DecisionAction>
       <ChoiceMenu
         label={t('decisions.plan.approveMenu')}
@@ -102,30 +104,33 @@ export function findPlanPanel(sessionKey: string): HTMLElement | null {
 /**
  * "Open plan": opens the side panel (slot `SidePanel` = PlanSidePanel) and moves the focus there
  * (user action); a second click closes it. Without a mounted panel (slot not wired) it toggles
- * the plan inside the card (`onInlineToggle`).
+ * the plan inside the card (`onInlineToggle`) – or is not shown at all without that fallback
+ * (read-only transcript card, R2W-15). Never an answer.
  */
 export function OpenPlanButton({
   sessionKey,
   decision,
-  inlineOpen,
+  inlineOpen = false,
   onInlineToggle,
 }: {
   sessionKey: string;
   decision: PlanDecision;
-  inlineOpen: boolean;
-  onInlineToggle: () => void;
+  inlineOpen?: boolean;
+  onInlineToggle?: () => void;
 }) {
   const t = useT();
   const panel = usePlanPanel(sessionKey);
+  const mounted = usePlanPanelMounted(sessionKey);
   const panelOpen = panel?.decisionId === decision.id;
   const open = panelOpen || inlineOpen;
+  if (!mounted && onInlineToggle === undefined) return null;
   const onClick = (event: MouseEvent<HTMLButtonElement>) => {
     if (panelOpen) {
       closePlanPanel(sessionKey);
       return;
     }
     if (!isPlanPanelMounted(sessionKey)) {
-      onInlineToggle();
+      onInlineToggle?.();
       return;
     }
     const opener = event.currentTarget;

@@ -52,6 +52,8 @@ export const de: typeof en = {
     loadFailed: 'Der Volltext konnte nicht geladen werden.',
     retry: 'Erneut versuchen',
     loaded: 'Volltext geladen ({total} Zeichen).',
+    clipped:
+      'Volltext geladen ({total} Zeichen) – zu groß für die Anzeige, gezeigt werden die ersten {shown}.',
     input: 'Lange Eingabe gekürzt (insgesamt {total} Zeichen).',
     structured: 'Das strukturierte Ergebnis war zu groß und wurde weggelassen.',
   },
@@ -75,6 +77,7 @@ export const de: typeof en = {
     mcp: '{tool} · MCP {server}',
     goToDecision: 'Zur Entscheidung',
     waitingForDecision: 'Wartet auf deine Entscheidung in der Entscheidungsleiste.',
+    decisionExpired: 'Abgelaufen – in der Entscheidungsleiste fortsetzen.',
     decision: {
       allowed: 'Erlaubt',
       allowedRemembered: 'Erlaubt und gemerkt für {destination}',

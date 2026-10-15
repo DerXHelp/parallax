@@ -407,3 +407,39 @@ Keine BLOCKER – WP-20 kann parallel starten. Reihenfolge = Priorität; kein Co
    machen; Transkript bleibt kanonisch.
 6. **R2W-06 (WP-15):** Inline-Budget für „Vollständig laden“ + Größen-LRU.
 7. **R2W-07 (WP-20):** E2E-Fälle (a)–(f) in Edge; WP-15 korrigiert `shift` nebenbei.
+
+## Umsetzung (Branch `fix/r2-web`, 15.10.2026)
+
+Koordinator-Entscheidungen: R2W-01 Variante B „Ziel-Sperre“ (ADR-040), R2W-04 Queue nur im
+Transkript + Kopfzeilen-Badge (ADR-041), Picker im Composer / Kopfzeile nur Status (ADR-042),
+„Manual“/„Manuell“ überall (ADR-043), WP-14-Wünsche (ADR-044), Contract-Limits (ADR-045).
+Details: `docs/wp/WP-14.md` §2.11, `WP-15.md` §3, `WP-16.md` §3, architecture §2.3k.
+
+| Befund | Umsetzung |
+|---|---|
+| R2W-01 | Ziel beim ersten Zeichen des Entwurfs fixiert (Haupt-Agent, ≥ 600 ms angezeigt, oder „Weiter planen“); sonst sendet Enter normal, Hinweis + expliziter Knopf „Als Antwort senden“ links der Sende-Knöpfe; wiederhergestellter Entwurf ohne Ziel; Tests inkl. Gegenprobe (Entscheidung erscheint beim Tippen → `session.sendPrompt`, keine Antwort) und Subagent + Enter |
+| R2W-02 | Andere-Feld bei Einfachauswahl leert `selected`; Test |
+| R2W-03 | `shell.permissionMode.*` en/de an Plan C.3, einzige Quelle für Picker, Umsetzen-Knopf, Transkript; `composer.mode.modes`/`decisions.plan.modesShort` entfernt; Kopfzeile unverändert als Status |
+| R2W-04 | `QueueList` entfernt (kein Chip – „Zu neuesten“ bräuchte eine Querverbindung Composer → Transkript) |
+| R2W-05 | „▾“-Einträge öffnen nur Formulare; „Ablehnen und stoppen“ ist eine `DecisionAction`; Test „Enter auf Menüpunkt antwortet nicht“ |
+| R2W-06 | Inline-Budget 1 Mi Zeichen/20 000 Zeilen mit Hinweis; Blob-LRU nach Anzahl und Größe (16/8 Mi) |
+| R2W-07 | nur der `shift`-NIT (Form inkl. Zeilenzahl und „Früher laden“); E2E bleibt WP-20 |
+| R2W-08 | `Disclosure` in `src/web/ui/disclosure.tsx`, Transkript-Wrapper, Permission-Karte nutzt es |
+| R2W-11 | Shortcut-Hilfe markiert `allowInInputs`, Beschreibung nennt Mod+Enter in der Leiste |
+| R2W-12 | `LIMITS.decisionMessageChars`/`planFeedbackChars`, Schemas in `model.ts` nutzen sie (Werte gleich, keine Verschärfung nötig), Kommentar `autoCompactThreshold` = Tokens; Web: `maxLength`, Validierung, Zeichenzähler |
+| R2W-13 | eine Frage: Composer-Text = `answer` mit `otherText`; Platzhalter/Hinweise je Fall |
+| R2W-14 | abgelaufene Permission/Frage im Transkript mit Hinweis + „Zur Entscheidung“ |
+| R2W-15 | „Plan öffnen“ in der Transkript-Karte (nur mit gemountetem Panel) |
+| R2W-16 | „Weiter planen“ mit fester Beschriftung, „…mit Feedback“ nur am Composer |
+| R2W-18 | teilweise: Shiki-/Diff-Cache nach Größe (`SizedLru`); Hash-Schlüssel und asynchrones Hervorheben offen |
+| R2W-19 | `aria-describedby` an Antwortknöpfen, `focus-visible`-Ring an Leiste und Plan-Panel (Pane-Region WP-14 nicht geändert) |
+
+Nicht umgesetzt (Begründung): R2W-09 (virtua-Stub global ändert alle Web-Tests; opt-in nicht nötig,
+WP-20 importiert `@web/features/transcript/testing`), R2W-10 (FakeHost-Queue: `src/web/state` nicht
+im Auftrag, für WP-20 nicht nötig), R2W-17 (CLAUDE.md/Feature-README gehören dem Koordinator),
+R2W-20 (`Alert` braucht eine kompakte Größe in `ui/alert`), R2W-21 (WP-20).
+
+Checks: `pnpm check` grün (103 Dateien, 2174 Tests), `pnpm build` grün ohne Chunk-Warnung (`index`
+150,5 kB, `react` 218,8 kB, `vendor` 235,6 kB), Sichttest Playground (`composer/late-decision`,
+`decisions/permission`, `decisions/plan`, `decisions/expired`, `transcript/large-output`,
+`shell-decisions` mit `?`-Hilfe; dunkel/hell, en/de) ohne Konsolenfehler.

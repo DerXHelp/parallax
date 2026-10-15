@@ -1,18 +1,20 @@
-import { ChevronDownIcon, CornerDownRightIcon, SendHorizontalIcon, SquareIcon, ZapIcon } from 'lucide-react';
-import { memo, useRef, useState } from 'react';
-import type { PromptPriority } from '@shared/common';
-import type { Decision, QueuedPrompt } from '@shared/model';
+import {
+  ChevronDownIcon,
+  CircleDotIcon,
+  CornerDownRightIcon,
+  ReplyIcon,
+  SendHorizontalIcon,
+  SquareIcon,
+  ZapIcon,
+} from 'lucide-react';
+import { memo, useContext, useEffect, useRef, useState } from 'react';
+import type { DecisionId, PromptPriority } from '@shared/common';
+import type { Decision } from '@shared/model';
 import type { RunState } from '@shared/status';
-import type { SessionViewState } from '@shared/sync';
 import { useT, type t as translateFn } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { useEscapeHandler } from '@web/shell/shortcuts';
-import {
-  useDecisions,
-  useSessionConnectionStatus,
-  useSessionSelector,
-  useSummarySelector,
-} from '@web/state/hooks';
+import { useDecisions, useSessionConnectionStatus, useSummarySelector } from '@web/state/hooks';
 import { reportTyping } from '@web/state/presence';
 import { Button } from '@web/ui/button';
 import {
@@ -23,6 +25,7 @@ import {
 } from '@web/ui/dropdown-menu';
 import { Spinner } from '@web/ui/spinner';
 import { Textarea } from '@web/ui/textarea';
+import { DecisionArmDelayContext } from '../decisions/components/card-shell';
 import { requesterText } from '../decisions/components/RequesterLabel';
 import { respondToDecision } from '../decisions/lib/respond';
 import {
@@ -30,53 +33,61 @@ import {
   pickDisplayedDecision,
   useSelectedDecisionId,
 } from '../decisions/state/bar-store';
-import { QueueList, type QueueEntry } from './components/QueueList';
 import { ContextGauge } from './ContextGauge';
-import { answerFromText, interruptSession, sendPrompt, textLimit } from './lib/commands';
+import { answerFromText, interruptSession, isSingleQuestion, sendPrompt, textLimit } from './lib/commands';
 import { ModelPicker } from './ModelPicker';
 import { ModePicker } from './ModePicker';
 import { clearDraft, getDraft, setDraft, useDraft } from './state/drafts';
 import { useComposerFocusTarget } from './state/focus';
 
-const EMPTY_QUEUE: readonly QueuedPrompt[] = [];
-const selectQueue = (view: SessionViewState) => view.detail.queue;
+/** `primary` = Enter / main button, `answer` = explicit "Send as answer" (decision not the Enter target). */
+type Via = 'primary' | 'answer' | 'message' | 'now';
 
-interface PendingSend {
-  id: number;
-  text: string;
-  priority: PromptPriority;
-}
+type TargetKind = 'permission' | 'question' | 'questions' | 'plan';
 
-let pendingCounter = 0;
-
-type Via = 'primary' | 'message' | 'now';
+/** The counter appears from this share of the limit on. */
+const COUNTER_FROM = 0.8;
 
 function isWorking(runState: RunState | null): boolean {
   return runState === 'working' || runState === 'starting';
 }
 
-function targetHint(target: Decision, t: typeof translateFn): string {
-  switch (target.kind) {
+function targetKind(decision: Decision): TargetKind {
+  if (decision.kind === 'question') return isSingleQuestion(decision) ? 'question' : 'questions';
+  return decision.kind;
+}
+
+/** Hint above the field: `target` = Enter answers it, `pending` = it is open, Enter sends a message. */
+function decisionHint(decision: Decision, variant: 'target' | 'pending', t: typeof translateFn): string {
+  const requester = requesterText(decision.requester, t);
+  switch (decision.kind) {
     case 'permission':
-      return t('composer.target.permission', {
-        tool: target.displayName ?? target.toolName,
-        requester: requesterText(target.requester, t),
+      return t(`composer.${variant}.permission`, {
+        tool: decision.displayName ?? decision.toolName,
+        requester,
       });
     case 'question':
-      return t('composer.target.question', { requester: requesterText(target.requester, t) });
+      return isSingleQuestion(decision)
+        ? t(`composer.${variant}.question`, { requester })
+        : t(`composer.${variant}.questions`, { requester });
     case 'plan':
-      return t('composer.target.plan', { version: target.version });
+      return t(`composer.${variant}.plan`, { version: decision.version });
   }
 }
 
 /**
  * Slot `Composer` (Plan "Chat-Ansicht → Interaktion", B "Tastatur", "Entwürfe"):
  * - Enter sends, Shift+Enter breaks the line (IME composition never sends).
- * - While Claude works, messages are queued (`priority: 'next'`, visible until taken over);
- *   "Send now" sends with `priority: 'now'`; Stop (and Esc in an empty composer) interrupts.
- * - While a decision is open (the one the bar shows), the text answers it: permission deny +
- *   message, question decline + message, plan revise ("Keep planning with feedback") – it can
- *   never approve. "Send as new message instead" queues it as a normal prompt.
+ * - While Claude works, messages are queued (`priority: 'next'`; the transcript shows them grey,
+ *   the header counts them – R2W-04); "Send now" sends with `priority: 'now'`; Stop (and Esc in
+ *   an empty composer) interrupts.
+ * - Open decision (the one the bar shows) – target lock (R2W-01, ADR-040): Enter answers it only
+ *   if it was already shown (≥ arm delay) when the current draft began, and only for the main
+ *   agent – permission deny + message, one question answered with the text, several questions
+ *   declined + message, plan revise ("Keep planning with feedback"); it can never approve. A
+ *   decision that appears while typing (or a subagent's, or a restored draft) leaves Enter as a
+ *   normal send; the composer then offers "Send as answer" explicitly. "Keep planning" in the bar
+ *   sets the target explicitly.
  * - Drafts per session survive remounts and reloads (state/drafts.ts); typing reports presence.
  * - Sending needs an open connection; failures restore the text and show a notice.
  */
@@ -88,20 +99,47 @@ export const Composer = memo(function Composer({ sessionKey }: { sessionKey: str
   const selectedId = useSelectedDecisionId(sessionKey);
   const displayed = pickDisplayedDecision(decisions, selectedId);
   const target = displayed?.state === 'open' ? displayed : null;
-  const queue = useSessionSelector(sessionKey, selectQueue, EMPTY_QUEUE);
+  const targetId = target?.id ?? null;
   const online = useSessionConnectionStatus(sessionKey) === 'open';
+  const armDelayMs = useContext(DecisionArmDelayContext);
   const rootRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [pending, setPending] = useState<readonly PendingSend[]>([]);
-  const [answering, setAnswering] = useState(0);
+  /** When the composer first saw the current target (arm delay, like the cards). */
+  const shownRef = useRef<{ id: DecisionId; at: number } | null>(null);
+  /** The decision Enter answers – fixed when the draft begins (R2W-01). */
+  const [lockedId, setLockedId] = useState<DecisionId | null>(null);
+  const [sending, setSending] = useState(0);
   const working = isWorking(runState);
 
+  useEffect(() => {
+    if (targetId !== null && shownRef.current?.id !== targetId) {
+      shownRef.current = { id: targetId, at: performance.now() };
+    }
+  }, [targetId]);
+
+  /** Shown for at least the arm delay – a decision appearing right before a key stroke is not taken. */
+  const isArmed = (decision: Decision): boolean => {
+    const shown = shownRef.current;
+    return shown?.id === decision.id && performance.now() - shown.at >= armDelayMs;
+  };
+
+  // Enter answers the target only when the draft was begun for it. An empty field shows what the
+  // first key stroke will fix (the main agent's decision), so placeholder and hint fit.
+  const enterAnswers =
+    target !== null && (lockedId === target.id || (text === '' && target.requester.kind === 'main'));
+  const answerTarget = enterAnswers ? target : null;
+  const pendingTarget = target !== null && !enterAnswers ? target : null;
+
   const value = text.trim();
-  const limit = textLimit(target);
+  const limit = textLimit(answerTarget);
   const tooLong = value.length > limit;
   const canSend = online && value !== '' && !tooLong;
+  const canAnswer =
+    pendingTarget !== null && online && value !== '' && value.length <= textLimit(pendingTarget);
 
-  useComposerFocusTarget(sessionKey, () => {
+  useComposerFocusTarget(sessionKey, (decisionId) => {
+    // "Keep planning" chose the decision explicitly: Enter answers it.
+    if (decisionId !== null) setLockedId(decisionId);
     textareaRef.current?.focus();
   });
 
@@ -121,19 +159,46 @@ export const Composer = memo(function Composer({ sessionKey }: { sessionKey: str
     { scopeRef: rootRef },
   );
 
+  const changeText = (next: string) => {
+    if (getDraft(sessionKey) === '' && next !== '') {
+      // The draft begins: fix its Enter target (an explicit choice for the same decision stays).
+      let lock: DecisionId | null = null;
+      if (
+        target !== null &&
+        (lockedId === target.id || (target.requester.kind === 'main' && isArmed(target)))
+      ) {
+        lock = target.id;
+      }
+      setLockedId(lock);
+    } else if (next === '') {
+      setLockedId(null);
+    }
+    setDraft(sessionKey, next);
+    reportTyping();
+  };
+
   const submit = (via: Via) => {
     const message = getDraft(sessionKey).trim();
-    const answerTarget = via === 'primary' ? target : null;
-    if (!online || message === '' || message.length > textLimit(answerTarget)) return;
+    let answer: Decision | null = null;
+    if (via === 'primary' && target !== null && lockedId === target.id) answer = target;
+    if (via === 'answer') {
+      if (target === null || !isArmed(target)) return;
+      answer = target;
+    }
+    if (!online || message === '' || message.length > textLimit(answer)) return;
     clearDraft(sessionKey);
-    const restore = () => {
-      if (getDraft(sessionKey) === '') setDraft(sessionKey, message);
+    setLockedId(null);
+    const restore = (lock: DecisionId | null) => {
+      if (getDraft(sessionKey) !== '') return;
+      setDraft(sessionKey, message);
+      setLockedId(lock);
     };
-    if (answerTarget !== null) {
-      setAnswering((count) => count + 1);
-      void respondToDecision(sessionKey, answerTarget, answerFromText(answerTarget, message)).then((ok) => {
-        setAnswering((count) => count - 1);
-        if (!ok) restore();
+    setSending((count) => count + 1);
+    if (answer !== null) {
+      const decision = answer;
+      void respondToDecision(sessionKey, decision, answerFromText(decision, message)).then((ok) => {
+        setSending((count) => count - 1);
+        if (!ok) restore(decision.id);
       });
       return;
     }
@@ -144,62 +209,54 @@ export const Composer = memo(function Composer({ sessionKey }: { sessionKey: str
         decisions.filter((d) => d.state === 'open' && d.requester.kind === 'main').map((d) => d.id),
       );
     }
-    const entry: PendingSend = { id: ++pendingCounter, text: message, priority };
-    setPending((current) => [...current, entry]);
     void sendPrompt(sessionKey, message, priority).then((ok) => {
-      setPending((current) => current.filter((candidate) => candidate.id !== entry.id));
-      if (!ok) restore();
+      setSending((count) => count - 1);
+      if (!ok) restore(null);
     });
   };
 
-  const queuedTexts = new Set(queue.map((prompt) => prompt.text.text));
-  const entries: QueueEntry[] = [
-    ...queue.map((prompt) => ({
-      key: prompt.messageUuid,
-      text: prompt.text.text,
-      priority: prompt.priority,
-      state: prompt.state,
-    })),
-    ...pending
-      .filter((entry) => !queuedTexts.has(entry.text))
-      .map((entry) => ({
-        key: `pending-${String(entry.id)}`,
-        text: entry.text,
-        priority: entry.priority,
-        state: 'sending' as const,
-      })),
-  ];
-
   let placeholder: string;
-  if (target !== null) placeholder = t(`composer.placeholder.${target.kind}`);
+  if (answerTarget !== null) placeholder = t(`composer.placeholder.${targetKind(answerTarget)}`);
   else placeholder = working ? t('composer.placeholder.working') : t('composer.placeholder.idle');
 
+  const answerLabel = (decision: Decision) =>
+    decision.kind === 'plan' ? t('composer.answerPlan') : t('composer.answer');
   let sendLabel: string;
-  if (target?.kind === 'plan') sendLabel = t('composer.answerPlan');
-  else if (target !== null) sendLabel = t('composer.answer');
+  if (answerTarget !== null) sendLabel = answerLabel(answerTarget);
   else sendLabel = working ? t('composer.queue') : t('composer.send');
 
-  const busy = answering > 0 || pending.length > 0;
+  let mode: string;
+  if (answerTarget !== null) mode = `answer-${answerTarget.kind}`;
+  else if (pendingTarget !== null) mode = `pending-${pendingTarget.kind}`;
+  else mode = working ? 'queue' : 'idle';
+
   const inputId = `composer-${sessionKey}`;
   const hintId = `${inputId}-hint`;
+  const hintTarget = answerTarget ?? pendingTarget;
 
   return (
     <div
       ref={rootRef}
       data-slot="composer"
       data-shortcut-scope="composer"
-      data-mode={target === null ? (working ? 'queue' : 'idle') : `answer-${target.kind}`}
+      data-mode={mode}
       className="border-t px-3 pt-2 pb-2"
     >
-      <QueueList entries={entries} />
-      {target === null ? null : (
+      {hintTarget === null ? null : (
         <p
           id={hintId}
-          data-slot="composer-target"
-          className="text-muted-foreground mb-1 flex items-start gap-1.5 text-2xs"
+          data-slot={answerTarget === null ? 'composer-pending' : 'composer-target'}
+          className={cn(
+            'mb-1 flex items-start gap-1.5 text-2xs',
+            answerTarget === null ? 'text-status-waiting' : 'text-muted-foreground',
+          )}
         >
-          <CornerDownRightIcon aria-hidden className="mt-px size-3 shrink-0" />
-          {targetHint(target, t)}
+          {answerTarget === null ? (
+            <CircleDotIcon aria-hidden className="mt-px size-3 shrink-0" />
+          ) : (
+            <CornerDownRightIcon aria-hidden className="mt-px size-3 shrink-0" />
+          )}
+          {decisionHint(hintTarget, answerTarget === null ? 'pending' : 'target', t)}
         </p>
       )}
       <Textarea
@@ -207,14 +264,13 @@ export const Composer = memo(function Composer({ sessionKey }: { sessionKey: str
         ref={textareaRef}
         value={text}
         aria-label={t('composer.label')}
-        aria-describedby={target === null ? undefined : hintId}
+        aria-describedby={hintTarget === null ? undefined : hintId}
         aria-invalid={tooLong}
         placeholder={placeholder}
         rows={1}
         className="max-h-60 min-h-9 resize-none"
         onChange={(event) => {
-          setDraft(sessionKey, event.target.value);
-          reportTyping();
+          changeText(event.target.value);
         }}
         onKeyDown={(event) => {
           if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
@@ -240,6 +296,29 @@ export const Composer = memo(function Composer({ sessionKey }: { sessionKey: str
         </div>
         <span className="flex-1" />
         {online ? null : <span className="text-warning text-2xs">{t('composer.notConnected')}</span>}
+        {value.length > limit * COUNTER_FROM ? (
+          <span
+            data-slot="composer-counter"
+            className={cn('text-2xs tabular-nums', tooLong ? 'text-destructive' : 'text-muted-foreground')}
+          >
+            {t('composer.counter', { count: value.length, max: limit })}
+          </span>
+        ) : null}
+        {/* Left of the send buttons: appearing while the user types never moves them (R2W-01). */}
+        {pendingTarget === null ? null : (
+          <Button
+            variant="outline"
+            size="sm"
+            data-action="answer"
+            disabled={!canAnswer}
+            onClick={() => {
+              submit('answer');
+            }}
+          >
+            <ReplyIcon aria-hidden />
+            {answerLabel(pendingTarget)}
+          </Button>
+        )}
         {working ? (
           <Button
             variant="outline"
@@ -253,7 +332,7 @@ export const Composer = memo(function Composer({ sessionKey }: { sessionKey: str
             {t('composer.stop')}
           </Button>
         ) : null}
-        {working && target === null ? (
+        {working && answerTarget === null ? (
           <Button
             variant="outline"
             size="sm"
@@ -273,15 +352,15 @@ export const Composer = memo(function Composer({ sessionKey }: { sessionKey: str
             size="sm"
             data-action="send"
             disabled={!canSend}
-            className={cn(target !== null && 'rounded-r-none')}
+            className={cn(answerTarget !== null && 'rounded-r-none')}
             onClick={() => {
               submit('primary');
             }}
           >
-            {busy ? <Spinner className="size-3" /> : <SendHorizontalIcon aria-hidden />}
+            {sending > 0 ? <Spinner className="size-3" /> : <SendHorizontalIcon aria-hidden />}
             {sendLabel}
           </Button>
-          {target === null ? null : (
+          {answerTarget === null ? null : (
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <Button

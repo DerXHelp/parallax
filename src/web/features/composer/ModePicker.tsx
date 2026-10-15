@@ -47,7 +47,8 @@ const OFFERED: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan', 'a
  * The ACTUAL permission mode of the session (C.3: from `init`/`status`, the summary field
  * `permissionMode`; fallback `detail.init.permissionMode`), never an optimistic value; picking a
  * mode sends `session.setPermissionMode` and the label follows the server. Bypass only when the
- * session's profile allows it (`allowsBypass`), always red.
+ * session's profile allows it (`allowsBypass`), always red. Labels are the shell's
+ * `shell.permissionMode.*` ("Manual" for `default`, C.3) – the same everywhere (R2W-03).
  */
 export const ModePicker = memo(function ModePicker({ sessionKey }: { sessionKey: string }) {
   const t = useT();
@@ -75,7 +76,7 @@ export const ModePicker = memo(function ModePicker({ sessionKey }: { sessionKey:
   const options: PermissionMode[] = [...OFFERED];
   if (allowsBypass) options.push('bypassPermissions');
   const Icon = mode === null ? HandIcon : MODE_ICONS[mode];
-  const label = mode === null ? t('composer.mode.unknown') : t(`composer.mode.modes.${mode}`);
+  const label = mode === null ? t('composer.mode.unknown') : t(`shell.permissionMode.${mode}`);
 
   const choose = async (next: PermissionMode) => {
     const parsed = parseSessionKey(sessionKey);
@@ -135,7 +136,7 @@ export const ModePicker = memo(function ModePicker({ sessionKey }: { sessionKey:
                   className={cn('mt-0.5', option === 'bypassPermissions' && 'text-destructive')}
                 />
                 <span className="grid min-w-0 gap-0.5">
-                  <span>{t(`composer.mode.modes.${option}`)}</span>
+                  <span>{t(`shell.permissionMode.${option}`)}</span>
                   <span className="text-muted-foreground text-2xs">
                     {disabled ? t('composer.mode.autoUnavailable') : t(`composer.mode.hints.${option}`)}
                   </span>
@@ -147,7 +148,7 @@ export const ModePicker = memo(function ModePicker({ sessionKey }: { sessionKey:
             <DropdownMenuRadioItem value="dontAsk" disabled className="items-start">
               <ShieldMinusIcon aria-hidden className="mt-0.5" />
               <span className="grid min-w-0 gap-0.5">
-                <span>{t('composer.mode.modes.dontAsk')}</span>
+                <span>{t('shell.permissionMode.dontAsk')}</span>
                 <span className="text-muted-foreground text-2xs">{t('composer.mode.hints.dontAsk')}</span>
               </span>
             </DropdownMenuRadioItem>

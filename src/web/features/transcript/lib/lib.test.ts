@@ -4,7 +4,8 @@ import { computeFallbackRows, contentToRows, diffStats, hunksToRows, peekFallbac
 import { languageForPath, resolveLanguage } from './languages';
 import { splitMarkdownBlocks } from './markdown-blocks';
 import { markdownUrlTransform, safeHttpUrl } from './safe-url';
-import { countLines, firstLine, normalizeTerminalText, stripToolUseError } from './text';
+import { SizedLru } from './sized-cache';
+import { clipForDisplay, countLines, firstLine, normalizeTerminalText, stripToolUseError } from './text';
 
 const ESC = '\u001b';
 
@@ -197,5 +198,47 @@ describe('languages', () => {
     expect(languageForPath('D:\\work\\a.tsx')).toBe('tsx');
     expect(languageForPath('/x/Dockerfile')).toBe('docker');
     expect(languageForPath('README')).toBeNull();
+  });
+});
+
+describe('SizedLru (R2W-06/R2W-18)', () => {
+  it('evicts the oldest entries over the count or the size budget, never the newest', () => {
+    const cache = new SizedLru<string, string>({ maxEntries: 3, maxSize: 10 });
+    cache.set('a', 'a', 4);
+    cache.set('b', 'b', 4);
+    expect(cache.count).toBe(2);
+    cache.set('c', 'c', 4);
+    expect([cache.peek('a'), cache.peek('b'), cache.peek('c')]).toEqual([undefined, 'b', 'c']);
+    expect(cache.totalSize).toBe(8);
+    cache.set('huge', 'h', 50);
+    expect([cache.peek('b'), cache.peek('c'), cache.peek('huge')]).toEqual([undefined, undefined, 'h']);
+    expect(cache.totalSize).toBe(50);
+  });
+
+  it('get refreshes an entry, peek does not; keep protects entries', () => {
+    const cache = new SizedLru<string, string>({ maxEntries: 2, maxSize: 100 });
+    cache.set('a', 'a', 1);
+    cache.set('b', 'b', 1);
+    expect(cache.get('a')).toBe('a');
+    cache.set('c', 'c', 1);
+    expect([cache.peek('a'), cache.peek('b')]).toEqual(['a', undefined]);
+    cache.set('d', 'd', 1, (value) => value === 'a');
+    expect([cache.peek('a'), cache.peek('c'), cache.peek('d')]).toEqual(['a', undefined, 'd']);
+    cache.set('a', 'a2', 5);
+    expect(cache.totalSize).toBe(6);
+    cache.clear();
+    expect([cache.count, cache.totalSize]).toEqual([0, 0]);
+  });
+});
+
+describe('clipForDisplay (R2W-06)', () => {
+  it('keeps texts within the budget and clips by chars or at a line end', () => {
+    expect(clipForDisplay('a\nb', { chars: 10, lines: 10 })).toEqual({ text: 'a\nb', clipped: false });
+    expect(clipForDisplay('abcdef', { chars: 4, lines: 10 })).toEqual({ text: 'abcd', clipped: true });
+    expect(clipForDisplay('1\n2\n3\n4\n', { chars: 100, lines: 2 })).toEqual({ text: '1\n2', clipped: true });
+    const log = 'line\n'.repeat(25_000);
+    const clipped = clipForDisplay(log);
+    expect(clipped.clipped).toBe(true);
+    expect(countLines(clipped.text)).toBe(20_000);
   });
 });
