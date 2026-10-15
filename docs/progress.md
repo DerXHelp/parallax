@@ -22,7 +22,7 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 | 22 | Live-Abnahme: Phase-1-Checks gegen echtes `claude`, Screenshots | 20, 21 | offen | – | – | – |
 | R0 | Review nach WP-00…02 (Konventionen, Duplikate, i18n, Importgrenzen, Sicherheit) | 02 | fertig | `289a9ac` (Review), `3c324dc` (Fixes) | 30 Befunde (6 BLOCKER, 6 SOLLTE, 18 NIT); alle BLOCKER/SOLLTE behoben: HTTP-/Auth-Contract, `@shared/paths`, dateigenaue Ownership, Statusregeln, `needs-resume`; 553 Tests | NIT R0-22 (ESLint-Meldung shared), R0-23 (`assertNotRealHome` Präfix), R0-24 (`ws` → devDeps?) in R1-Fixes (Koordinator-Freigabe Root-Configs); R0-25 nach WP-11 in R1 |
 | R1 | Review nach Welle 1a (10, 11, 12, 14) | Welle 1a | fertig | `3da4675`/`b8d928f` (Server), `a95a83f` (Web), V1 `1ab3cdd` | R1 Server 22 Befunde (1 BLOCKER: Auth-Bypass per `%xx`-Pfad), R1 Web 26 (3 BLOCKER), V1 15 (1 BLOCKER: WS ohne `Sec-Fetch-Site` abgelehnt) | `fix/r1-web` gemergt (`a158884`): Watcher wurzelverankert, Selektoren, Variante A, Notices, Feature-Grenzen, Code-Splitting; `fix/r1-server` gemergt (`b2978a5`): Guard nach Route (ADR-018), WS ohne Pflicht-`Sec-Fetch-Site` (ADR-019), Start-Abbruch bei neuerer `schemaVersion` (ADR-020), buildEnv ohne `AI_AGENT` + Registry-Ausnahme (ADR-021), nur absolute `.exe`; 1666 Tests | R1-15 Speicher, R1-17 lstat offen (später) |
-| R2 | Review nach Welle 1b (13, 15, 16) | Welle 1b | offen | – | – | – |
+| R2 | Review nach Welle 1b (13, 15, 16) | Welle 1b | läuft (Teil Web; Teil Server nach 13b) | – | – | – |
 | R3 | Review nach Welle 2/3 + `/code-review` | 20–22 | offen | – | – | – |
 
 ## Contract-Changelog
@@ -76,7 +76,7 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 13a FakeBackend + Broker + Basismodule/Test-Doubles und 13c SdkBackend parallel; 13b SessionManager nach Merge von 13a.
 
 ## Nächste Schritte
-1. Welle 1a komplett gemergt (1451 Tests). Läuft: R1 Server + Web, Verifier V1, WP-13-Design. Danach R1-Fixes inkl. gesammelter Contract-Wünsche, dann Welle 1b.
+1. Läuft: WP-13b (SessionManager), WP-21 (Launcher), Flake-Fix-Runde, R2 Web. Danach R2 Server, R2-Fixes, WP-20 (Verdrahtung + E2E), V2, WP-22 (Live-Abnahme).
 2. Danach Welle 1a (10, 11, 12, 14) in Worktrees `.worktrees/wp-xx`
    auf Branches `wp/xx`, jeweils `pnpm install --frozen-lockfile` im Worktree.
 3. Nach ≥ 24 h: `react`/`react-dom` 19.3.1 prüfen und nachziehen (Koordinator, siehe WP-00.md).
