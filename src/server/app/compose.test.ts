@@ -4,6 +4,7 @@
  * port in use (4) with a complete cleanup. The process view (tsx, real exit codes, WS flow) is in
  * `main.integration.test.ts`.
  */
+import { EventEmitter } from 'node:events';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
 import path from 'node:path';
@@ -14,6 +15,7 @@ import { makeTempHome, rawRequest } from '../http/testServer';
 import { checkHealth } from '../launcher/client';
 import { SERVER_EXIT_CODES } from '../launcher/exitCodes';
 import { readServerLock } from '../launcher/lockFile';
+import type { SignalTarget } from '../launcher/shutdown';
 import { acquireHomeLock, type HomeLock } from '../lib/homeLock';
 import type { CommandContext } from '../sync/ports';
 import { StartupError, startServer, type RunningServer } from './compose';
@@ -44,17 +46,18 @@ async function start(
     webRoot?: string | null;
     homeLock?: HomeLock;
     homeAccess?: (home: string) => Promise<unknown>;
+    signals?: SignalTarget;
   } = {},
 ): Promise<Started> {
   const exits: number[] = [];
   const config = loadConfig({
-    argv: ['--backend=fake', `--port=${String(options.port ?? 0)}`, `--home=${home}`],
+    argv: ['--backend=fake', `--port=${String(options.port ?? 0)}`, `--home=${home}`, '--validate=throw'],
     env: {},
   });
   const server = await startServer({
     config,
     webRoot: options.webRoot ?? null,
-    signals: null,
+    signals: options.signals ?? null,
     fakeSpeed: 0,
     exit: (code) => exits.push(code),
     homeLock: options.homeLock ?? null,
@@ -146,6 +149,20 @@ describe('startServer (composition)', () => {
     const again = await acquireHomeLock(home);
     expect(again.kind).toBe('acquired');
     if (again.kind === 'acquired') await again.lock.release();
+  });
+
+  it('a signal (SIGTERM, Ctrl+C) runs the same shutdown: exit 0, lock file gone (R3-17)', async () => {
+    const home = await tempHome();
+    const signals = new EventEmitter();
+    const { server, exits } = await start(home, { signals });
+    expect(signals.listenerCount('SIGTERM')).toBe(1);
+    expect(await checkHealth(server.port)).toMatchObject({ kind: 'ok', health: { backend: 'fake' } });
+    signals.emit('SIGTERM');
+    await vi.waitFor(() => {
+      expect(exits).toEqual([SERVER_EXIT_CODES.ok]);
+    });
+    expect(server.app.server.listening).toBe(false);
+    expect(await readServerLock(home)).toEqual({ kind: 'missing' });
   });
 
   it('refuses a second server on the same PARALLAX_HOME (exit code 5)', async () => {

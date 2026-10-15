@@ -68,7 +68,7 @@ describe('SDDL parsing (R2-13)', () => {
   });
 
   it('whoami csv → SID', () => {
-    expect(parseWhoamiSid(`"desktop-x\\xhelp","${USER}"\r\n`)).toBe(USER);
+    expect(parseWhoamiSid(`"pc-1\\jane","${USER}"\r\n`)).toBe(USER);
     expect(parseWhoamiSid('ERROR: access denied')).toBeNull();
   });
 });

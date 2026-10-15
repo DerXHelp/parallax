@@ -14,11 +14,13 @@ import { LIMITS, blobIdSchema } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   API_PATHS,
+  BLOB_CSP,
   DEV_AUTH_CODE_TTL_MS,
   DEV_WEB_PORT,
-  LOOPBACK_HOST,
   appUrlWithCode,
+  pageCsp,
   serverOrigin,
+  type BackendKind,
   type HealthResponse,
 } from '@shared/http';
 import { PRODUCT_ID } from '@shared/product';
@@ -59,7 +61,8 @@ export interface AttachableHub {
 }
 
 export interface CreateAppOptions {
-  config: Pick<ServerConfig, 'port' | 'dev'>;
+  /** `backend` (R3-02) is reported by `/api/health` when given. */
+  config: Pick<ServerConfig, 'port' | 'dev'> & { backend?: BackendKind };
   instance: ServerInstance;
   auth: AuthService;
   blobs: BlobStore;
@@ -74,23 +77,7 @@ export const JSON_BODY_LIMIT_BYTES = 64 * 1024;
 /** Sockets that ignore the shutdown close frame are terminated after this delay. */
 export const WS_SHUTDOWN_GRACE_MS = 1000;
 
-/** C.10 page CSP; style-src additionally allows inline styles (Radix injects `<style>` elements). */
-export function pageCsp(port: number): string {
-  return [
-    "default-src 'self'",
-    "script-src 'self'",
-    "style-src 'self' 'unsafe-inline'",
-    "object-src 'none'",
-    "base-uri 'none'",
-    "frame-ancestors 'none'",
-    "form-action 'none'",
-    "img-src 'self' data: blob:",
-    `connect-src 'self' ws://${LOOPBACK_HOST}:${String(port)}`,
-  ].join('; ');
-}
-
-/** Blob answers (C.10): never rendered as a document of the app's origin. */
-export const BLOB_CSP = "sandbox; default-src 'none'";
+// The page CSP (C.10) and the blob CSP come from @shared/http (`pageCsp`, `BLOB_CSP`; R3-14).
 
 const MEDIA_TYPE_PATTERN =
   /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*(?:\s*;\s*[a-z0-9_-]+=[a-z0-9_.-]+)*$/i;
@@ -222,6 +209,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   );
 
   // ---- routes ----
+  const backend = options.config.backend;
   app.get(API_PATHS.health, (): HealthResponse => ({
     ok: true,
     product: PRODUCT_ID,
@@ -229,6 +217,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     serverVersion: instance.serverVersion,
     buildId: instance.buildId,
     startedAt: instance.startedAt,
+    ...(backend === undefined ? {} : { backend }),
   }));
 
   registerAuthRoutes(app, auth, { port });

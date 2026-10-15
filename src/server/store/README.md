@@ -39,8 +39,10 @@ bleibt gesperrt (`get`/`set` werfen). WP-20 bricht den Start damit ab (`app/comp
 sortiert nach `order`, defekte Zeilen übersprungen und gezählt, abgebrochene letzte Zeile wird
 vor dem nächsten Anhängen abgeschlossen; LRU-Cache (8 Unterhaltungen), beim Anhängen
 aktualisiert. IDs werden vor jedem Pfadbau validiert (kein Path-Traversal). `validation`
-(`throw` unter Vitest, `log` im Dev-Modus über WP-20, sonst `off`) prüft jede angehängte Zeile
-gegen `transcriptLogLineSchema`; nach 3 fehlgeschlagenen Schreibversuchen einer Datei gibt es
+(Modul-Default `throw` unter Vitest/`NODE_ENV=test`, sonst `off`; der Server übergibt
+`config.validation`, Default `log` auch im Prod-Betrieb – R3-05) prüft jede angehängte Zeile
+gegen `transcriptLogLineSchema` (`log`: verworfen, `stats().invalidLines` gezählt, gedrosselt
+geloggt); nach 3 fehlgeschlagenen Schreibversuchen einer Datei gibt es
 einmal `STORE_WRITE_FAILED` an `warnings` (R1-16).
 
 **Blobs:** `put` hasht synchron (SHA-256) und schreibt asynchron; bis dahin liefert `get` aus dem

@@ -641,3 +641,128 @@ Format: `ADR-NNN – Titel` · Datum · WP · Kontext → Entscheidung → Folge
   loggt beim Start `logHomeAccess` als Warnung (Verdrahtung WP-20c).
 - **Folgen:** `unknown` (kein Windows, PowerShell gesperrt) ist nur `info`. Deny-Einträge werden
   ignoriert – die Warnung kann zu vorsichtig sein, nie zu nachsichtig.
+
+## ADR-060 – Edge-App-Profil: nie angemeldet, nie synchronisiert (nur Kommandozeilenschalter)
+- **Datum/WP:** 15.10.2026, R3-Fixes Server (V2-01, Koordinator-Entscheidung: Datenschutz, höchste Priorität)
+- **Kontext:** Ein frisches Profil `--user-data-dir=<home>\edge` meldete sich beim ersten Start
+  implizit mit dem Microsoft-Konto des Windows-Nutzers an, richtete Sync ein (Verlauf, getippte URLs
+  mit `#code=`, Tabs, Kennwörter) und zeigte modal „Wir synchronisieren …“ über der App.
+  `--no-first-run` verhindert das nicht. Richtlinien/Registry wären global und scheiden aus.
+- **Entscheidung:** `edgeAppArgs` startet Edge zusätzlich mit `--disable-sync`,
+  `--allow-browser-signin=false` und `--disable-features=msImplicitSignin,msEdgeFirstSyncOnFirstRun,
+  msWebUISyncConfirmationDialog,msForceBrowserSignIn,msSeamlessWebToBrowserSignIn,
+  msEnableWebToBrowserSignIn,msEnableAADWebToBrowserSignIn,msQuickAuthToBrowserSignIn` (Namen aus
+  `msedge.dll` 155). Gemessen (Edge 155.0.4283.45, Temp-Profile, CDP `edge://signin-internals`,
+  Profildateien; `docs/wp/V2.md` „Umsetzung Server“): nur `--disable-sync` → implizit angemeldet
+  („Signed In, Consented for Sync“), Sync aus; `msImplicitSignin` aus → „Not Signed In“, auch beim
+  zweiten Start; `--allow-browser-signin=false` und vorab geschriebene Prefs (`signin.allowed`,
+  `profiles.edge_implicit_sign_in_enabled`) allein verhindern die implizite Anmeldung **nicht** –
+  daher keine Prefs-Datei. Ein schon angemeldetes Profil (ältere Version) bekommt im Launcher einen
+  Hinweis (`edgeProfileSignedIn`, nur lesend); `pnpm preflight` warnt bei Edge-Richtlinien, die das
+  übersteuern können.
+- **Folgen:** Kein Konto, kein Sync, kein Sync-Dialog im App-Fenster; die Seite „Profile“ bietet nur
+  noch eine (nicht ausgeführte) Anmeldung an. Richtlinien gehen Schaltern vor:
+  `BrowserSignin=2`, `ForceSync`, `ImplicitSignInEnabled=1`, `ConfigureOnPremisesAccountAutoSignIn`,
+  `UserDataDir` und `FeatureFlagOverridesControl=0` (ignoriert `--disable-features`) – auf einem
+  verwalteten Arbeitsrechner vor WP-22 prüfen (`pnpm preflight`, `edge://policy`). Ein neuer
+  Edge-Feature-Name bei einem späteren Edge-Update wäre unwirksam, nicht schädlich (unbekannte
+  Namen werden ignoriert) – Nachprüfung in WP-22 per `edge://signin-internals`.
+
+## ADR-061 – FakeBackend nie auf dem echten Datenordner; Health meldet das Backend
+- **Datum/WP:** 15.10.2026, R3-Fixes Server (R3-02, Koordinator-Entscheidung „hart verbieten“)
+- **Kontext:** `--backend=fake` bzw. ein stehengebliebenes `PARALLAX_BACKEND=fake` startete das
+  FakeBackend auf `%LOCALAPPDATA%\Parallax` (Fake-Antworten in echten Transkripten, Fake-Session-IDs,
+  Fake-PIDs in `processes.json`); spätere Starts öffneten still ein Fenster zu diesem Server.
+- **Entscheidung:** `loadConfig`: `backend === 'fake'` und Home gleich oder unterhalb des echten
+  Datenordners → `ConfigError` (Server Exit 1, Launcher „Invalid option“, Exit 2). `GET /api/health`
+  trägt additiv `backend?: 'sdk' | 'fake'` (`backendKindSchema` in `@shared/http`, optional für ältere
+  Server). Der Launcher vergleicht es mit dem angeforderten Backend und bricht mit
+  `backend_mismatch` (Exit 1, Hinweis `parallax --backend=<laufendes>` → „Server beenden“) ab, statt
+  ein Fenster zu öffnen; ohne `backend` im Health (älterer Server) keine Prüfung.
+- **Folgen:** Dev (`.parallax-dev`) und E2E (Temp-Homes) unverändert. Die Kennzeichnung „Fake“ in der
+  UI liest `host.state.backend` (Web-Fixes, R3-01/R3-02).
+
+## ADR-062 – Ein Launcher je Datenordner, ein Build je Checkout (Named-Pipe-Locks)
+- **Datum/WP:** 15.10.2026, R3-Fixes Server (R3-04)
+- **Kontext:** Ein Doppelklick startete zwei Launcher; der zweite gab nach einem einzigen
+  `findRunningServer` mit „start Parallax again in a moment“ auf oder meldete im Port-Pfad einen
+  fremden Server. Zwei Launcher verschiedener Datenordner konnten gleichzeitig denselben Checkout
+  bauen.
+- **Entscheidung:** `lib/homeLock.ts` verallgemeinert den Home-Lock zu `acquireDirectoryLock(kind,
+  dir)` (`\\.\pipe\parallax-<kind>-<16 hex>`, gleicher Schlüssel wie der Home-Lock). Der Launcher
+  nimmt `launch` je Home für seinen ganzen Lauf (belegt → „waiting for it“, Poll bis
+  `lockWaitMs`, Default 25 min) und `build` je Checkout um den Build (nach dem Warten wird der Build
+  erneut geprüft). Zusätzlich: Exit 5/Port belegt → `findRunningServer` bis zur Bereitschaftsfrist
+  pollen; Port belegt durch einen Server **dieses** Homes → dessen Fenster.
+- **Folgen:** Doppelklick = ein Server, zwei Fenster (Integrationstest mit zwei echten Launchern).
+  Die Pipe verschwindet mit dem Prozess (kein Stale-Zustand). `e2e/global-setup.ts` baut ohne
+  Build-Lock (Follow-up, nicht im Besitz).
+
+## ADR-063 – Validierung ausgehender Daten explizit, Default `log` auch im Prod-Betrieb
+- **Datum/WP:** 15.10.2026, R3-Fixes Server (R3-05, Koordinator-Entscheidung „dauerhaft log“)
+- **Kontext:** Prod lief mit `off`: Contract-Abweichungen echter SDK-Daten verwarf erst der Client,
+  still (möglicher Resync-Kreis); der Testmodus hing am generischen `NODE_ENV=test`.
+- **Entscheidung:** `--validate=off|log|throw` / `PARALLAX_VALIDATE` (zod) in `loadConfig`, Default:
+  Flag > Env > `throw` unter Vitest bzw. `NODE_ENV=test` (E2E) > `log`. `compose.ts` übergibt den Wert
+  an Hub und Transkript-Store; der Launcher reicht ihn mit `--validate=` weiter. `log` verwirft den
+  Wert (ein Op bekommt keine Seq → keine Lücke), zählt ihn (`hub.stats().invalidOutgoing`,
+  `transcripts.stats().invalidLines`) und loggt mit laufender Zahl die ersten 20, dann jeden 100.
+  (`shouldLogRepeated`, `lib/logger.ts`).
+- **Folgen:** Ein Contract-Bruch in WP-22 erscheint als `error`-Zeile im Server-Log. Der Host-State hat
+  keinen Zähler (Contract unverändert) – nur Log und Server-Statistik. `NODE_ENV=test` bleibt als
+  Test-Erkennung, bis die E2E `PARALLAX_VALIDATE=throw` setzt (Follow-up).
+
+## ADR-064 – Globale Fehler-Handler und Waisen-Ergebnisse nach dem Shutdown
+- **Datum/WP:** 15.10.2026, R3-Fixes Server (R3-06)
+- **Kontext:** Ein spätes Ergebnis der Waisen-Prüfung nach `stores.close()` rief `processes.remove`
+  → `set()` warf → unbehandelte Rejection → Exit 1 mit Stacktrace; allgemein beendete jede
+  unbehandelte Rejection/Exception den Server ohne Log-Zeile, ohne 4503, ohne Aufräumen.
+- **Entscheidung:** Manager: jedes Waisen-Ergebnis mit `.catch` (Log), `shutdown()` wartet höchstens
+  `orphanShutdownWaitMs` (2 s) auf die laufende Prüfung, Ergebnisse nach dem Flush werden ignoriert
+  (Record bleibt, der nächste Start prüft erneut). `app/crash.ts`: `unhandledRejection`/
+  `uncaughtException` → `logger.fatal` + `shutdown.stop('error', 1)`; vor dem Shutdown-Rahmen
+  (Startphase) Log schließen und Exit 1; ein zweiter Fehler während des Fehler-Shutdowns → sofort
+  Exit 1; während eines regulären Shutdowns nur Log.
+- **Folgen:** Exit-Code 1 bedeutet jetzt auch „geordnet nach unerwartetem Fehler beendet“ (Ursache im
+  pino-Log als `fatal`). `ShutdownReason 'error'` ist damit genutzt (R3-11).
+
+## ADR-065 – Build-ID aus dem letzten Commit der Build-Eingaben (ergänzt ADR-013/ADR-036)
+- **Datum/WP:** 15.10.2026, R3-Fixes Server (R3-13, V2-03)
+- **Kontext:** `<version>+<HEAD-Hash>`: jeder Doku-Commit änderte die Build-ID → Neubau durch Launcher
+  und `pnpm e2e`, laufende Server galten als „older build“.
+- **Entscheidung:** `resolveBuildId` nimmt `git log -1 --format=%H -- <BUILD_INPUT_PATHSPECS>` (auf
+  12 Zeichen gekürzt; ohne Treffer HEAD, ohne git `nogit`), weiter mit `.dirty-<Digest>` für
+  uncommittete Build-Eingaben. Die Pfadliste schließt jetzt `**/*.md` (auch READMEs in `src/`),
+  `**/*.test.ts(x)` und `**/__snapshots__/**` aus. Gits Standard-History-Simplification sorgt dafür,
+  dass die Build-Eingaben dieses Commits denen von HEAD gleichen (auch nach Merges).
+- **Folgen:** Doku-, Fortschritts- und Test-Commits erzwingen keinen Neubau mehr (Test mit
+  Temp-Repo in `repo.config.test.ts`). Gleicher Inhalt auf zwei Zweigen kann verschiedene IDs haben
+  (nur ein überflüssiger Neubau). `resolveBuildId(repoRoot, env?)` nimmt die Env als Parameter.
+
+## ADR-066 – Der Server liefert eine beim Start fixierte UI-Kopie aus; Web-Build trägt seine ID
+- **Datum/WP:** 15.10.2026, R3-Fixes Server (V2-03, Koordinator: robusteste Lösung laut V2.md)
+- **Kontext:** `pnpm build`, `pnpm e2e` oder der Launcher eines anderen Datenordners bauten `dist/`
+  unter einem laufenden Server neu; dessen neue/neu geladene Fenster hingen dann dauerhaft in
+  „Parallax wurde aktualisiert“ (V2-04), und offene Dateien konnten `vite build` stören. Ein
+  „Build verweigert sich, solange ein Server läuft“ bräuchte eine Prozess-Erkennung je `dist` mit
+  Wettläufen; ein E2E-eigenes `dist` schützt nicht vor `pnpm build` und dem Launcher.
+- **Entscheidung:** Vite schreibt `dist/web/build.json` (`{"buildId"}`, gleiche ID wie
+  `dist/server.js`). `app/webSnapshot.ts`: Beim Start kopiert der Server `dist/web` nach
+  `PARALLAX_HOME/ui/<buildId>` (Temp-Ordner + Rename, Wiederverwendung je Build, ältere Kopien
+  gelöscht – der Home-Lock schließt Wettläufe aus) und liefert nur noch daraus aus. Passt die ID von
+  `build.json` nicht (halber/fremder Build) oder läuft ein unbundled `dev`-Build, wird `dist/web`
+  direkt ausgeliefert (Warnung). `checkBuild` verlangt jetzt `build.json` mit derselben ID wie der
+  Server-Bundle (halber Build → `stale`).
+- **Folgen:** Ein laufender Server ist von späteren Builds unabhängig; der Launcher-Hinweis „older
+  build“ bleibt der Weg zum Update. Kosten: einmal ≈ 8 MiB kopieren je Build und Datenordner (E2E:
+  je Server). Die erste Prüfung nach dem Update baut einmal neu (alte Builds ohne `build.json`).
+
+## ADR-067 – CSP-Direktiven zentral in `@shared/http`
+- **Datum/WP:** 15.10.2026, R3-Fixes Server (R3-14, Contract-Wunsch aus R1W-23, additiv)
+- **Kontext:** Die Seiten-CSP lebte nur in `src/server/http/app.ts`; ein Dev-Server konnte sie nicht
+  ohne Kopie übernehmen.
+- **Entscheidung:** `@shared/http` exportiert `pageCspDirectives(port)`, `BLOB_CSP_DIRECTIVES`,
+  `cspHeaderValue`, `pageCsp(port)` und `BLOB_CSP` (Werte unverändert, ADR-026); der Server nutzt sie.
+- **Folgen:** Die Vite-Dev-CSP (`server.headers` + `html.cspNonce`, R1W-23 „optional“) bleibt ein
+  Folgeauftrag für `vite.config.ts` (Nonce + HMR-WebSocket `ws://127.0.0.1:5173` ergänzen);
+  bis dahin README: `pnpm dev:live` nur in einem eigenen Edge-Profil.

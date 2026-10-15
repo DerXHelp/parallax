@@ -11,6 +11,10 @@
  * (also after a crash or taskkill): there is no stale state. Connections to the pipe are closed at
  * once; the server is `unref()`'d and never keeps the process alive. Other platforms (tests only):
  * no exclusivity (`exclusive: false`).
+ *
+ * The same mechanism serves other per-directory mutexes with their own pipe prefix
+ * (`acquireDirectoryLock`, R3-04): the launcher serializes concurrent starts per home
+ * (`launch`) and concurrent builds per checkout (`build`) with it.
  */
 import { createHash } from 'node:crypto';
 import { mkdir, realpath } from 'node:fs/promises';
@@ -29,8 +33,12 @@ export interface HomeLock {
 
 export type HomeLockResult =
   | { kind: 'acquired'; lock: HomeLock }
-  /** Another process holds the lock for this home → exit `SERVER_EXIT_CODES.alreadyRunning` (5). */
-  | { kind: 'busy'; pipe: string };
+  /**
+   * Another process holds the lock for this home → exit `SERVER_EXIT_CODES.alreadyRunning` (5).
+   * `access_denied` (EACCES): the pipe was created by another Windows user (multi-user/RDP machine,
+   * R3-16) – only a denial of service, never access to the data.
+   */
+  | { kind: 'busy'; pipe: string; reason: 'in_use' | 'access_denied' };
 
 /**
  * The key of a home: the real path (junctions, `subst` drives and 8.3 names resolve to one
@@ -47,17 +55,26 @@ export async function homeLockKey(home: string): Promise<string> {
   return windowsPathKey(real);
 }
 
-/** `\\.\pipe\parallax-home-<16 hex>` for a home key. */
-export function homeLockPipeName(key: string): string {
+/** Purpose of a directory lock = pipe prefix (`home`: one server per PARALLAX_HOME). */
+export type DirectoryLockKind = 'home' | 'launch' | 'build';
+
+/** `\\.\pipe\parallax-<kind>-<16 hex>` for a directory key. */
+export function directoryLockPipeName(kind: DirectoryLockKind, key: string): string {
   const digest = createHash('sha256').update(key, 'utf8').digest('hex').slice(0, 16);
-  return `\\\\.\\pipe\\parallax-home-${digest}`;
+  return `\\\\.\\pipe\\parallax-${kind}-${digest}`;
 }
 
-function listen(server: Server, pipe: string): Promise<'listening' | 'busy'> {
+/** `\\.\pipe\parallax-home-<16 hex>` for a home key. */
+export function homeLockPipeName(key: string): string {
+  return directoryLockPipeName('home', key);
+}
+
+function listen(server: Server, pipe: string): Promise<'listening' | 'in_use' | 'access_denied'> {
   return new Promise((resolve, reject) => {
     const onError = (error: Error): void => {
       server.off('listening', onListening);
-      if (errnoCode(error) === 'EADDRINUSE' || errnoCode(error) === 'EACCES') resolve('busy');
+      if (errnoCode(error) === 'EADDRINUSE') resolve('in_use');
+      else if (errnoCode(error) === 'EACCES') resolve('access_denied');
       else reject(error);
     };
     const onListening = (): void => {
@@ -79,23 +96,33 @@ export interface AcquireHomeLockOptions {
  * Takes the exclusive lock of `home` (absolute, safe path – it is created if missing so that its
  * real path is the key). `busy` if another process holds it; other failures reject.
  */
-export async function acquireHomeLock(
-  home: string,
+export function acquireHomeLock(home: string, options: AcquireHomeLockOptions = {}): Promise<HomeLockResult> {
+  return acquireDirectoryLock('home', home, options);
+}
+
+/**
+ * The exclusive lock `kind` of `dir` (absolute, safe path; created if missing so that its real
+ * path is the key – same key rules as the home lock). `busy` if another holder has it.
+ */
+export async function acquireDirectoryLock(
+  kind: DirectoryLockKind,
+  dir: string,
   options: AcquireHomeLockOptions = {},
 ): Promise<HomeLockResult> {
-  const issue = windowsPathIssue(home);
-  if (issue !== null) throw new TypeError(`home lock: unsafe PARALLAX_HOME (${issue})`);
+  const issue = windowsPathIssue(dir);
+  if (issue !== null) throw new TypeError(`${kind} lock: unsafe path (${issue})`);
   if ((options.platform ?? process.platform) !== 'win32') {
     return { kind: 'acquired', lock: { pipe: null, exclusive: false, release: () => Promise.resolve() } };
   }
-  await mkdir(home, { recursive: true });
-  const pipe = homeLockPipeName(await homeLockKey(home));
+  await mkdir(dir, { recursive: true });
+  const pipe = directoryLockPipeName(kind, await homeLockKey(dir));
   const server = createServer((socket) => {
     socket.destroy();
   });
-  if ((await listen(server, pipe)) === 'busy') {
+  const listened = await listen(server, pipe);
+  if (listened !== 'listening') {
     server.close();
-    return { kind: 'busy', pipe };
+    return { kind: 'busy', pipe, reason: listened };
   }
   server.unref();
   let released: Promise<void> | null = null;

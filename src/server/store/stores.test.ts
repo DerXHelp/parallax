@@ -235,7 +235,7 @@ describe('TranscriptStore (entries/<id>/<cv>.transcript.jsonl)', () => {
     }).toThrow(/invalid log line/);
     const lenient = createTranscriptStore({ home, validation: 'log' });
     lenient.append(ENTRY, CV, invalid);
-    expect(lenient.stats().appendedLines).toBe(0);
+    expect(lenient.stats()).toMatchObject({ appendedLines: 0, invalidLines: 1 });
     const off = createTranscriptStore({ home, validation: 'off' });
     off.append(ENTRY, CV, invalid);
     expect(off.stats().appendedLines).toBe(1);

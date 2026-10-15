@@ -1,7 +1,8 @@
 /**
  * Checks of `pnpm preflight` (Plan "Paketmanager: pnpm 12", "Claude-Profile"): Node version,
  * pnpm version, registry, every profile's `claude` (path, version, C.7 rule) and login, Microsoft
- * Edge, a hint for antivirus products that scan local web traffic (V1-08) and whether other users
+ * Edge and Edge policies that can sign in/sync its app profile (V2-01), a hint for antivirus
+ * products that scan local web traffic (V1-08) and whether other users
  * can read PARALLAX_HOME (R2-13). Pure
  * formatting/rating functions plus `runPreflight` with injectable seams. Output is English (Plan:
  * preflight and logs stay English). Never prints e-mail/org (parseAuthStatus).
@@ -13,7 +14,7 @@ import { windowsPathIssue } from '@shared/paths';
 import { findEdge } from '../lib/edge';
 import { checkHomeAccess, type HomeAccess } from '../lib/homeAccess';
 import { errnoCode, runFile, systemTool, type RunFileFn } from '../lib/process';
-import { regQuery, type RegQuery } from '../lib/registry';
+import { parseRegValues, regKeyQuery, regQuery, type RegKeyQuery, type RegQuery } from '../lib/registry';
 import { getEnvVar, nodeFsProbe, resolveExecutable, type FsProbe } from '../lib/windows';
 import type { ClaudeIntegrationImpl } from './integration';
 import { compareVersions } from './resolveClaude';
@@ -173,6 +174,62 @@ export function checkProfileStatus(
     login.hint = '`claude auth status --json` could not be read.';
   }
   return [claude, login];
+}
+
+/** Where Edge reads group/MDM policies (machine and user). */
+export const EDGE_POLICY_KEYS = [
+  'HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge',
+  'HKCU\\SOFTWARE\\Policies\\Microsoft\\Edge',
+] as const;
+
+/**
+ * Edge policies that can override the app profile's "never sign in, never sync" switches (V2-01,
+ * ADR-060), with the values that do. A policy beats a command-line switch; `FeatureFlagOverridesControl`
+ * = 0 even makes Edge ignore `--disable-features=msImplicitSignin`.
+ */
+const RISKY_EDGE_POLICIES: Readonly<Record<string, (data: string) => boolean>> = {
+  BrowserSignin: (data) => data === '0x2', // force sign-in
+  ForceSync: (data) => data === '0x1',
+  ImplicitSignInEnabled: (data) => data === '0x1',
+  ConfigureOnPremisesAccountAutoSignIn: (data) => data !== '0x0',
+  FeatureFlagOverridesControl: (data) => data === '0x0', // command-line feature switches ignored
+  UserDataDir: () => true, // the own --user-data-dir is replaced
+};
+
+/** Relevant Edge policies (`<name>=<data>`): warn if one can sign in/sync the app profile; none → no line. */
+export function checkEdgePolicies(
+  values: readonly { key: string; name: string; data: string }[],
+): PreflightCheck | null {
+  const relevant = values.filter(
+    (v) => Object.hasOwn(RISKY_EDGE_POLICIES, v.name) || /sync|signin/i.test(v.name),
+  );
+  if (relevant.length === 0) return null;
+  const risky = relevant.filter((v) => RISKY_EDGE_POLICIES[v.name]?.(v.data.toLowerCase()) === true);
+  const detail = relevant.map((v) => `${v.name}=${v.data}`).join(', ');
+  if (risky.length === 0) return { id: 'edge-policies', title: 'edge policies', level: 'info', detail };
+  return {
+    id: 'edge-policies',
+    title: 'edge policies',
+    level: 'warn',
+    detail,
+    hint:
+      `${risky.map((v) => v.name).join(', ')} can sign the Parallax Edge profile in to the Windows/work ` +
+      'account or turn on sync despite its switches (README "Edge-Profil"). Check edge://signin-internals ' +
+      'in a Parallax window after the first start.',
+  };
+}
+
+/** The values of EDGE_POLICY_KEYS (`reg query`; a missing key has none). */
+export async function edgePolicyValues(
+  query: RegKeyQuery,
+): Promise<{ key: string; name: string; data: string }[]> {
+  const values: { key: string; name: string; data: string }[] = [];
+  for (const key of EDGE_POLICY_KEYS) {
+    const output = await query(key, 64);
+    if (output === null) continue;
+    for (const value of parseRegValues(output)) values.push({ key, name: value.name, data: value.data });
+  }
+  return values;
 }
 
 export function checkEdge(edgePath: string | null): PreflightCheck {
@@ -357,6 +414,8 @@ export interface PreflightDeps {
   fs?: FsProbe;
   runFile?: RunFileFn;
   regQuery?: RegQuery;
+  /** Edge policy keys (`reg query <key>`, default reg.exe); V2-01. */
+  regKeyQuery?: RegKeyQuery;
   /** Registered antivirus products (default: Windows Security Center via CIM); null = unknown. */
   antivirus?: () => Promise<string[] | null>;
   /** PARALLAX_HOME to check for other readers (R2-13); omitted/null = no check. */
@@ -403,6 +462,8 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightReport
 
   const edge = await findEdge({ regQuery: deps.regQuery ?? regQuery(run), fs, env: deps.env });
   checks.push(checkEdge(edge));
+  const policies = checkEdgePolicies(await edgePolicyValues(deps.regKeyQuery ?? regKeyQuery(run)));
+  if (policies !== null) checks.push(policies);
   const antivirus = checkAntivirus(await (deps.antivirus ?? (() => antivirusProducts(run)))());
   if (antivirus !== null) checks.push(antivirus);
   const home = deps.home ?? null;
