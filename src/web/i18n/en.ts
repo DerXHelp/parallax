@@ -47,6 +47,7 @@ export const en = {
       unread: 'Unread',
       lastActivity: 'Last activity {time}',
       pinned: 'Pinned',
+      newSession: 'New session',
     },
     session: {
       loading: 'Loading session…',
@@ -60,6 +61,9 @@ export const en = {
       sessionId: 'Session ID',
       profile: 'Profile',
       details: 'Session details',
+      context: 'Context',
+      contextTokens: '{used} of {max} tokens · {source}',
+      contextSource: { sdk: 'measured', estimate: 'estimated' },
     },
     badges: {
       background: 'Background tasks',
@@ -86,10 +90,12 @@ export const en = {
     },
     newSession: {
       title: 'New session',
+      description: 'Choose the project folder. Claude starts with your first message.',
       cwdLabel: 'Project folder',
       cwdPlaceholder: 'D:\\work\\my-project',
-      submit: 'Start session',
-      starting: 'Starting…',
+      hint: 'Full path of an existing folder, e.g. copied from the Explorer address bar.',
+      submit: 'Create session',
+      starting: 'Creating…',
     },
     placeholders: {
       transcript: {
@@ -103,6 +109,7 @@ export const en = {
     setup: {
       title: 'Claude Code needs attention',
       description: 'The default profile cannot start sessions yet. Run “pnpm preflight” for details.',
+      preflight: 'Details: “pnpm preflight”.',
     },
     warnings: {
       title: 'Server warning',
@@ -119,6 +126,16 @@ export const en = {
     notifications: {
       region: 'Notifications',
       show: 'Show session',
+      toastBody: 'Click to show the session.',
+      permission: {
+        title: 'Get notified when a session needs you',
+        description:
+          'Windows notifications for “waiting for you” and “done” while Parallax is in the background.',
+        enable: 'Enable notifications',
+        later: 'Not now',
+        granted: 'Notifications are on.',
+        denied: 'Notifications are blocked. Allow them in the Edge site settings (lock icon) to get toasts.',
+      },
       kinds: {
         permission: '{title} – needs permission',
         question: '{title} – has a question',
