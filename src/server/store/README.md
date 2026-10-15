@@ -5,12 +5,18 @@ Store-Ports stehen in `src/server/sync/ports.ts`.
 
 | Datei | Exporte | Datei unter `PARALLAX_HOME` |
 | --- | --- | --- |
-| `jsonStore.ts` | `JsonStore<T>`, `createStoreWarnings()`, `writeFileAtomic`, `withFsRetry`, `nodeStoreFs`/`StoreFs` (Test-Naht) | – |
-| `registry.ts` | `openRegistryStore({ home, warnings? })` → `RegistryStore` + `close()` | `sessions.json` |
-| `settings.ts` | `openSettingsStore({ home, warnings? })` → `SettingsStore` + `flush()`/`close()` | `settings.json` |
-| `decisions.ts` | `createDecisionStore({ home, warnings? })` → `DecisionStore` + `flush()`/`close()`, `entryDir`, `planPath` | `entries/<entryId>/decisions.json`, `entries/<entryId>/plans/v<N>.md` |
-| `transcripts.ts` | `createTranscriptStore({ home })` → `TranscriptStore` + `stats()`/`close()`, `transcriptPath`, `isStreamingItem` | `entries/<entryId>/<conversationId>.transcript.jsonl` |
-| `blobs.ts` | `createBlobStore({ home })` → `BlobStore` + `flush()`/`close()`, `blobFilePath`, `blobMetaPath` | `blobs/<blobId>`, `blobs/<blobId>.meta.json` (`blobRefSchema`) |
+| `jsonStore.ts` | `JsonStore<T>` (`JsonStoreOptions`, `Migrations`, `Versioned`), `createStoreWarnings()` → `StoreWarningRegistry` (`StoreWarningSink`), `StoreVersionTooNewError`, `STORE_VERSION_TOO_NEW_EXIT_CODE` (3), `fileTimestamp`; Re-Exporte aus `lib/fs.ts` (R2-10, ADR-055): `writeFileAtomic`, `withFsRetry`, `DEFAULT_RETRY_DELAYS_MS`, `StoreFs`/`nodeStoreFs` (= `FsOps`/`nodeFsOps`, Test-Naht) | – |
+| `registry.ts` | `openRegistryStore({ home, warnings?, debounceMs?, fs?, retryDelaysMs?, logger? })` → `RegistryStore` + `close()`, `REGISTRY_FILE`, `REGISTRY_MIGRATIONS` | `sessions.json` |
+| `settings.ts` | `openSettingsStore({ home, warnings?, … })` → `SettingsStore` + `flush()`/`close()`, `SETTINGS_FILE`, `SETTINGS_MIGRATIONS` | `settings.json` |
+| `decisions.ts` | `createDecisionStore({ home, warnings?, … })` → `DecisionStore` + `flush()`/`close()`, `entryDir`, `planPath`, `ENTRIES_DIR`, `DECISIONS_FILE` | `entries/<entryId>/decisions.json`, `entries/<entryId>/plans/v<N>.md` |
+| `transcripts.ts` | `createTranscriptStore({ home, validation?, warnings?, flushMs?, cacheSize?, logger? })` → `TranscriptStore` + `stats()`/`close()`, `transcriptPath`, `isStreamingItem`, `TranscriptValidation`, `TRANSCRIPT_FAILURES_BEFORE_WARNING` | `entries/<entryId>/<conversationId>.transcript.jsonl` |
+| `blobs.ts` | `createBlobStore({ home, logger? })` → `BlobStore` + `flush()`/`close()`, `blobFilePath`, `blobMetaPath` | `blobs/<blobId>`, `blobs/<blobId>.meta.json` (`blobRefSchema`) |
+
+Weitere Dateien über `JsonStore`, aber außerhalb dieses Ordners: `auth-secret.json`
+(`http/auth.ts`, `backup: false`), `processes.json` (`sessions/processStore.ts`, WP-13). Das
+Lockfile `server.lock.json` (`launcher/lockFile.ts`) nutzt nur `writeFileAtomic`/`withFsRetry` aus
+`lib/fs.ts`. Neue Nutzer außerhalb von `store/` importieren diese Helfer direkt aus `lib/fs.ts`
+(ADR-055), nicht über `jsonStore.ts`.
 
 **JsonStore** (B „Persistenz“): zod-Schema der ganzen Datei + `schemaVersion` + Migrationen
 (`migrations[n]`: Version n → n + 1); atomar über Temp-Datei (fsync) + Rename, Retry bei
@@ -25,8 +31,8 @@ bei ungültigen Daten). Geschrieben wird erst, nachdem die Datei gelesen wurde.
 `load()` (und damit `openRegistryStore`/`openSettingsStore`/…) verwirft mit
 `StoreVersionTooNewError` (`STORE_VERSION_TOO_NEW {file, version, supported}`, englische Meldung
 „… update Parallax“); die Datei wird **nicht** verschoben, migriert oder überschrieben, der Store
-bleibt gesperrt (`get`/`set` werfen). WP-20 bricht den Start damit ab
-(`STORE_VERSION_TOO_NEW_EXIT_CODE` = 3).
+bleibt gesperrt (`get`/`set` werfen). WP-20 bricht den Start damit ab (`app/compose.ts` →
+`StartupError`, Exit `SERVER_EXIT_CODES.storeVersionTooNew` = `STORE_VERSION_TOO_NEW_EXIT_CODE` = 3).
 
 **Transkript-Log:** gepufferter Writer je Datei (50 ms), nicht-streamende Items nur
 (streamende werden verworfen und gezählt), Laden = Falten nach `id` (letzte Zeile gewinnt),

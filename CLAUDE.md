@@ -35,6 +35,7 @@ Eigene Pfade gezielt prüfen: `pnpm exec eslint <pfade>`, `pnpm exec vitest run 
 | `src/server/**/ports.ts`, `src/server/backend/{types,fixture}.ts` | Server-Ports | Koordinator (eingefroren) |
 | `src/server/lib/{logger,ids,paths}.ts` | Logger, `newId`, Pfad-Helfer (fs-Prüfungen auf `@shared/paths`) | WP-10 |
 | `src/server/lib/{process,windows,registry,edge}.ts` | Spawn/`killProcessTree`, `searchPath`/`resolveExecutable`, Registry-Env, `findEdge` | WP-11 |
+| `src/server/lib/{async,fs,homeLock,homeAccess}.ts` | `toError`/`sleep`, `withFsRetry`/`writeFileAtomic`, Home-Lock (Exit 5), Home-Rechte-Warnung | Koordinator (R2-Fixes) |
 | `src/server/config.ts`, `src/server/{http,sync,store}/` | Config, App, Auth, HTTP/WS, Sync, Stores | WP-10 |
 | `src/server/claude/` | resolveClaude, buildEnv, parseProfileArgs, Profil „Standard“, Preflight | WP-11 |
 | `src/server/sessions/{normalizer,status}/` | Normalizer, Statusmaschine | WP-12 |

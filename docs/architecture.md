@@ -1,7 +1,8 @@
 # Architektur
 
 Stand: WP-02 (Contracts v1, eingefroren) plus R0-Fixes (HTTP-/Auth-Contract, Datei-Ownership,
-Statusregeln; `docs/wp/R0.md`, Abschnitt „Umsetzung“). Code-Wahrheit sind die zod-Schemas in
+Statusregeln; `docs/wp/R0.md`, Abschnitt „Umsetzung“), nachgezogen bis R1/R2-Fixes und WP-20a
+(`docs/wp/R1.md`, `docs/wp/R2.md`, ADR-018 … ADR-056). Code-Wahrheit sind die zod-Schemas in
 `src/shared` und die Port-Dateien in `src/server`.
 
 **Rangfolge bei Widersprüchen (R0-10):** Contracts (`src/shared`, Ports) > dieses Dokument und die
@@ -60,8 +61,9 @@ flowchart LR
 | WP-13 | `backend/{sdk,fake}Backend.ts` → `AgentBackend`; `sessions/manager.ts` → `SessionSource`; `sessions/broker.ts` | alle Server-Ports, `lib/{ids,paths,process}.ts` | FakeBackend + Memory-Publisher |
 | WP-15 | `web/features/transcript/*` (`TranscriptView`, Renderer-Registry, Slots `Markdown`, `ToolInputPreview`) | WP-14-State, Slot `DecisionCard` | Playground + Komponenten-Tests |
 | WP-16 | `web/features/{decisions,composer}/*` (`DecisionBar`, `DecisionCard`, `Composer`, `ContextGauge`, `ModelPicker`, `ModePicker`) | WP-14-State, Slots `Markdown`, `ToolInputPreview` | Playground + Komponenten-Tests |
-| WP-20 | `main.ts`: `createApp` + `createSyncHub` + `createSessionManager` + Backend nach `--backend`; `App.tsx`: Slots mit den echten Komponenten füllen | alles | E2E |
+| WP-20 | `main.ts` (Config, Logging, Exit-Codes) + `app/compose.ts` (`startServer`: Stores, `createApp` + `createSyncHub` + `createSessionManager` + Backend nach `--backend`, Shutdown-Rahmen, Lockfile; §3.3); `App.tsx`: Slots mit den echten Komponenten füllen | alles | E2E |
 | WP-21 | `src/server/launcher/**`: Lockfile schreiben/lesen, Health-Ping, Launcher-Code, Edge-Start, „Server beenden“ | `@shared/http`, `lib/process.ts` | Temp-Home, Port 0 |
+| Koordinator (R2-Fixes) | `lib/async.ts`, `lib/fs.ts` (ADR-055), `lib/homeLock.ts` (ADR-054), `lib/homeAccess.ts` (ADR-056); Exporte §2.2 | Shared (`@shared/paths`), `lib/{logger,paths,process}.ts` | Nähte (`FsOps`, `run`, `platform`), Temp-Ordner, zwei Prozesse (Home-Lock) |
 
 **Import-Grenzen (ADR-003):** `src/shared` ist ein Blatt (nur `zod` und relative Shared-Module, keine
 Node-/DOM-APIs, keine SDK-Typen). Web ↛ Server, Server ↛ Web (tsconfig `rootDir` + ESLint
@@ -103,11 +105,12 @@ im Bericht).
 | `src/server/lib/logger.ts`, `lib/ids.ts`, `lib/paths.ts` | WP-10 | Exporte §2.2 |
 | `src/server/lib/process.ts` | WP-11 | Exporte §2.2; WP-13/21 nutzen nur |
 | `src/server/lib/windows.ts`, `lib/registry.ts`, `lib/edge.ts` | WP-11 | Exporte §2.2 (aus `claude/` verschoben, R1-08, ADR-024); WP-13/21 nutzen nur |
+| `src/server/lib/async.ts`, `lib/fs.ts`, `lib/homeLock.ts`, `lib/homeAccess.ts` | Koordinator (R2-Fixes) | Exporte §2.2 (ADR-054 … ADR-056); alle Pakete nutzen nur, Erweiterungen im Bericht anfragen |
 | `src/server/config.ts`, `src/server/{http,sync,store}/**` | WP-10 | |
 | `src/server/claude/**` | WP-11 | kein eigener Pfad-Helfer, Pfadregeln nur `@shared/paths` |
 | `src/server/sessions/normalizer/**`, `sessions/status/**` | WP-12 | |
 | übrige Dateien in `src/server/sessions/` und `src/server/backend/` | WP-13 | |
-| `src/server/main.ts`, `bootstrap.ts` | WP-20 | |
+| `src/server/main.ts`, `src/server/app/**` | WP-20 | Kompositionswurzel `app/compose.ts` (§3.3); `bootstrap.ts` gelöscht (WP-20a) |
 | `src/server/launcher/**` | WP-21 | |
 | `src/web/{App,main}.tsx`, `index.html`, `index.css` | WP-14 | WP-20 füllt in `App.tsx` die Slots |
 | `src/web/{shell,ui,lib,state,i18n,playground}/**` | WP-14 | in Welle 1b **nur lesen** |
@@ -146,12 +149,24 @@ interface RunFileOptions { cwd?: string; env?: Record<string, string>; timeoutMs
 interface RunFileResult { exitCode: number | null; signal: string | null; stdout: string; stderr: string; timedOut: boolean }
 type RunFileFn = typeof runFile
 runFile(file, args: readonly string[], options: RunFileOptions): Promise<RunFileResult>  // spawn, wirft nicht bei Exit ≠ 0, Timeout → Baum-Kill
-spawnHidden(file, args, options: SpawnOptions & { onStderr? }): ChildProcess  // stderr wird immer gelesen (F.16)
+spawnHidden(file, args, options: SpawnHiddenOptions): ChildProcess  // SpawnOptions ohne shell/windowsHide + onStderr; stderr wird immer gelesen (F.16)
 killProcessTree(pid: number): Promise<void>  // taskkill /PID <pid> /T /F; „nicht gefunden“ ist kein Fehler
 assertSpawnableFile(file): void             // TypeError für nackte Namen, relative/UNC/Device/ADS-Pfade, Nicht-.exe
 systemTool(name): string                    // %SystemRoot%\System32\<name>
-processInfo(pid) / processStartTime(pid) / childProcesses(pid)  // CIM über PowerShell (1–3 s), Waisen-Bereinigung
-isProcessAlive(pid): boolean; errnoCode(error): string | undefined
+isProcessAlive(pid): boolean                // process.kill(pid, 0), EPERM = lebt; Sofort-Vorfilter der Waisen-Bereinigung
+errnoCode(error): string | undefined
+// Prozessabfragen DREIWERTIG (R2-02, ADR-051): PowerShell + CIM (Win32_Process), 1–3 s, unter Last bis ≈ 23 s
+interface ProcessInfo { pid: number; name: string; parentPid: number | null; startedAt: Date }
+type ProcessQueryResult = { kind: 'ok'; processes: ProcessInfo[] }
+  | { kind: 'unknown'; reason: 'timeout' | 'failed' | 'output' | 'unsupported'; detail: string }  // nie „weg“
+queryProcesses({ pids?, parentPids? }, { timeoutMs?, run?, platform? }?): Promise<ProcessQueryResult>
+  // EINE Abfrage für viele PIDs (≤ PROCESS_QUERY_MAX_CLAUSES = 100 Klauseln je Aufruf), Timeout
+  // PROCESS_QUERY_TIMEOUT_MS = 60 s, -ErrorAction Stop + exit 3 statt leerer Liste; leerer Filter → ok []
+processInfo(pid, options?): Promise<{ kind: 'found'; info } | { kind: 'missing' } | { kind: 'unknown'; reason; detail }>
+childProcesses(pid, options?): Promise<ProcessQueryResult>  // direkte Kinder; Nutzer: Shutdown-Sweep (launcher/shutdown.ts),
+                                                           // nicht die Waisen-Bereinigung (Kinder-Pfad aus bis nach WP-22, ADR-052)
+processStartTime(pid, options?): Promise<Date | null>       // null = missing ODER unknown (unterscheiden: processInfo)
+processQueryFilters(filter), parseProcessQueryOutput(stdout) // reine Teile (WQL-Filter, JSON-Ausgabe)
 
 // src/server/lib/windows.ts (WP-11, R1-08) – Dateizugriffe nur über FsProbe (geprüft mit @shared/paths)
 interface FsProbe { isFile(path): Promise<boolean>; readText(path): Promise<string | null> }
@@ -166,7 +181,37 @@ regQuery(run?)(key, view) / regKeyQuery(run?)(key, view); parseRegDefaultValue, 
 readPersistentEnvironment({ query?, env }): Promise<Map<NAME, value>>  // HKCU\Environment + HKLM\…\Session Manager\Environment (ADR-021)
 
 // src/server/lib/edge.ts (WP-11): findEdge({ regQuery, fs, env }): Promise<string | null>  // Preflight, Launcher (WP-21)
+
+// src/server/lib/async.ts (Koordinator, R2-10, ADR-055) – ohne I/O, ohne Logging
+toError(error): Error; sleep(ms): Promise<void>      // sleep über das globale setTimeout (Fake-Timer greifen)
+realSetImmediate; nextMacrotask(): Promise<void>     // echtes setImmediate, beim Import gesichert (Fake-Timer greifen nicht)
+
+// src/server/lib/fs.ts (Koordinator, R2-10, ADR-055) – unverändert aus store/jsonStore.ts verschoben, dort re-exportiert
+interface FsOps { readFile; writeFile (mit fsync); rename; copyFile; unlink; mkdir }; nodeFsOps  // Test-Naht
+isTransientFsError(error): boolean                   // EPERM/EBUSY/EACCES (Scanner, Indexer, gleichzeitiger Leser)
+DEFAULT_RETRY_DELAYS_MS = [10, 25, 50, 100, 200, 400, 800]  // ≈ 1,6 s
+withFsRetry(op, delaysMs?): Promise<T>
+writeFileAtomic(file, data, { fs?, backup?, retryDelaysMs? }?): Promise<void>
+  // <file>.<pid>.<n>.tmp (fsync) → optional <file>.bak → Rename mit Retry; Temp-Datei bei Fehler entfernt
+
+// src/server/lib/homeLock.ts (Koordinator, R2-05, ADR-054) – Mutex je PARALLAX_HOME, §8; Verdrahtung: WP-20c
+acquireHomeLock(home, { platform? }?): Promise<{ kind: 'acquired'; lock: HomeLock } | { kind: 'busy'; pipe: string }>
+  // legt das Home an; unsicherer Pfad → TypeError; busy → Exit 5 (SERVER_EXIT_CODES.alreadyRunning)
+interface HomeLock { pipe: string | null; exclusive: boolean; release(): Promise<void> }  // release idempotent
+homeLockKey(home): Promise<string>                   // windowsPathKey(realpath(home))
+homeLockPipeName(key): string                        // \\.\pipe\parallax-home-<16 Hex von sha256(key)>
+
+// src/server/lib/homeAccess.ts (Koordinator, R2-13, ADR-056) – nur Warnung, keine ACL-Änderung
+checkHomeAccess(home, { run?, platform?, timeoutMs? }?): Promise<HomeAccess>  // wirft nie
+  // HomeAccess = private | shared {principals} | missing | unknown {reason}; DACL per Get-Acl (SDDL), SID per whoami
+logHomeAccess(home, options?): Promise<HomeAccess>   // warn bei shared – Server-Start (Verdrahtung WP-20c); Preflight nutzt checkHomeAccess
+parseSddlDacl(sddl), otherReaders(aces, userSid), parseWhoamiSid(output)  // reine Parser
 ```
+
+Neue kleine, generische Helfer (Fehler, Warten, Datei-Retry) gehören nach `lib/async.ts` bzw.
+`lib/fs.ts` (ADR-055); `store/jsonStore.ts` re-exportiert `withFsRetry`, `writeFileAtomic`,
+`DEFAULT_RETRY_DELAYS_MS` und `StoreFs`/`nodeStoreFs` (= `FsOps`/`nodeFsOps`) unverändert für die
+Store-Aufrufer.
 
 ### 2.3 Web-Erweiterungspunkte (normativ für WP-14; WP-15/16 nutzen; WP-20 verdrahtet)
 
@@ -909,28 +954,63 @@ sessions.json                         registryFileSchema (Entry inkl. unread, co
 profiles.json                         profilesFileSchema (Phase 2)
 settings.json                         settingsFileSchema
 auth-secret.json                      Secret des Geräte-Cookies (WP-10, rotierbar, §5.1; ohne .bak, R1-11)
-server.lock.json                      serverLockFileSchema (@shared/http; WP-21 schreibt/liest, §5.1)
-processes.json                        PID + Startzeit laufender claude.exe für die Waisen-Bereinigung
-                                      (WP-13-internes Schema {schemaVersion 1, records[]}, JsonStore; WP-13 §3.5.13)
+server.lock.json                      serverLockFileSchema (@shared/http; WP-21 schreibt/liest, §5.1; Retry ADR-050)
+processes.json                        PID, Image-Name, Startzeit laufender claude.exe für die Waisen-Bereinigung
+                                      (WP-13-internes Schema, sessions/processStore.ts; Regeln unten)
 blobs/<blobId>                        inhaltsadressiert
 blobs/<blobId>.meta.json              blobRefSchema (Medientyp, Größe, Name; R0-30)
 entries/<entryId>/<conversationId>.transcript.jsonl   append-only, transcriptLogLineSchema
 entries/<entryId>/decisions.json      decisionRecordsFileSchema (offene Records mit decision-Snapshot, R0-07)
 entries/<entryId>/plans/v<N>.md       Plan-Versionen (Text exakt wie in canUseTool)
 entries/<entryId>/attachments/<blobId>.<ext>   Uploads (C.11), Ordner in additionalDirectories
-logs/                                 pino-roll
+logs/parallax.<datum>.<n>.log         pino-roll (lib/logger.ts)
+logs/server.out.log                   stdout/stderr des vom Launcher gestarteten Servers (sonst leer: Abstürze vor
+                                      dem Logger, Ursache eines gescheiterten Starts als letzte Zeile, §3.3;
+                                      > 1 MiB → server.out.1.log beim nächsten Start)
+edge/                                 Edge-Profil des App-Fensters (--user-data-dir, WP-21)
 ```
+Der **Home-Lock** (unten) ist eine Named Pipe und liegt nicht im Home.
+
 `decisions.json`: Solange eine Entscheidung offen ist, trägt ihr Record `decision` (Stand bei
 Erzeugung, gekappt wie auf dem Draht); bei Auflösung wird `decision` auf `null` gesetzt. Nach einem
 Neustart stellt die Engine offene Records mit Snapshot als `state:'expired'` wieder her (A.10);
 Records ohne Snapshot (alte Dateien) werden als `expired` geschlossen und nur gezählt.
 **JsonStore-Regeln (B, WP-10):** zod-Schema + `schemaVersion` + Migrationen; atomar über Temp-Datei
-und Rename mit Retry bei EPERM/EBUSY; `.bak`; korrupte Dateien in Quarantäne + Host-Warnung
+und Rename mit Retry bei EPERM/EBUSY/EACCES (`writeFileAtomic`/`withFsRetry` aus `lib/fs.ts`,
+ADR-055); `.bak`; korrupte Dateien in Quarantäne + Host-Warnung
 `STORE_CORRUPT_QUARANTINED`; ein Writer, Debounce. Neue Felder immer mit Default (kein Bump).
 Eine Datei mit **neuerer** `schemaVersion` (neuerer Parallax-Build auf demselben `PARALLAX_HOME`)
 wird nie verschoben, migriert oder überschrieben: der Server bricht den Start ab
 (`STORE_VERSION_TOO_NEW`, Meldung „update Parallax“, Exit-Code 3; R1-06, ADR-020). Geschrieben
 wird erst, nachdem die Datei gelesen wurde.
+
+**`processes.json` (WP-13, `sessions/processStore.ts`; WP-13 §3.5.13 mit Nachtrag, ADR-051/052):**
+`{schemaVersion: 1, records: [{entryId, pid, image, startedAt}]}` über `JsonStore` (neuere Version →
+Start-Abbruch wie oben). Ein Record entsteht beim Spawn (`add` mit `flush`, überlebt einen harten
+Abbruch) und verschwindet beim Prozessende (`remove`, entprellt). Beim Serverstart: tote PIDs
+(`isProcessAlive`) → Record sofort entfernt, ohne PowerShell; die lebenden in **einer** gebündelten
+Abfrage im Hintergrund (`queryProcesses`, Timeout 60 s). Gleiche PID + Image (case-insensitiv) +
+Startzeit ± 5 s → `taskkill /T /F` des Baums, Record weg; andere Identität (PID wiederverwendet) →
+unberührt, Record weg; Ergebnis `unknown` (Timeout, Policy-Sperre, unlesbare Ausgabe) oder ein
+gescheitertes `taskkill` → Record **bleibt** (`warn`), der nächste Start prüft erneut. Nur Einträge
+mit lebendem Record warten darauf – ihr Start (vorher sichtbar `starting`) und ein ruhendes
+`session.rename`. **Kein Kinder-Pfad bis nach WP-22 (ADR-052):** Kinder eines toten `claude.exe`
+(Bash, MCP) werden weder gesucht noch beendet; Follow-up Herzschlag `aliveAt` je Record
+(`docs/wp/R2.md` „Follow-ups“).
+
+**Home-Lock (R2-05, ADR-054):** höchstens ein Server je `PARALLAX_HOME`. `acquireHomeLock(home)`
+(`lib/homeLock.ts`) nimmt vor dem ersten Store die Named Pipe `\\.\pipe\parallax-home-<16 Hex von
+sha256(windowsPathKey(realpath(home)))>`; Schreibweisen, Junctions und `subst` ergeben denselben
+Schlüssel, die Pipe verschwindet mit dem Prozess (kein Stale-Zustand). `busy` → Exit 5
+(`SERVER_EXIT_CODES.alreadyRunning`; der Launcher sucht dann den laufenden Server). **Stand `main`:**
+Modul und Tests vorhanden, verdrahtet wird es in WP-20c (Anleitung `docs/wp/R2.md` „Verdrahtung für
+WP-20c“); bis dahin entsteht Exit 5 nur über die Vorprüfung Lockfile + Health (§3.3, Schritt 3), die
+zwei gleichzeitige Starts nicht ausschließt.
+
+**Rechte des Homes (R2-13, ADR-056):** `server.lock.json` (Launcher-Token) und `auth-secret.json`
+liegen im Home; Parallax ändert keine ACLs. `checkHomeAccess` (`lib/homeAccess.ts`) erkennt andere
+Leser, `pnpm preflight` warnt (Prüfung „data dir“ mit `icacls`-Vorschlag); die Warnung im
+Server-Log beim Start (`logHomeAccess`) verdrahtet WP-20c.
 
 **Transkript-Log** (`src/server/sync/ports.ts`): eine Zeile je persistierter Op,
 `{v:1, at, op:'upsert', item}` (nur nicht-streamende Items) oder `{v:1, at, op:'remove', itemId}`.
@@ -941,7 +1021,8 @@ defekte Zeilen überspringen und zählen.
 
 - **Auth (A.8):** Einmal-Code → `POST /api/auth` → persistentes HttpOnly-/SameSite=Strict-Cookie;
   Bind-Adresse nur `127.0.0.1`; Host-Prüfung für jeden Request, Klassifizierung nach gematchter
-  Route mit Default-deny (ADR-018), Origin- und `Sec-Fetch-Site`-Prüfung für jeden nicht-GET-Request,
+  Route mit Default-deny (ADR-018: nicht gelistete Routen/Methoden – auch GET – brauchen Origin,
+  `Sec-Fetch-Site: same-origin` und Cookie; Ausnahme nur der Launcher-Endpunkt ohne Origin mit Token),
   beim WS-Upgrade Origin + Cookie (`Sec-Fetch-Site` nur falls vorhanden, ADR-019); kein Token in
   URLs (nur im `#`-Fragment, sofort entfernt), keine CORS-Header. Weitere Fenster über
   `POST /api/launcher/code` mit Launcher-Token. Details und Tabelle: §5.1. Strikte CSP (C.10;
@@ -954,7 +1035,10 @@ defekte Zeilen überspringen und zählen.
 - **Prozesse (C.8, ADR-022):** `close()`, bis 5 s warten, dann `taskkill /PID <pid> /T /F`; jeder
   Spawn mit `windowsHide: true`, ohne Shell und nur mit **absolutem `.exe`-Pfad** (nackte Namen über
   `resolveExecutable`/`systemTool` auflösen – libuv sucht sonst zuerst im `cwd`); Spawn-Wrapper liest
-  stderr (F.16).
+  stderr (F.16). Prozessabfragen sind dreiwertig (`unknown` heißt nie „weg“, ADR-051); Waisen beim
+  Start: nur der verifizierte `claude.exe`-Wurzelprozess, kein Kinder-Pfad bis nach WP-22 (ADR-052, §8).
+- **Ein Server je Home (ADR-054):** Home-Lock per Named Pipe, `busy` → Exit 5 (Verdrahtung WP-20c,
+  §8); Home-Rechte werden nur gewarnt (ADR-056).
 - **Auto-Retry (A.10, ADR-025):** nur nach einem Absturz im **Leerlauf** (`runState idle`, keine
   Queue, keine offene Entscheidung, Code `CLAUDE_PROCESS_CRASHED`): höchstens 3 Neustarts in Folge
   mit Backoff (2 s / 10 s / 30 s), Zähler zurück nach erfolgreichem Turn oder 5 min Laufzeit; jeder
