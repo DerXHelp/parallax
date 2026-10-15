@@ -3,9 +3,11 @@ import { CircleAlertIcon, CircleCheckIcon, InfoIcon, TriangleAlertIcon, type Luc
 import type { ComponentProps, ReactNode } from 'react';
 import { cn } from '@web/lib/cn';
 
-type Tone = 'info' | 'warning' | 'error' | 'success';
+export type AlertTone = 'info' | 'warning' | 'error' | 'success';
+type Tone = AlertTone;
 
-const TONE_ICON: Readonly<Record<Tone, LucideIcon>> = {
+/** Icon per tone (Alert, Banner, the notices of the NotificationCenter). */
+export const TONE_ICON: Readonly<Record<Tone, LucideIcon>> = {
   info: InfoIcon,
   warning: TriangleAlertIcon,
   error: CircleAlertIcon,

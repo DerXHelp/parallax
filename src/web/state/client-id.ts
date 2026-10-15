@@ -1,6 +1,6 @@
 import { clientIdSchema, type ClientId } from '@shared/common';
 import { newClientId } from '@web/lib/ids';
-import { STORAGE_KEYS, readStorage, writeStorage } from '@web/lib/storage';
+import { STORAGE_KEYS, readStorage, storageAvailable, writeStorage } from '@web/lib/storage';
 
 let cached: ClientId | null = null;
 
@@ -29,10 +29,15 @@ export interface ReloadGuard {
   /** Epoch ms of the last automatic reload of this window, or null. */
   read(): number | null;
   write(at: number): void;
+  /** False when `write` cannot persist (no automatic reload then – no loop, R1W-12); default true. */
+  available?(): boolean;
 }
 
 /** Reload guard in sessionStorage (survives the reload itself). */
 export const sessionReloadGuard: ReloadGuard = {
+  available() {
+    return storageAvailable('session');
+  },
   read() {
     const value = Number(readStorage('session', STORAGE_KEYS.reloadAt));
     return Number.isFinite(value) && value > 0 ? value : null;

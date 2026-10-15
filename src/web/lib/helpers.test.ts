@@ -4,8 +4,9 @@ import { sampleStatusFacts, sampleSummary, sampleTime } from '@shared/samples';
 import { DEFAULT_BACKOFF, backoffDelay } from './backoff';
 import { formatHash, getHashParam, parseHash, setHashParam } from './hash';
 import { newClientId, newCmdId } from './ids';
-import { pathTail } from './path-display';
+import { pathTail, shortPath } from './path-display';
 import { orderSessions } from './session-order';
+import { storageAvailable, storageKey } from './storage';
 
 describe('ids', () => {
   it('match the contract schemas', () => {
@@ -58,6 +59,22 @@ describe('pathTail', () => {
     expect(pathTail('/home/user/project/src', 2)).toBe('project/src');
     expect(pathTail('D:\\work', 2)).toBe('D:\\work');
     expect(pathTail('D:\\work\\demo', 1)).toBe('demo');
+  });
+
+  it('shortPath marks shortened paths (V1-13)', () => {
+    expect(shortPath('D:\\1\\2\\3\\4', 3)).toBe('…\\2\\3\\4');
+    expect(shortPath('/a/b/c', 2)).toBe('…/b/c');
+    expect(shortPath('D:\\work\\demo', 3)).toBe('D:\\work\\demo');
+  });
+});
+
+describe('storage', () => {
+  it('builds feature keys and probes availability (R1W-21, R1W-12)', () => {
+    expect(storageKey('composer', 'draft', 'local:en_1')).toBe('parallax.composer.draft.local:en_1');
+    expect(() => storageKey('composer', '')).toThrow();
+    expect(storageAvailable('local')).toBe(true);
+    expect(storageAvailable('session')).toBe(true);
+    expect(window.localStorage.getItem('parallax.probe')).toBeNull();
   });
 });
 

@@ -156,6 +156,8 @@ export const de: typeof en = {
     connecting: 'Verbinde…',
     unreachableTitle: 'Server nicht erreichbar',
     unreachableDescription: 'Parallax erreicht seinen lokalen Server nicht.',
+    upgradeRejected:
+      'Der Server antwortet, lehnt aber die Live-Verbindung (WebSocket) ab. Prüfe Sicherheitssoftware oder Proxys, die lokalen Verkehr filtern.',
     retryIn: { one: 'Neuer Versuch in {count} Sekunde…', other: 'Neuer Versuch in {count} Sekunden…' },
     reconnecting: 'Verbindung unterbrochen – verbinde neu…',
     serverStoppedTitle: 'Parallax-Server beendet',
@@ -164,7 +166,7 @@ export const de: typeof en = {
     reconnect: 'Neu verbinden',
     versionMismatchTitle: 'Parallax wurde aktualisiert',
     versionMismatchDescription:
-      'Dieses Fenster läuft mit einer älteren Version. Lade neu, um weiterzumachen.',
+      'Dieses Fenster und der Server laufen mit verschiedenen Versionen. Lade neu, um weiterzumachen – bleibt der Hinweis, starte Parallax neu.',
     status: {
       connecting: 'Verbinde',
       open: 'Verbunden',

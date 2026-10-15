@@ -1,11 +1,11 @@
-import { useCallback, useSyncExternalStore } from 'react';
+import { useCallback, useMemo, useSyncExternalStore } from 'react';
 
 /**
  * One shared clock for time-dependent UI (relative times, `deriveDisplayStatus` with
  * `rateLimitedUntil`/`wakeupAt`). Components never call `Date.now()` while rendering; they read
  * this clock, which ticks only while someone needs it:
  * - `useNow(intervalMs)`: re-render at least every `intervalMs`.
- * - `useNowUntil(deadlines)`: re-render when the earliest future deadline passes.
+ * - `useNowUntil(deadlines)`: re-render only when one of the deadlines passes.
  */
 
 let now = Date.now();
@@ -92,18 +92,26 @@ function toEpoch(value: string | number | null | undefined): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-/** Epoch ms, re-rendered when one of the (ISO or epoch) deadlines passes. */
+/**
+ * Epoch ms; re-renders ONLY when one of the (ISO or epoch) deadlines passes – not on the ticks of
+ * other `useNow` users (R1W-10). The value is the shared clock at render time.
+ */
 export function useNowUntil(deadlines: readonly (string | number | null | undefined)[]): number {
   const key = deadlines.map((deadline) => String(toEpoch(deadline))).join('|');
-  const subscribe = useCallback(
-    (listener: () => void) => {
-      const epochs = key
+  const epochs = useMemo(
+    () =>
+      key
         .split('|')
         .map(Number)
-        .filter((value) => Number.isFinite(value));
-      return subscribeClock(listener, Symbol('useNowUntil'), { deadlines: epochs });
-    },
+        .filter((value) => Number.isFinite(value)),
     [key],
   );
-  return useSyncExternalStore(subscribe, getClockNow, getClockNow);
+  const subscribe = useCallback(
+    (listener: () => void) => subscribeClock(listener, Symbol('useNowUntil'), { deadlines: epochs }),
+    [epochs],
+  );
+  // Snapshot = number of passed deadlines: it changes only when a deadline passes.
+  const passedDeadlines = useCallback(() => epochs.filter((deadline) => deadline <= now).length, [epochs]);
+  useSyncExternalStore(subscribe, passedDeadlines, passedDeadlines);
+  return getClockNow();
 }

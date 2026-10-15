@@ -18,6 +18,7 @@ die Web-UI (Edge im App-Modus) zeigt Status, Context, Chat und nicht-modale Ents
 |---|---|
 | `pnpm install --frozen-lockfile` | Abhängigkeiten exakt nach Lockfile |
 | `pnpm dev` | Server (FakeBackend, Port 4712, `--home=.parallax-dev`) + Vite (5173, Proxy `/api`) |
+| `pnpm dev:web` | nur Vite; Playground `#playground`; im Worktree eigener Port per `PARALLAX_DEV_WEB_PORT` |
 | `pnpm dev:live` | wie `dev`, aber SdkBackend (echtes `claude`) – nur mit WP-Freigabe |
 | `pnpm build` | `dist/web` (Vite) + `dist/server.js` (esbuild) |
 | `pnpm start` | Build + `node dist/server.js` (Launcher folgt in WP-21) |

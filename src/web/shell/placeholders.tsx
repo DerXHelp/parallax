@@ -2,7 +2,7 @@ import { LayoutListIcon, MessageSquareIcon, MousePointerClickIcon } from 'lucide
 import type { DecisionId, JsonValue } from '@shared/common';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
-import { useDecisions, useItem, useItemIds } from '@web/state/hooks';
+import { useDecision, useDecisions, useItem, useTopLevelItemIds } from '@web/state/hooks';
 
 /**
  * Neutral stand-ins for feature slots that are not wired yet (architecture §2.3 d/e). WP-20
@@ -70,7 +70,8 @@ function PlainItem({ sessionKey, itemId }: { sessionKey: string; itemId: string 
  */
 export function TranscriptPlaceholder({ sessionKey }: { sessionKey: string }) {
   const t = useT();
-  const ids = useItemIds(sessionKey);
+  // Top-level rows only (subagent items belong under their Agent card, R1W-02).
+  const ids = useTopLevelItemIds(sessionKey);
   return (
     <div data-slot="transcript-placeholder" className="flex h-full min-h-0 flex-col">
       <div className="text-muted-foreground flex items-center gap-2 border-b border-dashed px-4 py-1.5 text-2xs">
@@ -118,12 +119,18 @@ export function SidePanelPlaceholder(_props: { sessionKey: string }) {
   return null;
 }
 
-export function DecisionCardPlaceholder(_props: {
+/** Follows the DecisionCard rule (architecture §2.3e): nothing once the decision is resolved. */
+export function DecisionCardPlaceholder({
+  sessionKey,
+  decisionId,
+}: {
   sessionKey: string;
   decisionId: DecisionId;
   placement: 'transcript' | 'bar';
 }) {
   const t = useT();
+  const decision = useDecision(sessionKey, decisionId);
+  if (decision === null) return null;
   return (
     <div
       data-slot="decision-card-placeholder"
@@ -135,11 +142,17 @@ export function DecisionCardPlaceholder(_props: {
 }
 
 /** Plain text, line breaks kept – never interpreted as Markdown/HTML. */
-export function MarkdownPlaceholder({ text }: { text: string }) {
+export function MarkdownPlaceholder({ text }: { text: string; sessionKey?: string }) {
   return <div className="text-ui break-words whitespace-pre-wrap">{text}</div>;
 }
 
-export function ToolInputPreviewPlaceholder({ input }: { toolName: string; input: JsonValue }) {
+export function ToolInputPreviewPlaceholder({
+  input,
+}: {
+  toolName: string;
+  input: JsonValue;
+  sessionKey?: string;
+}) {
   return (
     <pre className="bg-muted/50 max-h-60 overflow-auto rounded-md p-2 font-mono text-2xs whitespace-pre-wrap">
       {JSON.stringify(input, null, 2)}
