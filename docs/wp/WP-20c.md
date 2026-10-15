@@ -63,7 +63,7 @@ $env:PARALLAX_E2E_SKIP_BUILD='1'; pnpm e2e # ohne Build-Prüfung (dist/ muss pas
 | | Write-Permission zeigt die Änderung, „Datei-Effekt“ im Fake: „The file fake-notes.txt was written.“ | grün |
 | | AskUserQuestion: Option + Markdown-Vorschau → „You chose: Blue“ | grün |
 | | Plan v1 → Feedback per Composer-Enter (Ziel-Sperre) → v2 → „▾“ Manual → „Implement · Manual“ → IMPLEMENTED, Kopfzeile „Manual“ | grün |
-| `windows.spec.ts` | zwei Fenster: Antwort im zweiten → Karte im ersten weg + „granted in another window“; gleichzeitige Klicks → genau ein Ergebnis, beide Fenster gleich (R2W-07 d) | grün |
+| `windows.spec.ts` | zwei Fenster (je eigenes Fenster/Profil): Antwort im zweiten → Karte im ersten weg + „granted in another window“; gleichzeitige Klicks → genau ein Ergebnis, beide Fenster gleich (R2W-07 d) | grün |
 | | Ziel-Sperre: Entscheidung erscheint (anderes Fenster startet den Turn) während des Tippens → Enter reiht ein, Karte bleibt; Gegenprobe: Entscheidung vorher da → Enter = Ablehnung mit Text | grün |
 | | Reload mit offener Frage-Karte → gleiche Karte wieder da, beantwortbar | grün |
 | `transcript.spec.ts` | (a) Streaming klebt am Ende, Hochscrollen löst, „Jump to latest“ klebt wieder | grün |
@@ -112,7 +112,12 @@ jede andere Verletzung lässt den Test scheitern.
 2. **Ein Server je Worker** (3 Worker); Fälle, die Einstellungen ändern oder den Server beenden,
    starten einen eigenen. Server mit `NODE_ENV=test` (Validierung `throw`) und Fehlerzeilen-Prüfung
    am Ende – Contract-Abweichungen an der Naht fallen auf.
-3. **Präsenz für Benachrichtigungen per Init-Script** (`document.hasFocus`/`visibilityState`
+3. **Zwei Fenster gleichzeitig = zwei Browser-Kontexte** (eigene Fenster): eine zweite Seite im
+   selben Kontext, die nicht vorne lag, blieb in headless Edge unter Vitest-Last viele Sekunden
+   stehen (kein Locator löste auf; Playwright schaltet Renderer-Backgrounding schon ab) – zwei
+   Abnahmeläufe scheiterten daran. Kein App-Fehler: die App wendet Ops in verborgenen Fenstern per
+   `setTimeout` an (`connection.ts`).
+4. **Präsenz für Benachrichtigungen per Init-Script** (`document.hasFocus`/`visibilityState`
    überschrieben, `Notification` umhüllt und aufgezeichnet): headless Edge meldet jede Seite als
    fokussiert und sichtbar; die Server-Kanalwahl und die Web-Zustellung laufen echt.
 

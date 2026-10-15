@@ -4,7 +4,10 @@
  *   stopped with `server.shutdown` + clean-exit check at the end of the worker.
  * - `app`: the default page, signed in like the launcher (`/#code=…`) and connected.
  * - `newWindow()`: another signed-in window – a second page of the same context (same Edge
- *   profile, same cookie) or, with `{ context: 'new' }`, of a fresh context (own cookie/storage).
+ *   profile, same cookie) or, with `{ context: 'new' }`, of a fresh context (own cookie/storage,
+ *   own window). Tests that work in two windows AT ONCE use 'new': in headless Edge a page of the
+ *   same context that is not in front stalled for many seconds under CPU load (no locator could
+ *   resolve), although Playwright disables renderer backgrounding.
  * - Diagnostics in every context: a CSP violation (`securitypolicyviolation`, R2W-07 f) or an
  *   uncaught page error fails the test; console errors are attached to the report.
  */
@@ -52,6 +55,8 @@ interface WindowOptions {
   init?: () => void;
   /** Context options of a fresh context (permissions …). */
   contextOptions?: Parameters<Browser['newContext']>[0];
+  /** Another server than the worker's (a test's own server). */
+  server?: E2eServer;
 }
 
 interface TestFixtures {
@@ -62,6 +67,11 @@ interface TestFixtures {
 
 interface WorkerFixtures {
   server: E2eServer;
+}
+
+/** For `E2eServer.stop()` of a test's own server: keeps its log as `server.log` of the test. */
+export function keepServerLog(testInfo: TestInfo): (lines: string[]) => Promise<void> {
+  return (lines) => attachText(testInfo, 'server.log', lines);
 }
 
 /** Writes `lines` into the test's output folder (test-results/, git-ignored) and attaches the file. */
@@ -171,9 +181,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     }
   },
 
-  newWindow: async ({ browser, context, server, diagnostics }, use, testInfo) => {
+  newWindow: async ({ browser, context, server: workerServer, diagnostics }, use, testInfo) => {
     const contexts: BrowserContext[] = [];
     const open = async (options: WindowOptions = {}): Promise<ParallaxApp> => {
+      const server = options.server ?? workerServer;
       let target = context;
       if (options.context === 'new') {
         target = await browser.newContext({

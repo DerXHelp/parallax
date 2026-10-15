@@ -6,12 +6,12 @@
 import type { Page, TestInfo } from '@playwright/test';
 import { ParallaxApp } from './support/app';
 import { startE2eServer, type E2eServer } from './support/server';
-import { expect, test } from './support/fixtures';
+import { expect, keepServerLog, test } from './support/fixtures';
 
 let own: E2eServer | null = null;
 
 test.afterEach(async () => {
-  await own?.stop();
+  await own?.stop(keepServerLog(test.info()));
   own = null;
 });
 

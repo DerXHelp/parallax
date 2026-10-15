@@ -6,16 +6,16 @@
  */
 import { ParallaxApp } from './support/app';
 import { startE2eServer, type E2eServer } from './support/server';
-import { expect, test } from './support/fixtures';
+import { expect, keepServerLog, test } from './support/fixtures';
 
 let own: E2eServer | null = null;
 
 test.afterEach(async () => {
-  await own?.stop();
+  await own?.stop(keepServerLog(test.info()));
   own = null;
 });
 
-test('"Stop server…" asks first, then stops the server in every window', async ({ page, context }) => {
+test('"Stop server…" asks first, then stops the server in every window', async ({ page, newWindow }) => {
   own = await startE2eServer({ label: 'shutdown' });
   const app = await new ParallaxApp(page, own).open();
   const waiting = await app.newSession(await own.makeProject('waiting'));
@@ -24,7 +24,8 @@ test('"Stop server…" asks first, then stops the server in every window', async
   const working = await app.newSession(await own.makeProject('working'));
   await working.send('fake:slow');
   await working.expectStatus('working');
-  const second = await new ParallaxApp(await context.newPage(), own).open();
+  // A second window (own window: see fixtures.ts on background pages under load).
+  const second = await newWindow({ context: 'new', server: own });
 
   // The confirmation names what is affected; "Cancel" keeps everything running.
   let menu = await app.openSettings();

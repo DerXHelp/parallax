@@ -14,8 +14,8 @@ test('two windows: an answer in one resolves the card in the other; the first cl
   newWindow,
 }) => {
   const session = await app.newSession(await server.makeProject('two-windows'));
-  // Second window of the same Edge profile, opened on the same session.
-  const other = await newWindow({ hash: `session=${session.key}` });
+  // A second window (own window, signed in with its own code) on the same session.
+  const other = await newWindow({ context: 'new', hash: `session=${session.key}` });
   const there = other.session(session.key);
   await expect(there.pane).toBeVisible();
 

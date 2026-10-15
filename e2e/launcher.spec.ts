@@ -12,7 +12,7 @@ import path from 'node:path';
 import { REPO_ROOT } from './support/paths';
 import { ParallaxApp } from './support/app';
 import { adoptE2eServer, type E2eServer } from './support/server';
-import { expect, test } from './support/fixtures';
+import { expect, keepServerLog, test } from './support/fixtures';
 
 const TSX_CLI = path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs');
 
@@ -20,7 +20,7 @@ let adopted: E2eServer | null = null;
 let root: string | null = null;
 
 test.afterEach(async () => {
-  await adopted?.stop();
+  await adopted?.stop(keepServerLog(test.info()));
   adopted = null;
   if (root !== null) await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   root = null;
