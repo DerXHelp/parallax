@@ -15,7 +15,6 @@ import {
   DialogTitle,
 } from '@web/ui/dialog';
 import { StatusIcon } from '@web/ui/status-icon';
-import { useShutdownT } from './i18n';
 import { shutdownImpact, type AffectedSession } from './impact';
 
 /**
@@ -73,7 +72,6 @@ function SessionList({ label, sessions }: { label: string; sessions: readonly Af
 
 function ShutdownConfirmation() {
   const { t, tError } = useI18n();
-  const s = useShutdownT();
   const entries = useSummaries();
   const now = useNow(5_000);
   const impact = useMemo(() => shutdownImpact(entries, new Date(now)), [entries, now]);
@@ -99,19 +97,27 @@ function ShutdownConfirmation() {
   return (
     <DialogContent className="sm:max-w-md">
       <DialogHeader>
-        <DialogTitle>{s('title')}</DialogTitle>
-        <DialogDescription>{s('description')}</DialogDescription>
+        <DialogTitle>{t('serverShutdown.title')}</DialogTitle>
+        <DialogDescription>{t('serverShutdown.description')}</DialogDescription>
       </DialogHeader>
-      {nothing ? <p className="text-muted-foreground text-xs">{s('nothingRunning')}</p> : null}
-      <SessionList label={s('working', { count: impact.working.length })} sessions={impact.working} />
-      <SessionList label={s('waiting', { count: impact.waiting.length })} sessions={impact.waiting} />
-      {impact.waiting.length > 0 ? <p className="text-muted-foreground text-xs">{s('waitingHint')}</p> : null}
-      {impact.idle > 0 ? (
-        <p className="text-muted-foreground text-xs">{s('idle', { count: impact.idle })}</p>
+      {nothing ? <p className="text-muted-foreground text-xs">{t('serverShutdown.nothingRunning')}</p> : null}
+      <SessionList
+        label={t('serverShutdown.working', { count: impact.working.length })}
+        sessions={impact.working}
+      />
+      <SessionList
+        label={t('serverShutdown.waiting', { count: impact.waiting.length })}
+        sessions={impact.waiting}
+      />
+      {impact.waiting.length > 0 ? (
+        <p className="text-muted-foreground text-xs">{t('serverShutdown.waitingHint')}</p>
       ) : null}
-      {connected ? null : <Alert tone="warning" title={s('notConnected')} />}
+      {impact.idle > 0 ? (
+        <p className="text-muted-foreground text-xs">{t('serverShutdown.idle', { count: impact.idle })}</p>
+      ) : null}
+      {connected ? null : <Alert tone="warning" title={t('serverShutdown.notConnected')} />}
       {error === null ? null : (
-        <Alert tone="error" title={s('failed')}>
+        <Alert tone="error" title={t('serverShutdown.failed')}>
           {tError(error)}
         </Alert>
       )}
@@ -125,7 +131,7 @@ function ShutdownConfirmation() {
           {t('common.cancel')}
         </Button>
         <Button variant="destructive" disabled={pending || !connected} onClick={confirm}>
-          {pending ? s('stopping') : s('confirm')}
+          {pending ? t('serverShutdown.stopping') : t('serverShutdown.confirm')}
         </Button>
       </DialogFooter>
     </DialogContent>

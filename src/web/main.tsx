@@ -8,6 +8,7 @@ import { StrictMode, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { PRODUCT_NAME } from '@shared/product';
 import { App } from './App';
+import { startNotificationDelivery } from './notifications/delivery';
 import { isPlaygroundHash } from './playground/route';
 import { installShortcutListener } from './shell/shortcuts';
 import { bootApp } from './state/bootstrap';
@@ -30,10 +31,13 @@ installShortcutListener();
 // Playground (#playground, dev server only): sample data over the in-memory transport, no server.
 // In production builds `import.meta.env.DEV` is false and the playground is not bundled.
 if (import.meta.env.DEV && isPlaygroundHash(window.location.hash)) {
+  // Server notifications of the FakeHost scenarios are delivered like in the app.
+  startNotificationDelivery();
   void import('./playground/PlaygroundApp').then(({ PlaygroundApp }) => {
     render(<PlaygroundApp />);
   });
 } else {
+  // Auth code → cookie, selection, presence, notifications, WebSocket of the local host (same origin).
   bootApp();
   render(<App />);
 }

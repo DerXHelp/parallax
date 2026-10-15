@@ -21,6 +21,11 @@ export function openShortcutHelp(): void {
   setOpen(true);
 }
 
+/** Closes it (tests: the open state is module-wide and would survive an unmount). */
+export function closeShortcutHelp(): void {
+  setOpen(false);
+}
+
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   return () => {

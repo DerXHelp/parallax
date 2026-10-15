@@ -1,4 +1,4 @@
-import { BellDotIcon, LayersIcon } from 'lucide-react';
+import { BellDotIcon, LayersIcon, SquarePenIcon } from 'lucide-react';
 import { memo, useMemo, type KeyboardEvent } from 'react';
 import { PRODUCT_NAME } from '@shared/product';
 import type { ProfileColor } from '@shared/model';
@@ -8,9 +8,11 @@ import { cn } from '@web/lib/cn';
 import { orderSessions, type OrderedSession } from '@web/lib/session-order';
 import { useNow } from '@web/state/clock';
 import { useHostState, useSelectedSession, useSummaries, type SummaryEntry } from '@web/state/hooks';
+import { IconButton } from '@web/ui/icon-button';
 import { StatusIcon } from '@web/ui/status-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
 import { ConnectionIndicator } from './ConnectionIndicator';
+import { openNewSession } from './NewSessionDialog';
 import { SettingsMenu } from './SettingsMenu';
 import { useShortcut } from './shortcuts';
 
@@ -183,6 +185,9 @@ export function Sidebar() {
         <LayersIcon aria-hidden className="text-brand size-4" />
         <span className="font-semibold tracking-tight">{PRODUCT_NAME}</span>
         <span className="flex-1" />
+        <IconButton label={t('shell.sidebar.newSession')} data-action="new-session" onClick={openNewSession}>
+          <SquarePenIcon aria-hidden />
+        </IconButton>
         <SettingsMenu />
       </div>
       {waiting.length > 0 ? (

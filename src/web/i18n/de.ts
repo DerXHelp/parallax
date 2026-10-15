@@ -39,6 +39,7 @@ export const de: typeof en = {
       unread: 'Ungelesen',
       lastActivity: 'Letzte Aktivität {time}',
       pinned: 'Angeheftet',
+      newSession: 'Neue Session',
     },
     session: {
       loading: 'Session wird geladen…',
@@ -52,6 +53,9 @@ export const de: typeof en = {
       sessionId: 'Session-ID',
       profile: 'Profil',
       details: 'Session-Details',
+      context: 'Kontext',
+      contextTokens: '{used} von {max} Tokens · {source}',
+      contextSource: { sdk: 'gemessen', estimate: 'geschätzt' },
     },
     badges: {
       background: 'Hintergrund-Tasks',
@@ -80,10 +84,12 @@ export const de: typeof en = {
     },
     newSession: {
       title: 'Neue Session',
+      description: 'Wähle den Projektordner. Claude startet mit deiner ersten Nachricht.',
       cwdLabel: 'Projektordner',
       cwdPlaceholder: 'D:\\work\\mein-projekt',
-      submit: 'Session starten',
-      starting: 'Startet…',
+      hint: 'Vollständiger Pfad eines vorhandenen Ordners, z. B. aus der Adresszeile des Explorers kopiert.',
+      submit: 'Session anlegen',
+      starting: 'Wird angelegt…',
     },
     placeholders: {
       transcript: {
@@ -97,6 +103,7 @@ export const de: typeof en = {
     setup: {
       title: 'Claude Code braucht Aufmerksamkeit',
       description: 'Das Standardprofil kann noch keine Sessions starten. Details liefert „pnpm preflight“.',
+      preflight: 'Details: „pnpm preflight“.',
     },
     warnings: {
       title: 'Hinweis des Servers',
@@ -113,6 +120,17 @@ export const de: typeof en = {
     notifications: {
       region: 'Benachrichtigungen',
       show: 'Session anzeigen',
+      toastBody: 'Klicken, um die Session anzuzeigen.',
+      permission: {
+        title: 'Benachrichtigen, wenn eine Session dich braucht',
+        description:
+          'Windows-Benachrichtigungen bei „wartet auf dich“ und „fertig“, während Parallax im Hintergrund ist.',
+        enable: 'Benachrichtigungen aktivieren',
+        later: 'Nicht jetzt',
+        granted: 'Benachrichtigungen sind aktiv.',
+        denied:
+          'Benachrichtigungen sind blockiert. Erlaube sie in den Website-Einstellungen von Edge (Schloss-Symbol), um Toasts zu erhalten.',
+      },
       kinds: {
         permission: '{title} – braucht eine Freigabe',
         question: '{title} – hat eine Frage',

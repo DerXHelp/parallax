@@ -1,6 +1,7 @@
-import { KeyboardIcon, PowerIcon, SettingsIcon } from 'lucide-react';
+import { BellRingIcon, KeyboardIcon, PowerIcon, SettingsIcon } from 'lucide-react';
 import { languageSchema, themeSchema } from '@shared/common';
 import { useT } from '@web/i18n';
+import { useNotificationPermission } from '@web/notifications/permission';
 import { showTextNotice } from '@web/state/notices';
 import { updateSettings, useSettings } from '@web/state/settings';
 import {
@@ -15,7 +16,7 @@ import {
   DropdownMenuTrigger,
 } from '@web/ui/dropdown-menu';
 import { IconButton } from '@web/ui/icon-button';
-import { useShutdownT } from './server-shutdown/i18n';
+import { enableNotifications } from './NotificationPermissionBanner';
 import { ServerShutdownDialog, openServerShutdown } from './server-shutdown/ServerShutdownDialog';
 import { HELP_KEYS, openShortcutHelp } from './ShortcutHelp';
 import { shortcutKeyLabels } from './shortcuts';
@@ -27,11 +28,15 @@ function save(patch: Parameters<typeof updateSettings>[0]): void {
   });
 }
 
-/** Theme and language (persisted by the server in settings.json, Plan Punkt 5) + shortcut help + "Stop server". */
+/**
+ * Theme and language (persisted by the server in settings.json, Plan Punkt 5) + "Enable
+ * notifications" (while the browser has not been asked yet; a click is the user gesture) +
+ * shortcut help + "Stop server".
+ */
 export function SettingsMenu() {
   const t = useT();
-  const shutdownT = useShutdownT();
   const settings = useSettings();
+  const permission = useNotificationPermission();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -69,6 +74,12 @@ export function SettingsMenu() {
           </DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
+        {permission === 'default' ? (
+          <DropdownMenuItem onSelect={enableNotifications}>
+            <BellRingIcon aria-hidden />
+            {t('shell.notifications.permission.enable')}
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuItem onSelect={openShortcutHelp}>
           <KeyboardIcon aria-hidden />
           {t('settings.shortcuts')}
@@ -77,7 +88,7 @@ export function SettingsMenu() {
         <DropdownMenuSeparator />
         <DropdownMenuItem variant="destructive" onSelect={openServerShutdown}>
           <PowerIcon aria-hidden />
-          {shutdownT('menuItem')}
+          {t('serverShutdown.menuItem')}
         </DropdownMenuItem>
       </DropdownMenuContent>
       {/* WP-21: confirmation of "Stop server" (Radix root renders no DOM; the dialog portals out). */}
