@@ -6,7 +6,8 @@ für Normalizer-Snapshots (WP-12) und das FakeBackend (WP-13).
 
 - **Format v1** (ADR-010): Zeile 1 Header `{fixtureVersion, scenario, description, sdkVersion,
   cliVersion, recordedAt, options}`, danach Events `{seq, tMs, kind, payload}`. Kinds und Bedeutung:
-  `docs/sdk-findings.md`, Abschnitt „Fixture-Format“. Parser/Validierung: `scripts/record/format.ts`.
+  `docs/sdk-findings.md`, Abschnitt „Fixture-Format“. Parser/Validierung:
+  `src/server/backend/fixture.ts` (einzige Quelle; `scripts/record/format.ts` re-exportiert es).
 - `fixtures.test.ts` prüft jede Datei (gültiges JSONL, Header passt zum Dateinamen, lückenlose `seq`,
   keine Benutzerpfade/E-Mails/Tokens).
 - Szenarien: `pnpm record --list`; Übersicht der Message-Typen: `pnpm record --stats`.

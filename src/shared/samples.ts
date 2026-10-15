@@ -5,6 +5,7 @@
  * samples.test.ts. Design: docs/wp/WP-02.md §14.2.
  */
 import { STANDARD_PROFILE_ID } from './common';
+import { PRODUCT_ID } from './product';
 import type {
   AssistantTextItem,
   BlobRef,
@@ -13,6 +14,7 @@ import type {
   ContextGauge,
   Conversation,
   DecisionOutcome,
+  DecisionRecord,
   DecisionResponse,
   Entry,
   HostState,
@@ -34,6 +36,7 @@ import type {
   TurnResultItem,
   UserMessageItem,
 } from './model';
+import type { AuthStatusResponse, HealthResponse, LauncherCodeResponse, ServerLockFile } from './http';
 import type { ClientHelloMessage, HelloMessage, PresenceState, SessionSnapshot } from './protocol';
 import { INITIAL_STATUS_FACTS, type StatusFacts } from './status';
 
@@ -199,6 +202,8 @@ export function sampleEntry(p: Partial<Entry> = {}): Entry {
     contextPct: 3,
     lastError: null,
     lastResultExcerpt: 'OK',
+    unread: false,
+    context: sampleContextGauge(),
     ...p,
   };
 }
@@ -550,6 +555,26 @@ export const sampleDecisions = {
   }),
 };
 
+/** `decisions.json` record of a still open plan decision (keeps the decision for A.10, R0-07). */
+export function sampleDecisionRecord(p: Partial<DecisionRecord> = {}): DecisionRecord {
+  const decision = sampleDecisions.plan();
+  return {
+    id: decision.id,
+    kind: 'plan',
+    conversationId: decision.conversationId,
+    toolUseId: decision.toolUseId,
+    toolName: decision.toolName,
+    requester: decision.requester,
+    createdAt: decision.createdAt,
+    resolvedAt: null,
+    outcome: null,
+    planVersion: decision.version,
+    planFilePath: decision.planFilePath,
+    decision,
+    ...p,
+  };
+}
+
 /** One example per response variant. */
 export const sampleResponses = {
   permissionAllowOnce: {
@@ -697,6 +722,51 @@ export function sampleClientHello(p: Partial<ClientHelloMessage> = {}): ClientHe
     buildId: 'dev',
     clientId: SAMPLE_IDS.client,
     presence: samplePresence(),
+    ...p,
+  };
+}
+
+// ---- HTTP / auth (src/shared/http.ts) ----
+
+/** Deterministic 43-char base64url token (auth code / launcher token). */
+export function sampleToken(n = 1): string {
+  return `tok${n.toString(16).padStart(40, '0')}`;
+}
+
+export function sampleHealthResponse(p: Partial<HealthResponse> = {}): HealthResponse {
+  return {
+    ok: true,
+    product: PRODUCT_ID,
+    serverInstanceId: SAMPLE_IDS.serverInstanceId,
+    serverVersion: '0.0.0',
+    buildId: 'dev',
+    startedAt: sampleTime(),
+    ...p,
+  };
+}
+
+export function sampleAuthStatus(p: Partial<AuthStatusResponse> = {}): AuthStatusResponse {
+  return { authenticated: true, serverInstanceId: SAMPLE_IDS.serverInstanceId, ...p };
+}
+
+export function sampleLauncherCode(p: Partial<LauncherCodeResponse> = {}): LauncherCodeResponse {
+  return {
+    code: sampleToken(1),
+    expiresAt: sampleTime(60),
+    serverInstanceId: SAMPLE_IDS.serverInstanceId,
+    ...p,
+  };
+}
+
+export function sampleServerLockFile(p: Partial<ServerLockFile> = {}): ServerLockFile {
+  return {
+    schemaVersion: 1,
+    pid: 4242,
+    port: 4711,
+    serverInstanceId: SAMPLE_IDS.serverInstanceId,
+    launcherToken: sampleToken(2),
+    startedAt: sampleTime(),
+    buildId: 'dev',
     ...p,
   };
 }

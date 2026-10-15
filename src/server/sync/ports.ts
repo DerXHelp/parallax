@@ -3,10 +3,15 @@
  * exceptions of the ports: `CommandError` and `transcriptLogLineSchema`. Frozen like src/shared.
  * Design: docs/wp/WP-02.md §8.1, §9.5.
  *
- * WP-10 modules (fixed names): http/app.ts (createApp), http/auth.ts, http/origin.ts, sync/hub.ts
- * (createSyncHub({source}): SessionPublisher & { attach(app) }), store/jsonStore.ts, store/registry.ts,
- * store/transcripts.ts, store/blobs.ts, store/decisions.ts, store/settings.ts, config.ts,
- * lib/ids.ts (newId(prefix)), lib/paths.ts. Test helper: createMemorySessionSource() next to hub.ts.
+ * WP-10 modules (fixed names): http/app.ts (createApp), http/auth.ts (POST /api/auth,
+ * GET /api/auth/status, POST /api/launcher/code, device cookie, one-time codes), http/origin.ts
+ * (Host/Origin/Sec-Fetch-Site guards) – contract src/shared/http.ts, rules docs/architecture.md
+ * §5.1; sync/hub.ts (createSyncHub({source}): SessionPublisher & { attach(app) }),
+ * store/jsonStore.ts, store/registry.ts, store/transcripts.ts, store/blobs.ts (meta file
+ * `blobs/<blobId>.meta.json` = blobRefSchema, R0-30), store/decisions.ts, store/settings.ts,
+ * config.ts, lib/logger.ts, lib/ids.ts (newId(prefix)), lib/paths.ts (fs checks on top of
+ * @shared/paths). Test helper: createMemorySessionSource() next to hub.ts.
+ * In dev/test mode the hub parses every published op with sessionOpSchema (R0-28).
  */
 import { z } from 'zod';
 import {
@@ -75,7 +80,10 @@ export interface SessionPublisher {
 export interface SessionSource {
   hostState(): HostState;
   listSummaries(): SessionSummary[];
-  /** Materialized view for an entry without cached state (restart, eviction): log tail + live state. */
+  /**
+   * Materialized view for an entry without cached state (restart, eviction): log tail + live state.
+   * The hub assigns `seq` itself; the `seq` of the returned view is ignored (R0-20).
+   */
   loadView(entryId: EntryId): Promise<SessionViewState | null>;
   /** Result matching commandResultSchemas[cmd.name]; throws CommandError. */
   handleCommand(cmd: Command, ctx: CommandContext): Promise<unknown>;
@@ -145,6 +153,7 @@ export interface RegistryStore {
 
 export interface DecisionStore {
   load(entryId: EntryId): Promise<DecisionRecord[]>;
+  /** Open records carry `decision` (restored as expired after a restart, R0-07); resolved ones null. */
   save(entryId: EntryId, records: DecisionRecord[]): void;
   savePlan(entryId: EntryId, version: number, text: string): Promise<void>;
   readPlan(entryId: EntryId, version: number): Promise<string | null>;

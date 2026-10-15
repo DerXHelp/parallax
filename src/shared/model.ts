@@ -299,10 +299,15 @@ export const entrySchema = z.object({
   /** init.apiKeySource ('none' = subscription). */
   apiKeySource: z.string().nullable().default(null),
   lastRunState: runStateSchema.default('sleeping'),
+  /** Plan B field; always `context?.percentage ?? null` (the engine writes both). */
   contextPct: z.number().nonnegative().nullable().default(null),
   lastError: errorInfoSchema.nullable().default(null),
   /** Short excerpt of the last result text for dormant entries (A.5). */
   lastResultExcerpt: z.string().max(500).nullable().default(null),
+  /** R0-17: a finished, unseen session keeps its "done" dot across a server restart. */
+  unread: z.boolean().default(false),
+  /** R0-17: last gauge, so sleeping sessions still show their context fill after a restart. */
+  context: contextGaugeSchema.nullable().default(null),
 });
 export type Entry = z.infer<typeof entrySchema>;
 
@@ -792,17 +797,18 @@ export const questionResponseSchema = z.discriminatedUnion('behavior', [
     answers: z
       .array(
         z.object({
-          /** Key = question text (F.5). */
-          question: z.string(),
-          /** Labels; multi-select → comma-separated (server). */
-          selected: z.array(z.string()),
+          /** Key = question text (F.5); must be a question of the decision (server checks, R0-09). */
+          question: z.string().max(LIMITS.questionChars),
+          /** Labels ⊆ the question's option labels; multi-select → comma-separated (server). */
+          selected: z.array(z.string().max(LIMITS.answerChars)).max(LIMITS.selectedMax),
           /** "Andere" free text. */
-          otherText: z.string().nullable().default(null),
+          otherText: z.string().max(LIMITS.answerChars).nullable().default(null),
           /** → annotations[q].notes */
-          notes: z.string().nullable().default(null),
+          notes: z.string().max(LIMITS.answerChars).nullable().default(null),
         }),
       )
-      .min(1),
+      .min(1)
+      .max(LIMITS.answersMax),
   }),
   z.object({ behavior: z.literal('decline'), message: z.string().max(10_000).default('') }),
 ]);
@@ -811,8 +817,9 @@ export type QuestionResponse = z.infer<typeof questionResponseSchema>;
 export const planResponseSchema = z.discriminatedUnion('behavior', [
   z.object({
     behavior: z.literal('approve'),
+    /** Must be in decision.approveModes (server checks, R0-09). */
     mode: permissionModeSchema,
-    editedPlan: z.string().nullable().default(null),
+    editedPlan: z.string().max(LIMITS.planChars).nullable().default(null),
   }),
   /** deny + message. */
   z.object({ behavior: z.literal('revise'), feedback: z.string().min(1).max(50_000) }),
@@ -843,6 +850,13 @@ export const decisionRecordSchema = z.object({
   outcome: decisionOutcomeSchema.nullable(),
   planVersion: z.number().int().positive().nullable(),
   planFilePath: z.string().nullable(),
+  /**
+   * R0-07: the decision as created (capped like on the wire), kept ONLY while it is open
+   * (`outcome` null) and set to null on resolution. After a restart the engine restores it with
+   * `state: 'expired'` (A.10: read-only card). Records without it (null) are closed as expired
+   * without a card and only counted.
+   */
+  decision: decisionSchema.nullable().default(null),
 });
 export type DecisionRecord = z.infer<typeof decisionRecordSchema>;
 
@@ -921,7 +935,8 @@ export const sessionInitInfoSchema = z.object({
   sessionId: claudeSessionIdSchema,
   cwd: z.string(),
   model: z.string(),
-  permissionMode: permissionModeSchema,
+  /** null = unknown mode of a newer CLI (`parsePermissionMode` + `unknownEnumCountKey`, R0-05). */
+  permissionMode: permissionModeSchema.nullable(),
   apiKeySource: z.string(),
   cliVersion: z.string(),
   tools: z.array(z.string()),
@@ -935,6 +950,7 @@ export const sessionInitInfoSchema = z.object({
   capabilities: z.array(z.string()),
   outputStyle: z.string().nullable(),
   fastModeState: z.string().nullable(),
+  /** null also for an unknown level (`parseEffortLevel`). */
   effort: effortLevelSchema.nullable(),
 });
 export type SessionInitInfo = z.infer<typeof sessionInitInfoSchema>;
@@ -945,6 +961,7 @@ export const modelOptionSchema = z.object({
   displayName: z.string(),
   description: z.string(),
   supportsEffort: z.boolean(),
+  /** Producer drops unknown levels of a newer CLI (`parseEffortLevels`, R0-05). */
   supportedEffortLevels: z.array(effortLevelSchema),
   supportsFastMode: z.boolean(),
   supportsAutoMode: z.boolean(),

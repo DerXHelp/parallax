@@ -17,6 +17,7 @@ import {
   contextGaugeSchema,
   conversationSchema,
   decisionOutcomeSchema,
+  decisionRecordSchema,
   decisionResponseSchema,
   decisionSchema,
   entrySchema,
@@ -31,6 +32,12 @@ import {
   settingsSchema,
   transcriptItemSchema,
 } from './model';
+import {
+  authStatusResponseSchema,
+  healthResponseSchema,
+  launcherCodeResponseSchema,
+  serverLockFileSchema,
+} from './http';
 import { clientHelloSchema, helloSchema, presenceStateSchema, sessionSnapshotSchema } from './protocol';
 import * as samples from './samples';
 import { statusFactsSchema } from './status';
@@ -64,6 +71,11 @@ describe('sample factories satisfy their schemas', () => {
     ['presence', presenceStateSchema, () => samples.samplePresence()],
     ['hello', helloSchema, () => samples.sampleHello()],
     ['clientHello', clientHelloSchema, () => samples.sampleClientHello()],
+    ['decisionRecord', decisionRecordSchema, () => samples.sampleDecisionRecord()],
+    ['health', healthResponseSchema, () => samples.sampleHealthResponse()],
+    ['authStatus', authStatusResponseSchema, () => samples.sampleAuthStatus()],
+    ['launcherCode', launcherCodeResponseSchema, () => samples.sampleLauncherCode()],
+    ['serverLockFile', serverLockFileSchema, () => samples.sampleServerLockFile()],
     ...Object.entries(samples.sampleItems).map(([name, f]): [string, z.ZodType, () => unknown] => [
       `item ${name}`,
       transcriptItemSchema,

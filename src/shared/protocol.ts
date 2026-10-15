@@ -16,6 +16,7 @@ import {
   isoDateTimeSchema,
   itemIdSchema,
   messageUuidSchema,
+  modelNameSchema,
   permissionModeSchema,
   profileIdSchema,
   promptPrioritySchema,
@@ -39,6 +40,11 @@ import { notificationKindSchema } from './status';
 
 /** Bump rules: docs/wp/WP-02.md §13 (not for new optional fields, server message types or commands). */
 export const PROTOCOL_VERSION = 1;
+/**
+ * A rejected upgrade (cookie, Origin, Host, Sec-Fetch-Site) is an HTTP 401/403 with an
+ * `ErrorPayload` body – the browser only sees close 1006, so the client asks
+ * `GET /api/auth/status` before connecting and after an abnormal close (src/shared/http.ts).
+ */
 export const WS_PATH = '/api/ws';
 export const WS_CLOSE = {
   /** Repeated invalid messages / message before clientHello. */
@@ -76,7 +82,7 @@ export const helloSchema = z.object({
   type: z.literal('hello'),
   protocolVersion: z.number().int().positive(),
   /** 'dev' in dev mode, otherwise the build id (`BUILD_ID`, src/shared/build.ts). */
-  buildId: z.string().min(1),
+  buildId: z.string().min(1).max(LIMITS.buildIdChars),
   /** New on every server start → client full resync. */
   serverInstanceId: z.uuid(),
   serverVersion: z.string(),
@@ -87,7 +93,7 @@ export type HelloMessage = z.infer<typeof helloSchema>;
 export const clientHelloSchema = z.object({
   type: z.literal('clientHello'),
   protocolVersion: z.number().int().positive(),
-  buildId: z.string().min(1),
+  buildId: z.string().min(1).max(LIMITS.buildIdChars),
   /** Stable per window (sessionStorage). */
   clientId: clientIdSchema,
   presence: presenceStateSchema,
@@ -215,8 +221,8 @@ export const commandSchema = z.discriminatedUnion('name', [
     profileId: profileIdSchema.optional(),
     title: z.string().max(LIMITS.titleChars).optional(),
     /** Missing = profile default / CLI. */
-    model: z.string().min(1).optional(),
-    /** Missing = omit (C.3). */
+    model: modelNameSchema.optional(),
+    /** Missing = omit (C.3). `bypassPermissions` only if the profile allowsBypass (R0-09). */
     permissionMode: permissionModeSchema.optional(),
     effort: effortLevelSchema.optional(),
     /** First prompt (starts the session). */
@@ -233,7 +239,7 @@ export const commandSchema = z.discriminatedUnion('name', [
   z.object({
     name: z.literal('session.setModel'),
     entryId: entryIdSchema,
-    model: z.string().min(1).nullable(),
+    model: modelNameSchema.nullable(),
   }),
   z.object({
     name: z.literal('session.setPermissionMode'),
@@ -254,7 +260,10 @@ export const commandSchema = z.discriminatedUnion('name', [
   }),
   /** End the process, keep the entry (→ sleeping). */
   z.object({ name: z.literal('session.close'), entryId: entryIdSchema }),
-  /** Start the process via resume (sleeping/interrupted/error). */
+  /**
+   * Start the process via resume (sleeping/interrupted/error). Without a Claude session id
+   * (entry created without prompt) → fresh start in the stored cwd (R0-21).
+   */
   z.object({ name: z.literal('session.resume'), entryId: entryIdSchema }),
   z.object({ name: z.literal('session.setPinned'), entryId: entryIdSchema, pinned: z.boolean() }),
   z.object({ name: z.literal('session.setArchived'), entryId: entryIdSchema, archived: z.boolean() }),
@@ -310,6 +319,7 @@ export const commandResultSchemas = {
   'session.getContext': z.object({ context: contextBreakdownSchema }),
   'session.refreshModels': z.object({ models: z.array(modelOptionSchema) }),
   'settings.update': z.object({ settings: settingsSchema }),
+  /** R0-19: the ack comes first, so this is the number of sessions TO stop (counted before closing). */
   'server.shutdown': z.object({ sessionsStopped: z.number().int().nonnegative() }),
 } as const satisfies Record<CommandName, z.ZodType>;
 export type CommandResult<N extends CommandName> = z.infer<(typeof commandResultSchemas)[N]>;

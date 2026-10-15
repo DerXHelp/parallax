@@ -110,6 +110,35 @@ export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export const effortLevelSchema = z.enum(EFFORT_LEVELS);
 export type EffortLevel = z.infer<typeof effortLevelSchema>;
 
+// ---- Tolerant reading of SDK enums (R0-05: a newer CLI may report values we do not know) ----
+
+/** Known permission mode or null (unknown value from a newer CLI → null + unknownEnumCountKey). */
+export function parsePermissionMode(value: unknown): PermissionMode | null {
+  const parsed = permissionModeSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/** Known effort level or null. */
+export function parseEffortLevel(value: unknown): EffortLevel | null {
+  const parsed = effortLevelSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/** Known effort levels in their given order, unknown values and duplicates dropped. */
+export function parseEffortLevels(values: readonly unknown[]): EffortLevel[] {
+  const result: EffortLevel[] = [];
+  for (const value of values) {
+    const level = parseEffortLevel(value);
+    if (level !== null && !result.includes(level)) result.push(level);
+  }
+  return result;
+}
+
+/** Key in `SessionDetail.unknownCounts` for an unknown enum value, e.g. `enum/permissionMode:turbo`. */
+export function unknownEnumCountKey(enumName: 'permissionMode' | 'effort', value: string): string {
+  return `enum/${enumName}:${value.slice(0, 100)}`;
+}
+
 /**
  * Destinations the user may pick for remembered permission rules (ADR-012). The UI default is
  * `session`; `projectSettings` writes into the repo, `userSettings` is global (WP-16 warns).
@@ -155,4 +184,39 @@ export const LIMITS = {
   cmdCacheTtlMs: 10 * 60 * 1000,
   /** Title length. */
   titleChars: 200,
+  // ---- R0-08: client input fields (zod `.max()` at the boundary, C.11) ----
+  /** Model name in commands (`session.create`, `session.setModel`); long enough for Bedrock ARNs. */
+  modelChars: 200,
+  /** `plan approve.editedPlan`. */
+  planChars: 200_000,
+  /** One answer text (`selected` label, `otherText`, `notes`). */
+  answerChars: 10_000,
+  /** `answers[].question` (key = question text, F.5). */
+  questionChars: 2_000,
+  /** Answers per question response. */
+  answersMax: 20,
+  /** Selected labels per answer. */
+  selectedMax: 50,
+  /** `hello.buildId` / `clientHello.buildId` / health. */
+  buildIdChars: 100,
+  // ---- R0-11: size budget per item and per snapshot (B "Speicher und Performance") ----
+  /**
+   * Budget per transcript item: chars of its JSON serialization. Assistant text and plan text are
+   * exempt (never capped). Over budget, the normalizer moves more content into blobs in this
+   * order: `result.structured` → result text parts → input strings (docs/architecture.md §6).
+   */
+  itemTotalChars: 64 * 1024,
+  /** Budget of the `items` of one `session.snapshot` (JSON chars); the hub drops the oldest (hasEarlier). */
+  snapshotMaxChars: 2 * 1024 * 1024,
 } as const;
+
+/**
+ * Model name or alias as given by the user/profile ('haiku', 'claude-opus-5-5', 'sonnet[1m]',
+ * Bedrock/Vertex ids). No leading `-` (would look like a CLI flag), no whitespace (R0-09).
+ */
+export const modelNameSchema = z
+  .string()
+  .min(1)
+  .max(LIMITS.modelChars)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:@/+~[\]-]*$/);
+export type ModelName = z.infer<typeof modelNameSchema>;
