@@ -45,8 +45,9 @@ export function RetryCountdown({ nextAttemptAt }: { nextAttemptAt: number | null
   const now = useNow(1000);
   if (nextAttemptAt === null) return null;
   const seconds = Math.max(0, Math.ceil((nextAttemptAt - now) / 1000));
+  // Not announced every second inside the banner's live region (R1W-13).
   return (
-    <span className="text-muted-foreground text-xs tabular-nums">
+    <span aria-live="off" className="text-muted-foreground text-xs tabular-nums">
       {t('connection.retryIn', { count: seconds })}
     </span>
   );
@@ -144,6 +145,7 @@ export function HostGate({ children }: { children: ReactNode }) {
           }
         >
           <p className="text-muted-foreground text-xs">{t('connection.unreachableDescription')}</p>
+          {host.upgradeRejected ? <Alert tone="warning">{t('connection.upgradeRejected')}</Alert> : null}
           <RetryCountdown nextAttemptAt={host.nextAttemptAt} />
         </FullPage>
       );

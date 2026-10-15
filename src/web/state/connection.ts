@@ -119,6 +119,8 @@ export interface HostConnectionOptions {
   maxCachedViews?: number;
   /** Presence debounce (A.9: 250 ms). */
   presenceDebounceMs?: number;
+  /** An open socket without `hello` is dropped and retried after this (default 10 s, R1W-11). */
+  helloTimeoutMs?: number;
   /** Batches ops per frame; default requestAnimationFrame (setTimeout while hidden). */
   scheduleFrame?: (callback: () => void) => void;
   store?: ClientStore;
@@ -128,6 +130,12 @@ export const COMMAND_TIMEOUT_MS = 60_000;
 export const UNSUBSCRIBE_DELAY_MS = 1500;
 export const MAX_CACHED_VIEWS = 8;
 export const PRESENCE_DEBOUNCE_MS = 250;
+export const HELLO_TIMEOUT_MS = 10_000;
+/**
+ * After this many attempts in a row with a valid sign-in whose socket closed before `hello`, the
+ * host record flags `upgradeRejected` (the server answers HTTP but refuses the WebSocket, V1-15).
+ */
+export const UPGRADE_REJECTED_AFTER = 3;
 const MAX_NOTIFICATIONS = 20;
 
 /** rAF while visible; rAF does not run in hidden windows, so a timer backs it up. */
@@ -201,6 +209,7 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
   const unsubscribeDelayMs = options.unsubscribeDelayMs ?? UNSUBSCRIBE_DELAY_MS;
   const maxCachedViews = options.maxCachedViews ?? MAX_CACHED_VIEWS;
   const presenceDebounceMs = options.presenceDebounceMs ?? PRESENCE_DEBOUNCE_MS;
+  const helloTimeoutMs = options.helloTimeoutMs ?? HELLO_TIMEOUT_MS;
   const scheduleFrame = options.scheduleFrame ?? defaultScheduleFrame;
 
   let started = false;
@@ -213,6 +222,11 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
   let lastInstanceId: string | null = null;
   let attempt = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let helloTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The auth check of the current attempt said "signed in" (V1-15). */
+  let authConfirmed = false;
+  /** Attempts in a row: signed in, but the socket closed before `hello`. */
+  let rejectedUpgrades = 0;
 
   const subscriptions = new Map<EntryId, Subscription>();
   /** Unsubscribed entries whose view is still cached, oldest first. */
@@ -273,10 +287,16 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
     reconnectTimer = null;
   }
 
+  function clearHelloTimer(): void {
+    if (helloTimer !== null) clearTimeout(helloTimer);
+    helloTimer = null;
+  }
+
   function closeTransport(): void {
     const current = transport;
     transport = null;
     helloReceived = false;
+    clearHelloTimer();
     current?.close();
   }
 
@@ -294,6 +314,7 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
   async function beginAttempt(): Promise<void> {
     const own = ++generation;
     clearReconnectTimer();
+    authConfirmed = false;
     if (options.checkAuth !== undefined) {
       setPhase('checking-auth');
       let result: AuthCheckResult;
@@ -320,6 +341,7 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
         fullResync();
         lastInstanceId = result.serverInstanceId;
       }
+      authConfirmed = true;
     }
     openTransport();
   }
@@ -329,6 +351,13 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
     setPhase('connecting');
     const current = options.createTransport();
     transport = current;
+    // A socket that opens but never says hello (hanging server) must not stay "connecting" (R1W-11).
+    helloTimer = setTimeout(() => {
+      helloTimer = null;
+      if (transport !== current || helloReceived) return;
+      closeTransport();
+      scheduleReconnect(makeError('CONNECTION_LOST', { reason: 'hello-timeout' }));
+    }, helloTimeoutMs);
     current.connect(
       (text) => {
         if (transport === current) handleText(text);
@@ -340,8 +369,11 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
   }
 
   function handleClose(code: number): void {
+    const hadHello = helloReceived;
     transport = null;
     helloReceived = false;
+    clearHelloTimer();
+    if (!hadHello && authConfirmed) rejectedUpgrades++;
     if (code === WS_CLOSE.AUTH_REVOKED) {
       failAllPending('AUTH_REQUIRED');
       setPhase('unauthenticated', { error: makeError('AUTH_REQUIRED') });
@@ -358,14 +390,17 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
     }
     // 1006 (also a rejected upgrade), 1000, 1001, 4400 …: back to the auth check, then reconnect.
     scheduleReconnect(makeError('CONNECTION_LOST', { code }));
+    if (rejectedUpgrades >= UPGRADE_REJECTED_AFTER)
+      updateHost(store, hostId, () => ({ upgradeRejected: true }));
   }
 
   /** Full resync (new serverInstanceId): drop summaries, views, seqs and open commands of this host. */
   function fullResync(): void {
     opQueue.clear();
     failAllPending('CONNECTION_LOST');
-    const prefix = `${hostId}:`;
-    const keys = Object.keys(store.getState().sessions).filter((key) => key.startsWith(prefix));
+    const keys = Object.keys(store.getState().sessions).filter(
+      (key) => parseSessionKey(key)?.hostId === hostId,
+    );
     removeSessions(store, keys);
     cachedOrder.length = 0;
     for (const sub of subscriptions.values()) sub.resyncPending = false;
@@ -383,7 +418,9 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
     });
     const last = reloadGuard.read();
     const at = now();
-    if (homeHost && (last === null || at - last >= RELOAD_GUARD_MS)) {
+    // Without a place to remember the last reload, never reload automatically (loop guard, R1W-12).
+    const guardWorks = reloadGuard.available?.() ?? true;
+    if (homeHost && guardWorks && (last === null || at - last >= RELOAD_GUARD_MS)) {
       reloadGuard.write(at);
       setPhase('version-mismatch', { error });
       reload();
@@ -424,7 +461,9 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
     const sameInstance = lastInstanceId === hello.serverInstanceId;
     lastInstanceId = hello.serverInstanceId;
     helloReceived = true;
+    clearHelloTimer();
     attempt = 0;
+    rejectedUpgrades = 0;
 
     const presence = presenceOf(store.getState(), hostId);
     lastSentPresence = JSON.stringify(presence);
@@ -434,6 +473,7 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
       serverInstanceId: hello.serverInstanceId,
       serverVersion: hello.serverVersion,
       authCodeRejected: false,
+      upgradeRejected: false,
     });
 
     for (const [entryId, sub] of subscriptions) {
@@ -481,7 +521,9 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
         // Queued ops are older than the snapshot (the WS is ordered) – it contains their effect.
         opQueue.delete(message.entryId);
         const sub = subscriptions.get(message.entryId);
-        if (sub !== undefined) sub.resyncPending = false;
+        // A late snapshot after the release would sit in the store outside the LRU (R1W-18).
+        if (sub === undefined) return;
+        sub.resyncPending = false;
         updateSession(store, keyOf(message.entryId), () => ({
           view: viewStateFromSnapshot(message),
           unavailable: null,
@@ -498,6 +540,7 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
       }
       case 'session.unavailable':
         opQueue.delete(message.entryId);
+        if (!subscriptions.has(message.entryId)) return;
         updateSession(store, keyOf(message.entryId), () => ({
           view: null,
           unavailable: message.error,
@@ -608,6 +651,8 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
     if (sub === undefined || sub.count > 0) return;
     subscriptions.delete(entryId);
     if (sendUnsubscribe) transmit({ type: 'unsubscribe', entryId });
+    // No record (e.g. after a full resync) → nothing to cache; never create an empty one (R1W-18).
+    if (sessionRecord(entryId) === undefined) return;
     updateSession(store, keyOf(entryId), () => ({ loading: false }));
     // Keep the view for a quick re-subscribe with sinceSeq; evict the oldest beyond the limit
     // (B "Transkripte nicht abonnierter Sessions werden aus dem Cache verdrängt").
@@ -731,6 +776,7 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
       started = false;
       generation++;
       clearReconnectTimer();
+      clearHelloTimer();
       if (presenceTimer !== null) clearTimeout(presenceTimer);
       presenceTimer = null;
       for (const sub of subscriptions.values()) {

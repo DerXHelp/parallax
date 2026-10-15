@@ -15,13 +15,18 @@ import { FakeHost } from './fake-host';
 import {
   sendCommand,
   useAttentionCount,
+  useChildItemIds,
   useDecisions,
   useDisplayStatus,
   useItem,
   useItemIds,
   useSelectedSession,
+  useSessionMeta,
+  useSessionSelector,
   useSessionView,
   useSummaries,
+  useSummarySelector,
+  useTopLevelItemIds,
 } from './hooks';
 import { startSelectionSync } from './selection';
 import { clientStore, resetClientStore } from './store';
@@ -224,5 +229,130 @@ describe('sendCommand', () => {
     ).rejects.toMatchObject({
       code: 'VALIDATION_FAILED',
     });
+  });
+});
+
+describe('derived selectors (R1W-02)', () => {
+  const subagentText = (id: string, order: number, parentToolUseId: string, streaming = false) =>
+    sampleItems.assistantText({
+      id,
+      order,
+      messageId: `msg_${id}`,
+      blockIndex: 0,
+      text: '',
+      streaming,
+      parentToolUseId,
+    });
+
+  async function frame() {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
+  it('useTopLevelItemIds stays referentially stable on deltas and on new subagent items', async () => {
+    const { host } = connectFakeHost();
+    const { result } = renderHook(() => ({
+      top: useTopLevelItemIds(KEY),
+      children: useChildItemIds(KEY, SAMPLE_IDS.toolUseId),
+    }));
+    const top = result.current.top;
+    expect(top).toHaveLength(5);
+    expect(result.current.children).toEqual([]);
+
+    await act(async () => {
+      host.pushOps(SAMPLE_IDS.entry, [
+        { op: 'item.upsert', item: subagentText('sub-1', 6, SAMPLE_IDS.toolUseId, true) },
+      ]);
+      await Promise.resolve();
+    });
+    expect(result.current.top).toBe(top);
+    expect(result.current.children).toEqual(['sub-1']);
+    const children = result.current.children;
+
+    await act(async () => {
+      host.pushOps(SAMPLE_IDS.entry, [{ op: 'item.delta', itemId: 'sub-1', field: 'text', append: 'Hi' }]);
+      await Promise.resolve();
+    });
+    expect(result.current.top).toBe(top);
+    expect(result.current.children).toBe(children);
+  });
+
+  it('shows items of an unknown parent tool call at the top level (never lost)', async () => {
+    const { host } = connectFakeHost();
+    const { result } = renderHook(() => useTopLevelItemIds(KEY));
+    await act(async () => {
+      host.pushOps(SAMPLE_IDS.entry, [
+        { op: 'item.upsert', item: subagentText('orphan', 6, 'toolu_not_loaded') },
+      ]);
+      await Promise.resolve();
+    });
+    expect(result.current.at(-1)).toBe('orphan');
+  });
+
+  it('useSessionMeta changes only with the meta data, not with deltas', async () => {
+    const { host } = connectFakeHost();
+    host.pushOps(SAMPLE_IDS.entry, [
+      { op: 'item.upsert', item: subagentText('live', 6, SAMPLE_IDS.toolUseId, true) },
+    ]);
+    let renders = 0;
+    const { result } = renderHook(() => {
+      renders++;
+      return useSessionMeta(KEY);
+    });
+    await frame();
+    expect(result.current).toMatchObject({
+      hasView: true,
+      loading: false,
+      unavailable: null,
+      hasEarlier: false,
+    });
+    expect(result.current.conversationId).toBe(SAMPLE_IDS.conversation);
+    const before = renders;
+    const meta = result.current;
+    await act(async () => {
+      host.pushOps(SAMPLE_IDS.entry, [{ op: 'item.delta', itemId: 'live', field: 'text', append: 'x' }]);
+      await Promise.resolve();
+    });
+    expect(renders).toBe(before);
+    expect(result.current).toBe(meta);
+  });
+
+  it('useSessionSelector returns the fallback without a view and compares shallowly', async () => {
+    const { host } = connectFakeHost();
+    let renders = 0;
+    const { result } = renderHook(() => {
+      renders++;
+      return useSessionSelector(KEY, (view) => view.decisions.map((d) => d.id), []);
+    });
+    expect(result.current).toEqual([]);
+    await frame();
+    const before = renders;
+    await act(async () => {
+      host.pushOps(SAMPLE_IDS.entry, [{ op: 'item.remove', itemId: `${SAMPLE_IDS.messageId}:1` }]);
+      await Promise.resolve();
+    });
+    expect(renders).toBe(before);
+    const none = renderHook(() => useSessionSelector(null, (view) => view.seq, -1));
+    expect(none.result.current).toBe(-1);
+  });
+
+  it('useSummarySelector ignores unrelated summary changes', () => {
+    const { host } = connectFakeHost();
+    let renders = 0;
+    const { result } = renderHook(() => {
+      renders++;
+      return useSummarySelector(KEY, (summary) => summary.title, null);
+    });
+    expect(result.current).toBe('Sample session');
+    const before = renders;
+    act(() => {
+      host.patchSummary(SAMPLE_IDS.entry, { lastActivityAt: '2026-10-15T09:00:00.000Z' });
+    });
+    expect(renders).toBe(before);
+    act(() => {
+      host.patchSummary(SAMPLE_IDS.entry, { title: 'Renamed' });
+    });
+    expect(result.current).toBe('Renamed');
   });
 });

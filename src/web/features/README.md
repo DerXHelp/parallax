@@ -14,7 +14,11 @@ Aufbau eines Feature-Ordners (R0-03): `i18n/{en,de}.ts` (Namespace = Ordnername,
 `playground.tsx` (`export const demos: PlaygroundDemo[]`, per `import.meta.glob` gefunden),
 optional `components/`, `state/`, `lib/` für feature-eigene Teile. Features importieren einander
 **nie**; gemeinsame Komponenten laufen über `FeatureSlots` (`src/web/shell/slots.tsx`), die WP-20 in
-`App.tsx` verdrahtet. `src/web/{ui,lib,state,i18n}` sind in Welle 1b read-only.
+`App.tsx` verdrahtet (ESLint meldet Querimporte, architecture §2.3h). `src/web/{ui,lib,state,i18n}` sind
+in Welle 1b read-only. Regel für die `DecisionCard` (Leiste einzig bedienbar, Transkript lesend mit
+„Zur Entscheidung“, Endzustand aus `tool_call.decision`): architecture §2.3e; Session-Daten nur über
+die Hooks (`useSessionMeta`, `useSessionSelector`, `useTopLevelItemIds` …, §2.3g), Hinweise über
+`showNotice` (§2.3i), schwere Renderer lazy (§2.3j).
 
 Kein `rehype-raw`, kein `dangerouslySetInnerHTML` (Review C.10). `streamdown` hängt von
 `rehype-raw` ab: Plugins so setzen, dass kein Roh-HTML gerendert wird.

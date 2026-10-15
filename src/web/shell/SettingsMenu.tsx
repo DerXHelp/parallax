@@ -1,6 +1,7 @@
 import { KeyboardIcon, SettingsIcon } from 'lucide-react';
 import { languageSchema, themeSchema } from '@shared/common';
 import { useT } from '@web/i18n';
+import { showTextNotice } from '@web/state/notices';
 import { updateSettings, useSettings } from '@web/state/settings';
 import {
   DropdownMenu,
@@ -18,8 +19,10 @@ import { HELP_KEYS, openShortcutHelp } from './ShortcutHelp';
 import { shortcutKeyLabels } from './shortcuts';
 
 function save(patch: Parameters<typeof updateSettings>[0]): void {
-  // The optimistic change is reverted on failure (state/settings.ts).
-  updateSettings(patch).catch(() => undefined);
+  // The optimistic change is reverted on failure (state/settings.ts); the user gets a hint.
+  updateSettings(patch).catch(() => {
+    showTextNotice('settings.saveFailed', undefined, { tone: 'error', id: 'settings.saveFailed' });
+  });
 }
 
 /** Theme and language (persisted by the server in settings.json, Plan Punkt 5) + shortcut help. */
