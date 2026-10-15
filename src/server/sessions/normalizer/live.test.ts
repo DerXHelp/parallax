@@ -185,10 +185,36 @@ describe('live normalizer: sizes and tolerance', () => {
       n.push({ type: 'stream_event', event: { type: 'message_start', message: { id, model, usage: { input_tokens: 1, output_tokens: 1 } } }, parent_tool_use_id: parent }, AT).signals;
     expect(start('m1', 'claude-haiku-5-5', null)).toEqual([
       { type: 'assistant_model', model: 'claude-haiku-5-5' },
-      { type: 'context_estimate', totalTokens: 2, model: 'claude-haiku-5-5' },
+      { type: 'context_estimate', totalTokens: 2, model: 'claude-haiku-5-5', contextWindow: null },
     ]);
     expect(start('m2', 'claude-haiku-5-5', null)).toEqual([]);
     expect(start('m3', 'claude-sonnet-5-5', 'toolu_agent')).toEqual([]);
     expect(start('m4', '<synthetic>', null)).toEqual([]);
+  });
+
+  it('carries modelUsage[model].contextWindow of the last result in later estimates (R1-07)', () => {
+    const n = fresh();
+    const start = (id: string, tokens: number) =>
+      n.push({ type: 'stream_event', event: { type: 'message_start', message: { id, model: 'claude-haiku-5-5', usage: { input_tokens: tokens, output_tokens: 1 } } }, parent_tool_use_id: null }, AT).signals;
+    expect(start('m1', 1).find((s) => s.type === 'context_estimate')).toMatchObject({ contextWindow: null });
+    n.push(
+      {
+        type: 'result',
+        subtype: 'success',
+        uuid: 'r1',
+        session_id: 'session-1',
+        num_turns: 1,
+        duration_ms: 10,
+        is_error: false,
+        modelUsage: { 'claude-haiku-5-5': { contextWindow: 200_000 }, 'claude-opus-5-5': { contextWindow: 1_000_000 } },
+      },
+      AT,
+    );
+    expect(start('m2', 5).find((s) => s.type === 'context_estimate')).toEqual({
+      type: 'context_estimate',
+      totalTokens: 6,
+      model: 'claude-haiku-5-5',
+      contextWindow: 200_000,
+    });
   });
 });

@@ -32,7 +32,11 @@ export const API_PATHS = {
   blob: '/api/blob/:blobId',
   /** POST upload → BlobRef (WP-02 §5.5); Phase 1 answers NOT_IMPLEMENTED. */
   attachments: '/api/attachments',
-  /** WebSocket upgrade (src/shared/protocol.ts). */
+  /**
+   * WebSocket upgrade (src/shared/protocol.ts). Guard (§5.1, ADR-019): Origin ∈ allowedOrigins,
+   * Host and device cookie required; Sec-Fetch-Site only checked when present (browsers send none
+   * on the handshake) and then must be `same-origin`. Only this route accepts an upgrade.
+   */
   ws: WS_PATH,
 } as const;
 

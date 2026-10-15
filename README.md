@@ -48,6 +48,27 @@ funktioniert mit npmjs und einem Nexus-Mirror gleichermaßen.
 - Liefert der Nexus kein `time`-Feld, greift `minimumReleaseAge` eventuell nicht.
 - Das Nachladen der gepinnten pnpm-Version holt `pnpm`/`@pnpm/exe.*` aus derselben Registry.
   Blockiert AppLocker/WDAC die native `pnpm.exe`, ist pnpm 11.28 der Fallback.
+- **In den Claude-Sessions:** Parallax entfernt `npm_*`/`PNPM_*`/`NODE_OPTIONS` aus der Umgebung
+  gestarteter `claude`-Prozesse (Laufzustand von `pnpm run`), behält sie aber, wenn sie **dauerhaft**
+  als Benutzer- oder Systemvariable gesetzt sind (Registry `HKCU\Environment` bzw.
+  `HKLM\…\Session Manager\Environment`, z. B. über „Umgebungsvariablen bearbeiten“) und denselben
+  Wert haben – so erreicht eine Firmen-Registry wie `NPM_CONFIG_REGISTRY` auch `npm`/`pnpm` in den
+  Sessions (ADR-021).
+
+## Virenscanner mit Web-Traffic-Scan (z. B. Kaspersky)
+Manche Virenscanner filtern auch lokalen HTTP-Verkehr auf `http://127.0.0.1`. Kasperskys
+Web-Anti-Virus wurde dabei beobachtet, wie er ein eigenes Skript in die Parallax-Seite einschleust,
+die Content-Security-Policy des Servers um seine Domain erweitert und die vollständige Seiten-URL
+samt Einmal-Code (`#code=…`) an sein Skript übergibt (Befund V1-08). Das weicht das
+Sicherheitsmodell auf (fremdes Skript im App-Fenster, Code für bis zu 60 s lesbar) und stört
+außerdem Netzwerk-Prüfungen der Tests.
+
+**Empfehlung:** `127.0.0.1` bzw. den Parallax-Port (Standard `4711`, Dev `4712`/`5173`) vom
+Web-Traffic-Scan ausnehmen – bei Kaspersky als vertrauenswürdige Adresse in den Netzwerk- bzw.
+Web-Anti-Virus-Einstellungen, oder dort „Skript in Datenverkehr einbetten“ abschalten
+(Bezeichnungen je nach Version). `pnpm preflight` weist auf erkannte Produkte mit
+Web-Traffic-Scan hin (Windows-Sicherheitscenter, ohne Admin-Rechte; Kaspersky, ESET, Bitdefender,
+Avast, AVG).
 
 ## Dokumentation
 - `CLAUDE.md` – Regeln, Befehle, Ordner-Ownership.

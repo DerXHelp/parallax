@@ -125,13 +125,15 @@
       "seq": 10,
       "type": "context_estimate",
       "totalTokens": 29270,
-      "model": "claude-haiku-5-5"
+      "model": "claude-haiku-5-5",
+      "contextWindow": null
     },
     {
       "seq": 15,
       "type": "context_estimate",
       "totalTokens": 29271,
-      "model": "claude-haiku-5-5"
+      "model": "claude-haiku-5-5",
+      "contextWindow": null
     },
     {
       "seq": 17,
@@ -352,13 +354,15 @@
       "seq": 54,
       "type": "context_estimate",
       "totalTokens": 31071,
-      "model": "claude-haiku-5-5"
+      "model": "claude-haiku-5-5",
+      "contextWindow": null
     },
     {
       "seq": 60,
       "type": "context_estimate",
       "totalTokens": 31075,
-      "model": "claude-haiku-5-5"
+      "model": "claude-haiku-5-5",
+      "contextWindow": null
     },
     {
       "seq": 62,

@@ -12,13 +12,13 @@ C.3, C.7, C.12).
 
 | Datei | Inhalt (wichtigste Exporte) |
 | --- | --- |
-| `integration.ts` | `createClaudeIntegration(deps)` → `ClaudeIntegration` (`launchSpecFor`, `checkProfile` = „Profil testen“), `profileNeedsSetup(status)` |
-| `env.ts` | `buildEnv(input)` / `buildEnvReport(input)` – **die eine** Env-Funktion für SDK, Terminal, Konsole, „Profil testen“ (C.2, A.7); `CLAUDE_CODE_ENV_ALLOWLIST`, `clientAppId`, `getEnvVar`/`setEnvVar`/`deleteEnvVar` (case-insensitiv) |
-| `resolveClaude.ts` | `resolveClaude`/`findClaude` (Profil-Pfad → `where claude`, nur `.exe`, npm-Shim → `bin\claude.exe`), `searchPath` (where im Prozess), `resolveCmdShim`, `parseClaudeVersion`, `compareVersions`, `cliVersionStatus` (C.7), `readSdkManifest`, `createMemoryFs` (Fake-Dateisystem für Tests) |
+| `integration.ts` | `createClaudeIntegration(deps)` → `ClaudeIntegration` (`launchSpecFor`, `checkProfile` = „Profil testen“), `profileNeedsSetup(status)`; liest die persistente Umgebung einmal (`deps.persistentEnv`, Default Registry) |
+| `env.ts` | `buildEnv(input)` / `buildEnvReport(input)` – **die eine** Env-Funktion für SDK, Terminal, Konsole, „Profil testen“ (C.2, A.7, R1-03); `envRemovalReason` (`session`/`run_state`/`machine_overridable`), Option `persistent` (Nexus-Ausnahme, ADR-021) und `target: 'sdk' \| 'terminal'` (`TERMINAL_TOOL_SHELL_VARS`), `CLAUDE_CODE_ENV_ALLOWLIST`, `clientAppId`, `setEnvVar`/`deleteEnvVar` (case-insensitiv; `getEnvVar` in `lib/windows.ts`) |
+| `resolveClaude.ts` | `resolveClaude`/`findClaude` (Profil-Pfad → `where claude`, nur `.exe`, npm-Shim → `bin\claude.exe`), `resolveClaudeShim`, `parseClaudeVersion`, `compareVersions`, `cliVersionStatus` (C.7), `readSdkManifest`, `whereOnPath` – `searchPath`/`resolveCmdShim`/`createMemoryFs` liegen seit R1-08 in `lib/windows.ts` |
 | `profileArgs.ts` | `parseProfileArgs` (C.12, rein), `BLOCKED_PROFILE_FLAGS`, `isBroadToolRule`, `splitToolList` |
 | `profiles.ts` | `STANDARD_PROFILE` (eingebaut, Default), `createProfileStore()`, `profileSummary()` |
 | `authStatus.ts` | `parseAuthStatus` (`claude auth status --json` → Contract-Sicht ohne E-Mail/Org), `parseRawAuthStatus` (nur Recorder) |
-| `preflight.ts` | Checks und Formatierung für `pnpm preflight` (`runPreflight`, `formatPreflight`, `findEdge`, `findPnpm`) |
+| `preflight.ts` | Checks und Formatierung für `pnpm preflight` (`runPreflight`, `formatPreflight`, `findPnpm`, `checkAntivirus`/`antivirusProducts` – V1-08); `findEdge` liegt seit R1-08 in `lib/edge.ts` |
 
 Regeln:
 - Jeder `claude`-Start und jeder Aufruf von `claude --version`/`auth status` bekommt sein Env aus

@@ -150,7 +150,7 @@ describe('WS upgrade guard', () => {
     ['from another local port', { origin: 'http://127.0.0.1:1' }, 403, 'ORIGIN_REJECTED', 'origin'],
     ['with Sec-Fetch-Site cross-site', { site: 'cross-site' }, 403, 'ORIGIN_REJECTED', 'sec-fetch-site'],
     ['with Sec-Fetch-Site same-site', { site: 'same-site' }, 403, 'ORIGIN_REJECTED', 'sec-fetch-site'],
-    ['without Sec-Fetch-Site', { site: null }, 403, 'ORIGIN_REJECTED', 'sec-fetch-site'],
+    ['with Sec-Fetch-Site none', { site: 'none' }, 403, 'ORIGIN_REJECTED', 'sec-fetch-site'],
     ['with a wrong Host', { host: 'localhost' }, 403, 'HOST_HEADER_REJECTED', undefined],
   ] as const)('rejects the upgrade %s', async (_name, overrides, status, code, reason) => {
     const s = await start();
@@ -162,6 +162,27 @@ describe('WS upgrade guard', () => {
     const body: unknown = JSON.parse(result.body);
     expect(body).toMatchObject({ code });
     if (reason !== undefined) expect(body).toMatchObject({ params: { reason } });
+  });
+
+  // V1-01: Chrome/Edge send no Sec-Fetch-Site on the WebSocket handshake (connectWs sends none by default).
+  it.each([
+    ['without Sec-Fetch-Site (like Chrome/Edge)', undefined],
+    ['with Sec-Fetch-Site same-origin', 'same-origin'],
+  ] as const)('accepts the upgrade %s', async (_name, site) => {
+    const s = await start();
+    const result = await connectWs(s, { cookie: await s.login(), site });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(await result.client.next('hello')).toMatchObject({
+      serverInstanceId: s.instance.serverInstanceId,
+    });
+    await result.client.close();
+  });
+
+  it('still rejects a foreign Origin without Sec-Fetch-Site, even with a valid cookie', async () => {
+    const s = await start();
+    const result = await connectWs(s, { cookie: await s.login(), origin: 'http://evil.example' });
+    expect(result).toMatchObject({ ok: false, status: 403 });
   });
 
   it('rejects a cookie of another port', async () => {
@@ -190,6 +211,11 @@ describe('HTTP guard for non-GET requests', () => {
     ['foreign origin', { origin: 'http://evil.example', 'sec-fetch-site': 'cross-site' }, 'ORIGIN_REJECTED'],
     ['Origin: null', { origin: 'null', 'sec-fetch-site': 'same-origin' }, 'ORIGIN_REJECTED'],
     ['missing Sec-Fetch-Site', { origin: 'ORIGIN' }, 'ORIGIN_REJECTED'],
+    [
+      'Sec-Fetch-Site none (typed URL / bookmark)',
+      { origin: 'ORIGIN', 'sec-fetch-site': 'none' },
+      'ORIGIN_REJECTED',
+    ],
     ['missing Origin', { 'sec-fetch-site': 'same-origin' }, 'ORIGIN_REJECTED'],
     [
       'wrong Host',

@@ -14,7 +14,36 @@ import type { StoreWarnings } from '../sync/ports';
  * atomic writes via temp file + rename with retry on EPERM/EBUSY (virus scanner, indexer);
  * `.bak` copy of the previous version; corrupt files go to quarantine (`<file>.corrupt-<time>`)
  * with a host warning `STORE_CORRUPT_QUARANTINED`; one writer per file, debounced writes.
+ *
+ * A file with a NEWER `schemaVersion` (written by a newer Parallax, e.g. another checkout on the
+ * same PARALLAX_HOME) is never moved, migrated or overwritten: `load()` rejects with
+ * `StoreVersionTooNewError` (`STORE_VERSION_TOO_NEW`), the store stays blocked and the server start
+ * is aborted ("update Parallax"; R1-06, ADR-020). Nothing is ever written before the file was read.
  */
+
+/** Process exit code of a server start aborted by STORE_VERSION_TOO_NEW (WP-20 main.ts, WP-21 launcher). */
+export const STORE_VERSION_TOO_NEW_EXIT_CODE = 3;
+
+/**
+ * A store file was written by a newer Parallax (`schemaVersion` > supported). The file is left
+ * unchanged; the caller aborts the server start and shows `message` (English, "update Parallax").
+ */
+export class StoreVersionTooNewError extends Error {
+  /** STORE_VERSION_TOO_NEW {file, version, supported}. */
+  readonly error: ErrorPayload;
+  /** Absolute path of the file (unchanged on disk). */
+  readonly file: string;
+
+  constructor(file: string, version: number, supported: number) {
+    super(
+      `${path.basename(file)} was written by a newer Parallax (schemaVersion ${String(version)}, this build ` +
+        `supports ${String(supported)}) – update Parallax. The file was left unchanged: ${file}`,
+    );
+    this.name = 'StoreVersionTooNewError';
+    this.file = file;
+    this.error = makeError('STORE_VERSION_TOO_NEW', { file: path.basename(file), version, supported });
+  }
+}
 
 // =====================================================================================
 // File system seam (tests inject failures, e.g. EPERM on rename)
@@ -176,6 +205,11 @@ export interface JsonStoreOptions<T extends Versioned> {
   migrations?: Migrations;
   /** Max delay between `set()` and the write (default 200 ms). */
   debounceMs?: number;
+  /**
+   * Copy the previous version to `<file>.bak` before each write (default true). False for secrets
+   * whose old value must not come back from a backup (auth secret after a rotation, R1-11).
+   */
+  backup?: boolean;
   warnings?: StoreWarningSink;
   fs?: StoreFs;
   retryDelaysMs?: readonly number[];
@@ -198,8 +232,21 @@ class LoadProblem extends Error {
   }
 }
 
+/** Thrown by `parse` for a file of a newer schema version (never quarantined). */
+class NewerVersion extends Error {
+  constructor(readonly version: number) {
+    super('newer_version');
+  }
+}
+
 type FileRead<T> =
-  { kind: 'ok'; value: T; migrated: boolean } | { kind: 'missing' } | { kind: 'problem'; issue: LoadIssue };
+  | { kind: 'ok'; value: T; migrated: boolean }
+  | { kind: 'missing' }
+  | { kind: 'problem'; issue: LoadIssue }
+  | { kind: 'newer'; version: number };
+
+/** unread → reading → done; `blocked` = newer schema version (load rejects, nothing is written). */
+type ReadState = 'unread' | 'reading' | 'done' | 'blocked';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -211,6 +258,9 @@ export class JsonStore<T extends Versioned> {
   private readonly log: Logger;
   private value: T | null = null;
   private loading: Promise<T> | null = null;
+  private readState: ReadState = 'unread';
+  /** Set when the file (or its .bak) has a newer schema version: the store refuses everything. */
+  private blockedBy: StoreVersionTooNewError | null = null;
   /** Unsaved changes. */
   private dirty = false;
   /** The last write failed: wait for the next set()/flush() instead of retrying in a loop. */
@@ -232,23 +282,40 @@ export class JsonStore<T extends Versioned> {
     return this.options.file;
   }
 
-  /** Reads the file once (later calls return the cached value). Rejects only for unreadable files. */
+  /**
+   * Reads the file once (later calls return the cached value). Rejects for unreadable files and
+   * with `StoreVersionTooNewError` for a file of a newer schema version (the store stays blocked).
+   */
   load(): Promise<T> {
-    if (this.value !== null) return Promise.resolve(this.value);
-    this.loading ??= this.readValue().then(({ value, persist }) => {
-      this.loading = null;
-      // A set() during the read wins over the file content.
-      if (this.value === null) {
-        this.value = value;
-        if (persist) this.markDirty();
-      }
-      return this.value;
-    });
+    if (this.blockedBy !== null) return Promise.reject(this.blockedBy);
+    if (this.readState === 'done' && this.value !== null) return Promise.resolve(this.value);
+    if (this.loading === null) {
+      this.readState = 'reading';
+      this.loading = this.readValue().then(
+        ({ value, persist }) => {
+          this.loading = null;
+          this.readState = 'done';
+          // A set() before/during the read wins over the file content.
+          if (this.value === null) {
+            this.value = value;
+            if (persist) this.markDirty();
+          } else if (this.dirty) {
+            this.scheduleWrite();
+          }
+          return this.value;
+        },
+        (error: unknown) => {
+          if (error instanceof StoreVersionTooNewError) this.block(error);
+          throw error;
+        },
+      );
+    }
     return this.loading;
   }
 
-  /** Current value; throws when neither load() finished nor set() was called. */
+  /** Current value; throws when neither load() finished nor set() was called (or the store is blocked). */
   get(): T {
+    if (this.blockedBy !== null) throw this.blockedBy;
     if (this.value === null) throw new Error(`JsonStore ${this.options.file} used before load()`);
     return this.value;
   }
@@ -256,6 +323,7 @@ export class JsonStore<T extends Versioned> {
   /** Validates (throws a ZodError on invalid data) and schedules a debounced write. */
   set(value: T): T {
     if (this.closed) throw new Error(`JsonStore ${this.options.file} is closed`);
+    if (this.blockedBy !== null) throw this.blockedBy;
     const parsed = this.options.schema.parse(value);
     this.value = parsed;
     this.markDirty();
@@ -266,11 +334,15 @@ export class JsonStore<T extends Versioned> {
     return this.set(fn(this.get()));
   }
 
-  /** Writes pending changes now and waits for the write (a failure becomes a host warning). */
+  /**
+   * Writes pending changes now and waits for the write (a failure becomes a host warning). An
+   * unread file is read first; a blocked or unreadable store writes nothing.
+   */
   async flush(): Promise<void> {
-    if (this.timer !== null) {
-      clearTimeout(this.timer);
-      this.timer = null;
+    this.clearTimer();
+    if (this.dirty && this.readState !== 'done') {
+      await this.load().catch(() => undefined);
+      this.clearTimer();
     }
     if (this.writing !== null) await this.writing;
     if (this.dirty) {
@@ -285,6 +357,26 @@ export class JsonStore<T extends Versioned> {
   }
 
   // ---- writing (single writer) ----
+
+  private clearTimer(): void {
+    if (this.timer === null) return;
+    clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  /** Newer schema version: refuse reads and writes from now on, drop pending changes. */
+  private block(error: StoreVersionTooNewError): void {
+    this.blockedBy = error;
+    this.readState = 'blocked';
+    this.clearTimer();
+    this.dirty = false;
+    this.value = null;
+    this.log.error(
+      { file: error.file, ...error.error.params },
+      'store file was written by a newer Parallax – update Parallax (file left unchanged)',
+    );
+    this.options.warnings?.add(error.error);
+  }
 
   private markDirty(): void {
     this.dirty = true;
@@ -304,11 +396,16 @@ export class JsonStore<T extends Versioned> {
   private startWrite(): void {
     const value = this.value;
     if (value === null || !this.dirty || this.writing !== null) return;
+    if (this.readState !== 'done') {
+      // Never write before the file was read: it may be newer (R1-06). The write follows the read.
+      if (this.readState === 'unread') void this.load().catch(() => undefined);
+      return;
+    }
     this.dirty = false;
     const data = `${JSON.stringify(value, null, 2)}\n`;
     this.writing = writeFileAtomic(this.options.file, data, {
       fs: this.fs,
-      backup: true,
+      backup: this.options.backup ?? true,
       retryDelaysMs: this.options.retryDelaysMs,
     })
       .catch((error: unknown) => {
@@ -335,15 +432,19 @@ export class JsonStore<T extends Versioned> {
   private async readValue(): Promise<{ value: T; persist: boolean }> {
     const main = await this.readFile(this.options.file);
     if (main.kind === 'ok') return { value: main.value, persist: main.migrated };
+    if (main.kind === 'newer')
+      throw new StoreVersionTooNewError(this.options.file, main.version, this.options.version);
     if (main.kind === 'problem') await this.quarantine(this.options.file, main.issue);
 
     // Missing or quarantined: fall back to the backup of the previous version.
-    const bak = await this.readFile(`${this.options.file}.bak`);
+    const bakFile = `${this.options.file}.bak`;
+    const bak = await this.readFile(bakFile);
     if (bak.kind === 'ok') {
       this.log.warn({ restoredFrom: 'bak' }, 'store restored from backup');
       return { value: bak.value, persist: true };
     }
-    if (bak.kind === 'problem') await this.quarantine(`${this.options.file}.bak`, bak.issue);
+    if (bak.kind === 'newer') throw new StoreVersionTooNewError(bakFile, bak.version, this.options.version);
+    if (bak.kind === 'problem') await this.quarantine(bakFile, bak.issue);
     return { value: this.options.defaults(), persist: main.kind === 'problem' };
   }
 
@@ -360,6 +461,7 @@ export class JsonStore<T extends Versioned> {
       return { kind: 'ok', value, migrated };
     } catch (error) {
       if (error instanceof LoadProblem) return { kind: 'problem', issue: error.issue };
+      if (error instanceof NewerVersion) return { kind: 'newer', version: error.version };
       throw error;
     }
   }
@@ -376,13 +478,8 @@ export class JsonStore<T extends Versioned> {
     }
     let version = raw.schemaVersion;
     const target = this.options.version;
-    if (version > target) {
-      throw new LoadProblem({
-        code: 'STORE_MIGRATION_FAILED',
-        reason: 'newer_version',
-        params: { version, supported: target },
-      });
-    }
+    // R1-06: never quarantine/overwrite a newer file – the start is aborted instead.
+    if (version > target) throw new NewerVersion(version);
     let current: Record<string, unknown> = raw;
     const migrated = version < target;
     while (version < target) {

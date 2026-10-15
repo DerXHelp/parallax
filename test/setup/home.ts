@@ -25,12 +25,23 @@ export function ensureTestEnv(env: NodeJS.ProcessEnv = process.env): string | un
   return created;
 }
 
-/** Throws when PARALLAX_HOME points to the productive data directory. */
+/**
+ * Throws when PARALLAX_HOME is the productive data directory or lies inside it (R0-23; compared
+ * case-insensitively with `/` and `\` alike, as Windows does).
+ */
 export function assertNotRealHome(home: string, env: NodeJS.ProcessEnv = process.env): void {
   const localAppData = env.LOCALAPPDATA;
   if (localAppData === undefined || localAppData === '') return;
-  const real = path.resolve(localAppData, 'Parallax').toLowerCase();
-  if (path.resolve(home).toLowerCase() === real) {
-    throw new Error(`Tests must not use the real data directory ${real}. Set PARALLAX_HOME to a temp dir.`);
+  const key = (value: string) =>
+    path.win32
+      .resolve(value)
+      .replace(/[\\/]+$/, '')
+      .toLowerCase();
+  const real = key(path.win32.join(localAppData, 'Parallax'));
+  const candidate = key(home);
+  if (candidate === real || candidate.startsWith(`${real}\\`)) {
+    throw new Error(
+      `Tests must not use the real data directory ${real} (or a folder inside it). Set PARALLAX_HOME to a temp dir.`,
+    );
   }
 }

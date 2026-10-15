@@ -134,12 +134,16 @@ describe('createApp', () => {
     });
     expect(missing.statusCode).toBe(404);
     expect(missing.json()).toEqual({ code: 'BLOB_NOT_FOUND', params: {} });
+    // Not a canonical API path (percent-encoding, dots): rejected before the route runs (R1-01).
     const malformed = await app.inject({
       method: 'GET',
       url: '/api/blob/..%2F..%2Fsecret',
       headers: { host: HOST, cookie },
     });
-    expect(malformed.statusCode).toBe(404);
+    expect(malformed.statusCode).toBe(400);
+    expect(malformed.json()).toEqual({ code: 'VALIDATION_FAILED', params: { reason: 'request_target' } });
+    const head = await app.inject({ method: 'HEAD', url, headers: { host: HOST } });
+    expect(head.statusCode).toBe(401);
   });
 
   it('falls back to application/octet-stream for odd media types', () => {
@@ -152,11 +156,9 @@ describe('createApp', () => {
     const { app, cookie } = await setup();
     const mutation = { host: HOST, origin: ORIGIN, 'sec-fetch-site': 'same-origin', cookie };
     const unknown = await app.inject({ method: 'GET', url: '/api/nope', headers: { host: HOST } });
-    expect(unknown.statusCode).toBe(501);
-    expect(unknown.json()).toMatchObject({
-      code: 'NOT_IMPLEMENTED',
-      params: { reason: 'not_found', path: '/api/nope' },
-    });
+    expect(unknown.statusCode).toBe(404);
+    expect(unknown.json()).toEqual({ code: 'ROUTE_NOT_FOUND', params: { path: '/api/nope' } });
+    expect(unknown.headers['cache-control']).toBe('no-store');
 
     const badJson = await app.inject({
       method: 'POST',
@@ -206,6 +208,11 @@ describe('createApp', () => {
     expect(index.headers['cache-control']).toBe('no-cache');
     const asset = await app.inject({ method: 'GET', url: '/assets/app.js', headers: { host: HOST } });
     expect(asset.statusCode).toBe(200);
+    expect(asset.headers['cache-control']).not.toBe('no-store');
+    // V1-06: a missing static file is a 404 (not 501).
+    const favicon = await app.inject({ method: 'GET', url: '/favicon.ico', headers: { host: HOST } });
+    expect(favicon.statusCode).toBe(404);
+    expect(favicon.json()).toMatchObject({ code: 'ROUTE_NOT_FOUND' });
     expect(
       (await app.inject({ method: 'GET', url: '/', headers: { host: 'evil.example' } })).statusCode,
     ).toBe(403);

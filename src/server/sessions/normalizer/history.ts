@@ -172,7 +172,8 @@ class HistoryBuilder {
         this.put(
           userMessageItem(this.uuidBase(message.uuid, at, null), capText(kind.text, this.ctx), {
             attachments: content.images,
-            origin: 'human',
+            // HistoryMessage.origin (R1-07): like live; unknown (absent/null) counts as human.
+            origin: (message.origin?.kind ?? 'human') === 'human' ? 'human' : 'other',
             priority: null,
           }),
         );

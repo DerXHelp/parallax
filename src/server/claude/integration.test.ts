@@ -7,7 +7,7 @@ import type { RunFileOptions, RunFileResult } from '../lib/process';
 import { CommandError } from '../sync/ports';
 import { createClaudeIntegration, profileNeedsSetup } from './integration';
 import { createProfileStore } from './profiles';
-import { createMemoryFs } from './resolveClaude';
+import { createMemoryFs } from '../lib/windows';
 
 const LOCAL = 'C:\\Users\\u\\.local\\bin\\claude.exe';
 const EMAIL = 'someone@example.com';
@@ -50,6 +50,7 @@ function setup(
     profileList?: Profile[];
     sdkClaudeCodeVersion?: string | null;
     resolveCacheMs?: number;
+    persistentEnv?: () => Promise<ReadonlyMap<string, string> | null>;
   } = {},
 ) {
   const calls: Call[] = [];
@@ -57,6 +58,7 @@ function setup(
   const integration = createClaudeIntegration({
     appVersion: '1.2.3',
     baseEnv: () => BASE_ENV,
+    persistentEnv: options.persistentEnv ?? (() => Promise.resolve(null)),
     fs,
     where: (name, env) => {
       expect(name).toBe('claude');
@@ -119,6 +121,52 @@ describe('launchSpecFor', () => {
     });
     expect(calls.map((call) => call.args)).toEqual([['--version']]);
     expect(calls[0]?.options.env).toEqual(spec.env);
+  });
+
+  it('keeps persistent machine variables (Nexus, ADR-021), reads the source once, never session markers', async () => {
+    let reads = 0;
+    const { integration, calls } = setup({
+      persistentEnv: () => {
+        reads += 1;
+        return Promise.resolve(
+          new Map([
+            ['NPM_LIFECYCLE_EVENT', 'preflight'],
+            ['CLAUDECODE', '1'],
+          ]),
+        );
+      },
+    });
+    const spec = await integration.launchSpecFor(STANDARD_PROFILE_ID, SAMPLE_IDS.entry);
+    await integration.checkProfile(STANDARD_PROFILE_ID);
+    await integration.launchSpecFor(STANDARD_PROFILE_ID, SAMPLE_IDS.entry);
+    expect(reads).toBe(1);
+    // run state and session markers stay removed although "persistent" with the same value
+    expect(spec.env.npm_lifecycle_event).toBeUndefined();
+    expect(spec.env.CLAUDECODE).toBeUndefined();
+    expect(calls.every((call) => call.options.env?.CLAUDECODE === undefined)).toBe(true);
+  });
+
+  it('passes a persistent NPM_CONFIG_REGISTRY on and survives a failing source', async () => {
+    const nexus = 'https://nexus.corp/npm/';
+    const ok = setup({ persistentEnv: () => Promise.resolve(new Map([['NPM_LIFECYCLE_EVENT', 'x']])) });
+    expect(
+      (await ok.integration.launchSpecFor(STANDARD_PROFILE_ID, SAMPLE_IDS.entry)).env,
+    ).not.toHaveProperty('npm_lifecycle_event');
+    const failing = setup({ persistentEnv: () => Promise.reject(new Error('reg.exe missing')) });
+    const spec = await failing.integration.launchSpecFor(STANDARD_PROFILE_ID, SAMPLE_IDS.entry);
+    expect(spec.executablePath).toBe(LOCAL);
+    const integration = createClaudeIntegration({
+      appVersion: '1.2.3',
+      baseEnv: () => ({ ...BASE_ENV, NPM_CONFIG_REGISTRY: nexus }),
+      persistentEnv: () => Promise.resolve(new Map([['NPM_CONFIG_REGISTRY', nexus]])),
+      fs: createMemoryFs({ [LOCAL]: '' }),
+      where: () => Promise.resolve([LOCAL]),
+      runFile: () => Promise.resolve(result('2.1.300 (Claude Code)\n')),
+      sdkClaudeCodeVersion: '2.1.296',
+    });
+    expect(
+      (await integration.launchSpecFor(STANDARD_PROFILE_ID, SAMPLE_IDS.entry)).env.NPM_CONFIG_REGISTRY,
+    ).toBe(nexus);
   });
 
   it('maps profile args, config dir and context window', async () => {

@@ -6,7 +6,7 @@ Rohe SDK-Messages → `TranscriptItem`s, `SessionOp`s und `StatusSignal`s. Port:
 
 | Datei | Inhalt |
 |---|---|
-| `index.ts` | öffentliche Exporte: `createLiveNormalizer`, `normalizeHistory`, `normalizeContextUsage` (Port-Typen) + `estimateContextGauge`, `modelContextWindow` |
+| `index.ts` | öffentliche Exporte: `createLiveNormalizer`, `normalizeHistory`, `normalizeContextUsage` (Port-Typen) + `estimateContextGauge`, `modelContextWindow`, `capText`, `capInput` (für die Engine, WP-13 §6 Nr. 6). Seit R1-07 trägt `context_estimate` `contextWindow` (aus `modelUsage` des letzten `result`); der Verlauf übernimmt `HistoryMessage.origin` für `user_message.origin` |
 | `live.ts` | Live-Adapter (Stream-Events, finale Messages per Message-ID, Tool-Paarung, Tasks, Reset, Zähler) |
 | `history.ts` | Verlaufs-Adapter (`getSessionMessages` + Subagent-Messages, nach Zeit gemischt) |
 | `context.ts` | Context-Gauge (C.1): `getContextUsage` → `ContextBreakdown`, Schätzung während des Turns |

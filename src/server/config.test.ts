@@ -48,13 +48,13 @@ describe('loadConfig', () => {
     const vars = env({
       PARALLAX_PORT: '0',
       PARALLAX_HOME: 'D:\\data\\px',
-      PARALLAX_HOST: '127.0.0.2',
+      PARALLAX_HOST: '127.0.0.1',
       PARALLAX_LOG_LEVEL: 'warn',
     });
     expect(loadConfig({ argv: [], env: vars, cwd: CWD })).toMatchObject({
       port: 0,
       home: 'D:\\data\\px',
-      host: '127.0.0.2',
+      host: '127.0.0.1',
       logLevel: 'warn',
     });
     expect(loadConfig({ argv: ['--port=5000', '--home=D:\\other'], env: vars, cwd: CWD })).toMatchObject({
@@ -77,6 +77,22 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ argv, env: env(), cwd: CWD })).toThrow(ConfigError);
   });
 
+  it.each(['0.0.0.0', '127.0.0.2', '::1', '::', '192.168.1.10', 'localhost'])(
+    'binds only to 127.0.0.1: --host=%s and PARALLAX_HOST are rejected (R1-05)',
+    (host) => {
+      expect(() => loadConfig({ argv: [`--host=${host}`], env: env(), cwd: CWD })).toThrow(
+        /only 127\.0\.0\.1/,
+      );
+      expect(() => loadConfig({ argv: [], env: env({ PARALLAX_HOST: host }), cwd: CWD })).toThrow(
+        ConfigError,
+      );
+    },
+  );
+
+  it('accepts --host=127.0.0.1 explicitly', () => {
+    expect(loadConfig({ argv: ['--host=127.0.0.1'], env: env(), cwd: CWD }).host).toBe('127.0.0.1');
+  });
+
   it('rejects unsafe home paths and the real home under Vitest', () => {
     expect(() => loadConfig({ argv: ['--home=\\\\server\\share'], env: env(), cwd: CWD })).toThrow(
       ConfigError,
@@ -84,6 +100,21 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ argv: [], env: env({ VITEST: 'true' }), cwd: CWD })).toThrow(
       /real data directory/,
     );
+    // R0-23: also a folder inside it, any spelling
+    expect(() =>
+      loadConfig({
+        argv: ['--home=c:\\users\\U\\appdata\\local\\PARALLAX\\sub'],
+        env: env({ VITEST: 'true' }),
+        cwd: CWD,
+      }),
+    ).toThrow(/real data directory/);
+    expect(
+      loadConfig({
+        argv: ['--home=C:\\Users\\u\\AppData\\Local\\Parallax-test'],
+        env: env({ VITEST: 'true' }),
+        cwd: CWD,
+      }).home,
+    ).toBe('C:\\Users\\u\\AppData\\Local\\Parallax-test');
   });
 });
 

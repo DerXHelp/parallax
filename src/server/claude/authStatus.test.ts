@@ -48,6 +48,11 @@ describe('parseAuthStatus (F.17)', () => {
       { state: 'logged_out', method: 'none', apiProvider: 'firstParty', subscriptionType: null },
     ],
     [
+      'logged out with null method/provider (R1-20)',
+      '{"loggedIn":false,"authMethod":null,"apiProvider":null,"subscriptionType":null}',
+      { state: 'logged_out', method: null, apiProvider: null, subscriptionType: null },
+    ],
+    [
       'api key login (no subscription)',
       { loggedIn: true, authMethod: 'api_key', apiProvider: 'firstParty', subscriptionType: null },
       { state: 'logged_in', method: 'api_key', apiProvider: 'firstParty', subscriptionType: null },
