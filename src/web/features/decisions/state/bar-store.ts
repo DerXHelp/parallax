@@ -23,9 +23,11 @@ interface BarState {
   /** Decision the user picked to view (else the bar shows the oldest open one). */
   selected: Readonly<Record<string, DecisionId>>;
   panels: Readonly<Record<string, PlanPanelState>>;
+  /** Sessions whose PlanSidePanel is mounted (ref count; else "Open plan" expands the plan inline). */
+  mounted: Readonly<Record<string, number>>;
 }
 
-const store = createStore<BarState>(() => ({ selected: {}, panels: {} }));
+const store = createStore<BarState>(() => ({ selected: {}, panels: {}, mounted: {} }));
 
 /** Decisions answered or cancelled by THIS window (insertion order, capped). */
 const local = new Set<DecisionId>();
@@ -33,9 +35,6 @@ const LOCAL_MAX = 500;
 
 /** Elements that opened a plan panel (focus returns there on close). */
 const panelOpeners = new Map<string, HTMLElement>();
-
-/** Sessions whose PlanSidePanel is mounted (else "Open plan" expands the plan inside the bar). */
-const mountedPanels = new Map<string, number>();
 
 export function useSelectedDecisionId(sessionKey: string): DecisionId | null {
   return useStore(store, (state) => state.selected[sessionKey] ?? null);
@@ -100,16 +99,25 @@ export function closePlanPanel(sessionKey: string): HTMLElement | null {
 
 /** Called by PlanSidePanel while mounted (ref-counted); returns the unregister function. */
 export function registerPlanPanel(sessionKey: string): () => void {
-  mountedPanels.set(sessionKey, (mountedPanels.get(sessionKey) ?? 0) + 1);
+  store.setState((state) => ({
+    mounted: { ...state.mounted, [sessionKey]: (state.mounted[sessionKey] ?? 0) + 1 },
+  }));
   return () => {
-    const count = (mountedPanels.get(sessionKey) ?? 1) - 1;
-    if (count <= 0) mountedPanels.delete(sessionKey);
-    else mountedPanels.set(sessionKey, count);
+    store.setState((state) => {
+      const count = (state.mounted[sessionKey] ?? 1) - 1;
+      const { [sessionKey]: _previous, ...rest } = state.mounted;
+      return { mounted: count <= 0 ? rest : { ...rest, [sessionKey]: count } };
+    });
   };
 }
 
 export function isPlanPanelMounted(sessionKey: string): boolean {
-  return (mountedPanels.get(sessionKey) ?? 0) > 0;
+  return (store.getState().mounted[sessionKey] ?? 0) > 0;
+}
+
+/** Re-renders when the session's PlanSidePanel mounts/unmounts (transcript "Open plan", R2W-15). */
+export function usePlanPanelMounted(sessionKey: string): boolean {
+  return useStore(store, (state) => (state.mounted[sessionKey] ?? 0) > 0);
 }
 
 // ---- answered by this window ----
@@ -151,8 +159,7 @@ export function writeApproveMode(mode: PermissionMode): void {
 
 /** Tests: forget everything (the module state is global). */
 export function resetDecisionBarState(): void {
-  store.setState({ selected: {}, panels: {} });
+  store.setState({ selected: {}, panels: {}, mounted: {} });
   local.clear();
   panelOpeners.clear();
-  mountedPanels.clear();
 }

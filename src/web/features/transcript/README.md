@@ -21,9 +21,9 @@ Plan-Karte. Details, Entscheidungen und Lücken: `docs/wp/WP-15.md`.
 | `items/` | eine Komponente je Item-Art: `TranscriptRow` (`useItem` je Zeile), `MessageRows` (User, Assistant, Thinking, Queue), `ToolCallRow` (Zeile + Entscheidung), `AgentCard`, `PlanCard`, `SystemRow`, `TurnFooter` |
 | `renderers/` | Tool-Renderer (`shell`, `edit`, `read`, `search`, `misc`, `generic`) + gemeinsame Teile (`parts`) |
 | `markdown/` | `Markdown` (Wrapper, Klartext-Fallback) und `MarkdownRenderer` (react-markdown + remark-gfm, Lazy-Chunk) |
-| `components/` | `Disclosure`, `CodeBlock` (+ `use-highlight`), `DiffView`, `AnsiText`, `CappedContent`/`TruncationNotice`, `CopyButton`, `ToolStatus`, `ModelBadge` – Kompositionen aus `@web/ui` |
-| `lib/` | reine Helfer: `ansi` (Scanner), `markdown-blocks`, `safe-url`, `diff`, `languages`, `highlight` (Shiki, Lazy-Chunk), `tool-input` (zod-Leser), `text` |
-| `state/` | `expansion` (Auf/Zu je Item, übersteht Re-Mounts der Liste), `full-text` („Vollständig laden“, Blob-LRU, austauschbarer Loader) |
+| `components/` | `Disclosure` (dünner Wrapper um `@web/ui/disclosure` mit `useExpanded`), `CodeBlock` (+ `use-highlight`), `DiffView`, `AnsiText`, `CappedContent`/`TruncationNotice` (Inline-Budget für Volltexte), `CopyButton`, `ToolStatus`, `ModelBadge` – Kompositionen aus `@web/ui` |
+| `lib/` | reine Helfer: `ansi` (Scanner), `markdown-blocks`, `safe-url`, `diff`, `languages`, `highlight` (Shiki, Lazy-Chunk), `tool-input` (zod-Leser), `text` (`clipForDisplay`, `INLINE_TEXT_BUDGET`), `sized-cache` (`SizedLru`: LRU nach Anzahl und Größe) |
+| `state/` | `expansion` (Auf/Zu je Item, übersteht Re-Mounts der Liste), `full-text` („Vollständig laden“, Blob-LRU 16 Texte/8 Mi Zeichen, austauschbarer Loader) |
 | `playground/` | Demo-Daten (`data.ts`), Live-Skript (`live.ts`), `TranscriptDemo` |
 | `i18n/` | `en.ts`/`de.ts` (Namespace `transcript`) |
 

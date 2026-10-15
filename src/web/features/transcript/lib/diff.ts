@@ -1,3 +1,4 @@
+import { SizedLru } from './sized-cache';
 import type { Hunk } from './tool-input';
 
 /**
@@ -64,8 +65,8 @@ export function contentToRows(content: string): DiffRow[] {
   return lines.map((text, index) => ({ kind: 'add', text, oldLine: null, newLine: index + 1 }));
 }
 
-const fallbackCache = new Map<string, DiffRow[]>();
-const FALLBACK_CACHE_MAX = 100;
+/** At most 100 pairs and ~2 Mi chars (key = both snippets, the rows repeat them; R2W-18). */
+const fallbackCache = new SizedLru<string, DiffRow[]>({ maxEntries: 100, maxSize: 2 * 1024 * 1024 });
 
 function fallbackKey(oldText: string, newText: string): string {
   return `${String(oldText.length)}:${oldText}\u0000${newText}`;
@@ -73,7 +74,7 @@ function fallbackKey(oldText: string, newText: string): string {
 
 /** Cached fallback rows (null until `computeFallbackRows` resolved once for this pair). */
 export function peekFallbackRows(oldText: string, newText: string): DiffRow[] | null {
-  return fallbackCache.get(fallbackKey(oldText, newText)) ?? null;
+  return fallbackCache.peek(fallbackKey(oldText, newText)) ?? null;
 }
 
 /**
@@ -87,10 +88,6 @@ export async function computeFallbackRows(oldText: string, newText: string): Pro
   const { structuredPatch } = await import('diff');
   const patch = structuredPatch('a', 'b', oldText, newText, undefined, undefined, { context: 3 });
   const rows = hunksToRows(patch.hunks);
-  if (fallbackCache.size >= FALLBACK_CACHE_MAX) {
-    const oldest = fallbackCache.keys().next().value;
-    if (oldest !== undefined) fallbackCache.delete(oldest);
-  }
-  fallbackCache.set(key, rows);
+  fallbackCache.set(key, rows, key.length * 2);
   return rows;
 }

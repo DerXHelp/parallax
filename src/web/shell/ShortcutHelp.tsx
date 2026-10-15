@@ -32,7 +32,10 @@ function getOpen(): boolean {
   return open;
 }
 
-/** `?` help listing every registered shortcut (Plan B "zentrale Shortcut-Registry mit ?-Hilfe"). */
+/**
+ * `?` help listing every registered shortcut (Plan B "zentrale Shortcut-Registry mit ?-Hilfe");
+ * shortcuts with `allowInInputs` are marked "also in text fields".
+ */
 export function ShortcutHelp() {
   const t = useT();
   const isOpen = useSyncExternalStore(subscribe, getOpen, getOpen);
@@ -63,7 +66,15 @@ export function ShortcutHelp() {
                 (typeof definition.keys === 'string' ? definition.keys : (definition.keys[0] ?? ''));
               return (
                 <div key={definition.id} className="flex items-center justify-between gap-4 py-1.5">
-                  <dt>{t(definition.description)}</dt>
+                  <dt className="grid gap-0.5">
+                    <span>{t(definition.description)}</span>
+                    {/* R2W-11: shortcuts that also fire while typing (Alt+1–9, Mod+Enter in the bar). */}
+                    {definition.allowInInputs === true ? (
+                      <span data-slot="shortcut-in-inputs" className="text-muted-foreground text-2xs">
+                        {t('shell.shortcuts.inInputs')}
+                      </span>
+                    ) : null}
+                  </dt>
                   <dd>
                     <KbdGroup keys={shortcutKeyLabels(combo, t)} />
                   </dd>

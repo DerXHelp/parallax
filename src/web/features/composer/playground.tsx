@@ -1,16 +1,20 @@
 import type { QueuedPrompt } from '@shared/model';
 import type { Command } from '@shared/protocol';
+import { sampleDecisions, sampleId } from '@shared/samples';
 import type { PlaygroundDemo } from '@web/playground/types';
 import type { FakeAck, FakeHost } from '@web/state/fake-host';
 import type { FeatureSlots } from '@web/shell/slots';
-import { DemoSession } from '../decisions/lib/demo-session';
+import { DEMO_ENTRIES } from '../decisions/lib/demo-data';
+import type { DemoHost } from '../decisions/lib/demo-host';
+import { DemoButton, DemoSession } from '../decisions/lib/demo-session';
 import { Composer } from './Composer';
 
 /**
  * Playground demos of the composer (WP-16; `#playground=composer/<id>`) in the real SessionPane.
  * The FakeHost has no prompt queue (R1W-22): `simulateQueue` adds one – while the session works a
  * `next` prompt waits in `detail.queue` ("sending" → "queued") and is taken over after a while;
- * Stop ends the turn and takes the queue over.
+ * Stop ends the turn and takes the queue over. The queue shows in the header badge and – with
+ * the transcript slot – grey at the end of the transcript, not in the composer (R2W-04).
  */
 
 const TAKE_OVER_MS = 4000;
@@ -79,6 +83,34 @@ function simulateQueue(cmd: Command, host: FakeHost): FakeAck | undefined {
   return undefined;
 }
 
+let lateCounter = 0;
+
+/** Opens a permission of the main agent or a subagent in the `working` demo session. */
+function openLateDecision(running: DemoHost | null, requester: 'main' | 'subagent'): void {
+  if (running === null) return;
+  const entryId = DEMO_ENTRIES.working;
+  lateCounter += 1;
+  const decision = sampleDecisions.permission({
+    entryId,
+    id: sampleId('dc', 0xd00 + lateCounter),
+    toolUseId: `toolu_demo_late_${String(lateCounter)}`,
+    createdAt: new Date().toISOString(),
+    input: { command: 'pnpm install', description: 'Install dependencies' },
+    description: 'Install dependencies',
+    requester:
+      requester === 'main'
+        ? { kind: 'main' }
+        : {
+            kind: 'subagent',
+            agentId: 'agent_explore_1',
+            description: 'Explore the store code',
+            parentToolUseId: 'toolu_demo_agent',
+          },
+  });
+  running.host.pushOps(entryId, [{ op: 'decision.upsert', decision }]);
+  running.host.syncDecisionCounts(entryId);
+}
+
 export const demos: PlaygroundDemo[] = [
   {
     id: 'idle',
@@ -96,6 +128,35 @@ export const demos: PlaygroundDemo[] = [
     id: 'with-permission',
     title: 'Composer – open permission ("send as answer" = deny + message)',
     render: () => <DemoSession entries={['permission']} show="permission" />,
+  },
+  {
+    id: 'late-decision',
+    title: 'Composer – a decision appears while typing (target lock, R2W-01)',
+    description:
+      'Type first, then open a permission: Enter still queues the text; "Send as answer" answers explicitly.',
+    render: () => (
+      <DemoSession
+        entries={['working']}
+        show="working"
+        onCommand={simulateQueue}
+        controls={(host) => (
+          <>
+            <DemoButton
+              label="Open a permission now"
+              onClick={() => {
+                openLateDecision(host.current, 'main');
+              }}
+            />
+            <DemoButton
+              label="Open a subagent permission"
+              onClick={() => {
+                openLateDecision(host.current, 'subagent');
+              }}
+            />
+          </>
+        )}
+      />
+    ),
   },
   {
     id: 'with-plan',

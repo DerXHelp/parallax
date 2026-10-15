@@ -453,3 +453,79 @@ Format: `ADR-NNN – Titel` · Datum · WP · Kontext → Entscheidung → Folge
   `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `*.config.ts`, `tsconfig*.json`).
 - **Folgen:** Doku-Änderungen ändern die Build-ID nicht mehr; neue Build-Eingaben außerhalb dieser
   Pfade müssen in die Liste aufgenommen werden.
+
+## ADR-040 – Composer: Ziel-Sperre für Enter bei offener Entscheidung
+- **Datum/WP:** 15.10.2026, R2-Fixes Web (R2W-01, Koordinator-Entscheidung Variante B)
+- **Kontext:** Enter im Composer beantwortete die gerade angezeigte offene Entscheidung – auch eine,
+  die erst während des Tippens erschien (auch von Subagenten): nie eine Freigabe, aber eine
+  ungewollte Ablehnung bzw. Plan-Überarbeitung mit dem Text der eigentlich nächsten Anweisung.
+- **Entscheidung:** Das Enter-Ziel wird beim ersten Zeichen des Entwurfs fixiert (`'' → nicht
+  leer`): nur die Entscheidung, die die Leiste dann zeigt, sofern sie vom Haupt-Agent stammt und
+  mindestens `ARM_DELAY_MS` (600 ms, wie die Karten) angezeigt war. „Weiter planen“ in der Leiste
+  setzt das Ziel explizit (`requestComposerFocus(sessionKey, decisionId)`). Ohne passendes Ziel
+  (Entscheidung erschien beim Tippen, anderes Ziel gewählt, Subagent, aus localStorage
+  wiederhergestellter Entwurf) sendet Enter normal (`next`); die Hinweiszeile sagt das, „Als
+  Antwort senden“ bzw. „Weiter planen mit Feedback“ ist dann ein expliziter Knopf links der
+  Sende-Knöpfe (verschiebt sie nicht; ebenfalls mit Arm-Verzögerung). Ein leeres Feld zeigt die
+  Antwort-Darstellung für Haupt-Agent-Entscheidungen, weil das erste Zeichen sie fixieren wird.
+  Schlägt eine Antwort fehl, kommen Text und Ziel zurück.
+- **Folgen:** Kein Zielwechsel unter den Händen des Nutzers; ein `next`-Prompt wartet dann hinter
+  der Entscheidung (gewollt, der Nutzer schrieb eine Anweisung). Tests mit Gegenprobe in
+  `composer/Composer.test.tsx`. Das Ziel lebt im Composer (Remount = kein Ziel).
+
+## ADR-041 – Warteschlange nur im Transkript und als Zähler in der Kopfzeile
+- **Datum/WP:** 15.10.2026, R2-Fixes Web (R2W-04, Koordinator-Entscheidung)
+- **Kontext:** Eingereihte Prompts erschienen dreifach: graue Zeilen im Transkript (WP-15), Liste
+  im Composer (WP-16), Badge „n eingereiht“ im Kopf (WP-14).
+- **Entscheidung:** Kanonisch ist das Transkript (Plan „Chat-Ansicht“: grau, bis verarbeitet),
+  dazu das Kopfzeilen-Badge mit Anzahl. Die Composer-Liste (`QueueList`) entfällt ohne Ersatz-Chip
+  (der empfohlene Chip mit „Zu neuesten“ bräuchte eine Querverbindung Composer → Transkript); die
+  Zeit bis zum `ack` zeigt der Spinner am Senden-Knopf.
+- **Folgen:** Keine Text-Deduplizierung `pending` ↔ `detail.queue` mehr im Composer.
+
+## ADR-042 – Modus/Modell: Picker im Composer, Kopfzeile nur Status
+- **Datum/WP:** 15.10.2026, R2-Fixes Web (R2W-03, Koordinator-Entscheidung)
+- **Kontext:** Plan „Kopfleiste“ sah die Picker im Kopf vor, WP-16 baute sie in den Composer; Kopf
+  und Composer zeigten beide Modus und Modell.
+- **Entscheidung:** Bedienbar sind Modus-, Modell- und Kontext-Picker nur im Composer (wie die
+  VS-Code-Extension, direkt am Eingabefeld). Die Kopfzeile zeigt Modell und tatsächlichen Modus als
+  kompakten, nicht bedienbaren Status (Badge/Text, unverändert); ein Sprung zum Picker per Klick
+  ist erlaubt, aber nicht umgesetzt.
+- **Folgen:** Keine Shell-Änderung nötig; WP-20 verdrahtet nur die Slots.
+
+## ADR-043 – Eine Quelle für Modus-Bezeichnungen: `shell.permissionMode.*`
+- **Datum/WP:** 15.10.2026, R2-Fixes Web (R2W-03, Plan C.3)
+- **Kontext:** Drei Varianten für dieselben Modi („Fragen“ im Kopf, „Manuell“ im Picker, „Einzeln
+  freigeben“ im Umsetzen-Knopf; de „Änderungen annehmen“ neben „Edits automatisch“).
+- **Entscheidung:** `shell.permissionMode.*` ist die einzige Bezeichnung: en „Manual“, „Accept
+  edits“, „Plan“, „Auto“; de „Manuell“, „Edits automatisch“, „Plan“, „Auto“. ModePicker,
+  Umsetzen-Knopf („Implement · Manual“) und der Endzustand im Transkript nutzen sie;
+  `composer.mode.modes` und `decisions.plan.modesShort` entfallen. Die Menüeinträge des
+  Umsetzen-Menüs bleiben beschreibend, beginnen aber mit dem Label („Manual – approve each change“).
+- **Folgen:** Neue Modi brauchen nur einen Eintrag in `shell.permissionMode`.
+
+## ADR-044 – WP-14-Wünsche aus WP-15/16: `Disclosure` nach `ui/`, Rest bleibt
+- **Datum/WP:** 15.10.2026, R2-Fixes Web (R2W-08 … R2W-11)
+- **Entscheidung:** `Disclosure` (kontrolliert/unkontrolliert, echter `<button>` mit
+  `aria-expanded`, `actions` neben dem Knopf) liegt in `src/web/ui/disclosure.tsx`; das Transkript
+  behält einen dünnen Wrapper mit `useExpanded`, die Permission-Karte nutzt das Primitive direkt.
+  `CodeBlock`/`DiffView` bleiben im Transkript (Shiki/State-Abhängigkeiten, ein Nutzer),
+  `ChoiceMenu` in `decisions`. Der virtua-Layout-Stub wird nicht global in `test/setup`
+  installiert (er patcht `ResizeObserver`/`offsetParent` für alle Web-Tests); WP-20 nimmt ihn bei
+  Bedarf direkt aus `@web/features/transcript/testing`. Die FakeHost-Queue bleibt zurückgestellt
+  (WP-20 testet gegen den echten Server). Die Shortcut-Hilfe markiert `allowInInputs`-Kürzel mit
+  „auch in Textfeldern“ und nennt die Mod+Enter-Ausnahme der Entscheidungsleiste.
+- **Folgen:** Weitere Primitive-Kandidaten erst, wenn ein zweites Feature sie braucht.
+
+## ADR-045 – Grenzen der Entscheidungs-Antworten als `LIMITS`
+- **Datum/WP:** 15.10.2026, R2-Fixes Web (R2W-12, Contract-Wunsch freigegeben, additiv)
+- **Kontext:** `deny.message`/`decline.message` (10 000) und `revise.feedback` (50 000) standen als
+  Literale im Schema und dupliziert im Web.
+- **Entscheidung:** `LIMITS.decisionMessageChars = 10_000` und `LIMITS.planFeedbackChars = 50_000`
+  in `@shared/common`; die Antwort-Schemas in `model.ts` (über `decisionResponseSchema` auch
+  `protocol.ts` `decision.respond`) nutzen sie – Werte unverändert, der Server-Contract war schon
+  begrenzt, daher keine Verschärfung. Kommentar am Schema: `autoCompactThreshold` ist eine
+  Token-Zahl. Das Web nutzt die Konstanten für `maxLength`, Validierung und den Zeichenzähler des
+  Composers (ab 80 % des Limits).
+- **Folgen:** `PROTOCOL_VERSION`/Schema-Versionen bleiben 1; Eintrag im Contract-Changelog macht
+  der Koordinator (`docs/progress.md`).

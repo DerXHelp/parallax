@@ -16,6 +16,7 @@ export const en = {
     working: 'Queue a message – Claude reads it after the current step…',
     permission: 'Tell Claude what to do instead…',
     question: 'Answer in your own words…',
+    questions: 'Tell Claude why you skip the questions…',
     plan: 'Feedback on the plan…',
   },
   send: 'Send',
@@ -30,29 +31,27 @@ export const en = {
   stopHint: 'Stops Claude (Esc in an empty message field).',
   notConnected: 'Not connected',
   tooLong: 'Too long – at most {max} characters.',
+  counter: '{count} / {max} characters',
+  /** Enter answers this decision (it was open before the draft began, R2W-01). */
   target: {
-    permission: 'Answering the {tool} permission ({requester}) – sending denies it with your text.',
-    question: 'Answering the question ({requester}) – sending skips it with your text.',
-    plan: 'Answering plan v{version} – sending your feedback keeps Claude planning.',
+    permission: 'Answering the {tool} permission ({requester}) – Enter denies it with your text.',
+    question: 'Answering the question ({requester}) – Enter answers it with your text.',
+    questions: 'Answering the questions ({requester}) – Enter skips them with your text.',
+    plan: 'Answering plan v{version} – Enter sends your feedback, Claude keeps planning.',
   },
-  queueList: {
-    label: 'Queued messages',
-    title: { one: '{count} queued message', other: '{count} queued messages' },
-    sending: 'sending',
-    queued: 'queued',
-    now: 'now',
+  /** A decision is open, but Enter sends a normal message (appeared while typing, subagent, …). */
+  pending: {
+    permission:
+      'The {tool} permission ({requester}) is open – Enter sends a new message, “Send as answer” denies it with your text.',
+    question:
+      'A question ({requester}) is open – Enter sends a new message, “Send as answer” answers it with your text.',
+    questions:
+      'Questions ({requester}) are open – Enter sends a new message, “Send as answer” skips them with your text.',
+    plan: 'Plan v{version} is open – Enter sends a new message, “Keep planning with feedback” sends your text as feedback.',
   },
   mode: {
     label: 'Permission mode',
     unknown: 'Unknown mode',
-    modes: {
-      default: 'Manual',
-      acceptEdits: 'Accept edits',
-      plan: 'Plan',
-      auto: 'Auto',
-      dontAsk: "Don't ask",
-      bypassPermissions: 'Bypass permissions',
-    } satisfies Record<PermissionMode, string>,
     hints: {
       default: 'Claude asks before every change and command.',
       acceptEdits: 'File edits run without asking; commands still ask.',
