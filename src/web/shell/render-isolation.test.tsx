@@ -21,6 +21,10 @@ vi.mock('@web/i18n/format', async (importOriginal) => {
   };
 });
 
+// The whole shell renders per test: 0.5–1.6 s in a full `pnpm test`, up to 14 s when several runs
+// load the machine (docs/wp/FLAKES.md).
+vi.setConfig({ testTimeout: 30_000 });
+
 let running: RunningScenario | null = null;
 const renders = { transcript: 0, decisionBar: 0, composer: 0 };
 

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   authCookieName,
   authStatusResponseSchema,
@@ -46,6 +46,15 @@ function viewWith(items: TranscriptItem[]): SessionViewState {
 const upsert = (order: number): SessionOp => ({ op: 'item.upsert', item: textItem(order) });
 
 let server: TestServer | null = null;
+
+// The first server of a worker pays a one-time warm-up (~2 s idle, >10 s under parallel load,
+// docs/wp/FLAKES.md). It is paid here with a generous hook limit, so no single test carries it.
+beforeAll(async () => {
+  const warm = await startTestServer();
+  const ws = await connectAndHello(warm, await warm.login(), sampleClientHello());
+  await ws.close();
+  await warm.close();
+}, 60_000);
 
 afterEach(async () => {
   await server?.close();

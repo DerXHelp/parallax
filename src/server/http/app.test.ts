@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { connect } from 'node:net';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { authCookieName, healthResponseSchema } from '@shared/http';
 import { createServerInstance } from '../config';
 import { createBlobStore, type FileBlobStore } from '../store/blobs';
@@ -10,7 +10,7 @@ import { createSyncHub } from '../sync/hub';
 import { createMemorySessionSource } from '../sync/memorySource';
 import { BLOB_CSP, createApp, pageCsp, safeMediaType } from './app';
 import { createAuthService, type AuthService } from './auth';
-import { makeTempHome, startTestServer, type TestServer } from './testServer';
+import { makeTempHome, rawRequest, startTestServer, type TestServer } from './testServer';
 
 const PORT = 4711;
 const HOST = '127.0.0.1:4711';
@@ -26,6 +26,14 @@ interface Fixture {
 
 let fixture: Fixture | null = null;
 let server: TestServer | null = null;
+
+// The first server of a worker pays a one-time warm-up (~2 s idle, >10 s under parallel load,
+// docs/wp/FLAKES.md). It is paid here with a generous hook limit, so no single test carries it.
+beforeAll(async () => {
+  const warm = await startTestServer();
+  await rawRequest(warm.port, { method: 'GET', path: '/api/health' });
+  await warm.close();
+}, 60_000);
 
 afterEach(async () => {
   await fixture?.app.close();
@@ -260,9 +268,10 @@ describe('rejected WebSocket upgrades', () => {
         resolve({ head, closed: true });
       });
       socket.on('error', reject);
+      // Deadline only for a server that never closes (fails below); 3 s were tight under load.
       setTimeout(() => {
         resolve({ head, closed: false });
-      }, 3000).unref();
+      }, 15_000).unref();
     });
     expect(result.head).toMatch(/^HTTP\/1\.1 403/);
     expect(result.head).toContain('"code":"ORIGIN_REJECTED"');

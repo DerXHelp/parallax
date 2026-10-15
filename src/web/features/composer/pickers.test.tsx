@@ -9,8 +9,9 @@ import { ContextGauge } from './ContextGauge';
 import { ModelPicker } from './ModelPicker';
 import { ModePicker } from './ModePicker';
 
-// UI tests with many key strokes: generous timeout under a fully parallel `pnpm test`.
-vi.setConfig({ testTimeout: 20_000 });
+// UI tests with many key strokes: 2.5–6 s in a full `pnpm test`, up to 21 s when several runs load
+// the machine (docs/wp/FLAKES.md). A timed-out test keeps typing into the next one, so keep a margin.
+vi.setConfig({ testTimeout: 60_000 });
 
 let harness: Harness | null = null;
 
