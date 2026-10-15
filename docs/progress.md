@@ -18,7 +18,7 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 | 15 | Transkript-Renderer: Streaming-Markdown, Diff, Bash, Fallback, virtualisierte Liste | 14 | fertig | `db121a2`, Merge `5b6a06b` | Virtualisierte Liste, react-markdown mit Block-Memo (skipHtml, nur http(s), Bilder nie geladen), Shiki mit Token-Theme lazy, Diff, Bash/ANSI, Read/Grep, System-Items, Plan-Karte Variante A; 52 Tests | WP-20: `TRANSCRIPT_SLOTS` einbinden; Wunsch: `Disclosure`/`CodeBlock`/`DiffView` nach `ui/`, virtua-Stub nach `test/setup`; doppelte Queue-Anzeige 15/16 klären |
 | 16 | Entscheidungen + Composer: Karten, Leiste, Queue, Stop, Entwürfe, Picker, Gauge | 14 | fertig | `8202dbe`, Merge `75842e7` | DecisionBar (einzige bedienbare Instanz, Mod+Enter nur mit Fokus, 600 ms Sperre), Karten Permission/Frage/Plan, PlanSidePanel, Composer (Enter = Ablehnung/Feedback, nie Freigabe), Mode-/Model-Picker, Gauge; 89 Tests | WP-20: Slots setzen; Wunsch WP-14: Label „Manual/Manuell“, Shortcut-Hilfe Mod+Enter; `autoCompactThreshold` als Token-Zahl dokumentieren |
 | 20 | Integration + E2E: Verdrahtung, Playwright (msedge) auf FakeBackend | 10–16 | offen | – | – | – |
-| 21 | Betrieb/Launcher: unsichtbarer Start, Lock + Health-Ping, Edge-Profil, `/auth`-Cookie, „Server beenden“ | 10 | läuft (Worktree `wp/21`, vorgezogen) | – | – | – |
+| 21 | Betrieb/Launcher: unsichtbarer Start, Lock + Health-Ping, Edge-Profil, `/auth`-Cookie, „Server beenden“ | 10 | fertig | `15e16cf`, Merge `5c1bf1f` | Launcher (`src/server/launcher`): Single-Instance über Lockfile + Health, Build nur ohne laufenden Server, detached Start, Code über `/api/launcher/code`, Edge-App mit eigenem Profil, Exit-Codes 3/4/5, `parallax.cmd/.ps1`, Menü „Server beenden“ mit Rückfrage; `pnpm start` → Launcher (`0f553bd`) | Verdrahtung in WP-20 (siehe Sammelliste) |
 | 22 | Live-Abnahme: Phase-1-Checks gegen echtes `claude`, Screenshots | 20, 21 | offen | – | – | – |
 | R0 | Review nach WP-00…02 (Konventionen, Duplikate, i18n, Importgrenzen, Sicherheit) | 02 | fertig | `289a9ac` (Review), `3c324dc` (Fixes) | 30 Befunde (6 BLOCKER, 6 SOLLTE, 18 NIT); alle BLOCKER/SOLLTE behoben: HTTP-/Auth-Contract, `@shared/paths`, dateigenaue Ownership, Statusregeln, `needs-resume`; 553 Tests | NIT R0-22 (ESLint-Meldung shared), R0-23 (`assertNotRealHome` Präfix), R0-24 (`ws` → devDeps?) in R1-Fixes (Koordinator-Freigabe Root-Configs); R0-25 nach WP-11 in R1 |
 | R1 | Review nach Welle 1a (10, 11, 12, 14) | Welle 1a | fertig | `3da4675`/`b8d928f` (Server), `a95a83f` (Web), V1 `1ab3cdd` | R1 Server 22 Befunde (1 BLOCKER: Auth-Bypass per `%xx`-Pfad), R1 Web 26 (3 BLOCKER), V1 15 (1 BLOCKER: WS ohne `Sec-Fetch-Site` abgelehnt) | `fix/r1-web` gemergt (`a158884`): Watcher wurzelverankert, Selektoren, Variante A, Notices, Feature-Grenzen, Code-Splitting; `fix/r1-server` gemergt (`b2978a5`): Guard nach Route (ADR-018), WS ohne Pflicht-`Sec-Fetch-Site` (ADR-019), Start-Abbruch bei neuerer `schemaVersion` (ADR-020), buildEnv ohne `AI_AGENT` + Registry-Ausnahme (ADR-021), nur absolute `.exe`; 1666 Tests | R1-15 Speicher, R1-17 lstat offen (später) |
@@ -78,8 +78,19 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 ## WP-13 Aufteilung (Design `d79305d` auf `wp/13`, `docs/wp/WP-13.md`)
 13a FakeBackend + Broker + Basismodule/Test-Doubles und 13c SdkBackend parallel; 13b SessionManager nach Merge von 13a.
 
+## Sammelliste für WP-20 (Verdrahtung + E2E)
+- Slots: `TRANSCRIPT_SLOTS` (WP-15) und `{DecisionBar, DecisionCard, SidePanel: PlanSidePanel, Composer}` (WP-16) in `APP_SLOTS`.
+- i18n-Namespace `serverShutdown` in `src/web/i18n/index.ts` registrieren (WP-21 nutzt bis dahin `useShutdownT`).
+- Server-`main.ts`: nach `listen` `writeServerLock` (tatsächlicher Port, `auth.launcherToken`); `onShutdownRequested` →
+  `shutdown.stop('command')` mit Engine-Shutdown (13b); Signale; Exit 4 bei EADDRINUSE, Exit 3 bei `StoreVersionTooNewError`.
+- Backend nach `--backend`: `createFakeBackend` (Default dev/E2E) bzw. `createSdkBackend()` (SDK nur dann dynamisch laden), `dispose()` beim Shutdown.
+- E2E (Playwright `msedge`, FakeBackend): Permission-, Frage-, Plan-Flow, Stop, Reload mit offener Karte, „Server beenden“.
+- Doku: CLAUDE.md/README „Installation und Start“, `src/web/shell/README.md`, architecture §5.1 (h) (Launcher holt Code auch beim ersten Start über `/api/launcher/code`).
+- Bekannt: Bis zur Verdrahtung endet ein echter `pnpm start` nach 30 s mit Zeitüberschreitung (Bootstrap-Stub).
+- Offen für später: `processInfo` per PowerShell braucht unter Last bis ≈23 s (Waisen-Bereinigung beim Start) – schnellere Methode prüfen; Web-Default-Timeout in Vitest statt Limits je Datei; Importkosten `radix-ui` in Tests.
+
 ## Nächste Schritte
-1. Läuft: WP-13b (SessionManager), WP-21 (Launcher), Flake-Fix-Runde, R2 Web. Danach R2 Server, R2-Fixes, WP-20 (Verdrahtung + E2E), V2, WP-22 (Live-Abnahme).
+1. Erledigt: WP-21, Flake-Fix-Runde (`89ad9bb`, `docs/wp/FLAKES.md`). Läuft: WP-13b, R2-Web-Fixes. Danach R2 Server, R2-Fixes, WP-20 (Verdrahtung + E2E), V2, WP-22 (Live-Abnahme).
 2. Danach Welle 1a (10, 11, 12, 14) in Worktrees `.worktrees/wp-xx`
    auf Branches `wp/xx`, jeweils `pnpm install --frozen-lockfile` im Worktree.
 3. Nach ≥ 24 h: `react`/`react-dom` 19.3.1 prüfen und nachziehen (Koordinator, siehe WP-00.md).
