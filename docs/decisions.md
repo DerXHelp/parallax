@@ -148,3 +148,14 @@ Format: `ADR-NNN – Titel` · Datum · WP · Kontext → Entscheidung → Folge
   tsx, Vitest) gilt `'dev'`. Das Server-Bundle trägt die ID zusätzlich in der ersten Zeile.
 - **Folgen:** Kein Zeitstempel, also kein Reload bei identischem Stand. Unversionierte neue Dateien
   ändern die ID nur über ihren Namen in `git status`. Ohne git: `<version>+nogit`.
+
+## ADR-014 – Design-Schritte über einen General-Purpose-Agenten in Planer-Rolle
+- **Datum/WP:** 15.10.2026, Koordinator (WP-02, gilt auch für WP-13)
+- **Kontext:** Die Umsetzungsstrategie sieht für die schwierigsten Pakete einen Plan-Subagenten vor
+  dem Coden vor. Der Plan-Agent kann keine Dateien schreiben; sein Design landete sonst vollständig
+  im Kontext des Koordinators.
+- **Entscheidung:** Ein General-Purpose-Agent übernimmt die Planer-Rolle, schreibt ausschließlich
+  das Design in `docs/wp/WP-xx.md` (kein Code) und berichtet ≤ 250 Wörter. Ein zweiter Agent setzt
+  das Design danach um und füllt den Ergebnisteil.
+- **Folgen:** Das Design ist versioniert und für Folge-Pakete nachlesbar; der Koordinator-Kontext
+  bleibt klein. Die Trennung Design → Umsetzung bleibt wie im Plan erhalten.
