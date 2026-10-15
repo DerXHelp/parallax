@@ -13,7 +13,7 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 | 10 | Server-Plattform: App, Config, Auth, HTTP/WS, Sync (Seq, Ringpuffer), `JsonStore`, Logger | 02 | fertig | `b594f55`, Merge `c0c978e` | Fastify-App, Auth (Code→Cookie HMAC, Launcher-Code), Origin/Host/Sec-Fetch-Site auch beim WS-Upgrade, CSP, SyncHub (Seq, Ringpuffer, Drosselung, Idempotenz), JsonStore + Stores, pino mit Redaction; 159 Tests | Contract: `ROUTE_NOT_FOUND`, Port-Kommentar `createSyncHub({source, instance})`; `DEV_WEB_PORT` in importfreies Shared-Modul (Vite-Loader-Warnungen); `@fastify/cookie` entfernen; lib/README ergänzen |
 | 11 | Claude-Integration: `resolveClaude`, Env-Builder, Profil „Standard“, `pnpm preflight` | 02 | fertig | `ef67969`, Merge `04b04b8` | resolveClaude (PATH×PATHEXT im Prozess, .cmd-Shim, .old ignoriert), buildEnv, Profil „Standard“, parseProfileArgs, parseAuthStatus, Versionsregel, lib/process, Preflight live ok; Recorder nutzt buildEnv; 977 Tests | R1-Fixes: dauerhaft gesetzte Env-Variablen (Registry) in buildEnv erhalten (Nexus, ADR), `findEdge` nach `lib/`, architecture §2.2 + lib/README um process-Exporte ergänzen |
 | 12 | Normalizer + Status: zwei Adapter, Snapshots aller Fixtures, `deriveDisplayStatus` | 01, 02 | fertig | `ae06b26`, Merge `67da537` | Live- + Verlaufs-Adapter mit identischen Items, Kappung, Context-Schätzung, `reduceStatus`, Datei-Snapshots über alle Fixtures; 224 Tests | Contract: `context_estimate.contextWindow: number\|null`, `HistoryMessage.origin`, Kommentar `session_id`-Signal, architecture §6; Hinweise für WP-13 in WP-12.md (registerPrompt vor send, Reset-Reihenfolge, mergeByTime …) |
-| 14 | Web-Shell + State: WS-Client mit Resync, Stores, Theme, i18n-Kern, Playground-Route | 02 | läuft (Worktree `wp/14`) | – | – | – |
+| 14 | Web-Shell + State: WS-Client mit Resync, Stores, Theme, i18n-Kern, Playground-Route | 02 | fertig | `af09e89`, Merge `0492779` | WS-Client mit Resync/Reconnect, Stores + Hooks (§10.3), i18n en/de mit `tError`, Theme, 27 UI-Primitives, Shell mit FeatureSlots, Playground (`pnpm dev:web` → `#playground`); 94 Web-Tests | Vite-Watcher ignoriert im Worktree alle Dateien (Ignore-Muster wurzelrelativ machen); `src/web/README.md` um shell/playground ergänzen; Chunk > 500 kB |
 | 13 | Session-Engine: FakeBackend, Broker, Manager, SdkBackend | 11, 12 | Design läuft (Worktree `wp/13`) | – | – | – |
 | 15 | Transkript-Renderer: Streaming-Markdown, Diff, Bash, Fallback, virtualisierte Liste | 14 | offen | – | – | – |
 | 16 | Entscheidungen + Composer: Karten, Leiste, Queue, Stop, Entwürfe, Picker, Gauge | 14 | offen | – | – | – |
@@ -60,7 +60,7 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
   `parseProfileArgs` als reine Funktion schon in WP-11, ohne UI.
 
 ## Nächste Schritte
-1. Welle 1a (WP-10, 11, 12, 14) parallel in Worktrees.
+1. Welle 1a komplett gemergt (1451 Tests). Läuft: R1 Server + Web, Verifier V1, WP-13-Design. Danach R1-Fixes inkl. gesammelter Contract-Wünsche, dann Welle 1b.
 2. Danach Welle 1a (10, 11, 12, 14) in Worktrees `.worktrees/wp-xx`
    auf Branches `wp/xx`, jeweils `pnpm install --frozen-lockfile` im Worktree.
 3. Nach ≥ 24 h: `react`/`react-dom` 19.3.1 prüfen und nachziehen (Koordinator, siehe WP-00.md).
