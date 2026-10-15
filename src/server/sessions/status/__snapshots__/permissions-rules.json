@@ -1,0 +1,163 @@
+{
+  "scenario": "permissions-rules",
+  "transitions": [
+    {
+      "seq": 0,
+      "event": "initial",
+      "display": "sleeping"
+    },
+    {
+      "seq": 2,
+      "event": "process_starting",
+      "display": "starting"
+    },
+    {
+      "seq": 5,
+      "event": "session_state:running",
+      "display": "working"
+    },
+    {
+      "seq": 26,
+      "event": "decisions_changed",
+      "display": "needs-permission"
+    },
+    {
+      "seq": 27,
+      "event": "decisions_changed",
+      "display": "working"
+    },
+    {
+      "seq": 111,
+      "event": "decisions_changed",
+      "display": "needs-permission"
+    },
+    {
+      "seq": 112,
+      "event": "decisions_changed",
+      "display": "working"
+    },
+    {
+      "seq": 133,
+      "event": "decisions_changed",
+      "display": "needs-permission"
+    },
+    {
+      "seq": 134,
+      "event": "decisions_changed",
+      "display": "working"
+    },
+    {
+      "seq": 175,
+      "event": "turn_result",
+      "display": "working+unread"
+    },
+    {
+      "seq": 177,
+      "event": "session_state:idle",
+      "display": "done+unread"
+    },
+    {
+      "seq": 179,
+      "event": "queue_changed",
+      "display": "background+unread"
+    },
+    {
+      "seq": 180,
+      "event": "session_state:running",
+      "display": "working+unread"
+    },
+    {
+      "seq": 197,
+      "event": "decisions_changed",
+      "display": "needs-permission+unread"
+    },
+    {
+      "seq": 198,
+      "event": "decisions_changed",
+      "display": "working+unread"
+    },
+    {
+      "seq": 350,
+      "event": "session_state:idle",
+      "display": "done+unread"
+    },
+    {
+      "seq": 352,
+      "event": "queue_changed",
+      "display": "background+unread"
+    },
+    {
+      "seq": 353,
+      "event": "session_state:running",
+      "display": "working+unread"
+    },
+    {
+      "seq": 370,
+      "event": "decisions_changed",
+      "display": "needs-permission+unread"
+    },
+    {
+      "seq": 371,
+      "event": "decisions_changed",
+      "display": "working+unread"
+    },
+    {
+      "seq": 386,
+      "event": "session_state:idle",
+      "display": "done+unread"
+    },
+    {
+      "seq": 388,
+      "event": "queue_changed",
+      "display": "background+unread"
+    },
+    {
+      "seq": 389,
+      "event": "session_state:running",
+      "display": "working+unread"
+    },
+    {
+      "seq": 406,
+      "event": "decisions_changed",
+      "display": "needs-permission+unread"
+    },
+    {
+      "seq": 407,
+      "event": "decisions_changed",
+      "display": "working+unread"
+    },
+    {
+      "seq": 464,
+      "event": "session_state:idle",
+      "display": "done+unread"
+    },
+    {
+      "seq": 468,
+      "event": "process_exit",
+      "display": "sleeping+unread"
+    }
+  ],
+  "facts": {
+    "runState": "sleeping",
+    "decisions": {
+      "permission": 0,
+      "question": 0,
+      "plan": 0,
+      "oldestKind": null,
+      "expired": 0
+    },
+    "unread": true,
+    "backgroundTasks": 0,
+    "queuedPrompts": 0,
+    "rateLimitedUntil": null,
+    "compacting": false,
+    "retrying": false,
+    "wakeupAt": null,
+    "lastTurn": {
+      "outcome": "success",
+      "endedAt": "2026-10-14T23:15:05.577Z",
+      "durationMs": 6582
+    },
+    "errorCode": null
+  }
+}

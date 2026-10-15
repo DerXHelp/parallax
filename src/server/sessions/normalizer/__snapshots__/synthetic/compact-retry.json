@@ -1,0 +1,234 @@
+{
+  "name": "compact-retry",
+  "conversations": [
+    "cv_00000000000000000000000000000001"
+  ],
+  "timeline": [
+    "#3 system/session_state_changed: !session_id | !session_state:running",
+    "#4 command_lifecycle/queued: !prompt_lifecycle:queued",
+    "#5 command_lifecycle/started: upsert 00000000-0000-4000-9000-000000000064 user_message o1 /compact | !prompt_lifecycle:started",
+    "#6 system/init: detail.patch {init} | !init",
+    "#7 system/status: !compacting:true",
+    "#8 system/compact_boundary: upsert 00000000-0000-4000-9000-000000000006 system/compact_boundary o2",
+    "#9 system/status: !compacting:false",
+    "#10 system/api_retry: upsert 00000000-0000-4000-9000-000000000008 system/api_retry o3 | !retry:true",
+    "#11 system/api_retry: upsert 00000000-0000-4000-9000-000000000008 system/api_retry o3",
+    "#12 stream_event/message_start: upsert 00000000-0000-4000-9000-000000000008 system/api_retry o3 | !retry:false | !assistant_model | !context_estimate",
+    "#13 stream_event/content_block_start/text: upsert msg_syn_compact_1:0 assistant_text o4 streaming 0ch",
+    "#14 delta msg_syn_compact_1:0 text ×1 (+10ch)",
+    "#15 assistant: upsert msg_syn_compact_1:0 assistant_text o4 final 10ch",
+    "#18 result/success: upsert 00000000-0000-4000-9000-000000000010 turn_result o5 success | !turn_result:success",
+    "#19 command_lifecycle/completed: !prompt_lifecycle:completed",
+    "#20 system/session_state_changed: !session_state:idle"
+  ],
+  "signals": [
+    {
+      "seq": 3,
+      "type": "session_id",
+      "sessionId": "5e550000-0000-4000-8000-000000000001"
+    },
+    {
+      "seq": 3,
+      "type": "session_state",
+      "state": "running"
+    },
+    {
+      "seq": 4,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-000000000064",
+      "state": "queued"
+    },
+    {
+      "seq": 5,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-000000000064",
+      "state": "started"
+    },
+    {
+      "seq": 6,
+      "type": "init",
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "cliVersion": "2.1.300",
+      "apiKeySource": "none",
+      "capabilities": [
+        "msg_lifecycle_v1"
+      ]
+    },
+    {
+      "seq": 7,
+      "type": "compacting",
+      "active": true
+    },
+    {
+      "seq": 9,
+      "type": "compacting",
+      "active": false
+    },
+    {
+      "seq": 10,
+      "type": "retry",
+      "active": true
+    },
+    {
+      "seq": 12,
+      "type": "retry",
+      "active": false
+    },
+    {
+      "seq": 12,
+      "type": "assistant_model",
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 12,
+      "type": "context_estimate",
+      "totalTokens": 20503,
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 18,
+      "type": "turn_result",
+      "outcome": "success",
+      "durationMs": 1200,
+      "costUsdTotal": 0.001,
+      "error": null,
+      "resultExcerpt": "OK",
+      "userMessageUuids": [],
+      "synthetic": false,
+      "startupFailure": false
+    },
+    {
+      "seq": 19,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-000000000064",
+      "state": "completed"
+    },
+    {
+      "seq": 20,
+      "type": "session_state",
+      "state": "idle"
+    }
+  ],
+  "items": {
+    "cv_00000000000000000000000000000001": [
+      {
+        "id": "00000000-0000-4000-9000-000000000064",
+        "order": 1,
+        "at": "2026-10-15T07:59:59.883Z",
+        "parentToolUseId": null,
+        "kind": "user_message",
+        "text": {
+          "text": "/compact",
+          "truncated": null
+        },
+        "attachments": [],
+        "origin": "human",
+        "slashCommand": "/compact",
+        "priority": "next"
+      },
+      {
+        "id": "00000000-0000-4000-9000-000000000006",
+        "order": 2,
+        "at": "2026-10-15T07:59:59.943Z",
+        "parentToolUseId": null,
+        "kind": "system",
+        "event": "compact_boundary",
+        "trigger": "manual",
+        "preTokens": 160000,
+        "postTokens": 30000
+      },
+      {
+        "id": "00000000-0000-4000-9000-000000000008",
+        "order": 3,
+        "at": "2026-10-15T07:59:59.963Z",
+        "parentToolUseId": null,
+        "kind": "system",
+        "event": "api_retry",
+        "attempt": 2,
+        "maxRetries": 10,
+        "retryDelayMs": 4000,
+        "errorStatus": 529,
+        "errorCode": "API_OVERLOADED",
+        "active": false
+      },
+      {
+        "id": "msg_syn_compact_1:0",
+        "order": 4,
+        "at": "2026-10-15T08:00:00.013Z",
+        "parentToolUseId": null,
+        "kind": "assistant_text",
+        "messageId": "msg_syn_compact_1",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "text": "Compacted.",
+        "streaming": false,
+        "aborted": false,
+        "localCommand": null
+      },
+      {
+        "id": "00000000-0000-4000-9000-000000000010",
+        "order": 5,
+        "at": "2026-10-15T08:00:00.043Z",
+        "parentToolUseId": null,
+        "kind": "turn_result",
+        "outcome": "success",
+        "subtype": "success",
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 1200,
+        "durationApiMs": 1000,
+        "numTurns": 1,
+        "usage": {
+          "input": 2,
+          "output": 10,
+          "cacheRead": 20000,
+          "cacheCreation": 500
+        },
+        "costUsdTotal": 0.001,
+        "costUsdTurn": null,
+        "permissionDenials": 0,
+        "errors": [],
+        "userMessageUuids": [],
+        "synthetic": false
+      }
+    ]
+  },
+  "detail": {
+    "init": {
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "cwd": "D:\\work\\synthetic",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "apiKeySource": "none",
+      "cliVersion": "2.1.300",
+      "tools": [
+        "Bash",
+        "Read",
+        "Write",
+        "Edit",
+        "Agent"
+      ],
+      "slashCommands": [
+        "clear",
+        "compact"
+      ],
+      "terminalSlashCommands": [],
+      "mcpServers": [],
+      "skills": [],
+      "agents": [
+        "general-purpose"
+      ],
+      "plugins": [],
+      "capabilities": [
+        "msg_lifecycle_v1"
+      ],
+      "outputStyle": "default",
+      "fastModeState": "off",
+      "effort": null
+    }
+  },
+  "unknownCounts": {},
+  "ignoredCounts": {}
+}

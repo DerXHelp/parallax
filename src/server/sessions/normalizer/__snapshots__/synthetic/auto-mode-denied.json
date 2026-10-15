@@ -1,0 +1,220 @@
+{
+  "name": "auto-mode-denied",
+  "conversations": [
+    "cv_00000000000000000000000000000001"
+  ],
+  "timeline": [
+    "#3 system/session_state_changed: !session_id | !session_state:running",
+    "#4 command_lifecycle/started: upsert 00000000-0000-4000-9000-00000000012c user_message o1 | !prompt_lifecycle:started",
+    "#5 system/init: detail.patch {init} | !init",
+    "#6 assistant: upsert msg_syn_denied_1:0 tool_call o2 Bash pending | !assistant_model",
+    "#7 system/permission_denied: upsert 00000000-0000-4000-9000-000000000005 system/permission_denied o3",
+    "#8 user: upsert msg_syn_denied_1:0 tool_call o2 Bash denied result(error)",
+    "#9 assistant: upsert msg_syn_denied_2:0 assistant_text o4 final 31ch",
+    "#10 result/success: upsert 00000000-0000-4000-9000-000000000008 turn_result o5 success | !turn_result:success",
+    "#11 command_lifecycle/completed: !prompt_lifecycle:completed",
+    "#12 system/session_state_changed: !session_state:idle"
+  ],
+  "signals": [
+    {
+      "seq": 3,
+      "type": "session_id",
+      "sessionId": "5e550000-0000-4000-8000-000000000001"
+    },
+    {
+      "seq": 3,
+      "type": "session_state",
+      "state": "running"
+    },
+    {
+      "seq": 4,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-00000000012c",
+      "state": "started"
+    },
+    {
+      "seq": 5,
+      "type": "init",
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "auto",
+      "cliVersion": "2.1.300",
+      "apiKeySource": "none",
+      "capabilities": [
+        "msg_lifecycle_v1"
+      ]
+    },
+    {
+      "seq": 6,
+      "type": "assistant_model",
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 10,
+      "type": "turn_result",
+      "outcome": "success",
+      "durationMs": 1200,
+      "costUsdTotal": 0.001,
+      "error": null,
+      "resultExcerpt": "OK",
+      "userMessageUuids": [],
+      "synthetic": false,
+      "startupFailure": false
+    },
+    {
+      "seq": 11,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-00000000012c",
+      "state": "completed"
+    },
+    {
+      "seq": 12,
+      "type": "session_state",
+      "state": "idle"
+    }
+  ],
+  "items": {
+    "cv_00000000000000000000000000000001": [
+      {
+        "id": "00000000-0000-4000-9000-00000000012c",
+        "order": 1,
+        "at": "2026-10-15T07:59:59.964Z",
+        "parentToolUseId": null,
+        "kind": "user_message",
+        "text": {
+          "text": "Delete the build folder",
+          "truncated": null
+        },
+        "attachments": [],
+        "origin": "human",
+        "slashCommand": null,
+        "priority": "next"
+      },
+      {
+        "id": "msg_syn_denied_1:0",
+        "order": 2,
+        "at": "2026-10-15T08:00:00.004Z",
+        "parentToolUseId": null,
+        "kind": "tool_call",
+        "messageId": "msg_syn_denied_1",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "toolUseId": "toolu_syn_denied_1",
+        "toolName": "Bash",
+        "input": {
+          "command": "rm -rf build",
+          "description": "Delete build"
+        },
+        "inputTruncated": null,
+        "inputPartial": null,
+        "status": "denied",
+        "result": {
+          "isError": true,
+          "content": [
+            {
+              "type": "text",
+              "text": {
+                "text": "Denied by auto mode: destructive command",
+                "truncated": null
+              }
+            }
+          ],
+          "structured": null,
+          "structuredTruncated": null,
+          "at": "2026-10-15T08:00:01.006Z"
+        },
+        "elapsedSeconds": null,
+        "task": null,
+        "decision": null
+      },
+      {
+        "id": "00000000-0000-4000-9000-000000000005",
+        "order": 3,
+        "at": "2026-10-15T08:00:00.014Z",
+        "parentToolUseId": null,
+        "kind": "system",
+        "event": "permission_denied",
+        "toolName": "Bash",
+        "toolUseId": "toolu_syn_denied_1",
+        "message": "Denied by auto mode: destructive command",
+        "reasonType": "classifier"
+      },
+      {
+        "id": "msg_syn_denied_2:0",
+        "order": 4,
+        "at": "2026-10-15T08:00:00.007Z",
+        "parentToolUseId": null,
+        "kind": "assistant_text",
+        "messageId": "msg_syn_denied_2",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "text": "I was not allowed to delete it.",
+        "streaming": false,
+        "aborted": false,
+        "localCommand": null
+      },
+      {
+        "id": "00000000-0000-4000-9000-000000000008",
+        "order": 5,
+        "at": "2026-10-15T08:00:00.044Z",
+        "parentToolUseId": null,
+        "kind": "turn_result",
+        "outcome": "success",
+        "subtype": "success",
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 1200,
+        "durationApiMs": 1000,
+        "numTurns": 1,
+        "usage": {
+          "input": 2,
+          "output": 10,
+          "cacheRead": 20000,
+          "cacheCreation": 500
+        },
+        "costUsdTotal": 0.001,
+        "costUsdTurn": null,
+        "permissionDenials": 1,
+        "errors": [],
+        "userMessageUuids": [],
+        "synthetic": false
+      }
+    ]
+  },
+  "detail": {
+    "init": {
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "cwd": "D:\\work\\synthetic",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "auto",
+      "apiKeySource": "none",
+      "cliVersion": "2.1.300",
+      "tools": [
+        "Bash",
+        "Read",
+        "Write",
+        "Edit",
+        "Agent"
+      ],
+      "slashCommands": [
+        "clear",
+        "compact"
+      ],
+      "terminalSlashCommands": [],
+      "mcpServers": [],
+      "skills": [],
+      "agents": [
+        "general-purpose"
+      ],
+      "plugins": [],
+      "capabilities": [
+        "msg_lifecycle_v1"
+      ],
+      "outputStyle": "default",
+      "fastModeState": "off",
+      "effort": null
+    }
+  },
+  "unknownCounts": {},
+  "ignoredCounts": {}
+}

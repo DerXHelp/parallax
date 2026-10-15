@@ -1,0 +1,293 @@
+{
+  "name": "tasks-progress",
+  "conversations": [
+    "cv_00000000000000000000000000000001"
+  ],
+  "timeline": [
+    "#3 system/session_state_changed: !session_id | !session_state:running",
+    "#4 command_lifecycle/started: upsert 00000000-0000-4000-9000-000000000190 user_message o1 | !prompt_lifecycle:started",
+    "#5 system/init: detail.patch {init} | !init",
+    "#6 assistant: upsert msg_syn_tasks_1:0 tool_call o2 Agent pending | !assistant_model",
+    "#7 system/background_tasks_changed: detail.patch {backgroundTasks} | !background_tasks:1",
+    "#8 system/task_started: upsert msg_syn_tasks_1:0 tool_call o2 Agent running task=running",
+    "#9 user: upsert msg_syn_tasks_1:0 tool_call o2 Agent background result task=running",
+    "#10 system/task_progress: upsert msg_syn_tasks_1:0 tool_call o2 Agent background result task=running",
+    "#11 assistant: upsert msg_syn_tasks_2:0 tool_call o3 Bash pending",
+    "#12 tool_progress: upsert msg_syn_tasks_2:0 tool_call o3 Bash running",
+    "#14 tool_progress: upsert msg_syn_tasks_2:0 tool_call o3 Bash running",
+    "#15 user: upsert msg_syn_tasks_2:0 tool_call o3 Bash done result",
+    "#16 system/task_updated: upsert msg_syn_tasks_1:0 tool_call o2 Agent error result task=failed",
+    "#17 system/task_notification: upsert msg_syn_tasks_1:0 tool_call o2 Agent error result task=failed",
+    "#18 system/background_tasks_changed: detail.patch {backgroundTasks} | !background_tasks:0",
+    "#19 system/task_notification: upsert 00000000-0000-4000-9000-000000000011 system/task_notification o4",
+    "#20 result/success: upsert 00000000-0000-4000-9000-000000000012 turn_result o5 success | !turn_result:success",
+    "#21 command_lifecycle/completed: !prompt_lifecycle:completed",
+    "#22 system/session_state_changed: !session_state:idle"
+  ],
+  "signals": [
+    {
+      "seq": 3,
+      "type": "session_id",
+      "sessionId": "5e550000-0000-4000-8000-000000000001"
+    },
+    {
+      "seq": 3,
+      "type": "session_state",
+      "state": "running"
+    },
+    {
+      "seq": 4,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-000000000190",
+      "state": "started"
+    },
+    {
+      "seq": 5,
+      "type": "init",
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "cliVersion": "2.1.300",
+      "apiKeySource": "none",
+      "capabilities": [
+        "msg_lifecycle_v1"
+      ]
+    },
+    {
+      "seq": 6,
+      "type": "assistant_model",
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 7,
+      "type": "background_tasks",
+      "count": 1
+    },
+    {
+      "seq": 18,
+      "type": "background_tasks",
+      "count": 0
+    },
+    {
+      "seq": 20,
+      "type": "turn_result",
+      "outcome": "success",
+      "durationMs": 1200,
+      "costUsdTotal": 0.001,
+      "error": null,
+      "resultExcerpt": "OK",
+      "userMessageUuids": [],
+      "synthetic": false,
+      "startupFailure": false
+    },
+    {
+      "seq": 21,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-000000000190",
+      "state": "completed"
+    },
+    {
+      "seq": 22,
+      "type": "session_state",
+      "state": "idle"
+    }
+  ],
+  "items": {
+    "cv_00000000000000000000000000000001": [
+      {
+        "id": "00000000-0000-4000-9000-000000000190",
+        "order": 1,
+        "at": "2026-10-15T07:59:59.964Z",
+        "parentToolUseId": null,
+        "kind": "user_message",
+        "text": {
+          "text": "Research in the background and build",
+          "truncated": null
+        },
+        "attachments": [],
+        "origin": "human",
+        "slashCommand": null,
+        "priority": "next"
+      },
+      {
+        "id": "msg_syn_tasks_1:0",
+        "order": 2,
+        "at": "2026-10-15T08:00:00.004Z",
+        "parentToolUseId": null,
+        "kind": "tool_call",
+        "messageId": "msg_syn_tasks_1",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "toolUseId": "toolu_syn_agent_1",
+        "toolName": "Agent",
+        "input": {
+          "subagent_type": "Explore",
+          "description": "Find usages",
+          "prompt": "Find all usages of foo"
+        },
+        "inputTruncated": null,
+        "inputPartial": null,
+        "status": "error",
+        "result": {
+          "isError": false,
+          "content": [
+            {
+              "type": "text",
+              "text": {
+                "text": "Async agent launched successfully.",
+                "truncated": null
+              }
+            }
+          ],
+          "structured": {
+            "isAsync": true,
+            "status": "async_launched",
+            "agentId": "task-a"
+          },
+          "structuredTruncated": null,
+          "at": "2026-10-15T08:00:01.007Z"
+        },
+        "elapsedSeconds": null,
+        "task": {
+          "taskId": "task-a",
+          "taskType": "local_agent",
+          "status": "failed",
+          "description": "Find usages",
+          "subagentType": "Explore",
+          "isBackgrounded": true,
+          "summary": "Agent failed",
+          "usage": {
+            "totalTokens": 1500,
+            "toolUses": 4,
+            "durationMs": 5000
+          },
+          "startedAt": "2026-10-15T08:00:00.024Z",
+          "endedAt": "2026-10-15T08:00:00.000Z"
+        },
+        "decision": null
+      },
+      {
+        "id": "msg_syn_tasks_2:0",
+        "order": 3,
+        "at": "2026-10-15T08:00:00.009Z",
+        "parentToolUseId": null,
+        "kind": "tool_call",
+        "messageId": "msg_syn_tasks_2",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "toolUseId": "toolu_syn_bash_1",
+        "toolName": "Bash",
+        "input": {
+          "command": "pnpm build"
+        },
+        "inputTruncated": null,
+        "inputPartial": null,
+        "status": "done",
+        "result": {
+          "isError": false,
+          "content": [
+            {
+              "type": "text",
+              "text": {
+                "text": "built",
+                "truncated": null
+              }
+            }
+          ],
+          "structured": {
+            "interrupted": false,
+            "isImage": false
+          },
+          "structuredTruncated": null,
+          "at": "2026-10-15T08:00:01.013Z"
+        },
+        "elapsedSeconds": 2,
+        "task": null,
+        "decision": null
+      },
+      {
+        "id": "00000000-0000-4000-9000-000000000011",
+        "order": 4,
+        "at": "2026-10-15T08:00:00.134Z",
+        "parentToolUseId": null,
+        "kind": "system",
+        "event": "task_notification",
+        "task": {
+          "taskId": "task-orphan",
+          "taskType": null,
+          "status": "completed",
+          "description": "",
+          "subagentType": null,
+          "isBackgrounded": false,
+          "summary": "Monitor done",
+          "usage": null,
+          "startedAt": null,
+          "endedAt": "2026-10-15T08:00:00.134Z"
+        }
+      },
+      {
+        "id": "00000000-0000-4000-9000-000000000012",
+        "order": 5,
+        "at": "2026-10-15T08:00:00.144Z",
+        "parentToolUseId": null,
+        "kind": "turn_result",
+        "outcome": "success",
+        "subtype": "success",
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 1200,
+        "durationApiMs": 1000,
+        "numTurns": 1,
+        "usage": {
+          "input": 2,
+          "output": 10,
+          "cacheRead": 20000,
+          "cacheCreation": 500
+        },
+        "costUsdTotal": 0.001,
+        "costUsdTurn": null,
+        "permissionDenials": 0,
+        "errors": [],
+        "userMessageUuids": [],
+        "synthetic": false
+      }
+    ]
+  },
+  "detail": {
+    "init": {
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "cwd": "D:\\work\\synthetic",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "apiKeySource": "none",
+      "cliVersion": "2.1.300",
+      "tools": [
+        "Bash",
+        "Read",
+        "Write",
+        "Edit",
+        "Agent"
+      ],
+      "slashCommands": [
+        "clear",
+        "compact"
+      ],
+      "terminalSlashCommands": [],
+      "mcpServers": [],
+      "skills": [],
+      "agents": [
+        "general-purpose"
+      ],
+      "plugins": [],
+      "capabilities": [
+        "msg_lifecycle_v1"
+      ],
+      "outputStyle": "default",
+      "fastModeState": "off",
+      "effort": null
+    },
+    "backgroundTasks": []
+  },
+  "unknownCounts": {},
+  "ignoredCounts": {}
+}

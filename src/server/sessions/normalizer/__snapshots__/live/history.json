@@ -1,0 +1,14 @@
+{
+  "scenario": "history",
+  "conversations": [
+    "cv_00000000000000000000000000000001"
+  ],
+  "timeline": [],
+  "signals": [],
+  "items": {
+    "cv_00000000000000000000000000000001": []
+  },
+  "detail": {},
+  "unknownCounts": {},
+  "ignoredCounts": {}
+}

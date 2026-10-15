@@ -1,0 +1,377 @@
+{
+  "name": "large-output",
+  "conversations": [
+    "cv_00000000000000000000000000000001"
+  ],
+  "timeline": [
+    "#3 system/session_state_changed: !session_id | !session_state:running",
+    "#4 command_lifecycle/started: upsert 00000000-0000-4000-9000-000000000384 user_message o1 | !prompt_lifecycle:started",
+    "#5 system/init: detail.patch {init} | !init",
+    "#6 assistant: upsert msg_syn_big_1:0 tool_call o2 Write pending | !assistant_model",
+    "#7 user: upsert msg_syn_big_1:0 tool_call o2 Write done result",
+    "#8 assistant: upsert msg_syn_big_2:0 tool_call o3 Bash pending",
+    "#9 user: upsert msg_syn_big_2:0 tool_call o3 Bash done result",
+    "#10 assistant: upsert msg_syn_big_3:0 tool_call o4 Read pending",
+    "#11 user: upsert msg_syn_big_3:0 tool_call o4 Read done result",
+    "#12 assistant: upsert msg_syn_big_4:0 tool_call o5 mcp__browser__screenshot pending",
+    "#13 user: upsert msg_syn_big_4:0 tool_call o5 mcp__browser__screenshot done result",
+    "#14 assistant: upsert msg_syn_big_5:0 tool_call o6 mcp__db__dump pending",
+    "#15 user: upsert msg_syn_big_5:0 tool_call o6 mcp__db__dump done result",
+    "#16 result/success: upsert 00000000-0000-4000-9000-00000000000e turn_result o7 success | !turn_result:success",
+    "#17 command_lifecycle/completed: !prompt_lifecycle:completed",
+    "#18 system/session_state_changed: !session_state:idle"
+  ],
+  "signals": [
+    {
+      "seq": 3,
+      "type": "session_id",
+      "sessionId": "5e550000-0000-4000-8000-000000000001"
+    },
+    {
+      "seq": 3,
+      "type": "session_state",
+      "state": "running"
+    },
+    {
+      "seq": 4,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-000000000384",
+      "state": "started"
+    },
+    {
+      "seq": 5,
+      "type": "init",
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "cliVersion": "2.1.300",
+      "apiKeySource": "none",
+      "capabilities": [
+        "msg_lifecycle_v1"
+      ]
+    },
+    {
+      "seq": 6,
+      "type": "assistant_model",
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 16,
+      "type": "turn_result",
+      "outcome": "success",
+      "durationMs": 1200,
+      "costUsdTotal": 0.001,
+      "error": null,
+      "resultExcerpt": "OK",
+      "userMessageUuids": [],
+      "synthetic": false,
+      "startupFailure": false
+    },
+    {
+      "seq": 17,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-000000000384",
+      "state": "completed"
+    },
+    {
+      "seq": 18,
+      "type": "session_state",
+      "state": "idle"
+    }
+  ],
+  "items": {
+    "cv_00000000000000000000000000000001": [
+      {
+        "id": "00000000-0000-4000-9000-000000000384",
+        "order": 1,
+        "at": "2026-10-15T07:59:59.964Z",
+        "parentToolUseId": null,
+        "kind": "user_message",
+        "text": {
+          "text": "Write, run, read, screenshot",
+          "truncated": null
+        },
+        "attachments": [],
+        "origin": "human",
+        "slashCommand": null,
+        "priority": "next"
+      },
+      {
+        "id": "msg_syn_big_1:0",
+        "order": 2,
+        "at": "2026-10-15T08:00:00.004Z",
+        "parentToolUseId": null,
+        "kind": "tool_call",
+        "messageId": "msg_syn_big_1",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "toolUseId": "toolu_syn_write_big",
+        "toolName": "Write",
+        "input": {
+          "file_path": "D:\\work\\synthetic\\big.txt",
+          "content": "«49152 chars, sha256 d4585f00edc111a1»"
+        },
+        "inputTruncated": {
+          "totalChars": 61497,
+          "blobId": "f4a772bc7b2cdf714d210a1a3d1997af6917e4b3e8b08ee9e717fa2246258f17"
+        },
+        "inputPartial": null,
+        "status": "done",
+        "result": {
+          "isError": false,
+          "content": [
+            {
+              "type": "text",
+              "text": {
+                "text": "File created successfully at: D:\\work\\synthetic\\big.txt",
+                "truncated": null
+              }
+            }
+          ],
+          "structured": null,
+          "structuredTruncated": {
+            "totalChars": 61533,
+            "blobId": "2f1b460cd07088dc9b469001eea80d59466b61e30466d816a682c7f7019c3ac1"
+          },
+          "at": "2026-10-15T08:00:01.005Z"
+        },
+        "elapsedSeconds": null,
+        "task": null,
+        "decision": null
+      },
+      {
+        "id": "msg_syn_big_2:0",
+        "order": 3,
+        "at": "2026-10-15T08:00:00.006Z",
+        "parentToolUseId": null,
+        "kind": "tool_call",
+        "messageId": "msg_syn_big_2",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "toolUseId": "toolu_syn_bash_big",
+        "toolName": "Bash",
+        "input": {
+          "command": "cat big.log"
+        },
+        "inputTruncated": null,
+        "inputPartial": null,
+        "status": "done",
+        "result": {
+          "isError": false,
+          "content": [
+            {
+              "type": "text",
+              "text": {
+                "text": "«49152 chars, sha256 8cb4dd1275fa9b66»",
+                "truncated": {
+                  "totalChars": 103999,
+                  "blobId": "f4360717cd7246707b995735921ca642a85d24f8e877f2e86d6efc16e1348403"
+                }
+              }
+            }
+          ],
+          "structured": {
+            "interrupted": false,
+            "isImage": false,
+            "noOutputExpected": false
+          },
+          "structuredTruncated": null,
+          "at": "2026-10-15T08:00:01.007Z"
+        },
+        "elapsedSeconds": null,
+        "task": null,
+        "decision": null
+      },
+      {
+        "id": "msg_syn_big_3:0",
+        "order": 4,
+        "at": "2026-10-15T08:00:00.008Z",
+        "parentToolUseId": null,
+        "kind": "tool_call",
+        "messageId": "msg_syn_big_3",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "toolUseId": "toolu_syn_read",
+        "toolName": "Read",
+        "input": {
+          "file_path": "D:\\work\\synthetic\\a.txt"
+        },
+        "inputTruncated": null,
+        "inputPartial": null,
+        "status": "done",
+        "result": {
+          "isError": false,
+          "content": [
+            {
+              "type": "text",
+              "text": {
+                "text": "1\talpha\n2\tbeta",
+                "truncated": null
+              }
+            }
+          ],
+          "structured": {
+            "type": "text",
+            "file": {
+              "filePath": "D:\\work\\synthetic\\a.txt",
+              "numLines": 2,
+              "startLine": 1,
+              "totalLines": 2
+            }
+          },
+          "structuredTruncated": null,
+          "at": "2026-10-15T08:00:01.009Z"
+        },
+        "elapsedSeconds": null,
+        "task": null,
+        "decision": null
+      },
+      {
+        "id": "msg_syn_big_4:0",
+        "order": 5,
+        "at": "2026-10-15T08:00:00.010Z",
+        "parentToolUseId": null,
+        "kind": "tool_call",
+        "messageId": "msg_syn_big_4",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "toolUseId": "toolu_syn_screenshot",
+        "toolName": "mcp__browser__screenshot",
+        "input": {},
+        "inputTruncated": null,
+        "inputPartial": null,
+        "status": "done",
+        "result": {
+          "isError": false,
+          "content": [
+            {
+              "type": "text",
+              "text": {
+                "text": "Screenshot taken",
+                "truncated": null
+              }
+            },
+            {
+              "type": "image",
+              "image": {
+                "blobId": "497790947d4666760ce38f3c00e852c71fdb66cae849bae8e9ede352719e1581",
+                "mediaType": "image/png",
+                "bytes": 70,
+                "width": null,
+                "height": null,
+                "name": null
+              }
+            }
+          ],
+          "structured": null,
+          "structuredTruncated": null,
+          "at": "2026-10-15T08:00:01.011Z"
+        },
+        "elapsedSeconds": null,
+        "task": null,
+        "decision": null
+      },
+      {
+        "id": "msg_syn_big_5:0",
+        "order": 6,
+        "at": "2026-10-15T08:00:00.012Z",
+        "parentToolUseId": null,
+        "kind": "tool_call",
+        "messageId": "msg_syn_big_5",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "toolUseId": "toolu_syn_mcp_big",
+        "toolName": "mcp__db__dump",
+        "input": {
+          "table": "logs"
+        },
+        "inputTruncated": null,
+        "inputPartial": null,
+        "status": "done",
+        "result": {
+          "isError": false,
+          "content": [
+            {
+              "type": "text",
+              "text": {
+                "text": "dumped",
+                "truncated": null
+              }
+            }
+          ],
+          "structured": null,
+          "structuredTruncated": {
+            "totalChars": 64900,
+            "blobId": "02b709c2cffcbd2a48baa6fdca94cfaed047778574ea102b8667818478044c3b"
+          },
+          "at": "2026-10-15T08:00:01.013Z"
+        },
+        "elapsedSeconds": null,
+        "task": null,
+        "decision": null
+      },
+      {
+        "id": "00000000-0000-4000-9000-00000000000e",
+        "order": 7,
+        "at": "2026-10-15T08:00:00.104Z",
+        "parentToolUseId": null,
+        "kind": "turn_result",
+        "outcome": "success",
+        "subtype": "success",
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 1200,
+        "durationApiMs": 1000,
+        "numTurns": 1,
+        "usage": {
+          "input": 2,
+          "output": 10,
+          "cacheRead": 20000,
+          "cacheCreation": 500
+        },
+        "costUsdTotal": 0.001,
+        "costUsdTurn": null,
+        "permissionDenials": 0,
+        "errors": [],
+        "userMessageUuids": [],
+        "synthetic": false
+      }
+    ]
+  },
+  "detail": {
+    "init": {
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "cwd": "D:\\work\\synthetic",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "apiKeySource": "none",
+      "cliVersion": "2.1.300",
+      "tools": [
+        "Bash",
+        "Read",
+        "Write",
+        "Edit",
+        "Agent"
+      ],
+      "slashCommands": [
+        "clear",
+        "compact"
+      ],
+      "terminalSlashCommands": [],
+      "mcpServers": [],
+      "skills": [],
+      "agents": [
+        "general-purpose"
+      ],
+      "plugins": [],
+      "capabilities": [
+        "msg_lifecycle_v1"
+      ],
+      "outputStyle": "default",
+      "fastModeState": "off",
+      "effort": null
+    }
+  },
+  "unknownCounts": {},
+  "ignoredCounts": {}
+}

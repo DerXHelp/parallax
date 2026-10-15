@@ -1,0 +1,29 @@
+{
+  "scenario": "history",
+  "transitions": [
+    {
+      "seq": 0,
+      "event": "initial",
+      "display": "sleeping"
+    }
+  ],
+  "facts": {
+    "runState": "sleeping",
+    "decisions": {
+      "permission": 0,
+      "question": 0,
+      "plan": 0,
+      "oldestKind": null,
+      "expired": 0
+    },
+    "unread": false,
+    "backgroundTasks": 0,
+    "queuedPrompts": 0,
+    "rateLimitedUntil": null,
+    "compacting": false,
+    "retrying": false,
+    "wakeupAt": null,
+    "lastTurn": null,
+    "errorCode": null
+  }
+}
