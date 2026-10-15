@@ -1,5 +1,5 @@
 import { ChevronRightIcon, TriangleAlertIcon } from 'lucide-react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { LIMITS, type RuleDestination } from '@shared/common';
 import type { PermissionDecision } from '@shared/model';
 import { useT } from '@web/i18n';
@@ -54,23 +54,25 @@ function DenyForm({
   sessionKey,
   decision,
   mode,
+  inputRef: ref,
   onCancel,
 }: {
   sessionKey: string;
   decision: PermissionDecision;
   mode: DenyFormMode;
+  /** The reason field (the "▾" menu focuses it again once it has closed). */
+  inputRef: RefObject<HTMLTextAreaElement | null>;
   onCancel: () => void;
 }) {
   const t = useT();
   const [reason, setReason] = useState('');
-  const ref = useRef<HTMLTextAreaElement>(null);
   const respond = useCardRespond();
   const disabled = useCardDisabled();
   const stop = mode === 'stop';
   useEffect(() => {
     // Opened by the user (a "▾" entry): moving the focus here is no focus theft.
     ref.current?.focus();
-  }, [mode]);
+  }, [mode, ref]);
   const deny = () =>
     respondToDecision(sessionKey, decision, {
       kind: 'permission',
@@ -130,9 +132,22 @@ function DenyForm({
  * Enter/Space (and typeahead), so it must never answer itself; the answer is the form's
  * `DecisionAction` (pointer or Mod+Enter only).
  */
-function DenyMenu({ onOpenForm }: { onOpenForm: (mode: DenyFormMode) => void }) {
+function DenyMenu({
+  onOpenForm,
+  focusForm,
+}: {
+  onOpenForm: (mode: DenyFormMode) => void;
+  /** Focuses the opened form's reason field. */
+  focusForm: () => void;
+}) {
   const t = useT();
   const disabled = useCardDisabled();
+  /** An entry opened a form: the form gets the focus, the menu must not return it to "▾". */
+  const openedForm = useRef(false);
+  const open = (mode: DenyFormMode) => {
+    openedForm.current = true;
+    onOpenForm(mode);
+  };
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
@@ -146,10 +161,22 @@ function DenyMenu({ onOpenForm }: { onOpenForm: (mode: DenyFormMode) => void }) 
           <ChevronRightIcon aria-hidden className="rotate-90" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent
+        align="end"
+        onCloseAutoFocus={(event) => {
+          // WP-20c: in Edge the closing menu (exit animation) took the focus from the reason
+          // field – the item under the pointer moved away as the form appeared, Radix focused the
+          // content on `pointerleave` – and then returned it to "▾": the user typed into nothing.
+          // Once the menu is gone, the focus goes (back) to the form.
+          if (!openedForm.current) return;
+          openedForm.current = false;
+          event.preventDefault();
+          focusForm();
+        }}
+      >
         <DropdownMenuItem
           onSelect={() => {
-            onOpenForm('reason');
+            open('reason');
           }}
         >
           {t('decisions.permission.denyWithReason')}
@@ -157,7 +184,7 @@ function DenyMenu({ onOpenForm }: { onOpenForm: (mode: DenyFormMode) => void }) 
         <DropdownMenuItem
           variant="destructive"
           onSelect={() => {
-            onOpenForm('stop');
+            open('stop');
           }}
         >
           {t('decisions.permission.denyAndStop')}
@@ -192,6 +219,7 @@ export function PermissionCard({
     defaultDestination(offer.ruleDestinations),
   );
   const [denyForm, setDenyForm] = useState<DenyFormMode | null>(null);
+  const reasonRef = useRef<HTMLTextAreaElement>(null);
   const tool = decision.displayName ?? decision.toolName;
   const summary = summarizeToolInput(decision.toolName, decision.input);
   const fileChange = isFileChangeTool(decision.toolName);
@@ -230,7 +258,12 @@ export function PermissionCard({
       <DecisionAction variant={offer.defaultToNo ? 'default' : 'outline'} data-action="deny" onAnswer={deny}>
         {t('decisions.permission.deny')}
       </DecisionAction>
-      <DenyMenu onOpenForm={setDenyForm} />
+      <DenyMenu
+        onOpenForm={setDenyForm}
+        focusForm={() => {
+          reasonRef.current?.focus();
+        }}
+      />
     </span>
   );
 
@@ -337,6 +370,7 @@ export function PermissionCard({
           sessionKey={sessionKey}
           decision={decision}
           mode={denyForm}
+          inputRef={reasonRef}
           onCancel={() => {
             setDenyForm(null);
           }}
