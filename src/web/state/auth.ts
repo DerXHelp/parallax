@@ -49,7 +49,11 @@ export function consumeAuthCode(location: LocationLike, history: HistoryLike): A
 
 export type AuthExchangeOutcome = 'ok' | 'rejected' | 'unreachable';
 
-/** Step 2: `POST /api/auth`. Any HTTP error counts as rejected, a network error as unreachable. */
+/**
+ * Step 2: `POST /api/auth`. A 4xx counts as rejected (401 AUTH_CODE_INVALID); a network error or
+ * a 5xx as unreachable – in dev the Vite proxy answers 502 while the server is down, and the code
+ * may still be valid once it is up (WP-20b).
+ */
 export async function exchangeAuthCode(code: AuthCode, fetchFn: FetchLike): Promise<AuthExchangeOutcome> {
   const body: AuthExchangeRequest = { code };
   try {
@@ -60,7 +64,8 @@ export async function exchangeAuthCode(code: AuthCode, fetchFn: FetchLike): Prom
       credentials: 'same-origin',
       cache: 'no-store',
     });
-    return response.ok ? 'ok' : 'rejected';
+    if (response.ok) return 'ok';
+    return response.status >= 500 ? 'unreachable' : 'rejected';
   } catch {
     return 'unreachable';
   }

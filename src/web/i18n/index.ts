@@ -7,6 +7,8 @@ import { de as decisionsDe } from '@web/features/decisions/i18n/de';
 import { en as decisionsEn } from '@web/features/decisions/i18n/en';
 import { de as transcriptDe } from '@web/features/transcript/i18n/de';
 import { en as transcriptEn } from '@web/features/transcript/i18n/en';
+import { de as serverShutdownDe } from '@web/shell/server-shutdown/i18n/de';
+import { en as serverShutdownEn } from '@web/shell/server-shutdown/i18n/en';
 import { de } from './de';
 import { en } from './en';
 import { errorsDe } from './errors.de';
@@ -28,9 +30,10 @@ export type { PluralForms, TranslationParams } from './types';
 /**
  * i18n core (Plan Punkt 5, architecture §2.3a): typed dictionaries, `t()` with interpolation and
  * plurals, `tError()` for every error code. Namespaces: shell (`common`, `shell`, `status`, `auth`,
- * `connection`, `settings` – en.ts), `errors` (errors.*.ts) and one per feature (`transcript`,
- * `decisions`, `composer` – src/web/features/<f>/i18n, registered statically here; a new
- * namespace is registered by the coordinator).
+ * `connection`, `settings` – en.ts), `errors` (errors.*.ts), one per feature (`transcript`,
+ * `decisions`, `composer` – src/web/features/<f>/i18n) and `serverShutdown`
+ * (src/web/shell/server-shutdown/i18n, WP-21), all registered statically here; a new namespace is
+ * registered by the coordinator (or the WP that owns this folder).
  */
 const enDictionary = {
   ...en,
@@ -38,6 +41,7 @@ const enDictionary = {
   transcript: transcriptEn,
   decisions: decisionsEn,
   composer: composerEn,
+  serverShutdown: serverShutdownEn,
 };
 
 /** Shape of every language's dictionary (English is the reference). */
@@ -49,6 +53,7 @@ const deDictionary: Dictionary = {
   transcript: transcriptDe,
   decisions: decisionsDe,
   composer: composerDe,
+  serverShutdown: serverShutdownDe,
 };
 
 export const DICTIONARIES: Readonly<Record<Language, Dictionary>> = { en: enDictionary, de: deDictionary };
