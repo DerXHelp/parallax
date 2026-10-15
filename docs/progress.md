@@ -17,7 +17,7 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 | 13 | Session-Engine: FakeBackend, Broker, Manager, SdkBackend | 11, 12 | fertig | 13a `6945574`, 13c `8f9ca67`/`eca2fc8`, 13b `b859a3f` (Merge `02634d2`); Design `d79305d` | FakeBackend (alle Fixtures), Broker, SdkBackend (gemockt), SessionManager mit virtueller Uhr, Recovery, Retry, Shutdown; 2434 Tests gesamt | Verdrahtung WP-20 laut WP-13b.md; Live-Prüfpunkte für WP-22 in WP-13b.md/WP-13c.md |
 | 15 | Transkript-Renderer: Streaming-Markdown, Diff, Bash, Fallback, virtualisierte Liste | 14 | fertig | `db121a2`, Merge `5b6a06b` | Virtualisierte Liste, react-markdown mit Block-Memo (skipHtml, nur http(s), Bilder nie geladen), Shiki mit Token-Theme lazy, Diff, Bash/ANSI, Read/Grep, System-Items, Plan-Karte Variante A; 52 Tests | WP-20: `TRANSCRIPT_SLOTS` einbinden; Wunsch: `Disclosure`/`CodeBlock`/`DiffView` nach `ui/`, virtua-Stub nach `test/setup`; doppelte Queue-Anzeige 15/16 klären |
 | 16 | Entscheidungen + Composer: Karten, Leiste, Queue, Stop, Entwürfe, Picker, Gauge | 14 | fertig | `8202dbe`, Merge `75842e7` | DecisionBar (einzige bedienbare Instanz, Mod+Enter nur mit Fokus, 600 ms Sperre), Karten Permission/Frage/Plan, PlanSidePanel, Composer (Enter = Ablehnung/Feedback, nie Freigabe), Mode-/Model-Picker, Gauge; 89 Tests | WP-20: Slots setzen; Wunsch WP-14: Label „Manual/Manuell“, Shortcut-Hilfe Mod+Enter; `autoCompactThreshold` als Token-Zahl dokumentieren |
-| 20 | Integration + E2E: Verdrahtung, Playwright (msedge) auf FakeBackend | 10–16 | läuft: 20a Server + 20b Web parallel (Worktrees), danach 20c E2E | – | – | – |
+| 20 | Integration + E2E: Verdrahtung, Playwright (msedge) auf FakeBackend | 10–16 | läuft: 20a gemergt (`64c11c8`, Merge `13c83d6`: `app/compose.ts`, Start-Reihenfolge architecture §3.3), 20b gemergt (`449e7bb`, Merge `7dd9429`: Slots, Auth, Neue Session, Benachrichtigungen); 20c E2E folgt | – | – | – |
 | 21 | Betrieb/Launcher: unsichtbarer Start, Lock + Health-Ping, Edge-Profil, `/auth`-Cookie, „Server beenden“ | 10 | fertig | `15e16cf`, Merge `5c1bf1f` | Launcher (`src/server/launcher`): Single-Instance über Lockfile + Health, Build nur ohne laufenden Server, detached Start, Code über `/api/launcher/code`, Edge-App mit eigenem Profil, Exit-Codes 3/4/5, `parallax.cmd/.ps1`, Menü „Server beenden“ mit Rückfrage; `pnpm start` → Launcher (`0f553bd`) | Verdrahtung in WP-20 (siehe Sammelliste) |
 | 22 | Live-Abnahme: Phase-1-Checks gegen echtes `claude`, Screenshots | 20, 21 | offen | – | – | – |
 | R0 | Review nach WP-00…02 (Konventionen, Duplikate, i18n, Importgrenzen, Sicherheit) | 02 | fertig | `289a9ac` (Review), `3c324dc` (Fixes) | 30 Befunde (6 BLOCKER, 6 SOLLTE, 18 NIT); alle BLOCKER/SOLLTE behoben: HTTP-/Auth-Contract, `@shared/paths`, dateigenaue Ownership, Statusregeln, `needs-resume`; 553 Tests | NIT R0-22 (ESLint-Meldung shared), R0-23 (`assertNotRealHome` Präfix), R0-24 (`ws` → devDeps?) in R1-Fixes (Koordinator-Freigabe Root-Configs); R0-25 nach WP-11 in R1 |
@@ -81,7 +81,7 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 ## WP-13 Aufteilung (Design `d79305d` auf `wp/13`, `docs/wp/WP-13.md`)
 13a FakeBackend + Broker + Basismodule/Test-Doubles und 13c SdkBackend parallel; 13b SessionManager nach Merge von 13a.
 
-## Sammelliste für WP-20 (Verdrahtung + E2E)
+## Sammelliste für WP-20 (Verdrahtung erledigt in 20a/20b; offen für 20c: E2E, Home-Lock aus R2-Fixes verdrahten, Bugs unten)
 - Slots: `TRANSCRIPT_SLOTS` (WP-15) und `{DecisionBar, DecisionCard, SidePanel: PlanSidePanel, Composer}` (WP-16) in `APP_SLOTS`.
 - i18n-Namespace `serverShutdown` in `src/web/i18n/index.ts` registrieren (WP-21 nutzt bis dahin `useShutdownT`).
 - Server-`main.ts`: nach `listen` `writeServerLock` (tatsächlicher Port, `auth.launcherToken`); `onShutdownRequested` →
@@ -91,6 +91,7 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 - Doku: CLAUDE.md/README „Installation und Start“, `src/web/shell/README.md`, architecture §5.1 (h) (Launcher holt Code auch beim ersten Start über `/api/launcher/code`).
 - Engine (13b): `openProcessStore` (Exit 3 bei `StoreVersionTooNewError`), `attachPublisher` vor `start()`, `warnings.onChange`/`checkProfile` → `publishHostState`, Stop-Reihenfolge `manager.shutdown()` → `app.close()` → Stores schließen.
 - Bekannt: Bis zur Verdrahtung endet ein echter `pnpm start` nach 30 s mit Zeitüberschreitung (Bootstrap-Stub).
+- Bugs aus WP-20a (für 20c): SDK wird im Bundle immer geladen (esbuild hebt statischen Import; `sdkBackend.ts` lazy oder `splitting`); `pnpm start -- --port=…` scheitert an wörtlichem `--` (`args.ts`).
 - Offen für später: `processInfo` per PowerShell braucht unter Last bis ≈23 s (Waisen-Bereinigung beim Start) – schnellere Methode prüfen; Web-Default-Timeout in Vitest statt Limits je Datei; Importkosten `radix-ui` in Tests.
 
 ## Nächste Schritte
