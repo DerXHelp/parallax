@@ -1,0 +1,185 @@
+import { CpuIcon } from 'lucide-react';
+import { memo, useState } from 'react';
+import { EFFORT_LEVELS, parseSessionKey, type EffortLevel } from '@shared/common';
+import type { ModelOption } from '@shared/model';
+import type { Command } from '@shared/protocol';
+import { useT } from '@web/i18n';
+import { errorPayloadOf } from '@web/state/connection';
+import {
+  sendCommand,
+  useSessionConnectionStatus,
+  useSessionSelector,
+  useSummarySelector,
+} from '@web/state/hooks';
+import { showErrorNotice } from '@web/state/notices';
+import { Button } from '@web/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@web/ui/dropdown-menu';
+import { Spinner } from '@web/ui/spinner';
+
+/** `supportedModels()` lists the CLI default as value `default`; the contract says `null` = default. */
+const DEFAULT_MODEL_VALUE = 'default';
+const DEFAULT_EFFORT = 'default';
+
+type LoadState = 'idle' | 'loading' | 'failed';
+
+/** The model option the session uses (`modelSetting`, F.12; null = the `default` option). */
+export function currentModelOption(
+  models: readonly ModelOption[] | null,
+  modelSetting: string | null,
+): ModelOption | null {
+  if (models === null) return null;
+  return models.find((model) => model.value === (modelSetting ?? DEFAULT_MODEL_VALUE)) ?? null;
+}
+
+/**
+ * Model picker (Plan "Kopfleiste": `supportedModels` + effort, fast toggle). Models come from the
+ * session detail (`detail.models`, loaded with `session.refreshModels` on first open when
+ * missing); effort only when the model supports it, fast mode only when the model offers it
+ * (`session.setFastMode`). The label shows the model setting, else the last model seen (F.6).
+ */
+export const ModelPicker = memo(function ModelPicker({ sessionKey }: { sessionKey: string }) {
+  const t = useT();
+  const models = useSessionSelector<readonly ModelOption[] | null>(
+    sessionKey,
+    (view) => view.detail.models,
+    null,
+  );
+  const modelSetting = useSummarySelector<string | null>(sessionKey, (s) => s.modelSetting, null);
+  const actualModel = useSummarySelector<string | null>(sessionKey, (s) => s.model, null);
+  const effort = useSummarySelector<EffortLevel | null>(sessionKey, (s) => s.effort, null);
+  const fastMode = useSummarySelector<boolean | null>(sessionKey, (s) => s.fastMode, null);
+  const online = useSessionConnectionStatus(sessionKey) === 'open';
+  const [load, setLoad] = useState<LoadState>('idle');
+  const [pending, setPending] = useState(false);
+  const current = currentModelOption(models, modelSetting);
+  const label = current?.displayName ?? modelSetting ?? actualModel ?? t('composer.model.default');
+  const efforts =
+    current?.supportsEffort === true
+      ? EFFORT_LEVELS.filter((level) => current.supportedEffortLevels.includes(level))
+      : [];
+
+  const run = async (build: (entryId: string) => Command) => {
+    const parsed = parseSessionKey(sessionKey);
+    if (parsed === null) return;
+    setPending(true);
+    try {
+      await sendCommand(sessionKey, build(parsed.entryId));
+    } catch (caught) {
+      showErrorNotice(errorPayloadOf(caught), { sessionKey, id: `composer.model.${sessionKey}` });
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const refresh = async () => {
+    const parsed = parseSessionKey(sessionKey);
+    if (parsed === null) return;
+    setLoad('loading');
+    try {
+      await sendCommand(sessionKey, { name: 'session.refreshModels', entryId: parsed.entryId });
+      setLoad('idle');
+    } catch {
+      setLoad('failed');
+    }
+  };
+
+  return (
+    <DropdownMenu
+      modal={false}
+      onOpenChange={(open) => {
+        if (open && models === null && load !== 'loading') void refresh();
+      }}
+    >
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          data-slot="model-picker"
+          disabled={!online}
+          aria-label={`${t('composer.model.label')}: ${label}`}
+          className="max-w-48"
+        >
+          <CpuIcon aria-hidden />
+          <span className="truncate">{label}</span>
+          {pending ? <Spinner className="size-3" /> : null}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-72">
+        <DropdownMenuLabel>{t('composer.model.label')}</DropdownMenuLabel>
+        {models === null ? (
+          <DropdownMenuItem disabled>
+            {load === 'failed' ? t('composer.model.unavailable') : t('composer.model.loading')}
+          </DropdownMenuItem>
+        ) : (
+          <DropdownMenuRadioGroup
+            value={current?.value ?? ''}
+            onValueChange={(value) => {
+              const option = models.find((model) => model.value === value);
+              if (option === undefined || option === current) return;
+              const model = option.value === DEFAULT_MODEL_VALUE ? null : option.value;
+              void run((entryId) => ({ name: 'session.setModel', entryId, model }));
+            }}
+          >
+            {models.map((model) => (
+              <DropdownMenuRadioItem key={model.value} value={model.value} className="items-start">
+                <span className="grid min-w-0 gap-0.5">
+                  <span>{model.displayName}</span>
+                  {model.description === '' ? null : (
+                    <span className="text-muted-foreground text-2xs">{model.description}</span>
+                  )}
+                </span>
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        )}
+        {efforts.length === 0 ? null : (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>{t('composer.model.effort')}</DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              value={effort ?? DEFAULT_EFFORT}
+              onValueChange={(value) => {
+                const level: EffortLevel | null | undefined =
+                  value === DEFAULT_EFFORT ? null : efforts.find((candidate) => candidate === value);
+                if (level === undefined || level === effort) return;
+                void run((entryId) => ({ name: 'session.setEffort', entryId, effort: level }));
+              }}
+            >
+              <DropdownMenuRadioItem value={DEFAULT_EFFORT}>
+                {t('composer.model.effortDefault')}
+              </DropdownMenuRadioItem>
+              {efforts.map((level) => (
+                <DropdownMenuRadioItem key={level} value={level}>
+                  {t(`composer.model.effortLevels.${level}`)}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </>
+        )}
+        {current?.supportsFastMode === true ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuCheckboxItem
+              checked={fastMode === true}
+              onCheckedChange={(checked) => {
+                void run((entryId) => ({ name: 'session.setFastMode', entryId, enabled: checked }));
+              }}
+            >
+              {t('composer.model.fast')}
+            </DropdownMenuCheckboxItem>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+});
