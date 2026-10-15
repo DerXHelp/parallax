@@ -14,6 +14,7 @@ import { makeTempHome, rawRequest } from '../http/testServer';
 import { checkHealth } from '../launcher/client';
 import { SERVER_EXIT_CODES } from '../launcher/exitCodes';
 import { readServerLock } from '../launcher/lockFile';
+import { acquireHomeLock, type HomeLock } from '../lib/homeLock';
 import type { CommandContext } from '../sync/ports';
 import { StartupError, startServer, type RunningServer } from './compose';
 
@@ -38,7 +39,12 @@ interface Started {
 
 async function start(
   home: string,
-  options: { port?: number; webRoot?: string | null } = {},
+  options: {
+    port?: number;
+    webRoot?: string | null;
+    homeLock?: HomeLock;
+    homeAccess?: (home: string) => Promise<unknown>;
+  } = {},
 ): Promise<Started> {
   const exits: number[] = [];
   const config = loadConfig({
@@ -51,6 +57,9 @@ async function start(
     signals: null,
     fakeSpeed: 0,
     exit: (code) => exits.push(code),
+    homeLock: options.homeLock ?? null,
+    // No PowerShell in the in-process tests unless a test asks for the check.
+    homeAccess: options.homeAccess ?? null,
   });
   cleanups.push(() => server.shutdown.stop('command'));
   return { server, exits };
@@ -103,6 +112,40 @@ describe('startServer (composition)', () => {
     await expect(server.manager.handleCommand({ name: 'server.shutdown' }, ctx())).rejects.toMatchObject({
       error: { code: 'SERVER_SHUTTING_DOWN' },
     });
+  });
+
+  it('releases the home lock of main.ts after the lock file; the access check runs after listen (R2-05/R2-13)', async () => {
+    const home = await tempHome();
+    const acquired = await acquireHomeLock(home);
+    if (acquired.kind !== 'acquired') throw new Error('home lock busy');
+    const order: string[] = [];
+    const homeLock: HomeLock = {
+      pipe: acquired.lock.pipe,
+      exclusive: acquired.lock.exclusive,
+      release: async () => {
+        order.push(`homeLock (lock file ${(await readServerLock(home)).kind})`);
+        await acquired.lock.release();
+      },
+    };
+    const checked: string[] = [];
+    const { server } = await start(home, {
+      homeLock,
+      homeAccess: async (checkedHome) => {
+        // Only after listen: the lock file exists already.
+        checked.push(`${checkedHome} (lock file ${(await readServerLock(checkedHome)).kind})`);
+        order.push('homeAccess');
+      },
+    });
+    await vi.waitFor(() => {
+      expect(checked).toEqual([`${home} (lock file ok)`]);
+    });
+    if (process.platform === 'win32') expect((await acquireHomeLock(home)).kind).toBe('busy');
+
+    await server.shutdown.stop('command');
+    expect(order).toEqual(['homeAccess', 'homeLock (lock file missing)']);
+    const again = await acquireHomeLock(home);
+    expect(again.kind).toBe('acquired');
+    if (again.kind === 'acquired') await again.lock.release();
   });
 
   it('refuses a second server on the same PARALLAX_HOME (exit code 5)', async () => {

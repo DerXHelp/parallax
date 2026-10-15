@@ -15,6 +15,15 @@ describe('launcher command line', () => {
     expect(parseLauncherArgs(['--help']).help).toBe(true);
   });
 
+  it('skips the literal "--" of `pnpm start -- --port=4800` (pnpm 12 passes it on)', () => {
+    const args = parseLauncherArgs(['--', '--port=4800', '--print-url']);
+    expect(args).toMatchObject({ printUrl: true, serverArgv: ['--port=4800'] });
+    const env = { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' };
+    expect(loadConfig({ argv: args.serverArgv, env, cwd: 'C:\\repo' }).port).toBe(4800);
+    // Without the fix loadConfig rejected it.
+    expect(() => loadConfig({ argv: ['--', '--port=4800'], env, cwd: 'C:\\repo' })).toThrow();
+  });
+
   it('resolves home and port like the server (flag > PARALLAX_* > default) and passes the result on', () => {
     const env = { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local', PARALLAX_PORT: '4800' };
     const fromEnv = loadConfig({ argv: [], env, cwd: 'C:\\repo' });

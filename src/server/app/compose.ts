@@ -12,11 +12,15 @@
  *     orphans in the background) → `createApp` (the app attaches the hub's WS route itself).
  *  5. Shutdown frame + signal handlers, then `listen` on 127.0.0.1 (EADDRINUSE → exit 4).
  *  6. `server.lock.json` with the actual port and `auth.launcherToken` – only now the launcher
- *     regards the server as ready; then "Profil testen" of the default profile in the background.
+ *     regards the server as ready; then in the background the access check of the home
+ *     (`logHomeAccess`, R2-13) and "Profil testen" of the default profile.
+ *
+ * The exclusive home lock (R2-05) is taken by main.ts before logging and stores (`homeLock`).
  *
  * Shutdown (command `server.shutdown`, SIGINT/SIGTERM/SIGBREAK/SIGHUP): `manager.shutdown()` (close
- * all queries ≤ 15 s, taskkill after 5 s grace, flush) → `app.close()` (WS close 4503) → close the
- * stores → release the lock file → `backend.dispose()` → close the log → `exit(code)`.
+ * all queries ≤ 15 s, taskkill after 5 s grace, flush, `backend.dispose()`) → `app.close()` (WS
+ * close 4503) → close the stores → wait for the access check → release the lock file → release
+ * the home lock → close the log → `exit(code)`.
  */
 import { existsSync } from 'node:fs';
 import type { FastifyInstance } from 'fastify';
@@ -40,6 +44,8 @@ import {
   type ShutdownStep,
   type SignalTarget,
 } from '../launcher/shutdown';
+import { logHomeAccess } from '../lib/homeAccess';
+import type { HomeLock } from '../lib/homeLock';
 import { logger as rootLogger, type LoggingHandle } from '../lib/logger';
 import { errnoCode } from '../lib/process';
 import { createSessionManager, type SessionManager } from '../sessions/manager';
@@ -84,6 +90,16 @@ export interface StartServerOptions {
   fakeSpeed?: number;
   /** Single-instance check (default `findRunningServer` over lock file + health). */
   findRunning?: (home: string) => Promise<RunningServerCheck>;
+  /**
+   * Exclusive lock of PARALLAX_HOME (R2-05), taken by main.ts BEFORE logging and the stores;
+   * released as the shutdown step after the lock file. null/absent = none (in-process tests).
+   */
+  homeLock?: HomeLock | null;
+  /**
+   * Check of the home's access rights after `listen`, in the background (default
+   * `logHomeAccess`, R2-13: only a warning); null = skipped (in-process tests).
+   */
+  homeAccess?: ((home: string) => Promise<unknown>) | null;
   logger?: Logger;
 }
 
@@ -204,7 +220,8 @@ async function createEngine(
   if (config.backend === 'fake') {
     return { backend: createFakeBackend({ speed: fakeSpeed }), claude: createFakeClaudeIntegration() };
   }
-  const { createSdkBackend } = await import('../backend/sdkBackend');
+  const { createSdkBackend, loadAgentSdk } = await import('../backend/sdkBackend');
+  await loadAgentSdk();
   return {
     backend: createSdkBackend(),
     claude: createClaudeIntegration({ appVersion: instance.serverVersion }),
@@ -251,13 +268,21 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   let lock: ServerLockHandle | null = null;
   let shutdown: ServerShutdown | null = null;
   let uninstallSignals: (() => void) | null = null;
+  /** The background access check of the home (its PowerShell must not outlive the server). */
+  let accessCheck: Promise<unknown> | null = null;
+  const homeLock = options.homeLock ?? null;
 
-  /** The close steps after `manager.shutdown()` (order: architecture "Komposition"). */
+  /**
+   * The close steps after `manager.shutdown()` (order: architecture "Komposition"). No backend
+   * step: `manager.shutdown()` disposes the backend (one owner, R2-06).
+   */
   const steps: ShutdownStep[] = [
     { name: 'http', run: () => app?.close() },
     { name: 'stores', run: () => stores.close(), timeoutMs: 10_000 },
+    { name: 'homeAccess', run: () => accessCheck },
     { name: 'lock', run: () => lock?.release() },
-    { name: 'backend', run: () => engine?.backend.dispose() },
+    // After the lock file: from here on another server may open this home (R2-05).
+    { name: 'homeLock', run: () => homeLock?.release() },
   ];
 
   const cleanupAfterFailure = async (): Promise<void> => {
@@ -265,6 +290,10 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     if (manager !== null) {
       const stopping = manager;
       await settle(() => stopping.shutdown(), 20_000, log, 'sessions');
+    } else if (engine !== null) {
+      // The manager was not created: nobody else disposes the backend.
+      const backend = engine.backend;
+      await settle(() => backend.dispose(), CLEANUP_STEP_TIMEOUT_MS, log, 'backend');
     }
     for (const step of steps)
       await settle(step.run, step.timeoutMs ?? CLEANUP_STEP_TIMEOUT_MS, log, step.name);
@@ -398,6 +427,14 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   }
   // A shutdown that started while the lock file was being written skipped its lock step.
   if (shutdown.stopping) await lock.release();
+
+  // Access rights of the home in the background (≈ 2 s PowerShell, never throws; R2-13: warn only).
+  const homeAccess = options.homeAccess === undefined ? logHomeAccess : options.homeAccess;
+  if (homeAccess !== null) {
+    accessCheck = homeAccess(config.home).catch((error: unknown) => {
+      log.warn({ err: error }, 'home access check failed');
+    });
+  }
 
   // "Profil testen" of the default profile in the background (real claude only with --backend=sdk).
   const { claude } = engine;
