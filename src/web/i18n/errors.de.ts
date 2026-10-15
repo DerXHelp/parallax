@@ -74,4 +74,9 @@ export const errorsDe: Record<ErrorCode, string> = {
   CONNECTION_LOST: 'Die Verbindung zum Server ist abgebrochen.',
   COMMAND_TIMEOUT: 'Der Server hat nicht rechtzeitig geantwortet.',
   INTERNAL_ERROR: 'Ein unerwarteter Fehler ist aufgetreten.',
+  // Contract additions of the R1 server fixes (kept at the end to stay merge-friendly).
+  ROUTE_NOT_FOUND: 'Diese Adresse gibt es nicht.',
+  PROMPT_NOT_DELIVERED:
+    'Die Nachricht wurde nicht zugestellt, weil die Session beendet wurde. Sende sie bei Bedarf erneut.',
+  STORE_VERSION_TOO_NEW: 'Die Daten stammen von einer neueren Parallax-Version. Aktualisiere Parallax.',
 };
