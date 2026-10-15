@@ -352,6 +352,7 @@ Format: `ADR-NNN – Titel` · Datum · WP · Kontext → Entscheidung → Folge
 - **Folgen:** Später enger (`style-src-elem 'self' 'sha256-…'`, `style-src-attr 'unsafe-inline'`),
   sobald WP-15/16 die tatsächlich injizierten Styles kennen; `require-trusted-types-for 'script'`
   prüfen (Follow-up).
+
 ## ADR-030 – Watcher-Ignores an der Wurzel verankert, Dev-Port je Worktree per Env
 - **Datum/WP:** 15.10.2026, R1-Fixes Web (R1W-01, R1W-23)
 - **Kontext:** Vite und Vitest geben `server.watch.ignored` an chokidar, das **absolute** Pfade
