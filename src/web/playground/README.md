@@ -36,5 +36,7 @@ export const demos: PlaygroundDemo[] = [{
 export const slots: Partial<FeatureSlots> = { Transcript: TranscriptView };
 ```
 
-Hinweis: In einem Worktree ignoriert der Vite-Watcher die Dateien (`worktreeGlobs` in
-`repo.config.ts`) – nach Änderungen den Dev-Server neu starten.
+Mehrere Worktrees parallel: eigener Port per `PARALLAX_DEV_WEB_PORT` (z. B.
+`$env:PARALLAX_DEV_WEB_PORT='5175'; pnpm dev:web`); HMR funktioniert auch in `.worktrees/<wp>`
+(`watchIgnores` in `repo.config.ts`). Lokale Hinweise (`showNotice`) erscheinen nur, wo ein
+`NotificationCenter` gemountet ist (Shell-Demos; eigene Demos binden ihn bei Bedarf ein).

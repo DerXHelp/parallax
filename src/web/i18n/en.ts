@@ -162,13 +162,16 @@ export const en = {
     connecting: 'Connecting…',
     unreachableTitle: 'Server not reachable',
     unreachableDescription: 'Parallax cannot reach its local server.',
+    upgradeRejected:
+      'The server answers but refuses the live connection (WebSocket). Check security software or proxies that filter local traffic.',
     retryIn: { one: 'Retrying in {count} second…', other: 'Retrying in {count} seconds…' },
     reconnecting: 'Connection lost – reconnecting…',
     serverStoppedTitle: 'Parallax server stopped',
     serverStoppedDescription: 'The local server was shut down. Start Parallax again, then reconnect.',
     reconnect: 'Reconnect',
     versionMismatchTitle: 'Parallax was updated',
-    versionMismatchDescription: 'This window runs an older version. Reload to continue.',
+    versionMismatchDescription:
+      'This window and the server run different versions. Reload to continue – if this stays, restart Parallax.',
     status: {
       connecting: 'Connecting',
       open: 'Connected',

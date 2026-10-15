@@ -2,14 +2,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { configDefaults, defineConfig } from 'vitest/config';
-import { repoAliases, worktreeGlobs } from './repo.config.ts';
+import { repoAliases, watchIgnores, worktreeGlobs } from './repo.config.ts';
 
 const repoRoot = path.dirname(fileURLToPath(import.meta.url));
-const exclude = [...configDefaults.exclude, ...worktreeGlobs, '**/dist/**', '**/.tsbuild/**'];
+/** Root-relative globs (tinyglobby with cwd = root), so `.worktrees/**` never hides this checkout. */
+const exclude = [...configDefaults.exclude, ...worktreeGlobs, 'dist/**', '.tsbuild/**', 'coverage/**'];
 
 /**
  * Tests live next to the code as *.test.ts(x). Two projects:
- *  - node: src/server, src/shared, scripts, test (Node environment)
+ *  - node: src/server, src/shared, scripts, test, root configs (Node environment)
  *  - web:  src/web (happy-dom + React Testing Library)
  * Every run gets PARALLAX_HOME=<tmp> and PARALLAX_PORT=0 unless already set (test/setup).
  */
@@ -19,7 +20,8 @@ export default defineConfig({
     alias: repoAliases(repoRoot),
   },
   server: {
-    watch: { ignored: [...worktreeGlobs] },
+    // `vitest --watch` (pnpm test:watch): anchored at this checkout, also inside .worktrees/<wp> (R1W-01).
+    watch: { ignored: watchIgnores(repoRoot) },
   },
   test: {
     globalSetup: ['test/setup/global.ts'],
@@ -34,6 +36,7 @@ export default defineConfig({
             'src/shared/**/*.test.ts',
             'scripts/**/*.test.ts',
             'test/**/*.test.ts',
+            '*.config.test.ts',
           ],
           exclude,
           setupFiles: ['test/setup/env.ts'],

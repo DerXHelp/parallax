@@ -1,21 +1,26 @@
 import { Tooltip as TooltipPrimitive } from 'radix-ui';
-import type { ComponentProps } from 'react';
+import { createContext, useContext, type ComponentProps } from 'react';
 import { cn } from '@web/lib/cn';
 
-/** Mounted once around the app (AppShell, playground); `Tooltip` also works standalone. */
+/** True below a TooltipProvider: tooltips then share its delay and skip-delay (R1W-24). */
+const ProviderPresent = createContext(false);
+
+/** Mounted once around the app (AppShell, playground); `Tooltip` also works standalone (tests). */
 export function TooltipProvider({
   delayDuration = 400,
   ...props
 }: ComponentProps<typeof TooltipPrimitive.Provider>) {
-  return <TooltipPrimitive.Provider data-slot="tooltip-provider" delayDuration={delayDuration} {...props} />;
+  return (
+    <ProviderPresent value={true}>
+      <TooltipPrimitive.Provider data-slot="tooltip-provider" delayDuration={delayDuration} {...props} />
+    </ProviderPresent>
+  );
 }
 
 export function Tooltip(props: ComponentProps<typeof TooltipPrimitive.Root>) {
-  return (
-    <TooltipProvider>
-      <TooltipPrimitive.Root data-slot="tooltip" {...props} />
-    </TooltipProvider>
-  );
+  const hasProvider = useContext(ProviderPresent);
+  const root = <TooltipPrimitive.Root data-slot="tooltip" {...props} />;
+  return hasProvider ? root : <TooltipProvider>{root}</TooltipProvider>;
 }
 
 export function TooltipTrigger(props: ComponentProps<typeof TooltipPrimitive.Trigger>) {

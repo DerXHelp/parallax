@@ -2,10 +2,10 @@ import { FolderOpenIcon, LayersIcon, PlayIcon } from 'lucide-react';
 import { useId, useMemo, useState } from 'react';
 import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
-import { windowsPathIssue } from '@shared/paths';
+import { windowsPathIssue, windowsPathKey } from '@shared/paths';
 import { PRODUCT_NAME } from '@shared/product';
 import { useI18n } from '@web/i18n';
-import { pathTail } from '@web/lib/path-display';
+import { shortPath } from '@web/lib/path-display';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand, useSelectedSession, useSummaries } from '@web/state/hooks';
 import { Alert } from '@web/ui/alert';
@@ -36,7 +36,7 @@ export function NewSessionForm({ initialCwd = '' }: { initialCwd?: string }) {
       (a, b) => Date.parse(b.summary.lastActivityAt) - Date.parse(a.summary.lastActivityAt),
     );
     for (const { summary } of sorted) {
-      const key = summary.cwd.toLowerCase();
+      const key = windowsPathKey(summary.cwd);
       if (seen.has(key)) continue;
       seen.add(key);
       result.push(summary.cwd);
@@ -113,7 +113,7 @@ export function NewSessionForm({ initialCwd = '' }: { initialCwd?: string }) {
                   className="hover:bg-accent focus-visible:ring-ring flex h-7 w-full items-center gap-2 rounded-sm px-2 text-left text-xs outline-none focus-visible:ring-2"
                 >
                   <FolderOpenIcon aria-hidden className="text-muted-foreground size-3.5 shrink-0" />
-                  <span className="truncate font-mono text-2xs">{pathTail(path, 3)}</span>
+                  <span className="truncate font-mono text-2xs">{shortPath(path, 3)}</span>
                 </button>
               </li>
             ))}

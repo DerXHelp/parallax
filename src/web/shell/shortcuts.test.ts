@@ -149,3 +149,87 @@ describe('ShortcutRegistry', () => {
     expect(listener).toHaveBeenCalledTimes(4);
   });
 });
+
+describe('Esc with event and scope, scopeRef, Alt codes (R1W-06, R1W-16)', () => {
+  function pane(name: string) {
+    const root = document.createElement('section');
+    root.dataset.name = name;
+    const composer = document.createElement('textarea');
+    composer.dataset.shortcutScope = 'composer';
+    const other = document.createElement('button');
+    root.append(composer, other);
+    document.body.append(root);
+    return { root, composer, other };
+  }
+
+  it('passes the event and runs scoped Esc handlers only with the focus inside the scope', () => {
+    const registry = new ShortcutRegistry();
+    const a = pane('a');
+    const stop = vi.fn((event: KeyboardEvent) => event.target === a.composer);
+    registry.pushEscape(stop, { scope: 'composer' });
+    // Focus elsewhere (transcript, sidebar): the stop handler does not run.
+    expect(registry.handleKeyDown(key({ key: 'Escape' }, a.other))).toBe(false);
+    expect(stop).not.toHaveBeenCalled();
+    const event = key({ key: 'Escape' }, a.composer);
+    expect(registry.handleKeyDown(event)).toBe(true);
+    expect(stop).toHaveBeenCalledWith(event);
+    a.root.remove();
+  });
+
+  it('scopeRef picks the handler of the pane that has the focus (two panes, same scope name)', () => {
+    const registry = new ShortcutRegistry();
+    const a = pane('a');
+    const b = pane('b');
+    const calls: string[] = [];
+    registry.register({
+      id: 'decision.allow',
+      keys: 'y',
+      description: 'shell.shortcuts.help',
+      scopeRef: { current: a.root },
+      run: () => {
+        calls.push('a');
+        return true;
+      },
+    });
+    registry.register({
+      id: 'decision.allow',
+      keys: 'y',
+      description: 'shell.shortcuts.help',
+      scopeRef: { current: b.root },
+      run: () => {
+        calls.push('b');
+        return true;
+      },
+    });
+    registry.pushEscape(
+      () => {
+        calls.push('esc-a');
+        return true;
+      },
+      { scopeRef: { current: a.root } },
+    );
+    expect(registry.handleKeyDown(key({ key: 'y' }, a.other))).toBe(true);
+    expect(registry.handleKeyDown(key({ key: 'y' }, b.other))).toBe(true);
+    expect(registry.handleKeyDown(key({ key: 'Escape' }, b.other))).toBe(false);
+    expect(registry.handleKeyDown(key({ key: 'Escape' }, a.other))).toBe(true);
+    expect(calls).toEqual(['a', 'b', 'esc-a']);
+    a.root.remove();
+    b.root.remove();
+  });
+
+  it('never treats Alt+Numpad digits (Windows Alt codes) as shortcuts', () => {
+    const alt1 = parseShortcut('Alt+1');
+    expect(
+      matchesShortcut(
+        { key: '1', code: 'Numpad1', ctrlKey: false, altKey: true, shiftKey: false, metaKey: false },
+        alt1,
+      ),
+    ).toBe(false);
+    expect(
+      matchesShortcut(
+        { key: '1', code: 'Digit1', ctrlKey: false, altKey: true, shiftKey: false, metaKey: false },
+        alt1,
+      ),
+    ).toBe(true);
+  });
+});

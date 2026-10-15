@@ -1,16 +1,28 @@
-import { useEffect, useEffectEvent, useSyncExternalStore } from 'react';
+import { useEffect, useEffectEvent, useSyncExternalStore, type RefObject } from 'react';
 import type { TranslationKey } from '@web/i18n';
 
 /**
  * Central shortcut registry (Plan B "Tastatur"): one keydown listener on the window, a `?` help
  * (ShortcutHelp), no Ctrl+Alt combinations (AltGr on German layouts = Ctrl+Alt: `@ € { [ ] } \ ~ |`),
- * nothing on Ctrl+W/N/T (not catchable). Esc goes through a stack: the newest active handler
- * that returns true wins (e.g. WP-16 "Stop via Esc with an empty composer"); open Radix layers
- * (dialog, menu, popover) handle their own Esc first.
+ * nothing on Ctrl+W/N/T (not catchable), Alt+Numpad digits stay Windows Alt codes. Esc goes
+ * through a stack: the newest active handler whose scope contains the focus and that returns true
+ * wins (e.g. WP-16 "Stop via Esc with an empty composer", scoped to the composer); open Radix
+ * layers (dialog, menu, popover) handle their own Esc first.
+ *
+ * Scopes: `scope: 'decision-bar'` (focus inside `[data-shortcut-scope="decision-bar"]`, any pane)
+ * or – exact with several panes – `scopeRef` (focus inside that element). Both may be combined.
  *
  * Key syntax: `Mod+K` (Mod = Ctrl), `Alt+1`, `Shift+Enter`, `?`, `Escape`. Symbol keys (`?`, `/`)
  * match regardless of Shift (layout-dependent).
  */
+
+/** Where the focus must be for a shortcut or Esc handler to fire. */
+export interface ShortcutScope {
+  /** Focus inside `[data-shortcut-scope="<scope>"]`. */
+  scope?: string;
+  /** Focus inside this element (e.g. the decision bar of THIS pane, R1W-06). */
+  scopeRef?: RefObject<HTMLElement | null>;
+}
 
 export interface ShortcutKeys {
   key: string;
@@ -20,7 +32,7 @@ export interface ShortcutKeys {
   meta: boolean;
 }
 
-export interface ShortcutDefinition {
+export interface ShortcutDefinition extends ShortcutScope {
   id: string;
   /** One combination or several (the handler gets the index of the matching one). */
   keys: string | readonly string[];
@@ -30,8 +42,6 @@ export interface ShortcutDefinition {
   displayKeys?: string;
   /** Also while the focus is in a text field (default false). */
   allowInInputs?: boolean;
-  /** Only while the focus is inside `[data-shortcut-scope="<scope>"]` (e.g. the decision bar, Plan B). */
-  scope?: string;
   /** Not listed in the help. */
   hidden?: boolean;
   /** Return `false` if not handled (the event then continues). */
@@ -105,6 +115,8 @@ export function parseShortcut(combo: string): ShortcutKeys {
 
 export interface KeyboardEventLike {
   key: string;
+  /** Physical key (`Numpad1` …); optional for synthetic events. */
+  code?: string;
   ctrlKey: boolean;
   altKey: boolean;
   shiftKey: boolean;
@@ -114,6 +126,8 @@ export interface KeyboardEventLike {
 export function matchesShortcut(event: KeyboardEventLike, keys: ShortcutKeys): boolean {
   // AltGr arrives as Ctrl+Alt – never a shortcut.
   if (event.ctrlKey && event.altKey) return false;
+  // Alt+Numpad digits type Windows Alt codes (Alt+0169 = ©) – never a shortcut (R1W-16).
+  if (event.altKey && event.code?.startsWith('Numpad') === true) return false;
   const key = normalizeKey(event.key);
   if (key !== keys.key) return false;
   if (event.ctrlKey !== keys.ctrl || event.altKey !== keys.alt || event.metaKey !== keys.meta) return false;
@@ -140,9 +154,29 @@ interface Registered {
   parsed: ShortcutKeys[];
 }
 
+/** Esc handler: return true if it handled the key (stops the stack, preventDefault). */
+export type EscapeHandler = (event: KeyboardEvent) => boolean;
+
+interface EscapeEntry {
+  handler: EscapeHandler;
+  scope: ShortcutScope;
+}
+
+/** True when the focus (`target`) satisfies the scope (no scope = everywhere). */
+export function isInScope(target: Element | null, scope: ShortcutScope): boolean {
+  if (scope.scope !== undefined) {
+    if ((target?.closest(`[data-shortcut-scope="${scope.scope}"]`) ?? null) === null) return false;
+  }
+  if (scope.scopeRef !== undefined) {
+    const element = scope.scopeRef.current;
+    if (element === null || target === null || !element.contains(target)) return false;
+  }
+  return true;
+}
+
 export class ShortcutRegistry {
   private readonly entries: Registered[] = [];
-  private readonly escapeStack: { handler: () => boolean }[] = [];
+  private readonly escapeStack: EscapeEntry[] = [];
   private readonly listeners = new Set<() => void>();
   private version = 0;
 
@@ -173,9 +207,12 @@ export class ShortcutRegistry {
     return result;
   }
 
-  /** Pushes an Esc handler (returns true if it handled the key). Returns the remove function. */
-  pushEscape(handler: () => boolean): () => void {
-    const entry = { handler };
+  /**
+   * Pushes an Esc handler; it only runs while the focus is inside `scope` (none = everywhere).
+   * Returns the remove function.
+   */
+  pushEscape(handler: EscapeHandler, scope: ShortcutScope = {}): () => void {
+    const entry: EscapeEntry = { handler, scope };
     this.escapeStack.push(entry);
     return () => {
       const index = this.escapeStack.indexOf(entry);
@@ -190,7 +227,9 @@ export class ShortcutRegistry {
     if (event.key === 'Escape' && !event.ctrlKey && !event.altKey && !event.metaKey) {
       if ((target?.closest(OVERLAY_SELECTOR) ?? null) !== null) return false;
       for (let i = this.escapeStack.length - 1; i >= 0; i--) {
-        if (this.escapeStack[i]?.handler() === true) {
+        const entry = this.escapeStack[i];
+        if (entry === undefined || !isInScope(target, entry.scope)) continue;
+        if (entry.handler(event)) {
           event.preventDefault();
           return true;
         }
@@ -202,10 +241,7 @@ export class ShortcutRegistry {
       if (entry === undefined) continue;
       const { definition } = entry;
       if (typing && definition.allowInInputs !== true) continue;
-      if (definition.scope !== undefined) {
-        const scoped = target?.closest(`[data-shortcut-scope="${definition.scope}"]`) ?? null;
-        if (scoped === null) continue;
-      }
+      if (!isInScope(target, definition)) continue;
       const index = entry.parsed.findIndex((keys) => matchesShortcut(event, keys));
       if (index < 0) continue;
       if (definition.run(event, index) !== false) {
@@ -253,7 +289,7 @@ export function installShortcutListener(
 /** Registers a shortcut while mounted; `run` always sees the latest props. */
 export function useShortcut(definition: ShortcutDefinition, enabled = true): void {
   const run = useEffectEvent((event: KeyboardEvent, index: number) => definition.run(event, index));
-  const { id, description, displayKeys, allowInInputs, scope, hidden } = definition;
+  const { id, description, displayKeys, allowInInputs, scope, scopeRef, hidden } = definition;
   const keys = typeof definition.keys === 'string' ? definition.keys : definition.keys.join('\n');
   useEffect(() => {
     if (!enabled) return undefined;
@@ -264,19 +300,26 @@ export function useShortcut(definition: ShortcutDefinition, enabled = true): voi
       displayKeys,
       allowInInputs,
       scope,
+      scopeRef,
       hidden,
       run: (event, index) => run(event, index),
     });
-  }, [enabled, id, keys, description, displayKeys, allowInInputs, scope, hidden]);
+  }, [enabled, id, keys, description, displayKeys, allowInInputs, scope, scopeRef, hidden]);
 }
 
-/** Esc handler while mounted and `enabled` (return true = handled, stops the stack). */
-export function useEscapeHandler(handler: () => boolean, enabled = true): void {
-  const run = useEffectEvent(() => handler());
+/**
+ * Esc handler while mounted and `enabled`: gets the event (target = focused element) and returns
+ * true when it handled the key (stops the stack). With `scope`/`scopeRef` it only runs while the
+ * focus is inside that scope – e.g. WP-16 "Stop via Esc" only with the focus in the composer of
+ * the same pane (R1W-06).
+ */
+export function useEscapeHandler(handler: EscapeHandler, enabled = true, options: ShortcutScope = {}): void {
+  const run = useEffectEvent((event: KeyboardEvent) => handler(event));
+  const { scope, scopeRef } = options;
   useEffect(() => {
     if (!enabled) return undefined;
-    return shortcuts.pushEscape(() => run());
-  }, [enabled]);
+    return shortcuts.pushEscape((event) => run(event), { scope, scopeRef });
+  }, [enabled, scope, scopeRef]);
 }
 
 function subscribeShortcuts(listener: () => void): () => void {

@@ -4,27 +4,38 @@ import type { Theme } from '@shared/common';
 import { STORAGE_KEYS } from '@web/lib/storage';
 import { applyInitialTheme, applyResolvedTheme, resolveTheme, useThemeController } from './theme';
 
+/** Typed stand-in for `matchMedia('(prefers-color-scheme: dark)')` (no cast, R1W-24). */
+class FakeMediaQueryList extends EventTarget implements MediaQueryList {
+  readonly media = '(prefers-color-scheme: dark)';
+  onchange: MediaQueryList['onchange'] = null;
+  dark: boolean;
+
+  constructor(dark: boolean) {
+    super();
+    this.dark = dark;
+  }
+
+  get matches(): boolean {
+    return this.dark;
+  }
+
+  addListener(): void {
+    // Deprecated API, unused by theme.ts.
+  }
+
+  removeListener(): void {
+    // Deprecated API, unused by theme.ts.
+  }
+}
+
 /** Fake `matchMedia('(prefers-color-scheme: dark)')` that can flip at runtime. */
 function stubSystemTheme(initialDark: boolean) {
-  let dark = initialDark;
-  const listeners = new Set<() => void>();
-  const query = {
-    get matches() {
-      return dark;
-    },
-    media: '(prefers-color-scheme: dark)',
-    addEventListener: (_type: string, listener: () => void) => {
-      listeners.add(listener);
-    },
-    removeEventListener: (_type: string, listener: () => void) => {
-      listeners.delete(listener);
-    },
-  };
-  vi.spyOn(window, 'matchMedia').mockImplementation(() => query as unknown as MediaQueryList);
+  const query = new FakeMediaQueryList(initialDark);
+  vi.spyOn(window, 'matchMedia').mockImplementation(() => query);
   return {
     set(next: boolean) {
-      dark = next;
-      for (const listener of listeners) listener();
+      query.dark = next;
+      query.dispatchEvent(new Event('change'));
     },
   };
 }
