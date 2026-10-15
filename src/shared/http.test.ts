@@ -7,6 +7,8 @@ import {
   AUTH_COOKIE_ATTRIBUTES,
   AUTH_COOKIE_MAX_AGE_SECONDS,
   AUTH_TOKEN_BYTES,
+  BLOB_CSP,
+  BLOB_CSP_DIRECTIVES,
   DEV_AUTH_CODE_TTL_MS,
   DEV_WEB_PORT,
   LOOPBACK_HOST,
@@ -19,13 +21,17 @@ import {
   authExchangeRequestSchema,
   authExchangeResponseSchema,
   authStatusResponseSchema,
+  backendKindSchema,
   bearerAuthorization,
   blobPath,
+  cspHeaderValue,
   healthResponseSchema,
   httpErrorBodySchema,
   launcherCodeRequestSchema,
   launcherCodeResponseSchema,
   launcherTokenSchema,
+  pageCsp,
+  pageCspDirectives,
   parseBearerToken,
   serverLockFileSchema,
   serverOrigin,
@@ -73,6 +79,33 @@ describe('hosts and origins (A.8)', () => {
   it.each([0, -1, 65536, 1.5, Number.NaN])('rejects port %s', (port) => {
     expect(() => serverOrigin(port)).toThrow(RangeError);
     expect(() => authCookieName(port)).toThrow(RangeError);
+  });
+});
+
+describe('content security policy (C.10, ADR-026, R3-14)', () => {
+  it('page CSP: scripts only from self, no plugins/base/framing/forms, own WebSocket only', () => {
+    const csp = pageCsp(4711);
+    expect(csp).toBe(
+      [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "object-src 'none'",
+        "base-uri 'none'",
+        "frame-ancestors 'none'",
+        "form-action 'none'",
+        "img-src 'self' data: blob:",
+        "connect-src 'self' ws://127.0.0.1:4711",
+      ].join('; '),
+    );
+    expect(csp).not.toMatch(/script-src[^;]*unsafe/);
+    expect(cspHeaderValue(pageCspDirectives(4800))).toContain('ws://127.0.0.1:4800');
+    expect(() => pageCspDirectives(0)).toThrow(RangeError);
+  });
+
+  it('blob CSP sandboxes every answer', () => {
+    expect(BLOB_CSP).toBe("sandbox; default-src 'none'");
+    expect(cspHeaderValue(BLOB_CSP_DIRECTIVES)).toBe(BLOB_CSP);
   });
 });
 
@@ -138,6 +171,15 @@ describe('request / response schemas', () => {
     expect(healthResponseSchema.safeParse({ ...sampleHealthResponse(), serverInstanceId: 'x' }).success).toBe(
       false,
     );
+  });
+
+  it('health carries the backend kind optionally (R3-02, additive: older servers send none)', () => {
+    expect(healthResponseSchema.parse({ ...sampleHealthResponse(), backend: 'fake' }).backend).toBe('fake');
+    expect(healthResponseSchema.parse(sampleHealthResponse()).backend).toBeUndefined();
+    expect(healthResponseSchema.safeParse({ ...sampleHealthResponse(), backend: 'other' }).success).toBe(
+      false,
+    );
+    expect(backendKindSchema.options).toEqual(['sdk', 'fake']);
   });
 
   it('the HTTP error body is an ErrorPayload; statuses come from the catalog', () => {

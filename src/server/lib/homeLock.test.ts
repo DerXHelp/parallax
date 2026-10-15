@@ -2,7 +2,14 @@ import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { makeTempHome } from '../http/testServer';
-import { acquireHomeLock, homeLockKey, homeLockPipeName, type HomeLock } from './homeLock';
+import {
+  acquireDirectoryLock,
+  acquireHomeLock,
+  directoryLockPipeName,
+  homeLockKey,
+  homeLockPipeName,
+  type HomeLock,
+} from './homeLock';
 import { isProcessAlive, killProcessTree, spawnHidden } from './process';
 
 const windowsOnly = process.platform === 'win32' ? it : it.skip;
@@ -102,13 +109,41 @@ describe('home lock (R2-05)', () => {
     const lock = await acquired(home);
     expect(lock.exclusive).toBe(true);
     for (const spelling of [home, home.toUpperCase(), `${home}\\`, home.replaceAll('\\', '/')]) {
-      expect(await acquireHomeLock(spelling)).toEqual({ kind: 'busy', pipe: lock.pipe });
+      expect(await acquireHomeLock(spelling)).toEqual({ kind: 'busy', pipe: lock.pipe, reason: 'in_use' });
     }
     await acquired(other);
     await lock.release();
     await lock.release();
     expect((await acquired(home)).pipe).toBe(lock.pipe);
   });
+
+  windowsOnly(
+    'directory locks (R3-04): one pipe per kind and directory, independent of the home lock',
+    async () => {
+      const home = await tempHome();
+      expect(directoryLockPipeName('launch', 'c:\\x')).toMatch(
+        /^\\\\\.\\pipe\\parallax-launch-[0-9a-f]{16}$/,
+      );
+      expect(directoryLockPipeName('home', 'c:\\x')).toBe(homeLockPipeName('c:\\x'));
+      const homeLock = await acquired(home);
+      const launch = await acquireDirectoryLock('launch', home);
+      if (launch.kind !== 'acquired') throw new Error('launch lock busy');
+      locks.push(launch.lock);
+      expect(launch.lock.pipe).not.toBe(homeLock.pipe);
+      expect(await acquireDirectoryLock('launch', home.toUpperCase())).toEqual({
+        kind: 'busy',
+        pipe: launch.lock.pipe,
+        reason: 'in_use',
+      });
+      const build = await acquireDirectoryLock('build', home);
+      expect(build.kind).toBe('acquired');
+      if (build.kind === 'acquired') locks.push(build.lock);
+      await launch.lock.release();
+      const again = await acquireDirectoryLock('launch', home);
+      expect(again.kind).toBe('acquired');
+      if (again.kind === 'acquired') locks.push(again.lock);
+    },
+  );
 
   windowsOnly('creates a missing home so that its real path is the key', async () => {
     const base = await tempHome();
@@ -126,7 +161,7 @@ describe('home lock (R2-05)', () => {
       // Another process holds the home → this one is busy.
       const first = await holder(pipe);
       expect(first.line).toBe('listening');
-      expect(await acquireHomeLock(home)).toEqual({ kind: 'busy', pipe });
+      expect(await acquireHomeLock(home)).toEqual({ kind: 'busy', pipe, reason: 'in_use' });
       // The holder dies (crash, taskkill) → no stale state: the lock is free again.
       await killProcessTree(first.pid);
       expect(

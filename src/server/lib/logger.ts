@@ -100,6 +100,20 @@ export function redactText(text: string): string {
   return result;
 }
 
+// ---- Repeated failures ----
+
+/** A repeated failure logs its first REPEATED_LOG_FIRST occurrences, then every REPEATED_LOG_EVERY-th. */
+export const REPEATED_LOG_FIRST = 20;
+export const REPEATED_LOG_EVERY = 100;
+
+/**
+ * Should occurrence number `count` (1-based) of a repeated failure be logged? A broken stream must
+ * not flood the log (R3-05: invalid outgoing values in `log` mode carry the running count).
+ */
+export function shouldLogRepeated(count: number): boolean {
+  return count <= REPEATED_LOG_FIRST || count % REPEATED_LOG_EVERY === 0;
+}
+
 // ---- Destinations ----
 
 interface LineSink {

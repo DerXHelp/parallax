@@ -5,9 +5,20 @@
  * The own `--user-data-dir` keeps token URLs out of the user's browser history and gives stable
  * notification permissions; when that profile is already open, Edge hands the new window to the
  * running browser process and the started `msedge.exe` exits at once.
+ *
+ * The profile never signs in and never syncs (V2-01, ADR-060): without extra switches a fresh
+ * profile is signed in implicitly with the Microsoft account of the Windows user, sync is set up
+ * and a modal "We are syncing …" dialog covers the app – URLs with `#code=` would reach the
+ * account. Measured with Edge 155 (docs/wp/V2.md "Umsetzung Server"): `msImplicitSignin` disabled
+ * keeps the profile signed out, `--disable-sync` keeps sync off even for a signed-in profile;
+ * pre-written prefs (`signin.allowed`, `profiles.edge_implicit_sign_in_enabled`) and
+ * `--allow-browser-signin=false` alone do NOT stop the implicit sign-in. Only command-line switches –
+ * no policies, no registry, no admin rights. A company policy can override them (ADR-060).
  */
 import type { ChildProcess } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { z } from 'zod';
 import { findEdge } from '../lib/edge';
 import { spawnHidden, type SpawnHiddenOptions } from '../lib/process';
 import { regQuery } from '../lib/registry';
@@ -18,14 +29,60 @@ export function edgeProfileDir(home: string): string {
   return path.join(home, 'edge');
 }
 
+/**
+ * Edge features disabled for the app profile (V2-01): implicit sign-in with the Windows account
+ * (the one that matters, verified), first sync on first run, the sync confirmation dialog, forced
+ * sign-in and the web-to-browser sign-in prompts. Unknown names are ignored by Edge.
+ */
+export const EDGE_DISABLED_FEATURES: readonly string[] = [
+  'msImplicitSignin',
+  'msEdgeFirstSyncOnFirstRun',
+  'msWebUISyncConfirmationDialog',
+  'msForceBrowserSignIn',
+  'msSeamlessWebToBrowserSignIn',
+  'msEnableWebToBrowserSignIn',
+  'msEnableAADWebToBrowserSignIn',
+  'msQuickAuthToBrowserSignIn',
+];
+
 /** Arguments for one app window on `url` (`http://127.0.0.1:<port>/#code=<code>`). */
 export function edgeAppArgs(options: { home: string; url: string }): string[] {
   return [
     `--user-data-dir=${edgeProfileDir(options.home)}`,
     '--no-first-run',
     '--no-default-browser-check',
+    // V2-01: never sync, never sign in implicitly (Chromium switch + Edge features).
+    '--disable-sync',
+    '--allow-browser-signin=false',
+    `--disable-features=${EDGE_DISABLED_FEATURES.join(',')}`,
     `--app=${options.url}`,
   ];
+}
+
+const localStateSchema = z.looseObject({
+  profile: z
+    .looseObject({
+      info_cache: z.record(z.string(), z.looseObject({ user_name: z.string().optional() })).optional(),
+    })
+    .optional(),
+});
+
+/**
+ * True if a profile in `<home>\edge` is signed in to an account (`Local State`: a non-empty
+ * `user_name` – e.g. signed in by a Parallax version before V2-01). Read-only; false if unreadable.
+ */
+export async function edgeProfileSignedIn(home: string): Promise<boolean> {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await readFile(path.join(edgeProfileDir(home), 'Local State'), 'utf8'));
+  } catch {
+    return false;
+  }
+  const parsed = localStateSchema.safeParse(raw);
+  if (!parsed.success) return false;
+  return Object.values(parsed.data.profile?.info_cache ?? {}).some(
+    (info) => (info.user_name ?? '').trim() !== '',
+  );
 }
 
 /** Absolute msedge.exe or null (real registry and file system). */

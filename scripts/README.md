@@ -33,4 +33,18 @@ Seit WP-11 nutzt der Recorder `buildEnvReport()` und `parseAuthStatus()` aus `sr
 spike-eigen bleiben nur das Entfernen von `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/
 `ANTHROPIC_BASE_URL`, der `PARALLAX_LIVE`-Guard und `PARALLAX_ENTRY_ID=spike`.
 
-Der Launcher für `pnpm start` (unsichtbarer Server, Edge-App-Fenster) folgt in WP-21.
+Der Launcher für `pnpm start` (unsichtbarer Server, Edge-App-Fenster) liegt in
+`src/server/launcher/` (WP-21, README dort).
+
+## `pnpm build:server` und die Build-ID
+
+`build-server.ts` bündelt `src/server/main.ts` nach `dist/server.js` (esbuild, ADR-004) und trägt die
+Build-ID (`resolveBuildId()` aus `repo.config.ts`) per `define` und in der ersten Zeile ein; Vite
+schreibt dieselbe ID nach `dist/web/build.json`. Die ID ist `<version>+<letzter Commit, der eine
+Build-Eingabe geändert hat>[.dirty-<Digest>]` (ADR-065): ein reiner Doku- oder Test-Commit ändert sie
+nicht und erzwingt keinen Neubau. Ein laufender Server liefert seine beim Start fixierte UI-Kopie
+aus (`PARALLAX_HOME/ui/<buildId>`, ADR-066) – ein späteres `pnpm build`/`pnpm e2e` stört ihn nicht.
+
+`pnpm preflight` meldet seit V2-01 zusätzlich Edge-Richtlinien (HKLM/HKCU
+`SOFTWARE\Policies\Microsoft\Edge`), die das App-Profil trotz seiner Schalter anmelden oder
+synchronisieren könnten (`warn`), bzw. hilfreiche Sign-in/Sync-Richtlinien (`info`).

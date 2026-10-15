@@ -153,6 +153,10 @@ export const launcherCodeResponseSchema = z.object({
 });
 export type LauncherCodeResponse = z.infer<typeof launcherCodeResponseSchema>;
 
+/** Session backend of a server: `sdk` = the real `claude`, `fake` = FakeBackend (no tokens). */
+export const backendKindSchema = z.enum(['sdk', 'fake']);
+export type BackendKind = z.infer<typeof backendKindSchema>;
+
 /** `GET /api/health` – no secrets; the launcher compares `serverInstanceId` with the lock file. */
 export const healthResponseSchema = z.object({
   ok: z.literal(true),
@@ -161,11 +165,61 @@ export const healthResponseSchema = z.object({
   serverVersion: z.string().min(1),
   buildId: z.string().min(1).max(LIMITS.buildIdChars),
   startedAt: isoDateTimeSchema,
+  /**
+   * Backend of the running server (R3-02, additive): the launcher refuses to open a window of a
+   * server whose backend differs from the requested one. Absent on builds before R3.
+   */
+  backend: backendKindSchema.optional(),
 });
 export type HealthResponse = z.infer<typeof healthResponseSchema>;
 
 /** Body of every HTTP error response (also of a rejected WS upgrade). */
 export const httpErrorBodySchema = errorPayloadSchema;
+
+// =====================================================================================
+// Content-Security-Policy (C.10, ADR-026; R1W-23/R3-14: one source for every server of the UI)
+// =====================================================================================
+
+/** Directive name → sources, in header order. */
+export type CspDirectives = readonly (readonly [directive: string, sources: readonly string[]])[];
+
+/**
+ * Page CSP of the UI served by a server on `port`: scripts only from the own origin (no inline,
+ * no eval), inline styles allowed (Radix injects `<style>`, ADR-026), images also `data:`/`blob:`,
+ * network only to the own origin and its WebSocket; no plugins, no `<base>`, no framing, no forms.
+ */
+export function pageCspDirectives(port: number): CspDirectives {
+  return [
+    ['default-src', ["'self'"]],
+    ['script-src', ["'self'"]],
+    ['style-src', ["'self'", "'unsafe-inline'"]],
+    ['object-src', ["'none'"]],
+    ['base-uri', ["'none'"]],
+    ['frame-ancestors', ["'none'"]],
+    ['form-action', ["'none'"]],
+    ['img-src', ["'self'", 'data:', 'blob:']],
+    ['connect-src', ["'self'", `ws://${LOOPBACK_HOST}:${String(checkedPort(port))}`]],
+  ];
+}
+
+/** Blob answers (`/api/blob/:id`): never rendered as a document of the app's origin. */
+export const BLOB_CSP_DIRECTIVES: CspDirectives = [
+  ['sandbox', []],
+  ['default-src', ["'none'"]],
+];
+
+/** Header value: `directive source source; directive …`. */
+export function cspHeaderValue(directives: CspDirectives): string {
+  return directives.map(([name, sources]) => [name, ...sources].join(' ')).join('; ');
+}
+
+/** `Content-Security-Policy` of the pages of a server on `port`. */
+export function pageCsp(port: number): string {
+  return cspHeaderValue(pageCspDirectives(port));
+}
+
+/** `Content-Security-Policy` of blob answers. */
+export const BLOB_CSP = cspHeaderValue(BLOB_CSP_DIRECTIVES);
 
 // =====================================================================================
 // Launcher authorization header

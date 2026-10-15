@@ -9,7 +9,9 @@
  *     integration (no `claude` process at all); `sdk` = SdkBackend (the SDK module is only imported
  *     here) + real Claude integration (profile "Standard", resolveClaude).
  *  4. SessionManager → SyncHub(source: manager) → `attachPublisher` → `manager.start()` (recovery;
- *     orphans in the background) → `createApp` (the app attaches the hub's WS route itself).
+ *     orphans in the background) → snapshot of the built UI in `PARALLAX_HOME/ui/<buildId>`
+ *     (webSnapshot.ts, V2-03) → `createApp` (the app attaches the hub's WS route itself).
+ *     Hub and transcript store validate outgoing values with `config.validation` (R3-05).
  *  5. Shutdown frame + signal handlers, then `listen` on 127.0.0.1 (EADDRINUSE → exit 4).
  *  6. `server.lock.json` with the actual port and `auth.launcherToken` – only now the launcher
  *     regards the server as ready; then in the background the access check of the home
@@ -44,6 +46,7 @@ import {
   type ShutdownStep,
   type SignalTarget,
 } from '../launcher/shutdown';
+import { settleWithin, toError } from '../lib/async';
 import { logHomeAccess } from '../lib/homeAccess';
 import type { HomeLock } from '../lib/homeLock';
 import { logger as rootLogger, type LoggingHandle } from '../lib/logger';
@@ -57,6 +60,7 @@ import { openRegistryStore } from '../store/registry';
 import { openSettingsStore } from '../store/settings';
 import { createTranscriptStore } from '../store/transcripts';
 import { createSyncHub } from '../sync/hub';
+import { prepareWebRoot } from './webSnapshot';
 
 /** The server start failed before it was ready; `exitCode` from SERVER_EXIT_CODES. */
 export class StartupError extends Error {
@@ -78,7 +82,10 @@ const LOG_CLOSE_TIMEOUT_MS = 2_000;
 
 export interface StartServerOptions {
   config: ServerConfig;
-  /** Built web UI (`dist/web`); null = not served (dev mode: Vite serves the UI). */
+  /**
+   * Built web UI (`dist/web`); null = not served (dev mode: Vite serves the UI). Served from its
+   * snapshot in `PARALLAX_HOME/ui/<buildId>` (webSnapshot.ts) when it carries the server's build id.
+   */
   webRoot: string | null;
   /** Closed after the shutdown steps, right before `exit` (so the last lines reach the file). */
   logging?: LoggingHandle | null;
@@ -133,24 +140,13 @@ interface Stores {
 
 /** Settles within `ms` and never rejects (cleanup must go on after a failing step). */
 async function settle(work: () => unknown, ms: number, log: Logger, what: string): Promise<void> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<'timeout'>((resolve) => {
-    timer = setTimeout(() => {
-      resolve('timeout');
-    }, ms);
-  });
-  try {
-    const outcome = await Promise.race([Promise.resolve().then(work), timeout]);
-    if (outcome === 'timeout') log.warn({ step: what, ms }, 'cleanup step timed out');
-  } catch (error) {
-    log.warn({ err: error, step: what }, 'cleanup step failed');
-  } finally {
-    clearTimeout(timer);
-  }
+  const settled = await settleWithin(work, ms);
+  if (settled.outcome === 'timeout') log.warn({ step: what, ms }, 'cleanup step timed out');
+  if (settled.outcome === 'failed') log.warn({ err: settled.error, step: what }, 'cleanup step failed');
 }
 
 function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return toError(error).message;
 }
 
 /**
@@ -179,12 +175,8 @@ async function openStores(config: ServerConfig, instance: ServerInstance, log: L
     opened.push({ name: 'blobs', close: () => blobs.close() });
     const decisions = createDecisionStore({ home, warnings });
     opened.push({ name: 'decisions', close: () => decisions.close() });
-    // Dev mode logs invalid lines (R1-16); otherwise the module default (off, `throw` under tests).
-    const transcripts = createTranscriptStore({
-      home,
-      warnings,
-      ...(config.dev ? { validation: 'log' as const } : {}),
-    });
+    // Invalid lines are logged and counted, also in production (R1-16, R3-05); tests: throw.
+    const transcripts = createTranscriptStore({ home, warnings, validation: config.validation });
     opened.push({ name: 'transcripts', close: () => transcripts.close() });
     return {
       warnings,
@@ -234,7 +226,9 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   const exit = options.exit ?? ((code: number) => process.exit(code));
   const findRunning = options.findRunning ?? ((home: string) => findRunningServer({ home }));
 
-  // 1. Single instance per data directory (a second writer would corrupt the stores).
+  // 1. Single instance per data directory (a second writer would corrupt the stores). Since the
+  //    home lock of main.ts (R2-05) this is belt and braces: it still catches a running server of a
+  //    build before the home lock, which does not hold the pipe (R3-11).
   const running = await findRunning(config.home);
   if (running.kind === 'running') {
     throw new StartupError(
@@ -335,20 +329,21 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       },
     });
     manager = sessions;
-    // Dev mode logs invalid outgoing values; otherwise the hub default (off, `throw` under tests).
-    const hub = createSyncHub({
-      source: sessions,
-      instance,
-      ...(config.dev ? { validation: 'log' as const } : {}),
-    });
+    // Invalid outgoing values are logged, counted and dropped – also in production, where real SDK
+    // data reaches the contract for the first time (R3-05); tests and E2E: throw.
+    const hub = createSyncHub({ source: sessions, instance, validation: config.validation });
     sessions.attachPublisher(hub); // before start() (WP-13 §3.5, R1-18)
     stores.warnings.onChange(() => {
       sessions.publishHostState();
     });
     await sessions.start();
 
-    if (options.webRoot !== null && !existsSync(options.webRoot)) {
-      log.warn({ webRoot: options.webRoot }, 'web UI not found - run "pnpm build" (API only)');
+    let webRoot = options.webRoot;
+    if (webRoot !== null && !existsSync(webRoot)) {
+      log.warn({ webRoot }, 'web UI not found - run "pnpm build" (API only)');
+    } else if (webRoot !== null) {
+      // A later build of dist/ must not change what this server serves (V2-03, ADR-066).
+      webRoot = await prepareWebRoot({ source: webRoot, home: config.home, buildId: instance.buildId, log });
     }
     app = await createApp({
       config,
@@ -356,7 +351,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       auth: stores.auth,
       blobs: stores.blobs,
       hub,
-      webRoot: options.webRoot,
+      webRoot,
     });
   } catch (error) {
     return fail(
@@ -456,6 +451,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       pid: process.pid,
       backend: config.backend,
       dev: config.dev,
+      validation: config.validation,
       home: config.home,
       buildId: instance.buildId,
       serverInstanceId: instance.serverInstanceId,

@@ -1,9 +1,20 @@
 import { EventEmitter } from 'node:events';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { appUrlWithCode, serverOrigin } from '@shared/http';
 import { sampleToken } from '@shared/samples';
+import { makeTempHome } from '../http/testServer';
 import type { SpawnHiddenOptions } from '../lib/process';
-import { edgeAppArgs, edgeProfileDir, openEdgeWindow, type SpawnFn, type SpawnedChild } from './edgeWindow';
+import {
+  EDGE_DISABLED_FEATURES,
+  edgeAppArgs,
+  edgeProfileDir,
+  edgeProfileSignedIn,
+  openEdgeWindow,
+  type SpawnFn,
+  type SpawnedChild,
+} from './edgeWindow';
 
 const HOME = 'C:\\Users\\Jane Doe\\AppData\\Local\\Parallax';
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
@@ -38,15 +49,45 @@ function fakeSpawn(outcome: 'spawn' | Error) {
 }
 
 describe('Edge app window (C.9, A.8)', () => {
-  it('own profile, no first-run UI, app mode on the code URL', () => {
+  it('own profile, no first-run UI, no sign-in/sync (V2-01), app mode on the code URL', () => {
     const url = appUrlWithCode(serverOrigin(4711), sampleToken(1));
     expect(edgeProfileDir(HOME)).toBe(`${HOME}\\edge`);
-    expect(edgeAppArgs({ home: HOME, url })).toEqual([
+    const args = edgeAppArgs({ home: HOME, url });
+    expect(args).toEqual([
       `--user-data-dir=${HOME}\\edge`,
       '--no-first-run',
       '--no-default-browser-check',
+      '--disable-sync',
+      '--allow-browser-signin=false',
+      `--disable-features=${EDGE_DISABLED_FEATURES.join(',')}`,
       `--app=http://127.0.0.1:4711/#code=${sampleToken(1)}`,
     ]);
+    // The operative switch against the implicit Windows-account sign-in (measured, ADR-060).
+    expect(EDGE_DISABLED_FEATURES[0]).toBe('msImplicitSignin');
+    // One --disable-features only (a second one would replace the first), the URL stays last.
+    expect(args.filter((arg) => arg.startsWith('--disable-features='))).toHaveLength(1);
+    expect(args.at(-1)).toMatch(/^--app=/);
+  });
+
+  it('detects a profile that is already signed in (Local State), read-only', async () => {
+    const home = await makeTempHome('r3-edgeprofile-');
+    try {
+      expect(await edgeProfileSignedIn(home)).toBe(false);
+      await mkdir(edgeProfileDir(home), { recursive: true });
+      const localState = (info: Record<string, unknown>) =>
+        writeFile(
+          path.join(edgeProfileDir(home), 'Local State'),
+          JSON.stringify({ profile: { info_cache: info } }),
+        );
+      await localState({ Default: { user_name: '', name: 'Profil 1' } });
+      expect(await edgeProfileSignedIn(home)).toBe(false);
+      await localState({ Default: { user_name: 'someone@example.invalid', gaia_id: 'x' } });
+      expect(await edgeProfileSignedIn(home)).toBe(true);
+      await writeFile(path.join(edgeProfileDir(home), 'Local State'), '{ broken');
+      expect(await edgeProfileSignedIn(home)).toBe(false);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it('starts the absolute msedge.exe detached with an argument array and unrefs it', async () => {

@@ -10,11 +10,14 @@ import { open, readFile, stat, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
+import { WEB_BUILD_INFO_FILE, parseWebBuildId } from '../app/webSnapshot';
 import { runFile, type RunFileFn, type RunFileResult } from '../lib/process';
 
 /** Relative to the repo root. */
 export const SERVER_BUNDLE = path.join('dist', 'server.js');
 export const WEB_INDEX = path.join('dist', 'web', 'index.html');
+/** `dist/web/build.json` (repo.config.ts `WEB_BUILD_INFO_FILE`, pinned by a test). */
+export const WEB_BUILD_INFO = path.join('dist', 'web', WEB_BUILD_INFO_FILE);
 
 /** First line of the server bundle: `// Parallax server, build <id>` (scripts/build-server.ts banner). */
 const BANNER = /^\/\/ \S+ server, build (\S+)\s*$/;
@@ -102,9 +105,19 @@ export type BuildState =
       expected: string | null;
     };
 
+/** Build id of `dist/web` (`build.json`, vite.config.ts), or null if missing/unreadable. */
+export async function readWebBundleBuildId(
+  repoRoot: string,
+  fs: BuildFs = nodeBuildFs,
+): Promise<string | null> {
+  const text = await fs.readText(path.join(repoRoot, WEB_BUILD_INFO));
+  return text === null ? null : parseWebBuildId(text);
+}
+
 /**
- * Up to date = server bundle and web index exist and the bundle's build id equals `expected`
- * (null = the current id could not be determined → rebuild to be safe).
+ * Up to date = server bundle and web index exist, both bundles carry the same build id (a build that
+ * stopped after `build:web` leaves them apart, ADR-066) and it equals `expected` (null = the current
+ * id could not be determined → rebuild to be safe).
  */
 export async function checkBuild(options: {
   repoRoot: string;
@@ -117,7 +130,7 @@ export async function checkBuild(options: {
   if (bundled === null || !webOk)
     return { upToDate: false, reason: 'missing', bundled, expected: options.expected };
   if (options.expected === null) return { upToDate: false, reason: 'unknown', bundled, expected: null };
-  if (bundled !== options.expected)
+  if (bundled !== options.expected || (await readWebBundleBuildId(options.repoRoot, fs)) !== bundled)
     return { upToDate: false, reason: 'stale', bundled, expected: options.expected };
   return { upToDate: true, buildId: bundled };
 }

@@ -16,6 +16,7 @@ import {
 } from '@shared/samples';
 import type { SessionViewState } from '@shared/sync';
 import { createServerInstance } from '../config';
+import { REPEATED_LOG_EVERY, REPEATED_LOG_FIRST, shouldLogRepeated } from '../lib/logger';
 import { createSyncHub, type HubSocket, type SyncHub } from './hub';
 import { createMemorySessionSource, type MemorySessionSource } from './memorySource';
 import { CommandError } from './ports';
@@ -519,7 +520,17 @@ describe('outgoing validation (R0-28)', () => {
     const broken = { op: 'item.remove', itemId: '' } as unknown as SessionOp;
     lenient.publishOps(ENTRY, [broken, upsert(3)]);
     expect(socket.ofType('session.ops')[0]?.ops.map((o) => o.op.op)).toEqual(['item.upsert']);
+    // R3-05: counted for the diagnosis; the seq stays gapless (the dropped op got none).
+    expect(lenient.stats()).toEqual({ invalidOutgoing: 1 });
+    expect(socket.ofType('session.ops')[0]?.ops[0]?.seq).toBe(lenient.inspect(ENTRY)?.seq ?? 0);
     lenient.dispose();
+  });
+
+  it('log mode logs the first failures and then only every 100th (R3-05)', () => {
+    const logged = Array.from({ length: 1000 }, (_, i) => i + 1).filter((n) => shouldLogRepeated(n));
+    expect(logged.slice(0, REPEATED_LOG_FIRST)).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+    expect(logged.slice(REPEATED_LOG_FIRST)).toEqual([100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]);
+    expect(REPEATED_LOG_EVERY).toBe(100);
   });
 });
 
