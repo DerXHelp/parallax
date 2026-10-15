@@ -107,6 +107,27 @@ describe('applySessionOp – op table', () => {
     expect(byId.get('c')).toMatchObject({ inputPartial: '{"command":' });
   });
 
+  it('item.delta after the final upsert (not streaming any more) is ignored (R0-15)', () => {
+    const s = applySessionOps(state(), [
+      {
+        op: 'item.upsert',
+        item: sampleItems.assistantText({ id: 'a', order: 50, text: 'OK', streaming: false }),
+      },
+      { op: 'item.upsert', item: sampleItems.thinking({ id: 't', order: 51, streaming: false }) },
+      { op: 'item.upsert', item: sampleItems.toolCall({ id: 'c', order: 52, status: 'running' }) },
+    ]);
+    const frozen = deepFreeze(s);
+    expect(applySessionOp(frozen, { op: 'item.delta', itemId: 'a', field: 'text', append: 'K' })).toBe(
+      frozen,
+    );
+    expect(applySessionOp(frozen, { op: 'item.delta', itemId: 't', field: 'thinking', append: 'm' })).toBe(
+      frozen,
+    );
+    expect(
+      applySessionOp(frozen, { op: 'item.delta', itemId: 'c', field: 'inputPartial', append: '{' }),
+    ).toBe(frozen);
+  });
+
   it('item.delta on an unknown id or a non-matching field is ignored', () => {
     const s = state();
     expect(applySessionOp(s, { op: 'item.delta', itemId: 'nope', field: 'text', append: 'x' })).toBe(s);

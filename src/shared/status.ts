@@ -4,7 +4,7 @@
  * Design and decision tables: docs/wp/WP-02.md §6.
  */
 import { z } from 'zod';
-import { decisionKindSchema, isoDateTimeSchema, type DecisionKind } from './common';
+import { DECISION_KINDS, decisionKindSchema, isoDateTimeSchema, type DecisionKind } from './common';
 import { errorCodeSchema } from './errors';
 
 /**
@@ -84,10 +84,16 @@ export const INITIAL_STATUS_FACTS: StatusFacts = Object.freeze({
 
 // ---- Display (§6.2) ----
 
+/**
+ * The kind is also the icon and i18n key of the status (`status.<kind>`, WP-14). `needs-resume`
+ * (ADR-016): interrupted by a server restart with expired decision cards – waits for the user
+ * ("Fortsetzen & Plan freigeben"), but has no live decision; own icon, distinct from `needs-*`.
+ */
 export const DISPLAY_STATUS_KINDS = [
   'needs-permission',
   'needs-answer',
   'needs-review',
+  'needs-resume',
   'error',
   'interrupted',
   'rate-limited',
@@ -113,16 +119,23 @@ export interface DisplayStatusBadges {
 
 export interface DisplayStatus {
   kind: DisplayStatusKind;
-  /** Counts for "Wartet auf dich (n)", Ctrl+K order, window title. Only for needs-*. */
+  /** Counts for "Wartet auf dich (n)", Ctrl+K order, window title. Only for needs-* (incl. needs-resume). */
   needsAttention: boolean;
   unread: boolean;
   /** Secondary badges (icon + text, never color only – B Barrierearmut). */
   badges: DisplayStatusBadges;
   /** Only while in the future. */
   rateLimitedUntil: string | null;
-  /** Sidebar sort bucket: 0 attention, 1 error/interrupted/rate-limited, 2 working/starting/background, 3 done, 4 rest. */
+  /** Sidebar sort bucket: 0 attention (needs-*), 1 error/interrupted/rate-limited, 2 working/starting/background, 3 done, 4 rest. */
   sortBucket: SortBucket;
 }
+
+const ATTENTION_KINDS: ReadonlySet<DisplayStatusKind> = new Set<DisplayStatusKind>([
+  'needs-permission',
+  'needs-answer',
+  'needs-review',
+  'needs-resume',
+]);
 
 const NEEDS_KIND: Readonly<Record<DecisionKind, DisplayStatusKind>> = {
   permission: 'needs-permission',
@@ -162,13 +175,16 @@ function classify(facts: StatusFacts, now: Date): { kind: DisplayStatusKind; sor
   ) {
     return { kind: NEEDS_KIND[attentionKind(facts)], sortBucket: 0 };
   }
-  // Rows 3–5
+  // Row 3 (ADR-016): expired cards after a restart wait for "Fortsetzen" – counts as attention.
+  if (runState === 'interrupted' && facts.decisions.expired > 0)
+    return { kind: 'needs-resume', sortBucket: 0 };
+  // Rows 4–6
   if (runState === 'error') return { kind: 'error', sortBucket: 1 };
   if (runState === 'interrupted') return { kind: 'interrupted', sortBucket: 1 };
   if (isFuture(facts.rateLimitedUntil, now) && (runState === 'idle' || runState === 'sleeping')) {
     return { kind: 'rate-limited', sortBucket: 1 };
   }
-  // Rows 6–11
+  // Rows 7–12
   if (runState === 'starting') return { kind: 'starting', sortBucket: 2 };
   if (runState === 'working') return { kind: 'working', sortBucket: 2 };
   if (runState === 'idle') {
@@ -182,12 +198,15 @@ function classify(facts: StatusFacts, now: Date): { kind: DisplayStatusKind; sor
   return { kind: 'sleeping', sortBucket: facts.unread ? 3 : 4 };
 }
 
-/** The one display-status derivation for server and UI (A.4). First matching row of §6.2 wins. */
+/**
+ * The one display-status derivation for server and UI (A.4). First matching row of the table in
+ * docs/architecture.md §7 wins (WP-02 §6.2 plus row 3 `needs-resume`, ADR-016).
+ */
 export function deriveDisplayStatus(facts: StatusFacts, now: Date): DisplayStatus {
   const { kind, sortBucket } = classify(facts, now);
   return {
     kind,
-    needsAttention: kind === 'needs-permission' || kind === 'needs-answer' || kind === 'needs-review',
+    needsAttention: ATTENTION_KINDS.has(kind),
     unread: facts.unread,
     badges: {
       background: facts.backgroundTasks > 0,
@@ -234,10 +253,26 @@ const NEEDS_NOTIFICATION: Partial<Record<DisplayStatusKind, NotificationKind>> =
   'needs-review': 'plan',
 };
 
+const DECISION_NOTIFICATION: Readonly<Record<DecisionKind, NotificationKind>> = {
+  permission: 'permission',
+  question: 'question',
+  plan: 'plan',
+};
+
+/** R0-13: the kind whose open count rose (first in DECISION_KINDS order), or null. */
+function increasedKind(prev: StatusFacts, next: StatusFacts): DecisionKind | null {
+  for (const kind of DECISION_KINDS) {
+    if (next.decisions[kind] > prev.decisions[kind]) return kind;
+  }
+  return null;
+}
+
 /**
  * Which notification (if any) a status transition triggers (A.9: the server decides the channel,
  * this decides the event). Pure; the server additionally applies presence rules and calls it with
  * `minDoneTurnMs: 0` for unfocused clients (B "Fertig-Toasts … oder ohne Fokus").
+ * A new decision is reported with ITS kind, not the kind of the oldest one (R0-13).
+ * `needs-resume` only arises when the server starts, so it never notifies (ADR-016).
  */
 export function notificationFor(
   prev: StatusFacts,
@@ -249,7 +284,11 @@ export function notificationFor(
   const n = deriveDisplayStatus(next, now).kind;
   const needs = NEEDS_NOTIFICATION[n];
   if (needs !== undefined) {
-    return p !== n || openDecisionCount(next) > openDecisionCount(prev) ? needs : null;
+    if (openDecisionCount(next) > openDecisionCount(prev)) {
+      const added = increasedKind(prev, next);
+      return added === null ? needs : DECISION_NOTIFICATION[added];
+    }
+    return p !== n ? needs : null;
   }
   switch (n) {
     case 'done':

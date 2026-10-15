@@ -2,6 +2,8 @@
  * Port: AgentBackend (WP-13 implements SdkBackend + FakeBackend). Types only; frozen like
  * src/shared. Raw SDK messages exist only behind this port (`BackendEvent.message: unknown`);
  * the normalizer (WP-12) parses them tolerantly. Design: docs/wp/WP-02.md §9.2.
+ * Ownership: this file and fixture.ts are frozen contracts; everything else in backend/ is WP-13
+ * (FakeBackend scenarios without a recorded fixture as `.ts` modules in backend/fake/, R0-06).
  */
 import type {
   EffortLevel,
@@ -122,6 +124,10 @@ export interface AgentBackend {
   readonly kind: 'sdk' | 'fake';
   /** Synchronous; failures arrive as events. */
   start(req: StartSessionRequest): AgentSession;
+  /**
+   * getSessionMessages including subagent messages (getSubagentMessages, with
+   * `parentToolUseId`), merged by time – so history items equal the live items (A.3, R0-18).
+   */
   readHistory(req: HistoryRequest): Promise<HistoryMessage[]>;
   getSessionInfo(req: HistoryRequest): Promise<BackendSessionInfo | null>;
   /** Only dormant sessions (C.6). */

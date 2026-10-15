@@ -72,6 +72,10 @@ function upsertItem(items: readonly TranscriptItem[], item: TranscriptItem): Tra
   return [...items.slice(0, at), item, ...items.slice(at)];
 }
 
+/**
+ * Deltas only apply to items that are still streaming (R0-15): a late delta after the final
+ * `item.upsert` would otherwise append text twice (on both sides equally wrong).
+ */
 function applyDelta(
   item: TranscriptItem,
   field: 'text' | 'thinking' | 'inputPartial',
@@ -79,13 +83,15 @@ function applyDelta(
 ): TranscriptItem | null {
   switch (item.kind) {
     case 'assistant_text':
-      return field === 'text' ? { ...item, text: item.text + append } : null;
+      return field === 'text' && item.streaming ? { ...item, text: item.text + append } : null;
     case 'thinking':
-      return field === 'text' || field === 'thinking'
+      return (field === 'text' || field === 'thinking') && item.streaming
         ? { ...item, text: { ...item.text, text: item.text.text + append } }
         : null;
     case 'tool_call':
-      return field === 'inputPartial' ? { ...item, inputPartial: (item.inputPartial ?? '') + append } : null;
+      return field === 'inputPartial' && item.status === 'streaming_input'
+        ? { ...item, inputPartial: (item.inputPartial ?? '') + append }
+        : null;
     default:
       return null;
   }

@@ -5,6 +5,13 @@
 import { describe, expectTypeOf, it } from 'vitest';
 import type { DecisionKind, EntryId, PermissionMode, RuleDestination } from './common';
 import { ERROR_CODES, type ErrorCode, type ErrorPayload } from './errors';
+import {
+  takeAuthCodeFromHash,
+  type AuthExchangeResponse,
+  type AuthStatusResponse,
+  type HealthResponse,
+  type LauncherCodeResponse,
+} from './http';
 import type {
   Decision,
   DecisionOutcome,
@@ -17,6 +24,7 @@ import type {
   TranscriptItem,
   TranscriptItemKind,
 } from './model';
+import type { PathIssue } from './paths';
 import {
   type SERVER_MESSAGE_TYPES,
   parseCommandResult,
@@ -109,6 +117,7 @@ function displayLabel(kind: DisplayStatusKind): string {
     case 'needs-permission':
     case 'needs-answer':
     case 'needs-review':
+    case 'needs-resume':
     case 'error':
     case 'interrupted':
     case 'rate-limited':
@@ -204,6 +213,23 @@ describe('contract types', () => {
     expectTypeOf(deriveDisplayStatus).returns.toEqualTypeOf<DisplayStatus>();
     expectTypeOf<SessionViewState['items']>().toEqualTypeOf<TranscriptItem[]>();
     expectTypeOf<SessionViewState['decisions']>().toEqualTypeOf<Decision[]>();
+  });
+
+  it('HTTP contract types (R0-01)', () => {
+    expectTypeOf<HealthResponse['product']>().toEqualTypeOf<'parallax'>();
+    expectTypeOf<AuthStatusResponse>().toEqualTypeOf<{ authenticated: boolean; serverInstanceId: string }>();
+    expectTypeOf<AuthExchangeResponse['authenticated']>().toEqualTypeOf<true>();
+    expectTypeOf<LauncherCodeResponse>().toEqualTypeOf<{
+      code: string;
+      expiresAt: string;
+      serverInstanceId: string;
+    }>();
+    expectTypeOf(takeAuthCodeFromHash).returns.toEqualTypeOf<{ code: string | null; hash: string }>();
+    expectTypeOf<PathIssue>().toExtend<string>();
+  });
+
+  it('R0-14 adds needs-resume to the display kinds', () => {
+    expectTypeOf<'needs-resume'>().toExtend<DisplayStatusKind>();
   });
 
   it('exhaustive switches compile', () => {

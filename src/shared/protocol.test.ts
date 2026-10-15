@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { LIMITS } from './common';
 import {
   PROTOCOL_VERSION,
   SERVER_MESSAGE_TYPES,
@@ -273,6 +274,37 @@ describe('client messages', () => {
       }),
     );
     expect(parsed.ok).toBe(true);
+  });
+
+  it('model names must not look like CLI flags (R0-09) and are length-capped (R0-08)', () => {
+    const setModel = (model: string | null) =>
+      parseClientMessage(
+        JSON.stringify({
+          type: 'cmd',
+          cmdId: SAMPLE_IDS.cmdId,
+          cmd: { name: 'session.setModel', entryId, model },
+        }),
+      ).ok;
+    expect(setModel('sonnet[1m]')).toBe(true);
+    expect(setModel(null)).toBe(true);
+    expect(setModel('--dangerously-skip-permissions')).toBe(false);
+    expect(setModel('x'.repeat(LIMITS.modelChars + 1))).toBe(false);
+    const create = (model: string) =>
+      parseClientMessage(
+        JSON.stringify({
+          type: 'cmd',
+          cmdId: SAMPLE_IDS.cmdId,
+          cmd: { name: 'session.create', cwd: 'D:\\x', model },
+        }),
+      ).ok;
+    expect(create('haiku')).toBe(true);
+    expect(create('-p')).toBe(false);
+  });
+
+  it('caps the build id of clientHello (R0-08)', () => {
+    const hello = (buildId: string) => parseClientMessage(JSON.stringify(sampleClientHello({ buildId }))).ok;
+    expect(hello('0.0.0+6d02d1a4a1cf.dirty-1a2b3c4d')).toBe(true);
+    expect(hello('x'.repeat(LIMITS.buildIdChars + 1))).toBe(false);
   });
 
   it('rejects a blank rename title but accepts null (auto title)', () => {

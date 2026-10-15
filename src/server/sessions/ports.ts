@@ -1,13 +1,28 @@
 /**
  * Port: normalizer + status machine (WP-12) ↔ session engine (WP-13). Types only; frozen like
- * src/shared. Design: docs/wp/WP-02.md §9.4.
+ * src/shared. Design: docs/wp/WP-02.md §9.4; rules added by R0 (R0-05, R0-11, R0-28, R0-29):
+ * docs/architecture.md §6/§7.
  *
  * WP-12 modules (fixed names): sessions/normalizer/index.ts exports createLiveNormalizer,
  * normalizeHistory, normalizeContextUsage; sessions/normalizer/sdk-schemas.ts (tolerant zod
- * schemas of SDK messages); sessions/status/machine.ts exports reduceStatus.
+ * schemas of SDK messages); sessions/status/machine.ts exports reduceStatus. Synthetic test
+ * streams (SDK types without a recorded fixture) live as `.ts` modules in
+ * sessions/normalizer/synthetic/*.ts (fixture format v1, checked with fixtureEventSchema) –
+ * never as `.jsonl` outside test/fixtures/sdk (git-ignored, R0-06).
  *
  * Single writer per SessionDetail field: normalizer → init, backgroundTasks, promptSuggestion,
  * rateLimit, commands, unknownCounts; engine → conversationId, conversations, queue, models.
+ *
+ * Normalizer rules (normative, tested by WP-12):
+ * - Unknown enum values of a newer CLI (permission mode, effort) become null and are counted as
+ *   `unknownEnumCountKey(...)` in unknownCounts; unknown effort levels are dropped
+ *   (parsePermissionMode / parseEffortLevels in @shared/common).
+ * - Size: every item stays within LIMITS.itemTotalChars (assistant text exempt); over budget,
+ *   move content into blobs in this order: result.structured → result text parts → input strings.
+ *   Bash/PowerShell/Read: fields of `structured` already contained in `content` (stdout, stderr,
+ *   file.content) are removed from `structured` (no duplicate text, R0-11).
+ * - Every emitted op must survive `sessionOpSchema.parse` unchanged (no `undefined` where the
+ *   schema has a null default); the snapshot tests assert this for every op (R0-28).
  */
 import type { ConversationId, EntryId, PermissionMode } from '@shared/common';
 import type { ErrorPayload } from '@shared/errors';
@@ -47,15 +62,16 @@ export type StatusSignal =
       type: 'init';
       sessionId: string;
       model: string;
-      permissionMode: PermissionMode;
+      /** null = unknown mode of a newer CLI (R0-05). */
+      permissionMode: PermissionMode | null;
       cliVersion: string;
       apiKeySource: string;
       capabilities: string[];
     }
   /** First message with a new session_id after a reset (F.7). */
   | { type: 'session_id'; sessionId: string }
-  /** system/status.permissionMode */
-  | { type: 'permission_mode'; mode: PermissionMode }
+  /** system/status.permissionMode; null = unknown mode of a newer CLI (R0-05). */
+  | { type: 'permission_mode'; mode: PermissionMode | null }
   | { type: 'compacting'; active: boolean }
   | { type: 'retry'; active: boolean }
   /** F.6, main thread only. */
@@ -71,9 +87,18 @@ export type StatusSignal =
       error: ErrorPayload | null;
       resultExcerpt: string | null;
       userMessageUuids: string[];
+      /** num_turns 0 (/rename, /clear, F.7/F.8): changes neither lastTurn nor unread. */
       synthetic: boolean;
+      /** `result.startup_failure_reason` was set (C.5, R0-05a); `error` carries its code. */
+      startupFailure: boolean;
     }
   | { type: 'conversation_reset'; trigger: string | null; correlationId: string }
+  /**
+   * system/session_title_changed (untyped, F.8). The ENGINE decides (R0-05e): the echo of its own
+   * pending `/rename X` (title === X) → title X, titleSource 'custom'; titleSource already
+   * 'custom' → ignore; within the current turn after a conversation_reset → ignore (the CLI
+   * echoes the old title for the new session); otherwise → title, titleSource 'ai'.
+   */
   | { type: 'title_changed'; title: string }
   /** Non-ambient tasks. */
   | { type: 'background_tasks'; count: number }
@@ -89,12 +114,21 @@ export interface NormalizerOutput {
 
 export interface LiveNormalizer {
   push(message: unknown, receivedAt: Date): NormalizerOutput;
+  /**
+   * The user_message item is created on `command_lifecycle started` (F.9). Without the capability
+   * `msg_lifecycle_v1` (older CLI, R0-29): when the uuid first appears in a status/result
+   * `user_message_uuids`, at the latest with the next turn_result.
+   */
   registerPrompt(prompt: PendingPrompt): void;
   /** Annotate the tool_call (status awaiting_decision / decision ref / outcome). */
   attachDecision(toolUseId: string, ref: ToolDecisionRef): NormalizerOutput;
   /** Close streaming items (turn abort, process exit). */
   finalizeOpen(reason: 'turn_end' | 'process_exit'): NormalizerOutput;
-  /** After conversation_reset: continue in the new conversation (the engine created the id). */
+  /**
+   * After conversation_reset: continue in the new conversation (the engine created the id).
+   * Afterwards NO ops for items of older conversations are emitted (e.g. a background task of the
+   * old conversation finishing) – they are only logged (R0-05f); `order` restarts at nextOrder.
+   */
   startConversation(conversationId: ConversationId, nextOrder: number): void;
   readonly unknownCounts: Readonly<Record<string, number>>;
   readonly ignoredCounts: Readonly<Record<string, number>>;
@@ -126,19 +160,33 @@ export type StatusEvent =
   /** When loading from the registry. */
   | { type: 'server_restart'; hadOpenDecisions: boolean };
 
+export interface ReduceStatusContext {
+  /** A client shows this session visibly (presence) → no unread. */
+  viewedByVisibleClient: boolean;
+  /** The current process has emitted at least one session_state signal (engine tracks it). */
+  sessionStateSeen: boolean;
+}
+
 /**
- * Pure status reducer (WP-12, table-tested there). Mandatory rules (§9.4):
- * session_state running|requires_action → working; idle → idle (+ unread=true if
- * lastTurn.outcome ≠ interrupted and !viewedByVisibleClient); turn_result only sets lastTurn
- * (errorCode stays null for interrupted); process_starting → starting; process_exit expected →
- * sleeping, unexpected → error (CLAUDE_PROCESS_CRASHED or the given error); assistant_error of
- * category setup → error; server_restart: starting|working or open decisions → interrupted,
- * idle → sleeping, otherwise unchanged; rate_limit rejected → rateLimitedUntil = resetsAt;
- * without any session_state signal seen so far (old CLI) turn_result also counts as idle.
+ * Pure status reducer (WP-12, table-tested there). Mandatory rules (WP-02 §9.4 + R0-05):
+ * - session_state running|requires_action → working; idle → idle (unread unchanged).
+ * - turn_result (synthetic: no change of lastTurn/unread at all): lastTurn = {outcome, now,
+ *   durationMs}; unread = true if outcome ≠ interrupted and !viewedByVisibleClient (otherwise
+ *   unchanged). unread is set ONLY here, so result → idle and idle → result give the same facts
+ *   (C.5 "beliebige Reihenfolge"); "done" still needs runState idle (deriveDisplayStatus).
+ * - turn_result with startupFailure, or with an error of category setup → runState error,
+ *   errorCode = error.code (fallback CLAUDE_STARTUP_FAILED); interrupted never sets errorCode.
+ * - Without sessionStateSeen (old CLI) a non-synthetic turn_result also counts as idle.
+ * - process_starting → starting; process_exit expected → sleeping; unexpected → error with the
+ *   given error or CLAUDE_PROCESS_CRASHED – but an existing errorCode (runState error) is kept.
+ * - assistant_error of category setup → error.
+ * - server_restart: starting|working or open decisions → interrupted; idle → sleeping; otherwise
+ *   unchanged (the engine then sends decisions_changed with the expired count → needs-resume).
+ * - rate_limit rejected → rateLimitedUntil = resetsAt.
  */
 export type ReduceStatus = (
   facts: StatusFacts,
   event: StatusEvent,
   now: Date,
-  ctx: { viewedByVisibleClient: boolean },
+  ctx: ReduceStatusContext,
 ) => StatusFacts;

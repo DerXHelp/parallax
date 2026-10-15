@@ -1,23 +1,27 @@
 # src/shared – Contracts (Server und Web)
 
 Isomorpher Code, den Server **und** Web importieren (Alias `@shared/*`). Design: `docs/wp/WP-02.md`,
-Überblick: `docs/architecture.md`. zod-Schemas sind die Quelle der Wahrheit (`Typ = z.infer<…>`).
+Überblick und R0-Ergänzungen: `docs/architecture.md`. zod-Schemas sind die Quelle der Wahrheit
+(`Typ = z.infer<…>`).
 
 | Modul | Inhalt |
 |---|---|
-| `common.ts` | IDs (`en_`/`cv_`/`dc_`/`cl_`/`pf_` + 32 Hex, UUIDs, Blob-IDs), `makeSessionKey`/`parseSessionKey`, Zeit, JSON, SDK-Enums (`PermissionMode`, `EffortLevel`, `RuleDestination`), `LIMITS` |
-| `errors.ts` | Fehlercode-Katalog (`ERROR_CATALOG`), `ErrorPayload`/`ErrorInfo`, Mapper `startup_failure_reason`/`assistant.error` → Code |
-| `status.ts` | `StatusFacts`, `deriveDisplayStatus`, `canSleep`, `notificationFor` |
-| `model.ts` | Profile, Settings, Registry-Einträge/Unterhaltungen, Transkript-Items, Entscheidungen (Antworten = Absichten), Context/Rate-Limit, Host-Zustand, Summary, Detail |
+| `common.ts` | IDs (`en_`/`cv_`/`dc_`/`cl_`/`pf_` + 32 Hex, UUIDs, Blob-IDs), `makeSessionKey`/`parseSessionKey`, Zeit, JSON, SDK-Enums (`PermissionMode`, `EffortLevel`, `RuleDestination`) mit toleranten Lesern (`parsePermissionMode`, `parseEffortLevels`, `unknownEnumCountKey`), `LIMITS`, `modelNameSchema` |
+| `errors.ts` | Fehlercode-Katalog (`ERROR_CATALOG`, inkl. `PROFILE_*`, `LAUNCHER_TOKEN_INVALID`, `SESSION_HELD_ELSEWHERE`), `ErrorPayload`/`ErrorInfo`, Mapper `startup_failure_reason`/`assistant.error` → Code, `PROFILE_ARG_INVALID_REASONS` |
+| `status.ts` | `StatusFacts`, `deriveDisplayStatus` (inkl. `needs-resume`, ADR-016), `canSleep`, `notificationFor` |
+| `model.ts` | Profile, Settings, Registry-Einträge/Unterhaltungen, Transkript-Items, Entscheidungen (Antworten = Absichten, Records mit Snapshot), Context/Rate-Limit, Host-Zustand, Summary, Detail |
 | `protocol.ts` | WS-Nachrichten beider Richtungen, Befehle + Ergebnis-Schemas, `parseClientMessage`/`parseServerMessage`/`parseCommandResult` |
 | `sync.ts` | reine Reducer für Server-Hub und Web-Store: `applySessionOp(s)`, `applySeqOps`, `mergeItems`, `trimItems` |
+| `http.ts` | HTTP-/Auth-Contract (ADR-015): `API_PATHS`, Request/Response-Schemas, `authCookieName(port)`, Einmal-Code und Launcher-Token, `takeAuthCodeFromHash`, `allowedHosts`/`allowedOrigins`, Lockfile-Schema |
+| `paths.ts` | reine Windows-Pfadregeln (C.10, ADR-017): `windowsPathIssue`, `isSafeWindowsPath`, `windowsPathKey`, `windowsPathsEqual`, `isWindowsPathInside` – die einzige Implementierung |
 | `build.ts` | `BUILD_ID` (`pnpm build` bettet sie per `define` ein, sonst `'dev'`) |
 | `samples.ts` | gültige Beispielobjekte (feste IDs/Zeiten) für Tests und Playground |
 | `product.ts` | Produktname an genau einer Stelle (WP-00) |
 
 Tests liegen daneben (`*.test.ts`, Typ-Tests in `contracts.types.test.ts`).
 
-- Import-Reihenfolge ohne Zyklen: `common` → `errors` → `status` → `model` → `protocol` → `sync`.
+- Import-Reihenfolge ohne Zyklen: `common` → `errors` → `status` → `model` → `protocol` → `sync`;
+  `http` nach `protocol`; `paths` ist unabhängig.
 - Nur `zod` und relative Shared-Module; kein DOM, keine Node-APIs, keine SDK-Typen
   (tsconfig ohne `lib: DOM` und ohne `@types/node`, ESLint `no-restricted-imports`).
 - Importiert nie aus `src/server` oder `src/web`.

@@ -159,3 +159,56 @@ Format: `ADR-NNN – Titel` · Datum · WP · Kontext → Entscheidung → Folge
   das Design danach um und füllt den Ergebnisteil.
 - **Folgen:** Das Design ist versioniert und für Folge-Pakete nachlesbar; der Koordinator-Kontext
   bleibt klein. Die Trennung Design → Umsetzung bleibt wie im Plan erhalten.
+
+## ADR-015 – HTTP-/Auth-Contract: Launcher-Token im Lockfile, kurzlebige Einmal-Codes
+- **Datum/WP:** 15.10.2026, R0-Fixes (Entscheidung des Koordinators zu R0-01)
+- **Kontext:** A.8 sieht `#code=` → `POST /api/auth` → Geräte-Cookie vor, B/C.8 ein Lockfile mit
+  Health-Ping und Single-Instance. Offen war, wie ein erneuter Start bei laufendem Server einen neuen
+  Code bekommt, und wie der Client „nicht angemeldet“ von „nicht erreichbar“ unterscheidet (ein im
+  Upgrade abgelehnter WebSocket ist im Browser nur Close 1006). WP-10 (Server) und WP-14 (Client)
+  bauen parallel.
+- **Entscheidung:** Neues Contract-Modul `src/shared/http.ts` (Pfade, Schemas, `authCookieName(port)`
+  = `parallax_<port>`, Fehlerkörper = `ErrorPayload`). Der Server schreibt nach `listen`
+  `PARALLAX_HOME/server.lock.json` mit Port, PID, Instanz-UUID und einem zufälligen
+  **Launcher-Token** (32 Byte, base64url). Ein erneuter Start liest das Lockfile, prüft per
+  `GET /api/health` die Instanz-UUID und holt mit `POST /api/launcher/code`
+  (`Authorization: Bearer <launcherToken>`, **ohne** Origin) einen einmal nutzbaren Code mit TTL
+  ≤ 60 s. Requests ohne Origin sind nur dort zulässig; alle Browser-Requests behalten die
+  Origin-/Host-/`Sec-Fetch-Site`-Pflicht (A.8). Der erste Start erzeugt den Code direkt im
+  Server-Prozess. `GET /api/auth/status` antwortet immer 200 (`authenticated`, `serverInstanceId`);
+  der Client fragt ihn vor dem WS und nach abnormalem Close. Dev: Origin **und** Host
+  `127.0.0.1:5173` zusätzlich erlaubt, eine Dev-URL mit Code (TTL 10 min) wird geloggt. Neuer
+  Fehlercode `LAUNCHER_TOKEN_INVALID`.
+- **Folgen:** Keine HMAC-Variante, kein Code im Log außer im Dev-Modus, kein Code in URLs außer
+  im Fragment. Ownership: Server WP-10 (`http/auth.ts`, `http/origin.ts`), Client WP-14
+  (`state/auth.ts`), Launcher und Lockfile WP-21. Details: `docs/architecture.md` §5.1.
+
+## ADR-016 – Anzeige-Status `needs-resume` für unterbrochene Sessions mit abgelaufenen Karten
+- **Datum/WP:** 15.10.2026, R0-Fixes (Entscheidung des Koordinators zu R0-14)
+- **Kontext:** Nach einem Serverneustart mit offener Entscheidung ist die Session `interrupted`
+  und die Karte read-only „abgelaufen“ (A.10). Ohne den Nutzer geht es nicht weiter („Fortsetzen &
+  Plan freigeben“), `needsAttention` war aber `false`.
+- **Entscheidung:** Neue Zeile 3 in `deriveDisplayStatus`: `runState = interrupted` und
+  `decisions.expired > 0` → `kind: 'needs-resume'`, `needsAttention: true`, `sortBucket: 0`. Sie
+  zählt zu „Wartet auf dich (n)“ und hat ein eigenes Icon/i18n-Schlüssel (`status.needs-resume`),
+  unterscheidbar von aktiven Entscheidungen. `notificationFor` meldet dafür nichts (der Zustand
+  entsteht nur beim Serverstart). Kein neuer `runState`, keine neuen Fakten.
+- **Folgen:** `DISPLAY_STATUS_KINDS` hat 14 Werte; WP-14 braucht Icon und Übersetzung. `canSleep`
+  bleibt unverändert (`interrupted` schläft nie). Tabelle: `docs/architecture.md` §7.
+
+## ADR-017 – Eine Pfadregel-Implementierung in `@shared/paths`, Feature-Slots statt Querimporte
+- **Datum/WP:** 15.10.2026, R0-Fixes (Koordinator-Vorgabe zu R0-02/R0-03)
+- **Kontext:** WP-10 und WP-11 laufen parallel und brauchen beide den sicherheitskritischen
+  UNC-/Device-/ADS-Filter (C.10); Owner des Pfad-Helfers ist WP-10. WP-15 rendert die Plan-Karte von
+  WP-16, WP-16 braucht Markdown und Diff-Vorschau von WP-15 – beide laufen parallel in Welle 1b.
+- **Entscheidung:** Die reinen Pfadregeln (`windowsPathIssue`, `windowsPathKey`, …) liegen getestet
+  und eingefroren in `src/shared/paths.ts`. `src/server/lib/paths.ts` (WP-10) ergänzt nur
+  Dateisystem-Prüfungen (`assertSafePath`, `checkCwd`); WP-11 und das Web importieren
+  `@shared/paths` direkt, niemand dupliziert die Regeln. `lib/process.ts` gehört WP-11. Im Web
+  liefert WP-14 `src/web/shell/slots.tsx` (`FeatureSlots`: Shell-Slots plus `DecisionCard`,
+  `Markdown`, `ToolInputPreview`); Features importieren einander nie, WP-20 setzt die echten
+  Komponenten in `App.tsx` ein. i18n-Wörterbücher je Feature in `features/<f>/i18n/` (Stubs von
+  WP-14, statisch registriert), Playground per `import.meta.glob`, `src/web/{ui,lib,state,i18n}` in
+  Welle 1b read-only.
+- **Folgen:** Datei-genaue Ownership in `CLAUDE.md` und `docs/architecture.md` §2.1; keine
+  gemeinsam bearbeitete Datei zwischen WP-10/11/12/14 bzw. WP-13/15/16.

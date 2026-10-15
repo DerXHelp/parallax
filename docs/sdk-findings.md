@@ -440,7 +440,8 @@ requiresUserInteraction}`, `assistant.{local_command_run, local_command_source}`
 ## Fixture-Format (Version 1)
 
 Datei `test/fixtures/sdk/<szenario>.jsonl`, UTF-8, LF, eine JSON-Zeile pro Datensatz. Validierung:
-`parseFixture()` in `scripts/record/format.ts` (zod), Test `test/fixtures/sdk/fixtures.test.ts`.
+`parseFixture()` in `src/server/backend/fixture.ts` (zod, einzige Quelle; `scripts/record/format.ts`
+re-exportiert es), Test `test/fixtures/sdk/fixtures.test.ts`.
 
 **Zeile 1 – Header:**
 ```json

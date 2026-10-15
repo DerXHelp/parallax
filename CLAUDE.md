@@ -27,23 +27,31 @@ die Web-UI (Edge im App-Modus) zeigt Status, Context, Chat und nicht-modale Ents
 
 Eigene Pfade gezielt prüfen: `pnpm exec eslint <pfade>`, `pnpm exec vitest run <pfade>`.
 
-## Ordner und Ownership
+## Ordner und Ownership (datei-genau; Details und Exporte: `docs/architecture.md` §2.1–2.3)
 | Pfad | Inhalt | Owner |
 |---|---|---|
-| `src/shared/` | Contracts: `common`, `errors`, `status`, `model`, `protocol`, `sync`, `build`, `samples` (zod), `product.ts` | WP-02 (eingefroren) |
-| `src/server/{backend/types,backend/fixture,sessions/ports,sync/ports,claude/ports}.ts` | Server-Ports | WP-02 (eingefroren) |
-| `src/server/lib/` | Logger, Pfad-/Prozess-Helfer | WP-10/11 |
-| `src/server/{http,sync,store}/` | App, Auth, HTTP/WS, Sync, JsonStore, Registry | WP-10 |
-| `src/server/claude/` | resolveClaude, buildEnv, Profil „Standard“, Preflight | WP-11 |
-| `src/server/sessions/` | Normalizer + Status (12), Manager + Broker (13) | WP-12/13 |
-| `src/server/backend/` | FakeBackend, SdkBackend | WP-13 |
-| `src/server/main.ts`, `bootstrap.ts` | Einstieg / temporärer Stub | WP-20 |
-| `src/web/{ui,lib,i18n,state}/`, `App.tsx`, `main.tsx` | Shell, Primitives, i18n, Stores | WP-14 |
-| `src/web/features/` | Transkript (15), Entscheidungen + Composer (16) | WP-15/16 |
-| `scripts/`, `test/fixtures/sdk/`, `e2e/` | Werkzeuge, Fixtures, E2E | WP-01/11/20/21 |
-| Root-Configs, `package.json`, Lockfile | Bootstrap | WP-00 / Koordinator |
+| `src/shared/**` | Contracts (zod): `common`, `errors`, `status`, `model`, `protocol`, `sync`, `http`, `paths`, `build`, `samples`, `product` | Koordinator (eingefroren) |
+| `src/server/**/ports.ts`, `src/server/backend/{types,fixture}.ts` | Server-Ports | Koordinator (eingefroren) |
+| `src/server/lib/{logger,ids,paths}.ts` | Logger, `newId`, Pfad-Helfer (fs-Prüfungen auf `@shared/paths`) | WP-10 |
+| `src/server/lib/process.ts` | `runFile`, `spawnHidden`, `killProcessTree` | WP-11 |
+| `src/server/config.ts`, `src/server/{http,sync,store}/` | Config, App, Auth, HTTP/WS, Sync, Stores | WP-10 |
+| `src/server/claude/` | resolveClaude, buildEnv, parseProfileArgs, Profil „Standard“, Preflight | WP-11 |
+| `src/server/sessions/{normalizer,status}/` | Normalizer, Statusmaschine | WP-12 |
+| übrige Dateien in `src/server/{sessions,backend}/` | Manager, Broker, Fake-/SdkBackend | WP-13 |
+| `src/server/{main,bootstrap}.ts` / `src/server/launcher/` | Einstieg / Launcher, Lockfile | WP-20 / WP-21 |
+| `src/web/{shell,ui,lib,state,i18n,playground}/`, `App.tsx`, `main.tsx`, `index.css` | Shell + Slots, Primitives, Stores, Auth-Client, i18n-Kern | WP-14 (Welle 1b: nur lesen) |
+| `src/web/features/transcript/` | Transkript inkl. eigenem `i18n/`, `playground.tsx` | WP-15 |
+| `src/web/features/{decisions,composer}/` | Entscheidungen, Composer (dito) | WP-16 |
+| `scripts/`, `test/`, `e2e/` | `preflight.ts` WP-11, Recorder + Fixtures WP-01, E2E WP-20, `test/setup` Koordinator | siehe Inhalt |
+| Root-Configs, `package.json`, Lockfile | Bootstrap | Koordinator |
 
-Jeder Ordner hat eine `README.md` mit Details. Aliase: `@shared/*` (überall), `@web/*` (nur Web).
+- Keine Datei wird von zwei Paketen bearbeitet; nichts in fremden Ordnern anlegen. `README.md` von
+  Ordnern mit mehreren Ownern (`src/server`, `server/lib`, `server/sessions`, `server/backend`,
+  `src/web`, `web/features`) pflegt der Koordinator.
+- Features importieren einander nie: gemeinsame Komponenten (`DecisionCard`, `Markdown`,
+  `ToolInputPreview`) über `FeatureSlots` (`src/web/shell/slots.tsx`), verdrahtet in WP-20.
+  Wörterbücher je Feature in `features/<f>/i18n/{en,de}.ts` (Stubs von WP-14).
+- Aliase: `@shared/*` (überall), `@web/*` (nur Web). Jeder Ordner hat eine `README.md`.
 
 ## Contracts (Kurzregeln, Details `docs/architecture.md`)
 - **Contracts und Ports sind eingefroren:** Änderung nur nach Freigabe des Koordinators (s. „Tabu“).
@@ -53,6 +61,7 @@ Jeder Ordner hat eine `README.md` mit Details. Aliase: `@shared/*` (überall), `
 - IDs: Server `lib/ids.ts` (`newId('en'|'cv'|'dc'|'pf')`), Web `lib/ids.ts`.
 - Ops nur über `applySessionOp` (`@shared/sync`) anwenden – Server-Hub und Web-Store.
 - Status-Anzeige nur über `deriveDisplayStatus` (`@shared/status`).
+- HTTP/Auth (Pfade, Schemas, Cookie `parallax_<port>`, Launcher-Code, Lockfile) nur aus `@shared/http`.
 - Persistierte Schemas: neue Felder immer mit Default; sonst `schemaVersion` + Migration.
 - Testdaten aus `@shared/samples` (feste IDs/Zeiten) statt eigener Beispielobjekte.
 
@@ -77,18 +86,20 @@ Jeder Ordner hat eine `README.md` mit Details. Aliase: `@shared/*` (überall), `
   nicht gesetzt). Nie das echte `%LOCALAPPDATA%\Parallax` anfassen – auch nicht im Dev-Modus.
 - **Kein Live-`claude`** (kein `pnpm dev:live`, kein `record`, kein SdkBackend-Test), außer das WP
   erlaubt es ausdrücklich. Standard ist das FakeBackend mit Fixtures.
+- Synthetische SDK-Streams als `.ts`-Module (Fixture-Format v1), nie `.jsonl` außerhalb
+  `test/fixtures/sdk/` (git-ignoriert, fehlt nach dem Merge).
 
 ## Tabu ohne Freigabe
 `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `src/shared/**` und die Server-Ports
-(`src/server/backend/types.ts`, `backend/fixture.ts`, `sessions/ports.ts`, `sync/ports.ts`,
-`claude/ports.ts`). Änderungswünsche (neue Abhängigkeit, Contract-Änderung) im Bericht unter
+(`src/server/**/ports.ts`, `backend/types.ts`, `backend/fixture.ts`). Änderungswünsche (neue
+Abhängigkeit, Contract-Änderung) im Bericht unter
 „GEWÜNSCHTE ABHÄNGIGKEITEN“ bzw. „SCHNITTSTELLEN/CONTRACT-ABWEICHUNGEN“ anfragen; erst nach Freigabe
 durch den Koordinator ändern (mit Eintrag im Contract-Changelog). Nichts außerhalb der eigenen
 Besitz-Pfade ändern.
 
 ## Windows
-- Pfade nur über den Pfad-Helfer (case-insensitiv vergleichen, `cwd`-String exakt behalten,
-  UNC/Device/ADS vor jedem Dateizugriff ablehnen).
+- Pfadregeln nur aus `@shared/paths` (Server: `lib/paths.ts`): case-insensitiv vergleichen,
+  `cwd`-String exakt behalten, UNC/Device/ADS vor jedem Dateizugriff ablehnen. Nie duplizieren.
 - Prozessbäume mit `taskkill /PID <pid> /T /F` beenden; **jeder** Spawn mit `windowsHide: true`
   und ohne Shell (Argument-Array). Nie `cmd /c start`.
 - Gestartete Hintergrundprozesse (Dev-Server, Vite, Tests) am Ende immer beenden.
@@ -124,6 +135,8 @@ COMMIT: <hash> <Betreff>
 ```
 
 ## Doku
+- **Rangfolge:** Contracts (`src/shared`, Ports) > `docs/architecture.md`/ADRs > `docs/wp/*` >
+  `docs/sdk-findings.md` > `docs/plan.md`.
 - `docs/plan.md` – abgestimmter Plan (bei Widersprüchen gilt „Änderungen nach kritischem Review“).
 - `docs/progress.md` – WP-Tabelle, Contract-Changelog, offene Fragen, nächste Schritte.
 - `docs/decisions.md` – ADRs (nur anhängen). `docs/architecture.md` – Architektur: Module,

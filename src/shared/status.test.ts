@@ -91,7 +91,7 @@ describe('deriveDisplayStatus – decision table (first matching row wins)', () 
       true,
       0,
     ],
-    // row 3 (decision + error: inconsistent facts → error)
+    // row 4 (decision + error: inconsistent facts → error)
     ['error', facts({ runState: 'error', errorCode: 'CLAUDE_PROCESS_CRASHED' }), 'error', false, 1],
     [
       'decision + error',
@@ -100,16 +100,38 @@ describe('deriveDisplayStatus – decision table (first matching row wins)', () 
       false,
       1,
     ],
-    // row 4
-    ['interrupted', facts({ runState: 'interrupted' }), 'interrupted', false, 1],
+    // row 3 (ADR-016): interrupted with expired cards waits for the user
     [
-      'interrupted with expired decision',
+      'interrupted with expired decision → needs-resume',
       facts({ runState: 'interrupted' }, { expired: 1 }),
-      'interrupted',
+      'needs-resume',
+      true,
+      0,
+    ],
+    [
+      'interrupted with expired + (inconsistent) open decisions → needs-resume',
+      facts({ runState: 'interrupted' }, { expired: 2, plan: 1, oldestKind: 'plan' }),
+      'needs-resume',
+      true,
+      0,
+    ],
+    [
+      'expired decisions while sleeping are no attention',
+      facts({ runState: 'sleeping' }, { expired: 1 }),
+      'sleeping',
+      false,
+      4,
+    ],
+    [
+      'expired decisions + error → error',
+      facts({ runState: 'error', errorCode: 'CLAUDE_PROCESS_CRASHED' }, { expired: 1 }),
+      'error',
       false,
       1,
     ],
     // row 5
+    ['interrupted', facts({ runState: 'interrupted' }), 'interrupted', false, 1],
+    // row 6
     ['rate-limited idle', facts({ runState: 'idle', rateLimitedUntil: FUTURE }), 'rate-limited', false, 1],
     [
       'rate-limited sleeping',
@@ -126,10 +148,10 @@ describe('deriveDisplayStatus – decision table (first matching row wins)', () 
       2,
     ],
     ['expired rate limit', facts({ runState: 'idle', rateLimitedUntil: PAST }), 'idle', false, 4],
-    // rows 6, 7
+    // rows 7, 8
     ['starting', facts({ runState: 'starting' }), 'starting', false, 2],
     ['working', facts({ runState: 'working' }), 'working', false, 2],
-    // row 8
+    // row 9
     ['background tasks', facts({ runState: 'idle', backgroundTasks: 1 }), 'background', false, 2],
     ['queued prompts', facts({ runState: 'idle', queuedPrompts: 2 }), 'background', false, 2],
     ['pending wakeup', facts({ runState: 'idle', wakeupAt: FUTURE }), 'background', false, 2],
@@ -141,10 +163,10 @@ describe('deriveDisplayStatus – decision table (first matching row wins)', () 
       2,
     ],
     ['past wakeup is no background', facts({ runState: 'idle', wakeupAt: PAST }), 'idle', false, 4],
-    // rows 9, 10
+    // rows 10, 11
     ['done', facts({ runState: 'idle', unread: true }), 'done', false, 3],
     ['idle', facts({ runState: 'idle' }), 'idle', false, 4],
-    // row 11 (decision + sleeping: inconsistent facts → sleeping)
+    // row 12 (decision + sleeping: inconsistent facts → sleeping)
     ['sleeping', facts({ runState: 'sleeping' }), 'sleeping', false, 4],
     ['sleeping + unread', facts({ runState: 'sleeping', unread: true }), 'sleeping', false, 3],
     [
@@ -250,6 +272,30 @@ describe('notificationFor', () => {
       facts({ runState: 'working' }, { permission: 1, plan: 1, oldestKind: 'permission' }),
       facts({ runState: 'working' }, { plan: 1, oldestKind: 'plan' }),
       'plan',
+    ],
+    [
+      'R0-13: a question added behind an open permission → question (not the oldest kind)',
+      permission1,
+      facts({ runState: 'working' }, { permission: 1, question: 1, oldestKind: 'permission' }),
+      'question',
+    ],
+    [
+      'R0-13: a plan added behind an open question → plan',
+      facts({ runState: 'idle' }, { question: 1, oldestKind: 'question' }),
+      facts({ runState: 'idle' }, { question: 1, plan: 1, oldestKind: 'question' }),
+      'plan',
+    ],
+    [
+      'needs-resume after a restart → no notification (ADR-016)',
+      facts({ runState: 'working' }, { plan: 1, oldestKind: 'plan' }),
+      facts({ runState: 'interrupted' }, { expired: 1 }),
+      null,
+    ],
+    [
+      'resume from needs-resume → working → nothing',
+      facts({ runState: 'interrupted' }, { expired: 1 }),
+      facts({ runState: 'starting' }),
+      null,
     ],
     ['long turn done', working, facts({ runState: 'idle', unread: true, lastTurn: turn(30_000) }), 'done'],
     [

@@ -15,9 +15,14 @@ import {
   itemIdSchema,
   jsonValueSchema,
   makeSessionKey,
+  modelNameSchema,
   paramsSchema,
+  parseEffortLevel,
+  parseEffortLevels,
+  parsePermissionMode,
   parseSessionKey,
   profileIdSchema,
+  unknownEnumCountKey,
 } from './common';
 
 const hex32 = '0123456789abcdef0123456789abcdef';
@@ -138,5 +143,49 @@ describe('limits', () => {
     expect(LIMITS.deltaFlushMs).toBeGreaterThanOrEqual(30);
     expect(LIMITS.deltaFlushMs).toBeLessThanOrEqual(50);
     expect(LIMITS.snapshotItems).toBeLessThanOrEqual(LIMITS.ringBufferOps);
+  });
+
+  it('R0-08/R0-11 budgets are consistent', () => {
+    expect(LIMITS.itemTotalChars).toBeGreaterThanOrEqual(LIMITS.itemTextChars);
+    expect(LIMITS.itemTotalChars).toBeLessThanOrEqual(64 * 1024);
+    expect(LIMITS.snapshotMaxChars).toBeLessThan(LIMITS.snapshotItems * LIMITS.itemTotalChars);
+    expect(LIMITS.planChars).toBeLessThanOrEqual(LIMITS.wsMaxPayloadBytes / 4);
+    expect(LIMITS.answersMax * LIMITS.answerChars).toBeLessThan(LIMITS.wsMaxPayloadBytes / 4);
+  });
+});
+
+describe('tolerant SDK enums (R0-05)', () => {
+  it('known values pass, unknown ones become null', () => {
+    expect(parsePermissionMode('acceptEdits')).toBe('acceptEdits');
+    expect(parsePermissionMode('turbo')).toBeNull();
+    expect(parsePermissionMode(undefined)).toBeNull();
+    expect(parseEffortLevel('xhigh')).toBe('xhigh');
+    expect(parseEffortLevel('ultra')).toBeNull();
+  });
+
+  it('effort level lists drop unknown values and duplicates, keeping the order', () => {
+    expect(parseEffortLevels(['high', 'ultra', 'low', 'high', 3])).toEqual(['high', 'low']);
+    expect(parseEffortLevels([])).toEqual([]);
+  });
+
+  it('unknown enum values are counted under a stable, bounded key', () => {
+    expect(unknownEnumCountKey('permissionMode', 'turbo')).toBe('enum/permissionMode:turbo');
+    expect(unknownEnumCountKey('effort', 'x'.repeat(500))).toHaveLength('enum/effort:'.length + 100);
+  });
+});
+
+describe('model names (R0-08, R0-09)', () => {
+  it.each([
+    'haiku',
+    'claude-opus-5-5',
+    'sonnet[1m]',
+    'claude-3-5-sonnet@20240620',
+    'us.anthropic.claude-x:0',
+  ])('accepts %s', (name) => {
+    expect(modelNameSchema.safeParse(name).success).toBe(true);
+  });
+
+  it.each(['', '-p', '--model', 'a b', 'x\n', 'x'.repeat(LIMITS.modelChars + 1)])('rejects %j', (name) => {
+    expect(modelNameSchema.safeParse(name).success).toBe(false);
   });
 });

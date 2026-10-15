@@ -28,6 +28,8 @@ playwright/.cache/
 
 # SDK recordings: only sanitized fixtures in test/fixtures/sdk/ are committed.
 # Raw recordings (pnpm record) go to .recordings/. Recordings from the work machine never enter the repo.
+# Synthetic test streams are .ts modules next to their tests (fixture format v1), never .jsonl:
+# any .jsonl outside test/fixtures/sdk/ is ignored and would be missing after a merge (R0-06).
 .recordings/
 *.jsonl
 !/test/fixtures/sdk/**/*.jsonl

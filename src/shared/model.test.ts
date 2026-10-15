@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
+import { LIMITS } from './common';
 import {
   currentConversation,
   currentSessionId,
   decisionOutcomeSchema,
+  decisionRecordSchema,
   decisionRecordsFileSchema,
   decisionResponseSchema,
   decisionSchema,
@@ -26,6 +28,7 @@ import {
 import {
   SAMPLE_IDS,
   sampleConversation,
+  sampleDecisionRecord,
   sampleDecisions,
   sampleDetail,
   sampleEntry,
@@ -87,7 +90,15 @@ describe('defaults for old files (B "fehlende Felder ergänzen")', () => {
       contextPct: null,
       lastError: null,
       lastResultExcerpt: null,
+      unread: false,
+      context: null,
     } satisfies Entry);
+  });
+
+  it('a decision record without the decision snapshot loads with decision null (R0-07)', () => {
+    const { decision: _decision, ...old } = sampleDecisionRecord();
+    expect(decisionRecordSchema.parse(old)).toEqual({ ...old, decision: null });
+    expect(decisionRecordSchema.parse(sampleDecisionRecord())).toEqual(sampleDecisionRecord());
   });
 
   it('a minimal profile gets every default', () => {
@@ -162,13 +173,34 @@ describe('round trips', () => {
           toolName: 'ExitPlanMode',
           requester: { kind: 'main' },
           createdAt: sampleTime(),
-          resolvedAt: null,
-          outcome: null,
+          resolvedAt: sampleTime(5),
+          outcome: sampleOutcomes.plan_approved,
           planVersion: 1,
           planFilePath: 'C:\\plans\\a.md',
+          decision: null,
         },
+        sampleDecisionRecord(),
+        sampleDecisionRecord({
+          id: sampleDecisions.permission().id,
+          kind: 'permission',
+          decision: sampleDecisions.permission(),
+          planVersion: null,
+          planFilePath: null,
+        }),
       ],
     });
+  });
+
+  it('an entry keeps unread and the context gauge (R0-17)', () => {
+    expectRoundTrip(entrySchema, sampleEntry({ unread: true, context: null }));
+    expectRoundTrip(entrySchema, sampleEntry());
+  });
+
+  it('init info accepts an unknown (null) permission mode of a newer CLI (R0-05)', () => {
+    const base = sampleDetail().init;
+    expect(base).not.toBeNull();
+    if (base !== null)
+      expectRoundTrip(sessionDetailSchema, sampleDetail({ init: { ...base, permissionMode: null } }));
   });
 
   it('host state, summary, detail', () => {
@@ -311,6 +343,33 @@ describe('negative cases', () => {
       decisionResponseSchema.safeParse({ kind: 'plan', response: { behavior: 'revise', feedback: '' } })
         .success,
     ).toBe(false);
+  });
+
+  it('caps client input fields (R0-08)', () => {
+    const plan = (editedPlan: string) =>
+      decisionResponseSchema.safeParse({
+        kind: 'plan',
+        response: { behavior: 'approve', mode: 'default', editedPlan },
+      }).success;
+    expect(plan('x'.repeat(LIMITS.planChars))).toBe(true);
+    expect(plan('x'.repeat(LIMITS.planChars + 1))).toBe(false);
+
+    const answer = (a: Record<string, unknown>, count = 1) =>
+      decisionResponseSchema.safeParse({
+        kind: 'question',
+        response: {
+          behavior: 'answer',
+          answers: Array.from({ length: count }, () => ({ question: 'Q?', selected: ['A'], ...a })),
+        },
+      }).success;
+    expect(answer({})).toBe(true);
+    expect(answer({}, LIMITS.answersMax)).toBe(true);
+    expect(answer({}, LIMITS.answersMax + 1)).toBe(false);
+    expect(answer({ question: 'q'.repeat(LIMITS.questionChars + 1) })).toBe(false);
+    expect(answer({ selected: Array.from({ length: LIMITS.selectedMax + 1 }, () => 'A') })).toBe(false);
+    expect(answer({ selected: ['a'.repeat(LIMITS.answerChars + 1)] })).toBe(false);
+    expect(answer({ otherText: 'o'.repeat(LIMITS.answerChars + 1) })).toBe(false);
+    expect(answer({ notes: 'n'.repeat(LIMITS.answerChars + 1) })).toBe(false);
   });
 
   it('rejects a host state without profiles', () => {

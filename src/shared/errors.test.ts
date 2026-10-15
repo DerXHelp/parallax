@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ERROR_CATALOG,
   ERROR_CODES,
+  PROFILE_ARG_INVALID_REASONS,
   errorCodeForAssistantError,
   errorCodeForRateLimitError,
   errorCodeForStartupFailure,
@@ -42,6 +43,47 @@ describe('error catalog', () => {
     expect(isSetupError('CLAUDE_NOT_FOUND')).toBe(true);
     expect(isSetupError('SHELL_TOOL_MISSING')).toBe(true);
     expect(isSetupError('API_ERROR')).toBe(false);
+  });
+});
+
+describe('R0 additions', () => {
+  it('profile codes (R0-04): errors make the profile invalid, the rest are warnings/info', () => {
+    const errors: ErrorCode[] = [
+      'PROFILE_INVALID',
+      'PROFILE_ARG_BLOCKED',
+      'PROFILE_ARG_NOT_ALLOWED',
+      'PROFILE_ARG_INVALID',
+      'PROFILE_ENV_REF_UNRESOLVED',
+    ];
+    const warnings: ErrorCode[] = [
+      'PROFILE_ARG_BROAD_ALLOWED_TOOLS',
+      'PROFILE_BYPASS_ENABLED',
+      'PROFILE_ARG_RESUME_NO_EFFECT',
+    ];
+    for (const code of errors)
+      expect(errorSpec(code), code).toMatchObject({ category: 'validation', severity: 'error' });
+    for (const code of warnings) expect(errorSpec(code).severity, code).toBe('warning');
+    expect(errorSpec('PROFILE_ARG_PASSED_RAW').severity).toBe('info');
+    expect(PROFILE_ARG_INVALID_REASONS).toEqual([
+      'missing_value',
+      'unexpected_value',
+      'duplicate',
+      'invalid_value',
+      'not_a_flag',
+    ]);
+  });
+
+  it('auth codes for the HTTP contract (R0-01) are 401/403', () => {
+    expect(errorSpec('LAUNCHER_TOKEN_INVALID')).toMatchObject({ category: 'auth', http: 401 });
+    expect(errorSpec('AUTH_REQUIRED').http).toBe(401);
+    expect(errorSpec('AUTH_CODE_INVALID').http).toBe(401);
+    expect(errorSpec('ORIGIN_REJECTED').http).toBe(403);
+    expect(errorSpec('HOST_HEADER_REJECTED').http).toBe(403);
+  });
+
+  it('a session held elsewhere is a retryable conflict, not a setup error (R0-26)', () => {
+    expect(errorSpec('SESSION_HELD_ELSEWHERE')).toMatchObject({ category: 'conflict', retryable: true });
+    expect(isSetupError('SESSION_HELD_ELSEWHERE')).toBe(false);
   });
 });
 
@@ -88,7 +130,8 @@ describe('startup_failure_reason → code (C.5)', () => {
     ['gateway_access_denied', 'CLAUDE_AUTH_FAILED'],
     ['proxy_invalid', 'CLAUDE_STARTUP_FAILED'],
     ['temp_dir_unusable', 'CLAUDE_STARTUP_FAILED'],
-    ['session_held_by_background', 'CLAUDE_STARTUP_FAILED'],
+    ['session_held_by_background', 'SESSION_HELD_ELSEWHERE'],
+    ['worktree_resume_refused', 'CLAUDE_STARTUP_FAILED'],
     ['something_new', 'CLAUDE_STARTUP_FAILED'],
     ['toString', 'CLAUDE_STARTUP_FAILED'],
     ['', 'CLAUDE_STARTUP_FAILED'],
