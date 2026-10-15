@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RULE_DESTINATIONS } from '@shared/common';
@@ -9,8 +9,9 @@ import { DecisionBar } from './DecisionBar';
 import { renderWithHost, type Harness } from './lib/testing';
 import { resetDecisionBarState } from './state/bar-store';
 
-// UI tests with many key strokes: generous timeout under a fully parallel `pnpm test`.
-vi.setConfig({ testTimeout: 20_000 });
+// UI tests with many key strokes: 2.5–6 s in a full `pnpm test`, up to 21 s when several runs load
+// the machine (docs/wp/FLAKES.md). A timed-out test keeps typing into the next one, so keep a margin.
+vi.setConfig({ testTimeout: 60_000 });
 
 let harness: Harness | null = null;
 
@@ -205,18 +206,33 @@ describe('answer safety (Plan "Tippen kann nie freigeben")', () => {
     expect(responses(h)).toEqual([]);
   });
 
-  it('a new decision ignores clicks during the arm delay', async () => {
-    const h = bar('permission', { entries: ['permission'], armDelayMs: 150 });
-    const user = userEvent.setup();
-    const allow = await screen.findByRole('button', { name: 'Allow once' });
-    expect(card().dataset.armed).toBe('false');
-    await user.click(allow);
-    expect(responses(h)).toEqual([]);
-    await waitFor(() => {
+  it('a new decision ignores clicks during the arm delay', () => {
+    // The arm timer runs on a fake clock: under parallel load the way from mounting the card to
+    // the first click took longer than the real 150 ms and decided the result (flake). The demo
+    // host renders the card synchronously; clicks go through fireEvent (detail 1 like a pointer
+    // click), because user-event's async wrapper waits on setTimeout and would stall here.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const h = bar('permission', { entries: ['permission'], armDelayMs: 150 });
+      const allow = screen.getByRole('button', { name: 'Allow once' });
+      expect(card().dataset.armed).toBe('false');
+      fireEvent.click(allow, { detail: 1 });
+      expect(responses(h)).toEqual([]);
+      act(() => {
+        vi.advanceTimersByTime(149);
+      });
+      expect(card().dataset.armed).toBe('false');
+      fireEvent.click(allow, { detail: 1 });
+      expect(responses(h)).toEqual([]);
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
       expect(card().dataset.armed).toBe('true');
-    });
-    await user.click(allow);
-    expect(responses(h)).toHaveLength(1);
+      fireEvent.click(allow, { detail: 1 });
+      expect(responses(h)).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('never takes the focus when a decision arrives', async () => {

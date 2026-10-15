@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sampleHostState } from '@shared/samples';
 import { App } from './App';
 import { setLanguage } from './i18n';
@@ -10,6 +10,10 @@ import { AppShell } from './shell/AppShell';
 import { installShortcutListener } from './shell/shortcuts';
 import { FeatureSlotsProvider } from './shell/slots';
 import { resetClientStore } from './state/store';
+
+// The whole shell renders per test: 1–3 s in a full `pnpm test`, up to 11 s when several runs load
+// the machine (docs/wp/FLAKES.md).
+vi.setConfig({ testTimeout: 30_000 });
 
 let running: RunningScenario | null = null;
 let removeShortcuts: (() => void) | null = null;
@@ -106,11 +110,12 @@ describe('App shell over the memory transport', () => {
       scenario.host.restart();
     });
     expect(await screen.findByText('Connection lost – reconnecting…')).toBeTruthy();
+    // Real backoff (~0.5 s) plus the new handshake; 3 s were tight under parallel load.
     await waitFor(
       () => {
         expect(screen.queryByText('Connection lost – reconnecting…')).toBeNull();
       },
-      { timeout: 3000 },
+      { timeout: 15_000 },
     );
     expect(screen.getByText('Connected')).toBeTruthy();
   });

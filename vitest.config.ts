@@ -40,6 +40,10 @@ export default defineConfig({
           ],
           exclude,
           setupFiles: ['test/setup/env.ts'],
+          // Real processes (spawn, taskkill, PowerShell), real servers/sockets, worker_threads and
+          // fs: 5 s / 10 s were too tight when several `pnpm check` run at once (docs/wp/FLAKES.md).
+          testTimeout: 20_000,
+          hookTimeout: 30_000,
         },
       },
       {
