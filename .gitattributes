@@ -8,6 +8,9 @@
 # Recorded SDK fixtures: compare as text, never rewrite line endings beyond LF.
 *.jsonl text eol=lf
 
+# Append-only ADR log: parallel branches append ADRs; union merge keeps both sides.
+docs/decisions.md merge=union
+
 # Lockfile: generated, keep LF, collapse in diffs.
 pnpm-lock.yaml text eol=lf linguist-generated=true -diff
 
