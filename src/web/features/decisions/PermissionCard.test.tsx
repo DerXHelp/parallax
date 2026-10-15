@@ -135,6 +135,97 @@ describe('PermissionCard', () => {
     ]);
   });
 
+  it('the keyboard hint never toggles during a pointer click (WP-20c: lost click in Edge)', async () => {
+    bar('permission');
+    const user = userEvent.setup();
+    const allow = await screen.findByRole('button', { name: 'Allow once' });
+    const hint = card().querySelector<HTMLElement>('[data-slot="decision-shortcut-hint"]');
+    if (hint === null) throw new Error('no hint');
+    // `:focus-visible` as the browser decides it (happy-dom treats every focus as visible). The spy
+    // sits on HTMLElement.prototype; Element.prototype keeps the real `matches`.
+    let visible: (element: Element) => boolean = () => false;
+    const matches = vi.spyOn(HTMLElement.prototype, 'matches').mockImplementation(function (
+      this: HTMLElement,
+      selector: string,
+    ) {
+      if (selector === ':focus-visible') return visible(this);
+      return Element.prototype.matches.call(this, selector);
+    });
+    const inMenu = (element: Element) => element.closest('[data-slot="dropdown-menu-content"]') !== null;
+    try {
+      // Pointer only: the hint stays hidden (it would move the buttons under the pointer).
+      await user.click(screen.getByRole('button', { name: 'Input' }));
+      expect(hint.className).toContain('hidden');
+      // A "▾" menu opened by pointer after typing focuses its (portalled) content as keyboard
+      // focus – that is not the card: the hint must not appear while the pointer is down, or the
+      // same click lands on the first menu entry.
+      const trigger = screen.getByRole('button', { name: 'More ways to deny' });
+      visible = inMenu;
+      await user.click(trigger);
+      await screen.findByRole('menuitem', { name: 'Deny with a reason…' });
+      expect(hint.className).toContain('hidden');
+      // Keyboard focus inside the card ("▾" again after its menu closed, like Radix does it)
+      // shows it – and it stays when the next pointerdown moves the focus to an answer button.
+      visible = (element) => element === trigger || inMenu(element);
+      await user.keyboard('{Escape}');
+      await waitFor(() => {
+        expect(hint.className).toContain('block');
+      });
+      visible = () => false;
+      fireEvent.pointerDown(allow);
+      act(() => {
+        allow.focus();
+      });
+      expect(hint.className).toContain('block');
+      expect(hint.className).not.toContain('hidden');
+    } finally {
+      matches.mockRestore();
+    }
+  });
+
+  it('the reason field keeps the focus after the menu closed (WP-20c, Edge)', async () => {
+    bar('permission');
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'More ways to deny' }));
+    const item = await screen.findByRole('menuitem', { name: 'Deny with a reason…' });
+    // Edge (e2e/decisions.spec.ts): the menu plays its exit animation; as the form appears the
+    // item moves away from the pointer and Radix focuses the menu content (`pointerleave`), then
+    // returns the focus to "▾" when the content unmounts. happy-dom has no CSS and no layout: give
+    // the content an animation (Radix then waits for `animationend`) and take the focus like Radix.
+    const content = item.closest<HTMLElement>('[data-slot="dropdown-menu-content"]');
+    if (content === null) throw new Error('no menu content');
+    content.style.animationName = 'exit';
+    await user.click(item);
+    const reason = await screen.findByRole('textbox', { name: 'Reason for Claude' });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(reason);
+    });
+    act(() => {
+      content.focus();
+    });
+    act(() => {
+      const end = new Event('animationend', { bubbles: true });
+      Object.defineProperty(end, 'animationName', { value: 'exit' });
+      content.dispatchEvent(end);
+    });
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, 50);
+        }),
+    );
+    expect(content.isConnected).toBe(false);
+    expect(document.activeElement).toBe(reason);
+    // Escape without choosing an entry still returns the focus to "▾".
+    const trigger = screen.getByRole('button', { name: 'More ways to deny' });
+    await user.click(trigger);
+    await screen.findByRole('menuitem', { name: 'Deny with a reason…' });
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(document.activeElement).toBe(trigger);
+    });
+  });
+
   it('"Deny and stop the turn…" opens a form; its button sends interrupt: true', async () => {
     const h = bar('permission');
     const user = userEvent.setup();

@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type FocusEvent as ReactFocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -68,6 +69,16 @@ function useCardActions(): CardActions {
   return context;
 }
 
+/** Keyboard focus (`:focus-visible`); false where the engine does not know the pseudo-class. */
+function isFocusVisible(target: EventTarget): boolean {
+  if (!(target instanceof Element)) return false;
+  try {
+    return target.matches(':focus-visible');
+  } catch {
+    return false;
+  }
+}
+
 /** Re-enables the buttons if an accepted answer never removed the card (defensive). */
 const SENDING_FALLBACK_MS = 15_000;
 
@@ -118,6 +129,7 @@ export function DecisionCardShell({
   const armed = useArmed(useContext(DecisionArmDelayContext));
   const online = useSessionConnectionStatus(sessionKey) === 'open';
   const [sending, setSending] = useState(false);
+  const [keyboardHint, setKeyboardHint] = useState(false);
   const disabled = sending || !online;
   const hintId = useId();
 
@@ -191,6 +203,19 @@ export function DecisionCardShell({
     if (event.key === 'Enter' || event.key === ' ') keyActivationAt.current = event.timeStamp;
   };
 
+  // The keyboard hint appears with the first keyboard focus inside the card and then stays
+  // (WP-20c): a hint that vanished on the pointerdown of a click (keyboard focus was on another
+  // control of the card, e.g. the "▾" trigger after its menu closed) moved the buttons, and the
+  // pointerup – and with it the click – landed on another element. Only the card's own DOM counts:
+  // React also bubbles the focus of portalled menus here, and a hint appearing while a "▾" menu
+  // opens under the pointer made that same click select the first menu entry.
+  const onFocusCapture = (event: ReactFocusEvent) => {
+    if (keyboardHint) return;
+    const root = rootRef.current;
+    if (root === null || !(event.target instanceof Node) || !root.contains(event.target)) return;
+    if (isFocusVisible(event.target)) setKeyboardHint(true);
+  };
+
   const kind = decision.state === 'expired' ? 'needs-resume' : NEEDS_KIND[decision.kind];
   const Icon = STATUS_PRESENTATION[kind].icon;
   const keys = shortcutKeyLabels(RESPOND_KEYS, t);
@@ -206,9 +231,10 @@ export function DecisionCardShell({
         data-armed={armed ? 'true' : 'false'}
         tabIndex={-1}
         onKeyDownCapture={onKeyDownCapture}
+        onFocusCapture={onFocusCapture}
         aria-busy={sending}
         className={cn(
-          'group/decision bg-card text-card-foreground focus-visible:ring-ring flex max-h-[45vh] min-h-0 flex-col rounded-lg border shadow-sm outline-none focus-visible:ring-2',
+          'bg-card text-card-foreground focus-visible:ring-ring flex max-h-[45vh] min-h-0 flex-col rounded-lg border shadow-sm outline-none focus-visible:ring-2',
           decision.state === 'open' ? 'border-status-waiting/45' : 'border-border',
           className,
         )}
@@ -233,12 +259,13 @@ export function DecisionCardShell({
             {t('decisions.bar.notConnected')}
           </p>
         )}
-        {/* Only for keyboard focus: a hint appearing on a pointer click would move the buttons
-            under the pointer (the click would land elsewhere). Screen readers get it as the
-            description of every answer button (R2W-19). */}
+        {/* Only after keyboard focus, and then it stays: a hint appearing or vanishing during a
+            pointer click would move the buttons under the pointer (the click would land
+            elsewhere). Screen readers get it as the description of every answer button (R2W-19). */}
         <p
           id={hintId}
-          className="text-muted-foreground hidden px-3 pb-2 text-2xs group-has-[:focus-visible]/decision:block"
+          data-slot="decision-shortcut-hint"
+          className={cn('text-muted-foreground px-3 pb-2 text-2xs', keyboardHint ? 'block' : 'hidden')}
         >
           {t('decisions.actions.shortcutHint', { keys: keys.join('+') })}
         </p>

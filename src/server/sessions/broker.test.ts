@@ -296,6 +296,33 @@ describe('broker – responding', () => {
     });
   });
 
+  it('the outcome reaches the tool call BEFORE decision.resolved (WP-20c: hint in the other window)', () => {
+    const t = setup();
+    const order: string[] = [];
+    const broker = createBroker({
+      entryId: ENTRY,
+      now: () => new Date(SAMPLE_TIME),
+      newDecisionId: () => sampleId('dc', 1),
+      store: t.stores.decisions,
+      conversationId: () => sampleId('cv', 1),
+      permissionMode: () => 'default',
+      allowsBypass: () => false,
+      supportsAutoMode: () => true,
+      findToolCall: () => null,
+      capInput: t.capInput,
+      emit: (ops) => {
+        for (const op of ops) order.push(op.op);
+      },
+      attachDecision: (_toolUseId, ref) => {
+        order.push(`attach ${ref.outcome?.type ?? 'open'}`);
+      },
+      onCountsChanged: () => undefined,
+    });
+    void broker.handler(request(), new AbortController().signal);
+    broker.respond(sampleId('dc', 1), allowOnce, CLIENT_1);
+    expect(order).toEqual(['decision.upsert', 'attach open', 'attach allowed', 'decision.resolved']);
+  });
+
   it('updatedInput comes from the uncapped original input', async () => {
     const toolCall = sampleItems.toolCall({ toolUseId: 'toolu_1', input: { content: 'cut' } });
     const t = setup({ toolCalls: [toolCall] });
