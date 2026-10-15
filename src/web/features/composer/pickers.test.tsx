@@ -80,6 +80,29 @@ describe('ModePicker (C.3)', () => {
     expect(item.className).toContain('text-destructive');
   });
 
+  it('before the first start: "CLI default" instead of "Unknown mode"; after init an unknown mode stays unknown (V2-05)', async () => {
+    const h = start('idle', 'mode');
+    const user = userEvent.setup();
+    await screen.findByRole('button', { name: 'Permission mode: Manual' });
+    const init = h.host.view(DEMO_ENTRIES.idle)?.detail.init ?? null;
+    act(() => {
+      h.host.patchSummary(DEMO_ENTRIES.idle, { permissionMode: null });
+      h.host.pushOps(DEMO_ENTRIES.idle, [{ op: 'detail.patch', patch: { init: null } }]);
+    });
+    const trigger = await screen.findByRole('button', { name: 'Permission mode: CLI default' });
+    expect(trigger.dataset.mode).toBe('not-started');
+    await user.click(trigger);
+    expect(await screen.findByText(/Not started yet: Claude Code starts with the default mode/)).toBeTruthy();
+    await user.keyboard('{Escape}');
+    if (init === null) throw new Error('demo session without init');
+    act(() => {
+      h.host.pushOps(DEMO_ENTRIES.idle, [
+        { op: 'detail.patch', patch: { init: { ...init, permissionMode: null } } },
+      ]);
+    });
+    expect(await screen.findByRole('button', { name: 'Permission mode: Unknown mode' })).toBeTruthy();
+  });
+
   it('shows a mode set outside Parallax (dontAsk) without offering it', async () => {
     const h = start('idle', 'mode');
     act(() => {

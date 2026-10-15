@@ -88,6 +88,8 @@ function QuestionBlock({
 
   const otherInput = (
     <Input
+      id={`${base}-other-text`}
+      name={`${base}-other-text`}
       aria-label={t('decisions.question.otherOption')}
       placeholder={t('decisions.question.otherPlaceholder')}
       value={draft.otherText}
@@ -203,6 +205,8 @@ function QuestionBlock({
         </div>
       )}
       <Input
+        id={`${base}-notes`}
+        name={`${base}-notes`}
         aria-label={t('decisions.question.notes')}
         placeholder={t('decisions.question.notesPlaceholder')}
         value={draft.notes}

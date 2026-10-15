@@ -87,7 +87,7 @@ export const AgentCard = memo(function AgentCard({ item, sessionKey }: ToolBodyP
       data-item-kind="tool_call"
       data-tool={item.toolName}
       data-status={item.status}
-      className="bg-card grid min-w-0 gap-1.5 rounded-md border px-3 py-2"
+      className="bg-card grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5 rounded-md border px-3 py-2"
     >
       <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
         <ToolStatus status={item.status} />

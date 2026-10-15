@@ -104,7 +104,9 @@ export function TranscriptCard({ sessionKey, decision }: { sessionKey: string; d
       data-decision-kind={decision.kind}
       data-decision-state={decision.state}
       aria-label={heading}
-      className="bg-card text-card-foreground grid gap-2 rounded-lg border px-3 py-2"
+      // One column that may shrink below the plan's widest line (code blocks scroll inside):
+      // an `auto` grid column grew with the content and the card was cut off on the right (V2-11).
+      className="bg-card text-card-foreground grid grid-cols-[minmax(0,1fr)] gap-2 rounded-lg border px-3 py-2"
     >
       <header className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
         <span className="min-w-0 truncate font-semibold">{heading}</span>

@@ -60,7 +60,7 @@ export function QueueMenu({
           variant="ghost"
           size="sm"
           data-action="queue"
-          aria-label={`${more} · ${t('decisions.bar.moreLabel')}`}
+          aria-label={t('decisions.bar.moreTrigger', { count: decisions.length - 1 })}
         >
           <ListIcon aria-hidden />
           {more}

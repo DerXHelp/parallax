@@ -95,7 +95,17 @@ function ShutdownConfirmation() {
   };
 
   return (
-    <DialogContent className="sm:max-w-md">
+    <DialogContent
+      className="sm:max-w-md"
+      onCloseAutoFocus={(event) => {
+        // Opened from a menu item that no longer exists (V2-07): back to the settings button,
+        // never to <body>.
+        const trigger = document.querySelector<HTMLElement>('[data-action="settings"]');
+        if (trigger === null) return;
+        event.preventDefault();
+        trigger.focus();
+      }}
+    >
       <DialogHeader>
         <DialogTitle>{t('serverShutdown.title')}</DialogTitle>
         <DialogDescription>{t('serverShutdown.description')}</DialogDescription>

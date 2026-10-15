@@ -331,6 +331,24 @@ läuft.
   Bezeichnungen der Modi überall aus `shell.permissionMode.*` („Manual“/„Manuell“ für `default`).
 - Gemeinsame Primitives aus Feature-Wünschen: `Disclosure` liegt in `src/web/ui` (ADR-044).
 
+**(l) Versionen, Prüf-Zustand, veraltetes Fenster (normativ, R3-Fixes Web, ADR-070 … ADR-074).**
+- **Versionen:** Die CLI-Version gilt je Session (`SessionSummary.cliVersion`, C.7) und steht als
+  nicht bedienbarer Eintrag in der Kopfzeile (`header-cli-version`, rot bei älter als
+  `HostState.sdkClaudeCodeVersion`) und im Sidebar-Tooltip; Claude Code des Standardprofils (Version,
+  Pfad), SDK, Parallax, Datenordner und FakeBackend stehen im Einstellungsmenü („Über diesen
+  Server“, `host-info`). Versionsvergleich im Web nur über `src/web/lib/version.ts`.
+- **Prüf-Zustand:** `claude.state === 'checking'` ist nie eine Warnung, sondern ein neutraler
+  Hinweis (`setup-hint[data-state=checking]`).
+- **Veraltetes Fenster:** In `version-mismatch` ohne frühere Verbindung bietet `HostGate` „Neu
+  laden“ und „Server beenden“; letzteres über `shutdownServer()` (kurzlebiger Socket nur für
+  `server.shutdown`, Timeout, nie hängend).
+- **Querverbindungen ohne Feature-Importe** laufen über Shell-Module: `decision-focus.ts` („Zur
+  Entscheidung“) und `transcript-follow.ts` (eigenes Senden → Transkript ans Ende).
+- **Anzeigetitel:** Sidebar, Kopfzeile, Pane-Label, „Server beenden“-Liste und Benachrichtigungen
+  nutzen `sessionTitle(summary)` (leerer Titel → Ordnername).
+- **Layout:** einspaltige Grids im Transkript und in Karten mit `grid-cols-[minmax(0,1fr)]`, damit
+  breite Inhalte (Codeblöcke) innen scrollen statt die Zeile zu verbreitern.
+
 ### 2.4 Weitere Regeln für Pakete der Welle 1
 - Feature-eigener State (z. B. Composer-Entwürfe) liegt in `features/<f>/state/`, Feature-Helfer in
   `features/<f>/lib/` – nie in `src/web/{state,lib}` (Welle 1b).

@@ -14,6 +14,7 @@ import type { RunState } from '@shared/status';
 import { useT, type t as translateFn } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { useEscapeHandler } from '@web/shell/shortcuts';
+import { followTranscript } from '@web/shell/transcript-follow';
 import { useDecisions, useSessionConnectionStatus, useSummarySelector } from '@web/state/hooks';
 import { reportTyping } from '@web/state/presence';
 import { Button } from '@web/ui/button';
@@ -188,6 +189,8 @@ export const Composer = memo(function Composer({ sessionKey }: { sessionKey: str
     if (!online || message === '' || message.length > textLimit(answer)) return;
     clearDraft(sessionKey);
     setLockedId(null);
+    // V2-06: the own message (and Claude's answer) must appear in view, even when scrolled up.
+    followTranscript(sessionKey);
     const restore = (lock: DecisionId | null) => {
       if (getDraft(sessionKey) !== '') return;
       setDraft(sessionKey, message);
@@ -294,106 +297,109 @@ export const Composer = memo(function Composer({ sessionKey }: { sessionKey: str
           <ModelPicker sessionKey={sessionKey} />
           <ContextGauge sessionKey={sessionKey} />
         </div>
-        <span className="flex-1" />
-        {online ? null : <span className="text-warning text-2xs">{t('composer.notConnected')}</span>}
-        {value.length > limit * COUNTER_FROM ? (
-          <span
-            data-slot="composer-counter"
-            className={cn('text-2xs tabular-nums', tooLong ? 'text-destructive' : 'text-muted-foreground')}
-          >
-            {t('composer.counter', { count: value.length, max: limit })}
-          </span>
-        ) : null}
-        {/* Left of the send buttons: appearing while the user types never moves them (R2W-01). */}
-        {pendingTarget === null ? null : (
-          <Button
-            variant="outline"
-            size="sm"
-            data-action="answer"
-            disabled={!canAnswer}
-            onClick={() => {
-              submit('answer');
-            }}
-          >
-            <ReplyIcon aria-hidden />
-            {answerLabel(pendingTarget)}
-          </Button>
-        )}
-        {working ? (
-          <Button
-            variant="outline"
-            size="sm"
-            data-action="stop"
-            title={t('composer.stopHint')}
-            disabled={!online}
-            onClick={stop}
-          >
-            <SquareIcon aria-hidden className="fill-current" />
-            {t('composer.stop')}
-          </Button>
-        ) : null}
-        {working && answerTarget === null ? (
-          <Button
-            variant="outline"
-            size="sm"
-            data-action="send-now"
-            title={t('composer.sendNowHint')}
-            disabled={!canSend}
-            onClick={() => {
-              submit('now');
-            }}
-          >
-            <ZapIcon aria-hidden />
-            {t('composer.sendNow')}
-          </Button>
-        ) : null}
-        <span className="inline-flex items-center gap-px">
-          <Button
-            size="sm"
-            data-action="send"
-            disabled={!canSend}
-            className={cn(answerTarget !== null && 'rounded-r-none')}
-            onClick={() => {
-              submit('primary');
-            }}
-          >
-            {sending > 0 ? <Spinner className="size-3" /> : <SendHorizontalIcon aria-hidden />}
-            {sendLabel}
-          </Button>
-          {answerTarget === null ? null : (
-            <DropdownMenu modal={false}>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  size="icon-sm"
-                  aria-label={t('composer.moreSend')}
-                  title={t('composer.moreSend')}
-                  disabled={!canSend}
-                  className="rounded-l-none"
-                >
-                  <ChevronDownIcon aria-hidden />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  onSelect={() => {
-                    submit('message');
-                  }}
-                >
-                  {t('composer.sendAsMessage')}
-                </DropdownMenuItem>
-                {working ? (
+        {/* One right-aligned group: when the footer wraps (narrow window, V2-11) the send buttons
+            stay on the right instead of starting the second line on the left. */}
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
+          {online ? null : <span className="text-warning text-2xs">{t('composer.notConnected')}</span>}
+          {value.length > limit * COUNTER_FROM ? (
+            <span
+              data-slot="composer-counter"
+              className={cn('text-2xs tabular-nums', tooLong ? 'text-destructive' : 'text-muted-foreground')}
+            >
+              {t('composer.counter', { count: value.length, max: limit })}
+            </span>
+          ) : null}
+          {/* Left of the send buttons: appearing while the user types never moves them (R2W-01). */}
+          {pendingTarget === null ? null : (
+            <Button
+              variant="outline"
+              size="sm"
+              data-action="answer"
+              disabled={!canAnswer}
+              onClick={() => {
+                submit('answer');
+              }}
+            >
+              <ReplyIcon aria-hidden />
+              {answerLabel(pendingTarget)}
+            </Button>
+          )}
+          {working ? (
+            <Button
+              variant="outline"
+              size="sm"
+              data-action="stop"
+              title={t('composer.stopHint')}
+              disabled={!online}
+              onClick={stop}
+            >
+              <SquareIcon aria-hidden className="fill-current" />
+              {t('composer.stop')}
+            </Button>
+          ) : null}
+          {working && answerTarget === null ? (
+            <Button
+              variant="outline"
+              size="sm"
+              data-action="send-now"
+              title={t('composer.sendNowHint')}
+              disabled={!canSend}
+              onClick={() => {
+                submit('now');
+              }}
+            >
+              <ZapIcon aria-hidden />
+              {t('composer.sendNow')}
+            </Button>
+          ) : null}
+          <span className="inline-flex items-center gap-px">
+            <Button
+              size="sm"
+              data-action="send"
+              disabled={!canSend}
+              className={cn(answerTarget !== null && 'rounded-r-none')}
+              onClick={() => {
+                submit('primary');
+              }}
+            >
+              {sending > 0 ? <Spinner className="size-3" /> : <SendHorizontalIcon aria-hidden />}
+              {sendLabel}
+            </Button>
+            {answerTarget === null ? null : (
+              <DropdownMenu modal={false}>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="icon-sm"
+                    aria-label={t('composer.moreSend')}
+                    title={t('composer.moreSend')}
+                    disabled={!canSend}
+                    className="rounded-l-none"
+                  >
+                    <ChevronDownIcon aria-hidden />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
                   <DropdownMenuItem
                     onSelect={() => {
-                      submit('now');
+                      submit('message');
                     }}
                   >
-                    {t('composer.sendNow')}
+                    {t('composer.sendAsMessage')}
                   </DropdownMenuItem>
-                ) : null}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        </span>
+                  {working ? (
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        submit('now');
+                      }}
+                    >
+                      {t('composer.sendNow')}
+                    </DropdownMenuItem>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </span>
+        </div>
       </div>
     </div>
   );

@@ -150,6 +150,62 @@ describe('QuestionCard (AskUserQuestion, F.5)', () => {
     });
   });
 
+  it('Mod+Enter on a focused option answers (V2-02); Enter and Space on it never do', async () => {
+    const h = start();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('checkbox', { name: /Lint/ }));
+    // The focus is on the chosen option (Radix prevents Enter there, also Ctrl+Enter).
+    await user.click(screen.getByRole('radio', { name: /SQLite/ }));
+    const radio = screen.getByRole('radio', { name: /SQLite/ });
+    expect(document.activeElement).toBe(radio);
+    expect(radio.getAttribute('aria-checked')).toBe('true');
+    await user.keyboard('{Enter}');
+    await user.keyboard(' ');
+    expect(h.commands('decision.respond')).toEqual([]);
+    await user.keyboard('{Control>}{Enter}{/Control}');
+    expect(h.commands('decision.respond').map((cmd) => cmd.response)).toEqual([
+      {
+        kind: 'question',
+        response: {
+          behavior: 'answer',
+          answers: [
+            {
+              question: 'Which storage format should the registry use?',
+              selected: ['SQLite'],
+              otherText: null,
+              notes: null,
+            },
+            {
+              question: 'Which checks should run before every commit?',
+              selected: ['Lint'],
+              otherText: null,
+              notes: null,
+            },
+          ],
+        },
+      },
+    ]);
+  });
+
+  it('Mod+Enter on a focused checkbox answers once complete, and never twice', async () => {
+    const h = start();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('radio', { name: /JSON files/ }));
+    await user.click(screen.getByRole('checkbox', { name: /Tests/ }));
+    expect(document.activeElement).toBe(screen.getByRole('checkbox', { name: /Tests/ }));
+    await user.keyboard(' ');
+    // Space toggles the option off again (no answer) – the second question is now unanswered.
+    expect(h.commands('decision.respond')).toEqual([]);
+    await user.keyboard('{Control>}{Enter}{/Control}');
+    expect(h.commands('decision.respond')).toEqual([]);
+    await user.keyboard(' ');
+    await user.keyboard('{Control>}{Enter}{/Control}');
+    expect(h.commands('decision.respond')).toHaveLength(1);
+    expect(h.commands('decision.respond')[0]?.response).toMatchObject({
+      response: { answers: [{ selected: ['JSON files'] }, { selected: ['Tests'] }] },
+    });
+  });
+
   it('"Skip" declines', async () => {
     const h = start();
     const user = userEvent.setup();

@@ -14,6 +14,11 @@ export const en = {
     label: 'Decisions',
     more: { one: '+{count} more', other: '+{count} more' },
     moreLabel: 'Open decisions of this session',
+    /** Accessible name of the "+n more" button (one key, R3-17). */
+    moreTrigger: {
+      one: '+{count} more · Open decisions of this session',
+      other: '+{count} more · Open decisions of this session',
+    },
     oldest: 'oldest',
     notConnected: 'Not connected – answers are paused.',
     sending: 'Sending…',
@@ -117,6 +122,8 @@ export const en = {
   },
   expired: {
     badge: 'Expired',
+    /** Title of an expired plan card (not "ready" any more, V2-08). */
+    planTitle: 'Plan v{version}',
     description: 'Parallax restarted while this was open, so Claude stopped. Continue the session.',
     resume: 'Continue',
     resumeApprove: 'Continue & implement · {mode}',

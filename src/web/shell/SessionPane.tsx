@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { parseSessionKey } from '@shared/common';
 import { useI18n, useT } from '@web/i18n';
+import { sessionTitle } from '@web/lib/session-title';
 import { useSelectedSession, useSessionMeta, useSummariesLoaded, useSummarySelector } from '@web/state/hooks';
 import { Alert } from '@web/ui/alert';
 import { Button } from '@web/ui/button';
@@ -54,7 +55,7 @@ const ComposerSlot = memo(function ComposerSlot({ sessionKey }: { sessionKey: st
   return <Composer sessionKey={sessionKey} />;
 });
 
-const selectTitle = (summary: { title: string }) => summary.title;
+const selectTitle = (summary: { title: string; cwd: string }) => sessionTitle(summary);
 
 /**
  * One session (pane-capable: the layout may render several side by side): header, transcript

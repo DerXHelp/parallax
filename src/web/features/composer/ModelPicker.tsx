@@ -106,7 +106,7 @@ export const ModelPicker = memo(function ModelPicker({ sessionKey }: { sessionKe
           size="sm"
           data-slot="model-picker"
           disabled={!online}
-          aria-label={`${t('composer.model.label')}: ${label}`}
+          aria-label={t('composer.model.trigger', { model: label })}
           className="max-w-48"
         >
           <CpuIcon aria-hidden />

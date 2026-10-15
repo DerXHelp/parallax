@@ -1,6 +1,7 @@
 import type { SessionSummary } from '@shared/model';
 import type { DisplayStatusKind } from '@shared/status';
 import { orderSessions } from '@web/lib/session-order';
+import { sessionTitle } from '@web/lib/session-title';
 
 /**
  * What "Stop server" interrupts (A.10: the confirmation lists the working and waiting sessions,
@@ -32,7 +33,7 @@ export function shutdownImpact(
   const impact: ShutdownImpact = { working: [], waiting: [], idle: 0 };
   // Archived sessions are included: a running process is stopped no matter where it is listed.
   for (const { entry, status } of orderSessions(entries, now, { includeArchived: true })) {
-    const affected = { sessionKey: entry.sessionKey, title: entry.summary.title, kind: status.kind };
+    const affected = { sessionKey: entry.sessionKey, title: sessionTitle(entry.summary), kind: status.kind };
     if (WAITING.has(status.kind)) impact.waiting.push(affected);
     else if (WORKING.has(status.kind)) impact.working.push(affected);
     else if (entry.summary.status.runState === 'idle') impact.idle += 1;

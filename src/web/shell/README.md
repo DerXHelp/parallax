@@ -16,7 +16,7 @@ Hinweis-Region, Shortcut-Registry und die `FeatureSlots` für WP-15/16 (architec
 | `EmptyState.tsx` | Willkommen / „keine Session gewählt“ mit dem Formular „Neue Session“ |
 | `NewSessionForm.tsx` | Phase-1-Minimum: Ordnerpfad + zuletzt genutzte Projekte (aus den Summaries) → `session.create {cwd}`, Session wählen, Eingabefeld fokussieren (`focusSessionInput`); unsichere Pfade vorab abgelehnt; `recentProjects` |
 | `NewSessionDialog.tsx` | dasselbe Formular als Dialog aus der Sidebar (`openNewSession`, `closeNewSession`) |
-| `HostGate.tsx` | „Nicht angemeldet“, „Server beendet“, „nicht erreichbar“ (Countdown), „Verbinde…“, veraltetes Fenster |
+| `HostGate.tsx` | „Nicht angemeldet“, „Server beendet“, „nicht erreichbar“ (Countdown), „Verbinde…“, veraltetes Fenster mit „Neu laden“ + „Server beenden…“ (Inline-Rückfrage, `shutdownServer`, V2-04) |
 | `ShellBanners.tsx` | Verbindung unterbrochen, Setup-Hinweis (`setupIssue`: Fehler des Standardprofils bzw. claude fehlt/abgemeldet/zu alt, übersetzt), Server-Warnungen, Benachrichtigungs-Berechtigung |
 | `NotificationPermissionBanner.tsx` | „Benachrichtigungen aktivieren“ (nur per Klick, `enableNotifications`), „Nicht jetzt“ |
 | `NotificationCenter.tsx` | Hinweis-Region unten rechts: lokale Hinweise aus `state/notices.ts` – auch die In-App-Benachrichtigungen des Servers (`src/web/notifications`) mit „Session anzeigen“ |
@@ -25,6 +25,7 @@ Hinweis-Region, Shortcut-Registry und die `FeatureSlots` für WP-15/16 (architec
 | `ConnectionIndicator.tsx` | Verbindungsstatus (Punkt + Text) |
 | `shortcuts.ts` | zentrale Registry: `useShortcut` (`scope`/`scopeRef`), `useEscapeHandler((event) => boolean, enabled, { scope?, scopeRef? })`, `isInScope`, `shortcuts`, `installShortcutListener`, `parseShortcut`, `shortcutKeyLabels` – keine Strg+Alt-Kürzel, Alt+Numpad nie |
 | `decision-focus.ts` | „Zur Entscheidung“ (architecture §2.3e): `focusDecision(sessionKey, decisionId)`, `useDecisionFocusHandler`, `registerDecisionFocusHandler`, `findDecisionBar` |
+| `transcript-follow.ts` | eigenes Senden → Transkript ans Ende (V2-06, ADR-074): `followTranscript(sessionKey)` (Composer), `useTranscriptFollowHandler` (Transkript) |
 | `server-shutdown/` | „Server beenden“ (WP-21), Namespace `serverShutdown` |
 
 Regeln: Kürzel nur über die Registry (keine eigenen `keydown`-Listener auf `window`);

@@ -16,7 +16,7 @@ import type { DecisionKind } from '@shared/common';
 import type { Decision } from '@shared/model';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
-import { shortcutKeyLabels, useShortcut } from '@web/shell/shortcuts';
+import { matchesShortcut, parseShortcut, shortcutKeyLabels, useShortcut } from '@web/shell/shortcuts';
 import { useSessionConnectionStatus } from '@web/state/hooks';
 import { Badge } from '@web/ui/badge';
 import { Button, type ButtonProps } from '@web/ui/button';
@@ -48,6 +48,14 @@ export const DecisionArmDelayContext = createContext<number>(ARM_DELAY_MS);
 const KEY_ACTIVATION_MS = 1000;
 
 export const RESPOND_KEYS = 'Mod+Enter';
+const RESPOND_COMBO = parseShortcut(RESPOND_KEYS);
+
+/**
+ * Options of a question (Radix radio/checkbox items). Radix calls `preventDefault()` for Enter on
+ * them (WAI-ARIA: Enter never toggles an option) – also for Mod+Enter, so the window's shortcut
+ * registry, which skips prevented events, never sees it there (V2-02).
+ */
+const OPTION_SELECTOR = '[role="radio"], [role="checkbox"]';
 
 interface CardActions {
   disabled: boolean;
@@ -167,6 +175,30 @@ export function DecisionCardShell({
     [disabled, armed, sending, hintId, accept, respond],
   );
 
+  /** Mod+Enter with the focus on `target` inside this card (registry and option path below). */
+  const answerByShortcut = (target: Element | null): void => {
+    if (!armed || disabled) return;
+    const button = target?.closest('[data-decision-action]');
+    if (button instanceof HTMLButtonElement && rootRef.current?.contains(button) === true) {
+      if (!button.disabled) {
+        viaShortcut.current = true;
+        try {
+          button.click();
+        } finally {
+          viaShortcut.current = false;
+        }
+      }
+      return;
+    }
+    // Focus on another control of the card ("Keep planning", "Open plan", a menu trigger …):
+    // Mod+Enter must not answer with the main action behind the user's back. Options of a
+    // question (radio/checkbox) belong to the answer form and keep the main action.
+    const control = target?.closest('button, a[href]');
+    const role = control?.getAttribute('role');
+    if (control instanceof HTMLElement && role !== 'radio' && role !== 'checkbox') return;
+    if (primary !== null) respond(primary);
+  };
+
   useShortcut({
     id: 'decisions.respond',
     keys: RESPOND_KEYS,
@@ -174,33 +206,22 @@ export function DecisionCardShell({
     scopeRef: rootRef,
     allowInInputs: true,
     run: (event) => {
-      if (!armed || disabled) return true;
-      const target = event.target instanceof Element ? event.target : null;
-      const button = target?.closest('[data-decision-action]');
-      if (button instanceof HTMLButtonElement && rootRef.current?.contains(button) === true) {
-        if (!button.disabled) {
-          viaShortcut.current = true;
-          try {
-            button.click();
-          } finally {
-            viaShortcut.current = false;
-          }
-        }
-        return true;
-      }
-      // Focus on another control of the card ("Keep planning", "Open plan", a menu trigger …):
-      // Mod+Enter must not answer with the main action behind the user's back. Options of a
-      // question (radio/checkbox) belong to the answer form and keep the main action.
-      const control = target?.closest('button, a[href]');
-      const role = control?.getAttribute('role');
-      if (control instanceof HTMLElement && role !== 'radio' && role !== 'checkbox') return true;
-      if (primary !== null) respond(primary);
+      answerByShortcut(event.target instanceof Element ? event.target : null);
       return true;
     },
   });
 
   const onKeyDownCapture = (event: ReactKeyboardEvent) => {
     if (event.key === 'Enter' || event.key === ' ') keyActivationAt.current = event.timeStamp;
+    // V2-02: Mod+Enter on a focused option of THIS card (its own DOM, not a portalled menu) is
+    // handled here, in the capture phase – before Radix prevents it. Plain Enter/Space stay
+    // untouched (they never answer); `preventDefault` keeps the registry from running it twice.
+    const target = event.target instanceof Element ? event.target : null;
+    const option = target?.closest(OPTION_SELECTOR) ?? null;
+    if (option === null || rootRef.current?.contains(option) !== true) return;
+    if (event.nativeEvent.isComposing || !matchesShortcut(event, RESPOND_COMBO)) return;
+    event.preventDefault();
+    answerByShortcut(option);
   };
 
   // The keyboard hint appears with the first keyboard focus inside the card and then stays
