@@ -4,6 +4,7 @@ import { VList, type VListHandle } from 'virtua';
 import type { QueuedPrompt, SessionSummary } from '@shared/model';
 import type { SessionViewState } from '@shared/sync';
 import { useT } from '@web/i18n';
+import { useTranscriptFollowHandler } from '@web/shell/transcript-follow';
 import { loadEarlier } from '@web/state/actions';
 import { errorPayloadOf } from '@web/state/connection';
 import { useSessionMeta, useSessionSelector, useSummarySelector, useTopLevelItemIds } from '@web/state/hooks';
@@ -201,6 +202,10 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
     setShowJump(false);
     scrollToEnd();
   };
+
+  // V2-06: a message sent from this window's composer brings the end back into view (the rows
+  // that follow – own message, queue entry, answer – then stick as usual).
+  useTranscriptFollowHandler(sessionKey, jumpToLatest);
 
   const empty = rows.length === 0;
   return (

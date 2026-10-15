@@ -3,7 +3,13 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_HOST_ID } from '@shared/common';
 import { makeError } from '@shared/errors';
-import { sampleContextGauge, sampleHostState, sampleTime } from '@shared/samples';
+import {
+  sampleClaudeInstallStatus,
+  sampleContextGauge,
+  sampleHostState,
+  sampleProfileSummary,
+  sampleTime,
+} from '@shared/samples';
 import { APP_SLOTS, App } from './App';
 import { Composer } from './features/composer/Composer';
 import { DecisionBar } from './features/decisions/DecisionBar';
@@ -395,6 +401,181 @@ describe('session header (status only, ADR-041/042)', () => {
     const view = within(header());
     expect(view.queryByRole('meter')).toBeNull();
     expect(view.getByText('1 expired decision')).toBeTruthy();
+  });
+
+  it('shows the Claude Code version of the session, red when older than the SDK expects (R3-01, C.7)', async () => {
+    const scenario = start('overview');
+    render(<App />);
+    await screen.findByRole('heading', { level: 1, name: 'Sample session' });
+    const version = () => header().querySelector<HTMLElement>('[data-slot="header-cli-version"]');
+    expect(version()?.textContent).toBe('CLI 2.1.300');
+    expect(version()?.dataset.versionStatus).toBe('ok');
+    act(() => {
+      scenario.host.patchSummary(PLAYGROUND_ENTRIES.main, { cliVersion: '2.1.200' });
+    });
+    await waitFor(() => {
+      expect(version()?.dataset.versionStatus).toBe('too_old');
+    });
+    // C.7: the SDK expects 2.1.296 (host.state.sdkClaudeCodeVersion); screen readers get the reason.
+    expect(
+      within(header()).getByText(
+        'Older than the version the Agent SDK expects (2.1.296) – update Claude Code.',
+      ),
+    ).toBeTruthy();
+    expect(within(header()).queryAllByRole('button')).toHaveLength(0);
+    // Not started yet (no init): no version entry at all.
+    act(() => {
+      scenario.host.patchSummary(PLAYGROUND_ENTRIES.main, { cliVersion: null });
+    });
+    await waitFor(() => {
+      expect(version()).toBeNull();
+    });
+  });
+
+  it('names a session without a title after its folder (V2-05)', async () => {
+    const scenario = start('overview');
+    render(<App />);
+    await screen.findByRole('heading', { level: 1, name: 'Sample session' });
+    act(() => {
+      scenario.host.patchSummary(PLAYGROUND_ENTRIES.main, { title: '', titleSource: 'none' });
+    });
+    expect(await screen.findByRole('heading', { level: 1, name: 'sample' })).toBeTruthy();
+    const nav = screen.getByRole('navigation', { name: 'Sessions' });
+    expect(within(nav).getByText('sample')).toBeTruthy();
+  });
+});
+
+describe('server facts (R3-01, R3-02) and the setup check (R3-03)', () => {
+  it('the settings menu shows Claude Code (version, path), SDK, Parallax, data folder and the FakeBackend', async () => {
+    start('overview');
+    const user = userEvent.setup();
+    render(<App />);
+    await sidebar();
+    // R3-02: the FakeBackend is marked next to the product name.
+    expect(document.querySelector('[data-slot="backend-fake"]')?.textContent).toContain('Fake');
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    const info = await screen.findByRole('group', { name: 'About this server' });
+    expect(within(info).getByText('Claude Code 2.1.300')).toBeTruthy();
+    expect(within(info).getByText('C:\\Users\\user\\.local\\bin\\claude.exe')).toBeTruthy();
+    expect(within(info).getByText('Agent SDK 0.3.296 · expects Claude Code 2.1.296 or newer')).toBeTruthy();
+    expect(within(info).getByText('Parallax 0.0.0')).toBeTruthy();
+    expect(within(info).getByText('Data: dev')).toBeTruthy();
+    expect(within(info).getByText('FakeBackend – no real Claude Code')).toBeTruthy();
+    // No menu items: the facts are read-only.
+    expect(within(info).queryAllByRole('menuitem')).toHaveLength(0);
+    // V2-09: the radio groups of the menu are labelled by their headings.
+    expect(screen.getByRole('group', { name: 'Theme' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'Language' })).toBeTruthy();
+  });
+
+  it('the real backend has no "Fake" badge; a too old CLI is red in the menu', async () => {
+    const scenario = start('overview');
+    const user = userEvent.setup();
+    render(<App />);
+    await sidebar();
+    act(() => {
+      scenario.host.setHostState(
+        sampleHostState({
+          backend: 'sdk',
+          dev: false,
+          dataDirLabel: '%LOCALAPPDATA%\\Parallax',
+          profiles: [
+            sampleProfileSummary({
+              claude: sampleClaudeInstallStatus({ version: '2.1.200', versionStatus: 'too_old' }),
+            }),
+          ],
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(document.querySelector('[data-slot="backend-fake"]')).toBeNull();
+    });
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    const info = await screen.findByRole('group', { name: 'About this server' });
+    expect(within(info).getByText('Older than the Agent SDK expects (at least 2.1.296).')).toBeTruthy();
+    expect(info.querySelector('[data-info="claude"]')?.getAttribute('data-version-status')).toBe('too_old');
+    expect(within(info).getByText('Data: %LOCALAPPDATA%\\Parallax')).toBeTruthy();
+    expect(info.querySelector('[data-info="backend"]')).toBeNull();
+  });
+
+  it('while "Profil testen" runs: a neutral checking line, no warning; afterwards the real result', async () => {
+    const scenario = start('checking');
+    const user = userEvent.setup();
+    render(<App />);
+    const hint = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>('[data-slot="setup-hint"]');
+      if (element === null) throw new Error('no setup hint yet');
+      return element;
+    });
+    expect(hint.dataset.state).toBe('checking');
+    expect(within(hint).getByText('Checking Claude Code…')).toBeTruthy();
+    expect(screen.queryByText('Claude Code needs attention')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(await screen.findByText('Claude Code: checking…')).toBeTruthy();
+    await user.keyboard('{Escape}');
+    // The check found no claude: now the warning with the translated reason.
+    act(() => {
+      scenario.host.setHostState(
+        sampleHostState({
+          setupRequired: true,
+          profiles: [
+            sampleProfileSummary({
+              claude: sampleClaudeInstallStatus({
+                state: 'not_found',
+                path: null,
+                version: null,
+                versionStatus: 'unknown',
+                error: makeError('CLAUDE_NOT_FOUND'),
+              }),
+            }),
+          ],
+        }),
+      );
+    });
+    expect(await screen.findByText('Claude Code needs attention')).toBeTruthy();
+    expect(document.querySelector<HTMLElement>('[data-slot="setup-hint"]')?.dataset.state).toBe('required');
+    // …and an ok check removes the hint.
+    act(() => {
+      scenario.host.setHostState(sampleHostState());
+    });
+    await waitFor(() => {
+      expect(document.querySelector('[data-slot="setup-hint"]')).toBeNull();
+    });
+  });
+
+  it('counts server messages that failed the contract at the connection indicator (R3-05)', async () => {
+    const scenario = start('overview');
+    render(<App />);
+    await sidebar();
+    expect(
+      document.querySelector('[data-slot="connection-indicator"]')?.hasAttribute('data-invalid-messages'),
+    ).toBe(false);
+    act(() => {
+      // A known type whose payload does not match the schema (e.g. a new field format).
+      const broken = JSON.stringify({ type: 'summary.upsert', summary: { entryId: 'broken' } });
+      scenario.host.transport.serverSendRaw(broken);
+      scenario.host.transport.serverSendRaw(broken);
+    });
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-slot="connection-indicator"]')?.getAttribute('data-invalid-messages'),
+      ).toBe('2');
+    });
+    expect(screen.getByText('2 server messages did not match the contract and were dropped.')).toBeTruthy();
+  });
+
+  it('the window title drops "(n)" once the server is stopped (V2-08)', async () => {
+    const scenario = start('overview');
+    render(<App />);
+    await sidebar();
+    expect(document.title).toBe('(4) Parallax');
+    act(() => {
+      scenario.host.transport.serverClose(4503);
+    });
+    expect(await screen.findByRole('heading', { name: 'Parallax server stopped' })).toBeTruthy();
+    await waitFor(() => {
+      expect(document.title).toBe('Parallax');
+    });
   });
 });
 

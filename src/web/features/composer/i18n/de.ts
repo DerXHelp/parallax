@@ -42,7 +42,11 @@ export const de: typeof en = {
   },
   mode: {
     label: 'Berechtigungsmodus',
+    trigger: 'Berechtigungsmodus: {mode}',
     unknown: 'Unbekannter Modus',
+    notStarted: 'CLI-Standard',
+    notStartedHint:
+      'Noch nicht gestartet: Claude Code startet mit dem Standardmodus seiner Einstellungen – oder dem Modus, den du hier wählst.',
     hints: {
       default: 'Claude fragt vor jeder Änderung und jedem Befehl.',
       acceptEdits: 'Datei-Änderungen laufen ohne Nachfrage, Befehle fragen weiter.',
@@ -56,6 +60,7 @@ export const de: typeof en = {
   },
   model: {
     label: 'Modell',
+    trigger: 'Modell: {model}',
     default: 'Standardmodell',
     loading: 'Modelle werden geladen…',
     unavailable: 'Die Modellliste gibt es, solange die Session läuft.',

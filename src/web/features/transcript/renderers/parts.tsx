@@ -41,7 +41,7 @@ export function Section({
   className?: string;
 }) {
   return (
-    <section className={cn('grid min-w-0 gap-1', className)}>
+    <section className={cn('grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1', className)}>
       <h4 className="text-muted-foreground text-2xs font-medium tracking-wide uppercase">{label}</h4>
       {children}
     </section>
@@ -141,7 +141,7 @@ export function ToolResultText({
       <ResultImages images={images} />
     </>
   );
-  if (hideLabel) return <div className="grid min-w-0 gap-1">{content}</div>;
+  if (hideLabel) return <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1">{content}</div>;
   return (
     <Section label={isError ? t('transcript.tool.error') : t('transcript.tool.result')}>{content}</Section>
   );

@@ -2,15 +2,17 @@ import {
   CloudOffIcon,
   LayersIcon,
   LogInIcon,
+  PowerIcon,
   RefreshCwIcon,
   ServerOffIcon,
   type LucideIcon,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
-import { makeError } from '@shared/errors';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import type { HostId } from '@shared/common';
+import { makeError, type ErrorPayload } from '@shared/errors';
 import { useI18n } from '@web/i18n';
 import { useNow } from '@web/state/clock';
-import { retryConnection } from '@web/state/connection';
+import { errorPayloadOf, retryConnection, shutdownServer } from '@web/state/connection';
 import { useHostRecord } from '@web/state/hooks';
 import { Alert } from '@web/ui/alert';
 import { Button } from '@web/ui/button';
@@ -50,6 +52,114 @@ export function RetryCountdown({ nextAttemptAt }: { nextAttemptAt: number | null
     <span aria-live="off" className="text-muted-foreground text-xs tabular-nums">
       {t('connection.retryIn', { count: seconds })}
     </span>
+  );
+}
+
+/**
+ * "Parallax was updated" without an earlier connection (V2-04): reloading only helps when the
+ * window is older than the server. When the server is the older one (V2-03: a build replaced
+ * `dist/` under it), reloading lands here again – so the view also offers "Stop server" (with an
+ * inline confirmation, Cancel focused) and, should that fail, the manual way out.
+ */
+function OutdatedWindow({ hostId }: { hostId: HostId }) {
+  const { t, tError } = useI18n();
+  const [confirming, setConfirming] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<ErrorPayload | null>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const stopRef = useRef<HTMLButtonElement>(null);
+  const [focusAfter, setFocusAfter] = useState<'cancel' | 'stop' | null>(null);
+
+  useEffect(() => {
+    // Only after a click on "Stop server…" / "Cancel" (a user action): the button that replaced
+    // the clicked one keeps the keyboard where it was.
+    if (focusAfter === 'cancel') cancelRef.current?.focus();
+    if (focusAfter === 'stop') stopRef.current?.focus();
+  }, [focusAfter, confirming]);
+
+  const confirm = () => {
+    setPending(true);
+    setError(null);
+    shutdownServer(hostId).then(
+      // Success: the host is "server stopped" now and HostGate shows that view.
+      () => undefined,
+      (caught: unknown) => {
+        setPending(false);
+        setError(errorPayloadOf(caught));
+      },
+    );
+  };
+
+  return (
+    <FullPage
+      icon={RefreshCwIcon}
+      title={t('connection.versionMismatchTitle')}
+      actions={
+        confirming ? undefined : (
+          <>
+            <Button
+              onClick={() => {
+                window.location.reload();
+              }}
+            >
+              {t('common.reload')}
+            </Button>
+            <Button
+              ref={stopRef}
+              variant="outline"
+              data-action="stop-server"
+              onClick={() => {
+                setConfirming(true);
+                setFocusAfter('cancel');
+              }}
+            >
+              <PowerIcon aria-hidden />
+              {t('serverShutdown.menuItem')}
+            </Button>
+          </>
+        )
+      }
+    >
+      <p className="text-muted-foreground text-xs">{t('connection.versionMismatchDescription')}</p>
+      <p className="text-muted-foreground text-xs">{t('connection.versionMismatchStuck')}</p>
+      {confirming ? (
+        <div data-slot="outdated-stop-server" className="grid w-full gap-2 text-left">
+          <Alert tone="warning" title={t('serverShutdown.title')}>
+            {t('serverShutdown.outdatedDescription')}
+          </Alert>
+          {error === null ? null : (
+            <Alert tone="error" title={t('serverShutdown.failed')}>
+              <span className="grid gap-0.5">
+                <span>{tError(error)}</span>
+                <span>{t('serverShutdown.manualHint')}</span>
+              </span>
+            </Alert>
+          )}
+          <div className="flex justify-center gap-2">
+            <Button
+              ref={cancelRef}
+              variant="ghost"
+              disabled={pending}
+              onClick={() => {
+                setConfirming(false);
+                setError(null);
+                setFocusAfter('stop');
+              }}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              data-action="confirm-stop-server"
+              disabled={pending}
+              onClick={confirm}
+            >
+              {pending ? t('serverShutdown.stopping') : t('serverShutdown.confirm')}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </FullPage>
   );
 }
 
@@ -108,23 +218,7 @@ export function HostGate({ children }: { children: ReactNode }) {
   }
 
   if (host.phase === 'version-mismatch' && !host.everConnected) {
-    return (
-      <FullPage
-        icon={RefreshCwIcon}
-        title={t('connection.versionMismatchTitle')}
-        actions={
-          <Button
-            onClick={() => {
-              window.location.reload();
-            }}
-          >
-            {t('common.reload')}
-          </Button>
-        }
-      >
-        <p className="text-muted-foreground text-xs">{t('connection.versionMismatchDescription')}</p>
-      </FullPage>
-    );
+    return <OutdatedWindow hostId={host.hostId} />;
   }
 
   if (!host.everConnected) {

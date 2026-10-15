@@ -60,10 +60,11 @@ export function ExpiredCard({
   const [mode, setMode] = useApproveMode(plan?.approveModes ?? NO_MODES);
   const expiredIds = decisions.filter((d) => d.state === 'expired').map((d) => d.id);
   const resume = () => resumeSession(sessionKey, expiredIds);
+  // Not "Plan v1 ready" next to the "Expired" badge (V2-08): the plan is no longer up for review.
   const title =
     plan === null
       ? t(`decisions.kind.${decision.kind}`)
-      : t('decisions.plan.ready', { version: plan.version });
+      : t('decisions.expired.planTitle', { version: plan.version });
 
   return (
     <DecisionCardShell

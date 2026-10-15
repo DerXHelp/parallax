@@ -45,7 +45,7 @@ function Notice({ tone, title, children }: { tone: AlertTone; title: ReactNode; 
       )}
     >
       <Icon aria-hidden />
-      <div className="grid min-w-0 gap-0.5">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-0.5">
         <div className="font-medium">{title}</div>
         {children === undefined ? null : <div className="text-muted-foreground break-words">{children}</div>}
       </div>

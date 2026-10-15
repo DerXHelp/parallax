@@ -20,6 +20,7 @@ import {
 import type * as FormatModule from '@web/i18n/format';
 import type { RunningScenario } from '@web/playground/PlaygroundScenario';
 import { FeatureSlotsProvider, type DecisionCardSlotProps, type FeatureSlots } from '@web/shell/slots';
+import { followTranscript } from '@web/shell/transcript-follow';
 import { sendCommand, useDecision } from '@web/state/hooks';
 import { resetClientStore } from '@web/state/store';
 import { resetExpansion } from './state/expansion';
@@ -205,6 +206,39 @@ describe('TranscriptView', () => {
     });
     await waitFor(() => {
       expect(scenario.host.commands.some((cmd) => cmd.name === 'transcript.loadEarlier')).toBe(true);
+    });
+  });
+
+  it('a message sent from this window brings the end back into view (V2-06)', async () => {
+    const items = Array.from({ length: 120 }, (_, i) =>
+      sampleItems.userMessage({
+        id: `px:follow:${String(i)}`,
+        order: i + 1,
+        text: { text: `follow ${String(i)}`, truncated: null },
+      }),
+    );
+    const s = session(9, items);
+    start(s);
+    render(<TranscriptView sessionKey={s.key} />);
+    const region = await screen.findByRole('region', { name: 'Transcript' });
+    // At the end first, then up: only a scroll towards the top unsticks.
+    for (const top of [5000, 1000]) {
+      act(() => {
+        region.scrollTop = top;
+        fireEvent.scroll(region);
+      });
+    }
+    expect(await screen.findByRole('button', { name: 'Jump to latest' })).toBeTruthy();
+    // Another session's request changes nothing; the own one sticks to the end again.
+    act(() => {
+      followTranscript(keyOf(sampleId('en', 99)));
+    });
+    expect(screen.getByRole('button', { name: 'Jump to latest' })).toBeTruthy();
+    act(() => {
+      followTranscript(s.key);
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Jump to latest' })).toBeNull();
     });
   });
 

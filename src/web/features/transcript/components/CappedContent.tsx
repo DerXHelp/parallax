@@ -98,7 +98,7 @@ export function CappedContent({
   const clip = useMemo(() => (loaded === null ? null : clipForDisplay(loaded)), [loaded]);
   const shown = clip?.text ?? text;
   return (
-    <div className="grid min-w-0 gap-1">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1">
       {children(shown)}
       {truncated === null ? null : (
         <TruncationNotice

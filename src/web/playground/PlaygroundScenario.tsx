@@ -35,7 +35,12 @@ export function startScenario(
   store.setState({ localSettings: settings });
 
   const transport = createMemoryTransport();
-  const host = new FakeHost({ transport, replyToPrompts: true, ...scenario.build(Date.now(), settings) });
+  const host = new FakeHost({
+    transport,
+    replyToPrompts: true,
+    ...(scenario.buildId === undefined ? {} : { buildId: scenario.buildId }),
+    ...scenario.build(Date.now(), settings),
+  });
   const auth = scenario.auth;
   let reloadAt: number | null = null;
   const connection = createHostConnection({

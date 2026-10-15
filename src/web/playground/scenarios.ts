@@ -47,8 +47,10 @@ export const SCENARIO_IDS = [
   'decisions',
   'empty',
   'setup',
+  'checking',
   'offline',
   'signed-out',
+  'outdated',
 ] as const;
 export type ScenarioId = (typeof SCENARIO_IDS)[number];
 
@@ -66,6 +68,8 @@ export interface Scenario {
   select: string | null;
   /** Result of the auth check before the WS (default: signed in, no check). */
   auth?: AuthCheckResult;
+  /** `hello.buildId` of the fake server (default 'dev' = this bundle); another one = outdated window. */
+  buildId?: string;
   build(now: number, settings: Settings): ScenarioData;
   /** Live behaviour after the start (timers); returns the stop function. */
   start?(host: FakeHost, now: () => number): () => void;
@@ -409,6 +413,39 @@ export const SCENARIOS: Readonly<Record<ScenarioId, Scenario>> = {
         warnings: [{ id: 'w1', error: makeError('STORE_CORRUPT_QUARANTINED'), at: iso(now) }],
       }),
     }),
+  },
+  checking: {
+    id: 'checking',
+    title: 'Claude Code is still being checked after the server start (R3-03)',
+    select: PLAYGROUND_SESSION_KEYS.main,
+    build: (now, settings) => ({
+      ...overviewData(now, settings),
+      hostState: sampleHostState({
+        settings,
+        // The server reports setupRequired until the first check is done.
+        setupRequired: true,
+        profiles: [
+          sampleProfileSummary({
+            claude: sampleClaudeInstallStatus({
+              state: 'checking',
+              path: null,
+              version: null,
+              versionStatus: 'unknown',
+              auth: { state: 'unknown', method: null, apiProvider: null, subscriptionType: null },
+              error: null,
+              checkedAt: null,
+            }),
+          }),
+        ],
+      }),
+    }),
+  },
+  outdated: {
+    id: 'outdated',
+    title: 'Parallax was updated – the server is another build (V2-04)',
+    select: null,
+    buildId: 'older-build',
+    build: overviewData,
   },
   offline: {
     id: 'offline',

@@ -74,7 +74,7 @@ function PlanFinal({ item, sessionKey }: ToolBodyProps) {
       data-item-kind="tool_call"
       data-tool={item.toolName}
       data-plan-state={outcome?.type ?? item.status}
-      className="bg-card grid min-w-0 gap-2 rounded-md border px-3 py-2"
+      className="bg-card grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 rounded-md border px-3 py-2"
     >
       <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
         <ClipboardListIcon aria-hidden className="text-brand size-3.5 shrink-0" />

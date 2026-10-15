@@ -102,6 +102,14 @@ function DenyForm({
           if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.altKey) {
             event.preventDefault();
             respond(deny);
+            return;
+          }
+          // V2-07: Esc closes the form like "Cancel" (never an answer, the composer's Esc-stop
+          // does not see it: prevented here).
+          const plain = !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey;
+          if (event.key === 'Escape' && plain && !event.nativeEvent.isComposing) {
+            event.preventDefault();
+            onCancel();
           }
         }}
       />
@@ -135,10 +143,13 @@ function DenyForm({
 function DenyMenu({
   onOpenForm,
   focusForm,
+  triggerRef,
 }: {
   onOpenForm: (mode: DenyFormMode) => void;
   /** Focuses the opened form's reason field. */
   focusForm: () => void;
+  /** "▾" itself: the focus returns here when the form is cancelled (V2-07). */
+  triggerRef: RefObject<HTMLButtonElement | null>;
 }) {
   const t = useT();
   const disabled = useCardDisabled();
@@ -152,8 +163,10 @@ function DenyMenu({
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <Button
+          ref={triggerRef}
           variant="outline"
           size="icon-sm"
+          data-action="deny-menu"
           aria-label={t('decisions.permission.denyMenu')}
           title={t('decisions.permission.denyMenu')}
           disabled={disabled}
@@ -220,6 +233,7 @@ export function PermissionCard({
   );
   const [denyForm, setDenyForm] = useState<DenyFormMode | null>(null);
   const reasonRef = useRef<HTMLTextAreaElement>(null);
+  const denyMenuRef = useRef<HTMLButtonElement>(null);
   const tool = decision.displayName ?? decision.toolName;
   const summary = summarizeToolInput(decision.toolName, decision.input);
   const fileChange = isFileChangeTool(decision.toolName);
@@ -263,6 +277,7 @@ export function PermissionCard({
         focusForm={() => {
           reasonRef.current?.focus();
         }}
+        triggerRef={denyMenuRef}
       />
     </span>
   );
@@ -373,6 +388,8 @@ export function PermissionCard({
           inputRef={reasonRef}
           onCancel={() => {
             setDenyForm(null);
+            // The form (and the focused control in it) goes away: back to "▾", never to <body>.
+            denyMenuRef.current?.focus();
           }}
         />
       )}

@@ -44,11 +44,6 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
   return result;
 }
 
-/** Re-reads the permission (tests; the hooks also re-read on window focus). */
-export function refreshNotificationPermission(): void {
-  emit();
-}
-
 export function isNotificationHintDismissed(): boolean {
   return dismissedInMemory || readStorage('local', HINT_KEY) === DISMISSED;
 }

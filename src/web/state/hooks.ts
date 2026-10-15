@@ -26,10 +26,10 @@ import {
   EMPTY_SESSION_RECORD,
   clientStore,
   emptyHostRecord,
-  type ClientNotification,
   type ClientState,
   type ClientStore,
   type ConnectionStatus,
+  type HostCounters,
   type HostRecord,
   type SessionRecord,
   type WindowPresence,
@@ -70,6 +70,11 @@ export function useHostState(hostId: HostId = LOCAL_HOST_ID): HostState | null {
 
 export function useConnectionStatus(hostId: HostId = LOCAL_HOST_ID): ConnectionStatus {
   return useStore(clientStore, (state) => state.hosts[hostId]?.status ?? 'connecting');
+}
+
+/** One counter of the host connection (e.g. `invalidMessages`, R3-05); re-renders only when it changes. */
+export function useHostCounter(counter: keyof HostCounters, hostId: HostId = LOCAL_HOST_ID): number {
+  return useStore(clientStore, (state) => state.hosts[hostId]?.counters[counter] ?? 0);
 }
 
 /** Connection status of the host of a session (e.g. disable "Send" while not `open`). */
@@ -432,14 +437,8 @@ export function useCommand(): SendCommand {
 }
 
 // ---- notifications (A.9) ----
-
-/**
- * Server notifications of this window until `notify.clear` (raw; shown once each by
- * src/web/notifications/delivery.ts as an in-app hint or a Web Notification).
- */
-export function useNotifications(): readonly ClientNotification[] {
-  return useStore(clientStore, (state) => state.notifications);
-}
+// Server notifications (`ClientState.notifications`, until `notify.clear`) are shown once each by
+// src/web/notifications/delivery.ts as an in-app hint or a Web Notification – no React hook.
 
 export function dismissNotification(id: string, store: ClientStore = clientStore): void {
   if (!store.getState().notifications.some((n) => n.id === id)) return;
