@@ -13,6 +13,7 @@ import { AsyncQueue } from './lib/asyncQueue';
 import { toPermissionRequest } from './permissionRequest';
 import {
   createSdkBackend,
+  loadAgentSdk,
   PERMISSION_FAILURE_MESSAGE,
   SDK_TIMEOUTS,
   stillQueuedOf,
@@ -1138,7 +1139,18 @@ describe('SdkBackend – dispose and defaults', () => {
     expect(h.fq().closeCalls).toBe(0);
   });
 
-  it('uses the SDK query() by default (mocked here – never the real CLI)', async () => {
+  it('without a query, createSdkBackend needs loadAgentSdk() first (the SDK is loaded lazily)', async () => {
+    vi.resetModules();
+    const fresh = await import('./sdkBackend');
+    expect(() => fresh.createSdkBackend({ history: fakeHistory(), now: () => NOW })).toThrow(
+      'await loadAgentSdk()',
+    );
+    expect(sdkQueryMock).not.toHaveBeenCalled();
+  });
+
+  it('uses the SDK query() by default once loadAgentSdk() resolved (mocked here – never the real CLI)', async () => {
+    expect(await loadAgentSdk()).toBe(sdkQueryMock);
+    expect(await loadAgentSdk()).toBe(sdkQueryMock);
     sdkQueryMock.mockImplementationOnce(() => {
       throw new Error('mocked sdk query');
     });
@@ -1154,6 +1166,7 @@ describe('SdkBackend – dispose and defaults', () => {
   });
 
   it('the default spawn is spawnHidden (mocked here – it refuses to run)', async () => {
+    await loadAgentSdk();
     sdkQueryMock.mockImplementationOnce(({ options }: { options: Options }) => {
       options.spawnClaudeCodeProcess?.({
         command: EXE,

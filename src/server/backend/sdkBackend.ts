@@ -14,14 +14,16 @@
  * signal:'SIGKILL', expected:true}`. Every control call has a timeout; a rejection is an Error (the
  * manager maps it to CLAUDE_CONTROL_FAILED). History runs in a worker per config dir (history/pool.ts).
  */
-import {
-  query as sdkQuery,
-  type CanUseTool,
-  type EffortLevel,
-  type Options,
-  type PermissionMode,
-  type Query,
-  type SDKUserMessage,
+// Types only: the SDK module itself is loaded by `loadAgentSdk()` (dynamic import). esbuild hoists
+// a static import of an external package to the top of the one-file bundle, so `dist/server.js`
+// loaded the SDK on every start, also with --backend=fake (WP-20a gap 1, WP-20c).
+import type {
+  CanUseTool,
+  EffortLevel,
+  Options,
+  PermissionMode,
+  Query,
+  SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { UUID } from 'node:crypto';
 import path from 'node:path';
@@ -552,12 +554,34 @@ class SdkSession implements AgentSession {
 
 // ---- backend ----
 
+let loadedSdkQuery: SdkQueryFn | null = null;
+
+/**
+ * Loads the Agent SDK (dynamic import, idempotent) and returns its `query`. The composition calls
+ * it before `createSdkBackend()`; nothing else in the bundle loads the SDK module (only
+ * `require.resolve` for paths, history/pool.ts and resolveClaude.ts).
+ */
+export async function loadAgentSdk(): Promise<SdkQueryFn> {
+  if (loadedSdkQuery === null) {
+    const sdk = await import('@anthropic-ai/claude-agent-sdk');
+    loadedSdkQuery = sdk.query;
+  }
+  return loadedSdkQuery;
+}
+
+function defaultQuery(): SdkQueryFn {
+  if (loadedSdkQuery === null) throw new Error('SdkBackend: await loadAgentSdk() before createSdkBackend()');
+  return loadedSdkQuery;
+}
+
+/** Without `deps.query`, `loadAgentSdk()` must have resolved before (throws otherwise). */
 export function createSdkBackend(deps: SdkBackendDeps = {}): AgentBackend & { readonly kind: 'sdk' } {
+  const query = deps.query ?? defaultQuery();
   const history = deps.history ?? createHistoryPool();
   const live = new Set<SdkSession>();
   let disposed = false;
   const ctx: SessionContext = {
-    query: deps.query ?? sdkQuery,
+    query,
     spawn: deps.spawn ?? spawnHidden,
     killProcessTree: deps.killProcessTree ?? killTree,
     now: deps.now ?? (() => new Date()),

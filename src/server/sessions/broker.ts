@@ -230,8 +230,11 @@ export function createBroker(deps: BrokerDeps): Broker {
       if (result !== null) pending.resolve(result);
     }
     const at = deps.now().toISOString();
-    deps.emit([{ op: 'decision.resolved', decisionId: slot.record.id, outcome, byClientId, at }]);
+    // The outcome first (tool_call.decision via item.upsert), then the removal: a window that sees
+    // the decision disappear already knows why ("allowed in another window", WP-20c). The other
+    // order could reach the client in two animation frames – it showed "no longer open" instead.
     deps.attachDecision(slot.record.toolUseId, refOf(slot.record, outcome));
+    deps.emit([{ op: 'decision.resolved', decisionId: slot.record.id, outcome, byClientId, at }]);
     slot.record = { ...slot.record, outcome, resolvedAt: at, decision: null };
     markResolved(slot.record.id);
   };

@@ -30,9 +30,14 @@ const OWN_FLAGS: Readonly<Record<string, (args: LauncherArgs) => void>> = {
   },
 };
 
+/**
+ * `--` is skipped: pnpm 12 passes it on literally (`pnpm start -- --port=4800`), and loadConfig
+ * (`parseArgs` without positionals) would reject it as an unexpected argument (WP-20a gap 2).
+ */
 export function parseLauncherArgs(argv: readonly string[]): LauncherArgs {
   const args: LauncherArgs = { printUrl: false, build: true, help: false, serverArgv: [] };
   for (const arg of argv) {
+    if (arg === '--') continue;
     const own = OWN_FLAGS[arg];
     if (own === undefined) args.serverArgv.push(arg);
     else own(args);

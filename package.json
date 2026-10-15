@@ -25,7 +25,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "playwright test --pass-with-no-tests",
+    "e2e": "playwright test",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run test",
     "preflight": "tsx --tsconfig tsconfig.tools.json scripts/preflight.ts",
     "record": "tsx --tsconfig tsconfig.tools.json scripts/record.ts"

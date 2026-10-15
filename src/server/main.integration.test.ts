@@ -27,6 +27,7 @@ import {
 import { checkHealth, requestLauncherCode } from './launcher/client';
 import { SERVER_EXIT_CODES } from './launcher/exitCodes';
 import { readServerLock } from './launcher/lockFile';
+import { acquireHomeLock } from './lib/homeLock';
 import { childProcesses, isProcessAlive, killProcessTree, spawnHidden } from './lib/process';
 
 // Real processes (tsx compiles the whole server on start): generous bounds for parallel load.
@@ -266,6 +267,24 @@ describe('server entry (main.ts) as a process with the FakeBackend', () => {
     expect(lastLine).toContain('sessions.json was written by a newer Parallax');
     expect(await readFile(registry, 'utf8')).toBe(content);
     expect(await readServerLock(home)).toEqual({ kind: 'missing' });
+  });
+
+  it('exit code 5 when another process holds the home lock – before any file of the home is touched', async () => {
+    const home = await tempDir('wp20c-homelock-');
+    // Another holder (here the test process; R2-05: named pipe, any process).
+    const held = await acquireHomeLock(home);
+    if (held.kind !== 'acquired') throw new Error('home lock busy');
+    try {
+      const server = spawnServer(['--backend=fake', '--port=0', `--home=${home}`]);
+      const exit = await server.exited;
+      expect(exit.code, server.output()).toBe(SERVER_EXIT_CODES.alreadyRunning);
+      const lastLine = server.stderr().trim().split(/\r?\n/).at(-1) ?? '';
+      expect(lastLine).toContain(`Another Parallax server already uses ${home}`);
+      // Neither the log nor a store was opened.
+      expect(await readdir(home)).toEqual([]);
+    } finally {
+      await held.lock.release();
+    }
   });
 
   it('exit code 4 when the port is in use', async () => {
