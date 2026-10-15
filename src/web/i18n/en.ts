@@ -48,6 +48,8 @@ export const en = {
       lastActivity: 'Last activity {time}',
       pinned: 'Pinned',
       newSession: 'New session',
+      fakeBadge: 'Fake',
+      fakeHint: 'This server runs the FakeBackend: sessions get simulated answers, not the real Claude Code.',
     },
     session: {
       loading: 'Loading session…',
@@ -64,6 +66,25 @@ export const en = {
       context: 'Context',
       contextTokens: '{used} of {max} tokens · {source}',
       contextSource: { sdk: 'measured', estimate: 'estimated' },
+      /** Per session (C.7): `init.claude_code_version` of its last start. */
+      cliVersionLabel: 'Claude Code version',
+      cliVersionShort: 'CLI {version}',
+      cliVersion: 'Claude Code {version}',
+      cliVersionHint: 'Reported by this session at its last start.',
+      cliTooOld: 'Older than the version the Agent SDK expects ({required}) – update Claude Code.',
+    },
+    /** Read-only facts of the server in the settings menu (R3-01, R3-02). */
+    info: {
+      title: 'About this server',
+      claude: 'Claude Code {version}',
+      claudeChecking: 'Claude Code: checking…',
+      claudeMissing: 'Claude Code: not found',
+      claudeUnknown: 'Claude Code: version unknown',
+      claudeTooOld: 'Older than the Agent SDK expects (at least {required}).',
+      sdk: 'Agent SDK {version} · expects Claude Code {required} or newer',
+      parallax: 'Parallax {version}',
+      data: 'Data: {path}',
+      backendFake: 'FakeBackend – no real Claude Code',
     },
     badges: {
       background: 'Background tasks',
@@ -110,6 +131,10 @@ export const en = {
       title: 'Claude Code needs attention',
       description: 'The default profile cannot start sessions yet. Run “pnpm preflight” for details.',
       preflight: 'Details: “pnpm preflight”.',
+      /** While the server tests the default profile after its start (R3-03): no warning yet. */
+      checkingTitle: 'Checking Claude Code…',
+      checkingDescription:
+        'Parallax tests the installed claude (version and sign-in) – this takes a few seconds.',
     },
     warnings: {
       title: 'Server warning',
@@ -134,7 +159,8 @@ export const en = {
         enable: 'Enable notifications',
         later: 'Not now',
         granted: 'Notifications are on.',
-        denied: 'Notifications are blocked. Allow them in the Edge site settings (lock icon) to get toasts.',
+        denied:
+          'Notifications are blocked. Allow them in the Edge settings (edge://settings/content/notifications) to get toasts.',
       },
       kinds: {
         permission: '{title} – needs permission',
@@ -192,6 +218,13 @@ export const en = {
     versionMismatchTitle: 'Parallax was updated',
     versionMismatchDescription:
       'This window and the server run different versions. Reload to continue – if this stays, restart Parallax.',
+    versionMismatchStuck:
+      'Still here after reloading? Then the running server is older than this window: stop it and start Parallax again.',
+    /** R3-05: server messages that failed the contract were dropped (counter of this window). */
+    invalidMessages: {
+      one: '{count} server message did not match the contract and was dropped.',
+      other: '{count} server messages did not match the contract and were dropped.',
+    },
     status: {
       connecting: 'Connecting',
       open: 'Connected',

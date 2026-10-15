@@ -642,3 +642,96 @@ describe('robustness (R1 fixes)', () => {
     expect(session()).toBeUndefined();
   });
 });
+
+describe('shutdownServer from an outdated window (V2-04)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Connection in `version-mismatch`: the server is another build (reload already used). */
+  function outdated() {
+    const ctx = setup();
+    ctx.connection.start();
+    ctx.transport.serverSend(sampleHello({ buildId: 'older-build' }));
+    expect(ctx.host()?.phase).toBe('version-mismatch');
+    ctx.transport.clearSent();
+    return ctx;
+  }
+
+  it('does a handshake on a short-lived socket, sends only server.shutdown, then "server stopped"', async () => {
+    const { transport, connection, host } = outdated();
+    const done = connection.shutdownServer();
+    expect(transport.connected).toBe(true);
+    transport.serverSend(sampleHello({ buildId: 'older-build' }));
+    expect(transport.sent.map((message) => message.type)).toEqual(['clientHello', 'cmd']);
+    const [cmd] = transport.sentOfType('cmd');
+    expect(cmd?.cmd).toEqual({ name: 'server.shutdown' });
+    // No subscriptions, no presence: the window stays outdated until the server is gone.
+    transport.serverSend({ type: 'ack', cmdId: cmd?.cmdId ?? '', ok: true, result: { sessionsStopped: 2 } });
+    await expect(done).resolves.toBeUndefined();
+    expect(host()?.phase).toBe('server-stopped');
+    expect(transport.connected).toBe(false);
+  });
+
+  it('close 4503 before the ack counts as stopped', async () => {
+    const { transport, connection, host } = outdated();
+    const done = connection.shutdownServer();
+    transport.serverSend(sampleHello({ buildId: 'older-build' }));
+    transport.serverClose(4503);
+    await expect(done).resolves.toBeUndefined();
+    expect(host()?.phase).toBe('server-stopped');
+  });
+
+  it('never hangs: no answer → COMMAND_TIMEOUT, refused → its error, other protocol → mismatch', async () => {
+    const silent = outdated();
+    const timedOut = silent.connection.shutdownServer(5_000).catch((error: unknown) => error);
+    silent.transport.serverSend(sampleHello({ buildId: 'older-build' }));
+    await vi.advanceTimersByTimeAsync(5_000);
+    const timeoutError = await timedOut;
+    expect(timeoutError).toBeInstanceOf(ClientCommandError);
+    expect((timeoutError as ClientCommandError).code).toBe('COMMAND_TIMEOUT');
+    expect(silent.host()?.phase).toBe('version-mismatch');
+    expect(silent.transport.connected).toBe(false);
+
+    const refused = outdated();
+    const rejected = refused.connection.shutdownServer().catch((error: unknown) => error);
+    refused.transport.serverSend(sampleHello({ buildId: 'older-build' }));
+    const [cmd] = refused.transport.sentOfType('cmd');
+    refused.transport.serverSend({
+      type: 'ack',
+      cmdId: cmd?.cmdId ?? '',
+      ok: false,
+      error: makeError('SERVER_SHUTTING_DOWN'),
+    });
+    expect(((await rejected) as ClientCommandError).code).toBe('SERVER_SHUTTING_DOWN');
+
+    const other = outdated();
+    const mismatch = other.connection.shutdownServer().catch((error: unknown) => error);
+    other.transport.serverSend(sampleHello({ protocolVersion: 2 }));
+    expect(((await mismatch) as ClientCommandError).code).toBe('PROTOCOL_VERSION_MISMATCH');
+    expect(other.transport.sent).toEqual([]);
+
+    const dropped = outdated();
+    const lost = dropped.connection.shutdownServer().catch((error: unknown) => error);
+    dropped.transport.serverClose(1006);
+    expect(((await lost) as ClientCommandError).code).toBe('CONNECTION_LOST');
+  });
+
+  it('while open it is a plain command; otherwise (e.g. reconnecting) it is refused', async () => {
+    const { transport, connection, host } = setup();
+    connection.start();
+    transport.serverSend(sampleHello());
+    const done = connection.shutdownServer();
+    const [cmd] = transport.sentOfType('cmd');
+    expect(cmd?.cmd).toEqual({ name: 'server.shutdown' });
+    transport.serverSend({ type: 'ack', cmdId: cmd?.cmdId ?? '', ok: true, result: { sessionsStopped: 0 } });
+    await expect(done).resolves.toBeUndefined();
+    transport.serverClose(1006);
+    expect(host()?.phase).toBe('reconnecting');
+    const refused = await connection.shutdownServer().catch((error: unknown) => error);
+    expect((refused as ClientCommandError).code).toBe('CONNECTION_LOST');
+  });
+});

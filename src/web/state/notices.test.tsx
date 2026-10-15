@@ -87,6 +87,12 @@ describe('local notices (R1W-07)', () => {
     await user.click(screen.getByRole('button', { name: 'Show session' }));
     expect(clientStore.getState().selectedSession).toBe(KEY);
     expect(clientStore.getState().notices).toHaveLength(0);
+    // The session is shown now: a further hint about it offers no "Show session" (V2-08).
+    act(() => {
+      showErrorNotice(makeError('SESSION_BUSY'), { sessionKey: KEY, id: 'again' });
+    });
+    expect(document.querySelector('[data-notice="again"]')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Show session' })).toBeNull();
   });
 
   it('SettingsMenu reports a failed settings.update (settings.saveFailed)', async () => {

@@ -226,6 +226,29 @@ describe('PermissionCard', () => {
     });
   });
 
+  it('Esc in the reason field closes the form like "Cancel" and returns the focus to "▾" (V2-07)', async () => {
+    const h = bar('permission');
+    const user = userEvent.setup();
+    const trigger = await screen.findByRole('button', { name: 'More ways to deny' });
+    await user.click(trigger);
+    await user.click(await screen.findByRole('menuitem', { name: 'Deny with a reason…' }));
+    const reason = await screen.findByRole('textbox', { name: 'Reason for Claude' });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(reason);
+    });
+    await user.type(reason, 'not now');
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('textbox', { name: 'Reason for Claude' })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    // "Cancel" does the same.
+    await user.click(trigger);
+    await user.click(await screen.findByRole('menuitem', { name: 'Deny with a reason…' }));
+    await user.click(await screen.findByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('textbox', { name: 'Reason for Claude' })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    expect(responses(h)).toEqual([]);
+  });
+
   it('"Deny and stop the turn…" opens a form; its button sends interrupt: true', async () => {
     const h = bar('permission');
     const user = userEvent.setup();

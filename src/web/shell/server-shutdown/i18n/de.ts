@@ -20,4 +20,8 @@ export const de: typeof en = {
   stopping: 'Wird beendet…',
   notConnected: 'Keine Verbindung zum Server – er ist eventuell schon beendet.',
   failed: 'Der Server konnte nicht beendet werden.',
+  outdatedDescription:
+    'Dabei werden auch alle Claude-Sessions dieses Servers gestoppt – nach dem Neustart lassen sie sich fortsetzen. Starte Parallax danach neu (parallax.cmd oder pnpm start).',
+  manualHint:
+    'Hilft das nicht: Beende den Parallax-Server (node.exe) im Task-Manager und starte Parallax neu.',
 };

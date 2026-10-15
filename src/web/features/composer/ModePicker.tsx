@@ -58,6 +58,8 @@ export const ModePicker = memo(function ModePicker({ sessionKey }: { sessionKey:
     (view) => view.detail.init?.permissionMode ?? null,
     null,
   );
+  /** `init` seen: a null mode is then an unknown mode of a newer CLI, not "not started yet". */
+  const reported = useSessionSelector<boolean>(sessionKey, (view) => view.detail.init !== null, false);
   const profileId = useSummarySelector<string | null>(sessionKey, (s) => s.profileId, null);
   const modelSetting = useSummarySelector<string | null>(sessionKey, (s) => s.modelSetting, null);
   const autoSupported = useSessionSelector<boolean>(
@@ -76,7 +78,12 @@ export const ModePicker = memo(function ModePicker({ sessionKey }: { sessionKey:
   const options: PermissionMode[] = [...OFFERED];
   if (allowsBypass) options.push('bypassPermissions');
   const Icon = mode === null ? HandIcon : MODE_ICONS[mode];
-  const label = mode === null ? t('composer.mode.unknown') : t(`shell.permissionMode.${mode}`);
+  // V2-05: before the first start nothing is reported – Claude Code then starts with the default
+  // mode of its own settings (the profile omits it, C.3), never a guess like "Manual".
+  const notStarted = mode === null && !reported;
+  let label: string;
+  if (mode !== null) label = t(`shell.permissionMode.${mode}`);
+  else label = notStarted ? t('composer.mode.notStarted') : t('composer.mode.unknown');
 
   const choose = async (next: PermissionMode) => {
     const parsed = parseSessionKey(sessionKey);
@@ -102,9 +109,9 @@ export const ModePicker = memo(function ModePicker({ sessionKey }: { sessionKey:
           variant="ghost"
           size="sm"
           data-slot="mode-picker"
-          data-mode={mode ?? 'unknown'}
+          data-mode={mode ?? (notStarted ? 'not-started' : 'unknown')}
           disabled={!online}
-          aria-label={`${t('composer.mode.label')}: ${label}`}
+          aria-label={t('composer.mode.trigger', { mode: label })}
           className={cn(mode === 'bypassPermissions' && 'text-destructive hover:text-destructive')}
         >
           <Icon aria-hidden />
@@ -114,6 +121,9 @@ export const ModePicker = memo(function ModePicker({ sessionKey }: { sessionKey:
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-72">
         <DropdownMenuLabel>{t('composer.mode.label')}</DropdownMenuLabel>
+        {notStarted ? (
+          <p className="text-muted-foreground px-2 pb-1 text-2xs">{t('composer.mode.notStartedHint')}</p>
+        ) : null}
         <DropdownMenuRadioGroup
           value={mode ?? ''}
           onValueChange={(value) => {

@@ -92,6 +92,10 @@ describe('"Stop server" (A.10: confirmation lists working and waiting sessions)'
       expect(screen.queryByRole('dialog')).toBeNull();
     });
     expect(running.host.commands).not.toContainEqual({ name: 'server.shutdown' });
+    // V2-07: the menu item that opened it is gone – the focus returns to the settings button.
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Settings' }));
+    });
   });
 
   it('is translated (German)', async () => {
@@ -145,6 +149,67 @@ describe('"Stop server" (A.10: confirmation lists working and waiting sessions)'
     expect(await within(dialog).findByRole('alert')).toBeTruthy();
     expect(within(dialog).getByText('The server could not be stopped.')).toBeTruthy();
     expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+});
+
+describe('"Parallax was updated" offers "Stop server" (V2-04)', () => {
+  /** A server of another build: the window stays outdated after its (stubbed) reload. */
+  function outdated(onCommand?: ConstructorParameters<typeof FakeHost>[0]['onCommand']) {
+    const transport = createMemoryTransport();
+    const host = new FakeHost({ transport, buildId: 'older-build', onCommand });
+    const reload = vi.fn();
+    const connection = createHostConnection({
+      hostId: LOCAL_HOST_ID,
+      createTransport: () => transport,
+      reload,
+      reloadGuard: { read: () => null, write: () => undefined },
+    });
+    registerConnection(connection);
+    connection.start();
+    cleanup = () => {
+      unregisterConnection(LOCAL_HOST_ID);
+      host.dispose();
+    };
+    return { host, reload };
+  }
+
+  it('offers Reload and Stop server; the confirmation stops the server', async () => {
+    const { host, reload } = outdated();
+    const user = userEvent.setup();
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: 'Parallax was updated' })).toBeTruthy();
+    expect(reload).toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Stop server…' }));
+    // An inline confirmation (no session list here), Cancel focused like in the dialog.
+    const cancel = await screen.findByRole('button', { name: 'Cancel' });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(cancel);
+    });
+    expect(screen.getByText(/Every Claude session of this server is stopped too/)).toBeTruthy();
+    expect(host.commands).toEqual([]);
+    await user.click(screen.getByRole('button', { name: 'Stop server' }));
+    expect(await screen.findByRole('heading', { name: 'Parallax server stopped' })).toBeTruthy();
+    expect(host.commands).toEqual([{ name: 'server.shutdown' }]);
+  });
+
+  it('a refused stop shows the error and the manual way out; Cancel goes back', async () => {
+    outdated((cmd) =>
+      cmd.name === 'server.shutdown' ? { ok: false, error: makeError('SERVER_SHUTTING_DOWN') } : undefined,
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'Stop server…' }));
+    await user.click(await screen.findByRole('button', { name: 'Stop server' }));
+    expect(await screen.findByText('The server could not be stopped.')).toBeTruthy();
+    expect(screen.getByText(/end the Parallax server \(node\.exe\) in the Task Manager/)).toBeTruthy();
+    // Not stuck: both buttons work again.
+    expect(screen.getByRole('button', { name: 'Stop server' }).hasAttribute('disabled')).toBe(false);
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('heading', { name: 'Parallax was updated' })).toBeTruthy();
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Stop server…' }));
+    });
   });
 });
 

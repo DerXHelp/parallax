@@ -225,3 +225,43 @@ und der Dev-Server erlaubt nur die Origin `127.0.0.1:5173` (ADR-030).
   falsch kodiert und zerstörten `en.ts`/`de.ts` – Texte mit Nicht-ASCII nur über das Edit-Werkzeug
   ändern.
 - `pnpm exec prettier` über `pnpm.ps1` reicht Datei-Arrays als einen String weiter – Bash nutzen.
+
+## 3. R3-Fixes Web (Branch `fix/r3-web`, 15.10.2026)
+
+Umsetzung der Web-Befunde aus `docs/wp/R3.md` und `docs/wp/V2.md` (Abschnitte „Umsetzung Web“),
+Entscheidungen ADR-070 … ADR-074.
+
+### 3.1 Verdrahtung und Anzeige
+
+- **Versionen (R3-01):** Kopfzeile „CLI ‹version›“ je Session (`summary.cliVersion`, ab `xl`, rot
+  bei älter als `host.state.sdkClaudeCodeVersion` – dann immer sichtbar), Sidebar-Tooltip „Claude
+  Code ‹version›“, Einstellungsmenü-Gruppe „Über diesen Server“ (Claude Code des Standardprofils mit
+  Pfad, Agent SDK + erwartete CLI, Parallax, Datenordner, FakeBackend).
+- **FakeBackend (R3-02, UI-Teil):** Badge „Fake“ neben „Parallax“ in der Sidebar.
+- **Prüf-Zustand (R3-03):** `claude.state === 'checking'` → neutraler Hinweis statt Warnung.
+- **Zähler (R3-05, Web-Teil):** verworfene Server-Nachrichten (`counters.invalidMessages`) am
+  Verbindungsindikator (Warn-Symbol + Zahl, Tooltip).
+- **Veraltetes Fenster (V2-04):** „Parallax wurde aktualisiert“ mit „Neu laden“ + „Server
+  beenden…“ (Inline-Rückfrage; `shutdownServer()` in `state/connection.ts`).
+- **Titel (V2-05/V2-08):** leerer Titel → Ordnername; Fenstertitel ohne „(n)“, solange keine
+  Verbindung besteht (Server beendet, abgemeldet, veraltet); Hinweis ohne „Session anzeigen“, wenn
+  die Session schon angezeigt wird; Fokus nach „Server beenden“-Dialog zurück aufs Zahnrad.
+
+### 3.2 Schnittstellen – was der Server liefert (geprüft, nichts fehlt)
+
+`SessionSummary.cliVersion` (aus `init.claude_code_version` über `runtime.ts` → `Entry.cliVersion`,
+persistiert; `null` vor dem ersten Start, `''` wenn `init` kein Feld hat → im Web „unbekannt“),
+`HostState.serverVersion`/`sdkVersion`/`sdkClaudeCodeVersion` (`compose.ts` aus
+`readSdkManifest()`, sonst `'unknown'`), `dataDirLabel`, `backend`, `profiles[].claude.{state,
+version, path, versionStatus}`. FakeBackend: CLI `2.1.300`, Pfad `C:\fake\claude.exe`.
+
+### 3.3 Selektoren/Test-IDs (neu, für E2E R3-07 f)
+
+`[data-slot="header-cli-version"][data-version-status=ok|too_old]`, `[data-slot="row-cli-version"]`
+(Sidebar-Tooltip), Gruppe „About this server“ / `[data-slot="host-info"]` mit
+`[data-info="claude"][data-version-status]`, `[data-info="sdk|parallax|data|backend"]`,
+`[data-action="settings"]` (Zahnrad), `[data-slot="backend-fake"]`,
+`[data-slot="setup-hint"][data-state=checking|required|too-old]`,
+`[data-slot="connection-indicator"][data-invalid-messages]`, `[data-slot="invalid-messages"]`,
+`[data-action="stop-server"]` / `[data-action="confirm-stop-server"]` /
+`[data-slot="outdated-stop-server"]` (veraltetes Fenster). Bestehende Selektoren unverändert.

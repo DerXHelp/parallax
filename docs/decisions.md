@@ -641,3 +641,81 @@ Format: `ADR-NNN – Titel` · Datum · WP · Kontext → Entscheidung → Folge
   loggt beim Start `logHomeAccess` als Warnung (Verdrahtung WP-20c).
 - **Folgen:** `unknown` (kein Windows, PowerShell gesperrt) ist nur `info`. Deny-Einträge werden
   ignoriert – die Warnung kann zu vorsichtig sein, nie zu nachsichtig.
+
+## ADR-070 – Versionsanzeige: CLI je Session in der Kopfzeile, Server-Fakten im Einstellungsmenü
+- **Datum/WP:** 15.10.2026, R3-Fixes Web (R3-01 BLOCKER, R3-02 UI-Teil; Plan „Claude-Auflösung →
+  Versions-Hinweis“, C.7)
+- **Kontext:** Die UI zeigte die `claude`-Version nirgends; WP-22 muss „angezeigte Version =
+  `claude --version`“ abnehmen. Die Daten liefert der Server schon: `SessionSummary.cliVersion`
+  (aus `init.claude_code_version`, persistiert in `Entry.cliVersion`), `HostState.{serverVersion,
+  sdkVersion, sdkClaudeCodeVersion, dataDirLabel, backend}`, `profiles[].claude.{version, path,
+  versionStatus}`.
+- **Entscheidung:** (a) Kopfzeile: nicht bedienbarer Eintrag „CLI ‹version›“
+  (`data-slot="header-cli-version"`, `data-version-status`), ab `xl` sichtbar; älter als
+  `sdkClaudeCodeVersion` → rotes Badge, immer sichtbar, Grund im Tooltip und als `sr-only`-Text.
+  Ohne `init` (nie gestartet) kein Eintrag. (b) Sidebar-Tooltip: Zeile „Claude Code ‹version›“
+  (rot bei zu alt). (c) Einstellungsmenü: beschriftete Gruppe „Über diesen Server“
+  (`data-slot="host-info"`, Einträge `data-info="claude|sdk|parallax|data|backend"`) – Claude Code
+  des Standardprofils mit Pfad (Prüfung: „wird geprüft…“, „nicht gefunden“), SDK mit erwarteter
+  CLI, Parallax-Version, Datenordner, „FakeBackend – kein echtes Claude Code“; keine Menüeinträge.
+  (d) Badge „Fake“ neben dem Produktnamen bei `backend === 'fake'`. Die Versionsregel C.7 rechnet
+  das Web je Session selbst (`src/web/lib/version.ts`, gleiche Semantik wie
+  `server/claude/resolveClaude.ts` `cliVersionStatus`), weil der Contract nur die Host-Version
+  bewertet; leere Versionen (`''` vom Normalizer ohne Feld) gelten als unbekannt.
+- **Folgen:** Kein Contract-Eingriff. Wunsch an den Koordinator: `compareVersions`/
+  `cliVersionStatus` nach `@shared` (eine Quelle für Server und Web). E2E-Assert „Version sichtbar“
+  (R3-07 f) über die genannten `data-*`-Attribute.
+
+## ADR-071 – Prüf-Zustand statt Setup-Warnung, solange „Profil testen“ läuft
+- **Datum/WP:** 15.10.2026, R3-Fixes Web (R3-03)
+- **Kontext:** Bis zum Ende der ersten Profil-Prüfung meldet der Server `claude.state: 'checking'`
+  und `setupRequired: true` – das frisch geöffnete Fenster zeigte kurz die Warnung „Claude Code
+  needs attention“.
+- **Entscheidung:** Client-Fix: bei `claude.state === 'checking'` zeigt `SetupHint` einen neutralen
+  Hinweis (Ton `info`, „Claude Code wird geprüft…“, `data-state="checking"`), unabhängig von
+  `setupRequired`; danach gilt das Ergebnis der Prüfung (`required` bzw. `too-old`). Auch das
+  Einstellungsmenü sagt „wird geprüft…“.
+- **Folgen:** Funktioniert mit und ohne die optionale Server-Änderung (`setupRequired` erst nach der
+  ersten Prüfung `true`). Playground-Szenario `shell-checking`.
+
+## ADR-072 – Mod+Enter auf einer Option der Frage-Karte: Capture-Phase der Karte, keine Registry-Ausnahme
+- **Datum/WP:** 15.10.2026, R3-Fixes Web (V2-02)
+- **Kontext:** Radix ruft auf Radio-/Checkbox-Items für Enter `preventDefault()` auf (WAI-ARIA),
+  auch für Strg+Enter; die Shortcut-Registry überspringt vorbelegte Ereignisse – der
+  `decisions.respond`-Handler lief auf einer fokussierten Option nie.
+- **Entscheidung:** `DecisionCardShell` behandelt genau diesen Fall im `onKeyDownCapture` der Karte
+  (vor Radix): Mod+Enter (`matchesShortcut` mit `RESPOND_KEYS`) auf `[role=radio|checkbox]` im
+  eigenen DOM der Karte (nicht in Portalen) → dieselbe Logik wie das Registry-Kürzel
+  (Hauptaktion), dann `preventDefault`, damit die Registry nicht ein zweites Mal antwortet. Eine
+  generelle Registry-Ausnahme für `allowInInputs`-Kürzel mit Modifier wurde verworfen: in offenen
+  Radix-Menüs löst Strg+Enter den Menüpunkt aus (der `preventDefault` setzt) – die Ausnahme hätte
+  dort zusätzlich geantwortet („Menüs wählen nur“).
+- **Folgen:** Enter/Leertaste auf Optionen antworten weiterhin nie; Tests mit Gegenprobe in
+  `QuestionCard.test.tsx`, im Browser nachgeprüft (Keydown weiter `defaultPrevented`, Antwort kommt).
+
+## ADR-073 – „Server beenden“ aus dem veralteten Fenster über einen kurzlebigen Socket
+- **Datum/WP:** 15.10.2026, R3-Fixes Web (V2-04; V2-03 bleibt beim Koordinator/WP-21)
+- **Kontext:** „Parallax wurde aktualisiert“ ohne frühere Verbindung bot nur „Neu laden“; ist der
+  Server der ältere Build (ein Build ersetzte `dist/` unter ihm), führt das Neuladen wieder dorthin.
+  Die Verbindung ist in dieser Phase geschlossen; eine HTTP-Route zum Beenden gibt es nicht (und
+  soll es nicht geben).
+- **Entscheidung:** `ManagedHostConnection.shutdownServer(timeoutMs = 15 s)`: offen → normales
+  `server.shutdown`; in `version-mismatch` ein eigener, kurzlebiger Socket (`createTransport()`),
+  der den Handshake mit derselben `protocolVersion` macht (der Hub prüft die `buildId` des Clients
+  nicht), nur `server.shutdown` sendet (keine Abos) und mit `ack` oder Close 4503 endet → Phase
+  `server-stopped`. Andere Protokollversion (`PROTOCOL_VERSION_MISMATCH`), Ablehnung, Abbruch oder
+  Zeitüberschreitung → `ClientCommandError`, die Ansicht bleibt bedienbar. `HostGate` zeigt „Neu
+  laden“ + „Server beenden…“ mit Inline-Rückfrage (Fokus auf „Abbrechen“), bei Fehler den
+  übersetzten Grund + Hinweis auf Task-Manager/`parallax.cmd`.
+- **Folgen:** Kein Server-/Contract-Eingriff; funktioniert, solange die Protokollversion gleich ist
+  (Build-Wechsel ohne Protokollwechsel ist der V2-03-Fall). Playground `shell-outdated`.
+
+## ADR-074 – Shell-Modul `transcript-follow`: eigene Nachricht holt das Transkript ans Ende
+- **Datum/WP:** 15.10.2026, R3-Fixes Web (V2-06)
+- **Kontext:** Hochgescrollt und gesendet → Nachricht und Antwort erschienen außerhalb des
+  sichtbaren Bereichs. Composer (WP-16) und Transkript (WP-15) dürfen einander nicht importieren.
+- **Entscheidung:** `src/web/shell/transcript-follow.ts` nach dem Muster von `decision-focus`:
+  der Composer ruft nach jedem eigenen Senden (Prompt oder Antwort per Text) `followTranscript
+  (sessionKey)`, das Transkript registriert `useTranscriptFollowHandler` und klebt wieder am Ende
+  (wie „Zum Neuesten“). Nachrichten aus anderen Fenstern verschieben die Ansicht nicht.
+- **Folgen:** Nur Nutzeraktionen dieses Fensters; weitere Features können denselben Weg nutzen.

@@ -104,7 +104,7 @@ function ToolCallFrame({
       data-item-kind="tool_call"
       data-tool={item.toolName}
       data-status={item.status}
-      className="grid min-w-0 gap-0.5"
+      className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-0.5"
     >
       <Disclosure
         stateKey={expansionKey(sessionKey, item.id)}
@@ -132,7 +132,7 @@ function ToolCallFrame({
           </span>
         }
       >
-        <div className="mt-1 mb-1.5 ml-5 grid min-w-0 gap-2">
+        <div className="mt-1 mb-1.5 ml-5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">
           {item.status === 'streaming_input' ? (
             <p className="text-muted-foreground text-xs italic">{t('transcript.tool.preparing')}</p>
           ) : (

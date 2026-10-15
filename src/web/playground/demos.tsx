@@ -277,8 +277,10 @@ export const shellDemos: readonly PlaygroundDemo[] = [
   shellDemo('decisions'),
   shellDemo('empty'),
   shellDemo('setup'),
+  shellDemo('checking'),
   shellDemo('offline'),
   shellDemo('signed-out'),
+  shellDemo('outdated'),
   {
     id: 'ui-status-icons',
     title: 'UI – Status icons (all display statuses)',
