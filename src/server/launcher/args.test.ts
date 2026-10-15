@@ -38,6 +38,17 @@ describe('launcher command line', () => {
     });
   });
 
+  it('passes PARALLAX_BACKEND=fake on as --backend=fake (smoke/E2E of the launcher path, WP-20)', () => {
+    const env = { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local', PARALLAX_BACKEND: 'fake' };
+    expect(serverArgsFor(loadConfig({ argv: [], env, cwd: 'C:\\repo' }))).toContain('--backend=fake');
+    // Without the variable the launcher starts the real backend; a flag wins over the variable.
+    expect(serverArgsFor(loadConfig({ argv: [], env: {}, cwd: 'C:\\repo' }))).toContain('--backend=sdk');
+    expect(serverArgsFor(loadConfig({ argv: ['--backend=sdk'], env, cwd: 'C:\\repo' }))).toContain(
+      '--backend=sdk',
+    );
+    expect(LAUNCHER_USAGE).toContain('PARALLAX_BACKEND');
+  });
+
   it('documents every flag in the usage text', () => {
     for (const flag of ['--port', '--home', '--backend', '--no-build', '--print-url', '--help']) {
       expect(LAUNCHER_USAGE).toContain(flag);
