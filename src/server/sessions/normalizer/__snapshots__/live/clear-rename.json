@@ -1,0 +1,900 @@
+{
+  "scenario": "clear-rename",
+  "conversations": [
+    "cv_00000000000000000000000000000001",
+    "cv_00000000000000000000000000000002"
+  ],
+  "timeline": [
+    "#4 system/session_state_changed: !session_id | !session_state:running",
+    "#5 command_lifecycle/queued: !prompt_lifecycle:queued",
+    "#6 command_lifecycle/started: upsert b74a6f1b-29e0-4a72-9ebb-be1f7e813180 user_message o1 | !prompt_lifecycle:started",
+    "#7 rate_limit_event: detail.patch {rateLimit} | !rate_limit:allowed",
+    "#8 system/init: detail.patch {init} | !init",
+    "#10 stream_event/message_start: !assistant_model | !context_estimate",
+    "#11 stream_event/content_block_start/text: upsert msg_011Cg2yRNEyiaKrbmW5zLE2y:0 assistant_text o2 streaming 0ch",
+    "#12 delta msg_011Cg2yRNEyiaKrbmW5zLE2y:0 text ×1 (+3ch)",
+    "#13 assistant: upsert msg_011Cg2yRNEyiaKrbmW5zLE2y:0 assistant_text o2 final 3ch",
+    "#15 stream_event/message_delta: !context_estimate",
+    "#17 result/success: upsert 55576fea-12a4-4e09-ac77-13058ae392f8 turn_result o3 success | !turn_result:success",
+    "#18 command_lifecycle/completed: !prompt_lifecycle:completed",
+    "#19 system/session_state_changed: !session_state:idle",
+    "#21 system/session_state_changed: !session_state:running",
+    "#22 command_lifecycle/queued: !prompt_lifecycle:queued",
+    "#23 command_lifecycle/started: upsert 8c9965bc-8b78-4af5-9bc9-2256da558614 user_message o4 /rename | !prompt_lifecycle:started",
+    "#24 system/session_title_changed: !title_changed",
+    "#25 system/init: !init",
+    "#26 assistant: upsert 6c0b1017-0187-4313-bc9f-4d91d92957e6:0 assistant_text o5 final 40ch",
+    "#27 result/success: upsert 4df75c3b-e72f-4c88-a435-1c74a6f073e1 turn_result o6 success synthetic | !turn_result:success:synthetic",
+    "#28 command_lifecycle/completed: !prompt_lifecycle:completed",
+    "#29 system/session_state_changed: !session_state:idle",
+    "#36 system/session_state_changed: !session_state:running",
+    "#37 command_lifecycle/queued: !prompt_lifecycle:queued",
+    "#38 command_lifecycle/started: upsert 2ed4f0cb-c6af-4932-9f3b-6e24f8c33305 user_message o7 /clear | !prompt_lifecycle:started",
+    "#39 conversation_reset: !conversation_reset",
+    "#39 engine/conversation.reset: conversation.reset → cv_00000000000000000000000000000002",
+    "#40 system/session_title_changed: upsert 96ce35cc-c220-4460-93cb-8ec96ab9cfd7 system/conversation_reset o1 | !session_id | !title_changed",
+    "#41 system/session_title_changed: !title_changed",
+    "#42 system/init: detail.patch {init} | !init",
+    "#43 result/success: upsert d71de233-bf08-4511-83ec-ed596235bed2 turn_result o2 success synthetic | !turn_result:success:synthetic",
+    "#44 command_lifecycle/completed: !prompt_lifecycle:completed",
+    "#45 system/session_state_changed: !session_state:idle",
+    "#49 system/session_state_changed: !session_state:running",
+    "#50 command_lifecycle/queued: !prompt_lifecycle:queued",
+    "#51 command_lifecycle/started: upsert 598eb59a-18b3-4348-a206-31097d0e7daa user_message o3 | !prompt_lifecycle:started",
+    "#52 system/init: !init",
+    "#54 stream_event/message_start: !context_estimate",
+    "#55 stream_event/content_block_start/text: upsert msg_011Cg2yRejfhg1HKPNxX1TSD:0 assistant_text o4 streaming 0ch",
+    "#56-57 delta msg_011Cg2yRejfhg1HKPNxX1TSD:0 text ×2 (+3ch)",
+    "#58 assistant: upsert msg_011Cg2yRejfhg1HKPNxX1TSD:0 assistant_text o4 final 3ch",
+    "#60 stream_event/message_delta: !context_estimate",
+    "#62 result/success: upsert 18ea989c-ea39-458a-a5f0-6b49514d2ba5 turn_result o5 success | !turn_result:success",
+    "#63 command_lifecycle/completed: !prompt_lifecycle:completed",
+    "#64 system/session_state_changed: !session_state:idle"
+  ],
+  "signals": [
+    {
+      "seq": 4,
+      "type": "session_id",
+      "sessionId": "f04bd9b2-88ce-404f-83e3-3367a23f9b8a"
+    },
+    {
+      "seq": 4,
+      "type": "session_state",
+      "state": "running"
+    },
+    {
+      "seq": 5,
+      "type": "prompt_lifecycle",
+      "messageUuid": "b74a6f1b-29e0-4a72-9ebb-be1f7e813180",
+      "state": "queued"
+    },
+    {
+      "seq": 6,
+      "type": "prompt_lifecycle",
+      "messageUuid": "b74a6f1b-29e0-4a72-9ebb-be1f7e813180",
+      "state": "started"
+    },
+    {
+      "seq": 7,
+      "type": "rate_limit",
+      "info": {
+        "status": "allowed",
+        "rateLimitType": "five_hour",
+        "resetsAt": "2026-10-15T03:50:00.000Z",
+        "utilization": null,
+        "windows": {
+          "five_hour": {
+            "utilization": 0.01,
+            "resetsAt": "2026-10-15T03:50:00.000Z"
+          },
+          "seven_day": {
+            "utilization": 0.35,
+            "resetsAt": "2026-10-17T22:00:00.000Z"
+          }
+        },
+        "at": "2026-10-14T23:10:19.583Z"
+      }
+    },
+    {
+      "seq": 8,
+      "type": "init",
+      "sessionId": "f04bd9b2-88ce-404f-83e3-3367a23f9b8a",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "cliVersion": "2.1.300",
+      "apiKeySource": "none",
+      "capabilities": [
+        "interrupt_receipt_v1",
+        "interrupt_cancel_queued_v1",
+        "interrupt_send_now_v1",
+        "msg_lifecycle_v1",
+        "request_marker_lists_v1",
+        "sdk_mcp_tools_list_changed",
+        "sdk_mcp_manifests",
+        "mcp_read_resource_v1",
+        "mcp_tool_ui_meta_v1",
+        "ui_surface_v1"
+      ]
+    },
+    {
+      "seq": 10,
+      "type": "assistant_model",
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 10,
+      "type": "context_estimate",
+      "totalTokens": 29270,
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 15,
+      "type": "context_estimate",
+      "totalTokens": 29271,
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 17,
+      "type": "turn_result",
+      "outcome": "success",
+      "durationMs": 3794,
+      "costUsdTotal": 0.0028932100000000002,
+      "error": null,
+      "resultExcerpt": "ONE",
+      "userMessageUuids": [
+        "b74a6f1b-29e0-4a72-9ebb-be1f7e813180"
+      ],
+      "synthetic": false,
+      "startupFailure": false
+    },
+    {
+      "seq": 18,
+      "type": "prompt_lifecycle",
+      "messageUuid": "b74a6f1b-29e0-4a72-9ebb-be1f7e813180",
+      "state": "completed"
+    },
+    {
+      "seq": 19,
+      "type": "session_state",
+      "state": "idle"
+    },
+    {
+      "seq": 21,
+      "type": "session_state",
+      "state": "running"
+    },
+    {
+      "seq": 22,
+      "type": "prompt_lifecycle",
+      "messageUuid": "8c9965bc-8b78-4af5-9bc9-2256da558614",
+      "state": "queued"
+    },
+    {
+      "seq": 23,
+      "type": "prompt_lifecycle",
+      "messageUuid": "8c9965bc-8b78-4af5-9bc9-2256da558614",
+      "state": "started"
+    },
+    {
+      "seq": 24,
+      "type": "title_changed",
+      "title": "Parallax Spike Title"
+    },
+    {
+      "seq": 25,
+      "type": "init",
+      "sessionId": "f04bd9b2-88ce-404f-83e3-3367a23f9b8a",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "cliVersion": "2.1.300",
+      "apiKeySource": "none",
+      "capabilities": [
+        "interrupt_receipt_v1",
+        "interrupt_cancel_queued_v1",
+        "interrupt_send_now_v1",
+        "msg_lifecycle_v1",
+        "request_marker_lists_v1",
+        "sdk_mcp_tools_list_changed",
+        "sdk_mcp_manifests",
+        "mcp_read_resource_v1",
+        "mcp_tool_ui_meta_v1",
+        "ui_surface_v1"
+      ]
+    },
+    {
+      "seq": 27,
+      "type": "turn_result",
+      "outcome": "success",
+      "durationMs": 76,
+      "costUsdTotal": 0.0028932100000000002,
+      "error": null,
+      "resultExcerpt": "Session renamed to: Parallax Spike Title",
+      "userMessageUuids": [
+        "8c9965bc-8b78-4af5-9bc9-2256da558614"
+      ],
+      "synthetic": true,
+      "startupFailure": false
+    },
+    {
+      "seq": 28,
+      "type": "prompt_lifecycle",
+      "messageUuid": "8c9965bc-8b78-4af5-9bc9-2256da558614",
+      "state": "completed"
+    },
+    {
+      "seq": 29,
+      "type": "session_state",
+      "state": "idle"
+    },
+    {
+      "seq": 36,
+      "type": "session_state",
+      "state": "running"
+    },
+    {
+      "seq": 37,
+      "type": "prompt_lifecycle",
+      "messageUuid": "2ed4f0cb-c6af-4932-9f3b-6e24f8c33305",
+      "state": "queued"
+    },
+    {
+      "seq": 38,
+      "type": "prompt_lifecycle",
+      "messageUuid": "2ed4f0cb-c6af-4932-9f3b-6e24f8c33305",
+      "state": "started"
+    },
+    {
+      "seq": 39,
+      "type": "conversation_reset",
+      "trigger": "clear",
+      "correlationId": "96ce35cc-c220-4460-93cb-8ec96ab9cfd7"
+    },
+    {
+      "seq": 40,
+      "type": "session_id",
+      "sessionId": "9b779de6-73fd-4d10-8e3e-0580a3e09f7b"
+    },
+    {
+      "seq": 40,
+      "type": "title_changed",
+      "title": "Parallax Spike Title"
+    },
+    {
+      "seq": 41,
+      "type": "title_changed",
+      "title": "Parallax Spike Title"
+    },
+    {
+      "seq": 42,
+      "type": "init",
+      "sessionId": "9b779de6-73fd-4d10-8e3e-0580a3e09f7b",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "cliVersion": "2.1.300",
+      "apiKeySource": "none",
+      "capabilities": [
+        "interrupt_receipt_v1",
+        "interrupt_cancel_queued_v1",
+        "interrupt_send_now_v1",
+        "msg_lifecycle_v1",
+        "request_marker_lists_v1",
+        "sdk_mcp_tools_list_changed",
+        "sdk_mcp_manifests",
+        "mcp_read_resource_v1",
+        "mcp_tool_ui_meta_v1",
+        "ui_surface_v1"
+      ]
+    },
+    {
+      "seq": 43,
+      "type": "turn_result",
+      "outcome": "success",
+      "durationMs": 316,
+      "costUsdTotal": 0,
+      "error": null,
+      "resultExcerpt": null,
+      "userMessageUuids": [
+        "2ed4f0cb-c6af-4932-9f3b-6e24f8c33305"
+      ],
+      "synthetic": true,
+      "startupFailure": false
+    },
+    {
+      "seq": 44,
+      "type": "prompt_lifecycle",
+      "messageUuid": "2ed4f0cb-c6af-4932-9f3b-6e24f8c33305",
+      "state": "completed"
+    },
+    {
+      "seq": 45,
+      "type": "session_state",
+      "state": "idle"
+    },
+    {
+      "seq": 49,
+      "type": "session_state",
+      "state": "running"
+    },
+    {
+      "seq": 50,
+      "type": "prompt_lifecycle",
+      "messageUuid": "598eb59a-18b3-4348-a206-31097d0e7daa",
+      "state": "queued"
+    },
+    {
+      "seq": 51,
+      "type": "prompt_lifecycle",
+      "messageUuid": "598eb59a-18b3-4348-a206-31097d0e7daa",
+      "state": "started"
+    },
+    {
+      "seq": 52,
+      "type": "init",
+      "sessionId": "9b779de6-73fd-4d10-8e3e-0580a3e09f7b",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "cliVersion": "2.1.300",
+      "apiKeySource": "none",
+      "capabilities": [
+        "interrupt_receipt_v1",
+        "interrupt_cancel_queued_v1",
+        "interrupt_send_now_v1",
+        "msg_lifecycle_v1",
+        "request_marker_lists_v1",
+        "sdk_mcp_tools_list_changed",
+        "sdk_mcp_manifests",
+        "mcp_read_resource_v1",
+        "mcp_tool_ui_meta_v1",
+        "ui_surface_v1"
+      ]
+    },
+    {
+      "seq": 54,
+      "type": "context_estimate",
+      "totalTokens": 31071,
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 60,
+      "type": "context_estimate",
+      "totalTokens": 31075,
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 62,
+      "type": "turn_result",
+      "outcome": "success",
+      "durationMs": 1922,
+      "costUsdTotal": 0.0026365100000000003,
+      "error": null,
+      "resultExcerpt": "TWO",
+      "userMessageUuids": [
+        "598eb59a-18b3-4348-a206-31097d0e7daa"
+      ],
+      "synthetic": false,
+      "startupFailure": false
+    },
+    {
+      "seq": 63,
+      "type": "prompt_lifecycle",
+      "messageUuid": "598eb59a-18b3-4348-a206-31097d0e7daa",
+      "state": "completed"
+    },
+    {
+      "seq": 64,
+      "type": "session_state",
+      "state": "idle"
+    }
+  ],
+  "items": {
+    "cv_00000000000000000000000000000001": [
+      {
+        "id": "b74a6f1b-29e0-4a72-9ebb-be1f7e813180",
+        "order": 1,
+        "at": "2026-10-14T23:10:15.018Z",
+        "parentToolUseId": null,
+        "kind": "user_message",
+        "text": {
+          "text": "Reply with exactly: ONE",
+          "truncated": null
+        },
+        "attachments": [],
+        "origin": "human",
+        "slashCommand": null,
+        "priority": "next"
+      },
+      {
+        "id": "msg_011Cg2yRNEyiaKrbmW5zLE2y:0",
+        "order": 2,
+        "at": "2026-10-14T23:10:22.507Z",
+        "parentToolUseId": null,
+        "kind": "assistant_text",
+        "messageId": "msg_011Cg2yRNEyiaKrbmW5zLE2y",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "text": "ONE",
+        "streaming": false,
+        "aborted": false,
+        "localCommand": null
+      },
+      {
+        "id": "55576fea-12a4-4e09-ac77-13058ae392f8",
+        "order": 3,
+        "at": "2026-10-14T23:10:22.570Z",
+        "parentToolUseId": null,
+        "kind": "turn_result",
+        "outcome": "success",
+        "subtype": "success",
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 3794,
+        "durationApiMs": 2484,
+        "numTurns": 1,
+        "usage": {
+          "input": 2,
+          "output": 5,
+          "cacheRead": 16241,
+          "cacheCreation": 13023
+        },
+        "costUsdTotal": 0.0028932100000000002,
+        "costUsdTurn": null,
+        "permissionDenials": 0,
+        "errors": [],
+        "userMessageUuids": [
+          "b74a6f1b-29e0-4a72-9ebb-be1f7e813180"
+        ],
+        "synthetic": false
+      },
+      {
+        "id": "8c9965bc-8b78-4af5-9bc9-2256da558614",
+        "order": 4,
+        "at": "2026-10-14T23:10:22.584Z",
+        "parentToolUseId": null,
+        "kind": "user_message",
+        "text": {
+          "text": "/rename Parallax Spike Title",
+          "truncated": null
+        },
+        "attachments": [],
+        "origin": "human",
+        "slashCommand": "/rename",
+        "priority": "next"
+      },
+      {
+        "id": "6c0b1017-0187-4313-bc9f-4d91d92957e6:0",
+        "order": 5,
+        "at": "2026-10-14T23:10:22.653Z",
+        "parentToolUseId": null,
+        "kind": "assistant_text",
+        "messageId": "6c0b1017-0187-4313-bc9f-4d91d92957e6",
+        "blockIndex": 0,
+        "model": "<synthetic>",
+        "text": "Session renamed to: Parallax Spike Title",
+        "streaming": false,
+        "aborted": false,
+        "localCommand": {
+          "command": "rename",
+          "args": "Parallax Spike Title"
+        }
+      },
+      {
+        "id": "4df75c3b-e72f-4c88-a435-1c74a6f073e1",
+        "order": 6,
+        "at": "2026-10-14T23:10:22.681Z",
+        "parentToolUseId": null,
+        "kind": "turn_result",
+        "outcome": "success",
+        "subtype": "success",
+        "terminalReason": null,
+        "stopReason": null,
+        "durationMs": 76,
+        "durationApiMs": 0,
+        "numTurns": 0,
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheCreation": 0
+        },
+        "costUsdTotal": 0.0028932100000000002,
+        "costUsdTurn": 0,
+        "permissionDenials": 0,
+        "errors": [],
+        "userMessageUuids": [
+          "8c9965bc-8b78-4af5-9bc9-2256da558614"
+        ],
+        "synthetic": true
+      },
+      {
+        "id": "2ed4f0cb-c6af-4932-9f3b-6e24f8c33305",
+        "order": 7,
+        "at": "2026-10-14T23:10:24.080Z",
+        "parentToolUseId": null,
+        "kind": "user_message",
+        "text": {
+          "text": "/clear",
+          "truncated": null
+        },
+        "attachments": [],
+        "origin": "human",
+        "slashCommand": "/clear",
+        "priority": "next"
+      }
+    ],
+    "cv_00000000000000000000000000000002": [
+      {
+        "id": "96ce35cc-c220-4460-93cb-8ec96ab9cfd7",
+        "order": 1,
+        "at": "2026-10-14T23:10:24.134Z",
+        "parentToolUseId": null,
+        "kind": "system",
+        "event": "conversation_reset",
+        "trigger": "clear"
+      },
+      {
+        "id": "d71de233-bf08-4511-83ec-ed596235bed2",
+        "order": 2,
+        "at": "2026-10-14T23:10:24.417Z",
+        "parentToolUseId": null,
+        "kind": "turn_result",
+        "outcome": "success",
+        "subtype": "success",
+        "terminalReason": null,
+        "stopReason": null,
+        "durationMs": 316,
+        "durationApiMs": 0,
+        "numTurns": 0,
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheCreation": 0
+        },
+        "costUsdTotal": 0,
+        "costUsdTurn": null,
+        "permissionDenials": 0,
+        "errors": [],
+        "userMessageUuids": [
+          "2ed4f0cb-c6af-4932-9f3b-6e24f8c33305"
+        ],
+        "synthetic": true
+      },
+      {
+        "id": "598eb59a-18b3-4348-a206-31097d0e7daa",
+        "order": 3,
+        "at": "2026-10-14T23:10:24.420Z",
+        "parentToolUseId": null,
+        "kind": "user_message",
+        "text": {
+          "text": "Reply with exactly: TWO",
+          "truncated": null
+        },
+        "attachments": [],
+        "origin": "human",
+        "slashCommand": null,
+        "priority": "next"
+      },
+      {
+        "id": "msg_011Cg2yRejfhg1HKPNxX1TSD:0",
+        "order": 4,
+        "at": "2026-10-14T23:10:26.316Z",
+        "parentToolUseId": null,
+        "kind": "assistant_text",
+        "messageId": "msg_011Cg2yRejfhg1HKPNxX1TSD",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "text": "TWO",
+        "streaming": false,
+        "aborted": false,
+        "localCommand": null
+      },
+      {
+        "id": "18ea989c-ea39-458a-a5f0-6b49514d2ba5",
+        "order": 5,
+        "at": "2026-10-14T23:10:26.435Z",
+        "parentToolUseId": null,
+        "kind": "turn_result",
+        "outcome": "success",
+        "subtype": "success",
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 1922,
+        "durationApiMs": 1512,
+        "numTurns": 1,
+        "usage": {
+          "input": 2,
+          "output": 5,
+          "cacheRead": 18841,
+          "cacheCreation": 12227
+        },
+        "costUsdTotal": 0.0026365100000000003,
+        "costUsdTurn": 0.00263651,
+        "permissionDenials": 0,
+        "errors": [],
+        "userMessageUuids": [
+          "598eb59a-18b3-4348-a206-31097d0e7daa"
+        ],
+        "synthetic": false
+      }
+    ]
+  },
+  "detail": {
+    "rateLimit": {
+      "status": "allowed",
+      "rateLimitType": "five_hour",
+      "resetsAt": "2026-10-15T03:50:00.000Z",
+      "utilization": null,
+      "windows": {
+        "five_hour": {
+          "utilization": 0.01,
+          "resetsAt": "2026-10-15T03:50:00.000Z"
+        },
+        "seven_day": {
+          "utilization": 0.35,
+          "resetsAt": "2026-10-17T22:00:00.000Z"
+        }
+      },
+      "at": "2026-10-14T23:10:19.583Z"
+    },
+    "init": {
+      "sessionId": "9b779de6-73fd-4d10-8e3e-0580a3e09f7b",
+      "cwd": "<SCRATCH>\\work\\clear-rename",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "apiKeySource": "none",
+      "cliVersion": "2.1.300",
+      "tools": [
+        "Task",
+        "AskUserQuestion",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "DesignSync",
+        "Edit",
+        "EnterPlanMode",
+        "EnterWorktree",
+        "ExitPlanMode",
+        "ExitWorktree",
+        "Glob",
+        "Grep",
+        "ListAgents",
+        "Monitor",
+        "NotebookEdit",
+        "PowerShell",
+        "PushNotification",
+        "Read",
+        "RemoteTrigger",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SendMessage",
+        "Skill",
+        "TaskStop",
+        "ToolSearch",
+        "WebFetch",
+        "WebSearch",
+        "Write",
+        "mcp__claude_ai_Claude_Docs__batch",
+        "mcp__claude_ai_Claude_Docs__create",
+        "mcp__claude_ai_Claude_Docs__delete",
+        "mcp__claude_ai_Claude_Docs__export",
+        "mcp__claude_ai_Claude_Docs__guide",
+        "mcp__claude_ai_Claude_Docs__query",
+        "mcp__claude_ai_Claude_Docs__read",
+        "mcp__claude_ai_Claude_Docs__update"
+      ],
+      "slashCommands": [
+        "animation-vocabulary",
+        "apple-design",
+        "emil-design-eng",
+        "find-animation-opportunities",
+        "find-skills",
+        "impeccable",
+        "improve-animations",
+        "review-animations",
+        "ui-ux-pro-max:banner-design",
+        "ui-ux-pro-max:brand",
+        "ui-ux-pro-max:design",
+        "ui-ux-pro-max:design-system",
+        "ui-ux-pro-max:slides",
+        "ui-ux-pro-max:ui-styling",
+        "ui-ux-pro-max:ui-ux-pro-max",
+        "frontend-design:frontend-design",
+        "memory-manager:memory-manager",
+        "design",
+        "design-sync",
+        "dataviz",
+        "update-config",
+        "verify",
+        "debug",
+        "code-review",
+        "simplify",
+        "batch",
+        "fewer-permission-prompts",
+        "doctor",
+        "loop",
+        "schedule",
+        "claude-api",
+        "run",
+        "run-skill-generator",
+        "plugin-authoring",
+        "advisor",
+        "agents",
+        "auto-mode-setup",
+        "autocompact",
+        "clear",
+        "color",
+        "compact",
+        "config",
+        "output-style",
+        "context",
+        "effort",
+        "fast",
+        "focus",
+        "heapdump",
+        "init",
+        "mcp",
+        "import",
+        "model",
+        "__remote-workflow",
+        "workflow-launch-exec",
+        "reload-plugins",
+        "reload-skills",
+        "rename",
+        "ultrareview",
+        "security-review",
+        "usage-credits",
+        "extra-usage",
+        "usage",
+        "insights",
+        "recap",
+        "skill-doctor",
+        "goal",
+        "design-consent",
+        "design-revoke",
+        "list-agents",
+        "team-onboarding",
+        "anthropic-skills:built-in-browser",
+        "anthropic-skills:chrome-browser",
+        "anthropic-skills:computer-use",
+        "anthropic-skills:deep-research",
+        "anthropic-skills:docs",
+        "anthropic-skills:docx",
+        "anthropic-skills:google-workspace",
+        "anthropic-skills:import-memory",
+        "anthropic-skills:morning",
+        "anthropic-skills:pdf",
+        "anthropic-skills:pptx",
+        "anthropic-skills:skill-creator",
+        "anthropic-skills:xlsx"
+      ],
+      "terminalSlashCommands": [
+        "doctor",
+        "color",
+        "focus",
+        "reload-plugins"
+      ],
+      "mcpServers": [
+        {
+          "name": "github",
+          "status": "pending",
+          "source": "user"
+        },
+        {
+          "name": "primevue",
+          "status": "pending",
+          "source": "user"
+        },
+        {
+          "name": "chrome-devtools",
+          "status": "pending",
+          "source": "user"
+        },
+        {
+          "name": "claude.ai Claude Docs",
+          "status": "connected",
+          "source": "claudeai"
+        }
+      ],
+      "skills": [
+        "animation-vocabulary",
+        "apple-design",
+        "emil-design-eng",
+        "find-animation-opportunities",
+        "find-skills",
+        "impeccable",
+        "improve-animations",
+        "review-animations",
+        "ui-ux-pro-max:banner-design",
+        "ui-ux-pro-max:brand",
+        "ui-ux-pro-max:design",
+        "ui-ux-pro-max:design-system",
+        "ui-ux-pro-max:slides",
+        "ui-ux-pro-max:ui-styling",
+        "ui-ux-pro-max:ui-ux-pro-max",
+        "frontend-design:frontend-design",
+        "memory-manager:memory-manager",
+        "design",
+        "design-sync",
+        "dataviz",
+        "update-config",
+        "verify",
+        "debug",
+        "code-review",
+        "simplify",
+        "batch",
+        "fewer-permission-prompts",
+        "doctor",
+        "loop",
+        "schedule",
+        "claude-api",
+        "run",
+        "run-skill-generator",
+        "plugin-authoring",
+        "anthropic-skills:built-in-browser",
+        "anthropic-skills:chrome-browser",
+        "anthropic-skills:computer-use",
+        "anthropic-skills:deep-research",
+        "anthropic-skills:docs",
+        "anthropic-skills:docx",
+        "anthropic-skills:google-workspace",
+        "anthropic-skills:import-memory",
+        "anthropic-skills:morning",
+        "anthropic-skills:pdf",
+        "anthropic-skills:pptx",
+        "anthropic-skills:skill-creator",
+        "anthropic-skills:xlsx"
+      ],
+      "agents": [
+        "claude",
+        "Explore",
+        "general-purpose",
+        "Plan",
+        "statusline-setup"
+      ],
+      "plugins": [
+        {
+          "name": "ui-ux-pro-max",
+          "version": "2.6.2"
+        },
+        {
+          "name": "frontend-design",
+          "version": null
+        },
+        {
+          "name": "memory-manager",
+          "version": "0.5.3"
+        },
+        {
+          "name": "cc-plugin-agents-md",
+          "version": null
+        },
+        {
+          "name": "cc-plugin-telemetry",
+          "version": null
+        },
+        {
+          "name": "cc-plugin-plugin-authoring",
+          "version": null
+        }
+      ],
+      "capabilities": [
+        "interrupt_receipt_v1",
+        "interrupt_cancel_queued_v1",
+        "interrupt_send_now_v1",
+        "msg_lifecycle_v1",
+        "request_marker_lists_v1",
+        "sdk_mcp_tools_list_changed",
+        "sdk_mcp_manifests",
+        "mcp_read_resource_v1",
+        "mcp_tool_ui_meta_v1",
+        "ui_surface_v1"
+      ],
+      "outputStyle": "default",
+      "fastModeState": "off",
+      "effort": null
+    }
+  },
+  "unknownCounts": {},
+  "ignoredCounts": {}
+}

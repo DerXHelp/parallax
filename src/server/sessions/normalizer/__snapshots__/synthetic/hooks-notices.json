@@ -1,0 +1,254 @@
+{
+  "name": "hooks-notices",
+  "conversations": [
+    "cv_00000000000000000000000000000001"
+  ],
+  "timeline": [
+    "#3 system/session_state_changed: !session_id | !session_state:running",
+    "#4 command_lifecycle/started: upsert 00000000-0000-4000-9000-0000000000c8 user_message o1 | !prompt_lifecycle:started",
+    "#5 system/init: detail.patch {init} | !init",
+    "#6 system/hook_started: upsert 00000000-0000-4000-9000-000000000004 system/hook o2",
+    "#7 system/hook_progress: upsert 00000000-0000-4000-9000-000000000004 system/hook o2",
+    "#8 system/hook_response: upsert 00000000-0000-4000-9000-000000000004 system/hook o2",
+    "#9 system/informational: upsert 00000000-0000-4000-9000-000000000007 system/informational o3",
+    "#10 system/notification: upsert 00000000-0000-4000-9000-000000000008 system/notification o4",
+    "#11 system/memory_recall: upsert 00000000-0000-4000-9000-000000000009 system/memory_recall o5",
+    "#12 system/local_command_output: upsert 00000000-0000-4000-9000-00000000000a system/local_command_output o6",
+    "#13 result/success: upsert 00000000-0000-4000-9000-00000000000b turn_result o7 success | !turn_result:success",
+    "#14 command_lifecycle/completed: !prompt_lifecycle:completed",
+    "#15 system/session_state_changed: !session_state:idle",
+    "#16 prompt_suggestion: detail.patch {promptSuggestion}",
+    "#17 system/commands_changed: detail.patch {commands}"
+  ],
+  "signals": [
+    {
+      "seq": 3,
+      "type": "session_id",
+      "sessionId": "5e550000-0000-4000-8000-000000000001"
+    },
+    {
+      "seq": 3,
+      "type": "session_state",
+      "state": "running"
+    },
+    {
+      "seq": 4,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-0000000000c8",
+      "state": "started"
+    },
+    {
+      "seq": 5,
+      "type": "init",
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "cliVersion": "2.1.300",
+      "apiKeySource": "none",
+      "capabilities": [
+        "msg_lifecycle_v1"
+      ]
+    },
+    {
+      "seq": 13,
+      "type": "turn_result",
+      "outcome": "success",
+      "durationMs": 1200,
+      "costUsdTotal": 0.001,
+      "error": null,
+      "resultExcerpt": "OK",
+      "userMessageUuids": [],
+      "synthetic": false,
+      "startupFailure": false
+    },
+    {
+      "seq": 14,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-0000000000c8",
+      "state": "completed"
+    },
+    {
+      "seq": 15,
+      "type": "session_state",
+      "state": "idle"
+    }
+  ],
+  "items": {
+    "cv_00000000000000000000000000000001": [
+      {
+        "id": "00000000-0000-4000-9000-0000000000c8",
+        "order": 1,
+        "at": "2026-10-15T08:00:00.010Z",
+        "parentToolUseId": null,
+        "kind": "user_message",
+        "text": {
+          "text": "Run the hooks",
+          "truncated": null
+        },
+        "attachments": [],
+        "origin": "human",
+        "slashCommand": null,
+        "priority": "next"
+      },
+      {
+        "id": "00000000-0000-4000-9000-000000000004",
+        "order": 2,
+        "at": "2026-10-15T08:00:00.050Z",
+        "parentToolUseId": null,
+        "kind": "system",
+        "event": "hook",
+        "hookName": "PreToolUse:Bash",
+        "hookEvent": "PreToolUse",
+        "outcome": "success",
+        "output": {
+          "text": "allowed by policy",
+          "truncated": null
+        }
+      },
+      {
+        "id": "00000000-0000-4000-9000-000000000007",
+        "order": 3,
+        "at": "2026-10-15T08:00:00.080Z",
+        "parentToolUseId": null,
+        "kind": "system",
+        "event": "informational",
+        "level": "warning",
+        "text": {
+          "text": "Stop hook blocked continuation",
+          "truncated": null
+        },
+        "tag": "stop_hook",
+        "preventContinuation": true
+      },
+      {
+        "id": "00000000-0000-4000-9000-000000000008",
+        "order": 4,
+        "at": "2026-10-15T08:00:00.090Z",
+        "parentToolUseId": null,
+        "kind": "system",
+        "event": "notification",
+        "key": "update",
+        "text": "A new version is available",
+        "priority": "low"
+      },
+      {
+        "id": "00000000-0000-4000-9000-000000000009",
+        "order": 5,
+        "at": "2026-10-15T08:00:00.100Z",
+        "parentToolUseId": null,
+        "kind": "system",
+        "event": "memory_recall",
+        "mode": "select",
+        "memories": [
+          {
+            "path": "D:\\work\\synthetic\\CLAUDE.md",
+            "scope": "personal",
+            "content": null
+          },
+          {
+            "path": "https://example.invalid/org-memory",
+            "scope": "organization",
+            "content": {
+              "text": "Use pnpm.",
+              "truncated": null
+            }
+          }
+        ]
+      },
+      {
+        "id": "00000000-0000-4000-9000-00000000000a",
+        "order": 6,
+        "at": "2026-10-15T08:00:00.110Z",
+        "parentToolUseId": null,
+        "kind": "system",
+        "event": "local_command_output",
+        "text": {
+          "text": "Total cost: $0.00",
+          "truncated": null
+        }
+      },
+      {
+        "id": "00000000-0000-4000-9000-00000000000b",
+        "order": 7,
+        "at": "2026-10-15T08:00:00.120Z",
+        "parentToolUseId": null,
+        "kind": "turn_result",
+        "outcome": "success",
+        "subtype": "success",
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 1200,
+        "durationApiMs": 1000,
+        "numTurns": 1,
+        "usage": {
+          "input": 2,
+          "output": 10,
+          "cacheRead": 20000,
+          "cacheCreation": 500
+        },
+        "costUsdTotal": 0.001,
+        "costUsdTurn": null,
+        "permissionDenials": 0,
+        "errors": [],
+        "userMessageUuids": [],
+        "synthetic": false
+      }
+    ]
+  },
+  "detail": {
+    "init": {
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "cwd": "D:\\work\\synthetic",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "apiKeySource": "none",
+      "cliVersion": "2.1.300",
+      "tools": [
+        "Bash",
+        "Read",
+        "Write",
+        "Edit",
+        "Agent"
+      ],
+      "slashCommands": [
+        "clear",
+        "compact"
+      ],
+      "terminalSlashCommands": [],
+      "mcpServers": [],
+      "skills": [],
+      "agents": [
+        "general-purpose"
+      ],
+      "plugins": [],
+      "capabilities": [
+        "msg_lifecycle_v1"
+      ],
+      "outputStyle": "default",
+      "fastModeState": "off",
+      "effort": null
+    },
+    "promptSuggestion": "Now run the tests",
+    "commands": [
+      {
+        "name": "clear",
+        "description": "Clear the conversation",
+        "argumentHint": "",
+        "aliases": [
+          "reset",
+          "new"
+        ],
+        "builtin": true
+      },
+      {
+        "name": "deploy",
+        "description": "Project skill",
+        "argumentHint": "<env>",
+        "aliases": [],
+        "builtin": false
+      }
+    ]
+  },
+  "unknownCounts": {},
+  "ignoredCounts": {}
+}

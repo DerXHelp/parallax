@@ -1,0 +1,221 @@
+{
+  "name": "unknown-types",
+  "conversations": [
+    "cv_00000000000000000000000000000001"
+  ],
+  "timeline": [
+    "#3 system/session_state_changed: !session_id | !session_state:running",
+    "#4 command_lifecycle/started: upsert 00000000-0000-4000-9000-000000000320 user_message o1 | !prompt_lifecycle:started",
+    "#5 system/init: detail.patch {init,unknownCounts} | !init",
+    "#6 system/status: detail.patch {unknownCounts} | !permission_mode:null",
+    "#7 brand_new_type: upsert 00000000-0000-4000-9000-000000000005 system/unknown o2 | detail.patch {unknownCounts}",
+    "#8 system/brand_new_subtype: upsert 00000000-0000-4000-9000-000000000006 system/unknown o3 | detail.patch {unknownCounts}",
+    "#13 assistant: detail.patch {unknownCounts}",
+    "#14 system/session_state_changed: detail.patch {unknownCounts}",
+    "#15 assistant: upsert msg_syn_unknown_1:0 system/unknown o5 | detail.patch {unknownCounts} | !assistant_model",
+    "#16 command_lifecycle/deferred: detail.patch {unknownCounts}",
+    "#17 result/success: upsert 00000000-0000-4000-9000-00000000000d turn_result o6 success | !turn_result:success",
+    "#18 command_lifecycle/completed: !prompt_lifecycle:completed",
+    "#19 system/session_state_changed: !session_state:idle"
+  ],
+  "signals": [
+    {
+      "seq": 3,
+      "type": "session_id",
+      "sessionId": "5e550000-0000-4000-8000-000000000001"
+    },
+    {
+      "seq": 3,
+      "type": "session_state",
+      "state": "running"
+    },
+    {
+      "seq": 4,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-000000000320",
+      "state": "started"
+    },
+    {
+      "seq": 5,
+      "type": "init",
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "model": "claude-haiku-5-5",
+      "permissionMode": null,
+      "cliVersion": "2.1.300",
+      "apiKeySource": "none",
+      "capabilities": [
+        "msg_lifecycle_v1"
+      ]
+    },
+    {
+      "seq": 6,
+      "type": "permission_mode",
+      "mode": null
+    },
+    {
+      "seq": 15,
+      "type": "assistant_model",
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 17,
+      "type": "turn_result",
+      "outcome": "success",
+      "durationMs": 1200,
+      "costUsdTotal": 0.001,
+      "error": null,
+      "resultExcerpt": "OK",
+      "userMessageUuids": [],
+      "synthetic": false,
+      "startupFailure": false
+    },
+    {
+      "seq": 18,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-000000000320",
+      "state": "completed"
+    },
+    {
+      "seq": 19,
+      "type": "session_state",
+      "state": "idle"
+    }
+  ],
+  "items": {
+    "cv_00000000000000000000000000000001": [
+      {
+        "id": "00000000-0000-4000-9000-000000000320",
+        "order": 1,
+        "at": "2026-10-15T07:59:59.881Z",
+        "parentToolUseId": null,
+        "kind": "user_message",
+        "text": {
+          "text": "Hi",
+          "truncated": null
+        },
+        "attachments": [],
+        "origin": "human",
+        "slashCommand": null,
+        "priority": "next"
+      },
+      {
+        "id": "00000000-0000-4000-9000-000000000005",
+        "order": 2,
+        "at": "2026-10-15T07:59:59.931Z",
+        "parentToolUseId": null,
+        "kind": "system",
+        "event": "unknown",
+        "sdkType": "brand_new_type",
+        "sdkSubtype": null,
+        "preview": "{\"type\":\"brand_new_type\",\"payload\":{\"a\":1},\"uuid\":\"00000000-0000-4000-9000-000000000005\",\"session_id\":\"5e550000-0000-4000-8000-000000000001\"}"
+      },
+      {
+        "id": "00000000-0000-4000-9000-000000000006",
+        "order": 3,
+        "at": "2026-10-15T07:59:59.941Z",
+        "parentToolUseId": null,
+        "kind": "system",
+        "event": "unknown",
+        "sdkType": "system",
+        "sdkSubtype": "brand_new_subtype",
+        "preview": "{\"type\":\"system\",\"subtype\":\"brand_new_subtype\",\"uuid\":\"00000000-0000-4000-9000-000000000006\",\"detail\":\"x\",\"session_id\":\"5e550000-0000-4000-8000-000000000001\"}"
+      },
+      {
+        "id": "msg_syn_unknown_1:0",
+        "order": 5,
+        "at": "2026-10-15T08:00:00.011Z",
+        "parentToolUseId": null,
+        "kind": "system",
+        "event": "unknown",
+        "sdkType": "assistant",
+        "sdkSubtype": "server_widget",
+        "preview": "{\"type\":\"server_widget\",\"widget\":{\"id\":1}}"
+      },
+      {
+        "id": "00000000-0000-4000-9000-00000000000d",
+        "order": 6,
+        "at": "2026-10-15T08:00:00.031Z",
+        "parentToolUseId": null,
+        "kind": "turn_result",
+        "outcome": "success",
+        "subtype": "success",
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 1200,
+        "durationApiMs": 1000,
+        "numTurns": 1,
+        "usage": {
+          "input": 2,
+          "output": 10,
+          "cacheRead": 20000,
+          "cacheCreation": 500
+        },
+        "costUsdTotal": 0.001,
+        "costUsdTurn": null,
+        "permissionDenials": 0,
+        "errors": [],
+        "userMessageUuids": [],
+        "synthetic": false
+      }
+    ]
+  },
+  "detail": {
+    "init": {
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "cwd": "D:\\work\\synthetic",
+      "model": "claude-haiku-5-5",
+      "permissionMode": null,
+      "apiKeySource": "none",
+      "cliVersion": "2.1.300",
+      "tools": [
+        "Bash",
+        "Read",
+        "Write",
+        "Edit",
+        "Agent"
+      ],
+      "slashCommands": [
+        "clear",
+        "compact"
+      ],
+      "terminalSlashCommands": [],
+      "mcpServers": [],
+      "skills": [],
+      "agents": [
+        "general-purpose"
+      ],
+      "plugins": [],
+      "capabilities": [
+        "msg_lifecycle_v1"
+      ],
+      "outputStyle": "default",
+      "fastModeState": "off",
+      "effort": null
+    },
+    "unknownCounts": {
+      "enum/permissionMode:turbo": 2,
+      "enum/effort:ultra": 1,
+      "brand_new_type": 1,
+      "system/brand_new_subtype": 1,
+      "invalid:assistant": 1,
+      "system/session_state_changed:paused": 1,
+      "assistant/block:server_widget": 1,
+      "command_lifecycle/deferred": 1
+    }
+  },
+  "unknownCounts": {
+    "enum/permissionMode:turbo": 2,
+    "enum/effort:ultra": 1,
+    "brand_new_type": 1,
+    "system/brand_new_subtype": 1,
+    "invalid:assistant": 1,
+    "system/session_state_changed:paused": 1,
+    "assistant/block:server_widget": 1,
+    "command_lifecycle/deferred": 1
+  },
+  "ignoredCounts": {
+    "system/files_persisted": 1,
+    "tool_use_summary": 1,
+    "auth_status": 1
+  }
+}

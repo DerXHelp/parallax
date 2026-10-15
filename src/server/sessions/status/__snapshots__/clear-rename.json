@@ -1,0 +1,103 @@
+{
+  "scenario": "clear-rename",
+  "transitions": [
+    {
+      "seq": 0,
+      "event": "initial",
+      "display": "sleeping"
+    },
+    {
+      "seq": 2,
+      "event": "process_starting",
+      "display": "starting"
+    },
+    {
+      "seq": 4,
+      "event": "session_state:running",
+      "display": "working"
+    },
+    {
+      "seq": 17,
+      "event": "turn_result",
+      "display": "working+unread"
+    },
+    {
+      "seq": 19,
+      "event": "session_state:idle",
+      "display": "done+unread"
+    },
+    {
+      "seq": 20,
+      "event": "queue_changed",
+      "display": "background+unread"
+    },
+    {
+      "seq": 21,
+      "event": "session_state:running",
+      "display": "working+unread"
+    },
+    {
+      "seq": 29,
+      "event": "session_state:idle",
+      "display": "done+unread"
+    },
+    {
+      "seq": 35,
+      "event": "queue_changed",
+      "display": "background+unread"
+    },
+    {
+      "seq": 36,
+      "event": "session_state:running",
+      "display": "working+unread"
+    },
+    {
+      "seq": 45,
+      "event": "session_state:idle",
+      "display": "done+unread"
+    },
+    {
+      "seq": 48,
+      "event": "queue_changed",
+      "display": "background+unread"
+    },
+    {
+      "seq": 49,
+      "event": "session_state:running",
+      "display": "working+unread"
+    },
+    {
+      "seq": 64,
+      "event": "session_state:idle",
+      "display": "done+unread"
+    },
+    {
+      "seq": 76,
+      "event": "process_exit",
+      "display": "sleeping+unread"
+    }
+  ],
+  "facts": {
+    "runState": "sleeping",
+    "decisions": {
+      "permission": 0,
+      "question": 0,
+      "plan": 0,
+      "oldestKind": null,
+      "expired": 0
+    },
+    "unread": true,
+    "backgroundTasks": 0,
+    "queuedPrompts": 0,
+    "rateLimitedUntil": null,
+    "compacting": false,
+    "retrying": false,
+    "wakeupAt": null,
+    "lastTurn": {
+      "outcome": "success",
+      "endedAt": "2026-10-14T23:10:26.435Z",
+      "durationMs": 1922
+    },
+    "errorCode": null
+  }
+}

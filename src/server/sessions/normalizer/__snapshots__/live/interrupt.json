@@ -1,0 +1,932 @@
+{
+  "scenario": "interrupt",
+  "conversations": [
+    "cv_00000000000000000000000000000001"
+  ],
+  "timeline": [
+    "#4 system/session_state_changed: !session_id | !session_state:running",
+    "#5 command_lifecycle/queued: !prompt_lifecycle:queued",
+    "#6 command_lifecycle/started: upsert 5a91909f-8e6c-447d-a83a-242f91d1f77b user_message o1 | !prompt_lifecycle:started",
+    "#7 rate_limit_event: detail.patch {rateLimit} | !rate_limit:allowed",
+    "#8 system/init: detail.patch {init} | !init",
+    "#10 stream_event/message_start: !assistant_model | !context_estimate",
+    "#11 stream_event/content_block_start/tool_use: upsert msg_011Cg2zA5ZKbGPNnDfj64JHF:0 tool_call o2 Bash streaming_input",
+    "#13-21 delta msg_011Cg2zA5ZKbGPNnDfj64JHF:0 inputPartial ×9 (+146ch)",
+    "#22 assistant: upsert msg_011Cg2zA5ZKbGPNnDfj64JHF:0 tool_call o2 Bash pending",
+    "#24 system/session_state_changed: !session_state:requires_action",
+    "#25 canUseTool: upsert msg_011Cg2zA5ZKbGPNnDfj64JHF:0 tool_call o2 Bash awaiting_decision decision=open",
+    "#26 decision: upsert msg_011Cg2zA5ZKbGPNnDfj64JHF:0 tool_call o2 Bash running decision=allowed",
+    "#27 stream_event/message_delta: !context_estimate",
+    "#29 system/session_state_changed: !session_state:running",
+    "#32 user: upsert msg_011Cg2zA5ZKbGPNnDfj64JHF:0 tool_call o2 Bash interrupted decision=allowed result(error)",
+    "#33 user: upsert d2c3ab2f-897d-4ccd-8947-d4fd44cadae1 system/interrupted o3",
+    "#34 result/error_during_execution: upsert c2a5ddfd-2a1e-418a-aaa8-7f59017cdf90 turn_result o4 interrupted | !turn_result:interrupted",
+    "#35 command_lifecycle/cancelled: !prompt_lifecycle:cancelled",
+    "#36 system/session_state_changed: !session_state:idle",
+    "#39 system/session_state_changed: !session_state:running",
+    "#40 command_lifecycle/queued: !prompt_lifecycle:queued",
+    "#41 command_lifecycle/started: upsert 9e9f7a89-de54-4591-a0f9-8f66cef91b2d user_message o5 | !prompt_lifecycle:started",
+    "#42 system/init: detail.patch {init} | !init",
+    "#44 stream_event/message_start: !context_estimate",
+    "#45 stream_event/content_block_start/text: upsert msg_011Cg2zAjEz8DkcxZeo9SmT4:0 assistant_text o6 streaming 0ch",
+    "#46 delta msg_011Cg2zAjEz8DkcxZeo9SmT4:0 text ×1 (+5ch)",
+    "#47 assistant: upsert msg_011Cg2zAjEz8DkcxZeo9SmT4:0 assistant_text o6 final 5ch",
+    "#51 result/success: upsert 5dfcbdf0-e3e3-4d6a-8133-394bb17ef8be turn_result o7 success | !turn_result:success",
+    "#52 command_lifecycle/completed: !prompt_lifecycle:completed",
+    "#53 system/session_state_changed: !session_state:idle",
+    "#55 system/session_state_changed: !session_state:running",
+    "#56 command_lifecycle/queued: !prompt_lifecycle:queued",
+    "#57 command_lifecycle/started: upsert 3e6a6bde-f464-4411-8412-55ec15a3ff02 user_message o8 | !prompt_lifecycle:started",
+    "#58 system/init: !init",
+    "#60 stream_event/message_start: !context_estimate",
+    "#61 stream_event/content_block_start/thinking: upsert msg_011Cg2zAqRYTQKSqX5QprYyZ:0 thinking o9 streaming 0ch",
+    "#63-83 delta msg_011Cg2zAqRYTQKSqX5QprYyZ:0 thinking ×11 (+100ch)",
+    "#86 assistant: upsert msg_011Cg2zAqRYTQKSqX5QprYyZ:0 thinking o9 final 100ch",
+    "#88 stream_event/content_block_start/text: upsert msg_011Cg2zAqRYTQKSqX5QprYyZ:1 assistant_text o10 streaming 0ch",
+    "#89-164 delta msg_011Cg2zAqRYTQKSqX5QprYyZ:1 text ×76 (+1091ch)",
+    "#165 assistant: upsert msg_011Cg2zAqRYTQKSqX5QprYyZ:1 assistant_text o10 final 1091ch",
+    "#167 stream_event/message_delta: !context_estimate",
+    "#169 result/success: upsert 6ab03fff-0f64-4b39-84e4-55b3a555d6fb turn_result o11 success | !turn_result:success",
+    "#170 command_lifecycle/completed: !prompt_lifecycle:completed",
+    "#171 system/session_state_changed: !session_state:idle"
+  ],
+  "signals": [
+    {
+      "seq": 4,
+      "type": "session_id",
+      "sessionId": "f9ed0a2b-f3f3-4a45-b14a-a27873781053"
+    },
+    {
+      "seq": 4,
+      "type": "session_state",
+      "state": "running"
+    },
+    {
+      "seq": 5,
+      "type": "prompt_lifecycle",
+      "messageUuid": "5a91909f-8e6c-447d-a83a-242f91d1f77b",
+      "state": "queued"
+    },
+    {
+      "seq": 6,
+      "type": "prompt_lifecycle",
+      "messageUuid": "5a91909f-8e6c-447d-a83a-242f91d1f77b",
+      "state": "started"
+    },
+    {
+      "seq": 7,
+      "type": "rate_limit",
+      "info": {
+        "status": "allowed",
+        "rateLimitType": "five_hour",
+        "resetsAt": "2026-10-15T03:50:00.000Z",
+        "utilization": null,
+        "windows": {
+          "five_hour": {
+            "utilization": 0.01,
+            "resetsAt": "2026-10-15T03:50:00.000Z"
+          },
+          "seven_day": {
+            "utilization": 0.35,
+            "resetsAt": "2026-10-17T22:00:00.000Z"
+          }
+        },
+        "at": "2026-10-14T23:19:58.780Z"
+      }
+    },
+    {
+      "seq": 8,
+      "type": "init",
+      "sessionId": "f9ed0a2b-f3f3-4a45-b14a-a27873781053",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "cliVersion": "2.1.300",
+      "apiKeySource": "none",
+      "capabilities": [
+        "interrupt_receipt_v1",
+        "interrupt_cancel_queued_v1",
+        "interrupt_send_now_v1",
+        "msg_lifecycle_v1",
+        "request_marker_lists_v1",
+        "sdk_mcp_tools_list_changed",
+        "sdk_mcp_manifests",
+        "mcp_read_resource_v1",
+        "mcp_tool_ui_meta_v1",
+        "ui_surface_v1"
+      ]
+    },
+    {
+      "seq": 10,
+      "type": "assistant_model",
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 10,
+      "type": "context_estimate",
+      "totalTokens": 29322,
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 24,
+      "type": "session_state",
+      "state": "requires_action"
+    },
+    {
+      "seq": 27,
+      "type": "context_estimate",
+      "totalTokens": 29411,
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 29,
+      "type": "session_state",
+      "state": "running"
+    },
+    {
+      "seq": 34,
+      "type": "turn_result",
+      "outcome": "interrupted",
+      "durationMs": 11150,
+      "costUsdTotal": 0.0029601100000000006,
+      "error": null,
+      "resultExcerpt": null,
+      "userMessageUuids": [
+        "5a91909f-8e6c-447d-a83a-242f91d1f77b"
+      ],
+      "synthetic": false,
+      "startupFailure": false
+    },
+    {
+      "seq": 35,
+      "type": "prompt_lifecycle",
+      "messageUuid": "5a91909f-8e6c-447d-a83a-242f91d1f77b",
+      "state": "cancelled"
+    },
+    {
+      "seq": 36,
+      "type": "session_state",
+      "state": "idle"
+    },
+    {
+      "seq": 39,
+      "type": "session_state",
+      "state": "running"
+    },
+    {
+      "seq": 40,
+      "type": "prompt_lifecycle",
+      "messageUuid": "9e9f7a89-de54-4591-a0f9-8f66cef91b2d",
+      "state": "queued"
+    },
+    {
+      "seq": 41,
+      "type": "prompt_lifecycle",
+      "messageUuid": "9e9f7a89-de54-4591-a0f9-8f66cef91b2d",
+      "state": "started"
+    },
+    {
+      "seq": 42,
+      "type": "init",
+      "sessionId": "f9ed0a2b-f3f3-4a45-b14a-a27873781053",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "cliVersion": "2.1.300",
+      "apiKeySource": "none",
+      "capabilities": [
+        "interrupt_receipt_v1",
+        "interrupt_cancel_queued_v1",
+        "interrupt_send_now_v1",
+        "msg_lifecycle_v1",
+        "request_marker_lists_v1",
+        "sdk_mcp_tools_list_changed",
+        "sdk_mcp_manifests",
+        "mcp_read_resource_v1",
+        "mcp_tool_ui_meta_v1",
+        "ui_surface_v1"
+      ]
+    },
+    {
+      "seq": 44,
+      "type": "context_estimate",
+      "totalTokens": 32945,
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 51,
+      "type": "turn_result",
+      "outcome": "success",
+      "durationMs": 1468,
+      "costUsdTotal": 0.0039831400000000005,
+      "error": null,
+      "resultExcerpt": "AFTER",
+      "userMessageUuids": [
+        "9e9f7a89-de54-4591-a0f9-8f66cef91b2d"
+      ],
+      "synthetic": false,
+      "startupFailure": false
+    },
+    {
+      "seq": 52,
+      "type": "prompt_lifecycle",
+      "messageUuid": "9e9f7a89-de54-4591-a0f9-8f66cef91b2d",
+      "state": "completed"
+    },
+    {
+      "seq": 53,
+      "type": "session_state",
+      "state": "idle"
+    },
+    {
+      "seq": 55,
+      "type": "session_state",
+      "state": "running"
+    },
+    {
+      "seq": 56,
+      "type": "prompt_lifecycle",
+      "messageUuid": "3e6a6bde-f464-4411-8412-55ec15a3ff02",
+      "state": "queued"
+    },
+    {
+      "seq": 57,
+      "type": "prompt_lifecycle",
+      "messageUuid": "3e6a6bde-f464-4411-8412-55ec15a3ff02",
+      "state": "started"
+    },
+    {
+      "seq": 58,
+      "type": "init",
+      "sessionId": "f9ed0a2b-f3f3-4a45-b14a-a27873781053",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "cliVersion": "2.1.300",
+      "apiKeySource": "none",
+      "capabilities": [
+        "interrupt_receipt_v1",
+        "interrupt_cancel_queued_v1",
+        "interrupt_send_now_v1",
+        "msg_lifecycle_v1",
+        "request_marker_lists_v1",
+        "sdk_mcp_tools_list_changed",
+        "sdk_mcp_manifests",
+        "mcp_read_resource_v1",
+        "mcp_tool_ui_meta_v1",
+        "ui_surface_v1"
+      ]
+    },
+    {
+      "seq": 60,
+      "type": "context_estimate",
+      "totalTokens": 32993,
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 167,
+      "type": "context_estimate",
+      "totalTokens": 33636,
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 169,
+      "type": "turn_result",
+      "outcome": "success",
+      "durationMs": 3359,
+      "costUsdTotal": 0.0052826800000000005,
+      "error": null,
+      "resultExcerpt": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43\n44\n45\n46\n47\n48\n49\n50\n51\n52\n53\n54\n55\n56\n57\n58\n59\n60\n61\n62\n63\n64\n65\n66\n67\n68\n69\n70\n71\n72\n73\n74\n75\n76\n77\n78\n79\n80\n81\n82\n83\n84\n85\n86\n87\n88\n89\n90\n91\n92\n93\n94\n95\n96\n97\n98\n99\n100\n101\n102\n103\n104\n105\n106\n107\n108\n109\n110\n111\n112\n113\n114\n115\n116\n117\n118\n119\n120\n121\n122\n123\n124\n125\n126\n127\n128\n129\n130\n131\n132\n133\n134\n135\n136\n137\n138\n139\n140\n141\n142\n143\n144\n145\n146\n147\n148\n149\n150\n151\n152\n",
+      "userMessageUuids": [
+        "3e6a6bde-f464-4411-8412-55ec15a3ff02"
+      ],
+      "synthetic": false,
+      "startupFailure": false
+    },
+    {
+      "seq": 170,
+      "type": "prompt_lifecycle",
+      "messageUuid": "3e6a6bde-f464-4411-8412-55ec15a3ff02",
+      "state": "completed"
+    },
+    {
+      "seq": 171,
+      "type": "session_state",
+      "state": "idle"
+    }
+  ],
+  "items": {
+    "cv_00000000000000000000000000000001": [
+      {
+        "id": "5a91909f-8e6c-447d-a83a-242f91d1f77b",
+        "order": 1,
+        "at": "2026-10-14T23:19:54.050Z",
+        "parentToolUseId": null,
+        "kind": "user_message",
+        "text": {
+          "text": "Use the Bash tool to run exactly: node -e \"setTimeout(() => console.log('finished'), 25000)\"   Then reply with exactly: DONE",
+          "truncated": null
+        },
+        "attachments": [],
+        "origin": "human",
+        "slashCommand": null,
+        "priority": "next"
+      },
+      {
+        "id": "msg_011Cg2zA5ZKbGPNnDfj64JHF:0",
+        "order": 2,
+        "at": "2026-10-14T23:20:02.487Z",
+        "parentToolUseId": null,
+        "kind": "tool_call",
+        "messageId": "msg_011Cg2zA5ZKbGPNnDfj64JHF",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "toolUseId": "toolu_0138CHiKYAgmsnBwWGrZRA7E",
+        "toolName": "Bash",
+        "input": {
+          "command": "node -e \"setTimeout(() => console.log('finished'), 25000)\"",
+          "description": "Run node timer script that prints finished after 25s"
+        },
+        "inputTruncated": null,
+        "inputPartial": null,
+        "status": "interrupted",
+        "result": {
+          "isError": true,
+          "content": [
+            {
+              "type": "text",
+              "text": {
+                "text": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.\n\nNote: The user's next message may contain a correction or preference. Pay close attention — if they explain what went wrong or how they'd prefer you to work, consider saving that to memory for future sessions.",
+                "truncated": null
+              }
+            }
+          ],
+          "structured": "User rejected tool use",
+          "structuredTruncated": null,
+          "at": "2026-10-14T23:20:09.092Z"
+        },
+        "elapsedSeconds": null,
+        "task": null,
+        "decision": {
+          "decisionId": "dc_00000000000000000000000000000001",
+          "kind": "permission",
+          "planVersion": null,
+          "outcome": {
+            "type": "allowed",
+            "remember": null,
+            "acceptEdits": false
+          }
+        }
+      },
+      {
+        "id": "d2c3ab2f-897d-4ccd-8947-d4fd44cadae1",
+        "order": 3,
+        "at": "2026-10-14T23:20:09.113Z",
+        "parentToolUseId": null,
+        "kind": "system",
+        "event": "interrupted",
+        "forToolUse": true
+      },
+      {
+        "id": "c2a5ddfd-2a1e-418a-aaa8-7f59017cdf90",
+        "order": 4,
+        "at": "2026-10-14T23:20:09.110Z",
+        "parentToolUseId": null,
+        "kind": "turn_result",
+        "outcome": "interrupted",
+        "subtype": "error_during_execution",
+        "terminalReason": "aborted_tools",
+        "stopReason": "tool_use",
+        "durationMs": 11150,
+        "durationApiMs": 3158,
+        "numTurns": 3,
+        "usage": {
+          "input": 2,
+          "output": 106,
+          "cacheRead": 16241,
+          "cacheCreation": 13062
+        },
+        "costUsdTotal": 0.0029601100000000006,
+        "costUsdTurn": null,
+        "permissionDenials": 0,
+        "errors": [
+          "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"
+        ],
+        "userMessageUuids": [
+          "5a91909f-8e6c-447d-a83a-242f91d1f77b"
+        ],
+        "synthetic": false
+      },
+      {
+        "id": "9e9f7a89-de54-4591-a0f9-8f66cef91b2d",
+        "order": 5,
+        "at": "2026-10-14T23:20:09.120Z",
+        "parentToolUseId": null,
+        "kind": "user_message",
+        "text": {
+          "text": "Reply with exactly: AFTER",
+          "truncated": null
+        },
+        "attachments": [],
+        "origin": "human",
+        "slashCommand": null,
+        "priority": "next"
+      },
+      {
+        "id": "msg_011Cg2zAjEz8DkcxZeo9SmT4:0",
+        "order": 6,
+        "at": "2026-10-14T23:20:10.596Z",
+        "parentToolUseId": null,
+        "kind": "assistant_text",
+        "messageId": "msg_011Cg2zAjEz8DkcxZeo9SmT4",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "text": "AFTER",
+        "streaming": false,
+        "aborted": false,
+        "localCommand": null
+      },
+      {
+        "id": "5dfcbdf0-e3e3-4d6a-8133-394bb17ef8be",
+        "order": 7,
+        "at": "2026-10-14T23:20:10.611Z",
+        "parentToolUseId": null,
+        "kind": "turn_result",
+        "outcome": "success",
+        "subtype": "success",
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 1468,
+        "durationApiMs": 4506,
+        "numTurns": 1,
+        "usage": {
+          "input": 2,
+          "output": 6,
+          "cacheRead": 29303,
+          "cacheCreation": 3634
+        },
+        "costUsdTotal": 0.0039831400000000005,
+        "costUsdTurn": 0.00102303,
+        "permissionDenials": 0,
+        "errors": [],
+        "userMessageUuids": [
+          "9e9f7a89-de54-4591-a0f9-8f66cef91b2d"
+        ],
+        "synthetic": false
+      },
+      {
+        "id": "3e6a6bde-f464-4411-8412-55ec15a3ff02",
+        "order": 8,
+        "at": "2026-10-14T23:20:10.616Z",
+        "parentToolUseId": null,
+        "kind": "user_message",
+        "text": {
+          "text": "Count from 1 to 300, one number per line, nothing else.",
+          "truncated": null
+        },
+        "attachments": [],
+        "origin": "human",
+        "slashCommand": null,
+        "priority": "next"
+      },
+      {
+        "id": "msg_011Cg2zAqRYTQKSqX5QprYyZ:0",
+        "order": 9,
+        "at": "2026-10-14T23:20:13.623Z",
+        "parentToolUseId": null,
+        "kind": "thinking",
+        "messageId": "msg_011Cg2zAqRYTQKSqX5QprYyZ",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "text": {
+          "text": "The user wants numbers 1 through 300 listed one per line, so I'll just generate the full sequence.\n\n",
+          "truncated": null
+        },
+        "redacted": false,
+        "streaming": false
+      },
+      {
+        "id": "msg_011Cg2zAqRYTQKSqX5QprYyZ:1",
+        "order": 10,
+        "at": "2026-10-14T23:20:13.918Z",
+        "parentToolUseId": null,
+        "kind": "assistant_text",
+        "messageId": "msg_011Cg2zAqRYTQKSqX5QprYyZ",
+        "blockIndex": 1,
+        "model": "claude-haiku-5-5",
+        "text": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43\n44\n45\n46\n47\n48\n49\n50\n51\n52\n53\n54\n55\n56\n57\n58\n59\n60\n61\n62\n63\n64\n65\n66\n67\n68\n69\n70\n71\n72\n73\n74\n75\n76\n77\n78\n79\n80\n81\n82\n83\n84\n85\n86\n87\n88\n89\n90\n91\n92\n93\n94\n95\n96\n97\n98\n99\n100\n101\n102\n103\n104\n105\n106\n107\n108\n109\n110\n111\n112\n113\n114\n115\n116\n117\n118\n119\n120\n121\n122\n123\n124\n125\n126\n127\n128\n129\n130\n131\n132\n133\n134\n135\n136\n137\n138\n139\n140\n141\n142\n143\n144\n145\n146\n147\n148\n149\n150\n151\n152\n153\n154\n155\n156\n157\n158\n159\n160\n161\n162\n163\n164\n165\n166\n167\n168\n169\n170\n171\n172\n173\n174\n175\n176\n177\n178\n179\n180\n181\n182\n183\n184\n185\n186\n187\n188\n189\n190\n191\n192\n193\n194\n195\n196\n197\n198\n199\n200\n201\n202\n203\n204\n205\n206\n207\n208\n209\n210\n211\n212\n213\n214\n215\n216\n217\n218\n219\n220\n221\n222\n223\n224\n225\n226\n227\n228\n229\n230\n231\n232\n233\n234\n235\n236\n237\n238\n239\n240\n241\n242\n243\n244\n245\n246\n247\n248\n249\n250\n251\n252\n253\n254\n255\n256\n257\n258\n259\n260\n261\n262\n263\n264\n265\n266\n267\n268\n269\n270\n271\n272\n273\n274\n275\n276\n277\n278\n279\n280\n281\n282\n283\n284\n285\n286\n287\n288\n289\n290\n291\n292\n293\n294\n295\n296\n297\n298\n299\n300",
+        "streaming": false,
+        "aborted": false,
+        "localCommand": null
+      },
+      {
+        "id": "6ab03fff-0f64-4b39-84e4-55b3a555d6fb",
+        "order": 11,
+        "at": "2026-10-14T23:20:13.994Z",
+        "parentToolUseId": null,
+        "kind": "turn_result",
+        "outcome": "success",
+        "subtype": "success",
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 3359,
+        "durationApiMs": 7775,
+        "numTurns": 1,
+        "usage": {
+          "input": 2,
+          "output": 645,
+          "cacheRead": 29584,
+          "cacheCreation": 3405
+        },
+        "costUsdTotal": 0.0052826800000000005,
+        "costUsdTurn": 0.00129954,
+        "permissionDenials": 0,
+        "errors": [],
+        "userMessageUuids": [
+          "3e6a6bde-f464-4411-8412-55ec15a3ff02"
+        ],
+        "synthetic": false
+      }
+    ]
+  },
+  "detail": {
+    "rateLimit": {
+      "status": "allowed",
+      "rateLimitType": "five_hour",
+      "resetsAt": "2026-10-15T03:50:00.000Z",
+      "utilization": null,
+      "windows": {
+        "five_hour": {
+          "utilization": 0.01,
+          "resetsAt": "2026-10-15T03:50:00.000Z"
+        },
+        "seven_day": {
+          "utilization": 0.35,
+          "resetsAt": "2026-10-17T22:00:00.000Z"
+        }
+      },
+      "at": "2026-10-14T23:19:58.780Z"
+    },
+    "init": {
+      "sessionId": "f9ed0a2b-f3f3-4a45-b14a-a27873781053",
+      "cwd": "<SCRATCH>\\work\\interrupt",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "apiKeySource": "none",
+      "cliVersion": "2.1.300",
+      "tools": [
+        "Task",
+        "AskUserQuestion",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "DesignSync",
+        "Edit",
+        "EnterPlanMode",
+        "EnterWorktree",
+        "ExitPlanMode",
+        "ExitWorktree",
+        "Glob",
+        "Grep",
+        "ListAgents",
+        "ListMcpResourcesTool",
+        "Monitor",
+        "NotebookEdit",
+        "PowerShell",
+        "PushNotification",
+        "Read",
+        "ReadMcpResourceDirTool",
+        "ReadMcpResourceTool",
+        "RemoteTrigger",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SendMessage",
+        "Skill",
+        "TaskStop",
+        "ToolSearch",
+        "WebFetch",
+        "WebSearch",
+        "Write",
+        "mcp__chrome-devtools__click",
+        "mcp__chrome-devtools__close_page",
+        "mcp__chrome-devtools__drag",
+        "mcp__chrome-devtools__emulate",
+        "mcp__chrome-devtools__evaluate_script",
+        "mcp__chrome-devtools__fill",
+        "mcp__chrome-devtools__fill_form",
+        "mcp__chrome-devtools__get_console_message",
+        "mcp__chrome-devtools__get_css_styles",
+        "mcp__chrome-devtools__get_network_request",
+        "mcp__chrome-devtools__handle_dialog",
+        "mcp__chrome-devtools__hover",
+        "mcp__chrome-devtools__lighthouse_audit",
+        "mcp__chrome-devtools__list_console_messages",
+        "mcp__chrome-devtools__list_network_requests",
+        "mcp__chrome-devtools__list_pages",
+        "mcp__chrome-devtools__navigate_page",
+        "mcp__chrome-devtools__new_page",
+        "mcp__chrome-devtools__performance_analyze_insight",
+        "mcp__chrome-devtools__performance_start_trace",
+        "mcp__chrome-devtools__performance_stop_trace",
+        "mcp__chrome-devtools__press_key",
+        "mcp__chrome-devtools__resize_page",
+        "mcp__chrome-devtools__select_page",
+        "mcp__chrome-devtools__take_heapsnapshot",
+        "mcp__chrome-devtools__take_screenshot",
+        "mcp__chrome-devtools__take_snapshot",
+        "mcp__chrome-devtools__type_text",
+        "mcp__chrome-devtools__upload_file",
+        "mcp__chrome-devtools__wait_for",
+        "mcp__claude_ai_Claude_Docs__batch",
+        "mcp__claude_ai_Claude_Docs__create",
+        "mcp__claude_ai_Claude_Docs__delete",
+        "mcp__claude_ai_Claude_Docs__export",
+        "mcp__claude_ai_Claude_Docs__guide",
+        "mcp__claude_ai_Claude_Docs__query",
+        "mcp__claude_ai_Claude_Docs__read",
+        "mcp__claude_ai_Claude_Docs__update",
+        "mcp__github__add_issue_comment",
+        "mcp__github__create_branch",
+        "mcp__github__create_issue",
+        "mcp__github__create_or_update_file",
+        "mcp__github__create_pull_request",
+        "mcp__github__create_pull_request_review",
+        "mcp__github__create_repository",
+        "mcp__github__fork_repository",
+        "mcp__github__get_file_contents",
+        "mcp__github__get_issue",
+        "mcp__github__get_pull_request",
+        "mcp__github__get_pull_request_comments",
+        "mcp__github__get_pull_request_files",
+        "mcp__github__get_pull_request_reviews",
+        "mcp__github__get_pull_request_status",
+        "mcp__github__list_commits",
+        "mcp__github__list_issues",
+        "mcp__github__list_pull_requests",
+        "mcp__github__merge_pull_request",
+        "mcp__github__push_files",
+        "mcp__github__search_code",
+        "mcp__github__search_issues",
+        "mcp__github__search_repositories",
+        "mcp__github__search_users",
+        "mcp__github__update_issue",
+        "mcp__github__update_pull_request_branch",
+        "mcp__primevue__compare_components",
+        "mcp__primevue__export_component_docs",
+        "mcp__primevue__find_by_event",
+        "mcp__primevue__find_by_prop",
+        "mcp__primevue__find_components_with_feature",
+        "mcp__primevue__generate_component_template",
+        "mcp__primevue__get_accessibility_guide",
+        "mcp__primevue__get_accessibility_info",
+        "mcp__primevue__get_categories",
+        "mcp__primevue__get_component",
+        "mcp__primevue__get_component_events",
+        "mcp__primevue__get_component_import",
+        "mcp__primevue__get_component_methods",
+        "mcp__primevue__get_component_props",
+        "mcp__primevue__get_component_pt",
+        "mcp__primevue__get_component_sections",
+        "mcp__primevue__get_component_slots",
+        "mcp__primevue__get_component_styles",
+        "mcp__primevue__get_component_tokens",
+        "mcp__primevue__get_component_url",
+        "mcp__primevue__get_composable",
+        "mcp__primevue__get_configuration",
+        "mcp__primevue__get_data_components",
+        "mcp__primevue__get_example",
+        "mcp__primevue__get_form_components",
+        "mcp__primevue__get_guide",
+        "mcp__primevue__get_icons_guide",
+        "mcp__primevue__get_installation",
+        "mcp__primevue__get_overlay_components",
+        "mcp__primevue__get_passthrough_guide",
+        "mcp__primevue__get_performance_tips",
+        "mcp__primevue__get_related_components",
+        "mcp__primevue__get_tailwind_guide",
+        "mcp__primevue__get_theming_guide",
+        "mcp__primevue__get_theming_info",
+        "mcp__primevue__get_usage_example",
+        "mcp__primevue__get_version_info",
+        "mcp__primevue__list_components",
+        "mcp__primevue__list_composables",
+        "mcp__primevue__list_examples",
+        "mcp__primevue__list_guides",
+        "mcp__primevue__search_all",
+        "mcp__primevue__search_components",
+        "mcp__primevue__suggest_component",
+        "mcp__primevue__validate_props"
+      ],
+      "slashCommands": [
+        "animation-vocabulary",
+        "apple-design",
+        "emil-design-eng",
+        "find-animation-opportunities",
+        "find-skills",
+        "impeccable",
+        "improve-animations",
+        "review-animations",
+        "ui-ux-pro-max:banner-design",
+        "ui-ux-pro-max:brand",
+        "ui-ux-pro-max:design",
+        "ui-ux-pro-max:design-system",
+        "ui-ux-pro-max:slides",
+        "ui-ux-pro-max:ui-styling",
+        "ui-ux-pro-max:ui-ux-pro-max",
+        "frontend-design:frontend-design",
+        "memory-manager:memory-manager",
+        "design",
+        "design-sync",
+        "dataviz",
+        "update-config",
+        "verify",
+        "debug",
+        "code-review",
+        "simplify",
+        "batch",
+        "fewer-permission-prompts",
+        "doctor",
+        "loop",
+        "schedule",
+        "claude-api",
+        "run",
+        "run-skill-generator",
+        "plugin-authoring",
+        "advisor",
+        "agents",
+        "auto-mode-setup",
+        "autocompact",
+        "clear",
+        "color",
+        "compact",
+        "config",
+        "output-style",
+        "context",
+        "effort",
+        "fast",
+        "focus",
+        "heapdump",
+        "init",
+        "mcp",
+        "import",
+        "model",
+        "__remote-workflow",
+        "workflow-launch-exec",
+        "reload-plugins",
+        "reload-skills",
+        "rename",
+        "ultrareview",
+        "security-review",
+        "usage-credits",
+        "extra-usage",
+        "usage",
+        "insights",
+        "recap",
+        "skill-doctor",
+        "goal",
+        "design-consent",
+        "design-revoke",
+        "list-agents",
+        "team-onboarding",
+        "anthropic-skills:built-in-browser",
+        "anthropic-skills:chrome-browser",
+        "anthropic-skills:computer-use",
+        "anthropic-skills:deep-research",
+        "anthropic-skills:docs",
+        "anthropic-skills:docx",
+        "anthropic-skills:google-workspace",
+        "anthropic-skills:import-memory",
+        "anthropic-skills:morning",
+        "anthropic-skills:pdf",
+        "anthropic-skills:pptx",
+        "anthropic-skills:skill-creator",
+        "anthropic-skills:xlsx"
+      ],
+      "terminalSlashCommands": [
+        "doctor",
+        "color",
+        "focus",
+        "reload-plugins"
+      ],
+      "mcpServers": [
+        {
+          "name": "github",
+          "status": "connected",
+          "source": "user"
+        },
+        {
+          "name": "primevue",
+          "status": "connected",
+          "source": "user"
+        },
+        {
+          "name": "chrome-devtools",
+          "status": "connected",
+          "source": "user"
+        },
+        {
+          "name": "claude.ai Claude Docs",
+          "status": "connected",
+          "source": "claudeai"
+        }
+      ],
+      "skills": [
+        "animation-vocabulary",
+        "apple-design",
+        "emil-design-eng",
+        "find-animation-opportunities",
+        "find-skills",
+        "impeccable",
+        "improve-animations",
+        "review-animations",
+        "ui-ux-pro-max:banner-design",
+        "ui-ux-pro-max:brand",
+        "ui-ux-pro-max:design",
+        "ui-ux-pro-max:design-system",
+        "ui-ux-pro-max:slides",
+        "ui-ux-pro-max:ui-styling",
+        "ui-ux-pro-max:ui-ux-pro-max",
+        "frontend-design:frontend-design",
+        "memory-manager:memory-manager",
+        "design",
+        "design-sync",
+        "dataviz",
+        "update-config",
+        "verify",
+        "debug",
+        "code-review",
+        "simplify",
+        "batch",
+        "fewer-permission-prompts",
+        "doctor",
+        "loop",
+        "schedule",
+        "claude-api",
+        "run",
+        "run-skill-generator",
+        "plugin-authoring",
+        "anthropic-skills:built-in-browser",
+        "anthropic-skills:chrome-browser",
+        "anthropic-skills:computer-use",
+        "anthropic-skills:deep-research",
+        "anthropic-skills:docs",
+        "anthropic-skills:docx",
+        "anthropic-skills:google-workspace",
+        "anthropic-skills:import-memory",
+        "anthropic-skills:morning",
+        "anthropic-skills:pdf",
+        "anthropic-skills:pptx",
+        "anthropic-skills:skill-creator",
+        "anthropic-skills:xlsx"
+      ],
+      "agents": [
+        "claude",
+        "Explore",
+        "general-purpose",
+        "Plan",
+        "statusline-setup"
+      ],
+      "plugins": [
+        {
+          "name": "ui-ux-pro-max",
+          "version": "2.6.2"
+        },
+        {
+          "name": "frontend-design",
+          "version": null
+        },
+        {
+          "name": "memory-manager",
+          "version": "0.5.3"
+        },
+        {
+          "name": "cc-plugin-agents-md",
+          "version": null
+        },
+        {
+          "name": "cc-plugin-telemetry",
+          "version": null
+        },
+        {
+          "name": "cc-plugin-plugin-authoring",
+          "version": null
+        }
+      ],
+      "capabilities": [
+        "interrupt_receipt_v1",
+        "interrupt_cancel_queued_v1",
+        "interrupt_send_now_v1",
+        "msg_lifecycle_v1",
+        "request_marker_lists_v1",
+        "sdk_mcp_tools_list_changed",
+        "sdk_mcp_manifests",
+        "mcp_read_resource_v1",
+        "mcp_tool_ui_meta_v1",
+        "ui_surface_v1"
+      ],
+      "outputStyle": "default",
+      "fastModeState": "off",
+      "effort": null
+    }
+  },
+  "unknownCounts": {},
+  "ignoredCounts": {}
+}
