@@ -11,6 +11,7 @@
 import type { SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
 import type { ChildProcess, ChildProcessWithoutNullStreams } from 'node:child_process';
 import { windowsPathKey } from '@shared/paths';
+import { toError } from '../lib/async';
 import { logger } from '../lib/logger';
 import type { spawnHidden } from '../lib/process';
 
@@ -36,10 +37,6 @@ export interface SpawnerOptions {
    * A synchronous failure is reported here and then rethrown to the SDK.
    */
   onError(error: Error): void;
-}
-
-function toError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
 }
 
 /** SpawnOptions.env may hold `undefined` values; spawn() wants plain strings. */

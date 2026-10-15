@@ -13,3 +13,6 @@ FakeBackend (`--backend=fake`), `pnpm dev:live` das SdkBackend.
   `.ts`-Module in `fake/` (Fixture-Format v1, mit `fixtureEventSchema` geprüft), nie `.jsonl` (R0-06).
 - Spawn über `lib/process.ts`, Prozessbaum-Kill über `killProcessTree` (C.8); der Spawn-Wrapper liest
   stderr selbst (F.16).
+- R2-Fixes: SdkBackend-Bereitschaft (`supportedModels`, auch vor den C.1-Flag-Settings) mit eigenem
+  Timeout `readyMs` 60 s (R2-04); Betas nur mit gültigem Header-Namen (R2-11); FakeBackend behält
+  höchstens `keepSessions` (50) beendete Sessions/Starts (R2-12). Kleine Helfer aus `lib/async.ts`.

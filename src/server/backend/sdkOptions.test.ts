@@ -303,4 +303,14 @@ describe('optionIssues', () => {
       ),
     ).toEqual(['only the first of 3 --mcp-config values is passed (extraArgs holds one value per flag)']);
   });
+
+  it('drops beta names that are no beta header and reports them (R2-11)', () => {
+    const req = request({
+      launch: launch({ sdkOptions: { betas: ['context-1m-2025-08-07', 'Bad Beta', '', 'x;y'] } }),
+    });
+    expect(buildQueryOptions(req, hooks).betas).toEqual(['context-1m-2025-08-07']);
+    expect(optionIssues(req)).toEqual(['invalid beta names are omitted: "Bad Beta", "", "x;y"']);
+    const onlyInvalid = request({ launch: launch({ sdkOptions: { betas: ['NOPE'] } }) });
+    expect('betas' in buildQueryOptions(onlyInvalid, hooks)).toBe(false);
+  });
 });

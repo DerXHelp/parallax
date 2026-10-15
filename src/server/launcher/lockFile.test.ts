@@ -1,9 +1,34 @@
-import { readFile, rm, writeFile } from 'node:fs/promises';
-import { afterEach, describe, expect, it } from 'vitest';
+import { once } from 'node:events';
+import { readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { SERVER_LOCK_FILE, serverLockFileSchema } from '@shared/http';
 import { sampleTime, sampleToken, sampleUuid } from '@shared/samples';
 import { makeTempHome } from '../http/testServer';
-import { readServerLock, serverLockPath, writeServerLock } from './lockFile';
+import { DEFAULT_RETRY_DELAYS_MS, nodeFsOps, type FsOps } from '../lib/fs';
+import { spawnHidden } from '../lib/process';
+import { LOCK_RETRY_DELAYS_MS, readServerLock, serverLockPath, writeServerLock } from './lockFile';
+
+const windowsOnly = process.platform === 'win32' ? it : it.skip;
+
+/** node -e: reads argv[1] every 20 ms for argv[2] ms, prints {reads, ok, missing, busy, torn}. */
+const POLLING_READER = `
+const fs = require('node:fs');
+const [file, ms] = process.argv.slice(1);
+const stats = { reads: 0, ok: 0, missing: 0, busy: 0, torn: 0 };
+const end = Date.now() + Number(ms);
+(function loop() {
+  if (Date.now() > end) { process.stdout.write(JSON.stringify(stats)); return; }
+  stats.reads += 1;
+  try { JSON.parse(fs.readFileSync(file, 'utf8')); stats.ok += 1; }
+  catch (e) {
+    if (e.code === 'ENOENT') stats.missing += 1;
+    else if (e.code === 'EPERM' || e.code === 'EBUSY' || e.code === 'EACCES') stats.busy += 1;
+    else stats.torn += 1;
+  }
+  setTimeout(loop, 20);
+})();
+`;
 
 const homes: string[] = [];
 
@@ -72,6 +97,140 @@ describe('server lock file (C.8, ADR-015)', () => {
     const read = () => Promise.reject(Object.assign(new Error('denied'), { code: 'EISDIR' }));
     expect(await readServerLock('C:\\nowhere', read)).toEqual({ kind: 'invalid', reason: 'unreadable' });
   });
+
+  it('retries a rename refused while another process reads the file (EPERM, R2-01)', async () => {
+    const home = await tempHome();
+    let refusals = 3;
+    const fs: FsOps = {
+      ...nodeFsOps,
+      rename: (from, to) => {
+        if (refusals > 0) {
+          refusals -= 1;
+          return Promise.reject(
+            Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' }),
+          );
+        }
+        return nodeFsOps.rename(from, to);
+      },
+    };
+    const handle = await writeServerLock({
+      home,
+      port: 4711,
+      instance: instance(),
+      launcherToken: sampleToken(),
+      fs,
+    });
+    expect(refusals).toBe(0);
+    expect(await readServerLock(home)).toEqual({ kind: 'ok', lock: handle.lock });
+    expect(LOCK_RETRY_DELAYS_MS.length).toBeGreaterThan(DEFAULT_RETRY_DELAYS_MS.length);
+  });
+
+  it('gives up after the lock retry schedule and leaves no temp file behind', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const home = await tempHome();
+      let attempts = 0;
+      const fs: FsOps = {
+        ...nodeFsOps,
+        rename: () => {
+          attempts += 1;
+          return Promise.reject(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+        },
+      };
+      const write = writeServerLock({
+        home,
+        port: 4711,
+        instance: instance(),
+        launcherToken: sampleToken(),
+        fs,
+      });
+      const state: { result: string | null } = { result: null };
+      void write.then(
+        () => {
+          state.result = 'written';
+        },
+        (error: unknown) => {
+          state.result = error instanceof Error ? error.message : 'error';
+        },
+      );
+      // The temp file is written with real I/O; only the retry delays run on the fake clock.
+      for (let i = 0; i < 5_000 && state.result === null; i += 1) {
+        await vi.advanceTimersByTimeAsync(100);
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      expect(state.result).toBe('EBUSY');
+      expect(attempts).toBe(LOCK_RETRY_DELAYS_MS.length + 1);
+      expect((await readdir(home)).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a read during a replace (EPERM) is retried; the reader never throws', async () => {
+    const home = await tempHome();
+    const handle = await writeServerLock({
+      home,
+      port: 4711,
+      instance: instance(),
+      launcherToken: sampleToken(),
+    });
+    let refusals = 2;
+    const read = (file: string) => {
+      if (refusals > 0) {
+        refusals -= 1;
+        return Promise.reject(Object.assign(new Error('EPERM'), { code: 'EPERM' }));
+      }
+      return readFile(file, 'utf8');
+    };
+    expect(await readServerLock(home, read)).toEqual({ kind: 'ok', lock: handle.lock });
+    const always = () => Promise.reject(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+    expect(await readServerLock(home, always)).toEqual({ kind: 'invalid', reason: 'unreadable' });
+  });
+
+  windowsOnly(
+    'stays consistent while another process polls the file (R2-01)',
+    async () => {
+      const home = await tempHome();
+      await writeServerLock({ home, port: 4711, instance: instance(), launcherToken: sampleToken() });
+      // A reader 7× faster than the launcher (150 ms): counts readable/missing/busy/torn reads.
+      const reader = spawnHidden(process.execPath, ['-e', POLLING_READER, serverLockPath(home), '3000'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let out = '';
+      reader.stdout?.setEncoding('utf8');
+      reader.stdout?.on('data', (chunk: string) => {
+        out += chunk;
+      });
+      const reading = { done: false };
+      const closed = once(reader, 'close').then(() => {
+        reading.done = true;
+      });
+      // Replace the file over and over until the reader ends (every write must succeed).
+      let writes = 0;
+      try {
+        while (!reading.done || writes < 20) {
+          writes += 1;
+          const handle = await writeServerLock({
+            home,
+            port: 1000 + writes,
+            instance: instance(writes),
+            launcherToken: sampleToken(writes),
+          });
+          expect(await readServerLock(home)).toEqual({ kind: 'ok', lock: handle.lock });
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+      } finally {
+        await closed;
+      }
+      const stats = z
+        .object({ reads: z.number(), ok: z.number(), torn: z.number() })
+        .parse(JSON.parse(out) as unknown);
+      expect(stats.ok).toBeGreaterThan(0);
+      expect(stats.torn).toBe(0);
+      expect((await readdir(home)).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    },
+    60_000,
+  );
 
   it('release removes only its own lock and is idempotent', async () => {
     const home = await tempHome();

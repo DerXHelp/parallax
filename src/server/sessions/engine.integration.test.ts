@@ -34,9 +34,12 @@ import {
   turnOpen,
 } from '../backend/fake/dsl';
 import { init, msg } from './normalizer/synthetic/build';
+import { FAKE_MODELS } from '../backend/fake/defaults';
 import { FAKE_SCENARIOS } from '../backend/fake/synthetic';
 import { loadFixtureScenario } from '../backend/fake/testing';
 import type { FixtureEvent } from '../backend/fixture';
+import { AsyncQueue } from '../backend/lib/asyncQueue';
+import type { BackendEvent } from '../backend/types';
 import type { ClientPresence, TranscriptStore } from '../sync/ports';
 import {
   HARNESS_CLIENT_ID,
@@ -802,7 +805,252 @@ describe('orphans', () => {
     startedAt: SAMPLE_TIME,
   });
 
-  it('name + start time match → taskkill; mismatch or gone → untouched; records removed; start waits', async () => {
+  const entry41 = sampleEntry({
+    id: sampleId('en', 41),
+    conversations: [sampleConversation({ id: sampleId('cv', 41) })],
+  });
+  const at = (s: number) => new Date(Date.parse(SAMPLE_TIME) + s * 1000);
+  const alive = (...pids: number[]) => {
+    const set = new Set(pids);
+    return (pid: number) => set.has(pid);
+  };
+
+  it('one bundled query: name + start match → taskkill, mismatch/reused → untouched; the start waits visibly', async () => {
+    const gate = Promise.withResolvers<undefined>();
+    const h = await setup({
+      seed: { entries: [entry41] },
+      processes: [record(1), record(2), record(3), record(4)],
+      proc: {
+        isProcessAlive: alive(50_001, 50_002, 50_003, 50_004),
+        queryProcesses: async () => {
+          await gate.promise;
+          return {
+            kind: 'ok',
+            processes: [
+              { pid: 50_001, name: 'CLAUDE.EXE', parentPid: 1, startedAt: at(4) },
+              { pid: 50_002, name: 'notepad.exe', parentPid: 1, startedAt: at(0) },
+              { pid: 50_003, name: 'claude.exe', parentPid: 1, startedAt: at(60) },
+              // 50_004 ended in between → gone
+            ],
+          };
+        },
+      },
+    });
+    // The start of entry 41 waits for its orphan check – visibly (R2-02).
+    const resume = h.cmd({ name: 'session.resume', entryId: entry41.id });
+    await h.settle();
+    expect(h.backend.starts).toHaveLength(0);
+    expect(h.facts(entry41.id).runState).toBe('starting');
+    expect(h.proc.queries).toEqual([{ pids: [50_001, 50_002, 50_003, 50_004] }]);
+    gate.resolve(undefined);
+    await resume;
+    await h.manager.orphansDone();
+    await h.settle();
+    expect(h.backend.starts).toHaveLength(1);
+    expect(h.proc.killed).toEqual([50_001]);
+    expect(h.stores.processes.records().map((r) => r.pid)).toEqual([h.session(entry41.id).pid]);
+  });
+
+  it('dead PIDs need no PowerShell: removed at once, the start does not wait (pre-filter)', async () => {
+    const never = Promise.withResolvers<undefined>();
+    const h = await setup({
+      seed: { entries: [entry41] },
+      processes: [record(1), record(2)],
+      proc: {
+        isProcessAlive: () => false,
+        queryProcesses: async () => {
+          await never.promise;
+          return { kind: 'ok', processes: [] };
+        },
+      },
+    });
+    await h.manager.orphansDone();
+    expect(h.proc.queries).toEqual([]);
+    expect(h.stores.processes.records()).toEqual([]);
+    await h.cmd({ name: 'session.resume', entryId: entry41.id });
+    expect(h.backend.starts).toHaveLength(1);
+  });
+
+  it('an inconclusive query (timeout) kills nothing and keeps the record for the next start', async () => {
+    const h = await setup({
+      seed: { entries: [entry41] },
+      processes: [record(1)],
+      proc: {
+        isProcessAlive: alive(50_001),
+        queryProcesses: () =>
+          Promise.resolve({ kind: 'unknown', reason: 'timeout', detail: 'no answer within 60000 ms' }),
+      },
+    });
+    await h.manager.orphansDone();
+    expect(h.proc.killed).toEqual([]);
+    expect(h.stores.processes.records().map((r) => r.pid)).toEqual([50_001]);
+    // The start goes on after the check (the record stays until the next server start).
+    await h.cmd({ name: 'session.resume', entryId: entry41.id });
+    await h.settle();
+    expect(h.backend.starts).toHaveLength(1);
+    expect(h.stores.processes.records().map((r) => r.pid)).toEqual([50_001, h.session(entry41.id).pid]);
+  });
+
+  it('children of a dead claude.exe are neither searched nor ended (R2-03)', async () => {
+    const h = await setup({ processes: [{ ...record(5), startedAt: at(-60).toISOString() }] });
+    h.proc.info.set(60_001, { pid: 60_001, name: 'node.exe', parentPid: 50_005, startedAt: at(-30) });
+    await h.manager.orphansDone();
+    expect(h.proc.queries).toEqual([]);
+    expect(h.proc.killed).toEqual([]);
+    expect(h.stores.processes.records()).toEqual([]);
+  });
+
+  it('a dormant rename waits for the orphan check of its entry (R2-08)', async () => {
+    const gate = Promise.withResolvers<undefined>();
+    const sessionId = '5e550000-0000-4000-8000-0000000000d1';
+    const entry = sampleEntry({
+      id: sampleId('en', 41),
+      conversations: [sampleConversation({ id: sampleId('cv', 41), sessionId })],
+    });
+    const h = await setup({
+      seed: { entries: [entry] },
+      processes: [record(1)],
+      proc: {
+        isProcessAlive: alive(50_001),
+        queryProcesses: async () => {
+          await gate.promise;
+          return { kind: 'ok', processes: [] };
+        },
+      },
+    });
+    const renamed = h.cmd({ name: 'session.rename', entryId: entry.id, title: 'New title' });
+    await h.settle();
+    expect(h.backend.history.info(sessionId)).toBeNull();
+    gate.resolve(undefined);
+    await renamed;
+    expect(h.backend.history.info(sessionId)).toMatchObject({ customTitle: 'New title' });
+  });
+});
+
+describe('readiness (R2-04)', () => {
+  const sessionId = '5e550000-0000-4000-8000-0000000000e1';
+  const dormant = sampleEntry({
+    id: sampleId('en', 51),
+    lastRunState: 'sleeping',
+    conversations: [sampleConversation({ id: sampleId('cv', 51), sessionId })],
+  });
+  const timeout = (): Error =>
+    Object.assign(new Error('supportedModels timed out after 60000 ms'), { name: 'TimeoutError' });
+
+  /** supportedModels() of every started session answers through a deferred the test controls. */
+  function controlReadiness(h: EngineHarness): PromiseWithResolvers<unknown[]>[] {
+    const calls: PromiseWithResolvers<unknown[]>[] = [];
+    const start = h.backend.start.bind(h.backend);
+    h.backend.start = (req) => {
+      const session = start(req);
+      session.supportedModels = () => {
+        const call = Promise.withResolvers<unknown[]>();
+        calls.push(call);
+        return call.promise;
+      };
+      return session;
+    };
+    return calls;
+  }
+
+  it('fails twice without a prompt → the process is closed, error CLAUDE_CONTROL_FAILED, no retry', async () => {
+    const h = await setup({ seed: { entries: [dormant] } });
+    const calls = controlReadiness(h);
+    await h.cmd({ name: 'session.resume', entryId: dormant.id });
+    await h.settle();
+    expect(h.facts(dormant.id).runState).toBe('starting');
+    calls[0]?.reject(timeout());
+    await h.settle();
+    expect(calls).toHaveLength(2);
+    expect(h.facts(dormant.id).runState).toBe('starting');
+    calls[1]?.reject(timeout());
+    await h.waitFor(() => h.facts(dormant.id).runState === 'error');
+    await h.settle();
+    expect(h.facts(dormant.id).errorCode).toBe('CLAUDE_CONTROL_FAILED');
+    expect(h.summary(dormant.id).lastError).toMatchObject({
+      code: 'CLAUDE_CONTROL_FAILED',
+      params: { method: 'supportedModels' },
+    });
+    expect(errorItems(h, dormant.id).map((i) => i.error.code)).toEqual(['CLAUDE_CONTROL_FAILED']);
+    expect(h.session(dormant.id).state).toBe('exited');
+    expect(h.manager.inspect(dormant.id)).toMatchObject({ phase: 'dormant', retryScheduled: false });
+  });
+
+  it('a second attempt that answers → idle with models', async () => {
+    const h = await setup({ seed: { entries: [dormant] } });
+    const calls = controlReadiness(h);
+    await h.cmd({ name: 'session.resume', entryId: dormant.id });
+    await h.settle();
+    calls[0]?.reject(timeout());
+    await h.settle();
+    calls[1]?.resolve([...FAKE_MODELS]);
+    await h.waitFor(() => h.facts(dormant.id).runState === 'idle');
+    expect(h.session(dormant.id).state).not.toBe('exited');
+    expect((await h.manager.loadView(dormant.id))?.detail.models?.length).toBeGreaterThan(0);
+  });
+
+  it('after a prompt the turn decides the status – a failed readiness only logs', async () => {
+    const h = await setup({ seed: { entries: [dormant] } });
+    const calls = controlReadiness(h);
+    await h.cmd({ name: 'session.resume', entryId: dormant.id });
+    await h.cmd({
+      name: 'session.sendPrompt',
+      entryId: dormant.id,
+      prompt: { text: 'Reply with exactly: OK' },
+    });
+    await h.waitFor(() => h.facts(dormant.id).runState === 'idle');
+    calls[0]?.reject(timeout());
+    await h.settle();
+    calls[1]?.reject(timeout());
+    await h.settle();
+    expect(h.facts(dormant.id).runState).toBe('idle');
+    expect(h.session(dormant.id).state).not.toBe('exited');
+  });
+});
+
+describe('start and stop edges', () => {
+  it('a spawn failure without a process fails the command with CLAUDE_SPAWN_FAILED (R2-07)', async () => {
+    const h = await setup();
+    const entryId = await h.create(null);
+    h.backend.start = (req) => {
+      const events = new AsyncQueue<BackendEvent>();
+      const at = h.now();
+      events.push({
+        type: 'error',
+        where: 'spawn',
+        name: 'Error',
+        message: 'spawn C:\\fake\\claude.exe ENOENT',
+        at,
+      });
+      events.push({ type: 'exit', code: null, signal: null, expected: false, at });
+      events.end();
+      const closed = (): Promise<never> => Promise.reject(new Error('session closed'));
+      return {
+        entryId: req.entryId,
+        pid: null,
+        events,
+        send: () => {
+          throw new Error('session closed');
+        },
+        interrupt: closed,
+        setModel: closed,
+        setPermissionMode: closed,
+        applyFlagSettings: closed,
+        getContextUsage: closed,
+        supportedModels: closed,
+        supportedCommands: closed,
+        stopTask: closed,
+        close: () => Promise.resolve(),
+      };
+    };
+    const error = await h.cmdError({ name: 'session.sendPrompt', entryId, prompt: { text: 'hi' } });
+    expect(error).toMatchObject({ code: 'CLAUDE_SPAWN_FAILED' });
+    expect(String(error.params.reason)).toContain('ENOENT');
+    expect(h.facts(entryId)).toMatchObject({ runState: 'error', errorCode: 'CLAUDE_SPAWN_FAILED' });
+    expect(h.manager.inspect(entryId)).toMatchObject({ phase: 'dormant', retryScheduled: false });
+  });
+
+  it('Stop while the start still runs reaches the session after the start (R2-15)', async () => {
     const entry = sampleEntry({
       id: sampleId('en', 41),
       conversations: [sampleConversation({ id: sampleId('cv', 41) })],
@@ -810,62 +1058,44 @@ describe('orphans', () => {
     const gate = Promise.withResolvers<undefined>();
     const h = await setup({
       seed: { entries: [entry] },
-      processes: [record(1), record(2), record(3), record(4)],
+      processes: [{ entryId: entry.id, pid: 50_001, image: 'claude.exe', startedAt: SAMPLE_TIME }],
       proc: {
-        processInfo: async (pid) => {
+        isProcessAlive: (pid) => pid === 50_001,
+        queryProcesses: async () => {
           await gate.promise;
-          if (pid === 50_001)
-            return {
-              pid,
-              name: 'CLAUDE.EXE',
-              parentPid: 1,
-              startedAt: new Date(Date.parse(SAMPLE_TIME) + 4_000),
-            };
-          if (pid === 50_002)
-            return { pid, name: 'notepad.exe', parentPid: 1, startedAt: new Date(SAMPLE_TIME) };
-          if (pid === 50_003)
-            return {
-              pid,
-              name: 'claude.exe',
-              parentPid: 1,
-              startedAt: new Date(Date.parse(SAMPLE_TIME) + 60_000),
-            };
-          return null;
+          return { kind: 'ok', processes: [] };
         },
       },
     });
-    // The start of entry 41 waits for its orphan cleanup.
-    const resume = h.cmd({ name: 'session.resume', entryId: entry.id });
+    const sent = h.cmd({ name: 'session.sendPrompt', entryId: entry.id, prompt: { text: 'fake:slow' } });
+    const stopped = h.cmd({ name: 'session.interrupt', entryId: entry.id });
     await h.settle();
     expect(h.backend.starts).toHaveLength(0);
     gate.resolve(undefined);
-    await resume;
-    await h.manager.orphansDone();
-    await h.settle();
-    expect(h.backend.starts).toHaveLength(1);
-    expect(h.proc.killed).toEqual([50_001]);
-    expect(h.stores.processes.records().map((r) => r.pid)).toEqual([h.session(entry.id).pid]);
+    await sent;
+    await stopped;
+    expect(h.session(entry.id).controls.map((c) => c.method)).toContain('interrupt');
   });
 
-  it('children of a dead claude.exe that started after it (and before this server) are ended', async () => {
-    const at = (s: number) => new Date(Date.parse(SAMPLE_TIME) + s * 1000);
-    const h = await setup({
-      processes: [{ ...record(5), startedAt: at(-60).toISOString() }],
-      proc: {
-        processInfo: () => Promise.resolve(null),
-        childProcesses: (pid) =>
-          Promise.resolve(
-            pid === 50_005
-              ? [
-                  { pid: 60_001, name: 'node.exe', parentPid: pid, startedAt: at(-30) },
-                  { pid: 60_002, name: 'old.exe', parentPid: pid, startedAt: at(-120) },
-                ]
-              : [],
-          ),
-      },
-    });
-    await h.manager.orphansDone();
-    expect(h.proc.killed).toEqual([60_001]);
+  it('closing with an open decision cancels it as process_exit before close() (R2-16)', async () => {
+    const h = await setup();
+    const start = h.backend.start.bind(h.backend);
+    h.backend.start = (req) => {
+      const session = start(req);
+      const handle = h.backend.sessions.at(-1);
+      const close = session.close.bind(session);
+      // Like the real SDK might: the CLI aborts its canUseTool signals while closing.
+      session.close = () => {
+        handle?.abortDecision();
+        return close();
+      };
+      return session;
+    };
+    const entryId = await h.create('fake:bash');
+    await h.waitFor(() => h.facts(entryId).decisions.permission === 1);
+    await h.cmd({ name: 'session.close', entryId });
+    await h.settle();
+    expect(outcomes(h, entryId)).toEqual([{ type: 'cancelled', reason: 'process_exit' }]);
   });
 });
 
