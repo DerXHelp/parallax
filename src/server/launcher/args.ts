@@ -60,7 +60,8 @@ export const LAUNCHER_USAGE = [
   'app window. If Parallax already runs, only another window is opened.',
   '  --port=<n>     server port (default 4711; also PARALLAX_PORT)',
   '  --home=<dir>   data directory (default %LOCALAPPDATA%\\Parallax; also PARALLAX_HOME)',
-  '  --backend=...    sdk (default, real claude) or fake (no tokens, for trying it out)',
+  '  --backend=...  sdk (default, real claude) or fake (no tokens, for trying it out and E2E;',
+  '                 also PARALLAX_BACKEND)',
   '  --no-build     do not check or rebuild dist/',
   '  --print-url    print the sign-in address (valid 60 s) instead of opening Edge',
 ].join('\n');

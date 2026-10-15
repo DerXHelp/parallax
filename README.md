@@ -18,10 +18,14 @@ pnpm install          # bzw. pnpm install --frozen-lockfile
 pnpm dev              # Server (FakeBackend, Port 4712) + Vite: http://127.0.0.1:5173
 pnpm check            # typecheck + lint + test
 pnpm build            # dist/web + dist/server.js
-pnpm start            # Build + Server (Launcher mit Edge-Fenster folgt)
+pnpm start            # Launcher: baut bei Bedarf, startet den Server unsichtbar, öffnet Edge
 ```
 `pnpm dev` verbraucht keine Tokens (FakeBackend) und nutzt `.parallax-dev/` statt
-`%LOCALAPPDATA%\Parallax`. `pnpm dev:live` nutzt das echte `claude`.
+`%LOCALAPPDATA%\Parallax`. Die Anmelde-Adresse `http://127.0.0.1:5173/#code=…` (10 min gültig)
+steht beim Start im Server-Log; Vite leitet `/api` (auch den WebSocket) an Port 4712 weiter.
+`tsx watch` startet den Server bei jeder Änderung neu (Sessions des FakeBackends enden dabei).
+„Server beenden“ beendet im Dev-Modus nur den Server – `tsx watch` und Vite laufen weiter, bis
+`Ctrl+C` oder die nächste Dateiänderung kommt. `pnpm dev:live` nutzt das echte `claude`.
 
 Die SDK-Plattform-Binaries (~270 MB) werden per `ignoredOptionalDependencies` in
 `pnpm-workspace.yaml` nicht installiert. Install-Skripte darf nur `esbuild` ausführen
@@ -32,9 +36,10 @@ Die SDK-Plattform-Binaries (~270 MB) werden per `ignoredOptionalDependencies` in
 Parallax läuft als unsichtbarer Hintergrund-Server mit Edge-App-Fenstern (ohne Installation):
 
 ```powershell
-.\parallax.cmd                 # Doppelklick genügt; in PowerShell alternativ .\parallax.ps1
+.\parallax.cmd                 # Doppelklick genügt; alternativ .\parallax.ps1 oder pnpm start
 .\parallax.cmd --port=4800     # anderer Port (auch PARALLAX_PORT), Daten: --home=<dir> / PARALLAX_HOME
 .\parallax.cmd --help          # alle Optionen
+pnpm start --print-url         # Optionen direkt anhängen (pnpm reicht ein `--` wörtlich weiter)
 ```
 
 - **Erster Start / nach `git pull`:** Der Launcher baut `dist/`, wenn es fehlt oder die Build-ID
@@ -52,11 +57,15 @@ Parallax läuft als unsichtbarer Hintergrund-Server mit Edge-App-Fenstern (ohne 
   3) → Parallax aktualisieren (`git pull`, `pnpm install`), die Daten bleiben unverändert; Server
   startet nicht → Pfad der Logdatei steht in der Meldung; Edge nicht gefunden → Edge installieren
   oder `--print-url` (Adresse mit Einmal-Code, 60 s gültig) in einem Chromium-Browser öffnen.
-- Weitere Optionen: `--backend=fake` (ohne Tokens ausprobieren), `--no-build` (kein Build-Check).
-  Für den produktiven Einsatz einen eigenen Checkout verwenden, damit Entwicklungs-Neustarts nicht
-  die eigene Arbeit unterbrechen (Plan A.7).
-- `pnpm start` ruft den Launcher auf, sobald das Script umgestellt ist (Koordinator); der
-  vollständige Ablauf setzt die Server-Verdrahtung aus WP-20 voraus (Lockfile, Exit-Codes).
+- Exit-Codes von `dist/server.js` (zeigt der Launcher an): 0 regulär beendet, 1 Fehler (auch
+  ungültige Option), 3 Daten einer neueren Parallax-Version, 4 Port belegt, 5 für dieses
+  Datenverzeichnis läuft schon ein Server.
+- Weitere Optionen: `--backend=fake` bzw. `PARALLAX_BACKEND=fake` (FakeBackend, startet kein
+  `claude` – zum Ausprobieren und für Smoke-/E2E-Tests des echten Startpfads), `--no-build` (kein
+  Build-Check). Für den produktiven Einsatz einen eigenen Checkout verwenden, damit
+  Entwicklungs-Neustarts nicht die eigene Arbeit unterbrechen (Plan A.7).
+- Ausprobieren ohne die eigenen Daten anzufassen (PowerShell):
+  `$env:PARALLAX_BACKEND='fake'; $env:PARALLAX_HOME="$env:TEMP\px-try"; pnpm start`.
 - Startet ein Terminal den Launcher in einem Job-Objekt, das beim Schließen alle Prozesse beendet,
   endet auch der Server – im Zweifel `parallax.cmd` per Doppelklick starten.
 

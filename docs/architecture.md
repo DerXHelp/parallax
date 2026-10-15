@@ -331,6 +331,46 @@ Features ──useCommand──▶ ConnectionManager.send(cmd) → {type:'cmd', 
 `sessionKey = hostId:entryId` existiert nur im Client (`makeSessionKey`); auf dem Draht steht nur
 `entryId`. Phase 1 hat genau den Host `local`.
 
+### 3.3 Komposition und Start-Reihenfolge (WP-20a, `src/server/main.ts` + `src/server/app/compose.ts`)
+`main.ts` lädt nur Config und Logging und ruft `startServer()`; alles andere setzt die
+Kompositionswurzel `app/compose.ts` zusammen (einziger Ort, der alle Module kennt). Start:
+
+| # | Schritt | Fehler → Exit-Code (`launcher/exitCodes.ts`) |
+|---|---|---|
+| 1 | `loadConfig()` (Flags > `PARALLAX_*` > Defaults; Host immer `127.0.0.1`) | ungültig → 1 |
+| 2 | `initLogging({home, dev, level, console: dev oder TTY})` – Datei `logs/parallax.*.log` immer; vom Launcher gestartet (stdout = `server.out.log`) ohne Konsole | 1 |
+| 3 | Single-Instance: `findRunningServer({home})` (Lockfile + Health) | Server läuft für dieses Home → 5 |
+| 4 | `createServerInstance()`, Stores in fester Reihenfolge: Registry, Settings, `processes.json`, Auth-Secret (lesen vor jedem Schreiben), Blobs/Decisions/Transkripte (lazy; Dev: Transkript-Validierung `log`) – eine `createStoreWarnings()`-Instanz für alle | `StoreVersionTooNewError` → 3 (Datei unverändert), sonst 1 |
+| 5 | Backend nach `config.backend`: `fake` = `createFakeBackend({speed: 1})` (interaktives Szenario) + `createFakeClaudeIntegration()` (kein `claude`-Prozess); `sdk` = `createSdkBackend()` per dynamischem Import + `createClaudeIntegration({appVersion})` (Profil „Standard“, `resolveClaude`) | 1 |
+| 6 | `createSessionManager({backend, claude, stores, host: {Versionen aus readSdkManifest(), dataDirLabel, dev}, onShutdownRequested})` → `createSyncHub({source: manager, instance, validation: dev ? 'log' : Default})` → `manager.attachPublisher(hub)` → `warnings.onChange → publishHostState` → `await manager.start()` (Recovery; Waisen im Hintergrund) | 1 |
+| 7 | `createApp({config, instance, auth, blobs, hub, webRoot})` – die App ruft `hub.attach` selbst auf; `webRoot` = `dist/web` neben `dist/server.js`, im Dev-Modus keiner (Vite) | 1 |
+| 8 | `createServerShutdown(…)` + `installSignalHandlers()` – **vor** `listen`, damit Signal und `server.shutdown` den Rahmen immer finden | – |
+| 9 | `app.listen({host: 127.0.0.1, port})` (Port 0 = frei) | `EADDRINUSE` → 4 (Meldung enthält „EADDRINUSE“), sonst 1 |
+| 10 | `writeServerLock({home, port: tatsächlicher Port, instance, launcherToken})` – erst jetzt gilt der Server für den Launcher als bereit | 1 |
+| 11 | Hintergrund: `claude.checkProfile(default)` → `publishHostState` („Profil testen“; echtes `claude` nur mit `sdk`) | nur Log |
+
+Schlägt ein Schritt ab 5 fehl, läuft dieselbe Aufräumfolge wie beim Beenden (ohne `exit`), dann
+schreibt `main.ts` die Ursache ins Log und als **letzte** Zeile auf stderr (der Launcher zeigt sie
+aus `server.out.log`) und beendet sich mit dem Code.
+
+**Beenden** (`server.shutdown` – die Engine antwortet zuerst und ruft `onShutdownRequested` →
+`shutdown.stop('command')` –, SIGINT/SIGTERM/SIGBREAK/SIGHUP → `stop('signal')`, zweites Signal →
+sofort 130): `manager.shutdown()` (Befehle → `SERVER_SHUTTING_DOWN`, `close()` aller Queries ≤ 15 s,
+nach 5 s Gnadenfrist `taskkill /T /F` der Kindprozessbäume, Stores flushen, `backend.dispose()`) →
+`app.close()` (WS-Close 4503, Hub entsorgt) → alle Stores schließen → Lockfile freigeben (nur das
+eigene) → `backend.dispose()` (idempotent) → Log-Datei schließen → `exit(0)`.
+
+| Start | Backend | Claude-Integration | Home |
+|---|---|---|---|
+| `pnpm dev` (`--dev --backend=fake --port=4712`) | Fake | Fake | `.parallax-dev` |
+| `pnpm dev:live` | SDK | echt | `.parallax-dev` |
+| `pnpm start` / `parallax.cmd` | SDK (Default ohne `--dev`) | echt | `%LOCALAPPDATA%\Parallax` |
+| `pnpm start` mit `PARALLAX_BACKEND=fake` bzw. `--backend=fake` (Smoke/E2E des echten Startpfads) | Fake | Fake | `PARALLAX_HOME` |
+
+Der Launcher löst Backend, Home und Port mit derselben `loadConfig` auf und übergibt sie explizit
+(`serverArgsFor`). Validierung ausgehender Werte (Hub, Transkripte): Dev `log`, sonst aus, unter
+Vitest bzw. `NODE_ENV=test` `throw`.
+
 ## 4. Source of Truth (A.3)
 
 | Daten | maßgeblich | persistiert in | live über |
@@ -635,16 +675,22 @@ Dev-Modus landet ein Code im Log. Das Secret liegt in `.parallax-dev`, das Cooki
 `serverInstanceId`, zufälliger `launcherToken`, `startedAt`, `buildId`) und löscht ihn beim
 regulären Beenden.
 
-### (h) Erster Start: Code im Prozess, Tausch gegen Cookie
+### (h) Erster Start: Code über den Launcher-Endpunkt, Tausch gegen Cookie
+Auch beim ersten Start holt der Launcher den Einmal-Code über `POST /api/launcher/code` (ein
+Codepfad für beide Fälle, WP-21 Entscheidung 2); der Server stellt im Prozess keinen Code aus und
+startet kein Edge. Nur der Dev-Modus loggt seine Anmelde-Adresse selbst (oben).
 ```mermaid
 sequenceDiagram
   participant L as Launcher (pnpm start)
   participant S as Server (neu)
   participant E as Edge (eigenes Profil)
-  L->>S: Start (detached, process.execPath)
-  S->>S: listen, serverInstanceId und launcherToken erzeugen, server.lock.json schreiben
-  S->>S: issueAuthCode() im Prozess (TTL 60 s)
-  S->>E: --app=http://127.0.0.1:PORT/#code=CODE
+  L->>S: Start (detached, process.execPath dist/server.js --home --port --backend)
+  S->>S: Stores, Engine, listen, server.lock.json schreiben (pid, port, serverInstanceId, launcherToken)
+  L->>L: server.lock.json mit der PID des Starts lesen
+  L->>S: GET /api/health (serverInstanceId gleich Lockfile = bereit)
+  L->>S: POST /api/launcher/code, Authorization Bearer launcherToken, ohne Origin
+  S-->>L: {code, expiresAt, serverInstanceId} (TTL 60 s)
+  L->>E: --app=http://127.0.0.1:PORT/#code=CODE
   E->>S: GET / (statische Seite)
   E->>E: takeAuthCodeFromHash, history.replaceState
   E->>S: POST /api/auth {code} (Origin, Sec-Fetch-Site same-origin)

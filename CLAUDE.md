@@ -21,7 +21,7 @@ die Web-UI (Edge im App-Modus) zeigt Status, Context, Chat und nicht-modale Ents
 | `pnpm dev:web` | nur Vite; Playground `#playground`; im Worktree eigener Port per `PARALLAX_DEV_WEB_PORT` |
 | `pnpm dev:live` | wie `dev`, aber SdkBackend (echtes `claude`) – nur mit WP-Freigabe |
 | `pnpm build` | `dist/web` (Vite) + `dist/server.js` (esbuild) |
-| `pnpm start` | Build + `node dist/server.js` (Launcher folgt in WP-21) |
+| `pnpm start` | Launcher: Build bei Bedarf, Server unsichtbar, Edge; ohne `claude`: `PARALLAX_BACKEND=fake` |
 | `pnpm check` | typecheck (`tsc -b`) + lint + test – muss vor jedem Commit grün sein |
 | `pnpm typecheck` / `lint` / `test` / `e2e` / `format` | Einzelschritte |
 | `pnpm preflight` / `pnpm record <szenario>` | Umgebungscheck (WP-11) / Fixture-Recorder (WP-01) |
