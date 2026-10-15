@@ -1,10 +1,10 @@
 import { randomBytes } from 'node:crypto';
-import { copyFile, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import type { Logger } from 'pino';
 import type { z } from 'zod';
 import { makeError, type ErrorCode, type ErrorPayload } from '@shared/errors';
 import type { HostWarning } from '@shared/model';
+import { DEFAULT_RETRY_DELAYS_MS, nodeFsOps, withFsRetry, writeFileAtomic, type FsOps } from '../lib/fs';
 import { logger as rootLogger } from '../lib/logger';
 import { fsErrorCode } from '../lib/paths';
 import type { StoreWarnings } from '../sync/ports';
@@ -46,97 +46,13 @@ export class StoreVersionTooNewError extends Error {
 }
 
 // =====================================================================================
-// File system seam (tests inject failures, e.g. EPERM on rename)
+// File system seam, retry and atomic replace: lib/fs.ts (R2-10), re-exported here unchanged
 // =====================================================================================
 
-export interface StoreFs {
-  readFile(file: string): Promise<string>;
-  /** Writes and fsyncs a new file (truncates); strings as UTF-8. */
-  writeFile(file: string, data: string | Uint8Array): Promise<void>;
-  rename(from: string, to: string): Promise<void>;
-  copyFile(from: string, to: string): Promise<void>;
-  unlink(file: string): Promise<void>;
-  mkdir(dir: string): Promise<void>;
-}
-
-export const nodeStoreFs: StoreFs = {
-  readFile: (file) => readFile(file, 'utf8'),
-  writeFile: async (file, data) => {
-    const handle = await open(file, 'w');
-    try {
-      await handle.writeFile(data);
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-  },
-  rename: (from, to) => rename(from, to),
-  copyFile: (from, to) => copyFile(from, to),
-  unlink: (file) => unlink(file),
-  mkdir: async (dir) => {
-    await mkdir(dir, { recursive: true });
-  },
-};
-
-/** Windows: a scanner/indexer briefly holding the file makes rename/read fail with these codes. */
-const TRANSIENT_FS_CODES: ReadonlySet<string> = new Set(['EPERM', 'EBUSY', 'EACCES']);
-
-/** Delays between retries of a transient failure (≈ 1.6 s in total). */
-export const DEFAULT_RETRY_DELAYS_MS: readonly number[] = [10, 25, 50, 100, 200, 400, 800];
-
-const sleep = (ms: number) =>
-  new Promise<void>((resolve) => {
-    setTimeout(resolve, ms);
-  });
-
-/** Runs `op`, retrying transient EPERM/EBUSY/EACCES failures with the given delays. */
-export async function withFsRetry<T>(
-  op: () => Promise<T>,
-  delaysMs: readonly number[] = DEFAULT_RETRY_DELAYS_MS,
-): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await op();
-    } catch (error) {
-      const code = fsErrorCode(error);
-      const delay = delaysMs[attempt];
-      if (code === null || !TRANSIENT_FS_CODES.has(code) || delay === undefined) throw error;
-      await sleep(delay);
-    }
-  }
-}
-
-let tmpCounter = 0;
-
-/**
- * Atomic replace: write `<file>.<pid>.<n>.tmp` (fsync), optionally copy the current file to
- * `<file>.bak`, then rename over the target (retried on EPERM/EBUSY). The temp file is removed on
- * failure. Used by JsonStore and the plan/blob files.
- */
-export async function writeFileAtomic(
-  file: string,
-  data: string | Uint8Array,
-  options: { fs?: StoreFs; backup?: boolean; retryDelaysMs?: readonly number[] } = {},
-): Promise<void> {
-  const fs = options.fs ?? nodeStoreFs;
-  await fs.mkdir(path.dirname(file));
-  tmpCounter += 1;
-  const tmp = `${file}.${String(process.pid)}.${String(tmpCounter)}.tmp`;
-  await fs.writeFile(tmp, data);
-  try {
-    if (options.backup === true) {
-      try {
-        await withFsRetry(() => fs.copyFile(file, `${file}.bak`), options.retryDelaysMs);
-      } catch (error) {
-        if (fsErrorCode(error) !== 'ENOENT') throw error;
-      }
-    }
-    await withFsRetry(() => fs.rename(tmp, file), options.retryDelaysMs);
-  } catch (error) {
-    await fs.unlink(tmp).catch(() => undefined);
-    throw error;
-  }
-}
+/** File system seam of the stores (tests inject failures, e.g. EPERM on rename). */
+export type StoreFs = FsOps;
+export const nodeStoreFs: StoreFs = nodeFsOps;
+export { DEFAULT_RETRY_DELAYS_MS, withFsRetry, writeFileAtomic };
 
 /** `20261015T080000123Z` – a timestamp that is a valid Windows file name part. */
 export function fileTimestamp(date: Date): string {

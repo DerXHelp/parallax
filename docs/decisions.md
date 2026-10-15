@@ -529,3 +529,115 @@ Format: `ADR-NNN – Titel` · Datum · WP · Kontext → Entscheidung → Folge
   Composers (ab 80 % des Limits).
 - **Folgen:** `PROTOCOL_VERSION`/Schema-Versionen bleiben 1; Eintrag im Contract-Changelog macht
   der Koordinator (`docs/progress.md`).
+
+## ADR-050 – Lockfile unter gleichzeitigem Lesen: Retry auf beiden Seiten, Leser tolerant
+- **Datum/WP:** 15.10.2026, R2-Fixes Server (R2-01, Koordinator-Entscheidung)
+- **Kontext:** Der Launcher liest `server.lock.json` alle 150 ms, während der neue Server die Datei
+  per Temp-Datei + Rename ersetzt. Unter Windows scheitert `MoveFileEx` über eine gerade geöffnete
+  Datei mit `EPERM` (Probe: 483 von 608 Renames gegen einen Leser in enger Schleife). Der
+  Fake-Server des Integrationstests renamte ohne Retry und starb daran – `pnpm check` wurde
+  sporadisch rot. Der Produktivcode hatte schon den Store-Retry (≈ 1,6 s).
+- **Entscheidung:** Fake-Server: synchroner Retry bei `EPERM`/`EBUSY`/`EACCES` mit Backoff (10 ms …
+  400 ms, bis 10 s) vor „listening“. Produktiv: `writeServerLock` mit eigenem, längerem Plan
+  `LOCK_RETRY_DELAYS_MS` (Store-Default + 3 × 1 s ≈ 4,6 s) und `fs`-Naht; `readServerLock`
+  wiederholt transiente Lesefehler und meldet alles Unlesbare als `missing`/`invalid`, nie als
+  Ausnahme. Leser sehen nie eine halbe Datei (atomarer Rename).
+- **Folgen:** Tests mit Naht (Rename-/Lese-`EPERM`, Aufgeben nach dem Plan ohne Temp-Rest) und ein
+  Windows-Test mit einem zweiten Prozess, der die Datei alle 20 ms liest, während sie in Schleife
+  ersetzt wird (keine zerrissenen Lesevorgänge, jedes Schreiben gelingt). Ein Leser in enger
+  Schleife ohne Pause könnte den Schreiber weiter aushungern – kein realer Fall (Launcher 150 ms).
+
+## ADR-051 – Prozessabfragen dreiwertig und gebündelt; Waisen-Start wartet sichtbar
+- **Datum/WP:** 15.10.2026, R2-Fixes Server (R2-02, Koordinator-Entscheidung)
+- **Kontext:** `processInfo`/`childProcesses` lieferten `null`/`[]` sowohl für „gibt es nicht“ als
+  auch für Timeout, Policy-Sperre (AppLocker, Constrained Language Mode) oder unlesbare Ausgabe –
+  ein laufender `claude.exe` wurde als „weg“ verbucht und sein Record gelöscht. Je Record liefen
+  zwei PowerShell-Aufrufe (20 s Timeout, unter Last ≈ 23 s), und der Start eines Eintrags wartete
+  unsichtbar bis ≈ 40 s.
+- **Entscheidung:** `lib/process.ts` `queryProcesses({pids, parentPids})` → `{kind:'ok', processes}`
+  oder `{kind:'unknown', reason: timeout|failed|output|unsupported, detail}`: **eine** CIM-Abfrage
+  (`ProcessId = a OR …`, höchstens 100 Klauseln je Aufruf), `-ErrorAction Stop` + `exit 3` statt
+  leerer Liste, Default-Timeout `PROCESS_QUERY_TIMEOUT_MS` 60 s; `processInfo` → `found`/`missing`/
+  `unknown`, `childProcesses` dreiwertig. Waisen beim Start: `isProcessAlive` als Sofort-Vorfilter
+  (tote PIDs → Record weg, keine PowerShell), die lebenden in einer Abfrage im Hintergrund;
+  `unknown` und ein gescheitertes `taskkill` behalten den Record (`warn`), beim nächsten Start
+  erneut. Nur Einträge mit lebendem Record warten; ihr Start setzt vorher `process_starting`
+  (sichtbar „starting“), Obergrenze = Abfrage-Timeout.
+- **Folgen:** Normalfall (kein Record oder Prozess tot) kostet keine PowerShell. `ProcDeps` ist
+  jetzt `{isProcessAlive, queryProcesses, killProcessTree}`; der Shutdown-Sweep beendet bei
+  `unknown` nichts. Ein dauerhaft gesperrtes PowerShell lässt Records liegen (klein, nur für lebende
+  PIDs).
+
+## ADR-052 – Waisen: nur der verifizierte `claude.exe`-Wurzelprozess bis nach WP-22
+- **Datum/WP:** 15.10.2026, R2-Fixes Server (R2-03, Koordinator-Entscheidung; ersetzt den
+  R1-Hinweis „Kinder eines toten `claude.exe` beenden“)
+- **Kontext:** War der aufgezeichnete `claude.exe` tot, wurden direkte Kinder mit Start zwischen
+  `recordedAt − 5 s` und dem Start dieses Servers beendet – nach oben offen bis zum Neustart; eine
+  inzwischen wiederverwendete PID hätte fremde Prozessbäume treffen können.
+- **Entscheidung:** Der Kinder-Pfad ist entfernt: beendet wird nur ein Prozess mit der
+  aufgezeichneten PID, demselben Image (case-insensitiv) **und** derselben Startzeit (± 5 s), per
+  `taskkill /T /F` (samt seinem Baum). Kein `aliveAt`-Herzschlag jetzt.
+- **Folgen:** Überleben nach einem harten Abbruch nur Kinder eines toten `claude.exe` (Bash, MCP),
+  bleiben sie bis zur Abnahme stehen. Follow-up nach WP-22: Herzschlag `aliveAt` je Record (Feld
+  mit Default) als Obergrenze, Kinder nur mit `startedAt ≤ aliveAt + Toleranz`, gemeinsamer Helfer
+  mit `launcher/shutdown.ts`.
+
+## ADR-053 – Bereitschaft: eigenes Timeout, zweiter Versuch, sonst `error`
+- **Datum/WP:** 15.10.2026, R2-Fixes Server (R2-04, Koordinator-Entscheidung)
+- **Kontext:** Ein ohne Prompt gestarteter Prozess (Resume, Auto-Retry) verlässt `starting` nur
+  über `supportedModels()` (Ende des `initialize`-Handshakes). Das hing am 15-s-Steuer-Timeout ohne
+  zweiten Versuch; ein Kaltstart ließ die Session dauerhaft `starting`.
+- **Entscheidung:** SdkBackend `SdkTimeouts.readyMs` = 60 s für `supportedModels` (auch vor den
+  C.1-Flag-Settings). Die Runtime versucht es zweimal (`READY_ATTEMPTS`); scheitern beide und kam
+  weder ein `session_state` noch ein Prompt, schließt die Engine den Prozess (`closeRuntime(…,
+  'not_ready')`) und der Eintrag endet in `error` mit `CLAUDE_CONTROL_FAILED {method:
+  'supportedModels'}` (px-Item, `lastError`, kein Auto-Retry). Kam ein Prompt bzw. Status, bestimmen
+  dessen Signale den Zustand (nur Log). Ein Absturz während des Wartens behält seinen eigenen Fehler.
+- **Folgen:** Nie mehr dauerhaft `starting`; „Neu starten“ ist der Ausweg. Höchstens ≈ 2 min bis
+  zum Fehler – im Live-Test (WP-22) mit einem Kaltstart prüfen.
+
+## ADR-054 – Exklusiver Home-Lock per Named Pipe (Exit 5)
+- **Datum/WP:** 15.10.2026, R2-Fixes Server (R2-05, Koordinator-Entscheidung)
+- **Kontext:** Zwei gleichzeitig gestartete Server (Doppelklick, zweiter `--port`, `pnpm dev:live`
+  mit `--home` auf das echte Home) öffneten beide die Stores und liefen durch Recovery und
+  Waisen-Bereinigung, bevor der Verlierer am `listen` scheiterte – oder liefen dauerhaft als zweiter
+  Writer. Das Lockfile schützt nur den Launcher-Pfad und erst nach `listen`.
+- **Entscheidung:** `src/server/lib/homeLock.ts`: `acquireHomeLock(home)` legt das Home an und
+  nimmt `\\.\pipe\parallax-home-<16 hex von sha256(windowsPathKey(realpath(home)))>` per
+  `net.createServer().listen` (libuv: erste Pipe-Instanz exklusiv → zweites `listen` =
+  `EADDRINUSE`, auch aus anderen Prozessen/Sitzungen). Ergebnis `{kind:'acquired', lock}` oder
+  `{kind:'busy', pipe}`; die Pipe verschwindet mit dem Prozess (kein Stale-Zustand), Verbindungen
+  werden sofort geschlossen, der Server ist `unref()`. `busy` → Exit-Code
+  `SERVER_EXIT_CODES.alreadyRunning` (5, schon vorhanden; der Launcher sucht dann den Gewinner).
+  Verdrahtung vor dem ersten Store in `main.ts` macht WP-20c (Anleitung in `docs/wp/R2.md`).
+- **Folgen:** Kein zweiter Writer je Home, unabhängig vom Port; Schreibweisen (Groß/klein, `/`,
+  abschließendes `\`, Junctions/`subst`) ergeben denselben Schlüssel. Ohne Windows keine
+  Exklusivität (`exclusive: false`, nur Tests).
+
+## ADR-055 – `lib/async.ts` und `lib/fs.ts` statt verstreuter Kopien
+- **Datum/WP:** 15.10.2026, R2-Fixes Server (R2-10, Koordinator-Zuschnitt)
+- **Kontext:** `toError` dreimal plus Inline-Kopien, `realSetImmediate` in vier Modulen, eigene
+  `sleep`-Kopien, eine eigene UUID-Regex im SdkBackend; `withFsRetry`/`writeFileAtomic` lagen in
+  `store/jsonStore.ts` (WP-10) und wurden vom Launcher importiert.
+- **Entscheidung:** `lib/async.ts` (`toError`, `sleep`, `realSetImmediate`, `nextMacrotask`),
+  `lib/fs.ts` (`withFsRetry`, `isTransientFsError`, `DEFAULT_RETRY_DELAYS_MS`, `writeFileAtomic`,
+  `FsOps`/`nodeFsOps`) – unverändert aus `jsonStore.ts` verschoben, dort als `StoreFs`/`nodeStoreFs`
+  usw. re-exportiert (Store-Aufrufer unverändert). Alle Kopien in `backend/`, `sessions/`,
+  `launcher/`, `lib/process.ts` nutzen die Module; die UUID-Prüfung nutzt `messageUuidSchema`.
+- **Folgen:** Neue kleine Helfer gehören dorthin. Der gemeinsame Kinder-Kill-Helfer entfällt
+  vorerst (ADR-052: kein zweiter Nutzer mehr), er kommt mit dem Herzschlag-Follow-up.
+
+## ADR-056 – `PARALLAX_HOME`-Rechte: nur warnen
+- **Datum/WP:** 15.10.2026, R2-Fixes Server (R2-13, Koordinator-Entscheidung)
+- **Kontext:** Das Home enthält Launcher-Token und Cookie-Secret. Unter `%LOCALAPPDATA%` erbt es
+  Nutzer-only-ACLs, mit `--home` auf einem anderen Laufwerk oft „Authentifizierte Benutzer: Ändern“;
+  auf Mehrbenutzer-/RDP-Rechnern ist `127.0.0.1` aus allen Sitzungen erreichbar.
+- **Entscheidung:** Keine ACL-Änderung. `lib/homeAccess.ts` `checkHomeAccess(home)` liest die DACL
+  als SDDL (`Get-Acl`, Pfad nur über eine Umgebungsvariable) und die eigene SID (`whoami /user`),
+  sprachunabhängig über SIDs: Allow-Einträge mit Lesezugriff für breite Benutzergruppen (Jeder,
+  Authentifizierte Benutzer, Benutzer, …) oder andere Konten (`S-1-5-21-…`) → `shared`; SYSTEM,
+  Administratoren, Ersteller-Besitzer, Dienste, App-Container zählen nicht. `pnpm preflight` zeigt
+  `warn` mit `icacls`-Vorschlag (Home wie der Server: `--home`/`PARALLAX_HOME`/Default), der Server
+  loggt beim Start `logHomeAccess` als Warnung (Verdrahtung WP-20c).
+- **Folgen:** `unknown` (kein Windows, PowerShell gesperrt) ist nur `info`. Deny-Einträge werden
+  ignoriert – die Warnung kann zu vorsichtig sein, nie zu nachsichtig.

@@ -27,7 +27,7 @@ Design: `docs/wp/WP-13.md` §3.5, Ergebnis und Verdrahtung für WP-20: `docs/wp/
 | `promptQueue.ts` | `PromptQueue` | Queue mit `uuid`/`priority`, Übernahme über Lifecycle bzw. `user_message_uuids` |
 | `summary.ts` | `summaryOf`, Titelregeln, `/rename`-Parser, Unterhaltungs-Helfer | rein |
 | `mirror.ts` | `baseView`, `applyToMirror`, `readMirrorItems`, `emptyDetail`, `findToolCallIn` | Mirror-View, Log-Tail + Verlaufs-Fallback (A.3) |
-| `recovery.ts` | `registryFacts`, `interruptedToolCalls`, `cleanupOrphan`, `ORPHAN_START_TOLERANCE_MS` | Serverstart, Waisen (C.8) |
+| `recovery.ts` | `registryFacts`, `interruptedToolCalls`, `cleanupOrphans`, `splitOrphanRecords`, `keepsOrphanRecord`, `OrphanResult`, `ORPHAN_START_TOLERANCE_MS` | Serverstart, Waisen (C.8): Lebend-Vorfilter, eine gebündelte Abfrage, `unknown` behält den Record (R2-02), nur der verifizierte `claude.exe`-Wurzelprozess (R2-03) |
 | `processStore.ts` | `openProcessStore`, `createMemoryProcessStore`, `processRecordSchema`, `PROCESSES_FILE` | `processes.json` (PID + Startzeit) |
 | `notifier.ts` | `chooseChannel`, `planNotification`, `decisionsCleared`, `isViewedByVisibleClient` | Benachrichtigungskanal (A.9), rein |
 | `retry.ts` | `decideRetry`, `afterSuccessfulTurn`, `DEFAULT_AUTO_RETRY` | Auto-Retry nur nach Absturz im Leerlauf (ADR-025), rein |

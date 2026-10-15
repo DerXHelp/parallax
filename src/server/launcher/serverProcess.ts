@@ -11,7 +11,7 @@ import { createServer } from 'node:net';
 import path from 'node:path';
 import { LOOPBACK_HOST } from '@shared/http';
 import { spawnHidden } from '../lib/process';
-import { withFsRetry } from '../store/jsonStore';
+import { withFsRetry } from '../lib/fs';
 
 /** stdout/stderr of the detached server (the pino log itself rotates in `logs/parallax.*.log`). */
 export const SERVER_OUT_LOG = 'server.out.log';

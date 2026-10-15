@@ -14,8 +14,9 @@ export const SERVER_EXIT_CODES = {
   /** `listen` → EADDRINUSE (port taken by another program or another Parallax). */
   portInUse: 4,
   /**
-   * Optional pre-check of the server before opening the stores: `findRunningServer({ home })`
-   * reports a live server on the same PARALLAX_HOME → exit instead of a second writer.
+   * Another server holds this PARALLAX_HOME: `acquireHomeLock(home)` (lib/homeLock.ts, R2-05) is
+   * `busy` – checked BEFORE the first store is opened, so there is never a second writer. The
+   * launcher then looks for the winner and opens a window there.
    */
   alreadyRunning: 5,
 } as const;

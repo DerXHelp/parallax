@@ -14,7 +14,7 @@
  */
 import type { Logger } from 'pino';
 import { logger as rootLogger } from '../lib/logger';
-import { childProcesses, killProcessTree, type ProcessInfo } from '../lib/process';
+import { childProcesses, killProcessTree, type ProcessQueryResult } from '../lib/process';
 
 export type ShutdownReason = 'command' | 'signal' | 'error';
 
@@ -171,13 +171,14 @@ const SWEEP_EXCLUDED = new Set(['powershell.exe']);
  * Ends every direct child process tree of the server (`taskkill /PID <pid> /T /F`, C.8) – the
  * `claude.exe` sessions that did not exit after `close()`, with their Bash/MCP children. Children
  * started before `since` are skipped (PID reuse: a child is never older than its parent). Returns
- * the number of trees ended; failures are logged, never thrown.
+ * the number of trees ended; failures – also a query that gave no answer (R2-02) – are logged,
+ * never thrown.
  */
 export async function killChildProcessTrees(
   options: {
     parentPid?: number;
     since?: Date;
-    list?: (pid: number) => Promise<ProcessInfo[]>;
+    list?: (pid: number) => Promise<ProcessQueryResult>;
     kill?: (pid: number) => Promise<void>;
     logger?: Logger;
   } = {},
@@ -185,10 +186,19 @@ export async function killChildProcessTrees(
   const log = options.logger ?? rootLogger;
   const parentPid = options.parentPid ?? process.pid;
   const since = options.since ?? new Date(Date.now() - process.uptime() * 1000 - 1000);
-  const list = options.list ?? ((pid: number) => childProcesses(pid));
+  const list =
+    options.list ?? ((pid: number) => childProcesses(pid, { timeoutMs: SHUTDOWN_FORCE_KILL_TIMEOUT_MS }));
   const kill = options.kill ?? killProcessTree;
+  const listed = await list(parentPid);
+  if (listed.kind === 'unknown') {
+    log.warn(
+      { reason: listed.reason, detail: listed.detail },
+      'shutdown: the child processes could not be listed - none ended',
+    );
+    return 0;
+  }
   let killed = 0;
-  for (const child of await list(parentPid)) {
+  for (const child of listed.processes) {
     if (SWEEP_EXCLUDED.has(child.name.toLowerCase())) continue;
     if (child.startedAt.getTime() < since.getTime()) continue;
     try {

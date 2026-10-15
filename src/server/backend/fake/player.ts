@@ -7,6 +7,7 @@
  */
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { nextMacrotask } from '../../lib/async';
 import {
   fixtureCallPayloadSchema,
   fixtureCanUseToolPayloadSchema,
@@ -16,7 +17,7 @@ import {
   type FixtureEvent,
 } from '../fixture';
 import { toPermissionRequest } from '../permissionRequest';
-import { SessionStopped, mapUuids, nextMacrotask, promptText, type RecordedAnswer } from './common';
+import { SessionStopped, mapUuids, promptText, type RecordedAnswer } from './common';
 import type { FakeSession } from './session';
 
 export interface PlayerOptions {

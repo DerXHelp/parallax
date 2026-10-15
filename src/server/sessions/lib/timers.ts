@@ -3,11 +3,10 @@
  * backoff, context refresh, host-state debounce, shutdown cap, sleep policy) goes through
  * `Timers`, so tests run without wall-clock dependence. `realTimers` wraps `setTimeout` (unref'd –
  * an engine timer never keeps the process alive); `createManualTimers()` is a virtual clock for
- * tests: zero-delay timers fire on the next real macrotask, longer ones only on `advance()`.
+ * tests: zero-delay timers fire on the next real macrotask, longer ones only on `advance()`
+ * (`realSetImmediate` of lib/async.ts: Vitest fake timers never stop that zero-delay path).
  */
-
-/** Captured at import time: Vitest fake timers never stop the manual clock's zero-delay path. */
-const realSetImmediate = setImmediate;
+import { realSetImmediate } from '../../lib/async';
 
 export interface TimerHandle {
   /** Idempotent; a fired timer ignores it. */

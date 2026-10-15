@@ -19,12 +19,13 @@ Auftrag, Bedienung und Entscheidungen: `docs/wp/WP-21.md`.
 | `args.ts` | `parseLauncherArgs`, `serverArgsFor`, `LAUNCHER_USAGE` | eigene Flags (`--print-url`, `--no-build`, `--help`), Rest an `loadConfig` |
 | `launcher.ts` | `runLauncher(options, deps)`, `createNodeLauncherDeps`, `LauncherError` (`reason`, `exitCode`), `LauncherDeps`, `LauncherOptions`, `LauncherResult` | Ablauf mit injizierten Abhängigkeiten, englische Meldungen |
 | `client.ts` | `checkHealth`, `requestLauncherCode`, `findRunningServer`, `nodeHttpJson`, `HttpJson` | HTTP auf 127.0.0.1 (`node:http`, kein Proxy, kein Keep-Alive, kein Origin) |
-| `lockFile.ts` | `writeServerLock` → `ServerLockHandle` (`release()`), `readServerLock`, `serverLockPath` | `PARALLAX_HOME/server.lock.json` atomar, `serverLockFileSchema` |
+| `lockFile.ts` | `writeServerLock` → `ServerLockHandle` (`release()`), `readServerLock`, `serverLockPath`, `LOCK_RETRY_DELAYS_MS` | `PARALLAX_HOME/server.lock.json` atomar, `serverLockFileSchema`; Rename mit ≈ 4,6 s Retry gegen den lesenden Launcher (R2-01), Leser tolerant (`missing`/`invalid`, nie geworfen) |
 | `build.ts` | `checkBuild`, `runBuild`, `BUILD_STEPS`, `readBundleBuildId`, `resolveCheckoutBuildId`, `resolvePackageBin` | Build-ID-Vergleich `dist/server.js` ↔ `resolveBuildId()` (repo.config.ts); Build = `build:web` + `build:server` mit node |
 | `serverProcess.ts` | `startServerProcess`, `probePort`, `readServerOutput`, `serverOutLogPath`, `logsDir` | detached + hidden, stdout/stderr → `logs/server.out.log` (Rotation > 1 MiB), `unref()` |
 | `edgeWindow.ts` | `edgeAppArgs`, `openEdgeWindow`, `locateEdge`, `edgeProfileDir`, `SpawnFn` | `--user-data-dir=<home>\edge --no-first-run --no-default-browser-check --app=<url>` |
-| `exitCodes.ts` | `SERVER_EXIT_CODES` | 3 = `STORE_VERSION_TOO_NEW`, 4 = Port belegt, 5 = läuft schon (optional) |
-| `shutdown.ts` | `createServerShutdown` → `ServerShutdown` (`stop`, `stopping`, `installSignalHandlers`), `killChildProcessTrees` | Rahmen „Server beenden“: Engine-Hook → nach 5 s `taskkill /T /F` → Schritte mit Timeout → Exit |
+| `exitCodes.ts` | `SERVER_EXIT_CODES` | 3 = `STORE_VERSION_TOO_NEW`, 4 = Port belegt, 5 = Home belegt (`acquireHomeLock` → `busy`, R2-05) |
+| `shutdown.ts` | `createServerShutdown` → `ServerShutdown` (`stop`, `stopping`, `installSignalHandlers`), `killChildProcessTrees` | Rahmen „Server beenden“: Engine-Hook → nach 5 s `taskkill /T /F` → Schritte mit Timeout → Exit; Kinderliste dreiwertig (`unknown` → nichts beendet) |
+| `launcher.ts` (Ergänzung) | `CODE_RETRY_DELAYS_MS` | Einmal-Code bei `failed` bis zu 3× mit Backoff erneut (R2-14), nie bei `token_invalid` |
 
 Tests: Unit-Tests je Modul mit Fakes (Uhr, Spawn, HTTP, fs), `client.test.ts` gegen den echten
 WP-10-Server (`startTestServer`), `launcher.integration.test.ts` mit einem Fake-Server-Skript im

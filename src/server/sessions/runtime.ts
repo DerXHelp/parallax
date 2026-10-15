@@ -32,6 +32,9 @@ type ExitEvent = Extract<BackendEvent, { type: 'exit' }>;
 const STDERR_TAIL_CHARS = 4096;
 const STDERR_MESSAGE_CHARS = 1000;
 
+/** supportedModels() attempts before a process that started without a prompt counts as failed (R2-04). */
+export const READY_ATTEMPTS = 2;
+
 export class SessionRuntime {
   pid: number | null;
   spawnedAt: Date | null = null;
@@ -46,6 +49,11 @@ export class SessionRuntime {
   /** A turn_result reported a startup failure (its error item and lastError stay). */
   startupFailure = false;
   spawnError: { name: string; message: string } | null = null;
+  /**
+   * The engine closes this process because of a failure (R2-04: not ready): its exit counts as
+   * unexpected with this error, even though close() was called.
+   */
+  failure: ErrorPayload | null = null;
   /** A non-synthetic turn_result came: query the AI title at the end of the turn. */
   private titleDue = false;
   /** Crash detail of `error{where:'iterator'}` (English message only). */
@@ -353,18 +361,21 @@ export class SessionRuntime {
       }
       if (undelivered.length > 0) s.publishQueue();
 
+      // An engine-initiated close because of a failure (R2-04) ends in `error`, not `sleeping`; a
+      // crash on its own keeps its own error.
+      const expected = event.expected && this.failure === null;
       let error: ErrorPayload | null = null;
-      if (!event.expected) {
-        error = this.exitError(event);
+      if (!expected) {
+        error = event.expected && this.failure !== null ? this.failure : this.exitError(event);
         if (!this.startupFailure) {
           s.addSystemError(error);
           s.setLastError(error);
         }
       }
-      s.reduce({ type: 'process_exit', expected: event.expected, error });
+      s.reduce({ type: 'process_exit', expected, error });
       if (pid !== null) this.core.stores.processes.remove(s.id, pid);
       const runtimeMs = event.at.getTime() - (this.spawnedAt ?? this.startedAt).getTime();
-      this.scheduleRetry({ expected: event.expected, code: error?.code ?? null, idleBefore, runtimeMs });
+      this.scheduleRetry({ expected, code: error?.code ?? null, idleBefore, runtimeMs });
     } catch (error) {
       this.core.reportError(error, 'onExit');
     } finally {
@@ -421,20 +432,53 @@ export class SessionRuntime {
     }, decision.delayMs);
   }
 
-  /** Readiness (§2.3 Nr. 6): supportedModels() answers after the initialize handshake. */
+  /**
+   * Readiness (§2.3 Nr. 6): supportedModels() answers after the initialize handshake. R2-04: a
+   * second attempt after a failure/timeout (the backend bounds each one, SdkBackend `readyMs`
+   * 60 s); if both fail and nothing else showed that the process works (no session_state, no
+   * prompt), the process is closed and the entry ends in `error` with CLAUDE_CONTROL_FAILED –
+   * never a lasting `starting`.
+   */
   async ready(): Promise<void> {
     const s = this.state;
-    try {
-      const raw = await this.agent.supportedModels();
-      if (!this.alive) return;
-      const catalog = toModelCatalog(raw);
-      this.core.setModels(s.entry.profileId, catalog);
-      s.emit([{ op: 'detail.patch', patch: { models: catalog.options } }]);
-      // Started without a prompt: nothing else would leave `starting` (synthetic, not "seen").
-      if (!this.sessionStateSeen && !this.sentSinceStart) s.reduce({ type: 'session_state', state: 'idle' });
-    } catch (error) {
-      if (this.alive) this.core.log.warn({ err: error, entryId: s.id }, 'supportedModels failed');
+    let raw: unknown[] | null = null;
+    for (let attempt = 1; raw === null; attempt += 1) {
+      try {
+        raw = await this.agent.supportedModels();
+      } catch (error) {
+        if (!this.alive || this.closing) return;
+        this.core.log.warn({ err: error, entryId: s.id, attempt }, 'supportedModels failed');
+        if (attempt >= READY_ATTEMPTS) {
+          this.notReady(error);
+          return;
+        }
+      }
     }
+    if (!this.alive) return;
+    const catalog = toModelCatalog(raw);
+    this.core.setModels(s.entry.profileId, catalog);
+    s.emit([{ op: 'detail.patch', patch: { models: catalog.options } }]);
+    // Started without a prompt: nothing else would leave `starting` (synthetic, not "seen").
+    if (!this.sessionStateSeen && !this.sentSinceStart) s.reduce({ type: 'session_state', state: 'idle' });
+  }
+
+  /** Readiness failed twice (R2-04): close the process, the exit reports `failure`. */
+  private notReady(error: unknown): void {
+    const s = this.state;
+    // A prompt went out or the CLI reported its state: its own signals drive the status. Without a
+    // process (or once it ends) the exit reports the real cause.
+    if (this.sessionStateSeen || this.sentSinceStart || this.pid === null || !this.alive) return;
+    this.failure = makeError(
+      'CLAUDE_CONTROL_FAILED',
+      { method: 'supportedModels' },
+      `claude did not become ready: ${errorMessage(error)}`.slice(0, 2000),
+    );
+    this.core.log.error({ entryId: s.id, pid: this.pid }, 'claude did not become ready – closing it');
+    s.lifecycle
+      .run(() => (s.runtime === this ? closeRuntime(s, this.core, 'not_ready') : Promise.resolve()))
+      .catch((closeError: unknown) => {
+        this.core.reportError(closeError, 'close after readiness failure');
+      });
   }
 }
 
@@ -459,6 +503,11 @@ export async function startRuntime(
   core.assertRunning();
   s.phase = 'starting';
   try {
+    if (s.orphanPending) {
+      // R2-02: a recorded claude.exe of this entry was alive at the server start; its check runs in
+      // the background (≤ 60 s). Never two writers on one JSONL – wait, but visibly.
+      s.reduce({ type: 'process_starting' });
+    }
     await s.orphanCleanup;
     core.assertRunning();
     let launch: LaunchSpec;
@@ -527,6 +576,14 @@ export async function startRuntime(
     s.phase = 'running';
     s.reduce({ type: 'process_starting' });
     runtime.run();
+    if (agent.pid === null) {
+      // R2-07: no process was spawned (synchronous spawn failure, missing .exe). The exit events
+      // set the status (error, px item, lastError); the command fails with the start code (§3.5.6)
+      // instead of a later SESSION_NOT_RUNNING.
+      await runtime.exited;
+      const reason = runtime.spawnError?.message ?? 'claude could not be started';
+      throw new CommandError(makeError('CLAUDE_SPAWN_FAILED', { reason: reason.slice(0, 200) }));
+    }
     void runtime.ready();
     return runtime;
   } finally {
@@ -534,17 +591,22 @@ export async function startRuntime(
   }
 }
 
-/** `closeRuntime(reason)` (§3.5.12): close() (5-s rule in the backend); onExit cleans up. */
+/**
+ * `closeRuntime(reason)` (§3.5.12): close() (5-s rule in the backend); onExit cleans up. Open
+ * decisions are cancelled first (`process_exit`, R2-16): deterministic, whether or not the SDK
+ * aborts the CLI's canUseTool signals before the process exit.
+ */
 export async function closeRuntime(
   s: EntryState,
   core: EngineCore,
-  reason: 'user' | 'sleep' | 'handoff',
+  reason: 'user' | 'sleep' | 'handoff' | 'not_ready',
 ): Promise<void> {
   const runtime = s.runtime;
   if (runtime === null) return;
   core.log.info({ entryId: s.id, reason }, 'closing claude process');
   s.phase = 'closing';
   runtime.closing = true;
+  s.broker.cancel('all', 'process_exit', 'deny');
   try {
     await runtime.agent.close();
   } catch (error) {

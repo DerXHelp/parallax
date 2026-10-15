@@ -8,12 +8,12 @@ import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { sampleId, SAMPLE_IDS } from '@shared/samples';
 import type { TranscriptItem } from '@shared/model';
 import { sessionOpSchema, type SessionOp } from '@shared/protocol';
+import { realSetImmediate } from '../../lib/async';
 import { createLiveNormalizer } from '../../sessions/normalizer';
 import { testContext } from '../../sessions/normalizer/testing/harness';
 import type { StatusSignal } from '../../sessions/ports';
 import type { BackendEvent, OutgoingPrompt, PermissionRequest, StartSessionRequest } from '../types';
 import { createFakeBackend, sequentialIds } from '../fakeBackend';
-import { realSetImmediate } from './common';
 import { createFakeClaudeIntegration } from './integration';
 
 const launch = await createFakeClaudeIntegration().launchSpecFor('standard', SAMPLE_IDS.entry);
@@ -324,19 +324,14 @@ describe('interactive scenario', () => {
     const h = harness();
     h.send('fake:compact');
     await h.turnDone(1);
-    expect(
-      h.signals
-        .filter((s) => s.type === 'compacting')
-        .map((s) => s.active),
-    ).toEqual([true, false]);
+    expect(h.signals.filter((s) => s.type === 'compacting').map((s) => s.active)).toEqual([true, false]);
     expect(h.items().some((i) => i.kind === 'system' && i.event === 'compact_boundary')).toBe(true);
     h.send('fake:ratelimit');
     await h.turnDone(2);
-    expect(
-      h.signals
-        .filter((s) => s.type === 'rate_limit')
-        .map((s) => s.info.status),
-    ).toEqual(['allowed_warning', 'rejected']);
+    expect(h.signals.filter((s) => s.type === 'rate_limit').map((s) => s.info.status)).toEqual([
+      'allowed_warning',
+      'rejected',
+    ]);
     h.send('fake:error');
     await h.turnDone(3);
     expect(
@@ -377,11 +372,7 @@ describe('interactive scenario', () => {
     expect(reset).toMatchObject({ trigger: 'clear' });
     const second = h.handle.sessionId ?? '';
     expect(second).not.toBe(first);
-    expect(
-      h.signals
-        .filter((s) => s.type === 'session_id')
-        .map((s) => s.sessionId),
-    ).toEqual([first, second]);
+    expect(h.signals.filter((s) => s.type === 'session_id').map((s) => s.sessionId)).toEqual([first, second]);
     await expect(
       h.backend.getSessionInfo({ sessionId: second, cwd: 'D:\\w', launch }),
     ).resolves.toMatchObject({ customTitle: 'My Title' });
