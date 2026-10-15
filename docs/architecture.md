@@ -54,7 +54,7 @@ flowchart LR
 |---|---|---|---|
 | WP-02 | `src/shared/{common,errors,status,model,protocol,sync,build,samples}.ts`; Ports `src/server/backend/types.ts`, `src/server/backend/fixture.ts`, `src/server/sessions/ports.ts`, `src/server/sync/ports.ts`, `src/server/claude/ports.ts` | – | zod-Roundtrips, Typ-Tests, Fixture-Tests |
 | WP-10 | `sync/hub.ts` → `SessionPublisher`; `store/*` → `TranscriptStore`, `BlobStore`, `RegistryStore`, `DecisionStore`, `SettingsStore`; `http/{app,auth,origin}.ts` (HTTP-/Auth-Contract §5.1); `config.ts`; `lib/{logger,ids,paths}.ts` | `SessionSource` (Port), Shared | `createMemorySessionSource()`, echter `ws`-Client, Port 0, Temp-Home |
-| WP-11 | `claude/integration.ts` → `ClaudeIntegration`; `resolveClaude`, `buildEnv`, `parseProfileArgs`, `parseAuthStatus`, Profil „Standard“; `lib/process.ts`; `scripts/preflight.ts` | Shared (`@shared/paths`) | Fake-Dateisystem/`where`-Stub, `.cmd`-Shim-Fixture |
+| WP-11 | `claude/integration.ts` → `ClaudeIntegration`; `resolveClaude`, `buildEnv`, `parseProfileArgs`, `parseAuthStatus`, Profil „Standard“; `lib/process.ts`, `lib/{windows,registry,edge}.ts` (R1-08); `scripts/preflight.ts` | Shared (`@shared/paths`) | Fake-Dateisystem/`where`-Stub, `.cmd`-Shim-Fixture |
 | WP-12 | `sessions/normalizer/*` → `createLiveNormalizer`, `normalizeHistory`, `normalizeContextUsage`; `sessions/status/machine.ts` → `reduceStatus` | Shared, `backend/fixture.ts`, Ports §9.4 | Fixture-Snapshots, synthetische Streams (§2.5) |
 | WP-14 | `web/state/*` (Transport, ConnectionManager, Hooks, `auth.ts`), `web/i18n/*`, `web/ui/*`, `web/shell/*` (Shell + Slots), `web/playground/*`, Theme | Shared (`protocol`, `sync`, `status`, `errors`, `http`, `samples`) | In-Memory-Transport |
 | WP-13 | `backend/{sdk,fake}Backend.ts` → `AgentBackend`; `sessions/manager.ts` → `SessionSource`; `sessions/broker.ts` | alle Server-Ports, `lib/{ids,paths,process}.ts` | FakeBackend + Memory-Publisher |
@@ -102,6 +102,7 @@ im Bericht).
 | `src/shared/**`, `src/server/**/ports.ts`, `src/server/backend/{types,fixture}.ts` (+ Tests) | Koordinator (eingefroren) | Änderung nur per Contract-Änderung |
 | `src/server/lib/logger.ts`, `lib/ids.ts`, `lib/paths.ts` | WP-10 | Exporte §2.2 |
 | `src/server/lib/process.ts` | WP-11 | Exporte §2.2; WP-13/21 nutzen nur |
+| `src/server/lib/windows.ts`, `lib/registry.ts`, `lib/edge.ts` | WP-11 | Exporte §2.2 (aus `claude/` verschoben, R1-08, ADR-024); WP-13/21 nutzen nur |
 | `src/server/config.ts`, `src/server/{http,sync,store}/**` | WP-10 | |
 | `src/server/claude/**` | WP-11 | kein eigener Pfad-Helfer, Pfadregeln nur `@shared/paths` |
 | `src/server/sessions/normalizer/**`, `sessions/status/**` | WP-12 | |
@@ -133,13 +134,38 @@ isWindowsPathInside(child, parent): boolean
 // src/server/lib/paths.ts (WP-10; WP-13 nutzt)
 assertSafePath(path: string): void         // windowsPathIssue ≠ null → throw CommandError(PATH_REJECTED, {reason})
 checkCwd(cwd: string): Promise<void>       // assertSafePath + stat: CWD_NOT_FOUND | CWD_NOT_DIRECTORY; cwd bleibt exakt
+resolveAllowedPath(path, roots): Promise<string>  // realpath + Allowlist → PATH_NOT_ALLOWED (Grenze: Datei-Symlink auf UNC, R1-17)
+fsErrorCode(error): string | null
 
-// src/server/lib/process.ts (WP-11; WP-13, WP-21 nutzen) – immer shell:false, windowsHide:true, nur .exe
+// src/server/lib/ids.ts (WP-10): newId(prefix), newUuid(), newToken() (32 Byte base64url)
+// src/server/lib/logger.ts (WP-10): logger, createLogger, initLogging, registerSecret, unregisterSecret, redactText
+
+// src/server/lib/process.ts (WP-11; WP-13, WP-21 nutzen) – immer shell:false, windowsHide:true,
+// nur ABSOLUTE .exe-Pfade (R1-04, ADR-022: ein nackter Name würde zuerst im cwd des Kindes gesucht)
 interface RunFileOptions { cwd?: string; env?: Record<string, string>; timeoutMs: number; maxOutputBytes?: number }
 interface RunFileResult { exitCode: number | null; signal: string | null; stdout: string; stderr: string; timedOut: boolean }
-runFile(file, args: readonly string[], options: RunFileOptions): Promise<RunFileResult>  // execFile, wirft nicht bei Exit ≠ 0
-spawnHidden(file, args: readonly string[], options: Omit<SpawnOptions, 'shell' | 'windowsHide'>): ChildProcess
+type RunFileFn = typeof runFile
+runFile(file, args: readonly string[], options: RunFileOptions): Promise<RunFileResult>  // spawn, wirft nicht bei Exit ≠ 0, Timeout → Baum-Kill
+spawnHidden(file, args, options: SpawnOptions & { onStderr? }): ChildProcess  // stderr wird immer gelesen (F.16)
 killProcessTree(pid: number): Promise<void>  // taskkill /PID <pid> /T /F; „nicht gefunden“ ist kein Fehler
+assertSpawnableFile(file): void             // TypeError für nackte Namen, relative/UNC/Device/ADS-Pfade, Nicht-.exe
+systemTool(name): string                    // %SystemRoot%\System32\<name>
+processInfo(pid) / processStartTime(pid) / childProcesses(pid)  // CIM über PowerShell (1–3 s), Waisen-Bereinigung
+isProcessAlive(pid): boolean; errnoCode(error): string | undefined
+
+// src/server/lib/windows.ts (WP-11, R1-08) – Dateizugriffe nur über FsProbe (geprüft mit @shared/paths)
+interface FsProbe { isFile(path): Promise<boolean>; readText(path): Promise<string | null> }
+nodeFsProbe; createMemoryFs(files)         // echt / Fake für Tests (touched-Protokoll)
+getEnvVar(env, name)                       // case-insensitiv
+searchPath(name, env, fs): Promise<string[]>   // where im Prozess (PATH × PATHEXT), nie das cwd, keine UNC/relativen Einträge
+resolveCmdShim(shimPath, fs, exeName?)     // npm-Shim (.cmd/.ps1) → .exe, nie node.exe
+resolveExecutable(name, env, fs?): Promise<string | null>  // nackter Name → absolute .exe (vor runFile/spawnHidden)
+
+// src/server/lib/registry.ts (WP-11) – reg.exe mit System32-Pfad, ohne Shell; Fehler → null/leer
+regQuery(run?)(key, view) / regKeyQuery(run?)(key, view); parseRegDefaultValue, parseRegValues, expandRegValue
+readPersistentEnvironment({ query?, env }): Promise<Map<NAME, value>>  // HKCU\Environment + HKLM\…\Session Manager\Environment (ADR-021)
+
+// src/server/lib/edge.ts (WP-11): findEdge({ regQuery, fs, env }): Promise<string | null>  // Preflight, Launcher (WP-21)
 ```
 
 ### 2.3 Web-Erweiterungspunkte (normativ für WP-14; WP-15/16 nutzen; WP-20 verdrahtet)
@@ -308,8 +334,8 @@ Features ──useCommand──▶ ConnectionManager.send(cmd) → {type:'cmd', 
 
 ## 5. Sync-Protokoll (`src/shared/protocol.ts`)
 
-**Endpunkt** `GET /api/ws`; Auth per Geräte-Cookie und Origin/Host/`Sec-Fetch-Site` **im Upgrade**
-(A.8, §5.1). Ein JSON-Objekt pro Frame, Diskriminator `type`. `PROTOCOL_VERSION = 1`. Vor dem
+**Endpunkt** `GET /api/ws`; Auth per Geräte-Cookie und Origin/Host **im Upgrade**, `Sec-Fetch-Site`
+nur falls vorhanden (A.8, §5.1, V1-01). Ein JSON-Objekt pro Frame, Diskriminator `type`. `PROTOCOL_VERSION = 1`. Vor dem
 Verbinden fragt der Client `GET /api/auth/status` (ein abgelehnter Upgrade ist im Browser nur Close
 1006).
 
@@ -363,8 +389,8 @@ sequenceDiagram
   participant C as Client (Fenster)
   participant H as SyncHub
   participant E as Engine
-  C->>H: WS-Upgrade /api/ws (Cookie, Origin, Host, Sec-Fetch-Site)
-  Note over H: Prüfung im upgrade-Handler, sonst HTTP 401/403 ohne WS
+  C->>H: WS-Upgrade /api/ws (Cookie, Origin, Host; Sec-Fetch-Site falls vorhanden)
+  Note over H: Prüfung im Guard und erneut in der WS-Route, sonst HTTP 400/401/403 ohne WS
   H-->>C: hello {protocolVersion, buildId, serverInstanceId}
   C->>H: clientHello {protocolVersion, buildId, clientId, presence}
   H-->>C: host.state
@@ -522,7 +548,8 @@ sequenceDiagram
 | `POST /api/launcher/code` | neuer Einmal-Code für ein weiteres Fenster | 200 `launcherCodeResponseSchema` `{code, expiresAt, serverInstanceId}` | 401 `LAUNCHER_TOKEN_INVALID`, 403 `ORIGIN_REJECTED` |
 | `GET /api/blob/:blobId` | Volltexte, Bilder (`blobPath(id)`) | Rohbytes mit `Content-Type` aus der Meta-Datei | 401 `AUTH_REQUIRED`, 404 `BLOB_NOT_FOUND` |
 | `POST /api/attachments` | Upload → `BlobRef` (Phase 2) | – | 501 `NOT_IMPLEMENTED` |
-| `GET /api/ws` | WebSocket-Upgrade (§5) | `101` | 401/403 + `ErrorPayload` (Browser sieht nur Close 1006) |
+| `GET /api/ws` | WebSocket-Upgrade (§5) | `101` | 400/401/403 + `ErrorPayload` (Browser sieht nur Close 1006) |
+| jede andere Methode/Pfad, fehlende statische Datei | – | – | 404 `ROUTE_NOT_FOUND {path}` (R1-12, V1-06) |
 
 **Codes, Token, Cookie:** Einmal-Code und Launcher-Token sind je 32 Zufallsbytes als base64url
 ohne Padding (43 Zeichen, `authCodeSchema`/`launcherTokenSchema`). Ein Code ist **einmal**
@@ -534,21 +561,38 @@ Domain); der Wert ist opak und mit dem persistenten Secret `PARALLAX_HOME/auth-s
 (Rotation = alle Cookies ungültig, offene WS mit Close 4401 `AUTH_REVOKED`; Rotations-UI Phase 2).
 Codes stellt WP-10 über `issueAuthCode(ttlMs?) → LauncherCodeResponse` aus (`http/auth.ts`).
 
-**Request-Prüfung (A.8, WP-10 `http/origin.ts`):** `Host` muss für **jeden** Request in
-`allowedHosts(port, dev)` liegen (sonst 403 `HOST_HEADER_REJECTED`); `Origin: null` wird überall
-abgelehnt, wo Origin geprüft wird; nie CORS-Header.
+**Request-Prüfung (A.8, WP-10 `http/origin.ts`; R1-01/ADR-018, V1-01/ADR-019):** Der Server
+lauscht nur auf `127.0.0.1` (R1-05, ADR-023). Klassifiziert wird nach der **gematchten Route**
+(Fastify `request.routeOptions.url`, z. B. `/api/blob/:blobId`, `/*` der Static-Route, keine Route
+= 404), **nie nach dem URL-Text** – der Router dekodiert Prozent-Kodierung und reduziert die
+Absolute-Form vor dem Matching (`/%61pi/ws` wäre sonst ein Bypass). **Default-deny:** jede Route
+oder Methode, die nicht in der Tabelle steht, wird wie eine Zustandsänderung geprüft (Zeile „jede
+andere Route“), auch bei GET. Vor der Tabelle gilt für **jeden** Request:
+1. `Host` ∈ `allowedHosts(port, dev)`, sonst 403 `HOST_HEADER_REJECTED`.
+2. Request-Target in Origin-Form (beginnt mit `/`, keine Absolute-/Asterisk-Form); auf API-Routen
+   (Muster unter `/api`) zusätzlich der kanonische Rohpfad `/api/<seg>/…` mit Segmenten aus
+   `[A-Za-z0-9_-]` (keine Prozent-Kodierung, kein `.`, `;`, `//`, `/` am Ende); sonst 400
+   `VALIDATION_FAILED {reason: 'request_target'}`.
+3. Ein WebSocket-Upgrade nur auf `/api/ws`, sonst 400 `INVALID_MESSAGE {reason: 'upgrade_not_allowed'}`.
 
-| Request | Origin | `Sec-Fetch-Site` | Auth |
+`Origin: null` wird überall abgelehnt, wo Origin geprüft wird; nie CORS-Header.
+
+| Request (Route-Muster + Methode) | Origin | `Sec-Fetch-Site` | Auth |
 |---|---|---|---|
-| statische Seite (`/`, Assets) | – | – | – |
-| `GET /api/health`, `GET /api/auth/status` | falls vorhanden ∈ `allowedOrigins` | falls vorhanden ∈ {`same-origin`, `none`} | – |
-| `GET /api/blob/:blobId` | falls vorhanden ∈ `allowedOrigins` | falls vorhanden ∈ {`same-origin`, `none`} | Cookie |
+| Static-Route `/*` GET/HEAD (Seite, Assets) | – | – | – |
+| `GET`/`HEAD` `/api/health`, `/api/auth/status`; GET/HEAD ohne Route (404) | falls vorhanden ∈ `allowedOrigins` | falls vorhanden ∈ {`same-origin`, `none`} | – |
+| `GET`/`HEAD` `/api/blob/:blobId` | falls vorhanden ∈ `allowedOrigins` | falls vorhanden ∈ {`same-origin`, `none`} | Cookie |
 | `POST /api/auth` | Pflicht ∈ `allowedOrigins` | Pflicht `same-origin` | Code |
-| WS-Upgrade `GET /api/ws`, jeder andere nicht-GET-Request | Pflicht ∈ `allowedOrigins` | Pflicht `same-origin` | Cookie |
+| WS-Upgrade `GET /api/ws` | Pflicht ∈ `allowedOrigins` | **falls vorhanden** `same-origin` (Chrome/Edge senden beim Handshake keins, V1-01) | Cookie |
+| jede andere Route/Methode (Default-deny, z. B. `POST /api/attachments`, künftig `GET /api/file`) | Pflicht ∈ `allowedOrigins` | Pflicht `same-origin` | Cookie |
 | `POST /api/launcher/code` | **muss fehlen** | fehlt oder `none` | `Authorization: Bearer <launcherToken>` |
 
+Die WS-Route wiederholt die komplette Prüfung selbst (`preValidation` und WS-Handler,
+`HubAttachOptions.authorizeUpgrade`) – zweite Linie, falls der globale Hook je umsortiert wird.
 Verstöße: 403 `ORIGIN_REJECTED` mit `params.reason` (`origin`, `origin-null`, `sec-fetch-site`).
-`same-site` wird abgelehnt (andere Ports auf 127.0.0.1 sind „same-site“). Requests ohne Origin sind
+`same-site` wird abgelehnt (andere Ports auf 127.0.0.1 sind „same-site“). Browser senden beim
+WebSocket-Handshake immer `Origin` und das SameSite=Strict-Cookie nur same-site – ein fremder
+Origin scheitert also auch ohne `Sec-Fetch-Site`. Requests ohne Origin sind
 für Zustandsänderungen **nur** auf dem Launcher-Endpunkt mit gültigem Token zulässig. Blob-Antworten
 mit `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'`,
 `Cross-Origin-Resource-Policy: same-origin`; Seiten-CSP nach C.10.
@@ -593,7 +637,7 @@ sequenceDiagram
   S-->>E: 200 + Set-Cookie parallax_PORT (HttpOnly, SameSite=Strict)
   E->>S: GET /api/auth/status
   S-->>E: {authenticated: true, serverInstanceId}
-  E->>S: WS-Upgrade /api/ws mit Cookie
+  E->>S: WS-Upgrade /api/ws mit Cookie und Origin (ohne Sec-Fetch-Site)
 ```
 
 ### (i) Server läuft schon: weiteres Fenster über den Launcher-Code
@@ -663,7 +707,7 @@ Bilder immer als Blob. Assistant-Text wird nie gekappt.
 
 | SDK-Message | Item | Signal / Wirkung |
 |---|---|---|
-| `stream_event` (`content_block_*`, Deltas) | Streaming-`assistant_text`/`thinking`/`tool_call` + `item.delta` | `context_estimate` |
+| `stream_event` (`content_block_*`, Deltas) | Streaming-`assistant_text`/`thinking`/`tool_call` + `item.delta` | `context_estimate` (mit `contextWindow` = `modelUsage[model].contextWindow` des letzten `result`, sonst `null`; R1-07) |
 | `assistant` (fertiger Block) | ersetzt das Streaming-Item gleicher ID; ohne Stream direkt final | `assistant_model` (Haupt-Thread); `assistant.error` → zusätzlich `system/error` + `assistant_error` |
 | `user` Prompt (nach `registerPrompt`, `command_lifecycle started`) | `user_message` | – |
 | `user` nur mit `tool_result` | – (→ `tool_call.result`) | – |
@@ -676,15 +720,16 @@ Bilder immer als Blob. Assistant-Text wird nie gekappt.
 | `system/compact_boundary`, `notification`, `informational`, `permission_denied`, `memory_recall`, `local_command_output` | gleichnamiges `system`-Item | – |
 | `system/api_retry` | `system/api_retry` (ein Item je Serie, `upsert`) | `retry` |
 | `system/hook_*` | `system/hook` (`upsert` je `hook_id`) | – |
-| `rate_limit_event` | `system/rate_limit` nur bei `allowed_warning`/`rejected` | `rate_limit` |
+| `rate_limit_event` | `system/rate_limit` nur bei `allowed_warning`/`rejected` | `rate_limit`; bei `rejected` zusätzlich `assistant_error` (`RATE_LIMIT_REJECTED`, `credits_required` → `CLAUDE_BILLING`) |
 | Modell-Fallback (`model_refusal_fallback`) | `system/model_fallback`; zurückgezogene Items → `item.remove` | – |
+| `system/model_refusal_no_fallback` | `system/error` (`MODEL_REFUSAL`) | – |
 | `system/task_started`/`task_updated`/`task_progress`, `tool_progress` | – (→ `tool_call.task`, `elapsedSeconds`) | – |
 | `system/task_notification` | `tool_call.task` bzw. `system/task_notification` ohne passendes `tool_call` | – |
 | `system/background_tasks_changed` | – (→ `detail.backgroundTasks`) | `background_tasks` |
 | `command_lifecycle` (untypisiert) | – (→ Queue) | `prompt_lifecycle` |
 | `system/session_title_changed` (untypisiert) | – | `title_changed` |
 | `prompt_suggestion`, `system/commands_changed` | – (→ Detail) | – |
-| `conversation_reset` | Marker `system/conversation_reset` als erstes Item der neuen Unterhaltung | `conversation_reset` + Op `conversation.reset` |
+| `conversation_reset` | Marker `system/conversation_reset` als erstes Item der neuen Unterhaltung – der Normalizer liefert ihn mit der ersten Ausgabe nach `startConversation` (WP-12 Entscheidung 1) | `conversation_reset` + Op `conversation.reset` (veröffentlicht die Engine) |
 | `system/thinking_tokens`, `keep_alive` | – | – |
 | bekannte, bewusst ignorierte Typen (`files_persisted`, `auth_status`, `tool_use_summary` …) | – | Zähler `ignoredCounts` |
 | unbekannte `type/subtype` | `system/unknown` | Zähler `unknownCounts` (Detail) |
@@ -736,7 +781,10 @@ Funktion ab. „Wartet“ ist **kein** `runState`, sondern folgt aus offenen Ent
 User-Stop führt über `idle` zu `lastTurn.outcome = 'interrupted'`, nicht zu `interrupted`/`error`.
 
 **`reduceStatus` (WP-12, normativ; WP-02 §9.4 + R0-05, Port-Kommentar in `sessions/ports.ts`):**
-- `session_state running|requires_action` → `working`; `idle` → `idle`, `unread` bleibt.
+- `session_state running|requires_action` → `working`; `idle` → `idle`, `unread` bleibt. Wirkt nur bei
+  laufendem Prozess (`starting|working|idle|error`): ein spätes Frame nach `process_exit`/Neustart
+  belebt `sleeping`/`interrupted`/`external` nicht (R1-19). Setup-Fehler in `turn_result`/
+  `assistant_error` ändern `external` nicht.
 - `turn_result` (nicht synthetisch): `lastTurn` setzen; `unread = true`, wenn `outcome ≠ interrupted`
   und kein sichtbarer Client die Session zeigt. `unread` wird **nur hier** gesetzt – „result → idle“
   und „idle → result“ ergeben dieselben Fakten (C.5); „fertig“ braucht trotzdem `idle`.
@@ -800,8 +848,10 @@ Unter `PARALLAX_HOME` (Default `%LOCALAPPDATA%\Parallax`, Dev `.parallax-dev`, T
 sessions.json                         registryFileSchema (Entry inkl. unread, context – R0-17)
 profiles.json                         profilesFileSchema (Phase 2)
 settings.json                         settingsFileSchema
-auth-secret.json                      Secret des Geräte-Cookies (WP-10, rotierbar, §5.1)
+auth-secret.json                      Secret des Geräte-Cookies (WP-10, rotierbar, §5.1; ohne .bak, R1-11)
 server.lock.json                      serverLockFileSchema (@shared/http; WP-21 schreibt/liest, §5.1)
+processes.json                        PID + Startzeit laufender claude.exe für die Waisen-Bereinigung
+                                      (WP-13-internes Schema {schemaVersion 1, records[]}, JsonStore; WP-13 §3.5.13)
 blobs/<blobId>                        inhaltsadressiert
 blobs/<blobId>.meta.json              blobRefSchema (Medientyp, Größe, Name; R0-30)
 entries/<entryId>/<conversationId>.transcript.jsonl   append-only, transcriptLogLineSchema
@@ -817,6 +867,10 @@ Records ohne Snapshot (alte Dateien) werden als `expired` geschlossen und nur ge
 **JsonStore-Regeln (B, WP-10):** zod-Schema + `schemaVersion` + Migrationen; atomar über Temp-Datei
 und Rename mit Retry bei EPERM/EBUSY; `.bak`; korrupte Dateien in Quarantäne + Host-Warnung
 `STORE_CORRUPT_QUARANTINED`; ein Writer, Debounce. Neue Felder immer mit Default (kein Bump).
+Eine Datei mit **neuerer** `schemaVersion` (neuerer Parallax-Build auf demselben `PARALLAX_HOME`)
+wird nie verschoben, migriert oder überschrieben: der Server bricht den Start ab
+(`STORE_VERSION_TOO_NEW`, Meldung „update Parallax“, Exit-Code 3; R1-06, ADR-020). Geschrieben
+wird erst, nachdem die Datei gelesen wurde.
 
 **Transkript-Log** (`src/server/sync/ports.ts`): eine Zeile je persistierter Op,
 `{v:1, at, op:'upsert', item}` (nur nicht-streamende Items) oder `{v:1, at, op:'remove', itemId}`.
@@ -826,14 +880,26 @@ defekte Zeilen überspringen und zählen.
 ## 9. Prozesse und Sicherheit (Kurzfassung)
 
 - **Auth (A.8):** Einmal-Code → `POST /api/auth` → persistentes HttpOnly-/SameSite=Strict-Cookie;
-  Host-Prüfung für jeden Request, Origin- und `Sec-Fetch-Site`-Prüfung für jeden nicht-GET-Request
-  und den WS-Upgrade; kein Token in URLs (nur im `#`-Fragment, sofort entfernt), keine CORS-Header.
-  Weitere Fenster über `POST /api/launcher/code` mit Launcher-Token. Details und Tabelle: §5.1.
-  Strikte CSP (C.10).
-- **Env (C.2):** jeder `claude`-Start über `buildEnv()` (Session-Variablen der aufrufenden
-  Claude-Session entfernt, `PARALLAX=1`, `PARALLAX_ENTRY_ID`).
-- **Prozesse (C.8):** `close()`, bis 5 s warten, dann `taskkill /PID <pid> /T /F`; jeder Spawn mit
-  `windowsHide: true`, ohne Shell; Spawn-Wrapper liest stderr (F.16).
+  Bind-Adresse nur `127.0.0.1`; Host-Prüfung für jeden Request, Klassifizierung nach gematchter
+  Route mit Default-deny (ADR-018), Origin- und `Sec-Fetch-Site`-Prüfung für jeden nicht-GET-Request,
+  beim WS-Upgrade Origin + Cookie (`Sec-Fetch-Site` nur falls vorhanden, ADR-019); kein Token in
+  URLs (nur im `#`-Fragment, sofort entfernt), keine CORS-Header. Weitere Fenster über
+  `POST /api/launcher/code` mit Launcher-Token. Details und Tabelle: §5.1. Strikte CSP (C.10;
+  `style-src 'unsafe-inline'` siehe ADR-026).
+- **Env (C.2, ADR-021):** jeder `claude`-Start über `buildEnv()`: Session-Marker der aufrufenden
+  Claude-Session (`CLAUDECODE`, `CLAUDE_CODE_*`, `CLAUDE_AGENT_SDK_*`, `CLAUDE_PID`, `CLAUDE_EFFORT`,
+  `AI_AGENT`, Hook-/Plugin-Kontext) und `pnpm run`-Laufzustand immer entfernt; übrige `npm_*`/
+  `PNPM_*`/`NODE_OPTIONS`/`NODE_ENV` nur behalten, wenn dauerhaft in HKCU/HKLM `Environment`
+  mit gleichem Wert gesetzt (Nexus); `PARALLAX=1`, `PARALLAX_ENTRY_ID`.
+- **Prozesse (C.8, ADR-022):** `close()`, bis 5 s warten, dann `taskkill /PID <pid> /T /F`; jeder
+  Spawn mit `windowsHide: true`, ohne Shell und nur mit **absolutem `.exe`-Pfad** (nackte Namen über
+  `resolveExecutable`/`systemTool` auflösen – libuv sucht sonst zuerst im `cwd`); Spawn-Wrapper liest
+  stderr (F.16).
+- **Auto-Retry (A.10, ADR-025):** nur nach einem Absturz im **Leerlauf** (`runState idle`, keine
+  Queue, keine offene Entscheidung, Code `CLAUDE_PROCESS_CRASHED`): höchstens 3 Neustarts in Folge
+  mit Backoff (2 s / 10 s / 30 s), Zähler zurück nach erfolgreichem Turn oder 5 min Laufzeit; jeder
+  Nutzerbefehl, der startet oder schließt, bricht den Timer ab. Absturz während der Arbeit oder mit
+  offener Entscheidung → `error` + „Neu starten“, nie automatisch (keine doppelten Seiteneffekte).
 - **Pfade (C.10):** UNC-, Device-, ADS-Pfade und reservierte Namen vor jedem Dateizugriff ablehnen
   (`@shared/paths`, eine Implementierung, §2.2); `cwd` exakt behalten, Vergleiche case-insensitiv
   über `windowsPathKey`.

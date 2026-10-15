@@ -61,8 +61,11 @@ export interface ContextWindowSources {
   override: number | null;
   /** `maxTokens` of the last ContextBreakdown (rawMaxTokens of getContextUsage). */
   lastSdkMaxTokens: number | null;
-  /** `modelUsage[model].contextWindow` of the last result (`modelContextWindow`). */
-  modelContextWindow: number | null;
+  /**
+   * `modelUsage[model].contextWindow` of the last result. Default (absent or null): the
+   * signal's own `contextWindow` (the normalizer fills it, R1-07).
+   */
+  modelContextWindow?: number | null;
 }
 
 /**
@@ -75,7 +78,9 @@ export function estimateContextGauge(
   at: Date,
 ): ContextGauge | null {
   const maxTokens =
-    validWindow(windows.override) ?? validWindow(windows.lastSdkMaxTokens) ?? validWindow(windows.modelContextWindow);
+    validWindow(windows.override) ??
+    validWindow(windows.lastSdkMaxTokens) ??
+    validWindow(windows.modelContextWindow ?? estimate.contextWindow);
   if (maxTokens === null || estimate.totalTokens < 0) return null;
   const totalTokens = Math.round(estimate.totalTokens);
   return {

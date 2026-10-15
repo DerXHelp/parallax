@@ -105,12 +105,20 @@ export interface HistoryMessage {
   message: unknown;
   parentToolUseId: string | null;
   timestamp: string | null;
+  /**
+   * `SessionMessage.origin` (R1-07): the backend (WP-13) fills it, the history normalizer (WP-12)
+   * maps it to `user_message.origin` like the live adapter. Absent/null = unknown (taken as human).
+   */
+  origin?: { kind: string } | null;
 }
 
 export interface BackendSessionInfo {
   sessionId: string;
+  /** SDK `summary`: custom title, else AI title, else the first prompt. */
   summary: string;
   customTitle: string | null;
+  /** SDK `firstPrompt` (WP-13 §6 Nr. 2): lets the engine tell an AI title from the prompt fallback. */
+  firstPrompt: string | null;
   lastModified: number;
 }
 

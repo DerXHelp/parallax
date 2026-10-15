@@ -58,6 +58,8 @@ export const ERROR_CATALOG = {
   ITEM_NOT_FOUND: { category: 'not_found', http: 404, severity: 'error', retryable: false },
   PROFILE_NOT_FOUND: { category: 'not_found', http: 404, severity: 'error', retryable: false },
   BLOB_NOT_FOUND: { category: 'not_found', http: 404, severity: 'error', retryable: false },
+  /** HTTP: no route for this method/path, or a missing static file (`params.path`, R1-12). */
+  ROUTE_NOT_FOUND: { category: 'not_found', http: 404, severity: 'error', retryable: false },
   // profiles: parseProfileArgs / buildEnv (C.12, Plan "Claude-Profile", R0-04). Params convention:
   // `index` (0-based position in profile.args), `flag` (e.g. '--add-dir'), see PROFILE_ARG_INVALID_REASONS.
   /** The profile as a whole cannot be used (at least one error below). */
@@ -90,6 +92,11 @@ export const ERROR_CATALOG = {
   SESSION_NOT_RUNNING: { category: 'conflict', http: 409, severity: 'warning', retryable: true },
   SESSION_BUSY: { category: 'conflict', http: 409, severity: 'warning', retryable: true },
   SESSION_EXTERNAL: { category: 'conflict', http: 409, severity: 'warning', retryable: false },
+  /**
+   * A queued prompt never reached the CLI (the process ended first, WP-13 §3.5.7); it is not resent
+   * automatically (no double execution). Shown as `system/error` item.
+   */
+  PROMPT_NOT_DELIVERED: { category: 'conflict', http: 409, severity: 'warning', retryable: true },
   /** startup_failure_reason `session_held_by_background`: the conversation runs elsewhere (Plan B, R0-26). */
   SESSION_HELD_ELSEWHERE: { category: 'conflict', http: 409, severity: 'error', retryable: true },
   MODE_NOT_ALLOWED: { category: 'conflict', http: 409, severity: 'error', retryable: false },
@@ -122,6 +129,12 @@ export const ERROR_CATALOG = {
   STORE_CORRUPT_QUARANTINED: { category: 'store', http: 500, severity: 'warning', retryable: false },
   STORE_WRITE_FAILED: { category: 'store', http: 500, severity: 'error', retryable: true },
   STORE_MIGRATION_FAILED: { category: 'store', http: 500, severity: 'error', retryable: false },
+  /**
+   * A store file has a newer `schemaVersion` than this build supports (written by a newer
+   * Parallax): the server does not start and leaves the file untouched – "update Parallax"
+   * (`params.file`, `version`, `supported`; R1-06, ADR-020).
+   */
+  STORE_VERSION_TOO_NEW: { category: 'store', http: 500, severity: 'error', retryable: false },
   // client-side only (never sent by a server)
   CONNECTION_LOST: { category: 'client', http: 0, severity: 'warning', retryable: true },
   COMMAND_TIMEOUT: { category: 'client', http: 0, severity: 'warning', retryable: true },

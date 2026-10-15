@@ -19,6 +19,21 @@ import { writeFileAtomic } from './jsonStore';
 export const BLOBS_DIR = 'blobs';
 export const BLOB_META_SUFFIX = '.meta.json';
 
+const FALLBACK_MEDIA_TYPE = 'application/octet-stream';
+
+/**
+ * `put` never throws for odd metadata from the SDK (R1-20: the normalizer passes `media_type`
+ * unchecked): an empty or over-long media type becomes `application/octet-stream`, a long name is
+ * cut to the schema limit. The served Content-Type is sanitized again (http/app.ts safeMediaType).
+ */
+function blobMeta(mediaType: string, name: string | null): { mediaType: string; name: string | null } {
+  const type = mediaType.trim();
+  return {
+    mediaType: type === '' || type.length > 100 ? FALLBACK_MEDIA_TYPE : type,
+    name: name === null ? null : name.slice(0, 260),
+  };
+}
+
 export function blobFilePath(home: string, blobId: BlobId): string {
   return path.join(home, BLOBS_DIR, blobIdSchema.parse(blobId));
 }
@@ -71,7 +86,7 @@ export function createBlobStore(options: BlobStoreOptions): FileBlobStore {
       const blobId = createHash('sha256').update(bytes).digest('hex');
       const known = refs.get(blobId);
       if (known !== undefined) return known;
-      const ref = blobRefSchema.parse({ blobId, mediaType, bytes: bytes.byteLength, name });
+      const ref = blobRefSchema.parse({ blobId, ...blobMeta(mediaType, name), bytes: bytes.byteLength });
       refs.set(blobId, ref);
       const blob: PendingBlob = { data: bytes, ref };
       pending.set(blobId, blob);

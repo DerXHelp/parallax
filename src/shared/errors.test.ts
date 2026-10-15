@@ -87,6 +87,36 @@ describe('R0 additions', () => {
   });
 });
 
+describe('R1 additions', () => {
+  it('ROUTE_NOT_FOUND is a plain 404 (R1-12)', () => {
+    expect(errorSpec('ROUTE_NOT_FOUND')).toEqual({
+      category: 'not_found',
+      http: 404,
+      severity: 'error',
+      retryable: false,
+    });
+  });
+
+  it('PROMPT_NOT_DELIVERED is a retryable conflict warning (WP-13 §6)', () => {
+    expect(errorSpec('PROMPT_NOT_DELIVERED')).toEqual({
+      category: 'conflict',
+      http: 409,
+      severity: 'warning',
+      retryable: true,
+    });
+  });
+
+  it('STORE_VERSION_TOO_NEW is a non-retryable store error (R1-06)', () => {
+    expect(errorSpec('STORE_VERSION_TOO_NEW')).toEqual({
+      category: 'store',
+      http: 500,
+      severity: 'error',
+      retryable: false,
+    });
+    expect(isSetupError('STORE_VERSION_TOO_NEW')).toBe(false);
+  });
+});
+
 describe('payloads', () => {
   it('makeError sets params {} and omits an absent message', () => {
     expect(makeError('ENTRY_NOT_FOUND')).toEqual({ code: 'ENTRY_NOT_FOUND', params: {} });

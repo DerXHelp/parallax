@@ -4,20 +4,17 @@ import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { sampleProfile } from '@shared/samples';
 import type { RunFileOptions, RunFileResult } from '../lib/process';
+import { createMemoryFs, nodeFsProbe, resolveCmdShim, searchPath } from '../lib/windows';
 import {
   cliVersionStatus,
   compareVersions,
-  createMemoryFs,
   findClaude,
-  nodeFsDeps,
   npmClaudeShimTarget,
   parseClaudeVersion,
   readClaudeVersion,
   readSdkManifest,
   resolveClaude,
   resolveClaudeShim,
-  resolveCmdShim,
-  searchPath,
   type FindClaudeDeps,
 } from './resolveClaude';
 
@@ -353,16 +350,16 @@ describe('real file system (temp npm folder with the .cmd shim fixture)', () => 
 
   it('finds and resolves the shim with the guarded node fs', async () => {
     const env = { PATH: npm, PATHEXT: '.EXE;.CMD' };
-    const hits = await searchPath('claude', env, nodeFsDeps);
+    const hits = await searchPath('claude', env, nodeFsProbe);
     expect(hits).toEqual([path.join(npm, 'claude'), path.join(npm, 'claude.cmd')]);
-    const found = await findClaude(AUTO, { ...nodeFsDeps, where: () => Promise.resolve(hits) });
+    const found = await findClaude(AUTO, { ...nodeFsProbe, where: () => Promise.resolve(hits) });
     expect(found.ok && found.path).toBe(target);
   });
 
   it('never stats unsafe paths', async () => {
-    expect(await nodeFsDeps.isFile('\\\\127.0.0.1\\c$\\x.exe')).toBe(false);
-    expect(await nodeFsDeps.readText('\\\\127.0.0.1\\c$\\x.cmd')).toBeNull();
-    expect(await nodeFsDeps.readText(npm)).toBeNull();
+    expect(await nodeFsProbe.isFile('\\\\127.0.0.1\\c$\\x.exe')).toBe(false);
+    expect(await nodeFsProbe.readText('\\\\127.0.0.1\\c$\\x.cmd')).toBeNull();
+    expect(await nodeFsProbe.readText(npm)).toBeNull();
   });
 });
 

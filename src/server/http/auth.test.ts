@@ -96,6 +96,27 @@ describe('device cookie', () => {
     expect(revoked).toBe(1);
   });
 
+  it('keeps no backup of the secret: a rotated secret can never come back from a .bak (R1-11)', async () => {
+    const home = await makeTempHome('auth-');
+    // A .bak left by an older build is removed at start.
+    await writeFile(
+      path.join(home, `${AUTH_SECRET_FILE}.bak`),
+      JSON.stringify({ schemaVersion: 1, secret: 'B'.repeat(43), createdAt: '2026-10-15T08:00:00.000Z' }),
+      'utf8',
+    );
+    const auth = await createAuthService({ home, serverInstanceId: SAMPLE_IDS.serverInstanceId });
+    expect(await readdir(home)).toEqual([AUTH_SECRET_FILE]);
+    const before = auth.createCookieValue();
+    await auth.rotateSecret();
+    await auth.rotateSecret();
+    expect(await readdir(home)).toEqual([AUTH_SECRET_FILE]);
+    await auth.close();
+    // Corrupt main file after the rotation: no backup to restore the old secret from.
+    await writeFile(path.join(home, AUTH_SECRET_FILE), '{broken', 'utf8');
+    const restarted = await createAuthService({ home, serverInstanceId: SAMPLE_IDS.serverInstanceId });
+    expect(restarted.verifyCookieValue(before)).toBe(false);
+  });
+
   it('builds the Set-Cookie header from the contract attributes and parses Cookie headers', () => {
     expect(authCookieHeader(4711, 'v')).toBe(
       'parallax_4711=v; Max-Age=34560000; Path=/; HttpOnly; SameSite=Strict',

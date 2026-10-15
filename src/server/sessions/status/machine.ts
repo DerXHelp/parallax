@@ -59,14 +59,20 @@ function count(n: number): number {
   return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
 }
 
+/** A process runs (session_state applies); after process_exit/restart a late frame changes nothing (R1-19). */
+function processRunning(runState: StatusFacts['runState']): boolean {
+  return runState === 'starting' || runState === 'working' || runState === 'idle' || runState === 'error';
+}
+
 export const reduceStatus: ReduceStatus = (facts, event, now, ctx) => {
   switch (event.type) {
     case 'session_state':
+      if (!processRunning(facts.runState)) return facts;
       if (event.state === 'idle') {
         // "fertig" only from idle (C.5); an error of this process stays until the next turn starts.
-        return facts.runState === 'error' || facts.runState === 'external' ? facts : apply(facts, { runState: 'idle' });
+        return facts.runState === 'error' ? facts : apply(facts, { runState: 'idle' });
       }
-      return facts.runState === 'external' ? facts : apply(facts, { runState: 'working', errorCode: null });
+      return apply(facts, { runState: 'working', errorCode: null });
 
     case 'init':
       // Old CLI without session_state_changed: init starts every turn (C.5).
@@ -77,7 +83,8 @@ export const reduceStatus: ReduceStatus = (facts, event, now, ctx) => {
     case 'turn_result': {
       let next = facts;
       const setupError = event.error !== null && isSetupError(event.error.code);
-      if (event.outcome !== 'interrupted' && (event.startupFailure || setupError)) {
+      // A handed-off session (external) keeps its state (R1-19).
+      if (event.outcome !== 'interrupted' && (event.startupFailure || setupError) && next.runState !== 'external') {
         next = toError(next, event.error?.code ?? 'CLAUDE_STARTUP_FAILED');
       }
       if (event.synthetic) return next;
@@ -92,7 +99,7 @@ export const reduceStatus: ReduceStatus = (facts, event, now, ctx) => {
     }
 
     case 'assistant_error':
-      return isSetupError(event.error.code) ? toError(facts, event.error.code) : facts;
+      return isSetupError(event.error.code) && facts.runState !== 'external' ? toError(facts, event.error.code) : facts;
 
     case 'process_starting':
       return apply(facts, { runState: 'starting', errorCode: null, ...NO_PROCESS });

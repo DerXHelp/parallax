@@ -28,6 +28,7 @@ export const REDACT_PATHS: readonly string[] = [
   'env',
   '*.env',
   '*.*.env',
+  '*.*.*.env',
   'headers.cookie',
   'headers.authorization',
   'headers["set-cookie"]',
@@ -81,6 +82,12 @@ const TEXT_PATTERNS: readonly (readonly [RegExp, string])[] = [
   [/\bsk-ant-[A-Za-z0-9_-]{8,}/g, REDACTED],
   [new RegExp(`\\b(${PRODUCT_ID}_\\d+=)[^;\\s"\\\\]+`, 'g'), `$1${REDACTED}`],
   [/\b([A-Z0-9_]*(?:API_KEY|AUTH_TOKEN|_TOKEN|_SECRET|PASSWORD)=)[^\s"\\]+/g, `$1${REDACTED}`],
+  // JSON form at any depth (R1-20): "GITHUB_TOKEN":"…", also escaped inside a string value.
+  [/("[A-Za-z0-9_-]*(?:TOKEN|SECRET|PASSWORD|API_?KEY)"\s*:\s*")(?:[^"\\]|\\.)*"/gi, `$1${REDACTED}"`],
+  [
+    /(\\"[A-Za-z0-9_-]*(?:TOKEN|SECRET|PASSWORD|API_?KEY)\\"\s*:\s*\\")(?:[^"\\]|\\[^"])*\\"/gi,
+    `$1${REDACTED}\\"`,
+  ],
 ];
 
 /** Removes registered secrets and token-like patterns from a text (also usable for stderr lines). */

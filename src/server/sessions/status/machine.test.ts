@@ -61,6 +61,33 @@ describe('reduceStatus: session_state', () => {
     expect(reduce(error, [{ type: 'session_state', state: 'idle' }])).toBe(error);
     expect(reduce(error, [{ type: 'session_state', state: 'running' }])).toMatchObject({ runState: 'working', errorCode: null });
   });
+
+  it.each(['sleeping', 'interrupted', 'external'] as const)(
+    'a late session_state after the process ended does not revive a %s session (R1-19)',
+    (runState) => {
+      const ended = sampleStatusFacts({ runState });
+      for (const state of ['idle', 'running', 'requires_action'] as const) {
+        expect(reduce(ended, [{ type: 'session_state', state }])).toBe(ended);
+      }
+    },
+  );
+
+  it('after process_exit a late idle frame keeps the session sleeping (R1-19)', () => {
+    const exited = reduce(working, [{ type: 'process_exit', expected: true, error: null }]);
+    expect(exited.runState).toBe('sleeping');
+    expect(reduce(exited, [{ type: 'session_state', state: 'idle' }])).toBe(exited);
+  });
+});
+
+describe('reduceStatus: external stays external (R1-19)', () => {
+  const external = sampleStatusFacts({ runState: 'external' });
+
+  it('a setup error in turn_result or assistant_error does not overwrite external', () => {
+    expect(reduce(external, [{ type: 'assistant_error', error: makeError('CLAUDE_AUTH_FAILED') }])).toBe(external);
+    const after = reduce(external, [turn({ outcome: 'error', startupFailure: true, error: makeError('CLAUDE_STARTUP_FAILED') })]);
+    expect(after.runState).toBe('external');
+    expect(after.errorCode).toBeNull();
+  });
 });
 
 describe('reduceStatus: turn_result', () => {
@@ -213,7 +240,7 @@ describe('reduceStatus: flags', () => {
       { type: 'session_id', sessionId: 's' },
       { type: 'permission_mode', mode: 'plan' },
       { type: 'assistant_model', model: 'claude-haiku-5-5' },
-      { type: 'context_estimate', totalTokens: 1, model: null },
+      { type: 'context_estimate', totalTokens: 1, model: null, contextWindow: null },
       { type: 'conversation_reset', trigger: 'clear', correlationId: 'x' },
       { type: 'title_changed', title: 't' },
       { type: 'prompt_lifecycle', messageUuid: 'u', state: 'queued' },

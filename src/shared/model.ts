@@ -757,9 +757,13 @@ export const planDecisionSchema = z.object({
   plan: z.string(),
   /** input.planFilePath (C.4: always from here). */
   planFilePath: z.string().nullable(),
-  /** v1, v2 … per conversation. */
+  /**
+   * v1, v2 … per ENTRY, monotonic across conversations (`/clear` does not restart it): the files
+   * `entries/<entryId>/plans/v<N>.md` and `DecisionStore.savePlan(entryId, version)` know no
+   * conversation, so a per-conversation count would overwrite older plans (WP-13 §6 Nr. 4).
+   */
   version: z.number().int().positive(),
-  /** Text of v(n-1) for "Was hat sich geändert?" (Phase 3). */
+  /** Text of v(n-1) of the same conversation, for "Was hat sich geändert?" (Phase 3). */
   previousVersionPlan: z.string().nullable(),
   /** Modes offered for "approve"; always explicit (C.4). The server decides (bypass only if the profile allows). */
   approveModes: z.array(permissionModeSchema).min(1),

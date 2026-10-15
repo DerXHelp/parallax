@@ -8,7 +8,8 @@ Stub aus WP-00 und wird in WP-20 durch die echte Verdrahtung ersetzt. Datei-gena
 | --- | --- | --- |
 | `**/ports.ts`, `backend/{types,fixture}.ts` | Server-Ports (eingefroren, nur per Contract-Änderung) | Koordinator |
 | `lib/logger.ts`, `lib/ids.ts`, `lib/paths.ts` | Logger, `newId`, Pfad-Helfer (fs-Prüfungen auf `@shared/paths`) | 10 |
-| `lib/process.ts` | `runFile`, `spawnHidden`, `killProcessTree` (ohne Shell, `windowsHide`) | 11 |
+| `lib/process.ts` | `runFile`, `spawnHidden`, `killProcessTree` (ohne Shell, `windowsHide`, nur absolute `.exe`) | 11 |
+| `lib/windows.ts`, `lib/registry.ts`, `lib/edge.ts` | PATH-Suche/npm-Shims, Registry (`reg.exe`), Edge-Suche (R1-08) | 11 |
 | `config.ts`, `http/`, `sync/`, `store/` | Config, Fastify-App, Auth, Origin/Host, CSP, WS, Sync, Stores | 10 |
 | `claude/` | `resolveClaude`, `buildEnv`, `parseProfileArgs`, Profil „Standard“, Preflight-Checks | 11 |
 | `sessions/normalizer/`, `sessions/status/` | Normalizer (zwei Adapter), Statusmaschine | 12 |
@@ -17,4 +18,5 @@ Stub aus WP-00 und wird in WP-20 durch die echte Verdrahtung ersetzt. Datei-gena
 | `launcher/` | Launcher, Lockfile, Edge-Start, „Server beenden“ | 21 |
 
 Regeln: nie aus `src/web` importieren; Logging nur über `lib/logger.ts`; jeder Spawn über
-`lib/process.ts` (`windowsHide: true`, ohne Shell); Pfadregeln nur aus `@shared/paths`.
+`lib/process.ts` (`windowsHide: true`, ohne Shell, nur absolute `.exe`-Pfade – R1-04); Pfadregeln
+nur aus `@shared/paths`; der Server lauscht nur auf `127.0.0.1` (R1-05).

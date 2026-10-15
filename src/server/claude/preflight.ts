@@ -1,23 +1,20 @@
 /**
  * Checks of `pnpm preflight` (Plan "Paketmanager: pnpm 12", "Claude-Profile"): Node version,
  * pnpm version, registry, every profile's `claude` (path, version, C.7 rule) and login, Microsoft
- * Edge. Pure formatting/rating functions plus `runPreflight` with injectable seams. Output is
- * English (Plan: preflight and logs stay English). Never prints e-mail/org (parseAuthStatus).
+ * Edge, and a hint for antivirus products that scan local web traffic (V1-08). Pure
+ * formatting/rating functions plus `runPreflight` with injectable seams. Output is English (Plan:
+ * preflight and logs stay English). Never prints e-mail/org (parseAuthStatus).
  */
 import path from 'node:path';
+import { z } from 'zod';
 import type { ClaudeInstallStatus, Profile } from '@shared/model';
 import { windowsPathIssue } from '@shared/paths';
-import { errnoCode, runFile, systemTool } from '../lib/process';
-import { getEnvVar } from './env';
+import { findEdge } from '../lib/edge';
+import { errnoCode, runFile, systemTool, type RunFileFn } from '../lib/process';
+import { regQuery, type RegQuery } from '../lib/registry';
+import { getEnvVar, nodeFsProbe, resolveExecutable, type FsProbe } from '../lib/windows';
 import type { ClaudeIntegrationImpl } from './integration';
-import {
-  compareVersions,
-  nodeFsDeps,
-  resolveCmdShim,
-  searchPath,
-  type ClaudeFsDeps,
-  type RunFileFn,
-} from './resolveClaude';
+import { compareVersions } from './resolveClaude';
 
 export type PreflightLevel = 'ok' | 'info' | 'warn' | 'fail';
 
@@ -189,6 +186,67 @@ export function checkEdge(edgePath: string | null): PreflightCheck {
   return { id: 'edge', title: 'edge', level: 'ok', detail: edgePath };
 }
 
+/**
+ * Antivirus products known to filter local web traffic. Kaspersky's Web Anti-Virus was observed
+ * injecting a script into http://127.0.0.1 pages, rewriting the CSP and reading the `#code=`
+ * one-time code (V1-08); the others offer comparable HTTP(S) filtering.
+ */
+const WEB_SCANNERS: readonly { pattern: RegExp; name: string }[] = [
+  { pattern: /kaspersky/i, name: 'Kaspersky' },
+  { pattern: /\beset\b/i, name: 'ESET' },
+  { pattern: /bitdefender/i, name: 'Bitdefender' },
+  { pattern: /\bavast\b/i, name: 'Avast' },
+  { pattern: /\bavg\b/i, name: 'AVG' },
+];
+
+/** Antivirus check: warn for a known web-traffic scanner, info otherwise; null if unknown. */
+export function checkAntivirus(products: readonly string[] | null): PreflightCheck | null {
+  if (products === null) return null;
+  const base = { id: 'antivirus', title: 'antivirus' };
+  const scanners = WEB_SCANNERS.filter((scanner) => products.some((p) => scanner.pattern.test(p))).map(
+    (scanner) => scanner.name,
+  );
+  if (scanners.length > 0) {
+    return {
+      ...base,
+      level: 'warn',
+      detail: `${scanners.join(', ')} (scans web traffic)`,
+      hint:
+        'Exclude 127.0.0.1 / the Parallax port from web traffic scanning: injected scripts weaken the ' +
+        'page CSP and can read the one-time login code (README: "Virenscanner mit Web-Traffic-Scan").',
+    };
+  }
+  // Security Center often lists one product several times (one entry per component).
+  const names = [...new Set(products)];
+  return { ...base, level: 'info', detail: names.length === 0 ? 'none registered' : names.join(', ') };
+}
+
+const antivirusOutputSchema = z.union([z.array(z.string()), z.string()]);
+
+/**
+ * Display names of the registered antivirus products (Windows Security Center, `root/SecurityCenter2`
+ * – readable without admin rights on client Windows). Null if unavailable (Windows Server, CIM error).
+ */
+export async function antivirusProducts(run: RunFileFn = runFile): Promise<string[] | null> {
+  if (process.platform !== 'win32') return null;
+  const script =
+    "$p = @(Get-CimInstance -Namespace 'root/SecurityCenter2' -ClassName AntiVirusProduct -ErrorAction Stop | " +
+    'ForEach-Object { [string]$_.displayName }); ConvertTo-Json -InputObject $p -Compress';
+  try {
+    const result = await run(
+      systemTool(path.win32.join('WindowsPowerShell', 'v1.0', 'powershell.exe')),
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
+      { timeoutMs: 20_000, maxOutputBytes: 64 * 1024 },
+    );
+    if (result.exitCode !== 0 || result.timedOut) return null;
+    const parsed = antivirusOutputSchema.safeParse(JSON.parse(result.stdout.trim()) as unknown);
+    if (!parsed.success) return null;
+    return typeof parsed.data === 'string' ? [parsed.data] : parsed.data;
+  } catch {
+    return null;
+  }
+}
+
 /** 0 = no failure (warnings allowed), 1 = at least one failure. */
 export function preflightExitCode(checks: readonly PreflightCheck[]): number {
   return checks.some((check) => check.level === 'fail') ? 1 : 0;
@@ -221,7 +279,7 @@ export interface PnpmCommand {
 /** pnpm that runs this script (`npm_execpath`), else `where pnpm` (.exe or npm shim → .exe). */
 export async function findPnpm(
   env: Readonly<Record<string, string | undefined>>,
-  fs: ClaudeFsDeps,
+  fs: FsProbe,
   nodeExecutable: string,
 ): Promise<PnpmCommand | null> {
   const execPath = getEnvVar(env, 'npm_execpath');
@@ -230,16 +288,8 @@ export async function findPnpm(
     if (ext === '.exe') return { file: execPath, prefix: [] };
     if (['.js', '.cjs', '.mjs'].includes(ext)) return { file: nodeExecutable, prefix: [execPath] };
   }
-  const hits = await searchPath('pnpm', env, fs);
-  const exe = hits.find((hit) => path.win32.extname(hit).toLowerCase() === '.exe');
-  if (exe !== undefined) return { file: exe, prefix: [] };
-  for (const hit of hits) {
-    const ext = path.win32.extname(hit).toLowerCase();
-    if (ext !== '.cmd' && ext !== '.ps1') continue;
-    const target = await resolveCmdShim(hit, fs, 'pnpm.exe');
-    if (target !== null) return { file: target, prefix: [] };
-  }
-  return null;
+  const exe = await resolveExecutable('pnpm', env, fs);
+  return exe === null ? null : { file: exe, prefix: [] };
 }
 
 /** `pnpm/<version>` from npm_config_user_agent. */
@@ -263,75 +313,6 @@ async function runText(
   }
 }
 
-// ---- Edge ----
-
-export type RegQuery = (key: string, view: 64 | 32) => Promise<string | null>;
-
-/** Default value of a `reg query <key> /ve` output (REG_SZ or REG_EXPAND_SZ, language-independent). */
-export function parseRegDefaultValue(
-  output: string,
-  env: Readonly<Record<string, string | undefined>>,
-): string | null {
-  for (const line of output.split(/\r?\n/)) {
-    const match = /\s(REG_SZ|REG_EXPAND_SZ)\s+(.+?)\s*$/.exec(line);
-    if (match === null) continue;
-    let value = (match[2] ?? '').replace(/^"(.*)"$/, '$1');
-    if (match[1] === 'REG_EXPAND_SZ') {
-      value = value.replace(/%([^%]+)%/g, (whole, name: string) => getEnvVar(env, name) ?? whole);
-    }
-    return value === '' ? null : value;
-  }
-  return null;
-}
-
-/** `reg.exe query <key> /ve /reg:<view>` (System32, no shell); null if the key does not exist. */
-export function regQuery(run: RunFileFn = runFile): RegQuery {
-  return async (key, view) => {
-    try {
-      const result = await run(systemTool('reg.exe'), ['query', key, '/ve', `/reg:${view}`], {
-        timeoutMs: 10_000,
-        maxOutputBytes: 64 * 1024,
-      });
-      return result.exitCode === 0 ? result.stdout : null;
-    } catch {
-      return null;
-    }
-  };
-}
-
-const EDGE_APP_PATH = 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\msedge.exe';
-
-/**
- * msedge.exe via App Paths (HKCU, HKLM 64/32 bit) or the usual install folders (C.9: `msedge`
- * is not on the PATH). Null if none exists.
- */
-export async function findEdge(deps: {
-  regQuery: RegQuery;
-  fs: ClaudeFsDeps;
-  env: Readonly<Record<string, string | undefined>>;
-}): Promise<string | null> {
-  const fromRegistry: string[] = [];
-  for (const [key, view] of [
-    [`HKCU\\${EDGE_APP_PATH}`, 64],
-    [`HKLM\\${EDGE_APP_PATH}`, 64],
-    [`HKLM\\${EDGE_APP_PATH}`, 32],
-  ] as const) {
-    const output = await deps.regQuery(key, view);
-    const value = output === null ? null : parseRegDefaultValue(output, deps.env);
-    if (value !== null) fromRegistry.push(value);
-  }
-  const folders = ['ProgramFiles(x86)', 'ProgramFiles', 'LOCALAPPDATA']
-    .map((name) => getEnvVar(deps.env, name))
-    .filter((value): value is string => value !== undefined && value !== '')
-    .map((root) => path.win32.join(root, 'Microsoft', 'Edge', 'Application', 'msedge.exe'));
-  for (const candidate of [...fromRegistry, ...folders]) {
-    if (windowsPathIssue(candidate) !== null) continue;
-    if (path.win32.extname(candidate).toLowerCase() !== '.exe') continue;
-    if (await deps.fs.isFile(candidate)) return candidate;
-  }
-  return null;
-}
-
 // ---- run ----
 
 export interface PreflightDeps {
@@ -344,9 +325,11 @@ export interface PreflightDeps {
   /** node.exe for a JS pnpm (process.execPath). */
   nodeExecutable: string;
   sdk: { sdkVersion: string; claudeCodeVersion: string } | null;
-  fs?: ClaudeFsDeps;
+  fs?: FsProbe;
   runFile?: RunFileFn;
   regQuery?: RegQuery;
+  /** Registered antivirus products (default: Windows Security Center via CIM); null = unknown. */
+  antivirus?: () => Promise<string[] | null>;
 }
 
 export interface PreflightReport {
@@ -355,7 +338,7 @@ export interface PreflightReport {
 }
 
 export async function runPreflight(deps: PreflightDeps): Promise<PreflightReport> {
-  const fs = deps.fs ?? nodeFsDeps;
+  const fs = deps.fs ?? nodeFsProbe;
   const run = deps.runFile ?? runFile;
   const checks: PreflightCheck[] = [checkNode(deps.nodeVersion)];
 
@@ -387,5 +370,7 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightReport
 
   const edge = await findEdge({ regQuery: deps.regQuery ?? regQuery(run), fs, env: deps.env });
   checks.push(checkEdge(edge));
+  const antivirus = checkAntivirus(await (deps.antivirus ?? (() => antivirusProducts(run)))());
+  if (antivirus !== null) checks.push(antivirus);
   return { checks, exitCode: preflightExitCode(checks) };
 }

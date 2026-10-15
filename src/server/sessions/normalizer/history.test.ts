@@ -227,6 +227,24 @@ describe('normalizeHistory details', () => {
     ]);
   });
 
+  it('maps HistoryMessage.origin like the live adapter; absent/null/human → human (R1-07)', () => {
+    const { items } = normalizeHistory(
+      [
+        user('o1', 'typed'),
+        { ...user('o2', 'from a channel'), origin: { kind: 'channel' } },
+        { ...user('o3', 'explicit human'), origin: { kind: 'human' } },
+        { ...user('o4', 'unknown'), origin: null },
+      ],
+      ctx,
+    );
+    expect(items.map((i) => (i.kind === 'user_message' ? [i.id, i.origin] : null))).toEqual([
+      ['o1', 'human'],
+      ['o2', 'other'],
+      ['o3', 'human'],
+      ['o4', 'human'],
+    ]);
+  });
+
   it('closes tool calls without result as interrupted and keeps the Edit input for the diff fallback', () => {
     const { items } = normalizeHistory(
       [

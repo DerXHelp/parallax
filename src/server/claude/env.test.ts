@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { SAMPLE_IDS } from '@shared/samples';
+import { getEnvVar } from '../lib/windows';
 import { CommandError } from '../sync/ports';
 import {
   CLAUDE_CODE_ENV_ALLOWLIST,
+  TERMINAL_TOOL_SHELL_VARS,
   buildEnv,
   buildEnvReport,
   clientAppId,
   deleteEnvVar,
-  getEnvVar,
+  envRemovalReason,
   resolveEnvRefs,
   setEnvVar,
   shouldRemoveEnvVar,
@@ -59,16 +61,28 @@ describe('shouldRemoveEnvVar (C.2, A.7)', () => {
     'CLAUDE_EFFORT',
     'CLAUDE_AGENT_SDK_VERSION',
     'CLAUDE_AGENT_SDK_CLIENT_APP',
-    // pnpm/npm run state
+    // R1-03: further markers of the calling session (AI_AGENT = claude-code_<version>_agent)
+    'AI_AGENT',
+    'ai_agent',
+    'CLAUDE_PROJECT_DIR',
+    'CLAUDE_ENV_FILE',
+    'CLAUDE_PLUGIN_ROOT',
+    'CLAUDE_PLUGIN_DATA',
+    // pnpm/npm run state (names observed with `pnpm run` 12.8)
     'npm_config_user_agent',
+    'npm_config_node_gyp',
     'npm_execpath',
     'npm_node_execpath',
     'npm_command',
     'npm_lifecycle_event',
+    'npm_lifecycle_script',
+    'npm_package_json',
     'npm_package_name',
+    'npm_package_version',
     'NPM_CONFIG_REGISTRY',
     'PNPM_HOME',
     'PNPM_PACKAGE_NAME',
+    'PNPM_SCRIPT_SRC_DIR',
     'pnpm_config_verify_deps_before_run',
     'INIT_CWD',
     'NODE_ENV',
@@ -102,10 +116,39 @@ describe('shouldRemoveEnvVar (C.2, A.7)', () => {
     'USERPROFILE',
     'SystemRoot',
     'GIT_EDITOR',
+    'GIT_TERMINAL_PROMPT',
+    'GCM_INTERACTIVE',
+    'NO_COLOR',
+    'MCP_TIMEOUT',
     'NoDefaultCurrentDirectoryInExePath',
     'HTTPS_PROXY',
+    'AI_AGENTS',
+    'CLAUDE_PROJECT',
   ])('keeps %s', (name) => {
     expect(shouldRemoveEnvVar(name)).toBe(false);
+  });
+
+  it.each([
+    ['CLAUDECODE', 'session'],
+    ['CLAUDE_CODE_SESSION_ID', 'session'],
+    ['CLAUDE_AGENT_SDK_VERSION', 'session'],
+    ['AI_AGENT', 'session'],
+    ['PARALLAX_ENTRY_ID', 'session'],
+    ['INIT_CWD', 'run_state'],
+    ['npm_lifecycle_event', 'run_state'],
+    ['npm_package_name', 'run_state'],
+    ['npm_execpath', 'run_state'],
+    ['npm_config_user_agent', 'run_state'],
+    ['PNPM_SCRIPT_SRC_DIR', 'run_state'],
+    ['NPM_CONFIG_REGISTRY', 'machine_overridable'],
+    ['npm_config_cafile', 'machine_overridable'],
+    ['PNPM_HOME', 'machine_overridable'],
+    ['NODE_OPTIONS', 'machine_overridable'],
+    ['NODE_ENV', 'machine_overridable'],
+    ['CLAUDE_CODE_GIT_BASH_PATH', null],
+    ['PATH', null],
+  ] as const)('classifies %s as %s', (name, reason) => {
+    expect(envRemovalReason(name)).toBe(reason);
   });
 
   it('allowlists only machine-level CLAUDE_CODE_* variables', () => {
@@ -205,6 +248,7 @@ describe('buildEnvReport (C.2)', () => {
     CLAUDE_EFFORT: 'high',
     CLAUDE_AGENT_SDK_VERSION: '0.3.296',
     CLAUDE_CONFIG_DIR: 'C:\\Users\\u\\.claude-work',
+    AI_AGENT: 'claude-code_2-1-299_agent',
     GIT_EDITOR: 'true',
     INIT_CWD: 'D:\\repo',
     NODE: 'C:\\Program Files\\nodejs\\node.exe',
@@ -251,6 +295,7 @@ describe('buildEnvReport (C.2)', () => {
     const report = buildEnvReport(input(devShell));
     expect(report.removed).toEqual(
       [
+        'AI_AGENT',
         'CLAUDECODE',
         'CLAUDE_CODE_ENTRYPOINT',
         'CLAUDE_CODE_SESSION_ID',
@@ -463,6 +508,168 @@ describe('buildEnvReport (C.2)', () => {
       expect(issues).toEqual([{ code: 'PATH_REJECTED', params: { reason, field: 'configDir' } }]);
       expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
     });
+  });
+});
+
+describe('persistent machine variables (Nexus, ADR-021)', () => {
+  const NEXUS = 'https://nexus.corp/repository/npm/';
+  /** A dev shell inside Claude Code + `pnpm run` on a machine with a company registry. */
+  const shell: Record<string, string> = {
+    Path: 'C:\\Windows',
+    NPM_CONFIG_REGISTRY: NEXUS,
+    PNPM_HOME: 'C:\\Users\\u\\AppData\\Local\\pnpm',
+    NODE_OPTIONS: '--use-system-ca',
+    NODE_ENV: 'development',
+    npm_config_cafile: 'C:\\certs\\corp.pem',
+    npm_lifecycle_event: 'dev',
+    npm_execpath: 'C:\\pnpm\\pnpm.cjs',
+    INIT_CWD: 'D:\\repo',
+    CLAUDECODE: '1',
+    CLAUDE_CODE_SESSION_ID: 'session',
+    CLAUDE_AGENT_SDK_VERSION: '0.3.296',
+    AI_AGENT: 'claude-code_2-1-299_agent',
+    PARALLAX_ENTRY_ID: 'en_x',
+  };
+  const report = (persistent: Record<string, string> | null) =>
+    buildEnvReport(
+      input(shell, {
+        persistent:
+          persistent === null
+            ? null
+            : new Map(Object.entries(persistent).map(([k, v]) => [k.toUpperCase(), v])),
+      }),
+    );
+
+  it('without a persistent source everything removable is removed (default)', () => {
+    const { env, keptPersistent } = report(null);
+    expect(keptPersistent).toEqual([]);
+    expect(
+      Object.keys(env).filter(
+        (key) => key !== 'Path' && !key.startsWith('PARALLAX') && !key.startsWith('CLAUDE_'),
+      ),
+    ).toEqual([]);
+  });
+
+  it('keeps NPM_*/PNPM_*/NODE_OPTIONS/NODE_ENV that are persistent with the same value', () => {
+    const { env, keptPersistent, removed } = report({
+      NPM_CONFIG_REGISTRY: NEXUS,
+      PNPM_HOME: 'C:\\Users\\u\\AppData\\Local\\pnpm',
+      NODE_OPTIONS: '--use-system-ca',
+      npm_config_cafile: 'C:\\certs\\corp.pem',
+    });
+    expect(keptPersistent).toEqual(
+      ['NODE_OPTIONS', 'npm_config_cafile', 'NPM_CONFIG_REGISTRY', 'PNPM_HOME'].sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    );
+    expect(env).toMatchObject({
+      NPM_CONFIG_REGISTRY: NEXUS,
+      PNPM_HOME: 'C:\\Users\\u\\AppData\\Local\\pnpm',
+      NODE_OPTIONS: '--use-system-ca',
+      npm_config_cafile: 'C:\\certs\\corp.pem',
+    });
+    expect(removed).toContain('NODE_ENV');
+  });
+
+  it('removes a persistent name whose process value differs (run state of pnpm run)', () => {
+    const { env, removed } = report({
+      NPM_CONFIG_REGISTRY: 'https://registry.npmjs.org/',
+      NODE_ENV: 'production',
+    });
+    expect(env.NPM_CONFIG_REGISTRY).toBeUndefined();
+    expect(env.NODE_ENV).toBeUndefined();
+    expect(removed).toEqual(expect.arrayContaining(['NPM_CONFIG_REGISTRY', 'NODE_ENV']));
+  });
+
+  it('never keeps session markers or run state, even when they are persistent with the same value', () => {
+    const { env, keptPersistent } = report({
+      CLAUDECODE: '1',
+      CLAUDE_CODE_SESSION_ID: 'session',
+      CLAUDE_AGENT_SDK_VERSION: '0.3.296',
+      AI_AGENT: 'claude-code_2-1-299_agent',
+      PARALLAX_ENTRY_ID: 'en_x',
+      npm_lifecycle_event: 'dev',
+      npm_execpath: 'C:\\pnpm\\pnpm.cjs',
+      INIT_CWD: 'D:\\repo',
+    });
+    expect(keptPersistent).toEqual([]);
+    for (const name of [
+      'CLAUDECODE',
+      'CLAUDE_CODE_SESSION_ID',
+      'CLAUDE_AGENT_SDK_VERSION',
+      'AI_AGENT',
+      'npm_lifecycle_event',
+      'npm_execpath',
+      'INIT_CWD',
+    ]) {
+      expect(env[name], name).toBeUndefined();
+    }
+    expect(env.PARALLAX_ENTRY_ID).toBe(SAMPLE_IDS.entry);
+  });
+
+  it('matches names case-insensitively (persistent source is upper-cased)', () => {
+    const { env } = buildEnvReport(
+      input({ npm_config_registry: NEXUS }, { persistent: new Map([['NPM_CONFIG_REGISTRY', NEXUS]]) }),
+    );
+    expect(env.npm_config_registry).toBe(NEXUS);
+  });
+});
+
+describe('target terminal (R1-03, Phase 2)', () => {
+  const toolShell: Record<string, string> = {
+    Path: 'C:\\Windows',
+    GIT_EDITOR: 'true',
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_ASKPASS: '',
+    GCM_INTERACTIVE: 'never',
+    COREPACK_ENABLE_AUTO_PIN: '0',
+    NO_COLOR: '1',
+    PYTHONIOENCODING: 'utf-8:surrogateescape',
+    PSExecutionPolicyPreference: 'Bypass',
+    NoDefaultCurrentDirectoryInExePath: '1',
+    MCP_TIMEOUT: '120000',
+  };
+
+  it('lists exactly the observed tool-shell variables', () => {
+    expect(TERMINAL_TOOL_SHELL_VARS).toEqual([
+      'GIT_EDITOR',
+      'GIT_TERMINAL_PROMPT',
+      'GIT_ASKPASS',
+      'GCM_INTERACTIVE',
+      'COREPACK_ENABLE_AUTO_PIN',
+      'NO_COLOR',
+      'PYTHONIOENCODING',
+      'PSEXECUTIONPOLICYPREFERENCE',
+    ]);
+  });
+
+  it('drops the tool-shell settings of a calling Claude session, keeps NoDefaultCurrentDirectoryInExePath', () => {
+    const { env } = buildEnvReport(input({ ...toolShell, CLAUDECODE: '1' }, { target: 'terminal' }));
+    for (const name of Object.keys(toolShell)) {
+      const expectedKept = ['Path', 'NoDefaultCurrentDirectoryInExePath', 'MCP_TIMEOUT'].includes(name);
+      expect(name in env, name).toBe(expectedKept);
+    }
+  });
+
+  it('keeps them for the SDK target and for a terminal not started from Claude Code', () => {
+    expect(buildEnvReport(input({ ...toolShell, CLAUDECODE: '1' })).env).toMatchObject({
+      GIT_EDITOR: 'true',
+    });
+    expect(buildEnvReport(input(toolShell, { target: 'terminal' })).env).toMatchObject({
+      GIT_EDITOR: 'true',
+      NO_COLOR: '1',
+    });
+  });
+
+  it('keeps a tool-shell variable the user set persistently with the same value', () => {
+    const { env, keptPersistent } = buildEnvReport(
+      input(
+        { ...toolShell, GIT_EDITOR: 'code --wait', CLAUDECODE: '1' },
+        { target: 'terminal', persistent: new Map([['GIT_EDITOR', 'code --wait']]) },
+      ),
+    );
+    expect(env.GIT_EDITOR).toBe('code --wait');
+    expect(keptPersistent).toEqual(['GIT_EDITOR']);
   });
 });
 

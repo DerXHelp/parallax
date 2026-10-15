@@ -14,8 +14,9 @@ export type AuthStatusView = ClaudeInstallStatus['auth'];
 /** Raw output, tolerant (unknown fields kept, all optional except `loggedIn`). */
 export const rawAuthStatusSchema = z.looseObject({
   loggedIn: z.boolean(),
-  authMethod: z.string().optional(),
-  apiProvider: z.string().optional(),
+  // nullable: the logged-out format is not recorded; null must not turn into CLAUDE_AUTH_FAILED (R1-20).
+  authMethod: z.string().nullable().optional(),
+  apiProvider: z.string().nullable().optional(),
   subscriptionType: z.string().nullable().optional(),
   /** Personal data: never log, persist or send (F.17). */
   email: z.string().nullable().optional(),

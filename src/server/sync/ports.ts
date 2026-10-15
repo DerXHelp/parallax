@@ -6,7 +6,7 @@
  * WP-10 modules (fixed names): http/app.ts (createApp), http/auth.ts (POST /api/auth,
  * GET /api/auth/status, POST /api/launcher/code, device cookie, one-time codes), http/origin.ts
  * (Host/Origin/Sec-Fetch-Site guards) – contract src/shared/http.ts, rules docs/architecture.md
- * §5.1; sync/hub.ts (createSyncHub({source}): SessionPublisher & { attach(app) }),
+ * §5.1; sync/hub.ts (createSyncHub({source, instance}): SessionPublisher & { attach(app, …) }),
  * store/jsonStore.ts, store/registry.ts, store/transcripts.ts, store/blobs.ts (meta file
  * `blobs/<blobId>.meta.json` = blobRefSchema, R0-30), store/decisions.ts, store/settings.ts,
  * config.ts, lib/logger.ts, lib/ids.ts (newId(prefix)), lib/paths.ts (fs checks on top of
@@ -157,6 +157,8 @@ export interface DecisionStore {
   save(entryId: EntryId, records: DecisionRecord[]): void;
   savePlan(entryId: EntryId, version: number, text: string): Promise<void>;
   readPlan(entryId: EntryId, version: number): Promise<string | null>;
+  /** Writes pending records now (shutdown: open records must survive as `expired`, A.10; WP-13 §6). */
+  flush(): Promise<void>;
 }
 
 export interface SettingsStore {

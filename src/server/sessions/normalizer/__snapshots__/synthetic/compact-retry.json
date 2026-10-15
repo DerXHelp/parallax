@@ -85,7 +85,8 @@
       "seq": 12,
       "type": "context_estimate",
       "totalTokens": 20503,
-      "model": "claude-haiku-5-5"
+      "model": "claude-haiku-5-5",
+      "contextWindow": null
     },
     {
       "seq": 18,

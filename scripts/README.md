@@ -13,7 +13,13 @@ auf (kein Modell-Aufruf, keine Tokens). Geprüft werden: Node (Fehler unter 22, 
 (≥ 12.8), Registry (`pnpm config get registry`, ohne Zugangsdaten angezeigt), Agent SDK, für jedes
 Profil (Phase 1: „Standard“) der aufgelöste `claude`-Pfad mit Version (rot, wenn älter als
 `claudeCodeVersion` des SDK) und der Login (Methode, Provider, Abo – nie E-Mail/Organisation),
-Microsoft Edge (App Paths bzw. Program Files).
+Microsoft Edge (App Paths bzw. Program Files) und – seit den R1-Fixes – registrierte Virenscanner
+(Windows-Sicherheitscenter per CIM, ohne Admin-Rechte): Warnung bei Produkten mit Web-Traffic-Scan
+(Kaspersky, ESET, Bitdefender, Avast, AVG; README „Virenscanner mit Web-Traffic-Scan“), sonst Info;
+ist das Sicherheitscenter nicht lesbar (z. B. Windows Server), entfällt die Zeile.
+
+Der Recorder (`scripts/record/processes.ts`) startet PowerShell und `taskkill` nur noch über
+`runFile` mit absolutem System32-Pfad (R1-04/R1-16).
 
 Exit-Code: `0` = ok (Warnungen erlaubt), `1` = mindestens ein Fehler, `2` = der Check selbst ist
 abgestürzt. Logik: `src/server/claude/preflight.ts`.

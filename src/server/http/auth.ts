@@ -12,6 +12,7 @@ import {
   authCodeSchema,
   authCookieName,
   authExchangeRequestSchema,
+  launcherTokenSchema,
   parseBearerToken,
   type AuthExchangeResponse,
   type AuthStatusResponse,
@@ -20,7 +21,8 @@ import {
 } from '@shared/http';
 import { newToken } from '../lib/ids';
 import { logger as rootLogger, registerSecret, unregisterSecret } from '../lib/logger';
-import { JsonStore, type StoreFs, type StoreWarningSink } from '../store/jsonStore';
+import { fsErrorCode } from '../lib/paths';
+import { JsonStore, nodeStoreFs, type StoreFs, type StoreWarningSink } from '../store/jsonStore';
 import { sendError } from './reply';
 
 /**
@@ -36,11 +38,10 @@ export const AUTH_SECRET_SCHEMA_VERSION = 1;
 /** Outstanding one-time codes kept at most (oldest dropped first). */
 export const MAX_PENDING_CODES = 100;
 
-const base64Url32Schema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
-
 export const authSecretFileSchema = z.object({
   schemaVersion: z.literal(AUTH_SECRET_SCHEMA_VERSION),
-  secret: base64Url32Schema,
+  /** 32 random bytes, base64url – the same format as the launcher token (R1-14). */
+  secret: launcherTokenSchema,
   createdAt: isoDateTimeSchema,
 });
 export type AuthSecretFile = z.infer<typeof authSecretFileSchema>;
@@ -109,8 +110,9 @@ export function readCookie(header: string, name: string): string | undefined {
 export async function createAuthService(options: AuthServiceOptions): Promise<AuthService> {
   const now = options.now ?? Date.now;
   const log = (options.logger ?? rootLogger).child({ module: 'auth' });
+  const file = path.join(options.home, AUTH_SECRET_FILE);
   const store = new JsonStore<AuthSecretFile>({
-    file: path.join(options.home, AUTH_SECRET_FILE),
+    file,
     schema: authSecretFileSchema,
     version: AUTH_SECRET_SCHEMA_VERSION,
     defaults: () => ({
@@ -119,14 +121,27 @@ export async function createAuthService(options: AuthServiceOptions): Promise<Au
       createdAt: new Date(now()).toISOString(),
     }),
     debounceMs: 0,
+    // R1-11: no backup – a revoked secret must never come back from a .bak (a lost secret only
+    // costs one new sign-in).
+    backup: false,
     warnings: options.warnings,
     fs: options.fs,
     logger: options.logger,
   });
+  /** Removes a `.bak` of an older build (or of the secret before a rotation). */
+  const removeBackup = async (): Promise<void> => {
+    try {
+      await (options.fs ?? nodeStoreFs).unlink(`${file}.bak`);
+    } catch (error) {
+      if (fsErrorCode(error) !== 'ENOENT')
+        log.warn({ err: error }, 'could not remove the auth secret backup');
+    }
+  };
   let secretFile = await store.load();
   // Persist a freshly generated (or restored) secret right away.
   store.set(secretFile);
   await store.flush();
+  await removeBackup();
   let secretKey = Buffer.from(secretFile.secret, 'base64url');
   registerSecret(secretFile.secret);
 
@@ -219,6 +234,7 @@ export async function createAuthService(options: AuthServiceOptions): Promise<Au
       secretKey = Buffer.from(secretFile.secret, 'base64url');
       registerSecret(secretFile.secret);
       await store.flush();
+      await removeBackup();
       log.info('auth secret rotated, all device cookies revoked');
       for (const listener of revokedListeners) listener();
     },

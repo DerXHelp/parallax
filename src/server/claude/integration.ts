@@ -9,23 +9,16 @@ import { makeError, type ErrorPayload } from '@shared/errors';
 import type { EntryId, ProfileId } from '@shared/common';
 import type { ClaudeInstallStatus, Profile } from '@shared/model';
 import { logger } from '../lib/logger';
-import { errnoCode, runFile } from '../lib/process';
+import { errnoCode, runFile, type RunFileFn } from '../lib/process';
+import { readPersistentEnvironment, type PersistentEnvironment } from '../lib/registry';
+import { nodeFsProbe, searchPath, type FsProbe } from '../lib/windows';
 import { CommandError } from '../sync/ports';
 import { parseAuthStatus, UNKNOWN_AUTH, type AuthStatusView } from './authStatus';
 import { buildEnv, buildEnvReport, clientAppId } from './env';
 import { parseProfileArgs } from './profileArgs';
 import { createProfileStore, type MutableProfileStore } from './profiles';
 import type { ClaudeIntegration, LaunchSpec } from './ports';
-import {
-  cliVersionStatus,
-  nodeFsDeps,
-  readSdkManifest,
-  resolveClaude,
-  searchPath,
-  type ClaudeFsDeps,
-  type ResolveClaudeResult,
-  type RunFileFn,
-} from './resolveClaude';
+import { cliVersionStatus, readSdkManifest, resolveClaude, type ResolveClaudeResult } from './resolveClaude';
 
 export const AUTH_STATUS_TIMEOUT_MS = 20_000;
 const DEFAULT_RESOLVE_CACHE_MS = 5 * 60_000;
@@ -37,8 +30,13 @@ export interface ClaudeIntegrationDeps {
   profiles?: MutableProfileStore;
   /** Base environment, read at every call (default: process.env). */
   baseEnv?: () => Readonly<Record<string, string | undefined>>;
+  /**
+   * Persistent environment for the buildEnv exception (ADR-021), read once per integration and
+   * cached (default: HKCU/HKLM `Environment` via reg.exe, errors → no exception). Tests inject.
+   */
+  persistentEnv?: () => Promise<PersistentEnvironment | null>;
   /** Guarded real file system by default. */
-  fs?: ClaudeFsDeps;
+  fs?: FsProbe;
   /** `where claude` over the built env; default: in-process PATH search (searchPath). */
   where?: (name: string, env: Readonly<Record<string, string>>) => Promise<string[]>;
   runFile?: RunFileFn;
@@ -68,7 +66,17 @@ interface CacheEntry {
 export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeIntegrationImpl {
   const profiles = deps.profiles ?? createProfileStore();
   const baseEnv = deps.baseEnv ?? (() => process.env);
-  const fs = deps.fs ?? nodeFsDeps;
+  const fs = deps.fs ?? nodeFsProbe;
+  const readPersistent = deps.persistentEnv ?? (() => readPersistentEnvironment({ env: baseEnv() }));
+  let persistentCache: Promise<PersistentEnvironment | null> | undefined;
+  /** Read once, cached; a failing source means "no exception" (fail closed). */
+  const persistentEnv = (): Promise<PersistentEnvironment | null> => {
+    persistentCache ??= readPersistent().catch((error: unknown) => {
+      logger.debug({ err: error }, 'persistent environment unreadable – no buildEnv exception');
+      return null;
+    });
+    return persistentCache;
+  };
   const where =
     deps.where ?? ((name: string, env: Readonly<Record<string, string>>) => searchPath(name, env, fs));
   const run = deps.runFile ?? runFile;
@@ -102,7 +110,7 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
       ...(deps.versionTimeoutMs === undefined ? {} : { versionTimeoutMs: deps.versionTimeoutMs }),
     })
       .then((result) => {
-        if (result.ok) cache.set(profile.id, { at: Date.now(), result });
+        if (result.ok) cache.set(profile.id, { at: now().getTime(), result });
         else cache.delete(profile.id);
         return result;
       })
@@ -118,7 +126,7 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
     env: Record<string, string>,
   ): Promise<ResolveClaudeResult> => {
     const hit = cache.get(profile.id);
-    if (hit !== undefined && Date.now() - hit.at < cacheMs && (await fs.isFile(hit.result.path)))
+    if (hit !== undefined && now().getTime() - hit.at < cacheMs && (await fs.isFile(hit.result.path)))
       return hit.result;
     return resolveFresh(profile, env);
   };
@@ -161,7 +169,13 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
       error: null,
       checkedAt: now().toISOString(),
     };
-    const report = buildEnvReport({ base: baseEnv(), profile, entryId: null, clientApp });
+    const report = buildEnvReport({
+      base: baseEnv(),
+      profile,
+      entryId: null,
+      clientApp,
+      persistent: await persistentEnv(),
+    });
     const envIssue = report.issues[0];
     if (envIssue !== undefined) return { ...status, error: envIssue };
 
@@ -189,7 +203,13 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
       if (args.errors.length > 0) {
         throw new CommandError(makeError('PROFILE_INVALID', { count: args.errors.length }));
       }
-      const env = buildEnv({ base: baseEnv(), profile, entryId, clientApp });
+      const env = buildEnv({
+        base: baseEnv(),
+        profile,
+        entryId,
+        clientApp,
+        persistent: await persistentEnv(),
+      });
       const resolved = await resolveCached(profile, env);
       if (!resolved.ok) throw new CommandError(resolved.error);
       logger.debug(

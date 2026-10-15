@@ -2,6 +2,7 @@ import { once } from 'node:events';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   assertSpawnableFile,
+  childProcesses,
   errnoCode,
   isProcessAlive,
   killProcessTree,
@@ -50,24 +51,61 @@ function grandchildPid(stdout: string): number {
   return pid;
 }
 
-describe('assertSpawnableFile (only .exe, no shell)', () => {
-  it.each(['claude.exe', 'C:\\Users\\u\\.local\\bin\\claude.EXE', 'git', 'taskkill'])(
-    'accepts %s',
-    (file) => {
-      expect(() => {
-        assertSpawnableFile(file);
-      }).not.toThrow();
-    },
-  );
+describe('assertSpawnableFile (only absolute .exe paths, no shell – R1-04)', () => {
+  it.each([
+    'C:\\Users\\u\\.local\\bin\\claude.EXE',
+    'C:\\Windows\\System32\\taskkill.exe',
+    'D:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+  ])('accepts %s', (file) => {
+    expect(() => {
+      assertSpawnableFile(file, 'win32');
+    }).not.toThrow();
+  });
 
-  it.each(['claude.cmd', 'C:\\x\\run.bat', 'x.ps1', 'x.js', 'x.com', 'x.lnk', '', 'a\0b.exe'])(
-    'rejects %j',
-    (file) => {
-      expect(() => {
-        assertSpawnableFile(file);
-      }).toThrow(TypeError);
-    },
-  );
+  it.each([
+    // bare names: libuv would search the child's cwd first (planted git.exe in a cloned repo)
+    'git',
+    'git.exe',
+    'explorer.exe',
+    'taskkill',
+    'claude.exe',
+    // relative / drive-relative / unsafe locations
+    '.\\git.exe',
+    'tools\\git.exe',
+    'C:git.exe',
+    '\\\\server\\share\\git.exe',
+    '\\\\?\\C:\\x\\git.exe',
+    'C:\\x\\git.exe:stream',
+    // not an .exe
+    'C:\\x\\claude.cmd',
+    'C:\\x\\run.bat',
+    'C:\\x\\x.ps1',
+    'C:\\x\\x.js',
+    'C:\\x\\x.com',
+    'C:\\x\\x.lnk',
+    'C:\\x\\noext',
+    '',
+    'C:\\a\0b.exe',
+  ])('rejects %j', (file) => {
+    expect(() => {
+      assertSpawnableFile(file, 'win32');
+    }).toThrow(TypeError);
+  });
+
+  it('requires an absolute path on other platforms (tests only)', () => {
+    expect(() => {
+      assertSpawnableFile('/usr/bin/node', 'linux');
+    }).not.toThrow();
+    expect(() => {
+      assertSpawnableFile('node', 'linux');
+    }).toThrow(TypeError);
+  });
+
+  it('is enforced by runFile and spawnHidden for bare names', async () => {
+    if (process.platform !== 'win32') return;
+    await expect(runFile('git', ['--version'], { timeoutMs: 5_000 })).rejects.toBeInstanceOf(TypeError);
+    expect(() => spawnHidden('explorer.exe', [])).toThrow(TypeError);
+  });
 });
 
 describe('systemTool / errnoCode', () => {
@@ -254,5 +292,33 @@ describe('processInfo (orphan cleanup, C.8)', () => {
 
   it('validates the pid', async () => {
     await expect(processInfo(0)).rejects.toBeInstanceOf(RangeError);
+    await expect(childProcesses(-1)).rejects.toBeInstanceOf(RangeError);
   });
+
+  windowsOnly(
+    'childProcesses lists the direct children with name and start time (WP-13 §6 Nr. 7)',
+    async () => {
+      const child = spawnHidden(NODE, ['-e', PARENT_WITH_GRANDCHILD], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const pid = child.pid;
+      if (pid === undefined) throw new Error('no pid');
+      started.add(pid);
+      let stdout = '';
+      child.stdout?.setEncoding('utf8');
+      child.stdout?.on('data', (chunk: string) => {
+        stdout += chunk;
+      });
+      expect(await waitUntil(() => stdout.includes('\n'), 10_000)).toBe(true);
+      const grandchild = grandchildPid(stdout);
+      const children = await childProcesses(pid);
+      const found = children.find((c) => c.pid === grandchild);
+      expect(found).toMatchObject({ pid: grandchild, parentPid: pid });
+      expect(found?.name.toLowerCase()).toBe('node.exe');
+      expect(found?.startedAt.getTime()).toBeLessThanOrEqual(Date.now());
+      // The grandchild starts no node.exe of its own (Windows may attach a conhost.exe).
+      const grandchildren = await childProcesses(grandchild);
+      expect(grandchildren.filter((c) => c.name.toLowerCase() === 'node.exe')).toEqual([]);
+      expect(grandchildren.every((c) => c.parentPid === grandchild)).toBe(true);
+    },
+    60_000,
+  );
 });

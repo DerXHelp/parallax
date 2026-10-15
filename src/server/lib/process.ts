@@ -1,14 +1,18 @@
 /**
  * Process helpers of the server (WP-11 owns this file; WP-13 and WP-21 use it). Every spawn goes
  * through here: always an argument array, `shell: false`, `windowsHide: true` (C.8, C.10), only
- * `.exe` files (C.7; a `.cmd`/`.bat` would need a shell). stderr of a piped child is always read
- * (F.16: a full stderr pipe blocks the child). Process trees end with `taskkill /PID <pid> /T /F`.
- * Contract of the exports: docs/architecture.md §2.2.
+ * ABSOLUTE `.exe` paths (C.7; a `.cmd`/`.bat` would need a shell; a bare name like `git` would be
+ * searched in the child's cwd first by libuv – a planted `git.exe` in a cloned repo, R1-04 /
+ * ADR-022). Resolve bare names with `resolveExecutable`/`searchPath` (lib/windows.ts) or
+ * `systemTool()`. stderr of a piped child is always read (F.16: a full stderr pipe blocks the
+ * child). Process trees end with `taskkill /PID <pid> /T /F`. Contract: docs/architecture.md §2.2.
  */
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import path from 'node:path';
 import { z } from 'zod';
+import { windowsPathIssue } from '@shared/paths';
 import { logger } from './logger';
+import { fsErrorCode } from './paths';
 
 export interface RunFileOptions {
   cwd?: string;
@@ -28,6 +32,13 @@ export interface RunFileResult {
   timedOut: boolean;
 }
 
+/** Signature of `runFile` (seam for tests and for the lookups in lib/registry.ts, claude/). */
+export type RunFileFn = (
+  file: string,
+  args: readonly string[],
+  options: RunFileOptions,
+) => Promise<RunFileResult>;
+
 export interface SpawnHiddenOptions extends Omit<SpawnOptions, 'shell' | 'windowsHide'> {
   /**
    * Receives stderr text when stderr is piped (the default). Without it the text goes to the
@@ -41,20 +52,35 @@ const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
 const CLOSE_GRACE_MS = 5_000;
 const STDERR_LOG_CHARS = 2_000;
 
-/** `code` of a Node system error (ENOENT, ESRCH, EPERM …). */
+/** `code` of a Node system error (ENOENT, ESRCH, EPERM …); same rule as `fsErrorCode` (lib/paths.ts). */
 export function errnoCode(error: unknown): string | undefined {
-  return error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+  return fsErrorCode(error) ?? undefined;
 }
 
 /**
- * Throws for files that cannot run without a shell (`.cmd`, `.bat`, `.ps1` …). Allowed: `*.exe`
- * and bare names without an extension (libuv resolves those only to `.exe`/`.com` on the PATH).
+ * Throws a TypeError unless `file` can be started safely without a shell (R1-04):
+ * - Windows: an absolute, safe path (`@shared/paths`: no relative/drive-relative, UNC, device or
+ *   ADS path) ending in `.exe`. Bare names (`git`, `explorer.exe`) are refused – libuv would look
+ *   in the child's cwd before the PATH unless `NoDefaultCurrentDirectoryInExePath` is set.
+ *   `.cmd`/`.bat`/`.ps1`/`.com` are refused (they need a shell or are not what we resolved).
+ * - Other platforms (tests only): an absolute path.
  */
-export function assertSpawnableFile(file: string): void {
+export function assertSpawnableFile(file: string, platform: NodeJS.Platform = process.platform): void {
   if (file === '' || file.includes('\0')) throw new TypeError('spawn: empty or invalid executable');
-  const ext = path.win32.extname(file);
-  if (ext !== '' && ext.toLowerCase() !== '.exe') {
+  if (platform !== 'win32') {
+    if (!path.posix.isAbsolute(file))
+      throw new TypeError(`spawn: only absolute paths are started, got "${file}"`);
+    return;
+  }
+  if (path.win32.extname(file).toLowerCase() !== '.exe') {
     throw new TypeError(`spawn: only .exe files are started (no shell), got "${path.win32.basename(file)}"`);
+  }
+  const issue = windowsPathIssue(file);
+  if (issue !== null) {
+    throw new TypeError(
+      `spawn: only absolute .exe paths are started (${issue}), got "${path.win32.basename(file)}" – ` +
+        'resolve bare names with resolveExecutable()/systemTool()',
+    );
   }
 }
 
@@ -226,7 +252,9 @@ export async function killProcessTree(pid: number): Promise<void> {
 /** taskkill itself is run without the timeout-kill path of runFile (no recursion). */
 function runTaskkill(pid: number): Promise<RunFileResult> {
   return new Promise<RunFileResult>((resolve, reject) => {
-    const child = spawn(systemTool('taskkill.exe'), ['/PID', String(pid), '/T', '/F'], {
+    const taskkill = systemTool('taskkill.exe');
+    assertSpawnableFile(taskkill);
+    const child = spawn(taskkill, ['/PID', String(pid), '/T', '/F'], {
       shell: false,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -313,4 +341,55 @@ export async function processInfo(
 /** Start time of `pid` or null (see processInfo). */
 export async function processStartTime(pid: number): Promise<Date | null> {
   return (await processInfo(pid))?.startedAt ?? null;
+}
+
+const childProcessesOutputSchema = z.array(
+  z.object({
+    pid: z.number().int().positive(),
+    name: z.string(),
+    parentPid: z.number().int().nullable(),
+    startedAt: z.iso.datetime({ offset: true }),
+  }),
+);
+
+/**
+ * Direct children of `pid` (Win32_Process with ParentProcessId = pid, like processInfo 1–3 s):
+ * for the orphan cleanup after a hard abort, when only children of a dead `claude.exe` survive
+ * (WP-13 §6 Nr. 7, §7). PIDs are reused – a caller must also compare the start time (a child is
+ * never older than its parent). Non-Windows or failure: empty list.
+ */
+export async function childProcesses(
+  pid: number,
+  options: { timeoutMs?: number } = {},
+): Promise<ProcessInfo[]> {
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new RangeError(`invalid pid: ${String(pid)}`);
+  if (process.platform !== 'win32') return [];
+  // Validated integer in the script (no injection); -InputObject @(...) keeps 0/1 results arrays (PS 5.1).
+  const script =
+    `$c = @(Get-CimInstance -ClassName Win32_Process -Filter 'ParentProcessId = ${pid}' | ` +
+    `Where-Object { $_.CreationDate } | ForEach-Object { @{ pid = [int]$_.ProcessId; name = [string]$_.Name; ` +
+    `parentPid = [int]$_.ParentProcessId; ` +
+    `startedAt = $_.CreationDate.ToUniversalTime().ToString("yyyy-MM-dd'T'HH':'mm':'ss'.'fff'Z'") } }); ` +
+    `ConvertTo-Json -InputObject $c -Compress`;
+  const result = await runFile(
+    systemTool(path.win32.join('WindowsPowerShell', 'v1.0', 'powershell.exe')),
+    ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
+    { timeoutMs: options.timeoutMs ?? 20_000, maxOutputBytes: 1024 * 1024 },
+  );
+  const text = result.stdout.trim();
+  if (result.exitCode !== 0 || text === '') return [];
+  let json: unknown;
+  try {
+    json = JSON.parse(text) as unknown;
+  } catch {
+    return [];
+  }
+  const parsed = childProcessesOutputSchema.safeParse(json);
+  if (!parsed.success) return [];
+  return parsed.data.map((row) => ({
+    pid: row.pid,
+    name: row.name,
+    parentPid: row.parentPid,
+    startedAt: new Date(row.startedAt),
+  }));
 }

@@ -213,6 +213,146 @@ Format: `ADR-NNN – Titel` · Datum · WP · Kontext → Entscheidung → Folge
 - **Folgen:** Datei-genaue Ownership in `CLAUDE.md` und `docs/architecture.md` §2.1; keine
   gemeinsam bearbeitete Datei zwischen WP-10/11/12/14 bzw. WP-13/15/16.
 
+## ADR-018 – Request-Guard nach gematchter Route, Default-deny, zweite Linie in der WS-Route
+- **Datum/WP:** 15.10.2026, R1-Fixes Server (R1-01, BLOCKER)
+- **Kontext:** Der Guard verglich den **rohen** URL-Pfad mit `API_PATHS`, der Router (find-my-way)
+  dekodiert dagegen Prozent-Kodierung und reduziert die Absolute-Form vor dem Matching. `/%61pi/ws`
+  oder `GET http://127.0.0.1:P/api/blob/<id>` galten als „statisch“ – WS und Blobs waren ohne Cookie
+  und sogar von jeder Website aus erreichbar (Cross-Site-WebSocket, nach WP-13/20 Codeausführung).
+- **Entscheidung:** Klassifiziert wird nach dem Muster der **gematchten Route**
+  (`request.routeOptions.url`) plus Methode (`http/origin.ts`, Tabelle §5.1); nicht gelistete
+  Routen/Methoden sind `mutation` (Origin + same-origin + Cookie, auch für GET), GET/HEAD ohne Route
+  (404) wie `public-get`. Vor der Tabelle: Host-Prüfung, Request-Target nur in Origin-Form, auf
+  API-Routen nur kanonische Rohpfade (`/api/<seg>/…`, Segmente `[A-Za-z0-9_-]`) → sonst 400
+  `VALIDATION_FAILED {reason:'request_target'}`; WebSocket-Upgrades nur auf `/api/ws` → sonst 400
+  `INVALID_MESSAGE {reason:'upgrade_not_allowed'}` (`@fastify/websocket` schlösse sonst auf jeder
+  GET-Route den Handshake ab). Die WS-Route prüft das Upgrade zusätzlich selbst
+  (`attach(app, {authorizeUpgrade})`: `preValidation` mit HTTP-Fehlerantwort, im WS-Handler
+  `terminate()` als letzte Linie). Kein Contract-Typ betroffen.
+- **Folgen:** Neue Routen (z. B. `/api/file`) sind ohne Änderung am Guard geschützt; die
+  Static-Route ist `STATIC_ROUTE = '/*'` (Default-Prefix von `@fastify/static`). Regressionstests
+  über rohe Sockets (kodiert, doppelt kodiert, Absolute-Form, Groß-/Kleinschreibung, Trailing
+  Slash, `..`, `;`, HEAD) für HTTP, Blob und WS, mit und ohne Web-UI.
+
+## ADR-019 – WS-Upgrade: `Sec-Fetch-Site` nur prüfen, wenn vorhanden
+- **Datum/WP:** 15.10.2026, R1-Fixes Server (V1-01, BLOCKER; Entscheidung des Koordinators)
+- **Kontext:** Chrome/Edge senden beim WebSocket-Handshake kein `Sec-Fetch-Site` (bei `fetch`
+  schon). Die Contract-Zeile verlangte `same-origin` – jeder echte Browser bekam 403, die App
+  verband nie. Die Integrationstests sahen es nicht, weil `connectWs` den Header immer mitschickte.
+- **Entscheidung:** Für den WS-Upgrade sind passender `Origin` (∈ `allowedOrigins`), `Host` und ein
+  gültiges Geräte-Cookie Pflicht; `Sec-Fetch-Site` wird nur geprüft, wenn vorhanden, und muss dann
+  `same-origin` sein (`cross-site`, `same-site`, `none` → 403). Für Nicht-GET-HTTP-Requests bleibt
+  `Sec-Fetch-Site: same-origin` Pflicht. Der Test-Client `connectWs` sendet standardmäßig kein
+  `Sec-Fetch-Site` mehr (wie Edge/Chrome).
+- **Folgen:** Browser senden beim Handshake immer `Origin`; fremde Seiten (auch andere Ports auf
+  127.0.0.1, „same-site“) scheitern an der Origin-Prüfung, Nicht-Browser am Cookie. architecture §5,
+  §5.1, Diagramme (a)/(h) angepasst. Der Vite-Proxy (Dev) reicht die Header nur durch – unverändert.
+
+## ADR-020 – Store-Datei mit neuerer `schemaVersion`: Start-Abbruch, Datei bleibt unverändert
+- **Datum/WP:** 15.10.2026, R1-Fixes Server (R1-06; Entscheidung des Koordinators)
+- **Kontext:** Eine neuere `schemaVersion` (neuerer Build auf demselben `PARALLAX_HOME`, z. B. ein
+  zweiter Checkout) landete in der Quarantäne, danach auch die `.bak`, und es wurden Defaults
+  geschrieben – ein Downgrade leerte `sessions.json` ohne Rückweg.
+- **Entscheidung:** `JsonStore.load()` verwirft bei neuerer Version (Hauptdatei oder `.bak`) mit
+  `StoreVersionTooNewError` (neuer Fehlercode `STORE_VERSION_TOO_NEW {file, version, supported}`,
+  englische Meldung „… update Parallax. The file was left unchanged …“). Die Datei wird weder
+  verschoben noch migriert noch überschrieben; der Store bleibt gesperrt (`get`/`set` werfen,
+  `flush` schreibt nichts), und es wird grundsätzlich erst geschrieben, nachdem die Datei gelesen
+  wurde (auch nach einem `set()` vor `load()`). Gilt für alle JsonStores (`sessions.json`,
+  `settings.json`, `auth-secret.json`, `decisions.json`, künftig `processes.json`). Der Server
+  bricht den Start ab (WP-20: Meldung auf stderr + Log, Exit-Code
+  `STORE_VERSION_TOO_NEW_EXIT_CODE` = 3). Korrupte Dateien bleiben bei Quarantäne.
+- **Folgen:** Kein Nur-Lese-Betrieb (einfacher, kein halber Zustand); der Launcher (WP-21) kann
+  Exit-Code 3 als „Parallax aktualisieren“ anzeigen. Die WP-14-Übersetzung des Codes kam im selben
+  Schritt (errors.en/de.ts, siehe R1.md „Umsetzung Server“).
+
+## ADR-021 – `buildEnv`: persistente Umgebungsvariablen (Nexus) und Session-Marker
+- **Datum/WP:** 15.10.2026, R1-Fixes Server (R1-03, R1-09; Entscheidung des Koordinators)
+- **Kontext:** C.2 entfernt `npm_*`/`PNPM_*`/`NODE_OPTIONS` pauschal (Laufzustand von `pnpm run`) –
+  das traf auch rechnerweit gesetzte Variablen wie `NPM_CONFIG_REGISTRY` (Firmen-Nexus) in den
+  Sessions. Zugleich ließ die Liste `AI_AGENT` (`claude-code_<version>_agent`) der aufrufenden
+  Claude-Session durch.
+- **Entscheidung:** Drei Klassen (`envRemovalReason`): `session` – `CLAUDECODE`, `CLAUDE_CODE_*`
+  (außer Allowlist), `CLAUDE_AGENT_SDK_*`, `CLAUDE_PID`, `CLAUDE_EFFORT`, `AI_AGENT`,
+  `CLAUDE_PROJECT_DIR`, `CLAUDE_ENV_FILE`, `CLAUDE_PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA`, geerbte
+  `PARALLAX`/`PARALLAX_ENTRY_ID`; `run_state` – `INIT_CWD`, `npm_lifecycle_*`, `npm_package_*`,
+  `npm_execpath`, `npm_node_execpath`, `npm_command`, `npm_config_user_agent`, `npm_config_node_gyp`,
+  `PNPM_SCRIPT_SRC_DIR`, `PNPM_PACKAGE_NAME`, `pnpm_config_verify_deps_before_run` (beobachtet mit
+  pnpm 12.8); `machine_overridable` – übrige `NPM_*`/`PNPM_*`, `NODE_OPTIONS`, `NODE_ENV`. Nur die
+  letzte Klasse bleibt erhalten, wenn derselbe Name dauerhaft in `HKCU\Environment` oder
+  `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment` steht **und** der Wert exakt
+  dem Prozess-Env entspricht (REG_EXPAND_SZ expandiert). `session`/`run_state` werden immer entfernt,
+  auch wenn sie persistent gesetzt wären. Registry-Lesen: `reg.exe query` per System32-Pfad ohne
+  Shell (`lib/registry.ts readPersistentEnvironment`), einmal je `ClaudeIntegration` gecacht,
+  Fehler → keine Ausnahme (fail closed), injizierbar (`persistentEnv`). Zusätzlich Option
+  `target: 'terminal'` (Phase 2): stammt das Basis-Env aus einer Claude-Session, werden deren
+  Tool-Shell-Variablen (`GIT_EDITOR`, `GIT_TERMINAL_PROMPT`, `GIT_ASKPASS`, `GCM_INTERACTIVE`,
+  `COREPACK_ENABLE_AUTO_PIN`, `NO_COLOR`, `PYTHONIOENCODING`, `PSExecutionPolicyPreference`) mit
+  derselben Persistenz-Ausnahme entfernt; `NoDefaultCurrentDirectoryInExePath` bleibt.
+- **Folgen:** Kein Profil-Workaround `${env:NPM_CONFIG_REGISTRY}` mehr nötig; `buildEnvReport`
+  meldet `keptPersistent`. Werte landen nie im Repo/Log (Tests mit Platzhaltern). OEM-Codepage der
+  `reg.exe`-Ausgabe kann Nicht-ASCII-Werte verfälschen → kein Treffer (fail closed).
+
+## ADR-022 – Spawns nur mit absolutem `.exe`-Pfad
+- **Datum/WP:** 15.10.2026, R1-Fixes Server (R1-04)
+- **Kontext:** libuv sucht einen Programmnamen ohne Pfad zuerst im `cwd` des Kindes (außer
+  `NoDefaultCurrentDirectoryInExePath` steht im übergebenen Env). Ein geklontes Repo mit `git.exe`
+  im Wurzelordner würde beim Git-Branch-Abruf (WP-13) oder „Im Explorer zeigen“ (WP-21) ausgeführt.
+- **Entscheidung:** `assertSpawnableFile` (in `runFile`, `spawnHidden`, taskkill-Pfad) verlangt
+  einen absoluten, sicheren Windows-Pfad (`@shared/paths`) mit Endung `.exe` – nackte Namen,
+  relative/Laufwerks-relative, UNC-, Device- und ADS-Pfade sowie `.cmd`/`.bat`/`.ps1`/`.com` werfen
+  `TypeError`. Aufrufer lösen Namen mit `resolveExecutable(name, env)` (lib/windows.ts, PATH ohne
+  cwd, npm-Shims) oder `systemTool(name)` (System32) auf. Der Recorder nutzt `runFile` mit
+  System32-Pfaden.
+- **Folgen:** WP-13 (Git-Branch je Turn) und WP-21 (Edge, Explorer) müssen vorab auflösen; Hinweis
+  in R1.md „Umsetzung Server“.
+
+## ADR-023 – Bind-Adresse fest `127.0.0.1`
+- **Datum/WP:** 15.10.2026, R1-Fixes Server (R1-05)
+- **Kontext:** `--host`/`PARALLAX_HOST` erlaubten jede IP (`0.0.0.0` öffnete den Server ins Netz;
+  ein Nicht-Browser setzt `Host` beliebig). Andere Loopback-Adressen sind mit `allowedHosts` ohnehin
+  unbenutzbar. Plan „Sicherheit“/A.8: nur `127.0.0.1`.
+- **Entscheidung:** `loadConfig` akzeptiert Flag und Env weiter (ADR-006), lehnt aber jeden Wert
+  außer `127.0.0.1` mit `ConfigError` ab; `ServerConfig.host` ist der Literal-Typ `'127.0.0.1'`.
+- **Folgen:** WP-20 übergibt `config.host` an `listen`; der WP-00-Stub `main.ts` wird dabei ersetzt.
+
+## ADR-024 – Windows-Helfer in `src/server/lib/` (PATH-Suche, npm-Shims, Registry, Edge)
+- **Datum/WP:** 15.10.2026, R1-Fixes Server (R1-08; Freigabe des Koordinators, erweitert)
+- **Kontext:** `searchPath`, `resolveCmdShim` (claude/resolveClaude.ts) und `findEdge`,
+  `regQuery`, `parseRegDefaultValue` (claude/preflight.ts) sind generisch; WP-21 darf `claude/`
+  nicht ändern, R1-04 braucht die PATH-Suche im Prozess-Kontext.
+- **Entscheidung:** Verschiebung ohne Logikänderung nach `lib/windows.ts` (`FsProbe`,
+  `nodeFsProbe`, `createMemoryFs`, `getEnvVar`, `searchPath`, `resolveCmdShim`, neu
+  `resolveExecutable`), `lib/registry.ts` (`regQuery`, `regKeyQuery`, `parseRegDefaultValue`,
+  `parseRegValues`, `readPersistentEnvironment`) und `lib/edge.ts` (`findEdge`); Owner WP-11.
+  `RunFileFn` liegt in `lib/process.ts`. `claude/*` importiert von dort, keine Alias-Exporte.
+- **Folgen:** `ClaudeFsDeps`/`nodeFsDeps` heißen jetzt `FsProbe`/`nodeFsProbe`; architecture §2.1,
+  §2.2 und `lib/README.md` ergänzt.
+
+## ADR-025 – Auto-Retry nur nach Absturz im Leerlauf
+- **Datum/WP:** 15.10.2026, R1-Fixes Server (Koordinator-Entscheidung zu WP-13 §3.5.12/§7)
+- **Kontext:** A.10 „Auto-Retry nur aus idle“ ließ offen, ob ein im Leerlauf abgestürzter Prozess
+  neu gestartet oder bis zum nächsten Prompt ruhend gelassen wird.
+- **Entscheidung:** Auto-Retry **nur** nach einem Absturz im Leerlauf (`expected: false`, Code
+  `CLAUDE_PROCESS_CRASHED`, vorher `runState idle`, leere Queue, keine offene Entscheidung):
+  Neustart wie `session.resume` ohne Prompt, höchstens 3 in Folge, Backoff 2 s / 10 s / 30 s, Zähler
+  zurück nach erfolgreichem Turn oder 5 min Laufzeit; Nutzerbefehle, die starten oder schließen,
+  brechen den Timer ab. Absturz während der Arbeit oder mit offener Entscheidung → `error` + „Neu
+  starten“, nie automatisch (keine Wiederholung von Seiteneffekten). Festgehalten in architecture §9.
+- **Folgen:** WP-13b setzt `retry.ts` so um (Design §3.5.12); `options.autoRetry: false` bleibt als
+  Schalter.
+
+## ADR-026 – Seiten-CSP mit `style-src 'self' 'unsafe-inline'`
+- **Datum/WP:** 15.10.2026, R1-Fixes Server (R1-10, Nachtrag zu WP-10 Abweichung Nr. 2)
+- **Kontext:** Radix/shadcn fügen `<style>`-Elemente ein (z. B. ScrollArea); C.10 nennt nur
+  `'self'`.
+- **Entscheidung:** `style-src 'self' 'unsafe-inline'` bleibt; `script-src 'self'` strikt, `img-src`,
+  `font-src` (über `default-src`) und `connect-src` nur `'self'` (+ eigener WS) – injiziertes CSS kann
+  nichts nach außen leiten. Restrisiko: CSS-Injection für UI-Redressing.
+- **Folgen:** Später enger (`style-src-elem 'self' 'sha256-…'`, `style-src-attr 'unsafe-inline'`),
+  sobald WP-15/16 die tatsächlich injizierten Styles kennen; `require-trusted-types-for 'script'`
+  prüfen (Follow-up).
+
 ## ADR-030 – Watcher-Ignores an der Wurzel verankert, Dev-Port je Worktree per Env
 - **Datum/WP:** 15.10.2026, R1-Fixes Web (R1W-01, R1W-23)
 - **Kontext:** Vite und Vitest geben `server.watch.ignored` an chokidar, das **absolute** Pfade
