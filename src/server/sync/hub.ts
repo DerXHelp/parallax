@@ -28,7 +28,7 @@ import { applySessionOp, trimItems, type SessionViewState } from '@shared/sync';
 import type { ServerInstance } from '../config';
 import type { HubAttachOptions } from '../http/app';
 import { replyError as replyHttpError, sendError as sendHttpError } from '../http/reply';
-import { logger as rootLogger } from '../lib/logger';
+import { logger as rootLogger, shouldLogRepeated } from '../lib/logger';
 import { CommandError, type ClientPresence, type SessionPublisher, type SessionSource } from './ports';
 
 /**
@@ -104,11 +104,19 @@ export const WS_CLOSE_SLOW_CONSUMER = 1013;
 export interface SyncHubOptions {
   source: SessionSource;
   instance: ServerInstance;
-  /** Default: `throw` under Vitest/NODE_ENV=test, otherwise `off` (main.ts passes `log` in dev). */
+  /**
+   * Default: `throw` under Vitest/NODE_ENV=test, otherwise `off`. The server passes
+   * `config.validation` (default `log`, also in production – R3-05).
+   */
   validation?: OutgoingValidation;
   timing?: Partial<HubTiming>;
   now?: () => Date;
   logger?: Logger;
+}
+
+export interface HubStats {
+  /** Outgoing values that failed the schema check (`log` mode: dropped, not sent). */
+  invalidOutgoing: number;
 }
 
 export interface HubEntryInfo {
@@ -130,6 +138,8 @@ export interface SyncHub extends SessionPublisher {
   handleConnection(socket: HubSocket): void;
   /** Debug/test view of one entry's sync state. */
   inspect(entryId: EntryId): HubEntryInfo | null;
+  /** Counters for the diagnosis (R3-05): outgoing values dropped by the `log` validation. */
+  stats(): HubStats;
   /** Stops all timers (sockets are closed by the app's preClose). */
   dispose(): void;
 }
@@ -292,8 +302,9 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
   const summaries = new Map<EntryId, SummaryState>();
   const cmdCache = new CommandCache();
   let heartbeat: NodeJS.Timeout | null = null;
+  let invalidOutgoing = 0;
 
-  // ---- outgoing validation (R0-28) ----
+  // ---- outgoing validation (R0-28; `log` also in production, R3-05) ----
 
   function checkOutgoing<T>(schema: z.ZodType<T>, value: T, what: string): boolean {
     if (validation === 'off') return true;
@@ -303,7 +314,10 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
       ? 'value changes under parse (undefined instead of null, missing default or extra key)'
       : `${parsed.error.issues[0]?.path.map(String).join('.') ?? ''}: ${parsed.error.issues[0]?.message ?? 'invalid'}`;
     if (validation === 'throw') throw new Error(`SyncHub: invalid ${what} – ${detail}`);
-    log.error({ what, detail }, 'invalid outgoing value dropped');
+    invalidOutgoing += 1;
+    if (shouldLogRepeated(invalidOutgoing)) {
+      log.error({ what, detail, count: invalidOutgoing }, 'invalid outgoing value dropped');
+    }
     return false;
   }
 
@@ -986,6 +1000,7 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
         pendingDeltas: entry.deltas.size,
       };
     },
+    stats: () => ({ invalidOutgoing }),
     attach: (app, attachOptions) => {
       app.route({
         method: 'GET',

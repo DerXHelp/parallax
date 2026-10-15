@@ -900,6 +900,37 @@ describe('orphans', () => {
     expect(h.stores.processes.records()).toEqual([]);
   });
 
+  it('the shutdown waits at most orphanShutdownWaitMs; a later result is ignored, never thrown (R3-06)', async () => {
+    const gate = Promise.withResolvers<undefined>();
+    const h = await setup({
+      seed: { entries: [entry41] },
+      processes: [record(1)],
+      proc: {
+        isProcessAlive: alive(50_001),
+        queryProcesses: async () => {
+          await gate.promise;
+          return {
+            kind: 'ok',
+            processes: [{ pid: 50_001, name: 'claude.exe', parentPid: 1, startedAt: at(1) }],
+          };
+        },
+      },
+    });
+    let closed = false;
+    const closing = h.close().then(() => {
+      closed = true;
+    });
+    await h.settle();
+    expect(closed).toBe(false);
+    h.timers.advance(2_000);
+    await closing;
+    // The CIM answer comes after the stores were flushed (they close next): ignored, record kept.
+    gate.resolve(undefined);
+    await h.manager.orphansDone();
+    expect(h.proc.killed).toEqual([50_001]);
+    expect(h.stores.processes.records().map((r) => r.pid)).toEqual([50_001]);
+  });
+
   it('a dormant rename waits for the orphan check of its entry (R2-08)', async () => {
     const gate = Promise.withResolvers<undefined>();
     const sessionId = '5e550000-0000-4000-8000-0000000000d1';

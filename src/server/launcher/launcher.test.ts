@@ -8,7 +8,7 @@ import {
   sampleUuid,
 } from '@shared/samples';
 import type { HealthCheck, LauncherCodeResult, RunningServerCheck } from './client';
-import { edgeProfileDir } from './edgeWindow';
+import { edgeAppArgs, edgeProfileDir } from './edgeWindow';
 import {
   CODE_RETRY_DELAYS_MS,
   LauncherError,
@@ -89,6 +89,8 @@ function world(w: WorldOptions = {}): World {
   };
 
   const deps: LauncherDeps = {
+    acquireLaunchLock: () => Promise.resolve({ kind: 'acquired', release: () => Promise.resolve() }),
+    acquireBuildLock: () => Promise.resolve({ kind: 'acquired', release: () => Promise.resolve() }),
     findRunningServer: () => {
       if (w.found !== undefined) return Promise.resolve(w.found);
       const lock = state.current.lock;
@@ -145,6 +147,7 @@ function world(w: WorldOptions = {}): World {
       state.edgeCalls.push({ edge, args });
       return Promise.resolve({ pid: 777 });
     },
+    edgeProfileSignedIn: () => Promise.resolve(false),
     sleep: (ms) => {
       tick(ms);
       return Promise.resolve();
@@ -180,13 +183,21 @@ describe('launcher: fresh start (architecture §5.1 (h))', () => {
     expect(w.edgeCalls).toHaveLength(1);
     const args = w.edgeCalls[0]?.args ?? [];
     expect(w.edgeCalls[0]?.edge).toBe(EDGE);
-    expect(args).toEqual([
-      `--user-data-dir=${edgeProfileDir(HOME)}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      expect.stringMatching(/^--app=http:\/\/127\.0\.0\.1:4711\/#code=[A-Za-z0-9_-]{43}$/),
-    ]);
-    expect(codeOf((args[3] ?? '').slice('--app='.length))).not.toBeNull();
+    // The own profile without sign-in/sync (V2-01), the code URL last.
+    expect(args.slice(0, -1)).toEqual(edgeAppArgs({ home: HOME, url: 'x' }).slice(0, -1));
+    expect(args).toContain(`--user-data-dir=${edgeProfileDir(HOME)}`);
+    expect(args).toContain('--disable-sync');
+    expect(args.at(-1)).toMatch(/^--app=http:\/\/127\.0\.0\.1:4711\/#code=[A-Za-z0-9_-]{43}$/);
+    expect(codeOf((args.at(-1) ?? '').slice('--app='.length))).not.toBeNull();
+  });
+
+  it('a profile signed in by an earlier version gets a note (V2-01); a fresh one none', async () => {
+    const w = world({ overrides: { edgeProfileSignedIn: () => Promise.resolve(true) } });
+    await runLauncher(options(), w.deps);
+    expect(w.out.join('\n')).toContain('is signed in to an account from an earlier Parallax version');
+    const fresh = world();
+    await runLauncher(options(), fresh.deps);
+    expect(fresh.out.join('\n')).not.toContain('signed in');
   });
 
   it('with port 0 skips the port probe and uses the port from the lock file', async () => {
@@ -507,5 +518,159 @@ describe('launcher: Edge', () => {
     const error = await failure(runLauncher(options(), w.deps));
     expect(error.reason).toBe('edge_failed');
     expect(error.message).toContain('spawn EACCES');
+  });
+});
+
+describe('launcher: backend of a running server (R3-02)', () => {
+  const running = sampleServerLockFile({ port: 4711, pid: 4242 });
+
+  it('another backend than requested is a clear error, no window', async () => {
+    const w = world({ running });
+    w.current.health.set(4711, okHealth(running, { backend: 'fake' }));
+    const error = await failure(runLauncher(options({ backend: 'sdk' }), w.deps));
+    expect(error.reason).toBe('backend_mismatch');
+    expect(error.exitCode).toBe(1);
+    expect(error.message).toContain('with the FakeBackend (--backend=fake)');
+    expect(error.message).toContain('real claude backend (--backend=sdk)');
+    expect(error.message).toContain('"parallax --backend=fake" opens a window of it');
+    expect(error.message).toContain('PID 4242');
+    expect(w.edgeCalls).toEqual([]);
+  });
+
+  it('the same backend, an unknown one (older server) or no request open the window', async () => {
+    for (const [backend, requested] of [
+      ['fake', 'fake'],
+      [undefined, 'sdk'],
+      ['fake', undefined],
+    ] as const) {
+      const w = world({ running });
+      w.current.health.set(4711, okHealth(running, backend === undefined ? {} : { backend }));
+      const result = await runLauncher(
+        options(requested === undefined ? {} : { backend: requested }),
+        w.deps,
+      );
+      expect(result.mode).toBe('existing');
+      expect(w.edgeCalls).toHaveLength(1);
+    }
+  });
+});
+
+describe('launcher: concurrent starts (R3-04)', () => {
+  it('a second launcher waits for the first one, then opens only a window of its server', async () => {
+    const winner = sampleServerLockFile({ port: 4711, pid: 6000, serverInstanceId: sampleUuid(42) });
+    let tries = 0;
+    const w = world();
+    w.deps.acquireLaunchLock = () => {
+      tries += 1;
+      if (tries < 4) return Promise.resolve({ kind: 'busy' });
+      // Meanwhile the first launcher's server became ready and it released the lock.
+      w.current.lock = winner;
+      w.current.health.set(4711, okHealth(winner));
+      return Promise.resolve({ kind: 'acquired', release: () => Promise.resolve() });
+    };
+    const result = await runLauncher(options(), w.deps);
+    expect(result).toMatchObject({ mode: 'existing', pid: 6000 });
+    expect(w.started).toEqual([]);
+    expect(w.edgeCalls).toHaveLength(1);
+    expect(w.out[0]).toContain('by another launcher - waiting for it');
+  });
+
+  it('the launch lock is released after the run, also after a failure', async () => {
+    let released = 0;
+    const lock = () =>
+      Promise.resolve({
+        kind: 'acquired' as const,
+        release: () => {
+          released += 1;
+          return Promise.resolve();
+        },
+      });
+    await runLauncher(options(), world({ overrides: { acquireLaunchLock: lock } }).deps);
+    await failure(
+      runLauncher(
+        options(),
+        world({ overrides: { acquireLaunchLock: lock, locateEdge: () => Promise.resolve(null) } }).deps,
+      ),
+    );
+    expect(released).toBe(2);
+  });
+
+  it('a launcher that never finishes: clear error after lockWaitMs', async () => {
+    const w = world({ overrides: { acquireLaunchLock: () => Promise.resolve({ kind: 'busy' }) } });
+    const error = await failure(runLauncher(options({ lockWaitMs: 1_000 }), w.deps));
+    expect(error.reason).toBe('launch_busy');
+    expect(error.message).toContain('Close its console window');
+    expect(w.started).toEqual([]);
+  });
+
+  it('a build of the same checkout by another launcher is awaited, not repeated', async () => {
+    let tries = 0;
+    let built = false;
+    const w = world({
+      overrides: {
+        checkBuild: () =>
+          Promise.resolve(
+            built
+              ? { upToDate: true, buildId: '1.0.0+abc' }
+              : { upToDate: false, reason: 'stale', bundled: '1.0.0+old', expected: '1.0.0+abc' },
+          ),
+        acquireBuildLock: () => {
+          tries += 1;
+          if (tries < 3) return Promise.resolve({ kind: 'busy' });
+          built = true; // the other launcher's build finished
+          return Promise.resolve({ kind: 'acquired', release: () => Promise.resolve() });
+        },
+      },
+    });
+    await runLauncher(options(), w.deps);
+    expect(w.builds).toBe(0);
+    expect(w.out[0]).toContain('Another build of this Parallax folder is running');
+    expect(w.started).toHaveLength(1);
+  });
+
+  it('exit 5: the winner is polled until it is ready, then its window opens', async () => {
+    const winner = sampleServerLockFile({ port: 4711, pid: 6000, serverInstanceId: sampleUuid(42) });
+    const w = world({ onStart: { exit: { code: 5, signal: null } } });
+    let polls = 0;
+    const find = w.deps.findRunningServer.bind(w.deps);
+    w.deps.findRunningServer = (home) => {
+      polls += 1;
+      // The winner writes its lock file only after stores, recovery and listen (≈ 1–2 s).
+      if (polls === 6) {
+        w.current.lock = winner;
+        w.current.health.set(4711, okHealth(winner));
+      }
+      return find(home);
+    };
+    const result = await runLauncher(options(), w.deps);
+    expect(result).toMatchObject({ mode: 'existing', pid: 6000 });
+    expect(polls).toBeGreaterThanOrEqual(6);
+  });
+
+  it('port taken by the server of this home that came up meanwhile: its window, no error', async () => {
+    const winner = sampleServerLockFile({ port: 4711, pid: 6000, serverInstanceId: sampleUuid(42) });
+    let checks = 0;
+    const w = world({ overrides: { probePort: () => Promise.resolve('in_use') } });
+    const find = w.deps.findRunningServer.bind(w.deps);
+    w.deps.findRunningServer = (home) => {
+      checks += 1;
+      if (checks === 2) {
+        w.current.lock = winner;
+        w.current.health.set(4711, okHealth(winner));
+      }
+      return find(home);
+    };
+    const result = await runLauncher(options(), w.deps);
+    expect(result).toMatchObject({ mode: 'existing', pid: 6000 });
+    expect(w.started).toEqual([]);
+  });
+});
+
+describe('launcher: port hint (V2-13)', () => {
+  it('no hint when the port was not asked for', async () => {
+    const running = sampleServerLockFile({ port: 4792, pid: 4242 });
+    const w = world({ running });
+    await runLauncher(options({ port: 4711, portExplicit: false }), w.deps);
+    expect(w.out.join('\n')).not.toContain('takes effect after');
   });
 });

@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { serverOrigin } from '@shared/http';
 import { ConfigError, loadConfig, type ServerConfig } from '../config';
 import { logger } from '../lib/logger';
-import { LAUNCHER_USAGE, parseLauncherArgs, serverArgsFor } from './args';
+import { LAUNCHER_USAGE, parseLauncherArgs, portRequested, serverArgsFor } from './args';
 import { SERVER_BUNDLE } from './build';
 import { LauncherError, createNodeLauncherDeps, runLauncher } from './launcher';
 
@@ -57,6 +57,8 @@ async function main(argv: readonly string[]): Promise<number> {
         serverArgs: serverArgsFor(config),
         build: args.build,
         printUrl: args.printUrl,
+        backend: config.backend,
+        portExplicit: portRequested(args.serverArgv, process.env),
       },
       deps,
     );

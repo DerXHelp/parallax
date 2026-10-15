@@ -11,7 +11,7 @@ Ringpuffer, Befehle mit `cmdId`/`ack`, Delta-Bündelung, Präsenz. Nachrichtenty
 
 | Datei | Exporte | Inhalt |
 | --- | --- | --- |
-| `hub.ts` | `createSyncHub({ source, instance, validation?, timing?, now?, logger? }) → SyncHub` (`SessionPublisher` + `attach(app, { authorizeUpgrade })`, `handleConnection`, `inspect`, `dispose`), `HubSocket`, `DEFAULT_HUB_TIMING`, `HUB_LIMITS` | der Hub; die WS-Route prüft jedes Upgrade selbst (`preValidation` + WS-Handler, R1-01) |
+| `hub.ts` | `createSyncHub({ source, instance, validation?, timing?, now?, logger? }) → SyncHub` (`SessionPublisher` + `attach(app, { authorizeUpgrade })`, `handleConnection`, `inspect`, `stats`, `dispose`), `HubSocket`, `DEFAULT_HUB_TIMING`, `HUB_LIMITS` | der Hub; die WS-Route prüft jedes Upgrade selbst (`preValidation` + WS-Handler, R1-01) |
 | `memorySource.ts` | `createMemorySessionSource() → MemorySessionSource` | Test-Double für `SessionSource` (Host-State, Summaries, Views, Verlauf für `loadEarlier`, Aufruf-Protokolle, `setHandler`) |
 
 Regeln des Hubs:
@@ -34,8 +34,11 @@ Regeln des Hubs:
 - **Befehle:** Idempotenz host-weit (LRU 1000, TTL 10 min ab Abschluss); Duplikat während der
   Ausführung wartet auf dasselbe `ack`; `VALIDATION_FAILED` wird ebenfalls gecacht; Ergebnis wird
   gegen `commandResultSchemas` geprüft (sonst `INTERNAL_ERROR`, `reason: invalid_result`).
-- **Validierung (R0-28):** `validation` `throw` (Default unter Vitest), `log` (Dev, ungültige
-  Werte werden verworfen) oder `off`; geprüft werden Ops, Summaries, Host-State, Snapshots,
+- **Validierung (R0-28, R3-05):** `validation` `throw` (Modul-Default unter Vitest/`NODE_ENV=test`),
+  `log` (der Server übergibt `config.validation`, Default auch im Prod-Betrieb: ungültige Werte
+  werden verworfen, gezählt – `stats().invalidOutgoing` – und mit laufender Zahl geloggt, die
+  ersten 20 und dann jeder 100.) oder `off`; geprüft werden Ops, Summaries, Host-State, Snapshots,
   Notifications – „übersteht `parse` unverändert“ (kein `undefined` statt `null`, alle Defaults).
+  Ein verworfenes Op bekommt keine Seq (keine Lücke beim Client).
 - **Schutz:** > 10 ungültige Nachrichten in 10 s → Close 4400; Client mit > 16 MiB
   ungesendeten Daten → Close 1013; Ping alle 30 s.

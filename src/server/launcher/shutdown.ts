@@ -6,13 +6,16 @@
  * (`sessionsStopped`, counted before closing) and then calls `onShutdownRequested`, which WP-20 wires
  * to `shutdown.stop('command')`. SIGINT/SIGTERM/SIGBREAK/SIGHUP take the same path.
  *
- * `stop()`: `stopSessions()` (engine: `close()` of every query, flush stores) – if it is still
- * running after `graceMs` (5 s, C.8), the remaining child process trees of the server are ended
- * with `taskkill /T /F` – then the close steps in order (`app.close()` → WS close 4503, stores,
- * `backend.dispose()`, lock file, logging), each bounded by a timeout, then `exit(code)`.
+ * `stop()`: `stopSessions()` (engine: `close()` of every query, flush stores, `backend.dispose()`)
+ * – if it is still running after `graceMs` (5 s, C.8), the remaining child process trees of the
+ * server are ended with `taskkill /T /F` – then the close steps in order (compose.ts: `http` → WS
+ * close 4503, `stores`, `homeAccess`, `lock`, `homeLock`), each bounded by a timeout, then
+ * `exit(code)` (the log file is closed by the exit wrapper of compose.ts).
  * The engine logic itself belongs to WP-13b; this module only orders and bounds the steps.
+ * Reason `error` (exit code 1): the global crash handler of main.ts (app/crash.ts, R3-06).
  */
 import type { Logger } from 'pino';
+import { settleWithin } from '../lib/async';
 import { logger as rootLogger } from '../lib/logger';
 import { childProcesses, killProcessTree, type ProcessQueryResult } from '../lib/process';
 
@@ -72,25 +75,9 @@ const SIGNALS: readonly NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGBREAK', 'SI
 
 type Outcome = 'done' | 'failed' | 'timeout';
 
-/** Settles `work` within `ms`; never rejects. The timer is cleared as soon as `work` settles. */
-function bounded(work: () => unknown, ms: number): Promise<Outcome> {
-  return new Promise<Outcome>((resolve) => {
-    const timer = setTimeout(() => {
-      resolve('timeout');
-    }, ms);
-    Promise.resolve()
-      .then(work)
-      .then(
-        () => {
-          clearTimeout(timer);
-          resolve('done');
-        },
-        () => {
-          clearTimeout(timer);
-          resolve('failed');
-        },
-      );
-  });
+/** Settles `work` within `ms`; never rejects (lib/async `settleWithin`). */
+async function bounded(work: () => unknown, ms: number): Promise<Outcome> {
+  return (await settleWithin(work, ms)).outcome;
 }
 
 export function createServerShutdown(options: ServerShutdownOptions = {}): ServerShutdown {

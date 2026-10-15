@@ -1,8 +1,9 @@
 # Architektur
 
 Stand: WP-02 (Contracts v1, eingefroren) plus R0-Fixes (HTTP-/Auth-Contract, Datei-Ownership,
-Statusregeln; `docs/wp/R0.md`, Abschnitt „Umsetzung“), nachgezogen bis R1/R2-Fixes und WP-20a
-(`docs/wp/R1.md`, `docs/wp/R2.md`, ADR-018 … ADR-056). Code-Wahrheit sind die zod-Schemas in
+Statusregeln; `docs/wp/R0.md`, Abschnitt „Umsetzung“), nachgezogen bis R1/R2-Fixes, WP-20a und die
+R3-Fixes Server (`docs/wp/R1.md`, `docs/wp/R2.md`, `docs/wp/R3.md`, ADR-018 … ADR-067; Server-,
+Launcher- und Build-Abschnitte §2.2, §3.3, §5.1, §8, §9, §11). Code-Wahrheit sind die zod-Schemas in
 `src/shared` und die Port-Dateien in `src/server`.
 
 **Rangfolge bei Widersprüchen (R0-10):** Contracts (`src/shared`, Ports) > dieses Dokument und die
@@ -185,6 +186,8 @@ readPersistentEnvironment({ query?, env }): Promise<Map<NAME, value>>  // HKCU\E
 // src/server/lib/async.ts (Koordinator, R2-10, ADR-055) – ohne I/O, ohne Logging
 toError(error): Error; sleep(ms): Promise<void>      // sleep über das globale setTimeout (Fake-Timer greifen)
 realSetImmediate; nextMacrotask(): Promise<void>     // echtes setImmediate, beim Import gesichert (Fake-Timer greifen nicht)
+settleWithin(work, ms): Promise<{outcome:'done'} | {outcome:'failed', error} | {outcome:'timeout'}>  // nie ein Reject (R3-10)
+// src/server/lib/logger.ts zusätzlich: shouldLogRepeated(count) – die ersten 20, dann jeder 100. (R3-05)
 
 // src/server/lib/fs.ts (Koordinator, R2-10, ADR-055) – unverändert aus store/jsonStore.ts verschoben, dort re-exportiert
 interface FsOps { readFile; writeFile (mit fsync); rename; copyFile; unlink; mkdir }; nodeFsOps  // Test-Naht
@@ -194,12 +197,15 @@ withFsRetry(op, delaysMs?): Promise<T>
 writeFileAtomic(file, data, { fs?, backup?, retryDelaysMs? }?): Promise<void>
   // <file>.<pid>.<n>.tmp (fsync) → optional <file>.bak → Rename mit Retry; Temp-Datei bei Fehler entfernt
 
-// src/server/lib/homeLock.ts (Koordinator, R2-05, ADR-054) – Mutex je PARALLAX_HOME, §8; Verdrahtung: WP-20c
-acquireHomeLock(home, { platform? }?): Promise<{ kind: 'acquired'; lock: HomeLock } | { kind: 'busy'; pipe: string }>
+// src/server/lib/homeLock.ts (Koordinator, R2-05, ADR-054, ADR-062) – Mutex je PARALLAX_HOME, §8; verdrahtet in main.ts
+acquireHomeLock(home, { platform? }?): Promise<{ kind: 'acquired'; lock: HomeLock }
+  | { kind: 'busy'; pipe: string; reason: 'in_use' | 'access_denied' }>   // access_denied: Pipe eines anderen Benutzers (R3-16)
   // legt das Home an; unsicherer Pfad → TypeError; busy → Exit 5 (SERVER_EXIT_CODES.alreadyRunning)
+acquireDirectoryLock(kind: 'home' | 'launch' | 'build', dir, options?)  // dasselbe für andere Mutexe (Launcher, R3-04)
 interface HomeLock { pipe: string | null; exclusive: boolean; release(): Promise<void> }  // release idempotent
 homeLockKey(home): Promise<string>                   // windowsPathKey(realpath(home))
 homeLockPipeName(key): string                        // \\.\pipe\parallax-home-<16 Hex von sha256(key)>
+directoryLockPipeName(kind, key): string             // \\.\pipe\parallax-<kind>-<16 Hex>
 
 // src/server/lib/homeAccess.ts (Koordinator, R2-13, ADR-056) – nur Warnung, keine ACL-Änderung
 checkHomeAccess(home, { run?, platform?, timeoutMs? }?): Promise<HomeAccess>  // wirft nie
@@ -400,13 +406,14 @@ Kompositionswurzel `app/compose.ts` zusammen (einziger Ort, der alle Module kenn
 
 | # | Schritt | Fehler → Exit-Code (`launcher/exitCodes.ts`) |
 |---|---|---|
-| 1 | `loadConfig()` (Flags > `PARALLAX_*` > Defaults; Host immer `127.0.0.1`) | ungültig → 1 |
-| 2 | `initLogging({home, dev, level, console: dev oder TTY})` – Datei `logs/parallax.*.log` immer; vom Launcher gestartet (stdout = `server.out.log`) ohne Konsole | 1 |
-| 3 | Single-Instance: `findRunningServer({home})` (Lockfile + Health) | Server läuft für dieses Home → 5 |
-| 4 | `createServerInstance()`, Stores in fester Reihenfolge: Registry, Settings, `processes.json`, Auth-Secret (lesen vor jedem Schreiben), Blobs/Decisions/Transkripte (lazy; Dev: Transkript-Validierung `log`) – eine `createStoreWarnings()`-Instanz für alle | `StoreVersionTooNewError` → 3 (Datei unverändert), sonst 1 |
+| 1 | `loadConfig()` (Flags > `PARALLAX_*` > Defaults; Host immer `127.0.0.1`; FakeBackend auf/unter dem echten Datenordner verboten, R3-02; `validation` `--validate`/`PARALLAX_VALIDATE`, Default `log`, Tests `throw`, R3-05) | ungültig → 1 |
+| 1a | Home-Lock `acquireHomeLock(home)` (`main.ts`, vor Log und erstem Store, ADR-054) | `busy` → 5 (Text nennt bei `access_denied` einen anderen Windows-Benutzer) |
+| 2 | `initLogging({home, dev, level, console: dev oder TTY})` – Datei `logs/parallax.*.log` immer; vom Launcher gestartet (stdout = `server.out.log`) ohne Konsole; danach Crash-Handler (`app/crash.ts`: `unhandledRejection`/`uncaughtException` → `fatal` + geordneter Shutdown, Exit 1; ADR-064) | 1 |
+| 3 | Single-Instance: `findRunningServer({home})` (Lockfile + Health; neben dem Home-Lock nur noch für Server älterer Builds ohne Pipe) | Server läuft für dieses Home → 5 |
+| 4 | `createServerInstance()`, Stores in fester Reihenfolge: Registry, Settings, `processes.json`, Auth-Secret (lesen vor jedem Schreiben), Blobs/Decisions/Transkripte (lazy; Transkript-Validierung `config.validation`) – eine `createStoreWarnings()`-Instanz für alle | `StoreVersionTooNewError` → 3 (Datei unverändert), sonst 1 |
 | 5 | Backend nach `config.backend`: `fake` = `createFakeBackend({speed: 1})` (interaktives Szenario) + `createFakeClaudeIntegration()` (kein `claude`-Prozess); `sdk` = `createSdkBackend()` per dynamischem Import + `createClaudeIntegration({appVersion})` (Profil „Standard“, `resolveClaude`) | 1 |
-| 6 | `createSessionManager({backend, claude, stores, host: {Versionen aus readSdkManifest(), dataDirLabel, dev}, onShutdownRequested})` → `createSyncHub({source: manager, instance, validation: dev ? 'log' : Default})` → `manager.attachPublisher(hub)` → `warnings.onChange → publishHostState` → `await manager.start()` (Recovery; Waisen im Hintergrund) | 1 |
-| 7 | `createApp({config, instance, auth, blobs, hub, webRoot})` – die App ruft `hub.attach` selbst auf; `webRoot` = `dist/web` neben `dist/server.js`, im Dev-Modus keiner (Vite) | 1 |
+| 6 | `createSessionManager({backend, claude, stores, host: {Versionen aus readSdkManifest(), dataDirLabel, dev}, onShutdownRequested})` → `createSyncHub({source: manager, instance, validation: config.validation})` → `manager.attachPublisher(hub)` → `warnings.onChange → publishHostState` → `await manager.start()` (Recovery; Waisen im Hintergrund) | 1 |
+| 7 | UI-Snapshot `prepareWebRoot` (`dist/web` → `PARALLAX_HOME/ui/<buildId>`, nur bei passender `dist/web/build.json`, ADR-066) → `createApp({config, instance, auth, blobs, hub, webRoot})` – die App ruft `hub.attach` selbst auf; `webRoot` = der Snapshot (bzw. `dist/web` neben `dist/server.js`), im Dev-Modus keiner (Vite); `/api/health` meldet `config.backend` | 1 |
 | 8 | `createServerShutdown(…)` + `installSignalHandlers()` – **vor** `listen`, damit Signal und `server.shutdown` den Rahmen immer finden | – |
 | 9 | `app.listen({host: 127.0.0.1, port})` (Port 0 = frei) | `EADDRINUSE` → 4 (Meldung enthält „EADDRINUSE“), sonst 1 |
 | 10 | `writeServerLock({home, port: tatsächlicher Port, instance, launcherToken})` – erst jetzt gilt der Server für den Launcher als bereit | 1 |
@@ -418,10 +425,13 @@ aus `server.out.log`) und beendet sich mit dem Code.
 
 **Beenden** (`server.shutdown` – die Engine antwortet zuerst und ruft `onShutdownRequested` →
 `shutdown.stop('command')` –, SIGINT/SIGTERM/SIGBREAK/SIGHUP → `stop('signal')`, zweites Signal →
-sofort 130): `manager.shutdown()` (Befehle → `SERVER_SHUTTING_DOWN`, `close()` aller Queries ≤ 15 s,
-nach 5 s Gnadenfrist `taskkill /T /F` der Kindprozessbäume, Stores flushen, `backend.dispose()`) →
-`app.close()` (WS-Close 4503, Hub entsorgt) → alle Stores schließen → Lockfile freigeben (nur das
-eigene) → `backend.dispose()` (idempotent) → Log-Datei schließen → `exit(0)`.
+sofort 130; unerwarteter Fehler → `stop('error', 1)`, ADR-064): `manager.shutdown()` (Befehle →
+`SERVER_SHUTTING_DOWN`, `close()` aller Queries ≤ 15 s, nach 5 s Gnadenfrist `taskkill /T /F` der
+Kindprozessbäume, ≤ 2 s auf eine laufende Waisen-Prüfung warten – spätere Ergebnisse ignoriert –,
+Stores flushen, `backend.dispose()`) → `app.close()` (WS-Close 4503, Hub entsorgt) → alle Stores
+schließen → auf die Zugriffsprüfung des Homes warten (`homeAccess`, keine PowerShell überlebt den
+Server) → Lockfile freigeben (nur das eigene) → Home-Lock freigeben → Log-Datei schließen (im
+`exit`-Wrapper) → `exit(code)`.
 
 | Start | Backend | Claude-Integration | Home |
 |---|---|---|---|
@@ -430,9 +440,17 @@ eigene) → `backend.dispose()` (idempotent) → Log-Datei schließen → `exit(
 | `pnpm start` / `parallax.cmd` | SDK (Default ohne `--dev`) | echt | `%LOCALAPPDATA%\Parallax` |
 | `pnpm start` mit `PARALLAX_BACKEND=fake` bzw. `--backend=fake` (Smoke/E2E des echten Startpfads) | Fake | Fake | `PARALLAX_HOME` |
 
-Der Launcher löst Backend, Home und Port mit derselben `loadConfig` auf und übergibt sie explizit
-(`serverArgsFor`). Validierung ausgehender Werte (Hub, Transkripte): Dev `log`, sonst aus, unter
-Vitest bzw. `NODE_ENV=test` `throw`.
+Der Launcher löst Backend, Home, Port und Validierung mit derselben `loadConfig` auf und übergibt
+sie explizit (`serverArgsFor`). Validierung ausgehender Werte (Hub, Transkripte, R3-05/ADR-063):
+`--validate`/`PARALLAX_VALIDATE`, sonst unter Vitest bzw. `NODE_ENV=test` (E2E) `throw`, in Dev und
+Prod `log` (verwerfen, zählen, gedrosselt loggen). Das FakeBackend auf (oder unter)
+`%LOCALAPPDATA%\Parallax` verweigert `loadConfig` (R3-02, ADR-061).
+
+**Launcher (WP-21, R3-04/ADR-062):** ein Launcher je Datenordner gleichzeitig (Pipe
+`parallax-launch-…`; ein zweiter wartet und öffnet dann ein Fenster des Servers), ein Build je
+Checkout (`parallax-build-…`); läuft ein Server mit anderem Backend als angefordert (Health
+`backend`), bricht er mit `backend_mismatch` ab. Edge startet mit eigenem Profil ohne Anmeldung
+und Sync (`--disable-sync`, `--disable-features=msImplicitSignin,…`, ADR-060).
 
 ## 4. Source of Truth (A.3)
 
@@ -659,7 +677,7 @@ sequenceDiagram
 
 | Methode, Pfad | Zweck | Erfolg | Fehler |
 |---|---|---|---|
-| `GET /api/health` | Single-Instance-Check (C.8), ohne Auth, ohne Geheimnisse | `healthResponseSchema` `{ok, product, serverInstanceId, serverVersion, buildId, startedAt}` | – |
+| `GET /api/health` | Single-Instance-Check (C.8), ohne Auth, ohne Geheimnisse | `healthResponseSchema` `{ok, product, serverInstanceId, serverVersion, buildId, startedAt, backend?}` (`backend` `sdk`/`fake` seit R3-02, optional) | – |
 | `POST /api/auth` | Einmal-Code → Geräte-Cookie (A.8) | 200 `authExchangeResponseSchema` + `Set-Cookie` | 401 `AUTH_CODE_INVALID` (unbekannt, benutzt oder abgelaufen – bewusst nicht unterscheidbar) |
 | `GET /api/auth/status` | „angemeldet?“ – vor dem WS und nach abnormalem Close | immer 200 `authStatusResponseSchema` `{authenticated, serverInstanceId}` | – |
 | `POST /api/launcher/code` | neuer Einmal-Code für ein weiteres Fenster | 200 `launcherCodeResponseSchema` `{code, expiresAt, serverInstanceId}` | 401 `LAUNCHER_TOKEN_INVALID`, 403 `ORIGIN_REJECTED` |
@@ -712,7 +730,9 @@ WebSocket-Handshake immer `Origin` und das SameSite=Strict-Cookie nur same-site 
 Origin scheitert also auch ohne `Sec-Fetch-Site`. Requests ohne Origin sind
 für Zustandsänderungen **nur** auf dem Launcher-Endpunkt mit gültigem Token zulässig. Blob-Antworten
 mit `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; default-src 'none'`,
-`Cross-Origin-Resource-Policy: same-origin`; Seiten-CSP nach C.10.
+`Cross-Origin-Resource-Policy: same-origin`; Seiten-CSP nach C.10. Beide CSPs kommen aus
+`@shared/http` (`pageCspDirectives(port)`/`pageCsp(port)`, `BLOB_CSP_DIRECTIVES`/`BLOB_CSP`,
+`cspHeaderValue`; R3-14, ADR-067).
 
 **Dev-Modus (`--dev`, ADR-006):** `allowedHosts`/`allowedOrigins` enthalten zusätzlich
 `127.0.0.1:5173` bzw. `http://127.0.0.1:5173` (der Vite-Proxy behält `Host`, kein `changeOrigin`).
@@ -985,7 +1005,10 @@ logs/parallax.<datum>.<n>.log         pino-roll (lib/logger.ts)
 logs/server.out.log                   stdout/stderr des vom Launcher gestarteten Servers (sonst leer: Abstürze vor
                                       dem Logger, Ursache eines gescheiterten Starts als letzte Zeile, §3.3;
                                       > 1 MiB → server.out.1.log beim nächsten Start)
-edge/                                 Edge-Profil des App-Fensters (--user-data-dir, WP-21)
+edge/                                 Edge-Profil des App-Fensters (--user-data-dir, WP-21; nie angemeldet, kein
+                                      Sync – --disable-sync, --disable-features=msImplicitSignin,…, ADR-060)
+ui/<buildId>/                         beim Serverstart fixierte Kopie von dist/web (nur die des laufenden Builds;
+                                      ältere werden beim Start gelöscht; V2-03, ADR-066)
 ```
 Der **Home-Lock** (unten) ist eine Named Pipe und liegt nicht im Home.
 
@@ -1020,15 +1043,15 @@ mit lebendem Record warten darauf – ihr Start (vorher sichtbar `starting`) und
 (`lib/homeLock.ts`) nimmt vor dem ersten Store die Named Pipe `\\.\pipe\parallax-home-<16 Hex von
 sha256(windowsPathKey(realpath(home)))>`; Schreibweisen, Junctions und `subst` ergeben denselben
 Schlüssel, die Pipe verschwindet mit dem Prozess (kein Stale-Zustand). `busy` → Exit 5
-(`SERVER_EXIT_CODES.alreadyRunning`; der Launcher sucht dann den laufenden Server). **Stand `main`:**
-Modul und Tests vorhanden, verdrahtet wird es in WP-20c (Anleitung `docs/wp/R2.md` „Verdrahtung für
-WP-20c“); bis dahin entsteht Exit 5 nur über die Vorprüfung Lockfile + Health (§3.3, Schritt 3), die
-zwei gleichzeitige Starts nicht ausschließt.
+(`SERVER_EXIT_CODES.alreadyRunning`; der Launcher wartet dann bis zur Bereitschaftsfrist auf den
+laufenden Server, R3-04). Verdrahtet in `main.ts` vor Log und erstem Store (§3.3, Schritt 1a); der
+Launcher nutzt denselben Mechanismus für „ein Launcher je Home“ und „ein Build je Checkout“
+(`acquireDirectoryLock`, ADR-062).
 
 **Rechte des Homes (R2-13, ADR-056):** `server.lock.json` (Launcher-Token) und `auth-secret.json`
 liegen im Home; Parallax ändert keine ACLs. `checkHomeAccess` (`lib/homeAccess.ts`) erkennt andere
-Leser, `pnpm preflight` warnt (Prüfung „data dir“ mit `icacls`-Vorschlag); die Warnung im
-Server-Log beim Start (`logHomeAccess`) verdrahtet WP-20c.
+Leser, `pnpm preflight` warnt (Prüfung „data dir“ mit `icacls`-Vorschlag); der Server loggt die
+Warnung beim Start (`logHomeAccess` im Hintergrund nach `listen`, `app/compose.ts`).
 
 **Transkript-Log** (`src/server/sync/ports.ts`): eine Zeile je persistierter Op,
 `{v:1, at, op:'upsert', item}` (nur nicht-streamende Items) oder `{v:1, at, op:'remove', itemId}`.
@@ -1055,8 +1078,14 @@ defekte Zeilen überspringen und zählen.
   `resolveExecutable`/`systemTool` auflösen – libuv sucht sonst zuerst im `cwd`); Spawn-Wrapper liest
   stderr (F.16). Prozessabfragen sind dreiwertig (`unknown` heißt nie „weg“, ADR-051); Waisen beim
   Start: nur der verifizierte `claude.exe`-Wurzelprozess, kein Kinder-Pfad bis nach WP-22 (ADR-052, §8).
-- **Ein Server je Home (ADR-054):** Home-Lock per Named Pipe, `busy` → Exit 5 (Verdrahtung WP-20c,
-  §8); Home-Rechte werden nur gewarnt (ADR-056).
+- **Ein Server je Home (ADR-054):** Home-Lock per Named Pipe, `busy` → Exit 5 (`main.ts`, §8);
+  Home-Rechte werden nur gewarnt (ADR-056). Das FakeBackend läuft nie auf dem echten Datenordner
+  (ADR-061).
+- **Edge-Profil (ADR-060):** eigenes `--user-data-dir`, nie mit einem Microsoft-/Windows-Konto
+  angemeldet, nie synchronisiert; Edge-Richtlinien eines verwalteten Rechners können das
+  übersteuern (`pnpm preflight` warnt).
+- **Unerwartete Fehler (ADR-064):** unbehandelte Rejection/Exception → `fatal`-Log und geordneter
+  Shutdown mit Exit 1.
 - **Auto-Retry (A.10, ADR-025):** nur nach einem Absturz im **Leerlauf** (`runState idle`, keine
   Queue, keine offene Entscheidung, Code `CLAUDE_PROCESS_CRASHED`): höchstens 3 Neustarts in Folge
   mit Backoff (2 s / 10 s / 30 s), Zähler zurück nach erfolgreichem Turn oder 5 min Laufzeit; jeder
@@ -1092,7 +1121,7 @@ defekte Zeilen überspringen und zählen.
 | Größe | Startwert | Erhöhen, wenn … |
 |---|---|---|
 | `PROTOCOL_VERSION` | `1` | ein Peer mit der alten Version eine Nachricht der neuen nicht mehr korrekt versteht (Feld entfernt/umbenannt, Semantik geändert, neues Pflichtfeld, Enum-Wert in Client→Server-Richtung entfernt). Nicht bei neuen optionalen Feldern, neuen Server-Nachrichtentypen (Client ignoriert sie), neuen Befehlen. |
-| `buildId` | `dev` ohne Bundle; sonst `<package.version>+<git-Kurzhash>[.dirty-<Digest>]` (`resolveBuildId`, `repo.config.ts`), Override `PARALLAX_BUILD_ID` | jeder Build mit anderem Stand (Client-Reload nach `git pull`) |
+| `buildId` | `dev` ohne Bundle; sonst `<package.version>+<12 Zeichen des letzten Commits, der eine Build-Eingabe geändert hat>[.dirty-<Digest>]` (`resolveBuildId`, `repo.config.ts`, ADR-065; Doku/Tests zählen nicht), Override `PARALLAX_BUILD_ID`; Web-Build zusätzlich in `dist/web/build.json` (ADR-066) | jeder Build mit anderen Build-Eingaben (Client-Reload nach `git pull`) |
 | `REGISTRY_SCHEMA_VERSION`, `PROFILES_SCHEMA_VERSION`, `SETTINGS_SCHEMA_VERSION`, `DECISIONS_SCHEMA_VERSION` | `1` | Migration nötig (Umbenennung, Strukturwechsel); neue Felder mit Default → kein Bump |
 | Transkript-Log-Zeile `v` (`TRANSCRIPT_LOG_VERSION`) | `1` | wie oben; alte Zeilen bleiben lesbar |
 | `fixtureVersion` | `1` (ADR-010) | Formatänderung der Fixtures |

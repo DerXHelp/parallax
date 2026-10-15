@@ -83,8 +83,9 @@ export function repoAliases(repoRoot: string): Record<string, string> {
 export const BUILD_ID_DEFINE = '__PARALLAX_BUILD_ID__';
 
 /**
- * Paths whose changes can change a bundle (ADR-036: docs and other files do not make the build
- * id "dirty"). Git pathspecs relative to the repo root.
+ * Paths whose changes can change a bundle (ADR-036, ADR-065): sources, scripts, configs, lockfile
+ * – without docs (`*.md`, also the READMEs inside src/) and tests/snapshots, which never reach a
+ * bundle. Git pathspecs relative to the repo root.
  */
 export const BUILD_INPUT_PATHSPECS = [
   'src',
@@ -94,7 +95,14 @@ export const BUILD_INPUT_PATHSPECS = [
   'pnpm-workspace.yaml',
   ':(glob)*.config.ts',
   ':(glob)tsconfig*.json',
+  ':(exclude,glob)**/*.md',
+  ':(exclude,glob)**/*.test.ts',
+  ':(exclude,glob)**/*.test.tsx',
+  ':(exclude,glob)**/__snapshots__/**',
 ] as const;
+
+/** `dist/web/build.json` = `{"buildId": …}` (vite.config.ts; read by src/server/app/webSnapshot.ts). */
+export const WEB_BUILD_INFO_FILE = 'build.json';
 
 const buildIdOverrideSchema = z.string().regex(/^[0-9A-Za-z.+_-]{1,100}$/);
 const packageJsonSchema = z.looseObject({ version: z.string().min(1) });
@@ -113,25 +121,33 @@ function git(repoRoot: string, args: string[]): string | null {
   }
 }
 
+/** Length of the commit part of a build id (`%H` cut to 12 hex – deterministic, unlike `%h`). */
+const COMMIT_CHARS = 12;
+
 /**
  * Build id embedded by `pnpm build` into the web and the server bundle (A.2: a new build id makes
  * open windows reload). `PARALLAX_BUILD_ID` overrides it; otherwise
- * `<package.version>+<git short hash>`, plus `.dirty-<digest of the uncommitted changes>` when
- * a build input (BUILD_INPUT_PATHSPECS) is changed or untracked. Deterministic, so the two
- * separately built bundles get the same value. Unbundled runs (dev server, tsx, Vitest) use 'dev'
- * instead (src/shared/build.ts).
+ * `<package.version>+<last commit that changed a build input>` (R3-13, ADR-065: a docs-only or
+ * test-only commit keeps the id, so it forces no rebuild), plus `.dirty-<digest of the uncommitted
+ * changes>` when a build input (BUILD_INPUT_PATHSPECS) is changed or untracked. Git's default
+ * history simplification makes that commit's build inputs identical to HEAD's. Deterministic, so
+ * the two separately built bundles get the same value. Unbundled runs (dev server, tsx, Vitest) use
+ * 'dev' instead (src/shared/build.ts).
  */
-export function resolveBuildId(repoRoot: string): string {
-  const override = process.env.PARALLAX_BUILD_ID;
+export function resolveBuildId(repoRoot: string, env: NodeJS.ProcessEnv = process.env): string {
+  const override = env.PARALLAX_BUILD_ID;
   if (override !== undefined && override !== '') return buildIdOverrideSchema.parse(override);
 
   const pkg = packageJsonSchema.parse(JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8')));
-  const head = git(repoRoot, ['rev-parse', '--short=12', 'HEAD']) ?? 'nogit';
+  const lastInput = git(repoRoot, ['log', '-1', '--format=%H', '--', ...BUILD_INPUT_PATHSPECS]) ?? '';
+  // No commit touched a build input (fresh repo): HEAD; no git at all: 'nogit'.
+  const commit =
+    (lastInput !== '' ? lastInput : git(repoRoot, ['rev-parse', 'HEAD']))?.slice(0, COMMIT_CHARS) ?? 'nogit';
   const status = git(repoRoot, ['status', '--porcelain', '--', ...BUILD_INPUT_PATHSPECS]) ?? '';
-  if (status === '') return `${pkg.version}+${head}`;
+  if (status === '') return `${pkg.version}+${commit}`;
 
   const diff =
     git(repoRoot, ['diff', 'HEAD', '--no-ext-diff', '--no-color', '--', ...BUILD_INPUT_PATHSPECS]) ?? '';
   const digest = createHash('sha256').update(status).update('\0').update(diff).digest('hex').slice(0, 8);
-  return `${pkg.version}+${head}.dirty-${digest}`;
+  return `${pkg.version}+${commit}.dirty-${digest}`;
 }

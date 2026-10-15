@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { nextMacrotask, realSetImmediate, sleep, toError } from './async';
+import { nextMacrotask, realSetImmediate, settleWithin, sleep, toError } from './async';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -23,6 +23,23 @@ describe('lib/async (R2-10)', () => {
     });
     await nextMacrotask();
     expect(ran).toBe(true);
+  });
+
+  it('settleWithin never rejects: done, failed (with the error), timeout (R3-10)', async () => {
+    expect(await settleWithin(() => 1, 1_000)).toEqual({ outcome: 'done' });
+    expect(await settleWithin(() => Promise.resolve(), 1_000)).toEqual({ outcome: 'done' });
+    const error = new Error('boom');
+    expect(
+      await settleWithin(() => {
+        throw error;
+      }, 1_000),
+    ).toEqual({ outcome: 'failed', error });
+    expect(await settleWithin(() => Promise.reject(error), 1_000)).toEqual({ outcome: 'failed', error });
+    vi.useFakeTimers();
+    const pending = settleWithin(() => new Promise(() => undefined), 500);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(await pending).toEqual({ outcome: 'timeout' });
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('sleep follows the (fake) clock', async () => {

@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { PRODUCT_NAME } from '@shared/product';
@@ -8,10 +8,12 @@ import type { RunFileFn, RunFileOptions } from '../lib/process';
 import {
   BUILD_STEPS,
   SERVER_BUNDLE,
+  WEB_BUILD_INFO,
   WEB_INDEX,
   checkBuild,
   parseBundleBuildId,
   readBundleBuildId,
+  readWebBundleBuildId,
   resolveCheckoutBuildId,
   resolvePackageBin,
   runBuild,
@@ -35,6 +37,7 @@ function memoryFs(files: Readonly<Record<string, string>>): BuildFs {
 }
 
 const banner = (id: string) => `// ${PRODUCT_NAME} server, build ${id}\nimport x from 'y';\n`;
+const webInfo = (id: string) => `${JSON.stringify({ buildId: id })}\n`;
 
 describe('build id of dist/server.js (ADR-013)', () => {
   it('parses the banner line', () => {
@@ -68,13 +71,37 @@ describe('build id of dist/server.js (ADR-013)', () => {
       { upToDate: false, reason: 'unknown' },
     ],
     [
-      'current',
+      'web of another build (stopped after build:web, ADR-066)',
+      { [SERVER_BUNDLE]: banner('1+a'), [WEB_INDEX]: '<html>', [WEB_BUILD_INFO]: webInfo('1+b') },
+      '1+a',
+      { upToDate: false, reason: 'stale' },
+    ],
+    [
+      'web without build.json (built before R3)',
       { [SERVER_BUNDLE]: banner('1+a'), [WEB_INDEX]: '<html>' },
+      '1+a',
+      { upToDate: false, reason: 'stale' },
+    ],
+    [
+      'current',
+      { [SERVER_BUNDLE]: banner('1+a'), [WEB_INDEX]: '<html>', [WEB_BUILD_INFO]: webInfo('1+a') },
       '1+a',
       { upToDate: true, buildId: '1+a' },
     ],
   ] as const)('checkBuild: %s', async (_name, files, expected, state) => {
     expect(await checkBuild({ repoRoot: ROOT, expected, fs: memoryFs(files) })).toMatchObject(state);
+  });
+
+  it('reads the web build id; the file name is the one vite.config.ts writes (repo.config.ts)', async () => {
+    expect(await readWebBundleBuildId(ROOT, memoryFs({ [WEB_BUILD_INFO]: webInfo('2+c') }))).toBe('2+c');
+    expect(await readWebBundleBuildId(ROOT, memoryFs({ [WEB_BUILD_INFO]: '{' }))).toBeNull();
+    expect(await readWebBundleBuildId(ROOT, memoryFs({}))).toBeNull();
+    const config: unknown = await import(pathToFileURL(path.join(repoRoot, 'repo.config.ts')).href);
+    const name: unknown =
+      typeof config === 'object' && config !== null ? Reflect.get(config, 'WEB_BUILD_INFO_FILE') : null;
+    expect(path.basename(WEB_BUILD_INFO)).toBe(name);
+    const vite = await readFile(path.join(repoRoot, 'vite.config.ts'), 'utf8');
+    expect(vite).toContain('fileName: WEB_BUILD_INFO_FILE');
   });
 
   it('the banner template of scripts/build-server.ts matches the parser', async () => {

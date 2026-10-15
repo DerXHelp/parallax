@@ -13,6 +13,7 @@ describe('loadConfig', () => {
     expect(loadConfig({ argv: [], env: env(), cwd: CWD })).toEqual({
       dev: false,
       backend: 'sdk',
+      validation: 'log',
       port: DEFAULT_PORT,
       host: '127.0.0.1',
       home: path.join('C:\\Users\\u\\AppData\\Local', 'Parallax'),
@@ -115,6 +116,42 @@ describe('loadConfig', () => {
         cwd: CWD,
       }).home,
     ).toBe('C:\\Users\\u\\AppData\\Local\\Parallax-test');
+  });
+
+  it('never runs the FakeBackend on the real data directory or inside it (R3-02)', () => {
+    for (const argv of [
+      ['--backend=fake'],
+      ['--backend=fake', '--home=c:\\users\\U\\appdata\\local\\PARALLAX'],
+      ['--backend=fake', '--home=C:\\Users\\u\\AppData\\Local\\Parallax\\sub'],
+    ]) {
+      expect(() => loadConfig({ argv, env: env(), cwd: CWD })).toThrow(
+        /FakeBackend never uses the real data/,
+      );
+    }
+    expect(() => loadConfig({ argv: [], env: env({ PARALLAX_BACKEND: 'fake' }), cwd: CWD })).toThrow(
+      ConfigError,
+    );
+    // Another home, dev mode (.parallax-dev) and the SdkBackend on the real home stay allowed.
+    expect(loadConfig({ argv: ['--backend=fake', '--home=D:\\tmp\\px'], env: env(), cwd: CWD }).backend).toBe(
+      'fake',
+    );
+    expect(loadConfig({ argv: ['--dev'], env: env(), cwd: CWD }).backend).toBe('fake');
+    expect(loadConfig({ argv: ['--backend=sdk'], env: env(), cwd: CWD }).dataDirLabel).toBe(
+      '%LOCALAPPDATA%\\Parallax',
+    );
+  });
+
+  it('outgoing validation: flag > PARALLAX_VALIDATE > test runs throw > log (R3-05)', () => {
+    const at = (argv: string[], vars: Record<string, string> = {}) =>
+      loadConfig({ argv, env: env(vars), cwd: CWD }).validation;
+    expect(at([])).toBe('log');
+    expect(at(['--dev'])).toBe('log');
+    expect(at([], { VITEST: 'true', PARALLAX_HOME: 'D:\\tmp\\px' })).toBe('throw');
+    expect(at([], { NODE_ENV: 'test' })).toBe('throw');
+    expect(at([], { PARALLAX_VALIDATE: 'off' })).toBe('off');
+    expect(at(['--validate=throw'], { PARALLAX_VALIDATE: 'off' })).toBe('throw');
+    expect(at(['--validate=log'], { NODE_ENV: 'test' })).toBe('log');
+    expect(() => at(['--validate=loud'])).toThrow(ConfigError);
   });
 });
 
