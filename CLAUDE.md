@@ -34,7 +34,7 @@ Eigene Pfade gezielt prüfen: `pnpm exec eslint <pfade>`, `pnpm exec vitest run 
 | `src/shared/**` | Contracts (zod): `common`, `errors`, `status`, `model`, `protocol`, `sync`, `http`, `paths`, `build`, `samples`, `product` | Koordinator (eingefroren) |
 | `src/server/**/ports.ts`, `src/server/backend/{types,fixture}.ts` | Server-Ports | Koordinator (eingefroren) |
 | `src/server/lib/{logger,ids,paths}.ts` | Logger, `newId`, Pfad-Helfer (fs-Prüfungen auf `@shared/paths`) | WP-10 |
-| `src/server/lib/process.ts` | `runFile`, `spawnHidden`, `killProcessTree` | WP-11 |
+| `src/server/lib/{process,windows,registry,edge}.ts` | Spawn/`killProcessTree`, `searchPath`/`resolveExecutable`, Registry-Env, `findEdge` | WP-11 |
 | `src/server/config.ts`, `src/server/{http,sync,store}/` | Config, App, Auth, HTTP/WS, Sync, Stores | WP-10 |
 | `src/server/claude/` | resolveClaude, buildEnv, parseProfileArgs, Profil „Standard“, Preflight | WP-11 |
 | `src/server/sessions/{normalizer,status}/` | Normalizer, Statusmaschine | WP-12 |
@@ -102,10 +102,11 @@ Besitz-Pfade ändern.
 - Pfadregeln nur aus `@shared/paths` (Server: `lib/paths.ts`): case-insensitiv vergleichen,
   `cwd`-String exakt behalten, UNC/Device/ADS vor jedem Dateizugriff ablehnen. Nie duplizieren.
 - Prozessbäume mit `taskkill /PID <pid> /T /F` beenden; **jeder** Spawn mit `windowsHide: true`
-  und ohne Shell (Argument-Array). Nie `cmd /c start`.
+  und ohne Shell (Argument-Array). Nie `cmd /c start`. Nur **absolute `.exe`-Pfade** starten
+  (`resolveExecutable` aus `lib/windows.ts`), nie nackte Namen wie `git` – sonst gewinnt das `cwd`.
 - Gestartete Hintergrundprozesse (Dev-Server, Vite, Tests) am Ende immer beenden.
 - **Session-Variablen der aufrufenden Claude-Session** (`CLAUDECODE`, `CLAUDE_CODE_*`,
-  `CLAUDE_PID`, `CLAUDE_EFFORT`, `CLAUDE_AGENT_SDK_*` …) dürfen nie in gestartete
+  `CLAUDE_PID`, `CLAUDE_EFFORT`, `CLAUDE_AGENT_SDK_*`, `AI_AGENT`, Hook-Marker …) dürfen nie in gestartete
   `claude`-Prozesse lecken: Env immer über `buildEnv()` bauen (Review C.2).
 
 ## Sprache

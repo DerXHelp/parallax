@@ -17,6 +17,7 @@ Isomorpher Code, den Server **und** Web importieren (Alias `@shared/*`). Design:
 | `build.ts` | `BUILD_ID` (`pnpm build` bettet sie per `define` ein, sonst `'dev'`) |
 | `samples.ts` | gültige Beispielobjekte (feste IDs/Zeiten) für Tests und Playground |
 | `product.ts` | Produktname an genau einer Stelle (WP-00) |
+| `devPorts.ts` | `DEV_WEB_PORT` ohne eigene Importe (Root-Configs laden es; `http.ts` re-exportiert) |
 
 Tests liegen daneben (`*.test.ts`, Typ-Tests in `contracts.types.test.ts`).
 
