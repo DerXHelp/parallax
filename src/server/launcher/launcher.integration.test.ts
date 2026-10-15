@@ -23,6 +23,23 @@ import { writeFileSync, renameSync } from 'node:fs';
 import { createServer } from 'node:http';
 import path from 'node:path';
 
+// Like writeServerLock (R2-01): the launcher reads the old lock file in a loop while this server
+// replaces it – on Windows that rename fails with EPERM/EBUSY/EACCES as long as a reader has the
+// file open. Retry with backoff (synchronously, before "listening" is reported), up to ~10 s.
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function replaceFile(tmp, file) {
+  const deadline = Date.now() + 10_000;
+  for (let delay = 10; ; delay = Math.min(delay * 2, 400)) {
+    try {
+      renameSync(tmp, file);
+      return;
+    } catch (error) {
+      if (!['EPERM', 'EBUSY', 'EACCES'].includes(error.code) || Date.now() > deadline) throw error;
+      pause(delay);
+    }
+  }
+}
+
 const args = Object.fromEntries(process.argv.slice(2).map((a) => a.replace(/^--/, '').split(/=(.*)/s).slice(0, 2)));
 const mode = process.env.FAKE_SERVER_MODE ?? 'ok';
 setTimeout(() => process.exit(0), 60_000).unref(); // safety net: never outlive the test run
@@ -57,7 +74,7 @@ server.listen(Number(args.port), '127.0.0.1', () => {
   const lock = { schemaVersion: 1, pid: process.pid, port, serverInstanceId: instanceId, launcherToken: token, startedAt, buildId: 'fake' };
   const file = path.join(args.home, 'server.lock.json');
   writeFileSync(file + '.tmp', JSON.stringify(lock));
-  renameSync(file + '.tmp', file);
+  replaceFile(file + '.tmp', file);
   process.stdout.write('fake server listening on ' + port + '\\n');
 });
 `;

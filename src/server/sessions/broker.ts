@@ -175,10 +175,19 @@ export function createBroker(deps: BrokerDeps): Broker {
     }
   };
 
+  /** The record of the newest plan version: after a restart the versions continue from it (R2-09). */
+  const isNewestPlan = (id: DecisionId): boolean => {
+    const version = slots.get(id)?.record.planVersion ?? null;
+    return version !== null && version === planVersion;
+  };
+
   const markResolved = (id: DecisionId): void => {
     resolvedOrder.push(id);
     while (resolvedOrder.length > keep) {
-      const oldest = resolvedOrder.shift();
+      // Oldest first, but never the newest plan record (§6 Nr. 4: plan versions stay monotonic).
+      const index = resolvedOrder.findIndex((candidate) => !isNewestPlan(candidate));
+      if (index < 0) break;
+      const [oldest] = resolvedOrder.splice(index, 1);
       if (oldest !== undefined) slots.delete(oldest);
     }
   };

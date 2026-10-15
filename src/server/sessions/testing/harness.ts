@@ -31,8 +31,9 @@ import { createFakeClaudeIntegration, type FakeClaudeIntegration } from '../../b
 import { recordedPrompts } from '../../backend/fake/testing';
 import { fixtureDecisionPayloadSchema, type ParsedFixture } from '../../backend/fixture';
 import { permissionUpdateSchema } from '../../backend/permissionRequest';
+import { nextMacrotask } from '../../lib/async';
 import { assertSafePath } from '../../lib/paths';
-import type { ProcessInfo } from '../../lib/process';
+import type { ProcessFilter, ProcessInfo } from '../../lib/process';
 import { CommandError, type ClientPresence } from '../../sync/ports';
 import type { ProcDeps, SleepPolicy } from '../entryState';
 import { createManualTimers, type ManualTimers } from '../lib/timers';
@@ -40,9 +41,6 @@ import { createSessionManager, type SessionManager, type SessionManagerOptions }
 import { createMemoryProcessStore, type MemoryProcessStore, type ProcessRecord } from '../processStore';
 import { createMemoryPublisher, type MemoryPublisher } from './memoryPublisher';
 import { createMemoryStores, type MemoryStores, type MemoryStoresSeed } from './memoryStores';
-
-/** Real setImmediate, captured before a test can install fake timers. */
-const realSetImmediate = setImmediate;
 
 export const HARNESS_CLIENT_ID: ClientId = sampleId('cl', 1);
 /** Default cwd of harness entries (checkCwd is stubbed: only the path rules apply). */
@@ -63,10 +61,10 @@ export interface HarnessStores extends MemoryStores {
 export interface HarnessProc extends ProcDeps {
   /** pids passed to killProcessTree. */
   readonly killed: number[];
-  /** processInfo answers per pid (missing → null = process gone). */
+  /** Live processes by pid: isProcessAlive and queryProcesses answer from it (absent = dead). */
   readonly info: Map<number, ProcessInfo>;
-  /** childProcesses answers per parent pid. */
-  readonly children: Map<number, ProcessInfo[]>;
+  /** Filters of every queryProcesses call (R2-02: one bundled call for all live records). */
+  readonly queries: ProcessFilter[];
 }
 
 export interface EngineHarnessOptions {
@@ -148,28 +146,32 @@ export interface EngineHarness {
   close(): Promise<void>;
 }
 
-function macrotask(): Promise<void> {
-  return new Promise((resolve) => {
-    realSetImmediate(resolve);
-  });
-}
-
 function createHarnessProc(overrides: Partial<ProcDeps> = {}): HarnessProc {
   const killed: number[] = [];
   const info = new Map<number, ProcessInfo>();
-  const children = new Map<number, ProcessInfo[]>();
+  const queries: ProcessFilter[] = [];
+  const queryProcesses = overrides.queryProcesses;
   return {
     killed,
     info,
-    children,
-    processInfo: overrides.processInfo ?? ((pid) => Promise.resolve(info.get(pid) ?? null)),
+    queries,
+    isProcessAlive: overrides.isProcessAlive ?? ((pid) => info.has(pid)),
+    queryProcesses: (filter) => {
+      queries.push(filter);
+      if (queryProcesses !== undefined) return queryProcesses(filter);
+      const pids = new Set(filter.pids ?? []);
+      const parents = new Set(filter.parentPids ?? []);
+      const processes = [...info.values()].filter(
+        (p) => pids.has(p.pid) || (p.parentPid !== null && parents.has(p.parentPid)),
+      );
+      return Promise.resolve({ kind: 'ok', processes });
+    },
     killProcessTree:
       overrides.killProcessTree ??
       ((pid) => {
         killed.push(pid);
         return Promise.resolve();
       }),
-    childProcesses: overrides.childProcesses ?? ((pid) => Promise.resolve(children.get(pid) ?? [])),
   };
 }
 
@@ -310,7 +312,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
 
     async settle() {
       await backend.settle();
-      for (let i = 0; i < 3; i += 1) await macrotask();
+      for (let i = 0; i < 3; i += 1) await nextMacrotask();
     },
 
     async drive(entryId, parsed, o = {}) {

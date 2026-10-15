@@ -7,9 +7,15 @@ import {
   sampleToken,
   sampleUuid,
 } from '@shared/samples';
-import type { HealthCheck, RunningServerCheck } from './client';
+import type { HealthCheck, LauncherCodeResult, RunningServerCheck } from './client';
 import { edgeProfileDir } from './edgeWindow';
-import { LauncherError, runLauncher, type LauncherDeps, type LauncherOptions } from './launcher';
+import {
+  CODE_RETRY_DELAYS_MS,
+  LauncherError,
+  runLauncher,
+  type LauncherDeps,
+  type LauncherOptions,
+} from './launcher';
 import type { ServerExit, StartedServer } from './serverProcess';
 
 const HOME = 'C:\\Users\\u\\AppData\\Local\\Temp\\parallax-test\\home';
@@ -284,6 +290,63 @@ describe('launcher: server already running (architecture §5.1 (i))', () => {
     const error = await failure(runLauncher(options(), w.deps));
     expect(error.reason).toBe('launcher_code_failed');
     expect(error.message).toContain('rejected the launcher token');
+  });
+
+  it('a busy server: the code request is retried with backoff (R2-14)', async () => {
+    const answers: LauncherCodeResult[] = [
+      { kind: 'failed', reason: 'ETIMEDOUT' },
+      { kind: 'failed', reason: 'ECONNRESET' },
+      { kind: 'ok', response: sampleLauncherCode({ code: sampleToken(99) }) },
+    ];
+    const slept: number[] = [];
+    let calls = 0;
+    const w = world({
+      running,
+      overrides: {
+        requestCode: () => {
+          calls += 1;
+          return Promise.resolve(answers.shift() ?? { kind: 'failed', reason: 'none' });
+        },
+        sleep: (ms) => {
+          slept.push(ms);
+          return Promise.resolve();
+        },
+      },
+    });
+    const result = await runLauncher(options(), w.deps);
+    expect(result.mode).toBe('existing');
+    expect(calls).toBe(3);
+    expect(slept).toEqual(CODE_RETRY_DELAYS_MS.slice(0, 2));
+  });
+
+  it('gives up after the retries; a rejected token is never retried', async () => {
+    let calls = 0;
+    const w = world({
+      running,
+      overrides: {
+        requestCode: () => {
+          calls += 1;
+          return Promise.resolve({ kind: 'failed', reason: 'ETIMEDOUT' });
+        },
+      },
+    });
+    const error = await failure(runLauncher(options(), w.deps));
+    expect(error.reason).toBe('launcher_code_failed');
+    expect(error.message).toContain('ETIMEDOUT');
+    expect(calls).toBe(CODE_RETRY_DELAYS_MS.length + 1);
+
+    let tokenCalls = 0;
+    const rejected = world({
+      running,
+      overrides: {
+        requestCode: () => {
+          tokenCalls += 1;
+          return Promise.resolve({ kind: 'token_invalid' });
+        },
+      },
+    });
+    await failure(runLauncher(options(), rejected.deps));
+    expect(tokenCalls).toBe(1);
   });
 });
 

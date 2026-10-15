@@ -2,9 +2,18 @@ import { describe, expect, it, vi } from 'vitest';
 import { makeError } from '@shared/errors';
 import { toolCallItemSchema } from '@shared/model';
 import { SAMPLE_TIME, sampleEntry, sampleId, sampleItems } from '@shared/samples';
-import type { ProcessInfo } from '../lib/process';
+import type { ProcessFilter, ProcessInfo, ProcessQueryResult } from '../lib/process';
 import type { ProcessRecord } from './processStore';
-import { cleanupOrphan, interruptedToolCalls, registryFacts, wasActive, type OrphanDeps } from './recovery';
+import {
+  cleanupOrphans,
+  interruptedToolCalls,
+  keepsOrphanRecord,
+  registryFacts,
+  splitOrphanRecords,
+  wasActive,
+  type OrphanDeps,
+  type OrphanResult,
+} from './recovery';
 
 describe('registryFacts (R0-17)', () => {
   it('runState, unread and the errorCode of an error entry come from the registry', () => {
@@ -64,13 +73,13 @@ describe('interruptedToolCalls', () => {
   });
 });
 
-describe('cleanupOrphan (C.8)', () => {
-  const record: ProcessRecord = {
-    entryId: sampleId('en', 1),
-    pid: 4242,
+describe('cleanupOrphans (C.8, R2-02, R2-03)', () => {
+  const record = (pid = 4242, n = 1): ProcessRecord => ({
+    entryId: sampleId('en', n),
+    pid,
     image: 'claude.exe',
     startedAt: SAMPLE_TIME,
-  };
+  });
   const at = (s: number) => new Date(Date.parse(SAMPLE_TIME) + s * 1000);
   const info = (p: Partial<ProcessInfo>): ProcessInfo => ({
     pid: 4242,
@@ -79,19 +88,17 @@ describe('cleanupOrphan (C.8)', () => {
     startedAt: at(0),
     ...p,
   });
+  const ok = (...processes: ProcessInfo[]): ProcessQueryResult => ({ kind: 'ok', processes });
 
-  function deps(p: Partial<OrphanDeps>): OrphanDeps & { killProcessTree: ReturnType<typeof vi.fn> } {
-    const killProcessTree = vi.fn(() => Promise.resolve());
-    return {
-      processInfo: () => Promise.resolve(null),
-      serverStartedAt: at(600),
-      log: { warn: vi.fn(), error: vi.fn() },
-      ...p,
-      killProcessTree,
-    };
+  function deps(p: Partial<OrphanDeps> = {}) {
+    const killProcessTree = vi.fn((_pid: number) => Promise.resolve());
+    const queryProcesses = vi.fn((_filter: ProcessFilter) => Promise.resolve(ok()));
+    const log = { warn: vi.fn(), error: vi.fn() };
+    const d: OrphanDeps = { isProcessAlive: () => true, queryProcesses, killProcessTree, log, ...p };
+    return { d, killProcessTree, queryProcesses, log };
   }
 
-  it.each<[string, ProcessInfo | null, string, number[]]>([
+  it.each<[string, ProcessInfo | null, OrphanResult, number[]]>([
     [
       'same image (case-insensitive) and start ± 5 s → killed',
       info({ name: 'Claude.EXE', startedAt: at(4.9) }),
@@ -100,33 +107,58 @@ describe('cleanupOrphan (C.8)', () => {
     ],
     ['start 6 s off → PID reused → untouched', info({ startedAt: at(6) }), 'not_ours', []],
     ['other image → untouched', info({ name: 'chrome.exe' }), 'not_ours', []],
-    ['gone, no child lookup', null, 'gone', []],
+    ['not in the answer → gone', null, 'gone', []],
   ])('%s', async (_name, found, result, killed) => {
-    const d = deps({ processInfo: () => Promise.resolve(found) });
-    expect(await cleanupOrphan(record, d)).toBe(result);
-    expect(d.killProcessTree.mock.calls.map((c: unknown[]) => c[0])).toEqual(killed);
+    const { d, killProcessTree } = deps({
+      queryProcesses: () => Promise.resolve(found === null ? ok() : ok(found)),
+    });
+    expect(await Promise.all(cleanupOrphans([record()], d))).toEqual([result]);
+    expect(killProcessTree.mock.calls.map((c) => c[0])).toEqual(killed);
   });
 
-  it('gone → children started after it and before this server are ended', async () => {
-    const d = deps({
-      childProcesses: () =>
-        Promise.resolve([
-          info({ pid: 1, name: 'node.exe', startedAt: at(10) }),
-          info({ pid: 2, name: 'old.exe', startedAt: at(-10) }),
-          info({ pid: 3, name: 'new.exe', startedAt: at(700) }),
-        ]),
-    });
-    expect(await cleanupOrphan(record, d)).toBe('children_killed');
-    expect(d.killProcessTree.mock.calls.map((c: unknown[]) => c[0])).toEqual([1]);
+  it('ONE query for all records (pids only – no children, R2-03)', async () => {
+    const { d, queryProcesses, killProcessTree } = deps();
+    queryProcesses.mockResolvedValue(ok(info({ pid: 2 }), info({ pid: 3, name: 'x.exe' })));
+    const results = await Promise.all(cleanupOrphans([record(1), record(2, 2), record(3, 3)], d));
+    expect(results).toEqual(['gone', 'killed', 'not_ours']);
+    expect(queryProcesses.mock.calls).toEqual([[{ pids: [1, 2, 3] }]]);
+    expect(killProcessTree.mock.calls.map((c) => c[0])).toEqual([2]);
+    expect(cleanupOrphans([], d)).toEqual([]);
   });
 
-  it('a failing lookup is logged, never thrown', async () => {
-    const errorLog = vi.fn();
-    const d = deps({
-      processInfo: () => Promise.reject(new Error('powershell missing')),
-      log: { warn: vi.fn(), error: errorLog },
+  it.each<[string, () => Promise<ProcessQueryResult>]>([
+    ['a timeout', () => Promise.resolve({ kind: 'unknown', reason: 'timeout', detail: 'no answer' })],
+    ['a policy/CIM failure', () => Promise.resolve({ kind: 'unknown', reason: 'failed', detail: 'exit 1' })],
+    ['a rejected query', () => Promise.reject(new Error('powershell missing'))],
+  ])('%s is unknown: nothing killed, warned, the record is kept (R2-02)', async (_name, query) => {
+    const { d, killProcessTree, log } = deps({ queryProcesses: query });
+    const [result] = await Promise.all(cleanupOrphans([record()], d));
+    expect(result).toBe('unknown');
+    expect(keepsOrphanRecord('unknown')).toBe(true);
+    expect(killProcessTree).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ pid: 4242 }),
+      expect.stringContaining('record kept'),
+    );
+  });
+
+  it('a failing taskkill is failed (logged, record kept), never thrown', async () => {
+    const { d, log } = deps({
+      queryProcesses: () => Promise.resolve(ok(info({}))),
+      killProcessTree: () => Promise.reject(new Error('access denied')),
     });
-    expect(await cleanupOrphan(record, d)).toBe('failed');
-    expect(errorLog).toHaveBeenCalled();
+    expect(await Promise.all(cleanupOrphans([record()], d))).toEqual(['failed']);
+    expect(log.error).toHaveBeenCalled();
+    expect(keepsOrphanRecord('failed')).toBe(true);
+    const removed: OrphanResult[] = ['killed', 'gone', 'not_ours'];
+    expect(removed.map((r) => keepsOrphanRecord(r))).toEqual([false, false, false]);
+  });
+
+  it('splitOrphanRecords: the liveness pre-filter keeps dead PIDs out of the query', () => {
+    const records = [record(1), record(2, 2), record(3, 3)];
+    expect(splitOrphanRecords(records, (pid) => pid !== 2)).toEqual({
+      alive: [records[0], records[2]],
+      dead: [records[1]],
+    });
   });
 });

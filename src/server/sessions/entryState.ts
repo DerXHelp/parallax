@@ -32,7 +32,7 @@ import type { SessionViewState } from '@shared/sync';
 import type { AgentBackend } from '../backend/types';
 import type { ClaudeIntegration } from '../claude/ports';
 import type { newId } from '../lib/ids';
-import type { ProcessInfo } from '../lib/process';
+import type { ProcessFilter, ProcessQueryResult } from '../lib/process';
 import { isStreamingItem } from '../store/transcripts';
 import {
   CommandError,
@@ -101,10 +101,11 @@ export interface NormalizerFns {
 }
 
 export interface ProcDeps {
-  processInfo(pid: number): Promise<ProcessInfo | null>;
+  /** Instant pre-filter of the orphan cleanup (lib/process.ts, `process.kill(pid, 0)`). */
+  isProcessAlive(pid: number): boolean;
+  /** One bundled, three-valued CIM query for all live orphan PIDs (lib/process.ts, R2-02). */
+  queryProcesses(filter: ProcessFilter): Promise<ProcessQueryResult>;
   killProcessTree(pid: number): Promise<void>;
-  /** Children of a dead claude.exe (orphan cleanup, §6 Nr. 7); optional. */
-  childProcesses?: (pid: number) => Promise<ProcessInfo[]>;
 }
 
 /**
@@ -181,6 +182,11 @@ export class EntryState {
   retryTimer: TimerHandle | null = null;
   /** The start waits for the orphan cleanup of this entry (never two writers on one JSONL). */
   orphanCleanup: Promise<void> = Promise.resolve();
+  /**
+   * A recorded claude.exe of this entry was still alive at the server start and its check is still
+   * running (R2-02): a start then shows `starting` while it waits.
+   */
+  orphanPending = false;
   viewedByVisibleClient = false;
   /** Hub subscribers (onSubscribersChanged). */
   subscribers = 0;

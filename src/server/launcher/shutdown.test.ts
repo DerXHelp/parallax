@@ -195,12 +195,15 @@ describe('killChildProcessTrees (taskkill /T /F of the remaining children)', () 
       since: new Date('2026-10-15T08:00:00.000Z'),
       list: (pid) => {
         expect(pid).toBe(100);
-        return Promise.resolve([
-          child(201, 'claude.exe', '2026-10-15T08:05:00.000Z'),
-          child(202, 'powershell.exe', '2026-10-15T08:30:00.000Z'),
-          child(203, 'claude.exe', '2026-10-14T23:00:00.000Z'),
-          child(204, 'node.exe', '2026-10-15T08:10:00.000Z'),
-        ]);
+        return Promise.resolve({
+          kind: 'ok',
+          processes: [
+            child(201, 'claude.exe', '2026-10-15T08:05:00.000Z'),
+            child(202, 'powershell.exe', '2026-10-15T08:30:00.000Z'),
+            child(203, 'claude.exe', '2026-10-14T23:00:00.000Z'),
+            child(204, 'node.exe', '2026-10-15T08:10:00.000Z'),
+          ],
+        });
       },
       kill: (pid) => {
         killed.push(pid);
@@ -210,5 +213,18 @@ describe('killChildProcessTrees (taskkill /T /F of the remaining children)', () 
     });
     expect(killed).toEqual([201, 204]);
     expect(count).toBe(1);
+  });
+
+  it('ends nothing when the children cannot be listed (R2-02: unknown is not "none")', async () => {
+    const kill = vi.fn(() => Promise.resolve());
+    const count = await killChildProcessTrees({
+      parentPid: 100,
+      list: () =>
+        Promise.resolve({ kind: 'unknown', reason: 'timeout', detail: 'no answer within 15000 ms' }),
+      kill,
+      logger: silent,
+    });
+    expect(count).toBe(0);
+    expect(kill).not.toHaveBeenCalled();
   });
 });
