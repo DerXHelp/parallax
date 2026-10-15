@@ -2,11 +2,13 @@ import { useCallback, useSyncExternalStore } from 'react';
 import { errorPayloadSchema, type ErrorPayload } from '@shared/errors';
 import { blobPath } from '@shared/http';
 import { showErrorNotice, showTextNotice } from '@web/state/notices';
+import { SizedLru } from '../lib/sized-cache';
 
 /**
  * "Vollständig laden" for capped texts (B "Speicher", model.ts §5.5): the full text of a capped
  * value lives as a blob (`GET /api/blob/<id>`, cookie auth). Loaded texts are kept in a small
- * LRU (virtualized rows re-mount), failures show a notice (architecture §2.3i) and can be retried.
+ * LRU bounded by count and size (virtualized rows re-mount), failures show a notice
+ * (architecture §2.3i) and can be retried.
  * Phase 1 has only the local host: `sessionKey` is accepted for multi-host blob links (R1W-20).
  */
 
@@ -49,25 +51,26 @@ export function setFullTextLoader(next: FullTextLoader | null): void {
   loader = next ?? fetchBlobText;
 }
 
-const MAX_TEXTS = 16;
+/**
+ * Kept texts: at most 16 and 8 Mi chars in total (R2W-06 – a few multi-MB logs must not pin
+ * memory); a text still loading is never evicted. What is shown inline is clipped separately
+ * (`clipForDisplay`, CappedContent).
+ */
+export const FULL_TEXT_CACHE = { maxEntries: 16, maxSize: 8 * 1024 * 1024 } as const;
 const IDLE: FullTextState = Object.freeze({ status: 'idle', text: null });
 const LOADING: FullTextState = Object.freeze({ status: 'loading', text: null });
 const ERROR: FullTextState = Object.freeze({ status: 'error', text: null });
-const entries = new Map<string, FullTextState>();
+const entries = new SizedLru<string, FullTextState>(FULL_TEXT_CACHE);
 const listeners = new Set<() => void>();
 
 function setEntry(blobId: string, entry: FullTextState): void {
-  entries.delete(blobId);
-  entries.set(blobId, entry);
-  if (entries.size > MAX_TEXTS) {
-    for (const [id, value] of entries) {
-      if (value.status !== 'loading') {
-        entries.delete(id);
-        break;
-      }
-    }
-  }
+  entries.set(blobId, entry, entry.text?.length ?? 0, (value) => value.status === 'loading');
   for (const listener of listeners) listener();
+}
+
+/** Tests: number of kept texts and their total size (chars). */
+export function fullTextCacheStats(): { count: number; chars: number } {
+  return { count: entries.count, chars: entries.totalSize };
 }
 
 /** Starts loading (no-op while loading or when already loaded). */
@@ -97,7 +100,7 @@ function subscribe(listener: () => void): () => void {
 
 /** State of one blob text (`idle` until `loadFullText`). */
 export function useFullText(blobId: string | null): FullTextState {
-  const getSnapshot = useCallback(() => (blobId === null ? IDLE : (entries.get(blobId) ?? IDLE)), [blobId]);
+  const getSnapshot = useCallback(() => (blobId === null ? IDLE : (entries.peek(blobId) ?? IDLE)), [blobId]);
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 

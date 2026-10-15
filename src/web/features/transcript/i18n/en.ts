@@ -58,6 +58,7 @@ export const en = {
     loadFailed: 'The full text could not be loaded.',
     retry: 'Try again',
     loaded: 'Full text loaded ({total} characters).',
+    clipped: 'Full text loaded ({total} characters) – too large to show here, the first {shown} are shown.',
     input: 'Long input shortened ({total} characters in total).',
     structured: 'The structured result was too large and was left out.',
   },
@@ -81,6 +82,7 @@ export const en = {
     mcp: '{tool} · MCP {server}',
     goToDecision: 'Go to decision',
     waitingForDecision: 'Waiting for your decision in the decision bar.',
+    decisionExpired: 'Expired – continue in the decision bar.',
     decision: {
       allowed: 'Allowed',
       allowedRemembered: 'Allowed and remembered for {destination}',

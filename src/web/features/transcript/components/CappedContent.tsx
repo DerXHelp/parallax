@@ -1,9 +1,11 @@
 import { ScissorsIcon } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import type { Truncation } from '@shared/model';
 import { useI18n } from '@web/i18n';
+import { cn } from '@web/lib/cn';
 import { Button } from '@web/ui/button';
 import { Spinner } from '@web/ui/spinner';
+import { clipForDisplay } from '../lib/text';
 import { loadFullText, useFullText } from '../state/full-text';
 
 /**
@@ -13,11 +15,14 @@ import { loadFullText, useFullText } from '../state/full-text';
 export function TruncationNotice({
   truncated,
   shownChars = 0,
+  displayedChars = null,
   sessionKey,
   kind = 'text',
 }: {
   truncated: Truncation;
   shownChars?: number;
+  /** Loaded, but only this many chars are shown (inline budget, R2W-06). */
+  displayedChars?: number | null;
   sessionKey: string | null;
   /** 'input': long input strings were cut in place (the blob holds the full input JSON). */
   kind?: 'text' | 'input';
@@ -31,9 +36,20 @@ export function TruncationNotice({
       : t('transcript.capped.notice', { shown: format.number(shownChars), total });
   if (full.status === 'done') {
     return (
-      <p className="text-muted-foreground flex items-center gap-1.5 text-2xs">
+      <p
+        data-slot={displayedChars === null ? 'capped-loaded' : 'capped-clipped'}
+        className={cn(
+          'flex items-center gap-1.5 text-2xs',
+          displayedChars === null ? 'text-muted-foreground' : 'text-warning',
+        )}
+      >
         <ScissorsIcon aria-hidden className="size-3" />
-        {t('transcript.capped.loaded', { total })}
+        {displayedChars === null
+          ? t('transcript.capped.loaded', { total })
+          : t('transcript.capped.clipped', {
+              total: format.number(full.text?.length ?? truncated.totalChars),
+              shown: format.number(displayedChars),
+            })}
       </p>
     );
   }
@@ -63,7 +79,8 @@ export function TruncationNotice({
 
 /**
  * Renders capped text through `children(text)`: the shortened text until the full text was
- * loaded, then the full text. The notice stays below the content.
+ * loaded, then the full text – within the inline budget (`clipForDisplay`: 1 Mi chars / 20 000
+ * lines, R2W-06; beyond it the notice says so). The notice stays below the content.
  */
 export function CappedContent({
   text,
@@ -77,12 +94,19 @@ export function CappedContent({
   children: (text: string) => ReactNode;
 }) {
   const full = useFullText(truncated?.blobId ?? null);
-  const shown = full.status === 'done' && full.text !== null ? full.text : text;
+  const loaded = full.status === 'done' ? full.text : null;
+  const clip = useMemo(() => (loaded === null ? null : clipForDisplay(loaded)), [loaded]);
+  const shown = clip?.text ?? text;
   return (
     <div className="grid min-w-0 gap-1">
       {children(shown)}
       {truncated === null ? null : (
-        <TruncationNotice truncated={truncated} shownChars={text.length} sessionKey={sessionKey} />
+        <TruncationNotice
+          truncated={truncated}
+          shownChars={text.length}
+          displayedChars={clip?.clipped === true ? clip.text.length : null}
+          sessionKey={sessionKey}
+        />
       )}
     </div>
   );

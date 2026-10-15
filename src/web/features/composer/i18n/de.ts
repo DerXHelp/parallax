@@ -9,6 +9,7 @@ export const de: typeof en = {
     working: 'Nachricht einreihen – Claude liest sie nach dem aktuellen Schritt…',
     permission: 'Sag Claude, was es stattdessen tun soll…',
     question: 'Mit eigenen Worten antworten…',
+    questions: 'Sag Claude, warum du die Fragen überspringst…',
     plan: 'Feedback zum Plan…',
   },
   send: 'Senden',
@@ -23,29 +24,25 @@ export const de: typeof en = {
   stopHint: 'Hält Claude an (Esc bei leerem Eingabefeld).',
   notConnected: 'Keine Verbindung',
   tooLong: 'Zu lang – höchstens {max} Zeichen.',
+  counter: '{count} / {max} Zeichen',
   target: {
-    permission: 'Antwort auf die {tool}-Freigabe ({requester}) – Senden lehnt sie mit deinem Text ab.',
-    question: 'Antwort auf die Frage ({requester}) – Senden überspringt sie mit deinem Text.',
-    plan: 'Antwort auf Plan v{version} – dein Feedback lässt Claude weiter planen.',
+    permission: 'Antwort auf die {tool}-Freigabe ({requester}) – Enter lehnt sie mit deinem Text ab.',
+    question: 'Antwort auf die Frage ({requester}) – Enter beantwortet sie mit deinem Text.',
+    questions: 'Antwort auf die Fragen ({requester}) – Enter überspringt sie mit deinem Text.',
+    plan: 'Antwort auf Plan v{version} – Enter sendet dein Feedback, Claude plant weiter.',
   },
-  queueList: {
-    label: 'Eingereihte Nachrichten',
-    title: { one: '{count} eingereihte Nachricht', other: '{count} eingereihte Nachrichten' },
-    sending: 'wird gesendet',
-    queued: 'eingereiht',
-    now: 'sofort',
+  pending: {
+    permission:
+      'Die {tool}-Freigabe ({requester}) ist offen – Enter sendet eine neue Nachricht, „Als Antwort senden“ lehnt sie mit deinem Text ab.',
+    question:
+      'Eine Frage ({requester}) ist offen – Enter sendet eine neue Nachricht, „Als Antwort senden“ beantwortet sie mit deinem Text.',
+    questions:
+      'Fragen ({requester}) sind offen – Enter sendet eine neue Nachricht, „Als Antwort senden“ überspringt sie mit deinem Text.',
+    plan: 'Plan v{version} ist offen – Enter sendet eine neue Nachricht, „Weiter planen mit Feedback“ schickt deinen Text als Feedback.',
   },
   mode: {
     label: 'Berechtigungsmodus',
     unknown: 'Unbekannter Modus',
-    modes: {
-      default: 'Manuell',
-      acceptEdits: 'Edits automatisch',
-      plan: 'Plan',
-      auto: 'Auto',
-      dontAsk: 'Nicht fragen',
-      bypassPermissions: 'Berechtigungen umgehen',
-    },
     hints: {
       default: 'Claude fragt vor jeder Änderung und jedem Befehl.',
       acceptEdits: 'Datei-Änderungen laufen ohne Nachfrage, Befehle fragen weiter.',

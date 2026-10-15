@@ -56,6 +56,10 @@ function rowKey(row: Row): string {
 interface ListShape {
   first: string | undefined;
   length: number;
+  /** All rows (items + queue + "earlier"): any other change ends the shift (R2W-07). */
+  rows: number;
+  /** The "earlier" row at the start. */
+  earlier: boolean;
   shift: boolean;
 }
 
@@ -106,12 +110,26 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
     return result;
   }, [ids, meta.hasEarlier, queue]);
 
-  // virtua `shift`: true exactly for updates that prepended items (derived from the previous shape).
-  const [shape, setShape] = useState<ListShape>({ first: ids[0], length: ids.length, shift: false });
+  // virtua `shift`: true exactly for the update that changed the start of the list – items
+  // prepended, or the "earlier" row added/removed (derived from the previous shape); the next
+  // change of the rows – e.g. a queued prompt appended at the end – ends it (R2W-07).
+  const [shape, setShape] = useState<ListShape>({
+    first: ids[0],
+    length: ids.length,
+    rows: rows.length,
+    earlier: meta.hasEarlier,
+    shift: false,
+  });
   let shift = shape.shift;
-  if (shape.first !== ids[0] || shape.length !== ids.length) {
-    shift = shape.first !== undefined && ids[0] !== shape.first && ids.includes(shape.first);
-    setShape({ first: ids[0], length: ids.length, shift });
+  if (
+    shape.first !== ids[0] ||
+    shape.length !== ids.length ||
+    shape.rows !== rows.length ||
+    shape.earlier !== meta.hasEarlier
+  ) {
+    const prepended = shape.first !== undefined && ids[0] !== shape.first && ids.includes(shape.first);
+    shift = prepended || shape.earlier !== meta.hasEarlier;
+    setShape({ first: ids[0], length: ids.length, rows: rows.length, earlier: meta.hasEarlier, shift });
   }
 
   const listRef = useRef<VListHandle>(null);

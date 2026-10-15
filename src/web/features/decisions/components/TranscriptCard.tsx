@@ -10,6 +10,7 @@ import { Button } from '@web/ui/button';
 import { StatusIcon } from '@web/ui/status-icon';
 import { planTitle } from '../lib/plan';
 import { summarizeToolInput } from '../lib/tool-input';
+import { OpenPlanButton } from './plan-parts';
 import { RequesterLabel } from './RequesterLabel';
 
 const STATUS: Readonly<Record<Decision['kind'], DisplayStatusKind>> = {
@@ -78,8 +79,9 @@ function Body({ sessionKey, decision }: { sessionKey: string; decision: Decision
 
 /**
  * Read-only card for the transcript (`placement: 'transcript'`, architecture §2.3e, ADR-031):
- * plan text (slot `Markdown`), status (icon + text) and "Go to decision" (→ focusDecision). No
- * answer controls – the bar is the only operable instance.
+ * plan text (slot `Markdown`), status (icon + text), "Open plan" (side panel, only when mounted)
+ * and "Go to decision" (→ focusDecision). No answer controls – the bar is the only operable
+ * instance.
  */
 export function TranscriptCard({ sessionKey, decision }: { sessionKey: string; decision: Decision }) {
   const t = useT();
@@ -115,6 +117,8 @@ export function TranscriptCard({ sessionKey, decision }: { sessionKey: string; d
           {expired ? t('decisions.transcript.expired') : t('decisions.transcript.waiting')}
         </span>
         <span className="flex-1" />
+        {/* Plan "Plan-Karte im Chat (… „Plan öffnen“)" – opening the panel is no answer (R2W-15). */}
+        {decision.kind === 'plan' ? <OpenPlanButton sessionKey={sessionKey} decision={decision} /> : null}
         <Button
           variant="outline"
           size="sm"
