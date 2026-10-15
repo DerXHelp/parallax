@@ -39,7 +39,7 @@ Eigene Pfade gezielt prüfen: `pnpm exec eslint <pfade>`, `pnpm exec vitest run 
 | `src/server/claude/` | resolveClaude, buildEnv, parseProfileArgs, Profil „Standard“, Preflight | WP-11 |
 | `src/server/sessions/{normalizer,status}/` | Normalizer, Statusmaschine | WP-12 |
 | übrige Dateien in `src/server/{sessions,backend}/` | Manager, Broker, Fake-/SdkBackend | WP-13 |
-| `src/server/{main,bootstrap}.ts` / `src/server/launcher/` | Einstieg / Launcher, Lockfile | WP-20 / WP-21 |
+| `src/server/main.ts`, `src/server/app/` / `src/server/launcher/` | Einstieg + Komposition (`compose.ts`) / Launcher, Lockfile | WP-20 / WP-21 |
 | `src/web/{shell,ui,lib,state,i18n,playground}/`, `App.tsx`, `main.tsx`, `index.css` | Shell + Slots, Primitives, Stores, Auth-Client, i18n-Kern | WP-14 (Welle 1b: nur lesen) |
 | `src/web/features/transcript/` | Transkript inkl. eigenem `i18n/`, `playground.tsx` | WP-15 |
 | `src/web/features/{decisions,composer}/` | Entscheidungen, Composer (dito) | WP-16 |
