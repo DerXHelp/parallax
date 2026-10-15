@@ -14,7 +14,7 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 | 11 | Claude-Integration: `resolveClaude`, Env-Builder, Profil „Standard“, `pnpm preflight` | 02 | fertig | `ef67969`, Merge `04b04b8` | resolveClaude (PATH×PATHEXT im Prozess, .cmd-Shim, .old ignoriert), buildEnv, Profil „Standard“, parseProfileArgs, parseAuthStatus, Versionsregel, lib/process, Preflight live ok; Recorder nutzt buildEnv; 977 Tests | R1-Fixes: dauerhaft gesetzte Env-Variablen (Registry) in buildEnv erhalten (Nexus, ADR), `findEdge` nach `lib/`, architecture §2.2 + lib/README um process-Exporte ergänzen |
 | 12 | Normalizer + Status: zwei Adapter, Snapshots aller Fixtures, `deriveDisplayStatus` | 01, 02 | fertig | `ae06b26`, Merge `67da537` | Live- + Verlaufs-Adapter mit identischen Items, Kappung, Context-Schätzung, `reduceStatus`, Datei-Snapshots über alle Fixtures; 224 Tests | Contract: `context_estimate.contextWindow: number\|null`, `HistoryMessage.origin`, Kommentar `session_id`-Signal, architecture §6; Hinweise für WP-13 in WP-12.md (registerPrompt vor send, Reset-Reihenfolge, mergeByTime …) |
 | 14 | Web-Shell + State: WS-Client mit Resync, Stores, Theme, i18n-Kern, Playground-Route | 02 | fertig | `af09e89`, Merge `0492779` | WS-Client mit Resync/Reconnect, Stores + Hooks (§10.3), i18n en/de mit `tError`, Theme, 27 UI-Primitives, Shell mit FeatureSlots, Playground (`pnpm dev:web` → `#playground`); 94 Web-Tests | Vite-Watcher ignoriert im Worktree alle Dateien (Ignore-Muster wurzelrelativ machen); `src/web/README.md` um shell/playground ergänzen; Chunk > 500 kB |
-| 13 | Session-Engine: FakeBackend, Broker, Manager, SdkBackend | 11, 12 | Design läuft (Worktree `wp/13`) | – | – | – |
+| 13 | Session-Engine: FakeBackend, Broker, Manager, SdkBackend | 11, 12 | Design fertig (`d79305d`), Umsetzung 13a/13c/13b folgt | – | – | – |
 | 15 | Transkript-Renderer: Streaming-Markdown, Diff, Bash, Fallback, virtualisierte Liste | 14 | offen | – | – | – |
 | 16 | Entscheidungen + Composer: Karten, Leiste, Queue, Stop, Entwürfe, Picker, Gauge | 14 | offen | – | – | – |
 | 20 | Integration + E2E: Verdrahtung, Playwright (msedge) auf FakeBackend | 10–16 | offen | – | – | – |
@@ -58,6 +58,21 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 - Koordinator-Entscheidungen 15.10.2026: Launcher-Code über Lockfile-Token (ADR-015);
   `interrupted` mit abgelaufener Karte zählt zu „Wartet auf dich“ (`needs-resume`, ADR-016);
   `parseProfileArgs` als reine Funktion schon in WP-11, ohne UI.
+
+## Freigegebene Contract-Wünsche (Umsetzung in den R1-Fixes, additiv, Versionen bleiben 1)
+- `errors.ts`: `ROUTE_NOT_FOUND` (WP-10), `PROMPT_NOT_DELIVERED` (WP-13).
+- `sessions/ports.ts`: `context_estimate.contextWindow: number | null`; Kommentar zum `session_id`-Signal (WP-12).
+- `backend/types.ts`: `HistoryMessage.origin` (WP-12), `BackendSessionInfo.firstPrompt` (WP-13).
+- `sync/ports.ts`: `DecisionStore.flush()` (WP-13); Port-Kommentar `createSyncHub({source, instance})` (WP-10).
+- `model.ts`: Kommentar „Plan-Versionen zählen je Eintrag“ (WP-13).
+- `DEV_WEB_PORT` in ein importfreies Shared-Modul (Vite-Loader-Warnungen, WP-10).
+- `architecture.md`: §6 (rejected → `assistant_error`, Reset-Marker nach `startConversation`), §8 `processes.json`, §2.2 + `lib/README` um `lib/process`-Exporte.
+- WP-12-Dateien: `capText`/`capInput` aus `normalizer/index.ts` re-exportieren; `lib/process.ts`: optional `childProcesses()`.
+- Koordinator-Entscheidungen: Auto-Retry nur nach Absturz im Leerlauf (A.10, max. 3, Backoff);
+  `buildEnv` erhält Variablen, die dauerhaft in HKCU/HKLM `Environment` gesetzt sind (Nexus); `findEdge` nach `lib/`.
+
+## WP-13 Aufteilung (Design `d79305d` auf `wp/13`, `docs/wp/WP-13.md`)
+13a FakeBackend + Broker + Basismodule/Test-Doubles und 13c SdkBackend parallel; 13b SessionManager nach Merge von 13a.
 
 ## Nächste Schritte
 1. Welle 1a komplett gemergt (1451 Tests). Läuft: R1 Server + Web, Verifier V1, WP-13-Design. Danach R1-Fixes inkl. gesammelter Contract-Wünsche, dann Welle 1b.
