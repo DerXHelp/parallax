@@ -17,4 +17,25 @@ describe('test environment', () => {
       assertNotRealHome('C:\\Users\\x\\AppData\\Local\\parallax', env);
     }).toThrow(/real data directory/);
   });
+
+  it.each([
+    'C:\\Users\\x\\AppData\\Local\\Parallax\\',
+    'c:\\users\\X\\appdata\\local\\PARALLAX\\tmp-123',
+    'C:/Users/x/AppData/Local/Parallax/logs/sub',
+    'C:\\Users\\x\\AppData\\Local\\Temp\\..\\Parallax\\x',
+  ])('refuses %s inside the real data directory (R0-23)', (home) => {
+    expect(() => {
+      assertNotRealHome(home, { LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' });
+    }).toThrow(/real data directory/);
+  });
+
+  it.each([
+    'C:\\Users\\x\\AppData\\Local\\Parallax-dev',
+    'C:\\Users\\x\\AppData\\Local\\Temp\\Parallax',
+    'D:\\Parallax',
+  ])('allows %s (not inside it)', (home) => {
+    expect(() => {
+      assertNotRealHome(home, { LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' });
+    }).not.toThrow();
+  });
 });

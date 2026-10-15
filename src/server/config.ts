@@ -6,7 +6,7 @@ import { parseArgs } from 'node:util';
 import { z } from 'zod';
 import { BUILD_ID } from '@shared/build';
 import { LOOPBACK_HOST } from '@shared/http';
-import { windowsPathIssue, windowsPathsEqual } from '@shared/paths';
+import { isWindowsPathInside, windowsPathIssue, windowsPathsEqual } from '@shared/paths';
 import { PRODUCT_ID, PRODUCT_NAME } from '@shared/product';
 import { newUuid } from './lib/ids';
 import { logLevelSchema, type LogLevel } from './lib/logger';
@@ -16,9 +16,13 @@ import { logLevelSchema, type LogLevel } from './lib/logger';
  * with zod. Settings (`settings.json`) have no server fields in Phase 1 (port/autostart follow in
  * Phase 2), so that layer is empty for now.
  *
- * Flags: `--dev`, `--backend=fake|sdk`, `--port=<0..65535>`, `--host=<ip>`, `--home=<dir>`,
+ * Flags: `--dev`, `--backend=fake|sdk`, `--port=<0..65535>`, `--host=127.0.0.1`, `--home=<dir>`,
  * `--log-level=<level>`. Env: `PARALLAX_HOME`, `PARALLAX_PORT` (0 = any free port),
  * `PARALLAX_HOST`, `PARALLAX_BACKEND`, `PARALLAX_DEV` (`1`/`true`), `PARALLAX_LOG_LEVEL`.
+ *
+ * The bind address is always 127.0.0.1 (Plan "Sicherheit", A.8; R1-05, ADR-023): `--host` /
+ * `PARALLAX_HOST` stay accepted for ADR-006 compatibility, every other value is a ConfigError –
+ * on 0.0.0.0 a non-browser client could fake the Host header.
  */
 
 /** Port of the productive server (`pnpm start`). Dev uses 4712 (DEV_SERVER_PORT in repo.config.ts). */
@@ -34,8 +38,8 @@ export interface ServerConfig {
   backend: BackendKind;
   /** 0 = any free port (tests); the actual port comes from the listening server. */
   port: number;
-  /** Bind address, default 127.0.0.1. Host/Origin checks stay on 127.0.0.1 (src/shared/http.ts). */
-  host: string;
+  /** Bind address: always 127.0.0.1 (LOOPBACK_HOST, R1-05); Host/Origin checks use the same address. */
+  host: typeof LOOPBACK_HOST;
   /** Absolute PARALLAX_HOME. */
   home: string;
   /** HostState.dataDirLabel (display only). */
@@ -55,7 +59,7 @@ const portSchema = z
   .regex(/^\d{1,5}$/, 'port must be a number')
   .transform(Number)
   .pipe(z.number().int().min(0).max(65535));
-const hostSchema = z.union([z.ipv4(), z.ipv6()]);
+const hostSchema = z.literal(LOOPBACK_HOST, { error: `only ${LOOPBACK_HOST} is allowed (loopback only)` });
 const boolEnvSchema = z.enum(['1', '0', 'true', 'false']).transform((v) => v === '1' || v === 'true');
 const homeSchema = z.string().trim().min(1);
 
@@ -152,7 +156,8 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
     if (issue !== null) throw new ConfigError(`invalid home (${issue}): ${home}`);
   }
   const isRealHome = windowsPathsEqual(home, realHome);
-  if (isRealHome && env.VITEST !== undefined) {
+  // Also no folder inside it (R0-23).
+  if (env.VITEST !== undefined && isWindowsPathInside(home, realHome)) {
     throw new ConfigError(`tests must not use the real data directory ${realHome}`);
   }
 

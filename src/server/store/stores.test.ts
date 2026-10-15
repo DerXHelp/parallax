@@ -1,14 +1,14 @@
 import { createHash } from 'node:crypto';
-import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { REGISTRY_SCHEMA_VERSION, type TranscriptItem } from '@shared/model';
 import { SAMPLE_IDS, sampleDecisionRecord, sampleEntry, sampleId, sampleItems } from '@shared/samples';
 import { makeTempHome } from '../http/testServer';
-import type { TranscriptLogLine } from '../sync/ports';
+import type { DecisionStore, TranscriptLogLine } from '../sync/ports';
 import { blobFilePath, blobMetaPath, createBlobStore } from './blobs';
 import { createDecisionStore, planPath } from './decisions';
-import { createStoreWarnings } from './jsonStore';
+import { StoreVersionTooNewError, createStoreWarnings } from './jsonStore';
 import { REGISTRY_FILE, openRegistryStore } from './registry';
 import { SETTINGS_FILE, openSettingsStore } from './settings';
 import { createTranscriptStore, transcriptPath } from './transcripts';
@@ -57,6 +57,26 @@ describe('RegistryStore (sessions.json)', () => {
   });
 });
 
+describe('newer schemaVersion aborts the start (R1-06)', () => {
+  it.each([
+    ['sessions.json', REGISTRY_FILE, (home: string) => openRegistryStore({ home })],
+    ['settings.json', SETTINGS_FILE, (home: string) => openSettingsStore({ home })],
+  ] as const)(
+    '%s: open rejects with STORE_VERSION_TOO_NEW and leaves the file as it was',
+    async (_name, name, open) => {
+      const home = await makeTempHome('newer-');
+      const text = `${JSON.stringify({ schemaVersion: 99, whatever: [1, 2, 3] })}\n`;
+      await writeFile(path.join(home, name), text, 'utf8');
+      await expect(open(home)).rejects.toBeInstanceOf(StoreVersionTooNewError);
+      await expect(open(home)).rejects.toMatchObject({
+        error: { code: 'STORE_VERSION_TOO_NEW', params: { file: name, version: 99 } },
+      });
+      expect(await readFile(path.join(home, name), 'utf8')).toBe(text);
+      expect(await readdir(home)).toEqual([name]);
+    },
+  );
+});
+
 describe('SettingsStore (settings.json)', () => {
   it('patches only the given fields and persists', async () => {
     const home = await makeTempHome('settings-');
@@ -86,6 +106,18 @@ describe('DecisionStore (decisions.json + plans)', () => {
     const reopened = createDecisionStore({ home });
     expect(await reopened.load(ENTRY)).toEqual([record]);
     expect(await reopened.load(sampleId('en', 5))).toEqual([]);
+  });
+
+  it('flush() through the port writes pending records immediately (WP-13 §6 Nr. 1, shutdown)', async () => {
+    const home = await makeTempHome('decisions-');
+    const store: DecisionStore = createDecisionStore({ home, debounceMs: 60_000 });
+    const record = sampleDecisionRecord();
+    store.save(ENTRY, [record]);
+    await store.flush();
+    const file = JSON.parse(await readFile(path.join(home, 'entries', ENTRY, 'decisions.json'), 'utf8')) as {
+      records: unknown[];
+    };
+    expect(file.records).toEqual([record]);
   });
 
   it('stores plan versions with the exact text', async () => {
@@ -194,6 +226,40 @@ describe('TranscriptStore (entries/<id>/<cv>.transcript.jsonl)', () => {
     await reading;
     expect((await store.readTail(ENTRY, CV, 1)).items.map((i) => i.order)).toEqual([2001]);
   });
+
+  it('checks every appended line against the schema in test/dev mode (R1-16)', async () => {
+    const home = await makeTempHome('transcripts-');
+    const invalid = { v: 1, at: 'not a date', op: 'remove', itemId: 'm1:0' } as unknown as TranscriptLogLine;
+    expect(() => {
+      createTranscriptStore({ home }).append(ENTRY, CV, invalid);
+    }).toThrow(/invalid log line/);
+    const lenient = createTranscriptStore({ home, validation: 'log' });
+    lenient.append(ENTRY, CV, invalid);
+    expect(lenient.stats().appendedLines).toBe(0);
+    const off = createTranscriptStore({ home, validation: 'off' });
+    off.append(ENTRY, CV, invalid);
+    expect(off.stats().appendedLines).toBe(1);
+  });
+
+  it('raises STORE_WRITE_FAILED once after repeated append failures (R1-16)', async () => {
+    const home = await makeTempHome('transcripts-');
+    const warnings = createStoreWarnings();
+    const store = createTranscriptStore({ home, flushMs: 60_000, warnings });
+    // A folder where the log file should be: every append fails.
+    await mkdir(transcriptPath(home, ENTRY, CV), { recursive: true });
+    store.append(ENTRY, CV, up(text(1)));
+    await store.flush();
+    await store.flush();
+    expect(warnings.list()).toEqual([]);
+    await store.flush();
+    await store.flush();
+    expect(warnings.list().map((w) => w.error)).toEqual([
+      {
+        code: 'STORE_WRITE_FAILED',
+        params: { file: `${CV}.transcript.jsonl`, reason: expect.any(String) as string },
+      },
+    ]);
+  });
 });
 
 describe('BlobStore (content-addressed)', () => {
@@ -230,6 +296,16 @@ describe('BlobStore (content-addressed)', () => {
     expect(second).toEqual(first);
     await blobs.flush();
     expect([...(await readFile(blobFilePath(home, first.blobId)))]).toEqual([0, 255, 1]);
+  });
+
+  it('never throws for odd metadata: empty/long media type → octet-stream, long name cut (R1-20)', async () => {
+    const blobs = createBlobStore({ home: await makeTempHome('blobs-') });
+    expect(blobs.put('a', '').mediaType).toBe('application/octet-stream');
+    expect(blobs.put('b', '   ').mediaType).toBe('application/octet-stream');
+    expect(blobs.put('c', `x/${'y'.repeat(200)}`).mediaType).toBe('application/octet-stream');
+    expect(blobs.put('d', ' image/png ', 'n'.repeat(400)).name).toHaveLength(260);
+    expect(blobs.put('e', ' image/png ').mediaType).toBe('image/png');
+    await blobs.flush();
   });
 
   it('returns null for unknown, malformed and invalid-meta blobs', async () => {

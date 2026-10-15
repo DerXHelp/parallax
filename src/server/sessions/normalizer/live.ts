@@ -62,6 +62,7 @@ import {
   type ItemBase,
   type TaskNotificationText,
 } from './builders';
+import { modelContextWindow } from './context';
 import { capText, fitToolCall, shareBudget } from './limits';
 import {
   apiRetryMessageSchema,
@@ -196,6 +197,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
   private lifecycleSupported: boolean | null = null;
   private lastModel: string | null = null;
   private lastEstimate: number | null = null;
+  /** Last valid raw `result` (its modelUsage[model].contextWindow goes into context_estimate, R1-07). */
+  private lastResult: unknown = null;
   private lastCostTotal: number | null = null;
   private turnAssistantError: ErrorPayload | null = null;
   private lastInitJson: string | null = null;
@@ -414,7 +417,12 @@ class LiveNormalizerImpl implements LiveNormalizer {
     const total = usageTotal(usage);
     if (total === null || total === this.lastEstimate) return;
     this.lastEstimate = total;
-    out.signals.push({ type: 'context_estimate', totalTokens: total, model });
+    out.signals.push({
+      type: 'context_estimate',
+      totalTokens: total,
+      model,
+      contextWindow: modelContextWindow(this.lastResult, model),
+    });
   }
 
   // ---- stream_event ----
@@ -832,6 +840,7 @@ class LiveNormalizerImpl implements LiveNormalizer {
     }
     const r = parsed.data;
     const at = receivedAt.toISOString();
+    this.lastResult = raw;
     this.closeStreaming(out);
     this.endRetrySeries(out);
 

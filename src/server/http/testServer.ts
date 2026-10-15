@@ -1,5 +1,6 @@
 import { mkdtemp } from 'node:fs/promises';
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
+import { connect } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
@@ -41,7 +42,7 @@ export async function makeTempHome(prefix = 'wp10-'): Promise<string> {
 }
 
 export async function startTestServer(
-  options: { dev?: boolean; timing?: Partial<HubTiming>; home?: string } = {},
+  options: { dev?: boolean; timing?: Partial<HubTiming>; home?: string; webRoot?: string } = {},
 ): Promise<TestServer> {
   const home = options.home ?? (await makeTempHome());
   const instance = createServerInstance({ serverVersion: '0.0.0-test' });
@@ -49,7 +50,14 @@ export async function startTestServer(
   const blobs = createBlobStore({ home });
   const source = createMemorySessionSource();
   const hub = createSyncHub({ source, instance, timing: { heartbeatMs: 0, ...options.timing } });
-  const app = await createApp({ config: { port: 0, dev: options.dev ?? false }, instance, auth, blobs, hub });
+  const app = await createApp({
+    config: { port: 0, dev: options.dev ?? false },
+    instance,
+    auth,
+    blobs,
+    hub,
+    webRoot: options.webRoot ?? null,
+  });
   await app.listen({ host: '127.0.0.1', port: 0 });
   const address = app.server.address();
   if (address === null || typeof address !== 'object') throw new Error('server not listening');
@@ -99,7 +107,8 @@ export function cookieFromSetCookie(setCookie: string[] | string | undefined, na
   return null;
 }
 
-// ---- raw HTTP (node:http: full control over Host, Origin, Sec-Fetch-Site) ----
+// ---- raw HTTP (node:http: full control over Host, Origin, Sec-Fetch-Site; `path` is sent verbatim,
+// so absolute-form targets like `http://127.0.0.1:P/api/blob/x` work too) ----
 
 export interface RawResponse {
   status: number;
@@ -133,13 +142,82 @@ export function rawRequest(
   });
 }
 
+// ---- raw WebSocket upgrade (net socket: any request target, method and header set) ----
+
+export interface RawUpgradeResult {
+  /** HTTP status of the answer (101 = the server upgraded), 0 if none arrived. */
+  status: number;
+  /** Everything received (head and body of an error answer). */
+  text: string;
+}
+
+/** Sends a WebSocket handshake for `target` as is and returns the server's answer (socket closed). */
+export function rawUpgrade(
+  port: number,
+  target: string,
+  headers: Record<string, string> = {},
+  options: { method?: string; timeoutMs?: number } = {},
+): Promise<RawUpgradeResult> {
+  const lines = [
+    `${options.method ?? 'GET'} ${target} HTTP/1.1`,
+    ...Object.entries({
+      host: `127.0.0.1:${String(port)}`,
+      connection: 'Upgrade',
+      upgrade: 'websocket',
+      'sec-websocket-version': '13',
+      'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
+      ...headers,
+    }).map(([name, value]) => `${name}: ${value}`),
+    '',
+    '',
+  ];
+  return new Promise((resolve, reject) => {
+    let text = '';
+    let settled = false;
+    const socket = connect(port, '127.0.0.1', () => {
+      socket.write(lines.join('\r\n'));
+    });
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      const status = Number(/^HTTP\/1\.1 (\d{3})/.exec(text)?.[1] ?? 0);
+      socket.destroy();
+      resolve({ status, text });
+    };
+    socket.on('data', (chunk: Buffer) => {
+      text += chunk.toString('utf8');
+      // A 101 is never followed by a close from the server: stop here.
+      if (text.startsWith('HTTP/1.1 101 ')) {
+        done();
+        return;
+      }
+      // A complete error answer (head + Content-Length body) is enough; do not wait for the close.
+      const headEnd = text.indexOf('\r\n\r\n');
+      if (headEnd < 0) return;
+      const length = Number(/\r\ncontent-length:\s*(\d+)/i.exec(text.slice(0, headEnd))?.[1] ?? 'NaN');
+      if (options.method === 'HEAD' || (Number.isFinite(length) && text.length - headEnd - 4 >= length))
+        done();
+    });
+    socket.on('close', done);
+    socket.on('error', reject);
+    setTimeout(done, options.timeoutMs ?? 3000).unref();
+  });
+}
+
 // ---- WebSocket test client ----
 
 export interface WsConnectOptions {
   cookie?: string;
+  /** Default: the server's own origin; null = no Origin header. */
   origin?: string | null;
+  /**
+   * `Sec-Fetch-Site` header. Default: none – like Chrome/Edge, which send no Sec-Fetch-* on the
+   * WebSocket handshake (V1-01); pass a value to test the "if present" rule.
+   */
   site?: string | null;
   host?: string;
+  /** Request path (default `/api/ws`), sent as given (no re-encoding). */
+  path?: string;
 }
 
 export type WsConnectResult =
@@ -236,11 +314,12 @@ export function connectWs(
   if (options.cookie !== undefined) headers.cookie = options.cookie;
   const origin = options.origin === undefined ? server.origin : options.origin;
   if (origin !== null) headers.origin = origin;
-  const site = options.site === undefined ? 'same-origin' : options.site;
-  if (site !== null) headers['sec-fetch-site'] = site;
+  if (options.site !== undefined && options.site !== null) headers['sec-fetch-site'] = options.site;
   if (options.host !== undefined) headers.host = options.host;
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(`ws://127.0.0.1:${String(server.port)}/api/ws`, { headers });
+    const socket = new WebSocket(`ws://127.0.0.1:${String(server.port)}${options.path ?? '/api/ws'}`, {
+      headers,
+    });
     const client = new TestWsClient(socket);
     socket.once('open', () => {
       resolve({ ok: true, client });

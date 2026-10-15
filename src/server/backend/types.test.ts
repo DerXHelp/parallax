@@ -11,7 +11,14 @@ import { describe, expectTypeOf, it } from 'vitest';
 import type { EffortLevel, PermissionMode, RuleDestination } from '@shared/common';
 import type { ParseProfileArgs, ProfileArgIssueParams } from '../claude/ports';
 import type { ReduceStatusContext, StatusSignal } from '../sessions/ports';
-import type { AgentBackend, OutgoingPrompt, StartSessionRequest } from './types';
+import type { DecisionStore } from '../sync/ports';
+import type {
+  AgentBackend,
+  BackendSessionInfo,
+  HistoryMessage,
+  OutgoingPrompt,
+  StartSessionRequest,
+} from './types';
 
 describe('SDK mirror types', () => {
   it('permission modes and effort levels equal the SDK', () => {
@@ -51,5 +58,22 @@ describe('R0 port refinements', () => {
     expectTypeOf<ParseProfileArgs>().parameters.toEqualTypeOf<[readonly string[], boolean]>();
     expectTypeOf<ProfileArgIssueParams['index']>().toEqualTypeOf<number>();
     expectTypeOf<ProfileArgIssueParams['flag']>().toEqualTypeOf<string>();
+  });
+});
+
+describe('R1 contract package (additive)', () => {
+  type Signal<T extends StatusSignal['type']> = Extract<StatusSignal, { type: T }>;
+
+  it('context_estimate carries the context window of the last result (R1-07)', () => {
+    expectTypeOf<Signal<'context_estimate'>['contextWindow']>().toEqualTypeOf<number | null>();
+  });
+
+  it('history messages may carry the SessionMessage origin; session info the first prompt', () => {
+    expectTypeOf<HistoryMessage['origin']>().toEqualTypeOf<{ kind: string } | null | undefined>();
+    expectTypeOf<BackendSessionInfo['firstPrompt']>().toEqualTypeOf<string | null>();
+  });
+
+  it('the decision store can be flushed through the port (WP-13 §6 Nr. 1)', () => {
+    expectTypeOf<DecisionStore['flush']>().toEqualTypeOf<() => Promise<void>>();
   });
 });

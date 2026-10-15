@@ -4,12 +4,13 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import type { Logger } from 'pino';
 import { conversationIdSchema, type ConversationId, type EntryId } from '@shared/common';
+import { makeError } from '@shared/errors';
 import type { TranscriptItem } from '@shared/model';
 import { logger as rootLogger } from '../lib/logger';
 import { fsErrorCode } from '../lib/paths';
 import { transcriptLogLineSchema, type TranscriptLogLine, type TranscriptStore } from '../sync/ports';
 import { entryDir } from './decisions';
-import { withFsRetry } from './jsonStore';
+import { withFsRetry, type StoreWarningSink } from './jsonStore';
 
 /**
  * Append-only transcript log per conversation (A.3, architecture §8):
@@ -17,7 +18,17 @@ import { withFsRetry } from './jsonStore';
  * persisted op. Buffered single writer per file; loading folds by id (last line wins), sorts by
  * `order`, skips and counts broken lines. Streaming items are never persisted (dropped + counted).
  * A small LRU cache keeps folded conversations, updated on append.
+ *
+ * R1-16: in test/dev mode every appended line is checked against the schema (an invalid line would
+ * be written and silently dropped on the next load); a file whose appends keep failing raises one
+ * host warning STORE_WRITE_FAILED (cleared by the next successful write).
  */
+
+/** Like the hub (R0-28): `throw` under Vitest, `log` in dev (main.ts), `off` otherwise. */
+export type TranscriptValidation = 'off' | 'log' | 'throw';
+
+/** Consecutive failed flushes of one file before the host warning. */
+export const TRANSCRIPT_FAILURES_BEFORE_WARNING = 3;
 
 export const TRANSCRIPT_SUFFIX = '.transcript.jsonl';
 
@@ -34,6 +45,10 @@ export interface TranscriptStoreOptions {
   flushMs?: number;
   /** Folded conversations kept in memory (default 8). */
   cacheSize?: number;
+  /** Schema check of appended lines (default: `throw` under Vitest/NODE_ENV=test, else `off`). */
+  validation?: TranscriptValidation;
+  /** Host warnings (STORE_WRITE_FAILED after repeated append failures). */
+  warnings?: StoreWarningSink;
   logger?: Logger;
 }
 
@@ -60,6 +75,12 @@ interface FileState {
   /** Serializes writes and reads of this file. */
   chain: Promise<void>;
   tailChecked: boolean;
+  /** Consecutive failed flushes; the warning is raised once per failure series. */
+  failures: number;
+}
+
+function defaultValidation(): TranscriptValidation {
+  return process.env.VITEST !== undefined || process.env.NODE_ENV === 'test' ? 'throw' : 'off';
 }
 
 type Fold = Map<string, TranscriptItem>;
@@ -106,12 +127,13 @@ export function createTranscriptStore(options: TranscriptStoreOptions): FileTran
   const files = new Map<string, FileState>();
   const cache = new Map<string, CachedFold>();
   const stats: TranscriptStoreStats = { appendedLines: 0, brokenLines: 0, droppedStreaming: 0 };
+  const validation = options.validation ?? defaultValidation();
   let timer: NodeJS.Timeout | null = null;
 
   const stateFor = (file: string): FileState => {
     let state = files.get(file);
     if (state === undefined) {
-      state = { file, queue: [], chain: Promise.resolve(), tailChecked: false };
+      state = { file, queue: [], chain: Promise.resolve(), tailChecked: false, failures: 0 };
       files.set(file, state);
     }
     return state;
@@ -163,9 +185,24 @@ export function createTranscriptStore(options: TranscriptStoreOptions): FileTran
   const flushFile = (state: FileState): Promise<void> => {
     state.chain = state.chain
       .then(() => writeQueued(state))
+      .then(() => {
+        state.failures = 0;
+      })
       .catch((error: unknown) => {
         // Lines stay queued; the next flush tries again.
-        log.error({ err: error, file: path.basename(state.file) }, 'transcript append failed');
+        state.failures += 1;
+        log.error(
+          { err: error, file: path.basename(state.file), failures: state.failures },
+          'transcript append failed',
+        );
+        if (state.failures === TRANSCRIPT_FAILURES_BEFORE_WARNING) {
+          options.warnings?.add(
+            makeError('STORE_WRITE_FAILED', {
+              file: path.basename(state.file),
+              reason: fsErrorCode(error) ?? 'unknown',
+            }),
+          );
+        }
       });
     return state.chain;
   };
@@ -253,6 +290,16 @@ export function createTranscriptStore(options: TranscriptStoreOptions): FileTran
         stats.droppedStreaming += 1;
         log.debug({ itemId: line.item.id }, 'transcript: streaming item not persisted');
         return;
+      }
+      if (validation !== 'off') {
+        const parsed = transcriptLogLineSchema.safeParse(line);
+        if (!parsed.success) {
+          const issue = parsed.error.issues[0];
+          const detail = `${issue?.path.map(String).join('.') ?? ''}: ${issue?.message ?? 'invalid'}`;
+          if (validation === 'throw') throw new Error(`TranscriptStore: invalid log line – ${detail}`);
+          log.error({ detail }, 'invalid transcript line dropped');
+          return;
+        }
       }
       stateFor(file).queue.push({ line, text: `${JSON.stringify(line)}\n` });
       stats.appendedLines += 1;

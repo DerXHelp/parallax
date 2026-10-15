@@ -3,25 +3,24 @@ import { STANDARD_PROFILE_ID } from '@shared/common';
 import { sampleClaudeInstallStatus } from '@shared/samples';
 import type { RunFileOptions, RunFileResult } from '../lib/process';
 import { createClaudeIntegration } from './integration';
+import { createMemoryFs } from '../lib/windows';
 import {
+  antivirusProducts,
+  checkAntivirus,
   checkEdge,
   checkNode,
   checkPnpm,
   checkProfileStatus,
   checkRegistry,
-  findEdge,
   findPnpm,
   formatPreflight,
-  parseRegDefaultValue,
   pnpmVersionFromUserAgent,
   preflightExitCode,
   redactRegistry,
   runPreflight,
   type PreflightCheck,
-  type RegQuery,
 } from './preflight';
 import { STANDARD_PROFILE } from './profiles';
-import { createMemoryFs } from './resolveClaude';
 
 const STANDARD = { id: STANDARD_PROFILE.id, name: STANDARD_PROFILE.name };
 const LOGGED_OUT = { state: 'logged_out', method: null, apiProvider: null, subscriptionType: null } as const;
@@ -135,54 +134,56 @@ describe('rating', () => {
   });
 });
 
-describe('Edge (C.9)', () => {
-  const EN = [
-    '',
-    'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\msedge.exe',
-    '    (Default)    REG_SZ    C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-    '    Path    REG_SZ    C:\\Program Files (x86)\\Microsoft\\Edge\\Application',
-    '',
-  ].join('\r\n');
-  const DE = EN.replace('(Default)', '(Standard)');
-  const EXPAND =
-    '    (Standard)    REG_EXPAND_SZ    "%LOCALAPPDATA%\\Microsoft\\Edge\\Application\\msedge.exe"\r\n';
-  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
-
-  it.each([
-    ['English', EN, EDGE],
-    ['German', DE, EDGE],
-    ['expand + quotes', EXPAND, 'C:\\Users\\u\\AppData\\Local\\Microsoft\\Edge\\Application\\msedge.exe'],
-    ['nothing', 'ERROR: not found', null],
-  ])('parseRegDefaultValue: %s', (_name, output, value) => {
-    expect(parseRegDefaultValue(output, { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' })).toBe(value);
+describe('antivirus hint (V1-08)', () => {
+  it.each<[string[] | null, PreflightCheck['level'] | null, string]>([
+    [['Kaspersky Premium'], 'warn', 'Kaspersky'],
+    [['Windows Defender', 'ESET Security'], 'warn', 'ESET'],
+    [['Bitdefender Antivirus Free'], 'warn', 'Bitdefender'],
+    [['Windows Defender'], 'info', 'Windows Defender'],
+    [['Kaspersky', 'Kaspersky', 'Windows Defender'], 'warn', 'Kaspersky (scans web traffic)'],
+    [[], 'info', 'none registered'],
+    [null, null, ''],
+  ])('%j → %s', (products, level, detail) => {
+    const check = checkAntivirus(products);
+    if (level === null) {
+      expect(check).toBeNull();
+      return;
+    }
+    expect(check?.level).toBe(level);
+    expect(check?.detail).toContain(detail);
+    expect(checkAntivirus(['A', 'A'])?.detail).toBe('A');
+    if (level === 'warn') expect(check?.hint).toMatch(/127\.0\.0\.1.*one-time login code/);
   });
 
-  const env = { 'ProgramFiles(x86)': 'C:\\Program Files (x86)', ProgramFiles: 'C:\\Program Files' };
-
-  it('prefers App Paths', async () => {
-    const queries: string[] = [];
-    const regQuery: RegQuery = (key, view) => {
-      queries.push(`${key}@${view}`);
-      return Promise.resolve(key.startsWith('HKLM') && view === 64 ? EN : null);
+  it('reads Windows Security Center without a shell and fails soft', async () => {
+    const run = (file: string, args: readonly string[]) => {
+      expect(file.toLowerCase()).toMatch(/system32\\windowspowershell\\v1\.0\\powershell\.exe$/);
+      expect(args.join(' ')).toContain('root/SecurityCenter2');
+      return Promise.resolve({
+        exitCode: 0,
+        signal: null,
+        stdout: '["Kaspersky","Windows Defender"]',
+        stderr: '',
+        timedOut: false,
+      });
     };
-    expect(await findEdge({ regQuery, fs: createMemoryFs({ [EDGE]: '' }), env })).toBe(EDGE);
-    expect(queries).toHaveLength(3);
-  });
-
-  it('falls back to Program Files and returns null if Edge is missing', async () => {
-    const none: RegQuery = () => Promise.resolve(null);
-    const programFiles = 'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe';
-    expect(await findEdge({ regQuery: none, fs: createMemoryFs({ [programFiles]: '' }), env })).toBe(
-      programFiles,
-    );
-    expect(await findEdge({ regQuery: none, fs: createMemoryFs({}), env })).toBeNull();
-  });
-
-  it('never touches an unsafe registry value', async () => {
-    const fs = createMemoryFs({});
-    const unc: RegQuery = () => Promise.resolve('    (Default)    REG_SZ    \\\\evil\\share\\msedge.exe\r\n');
-    expect(await findEdge({ regQuery: unc, fs, env: {} })).toBeNull();
-    expect(fs.touched).toEqual([]);
+    if (process.platform === 'win32') {
+      expect(await antivirusProducts(run)).toEqual(['Kaspersky', 'Windows Defender']);
+      expect(
+        await antivirusProducts(() =>
+          Promise.resolve({
+            exitCode: 1,
+            signal: null,
+            stdout: '',
+            stderr: 'Invalid namespace',
+            timedOut: false,
+          }),
+        ),
+      ).toBeNull();
+      expect(await antivirusProducts(() => Promise.reject(new Error('blocked')))).toBeNull();
+    } else {
+      expect(await antivirusProducts(run)).toBeNull();
+    }
   });
 });
 
@@ -250,6 +251,7 @@ describe('runPreflight', () => {
     const integration = createClaudeIntegration({
       appVersion: '0.0.0',
       baseEnv: () => ({ PATH: 'C:\\Users\\u\\.local\\bin' }),
+      persistentEnv: () => Promise.resolve(null),
       fs,
       runFile,
       sdkClaudeCodeVersion: '2.1.296',
@@ -272,6 +274,7 @@ describe('runPreflight', () => {
       fs,
       runFile,
       regQuery: () => Promise.resolve(null),
+      antivirus: () => Promise.resolve(['Windows Defender']),
     });
     expect(report.checks.map((check) => [check.id, check.level])).toEqual([
       ['node', 'ok'],
@@ -281,6 +284,7 @@ describe('runPreflight', () => {
       [`claude:${STANDARD_PROFILE_ID}`, 'ok'],
       [`login:${STANDARD_PROFILE_ID}`, 'ok'],
       ['edge', 'ok'],
+      ['antivirus', 'info'],
     ]);
     expect(report.exitCode).toBe(0);
     // Only version/status commands – never a model call.
@@ -304,6 +308,7 @@ describe('runPreflight', () => {
       fs,
       runFile,
       regQuery: () => Promise.resolve(null),
+      antivirus: () => Promise.resolve(['Windows Defender']),
     });
     expect(report.checks.filter((check) => check.level === 'fail').map((check) => check.id)).toEqual([
       'sdk',

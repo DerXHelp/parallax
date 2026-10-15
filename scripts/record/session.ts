@@ -22,6 +22,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { assertSpawnableFile } from '../../src/server/lib/process';
 import type { ModelUsageLite } from './context';
 import { isAssistant, isInit, isResult, isState } from './messages';
 import { killTree, listProcesses, processTree, survivors, type ProcInfo } from './processes';
@@ -342,6 +343,8 @@ export class LiveSession {
   };
 
   private readonly spawnProcess = (options: SpawnOptions): SpawnedProcess => {
+    // R1-04: only an absolute .exe (pathToClaudeCodeExecutable), never a bare name searched in the cwd.
+    assertSpawnableFile(options.command);
     const child = spawn(options.command, options.args, {
       cwd: options.cwd,
       env: options.env,

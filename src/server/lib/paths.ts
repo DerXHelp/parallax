@@ -46,6 +46,11 @@ export async function checkCwd(cwd: string): Promise<void> {
  * result to lie inside one of the (resolved) `roots`. Returns the resolved path.
  * Errors: PATH_REJECTED (unsafe string or unsafe resolution), PATH_NOT_ALLOWED (outside),
  * CWD_NOT_FOUND is not used here – a missing file rejects with the fs error (ENOENT).
+ *
+ * Known limit (R1-17): `realpath`/`stat` follow a FILE symlink before its target string can be
+ * checked, so a symlink `C:\x\link → \\server\share` still touches the share (C.10 NTLM leak).
+ * Creating such a link needs symlink rights (developer mode or admin) and write access inside the
+ * path; junctions cannot point to UNC. A per-segment `lstat` + `readlink` check would close it.
  */
 export async function resolveAllowedPath(path: string, roots: readonly string[]): Promise<string> {
   assertSafePath(path);

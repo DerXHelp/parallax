@@ -68,7 +68,11 @@ export type StatusSignal =
       apiKeySource: string;
       capabilities: string[];
     }
-  /** First message with a new session_id after a reset (F.7). */
+  /**
+   * Every new session_id, including the first one; after a reset the new id comes with the next
+   * frames (F.7). Ids of a conversation ended by a reset never trigger this signal again (late
+   * frames of the old conversation must not switch the new one back).
+   */
   | { type: 'session_id'; sessionId: string }
   /** system/status.permissionMode; null = unknown mode of a newer CLI (R0-05). */
   | { type: 'permission_mode'; mode: PermissionMode | null }
@@ -77,8 +81,12 @@ export type StatusSignal =
   /** F.6, main thread only. */
   | { type: 'assistant_model'; model: string }
   | { type: 'assistant_error'; error: ErrorPayload }
-  /** C.1 during the turn. */
-  | { type: 'context_estimate'; totalTokens: number; model: string | null }
+  /**
+   * C.1 during the turn. `contextWindow` = `modelUsage[model].contextWindow` of the last `result`
+   * of this normalizer (exact model, else the largest window), null before the first result – so
+   * the engine never parses raw `result` messages itself (R1-07).
+   */
+  | { type: 'context_estimate'; totalTokens: number; model: string | null; contextWindow: number | null }
   | {
       type: 'turn_result';
       outcome: 'success' | 'error' | 'interrupted';
