@@ -22,7 +22,7 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 | 22 | Live-Abnahme: Phase-1-Checks gegen echtes `claude`, Screenshots | 20, 21 | offen | – | – | – |
 | R0 | Review nach WP-00…02 (Konventionen, Duplikate, i18n, Importgrenzen, Sicherheit) | 02 | fertig | `289a9ac` (Review), `3c324dc` (Fixes) | 30 Befunde (6 BLOCKER, 6 SOLLTE, 18 NIT); alle BLOCKER/SOLLTE behoben: HTTP-/Auth-Contract, `@shared/paths`, dateigenaue Ownership, Statusregeln, `needs-resume`; 553 Tests | NIT R0-22 (ESLint-Meldung shared), R0-23 (`assertNotRealHome` Präfix), R0-24 (`ws` → devDeps?) in R1-Fixes (Koordinator-Freigabe Root-Configs); R0-25 nach WP-11 in R1 |
 | R1 | Review nach Welle 1a (10, 11, 12, 14) | Welle 1a | fertig | `3da4675`/`b8d928f` (Server), `a95a83f` (Web), V1 `1ab3cdd` | R1 Server 22 Befunde (1 BLOCKER: Auth-Bypass per `%xx`-Pfad), R1 Web 26 (3 BLOCKER), V1 15 (1 BLOCKER: WS ohne `Sec-Fetch-Site` abgelehnt) | `fix/r1-web` gemergt (`a158884`): Watcher wurzelverankert, Selektoren, Variante A, Notices, Feature-Grenzen, Code-Splitting; `fix/r1-server` gemergt (`b2978a5`): Guard nach Route (ADR-018), WS ohne Pflicht-`Sec-Fetch-Site` (ADR-019), Start-Abbruch bei neuerer `schemaVersion` (ADR-020), buildEnv ohne `AI_AGENT` + Registry-Ausnahme (ADR-021), nur absolute `.exe`; 1666 Tests | R1-15 Speicher, R1-17 lstat offen (später) |
-| R2 | Review nach Welle 1b (13, 15, 16) | Welle 1b | läuft: Web fertig (`a251a18`, 0 BLOCKER/7 SOLLTE/14 NIT), Fixes in `fix/r2-web`; Teil Server nach 13b | – | – | – |
+| R2 | Review nach Welle 1b (13, 15, 16) | Welle 1b | läuft: Web fertig (`a251a18`, 0 BLOCKER/7 SOLLTE/14 NIT), Fixes gemergt (`632e7ed`, Merge `2c95b2c`: Ziel-Sperre ADR-040, Warteschlange ADR-041, Picker ADR-042, Labels ADR-043, `ui/disclosure`); Teil Server nach 13b | – | – | – |
 | R3 | Review nach Welle 2/3 + `/code-review` | 20–22 | offen | – | – | – |
 
 ## Contract-Changelog
@@ -34,6 +34,7 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 | 15.10.2026 | 02 | Contracts v1 eingefroren: `src/shared/{common,errors,status,model,protocol,sync,build,samples}.ts` und Server-Ports `backend/{types,fixture}.ts`, `sessions/ports.ts`, `sync/ports.ts`, `claude/ports.ts`. `PROTOCOL_VERSION 1`, Schema-Versionen 1, Transkript-Log `v1`. Fixture-Format nur noch in `backend/fixture.ts` (Recorder re-exportiert). Build-ID per `define` (ADR-013). „Regel merken“ mit vier Zielen, Server baut `updatedPermissions` (ADR-012). Patch-Schemas ohne Defaults. |
 | 15.10.2026 | R0 | Additiv/Bugfix, `PROTOCOL_VERSION` und Schema-Versionen bleiben 1: neu `src/shared/http.ts` (HTTP-/Auth-Contract, Launcher-Code, Lockfile; ADR-015) und `src/shared/paths.ts` (Pfadregeln; ADR-017); Codes `LAUNCHER_TOKEN_INVALID`, `SESSION_HELD_ELSEWHERE`, 9 × `PROFILE_*` + `PROFILE_ARG_INVALID_REASONS`; Anzeige-Status `needs-resume` (ADR-016), `notificationFor` mit Art der neuen Entscheidung; `LIMITS` für Eingaben + `itemTotalChars`/`snapshotMaxChars`, `modelNameSchema`; `sessionInitInfo.permissionMode` nullable + tolerante Enum-Leser; `decisionRecord.decision`, `Entry.unread`/`context` (Defaults); `applyDelta` nur auf streamende Items; Ports: `StatusSignal` (`permissionMode` nullable, `turn_result.startupFailure`), `ReduceStatusContext`, `ParseProfileArgs`, `ProfileArgIssueParams`, Regelkommentare. |
 | 15.10.2026 | R1 | Additiv, Versionen bleiben 1: Codes ROUTE_NOT_FOUND, PROMPT_NOT_DELIVERED, STORE_VERSION_TOO_NEW (+ Texte en/de); Ports: StatusSignal.context_estimate.contextWindow, HistoryMessage.origin?, BackendSessionInfo.firstPrompt, DecisionStore.flush(), Kommentare session_id/createSyncHub/Plan-Version je Eintrag; HTTP-Guard nach Route (ADR-018), WS ohne Pflicht-Sec-Fetch-Site (ADR-019), Start-Abbruch bei neuerer schemaVersion (ADR-020); architecture §2.2/§5.1/§6/§8/§9. Neu `src/shared/devPorts.ts` (DEV_WEB_PORT importfrei, ADR-03x). |
+| 15.10.2026 | R2 | Additiv, Werte unverändert: `LIMITS.decisionMessageChars` (10 000), `LIMITS.planFeedbackChars` (50 000) in `common.ts`; Antwort-Schemas in `model.ts` nutzen sie; Kommentar `autoCompactThreshold` = Token-Zahl (ADR-045). |
 
 ## Offene Fragen an den Nutzer
 - Keine offenen Fragen.
@@ -90,7 +91,7 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 - Offen für später: `processInfo` per PowerShell braucht unter Last bis ≈23 s (Waisen-Bereinigung beim Start) – schnellere Methode prüfen; Web-Default-Timeout in Vitest statt Limits je Datei; Importkosten `radix-ui` in Tests.
 
 ## Nächste Schritte
-1. Erledigt: WP-21, Flake-Fix-Runde (`89ad9bb`, `docs/wp/FLAKES.md`). Läuft: WP-13b, R2-Web-Fixes. Danach R2 Server, R2-Fixes, WP-20 (Verdrahtung + E2E), V2, WP-22 (Live-Abnahme).
+1. Erledigt: WP-21, Flake-Fix-Runde (`89ad9bb`, `docs/wp/FLAKES.md`). R2-Web-Fixes gemergt. Läuft: WP-13b. Danach R2 Server, R2-Fixes, WP-20 (Verdrahtung + E2E), V2, WP-22 (Live-Abnahme).
 2. Danach Welle 1a (10, 11, 12, 14) in Worktrees `.worktrees/wp-xx`
    auf Branches `wp/xx`, jeweils `pnpm install --frozen-lockfile` im Worktree.
 3. Nach ≥ 24 h: `react`/`react-dom` 19.3.1 prüfen und nachziehen (Koordinator, siehe WP-00.md).
