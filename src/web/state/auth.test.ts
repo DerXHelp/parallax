@@ -115,6 +115,22 @@ describe('createAuthBootstrap', () => {
     expect(calls).toEqual([API_PATHS.auth, API_PATHS.auth, API_PATHS.authStatus]);
   });
 
+  it('keeps the code while a proxy answers 5xx (dev: Vite proxy 502 before the server is up)', async () => {
+    let up = false;
+    const calls: string[] = [];
+    const fetchFn: FetchLike = (url) => {
+      calls.push(url);
+      if (!up) return Promise.resolve(json(502, {}));
+      return Promise.resolve(json(200, sampleAuthStatus()));
+    };
+    const auth = createAuthBootstrap({ code: CODE, fetch: fetchFn });
+    await expect(auth.check()).resolves.toEqual({ kind: 'unreachable' });
+    expect(auth.codeRejected).toBe(false);
+    up = true;
+    await expect(auth.check()).resolves.toMatchObject({ kind: 'authenticated' });
+    expect(calls).toEqual([API_PATHS.auth, API_PATHS.auth, API_PATHS.authStatus]);
+  });
+
   it('treats an invalid status body as unreachable', async () => {
     const { fetchFn } = fakeFetch({ [API_PATHS.authStatus]: () => json(200, { authenticated: 'yes' }) });
     const auth = createAuthBootstrap({ code: null, fetch: fetchFn });

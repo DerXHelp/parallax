@@ -28,6 +28,7 @@ import {
   emptyHostRecord,
   type ClientNotification,
   type ClientState,
+  type ClientStore,
   type ConnectionStatus,
   type HostRecord,
   type SessionRecord,
@@ -432,10 +433,23 @@ export function useCommand(): SendCommand {
 
 // ---- notifications (A.9) ----
 
+/**
+ * Server notifications of this window until `notify.clear` (raw; shown once each by
+ * src/web/notifications/delivery.ts as an in-app hint or a Web Notification).
+ */
 export function useNotifications(): readonly ClientNotification[] {
   return useStore(clientStore, (state) => state.notifications);
 }
 
-export function dismissNotification(id: string): void {
-  clientStore.setState((state) => ({ notifications: state.notifications.filter((n) => n.id !== id) }));
+export function dismissNotification(id: string, store: ClientStore = clientStore): void {
+  if (!store.getState().notifications.some((n) => n.id === id)) return;
+  store.setState((state) => ({ notifications: state.notifications.filter((n) => n.id !== id) }));
+}
+
+/** All notifications of one session (the window shows it now – they are seen). */
+export function dismissSessionNotifications(sessionKey: string, store: ClientStore = clientStore): void {
+  if (!store.getState().notifications.some((n) => n.sessionKey === sessionKey)) return;
+  store.setState((state) => ({
+    notifications: state.notifications.filter((n) => n.sessionKey !== sessionKey),
+  }));
 }

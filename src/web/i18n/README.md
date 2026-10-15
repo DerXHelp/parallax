@@ -22,5 +22,6 @@ bleiben sichtbar). Plural als Objekt `{ one: '…', other: '…' }`, gewählt ü
 **Namespaces je Feature (R0-03):** `src/web/features/<f>/i18n/en.ts` (`export const en = { … }`)
 und `de.ts` (`export const de: typeof en = { … }`); Namespace = Ordnername (`transcript`,
 `decisions`, `composer`). Die Stubs hat WP-14 angelegt und statisch in `index.ts` registriert;
-WP-15/16 ändern nur ihre eigenen Dateien: `t('transcript.toolCall.running')`. Neue Namespaces
-registriert der Koordinator. In Welle 1b ist dieser Ordner read-only.
+WP-15/16 ändern nur ihre eigenen Dateien: `t('transcript.toolCall.running')`. Dazu kommt
+`serverShutdown` (`src/web/shell/server-shutdown/i18n/{en,de}.ts`, WP-21, registriert in WP-20b).
+Neue Namespaces registriert der Koordinator.

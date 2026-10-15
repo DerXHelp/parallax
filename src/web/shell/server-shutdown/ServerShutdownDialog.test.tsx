@@ -5,7 +5,7 @@ import { LOCAL_HOST_ID } from '@shared/common';
 import { makeError } from '@shared/errors';
 import { sampleHostState, sampleStatusFacts, sampleSummary } from '@shared/samples';
 import { App } from '@web/App';
-import { setLanguage } from '@web/i18n';
+import { DICTIONARIES, setLanguage, translate } from '@web/i18n';
 import { startScenario, type RunningScenario } from '@web/playground/PlaygroundScenario';
 import { createHostConnection, registerConnection, unregisterConnection } from '@web/state/connection';
 import { FakeHost } from '@web/state/fake-host';
@@ -13,7 +13,6 @@ import { resetClientStore } from '@web/state/store';
 import { createMemoryTransport } from '@web/state/transport';
 import { TooltipProvider } from '@web/ui/tooltip';
 import { SettingsMenu } from '../SettingsMenu';
-import { translateShutdown } from './i18n';
 import { closeServerShutdown } from './ServerShutdownDialog';
 import { de } from './i18n/de';
 import { en } from './i18n/en';
@@ -159,13 +158,15 @@ describe('serverShutdown texts', () => {
     for (const text of [...texts(en), ...texts(de)]) expect(text.trim()).not.toBe('');
   });
 
-  it('interpolates counts and picks plural forms per language', () => {
-    expect(translateShutdown('en', 'working', { count: 1200 })).toBe('Working (1,200)');
-    expect(translateShutdown('de', 'working', { count: 1200 })).toBe('Arbeitet (1.200)');
-    expect(translateShutdown('en', 'idle', { count: 1 })).toBe('1 more idle session will be closed.');
-    expect(translateShutdown('de', 'idle', { count: 2 })).toBe(
+  it('is registered as namespace serverShutdown (WP-20b) with the shell plural rules', () => {
+    expect(DICTIONARIES.en.serverShutdown).toBe(en);
+    expect(DICTIONARIES.de.serverShutdown).toBe(de);
+    expect(translate('en', 'serverShutdown.working', { count: 1200 })).toBe('Working (1,200)');
+    expect(translate('de', 'serverShutdown.working', { count: 1200 })).toBe('Arbeitet (1.200)');
+    expect(translate('en', 'serverShutdown.idle', { count: 1 })).toBe('1 more idle session will be closed.');
+    expect(translate('de', 'serverShutdown.idle', { count: 2 })).toBe(
       '2 weitere Sessions im Leerlauf werden geschlossen.',
     );
-    expect(translateShutdown('en', 'title')).toBe('Stop the Parallax server?');
+    expect(translate('en', 'serverShutdown.title')).toBe('Stop the Parallax server?');
   });
 });
