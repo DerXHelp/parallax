@@ -94,6 +94,11 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 - Bugs aus WP-20a (für 20c): SDK wird im Bundle immer geladen (esbuild hebt statischen Import; `sdkBackend.ts` lazy oder `splitting`); `pnpm start -- --port=…` scheitert an wörtlichem `--` (`args.ts`).
 - Offen für später: `processInfo` per PowerShell braucht unter Last bis ≈23 s (Waisen-Bereinigung beim Start) – schnellere Methode prüfen; Web-Default-Timeout in Vitest statt Limits je Datei; Importkosten `radix-ui` in Tests.
 
+## Koordinator-Regeln (Ablauf)
+- Merges ab 15.10.2026 nur noch mit `git merge --no-ff --no-commit`, dann `pnpm check` + `pnpm build`, erst bei Grün committen
+  (Anlass: semantischer Bruch `ProcessQueryResult` nach Merge `61e8e1f`, behoben in `2c3fb70`).
+- Doku nach R1/R2 nachgezogen (`d961201`); offen: `WP-13b.md` beschreibt noch den Kinder-Pfad (historisch).
+
 ## Nächste Schritte
 1. Welle 2 läuft: WP-20a (Server-Verdrahtung), WP-20b (Web-Verdrahtung), R2 Server. Danach R2-Server-Fixes, WP-20c (E2E), V2, R3, WP-22 (Live, vorher Nutzer-Bestätigung).
 2. Danach Welle 1a (10, 11, 12, 14) in Worktrees `.worktrees/wp-xx`
