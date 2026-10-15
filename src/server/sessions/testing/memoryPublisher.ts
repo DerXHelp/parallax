@@ -10,10 +10,8 @@ import type { ClientId, EntryId } from '@shared/common';
 import { hostStateSchema, sessionSummarySchema, type HostState, type SessionSummary } from '@shared/model';
 import { notifySchema, sessionOpSchema, type Notification, type SessionOp } from '@shared/protocol';
 import { applySessionOp, type SessionViewState } from '@shared/sync';
+import { realSetImmediate } from '../../lib/async';
 import type { ClientPresence, SessionPublisher } from '../../sync/ports';
-
-/** Real setImmediate, captured before a test can install fake timers. */
-const realSetImmediate = setImmediate;
 
 export interface MemoryPublisherOptions {
   /** Hub-like validation of everything published (default true). */

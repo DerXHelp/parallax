@@ -5,8 +5,10 @@
  * Checks (docs/plan.md "Paketmanager: pnpm 12", "Claude-Profile"): Node version (fail < 22, warn
  * if not 26), pnpm version, registry (`pnpm config get registry`), Agent SDK, for every profile
  * the resolved `claude` path + version (C.7) and the login (`claude auth status --json`, only
- * method/provider/subscription – never e-mail or organization), Microsoft Edge.
- * Only `claude --version` and `claude auth status` are run – no model call, no tokens.
+ * method/provider/subscription – never e-mail or organization), Microsoft Edge, and whether other
+ * users can read the data folder (R2-13; `--home=<dir>` / PARALLAX_HOME like the server, default
+ * %LOCALAPPDATA%\Parallax). Only `claude --version` and `claude auth status` are run – no model
+ * call, no tokens.
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -15,12 +17,25 @@ import { z } from 'zod';
 import { createClaudeIntegration } from '../src/server/claude/integration';
 import { formatPreflight, runPreflight } from '../src/server/claude/preflight';
 import { readSdkManifest } from '../src/server/claude/resolveClaude';
+import { loadConfig } from '../src/server/config';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function appVersion(): string {
   const text = readFileSync(path.join(repoRoot, 'package.json'), 'utf8');
   return z.looseObject({ version: z.string().min(1) }).parse(JSON.parse(text) as unknown).version;
+}
+
+/** The data folder the server would use (same rules as the server); null if the arguments are invalid. */
+function dataHome(): string | null {
+  try {
+    return loadConfig({ argv: process.argv.slice(2) }).home;
+  } catch (error) {
+    process.stderr.write(
+      `preflight: data folder not checked (${error instanceof Error ? error.message : String(error)})\n`,
+    );
+    return null;
+  }
 }
 
 async function main(): Promise<number> {
@@ -36,6 +51,7 @@ async function main(): Promise<number> {
     cwd: repoRoot,
     nodeExecutable: process.execPath,
     sdk,
+    home: dataHome(),
   });
   process.stdout.write(formatPreflight(report.checks));
   return report.exitCode;

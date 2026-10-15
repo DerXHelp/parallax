@@ -1,18 +1,10 @@
 /**
  * Small shared pieces of the FakeBackend modules (session, player, scripts): errors that end a
- * scenario or a turn, the real macrotask, UUID mapping and prompt helpers.
+ * scenario or a turn, UUID mapping and prompt helpers. The real macrotask (playback never needs
+ * fake-timer ticks) comes from lib/async.ts (`realSetImmediate`, `nextMacrotask`).
  */
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { OutgoingPrompt } from '../types';
-
-/** Real setImmediate, captured before a test can install fake timers (playback never needs ticks). */
-export const realSetImmediate = setImmediate;
-
-export function nextMacrotask(): Promise<void> {
-  return new Promise((resolve) => {
-    realSetImmediate(resolve);
-  });
-}
 
 /** The session stopped (close, crash, exit): ends the scenario quietly. */
 export class SessionStopped extends Error {

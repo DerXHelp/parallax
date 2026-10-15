@@ -5,9 +5,9 @@
  * from the `FakeHistoryStore` through the same mapping as the SdkBackend (`history/parse.ts`).
  * Default of `pnpm dev`, all engine tests and E2E.
  */
+import { realSetImmediate } from '../lib/async';
 import type { FixtureEvent, ParsedFixture } from './fixture';
 import { mergeHistory, toHistoryMessages, toSessionInfo } from './history/parse';
-import { realSetImmediate } from './fake/common';
 import { randomIds } from './fake/dsl';
 import { createFakeHistoryStore } from './fake/history';
 import { interactiveScenario } from './fake/interactive';
@@ -35,6 +35,8 @@ export { randomIds, sequentialIds } from './fake/dsl';
 
 export const DEFAULT_FAKE_PID_BASE = 40_000;
 export const DEFAULT_FAKE_MAX_DELAY_MS = 3_000;
+/** R2-12: exited sessions and start requests kept for inspection. */
+export const DEFAULT_FAKE_KEEP_SESSIONS = 50;
 
 export function eventsScenario(
   name: string,
@@ -68,9 +70,26 @@ export function createFakeBackend(options: FakeBackendOptions = {}): FakeBackend
   const history = options.history ?? createFakeHistoryStore({ now });
   const ids = options.ids ?? randomIds();
   const pidBase = options.pidBase ?? DEFAULT_FAKE_PID_BASE;
+  const keep = Math.max(0, options.keepSessions ?? DEFAULT_FAKE_KEEP_SESSIONS);
   const starts: FakeBackend['starts'][number][] = [];
   const sessions: FakeSession[] = [];
   const listeners = new Set<() => void>();
+  /** Start counter n (scenario choice, PIDs) – independent of the trimmed lists. */
+  let started = 0;
+
+  /** R2-12: drop the oldest exited sessions and start requests beyond `keep`. */
+  const prune = (): void => {
+    let exited = sessions.filter((s) => s.state === 'exited').length;
+    for (let i = 0; i < sessions.length && exited > keep;) {
+      if (sessions[i]?.state === 'exited') {
+        sessions.splice(i, 1);
+        exited -= 1;
+      } else {
+        i += 1;
+      }
+    }
+    if (starts.length > keep) starts.splice(0, starts.length - keep);
+  };
 
   const onStateChange = (): void => {
     for (const listener of [...listeners]) listener();
@@ -85,7 +104,9 @@ export function createFakeBackend(options: FakeBackendOptions = {}): FakeBackend
     history,
 
     start(req) {
-      const n = starts.length;
+      prune();
+      const n = started;
+      started += 1;
       starts.push(req);
       const scenario = options.scenario?.(req, n) ?? interactiveScenario();
       const session = new FakeSession({

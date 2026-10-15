@@ -6,6 +6,7 @@
  */
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { nextMacrotask, realSetImmediate, toError } from '../../lib/async';
 import { logger } from '../../lib/logger';
 import type { FixtureEvent } from '../fixture';
 import { AsyncQueue } from '../lib/asyncQueue';
@@ -21,10 +22,8 @@ import {
   HANDLER_ERROR_RESULT,
   SessionStopped,
   TurnInterrupted,
-  nextMacrotask,
   promptContent,
   promptText,
-  realSetImmediate,
   type RecordedAnswer,
 } from './common';
 import { FAKE_COMMANDS, FAKE_MODELS, fakeContextUsage, resolveFakeModel } from './defaults';
@@ -310,7 +309,7 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
         },
         (error: unknown) => {
           cleanup();
-          reject(error instanceof Error ? error : new Error(String(error)));
+          reject(toError(error));
         },
       );
     });
@@ -425,7 +424,7 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
     try {
       answer = this.deps.req.canUseTool(request, controller.signal);
     } catch (error) {
-      answer = Promise.reject(error instanceof Error ? error : new Error(String(error)));
+      answer = Promise.reject(toError(error));
     }
     answer.then(
       (result) => {
