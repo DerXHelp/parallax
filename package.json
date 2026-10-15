@@ -18,7 +18,7 @@
     "build": "pnpm run build:web && pnpm run build:server",
     "build:web": "vite build",
     "build:server": "tsx --tsconfig tsconfig.tools.json scripts/build-server.ts",
-    "start": "pnpm run build && node dist/server.js",
+    "start": "tsx --tsconfig src/server/tsconfig.json src/server/launcher/main.ts",
     "typecheck": "tsc -b",
     "lint": "eslint . --max-warnings=0",
     "format": "prettier --write .",
