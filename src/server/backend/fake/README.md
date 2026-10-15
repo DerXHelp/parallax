@@ -10,7 +10,7 @@ Design: `docs/wp/WP-13.md` §3.3, Ergebnis und Stolpersteine: `docs/wp/WP-13a.md
 | `types.ts` | Szenario-, Handle-, Script-Kontext- und Diagnose-Typen (Re-Export über `fakeBackend.ts`) |
 | `session.ts` | `FakeSession` (= `AgentSession` + `FakeSessionHandle`): Tore, UUID-Abbildung, Antworten, Exit |
 | `player.ts` | `EventPlayer` für Fixture-Format v1 (Abspielregeln §3.3), `compareDecision` |
-| `common.ts` | `SessionStopped`, `TurnInterrupted`, echtes `setImmediate`, `mapUuids`, Prompt-Helfer |
+| `common.ts` | `SessionStopped`, `TurnInterrupted`, `mapUuids`, Prompt-Helfer (echtes `setImmediate`/`nextMacrotask` jetzt aus `lib/async.ts`, R2-10) |
 | `dsl.ts` | Bausteine über WP-12 `synthetic/build.ts` (Turns, Blöcke, Entscheidungen, Subagents, Interrupt, `/clear`, `/rename`, Fehler, Crash) |
 | `interactive.ts` | Dev-Szenario mit Schlüsselwörtern (`fake:bash` … `/clear`) |
 | `defaults.ts` | Fake-Antworten: `getContextUsage`, `supportedModels`, `supportedCommands` |

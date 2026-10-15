@@ -27,6 +27,8 @@ import type { UUID } from 'node:crypto';
 import path from 'node:path';
 import type { Logger } from 'pino';
 import { z } from 'zod';
+import { messageUuidSchema } from '@shared/common';
+import { toError } from '../lib/async';
 import { logger } from '../lib/logger';
 import { killProcessTree as killTree, spawnHidden } from '../lib/process';
 import { mergeHistory, toHistoryMessages, toSessionInfo } from './history/parse';
@@ -53,10 +55,16 @@ export interface SdkTimeouts {
   closeGraceMs: number;
   /** After taskkill wait this long for `exit`, then synthesize it. */
   killWaitMs: number;
-  /** interrupt/setModel/setPermissionMode/applyFlagSettings/stopTask/supportedModels/supportedCommands. */
+  /** interrupt/setModel/setPermissionMode/applyFlagSettings/stopTask/supportedCommands. */
   controlMs: number;
   /** getContextUsage('full') (token counting; gateway models, C.1). */
   contextFullMs: number;
+  /**
+   * `supportedModels()` = the end of the `initialize` handshake (readiness, §2.3 Nr. 6; also before
+   * the C.1 flag settings). A cold start (first start after boot, scanner on claude.exe, slow
+   * plugins) can take longer than `controlMs` (R2-04).
+   */
+  readyMs: number;
   /** After the process exit wait at most this long for the end of the iterator. */
   iteratorAfterExitMs: number;
 }
@@ -66,6 +74,7 @@ export const SDK_TIMEOUTS: Readonly<SdkTimeouts> = Object.freeze({
   killWaitMs: 5_000,
   controlMs: 15_000,
   contextFullMs: 60_000,
+  readyMs: 60_000,
   iteratorAfterExitMs: 2_000,
 });
 
@@ -113,10 +122,6 @@ export interface SdkBackendDeps {
 
 // ---- helpers ----
 
-function toError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
-}
-
 function timeoutError(label: string, ms: number): Error {
   const error = new Error(`${label} timed out after ${ms} ms`);
   error.name = 'TimeoutError';
@@ -142,10 +147,9 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): 
   });
 }
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
+/** The prompt uuid must be a UUID (`messageUuidSchema`, the contract of `user_message_uuids`). */
 function isUuid(value: string): value is UUID {
-  return UUID_PATTERN.test(value);
+  return messageUuidSchema.safeParse(value).success;
 }
 
 type UserContent = SDKUserMessage['message']['content'];
@@ -312,9 +316,9 @@ class SdkSession implements AgentSession {
 
   /** C.1: settings file + profile autoCompactWindow → flag settings once the CLI is ready. */
   private async applyAfterReady(q: SdkQueryHandle, flags: { autoCompactWindow: number }): Promise<void> {
-    const { controlMs } = this.ctx.timeouts;
+    const { controlMs, readyMs } = this.ctx.timeouts;
     try {
-      await withTimeout(q.supportedModels(), controlMs, 'supportedModels');
+      await withTimeout(q.supportedModels(), readyMs, 'supportedModels');
       await withTimeout(q.applyFlagSettings(flags), controlMs, 'applyFlagSettings');
       this.log.info(flags, 'autoCompactWindow applied as flag setting');
     } catch (error) {
@@ -517,9 +521,12 @@ class SdkSession implements AgentSession {
     );
   }
 
-  /** Waits for the initialize handshake inside the SDK – the engine's readiness signal (§2.3 Nr. 6). */
+  /**
+   * Waits for the initialize handshake inside the SDK – the engine's readiness signal (§2.3 Nr. 6),
+   * bounded by `readyMs` (R2-04: a cold start may exceed `controlMs`).
+   */
   supportedModels(): Promise<unknown[]> {
-    return this.control('supportedModels', this.ctx.timeouts.controlMs, (q) => q.supportedModels());
+    return this.control('supportedModels', this.ctx.timeouts.readyMs, (q) => q.supportedModels());
   }
 
   supportedCommands(): Promise<unknown[]> {

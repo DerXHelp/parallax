@@ -10,6 +10,7 @@
  * come from `createNodeLauncherDeps`. Messages are English (console output like `pnpm preflight`).
  */
 import { appUrlWithCode, serverOrigin, type LauncherToken, type ServerLockFile } from '@shared/http';
+import { sleep } from '../lib/async';
 import { checkBuild, resolveCheckoutBuildId, runBuild, type BuildResult, type BuildState } from './build';
 import {
   checkHealth,
@@ -317,13 +318,29 @@ async function handleExit(
   );
 }
 
+/**
+ * Waits before the 2nd/3rd/4th code request (R2-14): right after its start the server is busy
+ * (recovery, orphan check, Edge) and a single 2-s request may time out. Never for `token_invalid`.
+ */
+export const CODE_RETRY_DELAYS_MS: readonly number[] = [250, 750, 1_500];
+
+async function requestCodeWithRetry(lock: ServerLockFile, deps: LauncherDeps): Promise<LauncherCodeResult> {
+  let code = await deps.requestCode(lock.port, lock.launcherToken);
+  for (const delay of CODE_RETRY_DELAYS_MS) {
+    if (code.kind !== 'failed') return code;
+    await deps.sleep(delay);
+    code = await deps.requestCode(lock.port, lock.launcherToken);
+  }
+  return code;
+}
+
 async function openWindow(
   lock: ServerLockFile,
   mode: LauncherResult['mode'],
   options: LauncherOptions,
   deps: LauncherDeps,
 ): Promise<LauncherResult> {
-  const code = await deps.requestCode(lock.port, lock.launcherToken);
+  const code = await requestCodeWithRetry(lock, deps);
   if (code.kind !== 'ok') {
     throw new LauncherError(
       'launcher_code_failed',
@@ -400,10 +417,7 @@ export function createNodeLauncherDeps(options: NodeLauncherDepsOptions): Launch
     readServerOutput: (offset) => readServerOutput(options.home, offset),
     locateEdge: () => locateEdge(env),
     openEdge: (edgePath, args) => openEdgeWindow(edgePath, args, options.spawnEdge),
-    sleep: (ms) =>
-      new Promise((resolve) => {
-        setTimeout(resolve, ms);
-      }),
+    sleep,
     now: () => Date.now(),
     out: options.out ?? ((line) => process.stdout.write(`${line}\n`)),
   };

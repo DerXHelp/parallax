@@ -306,6 +306,7 @@ describe('SdkBackend – start, events, close', () => {
       killWaitMs: 5000,
       controlMs: 15000,
       contextFullMs: 60000,
+      readyMs: 60000,
       iteratorAfterExitMs: 2000,
     });
   });
@@ -820,10 +821,10 @@ describe('SdkBackend – control methods', () => {
       15_000,
     ],
     [
-      'supportedModels',
+      'supportedModels (readiness, R2-04)',
       (s) => s.supportedModels(),
       (q) => q.supportedModels.mockReturnValue(new Promise(() => undefined)),
-      15_000,
+      60_000,
     ],
     [
       'supportedCommands',
@@ -949,6 +950,23 @@ describe('SdkBackend – autoCompactWindow with a settings file (C.1)', () => {
     readiness.resolve([]);
     await settle();
     expect(h.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({ autoCompactWindow: 400_000 });
+  });
+
+  it('waits up to readyMs (not controlMs) for the readiness before the flag settings (R2-04)', async () => {
+    useFakeTimeouts();
+    const readiness = Promise.withResolvers<unknown[]>();
+    const h = harness({
+      configure: (q) => {
+        q.supportedModels.mockReturnValue(readiness.promise);
+      },
+    });
+    const session = h.backend.start(request({ launch: both }));
+    const rec = record(session);
+    await vi.advanceTimersByTimeAsync(SDK_TIMEOUTS.controlMs + 1);
+    readiness.resolve([]);
+    await settle();
+    expect(h.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({ autoCompactWindow: 400_000 });
+    expect(rec.events.some((event) => event.type === 'error')).toBe(false);
   });
 
   it('inline autoCompactWindow needs no flag settings', async () => {

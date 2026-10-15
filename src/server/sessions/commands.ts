@@ -259,6 +259,9 @@ async function sendPrompt(
 }
 
 async function interrupt(core: EngineCore, s: EntryState): Promise<CommandResult<'session.interrupt'>> {
+  // R2-15: Stop right after the first prompt – the start (and the delivery) still runs in the lock:
+  // wait for it, then stop the turn it began instead of dropping the request.
+  if (running(s) === null && s.lifecycle.pending > 0) await s.lifecycle.idle();
   const runtime = running(s);
   // Idle/dormant: nothing to stop (F.10).
   if (runtime === null) return { stillQueued: [] };
@@ -296,6 +299,8 @@ async function rename(
     }
     const sessionId = currentSessionId(s.entry);
     if (sessionId === null) return;
+    // R2-08: renameSession writes the Claude JSONL – an orphaned claude.exe may still write it.
+    await s.orphanCleanup;
     try {
       const launch = await core.claude.launchSpecFor(s.entry.profileId, s.id);
       // C.6: only dormant sessions are renamed through the SDK.

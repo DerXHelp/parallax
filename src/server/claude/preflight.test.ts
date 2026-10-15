@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { STANDARD_PROFILE_ID } from '@shared/common';
 import { sampleClaudeInstallStatus } from '@shared/samples';
+import type { HomeAccess } from '../lib/homeAccess';
 import type { RunFileOptions, RunFileResult } from '../lib/process';
 import { createClaudeIntegration } from './integration';
 import { createMemoryFs } from '../lib/windows';
@@ -8,6 +9,7 @@ import {
   antivirusProducts,
   checkAntivirus,
   checkEdge,
+  checkHomeAccessResult,
   checkNode,
   checkPnpm,
   checkProfileStatus,
@@ -316,5 +318,48 @@ describe('runPreflight', () => {
       'edge',
     ]);
     expect(report.exitCode).toBe(1);
+  });
+
+  it('checks the data folder when a home is given (R2-13: a warning, never a failure)', async () => {
+    const { fs, runFile, integration } = stubs({ [LOCAL]: '', [PNPM_EXE]: '', [EDGE]: '' });
+    const homes: string[] = [];
+    const report = await runPreflight({
+      integration,
+      nodeVersion: 'v26.4.0',
+      env,
+      cwd: 'D:\\repo',
+      nodeExecutable: 'node.exe',
+      sdk,
+      fs,
+      runFile,
+      regQuery: () => Promise.resolve(null),
+      antivirus: () => Promise.resolve(null),
+      home: 'D:\\px-data',
+      homeAccess: (home) => {
+        homes.push(home);
+        return Promise.resolve({ kind: 'shared', principals: ['Authenticated Users'] });
+      },
+    });
+    expect(homes).toEqual(['D:\\px-data']);
+    expect(report.checks.at(-1)).toMatchObject({ id: 'home', level: 'warn' });
+    expect(report.exitCode).toBe(0);
+  });
+});
+
+describe('checkHomeAccessResult (R2-13)', () => {
+  it.each<[HomeAccess, PreflightCheck['level'], string]>([
+    [{ kind: 'private' }, 'ok', 'only you'],
+    [{ kind: 'missing' }, 'info', 'not created yet'],
+    [{ kind: 'unknown', reason: 'Get-Acl failed (exit 1)' }, 'info', 'Get-Acl failed'],
+    [
+      { kind: 'shared', principals: ['Authenticated Users', 'Users'] },
+      'warn',
+      'readable by Authenticated Users, Users',
+    ],
+  ])('%j → %s', (access, level, detail) => {
+    const check = checkHomeAccessResult('D:\\px-data', access);
+    expect(check.level).toBe(level);
+    expect(check.detail).toContain(detail);
+    if (level === 'warn') expect(check.hint).toContain('icacls "D:\\px-data" /inheritance:r');
   });
 });

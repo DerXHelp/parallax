@@ -1,7 +1,8 @@
 /**
  * Checks of `pnpm preflight` (Plan "Paketmanager: pnpm 12", "Claude-Profile"): Node version,
  * pnpm version, registry, every profile's `claude` (path, version, C.7 rule) and login, Microsoft
- * Edge, and a hint for antivirus products that scan local web traffic (V1-08). Pure
+ * Edge, a hint for antivirus products that scan local web traffic (V1-08) and whether other users
+ * can read PARALLAX_HOME (R2-13). Pure
  * formatting/rating functions plus `runPreflight` with injectable seams. Output is English (Plan:
  * preflight and logs stay English). Never prints e-mail/org (parseAuthStatus).
  */
@@ -10,6 +11,7 @@ import { z } from 'zod';
 import type { ClaudeInstallStatus, Profile } from '@shared/model';
 import { windowsPathIssue } from '@shared/paths';
 import { findEdge } from '../lib/edge';
+import { checkHomeAccess, type HomeAccess } from '../lib/homeAccess';
 import { errnoCode, runFile, systemTool, type RunFileFn } from '../lib/process';
 import { regQuery, type RegQuery } from '../lib/registry';
 import { getEnvVar, nodeFsProbe, resolveExecutable, type FsProbe } from '../lib/windows';
@@ -247,6 +249,33 @@ export async function antivirusProducts(run: RunFileFn = runFile): Promise<strin
   }
 }
 
+/**
+ * R2-13 (warn only, no ACL change): the data folder holds the launcher token and the cookie
+ * secret – other users must not be able to read it (multi-user/RDP machines, `--home` on another
+ * drive). An unknown result is only `info`.
+ */
+export function checkHomeAccessResult(home: string, access: HomeAccess): PreflightCheck {
+  const base = { id: 'home', title: 'data dir' };
+  switch (access.kind) {
+    case 'private':
+      return { ...base, level: 'ok', detail: `${home} (only you)` };
+    case 'missing':
+      return { ...base, level: 'info', detail: `${home} (not created yet)` };
+    case 'unknown':
+      return { ...base, level: 'info', detail: `${home} (access not checked: ${access.reason})` };
+    case 'shared':
+      return {
+        ...base,
+        level: 'warn',
+        detail: `${home} is readable by ${access.principals.join(', ')}`,
+        hint:
+          'It holds the launcher token and the cookie secret. Use a folder only you can read (the default ' +
+          `under %LOCALAPPDATA% is) or restrict it, e.g. icacls "${home}" /inheritance:r /grant:r ` +
+          '"%USERNAME%:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F".',
+      };
+  }
+}
+
 /** 0 = no failure (warnings allowed), 1 = at least one failure. */
 export function preflightExitCode(checks: readonly PreflightCheck[]): number {
   return checks.some((check) => check.level === 'fail') ? 1 : 0;
@@ -330,6 +359,10 @@ export interface PreflightDeps {
   regQuery?: RegQuery;
   /** Registered antivirus products (default: Windows Security Center via CIM); null = unknown. */
   antivirus?: () => Promise<string[] | null>;
+  /** PARALLAX_HOME to check for other readers (R2-13); omitted/null = no check. */
+  home?: string | null;
+  /** Default lib/homeAccess.ts `checkHomeAccess`. */
+  homeAccess?: (home: string) => Promise<HomeAccess>;
 }
 
 export interface PreflightReport {
@@ -372,5 +405,10 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightReport
   checks.push(checkEdge(edge));
   const antivirus = checkAntivirus(await (deps.antivirus ?? (() => antivirusProducts(run)))());
   if (antivirus !== null) checks.push(antivirus);
+  const home = deps.home ?? null;
+  if (home !== null) {
+    const access = await (deps.homeAccess ?? ((h: string) => checkHomeAccess(h, { run })))(home);
+    checks.push(checkHomeAccessResult(home, access));
+  }
   return { checks, exitCode: preflightExitCode(checks) };
 }

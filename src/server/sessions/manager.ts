@@ -26,7 +26,7 @@ import type { ClaudeIntegration } from '../claude/ports';
 import { newId, newUuid } from '../lib/ids';
 import { logger as rootLogger } from '../lib/logger';
 import { checkCwd as realCheckCwd } from '../lib/paths';
-import { childProcesses, killProcessTree, processInfo } from '../lib/process';
+import { isProcessAlive, killProcessTree, queryProcesses } from '../lib/process';
 import {
   CommandError,
   type ClientPresence,
@@ -58,8 +58,16 @@ import {
 } from './normalizer';
 import { decisionsCleared, isViewedByVisibleClient, planNotification } from './notifier';
 import type { ReduceStatus } from './ports';
-import type { ProcessStore } from './processStore';
-import { cleanupOrphan, interruptedToolCalls, registryFacts, wasActive } from './recovery';
+import type { ProcessRecord, ProcessStore } from './processStore';
+import {
+  cleanupOrphans,
+  interruptedToolCalls,
+  keepsOrphanRecord,
+  registryFacts,
+  splitOrphanRecords,
+  wasActive,
+  type OrphanResult,
+} from './recovery';
 import { DEFAULT_AUTO_RETRY } from './retry';
 import { closeRuntime } from './runtime';
 import { reduceStatus as realReduceStatus } from './status/machine';
@@ -135,7 +143,10 @@ export interface EngineEntryInfo {
 export interface SessionManager extends SessionSource {
   /** The hub ↔ source cycle (before start()). */
   attachPublisher(publisher: SessionPublisher): void;
-  /** Load the registry, recovery (§3.5.13); orphans are cleaned up in the background. */
+  /**
+   * Load the registry, recovery (§3.5.13); orphans are cleaned up in the background (one bundled
+   * query for the live PIDs only, R2-02; a start of such an entry waits for it, visibly `starting`).
+   */
   start(): Promise<void>;
   /** §3.5.14: close all processes (≤ shutdownTimeoutMs, then taskkill), flush the stores, dispose the backend. */
   shutdown(): Promise<void>;
@@ -166,17 +177,17 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   const engineWarnings = new Map<string, HostWarning>();
   const accountLimits: Record<string, RateLimitInfo> = {};
   const modelCache = new Map<ProfileId, ModelCatalog>();
-  const serverStartedAt = now();
   let publisher: SessionPublisher | null = null;
   let shuttingDown = false;
   let shutdownPromise: Promise<void> | null = null;
   let hostTimer: TimerHandle | null = null;
   let orphans: Promise<void> = Promise.resolve();
 
+  // R2-03: no child-process path – only a verified claude.exe root is ended (follow-up after WP-22).
   const proc: ProcDeps = {
-    processInfo: deps.proc?.processInfo ?? ((pid) => processInfo(pid)),
+    isProcessAlive: deps.proc?.isProcessAlive ?? isProcessAlive,
+    queryProcesses: deps.proc?.queryProcesses ?? ((filter) => queryProcesses(filter)),
     killProcessTree: deps.proc?.killProcessTree ?? killProcessTree,
-    childProcesses: deps.proc?.childProcesses ?? ((pid) => childProcesses(pid)),
   };
 
   const publisherOrThrow = (): SessionPublisher => {
@@ -339,6 +350,41 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     },
   };
 
+  /**
+   * §3.5.13 Nr. 4 with R2-02: dead PIDs (instant pre-filter) are removed without any PowerShell;
+   * the live ones go into ONE background query. Only entries with a live record wait for it
+   * (`orphanPending` → the start shows `starting`); `unknown`/`failed` keep their record.
+   */
+  const startOrphanCleanup = (records: readonly ProcessRecord[]): void => {
+    const { alive, dead } = splitOrphanRecords(records, (pid) => proc.isProcessAlive(pid));
+    for (const record of dead) {
+      log.info({ entryId: record.entryId, pid: record.pid, result: 'gone' }, 'orphan check');
+      stores.processes.remove(record.entryId, record.pid);
+    }
+    const results = cleanupOrphans(alive, { ...proc, log });
+    const byEntry = new Map<EntryId, Promise<void>[]>();
+    alive.forEach((record, index) => {
+      const result = results[index] ?? Promise.resolve<OrphanResult>('unknown');
+      const done = result.then((outcome) => {
+        log.info({ entryId: record.entryId, pid: record.pid, result: outcome }, 'orphan check');
+        if (!keepsOrphanRecord(outcome)) stores.processes.remove(record.entryId, record.pid);
+      });
+      byEntry.set(record.entryId, [...(byEntry.get(record.entryId) ?? []), done]);
+    });
+    const all: Promise<void>[] = [];
+    for (const [entryId, list] of byEntry) {
+      const cleanup = Promise.all(list).then(() => undefined);
+      all.push(cleanup);
+      const s = states.get(entryId);
+      if (s === undefined) continue;
+      s.orphanPending = true;
+      s.orphanCleanup = cleanup.finally(() => {
+        s.orphanPending = false;
+      });
+    }
+    orphans = Promise.all(all).then(() => undefined);
+  };
+
   /** §3.5.13 for one entry: decisions → facts → interrupted tool calls. */
   const recoverEntry = async (s: EntryState): Promise<void> => {
     const entry = s.entry;
@@ -383,23 +429,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       for (const entry of stores.registry.list()) {
         states.set(entry.id, new EntryState(core, entry, registryFacts(entry)));
       }
-      const cleanups: Promise<void>[] = [];
-      const byEntry = new Map<EntryId, typeof records>();
-      for (const record of records)
-        byEntry.set(record.entryId, [...(byEntry.get(record.entryId) ?? []), record]);
-      for (const [entryId, list] of byEntry) {
-        const cleanup = Promise.all(
-          list.map(async (record) => {
-            const result = await cleanupOrphan(record, { ...proc, serverStartedAt, log });
-            log.info({ entryId, pid: record.pid, result }, 'orphan check');
-            stores.processes.remove(record.entryId, record.pid);
-          }),
-        ).then(() => undefined);
-        const s = states.get(entryId);
-        if (s !== undefined) s.orphanCleanup = cleanup;
-        cleanups.push(cleanup);
-      }
-      orphans = Promise.all(cleanups).then(() => undefined);
+      startOrphanCleanup(records);
       await Promise.all([...states.values()].map((s) => recoverEntry(s)));
       for (const s of states.values()) s.flush();
     },
@@ -434,14 +464,17 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           }),
         ]);
         cap.timer?.cancel();
-        for (const s of states.values()) {
-          const pid = s.runtime?.pid ?? null;
-          if (pid === null) continue;
-          log.error({ entryId: s.id, pid }, 'process did not end at shutdown – killing its tree');
-          await proc.killProcessTree(pid).catch((error: unknown) => {
-            log.error({ err: error, entryId: s.id, pid }, 'killProcessTree failed at shutdown');
-          });
-        }
+        // R2-06: the remaining trees in parallel (each taskkill may take seconds).
+        await Promise.allSettled(
+          [...states.values()].map(async (s) => {
+            const pid = s.runtime?.pid ?? null;
+            if (pid === null) return;
+            log.error({ entryId: s.id, pid }, 'process did not end at shutdown – killing its tree');
+            await proc.killProcessTree(pid).catch((error: unknown) => {
+              log.error({ err: error, entryId: s.id, pid }, 'killProcessTree failed at shutdown');
+            });
+          }),
+        );
         for (const s of states.values()) s.flush();
         const flushes = await Promise.allSettled([
           stores.registry.flush(),

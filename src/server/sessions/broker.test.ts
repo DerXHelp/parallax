@@ -560,6 +560,27 @@ describe('broker – persistence, restore, expired, freeze', () => {
     expect(t.broker.open()[0]).toMatchObject({ version: 5 });
   });
 
+  it('trimming never drops the newest plan record: versions continue after a restart (R2-09)', () => {
+    const t = setup({ recordsKeep: 2 });
+    void t.broker.handler(planRequest('p1', 'v1 text'), new AbortController().signal);
+    t.broker.respond(
+      sampleId('dc', 1),
+      { kind: 'plan', response: { behavior: 'revise', feedback: 'x' } },
+      null,
+    );
+    for (let i = 2; i <= 5; i += 1) {
+      void t.broker.handler(request({ toolUseId: `t${String(i)}` }), new AbortController().signal);
+      t.broker.respond(sampleId('dc', i), allowOnce, null);
+    }
+    const saved = t.stores.decisions.records(ENTRY);
+    expect(saved.map((r) => r.toolUseId)).toEqual(['p1', 't5']);
+    expect(saved.length).toBeLessThanOrEqual(2);
+    const restarted = setup({ seed: saved });
+    restarted.broker.restore(saved);
+    void restarted.broker.handler(planRequest('p2', 'v2 text'), new AbortController().signal);
+    expect(restarted.broker.open()[0]).toMatchObject({ kind: 'plan', version: 2 });
+  });
+
   it('restore without open records → hadOpen false', () => {
     const t = setup();
     expect(
