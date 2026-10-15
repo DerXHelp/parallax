@@ -571,4 +571,25 @@ describe('FakeBackend â€“ session typing', () => {
     expect(agent.pid).toBe(40_000);
     void agent.close();
   });
+
+  it('keeps only the last keepSessions exited sessions and starts; the counter goes on (R2-12)', async () => {
+    const backend = createFakeBackend({
+      keepSessions: 2,
+      scenario: (_req, n) => eventsScenario(`s${String(n)}`, []),
+    });
+    const live = start(backend);
+    for (let i = 0; i < 4; i += 1) {
+      const s = start(backend);
+      await s.agent.close();
+      await s.consumed;
+    }
+    const last = start(backend);
+    expect(last.agent.pid).toBe(40_005);
+    expect(last.handle.scenario).toBe('s5');
+    // The live one stays, of the exited ones only the newest two, plus the new one.
+    expect(backend.sessions.map((s) => s.scenario)).toEqual(['s0', 's3', 's4', 's5']);
+    expect(backend.starts.length).toBeLessThanOrEqual(3);
+    await live.agent.close();
+    await last.agent.close();
+  });
 });

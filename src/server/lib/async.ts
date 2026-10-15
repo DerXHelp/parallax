@@ -1,0 +1,30 @@
+/**
+ * Small async helpers of the server (R2-10: one place instead of copies in backend/, sessions/,
+ * launcher/ and store/). No I/O, no logging.
+ */
+
+/**
+ * The real `setImmediate`, captured when this module is first imported – before a test can install
+ * Vitest fake timers. Code that must make progress under fake timers (FakeBackend playback, the
+ * manual engine clock, test pollers) schedules through this.
+ */
+export const realSetImmediate: typeof setImmediate = setImmediate;
+
+/** Resolves on the next real macrotask (unaffected by fake timers, see `realSetImmediate`). */
+export function nextMacrotask(): Promise<void> {
+  return new Promise((resolve) => {
+    realSetImmediate(resolve);
+  });
+}
+
+/** Resolves after `ms` (the global `setTimeout`, so fake timers apply). */
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, Math.max(0, ms));
+  });
+}
+
+/** A thrown value as an `Error` (non-errors are wrapped with `String(value)` as message). */
+export function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}

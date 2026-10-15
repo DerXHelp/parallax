@@ -34,6 +34,25 @@ function nonEmpty<T>(values: readonly T[] | undefined): values is readonly T[] {
   return values !== undefined && values.length > 0;
 }
 
+/** Syntax of an Anthropic beta header value, e.g. `context-1m-2025-08-07`. */
+const BETA_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+
+/**
+ * Profile string → `SdkBeta` (R2-11). `SdkBeta` lists only the betas known to this SDK version,
+ * but the CLI passes any beta header through – hence the one deliberate type assertion of the
+ * engine, guarded by the header syntax. Invalid values → null (dropped, reported by `optionIssues`).
+ */
+function asSdkBeta(beta: string): SdkBeta | null {
+  return BETA_PATTERN.test(beta) ? (beta as SdkBeta) : null;
+}
+
+function betasOf(betas: readonly string[]): SdkBeta[] {
+  return betas.flatMap((beta) => {
+    const value = asSdkBeta(beta);
+    return value === null ? [] : [value];
+  });
+}
+
 /**
  * Bypass needs `allowDangerouslySkipPermissions` at query start (C.3). The manager only passes
  * `bypassPermissions` with `allowsBypass`; without the launch flag the mode is dropped here too
@@ -95,8 +114,8 @@ export function buildQueryOptions(req: StartSessionRequest, hooks: QueryOptionHo
   if (nonEmpty(sdk.additionalDirectories)) options.additionalDirectories = [...sdk.additionalDirectories];
   if (nonEmpty(sdk.allowedTools)) options.allowedTools = [...sdk.allowedTools];
   if (nonEmpty(sdk.disallowedTools)) options.disallowedTools = [...sdk.disallowedTools];
-  // SdkBeta lists only the betas known to this SDK version; the CLI passes any header through.
-  if (nonEmpty(sdk.betas)) options.betas = sdk.betas.map((beta) => beta as SdkBeta);
+  const betas = betasOf(sdk.betas ?? []);
+  if (betas.length > 0) options.betas = betas;
   if (nonEmpty(sdk.plugins)) {
     options.plugins = sdk.plugins.map((path): SdkPluginConfig => ({ type: 'local', path }));
   }
@@ -128,6 +147,12 @@ export function optionIssues(req: StartSessionRequest): string[] {
   }
   if (req.permissionMode === 'bypassPermissions' && !req.launch.allowDangerouslySkipPermissions) {
     issues.push('permissionMode bypassPermissions without allowDangerouslySkipPermissions is omitted');
+  }
+  const invalidBetas = (req.launch.sdkOptions.betas ?? []).filter((beta) => asSdkBeta(beta) === null);
+  if (invalidBetas.length > 0) {
+    issues.push(
+      `invalid beta names are omitted: ${invalidBetas.map((beta) => JSON.stringify(beta)).join(', ')}`,
+    );
   }
   return issues;
 }

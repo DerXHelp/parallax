@@ -17,6 +17,7 @@ import { Worker } from 'node:worker_threads';
 import { z } from 'zod';
 import { windowsPathKey } from '@shared/paths';
 import type { LaunchSpec } from '../../claude/ports';
+import { toError } from '../../lib/async';
 import { logger } from '../../lib/logger';
 import { getEnvVar } from '../../lib/windows';
 import { HISTORY_WORKER_SOURCE } from './workerSource';
@@ -84,10 +85,6 @@ interface Slot {
   jobs: Map<number, Job>;
   idleTimer: NodeJS.Timeout | null;
   retired: boolean;
-}
-
-function toError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
 }
 
 function remoteError(error: { name: string; message: string }): Error {

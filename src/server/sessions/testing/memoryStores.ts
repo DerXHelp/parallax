@@ -23,6 +23,7 @@ import {
   type Settings,
   type TranscriptItem,
 } from '@shared/model';
+import { sleep } from '../../lib/async';
 import { isStreamingItem } from '../../store/transcripts';
 import {
   transcriptLogLineSchema,
@@ -100,11 +101,6 @@ export interface MemoryStores {
   settings: MemorySettingsStore;
   warnings: MemoryStoreWarnings;
 }
-
-const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 
 function lowerBound(items: readonly TranscriptItem[], order: number): number {
   let lo = 0;

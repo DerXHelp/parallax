@@ -40,6 +40,11 @@ export interface FakeBackendOptions {
   history?: FakeHistoryStore;
   /** Default 40000. */
   pidBase?: number;
+  /**
+   * Exited sessions (and start requests) kept for inspection, oldest dropped first – a long
+   * `pnpm dev`/E2E run must not grow forever (R2-12). Live sessions always stay. Default 50.
+   */
+  keepSessions?: number;
   /** Ids of the script mode (session ids, message ids, tool use ids); default random. */
   ids?: FakeIds;
 }

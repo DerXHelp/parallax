@@ -11,6 +11,7 @@ import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import path from 'node:path';
 import { z } from 'zod';
 import { windowsPathIssue } from '@shared/paths';
+import { toError } from './async';
 import { logger } from './logger';
 import { fsErrorCode } from './paths';
 
@@ -157,7 +158,7 @@ export function runFile(
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (error) {
-      reject(error instanceof Error ? error : new Error(String(error)));
+      reject(toError(error));
       return;
     }
     const stdout = collector(max);
@@ -281,6 +282,10 @@ function runTaskkill(pid: number): Promise<RunFileResult> {
   });
 }
 
+// =====================================================================================
+// Process queries (orphan cleanup at server start, shutdown sweep) – R2-02
+// =====================================================================================
+
 /** Identity of a running process, for the orphan cleanup on the next start (B, C.8). */
 export interface ProcessInfo {
   pid: number;
@@ -291,59 +296,89 @@ export interface ProcessInfo {
   startedAt: Date;
 }
 
-const processInfoOutputSchema = z.object({
-  name: z.string(),
-  parentPid: z.number().int().nullable(),
-  startedAt: z.iso.datetime({ offset: true }),
-});
+/**
+ * Why a query gave no answer: PowerShell timed out (`timeout`), could not run or failed – policy
+ * (AppLocker, Constrained Language Mode), CIM error, exit ≠ 0 (`failed`) – or printed something
+ * unreadable (`output`); `unsupported` off Windows. NEVER the same as "the process is gone".
+ */
+export type ProcessQueryFailure = 'timeout' | 'failed' | 'output' | 'unsupported';
+
+/** Result of `queryProcesses` (R2-02: an unknown answer is not an empty one). */
+export type ProcessQueryResult =
+  { kind: 'ok'; processes: ProcessInfo[] } | { kind: 'unknown'; reason: ProcessQueryFailure; detail: string };
+
+/** Three-valued lookup of one PID (`processInfo`). */
+export type ProcessLookup =
+  | { kind: 'found'; info: ProcessInfo }
+  | { kind: 'missing' }
+  | { kind: 'unknown'; reason: ProcessQueryFailure; detail: string };
+
+/** Processes with one of these PIDs and/or one of these parent PIDs. */
+export interface ProcessFilter {
+  pids?: readonly number[];
+  parentPids?: readonly number[];
+}
+
+export interface ProcessQueryOptions {
+  /** Per PowerShell call; default `PROCESS_QUERY_TIMEOUT_MS`. */
+  timeoutMs?: number;
+  /** Test seam (default `runFile`). */
+  run?: RunFileFn;
+  /** Test seam (default `process.platform`). */
+  platform?: NodeJS.Platform;
+}
 
 /**
- * Name, parent and start time of `pid` (Win32_Process via PowerShell/CIM, also for processes of
- * other sessions), or null if it does not exist. Takes 1–3 s (PowerShell + CIM start) – meant for
- * the one-time orphan cleanup at server start, not for hot paths.
+ * PowerShell + CIM: 1–3 s idle, up to ≈ 23 s under load (docs/wp/FLAKES.md). The orphan cleanup
+ * runs in the background, so the limit is generous (R2-02); a timeout is `unknown`, never "gone".
  */
-export async function processInfo(
-  pid: number,
-  options: { timeoutMs?: number } = {},
-): Promise<ProcessInfo | null> {
-  if (!Number.isSafeInteger(pid) || pid <= 0) throw new RangeError(`invalid pid: ${String(pid)}`);
-  if (process.platform !== 'win32') return null;
-  // `pid` is a validated integer, so the script text cannot be injected into. The date format has
-  // no culture-dependent specifier (':' and '.' are quoted) and works in Constrained Language Mode.
-  const script =
-    `$p = Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId = ${pid}'; ` +
-    `if ($p) { @{ name = [string]$p.Name; parentPid = [int]$p.ParentProcessId; ` +
-    `startedAt = $p.CreationDate.ToUniversalTime().ToString("yyyy-MM-dd'T'HH':'mm':'ss'.'fff'Z'") } ` +
-    `| ConvertTo-Json -Compress }`;
-  const result = await runFile(
-    systemTool(path.win32.join('WindowsPowerShell', 'v1.0', 'powershell.exe')),
-    ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
-    { timeoutMs: options.timeoutMs ?? 20_000, maxOutputBytes: 64 * 1024 },
-  );
-  const text = result.stdout.trim();
-  if (result.exitCode !== 0 || text === '') return null;
-  let json: unknown;
-  try {
-    json = JSON.parse(text) as unknown;
-  } catch {
-    return null;
+export const PROCESS_QUERY_TIMEOUT_MS = 60_000;
+/** WQL clauses per CIM query (the filter has a length limit); more PIDs → several sequential calls. */
+export const PROCESS_QUERY_MAX_CLAUSES = 100;
+
+function assertPids(pids: readonly number[]): void {
+  for (const pid of pids) {
+    if (!Number.isSafeInteger(pid) || pid <= 0) throw new RangeError(`invalid pid: ${String(pid)}`);
   }
-  const parsed = processInfoOutputSchema.safeParse(json);
-  if (!parsed.success) return null;
-  return {
-    pid,
-    name: parsed.data.name,
-    parentPid: parsed.data.parentPid,
-    startedAt: new Date(parsed.data.startedAt),
-  };
 }
 
-/** Start time of `pid` or null (see processInfo). */
-export async function processStartTime(pid: number): Promise<Date | null> {
-  return (await processInfo(pid))?.startedAt ?? null;
+/**
+ * WQL filters for `Win32_Process` (`ProcessId = a OR … OR ParentProcessId = b …`), at most
+ * `PROCESS_QUERY_MAX_CLAUSES` clauses each. Only validated integers go into the text (no injection).
+ */
+export function processQueryFilters(filter: ProcessFilter, maxClauses = PROCESS_QUERY_MAX_CLAUSES): string[] {
+  const pids = [...new Set(filter.pids ?? [])];
+  const parents = [...new Set(filter.parentPids ?? [])];
+  assertPids(pids);
+  assertPids(parents);
+  const clauses = [
+    ...pids.map((pid) => `ProcessId = ${String(pid)}`),
+    ...parents.map((pid) => `ParentProcessId = ${String(pid)}`),
+  ];
+  const filters: string[] = [];
+  for (let i = 0; i < clauses.length; i += maxClauses) {
+    filters.push(clauses.slice(i, i + maxClauses).join(' OR '));
+  }
+  return filters;
 }
 
-const childProcessesOutputSchema = z.array(
+/**
+ * The PowerShell script of one query. `-ErrorAction Stop` + `try/catch → exit 3`: a CIM failure
+ * must not print an empty list (that would read as "no such process"). The date format has no
+ * culture-dependent specifier and everything works in Constrained Language Mode;
+ * `-InputObject @(...)` keeps 0/1 results arrays (PS 5.1).
+ */
+function processQueryScript(wqlFilter: string): string {
+  return (
+    `try { $c = @(Get-CimInstance -ClassName Win32_Process -Filter '${wqlFilter}' -ErrorAction Stop | ` +
+    `Where-Object { $_.CreationDate } | ForEach-Object { @{ pid = [int]$_.ProcessId; name = [string]$_.Name; ` +
+    `parentPid = [int]$_.ParentProcessId; ` +
+    `startedAt = $_.CreationDate.ToUniversalTime().ToString("yyyy-MM-dd'T'HH':'mm':'ss'.'fff'Z'") } }); ` +
+    `ConvertTo-Json -InputObject $c -Compress } catch { Write-Output ('error: ' + $_.Exception.Message); exit 3 }`
+  );
+}
+
+const processQueryOutputSchema = z.array(
   z.object({
     pid: z.number().int().positive(),
     name: z.string(),
@@ -352,44 +387,105 @@ const childProcessesOutputSchema = z.array(
   }),
 );
 
-/**
- * Direct children of `pid` (Win32_Process with ParentProcessId = pid, like processInfo 1–3 s):
- * for the orphan cleanup after a hard abort, when only children of a dead `claude.exe` survive
- * (WP-13 §6 Nr. 7, §7). PIDs are reused – a caller must also compare the start time (a child is
- * never older than its parent). Non-Windows or failure: empty list.
- */
-export async function childProcesses(
-  pid: number,
-  options: { timeoutMs?: number } = {},
-): Promise<ProcessInfo[]> {
-  if (!Number.isSafeInteger(pid) || pid <= 0) throw new RangeError(`invalid pid: ${String(pid)}`);
-  if (process.platform !== 'win32') return [];
-  // Validated integer in the script (no injection); -InputObject @(...) keeps 0/1 results arrays (PS 5.1).
-  const script =
-    `$c = @(Get-CimInstance -ClassName Win32_Process -Filter 'ParentProcessId = ${pid}' | ` +
-    `Where-Object { $_.CreationDate } | ForEach-Object { @{ pid = [int]$_.ProcessId; name = [string]$_.Name; ` +
-    `parentPid = [int]$_.ParentProcessId; ` +
-    `startedAt = $_.CreationDate.ToUniversalTime().ToString("yyyy-MM-dd'T'HH':'mm':'ss'.'fff'Z'") } }); ` +
-    `ConvertTo-Json -InputObject $c -Compress`;
-  const result = await runFile(
-    systemTool(path.win32.join('WindowsPowerShell', 'v1.0', 'powershell.exe')),
-    ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
-    { timeoutMs: options.timeoutMs ?? 20_000, maxOutputBytes: 1024 * 1024 },
-  );
-  const text = result.stdout.trim();
-  if (result.exitCode !== 0 || text === '') return [];
+/** stdout of one query → processes, or null if it is not the expected JSON. */
+export function parseProcessQueryOutput(stdout: string): ProcessInfo[] | null {
+  const text = stdout.trim();
+  if (text === '') return null;
   let json: unknown;
   try {
     json = JSON.parse(text) as unknown;
   } catch {
-    return [];
+    return null;
   }
-  const parsed = childProcessesOutputSchema.safeParse(json);
-  if (!parsed.success) return [];
+  const parsed = processQueryOutputSchema.safeParse(json);
+  if (!parsed.success) return null;
   return parsed.data.map((row) => ({
     pid: row.pid,
     name: row.name,
     parentPid: row.parentPid,
     startedAt: new Date(row.startedAt),
   }));
+}
+
+function unknownResult(reason: ProcessQueryFailure, detail: string): ProcessQueryResult {
+  return { kind: 'unknown', reason, detail: detail.trim().slice(0, 500) };
+}
+
+async function runProcessQuery(
+  wqlFilter: string,
+  run: RunFileFn,
+  timeoutMs: number,
+): Promise<ProcessQueryResult> {
+  let result: RunFileResult;
+  try {
+    result = await run(
+      systemTool(path.win32.join('WindowsPowerShell', 'v1.0', 'powershell.exe')),
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', processQueryScript(wqlFilter)],
+      { timeoutMs, maxOutputBytes: 1024 * 1024 },
+    );
+  } catch (error) {
+    return unknownResult('failed', `powershell could not be started: ${toError(error).message}`);
+  }
+  if (result.timedOut) return unknownResult('timeout', `no answer within ${String(timeoutMs)} ms`);
+  if (result.exitCode !== 0) {
+    return unknownResult('failed', `exit ${String(result.exitCode)}: ${result.stdout} ${result.stderr}`);
+  }
+  const processes = parseProcessQueryOutput(result.stdout);
+  if (processes === null) return unknownResult('output', `unreadable output: ${result.stdout.slice(0, 200)}`);
+  return { kind: 'ok', processes };
+}
+
+/**
+ * Name, parent and start time of every process matching `filter` (Win32_Process via
+ * PowerShell/CIM, also processes of other sessions) – ONE PowerShell call for many PIDs and their
+ * children (R2-02: ≈ 2.8 s instead of 2 × 2.4 s per PID). Three-valued: a failure or timeout is
+ * `unknown`, never an empty list. Meant for the orphan cleanup and the shutdown sweep, not for hot
+ * paths. An empty filter answers `ok []` without a call.
+ */
+export async function queryProcesses(
+  filter: ProcessFilter,
+  options: ProcessQueryOptions = {},
+): Promise<ProcessQueryResult> {
+  const filters = processQueryFilters(filter);
+  if (filters.length === 0) return { kind: 'ok', processes: [] };
+  if ((options.platform ?? process.platform) !== 'win32') return unknownResult('unsupported', 'not Windows');
+  const run = options.run ?? runFile;
+  const timeoutMs = options.timeoutMs ?? PROCESS_QUERY_TIMEOUT_MS;
+  const found = new Map<number, ProcessInfo>();
+  for (const wqlFilter of filters) {
+    const result = await runProcessQuery(wqlFilter, run, timeoutMs);
+    if (result.kind === 'unknown') return result;
+    for (const info of result.processes) found.set(info.pid, info);
+  }
+  return { kind: 'ok', processes: [...found.values()] };
+}
+
+/** Three-valued identity of `pid` (see queryProcesses): found / missing / unknown. */
+export async function processInfo(pid: number, options: ProcessQueryOptions = {}): Promise<ProcessLookup> {
+  assertPids([pid]);
+  const result = await queryProcesses({ pids: [pid] }, options);
+  if (result.kind === 'unknown') return result;
+  const info = result.processes.find((p) => p.pid === pid);
+  return info === undefined ? { kind: 'missing' } : { kind: 'found', info };
+}
+
+/** Start time of `pid`; null if it is missing OR the lookup failed (use processInfo to tell them apart). */
+export async function processStartTime(pid: number, options: ProcessQueryOptions = {}): Promise<Date | null> {
+  const lookup = await processInfo(pid, options);
+  return lookup.kind === 'found' ? lookup.info.startedAt : null;
+}
+
+/**
+ * Direct children of `pid` (Win32_Process with ParentProcessId = pid), e.g. for the shutdown sweep
+ * (launcher/shutdown.ts). PIDs are reused – a caller must also compare the start time (a child is
+ * never older than its parent). Three-valued like queryProcesses.
+ */
+export async function childProcesses(
+  pid: number,
+  options: ProcessQueryOptions = {},
+): Promise<ProcessQueryResult> {
+  assertPids([pid]);
+  const result = await queryProcesses({ parentPids: [pid] }, options);
+  if (result.kind === 'unknown') return result;
+  return { kind: 'ok', processes: result.processes.filter((p) => p.parentPid === pid) };
 }
