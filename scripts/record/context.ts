@@ -2,12 +2,14 @@
  * Run context of the recorder: scratch folders, CLI/SDK versions, auth status, sanitizer secrets,
  * persistent spike state (.recordings/spike-state.json, git-ignored) and the budget guard.
  */
-import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import { parseRawAuthStatus, type RawAuthStatus } from '../../src/server/claude/authStatus';
+import { parseClaudeVersion } from '../../src/server/claude/resolveClaude';
+import { runFile } from '../../src/server/lib/process';
 import { buildSpikeEnv, type SpikeEnvResult } from './env';
 import { createSanitizer, type SanitizeSecrets, type Sanitizer } from './sanitize';
 
@@ -57,26 +59,17 @@ const stateSchema = z.object({
 });
 export type SpikeState = z.infer<typeof stateSchema>;
 
-const authStatusSchema = z.looseObject({
-  loggedIn: z.boolean(),
-  authMethod: z.string().optional(),
-  apiProvider: z.string().optional(),
-  email: z.string().optional(),
-  orgId: z.string().optional(),
-  orgName: z.string().optional(),
-  subscriptionType: z.string().optional(),
-  configDirectory: z.string().optional(),
-  projectsDirectory: z.string().optional(),
-});
-export type AuthStatus = z.infer<typeof authStatusSchema>;
+/**
+ * Raw `claude auth status --json` (WP-11 `parseRawAuthStatus`): the recorder needs e-mail and
+ * organization only to replace them in recordings; the guard uses `parseAuthStatus()`.
+ */
+export type AuthStatus = RawAuthStatus;
 
-function run(file: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(file, args, { windowsHide: true, timeout: 60_000, env, encoding: 'utf8' }, (error, stdout) => {
-      if (error) reject(new Error(error.message, { cause: error }));
-      else resolve(stdout);
-    });
-  });
+/** stdout of `file args` (no shell, hidden window, WP-11 runFile); throws on spawn errors and timeouts. */
+async function run(file: string, args: readonly string[], env: Record<string, string>): Promise<string> {
+  const result = await runFile(file, args, { env, timeoutMs: 60_000 });
+  if (result.timedOut) throw new Error(`${path.basename(file)} ${args.join(' ')}: timed out`);
+  return result.stdout;
 }
 
 export function loadState(): SpikeState {
@@ -125,14 +118,16 @@ export function claudeExecutable(): string {
 }
 
 /** `claude auth status --json` with the spike env (never interactive). */
-export async function readAuthStatus(claudePath: string, env: NodeJS.ProcessEnv): Promise<AuthStatus> {
+export async function readAuthStatus(claudePath: string, env: Record<string, string>): Promise<AuthStatus> {
   const stdout = await run(claudePath, ['auth', 'status', '--json'], env);
-  return authStatusSchema.parse(JSON.parse(stdout) as unknown);
+  const status = parseRawAuthStatus(stdout);
+  if (status === null) throw new Error('claude auth status --json: unexpected output');
+  return status;
 }
 
-export async function readCliVersion(claudePath: string, env: NodeJS.ProcessEnv): Promise<string> {
+export async function readCliVersion(claudePath: string, env: Record<string, string>): Promise<string> {
   const stdout = await run(claudePath, ['--version'], env);
-  return /^(\S+)/.exec(stdout.trim())?.[1] ?? stdout.trim();
+  return parseClaudeVersion(stdout) ?? stdout.trim();
 }
 
 export function readSdkVersion(): string {
@@ -143,14 +138,16 @@ export function readSdkVersion(): string {
 
 /** Machine and account values the sanitizer must replace. */
 export function secretsFor(authStatus: AuthStatus): SanitizeSecrets {
+  const list = (value: string | null | undefined): string[] =>
+    value === undefined || value === null || value === '' ? [] : [value];
   return {
     home: os.homedir(),
     tmpDir: os.tmpdir(),
     username: os.userInfo().username,
     hostname: os.hostname(),
-    emails: authStatus.email === undefined ? [] : [authStatus.email],
-    orgNames: authStatus.orgName === undefined ? [] : [authStatus.orgName],
-    ids: authStatus.orgId === undefined ? [] : [authStatus.orgId],
+    emails: list(authStatus.email),
+    orgNames: list(authStatus.orgName),
+    ids: list(authStatus.orgId),
   };
 }
 
