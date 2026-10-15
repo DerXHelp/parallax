@@ -355,6 +355,54 @@ describe('TranscriptView', () => {
     expect(screen.getByText('Plan v3')).toBeTruthy();
   });
 
+  it('tool calls with an expired decision say so and lead to the bar (R2W-14)', async () => {
+    const entryId = sampleId('en', 12);
+    const expired = sampleDecisions.permission({
+      id: sampleId('dc', 121),
+      entryId,
+      toolUseId: 'toolu_perm_expired',
+      state: 'expired',
+    });
+    const open = sampleDecisions.permission({
+      id: sampleId('dc', 122),
+      entryId,
+      toolUseId: 'toolu_perm_open',
+    });
+    const call = (n: number, patch: Partial<Parameters<typeof sampleItems.toolCall>[0]>) =>
+      sampleItems.toolCall({
+        id: `msg_perm${String(n)}:0`,
+        messageId: `msg_perm${String(n)}`,
+        blockIndex: 0,
+        order: n + 1,
+        toolName: 'Bash',
+        input: { command: 'mkdir build' },
+        result: null,
+        ...patch,
+      });
+    const s = session(
+      12,
+      [
+        sampleItems.userMessage(),
+        call(1, {
+          toolUseId: 'toolu_perm_expired',
+          status: 'interrupted',
+          decision: { decisionId: expired.id, kind: 'permission', planVersion: null, outcome: null },
+        }),
+        call(2, {
+          toolUseId: 'toolu_perm_open',
+          status: 'awaiting_decision',
+          decision: { decisionId: open.id, kind: 'permission', planVersion: null, outcome: null },
+        }),
+      ],
+      { decisions: [expired, open] },
+    );
+    start(s);
+    render(<TranscriptView sessionKey={s.key} />);
+    expect(await screen.findByText('Expired – continue in the decision bar.')).toBeTruthy();
+    expect(screen.getByText('Waiting for your decision in the decision bar.')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'Go to decision' })).toHaveLength(2);
+  });
+
   it('shows queued prompts grey until the CLI takes them over', async () => {
     const taken = sampleUuid(77);
     const s = session(

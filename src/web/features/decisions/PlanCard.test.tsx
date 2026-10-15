@@ -65,7 +65,7 @@ describe('PlanCard (Plan "Plan-Modus & Plan-Freigabe")', () => {
 
   it.each([
     ['With auto mode', 'Auto', 'auto'],
-    ['Approve each change', 'Each change', 'default'],
+    ['Manual – approve each change', 'Manual', 'default'],
   ] as const)('the ▾ menu picks "%s" and the main button implements with it', async (item, short, mode) => {
     const h = start();
     const user = userEvent.setup();
@@ -103,13 +103,14 @@ describe('PlanCard (Plan "Plan-Modus & Plan-Freigabe")', () => {
     expect(approvals(h)).toEqual([]);
   });
 
-  it('"Keep planning with feedback" sends the composer text as revise feedback', async () => {
+  it('"Keep planning" with a draft sends the composer text as revise feedback – its label stays', async () => {
     const h = start({ composer: true });
     const user = userEvent.setup();
     await user.type(await screen.findByRole('textbox', { name: 'Message to Claude' }), 'Add tests first');
-    // Both the bar and the composer offer the action; the bar's button comes first.
-    const [fromBar] = screen.getAllByRole('button', { name: 'Keep planning with feedback' });
-    if (fromBar === undefined) throw new Error('missing');
+    // R2W-16: the bar keeps "Keep planning" (fixed width), "…with feedback" is the composer's.
+    const fromBar = screen.getByRole('button', { name: 'Keep planning' });
+    expect(fromBar.dataset.action).toBe('revise');
+    expect(screen.getAllByRole('button', { name: 'Keep planning with feedback' })).toHaveLength(1);
     await user.click(fromBar);
     expect(approvals(h)).toEqual([
       { kind: 'plan', response: { behavior: 'revise', feedback: 'Add tests first' } },
@@ -168,7 +169,7 @@ describe('PlanCard (Plan "Plan-Modus & Plan-Freigabe")', () => {
     act(() => {
       setDraft(h.key('plan'), 'more detail');
     });
-    await user.click(screen.getByRole('button', { name: 'Keep planning with feedback' }));
+    await user.click(screen.getByRole('button', { name: 'Keep planning' }));
     expect(await screen.findByText('This decision is no longer open.')).toBeTruthy();
     expect(screen.getByRole('complementary').textContent).toContain('## Risks');
   });

@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DecisionOutcome } from '@shared/model';
@@ -11,6 +11,7 @@ import { DecisionBar } from './DecisionBar';
 import { DecisionCard } from './DecisionCard';
 import { DEMO_ENTRIES } from './lib/demo-data';
 import { renderWithHost, type Harness } from './lib/testing';
+import { PlanSidePanel } from './PlanSidePanel';
 import { resetDecisionBarState } from './state/bar-store';
 
 // UI tests with many key strokes: generous timeout under a fully parallel `pnpm test`.
@@ -220,6 +221,38 @@ describe('DecisionCard slot (architecture §2.3e)', () => {
     await user.click(button);
     expect(document.activeElement).toBe(shownCard());
     expect(document.querySelectorAll('[data-decision-action]').length).toBeGreaterThan(0);
+  });
+
+  it('transcript placement offers "Open plan" only with a mounted side panel (R2W-15)', async () => {
+    const h = renderWithHost(
+      (key) => (
+        <>
+          <DecisionCard sessionKey={key('plan')} decisionId={sampleId('dc', 0xa41)} placement="transcript" />
+          <PlanSidePanel sessionKey={key('plan')} />
+          <DecisionBar sessionKey={key('plan')} />
+        </>
+      ),
+      { entries: ['plan'] },
+    );
+    harness = h;
+    const user = userEvent.setup();
+    const article = await screen.findByRole('article', { name: /Plan v2 ready/ });
+    await user.click(within(article).getByRole('button', { name: 'Open plan' }));
+    const panel = await screen.findByRole('complementary', { name: 'Plan v2' });
+    expect(document.activeElement).toBe(panel);
+    expect(h.commands('decision.respond')).toEqual([]);
+    harness.stop();
+    resetClientStore();
+    resetDecisionBarState();
+    harness = renderWithHost(
+      (key) => (
+        <DecisionCard sessionKey={key('plan')} decisionId={sampleId('dc', 0xa41)} placement="transcript" />
+      ),
+      { entries: ['plan'] },
+    );
+    harness.running.connection.subscribe(DEMO_ENTRIES.plan);
+    const alone = await screen.findByRole('article', { name: /Plan v2 ready/ });
+    expect(within(alone).queryByRole('button', { name: 'Open plan' })).toBeNull();
   });
 
   it('renders null once the decision is resolved', async () => {

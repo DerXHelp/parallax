@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -51,6 +52,8 @@ interface CardActions {
   disabled: boolean;
   armed: boolean;
   sending: boolean;
+  /** Id of the "Enter and Space never answer" hint (`aria-describedby` of the answer buttons). */
+  hintId: string;
   /** True when a click on an answer button may answer (armed, not a key activation, enabled). */
   accept(event: ReactMouseEvent): boolean;
   /** Runs an answer: disables the card until the server answered (or the answer failed). */
@@ -116,6 +119,7 @@ export function DecisionCardShell({
   const online = useSessionConnectionStatus(sessionKey) === 'open';
   const [sending, setSending] = useState(false);
   const disabled = sending || !online;
+  const hintId = useId();
 
   useEffect(() => {
     if (!sending) return undefined;
@@ -147,8 +151,8 @@ export function DecisionCardShell({
   }, []);
 
   const value = useMemo<CardActions>(
-    () => ({ disabled, armed, sending, accept, respond }),
-    [disabled, armed, sending, accept, respond],
+    () => ({ disabled, armed, sending, hintId, accept, respond }),
+    [disabled, armed, sending, hintId, accept, respond],
   );
 
   useShortcut({
@@ -230,8 +234,12 @@ export function DecisionCardShell({
           </p>
         )}
         {/* Only for keyboard focus: a hint appearing on a pointer click would move the buttons
-            under the pointer (the click would land elsewhere). */}
-        <p className="text-muted-foreground hidden px-3 pb-2 text-2xs group-has-[:focus-visible]/decision:block">
+            under the pointer (the click would land elsewhere). Screen readers get it as the
+            description of every answer button (R2W-19). */}
+        <p
+          id={hintId}
+          className="text-muted-foreground hidden px-3 pb-2 text-2xs group-has-[:focus-visible]/decision:block"
+        >
           {t('decisions.actions.shortcutHint', { keys: keys.join('+') })}
         </p>
       </div>
@@ -258,6 +266,7 @@ export function DecisionAction({ onAnswer, disabled, ...props }: DecisionActionP
       size="sm"
       data-decision-action=""
       aria-keyshortcuts="Control+Enter"
+      aria-describedby={actions.hintId}
       disabled={actions.disabled || disabled === true}
       onClick={(event) => {
         if (!actions.accept(event)) return;

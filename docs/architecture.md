@@ -184,7 +184,8 @@ ihre eigenen Dateien. Ein neuer Namespace (späteres Feature) wird vom Koordinat
 **(b) `src/web/ui` (Primitives).** WP-14 liefert für Welle 1b mindestens: Button, Badge, Card,
 Tooltip, DropdownMenu, Popover, Dialog, Select, Collapsible, ScrollArea, Separator, Input, Textarea,
 ToggleGroup, RadioGroup, Checkbox, Tabs, Kbd, Progress, Skeleton, Spinner, Alert/Banner und
-`StatusIcon` (`DisplayStatusKind` → Icon + `t('status.<kind>')`, nie nur Farbe). Kein Barrel
+`StatusIcon` (`DisplayStatusKind` → Icon + `t('status.<kind>')`, nie nur Farbe); seit den
+R2-Fixes auch `Disclosure` (ADR-044). Kein Barrel
 (`index.ts`). In Welle 1b ist `src/web/ui` read-only; fehlt etwas, bauen WP-15/16 eine Komposition
 aus vorhandenen Primitives im eigenen Feature-Ordner (`features/<f>/components/`) und melden den
 Wunsch im Bericht (Verschieben nach `ui/` macht später der Koordinator). Direkte `radix-ui`-Importe
@@ -271,6 +272,19 @@ Schwere, spät gebrauchte Teile (Markdown-Renderer, Shiki, Diff) lädt WP-15 per
 Assets werden nie als `data:` inlined (`build.assetsInlineLimit: 0`); zod läuft im Web `jitless`
 (`src/web/lib/zod-jitless.ts`, erster Import in `main.tsx`), damit kein `eval`-Probe gegen die CSP
 läuft.
+
+**(k) Composer und offene Entscheidungen (normativ, R2W-01/03/04, ADR-040 … ADR-043).**
+- **Ziel-Sperre:** Enter im Composer beantwortet eine offene Entscheidung nur, wenn sie beim
+  ersten Zeichen des aktuellen Entwurfs schon angezeigt war (≥ `ARM_DELAY_MS`), vom Haupt-Agent
+  stammt oder per „Weiter planen“ (`requestComposerFocus(sessionKey, decisionId)`) gewählt wurde.
+  Sonst sendet Enter normal; „Als Antwort senden“ ist dann ein expliziter Knopf. Nie eine Freigabe:
+  Permission = deny + message, eine Frage = `answer` mit dem Text als „Andere“, mehrere Fragen =
+  decline + message, Plan = revise.
+- **Warteschlange:** gequeuete Prompts zeigt nur das Transkript (grau) plus das Kopfzeilen-Badge
+  mit Anzahl; der Composer hat keine eigene Liste.
+- **Modus/Modell:** bedienbar nur im Composer (Picker), die Kopfzeile zeigt sie als Status.
+  Bezeichnungen der Modi überall aus `shell.permissionMode.*` („Manual“/„Manuell“ für `default`).
+- Gemeinsame Primitives aus Feature-Wünschen: `Disclosure` liegt in `src/web/ui` (ADR-044).
 
 ### 2.4 Weitere Regeln für Pakete der Welle 1
 - Feature-eigener State (z. B. Composer-Entwürfe) liegt in `features/<f>/state/`, Feature-Helfer in

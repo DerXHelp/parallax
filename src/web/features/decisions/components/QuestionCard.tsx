@@ -95,7 +95,10 @@ function QuestionBlock({
       disabled={disabled}
       className="h-7 max-w-80"
       onChange={(event) => {
-        onChange({ ...draft, other: true, otherText: event.target.value });
+        // Typing into "Other" chooses it; in a single-select question that drops the option chosen
+        // before (one answer only, R2W-02), like picking the "Other" radio.
+        const selected = question.multiSelect ? draft.selected : [];
+        onChange({ ...draft, selected, other: true, otherText: event.target.value });
       }}
     />
   );

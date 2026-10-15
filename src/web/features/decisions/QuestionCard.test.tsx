@@ -104,6 +104,34 @@ describe('QuestionCard (AskUserQuestion, F.5)', () => {
     });
   });
 
+  it('single select: typing into "Other" after picking an option drops that option (R2W-02)', async () => {
+    const h = start();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('radio', { name: /JSON files/ }));
+    expect(screen.getByText('Preview: JSON files')).toBeTruthy();
+    const [otherFirst] = screen.getAllByRole('textbox', { name: 'Other' });
+    if (otherFirst === undefined) throw new Error('other missing');
+    await user.type(otherFirst, 'TOML');
+    expect(screen.getAllByRole('radio', { name: 'Other' })[0]?.getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByRole('radio', { name: /JSON files/ }).getAttribute('aria-checked')).toBe('false');
+    expect(screen.queryByText('Preview: JSON files')).toBeNull();
+    // Multi select keeps its ticks next to "Other".
+    await user.click(screen.getByRole('checkbox', { name: /Lint/ }));
+    const [, otherSecond] = screen.getAllByRole('textbox', { name: 'Other' });
+    if (otherSecond === undefined) throw new Error('other missing');
+    await user.type(otherSecond, 'knip');
+    await user.click(screen.getByRole('button', { name: 'Answer' }));
+    expect(h.commands('decision.respond')[0]?.response).toMatchObject({
+      kind: 'question',
+      response: {
+        answers: [
+          { selected: [], otherText: 'TOML' },
+          { selected: ['Lint'], otherText: 'knip' },
+        ],
+      },
+    });
+  });
+
   it('Mod+Enter in a field of the card answers once every question is answered', async () => {
     const h = start();
     const user = userEvent.setup();

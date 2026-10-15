@@ -68,8 +68,9 @@ export const en = {
       queued: { one: '{count} queued', other: '{count} queued' },
       expiredDecisions: { one: '{count} expired decision', other: '{count} expired decisions' },
     },
+    /** Labels of the permission modes everywhere (Plan C.3: "Manual" is the UI label of `default`). */
     permissionMode: {
-      default: 'Ask',
+      default: 'Manual',
       acceptEdits: 'Accept edits',
       plan: 'Plan',
       auto: 'Auto',
@@ -108,7 +109,9 @@ export const en = {
     },
     shortcuts: {
       title: 'Keyboard shortcuts',
-      description: 'Shortcuts do not fire while you type in a text field (except Esc).',
+      description:
+        'Shortcuts do not fire while you type in a text field – except Esc and the ones marked “also in text fields”. Ctrl+Enter answers only from the fields of the decision bar, never from the message field.',
+      inInputs: 'also in text fields',
       help: 'Show keyboard shortcuts',
       selectSession: 'Select session 1–9 in the sidebar',
       empty: 'No shortcuts registered.',

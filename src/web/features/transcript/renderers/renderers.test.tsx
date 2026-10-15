@@ -156,6 +156,33 @@ describe('Bash / PowerShell', () => {
     expect(screen.getByText('Full text loaded (250,000 characters).')).toBeTruthy();
   });
 
+  it('shows a huge loaded text only up to the inline budget and says so (R2W-06)', async () => {
+    const user = userEvent.setup();
+    setFullTextLoader(() => Promise.resolve('line\n'.repeat(25_000)));
+    renderRow(
+      toolItem({
+        toolName: 'Bash',
+        input: { command: 'pnpm install' },
+        result: {
+          ...result('line'),
+          content: [
+            {
+              type: 'text',
+              text: { text: 'line', truncated: { totalChars: 125_000, blobId: sampleBlobId(7) } },
+            },
+          ],
+        },
+      }),
+    );
+    await expand(user);
+    await user.click(screen.getByRole('button', { name: 'Load full text' }));
+    const notice = await screen.findByText(
+      'Full text loaded (125,000 characters) – too large to show here, the first 99,999 are shown.',
+    );
+    expect(notice.closest('[data-slot="capped-clipped"]')).not.toBeNull();
+    expect(document.querySelector('[data-slot="terminal-output"]')?.textContent).toHaveLength(99_999);
+  });
+
   it('reports a failed load as a notice and offers a retry', async () => {
     const user = userEvent.setup();
     setFullTextLoader(() => Promise.reject(new BlobLoadError({ code: 'BLOB_NOT_FOUND', params: {} })));

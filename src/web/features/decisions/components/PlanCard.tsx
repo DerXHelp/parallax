@@ -1,5 +1,6 @@
 import { MessageSquareTextIcon } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
+import { LIMITS } from '@shared/common';
 import type { PlanDecision } from '@shared/model';
 import { useT } from '@web/i18n';
 import { useFeatureSlots } from '@web/shell/slots';
@@ -11,14 +12,13 @@ import { respondToDecision } from '../lib/respond';
 import { DecisionAction, DecisionCardShell } from './card-shell';
 import { ApproveSplit, OpenPlanButton, PlanContextGauge, approvePlan, useApproveMode } from './plan-parts';
 
-/** Max length of plan feedback (contract `planResponse.revise.feedback`). */
-export const PLAN_FEEDBACK_MAX = 50_000;
-
 /**
  * Plan card in the bar (Plan "Plan-Modus & Plan-Freigabe"):
  * `Plan v2 bereit · [Umsetzen ▾] [Weiter planen] [Plan öffnen] · Kontext 78 %`.
  * "Implement" sends only the chosen mode (C.4); "Keep planning" sends the composer text as
- * feedback (deny + message, F.6) or – without text – moves the focus into the composer.
+ * feedback (deny + message, F.6) or – without text – moves the focus into the composer and makes
+ * this plan the composer's Enter target (R2W-01). Its label never changes with the draft (R2W-16:
+ * the buttons to its right do not move while the user types); "…with feedback" is the composer's.
  */
 export function PlanCard({
   sessionKey,
@@ -37,12 +37,12 @@ export function PlanCard({
   const title = planTitle(decision.plan);
   const titleSuffix = title === null ? null : ` · ${title}`;
   const summary = planSummary(decision.plan);
-  const feedbackReady = draft !== '' && draft.length <= PLAN_FEEDBACK_MAX;
+  const feedbackReady = draft !== '' && draft.length <= LIMITS.planFeedbackChars;
 
   const revise = async () => {
     const feedback = getDraft(sessionKey).trim();
-    if (feedback === '' || feedback.length > PLAN_FEEDBACK_MAX) {
-      requestComposerFocus(sessionKey);
+    if (feedback === '' || feedback.length > LIMITS.planFeedbackChars) {
+      requestComposerFocus(sessionKey, decision.id);
       return false;
     }
     const ok = await respondToDecision(sessionKey, decision, {
@@ -84,9 +84,14 @@ export function PlanCard({
             />
           )}
           {feedbackReady ? (
-            <DecisionAction variant="outline" data-action="revise" onAnswer={revise}>
+            <DecisionAction
+              variant="outline"
+              data-action="revise"
+              title={t('decisions.plan.keepPlanningSendHint')}
+              onAnswer={revise}
+            >
               <MessageSquareTextIcon aria-hidden />
-              {t('decisions.plan.keepPlanningWithFeedback')}
+              {t('decisions.plan.keepPlanning')}
             </DecisionAction>
           ) : (
             <Button
@@ -95,7 +100,7 @@ export function PlanCard({
               data-action="keep-planning"
               title={t('decisions.plan.keepPlanningHint')}
               onClick={() => {
-                requestComposerFocus(sessionKey);
+                requestComposerFocus(sessionKey, decision.id);
               }}
             >
               <MessageSquareTextIcon aria-hidden />

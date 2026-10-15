@@ -152,6 +152,14 @@ describe('limits', () => {
     expect(LIMITS.planChars).toBeLessThanOrEqual(LIMITS.wsMaxPayloadBytes / 4);
     expect(LIMITS.answersMax * LIMITS.answerChars).toBeLessThan(LIMITS.wsMaxPayloadBytes / 4);
   });
+
+  it('R2W-12: decision answer texts fit the WS payload and stay below the prompt limit', () => {
+    expect(LIMITS.decisionMessageChars).toBe(10_000);
+    expect(LIMITS.planFeedbackChars).toBe(50_000);
+    expect(LIMITS.decisionMessageChars).toBeLessThanOrEqual(LIMITS.planFeedbackChars);
+    expect(LIMITS.planFeedbackChars).toBeLessThan(LIMITS.promptChars);
+    expect(LIMITS.planFeedbackChars).toBeLessThanOrEqual(LIMITS.wsMaxPayloadBytes / 4);
+  });
 });
 
 describe('tolerant SDK enums (R0-05)', () => {

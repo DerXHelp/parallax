@@ -6,6 +6,7 @@ import {
 } from 'shiki/core';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 import type { LanguageId } from './languages';
+import { SizedLru } from './sized-cache';
 
 /**
  * Syntax highlighting (lazy chunk, only loaded through `import('./highlight')`): `shiki/core` with
@@ -85,8 +86,11 @@ function loadLanguage(core: HighlighterCore, language: LanguageId): Promise<void
   return loading;
 }
 
-const CACHE_MAX = 200;
-const cache = new Map<string, readonly HighlightedLine[]>();
+/**
+ * Highlighted blocks: at most 200 and ~2 Mi chars (key = the code, the tokens repeat it – counted
+ * twice; R2W-18), so a few large files do not pin memory.
+ */
+const cache = new SizedLru<string, readonly HighlightedLine[]>({ maxEntries: 200, maxSize: 2 * 1024 * 1024 });
 
 function cacheKey(code: string, language: LanguageId): string {
   return `${language}\u0000${code}`;
@@ -94,7 +98,7 @@ function cacheKey(code: string, language: LanguageId): string {
 
 /** Result of an earlier `highlight` call (re-mounted rows of the virtualized list render at once). */
 export function peekHighlight(code: string, language: LanguageId): readonly HighlightedLine[] | null {
-  return cache.get(cacheKey(code, language)) ?? null;
+  return cache.peek(cacheKey(code, language)) ?? null;
 }
 
 export async function highlight(code: string, language: LanguageId): Promise<readonly HighlightedLine[]> {
@@ -110,10 +114,6 @@ export async function highlight(code: string, language: LanguageId): Promise<rea
       return { content: token.content, color: token.color ?? null, fontStyle: fontStyle > 0 ? fontStyle : 0 };
     }),
   );
-  if (cache.size >= CACHE_MAX) {
-    const oldest = cache.keys().next().value;
-    if (oldest !== undefined) cache.delete(oldest);
-  }
-  cache.set(key, lines);
+  cache.set(key, lines, key.length * 2);
   return lines;
 }
