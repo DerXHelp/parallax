@@ -1,9 +1,13 @@
 import { act, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DISPLAY_STATUS_KINDS } from '@shared/status';
 import { setLanguage, translate } from '@web/i18n';
 import { Gauge, gaugeLevel } from './gauge';
 import { STATUS_PRESENTATION, StatusIcon } from './status-icon';
+
+// The first test renders every status icon: 0.4 s in a full `pnpm test`, over 3 s when several
+// runs load the machine (docs/wp/FLAKES.md).
+vi.setConfig({ testTimeout: 30_000 });
 
 afterEach(() => {
   act(() => {

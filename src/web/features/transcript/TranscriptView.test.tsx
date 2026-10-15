@@ -58,9 +58,14 @@ vi.mock('@web/i18n/format', async (importOriginal) => {
 let running: RunningScenario | null = null;
 let restoreResizeObserver: (() => void) | null = null;
 
+// Rows render the whole transcript: up to 2.5 s in a full `pnpm test`, over 10 s when several runs
+// load the machine (docs/wp/FLAKES.md).
+vi.setConfig({ testTimeout: 30_000 });
+
+// The lazy Markdown chunk: its first import alone takes ~17 s isolated, far more under load.
 beforeAll(async () => {
   await import('./markdown/MarkdownRenderer');
-}, 60_000);
+}, 180_000);
 
 beforeEach(() => {
   restoreResizeObserver = installResizeObserver({ viewport: 600, item: 48 });

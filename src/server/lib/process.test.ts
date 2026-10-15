@@ -16,6 +16,20 @@ import {
 const NODE = process.execPath;
 const windowsOnly = process.platform === 'win32' ? it : it.skip;
 
+/**
+ * Real child processes need real time: a node start takes ~1 s in a full `pnpm test` and several
+ * seconds when parallel runs load the machine (docs/wp/FLAKES.md). Limits below are deadlines
+ * (the tests wait for events), never fixed sleeps.
+ */
+const SPAWN_TEST_TIMEOUT_MS = 30_000;
+/** taskkill + node start + liveness polling. */
+const TREE_TEST_TIMEOUT_MS = 60_000;
+/** PowerShell + CIM: 6 s idle, 15–25 s per call under load. */
+const POWERSHELL_TEST_TIMEOUT_MS = 120_000;
+const POWERSHELL_CALL_TIMEOUT_MS = 60_000;
+/** Deadline for a child to report or to disappear. */
+const PROCESS_DEADLINE_MS = 20_000;
+
 /** Every PID a test started; killed in afterEach so no process survives a failing test. */
 const started = new Set<number>();
 
@@ -123,7 +137,7 @@ describe('systemTool / errnoCode', () => {
   });
 });
 
-describe('runFile', () => {
+describe('runFile', { timeout: SPAWN_TEST_TIMEOUT_MS }, () => {
   it('returns stdout, stderr and the exit code without throwing on exit ≠ 0', async () => {
     const result = await runFile(
       NODE,
@@ -179,16 +193,18 @@ describe('runFile', () => {
   windowsOnly(
     'kills the whole process tree on timeout (no surviving grandchild)',
     async () => {
-      const result = await runFile(NODE, ['-e', PARENT_WITH_GRANDCHILD], { timeoutMs: 1_500 });
+      // The parent never exits, so the timeout always fires; it only has to leave the parent
+      // enough time to start and print the grandchild's PID (1.5 s was too short under load).
+      const result = await runFile(NODE, ['-e', PARENT_WITH_GRANDCHILD], { timeoutMs: 6_000 });
       expect(result.timedOut).toBe(true);
       const pid = grandchildPid(result.stdout);
-      expect(await waitUntil(() => !isProcessAlive(pid), 10_000)).toBe(true);
+      expect(await waitUntil(() => !isProcessAlive(pid), PROCESS_DEADLINE_MS)).toBe(true);
     },
-    30_000,
+    TREE_TEST_TIMEOUT_MS,
   );
 });
 
-describe('spawnHidden', () => {
+describe('spawnHidden', { timeout: SPAWN_TEST_TIMEOUT_MS }, () => {
   it('always drains stderr (F.16: a full pipe would block the child)', async () => {
     let received = 0;
     const child = spawnHidden(
@@ -239,23 +255,30 @@ describe('killProcessTree (taskkill /T /F)', () => {
       child.stdout?.on('data', (chunk: string) => {
         stdout += chunk;
       });
-      expect(await waitUntil(() => stdout.includes('\n'), 10_000)).toBe(true);
+      expect(await waitUntil(() => stdout.includes('\n'), PROCESS_DEADLINE_MS)).toBe(true);
       const grandchild = grandchildPid(stdout);
       expect(isProcessAlive(grandchild)).toBe(true);
 
       await killProcessTree(pid);
-      expect(await waitUntil(() => !isProcessAlive(pid) && !isProcessAlive(grandchild), 10_000)).toBe(true);
+      expect(
+        await waitUntil(() => !isProcessAlive(pid) && !isProcessAlive(grandchild), PROCESS_DEADLINE_MS),
+      ).toBe(true);
     },
-    30_000,
+    TREE_TEST_TIMEOUT_MS,
   );
 
-  it('treats an already finished process as success', async () => {
-    const child = spawnHidden(NODE, ['-e', ''], { stdio: 'ignore' });
-    const pid = child.pid;
-    if (pid === undefined) throw new Error('no pid');
-    await once(child, 'close');
-    await expect(killProcessTree(pid)).resolves.toBeUndefined();
-  });
+  // Node start + taskkill start: ~3 s in a full `pnpm test`, over 5 s under parallel load.
+  it(
+    'treats an already finished process as success',
+    async () => {
+      const child = spawnHidden(NODE, ['-e', ''], { stdio: 'ignore' });
+      const pid = child.pid;
+      if (pid === undefined) throw new Error('no pid');
+      await once(child, 'close');
+      await expect(killProcessTree(pid)).resolves.toBeUndefined();
+    },
+    SPAWN_TEST_TIMEOUT_MS,
+  );
 
   it.each([0, -1, 1.5, Number.NaN, process.pid])('refuses pid %s', async (pid) => {
     await expect(killProcessTree(pid)).rejects.toBeInstanceOf(RangeError);
@@ -266,7 +289,9 @@ describe('processInfo (orphan cleanup, C.8)', () => {
   windowsOnly(
     'reports name, parent and start time of a running process',
     async () => {
-      const info = await processInfo(process.pid);
+      // The production default (20 s) is close to what one call takes under load; a timed-out
+      // call would return null here.
+      const info = await processInfo(process.pid, { timeoutMs: POWERSHELL_CALL_TIMEOUT_MS });
       expect(info).not.toBeNull();
       expect(info?.pid).toBe(process.pid);
       expect(info?.name.toLowerCase()).toBe('node.exe');
@@ -275,7 +300,7 @@ describe('processInfo (orphan cleanup, C.8)', () => {
       expect(startedAt).toBeLessThanOrEqual(Date.now());
       expect(startedAt).toBeGreaterThan(Date.now() - 24 * 3600 * 1000);
     },
-    60_000,
+    POWERSHELL_TEST_TIMEOUT_MS,
   );
 
   windowsOnly(
@@ -287,7 +312,7 @@ describe('processInfo (orphan cleanup, C.8)', () => {
       await once(child, 'close');
       expect(await processStartTime(pid)).toBeNull();
     },
-    60_000,
+    POWERSHELL_TEST_TIMEOUT_MS,
   );
 
   it('validates the pid', async () => {
@@ -307,18 +332,19 @@ describe('processInfo (orphan cleanup, C.8)', () => {
       child.stdout?.on('data', (chunk: string) => {
         stdout += chunk;
       });
-      expect(await waitUntil(() => stdout.includes('\n'), 10_000)).toBe(true);
+      expect(await waitUntil(() => stdout.includes('\n'), PROCESS_DEADLINE_MS)).toBe(true);
       const grandchild = grandchildPid(stdout);
-      const children = await childProcesses(pid);
+      // Two PowerShell calls: up to ~47 s together under load (the 60 s limit was nearly hit).
+      const children = await childProcesses(pid, { timeoutMs: POWERSHELL_CALL_TIMEOUT_MS });
       const found = children.find((c) => c.pid === grandchild);
       expect(found).toMatchObject({ pid: grandchild, parentPid: pid });
       expect(found?.name.toLowerCase()).toBe('node.exe');
       expect(found?.startedAt.getTime()).toBeLessThanOrEqual(Date.now());
       // The grandchild starts no node.exe of its own (Windows may attach a conhost.exe).
-      const grandchildren = await childProcesses(grandchild);
+      const grandchildren = await childProcesses(grandchild, { timeoutMs: POWERSHELL_CALL_TIMEOUT_MS });
       expect(grandchildren.filter((c) => c.name.toLowerCase() === 'node.exe')).toEqual([]);
       expect(grandchildren.every((c) => c.parentPid === grandchild)).toBe(true);
     },
-    60_000,
+    POWERSHELL_TEST_TIMEOUT_MS,
   );
 });

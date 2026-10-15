@@ -17,6 +17,10 @@ import { parseSearchText } from './search';
 const focusDecision = vi.hoisted(() => vi.fn(() => true));
 vi.mock('@web/shell/decision-focus', () => ({ focusDecision }));
 
+// Some rows load lazy chunks (highlighter, grammars) on first use: up to 2.6 s in a full
+// `pnpm test`, 5–7 s when several runs load the machine (docs/wp/FLAKES.md).
+vi.setConfig({ testTimeout: 30_000 });
+
 const SESSION = makeSessionKey(LOCAL_HOST_ID, SAMPLE_IDS.entry);
 const ESC = '\u001b';
 

@@ -36,6 +36,12 @@ export interface TestServer {
   close(): Promise<void>;
 }
 
+/**
+ * Deadline of the event waits below (an answer, a close, a message). Only a missing event runs
+ * into it, so it can be generous: 3 s were too tight under parallel test load (docs/wp/FLAKES.md).
+ */
+const WAIT_DEADLINE_MS = 10_000;
+
 export async function makeTempHome(prefix = 'wp10-'): Promise<string> {
   const base = process.env.PARALLAX_HOME ?? os.tmpdir();
   return mkdtemp(path.join(base, prefix));
@@ -200,7 +206,7 @@ export function rawUpgrade(
     });
     socket.on('close', done);
     socket.on('error', reject);
-    setTimeout(done, options.timeoutMs ?? 3000).unref();
+    setTimeout(done, options.timeoutMs ?? WAIT_DEADLINE_MS).unref();
   });
 }
 
@@ -270,7 +276,7 @@ export class TestWsClient {
   next<T extends ServerMessage['type']>(
     type: T,
     match: (m: MessageOf<T>) => boolean = () => true,
-    timeoutMs = 3000,
+    timeoutMs = WAIT_DEADLINE_MS,
   ): Promise<MessageOf<T>> {
     const isType = (m: ServerMessage): m is MessageOf<T> => m.type === type;
     const isMatch = (m: ServerMessage) => isType(m) && match(m);
