@@ -172,9 +172,6 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.133.0
         version: 0.133.0(zod@4.6.7)
-      '@fastify/cookie':
-        specifier: ^11.1.3
-        version: 11.1.3
       '@fastify/static':
         specifier: ^10.1.6
         version: 10.1.6
@@ -235,9 +232,6 @@ importers:
       virtua:
         specifier: ^0.53.5
         version: 0.53.5(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      ws:
-        specifier: ^8.22.0
-        version: 8.22.0
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -326,6 +320,9 @@ importers:
       vitest:
         specifier: ^5.0.4
         version: 5.0.4(@types/node@22.20.5)(happy-dom@21.0.1)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
+      ws:
+        specifier: ^8.22.0
+        version: 8.22.0
 
 packages:
 
@@ -616,9 +613,6 @@ packages:
 
   '@fastify/ajv-compiler@4.0.7':
     resolution: {integrity: sha512-VP0yIfwlc1ohj733keYDqyHm1VWeP9VQxYomunhr90jkC4aNNibbkrRiaNgPgqj1ORxUenILR4qzA/ppYBNAtQ==}
-
-  '@fastify/cookie@11.1.3':
-    resolution: {integrity: sha512-RBhlMNsmSG6C5KGiTkhSXBF75xIrUMSytDDBcpnVewhJ8XVYnJTu+SV6FYKXClIRsBuRjOfKbBSULvnPD3X/mg==}
 
   '@fastify/deepmerge@3.2.2':
     resolution: {integrity: sha512-155eqA/WMQdN6gUD4RrhS2K0Pcz2Ou9pQ86L0sipOpP9ONbTA6oYw/hW4VdBjR4egcDHqmWUK9x80oUX7S1mDQ==}
@@ -4392,11 +4386,6 @@ snapshots:
       ajv: 8.20.0
       ajv-formats: 3.0.1
       fast-uri: 4.2.2
-
-  '@fastify/cookie@11.1.3':
-    dependencies:
-      cookie: 2.0.1
-      fastify-plugin: 6.0.1
 
   '@fastify/deepmerge@3.2.2': {}
 
