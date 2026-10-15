@@ -238,7 +238,12 @@ describe('server entry (main.ts) as a process with the FakeBackend', () => {
     expect(await readServerLock(home)).toEqual({ kind: 'missing' });
     expect(isProcessAlive(lock.pid)).toBe(false);
     // No child of the server survived (a child keeps its ParentProcessId after the parent's exit).
-    const orphans = (await childProcesses(lock.pid)).filter((p) => p.startedAt >= startedAt);
+    // Three-valued (R2-02): "unknown" must fail the test, never read as "no children".
+    const children = await childProcesses(lock.pid);
+    if (children.kind === 'unknown') {
+      throw new Error(`child process query gave no answer (${children.reason}): ${children.detail}`);
+    }
+    const orphans = children.processes.filter((p) => p.startedAt >= startedAt);
     expect(orphans).toEqual([]);
     // The rotating log file got the whole run, including the last line before the exit.
     const logs = await readdir(path.join(home, 'logs'));
