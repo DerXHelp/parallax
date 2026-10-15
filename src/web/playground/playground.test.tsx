@@ -1,6 +1,6 @@
 import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseServerMessage, sessionOpSchema } from '@shared/protocol';
 import { sampleSessionSnapshot } from '@shared/samples';
 import { unregisterConnection } from '@web/state/connection';
@@ -9,6 +9,10 @@ import { resetClientStore } from '@web/state/store';
 import { createMemoryTransport } from '@web/state/transport';
 import { PlaygroundApp } from './PlaygroundApp';
 import { SCENARIOS, SCENARIO_IDS } from './scenarios';
+
+// The playground renders every demo: 2 s in a full `pnpm test`, up to 20 s when several runs load
+// the machine (docs/wp/FLAKES.md).
+vi.setConfig({ testTimeout: 60_000 });
 
 afterEach(() => {
   unregisterConnection();

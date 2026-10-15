@@ -20,11 +20,17 @@ vi.mock('react-markdown', async (importOriginal) => {
   return { ...actual, default: CountingMarkdown };
 });
 
-// The renderer and Shiki are lazy chunks; load them once up front (the first import is slow in tests).
+// The renderer and Shiki are lazy chunks; load them once up front (the first import is slow in tests:
+// ~20 s in a full `pnpm test`, over 60 s when several runs load the machine – docs/wp/FLAKES.md).
 beforeAll(async () => {
   await import('./MarkdownRenderer');
   await import('../lib/highlight');
-}, 60_000);
+}, 180_000);
+
+vi.setConfig({ testTimeout: 60_000 });
+
+/** The first render still suspends once on the lazy renderer (React retries it asynchronously). */
+const LAZY = { timeout: 15_000 };
 
 afterEach(() => {
   parsed.clear();
@@ -36,7 +42,7 @@ describe('Markdown', () => {
     render(
       <Markdown text={'# Title\n\n- **bold** `code`\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n- [x] done'} />,
     );
-    expect(await screen.findByRole('heading', { name: 'Title' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Title' }, LAZY)).toBeTruthy();
     expect(screen.getByText('bold').tagName).toBe('STRONG');
     expect(screen.getByText('code').tagName).toBe('CODE');
     expect(screen.getByRole('table')).toBeTruthy();
@@ -45,7 +51,7 @@ describe('Markdown', () => {
 
   it('never renders raw HTML, scripts or images; only http(s) links are clickable', async () => {
     const { container } = render(<Markdown text={SECURITY_MARKDOWN} />);
-    await screen.findByText('web link');
+    await screen.findByText('web link', {}, LAZY);
     expect(container.querySelector('script')).toBeNull();
     expect(container.querySelector('img')).toBeNull();
     expect(container.querySelector('b')).toBeNull();
@@ -78,13 +84,14 @@ describe('Markdown', () => {
         <Markdown streaming text={'```ts\nconst open = 1;'} />
       </>,
     );
+    // Loads the TypeScript grammar on first use (another lazy import).
     await waitFor(
       () => {
         expect(document.querySelectorAll('[data-slot="code-block"][data-highlighted="true"]')).toHaveLength(
           1,
         );
       },
-      { timeout: 15_000 },
+      { timeout: 30_000 },
     );
     const blocks = [...document.querySelectorAll('[data-slot="code-block"]')];
     expect(blocks[0]?.getAttribute('data-highlighted')).toBe('true');
@@ -97,12 +104,12 @@ describe('Markdown', () => {
     if (copy === undefined) throw new Error('no copy button');
     await user.click(copy);
     expect(writeText).toHaveBeenCalledWith('const closed = 1;');
-  }, 30_000);
+  });
 
   it('parses only the last block again while streaming', async () => {
     const first = 'First paragraph.';
     const { rerender } = render(<Markdown streaming text={`${first}\n\nSecond`} />);
-    await screen.findByText(first);
+    await screen.findByText(first, {}, LAZY);
     rerender(<Markdown streaming text={`${first}\n\nSecond block grows`} />);
     rerender(<Markdown streaming text={`${first}\n\nSecond block grows more\n\nThird`} />);
     await screen.findByText('Second block grows more');

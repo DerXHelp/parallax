@@ -15,6 +15,10 @@ import { createMemoryTransport } from './transport';
 
 const KEY = `local:${SAMPLE_IDS.entry}`;
 
+// Menu interaction through user-event: up to 2 s in a full `pnpm test`, over 6 s when several runs
+// load the machine (docs/wp/FLAKES.md).
+vi.setConfig({ testTimeout: 30_000 });
+
 afterEach(() => {
   vi.useRealTimers();
   unregisterConnection();
