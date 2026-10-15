@@ -12,6 +12,8 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: 'e2e',
   testMatch: '**/*.spec.ts',
+  // e2e/live: live smoke against the real `claude` (WP-22) – only with PARALLAX_LIVE=1.
+  testIgnore: process.env.PARALLAX_LIVE === '1' ? [] : ['live/**'],
   globalSetup: './e2e/global-setup.ts',
   fullyParallel: false,
   forbidOnly: true,
