@@ -1,0 +1,202 @@
+/**
+ * Autostart shortcut (ADR-110): `Parallax.lnk` in the user's Startup folder
+ * (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`, from the given `env` – a temp folder
+ * in tests), created and removed by a hidden Windows PowerShell with `WScript.Shell` – the script
+ * is constant (`-EncodedCommand`), the data travel in environment variables. Target = the real
+ * `node.exe` (`realpath(process.execPath)`: fnm/nvm multishell paths are temporary), arguments =
+ * tsx CLI, `--tsconfig`, the launcher's `main.ts` and `--autostart` (one command line,
+ * `windowsCommandLine`), working directory = the repo, window minimized (7). Live: L10 (WP-41).
+ *
+ * `launcherCommand` is also the base of the protocol handler (system/protocol.ts).
+ */
+import { access, mkdir, realpath } from 'node:fs/promises';
+import path from 'node:path';
+import { windowsPathIssue } from '@shared/paths';
+import { PRODUCT_NAME } from '@shared/product';
+import { toError } from '../lib/async';
+import { windowsCommandLine } from '../lib/cmdline';
+import { encodePowerShell, powerShellPath } from '../lib/powershell';
+import type { RunFileFn } from '../lib/process';
+import { getEnvVar } from '../lib/windows';
+import type { SystemOpResult } from './run';
+
+/** How to start the launcher (shortcut target, protocol handler command). */
+export interface StartCommand {
+  /** Absolute node.exe (realpath of process.execPath). */
+  node: string;
+  args: string[];
+  /** Working directory: the repo root. */
+  cwd: string;
+}
+
+export interface LauncherCommandOptions {
+  /** ≠ null: the server does not run on the default data directory → `--home=<home>` (ADR-110). */
+  home?: string | null;
+  /** Default `process.execPath`. */
+  execPath?: string;
+  /** Default `fs.promises.realpath`. */
+  realpath?: (file: string) => Promise<string>;
+}
+
+/**
+ * `realpath(process.execPath)` + `[<repo>\node_modules\tsx\dist\cli.mjs, '--tsconfig',
+ * <repo>\src\server\tsconfig.json, <repo>\src\server\launcher\main.ts, (--home=<home>,) …extra]`.
+ */
+export async function launcherCommand(
+  repoRoot: string,
+  extra: readonly string[],
+  opts: LauncherCommandOptions = {},
+): Promise<StartCommand> {
+  const node = await (opts.realpath ?? realpath)(opts.execPath ?? process.execPath);
+  const home = opts.home ?? null;
+  return {
+    node,
+    args: [
+      path.win32.join(repoRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs'),
+      '--tsconfig',
+      path.win32.join(repoRoot, 'src', 'server', 'tsconfig.json'),
+      path.win32.join(repoRoot, 'src', 'server', 'launcher', 'main.ts'),
+      ...(home === null ? [] : [`--home=${home}`]),
+      ...extra,
+    ],
+    cwd: repoRoot,
+  };
+}
+
+export const AUTOSTART_LINK_NAME = `${PRODUCT_NAME}.lnk`;
+/** `WshShortcut.WindowStyle`: 7 = minimized (the launcher's console only flashes in the taskbar). */
+export const AUTOSTART_WINDOW_STYLE = 7;
+export const AUTOSTART_TIMEOUT_MS = 30_000;
+
+/** `<APPDATA>\Microsoft\Windows\Start Menu\Programs\Startup\Parallax.lnk`, or null without a safe APPDATA. */
+export function autostartLinkPath(env: NodeJS.ProcessEnv): string | null {
+  const appData = getEnvVar(env, 'APPDATA');
+  if (appData === undefined || windowsPathIssue(appData) !== null) return null;
+  return path.win32.join(
+    appData,
+    'Microsoft',
+    'Windows',
+    'Start Menu',
+    'Programs',
+    'Startup',
+    AUTOSTART_LINK_NAME,
+  );
+}
+
+/** The variables the script reads. */
+export const AUTOSTART_ENV = {
+  action: 'PARALLAX_LNK_ACTION',
+  path: 'PARALLAX_LNK_PATH',
+  target: 'PARALLAX_LNK_TARGET',
+  args: 'PARALLAX_LNK_ARGS',
+  cwd: 'PARALLAX_LNK_CWD',
+  description: 'PARALLAX_LNK_DESCRIPTION',
+} as const;
+
+/** The constant script: create (WScript.Shell) or remove the shortcut; exit 3 with the reason. */
+export const AUTOSTART_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  'try {',
+  `  $path = $env:${AUTOSTART_ENV.path}`,
+  `  if ($env:${AUTOSTART_ENV.action} -eq 'remove') {`,
+  '    if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }',
+  "    Write-Output 'removed'",
+  '    exit 0',
+  '  }',
+  '  $shell = New-Object -ComObject WScript.Shell',
+  '  $link = $shell.CreateShortcut($path)',
+  `  $link.TargetPath = $env:${AUTOSTART_ENV.target}`,
+  `  $link.Arguments = $env:${AUTOSTART_ENV.args}`,
+  `  $link.WorkingDirectory = $env:${AUTOSTART_ENV.cwd}`,
+  `  $link.WindowStyle = ${String(AUTOSTART_WINDOW_STYLE)}`,
+  `  $link.Description = $env:${AUTOSTART_ENV.description}`,
+  '  $link.Save()',
+  "  Write-Output 'created'",
+  '  exit 0',
+  '} catch {',
+  "  Write-Output ('error: ' + $_.Exception.Message)",
+  '  exit 3',
+  '}',
+].join('\n');
+
+export interface ShortcutOptions {
+  run: RunFileFn;
+  /** Base environment of the PowerShell process (SystemRoot, …). */
+  env: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+}
+
+async function runShortcutScript(
+  vars: Record<string, string>,
+  expected: 'created' | 'removed',
+  opts: ShortcutOptions,
+): Promise<SystemOpResult> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(opts.env)) {
+    if (value !== undefined && !key.toUpperCase().startsWith('PARALLAX_LNK_')) env[key] = value;
+  }
+  Object.assign(env, vars);
+  try {
+    const result = await opts.run(
+      powerShellPath(opts.env),
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-EncodedCommand',
+        encodePowerShell(AUTOSTART_SCRIPT),
+      ],
+      { env, timeoutMs: opts.timeoutMs ?? AUTOSTART_TIMEOUT_MS, maxOutputBytes: 16 * 1024 },
+    );
+    if (result.timedOut) return { ok: false, reason: 'timeout' };
+    const output = result.stdout.trim();
+    if (result.exitCode === 0 && output.endsWith(expected)) return { ok: true };
+    return {
+      ok: false,
+      reason: `exit ${String(result.exitCode)}: ${(output || result.stderr.trim()).slice(0, 300)}`,
+    };
+  } catch (error) {
+    return { ok: false, reason: `powershell could not be started: ${toError(error).message}` };
+  }
+}
+
+/** Creates or replaces the shortcut `link` for `command` (Startup folder created if missing). */
+export async function createAutostartShortcut(
+  link: string,
+  command: StartCommand,
+  opts: ShortcutOptions,
+): Promise<SystemOpResult> {
+  try {
+    await mkdir(path.win32.dirname(link), { recursive: true });
+  } catch (error) {
+    return { ok: false, reason: `startup folder: ${toError(error).message}` };
+  }
+  return runShortcutScript(
+    {
+      [AUTOSTART_ENV.action]: 'create',
+      [AUTOSTART_ENV.path]: link,
+      [AUTOSTART_ENV.target]: command.node,
+      [AUTOSTART_ENV.args]: windowsCommandLine(command.args),
+      [AUTOSTART_ENV.cwd]: command.cwd,
+      [AUTOSTART_ENV.description]: PRODUCT_NAME,
+    },
+    'created',
+    opts,
+  );
+}
+
+/** Removes the shortcut `link` (a missing one is fine). */
+export function removeAutostartShortcut(link: string, opts: ShortcutOptions): Promise<SystemOpResult> {
+  return runShortcutScript({ [AUTOSTART_ENV.action]: 'remove', [AUTOSTART_ENV.path]: link }, 'removed', opts);
+}
+
+/** Does the shortcut exist (a plain `access`, no PowerShell)? */
+export async function autostartLinkExists(link: string): Promise<boolean> {
+  try {
+    await access(link);
+    return true;
+  } catch {
+    return false;
+  }
+}

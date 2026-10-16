@@ -13,7 +13,9 @@ import { writeFileAtomic } from './jsonStore';
  * Content-addressed blob cache (B "Speicher", architecture §8): `blobs/<sha256>` with the raw
  * bytes and `blobs/<sha256>.meta.json` (`blobRefSchema`, R0-30). `put` hashes synchronously and
  * writes asynchronously (normalizer contract, WP-02 §9.4); until the write is done `get` serves
- * the bytes from memory. The first meta file of a content wins.
+ * the bytes from memory. The first meta file of a content wins (also for uploads: the same image
+ * uploaded twice answers the first ref). Phase 2: `put(…, size)` stores the pixel size of an
+ * uploaded image (`width`/`height`, ADR-103).
  */
 
 export const BLOBS_DIR = 'blobs';
@@ -26,12 +28,24 @@ const FALLBACK_MEDIA_TYPE = 'application/octet-stream';
  * unchecked): an empty or over-long media type becomes `application/octet-stream`, a long name is
  * cut to the schema limit. The served Content-Type is sanitized again (http/app.ts safeMediaType).
  */
-function blobMeta(mediaType: string, name: string | null): { mediaType: string; name: string | null } {
+function blobMeta(
+  mediaType: string,
+  name: string | null,
+  size: { width: number; height: number } | null,
+): Pick<BlobRef, 'mediaType' | 'name' | 'width' | 'height'> {
   const type = mediaType.trim();
+  // Phase 2 (ADR-103): pixel size of an uploaded image; only a complete, plausible pair is kept.
+  const pixels = size !== null && isPixelCount(size.width) && isPixelCount(size.height) ? size : null;
   return {
     mediaType: type === '' || type.length > 100 ? FALLBACK_MEDIA_TYPE : type,
     name: name === null ? null : name.slice(0, 260),
+    width: pixels?.width ?? null,
+    height: pixels?.height ?? null,
   };
+}
+
+function isPixelCount(value: number): boolean {
+  return Number.isSafeInteger(value) && value > 0;
 }
 
 export function blobFilePath(home: string, blobId: BlobId): string {
@@ -81,12 +95,16 @@ export function createBlobStore(options: BlobStoreOptions): FileBlobStore {
   };
 
   return {
-    put: (data, mediaType, name = null) => {
+    put: (data, mediaType, name = null, size = null) => {
       const bytes = typeof data === 'string' ? Buffer.from(data, 'utf8') : Buffer.from(data);
       const blobId = createHash('sha256').update(bytes).digest('hex');
       const known = refs.get(blobId);
       if (known !== undefined) return known;
-      const ref = blobRefSchema.parse({ blobId, ...blobMeta(mediaType, name), bytes: bytes.byteLength });
+      const ref = blobRefSchema.parse({
+        blobId,
+        ...blobMeta(mediaType, name, size),
+        bytes: bytes.byteLength,
+      });
       refs.set(blobId, ref);
       const blob: PendingBlob = { data: bytes, ref };
       pending.set(blobId, blob);

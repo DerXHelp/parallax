@@ -10,7 +10,7 @@ Store-Ports stehen in `src/server/sync/ports.ts`.
 | `settings.ts` | `openSettingsStore({ home, warnings?, … })` → `SettingsStore` + `flush()`/`close()`, `SETTINGS_FILE`, `SETTINGS_MIGRATIONS` | `settings.json` |
 | `decisions.ts` | `createDecisionStore({ home, warnings?, … })` → `DecisionStore` + `flush()`/`close()`, `entryDir`, `planPath`, `ENTRIES_DIR`, `DECISIONS_FILE` | `entries/<entryId>/decisions.json`, `entries/<entryId>/plans/v<N>.md` |
 | `transcripts.ts` | `createTranscriptStore({ home, validation?, warnings?, flushMs?, cacheSize?, logger? })` → `TranscriptStore` + `stats()`/`close()`, `transcriptPath`, `isStreamingItem`, `TranscriptValidation`, `TRANSCRIPT_FAILURES_BEFORE_WARNING` | `entries/<entryId>/<conversationId>.transcript.jsonl` |
-| `blobs.ts` | `createBlobStore({ home, logger? })` → `BlobStore` + `flush()`/`close()`, `blobFilePath`, `blobMetaPath` | `blobs/<blobId>`, `blobs/<blobId>.meta.json` (`blobRefSchema`) |
+| `blobs.ts` | `createBlobStore({ home, logger? })` → `BlobStore` (`put(data, mediaType, name?, size?)`) + `flush()`/`close()`, `blobFilePath`, `blobMetaPath` | `blobs/<blobId>`, `blobs/<blobId>.meta.json` (`blobRefSchema`, Phase 2 mit `width`/`height`) |
 
 Weitere Dateien über `JsonStore`, aber außerhalb dieses Ordners: `auth-secret.json`
 (`http/auth.ts`, `backup: false`), `processes.json` (`sessions/processStore.ts`, WP-13). Das
@@ -47,7 +47,13 @@ einmal `STORE_WRITE_FAILED` an `warnings` (R1-16).
 
 **Blobs:** `put` hasht synchron (SHA-256) und schreibt asynchron; bis dahin liefert `get` aus dem
 Speicher; die erste Meta-Datei eines Inhalts gewinnt. Leerer/zu langer Medientyp →
-`application/octet-stream`, langer Name wird gekürzt (`put` wirft nie, R1-20).
+`application/octet-stream`, langer Name wird gekürzt (`put` wirft nie, R1-20). Phase 2 (ADR-103,
+WP-33): `put(…, size)` speichert die Pixelgröße eines hochgeladenen Bildes (`width`/`height`);
+nur ein vollständiges Paar positiver Ganzzahlen, sonst `null`.
+
+**`settings.json` nur lesend:** `config.ts` (`readSettingsFile`) liest die Datei für Port und
+Autostart-Fenster vor dem Start (Launcher, ADR-111) – ohne zu schreiben, zu verschieben oder zu
+migrieren; geschrieben wird sie nur über `openSettingsStore`.
 
 **Warnungen:** `createStoreWarnings()` ist `StoreWarnings` (Port) und Sink für alle Stores;
 `onChange` meldet neue Warnungen (die Engine veröffentlicht dann `host.state`).
