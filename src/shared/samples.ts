@@ -6,6 +6,12 @@
  */
 import { STANDARD_PROFILE_ID } from './common';
 import { PRODUCT_ID } from './product';
+import {
+  DEFAULT_AUTOSTART,
+  DEFAULT_IDLE_SLEEP,
+  DEFAULT_NOTIFICATION_EVENTS,
+  DEFAULT_NOTIFICATION_SETTINGS,
+} from './model';
 import type {
   AssistantTextItem,
   BlobRef,
@@ -17,11 +23,16 @@ import type {
   DecisionRecord,
   DecisionResponse,
   Entry,
+  ExternalHandoff,
+  FsListing,
   HostState,
   ModelOption,
+  NotificationSettings,
   PermissionDecision,
   PlanDecision,
   Profile,
+  ProfileInput,
+  ProfileIssue,
   ProfileSummary,
   QueuedPrompt,
   QuestionDecision,
@@ -37,7 +48,13 @@ import type {
   UserMessageItem,
 } from './model';
 import type { AuthStatusResponse, HealthResponse, LauncherCodeResponse, ServerLockFile } from './http';
-import type { ClientHelloMessage, HelloMessage, PresenceState, SessionSnapshot } from './protocol';
+import {
+  PROTOCOL_VERSION,
+  type ClientHelloMessage,
+  type HelloMessage,
+  type PresenceState,
+  type SessionSnapshot,
+} from './protocol';
 import { INITIAL_STATUS_FACTS, type StatusFacts } from './status';
 
 // ---- Fixed ids and times ----
@@ -123,12 +140,69 @@ export function sampleProfileSummary(p: Partial<ProfileSummary> = {}): ProfileSu
     builtin: true,
     allowsBypass: false,
     claude: sampleClaudeInstallStatus(),
+    defaults: { model: null, permissionMode: null, effort: null },
+    configDir: null,
+    issues: [],
+    entryCount: 0,
+    ...p,
+  };
+}
+
+/** Phase 2: input of profile.save / profile.validate (a new profile). */
+export function sampleProfileInput(p: Partial<ProfileInput> = {}): ProfileInput {
+  return {
+    name: 'Work',
+    color: 'blue',
+    executable: { kind: 'auto' },
+    configDir: 'C:\\Users\\user\\.claude-work',
+    env: { ANTHROPIC_BASE_URL: 'https://gateway.example.invalid', API_TOKEN: 'secret' },
+    contextWindow: null,
+    args: ['--add-dir', 'D:\\shared'],
+    passRawArgs: false,
+    defaults: { model: 'haiku', permissionMode: null, effort: null },
+    ...p,
+  };
+}
+
+/** Phase 2: one finding of the profile check. */
+export function sampleProfileIssue(p: Partial<ProfileIssue> = {}): ProfileIssue {
+  return {
+    level: 'error',
+    issue: { code: 'PROFILE_ARG_BLOCKED', params: { index: 0, flag: '--resume' } },
+    ...p,
+  };
+}
+
+export function sampleNotificationSettings(p: Partial<NotificationSettings> = {}): NotificationSettings {
+  return {
+    events: {
+      permission: { ...DEFAULT_NOTIFICATION_EVENTS.permission },
+      question: { ...DEFAULT_NOTIFICATION_EVENTS.question },
+      plan: { ...DEFAULT_NOTIFICATION_EVENTS.plan },
+      done: { ...DEFAULT_NOTIFICATION_EVENTS.done },
+      error: { ...DEFAULT_NOTIFICATION_EVENTS.error },
+      rate_limit: { ...DEFAULT_NOTIFICATION_EVENTS.rate_limit },
+    },
+    volume: DEFAULT_NOTIFICATION_SETTINGS.volume,
+    doNotDisturb: false,
+    focusedElsewhere: 'in_app',
+    doneMinSeconds: DEFAULT_NOTIFICATION_SETTINGS.doneMinSeconds,
+    openOnClick: false,
     ...p,
   };
 }
 
 export function sampleSettings(p: Partial<Settings> = {}): Settings {
-  return { language: 'en', theme: 'dark', ...p };
+  return {
+    language: 'en',
+    theme: 'dark',
+    notifications: sampleNotificationSettings(),
+    idleSleep: { ...DEFAULT_IDLE_SLEEP },
+    promptSuggestions: false,
+    port: null,
+    autostart: { ...DEFAULT_AUTOSTART },
+    ...p,
+  };
 }
 
 export function sampleRateLimitInfo(p: Partial<RateLimitInfo> = {}): RateLimitInfo {
@@ -159,6 +233,8 @@ export function sampleHostState(p: Partial<HostState> = {}): HostState {
     warnings: [],
     accountLimits: {},
     nativeNotifications: false,
+    port: 4711,
+    systemIntegration: false,
     ...p,
   };
 }
@@ -205,6 +281,20 @@ export function sampleEntry(p: Partial<Entry> = {}): Entry {
     lastResultExcerpt: 'OK',
     unread: false,
     context: sampleContextGauge(),
+    gitBranch: null,
+    external: null,
+    continueAt: null,
+    ...p,
+  };
+}
+
+/** Phase 2: an entry open in an external console (Entry.external). */
+export function sampleExternalHandoff(p: Partial<ExternalHandoff> = {}): ExternalHandoff {
+  return {
+    pid: 52_000,
+    processStartedAt: sampleTime(120),
+    since: sampleTime(120),
+    conversationId: SAMPLE_IDS.conversation,
     ...p,
   };
 }
@@ -271,6 +361,7 @@ export function sampleSummary(p: Partial<SessionSummary> = {}): SessionSummary {
     gitBranch: null,
     lastError: null,
     lastResultExcerpt: 'OK',
+    external: null,
     ...p,
   };
 }
@@ -489,7 +580,24 @@ export const sampleSystemItems: SystemItemFactories = {
     preview: '{"type":"system","subtype":"brand_new"}',
     ...p,
   }),
+  handoff: (p = {}) => ({ ...sysBase(15), event: 'handoff', phase: 'returned', importedItems: 3, ...p }),
 };
+
+// ---- Folder browser (Phase 2) ----
+
+export function sampleFsListing(p: Partial<FsListing> = {}): FsListing {
+  return {
+    path: 'D:\\work',
+    parent: 'D:\\',
+    entries: [
+      { name: '.git-hooks', path: 'D:\\work\\.git-hooks', kind: 'directory', hidden: true },
+      { name: 'parallax', path: 'D:\\work\\parallax', kind: 'directory', hidden: false },
+      { name: 'sample', path: 'D:\\work\\sample', kind: 'link', hidden: false },
+    ],
+    truncated: false,
+    ...p,
+  };
+}
 
 // ---- Decisions, responses, outcomes ----
 
@@ -707,7 +815,7 @@ export function samplePresence(p: Partial<PresenceState> = {}): PresenceState {
 export function sampleHello(p: Partial<HelloMessage> = {}): HelloMessage {
   return {
     type: 'hello',
-    protocolVersion: 1,
+    protocolVersion: PROTOCOL_VERSION,
     buildId: 'dev',
     serverInstanceId: SAMPLE_IDS.serverInstanceId,
     serverVersion: '0.0.0',
@@ -719,7 +827,7 @@ export function sampleHello(p: Partial<HelloMessage> = {}): HelloMessage {
 export function sampleClientHello(p: Partial<ClientHelloMessage> = {}): ClientHelloMessage {
   return {
     type: 'clientHello',
-    protocolVersion: 1,
+    protocolVersion: PROTOCOL_VERSION,
     buildId: 'dev',
     clientId: SAMPLE_IDS.client,
     presence: samplePresence(),

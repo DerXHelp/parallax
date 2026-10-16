@@ -64,6 +64,8 @@ export interface StartSessionRequest {
   permissionMode: PermissionMode | null;
   effort: EffortLevel | null;
   promptSuggestions: boolean;
+  /** Phase 2: fast mode as flag setting (`settings.fastMode`); null/absent = the CLI decides. */
+  fastMode?: boolean | null;
   canUseTool: PermissionHandler;
 }
 

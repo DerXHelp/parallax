@@ -60,7 +60,10 @@ export const statusFactsSchema = z.object({
   compacting: z.boolean(),
   /** Active api_retry series. */
   retrying: z.boolean(),
-  /** Scheduled wakeup (A.5); Phase 1 always null. */
+  /**
+   * Scheduled wakeup (A.5). Phase 2: the scheduled "continue" after a rate limit (Entry.continueAt,
+   * status event `wakeup`, ADR-112); ScheduleWakeup/`/loop` detection follows later.
+   */
   wakeupAt: isoDateTimeSchema.nullable(),
   lastTurn: turnInfoSchema.nullable(),
   /** Set exactly when runState is 'error'. */
@@ -244,7 +247,10 @@ export const NOTIFICATION_KINDS = ['permission', 'question', 'plan', 'done', 'er
 export const notificationKindSchema = z.enum(NOTIFICATION_KINDS);
 export type NotificationKind = z.infer<typeof notificationKindSchema>;
 
-/** B: "Fertig"-Toasts only for turns longer than this (Phase 2: setting). */
+/**
+ * B: "Fertig"-Toasts only for turns longer than this – the default of
+ * `settings.notifications.doneMinSeconds` (Phase 2, ADR-109).
+ */
 export const DONE_NOTIFY_MIN_TURN_MS = 20_000;
 
 const NEEDS_NOTIFICATION: Partial<Record<DisplayStatusKind, NotificationKind>> = {

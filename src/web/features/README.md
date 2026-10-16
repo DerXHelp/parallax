@@ -9,6 +9,10 @@ Koordinator):
 - `decisions/`, `composer/` (WP-16): Permission-, Frage- und Plan-Karten, angedockte
   Entscheidungsleiste, Queue, Stop, Entwürfe, Picker, Context-Gauge. Liefert `DecisionCard`,
   nutzt `Markdown` und `ToolInputPreview`.
+- Phase 2 (Ownership `docs/wp/WP-30.md` §6): `transcript/` + `composer/` → WP-37 (Slash-Menü,
+  Screenshots, Lightbox), `profiles/` (WP-36, Slot `ProfilesSettings`), `preferences/` (WP-38, Slot
+  `SettingsPage`); `decisions/` bleibt unverändert. Querverbindungen zur Shell laufen zusätzlich über
+  den Anfragekanal `src/web/shell/requests.ts`.
 
 Aufbau eines Feature-Ordners (R0-03): `i18n/{en,de}.ts` (Namespace = Ordnername, Stubs von WP-14),
 `playground.tsx` (`export const demos: PlaygroundDemo[]`, per `import.meta.glob` gefunden),

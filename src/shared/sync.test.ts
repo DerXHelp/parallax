@@ -153,6 +153,7 @@ describe('applySessionOp – op table', () => {
       conversationId: sampleId('cv', 2),
       previousConversationId: SAMPLE_IDS.conversation,
       trigger: 'clear',
+      hasEarlier: false,
     });
     expect(next.items).toEqual([]);
     expect(next.decisions).toEqual([]);
@@ -160,6 +161,24 @@ describe('applySessionOp – op table', () => {
     expect(next.conversationId).toBe(sampleId('cv', 2));
     expect(next.detail.conversationId).toBe(sampleId('cv', 2));
     expect(next.seq).toBe(s.seq);
+  });
+
+  it('conversation.reset of a switch (ADR-107) keeps hasEarlier; the tail follows as upserts', () => {
+    const s = deepFreeze(state());
+    const switched = applySessionOps(s, [
+      {
+        op: 'conversation.reset',
+        conversationId: sampleId('cv', 2),
+        previousConversationId: SAMPLE_IDS.conversation,
+        trigger: 'switch',
+        hasEarlier: true,
+      },
+      { op: 'item.upsert', item: sampleItems.userMessage({ order: 41 }) },
+      { op: 'item.upsert', item: sampleItems.assistantText({ order: 42 }) },
+    ]);
+    expect(switched.hasEarlier).toBe(true);
+    expect(switched.conversationId).toBe(sampleId('cv', 2));
+    expect(switched.items.map((item) => item.order)).toEqual([41, 42]);
   });
 
   it('decision.upsert inserts by createdAt and replaces by id', () => {

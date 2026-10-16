@@ -119,6 +119,16 @@ export function SidePanelPlaceholder(_props: { sessionKey: string }) {
   return null;
 }
 
+/** Phase 2: until WP-38 fills the slot nothing opens (the menu keeps its quick settings). */
+export function SettingsPagePlaceholder(_props: { section: string | null; onClose: () => void }) {
+  return null;
+}
+
+/** Phase 2: until WP-36 fills the slot the settings page shows no profile editor. */
+export function ProfilesSettingsPlaceholder(_props: Record<string, never>) {
+  return null;
+}
+
 /** Follows the DecisionCard rule (architecture §2.3e): nothing once the decision is resolved. */
 export function DecisionCardPlaceholder({
   sessionKey,

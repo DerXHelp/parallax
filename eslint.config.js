@@ -133,6 +133,11 @@ const webBase = [noServerInWeb, serverOnlyPackages, nodeBuiltinsInWeb];
 /** @param {object[]} patterns */
 const restrictImports = (patterns) => ({ 'no-restricted-imports': ['error', { patterns }] });
 
+/** Feature folders (Phase 2: + profiles, preferences – WP-30 §4.14 C). */
+const FEATURES = ['transcript', 'decisions', 'composer', 'profiles', 'preferences'];
+/** Every feature except the given ones (a feature group may import its own members). */
+const otherFeatures = (/** @type {string[]} */ own) => FEATURES.filter((f) => !own.includes(f));
+
 export default defineConfig([
   globalIgnores([
     '**/node_modules/**',
@@ -196,7 +201,8 @@ export default defineConfig([
     rules: restrictImports([...webBase, noFeaturesInCore]),
   },
   {
-    files: ['src/web/{shell,state,lib,playground}/**/*.{ts,tsx}'],
+    // R3-09: notifications/ is core code too (no features, no radix).
+    files: ['src/web/{shell,state,lib,playground,notifications}/**/*.{ts,tsx}'],
     rules: restrictImports([...webBase, radixOnlyInUi, noFeaturesInCore]),
   },
   {
@@ -209,22 +215,58 @@ export default defineConfig([
       ...webBase,
       radixOnlyInUi,
       noStoreWriters,
-      featureBoundary(['decisions', 'composer']),
+      featureBoundary(otherFeatures(['transcript'])),
     ]),
   },
   {
     // decisions ↔ composer both belong to WP-16.
     files: ['src/web/features/{decisions,composer}/**/*.{ts,tsx}'],
-    rules: restrictImports([...webBase, radixOnlyInUi, noStoreWriters, featureBoundary(['transcript'])]),
+    rules: restrictImports([
+      ...webBase,
+      radixOnlyInUi,
+      noStoreWriters,
+      featureBoundary(otherFeatures(['decisions', 'composer'])),
+    ]),
+  },
+  {
+    // Phase 2 features (WP-36, WP-38).
+    files: ['src/web/features/profiles/**/*.{ts,tsx}'],
+    rules: restrictImports([
+      ...webBase,
+      radixOnlyInUi,
+      noStoreWriters,
+      featureBoundary(otherFeatures(['profiles'])),
+    ]),
+  },
+  {
+    files: ['src/web/features/preferences/**/*.{ts,tsx}'],
+    rules: restrictImports([
+      ...webBase,
+      radixOnlyInUi,
+      noStoreWriters,
+      featureBoundary(otherFeatures(['preferences'])),
+    ]),
   },
   {
     // Feature tests may reset/inspect the store (resetClientStore in afterEach).
     files: ['src/web/features/transcript/**/*.test.{ts,tsx}'],
-    rules: restrictImports([...webBase, radixOnlyInUi, featureBoundary(['decisions', 'composer'])]),
+    rules: restrictImports([...webBase, radixOnlyInUi, featureBoundary(otherFeatures(['transcript']))]),
   },
   {
     files: ['src/web/features/{decisions,composer}/**/*.test.{ts,tsx}'],
-    rules: restrictImports([...webBase, radixOnlyInUi, featureBoundary(['transcript'])]),
+    rules: restrictImports([
+      ...webBase,
+      radixOnlyInUi,
+      featureBoundary(otherFeatures(['decisions', 'composer'])),
+    ]),
+  },
+  {
+    files: ['src/web/features/profiles/**/*.test.{ts,tsx}'],
+    rules: restrictImports([...webBase, radixOnlyInUi, featureBoundary(otherFeatures(['profiles']))]),
+  },
+  {
+    files: ['src/web/features/preferences/**/*.test.{ts,tsx}'],
+    rules: restrictImports([...webBase, radixOnlyInUi, featureBoundary(otherFeatures(['preferences']))]),
   },
   {
     files: ['src/server/**/*.ts'],

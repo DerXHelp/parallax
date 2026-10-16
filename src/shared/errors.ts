@@ -102,6 +102,15 @@ export const ERROR_CATALOG = {
   MODE_NOT_ALLOWED: { category: 'conflict', http: 409, severity: 'error', retryable: false },
   PROFILE_IN_USE: { category: 'conflict', http: 409, severity: 'error', retryable: false },
   SERVER_SHUTTING_DOWN: { category: 'conflict', http: 503, severity: 'warning', retryable: false },
+  // Phase 2 (WP-30 §4.3)
+  /** The entry is archived; only restore/pin/rename/loadEarlier/consoleCommand are allowed (ADR-106). */
+  SESSION_ARCHIVED: { category: 'conflict', http: 409, severity: 'warning', retryable: false },
+  /** The entry (or the target conversation) has no Claude session id yet (ADR-104, ADR-107). */
+  SESSION_NOT_STARTED: { category: 'conflict', http: 409, severity: 'warning', retryable: false },
+  /** session.reclaim while the external console still runs (`params.pid`, ADR-104). */
+  EXTERNAL_STILL_RUNNING: { category: 'conflict', http: 409, severity: 'warning', retryable: true },
+  /** The built-in profile cannot be deleted (ADR-102). */
+  PROFILE_NOT_DELETABLE: { category: 'conflict', http: 409, severity: 'error', retryable: false },
   // setup (C.5, C.7, F.17) – the UI shows the setup screen / hint
   CLAUDE_NOT_FOUND: { category: 'setup', http: 503, severity: 'error', retryable: true },
   CLAUDE_VERSION_TOO_OLD: { category: 'setup', http: 503, severity: 'warning', retryable: false },
@@ -125,6 +134,14 @@ export const ERROR_CATALOG = {
   MODEL_REFUSAL: { category: 'claude', http: 502, severity: 'warning', retryable: false },
   MCP_SERVER_NOT_APPROVED: { category: 'claude', http: 502, severity: 'info', retryable: false },
   TURN_FAILED: { category: 'claude', http: 502, severity: 'error', retryable: true },
+  /** The external console could not be opened (`params.reason`, ADR-104). */
+  EXTERNAL_CONSOLE_FAILED: { category: 'claude', http: 502, severity: 'error', retryable: true },
+  // files (Phase 2, ADR-119)
+  /** fs.listDirectory: no permission to read the folder (`params.path`). */
+  FOLDER_NOT_READABLE: { category: 'validation', http: 403, severity: 'error', retryable: false },
+  // Windows integration (Phase 2, ADR-109/110) – host warnings
+  AUTOSTART_FAILED: { category: 'internal', http: 500, severity: 'warning', retryable: true },
+  PROTOCOL_HANDLER_FAILED: { category: 'internal', http: 500, severity: 'warning', retryable: true },
   // store (B Persistenz)
   STORE_CORRUPT_QUARANTINED: { category: 'store', http: 500, severity: 'warning', retryable: false },
   STORE_WRITE_FAILED: { category: 'store', http: 500, severity: 'error', retryable: true },

@@ -2,7 +2,7 @@ import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseServerMessage, sessionOpSchema } from '@shared/protocol';
-import { sampleSessionSnapshot } from '@shared/samples';
+import { sampleSessionSnapshot, sampleSettings } from '@shared/samples';
 import { unregisterConnection } from '@web/state/connection';
 import { FakeHost } from '@web/state/fake-host';
 import { resetClientStore } from '@web/state/store';
@@ -23,10 +23,7 @@ afterEach(() => {
 describe('scenarios', () => {
   it('build schema-valid data for every scenario', () => {
     for (const id of SCENARIO_IDS) {
-      const data = SCENARIOS[id].build(Date.parse('2026-10-15T08:00:00.000Z'), {
-        language: 'en',
-        theme: 'dark',
-      });
+      const data = SCENARIOS[id].build(Date.parse('2026-10-15T08:00:00.000Z'), sampleSettings());
       for (const snapshot of data.sessions) {
         for (const item of snapshot.items)
           expect(sessionOpSchema.safeParse({ op: 'item.upsert', item }).success).toBe(true);

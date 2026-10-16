@@ -103,5 +103,10 @@ export function createFakeClaudeIntegration(
       store.setClaudeStatus(profileId, status);
       return Promise.resolve(status);
     },
+
+    // Phase 2 port (WP-30); the fake console spec follows in WP-34.
+    consoleLaunchFor() {
+      return Promise.reject(new CommandError(makeError('NOT_IMPLEMENTED', { command: 'consoleLaunchFor' })));
+    },
   };
 }

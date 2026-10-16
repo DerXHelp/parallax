@@ -222,6 +222,13 @@ export const en = {
     taskNotification: 'Background task: {description}',
     error: 'Error',
     unknown: 'Unknown event {type}',
+    handoff: {
+      external: 'Opened in an external console',
+      returned: {
+        one: 'Back from the console – {count} entry taken over',
+        other: 'Back from the console – {count} entries taken over',
+      },
+    },
   },
   generic: {
     input: 'Input',

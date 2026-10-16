@@ -11,7 +11,10 @@
  * never as `.jsonl` outside test/fixtures/sdk (git-ignored, R0-06).
  *
  * Single writer per SessionDetail field: normalizer → init, backgroundTasks, promptSuggestion,
- * rateLimit, commands, unknownCounts; engine → conversationId, conversations, queue, models.
+ * rateLimit, unknownCounts; engine → conversationId, conversations, queue, models. Phase 2
+ * (ADR-108): `commands` has two writers that both REPLACE the whole list (the last one wins): the
+ * normalizer (`system/commands_changed`) and the engine (`supportedCommands()` at readiness, the
+ * per-entry cache for dormant entries).
  *
  * Normalizer rules (normative, tested by WP-12):
  * - Unknown enum values of a newer CLI (permission mode, effort) become null and are counted as
@@ -166,7 +169,9 @@ export type StatusEvent =
   | { type: 'viewed' }
   | { type: 'external'; active: boolean }
   /** When loading from the registry. */
-  | { type: 'server_restart'; hadOpenDecisions: boolean };
+  | { type: 'server_restart'; hadOpenDecisions: boolean }
+  /** Phase 2 (ADR-112): sets StatusFacts.wakeupAt (scheduled "continue"); null clears it. */
+  | { type: 'wakeup'; at: string | null };
 
 export interface ReduceStatusContext {
   /** A client shows this session visibly (presence) → no unread. */
@@ -191,6 +196,7 @@ export interface ReduceStatusContext {
  * - server_restart: starting|working or open decisions → interrupted; idle → sleeping; otherwise
  *   unchanged (the engine then sends decisions_changed with the expired count → needs-resume).
  * - rate_limit rejected → rateLimitedUntil = resetsAt.
+ * - wakeup (Phase 2) → wakeupAt = at; nothing else changes.
  */
 export type ReduceStatus = (
   facts: StatusFacts,

@@ -10,7 +10,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EntryId } from '@shared/common';
 import type { ErrorCode } from '@shared/errors';
 import { currentConversation } from '@shared/model';
-import { sampleConversation, sampleEntry, sampleId, sampleItems, sampleProfile } from '@shared/samples';
+import {
+  sampleConversation,
+  sampleEntry,
+  sampleId,
+  sampleItems,
+  sampleProfile,
+  sampleSettings,
+} from '@shared/samples';
 import { eventsScenario } from '../backend/fakeBackend';
 import { closeGate, dslContext, input, events as join, textTurn, toEvents } from '../backend/fake/dsl';
 import { checkCwd } from '../lib/paths';
@@ -435,7 +442,7 @@ describe('commands of a running entry', () => {
     expect(h.facts(entryId).runState).toBe('sleeping');
     const before = h.publisher.hostStates.length;
     const { settings } = await h.cmd({ name: 'settings.update', patch: { language: 'de' } });
-    expect(settings).toEqual({ language: 'de', theme: 'dark' });
+    expect(settings).toEqual(sampleSettings({ language: 'de' }));
     expect(h.publisher.hostStates.length).toBe(before + 1);
     expect(h.publisher.hostStates.at(-1)?.settings.language).toBe('de');
   });

@@ -8,7 +8,12 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parsePermissionMode, RULE_DESTINATIONS, type ConversationId, type DecisionKind } from '@shared/common';
+import {
+  parsePermissionMode,
+  RULE_DESTINATIONS,
+  type ConversationId,
+  type DecisionKind,
+} from '@shared/common';
 import type { BlobRef, DecisionOutcome, ToolDecisionRef, TranscriptItem } from '@shared/model';
 import type { SessionOp } from '@shared/protocol';
 import { SAMPLE_TIME, sampleId } from '@shared/samples';
@@ -143,11 +148,19 @@ export function outcomeFor(kind: DecisionKind, decision: unknown, input: unknown
     return { type: 'plan_approved', mode, edited };
   }
   if (parsed.behavior === 'deny') {
-    return { type: 'denied', withMessage: (parsed.message ?? '') !== '', interrupt: parsed.interrupt === true };
+    return {
+      type: 'denied',
+      withMessage: (parsed.message ?? '') !== '',
+      interrupt: parsed.interrupt === true,
+    };
   }
   const rule = updates.find((u) => u.type === 'addRules');
   const remember = RULE_DESTINATIONS.find((d) => d === rule?.destination) ?? null;
-  return { type: 'allowed', remember, acceptEdits: updates.some((u) => u.type === 'setMode' && u.mode === 'acceptEdits') };
+  return {
+    type: 'allowed',
+    remember,
+    acceptEdits: updates.some((u) => u.type === 'setMode' && u.mode === 'acceptEdits'),
+  };
 }
 
 function promptText(content: string | unknown[]): string {
@@ -171,7 +184,9 @@ const timestampSchema = z.looseObject({ timestamp: z.string() });
  * Wall-clock start of a recording: the first SDK `timestamp` minus its tMs (the header's
  * recordedAt is the END of the run), so receive times stay plausible next to SDK timestamps.
  */
-export function startTime(fixture: Pick<ParsedFixture, 'events'> & { header?: { recordedAt: string } }): number {
+export function startTime(
+  fixture: Pick<ParsedFixture, 'events'> & { header?: { recordedAt: string } },
+): number {
   for (const event of fixture.events) {
     if (event.kind !== 'message') continue;
     const ts = timestampSchema.safeParse(event.payload);
@@ -217,7 +232,11 @@ export function replayLive(
       }
       case 'message': {
         const out = normalizer.push(event.payload, at);
-        record({ seq: event.seq, label: messageLabel(event.payload), source: 'normalizer', ...out }, event, at);
+        record(
+          { seq: event.seq, label: messageLabel(event.payload), source: 'normalizer', ...out },
+          event,
+          at,
+        );
         for (const signal of out.signals) {
           if (signal.type !== 'conversation_reset') continue;
           const previous = current;
@@ -230,7 +249,15 @@ export function replayLive(
               seq: event.seq,
               label: 'engine/conversation.reset',
               source: 'engine',
-              ops: [{ op: 'conversation.reset', conversationId: next, previousConversationId: previous, trigger: signal.trigger }],
+              ops: [
+                {
+                  op: 'conversation.reset',
+                  conversationId: next,
+                  previousConversationId: previous,
+                  trigger: signal.trigger,
+                  hasEarlier: false,
+                },
+              ],
               signals: [],
             },
             event,
@@ -258,7 +285,10 @@ export function replayLive(
         const open = decisions.get(decision.toolUseID);
         if (open === undefined) break;
         const { input, ...ref } = open;
-        const out = normalizer.attachDecision(decision.toolUseID, { ...ref, outcome: outcomeFor(ref.kind, event.payload, input) });
+        const out = normalizer.attachDecision(decision.toolUseID, {
+          ...ref,
+          outcome: outcomeFor(ref.kind, event.payload, input),
+        });
         record({ seq: event.seq, label: 'decision', source: 'engine', ...out }, event, at);
         break;
       }
@@ -376,7 +406,8 @@ interface DeltaRun {
 }
 
 function runLine(run: DeltaRun): string {
-  const range = run.first === run.last ? `#${String(run.first)}` : `#${String(run.first)}-${String(run.last)}`;
+  const range =
+    run.first === run.last ? `#${String(run.first)}` : `#${String(run.first)}-${String(run.last)}`;
   return `${range} ${run.key} ×${String(run.n)} (+${String(run.chars)}ch)`;
 }
 
@@ -522,7 +553,11 @@ export function replayStatus(
     const display = displayOf(facts, at);
     if (display !== last) {
       last = display;
-      transitions.push({ seq, event: event.type === 'session_state' ? `session_state:${event.state}` : event.type, display });
+      transitions.push({
+        seq,
+        event: event.type === 'session_state' ? `session_state:${event.state}` : event.type,
+        display,
+      });
     }
   };
   const decisionsChanged = (seq: number, at: Date): void => {
@@ -578,10 +613,18 @@ export function replayStatus(
           }
           for (const signal of step.signals) {
             applyEvent(signal, step.seq, at);
-            if (signal.type === 'prompt_lifecycle' && signal.state !== 'queued' && queued.delete(signal.messageUuid)) {
+            if (
+              signal.type === 'prompt_lifecycle' &&
+              signal.state !== 'queued' &&
+              queued.delete(signal.messageUuid)
+            ) {
               applyEvent({ type: 'queue_changed', count: queued.size }, step.seq, at);
             }
-            if (options.viewedAfterIdle === true && signal.type === 'session_state' && signal.state === 'idle') {
+            if (
+              options.viewedAfterIdle === true &&
+              signal.type === 'session_state' &&
+              signal.state === 'idle'
+            ) {
               applyEvent({ type: 'viewed' }, step.seq, at);
             }
           }

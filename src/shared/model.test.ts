@@ -9,11 +9,19 @@ import {
   decisionRecordsFileSchema,
   decisionResponseSchema,
   decisionSchema,
+  DEFAULT_NOTIFICATION_EVENTS,
   entrySchema,
+  externalHandoffSchema,
+  fsListingSchema,
   hostStateSchema,
+  notificationSettingsSchema,
+  profileInputSchema,
+  profileIssueSchema,
   profileSchema,
+  profileSummarySchema,
   profilesFileSchema,
   previousSessionIds,
+  REGISTRY_SCHEMA_VERSION,
   registryFileSchema,
   sessionDetailPatchSchema,
   sessionDetailSchema,
@@ -32,11 +40,17 @@ import {
   sampleDecisions,
   sampleDetail,
   sampleEntry,
+  sampleExternalHandoff,
+  sampleFsListing,
   sampleHostState,
   sampleId,
   sampleItems,
+  sampleNotificationSettings,
   sampleOutcomes,
   sampleProfile,
+  sampleProfileInput,
+  sampleProfileIssue,
+  sampleProfileSummary,
   sampleResponses,
   sampleSettings,
   sampleSummary,
@@ -92,6 +106,9 @@ describe('defaults for old files (B "fehlende Felder ergänzen")', () => {
       lastResultExcerpt: null,
       unread: false,
       context: null,
+      gitBranch: null,
+      external: null,
+      continueAt: null,
     } satisfies Entry);
   });
 
@@ -123,7 +140,10 @@ describe('defaults for old files (B "fehlende Felder ergänzen")', () => {
   });
 
   it('empty settings get defaults; the patch schema does not inject them', () => {
-    expect(settingsSchema.parse({})).toEqual({ language: 'en', theme: 'dark' });
+    expect(settingsSchema.parse({})).toEqual(sampleSettings());
+    expect(settingsSchema.parse({ language: 'de', theme: 'light' })).toEqual(
+      sampleSettings({ language: 'de', theme: 'light' }),
+    );
     expect(settingsPatchSchema.parse({ theme: 'light' })).toEqual({ theme: 'light' });
     expect(Object.keys(settingsPatchSchema.shape).sort()).toEqual(Object.keys(settingsSchema.shape).sort());
   });
@@ -159,7 +179,7 @@ describe('defaults for old files (B "fehlende Felder ergänzen")', () => {
 
 describe('round trips', () => {
   it('registry, profiles, settings, decisions files', () => {
-    expectRoundTrip(registryFileSchema, { schemaVersion: 1, entries: [sampleEntry()] });
+    expectRoundTrip(registryFileSchema, { schemaVersion: REGISTRY_SCHEMA_VERSION, entries: [sampleEntry()] });
     expectRoundTrip(profilesFileSchema, { schemaVersion: 1, profiles: [sampleProfile()] });
     expectRoundTrip(settingsFileSchema, { schemaVersion: 1, settings: sampleSettings({ language: 'de' }) });
     expectRoundTrip(decisionRecordsFileSchema, {
@@ -414,5 +434,121 @@ describe('registry helpers', () => {
   it('previous session ids skip conversations without a session id', () => {
     expect(previousSessionIds(entry)).toEqual(['s1']);
     expect(previousSessionIds(sampleEntry())).toEqual([]);
+  });
+});
+
+describe('Phase 2 contracts (WP-30 §4.5)', () => {
+  it('profile input: valid sample, limits, no unknown flags for env keys', () => {
+    expectRoundTrip(profileInputSchema, sampleProfileInput());
+    expectRoundTrip(
+      profileInputSchema,
+      sampleProfileInput({ id: 'standard', executable: { kind: 'path', path: 'C:\\c\\claude.exe' } }),
+    );
+    expect(profileInputSchema.safeParse(sampleProfileInput({ name: '   ' })).success).toBe(false);
+    expect(profileInputSchema.safeParse(sampleProfileInput({ env: { 'A=B': 'x' } })).success).toBe(false);
+    expect(profileInputSchema.safeParse(sampleProfileInput({ env: { ' A': 'x' } })).success).toBe(false);
+    const many = Object.fromEntries(
+      Array.from({ length: LIMITS.profileEnvMax + 1 }, (_, i) => [`V${String(i)}`, 'x']),
+    );
+    expect(profileInputSchema.safeParse(sampleProfileInput({ env: many })).success).toBe(false);
+    expect(
+      profileInputSchema.safeParse(
+        sampleProfileInput({ args: Array.from({ length: LIMITS.profileArgsMax + 1 }, () => '-v') }),
+      ).success,
+    ).toBe(false);
+    expect(
+      profileInputSchema.safeParse(
+        sampleProfileInput({ defaults: { model: '-x', permissionMode: null, effort: null } }),
+      ).success,
+    ).toBe(false);
+  });
+
+  it('profile summary: Phase-2 fields are additive with defaults', () => {
+    const { defaults: _d, configDir: _c, issues: _i, entryCount: _e, ...older } = sampleProfileSummary();
+    expect(profileSummarySchema.parse(older)).toEqual(sampleProfileSummary());
+    expectRoundTrip(
+      profileSummarySchema,
+      sampleProfileSummary({ issues: [sampleProfileIssue()], entryCount: 3 }),
+    );
+    expectRoundTrip(profileIssueSchema, sampleProfileIssue({ level: 'warning' }));
+    expect(profileIssueSchema.safeParse({ ...sampleProfileIssue(), level: 'fatal' }).success).toBe(false);
+  });
+
+  it('settings: partial notification objects fill their defaults; the patch needs whole objects', () => {
+    expect(notificationSettingsSchema.parse({})).toEqual(sampleNotificationSettings());
+    const parsed = notificationSettingsSchema.parse({
+      events: { done: { toast: false, sound: false, soundId: 'ping' } },
+    });
+    expect(parsed.events.done).toEqual({ toast: false, sound: false, soundId: 'ping' });
+    expect(parsed.events.permission).toEqual(DEFAULT_NOTIFICATION_EVENTS.permission);
+    expect(settingsPatchSchema.safeParse({ notifications: { volume: 0.5 } }).success).toBe(false);
+    expect(
+      settingsPatchSchema.safeParse({ notifications: sampleNotificationSettings({ volume: 0.5 }) }).success,
+    ).toBe(true);
+    expect(settingsPatchSchema.safeParse({ port: 80 }).success).toBe(false);
+    expect(settingsPatchSchema.safeParse({ port: null }).success).toBe(true);
+    expect(settingsPatchSchema.safeParse({ idleSleep: { enabled: true, minutes: 4 } }).success).toBe(false);
+    expect(
+      settingsPatchSchema.safeParse({ notifications: sampleNotificationSettings({ volume: 1.5 }) }).success,
+    ).toBe(false);
+    expect('editor' in settingsSchema.shape).toBe(false);
+  });
+
+  it('host state: port and systemIntegration are additive', () => {
+    const { port: _p, systemIntegration: _s, ...older } = sampleHostState();
+    expect(hostStateSchema.parse(older)).toMatchObject({ port: null, systemIntegration: false });
+  });
+
+  it('entry: gitBranch, external, continueAt default to null; end reason switched', () => {
+    const { gitBranch: _g, external: _x, continueAt: _c, ...older } = sampleEntry();
+    expect(entrySchema.parse(older)).toEqual(sampleEntry());
+    expectRoundTrip(
+      entrySchema,
+      sampleEntry({ external: sampleExternalHandoff(), continueAt: sampleTime(600), gitBranch: 'main' }),
+    );
+    expectRoundTrip(
+      entrySchema,
+      sampleEntry({
+        conversations: [
+          sampleConversation({ id: sampleId('cv', 2), endedAt: sampleTime(5), endReason: 'switched' }),
+          sampleConversation(),
+        ],
+      }),
+    );
+    expect(externalHandoffSchema.safeParse(sampleExternalHandoff({ pid: 0 })).success).toBe(false);
+    expect(REGISTRY_SCHEMA_VERSION).toBe(2);
+  });
+
+  it('summary.external and the handoff item default sensibly', () => {
+    const { external: _x, ...older } = sampleSummary();
+    expect(sessionSummarySchema.parse(older).external).toBeNull();
+    expectRoundTrip(
+      sessionSummarySchema,
+      sampleSummary({ external: { since: sampleTime(), pid: 4242, running: false } }),
+    );
+    const { importedItems: _n, ...handoff } = sampleSystemItems.handoff({ phase: 'external' });
+    expect(transcriptItemSchema.parse(handoff)).toEqual(
+      sampleSystemItems.handoff({ phase: 'external', importedItems: 0 }),
+    );
+  });
+
+  it('folder listing', () => {
+    expectRoundTrip(fsListingSchema, sampleFsListing());
+    expectRoundTrip(
+      fsListingSchema,
+      sampleFsListing({
+        path: null,
+        parent: null,
+        entries: [
+          { name: 'C:', path: 'C:\\', kind: 'drive', hidden: false },
+          { name: 'user', path: 'C:\\Users\\user', kind: 'home', hidden: false },
+        ],
+      }),
+    );
+    const withFile: unknown = {
+      ...sampleFsListing(),
+      entries: [{ name: 'x', path: 'x', kind: 'file', hidden: false }],
+    };
+    expect(fsListingSchema.safeParse(withFile).success).toBe(false);
   });
 });

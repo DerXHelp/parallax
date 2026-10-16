@@ -84,12 +84,20 @@ export const reduceStatus: ReduceStatus = (facts, event, now, ctx) => {
       let next = facts;
       const setupError = event.error !== null && isSetupError(event.error.code);
       // A handed-off session (external) keeps its state (R1-19).
-      if (event.outcome !== 'interrupted' && (event.startupFailure || setupError) && next.runState !== 'external') {
+      if (
+        event.outcome !== 'interrupted' &&
+        (event.startupFailure || setupError) &&
+        next.runState !== 'external'
+      ) {
         next = toError(next, event.error?.code ?? 'CLAUDE_STARTUP_FAILED');
       }
       if (event.synthetic) return next;
       next = apply(next, {
-        lastTurn: { outcome: event.outcome, endedAt: now.toISOString(), durationMs: Math.max(0, event.durationMs) },
+        lastTurn: {
+          outcome: event.outcome,
+          endedAt: now.toISOString(),
+          durationMs: Math.max(0, event.durationMs),
+        },
         ...(event.outcome !== 'interrupted' && !ctx.viewedByVisibleClient ? { unread: true } : {}),
       });
       if (!ctx.sessionStateSeen && next.runState !== 'error' && next.runState !== 'external') {
@@ -99,7 +107,9 @@ export const reduceStatus: ReduceStatus = (facts, event, now, ctx) => {
     }
 
     case 'assistant_error':
-      return isSetupError(event.error.code) && facts.runState !== 'external' ? toError(facts, event.error.code) : facts;
+      return isSetupError(event.error.code) && facts.runState !== 'external'
+        ? toError(facts, event.error.code)
+        : facts;
 
     case 'process_starting':
       return apply(facts, { runState: 'starting', errorCode: null, ...NO_PROCESS });
@@ -126,7 +136,9 @@ export const reduceStatus: ReduceStatus = (facts, event, now, ctx) => {
     }
 
     case 'rate_limit':
-      return apply(facts, { rateLimitedUntil: event.info.status === 'rejected' ? event.info.resetsAt : null });
+      return apply(facts, {
+        rateLimitedUntil: event.info.status === 'rejected' ? event.info.resetsAt : null,
+      });
 
     case 'compacting':
       return apply(facts, { compacting: event.active });
@@ -149,6 +161,10 @@ export const reduceStatus: ReduceStatus = (facts, event, now, ctx) => {
     case 'external':
       if (event.active) return apply(facts, { runState: 'external', errorCode: null, ...NO_PROCESS });
       return facts.runState === 'external' ? apply(facts, { runState: 'sleeping' }) : facts;
+
+    case 'wakeup':
+      // Phase 2 (ADR-112): the scheduled "continue" after a rate limit; nothing else changes.
+      return apply(facts, { wakeupAt: event.at });
 
     case 'session_id':
     case 'permission_mode':
