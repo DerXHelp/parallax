@@ -19,13 +19,15 @@ import {
 
 describe('summaryOf', () => {
   it('is schema-true (every field explicit, survives parse unchanged)', () => {
-    const summary = summaryOf(sampleEntry(), sampleStatusFacts(), { gitBranch: 'main' });
+    const summary = summaryOf(sampleEntry({ gitBranch: 'main' }), sampleStatusFacts());
     expect(sessionSummarySchema.parse(summary)).toEqual(summary);
     expect(summary).toMatchObject({ gitBranch: 'main', sessionId: '9b779de6-0000-4000-8000-000000000001' });
-    const plain = summaryOf(sampleEntry({ context: null, lastModel: null }), sampleStatusFacts(), {
-      gitBranch: null,
-    });
+    const plain = summaryOf(
+      sampleEntry({ context: null, lastModel: null, gitBranch: null }),
+      sampleStatusFacts(),
+    );
     expect(sessionSummarySchema.parse(plain)).toEqual(plain);
+    expect(plain.gitBranch).toBeNull();
   });
 });
 

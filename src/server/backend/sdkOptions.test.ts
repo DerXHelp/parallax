@@ -287,7 +287,41 @@ describe('flagSettingsAfterStart (C.1)', () => {
       { autoCompactWindow: 300_000 },
     ],
   ])('%s', (_label, partial, expected) => {
-    expect(flagSettingsAfterStart(launch(partial))).toEqual(expected);
+    expect(flagSettingsAfterStart(request({ launch: launch(partial) }))).toEqual(expected);
+  });
+});
+
+describe('fast mode as flag setting (Phase 2, WP-31)', () => {
+  const path = { sdkOptions: { settings: 'D:\\cfg\\settings.json' } };
+  it.each<[string, Partial<StartSessionRequest>, Options['settings'] | undefined, object | null]>([
+    ['absent → the CLI decides', {}, undefined, null],
+    ['null → the CLI decides', { fastMode: null }, undefined, null],
+    ['true → inline settings.fastMode', { fastMode: true }, { fastMode: true }, null],
+    ['false → inline settings.fastMode false', { fastMode: false }, { fastMode: false }, null],
+    [
+      'together with autoCompactWindow',
+      { fastMode: true, launch: launch({ autoCompactWindow: 400_000 }) },
+      { autoCompactWindow: 400_000, fastMode: true },
+      null,
+    ],
+    [
+      'settings file → path inline, fast mode after the start',
+      { fastMode: true, launch: launch(path) },
+      'D:\\cfg\\settings.json',
+      { fastMode: true },
+    ],
+    [
+      'settings file + autoCompactWindow + fast mode → both after the start',
+      { fastMode: false, launch: launch({ ...path, autoCompactWindow: 300_000 }) },
+      'D:\\cfg\\settings.json',
+      { autoCompactWindow: 300_000, fastMode: false },
+    ],
+  ])('%s', (_label, partial, settings, after) => {
+    const req = request(partial);
+    const options = buildQueryOptions(req, hooks);
+    if (settings === undefined) expect(options).not.toHaveProperty('settings');
+    else expect(options.settings).toEqual(settings);
+    expect(flagSettingsAfterStart(req)).toEqual(after);
   });
 });
 

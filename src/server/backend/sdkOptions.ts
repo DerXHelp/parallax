@@ -66,11 +66,23 @@ function permissionModeOf(req: StartSessionRequest): Options['permissionMode'] {
   return req.permissionMode;
 }
 
-function settingsOf(launch: LaunchSpec): Options['settings'] {
-  const path = launch.sdkOptions.settings;
+/**
+ * Flag-tier settings of the start: the profile's `autoCompactWindow` (C.1) and the entry's fast
+ * mode (Phase 2, `settings.fastMode`; null/absent = the CLI decides). Null when there is none.
+ */
+export function startFlagSettings(
+  req: StartSessionRequest,
+): { autoCompactWindow?: number; fastMode?: boolean } | null {
+  const flags: { autoCompactWindow?: number; fastMode?: boolean } = {};
+  if (req.launch.autoCompactWindow !== null) flags.autoCompactWindow = req.launch.autoCompactWindow;
+  if (req.fastMode !== undefined && req.fastMode !== null) flags.fastMode = req.fastMode;
+  return Object.keys(flags).length > 0 ? flags : null;
+}
+
+function settingsOf(req: StartSessionRequest): Options['settings'] {
+  const path = req.launch.sdkOptions.settings;
   if (path !== undefined) return path;
-  if (launch.autoCompactWindow !== null) return { autoCompactWindow: launch.autoCompactWindow };
-  return undefined;
+  return startFlagSettings(req) ?? undefined;
 }
 
 function extraArgsOf(launch: LaunchSpec): Record<string, string | null> | undefined {
@@ -120,7 +132,7 @@ export function buildQueryOptions(req: StartSessionRequest, hooks: QueryOptionHo
     options.plugins = sdk.plugins.map((path): SdkPluginConfig => ({ type: 'local', path }));
   }
 
-  const settings = settingsOf(launch);
+  const settings = settingsOf(req);
   if (settings !== undefined) options.settings = settings;
   const extraArgs = extraArgsOf(launch);
   if (extraArgs !== undefined) options.extraArgs = extraArgs;
@@ -128,12 +140,15 @@ export function buildQueryOptions(req: StartSessionRequest, hooks: QueryOptionHo
 }
 
 /**
- * C.1: with a settings FILE and a profile `autoCompactWindow`, the window cannot ride along in
- * `settings`; the backend applies it via `applyFlagSettings` once the session is ready.
+ * C.1 (+ Phase 2 fast mode): with a settings FILE the flag settings (`autoCompactWindow`,
+ * `fastMode`) cannot ride along in `settings`; the backend applies them via `applyFlagSettings`
+ * once the session is ready.
  */
-export function flagSettingsAfterStart(launch: LaunchSpec): { autoCompactWindow: number } | null {
-  if (launch.sdkOptions.settings === undefined || launch.autoCompactWindow === null) return null;
-  return { autoCompactWindow: launch.autoCompactWindow };
+export function flagSettingsAfterStart(
+  req: StartSessionRequest,
+): { autoCompactWindow?: number; fastMode?: boolean } | null {
+  if (req.launch.sdkOptions.settings === undefined) return null;
+  return startFlagSettings(req);
 }
 
 /** Things `buildQueryOptions` could not map as configured (English, for the log). */

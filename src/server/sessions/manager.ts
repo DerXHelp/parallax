@@ -1,14 +1,18 @@
 /**
  * `SessionManager` (WP-13 §3.5): implements the port `SessionSource` (sync/ports.ts) on top of an
  * `AgentBackend` (Sdk or Fake). Lifecycle per entry (dormant at server start, resume on
- * interaction, ready after `supportedModels()`), all Phase-1 commands (commands.ts), prompt queue,
+ * interaction, ready after `supportedModels()`), all commands (commands.ts), prompt queue,
  * normalizer + status machine, mirror views for `loadView`, summaries/ops/host state through the
  * `SessionPublisher` (the hub), persistence through the stores, crash/auto-retry, server start
  * (recovery, orphans) and shutdown. Wiring for WP-20: docs/wp/WP-13b.md "Verdrahtung".
+ *
+ * Phase 2 (WP-31): idle sleep from the settings (ADR-105), git branch refresh for visible entries
+ * (ADR-113), persistent model catalogs/account limits (ADR-114), slash-command cache (ADR-108),
+ * notification settings (ADR-109), host-command routing (ADR-101) and the Phase-2 host state.
  */
 import path from 'node:path';
 import type { Logger } from 'pino';
-import { jsonValueSchema, type EntryId, type ProfileId } from '@shared/common';
+import { jsonValueSchema, type ClientId, type EntryId, type ProfileId } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   currentConversation,
@@ -17,6 +21,7 @@ import {
   type HostWarning,
   type QueuedPrompt,
   type RateLimitInfo,
+  type Settings,
 } from '@shared/model';
 import type { Notification } from '@shared/protocol';
 import { canSleep, INITIAL_STATUS_FACTS, type StatusFacts } from '@shared/status';
@@ -38,13 +43,16 @@ import {
   CommandError,
   type ClientPresence,
   type CommandContext,
+  type HostCommandHandler,
   type SessionPublisher,
   type SessionSource,
 } from '../sync/ports';
+import { createMemoryCatalogStore } from './catalogStore';
+import { createMemoryCommandCatalogStore } from './commandCatalog';
 import { handleCommand, type CommandEngine } from './commands';
 import {
   EntryState,
-  NEVER_SLEEP,
+  settingsSleepPolicy,
   type EngineCore,
   type EngineStores,
   type NormalizerFns,
@@ -64,7 +72,12 @@ import {
   normalizeHistory,
 } from './normalizer';
 import { DISABLED_NATIVE_TOASTS, type NativeToasts } from './nativeToasts';
-import { decisionsCleared, isViewedByVisibleClient, planNotification } from './notifier';
+import {
+  decisionsCleared,
+  isViewedByVisibleClient,
+  isWatchedByFocusedClient,
+  planNotification,
+} from './notifier';
 import type { ReduceStatus } from './ports';
 import type { ProcessRecord, ProcessStore } from './processStore';
 import {
@@ -89,7 +102,7 @@ export const DEFAULT_SESSION_MANAGER_OPTIONS: SessionManagerOptions = {
   contextRefreshDelayMs: 250,
   shutdownTimeoutMs: 15_000,
   orphanShutdownWaitMs: 2_000,
-  promptSuggestions: false,
+  gitRefreshMs: 60_000,
   aiTitleDelayMs: 2_000,
   processSnapshotMs: 30_000,
   processSnapshotFirstMs: 10_000,
@@ -137,7 +150,20 @@ export interface SessionManagerDeps {
     platform: string;
     dataDirLabel: string;
     dev: boolean;
+    /**
+     * Phase 2: the actual listening port (`HostState.port`, null before listen). Optional until
+     * WP-40 wires it (compose.ts); absent → null.
+     */
+    port?: () => number | null;
+    /** Phase 2 (ADR-110): `HostState.systemIntegration` (SystemIntegration.available). Absent → false. */
+    systemIntegration?: boolean;
   };
+  /** Phase 2 (ADR-101): handlers of the host commands (`profile.*`, `fs.listDirectory`); default []. */
+  hostCommands?: readonly HostCommandHandler[];
+  /** After every successful settings.update (prev, next) – WP-40 wires SystemIntegration.apply. */
+  onSettingsChanged?: (prev: Settings, next: Settings) => void;
+  /** Extra host warnings merged into HostState.warnings (WP-40: SystemIntegration.warnings). */
+  extraWarnings?: () => HostWarning[];
   /** Called (setImmediate) after server.shutdown was acknowledged; WP-20 then calls shutdown(). */
   onShutdownRequested?: () => void;
   /** Native Windows toasts (WP22-03/-15, A.9); default: off. */
@@ -152,7 +178,7 @@ export interface SessionManagerDeps {
   capText?: EngineCore['capText'];
   /** Git branch of a cwd (default: `readGitBranch` via resolveExecutable, R1-04). */
   gitBranch?: EngineCore['gitBranch'];
-  /** Phase-2 idle sleep (default: never). */
+  /** Idle sleep (test seam; default: `settings.idleSleep`, ADR-105). */
   sleepPolicy?: SleepPolicy;
   now?: () => Date;
   /** Timer seam (default real, unref'd timers). */
@@ -190,7 +216,7 @@ export interface SessionManager extends SessionSource {
   start(): Promise<void>;
   /** §3.5.14: close all processes (≤ shutdownTimeoutMs, then taskkill), flush the stores, dispose the backend. */
   shutdown(): Promise<void>;
-  /** E.g. after warnings.onChange / checkProfile (WP-20). */
+  /** E.g. after warnings.onChange / checkProfile (WP-20), a profile change (WP-40). */
   publishHostState(): void;
   inspect(entryId: EntryId): EngineEntryInfo | null;
   /** Settles when the orphan cleanup of the server start is done (tests, diagnostics). */
@@ -212,16 +238,31 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   const log = (deps.logger ?? rootLogger).child({ module: 'sessions' });
   const now = deps.now ?? (() => new Date());
   const timers = deps.timers ?? realTimers;
-  const stores = deps.stores;
+  const stores: Required<EngineStores> = {
+    ...deps.stores,
+    catalogs: deps.stores.catalogs ?? createMemoryCatalogStore(),
+    commandCatalogs: deps.stores.commandCatalogs ?? createMemoryCommandCatalogStore(),
+  };
   const toasts = deps.toasts ?? DISABLED_NATIVE_TOASTS;
+  const hostCommands = deps.hostCommands ?? [];
   const states = new Map<EntryId, EntryState>();
   const engineWarnings = new Map<string, HostWarning>();
-  const accountLimits: Record<string, RateLimitInfo> = {};
-  const modelCache = new Map<ProfileId, ModelCatalog>();
+  // ADR-114: the last catalogs and subscription limits of the previous run are known at once.
+  const accountLimits: Record<string, RateLimitInfo> = stores.catalogs.limits();
+  const modelCache = new Map<ProfileId, ModelCatalog>(
+    Object.entries(stores.catalogs.models()).map(([profileId, stored]) => [
+      profileId,
+      { options: stored.options, resolved: stored.resolved, skipped: 0 },
+    ]),
+  );
   let publisher: SessionPublisher | null = null;
   let shuttingDown = false;
   let shutdownPromise: Promise<void> | null = null;
   let hostTimer: TimerHandle | null = null;
+  /** ADR-113: the 60-s git refresh of entries a visible window shows. */
+  let gitTimer: TimerHandle | null = null;
+  /** Last focus/view per client (git refresh on a focus change, ADR-113). */
+  const lastFocus = new Map<ClientId, { focused: boolean; viewing: EntryId | null }>();
   let orphans: Promise<void> = Promise.resolve();
   /** R3-06: set once shutdown() flushed the stores – they close right after (compose.ts). */
   let storesFlushed = false;
@@ -243,8 +284,34 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     return publisher;
   };
 
+  const reportError = (error: unknown, context: string): void => {
+    log.error({ err: error, context }, 'session engine: unexpected error');
+    try {
+      deps.onInternalError?.(error, context);
+    } catch {
+      // A failing observer must not break the engine.
+    }
+  };
+
+  /** WP-40's warnings (SystemIntegration); a failing source never breaks the host state. */
+  const extraWarnings = (): HostWarning[] => {
+    try {
+      return deps.extraWarnings?.() ?? [];
+    } catch (error) {
+      reportError(error, 'extraWarnings');
+      return [];
+    }
+  };
+
   const hostState = (): HostState => {
-    const profiles = deps.claude.profiles.summaries();
+    // Entries per profile, archived ones included (delete protection, configDir warning; ADR-102).
+    const entryCounts = new Map<string, number>();
+    for (const s of states.values()) {
+      entryCounts.set(s.entry.profileId, (entryCounts.get(s.entry.profileId) ?? 0) + 1);
+    }
+    const profiles = deps.claude.profiles
+      .summaries()
+      .map((p) => ({ ...p, entryCount: entryCounts.get(p.id) ?? 0 }));
     const defaultProfile = deps.claude.profiles.getDefault();
     const defaultSummary = profiles.find((p) => p.id === defaultProfile.id);
     return {
@@ -259,12 +326,11 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       defaultProfileId: defaultProfile.id,
       settings: stores.settings.get(),
       setupRequired: defaultSummary === undefined ? true : profileNeedsSetup(defaultSummary.claude),
-      warnings: [...stores.warnings.list(), ...engineWarnings.values()],
+      warnings: [...stores.warnings.list(), ...engineWarnings.values(), ...extraWarnings()],
       accountLimits: { ...accountLimits },
       nativeNotifications: toasts.available(),
-      // Phase 2 contract (WP-30): wired by WP-31/WP-40.
-      port: null,
-      systemIntegration: false,
+      port: deps.host.port?.() ?? null,
+      systemIntegration: deps.host.systemIntegration ?? false,
     };
   };
 
@@ -279,14 +345,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     publisher.publishHostState(hostState());
   };
 
-  const reportError = (error: unknown, context: string): void => {
-    log.error({ err: error, context }, 'session engine: unexpected error');
-    try {
-      deps.onInternalError?.(error, context);
-    } catch {
-      // A failing observer must not break the engine.
-    }
-  };
+  const presence = (): readonly ClientPresence[] => publisher?.presence() ?? [];
 
   /** Entries with a live claude.exe (PID known). */
   const runningProcesses = (): { s: EntryState; pid: number }[] =>
@@ -357,21 +416,65 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     snapshotTimer = null;
   };
 
-  const considerSleep = (s: EntryState, facts: StatusFacts): void => {
+  /**
+   * ADR-105: a running process may fall asleep when `canSleep(facts)` holds and no focused + visible
+   * window shows the entry (the user would face "Starting…"). The idle time counts from the moment
+   * both hold (`sleepSince`); every change of facts, presence or settings re-plans.
+   */
+  const sleepEligible = (s: EntryState, clients: readonly ClientPresence[]): boolean =>
+    !shuttingDown &&
+    s.runtime !== null &&
+    s.phase === 'running' &&
+    canSleep(s.facts, now()) &&
+    !isWatchedByFocusedClient(clients, s.id);
+
+  const planSleep = (s: EntryState, clients: readonly ClientPresence[]): void => {
     s.sleepTimer?.cancel();
     s.sleepTimer = null;
-    if (s.runtime === null || s.phase !== 'running' || !canSleep(facts, now())) return;
-    const delay = core.sleepPolicy.schedule(s.id, facts, now());
+    if (!sleepEligible(s, clients)) {
+      s.sleepSince = null;
+      return;
+    }
+    const at = now();
+    s.sleepSince ??= at.getTime();
+    const delay = core.sleepPolicy.schedule(s.id, s.facts, at, new Date(s.sleepSince));
     if (delay === null) return;
     s.sleepTimer = timers.setTimeout(() => {
       s.sleepTimer = null;
-      if (shuttingDown || !canSleep(s.facts, now())) return;
+      if (!sleepEligible(s, presence())) {
+        planSleep(s, presence());
+        return;
+      }
       s.lifecycle
-        .run(() => closeRuntime(s, core, 'sleep'))
+        .run(async () => {
+          // Re-checked inside the lock (a prompt may have started a turn meanwhile).
+          if (sleepEligible(s, presence())) await closeRuntime(s, core, 'sleep');
+        })
         .catch((error: unknown) => {
           log.warn({ err: error, entryId: s.id }, 'idle sleep failed');
         });
     }, delay);
+  };
+
+  /** Entries a visible window shows (focus not required) – the git refresh targets (ADR-113). */
+  const viewedStates = (clients: readonly ClientPresence[]): EntryState[] =>
+    [...states.values()].filter((s) => isViewedByVisibleClient(clients, s.id));
+
+  const cancelGitRefresh = (): void => {
+    gitTimer?.cancel();
+    gitTimer = null;
+  };
+
+  /** ADR-113: every `gitRefreshMs` while a visible window shows an entry (dormant ones too). */
+  const scheduleGitRefresh = (clients: readonly ClientPresence[] = presence()): void => {
+    if (options.gitRefreshMs <= 0 || shuttingDown || gitTimer !== null) return;
+    if (viewedStates(clients).length === 0) return;
+    gitTimer = timers.setTimeout(() => {
+      gitTimer = null;
+      if (shuttingDown) return;
+      for (const s of viewedStates(presence())) void s.refreshGitBranch();
+      scheduleGitRefresh();
+    }, options.gitRefreshMs);
   };
 
   const core: EngineCore = {
@@ -393,7 +496,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       ((text) => normalizerCapText(text, { storeBlob: (d, m, n) => stores.blobs.put(d, m, n) })),
     capInput: deps.capInput ?? defaultCapInput(stores),
     gitBranch: deps.gitBranch ?? ((cwd, env) => readGitBranch(cwd, env)),
-    sleepPolicy: deps.sleepPolicy ?? NEVER_SLEEP,
+    sleepPolicy: deps.sleepPolicy ?? settingsSleepPolicy(() => stores.settings.get()),
     now,
     timers,
     options,
@@ -424,20 +527,46 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     },
     setAccountLimit: (profileId, info) => {
       accountLimits[profileId] = info;
+      try {
+        stores.catalogs.setLimit(profileId, info);
+      } catch (error) {
+        reportError(error, 'catalogs.setLimit');
+      }
       core.scheduleHostState();
     },
     models: (profileId) => modelCache.get(profileId) ?? null,
     setModels: (profileId, catalog) => {
       modelCache.set(profileId, catalog);
+      try {
+        stores.catalogs.setModels(profileId, {
+          options: catalog.options,
+          resolved: catalog.resolved,
+          at: now().toISOString(),
+        });
+      } catch (error) {
+        reportError(error, 'catalogs.setModels');
+      }
     },
     allowsBypass: (profileId) =>
       deps.claude.profiles.summaries().find((p) => p.id === profileId)?.allowsBypass ?? false,
     profile: (profileId) => deps.claude.profiles.get(profileId),
+    clearNotifications,
+    considerSleep: (s) => {
+      planSleep(s, presence());
+    },
     factsChanged: (s, prev, next) => {
       // WP22-05: the interrupt at shutdown ends turns – no "done" notification for that.
       if (shuttingDown) return;
       const pub = publisherOrThrow();
-      const planned = planNotification(prev, next, now(), pub.presence(), s.id, toasts.available());
+      const planned = planNotification(
+        prev,
+        next,
+        now(),
+        pub.presence(),
+        s.id,
+        toasts.available(),
+        stores.settings.get().notifications,
+      );
       if (planned !== null) {
         const title = s.entry.title !== '' ? s.entry.title : cwdLabel(s.entry.cwd);
         if (planned.clientId !== null) {
@@ -454,7 +583,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         if (planned.native) toasts.show(s.id, planned.kind, title);
       }
       if (decisionsCleared(prev, next)) clearNotifications(s.id);
-      considerSleep(s, next);
+      planSleep(s, pub.presence());
     },
     processSpawned: () => {
       scheduleProcessSnapshot(options.processSnapshotFirstMs);
@@ -473,11 +602,14 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       states.set(entry.id, s);
       s.touch(true);
       s.flush();
+      // HostState.profiles[].entryCount changed.
+      publishHostState();
       return s;
     },
     runningCount: () => [...states.values()].filter((s) => s.runtime !== null).length,
     requestShutdown: () => {
       shuttingDown = true;
+      cancelGitRefresh();
       for (const s of states.values()) s.cancelTimers();
       setImmediate(() => {
         try {
@@ -486,6 +618,17 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           reportError(error, 'onShutdownRequested');
         }
       });
+    },
+    hostCommands,
+    settingsChanged: (prev, next) => {
+      try {
+        deps.onSettingsChanged?.(prev, next);
+      } catch (error) {
+        reportError(error, 'onSettingsChanged');
+      }
+      publishHostState();
+      // ADR-105: idle sleep on/off and its minutes apply at once.
+      for (const s of states.values()) planSleep(s, presence());
     },
   };
 
@@ -591,6 +734,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         shuttingDown = true;
         hostTimer?.cancel();
         hostTimer = null;
+        cancelGitRefresh();
         cancelProcessSnapshot();
         for (const s of states.values()) {
           s.cancelTimers();
@@ -712,6 +856,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           stores.transcripts.flush(),
           stores.decisions.flush(),
           stores.processes.flush(),
+          stores.catalogs.flush(),
+          stores.commandCatalogs.flush(),
         ]);
         for (const result of flushes) {
           if (result.status === 'rejected')
@@ -746,7 +892,31 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           s.reduce({ type: 'viewed' });
           clearNotifications(s.id);
         }
+        // ADR-105: a focused viewer keeps the session awake; leaving it starts the idle time.
+        planSleep(s, all);
       }
+      // ADR-113: a client that gained focus or switched sessions sees a fresh branch.
+      const focusedOn = new Set<EntryId>();
+      for (const c of all) {
+        const viewing = c.presence.viewingEntryId;
+        const before = lastFocus.get(c.clientId);
+        const focused = c.presence.focused && c.presence.visible;
+        if (focused && viewing !== null && (before?.focused !== true || before.viewing !== viewing)) {
+          focusedOn.add(viewing);
+        }
+      }
+      lastFocus.clear();
+      for (const c of all) {
+        lastFocus.set(c.clientId, {
+          focused: c.presence.focused && c.presence.visible,
+          viewing: c.presence.viewingEntryId,
+        });
+      }
+      if (!shuttingDown) {
+        for (const entryId of focusedOn) void states.get(entryId)?.refreshGitBranch();
+      }
+      if (viewedStates(all).length === 0) cancelGitRefresh();
+      else scheduleGitRefresh(all);
     },
 
     onSubscribersChanged(entryId, count) {
@@ -772,7 +942,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         retryScheduled: s.retryTimer !== null,
         mirrorItems: s.mirror?.items.length ?? null,
         subscribers: s.subscribers,
-        gitBranch: s.gitBranch,
+        gitBranch: s.entry.gitBranch,
       };
     },
 

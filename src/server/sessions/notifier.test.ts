@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { EntryId } from '@shared/common';
-import { SAMPLE_TIME, sampleId, sampleStatusFacts } from '@shared/samples';
-import { DONE_NOTIFY_MIN_TURN_MS } from '@shared/status';
+import type { NotificationSettings } from '@shared/model';
+import { SAMPLE_TIME, sampleId, sampleNotificationSettings, sampleStatusFacts } from '@shared/samples';
+import { DONE_NOTIFY_MIN_TURN_MS, type StatusFacts } from '@shared/status';
 import type { ClientPresence } from '../sync/ports';
-import { chooseChannel, decisionsCleared, isViewedByVisibleClient, planNotification } from './notifier';
+import {
+  chooseChannel,
+  decisionsCleared,
+  isViewedByVisibleClient,
+  isWatchedByFocusedClient,
+  planNotification,
+  type PlannedNotification,
+} from './notifier';
 
 const ENTRY: EntryId = sampleId('en', 1);
 const OTHER: EntryId = sampleId('en', 2);
@@ -158,5 +166,251 @@ describe('planNotification', () => {
     expect(decisionsCleared(two, working)).toBe(true);
     expect(decisionsCleared(two, one)).toBe(false);
     expect(decisionsCleared(working, working)).toBe(false);
+  });
+});
+
+// =====================================================================================
+// ADR-109 (WP-31): the notification settings, one row per case
+// =====================================================================================
+
+describe('planNotification with settings.notifications (ADR-109)', () => {
+  const working = sampleStatusFacts({ runState: 'working' });
+  const transitions: Record<string, [StatusFacts, StatusFacts]> = {
+    permission: [
+      working,
+      sampleStatusFacts({
+        runState: 'working',
+        decisions: { permission: 1, question: 0, plan: 0, oldestKind: 'permission', expired: 0 },
+      }),
+    ],
+    doneShort: [
+      working,
+      sampleStatusFacts({
+        unread: true,
+        lastTurn: { outcome: 'success', endedAt: SAMPLE_TIME, durationMs: 5_000 },
+      }),
+    ],
+    doneLong: [
+      working,
+      sampleStatusFacts({
+        unread: true,
+        lastTurn: { outcome: 'success', endedAt: SAMPLE_TIME, durationMs: 30_000 },
+      }),
+    ],
+    error: [working, sampleStatusFacts({ runState: 'error', errorCode: 'CLAUDE_PROCESS_CRASHED' })],
+  };
+  const clients: Record<string, ClientPresence[]> = {
+    none: [],
+    viewing: [client(1, { focused: true, visible: true, viewing: ENTRY })],
+    elsewhere: [client(1, { focused: true, visible: true, viewing: OTHER })],
+    elsewhereBlocked: [client(1, { focused: true, visible: true, viewing: OTHER, web: false })],
+    away: [client(1, { focused: false, visible: false, viewing: null })],
+    awayBlocked: [client(1, { focused: false, visible: false, viewing: null, web: false })],
+    awayViewing: [client(1, { focused: false, visible: true, viewing: ENTRY })],
+  };
+  const quiet = (kind: keyof NotificationSettings['events']): Partial<NotificationSettings> => {
+    const events = sampleNotificationSettings().events;
+    return { events: { ...events, [kind]: { ...events[kind], toast: false } } };
+  };
+  const cl1 = sampleId('cl', 1);
+  const to = (
+    delivery: 'in_app' | 'system',
+    kind: PlannedNotification['kind'] = 'permission',
+    native = false,
+    clientId: string | null = cl1,
+  ): PlannedNotification => ({ clientId, kind, delivery, native });
+
+  it.each<[string, Partial<NotificationSettings>, string, string, boolean, PlannedNotification | null]>([
+    // name, settings, clients, transition, nativeAvailable, expected
+    ['defaults: focused window elsewhere → in_app there', {}, 'elsewhere', 'permission', false, to('in_app')],
+    ['defaults: background window → system', {}, 'away', 'permission', false, to('system')],
+    ['defaults: the focused window shows the entry → nothing', {}, 'viewing', 'permission', true, null],
+    ['defaults: visible but unfocused viewer → system', {}, 'awayViewing', 'permission', false, to('system')],
+    [
+      'defaults: no client + native → native only',
+      {},
+      'none',
+      'permission',
+      true,
+      to('system', 'permission', true, null),
+    ],
+    ['defaults: no client, no native → nothing', {}, 'none', 'permission', false, null],
+    [
+      'defaults: blocked window + native → native + in_app',
+      {},
+      'awayBlocked',
+      'permission',
+      true,
+      to('in_app', 'permission', true),
+    ],
+    [
+      'DND: background window → in_app instead of system',
+      { doNotDisturb: true },
+      'away',
+      'permission',
+      false,
+      to('in_app'),
+    ],
+    ['DND: no client + native → nothing', { doNotDisturb: true }, 'none', 'permission', true, null],
+    [
+      'DND: blocked window + native → in_app only (no native)',
+      { doNotDisturb: true },
+      'awayBlocked',
+      'permission',
+      true,
+      to('in_app'),
+    ],
+    [
+      'DND: focused window elsewhere → in_app as before',
+      { doNotDisturb: true },
+      'elsewhere',
+      'permission',
+      false,
+      to('in_app'),
+    ],
+    [
+      'DND: the window shows the entry → nothing',
+      { doNotDisturb: true },
+      'viewing',
+      'permission',
+      false,
+      null,
+    ],
+    ['toast off for permission → in_app', quiet('permission'), 'away', 'permission', false, to('in_app')],
+    [
+      'toast off for permission → no native without client',
+      quiet('permission'),
+      'none',
+      'permission',
+      true,
+      null,
+    ],
+    [
+      'toast off for done does not touch permission',
+      quiet('done'),
+      'away',
+      'permission',
+      false,
+      to('system'),
+    ],
+    ['toast off for error → in_app error', quiet('error'), 'away', 'error', true, to('in_app', 'error')],
+    [
+      'focusedElsewhere system: focused window elsewhere → system',
+      { focusedElsewhere: 'system' },
+      'elsewhere',
+      'permission',
+      false,
+      to('system'),
+    ],
+    [
+      'focusedElsewhere system + blocked + native → native + in_app',
+      { focusedElsewhere: 'system' },
+      'elsewhereBlocked',
+      'permission',
+      true,
+      to('in_app', 'permission', true),
+    ],
+    [
+      'focusedElsewhere system + blocked, no native → system',
+      { focusedElsewhere: 'system' },
+      'elsewhereBlocked',
+      'permission',
+      false,
+      to('system'),
+    ],
+    [
+      'focusedElsewhere system + DND → in_app',
+      { focusedElsewhere: 'system', doNotDisturb: true },
+      'elsewhere',
+      'permission',
+      false,
+      to('in_app'),
+    ],
+    [
+      'focusedElsewhere system: the window shows the entry → nothing',
+      { focusedElsewhere: 'system' },
+      'viewing',
+      'permission',
+      false,
+      null,
+    ],
+    [
+      'doneMinSeconds 20: short turn, focused elsewhere → nothing',
+      { doneMinSeconds: 20 },
+      'elsewhere',
+      'doneShort',
+      false,
+      null,
+    ],
+    [
+      'doneMinSeconds 20: long turn, focused elsewhere → in_app done',
+      { doneMinSeconds: 20 },
+      'elsewhere',
+      'doneLong',
+      false,
+      to('in_app', 'done'),
+    ],
+    [
+      'doneMinSeconds 0: short turn, focused elsewhere → in_app done',
+      { doneMinSeconds: 0 },
+      'elsewhere',
+      'doneShort',
+      false,
+      to('in_app', 'done'),
+    ],
+    [
+      'doneMinSeconds 60: 30-s turn, focused elsewhere → nothing',
+      { doneMinSeconds: 60 },
+      'elsewhere',
+      'doneLong',
+      false,
+      null,
+    ],
+    [
+      'doneMinSeconds 60: unfocused → every done (threshold 0)',
+      { doneMinSeconds: 60 },
+      'away',
+      'doneShort',
+      false,
+      to('system', 'done'),
+    ],
+    [
+      'focusedElsewhere system: focused threshold still applies',
+      { focusedElsewhere: 'system', doneMinSeconds: 20 },
+      'elsewhere',
+      'doneShort',
+      false,
+      null,
+    ],
+    [
+      'focusedElsewhere system: long turn → system done',
+      { focusedElsewhere: 'system', doneMinSeconds: 20 },
+      'elsewhere',
+      'doneLong',
+      false,
+      to('system', 'done'),
+    ],
+    [
+      'toast off for done + DND off: long turn → in_app done',
+      quiet('done'),
+      'away',
+      'doneLong',
+      true,
+      to('in_app', 'done'),
+    ],
+  ])('%s', (_name, settings, clientKey, transitionKey, nativeAvailable, expected) => {
+    const transition = transitions[transitionKey];
+    const list = clients[clientKey];
+    if (transition === undefined || list === undefined) throw new Error('bad table row');
+    const [prev, next] = transition;
+    const notifications = sampleNotificationSettings(settings);
+    expect(planNotification(prev, next, NOW, list, ENTRY, nativeAvailable, notifications)).toEqual(expected);
+  });
+
+  it('isWatchedByFocusedClient needs focused + visible + viewing', () => {
+    expect(isWatchedByFocusedClient(clients.viewing ?? [], ENTRY)).toBe(true);
+    expect(isWatchedByFocusedClient(clients.awayViewing ?? [], ENTRY)).toBe(false);
+    expect(isWatchedByFocusedClient(clients.elsewhere ?? [], ENTRY)).toBe(false);
+    expect(isWatchedByFocusedClient([], ENTRY)).toBe(false);
   });
 });
