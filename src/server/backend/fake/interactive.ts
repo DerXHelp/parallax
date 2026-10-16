@@ -2,9 +2,11 @@
  * Interactive dev scenario (WP-13 §3.3; default of `createFakeBackend`, `pnpm dev`, E2E): answers
  * every prompt by keyword (first word, case-insensitive) – `fake:bash`, `fake:edit`,
  * `fake:question`, `fake:plan`, `fake:subagent`, `fake:parallel`, `fake:slow`, `fake:compact`,
- * `fake:ratelimit`, `fake:error`, `fake:crash`, `fake:held`, `/rename X`, `/clear`; anything else
- * gets a thought plus a streamed "Echo: …". Decisions really wait for the engine; interrupt() and
- * prompts with priority 'now' abort the running turn (F.9/F.10, simplified).
+ * `fake:ratelimit` (rejected, resets in 60 s – "continue at" in E2E), `fake:image` (Read of a PNG
+ * with an image result), `fake:error`, `fake:crash`, `fake:held`, `/rename X`, `/clear`; a prompt
+ * with images gets "Fake: received N image(s)" (Phase 2, ADR-103); anything else gets a thought
+ * plus a streamed "Echo: …". Decisions really wait for the engine; interrupt() and prompts with
+ * priority 'now' abort the running turn (F.9/F.10, simplified).
  */
 import type { PermissionResult, PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
@@ -35,7 +37,18 @@ import {
   turnOpen,
   type DslContext,
 } from './dsl';
+import {
+  FAKE_SHOT_HEIGHT,
+  FAKE_SHOT_NAME,
+  FAKE_SHOT_PNG_BASE64,
+  FAKE_SHOT_WIDTH,
+  promptImageCount,
+  receivedImagesText,
+} from './image';
 import type { FakeScenario, FakeScriptContext } from './types';
+
+/** `fake:ratelimit`: the rejected window resets this long after the turn (E2E "continue at"). */
+export const FAKE_RATE_LIMIT_RESET_S = 60;
 
 /** Per turn: what an interrupt epilogue needs. */
 interface Turn {
@@ -473,7 +486,7 @@ async function compact(ctx: FakeScriptContext, c: DslContext, turn: Turn): Promi
 }
 
 async function ratelimit(ctx: FakeScriptContext, c: DslContext, turn: Turn): Promise<void> {
-  const resetsAt = Math.floor(ctx.now().getTime() / 1000) + 3600;
+  const resetsAt = Math.floor(ctx.now().getTime() / 1000) + FAKE_RATE_LIMIT_RESET_S;
   const rateLimit = (info: Record<string, unknown>) =>
     frame(c, msg({ type: 'rate_limit_event', rate_limit_info: info }));
   await ctx.play(
@@ -495,6 +508,59 @@ async function ratelimit(ctx: FakeScriptContext, c: DslContext, turn: Turn): Pro
   );
 }
 
+/** `fake:image`: Read of a PNG; the tool result is an image block (stored as a blob, ADR-103). */
+async function image(ctx: FakeScriptContext, c: DslContext, turn: Turn): Promise<void> {
+  const toolUseId = ctx.ids.toolUseId();
+  const filePath = `${ctx.req.cwd}\\${FAKE_SHOT_NAME}`;
+  const answer = 'The screenshot shows a window with an orange block.';
+  await ctx.play(
+    events(
+      turnOpen(c, turn.prompt),
+      toolUseBlock(
+        c,
+        'Read',
+        { file_path: filePath },
+        { toolUseId, thinking: 'I will look at the screenshot.' },
+      ),
+      toolResultMessage(
+        c,
+        toolUseId,
+        [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: FAKE_SHOT_PNG_BASE64 } }],
+        {
+          // Like the CLI's Read of an image: the bytes are in the content block, not here again.
+          toolUseResult: {
+            type: 'image',
+            file: {
+              type: 'image/png',
+              originalSize: Buffer.from(FAKE_SHOT_PNG_BASE64, 'base64').byteLength,
+              dimensions: { originalWidth: FAKE_SHOT_WIDTH, originalHeight: FAKE_SHOT_HEIGHT },
+            },
+          },
+        },
+      ),
+      streamedText(c, answer),
+      turnClose(c, turn.prompt, { result: { result: answer } }),
+    ),
+  );
+}
+
+/** A prompt with images (ADR-103): the fake CLI counts them. */
+async function receivedImages(
+  ctx: FakeScriptContext,
+  c: DslContext,
+  turn: Turn,
+  count: number,
+): Promise<void> {
+  const answer = receivedImagesText(count);
+  await ctx.play(
+    events(
+      turnOpen(c, turn.prompt),
+      streamedText(c, answer),
+      turnClose(c, turn.prompt, { result: { result: answer } }),
+    ),
+  );
+}
+
 async function handle(
   ctx: FakeScriptContext,
   prompt: OutgoingPrompt,
@@ -503,8 +569,16 @@ async function handle(
 ): Promise<string> {
   const c = contextFor(ctx, sessionId);
   const text = promptText(prompt).trim();
+  const images = promptImageCount(prompt);
+  if (images > 0) {
+    await receivedImages(ctx, c, turn, images);
+    return sessionId;
+  }
   const keyword = (text.split(/\s+/)[0] ?? '').toLowerCase();
   switch (keyword) {
+    case 'fake:image':
+      await image(ctx, c, turn);
+      break;
     case 'fake:bash':
     case 'fake:permission':
       await bash(ctx, c, turn);

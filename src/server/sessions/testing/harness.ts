@@ -7,6 +7,7 @@
  * (prompts, interrupt, close, decisions via `answerFromFixture`). Only tests import this.
  */
 import { randomUUID } from 'node:crypto';
+import type { Logger } from 'pino';
 import { z } from 'zod';
 import type { ClientId, EntryId, PromptPriority } from '@shared/common';
 import type { ErrorPayload } from '@shared/errors';
@@ -31,10 +32,12 @@ import { createFakeClaudeIntegration, type FakeClaudeIntegration } from '../../b
 import { recordedPrompts } from '../../backend/fake/testing';
 import { fixtureDecisionPayloadSchema, type ParsedFixture } from '../../backend/fixture';
 import { permissionUpdateSchema } from '../../backend/permissionRequest';
+import type { MutableProfileStore } from '../../claude/profiles';
 import { nextMacrotask } from '../../lib/async';
 import { assertSafePath } from '../../lib/paths';
 import type { ProcessFilter, ProcessInfo } from '../../lib/process';
 import { CommandError, type ClientPresence, type HostCommandHandler } from '../../sync/ports';
+import type { ConsoleLauncher } from '../../system/ports';
 import { createMemoryCatalogStore, type MemoryCatalogStore } from '../catalogStore';
 import { createMemoryCommandCatalogStore, type MemoryCommandCatalogStore } from '../commandCatalog';
 import { NEVER_SLEEP, type ProcDeps, type SleepPolicy } from '../entryState';
@@ -115,6 +118,16 @@ export interface EngineHarnessOptions {
   onShutdownRequested?: () => void;
   /** Call manager.start() (default true). */
   start?: boolean;
+  /** Phase 2 (WP-34): the console of `session.openExternal` (default: none). */
+  consoleLauncher?: ConsoleLauncher;
+  /** Phase 2 (WP-34): `SystemIntegration.toastLaunchUri` (click target of native toasts). */
+  toastLaunchUri?: (entryId: EntryId) => string | null;
+  /** Phase 2 (WP-34): env (secrets) of every console spec of the fake integration. */
+  consoleEnv?: Readonly<Record<string, string>>;
+  /** Phase 2 (WP-34): profile store of the fake integration (wins over `profiles`). */
+  profileStore?: MutableProfileStore;
+  /** Engine logger (default: the root logger). */
+  logger?: Logger;
 }
 
 export type CommandInput = z.input<typeof commandSchema>;
@@ -222,7 +235,9 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
   });
   const claude = createFakeClaudeIntegration({
     ...(options.profiles === undefined ? {} : { profiles: options.profiles }),
+    ...(options.profileStore === undefined ? {} : { store: options.profileStore }),
     ...(options.allowsBypass === undefined ? {} : { allowsBypass: options.allowsBypass }),
+    ...(options.consoleEnv === undefined ? {} : { consoleEnv: options.consoleEnv }),
     now,
   });
   const proc = createHarnessProc(options.proc);
@@ -252,6 +267,11 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
       ? {}
       : { onShutdownRequested: options.onShutdownRequested }),
     ...(options.toasts === undefined ? {} : { toasts: options.toasts }),
+    ...(options.consoleLauncher === undefined ? {} : { consoleLauncher: options.consoleLauncher }),
+    ...(options.toastLaunchUri === undefined
+      ? {}
+      : { systemIntegration: { toastLaunchUri: options.toastLaunchUri } }),
+    ...(options.logger === undefined ? {} : { logger: options.logger }),
     now,
     timers,
     onInternalError: (error, context) => {

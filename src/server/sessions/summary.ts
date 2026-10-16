@@ -21,8 +21,15 @@ import type { BackendSessionInfo } from '../backend/types';
 /** Prompt titles are cut at a word boundary to this length (+ "…"). */
 export const PROMPT_TITLE_CHARS = 80;
 
-/** ADR-113: `gitBranch` comes from the entry (persisted, shown for dormant entries too). */
-export function summaryOf(entry: Entry, facts: StatusFacts): SessionSummary {
+/**
+ * ADR-113: `gitBranch` comes from the entry (persisted, shown for dormant entries too). ADR-104:
+ * `external.running` is false once the engine saw the console end and brings the session back.
+ */
+export function summaryOf(
+  entry: Entry,
+  facts: StatusFacts,
+  o: { externalRunning?: boolean } = {},
+): SessionSummary {
   return {
     entryId: entry.id,
     title: entry.title,
@@ -46,11 +53,10 @@ export function summaryOf(entry: Entry, facts: StatusFacts): SessionSummary {
     gitBranch: entry.gitBranch,
     lastError: entry.lastError,
     lastResultExcerpt: entry.lastResultExcerpt,
-    // Phase 2 contract (WP-30): `running` is refined by WP-34 (console state).
     external:
       entry.external === null
         ? null
-        : { since: entry.external.since, pid: entry.external.pid, running: true },
+        : { since: entry.external.since, pid: entry.external.pid, running: o.externalRunning ?? true },
   };
 }
 

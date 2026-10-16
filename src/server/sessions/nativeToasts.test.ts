@@ -1,8 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Language } from '@shared/common';
-import { sampleId } from '@shared/samples';
+import { DEFAULT_NOTIFICATION_EVENTS } from '@shared/model';
+import { sampleId, sampleSettings } from '@shared/samples';
+import type { NotificationKind } from '@shared/status';
 import type { ToastRequest, ToastResult } from '../lib/toast';
-import { DISABLED_NATIVE_TOASTS, TOAST_TEXTS, createNativeToasts, toastText } from './nativeToasts';
+import {
+  DISABLED_NATIVE_TOASTS,
+  TOAST_TEXTS,
+  createNativeToasts,
+  toastShowOptions,
+  toastText,
+} from './nativeToasts';
 
 const ENTRY = sampleId('en', 1);
 
@@ -153,6 +161,74 @@ describe('native toasts (WP22-03/-15, A.9)', () => {
     gate.resolve({ kind: 'shown' });
     await toasts.idle();
     expect(shown).toEqual(['T0 – done', 'T1 – done']);
+  });
+
+  it('ADR-109 (WP-34): show with options passes launchUri and silent to the toast request', async () => {
+    const { toasts, shown } = setup();
+    toasts.show(ENTRY, 'done', 'A', { launchUri: `parallax://session/${ENTRY}`, silent: true });
+    toasts.show(ENTRY, 'error', 'B', { launchUri: null, silent: false });
+    await toasts.idle();
+    expect(shown).toEqual([
+      {
+        title: 'A – done',
+        body: TOAST_TEXTS.en.body,
+        tag: ENTRY,
+        launchUri: `parallax://session/${ENTRY}`,
+        silent: true,
+      },
+      { title: 'B – error', body: TOAST_TEXTS.en.body, tag: ENTRY, launchUri: null, silent: false },
+    ]);
+  });
+
+  it.each<[string, NotificationKind, boolean, string | null, { launchUri: string | null; silent: boolean }]>([
+    [
+      'handler registered, sound on',
+      'permission',
+      true,
+      'parallax://session/x',
+      { launchUri: 'parallax://session/x', silent: false },
+    ],
+    ['no handler (openOnClick off)', 'done', true, null, { launchUri: null, silent: false }],
+    [
+      'sound off for the event',
+      'question',
+      false,
+      'parallax://session/x',
+      { launchUri: 'parallax://session/x', silent: true },
+    ],
+  ])('toastShowOptions: %s', (_name, kind, sound, uri, expected) => {
+    const settings = sampleSettings();
+    const events = {
+      ...settings.notifications.events,
+      [kind]: { ...settings.notifications.events[kind], sound },
+    };
+    const asked: string[] = [];
+    const system = {
+      toastLaunchUri: (entryId: string) => {
+        asked.push(entryId);
+        return uri;
+      },
+    };
+    expect(
+      toastShowOptions(
+        ENTRY,
+        kind,
+        { ...settings, notifications: { ...settings.notifications, events } },
+        system,
+      ),
+    ).toEqual(expected);
+    expect(asked).toEqual([ENTRY]);
+  });
+
+  it('toastShowOptions without a system integration: no click target; rate_limit is silent by default', () => {
+    expect(toastShowOptions(ENTRY, 'rate_limit', sampleSettings(), undefined)).toEqual({
+      launchUri: null,
+      silent: !DEFAULT_NOTIFICATION_EVENTS.rate_limit.sound,
+    });
+    expect(toastShowOptions(ENTRY, 'done', sampleSettings(), null)).toEqual({
+      launchUri: null,
+      silent: false,
+    });
   });
 
   it('disabled: never available, does nothing', async () => {

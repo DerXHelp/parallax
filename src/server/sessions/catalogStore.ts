@@ -54,7 +54,16 @@ export interface CatalogStore {
   limits(): Record<ProfileId, RateLimitInfo>;
   /** Debounced write. */
   setLimit(profileId: ProfileId, info: RateLimitInfo): void;
+  /** ADR-102 (WP-34): the profile changed or was deleted – its catalog is dropped (debounced write). */
+  removeModels(profileId: ProfileId): void;
+  /** ADR-102 (WP-34): the profile was deleted – its limits are dropped (debounced write). */
+  removeLimit(profileId: ProfileId): void;
   flush(): Promise<void>;
+}
+
+/** The record without `key` (no dynamic delete). */
+function without<T>(record: Record<string, T>, key: string): Record<string, T> {
+  return Object.fromEntries(Object.entries(record).filter(([k]) => k !== key));
 }
 
 export interface OpenCatalogStoreOptions {
@@ -102,6 +111,14 @@ export async function openCatalogStore(
     setLimit: (profileId, info) => {
       limits.update((file) => ({ ...file, profiles: { ...file.profiles, [profileId]: info } }));
     },
+    removeModels: (profileId) => {
+      if (!(profileId in models.get().profiles)) return;
+      models.update((file) => ({ ...file, profiles: without(file.profiles, profileId) }));
+    },
+    removeLimit: (profileId) => {
+      if (!(profileId in limits.get().profiles)) return;
+      limits.update((file) => ({ ...file, profiles: without(file.profiles, profileId) }));
+    },
     flush: async () => {
       await Promise.all([models.flush(), limits.flush()]);
     },
@@ -130,6 +147,12 @@ export function createMemoryCatalogStore(
     limits: () => structuredClone(limits),
     setLimit: (profileId, info) => {
       limits = { ...limits, [profileId]: rateLimitInfoSchema.parse(info) };
+    },
+    removeModels: (profileId) => {
+      models = without(models, profileId);
+    },
+    removeLimit: (profileId) => {
+      limits = without(limits, profileId);
     },
     flush: () => {
       flushes += 1;

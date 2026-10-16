@@ -13,6 +13,7 @@ import { currentConversation } from '@shared/model';
 import {
   sampleConversation,
   sampleEntry,
+  sampleExternalHandoff,
   sampleId,
   sampleItems,
   sampleProfile,
@@ -100,7 +101,12 @@ describe('general rows', () => {
   });
 
   it('runState external → SESSION_EXTERNAL (Phase 2 handoff); loadEarlier, setPinned, local rename work', async () => {
-    const entry = sampleEntry({ id: sampleId('en', 3), lastRunState: 'external' });
+    // Without a console launcher the state of the console is unknown: it stays `external` (ADR-051).
+    const entry = sampleEntry({
+      id: sampleId('en', 3),
+      lastRunState: 'external',
+      external: sampleExternalHandoff(),
+    });
     const h = await setup({ seed: { entries: [entry] } });
     const allowed = new Set(['transcript.loadEarlier', 'session.setPinned', 'session.rename']);
     for (const cmd of entryCommands(entry.id)) {
@@ -121,6 +127,14 @@ describe('general rows', () => {
     // The console owns the Claude session: no renameSession (no launch spec, no SDK call).
     expect(h.claude.launches).toEqual([]);
     expect(h.backend.starts).toEqual([]);
+    // Phase 2 (WP-34): reclaim refuses an unknown console state; the copy command works.
+    expect(await h.cmdError({ name: 'session.reclaim', entryId: entry.id })).toEqual({
+      code: 'EXTERNAL_STILL_RUNNING',
+      params: { pid: sampleExternalHandoff().pid },
+    });
+    const copy = await h.cmd({ name: 'session.consoleCommand', entryId: entry.id });
+    expect(copy.sessionId).toBe(currentConversation(entry).sessionId);
+    expect(h.facts(entry.id).runState).toBe('external');
   });
 
   it('an unexpected error → INTERNAL_ERROR (logged)', async () => {
@@ -179,7 +193,11 @@ describe('session.create', () => {
   it.each<[string, Partial<Extract<CommandInput, { name: 'session.create' }>>, ErrorCode]>([
     ['unknown profile', { profileId: sampleId('pf', 4) }, 'PROFILE_NOT_FOUND'],
     ['bypass without allowsBypass', { permissionMode: 'bypassPermissions' }, 'MODE_NOT_ALLOWED'],
-    ['attachments', { prompt: { text: 'x', attachments: [{ blobId: 'a'.repeat(64) }] } }, 'NOT_IMPLEMENTED'],
+    [
+      'unknown attachment',
+      { prompt: { text: 'x', attachments: [{ blobId: 'a'.repeat(64) }] } },
+      'BLOB_NOT_FOUND',
+    ],
     ['UNC cwd', { cwd: '\\\\server\\share\\repo' }, 'PATH_REJECTED'],
   ])('%s → %s', async (_name, extra, code) => {
     const h = await setup();
@@ -330,18 +348,21 @@ describe('commands of a dormant entry', () => {
     expect(h.summary(entryId)).toMatchObject({ fastMode: true, pinned: true, archived: false });
     expect(h.stores.registry.get(entryId)).toMatchObject({ fastMode: true, pinned: true });
     expect(h.backend.starts).toEqual([]);
-    const phase2: CommandInput[] = [
+    // WP-34 without a Claude session yet: console commands need one; reclaim/cancel are no-ops.
+    const notStarted: CommandInput[] = [
       { name: 'session.openExternal', entryId },
-      { name: 'session.reclaim', entryId },
       { name: 'session.consoleCommand', entryId },
-      { name: 'session.continueAfterLimit', entryId, enabled: true },
     ];
-    // WP-34.
-    for (const cmd of phase2)
-      expect([cmd.name, (await h.cmdError(cmd)).code]).toEqual([cmd.name, 'NOT_IMPLEMENTED']);
+    for (const cmd of notStarted)
+      expect([cmd.name, (await h.cmdError(cmd)).code]).toEqual([cmd.name, 'SESSION_NOT_STARTED']);
+    expect(await h.cmd({ name: 'session.reclaim', entryId })).toEqual({ importedItems: 0 });
+    expect(await h.cmd({ name: 'session.continueAfterLimit', entryId, enabled: false })).toEqual({
+      continueAt: null,
+    });
+    expect(h.backend.starts).toEqual([]);
   });
 
-  it('sendPrompt with attachments → NOT_IMPLEMENTED; decision.respond with an unknown id → DECISION_NOT_FOUND', async () => {
+  it('sendPrompt with an unknown attachment → BLOB_NOT_FOUND; decision.respond with an unknown id → DECISION_NOT_FOUND', async () => {
     const h = await setup();
     const entryId = await h.create(null);
     const attachments = await h.cmdError({
@@ -349,7 +370,8 @@ describe('commands of a dormant entry', () => {
       entryId,
       prompt: { text: 'x', attachments: [{ blobId: 'b'.repeat(64) }] },
     });
-    expect(attachments.code).toBe('NOT_IMPLEMENTED');
+    expect(attachments).toEqual({ code: 'BLOB_NOT_FOUND', params: { blobId: 'b'.repeat(64) } });
+    expect(h.backend.starts).toEqual([]);
     const unknown = await h.cmdError({
       name: 'decision.respond',
       entryId,

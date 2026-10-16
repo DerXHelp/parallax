@@ -5,7 +5,9 @@
  * only the read-mode commands, else SESSION_ARCHIVED (ADR-106); host commands (`profile.*`,
  * `fs.listDirectory`) go to the `HostCommandHandler` with that name (ADR-101), none →
  * NOT_IMPLEMENTED; unexpected errors → logged, INTERNAL_ERROR. Results match
- * `commandResultSchemas` (the hub checks them again).
+ * `commandResultSchemas` (the hub checks them again). WP-34: image attachments (attachments.ts,
+ * ADR-103), external console (external.ts, ADR-104), continue after the rate limit
+ * (continuePlan.ts, ADR-112).
  */
 import { LIMITS, type ClientId, type ProfileId } from '@shared/common';
 import { makeError } from '@shared/errors';
@@ -19,9 +21,11 @@ import {
   type HostCommandName,
   type SessionOp,
 } from '@shared/protocol';
-import { openDecisionCount } from '@shared/status';
 import { CommandError, type CommandContext, type HostCommandHandler } from '../sync/ports';
-import { commandError, gaugeOf, type EngineCore, type EntryState } from './entryState';
+import { resolveAttachments } from './attachments';
+import { cancelContinue, planContinue } from './continuePlan';
+import { assertWithoutWork, commandError, gaugeOf, type EngineCore, type EntryState } from './entryState';
+import { consoleCommand, openExternal, returnFromExternal } from './external';
 import { catalogOrFallback, toModelCatalog } from './models';
 import { closeRuntime, deliverPrompt, startRuntime } from './runtime';
 import { capTitle, implementPlanPrompt, newConversation, titleFromPrompt } from './summary';
@@ -115,24 +119,6 @@ function assertModeAllowed(core: EngineCore, profileId: ProfileId, mode: string 
   }
 }
 
-/**
- * WP-30 §4.12 "ohne Arbeit" (archive, switch, console): no start/turn running, no open decision,
- * nothing queued, no background task. Call inside the lifecycle lock (no start in between).
- */
-function assertWithoutWork(s: EntryState): void {
-  const f = s.facts;
-  if (
-    f.runState === 'starting' ||
-    f.runState === 'working' ||
-    openDecisionCount(f) > 0 ||
-    s.queue.count() > 0 ||
-    f.queuedPrompts > 0 ||
-    f.backgroundTasks > 0
-  ) {
-    throw commandError('SESSION_BUSY', { entryId: s.id });
-  }
-}
-
 async function controlCall<T>(
   method: string,
   call: () => Promise<T>,
@@ -161,7 +147,8 @@ async function createSession(
   await core.checkCwd(cmd.cwd);
   const permissionMode = cmd.permissionMode ?? profile.defaults.permissionMode;
   assertModeAllowed(core, profileId, permissionMode);
-  if (cmd.prompt !== undefined && cmd.prompt.attachments.length > 0) throw notImplemented('attachments');
+  // ADR-103: checked before the entry exists (a bad attachment creates nothing).
+  const attachments = await resolveAttachments(core.stores.blobs, cmd.prompt?.attachments ?? []);
   core.assertRunning();
 
   const now = core.now().toISOString();
@@ -201,7 +188,7 @@ async function createSession(
   try {
     const messageUuid = await s.lifecycle.run(async () => {
       await startRuntime(s, core, { byClientId: clientId });
-      return deliverPrompt(s, core, prompt.text, 'next');
+      return deliverPrompt(s, core, prompt.text, 'next', attachments);
     });
     return { entryId: entry.id, messageUuid };
   } catch (error) {
@@ -315,12 +302,19 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
       return refreshModels(core, s);
     case 'session.switchConversation':
       return switchConversation(core, s, cmd.conversationId, clientId);
-    // Phase 2 (WP-30 §4.12): implemented by WP-34.
+    // Phase 2 (WP-34): external console (ADR-104), continue after the rate limit (ADR-112).
     case 'session.openExternal':
+      return openExternal(core, s, clientId);
     case 'session.reclaim':
+      return returnFromExternal(core, s, 'command');
     case 'session.consoleCommand':
+      return consoleCommand(core, s);
     case 'session.continueAfterLimit':
-      throw notImplemented(cmd.name);
+      if (!cmd.enabled) {
+        cancelContinue(s);
+        return { continueAt: null } satisfies CommandResult<'session.continueAfterLimit'>;
+      }
+      return { continueAt: planContinue(core, s) } satisfies CommandResult<'session.continueAfterLimit'>;
   }
 }
 
@@ -336,19 +330,29 @@ async function sendPrompt(
   cmd: CommandOf<'session.sendPrompt'>,
   clientId: ClientId,
 ): Promise<CommandResult<'session.sendPrompt'>> {
-  if (cmd.prompt.attachments.length > 0) throw notImplemented('attachments');
-  s.cancelRetry();
   const text = cmd.prompt.text;
-  if (s.entry.titleSource === 'none') {
-    const title = titleFromPrompt(text);
-    if (title !== null) {
-      s.promptTitle = title;
-      s.patch((e) => ({ ...e, title, titleSource: 'prompt' }));
+  const list = cmd.prompt.attachments;
+  /** An own prompt: no auto-retry, no scheduled "continue" (ADR-112), the prompt title. */
+  const accept = (): void => {
+    s.cancelRetry();
+    cancelContinue(s);
+    if (s.entry.titleSource === 'none') {
+      const title = titleFromPrompt(text);
+      if (title !== null) {
+        s.promptTitle = title;
+        s.patch((e) => ({ ...e, title, titleSource: 'prompt' }));
+      }
     }
-  }
+  };
+  // Text only: at once (the title shows while a start may still wait for the lock).
+  if (list.length === 0) accept();
   const messageUuid = await s.lifecycle.run(async () => {
+    // ADR-103: the attachments are checked before anything starts, is sent or changes – inside the
+    // lock, so a Stop right after this prompt still waits for it (R2-15).
+    const attachments = await resolveAttachments(core.stores.blobs, list);
+    if (list.length > 0) accept();
     if (s.runtime === null) await startRuntime(s, core, { byClientId: clientId });
-    return deliverPrompt(s, core, text, cmd.priority);
+    return deliverPrompt(s, core, text, cmd.priority, attachments);
   });
   return { messageUuid };
 }
@@ -385,8 +389,9 @@ async function setArchived(
     assertWithoutWork(s);
     // The flag first: from here on every other command answers SESSION_ARCHIVED (also one that
     // waits for this lock – startRuntime refuses archived entries).
-    s.patch((e) => ({ ...e, archived: true, continueAt: null }));
-    if (s.facts.wakeupAt !== null) s.reduce({ type: 'wakeup', at: null });
+    s.patch((e) => ({ ...e, archived: true }));
+    // ADR-112: a scheduled "continue" is dropped (timer, continueAt, wakeupAt).
+    cancelContinue(s);
     await closeRuntime(s, core, 'archive');
   });
   s.cancelRetry();

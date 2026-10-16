@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from '@shared/common';
 import { sessionSummarySchema, type TitleSource } from '@shared/model';
-import { SAMPLE_TIME, sampleEntry, sampleId, sampleStatusFacts } from '@shared/samples';
+import {
+  SAMPLE_TIME,
+  sampleEntry,
+  sampleExternalHandoff,
+  sampleId,
+  sampleStatusFacts,
+} from '@shared/samples';
 import type { BackendSessionInfo } from '../backend/types';
 import {
   aiTitleFrom,
@@ -28,6 +34,17 @@ describe('summaryOf', () => {
     );
     expect(sessionSummarySchema.parse(plain)).toEqual(plain);
     expect(plain.gitBranch).toBeNull();
+  });
+
+  it('ADR-104 (WP-34): external {since, pid, running} from the handoff; running false while returning', () => {
+    const external = sampleExternalHandoff();
+    const entry = sampleEntry({ external, lastRunState: 'external' });
+    const facts = sampleStatusFacts({ runState: 'external' });
+    const running = summaryOf(entry, facts);
+    expect(running.external).toEqual({ since: external.since, pid: external.pid, running: true });
+    expect(sessionSummarySchema.parse(running)).toEqual(running);
+    expect(summaryOf(entry, facts, { externalRunning: false }).external?.running).toBe(false);
+    expect(summaryOf(sampleEntry(), sampleStatusFacts(), { externalRunning: false }).external).toBeNull();
   });
 });
 
