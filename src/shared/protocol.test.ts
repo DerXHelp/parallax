@@ -173,6 +173,15 @@ describe('client messages', () => {
     expect([...new Set(clientMessages.map((m) => m.type))].sort()).toEqual([...types].sort());
   });
 
+  it('presence: systemNotifications is optional and additive (WP22-03)', () => {
+    const older = { type: 'presence', presence: samplePresence() };
+    expect(parseClientMessage(JSON.stringify(older))).toEqual({ ok: true, message: older });
+    const newer = { type: 'presence', presence: samplePresence({ systemNotifications: false }) };
+    expect(parseClientMessage(JSON.stringify(newer))).toEqual({ ok: true, message: newer });
+    const invalid = { type: 'presence', presence: { ...samplePresence(), systemNotifications: 'no' } };
+    expect(parseClientMessage(JSON.stringify(invalid)).ok).toBe(false);
+  });
+
   it('fills command defaults (priority next, attachments [])', () => {
     const parsed = parseClientMessage(
       JSON.stringify({

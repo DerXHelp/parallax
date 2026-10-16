@@ -201,16 +201,33 @@ describe('session.create', () => {
 });
 
 describe('commands of a dormant entry', () => {
-  it('interrupt → {stillQueued: []} without a start; getContext / refreshModels → SESSION_NOT_RUNNING', async () => {
+  it('interrupt → {stillQueued: []} without a start; getContext → SESSION_NOT_RUNNING', async () => {
     const h = await setup();
     const entryId = await h.create(null);
     expect(await h.cmd({ name: 'session.interrupt', entryId })).toEqual({ stillQueued: [] });
     expect((await h.cmdError({ name: 'session.getContext', entryId, detail: 'summary' })).code).toBe(
       'SESSION_NOT_RUNNING',
     );
-    expect((await h.cmdError({ name: 'session.refreshModels', entryId })).code).toBe('SESSION_NOT_RUNNING');
     expect(await h.cmd({ name: 'session.close', entryId })).toEqual({});
     expect(h.backend.starts).toHaveLength(0);
+  });
+
+  it('WP22-01: before the first start the picker offers the CLI aliases; the choice is the first model', async () => {
+    const h = await setup();
+    const entryId = await h.create(null);
+    const { models } = await h.cmd({ name: 'session.refreshModels', entryId });
+    expect(models.map((m) => m.value)).toEqual(['default', 'opus', 'sonnet', 'haiku']);
+    expect((await h.manager.loadView(entryId))?.detail.models?.map((m) => m.value)).toEqual([
+      'default',
+      'opus',
+      'sonnet',
+      'haiku',
+    ]);
+    expect(h.backend.starts).toHaveLength(0);
+    await h.cmd({ name: 'session.setModel', entryId, model: 'haiku' });
+    expect(h.backend.starts).toHaveLength(0);
+    await h.cmd({ name: 'session.sendPrompt', entryId, prompt: { text: 'hello' } });
+    expect(h.backend.starts[0]?.model).toBe('haiku');
   });
 
   it('setModel / setPermissionMode / setEffort are stored and used by the next start', async () => {

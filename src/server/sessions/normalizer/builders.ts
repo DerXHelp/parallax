@@ -230,7 +230,13 @@ export function streamingBlockItem(base: ItemBase, block: unknown, ctx: BlockCon
     }
     case 'thinking': {
       const thinking = thinkingBlockSchema.safeParse(block);
-      return thinkingItem(base, ctx, { text: thinking.success ? (thinking.data.thinking ?? '') : '', truncated: null }, false, true);
+      return thinkingItem(
+        base,
+        ctx,
+        { text: thinking.success ? (thinking.data.thinking ?? '') : '', truncated: null },
+        false,
+        true,
+      );
     }
     case 'redacted_thinking':
       return thinkingItem(base, ctx, { text: '', truncated: null }, true, true);
@@ -258,7 +264,12 @@ export function streamingBlockItem(base: ItemBase, block: unknown, ctx: BlockCon
   }
 }
 
-function assistantText(base: ItemBase, ctx: BlockContext, text: string, streaming: boolean): AssistantTextItem {
+function assistantText(
+  base: ItemBase,
+  ctx: BlockContext,
+  text: string,
+  streaming: boolean,
+): AssistantTextItem {
   return {
     ...base,
     kind: 'assistant_text',
@@ -317,7 +328,10 @@ export function finalBlockItem(
     case 'thinking': {
       const thinking = thinkingBlockSchema.safeParse(block);
       if (thinking.success) {
-        return { kind: 'item', item: thinkingItem(base, ctx, capText(thinking.data.thinking ?? '', sink), false, false) };
+        return {
+          kind: 'item',
+          item: thinkingItem(base, ctx, capText(thinking.data.thinking ?? '', sink), false, false),
+        };
       }
       break;
     }
@@ -354,7 +368,12 @@ export function finalBlockItem(
   return { kind: 'unknown', blockType, preview: JSON.stringify(block ?? null).slice(0, 2000) };
 }
 
-export function unknownItem(base: ItemBase, sdkType: string, sdkSubtype: string | null, raw: unknown): SystemItem {
+export function unknownItem(
+  base: ItemBase,
+  sdkType: string,
+  sdkSubtype: string | null,
+  raw: unknown,
+): SystemItem {
   let preview: string;
   try {
     preview = JSON.stringify(raw ?? null).slice(0, 2000);
@@ -375,7 +394,10 @@ export function assistantErrorPayload(error: string): ErrorPayload {
 // ---- Tool results ----
 
 /** tool_result content → text parts (capped) and images (blobs); other blocks as JSON text. */
-export function toolResultContent(content: SdkToolResultBlock['content'], sink: BlobSink): ToolResultContent[] {
+export function toolResultContent(
+  content: SdkToolResultBlock['content'],
+  sink: BlobSink,
+): ToolResultContent[] {
   if (content === undefined) return [];
   if (typeof content === 'string') return [{ type: 'text', text: capText(content, sink) }];
   const parts: ToolResultContent[] = [];
@@ -388,7 +410,10 @@ export function toolResultContent(content: SdkToolResultBlock['content'], sink: 
     const image = imageBlockSchema.safeParse(block);
     if (image.success && image.data.source.data !== undefined) {
       const mediaType = (image.data.source.media_type ?? 'application/octet-stream').slice(0, 100);
-      parts.push({ type: 'image', image: sink.storeBlob(Buffer.from(image.data.source.data, 'base64'), mediaType) });
+      parts.push({
+        type: 'image',
+        image: sink.storeBlob(Buffer.from(image.data.source.data, 'base64'), mediaType),
+      });
       continue;
     }
     parts.push({ type: 'text', text: capText(JSON.stringify(block ?? null), sink) });
@@ -472,14 +497,22 @@ export function statusAfterResult(
   if (result.isError) {
     if (outcome !== undefined && DENIED_OUTCOMES.has(outcome)) return 'denied';
     if (meta?.permission_decision?.decision === 'reject' || deniedByCli) return 'denied';
-    if (meta?.non_execution_kind === 'user-rejected' || resultText(result.content).startsWith(USER_REJECTED_PREFIX)) {
+    if (
+      meta?.non_execution_kind === 'user-rejected' ||
+      resultText(result.content).startsWith(USER_REJECTED_PREFIX)
+    ) {
       return 'interrupted';
     }
     return 'error';
   }
   const structured = toJson(structuredRaw ?? null);
-  if (isRecord(structured) && (structured.isAsync === true || typeof structured.backgroundTaskId === 'string')) {
-    return call.task !== null && isTerminalTaskStatus(call.task.status) ? taskEndStatus(call.task) : 'background';
+  if (
+    isRecord(structured) &&
+    (structured.isAsync === true || typeof structured.backgroundTaskId === 'string')
+  ) {
+    return call.task !== null && isTerminalTaskStatus(call.task.status)
+      ? taskEndStatus(call.task)
+      : 'background';
   }
   if (call.task?.isBackgrounded === true && !isTerminalTaskStatus(call.task.status)) return 'background';
   return 'done';
@@ -492,22 +525,28 @@ export function taskEndStatus(task: TaskInfo): ToolCallStatus {
 /** Tool status after a task change: background calls end with their task; a running task marks pending → running. */
 export function statusWithTask(call: ToolCallItem, task: TaskInfo): ToolCallStatus {
   if (call.result === null) return call.status === 'pending' ? 'running' : call.status;
-  if (isTerminalTaskStatus(task.status)) return call.status === 'background' ? taskEndStatus(task) : call.status;
+  if (isTerminalTaskStatus(task.status))
+    return call.status === 'background' ? taskEndStatus(task) : call.status;
   return task.isBackgrounded && call.status === 'done' && !call.result.isError ? 'background' : call.status;
 }
 
 /** SDK task usage → TaskInfo.usage (all three numbers or nothing). */
 export function taskUsage(
-  usage: { total_tokens?: number | undefined; tool_uses?: number | undefined; duration_ms?: number | undefined } | undefined,
+  usage:
+    | { total_tokens?: number | undefined; tool_uses?: number | undefined; duration_ms?: number | undefined }
+    | undefined,
 ): TaskInfo['usage'] {
-  if (usage?.total_tokens === undefined || usage.tool_uses === undefined || usage.duration_ms === undefined) return null;
+  if (usage?.total_tokens === undefined || usage.tool_uses === undefined || usage.duration_ms === undefined)
+    return null;
   return { totalTokens: usage.total_tokens, toolUses: usage.tool_uses, durationMs: usage.duration_ms };
 }
 
 /** Status after a decision ref (attachDecision): open → awaiting_decision, allowed → running … */
 export function statusAfterDecision(call: ToolCallItem, ref: ToolDecisionRef): ToolCallStatus {
   if (call.result !== null) {
-    return ref.outcome !== null && DENIED_OUTCOMES.has(ref.outcome.type) && call.result.isError ? 'denied' : call.status;
+    return ref.outcome !== null && DENIED_OUTCOMES.has(ref.outcome.type) && call.result.isError
+      ? 'denied'
+      : call.status;
   }
   const outcome = ref.outcome;
   if (outcome === null) return 'awaiting_decision';
@@ -552,11 +591,24 @@ export function taskFromAgentInput(call: ToolCallItem, taskId: string): TaskInfo
   };
 }
 
-/** Caps `turn_result.errors` (diagnostic strings, may carry stderr). */
+/**
+ * Internal diagnostics of the CLI in `result.errors`, e.g. `[ede_diagnostic] result_type=user
+ * last_content_type=n/a stop_reason=tool_use` after every Stop (WP22-08) – no error for the user.
+ */
+const CLI_DIAGNOSTIC = /^\s*\[[a-z0-9_]*diagnostic\]/i;
+
+export function isCliDiagnostic(error: string): boolean {
+  return CLI_DIAGNOSTIC.test(error);
+}
+
+/**
+ * Caps `turn_result.errors` (may carry stderr). CLI diagnostics are left out (WP22-08): they are
+ * known, not unknown (no `unknownCounts` key), and stay in the CLI's own transcript.
+ */
 export function resultErrors(errors: unknown[] | undefined): string[] {
   if (errors === undefined) return [];
   return errors
-    .filter((e): e is string => typeof e === 'string')
+    .filter((e): e is string => typeof e === 'string' && !isCliDiagnostic(e))
     .slice(0, 20)
     .map((e) => e.slice(0, 4000));
 }
@@ -568,7 +620,8 @@ export function toRateLimitInfo(
     resetsAt?: number | undefined;
     rateLimitType?: string | undefined;
     utilization?: number | undefined;
-    unifiedWindows?: Record<string, { utilization?: number | undefined; resetsAt?: number | undefined }> | undefined;
+    unifiedWindows?:
+      Record<string, { utilization?: number | undefined; resetsAt?: number | undefined }> | undefined;
   },
   at: Date,
 ): RateLimitInfo | null {

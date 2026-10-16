@@ -112,6 +112,8 @@ export interface WindowPresence {
   visible: boolean;
   /** Composer used within the last 5 s (`reportTyping`). */
   typing: boolean;
+  /** WP22-03: Web Notifications permitted in this window (absent = not reported). */
+  systemNotifications?: boolean;
 }
 
 export interface ClientState {

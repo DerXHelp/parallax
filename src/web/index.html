@@ -3,11 +3,14 @@
   Dark is the default theme (class="dark"); state/theme.ts applies Light/System before the first
   render. No inline scripts or styles: the page CSP allows script-src 'self' only (Review C.10).
   #playground (dev server only) opens the playground, see src/web/playground/README.md.
+  translate="no" + "notranslate" (WP22-09): Edge offered to translate the app on every start; the
+  UI has its own languages (lang follows the language setting).
 -->
-<html lang="en" class="dark">
+<html lang="en" class="dark" translate="no">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="google" content="notranslate" />
     <meta name="color-scheme" content="dark light" />
     <!-- Local icon (public/favicon.svg, Lucide "layers"): no /favicon.ico request (V1-06). -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />

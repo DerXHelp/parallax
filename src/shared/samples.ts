@@ -158,6 +158,7 @@ export function sampleHostState(p: Partial<HostState> = {}): HostState {
     setupRequired: false,
     warnings: [],
     accountLimits: {},
+    nativeNotifications: false,
     ...p,
   };
 }

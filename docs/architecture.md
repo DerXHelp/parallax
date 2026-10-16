@@ -164,8 +164,9 @@ queryProcesses({ pids?, parentPids? }, { timeoutMs?, run?, platform? }?): Promis
   // EINE Abfrage für viele PIDs (≤ PROCESS_QUERY_MAX_CLAUSES = 100 Klauseln je Aufruf), Timeout
   // PROCESS_QUERY_TIMEOUT_MS = 60 s, -ErrorAction Stop + exit 3 statt leerer Liste; leerer Filter → ok []
 processInfo(pid, options?): Promise<{ kind: 'found'; info } | { kind: 'missing' } | { kind: 'unknown'; reason; detail }>
-childProcesses(pid, options?): Promise<ProcessQueryResult>  // direkte Kinder; Nutzer: Shutdown-Sweep (launcher/shutdown.ts),
-                                                           // nicht die Waisen-Bereinigung (Kinder-Pfad aus bis nach WP-22, ADR-052)
+childProcesses(pid, options?): Promise<ProcessQueryResult>  // direkte Kinder; Nutzer: Shutdown-Sweep (launcher/shutdown.ts)
+listProcesses(options?): Promise<ProcessQueryResult>        // ALLE Prozesse, eine CIM-Abfrage (Herzschlag-Schnappschuss, ADR-081)
+descendantsOf(processes, root): ProcessInfo[]               // rein; Nachkommen über alle Ebenen, Kind älter als Elter = PID-Wiederverwendung
 processStartTime(pid, options?): Promise<Date | null>       // null = missing ODER unknown (unterscheiden: processInfo)
 processQueryFilters(filter), parseProcessQueryOutput(stdout) // reine Teile (WQL-Filter, JSON-Ausgabe)
 
@@ -182,6 +183,12 @@ regQuery(run?)(key, view) / regKeyQuery(run?)(key, view); parseRegDefaultValue, 
 readPersistentEnvironment({ query?, env }): Promise<Map<NAME, value>>  // HKCU\Environment + HKLM\…\Session Manager\Environment (ADR-021)
 
 // src/server/lib/edge.ts (WP-11): findEdge({ regQuery, fs, env }): Promise<string | null>  // Preflight, Launcher (WP-21)
+
+// src/server/lib/toast.ts (WP-22-Fixes, ADR-082) – nativer Windows-Toast, wirft nie
+showToast({ title, body, tag }, options?): Promise<{kind:'shown'} | {kind:'failed', reason}>
+removeToast(tag, options?): Promise<{kind:'removed'} | {kind:'failed', reason}>
+  // PowerShell 5.1 + WinRT per -EncodedCommand, Daten nur über Umgebungsvariablen, XML per DOM;
+  // Absender TOAST_APP_ID 'Parallax.App' (Anzeigename in HKCU\Software\Classes\AppUserModelId), Gruppe 'parallax'
 
 // src/server/lib/async.ts (Koordinator, R2-10, ADR-055) – ohne I/O, ohne Logging
 toError(error): Error; sleep(ms): Promise<void>      // sleep über das globale setTimeout (Fake-Timer greifen)
@@ -512,11 +519,14 @@ gewinnt. Der Client sendet **Absichten** (`remember: <Ziel>`, `acceptEdits`, Ant
 der Server baut `PermissionResult`/`updatedPermissions` selbst aus den gespeicherten `suggestions`
 (F.3, ADR-012). Andere Fenster erhalten `decision.resolved`.
 
-**Präsenz/Benachrichtigungen (A.9):** `presence{focused, visible, viewingEntryId, typing}` nach jeder
-Änderung (entprellt 250 ms). Der Server wählt je Ereignis genau einen Kanal: fokussiertes, sichtbares
-Fenster zeigt die Session → nichts, sonst `notify{delivery:'in_app'}` dorthin; sonst `system` an genau
-einen (zuletzt fokussierten) Client; ohne Client Phase 1 nichts (Phase 2 nativer Toast). Welches
-Ereignis: `notificationFor` (§7).
+**Präsenz/Benachrichtigungen (A.9):** `presence{focused, visible, viewingEntryId, typing,
+systemNotifications?}` nach jeder Änderung (entprellt 250 ms). Der Server wählt je Ereignis genau
+einen Kanal: fokussiertes, sichtbares Fenster zeigt die Session → nichts, sonst
+`notify{delivery:'in_app'}` dorthin; sonst `system` an genau einen (zuletzt fokussierten) Client.
+Mit nativen Toasts (`HostState.nativeNotifications`, ADR-082): darf dieser Client keine Web
+Notifications zeigen (`systemNotifications: false`) → nativer Windows-Toast des Servers +
+`in_app` an ihn; ohne Client → nur der native Toast (sonst nichts). Welches Ereignis:
+`notificationFor` (§7). Das Edge-App-Fenster bekommt die Berechtigung vom Launcher (eigenes Profil).
 
 ### (a) Erstverbindung
 ```mermaid
@@ -993,7 +1003,8 @@ profiles.json                         profilesFileSchema (Phase 2)
 settings.json                         settingsFileSchema
 auth-secret.json                      Secret des Geräte-Cookies (WP-10, rotierbar, §5.1; ohne .bak, R1-11)
 server.lock.json                      serverLockFileSchema (@shared/http; WP-21 schreibt/liest, §5.1; Retry ADR-050)
-processes.json                        PID, Image-Name, Startzeit laufender claude.exe für die Waisen-Bereinigung
+processes.json                        PID, Image-Name, Startzeit laufender claude.exe + Herzschlag (aliveAt,
+                                      Schnappschuss der Nachkommen) für die Waisen-Bereinigung
                                       (WP-13-internes Schema, sessions/processStore.ts; Regeln unten)
 blobs/<blobId>                        inhaltsadressiert
 blobs/<blobId>.meta.json              blobRefSchema (Medientyp, Größe, Name; R0-30)
@@ -1025,19 +1036,24 @@ wird nie verschoben, migriert oder überschrieben: der Server bricht den Start a
 (`STORE_VERSION_TOO_NEW`, Meldung „update Parallax“, Exit-Code 3; R1-06, ADR-020). Geschrieben
 wird erst, nachdem die Datei gelesen wurde.
 
-**`processes.json` (WP-13, `sessions/processStore.ts`; WP-13 §3.5.13 mit Nachtrag, ADR-051/052):**
-`{schemaVersion: 1, records: [{entryId, pid, image, startedAt}]}` über `JsonStore` (neuere Version →
-Start-Abbruch wie oben). Ein Record entsteht beim Spawn (`add` mit `flush`, überlebt einen harten
-Abbruch) und verschwindet beim Prozessende (`remove`, entprellt). Beim Serverstart: tote PIDs
-(`isProcessAlive`) → Record sofort entfernt, ohne PowerShell; die lebenden in **einer** gebündelten
-Abfrage im Hintergrund (`queryProcesses`, Timeout 60 s). Gleiche PID + Image (case-insensitiv) +
-Startzeit ± 5 s → `taskkill /T /F` des Baums, Record weg; andere Identität (PID wiederverwendet) →
-unberührt, Record weg; Ergebnis `unknown` (Timeout, Policy-Sperre, unlesbare Ausgabe) oder ein
-gescheitertes `taskkill` → Record **bleibt** (`warn`), der nächste Start prüft erneut. Nur Einträge
-mit lebendem Record warten darauf – ihr Start (vorher sichtbar `starting`) und ein ruhendes
-`session.rename`. **Kein Kinder-Pfad bis nach WP-22 (ADR-052):** Kinder eines toten `claude.exe`
-(Bash, MCP) werden weder gesucht noch beendet; Follow-up Herzschlag `aliveAt` je Record
-(`docs/wp/R2.md` „Follow-ups“).
+**`processes.json` (WP-13, `sessions/processStore.ts`; WP-13 §3.5.13 mit Nachtrag, ADR-051/081):**
+`{schemaVersion: 1, records: [{entryId, pid, image, startedAt, aliveAt, children: [{pid, image,
+startedAt}]}]}` über `JsonStore` (neuere Version → Start-Abbruch wie oben; `aliveAt`/`children` mit
+Default `null`/`[]`). Ein Record entsteht beim Spawn (`add` mit `flush`, überlebt einen harten
+Abbruch) und verschwindet beim Prozessende (`remove`, entprellt). **Herzschlag (WP22-06):** 10 s
+nach einem Spawn, danach alle 30 s, solange Prozesse laufen, **eine** Prozessliste
+(`listProcesses`) für alle Sessions; je Record die Nachkommen der `claude.exe` mit exakter
+CIM-Startzeit (`children`, ≤ 200) und `aliveAt` (`heartbeat`, entprellt); eine unklare Liste behält
+den letzten Schnappschuss. Beim Serverstart: Records, deren Wurzel **und** Schnappschuss tot sind
+(`isProcessAlive`) → sofort entfernt, ohne PowerShell; die übrigen in **einer** gebündelten
+Abfrage im Hintergrund (`queryProcesses`, Timeout 60 s). Beendet (`taskkill /T /F`) werden die
+Wurzel bei gleicher PID + Image (case-insensitiv) + Startzeit ± 5 s und jeder Prozess des
+Schnappschusses mit **genau** derselben PID, demselben Image und derselben Startzeit; andere
+Identität (PID wiederverwendet) → unberührt; Record weg. Ergebnis `unknown` (Timeout, Policy-Sperre,
+unlesbare Ausgabe) oder ein gescheitertes `taskkill` → Record **bleibt** (`warn`), nichts beendet,
+der nächste Start prüft erneut. Prozesse, die nach dem letzten Schnappschuss starteten, sind
+unbekannt und bleiben. Nur Einträge mit lebendem Record warten darauf – ihr Start (vorher sichtbar
+`starting`) und ein ruhendes `session.rename`.
 
 **Home-Lock (R2-05, ADR-054):** höchstens ein Server je `PARALLAX_HOME`. `acquireHomeLock(home)`
 (`lib/homeLock.ts`) nimmt vor dem ersten Store die Named Pipe `\\.\pipe\parallax-home-<16 Hex von
@@ -1070,14 +1086,21 @@ defekte Zeilen überspringen und zählen.
   `style-src 'unsafe-inline'` siehe ADR-026).
 - **Env (C.2, ADR-021):** jeder `claude`-Start über `buildEnv()`: Session-Marker der aufrufenden
   Claude-Session (`CLAUDECODE`, `CLAUDE_CODE_*`, `CLAUDE_AGENT_SDK_*`, `CLAUDE_PID`, `CLAUDE_EFFORT`,
-  `AI_AGENT`, Hook-/Plugin-Kontext) und `pnpm run`-Laufzustand immer entfernt; übrige `npm_*`/
-  `PNPM_*`/`NODE_OPTIONS`/`NODE_ENV` nur behalten, wenn dauerhaft in HKCU/HKLM `Environment`
-  mit gleichem Wert gesetzt (Nexus); `PARALLAX=1`, `PARALLAX_ENTRY_ID`.
-- **Prozesse (C.8, ADR-022):** `close()`, bis 5 s warten, dann `taskkill /PID <pid> /T /F`; jeder
+  `AI_AGENT`, Hook-/Plugin-Kontext), **jedes geerbte `PARALLAX`/`PARALLAX_*`** (ADR-083) und
+  `pnpm run`-Laufzustand immer entfernt; übrige `npm_*`/`PNPM_*`/`NODE_OPTIONS`/`NODE_ENV` nur
+  behalten, wenn dauerhaft in HKCU/HKLM `Environment` mit gleichem Wert gesetzt (Nexus); danach
+  nur `PARALLAX=1`, `PARALLAX_ENTRY_ID`. Tests nutzen nie ein geerbtes `PARALLAX_HOME`
+  (`test/setup/home.ts`).
+- **Prozesse (C.8, ADR-022):** `close()`, bis 5 s warten, dann `taskkill /PID <pid> /T /F` (beim
+  Server-Shutdown: wartende Sessions erst `interrupt`, nach 2,5 s `taskkill`, ADR-084); jeder
   Spawn mit `windowsHide: true`, ohne Shell und nur mit **absolutem `.exe`-Pfad** (nackte Namen über
   `resolveExecutable`/`systemTool` auflösen – libuv sucht sonst zuerst im `cwd`); Spawn-Wrapper liest
   stderr (F.16). Prozessabfragen sind dreiwertig (`unknown` heißt nie „weg“, ADR-051); Waisen beim
-  Start: nur der verifizierte `claude.exe`-Wurzelprozess, kein Kinder-Pfad bis nach WP-22 (ADR-052, §8).
+  Start: der verifizierte `claude.exe`-Wurzelprozess und exakt passende Prozesse des letzten
+  Herzschlag-Schnappschusses (ADR-081, §8).
+- **Benachrichtigungen (ADR-082):** Web Notifications im Edge-App-Fenster (Origin vom Launcher im
+  eigenen Profil erlaubt); ohne Fenster bzw. ohne Berechtigung ein nativer Windows-Toast des Servers
+  (PowerShell-Helfer, Daten nur über Umgebungsvariablen, Absender per HKCU-AppUserModelId).
 - **Ein Server je Home (ADR-054):** Home-Lock per Named Pipe, `busy` → Exit 5 (`main.ts`, §8);
   Home-Rechte werden nur gewarnt (ADR-056). Das FakeBackend läuft nie auf dem echten Datenordner
   (ADR-061).

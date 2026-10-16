@@ -48,7 +48,7 @@ import { createBroker, type Broker } from './broker';
 import { createSerial, type Serial } from './lib/serial';
 import type { TimerHandle, Timers } from './lib/timers';
 import { applyToMirror, baseView, findToolCallIn, readMirrorItems } from './mirror';
-import { currentModelOption, type ModelCatalog } from './models';
+import { catalogOrFallback, currentModelOption, type ModelCatalog } from './models';
 import type {
   CreateLiveNormalizer,
   NormalizeContextUsage,
@@ -86,6 +86,18 @@ export interface SessionManagerOptions {
    * asynchronously after the result. Default 2000.
    */
   aiTitleDelayMs: number;
+  /**
+   * WP22-06: interval of the heartbeat snapshot of the process trees below every running
+   * claude.exe (`processes.json` `aliveAt` + `children`, one CIM query for all). 0 = off. Default 30000.
+   */
+  processSnapshotMs: number;
+  /** First snapshot this long after a spawn when no heartbeat runs yet. Default 10000. */
+  processSnapshotFirstMs: number;
+  /**
+   * WP22-05: at shutdown a process still running after this grace (after interrupt + close) is
+   * ended with taskkill, instead of waiting for the backend's own 5-s rule. Default 2500.
+   */
+  shutdownKillAfterMs: number;
 }
 
 export interface EngineStores {
@@ -110,6 +122,8 @@ export interface ProcDeps {
   isProcessAlive(pid: number): boolean;
   /** One bundled, three-valued CIM query for all live orphan PIDs (lib/process.ts, R2-02). */
   queryProcesses(filter: ProcessFilter): Promise<ProcessQueryResult>;
+  /** Every process (one CIM query) – the heartbeat snapshot of the session trees (WP22-06). */
+  listProcesses(): Promise<ProcessQueryResult>;
   killProcessTree(pid: number): Promise<void>;
 }
 
@@ -157,6 +171,10 @@ export interface EngineCore {
   profile(profileId: ProfileId): Profile | undefined;
   /** Notifications, clearing, sleep policy – after every change of the facts. */
   factsChanged(state: EntryState, prev: StatusFacts, next: StatusFacts): void;
+  /** A claude.exe was spawned (its record is in processes.json): starts the heartbeat (WP22-06). */
+  processSpawned(): void;
+  /** A claude.exe ended: the heartbeat stops with the last one. */
+  processEnded(): void;
 }
 
 export type EntryPhase = 'dormant' | 'starting' | 'running' | 'closing';
@@ -423,7 +441,7 @@ export class EntryState {
           items: read.items,
           hasEarlier: read.hasEarlier,
           decisions: [...this.broker.expired(), ...this.broker.open()],
-          models: this.core.models(this.entry.profileId)?.options ?? null,
+          models: catalogOrFallback(this.core.models(this.entry.profileId)).options,
           queue: this.queue.list(),
         });
         const view = applyToMirror(base, buffer);
@@ -444,7 +462,7 @@ export class EntryState {
       items: [],
       hasEarlier: this.conversation().lastOrder > 0,
       decisions: [...this.broker.expired(), ...this.broker.open()],
-      models: this.core.models(this.entry.profileId)?.options ?? null,
+      models: catalogOrFallback(this.core.models(this.entry.profileId)).options,
       queue: this.queue.list(),
     });
     this.mirror = view;
@@ -510,7 +528,7 @@ export class EntryState {
 
   /** After a non-synthetic turn: AI-title query, debounced (the CLI writes the title after the result). */
   scheduleAiTitle(): void {
-    if (this.runtime === null) return;
+    if (this.runtime === null || this.core.shuttingDown()) return;
     this.titleTimer?.cancel();
     this.titleTimer = this.core.timers.setTimeout(() => {
       this.titleTimer = null;
@@ -525,7 +543,7 @@ export class EntryState {
 
   /** After idle (C.1): one getContextUsage('summary'), debounced, at most one at a time. */
   scheduleContextRefresh(): void {
-    if (this.runtime === null) return;
+    if (this.runtime === null || this.core.shuttingDown()) return;
     this.contextTimer?.cancel();
     this.contextTimer = this.core.timers.setTimeout(() => {
       this.contextTimer = null;

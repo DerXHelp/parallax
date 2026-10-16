@@ -368,10 +368,13 @@ export function processQueryFilters(filter: ProcessFilter, maxClauses = PROCESS_
  * culture-dependent specifier and everything works in Constrained Language Mode;
  * `-InputObject @(...)` keeps 0/1 results arrays (PS 5.1).
  */
-function processQueryScript(wqlFilter: string): string {
+function processQueryScript(wqlFilter: string | null): string {
+  const selection =
+    wqlFilter === null ? '-Property ProcessId,ParentProcessId,Name,CreationDate' : `-Filter '${wqlFilter}'`;
   return (
-    `try { $c = @(Get-CimInstance -ClassName Win32_Process -Filter '${wqlFilter}' -ErrorAction Stop | ` +
-    `Where-Object { $_.CreationDate } | ForEach-Object { @{ pid = [int]$_.ProcessId; name = [string]$_.Name; ` +
+    `try { $c = @(Get-CimInstance -ClassName Win32_Process ${selection} -ErrorAction Stop | ` +
+    // ProcessId 0 (System Idle Process) has a CreationDate too, but no positive PID.
+    `Where-Object { $_.CreationDate -and $_.ProcessId -gt 0 } | ForEach-Object { @{ pid = [int]$_.ProcessId; name = [string]$_.Name; ` +
     `parentPid = [int]$_.ParentProcessId; ` +
     `startedAt = $_.CreationDate.ToUniversalTime().ToString("yyyy-MM-dd'T'HH':'mm':'ss'.'fff'Z'") } }); ` +
     `ConvertTo-Json -InputObject $c -Compress } catch { Write-Output ('error: ' + $_.Exception.Message); exit 3 }`
@@ -412,7 +415,7 @@ function unknownResult(reason: ProcessQueryFailure, detail: string): ProcessQuer
 }
 
 async function runProcessQuery(
-  wqlFilter: string,
+  wqlFilter: string | null,
   run: RunFileFn,
   timeoutMs: number,
 ): Promise<ProcessQueryResult> {
@@ -458,6 +461,42 @@ export async function queryProcesses(
     for (const info of result.processes) found.set(info.pid, info);
   }
   return { kind: 'ok', processes: [...found.values()] };
+}
+
+/**
+ * EVERY process of the machine in one CIM query (name, parent, start time; ≈ 1–3 s, three-valued
+ * like queryProcesses). For the periodic snapshot of the session process trees (WP22-06, R2-03):
+ * Win32_Process has no recursive filter, the descendants are computed with `descendantsOf`.
+ */
+export async function listProcesses(options: ProcessQueryOptions = {}): Promise<ProcessQueryResult> {
+  if ((options.platform ?? process.platform) !== 'win32') return unknownResult('unsupported', 'not Windows');
+  return runProcessQuery(null, options.run ?? runFile, options.timeoutMs ?? PROCESS_QUERY_TIMEOUT_MS);
+}
+
+/**
+ * All descendants of `root` in `processes` (children, grandchildren …; by ParentProcessId). PIDs
+ * are reused and a ParentProcessId may name a dead parent whose PID went to a newer process: a
+ * child is only counted when it started at or after its parent (a child is never older than its
+ * parent). Pure; `root` itself is not part of the result.
+ */
+export function descendantsOf(processes: readonly ProcessInfo[], root: ProcessInfo): ProcessInfo[] {
+  const byParent = new Map<number, ProcessInfo[]>();
+  for (const p of processes) {
+    if (p.parentPid === null || p.pid === p.parentPid) continue;
+    byParent.set(p.parentPid, [...(byParent.get(p.parentPid) ?? []), p]);
+  }
+  const out: ProcessInfo[] = [];
+  const seen = new Set<number>([root.pid]);
+  const queue: ProcessInfo[] = [root];
+  for (let parent = queue.shift(); parent !== undefined; parent = queue.shift()) {
+    for (const child of byParent.get(parent.pid) ?? []) {
+      if (seen.has(child.pid) || child.startedAt.getTime() < parent.startedAt.getTime()) continue;
+      seen.add(child.pid);
+      out.push(child);
+      queue.push(child);
+    }
+  }
+  return out;
 }
 
 /** Three-valued identity of `pid` (see queryProcesses): found / missing / unknown. */

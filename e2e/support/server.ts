@@ -112,12 +112,19 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Pr
 export interface StartServerOptions {
   /** Prefix of the temp folder (diagnostics). */
   label?: string;
+  /**
+   * Restart on the temp folder of an earlier server of this test (same PARALLAX_HOME and projects,
+   * e.g. "open plan card at shutdown → needs-resume after the restart"). That server must have
+   * exited (`requestShutdown` + `assertCleanExit`, not `stop()` – it removes the folder).
+   */
+  reuse?: Pick<E2eServer, 'root' | 'home'>;
 }
 
 export async function startE2eServer(options: StartServerOptions = {}): Promise<E2eServer> {
-  const root = await mkdtemp(path.join(os.tmpdir(), `parallax-e2e-${options.label ?? 'srv'}-`));
-  const home = path.join(root, 'home');
-  await mkdir(home);
+  const root =
+    options.reuse?.root ?? (await mkdtemp(path.join(os.tmpdir(), `parallax-e2e-${options.label ?? 'srv'}-`)));
+  const home = options.reuse?.home ?? path.join(root, 'home');
+  if (options.reuse === undefined) await mkdir(home);
   const startedAt = new Date(Date.now() - 1000);
   let out = '';
   const child: ChildProcess = spawnHidden(

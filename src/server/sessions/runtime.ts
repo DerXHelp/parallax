@@ -63,6 +63,14 @@ export class SessionRuntime {
   private exitHandled = false;
   private stderrTail = '';
   private readonly startedAt: Date;
+  /**
+   * WP22-10: `total_cost_usd` counts per query segment (CLI 2.1.300 starts at 0 after a resume,
+   * Findings F.14 is outdated). The conversation's cost = the earlier segments (`costBase`) + this
+   * segment's total since the conversation began here (`costOffset`, a `/clear` in this process).
+   */
+  private costBase: number;
+  private costOffset = 0;
+  private lastCostTotal: number | null = null;
 
   constructor(
     private readonly state: EntryState,
@@ -73,6 +81,7 @@ export class SessionRuntime {
   ) {
     this.pid = agent.pid;
     this.startedAt = core.now();
+    this.costBase = currentConversation(state.entry).costUsd ?? 0;
     this.exited = new Promise((resolve) => {
       this.resolveExited = resolve;
     });
@@ -143,6 +152,7 @@ export class SessionRuntime {
     this.core.stores.processes.add(record).catch((error: unknown) => {
       this.core.log.warn({ err: error, entryId: this.state.id, pid }, 'processes.json: add failed');
     });
+    this.core.processSpawned();
   }
 
   private onMessage(raw: unknown, at: Date): void {
@@ -263,10 +273,11 @@ export class SessionRuntime {
     s.reduce(signal);
     if (s.queue.onTurnResult(signal.userMessageUuids)) s.publishQueue();
     const at = this.core.now().toISOString();
+    const costUsd = this.conversationCost(signal.costUsdTotal);
     s.patch((e) =>
       withCurrentConversation(
         { ...e, lastActivityAt: at, lastResultExcerpt: signal.resultExcerpt ?? e.lastResultExcerpt },
-        (c) => ({ ...c, costUsd: signal.costUsdTotal ?? c.costUsd }),
+        (c) => ({ ...c, costUsd: costUsd ?? c.costUsd }),
       ),
     );
     if (signal.error !== null) {
@@ -276,13 +287,25 @@ export class SessionRuntime {
       s.setLastError(null);
       s.retry = afterSuccessfulTurn(s.retry);
     }
-    if (!signal.synthetic) {
+    if (!signal.synthetic && !this.core.shuttingDown()) {
       this.titleDue = true;
       void s.refreshGitBranch();
     }
     // Old CLI without session_state_changed: the result is the turn end (C.1).
     if (!this.sessionStateSeen) this.turnEnded();
     s.resetInTurn = false;
+  }
+
+  /** WP22-10: summed over the query segments of the conversation (null = no cost reported). */
+  private conversationCost(total: number | null): number | null {
+    if (total === null) return null;
+    if (this.lastCostTotal !== null && total < this.lastCostTotal) {
+      // The counter started again inside this process: keep what was counted so far.
+      this.costBase += Math.max(0, this.lastCostTotal - this.costOffset);
+      this.costOffset = 0;
+    }
+    this.lastCostTotal = total;
+    return Math.round((this.costBase + Math.max(0, total - this.costOffset)) * 1e9) / 1e9;
   }
 
   /** §3.5.9, diagram f: the ops of this output already went to the OLD conversation. */
@@ -314,6 +337,9 @@ export class SessionRuntime {
     s.promptTitle = null;
     s.resetInTurn = true;
     s.lastSdkMaxTokens = null;
+    // The new conversation costs from here on (the process total keeps counting).
+    this.costBase = 0;
+    this.costOffset = this.lastCostTotal ?? 0;
     s.emit([
       {
         op: 'conversation.reset',
@@ -386,6 +412,7 @@ export class SessionRuntime {
       }
       s.cancelProcessTimers();
       if (!this.core.shuttingDown()) s.dropMirrorIfUnused();
+      this.core.processEnded();
       this.resolveExited();
     }
   }

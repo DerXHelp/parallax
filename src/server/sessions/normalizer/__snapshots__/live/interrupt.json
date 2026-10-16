@@ -411,9 +411,7 @@
         "costUsdTotal": 0.0029601100000000006,
         "costUsdTurn": null,
         "permissionDenials": 0,
-        "errors": [
-          "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"
-        ],
+        "errors": [],
         "userMessageUuids": [
           "5a91909f-8e6c-447d-a83a-242f91d1f77b"
         ],

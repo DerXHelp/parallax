@@ -192,11 +192,14 @@ function statusOf(phase: HostPhase, everConnected: boolean): ConnectionStatus {
 
 function presenceOf(state: ClientState, hostId: HostId): PresenceState {
   const selected = state.selectedSession === null ? null : parseSessionKey(state.selectedSession);
+  const systemNotifications = state.presence.systemNotifications;
   return {
     focused: state.presence.focused,
     visible: state.presence.visible,
     typing: state.presence.typing,
     viewingEntryId: selected !== null && selected.hostId === hostId ? selected.entryId : null,
+    // WP22-03 (optional field): only when the window reports it.
+    ...(systemNotifications === undefined ? {} : { systemNotifications }),
   };
 }
 

@@ -232,9 +232,10 @@ describe('Edge policies (V2-01)', () => {
     data,
   });
 
-  it('no relevant policy: no line', () => {
-    expect(checkEdgePolicies([])).toBeNull();
-    expect(checkEdgePolicies([v('HomepageLocation', 'https://intranet')])).toBeNull();
+  it('no relevant policy: an OK line "none" (WP22-11 – the output shows that it was checked)', () => {
+    const none = { id: 'edge-policies', title: 'edge policies', level: 'ok', detail: 'none' };
+    expect(checkEdgePolicies([])).toEqual(none);
+    expect(checkEdgePolicies([v('HomepageLocation', 'https://intranet')])).toEqual(none);
   });
 
   it('policies that help (sign-in off, sync off) are only info', () => {
@@ -255,7 +256,7 @@ describe('Edge policies (V2-01)', () => {
   ])('%s=%s can override the switches → warn', (name, data) => {
     const check = checkEdgePolicies([v(name, data)]);
     expect(check).toMatchObject({ level: 'warn' });
-    expect(check?.hint).toContain(name);
+    expect(check.hint).toContain(name);
   });
 
   it('reads machine and user policies with reg query (64-bit view); missing keys have none', async () => {
@@ -339,6 +340,7 @@ describe('runPreflight', () => {
       [`claude:${STANDARD_PROFILE_ID}`, 'ok'],
       [`login:${STANDARD_PROFILE_ID}`, 'ok'],
       ['edge', 'ok'],
+      ['edge-policies', 'ok'],
       ['antivirus', 'info'],
     ]);
     expect(report.exitCode).toBe(0);

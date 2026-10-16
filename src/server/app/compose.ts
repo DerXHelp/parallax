@@ -52,6 +52,7 @@ import type { HomeLock } from '../lib/homeLock';
 import { logger as rootLogger, type LoggingHandle } from '../lib/logger';
 import { errnoCode } from '../lib/process';
 import { createSessionManager, type SessionManager } from '../sessions/manager';
+import { createNativeToasts } from '../sessions/nativeToasts';
 import { openProcessStore } from '../sessions/processStore';
 import { createBlobStore } from '../store/blobs';
 import { createDecisionStore } from '../store/decisions';
@@ -303,7 +304,19 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     engine = await createEngine(config, instance, options.fakeSpeed ?? DEFAULT_FAKE_SPEED);
     const { backend, claude } = engine;
     const manifest = await readSdkManifest();
+    // Native Windows toasts (WP22-03/-15, A.9): off under tests/E2E (config.toasts).
+    const toasts = createNativeToasts({
+      enabled: config.toasts === 'native',
+      language: () => stores.settings.get().language,
+      log: log.child({ module: 'toasts' }),
+      onUnavailable: () => {
+        manager?.publishHostState();
+      },
+    });
     const sessions = createSessionManager({
+      toasts,
+      // WP22-06: the FakeBackend has no real process tree (fake PIDs) – no heartbeat snapshots.
+      ...(config.backend === 'fake' ? { options: { processSnapshotMs: 0 } } : {}),
       backend,
       claude,
       stores: {
@@ -452,6 +465,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       backend: config.backend,
       dev: config.dev,
       validation: config.validation,
+      toasts: config.toasts,
       home: config.home,
       buildId: instance.buildId,
       serverInstanceId: instance.serverInstanceId,

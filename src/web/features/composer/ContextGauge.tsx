@@ -163,6 +163,10 @@ export const ContextGauge = memo(function ContextGauge({ sessionKey }: { session
                     </li>
                   ))}
                 </ul>
+                {/* WP22-14: same total as /context, but the SDK splits the categories differently. */}
+                <span data-slot="context-source" className="text-muted-foreground text-2xs">
+                  {t('composer.context.categoriesSource')}
+                </span>
                 <span className="text-muted-foreground">
                   {breakdown.data.isAutoCompactEnabled === false
                     ? t('composer.context.autoCompactOff')

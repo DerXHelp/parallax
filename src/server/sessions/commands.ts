@@ -10,7 +10,7 @@ import { currentSessionId, type Entry, type PlanDecision } from '@shared/model';
 import type { Command, CommandOf, CommandResult } from '@shared/protocol';
 import { CommandError, type CommandContext } from '../sync/ports';
 import { commandError, gaugeOf, type EngineCore, type EntryState } from './entryState';
-import { toModelCatalog } from './models';
+import { catalogOrFallback, toModelCatalog } from './models';
 import { closeRuntime, deliverPrompt, startRuntime } from './runtime';
 import { capTitle, implementPlanPrompt, newConversation, titleFromPrompt } from './summary';
 
@@ -396,11 +396,8 @@ async function refreshModels(
   s: EntryState,
 ): Promise<CommandResult<'session.refreshModels'>> {
   const runtime = running(s);
-  if (runtime === null) {
-    const cached = core.models(s.entry.profileId);
-    if (cached === null) throw commandError('SESSION_NOT_RUNNING', { entryId: s.id });
-    return { models: cached.options };
-  }
+  // Dormant: the profile's last catalog, before any start the CLI aliases (WP22-01).
+  if (runtime === null) return { models: catalogOrFallback(core.models(s.entry.profileId)).options };
   const raw = await controlCall('supportedModels', () => runtime.agent.supportedModels(), core, s.id);
   const catalog = toModelCatalog(raw);
   core.setModels(s.entry.profileId, catalog);

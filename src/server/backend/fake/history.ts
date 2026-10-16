@@ -141,12 +141,14 @@ export function createFakeHistoryStore(options: { now?: () => Date } = {}): Fake
       if (record === undefined) return null;
       const summary =
         record.customTitle ?? record.aiTitle ?? record.importedSummary ?? record.firstPrompt ?? '';
+      // Like SDK 0.3.296 (WP22-02): customTitle = custom title ‖ AI title.
+      const customTitle = record.customTitle ?? record.aiTitle;
       return {
         ...record.extra,
         sessionId,
         summary,
         lastModified: record.lastModified,
-        ...(record.customTitle === null ? {} : { customTitle: record.customTitle }),
+        ...(customTitle === null ? {} : { customTitle }),
         ...(record.firstPrompt === null ? {} : { firstPrompt: record.firstPrompt }),
       };
     },

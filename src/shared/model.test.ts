@@ -209,6 +209,13 @@ describe('round trips', () => {
     expectRoundTrip(sessionDetailSchema, sampleDetail());
   });
 
+  it('host state: nativeNotifications is additive with default false (WP22-03)', () => {
+    const { nativeNotifications: _omitted, ...older } = sampleHostState();
+    expect(hostStateSchema.parse(older).nativeNotifications).toBe(false);
+    expectRoundTrip(hostStateSchema, sampleHostState({ nativeNotifications: true }));
+    expect(hostStateSchema.safeParse({ ...older, nativeNotifications: 'yes' }).success).toBe(false);
+  });
+
   it.each(Object.entries(sampleItems))('item %s', (_name, factory) => {
     expectRoundTrip(transcriptItemSchema, factory());
   });
