@@ -39,6 +39,7 @@ describe('launcher command line', () => {
       '--backend=fake',
       '--log-level=info',
       '--validate=log',
+      `--toasts=${config.toasts}`,
     ]);
     // The server accepts exactly these flags (parseArgs strict) and resolves the same values – also
     // the validation mode of the launcher's environment (NODE_ENV=test of the E2E → throw, R3-05).
@@ -50,6 +51,22 @@ describe('launcher command line', () => {
     });
     const e2e = loadConfig({ argv: ['--home=D:\\px'], env: { ...env, NODE_ENV: 'test' }, cwd: 'C:\\repo' });
     expect(serverArgsFor(e2e)).toContain('--validate=throw');
+  });
+
+  it('CR-11: --toasts of the launcher (flag or PARALLAX_TOASTS) reaches the server', () => {
+    const env = { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' };
+    const flagged = loadConfig({ argv: ['--toasts=off', '--home=D:\\px'], env, cwd: 'C:\\repo' });
+    expect(serverArgsFor(flagged)).toContain('--toasts=off');
+    expect(loadConfig({ argv: serverArgsFor(flagged), env: {}, cwd: 'C:\\elsewhere' }).toasts).toBe('off');
+    const fromEnv = loadConfig({ argv: [], env: { ...env, PARALLAX_TOASTS: 'off' }, cwd: 'C:\\repo' });
+    expect(serverArgsFor(fromEnv)).toContain('--toasts=off');
+    // A flag of the launcher wins over the server's own environment.
+    const server = loadConfig({
+      argv: serverArgsFor(flagged),
+      env: { PARALLAX_TOASTS: 'native' },
+      cwd: 'C:\\x',
+    });
+    expect(server.toasts).toBe('off');
   });
 
   it('a port hint only for an explicitly requested port (V2-13)', () => {
@@ -84,6 +101,7 @@ describe('launcher command line', () => {
       '--home',
       '--backend',
       '--validate',
+      '--toasts',
       '--no-build',
       '--print-url',
       '--help',

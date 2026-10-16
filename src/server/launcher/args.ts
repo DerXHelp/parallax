@@ -45,9 +45,12 @@ export function parseLauncherArgs(argv: readonly string[]): LauncherArgs {
   return args;
 }
 
-/** Arguments for `dist/server.js`: the resolved values, so launcher and server agree. */
+/**
+ * Arguments for `dist/server.js`: the resolved values, so launcher and server agree (CR-11: also
+ * `--toasts`, so `parallax --toasts=off` reaches the server like `PARALLAX_TOASTS=off`).
+ */
 export function serverArgsFor(
-  config: Pick<ServerConfig, 'home' | 'port' | 'backend' | 'logLevel' | 'validation'>,
+  config: Pick<ServerConfig, 'home' | 'port' | 'backend' | 'logLevel' | 'validation' | 'toasts'>,
 ): string[] {
   return [
     `--home=${config.home}`,
@@ -55,6 +58,7 @@ export function serverArgsFor(
     `--backend=${config.backend}`,
     `--log-level=${config.logLevel}`,
     `--validate=${config.validation}`,
+    `--toasts=${config.toasts}`,
   ];
 }
 
@@ -68,7 +72,8 @@ export function portRequested(serverArgv: readonly string[], env: NodeJS.Process
 
 export const LAUNCHER_USAGE = [
   'Usage: parallax [--port=<n>] [--home=<dir>] [--backend=sdk|fake] [--log-level=<level>]',
-  '                [--validate=off|log|throw] [--no-build] [--print-url] [--help]',
+  '                [--validate=off|log|throw] [--toasts=native|off] [--no-build] [--print-url]',
+  '                [--help]',
   '',
   'Starts the Parallax server in the background (building it first if needed) and opens an Edge',
   'app window. If Parallax already runs, only another window is opened.',
@@ -79,6 +84,8 @@ export const LAUNCHER_USAGE = [
   '                 directory',
   '  --validate=... check of outgoing data: log (default: log and drop), throw (tests), off',
   '                 (also PARALLAX_VALIDATE)',
+  '  --toasts=...   native Windows toasts when no window can show a notification: native',
+  '                 (default) or off (also PARALLAX_TOASTS)',
   '  --no-build     do not check or rebuild dist/',
   '  --print-url    print the sign-in address (valid 60 s) instead of opening Edge',
 ].join('\n');

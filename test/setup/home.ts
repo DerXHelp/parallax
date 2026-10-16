@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { isWindowsPathInside, windowsPathKey } from '@shared/paths';
 
 /**
  * Test isolation (CLAUDE.md "Tests", R0-23, WP22-07): tests never touch the real data directory
@@ -33,19 +34,17 @@ export const SERVER_CONTROL_VARS: readonly string[] = [
   'PARALLAX_TOASTS',
 ];
 
-/** Case-insensitive comparison key of a Windows path (no trailing separator). */
+/**
+ * Comparison key of a Windows path: resolved here, compared by the ONE rule of `@shared/paths`
+ * (CR-09, CLAUDE.md "Windows": never duplicated) – the same verdict as `config.ts`.
+ */
 function pathKey(value: string): string {
-  return path.win32
-    .resolve(value)
-    .replace(/[\\/]+$/, '')
-    .toLowerCase();
+  return windowsPathKey(path.win32.resolve(value));
 }
 
 /** True if `child` is `parent` or lies inside it (case-insensitive, `/` and `\` alike – R0-23). */
 export function isPathInside(child: string, parent: string): boolean {
-  const c = pathKey(child);
-  const p = pathKey(parent);
-  return c === p || c.startsWith(`${p}\\`);
+  return isWindowsPathInside(path.win32.resolve(child), path.win32.resolve(parent));
 }
 
 /** A `parallax-test-*` folder directly inside the OS temp directory (and not the real home). */

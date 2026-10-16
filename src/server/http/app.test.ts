@@ -43,7 +43,7 @@ afterEach(async () => {
 });
 
 async function setup(
-  options: { webRoot?: string; dev?: boolean; backend?: 'sdk' | 'fake' } = {},
+  options: { webRoot?: string; dev?: boolean; backend?: 'sdk' | 'fake'; port?: number } = {},
 ): Promise<Fixture> {
   const home = await makeTempHome('app-');
   const instance = createServerInstance({ serverVersion: '1.2.3' });
@@ -52,7 +52,7 @@ async function setup(
   const hub = createSyncHub({ source: createMemorySessionSource(), instance, timing: { heartbeatMs: 0 } });
   const app = await createApp({
     config: {
-      port: PORT,
+      port: options.port ?? PORT,
       dev: options.dev ?? false,
       ...(options.backend === undefined ? {} : { backend: options.backend }),
     },
@@ -73,6 +73,31 @@ async function setup(
 }
 
 describe('createApp', () => {
+  it('CR-07: port 0 before listen – a defined 403 with a CSP instead of a RangeError/500', async () => {
+    const home = await makeTempHome('app-web-');
+    await writeFile(path.join(home, 'index.html'), '<!doctype html><title>Parallax</title>');
+    const { app } = await setup({ port: 0, webRoot: home });
+    for (const url of ['/', '/api/health']) {
+      for (const host of ['127.0.0.1:0', HOST]) {
+        const res = await app.inject({ method: 'GET', url, headers: { host } });
+        expect(res.statusCode).toBe(403);
+        expect(res.json()).toMatchObject({ code: 'HOST_HEADER_REJECTED' });
+        expect(res.headers['content-security-policy']).toBe(BLOB_CSP);
+      }
+    }
+    // Once it listens, the real port counts (page CSP with its WebSocket).
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.server.address();
+    if (address === null || typeof address !== 'object') throw new Error('not listening');
+    const res = await app.inject({
+      method: 'GET',
+      url: '/',
+      headers: { host: `127.0.0.1:${String(address.port)}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-security-policy']).toBe(pageCsp(address.port));
+  });
+
   it('answers /api/health without auth and without secrets', async () => {
     const { app, instanceId } = await setup();
     const res = await app.inject({ method: 'GET', url: '/api/health', headers: { host: HOST } });
