@@ -33,7 +33,7 @@ import {
   turnClose,
   turnOpen,
 } from '../backend/fake/dsl';
-import { init, msg } from './normalizer/synthetic/build';
+import { init, msg, system } from './normalizer/synthetic/build';
 import { FAKE_MODELS } from '../backend/fake/defaults';
 import { FAKE_SCENARIOS } from '../backend/fake/synthetic';
 import { loadFixtureScenario } from '../backend/fake/testing';
@@ -837,6 +837,59 @@ function textTurnEvents(): FixtureEvent[] {
   const prompt = c.ids.uuid();
   return join(input(c, prompt, 'Reply with exactly: OK'), textTurn(c, { prompt, text: 'OK' }), closeGate());
 }
+
+/** One turn whose result reports `total` as total_cost_usd (the CLI's counter of this process). */
+function costTurnEvents(total: number): FixtureEvent[] {
+  const c = dslContext({ sessionId: '5e550000-0000-4000-8000-0000000000c2' });
+  const prompt = c.ids.uuid();
+  return join(
+    input(c, prompt, 'Reply with exactly: OK'),
+    turnOpen(c, prompt),
+    turnClose(c, prompt, { result: { result: 'OK', total_cost_usd: total } }),
+    closeGate(),
+  );
+}
+
+describe('permission mode set by the CLI (WP22-04)', () => {
+  it('a mode change inside a turn (status message) reaches the summary – header and composer show it', async () => {
+    const c = dslContext({ sessionId: '5e550000-0000-4000-8000-0000000000c3' });
+    const prompt = c.ids.uuid();
+    const events = join(
+      input(c, prompt, 'Reply with exactly: OK'),
+      turnOpen(c, prompt),
+      toEvents([frame(c, system(0, 'status', { status: null, permissionMode: 'auto' }))]),
+      turnClose(c, prompt, { result: { result: 'OK' } }),
+      closeGate(),
+    );
+    const h = await setup({ scenario: () => eventsScenario('auto-switch', events) });
+    const entryId = await h.create('Reply with exactly: OK');
+    await h.waitFor(() => h.summary(entryId).permissionMode === 'auto');
+    expect(h.stores.registry.get(entryId)?.permissionMode).toBe('auto');
+    expect(
+      h.publisher.summaries.some((s) => s.summary.entryId === entryId && s.summary.permissionMode === 'auto'),
+    ).toBe(true);
+  });
+});
+
+describe('costs (WP22-10)', () => {
+  it('the conversation cost sums the query segments: a resumed CLI starts total_cost_usd at 0', async () => {
+    const h = await setup({
+      scenario: scenarios(
+        eventsScenario('first', costTurnEvents(0.003)),
+        eventsScenario('resumed', costTurnEvents(0.0005)),
+      ),
+    });
+    const entryId = await h.create('Reply with exactly: OK');
+    await h.waitFor(() => h.facts(entryId).runState === 'idle' && h.facts(entryId).lastTurn !== null);
+    const cost = () => currentConversation(h.stores.registry.get(entryId) ?? sampleEntry()).costUsd;
+    expect(cost()).toBe(0.003);
+    await h.cmd({ name: 'session.close', entryId });
+    await h.cmd({ name: 'session.sendPrompt', entryId, prompt: { text: 'Reply with exactly: OK' } });
+    await h.waitFor(() => h.backend.starts.length === 2 && h.facts(entryId).runState === 'idle');
+    await h.settle();
+    expect(cost()).toBe(0.0035);
+  });
+});
 
 describe('orphans', () => {
   const record = (n: number) => ({
