@@ -95,6 +95,7 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 - Offen für später: `processInfo` per PowerShell braucht unter Last bis ≈23 s (Waisen-Bereinigung beim Start) – schnellere Methode prüfen; Web-Default-Timeout in Vitest statt Limits je Datei; Importkosten `radix-ui` in Tests.
 
 ## Nutzer-Freigaben
+- 16.10.2026: Privates GitHub-Repo `DerXHelp/parallax` angelegt und `main` gepusht (Stand `c821118`) – auf ausdrücklichen Wunsch des Nutzers.
 - 15.10.2026: Live-Abnahme WP-22 freigegeben (echter Abo-Login; Haiku, Mini-Prompts, Scratch-Ordner, Temp-Home, kein API-Key; bei Auth-Fehler sofort stoppen).
 
 - 16.10.2026: WP22-04 – neue Sessions bekommen **keinen** von Parallax gesetzten Permission-Modus; CLI bzw. `defaultMode` entscheidet (Plan C.3 bleibt).
