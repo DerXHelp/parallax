@@ -25,6 +25,24 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 | R2 | Review nach Welle 1b (13, 15, 16) | Welle 1b | fertig: Web fertig (`a251a18`, 0 BLOCKER/7 SOLLTE/14 NIT), Fixes gemergt (`632e7ed`, Merge `2c95b2c`: Ziel-Sperre ADR-040, Warteschlange ADR-041, Picker ADR-042, Labels ADR-043, `ui/disclosure`); Teil Server fertig (`f6e9ab7`, 1 BLOCKER/4 SOLLTE/11 NIT), Fixes gemergt (`beda448`, Merge `61e8e1f`: Lockfile-Retry, Waisen-Prüfung dreiwertig, Bereitschaft mit Retry → `CLAUDE_CONTROL_FAILED`, `lib/homeLock` (Exit 5), `lib/{async,fs}`, ADR-050…056) | Nach WP-22: Herzschlag `aliveAt` + Kinder-Pfad (R2-03); Doku architecture §2.2/§8, `store/README`, WP-21-Beispiel, WP-13 §3.5.13 | – | – | – |
 | R3 | Review nach Welle 2/3 + `/code-review` | 20–22 | fertig: R3 `5f15036`, V2 `e8c8935`; Fixes Web `3b266db` (Merge `3f00ac3`: Versionsanzeige, Frage-Karte Strg+Enter, Update-Ansicht), Server `a8e9a58` (Edge ohne Konto/Sync, Fake-Schutz, Build-ID aus Build-Eingaben + UI-Kopie je buildId, Doppelstart, Crash-Handler, CSP in `@shared/http`); 2612 Tests, 24 E2E | Offen (nach WP-22): Vite-Dev-CSP, Build-Lock in E2E-Setup, `PARALLAX_VALIDATE=throw` in E2E, V2-12/14/15, R3-10/17, `cliVersionStatus` nach `@shared` (Kopie in `web/lib/version.ts`). **`/code-review` (high, `323a52f..main`): 12 Funde, alle reproduziert und behoben bzw. begründet** (`docs/wp/CODE-REVIEW.md`, ADR-090…094, Merge siehe Log); 2715 Tests, 26 E2E | – | – | – |
 
+## Phase 2 „Mission Control“ – Arbeitspakete (Design: `docs/wp/WP-30.md`, Wellenplan §7)
+Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
+
+| WP | Inhalt | Welle | Abhängig | Status | Commit | Ergebnis (eine Zeile) | Follow-ups |
+|---|---|---|---|---|---|---|---|
+| 30 | Design, Contracts v2, Gerüst, Doku (ADR-100…119, Ownership Phase 2) | 0 | – | fertig | `7a3530f`, `0215740`, `52912ec`, Merge `1488b83` | Lückenanalyse, Aufträge WP-31…41, `PROTOCOL_VERSION` 2, Registry v2, Anfragekanal `shell/requests.ts`, Slots; 2778 Tests, 26 E2E | Hinweis an alle Pakete: PowerShell 5.1 zerstört Umlaute bei `Get-Content`/`WriteAllText` |
+| 31 | Engine: Lebenszyklus, Archiv, Unterhaltungen, Einstellungs-Wirkung | 1 | 30 | läuft | – | – | – |
+| 32 | Profile und Claude-Integration | 1 | 30 | läuft | – | – | – |
+| 33 | Host-Dienste, Upload, Ordner-Browser, Windows-Integration, Launcher | 1 | 30 | läuft | – | – | – |
+| 35 | Navigation: Sidebar, Strg+K, Kopfzeile, Fenster | 1 | 30 | läuft | – | – | – |
+| 34 | Engine: externe Konsole, Rate-Limit-Fortsetzen, Bild-Anhänge, Toast-Klick | 2 | 31 (32/33 Ports) | offen | – | – | – |
+| 36 | Neue Session, Ordner-Browser-UI, Profil-Editor | 2 | 30 | offen | – | – | – |
+| 37 | Composer und Transkript: Slash-Menü, Screenshots, Lightbox | 2 | 30, 35 | offen | – | – | – |
+| 38 | Einstellungen und Benachrichtigungen (Töne) | 2 | 30 | offen | – | – | – |
+| 40 | Integration + E2E Phase 2 | 3 | 31–38 | offen | – | – | – |
+| R4/V3 | Review + Verifier, Fix-Runde | 3b | 40 | offen | – | – | – |
+| 41 | Live-Abnahme Phase 2 (freigegeben, F2) | 4 | 40 + Fixes | offen | – | – | – |
+
 ## Contract-Changelog
 Änderungen an `src/shared/**` (nur nach Freigabe durch den Koordinator).
 
@@ -34,6 +52,7 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 | 15.10.2026 | 02 | Contracts v1 eingefroren: `src/shared/{common,errors,status,model,protocol,sync,build,samples}.ts` und Server-Ports `backend/{types,fixture}.ts`, `sessions/ports.ts`, `sync/ports.ts`, `claude/ports.ts`. `PROTOCOL_VERSION 1`, Schema-Versionen 1, Transkript-Log `v1`. Fixture-Format nur noch in `backend/fixture.ts` (Recorder re-exportiert). Build-ID per `define` (ADR-013). „Regel merken“ mit vier Zielen, Server baut `updatedPermissions` (ADR-012). Patch-Schemas ohne Defaults. |
 | 15.10.2026 | R0 | Additiv/Bugfix, `PROTOCOL_VERSION` und Schema-Versionen bleiben 1: neu `src/shared/http.ts` (HTTP-/Auth-Contract, Launcher-Code, Lockfile; ADR-015) und `src/shared/paths.ts` (Pfadregeln; ADR-017); Codes `LAUNCHER_TOKEN_INVALID`, `SESSION_HELD_ELSEWHERE`, 9 × `PROFILE_*` + `PROFILE_ARG_INVALID_REASONS`; Anzeige-Status `needs-resume` (ADR-016), `notificationFor` mit Art der neuen Entscheidung; `LIMITS` für Eingaben + `itemTotalChars`/`snapshotMaxChars`, `modelNameSchema`; `sessionInitInfo.permissionMode` nullable + tolerante Enum-Leser; `decisionRecord.decision`, `Entry.unread`/`context` (Defaults); `applyDelta` nur auf streamende Items; Ports: `StatusSignal` (`permissionMode` nullable, `turn_result.startupFailure`), `ReduceStatusContext`, `ParseProfileArgs`, `ProfileArgIssueParams`, Regelkommentare. |
 | 15.10.2026 | R1 | Additiv, Versionen bleiben 1: Codes ROUTE_NOT_FOUND, PROMPT_NOT_DELIVERED, STORE_VERSION_TOO_NEW (+ Texte en/de); Ports: StatusSignal.context_estimate.contextWindow, HistoryMessage.origin?, BackendSessionInfo.firstPrompt, DecisionStore.flush(), Kommentare session_id/createSyncHub/Plan-Version je Eintrag; HTTP-Guard nach Route (ADR-018), WS ohne Pflicht-Sec-Fetch-Site (ADR-019), Start-Abbruch bei neuerer schemaVersion (ADR-020); architecture §2.2/§5.1/§6/§8/§9. Neu `src/shared/devPorts.ts` (DEV_WEB_PORT importfrei, ADR-03x). |
+| 16.10.2026 | 30 | **Contracts v2** (Spezifikation `docs/wp/WP-30.md` §4, ADR-100…119): `PROTOCOL_VERSION` 1 → 2 (neue Fehlercodes, System-Event `handoff`, Befehle); `REGISTRY_SCHEMA_VERSION` 1 → 2 (`conversationEndReason 'switched'`, Migration = Identität); Settings v1 additiv (Benachrichtigungen, Leerlauf-Schlaf, `promptSuggestions`, Port, Autostart; kein `editor`, F1); `ProfileSummary` erweitert, neu `ProfileInput`/`ProfileIssue`; Entry `gitBranch`/`external`/`continueAt`/`fastMode`; `Summary.external`; 12 neue Befehle + `HOST_COMMAND_NAMES`; `conversation.reset.hasEarlier`; 8 Fehlercodes; Upload-/Protokoll-Helfer in `@shared/http`; neu `@shared/version`. Ports: `consoleLaunchFor`, `HostCommandHandler`, `BlobStore.put(…, size)`, Status-Event `wakeup`, `StartSessionRequest.fastMode?`, neu `system/ports.ts`. |
 | 15.10.2026 | R2 | Additiv, Werte unverändert: `LIMITS.decisionMessageChars` (10 000), `LIMITS.planFeedbackChars` (50 000) in `common.ts`; Antwort-Schemas in `model.ts` nutzen sie; Kommentar `autoCompactThreshold` = Token-Zahl (ADR-045). |
 
 ## Offene Fragen an den Nutzer
@@ -119,5 +138,5 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 ## Nächste Schritte
 1. **Phase 1 abgeschlossen (16.10.2026).** Alle WPs, Reviews R0–R3, Verifier V1/V2, Live-Abnahme WP-22 und `/code-review` erledigt und gemergt.
 2. **Phase 2 „Mission Control“ beauftragt (16.10.2026, Nutzer: „Setze die Phase 2 um“).** Umfang = Plan „Phasen – Phase 2“.
-   WP-30 (Design: Lückenanalyse, Contracts v2, WP-Zerlegung) läuft in `.worktrees/wp-30` auf `wp/30`.
+   WP-30 gemergt (`1488b83`). Welle 1 (31, 32, 33, 35) läuft parallel in `.worktrees/wp-xx` auf `wp/xx`.
 3. Nach ≥ 24 h: `react`/`react-dom` 19.3.1 prüfen und nachziehen (Koordinator, siehe WP-00.md).
