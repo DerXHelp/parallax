@@ -12,6 +12,7 @@ import { edgeAppArgs, edgeProfileDir } from './edgeWindow';
 import {
   CODE_RETRY_DELAYS_MS,
   LauncherError,
+  createNodeLauncherDeps,
   runLauncher,
   type LauncherDeps,
   type LauncherOptions,
@@ -646,6 +647,17 @@ describe('launcher: concurrent starts (R3-04)', () => {
     expect(w.builds).toBe(0);
     expect(w.out[0]).toContain('Another build of this Parallax folder is running');
     expect(w.started).toHaveLength(1);
+  });
+
+  it('CR-04: the real build lock of a checkout on a UNC share is no TypeError', async () => {
+    const deps = createNodeLauncherDeps({
+      repoRoot: `\\\\nas-${String(process.pid)}\\share\\parallax`,
+      home: HOME,
+      serverScript: 'C:\\repo\\dist\\server.js',
+    });
+    const lock = await deps.acquireBuildLock();
+    expect(lock.kind).toBe('acquired');
+    if (lock.kind === 'acquired') await lock.release();
   });
 
   it('exit 5: the winner is polled until it is ready, then its window opens', async () => {

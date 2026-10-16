@@ -2,6 +2,7 @@
 
 | Skript            | Befehl              | Owner-WP | Stand                 |
 | ----------------- | ------------------- | -------- | --------------------- |
+| `build.ts`        | `pnpm build`        | CR-08    | fertig (beide Schritte unter dem Build-Lock, ADR-094) |
 | `build-server.ts` | `pnpm build:server` | 00       | fertig                |
 | `preflight.ts`    | `pnpm preflight`    | 11       | fertig (WP-11)        |
 | `record.ts`       | `pnpm record <sz>`  | 01       | fertig (WP-01, Env/Auth seit WP-11 über `src/server/claude`) |
@@ -44,6 +45,11 @@ schreibt dieselbe ID nach `dist/web/build.json`. Die ID ist `<version>+<letzter 
 Build-Eingabe geändert hat>[.dirty-<Digest>]` (ADR-065): ein reiner Doku- oder Test-Commit ändert sie
 nicht und erzwingt keinen Neubau. Ein laufender Server liefert seine beim Start fixierte UI-Kopie
 aus (`PARALLAX_HOME/ui/<buildId>`, ADR-066) – ein späteres `pnpm build`/`pnpm e2e` stört ihn nicht.
+Das Bündeln läuft unter dem Build-Lock des Checkouts (ADR-092; wartet auf einen Build des
+Launchers oder der E2E); hält der Aufrufer ihn schon (`runBuild`, `PARALLAX_BUILD_LOCK_HELD=1`),
+wird er nicht erneut genommen. `pnpm build` (`build.ts` → `buildUnderLock`) nimmt den Lock einmal
+für beide Schritte (`build:web` + `build:server`); ein zweiter Build desselben Checkouts wartet
+(ADR-094). Die Ausgabe der Schritte zeigt es nur bei einem Fehler.
 
 `pnpm preflight` meldet seit V2-01 zusätzlich Edge-Richtlinien (HKLM/HKCU
 `SOFTWARE\Policies\Microsoft\Edge`), die das App-Profil trotz seiner Schalter anmelden oder

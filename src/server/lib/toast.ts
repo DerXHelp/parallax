@@ -15,11 +15,16 @@
  *   one; `removeToast(tag)` takes it out of the Action Center (decision answered elsewhere).
  * - Constrained Language Mode / AppLocker block the WinRT types → `failed` (the caller falls back
  *   to the in-app hint; check on a managed work machine).
+ * - CR-05: `failed.permanent` tells a deterministic failure (no Windows, PowerShell cannot be
+ *   started, a language mode other than FullLanguage, the registry or the WinRT types cannot be
+ *   used – exit 4 of the script) from one that may pass (timeout under load, `Show` or
+ *   `History.Remove` failed – exit 3, anything unexpected). Only a permanent one may switch the
+ *   channel off (sessions/nativeToasts.ts).
  */
 import path from 'node:path';
 import { PRODUCT_NAME } from '@shared/product';
 import { toError } from './async';
-import { runFile, systemTool, type RunFileFn } from './process';
+import { errnoCode, runFile, systemTool, type RunFileFn } from './process';
 
 /** AppUserModelID of the Parallax toasts (HKCU registration, see the file comment). */
 export const TOAST_APP_ID = 'Parallax.App';
@@ -37,7 +42,22 @@ export interface ToastRequest {
   tag: string;
 }
 
-export type ToastResult = { kind: 'shown' | 'removed' } | { kind: 'failed'; reason: string };
+/** `permanent`: deterministic, the next call fails the same way (CR-05, see the file comment). */
+export type ToastResult =
+  { kind: 'shown' | 'removed' } | { kind: 'failed'; reason: string; permanent: boolean };
+
+/** Exit code of the script when the setup fails (language mode, registry, WinRT types): permanent. */
+export const TOAST_EXIT_UNAVAILABLE = 4;
+/** Exit code of the script when the action itself (`Show`, `History.Remove`) fails: may pass. */
+export const TOAST_EXIT_ACTION_FAILED = 3;
+/** Spawn errors of a busy machine (handles, memory) – PowerShell itself is there. */
+const TRANSIENT_SPAWN_ERRORS: ReadonlySet<string> = new Set([
+  'EMFILE',
+  'ENFILE',
+  'EAGAIN',
+  'ENOMEM',
+  'EBUSY',
+]);
 
 export interface ToastOptions {
   run?: RunFileFn;
@@ -46,10 +66,18 @@ export interface ToastOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-/** The constant script: reads everything from `$env:PARALLAX_TOAST_*`. */
+/**
+ * The constant script: reads everything from `$env:PARALLAX_TOAST_*`. Exit 4 = the setup failed
+ * (deterministic: language mode, registry, WinRT types), exit 3 = the action failed (may pass).
+ */
 export const TOAST_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
+  "$step = 'setup'",
   'try {',
+  "  if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') {",
+  "    Write-Output ('error[setup]: language mode ' + $ExecutionContext.SessionState.LanguageMode)",
+  `    exit ${String(TOAST_EXIT_UNAVAILABLE)}`,
+  '  }',
   '  $appId = $env:PARALLAX_TOAST_APP_ID',
   "  $key = 'HKCU:\\Software\\Classes\\AppUserModelId\\' + $appId",
   '  if (-not (Test-Path -LiteralPath $key)) { New-Item -Path $key -Force | Out-Null }',
@@ -59,6 +87,7 @@ export const TOAST_SCRIPT = [
   '  }',
   '  [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]',
   '  [void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType = WindowsRuntime]',
+  '  $step = $env:PARALLAX_TOAST_ACTION',
   "  if ($env:PARALLAX_TOAST_ACTION -eq 'remove') {",
   '    [Windows.UI.Notifications.ToastNotificationManager]::History.Remove($env:PARALLAX_TOAST_TAG, $env:PARALLAX_TOAST_GROUP, $appId)',
   "    Write-Output 'removed'",
@@ -75,8 +104,9 @@ export const TOAST_SCRIPT = [
   '  [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($toast)',
   "  Write-Output 'shown'",
   '} catch {',
-  "  Write-Output ('error: ' + $_.Exception.Message)",
-  '  exit 3',
+  "  Write-Output ('error[' + $step + ']: ' + $_.Exception.Message)",
+  `  if ($step -eq 'setup') { exit ${String(TOAST_EXIT_UNAVAILABLE)} }`,
+  `  exit ${String(TOAST_EXIT_ACTION_FAILED)}`,
   '}',
 ].join('\n');
 
@@ -100,7 +130,8 @@ async function runToast(
   expected: 'shown' | 'removed',
   options: ToastOptions,
 ): Promise<ToastResult> {
-  if ((options.platform ?? process.platform) !== 'win32') return { kind: 'failed', reason: 'not Windows' };
+  if ((options.platform ?? process.platform) !== 'win32')
+    return { kind: 'failed', reason: 'not Windows', permanent: true };
   const run = options.run ?? runFile;
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(options.env ?? process.env)) {
@@ -113,15 +144,21 @@ async function runToast(
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encodePowerShell(TOAST_SCRIPT)],
       { env, timeoutMs: options.timeoutMs ?? TOAST_TIMEOUT_MS, maxOutputBytes: 16 * 1024 },
     );
-    if (result.timedOut) return { kind: 'failed', reason: 'timeout' };
+    if (result.timedOut) return { kind: 'failed', reason: 'timeout', permanent: false };
     const output = result.stdout.trim();
     if (result.exitCode === 0 && output.endsWith(expected)) return { kind: expected };
     return {
       kind: 'failed',
       reason: `exit ${String(result.exitCode)}: ${(output || result.stderr.trim()).slice(0, 300)}`,
+      // Only the script's own setup verdict is deterministic; anything else may pass (CR-05).
+      permanent: result.exitCode === TOAST_EXIT_UNAVAILABLE,
     };
   } catch (error) {
-    return { kind: 'failed', reason: `powershell could not be started: ${toError(error).message}` };
+    return {
+      kind: 'failed',
+      reason: `powershell could not be started: ${toError(error).message}`,
+      permanent: !TRANSIENT_SPAWN_ERRORS.has(errnoCode(error) ?? ''),
+    };
   }
 }
 

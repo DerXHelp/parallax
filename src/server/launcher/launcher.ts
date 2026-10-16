@@ -24,12 +24,15 @@ import {
 import { sleep } from '../lib/async';
 import { acquireDirectoryLock, type DirectoryLockKind } from '../lib/homeLock';
 import {
-  BUILD_STEP_TIMEOUT_MS,
+  BUILD_LOCK_WAIT_MS,
+  acquireBuildLock,
   checkBuild,
+  pollLock,
   resolveCheckoutBuildId,
   runBuild,
   type BuildResult,
   type BuildState,
+  type LockAttempt,
 } from './build';
 import {
   checkHealth,
@@ -90,8 +93,8 @@ export class LauncherError extends Error {
   }
 }
 
-/** One try of a cross-process lock (lib/homeLock `acquireDirectoryLock`). */
-export type LockAttempt = { kind: 'acquired'; release: () => Promise<void> } | { kind: 'busy' };
+/** One try of a cross-process lock (lib/homeLock; defined with the build lock in build.ts). */
+export type { LockAttempt };
 
 export interface LauncherDeps {
   /** R3-04: one launcher per data directory at a time. */
@@ -163,7 +166,7 @@ export interface LauncherResult {
 export const DEFAULT_READY_TIMEOUT_MS = 30_000;
 export const DEFAULT_POLL_MS = 150;
 /** Another launcher may build first: both build steps at their limit plus the server start. */
-export const DEFAULT_LOCK_WAIT_MS = 2 * BUILD_STEP_TIMEOUT_MS + 5 * 60_000;
+export const DEFAULT_LOCK_WAIT_MS = BUILD_LOCK_WAIT_MS;
 
 const CHANGE_PORT_HINT = 'Choose another port with --port=<n> or the environment variable PARALLAX_PORT.';
 
@@ -239,16 +242,17 @@ async function waitForLock(
   options: LauncherOptions,
   deps: LauncherDeps,
 ): Promise<{ release: () => Promise<void>; waited: boolean }> {
-  let attempt = await acquire();
-  if (attempt.kind === 'acquired') return { release: attempt.release, waited: false };
-  deps.out(waiting);
-  const deadline = deps.now() + (options.lockWaitMs ?? DEFAULT_LOCK_WAIT_MS);
-  for (;;) {
-    if (deps.now() >= deadline) throw new LauncherError(reason, timeout);
-    await deps.sleep(options.pollMs ?? DEFAULT_POLL_MS);
-    attempt = await acquire();
-    if (attempt.kind === 'acquired') return { release: attempt.release, waited: true };
-  }
+  const lock = await pollLock(acquire, {
+    waitMs: options.lockWaitMs ?? DEFAULT_LOCK_WAIT_MS,
+    pollMs: options.pollMs ?? DEFAULT_POLL_MS,
+    sleep: (ms) => deps.sleep(ms),
+    now: () => deps.now(),
+    onWaiting: () => {
+      deps.out(waiting);
+    },
+  });
+  if (lock === null) throw new LauncherError(reason, timeout);
+  return lock;
 }
 
 const BACKEND_LABELS: Readonly<Record<BackendKind, string>> = {
@@ -596,7 +600,8 @@ export function createNodeLauncherDeps(options: NodeLauncherDepsOptions): Launch
   const env = options.env ?? process.env;
   return {
     acquireLaunchLock: (home) => tryDirectoryLock('launch', home),
-    acquireBuildLock: () => tryDirectoryLock('build', options.repoRoot),
+    // CR-04: keyed without the data-directory path rules (a checkout on a UNC share builds too).
+    acquireBuildLock: () => acquireBuildLock(options.repoRoot),
     findRunningServer: (home) => findRunningServer({ home }),
     checkHealth: (port) => checkHealth(port),
     readLock: (home) => readServerLock(home),

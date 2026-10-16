@@ -36,6 +36,7 @@ die Web-UI (Edge im App-Modus) zeigt Status, Context, Chat und nicht-modale Ents
 | `src/server/lib/{logger,ids,paths}.ts` | Logger, `newId`, Pfad-Helfer (fs-Prüfungen auf `@shared/paths`) | WP-10 |
 | `src/server/lib/{process,windows,registry,edge}.ts` | Spawn/`killProcessTree`, `searchPath`/`resolveExecutable`, Registry-Env, `findEdge` | WP-11 |
 | `src/server/lib/{async,fs,homeLock,homeAccess}.ts` | `toError`/`sleep`, `withFsRetry`/`writeFileAtomic`, Home-Lock (Exit 5), Home-Rechte-Warnung | Koordinator (R2-Fixes) |
+| `src/server/lib/toast.ts` | nativer Windows-Toast (PowerShell + WinRT, ADR-082/091) | WP-22-Fixes |
 | `src/server/config.ts`, `src/server/{http,sync,store}/` | Config, App, Auth, HTTP/WS, Sync, Stores | WP-10 |
 | `src/server/claude/` | resolveClaude, buildEnv, parseProfileArgs, Profil „Standard“, Preflight | WP-11 |
 | `src/server/sessions/{normalizer,status}/` | Normalizer, Statusmaschine | WP-12 |

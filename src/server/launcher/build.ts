@@ -2,15 +2,24 @@
  * "Build if `dist` is missing or stale" for the launcher (Plan "Server-Betrieb", ADR-013/036):
  * the build id stamped into the first line of `dist/server.js` (scripts/build-server.ts) is
  * compared with the id the current checkout would get (`resolveBuildId()` of repo.config.ts,
- * injected by the caller). The build runs the same two steps as `pnpm build` (package.json
- * `build:web` + `build:server`), directly with node and the local tool binaries – no pnpm needed,
- * no shell. A test pins these steps to the package.json scripts.
+ * injected by the caller). The build runs the two steps `build:web` + `build:server` of
+ * package.json, directly with node and the local tool binaries – no pnpm needed, no shell. A test
+ * pins these steps to the package.json scripts.
+ *
+ * Build lock (R3-04, CR-08, ADR-092/094): one build per checkout at a time – a named-pipe mutex
+ * (`acquireBuildLock`, `pollLock`) taken by the launcher, the E2E setup, `pnpm build`
+ * (`scripts/build.ts` → `buildUnderLock`: both steps under ONE lock) and `scripts/build-server.ts`
+ * (`pnpm build:server` alone); `runBuild` expects its caller to hold it and tells its child steps so
+ * (`BUILD_LOCK_HELD_ENV`).
  */
-import { open, readFile, stat, type FileHandle } from 'node:fs/promises';
+import { open, readFile, realpath, stat, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
+import { windowsPathIssue, windowsPathKey } from '@shared/paths';
 import { WEB_BUILD_INFO_FILE, parseWebBuildId } from '../app/webSnapshot';
+import { sleep } from '../lib/async';
+import { acquireKeyLock } from '../lib/homeLock';
 import { runFile, type RunFileFn, type RunFileResult } from '../lib/process';
 
 /** Relative to the repo root. */
@@ -195,7 +204,84 @@ export function stringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   );
 }
 
-/** Runs BUILD_STEPS in order with `node <bin> <args>` in the repo root; stops at the first failure. */
+// =====================================================================================
+// Build lock (R3-04, CR-04, CR-08)
+// =====================================================================================
+
+/** Set to `1` for the child steps of `runBuild`: their caller holds the build lock (no deadlock). */
+export const BUILD_LOCK_HELD_ENV = 'PARALLAX_BUILD_LOCK_HELD';
+/** Another build may run both steps at their limit first. */
+export const BUILD_LOCK_WAIT_MS = 2 * BUILD_STEP_TIMEOUT_MS + 5 * 60_000;
+export const BUILD_LOCK_POLL_MS = 500;
+
+/** One non-blocking try of a cross-process lock (named pipe, lib/homeLock.ts). */
+export type LockAttempt = { kind: 'acquired'; release: () => Promise<void> } | { kind: 'busy' };
+
+/**
+ * Key of the build lock of a checkout (CR-04): the real path of a plain drive path (junctions and
+ * `subst` drives share one lock). A path the data-directory rules refuse (`\\nas\share\…`, …) is
+ * the checkout this process runs from – it is keyed by its resolved spelling, without any further
+ * file system access (never a TypeError, the build still runs).
+ */
+export async function buildLockKey(
+  repoRoot: string,
+  fs: { realpath: (dir: string) => Promise<string> } = { realpath },
+): Promise<string> {
+  const resolved = path.win32.resolve(repoRoot);
+  if (windowsPathIssue(resolved) !== null) return windowsPathKey(resolved);
+  try {
+    return windowsPathKey(await fs.realpath(resolved));
+  } catch {
+    return windowsPathKey(resolved);
+  }
+}
+
+/** One try of the build lock of `repoRoot` (held until released or the process ends). */
+export async function acquireBuildLock(
+  repoRoot: string,
+  options: { platform?: NodeJS.Platform } = {},
+): Promise<LockAttempt> {
+  const result = await acquireKeyLock('build', await buildLockKey(repoRoot), options);
+  if (result.kind === 'busy') return { kind: 'busy' };
+  const lock = result.lock;
+  return { kind: 'acquired', release: () => lock.release() };
+}
+
+export interface LockPollOptions {
+  waitMs: number;
+  pollMs: number;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+  /** Called once when the first try finds the lock busy. */
+  onWaiting?: () => void;
+}
+
+/**
+ * Takes a lock; if another holder has it, calls `onWaiting` once and polls until it is free or
+ * `waitMs` passed (null). `waited` = it was busy at first (the caller re-checks what the other
+ * holder may have done, e.g. built the same checkout).
+ */
+export async function pollLock(
+  acquire: () => Promise<LockAttempt>,
+  options: LockPollOptions,
+): Promise<{ release: () => Promise<void>; waited: boolean } | null> {
+  let attempt = await acquire();
+  if (attempt.kind === 'acquired') return { release: attempt.release, waited: false };
+  options.onWaiting?.();
+  const deadline = options.now() + options.waitMs;
+  for (;;) {
+    if (options.now() >= deadline) return null;
+    await options.sleep(options.pollMs);
+    attempt = await acquire();
+    if (attempt.kind === 'acquired') return { release: attempt.release, waited: true };
+  }
+}
+
+/**
+ * Runs BUILD_STEPS in order with `node <bin> <args>` in the repo root; stops at the first failure.
+ * The caller holds the build lock (`acquireBuildLock`/`pollLock`); the steps get
+ * `BUILD_LOCK_HELD_ENV=1`, so `scripts/build-server.ts` does not wait for it (CR-08).
+ */
 export async function runBuild(options: {
   repoRoot: string;
   /** node.exe (process.execPath). */
@@ -216,7 +302,7 @@ export async function runBuild(options: {
     try {
       result = await run(options.nodePath, [bin, ...step.args], {
         cwd: options.repoRoot,
-        env: stringEnv(options.env),
+        env: { ...stringEnv(options.env), [BUILD_LOCK_HELD_ENV]: '1' },
         timeoutMs: BUILD_STEP_TIMEOUT_MS,
       });
     } catch (error) {
@@ -232,4 +318,55 @@ export async function runBuild(options: {
     }
   }
   return { ok: true };
+}
+
+/** `buildUnderLock` failed to get the lock in time (another build of the checkout hangs). */
+export type LockedBuildResult = BuildResult | { ok: false; step: 'lock'; output: string };
+
+/**
+ * `pnpm build` (CR-08, ADR-094): BOTH steps under one build lock of the checkout – a launcher, an
+ * E2E setup or a second `pnpm build` of the same checkout waits (`onWaiting` once) instead of
+ * emptying `dist/web` or rewriting `dist/server.js` at the same time. Released after the steps,
+ * also on failure. A caller that holds the lock already (`BUILD_LOCK_HELD_ENV=1`) builds at once.
+ */
+export async function buildUnderLock(options: {
+  repoRoot: string;
+  nodePath: string;
+  env: NodeJS.ProcessEnv;
+  run?: RunFileFn;
+  fs?: BuildFs;
+  onStep?: (step: BuildStep) => void;
+  onWaiting?: () => void;
+  /** Test seams (defaults: the real build lock, BUILD_LOCK_WAIT_MS/POLL_MS, real clock). */
+  acquire?: () => Promise<LockAttempt>;
+  waitMs?: number;
+  pollMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+}): Promise<LockedBuildResult> {
+  const build = (): Promise<BuildResult> =>
+    runBuild({
+      repoRoot: options.repoRoot,
+      nodePath: options.nodePath,
+      env: options.env,
+      ...(options.run === undefined ? {} : { run: options.run }),
+      ...(options.fs === undefined ? {} : { fs: options.fs }),
+      ...(options.onStep === undefined ? {} : { onStep: options.onStep }),
+    });
+  if (options.env[BUILD_LOCK_HELD_ENV] === '1') return build();
+  const lock = await pollLock(options.acquire ?? (() => acquireBuildLock(options.repoRoot)), {
+    waitMs: options.waitMs ?? BUILD_LOCK_WAIT_MS,
+    pollMs: options.pollMs ?? BUILD_LOCK_POLL_MS,
+    sleep: options.sleep ?? sleep,
+    now: options.now ?? (() => Date.now()),
+    ...(options.onWaiting === undefined ? {} : { onWaiting: options.onWaiting }),
+  });
+  if (lock === null) {
+    return { ok: false, step: 'lock', output: 'another build of this checkout did not finish in time' };
+  }
+  try {
+    return await build();
+  } finally {
+    await lock.release();
+  }
 }
