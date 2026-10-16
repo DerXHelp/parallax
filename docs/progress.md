@@ -97,6 +97,9 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 ## Nutzer-Freigaben
 - 15.10.2026: Live-Abnahme WP-22 freigegeben (echter Abo-Login; Haiku, Mini-Prompts, Scratch-Ordner, Temp-Home, kein API-Key; bei Auth-Fehler sofort stoppen).
 
+- 16.10.2026: WP22-04 – neue Sessions bekommen **keinen** von Parallax gesetzten Permission-Modus; CLI bzw. `defaultMode` entscheidet (Plan C.3 bleibt).
+- 16.10.2026: Kurze Live-Nachprüfung der WP-22-Fixes erlaubt (Rahmen wie WP-22, Budget ≤ 0,50 USD).
+
 ## Koordinator-Entscheidungen R3/V2 (15.10.2026)
 - V2-01: Parallax-Edge-Profil nie mit Microsoft-Konto anmelden/synchronisieren (Flags/Profil-Präferenzen, keine Policies).
 - R3-02: FakeBackend auf dem echten Datenverzeichnis verboten; Launcher meldet Backend-Abweichung eines laufenden Servers.
@@ -109,7 +112,7 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 - Doku nach R1/R2 nachgezogen (`d961201`); offen: `WP-13b.md` beschreibt noch den Kinder-Pfad (historisch).
 
 ## Nächste Schritte
-1. Alle Reviews/Fixes vor WP-22 gemergt. Läuft: WP-22 Live-Abnahme (freigegeben). Danach Fix-Runde zu WP-22-Befunden, `/code-review`, Phase-1-Abschluss.
+1. WP-22 fertig (`638a218`). Läuft: WP-22-Fix-Runde (`fix/wp22`: Env-Isolation `PARALLAX_*`, Benachrichtigungen im App-Fenster, Waisen-Kinder mit Herzschlag, Shutdown < 5 s, KI-Titel). Danach `/code-review`, Phase-1-Abschluss.
 2. Danach Welle 1a (10, 11, 12, 14) in Worktrees `.worktrees/wp-xx`
    auf Branches `wp/xx`, jeweils `pnpm install --frozen-lockfile` im Worktree.
 3. Nach ≥ 24 h: `react`/`react-dom` 19.3.1 prüfen und nachziehen (Koordinator, siehe WP-00.md).
