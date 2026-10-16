@@ -1,13 +1,37 @@
 /**
- * Profiles (Plan "Claude-Profile"; Phase 1: only the built-in profile "Standard" from code, no
- * profiles.json – the file format `profilesFileSchema` is ready for Phase 2). The store also keeps
- * the claude status of the last check per profile (ProfileSummary.claude).
+ * Profiles (Plan "Claude-Profile"): the built-in profile "Standard" (code, not data), the summary
+ * the UI sees and the in-memory store (Phase 1, preflight, tests). The persistent store of
+ * `profiles.json` (Phase 2, ADR-102) is `profileStore.ts`. Both keep the claude status of the last
+ * check per profile (ProfileSummary.claude).
  */
 import { STANDARD_PROFILE_ID, type ProfileId } from '@shared/common';
-import { profileSchema, type ClaudeInstallStatus, type Profile, type ProfileSummary } from '@shared/model';
+import {
+  profileSchema,
+  type ClaudeInstallStatus,
+  type Profile,
+  type ProfileIssue,
+  type ProfileSummary,
+} from '@shared/model';
+import { registerSecret } from '../lib/logger';
 import { UNKNOWN_AUTH } from './authStatus';
 import { parseProfileArgs } from './profileArgs';
 import type { ProfileStore } from './ports';
+
+/**
+ * Profile env names whose values are secrets (Plan "Claude-Profile": `*_KEY`, `*_TOKEN`,
+ * `*_SECRET`, plus anything with `PASSWORD`; case-insensitive). Their values are registered with
+ * the logger (R9) so they never appear in a log line; the UI masks them.
+ */
+export function isSecretEnvKey(name: string): boolean {
+  return /(?:_KEY|_TOKEN|_SECRET)$/i.test(name) || /PASSWORD/i.test(name);
+}
+
+/** Registers the values of secret env names (`isSecretEnvKey`) with the logger's redaction. */
+export function registerEnvSecrets(env: Readonly<Record<string, string>>): void {
+  for (const [name, value] of Object.entries(env)) {
+    if (isSecretEnvKey(name)) registerSecret(value);
+  }
+}
 
 /** Fixed timestamps: the built-in profile is code, not data. */
 const BUILTIN_TIME = '2026-10-15T00:00:00.000Z';
@@ -54,10 +78,14 @@ export function uncheckedClaudeStatus(): ClaudeInstallStatus {
 }
 
 /**
- * ProfileSummary without env values and args (what the UI may see). Phase 2 fields: `issues`
- * follow with WP-32, `entryCount` is filled by the engine (WP-31).
+ * ProfileSummary without env values and args (what the UI may see). `issues` come from the
+ * persistent store (profileIssues, WP-32); `entryCount` is filled by the engine (WP-31).
  */
-export function profileSummary(profile: Profile, claude: ClaudeInstallStatus): ProfileSummary {
+export function profileSummary(
+  profile: Profile,
+  claude: ClaudeInstallStatus,
+  issues: readonly ProfileIssue[] = [],
+): ProfileSummary {
   return {
     id: profile.id,
     name: profile.name,
@@ -68,7 +96,7 @@ export function profileSummary(profile: Profile, claude: ClaudeInstallStatus): P
     claude,
     defaults: { ...profile.defaults },
     configDir: profile.configDir,
-    issues: [],
+    issues: [...issues],
     entryCount: 0,
   };
 }

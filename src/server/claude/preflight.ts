@@ -3,20 +3,25 @@
  * pnpm version, registry, every profile's `claude` (path, version, C.7 rule) and login, Microsoft
  * Edge and Edge policies that can sign in/sync its app profile (V2-01), a hint for antivirus
  * products that scan local web traffic (V1-08) and whether other users
- * can read PARALLAX_HOME (R2-13). Pure
+ * can read PARALLAX_HOME (R2-13). Phase 2 (WP-32): the profiles come from the data folder's
+ * `profiles.json`, read without writing (`loadPreflightProfiles`), and every profile's findings
+ * (profileIssues) are listed before its claude check. Pure
  * formatting/rating functions plus `runPreflight` with injectable seams. Output is English (Plan:
- * preflight and logs stay English). Never prints e-mail/org (parseAuthStatus).
+ * preflight and logs stay English). Never prints e-mail/org (parseAuthStatus) or env values.
  */
 import path from 'node:path';
 import { z } from 'zod';
-import type { ClaudeInstallStatus, Profile } from '@shared/model';
+import type { ErrorPayload } from '@shared/errors';
+import type { ClaudeInstallStatus, Profile, ProfileIssue } from '@shared/model';
 import { windowsPathIssue } from '@shared/paths';
 import { findEdge } from '../lib/edge';
+import type { FsOps } from '../lib/fs';
 import { checkHomeAccess, type HomeAccess } from '../lib/homeAccess';
 import { errnoCode, runFile, systemTool, type RunFileFn } from '../lib/process';
 import { parseRegValues, regKeyQuery, regQuery, type RegKeyQuery, type RegQuery } from '../lib/registry';
 import { getEnvVar, nodeFsProbe, resolveExecutable, type FsProbe } from '../lib/windows';
 import type { ClaudeIntegrationImpl } from './integration';
+import { PROFILES_FILE, profilesOf, readProfilesFile, type ProfilesFileRead } from './profileStore';
 import { compareVersions } from './resolveClaude';
 
 export type PreflightLevel = 'ok' | 'info' | 'warn' | 'fail';
@@ -174,6 +179,85 @@ export function checkProfileStatus(
     login.hint = '`claude auth status --json` could not be read.';
   }
   return [claude, login];
+}
+
+// ---- profiles (Phase 2, WP-32) ----
+
+/** Where the checked profiles come from: `profiles.json` of the data folder, or only "Standard". */
+export function checkProfilesSource(read: ProfilesFileRead | null): PreflightCheck {
+  const base = { id: 'profiles', title: 'profiles' };
+  const standardOnly = 'only "Standard" checked';
+  if (read === null) return { ...base, level: 'info', detail: `built-in "Standard" (data folder unknown)` };
+  switch (read.kind) {
+    case 'missing':
+      return { ...base, level: 'info', detail: `built-in "Standard" (no ${PROFILES_FILE} yet)` };
+    case 'ok': {
+      const detail = `${String(read.profiles.length)} from ${PROFILES_FILE}`;
+      if (read.repairs.length === 0) return { ...base, level: 'ok', detail };
+      return {
+        ...base,
+        level: 'warn',
+        detail: `${detail} (inconsistent: ${read.repairs.join(', ')})`,
+        hint: 'The server repairs the file at its next start (exactly one default, "Standard" present).',
+      };
+    }
+    case 'newer':
+      return {
+        ...base,
+        level: 'warn',
+        detail: `${PROFILES_FILE} was written by a newer Parallax (schemaVersion ${String(read.version)}) – ${standardOnly}`,
+        hint: 'Update Parallax: this build does not start with that data folder.',
+      };
+    case 'invalid':
+      return {
+        ...base,
+        level: 'warn',
+        detail: `${PROFILES_FILE} is unreadable (${read.reason}) – ${standardOnly}`,
+        hint: 'The server moves the file to quarantine at its next start and continues with "Standard".',
+      };
+  }
+}
+
+/** Params that describe a finding without secrets (never env values – they are not in params). */
+const ISSUE_PARAMS: readonly string[] = ['field', 'flag', 'index', 'reason', 'name', 'key', 'value'];
+
+/** `PROFILE_ARG_BLOCKED (flag=--resume, index=0)`. */
+export function describeProfileIssue(issue: ErrorPayload): string {
+  const params = ISSUE_PARAMS.filter((key) => Object.hasOwn(issue.params, key)).map(
+    (key) => `${key}=${String(issue.params[key])}`,
+  );
+  return params.length === 0 ? issue.code : `${issue.code} (${params.join(', ')})`;
+}
+
+/** Errors → fail (sessions with the profile cannot start), warnings → warn, none → no line. */
+export function checkProfileIssues(
+  profile: Pick<Profile, 'id' | 'name'>,
+  issues: readonly ProfileIssue[],
+): PreflightCheck | null {
+  const errors = issues.filter((finding) => finding.level === 'error');
+  const shown = errors.length > 0 ? errors : issues.filter((finding) => finding.level === 'warning');
+  if (shown.length === 0) return null;
+  const check: PreflightCheck = {
+    id: `config:${profile.id}`,
+    title: 'config',
+    level: errors.length > 0 ? 'fail' : 'warn',
+    detail: `${shown.map((finding) => describeProfileIssue(finding.issue)).join(', ')} (profile "${profile.name}")`,
+  };
+  if (errors.length > 0)
+    check.hint = 'Fix the profile in the settings ("Profiles"): it cannot start sessions.';
+  return check;
+}
+
+/**
+ * The profiles of a data folder for `pnpm preflight`: `<home>/profiles.json` read WITHOUT writing
+ * (no quarantine, no repair on disk); missing/newer/unreadable → only "Standard".
+ */
+export async function loadPreflightProfiles(
+  home: string | null,
+  fs?: Pick<FsOps, 'readFile'>,
+): Promise<{ profiles: Profile[]; source: PreflightCheck }> {
+  const read = home === null ? null : await readProfilesFile(home, fs);
+  return { profiles: profilesOf(read), source: checkProfilesSource(read) };
 }
 
 /** Where Edge reads group/MDM policies (machine and user). */
@@ -424,6 +508,10 @@ export interface PreflightDeps {
   home?: string | null;
   /** Default lib/homeAccess.ts `checkHomeAccess`. */
   homeAccess?: (home: string) => Promise<HomeAccess>;
+  /** Line about the profile source (checkProfilesSource); omitted = no line. */
+  profilesSource?: PreflightCheck;
+  /** Findings per profile (profileIssues); omitted = not checked. */
+  profileIssues?: (profile: Profile) => ProfileIssue[];
 }
 
 export interface PreflightReport {
@@ -448,7 +536,11 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightReport
   checks.push(checkRegistry(registry));
 
   checks.push(checkSdk(deps.sdk?.sdkVersion ?? null, deps.sdk?.claudeCodeVersion ?? null));
+  if (deps.profilesSource !== undefined) checks.push(deps.profilesSource);
   for (const profile of deps.integration.profiles.list()) {
+    const config =
+      deps.profileIssues === undefined ? null : checkProfileIssues(profile, deps.profileIssues(profile));
+    if (config !== null) checks.push(config);
     try {
       const status = await deps.integration.checkProfile(profile.id);
       checks.push(...checkProfileStatus(profile, status, deps.sdk?.claudeCodeVersion ?? null));

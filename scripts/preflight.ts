@@ -7,7 +7,9 @@
  * the resolved `claude` path + version (C.7) and the login (`claude auth status --json`, only
  * method/provider/subscription – never e-mail or organization), Microsoft Edge, and whether other
  * users can read the data folder (R2-13; `--home=<dir>` / PARALLAX_HOME like the server, default
- * %LOCALAPPDATA%\Parallax). Only `claude --version` and `claude auth status` are run – no model
+ * %LOCALAPPDATA%\Parallax). The profiles are those of the data folder's `profiles.json`, read
+ * without writing anything (WP-32; missing or newer file → only "Standard"), each with its
+ * findings (profileIssues). Only `claude --version` and `claude auth status` are run – no model
  * call, no tokens.
  */
 import { readFileSync } from 'node:fs';
@@ -15,7 +17,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { createClaudeIntegration } from '../src/server/claude/integration';
-import { formatPreflight, runPreflight } from '../src/server/claude/preflight';
+import { formatPreflight, loadPreflightProfiles, runPreflight } from '../src/server/claude/preflight';
+import { profileIssues } from '../src/server/claude/profileIssues';
+import { defaultProfileIssueContext } from '../src/server/claude/profileStore';
+import { createProfileStore } from '../src/server/claude/profiles';
 import { readSdkManifest } from '../src/server/claude/resolveClaude';
 import { loadConfig } from '../src/server/config';
 
@@ -40,10 +45,14 @@ function dataHome(): string | null {
 
 async function main(): Promise<number> {
   const sdk = await readSdkManifest();
+  const home = dataHome();
+  const { profiles, source } = await loadPreflightProfiles(home);
   const integration = createClaudeIntegration({
     appVersion: appVersion(),
     sdkClaudeCodeVersion: sdk?.claudeCodeVersion ?? null,
+    profiles: createProfileStore(profiles),
   });
+  const issueContext = defaultProfileIssueContext();
   const report = await runPreflight({
     integration,
     nodeVersion: process.version,
@@ -51,7 +60,9 @@ async function main(): Promise<number> {
     cwd: repoRoot,
     nodeExecutable: process.execPath,
     sdk,
-    home: dataHome(),
+    home,
+    profilesSource: source,
+    profileIssues: (profile) => profileIssues(profile, issueContext),
   });
   process.stdout.write(formatPreflight(report.checks));
   return report.exitCode;

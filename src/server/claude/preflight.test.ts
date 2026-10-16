@@ -1,6 +1,10 @@
+import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { STANDARD_PROFILE_ID } from '@shared/common';
-import { sampleClaudeInstallStatus } from '@shared/samples';
+import type { Profile } from '@shared/model';
+import { sampleClaudeInstallStatus, sampleId, sampleProfile } from '@shared/samples';
 import type { HomeAccess } from '../lib/homeAccess';
 import type { RunFileOptions, RunFileResult } from '../lib/process';
 import { createClaudeIntegration } from './integration';
@@ -14,18 +18,24 @@ import {
   checkHomeAccessResult,
   checkNode,
   checkPnpm,
+  checkProfileIssues,
   checkProfileStatus,
+  checkProfilesSource,
   checkRegistry,
+  describeProfileIssue,
   edgePolicyValues,
   findPnpm,
   formatPreflight,
+  loadPreflightProfiles,
   pnpmVersionFromUserAgent,
   preflightExitCode,
   redactRegistry,
   runPreflight,
   type PreflightCheck,
 } from './preflight';
-import { STANDARD_PROFILE } from './profiles';
+import { profileIssues } from './profileIssues';
+import { PROFILES_FILE, type ProfilesFileRead } from './profileStore';
+import { STANDARD_PROFILE, createProfileStore } from './profiles';
 
 const STANDARD = { id: STANDARD_PROFILE.id, name: STANDARD_PROFILE.name };
 const LOGGED_OUT = { state: 'logged_out', method: null, apiProvider: null, subscriptionType: null } as const;
@@ -287,15 +297,17 @@ describe('runPreflight', () => {
     timedOut: false,
   });
 
-  function stubs(files: Record<string, string>) {
+  function stubs(files: Record<string, string>, profiles?: Profile[]) {
     const calls: string[] = [];
+    const envs: (Record<string, string> | undefined)[] = [];
     const fs = createMemoryFs(files);
     const runFile = (
       file: string,
       args: readonly string[],
-      _options: RunFileOptions,
+      options: RunFileOptions,
     ): Promise<RunFileResult> => {
       calls.push([file, ...args].join(' '));
+      envs.push(options.env);
       if (file === PNPM_EXE && args[0] === '--version') return Promise.resolve(ok('12.8.2\n'));
       if (file === PNPM_EXE) return Promise.resolve(ok('https://registry.npmjs.org/\n'));
       if (args[0] === '--version') return Promise.resolve(ok('2.1.300 (Claude Code)\n'));
@@ -310,8 +322,9 @@ describe('runPreflight', () => {
       fs,
       runFile,
       sdkClaudeCodeVersion: '2.1.296',
+      ...(profiles === undefined ? {} : { profiles: createProfileStore(profiles) }),
     });
-    return { fs, runFile, integration, calls };
+    return { fs, runFile, integration, calls, envs };
   }
 
   const env = { npm_execpath: PNPM_EXE, 'ProgramFiles(x86)': 'C:\\Program Files (x86)' };
@@ -351,6 +364,84 @@ describe('runPreflight', () => {
       `${LOCAL} --version`,
       `${LOCAL} auth status --json`,
     ]);
+  });
+
+  it('checks every profile of the data folder, reading profiles.json without writing (WP-32)', async () => {
+    const home = await mkdtemp(path.join(process.env.PARALLAX_HOME ?? os.tmpdir(), 'wp32-preflight-'));
+    const work = sampleId('pf', 1);
+    const broken = sampleId('pf', 2);
+    const text = `${JSON.stringify({
+      schemaVersion: 1,
+      profiles: [
+        sampleProfile({ isDefault: false }),
+        sampleProfile({
+          id: work,
+          name: 'Work',
+          builtin: false,
+          isDefault: true,
+          configDir: 'D:\\claude\\work',
+        }),
+        sampleProfile({
+          id: broken,
+          name: 'Broken',
+          builtin: false,
+          isDefault: false,
+          args: ['--resume', 'x'],
+          env: { K: '${env:NOPE_NOT_SET}' },
+        }),
+      ],
+    })}\n`;
+    await writeFile(path.join(home, PROFILES_FILE), text, 'utf8');
+
+    const { profiles, source } = await loadPreflightProfiles(home);
+    const { fs, runFile, integration, calls, envs } = stubs(
+      { [LOCAL]: '', [PNPM_EXE]: '', [EDGE]: '' },
+      profiles,
+    );
+    const report = await runPreflight({
+      integration,
+      nodeVersion: 'v26.4.0',
+      env,
+      cwd: 'D:\\repo',
+      nodeExecutable: 'node.exe',
+      sdk,
+      fs,
+      runFile,
+      regQuery: () => Promise.resolve(null),
+      regKeyQuery: () => Promise.resolve(null),
+      antivirus: () => Promise.resolve(['Windows Defender']),
+      profilesSource: source,
+      profileIssues: (profile) =>
+        profileIssues(profile, { env: {}, persistentEnv: new Map(), exists: () => true }),
+    });
+    expect(report.checks.map((check) => [check.id, check.level])).toEqual([
+      ['node', 'ok'],
+      ['pnpm', 'ok'],
+      ['registry', 'info'],
+      ['sdk', 'info'],
+      ['profiles', 'ok'],
+      [`claude:${STANDARD_PROFILE_ID}`, 'ok'],
+      [`login:${STANDARD_PROFILE_ID}`, 'ok'],
+      [`claude:${work}`, 'ok'],
+      [`login:${work}`, 'ok'],
+      [`config:${broken}`, 'fail'],
+      [`claude:${broken}`, 'fail'],
+      ['edge', 'ok'],
+      ['edge-policies', 'ok'],
+      ['antivirus', 'info'],
+    ]);
+    expect(report.checks.find((check) => check.id === 'profiles')?.detail).toBe('3 from profiles.json');
+    expect(report.checks.find((check) => check.id === `config:${broken}`)?.detail).toBe(
+      'PROFILE_ARG_BLOCKED (flag=--resume, index=0) (profile "Broken")',
+    );
+    expect(report.exitCode).toBe(1);
+    // Each profile is checked with its own env (Work: its config dir); the broken env never runs claude.
+    const workCalls = envs.filter((e) => e?.CLAUDE_CONFIG_DIR === 'D:\\claude\\work');
+    expect(workCalls).toHaveLength(2);
+    expect(calls.filter((call) => call.startsWith(LOCAL))).toHaveLength(4);
+    // Read-only: the file is untouched, nothing else was written.
+    expect(await readFile(path.join(home, PROFILES_FILE), 'utf8')).toBe(text);
+    expect(await readdir(home)).toEqual([PROFILES_FILE]);
   });
 
   it('fails without claude and Edge', async () => {
@@ -400,6 +491,75 @@ describe('runPreflight', () => {
     expect(homes).toEqual(['D:\\px-data']);
     expect(report.checks.at(-1)).toMatchObject({ id: 'home', level: 'warn' });
     expect(report.exitCode).toBe(0);
+  });
+});
+
+describe('profiles (WP-32)', () => {
+  it.each<[string, ProfilesFileRead | null, PreflightCheck['level'], string]>([
+    ['no data folder', null, 'info', 'built-in "Standard" (data folder unknown)'],
+    ['no file', { kind: 'missing' }, 'info', 'built-in "Standard" (no profiles.json yet)'],
+    [
+      'a consistent file',
+      { kind: 'ok', profiles: [STANDARD_PROFILE], repairs: [] },
+      'ok',
+      '1 from profiles.json',
+    ],
+    [
+      'a file the server repairs',
+      { kind: 'ok', profiles: [STANDARD_PROFILE], repairs: ['standard_added'] },
+      'warn',
+      '1 from profiles.json (inconsistent: standard_added)',
+    ],
+    [
+      'a newer file',
+      { kind: 'newer', version: 2 },
+      'warn',
+      'profiles.json was written by a newer Parallax (schemaVersion 2) – only "Standard" checked',
+    ],
+    [
+      'an unreadable file',
+      { kind: 'invalid', reason: 'json' },
+      'warn',
+      'profiles.json is unreadable (json) – only "Standard" checked',
+    ],
+  ])('%s', (_name, read, level, detail) => {
+    expect(checkProfilesSource(read)).toMatchObject({ id: 'profiles', level, detail });
+  });
+
+  it('loadPreflightProfiles without a data folder: only "Standard"', async () => {
+    const { profiles, source } = await loadPreflightProfiles(null);
+    expect(profiles).toEqual([STANDARD_PROFILE]);
+    expect(source.level).toBe('info');
+  });
+
+  it('lists errors (fail) before warnings (warn); infos alone give no line', () => {
+    const profile = { id: STANDARD_PROFILE_ID, name: 'Standard' } as const;
+    const blocked = {
+      level: 'error',
+      issue: { code: 'PROFILE_ARG_BLOCKED', params: { index: 0, flag: '-p' } },
+    } as const;
+    const bypass = {
+      level: 'warning',
+      issue: { code: 'PROFILE_BYPASS_ENABLED', params: { index: 1, flag: '--dangerously-skip-permissions' } },
+    } as const;
+    const raw = {
+      level: 'info',
+      issue: { code: 'PROFILE_ARG_PASSED_RAW', params: { index: 2, flag: '--x' } },
+    } as const;
+    expect(checkProfileIssues(profile, [blocked, bypass, raw])).toMatchObject({
+      id: `config:${STANDARD_PROFILE_ID}`,
+      level: 'fail',
+      detail: 'PROFILE_ARG_BLOCKED (flag=-p, index=0) (profile "Standard")',
+    });
+    expect(checkProfileIssues(profile, [bypass, raw])).toMatchObject({
+      level: 'warn',
+      detail: 'PROFILE_BYPASS_ENABLED (flag=--dangerously-skip-permissions, index=1) (profile "Standard")',
+    });
+    expect(checkProfileIssues(profile, [raw])).toBeNull();
+    expect(checkProfileIssues(profile, [])).toBeNull();
+    expect(
+      describeProfileIssue({ code: 'PROFILE_INVALID', params: { field: 'executable', reason: 'not_found' } }),
+    ).toBe('PROFILE_INVALID (field=executable, reason=not_found)');
   });
 });
 
