@@ -1,6 +1,8 @@
 # Architektur
 
-Stand: WP-02 (Contracts v1, eingefroren) plus R0-Fixes (HTTP-/Auth-Contract, Datei-Ownership,
+Stand Phase 2: Contracts v2 (WP-30, `docs/wp/WP-30.md` §4, ADR-100 … ADR-119; Protokoll v2, Registry
+v2) sind eingetragen in §2, §4, §5, §5.1, §5.2, §6, §8 – die Phase-2-Module beschreiben die Pakete
+WP-31 … WP-40 in ihren Ergebnissen. Davor: WP-02 (Contracts v1, eingefroren) plus R0-Fixes (HTTP-/Auth-Contract, Datei-Ownership,
 Statusregeln; `docs/wp/R0.md`, Abschnitt „Umsetzung“), nachgezogen bis R1/R2-Fixes, WP-20a und die
 R3-Fixes Server (`docs/wp/R1.md`, `docs/wp/R2.md`, `docs/wp/R3.md`, ADR-018 … ADR-067; Server-,
 Launcher- und Build-Abschnitte §2.2, §3.3, §5.1, §8, §9, §11) und die WP-22-Fixes (`docs/wp/WP-22.md`
@@ -67,6 +69,18 @@ flowchart LR
 | WP-21 | `src/server/launcher/**`: Lockfile schreiben/lesen, Health-Ping, Launcher-Code, Edge-Start, „Server beenden“ | `@shared/http`, `lib/process.ts` | Temp-Home, Port 0 |
 | Koordinator (R2-Fixes) | `lib/async.ts`, `lib/fs.ts` (ADR-055), `lib/homeLock.ts` (ADR-054), `lib/homeAccess.ts` (ADR-056); Exporte §2.2 | Shared (`@shared/paths`), `lib/{logger,paths,process}.ts` | Nähte (`FsOps`, `run`, `platform`), Temp-Ordner, zwei Prozesse (Home-Lock) |
 
+**Phase 2 (Mission Control, Design `docs/wp/WP-30.md`, ADR-100 … ADR-119):** Contracts v2 und Gerüst
+(WP-30), dann je Paket: WP-31/34 Engine (`sessions/**`, `backend/**`: Leerlauf-Schlaf, Archiv,
+Unterhaltungswechsel, Kataloge, Einstellungs-Wirkung, Host-Befehls-Routing; externe Konsole,
+Rate-Limit-Fortsetzen, Bild-Anhänge), WP-32 Profile (`claude/**`: `profiles.json`, `profile.*`,
+`consoleLaunchFor`), WP-33 Host-Dienste und Windows-Integration (`http`, `store`, `host`, `system`,
+`lib`, `launcher`, `config.ts`: Upload, `fs.listDirectory`, Konsole, Autostart, Protokoll-Handler),
+WP-35 … 38 Web (Navigation; Neue Session + Profil-Editor; Composer + Transkript; Einstellungen +
+Töne), WP-40 Verdrahtung + E2E. Dateigenaue Ownership: `CLAUDE.md` bzw. WP-30 §6 (ersetzt §2.1 für
+Phase 2). Neue Querverbindungen ohne Importe: Host-Befehle über `HostCommandHandler`
+(`sync/ports.ts`, ADR-101), Windows-Integration über `system/ports.ts`, im Web der Anfragekanal
+`src/web/shell/requests.ts` und die Slots `SettingsPage`/`ProfilesSettings`.
+
 **Import-Grenzen (ADR-003):** `src/shared` ist ein Blatt (nur `zod` und relative Shared-Module, keine
 Node-/DOM-APIs, keine SDK-Typen). Web ↛ Server, Server ↛ Web (tsconfig `rootDir` + ESLint
 `no-restricted-imports`). Server-Dateien dürfen SDK-Typen importieren; rohe SDK-Messages existieren
@@ -87,6 +101,8 @@ nur hinter `AgentBackend` (`BackendEvent.message: unknown`). Skripte dürfen Ser
 | `src/shared/http.ts` | HTTP-/Auth-Contract (R0-01): `API_PATHS`, Request/Response-Schemas, `authCookieName(port)`, Einmal-Code/Launcher-Token, `takeAuthCodeFromHash`, Lockfile-Schema |
 | `src/shared/paths.ts` | reine Windows-Pfadregeln (C.10, R0-02): `windowsPathIssue`, `windowsPathKey`, `windowsPathsEqual`, `isWindowsPathInside` |
 | `src/shared/samples.ts` | gültige Beispielobjekte für Tests und Playground |
+| `src/shared/version.ts` | Versionsregel C.7 (`compareVersions`, `cliVersionStatus`) – Phase 2, einzige Implementierung |
+| `src/server/system/ports.ts` | Phase 2: `ConsoleLauncher`, `SystemIntegration` (Windows-Integration ↔ Engine/Komposition) |
 | `src/server/backend/types.ts` | Port `AgentBackend`, `AgentSession`, `BackendEvent`, `PermissionRequest` |
 | `src/server/backend/fixture.ts` | Fixture-Format v1 (einzige Quelle), Laden, Payload-Views |
 | `src/server/sessions/ports.ts` | Normalizer/Status ↔ Engine (`LiveNormalizer`, `StatusSignal`, `ReduceStatus`) |
@@ -94,6 +110,10 @@ nur hinter `AgentBackend` (`BackendEvent.message: unknown`). Skripte dürfen Ser
 | `src/server/claude/ports.ts` | Claude-Integration ↔ Engine (`LaunchSpec`, `ClaudeIntegration`, `ProfileStore`, `ParseProfileArgs`) |
 
 ### 2.1 Datei-Ownership gemeinsamer Ordner (normativ, R0-02/R0-03)
+
+> Phase 2: Die Tabelle unten beschreibt Phase 1. Für Phase 2 gilt die Ownership-Tabelle in
+> `CLAUDE.md` (= `docs/wp/WP-30.md` §6); die Regeln dieses Abschnitts (keine Datei in zwei Paketen,
+> READMEs mehrfach besetzter Ordner beim Koordinator) gelten weiter.
 
 Ziel: Welle 1a (WP-10, 11, 12, 14) und Welle 1b (WP-13, 15, 16) bearbeiten **keine Datei
 gemeinsam**. Pakete legen in fremden Ordnern nichts an. `README.md` eines Ordners ändert nur sein
@@ -493,15 +513,19 @@ Prefs bleiben unangetastet → Hinweis „Parallax uses Windows notifications in
 | Status-Fakten | Engine (`reduceStatus`) | `lastRunState`, `lastError`, `contextPct` | `summary.upsert` |
 | Offene Entscheidungen | Broker (Speicher) | Metadaten `decisions.json`, Pläne `plans/v<N>.md` | `decision.*`-Ops |
 | Tatsächlicher Modus / Modell | `init`/`status` bzw. `assistant.message.model` | `permissionMode`, `lastModel` | Summary |
-| Profile, Settings | Server | `profiles.json` (Phase 2), `settings.json` | `host.state` |
-| Blobs (Bilder, Volltexte) | Blob-Cache | `blobs/` | `/api/blob/<id>` |
+| Profile, Settings | Server | `profiles.json` (Phase 2, ADR-102; ohne Datei nur „Standard“), `settings.json` | `host.state` (Profile ohne Env/Args; volles Profil nur per `profile.get`) |
+| Modell-Kataloge je Profil, Abo-Limits (Phase 2, ADR-114) | Engine | `model-catalogs.json`, `account-limits.json` | `detail.models`, `host.state.accountLimits` |
+| Slash-Befehle je Eintrag (Phase 2, ADR-108) | Engine/Normalizer | `entries/<id>/commands.json` (Cache) | `detail.commands` |
+| Externe Konsole (Phase 2, ADR-104) | Engine | `Entry.external` | Summary `external`, Item `handoff` |
+| Blobs (Bilder, Volltexte, Uploads) | Blob-Cache | `blobs/` | `/api/blob/<id>`; Upload `POST /api/attachments` (ADR-103) |
 | Entwürfe, Panelgrößen, gewählte Session | Client | `localStorage`/`sessionStorage` | – |
 | Deltas, Retry, Rate-Limit-Banner, Hooks | Speicher | – (geht bei Neustart verloren, akzeptiert) | Ops |
 
 ## 5. Sync-Protokoll (`src/shared/protocol.ts`)
 
 **Endpunkt** `GET /api/ws`; Auth per Geräte-Cookie und Origin/Host **im Upgrade**, `Sec-Fetch-Site`
-nur falls vorhanden (A.8, §5.1, V1-01). Ein JSON-Objekt pro Frame, Diskriminator `type`. `PROTOCOL_VERSION = 1`. Vor dem
+nur falls vorhanden (A.8, §5.1, V1-01). Ein JSON-Objekt pro Frame, Diskriminator `type`. `PROTOCOL_VERSION = 2`
+(Phase 2, ADR-100: neue Fehlercodes, System-Event `handoff`, neue Befehle). Vor dem
 Verbinden fragt der Client `GET /api/auth/status` (ein abgelehnter Upgrade ist im Browser nur Close
 1006).
 
@@ -523,7 +547,16 @@ Antwort ist genau eine von `session.snapshot` (kein `sinceSeq` oder außerhalb d
 `session.ops` (Replay, ggf. leer) oder `session.unavailable`; danach Live-`session.ops`. Ops:
 `item.upsert`, `item.delta` (`text`/`thinking`/`inputPartial`), `item.remove`, `conversation.reset`,
 `decision.upsert`, `decision.resolved`, `detail.patch` (ersetzt genau die genannten Felder). Der Client
-prüft `ops[0].seq === lastSeq + 1`, bei Lücke `subscribe{sinceSeq: lastSeq}`.
+prüft `ops[0].seq === lastSeq + 1`, bei Lücke `subscribe{sinceSeq: lastSeq}`. Phase 2:
+`conversation.reset.hasEarlier` (Wechsel in eine frühere Unterhaltung, ADR-107) – die Engine schickt
+danach das Log-Ende der Unterhaltung als `item.upsert`.
+
+**Host-Befehle (Phase 2, ADR-100/101):** `profile.get|save|delete|setDefault|test|validate` und
+`fs.listDirectory` tragen keine `entryId` (`HOST_COMMAND_NAMES`); die Engine reicht sie an
+`HostCommandHandler` weiter. `profile.get` liefert das vollständige Profil inklusive Env-Werten nur in
+der `ack` an das anfragende Fenster. Neue Eintragsbefehle: `session.switchConversation`,
+`session.openExternal`, `session.reclaim`, `session.consoleCommand`, `session.continueAfterLimit`;
+`session.setPinned/setArchived/setFastMode` werden umgesetzt. Regeln: §5.2.
 
 **Delta-Bündelung:** Der Hub puffert `item.delta` je `(itemId, field)` und flusht alle
 `LIMITS.deltaFlushMs` (40 ms) **oder** sofort vor jeder anderen Op desselben Eintrags; zusammengelegte
@@ -560,8 +593,12 @@ aus dem Benachrichtigungscenter. Ein deterministischer Fehler (CLM/AppLocker, ke
 den Kanal für den Serverlauf ab (`HostState.nativeNotifications: false`); andere (Timeout,
 `Show`/`History.Remove`) zählen, ab dem dritten in Folge pausiert er (1 min, verdoppelt, ≤ 15 min;
 ADR-091). Das Banner „Benachrichtigungen
-aktivieren“ erscheint nur ohne native Toasts. Ein Klick auf den nativen Toast schließt ihn nur
-(Protokoll `parallax:` erst Phase 2).
+aktivieren“ erscheint nur ohne native Toasts. Ein Klick auf den nativen Toast schließt ihn nur –
+außer mit der Phase-2-Option `settings.notifications.openOnClick` (ADR-109): dann trägt der Toast
+`parallax://session/<entryId>`, der HKCU-Protokoll-Handler startet den Launcher mit `--open`, und der
+öffnet ein App-Fenster mit `#code=…&session=<entryId>`. Phase 2 außerdem: „Nicht stören“,
+Toast/Ton je Ereignis, `focusedElsewhere` und `doneMinSeconds` aus den Einstellungen (Server
+filtert), Töne spielt der Client per Web Audio.
 
 ### (a) Erstverbindung
 ```mermaid
@@ -727,7 +764,7 @@ sequenceDiagram
 | `GET /api/auth/status` | „angemeldet?“ – vor dem WS und nach abnormalem Close | immer 200 `authStatusResponseSchema` `{authenticated, serverInstanceId}` | – |
 | `POST /api/launcher/code` | neuer Einmal-Code für ein weiteres Fenster | 200 `launcherCodeResponseSchema` `{code, expiresAt, serverInstanceId}` | 401 `LAUNCHER_TOKEN_INVALID`, 403 `ORIGIN_REJECTED` |
 | `GET /api/blob/:blobId` | Volltexte, Bilder (`blobPath(id)`) | Rohbytes mit `Content-Type` aus der Meta-Datei | 401 `AUTH_REQUIRED`, 404 `BLOB_NOT_FOUND` |
-| `POST /api/attachments` | Upload → `BlobRef` (Phase 2) | – | 501 `NOT_IMPLEMENTED` |
+| `POST /api/attachments?name=…&width=…&height=…` | Bild-Upload (Phase 2, ADR-103): Rohbytes, `Content-Type` ∈ `ATTACHMENT_MEDIA_TYPES`, ≤ `LIMITS.imageBytes`, Magic-Bytes geprüft | 200 `attachmentUploadResponseSchema` `{attachment: BlobRef}` | 400 `VALIDATION_FAILED` (Query), 413 `PAYLOAD_TOO_LARGE`, 415 `UNSUPPORTED_MEDIA_TYPE`, Guard wie „jede andere Route“ |
 | `GET /api/ws` | WebSocket-Upgrade (§5) | `101` | 400/401/403 + `ErrorPayload` (Browser sieht nur Close 1006) |
 | jede andere Methode/Pfad, fehlende statische Datei | – | – | 404 `ROUTE_NOT_FOUND {path}` (R1-12, V1-06) |
 
@@ -863,7 +900,7 @@ bzw. das Profil.
 | Permission `remember: D` | `D ∈ offer.ruleDestinations`; gebaut werden **nur** `addRules` mit `behavior:'allow'` und `addDirectories` aus den gespeicherten `suggestions`, mit `destination: D` (kein `deny`/`ask`, kein `cliArg`) | `DECISION_OPTION_UNAVAILABLE` |
 | Permission `acceptEdits: true` | nur wenn `offer.acceptEdits`; immer `{type:'setMode', mode:'acceptEdits', destination:'session'}` | `DECISION_OPTION_UNAVAILABLE` |
 | Frage `answers[]` | jede `question` ist ein Fragetext der Entscheidung und kommt höchstens einmal vor; `selected` ⊆ Labels dieser Frage; ohne `multiSelect` höchstens ein Label | `DECISION_OPTION_UNAVAILABLE` (`params.path`) |
-| `prompt.attachments[].blobId` | nur eigene Uploads dieses Eintrags (`entries/<id>/attachments/`) | `BLOB_NOT_FOUND` (Phase 1: `NOT_IMPLEMENTED`) |
+| `prompt.attachments[].blobId` | Phase 2 (ADR-103, ersetzt „nur eigene Uploads dieses Eintrags“): Blob existiert, `mediaType ∈ ATTACHMENT_MEDIA_TYPES`, `bytes ≤ LIMITS.imageBytes`; geprüft vor Start und Senden | `BLOB_NOT_FOUND`, `UNSUPPORTED_MEDIA_TYPE`, `PAYLOAD_TOO_LARGE` |
 | `model` | `modelNameSchema` (kein führendes `-`, keine Leerzeichen, ≤ `LIMITS.modelChars`) | `VALIDATION_FAILED` |
 | `cwd` | `checkCwd` (`lib/paths.ts`), String exakt speichern | `PATH_REJECTED` / `CWD_NOT_FOUND` / `CWD_NOT_DIRECTORY` |
 | Antwort auf eine `expired`-Entscheidung | Plan `approve` = „Fortsetzen & Plan freigeben“ (Diagramm g); alles andere | `DECISION_EXPIRED` |
@@ -871,6 +908,29 @@ bzw. das Profil.
 | `session.resume` | schließt abgelaufene Entscheidungen (`decision.resolved`, Outcome `expired`) | – |
 | `server.shutdown` | `ack` zuerst; `sessionsStopped` = Anzahl der zu stoppenden Sessions, **vor** dem Schließen gezählt | – |
 | `title_changed` (Engine) | Echo des eigenen `/rename X` (Titel = X) → `custom`; Titel ist `custom` → ignorieren; im laufenden Turn nach `conversation_reset` → ignorieren (Echo des alten Titels); sonst Titel übernehmen, `titleSource 'ai'` | – |
+
+**Phase 2 (normativ für WP-31/32/33/34; WP-30 §4.12):**
+
+| Befehl / Fall | Regel | Fehler |
+|---|---|---|
+| alle Eintragsbefehle, Eintrag archiviert | erlaubt nur `setArchived`, `setPinned`, `rename`, `transcript.loadEarlier`, `consoleCommand` | `SESSION_ARCHIVED` |
+| alle Eintragsbefehle, `runState external` | erlaubt nur `transcript.loadEarlier`, `reclaim`, `consoleCommand`, `setPinned`, `rename` (nur lokaler Titel) | `SESSION_EXTERNAL` |
+| „ohne Arbeit“ (Archiv, Wechsel, Konsole) | `runState ∉ {starting, working}`, keine offenen Entscheidungen, Queue leer, keine Hintergrund-Tasks | `SESSION_BUSY` |
+| `session.setPinned` | nur Flag | – |
+| `session.setArchived(true)` | „ohne Arbeit“; schließt einen laufenden Prozess, räumt Benachrichtigungen, löscht `continueAt` | `SESSION_BUSY` |
+| `session.setArchived(false)` | nur Flag | – |
+| `session.setFastMode` | laufend `applyFlagSettings({fastMode})`, dann `Entry.fastMode`; ruhend speichern, beim Start `StartSessionRequest.fastMode` | `CLAUDE_CONTROL_FAILED` |
+| `session.switchConversation` | Ziel ∈ `conversations`, ≠ aktuelle, mit `sessionId`; „ohne Arbeit“; Prozess schließen, aktuelle endet mit `switched`, Ziel ans Ende, `conversation.reset{trigger:'switch', hasEarlier}` + Log-Ende als `item.upsert` + `detail.patch`; Titel nicht `custom` → Titel des Ziels | `CONVERSATION_NOT_FOUND`, `SESSION_NOT_STARTED`, `SESSION_BUSY` |
+| `session.openExternal` | Session-ID vorhanden; „ohne Arbeit“; Query schließen; `consoleLaunchFor` → `ConsoleLauncher.open`; Erfolg → `Entry.external`, `external{active:true}`, Item `handoff/external`; Fehler → bleibt ruhend | `SESSION_NOT_STARTED`, `SESSION_BUSY`, `EXTERNAL_CONSOLE_FAILED`, Profilfehler |
+| `session.reclaim` | nur `external`; Konsole läuft (oder unklar) → Fehler; sonst Verlauf importieren, Item `handoff/returned`, → `sleeping` | `EXTERNAL_STILL_RUNNING` |
+| `session.consoleCommand` | Session-ID vorhanden; ändert nichts | `SESSION_NOT_STARTED` |
+| `session.continueAfterLimit` | `true`: `continue` zu `rateLimitedUntil` (sonst sofort), `Entry.continueAt` + Event `wakeup`; `false`: löschen; jeder eigene Prompt löscht | – |
+| `profile.save` | Pfade/Args geprüft; Befunde `level:'error'` → Ablehnung; neue ID `pf_…`; genau ein Default | `PROFILE_NOT_FOUND`, `PROFILE_INVALID {count}` |
+| `profile.delete` | nicht `builtin`; `entryCount = 0` (auch archivierte); war Default → „Standard“ | `PROFILE_NOT_DELETABLE`, `PROFILE_IN_USE {count}` |
+| `profile.setDefault` | Profil ohne Fehler-Befunde | `PROFILE_NOT_FOUND`, `PROFILE_INVALID` |
+| `profile.test` | `checkProfile` mit Profil-Env | `PROFILE_NOT_FOUND` |
+| `fs.listDirectory` | `null` → Laufwerke + Benutzerordner; sonst `windowsPathIssue`, je Segment `lstat`/`readlink` (Link auf unsicheres Ziel → `PATH_REJECTED{reason:'link_target'}`); nur Ordner, ≤ `LIMITS.fsListMax` | `CWD_NOT_FOUND`, `CWD_NOT_DIRECTORY`, `FOLDER_NOT_READABLE`, `PATH_REJECTED` |
+| `settings.update` | Top-Level-Felder ersetzen ganz; sofort: Schlaf-Policy, Benachrichtigungen, Systemintegration; nächster Start: `promptSuggestions`; Neustart: `port` | `VALIDATION_FAILED` |
 
 ## 6. Item-Modell (`src/shared/model.ts`, §5.6)
 
@@ -922,6 +982,7 @@ Bilder immer als Blob. Assistant-Text wird nie gekappt.
 | `conversation_reset` | Marker `system/conversation_reset` als erstes Item der neuen Unterhaltung – der Normalizer liefert ihn mit der ersten Ausgabe nach `startConversation` (WP-12 Entscheidung 1) | `conversation_reset` + Op `conversation.reset` (veröffentlicht die Engine) |
 | `system/thinking_tokens`, `keep_alive` | – | – |
 | bekannte, bewusst ignorierte Typen (`files_persisted`, `auth_status`, `tool_use_summary` …) | – | Zähler `ignoredCounts` |
+| – (Engine, Phase 2: Übergabe an/Rückkehr aus der externen Konsole, ADR-104) | `system/handoff` (`phase` `external`/`returned`, `importedItems`) als px-Item | Status-Event `external` |
 | unbekannte `type/subtype` | `system/unknown` | Zähler `unknownCounts` (Detail) |
 
 Subagent-Messages werden immer über `parent_tool_use_id` unter das Agent-`tool_call` sortiert;
@@ -1035,9 +1096,14 @@ auf. „Fertig“ nie bei laufender Hintergrundarbeit und nie nach User-Stop (ke
 
 Unter `PARALLAX_HOME` (Default `%LOCALAPPDATA%\Parallax`, Dev `.parallax-dev`, Tests Temp-Ordner):
 ```
-sessions.json                         registryFileSchema (Entry inkl. unread, context – R0-17)
-profiles.json                         profilesFileSchema (Phase 2)
-settings.json                         settingsFileSchema
+sessions.json                         registryFileSchema v2 (Entry inkl. unread, context – R0-17; Phase 2:
+                                      gitBranch, external, continueAt; Migration 1 → 2 = Identität, ADR-107)
+profiles.json                         profilesFileSchema (Phase 2, ADR-102: alle Profile inkl. „Standard“;
+                                      fehlt die Datei, gilt nur „Standard“)
+settings.json                         settingsFileSchema (Phase 2: notifications, idleSleep,
+                                      promptSuggestions, port, autostart – Felder mit Default)
+model-catalogs.json                   Phase 2 (ADR-114): supportedModels() je Profil (Server-intern)
+account-limits.json                   Phase 2 (ADR-114): letzte Abo-Limits je Profil (Server-intern)
 auth-secret.json                      Secret des Geräte-Cookies (WP-10, rotierbar, §5.1; ohne .bak, R1-11)
 server.lock.json                      serverLockFileSchema (@shared/http; WP-21 schreibt/liest, §5.1; Retry ADR-050)
 processes.json                        PID, Image-Name, Startzeit laufender claude.exe + Herzschlag (aliveAt,
@@ -1048,7 +1114,9 @@ blobs/<blobId>.meta.json              blobRefSchema (Medientyp, Größe, Name; R
 entries/<entryId>/<conversationId>.transcript.jsonl   append-only, transcriptLogLineSchema
 entries/<entryId>/decisions.json      decisionRecordsFileSchema (offene Records mit decision-Snapshot, R0-07)
 entries/<entryId>/plans/v<N>.md       Plan-Versionen (Text exakt wie in canUseTool)
-entries/<entryId>/attachments/<blobId>.<ext>   Uploads (C.11), Ordner in additionalDirectories
+entries/<entryId>/commands.json       Phase 2 (ADR-108/114): letzter Slash-Befehls-Katalog (Server-intern)
+entries/<entryId>/attachments/<blobId>.<ext>   Datei-Anhänge (C.11, Phase 3), Ordner in additionalDirectories;
+                                      Bild-Uploads (Phase 2) liegen als Blobs in blobs/ (ADR-103)
 logs/parallax.<datum>.<n>.log         pino-roll (lib/logger.ts)
 logs/server.out.log                   stdout/stderr des vom Launcher gestarteten Servers (sonst leer: Abstürze vor
                                       dem Logger, Ursache eines gescheiterten Starts als letzte Zeile, §3.3;
@@ -1060,7 +1128,9 @@ edge/                                 Edge-Profil des App-Fensters (--user-data-
 ui/<buildId>/                         beim Serverstart fixierte Kopie von dist/web (nur die des laufenden Builds;
                                       ältere werden beim Start gelöscht; V2-03, ADR-066)
 ```
-Der **Home-Lock** (unten) ist eine Named Pipe und liegt nicht im Home. Einzige Änderung, die
+Der **Home-Lock** (unten) ist eine Named Pipe und liegt nicht im Home. Phase 2 kommen – nur als
+Opt-in und nur auf dem produktiven Server (ADR-109/110) – `HKCU\Software\Classes\parallax`
+(Protokoll-Handler) und `Parallax.lnk` im Benutzer-Autostart hinzu. Sonst einzige Änderung, die
 Parallax selbst außerhalb des Homes macht (ADR-082): der native Toast legt `HKCU\Software\Classes\AppUserModelId\Parallax.App`
 (`DisplayName` „Parallax“) an, falls er fehlt – bei jedem Toast geprüft; Windows selbst führt den
 Absender danach unter `HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\
