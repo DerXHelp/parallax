@@ -64,7 +64,8 @@ export async function startLiveServer(): Promise<LiveServer> {
   let out = '';
   const child = spawnHidden(
     process.execPath,
-    [SERVER_BUNDLE, '--backend=sdk', '--port=0', `--home=${home}`, '--validate=log'],
+    // --toasts=off: the smoke must not pop up Windows toasts (NODE_ENV is not "test" here).
+    [SERVER_BUNDLE, '--backend=sdk', '--port=0', `--home=${home}`, '--validate=log', '--toasts=off'],
     {
       cwd: REPO_ROOT,
       env: liveServerEnv(),
