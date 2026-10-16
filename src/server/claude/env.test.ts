@@ -92,6 +92,16 @@ describe('shouldRemoveEnvVar (C.2, A.7)', () => {
     'PARALLAX',
     'PARALLAX_ENTRY_ID',
     'parallax_entry_id',
+    // WP22-07: every control variable of the server environment
+    'PARALLAX_HOME',
+    'parallax_home',
+    'PARALLAX_PORT',
+    'PARALLAX_BACKEND',
+    'PARALLAX_LIVE',
+    'PARALLAX_VALIDATE',
+    'PARALLAX_DEV_WEB_PORT',
+    'PARALLAX_LOG_LEVEL',
+    'PARALLAX_E2E_SKIP_BUILD',
   ])('removes %s', (name) => {
     expect(shouldRemoveEnvVar(name)).toBe(true);
   });
@@ -108,8 +118,8 @@ describe('shouldRemoveEnvVar (C.2, A.7)', () => {
     'NODE_EXTRA_CA_CERTS',
     'NODE_TLS_REJECT_UNAUTHORIZED',
     'NPM',
-    'PARALLAX_HOME',
-    'PARALLAX_PORT',
+    'PARALLAXHOME',
+    'MY_PARALLAX_HOME',
     'PATH',
     'Path',
     'PATHEXT',
@@ -134,6 +144,7 @@ describe('shouldRemoveEnvVar (C.2, A.7)', () => {
     ['CLAUDE_AGENT_SDK_VERSION', 'session'],
     ['AI_AGENT', 'session'],
     ['PARALLAX_ENTRY_ID', 'session'],
+    ['PARALLAX_HOME', 'session'],
     ['INIT_CWD', 'run_state'],
     ['npm_lifecycle_event', 'run_state'],
     ['npm_package_name', 'run_state'],
@@ -282,7 +293,6 @@ describe('buildEnvReport (C.2)', () => {
       CLAUDE_CONFIG_DIR: 'C:\\Users\\u\\.claude-work',
       GIT_EDITOR: 'true',
       NODE: 'C:\\Program Files\\nodejs\\node.exe',
-      PARALLAX_HOME: 'D:\\tmp\\home',
       ANTHROPIC_API_KEY: 'test',
       PARALLAX: '1',
       PARALLAX_ENTRY_ID: SAMPLE_IDS.entry,
@@ -318,6 +328,7 @@ describe('buildEnvReport (C.2)', () => {
         'pnpm_config_verify_deps_before_run',
         'PARALLAX',
         'PARALLAX_ENTRY_ID',
+        'PARALLAX_HOME',
       ].sort((a, b) => a.localeCompare(b)),
     );
     expect(report.pathEntriesRemoved).toBe(2);
@@ -481,6 +492,56 @@ describe('buildEnvReport (C.2)', () => {
       expect(Object.keys(env).filter((key) => key.toUpperCase() === 'PARALLAX_ENTRY_ID')).toEqual([]);
       expect(set.PARALLAX_ENTRY_ID).toBeUndefined();
       expect(env.PARALLAX).toBe('1');
+    });
+
+    it('WP22-07: of the server environment only PARALLAX=1 and the own PARALLAX_ENTRY_ID reach claude', () => {
+      // What a launcher-started server inherits (Parallax developed inside a Parallax session, live run).
+      const server: Record<string, string> = {
+        Path: 'C:\\Windows',
+        PARALLAX: '1',
+        PARALLAX_ENTRY_ID: 'en_parent',
+        PARALLAX_HOME: 'C:\\Users\\u\\AppData\\Local\\Temp\\parallax-live\\home',
+        parallax_port: '4711',
+        PARALLAX_BACKEND: 'sdk',
+        PARALLAX_LIVE: '1',
+        PARALLAX_VALIDATE: 'log',
+        PARALLAX_DEV_WEB_PORT: '5199',
+        PARALLAX_LOG_LEVEL: 'debug',
+        PARALLAX_TOASTS: 'off',
+        PARALLAX_SOMETHING_NEW: 'x',
+      };
+      for (const persistent of [
+        null,
+        new Map(Object.entries(server).map(([k, v]) => [k.toUpperCase(), v])),
+      ]) {
+        const { env, removed, keptPersistent } = buildEnvReport(input(server, { persistent }));
+        expect(
+          Object.keys(env)
+            .filter((key) => key.toUpperCase().startsWith('PARALLAX'))
+            .sort(),
+        ).toEqual(['PARALLAX', 'PARALLAX_ENTRY_ID']);
+        expect(env.PARALLAX).toBe('1');
+        expect(env.PARALLAX_ENTRY_ID).toBe(SAMPLE_IDS.entry);
+        expect(keptPersistent).toEqual([]);
+        expect(removed).toEqual(
+          expect.arrayContaining([
+            'PARALLAX_HOME',
+            'parallax_port',
+            'PARALLAX_LIVE',
+            'PARALLAX_SOMETHING_NEW',
+          ]),
+        );
+      }
+    });
+
+    it('keeps a PARALLAX_* variable the profile sets on purpose (step 3)', () => {
+      const { env } = buildEnvReport(
+        input(
+          { PARALLAX_HOME: 'D:\\server-home' },
+          { profile: { env: { PARALLAX_HOME: 'D:\\x' }, configDir: null } },
+        ),
+      );
+      expect(env.PARALLAX_HOME).toBe('D:\\x');
     });
 
     it('sets CLAUDE_CONFIG_DIR from the profile, over the inherited value and profile.env', () => {
