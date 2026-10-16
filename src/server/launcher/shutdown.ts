@@ -113,13 +113,20 @@ export function createServerShutdown(options: ServerShutdownOptions = {}): Serve
 
   async function run(reason: ShutdownReason, exitCode: number): Promise<void> {
     log.info({ reason }, 'shutdown: stopping the server');
+    const started = Date.now();
+    // WP22-05: duration per step in the final log line (target < 5 s for "Server beenden").
+    const durations: Record<string, number> = {};
     try {
+      let mark = Date.now();
       await stopSessions();
+      durations.sessions = Date.now() - mark;
       for (const step of options.steps ?? []) {
+        mark = Date.now();
         const outcome = await bounded(step.run, step.timeoutMs ?? stepTimeoutMs);
+        durations[step.name] = Date.now() - mark;
         if (outcome !== 'done') log.warn({ step: step.name, outcome }, 'shutdown: step did not complete');
       }
-      log.info({ reason, exitCode }, 'shutdown: done');
+      log.info({ reason, exitCode, totalMs: Date.now() - started, stepsMs: durations }, 'shutdown: done');
     } finally {
       exit(exitCode);
     }

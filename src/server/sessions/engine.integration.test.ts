@@ -891,12 +891,64 @@ describe('orphans', () => {
     expect(h.stores.processes.records().map((r) => r.pid)).toEqual([50_001, h.session(entry41.id).pid]);
   });
 
-  it('children of a dead claude.exe are neither searched nor ended (R2-03)', async () => {
+  it('children the last snapshot did not see are neither searched nor ended (R2-03)', async () => {
     const h = await setup({ processes: [{ ...record(5), startedAt: at(-60).toISOString() }] });
     h.proc.info.set(60_001, { pid: 60_001, name: 'node.exe', parentPid: 50_005, startedAt: at(-30) });
     await h.manager.orphansDone();
     expect(h.proc.queries).toEqual([]);
     expect(h.proc.killed).toEqual([]);
+    expect(h.stores.processes.records()).toEqual([]);
+  });
+
+  it('WP22-06 heartbeat: snapshot of the tree below every claude.exe, then every interval; stops with the last process', async () => {
+    const h = await setup({
+      scenario: () => eventsScenario('turn', textTurnEvents()),
+      options: { processSnapshotMs: 30_000, processSnapshotFirstMs: 10_000 },
+    });
+    const entryId = await h.create('Reply with exactly: OK');
+    await h.settle();
+    const pid = h.session(entryId).pid;
+    const spawned = h.now();
+    const t = (s: number) => new Date(spawned.getTime() + s * 1000);
+    h.proc.info.set(pid, { pid, name: 'claude.exe', parentPid: process.pid, startedAt: t(0) });
+    h.proc.info.set(70_001, { pid: 70_001, name: 'cmd.exe', parentPid: pid, startedAt: t(1) });
+    h.proc.info.set(70_002, { pid: 70_002, name: 'powershell.exe', parentPid: 70_001, startedAt: t(2) });
+    h.proc.info.set(70_003, { pid: 70_003, name: 'PING.EXE', parentPid: 70_002, startedAt: t(3) });
+    // An older process whose ParentProcessId is the (reused) PID: never part of the tree.
+    h.proc.info.set(70_004, { pid: 70_004, name: 'old.exe', parentPid: pid, startedAt: t(-100) });
+    expect(h.timers.pending().map((x) => x.ms)).toEqual([10_000]);
+    h.timers.advance(10_000);
+    await h.settle();
+    const [snap] = h.stores.processes.records();
+    expect(snap?.aliveAt).toBe(h.now().toISOString());
+    expect(snap?.children).toEqual([
+      { pid: 70_001, image: 'cmd.exe', startedAt: t(1).toISOString() },
+      { pid: 70_002, image: 'powershell.exe', startedAt: t(2).toISOString() },
+      { pid: 70_003, image: 'PING.EXE', startedAt: t(3).toISOString() },
+    ]);
+    expect(h.timers.pending().map((x) => x.ms)).toEqual([30_000]);
+    await h.cmd({ name: 'session.close', entryId });
+    await h.settle();
+    expect(h.timers.pending()).toEqual([]);
+    expect(h.stores.processes.records()).toEqual([]);
+  });
+
+  it('WP22-06 restart: processes of the snapshot that still run exactly as recorded are ended, the root is gone', async () => {
+    const shell = { pid: 70_011, image: 'powershell.exe', startedAt: at(5).toISOString() };
+    const ping = { pid: 70_012, image: 'PING.EXE', startedAt: at(6).toISOString() };
+    const h = await setup({
+      seed: { entries: [entry41] },
+      processes: [{ ...record(1), aliveAt: at(30).toISOString(), children: [shell, ping] }],
+      proc: { isProcessAlive: alive(70_011, 70_012) },
+      start: false,
+    });
+    h.proc.info.set(70_011, { pid: 70_011, name: 'powershell.exe', parentPid: 70_010, startedAt: at(5) });
+    // PID 70_012 now belongs to another program (other start time): untouched.
+    h.proc.info.set(70_012, { pid: 70_012, name: 'PING.EXE', parentPid: 1, startedAt: at(500) });
+    await h.manager.start();
+    await h.manager.orphansDone();
+    expect(h.proc.queries).toEqual([{ pids: [70_011, 70_012] }]);
+    expect(h.proc.killed).toEqual([70_011]);
     expect(h.stores.processes.records()).toEqual([]);
   });
 
@@ -1164,7 +1216,25 @@ describe('shutdown', () => {
     expect(order).toEqual(['ack', 'hook']);
   });
 
-  it('a process that ignores close() is killed after shutdownTimeoutMs', async () => {
+  it('WP22-05: a session waiting for a decision is interrupted before close(); no notification at shutdown', async () => {
+    const h = await setup({ presence: [viewer(null, { focused: false, visible: false })] });
+    const entryId = await h.create('fake:bash');
+    await h.waitFor(() => h.facts(entryId).decisions.permission === 1);
+    const notified = h.publisher.notifications.length;
+    await h.manager.shutdown();
+    const session = h.sessions(entryId)[0];
+    expect(session?.controls.map((c) => c.method)).toContain('interrupt');
+    expect(session?.state).toBe('exited');
+    // The frozen broker keeps the record open (→ expired after the restart, A.10) …
+    const h2 = await h.restart({ scenario: undefined });
+    harnesses.push(h2);
+    expect(h2.facts(entryId)).toMatchObject({ runState: 'interrupted', decisions: { expired: 1 } });
+    expect(h2.status(entryId).kind).toBe('needs-resume');
+    // … and the turn ended by the interrupt sends no "done" notification.
+    expect(h.publisher.notifications.length).toBe(notified);
+  });
+
+  it('a process that ignores close() is killed after shutdownKillAfterMs (WP22-05)', async () => {
     const killed: number[] = [];
     const pendingCloses: (() => void)[] = [];
     const holder: { h: EngineHarness | null } = { h: null };
@@ -1197,8 +1267,8 @@ describe('shutdown', () => {
     });
     const done = h.manager.shutdown();
     await h.settle();
-    expect(h.timers.pending().map((t) => t.ms)).toEqual([15_000]);
-    h.timers.advance(15_000);
+    expect(h.timers.pending().map((t) => t.ms)).toEqual([2_500]);
+    h.timers.advance(2_500);
     await done;
     expect(killed).toEqual([session.pid]);
     // Shutdown: nothing persisted from the forced exit (the last state stays).

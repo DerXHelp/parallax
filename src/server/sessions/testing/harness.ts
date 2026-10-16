@@ -38,7 +38,7 @@ import { CommandError, type ClientPresence } from '../../sync/ports';
 import type { ProcDeps, SleepPolicy } from '../entryState';
 import { createManualTimers, type ManualTimers } from '../lib/timers';
 import { createSessionManager, type SessionManager, type SessionManagerOptions } from '../manager';
-import { createMemoryProcessStore, type MemoryProcessStore, type ProcessRecord } from '../processStore';
+import { createMemoryProcessStore, type MemoryProcessStore, type ProcessRecordInput } from '../processStore';
 import { createMemoryPublisher, type MemoryPublisher } from './memoryPublisher';
 import { createMemoryStores, type MemoryStores, type MemoryStoresSeed } from './memoryStores';
 
@@ -73,7 +73,7 @@ export interface EngineHarnessOptions {
   seed?: MemoryStoresSeed;
   /** Reuse stores (restart). */
   stores?: HarnessStores;
-  processes?: readonly ProcessRecord[];
+  processes?: readonly ProcessRecordInput[];
   /** Shared Claude history (resume, readHistory). */
   history?: FakeHistoryStore;
   allowsBypass?: boolean;
@@ -166,6 +166,8 @@ function createHarnessProc(overrides: Partial<ProcDeps> = {}): HarnessProc {
       );
       return Promise.resolve({ kind: 'ok', processes });
     },
+    listProcesses:
+      overrides.listProcesses ?? (() => Promise.resolve({ kind: 'ok', processes: [...info.values()] })),
     killProcessTree:
       overrides.killProcessTree ??
       ((pid) => {
@@ -220,7 +222,9 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     onInternalError: (error, context) => {
       errors.push({ error, context });
     },
-    options: { contextRefreshDelayMs: 0, aiTitleDelayMs: 0, ...options.options },
+    // The heartbeat snapshot (WP22-06) is off unless a test enables it (its timer would show in
+    // `timers.pending()`).
+    options: { contextRefreshDelayMs: 0, aiTitleDelayMs: 0, processSnapshotMs: 0, ...options.options },
   });
   manager.attachPublisher(publisher);
   if (options.start !== false) await manager.start();
