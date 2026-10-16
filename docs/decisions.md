@@ -1113,3 +1113,190 @@ Format: `ADR-NNN – Titel` · Datum · WP · Kontext → Entscheidung → Folge
   echtem Lock (zwei `buildUnderLock` nacheinander statt verschränkt). Die Ausgabe von Vite/esbuild
   erscheint bei `pnpm build` nur noch im Fehlerfall (Schrittnamen und Build-ID immer).
   `pnpm install --frozen-lockfile` bleibt grün.
+
+---
+
+Phase 2 (Mission Control): Design `docs/wp/WP-30.md`. Nummern ab ADR-100 (Zehnerblöcke wie in
+Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
+
+## ADR-100 – Phase-2-Contracts: Host-Funktionen über WS-Befehle, Protokoll v2
+- **Datum/WP:** 16.10.2026, WP-30 (Phase-2-Design, Contracts v2)
+- **Kontext:** Profile, Ordner-Browser und Einstellungen brauchen Server-Funktionen; der Plan nennt
+  `GET/PUT /api/profiles`. Multi-Host (Backlog) verbindet ein Fenster per WS mit mehreren Hosts; HTTP
+  an einen fremden Origin bräuchte CORS (verboten, A.8).
+- **Entscheidung:** Alles Zustandsbezogene als `cmd`/`ack` (zod, Idempotenz, Auth wie WS); HTTP nur
+  für Binärdaten (`/api/blob`, `/api/attachments`). `PROTOCOL_VERSION` 2: neue Fehlercodes, das
+  System-Event `handoff` und neue Befehle sind für v1-Clients unlesbar; bei mehreren Hosts sind
+  Build-IDs legitim verschieden, die Protokollversion ist der Kompatibilitätsschlüssel.
+- **Folgen:** Offene Fenster laden nach dem Update einmal neu. Profil-Env-Werte gehen nur in der
+  `ack` an das anfragende Fenster (der Hub loggt nur Befehlsnamen).
+
+## ADR-101 – Host-Befehle: die Engine routet an `HostCommandHandler`
+- **Datum/WP:** 16.10.2026, WP-30
+- **Entscheidung:** `HOST_COMMAND_NAMES` (`@shared/protocol`: `profile.*`, `fs.listDirectory`) gehen
+  nicht an Eintrags-Logik, sondern an Handler aus `SessionManagerDeps.hostCommands` (Port in
+  `sync/ports.ts`); WP-32 liefert `profile.*`, WP-33 `fs.listDirectory`, WP-40 verdrahtet. Ohne Handler
+  → `NOT_IMPLEMENTED`.
+- **Begründung:** Parallele Pakete ohne gemeinsame Datei; die Engine bleibt der einzige Einstieg des
+  Hubs.
+
+## ADR-102 – Profil-Store: `profiles.json` mit allen Profilen, „Standard“ bearbeitbar, nie löschbar
+- **Datum/WP:** 16.10.2026, WP-30
+- **Entscheidung:** `PARALLAX_HOME/profiles.json` (`JsonStore`, `profilesFileSchema` v1) enthält alle
+  Profile; fehlt die Datei, gilt `[STANDARD_PROFILE]` (geschrieben erst beim ersten Speichern).
+  „Standard“ (`builtin`) ist voll bearbeitbar, nicht löschbar und wird ergänzt, falls er fehlt. Genau
+  ein Default; Löschen des Defaults macht „Standard“ zum Default. Befunde (`ProfileIssue`) mit
+  `level: 'error'` (Args gesperrt/nicht erlaubt/ungültig, ungültiger executable-/configDir-Pfad)
+  verhindern Speichern, Default-Setzen und Start; Warnungen (u. a. `${env:NAME}` nicht gesetzt)
+  nicht. Der Löschschutz zählt auch archivierte Einträge; die configDir-Warnung zeigt der Client
+  (`entryCount > 0`).
+- **Folgen:** Caches (Auflösung, Modelle) werden bei Profiländerung je Profil verworfen;
+  `HostState.profiles` wird neu veröffentlicht.
+
+## ADR-103 – Bild-Anhänge: roher Upload, inhaltsadressiert, ohne Eintragsbindung
+- **Datum/WP:** 16.10.2026, WP-30
+- **Entscheidung:** `POST /api/attachments` mit Rohbytes (`Content-Type` Bildtyp, keine
+  Multipart-Abhängigkeit), Magic-Byte-Prüfung, ≤ 3,75 MB (`LIMITS.imageBytes`); der Client
+  verkleinert vorher (lange Kante 1568 px, PNG, sonst JPEG mit sinkender Qualität). Ein Prompt darf
+  jedes Bild-Blob dieses Hosts referenzieren (existiert, Bildtyp, Größe) – die Regel „nur eigene
+  Uploads dieses Eintrags“ (§5.2) entfällt für Bilder: jeder Blob ist dem angemeldeten Nutzer ohnehin
+  lesbar, eine Bindung schützt nichts. Datei-Anhänge mit Eintragsordner (`additionalDirectories`,
+  C.11) bleiben Phase 3.
+- **Folgen:** Bilder gehen als base64 in der User-Message; das Transkript zeigt die `BlobRef`s.
+
+## ADR-104 – Externe Konsole: PowerShell `Start-Process`, Rückkehr mit Verlaufsimport
+- **Datum/WP:** 16.10.2026, WP-30
+- **Kontext:** Node/libuv setzt beim Spawn immer eigene Std-Handles (`STARTF_USESTDHANDLES`); ein direkt
+  gestartetes `claude.exe` hätte NUL statt einer Konsole (kein TUI), `detached` heißt unter Windows
+  `DETACHED_PROCESS` (gar keine Konsole). `cmd /c start` ist verboten (C.10).
+- **Entscheidung:** `system/console.ts` (WP-33): `powershell.exe` (absoluter System32-Pfad, versteckt,
+  ohne Shell) mit konstantem Skript per `-EncodedCommand`; Daten nur in Umgebungsvariablen
+  (`PARALLAX_CONSOLE_EXE`, `_ARGS` – Kommandozeile nach CommandLineToArgvW-Regeln –, `_CWD`), die das
+  Skript vor `Start-Process -PassThru` aus seiner Umgebung entfernt; die übrige Umgebung =
+  `consoleLaunchFor().env`. Ausgabe PID + Startzeit. Die Engine (WP-34) schließt vorher die SDK-Query
+  (nie beide gleichzeitig), setzt `external`, prüft alle 5 s den Prozess; endet er, holt sie die
+  Session automatisch zurück: Verlauf per `readHistory`, Nachrichten ab `since − 5 s` normalisiert
+  und angehängt, Item `handoff/returned`, Zustand `sleeping`. „Zurückholen“ löst dasselbe sofort aus
+  (Fehler, solange die Konsole läuft). Ein offener Handoff überlebt einen Serverneustart.
+  „Konsolenbefehl kopieren“ liefert eine PowerShell-Zeile als Rückfall.
+- **Folgen:** Ein `/clear` in der Konsole beginnt dort eine neue CLI-Session, die Parallax nicht kennt
+  (zurück kommt die ursprüngliche). AppLocker kann PowerShell sperren → `EXTERNAL_CONSOLE_FAILED` +
+  Kopierbefehl. Live zu prüfen (WP-41).
+
+## ADR-105 – Leerlauf-Schlaf aus den Einstellungen
+- **Datum/WP:** 16.10.2026, WP-30
+- **Entscheidung:** `settings.idleSleep` (Default an, 30 min, 5–1440). Schlaf nur, wenn `canSleep`
+  gilt und kein fokussiertes, sichtbares Fenster die Session zeigt; die Zeit läuft ab dem Moment, ab
+  dem beides gilt; Fakten-, Präsenz- und Settings-Änderungen planen neu. Schlafen =
+  `closeRuntime(…, 'sleep')` → `sleeping`.
+- **Folgen:** Speicher je Session (R1-15) bleibt auf die Wachzeit begrenzt.
+
+## ADR-106 – Archiv: nur ohne Arbeit, Prozess endet, Lesemodus
+- **Datum/WP:** 16.10.2026, WP-30
+- **Entscheidung:** Archivieren nur ohne laufende Arbeit, offene Entscheidungen, Queue und
+  Hintergrund-Tasks (sonst `SESSION_BUSY`); es schließt den Prozess, entfernt Benachrichtigungen und
+  ein geplantes Fortsetzen. Archivierte Einträge sind schreibgeschützt (`SESSION_ARCHIVED`) bis
+  „Wiederherstellen“. Kein endgültiges Löschen in Phase 2 (Backlog).
+
+## ADR-107 – Frühere Unterhaltungen: Wechsel im selben Eintrag, Registry v2
+- **Datum/WP:** 16.10.2026, WP-30
+- **Entscheidung:** `session.switchConversation` macht eine frühere Unterhaltung wieder aktuell: die
+  bisherige endet mit `switched`, die Ziel-Unterhaltung rückt ans Ende von `conversations` (die Regel
+  „die letzte ist die aktuelle“ bleibt; die UI sortiert nach `startedAt`). Der nächste Prompt setzt
+  deren Claude-Session fort. Sicht: `conversation.reset{hasEarlier}` + Log-Ende als `item.upsert`.
+  Der neue Enum-Wert erhöht `REGISTRY_SCHEMA_VERSION` auf 2 (Migration = Identität), damit ein älterer
+  Build sauber abbricht (ADR-020) statt die Datei in Quarantäne zu legen.
+- **Begründung:** Entspricht `/resume` der CLI im selben Fenster; kein zweiter Eintrag mit derselben
+  Claude-Session (zwei Schreiber).
+
+## ADR-108 – Slash-Befehle: nativ im Client, sonst durchreichen; Katalog je Eintrag
+- **Datum/WP:** 16.10.2026, WP-30
+- **Entscheidung:** Der Composer (WP-37) behandelt `/model`, `/effort`, `/fast`, `/plan`, `/rename`,
+  `/status`, `/help`, `/resume` nativ; `/clear` geht durch (die Engine kennt es). Terminal-Befehle =
+  `init.terminalSlashCommands` ∪ statische Liste → Hinweis „In externer Konsole öffnen“. Alles andere
+  wird als Prompt `/name args` gesendet. Die Engine ruft `supportedCommands()` bei Bereitschaft,
+  schreibt `detail.commands` und cached die Liste je Eintrag (`entries/<id>/commands.json`);
+  `commands_changed` (Normalizer) ersetzt sie ebenfalls (zwei Schreiber, die letzte Liste gewinnt).
+
+## ADR-109 – Benachrichtigungen: Server filtert, Client klingt, Klick über `parallax:`
+- **Datum/WP:** 16.10.2026, WP-30
+- **Entscheidung:** Der Server wendet „Nicht stören“, `events[kind].toast` (false → nur In-App),
+  `focusedElsewhere` und `doneMinSeconds` an (reine Funktion in `notifier.ts`). Töne spielt der Client
+  per Web Audio (synthetisiert, keine Dateien, kein Netz), wenn `sound` an und nicht „Nicht stören“;
+  eigene Web Notifications sind dann `silent`. Der native Toast ist stumm, wenn `sound` aus ist. Klick
+  auf den nativen Toast: mit `openOnClick` registriert der Server `HKCU\Software\Classes\parallax` →
+  Launcher `--open "%1"` → neues App-Fenster mit `#session=` (ein bestehendes Fenster nach vorn zu holen
+  ist unter Windows nicht verlässlich). URI streng geprüft (`parseSessionProtocolUri`), Aufruf ohne
+  `cmd`.
+- **Folgen:** Viele Klicks → viele Fenster (akzeptiert). Live zu prüfen (WP-41).
+
+## ADR-110 – Autostart als Verknüpfung; Systemintegration nur auf dem produktiven Server
+- **Datum/WP:** 16.10.2026, WP-30
+- **Entscheidung:** `Parallax.lnk` im Benutzer-Autostart, erzeugt per PowerShell/`WScript.Shell`
+  (Skript konstant, Daten per Env), Ziel = `realpath(process.execPath)` (fnm/nvm-Multishell-Pfade sind
+  temporär), Argumente = tsx-CLI, `--tsconfig`, `src/server/launcher/main.ts`, `--autostart`; Fenster
+  minimiert. Abgleich beim Serverstart und bei jeder Änderung. Autostart und Protokoll-Handler nur,
+  wenn der Server auf dem Standard-Datenordner mit SDK-Backend ohne `--dev` läuft
+  (`HostState.systemIntegration`); `--system-integration=on` erzwingt es (Live-Abnahme auf einem
+  Temp-Home, die registrierten Befehle tragen dann `--home=<home>`), Tests nie.
+- **Folgen:** Beim Anmelden erscheint kurz ein minimiertes Konsolenfenster des Launchers.
+
+## ADR-111 – Port aus den Einstellungen
+- **Datum/WP:** 16.10.2026, WP-30
+- **Entscheidung:** Rangfolge Flag > `PARALLAX_PORT` > `settings.port` > 4711; `loadConfig` liest
+  `settings.json` nur lesend (ungültig/neuer → ignorieren + Hinweis im Log), damit Launcher und Server
+  denselben Port wählen. Wirkung nach Neustart; `HostState.port` zeigt den tatsächlichen.
+
+## ADR-112 – Rate-Limit: „Fortsetzen um HH:MM“ über `wakeupAt`
+- **Datum/WP:** 16.10.2026, WP-30
+- **Entscheidung:** `session.continueAfterLimit(true)` plant `continue` zu `rateLimitedUntil`
+  (`Entry.continueAt`, Status-Event `wakeup` → `StatusFacts.wakeupAt`); fällig → ggf. Resume, Prompt
+  `continue`. Ein eigener Prompt oder Archivieren löscht den Plan. Nach einem Serverneustart wird ein
+  höchstens 1 h überfälliger Plan nachgeholt, ältere verworfen.
+
+## ADR-113 – Git-Branch: Start, Turn-Ende, sichtbare Sessions alle 60 s, persistent
+- **Datum/WP:** 16.10.2026, WP-30
+- **Entscheidung:** Lesen beim Start/Resume, am Turn-Ende, alle 60 s für Einträge, die ein sichtbares
+  Fenster zeigt (auch ruhend – nur `cwd` nötig), und bei Fokus-Wechsel; `Entry.gitBranch` persistiert.
+
+## ADR-114 – Kataloge persistent: Modelle je Profil, Slash-Befehle je Eintrag, Abo-Limits
+- **Datum/WP:** 16.10.2026, WP-30
+- **Entscheidung:** `PARALLAX_HOME/model-catalogs.json`, `entries/<id>/commands.json` und
+  `account-limits.json` (nur Sessions mit `apiKeySource 'none'`) – Server-interne Schemas (kein
+  Contract) mit `schemaVersion`; eine neuere Version bricht den Start ab wie ADR-020.
+
+## ADR-115 – Phase-2-Gerüst und Ownership
+- **Datum/WP:** 16.10.2026, WP-30
+- **Entscheidung:** WP-30 legt Contracts v2, Ports (inkl. neuem `system/ports.ts`), die Slots
+  `SettingsPage`/`ProfilesSettings`, den Anfragekanal `src/web/shell/requests.ts`, i18n-Namensräume je
+  Bereich (`navigation`, `newSession`, `profiles`, `preferences`) und die ESLint-Blöcke der neuen
+  Features an; danach bearbeitet jedes Paket nur eigene Dateien (Tabelle in `CLAUDE.md`). Gemeinsame
+  Verdrahtung (`compose.ts`, `App.tsx`) nur WP-40.
+
+## ADR-116 – Neue Fenster per `window.open(…, 'popup,noopener')`
+- **Datum/WP:** 16.10.2026, WP-30 (R3-15)
+- **Entscheidung:** „In neuem Fenster öffnen“ öffnet `/#session=<entryId>` als Popup **ohne** Opener:
+  das neue Fenster bekommt eine eigene `clientId` (kein doppelter Toast für Fenster-Zwillinge); das
+  Cookie gilt (gleiches Profil). Live zu prüfen im Edge-App-Fenster (WP-41).
+
+## ADR-117 – Prompt-Vorschläge: Setting (Default aus) und Ghost-Text schon in Phase 2
+- **Datum/WP:** 16.10.2026, WP-30
+- **Entscheidung:** `settings.promptSuggestions` (Default `false`, B: Mehrkosten je Turn) steuert die
+  SDK-Option beim nächsten Prozessstart. Der Composer zeigt `detail.promptSuggestion` als Ghost-Text
+  (Tab übernimmt) – aus Phase 3 vorgezogen, weil ein Schalter ohne sichtbare Wirkung verwirrt.
+- **Folgen:** Die Editor-Einstellung kommt dagegen erst mit „Im Editor öffnen“ in Phase 3
+  (Nutzerentscheidung 16.10.2026); in Phase 2 gibt es kein `editor`-Feld.
+
+## ADR-118 – Tastatur Phase 2
+- **Datum/WP:** 16.10.2026, WP-30
+- **Entscheidung:** Strg+K Quick-Switcher, Alt+1..9 (sichtbare Reihenfolge), Alt+N nächste wartende
+  Session (zyklisch, wie der Knopf „Wartet auf dich (n)“), F2 Umbenennen (Fokus nicht in einem
+  Eingabefeld). Keine Strg+Alt-Kürzel (AltGr). Belegung im Edge-App-Fenster per E2E prüfen.
+
+## ADR-119 – Ordner-Browser
+- **Datum/WP:** 16.10.2026, WP-30 (R1-17)
+- **Entscheidung:** `fs.listDirectory`: Wurzeln = vorhandene Laufwerke (je `stat` mit 1,5 s Timeout)
+  + Benutzerordner; nur Ordner und Links auf Ordner; versteckt = Punkt-Name oder bekannte
+  Systemordner (Node kennt kein Hidden-Attribut). Vor jedem Zugriff `windowsPathIssue` und je Segment
+  `lstat`/`readlink` (kein Link auf UNC/Device). Zugeordnete Netzlaufwerke sind erlaubt (vom Nutzer
+  eingerichtet, nicht aus Claudes Text).
