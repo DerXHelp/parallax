@@ -34,11 +34,11 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
 | 31 | Engine: Lebenszyklus, Archiv, Unterhaltungen, Einstellungs-Wirkung | 1 | 30 | fertig | `7848648`, Merge `67f77bb` | Leerlauf-Schlaf (ab `sleepSince`), Archiv/Pin, `switchConversation`, Fast-Modus, Git-Branch persistent, Slash-/Modell-Kataloge + Abo-Limits persistent, Notifier-Regeln, Host-Befehls-Routing; 937 Tests sessions/backend | WP-40: Verdrahtung laut WP-31.md §2.4 (`openCatalogStore` Exit 3, `port`, `systemIntegration`, `hostCommands`, `onSettingsChanged`, `extraWarnings`); README `sessions` (Koordinator) |
 | 32 | Profile und Claude-Integration | 1 | 30 | fertig | `0028d28`, Merge `69fa57d` | `profiles.json`-Store (ADR-102), Profil-Issues, Befehle `profile.*`, `consoleLaunchFor` + Kopierbefehl (PS 5.1 Legacy-Quoting), Preflight aller Profile; 587 Tests claude | WP-40: `store.close()` beim Beenden; README `claude` (Koordinator) |
 | 33 | Host-Dienste, Upload, Ordner-Browser, Windows-Integration, Launcher | 1 | 30 | fertig | `5eaae42`, `769426c` (Hub-Test 415), Merge `67f77bb` | `fs.listDirectory` (lstat je Segment, R1-17), Upload mit Magic-Bytes, `system/` (Konsole via PowerShell, Autostart, `parallax:`-Handler, doppelter Testschutz), Port aus Settings, Launcher `--open` (letztes Arg); 576 Tests | Toast-Klick blitzt kurz eine Konsole auf (L8); WP-40/34 Verdrahtung laut WP-33.md; `lib/README` + architecture §2.2 (Koordinator) |
-| 35 | Navigation: Sidebar, Strg+K, Kopfzeile, Fenster | 1 | 30 | läuft | – | – | – |
+| 35 | Navigation: Sidebar, Strg+K, Kopfzeile, Fenster | 1 | 30 | fertig | `9361e51`, Merge `6cd45af` | Sidebar flach/gruppiert zweizeilig, Kontextmenü (+ Umschalt+F10), Inline-Umbenennen, Quick-Switcher, Alt+1..9/Alt+N, neues Fenster (`popup,noopener`), Frühere Unterhaltungen, Session-Info, Abo-Limits; `ui/{context-menu,command-list}`, `lib/fuzzy`; 73 neue Tests; 3213 Tests gesamt | READMEs `ui`/`shell` + architecture §2.3(l) (Koordinator); offener modaler Dialog blendet Hinweis-Region für Screenreader aus (R4); `server/lib/process.test.ts` Hook-Timeout unter Last |
 | 34 | Engine: externe Konsole, Rate-Limit-Fortsetzen, Bild-Anhänge, Toast-Klick | 2 | 31 (32/33 Ports) | läuft | – | – | + `onProfileChanged` (ADR-102), Secrets nie loggen |
-| 36 | Neue Session, Ordner-Browser-UI, Profil-Editor | 2 | 30 | offen | – | – | – |
-| 37 | Composer und Transkript: Slash-Menü, Screenshots, Lightbox | 2 | 30, 35 | offen | – | – | – |
-| 38 | Einstellungen und Benachrichtigungen (Töne) | 2 | 30 | offen | – | – | – |
+| 36 | Neue Session, Ordner-Browser-UI, Profil-Editor | 2 | 30 | läuft | – | – | – |
+| 37 | Composer und Transkript: Slash-Menü, Screenshots, Lightbox | 2 | 30, 35 | läuft | – | – | – |
+| 38 | Einstellungen und Benachrichtigungen (Töne) | 2 | 30 | läuft | – | – | – |
 | 40 | Integration + E2E Phase 2 | 3 | 31–38 | offen | – | – | – |
 | R4/V3 | Review + Verifier, Fix-Runde | 3b | 40 | offen | – | – | – |
 | 41 | Live-Abnahme Phase 2 (freigegeben, F2) | 4 | 40 + Fixes | offen | – | – | – |
