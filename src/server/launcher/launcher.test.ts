@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { takeAuthCodeFromHash, type ServerLockFile } from '@shared/http';
 import {
+  SAMPLE_IDS,
   sampleHealthResponse,
   sampleLauncherCode,
   sampleServerLockFile,
@@ -185,7 +186,14 @@ describe('launcher: fresh start (architecture §5.1 (h))', () => {
   it('starts the server, waits for lock + health, opens an Edge app window with a code', async () => {
     const w = world();
     const result = await runLauncher(options(), w.deps);
-    expect(result).toEqual({ mode: 'started', port: 4711, pid: SERVER_PID, url: null, edgePid: 777 });
+    expect(result).toEqual({
+      mode: 'started',
+      port: 4711,
+      pid: SERVER_PID,
+      url: null,
+      edgePid: 777,
+      window: true,
+    });
     expect(w.started).toEqual([[`--home=${HOME}`, '--port=4711']]);
     expect(w.builds).toBe(0);
     expect(w.edgeCalls).toHaveLength(1);
@@ -704,5 +712,68 @@ describe('launcher: port hint (V2-13)', () => {
     const w = world({ running });
     await runLauncher(options({ port: 4711, portExplicit: false }), w.deps);
     expect(w.out.join('\n')).not.toContain('takes effect after');
+  });
+});
+
+describe('launcher: Phase 2 --open and --autostart (ADR-109, ADR-110)', () => {
+  const ENTRY = SAMPLE_IDS.entry;
+
+  it('--open: the window URL selects the session (fresh start, running server, --print-url)', async () => {
+    const fresh = world();
+    await runLauncher(options({ entryId: ENTRY }), fresh.deps);
+    const app = fresh.edgeCalls[0]?.args.at(-1) ?? '';
+    expect(app).toMatch(
+      new RegExp(`^--app=http://127\\.0\\.0\\.1:4711/#code=[A-Za-z0-9_-]{43}&session=${ENTRY}$`),
+    );
+    const { code, hash } = takeAuthCodeFromHash(new URL(app.slice('--app='.length)).hash);
+    expect(code).not.toBeNull();
+    expect(hash).toBe(`#session=${ENTRY}`);
+
+    const running = sampleServerLockFile({ port: 4711, pid: 4242 });
+    const existing = world({ running });
+    const result = await runLauncher(options({ entryId: ENTRY, printUrl: true }), existing.deps);
+    expect(result).toMatchObject({ mode: 'existing', window: true });
+    expect(result.url).toMatch(new RegExp(`&session=${ENTRY}$`));
+    expect(existing.started).toEqual([]);
+  });
+
+  it('--autostart without a window: the server starts, no code, no Edge', async () => {
+    let codes = 0;
+    const w = world();
+    const requestCode = w.deps.requestCode.bind(w.deps);
+    w.deps.requestCode = (port, token) => {
+      codes += 1;
+      return requestCode(port, token);
+    };
+    const result = await runLauncher(options({ openWindow: false }), w.deps);
+    expect(result).toEqual({
+      mode: 'started',
+      port: 4711,
+      pid: SERVER_PID,
+      url: null,
+      edgePid: null,
+      window: false,
+    });
+    expect(w.started).toHaveLength(1);
+    expect(codes).toBe(0);
+    expect(w.edgeCalls).toEqual([]);
+    expect(w.grants).toEqual([]);
+    // A server that already runs: nothing at all.
+    const running = sampleServerLockFile({ port: 4711, pid: 4242 });
+    const again = world({ running });
+    expect(await runLauncher(options({ openWindow: false }), again.deps)).toMatchObject({
+      mode: 'existing',
+      window: false,
+    });
+    expect(again.edgeCalls).toEqual([]);
+  });
+
+  it('--autostart with a window: like a normal start', async () => {
+    const w = world();
+    expect(await runLauncher(options({ openWindow: true }), w.deps)).toMatchObject({
+      window: true,
+      edgePid: 777,
+    });
+    expect(w.edgeCalls).toHaveLength(1);
   });
 });

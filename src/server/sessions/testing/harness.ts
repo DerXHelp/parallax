@@ -34,10 +34,17 @@ import { permissionUpdateSchema } from '../../backend/permissionRequest';
 import { nextMacrotask } from '../../lib/async';
 import { assertSafePath } from '../../lib/paths';
 import type { ProcessFilter, ProcessInfo } from '../../lib/process';
-import { CommandError, type ClientPresence } from '../../sync/ports';
-import type { ProcDeps, SleepPolicy } from '../entryState';
+import { CommandError, type ClientPresence, type HostCommandHandler } from '../../sync/ports';
+import { createMemoryCatalogStore, type MemoryCatalogStore } from '../catalogStore';
+import { createMemoryCommandCatalogStore, type MemoryCommandCatalogStore } from '../commandCatalog';
+import { NEVER_SLEEP, type ProcDeps, type SleepPolicy } from '../entryState';
 import { createManualTimers, type ManualTimers } from '../lib/timers';
-import { createSessionManager, type SessionManager, type SessionManagerOptions } from '../manager';
+import {
+  createSessionManager,
+  type SessionManager,
+  type SessionManagerDeps,
+  type SessionManagerOptions,
+} from '../manager';
 import type { NativeToasts } from '../nativeToasts';
 import { createMemoryProcessStore, type MemoryProcessStore, type ProcessRecordInput } from '../processStore';
 import { createMemoryPublisher, type MemoryPublisher } from './memoryPublisher';
@@ -57,6 +64,8 @@ export const HARNESS_HOST = {
 
 export interface HarnessStores extends MemoryStores {
   processes: MemoryProcessStore;
+  catalogs: MemoryCatalogStore;
+  commandCatalogs: MemoryCommandCatalogStore;
 }
 
 export interface HarnessProc extends ProcDeps {
@@ -83,7 +92,19 @@ export interface EngineHarnessOptions {
   proc?: Partial<ProcDeps>;
   gitBranch?: (cwd: string, env: Record<string, string>) => Promise<string | null>;
   checkCwd?: (cwd: string) => Promise<void>;
-  sleepPolicy?: SleepPolicy;
+  /**
+   * Idle sleep: default NEVER (Phase-1 tests count exact timers); `'settings'` = the manager's real
+   * policy from `settings.idleSleep` (ADR-105); or a test policy. Likewise `options.gitRefreshMs`
+   * defaults to 0 here (the 60-s git refresh only where a test enables it).
+   */
+  sleepPolicy?: SleepPolicy | 'settings';
+  /** Phase 2 (ADR-101). */
+  hostCommands?: readonly HostCommandHandler[];
+  onSettingsChanged?: SessionManagerDeps['onSettingsChanged'];
+  extraWarnings?: SessionManagerDeps['extraWarnings'];
+  /** HostState.port / systemIntegration (default: absent → null / false). */
+  port?: () => number | null;
+  systemIntegration?: boolean;
   /** Start of the virtual clock (default SAMPLE_TIME); `timers.advance(ms)` moves it. */
   clockStart?: string;
   /** Hub-like validation of everything published (default true). */
@@ -187,7 +208,10 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
   const stores: HarnessStores = options.stores ?? {
     ...createMemoryStores(options.seed ?? {}, { now }),
     processes: createMemoryProcessStore(options.processes ?? []),
+    catalogs: createMemoryCatalogStore(),
+    commandCatalogs: createMemoryCommandCatalogStore(),
   };
+  const sleepPolicy = options.sleepPolicy ?? NEVER_SLEEP;
   const publisher = createMemoryPublisher({ validate: options.validate ?? true });
   publisher.setPresence(options.presence ?? []);
   const backend = createFakeBackend({
@@ -207,7 +231,14 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     backend,
     claude,
     stores,
-    host: { ...HARNESS_HOST },
+    host: {
+      ...HARNESS_HOST,
+      ...(options.port === undefined ? {} : { port: options.port }),
+      ...(options.systemIntegration === undefined ? {} : { systemIntegration: options.systemIntegration }),
+    },
+    ...(options.hostCommands === undefined ? {} : { hostCommands: options.hostCommands }),
+    ...(options.onSettingsChanged === undefined ? {} : { onSettingsChanged: options.onSettingsChanged }),
+    ...(options.extraWarnings === undefined ? {} : { extraWarnings: options.extraWarnings }),
     checkCwd:
       options.checkCwd ??
       ((cwd) => {
@@ -216,7 +247,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
       }),
     proc,
     gitBranch: options.gitBranch ?? (() => Promise.resolve(null)),
-    ...(options.sleepPolicy === undefined ? {} : { sleepPolicy: options.sleepPolicy }),
+    ...(sleepPolicy === 'settings' ? {} : { sleepPolicy }),
     ...(options.onShutdownRequested === undefined
       ? {}
       : { onShutdownRequested: options.onShutdownRequested }),
@@ -226,9 +257,15 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     onInternalError: (error, context) => {
       errors.push({ error, context });
     },
-    // The heartbeat snapshot (WP22-06) is off unless a test enables it (its timer would show in
-    // `timers.pending()`).
-    options: { contextRefreshDelayMs: 0, aiTitleDelayMs: 0, processSnapshotMs: 0, ...options.options },
+    // The heartbeat snapshot (WP22-06) and the git refresh (ADR-113) are off unless a test enables
+    // them (their timers would show in `timers.pending()`).
+    options: {
+      contextRefreshDelayMs: 0,
+      aiTitleDelayMs: 0,
+      processSnapshotMs: 0,
+      gitRefreshMs: 0,
+      ...options.options,
+    },
   });
   manager.attachPublisher(publisher);
   if (options.start !== false) await manager.start();

@@ -6,11 +6,15 @@
  * - Sender: the app id `TOAST_APP_ID` with the display name `PRODUCT_NAME`, registered per user
  *   under `HKCU\Software\Classes\AppUserModelId\<id>` (`DisplayName` only – the documented way for
  *   unpackaged apps; without it Windows keeps the toast in the history but never shows it). No
- *   activator: a click only dismisses the toast (Phase 1; the opt-in `parallax:` protocol handler
- *   that opens the session is Phase 2).
- * - Data never goes into the script text: title, body and tag travel in environment variables of
- *   the PowerShell process, the XML is built with DOM calls (`CreateTextNode`) – no shell, no
- *   script or XML injection. The constant script goes as `-EncodedCommand` (no quoting issues).
+ *   COM activator: a click dismisses the toast – unless `launchUri` is given (Phase 2, ADR-109):
+ *   then the toast carries `activationType="protocol"` + `launch="parallax://session/<id>"` and a
+ *   click starts the opt-in protocol handler (system/protocol.ts). Only URIs accepted by
+ *   `parseSessionProtocolUri` are used (re-generated from the parsed id), anything else is ignored.
+ *   `silent` adds `<audio silent="true"/>` (sound off for the event, ADR-109).
+ * - Data never goes into the script text: title, body, tag and launch URI travel in environment
+ *   variables of the PowerShell process, the XML skeleton (`toastTemplateXml`, built only from
+ *   booleans) is filled with DOM calls (`CreateTextNode`, `SetAttribute`) – no shell, no script or
+ *   XML injection. The constant script goes as `-EncodedCommand` (no quoting issues).
  * - `tag` (≤ 64 chars) + group `parallax`: a newer toast of the same session replaces the older
  *   one; `removeToast(tag)` takes it out of the Action Center (decision answered elsewhere).
  * - Constrained Language Mode / AppLocker block the WinRT types → `failed` (the caller falls back
@@ -21,10 +25,13 @@
  *   `History.Remove` failed – exit 3, anything unexpected). Only a permanent one may switch the
  *   channel off (sessions/nativeToasts.ts).
  */
-import path from 'node:path';
+import { parseSessionProtocolUri, sessionProtocolUri } from '@shared/http';
 import { PRODUCT_NAME } from '@shared/product';
 import { toError } from './async';
-import { errnoCode, runFile, systemTool, type RunFileFn } from './process';
+import { encodePowerShell, powerShellPath } from './powershell';
+import { errnoCode, runFile, type RunFileFn } from './process';
+
+export { encodePowerShell };
 
 /** AppUserModelID of the Parallax toasts (HKCU registration, see the file comment). */
 export const TOAST_APP_ID = 'Parallax.App';
@@ -40,6 +47,13 @@ export interface ToastRequest {
   body: string;
   /** E.g. the entry id; a toast with the same tag replaces the older one. */
   tag: string;
+  /**
+   * Phase 2 (ADR-109): `parallax://session/<entryId>` – a click opens the session through the
+   * protocol handler. Ignored unless `parseSessionProtocolUri` accepts it; null/absent = no launch.
+   */
+  launchUri?: string | null;
+  /** Phase 2 (ADR-109): no sound (`<audio silent="true"/>`). */
+  silent?: boolean;
 }
 
 /** `permanent`: deterministic, the next call fails the same way (CR-05, see the file comment). */
@@ -94,10 +108,11 @@ export const TOAST_SCRIPT = [
   '    exit 0',
   '  }',
   '  $xml = New-Object Windows.Data.Xml.Dom.XmlDocument',
-  '  $xml.LoadXml(\'<toast><visual><binding template="ToastGeneric"><text></text><text></text></binding></visual></toast>\')',
+  '  $xml.LoadXml($env:PARALLAX_TOAST_XML)',
   "  $texts = $xml.GetElementsByTagName('text')",
   '  [void]$texts.Item(0).AppendChild($xml.CreateTextNode($env:PARALLAX_TOAST_TITLE))',
   '  [void]$texts.Item(1).AppendChild($xml.CreateTextNode($env:PARALLAX_TOAST_BODY))',
+  "  if ($env:PARALLAX_TOAST_LAUNCH) { $xml.DocumentElement.SetAttribute('launch', $env:PARALLAX_TOAST_LAUNCH) }",
   '  $toast = New-Object Windows.UI.Notifications.ToastNotification $xml',
   '  $toast.Tag = $env:PARALLAX_TOAST_TAG',
   '  $toast.Group = $env:PARALLAX_TOAST_GROUP',
@@ -110,9 +125,25 @@ export const TOAST_SCRIPT = [
   '}',
 ].join('\n');
 
-/** `-EncodedCommand` wants base64 of UTF-16LE. */
-export function encodePowerShell(script: string): string {
-  return Buffer.from(script, 'utf16le').toString('base64');
+/**
+ * XML skeleton of a toast, built only from booleans (no user data): two empty `<text>` nodes the
+ * script fills by DOM; `launch` adds `activationType="protocol"` and an empty `launch` attribute
+ * the script sets by DOM; `silent` adds `<audio silent="true"/>`.
+ */
+export function toastTemplateXml(options: { launch: boolean; silent: boolean }): string {
+  const attributes = options.launch ? ' activationType="protocol" launch=""' : '';
+  const audio = options.silent ? '<audio silent="true"/>' : '';
+  return (
+    `<toast${attributes}><visual><binding template="ToastGeneric"><text></text><text></text></binding>` +
+    `</visual>${audio}</toast>`
+  );
+}
+
+/** The canonical launch URI, or null if `uri` is absent or not a session URI (ADR-109). */
+function toastLaunchUri(uri: string | null | undefined): string | null {
+  if (uri === undefined || uri === null) return null;
+  const entryId = parseSessionProtocolUri(uri);
+  return entryId === null ? null : sessionProtocolUri(entryId);
 }
 
 /** Control characters (except tab/newline) out, length capped; XML escaping is done by the DOM. */
@@ -140,7 +171,7 @@ async function runToast(
   Object.assign(env, { PARALLAX_TOAST_APP_ID: TOAST_APP_ID, PARALLAX_TOAST_APP_NAME: PRODUCT_NAME }, vars);
   try {
     const result = await run(
-      systemTool(path.win32.join('WindowsPowerShell', 'v1.0', 'powershell.exe'), options.env ?? process.env),
+      powerShellPath(options.env ?? process.env),
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encodePowerShell(TOAST_SCRIPT)],
       { env, timeoutMs: options.timeoutMs ?? TOAST_TIMEOUT_MS, maxOutputBytes: 16 * 1024 },
     );
@@ -164,6 +195,7 @@ async function runToast(
 
 /** Shows a toast (see the file comment). Never throws. */
 export function showToast(request: ToastRequest, options: ToastOptions = {}): Promise<ToastResult> {
+  const launch = toastLaunchUri(request.launchUri);
   return runToast(
     {
       PARALLAX_TOAST_ACTION: 'show',
@@ -171,6 +203,8 @@ export function showToast(request: ToastRequest, options: ToastOptions = {}): Pr
       PARALLAX_TOAST_BODY: cleanText(request.body, MAX_TEXT_CHARS),
       PARALLAX_TOAST_TAG: cleanText(request.tag, MAX_TAG_CHARS),
       PARALLAX_TOAST_GROUP: TOAST_GROUP,
+      PARALLAX_TOAST_XML: toastTemplateXml({ launch: launch !== null, silent: request.silent === true }),
+      ...(launch === null ? {} : { PARALLAX_TOAST_LAUNCH: launch }),
     },
     'shown',
     options,

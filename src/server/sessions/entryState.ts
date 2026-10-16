@@ -21,6 +21,8 @@ import {
   type Profile,
   type RateLimitInfo,
   type SessionSummary,
+  type Settings,
+  type SlashCommandInfo,
   type ToolCallItem,
   type ToolDecisionRef,
   type TranscriptItem,
@@ -45,6 +47,8 @@ import {
   type TranscriptStore,
 } from '../sync/ports';
 import { createBroker, type Broker } from './broker';
+import type { CatalogStore } from './catalogStore';
+import type { CommandCatalogStore } from './commandCatalog';
 import { createSerial, type Serial } from './lib/serial';
 import type { TimerHandle, Timers } from './lib/timers';
 import { applyToMirror, baseView, findToolCallIn, readMirrorItems } from './mirror';
@@ -79,8 +83,11 @@ export interface SessionManagerOptions {
    * results are written before the stores close); later results are ignored. Default 2000.
    */
   orphanShutdownWaitMs: number;
-  /** B "Setting": costs one request per turn. Default false. */
-  promptSuggestions: boolean;
+  /**
+   * ADR-113: interval of the git-branch refresh for entries a visible window shows (also dormant
+   * ones). 0 = off. Default 60000. (`promptSuggestions` comes from the settings since Phase 2.)
+   */
+  gitRefreshMs: number;
   /**
    * Delay of the AI-title query after a turn (C.6, §3.5.8): the CLI writes its AI title
    * asynchronously after the result. Default 2000.
@@ -108,6 +115,13 @@ export interface EngineStores {
   settings: SettingsStore;
   warnings: StoreWarnings;
   processes: ProcessStore;
+  /**
+   * Phase 2 (ADR-114): model catalogs + account limits per profile (`openCatalogStore`, opened with
+   * the other stores – a newer file aborts the start). Default: in memory (not persistent).
+   */
+  catalogs?: CatalogStore;
+  /** Phase 2 (ADR-108): slash-command cache per entry (`createCommandCatalogStore`). Default: in memory. */
+  commandCatalogs?: CommandCatalogStore;
 }
 
 export interface NormalizerFns {
@@ -128,19 +142,34 @@ export interface ProcDeps {
 }
 
 /**
- * Phase-2 idle sleep (§3.5.17): delay until a sleeping attempt, or null. Default: never. Sleep
- * also needs `canSleep(facts)` and – before it is enabled – wakeup/`/loop` detection (R0-27).
+ * Idle sleep (§3.5.17, ADR-105): delay (ms from `now`) until the process of an eligible entry is
+ * closed, or null = not now. The engine asks only while the entry is eligible – a running process,
+ * `canSleep(facts)` and no focused + visible window showing it – and passes `since`, the moment
+ * from which both have held (the idle time counts from there). Every change of facts, presence or
+ * settings asks again. The manager's default is `settingsSleepPolicy` (`settings.idleSleep`); tests
+ * pass their own.
  */
 export interface SleepPolicy {
-  schedule(entryId: EntryId, facts: StatusFacts, now: Date): number | null;
+  schedule(entryId: EntryId, facts: StatusFacts, now: Date, since: Date): number | null;
 }
 
 export const NEVER_SLEEP: SleepPolicy = { schedule: () => null };
 
+/** ADR-105: `idleSleep.enabled` false → never; else `minutes` after `since`. */
+export function settingsSleepPolicy(settings: () => Settings): SleepPolicy {
+  return {
+    schedule: (_entryId, _facts, now, since) => {
+      const { enabled, minutes } = settings().idleSleep;
+      if (!enabled) return null;
+      return Math.max(0, since.getTime() + minutes * 60_000 - now.getTime());
+    },
+  };
+}
+
 export interface EngineCore {
   readonly backend: AgentBackend;
   readonly claude: ClaudeIntegration;
-  readonly stores: EngineStores;
+  readonly stores: Required<EngineStores>;
   readonly normalizer: NormalizerFns;
   readonly reduceStatus: ReduceStatus;
   readonly ids: { newId: typeof newId; newUuid: () => string };
@@ -164,13 +193,18 @@ export interface EngineCore {
   /** Debounced (1 s) host-state publication, e.g. after rate limits. */
   scheduleHostState(): void;
   setEngineWarning(id: string, error: ErrorPayload | null): void;
+  /** Subscription limits (ADR-114): callers pass only infos of `apiKeySource 'none'` sessions. */
   setAccountLimit(profileId: ProfileId, info: RateLimitInfo): void;
   models(profileId: ProfileId): ModelCatalog | null;
   setModels(profileId: ProfileId, catalog: ModelCatalog): void;
   allowsBypass(profileId: ProfileId): boolean;
   profile(profileId: ProfileId): Profile | undefined;
+  /** The entry's window hints and native toast are done (seen, answered, archived). */
+  clearNotifications(entryId: EntryId): void;
   /** Notifications, clearing, sleep policy – after every change of the facts. */
   factsChanged(state: EntryState, prev: StatusFacts, next: StatusFacts): void;
+  /** Re-plans the idle sleep of one entry (facts, presence or settings changed). */
+  considerSleep(state: EntryState): void;
   /** A claude.exe was spawned (its record is in processes.json): starts the heartbeat (WP22-06). */
   processSpawned(): void;
   /** A claude.exe ended: the heartbeat stops with the last one. */
@@ -214,9 +248,11 @@ export class EntryState {
   /** Hub subscribers (onSubscribersChanged). */
   subscribers = 0;
   lastSdkMaxTokens: number | null = null;
-  /** Phase 2 display (Plan "Git-Branch"); refreshed at the end of every turn, not persisted. */
-  gitBranch: string | null = null;
+  /** Env of the last launch (git lookups of a dormant entry need its PATH, R1-04). */
+  lastEnv: Record<string, string> | null = null;
   sleepTimer: TimerHandle | null = null;
+  /** ADR-105: since when (ms) the entry has been eligible for idle sleep; null = not eligible. */
+  sleepSince: number | null = null;
   private titleTimer: TimerHandle | null = null;
   private lastSummary: SessionSummary | null = null;
   private dirty = false;
@@ -274,16 +310,21 @@ export class EntryState {
 
   // ---- the op path ----
 
-  /** Publish → log → mirror (or loading buffer) → lastOrder (§3.5.4). */
-  emit(ops: readonly SessionOp[]): void {
+  /**
+   * Publish → log → mirror (or loading buffer) → lastOrder (§3.5.4). `log: false` = the items are
+   * already in the log (a switch publishes the tail of the target conversation, ADR-107). A
+   * `detail.patch` with `commands` also replaces the entry's command cache (ADR-108).
+   */
+  emit(ops: readonly SessionOp[], options: { log?: boolean } = {}): void {
     if (ops.length === 0) return;
     this.core.publisher().publishOps(this.entry.id, [...ops]);
+    const log = options.log ?? true;
     const conv = this.conversation();
     const at = this.core.now().toISOString();
     let lastOrder = conv.lastOrder;
     for (const op of ops) {
       if (op.op === 'item.upsert') {
-        if (!isStreamingItem(op.item)) {
+        if (log && !isStreamingItem(op.item)) {
           this.core.stores.transcripts.append(this.entry.id, conv.id, {
             v: 1,
             at,
@@ -293,12 +334,16 @@ export class EntryState {
         }
         lastOrder = Math.max(lastOrder, op.item.order);
       } else if (op.op === 'item.remove') {
-        this.core.stores.transcripts.append(this.entry.id, conv.id, {
-          v: 1,
-          at,
-          op: 'remove',
-          itemId: op.itemId,
-        });
+        if (log) {
+          this.core.stores.transcripts.append(this.entry.id, conv.id, {
+            v: 1,
+            at,
+            op: 'remove',
+            itemId: op.itemId,
+          });
+        }
+      } else if (op.op === 'detail.patch' && op.patch.commands !== undefined && op.patch.commands !== null) {
+        this.saveCommands(op.patch.commands);
       }
     }
     if (this.loading !== null) this.loading.buffer.push(...ops);
@@ -323,6 +368,14 @@ export class EntryState {
       error,
     };
     this.emit([{ op: 'item.upsert', item }]);
+  }
+
+  private saveCommands(commands: readonly SlashCommandInfo[]): void {
+    try {
+      this.core.stores.commandCatalogs.save(this.entry.id, commands);
+    } catch (error) {
+      this.core.reportError(error, 'commandCatalogs.save');
+    }
   }
 
   /** `detail.patch {queue}` + `queue_changed` after every queue change (§3.5.7). */
@@ -399,7 +452,7 @@ export class EntryState {
   }
 
   summary(): SessionSummary {
-    return summaryOf(this.entry, this.facts, { gitBranch: this.gitBranch });
+    return summaryOf(this.entry, this.facts);
   }
 
   publishSummary(urgent: boolean): void {
@@ -422,17 +475,24 @@ export class EntryState {
     const buffer: SessionOp[] = [];
     const promise = (async () => {
       try {
-        const read = await readMirrorItems(this.entry, {
-          transcripts: this.core.stores.transcripts,
-          backend: this.core.backend,
-          claude: this.core.claude,
-          normalizeHistory: this.core.normalizer.normalizeHistory,
-          storeBlob: (data, mediaType, name) => this.core.stores.blobs.put(data, mediaType, name),
-          now: this.core.now,
-          onHistoryError: (error) => {
-            this.core.log.warn({ err: error, entryId: this.entry.id }, 'history import failed');
-          },
-        });
+        const [read, commands] = await Promise.all([
+          readMirrorItems(this.entry, {
+            transcripts: this.core.stores.transcripts,
+            backend: this.core.backend,
+            claude: this.core.claude,
+            normalizeHistory: this.core.normalizer.normalizeHistory,
+            storeBlob: (data, mediaType, name) => this.core.stores.blobs.put(data, mediaType, name),
+            now: this.core.now,
+            onHistoryError: (error) => {
+              this.core.log.warn({ err: error, entryId: this.entry.id }, 'history import failed');
+            },
+          }),
+          // ADR-108: the menu of a dormant entry comes from the cache (readiness replaces it).
+          this.core.stores.commandCatalogs.load(this.entry.id).catch((error: unknown) => {
+            this.core.log.debug({ err: error, entryId: this.entry.id }, 'command cache unreadable');
+            return null;
+          }),
+        ]);
         if (read.imported.length > 0) this.importHistory(read.imported);
         // The base is built now (current broker, queue, conversations); ops published while
         // reading are applied on top – the view contains every op published so far (WP-10 Nr. 5).
@@ -442,6 +502,7 @@ export class EntryState {
           hasEarlier: read.hasEarlier,
           decisions: [...this.broker.expired(), ...this.broker.open()],
           models: catalogOrFallback(this.core.models(this.entry.profileId)).options,
+          commands,
           queue: this.queue.list(),
         });
         const view = applyToMirror(base, buffer);
@@ -463,6 +524,7 @@ export class EntryState {
       hasEarlier: this.conversation().lastOrder > 0,
       decisions: [...this.broker.expired(), ...this.broker.open()],
       models: catalogOrFallback(this.core.models(this.entry.profileId)).options,
+      commands: null,
       queue: this.queue.list(),
     });
     this.mirror = view;
@@ -522,6 +584,7 @@ export class EntryState {
     this.contextTimer = null;
     this.sleepTimer?.cancel();
     this.sleepTimer = null;
+    this.sleepSince = null;
     this.titleTimer?.cancel();
     this.titleTimer = null;
   }
@@ -606,21 +669,38 @@ export class EntryState {
     return { title: this.entry.title, titleSource: this.entry.titleSource, promptTitle: this.promptTitle };
   }
 
-  /** At the end of every turn: branch via `resolveExecutable('git')` (R1-04), one at a time. */
+  /**
+   * ADR-113: branch via `resolveExecutable('git')` (R1-04), one lookup at a time – after readiness,
+   * at the end of every turn, every 60 s while a visible window shows the entry (also dormant: only
+   * the cwd is needed) and on a focus change. Persisted in `Entry.gitBranch` (shown after a restart).
+   * The PATH comes from the running process, else the last launch, else a fresh launch spec.
+   */
   async refreshGitBranch(): Promise<void> {
-    const rt = this.runtime;
-    if (rt === null || this.gitBusy) return;
+    if (this.gitBusy || this.core.shuttingDown()) return;
     this.gitBusy = true;
     try {
-      const branch = await this.core.gitBranch(this.entry.cwd, rt.launch.env);
-      if (branch !== this.gitBranch) {
-        this.gitBranch = branch;
-        this.touch();
-      }
+      const env = this.runtime?.launch.env ?? this.lastEnv ?? (await this.launchEnv());
+      if (env === null || this.core.shuttingDown()) return;
+      const found = await this.core.gitBranch(this.entry.cwd, env);
+      if (this.core.shuttingDown()) return;
+      const branch = found === null ? null : found.slice(0, GIT_BRANCH_CHARS);
+      this.patch((e) => (e.gitBranch === branch ? e : { ...e, gitBranch: branch }));
     } catch (error) {
       this.core.log.debug({ err: error, entryId: this.entry.id }, 'git branch lookup failed');
     } finally {
       this.gitBusy = false;
+    }
+  }
+
+  /** Env of a fresh launch spec (dormant entry without an earlier launch); null if it fails. */
+  private async launchEnv(): Promise<Record<string, string> | null> {
+    try {
+      const launch = await this.core.claude.launchSpecFor(this.entry.profileId, this.entry.id);
+      this.lastEnv = launch.env;
+      return launch.env;
+    } catch (error) {
+      this.core.log.debug({ err: error, entryId: this.entry.id }, 'no launch env for the git lookup');
+      return null;
     }
   }
 
@@ -632,6 +712,9 @@ export class EntryState {
     this.setLastError(error);
   }
 }
+
+/** `Entry.gitBranch` max length (entrySchema). */
+const GIT_BRANCH_CHARS = 200;
 
 /** ContextBreakdown → the gauge fields stored on the entry. */
 export function gaugeOf(breakdown: ContextBreakdown): ContextGauge {

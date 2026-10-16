@@ -258,8 +258,9 @@ describe('HTTP guard for non-GET requests', () => {
       headers: { origin: s.origin, 'sec-fetch-site': 'same-origin', 'content-type': 'image/png', cookie },
       body: 'x',
     });
-    expect(ok.status).toBe(501);
-    expect(JSON.parse(ok.body)).toMatchObject({ code: 'NOT_IMPLEMENTED' });
+    // Past the guard the upload route answers itself (Phase 2, ADR-103): 'x' is no PNG → 415.
+    expect(ok.status).toBe(415);
+    expect(JSON.parse(ok.body)).toMatchObject({ code: 'UNSUPPORTED_MEDIA_TYPE' });
   });
 });
 

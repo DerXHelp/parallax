@@ -99,11 +99,12 @@ describe('general rows', () => {
       expect([cmd.name, (await h.cmdError(cmd)).code]).toEqual([cmd.name, 'SERVER_SHUTTING_DOWN']);
   });
 
-  it('runState external → SESSION_EXTERNAL (Phase 2 handoff), loadEarlier still works', async () => {
+  it('runState external → SESSION_EXTERNAL (Phase 2 handoff); loadEarlier, setPinned, local rename work', async () => {
     const entry = sampleEntry({ id: sampleId('en', 3), lastRunState: 'external' });
     const h = await setup({ seed: { entries: [entry] } });
+    const allowed = new Set(['transcript.loadEarlier', 'session.setPinned', 'session.rename']);
     for (const cmd of entryCommands(entry.id)) {
-      if (cmd.name === 'transcript.loadEarlier') continue;
+      if (allowed.has(cmd.name)) continue;
       expect([cmd.name, (await h.cmdError(cmd)).code]).toEqual([cmd.name, 'SESSION_EXTERNAL']);
     }
     const page = await h.cmd({
@@ -114,6 +115,12 @@ describe('general rows', () => {
       limit: 5,
     });
     expect(page).toEqual({ items: [], hasEarlier: false });
+    await h.cmd({ name: 'session.setPinned', entryId: entry.id, pinned: true });
+    await h.cmd({ name: 'session.rename', entryId: entry.id, title: 'Local only' });
+    expect(h.summary(entry.id)).toMatchObject({ pinned: true, title: 'Local only', titleSource: 'custom' });
+    // The console owns the Claude session: no renameSession (no launch spec, no SDK call).
+    expect(h.claude.launches).toEqual([]);
+    expect(h.backend.starts).toEqual([]);
   });
 
   it('an unexpected error → INTERNAL_ERROR (logged)', async () => {
@@ -314,14 +321,22 @@ describe('commands of a dormant entry', () => {
     expect(error.code).toBe('CONVERSATION_NOT_FOUND');
   });
 
-  it('setFastMode / setPinned / setArchived → NOT_IMPLEMENTED (Phase 2)', async () => {
+  it('Phase 2 flags of a dormant entry: setFastMode stored, setPinned, setArchived(false) only flags', async () => {
     const h = await setup();
     const entryId = await h.create(null);
+    await h.cmd({ name: 'session.setFastMode', entryId, enabled: true });
+    await h.cmd({ name: 'session.setPinned', entryId, pinned: true });
+    await h.cmd({ name: 'session.setArchived', entryId, archived: false });
+    expect(h.summary(entryId)).toMatchObject({ fastMode: true, pinned: true, archived: false });
+    expect(h.stores.registry.get(entryId)).toMatchObject({ fastMode: true, pinned: true });
+    expect(h.backend.starts).toEqual([]);
     const phase2: CommandInput[] = [
-      { name: 'session.setFastMode', entryId, enabled: true },
-      { name: 'session.setPinned', entryId, pinned: true },
-      { name: 'session.setArchived', entryId, archived: false },
+      { name: 'session.openExternal', entryId },
+      { name: 'session.reclaim', entryId },
+      { name: 'session.consoleCommand', entryId },
+      { name: 'session.continueAfterLimit', entryId, enabled: true },
     ];
+    // WP-34.
     for (const cmd of phase2)
       expect([cmd.name, (await h.cmdError(cmd)).code]).toEqual([cmd.name, 'NOT_IMPLEMENTED']);
   });

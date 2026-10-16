@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { RunFileFn, RunFileOptions } from './process';
-import { TOAST_APP_ID, TOAST_GROUP, TOAST_SCRIPT, encodePowerShell, removeToast, showToast } from './toast';
+import {
+  TOAST_APP_ID,
+  TOAST_GROUP,
+  TOAST_SCRIPT,
+  encodePowerShell,
+  removeToast,
+  showToast,
+  toastTemplateXml,
+} from './toast';
 
 interface Call {
   file: string;
@@ -129,6 +137,54 @@ describe('native Windows toast helper (WP22-03/-15, A.9)', () => {
     expect(mode).toBeLessThan(registry);
     expect(TOAST_SCRIPT).toContain('$step = $env:PARALLAX_TOAST_ACTION');
     expect(TOAST_SCRIPT).toContain("if ($step -eq 'setup') { exit 4 }");
+  });
+
+  it('Phase 2: launchUri → activationType="protocol" + launch (by DOM), silent → <audio silent>', async () => {
+    const entryId = 'en_0123456789abcdef0123456789abcdef';
+    const { run, calls } = fakeRun();
+    await showToast(
+      { title: 't', body: 'b', tag: 'x', launchUri: `PARALLAX:session/${entryId}/`, silent: true },
+      { run, platform: 'win32', env: ENV },
+    );
+    const env = calls[0]?.options.env ?? {};
+    // The canonical URI (re-generated from the parsed id) goes into the environment …
+    expect(env.PARALLAX_TOAST_LAUNCH).toBe(`parallax://session/${entryId}`);
+    // … the skeleton carries only booleans.
+    expect(env.PARALLAX_TOAST_XML).toBe(toastTemplateXml({ launch: true, silent: true }));
+    expect(toastTemplateXml({ launch: true, silent: true })).toBe(
+      '<toast activationType="protocol" launch=""><visual><binding template="ToastGeneric"><text></text>' +
+        '<text></text></binding></visual><audio silent="true"/></toast>',
+    );
+    expect(TOAST_SCRIPT).toContain("$xml.DocumentElement.SetAttribute('launch', $env:PARALLAX_TOAST_LAUNCH)");
+    expect(TOAST_SCRIPT).toContain('$xml.LoadXml($env:PARALLAX_TOAST_XML)');
+  });
+
+  it.each([
+    ['no launchUri', undefined],
+    ['null', null],
+    ['another scheme', 'https://evil.example/session/x'],
+    ['a malformed id', 'parallax://session/en_1"/><x'],
+  ])(
+    'without a valid launchUri (%s): plain toast as in Phase 1, no launch variable',
+    async (_name, launchUri) => {
+      const { run, calls } = fakeRun();
+      await showToast({ title: 't', body: 'b', tag: 'x', launchUri }, { run, platform: 'win32', env: ENV });
+      const env = calls[0]?.options.env ?? {};
+      expect(env.PARALLAX_TOAST_LAUNCH).toBeUndefined();
+      expect(env.PARALLAX_TOAST_XML).toBe(
+        '<toast><visual><binding template="ToastGeneric"><text></text><text></text></binding></visual></toast>',
+      );
+    },
+  );
+
+  it('an inherited PARALLAX_TOAST_LAUNCH never reaches the script', async () => {
+    const { run, calls } = fakeRun();
+    await showToast(
+      { title: 't', body: 'b', tag: 'x' },
+      { run, platform: 'win32', env: { ...ENV, PARALLAX_TOAST_LAUNCH: 'parallax://session/x' } },
+    );
+    expect(calls[0]?.options.env?.PARALLAX_TOAST_LAUNCH).toBeUndefined();
+    expect(toastTemplateXml({ launch: false, silent: true })).toContain('<audio silent="true"/>');
   });
 
   it('other platforms: failed without a call', async () => {

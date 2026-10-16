@@ -14,18 +14,23 @@ import { LIMITS, blobIdSchema } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   API_PATHS,
+  ATTACHMENT_MEDIA_TYPES,
   BLOB_CSP,
   DEV_AUTH_CODE_TTL_MS,
   DEV_WEB_PORT,
   appUrlWithCode,
+  attachmentMediaTypeSchema,
+  attachmentUploadQuerySchema,
   pageCsp,
   serverOrigin,
+  type AttachmentUploadResponse,
   type BackendKind,
   type HealthResponse,
 } from '@shared/http';
 import { PRODUCT_ID } from '@shared/product';
 import { WS_CLOSE } from '@shared/protocol';
 import type { ServerConfig, ServerInstance } from '../config';
+import { sniffImageType } from '../lib/images';
 import { logger as rootLogger } from '../lib/logger';
 import type { BlobStore } from '../sync/ports';
 import { registerAuthRoutes, type AuthService } from './auth';
@@ -35,8 +40,8 @@ import { replyError, sendError } from './reply';
 /**
  * The Fastify app (docs/architecture.md §5.1): request guard (Host/Origin/Sec-Fetch-Site + device
  * cookie, also for the WS upgrade – @fastify/websocket dispatches upgrades through the normal
- * hook chain), security headers + CSP (C.10), `/api/health`, auth routes, blobs, the WS route of
- * the hub and the static web UI. Never CORS headers. WP-20 wires it in main.ts:
+ * hook chain), security headers + CSP (C.10), `/api/health`, auth routes, blobs, the image upload
+ * `POST /api/attachments` (ADR-103), the WS route of the hub and the static web UI. Never CORS headers. WP-20 wires it in main.ts:
  * `createApp({ config, instance, auth, blobs, hub })` → `app.listen({ host, port })`.
  *
  * The guard classifies by the matched route (`request.routeOptions.url`), not by the URL text
@@ -72,7 +77,7 @@ export interface CreateAppOptions {
   logger?: Logger;
 }
 
-/** Body limit of the JSON routes (uploads get their own limit in Phase 2, C.11). */
+/** Body limit of the JSON routes (the upload has its own: LIMITS.imageBytes, C.11/ADR-103). */
 export const JSON_BODY_LIMIT_BYTES = 64 * 1024;
 /** Sockets that ignore the shutdown close frame are terminated after this delay. */
 export const WS_SHUTDOWN_GRACE_MS = 1000;
@@ -85,6 +90,11 @@ const MEDIA_TYPE_PATTERN =
 /** Media type from a meta file, or `application/octet-stream` if it is not a plain header value. */
 export function safeMediaType(mediaType: string): string {
   return MEDIA_TYPE_PATTERN.test(mediaType) ? mediaType : 'application/octet-stream';
+}
+
+/** `type/subtype` of a Content-Type header, lower case, without parameters ('' if absent). */
+export function mediaTypeEssence(header: string | undefined): string {
+  return (header ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
 }
 
 export async function createApp(options: CreateAppOptions): Promise<FastifyInstance> {
@@ -246,13 +256,37 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     return Buffer.from(blob.data.buffer, blob.data.byteOffset, blob.data.byteLength);
   });
 
-  // Phase 1: uploads are not implemented; accept any body type so the answer is NOT_IMPLEMENTED.
+  // Image upload (ADR-103): raw bytes of an ATTACHMENT_MEDIA_TYPES body, ≤ LIMITS.imageBytes. Any
+  // other Content-Type has no parser (415), a larger body hits the body limit (413); both map in
+  // the error handler above. Guard class "mutation" (Origin, same-origin, cookie) – unchanged.
   await app.register((scope, _opts, done) => {
     scope.removeAllContentTypeParsers();
-    scope.addContentTypeParser('*', (_request, _payload, parsed) => {
-      parsed(null, undefined);
+    scope.addContentTypeParser(
+      [...ATTACHMENT_MEDIA_TYPES],
+      { parseAs: 'buffer', bodyLimit: LIMITS.imageBytes },
+      (_request, body, parsed) => {
+        parsed(null, body);
+      },
+    );
+    scope.post(API_PATHS.attachments, { bodyLimit: LIMITS.imageBytes }, (request, reply) => {
+      const query = attachmentUploadQuerySchema.safeParse(request.query);
+      if (!query.success) return sendError(reply, makeError('VALIDATION_FAILED', { reason: 'query' }));
+      const body = request.body;
+      const declared = attachmentMediaTypeSchema.safeParse(mediaTypeEssence(request.headers['content-type']));
+      // The magic bytes must match the declared type (R7: no type spoofing, also no empty body).
+      if (!Buffer.isBuffer(body) || !declared.success || sniffImageType(body) !== declared.data) {
+        return sendError(reply, makeError('UNSUPPORTED_MEDIA_TYPE'));
+      }
+      const { name, width, height } = query.data;
+      const size = width !== undefined && height !== undefined ? { width, height } : null;
+      const attachment = blobs.put(body, declared.data, name ?? null, size);
+      log.debug(
+        { blobId: attachment.blobId, bytes: attachment.bytes, mediaType: attachment.mediaType },
+        'upload',
+      );
+      const response: AttachmentUploadResponse = { attachment };
+      return response;
     });
-    scope.post(API_PATHS.attachments, (_request, reply) => sendError(reply, makeError('NOT_IMPLEMENTED')));
     done();
   });
 

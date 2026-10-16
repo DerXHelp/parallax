@@ -15,6 +15,7 @@ import {
   type ModelOption,
   type QueuedPrompt,
   type SessionDetail,
+  type SlashCommandInfo,
   type ToolCallItem,
   type TranscriptItem,
 } from '@shared/model';
@@ -30,6 +31,8 @@ export function emptyDetail(o: {
   conversationId: ConversationId;
   conversations: Conversation[];
   models: ModelOption[] | null;
+  /** ADR-108: the cached catalog of a dormant entry (null = none yet). */
+  commands?: SlashCommandInfo[] | null;
   queue: QueuedPrompt[];
 }): SessionDetail {
   return {
@@ -38,7 +41,7 @@ export function emptyDetail(o: {
     conversations: o.conversations,
     init: null,
     models: o.models,
-    commands: null,
+    commands: o.commands ?? null,
     queue: o.queue,
     backgroundTasks: [],
     promptSuggestion: null,
@@ -122,6 +125,7 @@ export function baseView(o: {
   hasEarlier: boolean;
   decisions: readonly Decision[];
   models: ModelOption[] | null;
+  commands?: SlashCommandInfo[] | null;
   queue: QueuedPrompt[];
 }): SessionViewState {
   const current = currentConversation(o.entry);
@@ -137,6 +141,7 @@ export function baseView(o: {
       conversationId: current.id,
       conversations: o.entry.conversations,
       models: o.models,
+      commands: o.commands ?? null,
       queue: o.queue,
     }),
   };

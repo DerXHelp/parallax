@@ -978,6 +978,22 @@ describe('SdkBackend – autoCompactWindow with a settings file (C.1)', () => {
     expect(h.fq().applyFlagSettings).not.toHaveBeenCalled();
   });
 
+  it('Phase 2 fast mode: inline with settings.fastMode, after readiness with a settings file', async () => {
+    const inline = harness();
+    inline.backend.start(request({ fastMode: true }));
+    await settle();
+    expect(inline.fq().options.settings).toEqual({ fastMode: true });
+    expect(inline.fq().applyFlagSettings).not.toHaveBeenCalled();
+    const file = harness();
+    file.backend.start(request({ fastMode: false, launch: both }));
+    await settle();
+    expect(file.fq().options.settings).toBe('D:\\cfg\\settings.json');
+    expect(file.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({
+      autoCompactWindow: 400_000,
+      fastMode: false,
+    });
+  });
+
   it('a failing applyFlagSettings is reported as error{control}', async () => {
     const h = harness({
       configure: (q) => {

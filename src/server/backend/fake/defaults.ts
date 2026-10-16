@@ -123,6 +123,12 @@ export const FAKE_COMMANDS: readonly Record<string, unknown>[] = [
   },
 ];
 
+/**
+ * `init.terminal_slash_commands` of the fake CLI (Phase 2, ADR-108): commands that only work in a
+ * terminal – the composer hides them and offers "open in external console" instead.
+ */
+export const FAKE_TERMINAL_COMMANDS: readonly string[] = ['exit', 'statusline', 'vim'];
+
 /** Full model id for an alias/setting (init.model, assistant.model): 'haiku' → 'claude-haiku-5-5'. */
 export function resolveFakeModel(model: string | null): string {
   if (model === null) return 'claude-haiku-5-5';

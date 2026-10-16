@@ -6,6 +6,8 @@ import {
   expandRegValue,
   parseRegValues,
   readPersistentEnvironment,
+  regAddValue,
+  regDeleteKey,
   regKeyQuery,
   regQuery,
   type RegKeyQuery,
@@ -110,4 +112,91 @@ describe('reg.exe calls (System32, argument array)', () => {
     expect(calls[1]?.slice(1)).toEqual(['query', 'HKCU\\Environment', '/reg:64']);
     expect(calls[0]?.[0]?.toLowerCase()).toMatch(/^[a-z]:\\windows\\system32\\reg\.exe$/);
   });
+});
+
+describe('registry writes (Phase 2, protocol handler)', () => {
+  function recorder(result: Partial<RunFileResult> | Error = {}): { run: RunFileFn; calls: string[][] } {
+    const calls: string[][] = [];
+    const run: RunFileFn = (file, args) => {
+      calls.push([file, ...args]);
+      if (result instanceof Error) return Promise.reject(result);
+      return Promise.resolve({
+        exitCode: 0,
+        signal: null,
+        stdout: '',
+        stderr: '',
+        timedOut: false,
+        ...result,
+      });
+    };
+    return { run, calls };
+  }
+
+  it('adds REG_SZ values (default or named) with reg.exe and an argument array', async () => {
+    const { run, calls } = recorder();
+    const command = '"C:\\Program Files\\nodejs\\node.exe" "D:\\px\\main.ts" --open "%1"';
+    expect(
+      await regAddValue(run)('HKCU\\Software\\Classes\\parallax\\shell\\open\\command', null, command),
+    ).toEqual({
+      ok: true,
+    });
+    expect(await regAddValue(run)('HKCU\\Software\\Classes\\parallax', 'URL Protocol', '')).toEqual({
+      ok: true,
+    });
+    expect(calls[0]?.[0]?.toLowerCase()).toMatch(/^[a-z]:\\windows\\system32\\reg\.exe$/);
+    expect(calls[0]?.slice(1)).toEqual([
+      'add',
+      'HKCU\\Software\\Classes\\parallax\\shell\\open\\command',
+      '/ve',
+      '/t',
+      'REG_SZ',
+      '/d',
+      command,
+      '/f',
+      '/reg:64',
+    ]);
+    expect(calls[1]?.slice(1)).toEqual([
+      'add',
+      'HKCU\\Software\\Classes\\parallax',
+      '/v',
+      'URL Protocol',
+      '/t',
+      'REG_SZ',
+      '/d',
+      '',
+      '/f',
+      '/reg:64',
+    ]);
+  });
+
+  it('deletes a key; failures are results, never thrown', async () => {
+    const ok = recorder();
+    expect(await regDeleteKey(ok.run)('HKCU\\Software\\Classes\\parallax')).toEqual({ ok: true });
+    expect(ok.calls[0]?.slice(1)).toEqual(['delete', 'HKCU\\Software\\Classes\\parallax', '/f', '/reg:64']);
+    const denied = recorder({ exitCode: 1, stderr: 'ERROR: Access is denied.' });
+    expect(await regDeleteKey(denied.run)('HKCU\\Software\\Classes\\parallax')).toEqual({
+      ok: false,
+      reason: 'reg.exe exit 1: ERROR: Access is denied.',
+    });
+    const slow = recorder({ exitCode: null, timedOut: true });
+    expect(await regAddValue(slow.run)('HKCU\\X', null, 'v')).toEqual({
+      ok: false,
+      reason: 'reg.exe timed out',
+    });
+    const missing = recorder(new Error('spawn ENOENT'));
+    expect(await regAddValue(missing.run)('HKCU\\X', null, 'v')).toEqual({
+      ok: false,
+      reason: 'reg.exe could not be started: spawn ENOENT',
+    });
+  });
+
+  it.each(['HKLM\\Software\\Classes\\parallax', 'HKCU', 'HKCU\\', 'Software\\x', 'HKCU\\x\ny'])(
+    'never writes outside HKCU or with control characters: %j',
+    async (key) => {
+      const { run, calls } = recorder();
+      expect((await regAddValue(run)(key, null, 'v')).ok).toBe(false);
+      expect((await regDeleteKey(run)(key)).ok).toBe(false);
+      expect(calls).toEqual([]);
+    },
+  );
 });
