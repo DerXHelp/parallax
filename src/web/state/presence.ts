@@ -2,8 +2,10 @@ import { clientStore, type ClientStore, type WindowPresence } from './store';
 
 /**
  * Window presence for the server's notification channel choice (A.9, WP-02 §7.2): focus,
- * visibility, typing. The shown session (`viewingEntryId`) comes from the selection. Every host
- * connection sends `presence` after a change (debounced 250 ms, connection.ts).
+ * visibility, typing, and (WP22-03) whether this window can show Web Notifications – without that
+ * the server shows a native Windows toast instead. The shown session (`viewingEntryId`) comes
+ * from the selection. Every host connection sends `presence` after a change (debounced 250 ms,
+ * connection.ts).
  */
 
 /** "Composer active within the last 5 s" (WP-02 §7.2). */
@@ -12,16 +14,36 @@ export const TYPING_WINDOW_MS = 5000;
 function setPresence(store: ClientStore, patch: Partial<WindowPresence>): void {
   const current = store.getState().presence;
   const next = { ...current, ...patch };
-  if (next.focused === current.focused && next.visible === current.visible && next.typing === current.typing)
+  if (
+    next.focused === current.focused &&
+    next.visible === current.visible &&
+    next.typing === current.typing &&
+    next.systemNotifications === current.systemNotifications
+  )
     return;
   store.setState({ presence: next });
 }
 
+export interface PresenceTrackingOptions {
+  /** Re-read with every focus/visibility change (the user may change it in the Edge settings). */
+  systemNotifications?: () => boolean;
+}
+
 /** Tracks focus and visibility of the window; returns the cleanup. */
-export function startPresenceTracking(store: ClientStore = clientStore, win: Window = window): () => void {
+export function startPresenceTracking(
+  store: ClientStore = clientStore,
+  win: Window = window,
+  options: PresenceTrackingOptions = {},
+): () => void {
   const doc = win.document;
   const update = () => {
-    setPresence(store, { focused: doc.hasFocus(), visible: doc.visibilityState === 'visible' });
+    setPresence(store, {
+      focused: doc.hasFocus(),
+      visible: doc.visibilityState === 'visible',
+      ...(options.systemNotifications === undefined
+        ? {}
+        : { systemNotifications: options.systemNotifications() }),
+    });
   };
   win.addEventListener('focus', update);
   win.addEventListener('blur', update);
@@ -32,6 +54,11 @@ export function startPresenceTracking(store: ClientStore = clientStore, win: Win
     win.removeEventListener('blur', update);
     doc.removeEventListener('visibilitychange', update);
   };
+}
+
+/** After a permission request (notifications/permission.ts): report the new capability at once. */
+export function reportSystemNotifications(granted: boolean, store: ClientStore = clientStore): void {
+  setPresence(store, { systemNotifications: granted });
 }
 
 let typingTimer: ReturnType<typeof setTimeout> | null = null;

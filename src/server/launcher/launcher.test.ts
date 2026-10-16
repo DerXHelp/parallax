@@ -46,6 +46,8 @@ interface World {
   deps: LauncherDeps;
   out: string[];
   edgeCalls: { edge: string; args: readonly string[] }[];
+  /** allowNotifications calls (WP22-03). */
+  grants: { home: string; origin: string }[];
   started: (readonly string[])[];
   builds: number;
   /** Lock + health of the server that answers (changed by `onStart`). */
@@ -65,6 +67,7 @@ function world(w: WorldOptions = {}): World {
   const state: Omit<World, 'deps'> = {
     out: [],
     edgeCalls: [],
+    grants: [],
     started: [],
     builds: 0,
     current: { lock: w.running ?? null, health: new Map() },
@@ -148,6 +151,10 @@ function world(w: WorldOptions = {}): World {
       return Promise.resolve({ pid: 777 });
     },
     edgeProfileSignedIn: () => Promise.resolve(false),
+    allowNotifications: (home, origin) => {
+      state.grants.push({ home, origin });
+      return Promise.resolve({ kind: 'granted' });
+    },
     sleep: (ms) => {
       tick(ms);
       return Promise.resolve();
@@ -189,6 +196,19 @@ describe('launcher: fresh start (architecture §5.1 (h))', () => {
     expect(args).toContain('--disable-sync');
     expect(args.at(-1)).toMatch(/^--app=http:\/\/127\.0\.0\.1:4711\/#code=[A-Za-z0-9_-]{43}$/);
     expect(codeOf((args.at(-1) ?? '').slice('--app='.length))).not.toBeNull();
+  });
+
+  it('WP22-03: allows notifications for the server origin in the own profile before Edge opens', async () => {
+    const w = world();
+    await runLauncher(options(), w.deps);
+    expect(w.grants).toEqual([{ home: HOME, origin: 'http://127.0.0.1:4711' }]);
+    expect(w.out.join('\n')).not.toContain('notifications');
+    const skipped = world({
+      overrides: { allowNotifications: () => Promise.resolve({ kind: 'skipped', reason: 'locked' }) },
+    });
+    await runLauncher(options(), skipped.deps);
+    expect(skipped.edgeCalls).toHaveLength(1);
+    expect(skipped.out.join('\n')).toContain('notifications could not be allowed');
   });
 
   it('a profile signed in by an earlier version gets a note (V2-01); a fresh one none', async () => {

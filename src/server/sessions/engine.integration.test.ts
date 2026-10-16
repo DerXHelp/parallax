@@ -703,6 +703,47 @@ describe('presence and notifications', () => {
     expect(h.facts(entryId).unread).toBe(false);
     expect(h.publisher.cleared).toContain(entryId);
   });
+
+  it('WP22-03/-15: native toast for a window without Web Notifications and without any window; cleared with the card', async () => {
+    const shown: { entryId: string; kind: string; title: string }[] = [];
+    const cleared: string[] = [];
+    const toasts = {
+      available: () => true,
+      show: (entryId: string, kind: string, title: string) => shown.push({ entryId, kind, title }),
+      clear: (entryId: string) => cleared.push(entryId),
+      idle: () => Promise.resolve(),
+    };
+    const blocked = viewer(null, { focused: false, visible: false, systemNotifications: false });
+    const h = await setup({ toasts, presence: [blocked] });
+    expect(h.manager.hostState().nativeNotifications).toBe(true);
+    const entryId = await h.create('fake:bash');
+    await h.waitFor(() => h.facts(entryId).decisions.permission === 1);
+    await h.settle();
+    expect(shown).toEqual([{ entryId, kind: 'permission', title: 'fake:bash' }]);
+    // The window keeps its in-app hint (it shows it when the user comes back).
+    expect(h.publisher.notifications.map((n) => [n.clientId, n.notification.delivery])).toEqual([
+      [blocked.clientId, 'in_app'],
+    ]);
+    const [decision] = await h.decisions(entryId);
+    if (decision === undefined) throw new Error('no decision');
+    await h.cmd({
+      name: 'decision.respond',
+      entryId,
+      decisionId: decision.id,
+      response: { kind: 'permission', response: { behavior: 'allow', remember: null, acceptEdits: false } },
+    });
+    await h.settle();
+    expect(cleared).toContain(entryId);
+    // No window at all: a native toast only.
+    h.publisher.setPresence([]);
+    h.manager.onPresenceChanged([]);
+    await h.cmd({ name: 'session.sendPrompt', entryId, prompt: { text: 'fake:bash again' } });
+    await h.waitFor(() => h.facts(entryId).decisions.permission === 1);
+    await h.settle();
+    // permission, done of the allowed turn (the window still cannot show it), permission again.
+    expect(shown.map((s) => s.kind)).toEqual(['permission', 'done', 'permission']);
+    expect(h.publisher.notifications.map((n) => n.notification.kind)).toEqual(['permission', 'done']);
+  });
 });
 
 describe('engine extras', () => {

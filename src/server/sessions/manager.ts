@@ -62,6 +62,7 @@ import {
   normalizeContextUsage,
   normalizeHistory,
 } from './normalizer';
+import { DISABLED_NATIVE_TOASTS, type NativeToasts } from './nativeToasts';
 import { decisionsCleared, isViewedByVisibleClient, planNotification } from './notifier';
 import type { ReduceStatus } from './ports';
 import type { ProcessRecord, ProcessStore } from './processStore';
@@ -115,6 +116,8 @@ export interface SessionManagerDeps {
   };
   /** Called (setImmediate) after server.shutdown was acknowledged; WP-20 then calls shutdown(). */
   onShutdownRequested?: () => void;
+  /** Native Windows toasts (WP22-03/-15, A.9); default: off. */
+  toasts?: NativeToasts;
   // Defaults = the real modules (tests override):
   normalizer?: Partial<NormalizerFns>;
   reduceStatus?: ReduceStatus;
@@ -186,6 +189,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   const now = deps.now ?? (() => new Date());
   const timers = deps.timers ?? realTimers;
   const stores = deps.stores;
+  const toasts = deps.toasts ?? DISABLED_NATIVE_TOASTS;
   const states = new Map<EntryId, EntryState>();
   const engineWarnings = new Map<string, HostWarning>();
   const accountLimits: Record<string, RateLimitInfo> = {};
@@ -233,7 +237,14 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       setupRequired: defaultSummary === undefined ? true : profileNeedsSetup(defaultSummary.claude),
       warnings: [...stores.warnings.list(), ...engineWarnings.values()],
       accountLimits: { ...accountLimits },
+      nativeNotifications: toasts.available(),
     };
+  };
+
+  /** The entry's notifications are done (seen, answered elsewhere): window hints and native toast. */
+  const clearNotifications = (entryId: EntryId): void => {
+    publisherOrThrow().clearNotification(entryId);
+    toasts.clear(entryId);
   };
 
   const publishHostState = (): void => {
@@ -392,19 +403,23 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       // WP22-05: the interrupt at shutdown ends turns – no "done" notification for that.
       if (shuttingDown) return;
       const pub = publisherOrThrow();
-      const planned = planNotification(prev, next, now(), pub.presence(), s.id);
+      const planned = planNotification(prev, next, now(), pub.presence(), s.id, toasts.available());
       if (planned !== null) {
-        const notification: Notification = {
-          id: core.ids.newUuid(),
-          kind: planned.kind,
-          entryId: s.id,
-          title: s.entry.title !== '' ? s.entry.title : cwdLabel(s.entry.cwd),
-          delivery: planned.delivery,
-          at: now().toISOString(),
-        };
-        pub.notify(planned.clientId, notification);
+        const title = s.entry.title !== '' ? s.entry.title : cwdLabel(s.entry.cwd);
+        if (planned.clientId !== null) {
+          const notification: Notification = {
+            id: core.ids.newUuid(),
+            kind: planned.kind,
+            entryId: s.id,
+            title,
+            delivery: planned.delivery,
+            at: now().toISOString(),
+          };
+          pub.notify(planned.clientId, notification);
+        }
+        if (planned.native) toasts.show(s.id, planned.kind, title);
       }
-      if (decisionsCleared(prev, next)) pub.clearNotification(s.id);
+      if (decisionsCleared(prev, next)) clearNotifications(s.id);
       considerSleep(s, next);
     },
     processSpawned: () => {
@@ -649,7 +664,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         s.viewedByVisibleClient = visible;
         if (visible && s.facts.unread) {
           s.reduce({ type: 'viewed' });
-          publisherOrThrow().clearNotification(s.id);
+          clearNotifications(s.id);
         }
       }
     },

@@ -68,6 +68,12 @@ export const presenceStateSchema = z.object({
   viewingEntryId: entryIdSchema.nullable(),
   /** Composer active within the last 5 s (no focus stealing). */
   typing: z.boolean(),
+  /**
+   * WP22-03 (additive, optional): this window can show Web Notifications (permission granted).
+   * `false` → the server delivers a `system` notification as a native Windows toast instead (when
+   * `HostState.nativeNotifications`). Absent (older client) = assumed true.
+   */
+  systemNotifications: z.boolean().optional(),
 });
 export type PresenceState = z.infer<typeof presenceStateSchema>;
 

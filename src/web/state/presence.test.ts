@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { startPresenceTracking, reportTyping, TYPING_WINDOW_MS } from './presence';
+import { reportSystemNotifications, startPresenceTracking, reportTyping, TYPING_WINDOW_MS } from './presence';
 import { createClientStore } from './store';
 
 /** Window presence for the server's channel choice (A.9): focus, visibility, typing. */
@@ -42,6 +42,25 @@ describe('startPresenceTracking', () => {
     hasFocus.mockReturnValue(false);
     window.dispatchEvent(new Event('blur'));
     expect(store.getState().presence.focused).toBe(true);
+  });
+
+  it('WP22-03: reports whether Web Notifications work, re-read on focus and after a request', () => {
+    const store = createClientStore();
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    let granted = false;
+    const stop = startPresenceTracking(store, window, { systemNotifications: () => granted });
+    expect(store.getState().presence).toEqual({
+      focused: true,
+      visible: true,
+      typing: false,
+      systemNotifications: false,
+    });
+    granted = true;
+    window.dispatchEvent(new Event('focus'));
+    expect(store.getState().presence.systemNotifications).toBe(true);
+    reportSystemNotifications(false, store);
+    expect(store.getState().presence.systemNotifications).toBe(false);
+    stop();
   });
 
   it('reportTyping keeps `typing` for 5 s after the last key stroke', () => {

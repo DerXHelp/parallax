@@ -656,6 +656,22 @@ describe('notifications (A.9, Phase-1 minimum)', () => {
     expect(screen.queryByText('Get notified when a session needs you')).toBeNull();
   });
 
+  it('WP22-03: no "Enable notifications" hint while the server shows native Windows toasts', async () => {
+    const fake = fakeNotifier('default');
+    cleanups.push(setSystemNotifier(fake.notifier));
+    const scenario = start('overview');
+    render(<App />);
+    await sidebar();
+    expect(screen.getByText('Get notified when a session needs you')).toBeTruthy();
+    act(() => {
+      scenario.host.setHostState(sampleHostState({ nativeNotifications: true }));
+    });
+    await waitFor(() => {
+      expect(screen.queryByText('Get notified when a session needs you')).toBeNull();
+    });
+    expect(fake.requests).not.toHaveBeenCalled();
+  });
+
   it('"Not now" hides the hint for good; the settings menu still offers it', async () => {
     const fake = fakeNotifier('default');
     cleanups.push(setSystemNotifier(fake.notifier));

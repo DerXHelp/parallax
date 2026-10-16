@@ -43,8 +43,10 @@ import {
   edgeAppArgs,
   edgeProfileDir,
   edgeProfileSignedIn,
+  grantEdgeNotifications,
   locateEdge,
   openEdgeWindow,
+  type NotificationGrant,
   type SpawnFn,
 } from './edgeWindow';
 import { SERVER_EXIT_CODES } from './exitCodes';
@@ -112,6 +114,8 @@ export interface LauncherDeps {
   openEdge(edgePath: string, args: readonly string[]): Promise<{ pid: number | null }>;
   /** Is the Edge profile of `home` signed in to an account (from a version before V2-01)? */
   edgeProfileSignedIn(home: string): Promise<boolean>;
+  /** WP22-03: Web Notifications allowed for `origin` in the own Edge profile (never throws). */
+  allowNotifications(home: string, origin: string): Promise<NotificationGrant>;
   sleep(ms: number): Promise<void>;
   now(): number;
   /** One line of console output. */
@@ -544,6 +548,14 @@ async function openWindow(
         '(... > Settings > Profiles) or close all Parallax windows and delete that folder.',
     );
   }
+  // WP22-03: the app window cannot show Edge's permission prompt – allow the own origin up front.
+  const grant = await deps.allowNotifications(options.home, serverOrigin(lock.port));
+  if (grant.kind === 'skipped') {
+    deps.out(
+      `Note: notifications could not be allowed in the Parallax Edge profile (${grant.reason}); ` +
+        'Parallax uses Windows notifications instead.',
+    );
+  }
   try {
     const { pid } = await deps.openEdge(edge, edgeAppArgs({ home: options.home, url }));
     return { ...base, url: null, edgePid: pid };
@@ -606,6 +618,7 @@ export function createNodeLauncherDeps(options: NodeLauncherDepsOptions): Launch
     locateEdge: () => locateEdge(env),
     openEdge: (edgePath, args) => openEdgeWindow(edgePath, args, options.spawnEdge),
     edgeProfileSignedIn: (home) => edgeProfileSignedIn(home),
+    allowNotifications: (home, origin) => grantEdgeNotifications(home, origin),
     sleep,
     now: () => Date.now(),
     out: options.out ?? ((line) => process.stdout.write(`${line}\n`)),
