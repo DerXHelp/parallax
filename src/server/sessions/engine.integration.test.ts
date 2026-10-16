@@ -1063,7 +1063,8 @@ describe('orphans', () => {
     h.proc.info.set(70_012, { pid: 70_012, name: 'PING.EXE', parentPid: 1, startedAt: at(500) });
     await h.manager.start();
     await h.manager.orphansDone();
-    expect(h.proc.queries).toEqual([{ pids: [70_011, 70_012] }]);
+    // CR-01: after the kill of the shell, ping is looked up again right before its own kill.
+    expect(h.proc.queries).toEqual([{ pids: [70_011, 70_012] }, { pids: [70_012] }]);
     expect(h.proc.killed).toEqual([70_011]);
     expect(h.stores.processes.records()).toEqual([]);
   });
@@ -1350,6 +1351,115 @@ describe('shutdown', () => {
     expect(h.publisher.notifications.length).toBe(notified);
   });
 
+  /** Every session started from now on reaches its real close() only after `before()` settled. */
+  function delayCloses(h: EngineHarness, before: () => Promise<unknown>): void {
+    const start = h.backend.start.bind(h.backend);
+    h.backend.start = (req) => {
+      const session = start(req);
+      const close = session.close.bind(session);
+      session.close = async () => {
+        await before();
+        return close();
+      };
+      return session;
+    };
+  }
+
+  /**
+   * A harness whose taskkill ends the fake process (it exits like a killed claude.exe) and that
+   * counts close() calls on sessions that still run (CR-06: a waiting session with queued work
+   * must get neither an interrupt nor a close()).
+   */
+  async function killableSetup(): Promise<{ h: EngineHarness; closes: () => number }> {
+    const holder: { h: EngineHarness | null } = { h: null };
+    const h = await setup({
+      proc: {
+        killProcessTree: (pid) => {
+          holder.h?.proc.killed.push(pid);
+          holder.h?.backend.sessions.find((s) => s.pid === pid && s.state !== 'exited')?.crash(1);
+          return Promise.resolve();
+        },
+      },
+    });
+    holder.h = h;
+    let closes = 0;
+    const start = h.backend.start.bind(h.backend);
+    h.backend.start = (req) => {
+      const session = start(req);
+      const handle = h.backend.sessions.at(-1);
+      const close = session.close.bind(session);
+      session.close = () => {
+        if (handle?.state !== 'exited') closes += 1;
+        return close();
+      };
+      return session;
+    };
+    return { h, closes: () => closes };
+  }
+
+  it('CR-06: waiting for a decision with a queued prompt → no interrupt, no close(): its tree ends at once', async () => {
+    const { h, closes } = await killableSetup();
+    const entryId = await h.create('fake:bash');
+    await h.waitFor(() => h.facts(entryId).decisions.permission === 1);
+    const { messageUuid } = await h.cmd({
+      name: 'session.sendPrompt',
+      entryId,
+      prompt: { text: 'Reply with exactly: QUEUED' },
+    });
+    await h.waitFor(() => h.manager.inspect(entryId)?.queue.length === 1);
+    const session = h.session(entryId);
+    const sessionId = session.sessionId;
+    const done = h.manager.shutdown();
+    await h.settle();
+    await done;
+    // No timer was needed: the tree was ended right away, without interrupt or close() (both would
+    // start the queued prompt – live: close() lets a waiting CLI fail the permission and go on).
+    expect(session.controls.map((c) => c.method)).not.toContain('interrupt');
+    expect(closes()).toBe(0);
+    expect(h.proc.killed).toEqual([session.pid]);
+    expect(session.state).toBe('exited');
+    const started = h.backend.history
+      .messages(sessionId ?? '')
+      .filter((m) => typeof m === 'object' && m !== null && 'uuid' in m && m.uuid === messageUuid);
+    expect(started).toEqual([]);
+    // The prompt is reported as not delivered (px item, like after a crash).
+    expect(errorItems(h, entryId).map((i) => i.error.code)).toEqual(['PROMPT_NOT_DELIVERED']);
+    // The record of the open decision stays open (→ expired after the restart, A.10).
+    const h2 = await h.restart({ scenario: undefined });
+    harnesses.push(h2);
+    expect(h2.facts(entryId).decisions.expired).toBe(1);
+  });
+
+  it('CR-06: waiting for a decision while background work runs → no interrupt, no close() (a task would start a turn)', async () => {
+    const { h, closes } = await killableSetup();
+    const entryId = await h.create('fake:parallel');
+    await h.waitFor(() => h.facts(entryId).decisions.permission === 2);
+    expect(h.facts(entryId).backgroundTasks).toBeGreaterThan(0);
+    const session = h.session(entryId);
+    await h.manager.shutdown();
+    expect(session.controls.map((c) => c.method)).not.toContain('interrupt');
+    expect(closes()).toBe(0);
+    expect(h.proc.killed).toEqual([session.pid]);
+    expect(session.state).toBe('exited');
+  });
+
+  it('CR-02: a close() that needs 4 s (SessionEnd hooks, transcript) is not cut off', async () => {
+    const h = await setup({ scenario: () => eventsScenario('turn', textTurnEvents()) });
+    const release = Promise.withResolvers<undefined>();
+    delayCloses(h, () => release.promise);
+    const entryId = await h.create('Reply with exactly: OK');
+    await h.settle();
+    const session = h.session(entryId);
+    const done = h.manager.shutdown();
+    await h.settle();
+    h.timers.advance(4_000);
+    await h.settle();
+    release.resolve(undefined);
+    await done;
+    expect(h.proc.killed).toEqual([]);
+    expect(session.state).toBe('exited');
+  });
+
   it('a process that ignores close() is killed after shutdownKillAfterMs (WP22-05)', async () => {
     const killed: number[] = [];
     const pendingCloses: (() => void)[] = [];
@@ -1383,8 +1493,12 @@ describe('shutdown', () => {
     });
     const done = h.manager.shutdown();
     await h.settle();
-    expect(h.timers.pending().map((t) => t.ms)).toEqual([2_500]);
-    h.timers.advance(2_500);
+    // C.8 (CR-02): 5 s after close(), then taskkill; 15 s bound the whole step.
+    expect(h.timers.pending().map((t) => t.ms)).toEqual([5_000, 15_000]);
+    h.timers.advance(4_999);
+    await h.settle();
+    expect(killed).toEqual([]);
+    h.timers.advance(1);
     await done;
     expect(killed).toEqual([session.pid]);
     // Shutdown: nothing persisted from the forced exit (the last state stays).

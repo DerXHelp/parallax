@@ -21,6 +21,7 @@ import { StartupError, startServer, type RunningServer } from './app/compose';
 import { installCrashHandlers } from './app/crash';
 import { ConfigError, loadConfig, type ServerConfig } from './config';
 import { SERVER_EXIT_CODES } from './launcher/exitCodes';
+import type { ServerShutdown } from './launcher/shutdown';
 import { settleWithin } from './lib/async';
 import { acquireHomeLock, type HomeLock } from './lib/homeLock';
 import { initLogging, logger, type LoggingHandle } from './lib/logger';
@@ -89,11 +90,14 @@ async function main(): Promise<void> {
   }
 
   // R3-06: from here on an unexpected error ends the server in order (exit 1), never silently.
+  // CR-10: already during the start – from the shutdown frame on (step 5, before listen and the
+  // lock file). Before it (no lock file yet) the crash handler only closes the log and exits.
   let running: RunningServer | null = null;
+  let frame: ServerShutdown | null = null;
   const openLog = logging;
   installCrashHandlers({
     log: logger,
-    shutdown: () => running?.shutdown ?? null,
+    shutdown: () => running?.shutdown ?? frame,
     closeLog: async () => {
       await settleWithin(() => openLog.close(), 2_000);
     },
@@ -104,7 +108,15 @@ async function main(): Promise<void> {
   const webRoot = config.dev ? null : path.join(path.dirname(fileURLToPath(import.meta.url)), 'web');
 
   try {
-    running = await startServer({ config, webRoot, logging, homeLock });
+    running = await startServer({
+      config,
+      webRoot,
+      logging,
+      homeLock,
+      onShutdownFrame: (shutdown) => {
+        frame = shutdown;
+      },
+    });
   } catch (error) {
     const exitCode = error instanceof StartupError ? error.exitCode : SERVER_EXIT_CODES.failure;
     const message =
