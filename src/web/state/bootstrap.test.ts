@@ -2,7 +2,7 @@ import { waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
 import { API_PATHS } from '@shared/http';
-import { WS_PATH, parseClientMessage, type ClientMessage } from '@shared/protocol';
+import { PROTOCOL_VERSION, WS_PATH, parseClientMessage, type ClientMessage } from '@shared/protocol';
 import {
   sampleAuthStatus,
   sampleHostState,
@@ -142,7 +142,7 @@ describe('bootApp (auth bootstrap + WebSocket of the local host)', () => {
     sockets[0]?.receive(sampleHello());
     expect(sockets[0]?.sent[0]).toMatchObject({
       type: 'clientHello',
-      protocolVersion: 1,
+      protocolVersion: PROTOCOL_VERSION,
       buildId: 'dev',
       presence: { viewingEntryId: ENTRY, typing: false },
     });

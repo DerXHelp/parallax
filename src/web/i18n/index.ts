@@ -5,8 +5,16 @@ import { de as composerDe } from '@web/features/composer/i18n/de';
 import { en as composerEn } from '@web/features/composer/i18n/en';
 import { de as decisionsDe } from '@web/features/decisions/i18n/de';
 import { en as decisionsEn } from '@web/features/decisions/i18n/en';
+import { de as preferencesDe } from '@web/features/preferences/i18n/de';
+import { en as preferencesEn } from '@web/features/preferences/i18n/en';
+import { de as profilesDe } from '@web/features/profiles/i18n/de';
+import { en as profilesEn } from '@web/features/profiles/i18n/en';
 import { de as transcriptDe } from '@web/features/transcript/i18n/de';
 import { en as transcriptEn } from '@web/features/transcript/i18n/en';
+import { de as navigationDe } from '@web/shell/navigation/i18n/de';
+import { en as navigationEn } from '@web/shell/navigation/i18n/en';
+import { de as newSessionDe } from '@web/shell/new-session/i18n/de';
+import { en as newSessionEn } from '@web/shell/new-session/i18n/en';
 import { de as serverShutdownDe } from '@web/shell/server-shutdown/i18n/de';
 import { en as serverShutdownEn } from '@web/shell/server-shutdown/i18n/en';
 import { de } from './de';
@@ -33,7 +41,9 @@ export type { PluralForms, TranslationParams } from './types';
  * `connection`, `settings` – en.ts), `errors` (errors.*.ts), one per feature (`transcript`,
  * `decisions`, `composer` – src/web/features/<f>/i18n) and `serverShutdown`
  * (src/web/shell/server-shutdown/i18n, WP-21), all registered statically here; a new namespace is
- * registered by the coordinator (or the WP that owns this folder).
+ * registered by the coordinator (or the WP that owns this folder). Phase 2 (WP-30 §4.14 C):
+ * `navigation` (shell/navigation, WP-35), `newSession` (shell/new-session, WP-36), `profiles`
+ * (features/profiles, WP-36), `preferences` (features/preferences, WP-38).
  */
 const enDictionary = {
   ...en,
@@ -42,6 +52,10 @@ const enDictionary = {
   decisions: decisionsEn,
   composer: composerEn,
   serverShutdown: serverShutdownEn,
+  navigation: navigationEn,
+  newSession: newSessionEn,
+  profiles: profilesEn,
+  preferences: preferencesEn,
 };
 
 /** Shape of every language's dictionary (English is the reference). */
@@ -54,6 +68,10 @@ const deDictionary: Dictionary = {
   decisions: decisionsDe,
   composer: composerDe,
   serverShutdown: serverShutdownDe,
+  navigation: navigationDe,
+  newSession: newSessionDe,
+  profiles: profilesDe,
+  preferences: preferencesDe,
 };
 
 export const DICTIONARIES: Readonly<Record<Language, Dictionary>> = { en: enDictionary, de: deDictionary };

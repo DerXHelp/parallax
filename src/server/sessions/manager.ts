@@ -262,6 +262,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       warnings: [...stores.warnings.list(), ...engineWarnings.values()],
       accountLimits: { ...accountLimits },
       nativeNotifications: toasts.available(),
+      // Phase 2 contract (WP-30): wired by WP-31/WP-40.
+      port: null,
+      systemIntegration: false,
     };
   };
 

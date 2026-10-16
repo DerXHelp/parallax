@@ -319,6 +319,7 @@ describe('clear-rename', () => {
       conversationId: current?.id,
       previousConversationId: old?.id,
       trigger: 'clear',
+      hasEarlier: false,
     });
     const newItems = h.stores.transcripts.items(entryId, current?.id ?? '');
     expect(newItems[0]).toMatchObject({ kind: 'system', event: 'conversation_reset', order: 1 });

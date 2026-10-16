@@ -14,8 +14,14 @@ import { JsonStore, type Migrations, type StoreFs, type StoreWarningSink } from 
 /** `PARALLAX_HOME/sessions.json` (registryFileSchema). */
 export const REGISTRY_FILE = 'sessions.json';
 
-/** Migrations of sessions.json (none yet: schema version 1). */
-export const REGISTRY_MIGRATIONS: Migrations = {};
+/**
+ * Migrations of sessions.json. 1 → 2 (Phase 2, ADR-107): the new conversation end reason
+ * 'switched' – the data is unchanged (identity); the version only makes an older build stop
+ * cleanly (ADR-020) instead of quarantining the file or dropping the Phase-2 fields.
+ */
+export const REGISTRY_MIGRATIONS: Migrations = {
+  1: (raw) => ({ ...raw, schemaVersion: 2 }),
+};
 
 export interface RegistryStoreOptions {
   home: string;

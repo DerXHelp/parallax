@@ -7,7 +7,13 @@
 import type { ClientId, ProfileId } from '@shared/common';
 import { makeError } from '@shared/errors';
 import { currentSessionId, type Entry, type PlanDecision } from '@shared/model';
-import type { Command, CommandOf, CommandResult } from '@shared/protocol';
+import {
+  isHostCommand,
+  type Command,
+  type CommandOf,
+  type CommandResult,
+  type HostCommandName,
+} from '@shared/protocol';
 import { CommandError, type CommandContext } from '../sync/ports';
 import { commandError, gaugeOf, type EngineCore, type EntryState } from './entryState';
 import { catalogOrFallback, toModelCatalog } from './models';
@@ -25,7 +31,10 @@ export interface CommandEngine {
   requestShutdown(): void;
 }
 
-type EntryCommand = Exclude<Command, { name: 'session.create' | 'settings.update' | 'server.shutdown' }>;
+type EntryCommand = Exclude<
+  Command,
+  { name: 'session.create' | 'settings.update' | 'server.shutdown' | HostCommandName }
+>;
 
 export async function handleCommand(
   engine: CommandEngine,
@@ -48,6 +57,8 @@ export async function handleCommand(
         return { sessionsStopped } satisfies CommandResult<'server.shutdown'>;
       }
       default:
+        // Phase 2 (ADR-101): host commands go to HostCommandHandlers – routing follows in WP-31.
+        if (isHostCommand(cmd)) throw notImplemented(cmd.name);
         return await entryCommand(engine, cmd, ctx.clientId);
     }
   } catch (error) {
@@ -126,6 +137,9 @@ async function createSession(
     lastResultExcerpt: null,
     unread: false,
     context: null,
+    gitBranch: null,
+    external: null,
+    continueAt: null,
   };
   const s = engine.createEntry(entry, promptTitle);
   const prompt = cmd.prompt;
@@ -226,6 +240,13 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
       return getContext(core, s, cmd.detail);
     case 'session.refreshModels':
       return refreshModels(core, s);
+    // Phase 2 (WP-30 §4.12): implemented by WP-31 (switchConversation) and WP-34 (the others).
+    case 'session.switchConversation':
+    case 'session.openExternal':
+    case 'session.reclaim':
+    case 'session.consoleCommand':
+    case 'session.continueAfterLimit':
+      throw notImplemented(cmd.name);
   }
 }
 

@@ -53,7 +53,10 @@ export function uncheckedClaudeStatus(): ClaudeInstallStatus {
   };
 }
 
-/** ProfileSummary without env values and args (what the UI may see). */
+/**
+ * ProfileSummary without env values and args (what the UI may see). Phase 2 fields: `issues`
+ * follow with WP-32, `entryCount` is filled by the engine (WP-31).
+ */
 export function profileSummary(profile: Profile, claude: ClaudeInstallStatus): ProfileSummary {
   return {
     id: profile.id,
@@ -63,6 +66,10 @@ export function profileSummary(profile: Profile, claude: ClaudeInstallStatus): P
     builtin: profile.builtin,
     allowsBypass: parseProfileArgs(profile.args, profile.passRawArgs).allowDangerouslySkipPermissions,
     claude,
+    defaults: { ...profile.defaults },
+    configDir: profile.configDir,
+    issues: [],
+    entryCount: 0,
   };
 }
 

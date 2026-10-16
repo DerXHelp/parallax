@@ -19,6 +19,7 @@ import {
   jsonValueSchema,
   languageSchema,
   messageUuidSchema,
+  modelNameSchema,
   permissionModeSchema,
   profileIdSchema,
   promptPrioritySchema,
@@ -26,7 +27,7 @@ import {
   themeSchema,
 } from './common';
 import { errorCodeSchema, errorInfoSchema, errorPayloadSchema } from './errors';
-import { runStateSchema, statusFactsSchema, turnOutcomeSchema } from './status';
+import { runStateSchema, statusFactsSchema, turnOutcomeSchema, type NotificationKind } from './status';
 
 export { turnInfoSchema, type TurnInfo } from './status';
 
@@ -153,12 +154,65 @@ export const profileSchema = z.object({
 export type Profile = z.infer<typeof profileSchema>;
 
 export const PROFILES_SCHEMA_VERSION = 1;
-/** `profiles.json` (Phase 2; Phase 1 has only the built-in profile from code). */
+/**
+ * `profiles.json` (Phase 2, ADR-102): all profiles incl. "Standard"; a missing file means only the
+ * built-in profile from code (written on the first save).
+ */
 export const profilesFileSchema = z.object({
   schemaVersion: z.literal(PROFILES_SCHEMA_VERSION),
   profiles: z.array(profileSchema),
 });
 export type ProfilesFile = z.infer<typeof profilesFileSchema>;
+
+/** Strict form of `profileSchema.defaults` (profile input, summaries; Phase 2). */
+export const profileDefaultsSchema = z.object({
+  model: modelNameSchema.nullable(),
+  permissionMode: permissionModeSchema.nullable(),
+  effort: effortLevelSchema.nullable(),
+});
+export type ProfileDefaults = z.infer<typeof profileDefaultsSchema>;
+
+/**
+ * `profile.save` / `profile.validate` (Phase 2, ADR-102). `id` absent = new profile (the server
+ * assigns `pf_…`); `standard` = the built-in profile (editable, never deletable). `isDefault` is
+ * set only through `profile.setDefault`; `createdAt`/`updatedAt`/`builtin` come from the server.
+ */
+export const profileInputSchema = z.object({
+  id: profileIdSchema.optional(),
+  name: z.string().trim().min(1).max(60),
+  color: profileColorSchema,
+  /** `path`: absolute `.exe`, checked by the server (PROFILE_INVALID {field:'executable', reason}). */
+  executable: profileExecutableSchema,
+  configDir: z.string().min(1).max(LIMITS.pathChars).nullable(),
+  env: z
+    .record(
+      z
+        .string()
+        .min(1)
+        .max(LIMITS.profileEnvKeyChars)
+        .regex(/^[^=\s][^=]*$/),
+      z.string().max(LIMITS.profileEnvValueChars),
+    )
+    .refine((env) => Object.keys(env).length <= LIMITS.profileEnvMax, { message: 'too many variables' }),
+  contextWindow: z.number().int().min(100_000).max(1_000_000).nullable(),
+  args: z.array(z.string().max(LIMITS.profileArgChars)).max(LIMITS.profileArgsMax),
+  passRawArgs: z.boolean(),
+  defaults: profileDefaultsSchema,
+});
+export type ProfileInput = z.infer<typeof profileInputSchema>;
+
+/**
+ * One finding of the profile check (Phase 2, ADR-102). The server decides `level`: 'error' blocks
+ * save, start and becoming default (args blocked/not allowed/invalid, PROFILE_INVALID {field,
+ * reason} for executable/configDir); 'warning' (broad allowedTools, bypass, resume-no-effect,
+ * PROFILE_ENV_REF_UNRESOLVED); 'info' (PROFILE_ARG_PASSED_RAW). Arg findings carry
+ * ProfileArgIssueParams (`index` = line in the editor).
+ */
+export const profileIssueSchema = z.object({
+  level: z.enum(['error', 'warning', 'info']),
+  issue: errorPayloadSchema,
+});
+export type ProfileIssue = z.infer<typeof profileIssueSchema>;
 
 /** What the UI sees (never env values, never args): HostState.profiles. */
 export const profileSummarySchema = z.object({
@@ -170,6 +224,14 @@ export const profileSummarySchema = z.object({
   /** Derived from args (WP-11 parseProfileArgs), C.3. */
   allowsBypass: z.boolean(),
   claude: claudeInstallStatusSchema,
+  /** Phase 2: pre-selection shown in the "New session" dialog (no secrets). */
+  defaults: profileDefaultsSchema.default({ model: null, permissionMode: null, effort: null }),
+  /** Phase 2: → CLAUDE_CONFIG_DIR (display; configDir warning). Not secret. */
+  configDir: z.string().nullable().default(null),
+  /** Phase 2: findings of the profile check (ADR-102). */
+  issues: z.array(profileIssueSchema).default([]),
+  /** Phase 2: entries bound to the profile, archived ones included (delete protection, configDir warning). */
+  entryCount: z.number().int().nonnegative().default(0),
 });
 export type ProfileSummary = z.infer<typeof profileSummarySchema>;
 
@@ -179,20 +241,135 @@ export type ProfileSummary = z.infer<typeof profileSummarySchema>;
 
 export const SETTINGS_SCHEMA_VERSION = 1;
 
+// ---- Phase 2: notifications (ADR-109), idle sleep (ADR-105), port (ADR-111), autostart (ADR-110) ----
+
+/** Sounds the client synthesizes with Web Audio (no files, nothing from the network). */
+export const SOUND_IDS = ['chime', 'ping', 'pop', 'bell', 'alert'] as const;
+export const soundIdSchema = z.enum(SOUND_IDS);
+export type SoundId = z.infer<typeof soundIdSchema>;
+
+export const notificationEventSchema = z.object({
+  /** OS notification (Web Notification or native toast). false = in-app hint only. */
+  toast: z.boolean(),
+  /** Client sound (Web Audio). */
+  sound: z.boolean(),
+  soundId: soundIdSchema,
+});
+export type NotificationEventSettings = z.infer<typeof notificationEventSchema>;
+
+/** Defaults per event (Plan "Benachrichtigungen"). */
+export const DEFAULT_NOTIFICATION_EVENTS = {
+  permission: { toast: true, sound: true, soundId: 'chime' },
+  question: { toast: true, sound: true, soundId: 'chime' },
+  plan: { toast: true, sound: true, soundId: 'bell' },
+  done: { toast: true, sound: true, soundId: 'pop' },
+  error: { toast: true, sound: true, soundId: 'alert' },
+  rate_limit: { toast: true, sound: false, soundId: 'alert' },
+} as const satisfies Record<NotificationKind, NotificationEventSettings>;
+
+/** Strict form (settings.update replaces `notifications` as a whole – no partial nested patch). */
+const notificationSettingsFields = {
+  events: z.object({
+    permission: notificationEventSchema,
+    question: notificationEventSchema,
+    plan: notificationEventSchema,
+    done: notificationEventSchema,
+    error: notificationEventSchema,
+    rate_limit: notificationEventSchema,
+  }),
+  /** 0–1, gain of the client sounds. */
+  volume: z.number().min(0).max(1),
+  /** No OS notifications (web or native) and no sounds; in-app hints and "(n)" in the title stay. */
+  doNotDisturb: z.boolean(),
+  /** A focused, visible window shows ANOTHER session: 'in_app' hint there (A.9 default) or 'system'. */
+  focusedElsewhere: z.enum(['in_app', 'system']),
+  /** "Done" for a focused window only after turns of at least this many seconds (B: 20–30 s). */
+  doneMinSeconds: z.number().int().min(0).max(600),
+  /** HKCU protocol handler `parallax:` – a click on a native toast opens the session (A.9, opt-in). */
+  openOnClick: z.boolean(),
+};
+export const notificationSettingsPatchSchema = z.object(notificationSettingsFields);
+
+export const DEFAULT_NOTIFICATION_SETTINGS = {
+  events: DEFAULT_NOTIFICATION_EVENTS,
+  volume: 0.6,
+  doNotDisturb: false,
+  focusedElsewhere: 'in_app',
+  doneMinSeconds: 20,
+  openOnClick: false,
+} as const satisfies z.infer<typeof notificationSettingsPatchSchema>;
+
+/** Persisted form: every field with a default (a missing field loads without migration). */
+export const notificationSettingsSchema = z.object({
+  events: z
+    .object({
+      permission: notificationEventSchema.default(DEFAULT_NOTIFICATION_EVENTS.permission),
+      question: notificationEventSchema.default(DEFAULT_NOTIFICATION_EVENTS.question),
+      plan: notificationEventSchema.default(DEFAULT_NOTIFICATION_EVENTS.plan),
+      done: notificationEventSchema.default(DEFAULT_NOTIFICATION_EVENTS.done),
+      error: notificationEventSchema.default(DEFAULT_NOTIFICATION_EVENTS.error),
+      rate_limit: notificationEventSchema.default(DEFAULT_NOTIFICATION_EVENTS.rate_limit),
+    })
+    .default(DEFAULT_NOTIFICATION_EVENTS),
+  volume: notificationSettingsFields.volume.default(DEFAULT_NOTIFICATION_SETTINGS.volume),
+  doNotDisturb: z.boolean().default(false),
+  focusedElsewhere: notificationSettingsFields.focusedElsewhere.default('in_app'),
+  doneMinSeconds: notificationSettingsFields.doneMinSeconds.default(
+    DEFAULT_NOTIFICATION_SETTINGS.doneMinSeconds,
+  ),
+  openOnClick: z.boolean().default(false),
+});
+export type NotificationSettings = z.infer<typeof notificationSettingsSchema>;
+
+/** Leerlauf-Schlaf (ADR-105): the engine closes an idle process after `minutes` (canSleep rules). */
+export const idleSleepSchema = z.object({
+  enabled: z.boolean(),
+  minutes: z.number().int().min(5).max(1440),
+});
+export const DEFAULT_IDLE_SLEEP = { enabled: true, minutes: 30 } as const satisfies z.infer<
+  typeof idleSleepSchema
+>;
+
+/** Autostart shortcut (ADR-110; only on the productive server, HostState.systemIntegration). */
+export const autostartSchema = z.object({
+  enabled: z.boolean(),
+  /** At logon also open an app window (else only the server; native toasts still work). */
+  openWindow: z.boolean(),
+});
+export const DEFAULT_AUTOSTART = { enabled: false, openWindow: true } as const satisfies z.infer<
+  typeof autostartSchema
+>;
+
+/** null = default port 4711 (config.ts); takes effect after a server restart (ADR-111). */
+export const portSettingSchema = z.number().int().min(1024).max(65535).nullable();
+
 /** Fields without defaults: the base of the patch schema (a patch must never inject defaults). */
 const settingsFields = {
   language: languageSchema,
   theme: themeSchema,
+  notifications: notificationSettingsPatchSchema,
+  idleSleep: idleSleepSchema,
+  /** SDK `promptSuggestions` (one extra request per turn, B; ADR-117) – from the next process start. */
+  promptSuggestions: z.boolean(),
+  port: portSettingSchema,
+  autostart: autostartSchema,
 };
 
 export const settingsSchema = z.object({
   language: settingsFields.language.default('en'),
   theme: settingsFields.theme.default('dark'),
-  // Phase 2 adds fields additively (with defaults): notifications, idleSleep, editor, port, autostart …
+  notifications: notificationSettingsSchema.default(DEFAULT_NOTIFICATION_SETTINGS),
+  idleSleep: idleSleepSchema.default(DEFAULT_IDLE_SLEEP),
+  promptSuggestions: z.boolean().default(false),
+  port: portSettingSchema.default(null),
+  autostart: autostartSchema.default(DEFAULT_AUTOSTART),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
-/** `settings.update` patch: only the given fields change (no defaults applied). */
+/**
+ * `settings.update` patch: only the given TOP-LEVEL fields change, each replaced as a whole (nested
+ * objects too, no defaults applied).
+ */
 export const settingsPatchSchema = z.object(settingsFields).partial();
 export type SettingsPatch = z.infer<typeof settingsPatchSchema>;
 
@@ -241,6 +418,14 @@ export const hostStateSchema = z.object({
    * the client then needs no "Enable notifications" hint.
    */
   nativeNotifications: z.boolean().default(false),
+  /** Phase 2: actual listening port (null before listen); `settings.port` takes effect after a restart. */
+  port: z.number().int().min(0).max(65535).nullable().default(null),
+  /**
+   * Phase 2 (ADR-110): autostart and the protocol handler are available – only the productive
+   * server (default data directory, SDK backend, not --dev; `--system-integration=on` forces it).
+   * The UI disables both otherwise.
+   */
+  systemIntegration: z.boolean().default(false),
 });
 export type HostState = z.infer<typeof hostStateSchema>;
 
@@ -255,6 +440,8 @@ export const conversationEndReasonSchema = z.enum([
   'onboarding',
   'fork',
   'unknown',
+  /** Phase 2 (ADR-107): left by session.switchConversation (new value → registry schema v2). */
+  'switched',
 ]);
 export type ConversationEndReason = z.infer<typeof conversationEndReasonSchema>;
 
@@ -278,6 +465,18 @@ export const conversationSchema = z.object({
   lastOrder: z.number().int().nonnegative().default(0),
 });
 export type Conversation = z.infer<typeof conversationSchema>;
+
+/** Phase 2 (ADR-104): the entry is open in an external console. */
+export const externalHandoffSchema = z.object({
+  /** claude.exe of the console; null = unknown. */
+  pid: z.number().int().positive().nullable(),
+  /** Exact process start time (PID-reuse check, like ADR-081); null = unknown. */
+  processStartedAt: isoDateTimeSchema.nullable(),
+  since: isoDateTimeSchema,
+  /** Conversation whose session id was resumed in the console. */
+  conversationId: conversationIdSchema,
+});
+export type ExternalHandoff = z.infer<typeof externalHandoffSchema>;
 
 /** Replaces `titleIsCustom` (= 'custom'); only 'custom' is never overwritten automatically. */
 export const titleSourceSchema = z.enum(['none', 'prompt', 'ai', 'custom']);
@@ -318,10 +517,17 @@ export const entrySchema = z.object({
   unread: z.boolean().default(false),
   /** R0-17: last gauge, so sleeping sessions still show their context fill after a restart. */
   context: contextGaugeSchema.nullable().default(null),
+  /** Phase 2 (ADR-113): last git branch (null = no repo/unknown); shown for dormant entries too. */
+  gitBranch: z.string().max(200).nullable().default(null),
+  /** Phase 2 (ADR-104): open in an external console; null = not handed off. */
+  external: externalHandoffSchema.nullable().default(null),
+  /** Phase 2 (ADR-112): scheduled "continue" after a rate limit (→ StatusFacts.wakeupAt). */
+  continueAt: isoDateTimeSchema.nullable().default(null),
 });
 export type Entry = z.infer<typeof entrySchema>;
 
-export const REGISTRY_SCHEMA_VERSION = 1;
+/** 1 → 2 (Phase 2, ADR-107): conversation end reason 'switched'; the migration is the identity. */
+export const REGISTRY_SCHEMA_VERSION = 2;
 /** `sessions.json`. */
 export const registryFileSchema = z.object({
   schemaVersion: z.literal(REGISTRY_SCHEMA_VERSION),
@@ -620,6 +826,13 @@ export const systemItemSchema = z.discriminatedUnion('event', [
   systemBase.extend({ event: z.literal('task_notification'), task: taskInfoSchema }),
   /** assistant.error, crash, startup failure, result errors. */
   systemBase.extend({ event: z.literal('error'), error: errorPayloadSchema }),
+  /** Phase 2 (ADR-104): handed off to / returned from an external console. */
+  systemBase.extend({
+    event: z.literal('handoff'),
+    phase: z.enum(['external', 'returned']),
+    /** 'returned': items imported from the CLI transcript (turns made in the console). */
+    importedItems: z.number().int().nonnegative().default(0),
+  }),
   /** Tolerant parsing. */
   systemBase.extend({
     event: z.literal('unknown'),
@@ -917,6 +1130,18 @@ export const sessionSummarySchema = z.object({
   gitBranch: z.string().nullable().default(null),
   lastError: errorInfoSchema.nullable(),
   lastResultExcerpt: z.string().nullable(),
+  /**
+   * Phase 2 (ADR-104): external console; null = not handed off. `running: false` = the console
+   * ended, the return is pending.
+   */
+  external: z
+    .object({
+      since: isoDateTimeSchema,
+      pid: z.number().int().positive().nullable(),
+      running: z.boolean(),
+    })
+    .nullable()
+    .default(null),
 });
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 
@@ -1021,3 +1246,30 @@ export type SessionDetail = z.infer<typeof sessionDetailSchema>;
 /** `detail.patch`: replaces exactly the given fields (arrays are not merged, no defaults applied). */
 export const sessionDetailPatchSchema = z.object(sessionDetailFields).partial();
 export type SessionDetailPatch = z.infer<typeof sessionDetailPatchSchema>;
+
+// =====================================================================================
+// 5.12 Folder browser (Phase 2, ADR-119)
+// =====================================================================================
+
+export const fsEntrySchema = z.object({
+  name: z.string(),
+  /** Absolute path (listed path + name) – usable as session.create.cwd as is. */
+  path: z.string(),
+  /** 'drive' and 'home' only in the roots; 'link' = junction/symlink to a directory. */
+  kind: z.enum(['drive', 'home', 'directory', 'link']),
+  /** Heuristic: name starts with '.' or is a known system folder ($Recycle.Bin, System Volume Information …). */
+  hidden: z.boolean(),
+});
+export type FsEntry = z.infer<typeof fsEntrySchema>;
+
+export const fsListingSchema = z.object({
+  /** null = the roots (drives + user folder). */
+  path: z.string().nullable(),
+  /** null at a drive root and for the roots. */
+  parent: z.string().nullable(),
+  /** Directories only, sorted case-insensitively by name. */
+  entries: z.array(fsEntrySchema),
+  /** More than LIMITS.fsListMax directories. */
+  truncated: z.boolean(),
+});
+export type FsListing = z.infer<typeof fsListingSchema>;

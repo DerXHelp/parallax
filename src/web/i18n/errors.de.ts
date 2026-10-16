@@ -45,6 +45,10 @@ export const errorsDe: Record<ErrorCode, string> = {
   MODE_NOT_ALLOWED: 'Dieser Berechtigungsmodus ist für das Profil nicht erlaubt.',
   PROFILE_IN_USE: 'Das Profil wird noch von Sessions verwendet.',
   SERVER_SHUTTING_DOWN: 'Der Server wird beendet.',
+  SESSION_ARCHIVED: 'Diese Session ist archiviert – stelle sie zuerst wieder her.',
+  SESSION_NOT_STARTED: 'Diese Session hat noch keine Claude-Unterhaltung – sende zuerst eine Nachricht.',
+  EXTERNAL_STILL_RUNNING: 'Die Session ist noch in einer externen Konsole offen – beende claude dort zuerst.',
+  PROFILE_NOT_DELETABLE: 'Das eingebaute Profil kann nicht gelöscht werden.',
   CLAUDE_NOT_FOUND:
     'Claude Code wurde nicht gefunden. Installiere es und sorge dafür, dass „claude“ im PATH liegt.',
   CLAUDE_VERSION_TOO_OLD: 'Das installierte Claude Code ist zu alt. Aktualisiere es mit „claude update“.',
@@ -68,6 +72,11 @@ export const errorsDe: Record<ErrorCode, string> = {
   MODEL_REFUSAL: 'Das Modell hat die Anfrage abgelehnt.',
   MCP_SERVER_NOT_APPROVED: 'Ein MCP-Server wartet in Claude Code auf Freigabe.',
   TURN_FAILED: 'Der Durchlauf ist fehlgeschlagen.',
+  EXTERNAL_CONSOLE_FAILED: 'Die externe Konsole konnte nicht geöffnet werden.',
+  FOLDER_NOT_READABLE: 'Dieser Ordner kann nicht gelesen werden (keine Berechtigung).',
+  AUTOSTART_FAILED: 'Autostart konnte nicht eingerichtet werden.',
+  PROTOCOL_HANDLER_FAILED:
+    'Das Öffnen von Sessions aus Windows-Benachrichtigungen konnte nicht eingerichtet werden.',
   STORE_CORRUPT_QUARANTINED: 'Eine beschädigte Datendatei wurde beiseitegelegt und durch eine neue ersetzt.',
   STORE_WRITE_FAILED: 'Daten konnten nicht gespeichert werden.',
   STORE_MIGRATION_FAILED: 'Gespeicherte Daten konnten nicht aktualisiert werden.',

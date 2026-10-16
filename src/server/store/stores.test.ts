@@ -3,7 +3,14 @@ import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promise
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { REGISTRY_SCHEMA_VERSION, type TranscriptItem } from '@shared/model';
-import { SAMPLE_IDS, sampleDecisionRecord, sampleEntry, sampleId, sampleItems } from '@shared/samples';
+import {
+  SAMPLE_IDS,
+  sampleDecisionRecord,
+  sampleEntry,
+  sampleId,
+  sampleItems,
+  sampleSettings,
+} from '@shared/samples';
 import { makeTempHome } from '../http/testServer';
 import type { DecisionStore, TranscriptLogLine } from '../sync/ports';
 import { blobFilePath, blobMetaPath, createBlobStore } from './blobs';
@@ -55,6 +62,29 @@ describe('RegistryStore (sessions.json)', () => {
     expect(warnings.list()[0]?.error.code).toBe('STORE_CORRUPT_QUARANTINED');
     await registry.close();
   });
+
+  it('migrates a version-1 sessions.json to version 2 unchanged (Phase 2, ADR-107)', async () => {
+    const home = await makeTempHome('registry-');
+    const v1 = { ...sampleEntry() } as Record<string, unknown>;
+    delete v1.gitBranch;
+    delete v1.external;
+    delete v1.continueAt;
+    await writeFile(
+      path.join(home, REGISTRY_FILE),
+      JSON.stringify({ schemaVersion: 1, entries: [v1] }),
+      'utf8',
+    );
+    const warnings = createStoreWarnings();
+    const registry = await openRegistryStore({ home, warnings, debounceMs: 5 });
+    expect(warnings.list()).toEqual([]);
+    expect(registry.get(ENTRY)).toEqual(sampleEntry());
+    registry.upsert(sampleEntry({ title: 'Changed' }));
+    await registry.close();
+    const file = JSON.parse(await readFile(path.join(home, REGISTRY_FILE), 'utf8')) as {
+      schemaVersion: number;
+    };
+    expect(file.schemaVersion).toBe(2);
+  });
 });
 
 describe('newer schemaVersion aborts the start (R1-06)', () => {
@@ -81,13 +111,18 @@ describe('SettingsStore (settings.json)', () => {
   it('patches only the given fields and persists', async () => {
     const home = await makeTempHome('settings-');
     const settings = await openSettingsStore({ home, debounceMs: 5 });
-    expect(settings.get()).toEqual({ language: 'en', theme: 'dark' });
-    expect(settings.update({ language: 'de' })).toEqual({ language: 'de', theme: 'dark' });
-    expect(settings.update({ theme: undefined })).toEqual({ language: 'de', theme: 'dark' });
+    expect(settings.get()).toEqual(sampleSettings());
+    expect(settings.update({ language: 'de' })).toEqual(sampleSettings({ language: 'de' }));
+    expect(settings.update({ theme: undefined })).toEqual(sampleSettings({ language: 'de' }));
+    // Phase 2: a top-level field is replaced as a whole.
+    expect(settings.update({ idleSleep: { enabled: false, minutes: 30 } }).idleSleep).toEqual({
+      enabled: false,
+      minutes: 30,
+    });
     await settings.close();
     expect(JSON.parse(await readFile(path.join(home, SETTINGS_FILE), 'utf8'))).toEqual({
       schemaVersion: 1,
-      settings: { language: 'de', theme: 'dark' },
+      settings: sampleSettings({ language: 'de', idleSleep: { enabled: false, minutes: 30 } }),
     });
     expect(() => settings.update({ language: 'fr' } as unknown as { language: 'en' })).toThrow();
   });

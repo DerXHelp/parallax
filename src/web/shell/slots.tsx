@@ -5,10 +5,13 @@ import {
   DecisionBarPlaceholder,
   DecisionCardPlaceholder,
   MarkdownPlaceholder,
+  ProfilesSettingsPlaceholder,
+  SettingsPagePlaceholder,
   SidePanelPlaceholder,
   ToolInputPreviewPlaceholder,
   TranscriptPlaceholder,
 } from './placeholders';
+import type { SettingsSection } from './requests';
 
 /**
  * Feature slots instead of cross imports (architecture §2.3 d/e, ADR-017): the shell renders the
@@ -39,6 +42,19 @@ export interface FeatureSlots {
   Markdown: ComponentType<{ text: string; sessionKey?: string }>;
   /** WP-15 → WP-16 (diff preview in permission cards). `sessionKey`: host of capped inputs (blobs). */
   ToolInputPreview: ComponentType<{ toolName: string; input: JsonValue; sessionKey?: string }>;
+  // Phase 2 (WP-30 §4.14 C)
+  /**
+   * WP-38 (features/preferences): the settings page as a large dialog; the shell opens it on the
+   * request `{kind: 'settings'}` (shell/requests.ts). `section` null = the first section.
+   */
+  SettingsPage: ComponentType<SettingsPageSlotProps>;
+  /** WP-36 (features/profiles): profile list + editor, rendered by the settings page (section `profiles`). */
+  ProfilesSettings: ComponentType<Record<string, never>>;
+}
+
+export interface SettingsPageSlotProps {
+  section: SettingsSection | null;
+  onClose: () => void;
 }
 
 export type DecisionCardPlacement = 'transcript' | 'bar';
@@ -57,6 +73,8 @@ export const DEFAULT_FEATURE_SLOTS: FeatureSlots = {
   DecisionCard: DecisionCardPlaceholder,
   Markdown: MarkdownPlaceholder,
   ToolInputPreview: ToolInputPreviewPlaceholder,
+  SettingsPage: SettingsPagePlaceholder,
+  ProfilesSettings: ProfilesSettingsPlaceholder,
 };
 
 const FeatureSlotsContext = createContext<FeatureSlots>(DEFAULT_FEATURE_SLOTS);
@@ -82,6 +100,8 @@ export function FeatureSlotsProvider({
       DecisionCard: slots.DecisionCard ?? parent.DecisionCard,
       Markdown: slots.Markdown ?? parent.Markdown,
       ToolInputPreview: slots.ToolInputPreview ?? parent.ToolInputPreview,
+      SettingsPage: slots.SettingsPage ?? parent.SettingsPage,
+      ProfilesSettings: slots.ProfilesSettings ?? parent.ProfilesSettings,
     }),
     [parent, slots],
   );

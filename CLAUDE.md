@@ -28,32 +28,30 @@ die Web-UI (Edge im App-Modus) zeigt Status, Context, Chat und nicht-modale Ents
 | `$env:PARALLAX_LIVE='1'; pnpm e2e e2e/live` | Live-Smoke gegen das echte `claude` – nur mit Nutzer-Freigabe; SDK-/CLI-Upgrade: `docs/sdk-upgrade.md` |
 | `pnpm preflight` / `pnpm record <szenario>` | Umgebungscheck (WP-11) / Fixture-Recorder (WP-01) |
 
-## Ordner und Ownership (datei-genau; Details und Exporte: `docs/architecture.md` §2.1–2.3)
+## Ordner und Ownership Phase 2 (datei-genau; Details: `docs/wp/WP-30.md` §6, `docs/architecture.md` §2)
 | Pfad | Inhalt | Owner |
 |---|---|---|
-| `src/shared/**` | Contracts (zod): `common`, `errors`, `status`, `model`, `protocol`, `sync`, `http`, `paths`, `build`, `samples`, `product` | Koordinator (eingefroren) |
-| `src/server/**/ports.ts`, `src/server/backend/{types,fixture}.ts` | Server-Ports | Koordinator (eingefroren) |
-| `src/server/lib/{logger,ids,paths}.ts` | Logger, `newId`, Pfad-Helfer (fs-Prüfungen auf `@shared/paths`) | WP-10 |
-| `src/server/lib/{process,windows,registry,edge}.ts` | Spawn/`killProcessTree`, `searchPath`/`resolveExecutable`, Registry-Env, `findEdge` | WP-11 |
-| `src/server/lib/{async,fs,homeLock,homeAccess}.ts` | `toError`/`sleep`, `withFsRetry`/`writeFileAtomic`, Home-Lock (Exit 5), Home-Rechte-Warnung | Koordinator (R2-Fixes) |
-| `src/server/lib/toast.ts` | nativer Windows-Toast (PowerShell + WinRT, ADR-082/091) | WP-22-Fixes |
-| `src/server/config.ts`, `src/server/{http,sync,store}/` | Config, App, Auth, HTTP/WS, Sync, Stores | WP-10 |
-| `src/server/claude/` | resolveClaude, buildEnv, parseProfileArgs, Profil „Standard“, Preflight | WP-11 |
-| `src/server/sessions/{normalizer,status}/` | Normalizer, Statusmaschine | WP-12 |
-| übrige Dateien in `src/server/{sessions,backend}/` | Manager, Broker, Fake-/SdkBackend | WP-13 |
-| `src/server/main.ts`, `src/server/app/` / `src/server/launcher/` | Einstieg + Komposition (`compose.ts`) / Launcher, Lockfile | WP-20 / WP-21 |
-| `src/web/{shell,ui,lib,state,i18n,playground}/`, `App.tsx`, `main.tsx`, `index.css` | Shell + Slots, Primitives, Stores, Auth-Client, i18n-Kern | WP-14 (Welle 1b: nur lesen) |
-| `src/web/features/transcript/` | Transkript inkl. eigenem `i18n/`, `playground.tsx` | WP-15 |
-| `src/web/features/{decisions,composer}/` | Entscheidungen, Composer (dito) | WP-16 |
-| `scripts/`, `test/`, `e2e/` | `preflight.ts` WP-11, Recorder + Fixtures WP-01, E2E WP-20, `test/setup` Koordinator | siehe Inhalt |
-| Root-Configs, `package.json`, Lockfile | Bootstrap | Koordinator |
+| `src/shared/**`, `src/server/**/ports.ts` (inkl. `system/ports.ts`), `src/server/backend/{types,fixture}.ts` | Contracts v2 | Koordinator (eingefroren) |
+| `src/server/lib/{async,fs,homeLock,homeAccess}.ts` | Basis-Helfer (`toError`, `writeFileAtomic`, Home-Lock, Home-Rechte) | Koordinator |
+| `src/server/sessions/**` (ohne `ports.ts`), `src/server/backend/**` (ohne `types/fixture`) | Engine, Normalizer/Status, Fake-/SdkBackend | WP-31 (Welle 1), dann WP-34 |
+| `src/server/claude/**` (ohne `ports.ts`), `scripts/preflight.ts` | Profile, Claude-Integration, Preflight | WP-32 |
+| `src/server/{http,store,host}/**`, `src/server/system/**` (ohne `ports.ts`), übrige `src/server/lib/**`, `src/server/launcher/**`, `src/server/config.ts` | HTTP/Uploads, Stores, Ordner-Browser, Windows-Integration, Launcher | WP-33 |
+| `src/server/sync/**` (ohne `ports.ts`) | Hub (unverändert) | Koordinator |
+| `src/server/main.ts`, `src/server/app/**`, `src/web/{App,main}.tsx`, `e2e/**` | Komposition, Verdrahtung, E2E | WP-40 |
+| `src/web/shell/**` (ohne die Zeilen unten), `src/web/{state,lib,playground}/**`, neue `src/web/ui/{context-menu,command-list}.tsx` | Navigation (Sidebar, Strg+K, Kopfzeile, Fenster) | WP-35 |
+| `src/web/shell/{NewSessionDialog,NewSessionForm,EmptyState}.tsx`, `src/web/shell/new-session/**`, `src/web/features/profiles/**` | Neue Session, Profil-Editor | WP-36 |
+| `src/web/features/{composer,transcript}/**`, neue `src/web/ui/lightbox.tsx` | Composer, Transkript | WP-37 |
+| `src/web/features/preferences/**`, `src/web/notifications/**`, `src/web/shell/SettingsMenu.tsx`, neue `src/web/ui/slider.tsx` | Einstellungen, Töne | WP-38 |
+| `src/web/shell/{requests,slots,placeholders}.ts(x)`, `src/web/shell/server-shutdown/**`, `src/web/i18n/**`, bestehende `src/web/ui/*`, `src/web/features/decisions/**`, `index.{html,css}` | Gerüst / unverändert | Koordinator |
+| `scripts/` (übrige), `test/`, Root-Configs, `package.json`, Lockfile | Recorder, `test/setup`, Bootstrap | Koordinator |
 
 - Keine Datei wird von zwei Paketen bearbeitet; nichts in fremden Ordnern anlegen. `README.md` von
   Ordnern mit mehreren Ownern (`src/server`, `server/lib`, `server/sessions`, `server/backend`,
-  `src/web`, `web/features`) pflegt der Koordinator.
-- Features importieren einander nie: gemeinsame Komponenten (`DecisionCard`, `Markdown`,
-  `ToolInputPreview`) über `FeatureSlots` (`src/web/shell/slots.tsx`), verdrahtet in WP-20.
-  Wörterbücher je Feature in `features/<f>/i18n/{en,de}.ts` (Stubs von WP-14).
+  `src/web`, `web/shell`, `web/features`, `web/ui`) pflegt der Koordinator.
+- Features importieren einander nie: gemeinsame Komponenten über `FeatureSlots`
+  (`src/web/shell/slots.tsx`, verdrahtet in WP-40), Querverbindungen zur Shell über den Anfragekanal
+  `src/web/shell/requests.ts`. Wörterbücher je Bereich: `features/<f>/i18n/{en,de}.ts` bzw.
+  `shell/<bereich>/i18n/{en,de}.ts` (Namensräume `navigation`, `newSession`, `profiles`, `preferences`).
 - Aliase: `@shared/*` (überall), `@web/*` (nur Web). Jeder Ordner hat eine `README.md`.
 
 ## Contracts (Kurzregeln, Details `docs/architecture.md`)
