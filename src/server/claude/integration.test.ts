@@ -1,11 +1,17 @@
+import { mkdtemp } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { STANDARD_PROFILE_ID } from '@shared/common';
 import { claudeInstallStatusSchema, type Profile } from '@shared/model';
-import { SAMPLE_IDS, sampleClaudeInstallStatus, sampleProfile } from '@shared/samples';
-import { logger } from '../lib/logger';
+import { SAMPLE_IDS, sampleClaudeInstallStatus, sampleProfile, sampleProfileInput } from '@shared/samples';
+import { REDACTED, logger, redactText } from '../lib/logger';
 import type { RunFileOptions, RunFileResult } from '../lib/process';
+import { createStoreWarnings } from '../store/jsonStore';
 import { CommandError } from '../sync/ports';
 import { createClaudeIntegration, profileNeedsSetup } from './integration';
+import type { ConsoleLaunchRequest } from './ports';
+import { openProfileStore, type PersistentProfileStore } from './profileStore';
 import { createProfileStore } from './profiles';
 import { createMemoryFs } from '../lib/windows';
 
@@ -48,16 +54,18 @@ function setup(
     version?: () => Promise<RunFileResult>;
     auth?: () => Promise<RunFileResult>;
     profileList?: Profile[];
+    profiles?: PersistentProfileStore;
     sdkClaudeCodeVersion?: string | null;
     resolveCacheMs?: number;
     persistentEnv?: () => Promise<ReadonlyMap<string, string> | null>;
+    baseEnv?: Record<string, string>;
   } = {},
 ) {
   const calls: Call[] = [];
   const fs = createMemoryFs(options.files ?? { [LOCAL]: '' });
   const integration = createClaudeIntegration({
     appVersion: '1.2.3',
-    baseEnv: () => BASE_ENV,
+    baseEnv: () => options.baseEnv ?? BASE_ENV,
     persistentEnv: options.persistentEnv ?? (() => Promise.resolve(null)),
     fs,
     where: (name, env) => {
@@ -77,6 +85,7 @@ function setup(
       options.sdkClaudeCodeVersion === undefined ? '2.1.296' : options.sdkClaudeCodeVersion,
     now: () => new Date('2026-10-15T08:00:00.000Z'),
     ...(options.profileList === undefined ? {} : { profiles: createProfileStore(options.profileList) }),
+    ...(options.profiles === undefined ? {} : { profiles: options.profiles }),
     ...(options.resolveCacheMs === undefined ? {} : { resolveCacheMs: options.resolveCacheMs }),
   });
   return { integration, calls, fs };
@@ -202,11 +211,13 @@ describe('launchSpecFor', () => {
       'PROFILE_ENV_REF_UNRESOLVED',
       { name: 'NOT_SET_ANYWHERE', key: 'K' },
     ],
+    // ADR-102: every error issue of the profile check blocks the start.
+    ['unsafe config dir', { configDir: '\\\\server\\share' }, 'PROFILE_INVALID', { count: 1 }],
     [
-      'unsafe config dir',
-      { configDir: '\\\\server\\share' },
-      'PATH_REJECTED',
-      { reason: 'unc', field: 'configDir' },
+      'executable that is not an .exe',
+      { executable: { kind: 'path', path: 'C:\\Tools\\claude.cmd' } },
+      'PROFILE_INVALID',
+      { count: 1 },
     ],
   ])('throws for %s', async (_name, partial, code, params) => {
     const { integration, calls } = setup({ profileList: [sampleProfile(partial)] });
@@ -385,6 +396,190 @@ describe('checkProfile ("Profil testen")', () => {
     await integration.checkProfile(STANDARD_PROFILE_ID);
     await integration.launchSpecFor(STANDARD_PROFILE_ID, SAMPLE_IDS.entry);
     expect(calls.filter((call) => call.args[0] === '--version')).toHaveLength(1);
+  });
+});
+
+describe('consoleLaunchFor (Phase 2, ADR-104)', () => {
+  const request = (p: Partial<ConsoleLaunchRequest> = {}): ConsoleLaunchRequest => ({
+    profileId: STANDARD_PROFILE_ID,
+    entryId: SAMPLE_IDS.entry,
+    cwd: 'D:\\Work\\Repo ü',
+    resumeSessionId: SAMPLE_IDS.sessionId,
+    model: null,
+    permissionMode: null,
+    ...p,
+  });
+  /** A Claude Code tool shell: session markers plus the tool-shell settings of R1-03. */
+  const TOOL_SHELL_ENV = { ...BASE_ENV, GIT_EDITOR: 'true', NO_COLOR: '1', SECRET_HOME: 'machine-only' };
+
+  it('builds the console spec: profile args + --resume (+ model/mode/settings), terminal env, exact cwd', async () => {
+    const profile = sampleProfile({
+      configDir: 'D:\\claude\\work',
+      contextWindow: 200_000,
+      args: ['--add-dir', 'D:\\shared', '--verbose'],
+      passRawArgs: true,
+      env: { ANTHROPIC_BASE_URL: 'https://gateway.corp', HOME_COPY: '${env:SECRET_HOME}' },
+    });
+    const { integration } = setup({ profileList: [profile], baseEnv: TOOL_SHELL_ENV });
+    const spec = await integration.consoleLaunchFor(
+      request({ model: 'haiku', permissionMode: 'acceptEdits' }),
+    );
+    expect(spec.executablePath).toBe(LOCAL);
+    expect(spec.cwd).toBe('D:\\Work\\Repo ü');
+    expect(spec.args).toEqual([
+      '--add-dir',
+      'D:\\shared',
+      '--verbose',
+      '--resume',
+      SAMPLE_IDS.sessionId,
+      '--model',
+      'haiku',
+      '--permission-mode',
+      'acceptEdits',
+      '--settings',
+      '{"autoCompactWindow":200000}',
+    ]);
+    expect(spec.explicitEnv).toEqual({
+      ANTHROPIC_BASE_URL: 'https://gateway.corp',
+      HOME_COPY: 'machine-only',
+      CLAUDE_CONFIG_DIR: 'D:\\claude\\work',
+    });
+    expect(spec.env).toMatchObject({
+      ...spec.explicitEnv,
+      PARALLAX: '1',
+      PARALLAX_ENTRY_ID: SAMPLE_IDS.entry,
+      Path: 'C:\\Users\\u\\.local\\bin',
+    });
+    for (const marker of [
+      'CLAUDECODE',
+      'CLAUDE_CODE_SESSION_ID',
+      'CLAUDE_CODE_MESSAGING_TOKEN',
+      'GIT_EDITOR',
+      'NO_COLOR',
+    ]) {
+      expect(spec.env).not.toHaveProperty(marker);
+    }
+    expect(spec.env.npm_lifecycle_event).toBeUndefined();
+  });
+
+  it('does not add --model, --permission-mode or --settings the profile args already set', async () => {
+    const warn = vi.spyOn(logger, 'warn');
+    const profile = sampleProfile({
+      contextWindow: 300_000,
+      args: ['--model=opus', '--permission-mode', 'plan', '--settings', 'D:\\s.json'],
+    });
+    const { integration } = setup({ profileList: [profile] });
+    const spec = await integration.consoleLaunchFor(
+      request({ model: 'haiku', permissionMode: 'acceptEdits' }),
+    );
+    expect(spec.args).toEqual([
+      '--model=opus',
+      '--permission-mode',
+      'plan',
+      '--settings',
+      'D:\\s.json',
+      '--resume',
+      SAMPLE_IDS.sessionId,
+    ]);
+    expect(spec.explicitEnv).toEqual({});
+    expect(warn).toHaveBeenCalledWith(
+      { profileId: STANDARD_PROFILE_ID },
+      expect.stringContaining('autoCompactWindow'),
+    );
+  });
+
+  it('registers secret values of the explicit env with the logger', async () => {
+    const secret = 'console-secret-value-77';
+    const { integration } = setup({
+      profileList: [sampleProfile({ env: { GATEWAY_TOKEN: '${env:GW}' } })],
+      baseEnv: { ...BASE_ENV, GW: secret },
+    });
+    const spec = await integration.consoleLaunchFor(request());
+    expect(spec.explicitEnv).toEqual({ GATEWAY_TOKEN: secret });
+    expect(redactText(`token ${secret}`)).toBe(`token ${REDACTED}`);
+  });
+
+  it.each<[string, Partial<Profile>, Partial<ConsoleLaunchRequest>, string, Record<string, unknown>]>([
+    ['error issues', { args: ['--print'] }, {}, 'PROFILE_INVALID', { count: 1 }],
+    [
+      'unresolved env reference',
+      { env: { K: '${env:NOT_SET_ANYWHERE}' } },
+      {},
+      'PROFILE_ENV_REF_UNRESOLVED',
+      { name: 'NOT_SET_ANYWHERE', key: 'K' },
+    ],
+    ['unsafe cwd', {}, { cwd: '\\\\server\\share\\repo' }, 'PATH_REJECTED', { reason: 'unc', field: 'cwd' }],
+    [
+      'unknown profile',
+      {},
+      { profileId: 'pf_0123456789abcdef0123456789abcdef' },
+      'PROFILE_NOT_FOUND',
+      { profileId: 'pf_0123456789abcdef0123456789abcdef' },
+    ],
+  ])('throws for %s', async (_name, partial, req, code, params) => {
+    const { integration, calls } = setup({ profileList: [sampleProfile(partial)] });
+    const error = await commandError(integration.consoleLaunchFor(request(req)));
+    expect(error.error).toEqual({ code, params });
+    expect(calls).toEqual([]);
+  });
+
+  it('throws CLAUDE_NOT_FOUND like launchSpecFor', async () => {
+    const { integration } = setup({ files: {}, hits: [] });
+    expect((await commandError(integration.consoleLaunchFor(request()))).error.code).toBe('CLAUDE_NOT_FOUND');
+  });
+});
+
+describe('with a persistent profile store (ADR-102)', () => {
+  const OTHER = 'C:\\Tools\\claude-next\\claude.exe';
+
+  async function persistent(): Promise<PersistentProfileStore> {
+    return openProfileStore({
+      home: await mkdtemp(path.join(process.env.PARALLAX_HOME ?? os.tmpdir(), 'wp32-integration-')),
+      warnings: createStoreWarnings(),
+      debounceMs: 5,
+      issueContext: () => ({ env: {}, persistentEnv: new Map(), exists: () => true }),
+    });
+  }
+
+  it('uses the store, keeps the cache for unrelated changes and drops it when the executable changes', async () => {
+    const store = await persistent();
+    const { integration, calls } = setup({ profiles: store, files: { [LOCAL]: '', [OTHER]: '' } });
+    const versionCalls = () => calls.filter((call) => call.args[0] === '--version').map((call) => call.file);
+    const id = store.save(sampleProfileInput({ env: {}, configDir: null, args: [] }), new Date()).id;
+    expect(integration.profiles).toBe(store);
+
+    await integration.launchSpecFor(id, SAMPLE_IDS.entry);
+    store.save(sampleProfileInput({ id, name: 'Renamed', env: {}, configDir: null, args: [] }), new Date());
+    await integration.launchSpecFor(id, SAMPLE_IDS.entry);
+    expect(versionCalls()).toEqual([LOCAL]);
+
+    store.save(
+      sampleProfileInput({
+        id,
+        executable: { kind: 'path', path: OTHER },
+        env: {},
+        configDir: null,
+        args: [],
+      }),
+      new Date(),
+    );
+    const spec = await integration.launchSpecFor(id, SAMPLE_IDS.entry);
+    expect(spec.executablePath).toBe(OTHER);
+    expect(versionCalls()).toEqual([LOCAL, OTHER]);
+    await store.close();
+  });
+
+  it('checkProfile stores the status in the persistent store (onChange)', async () => {
+    const store = await persistent();
+    const { integration } = setup({ profiles: store });
+    let changes = 0;
+    store.onChange(() => {
+      changes += 1;
+    });
+    const status = await integration.checkProfile(STANDARD_PROFILE_ID);
+    expect(store.claudeStatus(STANDARD_PROFILE_ID)).toEqual(status);
+    expect(changes).toBe(1);
+    await store.close();
   });
 });
 
