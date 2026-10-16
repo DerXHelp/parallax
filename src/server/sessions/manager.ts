@@ -93,11 +93,33 @@ export const DEFAULT_SESSION_MANAGER_OPTIONS: SessionManagerOptions = {
   aiTitleDelayMs: 2_000,
   processSnapshotMs: 30_000,
   processSnapshotFirstMs: 10_000,
-  shutdownKillAfterMs: 2_500,
+  // C.8 (CR-02, ADR-090): up to 5 s after close() for a clean end (SessionEnd hooks, transcript).
+  shutdownKillAfterMs: 5_000,
 };
 
 /** WP22-05: bound of the interrupt sent at shutdown to a session that waits for a decision. */
 export const SHUTDOWN_INTERRUPT_MS = 1_000;
+
+/**
+ * The shutdown frame (launcher/shutdown.ts) sweeps the server's child process trees only after the
+ * engine's own C.8 window (interrupt ≤ 1 s, close(), ≤ 5 s, taskkill) plus a margin (CR-02).
+ */
+export const SHUTDOWN_SWEEP_GRACE_MS =
+  SHUTDOWN_INTERRUPT_MS + DEFAULT_SESSION_MANAGER_OPTIONS.shutdownKillAfterMs + 2_000;
+
+/**
+ * CR-06 (ADR-090): may the shutdown end the turn of a session that waits for a decision? Only when
+ * nothing is queued and no background work runs – otherwise BOTH ways start further work: after an
+ * interrupt the CLI's drain loop starts the next queued prompt at once (a finishing background task
+ * starts a turn of its own, Findings point 9), and on close() (stdin EOF) a waiting CLI fails the
+ * permission ("Tool permission stream closed") and continues the turn with the queued prompt folded
+ * in – a model call, tools (live, fix round). Such a session is ended with taskkill instead (it is
+ * blocked on the answer and writes nothing). Parallax's queue lists every prompt it sent that has
+ * not started.
+ */
+export function shutdownCanEndTurn(s: Pick<EntryState, 'queue' | 'facts'>): boolean {
+  return s.queue.count() === 0 && s.facts.queuedPrompts === 0 && s.facts.backgroundTasks === 0;
+}
 
 /** Debounce of host-state publications after rate-limit events (§3.5.5). */
 export const HOST_STATE_DEBOUNCE_MS = 1_000;
@@ -572,58 +594,104 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           // Never cancel at shutdown: open records stay open → `expired` after the restart (A.10).
           s.broker.freeze();
         }
-        /** Resolves when `work` settles or after `ms` on the engine clock (timers seam). */
-        const within = async (work: Promise<unknown>, ms: number): Promise<void> => {
+        /** True when `work` settled within `ms` on the engine clock (timers seam), false on timeout. */
+        const within = async (work: Promise<unknown>, ms: number): Promise<boolean> => {
           const cap: { timer: TimerHandle | null } = { timer: null };
-          await Promise.race([
+          const settled = await Promise.race([
             work.then(
-              () => undefined,
-              () => undefined,
+              () => true,
+              () => true,
             ),
-            new Promise<void>((resolve) => {
-              cap.timer = timers.setTimeout(resolve, ms);
+            new Promise<boolean>((resolve) => {
+              cap.timer = timers.setTimeout(() => {
+                resolve(false);
+              }, ms);
             }),
           ]);
           cap.timer?.cancel();
+          return settled;
+        };
+        const killTree = async (
+          s: EntryState,
+          pid: number,
+          level: 'info' | 'error',
+          message: string,
+        ): Promise<void> => {
+          log[level]({ entryId: s.id, pid }, message);
+          await proc.killProcessTree(pid).catch((error: unknown) => {
+            log.error({ err: error, entryId: s.id, pid }, 'killProcessTree failed at shutdown');
+          });
+        };
+        /** Prompts the CLI never started: a px item each, like after a crash (CR-06, §3.5.12). */
+        const reportUndelivered = (s: EntryState): void => {
+          const undelivered = s.queue.drain();
+          for (const prompt of undelivered) {
+            s.addSystemError(
+              makeError(
+                'PROMPT_NOT_DELIVERED',
+                { messageUuid: prompt.messageUuid, preview: prompt.text.text.slice(0, 100) },
+                'the server stopped before the prompt was started; it is not resent automatically',
+              ),
+            );
+          }
+          if (undelivered.length > 0) s.publishQueue();
         };
         const running = [...states.values()].filter((s) => s.runtime !== null);
+        // C.8 (CR-02, ADR-090): close() of every query in parallel, up to `shutdownKillAfterMs`
+        // (5 s) after it for a clean end – SessionEnd hooks and the CLI's transcript writes must not
+        // be cut off –, only then taskkill /T /F of what still runs.
         const closes = running.map(async (s) => {
           const runtime = s.runtime;
           if (runtime === null) return;
           runtime.closing = true;
-          // WP22-05: a CLI that waits for a permission/question/plan answer does not end on stdin
-          // EOF (8 s in WP-22) – end its turn first (bounded); the frozen broker keeps the records
-          // open (→ expired after the restart, A.10).
+          // A CLI that waits for a permission/question/plan answer: the frozen broker keeps the
+          // records open (→ expired after the restart, A.10).
           if (runtime.alive && s.broker.open().length > 0) {
-            await within(runtime.agent.interrupt(), SHUTDOWN_INTERRUPT_MS);
+            if (shutdownCanEndTurn(s)) {
+              // WP22-05: end its turn first (bounded) – it ends cleanly then, no model call.
+              await within(runtime.agent.interrupt(), SHUTDOWN_INTERRUPT_MS);
+            } else if (runtime.pid !== null) {
+              // CR-06: neither interrupt nor close() – both would start the queued work.
+              log.info(
+                { entryId: s.id, queued: s.queue.count(), backgroundTasks: s.facts.backgroundTasks },
+                'shutdown: waiting with queued work – ending its tree without close()',
+              );
+              await killTree(
+                s,
+                runtime.pid,
+                'info',
+                'shutdown: ending the process tree of a waiting session',
+              );
+              await runtime.exited;
+              // After the exit: no live normalizer allocates item orders any more.
+              reportUndelivered(s);
+              return;
+            }
           }
-          try {
-            await runtime.agent.close();
-          } catch (error) {
-            log.warn({ err: error, entryId: s.id }, 'close() failed at shutdown');
+          const closed = (async () => {
+            try {
+              await runtime.agent.close();
+            } catch (error) {
+              log.warn({ err: error, entryId: s.id }, 'close() failed at shutdown');
+            }
+          })();
+          if (!(await within(runtime.exited, options.shutdownKillAfterMs)) && runtime.pid !== null) {
+            await killTree(s, runtime.pid, 'info', 'process still running at shutdown – ending its tree');
           }
+          await closed;
           await runtime.exited;
         });
-        const killRemaining = async (level: 'info' | 'error', message: string): Promise<void> => {
+        // Upper bound of the whole step (each close() above has its own 5-s window).
+        if (!(await within(Promise.allSettled(closes), options.shutdownTimeoutMs))) {
           // R2-06: the remaining trees in parallel (each taskkill may take seconds).
           await Promise.allSettled(
             [...states.values()].map(async (s) => {
               const pid = s.runtime?.pid ?? null;
-              if (pid === null) return;
-              log[level]({ entryId: s.id, pid }, message);
-              await proc.killProcessTree(pid).catch((error: unknown) => {
-                log.error({ err: error, entryId: s.id, pid }, 'killProcessTree failed at shutdown');
-              });
+              if (pid !== null)
+                await killTree(s, pid, 'error', 'process did not end at shutdown – killing its tree');
             }),
           );
-        };
-        const allClosed = Promise.allSettled(closes);
-        // WP22-05: "Server beenden" < 5 s – whatever still runs after the grace is ended now,
-        // not after the backend's 5-s rule plus the sweep of the shutdown frame.
-        await within(allClosed, options.shutdownKillAfterMs);
-        await killRemaining('info', 'process still running at shutdown – ending its tree');
-        await within(allClosed, Math.max(0, options.shutdownTimeoutMs - options.shutdownKillAfterMs));
-        await killRemaining('error', 'process did not end at shutdown – killing its tree');
+        }
         // R3-06: a still running orphan check of the start may finish now (bounded); its removals
         // are flushed below, anything later is ignored.
         const orphanWait: { timer: TimerHandle | null } = { timer: null };

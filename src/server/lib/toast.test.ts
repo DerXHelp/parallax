@@ -73,27 +73,62 @@ describe('native Windows toast helper (WP22-03/-15, A.9)', () => {
     expect(show.calls[0]?.options.env?.PARALLAX_TOAST_TITLE).toHaveLength(300);
   });
 
-  it.each<[string, RunFileFn, RegExp]>([
+  const spawnError = (code: string): Error => Object.assign(new Error(`spawn ${code}`), { code });
+
+  it.each<[string, RunFileFn, RegExp, boolean]>([
     [
-      'CLM/AppLocker (exit 3)',
-      fakeRun('error: Cannot create type.', 3).run,
-      /exit 3: error: Cannot create type/,
+      'CLM/AppLocker (setup, exit 4)',
+      fakeRun('error[setup]: language mode ConstrainedLanguage', 4).run,
+      /exit 4: error\[setup\]: language mode/,
+      true,
     ],
-    ['an unexpected answer', fakeRun('something').run, /exit 0: something/],
+    [
+      'WinRT types missing (setup, exit 4)',
+      fakeRun('error[setup]: Unable to find type [Windows.UI.Notifications.ToastNotificationManager].', 4)
+        .run,
+      /exit 4: error\[setup\]: Unable to find type/,
+      true,
+    ],
+    [
+      'Show failed (exit 3)',
+      fakeRun('error[show]: Element not found.', 3).run,
+      /exit 3: error\[show\]/,
+      false,
+    ],
+    ['an unexpected answer', fakeRun('something').run, /exit 0: something/, false],
     [
       'a timeout',
       () => Promise.resolve({ exitCode: null, signal: 'SIGKILL', stdout: '', stderr: '', timedOut: true }),
       /timeout/,
+      false,
     ],
     [
       'PowerShell missing',
-      () => Promise.reject(new Error('spawn ENOENT')),
+      () => Promise.reject(spawnError('ENOENT')),
       /could not be started: spawn ENOENT/,
+      true,
     ],
-  ])('%s → failed, never thrown', async (_name, run, reason) => {
+    [
+      'no handles left (EMFILE)',
+      () => Promise.reject(spawnError('EMFILE')),
+      /could not be started: spawn EMFILE/,
+      false,
+    ],
+  ])('%s → failed, never thrown; permanent as classified (CR-05)', async (_name, run, reason, permanent) => {
     const result = await showToast({ title: 't', body: 'b', tag: 'x' }, { run, platform: 'win32', env: ENV });
-    expect(result.kind).toBe('failed');
-    expect(result.kind === 'failed' ? result.reason : '').toMatch(reason);
+    if (result.kind !== 'failed') throw new Error(`expected failed, got ${result.kind}`);
+    expect(result.reason).toMatch(reason);
+    expect(result.permanent).toBe(permanent);
+  });
+
+  it('CR-05: the script checks the language mode first and tells the setup from the action', () => {
+    const lines = TOAST_SCRIPT.split('\n');
+    const mode = lines.findIndex((l) => l.includes('$ExecutionContext.SessionState.LanguageMode'));
+    const registry = lines.findIndex((l) => l.includes('HKCU:'));
+    expect(mode).toBeGreaterThan(0);
+    expect(mode).toBeLessThan(registry);
+    expect(TOAST_SCRIPT).toContain('$step = $env:PARALLAX_TOAST_ACTION');
+    expect(TOAST_SCRIPT).toContain("if ($step -eq 'setup') { exit 4 }");
   });
 
   it('other platforms: failed without a call', async () => {
@@ -101,6 +136,7 @@ describe('native Windows toast helper (WP22-03/-15, A.9)', () => {
     expect(await showToast({ title: 't', body: 'b', tag: 'x' }, { run, platform: 'linux' })).toEqual({
       kind: 'failed',
       reason: 'not Windows',
+      permanent: true,
     });
     expect(calls).toEqual([]);
   });

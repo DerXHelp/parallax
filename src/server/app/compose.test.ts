@@ -5,6 +5,7 @@
  * `main.integration.test.ts`.
  */
 import { EventEmitter } from 'node:events';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
 import path from 'node:path';
@@ -14,11 +15,13 @@ import { loadConfig } from '../config';
 import { makeTempHome, rawRequest } from '../http/testServer';
 import { checkHealth } from '../launcher/client';
 import { SERVER_EXIT_CODES } from '../launcher/exitCodes';
-import { readServerLock } from '../launcher/lockFile';
-import type { SignalTarget } from '../launcher/shutdown';
+import { readServerLock, serverLockPath } from '../launcher/lockFile';
+import type { ServerShutdown, SignalTarget } from '../launcher/shutdown';
 import { acquireHomeLock, type HomeLock } from '../lib/homeLock';
+import { createLogger } from '../lib/logger';
 import type { CommandContext } from '../sync/ports';
 import { StartupError, startServer, type RunningServer } from './compose';
+import { installCrashHandlers } from './crash';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
@@ -162,6 +165,106 @@ describe('startServer (composition)', () => {
       expect(exits).toEqual([SERVER_EXIT_CODES.ok]);
     });
     expect(server.app.server.listening).toBe(false);
+    expect(await readServerLock(home)).toEqual({ kind: 'missing' });
+  });
+
+  it('CR-10: an unexpected error during the start (after listen) ends the server in order, like main.ts wires it', async () => {
+    const home = await tempHome();
+    const target = new EventEmitter();
+    const immediateExits: number[] = [];
+    const exits: number[] = [];
+    // The wiring of main.ts: the crash handler sees the frame as soon as startServer reports it.
+    let running: RunningServer | null = null;
+    let frame: ServerShutdown | null = null;
+    const uninstall = installCrashHandlers({
+      log: createLogger({ level: 'silent' }),
+      shutdown: () => running?.shutdown ?? frame,
+      exit: (code) => immediateExits.push(code),
+      target,
+    });
+    cleanups.push(() => {
+      uninstall();
+      return Promise.resolve();
+    });
+    const config = loadConfig({
+      argv: ['--backend=fake', '--port=0', `--home=${home}`, '--validate=throw', '--toasts=off'],
+      env: {},
+    });
+    let lockAtCrash = false;
+    running = await startServer({
+      config,
+      webRoot: null,
+      signals: null,
+      fakeSpeed: 0,
+      exit: (code) => exits.push(code),
+      homeLock: null,
+      onShutdownFrame: (shutdown) => {
+        frame = shutdown;
+      },
+      // Called after listen and the lock file, while startServer has not returned yet.
+      homeAccess: (checkedHome) => {
+        lockAtCrash = existsSync(serverLockPath(checkedHome));
+        target.emit('unhandledRejection', new Error('boom during the start'));
+        return Promise.resolve();
+      },
+    });
+    const started = running;
+    cleanups.push(() => started.shutdown.stop('command'));
+    await vi.waitFor(() => {
+      expect(exits).toEqual([SERVER_EXIT_CODES.failure]);
+    });
+    expect(lockAtCrash).toBe(true);
+    expect(immediateExits).toEqual([]);
+    expect(running.app.server.listening).toBe(false);
+    expect(await readServerLock(home)).toEqual({ kind: 'missing' });
+  });
+
+  it('CR-10: a shutdown that began during the start is awaited by a failing step – no second cleanup', async () => {
+    const home = await tempHome();
+    const blocker: Server = createServer((socket) => socket.destroy());
+    await new Promise<void>((resolve) => blocker.listen(0, '127.0.0.1', resolve));
+    cleanups.push(
+      () =>
+        new Promise<void>((resolve) => {
+          blocker.close(() => {
+            resolve();
+          });
+        }),
+    );
+    const address = blocker.address();
+    if (address === null || typeof address === 'string') throw new Error('blocker not listening');
+    let releases = 0;
+    const homeLock: HomeLock = {
+      pipe: null,
+      exclusive: false,
+      release: () => {
+        releases += 1;
+        return Promise.resolve();
+      },
+    };
+    const exits: number[] = [];
+    const config = loadConfig({
+      argv: ['--backend=fake', `--port=${String(address.port)}`, `--home=${home}`, '--toasts=off'],
+      env: {},
+    });
+    const error = await startError(
+      startServer({
+        config,
+        webRoot: null,
+        signals: null,
+        fakeSpeed: 0,
+        exit: (code) => exits.push(code),
+        homeLock,
+        homeAccess: null,
+        // E.g. an unexpected error (crash handler) or a signal right before listen.
+        onShutdownFrame: (shutdown) => {
+          void shutdown.stop('error', SERVER_EXIT_CODES.failure);
+        },
+      }),
+    );
+    expect(error.exitCode).toBe(SERVER_EXIT_CODES.portInUse);
+    expect(exits).toEqual([SERVER_EXIT_CODES.failure]);
+    expect(releases).toBe(1);
     expect(await readServerLock(home)).toEqual({ kind: 'missing' });
   });
 

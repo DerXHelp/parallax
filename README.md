@@ -62,9 +62,16 @@ pnpm start --print-url         # Optionen direkt anhängen (pnpm reicht ein `--`
   „Server beenden“ und erneutem Start. Er liefert die UI aus einer beim Start fixierten Kopie
   (`%LOCALAPPDATA%\Parallax\ui\<build>`); ein `pnpm build`/`pnpm e2e` im selben Checkout ändert
   also nichts an seinen Fenstern. Die Build-ID hängt nur an Build-Eingaben (Quellen, Configs,
-  Lockfile) – ein reiner Doku-Commit erzwingt keinen Neubau.
+  Lockfile) – ein reiner Doku-Commit erzwingt keinen Neubau. Launcher, `pnpm e2e` und
+  `pnpm build` bauen einen Checkout nie gleichzeitig (der zweite wartet; auch auf einem
+  Netzlaufwerk).
 - **Fenster schließen beendet den Server nicht** – die Sessions laufen weiter. Beenden über das
   Zahnrad-Menü → „Server beenden…“: Die Rückfrage nennt die arbeitenden und wartenden Sessions.
+  Jede Session bekommt bis zu 5 s für ein sauberes Ende (Transkript, SessionEnd-Hooks), erst
+  danach wird ihr Prozessbaum beendet – „Server beenden“ dauert also gut 5 s, wenn eine Session
+  noch arbeitet. Wartet eine Session auf eine Entscheidung und hat noch eine Nachricht in der
+  Warteschlange, wird ihr Prozess sofort beendet (sonst würde `claude` die Nachricht noch
+  bearbeiten); die Nachricht erscheint im Verlauf als „nicht zugestellt“.
 - **Fehlermeldungen:** Port belegt → `--port=<n>` wählen; „written by a newer Parallax“ (Exit-Code
   3) → Parallax aktualisieren (`git pull`, `pnpm install`), die Daten bleiben unverändert; Server
   startet nicht → Pfad der Logdatei steht in der Meldung; Edge nicht gefunden → Edge installieren
@@ -135,7 +142,9 @@ Parallax-Fenster unter `edge://signin-internals` („Signin Status: Not Signed I
   Edge-eigene Popups, keine Windows-Toasts – sie erscheinen nicht im Benachrichtigungscenter und
   verschwinden bei ausgeschaltetem Bildschirm ungesehen. Unter Constrained Language Mode/AppLocker
   (Firmenrechner) kann der Toast-Helfer gesperrt sein – Parallax schaltet ihn dann für den
-  Serverlauf ab und bleibt bei Hinweisen im Fenster.
+  Serverlauf ab und bleibt bei Hinweisen im Fenster. Ein einzelner Fehler (z. B. Zeitüberschreitung
+  unter Last) schaltet ihn nicht ab; erst nach drei Fehlern in Folge pausiert er (1 min, dann
+  länger, höchstens 15 min) und versucht es danach erneut.
 
 ## Andere Registry / Firmen-Nexus
 Im Projekt ist **keine Registry** eingetragen; der Lockfile enthält keine Tarball-URLs und

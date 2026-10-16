@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { ConfigError, loadConfig } from '../../src/server/config';
 import { SERVER_CONTROL_VARS, assertNotRealHome, ensureTestEnv, isOwnTestHome, isPathInside } from './home';
 
 describe('test environment', () => {
@@ -46,6 +47,42 @@ describe('test environment', () => {
     expect(isPathInside('C:/A/b/c', 'c:\\a\\B')).toBe(true);
     expect(isPathInside('C:\\a\\bc', 'C:\\a\\b')).toBe(false);
     expect(isPathInside('C:\\a\\b\\', 'C:\\a\\b')).toBe(true);
+    // Drive root and doubled separators (CR-09).
+    expect(isPathInside('D:\\x', 'D:\\')).toBe(true);
+    expect(isPathInside('d:/', 'D:\\')).toBe(true);
+    expect(isPathInside('D:\\', 'D:\\x')).toBe(false);
+    expect(isPathInside('C:\\a\\\\b\\c', 'C:\\a\\b')).toBe(true);
+  });
+
+  it.each([
+    'C:\\Users\\x\\AppData\\Local\\Parallax',
+    'c:/users/X/appdata/local/parallax/',
+    'C:\\Users\\x\\AppData\\Local\\\\Parallax\\sub',
+    'C:\\Users\\x\\AppData\\Local\\Parallax-other',
+    'C:\\Users\\x\\AppData\\Local\\Temp\\parallax',
+    'D:\\Parallax',
+  ])('CR-09: the test guard judges %s like config.ts (one rule, @shared/paths)', (home) => {
+    const env = { LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' };
+    const guard = (): void => {
+      assertNotRealHome(home, env);
+    };
+    // config.ts refuses the FakeBackend on/inside the real data directory with the same comparison.
+    const config = (): void => {
+      loadConfig({ argv: ['--backend=fake', `--home=${home}`], env, cwd: 'C:\\repo' });
+    };
+    let refusedByConfig = false;
+    try {
+      config();
+    } catch (error) {
+      refusedByConfig = error instanceof ConfigError && error.message.includes('real data directory');
+    }
+    let refusedByGuard = false;
+    try {
+      guard();
+    } catch {
+      refusedByGuard = true;
+    }
+    expect(refusedByGuard).toBe(refusedByConfig);
   });
 });
 

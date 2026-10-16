@@ -118,14 +118,31 @@ describe('cleanupOrphans (C.8, R2-02, R2-03)', () => {
     expect(killProcessTree.mock.calls.map((c) => c[0])).toEqual(killed);
   });
 
-  it('ONE query for all records (pids only – no children, R2-03)', async () => {
+  it('ONE query for all records; after a kill one fresh query for the rest (R2-03, CR-01)', async () => {
     const { d, queryProcesses, killProcessTree } = deps();
-    queryProcesses.mockResolvedValue(ok(info({ pid: 2 }), info({ pid: 3, name: 'x.exe' })));
-    const results = await Promise.all(cleanupOrphans([record(1), record(2, 2), record(3, 3)], d));
-    expect(results).toEqual(['gone', 'killed', 'not_ours']);
-    expect(queryProcesses.mock.calls).toEqual([[{ pids: [1, 2, 3] }]]);
+    queryProcesses.mockResolvedValue(
+      ok(info({ pid: 2 }), info({ pid: 3, name: 'x.exe' }), info({ pid: 4, name: 'y.exe' })),
+    );
+    const results = await Promise.all(
+      cleanupOrphans([record(1), record(2, 2), record(3, 3), record(4, 4)], d),
+    );
+    expect(results).toEqual(['gone', 'killed', 'not_ours', 'not_ours']);
+    // The kill of 2 makes the first answer stale: 3 and 4 are looked up again – in ONE query.
+    expect(queryProcesses.mock.calls).toEqual([[{ pids: [1, 2, 3, 4] }], [{ pids: [3, 4] }]]);
     expect(killProcessTree.mock.calls.map((c) => c[0])).toEqual([2]);
     expect(cleanupOrphans([], d)).toEqual([]);
+  });
+
+  it('CR-01: a later root whose PID was reused after an earlier kill is not ended', async () => {
+    const queryProcesses = vi
+      .fn((_filter: ProcessFilter) => Promise.resolve(ok()))
+      .mockResolvedValueOnce(ok(info({ pid: 1 }), info({ pid: 2 })))
+      // After the taskkill of 1: PID 2 belongs to a new process now (another start time).
+      .mockResolvedValueOnce(ok(info({ pid: 2, startedAt: at(90) })));
+    const { d, killProcessTree } = deps({ queryProcesses });
+    expect(await Promise.all(cleanupOrphans([record(1), record(2, 2)], d))).toEqual(['killed', 'not_ours']);
+    expect(killProcessTree.mock.calls.map((c) => c[0])).toEqual([1]);
+    expect(queryProcesses.mock.calls).toEqual([[{ pids: [1, 2] }], [{ pids: [2] }]]);
   });
 
   it.each<[string, () => Promise<ProcessQueryResult>]>([
@@ -177,7 +194,50 @@ describe('cleanupOrphans (C.8, R2-02, R2-03)', () => {
       const { d, killProcessTree } = deps({ isProcessAlive: (pid) => pid !== 4242, queryProcesses });
       expect(await Promise.all(cleanupOrphans([withChildren()], d))).toEqual(['killed']);
       expect(killProcessTree.mock.calls.map((c) => c[0])).toEqual([5001, 5002]);
+      // CR-01: ping is looked up again after the kill of the shell (still alive here).
+      expect(queryProcesses.mock.calls).toEqual([[{ pids: [5001, 5002] }], [{ pids: [5002] }]]);
+    });
+
+    it('CR-01: a child ended by an earlier taskkill /T is not killed again (no PowerShell either)', async () => {
+      const alive = new Set([5001, 5002]);
+      const queryProcesses = vi.fn((_filter: ProcessFilter) => Promise.resolve(ok(live(shell), live(ping))));
+      // The shell's tree contains ping: both end with the first taskkill /T.
+      const killProcessTree = vi.fn((pid: number) => {
+        if (pid === 5001) alive.clear();
+        return Promise.resolve();
+      });
+      const { d } = deps({ isProcessAlive: (pid) => alive.has(pid), queryProcesses, killProcessTree });
+      expect(await Promise.all(cleanupOrphans([withChildren()], d))).toEqual(['killed']);
+      expect(killProcessTree.mock.calls.map((c) => c[0])).toEqual([5001]);
       expect(queryProcesses.mock.calls).toEqual([[{ pids: [5001, 5002] }]]);
+    });
+
+    it('CR-01: a child PID reused right after an earlier kill (fresh check: other start) is untouched', async () => {
+      const queryProcesses = vi
+        .fn((_filter: ProcessFilter) => Promise.resolve(ok()))
+        .mockResolvedValueOnce(ok(live(shell), live(ping)))
+        .mockResolvedValueOnce(
+          ok(live(ping, { name: 'notepad.exe', startedAt: new Date('2026-10-15T12:01:00.000Z') })),
+        );
+      const { d, killProcessTree } = deps({ isProcessAlive: (pid) => pid !== 4242, queryProcesses });
+      expect(await Promise.all(cleanupOrphans([withChildren()], d))).toEqual(['killed']);
+      expect(killProcessTree.mock.calls.map((c) => c[0])).toEqual([5001]);
+    });
+
+    it('CR-01: an unknown fresh check ends nothing more and keeps the record', async () => {
+      const queryProcesses = vi
+        .fn((_filter: ProcessFilter): Promise<ProcessQueryResult> => Promise.resolve(ok()))
+        .mockResolvedValueOnce(ok(live(shell), live(ping)))
+        .mockResolvedValueOnce({ kind: 'unknown', reason: 'timeout', detail: 'slow' });
+      const { d, killProcessTree, log } = deps({ isProcessAlive: (pid) => pid !== 4242, queryProcesses });
+      const [result] = await Promise.all(cleanupOrphans([withChildren()], d));
+      expect(result).toBe('unknown');
+      expect(keepsOrphanRecord('unknown')).toBe(true);
+      expect(killProcessTree.mock.calls.map((c) => c[0])).toEqual([5001]);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ pid: 5002 }),
+        expect.stringContaining('record kept'),
+      );
     });
 
     it.each<[string, ProcessInfo]>([
@@ -192,12 +252,13 @@ describe('cleanupOrphans (C.8, R2-02, R2-03)', () => {
       expect(killProcessTree).not.toHaveBeenCalled();
     });
 
-    it('the root still runs: its tree first, then what is left of the snapshot', async () => {
-      const { d, killProcessTree } = deps({
-        queryProcesses: () => Promise.resolve(ok(info({}), live(ping))),
-      });
+    it('CR-01: the root still runs – its taskkill /T ends the tree, the snapshot is not ended again', async () => {
+      // The answer from BEFORE the root kill still lists ping; its PID may be reused by now.
+      const queryProcesses = vi.fn((_filter: ProcessFilter) => Promise.resolve(ok(info({}), live(ping))));
+      const { d, killProcessTree } = deps({ queryProcesses });
       expect(await Promise.all(cleanupOrphans([withChildren()], d))).toEqual(['killed']);
-      expect(killProcessTree.mock.calls.map((c) => c[0])).toEqual([4242, 5002]);
+      expect(killProcessTree.mock.calls.map((c) => c[0])).toEqual([4242]);
+      expect(queryProcesses).toHaveBeenCalledTimes(1);
     });
 
     it('an unknown answer ends nothing and keeps the record', async () => {

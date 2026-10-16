@@ -3,15 +3,21 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { windowsPathKey } from '@shared/paths';
 import { PRODUCT_NAME } from '@shared/product';
 import type { RunFileFn, RunFileOptions } from '../lib/process';
 import {
+  BUILD_LOCK_HELD_ENV,
   BUILD_STEPS,
   SERVER_BUNDLE,
   WEB_BUILD_INFO,
   WEB_INDEX,
+  acquireBuildLock,
+  buildLockKey,
+  buildUnderLock,
   checkBuild,
   parseBundleBuildId,
+  pollLock,
   readBundleBuildId,
   readWebBundleBuildId,
   resolveCheckoutBuildId,
@@ -19,6 +25,7 @@ import {
   runBuild,
   stringEnv,
   type BuildFs,
+  type LockAttempt,
 } from './build';
 
 // Real processes, git and a real server: generous limits, the machine may be busy (parallel checks).
@@ -121,7 +128,10 @@ describe('build steps (= pnpm build)', () => {
     const pkg = z
       .object({ scripts: z.record(z.string(), z.string()) })
       .parse(JSON.parse(await readFile(path.join(repoRoot, 'package.json'), 'utf8')));
-    expect(pkg.scripts.build).toBe('pnpm run build:web && pnpm run build:server');
+    // CR-08 (ADR-094): `pnpm build` runs both steps through buildUnderLock (one build lock).
+    expect(pkg.scripts.build).toBe('tsx --tsconfig tsconfig.tools.json scripts/build.ts');
+    const script = await readFile(path.join(repoRoot, 'scripts', 'build.ts'), 'utf8');
+    expect(script).toContain('await buildUnderLock(');
     for (const step of BUILD_STEPS) {
       expect(pkg.scripts[step.script]).toBe([step.bin, ...step.args].join(' '));
     }
@@ -205,6 +215,8 @@ describe('build steps (= pnpm build)', () => {
       ],
     ]);
     expect(calls[0]?.options).toMatchObject({ cwd: ROOT, env: { PATH: 'C:\\x' } });
+    // CR-08: the steps know that their caller holds the build lock (build-server.ts skips it).
+    expect(calls.map((call) => call.options.env?.[BUILD_LOCK_HELD_ENV])).toEqual(['1', '1']);
   });
 
   it('runBuild stops at the first failing step with its output', async () => {
@@ -235,5 +247,182 @@ describe('build steps (= pnpm build)', () => {
 
   it('stringEnv drops undefined values', () => {
     expect(stringEnv({ A: '1', B: undefined })).toEqual({ A: '1' });
+  });
+
+  it('CR-08: buildUnderLock waits for a busy lock, runs both steps under it, releases it (also on failure)', async () => {
+    const events: string[] = [];
+    const answers: LockAttempt[] = [{ kind: 'busy' }, { kind: 'busy' }];
+    const release = (): Promise<void> => {
+      events.push('release');
+      return Promise.resolve();
+    };
+    const failing = { on: false };
+    const run: RunFileFn = (_file, args) => {
+      events.push(`run ${String(args.at(-1))}`);
+      return Promise.resolve({
+        exitCode: failing.on ? 1 : 0,
+        signal: null,
+        stdout: '',
+        stderr: 'x',
+        timedOut: false,
+      });
+    };
+    const common = {
+      repoRoot: ROOT,
+      nodePath: 'n',
+      env: {},
+      run,
+      fs: toolsFs,
+      acquire: () => {
+        const next = answers.shift() ?? { kind: 'acquired' as const, release };
+        events.push(next.kind);
+        return Promise.resolve(next);
+      },
+      onWaiting: () => events.push('waiting'),
+      sleep: () => Promise.resolve(),
+    };
+    expect(await buildUnderLock(common)).toEqual({ ok: true });
+    expect(events).toEqual([
+      'busy',
+      'waiting',
+      'busy',
+      'acquired',
+      'run build',
+      'run scripts/build-server.ts',
+      'release',
+    ]);
+    events.length = 0;
+    failing.on = true;
+    const failed = await buildUnderLock(common);
+    expect(failed).toMatchObject({ ok: false, step: 'build:web' });
+    expect(events).toEqual(['acquired', 'run build', 'release']);
+    // Without the lock in time: no step at all.
+    const timedOut = await buildUnderLock({
+      ...common,
+      acquire: () => Promise.resolve({ kind: 'busy' }),
+      waitMs: 0,
+    });
+    expect(timedOut).toMatchObject({ ok: false, step: 'lock' });
+    // A caller that holds the lock (runBuild's children) builds at once.
+    const held = await buildUnderLock({
+      ...common,
+      env: { [BUILD_LOCK_HELD_ENV]: '1' },
+      acquire: () => Promise.reject(new Error('must not be called')),
+    });
+    expect(held).toMatchObject({ ok: false, step: 'build:web' });
+  });
+
+  it.runIf(process.platform === 'win32')(
+    'CR-08: two builds of one checkout at the same time are serialized by the real lock (no mixed dist)',
+    async () => {
+      const root = path.join(ROOT, `cr08-${String(process.pid)}`);
+      const steps: string[] = [];
+      const slowRun =
+        (name: string): RunFileFn =>
+        async (_file, args) => {
+          const step = String(args.at(-1));
+          steps.push(`${name} start ${step}`);
+          await new Promise((resolve) => setTimeout(resolve, 40));
+          steps.push(`${name} end ${step}`);
+          return { exitCode: 0, signal: null, stdout: '', stderr: '', timedOut: false };
+        };
+      const fsFor = (): BuildFs => ({
+        ...toolsFs,
+        readText: (file) => toolsFs.readText(path.resolve(ROOT, path.relative(root, file))),
+        isFile: (file) => toolsFs.isFile(path.resolve(ROOT, path.relative(root, file))),
+      });
+      const options = (name: string) => ({
+        repoRoot: root,
+        nodePath: 'n',
+        env: {},
+        run: slowRun(name),
+        fs: fsFor(),
+        pollMs: 10,
+      });
+      const [a, b] = await Promise.all([buildUnderLock(options('A')), buildUnderLock(options('B'))]);
+      expect([a, b]).toEqual([{ ok: true }, { ok: true }]);
+      const first = steps[0]?.slice(0, 1) ?? '';
+      const second = first === 'A' ? 'B' : 'A';
+      // One build after the other: all four events of the first, then all of the second.
+      expect(steps.map((s) => s.slice(0, 1))).toEqual([
+        first,
+        first,
+        first,
+        first,
+        second,
+        second,
+        second,
+        second,
+      ]);
+    },
+  );
+});
+
+describe('build lock (R3-04, CR-04, CR-08)', () => {
+  it('CR-04: a checkout on a UNC share is keyed by its spelling, without any file system access', async () => {
+    const realpath = vi.fn((dir: string) => Promise.resolve(dir));
+    expect(await buildLockKey('\\\\NAS\\share\\Parallax\\', { realpath })).toBe(
+      windowsPathKey('\\\\nas\\share\\parallax'),
+    );
+    expect(await buildLockKey('//nas/share/parallax', { realpath })).toBe(
+      await buildLockKey('\\\\NAS\\Share\\Parallax', { realpath }),
+    );
+    expect(realpath).not.toHaveBeenCalled();
+    // A drive path: its real path (junctions, subst) – the same key as before (pipe name stable).
+    realpath.mockResolvedValueOnce('D:\\Real\\Parallax');
+    expect(await buildLockKey('S:\\Parallax', { realpath })).toBe('d:\\real\\parallax');
+    expect(await buildLockKey('D:\\gone', { realpath: () => Promise.reject(new Error('ENOENT')) })).toBe(
+      'd:\\gone',
+    );
+  });
+
+  it.runIf(process.platform === 'win32')(
+    'CR-04: the lock of a UNC checkout works (no TypeError) and is exclusive',
+    async () => {
+      const root = `\\\\nas-${String(process.pid)}\\share\\parallax`;
+      const first = await acquireBuildLock(root);
+      expect(first.kind).toBe('acquired');
+      expect((await acquireBuildLock(root.toUpperCase())).kind).toBe('busy');
+      if (first.kind === 'acquired') await first.release();
+      const again = await acquireBuildLock(root);
+      expect(again.kind).toBe('acquired');
+      if (again.kind === 'acquired') await again.release();
+    },
+  );
+
+  it('pollLock: busy → onWaiting once, polls until free; waited tells the caller to check again', async () => {
+    const answers: LockAttempt[] = [{ kind: 'busy' }, { kind: 'busy' }];
+    const release = vi.fn(() => Promise.resolve());
+    const clock = { ms: 0 };
+    const onWaiting = vi.fn();
+    const lock = await pollLock(() => Promise.resolve(answers.shift() ?? { kind: 'acquired', release }), {
+      waitMs: 10_000,
+      pollMs: 500,
+      sleep: (ms) => {
+        clock.ms += ms;
+        return Promise.resolve();
+      },
+      now: () => clock.ms,
+      onWaiting,
+    });
+    expect(lock?.waited).toBe(true);
+    expect(onWaiting).toHaveBeenCalledTimes(1);
+    expect(clock.ms).toBe(1_000);
+    const timedOut = await pollLock(() => Promise.resolve({ kind: 'busy' }), {
+      waitMs: 1_000,
+      pollMs: 500,
+      sleep: (ms) => {
+        clock.ms += ms;
+        return Promise.resolve();
+      },
+      now: () => clock.ms,
+    });
+    expect(timedOut).toBeNull();
+  });
+
+  it('scripts/build-server.ts takes the lock unless runBuild holds it (CR-08)', async () => {
+    const source = await readFile(path.join(repoRoot, 'scripts', 'build-server.ts'), 'utf8');
+    expect(source).toContain('process.env[BUILD_LOCK_HELD_ENV]');
+    expect(source).toContain('acquireBuildLock(repoRoot)');
   });
 });
