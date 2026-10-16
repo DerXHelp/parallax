@@ -98,6 +98,10 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 - 16.10.2026: Privates GitHub-Repo `DerXHelp/parallax` angelegt und `main` gepusht (Stand `c821118`) – auf ausdrücklichen Wunsch des Nutzers.
 - 15.10.2026: Live-Abnahme WP-22 freigegeben (echter Abo-Login; Haiku, Mini-Prompts, Scratch-Ordner, Temp-Home, kein API-Key; bei Auth-Fehler sofort stoppen).
 
+- 16.10.2026 (Phase 2, WP-30 F1): Editor-Einstellung erst in Phase 3 zusammen mit „Im Editor öffnen“.
+- 16.10.2026 (Phase 2, WP-30 F2): Live-Abnahme WP-41 freigegeben – Abo-Login, Haiku, Mini-Prompts, Scratch-Ordner, Temp-Home,
+  Budget ≤ 1 USD, bei Auth-Fehler sofort stoppen; inkl. sichtbarem Konsolenfenster (`claude --resume`), HKCU-Protokoll-Handler
+  `parallax:` und Autostart-Verknüpfung, alles mit Rückbau am Ende.
 - 16.10.2026: WP22-04 – neue Sessions bekommen **keinen** von Parallax gesetzten Permission-Modus; CLI bzw. `defaultMode` entscheidet (Plan C.3 bleibt).
 - 16.10.2026: Kurze Live-Nachprüfung der WP-22-Fixes erlaubt (Rahmen wie WP-22, Budget ≤ 0,50 USD).
 
