@@ -1,23 +1,31 @@
 /**
  * ClaudeIntegration (port `./ports.ts`; WP-11 implements, WP-13 uses, WP-20 wires):
- * - launchSpecFor: parseProfileArgs + buildEnv(entryId) + resolveClaude (cached) → LaunchSpec.
+ * - launchSpecFor: profile check (error issues → PROFILE_INVALID, ADR-102) + parseProfileArgs +
+ *   buildEnv(entryId) + resolveClaude (cached) → LaunchSpec.
+ * - consoleLaunchFor (Phase 2, ADR-104): the same checks and executable, buildEnv(target
+ *   'terminal'), `profile.args` + `--resume <id>` (+ --model / --permission-mode / --settings).
  * - checkProfile ("Profil testen", preflight, server start): `claude --version` and
  *   `claude auth status --json` with exactly the env of a real start (buildEnv). Never logs or
  *   returns e-mail/org (parseAuthStatus drops them, F.17).
+ * The resolution cache is per profile and keyed by what resolves the executable; a persistent
+ * profile store (profileStore.ts) drops stale entries on every change (ADR-102).
  */
 import { makeError, type ErrorPayload } from '@shared/errors';
 import type { EntryId, ProfileId } from '@shared/common';
 import type { ClaudeInstallStatus, Profile } from '@shared/model';
+import { windowsPathIssue } from '@shared/paths';
 import { logger } from '../lib/logger';
 import { errnoCode, runFile, type RunFileFn } from '../lib/process';
 import { readPersistentEnvironment, type PersistentEnvironment } from '../lib/registry';
-import { nodeFsProbe, searchPath, type FsProbe } from '../lib/windows';
+import { getEnvVar, nodeFsProbe, searchPath, type FsProbe } from '../lib/windows';
 import { CommandError } from '../sync/ports';
 import { parseAuthStatus, UNKNOWN_AUTH, type AuthStatusView } from './authStatus';
-import { buildEnv, buildEnvReport, clientAppId } from './env';
+import { buildEnv, buildEnvReport, clientAppId, setEnvVar } from './env';
 import { parseProfileArgs } from './profileArgs';
-import { createProfileStore, type MutableProfileStore } from './profiles';
-import type { ClaudeIntegration, LaunchSpec } from './ports';
+import { errorCount, profileIssues } from './profileIssues';
+import type { PersistentProfileStore } from './profileStore';
+import { createProfileStore, registerEnvSecrets, type MutableProfileStore } from './profiles';
+import type { ClaudeIntegration, ConsoleLaunchRequest, ConsoleLaunchSpec, LaunchSpec } from './ports';
 import { cliVersionStatus, readSdkManifest, resolveClaude, type ResolveClaudeResult } from './resolveClaude';
 
 export const AUTH_STATUS_TIMEOUT_MS = 20_000;
@@ -26,8 +34,11 @@ const DEFAULT_RESOLVE_CACHE_MS = 5 * 60_000;
 export interface ClaudeIntegrationDeps {
   /** Parallax version (package.json) → CLAUDE_AGENT_SDK_CLIENT_APP=parallax/<version>. */
   appVersion: string;
-  /** Default: only the built-in profile "Standard". */
-  profiles?: MutableProfileStore;
+  /**
+   * Default: only the built-in profile "Standard" (in memory). A persistent store (openProfileStore)
+   * also invalidates the resolution cache of changed profiles.
+   */
+  profiles?: PersistentProfileStore | MutableProfileStore;
   /** Base environment, read at every call (default: process.env). */
   baseEnv?: () => Readonly<Record<string, string | undefined>>;
   /**
@@ -60,7 +71,20 @@ export function profileNeedsSetup(status: ClaudeInstallStatus): boolean {
 
 interface CacheEntry {
   at: number;
+  /** resolutionKey() of the profile the result belongs to. */
+  key: string;
   result: Extract<ResolveClaudeResult, { ok: true }>;
+}
+
+/** Everything the resolution of a profile depends on (executable, env incl. PATH, config dir). */
+function resolutionKey(profile: Profile): string {
+  return JSON.stringify([profile.executable, profile.env, profile.configDir]);
+}
+
+function notifiesChanges(
+  store: MutableProfileStore,
+): store is MutableProfileStore & Pick<PersistentProfileStore, 'onChange'> {
+  return 'onChange' in store && typeof store.onChange === 'function';
 }
 
 export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeIntegrationImpl {
@@ -84,8 +108,20 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
   const cacheMs = deps.resolveCacheMs ?? DEFAULT_RESOLVE_CACHE_MS;
   const clientApp = clientAppId(deps.appVersion);
   const cache = new Map<ProfileId, CacheEntry>();
-  const inFlight = new Map<ProfileId, Promise<ResolveClaudeResult>>();
+  /** Keyed by profile id + resolutionKey: a changed profile never joins an older resolution. */
+  const inFlight = new Map<string, Promise<ResolveClaudeResult>>();
   let requiredVersion: Promise<string | null> | undefined;
+
+  if (notifiesChanges(profiles)) {
+    profiles.onChange(() => {
+      for (const [id, entry] of cache) {
+        const current = profiles.get(id);
+        if (current !== undefined && resolutionKey(current) === entry.key) continue;
+        cache.delete(id);
+        logger.debug({ profileId: id }, 'claude resolution cache dropped (profile changed)');
+      }
+    });
+  }
 
   const sdkClaudeCodeVersion = (): Promise<string | null> => {
     if (deps.sdkClaudeCodeVersion !== undefined) return Promise.resolve(deps.sdkClaudeCodeVersion);
@@ -100,7 +136,9 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
   };
 
   const resolveFresh = (profile: Profile, env: Record<string, string>): Promise<ResolveClaudeResult> => {
-    const pending = inFlight.get(profile.id);
+    const key = resolutionKey(profile);
+    const flight = `${profile.id}\n${key}`;
+    const pending = inFlight.get(flight);
     if (pending !== undefined) return pending;
     const promise = resolveClaude(profile, {
       ...fs,
@@ -110,14 +148,14 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
       ...(deps.versionTimeoutMs === undefined ? {} : { versionTimeoutMs: deps.versionTimeoutMs }),
     })
       .then((result) => {
-        if (result.ok) cache.set(profile.id, { at: now().getTime(), result });
-        else cache.delete(profile.id);
+        if (result.ok) cache.set(profile.id, { at: now().getTime(), key, result });
+        else if (cache.get(profile.id)?.key === key) cache.delete(profile.id);
         return result;
       })
       .finally(() => {
-        inFlight.delete(profile.id);
+        inFlight.delete(flight);
       });
-    inFlight.set(profile.id, promise);
+    inFlight.set(flight, promise);
     return promise;
   };
 
@@ -126,9 +164,27 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
     env: Record<string, string>,
   ): Promise<ResolveClaudeResult> => {
     const hit = cache.get(profile.id);
-    if (hit !== undefined && now().getTime() - hit.at < cacheMs && (await fs.isFile(hit.result.path)))
+    if (
+      hit?.key === resolutionKey(profile) &&
+      now().getTime() - hit.at < cacheMs &&
+      (await fs.isFile(hit.result.path))
+    )
       return hit.result;
     return resolveFresh(profile, env);
+  };
+
+  /**
+   * ADR-102: error issues block a start (PROFILE_INVALID {count}). The executable's existence is
+   * left to the resolution (CLAUDE_NOT_FOUND with the reason); `${env:NAME}` fails in buildEnv.
+   */
+  const assertUsable = async (profile: Profile): Promise<void> => {
+    const issues = profileIssues(profile, {
+      env: baseEnv(),
+      persistentEnv: (await persistentEnv()) ?? new Map<string, string>(),
+      exists: () => true,
+    });
+    const count = errorCount(issues);
+    if (count > 0) throw new CommandError(makeError('PROFILE_INVALID', { count }));
   };
 
   const readAuth = async (
@@ -199,10 +255,8 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
 
     async launchSpecFor(profileId: ProfileId, entryId: EntryId): Promise<LaunchSpec> {
       const profile = requireProfile(profileId);
+      await assertUsable(profile);
       const args = parseProfileArgs(profile.args, profile.passRawArgs);
-      if (args.errors.length > 0) {
-        throw new CommandError(makeError('PROFILE_INVALID', { count: args.errors.length }));
-      }
       const env = buildEnv({
         base: baseEnv(),
         profile,
@@ -249,9 +303,55 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
       return status;
     },
 
-    // Phase 2 port (WP-30 §4.11); WP-32 implements it.
-    consoleLaunchFor(): Promise<never> {
-      return Promise.reject(new CommandError(makeError('NOT_IMPLEMENTED', { command: 'consoleLaunchFor' })));
+    async consoleLaunchFor(req: ConsoleLaunchRequest): Promise<ConsoleLaunchSpec> {
+      const profile = requireProfile(req.profileId);
+      const cwdIssue = windowsPathIssue(req.cwd);
+      if (cwdIssue !== null) {
+        throw new CommandError(makeError('PATH_REJECTED', { reason: cwdIssue, field: 'cwd' }));
+      }
+      await assertUsable(profile);
+      const parsed = parseProfileArgs(profile.args, profile.passRawArgs);
+      const env = buildEnv({
+        base: baseEnv(),
+        profile,
+        entryId: req.entryId,
+        clientApp,
+        persistent: await persistentEnv(),
+        target: 'terminal',
+      });
+      const resolved = await resolveCached(profile, env);
+      if (!resolved.ok) throw new CommandError(resolved.error);
+
+      // Only what the profile sets, resolved as the console sees it (`${env:NAME}`), + the config dir.
+      const explicitEnv: Record<string, string> = {};
+      for (const name of Object.keys(profile.env)) {
+        const value = getEnvVar(env, name);
+        if (value !== undefined) explicitEnv[name] = value;
+      }
+      if (profile.configDir !== null) setEnvVar(explicitEnv, 'CLAUDE_CONFIG_DIR', profile.configDir);
+      registerEnvSecrets(explicitEnv);
+
+      // profile.args are C.12-checked; the CLI takes them as written (bypass flags included).
+      const args = [...profile.args, '--resume', req.resumeSessionId];
+      if (req.model !== null && parsed.sdkOptions.model === undefined) args.push('--model', req.model);
+      if (req.permissionMode !== null && parsed.sdkOptions.permissionMode === undefined) {
+        args.push('--permission-mode', req.permissionMode);
+      }
+      if (profile.contextWindow !== null) {
+        if (parsed.sdkOptions.settings === undefined) {
+          args.push('--settings', JSON.stringify({ autoCompactWindow: profile.contextWindow }));
+        } else {
+          logger.warn(
+            { profileId: profile.id },
+            'profile args set --settings: the console gets no autoCompactWindow for contextWindow',
+          );
+        }
+      }
+      logger.debug(
+        { profileId: profile.id, entryId: req.entryId, executable: resolved.path, args: args.length },
+        'claude console launch spec',
+      );
+      return { executablePath: resolved.path, args, env, explicitEnv, cwd: req.cwd };
     },
   };
 }
