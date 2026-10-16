@@ -127,6 +127,24 @@ test('the displayed claude version equals `claude --version`', async ({ page, li
   await page.keyboard.press('Escape');
 });
 
+/**
+ * Allows every permission card of the running turn ("Allow once") until the session is idle.
+ * Haiku sometimes checks first (e.g. `Test-Path test.txt` with PowerShell, WP-22 fix round) and
+ * asks again for the Write – one card per turn is not guaranteed. At most `max` cards.
+ */
+async function allowUntilIdle(session: SessionView, max = 4): Promise<number> {
+  const idle = session.pane.locator('[data-slot="session-header"][data-status="idle"]');
+  for (let allowed = 0; ; allowed += 1) {
+    await expect(session.card.or(idle).first()).toBeVisible({ timeout: TURN_MS });
+    if ((await session.card.count()) === 0) return allowed;
+    if (allowed >= max) throw new Error(`more than ${String(max)} permission cards in one turn`);
+    const card = await armedCard(session, 'permission');
+    const id = await card.getAttribute('data-decision-id');
+    await card.locator('[data-action="allow-once"]').click();
+    if (id !== null) await expect(session.bar.locator(`[data-decision-id="${id}"]`)).toHaveCount(0);
+  }
+}
+
 test('permission "Allow once" writes the real file; subscription login + Haiku', async ({ page, live }) => {
   const app = await openApp(page, live);
   const cwd = await live.server.makeProject('permission');
@@ -136,7 +154,7 @@ test('permission "Allow once" writes the real file; subscription login + Haiku',
   await sendLive(live, session, 'lege test.txt mit dem Inhalt hallo an');
   const card = await armedCard(session, 'permission');
   await expect(card).toContainText('test.txt');
-  await card.locator('[data-action="allow-once"]').click();
+  expect(await allowUntilIdle(session)).toBeGreaterThanOrEqual(1);
   await session.expectStatus('idle', TURN_MS);
   expect((await readFile(path.join(cwd, 'test.txt'), 'utf8')).trim()).toBe('hallo');
 
