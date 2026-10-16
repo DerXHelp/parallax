@@ -6,20 +6,26 @@ import { parseArgs } from 'node:util';
 import { z } from 'zod';
 import { BUILD_ID } from '@shared/build';
 import { LOOPBACK_HOST, backendKindSchema, type BackendKind } from '@shared/http';
+import { SETTINGS_SCHEMA_VERSION, settingsFileSchema, type Settings } from '@shared/model';
 import { isWindowsPathInside, windowsPathIssue, windowsPathsEqual } from '@shared/paths';
 import { PRODUCT_ID, PRODUCT_NAME } from '@shared/product';
 import { newUuid } from './lib/ids';
 import { logLevelSchema, type LogLevel } from './lib/logger';
+import { fsErrorCode } from './lib/paths';
+import { SETTINGS_FILE } from './store/settings';
 
 /**
  * Server configuration (ADR-006): CLI flags > env `PARALLAX_*` > settings > defaults, validated
- * with zod. Settings (`settings.json`) have no server fields in Phase 1 (port/autostart follow in
- * Phase 2), so that layer is empty for now.
+ * with zod. From the settings (`<home>/settings.json`, read-only, ADR-111) only the port is used:
+ * flag > `PARALLAX_PORT` > `settings.port` > 4711 – the launcher resolves it with this same
+ * function and passes it on (`serverArgsFor`), so both agree. A settings file that cannot be used
+ * (invalid, newer schema version) is ignored with a hint in `notes` (logged by main.ts/launcher).
  *
  * Flags: `--dev`, `--backend=fake|sdk`, `--port=<0..65535>`, `--host=127.0.0.1`, `--home=<dir>`,
- * `--log-level=<level>`, `--validate=off|log|throw`, `--toasts=native|off`. Env: `PARALLAX_HOME`,
- * `PARALLAX_PORT` (0 = any free port), `PARALLAX_HOST`, `PARALLAX_BACKEND`, `PARALLAX_DEV`
- * (`1`/`true`), `PARALLAX_LOG_LEVEL`, `PARALLAX_VALIDATE`, `PARALLAX_TOASTS`.
+ * `--log-level=<level>`, `--validate=off|log|throw`, `--toasts=native|off`,
+ * `--system-integration=auto|on|off`. Env: `PARALLAX_HOME`, `PARALLAX_PORT` (0 = any free port),
+ * `PARALLAX_HOST`, `PARALLAX_BACKEND`, `PARALLAX_DEV` (`1`/`true`), `PARALLAX_LOG_LEVEL`,
+ * `PARALLAX_VALIDATE`, `PARALLAX_TOASTS`, `PARALLAX_SYSTEM_INTEGRATION`.
  *
  * The bind address is always 127.0.0.1 (Plan "Sicherheit", A.8; R1-05, ADR-023): `--host` /
  * `PARALLAX_HOST` stay accepted for ADR-006 compatibility, every other value is a ConfigError –
@@ -53,6 +59,17 @@ export type ValidationMode = z.infer<typeof validationModeSchema>;
 export const toastModeSchema = z.enum(['native', 'off']);
 export type ToastMode = z.infer<typeof toastModeSchema>;
 
+/**
+ * Windows integration – autostart shortcut and protocol handler `parallax:` (ADR-109/110,
+ * system/index.ts): `auto` = only the productive server (default data directory, SDK backend, no
+ * `--dev`; `systemIntegrationAvailable`), `on` forces it (live acceptance on a temp home; the
+ * registered commands then carry `--home=<home>`), `off`. Under Vitest and `NODE_ENV=test` always
+ * `off` – an explicit `on` there is a ConfigError. Flag `--system-integration`, env
+ * `PARALLAX_SYSTEM_INTEGRATION`.
+ */
+export const systemIntegrationModeSchema = z.enum(['auto', 'on', 'off']);
+export type SystemIntegrationMode = z.infer<typeof systemIntegrationModeSchema>;
+
 export interface ServerConfig {
   dev: boolean;
   backend: BackendKind;
@@ -69,6 +86,10 @@ export interface ServerConfig {
   /** HostState.dataDirLabel (display only). */
   dataDirLabel: string;
   logLevel: LogLevel;
+  /** Autostart + protocol handler (ADR-110); `auto` is decided by `systemIntegrationAvailable`. */
+  systemIntegration: SystemIntegrationMode;
+  /** Hints for the log (main.ts, launcher), e.g. an ignored settings.json (English, no secrets). */
+  notes: string[];
 }
 
 export class ConfigError extends Error {
@@ -111,6 +132,109 @@ export interface LoadConfigInput {
   env?: NodeJS.ProcessEnv;
   /** Base for a relative `--home` (default `process.cwd()`). */
   cwd?: string;
+  /** Text of a file (throws like `readFileSync`); seam for the settings file (default: real fs). */
+  readFile?: (file: string) => string;
+}
+
+// ---- settings.json, read-only (ADR-111) ----
+
+/** What `readSettingsFile` found: the settings, or null with a hint why they are not used. */
+export interface SettingsPeek {
+  settings: Settings | null;
+  /** English hint for the log; null if the file is fine or simply missing. */
+  note: string | null;
+}
+
+/** Larger files are not read (a settings file is a few KB). */
+const SETTINGS_MAX_BYTES = 1024 * 1024;
+
+function readTextFile(file: string): string {
+  const text = readFileSync(file, 'utf8');
+  if (text.length > SETTINGS_MAX_BYTES) throw new Error('file too large');
+  return text;
+}
+
+/**
+ * Reads `<home>/settings.json` WITHOUT writing or moving anything (the settings store of the
+ * server owns the file; the launcher only peeks): missing → no settings, no hint; unreadable,
+ * invalid or written by a newer Parallax version (`schemaVersion` > SETTINGS_SCHEMA_VERSION) →
+ * no settings and a hint. Never throws. Under Vitest the real data directory is never read, also
+ * not through a hand-made `env` (CLAUDE.md "Tests").
+ */
+export function readSettingsFile(
+  home: string,
+  readFile: (file: string) => string = readTextFile,
+): SettingsPeek {
+  if (process.env.VITEST !== undefined && isWindowsPathInside(home, defaultHome(process.env))) {
+    return { settings: null, note: null };
+  }
+  const file = path.join(home, SETTINGS_FILE);
+  const ignored = (why: string): SettingsPeek => ({
+    settings: null,
+    note: `${file} ignored (${why}) - using the defaults for port and autostart`,
+  });
+  let text: string;
+  try {
+    text = readFile(file);
+  } catch (error) {
+    const code = fsErrorCode(error);
+    if (code === 'ENOENT' || code === 'ENOTDIR') return { settings: null, note: null };
+    return ignored(`not readable: ${code ?? (error instanceof Error ? error.message : 'unknown error')}`);
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return ignored('not valid JSON');
+  }
+  const version =
+    typeof raw === 'object' && raw !== null && 'schemaVersion' in raw ? raw.schemaVersion : null;
+  if (typeof version === 'number' && version > SETTINGS_SCHEMA_VERSION) {
+    return ignored(`written by a newer Parallax version, schemaVersion ${String(version)}`);
+  }
+  const parsed = settingsFileSchema.safeParse(raw);
+  if (!parsed.success) return ignored('invalid settings file');
+  return { settings: parsed.data.settings, note: null };
+}
+
+/** Vitest or an E2E server (`NODE_ENV=test`) – in `env` or in this process. */
+function isTestRun(env: NodeJS.ProcessEnv): boolean {
+  return env.VITEST !== undefined || env.NODE_ENV === 'test' || process.env.VITEST !== undefined;
+}
+
+/**
+ * The effective mode (see `systemIntegrationModeSchema`): in a test run always `off`, an explicit
+ * `on` there is a ConfigError (a test must never change HKCU or the autostart folder, R6).
+ */
+export function resolveSystemIntegrationMode(
+  requested: SystemIntegrationMode,
+  testRun: boolean,
+): SystemIntegrationMode {
+  if (!testRun) return requested;
+  if (requested === 'on') {
+    throw new ConfigError(
+      'system integration "on" is not allowed in tests (it changes HKCU and the autostart folder)',
+    );
+  }
+  return 'off';
+}
+
+/**
+ * HostState.systemIntegration (ADR-110): `on` → true, `off` → false, `auto` → only the productive
+ * server: Windows, SDK backend, no `--dev`, the default data directory.
+ */
+export function systemIntegrationAvailable(
+  config: Pick<ServerConfig, 'systemIntegration' | 'home' | 'backend' | 'dev'>,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (config.systemIntegration !== 'auto') return config.systemIntegration === 'on';
+  return (
+    platform === 'win32' &&
+    config.backend === 'sdk' &&
+    !config.dev &&
+    windowsPathsEqual(config.home, defaultHome(env))
+  );
 }
 
 export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
@@ -129,6 +253,7 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
         'log-level': { type: 'string' },
         validate: { type: 'string' },
         toasts: { type: 'string' },
+        'system-integration': { type: 'string' },
       },
       strict: true,
       allowPositionals: false,
@@ -154,9 +279,6 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
         ? 'fake'
         : 'sdk'
       : parseOrThrow(backendKindSchema, backendRaw, 'backend');
-
-  const portRaw = flag('port') ?? nonEmpty(env.PARALLAX_PORT);
-  const port = portRaw === undefined ? DEFAULT_PORT : parseOrThrow(portSchema, portRaw, 'port');
 
   const hostRaw = flag('host') ?? nonEmpty(env.PARALLAX_HOST);
   const host = hostRaw === undefined ? LOOPBACK_HOST : parseOrThrow(hostSchema, hostRaw, 'host');
@@ -193,6 +315,26 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
     );
   }
 
+  // Port (ADR-111): flag > env > settings.json (read only when needed, after the home checks) > 4711.
+  const notes: string[] = [];
+  const portRaw = flag('port') ?? nonEmpty(env.PARALLAX_PORT);
+  let port: number;
+  if (portRaw !== undefined) {
+    port = parseOrThrow(portSchema, portRaw, 'port');
+  } else {
+    const peek = readSettingsFile(home, input.readFile);
+    if (peek.note !== null) notes.push(peek.note);
+    port = peek.settings?.port ?? DEFAULT_PORT;
+  }
+
+  const integrationRaw = flag('system-integration') ?? nonEmpty(env.PARALLAX_SYSTEM_INTEGRATION);
+  const systemIntegration = resolveSystemIntegrationMode(
+    integrationRaw === undefined
+      ? 'auto'
+      : parseOrThrow(systemIntegrationModeSchema, integrationRaw, 'system integration'),
+    isTestRun(env),
+  );
+
   // Explicit > env > test runs (Vitest, NODE_ENV=test as set by the E2E servers) fail loudly > log.
   const validateRaw = flag('validate') ?? nonEmpty(env.PARALLAX_VALIDATE);
   const validation =
@@ -220,6 +362,8 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
     home,
     dataDirLabel: isRealHome ? `%LOCALAPPDATA%\\${PRODUCT_NAME}` : dev ? 'dev' : home,
     logLevel,
+    systemIntegration,
+    notes,
   };
 }
 

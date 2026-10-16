@@ -201,8 +201,9 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
 
   async applyFlagSettings(settings: Parameters<AgentSession['applyFlagSettings']>[0]): Promise<void> {
     await this.control('applyFlagSettings', [settings], () => {
-      if (this.script !== null && settings.effortLevel !== undefined)
-        this.script.state.effort = settings.effortLevel;
+      if (this.script === null) return;
+      if (settings.effortLevel !== undefined) this.script.state.effort = settings.effortLevel;
+      if (settings.fastMode !== undefined) this.script.state.fastMode = settings.fastMode;
     });
   }
 
@@ -578,6 +579,7 @@ class ScriptContext implements FakeScriptContext {
       model: resolveFakeModel(deps.req.model),
       permissionMode: deps.req.permissionMode ?? 'default',
       effort: deps.req.effort,
+      fastMode: deps.req.fastMode ?? null,
       turns: 0,
     };
   }

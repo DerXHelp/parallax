@@ -10,9 +10,14 @@
  *    the port, start the server hidden and detached, wait until its lock file (same PID) and health
  *    answer, then code + window. Exit 5/port taken by a server of this home → wait for it.
  *
+ * Phase 2: `entryId` (`--open`, ADR-109) adds `&session=<entryId>` to the window URL;
+ * `openWindow: false` (`--autostart` with `settings.autostart.openWindow` off, ADR-110) stops after
+ * step 2 – the server runs, no code is requested and no window opens.
+ *
  * Every side effect is a dependency (`LauncherDeps`), so all paths are unit-tested; the real ones
  * come from `createNodeLauncherDeps`. Messages are English (console output like `pnpm preflight`).
  */
+import type { EntryId } from '@shared/common';
 import {
   appUrlWithCode,
   serverOrigin,
@@ -149,6 +154,13 @@ export interface LauncherOptions {
   lockWaitMs?: number;
   /** Poll interval while waiting (default 150 ms). */
   pollMs?: number;
+  /** Phase 2 (`--open`, ADR-109): the window selects this session (`#session=<entryId>`). */
+  entryId?: EntryId | null;
+  /**
+   * Phase 2 (`--autostart`, ADR-110): false = only make sure the server runs – no code, no window
+   * (`settings.autostart.openWindow` off). Default true.
+   */
+  openWindow?: boolean;
 }
 
 export interface LauncherResult {
@@ -159,8 +171,10 @@ export interface LauncherResult {
   pid: number;
   /** Only with `printUrl`. */
   url: string | null;
-  /** PID of the started msedge.exe (null with `printUrl`). */
+  /** PID of the started msedge.exe (null with `printUrl` or without a window). */
   edgePid: number | null;
+  /** False when `openWindow: false` skipped code and window (autostart). */
+  window: boolean;
 }
 
 export const DEFAULT_READY_TIMEOUT_MS = 30_000;
@@ -518,6 +532,9 @@ async function openWindow(
   options: LauncherOptions,
   deps: LauncherDeps,
 ): Promise<LauncherResult> {
+  const base = { mode, port: lock.port, pid: lock.pid };
+  // Autostart without a window (ADR-110): the server runs, native toasts work – nothing else to do.
+  if (options.openWindow === false) return { ...base, url: null, edgePid: null, window: false };
   const code = await requestCodeWithRetry(lock, deps);
   if (code.kind !== 'ok') {
     throw new LauncherError(
@@ -529,11 +546,15 @@ async function openWindow(
         : `No sign-in code from the server on port ${String(lock.port)} (${code.reason}). Start Parallax again.`,
     );
   }
-  const url = appUrlWithCode(serverOrigin(lock.port), code.response.code);
-  const base = { mode, port: lock.port, pid: lock.pid };
+  const entryId = options.entryId ?? undefined;
+  const url = appUrlWithCode(
+    serverOrigin(lock.port),
+    code.response.code,
+    entryId === undefined ? {} : { entryId },
+  );
   if (options.printUrl) {
     deps.out(`Open this address within 60 seconds (one-time sign-in code): ${url}`);
-    return { ...base, url, edgePid: null };
+    return { ...base, url, edgePid: null, window: true };
   }
   const edge = await deps.locateEdge();
   if (edge === null) {
@@ -562,7 +583,7 @@ async function openWindow(
   }
   try {
     const { pid } = await deps.openEdge(edge, edgeAppArgs({ home: options.home, url }));
-    return { ...base, url: null, edgePid: pid };
+    return { ...base, url: null, edgePid: pid, window: true };
   } catch (error) {
     throw new LauncherError(
       'edge_failed',

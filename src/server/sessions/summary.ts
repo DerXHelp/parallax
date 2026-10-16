@@ -21,11 +21,8 @@ import type { BackendSessionInfo } from '../backend/types';
 /** Prompt titles are cut at a word boundary to this length (+ "…"). */
 export const PROMPT_TITLE_CHARS = 80;
 
-export function summaryOf(
-  entry: Entry,
-  facts: StatusFacts,
-  extra: { gitBranch: string | null },
-): SessionSummary {
+/** ADR-113: `gitBranch` comes from the entry (persisted, shown for dormant entries too). */
+export function summaryOf(entry: Entry, facts: StatusFacts): SessionSummary {
   return {
     entryId: entry.id,
     title: entry.title,
@@ -46,7 +43,7 @@ export function summaryOf(
     sessionId: currentSessionId(entry),
     cliVersion: entry.cliVersion,
     apiKeySource: entry.apiKeySource,
-    gitBranch: extra.gitBranch,
+    gitBranch: entry.gitBranch,
     lastError: entry.lastError,
     lastResultExcerpt: entry.lastResultExcerpt,
     // Phase 2 contract (WP-30): `running` is refined by WP-34 (console state).

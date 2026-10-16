@@ -23,6 +23,7 @@ import {
   usage,
 } from '../../sessions/normalizer/synthetic/build';
 import type { EventKind, FixtureEvent } from '../fixture';
+import { FAKE_TERMINAL_COMMANDS } from './defaults';
 import type { FakeIds } from './types';
 
 export type Step = readonly [EventKind, unknown];
@@ -128,7 +129,20 @@ const lifecycle = (c: DslContext, prompt: string, value: string): Step =>
   frame(c, msg({ type: 'command_lifecycle', command_uuid: prompt, state: value }));
 
 const initFrame = (c: DslContext): Step =>
-  frame(c, init(0, { cwd: c.cwd, model: c.model, permissionMode: c.permissionMode }, c.sessionId));
+  frame(
+    c,
+    init(
+      0,
+      {
+        cwd: c.cwd,
+        model: c.model,
+        permissionMode: c.permissionMode,
+        // Phase 2 (ADR-108): like a CLI that reports its terminal-only commands.
+        terminal_slash_commands: [...FAKE_TERMINAL_COMMANDS],
+      },
+      c.sessionId,
+    ),
+  );
 
 const userText = (c: DslContext, text: string): Step =>
   frame(

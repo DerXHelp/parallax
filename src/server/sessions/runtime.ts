@@ -14,6 +14,7 @@ import { openDecisionCount } from '@shared/status';
 import type { AgentSession, BackendEvent } from '../backend/types';
 import type { LaunchSpec } from '../claude/ports';
 import { CommandError } from '../sync/ports';
+import { toSlashCommands } from './commandCatalog';
 import { commandError, errorMessage, errorPayloadOf, type EngineCore, type EntryState } from './entryState';
 import { toModelCatalog } from './models';
 import type { LiveNormalizer, StatusSignal } from './ports';
@@ -203,7 +204,8 @@ export class SessionRuntime {
         return;
       case 'rate_limit':
         s.reduce(signal);
-        this.core.setAccountLimit(s.entry.profileId, signal.info);
+        // ADR-114: the subscription display only shows limits of subscription sessions.
+        if (s.entry.apiKeySource === 'none') this.core.setAccountLimit(s.entry.profileId, signal.info);
         return;
       case 'assistant_model':
         s.patch((e) => (e.lastModel === signal.model ? e : { ...e, lastModel: signal.model }));
@@ -488,6 +490,24 @@ export class SessionRuntime {
     s.emit([{ op: 'detail.patch', patch: { models: catalog.options } }]);
     // Started without a prompt: nothing else would leave `starting` (synthetic, not "seen").
     if (!this.sessionStateSeen && !this.sentSinceStart) s.reduce({ type: 'session_state', state: 'idle' });
+    // Phase 2: the slash-command catalog (ADR-108) and the git branch (ADR-113) after readiness.
+    void this.refreshCommands();
+    void s.refreshGitBranch();
+  }
+
+  /** ADR-108: `supportedCommands()` → `detail.patch {commands}` (+ cache via emit); errors only logged. */
+  private async refreshCommands(): Promise<void> {
+    let raw: unknown[];
+    try {
+      raw = await this.agent.supportedCommands();
+    } catch (error) {
+      if (this.alive && !this.closing) {
+        this.core.log.warn({ err: error, entryId: this.state.id }, 'supportedCommands failed');
+      }
+      return;
+    }
+    if (!this.alive || this.state.runtime !== this) return;
+    this.state.emit([{ op: 'detail.patch', patch: { commands: toSlashCommands(raw) } }]);
   }
 
   /** Readiness failed twice (R2-04): close the process, the exit reports `failure`. */
@@ -529,6 +549,8 @@ export async function startRuntime(
 ): Promise<SessionRuntime> {
   if (s.runtime !== null) return s.runtime;
   core.assertRunning();
+  // ADR-106: an archived entry never starts (also not a start queued before the archiving, a retry).
+  if (s.entry.archived) throw commandError('SESSION_ARCHIVED', { entryId: s.id });
   s.phase = 'starting';
   try {
     if (s.orphanPending) {
@@ -549,6 +571,7 @@ export async function startRuntime(
       s.failStart(payload);
       throw new CommandError(payload);
     }
+    s.lastEnv = launch.env;
     try {
       await s.ensureMirror();
     } catch (error) {
@@ -591,7 +614,9 @@ export async function startRuntime(
         model: entry.modelSetting ?? launch.sdkOptions.model ?? null,
         permissionMode,
         effort: entry.effort,
-        promptSuggestions: core.options.promptSuggestions,
+        // ADR-117: the setting applies from the next process start.
+        promptSuggestions: core.stores.settings.get().promptSuggestions,
+        fastMode: entry.fastMode,
         canUseTool: s.broker.handler,
       });
     } catch (error) {
@@ -627,7 +652,7 @@ export async function startRuntime(
 export async function closeRuntime(
   s: EntryState,
   core: EngineCore,
-  reason: 'user' | 'sleep' | 'handoff' | 'not_ready',
+  reason: 'user' | 'sleep' | 'handoff' | 'not_ready' | 'archive' | 'switch',
 ): Promise<void> {
   const runtime = s.runtime;
   if (runtime === null) return;
