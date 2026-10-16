@@ -119,8 +119,8 @@ Besitz-Pfade ändern.
 - UI zweisprachig: Englisch (Default) und Deutsch.
 
 ## Git
-- Lokale Commits pro WP (Worktree-Branch `wp/xx`), Merge macht der Koordinator. **Niemals pushen**,
-  kein Remote anlegen.
+- Lokale Commits pro WP (Worktree-Branch `wp/xx`), Merge macht der Koordinator. **Subagenten pushen nie**;
+  `origin` = privates Repo `DerXHelp/parallax`, Push nur durch den Koordinator nach Freigabe des Nutzers.
 - Commit-Messages mit mehreren `-m`-Flags, **kein Heredoc**, keine Command-Substitution.
 - Worktrees liegen in `.worktrees/` (ignoriert, von tsconfig/Vitest/ESLint/Vite ausgeschlossen);
   pro Worktree `pnpm install --frozen-lockfile`. `core.longpaths` ist gesetzt.
