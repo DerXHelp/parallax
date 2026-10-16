@@ -27,7 +27,8 @@ export interface ProfileSdkOptions {
  * `params` of every profile issue (R0-04): `index` = 0-based position in `profile.args` of the
  * flag, `flag` = the flag as written (e.g. '--add-dir'); plus `reason`
  * (PROFILE_ARG_INVALID: PROFILE_ARG_INVALID_REASONS) or `value` (PROFILE_ARG_BROAD_ALLOWED_TOOLS).
- * The Phase-2 profile editor marks the line `index` with the translated code.
+ * The profile editor (Phase 2, `ProfileIssue` in @shared/model) marks the line `index` with the
+ * translated code.
  */
 export interface ProfileArgIssueParams {
   [key: string]: string | number;
@@ -80,12 +81,43 @@ export interface LaunchSpec {
   contextWindow: number | null;
 }
 
+/**
+ * Read view of the profiles for the engine. Mutations (profiles.json, Phase 2 ADR-102) are not part
+ * of the port: only WP-32 (`claude/profileStore.ts`) and the composition know them.
+ */
 export interface ProfileStore {
   list(): Profile[];
   get(id: ProfileId): Profile | undefined;
   getDefault(): Profile;
-  /** Including the claude status of the last check. */
+  /** Including the claude status of the last check; `entryCount` is filled by the engine. */
   summaries(): ProfileSummary[];
+}
+
+/** Phase 2 (ADR-104): input of consoleLaunchFor. */
+export interface ConsoleLaunchRequest {
+  profileId: ProfileId;
+  entryId: EntryId;
+  /** Exactly as stored (B). */
+  cwd: string;
+  resumeSessionId: string;
+  /** entry.modelSetting; null = omit. Not added when the profile args set --model. */
+  model: string | null;
+  /** Last actual mode if still allowed (§5.2), null = omit. Not added when the profile args set it. */
+  permissionMode: PermissionMode | null;
+}
+
+/** Phase 2 (ADR-104): everything to run `claude --resume <id>` in a visible console window. */
+export interface ConsoleLaunchSpec {
+  /** Absolute .exe (like LaunchSpec.executablePath). */
+  executablePath: string;
+  /** profile.args (C.12-checked) + `--resume <id>` (+ --model / --permission-mode / --settings). */
+  args: string[];
+  /** buildEnv(target 'terminal'): cleaned, profile env, CLAUDE_CONFIG_DIR, PARALLAX=1, PARALLAX_ENTRY_ID. */
+  env: Record<string, string>;
+  /** Only what the profile sets (resolved) + CLAUDE_CONFIG_DIR – for the copy command. */
+  explicitEnv: Record<string, string>;
+  /** Exactly as stored (B). */
+  cwd: string;
 }
 
 export interface ClaudeIntegration {
@@ -97,4 +129,9 @@ export interface ClaudeIntegration {
   launchSpecFor(profileId: ProfileId, entryId: EntryId): Promise<LaunchSpec>;
   /** `claude --version` + `claude auth status --json` (F.17); never logs e-mail/org. */
   checkProfile(profileId: ProfileId): Promise<ClaudeInstallStatus>;
+  /**
+   * Phase 2 (WP-32): the external console of an entry; throws CommandError (PROFILE_INVALID,
+   * CLAUDE_NOT_FOUND, PROFILE_ENV_REF_UNRESOLVED …) like launchSpecFor.
+   */
+  consoleLaunchFor(req: ConsoleLaunchRequest): Promise<ConsoleLaunchSpec>;
 }

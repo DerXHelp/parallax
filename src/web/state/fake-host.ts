@@ -554,7 +554,20 @@ export class FakeHost {
         return this.ok({ models: [sampleModelOption()] });
       case 'server.shutdown':
         return this.ok({ sessionsStopped: 0 });
+      // Phase 2 commands (WP-30) included: the packages answer them in their tests via `onCommand`.
       case 'session.setFastMode':
+      case 'session.switchConversation':
+      case 'session.openExternal':
+      case 'session.reclaim':
+      case 'session.consoleCommand':
+      case 'session.continueAfterLimit':
+      case 'profile.get':
+      case 'profile.save':
+      case 'profile.delete':
+      case 'profile.setDefault':
+      case 'profile.test':
+      case 'profile.validate':
+      case 'fs.listDirectory':
         return { ok: false, error: makeError('NOT_IMPLEMENTED', { name: cmd.name satisfies CommandName }) };
     }
   }

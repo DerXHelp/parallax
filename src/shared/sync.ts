@@ -146,12 +146,14 @@ export function applySessionOp(state: SessionViewState, op: SessionOp): SessionV
         ? { ...state, items: state.items.filter((item) => item.id !== op.itemId) }
         : state;
     case 'conversation.reset':
+      // Phase 2 (ADR-107): a switch to an earlier conversation keeps `hasEarlier` from the op; the
+      // engine follows with item.upserts of that conversation's tail.
       return {
         ...state,
         conversationId: op.conversationId,
         items: [],
         decisions: [],
-        hasEarlier: false,
+        hasEarlier: op.hasEarlier,
         detail: { ...state.detail, conversationId: op.conversationId },
       };
     case 'decision.upsert':

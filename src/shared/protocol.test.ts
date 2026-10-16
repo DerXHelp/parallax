@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from './common';
 import {
+  HOST_COMMAND_NAMES,
   PROTOCOL_VERSION,
   SERVER_MESSAGE_TYPES,
   clientMessageSchema,
   commandResultSchemas,
   commandSchema,
+  isHostCommand,
   parseClientMessage,
   parseCommandResult,
   parseServerMessage,
@@ -16,15 +18,21 @@ import {
 } from './protocol';
 import {
   SAMPLE_IDS,
+  sampleClaudeInstallStatus,
   sampleClientHello,
   sampleContextBreakdown,
   sampleDecisions,
+  sampleFsListing,
   sampleHello,
   sampleHostState,
+  sampleId,
   sampleItems,
   sampleModelOption,
   sampleOutcomes,
   samplePresence,
+  sampleProfile,
+  sampleProfileInput,
+  sampleProfileIssue,
   sampleResponses,
   sampleSessionSnapshot,
   sampleSummary,
@@ -64,6 +72,20 @@ const commands: Command[] = [
   { name: 'session.refreshModels', entryId },
   { name: 'settings.update', patch: { theme: 'light' } },
   { name: 'server.shutdown' },
+  // Phase 2 (WP-30 §4.6)
+  { name: 'session.switchConversation', entryId, conversationId: SAMPLE_IDS.conversation },
+  { name: 'session.openExternal', entryId },
+  { name: 'session.reclaim', entryId },
+  { name: 'session.consoleCommand', entryId },
+  { name: 'session.continueAfterLimit', entryId, enabled: true },
+  { name: 'profile.get', profileId: 'standard' },
+  { name: 'profile.save', profile: sampleProfileInput() },
+  { name: 'profile.delete', profileId: sampleId('pf', 2) },
+  { name: 'profile.setDefault', profileId: sampleId('pf', 2) },
+  { name: 'profile.test', profileId: 'standard' },
+  { name: 'profile.validate', profile: sampleProfileInput({ id: sampleId('pf', 2) }) },
+  { name: 'fs.listDirectory', path: null, showHidden: false },
+  { name: 'fs.listDirectory', path: 'D:\\work', showHidden: true },
 ];
 
 const clientMessages: ClientMessage[] = [
@@ -109,6 +131,7 @@ const serverMessages: ServerMessage[] = [
           conversationId: `cv_${'2'.repeat(32)}`,
           previousConversationId: SAMPLE_IDS.conversation,
           trigger: 'clear',
+          hasEarlier: false,
         },
       },
       { seq: 10, at: sampleTime(10), op: { op: 'decision.upsert', decision: sampleDecisions.question() } },
@@ -165,7 +188,7 @@ describe('client messages', () => {
 
   it('covers every command name', () => {
     const names = commandSchema.options.map((option) => option.shape.name.value);
-    expect(commands.map((c) => c.name).sort()).toEqual([...names].sort());
+    expect([...new Set(commands.map((c) => c.name))].sort()).toEqual([...names].sort());
   });
 
   it('covers every client message type', () => {
@@ -390,5 +413,64 @@ describe('command results', () => {
     ).not.toBeNull();
     expect(parseCommandResult('session.close', {})).toEqual({});
     expect(parseCommandResult('server.shutdown', { sessionsStopped: -1 })).toBeNull();
+  });
+
+  it('Phase 2 results (WP-30 §4.6)', () => {
+    expect(parseCommandResult('session.openExternal', { pid: 4242 })).toEqual({ pid: 4242 });
+    expect(parseCommandResult('session.openExternal', { pid: null })).toEqual({ pid: null });
+    expect(parseCommandResult('session.reclaim', { importedItems: -1 })).toBeNull();
+    expect(
+      parseCommandResult('session.consoleCommand', {
+        command: "& 'C:\\c\\claude.exe' --resume x",
+        sessionId: 'x',
+      }),
+    ).not.toBeNull();
+    expect(parseCommandResult('session.continueAfterLimit', { continueAt: sampleTime(60) })).not.toBeNull();
+    expect(
+      parseCommandResult('profile.get', {
+        profile: sampleProfile(),
+        issues: [sampleProfileIssue()],
+        entryCount: 2,
+      }),
+    ).not.toBeNull();
+    expect(parseCommandResult('profile.save', { profileId: sampleId('pf', 3) })).not.toBeNull();
+    expect(parseCommandResult('profile.save', { profileId: 'pf_bad' })).toBeNull();
+    expect(parseCommandResult('profile.test', { claude: sampleClaudeInstallStatus() })).not.toBeNull();
+    expect(parseCommandResult('profile.validate', { issues: [] })).toEqual({ issues: [] });
+    expect(parseCommandResult('fs.listDirectory', sampleFsListing())).toEqual(sampleFsListing());
+  });
+
+  it('host commands are exactly the commands without entryId besides create/settings/shutdown', () => {
+    const withoutEntry = commandSchema.options
+      .filter((option) => !('entryId' in option.shape))
+      .map((option) => option.shape.name.value)
+      .filter((name) => !['session.create', 'settings.update', 'server.shutdown'].includes(name));
+    expect([...withoutEntry].sort()).toEqual([...HOST_COMMAND_NAMES].sort());
+    expect(isHostCommand({ name: 'fs.listDirectory', path: null, showHidden: false })).toBe(true);
+    expect(isHostCommand({ name: 'session.reclaim', entryId })).toBe(false);
+  });
+
+  it('attachments per prompt are capped (LIMITS.attachmentsMax)', () => {
+    const prompt = (count: number) =>
+      parseClientMessage(
+        JSON.stringify({
+          type: 'cmd',
+          cmdId: SAMPLE_IDS.cmdId,
+          cmd: {
+            name: 'session.sendPrompt',
+            entryId,
+            prompt: {
+              text: '',
+              attachments: Array.from({ length: count }, () => ({ blobId: SAMPLE_IDS.blob })),
+            },
+          },
+        }),
+      ).ok;
+    expect(prompt(LIMITS.attachmentsMax)).toBe(true);
+    expect(prompt(LIMITS.attachmentsMax + 1)).toBe(false);
+  });
+
+  it('PROTOCOL_VERSION is 2 (Phase 2, ADR-100)', () => {
+    expect(PROTOCOL_VERSION).toBe(2);
   });
 });

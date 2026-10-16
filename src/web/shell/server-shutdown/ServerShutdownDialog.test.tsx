@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_HOST_ID } from '@shared/common';
 import { makeError } from '@shared/errors';
-import { sampleHostState, sampleStatusFacts, sampleSummary } from '@shared/samples';
+import { sampleHostState, sampleSettings, sampleStatusFacts, sampleSummary } from '@shared/samples';
 import { App } from '@web/App';
 import { DICTIONARIES, setLanguage, translate } from '@web/i18n';
 import { startScenario, type RunningScenario } from '@web/playground/PlaygroundScenario';
@@ -104,7 +104,9 @@ describe('"Stop server" (A.10: confirmation lists working and waiting sessions)'
     render(<App />);
     await screen.findByRole('navigation', { name: 'Sessions' });
     act(() => {
-      running?.host.setHostState(sampleHostState({ settings: { language: 'de', theme: 'dark' } }));
+      running?.host.setHostState(
+        sampleHostState({ settings: sampleSettings({ language: 'de', theme: 'dark' }) }),
+      );
     });
     await screen.findByText('Wartet auf dich (4)');
     await openConfirmation(user, 'Server beenden…');

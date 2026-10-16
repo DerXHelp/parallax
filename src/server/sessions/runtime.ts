@@ -346,6 +346,7 @@ export class SessionRuntime {
         conversationId,
         previousConversationId: previous.id,
         trigger: signal.trigger,
+        hasEarlier: false,
       },
       { op: 'detail.patch', patch: { conversationId, conversations: s.entry.conversations } },
     ]);

@@ -101,8 +101,10 @@ describe('createMemoryStores', () => {
 
   it('settings and warnings', () => {
     const stores = createMemoryStores({ settings: sampleSettings({ language: 'de' }) });
-    expect(stores.settings.get()).toEqual({ language: 'de', theme: 'dark' });
-    expect(stores.settings.update({ theme: 'light' })).toEqual({ language: 'de', theme: 'light' });
+    expect(stores.settings.get()).toEqual(sampleSettings({ language: 'de' }));
+    expect(stores.settings.update({ theme: 'light' })).toEqual(
+      sampleSettings({ language: 'de', theme: 'light' }),
+    );
     const seen: number[] = [];
     const off = stores.warnings.onChange((list) => seen.push(list.length));
     stores.warnings.add(makeError('STORE_CORRUPT_QUARANTINED', { file: 'sessions.json' }));

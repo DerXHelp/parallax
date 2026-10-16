@@ -8,6 +8,7 @@ import {
   ScissorsIcon,
   ShieldXIcon,
   SquarePenIcon,
+  SquareTerminalIcon,
   WebhookIcon,
   type LucideIcon,
 } from 'lucide-react';
@@ -295,6 +296,15 @@ export const SystemRow = memo(function SystemRow({
         <Notice tone="error" title={t('transcript.system.error')}>
           {tError(item.error)}
         </Notice>
+      );
+    case 'handoff':
+      // Phase 2 (ADR-104); WP-37 owns the final presentation.
+      return (
+        <Divider icon={SquareTerminalIcon}>
+          {item.phase === 'external'
+            ? t('transcript.system.handoff.external')
+            : t('transcript.system.handoff.returned', { count: item.importedItems })}
+        </Divider>
       );
     case 'unknown':
       return (

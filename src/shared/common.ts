@@ -212,6 +212,23 @@ export const LIMITS = {
   itemTotalChars: 64 * 1024,
   /** Budget of the `items` of one `session.snapshot` (JSON chars); the hub drops the oldest (hasEarlier). */
   snapshotMaxChars: 2 * 1024 * 1024,
+  // ---- Phase 2 (WP-30 §4.2) ----
+  /** Raw bytes of one image attachment: base64 ≈ 5 MB (API limit per image; C.11, ADR-103). */
+  imageBytes: 3_750_000,
+  /** Long edge the client scales images to before the upload (Plan "Anhänge": 1568–2000 px). */
+  imageMaxEdgePx: 1568,
+  /** Attachments per prompt (promptInputSchema). */
+  attachmentsMax: 20,
+  /** Directories of one fs.listDirectory answer; more → `truncated` (ADR-119). */
+  fsListMax: 2000,
+  /** Path arguments of commands (fs.listDirectory, profile paths) – like session.create.cwd. */
+  pathChars: 1000,
+  /** Profile input (profile.save / profile.validate; R0-08 "limits at the boundary"). */
+  profileEnvMax: 100,
+  profileEnvKeyChars: 200,
+  profileEnvValueChars: 10_000,
+  profileArgsMax: 100,
+  profileArgChars: 4_000,
 } as const;
 
 /**

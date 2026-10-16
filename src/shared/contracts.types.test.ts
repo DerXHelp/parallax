@@ -16,6 +16,7 @@ import type {
   Decision,
   DecisionOutcome,
   DecisionResponse,
+  FsListing,
   SessionDetail,
   SessionDetailPatch,
   Settings,
@@ -34,6 +35,8 @@ import {
   type CommandName,
   type CommandOf,
   type CommandResult,
+  type HostCommand,
+  type HostCommandName,
   type ServerMessage,
   type ServerMessageType,
   type SessionOp,
@@ -106,6 +109,7 @@ function systemLabel(event: SystemEvent): string {
     case 'task_notification':
     case 'error':
     case 'unknown':
+    case 'handoff':
       return event;
     default:
       return assertNever(event);
@@ -161,6 +165,13 @@ describe('contract types', () => {
     expectTypeOf<CommandOf<'settings.update'>['patch']>().toEqualTypeOf<SettingsPatch>();
     expectTypeOf<SettingsPatch>().toEqualTypeOf<Partial<Settings>>();
     expectTypeOf<CommandName>().toExtend<string>();
+  });
+
+  it('host commands (Phase 2, ADR-101) carry no entryId', () => {
+    expectTypeOf<HostCommandName>().toExtend<CommandName>();
+    expectTypeOf<HostCommand>().toEqualTypeOf<Extract<Command, { name: HostCommandName }>>();
+    expectTypeOf<Extract<keyof HostCommand, 'entryId'>>().toEqualTypeOf<never>();
+    expectTypeOf<CommandResult<'fs.listDirectory'>>().toEqualTypeOf<FsListing>();
   });
 
   it('SERVER_MESSAGE_TYPES is complete', () => {

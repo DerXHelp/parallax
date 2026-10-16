@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeSessionKey } from '@shared/common';
 import { makeError } from '@shared/errors';
-import type { SeqOp, SessionOp } from '@shared/protocol';
+import { PROTOCOL_VERSION, type SeqOp, type SessionOp } from '@shared/protocol';
 import {
   SAMPLE_IDS,
   sampleHello,
@@ -68,7 +68,11 @@ describe('handshake', () => {
     expect(connection.status()).toBe('connecting');
     transport.serverSend(sampleHello());
     const [hello] = transport.sentOfType('clientHello');
-    expect(hello).toMatchObject({ protocolVersion: 1, buildId: 'dev', clientId: SAMPLE_IDS.client });
+    expect(hello).toMatchObject({
+      protocolVersion: PROTOCOL_VERSION,
+      buildId: 'dev',
+      clientId: SAMPLE_IDS.client,
+    });
     expect(hello?.presence).toMatchObject({
       focused: true,
       visible: true,
@@ -424,7 +428,7 @@ describe('resync and reload', () => {
     vi.advanceTimersByTime(30_000);
     connection.retryNow();
     await vi.advanceTimersByTimeAsync(0);
-    transport.serverSend(sampleHello({ protocolVersion: 2 }));
+    transport.serverSend(sampleHello({ protocolVersion: 99 }));
     expect(reload).toHaveBeenCalledTimes(2);
   });
 
@@ -710,7 +714,7 @@ describe('shutdownServer from an outdated window (V2-04)', () => {
 
     const other = outdated();
     const mismatch = other.connection.shutdownServer().catch((error: unknown) => error);
-    other.transport.serverSend(sampleHello({ protocolVersion: 2 }));
+    other.transport.serverSend(sampleHello({ protocolVersion: 99 }));
     expect(((await mismatch) as ClientCommandError).code).toBe('PROTOCOL_VERSION_MISMATCH');
     expect(other.transport.sent).toEqual([]);
 

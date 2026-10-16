@@ -7,9 +7,10 @@
  * Import order: after protocol (common → errors → status → model → protocol → sync | http | paths).
  */
 import { z } from 'zod';
-import { LIMITS, isoDateTimeSchema, type BlobId } from './common';
+import { LIMITS, entryIdSchema, isoDateTimeSchema, type BlobId, type EntryId } from './common';
 import { DEV_WEB_PORT } from './devPorts';
 import { errorPayloadSchema } from './errors';
+import { blobRefSchema } from './model';
 import { PRODUCT_ID } from './product';
 import { WS_PATH } from './protocol';
 
@@ -30,7 +31,10 @@ export const API_PATHS = {
   launcherCode: '/api/launcher/code',
   /** GET with cookie; route pattern – build URLs with blobPath(). */
   blob: '/api/blob/:blobId',
-  /** POST upload → BlobRef (WP-02 §5.5); Phase 1 answers NOT_IMPLEMENTED. */
+  /**
+   * POST image upload → `attachmentUploadResponseSchema` (Phase 2, ADR-103; guard class
+   * "mutation": Origin, same-origin, cookie). Query `attachmentUploadQuerySchema`.
+   */
   attachments: '/api/attachments',
   /**
    * WebSocket upgrade (src/shared/protocol.ts). Guard (§5.1, ADR-019): Origin ∈ allowedOrigins,
@@ -177,6 +181,31 @@ export type HealthResponse = z.infer<typeof healthResponseSchema>;
 export const httpErrorBodySchema = errorPayloadSchema;
 
 // =====================================================================================
+// Image upload (Phase 2, ADR-103)
+// =====================================================================================
+
+/** Image types of an upload = the SDK's Base64ImageSource media types. */
+export const ATTACHMENT_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
+export const attachmentMediaTypeSchema = z.enum(ATTACHMENT_MEDIA_TYPES);
+export type AttachmentMediaType = z.infer<typeof attachmentMediaTypeSchema>;
+
+/**
+ * Query of `POST /api/attachments?name=…&width=…&height=…`. The body is the raw image
+ * (`Content-Type` ∈ ATTACHMENT_MEDIA_TYPES, ≤ LIMITS.imageBytes, magic bytes checked by the
+ * server): 413 PAYLOAD_TOO_LARGE, 415 UNSUPPORTED_MEDIA_TYPE, 400 VALIDATION_FAILED.
+ */
+export const attachmentUploadQuerySchema = z.object({
+  name: z.string().min(1).max(260).optional(),
+  width: z.coerce.number().int().positive().max(100_000).optional(),
+  height: z.coerce.number().int().positive().max(100_000).optional(),
+});
+export type AttachmentUploadQuery = z.infer<typeof attachmentUploadQuerySchema>;
+
+/** `POST /api/attachments` success (200). */
+export const attachmentUploadResponseSchema = z.object({ attachment: blobRefSchema });
+export type AttachmentUploadResponse = z.infer<typeof attachmentUploadResponseSchema>;
+
+// =====================================================================================
 // Content-Security-Policy (C.10, ADR-026; R1W-23/R3-14: one source for every server of the UI)
 // =====================================================================================
 
@@ -243,9 +272,40 @@ export function parseBearerToken(header: string | undefined): LauncherToken | nu
 
 export const AUTH_HASH_PARAM = 'code';
 
-/** URL the launcher opens: `<origin>/#code=<code>` (the code never goes into a query string). */
-export function appUrlWithCode(origin: string, code: AuthCode): string {
-  return `${origin}/#${AUTH_HASH_PARAM}=${code}`;
+/** `#session=<entryId>` selects a session (web `state/selection.ts`; launcher `--open`). */
+export const SESSION_HASH_PARAM = 'session';
+
+/**
+ * URL the launcher opens: `<origin>/#code=<code>` (the code never goes into a query string), with
+ * `options.entryId` also `&session=<entryId>` (Phase 2: protocol handler, ADR-109).
+ */
+export function appUrlWithCode(origin: string, code: AuthCode, options: { entryId?: EntryId } = {}): string {
+  const session = options.entryId === undefined ? '' : `&${SESSION_HASH_PARAM}=${options.entryId}`;
+  return `${origin}/#${AUTH_HASH_PARAM}=${code}${session}`;
+}
+
+// =====================================================================================
+// Protocol handler `parallax:` (Phase 2, A.9, ADR-109; opt-in)
+// =====================================================================================
+
+export const PROTOCOL_SCHEME = PRODUCT_ID;
+
+/** `parallax://session/<entryId>` – the launch URI of a native toast. */
+export function sessionProtocolUri(entryId: EntryId): string {
+  return `${PROTOCOL_SCHEME}://session/${entryId}`;
+}
+
+const SESSION_URI = new RegExp(`^${PROTOCOL_SCHEME}:(?://)?session/([^/]+)/?$`, 'i');
+
+/**
+ * Strict parser of the argument the protocol handler receives (any web page can trigger
+ * `parallax:` – R5): scheme case-insensitive, `//` optional, one optional trailing `/`, the id must
+ * be a valid entry id; anything else → null.
+ */
+export function parseSessionProtocolUri(uri: string): EntryId | null {
+  const match = SESSION_URI.exec(uri.trim());
+  const parsed = entryIdSchema.safeParse(match?.[1]);
+  return parsed.success ? parsed.data : null;
 }
 
 /**

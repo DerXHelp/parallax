@@ -8,6 +8,7 @@ import {
   sampleContextGauge,
   sampleHostState,
   sampleProfileSummary,
+  sampleSettings,
   sampleTime,
 } from '@shared/samples';
 import { APP_SLOTS, App } from './App';
@@ -131,7 +132,9 @@ describe('App shell over the memory transport', () => {
     render(<App />);
     await sidebar();
     act(() => {
-      scenario.host.setHostState(sampleHostState({ settings: { language: 'de', theme: 'light' } }));
+      scenario.host.setHostState(
+        sampleHostState({ settings: sampleSettings({ language: 'de', theme: 'light' }) }),
+      );
     });
     expect(await screen.findByText('Wartet auf dich (4)')).toBeTruthy();
     expect(document.documentElement.lang).toBe('de');

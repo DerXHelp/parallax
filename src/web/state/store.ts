@@ -1,7 +1,7 @@
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import type { EntryId, HostId } from '@shared/common';
 import type { ErrorPayload } from '@shared/errors';
-import type { HostState, SessionSummary, Settings } from '@shared/model';
+import { settingsSchema, type HostState, type SessionSummary, type Settings } from '@shared/model';
 import type { Notification } from '@shared/protocol';
 import type { SessionViewState } from '@shared/sync';
 import type { TranslationKey, TranslationParams } from '@web/i18n';
@@ -131,7 +131,8 @@ export interface ClientState {
 
 export type ClientStore = StoreApi<ClientState>;
 
-export const DEFAULT_SETTINGS: Settings = { language: 'en', theme: 'dark' };
+/** The schema defaults (Phase 2: every settings field, WP-30 §4.5). */
+export const DEFAULT_SETTINGS: Settings = settingsSchema.parse({});
 
 export function initialClientState(): ClientState {
   return {

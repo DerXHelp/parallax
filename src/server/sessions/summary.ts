@@ -49,6 +49,11 @@ export function summaryOf(
     gitBranch: extra.gitBranch,
     lastError: entry.lastError,
     lastResultExcerpt: entry.lastResultExcerpt,
+    // Phase 2 contract (WP-30): `running` is refined by WP-34 (console state).
+    external:
+      entry.external === null
+        ? null
+        : { since: entry.external.since, pid: entry.external.pid, running: true },
   };
 }
 
