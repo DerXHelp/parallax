@@ -15,7 +15,7 @@ $env:PARALLAX_E2E_SKIP_BUILD='1'; pnpm e2e # ohne Build-Prüfung
 
 | Datei | Inhalt |
 |---|---|
-| `global-setup.ts` | baut `dist/` nur, wenn es fehlt oder die Build-ID nicht passt (wie der Launcher); setzt für Runner und Worker ein eigenes Temp-`PARALLAX_HOME` und Port 0 und entfernt geerbte Server-Steuervariablen (`test/setup/home.ts`, WP22-07) |
+| `global-setup.ts` | baut `dist/` nur, wenn es fehlt oder die Build-ID nicht passt (wie der Launcher; Prüfung und Build unter dem Build-Lock des Checkouts, ADR-092); setzt für Runner und Worker ein eigenes Temp-`PARALLAX_HOME` und Port 0 und entfernt geerbte Server-Steuervariablen (`test/setup/home.ts`, WP22-07) |
 | `support/server.ts` | Server je Worker: `node dist/server.js --backend=fake --port=0 --home=<tmp>`, bereit = Lockfile + Health, Anmelde-URL über `POST /api/launcher/code`, Ende über `server.shutdown` mit Prüfung (Exit 0, Lockfile weg, keine Kindprozesse, keine Fehlerzeilen im Log); `adoptE2eServer` für einen vom Launcher gestarteten Server; `reuse` startet einen neuen Server auf dem Home eines beendeten (Neustart-Fälle) |
 | `support/fixtures.ts` | Fixtures `server` (Worker), `app` (angemeldete Seite), `newWindow()` (zweites Fenster, gleiches oder neues Profil); Diagnose: CSP-Verletzung oder Seitenfehler lässt den Test scheitern, WS-Frames + Server-Log als Artefakte |
 | `support/app.ts` | Page-Objects (`ParallaxApp`, `SessionView`) über die Test-Attribute (`data-slot`, `data-action` …) |

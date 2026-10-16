@@ -44,6 +44,9 @@ schreibt dieselbe ID nach `dist/web/build.json`. Die ID ist `<version>+<letzter 
 Build-Eingabe geändert hat>[.dirty-<Digest>]` (ADR-065): ein reiner Doku- oder Test-Commit ändert sie
 nicht und erzwingt keinen Neubau. Ein laufender Server liefert seine beim Start fixierte UI-Kopie
 aus (`PARALLAX_HOME/ui/<buildId>`, ADR-066) – ein späteres `pnpm build`/`pnpm e2e` stört ihn nicht.
+Das Bündeln läuft unter dem Build-Lock des Checkouts (ADR-092; wartet auf einen Build des
+Launchers oder der E2E); hält der Aufrufer ihn schon (`runBuild`, `PARALLAX_BUILD_LOCK_HELD=1`),
+wird er nicht erneut genommen. Der Vite-Schritt von `pnpm build` (`build:web`) nimmt ihn noch nicht.
 
 `pnpm preflight` meldet seit V2-01 zusätzlich Edge-Richtlinien (HKLM/HKCU
 `SOFTWARE\Policies\Microsoft\Edge`), die das App-Profil trotz seiner Schalter anmelden oder
