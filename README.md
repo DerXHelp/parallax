@@ -62,9 +62,9 @@ pnpm start --print-url         # Optionen direkt anhängen (pnpm reicht ein `--`
   „Server beenden“ und erneutem Start. Er liefert die UI aus einer beim Start fixierten Kopie
   (`%LOCALAPPDATA%\Parallax\ui\<build>`); ein `pnpm build`/`pnpm e2e` im selben Checkout ändert
   also nichts an seinen Fenstern. Die Build-ID hängt nur an Build-Eingaben (Quellen, Configs,
-  Lockfile) – ein reiner Doku-Commit erzwingt keinen Neubau. Launcher und `pnpm e2e` bauen einen
-  Checkout nie gleichzeitig (der zweite wartet; auch auf einem Netzlaufwerk). `pnpm build` wartet
-  bisher nur mit seinem Server-Schritt darauf – nicht parallel zu einem Launcher-Build starten.
+  Lockfile) – ein reiner Doku-Commit erzwingt keinen Neubau. Launcher, `pnpm e2e` und
+  `pnpm build` bauen einen Checkout nie gleichzeitig (der zweite wartet; auch auf einem
+  Netzlaufwerk).
 - **Fenster schließen beendet den Server nicht** – die Sessions laufen weiter. Beenden über das
   Zahnrad-Menü → „Server beenden…“: Die Rückfrage nennt die arbeitenden und wartenden Sessions.
   Jede Session bekommt bis zu 5 s für ein sauberes Ende (Transkript, SessionEnd-Hooks), erst

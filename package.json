@@ -15,7 +15,7 @@
     "dev:server": "tsx watch --clear-screen=false --tsconfig src/server/tsconfig.json --exclude \".worktrees/**\" --exclude \".claude/**\" src/server/main.ts --dev --backend=fake --port=4712 --home=.parallax-dev",
     "dev:server:live": "tsx watch --clear-screen=false --tsconfig src/server/tsconfig.json --exclude \".worktrees/**\" --exclude \".claude/**\" src/server/main.ts --dev --backend=sdk --port=4712 --home=.parallax-dev",
     "dev:web": "vite",
-    "build": "pnpm run build:web && pnpm run build:server",
+    "build": "tsx --tsconfig tsconfig.tools.json scripts/build.ts",
     "build:web": "vite build",
     "build:server": "tsx --tsconfig tsconfig.tools.json scripts/build-server.ts",
     "start": "tsx --tsconfig src/server/tsconfig.json src/server/launcher/main.ts",

@@ -2,14 +2,15 @@
  * "Build if `dist` is missing or stale" for the launcher (Plan "Server-Betrieb", ADR-013/036):
  * the build id stamped into the first line of `dist/server.js` (scripts/build-server.ts) is
  * compared with the id the current checkout would get (`resolveBuildId()` of repo.config.ts,
- * injected by the caller). The build runs the same two steps as `pnpm build` (package.json
- * `build:web` + `build:server`), directly with node and the local tool binaries – no pnpm needed,
- * no shell. A test pins these steps to the package.json scripts.
+ * injected by the caller). The build runs the two steps `build:web` + `build:server` of
+ * package.json, directly with node and the local tool binaries – no pnpm needed, no shell. A test
+ * pins these steps to the package.json scripts.
  *
- * Build lock (R3-04, CR-08, ADR-092): one build per checkout at a time – a named-pipe mutex
- * (`acquireBuildLock`, `pollLock`) taken by the launcher, the E2E setup and `scripts/build-server.ts`
- * (`pnpm build:server`, the second step of `pnpm build`); `runBuild` expects its caller to hold it
- * and tells its child steps so (`BUILD_LOCK_HELD_ENV`).
+ * Build lock (R3-04, CR-08, ADR-092/094): one build per checkout at a time – a named-pipe mutex
+ * (`acquireBuildLock`, `pollLock`) taken by the launcher, the E2E setup, `pnpm build`
+ * (`scripts/build.ts` → `buildUnderLock`: both steps under ONE lock) and `scripts/build-server.ts`
+ * (`pnpm build:server` alone); `runBuild` expects its caller to hold it and tells its child steps so
+ * (`BUILD_LOCK_HELD_ENV`).
  */
 import { open, readFile, realpath, stat, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
@@ -17,6 +18,7 @@ import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { windowsPathIssue, windowsPathKey } from '@shared/paths';
 import { WEB_BUILD_INFO_FILE, parseWebBuildId } from '../app/webSnapshot';
+import { sleep } from '../lib/async';
 import { acquireKeyLock } from '../lib/homeLock';
 import { runFile, type RunFileFn, type RunFileResult } from '../lib/process';
 
@@ -316,4 +318,55 @@ export async function runBuild(options: {
     }
   }
   return { ok: true };
+}
+
+/** `buildUnderLock` failed to get the lock in time (another build of the checkout hangs). */
+export type LockedBuildResult = BuildResult | { ok: false; step: 'lock'; output: string };
+
+/**
+ * `pnpm build` (CR-08, ADR-094): BOTH steps under one build lock of the checkout – a launcher, an
+ * E2E setup or a second `pnpm build` of the same checkout waits (`onWaiting` once) instead of
+ * emptying `dist/web` or rewriting `dist/server.js` at the same time. Released after the steps,
+ * also on failure. A caller that holds the lock already (`BUILD_LOCK_HELD_ENV=1`) builds at once.
+ */
+export async function buildUnderLock(options: {
+  repoRoot: string;
+  nodePath: string;
+  env: NodeJS.ProcessEnv;
+  run?: RunFileFn;
+  fs?: BuildFs;
+  onStep?: (step: BuildStep) => void;
+  onWaiting?: () => void;
+  /** Test seams (defaults: the real build lock, BUILD_LOCK_WAIT_MS/POLL_MS, real clock). */
+  acquire?: () => Promise<LockAttempt>;
+  waitMs?: number;
+  pollMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+}): Promise<LockedBuildResult> {
+  const build = (): Promise<BuildResult> =>
+    runBuild({
+      repoRoot: options.repoRoot,
+      nodePath: options.nodePath,
+      env: options.env,
+      ...(options.run === undefined ? {} : { run: options.run }),
+      ...(options.fs === undefined ? {} : { fs: options.fs }),
+      ...(options.onStep === undefined ? {} : { onStep: options.onStep }),
+    });
+  if (options.env[BUILD_LOCK_HELD_ENV] === '1') return build();
+  const lock = await pollLock(options.acquire ?? (() => acquireBuildLock(options.repoRoot)), {
+    waitMs: options.waitMs ?? BUILD_LOCK_WAIT_MS,
+    pollMs: options.pollMs ?? BUILD_LOCK_POLL_MS,
+    sleep: options.sleep ?? sleep,
+    now: options.now ?? (() => Date.now()),
+    ...(options.onWaiting === undefined ? {} : { onWaiting: options.onWaiting }),
+  });
+  if (lock === null) {
+    return { ok: false, step: 'lock', output: 'another build of this checkout did not finish in time' };
+  }
+  try {
+    return await build();
+  } finally {
+    await lock.release();
+  }
 }

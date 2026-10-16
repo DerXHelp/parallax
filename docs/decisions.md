@@ -1093,3 +1093,23 @@ Format: `ADR-NNN – Titel` · Datum · WP · Kontext → Entscheidung → Folge
   eines Elternprozesses sind seine Kinder tot). Ein Prozess, der nach einem erfolgreichen
   Wurzel-Kill außerhalb ihres Baums weiterläuft (Zwischenprozess vor dem Abbruch beendet), bleibt
   unberührt – wie Prozesse nach dem letzten Schnappschuss.
+
+## ADR-094 – `pnpm build` vollständig unter dem Build-Lock (schließt den offenen Punkt von ADR-092)
+- **Datum/WP:** 16.10.2026, Code-Review-Fix CR-08 (Koordinator-Freigabe: nur das Script `build`
+  in `package.json`, keine Abhängigkeiten, Lockfile unverändert)
+- **Kontext:** Nach ADR-092 lief der Vite-Schritt von `pnpm build`
+  (`pnpm run build:web && pnpm run build:server`) ohne Lock; ein `pnpm build` parallel zu einem
+  Launcher- oder E2E-Build konnte `dist/web` leeren, während der andere schrieb.
+- **Entscheidung:** `package.json` `build` → `tsx --tsconfig tsconfig.tools.json scripts/build.ts`.
+  Das Skript ruft `buildUnderLock` (`launcher/build.ts`): Build-Lock des Checkouts nehmen (belegt →
+  Meldung „another build of this checkout is running - waiting for it …“, Poll wie der Launcher),
+  dann `runBuild` mit genau den Schritten `build:web` + `build:server` (unverändert in
+  `package.json`, vom Pin-Test geprüft), Lock danach freigeben – auch bei einem Fehler. Hält der
+  Aufrufer den Lock schon (`PARALLAX_BUILD_LOCK_HELD=1`), baut es sofort. `build:web`/`build:server`
+  bleiben einzeln aufrufbar (`build:server` nimmt den Lock selbst, `build:web` nicht).
+- **Folgen:** Launcher, E2E-Setup und `pnpm build` bauen einen Checkout nie gleichzeitig. Nachweis:
+  zwei gleichzeitige `pnpm build` – der zweite wartete, bis der erste fertig war, und baute dann;
+  `dist/server.js` und `dist/web/build.json` tragen dieselbe Build-ID; Regressionstests mit
+  echtem Lock (zwei `buildUnderLock` nacheinander statt verschränkt). Die Ausgabe von Vite/esbuild
+  erscheint bei `pnpm build` nur noch im Fehlerfall (Schrittnamen und Build-ID immer).
+  `pnpm install --frozen-lockfile` bleibt grün.
