@@ -1,7 +1,9 @@
 @echo off
 rem Parallax launcher without installation (Plan "Server-Betrieb", WP-21): builds dist\ if needed,
 rem starts the server hidden in the background and opens an Edge app window - or, if Parallax
-rem already runs, only another window. Options: parallax.cmd --help (details: README "Starten").
+rem already runs, only another window. Options: parallax.cmd --help (details: README "Starten"),
+rem e.g. --port=N, --home=DIR, --print-url, --autostart (used by the autostart shortcut) and
+rem --open parallax://session/ID (used by the parallax: link handler; must be the last option).
 setlocal
 rem Never pick up programs from the current directory (cmd searches it before the PATH).
 set "NoDefaultCurrentDirectoryInExePath=1"

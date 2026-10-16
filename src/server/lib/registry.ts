@@ -1,12 +1,14 @@
 /**
- * Windows registry reads without a shell (WP-11 owns this file; R1-08 / ADR-024, Nexus ADR-021):
+ * Windows registry access without a shell (R1-08 / ADR-024, Nexus ADR-021; writes Phase 2, WP-33):
  * `reg.exe` with its absolute System32 path and an argument array (no PowerShell, no cmd), output
  * parsed language-independently. Failures (missing key, timeout, non-Windows) are never thrown –
- * the callers treat them as "nothing found".
+ * reads give "nothing found", writes (`regAddValue`/`regDeleteKey`, only below HKCU) a
+ * `{ ok: false, reason }`.
  *
  * Known limit: reg.exe prints in the OEM code page, so non-ASCII characters can arrive garbled.
  * The callers only compare/use values exactly, so a garbled value never matches (fails closed).
  */
+import { toError } from './async';
 import { runFile, systemTool, type RunFileFn } from './process';
 import { getEnvVar } from './windows';
 
@@ -41,6 +43,78 @@ export function regQuery(run: RunFileFn = runFile): RegQuery {
 /** All values of a key, see RegKeyQuery. */
 export function regKeyQuery(run: RunFileFn = runFile): RegKeyQuery {
   return (key, view) => runReg(run, ['query', key, `/reg:${String(view)}`], 1024 * 1024);
+}
+
+// ---- writes (Phase 2: protocol handler `parallax:`, ADR-109; WP-33) ----
+
+/** Result of a registry write: never thrown (the callers turn failures into host warnings). */
+export type RegWriteResult = { ok: true } | { ok: false; reason: string };
+
+/** `reg.exe add <key> (/ve | /v <name>) /t REG_SZ /d <data> /f /reg:<view>`. */
+export type RegAddValue = (
+  key: string,
+  name: string | null,
+  data: string,
+  view?: RegView,
+) => Promise<RegWriteResult>;
+
+/** `reg.exe delete <key> /f /reg:<view>` (the key with all subkeys and values). */
+export type RegDeleteKey = (key: string, view?: RegView) => Promise<RegWriteResult>;
+
+/**
+ * Writes go only below HKCU (no admin rights, never the machine) and never to the hive root;
+ * control characters are refused (an argument array has no other injection surface).
+ */
+function writableKeyIssue(key: string): string | null {
+  if (!/^HKCU\\[^\\]/i.test(key)) return 'only keys below HKCU are written';
+  for (let i = 0; i < key.length; i++) {
+    if (key.charCodeAt(i) < 0x20) return 'control character in the key';
+  }
+  return null;
+}
+
+async function runRegWrite(run: RunFileFn, args: readonly string[]): Promise<RegWriteResult> {
+  try {
+    const result = await run(systemTool('reg.exe'), args, {
+      timeoutMs: REG_TIMEOUT_MS,
+      maxOutputBytes: 64 * 1024,
+    });
+    if (result.timedOut) return { ok: false, reason: 'reg.exe timed out' };
+    if (result.exitCode === 0) return { ok: true };
+    const output = (result.stderr.trim() || result.stdout.trim()).slice(0, 300);
+    return { ok: false, reason: `reg.exe exit ${String(result.exitCode)}: ${output}` };
+  } catch (error) {
+    return { ok: false, reason: `reg.exe could not be started: ${toError(error).message}` };
+  }
+}
+
+/** REG_SZ value of an HKCU key (`name` null = the default value), see RegAddValue. */
+export function regAddValue(run: RunFileFn = runFile): RegAddValue {
+  return async (key, name, data, view = 64) => {
+    const issue = writableKeyIssue(key);
+    if (issue !== null) return { ok: false, reason: issue };
+    const target = name === null ? ['/ve'] : ['/v', name];
+    return runRegWrite(run, [
+      'add',
+      key,
+      ...target,
+      '/t',
+      'REG_SZ',
+      '/d',
+      data,
+      '/f',
+      `/reg:${String(view)}`,
+    ]);
+  };
+}
+
+/** Deletes an HKCU key with everything below it, see RegDeleteKey. */
+export function regDeleteKey(run: RunFileFn = runFile): RegDeleteKey {
+  return async (key, view = 64) => {
+    const issue = writableKeyIssue(key);
+    if (issue !== null) return { ok: false, reason: issue };
+    return runRegWrite(run, ['delete', key, '/f', `/reg:${String(view)}`]);
+  };
 }
 
 /** Expands `%NAME%` like Windows does for REG_EXPAND_SZ (unknown names stay literal). */
