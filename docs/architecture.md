@@ -1107,7 +1107,8 @@ Schlüssel, die Pipe verschwindet mit dem Prozess (kein Stale-Zustand). `busy` �
 (`SERVER_EXIT_CODES.alreadyRunning`; der Launcher wartet dann bis zur Bereitschaftsfrist auf den
 laufenden Server, R3-04). Verdrahtet in `main.ts` vor Log und erstem Store (§3.3, Schritt 1a); der
 Launcher nutzt denselben Mechanismus für „ein Launcher je Home“ (`acquireDirectoryLock`, ADR-062)
-und – mit Launcher, E2E-Setup und `pnpm build:server` – „ein Build je Checkout“
+und – mit Launcher, E2E-Setup, `pnpm build` (`scripts/build.ts` → `buildUnderLock`, beide Schritte
+unter einem Lock, ADR-094) und `pnpm build:server` – „ein Build je Checkout“
 (`launcher/build.ts` `acquireBuildLock`/`pollLock` über `acquireKeyLock`, auch für einen Checkout
 auf einem UNC-Pfad; `runBuild` setzt `PARALLAX_BUILD_LOCK_HELD=1` für seine Schritte; ADR-092).
 

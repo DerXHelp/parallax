@@ -5,9 +5,9 @@
  * The build id (same value as the web bundle, see resolveBuildId) is injected via `define`
  * (read by src/shared/build.ts) and stamped into the bundle's first line.
  *
- * CR-08 (ADR-092): runs under the build lock of the checkout (src/server/launcher/build.ts) –
- * unless its caller holds it already (`runBuild` of the launcher or the E2E setup sets
- * `BUILD_LOCK_HELD_ENV`). A build of another launcher or E2E run is waited for.
+ * CR-08 (ADR-092/094): runs under the build lock of the checkout (src/server/launcher/build.ts) –
+ * unless its caller holds it already (`runBuild` of `pnpm build`, the launcher or the E2E setup
+ * sets `BUILD_LOCK_HELD_ENV`). Run alone (`pnpm build:server`), it waits for another build.
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

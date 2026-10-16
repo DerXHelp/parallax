@@ -14,6 +14,7 @@ import {
   WEB_INDEX,
   acquireBuildLock,
   buildLockKey,
+  buildUnderLock,
   checkBuild,
   parseBundleBuildId,
   pollLock,
@@ -127,7 +128,10 @@ describe('build steps (= pnpm build)', () => {
     const pkg = z
       .object({ scripts: z.record(z.string(), z.string()) })
       .parse(JSON.parse(await readFile(path.join(repoRoot, 'package.json'), 'utf8')));
-    expect(pkg.scripts.build).toBe('pnpm run build:web && pnpm run build:server');
+    // CR-08 (ADR-094): `pnpm build` runs both steps through buildUnderLock (one build lock).
+    expect(pkg.scripts.build).toBe('tsx --tsconfig tsconfig.tools.json scripts/build.ts');
+    const script = await readFile(path.join(repoRoot, 'scripts', 'build.ts'), 'utf8');
+    expect(script).toContain('await buildUnderLock(');
     for (const step of BUILD_STEPS) {
       expect(pkg.scripts[step.script]).toBe([step.bin, ...step.args].join(' '));
     }
@@ -244,6 +248,114 @@ describe('build steps (= pnpm build)', () => {
   it('stringEnv drops undefined values', () => {
     expect(stringEnv({ A: '1', B: undefined })).toEqual({ A: '1' });
   });
+
+  it('CR-08: buildUnderLock waits for a busy lock, runs both steps under it, releases it (also on failure)', async () => {
+    const events: string[] = [];
+    const answers: LockAttempt[] = [{ kind: 'busy' }, { kind: 'busy' }];
+    const release = (): Promise<void> => {
+      events.push('release');
+      return Promise.resolve();
+    };
+    const failing = { on: false };
+    const run: RunFileFn = (_file, args) => {
+      events.push(`run ${String(args.at(-1))}`);
+      return Promise.resolve({
+        exitCode: failing.on ? 1 : 0,
+        signal: null,
+        stdout: '',
+        stderr: 'x',
+        timedOut: false,
+      });
+    };
+    const common = {
+      repoRoot: ROOT,
+      nodePath: 'n',
+      env: {},
+      run,
+      fs: toolsFs,
+      acquire: () => {
+        const next = answers.shift() ?? { kind: 'acquired' as const, release };
+        events.push(next.kind);
+        return Promise.resolve(next);
+      },
+      onWaiting: () => events.push('waiting'),
+      sleep: () => Promise.resolve(),
+    };
+    expect(await buildUnderLock(common)).toEqual({ ok: true });
+    expect(events).toEqual([
+      'busy',
+      'waiting',
+      'busy',
+      'acquired',
+      'run build',
+      'run scripts/build-server.ts',
+      'release',
+    ]);
+    events.length = 0;
+    failing.on = true;
+    const failed = await buildUnderLock(common);
+    expect(failed).toMatchObject({ ok: false, step: 'build:web' });
+    expect(events).toEqual(['acquired', 'run build', 'release']);
+    // Without the lock in time: no step at all.
+    const timedOut = await buildUnderLock({
+      ...common,
+      acquire: () => Promise.resolve({ kind: 'busy' }),
+      waitMs: 0,
+    });
+    expect(timedOut).toMatchObject({ ok: false, step: 'lock' });
+    // A caller that holds the lock (runBuild's children) builds at once.
+    const held = await buildUnderLock({
+      ...common,
+      env: { [BUILD_LOCK_HELD_ENV]: '1' },
+      acquire: () => Promise.reject(new Error('must not be called')),
+    });
+    expect(held).toMatchObject({ ok: false, step: 'build:web' });
+  });
+
+  it.runIf(process.platform === 'win32')(
+    'CR-08: two builds of one checkout at the same time are serialized by the real lock (no mixed dist)',
+    async () => {
+      const root = path.join(ROOT, `cr08-${String(process.pid)}`);
+      const steps: string[] = [];
+      const slowRun =
+        (name: string): RunFileFn =>
+        async (_file, args) => {
+          const step = String(args.at(-1));
+          steps.push(`${name} start ${step}`);
+          await new Promise((resolve) => setTimeout(resolve, 40));
+          steps.push(`${name} end ${step}`);
+          return { exitCode: 0, signal: null, stdout: '', stderr: '', timedOut: false };
+        };
+      const fsFor = (): BuildFs => ({
+        ...toolsFs,
+        readText: (file) => toolsFs.readText(path.resolve(ROOT, path.relative(root, file))),
+        isFile: (file) => toolsFs.isFile(path.resolve(ROOT, path.relative(root, file))),
+      });
+      const options = (name: string) => ({
+        repoRoot: root,
+        nodePath: 'n',
+        env: {},
+        run: slowRun(name),
+        fs: fsFor(),
+        pollMs: 10,
+      });
+      const [a, b] = await Promise.all([buildUnderLock(options('A')), buildUnderLock(options('B'))]);
+      expect([a, b]).toEqual([{ ok: true }, { ok: true }]);
+      const first = steps[0]?.slice(0, 1) ?? '';
+      const second = first === 'A' ? 'B' : 'A';
+      // One build after the other: all four events of the first, then all of the second.
+      expect(steps.map((s) => s.slice(0, 1))).toEqual([
+        first,
+        first,
+        first,
+        first,
+        second,
+        second,
+        second,
+        second,
+      ]);
+    },
+  );
 });
 
 describe('build lock (R3-04, CR-04, CR-08)', () => {
