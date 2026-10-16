@@ -13,7 +13,9 @@ Feature-Demos `#playground=transcript/<id>`. Theme und Sprache oben rechts.
 |---|---|
 | `PlaygroundApp.tsx` | Route-UI; findet Feature-Demos per `import.meta.glob('../features/*/playground.tsx', { eager: true })` |
 | `types.ts` | `PlaygroundDemo` (`{ id, title, description?, render() }`), `PlaygroundModule` (`{ demos?, slots? }`) |
-| `scenarios.ts` | Szenarien `overview` (alle 14 Anzeige-Status), `streaming` (Text-Deltas), `decisions` (drei offene Entscheidungen), `empty`, `setup`, `offline`, `signed-out`; `PLAYGROUND_ENTRIES`, `PLAYGROUND_SESSION_KEYS` |
+| `scenarios.ts` | Szenarien `overview` (alle 14 Anzeige-Status), `streaming` (Text-Deltas), `decisions` (drei offene Entscheidungen), `empty`, `setup`, `offline`, `signed-out`, `navigation`, `navigation-external`, `navigation-archived` (WP-35); `PLAYGROUND_ENTRIES`, `PLAYGROUND_SESSION_KEYS`; `ScenarioData.onCommand` (eigene Befehlsbehandlung des FakeHost) |
+| `navigation-scenario.ts` | Daten von WP-35: zwei Profile, mehrere Sessions je Projekt, Branches, Modelle, Context 12/72/91 %, angeheftet, archiviert, extern, Abo-Limits, frühere Unterhaltungen; `navigationCommands` (Konsolenbefehl, externe Konsole, Zurückholen, Unterhaltung wechseln, SESSION_BUSY bei laufendem Turn) |
+| `navigation-demos.tsx` | Demos `nav-sidebar-flat`, `nav-sidebar-grouped`, `nav-sidebar-archive`, `nav-quick-switcher`, `nav-header-menu`, `nav-conversations`, `nav-session-info`, `nav-external`, `nav-archived` |
 | `PlaygroundScenario.tsx` | `<PlaygroundScenario scenario="…">` (für Demos), `startScenario()` (Tests) |
 | `demos.tsx` | Demos von WP-14 (Shell-Szenarien, Status-Icons, Primitives) |
 | `route.ts` | `#playground`-Parameter (klein, auch im Build importiert) |

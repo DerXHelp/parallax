@@ -1,6 +1,7 @@
 import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { hostStateSchema, sessionDetailSchema, sessionSummarySchema } from '@shared/model';
 import { parseServerMessage, sessionOpSchema } from '@shared/protocol';
 import { sampleSessionSnapshot, sampleSettings } from '@shared/samples';
 import { unregisterConnection } from '@web/state/connection';
@@ -24,6 +25,15 @@ describe('scenarios', () => {
   it('build schema-valid data for every scenario', () => {
     for (const id of SCENARIO_IDS) {
       const data = SCENARIOS[id].build(Date.parse('2026-10-15T08:00:00.000Z'), sampleSettings());
+      expect(hostStateSchema.safeParse(data.hostState).success, id).toBe(true);
+      for (const summary of data.summaries) {
+        expect(sessionSummarySchema.safeParse(summary).success, `${id} ${summary.entryId}`).toBe(true);
+      }
+      for (const snapshot of data.sessions) {
+        expect(sessionDetailSchema.safeParse(snapshot.detail).success, `${id} ${snapshot.entryId}`).toBe(
+          true,
+        );
+      }
       for (const snapshot of data.sessions) {
         for (const item of snapshot.items)
           expect(sessionOpSchema.safeParse({ op: 'item.upsert', item }).success).toBe(true);
@@ -60,6 +70,23 @@ describe('FakeHost', () => {
 });
 
 describe('PlaygroundApp', () => {
+  it('lists the navigation demos of WP-35', () => {
+    window.history.replaceState(null, '', '/#playground=ui-status-icons');
+    render(<PlaygroundApp />);
+    const nav = screen.getByRole('navigation', { name: 'Demos' });
+    for (const title of [
+      'Navigation – Sidebar flat (pinned first, limits at the bottom)',
+      'Navigation – Sidebar grouped by project',
+      'Navigation – Archive view (restore)',
+      'Navigation – Quick switcher (Ctrl+K)',
+      'Navigation – Header menu “…”',
+      'Navigation – Banner: open in an external console',
+      'Navigation – Banner: archived session',
+    ]) {
+      expect(within(nav).getByText(title)).toBeTruthy();
+    }
+  });
+
   it('lists the demos and opens a deep link', async () => {
     window.history.replaceState(null, '', '/#playground=ui-status-icons');
     const user = userEvent.setup();
