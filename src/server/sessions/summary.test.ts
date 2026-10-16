@@ -116,8 +116,20 @@ describe('AI title (C.6, F.8)', () => {
   it.each<[string, BackendSessionInfo | null, ReturnType<typeof current>, string | null]>([
     ['AI title taken over', info({}), current('prompt'), 'Button color question'],
     ['no info', null, current('prompt'), null],
-    ['custom title in the CLI', info({ customTitle: 'X' }), current('prompt'), null],
+    // WP22-02: the SDK reports the AI title as customTitle too – only titleSource 'custom' protects.
+    [
+      'customTitle of the SDK (custom ‖ sidecar ‖ aiTitle)',
+      info({ customTitle: 'X' }),
+      current('prompt'),
+      'X',
+    ],
     ['own custom title', info({}), current('custom'), null],
+    [
+      'own custom title, also when the SDK reports one',
+      info({ customTitle: 'Y' }),
+      current('custom', 'Z'),
+      null,
+    ],
     [
       'summary = first prompt (fallback)',
       info({ summary: 'Use the AskUserQuestion tool exactly once' }),
@@ -141,6 +153,39 @@ describe('AI title (C.6, F.8)', () => {
     ],
   ])('%s', (_name, i, c, expected) => {
     expect(aiTitleFrom(i, c)).toBe(expected);
+  });
+
+  // WP22-02: getSessionInfo() answers of the live acceptance (SDK 0.3.296, CLI 2.1.300) – sessions
+  // never renamed, the transcript holds only `ai-title` entries.
+  it.each<[string, BackendSessionInfo, string]>([
+    [
+      'second session of the main run',
+      {
+        sessionId: '415e6ece-41d4-4a99-b48e-e27176001340',
+        summary: 'PowerShell Set-Content b.txt',
+        customTitle: 'PowerShell Set-Content b.txt',
+        firstPrompt:
+          'Fuehre mit dem PowerShell-Tool genau diesen Befehl aus: Set-Content -Path b.txt -Value b',
+        lastModified: 1792098863134,
+      },
+      'PowerShell Set-Content b.txt',
+    ],
+    [
+      'live smoke run 3',
+      {
+        sessionId: 'ffc6667b-77e7-4eb0-ac5d-613b0295649b',
+        summary: 'Datei test.txt mit Inhalt hallo',
+        customTitle: 'Datei test.txt mit Inhalt hallo',
+        firstPrompt: 'lege test.txt mit dem Inhalt hallo an',
+        lastModified: 1792100750988,
+      },
+      'Datei test.txt mit Inhalt hallo',
+    ],
+  ])('real answer (%s): the AI title replaces the prompt title', (_name, i, expected) => {
+    const promptTitle = i.firstPrompt ?? '';
+    expect(aiTitleFrom(i, { title: promptTitle, titleSource: 'prompt', promptTitle })).toBe(expected);
+    // … but never a title the user gave (/rename, session.rename).
+    expect(aiTitleFrom(i, { title: 'WP22 Live-Abnahme', titleSource: 'custom', promptTitle })).toBeNull();
   });
 
   it('isPromptFallback without anything to compare is false', () => {

@@ -67,9 +67,10 @@ describe('FakeHistoryStore', () => {
       message: { role: 'user', content: [{ type: 'text', text: 'Do it' }] },
     });
     store.setAiTitle(S, 'Fake: Do it');
+    // Like SDK 0.3.296 (WP22-02): the AI title also comes as customTitle.
     expect(toSessionInfo(store.info(S))).toMatchObject({
       summary: 'Fake: Do it',
-      customTitle: null,
+      customTitle: 'Fake: Do it',
       firstPrompt: 'Do it',
     });
     store.rename(S, 'Mine');
