@@ -112,7 +112,7 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 - Doku nach R1/R2 nachgezogen (`d961201`); offen: `WP-13b.md` beschreibt noch den Kinder-Pfad (historisch).
 
 ## Nächste Schritte
-1. WP-22 inkl. Fixes gemergt. Offen: Doku-Nachzug (CLAUDE.md/test-README „falls nicht gesetzt“, sdk-findings F.2/F.14), abschließendes `/code-review` über die nicht reviewten Änderungen seit R3, dann Phase-1-Abschluss mit dem Nutzer.
+1. WP-22 inkl. Fixes gemergt, Doku nachgezogen (`1f9a78e`). Läuft: `/code-review` (high) über `323a52f..main`. Danach letzte Fix-Runde (inkl. `--toasts` wird vom Launcher nicht weitergereicht, `lib/toast.ts` in Ownership-Tabellen, Kosten nach Resume F.14 offen), dann Phase-1-Abschluss mit dem Nutzer.
 2. Danach Welle 1a (10, 11, 12, 14) in Worktrees `.worktrees/wp-xx`
    auf Branches `wp/xx`, jeweils `pnpm install --frozen-lockfile` im Worktree.
 3. Nach ≥ 24 h: `react`/`react-dom` 19.3.1 prüfen und nachziehen (Koordinator, siehe WP-00.md).
