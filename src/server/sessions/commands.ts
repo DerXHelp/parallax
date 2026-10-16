@@ -1,20 +1,26 @@
 /**
- * Phase-1 commands of the engine (WP-13 §3.5.6; WP-02 §7.5, vorrangig architecture §5.2). General
- * rules: shutdown running → SERVER_SHUTTING_DOWN; unknown entry → ENTRY_NOT_FOUND; runState
- * `external` → SESSION_EXTERNAL (Phase 2+); unexpected errors → logged, INTERNAL_ERROR. Results
- * match `commandResultSchemas` (the hub checks them again).
+ * Commands of the engine (WP-13 §3.5.6; WP-02 §7.5, vorrangig architecture §5.2; Phase 2 WP-30
+ * §4.12). General rules: shutdown running → SERVER_SHUTTING_DOWN; unknown entry → ENTRY_NOT_FOUND;
+ * runState `external` → only the console-safe commands, else SESSION_EXTERNAL; archived entry →
+ * only the read-mode commands, else SESSION_ARCHIVED (ADR-106); host commands (`profile.*`,
+ * `fs.listDirectory`) go to the `HostCommandHandler` with that name (ADR-101), none →
+ * NOT_IMPLEMENTED; unexpected errors → logged, INTERNAL_ERROR. Results match
+ * `commandResultSchemas` (the hub checks them again).
  */
-import type { ClientId, ProfileId } from '@shared/common';
+import { LIMITS, type ClientId, type ProfileId } from '@shared/common';
 import { makeError } from '@shared/errors';
-import { currentSessionId, type Entry, type PlanDecision } from '@shared/model';
+import { currentSessionId, type Entry, type PlanDecision, type Settings } from '@shared/model';
 import {
   isHostCommand,
   type Command,
   type CommandOf,
   type CommandResult,
+  type HostCommand,
   type HostCommandName,
+  type SessionOp,
 } from '@shared/protocol';
-import { CommandError, type CommandContext } from '../sync/ports';
+import { openDecisionCount } from '@shared/status';
+import { CommandError, type CommandContext, type HostCommandHandler } from '../sync/ports';
 import { commandError, gaugeOf, type EngineCore, type EntryState } from './entryState';
 import { catalogOrFallback, toModelCatalog } from './models';
 import { closeRuntime, deliverPrompt, startRuntime } from './runtime';
@@ -29,12 +35,35 @@ export interface CommandEngine {
   runningCount(): number;
   /** server.shutdown: flag + `setImmediate(onShutdownRequested)` after the ack. */
   requestShutdown(): void;
+  /** ADR-101: handlers of the host commands (names disjoint). */
+  readonly hostCommands: readonly HostCommandHandler[];
+  /** After a successful settings.update: host state, sleep re-plan, `onSettingsChanged`. */
+  settingsChanged(prev: Settings, next: Settings): void;
 }
 
 type EntryCommand = Exclude<
   Command,
   { name: 'session.create' | 'settings.update' | 'server.shutdown' | HostCommandName }
 >;
+type EntryCommandName = EntryCommand['name'];
+
+/** WP-30 §4.12: an archived entry is read-only until it is restored. */
+const ARCHIVED_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryCommandName>([
+  'session.setArchived',
+  'session.setPinned',
+  'session.rename',
+  'transcript.loadEarlier',
+  'session.consoleCommand',
+]);
+
+/** WP-30 §4.12: open in an external console – never a second writer on the Claude session. */
+const EXTERNAL_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryCommandName>([
+  'transcript.loadEarlier',
+  'session.reclaim',
+  'session.consoleCommand',
+  'session.setPinned',
+  'session.rename',
+]);
 
 export async function handleCommand(
   engine: CommandEngine,
@@ -47,8 +76,9 @@ export async function handleCommand(
       case 'session.create':
         return await createSession(engine, cmd, ctx.clientId);
       case 'settings.update': {
+        const prev = engine.core.stores.settings.get();
         const settings = engine.core.stores.settings.update(cmd.patch);
-        engine.core.publishHostState();
+        engine.settingsChanged(prev, settings);
         return { settings } satisfies CommandResult<'settings.update'>;
       }
       case 'server.shutdown': {
@@ -57,8 +87,7 @@ export async function handleCommand(
         return { sessionsStopped } satisfies CommandResult<'server.shutdown'>;
       }
       default:
-        // Phase 2 (ADR-101): host commands go to HostCommandHandlers – routing follows in WP-31.
-        if (isHostCommand(cmd)) throw notImplemented(cmd.name);
+        if (isHostCommand(cmd)) return await hostCommand(engine, cmd, ctx);
         return await entryCommand(engine, cmd, ctx.clientId);
     }
   } catch (error) {
@@ -72,10 +101,35 @@ function notImplemented(name: string): CommandError {
   return commandError('NOT_IMPLEMENTED', { command: name });
 }
 
+/** ADR-101: the handler that lists the name; its CommandErrors pass through unchanged. */
+async function hostCommand(engine: CommandEngine, cmd: HostCommand, ctx: CommandContext): Promise<unknown> {
+  const handler = engine.hostCommands.find((h) => h.names.includes(cmd.name));
+  if (handler === undefined) throw notImplemented(cmd.name);
+  return handler.handle(cmd, ctx);
+}
+
 /** C.3 / R0-09: `bypassPermissions` only if the profile allows it. */
 function assertModeAllowed(core: EngineCore, profileId: ProfileId, mode: string | null | undefined): void {
   if (mode === 'bypassPermissions' && !core.allowsBypass(profileId)) {
     throw commandError('MODE_NOT_ALLOWED', { mode, profileId });
+  }
+}
+
+/**
+ * WP-30 §4.12 "ohne Arbeit" (archive, switch, console): no start/turn running, no open decision,
+ * nothing queued, no background task. Call inside the lifecycle lock (no start in between).
+ */
+function assertWithoutWork(s: EntryState): void {
+  const f = s.facts;
+  if (
+    f.runState === 'starting' ||
+    f.runState === 'working' ||
+    openDecisionCount(f) > 0 ||
+    s.queue.count() > 0 ||
+    f.queuedPrompts > 0 ||
+    f.backgroundTasks > 0
+  ) {
+    throw commandError('SESSION_BUSY', { entryId: s.id });
   }
 }
 
@@ -163,8 +217,11 @@ async function createSession(
 async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: ClientId): Promise<unknown> {
   const s = engine.state(cmd.entryId);
   if (s === undefined) throw commandError('ENTRY_NOT_FOUND', { entryId: cmd.entryId });
-  if (s.facts.runState === 'external' && cmd.name !== 'transcript.loadEarlier') {
+  if (s.facts.runState === 'external' && !EXTERNAL_ALLOWED.has(cmd.name)) {
     throw commandError('SESSION_EXTERNAL', { entryId: s.id });
+  }
+  if (s.entry.archived && !ARCHIVED_ALLOWED.has(cmd.name)) {
+    throw commandError('SESSION_ARCHIVED', { entryId: s.id });
   }
   const core = engine.core;
   switch (cmd.name) {
@@ -203,10 +260,26 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
       s.patch((e) => ({ ...e, effort: cmd.effort }));
       return {} satisfies CommandResult<'session.setEffort'>;
     }
-    case 'session.setFastMode':
+    case 'session.setFastMode': {
+      // §4.12: running → flag setting first (failure: CLAUDE_CONTROL_FAILED, nothing stored);
+      // dormant → stored, the next start passes it (StartSessionRequest.fastMode).
+      const runtime = running(s);
+      if (runtime !== null) {
+        await controlCall(
+          'applyFlagSettings',
+          () => runtime.agent.applyFlagSettings({ fastMode: cmd.enabled }),
+          core,
+          s.id,
+        );
+      }
+      s.patch((e) => (e.fastMode === cmd.enabled ? e : { ...e, fastMode: cmd.enabled }));
+      return {} satisfies CommandResult<'session.setFastMode'>;
+    }
     case 'session.setPinned':
+      s.patch((e) => (e.pinned === cmd.pinned ? e : { ...e, pinned: cmd.pinned }));
+      return {} satisfies CommandResult<'session.setPinned'>;
     case 'session.setArchived':
-      throw notImplemented(cmd.name);
+      return setArchived(core, s, cmd.archived);
     case 'session.rename':
       return rename(core, s, cmd.title);
     case 'session.close':
@@ -240,8 +313,9 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
       return getContext(core, s, cmd.detail);
     case 'session.refreshModels':
       return refreshModels(core, s);
-    // Phase 2 (WP-30 §4.12): implemented by WP-31 (switchConversation) and WP-34 (the others).
     case 'session.switchConversation':
+      return switchConversation(core, s, cmd.conversationId, clientId);
+    // Phase 2 (WP-30 §4.12): implemented by WP-34.
     case 'session.openExternal':
     case 'session.reclaim':
     case 'session.consoleCommand':
@@ -292,6 +366,34 @@ async function interrupt(core: EngineCore, s: EntryState): Promise<CommandResult
   return { stillQueued: [...result.stillQueued] };
 }
 
+/**
+ * ADR-106: `true` only without work (SESSION_BUSY) – ends a running process, clears the entry's
+ * notifications and a scheduled "continue"; `false` only clears the flag. Both idempotent.
+ */
+async function setArchived(
+  core: EngineCore,
+  s: EntryState,
+  archived: boolean,
+): Promise<CommandResult<'session.setArchived'>> {
+  if (!archived) {
+    s.patch((e) => (e.archived ? { ...e, archived: false } : e));
+    return {};
+  }
+  if (s.entry.archived) return {};
+  s.cancelRetry();
+  await s.lifecycle.run(async () => {
+    assertWithoutWork(s);
+    // The flag first: from here on every other command answers SESSION_ARCHIVED (also one that
+    // waits for this lock – startRuntime refuses archived entries).
+    s.patch((e) => ({ ...e, archived: true, continueAt: null }));
+    if (s.facts.wakeupAt !== null) s.reduce({ type: 'wakeup', at: null });
+    await closeRuntime(s, core, 'archive');
+  });
+  s.cancelRetry();
+  core.clearNotifications(s.id);
+  return {};
+}
+
 async function rename(
   core: EngineCore,
   s: EntryState,
@@ -309,6 +411,8 @@ async function rename(
   }
   const next = capTitle(title);
   s.patch((e) => ({ ...e, title: next, titleSource: 'custom' }));
+  // §4.12: in an external console only the local title (the console owns the Claude session).
+  if (s.facts.runState === 'external') return {};
   if (running(s) !== null) {
     renameRunning(core, s, next);
     return {};
@@ -319,7 +423,7 @@ async function rename(
       return;
     }
     const sessionId = currentSessionId(s.entry);
-    if (sessionId === null) return;
+    if (sessionId === null || s.facts.runState === 'external') return;
     // R2-08: renameSession writes the Claude JSONL – an orphaned claude.exe may still write it.
     await s.orphanCleanup;
     try {
@@ -341,6 +445,75 @@ function renameRunning(core: EngineCore, s: EntryState, title: string): void {
   } catch (error) {
     core.log.warn({ err: error, entryId: s.id }, '/rename prompt could not be sent – the local title stays');
   }
+}
+
+/**
+ * ADR-107 / §4.12: an earlier conversation becomes the current one again. Target ∈ conversations
+ * (CONVERSATION_NOT_FOUND) with a Claude session (SESSION_NOT_STARTED), without work
+ * (SESSION_BUSY); the current one already → no-op. The process is closed, the current conversation
+ * ends with `switched` (its title saved), the target moves to the end (`endedAt/endReason` null);
+ * ops: `conversation.reset{trigger 'switch', hasEarlier}` + the target's log tail as `item.upsert`
+ * + `detail.patch{conversationId, conversations}`. Title: not `custom` → the target's title. The
+ * next prompt resumes the target's Claude session (`currentSessionId`).
+ */
+async function switchConversation(
+  core: EngineCore,
+  s: EntryState,
+  conversationId: string,
+  clientId: ClientId,
+): Promise<CommandResult<'session.switchConversation'>> {
+  s.cancelRetry();
+  await s.lifecycle.run(async () => {
+    const target = s.entry.conversations.find((c) => c.id === conversationId);
+    if (target === undefined) throw commandError('CONVERSATION_NOT_FOUND', { conversationId });
+    const previous = s.conversation();
+    if (target.id === previous.id) return;
+    if (target.sessionId === null) throw commandError('SESSION_NOT_STARTED', { entryId: s.id });
+    assertWithoutWork(s);
+    // Read first: a failing read changes nothing.
+    const tail = await core.stores.transcripts.readTail(s.id, target.id, LIMITS.snapshotItems);
+    await closeRuntime(s, core, 'switch');
+    // Expired cards (A.10) belong to the conversation that is left.
+    s.broker.closeExpired(clientId);
+    const at = core.now().toISOString();
+    const keepCustom = s.entry.titleSource === 'custom';
+    s.patch((e) => ({
+      ...e,
+      conversations: [
+        ...e.conversations
+          .filter((c) => c.id !== target.id)
+          .map((c) =>
+            c.id === previous.id
+              ? { ...c, endedAt: at, endReason: 'switched' as const, title: e.title === '' ? null : e.title }
+              : c,
+          ),
+        { ...target, endedAt: null, endReason: null },
+      ],
+      title: keepCustom ? e.title : (target.title ?? ''),
+      titleSource: keepCustom ? 'custom' : target.title === null ? 'none' : 'ai',
+      // The gauge belonged to the conversation that was left (like /clear).
+      context: null,
+      contextPct: null,
+    }));
+    s.promptTitle = null;
+    s.pendingRename = null;
+    s.resetInTurn = false;
+    s.lastSdkMaxTokens = null;
+    const ops: SessionOp[] = [
+      {
+        op: 'conversation.reset',
+        conversationId: target.id,
+        previousConversationId: previous.id,
+        trigger: 'switch',
+        hasEarlier: tail.hasEarlier,
+      },
+      ...tail.items.map((item): SessionOp => ({ op: 'item.upsert', item })),
+      { op: 'detail.patch', patch: { conversationId: target.id, conversations: s.entry.conversations } },
+    ];
+    // The tail is already in the target's log.
+    s.emit(ops, { log: false });
+  });
+  return {};
 }
 
 async function respond(

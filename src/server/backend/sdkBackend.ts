@@ -294,7 +294,7 @@ class SdkSession implements AgentSession {
     }
     this.q = q;
     void this.pump(q);
-    const flags = flagSettingsAfterStart(req.launch);
+    const flags = flagSettingsAfterStart(req);
     if (flags !== null) void this.applyAfterReady(q, flags);
   }
 
@@ -316,13 +316,19 @@ class SdkSession implements AgentSession {
     }
   }
 
-  /** C.1: settings file + profile autoCompactWindow → flag settings once the CLI is ready. */
-  private async applyAfterReady(q: SdkQueryHandle, flags: { autoCompactWindow: number }): Promise<void> {
+  /**
+   * C.1 (+ Phase 2 fast mode): settings file + profile autoCompactWindow / entry fast mode → flag
+   * settings once the CLI is ready.
+   */
+  private async applyAfterReady(
+    q: SdkQueryHandle,
+    flags: { autoCompactWindow?: number; fastMode?: boolean },
+  ): Promise<void> {
     const { controlMs, readyMs } = this.ctx.timeouts;
     try {
       await withTimeout(q.supportedModels(), readyMs, 'supportedModels');
       await withTimeout(q.applyFlagSettings(flags), controlMs, 'applyFlagSettings');
-      this.log.info(flags, 'autoCompactWindow applied as flag setting');
+      this.log.info(flags, 'flag settings applied after the start');
     } catch (error) {
       if (this.exitSent || this.shutdownPromise !== null) return;
       this.emitError('control', error);

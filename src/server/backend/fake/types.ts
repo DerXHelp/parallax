@@ -110,6 +110,8 @@ export interface FakeScriptState {
   model: string;
   permissionMode: PermissionMode;
   effort: EffortLevel | null;
+  /** Phase 2: StartSessionRequest.fastMode, changed by applyFlagSettings({fastMode}); null = CLI default. */
+  fastMode: boolean | null;
   turns: number;
 }
 
