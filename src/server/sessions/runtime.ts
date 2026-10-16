@@ -14,6 +14,7 @@ import { openDecisionCount } from '@shared/status';
 import type { AgentSession, BackendEvent } from '../backend/types';
 import type { LaunchSpec } from '../claude/ports';
 import { CommandError } from '../sync/ports';
+import { NO_ATTACHMENTS, promptContent, type PromptAttachments } from './attachments';
 import { toSlashCommands } from './commandCatalog';
 import { commandError, errorMessage, errorPayloadOf, type EngineCore, type EntryState } from './entryState';
 import { toModelCatalog } from './models';
@@ -676,12 +677,15 @@ export async function closeRuntime(
 /**
  * Sends one prompt to the running process (§3.5.6 sendPrompt): `/rename X` → pendingRename,
  * `now` cancels open main-agent decisions, registerPrompt BEFORE send (F.9), queue `sending`.
+ * Phase 2 (ADR-103): checked image attachments go first as base64 blocks; the `user_message` item
+ * and the queue entry carry their BlobRefs.
  */
 export function deliverPrompt(
   s: EntryState,
   core: EngineCore,
   text: string,
   priority: PromptPriority,
+  attachments: PromptAttachments = NO_ATTACHMENTS,
 ): string {
   const runtime = s.runtime;
   if (runtime === null || !runtime.alive || runtime.closing) {
@@ -694,18 +698,18 @@ export function deliverPrompt(
     s.broker.cancel('main', 'interrupted', 'deny');
   }
   const at = core.now();
-  runtime.normalizer.registerPrompt({ messageUuid, text, attachments: [], priority, at });
+  runtime.normalizer.registerPrompt({ messageUuid, text, attachments: [...attachments.refs], priority, at });
   s.queue.add({
     messageUuid,
     text: core.capText(text),
-    attachments: [],
+    attachments: [...attachments.refs],
     priority,
     queuedAt: at.toISOString(),
   });
   s.publishQueue();
   runtime.sentSinceStart = true;
   try {
-    runtime.agent.send({ uuid: messageUuid, content: [{ type: 'text', text }], priority });
+    runtime.agent.send({ uuid: messageUuid, content: promptContent(text, attachments), priority });
   } catch (error) {
     core.log.warn({ err: error, entryId: s.id }, 'send() refused the prompt');
     if (s.queue.remove(messageUuid)) s.publishQueue();

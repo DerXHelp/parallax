@@ -8,6 +8,7 @@
 import { realSetImmediate } from '../lib/async';
 import type { FixtureEvent, ParsedFixture } from './fixture';
 import { mergeHistory, toHistoryMessages, toSessionInfo } from './history/parse';
+import { FAKE_CONSOLE_PROMPT, consoleTurnMessages } from './fake/console';
 import { randomIds } from './fake/dsl';
 import { createFakeHistoryStore } from './fake/history';
 import { interactiveScenario } from './fake/interactive';
@@ -32,6 +33,7 @@ export { createFakeHistoryStore } from './fake/history';
 export { interactiveScenario } from './fake/interactive';
 export { SessionStopped, TurnInterrupted } from './fake/common';
 export { randomIds, sequentialIds } from './fake/dsl';
+export { FAKE_CONSOLE_PROMPT, fakeConsoleAnswer } from './fake/console';
 
 export const DEFAULT_FAKE_PID_BASE = 40_000;
 export const DEFAULT_FAKE_MAX_DELAY_MS = 3_000;
@@ -143,6 +145,12 @@ export function createFakeBackend(options: FakeBackendOptions = {}): FakeBackend
       live?.diagnostic('rename-running', null, `renameSession on the running session ${req.sessionId}`);
       history.rename(req.sessionId, req.title);
       return Promise.resolve();
+    },
+
+    simulateConsoleTurn(sessionId, at, text = FAKE_CONSOLE_PROMPT) {
+      for (const message of consoleTurnMessages({ sessionId, at, text, ids })) {
+        history.record(sessionId, message);
+      }
     },
 
     async dispose() {

@@ -278,7 +278,7 @@ describe('archive and pin (ADR-106, WP-30 §4.12)', () => {
     for (const cmd of blocked) {
       expect([cmd.name, (await h.cmdError(cmd)).code]).toEqual([cmd.name, 'SESSION_ARCHIVED']);
     }
-    // Allowed: pin, rename, loadEarlier; consoleCommand follows in WP-34.
+    // Allowed: pin, rename, loadEarlier, consoleCommand (WP-34).
     await h.cmd({ name: 'session.setPinned', entryId, pinned: true });
     await h.cmd({ name: 'session.rename', entryId, title: 'Archived work' });
     const entry = h.stores.registry.get(entryId);
@@ -290,7 +290,9 @@ describe('archive and pin (ADR-106, WP-30 §4.12)', () => {
       beforeOrder: 100,
       limit: 10,
     });
-    expect((await h.cmdError({ name: 'session.consoleCommand', entryId })).code).toBe('NOT_IMPLEMENTED');
+    const copy = await h.cmd({ name: 'session.consoleCommand', entryId });
+    expect(copy.sessionId).toBe(h.summary(entryId).sessionId);
+    expect(copy.command).toContain('--resume');
     expect(h.summary(entryId)).toMatchObject({ pinned: true, title: 'Archived work', archived: true });
     expect(h.backend.starts).toHaveLength(1);
 
