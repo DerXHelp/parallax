@@ -146,9 +146,22 @@ export function createMemorySessionSource(options: { host?: HostState } = {}): M
       case 'session.setPinned':
       case 'session.setArchived':
         return {};
+      // Phase 2 commands (WP-30) included: tests answer them via their own handler.
       case 'decision.respond':
       case 'session.getContext':
       case 'session.refreshModels':
+      case 'session.switchConversation':
+      case 'session.openExternal':
+      case 'session.reclaim':
+      case 'session.consoleCommand':
+      case 'session.continueAfterLimit':
+      case 'profile.get':
+      case 'profile.save':
+      case 'profile.delete':
+      case 'profile.setDefault':
+      case 'profile.test':
+      case 'profile.validate':
+      case 'fs.listDirectory':
         throw new CommandError(makeError('NOT_IMPLEMENTED', { command: cmd.name }));
     }
   }

@@ -55,6 +55,11 @@ describe('createProfileStore (Phase 1)', () => {
       builtin: true,
       allowsBypass: false,
       claude: uncheckedClaudeStatus(),
+      // Phase 2 contract fields (WP-30); issues/entryCount are filled later (WP-32/WP-31).
+      defaults: { model: null, permissionMode: null, effort: null },
+      configDir: null,
+      issues: [],
+      entryCount: 0,
     });
     expect(profileSummarySchema.parse(summary)).toEqual(summary);
   });

@@ -7,6 +7,7 @@ import { z } from 'zod';
 import {
   LIMITS,
   blobIdSchema,
+  claudeSessionIdSchema,
   clientIdSchema,
   cmdIdSchema,
   conversationIdSchema,
@@ -23,12 +24,17 @@ import {
 } from './common';
 import { errorPayloadSchema, makeError, type ErrorPayload } from './errors';
 import {
+  claudeInstallStatusSchema,
   contextBreakdownSchema,
   decisionOutcomeSchema,
   decisionResponseSchema,
   decisionSchema,
+  fsListingSchema,
   hostStateSchema,
   modelOptionSchema,
+  profileInputSchema,
+  profileIssueSchema,
+  profileSchema,
   sessionDetailPatchSchema,
   sessionDetailSchema,
   sessionSummarySchema,
@@ -38,8 +44,12 @@ import {
 } from './model';
 import { notificationKindSchema } from './status';
 
-/** Bump rules: docs/wp/WP-02.md §13 (not for new optional fields, server message types or commands). */
-export const PROTOCOL_VERSION = 1;
+/**
+ * Bump rules: docs/wp/WP-02.md §13 (not for new optional fields, server message types or commands).
+ * 2 (Phase 2, ADR-100): new error codes, the system event `handoff` and new commands are members of
+ * closed unions a v1 client cannot parse; with several hosts build ids differ legitimately.
+ */
+export const PROTOCOL_VERSION = 2;
 /**
  * A rejected upgrade (cookie, Origin, Host, Sec-Fetch-Site) is an HTTP 401/403 with an
  * `ErrorPayload` body – the browser only sees close 1006, so the client asks
@@ -150,6 +160,11 @@ export const sessionOpSchema = z.discriminatedUnion('op', [
     conversationId: conversationIdSchema,
     previousConversationId: conversationIdSchema,
     trigger: z.string().nullable(),
+    /**
+     * Phase 2 (ADR-107): the new current conversation already has older items (switch to an earlier
+     * conversation) – the engine follows with item.upserts of its tail. Producers always set it (R0-28).
+     */
+    hasEarlier: z.boolean().default(false),
   }),
   /** New, or → expired. */
   z.object({ op: z.literal('decision.upsert'), decision: decisionSchema }),
@@ -210,10 +225,10 @@ export const sessionUnavailableSchema = z.object({
 export const promptInputSchema = z
   .object({
     text: z.string().max(LIMITS.promptChars),
-    /** Images/PDF, uploaded via HTTP before (Phase 1: NOT_IMPLEMENTED). */
+    /** Images uploaded via `POST /api/attachments` before (Phase 2, ADR-103). */
     attachments: z
       .array(z.object({ blobId: blobIdSchema }))
-      .max(20)
+      .max(LIMITS.attachmentsMax)
       .default([]),
   })
   .refine((p) => p.text.trim() !== '' || p.attachments.length > 0, { message: 'empty prompt' });
@@ -296,11 +311,63 @@ export const commandSchema = z.discriminatedUnion('name', [
   /** Only the given fields change (no defaults applied). */
   z.object({ name: z.literal('settings.update'), patch: settingsPatchSchema }),
   z.object({ name: z.literal('server.shutdown') }),
+  // ---- Phase 2 (WP-30 §4.6; rules: architecture §5.2) ----
+  /** Make an earlier conversation of the entry current again (ADR-107). */
+  z.object({
+    name: z.literal('session.switchConversation'),
+    entryId: entryIdSchema,
+    conversationId: conversationIdSchema,
+  }),
+  /** Close the SDK query and run `claude --resume <id>` in a visible console (ADR-104). */
+  z.object({ name: z.literal('session.openExternal'), entryId: entryIdSchema }),
+  /** Take the session back from the external console (only after the console ended). */
+  z.object({ name: z.literal('session.reclaim'), entryId: entryIdSchema }),
+  /** PowerShell line for "copy console command"; changes nothing. */
+  z.object({ name: z.literal('session.consoleCommand'), entryId: entryIdSchema }),
+  /** enabled: send "continue" at rateLimitedUntil (now if past); false: cancel (ADR-112). */
+  z.object({ name: z.literal('session.continueAfterLimit'), entryId: entryIdSchema, enabled: z.boolean() }),
+  z.object({ name: z.literal('profile.get'), profileId: profileIdSchema }),
+  z.object({ name: z.literal('profile.save'), profile: profileInputSchema }),
+  z.object({ name: z.literal('profile.delete'), profileId: profileIdSchema }),
+  z.object({ name: z.literal('profile.setDefault'), profileId: profileIdSchema }),
+  z.object({ name: z.literal('profile.test'), profileId: profileIdSchema }),
+  /** Findings of an unsaved input (live validation in the editor); writes nothing. */
+  z.object({ name: z.literal('profile.validate'), profile: profileInputSchema }),
+  /** Folder browser (ADR-119); `path: null` = the roots (drives + user folder). */
+  z.object({
+    name: z.literal('fs.listDirectory'),
+    path: z.string().min(1).max(LIMITS.pathChars).nullable(),
+    showHidden: z.boolean().default(false),
+  }),
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export type CommandName = Command['name'];
 /** The command object of one name, e.g. `CommandOf<'decision.respond'>`. */
 export type CommandOf<N extends CommandName> = Extract<Command, { name: N }>;
+
+/**
+ * Commands that concern the host, not one session (ADR-101): the engine routes them to the
+ * HostCommandHandlers (src/server/sync/ports.ts) of the profile store (WP-32) and the folder
+ * browser (WP-33).
+ */
+export const HOST_COMMAND_NAMES = [
+  'profile.get',
+  'profile.save',
+  'profile.delete',
+  'profile.setDefault',
+  'profile.test',
+  'profile.validate',
+  'fs.listDirectory',
+] as const satisfies readonly CommandName[];
+export type HostCommandName = (typeof HOST_COMMAND_NAMES)[number];
+export type HostCommand = Extract<Command, { name: HostCommandName }>;
+
+const HOST_COMMANDS: ReadonlySet<string> = new Set(HOST_COMMAND_NAMES);
+
+/** Is this a host command (no entryId, routed to a HostCommandHandler)? */
+export function isHostCommand(cmd: Command): cmd is HostCommand {
+  return HOST_COMMANDS.has(cmd.name);
+}
 
 /** Every command is its own message; the server answers exactly once with `ack`. */
 export const cmdMessageSchema = z.object({ type: z.literal('cmd'), cmdId: cmdIdSchema, cmd: commandSchema });
@@ -327,6 +394,24 @@ export const commandResultSchemas = {
   'settings.update': z.object({ settings: settingsSchema }),
   /** R0-19: the ack comes first, so this is the number of sessions TO stop (counted before closing). */
   'server.shutdown': z.object({ sessionsStopped: z.number().int().nonnegative() }),
+  'session.switchConversation': z.object({}),
+  'session.openExternal': z.object({ pid: z.number().int().positive().nullable() }),
+  'session.reclaim': z.object({ importedItems: z.number().int().nonnegative() }),
+  /** PowerShell line (cwd, explicit profile env, exe, args) and the Claude session id. */
+  'session.consoleCommand': z.object({ command: z.string(), sessionId: claudeSessionIdSchema }),
+  'session.continueAfterLimit': z.object({ continueAt: isoDateTimeSchema.nullable() }),
+  /** The full profile INCLUDING env values – only in the ack to the asking window. */
+  'profile.get': z.object({
+    profile: profileSchema,
+    issues: z.array(profileIssueSchema),
+    entryCount: z.number().int().nonnegative(),
+  }),
+  'profile.save': z.object({ profileId: profileIdSchema }),
+  'profile.delete': z.object({}),
+  'profile.setDefault': z.object({}),
+  'profile.test': z.object({ claude: claudeInstallStatusSchema }),
+  'profile.validate': z.object({ issues: z.array(profileIssueSchema) }),
+  'fs.listDirectory': fsListingSchema,
 } as const satisfies Record<CommandName, z.ZodType>;
 export type CommandResult<N extends CommandName> = z.infer<(typeof commandResultSchemas)[N]>;
 

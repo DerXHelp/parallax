@@ -3,6 +3,7 @@ import { errorSpec } from './errors';
 import {
   API_PATHS,
   API_PREFIX,
+  ATTACHMENT_MEDIA_TYPES,
   AUTH_CODE_TTL_MS,
   AUTH_COOKIE_ATTRIBUTES,
   AUTH_COOKIE_MAX_AGE_SECONDS,
@@ -12,10 +13,15 @@ import {
   DEV_AUTH_CODE_TTL_MS,
   DEV_WEB_PORT,
   LOOPBACK_HOST,
+  PROTOCOL_SCHEME,
   SERVER_LOCK_FILE,
+  SESSION_HASH_PARAM,
   allowedHosts,
   allowedOrigins,
   appUrlWithCode,
+  attachmentMediaTypeSchema,
+  attachmentUploadQuerySchema,
+  attachmentUploadResponseSchema,
   authCodeSchema,
   authCookieName,
   authExchangeRequestSchema,
@@ -33,8 +39,10 @@ import {
   pageCsp,
   pageCspDirectives,
   parseBearerToken,
+  parseSessionProtocolUri,
   serverLockFileSchema,
   serverOrigin,
+  sessionProtocolUri,
   takeAuthCodeFromHash,
 } from './http';
 import { WS_PATH } from './protocol';
@@ -211,6 +219,71 @@ describe('#code= hand-over', () => {
     [`code=${code}`, code, ''],
   ])('%s', (hash, expectedCode, rest) => {
     expect(takeAuthCodeFromHash(hash)).toEqual({ code: expectedCode, hash: rest });
+  });
+
+  it('Phase 2: the launcher URL can select a session; the client keeps it after the code', () => {
+    const url = appUrlWithCode(serverOrigin(4711), code, { entryId: SAMPLE_IDS.entry });
+    expect(url).toBe(`http://127.0.0.1:4711/#code=${code}&${SESSION_HASH_PARAM}=${SAMPLE_IDS.entry}`);
+    expect(takeAuthCodeFromHash(url.slice(url.indexOf('#')))).toEqual({
+      code,
+      hash: `#${SESSION_HASH_PARAM}=${SAMPLE_IDS.entry}`,
+    });
+  });
+});
+
+describe('protocol handler parallax: (Phase 2, ADR-109)', () => {
+  it('builds and parses the session URI', () => {
+    expect(PROTOCOL_SCHEME).toBe('parallax');
+    expect(sessionProtocolUri(SAMPLE_IDS.entry)).toBe(`parallax://session/${SAMPLE_IDS.entry}`);
+    expect(parseSessionProtocolUri(sessionProtocolUri(SAMPLE_IDS.entry))).toBe(SAMPLE_IDS.entry);
+  });
+
+  it.each([
+    [`parallax://session/${SAMPLE_IDS.entry}/`, SAMPLE_IDS.entry],
+    [`PARALLAX:session/${SAMPLE_IDS.entry}`, SAMPLE_IDS.entry],
+    [`parallax://session/${SAMPLE_IDS.entry}//`, null],
+    [`parallax://session/en_123`, null],
+    [`parallax://session/${SAMPLE_IDS.entry}?x=1`, null],
+    [`parallax://session/${SAMPLE_IDS.entry}" --evil`, null],
+    [`parallax://other/${SAMPLE_IDS.entry}`, null],
+    [`http://session/${SAMPLE_IDS.entry}`, null],
+    ['', null],
+  ])('%s → %s', (uri, expected) => {
+    expect(parseSessionProtocolUri(uri)).toBe(expected);
+  });
+});
+
+describe('image upload (Phase 2, ADR-103)', () => {
+  it('media types are the SDK image types', () => {
+    expect([...ATTACHMENT_MEDIA_TYPES]).toEqual(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+    expect(attachmentMediaTypeSchema.safeParse('image/svg+xml').success).toBe(false);
+  });
+
+  it('query: coerces sizes, caps the name', () => {
+    expect(attachmentUploadQuerySchema.parse({ name: 'shot.png', width: '1568', height: '980' })).toEqual({
+      name: 'shot.png',
+      width: 1568,
+      height: 980,
+    });
+    expect(attachmentUploadQuerySchema.parse({})).toEqual({});
+    expect(attachmentUploadQuerySchema.safeParse({ width: '0' }).success).toBe(false);
+    expect(attachmentUploadQuerySchema.safeParse({ width: 'abc' }).success).toBe(false);
+    expect(attachmentUploadQuerySchema.safeParse({ name: 'x'.repeat(261) }).success).toBe(false);
+  });
+
+  it('response carries a BlobRef', () => {
+    const ok = attachmentUploadResponseSchema.safeParse({
+      attachment: {
+        blobId: sampleBlobId(2),
+        mediaType: 'image/png',
+        bytes: 10,
+        width: 1,
+        height: 1,
+        name: null,
+      },
+    });
+    expect(ok.success).toBe(true);
+    expect(attachmentUploadResponseSchema.safeParse({ attachment: { blobId: 'x' } }).success).toBe(false);
   });
 });
 

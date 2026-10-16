@@ -1,12 +1,14 @@
 import { LOCAL_HOST_ID, entryIdSchema, makeSessionKey, parseSessionKey } from '@shared/common';
+import { SESSION_HASH_PARAM } from '@shared/http';
 import { getHashParam, setHashParam } from '@web/lib/hash';
 import { clientStore, type ClientStore } from './store';
 
 /**
  * Session shown in this window, mirrored in the URL (`#session=local:en_…`, Plan "Web-UI": a new
- * window can open with a given session). A bare entry id (`#session=en_…`) means the local host.
+ * window can open with a given session). A bare entry id (`#session=en_…`) means the local host –
+ * that is what the launcher opens for the protocol handler (Phase 2, `appUrlWithCode`).
  */
-export const SESSION_HASH_PARAM = 'session';
+export { SESSION_HASH_PARAM };
 
 /** Session key from the hash, or null if absent/invalid. */
 export function sessionKeyFromHash(hash: string): string | null {

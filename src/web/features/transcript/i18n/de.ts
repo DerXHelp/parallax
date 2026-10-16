@@ -220,6 +220,13 @@ export const de: typeof en = {
     taskNotification: 'Hintergrund-Task: {description}',
     error: 'Fehler',
     unknown: 'Unbekanntes Ereignis {type}',
+    handoff: {
+      external: 'In einer externen Konsole geöffnet',
+      returned: {
+        one: 'Aus der Konsole zurück – {count} Eintrag übernommen',
+        other: 'Aus der Konsole zurück – {count} Einträge übernommen',
+      },
+    },
   },
   generic: {
     input: 'Eingabe',

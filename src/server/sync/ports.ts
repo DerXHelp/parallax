@@ -35,7 +35,14 @@ import {
   type SettingsPatch,
   type TranscriptItem,
 } from '@shared/model';
-import type { Command, Notification, PresenceState, SessionOp } from '@shared/protocol';
+import type {
+  Command,
+  HostCommand,
+  HostCommandName,
+  Notification,
+  PresenceState,
+  SessionOp,
+} from '@shared/protocol';
 import type { SessionViewState } from '@shared/sync';
 
 export interface ClientPresence {
@@ -92,6 +99,17 @@ export interface SessionSource {
   onSubscribersChanged(entryId: EntryId, count: number): void;
 }
 
+/**
+ * Phase 2 (ADR-101): handler of host commands (`HOST_COMMAND_NAMES`: profile.*, fs.listDirectory).
+ * Implemented by WP-32 (profiles) and WP-33 (folder browser); the engine routes by name (names are
+ * disjoint across handlers; no handler → NOT_IMPLEMENTED); WP-40 wires them.
+ */
+export interface HostCommandHandler {
+  readonly names: readonly HostCommandName[];
+  /** Result matching commandResultSchemas[cmd.name]; throws CommandError. */
+  handle(cmd: HostCommand, ctx: CommandContext): Promise<unknown>;
+}
+
 // ---- Transcript log (one JSON line per persisted op, A.3) ----
 
 export const TRANSCRIPT_LOG_VERSION = 1;
@@ -138,7 +156,13 @@ export interface TranscriptStore {
 }
 
 export interface BlobStore {
-  put(data: Uint8Array | string, mediaType: string, name?: string | null): BlobRef;
+  /** Phase 2: `size` = pixel size of an uploaded image (BlobRef.width/height, ADR-103). */
+  put(
+    data: Uint8Array | string,
+    mediaType: string,
+    name?: string | null,
+    size?: { width: number; height: number } | null,
+  ): BlobRef;
   get(blobId: BlobId): Promise<{ data: Uint8Array; ref: BlobRef } | null>;
 }
 

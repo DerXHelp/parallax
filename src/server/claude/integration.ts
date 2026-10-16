@@ -248,5 +248,10 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
       );
       return status;
     },
+
+    // Phase 2 port (WP-30 §4.11); WP-32 implements it.
+    consoleLaunchFor(): Promise<never> {
+      return Promise.reject(new CommandError(makeError('NOT_IMPLEMENTED', { command: 'consoleLaunchFor' })));
+    },
   };
 }

@@ -154,7 +154,7 @@ describe('handshake', () => {
   it('closes with 4409 on another protocol version', () => {
     const socket = new FakeSocket();
     hub.handleConnection(socket);
-    socket.receive(sampleClientHello({ protocolVersion: 2 }));
+    socket.receive(sampleClientHello({ protocolVersion: 99 }));
     expect(socket.ofType('error')[0]).toMatchObject({ error: { code: 'PROTOCOL_VERSION_MISMATCH' } });
     expect(socket.closedWith?.code).toBe(WS_CLOSE.PROTOCOL_VERSION_MISMATCH);
   });
