@@ -196,7 +196,14 @@ describe('bootApp (auth bootstrap + WebSocket of the local host)', () => {
       expect(socket.sent.filter((message) => message.type === 'presence')).toEqual([
         {
           type: 'presence',
-          presence: { focused: false, visible: true, viewingEntryId: ENTRY, typing: false },
+          // WP22-03: whether this window can show Web Notifications (the fake notifier says granted).
+          presence: {
+            focused: false,
+            visible: true,
+            viewingEntryId: ENTRY,
+            typing: false,
+            systemNotifications: true,
+          },
         },
       ]);
     });

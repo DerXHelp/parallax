@@ -1,0 +1,154 @@
+/**
+ * Native Windows toasts (Plan A.9: "ohne offenes Fenster einen nativen Windows-Toast über einen
+ * PowerShell-Helfer (`Windows.UI.Notifications`, ohne Installation)"; WP22-03/-15): Windows
+ * PowerShell 5.1 with the WinRT types, no module, no install, no admin rights.
+ *
+ * - Sender: the app id `TOAST_APP_ID` with the display name `PRODUCT_NAME`, registered per user
+ *   under `HKCU\Software\Classes\AppUserModelId\<id>` (`DisplayName` only – the documented way for
+ *   unpackaged apps; without it Windows keeps the toast in the history but never shows it). No
+ *   activator: a click only dismisses the toast (Phase 1; the opt-in `parallax:` protocol handler
+ *   that opens the session is Phase 2).
+ * - Data never goes into the script text: title, body and tag travel in environment variables of
+ *   the PowerShell process, the XML is built with DOM calls (`CreateTextNode`) – no shell, no
+ *   script or XML injection. The constant script goes as `-EncodedCommand` (no quoting issues).
+ * - `tag` (≤ 64 chars) + group `parallax`: a newer toast of the same session replaces the older
+ *   one; `removeToast(tag)` takes it out of the Action Center (decision answered elsewhere).
+ * - Constrained Language Mode / AppLocker block the WinRT types → `failed` (the caller falls back
+ *   to the in-app hint; check on a managed work machine).
+ */
+import path from 'node:path';
+import { PRODUCT_NAME } from '@shared/product';
+import { toError } from './async';
+import { runFile, systemTool, type RunFileFn } from './process';
+
+/** AppUserModelID of the Parallax toasts (HKCU registration, see the file comment). */
+export const TOAST_APP_ID = 'Parallax.App';
+/** Group of every Parallax toast (History.Remove needs tag + group). */
+export const TOAST_GROUP = 'parallax';
+/** PowerShell start + WinRT load: ~1 s idle, much more under load. */
+export const TOAST_TIMEOUT_MS = 30_000;
+const MAX_TEXT_CHARS = 300;
+const MAX_TAG_CHARS = 64;
+
+export interface ToastRequest {
+  title: string;
+  body: string;
+  /** E.g. the entry id; a toast with the same tag replaces the older one. */
+  tag: string;
+}
+
+export type ToastResult = { kind: 'shown' | 'removed' } | { kind: 'failed'; reason: string };
+
+export interface ToastOptions {
+  run?: RunFileFn;
+  platform?: NodeJS.Platform;
+  timeoutMs?: number;
+  env?: NodeJS.ProcessEnv;
+}
+
+/** The constant script: reads everything from `$env:PARALLAX_TOAST_*`. */
+export const TOAST_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  'try {',
+  '  $appId = $env:PARALLAX_TOAST_APP_ID',
+  "  $key = 'HKCU:\\Software\\Classes\\AppUserModelId\\' + $appId",
+  '  if (-not (Test-Path -LiteralPath $key)) { New-Item -Path $key -Force | Out-Null }',
+  '  $name = (Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue).DisplayName',
+  '  if ($name -ne $env:PARALLAX_TOAST_APP_NAME) {',
+  '    Set-ItemProperty -LiteralPath $key -Name DisplayName -Value $env:PARALLAX_TOAST_APP_NAME',
+  '  }',
+  '  [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]',
+  '  [void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType = WindowsRuntime]',
+  "  if ($env:PARALLAX_TOAST_ACTION -eq 'remove') {",
+  '    [Windows.UI.Notifications.ToastNotificationManager]::History.Remove($env:PARALLAX_TOAST_TAG, $env:PARALLAX_TOAST_GROUP, $appId)',
+  "    Write-Output 'removed'",
+  '    exit 0',
+  '  }',
+  '  $xml = New-Object Windows.Data.Xml.Dom.XmlDocument',
+  '  $xml.LoadXml(\'<toast><visual><binding template="ToastGeneric"><text></text><text></text></binding></visual></toast>\')',
+  "  $texts = $xml.GetElementsByTagName('text')",
+  '  [void]$texts.Item(0).AppendChild($xml.CreateTextNode($env:PARALLAX_TOAST_TITLE))',
+  '  [void]$texts.Item(1).AppendChild($xml.CreateTextNode($env:PARALLAX_TOAST_BODY))',
+  '  $toast = New-Object Windows.UI.Notifications.ToastNotification $xml',
+  '  $toast.Tag = $env:PARALLAX_TOAST_TAG',
+  '  $toast.Group = $env:PARALLAX_TOAST_GROUP',
+  '  [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($toast)',
+  "  Write-Output 'shown'",
+  '} catch {',
+  "  Write-Output ('error: ' + $_.Exception.Message)",
+  '  exit 3',
+  '}',
+].join('\n');
+
+/** `-EncodedCommand` wants base64 of UTF-16LE. */
+export function encodePowerShell(script: string): string {
+  return Buffer.from(script, 'utf16le').toString('base64');
+}
+
+/** Control characters (except tab/newline) out, length capped; XML escaping is done by the DOM. */
+function cleanText(text: string, max: number): string {
+  let out = '';
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0;
+    out += code < 0x20 && code !== 0x09 && code !== 0x0a ? ' ' : ch;
+  }
+  return out.slice(0, max);
+}
+
+async function runToast(
+  vars: Record<string, string>,
+  expected: 'shown' | 'removed',
+  options: ToastOptions,
+): Promise<ToastResult> {
+  if ((options.platform ?? process.platform) !== 'win32') return { kind: 'failed', reason: 'not Windows' };
+  const run = options.run ?? runFile;
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(options.env ?? process.env)) {
+    if (value !== undefined && !key.toUpperCase().startsWith('PARALLAX_TOAST_')) env[key] = value;
+  }
+  Object.assign(env, { PARALLAX_TOAST_APP_ID: TOAST_APP_ID, PARALLAX_TOAST_APP_NAME: PRODUCT_NAME }, vars);
+  try {
+    const result = await run(
+      systemTool(path.win32.join('WindowsPowerShell', 'v1.0', 'powershell.exe'), options.env ?? process.env),
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encodePowerShell(TOAST_SCRIPT)],
+      { env, timeoutMs: options.timeoutMs ?? TOAST_TIMEOUT_MS, maxOutputBytes: 16 * 1024 },
+    );
+    if (result.timedOut) return { kind: 'failed', reason: 'timeout' };
+    const output = result.stdout.trim();
+    if (result.exitCode === 0 && output.endsWith(expected)) return { kind: expected };
+    return {
+      kind: 'failed',
+      reason: `exit ${String(result.exitCode)}: ${(output || result.stderr.trim()).slice(0, 300)}`,
+    };
+  } catch (error) {
+    return { kind: 'failed', reason: `powershell could not be started: ${toError(error).message}` };
+  }
+}
+
+/** Shows a toast (see the file comment). Never throws. */
+export function showToast(request: ToastRequest, options: ToastOptions = {}): Promise<ToastResult> {
+  return runToast(
+    {
+      PARALLAX_TOAST_ACTION: 'show',
+      PARALLAX_TOAST_TITLE: cleanText(request.title, MAX_TEXT_CHARS),
+      PARALLAX_TOAST_BODY: cleanText(request.body, MAX_TEXT_CHARS),
+      PARALLAX_TOAST_TAG: cleanText(request.tag, MAX_TAG_CHARS),
+      PARALLAX_TOAST_GROUP: TOAST_GROUP,
+    },
+    'shown',
+    options,
+  );
+}
+
+/** Removes the toast with this tag from the Action Center (no-op if there is none). Never throws. */
+export function removeToast(tag: string, options: ToastOptions = {}): Promise<ToastResult> {
+  return runToast(
+    {
+      PARALLAX_TOAST_ACTION: 'remove',
+      PARALLAX_TOAST_TAG: cleanText(tag, MAX_TAG_CHARS),
+      PARALLAX_TOAST_GROUP: TOAST_GROUP,
+    },
+    'removed',
+    options,
+  );
+}

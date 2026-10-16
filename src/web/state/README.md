@@ -15,7 +15,7 @@ Verdrahtung: `docs/wp/WP-20b.md`. Feature-eigener State liegt in `features/<f>/s
 | `auth.ts` | Auth-Bootstrap nach `docs/architecture.md` §5.1: `consumeAuthCode`, `exchangeAuthCode` (4xx = abgelehnt, 5xx/Netz = nicht erreichbar, Code bleibt), `fetchAuthStatus`, `createAuthBootstrap` |
 | `bootstrap.ts` | `bootApp({ fetch?, createSocket?, notifier?, reload? })` – Code aus der URL, Auswahl, Präsenz, Benachrichtigungs-Zustellung (`src/web/notifications`), Verbindung `local` (WS `ws://<location.host>/api/ws`, im Dev über den Vite-Proxy) |
 | `clock.ts` | `useNow(intervalMs)`, `useNowUntil(deadlines)` – keine `Date.now()`-Aufrufe im Render |
-| `presence.ts` | `startPresenceTracking`, `reportTyping` (für den Composer) |
+| `presence.ts` | `startPresenceTracking(store?, win?, { systemNotifications? })` (Fokus, Sichtbarkeit, Web-Notification-Fähigkeit, WP22-03), `reportSystemNotifications`, `reportTyping` (für den Composer) |
 | `selection.ts` | `#session=…` ↔ Auswahl (`setSelectedSession`, `startSelectionSync`) |
 | `settings.ts` | `useSettings`, `updateSettings` (optimistisch, `settings.update`) |
 | `theme.ts` | Dark/Light/System: `resolveTheme`, `applyResolvedTheme`, `useThemeController`, `useResolvedTheme`, `applyInitialTheme` |

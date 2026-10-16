@@ -38,6 +38,7 @@ import { CommandError, type ClientPresence } from '../../sync/ports';
 import type { ProcDeps, SleepPolicy } from '../entryState';
 import { createManualTimers, type ManualTimers } from '../lib/timers';
 import { createSessionManager, type SessionManager, type SessionManagerOptions } from '../manager';
+import type { NativeToasts } from '../nativeToasts';
 import { createMemoryProcessStore, type MemoryProcessStore, type ProcessRecordInput } from '../processStore';
 import { createMemoryPublisher, type MemoryPublisher } from './memoryPublisher';
 import { createMemoryStores, type MemoryStores, type MemoryStoresSeed } from './memoryStores';
@@ -88,6 +89,8 @@ export interface EngineHarnessOptions {
   /** Hub-like validation of everything published (default true). */
   validate?: boolean;
   presence?: readonly ClientPresence[];
+  /** Native toasts (WP22-03); default off. */
+  toasts?: NativeToasts;
   onShutdownRequested?: () => void;
   /** Call manager.start() (default true). */
   start?: boolean;
@@ -217,6 +220,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     ...(options.onShutdownRequested === undefined
       ? {}
       : { onShutdownRequested: options.onShutdownRequested }),
+    ...(options.toasts === undefined ? {} : { toasts: options.toasts }),
     now,
     timers,
     onInternalError: (error, context) => {

@@ -11,12 +11,18 @@ const NOW = new Date(SAMPLE_TIME);
 
 function client(
   n: number,
-  p: { focused: boolean; visible: boolean; viewing: EntryId | null },
+  p: { focused: boolean; visible: boolean; viewing: EntryId | null; web?: boolean },
   lastFocusSec: number | null = n,
 ): ClientPresence {
   return {
     clientId: sampleId('cl', n),
-    presence: { focused: p.focused, visible: p.visible, viewingEntryId: p.viewing, typing: false },
+    presence: {
+      focused: p.focused,
+      visible: p.visible,
+      viewingEntryId: p.viewing,
+      typing: false,
+      ...(p.web === undefined ? {} : { systemNotifications: p.web }),
+    },
     lastFocusAt: lastFocusSec === null ? null : new Date(Date.parse(SAMPLE_TIME) + lastFocusSec * 1000),
     connectedAt: new Date(Date.parse(SAMPLE_TIME) + n),
   };
@@ -67,9 +73,34 @@ describe('chooseChannel (A.9)', () => {
         : {
             clientId: sampleId('cl', expected.client),
             delivery: expected.delivery,
+            native: false,
             minDoneTurnMs: expected.min,
           },
     );
+  });
+
+  it('WP22-03/-15 with native toasts: no window → native only; a window without Web Notifications → native + in_app', () => {
+    const native = (clientId: string | null, delivery: 'in_app' | 'system') => ({
+      clientId,
+      delivery,
+      native: true,
+      minDoneTurnMs: 0,
+    });
+    expect(chooseChannel([], ENTRY, true)).toEqual(native(null, 'system'));
+    expect(chooseChannel([], ENTRY, false)).toBeNull();
+    const blocked = [client(1, { focused: false, visible: false, viewing: null, web: false })];
+    expect(chooseChannel(blocked, ENTRY, true)).toEqual(native(sampleId('cl', 1), 'in_app'));
+    // Without native toasts the old rule: system (the window falls back to its in-app hint).
+    expect(chooseChannel(blocked, ENTRY, false)).toMatchObject({ delivery: 'system', native: false });
+    // A window that can (or an older client that does not say) → its Web Notification, no native toast.
+    for (const web of [true, undefined]) {
+      expect(
+        chooseChannel([client(1, { focused: false, visible: false, viewing: null, web })], ENTRY, true),
+      ).toMatchObject({ delivery: 'system', native: false });
+    }
+    // Looking at the window: in-app as always, never a native toast.
+    const looking = [client(1, { focused: true, visible: true, viewing: OTHER, web: false })];
+    expect(chooseChannel(looking, ENTRY, true)).toMatchObject({ delivery: 'in_app', native: false });
   });
 
   it('isViewedByVisibleClient needs visible + viewing (focus not required)', () => {
@@ -99,9 +130,17 @@ describe('planNotification', () => {
       clientId: sampleId('cl', 1),
       kind: 'done',
       delivery: 'system',
+      native: false,
     });
     const elsewhere = [client(1, { focused: true, visible: true, viewing: OTHER })];
     expect(planNotification(working, shortDone, NOW, elsewhere, ENTRY)).toBeNull();
+    // No window at all, native toasts on: a native toast only (clientId null).
+    expect(planNotification(working, shortDone, NOW, [], ENTRY, true)).toEqual({
+      clientId: null,
+      kind: 'done',
+      delivery: 'system',
+      native: true,
+    });
   });
 
   it('a new decision is reported with its kind (R0-13); cleared when the last one is gone', () => {
