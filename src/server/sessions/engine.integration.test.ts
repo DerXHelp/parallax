@@ -1027,6 +1027,28 @@ describe('orphans', () => {
     expect(h.stores.processes.records()).toEqual([]);
   });
 
+  it('WP22-06 heartbeat: a PID that is not the spawned claude.exe (fake/reused) lends no tree', async () => {
+    const h = await setup({
+      scenario: () => eventsScenario('turn', textTurnEvents()),
+      options: { processSnapshotMs: 30_000, processSnapshotFirstMs: 10_000 },
+    });
+    const entryId = await h.create('Reply with exactly: OK');
+    await h.settle();
+    const pid = h.session(entryId).pid;
+    const t = (s: number) => new Date(h.now().getTime() + s * 1000);
+    // Same PID, but another program (or started long before the spawn).
+    h.proc.info.set(pid, { pid, name: 'notepad.exe', parentPid: 1, startedAt: t(0) });
+    h.proc.info.set(70_101, { pid: 70_101, name: 'child.exe', parentPid: pid, startedAt: t(1) });
+    h.timers.advance(10_000);
+    await h.settle();
+    expect(h.stores.processes.records()[0]).toMatchObject({ aliveAt: null, children: [] });
+    h.proc.info.set(pid, { pid, name: 'claude.exe', parentPid: 1, startedAt: t(-3_600) });
+    h.timers.advance(30_000);
+    await h.settle();
+    expect(h.stores.processes.records()[0]).toMatchObject({ aliveAt: null, children: [] });
+    await h.cmd({ name: 'session.close', entryId });
+  });
+
   it('WP22-06 restart: processes of the snapshot that still run exactly as recorded are ended, the root is gone', async () => {
     const shell = { pid: 70_011, image: 'powershell.exe', startedAt: at(5).toISOString() };
     const ping = { pid: 70_012, image: 'PING.EXE', startedAt: at(6).toISOString() };

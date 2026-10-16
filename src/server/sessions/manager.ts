@@ -6,6 +6,7 @@
  * `SessionPublisher` (the hub), persistence through the stores, crash/auto-retry, server start
  * (recovery, orphans) and shutdown. Wiring for WP-20: docs/wp/WP-13b.md "Verdrahtung".
  */
+import path from 'node:path';
 import type { Logger } from 'pino';
 import { jsonValueSchema, type EntryId, type ProfileId } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
@@ -70,6 +71,7 @@ import {
   cleanupOrphans,
   interruptedToolCalls,
   keepsOrphanRecord,
+  ORPHAN_START_TOLERANCE_MS,
   registryFacts,
   splitOrphanRecords,
   wasActive,
@@ -293,7 +295,14 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       const aliveAt = now().toISOString();
       for (const { s, pid } of running) {
         const root = byPid.get(pid);
-        if (s.runtime?.pid !== pid || root === undefined) continue;
+        const runtime = s.runtime;
+        if (runtime?.pid !== pid || root === undefined || runtime.spawnedAt === null) continue;
+        // Only the process this runtime spawned (image + start time, like the orphan check): a
+        // fake PID of the FakeBackend or a PID reused since must never lend its tree to a record.
+        const image = path.win32.basename(runtime.launch.executablePath).toLowerCase();
+        const sameStart =
+          Math.abs(root.startedAt.getTime() - runtime.spawnedAt.getTime()) <= ORPHAN_START_TOLERANCE_MS;
+        if (root.name.toLowerCase() !== image || !sameStart) continue;
         const children = descendantsOf(result.processes, root).map((p) => ({
           pid: p.pid,
           image: p.name,

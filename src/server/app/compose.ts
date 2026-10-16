@@ -315,6 +315,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     });
     const sessions = createSessionManager({
       toasts,
+      // WP22-06: the FakeBackend has no real process tree (fake PIDs) – no heartbeat snapshots.
+      ...(config.backend === 'fake' ? { options: { processSnapshotMs: 0 } } : {}),
       backend,
       claude,
       stores: {
