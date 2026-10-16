@@ -31,11 +31,11 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
 | WP | Inhalt | Welle | Abhängig | Status | Commit | Ergebnis (eine Zeile) | Follow-ups |
 |---|---|---|---|---|---|---|---|
 | 30 | Design, Contracts v2, Gerüst, Doku (ADR-100…119, Ownership Phase 2) | 0 | – | fertig | `7a3530f`, `0215740`, `52912ec`, Merge `1488b83` | Lückenanalyse, Aufträge WP-31…41, `PROTOCOL_VERSION` 2, Registry v2, Anfragekanal `shell/requests.ts`, Slots; 2778 Tests, 26 E2E | Hinweis an alle Pakete: PowerShell 5.1 zerstört Umlaute bei `Get-Content`/`WriteAllText` |
-| 31 | Engine: Lebenszyklus, Archiv, Unterhaltungen, Einstellungs-Wirkung | 1 | 30 | läuft | – | – | – |
-| 32 | Profile und Claude-Integration | 1 | 30 | läuft | – | – | – |
-| 33 | Host-Dienste, Upload, Ordner-Browser, Windows-Integration, Launcher | 1 | 30 | läuft | – | – | – |
+| 31 | Engine: Lebenszyklus, Archiv, Unterhaltungen, Einstellungs-Wirkung | 1 | 30 | fertig | `7848648`, Merge `67f77bb` | Leerlauf-Schlaf (ab `sleepSince`), Archiv/Pin, `switchConversation`, Fast-Modus, Git-Branch persistent, Slash-/Modell-Kataloge + Abo-Limits persistent, Notifier-Regeln, Host-Befehls-Routing; 937 Tests sessions/backend | WP-40: Verdrahtung laut WP-31.md §2.4 (`openCatalogStore` Exit 3, `port`, `systemIntegration`, `hostCommands`, `onSettingsChanged`, `extraWarnings`); README `sessions` (Koordinator) |
+| 32 | Profile und Claude-Integration | 1 | 30 | fertig | `0028d28`, Merge `69fa57d` | `profiles.json`-Store (ADR-102), Profil-Issues, Befehle `profile.*`, `consoleLaunchFor` + Kopierbefehl (PS 5.1 Legacy-Quoting), Preflight aller Profile; 587 Tests claude | WP-40: `store.close()` beim Beenden; README `claude` (Koordinator) |
+| 33 | Host-Dienste, Upload, Ordner-Browser, Windows-Integration, Launcher | 1 | 30 | fertig | `5eaae42`, `769426c` (Hub-Test 415), Merge `67f77bb` | `fs.listDirectory` (lstat je Segment, R1-17), Upload mit Magic-Bytes, `system/` (Konsole via PowerShell, Autostart, `parallax:`-Handler, doppelter Testschutz), Port aus Settings, Launcher `--open` (letztes Arg); 576 Tests | Toast-Klick blitzt kurz eine Konsole auf (L8); WP-40/34 Verdrahtung laut WP-33.md; `lib/README` + architecture §2.2 (Koordinator) |
 | 35 | Navigation: Sidebar, Strg+K, Kopfzeile, Fenster | 1 | 30 | läuft | – | – | – |
-| 34 | Engine: externe Konsole, Rate-Limit-Fortsetzen, Bild-Anhänge, Toast-Klick | 2 | 31 (32/33 Ports) | offen | – | – | – |
+| 34 | Engine: externe Konsole, Rate-Limit-Fortsetzen, Bild-Anhänge, Toast-Klick | 2 | 31 (32/33 Ports) | läuft | – | – | + `onProfileChanged` (ADR-102), Secrets nie loggen |
 | 36 | Neue Session, Ordner-Browser-UI, Profil-Editor | 2 | 30 | offen | – | – | – |
 | 37 | Composer und Transkript: Slash-Menü, Screenshots, Lightbox | 2 | 30, 35 | offen | – | – | – |
 | 38 | Einstellungen und Benachrichtigungen (Töne) | 2 | 30 | offen | – | – | – |
