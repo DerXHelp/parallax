@@ -6,6 +6,7 @@ import { useSelectedSession, useSessionMeta, useSummariesLoaded, useSummarySelec
 import { Alert } from '@web/ui/alert';
 import { Button } from '@web/ui/button';
 import { Skeleton } from '@web/ui/skeleton';
+import { PaneBanners } from './navigation/PaneBanners';
 import { SessionHeader } from './SessionHeader';
 import { useFeatureSlots } from './slots';
 
@@ -97,6 +98,7 @@ export function SessionPane({ sessionKey }: { sessionKey: string }) {
   return (
     <section aria-label={title} data-session-key={sessionKey} className="flex h-full min-h-0 flex-col">
       <SessionHeader sessionKey={sessionKey} />
+      <PaneBanners sessionKey={sessionKey} />
       {meta.unavailable === null ? null : (
         <div className="p-3">
           <Alert tone="error" title={t('shell.session.unavailable')}>
