@@ -129,15 +129,27 @@ export function isPromptFallback(
   return head !== '' && s.startsWith(head);
 }
 
-/** AI title from getSessionInfo, or null if it must not be taken over (§3.5.8). */
+/**
+ * AI title from getSessionInfo, or null if it must not be taken over (§3.5.8).
+ *
+ * WP22-02: with SDK 0.3.296 / CLI 2.1.300 `customTitle` is NOT only a `/rename` title: the SDK
+ * fills it with `custom-title` entry ‖ the CLI's `custom-title.json` sidecar ‖ `aiTitle` – a
+ * session that was never renamed reports its AI title there (live: `{summary: "PowerShell
+ * Set-Content b.txt", customTitle: "PowerShell Set-Content b.txt", firstPrompt: "Fuehre mit …"}`).
+ * Whether a title is the user's own is known by the server alone: `titleSource 'custom'`
+ * (`/rename`, `session.rename`, a title at creation) is never replaced (acceptsAiTitle). The
+ * candidate is `customTitle` (custom or AI) or, from older SDKs, `summary`; a summary that is
+ * only the first prompt (the SDK's fallback) is no AI title.
+ */
 export function aiTitleFrom(
   info: BackendSessionInfo | null,
   current: { title: string; titleSource: TitleSource; promptTitle: string | null },
 ): string | null {
-  if (info?.customTitle !== null || !acceptsAiTitle(current.titleSource)) return null;
-  const title = capTitle(collapse(info.summary));
+  if (info === null || !acceptsAiTitle(current.titleSource)) return null;
+  const raw = info.customTitle ?? info.summary;
+  const title = capTitle(collapse(raw));
   if (title === '' || title === current.title) return null;
-  if (isPromptFallback(info.summary, info.firstPrompt, current.promptTitle)) return null;
+  if (isPromptFallback(raw, info.firstPrompt, current.promptTitle)) return null;
   return title;
 }
 

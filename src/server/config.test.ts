@@ -14,12 +14,24 @@ describe('loadConfig', () => {
       dev: false,
       backend: 'sdk',
       validation: 'log',
+      toasts: process.platform === 'win32' ? 'native' : 'off',
       port: DEFAULT_PORT,
       host: '127.0.0.1',
       home: path.join('C:\\Users\\u\\AppData\\Local', 'Parallax'),
       dataDirLabel: '%LOCALAPPDATA%\\Parallax',
       logLevel: 'info',
     });
+  });
+
+  it('native toasts: flag > env > off under tests (Vitest, NODE_ENV=test) (WP22-03)', () => {
+    const load = (argv: string[], vars: Record<string, string> = {}) =>
+      loadConfig({ argv: ['--home=D:\\data\\px', ...argv], env: env(vars), cwd: CWD }).toasts;
+    expect(load(['--toasts=off'])).toBe('off');
+    expect(load([], { PARALLAX_TOASTS: 'off' })).toBe('off');
+    expect(load(['--toasts=native'], { PARALLAX_TOASTS: 'off', VITEST: 'true' })).toBe('native');
+    expect(load([], { VITEST: 'true' })).toBe('off');
+    expect(load([], { NODE_ENV: 'test' })).toBe('off');
+    expect(() => load(['--toasts=loud'])).toThrow(ConfigError);
   });
 
   it('parses the pnpm dev flags (ADR-006)', () => {

@@ -17,9 +17,9 @@ import { logLevelSchema, type LogLevel } from './lib/logger';
  * Phase 2), so that layer is empty for now.
  *
  * Flags: `--dev`, `--backend=fake|sdk`, `--port=<0..65535>`, `--host=127.0.0.1`, `--home=<dir>`,
- * `--log-level=<level>`, `--validate=off|log|throw`. Env: `PARALLAX_HOME`, `PARALLAX_PORT`
- * (0 = any free port), `PARALLAX_HOST`, `PARALLAX_BACKEND`, `PARALLAX_DEV` (`1`/`true`),
- * `PARALLAX_LOG_LEVEL`, `PARALLAX_VALIDATE`.
+ * `--log-level=<level>`, `--validate=off|log|throw`, `--toasts=native|off`. Env: `PARALLAX_HOME`,
+ * `PARALLAX_PORT` (0 = any free port), `PARALLAX_HOST`, `PARALLAX_BACKEND`, `PARALLAX_DEV`
+ * (`1`/`true`), `PARALLAX_LOG_LEVEL`, `PARALLAX_VALIDATE`, `PARALLAX_TOASTS`.
  *
  * The bind address is always 127.0.0.1 (Plan "Sicherheit", A.8; R1-05, ADR-023): `--host` /
  * `PARALLAX_HOST` stay accepted for ADR-006 compatibility, every other value is a ConfigError –
@@ -45,11 +45,21 @@ export { backendKindSchema, type BackendKind };
 export const validationModeSchema = z.enum(['off', 'log', 'throw']);
 export type ValidationMode = z.infer<typeof validationModeSchema>;
 
+/**
+ * Native Windows toasts (WP22-03/-15, Plan A.9; sessions/nativeToasts.ts): `native` on Windows,
+ * `off` under Vitest and in the E2E servers (`NODE_ENV=test`) – a test run must not pop up toasts
+ * or write the HKCU app id. Flag `--toasts=native|off`, env `PARALLAX_TOASTS`.
+ */
+export const toastModeSchema = z.enum(['native', 'off']);
+export type ToastMode = z.infer<typeof toastModeSchema>;
+
 export interface ServerConfig {
   dev: boolean;
   backend: BackendKind;
   /** Outgoing validation (R3-05). */
   validation: ValidationMode;
+  /** Native Windows toasts (WP22-03/-15). */
+  toasts: ToastMode;
   /** 0 = any free port (tests); the actual port comes from the listening server. */
   port: number;
   /** Bind address: always 127.0.0.1 (LOOPBACK_HOST, R1-05); Host/Origin checks use the same address. */
@@ -118,6 +128,7 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
         home: { type: 'string' },
         'log-level': { type: 'string' },
         validate: { type: 'string' },
+        toasts: { type: 'string' },
       },
       strict: true,
       allowPositionals: false,
@@ -191,10 +202,19 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
         ? 'throw'
         : 'log';
 
+  const toastsRaw = flag('toasts') ?? nonEmpty(env.PARALLAX_TOASTS);
+  const toasts: ToastMode =
+    toastsRaw !== undefined
+      ? parseOrThrow(toastModeSchema, toastsRaw, 'toasts')
+      : process.platform === 'win32' && env.VITEST === undefined && env.NODE_ENV !== 'test'
+        ? 'native'
+        : 'off';
+
   return {
     dev,
     backend,
     validation,
+    toasts,
     port,
     host,
     home,

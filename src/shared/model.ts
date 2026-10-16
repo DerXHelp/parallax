@@ -235,6 +235,12 @@ export const hostStateSchema = z.object({
   warnings: z.array(hostWarningSchema).default([]),
   /** Last rate-limit info per profile (subscription display, Phase 2). */
   accountLimits: z.record(z.string(), rateLimitInfoSchema).default({}),
+  /**
+   * WP22-03/-15 (additive, default false): the server shows native Windows toasts (PowerShell
+   * helper, Plan A.9) when no window is open or the target window cannot show Web Notifications –
+   * the client then needs no "Enable notifications" hint.
+   */
+  nativeNotifications: z.boolean().default(false),
 });
 export type HostState = z.infer<typeof hostStateSchema>;
 
@@ -263,7 +269,10 @@ export const conversationSchema = z.object({
   title: z.string().max(LIMITS.titleChars).nullable().default(null),
   /** `new_conversation_id` of the conversation_reset that started it – correlation only (F.7). */
   resetCorrelationId: z.string().nullable().default(null),
-  /** Last cumulative cost of this conversation's query segment (F.7, F.14: do not sum over resumes). */
+  /**
+   * Cumulative cost of this conversation, summed over its query segments (WP22-10: since CLI
+   * 2.1.300 `total_cost_usd` starts at 0 after a resume – F.14 no longer holds).
+   */
   costUsd: z.number().nonnegative().nullable().default(null),
   /** Highest item `order` written so far (the normalizer continues from here, §5.6). */
   lastOrder: z.number().int().nonnegative().default(0),

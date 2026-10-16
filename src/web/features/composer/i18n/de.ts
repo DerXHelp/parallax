@@ -62,6 +62,8 @@ export const de: typeof en = {
     label: 'Modell',
     trigger: 'Modell: {model}',
     default: 'Standardmodell',
+    defaultActual: '{label} · {model}',
+    actual: 'Läuft gerade auf {model}',
     loading: 'Modelle werden geladen…',
     unavailable: 'Die Modellliste gibt es, solange die Session läuft.',
     effort: 'Aufwand',
@@ -89,6 +91,8 @@ export const de: typeof en = {
     breakdown: 'Aufschlüsselung',
     loading: 'Aufschlüsselung wird geladen…',
     unavailable: 'Die Aufschlüsselung gibt es, solange die Session läuft.',
+    categoriesSource:
+      'Kategorien laut Agent SDK – die Summe entspricht /context, die Aufteilung kann abweichen.',
     kinds: {
       used: 'belegt',
       free: 'frei',

@@ -62,7 +62,14 @@ export const ModelPicker = memo(function ModelPicker({ sessionKey }: { sessionKe
   const [load, setLoad] = useState<LoadState>('idle');
   const [pending, setPending] = useState(false);
   const current = currentModelOption(models, modelSetting);
-  const label = current?.displayName ?? modelSetting ?? actualModel ?? t('composer.model.default');
+  // WP22-12: "Default" follows the CLI/user settings (or ANTHROPIC_MODEL) – its description may
+  // name another model than the one that answers; show the model actually seen next to it.
+  const actualForDefault =
+    modelSetting === null && current?.value === DEFAULT_MODEL_VALUE ? actualModel : null;
+  const label =
+    current !== null && actualForDefault !== null
+      ? t('composer.model.defaultActual', { label: current.displayName, model: actualForDefault })
+      : (current?.displayName ?? modelSetting ?? actualModel ?? t('composer.model.default'));
   const efforts =
     current?.supportsEffort === true
       ? EFFORT_LEVELS.filter((level) => current.supportedEffortLevels.includes(level))
@@ -137,6 +144,11 @@ export const ModelPicker = memo(function ModelPicker({ sessionKey }: { sessionKe
                   {model.description === '' ? null : (
                     <span className="text-muted-foreground text-2xs">{model.description}</span>
                   )}
+                  {model.value === DEFAULT_MODEL_VALUE && actualForDefault !== null ? (
+                    <span data-slot="model-actual" className="text-muted-foreground text-2xs">
+                      {t('composer.model.actual', { model: actualForDefault })}
+                    </span>
+                  ) : null}
                 </span>
               </DropdownMenuRadioItem>
             ))}

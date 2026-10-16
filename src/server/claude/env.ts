@@ -12,7 +12,10 @@
  *     - `session` – markers of the calling Claude session: `CLAUDECODE`, `CLAUDE_CODE_*` (except
  *       CLAUDE_CODE_ENV_ALLOWLIST), `CLAUDE_AGENT_SDK_*`, `CLAUDE_PID`, `CLAUDE_EFFORT`,
  *       `AI_AGENT` (R1-03), the hook/plugin context `CLAUDE_PROJECT_DIR`, `CLAUDE_ENV_FILE`,
- *       `CLAUDE_PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA`, and inherited `PARALLAX`/`PARALLAX_ENTRY_ID`;
+ *       `CLAUDE_PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA`, and EVERY inherited `PARALLAX`/`PARALLAX_*`
+ *       (WP22-07: the server's own control variables `PARALLAX_HOME`, `PARALLAX_PORT`,
+ *       `PARALLAX_BACKEND`, `PARALLAX_LIVE`, `PARALLAX_VALIDATE`, `PARALLAX_DEV_WEB_PORT` … – a
+ *       `pnpm test`/`pnpm start` in a session tool must never reach the running server's home);
  *     - `run_state` – what `pnpm run`/`npm run` set: `INIT_CWD`, `npm_lifecycle_*`,
  *       `npm_package_*`, `npm_execpath`, `npm_node_execpath`, `npm_command`,
  *       `npm_config_user_agent`, `npm_config_node_gyp`, `PNPM_SCRIPT_SRC_DIR`, `PNPM_PACKAGE_NAME`,
@@ -30,6 +33,8 @@
  *     removed machine variable such as `${env:NPM_CONFIG_REGISTRY}` can be passed on on purpose).
  *  4. Set `PARALLAX=1`, `PARALLAX_ENTRY_ID`, `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1`,
  *     `CLAUDE_AGENT_SDK_CLIENT_APP=parallax/<version>` and `CLAUDE_CONFIG_DIR` (profile.configDir).
+ *     These two are the only `PARALLAX*` names a started `claude` ever sees (a profile env value
+ *     with a `PARALLAX_*` name is set on purpose and kept).
  */
 import path from 'node:path';
 import type { EntryId } from '@shared/common';
@@ -83,11 +88,14 @@ const SESSION_EXACT: ReadonlySet<string> = new Set([
   'CLAUDE_PLUGIN_DATA',
   // Set by buildEnv itself; an inherited value (Parallax started from a Parallax session) never survives.
   'PARALLAX',
-  'PARALLAX_ENTRY_ID',
 ]);
 
-/** Session prefixes (upper-cased), unless allowlisted. Never kept, even if persistent. */
-const SESSION_PREFIXES: readonly string[] = ['CLAUDE_CODE_', 'CLAUDE_AGENT_SDK_'];
+/**
+ * Session prefixes (upper-cased), unless allowlisted. Never kept, even if persistent. `PARALLAX_`:
+ * every control variable of the server environment (WP22-07) – buildEnv sets PARALLAX_ENTRY_ID
+ * itself in step 4.
+ */
+const SESSION_PREFIXES: readonly string[] = ['CLAUDE_CODE_', 'CLAUDE_AGENT_SDK_', 'PARALLAX_'];
 
 /** Run state of `pnpm run` / `npm run` (exact, upper-cased; as observed with pnpm 12.8). Never kept. */
 const RUN_STATE_EXACT: ReadonlySet<string> = new Set([

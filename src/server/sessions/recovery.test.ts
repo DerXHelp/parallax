@@ -79,6 +79,8 @@ describe('cleanupOrphans (C.8, R2-02, R2-03)', () => {
     pid,
     image: 'claude.exe',
     startedAt: SAMPLE_TIME,
+    aliveAt: null,
+    children: [],
   });
   const at = (s: number) => new Date(Date.parse(SAMPLE_TIME) + s * 1000);
   const info = (p: Partial<ProcessInfo>): ProcessInfo => ({
@@ -152,6 +154,77 @@ describe('cleanupOrphans (C.8, R2-02, R2-03)', () => {
     expect(keepsOrphanRecord('failed')).toBe(true);
     const removed: OrphanResult[] = ['killed', 'gone', 'not_ours'];
     expect(removed.map((r) => keepsOrphanRecord(r))).toEqual([false, false, false]);
+  });
+
+  describe('WP22-06: processes of the last heartbeat snapshot', () => {
+    const shell = { pid: 5001, image: 'powershell.exe', startedAt: '2026-10-15T12:00:05.123Z' };
+    const ping = { pid: 5002, image: 'PING.EXE', startedAt: '2026-10-15T12:00:05.456Z' };
+    const withChildren = (): ProcessRecord => ({
+      ...record(),
+      aliveAt: '2026-10-15T12:00:30.000Z',
+      children: [shell, ping],
+    });
+    const live = (child: typeof shell, p: Partial<ProcessInfo> = {}): ProcessInfo => ({
+      pid: child.pid,
+      name: child.image,
+      parentPid: 1,
+      startedAt: new Date(child.startedAt),
+      ...p,
+    });
+
+    it('claude.exe ended itself (gone), its tool shell + ping still run exactly as recorded → both ended', async () => {
+      const queryProcesses = vi.fn((_filter: ProcessFilter) => Promise.resolve(ok(live(shell), live(ping))));
+      const { d, killProcessTree } = deps({ isProcessAlive: (pid) => pid !== 4242, queryProcesses });
+      expect(await Promise.all(cleanupOrphans([withChildren()], d))).toEqual(['killed']);
+      expect(killProcessTree.mock.calls.map((c) => c[0])).toEqual([5001, 5002]);
+      expect(queryProcesses.mock.calls).toEqual([[{ pids: [5001, 5002] }]]);
+    });
+
+    it.each<[string, ProcessInfo]>([
+      ['another start time (PID reused)', live(shell, { startedAt: new Date('2026-10-15T12:00:05.124Z') })],
+      ['another image', live(shell, { name: 'notepad.exe' })],
+    ])('a snapshot PID with %s is never touched', async (_name, found) => {
+      const { d, killProcessTree } = deps({
+        isProcessAlive: (pid) => pid === 5001,
+        queryProcesses: () => Promise.resolve(ok(found)),
+      });
+      expect(await Promise.all(cleanupOrphans([withChildren()], d))).toEqual(['gone']);
+      expect(killProcessTree).not.toHaveBeenCalled();
+    });
+
+    it('the root still runs: its tree first, then what is left of the snapshot', async () => {
+      const { d, killProcessTree } = deps({
+        queryProcesses: () => Promise.resolve(ok(info({}), live(ping))),
+      });
+      expect(await Promise.all(cleanupOrphans([withChildren()], d))).toEqual(['killed']);
+      expect(killProcessTree.mock.calls.map((c) => c[0])).toEqual([4242, 5002]);
+    });
+
+    it('an unknown answer ends nothing and keeps the record', async () => {
+      const { d, killProcessTree } = deps({
+        isProcessAlive: (pid) => pid !== 4242,
+        queryProcesses: () => Promise.resolve({ kind: 'unknown', reason: 'timeout', detail: 'slow' }),
+      });
+      expect(await Promise.all(cleanupOrphans([withChildren()], d))).toEqual(['unknown']);
+      expect(killProcessTree).not.toHaveBeenCalled();
+    });
+
+    it('a failing taskkill of a child keeps the record (failed)', async () => {
+      const { d } = deps({
+        isProcessAlive: (pid) => pid !== 4242,
+        queryProcesses: () => Promise.resolve(ok(live(shell))),
+        killProcessTree: () => Promise.reject(new Error('access denied')),
+      });
+      expect(await Promise.all(cleanupOrphans([withChildren()], d))).toEqual(['failed']);
+    });
+
+    it('splitOrphanRecords: a dead root with a live snapshot process still needs the query', () => {
+      const records = [withChildren(), record(7, 7)];
+      expect(splitOrphanRecords(records, (pid) => pid === 5002)).toEqual({
+        alive: [records[0]],
+        dead: [records[1]],
+      });
+    });
   });
 
   it('splitOrphanRecords: the liveness pre-filter keeps dead PIDs out of the query', () => {

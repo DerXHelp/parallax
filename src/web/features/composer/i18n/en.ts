@@ -73,6 +73,8 @@ export const en = {
     label: 'Model',
     trigger: 'Model: {model}',
     default: 'Default model',
+    defaultActual: '{label} · {model}',
+    actual: 'Currently running on {model}',
     loading: 'Loading models…',
     unavailable: 'The model list is available while the session runs.',
     effort: 'Effort',
@@ -100,6 +102,8 @@ export const en = {
     breakdown: 'Breakdown',
     loading: 'Loading breakdown…',
     unavailable: 'The breakdown is available while the session runs.',
+    categoriesSource:
+      'Categories as reported by the Agent SDK – the total matches /context, the split into categories can differ.',
     kinds: {
       used: 'used',
       free: 'free',

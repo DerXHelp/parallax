@@ -33,7 +33,7 @@ import {
   turnClose,
   turnOpen,
 } from '../backend/fake/dsl';
-import { init, msg } from './normalizer/synthetic/build';
+import { init, msg, system } from './normalizer/synthetic/build';
 import { FAKE_MODELS } from '../backend/fake/defaults';
 import { FAKE_SCENARIOS } from '../backend/fake/synthetic';
 import { loadFixtureScenario } from '../backend/fake/testing';
@@ -703,6 +703,47 @@ describe('presence and notifications', () => {
     expect(h.facts(entryId).unread).toBe(false);
     expect(h.publisher.cleared).toContain(entryId);
   });
+
+  it('WP22-03/-15: native toast for a window without Web Notifications and without any window; cleared with the card', async () => {
+    const shown: { entryId: string; kind: string; title: string }[] = [];
+    const cleared: string[] = [];
+    const toasts = {
+      available: () => true,
+      show: (entryId: string, kind: string, title: string) => shown.push({ entryId, kind, title }),
+      clear: (entryId: string) => cleared.push(entryId),
+      idle: () => Promise.resolve(),
+    };
+    const blocked = viewer(null, { focused: false, visible: false, systemNotifications: false });
+    const h = await setup({ toasts, presence: [blocked] });
+    expect(h.manager.hostState().nativeNotifications).toBe(true);
+    const entryId = await h.create('fake:bash');
+    await h.waitFor(() => h.facts(entryId).decisions.permission === 1);
+    await h.settle();
+    expect(shown).toEqual([{ entryId, kind: 'permission', title: 'fake:bash' }]);
+    // The window keeps its in-app hint (it shows it when the user comes back).
+    expect(h.publisher.notifications.map((n) => [n.clientId, n.notification.delivery])).toEqual([
+      [blocked.clientId, 'in_app'],
+    ]);
+    const [decision] = await h.decisions(entryId);
+    if (decision === undefined) throw new Error('no decision');
+    await h.cmd({
+      name: 'decision.respond',
+      entryId,
+      decisionId: decision.id,
+      response: { kind: 'permission', response: { behavior: 'allow', remember: null, acceptEdits: false } },
+    });
+    await h.settle();
+    expect(cleared).toContain(entryId);
+    // No window at all: a native toast only.
+    h.publisher.setPresence([]);
+    h.manager.onPresenceChanged([]);
+    await h.cmd({ name: 'session.sendPrompt', entryId, prompt: { text: 'fake:bash again' } });
+    await h.waitFor(() => h.facts(entryId).decisions.permission === 1);
+    await h.settle();
+    // permission, done of the allowed turn (the window still cannot show it), permission again.
+    expect(shown.map((s) => s.kind)).toEqual(['permission', 'done', 'permission']);
+    expect(h.publisher.notifications.map((n) => n.notification.kind)).toEqual(['permission', 'done']);
+  });
 });
 
 describe('engine extras', () => {
@@ -796,6 +837,59 @@ function textTurnEvents(): FixtureEvent[] {
   const prompt = c.ids.uuid();
   return join(input(c, prompt, 'Reply with exactly: OK'), textTurn(c, { prompt, text: 'OK' }), closeGate());
 }
+
+/** One turn whose result reports `total` as total_cost_usd (the CLI's counter of this process). */
+function costTurnEvents(total: number): FixtureEvent[] {
+  const c = dslContext({ sessionId: '5e550000-0000-4000-8000-0000000000c2' });
+  const prompt = c.ids.uuid();
+  return join(
+    input(c, prompt, 'Reply with exactly: OK'),
+    turnOpen(c, prompt),
+    turnClose(c, prompt, { result: { result: 'OK', total_cost_usd: total } }),
+    closeGate(),
+  );
+}
+
+describe('permission mode set by the CLI (WP22-04)', () => {
+  it('a mode change inside a turn (status message) reaches the summary – header and composer show it', async () => {
+    const c = dslContext({ sessionId: '5e550000-0000-4000-8000-0000000000c3' });
+    const prompt = c.ids.uuid();
+    const events = join(
+      input(c, prompt, 'Reply with exactly: OK'),
+      turnOpen(c, prompt),
+      toEvents([frame(c, system(0, 'status', { status: null, permissionMode: 'auto' }))]),
+      turnClose(c, prompt, { result: { result: 'OK' } }),
+      closeGate(),
+    );
+    const h = await setup({ scenario: () => eventsScenario('auto-switch', events) });
+    const entryId = await h.create('Reply with exactly: OK');
+    await h.waitFor(() => h.summary(entryId).permissionMode === 'auto');
+    expect(h.stores.registry.get(entryId)?.permissionMode).toBe('auto');
+    expect(
+      h.publisher.summaries.some((s) => s.summary.entryId === entryId && s.summary.permissionMode === 'auto'),
+    ).toBe(true);
+  });
+});
+
+describe('costs (WP22-10)', () => {
+  it('the conversation cost sums the query segments: a resumed CLI starts total_cost_usd at 0', async () => {
+    const h = await setup({
+      scenario: scenarios(
+        eventsScenario('first', costTurnEvents(0.003)),
+        eventsScenario('resumed', costTurnEvents(0.0005)),
+      ),
+    });
+    const entryId = await h.create('Reply with exactly: OK');
+    await h.waitFor(() => h.facts(entryId).runState === 'idle' && h.facts(entryId).lastTurn !== null);
+    const cost = () => currentConversation(h.stores.registry.get(entryId) ?? sampleEntry()).costUsd;
+    expect(cost()).toBe(0.003);
+    await h.cmd({ name: 'session.close', entryId });
+    await h.cmd({ name: 'session.sendPrompt', entryId, prompt: { text: 'Reply with exactly: OK' } });
+    await h.waitFor(() => h.backend.starts.length === 2 && h.facts(entryId).runState === 'idle');
+    await h.settle();
+    expect(cost()).toBe(0.0035);
+  });
+});
 
 describe('orphans', () => {
   const record = (n: number) => ({
@@ -891,12 +985,86 @@ describe('orphans', () => {
     expect(h.stores.processes.records().map((r) => r.pid)).toEqual([50_001, h.session(entry41.id).pid]);
   });
 
-  it('children of a dead claude.exe are neither searched nor ended (R2-03)', async () => {
+  it('children the last snapshot did not see are neither searched nor ended (R2-03)', async () => {
     const h = await setup({ processes: [{ ...record(5), startedAt: at(-60).toISOString() }] });
     h.proc.info.set(60_001, { pid: 60_001, name: 'node.exe', parentPid: 50_005, startedAt: at(-30) });
     await h.manager.orphansDone();
     expect(h.proc.queries).toEqual([]);
     expect(h.proc.killed).toEqual([]);
+    expect(h.stores.processes.records()).toEqual([]);
+  });
+
+  it('WP22-06 heartbeat: snapshot of the tree below every claude.exe, then every interval; stops with the last process', async () => {
+    const h = await setup({
+      scenario: () => eventsScenario('turn', textTurnEvents()),
+      options: { processSnapshotMs: 30_000, processSnapshotFirstMs: 10_000 },
+    });
+    const entryId = await h.create('Reply with exactly: OK');
+    await h.settle();
+    const pid = h.session(entryId).pid;
+    const spawned = h.now();
+    const t = (s: number) => new Date(spawned.getTime() + s * 1000);
+    h.proc.info.set(pid, { pid, name: 'claude.exe', parentPid: process.pid, startedAt: t(0) });
+    h.proc.info.set(70_001, { pid: 70_001, name: 'cmd.exe', parentPid: pid, startedAt: t(1) });
+    h.proc.info.set(70_002, { pid: 70_002, name: 'powershell.exe', parentPid: 70_001, startedAt: t(2) });
+    h.proc.info.set(70_003, { pid: 70_003, name: 'PING.EXE', parentPid: 70_002, startedAt: t(3) });
+    // An older process whose ParentProcessId is the (reused) PID: never part of the tree.
+    h.proc.info.set(70_004, { pid: 70_004, name: 'old.exe', parentPid: pid, startedAt: t(-100) });
+    expect(h.timers.pending().map((x) => x.ms)).toEqual([10_000]);
+    h.timers.advance(10_000);
+    await h.settle();
+    const [snap] = h.stores.processes.records();
+    expect(snap?.aliveAt).toBe(h.now().toISOString());
+    expect(snap?.children).toEqual([
+      { pid: 70_001, image: 'cmd.exe', startedAt: t(1).toISOString() },
+      { pid: 70_002, image: 'powershell.exe', startedAt: t(2).toISOString() },
+      { pid: 70_003, image: 'PING.EXE', startedAt: t(3).toISOString() },
+    ]);
+    expect(h.timers.pending().map((x) => x.ms)).toEqual([30_000]);
+    await h.cmd({ name: 'session.close', entryId });
+    await h.settle();
+    expect(h.timers.pending()).toEqual([]);
+    expect(h.stores.processes.records()).toEqual([]);
+  });
+
+  it('WP22-06 heartbeat: a PID that is not the spawned claude.exe (fake/reused) lends no tree', async () => {
+    const h = await setup({
+      scenario: () => eventsScenario('turn', textTurnEvents()),
+      options: { processSnapshotMs: 30_000, processSnapshotFirstMs: 10_000 },
+    });
+    const entryId = await h.create('Reply with exactly: OK');
+    await h.settle();
+    const pid = h.session(entryId).pid;
+    const t = (s: number) => new Date(h.now().getTime() + s * 1000);
+    // Same PID, but another program (or started long before the spawn).
+    h.proc.info.set(pid, { pid, name: 'notepad.exe', parentPid: 1, startedAt: t(0) });
+    h.proc.info.set(70_101, { pid: 70_101, name: 'child.exe', parentPid: pid, startedAt: t(1) });
+    h.timers.advance(10_000);
+    await h.settle();
+    expect(h.stores.processes.records()[0]).toMatchObject({ aliveAt: null, children: [] });
+    h.proc.info.set(pid, { pid, name: 'claude.exe', parentPid: 1, startedAt: t(-3_600) });
+    h.timers.advance(30_000);
+    await h.settle();
+    expect(h.stores.processes.records()[0]).toMatchObject({ aliveAt: null, children: [] });
+    await h.cmd({ name: 'session.close', entryId });
+  });
+
+  it('WP22-06 restart: processes of the snapshot that still run exactly as recorded are ended, the root is gone', async () => {
+    const shell = { pid: 70_011, image: 'powershell.exe', startedAt: at(5).toISOString() };
+    const ping = { pid: 70_012, image: 'PING.EXE', startedAt: at(6).toISOString() };
+    const h = await setup({
+      seed: { entries: [entry41] },
+      processes: [{ ...record(1), aliveAt: at(30).toISOString(), children: [shell, ping] }],
+      proc: { isProcessAlive: alive(70_011, 70_012) },
+      start: false,
+    });
+    h.proc.info.set(70_011, { pid: 70_011, name: 'powershell.exe', parentPid: 70_010, startedAt: at(5) });
+    // PID 70_012 now belongs to another program (other start time): untouched.
+    h.proc.info.set(70_012, { pid: 70_012, name: 'PING.EXE', parentPid: 1, startedAt: at(500) });
+    await h.manager.start();
+    await h.manager.orphansDone();
+    expect(h.proc.queries).toEqual([{ pids: [70_011, 70_012] }]);
+    expect(h.proc.killed).toEqual([70_011]);
     expect(h.stores.processes.records()).toEqual([]);
   });
 
@@ -1164,7 +1332,25 @@ describe('shutdown', () => {
     expect(order).toEqual(['ack', 'hook']);
   });
 
-  it('a process that ignores close() is killed after shutdownTimeoutMs', async () => {
+  it('WP22-05: a session waiting for a decision is interrupted before close(); no notification at shutdown', async () => {
+    const h = await setup({ presence: [viewer(null, { focused: false, visible: false })] });
+    const entryId = await h.create('fake:bash');
+    await h.waitFor(() => h.facts(entryId).decisions.permission === 1);
+    const notified = h.publisher.notifications.length;
+    await h.manager.shutdown();
+    const session = h.sessions(entryId)[0];
+    expect(session?.controls.map((c) => c.method)).toContain('interrupt');
+    expect(session?.state).toBe('exited');
+    // The frozen broker keeps the record open (→ expired after the restart, A.10) …
+    const h2 = await h.restart({ scenario: undefined });
+    harnesses.push(h2);
+    expect(h2.facts(entryId)).toMatchObject({ runState: 'interrupted', decisions: { expired: 1 } });
+    expect(h2.status(entryId).kind).toBe('needs-resume');
+    // … and the turn ended by the interrupt sends no "done" notification.
+    expect(h.publisher.notifications.length).toBe(notified);
+  });
+
+  it('a process that ignores close() is killed after shutdownKillAfterMs (WP22-05)', async () => {
     const killed: number[] = [];
     const pendingCloses: (() => void)[] = [];
     const holder: { h: EngineHarness | null } = { h: null };
@@ -1197,8 +1383,8 @@ describe('shutdown', () => {
     });
     const done = h.manager.shutdown();
     await h.settle();
-    expect(h.timers.pending().map((t) => t.ms)).toEqual([15_000]);
-    h.timers.advance(15_000);
+    expect(h.timers.pending().map((t) => t.ms)).toEqual([2_500]);
+    h.timers.advance(2_500);
     await done;
     expect(killed).toEqual([session.pid]);
     // Shutdown: nothing persisted from the forced exit (the last state stays).

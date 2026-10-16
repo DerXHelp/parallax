@@ -20,6 +20,8 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { findEdge } from '../lib/edge';
+import { nodeFsOps, writeFileAtomic, type FsOps } from '../lib/fs';
+import { fsErrorCode } from '../lib/paths';
 import { spawnHidden, type SpawnHiddenOptions } from '../lib/process';
 import { regQuery } from '../lib/registry';
 import { nodeFsProbe } from '../lib/windows';
@@ -83,6 +85,90 @@ export async function edgeProfileSignedIn(home: string): Promise<boolean> {
   return Object.values(parsed.data.profile?.info_cache ?? {}).some(
     (info) => (info.user_name ?? '').trim() !== '',
   );
+}
+
+/** `<profile>\Default\Preferences` of the app profile. */
+export function edgePreferencesFile(home: string): string {
+  return path.join(edgeProfileDir(home), 'Default', 'Preferences');
+}
+
+/** Chromium time (µs since 1601-01-01) as Edge writes it into `last_modified`. */
+export function chromiumTime(date: Date): string {
+  return String((BigInt(date.getTime()) + 11_644_473_600_000n) * 1000n);
+}
+
+const objectSchema = z.record(z.string(), z.unknown());
+
+export type NotificationGrant =
+  { kind: 'granted' } | { kind: 'already' } | { kind: 'skipped'; reason: string };
+
+/**
+ * WP22-03: allows Web Notifications for the server origin in the OWN Edge profile before the app
+ * window opens – `profile.content_settings.exceptions.notifications["<origin>,*"] = {setting: 1}`
+ * in `<home>\edge\Default\Preferences` (merged, written atomically; a new profile gets a minimal
+ * file). Reason: Edge shows `Notification.requestPermission()` only as a chip in the address bar,
+ * which an app window does not have – the request counts as "ignored". Measured with Edge 155: the
+ * pre-written exception is accepted (fresh and existing profile) and a Web Notification is shown
+ * (Edge's own popup, also with the window minimized). Only this profile, no policy, no registry.
+ * Edge keeps its in-memory prefs while it runs (a running profile writes them back on exit; the
+ * exception of the usual port is already there then). Unreadable prefs are left alone. Never throws.
+ */
+export async function grantEdgeNotifications(
+  home: string,
+  origin: string,
+  options: { now?: () => Date; fs?: FsOps } = {},
+): Promise<NotificationGrant> {
+  const file = edgePreferencesFile(home);
+  const fs = options.fs ?? nodeFsOps;
+  let prefs: Record<string, unknown> = {};
+  try {
+    const parsed = objectSchema.safeParse(JSON.parse(await fs.readFile(file)));
+    if (!parsed.success) return { kind: 'skipped', reason: 'preferences are no JSON object' };
+    prefs = parsed.data;
+  } catch (error) {
+    if (fsErrorCode(error) !== 'ENOENT') {
+      return { kind: 'skipped', reason: `preferences unreadable (${fsErrorCode(error) ?? 'parse error'})` };
+    }
+  }
+  const pattern = `${origin},*`;
+  /** The object under `key` (absent = empty); a non-object fails the parse. */
+  const child = (parent: Record<string, unknown> | undefined, key: string) =>
+    objectSchema.safeParse(parent?.[key] ?? {});
+  const profile = child(prefs, 'profile');
+  const contentSettings = child(profile.data, 'content_settings');
+  const exceptions = child(contentSettings.data, 'exceptions');
+  const notifications = child(exceptions.data, 'notifications');
+  if (!profile.success || !contentSettings.success || !exceptions.success || !notifications.success) {
+    return { kind: 'skipped', reason: 'unexpected preferences layout' };
+  }
+  const current = objectSchema.safeParse(notifications.data[pattern]);
+  if (current.success && current.data.setting === 1) return { kind: 'already' };
+  const next = {
+    ...prefs,
+    profile: {
+      ...profile.data,
+      content_settings: {
+        ...contentSettings.data,
+        exceptions: {
+          ...exceptions.data,
+          notifications: {
+            ...notifications.data,
+            [pattern]: {
+              ...(current.success ? current.data : {}),
+              last_modified: chromiumTime((options.now ?? (() => new Date()))()),
+              setting: 1,
+            },
+          },
+        },
+      },
+    },
+  };
+  try {
+    await writeFileAtomic(file, JSON.stringify(next), { fs });
+    return { kind: 'granted' };
+  } catch (error) {
+    return { kind: 'skipped', reason: `preferences not writable (${fsErrorCode(error) ?? 'error'})` };
+  }
 }
 
 /** Absolute msedge.exe or null (real registry and file system). */

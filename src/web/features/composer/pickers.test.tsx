@@ -151,6 +151,23 @@ describe('ModelPicker (F.12)', () => {
     ]);
   });
 
+  it('WP22-12: "Default" names the model that actually answers (label and default row)', async () => {
+    const h = start('idle', 'model');
+    act(() => {
+      h.host.patchSummary(DEMO_ENTRIES.idle, { modelSetting: null, model: 'claude-haiku-5-5' });
+    });
+    const user = userEvent.setup();
+    const trigger = await screen.findByRole('button', { name: /^Model: .+ · claude-haiku-5-5$/ });
+    await user.click(trigger);
+    expect(await screen.findByText('Currently running on claude-haiku-5-5')).toBeTruthy();
+    await user.keyboard('{Escape}');
+    // An explicit choice shows just that model.
+    act(() => {
+      h.host.patchSummary(DEMO_ENTRIES.idle, { modelSetting: 'opus' });
+    });
+    expect(await screen.findByRole('button', { name: 'Model: Opus' })).toBeTruthy();
+  });
+
   it('loads the model list on first open when the detail has none', async () => {
     const h = start('idle', 'model');
     act(() => {

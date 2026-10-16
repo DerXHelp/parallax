@@ -1,10 +1,11 @@
 import { LOCAL_HOST_ID } from '@shared/common';
 import { WS_PATH } from '@shared/protocol';
 import { startNotificationDelivery } from '@web/notifications/delivery';
-import type { SystemNotifier } from '@web/notifications/system';
+import { getSystemNotifier, type SystemNotifier } from '@web/notifications/system';
 import { consumeAuthCode, createAuthBootstrap, type FetchLike } from './auth';
 import { createHostConnection, registerConnection, type ManagedHostConnection } from './connection';
 import { startPresenceTracking } from './presence';
+import { clientStore } from './store';
 import { startSelectionSync } from './selection';
 import { createWebSocketTransport, webSocketUrl, type SocketFactory } from './transport';
 
@@ -33,7 +34,10 @@ export interface BootedApp {
 export function bootApp(options: BootOptions = {}): BootedApp {
   const code = consumeAuthCode(window.location, window.history);
   const stopSelection = startSelectionSync();
-  const stopPresence = startPresenceTracking();
+  // WP22-03: the server needs to know whether this window can show Web Notifications.
+  const stopPresence = startPresenceTracking(clientStore, window, {
+    systemNotifications: () => (options.notifier ?? getSystemNotifier()).permission() === 'granted',
+  });
   const stopNotifications = startNotificationDelivery(
     options.notifier === undefined ? {} : { notifier: options.notifier },
   );

@@ -381,9 +381,7 @@
         "costUsdTotal": 0.0029402100000000004,
         "costUsdTurn": null,
         "permissionDenials": 0,
-        "errors": [
-          "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"
-        ],
+        "errors": [],
         "userMessageUuids": [
           "9ae8aacd-8a90-4544-96af-a9463436b04e"
         ],
@@ -522,9 +520,7 @@
         "costUsdTotal": 0.0036742100000000007,
         "costUsdTurn": 0,
         "permissionDenials": 0,
-        "errors": [
-          "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"
-        ],
+        "errors": [],
         "userMessageUuids": [
           "bbb2b341-3cef-49d4-b960-ca0652934bc3"
         ],

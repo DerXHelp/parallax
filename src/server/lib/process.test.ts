@@ -3,9 +3,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   assertSpawnableFile,
   childProcesses,
+  descendantsOf,
   errnoCode,
   isProcessAlive,
   killProcessTree,
+  listProcesses,
   parseProcessQueryOutput,
   PROCESS_QUERY_MAX_CLAUSES,
   processInfo,
@@ -481,6 +483,97 @@ describe('processInfo / queryProcesses (orphan cleanup, C.8, R2-02)', () => {
       if (grandchildren.kind !== 'ok') return;
       expect(grandchildren.processes.filter((c) => c.name.toLowerCase() === 'node.exe')).toEqual([]);
       expect(grandchildren.processes.every((c) => c.parentPid === grandchild)).toBe(true);
+    },
+    POWERSHELL_TEST_TIMEOUT_MS,
+  );
+});
+
+describe('listProcesses / descendantsOf (heartbeat snapshot, WP22-06)', () => {
+  const at = (s: number) => new Date(Date.parse('2026-10-15T12:00:00.000Z') + s * 1000);
+  const p = (pid: number, parentPid: number | null, s: number, name = 'x.exe') => ({
+    pid,
+    name,
+    parentPid,
+    startedAt: at(s),
+  });
+
+  it('descendants by ParentProcessId over all levels; a "child" older than its parent is a reused PID', () => {
+    const claude = p(100, 1, 0, 'claude.exe');
+    const list = [
+      claude,
+      p(200, 100, 1, 'cmd.exe'),
+      p(300, 200, 2, 'powershell.exe'),
+      p(400, 300, 3, 'PING.EXE'),
+      p(201, 100, 1, 'node.exe'),
+      // ParentProcessId 100 of a process that started BEFORE the claude.exe: an older owner of PID 100.
+      p(500, 100, -10, 'stale.exe'),
+      p(501, 500, -9, 'stale-child.exe'),
+      p(900, 1, 5, 'other.exe'),
+    ];
+    expect(
+      descendantsOf(list, claude)
+        .map((x) => x.pid)
+        .sort(),
+    ).toEqual([200, 201, 300, 400]);
+    // A dead intermediate parent: the grandchild still hangs at its (now missing) parent PID.
+    expect(descendantsOf([claude, p(300, 200, 2)], claude)).toEqual([]);
+    // Cycles do not loop.
+    expect(descendantsOf([p(1, 2, 0), p(2, 1, 0)], p(1, 2, 0)).map((x) => x.pid)).toEqual([2]);
+  });
+
+  it('one query without a filter; three-valued like queryProcesses', async () => {
+    const calls: string[][] = [];
+    const run: RunFileFn = (_file, args) => {
+      calls.push([...args]);
+      return Promise.resolve({
+        exitCode: 0,
+        signal: null,
+        stdout: '[{"pid":5,"name":"claude.exe","parentPid":1,"startedAt":"2026-10-15T08:00:00.000Z"}]',
+        stderr: '',
+        timedOut: false,
+      });
+    };
+    expect(await listProcesses({ run, platform: 'win32' })).toMatchObject({
+      kind: 'ok',
+      processes: [{ pid: 5, name: 'claude.exe' }],
+    });
+    const script = calls[0]?.at(-1) ?? '';
+    expect(script).toContain('-Property ProcessId,ParentProcessId,Name,CreationDate');
+    expect(script).not.toContain('-Filter');
+    expect(await listProcesses({ run, platform: 'linux' })).toMatchObject({
+      kind: 'unknown',
+      reason: 'unsupported',
+    });
+    const failing: RunFileFn = () =>
+      Promise.resolve({ exitCode: 3, signal: null, stdout: 'error: denied', stderr: '', timedOut: false });
+    expect(await listProcesses({ run: failing, platform: 'win32' })).toMatchObject({
+      kind: 'unknown',
+      reason: 'failed',
+    });
+  });
+
+  windowsOnly(
+    'the real listing finds this test process and the grandchild below a child',
+    async () => {
+      const child = spawnHidden(NODE, ['-e', PARENT_WITH_GRANDCHILD], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const pid = child.pid;
+      if (pid === undefined) throw new Error('no pid');
+      started.add(pid);
+      let stdout = '';
+      child.stdout?.setEncoding('utf8');
+      child.stdout?.on('data', (chunk: string) => {
+        stdout += chunk;
+      });
+      expect(await waitUntil(() => stdout.includes('\n'), PROCESS_DEADLINE_MS)).toBe(true);
+      const grandchild = grandchildPid(stdout);
+      const result = await listProcesses({ timeoutMs: POWERSHELL_CALL_TIMEOUT_MS });
+      expect(result.kind).toBe('ok');
+      if (result.kind !== 'ok') return;
+      const self = result.processes.find((x) => x.pid === process.pid);
+      if (self === undefined) throw new Error('own process not listed');
+      expect(descendantsOf(result.processes, self).map((x) => x.pid)).toEqual(
+        expect.arrayContaining([pid, grandchild]),
+      );
     },
     POWERSHELL_TEST_TIMEOUT_MS,
   );

@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { readStorage, storageKey, writeStorage } from '@web/lib/storage';
+import { reportSystemNotifications } from '@web/state/presence';
 import type { NotificationPermissionState } from './channel';
 import { getSystemNotifier } from './system';
 
@@ -40,6 +41,8 @@ export function useNotificationPermission(): NotificationPermissionState {
 /** Asks the browser – call only from a click handler. Resolves with the new permission. */
 export async function requestNotificationPermission(): Promise<NotificationPermissionState> {
   const result = await getSystemNotifier().requestPermission();
+  // WP22-03: the server chooses native toasts for a window without permission.
+  reportSystemNotifications(result === 'granted');
   emit();
   return result;
 }
