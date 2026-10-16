@@ -56,6 +56,40 @@ export function toModelCatalog(raw: unknown): ModelCatalog {
   return catalog;
 }
 
+function aliasOption(value: string, displayName: string): ModelOption {
+  return {
+    value,
+    displayName,
+    description: '',
+    supportsEffort: false,
+    supportedEffortLevels: [],
+    supportsFastMode: false,
+    supportsAutoMode: false,
+  };
+}
+
+/**
+ * WP22-01: before the first start of a profile there is no `supportedModels()` catalog – the
+ * picker offers the CLI's model aliases instead (`--model default|opus|sonnet|haiku`), so the very
+ * first turn can already run on the chosen model (`session.setModel` on a dormant entry is kept as
+ * `modelSetting` and passed at the start). Replaced by the real catalog once a process answered.
+ */
+export const FALLBACK_MODEL_CATALOG: Readonly<ModelCatalog> = Object.freeze({
+  options: [
+    aliasOption('default', 'Default'),
+    aliasOption('opus', 'Opus'),
+    aliasOption('sonnet', 'Sonnet'),
+    aliasOption('haiku', 'Haiku'),
+  ],
+  resolved: {},
+  skipped: 0,
+});
+
+/** The profile's catalog, or the alias fallback while it has none (WP22-01). */
+export function catalogOrFallback(catalog: ModelCatalog | null): ModelCatalog {
+  return catalog ?? { ...FALLBACK_MODEL_CATALOG, options: [...FALLBACK_MODEL_CATALOG.options] };
+}
+
 /**
  * The row of the entry's current model: the setting (alias as given) first, then the model
  * actually seen (value or resolvedModel), then the CLI default row.

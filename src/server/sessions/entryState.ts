@@ -48,7 +48,7 @@ import { createBroker, type Broker } from './broker';
 import { createSerial, type Serial } from './lib/serial';
 import type { TimerHandle, Timers } from './lib/timers';
 import { applyToMirror, baseView, findToolCallIn, readMirrorItems } from './mirror';
-import { currentModelOption, type ModelCatalog } from './models';
+import { catalogOrFallback, currentModelOption, type ModelCatalog } from './models';
 import type {
   CreateLiveNormalizer,
   NormalizeContextUsage,
@@ -441,7 +441,7 @@ export class EntryState {
           items: read.items,
           hasEarlier: read.hasEarlier,
           decisions: [...this.broker.expired(), ...this.broker.open()],
-          models: this.core.models(this.entry.profileId)?.options ?? null,
+          models: catalogOrFallback(this.core.models(this.entry.profileId)).options,
           queue: this.queue.list(),
         });
         const view = applyToMirror(base, buffer);
@@ -462,7 +462,7 @@ export class EntryState {
       items: [],
       hasEarlier: this.conversation().lastOrder > 0,
       decisions: [...this.broker.expired(), ...this.broker.open()],
-      models: this.core.models(this.entry.profileId)?.options ?? null,
+      models: catalogOrFallback(this.core.models(this.entry.profileId)).options,
       queue: this.queue.list(),
     });
     this.mirror = view;

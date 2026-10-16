@@ -199,11 +199,13 @@ const RISKY_EDGE_POLICIES: Readonly<Record<string, (data: string) => boolean>> =
 /** Relevant Edge policies (`<name>=<data>`): warn if one can sign in/sync the app profile; none → no line. */
 export function checkEdgePolicies(
   values: readonly { key: string; name: string; data: string }[],
-): PreflightCheck | null {
+): PreflightCheck {
   const relevant = values.filter(
     (v) => Object.hasOwn(RISKY_EDGE_POLICIES, v.name) || /sync|signin/i.test(v.name),
   );
-  if (relevant.length === 0) return null;
+  // WP22-11: always one line, so the output shows that the policies were checked.
+  if (relevant.length === 0)
+    return { id: 'edge-policies', title: 'edge policies', level: 'ok', detail: 'none' };
   const risky = relevant.filter((v) => RISKY_EDGE_POLICIES[v.name]?.(v.data.toLowerCase()) === true);
   const detail = relevant.map((v) => `${v.name}=${v.data}`).join(', ');
   if (risky.length === 0) return { id: 'edge-policies', title: 'edge policies', level: 'info', detail };
@@ -462,8 +464,7 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightReport
 
   const edge = await findEdge({ regQuery: deps.regQuery ?? regQuery(run), fs, env: deps.env });
   checks.push(checkEdge(edge));
-  const policies = checkEdgePolicies(await edgePolicyValues(deps.regKeyQuery ?? regKeyQuery(run)));
-  if (policies !== null) checks.push(policies);
+  checks.push(checkEdgePolicies(await edgePolicyValues(deps.regKeyQuery ?? regKeyQuery(run))));
   const antivirus = checkAntivirus(await (deps.antivirus ?? (() => antivirusProducts(run)))());
   if (antivirus !== null) checks.push(antivirus);
   const home = deps.home ?? null;
