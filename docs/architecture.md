@@ -3,8 +3,9 @@
 Stand: WP-02 (Contracts v1, eingefroren) plus R0-Fixes (HTTP-/Auth-Contract, Datei-Ownership,
 Statusregeln; `docs/wp/R0.md`, Abschnitt „Umsetzung“), nachgezogen bis R1/R2-Fixes, WP-20a und die
 R3-Fixes Server (`docs/wp/R1.md`, `docs/wp/R2.md`, `docs/wp/R3.md`, ADR-018 … ADR-067; Server-,
-Launcher- und Build-Abschnitte §2.2, §3.3, §5.1, §8, §9, §11). Code-Wahrheit sind die zod-Schemas in
-`src/shared` und die Port-Dateien in `src/server`.
+Launcher- und Build-Abschnitte §2.2, §3.3, §5.1, §8, §9, §11) und die WP-22-Fixes (`docs/wp/WP-22.md`
+„Umsetzung der Befunde“, ADR-080 … ADR-087: Benachrichtigungen, Waisen, Shutdown, Env). Code-Wahrheit
+sind die zod-Schemas in `src/shared` und die Port-Dateien in `src/server`.
 
 **Rangfolge bei Widersprüchen (R0-10):** Contracts (`src/shared`, Ports) > dieses Dokument und die
 ADRs (`docs/decisions.md`) > Designs/Aufträge in `docs/wp/` > `docs/sdk-findings.md` > `docs/plan.md`
@@ -413,13 +414,13 @@ Kompositionswurzel `app/compose.ts` zusammen (einziger Ort, der alle Module kenn
 
 | # | Schritt | Fehler → Exit-Code (`launcher/exitCodes.ts`) |
 |---|---|---|
-| 1 | `loadConfig()` (Flags > `PARALLAX_*` > Defaults; Host immer `127.0.0.1`; FakeBackend auf/unter dem echten Datenordner verboten, R3-02; `validation` `--validate`/`PARALLAX_VALIDATE`, Default `log`, Tests `throw`, R3-05) | ungültig → 1 |
+| 1 | `loadConfig()` (Flags > `PARALLAX_*` > Defaults; Host immer `127.0.0.1`; FakeBackend auf/unter dem echten Datenordner verboten, R3-02; `validation` `--validate`/`PARALLAX_VALIDATE`, Default `log`, Tests `throw`, R3-05; `toasts` `--toasts=native\|off`/`PARALLAX_TOASTS`, Default `native` unter Windows, `off` unter Vitest bzw. `NODE_ENV=test`, ADR-082) | ungültig → 1 |
 | 1a | Home-Lock `acquireHomeLock(home)` (`main.ts`, vor Log und erstem Store, ADR-054) | `busy` → 5 (Text nennt bei `access_denied` einen anderen Windows-Benutzer) |
 | 2 | `initLogging({home, dev, level, console: dev oder TTY})` – Datei `logs/parallax.*.log` immer; vom Launcher gestartet (stdout = `server.out.log`) ohne Konsole; danach Crash-Handler (`app/crash.ts`: `unhandledRejection`/`uncaughtException` → `fatal` + geordneter Shutdown, Exit 1; ADR-064) | 1 |
 | 3 | Single-Instance: `findRunningServer({home})` (Lockfile + Health; neben dem Home-Lock nur noch für Server älterer Builds ohne Pipe) | Server läuft für dieses Home → 5 |
 | 4 | `createServerInstance()`, Stores in fester Reihenfolge: Registry, Settings, `processes.json`, Auth-Secret (lesen vor jedem Schreiben), Blobs/Decisions/Transkripte (lazy; Transkript-Validierung `config.validation`) – eine `createStoreWarnings()`-Instanz für alle | `StoreVersionTooNewError` → 3 (Datei unverändert), sonst 1 |
 | 5 | Backend nach `config.backend`: `fake` = `createFakeBackend({speed: 1})` (interaktives Szenario) + `createFakeClaudeIntegration()` (kein `claude`-Prozess); `sdk` = `createSdkBackend()` per dynamischem Import + `createClaudeIntegration({appVersion})` (Profil „Standard“, `resolveClaude`) | 1 |
-| 6 | `createSessionManager({backend, claude, stores, host: {Versionen aus readSdkManifest(), dataDirLabel, dev}, onShutdownRequested})` → `createSyncHub({source: manager, instance, validation: config.validation})` → `manager.attachPublisher(hub)` → `warnings.onChange → publishHostState` → `await manager.start()` (Recovery; Waisen im Hintergrund) | 1 |
+| 6 | `createSessionManager({backend, claude, stores, toasts: createNativeToasts({enabled: config.toasts === 'native', …}), host: {Versionen aus readSdkManifest(), dataDirLabel, dev}, onShutdownRequested})` (mit `fake` ohne Herzschlag, `processSnapshotMs: 0`) → `createSyncHub({source: manager, instance, validation: config.validation})` → `manager.attachPublisher(hub)` → `warnings.onChange → publishHostState` → `await manager.start()` (Recovery; Waisen im Hintergrund) | 1 |
 | 7 | UI-Snapshot `prepareWebRoot` (`dist/web` → `PARALLAX_HOME/ui/<buildId>`, nur bei passender `dist/web/build.json`, ADR-066) → `createApp({config, instance, auth, blobs, hub, webRoot})` – die App ruft `hub.attach` selbst auf; `webRoot` = der Snapshot (bzw. `dist/web` neben `dist/server.js`), im Dev-Modus keiner (Vite); `/api/health` meldet `config.backend` | 1 |
 | 8 | `createServerShutdown(…)` + `installSignalHandlers()` – **vor** `listen`, damit Signal und `server.shutdown` den Rahmen immer finden | – |
 | 9 | `app.listen({host: 127.0.0.1, port})` (Port 0 = frei) | `EADDRINUSE` → 4 (Meldung enthält „EADDRINUSE“), sonst 1 |
@@ -433,12 +434,20 @@ aus `server.out.log`) und beendet sich mit dem Code.
 **Beenden** (`server.shutdown` – die Engine antwortet zuerst und ruft `onShutdownRequested` →
 `shutdown.stop('command')` –, SIGINT/SIGTERM/SIGBREAK/SIGHUP → `stop('signal')`, zweites Signal →
 sofort 130; unerwarteter Fehler → `stop('error', 1)`, ADR-064): `manager.shutdown()` (Befehle →
-`SERVER_SHUTTING_DOWN`, `close()` aller Queries ≤ 15 s, nach 5 s Gnadenfrist `taskkill /T /F` der
-Kindprozessbäume, ≤ 2 s auf eine laufende Waisen-Prüfung warten – spätere Ergebnisse ignoriert –,
-Stores flushen, `backend.dispose()`) → `app.close()` (WS-Close 4503, Hub entsorgt) → alle Stores
-schließen → auf die Zugriffsprüfung des Homes warten (`homeAccess`, keine PowerShell überlebt den
-Server) → Lockfile freigeben (nur das eigene) → Home-Lock freigeben → Log-Datei schließen (im
-`exit`-Wrapper) → `exit(code)`.
+`SERVER_SHUTTING_DOWN`; Herzschlag und Timer aus, Broker eingefroren – offene Entscheidungen bleiben
+als Records offen und sind nach dem Neustart `expired`; keine Benachrichtigungen und keine
+KI-Titel-, Context- oder Git-Abfragen mehr; Sessions mit offener Entscheidung erst `interrupt()`
+(≤ 1 s), dann `close()` aller Queries; was nach `shutdownKillAfterMs` 2,5 s noch läuft, beendet die
+Engine parallel per `taskkill /T /F`, nach insgesamt 15 s noch einmal (`error`-Log; ADR-084); ≤ 2 s
+auf eine laufende Waisen-Prüfung warten – spätere Ergebnisse ignoriert –, Stores flushen,
+`backend.dispose()`). Der Shutdown-Rahmen (`launcher/shutdown.ts`) begrenzt diesen Schritt auf 20 s
+und beendet, falls er nach der Gnadenfrist von 5 s noch läuft, zusätzlich die direkten
+Kindprozessbäume des Servers (`killChildProcessTrees`). Danach, jeder Schritt mit Timeout (5 s,
+Stores 10 s): `app.close()` (WS-Close 4503, Hub entsorgt) → alle Stores schließen → auf die
+Zugriffsprüfung des Homes warten (`homeAccess`, keine PowerShell überlebt den Server) → Lockfile
+freigeben (nur das eigene) → Home-Lock freigeben → Logzeile „shutdown: done“ mit `totalMs` und Dauer
+je Schritt (`stepsMs`) → Log-Datei schließen (im `exit`-Wrapper) → `exit(code)`. Live (WP-22-Fixes):
+arbeitende + wartende Session → 3,7 s bis zum Prozessende.
 
 | Start | Backend | Claude-Integration | Home |
 |---|---|---|---|
@@ -457,7 +466,11 @@ Prod `log` (verwerfen, zählen, gedrosselt loggen). Das FakeBackend auf (oder un
 `parallax-launch-…`; ein zweiter wartet und öffnet dann ein Fenster des Servers), ein Build je
 Checkout (`parallax-build-…`); läuft ein Server mit anderem Backend als angefordert (Health
 `backend`), bricht er mit `backend_mismatch` ab. Edge startet mit eigenem Profil ohne Anmeldung
-und Sync (`--disable-sync`, `--disable-features=msImplicitSignin,…`, ADR-060).
+und Sync (`--disable-sync`, `--disable-features=msImplicitSignin,…`, ADR-060). Vor jedem Fenster
+erlaubt der Launcher Web Notifications für den eigenen Origin in diesem Profil
+(`grantEdgeNotifications`, `<home>\edge\Default\Preferences`: `profile.content_settings.exceptions.
+notifications["http://127.0.0.1:<port>,*"] = {setting: 1}`, zusammengeführt und atomar; unlesbare
+Prefs bleiben unangetastet → Hinweis „Parallax uses Windows notifications instead“; ADR-082).
 
 ## 4. Source of Truth (A.3)
 
@@ -526,7 +539,16 @@ einen Kanal: fokussiertes, sichtbares Fenster zeigt die Session → nichts, sons
 Mit nativen Toasts (`HostState.nativeNotifications`, ADR-082): darf dieser Client keine Web
 Notifications zeigen (`systemNotifications: false`) → nativer Windows-Toast des Servers +
 `in_app` an ihn; ohne Client → nur der native Toast (sonst nichts). Welches Ereignis:
-`notificationFor` (§7). Das Edge-App-Fenster bekommt die Berechtigung vom Launcher (eigenes Profil).
+`notificationFor` (§7). Das Edge-App-Fenster bekommt die Berechtigung vom Launcher (eigenes Profil,
+§3.3); seine Web Notifications sind Edge-eigene Popups, keine Windows-Toasts. `systemNotifications`
+meldet das Fenster als `Notification.permission === 'granted'`; fehlt die Freigabe, übernimmt der
+native Toast. Der native Toast (`sessions/nativeToasts.ts` → `lib/toast.ts`, Texte en/de nach
+`settings.language`) läuft je Aufruf als eigene PowerShell, nacheinander; ist die letzte offene
+Entscheidung beantwortet oder die Session gesehen (ungelesen → gelesen), nimmt der Server ihn wieder
+aus dem Benachrichtigungscenter. Der erste Fehler (CLM/AppLocker, kein WinRT) schaltet den Kanal für
+den Serverlauf ab (`HostState.nativeNotifications: false`); das Banner „Benachrichtigungen
+aktivieren“ erscheint nur ohne native Toasts. Ein Klick auf den nativen Toast schließt ihn nur
+(Protokoll `parallax:` erst Phase 2).
 
 ### (a) Erstverbindung
 ```mermaid
@@ -1017,11 +1039,17 @@ logs/server.out.log                   stdout/stderr des vom Launcher gestarteten
                                       dem Logger, Ursache eines gescheiterten Starts als letzte Zeile, §3.3;
                                       > 1 MiB → server.out.1.log beim nächsten Start)
 edge/                                 Edge-Profil des App-Fensters (--user-data-dir, WP-21; nie angemeldet, kein
-                                      Sync – --disable-sync, --disable-features=msImplicitSignin,…, ADR-060)
+                                      Sync – --disable-sync, --disable-features=msImplicitSignin,…, ADR-060;
+                                      Benachrichtigungs-Freigabe des eigenen Origins in Default\Preferences,
+                                      vom Launcher vor jedem Fenster gesetzt, ADR-082)
 ui/<buildId>/                         beim Serverstart fixierte Kopie von dist/web (nur die des laufenden Builds;
                                       ältere werden beim Start gelöscht; V2-03, ADR-066)
 ```
-Der **Home-Lock** (unten) ist eine Named Pipe und liegt nicht im Home.
+Der **Home-Lock** (unten) ist eine Named Pipe und liegt nicht im Home. Einzige Änderung, die
+Parallax selbst außerhalb des Homes macht (ADR-082): der native Toast legt `HKCU\Software\Classes\AppUserModelId\Parallax.App`
+(`DisplayName` „Parallax“) an, falls er fehlt – bei jedem Toast geprüft; Windows selbst führt den
+Absender danach unter `HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\
+Parallax.App` (README „Benachrichtigungen“).
 
 `decisions.json`: Solange eine Entscheidung offen ist, trägt ihr Record `decision` (Stand bei
 Erzeugung, gekappt wie auf dem Draht); bei Auflösung wird `decision` auf `null` gesetzt. Nach einem
@@ -1040,8 +1068,8 @@ wird erst, nachdem die Datei gelesen wurde.
 `{schemaVersion: 1, records: [{entryId, pid, image, startedAt, aliveAt, children: [{pid, image,
 startedAt}]}]}` über `JsonStore` (neuere Version → Start-Abbruch wie oben; `aliveAt`/`children` mit
 Default `null`/`[]`). Ein Record entsteht beim Spawn (`add` mit `flush`, überlebt einen harten
-Abbruch) und verschwindet beim Prozessende (`remove`, entprellt). **Herzschlag (WP22-06):** 10 s
-nach einem Spawn, danach alle 30 s, solange Prozesse laufen, **eine** Prozessliste
+Abbruch) und verschwindet beim Prozessende (`remove`, entprellt). **Herzschlag (WP22-06, nur mit
+dem SdkBackend):** 10 s nach einem Spawn, danach alle 30 s, solange Prozesse laufen, **eine** Prozessliste
 (`listProcesses`) für alle Sessions; je Record die Nachkommen der `claude.exe` mit exakter
 CIM-Startzeit (`children`, ≤ 200) und `aliveAt` (`heartbeat`, entprellt); eine unklare Liste behält
 den letzten Schnappschuss. Beim Serverstart: Records, deren Wurzel **und** Schnappschuss tot sind
@@ -1089,18 +1117,21 @@ defekte Zeilen überspringen und zählen.
   `AI_AGENT`, Hook-/Plugin-Kontext), **jedes geerbte `PARALLAX`/`PARALLAX_*`** (ADR-083) und
   `pnpm run`-Laufzustand immer entfernt; übrige `npm_*`/`PNPM_*`/`NODE_OPTIONS`/`NODE_ENV` nur
   behalten, wenn dauerhaft in HKCU/HKLM `Environment` mit gleichem Wert gesetzt (Nexus); danach
-  nur `PARALLAX=1`, `PARALLAX_ENTRY_ID`. Tests nutzen nie ein geerbtes `PARALLAX_HOME`
-  (`test/setup/home.ts`).
+  nur `PARALLAX=1`, `PARALLAX_ENTRY_ID`. Tests nehmen immer ein eigenes Temp-`PARALLAX_HOME`
+  (`parallax-test-*` im OS-Temp; Vitest- und Playwright-globalSetup frisch, `test/setup/home.ts`).
 - **Prozesse (C.8, ADR-022):** `close()`, bis 5 s warten, dann `taskkill /PID <pid> /T /F` (beim
-  Server-Shutdown: wartende Sessions erst `interrupt`, nach 2,5 s `taskkill`, ADR-084); jeder
-  Spawn mit `windowsHide: true`, ohne Shell und nur mit **absolutem `.exe`-Pfad** (nackte Namen über
+  Server-Shutdown: wartende Sessions erst `interrupt`, was nach 2,5 s noch läuft, per `taskkill`,
+  §3.3, ADR-084); jeder Spawn mit `windowsHide: true`, ohne Shell und nur mit **absolutem
+  `.exe`-Pfad** (nackte Namen über
   `resolveExecutable`/`systemTool` auflösen – libuv sucht sonst zuerst im `cwd`); Spawn-Wrapper liest
   stderr (F.16). Prozessabfragen sind dreiwertig (`unknown` heißt nie „weg“, ADR-051); Waisen beim
   Start: der verifizierte `claude.exe`-Wurzelprozess und exakt passende Prozesse des letzten
   Herzschlag-Schnappschusses (ADR-081, §8).
-- **Benachrichtigungen (ADR-082):** Web Notifications im Edge-App-Fenster (Origin vom Launcher im
-  eigenen Profil erlaubt); ohne Fenster bzw. ohne Berechtigung ein nativer Windows-Toast des Servers
-  (PowerShell-Helfer, Daten nur über Umgebungsvariablen, Absender per HKCU-AppUserModelId).
+- **Benachrichtigungen (ADR-082, §5 „Präsenz“):** Web Notifications im Edge-App-Fenster (Origin vom
+  Launcher im eigenen Profil erlaubt, Edge-eigene Popups); ohne Fenster bzw. ohne Berechtigung ein
+  nativer Windows-Toast des Servers (PowerShell 5.1 + WinRT, Skript konstant per `-EncodedCommand`,
+  Daten nur über Umgebungsvariablen, XML per DOM; Absender `Parallax.App` per HKCU-AppUserModelId).
+  `--toasts=native|off`/`PARALLAX_TOASTS`, unter Tests aus; erster Fehler → Kanal aus für den Serverlauf.
 - **Ein Server je Home (ADR-054):** Home-Lock per Named Pipe, `busy` → Exit 5 (`main.ts`, §8);
   Home-Rechte werden nur gewarnt (ADR-056). Das FakeBackend läuft nie auf dem echten Datenordner
   (ADR-061).

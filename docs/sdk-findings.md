@@ -4,6 +4,10 @@
 · **SDK** `@anthropic-ai/claude-agent-sdk` 0.3.296 (`claudeCodeVersion` im SDK-Manifest: 2.1.296)
 · **Modell** `haiku` (= `claude-haiku-5-5`, 1M-Kontextfenster) · Node 26.4.0 · Windows 11.
 
+**Nachträge:** 16.10.2026 aus der Live-Abnahme WP-22 (`docs/wp/WP-22.md`, Abnahme 15.10., Nachprüfung
+16.10.2026; gleiche CLI 2.1.300 und SDK 0.3.296). Sie stehen als „Nachtrag 16.10.2026 (WP-22)“ bei den
+betroffenen Punkten; die ursprünglichen Befunde bleiben unverändert stehen.
+
 Der Plan wurde gegen SDK 0.3.299 / CLI 2.1.299 geprüft. Alle dort zitierten APIs existieren auch in
 0.3.296 (`perTaskStopAffordance`, `suppressAlwaysAllowRule`, `defaultToNo`, `toolConfig.askUserQuestion`,
 `renameSession`, `stopTask`, `getContextUsage({detail})`, `applyFlagSettings`, `spawnClaudeCodeProcess`,
@@ -49,6 +53,11 @@ Befehlsausgaben sind mit `$` markiert (E-Mail/Org geschwärzt). Aufgezeichnet mi
     MCP) – der Spike verbrauchte ~2,1 Mio. Tokens (93 % Cache-Reads) statt „niedrig fünfstellig“;
     geschätzte Kosten 0,22 USD, Abo-5h-Fenster von 0 % auf 1 % (Abschnitt „Verbrauch“).
 
+> **Nachtrag 16.10.2026 (WP-22):** Nr. 4 gilt nicht mehr allgemein – in der Abnahme wechselte der
+> Default derselben CLI für dasselbe Konto von `default` auf `auto` (Punkt 2). Neu dazu: der KI-Titel
+> steht auch in `getSessionInfo().customTitle` (Punkt 8), `total_cost_usd` begann nach einem Resume bei
+> 0 (Punkt 14), nach hartem Server-Abbruch überleben Tool-Prozesse (Punkt 16).
+
 ---
 
 ## Punkt 1 – Auth mit Abo-Login, `apiKeySource`, `init`-Felder
@@ -77,6 +86,11 @@ Befehlsausgaben sind mit `$` markiert (E-Mail/Org geschwärzt). Aufgezeichnet mi
   Update behandeln. `mcp_servers.status` aus `init` ist beim Start unzuverlässig (pending) →
   `mcpServerStatus()` bzw. spätere `init`s nutzen.
 
+> **Nachtrag 16.10.2026 (WP-22):** Mit dem echten Startweg (`pnpm start`, SdkBackend) bestätigt:
+> `apiKeySource: "none"`, kein Auth-/Billing-Fehler. `rate_limit_event` brachte den Hinweis
+> „Approaching the usage limit – 79–81 % used · seven_day“ (Wochenfenster des Kontos). Ohne Modell im
+> Profil folgte die CLI `ANTHROPIC_MODEL=haiku` aus der Server-Umgebung (`claude-haiku-5-5`).
+
 ## Punkt 2 – Weggelassener `permissionMode`
 
 - **Ergebnis:** Ohne `permissionMode` startete die Session in **`default`**
@@ -90,6 +104,19 @@ Befehlsausgaben sind mit `$` markiert (E-Mail/Org geschwärzt). Aufgezeichnet mi
 - **Konsequenz:** Plan C.3 bleibt richtig („weglassen, tatsächlichen Modus anzeigen“), aber Parallax
   darf nicht annehmen, dass „weggelassen = auto“. Modus aus `init`/`status`, bei Leerlauf-Änderung
   zusätzlich lokal setzen (der Server weiß, was er gesetzt hat).
+
+> **Nachtrag 16.10.2026 (Quelle: WP-22, Befund WP22-04; ADR-080):** In der Abnahme am 15.10.2026
+> (CLI 2.1.300, SDK 0.3.296, dasselbe Konto) startete die erste Session um 22:21 ohne `permissionMode`
+> noch in `default`; ab ≈ 23:20 starteten neue **und** fortgesetzte Sessions in **`auto`**
+> (`initializationResult().current_permission_mode`, auch per SDK-Probe ohne Prompt – für einen neuen
+> Ordner und für den Ordner der Session von 22:21; Transkript `permissionMode: "auto"`; in
+> `~/.claude.json` u. a. `hasSeenAutoDefaultNotice`). Im Auto-Modus legte Claude eine Datei per
+> `Set-Content` ohne Permission-Karte an. Der Default ist also nicht nur konto-/maschinenabhängig,
+> sondern kann im Lauf ohne Versionswechsel umspringen; „weggelassen = `default`“ gilt nicht mehr
+> allgemein. Parallax setzt bewusst **keinen** eigenen Modus (Plan C.3, ADR-080): es zeigt den
+> tatsächlichen Modus aus `init`/`system/status` (auch einen Wechsel durch die CLI im Turn); wer immer
+> gefragt werden will, wählt „Manual“ bzw. setzt `defaultMode` (der Live-Smoke wählt „Manual“ vor dem
+> ersten Prompt).
 
 ## Punkt 3 – `canUseTool`: Signatur, Optionen, Entscheidungen
 
@@ -131,6 +158,12 @@ Befehlsausgaben sind mit `$` markiert (E-Mail/Org geschwärzt). Aufgezeichnet mi
   mit wählbarem Ziel. Die Karte darf nicht „nie wieder fragen“ versprechen. `decisionReasonType`,
   `requiresUserInteraction` tolerant übernehmen. `interrupt:true`-Deny ist ein Fehler-`result`, aber
   kein Session-Fehler → Status `idle`/`interrupted`, nicht `error`. `decisionClassification` mitsenden.
+
+> **Nachtrag 16.10.2026 (WP-22):** Live bestätigt: Write/Edit bieten nur `setMode acceptEdits`, keine
+> Regel. Eine „Immer erlauben · Diese Session“-Regel für einen PowerShell-Befehl ohne Pfad
+> (`ping -n 30 …`) verhinderte die erneute Abfrage desselben Befehls (kein `.claude\settings.local.json`
+> im Projekt). Eine PowerShell-Karte für eine Datei **im** Projektordner meldete „Outside the allowed
+> folders: <cwd>\notify.txt“ – der Text kommt aus der CLI (`blockedPath`).
 
 ## Punkt 4 – Write/Edit/Read/Bash/PowerShell: `tool_use_result` live
 
@@ -180,6 +213,10 @@ Befehlsausgaben sind mit `$` markiert (E-Mail/Org geschwärzt). Aufgezeichnet mi
   sichtbar, aber **ohne** Permission-Karte. „Mit frischem Kontext umsetzen“ nicht getestet (kein SDK-Request,
   Fallback aus C.4). Modell pro Assistant-Message anzeigen; Plan-Modus kostet mit Haiku deutlich mehr.
 
+> **Nachtrag 16.10.2026 (WP-22):** Erneut beobachtet: Plan-Modus mit Haiku plante auf
+> `claude-sonnet-5-5` (3 Requests, ≈ 0,20 der ≈ 0,25 USD der Abnahme); Plan-Datei
+> `~/.claude/plans/<slug>.md`, Feedback-Runde v1 → v2 und Freigabe mit `acceptEdits` wie oben.
+
 ## Punkt 7 – `/clear`
 
 - **Ergebnis:** `/clear` als User-Message → `conversation_reset {new_conversation_id, uuid (= dieselbe
@@ -196,6 +233,9 @@ Befehlsausgaben sind mit `$` markiert (E-Mail/Org geschwärzt). Aufgezeichnet mi
   Korrelation speichern. Titel nach `/clear` nicht automatisch zurücksetzen – die CLI behält ihn.
   Kosten-/Usage-Summen pro Unterhaltung führen.
 
+> **Nachtrag 16.10.2026 (WP-22):** Live bestätigt: nach `/clear` neue Session-ID (≠ Korrelations-ID
+> `new_conversation_id`), der Titel bleibt.
+
 ## Punkt 8 – `/rename`, Titel, KI-Titel
 
 - **Ergebnis:** `/rename <name>` über die laufende Session funktioniert: `system/session_title_changed
@@ -208,6 +248,17 @@ Befehlsausgaben sind mit `$` markiert (E-Mail/Org geschwärzt). Aufgezeichnet mi
 - **Konsequenz:** `/rename` durchreichen und `session_title_changed` auswerten (kein `renameSession()`
   auf laufende Sessions). Auto-Titel: nach `result` `getSessionInfo().summary` lesen, solange
   `titleIsCustom=false`. `session_title_changed` gehört in den Contract (untypisiert).
+
+> **Nachtrag 16.10.2026 (Quelle: WP-22, Befund WP22-02; ADR-085):** Mit SDK 0.3.296/CLI 2.1.300
+> liefert `getSessionInfo()` den KI-Titel einer **nie umbenannten** Session auch als `customTitle`
+> (Beleg: `{summary: "Datei test.txt erstellen", customTitle: "Datei test.txt erstellen", firstPrompt:
+> "lege test.txt …"}`; im Transkript nur `ai-title`-Einträge, dazu legt die CLI
+> `<session>\custom-title.json` an). Laut ADR-085 füllt das SDK `customTitle` aus `custom-title` ‖
+> Sidecar `custom-title.json` ‖ `aiTitle`. `customTitle !== null` ist damit **kein** Beleg für einen
+> eigenen Titel – `titleIsCustom` (Konsequenz oben) darf nicht daraus abgeleitet werden. Parallax
+> erkennt eigene Titel nur selbst (`titleSource 'custom'` nach `/rename`, `session.rename` oder Titel
+> beim Anlegen) und übernimmt sonst `customTitle` bzw. `summary`; Nachprüfung 16.10.2026:
+> `titleSource: ai`.
 
 ## Punkt 9 – Streaming-Input-Queue, `priority`, `replay-user-messages`
 
@@ -230,6 +281,10 @@ Befehlsausgaben sind mit `$` markiert (E-Mail/Org geschwärzt). Aufgezeichnet mi
   nötig (später ggf. für Rewind). „Jetzt senden“ (`now`) bricht den laufenden Turn ab und schiebt Tools
   in den Hintergrund → UI-Hinweis. `command_lifecycle` muss in den Contract (untypisiert!).
 
+> **Nachtrag 16.10.2026 (WP-22):** Live bestätigt: `next` während eines Tools wird nach dem Tool
+> übernommen; `now` schiebt das laufende Tool in den Hintergrund, die neue Nachricht wird beantwortet,
+> nach der Task-Notification folgt automatisch ein weiterer Turn.
+
 ## Punkt 10 – `interrupt()` und `session_state_changed`
 
 - **Während eines laufenden Tools** (`interrupt#25`–`#36`): `interrupt()` liefert `{still_queued:[]}`
@@ -250,6 +305,12 @@ Befehlsausgaben sind mit `$` markiert (E-Mail/Org geschwärzt). Aufgezeichnet mi
 - **Konsequenz:** „Fertig“ nur aus `idle` (C.5 bestätigt). Interrupt-`result` ist `error_during_execution`
   mit `terminal_reason aborted_*` → Status `interrupted`/`idle`, kein Fehlerbanner. `requires_action`
   ist ein zusätzliches Signal für „wartet auf dich“.
+
+> **Nachtrag 16.10.2026 (Quelle: WP-22, Befund WP22-08; ADR-087):** Nach jedem Stop/Interrupt enthält
+> `result.errors` (CLI 2.1.300) einen internen Diagnose-Eintrag, z. B. `[ede_diagnostic]
+> result_type=user last_content_type=n/a stop_reason=tool_use`; Parallax zeigt `[…diagnostic]`-Einträge
+> nicht an. Live: `interrupt()` während `ping -n 30` → `idle` nach 228 ms, bei offener PowerShell-Karte
+> → `idle` nach 252 ms (Karte weg, Tool abgebrochen).
 
 ## Punkt 11 – Subagent (Agent-Tool)
 
@@ -283,6 +344,13 @@ Befehlsausgaben sind mit `$` markiert (E-Mail/Org geschwärzt). Aufgezeichnet mi
   und lösen mit `undefined` auf (`#29`–`#31`), ohne Messages (`#33`).
 - **Konsequenz:** Context-Gauge wie in C.1. Bei 1M-Fenstern (Haiku 5.5) bleibt die Gauge lange niedrig.
 
+> **Nachtrag 16.10.2026 (WP-22, Befunde WP22-12/-14):** `getContextUsage({detail:'summary'})` und
+> `/context` lieferten dieselbe Summe (36,6 k von 1 M), aber andere Kategorien (System tools 13.8K
+> vs. 7.9k, MCP tools (deferred) 33.6K vs. 25.6k, Messages 10.7K vs. 16.5k) – nur Beobachtung.
+> `supportedModels()` beschreibt „Default (recommended)“ nach den Nutzer-Settings (hier „Opus 5.5“),
+> auch wenn die Session per `ANTHROPIC_MODEL=haiku` auf Haiku läuft; das tatsächliche Modell kam aus
+> `assistant.message.model` (`claude-haiku-5-5`).
+
 ## Punkt 13 – `rate_limit_event`, Stream-Deltas, Abgleich mit der finalen Message
 
 - **`rate_limit_event`:** einmal pro Session beim ersten Request, `status:"allowed"`,
@@ -311,6 +379,17 @@ Befehlsausgaben sind mit `$` markiert (E-Mail/Org geschwärzt). Aufgezeichnet mi
   `prompt_suggestion` (`#21`).
 - **Konsequenz:** Resume wie geplant (gleicher `cwd`, gespeicherter Modus). Kosten nicht über Resumes
   summieren. Prompt-Suggestions nicht als verlässlich annehmen (nach Resume evtl. „erster Turn“).
+
+> **Nachtrag 16.10.2026 (Quelle: WP-22, Befund WP22-10; ADR-087):** In der Abnahme begann
+> `result.total_cost_usd` nach einem Resume **bei 0** (Unterhaltung `845aaf25…`: vor dem Neustart
+> über 0,003 USD, im fortgesetzten Prozess 0,00053 USD) – anders als oben, bei derselben CLI 2.1.300; die
+> Ursache des Unterschieds ist nicht geklärt. „Enthält die Kosten der ursprünglichen Session“ und
+> „Kosten nicht über Resumes summieren“ sind damit nicht verlässlich. Parallax summiert die Kosten je
+> Unterhaltung über die Query-Segmente (Nachprüfung 16.10.2026: 0,0080 + 0,0015 = 0,0095 USD über zwei
+> Prozesse). Außerdem bestätigt: Resume nach Serverneustart mit derselben Session-ID; `claude --resume
+> <id> -p … --output-format json` in der Konsole setzt eine Parallax-Session mit gleicher
+> `session_id` fort – aus einer Claude-Code-Shell nur ohne `CLAUDECODE`/`CLAUDE_CODE_*` (die CLI
+> schützt sich gegen verschachtelte Sessions).
 
 ## Punkt 15 – Verlauf: `getSessionMessages`/`listSessions`/`getSessionInfo`, `CLAUDE_CONFIG_DIR`, `dir`
 
@@ -351,6 +430,27 @@ Befehlsausgaben sind mit `$` markiert (E-Mail/Org geschwärzt). Aufgezeichnet mi
   Fallback (harte Server-Abbrüche nicht getestet). WP-13: eigener Spawn-Wrapper **muss stderr
   konsumieren** (sonst blockiert die Pipe) und ins Log schreiben; `windowsHide:true` setzt das SDK im
   Default ebenfalls.
+
+> **Nachtrag 16.10.2026 (Quelle: WP-22, Befunde WP22-05/-06/-07; ADR-081, ADR-083, ADR-084):**
+> - **Harter Server-Abbruch** (`taskkill /PID <server> /F`, am 15. und 16.10.2026): `claude.exe`
+>   beendete sich selbst (stdin zu) samt MCP-Servern; die von ihm gestarteten Tool-Prozesse
+>   (`powershell.exe` → `PING.EXE`) liefen als **Waisen** weiter, bis der Befehl von selbst endete.
+>   Prozessbaum vorher: `claude.exe` → `conhost.exe`, 3× `cmd.exe`/`node.exe` (MCP), `cmd.exe` →
+>   `powershell.exe` → `PING.EXE`; ein Herzschlag-Schnappschuss zählte 21 Nachkommen. Parallax beendet
+>   beim nächsten Start exakt verifizierte Prozesse des letzten Schnappschusses (ADR-081).
+> - **Ende mit offener Entscheidung:** Eine Session, deren CLI auf eine `canUseTool`-Antwort wartet,
+>   endete nach Input-EOF/`Query.close()` nicht innerhalb von 5 s (laut ADR-084 wartet die CLI auf die
+>   Antwort, während das SDK das `canUseTool`-Signal vorher abbricht) → `taskkill`, Exit-Code 1. Mit
+>   `interrupt()` vor `close()` endete sie nach ≈ 1,3 s.
+> - **Umgebung der Tools** (Env-Probe): Im Tool-Prozess einer Session setzt die CLI selbst
+>   `CLAUDECODE`, `AI_AGENT` (`claude-code_<version>_agent`), `CLAUDE_CODE_SESSION_ID` (eigene
+>   Session), `CLAUDE_PID` (eigene PID), `CLAUDE_CODE_MESSAGING_SOCKET`/`_TOKEN`,
+>   `CLAUDE_CODE_SESSION_ATTENDED` (`0`) und `CLAUDE_CODE_CHILD_SESSION`; vom SDK kommen
+>   `CLAUDE_CODE_ENTRYPOINT=sdk-ts`, `CLAUDE_AGENT_SDK_VERSION` und
+>   `CLAUDE_CODE_QUESTION_PREVIEW_FORMAT=markdown`. Diese Namen in einer Session sind also kein Leck
+>   der aufrufenden Umgebung. Was `buildEnv` durchlässt, sehen auch die Tools (in der Abnahme
+>   `PARALLAX_HOME` des Servers) – deshalb entfernt `buildEnv` jedes geerbte `PARALLAX_*` (ADR-083;
+>   Nachprüfung: nur noch `PARALLAX`, `PARALLAX_ENTRY_ID`).
 
 ## Punkt 17 – Claude-Auflösung, `--version`, `auth status`
 
@@ -411,6 +511,9 @@ Nicht beobachtet (in der Union, kein Szenario dafür): `compact_boundary`, `api_
 `elicitation_complete` u. a. `system/commands_changed` kam zweimal im ersten (verlorenen) Permissions-Lauf
 vor, in keinem erhaltenen Fixture. → FakeBackend/Normalizer behandeln unbekannte Typen tolerant.
 
+> **Nachtrag 16.10.2026 (WP-22):** Hauptlauf und Live-Smoke gegen CLI 2.1.300 ohne einen einzigen
+> Validierungs-Drop echter SDK-Daten im Server-Log (R3-05); im Live-Smoke `unknownCounts` `{}`.
+
 ## Abweichungen 0.3.296 / Laufzeit gegenüber den Plan-Annahmen
 
 | Thema | Plan | Beobachtet (Beleg) | Konsequenz |
@@ -436,6 +539,12 @@ request_sent_wall_ms}`, `rate_limit_info.unifiedWindows`, `canUseTool.options.{d
 requiresUserInteraction}`, `assistant.{local_command_run, local_command_source}`,
 `tool_use_result.backgroundedToDeliverMessage`, `getContextUsage().autocompactSource`,
 `ModelInfo.supportsThinkingOff`, `initializationResult().{pid, current_permission_mode, session_state}`.
+
+> **Nachtrag 16.10.2026 (WP-22), weitere Abweichungen:** `permissionMode` weggelassen → in WP-22
+> zuerst `default`, dann `auto` (Punkt 2); `getSessionInfo().customTitle` enthält auch den KI-Titel
+> (Punkt 8); `total_cost_usd` nach Resume begann bei 0 (Punkt 14); `result.errors` enthält nach
+> Interrupts `[ede_diagnostic] …` (Punkt 10); Tool-Prozesse überleben einen harten Server-Abbruch
+> (Punkt 16).
 
 ## Fixture-Format (Version 1)
 
@@ -548,3 +657,6 @@ Task-Ausgaben unter `%TEMP%\claude\C--Users-<USER>-…-parallax-spike-…` (5 Or
 - `aborted:true` an Assistant-Messages, `task_progress`, `api_retry`, `compact_boundary`,
   `prompt_suggestion`, `permission_denied` (Auto-Modus) – nicht ausgelöst.
 - Verhalten mit Auto-Modus als CLI-Default (auf diesem Konto nicht aktiv).
+
+> **Nachtrag 16.10.2026 (WP-22):** „Waisen nach hartem Server-Abbruch“ ist live geprüft (Punkt 16);
+> der Auto-Modus wurde während der Abnahme zum CLI-Default dieses Kontos (Punkt 2).
