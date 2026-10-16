@@ -21,12 +21,12 @@ die Web-UI (Edge im App-Modus) zeigt Status, Context, Chat und nicht-modale Ents
 | `pnpm dev:web` | nur Vite; Playground `#playground`; im Worktree eigener Port per `PARALLAX_DEV_WEB_PORT` |
 | `pnpm dev:live` | wie `dev`, aber SdkBackend (echtes `claude`) – nur mit WP-Freigabe |
 | `pnpm build` | `dist/web` (Vite) + `dist/server.js` (esbuild) |
-| `pnpm start` | Launcher: Build bei Bedarf, Server unsichtbar, Edge; ohne `claude`: `PARALLAX_BACKEND=fake` |
+| `pnpm start` | Launcher: Build bei Bedarf, Server unsichtbar, Edge; ohne `claude`: `PARALLAX_BACKEND=fake` + eigenes `PARALLAX_HOME` |
 | `pnpm check` | typecheck (`tsc -b`) + lint + test – muss vor jedem Commit grün sein |
-| `pnpm typecheck` / `lint` / `test` / `e2e` / `format` | Einzelschritte |
+| `pnpm typecheck` / `lint` / `test` / `format` | Einzelschritte; eigene Pfade: `pnpm exec eslint <pfade>`, `pnpm exec vitest run <pfade>` |
+| `pnpm e2e` | Playwright in Edge gegen den Server-Build mit FakeBackend (ohne `e2e/live`) |
+| `$env:PARALLAX_LIVE='1'; pnpm e2e e2e/live` | Live-Smoke gegen das echte `claude` – nur mit Nutzer-Freigabe; SDK-/CLI-Upgrade: `docs/sdk-upgrade.md` |
 | `pnpm preflight` / `pnpm record <szenario>` | Umgebungscheck (WP-11) / Fixture-Recorder (WP-01) |
-
-Eigene Pfade gezielt prüfen: `pnpm exec eslint <pfade>`, `pnpm exec vitest run <pfade>`.
 
 ## Ordner und Ownership (datei-genau; Details und Exporte: `docs/architecture.md` §2.1–2.3)
 | Pfad | Inhalt | Owner |
@@ -84,10 +84,11 @@ Eigene Pfade gezielt prüfen: `pnpm exec eslint <pfade>`, `pnpm exec vitest run 
 
 ## Tests
 - `*.test.ts(x)` liegen **neben dem Code**; Web-Tests laufen in happy-dom mit Testing Library.
-- Immer mit `PARALLAX_HOME=<tmp>` und `PARALLAX_PORT=0` (setzt `test/setup` automatisch, falls
-  nicht gesetzt). Nie das echte `%LOCALAPPDATA%\Parallax` anfassen – auch nicht im Dev-Modus.
-- **Kein Live-`claude`** (kein `pnpm dev:live`, kein `record`, kein SdkBackend-Test), außer das WP
-  erlaubt es ausdrücklich. Standard ist das FakeBackend mit Fixtures.
+- `test/setup` (Vitest, auch `e2e/global-setup.ts`) nimmt **immer** ein eigenes Temp-`PARALLAX_HOME`
+  (`parallax-test-*` im OS-Temp; jedes andere geerbte Home wird ersetzt), `PARALLAX_PORT=0` und entfernt
+  geerbte Server-Steuervariablen. Nie das echte `%LOCALAPPDATA%\Parallax` anfassen – auch nicht im Dev-Modus.
+- **Kein Live-`claude`** (kein `pnpm dev:live`, kein `record`, kein Live-Smoke, kein SdkBackend-Test),
+  außer das WP erlaubt es ausdrücklich. Standard ist das FakeBackend mit Fixtures.
 - Synthetische SDK-Streams als `.ts`-Module (Fixture-Format v1), nie `.jsonl` außerhalb
   `test/fixtures/sdk/` (git-ignoriert, fehlt nach dem Merge).
 
@@ -108,7 +109,8 @@ Besitz-Pfade ändern.
 - Gestartete Hintergrundprozesse (Dev-Server, Vite, Tests) am Ende immer beenden.
 - **Session-Variablen der aufrufenden Claude-Session** (`CLAUDECODE`, `CLAUDE_CODE_*`,
   `CLAUDE_PID`, `CLAUDE_EFFORT`, `CLAUDE_AGENT_SDK_*`, `AI_AGENT`, Hook-Marker …) dürfen nie in gestartete
-  `claude`-Prozesse lecken: Env immer über `buildEnv()` bauen (Review C.2).
+  `claude`-Prozesse lecken: Env immer über `buildEnv()` bauen (Review C.2). `buildEnv` entfernt auch
+  jedes geerbte `PARALLAX`/`PARALLAX_*`; gesetzt werden nur `PARALLAX=1` und `PARALLAX_ENTRY_ID` (ADR-083).
 
 ## Sprache
 - Doku (README, `docs/**`, CLAUDE.md, WP-Aufträge/-Berichte) und Commit-Messages: **Deutsch**.

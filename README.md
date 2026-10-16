@@ -98,33 +98,44 @@ Parallax-Fenster unter `edge://signin-internals` („Signin Status: Not Signed I
 
 - Ein Profil, das eine ältere Parallax-Version schon angemeldet hat, bleibt angemeldet (Sync bleibt
   trotzdem aus); der Launcher weist darauf hin. Abmelden im Fenster („…“ → Einstellungen →
-  Profile) oder alle Parallax-Fenster schließen und den Ordner `edge` löschen (nur
-  Benachrichtigungs-Freigaben gehen verloren).
+  Profile) oder alle Parallax-Fenster schließen und den Ordner `edge` löschen (die
+  Benachrichtigungs-Freigabe setzt der Launcher beim nächsten Fenster neu).
 - **Firmenrechner:** Edge-Richtlinien (Gruppenrichtlinie/Intune, `HKLM`/`HKCU\SOFTWARE\Policies\
   Microsoft\Edge`) gehen Kommandozeilenschaltern vor – z. B. `BrowserSignin=2` (Anmeldung
   erzwingen), `ForceSync`, `ImplicitSignInEnabled=1`, `FeatureFlagOverridesControl=0` (ignoriert
   `--disable-features`) oder `UserDataDir`. `pnpm preflight` warnt bei solchen Richtlinien
-  (Prüfung „edge policies“); dann nach dem ersten Start `edge://signin-internals` und
-  `edge://policy` im Parallax-Fenster ansehen.
+  (Prüfung „edge policies“, ohne relevante Richtlinie `OK edge policies none`); dann nach dem
+  ersten Start `edge://signin-internals` und `edge://policy` im Parallax-Fenster ansehen.
 
 ### Benachrichtigungen
 - **Im App-Fenster:** Edge kann die Berechtigungsanfrage dort nicht anzeigen (sie erscheint als
-  Symbol in der Adressleiste, die das App-Fenster nicht hat). Der Launcher erlaubt deshalb vor dem
-  Öffnen Benachrichtigungen für `http://127.0.0.1:<port>` **nur im eigenen Parallax-Profil**
-  (`<Datenordner>\edge\Default\Preferences`, keine Richtlinie). Edge zeigt sie als eigenes Popup
-  unten rechts; ein Klick holt das Fenster und die Session nach vorn.
+  Symbol in der Adressleiste, die das App-Fenster nicht hat). Der Launcher erlaubt deshalb vor
+  jedem Fenster Benachrichtigungen für `http://127.0.0.1:<port>` **nur im eigenen Parallax-Profil**
+  (`<Datenordner>\edge\Default\Preferences`, keine Richtlinie; geht das nicht, meldet er es und
+  Parallax nimmt den Windows-Toast). Edge zeigt sie als eigenes Popup unten rechts; ein Klick holt
+  das Fenster und die Session nach vorn.
 - **Ohne offenes Fenster** (oder wenn ein Fenster keine Benachrichtigungen zeigen darf) zeigt der
   Server einen **Windows-Toast** mit Absender „Parallax“ (PowerShell-Helfer, ohne Installation).
-  Dafür trägt Parallax einmalig den Anzeigenamen unter
-  `HKCU\Software\Classes\AppUserModelId\Parallax.App` ein (nur der eigene Benutzer, keine
-  Admin-Rechte; entfernen: `reg delete HKCU\Software\Classes\AppUserModelId\Parallax.App /f`). Ein
-  Klick auf diesen Toast schließt ihn nur (Öffnen der Session per `parallax:`-Protokoll folgt in
-  Phase 2). Abschalten: `--toasts=off` bzw. `PARALLAX_TOASTS=off`; in Tests ist er immer aus.
-- Bei ausgeschaltetem Bildschirm, aktivem „Nicht stören“ oder in Windows (Einstellungen →
-  System → Benachrichtigungen) deaktiviertem Absender „Parallax“ bzw. „Microsoft Edge“ zeigt
-  Windows nichts an; Windows-Toasts landen dann im Benachrichtigungscenter. Unter Constrained
-  Language Mode/AppLocker (Firmenrechner) kann der Toast-Helfer gesperrt sein – Parallax bleibt
-  dann bei Hinweisen im Fenster.
+  Ein Klick auf diesen Toast schließt ihn nur (Öffnen der Session per `parallax:`-Protokoll folgt
+  in Phase 2). Abschalten: `--toasts=off` bzw. `PARALLAX_TOASTS=off`; in Tests ist er immer aus.
+- **Was Parallax dafür unter HKCU einträgt** (nur der eigene Benutzer, keine Admin-Rechte): den
+  Anzeigenamen „Parallax“ unter `HKCU\Software\Classes\AppUserModelId\Parallax.App` – die einzige
+  Änderung, die Parallax selbst außerhalb des Datenordners macht. Der Helfer legt den Schlüssel bei
+  jedem Toast an, falls er fehlt. Nach dem ersten Toast führt Windows den Absender zusätzlich
+  selbst unter `HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Parallax.App`.
+  **Entfernen:** erst die Toasts abschalten (sonst legt der nächste Toast den Schlüssel neu an),
+  dann
+  ```powershell
+  reg delete HKCU\Software\Classes\AppUserModelId\Parallax.App /f
+  reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Parallax.App /f
+  ```
+- **Windows-Einstellungen** (Einstellungen → System → Benachrichtigungen): Bei aktivem „Nicht
+  stören“, deaktiviertem Absender „Parallax“ oder ausgeschaltetem Bildschirm erscheint kein
+  Banner; Windows-Toasts liegen dann im Benachrichtigungscenter. Die Popups des App-Fensters sind
+  Edge-eigene Popups, keine Windows-Toasts – sie erscheinen nicht im Benachrichtigungscenter und
+  verschwinden bei ausgeschaltetem Bildschirm ungesehen. Unter Constrained Language Mode/AppLocker
+  (Firmenrechner) kann der Toast-Helfer gesperrt sein – Parallax schaltet ihn dann für den
+  Serverlauf ab und bleibt bei Hinweisen im Fenster.
 
 ## Andere Registry / Firmen-Nexus
 Im Projekt ist **keine Registry** eingetragen; der Lockfile enthält keine Tarball-URLs und
