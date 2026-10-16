@@ -51,7 +51,7 @@ import { logHomeAccess } from '../lib/homeAccess';
 import type { HomeLock } from '../lib/homeLock';
 import { logger as rootLogger, type LoggingHandle } from '../lib/logger';
 import { errnoCode } from '../lib/process';
-import { createSessionManager, type SessionManager } from '../sessions/manager';
+import { createSessionManager, SHUTDOWN_SWEEP_GRACE_MS, type SessionManager } from '../sessions/manager';
 import { createNativeToasts } from '../sessions/nativeToasts';
 import { openProcessStore } from '../sessions/processStore';
 import { createBlobStore } from '../store/blobs';
@@ -108,6 +108,12 @@ export interface StartServerOptions {
    * `logHomeAccess`, R2-13: only a warning); null = skipped (in-process tests).
    */
   homeAccess?: ((home: string) => Promise<unknown>) | null;
+  /**
+   * CR-10: called once the shutdown frame exists (step 5, before `listen`). main.ts hands it to
+   * the crash handler, so an unexpected error from here on ends the server in order (stores
+   * flushed, lock file removed) – also while `startServer` has not returned yet.
+   */
+  onShutdownFrame?: (shutdown: ServerShutdown) => void;
   logger?: Logger;
 }
 
@@ -296,7 +302,13 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
 
   /** Cleans up and rejects; main.ts logs the error and exits with `exitCode`. */
   const fail = async (exitCode: number, message: string, cause: unknown): Promise<never> => {
-    await cleanupAfterFailure();
+    if (shutdown?.stopping === true) {
+      // CR-10: a shutdown (error shutdown of the crash handler, a signal) runs the same cleanup
+      // already – wait for it instead of closing everything twice.
+      await shutdown.stop('error', SERVER_EXIT_CODES.failure);
+    } else {
+      await cleanupAfterFailure();
+    }
     throw new StartupError(exitCode, message, { cause });
   };
 
@@ -379,6 +391,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   const sessions = manager;
   shutdown = createServerShutdown({
     stopSessions: () => sessions.shutdown(),
+    // CR-02 (ADR-090): the sweep of the server's child trees only after the engine's C.8 window.
+    graceMs: SHUTDOWN_SWEEP_GRACE_MS,
     steps,
     exit: (code) => {
       if (logging === null) {
@@ -392,6 +406,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     logger: log,
   });
   if (options.signals !== null) uninstallSignals = shutdown.installSignalHandlers(options.signals);
+  options.onShutdownFrame?.(shutdown);
 
   const listening = app;
   try {

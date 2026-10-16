@@ -5,7 +5,7 @@
  */
 import type { Entry, ToolCallItem, TranscriptItem } from '@shared/model';
 import { INITIAL_STATUS_FACTS, type StatusFacts } from '@shared/status';
-import type { ProcessFilter, ProcessInfo, ProcessQueryResult } from '../lib/process';
+import type { ProcessFilter, ProcessInfo, ProcessLookup, ProcessQueryResult } from '../lib/process';
 import type { ProcessChild, ProcessRecord } from './processStore';
 
 /** Facts before `server_restart` (R0-17: runState, unread and errorCode from the registry). */
@@ -109,8 +109,70 @@ function matchesExactly(info: ProcessInfo, child: ProcessChild): boolean {
   return sameImage(info.name, child.image) && info.startedAt.getTime() === Date.parse(child.startedAt);
 }
 
+/** The recorded claude.exe: same image and start time (± 5 s, the spawn time is taken in-process). */
+function isRecordedRoot(info: ProcessInfo, record: ProcessRecord): boolean {
+  const sameStart =
+    Math.abs(info.startedAt.getTime() - Date.parse(record.startedAt)) <= ORPHAN_START_TOLERANCE_MS;
+  return sameImage(info.name, record.image) && sameStart;
+}
+
+function safeQuery(deps: OrphanDeps, filter: ProcessFilter): Promise<ProcessQueryResult> {
+  return deps.queryProcesses(filter).catch((error: unknown): ProcessQueryResult => ({
+    kind: 'unknown',
+    reason: 'failed',
+    detail: error instanceof Error ? error.message : String(error),
+  }));
+}
+
+/**
+ * CR-01: what the last query said about the processes of the records – STALE as soon as anything
+ * was killed (a `taskkill /T` frees PIDs that Windows may hand out again at once). So every kill is
+ * preceded by a fresh look at exactly that PID: dead now → skipped without PowerShell; alive and
+ * nothing killed since the last answer that covered it → that answer; otherwise ONE new bundled
+ * query (the PID plus every PID not looked up yet that is still alive).
+ */
+class ProcessView {
+  private answer: Promise<ProcessQueryResult>;
+  private covered: ReadonlySet<number>;
+  private fresh = true;
+  /** PIDs of the records not looked up yet (bundled into the next query). */
+  private readonly pending: Set<number>;
+
+  constructor(
+    private readonly deps: OrphanDeps,
+    allPids: readonly number[],
+    queried: readonly number[],
+  ) {
+    this.pending = new Set(allPids);
+    this.covered = new Set(queried);
+    this.answer = safeQuery(deps, { pids: queried });
+  }
+
+  /** The identity of `pid` right now (three-valued like `processInfo`). */
+  async lookup(pid: number): Promise<ProcessLookup> {
+    this.pending.delete(pid);
+    if (!this.fresh || !this.covered.has(pid)) {
+      if (!this.deps.isProcessAlive(pid)) return { kind: 'missing' };
+      const pids = [pid, ...[...this.pending].filter((p) => this.deps.isProcessAlive(p))];
+      this.answer = safeQuery(this.deps, { pids });
+      this.covered = new Set(pids);
+      this.fresh = true;
+    }
+    const result = await this.answer;
+    if (result.kind === 'unknown') return result;
+    const info = result.processes.find((p) => p.pid === pid);
+    return info === undefined ? { kind: 'missing' } : { kind: 'found', info };
+  }
+
+  /** A taskkill ran (also a failed one may have ended processes): every answer so far is stale. */
+  invalidate(): void {
+    this.fresh = false;
+  }
+}
+
 async function kill(
   deps: OrphanDeps,
+  view: ProcessView,
   pid: number,
   context: Record<string, unknown>,
   what: string,
@@ -122,35 +184,56 @@ async function kill(
   } catch (error) {
     deps.log.error({ err: error, ...context, pid }, `ending an orphaned ${what} failed`);
     return 'failed';
+  } finally {
+    view.invalidate();
   }
 }
 
 async function checkRecord(
   record: ProcessRecord,
-  processes: ReadonlyMap<number, ProcessInfo>,
+  view: ProcessView,
   deps: OrphanDeps,
 ): Promise<OrphanResult> {
   const context = { entryId: record.entryId, rootPid: record.pid };
+  const inconclusive = (pid: number, lookup: Extract<ProcessLookup, { kind: 'unknown' }>): void => {
+    deps.log.warn(
+      { entryId: record.entryId, pid, reason: lookup.reason, detail: lookup.detail },
+      'orphan check inconclusive – process left alone, record kept for the next start',
+    );
+  };
   const outcomes: ('killed' | 'failed')[] = [];
-  // 1. The claude.exe root: same image and start time (± 5 s, the spawn time is taken in-process).
-  const root = processes.get(record.pid);
+  // 1. The claude.exe root: same image and start time (± 5 s).
+  const root = await view.lookup(record.pid);
+  if (root.kind === 'unknown') {
+    inconclusive(record.pid, root);
+    return 'unknown';
+  }
   let rootResult: 'gone' | 'not_ours' = 'gone';
-  if (root !== undefined) {
-    const sameStart =
-      Math.abs(root.startedAt.getTime() - Date.parse(record.startedAt)) <= ORPHAN_START_TOLERANCE_MS;
-    if (sameImage(root.name, record.image) && sameStart) {
-      outcomes.push(await kill(deps, record.pid, context, 'claude process tree'));
+  if (root.kind === 'found') {
+    if (isRecordedRoot(root.info, record)) {
+      const outcome = await kill(deps, view, record.pid, context, 'claude process tree');
+      // CR-01: its `taskkill /T` ended the whole tree below it – the snapshot is not ended again
+      // (its PIDs may already belong to new processes).
+      if (outcome === 'killed') return 'killed';
+      outcomes.push(outcome);
     } else {
       rootResult = 'not_ours';
     }
   }
   // 2. WP22-06: every process of the last snapshot that still runs EXACTLY as recorded (PID,
   //    image, start time) – e.g. a tool shell whose claude.exe ended itself after the abort. A
-  //    process the snapshot did not see (started after `aliveAt`) is never touched.
+  //    process the snapshot did not see (started after `aliveAt`) is never touched. CR-01: each one
+  //    is looked up again right before its kill (an earlier kill may have ended it, its PID reused).
   for (const child of record.children) {
-    const info = processes.get(child.pid);
-    if (info === undefined || !matchesExactly(info, child)) continue;
-    outcomes.push(await kill(deps, child.pid, { ...context, image: child.image }, 'child process tree'));
+    const lookup = await view.lookup(child.pid);
+    if (lookup.kind === 'unknown') {
+      inconclusive(child.pid, lookup);
+      return outcomes.includes('failed') ? 'failed' : 'unknown';
+    }
+    if (lookup.kind !== 'found' || !matchesExactly(lookup.info, child)) continue;
+    outcomes.push(
+      await kill(deps, view, child.pid, { ...context, image: child.image }, 'child process tree'),
+    );
   }
   if (outcomes.includes('failed')) return 'failed';
   if (outcomes.includes('killed')) return 'killed';
@@ -160,39 +243,28 @@ async function checkRecord(
 /**
  * Records of processes.json with a live PID (C.8): ONE query for all of them; ended with
  * `taskkill /T /F` (the whole tree) are
- *  - the claude.exe itself when it still runs with the recorded image and start time (± 5 s);
- *  - WP22-06 (R2-03 follow-up): every process of the record's last heartbeat snapshot that still
- *    runs with exactly the recorded PID, image and start time. A PID reused by another program
- *    never matches (its start time differs) and stays untouched (`not_ours`); processes started
- *    after the last snapshot are unknown and stay too.
- * A failed/slow query is `unknown` – nothing is killed, the records stay for the next start
+ *  - the claude.exe itself when it still runs with the recorded image and start time (± 5 s) –
+ *    then nothing else of the record (CR-01: its tree is gone with it);
+ *  - otherwise (WP22-06, R2-03 follow-up) every process of the record's last heartbeat snapshot that
+ *    still runs with exactly the recorded PID, image and start time. A PID reused by another
+ *    program never matches (its start time differs) and stays untouched (`not_ours`); processes
+ *    started after the last snapshot are unknown and stay too.
+ * CR-01: every single kill follows a fresh look at that PID (after any kill, a new query). A
+ * failed/slow query is `unknown` – nothing more is killed, the record stays for the next start
  * (R2-02). Resolves per record (same order as `records`); never rejects.
  */
 export function cleanupOrphans(records: readonly ProcessRecord[], deps: OrphanDeps): Promise<OrphanResult>[] {
   if (records.length === 0) return [];
   const pids = [...new Set(records.flatMap((r) => livePids(r, (pid) => deps.isProcessAlive(pid))))];
-  const query = deps
-    .queryProcesses({ pids: pids.length > 0 ? pids : records.map((r) => r.pid) })
-    .catch((error: unknown): ProcessQueryResult => ({
-      kind: 'unknown',
-      reason: 'failed',
-      detail: error instanceof Error ? error.message : String(error),
-    }));
+  const all = [...new Set(records.flatMap((r) => [r.pid, ...r.children.map((c) => c.pid)]))];
+  const view = new ProcessView(deps, all, pids.length > 0 ? pids : records.map((r) => r.pid));
   // Records one after the other: a root's `taskkill /T` may already end processes of a later one.
   let previous: Promise<unknown> = Promise.resolve();
   return records.map((record) => {
     const before = previous;
     const done = (async (): Promise<OrphanResult> => {
-      const result = await query;
       await before.catch(() => undefined);
-      if (result.kind === 'unknown') {
-        deps.log.warn(
-          { entryId: record.entryId, pid: record.pid, reason: result.reason, detail: result.detail },
-          'orphan check inconclusive – process left alone, record kept for the next start',
-        );
-        return 'unknown';
-      }
-      return checkRecord(record, new Map(result.processes.map((p) => [p.pid, p])), deps);
+      return checkRecord(record, view, deps);
     })();
     previous = done;
     return done;

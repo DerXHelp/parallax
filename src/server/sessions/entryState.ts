@@ -72,7 +72,7 @@ export interface SessionManagerOptions {
   autoRetry: AutoRetryPolicy | false;
   /** Debounce of getContextUsage after idle (C.1). Default 250. */
   contextRefreshDelayMs: number;
-  /** Upper bound for closing all sessions at shutdown, then taskkill. Default 15000. */
+  /** Upper bound for closing all sessions at shutdown, then taskkill of the rest. Default 15000. */
   shutdownTimeoutMs: number;
   /**
    * R3-06: the shutdown waits this long for a still running orphan check of the server start (its
@@ -94,8 +94,8 @@ export interface SessionManagerOptions {
   /** First snapshot this long after a spawn when no heartbeat runs yet. Default 10000. */
   processSnapshotFirstMs: number;
   /**
-   * WP22-05: at shutdown a process still running after this grace (after interrupt + close) is
-   * ended with taskkill, instead of waiting for the backend's own 5-s rule. Default 2500.
+   * C.8 (CR-02, ADR-090): at shutdown a process still running this long after its close() is ended
+   * with taskkill /T /F – until then it may end cleanly (SessionEnd hooks, transcript). Default 5000.
    */
   shutdownKillAfterMs: number;
 }
