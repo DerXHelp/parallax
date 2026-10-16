@@ -997,3 +997,99 @@ Format: `ADR-NNN – Titel` · Datum · WP · Kontext → Entscheidung → Folge
   - WP22-14: Der Gauge-Dialog nennt die Quelle der Kategorien (Agent SDK; Summe wie `/context`,
     Aufteilung kann abweichen).
 - **Folgen:** Kein Contract-Eingriff außer dem Kommentar zu `conversation.costUsd`.
+
+## ADR-090 – „Server beenden“ nach C.8: 5 s je `close()`; wartende Sessions mit Arbeit in der Queue sofort beenden (ersetzt ADR-084)
+- **Datum/WP:** 16.10.2026, Code-Review-Fixes (CR-02, CR-06; Koordinator-Vorgabe: Plan C.8,
+  Transkript-Integrität vor Geschwindigkeit)
+- **Kontext:** ADR-084 beendete jeden `claude.exe`-Baum, dessen `close()` nach 2,5 s nicht fertig
+  war (SessionEnd-Hooks und Transkript-Schreiben brauchen bis 3–4 s, CR-02), und schickte jeder
+  Session mit offener Entscheidung ein `interrupt()` – nach einem abgebrochenen Turn startet die
+  Drain-Schleife der CLI aber sofort den nächsten gequeueten Prompt (SDK-Doku zu `still_queued`,
+  CR-06). **Live-Messung dieser Fix-Runde** (CLI 2.1.300, Haiku, drei Sessions): auch `close()`
+  allein hilft dort nicht – eine wartende CLI quittiert stdin-EOF mit „Tool permission request
+  failed: AbortError: Tool permission stream closed“, setzt den Turn fort und beantwortete den
+  bereits gefalteten Queue-Prompt (Modellaufruf 0,3 s nach dem Shutdown, Exit 0 nach 2,5 s). Ohne
+  Queue endet die wartende Session nach `interrupt` + `close()` sauber („[Request interrupted by
+  user for tool use]“, kein Modellaufruf, 1,1 s). Ein Abbrechen der Queue (`cancel_queued`) bietet
+  `Query.interrupt()` in SDK 0.3.296 nicht an.
+- **Entscheidung:** `manager.shutdown()` je Session parallel:
+  - **wartet auf eine Entscheidung, Queue leer, keine Hintergrund-Tasks** (`shutdownCanEndTurn`):
+    `interrupt()` (≤ 1 s), dann wie unten;
+  - **wartet und hat gequeuete Prompts oder Hintergrund-Tasks:** weder `interrupt` noch `close()`
+    (beides startet weitere Arbeit: Modell, Tools, neue Permission-Requests in den eingefrorenen
+    Broker), sondern sofort `taskkill /T /F`. Die CLI blockiert dort auf der Antwort und schreibt
+    nichts; nach dem Ende bekommt jeder nie gestartete Prompt ein px-Item `PROMPT_NOT_DELIVERED`
+    (wie nach einem Absturz), der Record der Entscheidung bleibt offen (→ `expired`, A.10);
+  - **sonst** `close()`, bis zu `shutdownKillAfterMs` **5 s ab diesem `close()`** auf das Ende
+    warten, erst dann `taskkill /T /F` (C.8). Obergrenze des Schritts 15 s (dann `error`-Log und
+    Kill der Reste). Der Sweep des Shutdown-Rahmens (`killChildProcessTrees`) läuft erst nach
+    `SHUTDOWN_SWEEP_GRACE_MS` (1 + 5 + 2 = 8 s) als Rückfallebene.
+- **Folgen:** „Server beenden“ mit einer arbeitenden Session dauert jetzt ≈ 5 s + Dauer des
+  `taskkill` (live 6,6 s: wartende Session per Interrupt nach 1,1 s, die mit Queue-Prompt –
+  damals noch per `close()` – nach 2,5 s, die arbeitende mit laufendem `ping` nach 5,0 s beendet,
+  Prozessende 6,55 s, `totalMs 6597`); das WP-22-Ziel „< 5 s“ gilt für das parallele Warten. Eine
+  gequeuete Nachricht einer wartenden Session wird beim Beenden nicht mehr bearbeitet, sondern als
+  nicht zugestellt angezeigt. Eine arbeitende Session mit Queue kann ihren Turn in den 5 s noch
+  beenden und den nächsten Prompt beginnen (C.8-Kompromiss, Kill nach 5 s). Engine-Tests mit
+  virtueller Uhr: 4-s-`close()` wird nicht abgeschnitten, Kill erst bei 5 s, kein Interrupt/kein
+  `close()` bei Queue bzw. Hintergrund-Task.
+
+## ADR-091 – Native Toasts: nur deterministische Fehler schalten ab, sonst zählen und pausieren (ergänzt ADR-082)
+- **Datum/WP:** 16.10.2026, Code-Review-Fixes (CR-05, CR-03)
+- **Kontext:** Jeder `failed`-Toast – auch ein Timeout unter Last oder ein gescheitertes
+  `History.Remove` – schaltete den Kanal für den ganzen Serverlauf ab (CR-05). `toastText` nutzte
+  den Titel als Ersetzungsstring (`$&`, `$'` … wurden ausgewertet, CR-03).
+- **Entscheidung:** `lib/toast.ts` liefert `failed.permanent`: das Skript prüft zuerst den
+  Sprachmodus (`$ExecutionContext.SessionState.LanguageMode` ≠ `FullLanguage` → Exit 4) und meldet
+  Fehler der Einrichtung (Registry, WinRT-Typen) mit Exit 4, Fehler der Aktion (`Show`,
+  `History.Remove`) mit Exit 3. Dauerhaft sind: kein Windows, Exit 4, PowerShell nicht startbar
+  (außer `EMFILE`/`ENFILE`/`EAGAIN`/`ENOMEM`/`EBUSY`). Nur diese schalten den Kanal ab
+  (`onUnavailable`, Host-State `nativeNotifications: false`). Alle anderen werden gezählt; ab dem
+  dritten in Folge pausiert der Kanal (`TOAST_BACKOFF_MS` 1 min, je weiterem Fehler verdoppelt,
+  höchstens 15 min) und versucht es danach erneut; ein Erfolg setzt Zähler und Pause zurück.
+  `available()` bleibt in der Pause `true`. `toastText` ersetzt `{title}` per Funktion.
+- **Folgen:** Kurze Lastspitzen kosten höchstens die Toasts der Pause, nicht alle bis zum Neustart.
+  Live geprüft: das geänderte Skript läuft (`removeToast` → `removed`). CLM selbst ist nur per
+  Unit-Test geprüft (F6 bleibt für einen verwalteten Rechner offen).
+
+## ADR-092 – Build-Lock im gemeinsamen Build-Weg; Checkout auf UNC-Pfad baut (ergänzt ADR-062)
+- **Datum/WP:** 16.10.2026, Code-Review-Fixes (CR-08, CR-04)
+- **Kontext:** Den Build-Lock (R3-04) nahm nur der Launcher; `pnpm e2e` und `pnpm build` bauten
+  ohne ihn (CR-08). `acquireDirectoryLock('build', repoRoot)` warf für Pfade, die die
+  Datenordner-Regeln ablehnen (UNC, …), einen `TypeError` – ein Checkout auf `\\nas\…` mit veraltetem
+  `dist/` stürzte ab (CR-04).
+- **Entscheidung:** `launcher/build.ts` besitzt den Lock: `acquireBuildLock(repoRoot)` (Named Pipe
+  `parallax-build-<16 Hex>` wie bisher), `pollLock` (Warten mit einer Meldung, auch vom Launcher
+  genutzt), `buildLockKey` – echter Pfad für Laufwerkspfade (gleicher Pipe-Name wie bisher), für
+  einen von `@shared/paths` abgelehnten Pfad dessen aufgelöste Schreibweise **ohne** weiteren
+  Dateizugriff (es ist der Checkout, aus dem der Prozess läuft). `lib/homeLock.ts` bekommt dafür
+  `acquireKeyLock(kind, key)` (der Pipe-Teil ohne Pfadprüfung); `acquireDirectoryLock` bleibt
+  streng. Nutzer: Launcher (`ensureBuild`), `e2e/global-setup.ts` (prüft und baut unter dem Lock,
+  wartet auf einen laufenden Build und prüft danach neu) und `scripts/build-server.ts`
+  (`pnpm build:server`). `runBuild` erwartet den Lock beim Aufrufer und setzt für seine Schritte
+  `PARALLAX_BUILD_LOCK_HELD=1`, damit `build-server.ts` nicht auf den eigenen Aufrufer wartet.
+- **Folgen:** Launcher und E2E-Setup bauen einen Checkout nie gleichzeitig (manuell geprüft:
+  `pnpm build:server` wartete auf einen gehaltenen Lock und baute danach). **Offen:** Der
+  Vite-Schritt von `pnpm build` (`build:web`) läuft weiter ohne Lock – dafür müsste
+  `package.json` `build` auf ein Skript zeigen, das `runBuild` unter dem Lock ausführt (oder
+  `vite.config.ts` den Lock nehmen); beides liegt außerhalb dieser Fix-Runde (Anfrage im Bericht).
+  Zwei Schreibweisen desselben UNC-Checkouts teilen sich keinen Lock.
+
+## ADR-093 – Waisen: nach dem Kill der Wurzel nichts weiter; jeder Kill nach frischer Prüfung (ergänzt ADR-081)
+- **Datum/WP:** 16.10.2026, Code-Review-Fixes (CR-01, Koordinator-Vorgabe)
+- **Kontext:** `checkRecord` beendete nach dem `taskkill /T` einer noch laufenden Wurzel zusätzlich
+  jeden Prozess des Schnappschusses mit den Prozessinfos von **vor** diesem Kill. Die PIDs des eben
+  beendeten Baums kann Windows sofort neu vergeben – ein fremder Prozess(baum) wäre hart beendet
+  worden, dazu bis zu 200 unnötige `taskkill`-Starts je Record; ebenso nutzten spätere Records die
+  Antwort von vor den Kills früherer Records.
+- **Entscheidung:** Wurde die verifizierte Wurzel erfolgreich beendet, endet der Record dort
+  (`killed`; ihr `/T` hat den Baum mitgenommen). Sonst wird jeder Prozess des Schnappschusses (und
+  jede Wurzel eines späteren Records) **unmittelbar vor seinem Kill** frisch geprüft: tot →
+  übersprungen (ohne PowerShell); lebt er und lief seit der letzten Antwort ein `taskkill`, dann
+  eine neue gebündelte Abfrage (diese PID plus alle noch nicht geprüften, lebenden PIDs der
+  Records). Beendet wird nur bei exakt gleicher PID, Image und Startzeit. Eine `unknown`-Antwort
+  beendet nichts mehr und behält den Record.
+- **Folgen:** Je Kill höchstens eine zusätzliche CIM-Abfrage, im Normalfall keine (nach dem Kill
+  eines Elternprozesses sind seine Kinder tot). Ein Prozess, der nach einem erfolgreichen
+  Wurzel-Kill außerhalb ihres Baums weiterläuft (Zwischenprozess vor dem Abbruch beendet), bleibt
+  unberührt – wie Prozesse nach dem letzten Schnappschuss.
