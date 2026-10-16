@@ -113,7 +113,7 @@ Status: `offen` · `läuft` · `fertig` · `teilweise` · `blockiert`
 - Doku nach R1/R2 nachgezogen (`d961201`); offen: `WP-13b.md` beschreibt noch den Kinder-Pfad (historisch).
 
 ## Nächste Schritte
-1. **Phase 1 abgeschlossen (16.10.2026).** Alle WPs, Reviews R0–R3, Verifier V1/V2, Live-Abnahme WP-22 und `/code-review` erledigt und gemergt. Nächster Schritt: Phasen-/Umfangsbesprechung mit dem Nutzer (Phase 2 „Mission Control“).
-2. Danach Welle 1a (10, 11, 12, 14) in Worktrees `.worktrees/wp-xx`
-   auf Branches `wp/xx`, jeweils `pnpm install --frozen-lockfile` im Worktree.
+1. **Phase 1 abgeschlossen (16.10.2026).** Alle WPs, Reviews R0–R3, Verifier V1/V2, Live-Abnahme WP-22 und `/code-review` erledigt und gemergt.
+2. **Phase 2 „Mission Control“ beauftragt (16.10.2026, Nutzer: „Setze die Phase 2 um“).** Umfang = Plan „Phasen – Phase 2“.
+   WP-30 (Design: Lückenanalyse, Contracts v2, WP-Zerlegung) läuft in `.worktrees/wp-30` auf `wp/30`.
 3. Nach ≥ 24 h: `react`/`react-dom` 19.3.1 prüfen und nachziehen (Koordinator, siehe WP-00.md).
