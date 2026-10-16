@@ -843,3 +843,157 @@ Format: `ADR-NNN – Titel` · Datum · WP · Kontext → Entscheidung → Folge
 - **Folgen:** Die Vite-Dev-CSP (`server.headers` + `html.cspNonce`, R1W-23 „optional“) bleibt ein
   Folgeauftrag für `vite.config.ts` (Nonce + HMR-WebSocket `ws://127.0.0.1:5173` ergänzen);
   bis dahin README: `pnpm dev:live` nur in einem eigenen Edge-Profil.
+
+## ADR-080 – Kein eigener Permission-Modus für neue Sessions (Plan C.3 bewusst beibehalten nach WP-22)
+- **Datum/WP:** 16.10.2026, WP-22-Fixes (WP22-04, Nutzer-Entscheidung)
+- **Kontext:** In der Live-Abnahme wechselte der Default der CLI 2.1.300 für dasselbe Konto von
+  `default` auf `auto` (neue **und** fortgesetzte Sessions); im Auto-Modus legte Claude eine Datei
+  ohne Karte an. Vorschlag aus WP-22: das Standardprofil setzt `default` explizit.
+- **Entscheidung:** Parallax setzt **keinen** eigenen Modus. Es bleibt bei C.3: ohne Wahl entscheidet
+  die CLI bzw. der `defaultMode` des Nutzers (`settings.json`), bei Resume der zuletzt tatsächliche
+  Modus der Session (`Entry.permissionMode`); der Nutzer kann ihn je Session im Composer vor dem
+  ersten Prompt und jederzeit danach umstellen. Kein Code-Umbau.
+- **Begründung:** Der Modus ist eine Einstellung des Nutzers und seines Kontos; ein von Parallax
+  erzwungener Modus wiche still vom Verhalten der CLI im Terminal ab und überschriebe eine bewusste
+  `defaultMode`-Wahl. Der **tatsächliche** Modus ist immer sichtbar: Kopfzeile (`header-mode`) und
+  Composer-Picker folgen `init.permissionMode` und jeder `system/status`-Nachricht mit
+  `permissionMode` (auch ein Wechsel durch die CLI mitten im Turn, z. B. nach der Plan-Freigabe –
+  Engine-Test „permission mode set by the CLI (WP22-04)“; Picker-Test „label follows the server“).
+- **Folgen:** Wer „Parallax fragt immer“ will, stellt `defaultMode` der CLI bzw. den Modus der
+  Session auf „Manual“. Der Live-Smoke wählt „Manual“ vor dem ersten Prompt. Findings Punkt 2
+  („ohne `permissionMode` startet die Session in `default`“) gilt nicht mehr allgemein.
+
+## ADR-081 – Waisen: Herzschlag-Schnappschuss der Prozessbäume, exakte Verifikation (ersetzt ADR-052)
+- **Datum/WP:** 16.10.2026, WP-22-Fixes (WP22-06, R2-03-Follow-up)
+- **Kontext:** Nach einem harten Server-Abbruch beendet sich `claude.exe` selbst (stdin zu), seine
+  Tool-Prozesse (`powershell.exe` → `PING.EXE`, ein Dev-Server …) laufen weiter; ADR-052 beendete
+  nur die verifizierte Wurzel. Ein Kinder-Pfad über `ParentProcessId` allein ist gegen
+  PID-Wiederverwendung nicht sicher, und Enkel eines toten Zwischenprozesses hängen an einer
+  fremden ParentProcessId.
+- **Entscheidung:** Herzschlag in der Engine: 10 s nach einem Spawn, danach alle 30 s
+  (`processSnapshotMs`, nur solange Prozesse laufen) **eine** CIM-Prozessliste
+  (`lib/process.ts` `listProcesses`) für alle Sessions; je Record die Nachkommen der `claude.exe`
+  (`descendantsOf`: über alle Ebenen, ein „Kind“ älter als sein Elternprozess zählt nicht) mit PID,
+  Image und **exakter** CIM-Startzeit als `children` plus `aliveAt` in `processes.json` (Felder mit
+  Default, kein Versionssprung, höchstens 200 Einträge). Beim nächsten Start: Lebend-Vorfilter über
+  Wurzel **und** Schnappschuss, eine gebündelte Abfrage; beendet (`taskkill /T /F`) werden die
+  verifizierte Wurzel (PID + Image + Start ± 5 s, wie bisher) und jeder Prozess des Schnappschusses,
+  der noch mit **genau** derselben PID, demselben Image und derselben Startzeit läuft. `unknown`
+  beendet nie etwas und behält den Record, ein gescheitertes `taskkill` ebenso.
+- **Folgen:** Prozesse, die nach dem letzten Schnappschuss starteten (≤ 30 s Fenster), bleiben
+  unbekannt und unberührt. Kosten: eine PowerShell alle 30 s, solange Sessions laufen (≈ 1–3 s,
+  ≈ 35 KB JSON bei ≈ 370 Prozessen). Live geprüft (WP-22.md „Umsetzung“): nach `taskkill` des
+  Servers überlebten `powershell.exe` + `PING.EXE`, der Neustart beendete genau diese. Das
+  verwaiste Lockfile erkennt der Launcher wie bisher („stale lock file“) und ersetzt es.
+
+## ADR-082 – Benachrichtigungen: Origin im eigenen Edge-Profil erlauben, sonst nativer Windows-Toast
+- **Datum/WP:** 16.10.2026, WP-22-Fixes (WP22-03, WP22-15; Plan A.9)
+- **Kontext:** Edge zeigt `Notification.requestPermission()` im App-Fenster als Chip in der fehlenden
+  Adressleiste – die Anfrage gilt als „ignoriert“. Zusätzlich erschien in WP-22 trotz Berechtigung
+  kein sichtbarer Toast. Nachmessung (Edge 155, Temp-Profile): eine vorab in
+  `Default\Preferences` geschriebene Ausnahme `profile.content_settings.exceptions.notifications
+  ["http://127.0.0.1:<port>,*"] = {setting: 1}` wird akzeptiert (frisches und bestehendes Profil);
+  die Web Notification erscheint dann als **Edge-eigenes Popup** (kein Windows-Toast, darum kein
+  Eintrag in `wpndatabase.db`), auch bei minimiertem Fenster – bei eingeschaltetem Bildschirm.
+  WP22-15 lag sehr wahrscheinlich am ausgeschalteten Bildschirm (Windows zeigt dann keine Banner,
+  Edge-Popups verschwinden ungesehen).
+- **Entscheidung:** (a) Der Launcher erlaubt vor jedem Öffnen eines Fensters Benachrichtigungen für
+  den eigenen Origin im eigenen Profil (`grantEdgeNotifications`: zusammenführen, atomar schreiben,
+  unlesbare Prefs unangetastet; keine Policy, keine Registry). (b) Der Server zeigt einen
+  **nativen Windows-Toast** (`lib/toast.ts`, PowerShell 5.1 + WinRT, Skript konstant per
+  `-EncodedCommand`, Titel/Text/Tag nur über Umgebungsvariablen, XML per DOM – keine Shell-, Skript-
+  oder XML-Injektion), wenn kein Fenster offen ist oder das gewählte Fenster keine Web
+  Notifications zeigen darf (Präsenz `systemNotifications: false`; das Fenster bekommt dann den
+  In-App-Hinweis). Absender „Parallax“ über den Anzeigenamen unter
+  `HKCU\Software\Classes\AppUserModelId\Parallax.App` (dokumentierter Weg für nicht paketierte
+  Apps; ohne ihn behält Windows den Toast nur im Verlauf). Texte en/de nach `settings.language`,
+  ein PowerShell-Aufruf nach dem anderen, `notify.clear` entfernt den Toast (`History.Remove`).
+  Der erste Fehler (CLM/AppLocker, WinRT fehlt) schaltet den Kanal für den Serverlauf ab.
+  `--toasts=native|off`/`PARALLAX_TOASTS`, unter Vitest/`NODE_ENV=test` aus. Contract additiv:
+  `PresenceState.systemNotifications?`, `HostState.nativeNotifications` (Default `false`); das
+  Banner „Benachrichtigungen aktivieren“ entfällt, solange native Toasts verfügbar sind.
+- **Folgen:** Ein Klick auf den nativen Toast schließt ihn nur – das Öffnen der Session über den
+  optionalen HKCU-Protokoll-Handler `parallax:` bleibt Opt-in in Phase 2 (Plan A.9). Der eine
+  HKCU-Schlüssel ist die einzige Änderung außerhalb des Datenordners (README „Benachrichtigungen“).
+  Windows-Einstellungen („Nicht stören“, Absender deaktiviert, Bildschirm aus) können Banner
+  unterdrücken; Windows-Toasts bleiben dann im Benachrichtigungscenter.
+
+## ADR-083 – Keine `PARALLAX_*` der Server-Umgebung in `claude`; Tests nie auf geerbtem Home
+- **Datum/WP:** 16.10.2026, WP-22-Fixes (WP22-07, höchste Priorität)
+- **Kontext:** `buildEnv` entfernte nur `PARALLAX`/`PARALLAX_ENTRY_ID`; `PARALLAX_HOME` (und
+  `PARALLAX_PORT`, `_BACKEND`, `_VALIDATE`, `_LIVE` …) des Servers erreichten jedes Tool einer
+  Session. Ein `pnpm test`/`pnpm start` in einer Parallax-Session griff damit auf das Home des
+  laufenden Servers zu (`test/setup` setzte `PARALLAX_HOME` nur „falls nicht gesetzt“).
+- **Entscheidung:** `buildEnv` behandelt `PARALLAX` und jedes `PARALLAX_*` als Session-Marker
+  (immer entfernt, auch wenn dauerhaft gesetzt) und setzt danach nur `PARALLAX=1` und
+  `PARALLAX_ENTRY_ID`; eine Profil-Variable mit `PARALLAX_*`-Namen bleibt (bewusst gesetzt).
+  Defense in depth: die globalSetups von Vitest und Playwright nehmen **immer** ein frisches
+  Temp-Home (`parallax-test-*` direkt im OS-Temp), Worker behalten nur dieses; jedes andere geerbte
+  Home (echtes Datenverzeichnis, darin, nicht temporär, Temp-Home eines Live-Servers) wird ersetzt
+  (Hinweis auf stderr). `PARALLAX_PORT` ist in Tests immer `0`, geerbte Server-Steuervariablen
+  (`PARALLAX_BACKEND`, `_DEV`, `_HOST`, `_LOG_LEVEL`, `_VALIDATE`, `_TOASTS`, `PARALLAX`,
+  `PARALLAX_ENTRY_ID`) werden entfernt; `PARALLAX_LIVE*`/`PARALLAX_E2E_SKIP_BUILD` bleiben (Schalter
+  der Werkzeuge).
+- **Folgen:** Live geprüft: das PowerShell-Tool einer Session sieht nur `PARALLAX,PARALLAX_ENTRY_ID`,
+  obwohl der Server mit `PARALLAX_HOME` lief. CLAUDE.md/`test/README.md` („falls nicht gesetzt“)
+  sollten nachgezogen werden (Koordinator).
+
+## ADR-084 – „Server beenden“ < 5 s: wartende Sessions erst unterbrechen, nach 2,5 s beenden
+- **Datum/WP:** 16.10.2026, WP-22-Fixes (WP22-05)
+- **Kontext:** Eine Session mit offener Permission-Karte endete nach `input.end()`/`Query.close()`
+  nicht (die CLI wartet auf die Antwort; die SDK bricht das `canUseTool`-Signal ab, bevor sie
+  antworten kann) – erst `closeGraceMs` 5 s + `taskkill` + 1,5 s Rest = 8,0 s.
+- **Entscheidung:** `manager.shutdown()`: Sessions mit offener Entscheidung bekommen vor `close()`
+  ein `interrupt()` (höchstens 1 s; der eingefrorene Broker hält die Records offen → nach dem
+  Neustart `expired`/`needs-resume`, A.10). Was nach `shutdownKillAfterMs` (2,5 s) noch läuft, beendet
+  die Engine parallel per `taskkill /T /F` (statt auf die 5-s-Regel des Backends und den Sweep des
+  Shutdown-Rahmens zu warten); die Obergrenze 15 s bleibt. Während des Shutdowns keine
+  Benachrichtigungen, KI-Titel-, Context- oder Git-Abfragen. Die Schlusszeile „shutdown: done“
+  nennt `totalMs` und die Dauer je Schritt.
+- **Folgen:** Live: arbeitende + wartende Session → 3,7 s bis zum Prozessende (die wartende endete
+  nach dem Interrupt nach 1,3 s, die arbeitende mit laufendem `ping` wurde nach 2,5 s beendet).
+  Exit-Code 1 der beendeten `claude.exe` ist erwartet (nur `info`-Log).
+
+## ADR-085 – KI-Titel: `customTitle` der SDK ist kein Beweis für einen eigenen Titel
+- **Datum/WP:** 16.10.2026, WP-22-Fixes (WP22-02)
+- **Kontext:** SDK 0.3.296 füllt `getSessionInfo().customTitle` mit `custom-title` ‖ Sidecar
+  `custom-title.json` der CLI ‖ `aiTitle`; eine nie umbenannte Session meldet ihren KI-Titel dort.
+  `aiTitleFrom` verwarf jeden Titel mit `customTitle !== null`.
+- **Entscheidung:** Eigene Titel erkennt nur der Server (`titleSource 'custom'` nach `/rename`,
+  `session.rename` oder Titel beim Anlegen) – die werden nie ersetzt. Kandidat ist `customTitle`
+  bzw. (ältere SDKs) `summary`; ein Text gleich dem ersten Prompt bleibt ausgeschlossen. Der
+  FakeHistoryStore bildet das Feldbild der SDK nach.
+- **Folgen:** Live: „PARALLAX-Umgebungsvariablen in PowerShell“ (`titleSource: ai`). Ein in der
+  Konsole per `/rename` gesetzter Titel einer Parallax-Session gilt als KI-Titel (darf ersetzt
+  werden) – selten, unschädlich.
+
+## ADR-086 – Modellwahl vor dem ersten Start: CLI-Aliase als Katalog
+- **Datum/WP:** 16.10.2026, WP-22-Fixes (WP22-01, WP22-12)
+- **Kontext:** Vor dem ersten Start eines Profils gab es keinen `supportedModels()`-Katalog; der
+  Picker zeigte „Die Modellliste gibt es, solange die Session läuft“, der erste Turn lief immer mit
+  dem Nutzer-Default (hier Opus/xhigh). „Default (recommended) · Opus 5.5“ stand im Picker, obwohl
+  Haiku antwortete (`ANTHROPIC_MODEL`).
+- **Entscheidung:** Ohne Katalog liefern Snapshot und `session.refreshModels` die CLI-Aliase
+  `default`/`opus`/`sonnet`/`haiku` (`FALLBACK_MODEL_CATALOG`); `session.setModel` auf einer
+  ruhenden Session gilt schon für den ersten Start. Nach dem ersten Prozess ersetzt der echte
+  Katalog (je Profil im Speicher) die Aliase. Ist „Default“ gewählt, nennen Label und Zeile das
+  tatsächlich gesehene Modell („Default … · claude-haiku-5-5“).
+- **Folgen:** Effort-Stufen gibt es erst mit dem echten Katalog. Ein persistierter Katalog je
+  Profil (über Serverneustarts) ist Phase 2.
+
+## ADR-087 – Kleinere WP-22-Befunde: Diagnosen, Kosten, Übersetzung, Preflight, Context-Quelle
+- **Datum/WP:** 16.10.2026, WP-22-Fixes (WP22-08, -09, -10, -11, -13, -14)
+- **Entscheidung:**
+  - WP22-08: `result.errors`-Einträge der Form `[…diagnostic] …` (z. B. `[ede_diagnostic]` nach jedem
+    Stop) sind interne CLI-Diagnosen – sie fehlen im `turn_result` (keine rote Fußzeile, kein
+    `unknownCounts`-Schlüssel); im CLI-Transkript bleiben sie.
+  - WP22-09: `<html translate="no">` + `<meta name="google" content="notranslate">`.
+  - WP22-10: `conversation.costUsd` summiert die Query-Segmente (CLI 2.1.300 beginnt
+    `total_cost_usd` nach einem Resume bei 0; ein `/clear` im selben Prozess beginnt beim aktuellen
+    Stand). Findings F.14 ist veraltet.
+  - WP22-11: `pnpm preflight` meldet ohne relevante Richtlinie `OK edge policies none`.
+  - WP22-13: Gewollt verschieden: nach Stop läuft der Prozess weiter und ist bereit → `Idle`; nach
+    einem Server-Abbruch ist der Turn abgeschnitten und kein Prozess da → `Interrupted`.
+  - WP22-14: Der Gauge-Dialog nennt die Quelle der Kategorien (Agent SDK; Summe wie `/context`,
+    Aufteilung kann abweichen).
+- **Folgen:** Kein Contract-Eingriff außer dem Kommentar zu `conversation.costUsd`.
