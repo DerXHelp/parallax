@@ -143,6 +143,7 @@ export class SessionRuntime {
     this.core.stores.processes.add(record).catch((error: unknown) => {
       this.core.log.warn({ err: error, entryId: this.state.id, pid }, 'processes.json: add failed');
     });
+    this.core.processSpawned();
   }
 
   private onMessage(raw: unknown, at: Date): void {
@@ -276,7 +277,7 @@ export class SessionRuntime {
       s.setLastError(null);
       s.retry = afterSuccessfulTurn(s.retry);
     }
-    if (!signal.synthetic) {
+    if (!signal.synthetic && !this.core.shuttingDown()) {
       this.titleDue = true;
       void s.refreshGitBranch();
     }
@@ -386,6 +387,7 @@ export class SessionRuntime {
       }
       s.cancelProcessTimers();
       if (!this.core.shuttingDown()) s.dropMirrorIfUnused();
+      this.core.processEnded();
       this.resolveExited();
     }
   }

@@ -26,7 +26,13 @@ import type { ClaudeIntegration } from '../claude/ports';
 import { newId, newUuid } from '../lib/ids';
 import { logger as rootLogger } from '../lib/logger';
 import { checkCwd as realCheckCwd } from '../lib/paths';
-import { isProcessAlive, killProcessTree, queryProcesses } from '../lib/process';
+import {
+  descendantsOf,
+  isProcessAlive,
+  killProcessTree,
+  listProcesses,
+  queryProcesses,
+} from '../lib/process';
 import {
   CommandError,
   type ClientPresence,
@@ -82,7 +88,13 @@ export const DEFAULT_SESSION_MANAGER_OPTIONS: SessionManagerOptions = {
   orphanShutdownWaitMs: 2_000,
   promptSuggestions: false,
   aiTitleDelayMs: 2_000,
+  processSnapshotMs: 30_000,
+  processSnapshotFirstMs: 10_000,
+  shutdownKillAfterMs: 2_500,
 };
+
+/** WP22-05: bound of the interrupt sent at shutdown to a session that waits for a decision. */
+export const SHUTDOWN_INTERRUPT_MS = 1_000;
 
 /** Debounce of host-state publications after rate-limit events (§3.5.5). */
 export const HOST_STATE_DEBOUNCE_MS = 1_000;
@@ -186,12 +198,17 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   /** R3-06: set once shutdown() flushed the stores – they close right after (compose.ts). */
   let storesFlushed = false;
 
-  // R2-03: no child-process path – only a verified claude.exe root is ended (follow-up after WP-22).
+  // WP22-06 (R2-03 follow-up): the heartbeat snapshots the process trees; the next start ends only
+  // the verified claude.exe root and exactly matching processes of its last snapshot.
   const proc: ProcDeps = {
     isProcessAlive: deps.proc?.isProcessAlive ?? isProcessAlive,
     queryProcesses: deps.proc?.queryProcesses ?? ((filter) => queryProcesses(filter)),
+    listProcesses: deps.proc?.listProcesses ?? (() => listProcesses()),
     killProcessTree: deps.proc?.killProcessTree ?? killProcessTree,
   };
+  let snapshotTimer: TimerHandle | null = null;
+  let snapshotBusy = false;
+  const snapshotsStopped = (): boolean => shuttingDown || storesFlushed;
 
   const publisherOrThrow = (): SessionPublisher => {
     if (publisher === null) throw new Error('SessionManager: attachPublisher() must be called before use');
@@ -231,6 +248,68 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     } catch {
       // A failing observer must not break the engine.
     }
+  };
+
+  /** Entries with a live claude.exe (PID known). */
+  const runningProcesses = (): { s: EntryState; pid: number }[] =>
+    [...states.values()].flatMap((s) => {
+      const pid = s.runtime?.alive === true ? s.runtime.pid : null;
+      return pid === null ? [] : [{ s, pid }];
+    });
+
+  /**
+   * WP22-06 heartbeat: ONE process listing for all running sessions; per claude.exe its current
+   * descendants with exact start times + `aliveAt` into processes.json (debounced write). After a
+   * hard abort the next start ends exactly these processes (recovery.ts). An inconclusive listing
+   * keeps the previous snapshot.
+   */
+  const takeProcessSnapshot = async (): Promise<void> => {
+    const running = runningProcesses();
+    if (snapshotBusy || shuttingDown || running.length === 0) return;
+    snapshotBusy = true;
+    try {
+      const result = await proc.listProcesses();
+      if (result.kind === 'unknown') {
+        log.debug(
+          { reason: result.reason, detail: result.detail },
+          'process snapshot inconclusive – kept the last one',
+        );
+        return;
+      }
+      // The shutdown may have begun during the listing.
+      if (snapshotsStopped()) return;
+      const byPid = new Map(result.processes.map((p) => [p.pid, p]));
+      const aliveAt = now().toISOString();
+      for (const { s, pid } of running) {
+        const root = byPid.get(pid);
+        if (s.runtime?.pid !== pid || root === undefined) continue;
+        const children = descendantsOf(result.processes, root).map((p) => ({
+          pid: p.pid,
+          image: p.name,
+          startedAt: p.startedAt.toISOString(),
+        }));
+        stores.processes.heartbeat(s.id, pid, { aliveAt, children });
+      }
+    } catch (error) {
+      log.warn({ err: error }, 'process snapshot failed');
+    } finally {
+      snapshotBusy = false;
+    }
+  };
+
+  const scheduleProcessSnapshot = (delayMs: number): void => {
+    if (options.processSnapshotMs <= 0 || shuttingDown || snapshotTimer !== null) return;
+    snapshotTimer = timers.setTimeout(() => {
+      snapshotTimer = null;
+      void takeProcessSnapshot().finally(() => {
+        if (runningProcesses().length > 0) scheduleProcessSnapshot(options.processSnapshotMs);
+      });
+    }, delayMs);
+  };
+
+  const cancelProcessSnapshot = (): void => {
+    snapshotTimer?.cancel();
+    snapshotTimer = null;
   };
 
   const considerSleep = (s: EntryState, facts: StatusFacts): void => {
@@ -310,6 +389,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       deps.claude.profiles.summaries().find((p) => p.id === profileId)?.allowsBypass ?? false,
     profile: (profileId) => deps.claude.profiles.get(profileId),
     factsChanged: (s, prev, next) => {
+      // WP22-05: the interrupt at shutdown ends turns – no "done" notification for that.
+      if (shuttingDown) return;
       const pub = publisherOrThrow();
       const planned = planNotification(prev, next, now(), pub.presence(), s.id);
       if (planned !== null) {
@@ -325,6 +406,12 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       }
       if (decisionsCleared(prev, next)) pub.clearNotification(s.id);
       considerSleep(s, next);
+    },
+    processSpawned: () => {
+      scheduleProcessSnapshot(options.processSnapshotFirstMs);
+    },
+    processEnded: () => {
+      if (runningProcesses().length === 0) cancelProcessSnapshot();
     },
   };
 
@@ -455,16 +542,37 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         shuttingDown = true;
         hostTimer?.cancel();
         hostTimer = null;
+        cancelProcessSnapshot();
         for (const s of states.values()) {
           s.cancelTimers();
           // Never cancel at shutdown: open records stay open → `expired` after the restart (A.10).
           s.broker.freeze();
         }
+        /** Resolves when `work` settles or after `ms` on the engine clock (timers seam). */
+        const within = async (work: Promise<unknown>, ms: number): Promise<void> => {
+          const cap: { timer: TimerHandle | null } = { timer: null };
+          await Promise.race([
+            work.then(
+              () => undefined,
+              () => undefined,
+            ),
+            new Promise<void>((resolve) => {
+              cap.timer = timers.setTimeout(resolve, ms);
+            }),
+          ]);
+          cap.timer?.cancel();
+        };
         const running = [...states.values()].filter((s) => s.runtime !== null);
         const closes = running.map(async (s) => {
           const runtime = s.runtime;
           if (runtime === null) return;
           runtime.closing = true;
+          // WP22-05: a CLI that waits for a permission/question/plan answer does not end on stdin
+          // EOF (8 s in WP-22) – end its turn first (bounded); the frozen broker keeps the records
+          // open (→ expired after the restart, A.10).
+          if (runtime.alive && s.broker.open().length > 0) {
+            await within(runtime.agent.interrupt(), SHUTDOWN_INTERRUPT_MS);
+          }
           try {
             await runtime.agent.close();
           } catch (error) {
@@ -472,25 +580,26 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           }
           await runtime.exited;
         });
-        const cap: { timer: TimerHandle | null } = { timer: null };
-        await Promise.race([
-          Promise.allSettled(closes),
-          new Promise<void>((resolve) => {
-            cap.timer = timers.setTimeout(resolve, options.shutdownTimeoutMs);
-          }),
-        ]);
-        cap.timer?.cancel();
-        // R2-06: the remaining trees in parallel (each taskkill may take seconds).
-        await Promise.allSettled(
-          [...states.values()].map(async (s) => {
-            const pid = s.runtime?.pid ?? null;
-            if (pid === null) return;
-            log.error({ entryId: s.id, pid }, 'process did not end at shutdown – killing its tree');
-            await proc.killProcessTree(pid).catch((error: unknown) => {
-              log.error({ err: error, entryId: s.id, pid }, 'killProcessTree failed at shutdown');
-            });
-          }),
-        );
+        const killRemaining = async (level: 'info' | 'error', message: string): Promise<void> => {
+          // R2-06: the remaining trees in parallel (each taskkill may take seconds).
+          await Promise.allSettled(
+            [...states.values()].map(async (s) => {
+              const pid = s.runtime?.pid ?? null;
+              if (pid === null) return;
+              log[level]({ entryId: s.id, pid }, message);
+              await proc.killProcessTree(pid).catch((error: unknown) => {
+                log.error({ err: error, entryId: s.id, pid }, 'killProcessTree failed at shutdown');
+              });
+            }),
+          );
+        };
+        const allClosed = Promise.allSettled(closes);
+        // WP22-05: "Server beenden" < 5 s – whatever still runs after the grace is ended now,
+        // not after the backend's 5-s rule plus the sweep of the shutdown frame.
+        await within(allClosed, options.shutdownKillAfterMs);
+        await killRemaining('info', 'process still running at shutdown – ending its tree');
+        await within(allClosed, Math.max(0, options.shutdownTimeoutMs - options.shutdownKillAfterMs));
+        await killRemaining('error', 'process did not end at shutdown – killing its tree');
         // R3-06: a still running orphan check of the start may finish now (bounded); its removals
         // are flushed below, anything later is ignored.
         const orphanWait: { timer: TimerHandle | null } = { timer: null };
