@@ -111,11 +111,25 @@ export async function acquireDirectoryLock(
 ): Promise<HomeLockResult> {
   const issue = windowsPathIssue(dir);
   if (issue !== null) throw new TypeError(`${kind} lock: unsafe path (${issue})`);
+  if ((options.platform ?? process.platform) !== 'win32') return acquireKeyLock(kind, '', options);
+  await mkdir(dir, { recursive: true });
+  return acquireKeyLock(kind, await homeLockKey(dir), options);
+}
+
+/**
+ * The exclusive lock `kind` for an already computed directory key – the pipe part of
+ * `acquireDirectoryLock`, WITHOUT any file system access or path check. For a directory the
+ * process works in anyway (the checkout of the build lock, CR-04: also a checkout on a UNC share).
+ */
+export async function acquireKeyLock(
+  kind: DirectoryLockKind,
+  key: string,
+  options: AcquireHomeLockOptions = {},
+): Promise<HomeLockResult> {
   if ((options.platform ?? process.platform) !== 'win32') {
     return { kind: 'acquired', lock: { pipe: null, exclusive: false, release: () => Promise.resolve() } };
   }
-  await mkdir(dir, { recursive: true });
-  const pipe = directoryLockPipeName(kind, await homeLockKey(dir));
+  const pipe = directoryLockPipeName(kind, key);
   const server = createServer((socket) => {
     socket.destroy();
   });

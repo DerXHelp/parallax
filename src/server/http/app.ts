@@ -100,12 +100,17 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     bodyLimit: JSON_BODY_LIMIT_BYTES,
   });
 
-  /** Actual listening port (config port 0 → the OS-assigned one). */
-  const port = (): number => {
+  /**
+   * Actual listening port (config port 0 → the OS-assigned one); null while it is not known yet:
+   * port 0 before `listen` (CR-07 – only `inject` reaches the app then).
+   */
+  const knownPort = (): number | null => {
     const address = app.server.address();
     if (address !== null && typeof address === 'object') return address.port;
-    return options.config.port;
+    return options.config.port === 0 ? null : options.config.port;
   };
+  /** For the routes: they run only after the guard accepted the request, i.e. with a known port. */
+  const port = (): number => knownPort() ?? options.config.port;
 
   // ---- WebSocket plugin (explicit maxPayload, C.11) ----
   // Registered before the guard: its onRequest hook marks upgrade requests, so a rejected
@@ -131,7 +136,9 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     route: string | null,
     upgrade: boolean,
   ): ErrorPayload | null => {
-    const currentPort = port();
+    const currentPort = knownPort();
+    // CR-07: no Host header can name a server whose port is not known yet (never a RangeError/500).
+    if (currentPort === null) return makeError('HOST_HEADER_REJECTED');
     const result = checkRequest(
       { method: request.method, url: request.url, route, upgrade, headers: request.headers },
       { port: currentPort, dev },
@@ -183,8 +190,11 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     });
     if (!reply.hasHeader('cross-origin-resource-policy'))
       void reply.header('cross-origin-resource-policy', 'same-origin');
-    if (!reply.hasHeader('content-security-policy'))
-      void reply.header('content-security-policy', pageCsp(port()));
+    if (!reply.hasHeader('content-security-policy')) {
+      // CR-07: without a known port (only an error answer) the strictest policy, never a throw.
+      const currentPort = knownPort();
+      void reply.header('content-security-policy', currentPort === null ? BLOB_CSP : pageCsp(currentPort));
+    }
     // Everything but the static UI (API answers, errors, 404) is never cached.
     if (request.routeOptions.url !== STATIC_ROUTE && !reply.hasHeader('cache-control')) {
       void reply.header('cache-control', 'no-store');

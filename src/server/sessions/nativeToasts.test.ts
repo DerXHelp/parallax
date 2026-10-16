@@ -11,6 +11,7 @@ function setup(results: ToastResult[] = [], language: Language = 'en') {
   const removed: string[] = [];
   const log = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
   const onUnavailable = vi.fn();
+  const clock = { ms: 0 };
   let n = 0;
   const next = (): Promise<ToastResult> => Promise.resolve(results[n++] ?? { kind: 'shown' });
   const toasts = createNativeToasts({
@@ -18,6 +19,7 @@ function setup(results: ToastResult[] = [], language: Language = 'en') {
     language: () => language,
     log,
     onUnavailable,
+    now: () => clock.ms,
     show: (request) => {
       shown.push(request);
       return next();
@@ -27,8 +29,10 @@ function setup(results: ToastResult[] = [], language: Language = 'en') {
       return next();
     },
   });
-  return { toasts, shown, removed, log, onUnavailable };
+  return { toasts, shown, removed, log, onUnavailable, clock };
 }
+
+const TIMEOUT: ToastResult = { kind: 'failed', reason: 'timeout', permanent: false };
 
 describe('native toasts (WP22-03/-15, A.9)', () => {
   it('texts per language mirror the web kinds; the body names no click (Phase 1)', () => {
@@ -37,6 +41,11 @@ describe('native toasts (WP22-03/-15, A.9)', () => {
     for (const language of ['en', 'de'] as const) {
       expect(TOAST_TEXTS[language].body).not.toMatch(/click|klick/i);
     }
+  });
+
+  it("CR-03: the title is inserted literally ($&, $`, $', $$ are no replacement patterns)", () => {
+    expect(toastText('en', 'done', 'Fix $& escaping')).toBe('Fix $& escaping – done');
+    expect(toastText('de', 'error', "a$`b$'c$$d")).toBe("a$`b$'c$$d – Fehler");
   });
 
   it('shows with the entry id as tag, one after the other; clear removes only shown toasts', async () => {
@@ -55,9 +64,9 @@ describe('native toasts (WP22-03/-15, A.9)', () => {
     expect(toasts.available()).toBe(true);
   });
 
-  it('the first failure (CLM, WinRT missing) switches the channel off and reports it once', async () => {
+  it('a deterministic failure (CLM, WinRT missing) switches the channel off and reports it once', async () => {
     const { toasts, shown, log, onUnavailable } = setup([
-      { kind: 'failed', reason: 'exit 3: error: blocked' },
+      { kind: 'failed', reason: 'exit 4: error[setup]: language mode ConstrainedLanguage', permanent: true },
     ]);
     toasts.show(ENTRY, 'done', 'A');
     toasts.show(ENTRY, 'done', 'B');
@@ -66,12 +75,65 @@ describe('native toasts (WP22-03/-15, A.9)', () => {
     expect(toasts.available()).toBe(false);
     expect(onUnavailable).toHaveBeenCalledTimes(1);
     expect(log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ reason: 'exit 3: error: blocked' }),
+      expect.objectContaining({ reason: 'exit 4: error[setup]: language mode ConstrainedLanguage' }),
       expect.stringContaining('stay in-app'),
     );
     toasts.show(ENTRY, 'done', 'C');
     await toasts.idle();
     expect(shown).toHaveLength(1);
+  });
+
+  it('CR-05: a timeout under load is counted, the channel stays on', async () => {
+    const { toasts, shown, onUnavailable } = setup([TIMEOUT]);
+    toasts.show(ENTRY, 'done', 'A');
+    toasts.show(ENTRY, 'question', 'B');
+    await toasts.idle();
+    expect(shown.map((r) => r.title)).toEqual(['A – done', 'B – has a question']);
+    expect(toasts.available()).toBe(true);
+    expect(onUnavailable).not.toHaveBeenCalled();
+  });
+
+  it('CR-05: a failed History.Remove is counted, the channel stays on', async () => {
+    const { toasts, shown, removed, onUnavailable } = setup([
+      { kind: 'shown' },
+      { kind: 'failed', reason: 'exit 3: error[remove]: Element not found.', permanent: false },
+    ]);
+    toasts.show(ENTRY, 'done', 'A');
+    toasts.clear(ENTRY);
+    toasts.show(ENTRY, 'question', 'B');
+    await toasts.idle();
+    expect(removed).toEqual([ENTRY]);
+    expect(shown.map((r) => r.title)).toEqual(['A – done', 'B – has a question']);
+    expect(toasts.available()).toBe(true);
+    expect(onUnavailable).not.toHaveBeenCalled();
+  });
+
+  it('CR-05: from the third failure in a row the channel pauses (1 min, doubled); a success resets', async () => {
+    const { toasts, shown, clock } = setup([TIMEOUT, TIMEOUT, TIMEOUT, TIMEOUT]);
+    const show = async (title: string): Promise<void> => {
+      toasts.show(ENTRY, 'done', title);
+      await toasts.idle();
+    };
+    await show('1');
+    await show('2');
+    await show('3');
+    expect(shown).toHaveLength(3);
+    // Paused for 1 min: nothing is started.
+    clock.ms = 59_999;
+    await show('skipped');
+    expect(shown).toHaveLength(3);
+    clock.ms = 60_000;
+    await show('4');
+    expect(shown).toHaveLength(4);
+    // Fourth failure in a row: 2 min.
+    clock.ms = 60_000 + 119_999;
+    await show('skipped');
+    expect(shown).toHaveLength(4);
+    clock.ms = 60_000 + 120_000;
+    await show('5'); // succeeds → counter and pause reset
+    await show('6');
+    expect(shown.map((r) => r.title)).toEqual(['1', '2', '3', '4', '5', '6'].map((t) => `${t} – done`));
+    expect(toasts.available()).toBe(true);
   });
 
   it('a burst beyond the queue is dropped instead of starting PowerShells without end', async () => {
