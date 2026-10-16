@@ -68,6 +68,20 @@ export function useHostState(hostId: HostId = LOCAL_HOST_ID): HostState | null {
   return useStore(clientStore, (state) => state.hosts[hostId]?.hostState ?? null);
 }
 
+/** `host.state` of every host that delivered one (multi-host: profiles per host, Plan "Multi-Host"). */
+export function selectHostStates(state: ClientState): Record<HostId, HostState> {
+  const result: Record<HostId, HostState> = {};
+  for (const host of Object.values(state.hosts)) {
+    if (host.hostState !== null) result[host.hostId] = host.hostState;
+  }
+  return result;
+}
+
+/** All host states by host id; re-renders only when one of them changes (shallow). */
+export function useHostStates(): Readonly<Record<HostId, HostState>> {
+  return useStore(clientStore, useShallow(selectHostStates));
+}
+
 export function useConnectionStatus(hostId: HostId = LOCAL_HOST_ID): ConnectionStatus {
   return useStore(clientStore, (state) => state.hosts[hostId]?.status ?? 'connecting');
 }

@@ -14,6 +14,8 @@ export const STORAGE_KEYS = {
   reloadAt: `${PRODUCT_ID}.reloadAt`,
   /** localStorage: last applied theme setting, so a reload starts without a flash. */
   theme: `${PRODUCT_ID}.theme`,
+  /** localStorage: sidebar view `flat` | `grouped` (WP-35, Plan "Sidebar"). */
+  sidebarMode: `${PRODUCT_ID}.sidebar.mode`,
 } as const;
 
 /**

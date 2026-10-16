@@ -41,6 +41,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@web/ui/tabs';
 import { Textarea } from '@web/ui/textarea';
 import { ToggleGroup, ToggleGroupItem } from '@web/ui/toggle-group';
 import { TooltipProvider } from '@web/ui/tooltip';
+import { navigationDemos } from './navigation-demos';
 import { PlaygroundScenario } from './PlaygroundScenario';
 import { SCENARIOS, type ScenarioId } from './scenarios';
 import type { PlaygroundDemo } from './types';
@@ -281,6 +282,7 @@ export const shellDemos: readonly PlaygroundDemo[] = [
   shellDemo('offline'),
   shellDemo('signed-out'),
   shellDemo('outdated'),
+  ...navigationDemos,
   {
     id: 'ui-status-icons',
     title: 'UI – Status icons (all display statuses)',

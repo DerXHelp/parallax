@@ -17,7 +17,8 @@ import {
 } from '@shared/samples';
 import type { StatusFacts } from '@shared/status';
 import type { AuthCheckResult } from '@web/state/auth';
-import type { FakeHost } from '@web/state/fake-host';
+import type { FakeHost, FakeHostOptions } from '@web/state/fake-host';
+import { NAVIGATION_SESSION_KEYS, navigationData } from './navigation-scenario';
 
 /**
  * Playground scenarios: sample data from @shared/samples (fixed ids; times relative to "now" only
@@ -51,6 +52,9 @@ export const SCENARIO_IDS = [
   'offline',
   'signed-out',
   'outdated',
+  'navigation',
+  'navigation-external',
+  'navigation-archived',
 ] as const;
 export type ScenarioId = (typeof SCENARIO_IDS)[number];
 
@@ -58,6 +62,8 @@ export interface ScenarioData {
   hostState: HostState;
   summaries: SessionSummary[];
   sessions: SessionSnapshot[];
+  /** Own command handling of the FakeHost (Phase 2 commands, WP-35 navigation demos). */
+  onCommand?: FakeHostOptions['onCommand'];
 }
 
 export interface Scenario {
@@ -460,5 +466,23 @@ export const SCENARIOS: Readonly<Record<ScenarioId, Scenario>> = {
     select: null,
     auth: { kind: 'unauthenticated', codeRejected: true },
     build: overviewData,
+  },
+  navigation: {
+    id: 'navigation',
+    title: 'Navigation: projects, branches, models, pinned, archived, limits (WP-35)',
+    select: NAVIGATION_SESSION_KEYS.auth,
+    build: navigationData,
+  },
+  'navigation-external': {
+    id: 'navigation-external',
+    title: 'Navigation: session open in an external console (WP-35)',
+    select: NAVIGATION_SESSION_KEYS.external,
+    build: navigationData,
+  },
+  'navigation-archived': {
+    id: 'navigation-archived',
+    title: 'Navigation: archived session (WP-35)',
+    select: NAVIGATION_SESSION_KEYS.prototype,
+    build: navigationData,
   },
 };
