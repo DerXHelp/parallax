@@ -5,7 +5,6 @@ import type { DisplayStatusKind } from '@shared/status';
 import { useFormat, useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { shortModelName } from '@web/lib/model-name';
-import { pathTail } from '@web/lib/path-display';
 import { sessionTitle } from '@web/lib/session-title';
 import { cliVersionStatus, knownVersion } from '@web/lib/version';
 import type { SummaryEntry } from '@web/state/hooks';
@@ -15,6 +14,7 @@ import { gaugeLevel, type GaugeLevel } from '@web/ui/gauge';
 import { IconButton } from '@web/ui/icon-button';
 import { StatusIcon } from '@web/ui/status-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
+import { PathTail } from './PathTail';
 import { PROFILE_BG } from './profile-colors';
 import { startRename, useRenaming } from './rename';
 import { RenameField } from './RenameField';
@@ -85,7 +85,8 @@ export interface SessionRowProps {
 
 /**
  * Two-line sidebar entry (Plan "Sidebar"): line 1 status icon (+ text for screen readers), title,
- * pin, relative time, unread dot; line 2 last two path segments, ⎇ branch, short model name,
+ * pin, relative time, unread dot; line 2 last two path segments (the last one never cut first,
+ * WP41-02), ⎇ branch, short model name,
  * context fill. Profile color stripe on the left, details in the tooltip. Right click (or
  * Shift+F10) opens the context menu; the "…" button (on hover/focus) the same actions. Double
  * click on the title or F2 edits it inline.
@@ -216,11 +217,10 @@ export const SessionRow = memo(function SessionRow({
                   data-slot="row-details"
                   className="text-muted-foreground flex h-4 min-w-0 items-center gap-1.5 pl-5.5 text-2xs"
                 >
-                  {/* Grouped: the group header names the folder. Path and branch shrink, the model stays. */}
+                  {/* Grouped: the group header names the folder. Path and branch shrink, the model stays;
+                      in the path the folder before the project folder gives way first (WP41-02). */}
                   {showPath ? (
-                    <span data-slot="row-path" className="min-w-10 shrink truncate">
-                      {pathTail(summary.cwd, 2)}
-                    </span>
+                    <PathTail path={summary.cwd} data-slot="row-path" className="min-w-10 shrink" />
                   ) : null}
                   {summary.gitBranch === null ? null : (
                     <span data-slot="row-branch" className="flex min-w-10 shrink-[2] items-center gap-0.5">

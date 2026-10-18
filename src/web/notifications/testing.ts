@@ -51,8 +51,16 @@ export class FakeAudioContext {
   static instances: FakeAudioContext[] = [];
   /** What `resume()` achieves (false = no user activation). */
   static resumable = true;
-  state: 'suspended' | 'running' | 'closed' = 'running';
+  /**
+   * State of a new context: `running` = the browser may start audio right away (Chromium with a
+   * user activation or `--autoplay-policy=no-user-gesture-required`), `suspended` = it waits for a
+   * `resume()` (spec order, or blocked without a gesture when `resumable` is false).
+   */
+  static initialState: 'suspended' | 'running' = 'running';
+  state: 'suspended' | 'running' | 'closed' = FakeAudioContext.initialState;
   currentTime = 2;
+  /** How often `resume()` was called. */
+  resumeCalls = 0;
   readonly destination = new FakeNode();
   readonly gains: FakeGain[] = [];
   readonly oscillators: FakeOscillator[] = [];
@@ -64,6 +72,7 @@ export class FakeAudioContext {
   static reset(): void {
     FakeAudioContext.instances = [];
     FakeAudioContext.resumable = true;
+    FakeAudioContext.initialState = 'running';
   }
 
   static last(): FakeAudioContext {
@@ -85,6 +94,7 @@ export class FakeAudioContext {
   }
 
   resume(): Promise<void> {
+    this.resumeCalls++;
     if (FakeAudioContext.resumable) this.state = 'running';
     return Promise.resolve();
   }

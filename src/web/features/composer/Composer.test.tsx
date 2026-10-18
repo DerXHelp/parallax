@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
 import { makeError } from '@shared/errors';
 import type { Decision } from '@shared/model';
-import { sampleDecisions, sampleId } from '@shared/samples';
+import { sampleDecisions, sampleExternalHandoff, sampleId } from '@shared/samples';
+import { resetHandoffs, trackHandoff } from '@web/shell/navigation/handoff';
 import { clientStore, resetClientStore } from '@web/state/store';
 import { DecisionBar } from '../decisions/DecisionBar';
 import { DEMO_ENTRIES, type DemoEntry } from '../decisions/lib/demo-data';
@@ -25,8 +26,41 @@ afterEach(() => {
   resetClientStore();
   resetDecisionBarState();
   resetDraftStore();
+  resetHandoffs();
   localStorage.clear();
 });
+
+/**
+ * Chromium/Edge: a textarea React creates with text keeps its caret at the start (React sets the
+ * default value and then the same value – no change, so the caret does not move). happy-dom moves it
+ * to the end. Until the returned restore runs, a value set on a field not yet in the document puts
+ * the caret at its start, as in the browser (WP41-07).
+ */
+function emulateChromiumNewFieldCaret(): () => void {
+  let prototype: object | null = HTMLTextAreaElement.prototype;
+  let owner: object | null = null;
+  let original: PropertyDescriptor | undefined;
+  while (prototype !== null && original === undefined) {
+    original = Object.getOwnPropertyDescriptor(prototype, 'value');
+    owner = prototype;
+    prototype = Object.getPrototypeOf(prototype) as object | null;
+  }
+  if (original?.set === undefined || owner === null) {
+    throw new Error('textarea without a value accessor');
+  }
+  const descriptor = original;
+  const target = owner;
+  Object.defineProperty(target, 'value', {
+    ...descriptor,
+    set(this: HTMLTextAreaElement, value: string) {
+      descriptor.set?.call(this, value);
+      if (!this.isConnected) this.setSelectionRange(0, 0);
+    },
+  });
+  return () => {
+    Object.defineProperty(target, 'value', descriptor);
+  };
+}
 
 function start(
   entry: DemoEntry,
@@ -179,6 +213,8 @@ describe('Composer', () => {
     await waitFor(() => {
       expect(textbox().value).toBe('try this');
     });
+    // WP41-07: the caret stands at the end of the text that came back.
+    expect([textbox().selectionStart, textbox().selectionEnd]).toEqual([8, 8]);
     expect(clientStore.getState().notices.map((notice) => notice.content)).toEqual([
       { error: makeError('SESSION_BUSY') },
     ]);
@@ -207,6 +243,77 @@ describe('Composer', () => {
     });
     expect(screen.getByRole('alert').textContent).toBe('Too long – at most 200,000 characters.');
     expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
+  });
+});
+
+describe('Composer and the handoff to an external console (WP41-07)', () => {
+  it('while "Open in external console" is on its way nothing is sent – Enter and the button do nothing, the text stays', async () => {
+    const h = start('idle');
+    const user = userEvent.setup();
+    await user.type(textbox(), 'second writer');
+    let answer: () => void = () => undefined;
+    let request: Promise<void> = Promise.resolve();
+    act(() => {
+      // As from the session menu: the composer only sees the shared state.
+      request = trackHandoff(
+        h.key('idle'),
+        new Promise<void>((resolve) => {
+          answer = resolve;
+        }),
+      );
+    });
+    expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
+    await user.keyboard('{Enter}');
+    expect(h.commands('session.sendPrompt')).toEqual([]);
+    expect(textbox().value).toBe('second writer');
+    // Refused (or the console did not open): writing here goes on.
+    await act(async () => {
+      answer();
+      await request;
+    });
+    expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(false);
+    await user.keyboard('{Enter}');
+    expect(prompts(h)).toEqual([['second writer', 'next']]);
+  });
+
+  it('a prompt refused because the session went to a console comes back with the caret at its end – in the field after the return', async () => {
+    const h = start('idle', {
+      onCommand: (cmd, host) => {
+        if (cmd.name !== 'session.sendPrompt') return undefined;
+        // Another window handed the session off a moment earlier (R4-01: the server refuses).
+        host.patchSummary(cmd.entryId, {
+          external: { since: sampleExternalHandoff().since, pid: 52_000, running: true },
+        });
+        return { ok: false, error: makeError('SESSION_EXTERNAL') };
+      },
+    });
+    const user = userEvent.setup();
+    await user.type(textbox(), 'Only the word.{Enter}');
+    await waitFor(() => {
+      expect(document.querySelector('[data-slot="composer"]')?.getAttribute('data-reason')).toBe('external');
+    });
+    await waitFor(() => {
+      expect(clientStore.getState().notices.map((notice) => notice.content)).toEqual([
+        { error: makeError('SESSION_EXTERNAL') },
+      ]);
+    });
+    // Back from the console: a new field with the refused text, the caret at its end.
+    const restore = emulateChromiumNewFieldCaret();
+    try {
+      act(() => {
+        h.host.patchSummary(DEMO_ENTRIES.idle, { external: null });
+      });
+    } finally {
+      restore();
+    }
+    expect(textbox().value).toBe('Only the word.');
+    expect([textbox().selectionStart, textbox().selectionEnd]).toEqual([14, 14]);
+    // New text goes after the old one (live it landed in front of it).
+    act(() => {
+      textbox().focus();
+    });
+    await user.keyboard(' Second writer');
+    expect(textbox().value).toBe('Only the word. Second writer');
   });
 });
 

@@ -16,7 +16,7 @@ Web Notifications zeigen darf – `systemNotifications`) meldet `state/presence.
 | `sounds.ts` | Töne (ADR-109): `SOUNDS` (fünf synthetisierte Klänge, Oszillator + Hüllkurve, ≤ 600 ms), `playSound(id, volume)` → `'played' \| 'locked' \| 'unsupported'`, `unlockAudio()`, `installAudioUnlock(window)` (erstes `pointerdown`/`keydown`), `audioState()`, `subscribeAudioUnlock`, `SoundPlayer` (`state`, `play`, `onUnlock`, optional `unlock`)/`webAudioPlayer`, `resetAudio()` (Tests) |
 | `delivery.ts` | `startNotificationDelivery({ store?, notifier?, focusWindow?, sounds? })` → Stop-Funktion; `IN_APP_NOTIFICATION_MS` (10 s), `noticeIdOf(id)`, `SOUNDS_LOCKED_NOTICE_ID` |
 | `permission.ts` | `useNotificationPermission`, `requestNotificationPermission` (nur aus einem Klick; meldet das Ergebnis sofort als Präsenz), `useNotificationHintDismissed`, `dismissNotificationHint` (localStorage `parallax.notifications.permissionHint`) |
-| `testing.ts` | nur Tests: `FakeAudioContext` (zeichnet den Web-Audio-Graphen auf) |
+| `testing.ts` | nur Tests: `FakeAudioContext` (zeichnet den Web-Audio-Graphen auf; `initialState` `running`/`suspended`, `resumable`, `resumeCalls` – Browser mit und ohne Autoplay-Sperre) |
 
 Regeln:
 - Jede Server-Benachrichtigung wird einmal ausgeliefert (Notice-ID `notify:<id>`, Toast-`tag` =
@@ -26,8 +26,17 @@ Regeln:
   `events[kind].sound` und nicht „Nicht stören“, mit `soundId` und `volume` der Einstellungen des
   Hosts. Eigene Web Notifications sind dann `silent` (ebenso ohne Ton für das Ereignis); nur wenn
   der Ton gewünscht, aber gesperrt oder Web Audio nicht verfügbar ist, darf der Browser klingen.
-- Autoplay: Töne sind bis zur ersten Interaktion im Fenster gesperrt; der `AudioContext` entsteht
-  erst danach beim ersten Ton und wird in Pausen suspendiert. Ein gesperrter Ton zeigt einmal je
+- Autoplay: Töne sind bis zur ersten Interaktion im Fenster gesperrt – außer der Browser erlaubt
+  Audio ohne Geste (WP41-01): Der erste Ton davor fragt den Browser **einmal** je Fensterlauf –
+  `navigator.getAutoplayPolicy('audiocontext')`, wo vorhanden (ohne Kontext, auch schon in
+  `installAudioUnlock`), sonst über einen neuen `AudioContext` (`running` sofort – so meldet ihn
+  Chromium im Launcher-Fenster mit `--autoplay-policy=no-user-gesture-required`, ADR-120 – oder nach
+  `resume()` mit 500-ms-Timeout). Erlaubt → entsperrt (Unlock-Listener benachrichtigt, noch vor dem
+  ersten `await`, damit der `silent`-Wert der eigenen Web Notification stimmt) und der Ton spielt;
+  sonst `locked`, der suspendierte Kontext bleibt für die Töne nach der ersten Interaktion. In
+  normalen Browsern kann diese Probe eine Konsolen-**Warnung** „AudioContext was not allowed to
+  start“ erzeugen (kein Fehler; nur wenn vor der ersten Interaktion ein Ton fällig wird). Der
+  `AudioContext` entsteht erst beim ersten Ton und wird in Pausen suspendiert. Ein gesperrter Ton zeigt einmal je
   Fensterlauf den Hinweis „Töne aktivieren“ (`preferences.sounds.locked`, bleibt bis zur
   Interaktion, die ihn auch schließt) mit gleichnamigem Knopf (`ClientNotice.action`,
   `navigation.notices.enableSounds`, ruft `SoundPlayer.unlock` – ADR-126, R4W-05). Seit ADR-120 nur

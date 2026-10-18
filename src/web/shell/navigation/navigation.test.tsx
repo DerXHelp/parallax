@@ -90,7 +90,13 @@ describe('sidebar entries (WP-35 §1)', () => {
   it('shows two lines: path, branch only when set, short model name, context level 70/85', async () => {
     await start();
     const landing = within(row(KEYS.landing));
-    expect(landing.getByText('web\\landing')).toBeTruthy();
+    const path = row(KEYS.landing).querySelector('[data-slot="row-path"]');
+    expect(path?.textContent).toBe('web\\landing');
+    // WP41-02: the project folder sits in an element of its own that never shrinks.
+    expect(path?.querySelector('[data-slot="path-head"]')?.textContent).toBe('web');
+    const last = path?.querySelector('[data-slot="path-last"]');
+    expect(last?.textContent).toBe('\\landing');
+    expect(last?.className.split(' ')).toContain('shrink-0');
     expect(row(KEYS.landing).querySelector('[data-slot="row-branch"]')?.textContent).toBe('Branchmain');
     expect(row(KEYS.landing).querySelector('[data-slot="row-model"]')?.textContent).toBe('Modelhaiku');
     expect(row(KEYS.landing).querySelector('[data-slot="row-context"]')?.getAttribute('data-level')).toBe(
@@ -463,6 +469,10 @@ describe('quick switcher (WP-35 §5)', () => {
     expect(options()[0]).toContain('Answer the color question');
     expect(options()[1]).toContain('Database migration plan');
     expect(options()).toHaveLength(8);
+    // WP41-02: the project folder in an element of its own that never shrinks.
+    const firstPath = within(dialog).getAllByRole('option')[0]?.querySelector('[data-slot="switcher-path"]');
+    expect(firstPath?.textContent).toBe('web\\landing');
+    expect(firstPath?.querySelector('[data-slot="path-last"]')?.className.split(' ')).toContain('shrink-0');
     const input = within(dialog).getByRole('combobox', { name: 'Switch session' });
     // Branch and profile are searchable too.
     await user.type(input, 'redirect-loop');

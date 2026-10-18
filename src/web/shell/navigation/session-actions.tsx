@@ -30,6 +30,7 @@ import { openNewSession } from '../NewSessionDialog';
 import { requestShell } from '../requests';
 import { shortcutKeyLabels } from '../shortcuts';
 import { sessionFocusTarget } from './focus';
+import { isHandoffPending, openExternalConsole } from './handoff';
 import { startRenameAfterMenu, takePendingRename, type RenamePlace } from './rename';
 
 /**
@@ -204,9 +205,12 @@ function build(
         id,
         label: 'navigation.actions.openExternal',
         icon: SquareTerminalIcon,
-        disabled: !started || external || summary.archived,
+        disabled: !started || external || summary.archived || isHandoffPending(sessionKey),
         run: () => {
-          runSessionCommand(sessionKey, { name: 'session.openExternal', entryId });
+          // WP41-07: tracked – the composer sends nothing until the server answered.
+          openExternalConsole(sessionKey, entryId).catch((error: unknown) => {
+            showErrorNotice(errorPayloadOf(error), { sessionKey });
+          });
         },
       };
     case 'copyConsoleCommand':

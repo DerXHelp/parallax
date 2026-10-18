@@ -74,6 +74,9 @@ export const en = {
     configDirBrowse: 'Browse…',
     configDirHint:
       'Every config folder has its own sign-in and its own conversations – e.g. one for private use, one for work.',
+    /** WP41-06: shown while a folder is entered (CLI behavior of `--version`/`auth status`). */
+    configDirWrites:
+      'Claude Code sets the folder up itself: even “Test profile” creates .claude.json and a backups folder in it if they are missing.',
     configDirWarning: {
       one: '{count} session uses this profile. With a different config folder it can no longer be resumed.',
       other: '{count} sessions use this profile. With a different config folder they can no longer be resumed.',

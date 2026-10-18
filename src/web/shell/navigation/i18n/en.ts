@@ -130,6 +130,8 @@ export const en = {
   limits: {
     label: 'Subscription limits',
     profile: 'Profile {name}',
+    /** One account shared by several profiles (same config folder, WP41-05); `names` joined by ", ". */
+    profiles: 'Profiles {names}',
     windows: {
       five_hour: '5-hour limit',
       seven_day: 'Weekly limit',
