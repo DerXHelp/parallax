@@ -23,6 +23,11 @@ export interface RunFileOptions {
   timeoutMs: number;
   /** Per stream (stdout, stderr); more output is read and discarded. Default 1 MiB. */
   maxOutputBytes?: number;
+  /**
+   * Ends the process tree like the timeout (`timedOut: true`), e.g. at the server shutdown (V3-15);
+   * already aborted → nothing is started.
+   */
+  signal?: AbortSignal;
 }
 
 export interface RunFileResult {
@@ -137,8 +142,8 @@ function collector(max: number): { push(chunk: Buffer): void; text(): string } {
 
 /**
  * Runs `file args` to completion (like execFile, but never through a shell). Resolves for any exit
- * code; rejects only when the process cannot be started (ENOENT, EACCES, …). On timeout the whole
- * process tree is killed (`taskkill /T /F`), so no grandchild survives.
+ * code; rejects only when the process cannot be started (ENOENT, EACCES, …). On timeout (or an
+ * aborted `signal`) the whole process tree is killed (`taskkill /T /F`), so no grandchild survives.
  */
 export function runFile(
   file: string,
@@ -147,6 +152,11 @@ export function runFile(
 ): Promise<RunFileResult> {
   const max = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   return new Promise<RunFileResult>((resolve, reject) => {
+    const abortSignal = options.signal;
+    if (abortSignal?.aborted === true) {
+      resolve({ exitCode: null, signal: null, stdout: '', stderr: '', timedOut: true });
+      return;
+    }
     let child: ChildProcess;
     try {
       assertSpawnableFile(file);
@@ -172,10 +182,14 @@ export function runFile(
       settled = true;
       clearTimeout(timer);
       clearTimeout(graceTimer);
+      abortSignal?.removeEventListener('abort', stop);
       resolve({ exitCode, signal, stdout: stdout.text(), stderr: stderr.text(), timedOut });
     };
 
-    const timer = setTimeout(() => {
+    /** Timeout or abort: the whole tree is ended, then `close` is awaited (bounded). */
+    const stop = (): void => {
+      if (settled || timedOut) return;
+      clearTimeout(timer);
       timedOut = true;
       const pid = child.pid;
       const kill = pid === undefined ? Promise.resolve() : killProcessTree(pid);
@@ -189,7 +203,9 @@ export function runFile(
             finish(null, 'SIGKILL');
           }, CLOSE_GRACE_MS);
         });
-    }, options.timeoutMs);
+    };
+    const timer = setTimeout(stop, options.timeoutMs);
+    abortSignal?.addEventListener('abort', stop, { once: true });
 
     child.stdout?.on('data', (chunk: Buffer) => {
       stdout.push(chunk);
@@ -202,6 +218,7 @@ export function runFile(
       settled = true;
       clearTimeout(timer);
       clearTimeout(graceTimer);
+      abortSignal?.removeEventListener('abort', stop);
       reject(error);
     });
     child.once('close', (code, signal) => {

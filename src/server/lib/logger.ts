@@ -14,7 +14,8 @@ import { PRODUCT_ID } from '@shared/product';
  * - Redaction (B "Der Logger maskiert Env-Werte und Tokens"): values under `REDACT_PATHS` are
  *   censored (an `env` object keeps its keys, every value becomes `[REDACTED]`), and every
  *   finished line is scrubbed by `redactText` (registered secrets, Bearer tokens, API keys,
- *   device-cookie values, `*_TOKEN=`/`*_KEY=` assignments).
+ *   device-cookie values, assignments and JSON keys of secret env names – the name parts of
+ *   `@shared/secrets`, ADR-124).
  */
 
 export const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
@@ -77,15 +78,30 @@ export function unregisterSecret(value: string): void {
   secretValues.delete(value);
 }
 
+/**
+ * Name parts of `@shared/secrets` (ADR-124, R4-07) for the free-text patterns: an `_`-separated
+ * part anywhere in an env-style name (`AWS_BEARER_TOKEN_BEDROCK=`, `GH_TOKEN_CI=`, `AWS_CREDENTIALS=`),
+ * never a longer word (`KEYBOARD_LAYOUT=`, `TOKENIZER_PATH=`, `max_tokens=`).
+ */
+const SECRET_PART = '(?:API_?KEY|APIKEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)';
+/** An env-style assignment `<secret name>=<value>` (case-insensitive, like Windows env names). */
+const SECRET_ASSIGNMENT = new RegExp(
+  `\\b((?:[A-Z0-9]+_)*${SECRET_PART}(?:_[A-Z0-9]+)*=|[A-Z0-9_]*PASSWORD[A-Z0-9_]*=|ANTHROPIC_CUSTOM_HEADERS=)[^\\s"\\\\]+`,
+  'gi',
+);
+/** A JSON key with a secret: camelCase endings (`refreshToken`) or an `_` part (`GH_TOKEN_CI`, `X_KEY`). */
+const SECRET_JSON_KEY =
+  '[A-Za-z0-9_-]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|CREDENTIALS?)(?:_[A-Za-z0-9_-]*)?|[A-Za-z0-9_-]*_KEY(?:_[A-Za-z0-9_-]*)?|ANTHROPIC_CUSTOM_HEADERS';
+
 const TEXT_PATTERNS: readonly (readonly [RegExp, string])[] = [
   [/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi, `$1${REDACTED}`],
   [/\bsk-ant-[A-Za-z0-9_-]{8,}/g, REDACTED],
   [new RegExp(`\\b(${PRODUCT_ID}_\\d+=)[^;\\s"\\\\]+`, 'g'), `$1${REDACTED}`],
-  [/\b([A-Z0-9_]*(?:API_KEY|AUTH_TOKEN|_TOKEN|_SECRET|PASSWORD)=)[^\s"\\]+/g, `$1${REDACTED}`],
+  [SECRET_ASSIGNMENT, `$1${REDACTED}`],
   // JSON form at any depth (R1-20): "GITHUB_TOKEN":"…", also escaped inside a string value.
-  [/("[A-Za-z0-9_-]*(?:TOKEN|SECRET|PASSWORD|API_?KEY)"\s*:\s*")(?:[^"\\]|\\.)*"/gi, `$1${REDACTED}"`],
+  [new RegExp(`("(?:${SECRET_JSON_KEY})"\\s*:\\s*")(?:[^"\\\\]|\\\\.)*"`, 'gi'), `$1${REDACTED}"`],
   [
-    /(\\"[A-Za-z0-9_-]*(?:TOKEN|SECRET|PASSWORD|API_?KEY)\\"\s*:\s*\\")(?:[^"\\]|\\[^"])*\\"/gi,
+    new RegExp(`(\\\\"(?:${SECRET_JSON_KEY})\\\\"\\s*:\\s*\\\\")(?:[^"\\\\]|\\\\[^"])*\\\\"`, 'gi'),
     `$1${REDACTED}\\"`,
   ],
 ];

@@ -30,8 +30,9 @@
  *
  * Shutdown (command `server.shutdown`, SIGINT/SIGTERM/SIGBREAK/SIGHUP): `manager.shutdown()` (close
  * all queries ≤ 15 s, taskkill after 5 s grace, flush, `backend.dispose()`) → `app.close()` (WS
- * close 4503) → wait for a running system-integration step → close the stores → wait for the
- * access check → release the lock file → release the home lock → close the log → `exit(code)`.
+ * close 4503) → wait for a running system-integration step → wait for a running "Profil testen"
+ * (R4-13) → close the stores → end a still running access check (V3-15 b) → release the lock file
+ * → release the home lock → close the log → `exit(code)`.
  */
 import { existsSync } from 'node:fs';
 import type { FastifyInstance } from 'fastify';
@@ -130,9 +131,10 @@ export interface StartServerOptions {
   homeLock?: HomeLock | null;
   /**
    * Check of the home's access rights after `listen`, in the background (default
-   * `logHomeAccess`, R2-13: only a warning); null = skipped (in-process tests).
+   * `logHomeAccess`, R2-13: only a warning); null = skipped (in-process tests). `signal` aborts at
+   * the shutdown (V3-15 b: a check still running is ended, not awaited).
    */
-  homeAccess?: ((home: string) => Promise<unknown>) | null;
+  homeAccess?: ((home: string, signal: AbortSignal) => Promise<unknown>) | null;
   /**
    * CR-10: called once the shutdown frame exists (step 5, before `listen`). main.ts hands it to
    * the crash handler, so an unexpected error from here on ends the server in order (stores
@@ -342,6 +344,10 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   let uninstallSignals: (() => void) | null = null;
   /** The background access check of the home (its PowerShell must not outlive the server). */
   let accessCheck: Promise<unknown> | null = null;
+  /** V3-15 (b): the shutdown ends a still running access check instead of waiting for it. */
+  const accessAbort = new AbortController();
+  /** R4-13: the "Profil testen" queue (its claude.exe must not outlive the server either). */
+  let profileChecks: Promise<void> = Promise.resolve();
   const homeLock = options.homeLock ?? null;
   /** HostState.port: the actual port once listening (also with `--port=0`), null before. */
   let listeningPort: number | null = null;
@@ -373,8 +379,18 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   const steps: ShutdownStep[] = [
     { name: 'http', run: () => app?.close() },
     { name: 'system', run: () => systemApply },
+    // R4-13: no new check starts during the shutdown; a running one (claude --version + auth
+    // status, ≤ 20 s) is awaited – bounded – before its result could meet closed stores.
+    { name: 'profileChecks', run: () => profileChecks },
     { name: 'stores', run: () => stores.close(), timeoutMs: 10_000 },
-    { name: 'homeAccess', run: () => accessCheck },
+    {
+      name: 'homeAccess',
+      run: () => {
+        // V3-15 (b): a check still running shortly after the start is ended (its PowerShell tree).
+        accessAbort.abort();
+        return accessCheck;
+      },
+    },
     { name: 'lock', run: () => lock?.release() },
     // After the lock file: from here on another server may open this home (R2-05).
     { name: 'homeLock', run: () => homeLock?.release() },
@@ -482,8 +498,9 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     // "Profil testen" of every profile nobody checked yet (status `checking`, `checkedAt` null): at
     // the start the default first, then after every profile change – a new profile would show
     // "checking" for ever otherwise (WP-40). One check at a time; none during the shutdown.
+    // R4-06: a save that changes executable, env or config dir resets the status (`checkedAt` null)
+    // – the same path checks it again.
     const checking = new Set<ProfileId>();
-    let checkQueue: Promise<void> = Promise.resolve();
     checkProfiles = () => {
       if (!profileChecksOn || shutdown?.stopping === true) return;
       const defaultId = claude.profiles.getDefault().id;
@@ -493,7 +510,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         .sort((a, b) => Number(b.id === defaultId) - Number(a.id === defaultId));
       for (const { id } of pending) {
         checking.add(id);
-        checkQueue = checkQueue
+        profileChecks = profileChecks
           .then(async () => {
             if (shutdown?.stopping === true) return;
             await claude.checkProfile(id);
@@ -610,9 +627,12 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   if (shutdown.stopping) await lock.release();
 
   // Access rights of the home in the background (≈ 2 s PowerShell, never throws; R2-13: warn only).
-  const homeAccess = options.homeAccess === undefined ? logHomeAccess : options.homeAccess;
+  const homeAccess =
+    options.homeAccess === undefined
+      ? (home: string, signal: AbortSignal) => logHomeAccess(home, { signal })
+      : options.homeAccess;
   if (homeAccess !== null) {
-    accessCheck = homeAccess(config.home).catch((error: unknown) => {
+    accessCheck = homeAccess(config.home, accessAbort.signal).catch((error: unknown) => {
       log.warn({ err: error }, 'home access check failed');
     });
   }

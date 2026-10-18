@@ -130,6 +130,40 @@ describe('checkHomeAccess / logHomeAccess', () => {
     expect(log.warn).toHaveBeenCalledOnce();
   });
 
+  it('V3-15 (b): an aborted check ends as unknown "aborted"; the signal reaches every tool call', async () => {
+    const home = await makeTempHome('r2-acl-');
+    homes.push(home);
+    const before = new AbortController();
+    before.abort();
+    const calls: (AbortSignal | undefined)[] = [];
+    const run: RunFileFn = (_file, _args, options) => {
+      calls.push(options.signal);
+      return Promise.resolve({
+        exitCode: 0,
+        signal: null,
+        stdout: `"x\\u","${USER}"`,
+        stderr: '',
+        timedOut: false,
+      });
+    };
+    expect(await checkHomeAccess(home, { platform: 'win32', run, signal: before.signal })).toEqual({
+      kind: 'unknown',
+      reason: 'aborted',
+    });
+    expect(calls).toEqual([]);
+    // Aborted while whoami runs: Get-Acl is not started any more.
+    const during = new AbortController();
+    const aborting: RunFileFn = (file, args, options) => {
+      during.abort();
+      return run(file, args, options);
+    };
+    expect(await checkHomeAccess(home, { platform: 'win32', run: aborting, signal: during.signal })).toEqual({
+      kind: 'unknown',
+      reason: 'aborted',
+    });
+    expect(calls).toEqual([during.signal]);
+  });
+
   windowsOnly(
     'real tools: a temp folder is readable as checked; granting Everyone read makes it shared',
     async () => {
