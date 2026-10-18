@@ -41,7 +41,8 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
 | 38 | Einstellungen und Benachrichtigungen (Töne) | 2 | 30 | fertig | `7b94e76`, Merge `42b29af` | Einstellungsseite (Dialog, vertikale Tabs, sofort speichern mit Overlay und Rücknahme), `ui/slider`, fünf synthetisierte Töne (Web Audio, Unlock nach Interaktion), Zustellung mit `focusedElsewhere`/„Nicht stören“/`silent`, Menüeintrag „Einstellungen…“, `HostFacts`; 130 eigene Tests | siehe Sammelliste Welle 2 |
 | 40 | Integration + E2E Phase 2 | 3 | 31–38 | fertig | `f106ec3`…`a61f813` (7 Commits), Merge `6373625` | Server-Verdrahtung (Profil-Store, Kataloge, Konsole, Systemintegration, Host-Befehle, Port, `onProfileChanged`), Web-Slots `PREFERENCES_SLOTS`/`ProfilesSettings`, V2-15; Integrationsfehler: neue Profile blieben auf `checking` (jetzt alle ungeprüften Profile prüfen); Fixes ADR-120 (Autoplay) und `openNewSession({cwd})`; 15 neue E2E-Fälle (41 gesamt, 2× grün, 1× unter Last); 3520 Tests | R4: Einstellungen/Profil-Editor im Start-Chunk (412 kB, `lazy()`), veraltete Kommentare „Optional until WP-40“ in `sessions/manager.ts`; V3: deaktivierter eingeschalteter Switch wirkt aktiv, Bild im `Read`-Ergebnis erst nach Aufklappen; WP-41: L9, L12, Ton im App-Fenster aus Autostart |
 | R4/V3 | Review + Verifier, Fix-Runde | 3b | 40 | fertig | R4 `10ff433`, V3 `9231448` (Merge `1f2e866`); Fix-Runde (`docs/wp/FIX-R4.md`): K `29f3256`, F4 `9ba8092`, F3 `80ee1e8`, F2 `6be4d0e`, F1 `a617e0a`, Nacharbeit `150d2e2`, F5 `07d7197` | R4-Server 16 Befunde (2 BLOCKER: R4-01 Konsolen-Gate im Lock, R4-02 Schlaf ohne Wakeup-Erkennung; 5 SOLLTE, 9 NIT), R4-Web 28 (0/10/18), V3 15 (0/8/7); Entscheidungen ADR-121…127; Fix-Runde: alle BLOCKER/SOLLTE behoben (Ergebnisse `FIX-R4-F1…F5.md`), Endstand 3702 Tests, 45/45 E2E (3× grün, davon 1× unter Last), Start-Chunk `index` 435,7 → 378,0 kB | siehe „Zurückgestellt nach der Fix-Runde“ unten; Live-Prüfpunkte A19–A26 in WP-41 |
-| 41 | Live-Abnahme Phase 2 (freigegeben, F2) | 4 | 40 + Fixes | offen | – | – | – |
+| 41 | Live-Abnahme Phase 2 (freigegeben, F2) | 4 | 40 + Fixes | teilweise | `fc019d8`…`281a555`, Merge `31a1fe7` | Live gegen `claude` 2.1.300 (Abo, Haiku), 0,063 USD: 17 ok (5 mit Befund), 2 teilweise, 1 notiert (RAM: je `claude.exe` ≈ 220 MB WS), Rückbau vollständig; Befunde WP41-01…08 (0 BLOCKER, 2 SOLLTE, 6 NIT) → FIX-41 | **A18 Live-Smoke offen** (Auto-Modus blockiert den Start des echten `claude` – Nutzer-Bestätigung, nach FIX-41); A16/A17/A22/A23/A26 ungeprüft (Desktop-Bedienung verboten, Nutzer-Regel 18.10.) → Nutzer-Checkliste WP-41 §2.6 |
+| FIX-41 | Fix-Runde nach WP-41 (`docs/wp/FIX-41.md`): F1 Server (WP41-04, -08/ADR-128), F2 Web (WP41-01, -02, -05, -06, -07) | 4b | 41 | läuft | – | – | – |
 
 ### Sammelliste Welle 2 (Stand 18.10.2026, nach Merge `5f0d0cf`: 199 Dateien, 3509 Tests)
 - **WP-40 (Naht, beauftragt):** Slots `SettingsPage`/`PREFERENCES_SLOTS` (WP-38) und `ProfilesSettings` (WP-36)
@@ -173,6 +174,12 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
 2. **Phase 2 „Mission Control“ beauftragt (16.10.2026, Nutzer: „Setze die Phase 2 um“).** Umfang = Plan „Phasen – Phase 2“.
    WP-30 gemergt (`1488b83`). Welle 1 (31, 32, 33, 35) und Welle 2 (34, 36, 37, 38) gemergt (`5f0d0cf`, 18.10.2026);
    WP-40 (Integration + E2E) gemergt (`6373625`, 18.10.2026). R4/V3 und Fix-Runde (K, F1–F5) gemergt
-   (`07d7197`, 18.10.2026). **Nächster Schritt: WP-41** (Live-Abnahme gegen das echte `claude`, freigegeben
-   F2, Checkliste A1–A26), danach `/code-review` (high) über `fdc44f7..main` (WP-30 §7).
-3. Nach ≥ 24 h: `react`/`react-dom` 19.3.1 prüfen und nachziehen (Koordinator, siehe WP-00.md).
+   (`07d7197`, 18.10.2026). WP-41 (Live-Abnahme) teilweise gemergt (`31a1fe7`, 18.10.2026).
+   **Nächster Schritt: FIX-41** (zwei Pakete parallel), danach A18 Live-Smoke (Nutzer-Bestätigung) und
+   Nutzer-Checkliste WP-41 §2.6, dann `/code-review` (high) über `fdc44f7..main` (WP-30 §7).
+3. **Nutzer-Regel 18.10.2026:** keine Desktop-Bedienung per Skript (Klicks, Tastatur, Fenster-Fokus,
+   Bildschirmfotos, UI Automation, Prozessspeicher) – auch nicht in freigegebenen Live-Tests; gilt für jeden
+   Subagenten (in jeden Auftrag für Live-/UI-Arbeit schreiben). UI-Prüfung nur über Vitest/Playwright.
+4. **Ablauf-Regel 18.10.2026:** lange Läufe (`pnpm check`, `pnpm e2e`) im Hintergrund mit Ausgabe in Dateien
+   starten, nicht blockierend durch die Tool-Pipe (Absturz der Koordinator-Session während A18).
+5. Nach ≥ 24 h: `react`/`react-dom` 19.3.1 prüfen und nachziehen (Koordinator, siehe WP-00.md).
