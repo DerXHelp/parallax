@@ -96,8 +96,12 @@ describe('R6: the Windows integration never runs for real in a test run', () => 
     const factories =
       /\b(createSystemIntegration|createConsoleLauncher|createAutostartShortcut|removeAutostartShortcut)\(/;
     const offenders: string[] = [];
-    for (const file of files) {
-      const text = await readFile(file, 'utf8');
+    // Read at once, not one after another: under a full parallel `pnpm check` (virus scanner) each
+    // read can take long – the sequential loop once hit the 20-s test timeout (FIX-R4-F1).
+    const texts = await Promise.all(
+      files.map(async (file) => ({ file, text: await readFile(file, 'utf8') })),
+    );
+    for (const { file, text } of texts) {
       if (/process\.env\.APPDATA|process\.env\['APPDATA'\]/.test(text))
         offenders.push(`${file}: real APPDATA`);
       if (factories.test(text) && !/\brun\b/.test(text)) offenders.push(`${file}: no injected run`);
