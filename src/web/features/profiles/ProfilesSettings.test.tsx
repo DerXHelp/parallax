@@ -303,6 +303,13 @@ describe('ProfilesSettings – editor', () => {
     expect(within(form).getByLabelText<HTMLInputElement>('Value of variable 1').type).toBe('password');
     await user.click(within(form).getByRole('button', { name: 'Add argument' }));
     await user.type(within(form).getByLabelText('Argument 1'), '--add-dir{Enter}D:\\shared');
+    // Under load the live check (400 ms) may run between "--add-dir" and its value: "--add-dir"
+    // alone is an error and disables "Save" until the check of the whole value is back. Wait for
+    // that check and an enabled button – a click on the disabled one would be lost (like V3-08).
+    await waitFor(() => {
+      expect(running.commands('profile.validate').at(-1)?.profile.args).toEqual(['--add-dir', 'D:\\shared']);
+      expect(within(form).getByRole('button', { name: 'Save' })).toHaveProperty('disabled', false);
+    });
     await user.click(within(form).getByRole('button', { name: 'Save' }));
     const saved = await screen.findByText('Profile “Private” saved.');
     // V3-14: the editor is shown anew – the focus goes to the notice, not to <body>.

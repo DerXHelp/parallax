@@ -31,6 +31,13 @@ function demoSummaries() {
     [3, 'd:\\WORK\\parallax', 30, false],
     [4, 'D:\\work\\web\\landing', 60, true],
     [5, 'C:\\Users\\user\\Documents', 300, false],
+    // V3-01: a long path ends with an ellipsis, the dialog keeps its width.
+    [
+      6,
+      'C:\\Users\\user\\Documents\\parallax-verifikation-mit-einem-recht-langen-ordnernamen\\projekte\\beta-mit-einem-sehr-langen-ordnernamen-fuer-den-test-der-kopfzeile',
+      20,
+      false,
+    ],
   ];
   return rows.map(([n, cwd, minutesAgo, archived]) =>
     sampleSummary({

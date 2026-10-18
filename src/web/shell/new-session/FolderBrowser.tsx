@@ -279,11 +279,12 @@ function FolderBrowserContent({
     if (typeof option?.scrollIntoView === 'function') option.scrollIntoView({ block: 'nearest' });
   }, [active, listing]);
 
-  // V3-01: a long path scrolls the breadcrumb bar – keep its end (the open folder) in view.
+  // V3-01: a long path scrolls the breadcrumb bar – keep its end (the open folder) in view, also
+  // when the language (the width of "This PC") changes.
   useLayoutEffect(() => {
     const bar = crumbsRef.current;
     if (bar !== null) bar.scrollLeft = bar.scrollWidth;
-  }, [current]);
+  }, [current, t]);
 
   const crumbs = current === null ? [] : breadcrumbs(current);
   const listLabel = current === null ? t('newSession.browser.listRoots') : t('newSession.browser.list', { path: current });

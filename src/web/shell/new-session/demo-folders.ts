@@ -30,7 +30,14 @@ export const DEMO_FOLDERS: Readonly<Record<string, readonly DemoFolder[]>> = {
   ],
   'c:\\users\\user\\.claude': [],
   'c:\\users\\user\\.claude-work': [],
-  'c:\\users\\user\\documents': [],
+  // A long path (V3-01: dialogs keep their width, breadcrumbs scroll to the end).
+  'c:\\users\\user\\documents': [{ name: 'parallax-verifikation-mit-einem-recht-langen-ordnernamen' }],
+  'c:\\users\\user\\documents\\parallax-verifikation-mit-einem-recht-langen-ordnernamen': [{ name: 'projekte' }],
+  'c:\\users\\user\\documents\\parallax-verifikation-mit-einem-recht-langen-ordnernamen\\projekte': [
+    { name: 'beta-mit-einem-sehr-langen-ordnernamen-fuer-den-test-der-kopfzeile' },
+  ],
+  'c:\\users\\user\\documents\\parallax-verifikation-mit-einem-recht-langen-ordnernamen\\projekte\\beta-mit-einem-sehr-langen-ordnernamen-fuer-den-test-der-kopfzeile':
+    [],
   'c:\\users\\user\\downloads': [],
   'd:\\': [{ name: '$Recycle.Bin', hidden: true }, { name: 'archive' }, { name: 'work' }],
   'd:\\archive': [{ name: '2019' }, { name: '2020' }, { name: '2021' }],
