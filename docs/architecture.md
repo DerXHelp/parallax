@@ -157,11 +157,16 @@ windowsPathKey(path): string               // Vergleichsschlüssel (case-insensi
 windowsPathsEqual(a, b): boolean
 isWindowsPathInside(child, parent): boolean
 
-// src/server/lib/paths.ts (WP-10; WP-13 nutzt)
+// src/server/lib/paths.ts (WP-10; WP-13 nutzt; Phase 2 WP-33: Links, R1-17 erledigt)
 assertSafePath(path: string): void         // windowsPathIssue ≠ null → throw CommandError(PATH_REJECTED, {reason})
-checkCwd(cwd: string): Promise<void>       // assertSafePath + stat: CWD_NOT_FOUND | CWD_NOT_DIRECTORY; cwd bleibt exakt
-resolveAllowedPath(path, roots): Promise<string>  // realpath + Allowlist → PATH_NOT_ALLOWED (Grenze: Datei-Symlink auf UNC, R1-17)
+checkCwd(cwd, fs?: LinkFs): Promise<void>  // assertSafePath + assertNoUnsafeLink + stat: CWD_NOT_FOUND | CWD_NOT_DIRECTORY; cwd bleibt exakt
+resolveAllowedPath(path, roots, fs?): Promise<string>  // assertNoUnsafeLink, dann realpath + Allowlist → PATH_NOT_ALLOWED
 fsErrorCode(error): string | null
+assertNoUnsafeLink(path, fs?: LinkFs): Promise<void>
+  // lstat je Segment (ohne Laufwerkswurzel); Junction/Symlink → readlink, Ziel (resolveLinkTarget) wie ein Pfad
+  // geprüft und rekursiv weiter, höchstens MAX_LINK_HOPS = 16; unsicher/unlesbar → PATH_REJECTED {reason:'link_target'}
+  // (linkTargetRejected()) – bevor irgendein Aufruf dem Link folgt (Symlink auf \\server\share, C.10)
+interface LinkFs { lstat; readlink }; nodeLinkFs     // Test-Naht (ein UNC-Symlink braucht sonst Admin-Rechte)
 
 // src/server/lib/ids.ts (WP-10): newId(prefix), newUuid(), newToken() (32 Byte base64url)
 // src/server/lib/logger.ts (WP-10): logger, createLogger, initLogging, registerSecret, unregisterSecret, redactText
@@ -203,6 +208,19 @@ resolveExecutable(name, env, fs?): Promise<string | null>  // nackter Name → a
 // src/server/lib/registry.ts (WP-11) – reg.exe mit System32-Pfad, ohne Shell; Fehler → null/leer
 regQuery(run?)(key, view) / regKeyQuery(run?)(key, view); parseRegDefaultValue, parseRegValues, expandRegValue
 readPersistentEnvironment({ query?, env }): Promise<Map<NAME, value>>  // HKCU\Environment + HKLM\…\Session Manager\Environment (ADR-021)
+regAddValue(run?)(key, name | null, data, view?) / regDeleteKey(run?)(key, view?): Promise<RegWriteResult>
+  // Phase 2 (WP-33, Protokoll-Handler): nur unter HKCU\…, nie die Wurzel, keine Steuerzeichen; {ok:false, reason} statt Exception
+
+// src/server/lib/cmdline.ts (WP-33) – EINE Befehlszeile, die CommandLineToArgvW exakt in args zurückteilt
+windowsCommandLine(args): string; quoteWindowsArg(arg): string
+  // Start-Process -ArgumentList (Konsole), WshShortcut.Arguments (Autostart), shell\open\command – nie für cmd.exe
+
+// src/server/lib/powershell.ts (WP-33) – konstante Skripte, Daten nur per Env
+powerShellPath(env?): string               // %SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe
+encodePowerShell(script): string           // -EncodedCommand (UTF-16LE base64)
+POWERSHELL_UTC_ISO_FORMAT                  // kulturunabhängiges ISO-UTC-Format für DateTime.ToString
+
+// src/server/lib/images.ts (WP-33, ADR-103): sniffImageType(bytes): AttachmentMediaType | null  // Magic Bytes PNG/JPEG/GIF/WebP
 
 // src/server/lib/edge.ts (WP-11): findEdge({ regQuery, fs, env }): Promise<string | null>  // Preflight, Launcher (WP-21)
 
@@ -213,6 +231,8 @@ removeToast(tag, options?): Promise<{kind:'removed'} | {kind:'failed', reason, p
   // Absender TOAST_APP_ID 'Parallax.App' (Anzeigename in HKCU\Software\Classes\AppUserModelId), Gruppe 'parallax'
   // permanent (CR-05): kein Windows, PowerShell nicht startbar, Exit 4 (Sprachmodus ≠ FullLanguage,
   // Registry/WinRT-Typen); vorübergehend: Timeout, Exit 3 (Show/History.Remove), Unerwartetes
+  // Phase 2 (WP-33, ADR-109): ToastRequest.launchUri? ('parallax://session/<entryId>', ungültig → ignoriert)
+  // und silent?; toastTemplateXml({launch, silent}) – XML-Gerüst nur aus Booleans (PARALLAX_TOAST_XML)
 
 // src/server/lib/async.ts (Koordinator, R2-10, ADR-055) – ohne I/O, ohne Logging
 toError(error): Error; sleep(ms): Promise<void>      // sleep über das globale setTimeout (Fake-Timer greifen)
@@ -250,6 +270,18 @@ Neue kleine, generische Helfer (Fehler, Warten, Datei-Retry) gehören nach `lib/
 `lib/fs.ts` (ADR-055); `store/jsonStore.ts` re-exportiert `withFsRetry`, `writeFileAtomic`,
 `DEFAULT_RETRY_DELAYS_MS` und `StoreFs`/`nodeStoreFs` (= `FsOps`/`nodeFsOps`) unverändert für die
 Store-Aufrufer.
+
+**Server-Module Phase 2, Welle 1 (WP-31 … 33; Exporte in den Ordner-READMEs, Verdrahtung WP-40 in
+`app/compose.ts`):**
+
+| Bereich | Module und Verhalten |
+|---|---|
+| Windows-Integration (WP-33) | `system/index.ts` `createSystemIntegration({available, repoRoot, home, …})` → Port `SystemIntegration` (`system/ports.ts`): Autostart-Verknüpfung (`system/autostart.ts`, ADR-110) und Protokoll-Handler `parallax:` (`system/protocol.ts`, HKCU, fremder Handler nie überschrieben, ADR-109) nach den Settings abgeglichen – nacheinander, nie werfend; Fehler als Host-Warnungen `AUTOSTART_FAILED`/`PROTOCOL_HANDLER_FAILED`; `toastLaunchUri(entryId)` nur bei registriertem Handler. Externe Konsole `system/console.ts` `createConsoleLauncher()` (versteckte PowerShell, `Start-Process`, ADR-104) bzw. `system/fakeConsole.ts` `createFakeConsoleLauncher()` (Fake-Backend/E2E) → Port `ConsoleLauncher`. Nur der produktive Server ändert HKCU/Autostart (`systemIntegrationAvailable(config)`); `system/run.ts` verweigert in Testläufen jeden Aufruf ohne injiziertes `run`. |
+| Upload (WP-33) | `POST /api/attachments` in `http/app.ts` (ADR-103): nur `ATTACHMENT_MEDIA_TYPES`, ≤ `LIMITS.imageBytes`, Query `attachmentUploadQuerySchema` (400), Magic Bytes per `sniffImageType` passend zum Content-Type (sonst 415); `store/blobs.ts` `put(data, mediaType, name?, size?)` speichert `width`/`height`. |
+| Ordner-Browser (WP-33) | `host/fsCommands.ts` `createFsCommands()` → `HostCommandHandler` für `fs.listDirectory` (ADR-119): Wurzeln = Benutzerordner + Laufwerke (`stat` mit 1,5 s Timeout, höchstens eines je Laufwerk gleichzeitig), sonst `windowsPathIssue` → `assertNoUnsafeLink` → `readdir`; nur Ordner und sichere Links auf Ordner, `truncated` ab `LIMITS.fsListMax`. |
+| Config/Launcher (WP-33) | Port Flag > `PARALLAX_PORT` > `settings.port` > 4711 (`readSettingsFile`, nur lesend, ADR-111), `ServerConfig.{systemIntegration, notes}`, `resolveSystemIntegrationMode`; Launcher `--open <uri>` (letztes Argument), `--autostart`, reicht `--system-integration` durch (`launcher/{args,cli}.ts`). |
+| Profile (WP-32) | `claude/profileStore.ts` `openProfileStore` → `PersistentProfileStore` über `profiles.json` (ADR-102: Invarianten in `normalizeProfiles`, `onChange`, `issuesOf`); `claude/profileIssues.ts` (Befunde Fehler → Warnungen → Infos; Fehler verhindern den Start); `claude/profileCommands.ts` `createProfileCommands` → `HostCommandHandler` für `profile.*` (ADR-101); `ClaudeIntegration.consoleLaunchFor` + `claude/consoleCommand.ts` `consoleCommandText` (Konsole und Kopierbefehl, ADR-104); `pnpm preflight` prüft jedes Profil nur lesend. |
+| Kataloge (WP-31) | `sessions/catalogStore.ts` `openCatalogStore` (`model-catalogs.json` mit `resolved`, `account-limits.json`, je Profil, ADR-114) und `sessions/commandCatalog.ts` `createCommandCatalogStore` (Slash-Befehle je Eintrag in `entries/<id>/commands.json`, ADR-108); beide mit Speicher-Variante (`createMemory…`) für Harness und Tests. |
 
 ### 2.3 Web-Erweiterungspunkte (normativ für WP-14; WP-15/16 nutzen; WP-20 verdrahtet)
 
@@ -386,6 +418,13 @@ läuft.
   nutzen `sessionTitle(summary)` (leerer Titel → Ordnername).
 - **Layout:** einspaltige Grids im Transkript und in Karten mit `grid-cols-[minmax(0,1fr)]`, damit
   breite Inhalte (Codeblöcke) innen scrollen statt die Zeile zu verbreitern.
+- **Kopfzeile und Sidebar (Phase 2, WP-35):** `SessionHeader` rendert die Leiste
+  `data-slot="session-bar"` mit der Statuszeile `[data-slot="session-header"]` (ADR-042: nur Status;
+  bedienbar ist dort nur der Titel – Inline-Umbenennen per Doppelklick, F2 oder `/rename`) und rechts
+  **daneben, nicht darin,** dem „…“-Menü (`data-slot="session-menu"`: Frühere Unterhaltungen,
+  Session-Info, externe Konsole …). Die Sidebar ist `w-72` breit (zweizeilige Einträge); der
+  „…“-Knopf je Zeile erscheint nur bei Hover oder Fokus, die Liste bleibt ein Tab-Stopp
+  (Roving-Tabindex).
 
 ### 2.4 Weitere Regeln für Pakete der Welle 1
 - Feature-eigener State (z. B. Composer-Entwürfe) liegt in `features/<f>/state/`, Feature-Helfer in

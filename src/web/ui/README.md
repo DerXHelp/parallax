@@ -14,8 +14,10 @@ Primitive, **kein Barrel** (`index.ts`). Kompakt: Standardhöhe 28 px, Text `tex
 | `card.tsx` | `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardAction`, `CardContent`, `CardFooter` |
 | `tooltip.tsx` | `TooltipProvider`, `Tooltip` (nutzt einen vorhandenen Provider, sonst einen eigenen), `TooltipTrigger`, `TooltipContent` |
 | `dropdown-menu.tsx` | `DropdownMenu` + `Trigger`, `Content`, `Item` (`variant="destructive"`), `CheckboxItem`, `RadioGroup`, `RadioItem`, `Label`, `Separator`, `Shortcut`, `Sub`, `SubTrigger`, `SubContent`, `Group`, `Portal` |
+| `context-menu.tsx` | Phase 2 (WP-35): `ContextMenu` + `Trigger`, `Content`, `Item` (`variant="destructive"`, `inset`), `CheckboxItem`, `Label`, `Separator`, `Shortcut`, `Group`, `Sub`, `SubTrigger`, `SubContent` – Radix-`ContextMenu` im Look von `dropdown-menu` (Rechtsklick, Umschalt+F10, Kontextmenütaste) |
 | `popover.tsx` | `Popover`, `PopoverTrigger`, `PopoverAnchor`, `PopoverContent` |
 | `dialog.tsx` | `Dialog` + `Trigger`, `Content` (`showCloseButton`), `Header`, `Footer`, `Title`, `Description`, `Close`, `Overlay`, `Portal` – nur für echte Dialoge, Entscheidungen bleiben nicht-modal |
+| `command-list.tsx` | Phase 2 (WP-35): durchsuchbare Liste im Combobox-Muster – `CommandInput` (`role="combobox"`, `aria-activedescendant`, Fokus bleibt im Suchfeld), `CommandList` (`role="listbox"`, `items`/`getKey`/`renderItem`, `activeIndex`, `onSelect`, `empty`), `handleCommandKey` (Pfeile zyklisch, Bild↑/↓, Enter mit Modifikatoren `CommandModifiers`; Esc bleibt beim Dialog), `commandOptionId`; Filtern macht der Aufrufer (`lib/fuzzy.ts`) |
 | `select.tsx` | `Select`, `SelectTrigger` (`size`), `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator` |
 | `collapsible.tsx` | `Collapsible`, `CollapsibleTrigger`, `CollapsibleContent` (ungestylt) |
 | `disclosure.tsx` | `Disclosure` (Chevron-Umschalter als echter `<button>` mit `aria-expanded`, `header`, `actions` neben dem Knopf, `label`; kontrolliert `open`/`onOpenChange` oder `defaultOpen`; Inhalt nur offen gemountet – R2W-08) |
