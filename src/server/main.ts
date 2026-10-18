@@ -89,6 +89,9 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Hints of loadConfig, e.g. an ignored settings.json (port from the defaults, WP-33).
+  for (const note of config.notes) logger.warn(note);
+
   // R3-06: from here on an unexpected error ends the server in order (exit 1), never silently.
   // CR-10: already during the start – from the shutdown frame on (step 5, before listen and the
   // lock file). Before it (no lock file yet) the crash handler only closes the log and exits.
@@ -105,12 +108,17 @@ async function main(): Promise<void> {
   });
 
   // In the bundle this file is dist/server.js and the built UI dist/web; dev mode uses Vite.
-  const webRoot = config.dev ? null : path.join(path.dirname(fileURLToPath(import.meta.url)), 'web');
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const webRoot = config.dev ? null : path.join(here, 'web');
+  // The checkout (system integration: launcher command, ADR-110): dist/server.js → `..`,
+  // src/server/main.ts under tsx (dev, tests) → `../..`.
+  const repoRoot = path.resolve(here, path.basename(here) === 'dist' ? '..' : path.join('..', '..'));
 
   try {
     running = await startServer({
       config,
       webRoot,
+      repoRoot,
       logging,
       homeLock,
       onShutdownFrame: (shutdown) => {
