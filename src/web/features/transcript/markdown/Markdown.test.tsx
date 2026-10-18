@@ -106,6 +106,29 @@ describe('Markdown', () => {
     expect(writeText).toHaveBeenCalledWith('const closed = 1;');
   });
 
+  it('V2-12: keeps the backslashes of Windows paths in running text, escapes elsewhere stay escapes', async () => {
+    const { container } = render(
+      <Markdown
+        text={[
+          'Implement the plan in C:\\Users\\user\\.claude\\plans\\x.md now.',
+          '',
+          'Build into D:\\work\\_out\\ and \\*not bold\\* or snake\\_case.',
+          '',
+          'Code `C:\\Users\\.claude` stays.',
+        ].join('\n')}
+      />,
+    );
+    await screen.findByText(/Implement the plan/, {}, LAZY);
+    const paragraphs = [...container.querySelectorAll('p')].map((p) => p.textContent);
+    expect(paragraphs).toEqual([
+      'Implement the plan in C:\\Users\\user\\.claude\\plans\\x.md now.',
+      'Build into D:\\work\\_out\\ and *not bold* or snake_case.',
+      'Code C:\\Users\\.claude stays.',
+    ]);
+    expect(container.querySelector('strong, em')).toBeNull();
+    expect(container.querySelector('code')?.textContent).toBe('C:\\Users\\.claude');
+  });
+
   it('parses only the last block again while streaming', async () => {
     const first = 'First paragraph.';
     const { rerender } = render(<Markdown streaming text={`${first}\n\nSecond`} />);

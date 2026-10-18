@@ -26,6 +26,16 @@ export const en = {
     image: 'Image: {name}',
     unnamed: 'unnamed',
   },
+  /** Thumbnails and the lightbox (WP-37). */
+  image: {
+    open: 'Enlarge image {name}',
+    zoomIn: 'Zoom in (+)',
+    zoomOut: 'Zoom out (−)',
+    fit: 'Fit to window (0)',
+    actualSize: 'Actual size (1)',
+    save: 'Save as…',
+    close: 'Close (Esc)',
+  },
   assistant: {
     label: 'Claude',
     aborted: 'Stopped before the answer was complete.',
@@ -228,6 +238,8 @@ export const en = {
         one: 'Back from the console – {count} entry taken over',
         other: 'Back from the console – {count} entries taken over',
       },
+      /** Nothing new in the CLI transcript (no turns in the console, or not readable – L7). */
+      returnedNone: 'Back from the console – no new entries taken over',
     },
   },
   generic: {

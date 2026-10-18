@@ -201,7 +201,12 @@ describe('App shell over the memory transport', () => {
     await user.type(screen.getByLabelText('Project folder'), 'D:\\work\\demo');
     await user.click(screen.getByRole('button', { name: 'Create session' }));
     expect(await screen.findByRole('heading', { level: 1, name: 'demo' })).toBeTruthy();
-    expect(scenario.host.commands).toContainEqual({ name: 'session.create', cwd: 'D:\\work\\demo' });
+    // WP-36: the profile is always explicit (the default one is pre-selected).
+    expect(scenario.host.commands).toContainEqual({
+      name: 'session.create',
+      cwd: 'D:\\work\\demo',
+      profileId: 'standard',
+    });
     const input = await screen.findByRole('textbox', { name: 'Message to Claude' });
     await waitFor(() => {
       expect(document.activeElement).toBe(input);
@@ -227,7 +232,8 @@ describe('App shell over the memory transport', () => {
     const dialog = await screen.findByRole('dialog', { name: 'New session' });
     const recent = within(dialog).getByRole('list', { name: 'Recent projects' });
     const projects = within(recent).getAllByRole('button');
-    expect(projects).toHaveLength(5);
+    // WP-36: up to eight distinct folders.
+    expect(projects).toHaveLength(8);
     // The most recent folder first (sessions sorted by activity, case-insensitive dedup).
     const first = projects[0];
     if (first === undefined) throw new Error('no recent project');
@@ -242,6 +248,7 @@ describe('App shell over the memory transport', () => {
     expect(scenario.host.commands).toContainEqual({
       name: 'session.create',
       cwd: 'D:\\work\\parallax\\docs',
+      profileId: 'standard',
     });
     expect(await screen.findByRole('heading', { level: 1, name: 'docs' })).toBeTruthy();
     expect(window.location.hash).toMatch(/^#session=local:en_/);
@@ -270,7 +277,7 @@ describe('App shell over the memory transport', () => {
     await user.type(await screen.findByLabelText('Project folder'), 'D:\\missing');
     await user.click(screen.getByRole('button', { name: 'Create session' }));
     expect(await screen.findByText('The folder does not exist.')).toBeTruthy();
-    expect(host.commands).toEqual([{ name: 'session.create', cwd: 'D:\\missing' }]);
+    expect(host.commands).toEqual([{ name: 'session.create', cwd: 'D:\\missing', profileId: 'standard' }]);
     expect(window.location.hash).toBe('');
   });
 
