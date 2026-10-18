@@ -228,19 +228,8 @@ describe('pane banners (WP-35 §9)', () => {
 
 describe('subscription limits (WP-35 §10)', () => {
   it('per account with limits: 5-hour and weekly bars, reset time, names with several accounts', async () => {
+    // WP41-05: one block per account – "Work" has its own config folder in the scenario.
     const scenario = await start();
-    // WP41-05: one block per account – "Work" signs in with its own config folder.
-    act(() => {
-      const state = scenario.host.hostState;
-      scenario.host.setHostState({
-        ...state,
-        profiles: state.profiles.map((profile) =>
-          profile.id === NAVIGATION_WORK_PROFILE
-            ? { ...profile, configDir: 'C:\\Users\\user\\.claude-work' }
-            : profile,
-        ),
-      });
-    });
     const limits = screen.getByRole('region', { name: 'Subscription limits' });
     const standard = within(limits).getByRole('group', { name: 'Profile Standard' });
     const meters = within(standard).getAllByRole('meter');
