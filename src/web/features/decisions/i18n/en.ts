@@ -136,7 +136,6 @@ export const en = {
     showLess: 'Show less',
   },
   panel: {
-    label: 'Plan',
     title: 'Plan v{version}',
     close: 'Close plan',
     file: 'Plan file',

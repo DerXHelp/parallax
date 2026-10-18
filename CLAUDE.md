@@ -50,7 +50,9 @@ die Web-UI (Edge im App-Modus) zeigt Status, Context, Chat und nicht-modale Ents
   `src/web`, `web/shell`, `web/features`, `web/ui`) pflegt der Koordinator.
 - Features importieren einander nie: gemeinsame Komponenten über `FeatureSlots`
   (`src/web/shell/slots.tsx`, verdrahtet in WP-40), Querverbindungen zur Shell über den Anfragekanal
-  `src/web/shell/requests.ts`. Wörterbücher je Bereich: `features/<f>/i18n/{en,de}.ts` bzw.
+  `src/web/shell/requests.ts`. Features dürfen Shell-Bausteine importieren, die Shell nie Features;
+  reine Helfer gehören nach `src/web/lib` (ADR-126). Fehler aus einem offenen Dialog zeigt der Dialog
+  selbst (`Alert role="alert"`). Wörterbücher je Bereich: `features/<f>/i18n/{en,de}.ts` bzw.
   `shell/<bereich>/i18n/{en,de}.ts` (Namensräume `navigation`, `newSession`, `profiles`, `preferences`).
 - Aliase: `@shared/*` (überall), `@web/*` (nur Web). Jeder Ordner hat eine `README.md`.
 

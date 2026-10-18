@@ -371,13 +371,19 @@ nur über Slots bzw. `import.meta.glob`), in `src/web/i18n` alles außer `featur
 `radix-ui` außerhalb `src/web/ui`, Store-Schreiber (`clientStore`, `updateHost`, `updateSession`,
 `removeSessions`, `resetClientStore`) in Feature-Code (Tests ausgenommen), Node-Builtins mit und
 ohne `node:` in `src/web` und `src/shared`. `App.tsx`/`main.tsx` dürfen Features importieren (WP-20).
+Die Gegenrichtung ist erlaubt: Features dürfen Shell-Bausteine (Komponenten, Kanäle) importieren, z. B.
+`features/profiles` → `shell/new-session/FolderBrowser`; reine Helfer gehören nach `src/web/lib`
+(ADR-126).
 
 **(i) Lokale Hinweise (normativ, R1W-07, ADR-033).** Kurzlebige Hinweise eines Fensters („kopiert“,
 „Prompt nicht gesendet“, `DECISION_ALREADY_RESOLVED` aus einem anderen Fenster, Einstellung nicht
 gespeichert) nur über `showNotice`/`showTextNotice`/`showErrorNotice` aus `src/web/state/notices.ts`;
 die Shell zeigt sie in der Region des `NotificationCenter` (Fehler `role="alert"`, sonst
 `role="status"`, Übersetzung beim Rendern). Keine eigenen Toast-Regionen in Features;
-Validierungsfehler direkt am Eingabefeld bleiben inline.
+Validierungsfehler direkt am Eingabefeld bleiben inline. Phase 2 (ADR-126): Fehler einer Aktion aus
+einem offenen Dialog zeigt der Dialog selbst (`Alert role="alert"`); die Hinweis-Region liegt über
+modalen Dialogen und bleibt für Screenreader erreichbar; ein Hinweis kann eine Aktion tragen
+(`ClientNotice.action?`, z. B. „Töne aktivieren“).
 
 **(j) Bundle (normativ, R1W-09, V1-02, V1-09, ADR-035).** Start-Bundle in Chunks `react`, `vendor`
 (nur `$initial`-Module aus `node_modules`) und `index`; die Warnschwelle 500 kB bleibt Wächter.

@@ -10,7 +10,6 @@ export const de: typeof en = {
     reload: 'Neu laden',
     loading: 'Wird geladen…',
     dismiss: 'Ausblenden',
-    show: 'Anzeigen',
     unknown: 'Unbekannt',
     keys: {
       ctrl: 'Strg',
@@ -35,9 +34,7 @@ export const de: typeof en = {
       count: { one: '{count} Session', other: '{count} Sessions' },
       empty: 'Noch keine Sessions.',
       waiting: 'Wartet auf dich ({count})',
-      waitingAction: 'Zur nächsten Session, die auf dich wartet',
       unread: 'Ungelesen',
-      lastActivity: 'Letzte Aktivität {time}',
       pinned: 'Angeheftet',
       newSession: 'Neue Session',
       fakeBadge: 'Fake',
@@ -100,16 +97,12 @@ export const de: typeof en = {
       description: 'Wähle links eine Session oder starte eine neue.',
       welcomeTitle: 'Willkommen bei {product}',
       welcomeDescription: 'Starte deine erste Claude-Code-Session in einem Projektordner.',
-      recentProjects: 'Zuletzt genutzte Projekte',
     },
     newSession: {
       title: 'Neue Session',
-      description: 'Wähle den Projektordner. Claude startet mit deiner ersten Nachricht.',
       cwdLabel: 'Projektordner',
       cwdPlaceholder: 'D:\\work\\mein-projekt',
-      hint: 'Vollständiger Pfad eines vorhandenen Ordners, z. B. aus der Adresszeile des Explorers kopiert.',
       submit: 'Session anlegen',
-      starting: 'Wird angelegt…',
     },
     placeholders: {
       transcript: {

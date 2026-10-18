@@ -49,7 +49,15 @@ export interface FeatureSlots {
    */
   SettingsPage: ComponentType<SettingsPageSlotProps>;
   /** WP-36 (features/profiles): profile list + editor, rendered by the settings page (section `profiles`). */
-  ProfilesSettings: ComponentType<Record<string, never>>;
+  ProfilesSettings: ComponentType<ProfilesSettingsSlotProps>;
+}
+
+export interface ProfilesSettingsSlotProps {
+  /**
+   * R4W-01: reports whether the editor holds unsaved changes, so the settings page can ask before
+   * it closes (Esc, X, outside click, a new `settings` request). Optional: without it nothing asks.
+   */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 export interface SettingsPageSlotProps {

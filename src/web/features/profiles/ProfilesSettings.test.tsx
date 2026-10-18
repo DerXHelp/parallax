@@ -40,7 +40,9 @@ async function mount(selection?: ProfileSelection, options: Parameters<typeof st
 /** The editor form of a saved profile, or `'new'` for the draft of a new one. */
 async function editor(profileId: string): Promise<HTMLElement> {
   return waitFor(() => {
-    const form = document.querySelector<HTMLElement>(`[data-slot="profile-editor"][data-profile-id="${profileId}"]`);
+    const form = document.querySelector<HTMLElement>(
+      `[data-slot="profile-editor"][data-profile-id="${profileId}"]`,
+    );
     if (form === null) throw new Error(`editor of ${profileId} not shown`);
     return form;
   });
@@ -78,7 +80,8 @@ describe('ProfilesSettings – editor', () => {
   it('masks secret values with an eye button per row; other values stay visible', async () => {
     const { user } = await mount({ kind: 'profile', id: work });
     const form = await editor(work);
-    const value = (index: number) => within(form).getByLabelText<HTMLInputElement>(`Value of variable ${String(index)}`);
+    const value = (index: number) =>
+      within(form).getByLabelText<HTMLInputElement>(`Value of variable ${String(index)}`);
     // ANTHROPIC_API_KEY, HTTPS_PROXY, GITHUB_TOKEN
     expect(value(1).type).toBe('password');
     expect(value(1).autocomplete).toBe('new-password');
@@ -106,14 +109,18 @@ describe('ProfilesSettings – editor', () => {
     expect(bypass.getAttribute('data-bypass')).toBe('true');
     expect(within(bypass).getByText('Bypass')).toBeTruthy();
     expect(within(bypass).getByLabelText('Argument 1').className).toContain('text-destructive');
-    expect(bypass.textContent).toContain('--dangerously-skip-permissions lets Claude Code act without asking');
+    expect(bypass.textContent).toContain(
+      '--dangerously-skip-permissions lets Claude Code act without asking',
+    );
     expect(argRow(form, 1).textContent).toContain('--verbose is passed to Claude Code unchecked.');
     const missing = argRow(form, 2);
     expect(missing.getAttribute('data-invalid')).toBe('true');
     expect(missing.textContent).toContain('--add-dir needs a value');
     expect(within(missing).getByLabelText('Argument 3').getAttribute('aria-invalid')).toBe('true');
     // The env reference that this machine does not resolve – on its variable.
-    expect(form.textContent).toContain('The variable GATEWAY_TOKEN (used in ANTHROPIC_AUTH_TOKEN) is not set');
+    expect(form.textContent).toContain(
+      'The variable GATEWAY_TOKEN (used in ANTHROPIC_AUTH_TOKEN) is not set',
+    );
     // Bypass is allowed here, so the mode menu offers it (red).
     await user.click(within(form).getByRole('button', { name: /^Permission mode/ }));
     const menu = await screen.findByRole('menu');
@@ -123,17 +130,18 @@ describe('ProfilesSettings – editor', () => {
     await user.keyboard('{Escape}');
     expect(within(form).getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
     expect(within(form).getByText('A profile with errors cannot be saved – fix them first.')).toBeTruthy();
-    // Fixing the line (live check after 400 ms) unblocks saving.
+    // Fixing the line (live check after 400 ms) unblocks saving. Under load typing is slower than the
+    // debounce, so a check may run mid-word: wait for the check of the whole value (V3-08).
     await user.type(within(form).getByLabelText('Argument 3'), '{Enter}D:\\shared');
     await waitFor(() => {
+      expect(running.commands('profile.validate').at(-1)?.profile.args).toEqual([
+        '--dangerously-skip-permissions',
+        '--verbose',
+        '--add-dir',
+        'D:\\shared',
+      ]);
       expect(within(form).getByRole('button', { name: 'Save' })).toHaveProperty('disabled', false);
     });
-    expect(running.commands('profile.validate').at(-1)?.profile.args).toEqual([
-      '--dangerously-skip-permissions',
-      '--verbose',
-      '--add-dir',
-      'D:\\shared',
-    ]);
     await user.click(within(form).getByRole('button', { name: 'Save' }));
     expect(await screen.findByText('Profile “Gateway” saved.')).toBeTruthy();
     expect(running.server.profiles.find((p) => p.id === DEMO_PROFILE_IDS.gateway)?.args).toHaveLength(4);
@@ -145,7 +153,9 @@ describe('ProfilesSettings – editor', () => {
     const field = within(form).getByLabelText<HTMLInputElement>('Config folder (CLAUDE_CONFIG_DIR)');
     expect(form.querySelector('[data-slot="config-dir-warning"]')).toBeNull();
     await user.type(field, '2');
-    expect(within(form).getByText(/2 sessions use this profile\. With a different config folder/)).toBeTruthy();
+    expect(
+      within(form).getByText(/2 sessions use this profile\. With a different config folder/),
+    ).toBeTruthy();
     // Only the case changed: the same folder on Windows – no warning.
     await user.clear(field);
     await user.type(field, 'c:\\users\\USER\\.claude-work');
@@ -213,18 +223,26 @@ describe('ProfilesSettings – editor', () => {
   });
 
   it('tests a profile and shows version, sign-in and plan', async () => {
-    const { user, running } = await mount({ kind: 'profile', id: work }, {
-      server: {
-        profiles: demoProfiles(),
-        entryCounts: { [work]: 2 },
-        testResults: {
-          [work]: sampleClaudeInstallStatus({
-            version: '2.1.310',
-            auth: { state: 'logged_in', method: 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'team' },
-          }),
+    const { user, running } = await mount(
+      { kind: 'profile', id: work },
+      {
+        server: {
+          profiles: demoProfiles(),
+          entryCounts: { [work]: 2 },
+          testResults: {
+            [work]: sampleClaudeInstallStatus({
+              version: '2.1.310',
+              auth: {
+                state: 'logged_in',
+                method: 'claude.ai',
+                apiProvider: 'firstParty',
+                subscriptionType: 'team',
+              },
+            }),
+          },
         },
       },
-    });
+    );
     const form = await editor(work);
     await user.click(within(form).getByRole('button', { name: 'Test profile' }));
     const panel = await waitFor(() => {
@@ -300,6 +318,21 @@ describe('ProfilesSettings – editor', () => {
     await user.click(screen.getByRole('button', { name: /^Standard/ }));
     await user.click(screen.getByRole('button', { name: 'Discard changes' }));
     await editor(STANDARD_PROFILE_ID);
+  });
+
+  it('reports unsaved changes to the settings page (slot prop onDirtyChange, R4W-01)', async () => {
+    demo = startProfilesDemo({ immediate: true });
+    const onDirtyChange = vi.fn();
+    render(
+      <TooltipProvider>
+        <ProfilesSettings initialSelection={{ kind: 'profile', id: work }} onDirtyChange={onDirtyChange} />
+      </TooltipProvider>,
+    );
+    const user = userEvent.setup();
+    const form = await editor(work);
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+    await user.type(within(form).getByLabelText('Name'), ' 2');
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
   });
 
   it('speaks German', async () => {

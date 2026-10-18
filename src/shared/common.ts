@@ -219,6 +219,11 @@ export const LIMITS = {
   imageMaxEdgePx: 1568,
   /** Attachments per prompt (promptInputSchema). */
   attachmentsMax: 20,
+  /**
+   * Raw bytes of all image attachments of one prompt (ADR-125): base64 ≈ 26.7 MB, below the
+   * request limit of the Messages API. Over it → `PAYLOAD_TOO_LARGE {bytes, max}`.
+   */
+  attachmentsTotalBytes: 20_000_000,
   /** Directories of one fs.listDirectory answer; more → `truncated` (ADR-119). */
   fsListMax: 2000,
   /** Path arguments of commands (fs.listDirectory, profile paths) – like session.create.cwd. */
