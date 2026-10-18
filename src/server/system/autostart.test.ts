@@ -8,6 +8,8 @@ import type { RunFileFn, RunFileOptions, RunFileResult } from '../lib/process';
 import {
   AUTOSTART_ENV,
   AUTOSTART_SCRIPT,
+  FOREIGN_SHORTCUT,
+  LAUNCHER_MARKER,
   autostartLinkPath,
   createAutostartShortcut,
   launcherCommand,
@@ -59,12 +61,21 @@ describe('launcherCommand (ADR-110)', () => {
     });
   });
 
-  it('another data directory adds --home=<home> before the extra arguments', async () => {
+  it('another data directory adds --home=<home> and --system-integration=on before the extra arguments (R4-12)', async () => {
     const command = await launcherCommand(REPO, ['--autostart'], {
       home: 'D:\\temp\\px home',
       realpath: () => Promise.resolve(NODE),
     });
-    expect(command.args.slice(-2)).toEqual(['--home=D:\\temp\\px home', '--autostart']);
+    expect(command.args.slice(-3)).toEqual([
+      '--home=D:\\temp\\px home',
+      '--system-integration=on',
+      '--autostart',
+    ]);
+    // The default data directory needs neither (auto integrates it).
+    const plain = await launcherCommand(REPO, ['--autostart'], { realpath: () => Promise.resolve(NODE) });
+    expect(plain.args.some((a) => a.startsWith('--home=') || a.startsWith('--system-integration'))).toBe(
+      false,
+    );
   });
 
   it('uses the real node.exe by default', async () => {
@@ -109,11 +120,10 @@ describe('autostart shortcut (ADR-110)', () => {
     const call = calls[0];
     if (call === undefined) throw new Error('no call');
     expect(call.file).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+    // R4-04: no -ExecutionPolicy.
     expect(call.args).toEqual([
       '-NoProfile',
       '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
       '-EncodedCommand',
       encodePowerShell(AUTOSTART_SCRIPT),
     ]);
@@ -140,6 +150,12 @@ describe('autostart shortcut (ADR-110)', () => {
     expect(removed.calls[0]?.options.env).toMatchObject({
       [AUTOSTART_ENV.action]: 'remove',
       [AUTOSTART_ENV.path]: 'C:\\x\\Parallax.lnk',
+      [AUTOSTART_ENV.marker]: LAUNCHER_MARKER,
+    });
+    // R4-11: a shortcut that does not start the launcher stays – also a success.
+    const foreign = fakeRun(FOREIGN_SHORTCUT);
+    expect(await removeAutostartShortcut('C:\\x\\Parallax.lnk', { run: foreign.run, env: {} })).toEqual({
+      ok: true,
     });
     const failed = fakeRun('error: Zugriff verweigert', { exitCode: 3 });
     expect(await removeAutostartShortcut('C:\\x\\Parallax.lnk', { run: failed.run, env: {} })).toEqual({
@@ -162,5 +178,20 @@ describe('autostart shortcut (ADR-110)', () => {
       ok: false,
       reason: 'powershell could not be started: spawn EACCES',
     });
+  });
+
+  it('R4-11: the removal reads the shortcut first and keeps one without the launcher in its arguments', () => {
+    const lines = AUTOSTART_SCRIPT.split('\n');
+    const read = lines.findIndex((l) => l.includes('.CreateShortcut($path)'));
+    const check = lines.findIndex((l) => l.includes('.Arguments') && l.includes('Contains($marker)'));
+    const keep = lines.findIndex((l) => l.includes(`Write-Output '${FOREIGN_SHORTCUT}'`));
+    const remove = lines.findIndex((l) => l.includes('Remove-Item -LiteralPath $path'));
+    expect(read).toBeGreaterThan(0);
+    expect(read).toBeLessThan(check);
+    expect(check).toBeLessThan(keep);
+    expect(keep).toBeLessThan(remove);
+    // Without a marker (never from Parallax) nothing is removed.
+    expect(lines[check]).toContain('-not $marker');
+    expect(LAUNCHER_MARKER).toBe('launcher\\main.ts');
   });
 });
