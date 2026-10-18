@@ -22,7 +22,8 @@
  *     state then carries the actual port (`HostState.port`).
  *  6. `server.lock.json` with the actual port and `auth.launcherToken` – only now the launcher
  *     regards the server as ready; then in the background the access check of the home
- *     (`logHomeAccess`, R2-13), "Profil testen" of the default profile and the first
+ *     (`logHomeAccess`, R2-13), "Profil testen" of every unchecked profile (default first; again
+ *     for a new profile after every profile change) and the first
  *     `SystemIntegration.apply(settings)` (again after every settings.update).
  *
  * The exclusive home lock (R2-05) is taken by main.ts before logging and stores (`homeLock`).
@@ -344,6 +345,9 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   const homeLock = options.homeLock ?? null;
   /** HostState.port: the actual port once listening (also with `--port=0`), null before. */
   let listeningPort: number | null = null;
+  /** "Profil testen" of unchecked profiles (set up with the engine; runs from step 6 on). */
+  let checkProfiles: (() => void) | null = null;
+  let profileChecksOn = false;
 
   // Autostart + `parallax:` handler (ADR-109/110): only the productive server; never in tests.
   const system =
@@ -475,10 +479,39 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     stores.warnings.onChange(() => {
       sessions.publishHostState();
     });
+    // "Profil testen" of every profile nobody checked yet (status `checking`, `checkedAt` null): at
+    // the start the default first, then after every profile change – a new profile would show
+    // "checking" for ever otherwise (WP-40). One check at a time; none during the shutdown.
+    const checking = new Set<ProfileId>();
+    let checkQueue: Promise<void> = Promise.resolve();
+    checkProfiles = () => {
+      if (!profileChecksOn || shutdown?.stopping === true) return;
+      const defaultId = claude.profiles.getDefault().id;
+      const pending = claude.profiles
+        .summaries()
+        .filter((profile) => profile.claude.checkedAt === null && !checking.has(profile.id))
+        .sort((a, b) => Number(b.id === defaultId) - Number(a.id === defaultId));
+      for (const { id } of pending) {
+        checking.add(id);
+        checkQueue = checkQueue
+          .then(async () => {
+            if (shutdown?.stopping === true) return;
+            await claude.checkProfile(id);
+            sessions.publishHostState();
+          })
+          .catch((error: unknown) => {
+            log.warn({ err: error, profileId: id }, 'profile check failed');
+          })
+          .finally(() => {
+            checking.delete(id);
+          });
+      }
+    };
     // ADR-102: a saved/deleted/re-checked profile drops the caches of a changed profile and
     // publishes the host state (WP-34 §2.4; the store reports no id – the engine compares).
     stores.profiles.onChange(() => {
       sessions.onProfileChanged();
+      checkProfiles?.();
     });
     system.onChange(() => {
       sessions.publishHostState();
@@ -588,17 +621,10 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   // `available: false` – tests, dev, fake, another data directory – does nothing).
   applySystem(stores.settings.get());
 
-  // "Profil testen" of the default profile in the background (real claude only with --backend=sdk).
-  const { claude } = engine;
-  const defaultProfile = claude.profiles.getDefault().id;
-  void claude
-    .checkProfile(defaultProfile)
-    .then(() => {
-      sessions.publishHostState();
-    })
-    .catch((error: unknown) => {
-      log.warn({ err: error, profileId: defaultProfile }, 'profile check failed');
-    });
+  // "Profil testen" of every unchecked profile in the background, the default first (real claude
+  // only with --backend=sdk); from now on also after every profile change.
+  profileChecksOn = true;
+  checkProfiles();
 
   const origin = serverOrigin(port);
   log.info(

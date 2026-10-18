@@ -351,11 +351,14 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
     const saved = await manager.handleCommand({ name: 'profile.save', profile: sampleProfileInput() }, ctx());
     const profileId = (saved as { profileId: string }).profileId;
     expect(manager.hostState().profiles.map((p) => p.name)).toEqual(['Standard', 'Work']);
+    // A new profile is checked in the background – it never stays "checking" (WP-40).
+    await vi.waitFor(() => {
+      expect(manager.hostState().profiles.find((p) => p.id === profileId)?.claude.state).toBe('ok');
+    });
     // The fake integration reads the same store: "Profil testen" works for the new profile.
     expect(await manager.handleCommand({ name: 'profile.test', profileId }, ctx())).toMatchObject({
       claude: { state: 'ok' },
     });
-    expect(manager.hostState().profiles.find((p) => p.id === profileId)?.claude.state).toBe('ok');
 
     // entryCount comes from the registry: a session of the profile protects it against deletion.
     await manager.handleCommand({ name: 'session.create', cwd: project, profileId }, ctx());
