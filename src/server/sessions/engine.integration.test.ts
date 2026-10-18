@@ -5,6 +5,7 @@
  * loadView race, presence/notifications, orphans and shutdown.
  */
 import { randomUUID } from 'node:crypto';
+import pino from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EntryId } from '@shared/common';
 import { makeError } from '@shared/errors';
@@ -743,6 +744,94 @@ describe('presence and notifications', () => {
     // permission, done of the allowed turn (the window still cannot show it), permission again.
     expect(shown.map((s) => s.kind)).toEqual(['permission', 'done', 'permission']);
     expect(h.publisher.notifications.map((n) => n.notification.kind)).toEqual(['permission', 'done']);
+  });
+
+  it('WP41-04: one debug line per notification – target, channel, reason, presence; never the title', async () => {
+    const lines: string[] = [];
+    const logger = pino({ level: 'debug' }, { write: (line: string) => lines.push(line) });
+    const routes = () =>
+      lines
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter((line) => line.msg === 'notification route');
+    // WP-41 A4: the app window (visible, never focused on this connection) and a hidden helper
+    // client that connected later – the tie-break sends the notify to the helper.
+    const app: ClientPresence = { ...viewer(null, { focused: false, visible: true }, 1), lastFocusAt: null };
+    const helper: ClientPresence = {
+      ...viewer(null, { focused: false, visible: false }, 2),
+      lastFocusAt: null,
+      connectedAt: new Date(Date.parse(SAMPLE_TIME) + 1_000),
+    };
+    const h = await setup({ logger, presence: [app, helper] });
+    const entryId = await h.create('fake:bash');
+    await h.waitFor(() => h.facts(entryId).decisions.permission === 1);
+    await h.settle();
+    expect(h.publisher.notifications.map((n) => [n.clientId, n.notification.kind])).toEqual([
+      [helper.clientId, 'permission'],
+    ]);
+    expect(routes()).toEqual([
+      expect.objectContaining({
+        level: 20,
+        module: 'sessions',
+        entryId,
+        kind: 'permission',
+        channel: 'system',
+        clientId: helper.clientId,
+        reason: 'never_focused',
+        filter: null,
+        presence: {
+          count: 2,
+          clients: [
+            {
+              clientId: app.clientId,
+              focused: false,
+              visible: true,
+              systemNotifications: null,
+              viewing: false,
+              everFocused: false,
+              connectedRank: 2,
+            },
+            {
+              clientId: helper.clientId,
+              focused: false,
+              visible: false,
+              systemNotifications: null,
+              viewing: false,
+              everFocused: false,
+              connectedRank: 1,
+            },
+          ],
+        },
+      }),
+    ]);
+
+    // The focused window shows the entry: nothing is delivered, the event is still logged once.
+    const [decision] = await h.decisions(entryId);
+    if (decision === undefined) throw new Error('no decision');
+    await h.cmd({
+      name: 'decision.respond',
+      entryId,
+      decisionId: decision.id,
+      response: { kind: 'permission', response: { behavior: 'allow', remember: null, acceptEdits: false } },
+    });
+    await h.waitFor(() => h.facts(entryId).runState === 'idle');
+    const watching = viewer(entryId, {}, 3);
+    h.publisher.setPresence([watching]);
+    h.manager.onPresenceChanged([watching]);
+    await h.cmd({ name: 'session.sendPrompt', entryId, prompt: { text: 'fake:bash again' } });
+    await h.waitFor(() => h.facts(entryId).decisions.permission === 1);
+    await h.settle();
+    const last = routes().at(-1);
+    expect(last).toMatchObject({
+      kind: 'permission',
+      channel: 'none',
+      clientId: null,
+      reason: 'viewing_focused',
+    });
+    expect(routes().filter((r) => r.channel !== 'none')).toHaveLength(h.publisher.notifications.length);
+    // No prompt text or title in any route line.
+    for (const line of lines.filter((l) => l.includes('notification route'))) {
+      expect(line).not.toContain('fake:bash');
+    }
   });
 });
 
