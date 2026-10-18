@@ -4,15 +4,24 @@ import type { SoundId } from '@shared/model';
  * Notification sounds (ADR-109, WP-38): five short sounds synthesized with Web Audio – oscillators
  * with an attack/decay envelope, at most 600 ms, no audio files, nothing from the network.
  *
- * Browser autoplay policy: before the first user interaction of the window a sound is `locked`.
+ * Browser autoplay policy: before the first user interaction of the window a sound is `locked` –
+ * unless the browser lets audio start without one. Parallax' own Edge window runs with
+ * `--autoplay-policy=no-user-gesture-required` (ADR-120), so the first sound requested before any
+ * interaction asks the browser once (WP41-01): `navigator.getAutoplayPolicy('audiocontext')` where
+ * it exists (no context needed; also checked by `installAudioUnlock`), otherwise a context is
+ * created – `running` (Chromium reports it at once) or running after `resume()` unlocks the sounds
+ * and tells the unlock listeners; else the sound stays `locked` and no later sound asks again.
  * `installAudioUnlock` (started with the notification delivery) calls `unlockAudio` on the first
  * pointerdown/keydown; preview buttons call it directly (their click is the interaction). The
- * AudioContext is created lazily with the first sound after that and suspended again while silent
- * (no audio thread running for nothing). The volume is the gain of the whole sound (0–1).
+ * AudioContext is created lazily with the first sound and suspended again while silent (no audio
+ * thread running for nothing). The volume is the gain of the whole sound (0–1).
  */
 
 export type PlayResult = 'played' | 'locked' | 'unsupported';
-/** `ready` = unlocked (the next sound plays), `locked` = no interaction yet, `unsupported` = no Web Audio. */
+/**
+ * `ready` = unlocked (the next sound plays), `locked` = no interaction yet and the browser did not
+ * (yet) allow audio without one (WP41-01), `unsupported` = no Web Audio.
+ */
 export type AudioState = 'ready' | 'locked' | 'unsupported';
 
 /** One oscillator with an envelope; times in seconds from the start of the sound. */
@@ -74,6 +83,8 @@ export function soundLength(id: SoundId): number {
 
 let context: AudioContext | null = null;
 let unlocked = false;
+/** The browser was asked once whether audio may start without an interaction (WP41-01). */
+let probed = false;
 /** Sounds still playing on `context` (it is suspended when the last one ends). */
 let playing = 0;
 /** A running `suspend()` – the next sound waits for it before resuming. */
@@ -82,6 +93,26 @@ const unlockListeners = new Set<() => void>();
 
 function audioContextClass(): typeof AudioContext | null {
   return typeof AudioContext === 'function' ? AudioContext : null;
+}
+
+/** `navigator.getAutoplayPolicy` (Firefox so far; not in lib.dom). */
+interface AutoplayPolicyNavigator {
+  getAutoplayPolicy?: (type: 'audiocontext') => string;
+}
+
+/**
+ * What the browser says up front about starting Web Audio without a gesture – without creating a
+ * context (no console warning): true/false, or null where it cannot tell (Chromium).
+ */
+function autoplayAllowed(): boolean | null {
+  if (typeof navigator === 'undefined') return null;
+  const nav: Navigator & AutoplayPolicyNavigator = navigator;
+  if (typeof nav.getAutoplayPolicy !== 'function') return null;
+  try {
+    return nav.getAutoplayPolicy('audiocontext') === 'allowed';
+  } catch {
+    return null;
+  }
 }
 
 export function audioState(): AudioState {
@@ -107,8 +138,12 @@ export function subscribeAudioUnlock(listener: () => void): () => void {
 
 type UnlockTarget = Pick<Window, 'addEventListener' | 'removeEventListener'>;
 
-/** Unlocks on the first pointerdown/keydown in the window (capture phase); returns the remove function. */
+/**
+ * Unlocks on the first pointerdown/keydown in the window (capture phase) – or right away when the
+ * browser says up front that audio needs no gesture (WP41-01); returns the remove function.
+ */
 export function installAudioUnlock(target: UnlockTarget = window): () => void {
+  if (autoplayAllowed() === true) unlockAudio();
   const handler = () => {
     unlockAudio();
   };
@@ -181,20 +216,33 @@ function schedule(ctx: AudioContext, tones: readonly Tone[], volume: number): vo
 export async function playSound(id: SoundId, volume: number): Promise<PlayResult> {
   const Ctor = audioContextClass();
   if (Ctor === null) return 'unsupported';
-  if (!unlocked) return 'locked';
+  // WP41-01: without an interaction yet, the first sound asks the browser once (see the file comment).
+  const probing = !unlocked;
+  if (probing) {
+    if (probed) return 'locked';
+    probed = true;
+    const allowed = autoplayAllowed();
+    if (allowed === false) return 'locked';
+    if (allowed === true) unlockAudio();
+  }
   try {
     if (context === null || context.state === 'closed') {
       context = new Ctor();
       playing = 0;
     }
     const ctx = context;
+    // Before the first await: the caller's next `audioState()` (e.g. the silent flag of its own
+    // Web Notification, delivery.ts) already sees the unlock – no second sound from the toast.
+    if (ctx.state === 'running') unlockAudio();
     if (suspending !== null) await suspending;
     if (ctx.state !== 'running') await settle(ctx.resume(), RESUME_TIMEOUT_MS);
     if (ctx.state !== 'running') {
-      // No user activation after all (e.g. the first key was Esc): wait for the next interaction.
+      // No user activation after all (e.g. the first key was Esc, or the browser wants a gesture):
+      // wait for the next interaction. The suspended context stays for the sounds after it.
       unlocked = false;
       return 'locked';
     }
+    unlockAudio();
     schedule(ctx, SOUNDS[id], volume);
     return 'played';
   } catch {
@@ -202,10 +250,11 @@ export async function playSound(id: SoundId, volume: number): Promise<PlayResult
   }
 }
 
-/** Tests: forget the context, the unlock and the listeners. */
+/** Tests: forget the context, the unlock, the browser probe and the listeners. */
 export function resetAudio(): void {
   context = null;
   unlocked = false;
+  probed = false;
   playing = 0;
   suspending = null;
   unlockListeners.clear();

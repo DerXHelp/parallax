@@ -53,3 +53,39 @@ describe('SessionHeader layout (V3-05)', () => {
     expect(screen.getByRole('heading', { level: 1 }).className).toContain('shrink-[8]');
   });
 });
+
+describe('SessionHeader folder (WP41-02)', () => {
+  function showCwd(cwd: string): void {
+    clientStore.setState({
+      hosts: {
+        [LOCAL_HOST_ID]: {
+          ...emptyHostRecord(LOCAL_HOST_ID),
+          hostState: sampleHostState(),
+          summaries: { [SAMPLE_IDS.entry]: sampleSummary({ cwd }) },
+        },
+      },
+    });
+  }
+
+  function headerPath(): HTMLElement {
+    const element = document.querySelector<HTMLElement>('[data-slot="header-path"]');
+    if (element === null) throw new Error('no folder in the header');
+    return element;
+  }
+
+  it('sibling project folders under one long folder stay apart: the last segment never shrinks', () => {
+    showCwd('C:\\Users\\me\\AppData\\Local\\Temp\\parallax-live2-20261018-183959\\p1');
+    render(
+      <TooltipProvider>
+        <SessionHeader sessionKey={KEY} />
+      </TooltipProvider>,
+    );
+    expect(headerPath().textContent).toBe('parallax-live2-20261018-183959\\p1');
+    const head = headerPath().querySelector('[data-slot="path-head"]');
+    expect(head?.textContent).toBe('parallax-live2-20261018-183959');
+    expect(head?.className.split(' ')).toEqual(expect.arrayContaining(['min-w-0', 'truncate']));
+    const last = headerPath().querySelector('[data-slot="path-last"]');
+    expect(last?.textContent).toBe('\\p1');
+    expect(last?.className.split(' ')).toContain('shrink-0');
+  });
+});

@@ -44,10 +44,11 @@ describe('sounds (ADR-109: Web Audio, synthesized, ≤ 600 ms)', () => {
     }
   });
 
-  it('is locked before the first interaction and creates no AudioContext', async () => {
+  it('is locked before the first interaction and creates no AudioContext until a sound is asked for', () => {
+    const uninstall = installAudioUnlock(window);
     expect(audioState()).toBe('locked');
-    expect(await playSound('chime', 0.6)).toBe('locked');
     expect(FakeAudioContext.instances).toHaveLength(0);
+    uninstall();
   });
 
   it('is unsupported without Web Audio', async () => {
@@ -129,5 +130,77 @@ describe('sounds (ADR-109: Web Audio, synthesized, ≤ 600 ms)', () => {
     uninstall();
     window.dispatchEvent(new Event('pointerdown'));
     expect(audioState()).toBe('locked');
+  });
+});
+
+describe('sounds without an interaction when the browser allows it (WP41-01, ADR-120)', () => {
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, 'getAutoplayPolicy');
+  });
+
+  function stubAutoplayPolicy(answer: string): void {
+    Object.defineProperty(navigator, 'getAutoplayPolicy', { configurable: true, value: () => answer });
+  }
+
+  it("Parallax' Edge window (a new context runs at once): the first sound plays and unlocks before it settles", async () => {
+    const listener = vi.fn();
+    subscribeAudioUnlock(listener);
+    expect(audioState()).toBe('locked');
+    const result = playSound('chime', 0.5);
+    // Already now – the window's own Web Notification reads this for its silent flag (delivery.ts).
+    expect(audioState()).toBe('ready');
+    expect(listener).toHaveBeenCalledOnce();
+    expect(await result).toBe('played');
+    expect(FakeAudioContext.instances).toHaveLength(1);
+    expect(FakeAudioContext.last().masterGains()).toEqual([0.5]);
+  });
+
+  it('a context that runs only after resume() (spec order) unlocks as well', async () => {
+    FakeAudioContext.initialState = 'suspended';
+    const listener = vi.fn();
+    subscribeAudioUnlock(listener);
+    expect(await playSound('pop', 0.5)).toBe('played');
+    expect(audioState()).toBe('ready');
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
+  it('a browser that wants a gesture: the first sound asks once and stays locked; the interaction unlocks the same context', async () => {
+    FakeAudioContext.initialState = 'suspended';
+    FakeAudioContext.resumable = false;
+    const listener = vi.fn();
+    subscribeAudioUnlock(listener);
+    expect(await playSound('bell', 0.5)).toBe('locked');
+    expect(await playSound('bell', 0.5)).toBe('locked');
+    // Asked once, not with every sound.
+    expect(FakeAudioContext.instances).toHaveLength(1);
+    expect(FakeAudioContext.last().resumeCalls).toBe(1);
+    expect(audioState()).toBe('locked');
+    expect(listener).not.toHaveBeenCalled();
+    // The first click gives the page its user activation.
+    FakeAudioContext.resumable = true;
+    unlockAudio();
+    expect(listener).toHaveBeenCalledOnce();
+    expect(await playSound('bell', 0.5)).toBe('played');
+    expect(FakeAudioContext.instances).toHaveLength(1);
+  });
+
+  it('navigator.getAutoplayPolicy answers without a context: "allowed" unlocks at install, otherwise the sound stays locked', async () => {
+    stubAutoplayPolicy('allowed-muted');
+    let uninstall = installAudioUnlock(window);
+    expect(audioState()).toBe('locked');
+    expect(await playSound('ping', 0.5)).toBe('locked');
+    expect(FakeAudioContext.instances).toHaveLength(0);
+    uninstall();
+
+    resetAudio();
+    stubAutoplayPolicy('allowed');
+    const listener = vi.fn();
+    subscribeAudioUnlock(listener);
+    uninstall = installAudioUnlock(window);
+    expect(audioState()).toBe('ready');
+    expect(listener).toHaveBeenCalledOnce();
+    expect(FakeAudioContext.instances).toHaveLength(0);
+    expect(await playSound('ping', 0.5)).toBe('played');
+    uninstall();
   });
 });

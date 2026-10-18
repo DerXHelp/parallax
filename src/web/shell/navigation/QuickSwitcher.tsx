@@ -16,6 +16,7 @@ import { CommandInput, CommandList, handleCommandKey, type CommandModifiers } fr
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@web/ui/dialog';
 import { StatusIcon } from '@web/ui/status-icon';
 import { focusSessionInput } from '../NewSessionForm';
+import { PathTail } from './PathTail';
 import { PROFILE_BG } from './profile-colors';
 import { setArchiveView } from './sidebar-view';
 
@@ -50,7 +51,8 @@ function SwitcherItem({
         </span>
       </span>
       <span className="text-muted-foreground flex min-w-0 items-center gap-1.5 pl-5.5 text-2xs">
-        <span className="min-w-0 truncate">{pathTail(summary.cwd)}</span>
+        {/* WP41-02: the project folder stays whole, the folder before it shrinks. */}
+        <PathTail path={summary.cwd} data-slot="switcher-path" />
         {summary.gitBranch === null ? null : (
           <span className="flex min-w-0 items-center gap-0.5">
             <GitBranchIcon aria-hidden className="size-3 shrink-0" />

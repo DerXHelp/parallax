@@ -124,6 +124,7 @@ export const de: typeof en = {
   limits: {
     label: 'Abo-Limits',
     profile: 'Profil {name}',
+    profiles: 'Profile {names}',
     windows: {
       five_hour: '5-Stunden-Limit',
       seven_day: 'Wochenlimit',

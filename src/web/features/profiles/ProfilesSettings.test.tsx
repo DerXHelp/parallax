@@ -162,6 +162,22 @@ describe('ProfilesSettings – editor', () => {
     expect(form.querySelector('[data-slot="config-dir-warning"]')).toBeNull();
   });
 
+  it('a chosen config folder says that Claude Code sets it up itself – even "Test profile" (WP41-06)', async () => {
+    const { user } = await mount({ kind: 'profile', id: work });
+    const form = await editor(work);
+    const field = within(form).getByLabelText<HTMLInputElement>('Config folder (CLAUDE_CONFIG_DIR)');
+    const hint = within(form).getByText(
+      'Claude Code sets the folder up itself: even “Test profile” creates .claude.json and a backups folder in it if they are missing.',
+    );
+    // Part of the field's description.
+    expect(field.getAttribute('aria-describedby')).toBe(hint.parentElement?.id);
+    // Empty = the default folder of Claude Code: nothing new is set up, no hint.
+    await user.clear(field);
+    expect(form.querySelector('[data-slot="config-dir-writes"]')).toBeNull();
+    await user.type(field, 'D:\\claude-empty');
+    expect(form.querySelector('[data-slot="config-dir-writes"]')).not.toBeNull();
+  });
+
   it('picks the config folder with the folder browser', async () => {
     const { user } = await mount({ kind: 'profile', id: work });
     const form = await editor(work);

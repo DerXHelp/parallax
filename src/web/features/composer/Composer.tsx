@@ -39,11 +39,11 @@ import type { Decision, ModelOption, SlashCommandInfo } from '@shared/model';
 import type { RunState } from '@shared/status';
 import { useT, type t as translateFn } from '@web/i18n';
 import { cn } from '@web/lib/cn';
+import { isHandoffPending, openExternalConsole, useHandoffPending } from '@web/shell/navigation/handoff';
 import { useEscapeHandler } from '@web/shell/shortcuts';
 import { followTranscript } from '@web/shell/transcript-follow';
 import { errorPayloadOf } from '@web/state/connection';
 import {
-  sendCommand,
   useDecisions,
   useSessionConnectionStatus,
   useSessionSelector,
@@ -185,7 +185,9 @@ function hasFiles(event: DragEvent): boolean {
  *   sending waits for them. Prompt suggestion as placeholder, Tab takes it (ADR-117). Rate-limit
  *   banner (ADR-112). Archived / handed-off sessions get no field (the pane banner has the actions).
  * - Drafts per session survive remounts and reloads (state/drafts.ts); typing reports presence.
- * - Sending needs an open connection; failures restore the text and show a notice.
+ * - Sending needs an open connection; failures restore the text (caret at its end, also in a field
+ *   mounted later) and show a notice. While "Open in external console" is on its way (here or from
+ *   a session menu, `shell/navigation/handoff.ts`) nothing is sent – the text stays (WP41-07).
  */
 export const Composer = memo(function Composer({ sessionKey }: { sessionKey: string }) {
   const archived = useSummarySelector<boolean>(sessionKey, (s) => s.archived, false);
@@ -275,7 +277,8 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const [picker, setPicker] = useState<PickerState>(PICKER_CLOSED);
   const [helpOpen, setHelpOpen] = useState(false);
   const [terminalHint, setTerminalHint] = useState<string | null>(null);
-  const [externalPending, setExternalPending] = useState(false);
+  /** WP41-07: "Open in external console" is on its way (from here or a session menu) – send nothing. */
+  const handoffPending = useHandoffPending(sessionKey);
   const [slashError, setSlashError] = useState<InlineError | null>(null);
   const [dragging, setDragging] = useState(false);
   const working = isWorking(runState);
@@ -293,6 +296,15 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     pendingCaretRef.current = null;
     field.setSelectionRange(position, position);
   }, [text]);
+
+  // WP41-07: a draft in a new field (remount – e.g. back from the external console, with a refused
+  // prompt restored meanwhile) is continued at its end; Chrome leaves the caret at the start of a
+  // textarea whose value React set on mount, and new text landed in front of the old one.
+  useLayoutEffect(() => {
+    const field = textareaRef.current;
+    if (field === null || field.value === '') return;
+    field.setSelectionRange(field.value.length, field.value.length);
+  }, []);
 
   /** Shown for at least the arm delay – a decision appearing right before a key stroke is not taken. */
   const isArmed = (decision: Decision): boolean => {
@@ -356,12 +368,17 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const limit = textLimit(answerTarget);
   const tooLong = value.length > limit;
   let canSend: boolean;
-  if (answerTarget !== null) canSend = online && value !== '' && !tooLong;
+  if (handoffPending) canSend = false;
+  else if (answerTarget !== null) canSend = online && value !== '' && !tooLong;
   // `/plan text` sends the text with the images (R4W-26): it waits for them like a message.
   else if (commandDraft) canSend = online && !(sendsPrompt(draftAction) && attachmentsBlocked);
   else canSend = online && !tooLong && !attachmentsBlocked && (value !== '' || readyUploads > 0);
   const canAnswer =
-    pendingTarget !== null && online && value !== '' && value.length <= textLimit(pendingTarget);
+    pendingTarget !== null &&
+    online &&
+    !handoffPending &&
+    value !== '' &&
+    value.length <= textLimit(pendingTarget);
   const suggestion =
     answerTarget === null && text === '' && promptSuggestion !== null && promptSuggestion.trim() !== ''
       ? promptSuggestion.trim()
@@ -415,6 +432,9 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
 
   const restoreDraft = (previous: string, lock: DecisionId | null) => {
     if (getDraft(sessionKey) !== '') return;
+    // WP41-07: the caret goes to the end of the text that comes back (a field mounted later does
+    // the same in its mount effect).
+    if (previous !== '') pendingCaretRef.current = previous.length;
     setDraft(sessionKey, previous);
     setLockedId(lock);
   };
@@ -430,6 +450,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     const ready = getAttachments(sessionKey).filter((a) => a.status === 'done');
     if (
       !online ||
+      isHandoffPending(sessionKey) ||
       attachmentsHold() ||
       (message === '' && ready.length === 0) ||
       message.length > LIMITS.promptChars
@@ -501,6 +522,8 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   };
 
   const submit = (via: Via) => {
+    // WP41-07: the store, not the last render – an Enter right after the click is held as well.
+    if (isHandoffPending(sessionKey)) return;
     const message = getDraft(sessionKey).trim();
     let answer: Decision | null = null;
     if (via === 'primary' && target !== null && lockedId === target.id) answer = target;
@@ -552,17 +575,13 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const openExternal = () => {
     if (entryId === null) return;
     const before = getDraft(sessionKey);
-    setExternalPending(true);
-    sendCommand(sessionKey, { name: 'session.openExternal', entryId })
+    openExternalConsole(sessionKey, entryId)
       .then(() => {
         setTerminalHint(null);
         if (getDraft(sessionKey) === before) clearDraft(sessionKey);
       })
       .catch((caught: unknown) => {
         showErrorNotice(errorPayloadOf(caught), { sessionKey, id: `composer.external.${sessionKey}` });
-      })
-      .finally(() => {
-        setExternalPending(false);
       });
   };
 
@@ -734,13 +753,8 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
           title={t('composer.slash.terminal.title', { command: terminalHint })}
           actions={
             <>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!online || externalPending}
-                onClick={openExternal}
-              >
-                {externalPending ? <Spinner className="size-3" /> : <TerminalIcon aria-hidden />}
+              <Button size="sm" variant="outline" disabled={!online || handoffPending} onClick={openExternal}>
+                {handoffPending ? <Spinner className="size-3" /> : <TerminalIcon aria-hidden />}
                 {t('composer.slash.terminal.open')}
               </Button>
               <Button

@@ -11,8 +11,9 @@ import {
   noticeIdOf,
   startNotificationDelivery,
 } from './delivery';
-import type { AudioState, PlayResult, SoundPlayer } from './sounds';
+import { resetAudio, type AudioState, type PlayResult, type SoundPlayer } from './sounds';
 import type { SystemNotifier, SystemToastOptions } from './system';
+import { FakeAudioContext } from './testing';
 
 const ENTRY: EntryId = sampleId('en', 1);
 const OTHER: EntryId = sampleId('en', 2);
@@ -325,6 +326,49 @@ describe('notification settings in the window (ADR-109: the server filters, the 
     hint?.action?.run();
     expect(player.state()).toBe('ready');
     expect(store.getState().notices.map((n) => n.id)).not.toContain(SOUNDS_LOCKED_NOTICE_ID);
+  });
+
+  describe('with Web Audio in a window nobody clicked yet (WP41-01)', () => {
+    beforeEach(() => {
+      FakeAudioContext.reset();
+      vi.stubGlobal('AudioContext', FakeAudioContext);
+      resetAudio();
+    });
+
+    afterEach(() => {
+      resetAudio();
+      vi.unstubAllGlobals();
+    });
+
+    it("Parallax' Edge window (audio without a gesture, ADR-120): one sound from the window, a silent toast, no hint", async () => {
+      const notifier = fakeNotifier('granted');
+      stop = startNotificationDelivery({ store, notifier });
+      setFocus(store, false);
+      push(store, notification('n1', 'permission', ENTRY, 'system'));
+      await vi.waitFor(() => {
+        expect(FakeAudioContext.last().masterGains()).toEqual([0.6]);
+      });
+      expect(notifier.shown.map((toast) => toast.silent)).toEqual([true]);
+      expect(store.getState().notices.map((n) => n.id)).not.toContain(SOUNDS_LOCKED_NOTICE_ID);
+    });
+
+    it('a browser that wants a gesture keeps the fallback: the toast sounds and the window asks to enable sounds', async () => {
+      FakeAudioContext.initialState = 'suspended';
+      FakeAudioContext.resumable = false;
+      const notifier = fakeNotifier('granted');
+      stop = startNotificationDelivery({ store, notifier });
+      setFocus(store, false);
+      push(store, notification('n1', 'permission', ENTRY, 'system'));
+      await vi.waitFor(() => {
+        expect(store.getState().notices.map((n) => n.id)).toContain(SOUNDS_LOCKED_NOTICE_ID);
+      });
+      expect(notifier.shown.map((toast) => toast.silent)).toEqual([false]);
+      expect(FakeAudioContext.instances.flatMap((context) => context.oscillators)).toEqual([]);
+      // The first click unlocks (installAudioUnlock) and removes the hint.
+      FakeAudioContext.resumable = true;
+      window.dispatchEvent(new Event('pointerdown'));
+      expect(store.getState().notices.map((n) => n.id)).not.toContain(SOUNDS_LOCKED_NOTICE_ID);
+    });
   });
 
   it('the first interaction unlocks the sounds and removes the hint', async () => {
