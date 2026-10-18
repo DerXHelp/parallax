@@ -62,6 +62,10 @@ QuestionCard/PermissionCard 5–6 s (Limit 20 s), viele Web-Tests 2–3 s ohne e
 | `web/features/transcript/TranscriptView.test.tsx` › 3–4 Tests | L2 3/3 | Timeout 5 s | bis 10,5 s unter Last | Datei-Limit 30 s, `beforeAll` 180 s |
 | `web/playground/playground.test.tsx` › „lists the demos …“ | L2 3/3 | Timeout 5 s | alle Demos, bis 11 s (nach den Fixes unter L2 bis 20 s) | Datei-Limit 60 s |
 | `web/state/notices.test.tsx` › „SettingsMenu reports a failed settings.update“ | L2 2/3 | Timeout 5 s | Menü-Bedienung, bis 6,4 s | Datei-Limit 30 s |
+| **Phase 2 (R4/V3-Fix-Runde, 18.10.2026)** | | | | |
+| `web/features/profiles/ProfilesSettings.test.tsx` › „shows findings at their line …“ (V3-08) und „creates a new profile …“ | voller `pnpm check` unter Parallel-Last, je 1× | Assertion auf `profile.validate` mit Teilwert („D“ statt „D:\shared“) | **Debounce-Annahme:** Tippen langsamer als die 400-ms-Live-Prüfung, eine Prüfung lief mitten im Wort | auf die Prüfung des ganzen Werts warten (`waitFor`), Paket K bzw. F3 |
+| `server/system/guard.test.ts` (F1-FLAKE-1) | `pnpm check` unter Volllast 1× | Timeout 20 s (isoliert 0,3 s) | Testdateien nacheinander gelesen | gleichzeitig lesen, Zeitlimit unverändert (F1) |
+| `e2e/support` Anmeldecode (F5-FLAKE-1) | E2E unter Last | Login scheitert | E2E-Hilfe hatte nur das 2-s-Ping-Budget des Launchers | eigenes 30-s-Budget (`57b4487`, F5) |
 
 ## Vorbeugend gehärtet (unter Last knapp, aber noch nicht rot)
 
