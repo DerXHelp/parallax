@@ -46,16 +46,18 @@ test('keyboard: Ctrl+K picks by fuzzy search, Alt+1…9 the visible order, Alt+N
   const first = await waitingSession(app, own, 'wait-one');
   const second = await waitingSession(app, own, 'wait-two');
 
-  // Ctrl+K: fuzzy ("zbr" → "Fake: hello zebra"), Enter opens it.
+  // Ctrl+K: fuzzy ("zbr" → "Fake: hello zebra") – a title hit ranks first (V3-03); the random
+  // suffix of the temp folder may add a weak path hit of another session, so no exact count (R4W-27).
   await page.keyboard.press('Control+k');
   const switcher = page.locator('[data-slot="quick-switcher"]');
   await expect(switcher).toBeVisible();
   await page.keyboard.type('zbr');
-  await expect(switcher.getByRole('option')).toHaveCount(1);
-  await expect(switcher.getByRole('option')).toContainText('Fake: hello zebra');
+  await expect(switcher.getByRole('option').first()).toContainText('Fake: hello zebra');
   await page.keyboard.press('Enter');
   await expect(switcher).toHaveCount(0);
   await app.waitForSelection((key) => key === zebra.key);
+  // R4W-04: the chosen session's message field has the focus.
+  await expect(zebra.composer).toBeFocused();
 
   // Alt+1…9 = the n-th row of the visible list (waiting first, then by activity).
   const order = await app.rowKeys();
@@ -128,20 +130,93 @@ test('rename (F2, double click), context menu: pin, archive → archive view →
   // The server refuses a prompt to an archived session anyway (SESSION_ARCHIVED).
   await expect(sendPromptOver(own, newer.entryId)).rejects.toThrow('SESSION_ARCHIVED');
 
-  // Archive view → restore.
+  // Archive view → restore. Restoring the last archived session goes back to the list by itself
+  // (V3-14: no empty "Archive (0)"), the toggle disappears with the archive.
   const toggle = page.locator('[data-slot="archive-toggle"]');
-  await expect(toggle).toHaveText('Archive (1)');
+  await expect(toggle).toHaveText(/\(1\)$/);
   await toggle.click();
   await expect(app.sidebar()).toHaveAttribute('data-view', 'archive');
   await expect(app.row(newer.key)).toBeVisible();
   await page.locator(`[data-row="${newer.key}"] [data-action="restore"]`).click();
-  await expect(app.row(newer.key)).toHaveCount(0);
-  await page.getByRole('button', { name: 'Back to the sessions' }).click();
   await expect(app.sidebar()).toHaveAttribute('data-view', 'flat');
+  await expect(toggle).toHaveCount(0);
   await expect(app.row(newer.key)).toBeVisible();
   await expect(newer.pane.locator('[data-slot="pane-archived"]')).toHaveCount(0);
   await newer.send('after the restore');
   await expect(newer.assistantText('Echo: after the restore')).toBeVisible();
+});
+
+/** Types a native command into the composer and runs it (Esc closes only the slash menu). */
+async function runCommand(session: SessionView, text: string): Promise<void> {
+  await session.composer.click();
+  await session.composer.fill(text);
+  await session.composer.press('Escape');
+  await session.composer.press('Enter');
+}
+
+test('focus comes back after Esc: Ctrl+K, /status, /help, session info from "…", "New session" (R4W-04, V3-04)', async ({
+  page,
+}) => {
+  own = await startE2eServer({ label: 'nav-focus' });
+  const app = await new ParallaxApp(page, own).open();
+  const other = await titledSession(app, own, 'focus-other');
+  const session = await titledSession(app, own, 'focus-main');
+  const switcher = page.locator('[data-slot="quick-switcher"]');
+
+  // Ctrl+K from the message field, Esc → the message field again.
+  await session.composer.click();
+  await page.keyboard.press('Control+k');
+  await expect(switcher).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(switcher).toHaveCount(0);
+  await expect(session.composer).toBeFocused();
+
+  // A focused sidebar row → Ctrl+K → Esc → the row.
+  await app.row(other.key).focus();
+  await page.keyboard.press('Control+k');
+  await expect(switcher).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(switcher).toHaveCount(0);
+  await expect(app.row(other.key)).toBeFocused();
+
+  // `/status` (session info) and `/help` from the composer → Esc → the message field.
+  const info = page.locator('[data-slot="session-info"]');
+  await runCommand(session, '/status');
+  await expect(info).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(info).toHaveCount(0);
+  await expect(session.composer).toBeFocused();
+  const help = page.locator('[data-slot="slash-help"]');
+  await runCommand(session, '/help');
+  await expect(help).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(help).toHaveCount(0);
+  await expect(session.composer).toBeFocused();
+
+  // Session info from the header's "…" menu → Esc → the "…" button.
+  await (await session.headerMenu()).locator('[data-action="sessionInfo"]').click();
+  await expect(info).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(info).toHaveCount(0);
+  await expect(session.pane.locator('[data-slot="session-menu"]')).toBeFocused();
+
+  // "New session" from the sidebar → Esc → the button (V3-04).
+  const newSession = page.locator('[data-action="new-session"]');
+  await newSession.click();
+  const dialog = page.locator('[data-slot="new-session-dialog"]');
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(newSession).toBeFocused();
+
+  // Ctrl+K → Enter on another session → that session's message field (R4W-04).
+  await page.keyboard.press('Control+k');
+  await expect(switcher).toBeVisible();
+  await page.keyboard.type('focus-other');
+  await expect(switcher.getByRole('option').first()).toContainText('Fake: hello focus-other');
+  await page.keyboard.press('Enter');
+  await app.waitForSelection((key) => key === other.key);
+  await expect(other.composer).toBeFocused();
 });
 
 async function sendPromptOver(server: E2eServer, entryId: string): Promise<void> {
