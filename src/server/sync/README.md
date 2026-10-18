@@ -18,6 +18,9 @@ Regeln des Hubs:
 - **Handshake:** `hello` sofort; vor `clientHello` → `error` + Close 4400; andere
   `protocolVersion` → `error PROTOCOL_VERSION_MISMATCH` + Close 4409; danach `host.state`,
   `summaries.snapshot` (aus der Source).
+- **Präsenz:** `lastFocusAt` je `clientId` über Reconnects gemerkt (`HUB_LIMITS.focusMemory` = 256,
+  ältester Fokus fliegt zuerst raus); ein unfokussiertes `clientHello` übernimmt den gemerkten Wert
+  (ADR-129).
 - **Kanal 1:** `publishSummary` sendet sofort, wenn `urgent` oder sich etwas außer `context`,
   `lastActivityAt`, `lastResultExcerpt` geändert hat; sonst höchstens 1×/s je Eintrag
   (Trailing-Flush mit dem letzten Stand).

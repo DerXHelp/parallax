@@ -4,6 +4,7 @@ import { getEnvVar } from '../lib/windows';
 import { CommandError } from '../sync/ports';
 import {
   CLAUDE_CODE_ENV_ALLOWLIST,
+  CLAUDE_SESSION_TOOL_SHELL_VARS,
   TERMINAL_TOOL_SHELL_VARS,
   buildEnv,
   buildEnvReport,
@@ -712,7 +713,7 @@ describe('target terminal (R1-03, Phase 2)', () => {
     }
   });
 
-  it('keeps them for the SDK target and for a terminal not started from Claude Code', () => {
+  it('keeps them for the SDK target (except PSExecutionPolicyPreference, ADR-128) and for a terminal not started from Claude Code', () => {
     expect(buildEnvReport(input({ ...toolShell, CLAUDECODE: '1' })).env).toMatchObject({
       GIT_EDITOR: 'true',
     });
@@ -731,6 +732,123 @@ describe('target terminal (R1-03, Phase 2)', () => {
     );
     expect(env.GIT_EDITOR).toBe('code --wait');
     expect(keptPersistent).toEqual(['GIT_EDITOR']);
+  });
+
+  it('reports every removed tool-shell variable with the reason tool_shell', () => {
+    const { removed, reasons } = buildEnvReport(
+      input({ ...toolShell, CLAUDECODE: '1' }, { target: 'terminal' }),
+    );
+    const names = TERMINAL_TOOL_SHELL_VARS.map(
+      (upper) => Object.keys(toolShell).find((key) => key.toUpperCase() === upper) ?? upper,
+    );
+    expect(removed).toEqual([...names, 'CLAUDECODE'].sort((a, b) => a.localeCompare(b)));
+    for (const name of names) expect(reasons.get(name), name).toBe('tool_shell');
+    expect(reasons.get('CLAUDECODE')).toBe('session');
+  });
+});
+
+describe('ADR-128: PSExecutionPolicyPreference of a calling Claude session for every target (WP41-08)', () => {
+  /** The tool shell of a Claude Code session (2.1.299) – `pnpm start`/`pnpm dev` run from there. */
+  const toolShell: Record<string, string> = {
+    Path: 'C:\\Windows',
+    GIT_EDITOR: 'true',
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_ASKPASS: '',
+    GCM_INTERACTIVE: 'never',
+    COREPACK_ENABLE_AUTO_PIN: '0',
+    NO_COLOR: '1',
+    PYTHONIOENCODING: 'utf-8:surrogateescape',
+    PSExecutionPolicyPreference: 'Bypass',
+    NoDefaultCurrentDirectoryInExePath: '1',
+    MCP_TIMEOUT: '120000',
+    CLAUDECODE: '1',
+  };
+  const KEPT = {
+    GIT_EDITOR: 'true',
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_ASKPASS: '',
+    GCM_INTERACTIVE: 'never',
+    COREPACK_ENABLE_AUTO_PIN: '0',
+    NO_COLOR: '1',
+    PYTHONIOENCODING: 'utf-8:surrogateescape',
+    NoDefaultCurrentDirectoryInExePath: '1',
+    MCP_TIMEOUT: '120000',
+  };
+  const policyKeys = (env: Record<string, string>): string[] =>
+    Object.keys(env).filter((key) => key.toUpperCase() === 'PSEXECUTIONPOLICYPREFERENCE');
+
+  it('lists only PSExecutionPolicyPreference (a subset of the terminal list)', () => {
+    expect(CLAUDE_SESSION_TOOL_SHELL_VARS).toEqual(['PSEXECUTIONPOLICYPREFERENCE']);
+    for (const name of CLAUDE_SESSION_TOOL_SHELL_VARS) expect(TERMINAL_TOOL_SHELL_VARS).toContain(name);
+  });
+
+  it.each<[string, Partial<BuildEnvInput>]>([
+    ['SDK session (default target)', {}],
+    ['SDK session (explicit target sdk)', { target: 'sdk' }],
+    ['"Profil testen" / preflight (no entry)', { entryId: null }],
+  ])('%s: removed with reason tool_shell, the other tool-shell settings stay', (_name, partial) => {
+    const { env, removed, keptPersistent, reasons } = buildEnvReport(input(toolShell, partial));
+    expect(policyKeys(env)).toEqual([]);
+    expect(env).toMatchObject(KEPT);
+    expect(removed).toEqual(['CLAUDECODE', 'PSExecutionPolicyPreference']);
+    expect(keptPersistent).toEqual([]);
+    expect(reasons.get('PSExecutionPolicyPreference')).toBe('tool_shell');
+    expect(reasons.has('GIT_EDITOR')).toBe(false);
+  });
+
+  it.each([
+    ['psexecutionpolicypreference', 'CLAUDECODE'],
+    ['PSEXECUTIONPOLICYPREFERENCE', 'claudecode'],
+    ['PsExecutionPolicyPreference', 'ClaudeCode'],
+  ])('matches %s case-insensitively (marker %s)', (policy, marker) => {
+    const { env, removed, reasons } = buildEnvReport(
+      input({ Path: 'C:\\Windows', [policy]: 'Bypass', [marker]: '1', NO_COLOR: '1' }),
+    );
+    expect(policyKeys(env)).toEqual([]);
+    expect(env.NO_COLOR).toBe('1');
+    expect(removed).toContain(policy);
+    expect(reasons.get(policy)).toBe('tool_shell');
+  });
+
+  it('without a calling Claude session (no CLAUDECODE) nothing changes – for every target', () => {
+    const { CLAUDECODE: _marker, ...plain } = toolShell;
+    for (const target of ['sdk', 'terminal'] as const) {
+      const { env, removed, reasons } = buildEnvReport(input(plain, { target }));
+      expect(env.PSExecutionPolicyPreference, target).toBe('Bypass');
+      expect(env, target).toMatchObject(KEPT);
+      expect(removed, target).toEqual([]);
+      expect(reasons.size, target).toBe(0);
+    }
+  });
+
+  it('keeps it when it is set persistently with the same value (reason tool_shell), removes it otherwise', () => {
+    const same = buildEnvReport(
+      input(toolShell, { persistent: new Map([['PSEXECUTIONPOLICYPREFERENCE', 'Bypass']]) }),
+    );
+    expect(same.env.PSExecutionPolicyPreference).toBe('Bypass');
+    expect(same.keptPersistent).toEqual(['PSExecutionPolicyPreference']);
+    expect(same.removed).toEqual(['CLAUDECODE']);
+    expect(same.reasons.get('PSExecutionPolicyPreference')).toBe('tool_shell');
+
+    const other = buildEnvReport(
+      input(toolShell, { persistent: new Map([['PSEXECUTIONPOLICYPREFERENCE', 'RemoteSigned']]) }),
+    );
+    expect(policyKeys(other.env)).toEqual([]);
+    expect(other.keptPersistent).toEqual([]);
+    expect(other.removed).toContain('PSExecutionPolicyPreference');
+  });
+
+  it('a profile can still set it on purpose (step 3, also via ${env:…} of the machine)', () => {
+    const { env, issues } = buildEnvReport(
+      input(toolShell, {
+        profile: {
+          env: { PSExecutionPolicyPreference: '${env:PSExecutionPolicyPreference}' },
+          configDir: null,
+        },
+      }),
+    );
+    expect(issues).toEqual([]);
+    expect(env.PSExecutionPolicyPreference).toBe('Bypass');
   });
 });
 

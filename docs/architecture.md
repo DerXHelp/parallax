@@ -636,7 +636,10 @@ der Server baut `PermissionResult`/`updatedPermissions` selbst aus den gespeiche
 **Präsenz/Benachrichtigungen (A.9):** `presence{focused, visible, viewingEntryId, typing,
 systemNotifications?}` nach jeder Änderung (entprellt 250 ms). Der Server wählt je Ereignis genau
 einen Kanal: fokussiertes, sichtbares Fenster zeigt die Session → nichts, sonst
-`notify{delivery:'in_app'}` dorthin; sonst `system` an genau einen (zuletzt fokussierten) Client.
+`notify{delivery:'in_app'}` dorthin; sonst `system` an genau einen (zuletzt fokussierten) Client –
+bei Gleichstand bzw. „nie fokussiert“ der mit Web Notifications, dann der sichtbare, dann der zuletzt
+verbundene (ADR-129). Der Hub merkt sich `lastFocusAt` je `clientId` über Reconnects
+(`HUB_LIMITS.focusMemory`); je Ereignis loggt die Engine eine `debug`-Zeile `notification route`.
 Mit nativen Toasts (`HostState.nativeNotifications`, ADR-082): darf dieser Client keine Web
 Notifications zeigen (`systemNotifications: false`) → nativer Windows-Toast des Servers +
 `in_app` an ihn; ohne Client → nur der native Toast (sonst nichts). Welches Ereignis:
