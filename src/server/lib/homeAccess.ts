@@ -17,6 +17,7 @@ import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { logger as rootLogger } from './logger';
 import { fsErrorCode } from './paths';
+import { powerShellPath } from './powershell';
 import { runFile, systemTool, type RunFileFn } from './process';
 
 export type HomeAccess =
@@ -191,6 +192,8 @@ export interface HomeAccessOptions {
   platform?: NodeJS.Platform;
   /** Per tool call (default 30 s). */
   timeoutMs?: number;
+  /** Ends a running check (its process trees) → `unknown` 'aborted' (server shutdown, V3-15 b). */
+  signal?: AbortSignal;
 }
 
 /** Checks the DACL of `home` (see the file comment). Never throws. */
@@ -198,6 +201,9 @@ export async function checkHomeAccess(home: string, options: HomeAccessOptions =
   if ((options.platform ?? process.platform) !== 'win32') return { kind: 'unknown', reason: 'not Windows' };
   const run = options.run ?? runFile;
   const timeoutMs = options.timeoutMs ?? 30_000;
+  const signal = options.signal;
+  const aborted = (): HomeAccess | null =>
+    signal?.aborted === true ? { kind: 'unknown', reason: 'aborted' } : null;
   try {
     await stat(home);
   } catch (error) {
@@ -205,14 +211,21 @@ export async function checkHomeAccess(home: string, options: HomeAccessOptions =
     return { kind: 'unknown', reason: `not readable (${fsErrorCode(error) ?? 'error'})` };
   }
   try {
-    const whoami = await run(systemTool('whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { timeoutMs });
+    const before = aborted();
+    if (before !== null) return before;
+    const whoami = await run(systemTool('whoami.exe'), ['/user', '/fo', 'csv', '/nh'], {
+      timeoutMs,
+      ...(signal === undefined ? {} : { signal }),
+    });
+    const afterWhoami = aborted();
+    if (afterWhoami !== null) return afterWhoami;
     const userSid = whoami.exitCode === 0 ? parseWhoamiSid(whoami.stdout) : null;
     if (userSid === null) return { kind: 'unknown', reason: 'the user SID could not be read' };
     const env: Record<string, string> = {};
     for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
     env.PARALLAX_ACL_TARGET = path.resolve(home);
     const acl = await run(
-      systemTool(path.win32.join('WindowsPowerShell', 'v1.0', 'powershell.exe')),
+      powerShellPath(),
       [
         '-NoLogo',
         '-NoProfile',
@@ -220,8 +233,10 @@ export async function checkHomeAccess(home: string, options: HomeAccessOptions =
         '-Command',
         '(Get-Acl -LiteralPath $env:PARALLAX_ACL_TARGET).Sddl',
       ],
-      { timeoutMs, env, maxOutputBytes: 64 * 1024 },
+      { timeoutMs, env, maxOutputBytes: 64 * 1024, ...(signal === undefined ? {} : { signal }) },
     );
+    const afterAcl = aborted();
+    if (afterAcl !== null) return afterAcl;
     if (acl.timedOut) return { kind: 'unknown', reason: 'Get-Acl timed out' };
     const aces = acl.exitCode === 0 ? parseSddlDacl(acl.stdout) : null;
     if (aces === null) return { kind: 'unknown', reason: `Get-Acl failed (exit ${String(acl.exitCode)})` };

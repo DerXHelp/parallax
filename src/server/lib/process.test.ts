@@ -1,5 +1,9 @@
 import { once } from 'node:events';
+import { existsSync, readFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
+import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { makeTempHome } from '../http/testServer';
 import {
   assertSpawnableFile,
   childProcesses,
@@ -207,6 +211,38 @@ describe('runFile', { timeout: SPAWN_TEST_TIMEOUT_MS }, () => {
       expect(result.timedOut).toBe(true);
       const pid = grandchildPid(result.stdout);
       expect(await waitUntil(() => !isProcessAlive(pid), PROCESS_DEADLINE_MS)).toBe(true);
+    },
+    TREE_TEST_TIMEOUT_MS,
+  );
+
+  it('an already aborted signal starts nothing (V3-15)', async () => {
+    const abort = new AbortController();
+    abort.abort();
+    expect(
+      await runFile('C:\\does\\not\\exist\\nope.exe', [], { timeoutMs: 5_000, signal: abort.signal }),
+    ).toEqual({ exitCode: null, signal: null, stdout: '', stderr: '', timedOut: true });
+  });
+
+  windowsOnly(
+    'an abort ends the whole process tree like the timeout (V3-15)',
+    async () => {
+      const dir = await makeTempHome('runfile-abort-');
+      const marker = path.join(dir, 'grandchild.pid');
+      const script = [
+        "const { spawn } = require('node:child_process');",
+        "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });",
+        "require('node:fs').writeFileSync(process.argv[1], String(child.pid));",
+        'setInterval(() => {}, 1000);',
+      ].join('\n');
+      const abort = new AbortController();
+      const running = runFile(NODE, ['-e', script, marker], { timeoutMs: 120_000, signal: abort.signal });
+      expect(await waitUntil(() => existsSync(marker), PROCESS_DEADLINE_MS)).toBe(true);
+      const pid = Number(readFileSync(marker, 'utf8'));
+      started.add(pid);
+      abort.abort();
+      expect((await running).timedOut).toBe(true);
+      expect(await waitUntil(() => !isProcessAlive(pid), PROCESS_DEADLINE_MS)).toBe(true);
+      await rm(dir, { recursive: true, force: true });
     },
     TREE_TEST_TIMEOUT_MS,
   );

@@ -5,6 +5,7 @@ import {
   nativeCommandArg,
   powerShellEnvVariable,
   powerShellLiteral,
+  secretPrompt,
 } from './consoleCommand';
 import type { ConsoleLaunchSpec } from './ports';
 
@@ -106,11 +107,36 @@ describe('consoleCommandText', () => {
   });
 
   it('only copies the explicit env (no machine env, no Parallax markers)', () => {
-    const text = consoleCommandText(spec({ explicitEnv: { API_TOKEN: 'secret-value' } }));
-    expect(text).toContain(`$env:API_TOKEN='secret-value'`);
+    const text = consoleCommandText(spec({ explicitEnv: { API_BASE: 'https://gw.example.invalid' } }));
+    expect(text).toContain(`$env:API_BASE='https://gw.example.invalid'`);
     expect(text).not.toContain('do-not-copy');
     expect(text).not.toContain('PARALLAX');
     expect(text).not.toContain('C:\\Windows');
+  });
+
+  it('ADR-123 (R4W-08): secret names get a hidden prompt instead of their value', () => {
+    const text = consoleCommandText(
+      spec({
+        explicitEnv: {
+          GATEWAY_TOKEN: 'x-secret-gateway-1',
+          AWS_BEARER_TOKEN_BEDROCK: 'x-secret-bedrock-2',
+          ANTHROPIC_CUSTOM_HEADERS: 'Authorization: x-secret-header-3',
+          ANTHROPIC_BASE_URL: 'https://gw.example.invalid',
+        },
+      }),
+    );
+    for (const value of ['x-secret-gateway-1', 'x-secret-bedrock-2', 'x-secret-header-3']) {
+      expect(text).not.toContain(value);
+    }
+    expect(text).toContain(
+      `$env:GATEWAY_TOKEN=[Net.NetworkCredential]::new('', (Read-Host 'GATEWAY_TOKEN' -AsSecureString)).Password; `,
+    );
+    expect(text).toContain(`$env:AWS_BEARER_TOKEN_BEDROCK=${secretPrompt('AWS_BEARER_TOKEN_BEDROCK')}`);
+    expect(text).toContain(`$env:ANTHROPIC_CUSTOM_HEADERS=${secretPrompt('ANTHROPIC_CUSTOM_HEADERS')}`);
+    // Other values stay in the line; the prompt label is a literal (no injection through a name).
+    expect(text).toContain(`$env:ANTHROPIC_BASE_URL='https://gw.example.invalid'`);
+    expect(secretPrompt("A_TOKEN'; calc; '")).toContain(`Read-Host 'A_TOKEN''; calc; ''' -AsSecureString`);
+    expect(text).not.toMatch(/[\r\n]/);
   });
 
   it.each<[string, string[], string]>([

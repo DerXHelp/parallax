@@ -13,10 +13,13 @@
 
 const NEEDS_QUOTES = /[ \t\n\v"]/;
 
-/** One argument, quoted only when needed. */
-export function quoteWindowsArg(arg: string): string {
-  if (arg !== '' && !NEEDS_QUOTES.test(arg)) return arg;
-  let out = '"';
+/**
+ * The inside of a quoted argument (the quotes themselves are not added): `"` → `\"` with the
+ * backslashes before it doubled, trailing backslashes doubled (a closing quote follows). Also the
+ * base of the console copy command (claude/consoleCommand.ts, R4-14).
+ */
+export function quotedArgBody(arg: string): string {
+  let out = '';
   let backslashes = 0;
   for (const ch of arg) {
     if (ch === '\\') {
@@ -30,7 +33,13 @@ export function quoteWindowsArg(arg: string): string {
     }
     backslashes = 0;
   }
-  return `${out}${'\\'.repeat(backslashes * 2)}"`;
+  return `${out}${'\\'.repeat(backslashes * 2)}`;
+}
+
+/** One argument, quoted only when needed. */
+export function quoteWindowsArg(arg: string): string {
+  if (arg !== '' && !NEEDS_QUOTES.test(arg)) return arg;
+  return `"${quotedArgBody(arg)}"`;
 }
 
 /** `args` joined into one command line (`CommandLineToArgvW` rules, see the file comment). */

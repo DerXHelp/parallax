@@ -19,8 +19,8 @@
 import type { ClientId, PermissionMode } from '@shared/common';
 import { currentSessionId, type ExternalHandoff } from '@shared/model';
 import type { CommandResult, SessionOp } from '@shared/protocol';
+import { isSecretEnvKey } from '@shared/secrets';
 import { consoleCommandText } from '../claude/consoleCommand';
-import { isSecretEnvKey } from '../claude/profiles';
 import type { ConsoleLaunchRequest, ConsoleLaunchSpec, LaunchSpec } from '../claude/ports';
 import { redactText, REDACTED } from '../lib/logger';
 import type { ConsoleOpenResult, ConsoleProcess } from '../system/ports';

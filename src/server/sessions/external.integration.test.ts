@@ -16,7 +16,7 @@ import type { SessionOp } from '@shared/protocol';
 import { SAMPLE_TIME } from '@shared/samples';
 import { FAKE_CONSOLE_PROMPT, fakeConsoleAnswer } from '../backend/fakeBackend';
 import type { HistoryMessage } from '../backend/types';
-import { consoleCommandText } from '../claude/consoleCommand';
+import { consoleCommandText, secretPrompt } from '../claude/consoleCommand';
 import { REDACTED } from '../lib/logger';
 import { CommandError } from '../sync/ports';
 import { HANDOFF_IMPORT_SLACK_MS } from './external';
@@ -586,9 +586,12 @@ describe('session.consoleCommand and secrets (ADR-104)', () => {
     const { h, launcher } = s;
     const entryId = await idleEntry(h);
 
-    // The copy command carries the env on purpose (ADR-104) – only in the command result.
+    // ADR-123 (R4W-08): the copy command asks for secret values instead of carrying them; other
+    // values of the profile env stay in the line.
     const copy = await h.cmd({ name: 'session.consoleCommand', entryId });
-    expect(copy.command).toContain(SECRET);
+    expect(copy.command).not.toContain(SECRET);
+    expect(copy.command).toContain(`$env:API_TOKEN=${secretPrompt('API_TOKEN')}`);
+    expect(copy.command).toContain(`$env:CLAUDE_CONFIG_DIR='D:\\cfg'`);
 
     launcher.failNext(`Start-Process failed for API_TOKEN=${SECRET} in D:\\cfg`);
     const failed = await h.cmdError({ name: 'session.openExternal', entryId });
