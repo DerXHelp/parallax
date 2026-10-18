@@ -177,6 +177,29 @@ describe('slash menu (WP-37 §1)', () => {
     expect(menuNames()).toContain('review-pr');
   });
 
+  it('V3-02: a fully typed terminal command opens no menu – Enter shows its hint without Esc', async () => {
+    const h = await start();
+    const user = userEvent.setup();
+    await user.type(textbox(), '/vim');
+    // Before: /compact matched through scattered letters of its description and Enter took it.
+    expect(screen.queryByRole('listbox')).toBeNull();
+    await user.keyboard('{Enter}');
+    expect(screen.getByText('/vim only works in the terminal of Claude Code')).toBeTruthy();
+    expect(textbox().value).toBe('/vim');
+    expect(h.commands('session.sendPrompt')).toEqual([]);
+  });
+
+  it('V3-02: names before descriptions; short words search names only', async () => {
+    await start();
+    const user = userEvent.setup();
+    await user.type(textbox(), '/mo');
+    expect(menuNames()).toEqual(['model']);
+    await user.clear(textbox());
+    // Only through its description ("… keep a summary in context").
+    await user.type(textbox(), '/summ');
+    expect(menuNames()).toEqual(['compact']);
+  });
+
   it('without a catalog it lists the names of init.slashCommands', async () => {
     await start('idle', { catalog: false });
     const user = userEvent.setup();
@@ -367,6 +390,29 @@ describe('sending a "/" draft (WP-37 §2)', () => {
     await user.click(within(dialog).getByRole('button', { name: /Keyboard shortcuts/ }));
     await waitFor(() => {
       expect(screen.queryByRole('dialog', { name: 'Commands' })).toBeNull();
+    });
+  });
+
+  it('V3-04: closing /help gives the focus back to the message field (typed or picked in the menu)', async () => {
+    await start();
+    const user = userEvent.setup();
+    await user.type(textbox(), '/help {Enter}');
+    await screen.findByRole('dialog', { name: 'Commands' });
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(textbox());
+    });
+    // Picked in the menu (Enter on the active entry runs it right away).
+    await user.type(textbox(), '/hel');
+    expect(activeName()).toBe('help');
+    await user.keyboard('{Enter}');
+    const dialog = await screen.findByRole('dialog', { name: 'Commands' });
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await waitFor(() => {
+      expect(document.activeElement).toBe(textbox());
     });
   });
 

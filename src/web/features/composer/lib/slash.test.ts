@@ -5,6 +5,7 @@ import {
   buildMenuEntries,
   classifySlash,
   filterMenu,
+  menuMatches,
   NATIVE_COMMANDS,
   parseSlashDraft,
   slashQuery,
@@ -91,13 +92,62 @@ describe('buildMenuEntries', () => {
 });
 
 describe('filterMenu', () => {
-  it('matches name, aliases and description fuzzily, best first', () => {
+  it('matches name and aliases fuzzily, the description as one piece; best first', () => {
     const list = entries();
     expect(filterMenu(list, 'comp')[0]?.name).toBe('compact');
     expect(filterMenu(list, 'reset').map((entry) => entry.name)).toContain('clear');
     expect(filterMenu(list, 'pull request')[0]?.name).toBe('review-pr');
     expect(filterMenu(list, '').length).toBe(list.length);
     expect(filterMenu(list, 'zzzz')).toEqual([]);
+  });
+
+  /** The CLI's real wording (V3-02): "/vim" found /clear through scattered letters of it. */
+  const V3_CATALOG: SlashCatalog = {
+    commands: [
+      info('clear', {
+        aliases: ['reset', 'new'],
+        description: 'Start a new session with empty context; previous session stays resumable',
+      }),
+      info('compact', { description: 'Summarize the conversation to free context' }),
+      info('summary', { builtin: false, description: 'Write a summary of the model output' }),
+      info('vim-helper', { builtin: false, description: 'Helper for editor modes' }),
+    ],
+    slashCommands: [],
+    terminalSlashCommands: [],
+  };
+
+  it('V3-02: the description counts only as a contiguous piece of at least three characters', () => {
+    const list = entries(V3_CATALOG);
+    const names = (query: string) => filterMenu(list, query).map((entry) => entry.name);
+    // "v…i…m" scattered over the description of /clear is no match any more.
+    expect(names('vim')).toEqual(['vim-helper']);
+    // Two letters: names only ("/mo" listed Status, Fast, Plan, Effort and Clear before).
+    expect(names('mo')).toEqual(['model']);
+    expect(names('output')).toEqual(['summary']);
+    // Accents and case do not matter in the description.
+    expect(names('CONVERSATION')).toEqual(['compact']);
+  });
+
+  it('V3-02: name and alias hits come before description hits, an exact name or alias first', () => {
+    const list = entries(V3_CATALOG);
+    const names = (query: string) => filterMenu(list, query).map((entry) => entry.name);
+    // Name hits (summary, resume) before the description hits (clear: "… resumable",
+    // compact: "Summarize …"; those in entry order).
+    expect(names('sum')).toEqual(['summary', 'resume', 'clear', 'compact']);
+    expect(names('reset')[0]).toBe('clear');
+    expect(names('new')[0]).toBe('clear');
+    expect(filterMenu(entries(), 'm')[0]?.name).toBe('model');
+  });
+
+  it('V3-02: a fully typed terminal-only command opens no menu', () => {
+    const list = entries(V3_CATALOG);
+    const terminal = terminalCommands([]);
+    expect(menuMatches(list, 'vim', terminal)).toEqual([]);
+    expect(menuMatches(list, 'VIM', terminal)).toEqual([]);
+    // Typing on (or a prefix) still searches.
+    expect(menuMatches(list, 'vim-', terminal).map((entry) => entry.name)).toEqual(['vim-helper']);
+    expect(menuMatches(list, 'vi', terminal).map((entry) => entry.name)).toEqual(['vim-helper']);
+    expect(menuMatches(list, 'model', terminal)[0]?.name).toBe('model');
   });
 });
 

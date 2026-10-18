@@ -1,5 +1,5 @@
-import type { SessionDetail, SlashCommandInfo } from '@shared/model';
-import { fuzzyFilter } from '@web/lib/fuzzy';
+import type { SlashCommandInfo } from '@shared/model';
+import { fuzzyScore } from '@web/lib/fuzzy';
 
 /**
  * Slash commands of the composer (ADR-108, Plan "Slash-Befehle", WP-37): pure helpers for the menu
@@ -103,15 +103,6 @@ export interface SlashCatalog {
   terminalSlashCommands: readonly string[];
 }
 
-/** The catalog part of a session detail. */
-export function slashCatalogOf(detail: Pick<SessionDetail, 'init' | 'commands'> | null): SlashCatalog {
-  return {
-    commands: detail?.commands ?? null,
-    slashCommands: detail?.init?.slashCommands ?? [],
-    terminalSlashCommands: detail?.init?.terminalSlashCommands ?? [],
-  };
-}
-
 function bare(name: string): string {
   return (name.startsWith('/') ? name.slice(1) : name).trim().toLowerCase();
 }
@@ -183,9 +174,68 @@ export function buildMenuEntries(catalog: SlashCatalog, describeNative: Describe
   return [...result, ...others];
 }
 
-/** Menu entries matching `query` (fuzzy over name, aliases and description; best first). */
+/** A query word of at least this length may match a description (shorter ones only names). */
+export const DESCRIPTION_MIN_CHARS = 3;
+
+/** Lower case without diacritics (as the fuzzy matcher compares). */
+function fold(value: string): string {
+  return value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+}
+
+/**
+ * Menu entries matching `query` (V3-02): every word must match the name or an alias fuzzily, or –
+ * from `DESCRIPTION_MIN_CHARS` characters on – appear in the description as one piece (no scattered
+ * letters: `/vim` must not find `/clear` via "pre**v**ious … resu**m**able"). An exact name or alias
+ * comes first, then entries whose words all hit names/aliases (best fuzzy score first), then those
+ * found through the description; ties keep the entry order (native commands first).
+ */
 export function filterMenu(entries: readonly MenuEntry[], query: string): MenuEntry[] {
-  return fuzzyFilter(entries, query, (entry) => [entry.name, ...entry.aliases, entry.description]);
+  const words = query
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word !== '');
+  if (words.length === 0) return [...entries];
+  const exact = words.length === 1 ? bare(words[0] ?? '') : null;
+  const scored: { entry: MenuEntry; rank: number; score: number; index: number }[] = [];
+  entries.forEach((entry, index) => {
+    const names = [entry.name, ...entry.aliases];
+    const description = fold(entry.description);
+    let score = 0;
+    let viaDescription = false;
+    for (const word of words) {
+      let best: number | null = null;
+      for (const name of names) {
+        const value = fuzzyScore(word, name);
+        if (value !== null && (best === null || value > best)) best = value;
+      }
+      if (best !== null) {
+        score += best;
+        continue;
+      }
+      const folded = fold(word);
+      if (folded.length < DESCRIPTION_MIN_CHARS || !description.includes(folded)) return;
+      viaDescription = true;
+    }
+    let rank = viaDescription ? 2 : 1;
+    if (exact !== null && names.includes(exact)) rank = 0;
+    scored.push({ entry, rank, score, index });
+  });
+  scored.sort((a, b) => a.rank - b.rank || b.score - a.score || a.index - b.index);
+  return scored.map((item) => item.entry);
+}
+
+/**
+ * The entries the slash menu shows for `query`: none when the query is exactly a terminal-only
+ * command (V3-02) – the menu stays closed, Enter shows the "external console" hint instead of
+ * taking another command.
+ */
+export function menuMatches(
+  entries: readonly MenuEntry[],
+  query: string,
+  terminal: ReadonlySet<string>,
+): MenuEntry[] {
+  if (terminal.has(bare(query))) return [];
+  return filterMenu(entries, query);
 }
 
 /**
@@ -224,6 +274,11 @@ export type SlashAction =
   | { kind: 'terminal'; name: string }
   /** Sent as a prompt (aliases of catalog commands resolved to the command name). */
   | { kind: 'pass'; text: string };
+
+/** A native command that also sends a prompt (`/plan text`): it takes the attached images along. */
+export function sendsPrompt(action: SlashAction | null): boolean {
+  return action?.kind === 'native' && action.command === 'plan' && action.args !== '';
+}
 
 /** The menu entry (or native command) that `name` or one of its aliases names. */
 export function resolveEntry(entries: readonly MenuEntry[], name: string): MenuEntry | null {

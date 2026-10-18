@@ -183,6 +183,9 @@ export const de: typeof en = {
     tooMany: 'Höchstens {max} Bilder pro Nachricht.',
     pending: 'Bilder werden hochgeladen…',
     removeFailed: 'Entferne das fehlgeschlagene Bild, um zu senden.',
+    overTotal: 'Alle Bilder zusammen über {max}',
+    removeTooLarge: 'Die Bilder sind zusammen zu groß – entferne eins, um zu senden.',
+    notWithAnswer: 'Die Bilder bleiben für deine nächste Nachricht – eine Antwort geht ohne sie.',
     drop: 'Bilder hier ablegen, um sie anzuhängen',
   },
   suggestion: {
