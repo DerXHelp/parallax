@@ -56,6 +56,13 @@ export interface FakeBackend extends AgentBackend {
   readonly history: FakeHistoryStore;
   /** Resolves when every live session waits at a gate (input/decision/control/close). */
   settle(): Promise<void>;
+  /**
+   * Phase 2 (WP-34, ADR-104): a turn made in the (fake) external console – one user and one
+   * assistant entry with timestamp `at` appended to the fake history of `sessionId`, as the CLI
+   * would write them into the transcript the engine imports on return. WP-40 calls it from the
+   * fake console's `onRun`.
+   */
+  simulateConsoleTurn(sessionId: string, at: Date, text?: string): void;
 }
 
 export type FakeSessionState =

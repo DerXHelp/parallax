@@ -1,25 +1,43 @@
 /**
  * `createFakeClaudeIntegration()` (WP-13 §3.3): port `ClaudeIntegration` without a real `claude`
- * – for `pnpm dev --backend=fake`, engine tests and E2E. Profiles come from the WP-11 profile
- * store; every profile reports `ok`/`logged_in` (no setup screen), `launchSpecFor` returns a
- * LaunchSpec with a fake executable and an empty env. Tests can make the next launches fail.
+ * – for `pnpm dev --backend=fake`, engine tests and E2E. Profiles come from a profile store (a
+ * passed one – e.g. the persistent `profiles.json` store of WP-32 – wins over `profiles`); every
+ * profile reports `ok`/`logged_in` (no setup screen), `launchSpecFor` returns a LaunchSpec with a
+ * fake executable and an empty env, `consoleLaunchFor` (Phase 2, WP-34) the console spec of
+ * `claude --resume <id>` for the fake console. Tests can make the next launches fail.
  */
 import type { EntryId, ProfileId } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import type { ClaudeInstallStatus, Profile, ProfileSummary } from '@shared/model';
 import { parseProfileArgs } from '../../claude/profileArgs';
 import { createProfileStore, type MutableProfileStore } from '../../claude/profiles';
-import type { ClaudeIntegration, LaunchSpec, ProfileStore } from '../../claude/ports';
+import type {
+  ClaudeIntegration,
+  ConsoleLaunchRequest,
+  ConsoleLaunchSpec,
+  LaunchSpec,
+  ProfileStore,
+} from '../../claude/ports';
 import { CommandError } from '../../sync/ports';
 
 export const FAKE_CLAUDE_PATH = 'C:\\fake\\claude.exe';
 export const FAKE_CLAUDE_VERSION = '2.1.300';
 
 export interface FakeClaudeIntegrationOptions {
-  /** Default: only the built-in profile "Standard". */
+  /** Default: only the built-in profile "Standard". Ignored when `store` is given. */
   profiles?: readonly Profile[];
+  /**
+   * Phase 2 (WP-34): an existing store (e.g. the persistent profile store of WP-32) – it wins over
+   * `profiles`; `checkProfile` writes the ok status into it.
+   */
+  store?: MutableProfileStore;
   /** Overrides ProfileSummary.allowsBypass and LaunchSpec.allowDangerouslySkipPermissions (C.3). */
   allowsBypass?: boolean;
+  /**
+   * Test seam (WP-34): env of every console spec (`env` and `explicitEnv`), e.g. a fake secret that
+   * must never reach a log, an op or an item. Default {}.
+   */
+  consoleEnv?: Readonly<Record<string, string>>;
   now?: () => Date;
 }
 
@@ -27,7 +45,12 @@ export interface FakeClaudeIntegration extends ClaudeIntegration {
   readonly profiles: ProfileStore;
   /** Every launchSpecFor call. */
   readonly launches: readonly { profileId: ProfileId; entryId: EntryId }[];
-  /** Test: launchSpecFor throws CommandError(error) until reset with null (e.g. CLAUDE_NOT_FOUND). */
+  /** Every consoleLaunchFor call (Phase 2). */
+  readonly consoleLaunches: readonly ConsoleLaunchRequest[];
+  /**
+   * Test: launchSpecFor and consoleLaunchFor throw CommandError(error) until reset with null (e.g.
+   * CLAUDE_NOT_FOUND).
+   */
   setLaunchError(error: ErrorPayload | null): void;
 }
 
@@ -47,9 +70,11 @@ export function createFakeClaudeIntegration(
   options: FakeClaudeIntegrationOptions = {},
 ): FakeClaudeIntegration {
   const now = options.now ?? (() => new Date());
-  const store: MutableProfileStore = createProfileStore(options.profiles);
+  const store: MutableProfileStore = options.store ?? createProfileStore(options.profiles);
   for (const profile of store.list()) store.setClaudeStatus(profile.id, okStatus(now()));
   const launches: { profileId: ProfileId; entryId: EntryId }[] = [];
+  const consoleLaunches: ConsoleLaunchRequest[] = [];
+  const consoleEnv = { ...options.consoleEnv };
   let launchError: ErrorPayload | null = null;
 
   const bypassOverride = (summary: ProfileSummary): ProfileSummary =>
@@ -62,9 +87,16 @@ export function createFakeClaudeIntegration(
     summaries: () => store.summaries().map(bypassOverride),
   };
 
+  /** The profile of a launch, or the error the launch fails with (set launch error first). */
+  const launchProfile = (profileId: ProfileId): Profile | CommandError => {
+    if (launchError !== null) return new CommandError(launchError);
+    return store.get(profileId) ?? new CommandError(makeError('PROFILE_NOT_FOUND', { profileId }));
+  };
+
   return {
     profiles,
     launches,
+    consoleLaunches,
 
     setLaunchError(error) {
       launchError = error;
@@ -72,10 +104,8 @@ export function createFakeClaudeIntegration(
 
     launchSpecFor(profileId, entryId) {
       launches.push({ profileId, entryId });
-      if (launchError !== null) return Promise.reject(new CommandError(launchError));
-      const profile = store.get(profileId);
-      if (profile === undefined)
-        return Promise.reject(new CommandError(makeError('PROFILE_NOT_FOUND', { profileId })));
+      const profile = launchProfile(profileId);
+      if (profile instanceof CommandError) return Promise.reject(profile);
       const args = parseProfileArgs(profile.args, profile.passRawArgs);
       if (args.errors.length > 0) {
         return Promise.reject(new CommandError(makeError('PROFILE_INVALID', { count: args.errors.length })));
@@ -104,9 +134,19 @@ export function createFakeClaudeIntegration(
       return Promise.resolve(status);
     },
 
-    // Phase 2 port (WP-30); the fake console spec follows in WP-34.
-    consoleLaunchFor() {
-      return Promise.reject(new CommandError(makeError('NOT_IMPLEMENTED', { command: 'consoleLaunchFor' })));
+    // Phase 2 (WP-34): what the fake console (system/fakeConsole.ts) gets – `claude --resume <id>`.
+    consoleLaunchFor(req) {
+      consoleLaunches.push({ ...req });
+      const profile = launchProfile(req.profileId);
+      if (profile instanceof CommandError) return Promise.reject(profile);
+      const spec: ConsoleLaunchSpec = {
+        executablePath: FAKE_CLAUDE_PATH,
+        args: ['--resume', req.resumeSessionId],
+        env: { ...consoleEnv },
+        explicitEnv: { ...consoleEnv },
+        cwd: req.cwd,
+      };
+      return Promise.resolve(spec);
     },
   };
 }
