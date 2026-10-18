@@ -4,7 +4,9 @@
  *
  * Channel: a focused + visible window shows the entry → nothing; another focused + visible window →
  * `in_app` there (`settings.notifications.focusedElsewhere 'in_app'`, default) or `system` to that
- * window (`'system'`); otherwise `system` to the last focused client. "done" needs a turn of at least
+ * window (`'system'`); otherwise `system` to the last focused client – on a tie (also: never focused)
+ * ADR-129 prefers clients that can show Web Notifications, then visible ones, then the most recently
+ * connected (`notificationTarget`). "done" needs a turn of at least
  * `doneMinSeconds` when the target window is focused, any length otherwise. WP22-03/-15 (Plan A.9)
  * with native toasts available (`nativeAvailable`): a `system` target that cannot show Web
  * Notifications (presence `systemNotifications: false`) → a native Windows toast plus the in-app
@@ -15,7 +17,7 @@
  * OS notification (neither `system` nor native): the chosen client gets the `in_app` hint instead,
  * without a client nothing. Sounds are the client's business (it applies `sound` + DND itself).
  *
- * WP41-04: `routeNotification` also says WHY (ChannelReason, settings filter) and `presenceSummary`
+ * WP41-04: `routeNotification` also says WHY (ChannelReason, TieBreak, settings filter) and `presenceSummary`
  * condenses the presence for the engine's one debug line per notification (no titles, no texts).
  */
 import type { ClientId, EntryId } from '@shared/common';
@@ -57,8 +59,8 @@ export const DEFAULT_CHANNEL_RULES: Readonly<ChannelRules> = Object.freeze({
  * - `viewing_focused` – a focused + visible window shows the entry → nothing;
  * - `focused_elsewhere` – another focused + visible window (the most recently focused of them);
  * - `last_focused` – no focused + visible window: the most recently focused client;
- * - `focus_tie` – same: several clients share the latest focus time → the most recently connected;
- * - `never_focused` – same: no client was ever focused (per connection) → the most recently connected;
+ * - `focus_tie` – same: several clients share the latest focus time → tie-break (TieBreak, ADR-129);
+ * - `never_focused` – same: no client was ever focused → tie-break (TieBreak) if more than one;
  * - `no_client_native` – no client at all → native toast only;
  * - `no_client` – no client and no native toasts → nothing.
  */
@@ -71,10 +73,20 @@ export type ChannelReason =
   | 'no_client_native'
   | 'no_client';
 
+/**
+ * Which stage of the target tie-break decided between clients with the same latest focus (also:
+ * none ever focused) – ADR-129: (b) `notifications` – clients that can show Web Notifications
+ * (`systemNotifications !== false`) first, (c) `visible` – visible ones first, (d) `connected` – the
+ * most recently connected. null = no tie (one client had the latest focus).
+ */
+export type TieBreak = 'notifications' | 'visible' | 'connected';
+
 /** chooseChannel plus its reason; `minDoneTurnMs` also when nothing is delivered (for the log). */
 export interface ChannelChoice {
   channel: NotificationChannel | null;
   reason: ChannelReason;
+  /** Only for `focus_tie`/`never_focused` with more than one candidate; otherwise null. */
+  tieBreak: TieBreak | null;
   minDoneTurnMs: number;
 }
 
@@ -82,26 +94,62 @@ function time(date: Date | null): number {
   return date === null ? Number.NEGATIVE_INFINITY : date.getTime();
 }
 
-interface FocusPick {
-  client: ClientPresence;
-  /** Another client has the same lastFocusAt (also: both never focused) – connectedAt decided. */
-  tie: boolean;
+/** The most recently connected of `clients` (the first one on equal times). */
+function lastConnected(clients: readonly ClientPresence[]): ClientPresence | null {
+  let best: ClientPresence | null = null;
+  for (const client of clients) {
+    if (best === null || client.connectedAt.getTime() > best.connectedAt.getTime()) best = client;
+  }
+  return best;
 }
 
-/** Most recently focused client (ties and never focused: most recently connected). */
-function lastFocused(clients: readonly ClientPresence[]): FocusPick | null {
-  let best: ClientPresence | null = null;
-  let tie = false;
-  for (const client of clients) {
-    if (best === null || time(client.lastFocusAt) > time(best.lastFocusAt)) {
-      best = client;
-      tie = false;
-    } else if (time(client.lastFocusAt) === time(best.lastFocusAt)) {
-      tie = true;
-      if (client.connectedAt.getTime() > best.connectedAt.getTime()) best = client;
-    }
+/**
+ * Among focused + visible windows: the most recently focused (ties: most recently connected) –
+ * unchanged by ADR-129.
+ */
+function lastFocusedWindow(windows: readonly ClientPresence[]): ClientPresence | null {
+  const latest = Math.max(...windows.map((c) => time(c.lastFocusAt)));
+  return lastConnected(windows.filter((c) => time(c.lastFocusAt) === latest));
+}
+
+interface TargetPick {
+  client: ClientPresence;
+  /** Several clients shared the latest focus time (also: none ever focused). */
+  tie: boolean;
+  tieBreak: TieBreak | null;
+}
+
+/** Keeps the preferred clients when the rule separates the group (some, not all, match). */
+function prefer(
+  group: readonly ClientPresence[],
+  rule: (c: ClientPresence) => boolean,
+): readonly ClientPresence[] {
+  const preferred = group.filter(rule);
+  return preferred.length > 0 && preferred.length < group.length ? preferred : group;
+}
+
+/**
+ * The target without a focused + visible window (ADR-129): (a) the most recently focused client;
+ * on a tie – also "never focused" – (b) Web Notifications possible before not, (c) visible before
+ * hidden, (d) most recently connected. `tieBreak` names the stage that left one client.
+ */
+function notificationTarget(clients: readonly ClientPresence[]): TargetPick | null {
+  if (clients.length === 0) return null;
+  const latest = Math.max(...clients.map((c) => time(c.lastFocusAt)));
+  let group: readonly ClientPresence[] = clients.filter((c) => time(c.lastFocusAt) === latest);
+  const [only] = group;
+  if (group.length === 1 && only !== undefined) return { client: only, tie: false, tieBreak: null };
+  const stages: [TieBreak, (c: ClientPresence) => boolean][] = [
+    ['notifications', (c) => c.presence.systemNotifications !== false],
+    ['visible', (c) => c.presence.visible],
+  ];
+  for (const [stage, rule] of stages) {
+    group = prefer(group, rule);
+    const [single] = group;
+    if (group.length === 1 && single !== undefined) return { client: single, tie: true, tieBreak: stage };
   }
-  return best === null ? null : { client: best, tie };
+  const connected = lastConnected(group);
+  return connected === null ? null : { client: connected, tie: true, tieBreak: 'connected' };
 }
 
 /** `system` to `target` – or native + in_app when it cannot show Web Notifications (WP22-03/-15). */
@@ -125,30 +173,41 @@ export function chooseChannelWithReason(
 ): ChannelChoice {
   const active = clients.filter((c) => c.presence.focused && c.presence.visible);
   if (active.some((c) => c.presence.viewingEntryId === entryId)) {
-    return { channel: null, reason: 'viewing_focused', minDoneTurnMs: rules.focusedDoneMinMs };
+    return {
+      channel: null,
+      reason: 'viewing_focused',
+      tieBreak: null,
+      minDoneTurnMs: rules.focusedDoneMinMs,
+    };
   }
-  const window = lastFocused(active)?.client ?? null;
+  const window = lastFocusedWindow(active);
   if (window !== null) {
     const minDoneTurnMs = rules.focusedDoneMinMs;
     const channel: NotificationChannel =
       rules.focusedElsewhere === 'system'
         ? systemChannel(window, nativeAvailable, minDoneTurnMs)
         : { clientId: window.clientId, delivery: 'in_app', native: false, minDoneTurnMs };
-    return { channel, reason: 'focused_elsewhere', minDoneTurnMs };
+    return { channel, reason: 'focused_elsewhere', tieBreak: null, minDoneTurnMs };
   }
-  const target = lastFocused(clients);
+  const target = notificationTarget(clients);
   if (target === null) {
     return nativeAvailable
       ? {
           channel: { clientId: null, delivery: 'system', native: true, minDoneTurnMs: 0 },
           reason: 'no_client_native',
+          tieBreak: null,
           minDoneTurnMs: 0,
         }
-      : { channel: null, reason: 'no_client', minDoneTurnMs: 0 };
+      : { channel: null, reason: 'no_client', tieBreak: null, minDoneTurnMs: 0 };
   }
   const reason: ChannelReason =
     target.client.lastFocusAt === null ? 'never_focused' : target.tie ? 'focus_tie' : 'last_focused';
-  return { channel: systemChannel(target.client, nativeAvailable, 0), reason, minDoneTurnMs: 0 };
+  return {
+    channel: systemChannel(target.client, nativeAvailable, 0),
+    reason,
+    tieBreak: target.tieBreak,
+    minDoneTurnMs: 0,
+  };
 }
 
 export function chooseChannel(
@@ -188,6 +247,7 @@ export interface NotificationRoute {
   kind: NotificationKind;
   planned: PlannedNotification | null;
   reason: ChannelReason;
+  tieBreak: TieBreak | null;
   filter: NotificationFilter | null;
 }
 
@@ -206,13 +266,18 @@ export function routeNotification(
   nativeAvailable = false,
   notifications: NotificationSettings = DEFAULT_NOTIFICATION_SETTINGS,
 ): NotificationRoute | null {
-  const { channel, reason, minDoneTurnMs } = chooseChannelWithReason(clients, entryId, nativeAvailable, {
-    focusedElsewhere: notifications.focusedElsewhere,
-    focusedDoneMinMs: notifications.doneMinSeconds * 1000,
-  });
+  const { channel, reason, tieBreak, minDoneTurnMs } = chooseChannelWithReason(
+    clients,
+    entryId,
+    nativeAvailable,
+    {
+      focusedElsewhere: notifications.focusedElsewhere,
+      focusedDoneMinMs: notifications.doneMinSeconds * 1000,
+    },
+  );
   const kind = notificationFor(prev, next, now, { minDoneTurnMs });
   if (kind === null) return null;
-  if (channel === null) return { kind, planned: null, reason, filter: null };
+  if (channel === null) return { kind, planned: null, reason, tieBreak, filter: null };
   const filter: NotificationFilter | null = notifications.doNotDisturb
     ? 'do_not_disturb'
     : notifications.events[kind].toast
@@ -224,12 +289,13 @@ export function routeNotification(
       channel.clientId === null
         ? null
         : { clientId: channel.clientId, kind, delivery: 'in_app', native: false };
-    return { kind, planned, reason, filter };
+    return { kind, planned, reason, tieBreak, filter };
   }
   return {
     kind,
     planned: { clientId: channel.clientId, kind, delivery: channel.delivery, native: channel.native },
     reason,
+    tieBreak,
     filter: null,
   };
 }
@@ -267,7 +333,7 @@ export interface ClientPresenceSummary {
   systemNotifications: boolean | null;
   /** Shows the notified entry. */
   viewing: boolean;
-  /** lastFocusAt is set (the hub resets it per connection). */
+  /** lastFocusAt is set (the hub remembers it per window across reconnects, ADR-129). */
   everFocused: boolean;
   /** Rank by connectedAt, 1 = most recently connected (the tie-break of the channel choice). */
   connectedRank: number;

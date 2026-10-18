@@ -16,6 +16,7 @@ import {
   routeNotification,
   type ChannelReason,
   type PlannedNotification,
+  type TieBreak,
 } from './notifier';
 
 const ENTRY: EntryId = sampleId('en', 1);
@@ -424,15 +425,16 @@ describe('planNotification with settings.notifications (ADR-109)', () => {
 // WP41-04: why the channel went where it went (debug log of the engine)
 // =====================================================================================
 
-describe('chooseChannelWithReason (WP41-04)', () => {
-  it.each<[string, ClientPresence[], boolean, number | null, ChannelReason]>([
-    // name, clients, nativeAvailable, target client (null = none), reason
+describe('chooseChannelWithReason (WP41-04, ADR-129)', () => {
+  it.each<[string, ClientPresence[], boolean, number | null, ChannelReason, TieBreak | null]>([
+    // name, clients, nativeAvailable, target client (null = none), reason, tie-break stage
     [
       'focused window shows the entry',
       [client(1, { focused: true, visible: true, viewing: ENTRY })],
       true,
       null,
       'viewing_focused',
+      null,
     ],
     [
       'another focused window',
@@ -443,6 +445,7 @@ describe('chooseChannelWithReason (WP41-04)', () => {
       false,
       1,
       'focused_elsewhere',
+      null,
     ],
     [
       'background windows → the most recently focused',
@@ -453,30 +456,44 @@ describe('chooseChannelWithReason (WP41-04)', () => {
       false,
       2,
       'last_focused',
+      null,
     ],
     [
-      'focused once, the others never → the focused one (even if connected first)',
+      'focused once, the others never → the focused one (even hidden, connected first, no Web Notifications)',
       [
-        client(1, { focused: false, visible: true, viewing: null }, 5),
-        client(2, { focused: false, visible: false, viewing: null }, null),
+        client(1, { focused: false, visible: false, viewing: null, web: false }, 5),
+        client(2, { focused: false, visible: true, viewing: null }, null),
       ],
       false,
       1,
       'last_focused',
+      null,
     ],
     [
-      'same focus time → the most recently connected',
+      'same focus time, all alike → the most recently connected',
       [
-        client(1, { focused: false, visible: true, viewing: null }, 5),
+        client(1, { focused: false, visible: false, viewing: null }, 5),
         client(2, { focused: false, visible: false, viewing: null }, 5),
         client(3, { focused: false, visible: false, viewing: null }, 1),
       ],
       false,
       2,
       'focus_tie',
+      'connected',
     ],
     [
-      'never focused → the most recently connected',
+      'same focus time → the visible one (b equal, c decides)',
+      [
+        client(1, { focused: false, visible: true, viewing: null }, 5),
+        client(2, { focused: false, visible: false, viewing: null }, 5),
+      ],
+      false,
+      1,
+      'focus_tie',
+      'visible',
+    ],
+    [
+      'never focused, all alike → the most recently connected',
       [
         client(1, { focused: false, visible: false, viewing: null }, null),
         client(2, { focused: false, visible: false, viewing: null }, null),
@@ -484,6 +501,54 @@ describe('chooseChannelWithReason (WP41-04)', () => {
       false,
       2,
       'never_focused',
+      'connected',
+    ],
+    [
+      'never focused → Web Notifications possible before visible (b decides)',
+      [
+        client(1, { focused: false, visible: true, viewing: null, web: false }, null),
+        client(2, { focused: false, visible: false, viewing: null, web: true }, null),
+        client(3, { focused: false, visible: true, viewing: null, web: false }, null),
+      ],
+      false,
+      2,
+      'never_focused',
+      'notifications',
+    ],
+    [
+      'never focused → b keeps two, c decides',
+      [
+        client(1, { focused: false, visible: true, viewing: null }, null),
+        client(2, { focused: false, visible: false, viewing: null }, null),
+        client(3, { focused: false, visible: true, viewing: null, web: false }, null),
+      ],
+      false,
+      1,
+      'never_focused',
+      'visible',
+    ],
+    [
+      'never focused → b and c keep two, the most recently connected of them',
+      [
+        client(1, { focused: false, visible: true, viewing: null }, null),
+        client(2, { focused: false, visible: true, viewing: null }, null),
+        client(3, { focused: false, visible: false, viewing: null }, null),
+      ],
+      false,
+      2,
+      'never_focused',
+      'connected',
+    ],
+    [
+      'never focused, none can show Web Notifications → b does not separate, c decides',
+      [
+        client(1, { focused: false, visible: true, viewing: null, web: false }, null),
+        client(2, { focused: false, visible: false, viewing: null, web: false }, null),
+      ],
+      false,
+      1,
+      'never_focused',
+      'visible',
     ],
     [
       'a single never focused client',
@@ -491,30 +556,47 @@ describe('chooseChannelWithReason (WP41-04)', () => {
       false,
       1,
       'never_focused',
+      null,
     ],
-    ['no client + native toasts', [], true, null, 'no_client_native'],
-    ['no client, no native toasts', [], false, null, 'no_client'],
-  ])('%s', (_name, list, nativeAvailable, target, reason) => {
+    [
+      'focused_elsewhere unchanged: several focused windows → the most recently focused, not by Web Notifications',
+      [
+        client(1, { focused: true, visible: true, viewing: OTHER, web: true }, 3),
+        client(2, { focused: true, visible: true, viewing: null, web: false }, 7),
+      ],
+      false,
+      2,
+      'focused_elsewhere',
+      null,
+    ],
+    ['no client + native toasts', [], true, null, 'no_client_native', null],
+    ['no client, no native toasts', [], false, null, 'no_client', null],
+  ])('%s', (_name, list, nativeAvailable, target, reason, tieBreak) => {
     const choice = chooseChannelWithReason(list, ENTRY, nativeAvailable);
     expect(choice.reason).toBe(reason);
+    expect(choice.tieBreak).toBe(tieBreak);
     expect(choice.channel?.clientId ?? null).toBe(target === null ? null : sampleId('cl', target));
     // The channel itself is exactly chooseChannel's.
     expect(choice.channel).toEqual(chooseChannel(list, ENTRY, nativeAvailable));
   });
 
-  it('WP-41 A4: a never focused app window loses against helper clients that connected later', () => {
+  it('WP-41 A4 (ADR-129): a never focused, visible app window wins against hidden helper clients that connected later', () => {
     // App window (visible, unfocused since its connection) + two hidden helper clients (px/watch).
     const app = client(1, { focused: false, visible: true, viewing: null }, null);
-    const helpers = [
-      client(2, { focused: false, visible: false, viewing: null }, null),
-      client(3, { focused: false, visible: false, viewing: null }, null),
-    ];
-    const before = chooseChannelWithReason([app, ...helpers], ENTRY);
-    expect(before).toMatchObject({ reason: 'never_focused', channel: { clientId: sampleId('cl', 3) } });
-    // After one focus + blur the app window has a lastFocusAt and wins.
-    const focusedOnce = { ...app, lastFocusAt: new Date(Date.parse(SAMPLE_TIME) + 60_000) };
-    const after = chooseChannelWithReason([focusedOnce, ...helpers], ENTRY);
-    expect(after).toMatchObject({ reason: 'last_focused', channel: { clientId: sampleId('cl', 1) } });
+    const px = client(2, { focused: false, visible: false, viewing: null }, null);
+    const watch = client(3, { focused: false, visible: false, viewing: null }, null);
+    expect(chooseChannelWithReason([app, px, watch], ENTRY)).toMatchObject({
+      reason: 'never_focused',
+      tieBreak: 'visible',
+      channel: { clientId: sampleId('cl', 1), delivery: 'system' },
+    });
+    // A focused helper still wins by its focus time (stage a).
+    const focusedHelper = { ...watch, lastFocusAt: new Date(Date.parse(SAMPLE_TIME) + 60_000) };
+    expect(chooseChannelWithReason([app, px, focusedHelper], ENTRY)).toMatchObject({
+      reason: 'last_focused',
+      tieBreak: null,
+      channel: { clientId: sampleId('cl', 3) },
+    });
   });
 
   it('minDoneTurnMs: focused threshold for a focused window (also when nothing is delivered), 0 otherwise', () => {
@@ -558,6 +640,7 @@ describe('routeNotification (WP41-04)', () => {
       kind: 'permission',
       planned: { clientId: cl1, kind: 'permission', delivery: 'system', native: false },
       reason: 'last_focused',
+      tieBreak: null,
       filter: null,
     });
     expect(route?.planned).toEqual(planNotification(working, permission, NOW, away, ENTRY));
@@ -568,12 +651,28 @@ describe('routeNotification (WP41-04)', () => {
       kind: 'permission',
       planned: null,
       reason: 'viewing_focused',
+      tieBreak: null,
       filter: null,
     });
     expect(routeNotification(working, shortDone, NOW, [], ENTRY, false)).toEqual({
       kind: 'done',
       planned: null,
       reason: 'no_client',
+      tieBreak: null,
+      filter: null,
+    });
+  });
+
+  it('names the tie-break stage of the target (ADR-129)', () => {
+    const tied = [
+      client(1, { focused: false, visible: true, viewing: null }, null),
+      client(2, { focused: false, visible: false, viewing: null }, null),
+    ];
+    expect(routeNotification(working, permission, NOW, tied, ENTRY)).toEqual({
+      kind: 'permission',
+      planned: { clientId: cl1, kind: 'permission', delivery: 'system', native: false },
+      reason: 'never_focused',
+      tieBreak: 'visible',
       filter: null,
     });
   });
@@ -584,6 +683,7 @@ describe('routeNotification (WP41-04)', () => {
       kind: 'permission',
       planned: { clientId: cl1, kind: 'permission', delivery: 'in_app', native: false },
       reason: 'last_focused',
+      tieBreak: null,
       filter: 'do_not_disturb',
     });
     const events = sampleNotificationSettings().events;
@@ -594,6 +694,7 @@ describe('routeNotification (WP41-04)', () => {
       kind: 'permission',
       planned: null,
       reason: 'no_client_native',
+      tieBreak: null,
       filter: 'toast_off',
     });
   });

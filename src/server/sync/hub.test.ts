@@ -17,7 +17,7 @@ import {
 import type { SessionViewState } from '@shared/sync';
 import { createServerInstance } from '../config';
 import { REPEATED_LOG_EVERY, REPEATED_LOG_FIRST, shouldLogRepeated } from '../lib/logger';
-import { createSyncHub, type HubSocket, type SyncHub } from './hub';
+import { HUB_LIMITS, createSyncHub, type HubSocket, type SyncHub } from './hub';
 import { createMemorySessionSource, type MemorySessionSource } from './memorySource';
 import { CommandError } from './ports';
 
@@ -185,6 +185,71 @@ describe('handshake', () => {
     expect(one.ofType('notify.clear')).toHaveLength(1);
     one.close();
     expect(hub.presence().map((p) => p.clientId)).toEqual([sampleId('cl', 2)]);
+  });
+});
+
+describe('presence: last focus across reconnects (ADR-129, WP41-04)', () => {
+  const unfocused = samplePresence({ focused: false });
+  const helloAs = (n: number, focused: boolean): FakeSocket => {
+    const socket = new FakeSocket();
+    hub.handleConnection(socket);
+    socket.receive(sampleClientHello({ clientId: sampleId('cl', n), presence: samplePresence({ focused }) }));
+    return socket;
+  };
+  const lastFocusOf = (n: number): Date | null | undefined =>
+    hub.presence().find((p) => p.clientId === sampleId('cl', n))?.lastFocusAt;
+
+  it('an unfocused reconnect keeps the last focus of the window; a blur keeps it too', () => {
+    const focusedAt = new Date();
+    const first = helloAs(1, true);
+    vi.advanceTimersByTime(5_000);
+    first.receive({ type: 'presence', presence: unfocused });
+    expect(lastFocusOf(1)).toEqual(focusedAt);
+    first.close();
+    vi.advanceTimersByTime(60_000);
+    // Server restart/network/standby: the same window comes back without focus.
+    helloAs(1, false);
+    expect(lastFocusOf(1)).toEqual(focusedAt);
+    // A window never seen before starts as "never focused".
+    helloAs(2, false);
+    expect(lastFocusOf(2)).toBeNull();
+  });
+
+  it('a focused hello or presence sets now() and is remembered for the next connection', () => {
+    const first = helloAs(1, false);
+    expect(lastFocusOf(1)).toBeNull();
+    vi.advanceTimersByTime(1_000);
+    first.receive({ type: 'presence', presence: samplePresence({ focused: true }) });
+    const presenceFocus = new Date();
+    expect(lastFocusOf(1)).toEqual(presenceFocus);
+    first.close();
+    vi.advanceTimersByTime(1_000);
+    const again = helloAs(1, false);
+    expect(lastFocusOf(1)).toEqual(presenceFocus);
+    again.close();
+    vi.advanceTimersByTime(1_000);
+    helloAs(1, true);
+    expect(lastFocusOf(1)).toEqual(new Date());
+  });
+
+  it(`remembers at most ${String(HUB_LIMITS.focusMemory)} windows – the oldest focus goes first`, () => {
+    const max = HUB_LIMITS.focusMemory;
+    helloAs(1, true).close();
+    vi.advanceTimersByTime(1);
+    const second = helloAs(2, true);
+    vi.advanceTimersByTime(1);
+    // Window 1 focuses again (in a new connection): it is now younger than window 2.
+    helloAs(1, true).close();
+    second.close();
+    for (let n = 3; n <= max + 1; n++) {
+      vi.advanceTimersByTime(1);
+      helloAs(n, true).close();
+    }
+    // max + 1 windows were focused: window 2 (oldest focus) is forgotten, window 1 is kept.
+    helloAs(2, false);
+    helloAs(1, false);
+    expect(lastFocusOf(2)).toBeNull();
+    expect(lastFocusOf(1)).not.toBeNull();
   });
 });
 

@@ -753,8 +753,8 @@ describe('presence and notifications', () => {
       lines
         .map((line) => JSON.parse(line) as Record<string, unknown>)
         .filter((line) => line.msg === 'notification route');
-    // WP-41 A4: the app window (visible, never focused on this connection) and a hidden helper
-    // client that connected later – the tie-break sends the notify to the helper.
+    // WP-41 A4: the app window (visible, never focused) and a hidden helper client that connected
+    // later – ADR-129: the tie-break prefers the visible window (before: the helper got the notify).
     const app: ClientPresence = { ...viewer(null, { focused: false, visible: true }, 1), lastFocusAt: null };
     const helper: ClientPresence = {
       ...viewer(null, { focused: false, visible: false }, 2),
@@ -766,7 +766,7 @@ describe('presence and notifications', () => {
     await h.waitFor(() => h.facts(entryId).decisions.permission === 1);
     await h.settle();
     expect(h.publisher.notifications.map((n) => [n.clientId, n.notification.kind])).toEqual([
-      [helper.clientId, 'permission'],
+      [app.clientId, 'permission'],
     ]);
     expect(routes()).toEqual([
       expect.objectContaining({
@@ -775,8 +775,9 @@ describe('presence and notifications', () => {
         entryId,
         kind: 'permission',
         channel: 'system',
-        clientId: helper.clientId,
+        clientId: app.clientId,
         reason: 'never_focused',
+        tieBreak: 'visible',
         filter: null,
         presence: {
           count: 2,
@@ -826,6 +827,7 @@ describe('presence and notifications', () => {
       channel: 'none',
       clientId: null,
       reason: 'viewing_focused',
+      tieBreak: null,
     });
     expect(routes().filter((r) => r.channel !== 'none')).toHaveLength(h.publisher.notifications.length);
     // No prompt text or title in any route line.
