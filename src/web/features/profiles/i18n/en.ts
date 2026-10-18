@@ -80,7 +80,7 @@ export const en = {
     },
     env: 'Environment variables',
     envHint:
-      'Values may reference a variable of this computer with {reference}. Values of names ending in _KEY, _TOKEN or _SECRET or containing PASSWORD are hidden.',
+      'Values may reference a variable of this computer with {reference}. Values of secret names – with a part such as KEY, TOKEN, SECRET, PASSWORD or CREDENTIALS – are hidden.',
     envEmpty: 'No variables.',
     envName: 'Name',
     envValue: 'Value',

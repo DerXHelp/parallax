@@ -1,10 +1,7 @@
 import { BellRingIcon, KeyboardIcon, PowerIcon, SettingsIcon, SlidersHorizontalIcon } from 'lucide-react';
 import { useId, useRef, useState } from 'react';
 import { languageSchema, themeSchema } from '@shared/common';
-import type { HostState } from '@shared/model';
 import { useT } from '@web/i18n';
-import { cn } from '@web/lib/cn';
-import { knownVersion } from '@web/lib/version';
 import { useNotificationPermission } from '@web/notifications/permission';
 import { useHostState } from '@web/state/hooks';
 import { showTextNotice } from '@web/state/notices';
@@ -22,10 +19,10 @@ import {
   DropdownMenuTrigger,
 } from '@web/ui/dropdown-menu';
 import { IconButton } from '@web/ui/icon-button';
+import { HostFacts } from './HostFacts';
 import { enableNotifications } from './NotificationPermissionBanner';
 import { requestShell, useShellRequestHandler, type SettingsSection } from './requests';
 import { ServerShutdownDialog, openServerShutdown } from './server-shutdown/ServerShutdownDialog';
-import { defaultProfileOf } from './ShellBanners';
 import { HELP_KEYS, openShortcutHelp } from './ShortcutHelp';
 import { shortcutKeyLabels } from './shortcuts';
 import { DEFAULT_FEATURE_SLOTS, useFeatureSlots } from './slots';
@@ -35,63 +32,6 @@ function save(patch: Parameters<typeof updateSettings>[0]): void {
   updateSettings(patch).catch(() => {
     showTextNotice('settings.saveFailed', undefined, { tone: 'error', id: 'settings.saveFailed' });
   });
-}
-
-/** The default profile's claude (B "Claude-Auflösung": path + `claude --version`, rule C.7). */
-function ClaudeInfo({ hostState }: { hostState: HostState }) {
-  const t = useT();
-  const claude = defaultProfileOf(hostState)?.claude;
-  if (claude === undefined) return null;
-  const version = knownVersion(claude.version);
-  let line: string;
-  if (claude.state === 'checking') line = t('shell.info.claudeChecking');
-  else if (claude.state === 'not_found') line = t('shell.info.claudeMissing');
-  else if (version === null) line = t('shell.info.claudeUnknown');
-  else line = t('shell.info.claude', { version });
-  return (
-    <div data-info="claude" data-version-status={claude.versionStatus} className="grid gap-0.5">
-      <span className={claude.versionStatus === 'too_old' ? 'text-destructive' : undefined}>{line}</span>
-      {claude.path === null ? null : (
-        <span className="text-muted-foreground font-mono break-all">{claude.path}</span>
-      )}
-      {claude.versionStatus === 'too_old' ? (
-        <span className="text-destructive">
-          {t('shell.info.claudeTooOld', { required: hostState.sdkClaudeCodeVersion })}
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
-/**
- * Read-only facts of the server (R3-01: the installed Claude Code and the Agent SDK – the WP-22
- * check "displayed version = `claude --version`"; R3-02: FakeBackend marked). Shown in the menu
- * ("About this server") and in the section "About" of the settings page (WP-38) – one place.
- */
-export function HostFacts({ hostState, className }: { hostState: HostState; className?: string }) {
-  const t = useT();
-  return (
-    <div data-slot="host-info" className={cn('grid gap-1.5 text-2xs select-text', className)}>
-      <ClaudeInfo hostState={hostState} />
-      <span data-info="sdk">
-        {t('shell.info.sdk', {
-          version: hostState.sdkVersion,
-          required: hostState.sdkClaudeCodeVersion,
-        })}
-      </span>
-      <span data-info="parallax" className="text-muted-foreground">
-        {t('shell.info.parallax', { version: hostState.serverVersion })}
-      </span>
-      <span data-info="data" className="text-muted-foreground break-all">
-        {t('shell.info.data', { path: hostState.dataDirLabel })}
-      </span>
-      {hostState.backend === 'fake' ? (
-        <span data-info="backend" className="text-warning font-medium">
-          {t('shell.info.backendFake')}
-        </span>
-      ) : null}
-    </div>
-  );
 }
 
 /** The server facts in the menu: no menu items – the arrow keys skip them, a labelled group. */
@@ -114,21 +54,22 @@ function HostInfo() {
 /**
  * The settings page (slot `SettingsPage`, WP-38) as a large dialog on the shell request
  * `{kind: 'settings', section?}` (WP-30 §4.14 C) – from the menu entry, `/settings` or a link to a
- * section. Without a wired page (placeholder slot) nobody takes the request.
+ * section. Without a wired page (placeholder slot) nobody takes the request. A request while the
+ * page is open only changes `section` (R4W-01 c): the page is never mounted anew, an unsaved
+ * profile draft in it survives (the page of WP-38 also takes such requests itself).
  */
 function SettingsPageHost() {
   const { SettingsPage } = useFeatureSlots();
   const available = SettingsPage !== DEFAULT_FEATURE_SLOTS.SettingsPage;
-  const [open, setOpen] = useState<{ section: SettingsSection | null; serial: number } | null>(null);
+  const [open, setOpen] = useState<{ section: SettingsSection | null } | null>(null);
   useShellRequestHandler('settings', (request) => {
     if (!available) return false;
-    setOpen((current) => ({ section: request.section ?? null, serial: (current?.serial ?? 0) + 1 }));
+    setOpen((current) => ({ section: request.section ?? current?.section ?? null }));
     return true;
   });
   if (open === null) return null;
   return (
     <SettingsPage
-      key={open.serial}
       section={open.section}
       onClose={() => {
         setOpen(null);

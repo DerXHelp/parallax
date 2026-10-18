@@ -23,9 +23,15 @@ interface DialogState {
   prefill: NewSessionPrefill;
   /** New per opening: the form starts fresh with the prefill. */
   opening: number;
+  /**
+   * The element that had the focus when the dialog opened (e.g. the sidebar button): it gets the
+   * focus back when the dialog closes without a new session (V3-04 – no DialogTrigger here, Radix
+   * would leave the focus on `<body>`).
+   */
+  returnFocus: HTMLElement | null;
 }
 
-let state: DialogState = { open: false, prefill: {}, opening: 0 };
+let state: DialogState = { open: false, prefill: {}, opening: 0, returnFocus: null };
 const listeners = new Set<() => void>();
 
 function emit(next: DialogState): void {
@@ -33,8 +39,19 @@ function emit(next: DialogState): void {
   for (const listener of [...listeners]) listener();
 }
 
+function focusedElement(): HTMLElement | null {
+  return document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+    ? document.activeElement
+    : null;
+}
+
 function show(prefill: NewSessionPrefill): void {
-  emit({ open: true, prefill, opening: state.opening + 1 });
+  emit({
+    open: true,
+    prefill,
+    opening: state.opening + 1,
+    returnFocus: state.open ? state.returnFocus : focusedElement(),
+  });
 }
 
 function isEvent(value: NewSessionPrefill | SyntheticEvent | Event): value is SyntheticEvent | Event {
@@ -78,7 +95,7 @@ function getState(): DialogState {
 /** Mounted once in the AppShell. */
 export function NewSessionDialog() {
   const t = useT();
-  const { open, prefill, opening } = useSyncExternalStore(subscribe, getState, getState);
+  const { open, prefill, opening, returnFocus } = useSyncExternalStore(subscribe, getState, getState);
   const created = useRef(false);
   useShellRequestHandler('newSession', (request) => {
     show(cleanPrefill({ cwd: request.cwd, profileId: request.profileId }));
@@ -103,7 +120,14 @@ export function NewSessionDialog() {
           }}
           onCloseAutoFocus={(event) => {
             // The new session's message field takes the focus (NewSessionForm), not the opener.
-            if (created.current) event.preventDefault();
+            if (created.current) {
+              event.preventDefault();
+              return;
+            }
+            // Esc, X, click outside: back to where the dialog was opened from (V3-04).
+            if (returnFocus?.isConnected !== true) return;
+            event.preventDefault();
+            returnFocus.focus();
           }}
         >
           <DialogHeader>

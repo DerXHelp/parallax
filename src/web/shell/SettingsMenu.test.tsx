@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { useState } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resetClientStore } from '@web/state/store';
 import { TooltipProvider } from '@web/ui/tooltip';
 import { requestShell } from './requests';
@@ -75,5 +76,28 @@ describe('settings menu → settings page (WP-38, request "settings")', () => {
       requestShell({ kind: 'settings', section: 'about' });
     });
     expect(screen.getByRole('dialog', { name: 'fake settings' }).getAttribute('data-section')).toBe('about');
+  });
+
+  it('a request while the page is open changes only the section – no new page (R4W-01 c)', () => {
+    const mounted = vi.fn(() => true);
+    function CountingPage({ section, onClose }: SettingsPageSlotProps) {
+      useState(mounted);
+      return <FakePage section={section} onClose={onClose} />;
+    }
+    renderMenu({ SettingsPage: CountingPage });
+    act(() => {
+      requestShell({ kind: 'settings', section: 'profiles' });
+    });
+    act(() => {
+      requestShell({ kind: 'settings', section: 'server' });
+    });
+    const page = screen.getByRole('dialog', { name: 'fake settings' });
+    expect(page.getAttribute('data-section')).toBe('server');
+    // Without a section the page keeps the shown one.
+    act(() => {
+      requestShell({ kind: 'settings' });
+    });
+    expect(page.getAttribute('data-section')).toBe('server');
+    expect(mounted).toHaveBeenCalledOnce();
   });
 });

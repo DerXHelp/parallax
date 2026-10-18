@@ -139,12 +139,7 @@ export function ProfileIssueText({
   );
 }
 
-/** Findings that block starting a session with the profile (ADR-102). */
+/** Findings that block starting a session with the profile (ADR-102); none = the profile is usable. */
 export function profileErrors(profile: Pick<ProfileSummary, 'issues'>): ProfileIssue[] {
   return profile.issues.filter((finding) => finding.level === 'error');
-}
-
-/** The profile can start sessions (no `level: 'error'` finding). */
-export function isProfileUsable(profile: Pick<ProfileSummary, 'issues'>): boolean {
-  return profileErrors(profile).length === 0;
 }

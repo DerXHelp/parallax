@@ -1,10 +1,10 @@
-import type { HostState } from '@shared/model';
+import { DEFAULT_PORT, type HostState } from '@shared/model';
 import { useT } from '@web/i18n';
 import { Switch } from '@web/ui/switch';
 import { HostWarnings } from '../components/HostWarnings';
 import { NumberField } from '../components/NumberField';
 import { SettingField, SettingList } from '../components/SettingField';
-import { DEFAULT_PORT, PORT_RANGE } from '../lib/limits';
+import { PORT_RANGE } from '../lib/limits';
 import type { SettingsEditor } from '../state/settings-editor';
 
 /**
@@ -24,6 +24,10 @@ export function ServerSection({
   const integration = hostState?.systemIntegration ?? false;
   const defaultPort = String(DEFAULT_PORT);
   const currentPort = hostState?.port ?? null;
+  const integrationReason = integration ? null : t('preferences.systemIntegrationOff');
+  // R4W-18: the sub-option says why it cannot be used (no integration, or autostart is off).
+  const openWindowReason =
+    integrationReason ?? (autostart.enabled ? null : t('preferences.server.openWindowNeedsAutostart'));
   return (
     <SettingList>
       <SettingField
@@ -53,7 +57,7 @@ export function ServerSection({
         label={t('preferences.server.autostart')}
         description={t('preferences.server.autostartHint')}
         disabled={!integration}
-        disabledReason={integration ? null : t('preferences.systemIntegrationOff')}
+        disabledReason={integrationReason}
         control={({ id, describedBy }) => (
           <Switch
             id={id}
@@ -70,12 +74,13 @@ export function ServerSection({
       <SettingField
         name="openWindow"
         label={t('preferences.server.openWindow')}
-        disabled={!integration || !autostart.enabled}
+        disabled={openWindowReason !== null}
+        disabledReason={openWindowReason}
         control={({ id, describedBy }) => (
           <Switch
             id={id}
             aria-describedby={describedBy}
-            disabled={!integration || !autostart.enabled}
+            disabled={openWindowReason !== null}
             checked={autostart.openWindow}
             onCheckedChange={(openWindow) => {
               save({ autostart: { ...autostart, openWindow } });

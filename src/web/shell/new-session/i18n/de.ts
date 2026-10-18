@@ -16,7 +16,7 @@ export const de: typeof en = {
   profile: {
     label: 'Profil',
     none: 'Kein Profil verfügbar',
-    defaultBadge: 'Standard',
+    defaultBadge: 'Standardprofil',
     unusable: 'Mit diesem Profil lassen sich keine Sessions starten:',
     unusableShort: {
       one: '{count} Fehler – nicht nutzbar',
