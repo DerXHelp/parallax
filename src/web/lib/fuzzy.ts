@@ -40,10 +40,23 @@ function isWordStart(chars: readonly string[], index: number): boolean {
  * Higher is better (scores are only comparable for the same query).
  */
 export function fuzzyScore(query: string, text: string): number | null {
+  return scoreDetail(query, text)?.score ?? null;
+}
+
+interface ScoreDetail {
+  /** Final score (`raw` minus the length penalty of the text). */
+  score: number;
+  /** Matches, word starts and runs minus the gaps – before the length penalty. */
+  raw: number;
+  /** Query characters without whitespace. */
+  length: number;
+}
+
+function scoreDetail(query: string, text: string): ScoreDetail | null {
   const needle = characters(query)
     .filter((char) => !/\s/.test(char))
     .map((char) => char.toLowerCase());
-  if (needle.length === 0) return 0;
+  if (needle.length === 0) return { score: 0, raw: 0, length: 0 };
   const chars = characters(text);
   const haystack = chars.map((char) => char.toLowerCase());
   const n = needle.length;
@@ -77,7 +90,18 @@ export function fuzzyScore(query: string, text: string): number | null {
   for (const value of previous) {
     if (value !== null && (result === null || value > result)) result = value;
   }
-  return result === null ? null : result - m * LENGTH_PENALTY;
+  return result === null ? null : { score: result - m * LENGTH_PENALTY, raw: result, length: n };
+}
+
+export interface FuzzyFilterOptions {
+  /**
+   * Drops scattered matches (V3-03): a token counts only if word starts and runs pay for its gaps
+   * (at least one point per character) – "fake" then no longer hits "fuer-den-lauf-der-kopfzeile",
+   * "lpc" still hits "Landing page copy".
+   */
+  strict?: boolean;
+  /** Each later key costs this many points, so earlier keys win near ties (e.g. title before profile). */
+  keyPenalty?: number;
 }
 
 /**
@@ -85,21 +109,30 @@ export function fuzzyScore(query: string, text: string): number | null {
  * different key), best first; equal scores keep the input order. An empty query returns all items
  * in their order.
  */
-export function fuzzyFilter<T>(items: readonly T[], query: string, keys: (item: T) => string[]): T[] {
+export function fuzzyFilter<T>(
+  items: readonly T[],
+  query: string,
+  keys: (item: T) => string[],
+  options: FuzzyFilterOptions = {},
+): T[] {
   const tokens = query
     .trim()
     .split(/\s+/)
     .filter((token) => token !== '');
   if (tokens.length === 0) return [...items];
+  const strict = options.strict === true;
+  const keyPenalty = options.keyPenalty ?? 0;
   const scored: { item: T; score: number; index: number }[] = [];
   items.forEach((item, index) => {
     const texts = keys(item);
     let total = 0;
     for (const token of tokens) {
       let best: number | null = null;
-      for (const text of texts) {
-        const score = fuzzyScore(token, text);
-        if (score !== null && (best === null || score > best)) best = score;
+      for (const [keyIndex, text] of texts.entries()) {
+        const detail = scoreDetail(token, text);
+        if (detail === null || (strict && detail.raw < detail.length * MATCH)) continue;
+        const score = detail.score - keyIndex * keyPenalty;
+        if (best === null || score > best) best = score;
       }
       if (best === null) return;
       total += best;

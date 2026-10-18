@@ -112,15 +112,15 @@ function PrimitivesGallery() {
         </Section>
         <Section title="Gauge · Progress · Skeleton">
           {SAMPLE.gauge.map((value) => (
-            <Gauge key={value} value={value} label={t('shell.session.details')} />
+            <Gauge key={value} value={value} label={t('shell.session.context')} />
           ))}
           <Progress value={40} aria-label={t('common.loading')} className="w-40" />
           <Skeleton className="h-4 w-32" />
         </Section>
         <Section title="Input · Textarea · Select">
           <div className="grid w-64 gap-1.5">
-            <Label htmlFor="pg-input">{t('shell.newSession.cwdLabel')}</Label>
-            <Input id="pg-input" placeholder={t('shell.newSession.cwdPlaceholder')} />
+            <Label htmlFor="pg-input">{t('newSession.cwd.label')}</Label>
+            <Input id="pg-input" placeholder={t('newSession.cwd.placeholder')} />
           </div>
           <Textarea className="w-72" placeholder={t('shell.placeholders.composer')} />
           <Select defaultValue="acceptEdits">
@@ -187,14 +187,14 @@ function PrimitivesGallery() {
           </Tabs>
           <Card className="w-72">
             <CardHeader>
-              <CardTitle>{t('shell.newSession.title')}</CardTitle>
+              <CardTitle>{t('newSession.title')}</CardTitle>
               <CardDescription>{t('shell.empty.welcomeDescription')}</CardDescription>
             </CardHeader>
             <CardContent>
               <Separator className="my-2" />
               <Button size="sm">
                 <PlusIcon aria-hidden />
-                {t('shell.newSession.submit')}
+                {t('newSession.submit')}
               </Button>
             </CardContent>
           </Card>
@@ -238,7 +238,7 @@ function PrimitivesGallery() {
           </DropdownMenu>
           <Popover>
             <PopoverTrigger asChild>
-              <Button variant="outline">{t('shell.session.details')}</Button>
+              <Button variant="outline">{t('navigation.actions.sessionInfo')}</Button>
             </PopoverTrigger>
             <PopoverContent className="text-xs">{t('shell.empty.description')}</PopoverContent>
           </Popover>

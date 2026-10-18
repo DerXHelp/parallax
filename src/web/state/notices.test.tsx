@@ -95,6 +95,34 @@ describe('local notices (R1W-07)', () => {
     expect(screen.queryByRole('button', { name: 'Show session' })).toBeNull();
   });
 
+  it('a notice with an action shows its button; it runs once and closes the notice (ADR-126)', async () => {
+    const user = userEvent.setup();
+    const run = vi.fn();
+    render(
+      <TooltipProvider>
+        <NotificationCenter />
+      </TooltipProvider>,
+    );
+    act(() => {
+      showTextNotice('preferences.sounds.locked', undefined, {
+        id: 'sounds',
+        durationMs: null,
+        action: { label: 'navigation.notices.enableSounds', run },
+      });
+    });
+    await user.click(within(region()).getByRole('button', { name: 'Enable sounds' }));
+    expect(run).toHaveBeenCalledOnce();
+    expect(clientStore.getState().notices).toHaveLength(0);
+  });
+
+  it('the region sits above modal dialogs and keeps out of their aria-hidden (ADR-126)', () => {
+    render(<NotificationCenter />);
+    const section = region();
+    // `aria-live` makes Radix' hideOthers skip it; "off": the cards are the live regions.
+    expect(section.getAttribute('aria-live')).toBe('off');
+    expect(section.className).toContain('z-[60]');
+  });
+
   it('SettingsMenu reports a failed settings.update (settings.saveFailed)', async () => {
     const transport = createMemoryTransport();
     const host = new FakeHost({

@@ -19,6 +19,7 @@ import type { SessionSummary } from '@shared/model';
 import type { Command } from '@shared/protocol';
 import { useT, type TranslationKey } from '@web/i18n';
 import { copyText } from '@web/lib/clipboard';
+import { focusElement, focusedElement } from '@web/lib/return-focus';
 import { openSessionWindow } from '@web/lib/windows';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand } from '@web/state/hooks';
@@ -28,6 +29,7 @@ import { DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut } from '@
 import { openNewSession } from '../NewSessionDialog';
 import { requestShell } from '../requests';
 import { shortcutKeyLabels } from '../shortcuts';
+import { sessionFocusTarget } from './focus';
 import { startRenameAfterMenu, takePendingRename, type RenamePlace } from './rename';
 
 /**
@@ -275,11 +277,25 @@ export function sessionActions(
 }
 
 /**
- * `onCloseAutoFocus` of every menu with session actions: a chosen "Rename" opens its field now and
- * keeps the focus there (instead of Radix returning it to the menu trigger).
+ * `onCloseAutoFocus` of every menu with session actions (`place`: where the menu belongs):
+ * - a chosen "Rename" opens its field now and keeps the focus there (instead of Radix returning it
+ *   to the menu trigger);
+ * - otherwise Radix returns the focus to the trigger – but the row's "…" exists only on hover or
+ *   focus, and a pinned row has moved meanwhile: if the focus ended on `<body>`, it goes to the
+ *   session's row (sidebar) or the header's "…" (V3-04 "Anheften"). A dialog the action opened
+ *   keeps it.
  */
-export function onSessionMenuCloseAutoFocus(event: Event): void {
-  if (takePendingRename()) event.preventDefault();
+export function sessionMenuCloseAutoFocus(sessionKey: string, place: RenamePlace): (event: Event) => void {
+  return (event) => {
+    if (takePendingRename()) {
+      event.preventDefault();
+      return;
+    }
+    // After Radix' own attempt (same task) and React's re-render of a moved row.
+    setTimeout(() => {
+      if (focusedElement() === null) focusElement(sessionFocusTarget(sessionKey, place));
+    }, 0);
+  };
 }
 
 /** Menu items of the actions, as context-menu or dropdown-menu items. */

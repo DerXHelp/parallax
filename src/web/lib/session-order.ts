@@ -76,6 +76,8 @@ export interface SessionGroup<T> {
   label: string;
   /** At least one entry needs the user. */
   attention: boolean;
+  /** At least one entry is pinned (such groups come first, like pinned entries in the flat list). */
+  pinned: boolean;
   /** Newest `lastActivityAt` of the group (epoch ms). */
   lastActivity: number;
   /** Pinned first, then bucket → activity → title. */
@@ -89,7 +91,8 @@ function groupKeyOf(entry: WithSummary & { hostId?: string }): string {
 
 /**
  * Grouped sidebar (Plan "gruppiert nach Projekt"): non-archived entries per project folder
- * (case-insensitive, `windowsPathKey`); groups with attention first, then newest activity, then label.
+ * (case-insensitive, `windowsPathKey`); groups with a pinned entry first (V3-14, as in the flat
+ * list), then groups with attention, then newest activity, then label.
  */
 export function groupSessions<T extends WithSummary & { hostId?: string }>(
   entries: readonly T[],
@@ -106,6 +109,7 @@ export function groupSessions<T extends WithSummary & { hostId?: string }>(
         cwd: item.entry.summary.cwd,
         label: pathTail(item.entry.summary.cwd),
         attention: item.status.needsAttention,
+        pinned: item.entry.summary.pinned,
         lastActivity: activity,
         sessions: [item],
       });
@@ -113,6 +117,7 @@ export function groupSessions<T extends WithSummary & { hostId?: string }>(
     }
     group.sessions.push(item);
     group.attention ||= item.status.needsAttention;
+    group.pinned ||= item.entry.summary.pinned;
     if (activity > group.lastActivity) {
       group.lastActivity = activity;
       group.cwd = item.entry.summary.cwd;
@@ -122,6 +127,7 @@ export function groupSessions<T extends WithSummary & { hostId?: string }>(
   const result = [...groups.values()];
   for (const group of result) group.sessions = pinnedFirst(group.sessions);
   return result.sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
     if (a.attention !== b.attention) return a.attention ? -1 : 1;
     return b.lastActivity - a.lastActivity || a.label.localeCompare(b.label);
   });

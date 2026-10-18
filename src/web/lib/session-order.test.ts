@@ -68,7 +68,7 @@ describe('archivedOrder', () => {
 });
 
 describe('groupSessions', () => {
-  it('groups case-insensitively by folder, groups with attention first, then newest activity', () => {
+  it('groups case-insensitively by folder: pinned groups first, then attention, then newest activity', () => {
     const entries = [
       entry(1, { cwd: 'D:\\work\\api', minutes: 1 }),
       entry(2, { cwd: 'd:/WORK/api/', minutes: 40 }),
@@ -76,16 +76,25 @@ describe('groupSessions', () => {
       entry(4, { cwd: 'D:\\work\\docs', minutes: 10 }),
       entry(5, { cwd: 'D:\\work\\api', minutes: 3, pinned: true }),
       entry(6, { cwd: 'D:\\work\\web', minutes: 2, archived: true }),
+      entry(7, { cwd: 'D:\\work\\tools', minutes: 90 }),
     ];
     const groups = groupSessions(entries, NOW);
-    expect(groups.map((group) => group.key)).toEqual(['d:\\work\\web', 'd:\\work\\api', 'd:\\work\\docs']);
-    const api = groups[1];
+    // V3-14: the group of a pinned session comes first, as the pinned entry does in the flat list.
+    expect(groups.map((group) => group.key)).toEqual([
+      'd:\\work\\api',
+      'd:\\work\\web',
+      'd:\\work\\docs',
+      'd:\\work\\tools',
+    ]);
+    const api = groups[0];
     // Spelling of the newest entry; pinned first inside the group.
     expect(api?.cwd).toBe('D:\\work\\api');
     expect(api?.label).toBe('work\\api');
+    expect(api?.pinned).toBe(true);
     expect(api?.sessions.map((item) => item.entry.key)).toEqual(['k5', 'k1', 'k2']);
-    expect(groups[0]?.attention).toBe(true);
-    expect(keys(groupedOrder(groups))).toEqual(['k3', 'k5', 'k1', 'k2', 'k4']);
+    expect(groups[1]?.attention).toBe(true);
+    expect(groups[1]?.pinned).toBe(false);
+    expect(keys(groupedOrder(groups))).toEqual(['k5', 'k1', 'k2', 'k3', 'k4', 'k7']);
   });
 
   it('keeps hosts apart (multi-host)', () => {
