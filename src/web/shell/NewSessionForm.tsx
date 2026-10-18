@@ -53,6 +53,27 @@ export function focusSessionInput(sessionKey: string, frames = FOCUS_FRAMES): vo
 }
 
 /**
+ * A recent project's path in one line (V3-01): the parent part gives way first (ellipsis), the
+ * folder name stays visible as long as it fits; the full path is in the button's `title`.
+ */
+function ProjectPath({ path }: { path: string }) {
+  const short = shortPath(path, 3);
+  const cut = Math.max(short.lastIndexOf('\\'), short.lastIndexOf('/'));
+  const head = short.slice(0, cut + 1);
+  const name = short.slice(cut + 1);
+  return (
+    <>
+      {/* Two flex parts would read as two words: the name for assistive tech is the plain text. */}
+      <span aria-hidden className="flex min-w-0 font-mono text-2xs">
+        <span className="min-w-0 truncate">{head}</span>
+        <span className="max-w-full shrink-0 truncate">{name}</span>
+      </span>
+      <span className="sr-only">{short}</span>
+    </>
+  );
+}
+
+/**
  * The profile shown as chosen: the explicit choice (or the pre-filled one) if it still exists,
  * else the host's default profile (Plan "Claude-Profile": the default is always pre-selected).
  */
@@ -217,7 +238,7 @@ export function NewSessionForm({
                     )}
                   >
                     <FolderOpenIcon aria-hidden className="text-muted-foreground size-3.5 shrink-0" />
-                    <span className="min-w-0 truncate font-mono text-2xs">{shortPath(path, 3)}</span>
+                    <ProjectPath path={path} />
                   </button>
                 </li>
               );
