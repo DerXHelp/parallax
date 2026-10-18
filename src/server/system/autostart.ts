@@ -40,7 +40,10 @@ export interface LauncherCommandOptions {
 
 /**
  * `realpath(process.execPath)` + `[<repo>\node_modules\tsx\dist\cli.mjs, '--tsconfig',
- * <repo>\src\server\tsconfig.json, <repo>\src\server\launcher\main.ts, (--home=<home>,) …extra]`.
+ * <repo>\src\server\tsconfig.json, <repo>\src\server\launcher\main.ts, (--home=<home>,
+ * --system-integration=on,) …extra]`. R4-12: another data directory is only integrated with
+ * `--system-integration=on` (`auto` turns it off there) – the server the shortcut or the protocol
+ * handler starts gets the same mode, so it can undo the registration through its settings.
  */
 export async function launcherCommand(
   repoRoot: string,
@@ -56,7 +59,7 @@ export async function launcherCommand(
       '--tsconfig',
       path.win32.join(repoRoot, 'src', 'server', 'tsconfig.json'),
       path.win32.join(repoRoot, 'src', 'server', 'launcher', 'main.ts'),
-      ...(home === null ? [] : [`--home=${home}`]),
+      ...(home === null ? [] : [`--home=${home}`, '--system-integration=on']),
       ...extra,
     ],
     cwd: repoRoot,
@@ -83,6 +86,12 @@ export function autostartLinkPath(env: NodeJS.ProcessEnv): string | null {
   );
 }
 
+/**
+ * Marks a start command as Parallax's own (case-insensitive): the launcher's `main.ts` in the
+ * arguments – shortcut (R4-11) and protocol handler (system/protocol.ts).
+ */
+export const LAUNCHER_MARKER = 'launcher\\main.ts';
+
 /** The variables the script reads. */
 export const AUTOSTART_ENV = {
   action: 'PARALLAX_LNK_ACTION',
@@ -91,15 +100,32 @@ export const AUTOSTART_ENV = {
   args: 'PARALLAX_LNK_ARGS',
   cwd: 'PARALLAX_LNK_CWD',
   description: 'PARALLAX_LNK_DESCRIPTION',
+  /** R4-11: `LAUNCHER_MARKER` – a shortcut without it in its arguments is not removed. */
+  marker: 'PARALLAX_LNK_MARKER',
 } as const;
 
-/** The constant script: create (WScript.Shell) or remove the shortcut; exit 3 with the reason. */
+/** Output of the remove action for a shortcut that belongs to the user or another program (R4-11). */
+export const FOREIGN_SHORTCUT = 'foreign';
+
+/**
+ * The constant script: create (WScript.Shell) or remove the shortcut; exit 3 with the reason. The
+ * removal reads an existing shortcut first and leaves it alone (`foreign`) unless its arguments
+ * contain the marker (R4-11: e.g. a `Parallax.lnk` the user made on `parallax.cmd` in Phase 1).
+ */
 export const AUTOSTART_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
   'try {',
   `  $path = $env:${AUTOSTART_ENV.path}`,
   `  if ($env:${AUTOSTART_ENV.action} -eq 'remove') {`,
-  '    if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }',
+  '    if (Test-Path -LiteralPath $path) {',
+  '      $existing = (New-Object -ComObject WScript.Shell).CreateShortcut($path)',
+  `      $marker = ([string]$env:${AUTOSTART_ENV.marker}).ToLowerInvariant()`,
+  '      if (-not $marker -or -not ([string]$existing.Arguments).ToLowerInvariant().Contains($marker)) {',
+  `        Write-Output '${FOREIGN_SHORTCUT}'`,
+  '        exit 0',
+  '      }',
+  '      Remove-Item -LiteralPath $path -Force',
+  '    }',
   "    Write-Output 'removed'",
   '    exit 0',
   '  }',
@@ -128,7 +154,7 @@ export interface ShortcutOptions {
 
 async function runShortcutScript(
   vars: Record<string, string>,
-  expected: 'created' | 'removed',
+  expected: readonly string[],
   opts: ShortcutOptions,
 ): Promise<SystemOpResult> {
   const env: Record<string, string> = {};
@@ -137,21 +163,15 @@ async function runShortcutScript(
   }
   Object.assign(env, vars);
   try {
+    // R4-04: no `-ExecutionPolicy` – an `-EncodedCommand` is not subject to it.
     const result = await opts.run(
       powerShellPath(opts.env),
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-EncodedCommand',
-        encodePowerShell(AUTOSTART_SCRIPT),
-      ],
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodePowerShell(AUTOSTART_SCRIPT)],
       { env, timeoutMs: opts.timeoutMs ?? AUTOSTART_TIMEOUT_MS, maxOutputBytes: 16 * 1024 },
     );
     if (result.timedOut) return { ok: false, reason: 'timeout' };
     const output = result.stdout.trim();
-    if (result.exitCode === 0 && output.endsWith(expected)) return { ok: true };
+    if (result.exitCode === 0 && expected.some((word) => output.endsWith(word))) return { ok: true };
     return {
       ok: false,
       reason: `exit ${String(result.exitCode)}: ${(output || result.stderr.trim()).slice(0, 300)}`,
@@ -181,14 +201,21 @@ export async function createAutostartShortcut(
       [AUTOSTART_ENV.cwd]: command.cwd,
       [AUTOSTART_ENV.description]: PRODUCT_NAME,
     },
-    'created',
+    ['created'],
     opts,
   );
 }
 
-/** Removes the shortcut `link` (a missing one is fine). */
+/**
+ * Removes the own shortcut `link` (a missing one is fine); one whose arguments do not start the
+ * launcher (`LAUNCHER_MARKER`) belongs to someone else and stays (R4-11, also `ok`).
+ */
 export function removeAutostartShortcut(link: string, opts: ShortcutOptions): Promise<SystemOpResult> {
-  return runShortcutScript({ [AUTOSTART_ENV.action]: 'remove', [AUTOSTART_ENV.path]: link }, 'removed', opts);
+  return runShortcutScript(
+    { [AUTOSTART_ENV.action]: 'remove', [AUTOSTART_ENV.path]: link, [AUTOSTART_ENV.marker]: LAUNCHER_MARKER },
+    ['removed', FOREIGN_SHORTCUT],
+    opts,
+  );
 }
 
 /** Does the shortcut exist (a plain `access`, no PowerShell)? */

@@ -115,7 +115,8 @@ describe('assertNoUnsafeLink (R1-17: lstat/readlink per segment)', () => {
       'D:\\other': 'E:\\final',
     });
     await expect(assertNoUnsafeLink('C:\\work\\a\\b\\c', fs)).resolves.toBeUndefined();
-    // The drive root itself is never asked; each target is checked before going through it.
+    // The drive root itself is never asked; each target is checked before going through it, and
+    // the rest of the path continues where the links really lead (R4-10).
     expect(fs.touched).not.toContain('C:\\');
     expect(fs.touched).toEqual(
       expect.arrayContaining([
@@ -124,9 +125,23 @@ describe('assertNoUnsafeLink (R1-17: lstat/readlink per segment)', () => {
         'D:\\real\\b',
         'D:\\other',
         'E:\\final',
-        'C:\\work\\a\\b\\c',
+        'E:\\final\\b',
+        'E:\\final\\b\\c',
       ]),
     );
+    expect(fs.touched).not.toContain('C:\\work\\a\\b\\c');
+  });
+
+  it('R4-10: a relative target behind a link resolves against the folder it really lies in', async () => {
+    // C:\a\link → D:\x\y; D:\x\y\b → ..\..\z (= D:\z, not C:\z); D:\z → a share.
+    const fs = fakeLinks({
+      'C:\\a\\link': 'D:\\x\\y',
+      'D:\\x\\y\\b': '..\\..\\z',
+      'D:\\z': '\\\\server\\share',
+    });
+    expect(payload(await errorOf(assertNoUnsafeLink('C:\\a\\link\\b', fs)))).toEqual(rejected);
+    expect(payload(await errorOf(assertNoUnsafeLink('C:\\a\\link\\b\\deeper', fs)))).toEqual(rejected);
+    expect(fs.touched.some((p) => p.startsWith('\\\\'))).toBe(false);
   });
 
   it.each([

@@ -3,7 +3,8 @@
  * – for `pnpm dev --backend=fake`, engine tests and E2E. Profiles come from a profile store (a
  * passed one – e.g. the persistent `profiles.json` store of WP-32 – wins over `profiles`); every
  * profile reports `ok`/`logged_in` (no setup screen), `launchSpecFor` returns a LaunchSpec with a
- * fake executable and an empty env, `consoleLaunchFor` (Phase 2, WP-34) the console spec of
+ * fake executable and an env of only the lookup variables of `launchEnv` (V3-11: the fake server's
+ * git branch; tests: empty), `consoleLaunchFor` (Phase 2, WP-34) the console spec of
  * `claude --resume <id>` for the fake console. Tests can make the next launches fail.
  */
 import type { EntryId, ProfileId } from '@shared/common';
@@ -11,6 +12,7 @@ import { makeError, type ErrorPayload } from '@shared/errors';
 import type { ClaudeInstallStatus, Profile, ProfileSummary } from '@shared/model';
 import { parseProfileArgs } from '../../claude/profileArgs';
 import { createProfileStore, type MutableProfileStore } from '../../claude/profiles';
+import { getEnvVar } from '../../lib/windows';
 import type {
   ClaudeIntegration,
   ConsoleLaunchRequest,
@@ -38,7 +40,36 @@ export interface FakeClaudeIntegrationOptions {
    * must never reach a log, an op or an item. Default {}.
    */
   consoleEnv?: Readonly<Record<string, string>>;
+  /**
+   * V3-11: base environment whose lookup variables (`FAKE_LAUNCH_ENV_KEYS`: PATH, PATHEXT,
+   * SystemRoot …) every launch spec carries – the fake server passes `process.env`, so the git-branch
+   * lookup finds `git` (resolveExecutable over the session PATH). Default none (tests: empty env).
+   */
+  launchEnv?: Readonly<Record<string, string | undefined>>;
   now?: () => Date;
+}
+
+/** V3-11: what a git lookup needs from the environment (no secrets, no session markers). */
+export const FAKE_LAUNCH_ENV_KEYS: readonly string[] = [
+  'PATH',
+  'PATHEXT',
+  'SystemRoot',
+  'windir',
+  'USERPROFILE',
+  'HOMEDRIVE',
+  'HOMEPATH',
+  'TEMP',
+  'TMP',
+];
+
+/** The `FAKE_LAUNCH_ENV_KEYS` of `base` (case-insensitive, under the canonical names). */
+export function fakeLaunchEnv(base: Readonly<Record<string, string | undefined>>): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const name of FAKE_LAUNCH_ENV_KEYS) {
+    const value = getEnvVar(base, name);
+    if (value !== undefined) env[name] = value;
+  }
+  return env;
 }
 
 export interface FakeClaudeIntegration extends ClaudeIntegration {
@@ -75,6 +106,7 @@ export function createFakeClaudeIntegration(
   const launches: { profileId: ProfileId; entryId: EntryId }[] = [];
   const consoleLaunches: ConsoleLaunchRequest[] = [];
   const consoleEnv = { ...options.consoleEnv };
+  const launchEnv = options.launchEnv;
   let launchError: ErrorPayload | null = null;
 
   const bypassOverride = (summary: ProfileSummary): ProfileSummary =>
@@ -114,7 +146,7 @@ export function createFakeClaudeIntegration(
         profileId: profile.id,
         executablePath: FAKE_CLAUDE_PATH,
         executableVersion: FAKE_CLAUDE_VERSION,
-        env: {},
+        env: launchEnv === undefined ? {} : fakeLaunchEnv(launchEnv),
         configDir: profile.configDir,
         sdkOptions: args.sdkOptions,
         extraArgs: args.extraArgs,

@@ -6,6 +6,7 @@ import type { Logger } from 'pino';
 import { conversationIdSchema, type ConversationId, type EntryId } from '@shared/common';
 import { makeError } from '@shared/errors';
 import type { TranscriptItem } from '@shared/model';
+import { isTestRun } from '../config';
 import { logger as rootLogger, shouldLogRepeated } from '../lib/logger';
 import { fsErrorCode } from '../lib/paths';
 import { transcriptLogLineSchema, type TranscriptLogLine, type TranscriptStore } from '../sync/ports';
@@ -85,7 +86,7 @@ interface FileState {
 }
 
 function defaultValidation(): TranscriptValidation {
-  return process.env.VITEST !== undefined || process.env.NODE_ENV === 'test' ? 'throw' : 'off';
+  return isTestRun() ? 'throw' : 'off';
 }
 
 type Fold = Map<string, TranscriptItem>;

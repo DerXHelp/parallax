@@ -499,6 +499,29 @@ describe('consoleLaunchFor (Phase 2, ADR-104)', () => {
     expect(redactText(`token ${secret}`)).toBe(`token ${REDACTED}`);
   });
 
+  it.each<[string, 'launch' | 'check']>([
+    ['launchSpecFor', 'launch'],
+    ['checkProfile', 'check'],
+  ])(
+    'R4-07 (ADR-124): %s registers the resolved secret values of the profile (not only the console)',
+    async (_name, call) => {
+      const secret = `resolved-${call}-secret-4711`;
+      const plain = `resolved-${call}-plain-value`;
+      const profile = sampleProfile({
+        env: { AWS_BEARER_TOKEN_BEDROCK: '${env:BEDROCK}', NOTE: '${env:PLAIN_NOTE}' },
+      });
+      const { integration } = setup({
+        profileList: [profile],
+        baseEnv: { ...BASE_ENV, BEDROCK: secret, PLAIN_NOTE: plain },
+      });
+      expect(redactText(`x ${secret}`)).toBe(`x ${secret}`);
+      if (call === 'launch') await integration.launchSpecFor(profile.id, SAMPLE_IDS.entry);
+      else await integration.checkProfile(profile.id);
+      expect(redactText(`x ${secret}`)).toBe(`x ${REDACTED}`);
+      expect(redactText(`x ${plain}`)).toBe(`x ${plain}`);
+    },
+  );
+
   it.each<[string, Partial<Profile>, Partial<ConsoleLaunchRequest>, string, Record<string, unknown>]>([
     ['error issues', { args: ['--print'] }, {}, 'PROFILE_INVALID', { count: 1 }],
     [

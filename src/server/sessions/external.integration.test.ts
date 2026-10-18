@@ -16,8 +16,9 @@ import type { SessionOp } from '@shared/protocol';
 import { SAMPLE_TIME } from '@shared/samples';
 import { FAKE_CONSOLE_PROMPT, fakeConsoleAnswer } from '../backend/fakeBackend';
 import type { HistoryMessage } from '../backend/types';
-import { consoleCommandText } from '../claude/consoleCommand';
+import { consoleCommandText, secretPrompt } from '../claude/consoleCommand';
 import { REDACTED } from '../lib/logger';
+import { CommandError } from '../sync/ports';
 import { HANDOFF_IMPORT_SLACK_MS } from './external';
 import {
   createTestConsoleLauncher,
@@ -248,6 +249,121 @@ describe('session.openExternal (ADR-104)', () => {
 });
 
 // =====================================================================================
+// Races with a slow console start (R4-01, R4-03)
+// =====================================================================================
+
+describe('commands and the shutdown while the console opens (R4-01, R4-03)', () => {
+  it('R4-01: prompt, resume, second openExternal, archive and switch that waited for the lock → SESSION_EXTERNAL', async () => {
+    const { h, launcher } = await setup();
+    const entryId = await idleEntry(h);
+    const starts = h.backend.starts.length;
+    const conversationId = h.manager.inspect(entryId)?.conversationId ?? '';
+    const hold = launcher.holdNext();
+    const opening = h.cmd({ name: 'session.openExternal', entryId });
+    await hold.reached;
+    // Each passed the gate on arrival (the entry was not external yet) and waits for the lock.
+    const waiting = [
+      h.cmdError({ name: 'session.sendPrompt', entryId, prompt: { text: 'Reply with exactly: OK' } }),
+      h.cmdError({ name: 'session.resume', entryId }),
+      h.cmdError({ name: 'session.openExternal', entryId }),
+      h.cmdError({ name: 'session.setArchived', entryId, archived: true }),
+      h.cmdError({ name: 'session.switchConversation', entryId, conversationId }),
+    ];
+    await h.settle();
+    hold.release();
+    expect(await opening).toEqual({ pid: PID });
+    const errors = await Promise.all(waiting);
+    expect(errors).toEqual(errors.map(() => ({ code: 'SESSION_EXTERNAL', params: { entryId } })));
+    // Never two writers: one console, no new SDK process, the status stays external.
+    expect(launcher.opened).toHaveLength(1);
+    expect(h.backend.starts).toHaveLength(starts);
+    expect(h.facts(entryId).runState).toBe('external');
+    expect(h.summary(entryId)).toMatchObject({ archived: false, external: { pid: PID, running: true } });
+    expect(h.manager.inspect(entryId)).toMatchObject({ phase: 'dormant', externalWatched: true });
+  });
+
+  it('R4-03: a shutdown while the console opens waits for it; the handoff survives the restart', async () => {
+    const s = await setup();
+    const entryId = await idleEntry(s.h);
+    const hold = s.launcher.holdNext();
+    const opening = s.h.cmd({ name: 'session.openExternal', entryId });
+    await hold.reached;
+    let stopped = false;
+    const stopping = s.h.manager.shutdown().then(() => {
+      stopped = true;
+    });
+    await s.h.settle();
+    expect(stopped).toBe(false);
+    hold.release();
+    expect(await opening).toEqual({ pid: PID });
+    await stopping;
+    expect(s.h.stores.registry.get(entryId)?.external).toMatchObject({ pid: PID });
+    const h = await restart(s);
+    expect(h.facts(entryId).runState).toBe('external');
+    expect(h.manager.inspect(entryId)?.externalWatched).toBe(true);
+    expect(s.launcher.opened).toHaveLength(1);
+  });
+
+  it('R4-03: the wait is bounded (lifecycleShutdownWaitMs); a console opened afterwards is still recorded', async () => {
+    const s = await setup({ options: { lifecycleShutdownWaitMs: 4_000 } });
+    const entryId = await idleEntry(s.h);
+    const hold = s.launcher.holdNext();
+    const opening = s.h.cmd({ name: 'session.openExternal', entryId });
+    await hold.reached;
+    let stopped = false;
+    const stopping = s.h.manager.shutdown().then(() => {
+      stopped = true;
+    });
+    await s.h.settle();
+    s.h.timers.advance(3_999);
+    await s.h.settle();
+    expect(stopped).toBe(false);
+    s.h.timers.advance(1);
+    await stopping;
+    hold.release();
+    expect(await opening).toEqual({ pid: PID });
+  });
+
+  it('R4-03: a shutdown before the console opens → SERVER_SHUTTING_DOWN, nothing opened', async () => {
+    const { h, launcher } = await setup();
+    const entryId = await idleEntry(h);
+    const gate = Promise.withResolvers<undefined>();
+    const reached = Promise.withResolvers<undefined>();
+    const launchFor = h.claude.consoleLaunchFor.bind(h.claude);
+    h.claude.consoleLaunchFor = async (req) => {
+      reached.resolve(undefined);
+      await gate.promise;
+      return launchFor(req);
+    };
+    const opening = h.cmdError({ name: 'session.openExternal', entryId });
+    await reached.promise;
+    const stopping = h.manager.shutdown();
+    await h.settle();
+    gate.resolve(undefined);
+    expect(await opening).toEqual({ code: 'SERVER_SHUTTING_DOWN', params: {} });
+    await stopping;
+    expect(launcher.opened).toEqual([]);
+    expect(h.stores.registry.get(entryId)?.external).toBeNull();
+  });
+
+  it('R4-09: a deleted working folder → CWD_NOT_FOUND before the query is closed', async () => {
+    const missing = { value: false };
+    const { h, launcher } = await setup({
+      checkCwd: (cwd) => {
+        if (missing.value) return Promise.reject(new CommandError(makeError('CWD_NOT_FOUND', { cwd })));
+        return Promise.resolve();
+      },
+    });
+    const entryId = await idleEntry(h);
+    missing.value = true;
+    expect((await h.cmdError({ name: 'session.openExternal', entryId })).code).toBe('CWD_NOT_FOUND');
+    expect(launcher.opened).toEqual([]);
+    expect(h.session(entryId).state).not.toBe('exited');
+    expect(h.facts(entryId).runState).toBe('idle');
+  });
+});
+
+// =====================================================================================
 // Watch, return, reclaim
 // =====================================================================================
 
@@ -470,9 +586,12 @@ describe('session.consoleCommand and secrets (ADR-104)', () => {
     const { h, launcher } = s;
     const entryId = await idleEntry(h);
 
-    // The copy command carries the env on purpose (ADR-104) – only in the command result.
+    // ADR-123 (R4W-08): the copy command asks for secret values instead of carrying them; other
+    // values of the profile env stay in the line.
     const copy = await h.cmd({ name: 'session.consoleCommand', entryId });
-    expect(copy.command).toContain(SECRET);
+    expect(copy.command).not.toContain(SECRET);
+    expect(copy.command).toContain(`$env:API_TOKEN=${secretPrompt('API_TOKEN')}`);
+    expect(copy.command).toContain(`$env:CLAUDE_CONFIG_DIR='D:\\cfg'`);
 
     launcher.failNext(`Start-Process failed for API_TOKEN=${SECRET} in D:\\cfg`);
     const failed = await h.cmdError({ name: 'session.openExternal', entryId });

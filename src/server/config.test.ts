@@ -1,8 +1,10 @@
+import { rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_PORT } from '@shared/model';
+import { makeTempHome } from './http/testServer';
 import {
   ConfigError,
-  DEFAULT_PORT,
   createServerInstance,
   defaultHome,
   loadConfig,
@@ -237,6 +239,21 @@ describe('port from settings.json (ADR-111)', () => {
     });
     expect(peek).toEqual({ settings: null, note: expect.stringMatching(/not readable: EACCES/) as string });
     expect(readSettingsFile('D:\\px', reader({}))).toEqual({ settings: null, note: null });
+  });
+
+  it('R4-15: the real reader checks the size first – a file over 1 MiB is not read', async () => {
+    const home = await makeTempHome('r4-settings-');
+    try {
+      await writeFile(path.join(home, 'settings.json'), ' '.repeat(1024 * 1024 + 1));
+      expect(readSettingsFile(home)).toEqual({
+        settings: null,
+        note: expect.stringMatching(/not readable: file too large/) as string,
+      });
+      await writeFile(path.join(home, 'settings.json'), settingsFile(4890));
+      expect(readSettingsFile(home).settings?.port).toBe(4890);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it('never reads the real data directory under Vitest, even with a hand-made env', () => {

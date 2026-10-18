@@ -14,13 +14,13 @@ import { PROTOCOL_SCHEME } from '@shared/http';
 import { PRODUCT_NAME } from '@shared/product';
 import { windowsCommandLine } from '../lib/cmdline';
 import { parseRegDefaultValue, type RegAddValue, type RegDeleteKey, type RegQuery } from '../lib/registry';
-import type { StartCommand } from './autostart';
+import { LAUNCHER_MARKER, type StartCommand } from './autostart';
 import type { SystemOpResult } from './run';
 
 export const PROTOCOL_KEY = `HKCU\\Software\\Classes\\${PROTOCOL_SCHEME}`;
 export const PROTOCOL_COMMAND_KEY = `${PROTOCOL_KEY}\\shell\\open\\command`;
-/** Marks a command as Parallax's own (case-insensitive). */
-export const OWN_COMMAND_MARKER = 'launcher\\main.ts';
+/** Marks a command as Parallax's own (case-insensitive; the same marker as the autostart shortcut). */
+export const OWN_COMMAND_MARKER = LAUNCHER_MARKER;
 /** `reason` of a handler that belongs to another program. */
 export const FOREIGN_HANDLER = 'foreign';
 

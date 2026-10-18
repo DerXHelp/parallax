@@ -8,6 +8,7 @@
  * - profile ids are unique (the first one wins);
  * - exactly one `isDefault` (several → the first, none → "Standard").
  * Values of secret env names (`isSecretEnvKey`) are registered with the logger on load and save.
+ * A save that changes executable, env or config dir drops the profile's check status (R4-06).
  * The mutations are no port (WP-30 §4.11): only the profile commands and the composition use them.
  */
 import { statSync } from 'node:fs';
@@ -34,6 +35,7 @@ import { CommandError } from '../sync/ports';
 import { errorCount, profileIssues, type ProfileIssueContext } from './profileIssues';
 import {
   STANDARD_PROFILE,
+  profileResolutionKey,
   profileSummary,
   registerEnvSecrets,
   uncheckedClaudeStatus,
@@ -288,7 +290,12 @@ export async function openProfileStore(options: OpenProfileStoreOptions): Promis
       };
       commit(existing === undefined ? [...list(), profile] : list().map((p) => (p.id === id ? profile : p)));
       registerEnvSecrets(profile.env);
-      log.info({ profileId: id, created: existing === undefined }, 'profile saved');
+      // R4-06: another executable, env or config dir (other account, other claude) makes the last
+      // check stale – back to "checking"; the change listener (compose.ts) checks it again.
+      const recheck =
+        existing !== undefined && profileResolutionKey(existing) !== profileResolutionKey(profile);
+      if (recheck) statuses.delete(id);
+      log.info({ profileId: id, created: existing === undefined, recheck }, 'profile saved');
       changed();
       return requireProfile(id);
     },

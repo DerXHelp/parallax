@@ -25,7 +25,7 @@ import {
   type SessionSnapshot,
 } from '@shared/protocol';
 import { applySessionOp, trimItems, type SessionViewState } from '@shared/sync';
-import type { ServerInstance } from '../config';
+import { isTestRun, type ServerInstance } from '../config';
 import type { HubAttachOptions } from '../http/app';
 import { replyError as replyHttpError, sendError as sendHttpError } from '../http/reply';
 import { logger as rootLogger, shouldLogRepeated } from '../lib/logger';
@@ -272,7 +272,7 @@ function withoutThrottledFields(
 }
 
 function defaultValidation(): OutgoingValidation {
-  return process.env.VITEST !== undefined || process.env.NODE_ENV === 'test' ? 'throw' : 'off';
+  return isTestRun() ? 'throw' : 'off';
 }
 
 const itemCharsCache = new WeakMap<object, number>();

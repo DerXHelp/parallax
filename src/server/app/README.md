@@ -20,14 +20,18 @@ Hub und Transkript-Store validieren ausgehende Werte mit `config.validation` (`-
 Startbefehle der Systemintegration; fehlt = keine Systemintegration), `systemIntegration`
 (Test-Seam), `logging` (wird als Letztes geschlossen), `exit` (Default `process.exit`), `signals`
 (Default `process`, null = keine), `fakeSpeed` (Default 1), `findRunning`, `homeLock` (von
-`main.ts`, Schritt nach dem Lockfile), `homeAccess` (Default `logHomeAccess`, null = keine),
-`logger`. Shutdown-Schritte nach `manager.shutdown()` (der auch `backend.dispose()` ruft und die
-Slash-Befehls-Caches flusht): `http → system → stores → homeAccess → lock → homeLock`. Der
+`main.ts`, Schritt nach dem Lockfile), `homeAccess(home, signal)` (Default `logHomeAccess`, null =
+keine; `signal` bricht eine noch laufende Prüfung beim Beenden ab, V3-15 b), `logger`.
+Shutdown-Schritte nach `manager.shutdown()` (der auch `backend.dispose()` ruft und die
+Slash-Befehls-Caches flusht): `http → system → profileChecks (R4-13) → stores → homeAccess (Abbruch)
+→ lock → homeLock`. „Profil testen“ läuft für jedes Profil mit `checkedAt` null – neue Profile und
+solche, deren Executable/Env/Config-Ordner sich geändert hat (R4-06). Der
 Prozess-Test des Einstiegs liegt in `src/server/main.integration.test.ts` (tsx-Kindprozess,
 Launcher-Code → Cookie → WS → Permission → `server.shutdown`, Exit-Codes 3, 4, 5).
 
 Verdrahtung Phase 2 (WP-31 §2.4, WP-32, WP-33, WP-34 §2.4): `openProfileStore` vor der Integration
-(`createFakeClaudeIntegration({store})` bzw. `createClaudeIntegration({appVersion, profiles})`),
+(`createFakeClaudeIntegration({store, launchEnv: process.env})` – PATH & Co. für die Git-Branch-Suche,
+V3-11 – bzw. `createClaudeIntegration({appVersion, profiles})`),
 `openCatalogStore` + `createCommandCatalogStore` an den Manager, `store.onChange →
 manager.onProfileChanged()`, `hostCommands: [createProfileCommands(…), createFsCommands()]`,
 `createSystemIntegration({available: systemIntegrationAvailable(config), repoRoot, home})` mit

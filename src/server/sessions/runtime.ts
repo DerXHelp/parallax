@@ -11,12 +11,20 @@ import type { ClientId, PermissionMode, PromptPriority } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import { currentConversation, currentSessionId } from '@shared/model';
 import { openDecisionCount } from '@shared/status';
+import type { SessionOp } from '@shared/protocol';
 import type { AgentSession, BackendEvent } from '../backend/types';
 import type { LaunchSpec } from '../claude/ports';
 import { CommandError } from '../sync/ports';
 import { NO_ATTACHMENTS, promptContent, type PromptAttachments } from './attachments';
 import { toSlashCommands } from './commandCatalog';
-import { commandError, errorMessage, errorPayloadOf, type EngineCore, type EntryState } from './entryState';
+import {
+  commandError,
+  errorMessage,
+  errorPayloadOf,
+  isExternal,
+  type EngineCore,
+  type EntryState,
+} from './entryState';
 import { toModelCatalog } from './models';
 import type { LiveNormalizer, StatusSignal } from './ports';
 import { afterSuccessfulTurn, decideRetry } from './retry';
@@ -37,6 +45,21 @@ const STDERR_MESSAGE_CHARS = 1000;
 /** supportedModels() attempts before a process that started without a prompt counts as failed (R2-04). */
 export const READY_ATTEMPTS = 2;
 
+/** ADR-121: tools with which Claude plans a later turn of this process (the CLI keeps the plan in memory). */
+export const SCHEDULING_TOOLS: ReadonlySet<string> = new Set(['ScheduleWakeup', 'CronCreate']);
+
+/** ADR-121: a prompt that starts with the `/loop` command (repeats itself in this process). */
+export function isLoopPrompt(text: string): boolean {
+  return /^\/loop(?:\s|$)/i.test(text.trimStart());
+}
+
+/** ADR-121: the ops contain a tool call of `SCHEDULING_TOOLS` (also a streaming or subagent one). */
+function plansTurn(ops: readonly SessionOp[]): boolean {
+  return ops.some(
+    (op) => op.op === 'item.upsert' && op.item.kind === 'tool_call' && SCHEDULING_TOOLS.has(op.item.toolName),
+  );
+}
+
 export class SessionRuntime {
   pid: number | null;
   spawnedAt: Date | null = null;
@@ -44,6 +67,12 @@ export class SessionRuntime {
   sessionStateSeen = false;
   /** A prompt went to this process (readiness then sets no synthetic idle). */
   sentSinceStart = false;
+  /**
+   * ADR-121 (R4-02): this process has a planned turn (`ScheduleWakeup`/`CronCreate`, a `/loop`
+   * prompt) – it never falls asleep. Conservative: stays set until the process ends (`CronDelete`
+   * does not clear it); a new process starts without it.
+   */
+  scheduled = false;
   /** close() was requested (an iterator end counts as expected). */
   closing = false;
   /** The normalizer may still be used (false once the exit was handled). */
@@ -161,7 +190,16 @@ export class SessionRuntime {
     if (!this.alive) return;
     const out = this.normalizer.push(raw, at);
     this.state.emit(out.ops);
+    if (!this.scheduled && plansTurn(out.ops)) this.markScheduled('tool');
     for (const signal of out.signals) this.onSignal(signal);
+  }
+
+  /** ADR-121: from now on this process never falls asleep (a planned idle sleep is dropped). */
+  markScheduled(by: 'tool' | 'loop'): void {
+    if (this.scheduled) return;
+    this.scheduled = true;
+    this.core.log.info({ entryId: this.state.id, by }, 'planned turn – no idle sleep for this process');
+    this.core.considerSleep(this.state);
   }
 
   // ---- signals (§3.5.5; ops of the same output are already published) ----
@@ -552,6 +590,9 @@ export async function startRuntime(
   core.assertRunning();
   // ADR-106: an archived entry never starts (also not a start queued before the archiving, a retry).
   if (s.entry.archived) throw commandError('SESSION_ARCHIVED', { entryId: s.id });
+  // ADR-104 / R4-01: never a second writer next to the external console (prompt, resume, plan
+  // approval, retry, scheduled "continue" – also one that waited for the lock during the handoff).
+  if (isExternal(s)) throw commandError('SESSION_EXTERNAL', { entryId: s.id });
   s.phase = 'starting';
   try {
     if (s.orphanPending) {
@@ -694,6 +735,7 @@ export function deliverPrompt(
   const messageUuid = core.ids.newUuid();
   const rename = parseRenameCommand(text);
   if (rename !== null) s.pendingRename = rename;
+  if (isLoopPrompt(text)) runtime.markScheduled('loop');
   if (priority === 'now' && s.broker.open().some((d) => d.requester.kind === 'main')) {
     s.broker.cancel('main', 'interrupted', 'deny');
   }

@@ -87,6 +87,31 @@ describe('logger redaction', () => {
     );
   });
 
+  it.each([
+    'AWS_BEARER_TOKEN_BEDROCK',
+    'GH_TOKEN_CI',
+    'AWS_CREDENTIALS',
+    'ANTHROPIC_API_KEY',
+    'ANTHROPIC_AUTH_TOKEN',
+    'Db_Password_Main',
+    'MY_PASSWD',
+    'X_APIKEY',
+    'ANTHROPIC_CUSTOM_HEADERS',
+  ])('R4-07 (ADR-124): scrubs the value of %s as an assignment and as a JSON key', (name) => {
+    const value = 'v4lue-of-the-secret';
+    expect(redactText(`stderr: ${name}=${value} rest`)).toBe(`stderr: ${name}=${REDACTED} rest`);
+    expect(redactText(`{"${name}":"${value}"}`)).toBe(`{"${name}":"${REDACTED}"}`);
+    expect(redactText(`"{\\"${name}\\":\\"${value}\\"}"`)).not.toContain(value);
+  });
+
+  it.each(['KEYBOARD_LAYOUT', 'TOKENIZER_PATH', 'max_tokens', 'PATH', 'MONKEY'])(
+    'R4-07: keeps %s readable',
+    (name) => {
+      expect(redactText(`${name}=visible-value-1`)).toBe(`${name}=visible-value-1`);
+      expect(redactText(`{"${name}":"visible-value-1"}`)).toBe(`{"${name}":"visible-value-1"}`);
+    },
+  );
+
   it('keeps the dev login URL readable (codes are only logged in dev mode, by design)', () => {
     const url = 'http://127.0.0.1:5173/#code=tok0000000000000000000000000000000000000001';
     expect(redactText(url)).toBe(url);

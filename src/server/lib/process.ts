@@ -23,6 +23,11 @@ export interface RunFileOptions {
   timeoutMs: number;
   /** Per stream (stdout, stderr); more output is read and discarded. Default 1 MiB. */
   maxOutputBytes?: number;
+  /**
+   * Ends the process tree like the timeout (`timedOut: true`), e.g. at the server shutdown (V3-15);
+   * already aborted → nothing is started.
+   */
+  signal?: AbortSignal;
 }
 
 export interface RunFileResult {
@@ -92,6 +97,21 @@ export function systemTool(name: string, env: NodeJS.ProcessEnv = process.env): 
 }
 
 /**
+ * `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` – the one place of this path
+ * (R4-14; re-exported by lib/powershell.ts for the constant scripts).
+ */
+export function powerShellPath(env: NodeJS.ProcessEnv = process.env): string {
+  return systemTool(path.win32.join('WindowsPowerShell', 'v1.0', 'powershell.exe'), env);
+}
+
+/**
+ * .NET format of `DateTime.ToString(…)` for an ISO-8601 UTC time with milliseconds – no
+ * culture-dependent specifier. Used by the process queries below and system/console.ts
+ * (re-exported by lib/powershell.ts, R4-14).
+ */
+export const POWERSHELL_UTC_ISO_FORMAT = "yyyy-MM-dd'T'HH':'mm':'ss'.'fff'Z'";
+
+/**
  * spawn() with `shell: false` and `windowsHide: true` (cannot be overridden). A piped stderr is
  * always consumed (F.16); see `onStderr`. The caller must handle the child's `error` event
  * (spawn failures such as ENOENT arrive there) and should end trees with killProcessTree().
@@ -137,8 +157,8 @@ function collector(max: number): { push(chunk: Buffer): void; text(): string } {
 
 /**
  * Runs `file args` to completion (like execFile, but never through a shell). Resolves for any exit
- * code; rejects only when the process cannot be started (ENOENT, EACCES, …). On timeout the whole
- * process tree is killed (`taskkill /T /F`), so no grandchild survives.
+ * code; rejects only when the process cannot be started (ENOENT, EACCES, …). On timeout (or an
+ * aborted `signal`) the whole process tree is killed (`taskkill /T /F`), so no grandchild survives.
  */
 export function runFile(
   file: string,
@@ -147,6 +167,11 @@ export function runFile(
 ): Promise<RunFileResult> {
   const max = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   return new Promise<RunFileResult>((resolve, reject) => {
+    const abortSignal = options.signal;
+    if (abortSignal?.aborted === true) {
+      resolve({ exitCode: null, signal: null, stdout: '', stderr: '', timedOut: true });
+      return;
+    }
     let child: ChildProcess;
     try {
       assertSpawnableFile(file);
@@ -172,10 +197,14 @@ export function runFile(
       settled = true;
       clearTimeout(timer);
       clearTimeout(graceTimer);
+      abortSignal?.removeEventListener('abort', stop);
       resolve({ exitCode, signal, stdout: stdout.text(), stderr: stderr.text(), timedOut });
     };
 
-    const timer = setTimeout(() => {
+    /** Timeout or abort: the whole tree is ended, then `close` is awaited (bounded). */
+    const stop = (): void => {
+      if (settled || timedOut) return;
+      clearTimeout(timer);
       timedOut = true;
       const pid = child.pid;
       const kill = pid === undefined ? Promise.resolve() : killProcessTree(pid);
@@ -189,7 +218,9 @@ export function runFile(
             finish(null, 'SIGKILL');
           }, CLOSE_GRACE_MS);
         });
-    }, options.timeoutMs);
+    };
+    const timer = setTimeout(stop, options.timeoutMs);
+    abortSignal?.addEventListener('abort', stop, { once: true });
 
     child.stdout?.on('data', (chunk: Buffer) => {
       stdout.push(chunk);
@@ -202,6 +233,7 @@ export function runFile(
       settled = true;
       clearTimeout(timer);
       clearTimeout(graceTimer);
+      abortSignal?.removeEventListener('abort', stop);
       reject(error);
     });
     child.once('close', (code, signal) => {
@@ -376,7 +408,7 @@ function processQueryScript(wqlFilter: string | null): string {
     // ProcessId 0 (System Idle Process) has a CreationDate too, but no positive PID.
     `Where-Object { $_.CreationDate -and $_.ProcessId -gt 0 } | ForEach-Object { @{ pid = [int]$_.ProcessId; name = [string]$_.Name; ` +
     `parentPid = [int]$_.ParentProcessId; ` +
-    `startedAt = $_.CreationDate.ToUniversalTime().ToString("yyyy-MM-dd'T'HH':'mm':'ss'.'fff'Z'") } }); ` +
+    `startedAt = $_.CreationDate.ToUniversalTime().ToString("${POWERSHELL_UTC_ISO_FORMAT}") } }); ` +
     `ConvertTo-Json -InputObject $c -Compress } catch { Write-Output ('error: ' + $_.Exception.Message); exit 3 }`
   );
 }
@@ -422,7 +454,7 @@ async function runProcessQuery(
   let result: RunFileResult;
   try {
     result = await run(
-      systemTool(path.win32.join('WindowsPowerShell', 'v1.0', 'powershell.exe')),
+      powerShellPath(),
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', processQueryScript(wqlFilter)],
       { timeoutMs, maxOutputBytes: 1024 * 1024 },
     );
