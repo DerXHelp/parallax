@@ -12,10 +12,12 @@ Design: `docs/wp/WP-13.md` §3.3, Ergebnis und Stolpersteine: `docs/wp/WP-13a.md
 | `player.ts` | `EventPlayer` für Fixture-Format v1 (Abspielregeln §3.3), `compareDecision` |
 | `common.ts` | `SessionStopped`, `TurnInterrupted`, `mapUuids`, Prompt-Helfer (echtes `setImmediate`/`nextMacrotask` jetzt aus `lib/async.ts`, R2-10) |
 | `dsl.ts` | Bausteine über WP-12 `synthetic/build.ts` (Turns, Blöcke, Entscheidungen, Subagents, Interrupt, `/clear`, `/rename`, Fehler, Crash) |
-| `interactive.ts` | Dev-Szenario mit Schlüsselwörtern (`fake:bash` … `/clear`) |
-| `defaults.ts` | Fake-Antworten: `getContextUsage`, `supportedModels`, `supportedCommands` |
+| `interactive.ts` | Dev-Szenario mit Schlüsselwörtern (`fake:bash` … `/clear`; Phase 2: `fake:image` = Read mit Bild-Ergebnis, `fake:ratelimit` mit Reset in 60 s; Prompt mit Bildern → „Fake: received N image(s)“) |
+| `defaults.ts` | Fake-Antworten: `getContextUsage`, `supportedModels`, `supportedCommands` (inkl. Terminal-Befehle) |
 | `history.ts` | `FakeHistoryStore` (Rohformen wie das SDK, Import aus `history.jsonl`) |
-| `integration.ts` | `createFakeClaudeIntegration()` (Port `ClaudeIntegration` ohne `claude`) |
+| `integration.ts` | `createFakeClaudeIntegration({store?, consoleEnv?})` (Port `ClaudeIntegration` ohne `claude`, `consoleLaunchFor` → Fake-Konsolen-Spec) |
+| `console.ts` | `FAKE_CONSOLE_PROMPT`, `fakeConsoleAnswer`, `consoleTurnMessages` – Turns einer simulierten externen Konsole (`FakeBackend.simulateConsoleTurn`, WP-34) |
+| `image.ts` | `FAKE_SHOT_PNG_BASE64` (gültiges 24×16-PNG), `promptImageCount`, `receivedImagesText` |
 | `testing.ts` | nur Tests: `loadFixtureScenario`, `fixtureDecisionResponder`, `recordedPrompts`, `driveFixtureSession` |
 | `<name>.ts`, `synthetic.ts` | synthetische Engine-Szenarien (`export const events`), Index `FAKE_SCENARIOS` |
 
