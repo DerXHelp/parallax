@@ -81,6 +81,48 @@ export class ParallaxApp {
   notices(): Locator {
     return this.page.locator('[data-slot="notification-center"] [data-notice]');
   }
+
+  // ---- Phase 2 (WP-35 sidebar, WP-38 settings page; WP-40) ----
+
+  /** The session list of the sidebar (`data-view` = flat | grouped | archive). */
+  sidebar(): Locator {
+    return this.page.getByRole('navigation', { name: 'Sessions' });
+  }
+
+  /** The row button of a session in the sidebar. */
+  row(sessionKey: string): Locator {
+    return this.page.locator(`[data-session-row="${sessionKey}"]`);
+  }
+
+  /** Display status of a sidebar row (`data-status` of its status icon). */
+  rowStatus(sessionKey: string): Locator {
+    return this.row(sessionKey).locator('[data-slot="status-icon"]');
+  }
+
+  /** Session keys of the sidebar rows in their visible order. */
+  async rowKeys(): Promise<string[]> {
+    return this.sidebar()
+      .locator('[data-session-row]')
+      .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-session-row') ?? ''));
+  }
+
+  /** Right click on a session row: its context menu (WP-35). */
+  async rowMenu(sessionKey: string): Promise<Locator> {
+    await this.row(sessionKey).click({ button: 'right' });
+    const menu = this.page.locator(`[data-session-menu="${sessionKey}"]`);
+    await expect(menu).toBeVisible();
+    return menu;
+  }
+
+  /** "Settings…" in the settings menu → the settings page (WP-38), optionally on a section. */
+  async openSettingsPage(section?: string): Promise<Locator> {
+    const menu = await this.openSettings();
+    await menu.locator('[data-action="open-settings"]').click();
+    const page = this.page.locator('[data-slot="settings-page"]');
+    await expect(page).toBeVisible();
+    if (section !== undefined) await page.locator(`[role="tab"][data-section="${section}"]`).click();
+    return page;
+  }
 }
 
 export class SessionView {
@@ -143,5 +185,13 @@ export class SessionView {
   /** The scrollable list of the transcript (virtua's scroll container). */
   list(): Locator {
     return this.transcript.getByRole('region');
+  }
+
+  /** The "…" menu next to the header (WP-35 §8). */
+  async headerMenu(): Promise<Locator> {
+    await this.pane.locator('[data-slot="session-menu"]').click();
+    const menu = this.page.getByRole('menu');
+    await expect(menu).toBeVisible();
+    return menu;
   }
 }
