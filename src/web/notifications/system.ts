@@ -16,6 +16,8 @@ export interface SystemToastOptions {
   body: string;
   /** `sessionKey`: a newer toast of the same session replaces the older one (protocol `notify`). */
   tag: string;
+  /** No sound of the browser/OS (ADR-109: the window plays its own sound, or the event has none). */
+  silent?: boolean;
   onClick: () => void;
 }
 
@@ -42,10 +44,10 @@ export const browserNotifier: SystemNotifier = {
       return browserPermission();
     }
   },
-  show({ title, body, tag, onClick }) {
+  show({ title, body, tag, silent = false, onClick }) {
     if (browserPermission() !== 'granted') return null;
     try {
-      const toast = new Notification(title, { body, tag });
+      const toast = new Notification(title, { body, tag, silent });
       toast.onclick = (event) => {
         event.preventDefault();
         onClick();
