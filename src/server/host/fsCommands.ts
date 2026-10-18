@@ -26,13 +26,7 @@ import { makeError } from '@shared/errors';
 import type { FsEntry, FsListing } from '@shared/model';
 import { windowsPathIssue, windowsPathsEqual } from '@shared/paths';
 import type { HostCommand, HostCommandName } from '@shared/protocol';
-import {
-  assertNoUnsafeLink,
-  assertSafePath,
-  fsErrorCode,
-  resolveLinkTarget,
-  type LinkFs,
-} from '../lib/paths';
+import { assertNoUnsafeLink, assertSafePath, fsErrorCode, type LinkFs } from '../lib/paths';
 import { CommandError, type HostCommandHandler } from '../sync/ports';
 
 /** One directory entry (`fs.Dirent` of `readdir(…, {withFileTypes: true})`). */
@@ -117,12 +111,14 @@ function folderError(error: unknown, dir: string): unknown {
   return error;
 }
 
-/** A link entry of a listing: its target checked like a path; true only for a safe link to a folder. */
+/**
+ * A link entry of a listing: the whole path checked (R4-10: a relative target resolves against the
+ * folder the link physically lies in, also when the listed folder is reached through a link); true
+ * only for a safe link to a folder.
+ */
 async function isSafeFolderLink(fs: DirFs, link: string): Promise<boolean> {
   try {
-    const target = resolveLinkTarget(link, await fs.readlink(link));
-    if (target === null) return false;
-    await assertNoUnsafeLink(target, fs);
+    await assertNoUnsafeLink(link, fs);
     return (await fs.stat(link)).isDirectory();
   } catch {
     return false;

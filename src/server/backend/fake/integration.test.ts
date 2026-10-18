@@ -5,7 +5,7 @@ import { SAMPLE_IDS, sampleId, sampleProfile } from '@shared/samples';
 import { profileNeedsSetup } from '../../claude/integration';
 import { createProfileStore } from '../../claude/profiles';
 import { CommandError } from '../../sync/ports';
-import { FAKE_CLAUDE_PATH, createFakeClaudeIntegration } from './integration';
+import { FAKE_CLAUDE_PATH, FAKE_LAUNCH_ENV_KEYS, createFakeClaudeIntegration } from './integration';
 
 describe('createFakeClaudeIntegration', () => {
   it('profiles report ok/logged_in (no setup screen); summaries are schema-true', () => {
@@ -46,6 +46,21 @@ describe('createFakeClaudeIntegration', () => {
     });
     expect(claude.profiles.summaries().every((s) => s.allowsBypass)).toBe(true);
     expect(claude.launches).toEqual([{ profileId: custom.id, entryId: SAMPLE_IDS.entry }]);
+  });
+
+  it('V3-11: with launchEnv the spec carries only the lookup variables (PATH & co.) – git is found', async () => {
+    const claude = createFakeClaudeIntegration({
+      launchEnv: {
+        Path: 'C:\\Program Files\\Git\\cmd;C:\\Windows',
+        SYSTEMROOT: 'C:\\Windows',
+        ANTHROPIC_API_KEY: 'never-copied',
+        CLAUDECODE: '1',
+        UNSET: undefined,
+      },
+    });
+    const spec = await claude.launchSpecFor('standard', SAMPLE_IDS.entry);
+    expect(spec.env).toEqual({ PATH: 'C:\\Program Files\\Git\\cmd;C:\\Windows', SystemRoot: 'C:\\Windows' });
+    expect(FAKE_LAUNCH_ENV_KEYS).toContain('PATH');
   });
 
   it('unknown profile → PROFILE_NOT_FOUND; invalid args → PROFILE_INVALID; setLaunchError', async () => {

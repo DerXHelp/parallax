@@ -28,6 +28,16 @@ Auftrag, Bedienung und Entscheidungen: `docs/wp/WP-21.md`.
   kann keine Optionen anhängen); Fenster-URL `appUrlWithCode(origin, code, {entryId})`.
   `--autostart` (Verknüpfung, ADR-110): Server wie immer (Build-Prüfung), Fenster nur bei
   `settings.autostart.openWindow`. `--system-integration=auto|on|off` geht an den Server.
+- **`--print-url` in Skripten (V3-15 a, Lücke WP-20a):** Der detached Server erbt – wie bei libuv
+  unter Windows üblich – alle vererbbaren Handles des Launchers, also auch eine **Pipe** auf seine
+  Ausgabe. Wer die Ausgabe über eine Pipe liest (PowerShell `$x = pnpm start -- --print-url`,
+  `| Out-File`, `*>`, Node `spawn` mit `stdio: 'pipe'`), bekommt das Ende der Ausgabe erst mit dem
+  Serverende – der Einmal-Code ist dann abgelaufen. Stattdessen nur auf das **Ende des
+  Launchers** warten (Exit-Code) und die Ausgabe in eine **Datei** umleiten, deren Handle der
+  Aufrufer selbst öffnet: Node `spawn(…, {stdio: ['ignore', fd, fd]})` wie `e2e/launcher.spec.ts`;
+  PowerShell `$p = Start-Process … -RedirectStandardOutput <datei> -PassThru; $p.WaitForExit()`
+  (nicht `-Wait` – das wartet auch auf alle Nachfahren, also auf den Server). Die Vererbung
+  abschalten geht in Node ohne native Hilfe nicht (kein `SetHandleInformation`).
 
 | Datei | Exporte | Inhalt |
 | --- | --- | --- |

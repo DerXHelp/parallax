@@ -5,15 +5,17 @@
  * `run` and `env` (temp `APPDATA`); without them every call is refused before anything is spawned
  * – the console, the shortcut and the registry stay untouched even by a forgotten seam.
  */
+import { isTestRun } from '../config';
 import { runFile, type RunFileFn } from '../lib/process';
 
 /** Result of one integration step; never thrown (failures become host warnings). */
 export type SystemOpResult = { ok: true } | { ok: false; reason: string };
 
-/** Vitest or an E2E server (`NODE_ENV=test`) – checked on every call. */
-export function isTestProcess(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.VITEST !== undefined || env.NODE_ENV === 'test';
-}
+/**
+ * Vitest or an E2E server (`NODE_ENV=test`) – checked on every call; the one rule of config.ts
+ * (`isTestRun`, R4-14: under Vitest also with a hand-made `env`).
+ */
+export const isTestProcess = isTestRun;
 
 export const TEST_RUN_REFUSAL = 'refused in a test run - inject run/env';
 

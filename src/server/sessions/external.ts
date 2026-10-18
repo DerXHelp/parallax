@@ -9,8 +9,11 @@
  * (`readHistory`, messages from `since − 5 s` on, `normalizeHistory` after `lastOrder`, ids already
  * in the log dropped), adds `system/handoff {returned, importedItems}` and ends in `sleeping`.
  * Server start: an open handoff is checked again (running/unknown → watched, ended → return);
- * the shutdown leaves the console alone. `session.consoleCommand` hands out the PowerShell line
- * of the same spec ("copy console command", changes nothing).
+ * the shutdown leaves the console alone (it waits, bounded, for a console still opening – R4-03).
+ * `session.consoleCommand` hands out the PowerShell line of the same spec ("copy console command",
+ * changes nothing; secret values are asked for in the console, never copied – ADR-123). R4-01:
+ * every command that waited for the lifecycle lock checks the gates again inside it
+ * (`assertEntryGate`), and `startRuntime` refuses an external entry – never a second writer.
  *
  * Secrets: the console spec carries the profile env in plain text (`env`, `explicitEnv`, ADR-104).
  * It is never logged and never put into an op, an item or an error – a launcher failure reason is

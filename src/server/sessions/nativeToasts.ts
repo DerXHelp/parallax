@@ -12,7 +12,7 @@
  * both. Phase 2 (ADR-109, WP-34): a click opens the session through the opt-in protocol handler
  * (`launchUri` = `SystemIntegration.toastLaunchUri(entryId)`, null → the click only dismisses), and
  * the toast is silent when the event's sound is off – both from the settings at the time of the
- * toast (`toastShowOptions`).
+ * toast (`toastShowOptions`) – or when a window gets the notification too and sounds (ADR-122).
  */
 import type { Logger } from 'pino';
 import type { EntryId, Language } from '@shared/common';
@@ -31,17 +31,20 @@ export interface ToastShowOptions {
 
 /**
  * ADR-109: `launchUri` from the system integration (only with `openOnClick` and a registered
- * handler), `silent` = the event's sound is off – the settings at the time of the toast.
+ * handler), `silent` = the event's sound is off – the settings at the time of the toast. ADR-122
+ * (R4W-07): also silent when a window gets the same notification (`windowNotified`, the case of a
+ * window without Web Notifications) – the window plays the sound itself, never both.
  */
 export function toastShowOptions(
   entryId: EntryId,
   kind: NotificationKind,
   settings: Settings,
   system: Pick<SystemIntegration, 'toastLaunchUri'> | null | undefined,
+  windowNotified = false,
 ): ToastShowOptions {
   return {
     launchUri: system?.toastLaunchUri(entryId) ?? null,
-    silent: !settings.notifications.events[kind].sound,
+    silent: windowNotified || !settings.notifications.events[kind].sound,
   };
 }
 

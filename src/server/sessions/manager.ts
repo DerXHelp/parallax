@@ -11,6 +11,9 @@
  * notification settings (ADR-109), host-command routing (ADR-101) and the Phase-2 host state.
  * WP-34: external console (ADR-104), continue after the rate limit (ADR-112), image attachments
  * (ADR-103), clickable/silent native toasts (ADR-109), profile caches (ADR-102, `onProfileChanged`).
+ * Fix round R4: no idle sleep for a process with a planned turn (ADR-121), a silent toast when a
+ * window sounds itself (ADR-122), the shutdown waits (bounded) for running lifecycle operations
+ * (R4-03).
  */
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -164,8 +167,8 @@ export interface SessionManagerDeps {
     dataDirLabel: string;
     dev: boolean;
     /**
-     * Phase 2: the actual listening port (`HostState.port`, null before listen). Optional until
-     * WP-40 wires it (compose.ts); absent → null.
+     * Phase 2: the actual listening port (`HostState.port`, null before listen); compose.ts wires
+     * it. Absent (engine tests) → null.
      */
     port?: () => number | null;
     /** Phase 2 (ADR-110): `HostState.systemIntegration` (SystemIntegration.available). Absent → false. */
@@ -648,13 +651,14 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           };
           pub.notify(planned.clientId, notification);
         }
-        // ADR-109: click → the session (opt-in protocol handler), silent when the event's sound is off.
+        // ADR-109: click → the session (opt-in protocol handler), silent when the event's sound is
+        // off – ADR-122: or when a window got the notify above (it plays the sound itself).
         if (planned.native) {
           toasts.show(
             s.id,
             planned.kind,
             title,
-            toastShowOptions(s.id, planned.kind, settings, deps.systemIntegration),
+            toastShowOptions(s.id, planned.kind, settings, deps.systemIntegration, planned.clientId !== null),
           );
         }
       }

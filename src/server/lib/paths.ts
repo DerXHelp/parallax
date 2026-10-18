@@ -60,9 +60,15 @@ export function resolveLinkTarget(link: string, target: string): string | null {
   return windowsPathIssue(candidate) === null ? candidate : null;
 }
 
-async function checkLinks(file: string, fs: LinkFs, budget: { hops: number }): Promise<void> {
-  const root = file.slice(0, 3);
-  let current = root;
+/**
+ * Walks `file` segment by segment and returns where it physically leads (every link replaced by
+ * its checked target), or null when a segment does not exist. R4-10: after a link the walk goes on
+ * in its TARGET – a relative target further down (`..\..\z`) is resolved against the folder it
+ * really lies in, like the file system does, not against the path as written.
+ */
+async function checkLinks(file: string, fs: LinkFs, budget: { hops: number }): Promise<string | null> {
+  // Paths with `.`/`..` segments never get here (windowsPathIssue rejects them).
+  let current = file.slice(0, 3);
   for (const segment of file.slice(3).split(/[\\/]/)) {
     if (segment === '') continue;
     current = path.win32.join(current, segment);
@@ -72,7 +78,7 @@ async function checkLinks(file: string, fs: LinkFs, budget: { hops: number }): P
     } catch (error) {
       const code = fsErrorCode(error);
       // The rest does not exist (or is no folder): the caller's own access reports that.
-      if (code === 'ENOENT' || code === 'ENOTDIR') return;
+      if (code === 'ENOENT' || code === 'ENOTDIR') return null;
       throw error;
     }
     if (!isLink) continue;
@@ -87,9 +93,13 @@ async function checkLinks(file: string, fs: LinkFs, budget: { hops: number }): P
     }
     const target = resolveLinkTarget(current, raw);
     if (target === null) throw linkTargetRejected();
-    // The target's own segments may be links too – check them before anything goes through it.
-    await checkLinks(target, fs, budget);
+    // The target's own segments may be links too – check them before anything goes through it;
+    // the remaining segments continue in the target (R4-10).
+    const physical = await checkLinks(target, fs, budget);
+    if (physical === null) return null;
+    current = physical;
   }
+  return current;
 }
 
 /**
