@@ -1,5 +1,5 @@
 import { ArchiveRestoreIcon, EllipsisIcon, GitBranchIcon, PinIcon } from 'lucide-react';
-import { memo, useState, type FocusEvent } from 'react';
+import { memo, useMemo, useState, type FocusEvent } from 'react';
 import type { ProfileColor } from '@shared/model';
 import type { DisplayStatusKind } from '@shared/status';
 import { useFormat, useT } from '@web/i18n';
@@ -21,9 +21,9 @@ import { RenameField } from './RenameField';
 import {
   SIDEBAR_ACTIONS,
   SessionActionItems,
-  onSessionMenuCloseAutoFocus,
   runSessionCommand,
   sessionActions,
+  sessionMenuCloseAutoFocus,
 } from './session-actions';
 
 const BAR_FILL: Readonly<Record<GaugeLevel, string>> = {
@@ -112,6 +112,7 @@ export const SessionRow = memo(function SessionRow({
   const [contextOpen, setContextOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [tooltip, setTooltip] = useState(false);
+  const onMenuCloseAutoFocus = useMemo(() => sessionMenuCloseAutoFocus(sessionKey, 'sidebar'), [sessionKey]);
 
   const relative = format.relative(summary.lastActivityAt, now, 'narrow');
   const title = sessionTitle(summary);
@@ -274,9 +275,12 @@ export const SessionRow = memo(function SessionRow({
             </TooltipContent>
           </Tooltip>
           {summary.archived && !editing ? (
+            // No tab stop (R4W-13: the list stays one tab stop); the keyboard restores through the
+            // row's "…" menu or context menu.
             <IconButton
               label={t('navigation.actions.restore')}
               size="icon-xs"
+              tabIndex={-1}
               data-action="restore"
               className="bg-sidebar-accent absolute right-1 bottom-1"
               onClick={() => {
@@ -303,14 +307,18 @@ export const SessionRow = memo(function SessionRow({
                   <EllipsisIcon aria-hidden />
                 </IconButton>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" side="right" onCloseAutoFocus={onSessionMenuCloseAutoFocus}>
+              <DropdownMenuContent align="start" side="right" onCloseAutoFocus={onMenuCloseAutoFocus}>
                 <SessionActionItems actions={actions} kind="dropdown" />
               </DropdownMenuContent>
             </DropdownMenu>
           ) : null}
         </li>
       </ContextMenuTrigger>
-      <ContextMenuContent onCloseAutoFocus={onSessionMenuCloseAutoFocus} data-session-menu={sessionKey}>
+      <ContextMenuContent
+        aria-label={t('navigation.row.actions', { title })}
+        onCloseAutoFocus={onMenuCloseAutoFocus}
+        data-session-menu={sessionKey}
+      >
         <SessionActionItems actions={actions} kind="context" />
       </ContextMenuContent>
     </ContextMenu>

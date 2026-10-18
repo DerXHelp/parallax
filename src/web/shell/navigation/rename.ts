@@ -1,11 +1,13 @@
 import { useEffect, useSyncExternalStore } from 'react';
+import { focusElement, focusedElement } from '@web/lib/return-focus';
+import { sessionFocusTarget, type SessionFocusPlace } from './focus';
 
 /**
  * Inline title edit (Plan "/rename": double click on the title in the sidebar or the header, F2,
  * `/rename` without an argument via the request `renameTitle`). At most one edit per window; the
  * place decides where the field appears. The header of a shown session wins over its sidebar row.
  */
-export type RenamePlace = 'sidebar' | 'header';
+export type RenamePlace = SessionFocusPlace;
 
 interface RenameState {
   sessionKey: string;
@@ -37,8 +39,7 @@ export function renamePlaceFor(sessionKey: string): RenamePlace {
 
 /** Starts the edit (replacing another one); `place` defaults to `renamePlaceFor`. */
 export function startRename(sessionKey: string, place: RenamePlace = renamePlaceFor(sessionKey)): void {
-  const active = typeof document === 'undefined' ? null : document.activeElement;
-  returnFocus = active instanceof HTMLElement && active !== document.body ? active : null;
+  returnFocus = focusedElement();
   current = { sessionKey, place };
   emit();
 }
@@ -84,21 +85,9 @@ export function finishRename(restoreFocus: boolean): void {
   if (!restoreFocus) return;
   // After React has re-rendered the row/title.
   setTimeout(() => {
-    if (target?.isConnected === true && !target.hidden) {
-      target.focus();
-      return;
-    }
-    // Session keys are `host:en_<hex>` – safe inside a quoted attribute selector.
-    const selector =
-      ended.place === 'sidebar'
-        ? `[data-session-row="${ended.sessionKey}"]`
-        : `[data-session-key="${ended.sessionKey}"] [data-slot="session-menu"]`;
-    document.querySelector<HTMLElement>(selector)?.focus();
+    if (focusElement(target)) return;
+    focusElement(sessionFocusTarget(ended.sessionKey, ended.place));
   }, 0);
-}
-
-export function getRename(): Readonly<RenameState> | null {
-  return current;
 }
 
 /** True while this session is edited at this place. */

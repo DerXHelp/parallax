@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { useT } from '@web/i18n';
+import { useReturnFocus } from '@web/lib/return-focus';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@web/ui/dialog';
 import { KbdGroup } from '@web/ui/kbd';
 import { shortcutKeyLabels, useShortcut, useShortcutList } from './shortcuts';
@@ -45,6 +46,8 @@ export function ShortcutHelp() {
   const t = useT();
   const isOpen = useSyncExternalStore(subscribe, getOpen, getOpen);
   const list = useShortcutList();
+  // No trigger button (`?` or a menu): the focus goes back to where it was (V3-04).
+  const returnFocus = useReturnFocus(isOpen);
   useShortcut({
     id: 'shell.help',
     keys: HELP_KEYS,
@@ -56,7 +59,7 @@ export function ShortcutHelp() {
   });
   return (
     <Dialog open={isOpen} onOpenChange={setOpen}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md" onCloseAutoFocus={returnFocus}>
         <DialogHeader>
           <DialogTitle>{t('shell.shortcuts.title')}</DialogTitle>
           <DialogDescription>{t('shell.shortcuts.description')}</DialogDescription>

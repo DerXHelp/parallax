@@ -1,9 +1,9 @@
 import { useMemo } from 'react';
 import type { HostState } from '@shared/model';
 import { useFormat, useT } from '@web/i18n';
-import { isKnownLimitWindow, limitBars, type LimitBar } from '@web/lib/account-limits';
+import { isKnownLimitWindow, limitBars, limitDeadlines, type LimitBar } from '@web/lib/account-limits';
 import { cn } from '@web/lib/cn';
-import { useNow } from '@web/state/clock';
+import { useNowUntil } from '@web/state/clock';
 import { useHostState } from '@web/state/hooks';
 import { Gauge } from '@web/ui/gauge';
 import { PROFILE_BG } from './profile-colors';
@@ -16,7 +16,8 @@ function LimitRow({ bar, now }: { bar: LimitBar; now: number }) {
   const label = isKnownLimitWindow(bar.window)
     ? t(`navigation.limits.windows.${bar.window}`)
     : t('navigation.limits.window', { name: bar.window });
-  // Within a day the time is enough ("resets at 22:35"), later windows name the date.
+  // Within a day the time is enough ("resets at 22:35"), later windows name the date (bars only
+  // carry future resets – limitBars leaves the past ones out).
   const resets =
     bar.resetsAt === null
       ? null
@@ -41,13 +42,13 @@ interface ProfileLimits {
   bars: LimitBar[];
 }
 
-function profileLimits(hostState: HostState | null): ProfileLimits[] {
+function profileLimits(hostState: HostState | null, now: number): ProfileLimits[] {
   if (hostState === null) return [];
   const result: ProfileLimits[] = [];
   for (const profile of hostState.profiles) {
     const info = hostState.accountLimits[profile.id];
     if (info === undefined) continue;
-    const bars = limitBars(info);
+    const bars = limitBars(info, now);
     if (bars.length > 0) result.push({ id: profile.id, name: profile.name, color: profile.color, bars });
   }
   return result;
@@ -57,13 +58,18 @@ function profileLimits(hostState: HostState | null): ProfileLimits[] {
  * Subscription limits at the bottom of the sidebar (Plan "Abo-Limit-Anzeige"): per profile with an
  * entry in `HostState.accountLimits` (the server keeps subscription sessions only) the 5-hour and
  * the weekly window with "resets at HH:MM"; name and color only when several profiles report.
- * Display only.
+ * Display only. A window disappears at its reset (R4W-06, V3-07) – the clock re-renders exactly
+ * then (and a day before, when the text switches from the date to the time).
  */
 export function AccountLimits() {
   const t = useT();
   const hostState = useHostState();
-  const now = useNow(60_000);
-  const profiles = useMemo(() => profileLimits(hostState), [hostState]);
+  const deadlines = useMemo(
+    () => limitDeadlines(Object.values(hostState?.accountLimits ?? {}), DAY_MS),
+    [hostState],
+  );
+  const now = useNowUntil(deadlines);
+  const profiles = useMemo(() => profileLimits(hostState, now), [hostState, now]);
   if (profiles.length === 0) return null;
   const several = profiles.length > 1;
   return (

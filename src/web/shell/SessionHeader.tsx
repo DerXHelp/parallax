@@ -47,7 +47,9 @@ function HeaderCliVersion({ version, required }: { version: string; required: st
   const t = useT();
   const tooOld = cliVersionStatus(version, required) === 'too_old';
   return (
-    <div className={cn('min-w-0 items-center gap-1', tooOld ? 'flex shrink-0' : 'hidden xl:flex')}>
+    // Never shrinks (V3-05: a squeezed "CLI 2.1.300" ran under the context gauge); narrow panes
+    // hide it instead (below xl), unless it is too old.
+    <div className={cn('shrink-0 items-center gap-1', tooOld ? 'flex' : 'hidden xl:flex')}>
       <dt className="sr-only">{t('shell.session.cliVersionLabel')}</dt>
       <dd data-slot="header-cli-version" data-version-status={tooOld ? 'too_old' : 'ok'}>
         <Tooltip>
@@ -108,8 +110,9 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
         {editing ? (
           <RenameField sessionKey={sessionKey} summary={summary} className="w-72 min-w-24 shrink" />
         ) : (
+          // The title gives way first (shrink 8 against the facts' 1, V3-05), down to 6rem.
           <h1
-            className="min-w-0 truncate text-ui font-semibold"
+            className="min-w-24 shrink-[8] truncate text-ui font-semibold"
             onDoubleClick={() => {
               startRename(sessionKey, 'header');
             }}
@@ -147,7 +150,11 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
           </Badge>
         ) : null}
         <span className="flex-1" />
-        <dl className="text-muted-foreground flex min-w-0 items-center gap-3 text-xs whitespace-nowrap">
+        {/* Only path and model shrink (with an ellipsis); every other fact keeps its width. */}
+        <dl
+          data-slot="header-facts"
+          className="text-muted-foreground flex min-w-0 items-center gap-3 text-xs whitespace-nowrap"
+        >
           <div className="flex min-w-0 items-center gap-1">
             <dt className="sr-only">{t('shell.session.cwd')}</dt>
             <dd className="flex min-w-0">

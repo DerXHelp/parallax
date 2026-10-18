@@ -4,6 +4,7 @@ import { setLanguage, useT } from '@web/i18n';
 import { useAttentionCount, useConnectionStatus } from '@web/state/hooks';
 import { useSettings } from '@web/state/settings';
 import { useThemeController } from '@web/state/theme';
+import { installDropGuard } from './drop-guard';
 
 /**
  * Window title "(n) Parallax" with n = sessions waiting for the user (Plan "Benachrichtigungen").
@@ -22,7 +23,8 @@ export function useWindowTitle(): void {
 
 /**
  * Applies the host settings to the window: theme (Dark/Light/System), language (start is always
- * English until `host.state` arrives) and the window title. Mounted once (App, playground).
+ * English until `host.state` arrives) and the window title; guards the window against file and
+ * link drops outside a drop zone (R4W-02, drop-guard.ts). Mounted once (App, playground).
  */
 export function ShellEffects() {
   const settings = useSettings();
@@ -31,5 +33,6 @@ export function ShellEffects() {
     setLanguage(settings.language);
   }, [settings.language]);
   useWindowTitle();
+  useEffect(() => installDropGuard(window), []);
   return null;
 }

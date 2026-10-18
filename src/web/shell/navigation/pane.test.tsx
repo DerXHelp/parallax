@@ -114,7 +114,7 @@ describe('header (WP-35 §8)', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Set up the OAuth client' })).toBeTruthy();
   });
 
-  it('a busy session refuses the switch: SESSION_BUSY as a notice, the dialog stays', async () => {
+  it('a busy session refuses the switch: SESSION_BUSY inside the dialog (ADR-126), the dialog stays', async () => {
     const scenario = await start();
     const user = userEvent.setup();
     act(() => {
@@ -125,11 +125,21 @@ describe('header (WP-35 §8)', () => {
     });
     const dialog = await screen.findByRole('dialog', { name: 'Earlier conversations' });
     await user.click(within(dialog).getAllByRole('button', { name: 'Open' })[0] ?? dialog);
-    // The modal dialog hides the rest of the page from the accessibility tree.
-    const region = screen.getByRole('region', { name: 'Notifications', hidden: true });
-    const notice = await within(region).findByText('The session is busy. Try again in a moment.');
-    expect(notice.closest('[data-notice]')?.getAttribute('data-tone')).toBe('warning');
+    // R4W-05: announced inside the dialog, not behind its overlay.
+    const alert = await within(dialog).findByRole('alert');
+    expect(alert.textContent).toContain('The session is busy. Try again in a moment.');
+    expect(alert.closest('[data-slot="conversations-error"]')).toBe(alert);
+    const region = screen.getByRole('region', { name: 'Notifications' });
+    expect(within(region).queryByText('The session is busy. Try again in a moment.')).toBeNull();
     expect(screen.getByRole('dialog', { name: 'Earlier conversations' })).toBeTruthy();
+    // The next try clears the old message; once the session is idle it switches and closes.
+    act(() => {
+      scenario.host.patchSummary(NAVIGATION_ENTRIES.auth, {}, { runState: 'idle' });
+    });
+    await user.click(within(dialog).getAllByRole('button', { name: 'Open' })[0] ?? dialog);
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Earlier conversations' })).toBeNull();
+    });
   });
 
   it('session info shows model, mode, folder, branch, CLI, sign-in, session id, profile and MCP servers', async () => {
@@ -145,18 +155,25 @@ describe('header (WP-35 §8)', () => {
       'D:\\work\\auth-service',
       'feature/login',
       '2.1.300',
-      'none',
+      // R4W-14: known enum values translated ('none' = subscription, MCP status).
+      'Subscription (claude.ai)',
       'Work',
       'github',
-      'connected',
+      'Connected',
       'playwright',
-      'failed',
+      'Failed',
     ]) {
       expect(info.getByText(text)).toBeTruthy();
     }
+    act(() => {
+      setLanguage('de');
+    });
+    expect(info.getByText('Abo (claude.ai)')).toBeTruthy();
+    expect(info.getByText('Verbunden')).toBeTruthy();
+    expect(info.getByText('Arbeitsverzeichnis')).toBeTruthy();
     await user.keyboard('{Escape}');
     await waitFor(() => {
-      expect(screen.queryByRole('dialog', { name: 'Session info' })).toBeNull();
+      expect(screen.queryByRole('dialog', { name: 'Session-Info' })).toBeNull();
     });
   });
 });
