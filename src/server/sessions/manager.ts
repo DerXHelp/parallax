@@ -109,6 +109,8 @@ export const DEFAULT_SESSION_MANAGER_OPTIONS: SessionManagerOptions = {
   contextRefreshDelayMs: 250,
   shutdownTimeoutMs: 15_000,
   orphanShutdownWaitMs: 2_000,
+  // R4-03: below the frame's 20-s bound of the whole engine shutdown (launcher/shutdown.ts).
+  lifecycleShutdownWaitMs: 10_000,
   gitRefreshMs: 60_000,
   aiTitleDelayMs: 2_000,
   processSnapshotMs: 30_000,
@@ -228,6 +230,8 @@ export interface EngineEntryInfo {
   continueScheduled: boolean;
   /** ADR-104: the next console state check is armed. */
   externalWatched: boolean;
+  /** ADR-121: the running process has a planned turn (no idle sleep). */
+  scheduledTurn: boolean;
 }
 
 export interface SessionManager extends SessionSource {
@@ -483,6 +487,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     !shuttingDown &&
     s.runtime !== null &&
     s.phase === 'running' &&
+    // ADR-121 (R4-02): a planned turn (ScheduleWakeup/CronCreate, /loop) dies with the process.
+    !s.runtime.scheduled &&
     canSleep(s.facts, now()) &&
     !isWatchedByFocusedClient(clients, s.id);
 
@@ -857,6 +863,14 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           cap.timer?.cancel();
           return settled;
         };
+        // R4-03: lifecycle operations still running – `openExternal` while PowerShell opens the
+        // console (its query is already closed, so the closes below do not wait for it), a return
+        // import – finish before the stores are flushed; bounded, alongside the closes.
+        const busy = [...states.values()].filter((s) => s.lifecycle.pending > 0);
+        const lifecycleSettled =
+          busy.length === 0
+            ? Promise.resolve(true)
+            : within(Promise.all(busy.map((s) => s.lifecycle.idle())), options.lifecycleShutdownWaitMs);
         const killTree = async (
           s: EntryState,
           pid: number,
@@ -936,6 +950,12 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
               if (pid !== null)
                 await killTree(s, pid, 'error', 'process did not end at shutdown – killing its tree');
             }),
+          );
+        }
+        if (!(await lifecycleSettled)) {
+          log.warn(
+            { entries: busy.filter((s) => s.lifecycle.pending > 0).map((s) => s.id) },
+            'shutdown: lifecycle operations still running – flushing without them',
           );
         }
         // R3-06: a still running orphan check of the start may finish now (bounded); its removals
@@ -1044,6 +1064,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         gitBranch: s.entry.gitBranch,
         continueScheduled: s.continueTimer !== null,
         externalWatched: s.externalTimer !== null,
+        scheduledTurn: s.runtime?.scheduled ?? false,
       };
     },
 
