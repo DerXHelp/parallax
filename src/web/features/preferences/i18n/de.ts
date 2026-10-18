@@ -13,7 +13,16 @@ export const de: typeof en = {
     profiles: 'Profile',
     server: 'Server',
     about: 'Über',
+    unsaved: 'ungespeicherte Änderungen',
   },
+  closeConfirm: {
+    title: 'Ungespeicherte Profiländerungen verwerfen?',
+    description:
+      'Im Profil-Editor gibt es Änderungen, die noch nicht gespeichert sind. Beim Schließen der Einstellungen gehen sie verloren.',
+    keep: 'Weiter bearbeiten',
+    discard: 'Verwerfen und schließen',
+  },
+  dismissError: 'Ausblenden',
   general: {
     languageHint: 'Sprache der App und der Windows-Benachrichtigungen.',
     themeHint: '„System“ folgt der Windows-Einstellung. Das Einstellungsmenü bietet dieselbe Schnellwahl.',
@@ -28,7 +37,7 @@ export const de: typeof en = {
       sound: 'Ton',
     },
     kinds: {
-      permission: 'Erlaubnis nötig',
+      permission: 'Braucht Freigabe',
       question: 'Frage',
       plan: 'Plan prüfen',
       done: 'Fertig',
@@ -74,6 +83,7 @@ export const de: typeof en = {
     autostartHint:
       'Startet den Server im Hintergrund; Windows-Benachrichtigungen funktionieren auch ohne Fenster.',
     openWindow: 'Beim Anmelden auch ein Fenster öffnen',
+    openWindowNeedsAutostart: 'Nur, solange „Parallax beim Anmelden an Windows starten“ eingeschaltet ist.',
   },
   profiles: {
     unavailable: 'Der Profil-Editor ist in dieser Ansicht nicht verfügbar.',

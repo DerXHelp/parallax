@@ -52,6 +52,7 @@ export interface ProfileEditorEvents {
   onDefaultSet: (name: string) => void;
   /** "Discard" of a new, unsaved profile. */
   onDiscardNew: () => void;
+  /** The form differs from its start (an untouched new profile is not dirty – nothing to lose). */
   onDirtyChange: (dirty: boolean) => void;
 }
 
@@ -236,11 +237,15 @@ function ProfileForm({
   const [testResult, setTestResult] = useState<ClaudeInstallStatus | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const validateSeq = useRef(0);
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const deleteRef = useRef<HTMLButtonElement>(null);
 
   const allowsBypass = bypassAllowed(validation.issues);
   const built = useMemo(() => buildInput(draft, profileId, { allowsBypass }), [draft, profileId, allowsBypass]);
   const currentKey = inputKey(built);
-  const dirty = profileId === null || draftKey(draft) !== baseline;
+  const changed = draftKey(draft) !== baseline;
+  /** Something to save: every new profile, a saved one only when changed. */
+  const dirty = profileId === null || changed;
   const placed = useMemo(
     () => placeIssues(validation.issues, validation.argRowIds, draft.env),
     [validation, draft.env],
@@ -255,8 +260,16 @@ function ProfileForm({
     events.onDirtyChange(value);
   });
   useEffect(() => {
-    reportDirty(dirty);
-  }, [dirty]);
+    reportDirty(changed);
+  }, [changed]);
+
+  // V3-14: the result of "Test profile" (or its error) appears below the fold – bring it into view.
+  useEffect(() => {
+    if (testResult === null && actionError === null) return;
+    const results = resultsRef.current;
+    // happy-dom and old engines may lack scrollIntoView.
+    if (typeof results?.scrollIntoView === 'function') results.scrollIntoView({ block: 'nearest' });
+  }, [testResult, actionError]);
 
   /** `profile.validate` of the current draft; only the newest answer counts. */
   const validateNow = (key: string) => {
@@ -428,7 +441,10 @@ function ProfileForm({
           <FieldNotes id={ids.nameNotes} problems={nameProblems} />
         </div>
         <div className="grid gap-1.5">
-          <Label id={ids.color}>{t('profiles.fields.color')}</Label>
+          {/* Names a group (aria-labelledby), not one form field: no <label> (V3-12). */}
+          <span id={ids.color} className="text-xs font-medium">
+            {t('profiles.fields.color')}
+          </span>
           <ColorPicker
             value={draft.color}
             labelId={ids.color}
@@ -441,7 +457,9 @@ function ProfileForm({
 
       <Section title={t('profiles.sections.claude')}>
         <div className="grid gap-1.5">
-          <Label id={ids.executable}>{t('profiles.fields.executable')}</Label>
+          <span id={ids.executable} className="text-xs font-medium">
+            {t('profiles.fields.executable')}
+          </span>
           <RadioGroup
             aria-labelledby={ids.executable}
             value={draft.executableKind}
@@ -615,7 +633,8 @@ function ProfileForm({
       </Section>
 
       <Section title={t('profiles.sections.defaults')}>
-        <div className="grid gap-3 @md:grid-cols-3">
+        {/* One field per row (V3-06): the menu labels ("Not set – Claude Code decides") never fit three columns. */}
+        <div className="grid max-w-sm grid-cols-[minmax(0,1fr)] gap-3" data-slot="profile-defaults">
           <div className="grid content-start gap-1.5">
             <Label htmlFor={ids.model}>{t('profiles.fields.model')}</Label>
             <Input
@@ -668,11 +687,15 @@ function ProfileForm({
         </div>
       </Section>
 
-      {testResult === null ? null : <TestResult claude={testResult} />}
-      {actionError === null ? null : (
-        <Alert tone="error" data-slot="profile-action-error">
-          {tError(actionError)}
-        </Alert>
+      {testResult === null && actionError === null ? null : (
+        <div ref={resultsRef} data-slot="profile-results" className="grid gap-3">
+          {testResult === null ? null : <TestResult claude={testResult} />}
+          {actionError === null ? null : (
+            <Alert tone="error" data-slot="profile-action-error">
+              {tError(actionError)}
+            </Alert>
+          )}
+        </div>
       )}
       {confirmDelete && profileId !== null ? (
         <Alert
@@ -685,7 +708,6 @@ function ProfileForm({
                 size="sm"
                 variant="destructive"
                 data-action="profile-delete-confirm"
-                autoFocus
                 disabled={busy !== null}
                 onClick={() => {
                   void run('delete', async () => {
@@ -701,8 +723,12 @@ function ProfileForm({
               <Button
                 size="sm"
                 variant="outline"
+                data-action="profile-delete-cancel"
+                // R4W-24: "Cancel" takes the focus – a repeated Enter on "Delete…" deletes nothing.
+                autoFocus
                 onClick={() => {
                   setConfirmDelete(false);
+                  deleteRef.current?.focus();
                 }}
               >
                 {t('common.cancel')}
@@ -712,9 +738,10 @@ function ProfileForm({
         />
       ) : null}
 
+      {/* Sticks to the bottom edge of the settings panel (which has no bottom padding, V3-06). */}
       <div
         data-slot="profile-actions"
-        className="bg-popover sticky bottom-0 -mx-1 grid gap-1.5 border-t px-1 pt-2 pb-1"
+        className="bg-popover sticky bottom-0 -mx-1 grid gap-1.5 border-t px-1 pt-2 pb-4"
       >
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -761,6 +788,7 @@ function ProfileForm({
                 {busy === 'test' ? t('profiles.editor.testing') : t('profiles.editor.test')}
               </Button>
               <Button
+                ref={deleteRef}
                 variant="ghost"
                 data-action="profile-delete"
                 className="text-destructive hover:text-destructive ml-auto"

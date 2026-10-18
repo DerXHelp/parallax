@@ -16,6 +16,7 @@ import {
 } from '@shared/model';
 import { windowsPathKey } from '@shared/paths';
 import type { TranslationKey, TranslationParams } from '@web/i18n';
+import { numberRange } from '@web/lib/zod-range';
 import { issueArgIndex, issueEnvKey, issueField } from '@web/shell/new-session/profile-issues';
 
 /**
@@ -61,14 +62,16 @@ export function newRowId(): string {
   return `row-${String(rowCounter)}`;
 }
 
-// Limits read from the contract (`profileInputSchema`), never duplicated.
-const contextWindowSchema = profileInputSchema.shape.contextWindow.unwrap();
+// Limits and rules read from the contract (`profileInputSchema`), never duplicated (R4W-21).
+const contextWindowRange = numberRange(profileInputSchema.shape.contextWindow.unwrap());
 /** Smallest `contextWindow` override (100 000). */
-export const CONTEXT_WINDOW_MIN = contextWindowSchema.minValue ?? 0;
+export const CONTEXT_WINDOW_MIN = contextWindowRange.min;
 /** Largest `contextWindow` override (1 000 000). */
-export const CONTEXT_WINDOW_MAX = contextWindowSchema.maxValue ?? Number.MAX_SAFE_INTEGER;
+export const CONTEXT_WINDOW_MAX = contextWindowRange.max;
 /** Longest profile name (60). */
 export const PROFILE_NAME_MAX = profileInputSchema.shape.name.maxLength ?? Number.MAX_SAFE_INTEGER;
+/** Schema of an env variable name (not empty, no "=", no leading space, length limit). */
+const envKeySchema = profileInputSchema.shape.env.keyType;
 
 /** Bypass flags (parseProfileArgs, C.3): the row is marked red right away, before the check. */
 const BYPASS_ARG = /^--(?:allow-)?dangerously-skip-permissions$/;
@@ -188,12 +191,13 @@ export function buildInput(
       problems.push({ field, key: 'profiles.problems.envKeyRequired' });
       continue;
     }
-    if (!/^[^=\s][^=]*$/.test(row.key)) {
-      problems.push({ field, key: 'profiles.problems.envKeyInvalid' });
-      continue;
-    }
     if (row.key.length > LIMITS.profileEnvKeyChars) {
       problems.push({ field, key: 'profiles.problems.tooLong', params: { max: LIMITS.profileEnvKeyChars } });
+      continue;
+    }
+    // The name rule of the contract itself (R4W-21): no "=", no leading space.
+    if (!envKeySchema.safeParse(row.key).success) {
+      problems.push({ field, key: 'profiles.problems.envKeyInvalid' });
       continue;
     }
     if (row.value.length > LIMITS.profileEnvValueChars) {

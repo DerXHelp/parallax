@@ -1,5 +1,5 @@
 import { PlayIcon } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   SOUND_IDS,
   soundIdSchema,
@@ -25,6 +25,8 @@ import type { SettingsEditor } from '../state/settings-editor';
 
 /** Played after a volume change (the user hears the new loudness). */
 const VOLUME_PREVIEW: SoundId = 'ping';
+/** Arrow/Page/Home/End keys on the volume: saved and played once this long after the last key. */
+export const VOLUME_KEY_COMMIT_MS = 300;
 
 /** "Play" and every choice in the sound list: the click is the interaction that unlocks Web Audio. */
 function preview(soundId: SoundId, volume: number): void {
@@ -110,8 +112,38 @@ function EventRow({
 
 function VolumeSlider({ volume, onCommit }: { volume: number; onCommit: (volume: number) => void }) {
   const t = useT();
-  /** Percent while dragging (saved once at the end, not per pixel). */
+  /** Percent while dragging or between key presses (saved once at the end, not per pixel/key). */
   const [dragging, setDragging] = useState<number | null>(null);
+  const viaKeyboard = useRef(false);
+  const keyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const keyValue = useRef<number | null>(null);
+  const latestCommit = useRef(onCommit);
+  useLayoutEffect(() => {
+    latestCommit.current = onCommit;
+  }, [onCommit]);
+
+  const commit = (value: number, withPreview: boolean) => {
+    setDragging(null);
+    latestCommit.current(value / 100);
+    if (withPreview) preview(VOLUME_PREVIEW, value / 100);
+  };
+  /** Saves the pending keyboard value and plays it. */
+  const flushKeys = () => {
+    keyTimer.current = null;
+    const value = keyValue.current;
+    keyValue.current = null;
+    if (value !== null) commit(value, true);
+  };
+  // The page closes right after a key press: the value is still saved (without a sound).
+  useEffect(
+    () => () => {
+      if (keyTimer.current !== null) clearTimeout(keyTimer.current);
+      const value = keyValue.current;
+      if (value !== null) latestCommit.current(value / 100);
+    },
+    [],
+  );
+
   const percent = dragging ?? Math.round(volume * 100);
   const valueText = (value: number) => t('preferences.notifications.volumeValue', { percent: value });
   return (
@@ -123,14 +155,25 @@ function VolumeSlider({ volume, onCommit }: { volume: number; onCommit: (volume:
         max={100}
         step={1}
         value={[percent]}
+        onKeyDown={() => {
+          viaKeyboard.current = true;
+        }}
+        onPointerDown={() => {
+          viaKeyboard.current = false;
+        }}
         onValueChange={([value]) => {
           if (value !== undefined) setDragging(value);
         }}
         onValueCommit={([value]) => {
-          setDragging(null);
           if (value === undefined) return;
-          onCommit(value / 100);
-          preview(VOLUME_PREVIEW, value / 100);
+          if (!viaKeyboard.current) {
+            commit(value, true);
+            return;
+          }
+          // R4W-17: Radix commits on every key – save and play once after the last one.
+          keyValue.current = value;
+          if (keyTimer.current !== null) clearTimeout(keyTimer.current);
+          keyTimer.current = setTimeout(flushKeys, VOLUME_KEY_COMMIT_MS);
         }}
       />
       <span className="text-muted-foreground w-10 text-right text-xs tabular-nums" aria-hidden>
@@ -205,6 +248,8 @@ export function NotificationsSection({
       <SettingField
         name="volume"
         label={t('preferences.notifications.volume')}
+        // The slider thumb is no labelable element; it carries the name itself (V3-12).
+        labelFor={false}
         control={() => (
           <VolumeSlider
             volume={notifications.volume}

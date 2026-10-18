@@ -6,6 +6,7 @@ import type { PlaygroundDemo, PlaygroundModule } from '@web/playground/types';
 import { FolderBrowser } from '@web/shell/new-session/FolderBrowser';
 import { NewSessionDialog, type NewSessionPrefill } from '@web/shell/NewSessionDialog';
 import { requestShell } from '@web/shell/requests';
+import { useFeatureSlots } from '@web/shell/slots';
 import { useConnectionStatus } from '@web/state/hooks';
 import { useSettings } from '@web/state/settings';
 import { Button } from '@web/ui/button';
@@ -30,6 +31,13 @@ function demoSummaries() {
     [3, 'd:\\WORK\\parallax', 30, false],
     [4, 'D:\\work\\web\\landing', 60, true],
     [5, 'C:\\Users\\user\\Documents', 300, false],
+    // V3-01: a long path ends with an ellipsis, the dialog keeps its width.
+    [
+      6,
+      'C:\\Users\\user\\Documents\\parallax-verifikation-mit-einem-recht-langen-ordnernamen\\projekte\\beta-mit-einem-sehr-langen-ordnernamen-fuer-den-test-der-kopfzeile',
+      20,
+      false,
+    ],
   ];
   return rows.map(([n, cwd, minutesAgo, archived]) =>
     sampleSummary({
@@ -102,6 +110,36 @@ function EditorDemo({ selection }: { selection?: ProfileSelection }) {
   return (
     <div className="mx-auto max-w-4xl p-6">
       <ProfilesSettings initialSelection={selection} />
+    </div>
+  );
+}
+
+/**
+ * The settings page (slot `SettingsPage` of WP-38, no feature import) at "Profiles" over the demo
+ * host: a draft survives switching sections, closing with unsaved changes asks (R4W-01).
+ */
+function SettingsPageDemo() {
+  const { t } = useI18n();
+  const { SettingsPage } = useFeatureSlots();
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="p-6">
+      <Button
+        variant="outline"
+        onClick={() => {
+          setOpen(true);
+        }}
+      >
+        {t('profiles.list.label')}
+      </Button>
+      {open ? (
+        <SettingsPage
+          section="profiles"
+          onClose={() => {
+            setOpen(false);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -192,6 +230,17 @@ export const demos: PlaygroundDemo[] = [
     render: () => (
       <DemoHost>
         <EditorDemo selection={{ kind: 'profile', id: DEMO_PROFILE_IDS.work }} />
+      </DemoHost>
+    ),
+  },
+  {
+    id: 'settings-page',
+    title: 'Settings page – section “Profiles” (unsaved drafts, R4W-01)',
+    description:
+      'Change a field, switch to “General” and back: the draft stays. Esc, × or a click outside asks first.',
+    render: () => (
+      <DemoHost>
+        <SettingsPageDemo />
       </DemoHost>
     ),
   },

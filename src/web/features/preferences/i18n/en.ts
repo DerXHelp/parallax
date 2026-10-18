@@ -16,7 +16,18 @@ export const en = {
     profiles: 'Profiles',
     server: 'Server',
     about: 'About',
+    /** Screen reader text of the dot on "Profiles" while the profile editor holds unsaved changes. */
+    unsaved: 'unsaved changes',
   },
+  /** Inline question when the page should close while the profile editor holds unsaved changes. */
+  closeConfirm: {
+    title: 'Discard the unsaved profile changes?',
+    description: 'The profile editor has changes that are not saved yet. Closing the settings discards them.',
+    keep: 'Keep editing',
+    discard: 'Discard and close',
+  },
+  /** Hides the error of a refused change (the value already went back). */
+  dismissError: 'Dismiss',
   general: {
     languageHint: 'Language of the app and of the Windows notifications.',
     themeHint: 'System follows the Windows setting. The settings menu offers the same quick choice.',
@@ -75,6 +86,7 @@ export const en = {
     autostart: 'Start Parallax when you sign in to Windows',
     autostartHint: 'Starts the server in the background; Windows notifications work without a window.',
     openWindow: 'Also open a window at sign-in',
+    openWindowNeedsAutostart: 'Only while “Start Parallax when you sign in to Windows” is on.',
   },
   profiles: {
     unavailable: 'The profile editor is not available in this view.',

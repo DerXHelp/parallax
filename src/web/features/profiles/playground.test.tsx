@@ -41,6 +41,7 @@ describe('profiles playground (WP-36 requirement 5)', () => {
       'editor-new',
       'editor-findings',
       'editor-in-use',
+      'settings-page',
     ]);
     expect(slots?.ProfilesSettings).toBe(ProfilesSettings);
   });
