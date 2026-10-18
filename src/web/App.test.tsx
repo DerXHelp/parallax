@@ -18,6 +18,7 @@ import { DecisionCard } from './features/decisions/DecisionCard';
 import { PlanSidePanel } from './features/decisions/PlanSidePanel';
 import { PREFERENCES_SLOTS, SettingsPage } from './features/preferences';
 import { ProfilesSettings } from './features/profiles';
+import { startProfilesDemo } from './features/profiles/lib/demo-host';
 import { TRANSCRIPT_SLOTS } from './features/transcript/slots';
 import { installResizeObserver } from './features/transcript/testing';
 import { setLanguage } from './i18n';
@@ -28,14 +29,15 @@ import { PLAYGROUND_ENTRIES, PLAYGROUND_SESSION_KEYS } from './playground/scenar
 import { startScenario, type RunningScenario } from './playground/PlaygroundScenario';
 import { AppShell } from './shell/AppShell';
 import { closeNewSession } from './shell/NewSessionDialog';
-import { requestShell, type ShellRequest } from './shell/requests';
+import { requestShell, type ShellRequestKind, type ShellRequestOf } from './shell/requests';
 import { closeShortcutHelp } from './shell/ShortcutHelp';
 import { installShortcutListener } from './shell/shortcuts';
-import { FeatureSlotsProvider } from './shell/slots';
+import { DEFAULT_FEATURE_SLOTS, FeatureSlotsProvider } from './shell/slots';
 import { createHostConnection, registerConnection, unregisterConnection } from './state/connection';
 import { FakeHost } from './state/fake-host';
 import { resetClientStore } from './state/store';
 import { createMemoryTransport } from './state/transport';
+import { TooltipProvider } from './ui/tooltip';
 
 // The whole shell renders per test: 1–3 s in a full `pnpm test`, up to 11 s when several runs load
 // the machine (docs/wp/FLAKES.md).
@@ -310,21 +312,108 @@ describe('App shell over the memory transport', () => {
   });
 });
 
+/**
+ * One request of every kind of the shell channel (R4W-28): a mapped type over `ShellRequestKind` –
+ * a new kind in shell/requests.ts without an entry here breaks `tsc`.
+ */
+const EVERY_REQUEST: { [K in ShellRequestKind]: ShellRequestOf<K> } = {
+  quickSwitcher: { kind: 'quickSwitcher' },
+  conversations: { kind: 'conversations', sessionKey: PLAYGROUND_SESSION_KEYS.main },
+  sessionInfo: { kind: 'sessionInfo', sessionKey: PLAYGROUND_SESSION_KEYS.main },
+  newSession: { kind: 'newSession', cwd: 'D:\\work\\parallax' },
+  settings: { kind: 'settings', section: 'about' },
+  renameTitle: { kind: 'renameTitle', sessionKey: PLAYGROUND_SESSION_KEYS.main },
+};
+
 describe('wired feature slots (WP-20b, WP-40)', () => {
-  it('APP_SLOTS holds the components of WP-15, WP-16, WP-36 and WP-38', () => {
-    expect(APP_SLOTS).toEqual({
+  it('APP_SLOTS holds the components of WP-15 and WP-16 and lazy slots of WP-36 and WP-38 (R4W-19)', () => {
+    const { SettingsPage: settingsSlot, ProfilesSettings: profilesSlot, ...eager } = APP_SLOTS;
+    expect(eager).toEqual({
       ...TRANSCRIPT_SLOTS,
       DecisionBar,
       DecisionCard,
       SidePanel: PlanSidePanel,
       Composer,
-      SettingsPage,
-      ProfilesSettings,
     });
     expect(APP_SLOTS.Transcript).toBe(TRANSCRIPT_SLOTS.Transcript);
     expect(APP_SLOTS.Markdown).toBe(TRANSCRIPT_SLOTS.Markdown);
     expect(APP_SLOTS.ToolInputPreview).toBe(TRANSCRIPT_SLOTS.ToolInputPreview);
-    expect(APP_SLOTS.SettingsPage).toBe(PREFERENCES_SLOTS.SettingsPage);
+    // R4W-19: own chunks behind a Suspense wrapper – neither the component itself (that would put
+    // it into the start chunk) nor the placeholder (the shell would hide the entry points).
+    expect(settingsSlot).toBeDefined();
+    expect(settingsSlot).not.toBe(SettingsPage);
+    expect(settingsSlot).not.toBe(DEFAULT_FEATURE_SLOTS.SettingsPage);
+    expect(profilesSlot).toBeDefined();
+    expect(profilesSlot).not.toBe(ProfilesSettings);
+    expect(profilesSlot).not.toBe(DEFAULT_FEATURE_SLOTS.ProfilesSettings);
+    // App.tsx loads only `SettingsPage` of WP-38 – a new slot there must be wired here on purpose.
+    expect(Object.keys(PREFERENCES_SLOTS)).toEqual(['SettingsPage']);
+    expect(PREFERENCES_SLOTS.SettingsPage).toBe(SettingsPage);
+  });
+
+  it('the lazy settings page shows the requested section and closes through onClose (R4W-19)', async () => {
+    start('overview');
+    const Slot = APP_SLOTS.SettingsPage;
+    if (Slot === undefined) throw new Error('no settings page slot');
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <FeatureSlotsProvider slots={APP_SLOTS}>
+        <TooltipProvider>
+          <Slot section="about" onClose={onClose} />
+        </TooltipProvider>
+      </FeatureSlotsProvider>,
+    );
+    const page = await screen.findByRole('dialog', { name: 'Settings' });
+    expect(within(page).getByRole('tab', { name: 'About' }).getAttribute('aria-selected')).toBe('true');
+    expect(within(page).getByText('FakeBackend – no real Claude Code')).toBeTruthy();
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('the lazy profile editor reports its draft to the lazy page: kept over a section switch, Esc asks (R4W-01, R4W-19)', async () => {
+    const demo = startProfilesDemo({ immediate: true });
+    cleanups.push(() => {
+      demo.stop();
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole('button', { name: 'Settings' });
+    act(() => {
+      requestShell({ kind: 'settings', section: 'profiles' });
+    });
+    const page = await screen.findByRole('dialog', { name: 'Settings' });
+    const profilesTab = () => within(page).getByRole('tab', { name: /^Profiles/ });
+    // The real editor of WP-36 behind the lazy slot (not the placeholder of the section).
+    const section = await waitFor(() => {
+      const element = page.querySelector<HTMLElement>('[data-slot="profiles-settings"]');
+      if (element === null) throw new Error('profile section not loaded yet');
+      return element;
+    });
+    expect(page.querySelector('[data-slot="profiles-settings-loading"]')).toBeNull();
+    await user.click(within(section).getByRole('button', { name: 'New profile' }));
+    const form = await waitFor(() => {
+      const element = section.querySelector<HTMLElement>(
+        '[data-slot="profile-editor"][data-profile-id="new"]',
+      );
+      if (element === null) throw new Error('no editor for the new profile');
+      return element;
+    });
+    await user.type(within(form).getByLabelText('Name'), 'Draft');
+    await waitFor(() => {
+      expect(profilesTab().getAttribute('data-unsaved')).toBe('true');
+    });
+    await user.click(within(page).getByRole('tab', { name: 'General' }));
+    await user.click(profilesTab());
+    expect(within(form).getByLabelText<HTMLInputElement>('Name').value).toBe('Draft');
+    await user.keyboard('{Escape}');
+    expect(page.querySelector('[data-slot="settings-close-confirm"]')).not.toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBe(page);
+    await user.click(within(page).getByRole('button', { name: 'Discard and close' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull();
+    });
+    expect(demo.commands('profile.save')).toEqual([]);
   });
 
   it('"Settings…" opens the settings page; its section "Profiles" shows the profile editor (WP-40)', async () => {
@@ -337,42 +426,51 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
     const page = await screen.findByRole('dialog', { name: 'Settings' });
     await user.click(within(page).getByRole('tab', { name: 'Profiles' }));
     const profiles = await within(page).findByRole('tabpanel', { name: 'Profiles' });
-    // The real slot of WP-36, not the "not available" hint of the placeholder.
-    expect(profiles.querySelector('[data-slot="profiles-settings"]')).not.toBeNull();
+    // The real slot of WP-36 (a lazy chunk, R4W-19), not the "not available" hint of the placeholder.
+    await waitFor(() => {
+      expect(profiles.querySelector('[data-slot="profiles-settings"]')).not.toBeNull();
+    });
     expect(profiles.querySelector('[data-slot="profile-list"]')).not.toBeNull();
+    expect(within(profiles).queryByText('The profile editor is not available in this view.')).toBeNull();
     await user.keyboard('{Escape}');
     await waitFor(() => {
       expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull();
     });
   });
 
-  it('every request of the shell channel has a mounted handler in the app (WP-40)', async () => {
+  it('every request of the shell channel has a mounted handler in the app (WP-40, R4W-28)', async () => {
     start('overview');
     const user = userEvent.setup();
     render(<App />);
     await screen.findByRole('heading', { level: 1, name: 'Sample session' });
     // false = nobody took it (shell/requests.ts) – a missing registration is an integration bug.
-    const requests: ShellRequest[] = [
-      { kind: 'quickSwitcher' },
-      { kind: 'conversations', sessionKey: PLAYGROUND_SESSION_KEYS.main },
-      { kind: 'sessionInfo', sessionKey: PLAYGROUND_SESSION_KEYS.main },
-      { kind: 'newSession', cwd: 'D:\\work\\parallax' },
-      { kind: 'settings', section: 'about' },
-      { kind: 'renameTitle', sessionKey: PLAYGROUND_SESSION_KEYS.main },
-    ];
-    for (const request of requests) {
+    for (const request of Object.values(EVERY_REQUEST)) {
       let taken = false;
       act(() => {
         taken = requestShell(request);
       });
       expect(taken, request.kind).toBe(true);
-      if (request.kind !== 'renameTitle') {
-        await screen.findByRole('dialog');
+      if (request.kind === 'renameTitle') {
+        // The inline title field of the header (no dialog); Esc cancels.
+        const field = await waitFor(() => {
+          const element = document.querySelector<HTMLElement>('[data-slot="rename-field"]');
+          if (element === null) throw new Error('no rename field');
+          return element;
+        });
+        await waitFor(() => {
+          expect(document.activeElement).toBe(field);
+        });
         await user.keyboard('{Escape}');
         await waitFor(() => {
-          expect(screen.queryByRole('dialog')).toBeNull();
+          expect(document.querySelector('[data-slot="rename-field"]')).toBeNull();
         });
+        continue;
       }
+      await screen.findByRole('dialog');
+      await user.keyboard('{Escape}');
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).toBeNull();
+      });
     }
     // The pre-filled folder reached the dialog (WP-36 handler).
     act(() => {
