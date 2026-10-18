@@ -24,9 +24,12 @@
  *       the same name is defined persistently (HKCU/HKLM `Environment`) with exactly the same
  *       value (Nexus: `NPM_CONFIG_REGISTRY`, `PNPM_HOME`; ADR-021). `session` and `run_state`
  *       names are removed even when they are persistent.
- *     - target `terminal` only, when the base env comes from a Claude session (`CLAUDECODE` set):
- *       the tool-shell settings of that session (`GIT_EDITOR=true`, `GIT_TERMINAL_PROMPT=0`,
- *       `GCM_INTERACTIVE`, `NO_COLOR`, …, TERMINAL_TOOL_SHELL_VARS) – same persistence exception.
+ *     - `tool_shell` – only when the base env comes from a Claude session (`CLAUDECODE` set): the
+ *       tool-shell settings of that session, same persistence exception. Target `terminal`: all of
+ *       TERMINAL_TOOL_SHELL_VARS (`GIT_EDITOR=true`, `GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE`,
+ *       `NO_COLOR`, …); every other target (SDK session, "Profil testen", preflight): only
+ *       `PSExecutionPolicyPreference` (CLAUDE_SESSION_TOOL_SHELL_VARS, ADR-128 – the relaxed
+ *       execution policy would reach the started claude and, through it, its hooks and MCP servers).
  *     Drop `node_modules\.bin` entries from PATH. `NoDefaultCurrentDirectoryInExePath` is kept.
  *  3. Merge the profile env case-insensitively (`PATH` replaces `Path`). `${env:NAME}` refers to a
  *     variable of the machine: looked up in the cleaned env, then in the original base env (so a
@@ -118,10 +121,11 @@ const MACHINE_OVERRIDABLE_PREFIXES: readonly string[] = ['NPM_', 'PNPM_'];
 
 /**
  * Tool-shell settings Claude Code puts into the environment of its own Bash/PowerShell tools
- * (observed names in a Claude Code 2.1.299 session, not set persistently there). Harmless for an
- * SDK session (the started claude sets them for its tools anyway), but they break an interactive
- * terminal (`git commit` without -m, credential prompts, colors) – removed for target `terminal`
- * when the base env comes from a Claude session (R1-03, Phase 2).
+ * (observed names in a Claude Code 2.1.299 session, not set persistently there). Removed for target
+ * `terminal` when the base env comes from a Claude session (R1-03, Phase 2): they break an
+ * interactive terminal (`git commit` without -m, credential prompts, colors). For the other targets
+ * they are harmless (the started claude sets them for its tools anyway) and kept – except
+ * CLAUDE_SESSION_TOOL_SHELL_VARS (ADR-128).
  */
 export const TERMINAL_TOOL_SHELL_VARS: readonly string[] = [
   'GIT_EDITOR',
@@ -134,6 +138,15 @@ export const TERMINAL_TOOL_SHELL_VARS: readonly string[] = [
   'PSEXECUTIONPOLICYPREFERENCE',
 ];
 const TERMINAL_TOOL_SHELL: ReadonlySet<string> = new Set(TERMINAL_TOOL_SHELL_VARS);
+
+/**
+ * The tool-shell settings of a calling Claude session removed for EVERY target (ADR-128, WP41-08):
+ * `PSExecutionPolicyPreference=Bypass` would hand the relaxed execution policy to the SDK claude
+ * and, through it, to its hooks and MCP servers. Subset of TERMINAL_TOOL_SHELL_VARS (upper-cased).
+ */
+export const CLAUDE_SESSION_TOOL_SHELL_VARS: readonly string[] = ['PSEXECUTIONPOLICYPREFERENCE'];
+const CLAUDE_SESSION_TOOL_SHELL: ReadonlySet<string> = new Set(CLAUDE_SESSION_TOOL_SHELL_VARS);
+const NO_NAMES: ReadonlySet<string> = new Set();
 
 const hasPrefix = (upper: string, prefixes: readonly string[]): boolean =>
   prefixes.some((prefix) => upper.startsWith(prefix));
@@ -162,7 +175,10 @@ export interface BuildEnvInput {
    * upper-cased names). Default null = no exception: every removable name is removed.
    */
   persistent?: PersistentEnvironment | null;
-  /** `sdk` (default): SDK session, "Profil testen", preflight. `terminal`: interactive terminal/console (Phase 2). */
+  /**
+   * `sdk` (default): SDK session, "Profil testen", preflight. `terminal`: interactive terminal/console
+   * (Phase 2). Decides which tool-shell settings of a calling Claude session are removed (step 2).
+   */
   target?: 'sdk' | 'terminal';
 }
 
@@ -172,6 +188,8 @@ export interface BuildEnvReport {
   removed: string[];
   /** Removable names kept because they are defined persistently with the same value (ADR-021), sorted. */
   keptPersistent: string[];
+  /** The removal rule of every name in `removed` and `keptPersistent` (spelling of the base env). */
+  reasons: Map<string, EnvRemovalReason>;
   /** PATH entries dropped because they point into node_modules\.bin. */
   pathEntriesRemoved: number;
   /** Variables set by the builder itself (never profile env values, which may be secrets). */
@@ -185,7 +203,10 @@ export function clientAppId(version: string): string {
   return `${PRODUCT_ID}/${version}`;
 }
 
-/** Removal rule of step 2 for `name` (target `sdk`), or null if it is always kept. */
+/**
+ * Removal rule of step 2 for `name`, or null if it is always kept – without `tool_shell`, which
+ * depends on the base env (`CLAUDECODE`) and the target (see buildEnvReport).
+ */
 export function envRemovalReason(name: string): Exclude<EnvRemovalReason, 'tool_shell'> | null {
   const upper = name.toUpperCase();
   if (ALLOWLIST.has(upper)) return null;
@@ -247,10 +268,17 @@ export function buildEnvReport(input: BuildEnvInput): BuildEnvReport {
   const seen = new Set<string>();
   const removed: string[] = [];
   const keptPersistent: string[] = [];
+  const reasons = new Map<string, EnvRemovalReason>();
   const issues: ErrorPayload[] = [];
   let pathEntriesRemoved = 0;
   const persistent = input.persistent ?? null;
-  const terminalInClaude = input.target === 'terminal' && getEnvVar(input.base, 'CLAUDECODE') !== undefined;
+  // Tool-shell settings of a calling Claude session (R1-03; ADR-128 for the non-terminal targets).
+  const fromClaudeSession = getEnvVar(input.base, 'CLAUDECODE') !== undefined;
+  const toolShell: ReadonlySet<string> = !fromClaudeSession
+    ? NO_NAMES
+    : input.target === 'terminal'
+      ? TERMINAL_TOOL_SHELL
+      : CLAUDE_SESSION_TOOL_SHELL;
 
   // Steps 1 + 2: copy, one spelling per name, remove session and run-state variables.
   for (const [key, value] of Object.entries(input.base)) {
@@ -259,8 +287,9 @@ export function buildEnvReport(input: BuildEnvInput): BuildEnvReport {
     if (seen.has(upper)) continue;
     seen.add(upper);
     const reason: EnvRemovalReason | null =
-      envRemovalReason(key) ?? (terminalInClaude && TERMINAL_TOOL_SHELL.has(upper) ? 'tool_shell' : null);
+      envRemovalReason(key) ?? (toolShell.has(upper) ? 'tool_shell' : null);
     if (reason !== null) {
+      reasons.set(key, reason);
       const overridable = reason === 'machine_overridable' || reason === 'tool_shell';
       if (overridable && persistent !== null && persistent.get(upper) === value) {
         keptPersistent.push(key);
@@ -312,7 +341,7 @@ export function buildEnvReport(input: BuildEnvInput): BuildEnvReport {
 
   removed.sort((a, b) => a.localeCompare(b));
   keptPersistent.sort((a, b) => a.localeCompare(b));
-  return { env, removed, keptPersistent, pathEntriesRemoved, set, issues };
+  return { env, removed, keptPersistent, reasons, pathEntriesRemoved, set, issues };
 }
 
 /**

@@ -86,7 +86,9 @@ import {
   decisionsCleared,
   isViewedByVisibleClient,
   isWatchedByFocusedClient,
-  planNotification,
+  presenceSummary,
+  routeChannel,
+  routeNotification,
 } from './notifier';
 import type { ReduceStatus } from './ports';
 import type { ProcessRecord, ProcessStore } from './processStore';
@@ -629,15 +631,32 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       if (shuttingDown) return;
       const pub = publisherOrThrow();
       const settings = stores.settings.get();
-      const planned = planNotification(
+      const clients = pub.presence();
+      const route = routeNotification(
         prev,
         next,
         now(),
-        pub.presence(),
+        clients,
         s.id,
         toasts.available(),
         settings.notifications,
       );
+      // WP41-04: one line per notification – target, channel and why (never the title: prompt text).
+      if (route !== null) {
+        log.debug(
+          {
+            entryId: s.id,
+            kind: route.kind,
+            channel: routeChannel(route.planned),
+            clientId: route.planned?.clientId ?? null,
+            reason: route.reason,
+            filter: route.filter,
+            presence: presenceSummary(clients, s.id),
+          },
+          'notification route',
+        );
+      }
+      const planned = route?.planned ?? null;
       if (planned !== null) {
         const title = s.entry.title !== '' ? s.entry.title : cwdLabel(s.entry.cwd);
         if (planned.clientId !== null) {
