@@ -1,6 +1,5 @@
 import { BrainIcon, CircleStopIcon, ClockIcon, FileIcon, SquareSlashIcon, ZapIcon } from 'lucide-react';
 import { memo, useContext, type ReactNode } from 'react';
-import { blobPath } from '@shared/http';
 import type { AssistantTextItem, BlobRef, QueuedPrompt, ThinkingItem, UserMessageItem } from '@shared/model';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
@@ -8,6 +7,7 @@ import { Badge } from '@web/ui/badge';
 import { Spinner } from '@web/ui/spinner';
 import { CappedContent } from '../components/CappedContent';
 import { Disclosure } from '../components/Disclosure';
+import { ImageThumb } from '../components/ImageThumb';
 import { ModelBadge } from '../components/ModelBadge';
 import { QueuedIdsContext } from '../context';
 import { Markdown } from '../markdown/Markdown';
@@ -19,19 +19,15 @@ function Attachments({ attachments }: { attachments: readonly BlobRef[] }) {
   const t = useT();
   if (attachments.length === 0) return null;
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap items-start gap-2">
       {attachments.map((attachment) => {
         const name = attachment.name ?? t('transcript.user.unnamed');
         if (attachment.mediaType.startsWith('image/')) {
           return (
-            <img
+            <ImageThumb
               key={attachment.blobId}
-              src={blobPath(attachment.blobId)}
-              alt={t('transcript.user.image', { name })}
-              width={attachment.width ?? undefined}
-              height={attachment.height ?? undefined}
-              loading="lazy"
-              className="max-h-40 max-w-60 rounded-md border object-cover"
+              image={attachment}
+              className="h-auto max-h-40 w-auto max-w-60 object-cover"
             />
           );
         }

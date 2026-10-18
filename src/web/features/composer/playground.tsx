@@ -1,13 +1,18 @@
+import { LOCAL_HOST_ID, makeSessionKey, type EntryId } from '@shared/common';
 import type { QueuedPrompt } from '@shared/model';
 import type { Command } from '@shared/protocol';
 import { sampleDecisions, sampleId } from '@shared/samples';
+import { INITIAL_STATUS_FACTS } from '@shared/status';
 import type { PlaygroundDemo } from '@web/playground/types';
 import type { FakeAck, FakeHost } from '@web/state/fake-host';
 import type { FeatureSlots } from '@web/shell/slots';
-import { DEMO_ENTRIES } from '../decisions/lib/demo-data';
+import { DEMO_ENTRIES, type DemoData } from '../decisions/lib/demo-data';
 import type { DemoHost } from '../decisions/lib/demo-host';
 import { DemoButton, DemoSession } from '../decisions/lib/demo-session';
 import { Composer } from './Composer';
+import { ComposerDemo } from './demo/ComposerDemo';
+import { DEMO_COMMANDS, sampleScreenshot, withDetail, withSummary } from './demo/data';
+import { addAttachmentFiles } from './state/attachments';
 
 /**
  * Playground demos of the composer (WP-16; `#playground=composer/<id>`) in the real SessionPane.
@@ -81,6 +86,98 @@ function simulateQueue(cmd: Command, host: FakeHost): FakeAck | undefined {
     return { ok: true, result: { stillQueued: [] } };
   }
   return undefined;
+}
+
+/** Phase-2 commands the FakeHost leaves to the packages (WP-30): a plausible engine answer. */
+function phase2Commands(cmd: Command, host: FakeHost): FakeAck | undefined {
+  const now = new Date().toISOString();
+  switch (cmd.name) {
+    case 'session.setFastMode':
+      host.patchSummary(cmd.entryId, { fastMode: cmd.enabled });
+      return { ok: true, result: {} };
+    case 'session.openExternal':
+      host.patchSummary(
+        cmd.entryId,
+        { external: { since: now, pid: 52_000, running: true } },
+        { runState: 'external' },
+      );
+      host.pushOps(cmd.entryId, [
+        {
+          op: 'item.upsert',
+          item: {
+            kind: 'system',
+            id: crypto.randomUUID(),
+            order: (host.view(cmd.entryId)?.items.at(-1)?.order ?? 0) + 1,
+            at: now,
+            parentToolUseId: null,
+            event: 'handoff',
+            phase: 'external',
+            importedItems: 0,
+          },
+        },
+      ]);
+      return { ok: true, result: { pid: 52_000 } };
+    case 'session.reclaim':
+      host.patchSummary(cmd.entryId, { external: null }, { runState: 'sleeping' });
+      host.pushOps(cmd.entryId, [
+        {
+          op: 'item.upsert',
+          item: {
+            kind: 'system',
+            id: crypto.randomUUID(),
+            order: (host.view(cmd.entryId)?.items.at(-1)?.order ?? 0) + 1,
+            at: now,
+            parentToolUseId: null,
+            event: 'handoff',
+            phase: 'returned',
+            importedItems: 2,
+          },
+        },
+      ]);
+      return { ok: true, result: { importedItems: 2 } };
+    case 'session.continueAfterLimit': {
+      const until = host.summaries.get(cmd.entryId)?.status.rateLimitedUntil ?? null;
+      const future = until !== null && Date.parse(until) > Date.now();
+      if (!cmd.enabled) host.patchSummary(cmd.entryId, {}, { wakeupAt: null });
+      else if (future) host.patchSummary(cmd.entryId, {}, { wakeupAt: until });
+      else host.patchSummary(cmd.entryId, {}, { wakeupAt: null, rateLimitedUntil: null });
+      return { ok: true, result: { continueAt: cmd.enabled && future ? until : null } };
+    }
+    default:
+      return undefined;
+  }
+}
+
+/** The slash catalog plus the CLI's own terminal list (L1). */
+function withCatalog(data: DemoData): DemoData {
+  return {
+    ...data,
+    sessions: data.sessions.map((session) => ({
+      ...session,
+      detail: {
+        ...session.detail,
+        commands: DEMO_COMMANDS,
+        init:
+          session.detail.init === null
+            ? null
+            : { ...session.detail.init, terminalSlashCommands: ['statusline', 'theme'] },
+      },
+    })),
+  };
+}
+
+function setLimit(running: DemoHost | null, untilOffsetMs: number, planned: boolean): void {
+  if (running === null) return;
+  const until = new Date(Date.now() + untilOffsetMs).toISOString();
+  running.host.patchSummary(
+    DEMO_ENTRIES.idle,
+    {},
+    { rateLimitedUntil: until, wakeupAt: planned ? until : null },
+  );
+}
+
+async function addScreenshot(entryId: EntryId, name: string): Promise<void> {
+  addAttachmentFiles(makeSessionKey(LOCAL_HOST_ID, entryId), [await sampleScreenshot(name)]);
 }
 
 let lateCounter = 0;
@@ -167,6 +264,152 @@ export const demos: PlaygroundDemo[] = [
     id: 'bypass',
     title: 'Composer – profile allows bypass (red mode)',
     render: () => <DemoSession entries={['bypass']} show="bypass" />,
+  },
+  {
+    id: 'slash',
+    title: 'Composer – slash menu with catalog (WP-37)',
+    description:
+      'Type /: native commands (Parallax), Claude Code, skills, MCP; /model, /effort, /fast, /help, /status, /resume, /rename run here; /vim or /theme shows the terminal hint.',
+    render: () => <ComposerDemo setup={withCatalog} onCommand={phase2Commands} />,
+  },
+  {
+    id: 'slash-plain',
+    title: 'Composer – slash menu without catalog (names from init)',
+    description: 'Before supportedCommands() reported: only names, no descriptions or origin.',
+    render: () => (
+      <ComposerDemo setup={(data) => withDetail(data, { commands: null })} onCommand={phase2Commands} />
+    ),
+  },
+  {
+    id: 'attachments',
+    title: 'Composer – screenshots: paste, drop, paper clip (WP-37)',
+    description:
+      'Chips with preview and upload state (fake uploader, 1.2 s). Names with "fail" get 413, with "type" 415. Sending waits for uploads.',
+    render: () => (
+      <ComposerDemo
+        onCommand={phase2Commands}
+        controls={() => (
+          <>
+            <DemoButton
+              label="Add a 2560×1440 screenshot (scaled to 1568)"
+              onClick={() => {
+                void addScreenshot(DEMO_ENTRIES.idle, 'Screenshot 2026-10-16 141502.png');
+              }}
+            />
+            <DemoButton
+              label="Add one that fails (413)"
+              onClick={() => {
+                void addScreenshot(DEMO_ENTRIES.idle, 'fail-too-large.png');
+              }}
+            />
+            <DemoButton
+              label="Add one with a rejected type (415)"
+              onClick={() => {
+                void addScreenshot(DEMO_ENTRIES.idle, 'wrong-type.png');
+              }}
+            />
+          </>
+        )}
+      />
+    ),
+  },
+  {
+    id: 'suggestion',
+    title: 'Composer – prompt suggestion as ghost text (ADR-117)',
+    description: 'Empty field shows the suggestion; Tab takes it.',
+    render: () => (
+      <ComposerDemo
+        setup={(data) => withDetail(data, { promptSuggestion: 'Run the tests and fix what fails' })}
+      />
+    ),
+  },
+  {
+    id: 'rate-limit',
+    title: 'Composer – rate-limit banner (ADR-112)',
+    description: 'Limited → "Continue at HH:MM" plans → "Cancel"; after the reset "Continue" right away.',
+    render: () => (
+      <ComposerDemo
+        setup={(data) =>
+          withSummary(data, {
+            status: {
+              ...(data.summaries[0]?.status ?? INITIAL_STATUS_FACTS),
+              rateLimitedUntil: new Date(Date.now() + 2 * 3600_000).toISOString(),
+            },
+          })
+        }
+        onCommand={phase2Commands}
+        controls={(host) => (
+          <>
+            <DemoButton
+              label="Limited (2 h)"
+              onClick={() => {
+                setLimit(host.current, 2 * 3600_000, false);
+              }}
+            />
+            <DemoButton
+              label="Continue planned"
+              onClick={() => {
+                setLimit(host.current, 2 * 3600_000, true);
+              }}
+            />
+            <DemoButton
+              label="Limit reset (expired)"
+              onClick={() => {
+                setLimit(host.current, -60_000, false);
+              }}
+            />
+            <DemoButton
+              label="Resets in 10 s"
+              onClick={() => {
+                setLimit(host.current, 10_000, false);
+              }}
+            />
+          </>
+        )}
+      />
+    ),
+  },
+  {
+    id: 'disabled',
+    title: 'Composer – archived / open in an external console',
+    description: 'No field, one short line; the pane banner has the actions ("Restore", "Take back").',
+    render: () => (
+      <ComposerDemo
+        setup={(data) => withSummary(data, { archived: true })}
+        onCommand={phase2Commands}
+        controls={(host) => (
+          <>
+            <DemoButton
+              label="Archive"
+              onClick={() => {
+                host.current?.host.patchSummary(DEMO_ENTRIES.idle, { archived: true });
+              }}
+            />
+            <DemoButton
+              label="Open in external console"
+              onClick={() => {
+                host.current?.host.patchSummary(
+                  DEMO_ENTRIES.idle,
+                  {
+                    archived: false,
+                    external: { since: new Date().toISOString(), pid: 52_000, running: true },
+                  },
+                  { runState: 'external' },
+                );
+              }}
+            />
+            <DemoButton
+              label="Console ended"
+              onClick={() => {
+                host.current?.host.patchSummary(DEMO_ENTRIES.idle, {
+                  external: { since: new Date().toISOString(), pid: 52_000, running: false },
+                });
+              }}
+            />
+          </>
+        )}
+      />
+    ),
   },
 ];
 

@@ -1,4 +1,4 @@
-import { LIMITS, parseSessionKey, type PromptPriority } from '@shared/common';
+import { LIMITS, parseSessionKey, type BlobId, type PromptPriority } from '@shared/common';
 import type { Decision, DecisionResponse } from '@shared/model';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand } from '@web/state/hooks';
@@ -49,10 +49,12 @@ export function answerFromText(decision: Decision, text: string): DecisionRespon
   }
 }
 
+/** Sends a prompt; `attachments` are blob ids of uploaded images (ADR-103) – the text may then be empty. */
 export async function sendPrompt(
   sessionKey: string,
   text: string,
   priority: PromptPriority,
+  attachments: readonly BlobId[] = [],
 ): Promise<boolean> {
   const parsed = parseSessionKey(sessionKey);
   if (parsed === null) return false;
@@ -60,7 +62,7 @@ export async function sendPrompt(
     await sendCommand(sessionKey, {
       name: 'session.sendPrompt',
       entryId: parsed.entryId,
-      prompt: { text, attachments: [] },
+      prompt: { text, attachments: attachments.map((blobId) => ({ blobId })) },
       priority,
     });
     return true;

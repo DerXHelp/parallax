@@ -1,5 +1,5 @@
 import { CpuIcon } from 'lucide-react';
-import { memo, useState } from 'react';
+import { memo, useEffect, useEffectEvent, useState } from 'react';
 import { EFFORT_LEVELS, parseSessionKey, type EffortLevel } from '@shared/common';
 import type { ModelOption } from '@shared/model';
 import type { Command } from '@shared/protocol';
@@ -25,20 +25,32 @@ import {
   DropdownMenuTrigger,
 } from '@web/ui/dropdown-menu';
 import { Spinner } from '@web/ui/spinner';
+import { currentModelOption, DEFAULT_MODEL_VALUE } from './lib/models';
 
-/** `supportedModels()` lists the CLI default as value `default`; the contract says `null` = default. */
-const DEFAULT_MODEL_VALUE = 'default';
 const DEFAULT_EFFORT = 'default';
 
 type LoadState = 'idle' | 'loading' | 'failed';
 
-/** The model option the session uses (`modelSetting`, F.12; null = the `default` option). */
-export function currentModelOption(
-  models: readonly ModelOption[] | null,
-  modelSetting: string | null,
-): ModelOption | null {
-  if (models === null) return null;
-  return models.find((model) => model.value === (modelSetting ?? DEFAULT_MODEL_VALUE)) ?? null;
+/** Runs `run` once when the menu content mounts (= the menu opened, however it was opened). */
+function OnOpen({ run }: { run: () => void }) {
+  const onOpen = useEffectEvent(run);
+  useEffect(() => {
+    onOpen();
+  }, []);
+  return null;
+}
+
+/** Part of the menu: everything, or only the effort levels (`/effort` without a level, WP-37). */
+export type ModelPickerSection = 'all' | 'effort';
+
+export interface ModelPickerProps {
+  sessionKey: string;
+  /** Controlled open state (the composer opens it for `/model` and `/effort`); else uncontrolled. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  section?: ModelPickerSection;
+  /** Focus after closing (default: back to the trigger). */
+  onCloseAutoFocus?: (event: Event) => void;
 }
 
 /**
@@ -46,9 +58,18 @@ export function currentModelOption(
  * session detail (`detail.models`, loaded with `session.refreshModels` on first open when
  * missing); effort only when the model supports it, fast mode only when the model offers it
  * (`session.setFastMode`). The label shows the model setting, else the last model seen (F.6).
+ * `/model` and `/effort` open it from the composer (controlled `open`, `section`).
  */
-export const ModelPicker = memo(function ModelPicker({ sessionKey }: { sessionKey: string }) {
+export const ModelPicker = memo(function ModelPicker({
+  sessionKey,
+  open: controlledOpen,
+  onOpenChange,
+  section = 'all',
+  onCloseAutoFocus,
+}: ModelPickerProps) {
   const t = useT();
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = controlledOpen ?? ownOpen;
   const models = useSessionSelector<readonly ModelOption[] | null>(
     sessionKey,
     (view) => view.detail.models,
@@ -100,11 +121,40 @@ export const ModelPicker = memo(function ModelPicker({ sessionKey }: { sessionKe
     }
   };
 
+  const effortOnly = section === 'effort';
+  const effortGroup =
+    efforts.length === 0 ? null : (
+      <>
+        {effortOnly ? null : <DropdownMenuSeparator />}
+        <DropdownMenuLabel>{t('composer.model.effort')}</DropdownMenuLabel>
+        <DropdownMenuRadioGroup
+          value={effort ?? DEFAULT_EFFORT}
+          onValueChange={(value) => {
+            const level: EffortLevel | null | undefined =
+              value === DEFAULT_EFFORT ? null : efforts.find((candidate) => candidate === value);
+            if (level === undefined || level === effort) return;
+            void run((entryId) => ({ name: 'session.setEffort', entryId, effort: level }));
+          }}
+        >
+          <DropdownMenuRadioItem value={DEFAULT_EFFORT}>
+            {t('composer.model.effortDefault')}
+          </DropdownMenuRadioItem>
+          {efforts.map((level) => (
+            <DropdownMenuRadioItem key={level} value={level}>
+              {t(`composer.model.effortLevels.${level}`)}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </>
+    );
+
   return (
     <DropdownMenu
       modal={false}
-      onOpenChange={(open) => {
-        if (open && models === null && load !== 'loading') void refresh();
+      open={open}
+      onOpenChange={(next) => {
+        setOwnOpen(next);
+        onOpenChange?.(next);
       }}
     >
       <DropdownMenuTrigger asChild>
@@ -121,9 +171,32 @@ export const ModelPicker = memo(function ModelPicker({ sessionKey }: { sessionKe
           {pending ? <Spinner className="size-3" /> : null}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-72">
-        <DropdownMenuLabel>{t('composer.model.label')}</DropdownMenuLabel>
-        {models === null ? (
+      <DropdownMenuContent
+        align="start"
+        className="w-72"
+        data-section={section}
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
+        <OnOpen
+          run={() => {
+            // Every way of opening (click, keyboard, `/model` from the composer) loads a missing list.
+            if (models === null && load !== 'loading') void refresh();
+          }}
+        />
+        {effortOnly ? (
+          (effortGroup ?? (
+            <DropdownMenuItem disabled>
+              {models === null
+                ? load === 'failed'
+                  ? t('composer.model.unavailable')
+                  : t('composer.model.loading')
+                : t('composer.model.effortUnavailable')}
+            </DropdownMenuItem>
+          ))
+        ) : (
+          <DropdownMenuLabel>{t('composer.model.label')}</DropdownMenuLabel>
+        )}
+        {effortOnly ? null : models === null ? (
           <DropdownMenuItem disabled>
             {load === 'failed' ? t('composer.model.unavailable') : t('composer.model.loading')}
           </DropdownMenuItem>
@@ -154,31 +227,8 @@ export const ModelPicker = memo(function ModelPicker({ sessionKey }: { sessionKe
             ))}
           </DropdownMenuRadioGroup>
         )}
-        {efforts.length === 0 ? null : (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel>{t('composer.model.effort')}</DropdownMenuLabel>
-            <DropdownMenuRadioGroup
-              value={effort ?? DEFAULT_EFFORT}
-              onValueChange={(value) => {
-                const level: EffortLevel | null | undefined =
-                  value === DEFAULT_EFFORT ? null : efforts.find((candidate) => candidate === value);
-                if (level === undefined || level === effort) return;
-                void run((entryId) => ({ name: 'session.setEffort', entryId, effort: level }));
-              }}
-            >
-              <DropdownMenuRadioItem value={DEFAULT_EFFORT}>
-                {t('composer.model.effortDefault')}
-              </DropdownMenuRadioItem>
-              {efforts.map((level) => (
-                <DropdownMenuRadioItem key={level} value={level}>
-                  {t(`composer.model.effortLevels.${level}`)}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </>
-        )}
-        {current?.supportsFastMode === true ? (
+        {effortOnly ? null : effortGroup}
+        {!effortOnly && current?.supportsFastMode === true ? (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuCheckboxItem

@@ -20,6 +20,15 @@ export const de: typeof en = {
     image: 'Bild: {name}',
     unnamed: 'ohne Namen',
   },
+  image: {
+    open: 'Bild {name} vergrößern',
+    zoomIn: 'Vergrößern (+)',
+    zoomOut: 'Verkleinern (−)',
+    fit: 'An Fenster anpassen (0)',
+    actualSize: 'Originalgröße (1)',
+    save: 'Speichern unter…',
+    close: 'Schließen (Esc)',
+  },
   assistant: {
     label: 'Claude',
     aborted: 'Abgebrochen, bevor die Antwort fertig war.',
@@ -221,11 +230,12 @@ export const de: typeof en = {
     error: 'Fehler',
     unknown: 'Unbekanntes Ereignis {type}',
     handoff: {
-      external: 'In einer externen Konsole geöffnet',
+      external: 'In externer Konsole geöffnet',
       returned: {
         one: 'Aus der Konsole zurück – {count} Eintrag übernommen',
         other: 'Aus der Konsole zurück – {count} Einträge übernommen',
       },
+      returnedNone: 'Aus der Konsole zurück – keine neuen Einträge übernommen',
     },
   },
   generic: {

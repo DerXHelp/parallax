@@ -1,4 +1,5 @@
 import { createContext, useContext, type ComponentType } from 'react';
+import type { BlobRef } from '@shared/model';
 
 /**
  * Values the TranscriptView computes once and every row may need. They change rarely (model
@@ -25,3 +26,13 @@ export function useTranscriptSettings(): TranscriptSettings | null {
 
 /** Message UUIDs still in `detail.queue` (B "Gequeuete Nachrichten" – shown grey until taken over). */
 export const QueuedIdsContext = createContext<ReadonlySet<string>>(new Set());
+
+/** Opens a blob image in the transcript's lightbox; `trigger` gets the focus back afterwards. */
+export type OpenImage = (image: BlobRef, trigger: HTMLElement) => void;
+
+/**
+ * The TranscriptView's single lightbox (`components/ImageViewer.tsx`): it lives outside the
+ * virtualized rows, so it stays open when the row of its thumbnail scrolls away and unmounts
+ * (following new output). Null outside a TranscriptView – a thumbnail then has its own lightbox.
+ */
+export const ImageViewerContext = createContext<OpenImage | null>(null);

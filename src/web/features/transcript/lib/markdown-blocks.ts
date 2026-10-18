@@ -18,7 +18,7 @@ export interface MarkdownBlock {
   openFence: boolean;
 }
 
-interface Fence {
+export interface Fence {
   char: '`' | '~';
   length: number;
 }
@@ -27,7 +27,8 @@ const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 const LIST_ITEM = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:\s|$)/;
 const BLANK = /^\s*$/;
 
-function openingFence(line: string): Fence | null {
+/** The code fence a line opens (``` or ~~~, CommonMark lengths), else null. */
+export function openingFence(line: string): Fence | null {
   const match = FENCE_OPEN.exec(line);
   const marker = match?.[1];
   if (marker === undefined) return null;
@@ -37,7 +38,8 @@ function openingFence(line: string): Fence | null {
   return { char, length: marker.length };
 }
 
-function closesFence(line: string, fence: Fence): boolean {
+/** Does `line` close `fence`? */
+export function closesFence(line: string, fence: Fence): boolean {
   const trimmed = line.trim();
   if (trimmed.length < fence.length || line.length - line.trimStart().length > 3) return false;
   for (const ch of trimmed) if (ch !== fence.char) return false;

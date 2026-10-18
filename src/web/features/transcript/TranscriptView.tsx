@@ -12,6 +12,7 @@ import { showErrorNotice } from '@web/state/notices';
 import { Button } from '@web/ui/button';
 import { Skeleton } from '@web/ui/skeleton';
 import { Spinner } from '@web/ui/spinner';
+import { ImageViewer } from './components/ImageViewer';
 import { QueuedIdsContext, TranscriptSettingsContext, type TranscriptSettings } from './context';
 import { QueuedPromptRow } from './items/MessageRows';
 import { TranscriptRow } from './items/TranscriptRow';
@@ -24,7 +25,8 @@ import { preloadMarkdown } from './markdown/Markdown';
  * - sticks to the bottom while new content arrives, unless the user scrolled up ("Jump to latest");
  * - scrolling to the top loads earlier items (`loadEarlier`, `hasEarlier`), virtua's `shift` keeps
  *   the position while items are prepended;
- * - queued prompts (`detail.queue`) appear grey at the end until the CLI takes them over.
+ * - queued prompts (`detail.queue`) appear grey at the end until the CLI takes them over;
+ * - one image lightbox next to the list (`ImageViewer`, WP-37): it survives its row unmounting.
  */
 
 type Row = { kind: 'earlier' } | { kind: 'item'; id: string } | { kind: 'queued'; prompt: QueuedPrompt };
@@ -207,58 +209,75 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
   // that follow – own message, queue entry, answer – then stick as usual).
   useTranscriptFollowHandler(sessionKey, jumpToLatest);
 
+  const rootRef = useRef<HTMLDivElement>(null);
+  const listFocus = useCallback(
+    () => rootRef.current?.querySelector<HTMLElement>('[role="region"]') ?? null,
+    [],
+  );
+
   const empty = rows.length === 0;
   return (
     <TranscriptSettingsContext value={settings}>
       <QueuedIdsContext value={queuedIds}>
-        <div data-slot="transcript" data-session-key={sessionKey} className="relative h-full min-h-0">
-          {!meta.hasView ? (
-            <div aria-busy="true" aria-label={t('transcript.list.label')} className="flex flex-col gap-3 p-4">
-              <Skeleton className="h-4 w-1/3" />
-              <Skeleton className="h-16 w-2/3" />
-              <Skeleton className="h-4 w-1/2" />
-            </div>
-          ) : empty ? (
-            <p className="text-muted-foreground flex h-full items-center justify-center p-6 text-xs">
-              {t('transcript.list.empty')}
-            </p>
-          ) : (
-            <VList
-              ref={listRef}
-              data={rows}
-              shift={shift}
-              onScroll={onScroll}
-              onResize={onResize}
-              role="region"
-              aria-label={t('transcript.list.label')}
-              tabIndex={0}
-              className="focus-visible:ring-ring/60 h-full outline-none focus-visible:ring-2 focus-visible:ring-inset"
-            >
-              {(row: Row) => (
-                <div key={rowKey(row)} data-row={row.kind} className="mx-auto w-full max-w-4xl px-4 py-1.5">
-                  {row.kind === 'earlier' ? (
-                    <EarlierRow loading={loadingEarlier} onLoad={requestEarlier} />
-                  ) : row.kind === 'item' ? (
-                    <TranscriptRow sessionKey={sessionKey} itemId={row.id} />
-                  ) : (
-                    <QueuedPromptRow prompt={row.prompt} />
-                  )}
-                </div>
-              )}
-            </VList>
-          )}
-          {showJump && !empty ? (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={jumpToLatest}
-              className="absolute bottom-3 left-1/2 -translate-x-1/2 border shadow-md"
-            >
-              <ArrowDownIcon aria-hidden />
-              {t('transcript.list.jumpToLatest')}
-            </Button>
-          ) : null}
-        </div>
+        <ImageViewer fallbackFocus={listFocus}>
+          <div
+            ref={rootRef}
+            data-slot="transcript"
+            data-session-key={sessionKey}
+            className="relative h-full min-h-0"
+          >
+            {!meta.hasView ? (
+              <div
+                aria-busy="true"
+                aria-label={t('transcript.list.label')}
+                className="flex flex-col gap-3 p-4"
+              >
+                <Skeleton className="h-4 w-1/3" />
+                <Skeleton className="h-16 w-2/3" />
+                <Skeleton className="h-4 w-1/2" />
+              </div>
+            ) : empty ? (
+              <p className="text-muted-foreground flex h-full items-center justify-center p-6 text-xs">
+                {t('transcript.list.empty')}
+              </p>
+            ) : (
+              <VList
+                ref={listRef}
+                data={rows}
+                shift={shift}
+                onScroll={onScroll}
+                onResize={onResize}
+                role="region"
+                aria-label={t('transcript.list.label')}
+                tabIndex={0}
+                className="focus-visible:ring-ring/60 h-full outline-none focus-visible:ring-2 focus-visible:ring-inset"
+              >
+                {(row: Row) => (
+                  <div key={rowKey(row)} data-row={row.kind} className="mx-auto w-full max-w-4xl px-4 py-1.5">
+                    {row.kind === 'earlier' ? (
+                      <EarlierRow loading={loadingEarlier} onLoad={requestEarlier} />
+                    ) : row.kind === 'item' ? (
+                      <TranscriptRow sessionKey={sessionKey} itemId={row.id} />
+                    ) : (
+                      <QueuedPromptRow prompt={row.prompt} />
+                    )}
+                  </div>
+                )}
+              </VList>
+            )}
+            {showJump && !empty ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={jumpToLatest}
+                className="absolute bottom-3 left-1/2 -translate-x-1/2 border shadow-md"
+              >
+                <ArrowDownIcon aria-hidden />
+                {t('transcript.list.jumpToLatest')}
+              </Button>
+            ) : null}
+          </div>
+        </ImageViewer>
       </QueuedIdsContext>
     </TranscriptSettingsContext>
   );
