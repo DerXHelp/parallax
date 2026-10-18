@@ -536,6 +536,12 @@ function ProfileForm({
           </div>
           <div id={ids.configDirHint} className="grid gap-1">
             <p className="text-muted-foreground text-2xs">{t('profiles.fields.configDirHint')}</p>
+            {/* WP41-06: Claude Code sets up a chosen folder itself – even "Test profile" writes there. */}
+            {draft.configDir.trim() === '' ? null : (
+              <p data-slot="config-dir-writes" className="text-muted-foreground text-2xs">
+                {t('profiles.fields.configDirWrites')}
+              </p>
+            )}
             <FieldNotes id={`${ids.configDirHint}-notes`} problems={configDirProblems} issues={placed.configDir} />
             {showConfigDirWarning ? (
               <Alert tone="warning" data-slot="config-dir-warning">

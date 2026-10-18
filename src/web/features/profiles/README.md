@@ -19,6 +19,12 @@ Slot `ProfilesSettings` (`src/web/shell/slots.tsx`); WP-40 setzt den Slot in `Ap
 | `playground.tsx` | Demos: Dialog (mit/ohne Vorbelegung), Ordner-Browser, Editor, Einstellungsseite über den Slot `SettingsPage` (R4W-01); Slot `ProfilesSettings` für die Einstellungsseite des Playgrounds (Test: `playground.test.tsx`) |
 | `i18n/{en,de}.ts` | Namensraum `profiles` (registriert in `src/web/i18n/index.ts`) |
 
+Hinweis `configDir` (WP41-06, Live-Abnahme WP-41): Claude Code richtet einen Konfigurationsordner
+selbst ein – schon „Profil testen“ (`claude --version`/`auth status` mit `CLAUDE_CONFIG_DIR`) legt in
+einem leeren Ordner `.claude.json` und `backups\` an; „nur lesend“ (WP-30 §10) gilt also nicht für
+den Ordner. Der Editor sagt das unter dem Feld (`profiles.fields.configDirWrites`, nur solange ein
+Ordner eingetragen ist – leer = Standardordner von Claude Code). Kein Verhaltenswechsel.
+
 Importgrenzen: kein Import aus anderen Features (ESLint), Store nur über `@web/state/hooks`;
 Shell-Bausteine (`FolderBrowser`, `profile-status`, `profile-issues`) aus `src/web/shell/new-session`
 (Feature → Shell erlaubt, ADR-126), die Secret-Regel aus `@shared/secrets`.

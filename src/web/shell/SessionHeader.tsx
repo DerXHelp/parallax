@@ -4,7 +4,6 @@ import { LOCAL_HOST_ID, parseSessionKey } from '@shared/common';
 import type { ContextGauge } from '@shared/model';
 import { useI18n, useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
-import { pathTail } from '@web/lib/path-display';
 import { sessionTitle } from '@web/lib/session-title';
 import { cliVersionStatus, knownVersion } from '@web/lib/version';
 import { useDisplayStatus, useHostState, useSummary } from '@web/state/hooks';
@@ -13,6 +12,7 @@ import { Gauge } from '@web/ui/gauge';
 import { StatusIcon } from '@web/ui/status-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
 import { RenameField } from './navigation/RenameField';
+import { PathTail } from './navigation/PathTail';
 import { startRename, useRenameHeader, useRenaming } from './navigation/rename';
 import { SessionMenu } from './navigation/SessionMenu';
 
@@ -163,7 +163,8 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
                   {/* Shrinks with the pane (V1-04): the path never runs under the mode badge. */}
                   <span className="flex max-w-full min-w-0 items-center gap-1 font-mono text-2xs">
                     <FolderIcon aria-hidden className="size-3 shrink-0" />
-                    <span className="min-w-0 truncate">{pathTail(summary.cwd, 2)}</span>
+                    {/* WP41-02: the project folder stays whole, the folder before it shrinks. */}
+                    <PathTail path={summary.cwd} data-slot="header-path" />
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>

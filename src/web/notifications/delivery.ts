@@ -21,8 +21,9 @@ import { getSystemNotifier, type SystemNotifier, type SystemToast } from './syst
  * disturb", the toast switches, the focus rule and the "done" threshold; the window adds the sound
  * (`events[kind].sound`, not "Do not disturb", Web Audio – sounds.ts) and makes its own Web
  * Notifications silent then. A sound locked by the autoplay policy shows the hint "Enable sounds"
- * with a button of that name once per window run (until the first interaction unlocks them;
- * ADR-120 makes this the fallback for windows not opened by the launcher). A `notify.clear` (decision
+ * with a button of that name once per window run (until the first interaction unlocks them). The
+ * launcher's window allows audio without a gesture (ADR-120): its first sound unlocks at once
+ * (WP41-01, sounds.ts), so the hint is the fallback for other windows. A `notify.clear` (decision
  * answered elsewhere) retracts hint and toast; showing a session clears its notifications (they
  * are seen). Runs outside React (started by bootApp and for the playground in main.tsx).
  */
