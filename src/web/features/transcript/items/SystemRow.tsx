@@ -20,6 +20,7 @@ import { cn } from '@web/lib/cn';
 import { TONE_ICON, type AlertTone } from '@web/ui/alert';
 import { CappedContent } from '../components/CappedContent';
 import { Disclosure } from '../components/Disclosure';
+import { isKnownRateLimitWindow } from '../lib/rate-limit';
 import { TerminalOutput } from '../renderers/parts';
 import { expansionKey } from '../state/expansion';
 
@@ -157,7 +158,10 @@ export const SystemRow = memo(function SystemRow({
         info.resetsAt === null
           ? null
           : t('transcript.system.rateLimit.resetsAt', { time: format.dateTime(info.resetsAt) }),
-        info.rateLimitType,
+        // V3-13: the known windows translated, an unknown one as the SDK sent it.
+        info.rateLimitType !== null && isKnownRateLimitWindow(info.rateLimitType)
+          ? t(`transcript.system.rateLimit.windows.${info.rateLimitType}`)
+          : info.rateLimitType,
       ]);
       return (
         <Notice

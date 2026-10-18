@@ -11,7 +11,12 @@ import { renderWithHost, type Harness } from '../decisions/lib/testing';
 import { Composer } from './Composer';
 import type { DecodedImage } from './lib/images';
 import { setAttachmentUploader, UploadError } from './lib/upload';
-import { resetAttachments, setImageDecoder } from './state/attachments';
+import {
+  attachmentsOverTotal,
+  resetAttachments,
+  setImageDecoder,
+  type ComposerAttachment,
+} from './state/attachments';
 import { resetDraftStore } from './state/drafts';
 
 vi.setConfig({ testTimeout: 60_000 });
@@ -239,6 +244,105 @@ describe('image attachments (ADR-103, WP-37 §4)', () => {
     expect(clientStore.getState().notices.map((notice) => notice.content)).toEqual([
       { text: 'composer.attachments.tooMany', params: { max: LIMITS.attachmentsMax } },
     ]);
+  });
+
+  it('ADR-125: images over the total limit show the error on the chip and block sending until removed', async () => {
+    smallImages();
+    const uploads = controlledUploads();
+    const h = start();
+    const perImage = 3_750_000;
+    const count = Math.floor(LIMITS.attachmentsTotalBytes / perImage) + 1;
+    paste(Array.from({ length: count }, (_, i) => png(`big-${String(i)}.png`)));
+    await waitFor(() => {
+      expect(uploads).toHaveLength(count);
+    });
+    act(() => {
+      uploads.forEach((upload, i) => {
+        upload.resolve({ ...blob(20 + i, upload.name), bytes: perImage });
+      });
+    });
+    await waitFor(() => {
+      expect(chips().map((chip) => chip.getAttribute('data-status'))).toEqual(Array(count).fill('done'));
+    });
+    // Only the last chip crosses the limit (in list order).
+    expect(chips().map((chip) => chip.hasAttribute('data-over-total'))).toEqual([
+      ...Array<boolean>(count - 1).fill(false),
+      true,
+    ]);
+    const last = chips().at(-1) ?? document.body;
+    expect(within(last).getByText('All images together over 20 MB')).toBeTruthy();
+    expect(
+      within(last).getByRole('group', { name: `big-${String(count - 1)}.png: All images together over 20 MB` }),
+    ).toBeTruthy();
+    expect(screen.getByText('The images are too large together – remove one to send.')).toBeTruthy();
+    expect(sendButton().disabled).toBe(true);
+    const user = userEvent.setup();
+    await user.type(textbox(), 'many screenshots{Enter}');
+    expect(h.commands('session.sendPrompt')).toEqual([]);
+    await user.click(screen.getByRole('button', { name: `Remove big-${String(count - 1)}.png` }));
+    expect(chips().some((chip) => chip.hasAttribute('data-over-total'))).toBe(false);
+    expect(sendButton().disabled).toBe(false);
+    await user.click(sendButton());
+    expect(h.commands('session.sendPrompt')[0]?.prompt.attachments).toHaveLength(count - 1);
+  });
+
+  it('attachmentsOverTotal adds the finished uploads in list order', () => {
+    const chip = (id: string, bytes: number | null): ComposerAttachment => ({
+      id,
+      name: `${id}.png`,
+      previewUrl: null,
+      status: bytes === null ? 'uploading' : 'done',
+      failure: null,
+      ref: bytes === null ? null : { ...blob(1, `${id}.png`), bytes },
+    });
+    expect([...attachmentsOverTotal([chip('a', 6), chip('b', null), chip('c', 5)], 10)]).toEqual(['c']);
+    expect([...attachmentsOverTotal([chip('a', 11), chip('b', 1)], 10)]).toEqual(['a', 'b']);
+    expect(attachmentsOverTotal([chip('a', 10)], 10).size).toBe(0);
+  });
+
+  it('R4W-26: "/plan text" waits for running uploads – no mode switch with the text left behind', async () => {
+    smallImages();
+    const uploads = controlledUploads();
+    const h = start();
+    paste([png('plan.png')]);
+    await waitFor(() => {
+      expect(uploads).toHaveLength(1);
+    });
+    const user = userEvent.setup();
+    await user.type(textbox(), '/plan write the tests first');
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Run' }).disabled).toBe(true);
+    await user.keyboard('{Enter}');
+    expect(h.commands('session.setPermissionMode')).toEqual([]);
+    expect(textbox().value).toBe('/plan write the tests first');
+    expect(screen.getByText('Uploading images…')).toBeTruthy();
+    act(() => {
+      uploads[0]?.resolve(blob(3, 'plan.png'));
+    });
+    await waitFor(() => {
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Run' }).disabled).toBe(false);
+    });
+    await user.keyboard('{Enter}');
+    await waitFor(() => {
+      expect(h.commands('session.sendPrompt').map((cmd) => cmd.prompt)).toEqual([
+        { text: 'write the tests first', attachments: [{ blobId: sampleBlobId(3) }] },
+      ]);
+    });
+    expect(h.commands('session.setPermissionMode').map((cmd) => cmd.mode)).toEqual(['plan']);
+  });
+
+  it('R4W-26: while Enter answers a decision, a hint says the images wait for the next message', async () => {
+    smallImages();
+    controlledUploads();
+    harness = renderWithHost((key) => <Composer sessionKey={key('permission')} />, {
+      entries: ['permission'],
+    });
+    await screen.findByText(/Enter denies it with your text/);
+    expect(document.querySelector('[data-slot="composer-images-later"]')).toBeNull();
+    paste([png('proof.png')]);
+    const hint = await screen.findByText(
+      'The images stay for your next message – an answer is sent without them.',
+    );
+    expect(textbox().getAttribute('aria-describedby')?.split(' ')).toContain(hint.closest('p')?.id);
   });
 
   it('an unreadable image fails on its chip', async () => {

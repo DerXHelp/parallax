@@ -50,6 +50,9 @@ export function ImageThumb({ image, className }: { image: BlobRef; className?: s
   const openImage = useContext(ImageViewerContext);
   const { name, lightbox } = useBlobImage(image);
   const labels = useLightboxLabels(lightbox.alt);
+  // Lazy loading only with a known size (V3-12: a lazy image without dimensions shifts the layout
+  // when it arrives). Tool-result blobs have none; the virtualized list mounts rows near view only.
+  const sized = image.width !== null && image.height !== null;
   const button = (
     <button
       type="button"
@@ -69,7 +72,7 @@ export function ImageThumb({ image, className }: { image: BlobRef; className?: s
         alt={lightbox.alt}
         width={image.width ?? undefined}
         height={image.height ?? undefined}
-        loading="lazy"
+        loading={sized ? 'lazy' : undefined}
         className={cn('rounded-md border', className)}
       />
     </button>

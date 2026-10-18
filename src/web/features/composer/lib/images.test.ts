@@ -124,12 +124,19 @@ describe('prepareImage (ADR-103)', () => {
     });
   });
 
-  it('keeps a GIF that is small enough unchanged (animation), even above the edge limit', async () => {
-    const codec = fakeDecoder({ width: 3000, height: 3000 }, () => 1);
+  it('keeps a small GIF within the edge limit unchanged (animation)', async () => {
+    const codec = fakeDecoder({ width: 800, height: 600 }, () => 1);
     const gif = file('anim.gif', 'image/gif', 1_000_000);
     const prepared = await prepareImage(gif, { decode: codec.decode });
-    expect(prepared).toMatchObject({ blob: gif, type: 'image/gif', width: 3000, height: 3000 });
+    expect(prepared).toMatchObject({ blob: gif, type: 'image/gif', width: 800, height: 600 });
     expect(codec.encoded).toEqual([]);
+  });
+
+  it('scales a GIF above the edge limit like any other image (R4W-26, ADR-103)', async () => {
+    const codec = fakeDecoder({ width: 3000, height: 3000 }, () => 1_000);
+    const prepared = await prepareImage(file('anim.gif', 'image/gif', 1_000_000), { decode: codec.decode });
+    expect(prepared).toMatchObject({ type: 'image/png', name: 'anim.png', width: 1568, height: 1568 });
+    expect(codec.encoded.map((entry) => entry.size)).toEqual([{ width: 1568, height: 1568 }]);
   });
 
   it('re-encodes a GIF that is too large', async () => {

@@ -10,7 +10,7 @@ import { ModelBadge } from '../components/ModelBadge';
 import { ToolStatus } from '../components/ToolStatus';
 import { useTranscriptSettings } from '../context';
 import { readAgentInput, readAgentResult } from '../lib/tool-input';
-import { ToolResultText } from '../renderers/parts';
+import { ToolResultImages, ToolResultText } from '../renderers/parts';
 import type { ToolBodyProps } from '../renderers/types';
 import { expansionKey } from '../state/expansion';
 
@@ -137,6 +137,8 @@ export const AgentCard = memo(function AgentCard({ item, sessionKey }: ToolBodyP
           </div>
         </Disclosure>
       )}
+      {/* Pictures of the result without expanding it (R4W-03; the result text leaves them out). */}
+      <ToolResultImages item={item} />
       <AgentSteps item={item} sessionKey={sessionKey} />
     </div>
   );

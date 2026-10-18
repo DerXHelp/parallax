@@ -1,6 +1,7 @@
 import { CheckIcon, CopyIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useT } from '@web/i18n';
+import { copyText } from '@web/lib/clipboard';
 import { showTextNotice } from '@web/state/notices';
 import { IconButton } from '@web/ui/icon-button';
 
@@ -20,7 +21,11 @@ export function CopyButton({ text, label, className }: { text: string; label?: s
   );
 
   const copy = () => {
-    const done = () => {
+    void copyText(text).then((ok) => {
+      if (!ok) {
+        showTextNotice('transcript.code.copyFailed', undefined, { tone: 'error', id: 'transcript-copy' });
+        return;
+      }
       setCopied(true);
       if (timer.current !== null) clearTimeout(timer.current);
       timer.current = setTimeout(() => {
@@ -31,17 +36,7 @@ export function CopyButton({ text, label, className }: { text: string; label?: s
         id: 'transcript-copy',
         durationMs: 2000,
       });
-    };
-    const failed = () => {
-      showTextNotice('transcript.code.copyFailed', undefined, { tone: 'error', id: 'transcript-copy' });
-    };
-    // `navigator.clipboard` is missing outside secure contexts – 127.0.0.1 is one.
-    const clipboard = typeof navigator === 'undefined' ? undefined : navigator.clipboard;
-    if (clipboard === undefined) {
-      failed();
-      return;
-    }
-    clipboard.writeText(text).then(done, failed);
+    });
   };
 
   return (
