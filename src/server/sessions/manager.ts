@@ -9,7 +9,10 @@
  * Phase 2 (WP-31): idle sleep from the settings (ADR-105), git branch refresh for visible entries
  * (ADR-113), persistent model catalogs/account limits (ADR-114), slash-command cache (ADR-108),
  * notification settings (ADR-109), host-command routing (ADR-101) and the Phase-2 host state.
+ * WP-34: external console (ADR-104), continue after the rate limit (ADR-112), image attachments
+ * (ADR-103), clickable/silent native toasts (ADR-109), profile caches (ADR-102, `onProfileChanged`).
  */
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { Logger } from 'pino';
 import { jsonValueSchema, type ClientId, type EntryId, type ProfileId } from '@shared/common';
@@ -19,6 +22,7 @@ import {
   type Entry,
   type HostState,
   type HostWarning,
+  type Profile,
   type QueuedPrompt,
   type RateLimitInfo,
   type Settings,
@@ -47,9 +51,11 @@ import {
   type SessionPublisher,
   type SessionSource,
 } from '../sync/ports';
+import type { ConsoleLauncher, SystemIntegration } from '../system/ports';
 import { createMemoryCatalogStore } from './catalogStore';
 import { createMemoryCommandCatalogStore } from './commandCatalog';
 import { handleCommand, type CommandEngine } from './commands';
+import { restoreContinue } from './continuePlan';
 import {
   EntryState,
   settingsSleepPolicy,
@@ -60,9 +66,10 @@ import {
   type SessionManagerOptions,
   type SleepPolicy,
 } from './entryState';
+import { restoreExternal } from './external';
 import { readGitBranch } from './lib/gitBranch';
 import { realTimers, type TimerHandle, type Timers } from './lib/timers';
-import type { ModelCatalog } from './models';
+import { catalogOrFallback, type ModelCatalog } from './models';
 import {
   capInput as normalizerCapInput,
   capText as normalizerCapText,
@@ -71,7 +78,7 @@ import {
   normalizeContextUsage,
   normalizeHistory,
 } from './normalizer';
-import { DISABLED_NATIVE_TOASTS, type NativeToasts } from './nativeToasts';
+import { DISABLED_NATIVE_TOASTS, toastShowOptions, type NativeToasts } from './nativeToasts';
 import {
   decisionsCleared,
   isViewedByVisibleClient,
@@ -108,6 +115,10 @@ export const DEFAULT_SESSION_MANAGER_OPTIONS: SessionManagerOptions = {
   processSnapshotFirstMs: 10_000,
   // C.8 (CR-02, ADR-090): up to 5 s after close() for a clean end (SessionEnd hooks, transcript).
   shutdownKillAfterMs: 5_000,
+  // ADR-104: console state check of a handed-off entry.
+  externalPollMs: 5_000,
+  // ADR-112: a plan at most 1 h overdue is still sent after a restart.
+  continueGraceMs: 3_600_000,
 };
 
 /** WP22-05: bound of the interrupt sent at shutdown to a session that waits for a decision. */
@@ -168,6 +179,15 @@ export interface SessionManagerDeps {
   onShutdownRequested?: () => void;
   /** Native Windows toasts (WP22-03/-15, A.9); default: off. */
   toasts?: NativeToasts;
+  /**
+   * Phase 2 (ADR-104, WP-34): the visible console of `session.openExternal` (WP-33
+   * `createConsoleLauncher()`, fake server `createFakeConsoleLauncher()`). Absent →
+   * `openExternal` answers EXTERNAL_CONSOLE_FAILED {reason:'unavailable'} and a handoff of an
+   * earlier run stays `external` (its state is unknown, ADR-051).
+   */
+  consoleLauncher?: ConsoleLauncher;
+  /** Phase 2 (ADR-109, WP-34): click target of native toasts (`toastLaunchUri`); absent → none. */
+  systemIntegration?: Pick<SystemIntegration, 'toastLaunchUri'>;
   // Defaults = the real modules (tests override):
   normalizer?: Partial<NormalizerFns>;
   reduceStatus?: ReduceStatus;
@@ -204,6 +224,10 @@ export interface EngineEntryInfo {
   mirrorItems: number | null;
   subscribers: number;
   gitBranch: string | null;
+  /** ADR-112: a "continue" timer is armed. */
+  continueScheduled: boolean;
+  /** ADR-104: the next console state check is armed. */
+  externalWatched: boolean;
 }
 
 export interface SessionManager extends SessionSource {
@@ -218,9 +242,32 @@ export interface SessionManager extends SessionSource {
   shutdown(): Promise<void>;
   /** E.g. after warnings.onChange / checkProfile (WP-20), a profile change (WP-40). */
   publishHostState(): void;
+  /**
+   * ADR-102 (WP-34; WP-40 wires it to `PersistentProfileStore.onChange`): a profile was saved,
+   * deleted or re-checked. For `profileId` – or, with null/absent, for every profile the engine
+   * knows – the caches of a CHANGED profile are dropped: model catalog incl. the alias resolution
+   * (memory and `model-catalogs.json`; open views of dormant entries fall back to the aliases), the
+   * launch env of dormant entries (git PATH); a deleted profile also loses its account limits.
+   * "Changed" = executable, env, configDir, args or passRawArgs differ from the last known profile
+   * (a rename, colour, default or claude-status change keeps the caches, like WP-32's resolution
+   * cache). Always publishes the host state afterwards.
+   */
+  onProfileChanged(profileId?: ProfileId | null): void;
   inspect(entryId: EntryId): EngineEntryInfo | null;
   /** Settles when the orphan cleanup of the server start is done (tests, diagnostics). */
   orphansDone(): Promise<void>;
+  /** Settles when the console checks of the server start are done (ADR-104; tests, diagnostics). */
+  externalChecksDone(): Promise<void>;
+}
+
+/**
+ * Everything a profile's model catalog depends on (ADR-102), hashed (the env holds secrets); null =
+ * the profile does not exist.
+ */
+export function profileCacheKey(profile: Profile | undefined): string | null {
+  if (profile === undefined) return null;
+  const parts = [profile.executable, profile.env, profile.configDir, profile.args, profile.passRawArgs];
+  return createHash('sha256').update(JSON.stringify(parts)).digest('hex');
 }
 
 /** Real `capInput` (WP-12 limits) for broker decision cards: JSON value + blob of the full input. */
@@ -248,13 +295,24 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   const states = new Map<EntryId, EntryState>();
   const engineWarnings = new Map<string, HostWarning>();
   // ADR-114: the last catalogs and subscription limits of the previous run are known at once.
-  const accountLimits: Record<string, RateLimitInfo> = stores.catalogs.limits();
+  const accountLimits = new Map<ProfileId, RateLimitInfo>(Object.entries(stores.catalogs.limits()));
   const modelCache = new Map<ProfileId, ModelCatalog>(
     Object.entries(stores.catalogs.models()).map(([profileId, stored]) => [
       profileId,
       { options: stored.options, resolved: stored.resolved, skipped: 0 },
     ]),
   );
+  /**
+   * ADR-102: `profileCacheKey` of every profile as last seen – the persisted catalogs belong to the
+   * profiles as they are at this start; onProfileChanged compares against these keys.
+   */
+  const profileKeys = new Map<ProfileId, string>();
+  for (const profile of deps.claude.profiles.list()) {
+    const key = profileCacheKey(profile);
+    if (key !== null) profileKeys.set(profile.id, key);
+  }
+  /** ADR-104: the console checks of the server start (tests, diagnostics). */
+  let externalChecks: Promise<void> = Promise.resolve();
   let publisher: SessionPublisher | null = null;
   let shuttingDown = false;
   let shutdownPromise: Promise<void> | null = null;
@@ -327,7 +385,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       settings: stores.settings.get(),
       setupRequired: defaultSummary === undefined ? true : profileNeedsSetup(defaultSummary.claude),
       warnings: [...stores.warnings.list(), ...engineWarnings.values(), ...extraWarnings()],
-      accountLimits: { ...accountLimits },
+      accountLimits: Object.fromEntries(accountLimits),
       nativeNotifications: toasts.available(),
       port: deps.host.port?.() ?? null,
       systemIntegration: deps.host.systemIntegration ?? false,
@@ -480,6 +538,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   const core: EngineCore = {
     backend: deps.backend,
     claude: deps.claude,
+    consoleLauncher: deps.consoleLauncher ?? null,
     stores,
     normalizer: {
       createLiveNormalizer: deps.normalizer?.createLiveNormalizer ?? createLiveNormalizer,
@@ -526,7 +585,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       publishHostState();
     },
     setAccountLimit: (profileId, info) => {
-      accountLimits[profileId] = info;
+      accountLimits.set(profileId, info);
       try {
         stores.catalogs.setLimit(profileId, info);
       } catch (error) {
@@ -537,6 +596,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     models: (profileId) => modelCache.get(profileId) ?? null,
     setModels: (profileId, catalog) => {
       modelCache.set(profileId, catalog);
+      const key = profileCacheKey(deps.claude.profiles.get(profileId));
+      if (key !== null && !profileKeys.has(profileId)) profileKeys.set(profileId, key);
       try {
         stores.catalogs.setModels(profileId, {
           options: catalog.options,
@@ -558,6 +619,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       // WP22-05: the interrupt at shutdown ends turns – no "done" notification for that.
       if (shuttingDown) return;
       const pub = publisherOrThrow();
+      const settings = stores.settings.get();
       const planned = planNotification(
         prev,
         next,
@@ -565,7 +627,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         pub.presence(),
         s.id,
         toasts.available(),
-        stores.settings.get().notifications,
+        settings.notifications,
       );
       if (planned !== null) {
         const title = s.entry.title !== '' ? s.entry.title : cwdLabel(s.entry.cwd);
@@ -580,7 +642,15 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           };
           pub.notify(planned.clientId, notification);
         }
-        if (planned.native) toasts.show(s.id, planned.kind, title);
+        // ADR-109: click → the session (opt-in protocol handler), silent when the event's sound is off.
+        if (planned.native) {
+          toasts.show(
+            s.id,
+            planned.kind,
+            title,
+            toastShowOptions(s.id, planned.kind, settings, deps.systemIntegration),
+          );
+        }
       }
       if (decisionsCleared(prev, next)) clearNotifications(s.id);
       planSleep(s, pub.presence());
@@ -630,6 +700,29 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       // ADR-105: idle sleep on/off and its minutes apply at once.
       for (const s of states.values()) planSleep(s, presence());
     },
+  };
+
+  /**
+   * ADR-102: the caches of a changed (or deleted) profile – model catalog incl. alias resolution in
+   * memory and on disk, the launch env of its dormant entries; a deleted profile also loses its
+   * account limits. Open views of dormant entries fall back to the aliases.
+   */
+  const dropProfileCaches = (profileId: ProfileId, deleted: boolean): void => {
+    const hadCatalog = modelCache.delete(profileId);
+    try {
+      stores.catalogs.removeModels(profileId);
+      if (deleted && accountLimits.delete(profileId)) stores.catalogs.removeLimit(profileId);
+    } catch (error) {
+      reportError(error, 'catalogs.remove');
+    }
+    for (const s of states.values()) {
+      if (s.entry.profileId !== profileId || s.runtime !== null) continue;
+      s.lastEnv = null;
+      if (hadCatalog && (s.mirror !== null || s.loading !== null)) {
+        s.emit([{ op: 'detail.patch', patch: { models: catalogOrFallback(null).options } }]);
+      }
+    }
+    log.info({ profileId, deleted }, 'profile caches dropped');
   };
 
   /**
@@ -727,6 +820,12 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       startOrphanCleanup(records);
       await Promise.all([...states.values()].map((s) => recoverEntry(s)));
       for (const s of states.values()) s.flush();
+      // ADR-112: scheduled "continue" plans; ADR-104: open handoffs are checked in the background
+      // (running/unknown → watched, ended → return with import).
+      for (const s of states.values()) restoreContinue(core, s);
+      externalChecks = Promise.all([...states.values()].map((s) => restoreExternal(core, s))).then(
+        () => undefined,
+      );
     },
 
     shutdown() {
@@ -943,10 +1042,41 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         mirrorItems: s.mirror?.items.length ?? null,
         subscribers: s.subscribers,
         gitBranch: s.entry.gitBranch,
+        continueScheduled: s.continueTimer !== null,
+        externalWatched: s.externalTimer !== null,
       };
     },
 
+    onProfileChanged(profileId) {
+      const known = deps.claude.profiles.list().map((p) => p.id);
+      const ids =
+        profileId === undefined || profileId === null
+          ? new Set<ProfileId>([
+              ...profileKeys.keys(),
+              ...known,
+              ...modelCache.keys(),
+              ...accountLimits.keys(),
+            ])
+          : new Set<ProfileId>([profileId]);
+      for (const id of ids) {
+        const key = profileCacheKey(deps.claude.profiles.get(id));
+        const before = profileKeys.get(id) ?? null;
+        if (key !== null && key === before) continue;
+        if (key === null) {
+          profileKeys.delete(id);
+        } else {
+          profileKeys.set(id, key);
+        }
+        // A profile seen for the first time has no caches of an older version.
+        if (before === null && key !== null && !modelCache.has(id)) continue;
+        if (key === null && !modelCache.has(id) && !accountLimits.has(id)) continue;
+        dropProfileCaches(id, key === null);
+      }
+      publishHostState();
+    },
+
     orphansDone: () => orphans,
+    externalChecksDone: () => externalChecks,
   };
   return manager;
 }

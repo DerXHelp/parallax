@@ -29,10 +29,10 @@ import {
   type Truncation,
 } from '@shared/model';
 import type { SessionOp } from '@shared/protocol';
-import type { StatusFacts } from '@shared/status';
+import { openDecisionCount, type StatusFacts } from '@shared/status';
 import type { SessionViewState } from '@shared/sync';
 import type { AgentBackend } from '../backend/types';
-import type { ClaudeIntegration } from '../claude/ports';
+import type { ClaudeIntegration, LaunchSpec } from '../claude/ports';
 import type { newId } from '../lib/ids';
 import type { ProcessFilter, ProcessQueryResult } from '../lib/process';
 import { isStreamingItem } from '../store/transcripts';
@@ -46,6 +46,7 @@ import {
   type StoreWarnings,
   type TranscriptStore,
 } from '../sync/ports';
+import type { ConsoleLauncher } from '../system/ports';
 import { createBroker, type Broker } from './broker';
 import type { CatalogStore } from './catalogStore';
 import type { CommandCatalogStore } from './commandCatalog';
@@ -105,6 +106,16 @@ export interface SessionManagerOptions {
    * with taskkill /T /F – until then it may end cleanly (SessionEnd hooks, transcript). Default 5000.
    */
   shutdownKillAfterMs: number;
+  /**
+   * Phase 2 (ADR-104): interval of the `ConsoleLauncher.state()` check of every entry open in an
+   * external console; `ended` brings it back automatically. Default 5000.
+   */
+  externalPollMs: number;
+  /**
+   * Phase 2 (ADR-112): a scheduled "continue" that became due while the server was down is still
+   * sent at the next start when it is at most this overdue; older plans are dropped. Default 3 600 000.
+   */
+  continueGraceMs: number;
 }
 
 export interface EngineStores {
@@ -169,6 +180,8 @@ export function settingsSleepPolicy(settings: () => Settings): SleepPolicy {
 export interface EngineCore {
   readonly backend: AgentBackend;
   readonly claude: ClaudeIntegration;
+  /** Phase 2 (ADR-104): the visible console of `session.openExternal`; null = not available. */
+  readonly consoleLauncher: ConsoleLauncher | null;
   readonly stores: Required<EngineStores>;
   readonly normalizer: NormalizerFns;
   readonly reduceStatus: ReduceStatus;
@@ -253,6 +266,12 @@ export class EntryState {
   sleepTimer: TimerHandle | null = null;
   /** ADR-105: since when (ms) the entry has been eligible for idle sleep; null = not eligible. */
   sleepSince: number | null = null;
+  /** ADR-104: next `ConsoleLauncher.state()` check while the entry is open in an external console. */
+  externalTimer: TimerHandle | null = null;
+  /** ADR-104: false once the console was seen ended (the return is running) – `summary.external.running`. */
+  externalRunning = true;
+  /** ADR-112: the scheduled "continue" (`Entry.continueAt`); survives process ends, not the shutdown. */
+  continueTimer: TimerHandle | null = null;
   private titleTimer: TimerHandle | null = null;
   private lastSummary: SessionSummary | null = null;
   private dirty = false;
@@ -370,6 +389,26 @@ export class EntryState {
     this.emit([{ op: 'item.upsert', item }]);
   }
 
+  /**
+   * ADR-104: engine-made `system/handoff` item (`px:` id, order = lastOrder + 1) – handed off to the
+   * external console or returned from it (`importedItems` = turns taken over from the console).
+   */
+  addHandoffItem(phase: 'external' | 'returned', importedItems: number): void {
+    const conv = this.conversation();
+    const order = conv.lastOrder + 1;
+    const item: TranscriptItem = {
+      id: `px:${conv.id}:${String(order)}`,
+      order,
+      at: this.core.now().toISOString(),
+      parentToolUseId: null,
+      kind: 'system',
+      event: 'handoff',
+      phase,
+      importedItems,
+    };
+    this.emit([{ op: 'item.upsert', item }]);
+  }
+
   private saveCommands(commands: readonly SlashCommandInfo[]): void {
     try {
       this.core.stores.commandCatalogs.save(this.entry.id, commands);
@@ -452,7 +491,7 @@ export class EntryState {
   }
 
   summary(): SessionSummary {
-    return summaryOf(this.entry, this.facts);
+    return summaryOf(this.entry, this.facts, { externalRunning: this.externalRunning });
   }
 
   publishSummary(urgent: boolean): void {
@@ -599,9 +638,14 @@ export class EntryState {
     }, this.core.options.aiTitleDelayMs);
   }
 
+  /** Every timer of the entry (shutdown): also the console check and a scheduled "continue". */
   cancelTimers(): void {
     this.cancelRetry();
     this.cancelProcessTimers();
+    this.externalTimer?.cancel();
+    this.externalTimer = null;
+    this.continueTimer?.cancel();
+    this.continueTimer = null;
   }
 
   /** After idle (C.1): one getContextUsage('summary'), debounced, at most one at a time. */
@@ -642,18 +686,21 @@ export class EntryState {
     }
   }
 
-  /** After a non-synthetic turn (C.6, F.8): AI title via getSessionInfo, one at a time. */
-  async queryAiTitle(): Promise<void> {
-    const rt = this.runtime;
+  /**
+   * After a non-synthetic turn (C.6, F.8): AI title via getSessionInfo, one at a time. Without a
+   * running process (return from the external console, ADR-104) the caller passes the launch spec.
+   */
+  async queryAiTitle(launchSpec?: LaunchSpec): Promise<void> {
+    const launch = launchSpec ?? this.runtime?.launch ?? null;
     const sessionId = currentSessionId(this.entry);
-    if (rt === null || sessionId === null || this.titleBusy || !acceptsAiTitle(this.entry.titleSource))
+    if (launch === null || sessionId === null || this.titleBusy || !acceptsAiTitle(this.entry.titleSource))
       return;
     this.titleBusy = true;
     try {
       const info = await this.core.backend.getSessionInfo({
         sessionId,
         cwd: this.entry.cwd,
-        launch: rt.launch,
+        launch,
       });
       if (currentSessionId(this.entry) !== sessionId) return;
       const title = aiTitleFrom(info, this.titleContext());
@@ -744,4 +791,22 @@ export function commandError(
   params: Parameters<typeof makeError>[1] = {},
 ): CommandError {
   return new CommandError(makeError(code, params));
+}
+
+/**
+ * WP-30 §4.12 "ohne Arbeit" (archive, switch, console): no start/turn running, no open decision,
+ * nothing queued, no background task. Call inside the lifecycle lock (no start in between).
+ */
+export function assertWithoutWork(s: EntryState): void {
+  const f = s.facts;
+  if (
+    f.runState === 'starting' ||
+    f.runState === 'working' ||
+    openDecisionCount(f) > 0 ||
+    s.queue.count() > 0 ||
+    f.queuedPrompts > 0 ||
+    f.backgroundTasks > 0
+  ) {
+    throw commandError('SESSION_BUSY', { entryId: s.id });
+  }
 }

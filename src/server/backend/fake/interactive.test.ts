@@ -1,8 +1,10 @@
 /**
  * The interactive dev scenario through the REAL normalizer, driven like the engine would
  * (registerPrompt before send, startConversation after a reset): every keyword, decisions,
- * interrupt, priority now/next, control calls.
+ * interrupt, priority now/next, control calls; Phase 2 (WP-34): images in a prompt, `fake:image`,
+ * the 60-s rate limit, simulated console turns.
  */
+import { inflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { sampleId, SAMPLE_IDS } from '@shared/samples';
@@ -12,8 +14,19 @@ import { realSetImmediate } from '../../lib/async';
 import { createLiveNormalizer } from '../../sessions/normalizer';
 import { testContext } from '../../sessions/normalizer/testing/harness';
 import type { StatusSignal } from '../../sessions/ports';
-import type { BackendEvent, OutgoingPrompt, PermissionRequest, StartSessionRequest } from '../types';
+import { sniffImageType } from '../../lib/images';
+import { normalizeHistory } from '../../sessions/normalizer';
+import type {
+  BackendEvent,
+  OutgoingContent,
+  OutgoingPrompt,
+  PermissionRequest,
+  StartSessionRequest,
+} from '../types';
 import { createFakeBackend, sequentialIds } from '../fakeBackend';
+import { FAKE_CONSOLE_PROMPT, fakeConsoleAnswer } from './console';
+import { FAKE_SHOT_HEIGHT, FAKE_SHOT_PNG_BASE64, FAKE_SHOT_WIDTH } from './image';
+import { FAKE_RATE_LIMIT_RESET_S } from './interactive';
 import { createFakeClaudeIntegration } from './integration';
 
 const launch = await createFakeClaudeIntegration().launchSpecFor('standard', SAMPLE_IDS.entry);
@@ -75,11 +88,15 @@ function harness(p: Partial<StartSessionRequest> = {}) {
     }
   })();
   let n = 0;
-  const send = (text: string, priority: 'next' | 'now' = 'next'): OutgoingPrompt => {
+  const send = (
+    text: string,
+    priority: 'next' | 'now' = 'next',
+    images: readonly OutgoingContent[] = [],
+  ): OutgoingPrompt => {
     n += 1;
     const prompt: OutgoingPrompt = {
       uuid: `00000000-0000-4000-b000-${n.toString(16).padStart(12, '0')}`,
-      content: [{ type: 'text', text }],
+      content: [...images, ...(text === '' ? [] : [{ type: 'text' as const, text }])],
       priority,
     };
     normalizer.registerPrompt({ messageUuid: prompt.uuid, text, attachments: [], priority, at: new Date() });
@@ -332,6 +349,11 @@ describe('interactive scenario', () => {
       'allowed_warning',
       'rejected',
     ]);
+    // WP-34 (d): the window resets ≈ 60 s from now (E2E "continue at" within a test run).
+    const rejected = h.signals.find((s) => s.type === 'rate_limit' && s.info.status === 'rejected');
+    const resetsAt = rejected?.type === 'rate_limit' ? Date.parse(rejected.info.resetsAt ?? '') : Number.NaN;
+    expect(resetsAt - Date.now()).toBeGreaterThan((FAKE_RATE_LIMIT_RESET_S - 15) * 1000);
+    expect(resetsAt - Date.now()).toBeLessThanOrEqual(FAKE_RATE_LIMIT_RESET_S * 1000);
     h.send('fake:error');
     await h.turnDone(3);
     expect(
@@ -408,3 +430,111 @@ describe('interactive scenario', () => {
     await h.close();
   });
 });
+
+describe('interactive scenario – Phase 2 (WP-34)', () => {
+  const png: OutgoingContent = { type: 'image', mediaType: 'image/png', base64: FAKE_SHOT_PNG_BASE64 };
+
+  it('(a) a prompt with images → "Fake: received N image(s)"; the images reach the history as blocks', async () => {
+    const h = harness();
+    h.send('What do you see?', 'next', [png, png]);
+    await h.turnDone(1);
+    expect(texts(h.items())).toEqual(['Fake: received 2 image(s)']);
+    h.send('', 'next', [png]);
+    await h.turnDone(2);
+    expect(texts(h.items()).at(-1)).toBe('Fake: received 1 image(s)');
+    const sessionId = h.handle.sessionId ?? '';
+    const history = await h.backend.readHistory({ sessionId, cwd: 'D:\\work\\fake', launch });
+    const first = history.find((m) => m.type === 'user');
+    expect(first?.message).toMatchObject({
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/png' } },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png' } },
+        { type: 'text', text: 'What do you see?' },
+      ],
+    });
+    expect(h.handle.diagnostics).toEqual([]);
+    await h.close();
+  });
+
+  it('(b) fake:image → Read of fake-shot.png with an image result: a small, complete PNG as blob', async () => {
+    const h = harness();
+    h.send('fake:image');
+    await h.turnDone(1);
+    const call = h.items().find((i) => i.kind === 'tool_call');
+    if (call?.kind !== 'tool_call') throw new Error('no tool call');
+    expect(call).toMatchObject({
+      toolName: 'Read',
+      status: 'done',
+      input: { file_path: expect.stringMatching(/\\fake-shot\.png$/) as string },
+    });
+    const image = call.result?.content.find((part) => part.type === 'image');
+    expect(image).toMatchObject({ type: 'image', image: { mediaType: 'image/png' } });
+    expect(texts(h.items()).at(-1)).toBe('The screenshot shows a window with an orange block.');
+
+    // ≤ 1 KB, valid: signature, IHDR 24×16, every chunk CRC, IDAT inflates to the raw rows.
+    const bytes = Buffer.from(FAKE_SHOT_PNG_BASE64, 'base64');
+    expect(bytes.byteLength).toBeLessThanOrEqual(1024);
+    expect(sniffImageType(bytes)).toBe('image/png');
+    const chunks: { type: string; data: Buffer }[] = [];
+    for (let at = 8; at < bytes.byteLength;) {
+      const length = bytes.readUInt32BE(at);
+      const type = bytes.toString('ascii', at + 4, at + 8);
+      const data = bytes.subarray(at + 8, at + 8 + length);
+      expect(bytes.readUInt32BE(at + 8 + length)).toBe(crc32(bytes.subarray(at + 4, at + 8 + length)));
+      chunks.push({ type, data });
+      at += 12 + length;
+    }
+    expect(chunks.map((c) => c.type)).toEqual(['IHDR', 'IDAT', 'IEND']);
+    const ihdr = chunks[0]?.data ?? Buffer.alloc(0);
+    expect([ihdr.readUInt32BE(0), ihdr.readUInt32BE(4)]).toEqual([FAKE_SHOT_WIDTH, FAKE_SHOT_HEIGHT]);
+    expect(inflateSync(chunks[1]?.data ?? Buffer.alloc(0)).byteLength).toBe(
+      FAKE_SHOT_HEIGHT * (1 + FAKE_SHOT_WIDTH * 3),
+    );
+    await h.close();
+  });
+
+  it('(c) simulateConsoleTurn → a user and an assistant entry with the given time in the history', async () => {
+    const h = harness();
+    h.send('hello');
+    await h.turnDone(1);
+    const sessionId = h.handle.sessionId ?? '';
+    const at = new Date('2026-10-15T09:30:00.000Z');
+    h.backend.simulateConsoleTurn(sessionId, at);
+    h.backend.simulateConsoleTurn(sessionId, at, 'second console prompt');
+    const history = await h.backend.readHistory({ sessionId, cwd: 'D:\\work\\fake', launch });
+    const consoleMessages = history.filter((m) => m.timestamp === at.toISOString());
+    expect(consoleMessages.map((m) => m.type)).toEqual(['user', 'assistant', 'user', 'assistant']);
+    const { items } = normalizeHistory(consoleMessages, {
+      entryId: SAMPLE_IDS.entry,
+      conversationId: sampleId('cv', 1),
+      nextOrder: 10,
+      storeBlob: () => {
+        throw new Error('no blobs');
+      },
+      now: () => at,
+    });
+    expect(items.map((i) => [i.kind, i.order, i.at])).toEqual([
+      ['user_message', 10, at.toISOString()],
+      ['assistant_text', 11, at.toISOString()],
+      ['user_message', 12, at.toISOString()],
+      ['assistant_text', 13, at.toISOString()],
+    ]);
+    expect(items.flatMap((i) => (i.kind === 'assistant_text' ? [i.text] : []))).toEqual([
+      fakeConsoleAnswer(FAKE_CONSOLE_PROMPT),
+      fakeConsoleAnswer('second console prompt'),
+    ]);
+    await h.close();
+  });
+});
+
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+
+function crc32(bytes: Uint8Array): number {
+  let c = 0xffffffff;
+  for (const byte of bytes) c = (CRC_TABLE[(c ^ byte) & 0xff] ?? 0) ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}

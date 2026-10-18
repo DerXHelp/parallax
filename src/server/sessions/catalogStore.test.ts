@@ -77,6 +77,22 @@ describe('openCatalogStore (ADR-114)', () => {
     expect(await readFile(path.join(home, ACCOUNT_LIMITS_FILE), 'utf8')).toBe(newer);
   });
 
+  it('ADR-102 (WP-34): removeModels/removeLimit drop one profile, persisted; unknown ids are no-ops', async () => {
+    const store = await openCatalogStore({ home, debounceMs: 1 });
+    store.setModels('standard', catalog);
+    store.setModels(sampleId('pf', 2), catalog);
+    store.setLimit(sampleId('pf', 2), limit);
+    store.removeModels(sampleId('pf', 2));
+    store.removeLimit(sampleId('pf', 2));
+    store.removeModels(sampleId('pf', 9));
+    store.removeLimit(sampleId('pf', 9));
+    await store.close();
+    const again = await openCatalogStore({ home });
+    expect(again.models()).toEqual({ standard: catalog });
+    expect(again.limits()).toEqual({});
+    await again.close();
+  });
+
   it('a missing resolved map defaults to {} (older file of the same version)', async () => {
     const { resolved: _resolved, ...withoutResolved } = catalog;
     await writeFile(
@@ -100,5 +116,9 @@ describe('createMemoryCatalogStore', () => {
     }).toThrow();
     await store.flush();
     expect(store.flushes).toBe(1);
+    store.removeModels('standard');
+    store.removeLimit('standard');
+    expect(store.models()).toEqual({});
+    expect(store.limits()).toEqual({});
   });
 });

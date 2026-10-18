@@ -9,17 +9,47 @@
  * `nativeNotifications: false` and the windows keep their in-app hints. Other failures (a timeout
  * under load, a failed `Show`/`History.Remove`) are counted; from the third one in a row the channel
  * pauses with a growing backoff (1 min, doubled, ≤ 15 min) and then tries again; a success resets
- * both. A click on the toast only dismisses it (Phase 1).
+ * both. Phase 2 (ADR-109, WP-34): a click opens the session through the opt-in protocol handler
+ * (`launchUri` = `SystemIntegration.toastLaunchUri(entryId)`, null → the click only dismisses), and
+ * the toast is silent when the event's sound is off – both from the settings at the time of the
+ * toast (`toastShowOptions`).
  */
 import type { Logger } from 'pino';
 import type { EntryId, Language } from '@shared/common';
+import type { Settings } from '@shared/model';
 import type { NotificationKind } from '@shared/status';
 import { removeToast, showToast, type ToastRequest, type ToastResult } from '../lib/toast';
+import type { SystemIntegration } from '../system/ports';
+
+/** Phase 2 (ADR-109): click target and sound of one toast. */
+export interface ToastShowOptions {
+  /** `parallax://session/<id>`; null = the click only dismisses the toast. */
+  launchUri: string | null;
+  /** No sound (`events[kind].sound` off). */
+  silent: boolean;
+}
+
+/**
+ * ADR-109: `launchUri` from the system integration (only with `openOnClick` and a registered
+ * handler), `silent` = the event's sound is off – the settings at the time of the toast.
+ */
+export function toastShowOptions(
+  entryId: EntryId,
+  kind: NotificationKind,
+  settings: Settings,
+  system: Pick<SystemIntegration, 'toastLaunchUri'> | null | undefined,
+): ToastShowOptions {
+  return {
+    launchUri: system?.toastLaunchUri(entryId) ?? null,
+    silent: !settings.notifications.events[kind].sound,
+  };
+}
 
 export interface NativeToasts {
   /** The channel can be used (enabled and not failed). */
   available(): boolean;
-  show(entryId: EntryId, kind: NotificationKind, title: string): void;
+  /** `options` (Phase 2): click target and sound; absent = a click dismisses, sound on. */
+  show(entryId: EntryId, kind: NotificationKind, title: string, options?: ToastShowOptions): void;
   /** Takes the entry's toast out of the Action Center (only if one was shown). */
   clear(entryId: EntryId): void;
   /** Resolves when the queue is empty (tests, shutdown). */
@@ -159,11 +189,24 @@ export function createNativeToasts(options: NativeToastOptions): NativeToasts {
 
   return {
     available: () => !failed,
-    show(entryId, kind, title) {
+    show(entryId, kind, title, extra) {
       const text = toastText(options.language(), kind, title);
-      options.log.info({ entryId, kind }, 'native toast');
+      options.log.info(
+        {
+          entryId,
+          kind,
+          ...(extra === undefined ? {} : { click: extra.launchUri !== null, silent: extra.silent }),
+        },
+        'native toast',
+      );
       shown.add(entryId);
-      enqueue('show', () => show({ title: text, body: TOAST_TEXTS[options.language()].body, tag: entryId }));
+      const request: ToastRequest = {
+        title: text,
+        body: TOAST_TEXTS[options.language()].body,
+        tag: entryId,
+        ...(extra === undefined ? {} : { launchUri: extra.launchUri, silent: extra.silent }),
+      };
+      enqueue('show', () => show(request));
     },
     clear(entryId) {
       if (!shown.delete(entryId)) return;
