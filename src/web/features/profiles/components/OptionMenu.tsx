@@ -55,11 +55,12 @@ export function OptionMenu<T extends string>({
           aria-labelledby={`${labelId} ${valueId}`}
           aria-invalid={invalid ? true : undefined}
           className={cn(
-            'w-full justify-between font-normal',
+            // Shrinks with its column; the label ends with an ellipsis instead of overflowing (V3-06).
+            'w-full min-w-0 justify-between font-normal',
             chosen?.destructive === true && 'text-destructive hover:text-destructive',
           )}
         >
-          <span id={valueId} className="truncate">
+          <span id={valueId} className="min-w-0 truncate" title={chosen?.label}>
             {chosen?.label ?? value ?? ''}
           </span>
           <ChevronDownIcon aria-hidden className="text-muted-foreground size-3.5" />

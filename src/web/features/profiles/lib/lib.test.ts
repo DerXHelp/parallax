@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { LIMITS } from '@shared/common';
 import { makeError } from '@shared/errors';
-import type { ProfileIssue } from '@shared/model';
+import { profileInputSchema, type ProfileIssue } from '@shared/model';
 import { sampleId, sampleProfile } from '@shared/samples';
 import { demoProfileIssues } from './demo-host';
 import {
@@ -18,29 +19,12 @@ import {
   problemsFor,
   type ProfileDraft,
 } from './draft';
-import { isSecretEnvKey } from './secrets';
 
 const WORK = sampleId('pf', 2);
 
 function draft(patch: Partial<ProfileDraft> = {}): ProfileDraft {
   return { ...newDraft([]), name: 'Work', ...patch };
 }
-
-describe('isSecretEnvKey (same rule as the server)', () => {
-  it.each([
-    ['ANTHROPIC_API_KEY', true],
-    ['github_token', true],
-    ['CLIENT_SECRET', true],
-    ['DB_PASSWORD_FILE', true],
-    ['MyPassword', true],
-    ['KEYCHAIN', false],
-    ['TOKENS', false],
-    ['HTTPS_PROXY', false],
-    ['ANTHROPIC_BASE_URL', false],
-  ])('%s → %s', (name, secret) => {
-    expect(isSecretEnvKey(name)).toBe(secret);
-  });
-});
 
 describe('draft ↔ ProfileInput', () => {
   it('round-trips a saved profile and drops empty rows', () => {
@@ -114,6 +98,23 @@ describe('draft ↔ ProfileInput', () => {
     expect(problemsFor(problems, { envRow: 'c' })[0]?.key).toBe('profiles.problems.envKeyRequired');
     expect(problemsFor(problems, { envRow: 'd' })[0]?.key).toBe('profiles.problems.envKeyInvalid');
     expect(problemsFor(problems, { envRow: 'a' })).toEqual([]);
+  });
+
+  it('checks env names with the rule of the contract (R4W-21)', () => {
+    const keyProblem = (key: string) =>
+      problemsFor(buildInput(draft({ env: [{ id: 'r', key, value: 'v' }] }), null, { allowsBypass: false }).problems, {
+        envRow: 'r',
+      })[0]?.key ?? null;
+    expect(keyProblem('HTTPS_PROXY')).toBeNull();
+    expect(keyProblem('A B')).toBeNull();
+    expect(keyProblem(' LEADING')).toBe('profiles.problems.envKeyInvalid');
+    expect(keyProblem('\tTAB')).toBe('profiles.problems.envKeyInvalid');
+    expect(keyProblem('A=B')).toBe('profiles.problems.envKeyInvalid');
+    expect(keyProblem('X'.repeat(LIMITS.profileEnvKeyChars + 1))).toBe('profiles.problems.tooLong');
+    // Whatever the editor accepts, the command schema accepts too.
+    for (const key of ['HTTPS_PROXY', 'A B', 'x'.repeat(LIMITS.profileEnvKeyChars)]) {
+      expect(profileInputSchema.shape.env.keyType.safeParse(key).success).toBe(true);
+    }
   });
 
   it('reads its limits from the contract', () => {

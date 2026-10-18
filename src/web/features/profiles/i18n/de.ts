@@ -7,7 +7,7 @@ export const de: typeof en = {
   list: {
     label: 'Profile',
     new: 'Neues Profil',
-    default: 'Standard',
+    default: 'Standardprofil',
     builtin: 'Eingebaut',
     sessions: { one: '{count} Session', other: '{count} Sessions' },
     errors: { one: '{count} Fehler', other: '{count} Fehler' },
@@ -77,7 +77,7 @@ export const de: typeof en = {
     },
     env: 'Umgebungsvariablen',
     envHint:
-      'Werte können mit {reference} auf eine Variable dieses Rechners verweisen. Werte von Namen, die auf _KEY, _TOKEN oder _SECRET enden oder PASSWORD enthalten, sind verdeckt.',
+      'Werte können mit {reference} auf eine Variable dieses Rechners verweisen. Werte geheimer Namen – mit einem Teil wie KEY, TOKEN, SECRET, PASSWORD oder CREDENTIALS – sind verdeckt.',
     envEmpty: 'Keine Variablen.',
     envName: 'Name',
     envValue: 'Wert',
@@ -96,7 +96,7 @@ export const de: typeof en = {
     argAdd: 'Argument hinzufügen',
     passRaw: 'Unbekannte Argumente ungeprüft durchreichen',
     passRawHint: 'Aus: Nur Argumente, die Parallax kennt, sind erlaubt.',
-    contextWindow: 'Context-Fenster (Tokens)',
+    contextWindow: 'Kontextfenster (Tokens)',
     contextWindowPlaceholder: 'z. B. 200000',
     contextWindowHint:
       'Leer = wie von Claude Code gemeldet. Nur für Gateway- oder interne Modelle, deren Größe Claude Code nicht kennt: {min} bis {max}.',

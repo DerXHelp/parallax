@@ -72,6 +72,26 @@ describe('FolderBrowser (ADR-119)', () => {
     expect(screen.getByRole('button', { name: 'Up one level' })).toHaveProperty('disabled', true);
   });
 
+  it('keeps the end of a long breadcrumb bar (the open folder) in view (V3-01)', async () => {
+    // happy-dom has no layout: the bar pretends to be wider than its box.
+    const scrollWidth = vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockReturnValue(900);
+    try {
+      const { user } = await open('D:\\work');
+      await waitForPath('D:\\work');
+      const bar = screen.getByRole('navigation', { name: 'Location' });
+      await waitFor(() => {
+        expect(bar.scrollLeft).toBe(900);
+      });
+      // Opening a subfolder keeps following the open folder.
+      bar.scrollLeft = 0;
+      await user.dblClick(within(list()).getByRole('option', { name: /parallax/ }));
+      await waitForPath('D:\\work\\parallax');
+      expect(bar.scrollLeft).toBe(900);
+    } finally {
+      scrollWidth.mockRestore();
+    }
+  });
+
   it('starts in the typed folder, hides hidden folders until switched on', async () => {
     const { running, user } = await open('D:\\work');
     await waitForPath('D:\\work');
