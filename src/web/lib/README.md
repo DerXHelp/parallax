@@ -10,7 +10,7 @@ gibt (auch in `src/shared`, z. B. `@shared/paths` für Pfadregeln).
 | `backoff.ts` | `backoffDelay(attempt, options, random)`, `DEFAULT_BACKOFF` (0,5 s → 15 s, ±20 %) |
 | `hash.ts` | `#a=1&flag`-Parameter: `parseHash`, `formatHash`, `getHashParam`, `setHashParam` |
 | `storage.ts` | sicheres `localStorage`/`sessionStorage` (`readStorage`, `writeStorage`, `storageAvailable`, `STORAGE_KEYS` inkl. `sidebarMode`), Feature-Schlüssel `storageKey(namespace, …parts)` → `parallax.<namespace>.<…>` |
-| `path-display.ts` | nur Anzeige: `pathTail(path, n)` (`D:\1\2\3\4` → `3\4`), `shortPath(path, n)` (`…\3\4`) |
+| `path-display.ts` | nur Anzeige: `pathTail(path, n)` (`D:\1\2\3\4` → `3\4`), `shortPath(path, n)` (`…\3\4`), `splitPathTail(path, n)` → `{ head, separator, last }` (`head + separator + last = pathTail`; Ansicht kürzt nur `head`, das letzte Segment bleibt ganz – WP41-02, `shell/navigation/PathTail.tsx`) |
 | `zod-jitless.ts` | Seiteneffekt-Modul (erster Import in `main.tsx`): zod ohne `eval`-JIT (CSP) |
 | `session-order.ts` | `orderSessions(entries, now)` – Sidebar-Reihenfolge (sortBucket, Aktivität, Anzeigetitel); Phase 2 (WP-35): `flatSidebarOrder` (angeheftete zuerst), `groupSessions`/`groupedOrder` (Gruppe = `windowsPathKey(cwd)`, je Host), `archivedOrder`, `nextWaiting` (Alt+N, zyklisch), `waitingFirst`, `pinnedFirst` |
 | `fuzzy.ts` | `fuzzyScore(query, text)` (null = kein Treffer; Wortanfänge, Folgen, ohne Akzente), `fuzzyFilter(items, query, keys, options?)` (jedes Wort in irgendeinem Schlüssel, beste zuerst; `options.strict` verwirft Streutreffer, `options.keyPenalty` lässt frühere Schlüssel knappe Gleichstände gewinnen – V3-03) – WP-35, genutzt von WP-36/37 |

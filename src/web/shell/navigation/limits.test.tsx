@@ -1,7 +1,13 @@
 import { act, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { RateLimitInfo } from '@shared/model';
-import { sampleHostState, sampleProfileSummary, sampleRateLimitInfo, sampleTime } from '@shared/samples';
+import type { ProfileSummary, RateLimitInfo } from '@shared/model';
+import {
+  sampleHostState,
+  sampleId,
+  sampleProfileSummary,
+  sampleRateLimitInfo,
+  sampleTime,
+} from '@shared/samples';
 import { setLanguage } from '@web/i18n';
 import { refreshClock } from '@web/state/clock';
 import { clientStore, emptyHostRecord, resetClientStore } from '@web/state/store';
@@ -87,5 +93,108 @@ describe('subscription limits over time (R4W-06, V3-07)', () => {
     );
     render(<AccountLimits />);
     expect(screen.queryByRole('region', { name: 'Subscription limits' })).toBeNull();
+  });
+});
+
+describe('one block per account (WP41-05)', () => {
+  const PLAIN = sampleProfileSummary({
+    id: sampleId('pf', 1),
+    name: 'Plain',
+    color: 'green',
+    isDefault: false,
+    builtin: false,
+  });
+  const WORK = sampleProfileSummary({
+    id: sampleId('pf', 2),
+    name: 'Work',
+    color: 'blue',
+    isDefault: false,
+    builtin: false,
+    configDir: 'C:\\Users\\user\\.claude-work',
+  });
+  const WORK_FAST = sampleProfileSummary({
+    id: sampleId('pf', 3),
+    name: 'Work fast',
+    color: 'teal',
+    isDefault: false,
+    builtin: false,
+    // The same folder in another spelling (Windows: case-insensitive, either separator).
+    configDir: 'c:/users/USER/.claude-work/',
+  });
+  const PRIVATE = sampleProfileSummary({
+    id: sampleId('pf', 4),
+    name: 'Private',
+    color: 'pink',
+    isDefault: false,
+    builtin: false,
+    configDir: 'C:\\Users\\user\\.claude-private',
+  });
+
+  /** A report of the 5-hour window, `seconds` after the sample time. */
+  function report(utilization: number, seconds: number): RateLimitInfo {
+    return sampleRateLimitInfo({
+      windows: { five_hour: { utilization, resetsAt: sampleTime(3600) } },
+      utilization,
+      at: sampleTime(seconds),
+    });
+  }
+
+  function setHost(profiles: ProfileSummary[], accountLimits: Record<string, RateLimitInfo>): void {
+    clientStore.setState({
+      hosts: {
+        local: { ...emptyHostRecord('local'), hostState: sampleHostState({ profiles, accountLimits }) },
+      },
+    });
+  }
+
+  function values(): string[] {
+    const region = document.querySelector<HTMLElement>('[data-slot="account-limits"]');
+    if (region === null) return [];
+    return within(region)
+      .getAllByRole('meter')
+      .map((meter) => meter.getAttribute('aria-valuenow') ?? '');
+  }
+
+  it('two profiles on the default folder are one account: one block, the newest report', () => {
+    setHost([PROFILE, PLAIN], { [PROFILE.id]: report(0.03, -60), [PLAIN.id]: report(0.05, 0) });
+    render(<AccountLimits />);
+    expect(meters()).toEqual(['5-hour limit']);
+    expect(values()).toEqual(['5']);
+    // One account: no name above the bars (as with a single profile).
+    expect(screen.queryByRole('group')).toBeNull();
+  });
+
+  it('several accounts: one block each, named after all profiles of the account', () => {
+    setHost([PROFILE, WORK, WORK_FAST, PRIVATE], {
+      [WORK.id]: report(0.2, -30),
+      [WORK_FAST.id]: report(0.25, 0),
+      [PRIVATE.id]: report(0.6, 0),
+    });
+    render(<AccountLimits />);
+    const groups = screen.getAllByRole('group');
+    expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual([
+      'Profiles Work, Work fast',
+      'Profile Private',
+    ]);
+    expect(groups[0]?.textContent).toContain('Work, Work fast');
+    expect(
+      within(groups[0] ?? document.body)
+        .getByRole('meter')
+        .getAttribute('aria-valuenow'),
+    ).toBe('25');
+    expect(
+      within(groups[1] ?? document.body)
+        .getByRole('meter')
+        .getAttribute('aria-valuenow'),
+    ).toBe('60');
+    // The standard profile has not reported: its account shows nothing.
+    expect(values()).toEqual(['25', '60']);
+    act(() => {
+      setLanguage('de');
+    });
+    expect(screen.getAllByRole('group').map((group) => group.getAttribute('aria-label'))).toEqual([
+      'Profile Work, Work fast',
+      'Profil Private',
+    ]);
   });
 });

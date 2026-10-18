@@ -70,6 +70,8 @@ export const de: typeof en = {
     configDirBrowse: 'Durchsuchen…',
     configDirHint:
       'Jeder Konfigurationsordner hat eine eigene Anmeldung und eigene Unterhaltungen – z. B. einer privat, einer für die Arbeit.',
+    configDirWrites:
+      'Claude Code richtet den Ordner selbst ein: Schon „Profil testen“ legt darin .claude.json und einen Ordner backups an, falls sie fehlen.',
     configDirWarning: {
       one: '{count} Session nutzt dieses Profil. Mit einem anderen Konfigurationsordner lässt sie sich nicht mehr fortsetzen.',
       other:
