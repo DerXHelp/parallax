@@ -64,7 +64,7 @@ describe('"Stop server" (A.10: confirmation lists working and waiting sessions)'
     }
     // Status as icon + text (never color only).
     expect(within(waiting).getByText('Plan ready for review')).toBeTruthy();
-    expect(within(dialog).getByText('3 more idle sessions will be closed.')).toBeTruthy();
+    expect(within(dialog).getByText('3 idle sessions (no running work) will be closed.')).toBeTruthy();
     // Sleeping, interrupted, failed and external sessions are not affected.
     expect(within(dialog).queryByText('Sleeping since yesterday')).toBeNull();
     expect(within(dialog).queryByText('Plan approval after restart')).toBeNull();
@@ -112,7 +112,9 @@ describe('"Stop server" (A.10: confirmation lists working and waiting sessions)'
     await openConfirmation(user, 'Server beenden…');
     const dialog = await screen.findByRole('dialog', { name: 'Parallax-Server beenden?' });
     expect(within(dialog).getByRole('heading', { name: 'Arbeitet (3)' })).toBeTruthy();
-    expect(within(dialog).getByText('3 weitere Sessions im Leerlauf werden geschlossen.')).toBeTruthy();
+    expect(
+      within(dialog).getByText('3 Sessions im Leerlauf (ohne laufende Arbeit) werden geschlossen.'),
+    ).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Server beenden' })).toBeTruthy();
   });
 
@@ -151,6 +153,40 @@ describe('"Stop server" (A.10: confirmation lists working and waiting sessions)'
     expect(await within(dialog).findByRole('alert')).toBeTruthy();
     expect(within(dialog).getByText('The server could not be stopped.')).toBeTruthy();
     expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+
+  it('only idle sessions: no lists, the idle line stands on its own (V3-13)', async () => {
+    const transport = createMemoryTransport();
+    const host = new FakeHost({
+      transport,
+      summaries: [sampleSummary({ title: 'Quiet', status: sampleStatusFacts({ runState: 'idle' }) })],
+    });
+    const connection = createHostConnection({
+      hostId: LOCAL_HOST_ID,
+      createTransport: () => transport,
+      reload: () => undefined,
+    });
+    registerConnection(connection);
+    connection.start();
+    cleanup = () => {
+      unregisterConnection(LOCAL_HOST_ID);
+      host.dispose();
+    };
+    const user = userEvent.setup();
+    render(
+      <TooltipProvider>
+        <SettingsMenu />
+      </TooltipProvider>,
+    );
+    await waitFor(() => {
+      expect(connection.status()).toBe('open');
+    });
+    await openConfirmation(user);
+    const dialog = await screen.findByRole('dialog', { name: 'Stop the Parallax server?' });
+    expect(within(dialog).queryByRole('heading', { name: /^Working/ })).toBeNull();
+    expect(within(dialog).queryByRole('heading', { name: /^Waiting/ })).toBeNull();
+    expect(within(dialog).queryByText('Quiet')).toBeNull();
+    expect(within(dialog).getByText('1 idle session (no running work) will be closed.')).toBeTruthy();
   });
 });
 
@@ -230,10 +266,18 @@ describe('serverShutdown texts', () => {
     expect(DICTIONARIES.de.serverShutdown).toBe(de);
     expect(translate('en', 'serverShutdown.working', { count: 1200 })).toBe('Working (1,200)');
     expect(translate('de', 'serverShutdown.working', { count: 1200 })).toBe('Arbeitet (1.200)');
-    expect(translate('en', 'serverShutdown.idle', { count: 1 })).toBe('1 more idle session will be closed.');
+    expect(translate('en', 'serverShutdown.idle', { count: 1 })).toBe(
+      '1 idle session (no running work) will be closed.',
+    );
     expect(translate('de', 'serverShutdown.idle', { count: 2 })).toBe(
-      '2 weitere Sessions im Leerlauf werden geschlossen.',
+      '2 Sessions im Leerlauf (ohne laufende Arbeit) werden geschlossen.',
     );
     expect(translate('en', 'serverShutdown.title')).toBe('Stop the Parallax server?');
+  });
+
+  it('the idle line reads on its own – no "more"/"weitere" that needs a list before it (V3-13)', () => {
+    for (const text of [...Object.values(en.idle), ...Object.values(de.idle)]) {
+      expect(text).not.toMatch(/\bmore\b|weitere/i);
+    }
   });
 });

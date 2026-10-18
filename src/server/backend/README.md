@@ -23,7 +23,10 @@ FakeBackend (`--backend=fake`), `pnpm dev:live` das SdkBackend.
   `flagSettingsAfterStart(req)` → `applyFlagSettings` nach der Bereitschaft. FakeBackend: Terminal-
   Befehle im `init` (`FAKE_TERMINAL_COMMANDS`), `fastMode` im Script-Zustand, simulierte externe
   Konsole (`simulateConsoleTurn`), Bild-Anhänge und Rate-Limit im Dev-Szenario – Details in
-  `fake/README.md`.
+  `fake/README.md`. Fake-Integration (`fake/integration.ts`, `createFakeClaudeIntegration`): Option
+  `launchEnv` → Launch-Specs nur mit den Suchvariablen `FAKE_LAUNCH_ENV_KEYS` (PATH, PATHEXT,
+  SystemRoot …; keine Secrets, keine Session-Marker), damit der Fake-Server den Git-Branch findet
+  (V3-11; `app/compose.ts` übergibt `process.env`, Tests/Harness nichts).
 
 Design: `docs/wp/WP-13.md` §3.1–3.3; Ergebnisse: `docs/wp/WP-13a.md` (Fake), `docs/wp/WP-13c.md` (SDK).
 

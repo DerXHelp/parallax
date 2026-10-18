@@ -40,7 +40,8 @@ Regeln:
   (Chip in der fehlenden Adressleiste) – der Launcher erlaubt den eigenen Origin deshalb vorab im
   eigenen Profil. Darf ein Fenster trotzdem keine Web Notifications zeigen oder ist gar kein
   Fenster offen, zeigt der **Server** einen nativen Windows-Toast (Absender „Parallax“,
-  `src/server/lib/toast.ts`, stumm ohne Ton für das Ereignis); das Fenster behält seinen
+  `src/server/lib/toast.ts`, stumm ohne Ton für das Ereignis und – ADR-122 – auch dann, wenn ein
+  Fenster dieselbe Meldung bekommt und den Ton selbst spielt); das Fenster behält seinen
   In-App-Hinweis. Solange der Server native Toasts kann (`HostState.nativeNotifications`), entfällt
   das Banner. Ein Klick auf den nativen Toast öffnet die Session nur mit
   `settings.notifications.openOnClick` (Protokoll-Handler `parallax:`, ADR-109).

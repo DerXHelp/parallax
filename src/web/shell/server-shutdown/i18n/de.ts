@@ -12,8 +12,8 @@ export const de: typeof en = {
   waitingHint:
     'Offene Freigaben, Fragen und Pläne verfallen; ein Plan lässt sich nach dem Neustart freigeben („Fortsetzen“).',
   idle: {
-    one: '{count} weitere Session im Leerlauf wird geschlossen.',
-    other: '{count} weitere Sessions im Leerlauf werden geschlossen.',
+    one: '{count} Session im Leerlauf (ohne laufende Arbeit) wird geschlossen.',
+    other: '{count} Sessions im Leerlauf (ohne laufende Arbeit) werden geschlossen.',
   },
   nothingRunning: 'Keine Session läuft – es wird nichts unterbrochen.',
   confirm: 'Server beenden',

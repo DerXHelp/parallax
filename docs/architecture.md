@@ -173,7 +173,8 @@ interface LinkFs { lstat; readlink }; nodeLinkFs     // Test-Naht (ein UNC-Symli
 
 // src/server/lib/process.ts (WP-11; WP-13, WP-21 nutzen) – immer shell:false, windowsHide:true,
 // nur ABSOLUTE .exe-Pfade (R1-04, ADR-022: ein nackter Name würde zuerst im cwd des Kindes gesucht)
-interface RunFileOptions { cwd?: string; env?: Record<string, string>; timeoutMs: number; maxOutputBytes?: number }
+interface RunFileOptions { cwd?: string; env?: Record<string, string>; timeoutMs: number; maxOutputBytes?: number; signal?: AbortSignal }
+  // signal (V3-15 b): Abbruch beendet den Baum wie der Timeout (timedOut: true); schon abgebrochen → nichts gestartet
 interface RunFileResult { exitCode: number | null; signal: string | null; stdout: string; stderr: string; timedOut: boolean }
 type RunFileFn = typeof runFile
 runFile(file, args: readonly string[], options: RunFileOptions): Promise<RunFileResult>  // spawn, wirft nicht bei Exit ≠ 0, Timeout → Baum-Kill
@@ -214,11 +215,13 @@ regAddValue(run?)(key, name | null, data, view?) / regDeleteKey(run?)(key, view?
 // src/server/lib/cmdline.ts (WP-33) – EINE Befehlszeile, die CommandLineToArgvW exakt in args zurückteilt
 windowsCommandLine(args): string; quoteWindowsArg(arg): string
   // Start-Process -ArgumentList (Konsole), WshShortcut.Arguments (Autostart), shell\open\command – nie für cmd.exe
+quotedArgBody(arg): string                 // Inneres eines gequoteten Arguments; Basis auch des Konsolen-Kopierbefehls (R4-14)
 
 // src/server/lib/powershell.ts (WP-33) – konstante Skripte, Daten nur per Env
 powerShellPath(env?): string               // %SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe
 encodePowerShell(script): string           // -EncodedCommand (UTF-16LE base64)
 POWERSHELL_UTC_ISO_FORMAT                  // kulturunabhängiges ISO-UTC-Format für DateTime.ToString
+  // powerShellPath und POWERSHELL_UTC_ISO_FORMAT sind in lib/process.ts definiert und hier re-exportiert (R4-14)
 
 // src/server/lib/images.ts (WP-33, ADR-103): sniffImageType(bytes): AttachmentMediaType | null  // Magic Bytes PNG/JPEG/GIF/WebP
 
@@ -260,7 +263,7 @@ homeLockPipeName(key): string                        // \\.\pipe\parallax-home-<
 directoryLockPipeName(kind, key): string             // \\.\pipe\parallax-<kind>-<16 Hex>
 
 // src/server/lib/homeAccess.ts (Koordinator, R2-13, ADR-056) – nur Warnung, keine ACL-Änderung
-checkHomeAccess(home, { run?, platform?, timeoutMs? }?): Promise<HomeAccess>  // wirft nie
+checkHomeAccess(home, { run?, platform?, timeoutMs?, signal? }?): Promise<HomeAccess>  // wirft nie; signal → unknown 'aborted' (Shutdown, V3-15 b)
   // HomeAccess = private | shared {principals} | missing | unknown {reason}; DACL per Get-Acl (SDDL), SID per whoami
 logHomeAccess(home, options?): Promise<HomeAccess>   // warn bei shared – Server-Start (Verdrahtung WP-20c); Preflight nutzt checkHomeAccess
 parseSddlDacl(sddl), otherReaders(aces, userSid), parseWhoamiSid(output)  // reine Parser
@@ -383,7 +386,11 @@ die Shell zeigt sie in der Region des `NotificationCenter` (Fehler `role="alert"
 Validierungsfehler direkt am Eingabefeld bleiben inline. Phase 2 (ADR-126): Fehler einer Aktion aus
 einem offenen Dialog zeigt der Dialog selbst (`Alert role="alert"`); die Hinweis-Region liegt über
 modalen Dialogen und bleibt für Screenreader erreichbar; ein Hinweis kann eine Aktion tragen
-(`ClientNotice.action?`, z. B. „Töne aktivieren“).
+(`NoticeOptions.action` → `ClientNotice.action?` = `{label, run}`, ein Knopf in der Karte, z. B. „Töne
+aktivieren“). Technik (FIX-R4 F2): die Region hat `z-[60]` (über dem Overlay `z-50`) und
+`aria-live="off"` – Radix' `hideOthers` lässt `[aria-live]`-Knoten aus, die Karten (`status`/`alert`) sind
+die eigentlichen Live-Regionen; ein `pointerdown` bleibt in der Region, damit die Bedienung eines
+Hinweises nicht als Klick neben den Dialog zählt.
 
 **(j) Bundle (normativ, R1W-09, V1-02, V1-09, ADR-035).** Start-Bundle in Chunks `react`, `vendor`
 (nur `$initial`-Module aus `node_modules`) und `index`; die Warnschwelle 500 kB bleibt Wächter.
@@ -947,7 +954,7 @@ bzw. das Profil.
 | Permission `remember: D` | `D ∈ offer.ruleDestinations`; gebaut werden **nur** `addRules` mit `behavior:'allow'` und `addDirectories` aus den gespeicherten `suggestions`, mit `destination: D` (kein `deny`/`ask`, kein `cliArg`) | `DECISION_OPTION_UNAVAILABLE` |
 | Permission `acceptEdits: true` | nur wenn `offer.acceptEdits`; immer `{type:'setMode', mode:'acceptEdits', destination:'session'}` | `DECISION_OPTION_UNAVAILABLE` |
 | Frage `answers[]` | jede `question` ist ein Fragetext der Entscheidung und kommt höchstens einmal vor; `selected` ⊆ Labels dieser Frage; ohne `multiSelect` höchstens ein Label | `DECISION_OPTION_UNAVAILABLE` (`params.path`) |
-| `prompt.attachments[].blobId` | Phase 2 (ADR-103, ersetzt „nur eigene Uploads dieses Eintrags“): Blob existiert, `mediaType ∈ ATTACHMENT_MEDIA_TYPES`, `bytes ≤ LIMITS.imageBytes`; geprüft vor Start und Senden | `BLOB_NOT_FOUND`, `UNSUPPORTED_MEDIA_TYPE`, `PAYLOAD_TOO_LARGE` |
+| `prompt.attachments[].blobId` | Phase 2 (ADR-103, ersetzt „nur eigene Uploads dieses Eintrags“): Blob existiert, `mediaType ∈ ATTACHMENT_MEDIA_TYPES`, `bytes ≤ LIMITS.imageBytes`; alle zusammen ≤ `LIMITS.attachmentsTotalBytes` (ADR-125, Rohbytes; `params` `{bytes: Summe, max}` ohne `blobId`); geprüft vor Start und Senden, vor dem base64 | `BLOB_NOT_FOUND`, `UNSUPPORTED_MEDIA_TYPE`, `PAYLOAD_TOO_LARGE` |
 | `model` | `modelNameSchema` (kein führendes `-`, keine Leerzeichen, ≤ `LIMITS.modelChars`) | `VALIDATION_FAILED` |
 | `cwd` | `checkCwd` (`lib/paths.ts`), String exakt speichern | `PATH_REJECTED` / `CWD_NOT_FOUND` / `CWD_NOT_DIRECTORY` |
 | Antwort auf eine `expired`-Entscheidung | Plan `approve` = „Fortsetzen & Plan freigeben“ (Diagramm g); alles andere | `DECISION_EXPIRED` |
@@ -962,13 +969,14 @@ bzw. das Profil.
 |---|---|---|
 | alle Eintragsbefehle, Eintrag archiviert | erlaubt nur `setArchived`, `setPinned`, `rename`, `transcript.loadEarlier`, `consoleCommand` | `SESSION_ARCHIVED` |
 | alle Eintragsbefehle, `runState external` | erlaubt nur `transcript.loadEarlier`, `reclaim`, `consoleCommand`, `setPinned`, `rename` (nur lokaler Titel) | `SESSION_EXTERNAL` |
+| beide Gates (R4-01, ADR-127) | geprüft beim Eingang **und** erneut im Lifecycle-Lock (`assertEntryGate`): ein Befehl, der auf den Lock wartete, während `openExternal` oder das Archivieren lief, kommt nicht mehr durch; `startRuntime` lehnt einen externen Eintrag ab (auch Retry/Fortsetzen) | `SESSION_EXTERNAL`, `SESSION_ARCHIVED` |
 | „ohne Arbeit“ (Archiv, Wechsel, Konsole) | `runState ∉ {starting, working}`, keine offenen Entscheidungen, Queue leer, keine Hintergrund-Tasks | `SESSION_BUSY` |
 | `session.setPinned` | nur Flag | – |
 | `session.setArchived(true)` | „ohne Arbeit“; schließt einen laufenden Prozess, räumt Benachrichtigungen, löscht `continueAt` | `SESSION_BUSY` |
 | `session.setArchived(false)` | nur Flag | – |
 | `session.setFastMode` | laufend `applyFlagSettings({fastMode})`, dann `Entry.fastMode`; ruhend speichern, beim Start `StartSessionRequest.fastMode` | `CLAUDE_CONTROL_FAILED` |
 | `session.switchConversation` | Ziel ∈ `conversations`, ≠ aktuelle, mit `sessionId`; „ohne Arbeit“; Prozess schließen, aktuelle endet mit `switched`, Ziel ans Ende, `conversation.reset{trigger:'switch', hasEarlier}` + Log-Ende als `item.upsert` + `detail.patch`; Titel nicht `custom` → Titel des Ziels | `CONVERSATION_NOT_FOUND`, `SESSION_NOT_STARTED`, `SESSION_BUSY` |
-| `session.openExternal` | Session-ID vorhanden; „ohne Arbeit“; Query schließen; `consoleLaunchFor` → `ConsoleLauncher.open`; Erfolg → `Entry.external`, `external{active:true}`, Item `handoff/external`; Fehler → bleibt ruhend | `SESSION_NOT_STARTED`, `SESSION_BUSY`, `EXTERNAL_CONSOLE_FAILED`, Profilfehler |
+| `session.openExternal` | Session-ID vorhanden; „ohne Arbeit“; `checkCwd` (R4-09); Query schließen; `consoleLaunchFor` → `ConsoleLauncher.open` (nicht mehr nach Shutdown-Beginn, R4-03); Erfolg → `Entry.external`, `external{active:true}`, Item `handoff/external`; Fehler → bleibt ruhend; schon extern (auch ein zweites, auf den Lock wartendes `openExternal`) → Fehler, nie eine zweite Konsole | `SESSION_NOT_STARTED`, `SESSION_BUSY`, `SESSION_EXTERNAL`, `EXTERNAL_CONSOLE_FAILED`, `CWD_*`/`PATH_REJECTED`, `SERVER_SHUTTING_DOWN`, Profilfehler |
 | `session.reclaim` | nur `external`; Konsole läuft (oder unklar) → Fehler; sonst Verlauf importieren, Item `handoff/returned`, → `sleeping` | `EXTERNAL_STILL_RUNNING` |
 | `session.consoleCommand` | Session-ID vorhanden; ändert nichts | `SESSION_NOT_STARTED` |
 | `session.continueAfterLimit` | `true`: `continue` zu `rateLimitedUntil` (sonst sofort), `Entry.continueAt` + Event `wakeup`; `false`: löschen; jeder eigene Prompt löscht | – |
@@ -1161,7 +1169,9 @@ blobs/<blobId>.meta.json              blobRefSchema (Medientyp, Größe, Name; R
 entries/<entryId>/<conversationId>.transcript.jsonl   append-only, transcriptLogLineSchema
 entries/<entryId>/decisions.json      decisionRecordsFileSchema (offene Records mit decision-Snapshot, R0-07)
 entries/<entryId>/plans/v<N>.md       Plan-Versionen (Text exakt wie in canUseTool)
-entries/<entryId>/commands.json       Phase 2 (ADR-108/114): letzter Slash-Befehls-Katalog (Server-intern)
+entries/<entryId>/commands.json       Phase 2 (ADR-108/114): letzter Slash-Befehls-Katalog (Server-intern); nur Cache –
+                                      unlesbar, ungültig oder neuere schemaVersion = „kein Cache“, wird
+                                      überschrieben, kein Startabbruch (ADR-127)
 entries/<entryId>/attachments/<blobId>.<ext>   Datei-Anhänge (C.11, Phase 3), Ordner in additionalDirectories;
                                       Bild-Uploads (Phase 2) liegen als Blobs in blobs/ (ADR-103)
 logs/parallax.<datum>.<n>.log         pino-roll (lib/logger.ts)
@@ -1294,20 +1304,26 @@ defekte Zeilen überspringen und zählen.
 
 - **Multi-Host:** `hostId` lebt nur im Client (`sessionKey`, Connection-Map); Transport austauschbar
   (`createWebSocketTransport`/`createMemoryTransport`); Blobs, Profile, Settings gelten pro Host.
-- **Profile (Phase 2):** Dateiformat `profiles.json` steht (`profileSchema`); Phase 1 liefert das
-  eingebaute Profil „Standard“ aus Code.
-- **Terminal/externe Konsole:** `runState 'external'`, Befehle antworten `SESSION_EXTERNAL`.
+- **Profile:** seit Phase 2 `profiles.json` mit allen Profilen inkl. „Standard“ (ADR-102,
+  `profileSchema`), Profil-Editor in den Einstellungen (WP-36), Prüfung je Profil (`profile.test`).
+- **Terminal/externe Konsole:** Phase 2 übergibt an eine externe PowerShell-Konsole (ADR-104,
+  ADR-123, Gates §5 „Phase 2“ inkl. Prüfung im Lifecycle-Lock); `runState 'external'`, Befehle außer
+  `EXTERNAL_ALLOWED` antworten `SESSION_EXTERNAL`. Ein eingebettetes Terminal bleibt Erweiterung (Phase 4).
 - **Observer (Phase 5):** eigene Einträge, `user_message.origin = 'other'`.
 - **Rewind/Fork:** neue Unterhaltung mit `endReason 'fork'`.
 - **Settings:** additiv mit Defaults; `settings.update` patcht nur genannte Felder.
-- **Anhänge:** Contract steht (HTTP-Upload → `BlobRef`, Prompt referenziert `blobId`), Phase 1
-  `NOT_IMPLEMENTED`.
-- **Wakeups und `/loop` (R0-27):** `wakeupAt` ist in Phase 1 immer `null`. Die Erkennung
-  (`ScheduleWakeup`/`CronCreate`, `/loop`) ist Pflicht, **bevor** der Leerlauf-Schlaf (Phase 2)
-  aktiviert wird – sonst schläft eine geplante Session ein.
-- **Profil-Args (C.12):** `parseProfileArgs` (WP-11) ist schon in Phase 1 eine reine, getestete
-  Funktion mit Fehlercodes `PROFILE_*` (`params.index`, `params.flag`); der Profil-Editor folgt in
-  Phase 2.
+- **Anhänge:** seit Phase 2 Bild-Anhänge (HTTP-Upload → `BlobRef`, Prompt referenziert `blobId`,
+  ADR-103; Einzelgrenze `LIMITS.imageBytes`, Summe je Prompt `LIMITS.attachmentsTotalBytes`, ADR-125).
+  Datei-Anhänge mit Eintragsordner (`additionalDirectories`, C.11) folgen in Phase 3.
+- **Wakeups und `/loop` (R0-27, erfüllt durch ADR-121):** `wakeupAt` trägt seit Phase 2 das geplante
+  „Fortsetzen“ nach einem Rate-Limit (ADR-112). Geplante Turns erkennt die Engine (`sessions/runtime.ts`):
+  ein Tool-Call `ScheduleWakeup`/`CronCreate` (auch streamend oder im Subagent) oder ein gesendeter
+  Prompt, der mit `/loop` beginnt, markiert den laufenden Prozess als „geplant“; der Leerlauf-Schlaf
+  (ADR-105) schließt ihn aus, bis der Prozess endet (konservativ: `CronDelete` hebt nichts auf). Rein
+  Engine-intern, kein Contract, keine eigene Anzeige; Default `DEFAULT_IDLE_SLEEP` (an, 30 min) bleibt.
+- **Profil-Args (C.12):** `parseProfileArgs` (WP-11) ist eine reine, getestete Funktion mit
+  Fehlercodes `PROFILE_*` (`params.index`, `params.flag`); seit Phase 2 speisen ihre Befunde die
+  Profil-Befunde (`claude/profileIssues.ts`) für Profil-Editor, Speichern und jeden Start.
 
 ## 11. Contract-Änderungen und Versionierung
 
