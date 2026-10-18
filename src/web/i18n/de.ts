@@ -52,7 +52,6 @@ export const de: typeof en = {
       permissionMode: 'Modus',
       sessionId: 'Session-ID',
       profile: 'Profil',
-      details: 'Session-Details',
       context: 'Kontext',
       contextTokens: '{used} von {max} Tokens · {source}',
       contextSource: { sdk: 'gemessen', estimate: 'geschätzt' },
@@ -97,12 +96,6 @@ export const de: typeof en = {
       description: 'Wähle links eine Session oder starte eine neue.',
       welcomeTitle: 'Willkommen bei {product}',
       welcomeDescription: 'Starte deine erste Claude-Code-Session in einem Projektordner.',
-    },
-    newSession: {
-      title: 'Neue Session',
-      cwdLabel: 'Projektordner',
-      cwdPlaceholder: 'D:\\work\\mein-projekt',
-      submit: 'Session anlegen',
     },
     placeholders: {
       transcript: {

@@ -21,6 +21,8 @@ gibt (auch in `src/shared`, z. B. `@shared/paths` für Pfadregeln).
 | `clipboard.ts` | `copyText(text)` → `false` statt Fehler (ohne sicheren Kontext, abgelehnt) |
 | `session-title.ts` | `sessionTitle(summary)` – Anzeigetitel: Server-Titel oder Ordnername, solange der Titel leer ist (V2-05) |
 | `version.ts` | `compareVersions(a, b)`, `cliVersionStatus(cli, required)` – Versionsregel C.7 für die Anzeige (wie der Server, R3-01) |
+| `media-types.ts` | `extensionForMediaType(type)` (eine Endungstabelle: PNG, JPEG, WebP, GIF, SVG, PDF; ohne Parameter, Groß-/Kleinschreibung egal, unbekannt → `null`; R4W-21), `fileNameForMediaType(name, type, fallback?)` – nur Anzeige/Benennung, genutzt von Composer (Anhangsnamen) und Transkript („Speichern unter“) |
+| `zod-range.ts` | `numberRange(schema)` → `{min, max}` aus `.min()`/`.max()` eines zod-Number-Schemas (ohne Grenze ±Infinity) – Bereiche aus dem Contract statt Literalen (R4W-21), genutzt von `features/{preferences,profiles}` |
 | `return-focus.ts` | `useReturnFocus(open, fallback?)` → `onCloseAutoFocus` für Dialoge ohne Trigger (Fokus beim Öffnen merken, beim Schließen zurück, sonst `fallback()`; R4W-04), `focusedElement()` (null für `<body>`), `focusElement(el)` (nur verbunden, sichtbar, nicht `inert`) |
 
 In Welle 1b read-only; feature-spezifische Helfer liegen in `features/<f>/lib/`.

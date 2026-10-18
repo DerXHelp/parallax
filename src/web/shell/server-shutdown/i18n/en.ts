@@ -12,9 +12,10 @@ export const en = {
   waiting: 'Waiting for you ({count})',
   waitingHint:
     'Open permissions, questions and plans expire; a plan can be approved after the restart (“Resume”).',
+  /** V3-13: reads on its own – also when no working/waiting list precedes it (no "more"). */
   idle: {
-    one: '{count} more idle session will be closed.',
-    other: '{count} more idle sessions will be closed.',
+    one: '{count} idle session (no running work) will be closed.',
+    other: '{count} idle sessions (no running work) will be closed.',
   },
   nothingRunning: 'No session is running – nothing will be interrupted.',
   confirm: 'Stop server',

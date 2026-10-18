@@ -18,8 +18,11 @@ Aufbau eines Feature-Ordners (R0-03): `i18n/{en,de}.ts` (Namespace = Ordnername,
 `playground.tsx` (`export const demos: PlaygroundDemo[]`, per `import.meta.glob` gefunden),
 optional `components/`, `state/`, `lib/` für feature-eigene Teile. Features importieren einander
 **nie**; gemeinsame Komponenten laufen über `FeatureSlots` (`src/web/shell/slots.tsx`), die WP-20 in
-`App.tsx` verdrahtet (ESLint meldet Querimporte, architecture §2.3h). `src/web/{ui,lib,state,i18n}` sind
-in Welle 1b read-only. Regel für die `DecisionCard` (Leiste einzig bedienbar, Transkript lesend mit
+`App.tsx` verdrahtet (ESLint meldet Querimporte, architecture §2.3h). Shell-Bausteine (Komponenten,
+Kanäle) dürfen Features importieren, die Shell nie Features (ADR-126) – z. B. `shell/HostFacts.tsx`
+(`preferences`, Bereich „Über“) und `shell/new-session/FolderBrowser` (`profiles`); reine Helfer, die
+mehrere Features brauchen, liegen in `src/web/lib` (z. B. `media-types.ts` für Composer und Transkript,
+`zod-range.ts` für Profile und Einstellungen). `src/web/{ui,lib,state,i18n}` sind in Welle 1b read-only. Regel für die `DecisionCard` (Leiste einzig bedienbar, Transkript lesend mit
 „Zur Entscheidung“, Endzustand aus `tool_call.decision`): architecture §2.3e; Session-Daten nur über
 die Hooks (`useSessionMeta`, `useSessionSelector`, `useTopLevelItemIds` …, §2.3g), Hinweise über
 `showNotice` (§2.3i), schwere Renderer lazy (§2.3j).

@@ -59,7 +59,6 @@ export const en = {
       permissionMode: 'Mode',
       sessionId: 'Session ID',
       profile: 'Profile',
-      details: 'Session details',
       context: 'Context',
       contextTokens: '{used} of {max} tokens · {source}',
       contextSource: { sdk: 'measured', estimate: 'estimated' },
@@ -104,12 +103,6 @@ export const en = {
       description: 'Pick a session on the left or start a new one.',
       welcomeTitle: 'Welcome to {product}',
       welcomeDescription: 'Start your first Claude Code session in a project folder.',
-    },
-    newSession: {
-      title: 'New session',
-      cwdLabel: 'Project folder',
-      cwdPlaceholder: 'D:\\work\\my-project',
-      submit: 'Create session',
     },
     placeholders: {
       transcript: {

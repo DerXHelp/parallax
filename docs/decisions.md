@@ -1357,3 +1357,35 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   (2) Fehler einer Aktion aus einem offenen Dialog zeigt der Dialog selbst (`Alert role="alert"`), nicht
   die Hinweis-Region. (3) Die Hinweis-Region liegt über modalen Dialogen und bleibt für Screenreader
   erreichbar; ein Hinweis kann eine Aktion tragen (`ClientNotice.action?`), z. B. „Töne aktivieren“.
+
+## ADR-127 – Nachträge aus der Fix-Runde R4
+- **Datum/WP:** 18.10.2026, Koordinator nach FIX-R4 (Quellen: `docs/wp/FIX-R4-F1.md` … `FIX-R4-F4.md`).
+  Ergänzt ADR-102, ADR-104, ADR-110, ADR-114 und ADR-124; deren Text bleibt unverändert (nur anhängen).
+- **ADR-102 (Profil-Store; Quelle FIX-R4-F1, R4-06):** Ändert ein Speichern `executable`, `env` oder
+  `configDir` (`profileResolutionKey`, derselbe Schlüssel wie der Auflösungs-Cache), fällt der Prüfstatus
+  auf „wird geprüft“ zurück und die Komposition prüft das Profil neu; Name, Farbe, Args und Vorgaben
+  behalten ihn (Args ändern weder Version noch Anmeldung).
+- **ADR-104 (externe Konsole; Quelle FIX-R4-F1, R4-01/-03/-04/-05):** (a) Die Gates `SESSION_EXTERNAL`/
+  `SESSION_ARCHIVED` gelten beim Eingang **und** erneut im Lifecycle-Lock (`assertEntryGate`); ein zweites
+  `openExternal`, das auf den Lock wartete, antwortet `SESSION_EXTERNAL` (nicht idempotent),
+  `startRuntime` lehnt externe Einträge ab – nie ein zweiter Schreiber, nie eine zweite Konsole.
+  (b) Der Shutdown wartet ab Beginn, parallel zu den Closes, höchstens `lifecycleShutdownWaitMs` (10 s) auf
+  laufende Lifecycle-Operationen, damit ein gerade geöffneter Handoff gespeichert wird; nach
+  Shutdown-Beginn öffnet `openExternal` nichts mehr (`SERVER_SHUTTING_DOWN`). (c) PowerShell startet
+  ohne `-ExecutionPolicy Bypass`; das Skript setzt `PSModulePath` und `PSExecutionPolicyPreference` vor
+  `Start-Process` auf die Werte der Spec bzw. entfernt sie (Träger `PARALLAX_CONSOLE_PSMODULEPATH`/
+  `_PSPOLICY`) – die Konsole erbt keine Lockerung von Parallax. (d) Die 5-s-Prüfung fragt die Startzeit per
+  CIM nur beim ersten Blick und dann alle 60 s (`CONSOLE_RECHECK_MS`), dazwischen nur `isProcessAlive`.
+- **ADR-110 (Autostart; Quelle FIX-R4-F1, R4-11/-12):** „Autostart aus“ entfernt eine vorhandene
+  `Parallax.lnk` nur, wenn ihre Argumente `launcher\main.ts` enthalten; eine fremde Verknüpfung bleibt
+  (`foreign`, kein Fehler – wie beim fremden Protokoll-Handler). Auf einem anderen Datenordner tragen
+  Verknüpfung und Protokoll-Befehl `--home=<home> --system-integration=on`, damit der so gestartete Server
+  wieder integriert ist.
+- **ADR-114 (Kataloge; Quelle FIX-R4-F1, R4-15):** Der Startabbruch bei neuerer `schemaVersion` gilt für
+  `model-catalogs.json` und `account-limits.json`. `entries/<id>/commands.json` ist nur Cache: unlesbar,
+  ungültig oder neuer heißt „kein Cache“, die Datei wird mit dem nächsten Katalog überschrieben (WP-31
+  bewusst, harmlos).
+- **ADR-124 (Secret-Regel; Quelle FIX-R4-F1, R4-07):** Registriert werden die aufgelösten Werte der
+  Secret-Namen **des Profils** (`registerProfileSecrets` in `launchSpecFor`, `checkProfile` vor dem
+  CLI-Aufruf und `consoleLaunchFor`), nicht jedes Secret der Server-Umgebung (Pfade in `*_KEY_PATH`-Variablen
+  würden Logs unlesbar machen). Die Freitextmuster des Loggers folgen denselben Namensteilen.
