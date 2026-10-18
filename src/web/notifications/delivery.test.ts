@@ -309,6 +309,24 @@ describe('notification settings in the window (ADR-109: the server filters, the 
     expect(store.getState().notices.some((n) => n.id === SOUNDS_LOCKED_NOTICE_ID)).toBe(false);
   });
 
+  it('the hint carries the button "Enable sounds": it unlocks and the hint goes away (R4W-05)', async () => {
+    const sounds = fakeSounds('locked');
+    const player: SoundPlayer = {
+      ...sounds.player,
+      unlock: () => {
+        sounds.unlock();
+      },
+    };
+    stop = startNotificationDelivery({ store, notifier: fakeNotifier('default'), sounds: player });
+    push(store, notification('n1', 'done', OTHER, 'in_app'));
+    await settle();
+    const hint = store.getState().notices.find((n) => n.id === SOUNDS_LOCKED_NOTICE_ID);
+    expect(hint?.action?.label).toBe('navigation.notices.enableSounds');
+    hint?.action?.run();
+    expect(player.state()).toBe('ready');
+    expect(store.getState().notices.map((n) => n.id)).not.toContain(SOUNDS_LOCKED_NOTICE_ID);
+  });
+
   it('the first interaction unlocks the sounds and removes the hint', async () => {
     const sounds = fakeSounds('locked');
     stop = startNotificationDelivery({ store, notifier: fakeNotifier('default'), sounds: sounds.player });

@@ -94,6 +94,12 @@ export type NoticeTone = 'info' | 'success' | 'warning' | 'error';
 /** What a local notice says: a translation key (translated when rendered) or an error payload. */
 export type NoticeContent = { text: TranslationKey; params?: TranslationParams } | { error: ErrorPayload };
 
+/** A button of a notice (ADR-126, e.g. "Enable sounds"); the notice closes after `run`. */
+export interface NoticeAction {
+  label: TranslationKey;
+  run(): void;
+}
+
 /** A short-lived hint raised in this window (notices.ts, R1W-07) – never sent to the server. */
 export interface ClientNotice {
   id: string;
@@ -103,6 +109,8 @@ export interface ClientNotice {
   sessionKey: string | null;
   /** Auto-dismiss after this many ms; null = until dismissed. */
   durationMs: number | null;
+  /** Optional button of the notice (ADR-126). */
+  action?: NoticeAction;
 }
 
 export interface WindowPresence {

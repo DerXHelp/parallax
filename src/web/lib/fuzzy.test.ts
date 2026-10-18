@@ -74,3 +74,40 @@ describe('fuzzyFilter', () => {
     expect(result[1]).toBe(twins[1]);
   });
 });
+
+describe('fuzzyFilter – strict (V3-03, quick switcher)', () => {
+  const folder = 'beta-mit-einem-sehr-langen-ordnernamen-fuer-den-lauf-der-kopfzeile';
+  const one = (query: string, text: string, strict: boolean) =>
+    fuzzyFilter([text], query, (value) => [value], { strict }).length === 1;
+
+  it.each([
+    // query, text, kept without strict, kept with strict
+    ['fake', folder, true, false],
+    ['xyz', 'axbycz', true, false],
+    ['fake', 'fake:question', true, true],
+    ['lpc', 'Landing page copy', true, true],
+    ['rfas', 'Refactoring Auth-Service', true, true],
+    ['edir', 'Fix the login redirect', true, true],
+    ['e', 'Fix the login redirect', true, true],
+    ['langer', 'Arbeit über Gateway mit einem recht langen Profilnamen', true, true],
+  ])('%j in %j: loose %s, strict %s', (query, text, loose, strict) => {
+    expect(one(query, text, false)).toBe(loose);
+    expect(one(query, text, true)).toBe(strict);
+  });
+
+  it('ranks by match quality; with keyPenalty an earlier key wins a near tie', () => {
+    const items = [
+      { title: 'Database migration plan', profile: 'Arbeit über Gateway mit einem recht langen Profilnamen' },
+      {
+        title: 'Ein sehr langer Sessiontitel, der in der Kopfzeile mit der CLI-Version kollidiert',
+        profile: 'Standard',
+      },
+    ];
+    const keys = (item: (typeof items)[number]) => [item.title, item.profile];
+    expect(fuzzyFilter(items, 'langer', keys, { strict: true })[0]).toBe(items[1]);
+    // "lang" starts a word in both: without a key penalty the shorter profile name wins …
+    expect(fuzzyFilter(items, 'lang', keys, { strict: true })[0]).toBe(items[0]);
+    // … with it the title (key 0) beats the profile name (key 1).
+    expect(fuzzyFilter(items, 'lang', keys, { strict: true, keyPenalty: 1 })[0]).toBe(items[1]);
+  });
+});

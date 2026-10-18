@@ -3,7 +3,6 @@ import type { en } from './en';
 /** German texts of namespace `navigation` (same shape as en.ts). */
 export const de: typeof en = {
   sidebar: {
-    viewMode: 'Ansicht der Seitenleiste',
     flat: 'Flache Liste',
     grouped: 'Nach Projekt gruppieren',
     nextWaiting: 'Nächste Session, die auf dich wartet (Alt+N)',
@@ -12,15 +11,12 @@ export const de: typeof en = {
     archiveBack: 'Zurück zu den Sessions',
     archiveEmpty: 'Keine archivierten Sessions.',
     group: 'Projekt {name}',
-    groupSessions: { one: '{count} Session', other: '{count} Sessions' },
   },
   row: {
     actions: 'Aktionen für „{title}“',
     branch: 'Branch',
     model: 'Modell',
-    context: 'Context',
-    archived: 'Archiviert',
-    external: 'In einer externen Konsole',
+    context: 'Kontext',
   },
   actions: {
     menu: 'Session-Aktionen',
@@ -43,7 +39,7 @@ export const de: typeof en = {
   },
   console: {
     copied:
-      'Konsolenbefehl kopiert. Nutze diese Session nicht in Parallax, solange claude in der Konsole läuft – zwei Schreiber würden die Unterhaltung durcheinanderbringen.',
+      'Konsolenbefehl kopiert. Geheime Werte des Profils stehen nicht darin – die Konsole fragt sie ab. Nutze diese Session nicht in Parallax, solange claude in der Konsole läuft – zwei Schreiber würden die Unterhaltung durcheinanderbringen.',
     copyFailed: 'Der Konsolenbefehl konnte nicht in die Zwischenablage kopiert werden.',
   },
   switcher: {
@@ -87,7 +83,7 @@ export const de: typeof en = {
     description: 'Fakten dieser Session, wie Claude Code sie beim letzten Start gemeldet hat.',
     model: 'Modell',
     mode: 'Modus',
-    cwd: 'Arbeitsordner',
+    cwd: 'Arbeitsverzeichnis',
     branch: 'Git-Branch',
     cliVersion: 'Claude-Code-Version',
     apiKeySource: 'Anmeldung (API-Key-Quelle)',
@@ -97,6 +93,24 @@ export const de: typeof en = {
     none: 'Keine',
     unknown: 'Unbekannt',
     notStarted: 'Noch nicht gestartet – die Angaben erscheinen nach der ersten Nachricht.',
+    apiKeySources: {
+      subscription: 'Abo (claude.ai)',
+      envKey: 'API-Key (ANTHROPIC_API_KEY)',
+      helper: 'API-Key-Helfer (apiKeyHelper)',
+      loginManaged: 'Von /login verwalteter Key',
+      user: 'API-Key aus den Benutzereinstellungen',
+      project: 'API-Key aus den Projekteinstellungen',
+      org: 'API-Key der Organisation',
+      temporary: 'Temporärer API-Key',
+      oauth: 'OAuth-Anmeldung',
+    },
+    mcpStatus: {
+      connected: 'Verbunden',
+      failed: 'Fehlgeschlagen',
+      needsAuth: 'Anmeldung nötig',
+      pending: 'Startet',
+      disabled: 'Deaktiviert',
+    },
   },
   pane: {
     externalTitle: 'In externer Konsole geöffnet (seit {time})',
@@ -115,7 +129,10 @@ export const de: typeof en = {
       seven_day: 'Wochenlimit',
     },
     window: 'Limit ({name})',
-    resetsAt: 'Zurückgesetzt um {time}',
-    resetsOn: 'Zurückgesetzt am {date}',
+    resetsAt: 'Reset um {time}',
+    resetsOn: 'Reset am {date}',
+  },
+  notices: {
+    enableSounds: 'Töne aktivieren',
   },
 };
