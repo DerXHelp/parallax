@@ -12,6 +12,7 @@ import {
   useEffect,
   useEffectEvent,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
@@ -147,6 +148,7 @@ function FolderBrowserContent({
   const listId = useId();
   const hiddenId = useId();
   const listRef = useRef<HTMLDivElement>(null);
+  const crumbsRef = useRef<HTMLElement>(null);
   const requestRef = useRef(0);
   const typeahead = useRef<{ text: string; at: number }>({ text: '', at: 0 });
   const [listing, setListing] = useState<FsListing | null>(null);
@@ -277,6 +279,12 @@ function FolderBrowserContent({
     if (typeof option?.scrollIntoView === 'function') option.scrollIntoView({ block: 'nearest' });
   }, [active, listing]);
 
+  // V3-01: a long path scrolls the breadcrumb bar – keep its end (the open folder) in view.
+  useLayoutEffect(() => {
+    const bar = crumbsRef.current;
+    if (bar !== null) bar.scrollLeft = bar.scrollWidth;
+  }, [current]);
+
   const crumbs = current === null ? [] : breadcrumbs(current);
   const listLabel = current === null ? t('newSession.browser.listRoots') : t('newSession.browser.list', { path: current });
   const optionId = (index: number) => `${listId}-option-${String(index)}`;
@@ -304,7 +312,12 @@ function FolderBrowserContent({
         >
           <ArrowUpIcon aria-hidden />
         </IconButton>
-        <nav aria-label={t('newSession.browser.location')} className="min-w-0 flex-1 overflow-x-auto">
+        <nav
+          ref={crumbsRef}
+          aria-label={t('newSession.browser.location')}
+          data-slot="folder-breadcrumbs"
+          className="min-w-0 flex-1 overflow-x-auto"
+        >
           <ol className="flex min-w-0 items-center gap-0.5 text-xs whitespace-nowrap">
             <li className="flex items-center">
               <Button

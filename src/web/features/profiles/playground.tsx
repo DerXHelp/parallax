@@ -6,6 +6,7 @@ import type { PlaygroundDemo, PlaygroundModule } from '@web/playground/types';
 import { FolderBrowser } from '@web/shell/new-session/FolderBrowser';
 import { NewSessionDialog, type NewSessionPrefill } from '@web/shell/NewSessionDialog';
 import { requestShell } from '@web/shell/requests';
+import { useFeatureSlots } from '@web/shell/slots';
 import { useConnectionStatus } from '@web/state/hooks';
 import { useSettings } from '@web/state/settings';
 import { Button } from '@web/ui/button';
@@ -106,6 +107,36 @@ function EditorDemo({ selection }: { selection?: ProfileSelection }) {
   );
 }
 
+/**
+ * The settings page (slot `SettingsPage` of WP-38, no feature import) at "Profiles" over the demo
+ * host: a draft survives switching sections, closing with unsaved changes asks (R4W-01).
+ */
+function SettingsPageDemo() {
+  const { t } = useI18n();
+  const { SettingsPage } = useFeatureSlots();
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="p-6">
+      <Button
+        variant="outline"
+        onClick={() => {
+          setOpen(true);
+        }}
+      >
+        {t('profiles.list.label')}
+      </Button>
+      {open ? (
+        <SettingsPage
+          section="profiles"
+          onClose={() => {
+            setOpen(false);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function dialog(id: string, title: string, prefill: NewSessionPrefill, description?: string): PlaygroundDemo {
   return {
     id,
@@ -192,6 +223,17 @@ export const demos: PlaygroundDemo[] = [
     render: () => (
       <DemoHost>
         <EditorDemo selection={{ kind: 'profile', id: DEMO_PROFILE_IDS.work }} />
+      </DemoHost>
+    ),
+  },
+  {
+    id: 'settings-page',
+    title: 'Settings page – section “Profiles” (unsaved drafts, R4W-01)',
+    description:
+      'Change a field, switch to “General” and back: the draft stays. Esc, × or a click outside asks first.',
+    render: () => (
+      <DemoHost>
+        <SettingsPageDemo />
       </DemoHost>
     ),
   },

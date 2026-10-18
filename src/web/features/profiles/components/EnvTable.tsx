@@ -1,18 +1,19 @@
 import { EyeIcon, EyeOffIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { ProfileIssue } from '@shared/model';
+import { isSecretEnvKey } from '@shared/secrets';
 import { useI18n } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { Button } from '@web/ui/button';
 import { IconButton } from '@web/ui/icon-button';
 import { Input } from '@web/ui/input';
 import { newRowId, problemsFor, type DraftProblem, type EnvRow } from '../lib/draft';
-import { isSecretEnvKey } from '../lib/secrets';
 import { FieldNotes } from './FieldNotes';
 
 /**
  * Environment variables of a profile (Plan "Claude-Profile"): name/value rows. Values of secret
- * names (`*_KEY`, `*_TOKEN`, `*_SECRET`, `*PASSWORD*`) are masked (`type="password"`,
+ * names (`isSecretEnvKey` of `@shared/secrets` – the server's rule for log redaction and the
+ * console command, ADR-124) are masked (`type="password"`,
  * `autocomplete="new-password"` so the browser never fills in a saved password) until the eye
  * button reveals them – per row, in this window only. Values never leave the form except in
  * `profile.validate`/`profile.save`.

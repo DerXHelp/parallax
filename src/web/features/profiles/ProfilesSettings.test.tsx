@@ -207,12 +207,23 @@ describe('ProfilesSettings – editor', () => {
   it('deletes an unused profile after asking', async () => {
     const { user, running } = await mount({ kind: 'profile', id: DEMO_PROFILE_IDS.gateway });
     const form = await editor(DEMO_PROFILE_IDS.gateway);
-    await user.click(within(form).getByRole('button', { name: 'Delete…' }));
+    const remove = within(form).getByRole('button', { name: 'Delete…' });
+    await user.click(remove);
     const confirm = within(form).getByRole('button', { name: 'Delete profile' });
-    expect(document.activeElement).toBe(confirm);
+    // R4W-24: "Cancel" has the focus – Enter again deletes nothing; Cancel returns to "Delete…".
+    expect(document.activeElement).toBe(within(form).getByRole('button', { name: 'Cancel' }));
+    await user.keyboard('{Enter}');
+    expect(within(form).queryByRole('button', { name: 'Delete profile' })).toBeNull();
+    expect(document.activeElement).toBe(remove);
     expect(running.commands('profile.delete')).toEqual([]);
-    await user.click(confirm);
-    expect(await screen.findByText('Profile “Gateway” deleted.')).toBeTruthy();
+    await user.click(remove);
+    await user.click(within(form).getByRole('button', { name: 'Delete profile' }));
+    const notice = await screen.findByText('Profile “Gateway” deleted.');
+    // V3-14: the focus goes to the notice, not to <body>.
+    await waitFor(() => {
+      expect(document.activeElement).toBe(notice.closest('[data-slot="profile-notice"]'));
+    });
+    expect(confirm.isConnected).toBe(false);
     expect(running.commands('profile.delete')).toEqual([
       { name: 'profile.delete', profileId: DEMO_PROFILE_IDS.gateway },
     ]);
@@ -244,12 +255,21 @@ describe('ProfilesSettings – editor', () => {
       },
     );
     const form = await editor(work);
+    const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView');
     await user.click(within(form).getByRole('button', { name: 'Test profile' }));
     const panel = await waitFor(() => {
       const element = form.querySelector<HTMLElement>('[data-slot="profile-test-result"]');
       if (element === null) throw new Error('no test result');
       return element;
     });
+    // V3-14: the result below the fold is scrolled into view.
+    await waitFor(() => {
+      expect(
+        scrollIntoView.mock.contexts.some((element) => element instanceof Element && element.contains(panel)),
+      ).toBe(true);
+    });
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    scrollIntoView.mockRestore();
     expect(running.commands('profile.test')).toEqual([{ name: 'profile.test', profileId: work }]);
     expect(within(panel).getByText('2.1.310')).toBeTruthy();
     expect(within(panel).getByText('Signed in (claude.ai)')).toBeTruthy();
@@ -284,7 +304,11 @@ describe('ProfilesSettings – editor', () => {
     await user.click(within(form).getByRole('button', { name: 'Add argument' }));
     await user.type(within(form).getByLabelText('Argument 1'), '--add-dir{Enter}D:\\shared');
     await user.click(within(form).getByRole('button', { name: 'Save' }));
-    expect(await screen.findByText('Profile “Private” saved.')).toBeTruthy();
+    const saved = await screen.findByText('Profile “Private” saved.');
+    // V3-14: the editor is shown anew – the focus goes to the notice, not to <body>.
+    await waitFor(() => {
+      expect(document.activeElement).toBe(saved.closest('[data-slot="profile-notice"]'));
+    });
     expect(running.commands('profile.save')).toEqual([
       {
         name: 'profile.save',
@@ -301,9 +325,9 @@ describe('ProfilesSettings – editor', () => {
         },
       },
     ]);
-    const saved = running.server.profiles.at(-1);
-    expect(saved?.name).toBe('Private');
-    await editor(saved?.id ?? 'missing');
+    const stored = running.server.profiles.at(-1);
+    expect(stored?.name).toBe('Private');
+    await editor(stored?.id ?? 'missing');
   });
 
   it('asks before leaving unsaved changes', async () => {
@@ -313,11 +337,51 @@ describe('ProfilesSettings – editor', () => {
     expect(within(form).getByText('Unsaved changes')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: /^Standard/ }));
     expect(screen.getByText('Discard the unsaved changes of this profile?')).toBeTruthy();
+    // R4W-24: the harmless choice has the focus.
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep editing' }));
     await user.click(screen.getByRole('button', { name: 'Keep editing' }));
     expect(within(form).getByLabelText<HTMLInputElement>('Name').value).toBe('Work 2');
+    // The question is gone: the focus is on the profile being edited, not on <body>.
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: /^Work/ }));
+    });
     await user.click(screen.getByRole('button', { name: /^Standard/ }));
     await user.click(screen.getByRole('button', { name: 'Discard changes' }));
     await editor(STANDARD_PROFILE_ID);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: /^Standard/ }));
+    });
+  });
+
+  it('an untouched new profile has nothing to lose: switching away does not ask', async () => {
+    demo = startProfilesDemo({ immediate: true });
+    const onDirtyChange = vi.fn();
+    render(
+      <TooltipProvider>
+        <ProfilesSettings initialSelection={{ kind: 'new' }} onDirtyChange={onDirtyChange} />
+      </TooltipProvider>,
+    );
+    const user = userEvent.setup();
+    const form = await editor('new');
+    // Saving is still offered (a new profile), but nothing is unsaved yet.
+    expect(within(form).getByRole('button', { name: 'Save' })).toHaveProperty('disabled', false);
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+    await user.click(screen.getByRole('button', { name: /^Work/ }));
+    expect(screen.queryByText('Discard the unsaved changes of this profile?')).toBeNull();
+    await editor(work);
+  });
+
+  it('labels: color and program name their groups; no <label> without a field (V3-12)', async () => {
+    await mount({ kind: 'profile', id: work });
+    const form = await editor(work);
+    for (const text of ['Color', 'Program']) {
+      const label = within(form).getByText(text, { selector: 'span' });
+      expect(within(form).getByRole('radiogroup', { name: text }).getAttribute('aria-labelledby')).toBe(label.id);
+    }
+    for (const label of form.querySelectorAll('label')) {
+      const target = label.getAttribute('for');
+      expect(target === null || document.getElementById(target) !== null, label.textContent).toBe(true);
+    }
   });
 
   it('reports unsaved changes to the settings page (slot prop onDirtyChange, R4W-01)', async () => {
@@ -347,7 +411,10 @@ describe('ProfilesSettings – editor', () => {
     );
     const form = await editor(work);
     expect(within(form).getByLabelText('Konfigurationsordner (CLAUDE_CONFIG_DIR)')).toBeTruthy();
+    expect(within(form).getByLabelText('Kontextfenster (Tokens)')).toBeTruthy();
     expect(within(form).getByRole('button', { name: 'Wert der Variable 1 anzeigen' })).toBeTruthy();
+    // V3-13: the default badge differs from the name of the built-in profile „Standard“.
+    expect(screen.getByRole('button', { name: /^Standard/ }).textContent).toContain('Standardprofil');
     expect(
       within(form).getByText('Nicht löschbar: 2 Sessions nutzen dieses Profil (archivierte zählen mit).'),
     ).toBeTruthy();

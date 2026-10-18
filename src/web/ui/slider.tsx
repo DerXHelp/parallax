@@ -15,7 +15,10 @@ export interface SliderProps extends ComponentProps<typeof SliderPrimitive.Root>
 /**
  * Range input (e.g. the notification volume, WP-38) on Radix `Slider`: one thumb per value.
  * Keyboard: arrows step, Page↑/↓ step ×10, Home/End. `onValueChange` follows every move while
- * dragging, `onValueCommit` fires once at the end (pointer up, every key) – save there.
+ * dragging, `onValueCommit` fires once at the end of a drag (pointer up) but on **every** key
+ * press – a caller that saves or plays something there groups held/repeated keys itself (e.g. the
+ * volume of WP-38 saves 300 ms after the last key, R4W-17; `onKeyDown`/`onPointerDown` tell the
+ * input apart).
  */
 export function Slider({
   className,

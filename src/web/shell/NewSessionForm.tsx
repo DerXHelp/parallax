@@ -152,10 +152,11 @@ export function NewSessionForm({
         void submit();
       }}
       data-slot="new-session-form"
-      className="grid w-full max-w-md gap-4"
+      // One column that never grows with long paths (V3-01): they end with an ellipsis instead.
+      className="grid w-full max-w-md grid-cols-[minmax(0,1fr)] gap-4"
       aria-label={t('newSession.title')}
     >
-      <div className="grid gap-1.5">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
         <Label htmlFor={inputId}>{t('newSession.cwd.label')}</Label>
         <div className="flex gap-2">
           <Input
@@ -192,11 +193,11 @@ export function NewSessionForm({
       </div>
 
       {shownRecent.length === 0 ? null : (
-        <div className="grid gap-1">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-1" data-slot="recent-projects">
           <span className="text-muted-foreground text-2xs font-medium tracking-wide uppercase">
             {t('newSession.recent.label')}
           </span>
-          <ul className="grid gap-px" aria-label={t('newSession.recent.label')}>
+          <ul className="grid grid-cols-[minmax(0,1fr)] gap-px" aria-label={t('newSession.recent.label')}>
             {shownRecent.map((path) => {
               const current = windowsPathKey(path) === cwdKey;
               return (
@@ -211,12 +212,12 @@ export function NewSessionForm({
                       setError(null);
                     }}
                     className={cn(
-                      'hover:bg-accent focus-visible:ring-ring flex h-7 w-full items-center gap-2 rounded-sm px-2 text-left text-xs outline-none focus-visible:ring-2',
+                      'hover:bg-accent focus-visible:ring-ring flex h-7 w-full min-w-0 items-center gap-2 rounded-sm px-2 text-left text-xs outline-none focus-visible:ring-2',
                       current && 'bg-accent text-accent-foreground',
                     )}
                   >
                     <FolderOpenIcon aria-hidden className="text-muted-foreground size-3.5 shrink-0" />
-                    <span className="truncate font-mono text-2xs">{shortPath(path, 3)}</span>
+                    <span className="min-w-0 truncate font-mono text-2xs">{shortPath(path, 3)}</span>
                   </button>
                 </li>
               );
@@ -225,7 +226,7 @@ export function NewSessionForm({
         </div>
       )}
 
-      <div className="grid gap-1.5">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
         <Label id={profileLabelId} htmlFor={profileId}>
           {t('newSession.profile.label')}
         </Label>
@@ -237,7 +238,7 @@ export function NewSessionForm({
           value={profile?.id ?? null}
           onValueChange={setChoice}
         />
-        <div id={profileHintId} className="grid gap-1">
+        <div id={profileHintId} className="grid grid-cols-[minmax(0,1fr)] gap-1">
           {defaultParts.length === 0 ? null : (
             <p className="text-muted-foreground text-2xs">
               {t('newSession.profile.defaults', { list: defaultParts.join(' · ') })}

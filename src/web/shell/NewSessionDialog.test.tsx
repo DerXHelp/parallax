@@ -252,6 +252,32 @@ describe('"New session" dialog (WP-36)', () => {
     });
   });
 
+  it('Esc and the close button give the focus back to the opener (V3-04)', async () => {
+    await mount();
+    const user = userEvent.setup();
+    render(
+      <button type="button" onClick={openNewSession}>
+        open dialog
+      </button>,
+    );
+    const opener = screen.getByRole('button', { name: 'open dialog' });
+    await user.click(opener);
+    await dialog();
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(opener);
+    });
+    await user.click(opener);
+    const view = await dialog();
+    await user.click(within(view).getByRole('button', { name: 'Close' }));
+    await waitFor(() => {
+      expect(document.activeElement).toBe(opener);
+    });
+  });
+
   it('rejects unsafe paths before sending and shows server errors translated', async () => {
     const running = await mount({ failCreate: true });
     const user = userEvent.setup();

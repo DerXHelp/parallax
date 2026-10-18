@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ProfileId } from '@shared/common';
 import { useI18n, type TranslationKey, type TranslationParams } from '@web/i18n';
 import type { ProfilesSettingsSlotProps } from '@web/shell/slots';
@@ -14,10 +14,20 @@ interface Notice {
 }
 
 /**
+ * Where the focus goes after an action whose button disappears (V3-14): the notice ("saved",
+ * "deleted" …) or the chosen entry of the list. `serial` makes every action count.
+ */
+interface FocusAfter {
+  target: 'notice' | 'row';
+  serial: number;
+}
+
+/**
  * Settings section "Profiles" (slot `ProfilesSettings`, WP-36 requirement 3; ADR-102): the
  * profiles of the local host on the left, the editor of the chosen one on the right (stacked when
- * narrow). Switching away from unsaved changes asks first. Everything is decided by the server
- * (`profile.*`); the list follows `HostState.profiles`.
+ * narrow). Switching away from unsaved changes asks first; the settings page asks before it closes
+ * (R4W-01, `onDirtyChange`). Everything is decided by the server (`profile.*`); the list follows
+ * `HostState.profiles`.
  */
 export function ProfilesSettings({
   initialSelection,
@@ -39,6 +49,22 @@ export function ProfilesSettings({
   }, [dirty, onDirtyChange]);
   const [pending, setPending] = useState<ProfileSelection | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [focusAfter, setFocusAfter] = useState<FocusAfter | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const noticeRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (focusAfter === null) return;
+    if (focusAfter.target === 'notice' && noticeRef.current !== null) {
+      noticeRef.current.focus();
+      return;
+    }
+    rootRef.current?.querySelector<HTMLElement>('[data-slot="profile-list"] [aria-current="true"]')?.focus();
+  }, [focusAfter]);
+
+  const focusNext = (target: FocusAfter['target']) => {
+    setFocusAfter((current) => ({ target, serial: (current?.serial ?? 0) + 1 }));
+  };
 
   // The chosen profile, else the default one (also after it was deleted elsewhere).
   const chosen: ProfileSelection | null =
@@ -71,17 +97,21 @@ export function ProfilesSettings({
     onSaved: (profileId: ProfileId, name: string) => {
       setNotice({ key: 'profiles.notices.saved', params: { name } });
       open({ kind: 'profile', id: profileId });
+      focusNext('notice');
     },
     onDeleted: (name: string) => {
       setNotice({ key: 'profiles.notices.deleted', params: { name } });
       open(null);
+      focusNext('notice');
     },
     onDefaultSet: (name: string) => {
       setNotice({ key: 'profiles.notices.defaultSet', params: { name } });
+      focusNext('notice');
     },
     onDiscardNew: () => {
       setNotice(null);
       open(null);
+      focusNext('row');
     },
     onDirtyChange: setDirty,
   };
@@ -90,7 +120,7 @@ export function ProfilesSettings({
     chosen?.kind === 'profile' ? (profiles.find((profile) => profile.id === chosen.id) ?? null) : null;
 
   return (
-    <div data-slot="profiles-settings" className="@container grid gap-3">
+    <div ref={rootRef} data-slot="profiles-settings" className="@container grid gap-3">
       <p className="text-muted-foreground text-xs">{t('profiles.description')}</p>
       <div className="grid gap-4 @2xl:grid-cols-[15rem_minmax(0,1fr)]">
         <ProfileList profiles={profiles} selection={chosen ?? { kind: 'new' }} onSelect={request} />
@@ -106,10 +136,10 @@ export function ProfilesSettings({
                     size="sm"
                     variant="outline"
                     data-action="profile-discard-changes"
-                    autoFocus
                     onClick={() => {
                       setNotice(null);
                       open(pending);
+                      focusNext('row');
                     }}
                   >
                     {t('profiles.editor.discard')}
@@ -117,8 +147,12 @@ export function ProfilesSettings({
                   <Button
                     size="sm"
                     variant="ghost"
+                    data-action="profile-keep-editing"
+                    // R4W-24: the harmless choice takes the focus (a repeated Enter discards nothing).
+                    autoFocus
                     onClick={() => {
                       setPending(null);
+                      focusNext('row');
                     }}
                   >
                     {t('profiles.editor.keepEditing')}
@@ -128,7 +162,13 @@ export function ProfilesSettings({
             />
           )}
           {notice === null ? null : (
-            <Alert tone="success" data-slot="profile-notice">
+            <Alert
+              ref={noticeRef}
+              tabIndex={-1}
+              tone="success"
+              data-slot="profile-notice"
+              className="focus-visible:ring-ring outline-none focus-visible:ring-2"
+            >
               {t(notice.key, notice.params)}
             </Alert>
           )}

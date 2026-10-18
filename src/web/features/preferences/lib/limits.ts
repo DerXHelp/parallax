@@ -1,24 +1,15 @@
-import type { ZodNumber } from 'zod';
 import { idleSleepSchema, notificationSettingsPatchSchema, portSettingSchema } from '@shared/model';
+import { numberRange, type NumberRange } from '@web/lib/zod-range';
 
-/** Allowed range of a number setting – read from the contract, never duplicated (WP-30 §4.5). */
-export interface NumberRange {
-  min: number;
-  max: number;
-}
-
-function rangeOf(schema: ZodNumber): NumberRange {
-  return { min: schema.minValue ?? 0, max: schema.maxValue ?? Number.MAX_SAFE_INTEGER };
-}
+/** Ranges of the number settings – read from the contract, never duplicated (WP-30 §4.5). */
+export type { NumberRange };
 
 /** `settings.idleSleep.minutes` (ADR-105: 5–1440). */
-export const IDLE_MINUTES = rangeOf(idleSleepSchema.shape.minutes);
+export const IDLE_MINUTES = numberRange(idleSleepSchema.shape.minutes);
 /** `settings.notifications.doneMinSeconds` (0–600). */
-export const DONE_SECONDS = rangeOf(notificationSettingsPatchSchema.shape.doneMinSeconds);
-/** `settings.port` (ADR-111: 1024–65535, null = default). */
-export const PORT_RANGE = rangeOf(portSettingSchema.unwrap());
-/** The server's default port when `settings.port` is null (src/server/config.ts, ADR-111). */
-export const DEFAULT_PORT = 4711;
+export const DONE_SECONDS = numberRange(notificationSettingsPatchSchema.shape.doneMinSeconds);
+/** `settings.port` (ADR-111: 1024–65535, null = default `DEFAULT_PORT` from `@shared/model`). */
+export const PORT_RANGE = numberRange(portSettingSchema.unwrap());
 
 /**
  * A whole number typed by the user: digits only (no sign, no decimals, no exponent), within the

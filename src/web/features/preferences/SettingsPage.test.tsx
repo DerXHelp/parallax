@@ -1,5 +1,6 @@
 import { act, configure, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useEffect, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_HOST_ID } from '@shared/common';
 import { makeError } from '@shared/errors';
@@ -11,7 +12,7 @@ import { FakeAudioContext } from '@web/notifications/testing';
 import { requestShell, type SettingsSection } from '@web/shell/requests';
 import { SettingsMenu } from '@web/shell/SettingsMenu';
 import { ShellEffects } from '@web/shell/ShellEffects';
-import { FeatureSlotsProvider, type FeatureSlots } from '@web/shell/slots';
+import { FeatureSlotsProvider, type FeatureSlots, type ProfilesSettingsSlotProps } from '@web/shell/slots';
 import { createHostConnection, registerConnection, unregisterConnection } from '@web/state/connection';
 import { FakeHost } from '@web/state/fake-host';
 import { resetClientStore } from '@web/state/store';
@@ -44,14 +45,19 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** A FakeHost as host `local`; `failUpdates` rejects every settings.update (STORE_WRITE_FAILED). */
-async function connect(options: { hostState?: HostState; failUpdates?: boolean } = {}) {
+/**
+ * A FakeHost as host `local`; `failUpdates` rejects every settings.update (STORE_WRITE_FAILED),
+ * `failUpdate` those it returns true for.
+ */
+async function connect(
+  options: { hostState?: HostState; failUpdates?: boolean; failUpdate?: (patch: SettingsPatch) => boolean } = {},
+) {
   const transport = createMemoryTransport();
   const host = new FakeHost({
     transport,
     hostState: options.hostState ?? sampleHostState(),
     onCommand: (cmd) =>
-      options.failUpdates === true && cmd.name === 'settings.update'
+      cmd.name === 'settings.update' && (options.failUpdates === true || options.failUpdate?.(cmd.patch) === true)
         ? { ok: false, error: makeError('STORE_WRITE_FAILED') }
         : undefined,
   });
@@ -254,6 +260,33 @@ describe('Notifications', () => {
     for (const patch of patches(host)) expect(Object.keys(patch.notifications ?? {})).toHaveLength(6);
   });
 
+  it('keyboard steps on the volume are saved and played once, after the last key (R4W-17)', async () => {
+    const host = await connect();
+    const user = userEvent.setup({ delay: null });
+    renderPage('notifications');
+    const slider = screen.getByRole('slider', { name: 'Volume' });
+    slider.focus();
+    await user.keyboard('{ArrowRight}{ArrowRight}{ArrowRight}{ArrowRight}{ArrowRight}');
+    expect(slider.getAttribute('aria-valuetext')).toBe('65 %');
+    // One patch with the final value (Radix commits on every key: without grouping these were five).
+    await waitFor(() => {
+      expect(patches(host).map((patch) => patch.notifications?.volume)).toEqual([0.65]);
+    });
+    expect(FakeAudioContext.last().masterGains()).toEqual([0.65]);
+  });
+
+  it('the volume label points at no element (the slider thumb is named itself, V3-12)', async () => {
+    await connect();
+    renderPage('notifications');
+    const field = document.querySelector('[data-setting="volume"]');
+    expect(field?.querySelector('label')?.hasAttribute('for')).toBe(false);
+    // Fields with a labelable control keep their <label for>.
+    const dnd = document.querySelector('[data-setting="doNotDisturb"] label');
+    expect(dnd?.getAttribute('for')).toBe(screen.getByRole('switch', { name: 'Do not disturb' }).id);
+    // Fields with only a group below have none either.
+    expect(document.querySelector('[data-setting="events"] label')?.hasAttribute('for')).toBe(false);
+  });
+
   it('"Done" threshold: 0–600 seconds, invalid input stays local with an error', async () => {
     const host = await connect();
     const user = userEvent.setup();
@@ -383,15 +416,32 @@ describe('Server', () => {
   it('autostart is disabled with the reason without system integration', async () => {
     await connect();
     renderPage('server');
-    expect(
-      screen
-        .getByRole('switch', { name: 'Start Parallax when you sign in to Windows' })
-        .hasAttribute('disabled'),
-    ).toBe(true);
-    expect(
-      screen.getByRole('switch', { name: 'Also open a window at sign-in' }).hasAttribute('disabled'),
-    ).toBe(true);
-    expect(screen.getByText(/Only available for the installed Parallax server/)).toBeTruthy();
+    const autostart = screen.getByRole('switch', { name: 'Start Parallax when you sign in to Windows' });
+    expect(autostart.hasAttribute('disabled')).toBe(true);
+    const openWindow = screen.getByRole('switch', { name: 'Also open a window at sign-in' });
+    expect(openWindow.hasAttribute('disabled')).toBe(true);
+    // Both switches name the reason (R4W-18: the sub-option too).
+    const reasons = screen.getAllByText(/Only available for the installed Parallax server/);
+    expect(reasons).toHaveLength(2);
+    for (const toggle of [autostart, openWindow]) {
+      const described = (toggle.getAttribute('aria-describedby') ?? '').split(' ');
+      expect(reasons.some((reason) => described.includes(reason.closest('p')?.id ?? '-'))).toBe(true);
+    }
+  });
+
+  it('"Also open a window" says it needs autostart while autostart is off (R4W-18)', async () => {
+    await connect({
+      hostState: sampleHostState({
+        systemIntegration: true,
+        settings: sampleSettings({ autostart: { enabled: false, openWindow: true } }),
+      }),
+    });
+    renderPage('server');
+    const openWindow = screen.getByRole('switch', { name: 'Also open a window at sign-in' });
+    expect(openWindow.hasAttribute('disabled')).toBe(true);
+    const reason = screen.getByText('Only while “Start Parallax when you sign in to Windows” is on.');
+    expect((openWindow.getAttribute('aria-describedby') ?? '').split(' ')).toContain(reason.closest('p')?.id);
+    expect(screen.queryByText(/Only available for the installed Parallax server/)).toBeNull();
   });
 
   it('with system integration: autostart, "open a window", AUTOSTART_FAILED', async () => {
@@ -451,6 +501,131 @@ describe('Profiles and About', () => {
   });
 });
 
+/** Stand-in for the profile editor of WP-36: one draft field, reports unsaved changes like it. */
+function DraftProfiles({ onDirtyChange }: ProfilesSettingsSlotProps) {
+  const [value, setValue] = useState('');
+  useEffect(() => {
+    onDirtyChange?.(value !== '');
+  }, [value, onDirtyChange]);
+  return (
+    <input
+      aria-label="profile draft"
+      value={value}
+      onChange={(event) => {
+        setValue(event.target.value);
+      }}
+    />
+  );
+}
+
+const DRAFT_SLOTS: Partial<FeatureSlots> = { ProfilesSettings: DraftProfiles };
+
+function draftField(): HTMLInputElement {
+  return screen.getByLabelText<HTMLInputElement>('profile draft');
+}
+
+function profilesTab(): HTMLElement {
+  return screen.getByRole('tab', { name: /^Profiles/ });
+}
+
+describe('unsaved profile drafts (R4W-01)', () => {
+  it('a draft survives switching sections; the tab marks unsaved changes', async () => {
+    await connect();
+    const user = userEvent.setup();
+    renderPage('profiles', DRAFT_SLOTS);
+    await user.type(draftField(), 'secret-ish');
+    expect(profilesTab().getAttribute('data-unsaved')).toBe('true');
+    expect(profilesTab().textContent).toContain('unsaved changes');
+    await user.click(screen.getByRole('tab', { name: 'General' }));
+    // Kept mounted but hidden while another section shows.
+    expect(screen.queryByRole('textbox', { name: 'profile draft' })).toBeNull();
+    expect(draftField().closest('[role="tabpanel"]')?.hasAttribute('hidden')).toBe(true);
+    await user.click(profilesTab());
+    expect(draftField().value).toBe('secret-ish');
+  });
+
+  it('Esc with unsaved changes asks inline; "Keep editing" goes back to the field, "Discard and close" closes', async () => {
+    await connect();
+    const user = userEvent.setup();
+    const { onClose, dialog } = renderPage('profiles', DRAFT_SLOTS);
+    await user.type(draftField(), 'x');
+    await user.keyboard('{Escape}');
+    expect(onClose).not.toHaveBeenCalled();
+    const confirm = within(dialog).getByText('Discard the unsaved profile changes?').closest('[data-slot="settings-close-confirm"]');
+    expect(confirm).not.toBeNull();
+    // R4W-24: the harmless choice has the focus.
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Keep editing' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
+    expect(dialog.querySelector('[data-slot="settings-close-confirm"]')).toBeNull();
+    await waitFor(() => {
+      expect(document.activeElement).toBe(draftField());
+    });
+    expect(draftField().value).toBe('x');
+    // Asked again: Esc while asking = keep editing; then discard closes.
+    await user.keyboard('{Escape}');
+    expect(within(dialog).getByRole('button', { name: 'Keep editing' })).toBeTruthy();
+    await user.keyboard('{Escape}');
+    expect(dialog.querySelector('[data-slot="settings-close-confirm"]')).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    await user.keyboard('{Escape}');
+    await user.click(within(dialog).getByRole('button', { name: 'Discard and close' }));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('the close button and a click outside ask as well – also from another section', async () => {
+    await connect();
+    const user = userEvent.setup();
+    const { onClose, dialog } = renderPage('profiles', DRAFT_SLOTS);
+    await user.type(draftField(), 'x');
+    await user.click(screen.getByRole('tab', { name: 'Server' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(within(dialog).getByText('Discard the unsaved profile changes?')).toBeTruthy();
+    // "Keep editing" from another section shows the profile editor again.
+    await user.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
+    expect(profilesTab().getAttribute('aria-selected')).toBe('true');
+    await waitFor(() => {
+      expect(document.activeElement).toBe(profilesTab());
+    });
+    const overlay = document.querySelector<HTMLElement>('[data-slot="dialog-overlay"]');
+    if (overlay === null) throw new Error('no overlay');
+    await user.click(overlay);
+    expect(within(dialog).getByText('Discard the unsaved profile changes?')).toBeTruthy();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('without unsaved changes nothing asks', async () => {
+    await connect();
+    const user = userEvent.setup();
+    const { onClose } = renderPage('profiles', DRAFT_SLOTS);
+    await user.type(draftField(), 'x');
+    await user.clear(draftField());
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('a settings request while open switches the section and keeps the draft (no new page)', async () => {
+    await connect();
+    const user = userEvent.setup();
+    renderPage('profiles', DRAFT_SLOTS);
+    await user.type(draftField(), 'kept');
+    let taken = false;
+    act(() => {
+      taken = requestShell({ kind: 'settings', section: 'about' });
+    });
+    expect(taken).toBe(true);
+    expect(screen.getByRole('tab', { name: 'About' }).getAttribute('aria-selected')).toBe('true');
+    act(() => {
+      requestShell({ kind: 'settings', section: 'profiles' });
+    });
+    expect(draftField().value).toBe('kept');
+    // Without a section the page stays where it is.
+    act(() => {
+      requestShell({ kind: 'settings' });
+    });
+    expect(profilesTab().getAttribute('aria-selected')).toBe('true');
+  });
+});
+
 describe('saving (optimistic, rollback on failure)', () => {
   it('a refused change goes back and says so inside the dialog', async () => {
     const host = await connect({ failUpdates: true });
@@ -467,6 +642,23 @@ describe('saving (optimistic, rollback on failure)', () => {
     });
     expect(host.hostState.settings.notifications.doNotDisturb).toBe(false);
     expect(patches(host)).toHaveLength(1);
+  });
+
+  it('the error stays when another field saves fine; "Dismiss" hides it (R4W-16)', async () => {
+    await connect({ failUpdate: (patch) => patch.notifications !== undefined });
+    const user = userEvent.setup();
+    const { dialog } = renderPage('notifications');
+    await user.click(screen.getByRole('switch', { name: 'Do not disturb' }));
+    const alert = await within(dialog).findByRole('alert');
+    await user.click(screen.getByRole('tab', { name: 'Sessions' }));
+    const suggestions = screen.getByRole('switch', { name: 'Prompt suggestions' });
+    await user.click(suggestions);
+    await waitFor(() => {
+      expect(suggestions.getAttribute('aria-checked')).toBe('true');
+    });
+    expect(within(dialog).getByRole('alert')).toBe(alert);
+    await user.click(within(alert).getByRole('button', { name: 'Dismiss' }));
+    expect(within(dialog).queryByRole('alert')).toBeNull();
   });
 
   it('a switch moves at once, before the server confirms it', async () => {
