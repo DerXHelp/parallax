@@ -660,3 +660,14 @@ Task-Ausgaben unter `%TEMP%\claude\C--Users-<USER>-…-parallax-spike-…` (5 Or
 
 > **Nachtrag 16.10.2026 (WP-22):** „Waisen nach hartem Server-Abbruch“ ist live geprüft (Punkt 16);
 > der Auto-Modus wurde während der Abnahme zum CLI-Default dieses Kontos (Punkt 2).
+
+> **Nachtrag 18.10.2026 (WP-41):** CLI 2.1.300, SDK 0.3.296, Haiku, Abo-Login (Details `docs/wp/WP-41.md`).
+> - `prompt_suggestion`: mit `promptSuggestions` an (ADR-117, frischer Prozess) kam in zwei Turns keine
+>   Vorschlags-Message, auch keine unbekannten Typen im Log – weiter „nicht ausgelöst“ (WP41-03).
+> - `compact_boundary` ist live ausgelöst: `/compact` mit 35 526 → 3 465 Token (A8).
+> - `--version` und `auth status` mit einem leeren `CLAUDE_CONFIG_DIR` legen dort `.claude.json` und
+>   `backups\` an – „Profil testen“ ist also nicht rein lesend (WP41-06).
+> - `claude --resume <id>` in einer externen Konsole: die Konsolen-Turns kommen über `getSessionMessages`
+>   mit Zeitstempeln zurück, ohne Dubletten (A6, A20). `/clear` liefert die neue Session-ID im nächsten
+>   `init` (bestätigt F.7).
+> - Abo-Limits (5 h/Woche) stimmen mit `/usage` überein (A12).

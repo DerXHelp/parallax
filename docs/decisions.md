@@ -1389,3 +1389,19 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   Secret-Namen **des Profils** (`registerProfileSecrets` in `launchSpecFor`, `checkProfile` vor dem
   CLI-Aufruf und `consoleLaunchFor`), nicht jedes Secret der Server-Umgebung (Pfade in `*_KEY_PATH`-Variablen
   würden Logs unlesbar machen). Die Freitextmuster des Loggers folgen denselben Namensteilen.
+
+## ADR-128 – `PSExecutionPolicyPreference` der aufrufenden Claude-Session auch für SDK-Spawns entfernen
+- **Datum/WP:** 18.10.2026, Koordinator nach WP-41 (Befund WP41-08). Ergänzt ADR-021 (dessen Text bleibt).
+- **Kontext:** ADR-021 entfernt die Tool-Shell-Variablen einer aufrufenden Claude-Session
+  (`TERMINAL_TOOL_SHELL_VARS`) nur für `target: 'terminal'`, weil das gestartete `claude` sie für seine
+  eigenen Tools ohnehin setzt. Live (WP-41) bekamen die SDK-`claude`-Prozesse eines aus einer
+  Claude-Code-Shell gestarteten Servers `PSExecutionPolicyPreference=Bypass`; darüber erben auch die von
+  `claude` gestarteten Hooks und MCP-Server die gelockerte Ausführungsrichtlinie. Für die Konsole hat
+  R4-04 dieselbe Lockerung bereits beseitigt (ADR-127 zu ADR-104 (c)).
+- **Entscheidung:** Stammt das Basis-Env aus einer Claude-Session (`CLAUDECODE` gesetzt), entfernt
+  `buildEnv` `PSExecutionPolicyPreference` (case-insensitiv) für **jedes** Ziel, also auch SDK-Session,
+  „Profil testen“ und Preflight – mit derselben Persistenz-Ausnahme (bleibt, wenn persistent mit gleichem
+  Wert gesetzt) und demselben Report-Grund `tool_shell`. Die übrigen Tool-Shell-Variablen bleiben für SDK
+  erhalten (harmlos, ADR-021).
+- **Folgen:** Normaler Start (Launcher, Autostart, `parallax.cmd`) ist unverändert, weil ohne aufrufende
+  Session nichts greift. Umsetzung und Tests: FIX-41 F1 (`src/server/claude/env.ts`, `env.test.ts`).
