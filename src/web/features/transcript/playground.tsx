@@ -110,6 +110,12 @@ export const demos: PlaygroundDemo[] = [
     'Raw HTML, javascript:/data: links, images, ANSI/OSC escapes',
   ),
   transcriptDemo('queue', 'queue', 'Queued prompts', 'detail.queue shown grey until taken over'),
+  transcriptDemo(
+    'media',
+    'media',
+    'Images, lightbox, console handoff, Windows paths (WP-37)',
+    'Click a thumbnail: lightbox with zoom (buttons, wheel, + − 0 1), "Save as", Esc; handoff rows; V2-12 paths keep their backslashes',
+  ),
   {
     id: 'slots',
     title: 'Markdown and ToolInputPreview slots',

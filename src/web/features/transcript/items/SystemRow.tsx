@@ -2,6 +2,7 @@ import {
   BellIcon,
   BookOpenIcon,
   CircleStopIcon,
+  CornerDownLeftIcon,
   LayersIcon,
   MessageSquareDashedIcon,
   RotateCwIcon,
@@ -71,14 +72,17 @@ function Line({
   );
 }
 
-/** Horizontal divider with a label (compaction, new conversation). */
-function Divider({ icon: Icon, children }: { icon: LucideIcon; children: ReactNode }) {
+/**
+ * Horizontal divider with a label (compaction, new conversation, console handoff). The lines are
+ * decoration only – the label stays readable (a `separator` role would hide its text).
+ */
+function Divider({ icon: Icon, children, slot }: { icon: LucideIcon; children: ReactNode; slot?: string }) {
   return (
-    <div role="separator" className="text-muted-foreground flex items-center gap-2 py-1 text-2xs">
-      <span className="bg-border h-px flex-1" />
-      <Icon aria-hidden className="size-3.5" />
-      <span>{children}</span>
-      <span className="bg-border h-px flex-1" />
+    <div data-slot={slot} className="text-muted-foreground flex items-center gap-2 py-1 text-2xs">
+      <span aria-hidden className="bg-border h-px flex-1" />
+      <Icon aria-hidden className="size-3.5 shrink-0" />
+      <span className="min-w-0 text-center">{children}</span>
+      <span aria-hidden className="bg-border h-px flex-1" />
     </div>
   );
 }
@@ -297,15 +301,21 @@ export const SystemRow = memo(function SystemRow({
           {tError(item.error)}
         </Notice>
       );
-    case 'handoff':
-      // Phase 2 (ADR-104); WP-37 owns the final presentation.
+    case 'handoff': {
+      // ADR-104: handed off to an external console / taken back (with the turns made there).
+      let label: string;
+      if (item.phase === 'external') label = t('transcript.system.handoff.external');
+      else if (item.importedItems === 0) label = t('transcript.system.handoff.returnedNone');
+      else label = t('transcript.system.handoff.returned', { count: item.importedItems });
       return (
-        <Divider icon={SquareTerminalIcon}>
-          {item.phase === 'external'
-            ? t('transcript.system.handoff.external')
-            : t('transcript.system.handoff.returned', { count: item.importedItems })}
+        <Divider
+          icon={item.phase === 'external' ? SquareTerminalIcon : CornerDownLeftIcon}
+          slot={`handoff-${item.phase}`}
+        >
+          {joined([label, format.time(item.at)])}
         </Divider>
       );
+    }
     case 'unknown':
       return (
         <Disclosure

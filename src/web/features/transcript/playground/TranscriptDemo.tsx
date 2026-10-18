@@ -1,8 +1,9 @@
 import { useEffect, type ReactNode } from 'react';
 import { startScenario } from '@web/playground/PlaygroundScenario';
 import { NotificationCenter } from '@web/shell/NotificationCenter';
+import { setBlobSourceResolver } from '../state/blob-source';
 import { BlobLoadError, setFullTextLoader } from '../state/full-text';
-import { demoBlobText, demoSessions } from './data';
+import { demoBlobText, demoImageSource, demoSessions } from './data';
 import { startStreamingDemo } from './live';
 
 /**
@@ -27,10 +28,13 @@ export function TranscriptDemo({ live = false, children }: { live?: boolean; chi
         }, 400);
       });
     });
+    // Images of the media demo as generated data: URLs (no blob server behind Vite).
+    setBlobSourceResolver(demoImageSource);
     const stopLive = live ? startStreamingDemo(running.host, Date.now) : null;
     return () => {
       stopLive?.();
       setFullTextLoader(null);
+      setBlobSourceResolver(null);
       running.stop();
     };
   }, [live]);

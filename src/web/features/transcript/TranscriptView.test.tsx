@@ -6,6 +6,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { LOCAL_HOST_ID, makeSessionKey, type EntryId } from '@shared/common';
 import type { Decision, QueuedPrompt, SessionSummary, TranscriptItem } from '@shared/model';
 import {
+  sampleBlobId,
+  sampleBlobRef,
   sampleDecisions,
   sampleDetail,
   sampleId,
@@ -516,5 +518,53 @@ describe('TranscriptView', () => {
     start(s);
     render(<TranscriptView sessionKey={s.key} />);
     expect(await screen.findByText('No messages yet.')).toBeTruthy();
+  });
+
+  it('opens images in one lightbox next to the list: it stays open when the row goes away (WP-37)', async () => {
+    const image = sampleBlobRef({ blobId: sampleBlobId(7), name: 'shot.png', width: 640, height: 480 });
+    const s = session(12, [
+      sampleItems.userMessage({ id: 'px:image', order: 1, attachments: [image] }),
+      sampleItems.assistantText({ order: 2, text: 'I see the screenshot.' }),
+    ]);
+    const scenario = start(s);
+    render(<TranscriptView sessionKey={s.key} />);
+    const user = userEvent.setup();
+    const thumb = await screen.findByRole('button', { name: 'Enlarge image shot.png' });
+    await user.click(thumb);
+    const dialog = await screen.findByRole('dialog', { name: 'Image: shot.png' });
+    expect(within(dialog).getByRole('link', { name: 'Save as…' }).getAttribute('download')).toBe('shot.png');
+    expect(dialog.closest('[data-slot="transcript"]')).toBeNull();
+    // The row unmounts (as when virtua drops a row scrolled away by new output): the dialog stays.
+    await act(async () => {
+      scenario.host.pushOps(s.entryId, [{ op: 'item.remove', itemId: 'px:image' }]);
+      scenario.connection.flush();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Enlarge image shot.png' })).toBeNull();
+    });
+    expect(screen.getByRole('dialog', { name: 'Image: shot.png' })).toBe(dialog);
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    // The thumbnail is gone: the focus goes to the list instead of the page.
+    expect(document.activeElement).toBe(screen.getByRole('region', { name: 'Transcript' }));
+  });
+
+  it('returns the focus to the thumbnail after closing the lightbox', async () => {
+    const image = sampleBlobRef({ blobId: sampleBlobId(8), name: 'tool.png', width: 320, height: 200 });
+    const s = session(13, [sampleItems.userMessage({ id: 'px:image2', order: 1, attachments: [image] })]);
+    start(s);
+    render(<TranscriptView sessionKey={s.key} />);
+    const user = userEvent.setup();
+    const thumb = await screen.findByRole('button', { name: 'Enlarge image tool.png' });
+    await user.click(thumb);
+    await screen.findByRole('dialog', { name: 'Image: tool.png' });
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    expect(document.activeElement).toBe(thumb);
   });
 });
