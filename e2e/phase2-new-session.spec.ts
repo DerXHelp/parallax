@@ -40,14 +40,22 @@ test('dialog: default profile pre-selected, the folder browser takes the folder 
   const browser = page.locator('[data-slot="folder-browser"]');
   const list = browser.locator('[data-slot="folder-list"]');
   await expect(list).toHaveAttribute('data-path', root);
-  const names = () => list.getByRole('option').allTextContents();
-  await expect.poll(names).toEqual(['app', 'docs']);
+  // The entries by their paths (`data-path`), not by text – the hidden one carries a badge (R4W-27).
+  const entries = () =>
+    list
+      .getByRole('option')
+      .evaluateAll((options) => options.map((option) => option.getAttribute('data-path') ?? ''));
+  const inRoot = (...names: string[]) => names.map((name) => path.join(root, name));
+  // CSS strings treat "\" as an escape: a Windows path in an attribute selector needs it doubled.
+  const option = (folder: string) =>
+    list.locator(`[role="option"][data-path="${folder.replaceAll('\\', '\\\\')}"]`);
+  await expect.poll(entries).toEqual(inRoot('app', 'docs'));
   await browser.locator('[data-action="folder-show-hidden"]').click();
-  await expect.poll(names).toEqual(['.hiddenHidden', 'app', 'docs']);
-  await list.getByRole('option', { name: /^app/ }).dblclick();
+  await expect.poll(entries).toEqual(inRoot('.hidden', 'app', 'docs'));
+  await option(path.join(root, 'app')).dblclick();
   await expect(list).toHaveAttribute('data-path', path.join(root, 'app'));
-  await list.getByRole('option', { name: /^src/ }).dblclick();
   const chosen = path.join(root, 'app', 'src');
+  await option(chosen).dblclick();
   await expect(list).toHaveAttribute('data-path', chosen);
   await browser.locator('[data-action="choose-folder"]').click();
   await expect(browser).toHaveCount(0);
@@ -126,4 +134,8 @@ test('profiles: create (colour, masked *_TOKEN), test, make default, delete bloc
   await expect(
     again.locator('[data-slot="profile-editor"][data-profile-id="standard"] [data-action="profile-delete"]'),
   ).toBeDisabled();
+
+  // R9 (R4W-27): the secret value never reached the server log – not while saving, testing or
+  // starting the session with the profile.
+  expect((await own.logLines()).filter((line) => line.includes('tok-e2e-secret'))).toEqual([]);
 });

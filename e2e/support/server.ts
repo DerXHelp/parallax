@@ -16,6 +16,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { appUrlWithCode, authCookieName, serverOrigin, type ServerLockFile } from '@shared/http';
+import type { Settings } from '@shared/model';
 import { PROTOCOL_VERSION } from '@shared/protocol';
 import {
   connectWs,
@@ -30,6 +31,14 @@ import { REPO_ROOT, SERVER_BUNDLE } from './paths';
 
 const READY_TIMEOUT_MS = 60_000;
 const EXIT_TIMEOUT_MS = 30_000;
+/**
+ * One sign-in code request of a test (`POST /api/launcher/code`). The launcher's default is its
+ * health-ping budget (2 s, `HEALTH_TIMEOUT_MS`: "a running server answers in a few ms") – a
+ * wall-clock assumption of an idle machine. With `pnpm test` running next to three workers the
+ * answer took longer and a test failed with "launcher code failed: failed" (FIX-R4-F5 §3). A test
+ * waits like for any other answer of the server (`nodeCommand`: 30 s).
+ */
+const LAUNCHER_CODE_TIMEOUT_MS = 30_000;
 
 export interface ExitResult {
   code: number | null;
@@ -227,6 +236,15 @@ function serverHandle(parts: HandleParts): E2eServer {
   let projects = 0;
   let stopped = false;
 
+  /** A one-time sign-in code (like the launcher, with the test's budget); the reason on failure. */
+  const launcherCode = async (): Promise<string> => {
+    const code = await requestLauncherCode(ready.port, ready.launcherToken, {
+      timeoutMs: LAUNCHER_CODE_TIMEOUT_MS,
+    });
+    if (code.kind === 'ok') return code.response.code;
+    throw new Error(`launcher code failed: ${code.kind === 'failed' ? code.reason : code.kind}`);
+  };
+
   const server: E2eServer = {
     root,
     home,
@@ -238,19 +256,16 @@ function serverHandle(parts: HandleParts): E2eServer {
     exited,
     output: out,
     async loginUrl(hash = '') {
-      const code = await requestLauncherCode(ready.port, ready.launcherToken);
-      if (code.kind !== 'ok') throw new Error(`launcher code failed: ${code.kind}`);
-      const url = appUrlWithCode(origin, code.response.code);
+      const url = appUrlWithCode(origin, await launcherCode());
       return hash === '' ? url : `${url}&${hash.replace(/^#/, '')}`;
     },
     async deviceCookie() {
-      const code = await requestLauncherCode(ready.port, ready.launcherToken);
-      if (code.kind !== 'ok') throw new Error(`launcher code failed: ${code.kind}`);
+      const code = await launcherCode();
       const login = await rawRequest(ready.port, {
         method: 'POST',
         path: '/api/auth',
         headers: { origin, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' },
-        body: JSON.stringify({ code: code.response.code }),
+        body: JSON.stringify({ code }),
       });
       const cookie = cookieFromSetCookie(login.headers['set-cookie'], authCookieName(ready.port));
       if (login.status !== 200 || cookie === null) throw new Error(`code exchange failed: ${login.body}`);
@@ -376,4 +391,20 @@ export async function connectNodeClient(server: E2eServer): Promise<TestWsClient
   });
   await client.next('summaries.snapshot');
   return client;
+}
+
+/**
+ * The settings the server has stored – from the `host.state` of a fresh node client's handshake
+ * (sent before `summaries.snapshot`), not the page's optimistic view (R4W-27). The client never
+ * had the focus, so it is never the target of a notification.
+ */
+export async function serverSettings(server: E2eServer): Promise<Settings> {
+  const client = await connectNodeClient(server);
+  try {
+    const state = client.all('host.state').at(-1);
+    if (state === undefined) throw new Error('no host.state in the handshake');
+    return state.host.settings;
+  } finally {
+    client.socket.terminate();
+  }
 }

@@ -3,45 +3,31 @@
  * focused and visible – an init script lets a test move a window "to the background"
  * (`document.hasFocus()` / `document.visibilityState`), wraps `Notification` (every Web Notification
  * is recorded, the toast objects stay reachable for a click) and wraps `AudioContext` (every started
- * oscillator of a notification sound is recorded, ADR-109). The server's channel choice and the
- * window's delivery run for real.
+ * oscillator of a notification sound is recorded, ADR-109). It also notes the presence the page
+ * last sent over its WebSocket (`clientHello` / `presence`), so `setPresence` waits for exactly that
+ * frame instead of a fixed time (R4W-10). The server's channel choice and the window's delivery run
+ * for real.
  */
-import type { Page } from '@playwright/test';
-
-export interface RecordedToast {
-  title: string;
-  body: string | undefined;
-  tag: string | undefined;
-  silent: boolean | null | undefined;
-}
-
-export interface RecordedTone {
-  type: string;
-  frequency: number | null;
-}
-
-interface RecordingWindow {
-  __e2eFocused: boolean;
-  __e2eVisible: boolean;
-  __e2eToasts: RecordedToast[];
-  __e2eToastObjects: Notification[];
-  __e2eTones: RecordedTone[];
-}
+import { expect, type Page } from '@playwright/test';
+import type { RecordedToast, RecordedTone, SentPresence } from './dom';
 
 /** Init script (runs before the page's scripts): see the module comment. */
 export function recordNotifications(): void {
-  const w = window as unknown as RecordingWindow;
-  w.__e2eFocused = true;
-  w.__e2eVisible = true;
-  w.__e2eToasts = [];
-  w.__e2eToastObjects = [];
-  w.__e2eTones = [];
+  const toasts: RecordedToast[] = [];
+  const toastObjects: Notification[] = [];
+  const tones: RecordedTone[] = [];
+  window.__e2eFocused = true;
+  window.__e2eVisible = true;
+  window.__e2eToasts = toasts;
+  window.__e2eToastObjects = toastObjects;
+  window.__e2eTones = tones;
+  window.__e2ePresence = null;
   const Real = window.Notification;
   class Recording extends Real {
     constructor(title: string, options?: NotificationOptions) {
-      w.__e2eToasts.push({ title, body: options?.body, tag: options?.tag, silent: options?.silent });
+      toasts.push({ title, body: options?.body, tag: options?.tag, silent: options?.silent });
       super(title, options);
-      w.__e2eToastObjects.push(this);
+      toastObjects.push(this);
     }
   }
   Object.defineProperty(window, 'Notification', { value: Recording, configurable: true, writable: true });
@@ -57,7 +43,7 @@ export function recordNotifications(): void {
       };
       const start = oscillator.start.bind(oscillator);
       oscillator.start = (when?: number) => {
-        w.__e2eTones.push({ type: oscillator.type, frequency });
+        tones.push({ type: oscillator.type, frequency });
         start(when);
       };
       return oscillator;
@@ -69,42 +55,78 @@ export function recordNotifications(): void {
     writable: true,
   });
   Document.prototype.hasFocus = function hasFocus() {
-    return w.__e2eFocused;
+    return window.__e2eFocused ?? true;
   };
   Object.defineProperty(Document.prototype, 'visibilityState', {
     configurable: true,
-    get: () => (w.__e2eVisible ? 'visible' : 'hidden'),
+    get: () => ((window.__e2eVisible ?? true) ? 'visible' : 'hidden'),
   });
+  // The presence the page sent last (`clientHello` carries the first one, `presence` every change).
+  const recordPresence = (data: unknown) => {
+    if (typeof data !== 'string') return;
+    let message: unknown;
+    try {
+      message = JSON.parse(data);
+    } catch {
+      return;
+    }
+    if (
+      typeof message === 'object' &&
+      message !== null &&
+      'type' in message &&
+      (message.type === 'presence' || message.type === 'clientHello') &&
+      'presence' in message &&
+      typeof message.presence === 'object' &&
+      message.presence !== null &&
+      'focused' in message.presence &&
+      'visible' in message.presence &&
+      typeof message.presence.focused === 'boolean' &&
+      typeof message.presence.visible === 'boolean'
+    ) {
+      window.__e2ePresence = { focused: message.presence.focused, visible: message.presence.visible };
+    }
+  };
+  const RealSocket = window.WebSocket;
+  class RecordingSocket extends RealSocket {
+    override send(data: Parameters<WebSocket['send']>[0]): void {
+      recordPresence(data);
+      super.send(data);
+    }
+  }
+  Object.defineProperty(window, 'WebSocket', { value: RecordingSocket, configurable: true, writable: true });
 }
 
-/** Moves the window to the background (or back) and lets the presence reach the server. */
-export async function setPresence(
-  page: Page,
-  presence: { focused: boolean; visible: boolean },
-): Promise<void> {
+/**
+ * Moves the window to the background (or back) and waits until the page has SENT that presence
+ * (R4W-10): the client debounces it (250 ms, state/connection.ts), the server reads the frames of
+ * one socket in order – every later command of this page is handled with the new presence. A
+ * condition, no fixed wait.
+ */
+export async function setPresence(page: Page, presence: SentPresence): Promise<void> {
   await page.evaluate((next) => {
-    const w = window as unknown as RecordingWindow;
-    w.__e2eFocused = next.focused;
-    w.__e2eVisible = next.visible;
+    window.__e2eFocused = next.focused;
+    window.__e2eVisible = next.visible;
     window.dispatchEvent(new Event(next.focused ? 'focus' : 'blur'));
     document.dispatchEvent(new Event('visibilitychange'));
   }, presence);
-  // presence is debounced 250 ms (connection.ts)
-  await page.waitForTimeout(700);
+  await expect
+    .poll(() => page.evaluate(() => window.__e2ePresence ?? null), {
+      message: `presence ${JSON.stringify(presence)} sent`,
+    })
+    .toEqual(presence);
 }
 
 export function toasts(page: Page): Promise<RecordedToast[]> {
-  return page.evaluate(() => (window as unknown as RecordingWindow).__e2eToasts);
+  return page.evaluate(() => window.__e2eToasts ?? []);
 }
 
 /** Clicks the last recorded Web Notification (like a click on the Edge popup). */
 export async function clickLastToast(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const list = (window as unknown as RecordingWindow).__e2eToastObjects;
-    list.at(-1)?.dispatchEvent(new Event('click', { cancelable: true }));
+    window.__e2eToastObjects?.at(-1)?.dispatchEvent(new Event('click', { cancelable: true }));
   });
 }
 
 export function tones(page: Page): Promise<RecordedTone[]> {
-  return page.evaluate(() => (window as unknown as RecordingWindow).__e2eTones);
+  return page.evaluate(() => window.__e2eTones ?? []);
 }

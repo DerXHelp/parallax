@@ -2,10 +2,14 @@
  * Phase-2 composer and transcript (WP-37 over WP-31/WP-34; ADR-103/108/112):
  * - slash menu: fuzzy over the native and CLI commands, `/model haiku` changes the model,
  *   `/rename X` the title, `/clear` starts a new conversation in the same entry, a terminal command
- *   (`/vim`) shows the hint "Open in external console" instead of being sent;
+ *   (`/vim`) typed exactly closes the menu and Enter shows the hint "Open in external console"
+ *   instead of sending it (V3-02: no Esc needed);
  * - a pasted image (clipboard event with a PNG) becomes a chip, is uploaded and sent: the message
  *   shows the attachment, the fake answers "received 1 image(s)"; an image in a tool result
- *   (`fake:image`) opens in the lightbox, Esc closes it;
+ *   (`fake:image`) shows under the collapsed tool row, once, named after the read file (R4W-03),
+ *   and opens in the lightbox, Esc closes it;
+ * - a file dropped next to the composer (transcript, sidebar) is refused – the window would open
+ *   it otherwise (R4W-02); dropped on the composer it becomes a chip;
  * - rate limit (`fake:ratelimit`): banner → "Continue at HH:MM" plans the continue → "Cancel".
  */
 import type { Locator } from '@playwright/test';
@@ -58,8 +62,12 @@ test('slash menu: fuzzy, /model, /rename, /clear, terminal command hint', async 
   await session.send('after the clear');
   await expect(session.assistantText('Echo: after the clear')).toBeVisible();
 
-  // A terminal-only command is not sent: hint with "Open in external console".
-  await run(session, '/vim');
+  // A terminal-only command is not sent: hint with "Open in external console". V3-02: typed
+  // exactly, it closes the menu – Enter without Esc shows the hint (it used to take "/clear ").
+  await session.composer.click();
+  await session.composer.fill('/vim');
+  await expect(menu).toHaveCount(0);
+  await session.composer.press('Enter');
   const hint = session.composerRoot.locator('[data-slot="terminal-hint"]');
   await expect(hint).toBeVisible();
   await expect(hint).toContainText('/vim');
@@ -116,17 +124,87 @@ test('a pasted image: chip → upload → sent; tool images open in the lightbox
   // An image in a tool result (Read of a PNG) opens in the lightbox.
   await session.send('fake:image look at the screenshot');
   await expect(session.assistantText('The screenshot shows a window with an orange block.')).toBeVisible();
-  // The tool call opens on a click and shows the image of its result.
+  // R4W-03: the picture shows under the collapsed tool row – exactly once, without a click – and
+  // carries the name of the read file (`input.file_path`).
   const read = session.toolCall('Read');
-  await read.getByRole('button', { name: /Read/ }).first().click();
   const thumb = read.locator('[data-slot="image-thumb"]');
+  await expect(thumb).toHaveCount(1);
+  await expect(read.locator('[aria-expanded]').first()).toHaveAttribute('aria-expanded', 'false');
+  await expect(thumb).toHaveAccessibleName('Enlarge image fake-shot.png');
   await thumb.click();
   const lightbox = page.locator('[data-slot="lightbox"]');
   await expect(lightbox).toBeVisible();
-  await expect(lightbox.locator('[data-slot="lightbox-save"]')).toHaveAttribute('href', /^\/api\/blob\//);
+  await expect(lightbox).toHaveAccessibleName('Image: fake-shot.png');
+  const save = lightbox.locator('[data-slot="lightbox-save"]');
+  await expect(save).toHaveAttribute('href', /^\/api\/blob\//);
+  await expect(save).toHaveAttribute('download', 'fake-shot.png');
   await page.keyboard.press('Escape');
   await expect(lightbox).toHaveCount(0);
   await expect(thumb).toBeFocused();
+});
+
+interface DropResult {
+  /** `dragover` was cancelled (no cancel = the browser's own handling). */
+  overCancelled: boolean;
+  /** `drop` was cancelled – a real drop would not open the file in the window. */
+  dropCancelled: boolean;
+}
+
+/**
+ * Drags a PNG file over `target` and drops it (DragEvents with a DataTransfer that holds a File, as
+ * Edge fires them for a screenshot from the Explorer). Synthetic events never navigate by
+ * themselves; what counts is whether somebody cancelled them – a real drop that nobody cancels
+ * makes Edge open the file in the app window (R4W-02). The cursor (`dropEffect`) is not
+ * observable here: Chromium ignores setting it on a constructed DataTransfer (only a real drag
+ * has one) – `shell/drop-guard.test.tsx` checks it.
+ */
+async function dropFile(target: Locator): Promise<DropResult> {
+  return target.evaluate(async (element) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 16;
+    canvas.height = 16;
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, 'image/png');
+    });
+    if (blob === null) throw new Error('no PNG');
+    const data = new DataTransfer();
+    data.items.add(new File([blob], 'dropped.png', { type: 'image/png' }));
+    const fire = (type: string) => {
+      const event = new DragEvent(type, { dataTransfer: data, bubbles: true, cancelable: true });
+      element.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    fire('dragenter');
+    const overCancelled = fire('dragover');
+    const dropCancelled = fire('drop');
+    return { overCancelled, dropCancelled };
+  });
+}
+
+test('a file dropped next to the composer is refused (no navigation); on the composer it becomes a chip (R4W-02)', async ({
+  app,
+  server,
+  page,
+}) => {
+  const session = await app.newSession(await server.makeProject('drop'));
+  await session.send('hello drop');
+  await expect(session.assistantText('Echo: hello drop')).toBeVisible();
+  const url = page.url();
+  const chips = session.composerRoot.locator('[data-slot="attachment-chip"]');
+
+  // Transcript, sidebar, header: no drop zone there – the window-wide guard cancels the drop.
+  for (const target of [session.transcript, app.sidebar(), session.header]) {
+    expect(await dropFile(target)).toEqual({ overCancelled: true, dropCancelled: true });
+  }
+  expect(page.url()).toBe(url);
+  await app.waitConnected();
+  await expect(chips).toHaveCount(0);
+
+  // The composer is the drop zone: it takes the file – a chip, uploaded.
+  expect(await dropFile(session.composer)).toEqual({ overCancelled: true, dropCancelled: true });
+  await expect(chips).toHaveCount(1);
+  await expect(chips).toHaveAttribute('data-status', 'done');
+  expect(page.url()).toBe(url);
 });
 
 test('rate limit: banner → "Continue at HH:MM" plans the continue → Cancel', async ({ app, server }) => {
