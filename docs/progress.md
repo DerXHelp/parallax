@@ -40,7 +40,7 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
 | 37 | Composer und Transkript: Slash-Menü, Screenshots, Lightbox | 2 | 30, 35 | fertig | `0bca858`, Merge `5f0d0cf` (mit 36) | Slash-Menü (Fuzzy, native Befehle, Durchreichen, Terminal-Hinweis), Screenshots per Einfügen/Ziehen/Büroklammer mit Verkleinern, Upload und Chips, Ghost-Text, Rate-Limit-Banner, Composer gesperrt bei Konsole/Archiv, `ui/lightbox` (eine je Transkript, außerhalb der virtualisierten Liste), `handoff`-Zeile, Windows-Pfade (V2-12); 238 eigene Tests, Sichtprüfung dark/light × en/de | siehe Sammelliste Welle 2 |
 | 38 | Einstellungen und Benachrichtigungen (Töne) | 2 | 30 | fertig | `7b94e76`, Merge `42b29af` | Einstellungsseite (Dialog, vertikale Tabs, sofort speichern mit Overlay und Rücknahme), `ui/slider`, fünf synthetisierte Töne (Web Audio, Unlock nach Interaktion), Zustellung mit `focusedElsewhere`/„Nicht stören“/`silent`, Menüeintrag „Einstellungen…“, `HostFacts`; 130 eigene Tests | siehe Sammelliste Welle 2 |
 | 40 | Integration + E2E Phase 2 | 3 | 31–38 | fertig | `f106ec3`…`a61f813` (7 Commits), Merge `6373625` | Server-Verdrahtung (Profil-Store, Kataloge, Konsole, Systemintegration, Host-Befehle, Port, `onProfileChanged`), Web-Slots `PREFERENCES_SLOTS`/`ProfilesSettings`, V2-15; Integrationsfehler: neue Profile blieben auf `checking` (jetzt alle ungeprüften Profile prüfen); Fixes ADR-120 (Autoplay) und `openNewSession({cwd})`; 15 neue E2E-Fälle (41 gesamt, 2× grün, 1× unter Last); 3520 Tests | R4: Einstellungen/Profil-Editor im Start-Chunk (412 kB, `lazy()`), veraltete Kommentare „Optional until WP-40“ in `sessions/manager.ts`; V3: deaktivierter eingeschalteter Switch wirkt aktiv, Bild im `Read`-Ergebnis erst nach Aufklappen; WP-41: L9, L12, Ton im App-Fenster aus Autostart |
-| R4/V3 | Review + Verifier, Fix-Runde | 3b | 40 | läuft (Fix-Runde) | R4 `10ff433`, V3 `9231448` (Merge `1f2e866`) | R4-Server 16 Befunde (2 BLOCKER: R4-01 Konsolen-Gate im Lock, R4-02 Schlaf ohne Wakeup-Erkennung; 5 SOLLTE, 9 NIT), R4-Web 28 (0/10/18), V3 15 (0/8/7; 41/41 E2E 2×, ein instabiler Unit-Test V3-08); Koordinator-Entscheidungen ADR-121…126, Koordinator-Paket K (siehe Changelog) | Fix-Pakete F1 Server, F2 Shell/Navigation, F3 Profile/Neue Session/Einstellungen, F4 Composer/Transkript; danach F5 E2E/App |
+| R4/V3 | Review + Verifier, Fix-Runde | 3b | 40 | fertig | R4 `10ff433`, V3 `9231448` (Merge `1f2e866`); Fix-Runde (`docs/wp/FIX-R4.md`): K `29f3256`, F4 `9ba8092`, F3 `80ee1e8`, F2 `6be4d0e`, F1 `a617e0a`, Nacharbeit `150d2e2`, F5 `07d7197` | R4-Server 16 Befunde (2 BLOCKER: R4-01 Konsolen-Gate im Lock, R4-02 Schlaf ohne Wakeup-Erkennung; 5 SOLLTE, 9 NIT), R4-Web 28 (0/10/18), V3 15 (0/8/7); Entscheidungen ADR-121…127; Fix-Runde: alle BLOCKER/SOLLTE behoben (Ergebnisse `FIX-R4-F1…F5.md`), Endstand 3702 Tests, 45/45 E2E (3× grün, davon 1× unter Last), Start-Chunk `index` 435,7 → 378,0 kB | siehe „Zurückgestellt nach der Fix-Runde“ unten; Live-Prüfpunkte A19–A26 in WP-41 |
 | 41 | Live-Abnahme Phase 2 (freigegeben, F2) | 4 | 40 + Fixes | offen | – | – | – |
 
 ### Sammelliste Welle 2 (Stand 18.10.2026, nach Merge `5f0d0cf`: 199 Dateien, 3509 Tests)
@@ -61,6 +61,19 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
   bleibt ein Terminal-Befehl mit Hinweis „In externer Konsole öffnen“ (ADR-108 unverändert): er
   betrifft die Einstellungen von Claude Code, nicht die von Parallax; die Parallax-Einstellungen sind
   über das Menü erreichbar.
+
+### Zurückgestellt nach der Fix-Runde R4 (Stand 18.10.2026, `07d7197`)
+- V3-14: Sidebar klappt bei schmalem Fenster (700 px) nicht ein – Gestaltungsfrage, Phase 3.
+- R4W-02 optional: Drop-Zone über dem ganzen Session-Bereich (der globale Drop-Schutz ist umgesetzt).
+- R4W-25: Lightbox „Speichern unter“ im Edge-Profil – Live-Prüfpunkt A24, Entscheidung nach WP-41.
+- V3-15 (a): `pnpm start -- --print-url` mit umgeleiteter Ausgabe kehrt erst mit dem Serverende zurück
+  (Handle-Vererbung, ohne native Hilfe nicht lösbar) – nur README-Hinweis.
+- V3-12: Radix-Hilfsinputs ohne `id`/`name` (ui-intern).
+- Bundle: `index` < 360 kB nur mit lazy geladenen de-Wörterbüchern (R2W-21); Fehlergrenze für
+  Lazy-Slots (Chunk-Ladefehler reißt sonst den React-Baum); eigenes `e2e/tsconfig.json` (lib DOM).
+- Optional: `focusSessionInput` nach `src/web/lib`; `useReturnFocus` auch in `NewSessionDialog`,
+  `HelpDialog`, `SettingsPage` (haben eigene, getestete Fokus-Rückgabe); i18n-Wächtertest für
+  unbenutzte Schlüssel; feste Wartezeiten in Phase-1-E2E-Specs.
 
 ## Contract-Changelog
 Änderungen an `src/shared/**` (nur nach Freigabe durch den Koordinator).
@@ -159,6 +172,7 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
 1. **Phase 1 abgeschlossen (16.10.2026).** Alle WPs, Reviews R0–R3, Verifier V1/V2, Live-Abnahme WP-22 und `/code-review` erledigt und gemergt.
 2. **Phase 2 „Mission Control“ beauftragt (16.10.2026, Nutzer: „Setze die Phase 2 um“).** Umfang = Plan „Phasen – Phase 2“.
    WP-30 gemergt (`1488b83`). Welle 1 (31, 32, 33, 35) und Welle 2 (34, 36, 37, 38) gemergt (`5f0d0cf`, 18.10.2026);
-   WP-40 (Integration + E2E) gemergt (`6373625`, 18.10.2026). R4 (Server/Web, read-only) und V3 (Verifier,
-   eigener Worktree `.worktrees/v3`) laufen; danach Fix-Runde, dann WP-41 (Live-Abnahme, freigegeben F2).
+   WP-40 (Integration + E2E) gemergt (`6373625`, 18.10.2026). R4/V3 und Fix-Runde (K, F1–F5) gemergt
+   (`07d7197`, 18.10.2026). **Nächster Schritt: WP-41** (Live-Abnahme gegen das echte `claude`, freigegeben
+   F2, Checkliste A1–A26), danach `/code-review` (high) über `fdc44f7..main` (WP-30 §7).
 3. Nach ≥ 24 h: `react`/`react-dom` 19.3.1 prüfen und nachziehen (Koordinator, siehe WP-00.md).

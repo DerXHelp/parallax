@@ -395,7 +395,10 @@ Hinweises nicht als Klick neben den Dialog zählt.
 **(j) Bundle (normativ, R1W-09, V1-02, V1-09, ADR-035).** Start-Bundle in Chunks `react`, `vendor`
 (nur `$initial`-Module aus `node_modules`) und `index`; die Warnschwelle 500 kB bleibt Wächter.
 Schwere, spät gebrauchte Teile (Markdown-Renderer, Shiki, Diff) lädt WP-15 per `import()`/
-`React.lazy` – sie landen automatisch in eigenen Chunks. Shiki nur mit der JavaScript-Regex-Engine
+`React.lazy` – sie landen automatisch in eigenen Chunks. Phase 2 (R4W-19): `App.tsx` lädt die Slots
+`SettingsPage` (ohne Fallback) und `ProfilesSettings` (mit Skelett) per `React.lazy` – Chunks
+`preferences` und `profiles`, der Profil-Chunk wird mit der Seite vorgeladen; `PREFERENCES_SLOTS`
+enthält nur `SettingsPage` (Wächter-Test in `App.test.tsx`). Shiki nur mit der JavaScript-Regex-Engine
 (`shiki/core` + `shiki/engine/javascript`, keine Oniguruma-WASM – CSP ohne `'wasm-unsafe-eval'`).
 Assets werden nie als `data:` inlined (`build.assetsInlineLimit: 0`); zod läuft im Web `jitless`
 (`src/web/lib/zod-jitless.ts`, erster Import in `main.tsx`), damit kein `eval`-Probe gegen die CSP
