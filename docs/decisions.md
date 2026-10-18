@@ -1300,3 +1300,11 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   Systemordner (Node kennt kein Hidden-Attribut). Vor jedem Zugriff `windowsPathIssue` und je Segment
   `lstat`/`readlink` (kein Link auf UNC/Device). Zugeordnete Netzlaufwerke sind erlaubt (vom Nutzer
   eingerichtet, nicht aus Claudes Text).
+
+## ADR-120 – Parallax-Edge-Fenster ohne Autoplay-Sperre
+- **Datum/WP:** 18.10.2026, Koordinator nach WP-38 (umgesetzt in WP-40)
+- **Entscheidung:** Der Launcher startet Edge zusätzlich mit `--autoplay-policy=no-user-gesture-required`.
+  Das eigene Edge-Profil lädt nur den Parallax-Origin auf `127.0.0.1` (nichts aus dem Internet), daher
+  betrifft die Lockerung nur unsere synthetisierten Töne (ADR-109). Ohne das Flag bleibt ein Fenster
+  aus Autostart oder Toast-Klick bis zur ersten Interaktion stumm. Der Hinweis „Töne aktivieren“
+  (WP-38) bleibt als Rückfall für Fenster, die nicht über den Launcher geöffnet wurden.

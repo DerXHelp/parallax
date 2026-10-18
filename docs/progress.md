@@ -36,12 +36,31 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
 | 33 | Host-Dienste, Upload, Ordner-Browser, Windows-Integration, Launcher | 1 | 30 | fertig | `5eaae42`, `769426c` (Hub-Test 415), Merge `67f77bb` | `fs.listDirectory` (lstat je Segment, R1-17), Upload mit Magic-Bytes, `system/` (Konsole via PowerShell, Autostart, `parallax:`-Handler, doppelter Testschutz), Port aus Settings, Launcher `--open` (letztes Arg); 576 Tests | Toast-Klick blitzt kurz eine Konsole auf (L8); WP-40/34 Verdrahtung laut WP-33.md; `lib/README` + architecture §2.2 (Koordinator) |
 | 35 | Navigation: Sidebar, Strg+K, Kopfzeile, Fenster | 1 | 30 | fertig | `9361e51`, Merge `6cd45af` | Sidebar flach/gruppiert zweizeilig, Kontextmenü (+ Umschalt+F10), Inline-Umbenennen, Quick-Switcher, Alt+1..9/Alt+N, neues Fenster (`popup,noopener`), Frühere Unterhaltungen, Session-Info, Abo-Limits; `ui/{context-menu,command-list}`, `lib/fuzzy`; 73 neue Tests; 3213 Tests gesamt | READMEs `ui`/`shell` + architecture §2.3(l) (Koordinator); offener modaler Dialog blendet Hinweis-Region für Screenreader aus (R4); `server/lib/process.test.ts` Hook-Timeout unter Last |
 | 34 | Engine: externe Konsole, Rate-Limit-Fortsetzen, Bild-Anhänge, Toast-Klick | 2 | 31 (32/33 Ports) | fertig | `f6fae4d`, Merge `aa7d6cd` | `openExternal`/Rückkehr mit Import der Konsolen-Turns/Serverstart (ADR-104), `continueAt` + `wakeup` mit Gnadenfrist (ADR-112), Bild-Anhänge als `image`-Blöcke (ADR-103), Toast mit Klick-URI und `silent` (ADR-109), `onProfileChanged` (ADR-102), Secrets nie geloggt; FakeBackend `fake:image`/`fake:ratelimit`/`simulateConsoleTurn`; 3256 Tests nach Merge | WP-40: Verdrahtung laut WP-34.md §2.4 (`consoleLauncher`, `systemIntegration`, `profileStore.onChange` → `onProfileChanged`); WP-41 (L7): Zeitstempel der Konsolen-Turns live prüfen |
-| 36 | Neue Session, Ordner-Browser-UI, Profil-Editor | 2 | 30 | läuft | – | – | – |
-| 37 | Composer und Transkript: Slash-Menü, Screenshots, Lightbox | 2 | 30, 35 | läuft | – | – | – |
-| 38 | Einstellungen und Benachrichtigungen (Töne) | 2 | 30 | läuft | – | – | – |
-| 40 | Integration + E2E Phase 2 | 3 | 31–38 | offen | – | – | – |
+| 36 | Neue Session, Ordner-Browser-UI, Profil-Editor | 2 | 30 | fertig | `f1af3e9`, Merge `5f0d0cf` (mit 37) | Dialog mit Pfadfeld, Ordner-Browser (`fs.listDirectory`), bis 8 zuletzt genutzten Projekten, Profilwahl (Default vorausgewählt, `session.create {cwd, profileId}`), Profil-Editor (Liste, Anlegen, Bearbeiten, Testen, Löschen mit Schutz, maskierte Secrets) als Slot `ProfilesSettings`; 68 eigene Tests | siehe Sammelliste Welle 2 |
+| 37 | Composer und Transkript: Slash-Menü, Screenshots, Lightbox | 2 | 30, 35 | fertig | `0bca858`, Merge `5f0d0cf` (mit 36) | Slash-Menü (Fuzzy, native Befehle, Durchreichen, Terminal-Hinweis), Screenshots per Einfügen/Ziehen/Büroklammer mit Verkleinern, Upload und Chips, Ghost-Text, Rate-Limit-Banner, Composer gesperrt bei Konsole/Archiv, `ui/lightbox` (eine je Transkript, außerhalb der virtualisierten Liste), `handoff`-Zeile, Windows-Pfade (V2-12); 238 eigene Tests, Sichtprüfung dark/light × en/de | siehe Sammelliste Welle 2 |
+| 38 | Einstellungen und Benachrichtigungen (Töne) | 2 | 30 | fertig | `7b94e76`, Merge `42b29af` | Einstellungsseite (Dialog, vertikale Tabs, sofort speichern mit Overlay und Rücknahme), `ui/slider`, fünf synthetisierte Töne (Web Audio, Unlock nach Interaktion), Zustellung mit `focusedElsewhere`/„Nicht stören“/`silent`, Menüeintrag „Einstellungen…“, `HostFacts`; 130 eigene Tests | siehe Sammelliste Welle 2 |
+| 40 | Integration + E2E Phase 2 | 3 | 31–38 | läuft | – | – | – |
 | R4/V3 | Review + Verifier, Fix-Runde | 3b | 40 | offen | – | – | – |
 | 41 | Live-Abnahme Phase 2 (freigegeben, F2) | 4 | 40 + Fixes | offen | – | – | – |
+
+### Sammelliste Welle 2 (Stand 18.10.2026, nach Merge `5f0d0cf`: 199 Dateien, 3509 Tests)
+- **WP-40 (Naht, beauftragt):** Slots `SettingsPage`/`PREFERENCES_SLOTS` (WP-38) und `ProfilesSettings` (WP-36)
+  in `App.tsx`; Verdrahtung laut WP-31/32/33/34 §2.4; `profileStore.onChange → manager.onProfileChanged()`;
+  Edge mit `--autoplay-policy=no-user-gesture-required` (ADR-120, `launcher/edgeWindow.ts`);
+  `shell/navigation/session-actions.tsx` verliert im Rückfall das `cwd` → `openNewSession({cwd})` (WP-36-Befund).
+- **R4/Fix-Runde:** `isSecretEnvKey` nach `@shared` (Contract-Wunsch WP-36; Kopie in
+  `features/profiles/lib/secrets.ts`); Feature `profiles` importiert `shell/new-session` (Grenze prüfen);
+  unbenutzte Schlüssel `shell.newSession.{description,hint,starting}`, `shell.empty.recentProjects`;
+  Esc auf der Einstellungsseite verwirft ungespeicherte Profiländerungen ohne Rückfrage;
+  `state/settings.ts` alle Top-Level-Felder optimistisch (WP-38); Hinweis mit Aktion (`ClientNotice`)
+  für „Töne aktivieren“ und Hinweis-Region hinter Modals (z-40, `aria-hidden`; WP-35/38);
+  Kommentar in `server/lib/powershell.ts` nennt `lib/process.ts` statt `system/console.ts`.
+- **WP-41 live:** L1, L3, L5 (WP-37), Einfügen eines Screenshots aus Win+Umschalt+S, L7 (Zeitstempel
+  der Konsolen-Turns, WP-34).
+- **Koordinator-Entscheidung 18.10.2026:** `/config` (und Aliase wie `/settings`) ohne `key=value`
+  bleibt ein Terminal-Befehl mit Hinweis „In externer Konsole öffnen“ (ADR-108 unverändert): er
+  betrifft die Einstellungen von Claude Code, nicht die von Parallax; die Parallax-Einstellungen sind
+  über das Menü erreichbar.
 
 ## Contract-Changelog
 Änderungen an `src/shared/**` (nur nach Freigabe durch den Koordinator).
@@ -138,5 +157,6 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
 ## Nächste Schritte
 1. **Phase 1 abgeschlossen (16.10.2026).** Alle WPs, Reviews R0–R3, Verifier V1/V2, Live-Abnahme WP-22 und `/code-review` erledigt und gemergt.
 2. **Phase 2 „Mission Control“ beauftragt (16.10.2026, Nutzer: „Setze die Phase 2 um“).** Umfang = Plan „Phasen – Phase 2“.
-   WP-30 gemergt (`1488b83`). Welle 1 (31, 32, 33, 35) läuft parallel in `.worktrees/wp-xx` auf `wp/xx`.
+   WP-30 gemergt (`1488b83`). Welle 1 (31, 32, 33, 35) und Welle 2 (34, 36, 37, 38) gemergt (`5f0d0cf`, 18.10.2026);
+   WP-40 (Integration + E2E) läuft in `.worktrees/wp-40`, danach R4/V3 und WP-41.
 3. Nach ≥ 24 h: `react`/`react-dom` 19.3.1 prüfen und nachziehen (Koordinator, siehe WP-00.md).
