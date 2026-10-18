@@ -31,6 +31,8 @@ Primitive, **kein Barrel** (`index.ts`). Kompakt: Standardhöhe 28 px, Text `tex
 | `progress.tsx`, `gauge.tsx` | `Progress` (Fortschritt), `Gauge` (Pegel, `role="meter"`, Schwellen 70/85 %), `gaugeLevel`, `GAUGE_THRESHOLDS` |
 | `skeleton.tsx`, `spinner.tsx` | `Skeleton`, `Spinner` (`role="status"`, Label per `t()`) |
 | `alert.tsx` | `Alert` (`tone`: info/warning/error/success, `title`, `actions`), `Banner` (Streifen oben), `TONE_ICON`, `AlertTone` |
+| `slider.tsx` | `Slider` (Radix; Pflicht-`thumbLabel`, `valueText(value)` → `aria-valuetext`, `onValueChange` beim Ziehen, `onValueCommit` am Ende; WP-38) |
+| `lightbox.tsx` | `Lightbox` (Bild im Vollbild-Dialog, Zoom `ZOOM_STEP`/`ZOOM_MIN`/`ZOOM_MAX`, `fitScale`, Labels per Prop, Fokus-Rückgabe über `onCloseAutoFocus`), `LightboxImage`, `LightboxLabels` (WP-37) |
 | `status-icon.tsx` | `StatusIcon` (`DisplayStatusKind` → Icon + `t('status.<kind>')`, `showLabel`, `withTooltip`; nie nur Farbe), `STATUS_PRESENTATION`, `STATUS_KINDS` |
 
 Barrierearm: jedes Icon-only-Element hat einen Namen (`label`/`aria-label` aus `t()`), Status
