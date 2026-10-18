@@ -38,6 +38,7 @@ import { IconButton } from '@web/ui/icon-button';
 import { Toggle } from '@web/ui/toggle';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
 import { ConnectionIndicator } from './ConnectionIndicator';
+import { PathTail } from './navigation/PathTail';
 import { AccountLimits } from './navigation/AccountLimits';
 import { newSessionIn } from './navigation/session-actions';
 import { SessionRow } from './navigation/SessionRow';
@@ -144,10 +145,11 @@ function GroupSection({ group, context }: { group: SessionGroup<SummaryEntry>; c
             <FolderIcon aria-hidden className="size-3 shrink-0" />
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className="min-w-0 flex-1 truncate">
-                  <span id={labelId}>
+                <span className="flex min-w-0 flex-1">
+                  <span id={labelId} className="flex min-w-0">
                     <span className="sr-only">{groupName}</span>
-                    <span aria-hidden>{group.label}</span>
+                    {/* WP41-02: the project folder (last segment) stays visible, the parent shrinks. */}
+                    <PathTail aria-hidden path={group.cwd} />
                   </span>
                 </span>
               </TooltipTrigger>

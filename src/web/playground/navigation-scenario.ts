@@ -287,6 +287,8 @@ function hostState(now: number, settings: Settings): HostState {
         color: 'blue',
         isDefault: false,
         builtin: false,
+        // A second account (WP41-05: limits are grouped by config folder).
+        configDir: 'C:\\Users\\user\\.claude-work',
       }),
     ],
     accountLimits: {
