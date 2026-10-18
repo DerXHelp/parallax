@@ -1,12 +1,12 @@
 import { useMemo, type ReactNode } from 'react';
 import { jsonValueSchema, type JsonValue } from '@shared/common';
-import { blobPath } from '@shared/http';
 import type { BlobRef, ToolCallItem } from '@shared/model';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { AnsiText } from '../components/AnsiText';
 import { CappedContent, TruncationNotice } from '../components/CappedContent';
 import { CodeBlock } from '../components/CodeBlock';
+import { ImageThumb } from '../components/ImageThumb';
 import { useFullText } from '../state/full-text';
 import { normalizeTerminalText, resultImages, resultText, stripToolUseError } from '../lib/text';
 import type { Translate } from './types';
@@ -80,22 +80,17 @@ export function TerminalOutput({
   );
 }
 
-/** Images of a tool result (blobs, same origin – CSP `img-src 'self'`). */
+/** Images of a tool result (blobs, same origin – CSP `img-src 'self'`); a click opens the lightbox. */
 export function ResultImages({ images }: { images: readonly BlobRef[] }) {
-  const t = useT();
   if (images.length === 0) return null;
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap items-start gap-2">
       {images.map((image) =>
         image.mediaType.startsWith('image/') ? (
-          <img
+          <ImageThumb
             key={image.blobId}
-            src={blobPath(image.blobId)}
-            alt={t('transcript.user.image', { name: image.name ?? t('transcript.user.unnamed') })}
-            width={image.width ?? undefined}
-            height={image.height ?? undefined}
-            loading="lazy"
-            className="max-h-80 max-w-full rounded-md border object-contain"
+            image={image}
+            className="h-auto max-h-80 w-auto max-w-full object-contain"
           />
         ) : null,
       )}

@@ -16,6 +16,7 @@ import { CodeBlock } from '../components/CodeBlock';
 import { resolveLanguage } from '../lib/languages';
 import { splitMarkdownBlocks } from '../lib/markdown-blocks';
 import { markdownUrlTransform, safeHttpUrl } from '../lib/safe-url';
+import { preserveWindowsPaths } from '../lib/windows-paths';
 
 /**
  * The heavy part of the Markdown renderer (lazy chunk). Security (Review C.10, CLAUDE.md):
@@ -205,7 +206,8 @@ const MarkdownBlockView = memo(function MarkdownBlockView({
 });
 
 export function MarkdownRenderer({ text, streaming }: { text: string; streaming: boolean }) {
-  const blocks = useMemo(() => splitMarkdownBlocks(text), [text]);
+  // V2-12: backslashes of Windows paths in running text stay visible (`\.` is no escape there).
+  const blocks = useMemo(() => splitMarkdownBlocks(preserveWindowsPaths(text)), [text]);
   return blocks.map((block, index) => (
     <MarkdownBlockView key={index} text={block.text} openFence={streaming && block.openFence} />
   ));

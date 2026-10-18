@@ -11,6 +11,7 @@ import type {
 import type { SessionSnapshot } from '@shared/protocol';
 import {
   sampleBlobId,
+  sampleBlobRef,
   sampleDecisions,
   sampleDetail,
   sampleId,
@@ -39,6 +40,7 @@ export const DEMO_ENTRIES = {
   long: sampleId('en', 207),
   security: sampleId('en', 208),
   queue: sampleId('en', 209),
+  media: sampleId('en', 210),
 } as const;
 
 export type DemoEntry = keyof typeof DEMO_ENTRIES;
@@ -838,6 +840,116 @@ function queueSession(): DemoSession {
   };
 }
 
+/** Blob ids of the media demo; the playground has no blob server (`demoImageSource`). */
+export const DEMO_IMAGE_BLOBS = {
+  screenshot: sampleBlobId(41),
+  second: sampleBlobId(42),
+  page: sampleBlobId(43),
+} as const;
+
+const DEMO_IMAGES: Readonly<Record<string, { width: number; height: number; label: string; hue: number }>> = {
+  [DEMO_IMAGE_BLOBS.screenshot]: { width: 1568, height: 882, label: 'Screenshot 1568 × 882', hue: 215 },
+  [DEMO_IMAGE_BLOBS.second]: { width: 600, height: 900, label: 'Portrait 600 × 900', hue: 150 },
+  [DEMO_IMAGE_BLOBS.page]: { width: 2400, height: 1500, label: 'Browser screenshot 2400 × 1500', hue: 280 },
+};
+
+/** A generated SVG as `data:` URL for the demo blobs (CSP `img-src data:`), else null. */
+export function demoImageSource(blobId: string): string | null {
+  const image = DEMO_IMAGES[blobId];
+  if (image === undefined) return null;
+  const { width, height, label, hue } = image;
+  const svg = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${String(width)}" height="${String(height)}" viewBox="0 0 ${String(width)} ${String(height)}">`,
+    `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${String(hue)} 65% 55%)"/><stop offset="1" stop-color="hsl(${String(hue + 50)} 60% 30%)"/></linearGradient></defs>`,
+    '<rect width="100%" height="100%" fill="url(#g)"/>',
+    `<rect x="4%" y="6%" width="92%" height="10%" rx="12" fill="rgba(255,255,255,0.25)"/>`,
+    `<text x="50%" y="55%" font-family="sans-serif" font-size="${String(Math.round(height / 12))}" fill="white" text-anchor="middle">${label}</text>`,
+    '</svg>',
+  ].join('');
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+const MEDIA_ANSWER = [
+  'The header wraps because the CLI version badge has no `whitespace-nowrap`.',
+  '',
+  'Your settings live in C:\\Users\\user\\.claude\\settings.json, the plan in',
+  'C:\\Users\\user\\.claude\\plans\\header-fix.md and the build output in D:\\work\\parallax\\dist\\_assets\\.',
+  'Escapes outside paths still work: \\*not bold\\* and snake\\_case.',
+].join('\n');
+
+/** Images (attachments + tool result → lightbox), console handoff rows, Windows paths (V2-12). */
+function mediaSession(): DemoSession {
+  const entryId = DEMO_ENTRIES.media;
+  const screenshot = sampleBlobRef({
+    blobId: DEMO_IMAGE_BLOBS.screenshot,
+    name: 'Screenshot 2026-10-16 141502.png',
+    width: 1568,
+    height: 882,
+  });
+  const second = sampleBlobRef({
+    blobId: DEMO_IMAGE_BLOBS.second,
+    name: 'mobile.png',
+    width: 600,
+    height: 900,
+  });
+  const page = sampleBlobRef({ blobId: DEMO_IMAGE_BLOBS.page, name: null, width: 2400, height: 1500 });
+  const items: TranscriptItem[] = [
+    user('px:media:prompt', 1, 'Why does the header wrap? Two screenshots attached.', {
+      attachments: [screenshot, second],
+    }),
+    tool('msg_media', 0, 2, {
+      toolName: 'mcp__chrome-devtools__take_screenshot',
+      input: { fullPage: false, format: 'png' },
+      result: {
+        isError: false,
+        content: [
+          { type: 'text', text: { text: 'Took a screenshot of the current page.', truncated: null } },
+          { type: 'image', image: page },
+        ],
+        structured: null,
+        structuredTruncated: null,
+        at: sampleTime(2),
+      },
+    }),
+    sampleItems.assistantText({
+      id: 'msg_media2:0',
+      messageId: 'msg_media2',
+      blockIndex: 0,
+      order: 3,
+      text: MEDIA_ANSWER,
+    }),
+    sampleSystemItems.handoff({
+      id: sampleUuid(2100),
+      order: 4,
+      at: sampleTime(4),
+      phase: 'external',
+      importedItems: 0,
+    }),
+    sampleSystemItems.handoff({
+      id: sampleUuid(2101),
+      order: 5,
+      at: sampleTime(600),
+      phase: 'returned',
+      importedItems: 3,
+    }),
+    sampleSystemItems.handoff({
+      id: sampleUuid(2102),
+      order: 6,
+      at: sampleTime(900),
+      phase: 'external',
+      importedItems: 0,
+    }),
+    sampleSystemItems.handoff({
+      id: sampleUuid(2103),
+      order: 7,
+      at: sampleTime(1200),
+      phase: 'returned',
+      importedItems: 0,
+    }),
+  ];
+  return { summary: summaryOf(entryId, 'Images and handoff'), snapshot: snapshotOf(entryId, items) };
+}
+
 function streamingSession(): DemoSession {
   const entryId = DEMO_ENTRIES.streaming;
   return {
@@ -858,5 +970,6 @@ export function demoSessions(now: number): DemoSession[] {
     longSession(),
     securitySession(),
     queueSession(),
+    mediaSession(),
   ];
 }
