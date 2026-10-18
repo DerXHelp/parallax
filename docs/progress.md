@@ -39,8 +39,8 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
 | 36 | Neue Session, Ordner-Browser-UI, Profil-Editor | 2 | 30 | fertig | `f1af3e9`, Merge `5f0d0cf` (mit 37) | Dialog mit Pfadfeld, Ordner-Browser (`fs.listDirectory`), bis 8 zuletzt genutzten Projekten, Profilwahl (Default vorausgewählt, `session.create {cwd, profileId}`), Profil-Editor (Liste, Anlegen, Bearbeiten, Testen, Löschen mit Schutz, maskierte Secrets) als Slot `ProfilesSettings`; 68 eigene Tests | siehe Sammelliste Welle 2 |
 | 37 | Composer und Transkript: Slash-Menü, Screenshots, Lightbox | 2 | 30, 35 | fertig | `0bca858`, Merge `5f0d0cf` (mit 36) | Slash-Menü (Fuzzy, native Befehle, Durchreichen, Terminal-Hinweis), Screenshots per Einfügen/Ziehen/Büroklammer mit Verkleinern, Upload und Chips, Ghost-Text, Rate-Limit-Banner, Composer gesperrt bei Konsole/Archiv, `ui/lightbox` (eine je Transkript, außerhalb der virtualisierten Liste), `handoff`-Zeile, Windows-Pfade (V2-12); 238 eigene Tests, Sichtprüfung dark/light × en/de | siehe Sammelliste Welle 2 |
 | 38 | Einstellungen und Benachrichtigungen (Töne) | 2 | 30 | fertig | `7b94e76`, Merge `42b29af` | Einstellungsseite (Dialog, vertikale Tabs, sofort speichern mit Overlay und Rücknahme), `ui/slider`, fünf synthetisierte Töne (Web Audio, Unlock nach Interaktion), Zustellung mit `focusedElsewhere`/„Nicht stören“/`silent`, Menüeintrag „Einstellungen…“, `HostFacts`; 130 eigene Tests | siehe Sammelliste Welle 2 |
-| 40 | Integration + E2E Phase 2 | 3 | 31–38 | läuft | – | – | – |
-| R4/V3 | Review + Verifier, Fix-Runde | 3b | 40 | offen | – | – | – |
+| 40 | Integration + E2E Phase 2 | 3 | 31–38 | fertig | `f106ec3`…`a61f813` (7 Commits), Merge `6373625` | Server-Verdrahtung (Profil-Store, Kataloge, Konsole, Systemintegration, Host-Befehle, Port, `onProfileChanged`), Web-Slots `PREFERENCES_SLOTS`/`ProfilesSettings`, V2-15; Integrationsfehler: neue Profile blieben auf `checking` (jetzt alle ungeprüften Profile prüfen); Fixes ADR-120 (Autoplay) und `openNewSession({cwd})`; 15 neue E2E-Fälle (41 gesamt, 2× grün, 1× unter Last); 3520 Tests | R4: Einstellungen/Profil-Editor im Start-Chunk (412 kB, `lazy()`), veraltete Kommentare „Optional until WP-40“ in `sessions/manager.ts`; V3: deaktivierter eingeschalteter Switch wirkt aktiv, Bild im `Read`-Ergebnis erst nach Aufklappen; WP-41: L9, L12, Ton im App-Fenster aus Autostart |
+| R4/V3 | Review + Verifier, Fix-Runde | 3b | 40 | läuft | – | – | – |
 | 41 | Live-Abnahme Phase 2 (freigegeben, F2) | 4 | 40 + Fixes | offen | – | – | – |
 
 ### Sammelliste Welle 2 (Stand 18.10.2026, nach Merge `5f0d0cf`: 199 Dateien, 3509 Tests)
@@ -158,5 +158,6 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
 1. **Phase 1 abgeschlossen (16.10.2026).** Alle WPs, Reviews R0–R3, Verifier V1/V2, Live-Abnahme WP-22 und `/code-review` erledigt und gemergt.
 2. **Phase 2 „Mission Control“ beauftragt (16.10.2026, Nutzer: „Setze die Phase 2 um“).** Umfang = Plan „Phasen – Phase 2“.
    WP-30 gemergt (`1488b83`). Welle 1 (31, 32, 33, 35) und Welle 2 (34, 36, 37, 38) gemergt (`5f0d0cf`, 18.10.2026);
-   WP-40 (Integration + E2E) läuft in `.worktrees/wp-40`, danach R4/V3 und WP-41.
+   WP-40 (Integration + E2E) gemergt (`6373625`, 18.10.2026). R4 (Server/Web, read-only) und V3 (Verifier,
+   eigener Worktree `.worktrees/v3`) laufen; danach Fix-Runde, dann WP-41 (Live-Abnahme, freigegeben F2).
 3. Nach ≥ 24 h: `react`/`react-dom` 19.3.1 prüfen und nachziehen (Koordinator, siehe WP-00.md).

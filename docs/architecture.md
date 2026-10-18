@@ -479,16 +479,16 @@ Kompositionswurzel `app/compose.ts` zusammen (einziger Ort, der alle Module kenn
 |---|---|---|
 | 1 | `loadConfig()` (Flags > `PARALLAX_*` > Defaults; Host immer `127.0.0.1`; FakeBackend auf/unter dem echten Datenordner verboten, R3-02; `validation` `--validate`/`PARALLAX_VALIDATE`, Default `log`, Tests `throw`, R3-05; `toasts` `--toasts=native\|off`/`PARALLAX_TOASTS`, Default `native` unter Windows, `off` unter Vitest bzw. `NODE_ENV=test`, ADR-082) | ungültig → 1 |
 | 1a | Home-Lock `acquireHomeLock(home)` (`main.ts`, vor Log und erstem Store, ADR-054) | `busy` → 5 (Text nennt bei `access_denied` einen anderen Windows-Benutzer) |
-| 2 | `initLogging({home, dev, level, console: dev oder TTY})` – Datei `logs/parallax.*.log` immer; vom Launcher gestartet (stdout = `server.out.log`) ohne Konsole; danach Crash-Handler (`app/crash.ts`: `unhandledRejection`/`uncaughtException` → `fatal` + geordneter Shutdown, Exit 1; ADR-064) | 1 |
+| 2 | `initLogging({home, dev, level, console: dev oder TTY})` – Datei `logs/parallax.*.log` immer; vom Launcher gestartet (stdout = `server.out.log`) ohne Konsole; danach Crash-Handler (`app/crash.ts`: `unhandledRejection`/`uncaughtException` → `fatal` + geordneter Shutdown, Exit 1; ADR-064); Phase 2: `config.notes` (WP-33, z. B. verworfener Port aus den Settings) als `warn` | 1 |
 | 3 | Single-Instance: `findRunningServer({home})` (Lockfile + Health; neben dem Home-Lock nur noch für Server älterer Builds ohne Pipe) | Server läuft für dieses Home → 5 |
-| 4 | `createServerInstance()`, Stores in fester Reihenfolge: Registry, Settings, `processes.json`, Auth-Secret (lesen vor jedem Schreiben), Blobs/Decisions/Transkripte (lazy; Transkript-Validierung `config.validation`) – eine `createStoreWarnings()`-Instanz für alle | `StoreVersionTooNewError` → 3 (Datei unverändert), sonst 1 |
-| 5 | Backend nach `config.backend`: `fake` = `createFakeBackend({speed: 1})` (interaktives Szenario) + `createFakeClaudeIntegration()` (kein `claude`-Prozess); `sdk` = `createSdkBackend()` per dynamischem Import + `createClaudeIntegration({appVersion})` (Profil „Standard“, `resolveClaude`) | 1 |
-| 6 | `createSessionManager({backend, claude, stores, toasts: createNativeToasts({enabled: config.toasts === 'native', …}), host: {Versionen aus readSdkManifest(), dataDirLabel, dev}, onShutdownRequested})` (mit `fake` ohne Herzschlag, `processSnapshotMs: 0`) → `createSyncHub({source: manager, instance, validation: config.validation})` → `manager.attachPublisher(hub)` → `warnings.onChange → publishHostState` → `await manager.start()` (Recovery; Waisen im Hintergrund) | 1 |
+| 4 | `createServerInstance()`, Stores in fester Reihenfolge: Registry, Settings, `processes.json`, Profile (`openProfileStore`, `profiles.json`, WP-32), Kataloge (`openCatalogStore`: `model-catalogs.json`, `account-limits.json`; `createCommandCatalogStore`, WP-31), Auth-Secret (lesen vor jedem Schreiben), Blobs/Decisions/Transkripte (lazy; Transkript-Validierung `config.validation`) – eine `createStoreWarnings()`-Instanz für alle | `StoreVersionTooNewError` → 3 (Datei unverändert), sonst 1 |
+| 5 | Backend nach `config.backend`: `fake` = `createFakeBackend({speed: 1})` (interaktives Szenario) + `createFakeClaudeIntegration({store})` (kein `claude`-Prozess) + `createFakeConsoleLauncher({runMs: 1500, onRun → simulateConsoleTurn})`; `sdk` = `createSdkBackend()` per dynamischem Import + `createClaudeIntegration({appVersion, profiles: store})` (`resolveClaude` je Profil) + `createConsoleLauncher()` (ADR-104). Systemintegration (WP-33): `createSystemIntegration({available, repoRoot, home})`, `available` nur mit `repoRoot` (aus `main.ts`) und `systemIntegrationAvailable(config)` (`sdk`, kein Dev, echtes Home – bzw. `systemIntegration: 'on'`) | 1 |
+| 6 | `createSessionManager({backend, claude, stores (inkl. catalogs, commandCatalogs), consoleLauncher, systemIntegration, toasts: createNativeToasts({enabled: config.toasts === 'native', …}), host: {Versionen aus readSdkManifest(), dataDirLabel, dev, port: () => tatsächlicher Port, systemIntegration: available}, hostCommands: [createProfileCommands(…), createFsCommands()], onSettingsChanged → system.apply, extraWarnings → system.warnings, onShutdownRequested})` (mit `fake` ohne Herzschlag, `processSnapshotMs: 0`) → `createSyncHub({source: manager, instance, validation: config.validation})` → `manager.attachPublisher(hub)` → `warnings.onChange`/`system.onChange → publishHostState`, `profileStore.onChange → manager.onProfileChanged()` (ADR-102) → `await manager.start()` (Recovery, Fortsetzen-Pläne und externe Konsolen wiederherstellen; Waisen im Hintergrund) | 1 |
 | 7 | UI-Snapshot `prepareWebRoot` (`dist/web` → `PARALLAX_HOME/ui/<buildId>`, nur bei passender `dist/web/build.json`, ADR-066) → `createApp({config, instance, auth, blobs, hub, webRoot})` – die App ruft `hub.attach` selbst auf; `webRoot` = der Snapshot (bzw. `dist/web` neben `dist/server.js`), im Dev-Modus keiner (Vite); `/api/health` meldet `config.backend` | 1 |
 | 8 | `createServerShutdown(…)` + `installSignalHandlers()` – **vor** `listen`, damit Signal und `server.shutdown` den Rahmen immer finden; `onShutdownFrame(shutdown)` gibt ihn an `main.ts` (Crash-Handler schon während des Starts, CR-10) | – |
 | 9 | `app.listen({host: 127.0.0.1, port})` (Port 0 = frei) | `EADDRINUSE` → 4 (Meldung enthält „EADDRINUSE“), sonst 1 |
-| 10 | `writeServerLock({home, port: tatsächlicher Port, instance, launcherToken})` – erst jetzt gilt der Server für den Launcher als bereit | 1 |
-| 11 | Hintergrund: `claude.checkProfile(default)` → `publishHostState` („Profil testen“; echtes `claude` nur mit `sdk`) | nur Log |
+| 10 | `writeServerLock({home, port: tatsächlicher Port, instance, launcherToken})` – erst jetzt gilt der Server für den Launcher als bereit; danach `publishHostState()` (jetzt mit `HostState.port`) | 1 |
+| 11 | Hintergrund: „Profil testen“ für jedes ungeprüfte Profil (`checkedAt === null`), Default zuerst, nacheinander, auch nach jeder Profiländerung für neue Profile, nie während des Beendens (WP-40) → `publishHostState` (echtes `claude` nur mit `sdk`); erstes `system.apply(settings)` (Protokoll-Handler, Autostart) | nur Log |
 
 Schlägt ein Schritt ab 5 fehl, läuft dieselbe Aufräumfolge wie beim Beenden (ohne `exit`), dann
 schreibt `main.ts` die Ursache ins Log und als **letzte** Zeile auf stderr (der Launcher zeigt sie
@@ -512,8 +512,9 @@ eine laufende Waisen-Prüfung warten – spätere Ergebnisse ignoriert –, Stor
 `backend.dispose()`). Der Shutdown-Rahmen (`launcher/shutdown.ts`) begrenzt diesen Schritt auf 20 s
 und beendet, falls er nach `SHUTDOWN_SWEEP_GRACE_MS` (8 s, nach dem C.8-Fenster der Engine) noch
 läuft, zusätzlich die direkten Kindprozessbäume des Servers (`killChildProcessTrees`). Danach,
-jeder Schritt mit Timeout (5 s, Stores 10 s): `app.close()` (WS-Close 4503, Hub entsorgt) → alle
-Stores schließen → auf die Zugriffsprüfung des Homes warten (`homeAccess`, keine PowerShell
+jeder Schritt mit Timeout (5 s, Stores 10 s): `app.close()` (WS-Close 4503, Hub entsorgt) → auf ein
+laufendes `system.apply` warten (keine PowerShell überlebt den Server, Phase 2) → alle Stores
+schließen (inkl. Profile und Kataloge, umgekehrte Reihenfolge) → auf die Zugriffsprüfung des Homes warten (`homeAccess`, keine PowerShell
 überlebt den Server) → Lockfile freigeben (nur das eigene) → Home-Lock freigeben → Logzeile
 „shutdown: done“ mit `totalMs` und Dauer je Schritt (`stepsMs`) → Log-Datei schließen (im
 `exit`-Wrapper) → `exit(code)`. Live (Code-Review-Fixes): wartende + arbeitende Session → 6,6 s
@@ -536,7 +537,8 @@ Prod `log` (verwerfen, zählen, gedrosselt loggen). Das FakeBackend auf (oder un
 `parallax-launch-…`; ein zweiter wartet und öffnet dann ein Fenster des Servers), ein Build je
 Checkout (`parallax-build-…`); läuft ein Server mit anderem Backend als angefordert (Health
 `backend`), bricht er mit `backend_mismatch` ab. Edge startet mit eigenem Profil ohne Anmeldung
-und Sync (`--disable-sync`, `--disable-features=msImplicitSignin,…`, ADR-060). Vor jedem Fenster
+und Sync (`--disable-sync`, `--disable-features=msImplicitSignin,…`, ADR-060) und ohne
+Autoplay-Sperre (`--autoplay-policy=no-user-gesture-required`, nur der eigene Origin, ADR-120). Vor jedem Fenster
 erlaubt der Launcher Web Notifications für den eigenen Origin in diesem Profil
 (`grantEdgeNotifications`, `<home>\edge\Default\Preferences`: `profile.content_settings.exceptions.
 notifications["http://127.0.0.1:<port>,*"] = {setting: 1}`, zusammengeführt und atomar; unlesbare

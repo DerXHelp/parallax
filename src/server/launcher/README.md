@@ -14,7 +14,9 @@ Auftrag, Bedienung und Entscheidungen: `docs/wp/WP-21.md`.
   bzw. Port belegt durch den Server dieses Homes → bis zur Bereitschaftsfrist auf ihn warten.
 - **Edge-Profil** `<home>\edge`: nie angemeldet, nie synchronisiert (`--disable-sync`,
   `--disable-features=msImplicitSignin,…`, V2-01/ADR-060); ein schon angemeldetes Profil (ältere
-  Version) bekommt einen Hinweis.
+  Version) bekommt einen Hinweis. Ohne Autoplay-Sperre (`EDGE_AUTOPLAY_POLICY` =
+  `--autoplay-policy=no-user-gesture-required`, ADR-120), damit Töne auch in Fenstern aus Autostart
+  oder Toast-Klick ohne vorherige Interaktion klingen.
 - **Server-Seite** (für WP-20 in `main.ts`): Lockfile schreiben/freigeben, Exit-Codes,
   Shutdown-Rahmen.
 - Jeder Spawn über `lib/process.ts` (`windowsHide`, ohne Shell, nur absolute `.exe`): Server =
