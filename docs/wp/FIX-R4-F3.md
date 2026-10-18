@@ -2,7 +2,8 @@
 
 > Fix-Paket F3 der Fix-Runde nach R4/V3 (`docs/wp/FIX-R4.md` §2). Worktree `.worktrees/fix-f3`,
 > Branch `fix/r4-f3`, Basis `main` = `29f3256`. Grundlage: `docs/wp/R4-web.md`, `docs/wp/V3.md`,
-> ADR-123/124/126, Contract-Changelog „R4 (K)“.
+> ADR-123/124/126, Contract-Changelog „R4 (K)“. Commits: `be83921` (Fixes + Tests), `508c81b`
+> (Nachträge aus der Sichtprüfung, instabiler Test), danach dieses Ergebnis.
 
 ## 1. Befunde
 
@@ -21,11 +22,12 @@
 | R4W-22 (optional) `HostFacts` in `SettingsMenu.tsx` | neue Datei `src/web/shell/HostFacts.tsx` (`HostFacts` + `ClaudeInfo`); `SettingsMenu` und `AboutSection` importieren von dort | bestehende Tests (`SettingsPage.test` „About …“) |
 | R4W-23 toter Export | `isProfileUsable` entfernt (`profileErrors(...).length === 0` ist die Regel, Doku am Helfer) | – (tsc/lint) |
 | R4W-24 Autofokus auf destruktiver Aktion | Fokus auf „Abbrechen“ (Löschen) bzw. „Weiter bearbeiten“ (Verwerfen, Schließen der Seite); „Abbrechen“ gibt den Fokus an „Löschen…“ zurück | `ProfilesSettings.test` „deletes … after asking“ (Enter auf dem Fokus löscht nicht), „asks before leaving …“ |
-| **V3-01 Teil 2** lange Pfade sprengen die Dialoge | `NewSessionForm`: alle Raster mit `grid-cols-[minmax(0,1fr)]`, Projekt-Knöpfe `min-w-0` + Ellipse (`title` = voller Pfad); `FolderBrowser`: Brotkrumenleiste nach jedem Ordnerwechsel ans Ende gescrollt (`scrollLeft = scrollWidth`) | `FolderBrowser.test` „keeps the end of a long breadcrumb bar …“ (ohne Fix `scrollLeft` 0); Layout per Sichtprüfung (§3) |
+| **V3-01 Teil 2** lange Pfade sprengen die Dialoge | `NewSessionForm`: alle Raster mit `grid-cols-[minmax(0,1fr)]`; Projekt-Knöpfe `min-w-0`, der Elternteil des Pfads weicht zuerst (Ellipse), der Ordnername bleibt sichtbar, solange er passt (`title` = voller Pfad, zugänglicher Name = Kurzpfad als `sr-only`); `FolderBrowser`: Brotkrumenleiste nach jedem Ordner- und Sprachwechsel ans Ende gescrollt (`scrollLeft = scrollWidth`); Demo-Ordnerbaum/Playground mit langem Pfad | `FolderBrowser.test` „keeps the end of a long breadcrumb bar …“ (ohne Fix `scrollLeft` 0); Layout per Sichtprüfung (§3) |
 | **V3-04** Fokus nach „Neue Session“ auf `body` | `NewSessionDialog` merkt sich beim Öffnen (`show`) das fokussierte Element und gibt ihm in `onCloseAutoFocus` den Fokus zurück (Muster `SettingsPage`, nicht `useReturnFocus` von F2); nach „Session anlegen“ weiter das Eingabefeld der neuen Session | `NewSessionDialog.test` „Esc and the close button give the focus back to the opener“ |
 | **V3-06** Vorgaben überlaufen, Aktionsleiste | Vorgaben einspaltig (`max-w-sm`, `minmax(0,1fr)`), `OptionMenu`-Knopf `min-w-0` + Ellipse + `title`; Bereich „Profile“ ohne Innenabstand unten (`pb-0`), die klebende Aktionsleiste hat ihn selbst (`pb-4`) – kein Durchscheinen unter ihr | Sichtprüfung (§3) |
 | V3-12 (WP-36/38) | `SettingField`: `<label for>` nur bei beschriftbarem Steuerelement (`labelFor`, Lautstärke `false`, nur-`below` ohne `for`); Profil-Editor: „Farbe“/„Programm“ als `span` mit `id` (Gruppen über `aria-labelledby`), kein `<label>` ohne Feld | `SettingsPage.test` „the volume label points at no element“, `ProfilesSettings.test` „labels …“ |
-| V3-13 (WP-36/38) | DE: Standard-Badge „Standardprofil“ (Liste, Editor, Profilwahl) statt „Standard Standard“; „Kontextfenster (Tokens)“; Ereignis „Braucht Freigabe“ (EN „Needs permission“) wie der Status | `ProfilesSettings.test` „speaks German“, `SettingsPage.test` Ereignistabelle |
+| V3-13 (WP-36/38) | DE: Standard-Badge „Standardprofil“ (Liste, Editor, Profilwahl) statt „Standard Standard“; „Kontextfenster (Tokens)“; Ereignis „Braucht Freigabe“ wie der Status (EN „Permission needed“ bleibt – E2E `phase2-settings.spec.ts:44` hängt daran) | `ProfilesSettings.test` „speaks German“ |
+| Koordinator-Nachtrag: instabiler Test „creates a new profile …“ (`ProfilesSettings.test`, Fund von F4 im vollen `pnpm check`) | Ursache wie V3-08: unter Last läuft die Live-Prüfung (400 ms) zwischen „--add-dir“ und seinem Wert; „--add-dir“ allein ist ein Fehler und sperrt „Speichern“, der Klick auf den gesperrten Knopf geht verloren. Der Test wartet jetzt vor dem Klick auf die Prüfung des ganzen Werts und einen freien Knopf (Bedingung, keine feste Wartezeit, Zeitlimits unverändert) | isoliert und im vollen `pnpm check` grün (§4) |
 | V3-14 (WP-36) | Testergebnis bzw. Aktionsfehler per `scrollIntoView({block:'nearest'})` in Sicht; nach Speichern/Löschen/Standard Fokus auf den Hinweis (`tabIndex=-1`), nach Verwerfen auf die gewählte Zeile; ein unberührtes neues Profil gilt nicht als „ungespeichert“ (kein Nachfragen beim Wechsel/Schließen) | `ProfilesSettings.test` „tests a profile …“, „creates a new profile …“, „deletes …“, „an untouched new profile …“ |
 
 ### Zurückgestellt
@@ -50,11 +52,47 @@
 
 ## 3. Sichtprüfung
 
-(folgt)
+Vite (`PARALLAX_DEV_WEB_PORT=5186`, `pnpm dev:web`), Playground im MCP-Browser, Messung per Skript
+(`scrollWidth`/`clientWidth`, Knopfpositionen). Screenshots in
+`%TEMP%\claude\parallax-fix-f3\shots\` (Schema `<ansicht>__<theme>-<sprache>__<viewport>.png`).
+
+- **Neue Session mit langem Pfad** (`profiles/new-session`, neuer Eintrag `…\beta-mit-einem-sehr-langen-…`):
+  1280×800 dark-en/light-de und 900×700 dark-de – Dialog `scrollWidth` = `clientWidth` (510), „Durchsuchen…“
+  und „Session anlegen“ im Dialog; Projekt-Knopf zeigt den Ordnernamen mit Ellipse
+  (`new-session-longpath(-chosen)__…`).
+- **Ordner-Browser im langen Pfad**: 574 = 574, Titel und „Diesen Ordner wählen“ ganz sichtbar,
+  Brotkrumen am Ende (`scrollLeft` = `scrollWidth − clientWidth`, auch nach Sprachwechsel)
+  (`folder-browser-longpath__dark-en|light-de__1280x800`, `…__dark-de__900x700`).
+- **Profil-Editor „Vorgaben für neue Sessions“** (`profiles/settings-page`): einspaltig, „Nicht gesetzt –
+  Claude Code entscheidet“ ungekürzt (251 px bzw. 190 px Text ohne Abschneiden), Panel ohne horizontales
+  Scrollen (564 = 564); klebende Aktionsleiste endet bündig am Panelrand (735,2 = 735,2), nichts scheint
+  darunter durch (`profile-editor-defaults(-notset)__dark-de__1280x800`, `…__light-en__900x700`).
+- **Rückfrage beim Schließen** (R4W-01): Name eingeben → „Allgemein“ (Punkt am Reiter „Profile“) → Esc →
+  Inline-Frage, Fokus „Weiter bearbeiten“ → Enter → „Profile“ gewählt, Entwurf da; Esc im Feld → Frage →
+  „Weiter bearbeiten“ → Fokus zurück im Feld; X → Frage (`settings-general-unsaved-profile__dark-de__…`,
+  `settings-close-confirm__dark-de|light-en__1280x800`).
+- **Deaktivierte Schalter** (V3-10/R4W-18): ohne Integration beide Schalter mit Begründung, „Fenster
+  öffnen“ an + deaktiviert in neutraler Spur (Fix K); mit Integration und Autostart aus: „Nur, solange …“
+  (`settings-server-disabled__light-en|dark-de__…`, `settings-server-autostart-off__dark-de|light-en__…`).
+- **Barrierefreiheit**: auf allen sechs Bereichen keine `<label for>` ohne beschriftbares Ziel; DevTools-Issue
+  „Incorrect use of `<label for>`“ weg; im Profil-Editor kein `<label>` ohne Feld. Verbleibend nur die
+  Radix-Hilfsinputs („form field without id or name“, „No label associated“, zurückgestellt).
+- „Profil testen“: Ergebnis nach dem Klick im sichtbaren Bereich (Unterkante 799,9 von 800).
+
+Aufgeräumt: Vite per PID beendet (`taskkill /PID 31620 /T /F`, Port 5186 frei, kein `node` mit
+`fix-f3`), MCP-Tab auf `about:blank`, Emulation zurückgesetzt.
 
 ## 4. Checks
 
-(folgt)
+- **Gegenprobe:** die Produktionsdateien von `main` (`29f3256`) mit den neuen Tests: 25 neue bzw.
+  angepasste Tests rot (R4W-01 a/b/c, -09, -16, -17, -18, -24, V3-01, V3-04, V3-12, V3-14), grün blieben
+  nur verhaltensneutrale (Env-Namensregel R4W-21, „without unsaved changes nothing asks“). Danach HEAD
+  wiederhergestellt.
+- Eigene Pfade: `pnpm exec tsc -b` grün, `pnpm exec eslint <eigene Pfade> --max-warnings=0` grün,
+  `pnpm exec vitest run <eigene Pfade>` 15 Dateien / 119 Tests grün (vor Stufe 2), nach Stufe 2 10 Dateien /
+  73 Tests (Profile, Neue Session) grün.
+- Voll (Stand `508c81b`, parallel zu F1/F2/F4): `pnpm check` grün – typecheck, lint, **203 Dateien /
+  3565 Tests**; `pnpm build` grün (`index-*.js` 427 604 B; `lazy()` ist F5, R4W-19).
 
 ## 5. Live-Prüfpunkte für WP-41
 
@@ -62,7 +100,16 @@
 - R4W-17: Lautstärke mit gehaltener Pfeiltaste – ein Ton nach dem Loslassen, ein `settings.update`.
 - V3-04: „Neue Session“ über den Sidebar-Knopf öffnen, Esc → Fokus auf dem Knopf.
 
-## 6. Wünsche an den Koordinator
+## 6. Hinweise für F5 (E2E nach dem Merge)
+
+- Neue Fälle laut FIX-R4 §2: Entwurf übersteht den Bereichswechsel (`[role=tab][data-section=…]`, Punkt
+  `[data-unsaved="true"]` am Reiter „Profile“), Esc mit Entwurf zeigt `[data-slot="settings-close-confirm"]`
+  (`[data-action="settings-keep-editing"]`, `[data-action="settings-discard-close"]`).
+- `phase2-new-session.spec.ts` bleibt gültig: nach „Speichern“/„Als Standard“ ist der Editor sauber, Esc
+  schließt ohne Frage; der Fokus liegt danach auf dem Hinweis (`[data-slot="profile-notice"]`).
+- EN-Text „Permission needed“ unverändert (Selektor `phase2-settings.spec.ts:44`).
+
+## 7. Wünsche an den Koordinator
 
 - **Doku (READMEs mit mehreren Ownern):** `src/web/shell/README.md` – neue Zeile `HostFacts.tsx`
   (Server-Infos, genutzt von `SettingsMenu.tsx` und `features/preferences`), bei `SettingsMenu.tsx`
