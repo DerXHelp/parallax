@@ -17,8 +17,7 @@ import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { logger as rootLogger } from './logger';
 import { fsErrorCode } from './paths';
-import { powerShellPath } from './powershell';
-import { runFile, systemTool, type RunFileFn } from './process';
+import { powerShellPath, runFile, systemTool, type RunFileFn } from './process';
 
 export type HomeAccess =
   /** Only the current user (plus SYSTEM/Administrators) can read it. */

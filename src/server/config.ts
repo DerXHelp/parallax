@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,7 +6,7 @@ import { parseArgs } from 'node:util';
 import { z } from 'zod';
 import { BUILD_ID } from '@shared/build';
 import { LOOPBACK_HOST, backendKindSchema, type BackendKind } from '@shared/http';
-import { SETTINGS_SCHEMA_VERSION, settingsFileSchema, type Settings } from '@shared/model';
+import { DEFAULT_PORT, SETTINGS_SCHEMA_VERSION, settingsFileSchema, type Settings } from '@shared/model';
 import { isWindowsPathInside, windowsPathIssue, windowsPathsEqual } from '@shared/paths';
 import { PRODUCT_ID, PRODUCT_NAME } from '@shared/product';
 import { newUuid } from './lib/ids';
@@ -35,8 +35,6 @@ import { SETTINGS_FILE } from './store/settings';
  * answers, fake session ids and fake PIDs would mix with the real entries – ConfigError.
  */
 
-/** Port of the productive server (`pnpm start`). Dev uses 4712 (DEV_SERVER_PORT in repo.config.ts). */
-export const DEFAULT_PORT = 4711;
 /** Default data directory in dev mode, relative to the working directory (never %LOCALAPPDATA%). */
 export const DEV_HOME_DIR = '.parallax-dev';
 
@@ -145,13 +143,12 @@ export interface SettingsPeek {
   note: string | null;
 }
 
-/** Larger files are not read (a settings file is a few KB). */
+/** Larger files are not read (a settings file is a few KB; the size is checked first, R4-15). */
 const SETTINGS_MAX_BYTES = 1024 * 1024;
 
 function readTextFile(file: string): string {
-  const text = readFileSync(file, 'utf8');
-  if (text.length > SETTINGS_MAX_BYTES) throw new Error('file too large');
-  return text;
+  if (statSync(file).size > SETTINGS_MAX_BYTES) throw new Error('file too large');
+  return readFileSync(file, 'utf8');
 }
 
 /**
@@ -197,8 +194,12 @@ export function readSettingsFile(
   return { settings: parsed.data.settings, note: null };
 }
 
-/** Vitest or an E2E server (`NODE_ENV=test`) – in `env` or in this process. */
-function isTestRun(env: NodeJS.ProcessEnv): boolean {
+/**
+ * Vitest or an E2E server (`NODE_ENV=test`) – in `env` or in this process (a hand-made `env` of a
+ * test never hides Vitest). The one test-run check of the server (R4-14): config, the R6 guard of
+ * the system integration (system/run.ts), the validation defaults of hub and transcript store.
+ */
+export function isTestRun(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.VITEST !== undefined || env.NODE_ENV === 'test' || process.env.VITEST !== undefined;
 }
 

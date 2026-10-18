@@ -14,11 +14,13 @@ import { sampleEntry, sampleId, sampleProfile, sampleTime } from '@shared/sample
 import type { NotificationKind } from '@shared/status';
 import { FAKE_SHOT_PNG_BASE64 } from '../backend/fake/image';
 import { profileSummary, uncheckedClaudeStatus, type MutableProfileStore } from '../claude/profiles';
+import type { ClientPresence } from '../sync/ports';
 import { CONTINUE_PROMPT } from './continuePlan';
 import { HOST_STATE_DEBOUNCE_MS } from './manager';
 import { FALLBACK_MODEL_CATALOG } from './models';
 import type { NativeToasts, ToastShowOptions } from './nativeToasts';
 import {
+  HARNESS_CLIENT_ID,
   HARNESS_CWD,
   createEngineHarness,
   type EngineHarness,
@@ -187,6 +189,48 @@ describe('image attachments (ADR-103)', () => {
     ).toBe(error(blobId).code);
     expect(h.session(running).sent).toHaveLength(sent);
     expect(h.manager.inspect(running)?.queue).toEqual([]);
+  });
+});
+
+describe('total size of the image attachments (ADR-125, R4-16)', () => {
+  /** Distinct blobs (other content → other sha256) of `bytes` each. */
+  const images = (h: EngineHarness, sizes: readonly number[]) =>
+    sizes.map((bytes, i) => ({ blobId: h.stores.blobs.put(Buffer.alloc(bytes, i + 1), 'image/png').blobId }));
+
+  it('over LIMITS.attachmentsTotalBytes → PAYLOAD_TOO_LARGE {bytes: sum, max}; nothing starts or is sent', async () => {
+    const h = await setup();
+    const over = images(h, [3_500_000, 3_500_000, 3_500_000, 3_500_000, 3_500_000, 3_500_000]);
+    const error = {
+      code: 'PAYLOAD_TOO_LARGE',
+      params: { bytes: 21_000_000, max: LIMITS.attachmentsTotalBytes },
+    };
+    expect(
+      await h.cmdError({
+        name: 'session.create',
+        cwd: HARNESS_CWD,
+        prompt: { text: 'x', attachments: over },
+      }),
+    ).toEqual(error);
+    expect(h.backend.starts).toEqual([]);
+    const running = await idleEntry(h);
+    const sent = h.session(running).sent.length;
+    expect(
+      await h.cmdError({
+        name: 'session.sendPrompt',
+        entryId: running,
+        prompt: { text: 'x', attachments: over },
+      }),
+    ).toEqual(error);
+    expect(h.session(running).sent).toHaveLength(sent);
+    // Exactly at the limit is fine.
+    const limit = images(h, [3_750_000, 3_750_000, 3_750_000, 3_750_000, 3_750_000, 1_250_000]);
+    await h.cmd({ name: 'session.sendPrompt', entryId: running, prompt: { text: 'x', attachments: limit } });
+    expect(
+      h
+        .session(running)
+        .sent.at(-1)
+        ?.content.filter((c) => c.type === 'image'),
+    ).toHaveLength(6);
   });
 });
 
@@ -374,6 +418,32 @@ describe('native toasts: click URI and silent (ADR-109)', () => {
     });
     await h.waitFor(() => shown.length === 2);
     expect(shown[1]).toMatchObject({ kind: 'done', options: { silent: true } });
+  });
+
+  it('ADR-122 (R4W-07): silent when a window without Web Notifications gets the notify too (it sounds itself)', async () => {
+    const { toasts, shown } = toastDouble();
+    const window: ClientPresence = {
+      clientId: HARNESS_CLIENT_ID,
+      presence: {
+        focused: false,
+        visible: false,
+        viewingEntryId: null,
+        typing: false,
+        systemNotifications: false,
+      },
+      lastFocusAt: new Date(sampleTime(0)),
+      connectedAt: new Date(sampleTime(0)),
+    };
+    const h = await setup({ toasts, presence: [window] });
+    const entryId = await h.create('fake:bash');
+    await h.waitFor(() => shown.length === 1);
+    expect(h.publisher.notifications).toEqual([
+      expect.objectContaining({
+        clientId: HARNESS_CLIENT_ID,
+        notification: expect.objectContaining({ entryId, kind: 'permission', delivery: 'in_app' }) as unknown,
+      }),
+    ]);
+    expect(shown[0]).toMatchObject({ entryId, kind: 'permission', options: { silent: true } });
   });
 
   it('without a protocol handler: launchUri null (a click only dismisses)', async () => {

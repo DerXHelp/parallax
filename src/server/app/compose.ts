@@ -281,7 +281,8 @@ async function createEngine(
     const fakeBackend = createFakeBackend({ speed: fakeSpeed });
     return {
       backend: fakeBackend,
-      claude: createFakeClaudeIntegration({ store: profiles }),
+      // V3-11: the launch specs carry PATH & co., so the git branch shows in the fake server too.
+      claude: createFakeClaudeIntegration({ store: profiles, launchEnv: process.env }),
       consoleLauncher: createFakeConsoleLauncher({
         runMs: FAKE_CONSOLE_RUN_MS,
         onRun: (spec) => {

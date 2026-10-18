@@ -97,6 +97,21 @@ export function systemTool(name: string, env: NodeJS.ProcessEnv = process.env): 
 }
 
 /**
+ * `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` – the one place of this path
+ * (R4-14; re-exported by lib/powershell.ts for the constant scripts).
+ */
+export function powerShellPath(env: NodeJS.ProcessEnv = process.env): string {
+  return systemTool(path.win32.join('WindowsPowerShell', 'v1.0', 'powershell.exe'), env);
+}
+
+/**
+ * .NET format of `DateTime.ToString(…)` for an ISO-8601 UTC time with milliseconds – no
+ * culture-dependent specifier. Used by the process queries below and system/console.ts
+ * (re-exported by lib/powershell.ts, R4-14).
+ */
+export const POWERSHELL_UTC_ISO_FORMAT = "yyyy-MM-dd'T'HH':'mm':'ss'.'fff'Z'";
+
+/**
  * spawn() with `shell: false` and `windowsHide: true` (cannot be overridden). A piped stderr is
  * always consumed (F.16); see `onStderr`. The caller must handle the child's `error` event
  * (spawn failures such as ENOENT arrive there) and should end trees with killProcessTree().
@@ -393,7 +408,7 @@ function processQueryScript(wqlFilter: string | null): string {
     // ProcessId 0 (System Idle Process) has a CreationDate too, but no positive PID.
     `Where-Object { $_.CreationDate -and $_.ProcessId -gt 0 } | ForEach-Object { @{ pid = [int]$_.ProcessId; name = [string]$_.Name; ` +
     `parentPid = [int]$_.ParentProcessId; ` +
-    `startedAt = $_.CreationDate.ToUniversalTime().ToString("yyyy-MM-dd'T'HH':'mm':'ss'.'fff'Z'") } }); ` +
+    `startedAt = $_.CreationDate.ToUniversalTime().ToString("${POWERSHELL_UTC_ISO_FORMAT}") } }); ` +
     `ConvertTo-Json -InputObject $c -Compress } catch { Write-Output ('error: ' + $_.Exception.Message); exit 3 }`
   );
 }
@@ -439,7 +454,7 @@ async function runProcessQuery(
   let result: RunFileResult;
   try {
     result = await run(
-      systemTool(path.win32.join('WindowsPowerShell', 'v1.0', 'powershell.exe')),
+      powerShellPath(),
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', processQueryScript(wqlFilter)],
       { timeoutMs, maxOutputBytes: 1024 * 1024 },
     );

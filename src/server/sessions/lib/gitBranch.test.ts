@@ -30,6 +30,32 @@ describe('readGitBranch (R1-04: never a bare `git`)', () => {
     );
   });
 
+  it('V3-11: a fresh repository without a commit – the branch from `git branch --show-current`', async () => {
+    const runFile = vi.fn<RunFileFn>((_file, args) =>
+      Promise.resolve(
+        args[0] === 'rev-parse'
+          ? result({ exitCode: 128, stdout: 'HEAD\n', stderr: "fatal: ambiguous argument 'HEAD'" })
+          : result({ stdout: 'main\n' }),
+      ),
+    );
+    const resolve = () => Promise.resolve('C:\\git\\git.exe');
+    expect(await readGitBranch('D:\\fresh', {}, { resolve, runFile })).toBe('main');
+    expect(runFile.mock.calls.map((call) => call[1])).toEqual([
+      ['rev-parse', '--abbrev-ref', 'HEAD'],
+      ['branch', '--show-current'],
+    ]);
+    // Detached HEAD in the fallback (empty output) and a second failure → null.
+    runFile.mockImplementation((_file, args) =>
+      Promise.resolve(args[0] === 'rev-parse' ? result({ exitCode: 128 }) : result({ stdout: '\n' })),
+    );
+    expect(await readGitBranch('D:\\fresh', {}, { resolve, runFile })).toBeNull();
+    // A repository with commits needs only one call.
+    runFile.mockClear();
+    runFile.mockImplementation(() => Promise.resolve(result({ stdout: 'dev\n' })));
+    expect(await readGitBranch('D:\\repo', {}, { resolve, runFile })).toBe('dev');
+    expect(runFile).toHaveBeenCalledTimes(1);
+  });
+
   it.each<[string, Partial<RunFileResult> | 'nogit' | 'throws']>([
     ['no git on the PATH', 'nogit'],
     ['not a repository', { exitCode: 128, stdout: '' }],

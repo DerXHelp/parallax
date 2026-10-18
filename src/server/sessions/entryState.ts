@@ -133,11 +133,15 @@ export interface EngineStores {
   warnings: StoreWarnings;
   processes: ProcessStore;
   /**
-   * Phase 2 (ADR-114): model catalogs + account limits per profile (`openCatalogStore`, opened with
-   * the other stores – a newer file aborts the start). Default: in memory (not persistent).
+   * Phase 2 (ADR-114): model catalogs + account limits per profile – compose.ts passes the file
+   * store (`openCatalogStore`, opened with the other stores; a newer file aborts the start).
+   * Absent (engine tests): in memory.
    */
   catalogs?: CatalogStore;
-  /** Phase 2 (ADR-108): slash-command cache per entry (`createCommandCatalogStore`). Default: in memory. */
+  /**
+   * Phase 2 (ADR-108): slash-command cache per entry – compose.ts passes `createCommandCatalogStore`.
+   * Absent (engine tests): in memory.
+   */
   commandCatalogs?: CommandCatalogStore;
 }
 

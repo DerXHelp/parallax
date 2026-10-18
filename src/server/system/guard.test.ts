@@ -42,7 +42,8 @@ describe('R6: the Windows integration never runs for real in a test run', () => 
   it('this is a test run; the defaults are refused, the environment is empty', async () => {
     expect(isTestProcess()).toBe(true);
     expect(isTestProcess({ NODE_ENV: 'test' })).toBe(true);
-    expect(isTestProcess({})).toBe(false);
+    // R4-14: one rule with config.ts – under Vitest also a hand-made env counts as a test run.
+    expect(isTestProcess({})).toBe(true);
     expect(systemEnv()).toEqual({});
     const env = { APPDATA: 'C:\\temp' };
     expect(systemEnv(env)).toBe(env);
