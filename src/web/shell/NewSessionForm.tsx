@@ -1,19 +1,30 @@
-import { FolderOpenIcon, PlusIcon } from 'lucide-react';
+import { FolderOpenIcon, FolderSearchIcon, PlusIcon } from 'lucide-react';
 import { useId, useMemo, useState } from 'react';
-import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
+import { LOCAL_HOST_ID, makeSessionKey, type ProfileId } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
+import type { ProfileSummary } from '@shared/model';
 import { windowsPathIssue, windowsPathKey } from '@shared/paths';
 import { useI18n } from '@web/i18n';
+import { cn } from '@web/lib/cn';
 import { shortPath } from '@web/lib/path-display';
 import { errorPayloadOf } from '@web/state/connection';
-import { sendCommand, useConnectionStatus, useSelectedSession, useSummaries } from '@web/state/hooks';
+import {
+  sendCommand,
+  useConnectionStatus,
+  useHostState,
+  useSelectedSession,
+  useSummaries,
+} from '@web/state/hooks';
 import { Alert } from '@web/ui/alert';
 import { Button } from '@web/ui/button';
 import { Input } from '@web/ui/input';
 import { Label } from '@web/ui/label';
 import { Spinner } from '@web/ui/spinner';
+import { FolderBrowser } from './new-session/FolderBrowser';
+import { ProfileIssueText, profileErrors } from './new-session/profile-status';
+import { ProfileSelect } from './new-session/ProfileSelect';
+import { filterRecentProjects, recentProjects } from './new-session/recent-projects';
 
-const RECENT_PROJECTS = 5;
 /** Frames to wait for the new session's pane before giving up on focusing its message field. */
 const FOCUS_FRAMES = 20;
 
@@ -41,57 +52,66 @@ export function focusSessionInput(sessionKey: string, frames = FOCUS_FRAMES): vo
   });
 }
 
-/** Up to five distinct folders of the existing sessions, most recent activity first (case-insensitive). */
-export function recentProjects(
-  entries: readonly { summary: { cwd: string; lastActivityAt: string } }[],
-  limit = RECENT_PROJECTS,
-): string[] {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  const sorted = [...entries].sort(
-    (a, b) => Date.parse(b.summary.lastActivityAt) - Date.parse(a.summary.lastActivityAt),
+/**
+ * The profile shown as chosen: the explicit choice (or the pre-filled one) if it still exists,
+ * else the host's default profile (Plan "Claude-Profile": the default is always pre-selected).
+ */
+export function chosenProfile(
+  profiles: readonly ProfileSummary[],
+  choice: ProfileId | null,
+  defaultProfileId: ProfileId | null,
+): ProfileSummary | null {
+  return (
+    profiles.find((profile) => profile.id === choice) ??
+    profiles.find((profile) => profile.id === defaultProfileId) ??
+    profiles[0] ??
+    null
   );
-  for (const { summary } of sorted) {
-    const key = windowsPathKey(summary.cwd);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(summary.cwd);
-    if (result.length >= limit) break;
-  }
-  return result;
 }
 
 /**
- * "New session", Phase-1 minimum (Plan "Neue Session", B "Empty State mit zuletzt genutzten
- * Projekten"): folder path as text + the recent projects (derived from the sessions – the
- * contract has no separate list) → `session.create {cwd}`. Without a first prompt the server
- * creates a sleeping entry; the first message in the composer starts it. The new session is
- * selected and its message field focused. Unsafe paths (UNC, device, ADS …) are rejected before
- * sending (`@shared/paths`); server errors (CWD_NOT_FOUND …) are shown translated. Folder browser
- * and profile choice: Phase 2.
+ * "New session" (Plan "Neue Session", WP-36): project folder (typed, from the recent projects or
+ * the folder browser) and profile (default pre-selected; profiles with error findings cannot be
+ * picked) → `session.create {cwd, profileId}` with an explicit profile. Without a first prompt the
+ * server creates a sleeping entry; the first message in the composer starts it. The new session
+ * is selected and its message field focused. Unsafe paths (UNC, device, ADS …) are rejected
+ * before sending (`@shared/paths`); server errors (CWD_NOT_FOUND …) are shown translated.
  */
 export function NewSessionForm({
   initialCwd = '',
+  initialProfileId,
   onCreated,
 }: {
   initialCwd?: string;
+  /** Pre-selected profile ("New session in this project…"); default: the host's default profile. */
+  initialProfileId?: ProfileId;
   /** After the session was created and selected (e.g. close the dialog). */
   onCreated?: (sessionKey: string) => void;
 }) {
   const { t, tError } = useI18n();
   const inputId = useId();
   const hintId = useId();
+  const profileId = useId();
+  const profileLabelId = useId();
+  const profileHintId = useId();
   const [cwd, setCwd] = useState(initialCwd);
+  const [choice, setChoice] = useState<ProfileId | null>(initialProfileId ?? null);
   const [error, setError] = useState<ErrorPayload | null>(null);
   const [pending, setPending] = useState(false);
   const [, select] = useSelectedSession();
   const entries = useSummaries();
+  const hostState = useHostState();
   const online = useConnectionStatus() === 'open';
   const recent = useMemo(() => recentProjects(entries), [entries]);
+  const shownRecent = useMemo(() => filterRecentProjects(recent, cwd), [recent, cwd]);
+  const profiles = hostState?.profiles ?? [];
+  const profile = chosenProfile(profiles, choice, hostState?.defaultProfileId ?? null);
+  const blocking = profile === null ? [] : profileErrors(profile);
+  const cwdKey = windowsPathKey(cwd.trim());
 
   const submit = async () => {
     const value = cwd.trim();
-    if (value === '' || pending) return;
+    if (value === '' || pending || profile === null || blocking.length > 0) return;
     const issue = windowsPathIssue(value);
     if (issue !== null) {
       setError(makeError('PATH_REJECTED', { reason: issue }));
@@ -100,7 +120,7 @@ export function NewSessionForm({
     setPending(true);
     setError(null);
     try {
-      const result = await sendCommand(null, { name: 'session.create', cwd: value });
+      const result = await sendCommand(null, { name: 'session.create', cwd: value, profileId: profile.id });
       const sessionKey = makeSessionKey(LOCAL_HOST_ID, result.entryId);
       select(sessionKey);
       setCwd('');
@@ -113,6 +133,18 @@ export function NewSessionForm({
     }
   };
 
+  const defaults = profile?.defaults ?? { model: null, permissionMode: null, effort: null };
+  const defaultParts: string[] = [];
+  if (defaults.model !== null) defaultParts.push(t('newSession.profile.defaultModel', { model: defaults.model }));
+  if (defaults.permissionMode !== null) {
+    defaultParts.push(
+      t('newSession.profile.defaultMode', { mode: t(`shell.permissionMode.${defaults.permissionMode}`) }),
+    );
+  }
+  if (defaults.effort !== null) {
+    defaultParts.push(t('newSession.profile.defaultEffort', { effort: t(`newSession.efforts.${defaults.effort}`) }));
+  }
+
   return (
     <form
       onSubmit={(event) => {
@@ -120,61 +152,120 @@ export function NewSessionForm({
         void submit();
       }}
       data-slot="new-session-form"
-      className="grid w-full max-w-md gap-2"
-      aria-label={t('shell.newSession.title')}
+      className="grid w-full max-w-md gap-4"
+      aria-label={t('newSession.title')}
     >
-      <Label htmlFor={inputId}>{t('shell.newSession.cwdLabel')}</Label>
-      <div className="flex gap-2">
-        <Input
-          id={inputId}
-          name="cwd"
-          value={cwd}
-          spellCheck={false}
-          autoComplete="off"
-          placeholder={t('shell.newSession.cwdPlaceholder')}
-          aria-invalid={error === null ? undefined : true}
-          aria-describedby={hintId}
-          className="font-mono text-xs"
-          onChange={(event) => {
-            setCwd(event.target.value);
-            setError(null);
-          }}
-        />
-        <Button type="submit" disabled={pending || !online || cwd.trim() === ''}>
-          {pending ? <Spinner label={t('shell.newSession.starting')} /> : <PlusIcon aria-hidden />}
-          {pending ? t('shell.newSession.starting') : t('shell.newSession.submit')}
-        </Button>
+      <div className="grid gap-1.5">
+        <Label htmlFor={inputId}>{t('newSession.cwd.label')}</Label>
+        <div className="flex gap-2">
+          <Input
+            id={inputId}
+            name="cwd"
+            value={cwd}
+            spellCheck={false}
+            autoComplete="off"
+            placeholder={t('newSession.cwd.placeholder')}
+            aria-invalid={error === null ? undefined : true}
+            aria-describedby={hintId}
+            className="font-mono text-xs"
+            onChange={(event) => {
+              setCwd(event.target.value);
+              setError(null);
+            }}
+          />
+          <FolderBrowser
+            initialPath={cwd}
+            onSelect={(path) => {
+              setCwd(path);
+              setError(null);
+            }}
+          >
+            <Button variant="outline" data-action="browse-folder">
+              <FolderSearchIcon aria-hidden />
+              {t('newSession.cwd.browse')}
+            </Button>
+          </FolderBrowser>
+        </div>
+        <p id={hintId} className="text-muted-foreground text-2xs">
+          {t('newSession.cwd.hint')}
+        </p>
       </div>
-      <p id={hintId} className="text-muted-foreground text-2xs">
-        {t('shell.newSession.hint')}
-      </p>
-      {error === null ? null : <Alert tone="error">{tError(error)}</Alert>}
-      {recent.length === 0 ? null : (
-        <div className="mt-2 grid gap-1">
+
+      {shownRecent.length === 0 ? null : (
+        <div className="grid gap-1">
           <span className="text-muted-foreground text-2xs font-medium tracking-wide uppercase">
-            {t('shell.empty.recentProjects')}
+            {t('newSession.recent.label')}
           </span>
-          <ul className="grid gap-px" aria-label={t('shell.empty.recentProjects')}>
-            {recent.map((path) => (
-              <li key={path}>
-                <button
-                  type="button"
-                  title={path}
-                  data-recent-project={path}
-                  onClick={() => {
-                    setCwd(path);
-                    setError(null);
-                  }}
-                  className="hover:bg-accent focus-visible:ring-ring flex h-7 w-full items-center gap-2 rounded-sm px-2 text-left text-xs outline-none focus-visible:ring-2"
-                >
-                  <FolderOpenIcon aria-hidden className="text-muted-foreground size-3.5 shrink-0" />
-                  <span className="truncate font-mono text-2xs">{shortPath(path, 3)}</span>
-                </button>
-              </li>
-            ))}
+          <ul className="grid gap-px" aria-label={t('newSession.recent.label')}>
+            {shownRecent.map((path) => {
+              const current = windowsPathKey(path) === cwdKey;
+              return (
+                <li key={path}>
+                  <button
+                    type="button"
+                    title={path}
+                    data-recent-project={path}
+                    aria-pressed={current}
+                    onClick={() => {
+                      setCwd(path);
+                      setError(null);
+                    }}
+                    className={cn(
+                      'hover:bg-accent focus-visible:ring-ring flex h-7 w-full items-center gap-2 rounded-sm px-2 text-left text-xs outline-none focus-visible:ring-2',
+                      current && 'bg-accent text-accent-foreground',
+                    )}
+                  >
+                    <FolderOpenIcon aria-hidden className="text-muted-foreground size-3.5 shrink-0" />
+                    <span className="truncate font-mono text-2xs">{shortPath(path, 3)}</span>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
+
+      <div className="grid gap-1.5">
+        <Label id={profileLabelId} htmlFor={profileId}>
+          {t('newSession.profile.label')}
+        </Label>
+        <ProfileSelect
+          id={profileId}
+          labelId={profileLabelId}
+          describedBy={defaultParts.length > 0 || blocking.length > 0 ? profileHintId : undefined}
+          profiles={profiles}
+          value={profile?.id ?? null}
+          onValueChange={setChoice}
+        />
+        <div id={profileHintId} className="grid gap-1">
+          {defaultParts.length === 0 ? null : (
+            <p className="text-muted-foreground text-2xs">
+              {t('newSession.profile.defaults', { list: defaultParts.join(' · ') })}
+            </p>
+          )}
+          {blocking.length === 0 ? null : (
+            <Alert tone="error" title={t('newSession.profile.unusable')} data-slot="profile-unusable">
+              <span className="grid gap-1">
+                {blocking.map((finding, index) => (
+                  <ProfileIssueText key={`${finding.issue.code}-${String(index)}`} finding={finding} />
+                ))}
+              </span>
+            </Alert>
+          )}
+        </div>
+      </div>
+
+      {error === null ? null : <Alert tone="error">{tError(error)}</Alert>}
+
+      <div className="flex justify-end">
+        <Button
+          type="submit"
+          disabled={pending || !online || cwd.trim() === '' || profile === null || blocking.length > 0}
+        >
+          {pending ? <Spinner label={t('newSession.creating')} /> : <PlusIcon aria-hidden />}
+          {pending ? t('newSession.creating') : t('newSession.submit')}
+        </Button>
+      </div>
     </form>
   );
 }
