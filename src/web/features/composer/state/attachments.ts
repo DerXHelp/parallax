@@ -161,6 +161,28 @@ export function removeAttachment(sessionKey: string, id: string): void {
   );
 }
 
+const NONE: ReadonlySet<string> = new Set();
+
+/**
+ * Chips over the total limit of one prompt (ADR-125, `LIMITS.attachmentsTotalBytes`): the raw
+ * bytes of the finished uploads add up in list order; every chip from the one that crosses the
+ * limit on is over. Sending waits until such chips are removed – the server would refuse the
+ * prompt with `PAYLOAD_TOO_LARGE` anyway.
+ */
+export function attachmentsOverTotal(
+  list: readonly ComposerAttachment[],
+  max: number = LIMITS.attachmentsTotalBytes,
+): ReadonlySet<string> {
+  let total = 0;
+  let over: Set<string> | null = null;
+  for (const attachment of list) {
+    if (attachment.status !== 'done' || attachment.ref === null) continue;
+    total += attachment.ref.bytes;
+    if (total > max) (over ??= new Set()).add(attachment.id);
+  }
+  return over ?? NONE;
+}
+
 /** Current chips of a session (outside React). */
 export function getAttachments(sessionKey: string): readonly ComposerAttachment[] {
   return listOf(sessionKey);

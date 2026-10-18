@@ -8,7 +8,7 @@ import { CappedContent, TruncationNotice } from '../components/CappedContent';
 import { CodeBlock } from '../components/CodeBlock';
 import { ImageThumb } from '../components/ImageThumb';
 import { useFullText } from '../state/full-text';
-import { normalizeTerminalText, resultImages, resultText, stripToolUseError } from '../lib/text';
+import { normalizeTerminalText, previewImages, resultText, stripToolUseError } from '../lib/text';
 import type { Translate } from './types';
 
 /** Building blocks shared by the tool renderers. */
@@ -80,17 +80,20 @@ export function TerminalOutput({
   );
 }
 
-/** Images of a tool result (blobs, same origin – CSP `img-src 'self'`); a click opens the lightbox. */
-export function ResultImages({ images }: { images: readonly BlobRef[] }) {
+/**
+ * Thumbnails of blob images (same origin – CSP `img-src 'self'`); a click opens the lightbox with
+ * the full size. Other media types are skipped.
+ */
+export function ResultImages({ images, className }: { images: readonly BlobRef[]; className?: string }) {
   if (images.length === 0) return null;
   return (
-    <div className="flex flex-wrap items-start gap-2">
-      {images.map((image) =>
+    <div data-slot="tool-images" className={cn('flex flex-wrap items-start gap-2', className)}>
+      {images.map((image, index) =>
         image.mediaType.startsWith('image/') ? (
           <ImageThumb
-            key={image.blobId}
+            key={`${image.blobId}:${String(index)}`}
             image={image}
-            className="h-auto max-h-80 w-auto max-w-full object-contain"
+            className="h-auto max-h-40 w-auto max-w-full object-contain"
           />
         ) : null,
       )}
@@ -99,8 +102,18 @@ export function ResultImages({ images }: { images: readonly BlobRef[] }) {
 }
 
 /**
+ * The pictures of a tool result as thumbnails below the tool line – visible without expanding it
+ * and shown exactly once (R4W-03/V3-09, Plan "Bilder in Tool-Ergebnissen … inline als Thumbnail"):
+ * the bodies (`ToolResultText`, Read) leave them out. Named after `input.file_path` when the blob
+ * has no name (`previewImages`).
+ */
+export function ToolResultImages({ item, className }: { item: ToolCallItem; className?: string }) {
+  return <ResultImages images={previewImages(item)} className={className} />;
+}
+
+/**
  * The text result of a tool call (capped, ANSI-safe), error results in the error tone. Returns
- * null when there is no result yet.
+ * null when there is no result yet. Images are not part of it (`ToolResultImages` below the line).
  */
 export function ToolResultText({
   item,
@@ -117,25 +130,19 @@ export function ToolResultText({
   const t = useT();
   if (item.result === null) return null;
   const { text, truncated, parts } = resultText(item);
-  const images = resultImages(item);
+  const hasImages = previewImages(item).length > 0;
   const isError = item.result.isError;
   const shown = isError ? stripToolUseError(text) : text;
-  const content = (
-    <>
-      {parts === 0 || shown.trim() === '' ? (
-        images.length === 0 ? (
-          <p className="text-muted-foreground text-xs italic">
-            {emptyLabel ?? t('transcript.tool.noOutput')}
-          </p>
-        ) : null
-      ) : (
-        <CappedContent text={shown} truncated={truncated} sessionKey={sessionKey}>
-          {(value) => <TerminalOutput text={value} tone={isError ? 'error' : 'default'} />}
-        </CappedContent>
-      )}
-      <ResultImages images={images} />
-    </>
-  );
+  // Only pictures: they stand below the tool line – no "No output" here, and no empty section.
+  if ((parts === 0 || shown.trim() === '') && hasImages) return null;
+  const content =
+    parts === 0 || shown.trim() === '' ? (
+      <p className="text-muted-foreground text-xs italic">{emptyLabel ?? t('transcript.tool.noOutput')}</p>
+    ) : (
+      <CappedContent text={shown} truncated={truncated} sessionKey={sessionKey}>
+        {(value) => <TerminalOutput text={value} tone={isError ? 'error' : 'default'} />}
+      </CappedContent>
+    );
   if (hideLabel) return <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1">{content}</div>;
   return (
     <Section label={isError ? t('transcript.tool.error') : t('transcript.tool.result')}>{content}</Section>

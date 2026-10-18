@@ -3,6 +3,7 @@ import {
   ChevronDownIcon,
   CircleDotIcon,
   CornerDownRightIcon,
+  ImageIcon,
   ImagePlusIcon,
   PaperclipIcon,
   ReplyIcon,
@@ -80,9 +81,10 @@ import {
   applyMenuEntry,
   buildMenuEntries,
   classifySlash,
-  filterMenu,
+  menuMatches,
   NATIVE_WITHOUT_ARGUMENT,
   resolveEntry,
+  sendsPrompt,
   slashQuery,
   takesArgument,
   terminalCommands,
@@ -96,6 +98,7 @@ import { RateLimitBanner } from './RateLimitBanner';
 import { SlashMenu, slashMenuId } from './SlashMenu';
 import {
   addAttachmentFiles,
+  attachmentsOverTotal,
   getAttachments,
   releaseAttachments,
   restoreAttachments,
@@ -324,7 +327,11 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     setActiveIndex(0);
     setMenuDismissed(false);
   }
-  const matches = useMemo(() => (query === null ? [] : filterMenu(entries, query)), [entries, query]);
+  // A fully typed terminal-only command closes the menu: Enter shows its hint (V3-02).
+  const matches = useMemo(
+    () => (query === null ? [] : menuMatches(entries, query, terminal)),
+    [entries, query, terminal],
+  );
   const menuOpen = query !== null && !menuDismissed && matches.length > 0;
   const menuIndex = Math.min(activeIndex, matches.length - 1);
   const activeEntry = menuOpen ? (matches[menuIndex] ?? null) : null;
@@ -342,13 +349,17 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const busyUploads = attachments.some((a) => a.status === 'preparing' || a.status === 'uploading');
   const failedUploads = attachments.some((a) => a.status === 'error');
   const readyUploads = attachments.filter((a) => a.status === 'done').length;
+  // ADR-125: together over `LIMITS.attachmentsTotalBytes` – the chips say which ones.
+  const overTotal = useMemo(() => attachmentsOverTotal(attachments), [attachments]);
+  const attachmentsBlocked = busyUploads || failedUploads || overTotal.size > 0;
 
   const limit = textLimit(answerTarget);
   const tooLong = value.length > limit;
   let canSend: boolean;
   if (answerTarget !== null) canSend = online && value !== '' && !tooLong;
-  else if (commandDraft) canSend = online;
-  else canSend = online && !tooLong && !busyUploads && !failedUploads && (value !== '' || readyUploads > 0);
+  // `/plan text` sends the text with the images (R4W-26): it waits for them like a message.
+  else if (commandDraft) canSend = online && !(sendsPrompt(draftAction) && attachmentsBlocked);
+  else canSend = online && !tooLong && !attachmentsBlocked && (value !== '' || readyUploads > 0);
   const canAnswer =
     pendingTarget !== null && online && value !== '' && value.length <= textLimit(pendingTarget);
   const suggestion =
@@ -408,12 +419,21 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     setLockedId(lock);
   };
 
+  /** Images that keep a prompt from going out now (busy, failed, together too large – ADR-125). */
+  const attachmentsHold = (): boolean => {
+    const current = getAttachments(sessionKey);
+    return current.some((a) => a.status !== 'done') || attachmentsOverTotal(current).size > 0;
+  };
+
   /** Sends text (+ the finished images) as a prompt; restores both when it fails. */
   const sendMessage = (message: string, priority: PromptPriority): Promise<boolean> => {
-    const current = getAttachments(sessionKey);
-    const busy = current.some((a) => a.status !== 'done');
-    const ready = current.filter((a) => a.status === 'done');
-    if (!online || busy || (message === '' && ready.length === 0) || message.length > LIMITS.promptChars) {
+    const ready = getAttachments(sessionKey).filter((a) => a.status === 'done');
+    if (
+      !online ||
+      attachmentsHold() ||
+      (message === '' && ready.length === 0) ||
+      message.length > LIMITS.promptChars
+    ) {
       return Promise.resolve(false);
     }
     const previous = getDraft(sessionKey).trim();
@@ -505,6 +525,8 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     const priority: PromptPriority = via === 'now' ? 'now' : 'next';
     const action = message.startsWith('/') ? classifySlash(message, entries, terminal) : null;
     if (action?.kind === 'native') {
+      // `/plan text` waits for the images like a message – no mode switch with the text left behind.
+      if (sendsPrompt(action) && attachmentsHold()) return;
       runNative(action.command, action.args);
       return;
     }
@@ -634,9 +656,13 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const menuHintId = `${inputId}-menu-hint`;
   const suggestionId = `${inputId}-suggestion`;
   const argumentId = `${inputId}-argument`;
+  const imagesHintId = `${inputId}-images-later`;
   const hintTarget = answerTarget ?? pendingTarget;
+  // An answer carries no images (contract): the chips stay for the next message (R4W-26).
+  const imagesWaitForMessage = answerTarget !== null && attachments.length > 0;
   const describedBy = [
     hintTarget === null ? null : hintId,
+    imagesWaitForMessage ? imagesHintId : null,
     menuOpen ? menuHintId : null,
     suggestion === null ? null : suggestionId,
     argumentHint === '' ? null : argumentId,
@@ -690,6 +716,16 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
           {decisionHint(hintTarget, answerTarget === null ? 'pending' : 'target', t)}
         </p>
       )}
+      {imagesWaitForMessage ? (
+        <p
+          id={imagesHintId}
+          data-slot="composer-images-later"
+          className="text-muted-foreground mb-1 flex items-start gap-1.5 text-2xs"
+        >
+          <ImageIcon aria-hidden className="mt-px size-3 shrink-0" />
+          {t('composer.attachments.notWithAnswer')}
+        </p>
+      ) : null}
       {terminalHint === null ? null : (
         <Alert
           tone="warning"
@@ -843,6 +879,8 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
               </IconButton>
               <input
                 ref={fileInputRef}
+                // V3-12: a form field needs an id or a name (DevTools issue), even a hidden one.
+                id={`${inputId}-files`}
                 type="file"
                 accept={ATTACHMENT_MEDIA_TYPES.join(',')}
                 multiple
@@ -885,6 +923,10 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
           ) : failedUploads ? (
             <span data-slot="composer-uploads" className="text-destructive text-2xs">
               {t('composer.attachments.removeFailed')}
+            </span>
+          ) : overTotal.size > 0 ? (
+            <span data-slot="composer-uploads" className="text-destructive text-2xs">
+              {t('composer.attachments.removeTooLarge')}
             </span>
           ) : null}
           {value.length > limit * COUNTER_FROM ? (
@@ -993,6 +1035,9 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
         entries={entries}
         terminal={[...terminal].sort()}
         hasCatalog={commands !== null}
+        returnFocus={() => {
+          textareaRef.current?.focus();
+        }}
       />
     </div>
   );

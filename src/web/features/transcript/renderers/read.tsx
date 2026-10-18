@@ -6,16 +6,17 @@ import { shortPath } from '@web/lib/path-display';
 import { CappedContent } from '../components/CappedContent';
 import { CodeBlock } from '../components/CodeBlock';
 import { languageForPath } from '../lib/languages';
-import { resultImages, resultText, stripToolUseError } from '../lib/text';
+import { previewImages, resultText, stripToolUseError } from '../lib/text';
 import { readReadInput, readReadResult } from '../lib/tool-input';
 import { GenericToolBody } from './generic';
-import { ResultImages, TerminalOutput } from './parts';
+import { TerminalOutput } from './parts';
 import type { ToolBodyProps, ToolRenderer, Translate } from './types';
 
 /**
  * Read: file + line range (F.4: `{ type:'text', file:{ filePath, numLines, startLine, totalLines } }`
  * live; in the history only the input `offset`/`limit`). The tool result is the CLI's numbered
- * listing (`<n>\t<line>`) – shown as code with a line-number gutter. Images come as blobs.
+ * listing (`<n>\t<line>`) – shown as code with a line-number gutter. Images come as blobs; the
+ * row shows them below its line (`ToolResultImages`, R4W-03), named after `file_path`.
  */
 
 const NUMBERED_LINE = /^\s*(\d+)(?:\t|→)(.*)$/;
@@ -69,7 +70,8 @@ function ReadBody({ item, sessionKey }: ToolBodyProps) {
   const { text, truncated } = resultText(item);
   const listing = useMemo(() => parseNumberedListing(text), [text]);
   if (input === null) return <GenericToolBody item={item} sessionKey={sessionKey} />;
-  const images = resultImages(item);
+  // Pictures (a Read of a screenshot) stand below the tool line, not here (R4W-03).
+  const hasImages = previewImages(item).length > 0;
   if (item.result === null) return null;
   if (item.result.isError) return <TerminalOutput text={stripToolUseError(text)} tone="error" />;
   const language = languageForPath(input.file_path);
@@ -79,9 +81,7 @@ function ReadBody({ item, sessionKey }: ToolBodyProps) {
         <p className="text-muted-foreground text-2xs">{t('transcript.read.pages', { pages: input.pages })}</p>
       )}
       {text.trim() === '' ? (
-        images.length === 0 ? (
-          <p className="text-muted-foreground text-xs italic">{t('transcript.read.empty')}</p>
-        ) : null
+        hasImages ? null : <p className="text-muted-foreground text-xs italic">{t('transcript.read.empty')}</p>
       ) : (
         <CappedContent text={text} truncated={truncated} sessionKey={sessionKey}>
           {(value) => {
@@ -99,7 +99,6 @@ function ReadBody({ item, sessionKey }: ToolBodyProps) {
           }}
         </CappedContent>
       )}
-      <ResultImages images={images} />
     </>
   );
 }
