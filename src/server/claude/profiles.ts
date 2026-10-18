@@ -12,25 +12,29 @@ import {
   type ProfileIssue,
   type ProfileSummary,
 } from '@shared/model';
+import { isSecretEnvKey } from '@shared/secrets';
 import { registerSecret } from '../lib/logger';
 import { UNKNOWN_AUTH } from './authStatus';
 import { parseProfileArgs } from './profileArgs';
 import type { ProfileStore } from './ports';
 
 /**
- * Profile env names whose values are secrets (Plan "Claude-Profile": `*_KEY`, `*_TOKEN`,
- * `*_SECRET`, plus anything with `PASSWORD`; case-insensitive). Their values are registered with
- * the logger (R9) so they never appear in a log line; the UI masks them.
+ * Registers the values of secret env names (`isSecretEnvKey` of `@shared/secrets`, ADR-124 – the
+ * one rule of server and web) with the logger's redaction (R9).
  */
-export function isSecretEnvKey(name: string): boolean {
-  return /(?:_KEY|_TOKEN|_SECRET)$/i.test(name) || /PASSWORD/i.test(name);
-}
-
-/** Registers the values of secret env names (`isSecretEnvKey`) with the logger's redaction. */
 export function registerEnvSecrets(env: Readonly<Record<string, string>>): void {
   for (const [name, value] of Object.entries(env)) {
     if (isSecretEnvKey(name)) registerSecret(value);
   }
+}
+
+/**
+ * Everything the resolution and the check of a profile's `claude` depend on (executable, env incl.
+ * PATH, config dir): the integration's resolution cache (ADR-102) and the reset of the check
+ * status after a save (R4-06) compare it.
+ */
+export function profileResolutionKey(profile: Pick<Profile, 'executable' | 'env' | 'configDir'>): string {
+  return JSON.stringify([profile.executable, profile.env, profile.configDir]);
 }
 
 /** Fixed timestamps: the built-in profile is code, not data. */

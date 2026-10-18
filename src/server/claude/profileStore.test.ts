@@ -409,6 +409,31 @@ describe('summaries, claude status and onChange', () => {
     await store.close();
   });
 
+  it('R4-06: a change of executable, env or config dir drops the check status; a rename keeps it', async () => {
+    const store = await open(await tempHome());
+    const saved = store.save(sampleProfileInput({ env: {}, configDir: null }), NOW);
+    const ok = sampleClaudeInstallStatus();
+    const input = sampleProfileInput({ id: saved.id, env: {}, configDir: null });
+    const checked = (): void => {
+      store.setClaudeStatus(saved.id, ok);
+    };
+    checked();
+    // Name, colour, args and defaults do not change what `claude` is and who is signed in.
+    store.save({ ...input, name: 'Renamed', color: 'teal', args: ['--verbose'], passRawArgs: true }, NOW);
+    expect(store.claudeStatus(saved.id)).toEqual(ok);
+    for (const change of [
+      { configDir: 'D:\\claude\\other' },
+      { env: { CLAUDE_CODE_USE_BEDROCK: '1' } },
+      { executable: { kind: 'path' as const, path: EXE } },
+    ]) {
+      checked();
+      store.save({ ...input, ...change }, NOW);
+      expect(store.claudeStatus(saved.id)).toMatchObject({ state: 'checking', checkedAt: null });
+      expect(store.summaries().find((s) => s.id === saved.id)?.claude.checkedAt).toBeNull();
+    }
+    await store.close();
+  });
+
   it('survives a reopen', async () => {
     const home = await tempHome();
     const first = await open(home);

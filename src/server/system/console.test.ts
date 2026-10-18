@@ -69,11 +69,10 @@ describe('createConsoleLauncher().open (ADR-104)', () => {
     expect(call.file.toLowerCase()).toMatch(
       /^[a-z]:\\windows\\system32\\windowspowershell\\v1\.0\\powershell\.exe$/,
     );
+    // R4-04: no -ExecutionPolicy (it would hand PSExecutionPolicyPreference=Bypass to the console).
     expect(call.args).toEqual([
       '-NoProfile',
       '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
       '-EncodedCommand',
       encodePowerShell(CONSOLE_SCRIPT),
     ]);
@@ -107,6 +106,38 @@ describe('createConsoleLauncher().open (ADR-104)', () => {
     expect(CONSOLE_SCRIPT).toContain('Start-Process -FilePath $exe -WorkingDirectory $cwd -PassThru');
     expect(CONSOLE_SCRIPT).not.toMatch(/cmd(\.exe)?\b|Invoke-Expression|iex\b/i);
     expect(CONSOLE_SCRIPT).toContain('exit 3');
+  });
+
+  it("R4-04: PowerShell's own PSModulePath/PSExecutionPolicyPreference are set back to the spec's before Start-Process", async () => {
+    const lines = CONSOLE_SCRIPT.split('\n');
+    const start = lines.findIndex((l) => l.includes('Start-Process'));
+    for (const name of ['PSModulePath', 'PSExecutionPolicyPreference']) {
+      const set = lines.findIndex((l) => l.includes(`$env:${name} =`));
+      const removed = lines.findIndex((l) => l.includes(`'Env:${name}'`) && l.includes('Remove-Item'));
+      expect(set).toBeGreaterThan(0);
+      expect(set).toBeLessThan(start);
+      expect(removed).toBeGreaterThan(0);
+      expect(removed).toBeLessThan(start);
+    }
+    expect(CONSOLE_SCRIPT).not.toMatch(/ExecutionPolicy\s+Bypass/i);
+
+    // With the variables in the spec (any case): their values travel in the carriers.
+    const { run, calls } = fakeRun();
+    const env = { ...SPEC.env, psmodulepath: 'C:\\Users\\u\\Documents\\PowerShell\\Modules' };
+    await createConsoleLauncher({ run, platform: 'win32' }).open({ ...SPEC, env });
+    expect(calls[0]?.options.env).toMatchObject({
+      [CONSOLE_ENV.psModulePath]: 'C:\\Users\\u\\Documents\\PowerShell\\Modules',
+    });
+    expect(calls[0]?.options.env).not.toHaveProperty(CONSOLE_ENV.psPolicy);
+    // Without them: no carrier (the script removes both from the console's environment).
+    const plain = fakeRun();
+    await createConsoleLauncher({ run: plain.run, platform: 'win32' }).open({
+      ...SPEC,
+      env: { ...SPEC.env, parallax_console_pspolicy: 'Bypass' },
+    });
+    const keys = Object.keys(plain.calls[0]?.options.env ?? {}).map((k) => k.toUpperCase());
+    expect(keys).not.toContain(CONSOLE_ENV.psPolicy);
+    expect(keys).not.toContain(CONSOLE_ENV.psModulePath);
   });
 
   it('empty args travel as an empty line', async () => {
@@ -177,6 +208,55 @@ describe('createConsoleLauncher().state (ADR-104, ADR-051)', () => {
     expect(await state({ isAlive: alive, startTime: () => Promise.reject(new Error('x')) })).toBe('unknown');
     expect(await state({ isAlive: alive }, null)).toBe('running');
     expect(await state({ isAlive: alive }, started, null)).toBe('unknown');
+  });
+
+  it('R4-05: the creation time once per process, then only the liveness check; again after CONSOLE_RECHECK_MS', async () => {
+    let clock = 0;
+    let alive = true;
+    const queries: number[] = [];
+    let actual = new Date(started.getTime() + 1_000);
+    const launcher = createConsoleLauncher({
+      platform: 'win32',
+      run: fakeRun().run,
+      isAlive: () => alive,
+      now: () => clock,
+      startTime: (pid) => {
+        queries.push(pid);
+        return Promise.resolve(actual);
+      },
+    });
+    const proc = { pid: 4242, startedAt: started };
+    // Two checks at once share one query.
+    expect(await Promise.all([launcher.state(proc), launcher.state(proc)])).toEqual(['running', 'running']);
+    for (let i = 0; i < 11; i += 1) {
+      clock += 5_000;
+      expect(await launcher.state(proc)).toBe('running');
+    }
+    expect(queries).toEqual([4242]);
+    clock += 5_000;
+    // 60 s after the first confirmation: verified again (PID reuse).
+    actual = new Date(started.getTime() + 600_000);
+    expect(await launcher.state(proc)).toBe('ended');
+    expect(queries).toEqual([4242, 4242]);
+    // A dead PID is `ended` at once, without any query.
+    alive = false;
+    expect(await launcher.state({ pid: 4243, startedAt: started })).toBe('ended');
+    expect(queries).toHaveLength(2);
+    // A failed query is not remembered.
+    alive = true;
+    const failing = createConsoleLauncher({
+      platform: 'win32',
+      run: fakeRun().run,
+      isAlive: () => true,
+      now: () => clock,
+      startTime: (pid) => {
+        queries.push(pid);
+        return Promise.resolve(null);
+      },
+    });
+    expect(await failing.state(proc)).toBe('unknown');
+    expect(await failing.state(proc)).toBe('unknown');
+    expect(queries).toHaveLength(4);
   });
 
   it('by default asks the process start time through the injected runner (CIM query)', async () => {

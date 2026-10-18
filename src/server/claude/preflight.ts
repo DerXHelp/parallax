@@ -17,7 +17,7 @@ import { windowsPathIssue } from '@shared/paths';
 import { findEdge } from '../lib/edge';
 import type { FsOps } from '../lib/fs';
 import { checkHomeAccess, type HomeAccess } from '../lib/homeAccess';
-import { errnoCode, runFile, systemTool, type RunFileFn } from '../lib/process';
+import { errnoCode, powerShellPath, runFile, type RunFileFn } from '../lib/process';
 import { parseRegValues, regKeyQuery, regQuery, type RegKeyQuery, type RegQuery } from '../lib/registry';
 import { getEnvVar, nodeFsProbe, resolveExecutable, type FsProbe } from '../lib/windows';
 import type { ClaudeIntegrationImpl } from './integration';
@@ -379,7 +379,7 @@ export async function antivirusProducts(run: RunFileFn = runFile): Promise<strin
     'ForEach-Object { [string]$_.displayName }); ConvertTo-Json -InputObject $p -Compress';
   try {
     const result = await run(
-      systemTool(path.win32.join('WindowsPowerShell', 'v1.0', 'powershell.exe')),
+      powerShellPath(),
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
       { timeoutMs: 20_000, maxOutputBytes: 64 * 1024 },
     );

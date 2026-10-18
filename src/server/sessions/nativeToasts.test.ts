@@ -231,6 +231,14 @@ describe('native toasts (WP22-03/-15, A.9)', () => {
     });
   });
 
+  it('ADR-122: silent when a window got the notification too (it plays the sound), whatever the setting', () => {
+    expect(toastShowOptions(ENTRY, 'done', sampleSettings(), null, true)).toEqual({
+      launchUri: null,
+      silent: true,
+    });
+    expect(toastShowOptions(ENTRY, 'done', sampleSettings(), null, false).silent).toBe(false);
+  });
+
   it('disabled: never available, does nothing', async () => {
     const log = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
     expect(createNativeToasts({ enabled: false, language: () => 'en', log })).toBe(DISABLED_NATIVE_TOASTS);

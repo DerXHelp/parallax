@@ -42,7 +42,8 @@ describe('R6: the Windows integration never runs for real in a test run', () => 
   it('this is a test run; the defaults are refused, the environment is empty', async () => {
     expect(isTestProcess()).toBe(true);
     expect(isTestProcess({ NODE_ENV: 'test' })).toBe(true);
-    expect(isTestProcess({})).toBe(false);
+    // R4-14: one rule with config.ts – under Vitest also a hand-made env counts as a test run.
+    expect(isTestProcess({})).toBe(true);
     expect(systemEnv()).toEqual({});
     const env = { APPDATA: 'C:\\temp' };
     expect(systemEnv(env)).toBe(env);
@@ -95,8 +96,12 @@ describe('R6: the Windows integration never runs for real in a test run', () => 
     const factories =
       /\b(createSystemIntegration|createConsoleLauncher|createAutostartShortcut|removeAutostartShortcut)\(/;
     const offenders: string[] = [];
-    for (const file of files) {
-      const text = await readFile(file, 'utf8');
+    // Read at once, not one after another: under a full parallel `pnpm check` (virus scanner) each
+    // read can take long – the sequential loop once hit the 20-s test timeout (FIX-R4-F1).
+    const texts = await Promise.all(
+      files.map(async (file) => ({ file, text: await readFile(file, 'utf8') })),
+    );
+    for (const { file, text } of texts) {
       if (/process\.env\.APPDATA|process\.env\['APPDATA'\]/.test(text))
         offenders.push(`${file}: real APPDATA`);
       if (factories.test(text) && !/\brun\b/.test(text)) offenders.push(`${file}: no injected run`);

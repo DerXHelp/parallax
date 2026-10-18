@@ -3,12 +3,19 @@
  * PIDs from 60 000 with the harness clock as start time, records every spec and every `state()`
  * check, answers `state()` per PID as the test sets it (default `running`) and fails the next
  * `open()` on request. `onOpen` runs synchronously inside `open()` (e.g. a simulated console turn).
- * Only tests import this (the fake server uses `system/fakeConsole.ts`).
+ * `holdNext()` keeps the next `open()` pending until the test releases it (a slow PowerShell, R4-01/
+ * R4-03). Only tests import this (the fake server uses `system/fakeConsole.ts`).
  */
 import type { ConsoleLaunchSpec } from '../../claude/ports';
 import type { ConsoleLauncher, ConsoleProcess } from '../../system/ports';
 
 export type TestConsoleState = 'running' | 'ended' | 'unknown';
+
+/** A held `open()`: `reached` settles once it was called, `release()` lets it answer. */
+export interface ConsoleHold {
+  readonly reached: Promise<void>;
+  release(): void;
+}
 
 export interface TestConsoleLauncher extends ConsoleLauncher {
   /** Every spec passed to open() (also the failed ones). */
@@ -21,6 +28,8 @@ export interface TestConsoleLauncher extends ConsoleLauncher {
   failNext(reason: string): void;
   /** The next open() reports a process without PID/start time. */
   unknownNext(): void;
+  /** The next open() waits (after recording its spec) until `release()`. */
+  holdNext(): ConsoleHold;
 }
 
 export const TEST_CONSOLE_FIRST_PID = 60_000;
@@ -35,6 +44,8 @@ export function createTestConsoleLauncher(o: {
   let nextPid = TEST_CONSOLE_FIRST_PID;
   let failure: string | null = null;
   let unknown = false;
+  let hold: { reached: PromiseWithResolvers<undefined>; released: PromiseWithResolvers<undefined> } | null =
+    null;
   return {
     opened,
     checks,
@@ -47,21 +58,40 @@ export function createTestConsoleLauncher(o: {
     unknownNext() {
       unknown = true;
     },
-    open(spec) {
+    holdNext() {
+      const next = {
+        reached: Promise.withResolvers<undefined>(),
+        released: Promise.withResolvers<undefined>(),
+      };
+      hold = next;
+      return {
+        reached: next.reached.promise,
+        release: () => {
+          next.released.resolve(undefined);
+        },
+      };
+    },
+    async open(spec) {
       opened.push(spec);
+      const held = hold;
+      hold = null;
+      if (held !== null) {
+        held.reached.resolve(undefined);
+        await held.released.promise;
+      }
       if (failure !== null) {
         const reason = failure;
         failure = null;
-        return Promise.resolve({ kind: 'failed', reason });
+        return { kind: 'failed', reason };
       }
       o.onOpen?.(spec);
       if (unknown) {
         unknown = false;
-        return Promise.resolve({ kind: 'opened', process: { pid: null, startedAt: null } });
+        return { kind: 'opened', process: { pid: null, startedAt: null } };
       }
       const pid = nextPid;
       nextPid += 1;
-      return Promise.resolve({ kind: 'opened', process: { pid, startedAt: o.now() } });
+      return { kind: 'opened', process: { pid, startedAt: o.now() } };
     },
     state(process) {
       checks.push(process);

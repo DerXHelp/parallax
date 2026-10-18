@@ -28,7 +28,7 @@ import {
   type TranscriptItem,
   type Truncation,
 } from '@shared/model';
-import type { SessionOp } from '@shared/protocol';
+import type { Command, HostCommandName, SessionOp } from '@shared/protocol';
 import { openDecisionCount, type StatusFacts } from '@shared/status';
 import type { SessionViewState } from '@shared/sync';
 import type { AgentBackend } from '../backend/types';
@@ -85,6 +85,12 @@ export interface SessionManagerOptions {
    */
   orphanShutdownWaitMs: number;
   /**
+   * R4-03: the shutdown waits this long (from its start, alongside the closes) for lifecycle
+   * operations still running – e.g. `openExternal` while PowerShell opens the console – before it
+   * flushes the stores (the handoff is recorded then). Default 10000.
+   */
+  lifecycleShutdownWaitMs: number;
+  /**
    * ADR-113: interval of the git-branch refresh for entries a visible window shows (also dormant
    * ones). 0 = off. Default 60000. (`promptSuggestions` comes from the settings since Phase 2.)
    */
@@ -127,11 +133,15 @@ export interface EngineStores {
   warnings: StoreWarnings;
   processes: ProcessStore;
   /**
-   * Phase 2 (ADR-114): model catalogs + account limits per profile (`openCatalogStore`, opened with
-   * the other stores – a newer file aborts the start). Default: in memory (not persistent).
+   * Phase 2 (ADR-114): model catalogs + account limits per profile – compose.ts passes the file
+   * store (`openCatalogStore`, opened with the other stores; a newer file aborts the start).
+   * Absent (engine tests): in memory.
    */
   catalogs?: CatalogStore;
-  /** Phase 2 (ADR-108): slash-command cache per entry (`createCommandCatalogStore`). Default: in memory. */
+  /**
+   * Phase 2 (ADR-108): slash-command cache per entry – compose.ts passes `createCommandCatalogStore`.
+   * Absent (engine tests): in memory.
+   */
   commandCatalogs?: CommandCatalogStore;
 }
 
@@ -791,6 +801,51 @@ export function commandError(
   params: Parameters<typeof makeError>[1] = {},
 ): CommandError {
   return new CommandError(makeError(code, params));
+}
+
+/** Commands of one entry (everything but the host-wide ones). */
+export type EntryCommand = Exclude<
+  Command,
+  { name: 'session.create' | 'settings.update' | 'server.shutdown' | HostCommandName }
+>;
+export type EntryCommandName = EntryCommand['name'];
+
+/** WP-30 §4.12: an archived entry is read-only until it is restored. */
+export const ARCHIVED_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryCommandName>([
+  'session.setArchived',
+  'session.setPinned',
+  'session.rename',
+  'transcript.loadEarlier',
+  'session.consoleCommand',
+]);
+
+/** WP-30 §4.12: open in an external console – never a second writer on the Claude session. */
+export const EXTERNAL_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryCommandName>([
+  'transcript.loadEarlier',
+  'session.reclaim',
+  'session.consoleCommand',
+  'session.setPinned',
+  'session.rename',
+]);
+
+/** The entry is handed off to an external console (recorded, or its status says so). */
+export function isExternal(s: EntryState): boolean {
+  return s.entry.external !== null || s.facts.runState === 'external';
+}
+
+/**
+ * The gates of WP-30 §4.12: external → only `EXTERNAL_ALLOWED` (SESSION_EXTERNAL), archived → only
+ * `ARCHIVED_ALLOWED` (SESSION_ARCHIVED). Checked when a command arrives AND again inside the
+ * lifecycle lock (R4-01): a command that waited for the lock while `openExternal` or the archiving
+ * ran must not continue past the gate it passed before.
+ */
+export function assertEntryGate(s: EntryState, name: EntryCommandName): void {
+  if (isExternal(s) && !EXTERNAL_ALLOWED.has(name)) {
+    throw commandError('SESSION_EXTERNAL', { entryId: s.id });
+  }
+  if (s.entry.archived && !ARCHIVED_ALLOWED.has(name)) {
+    throw commandError('SESSION_ARCHIVED', { entryId: s.id });
+  }
 }
 
 /**

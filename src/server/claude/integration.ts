@@ -24,7 +24,12 @@ import { buildEnv, buildEnvReport, clientAppId, setEnvVar } from './env';
 import { parseProfileArgs } from './profileArgs';
 import { errorCount, profileIssues } from './profileIssues';
 import type { PersistentProfileStore } from './profileStore';
-import { createProfileStore, registerEnvSecrets, type MutableProfileStore } from './profiles';
+import {
+  createProfileStore,
+  profileResolutionKey,
+  registerEnvSecrets,
+  type MutableProfileStore,
+} from './profiles';
 import type { ClaudeIntegration, ConsoleLaunchRequest, ConsoleLaunchSpec, LaunchSpec } from './ports';
 import { cliVersionStatus, readSdkManifest, resolveClaude, type ResolveClaudeResult } from './resolveClaude';
 
@@ -77,8 +82,24 @@ interface CacheEntry {
 }
 
 /** Everything the resolution of a profile depends on (executable, env incl. PATH, config dir). */
-function resolutionKey(profile: Profile): string {
-  return JSON.stringify([profile.executable, profile.env, profile.configDir]);
+const resolutionKey = profileResolutionKey;
+
+/**
+ * ADR-124 (R4-07): the values of the profile's secret env names as the built env carries them
+ * (`${env:NAME}` resolved) are registered with the log redaction at every launch spec, profile
+ * check and console spec – not only for the console. Returns those values (name → value).
+ */
+function registerProfileSecrets(
+  profile: Profile,
+  env: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const resolved: Record<string, string> = {};
+  for (const name of Object.keys(profile.env)) {
+    const value = getEnvVar(env, name);
+    if (value !== undefined) resolved[name] = value;
+  }
+  registerEnvSecrets(resolved);
+  return resolved;
 }
 
 function notifiesChanges(
@@ -234,6 +255,8 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
     });
     const envIssue = report.issues[0];
     if (envIssue !== undefined) return { ...status, error: envIssue };
+    // CLI stderr/stdout of the check may be logged: its secrets are known first (ADR-124).
+    registerProfileSecrets(profile, report.env);
 
     const resolved = await resolveFresh(profile, report.env);
     if (!resolved.ok) return { ...status, state: 'not_found', error: resolved.error };
@@ -264,6 +287,8 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
         clientApp,
         persistent: await persistentEnv(),
       });
+      // ADR-124: before anything of this start can be logged (CLI stderr, spawn errors).
+      registerProfileSecrets(profile, env);
       const resolved = await resolveCached(profile, env);
       if (!resolved.ok) throw new CommandError(resolved.error);
       logger.debug(
@@ -319,17 +344,12 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
         persistent: await persistentEnv(),
         target: 'terminal',
       });
+      // Only what the profile sets, resolved as the console sees it (`${env:NAME}`), + the config
+      // dir; its secrets are registered first (ADR-124).
+      const explicitEnv = registerProfileSecrets(profile, env);
       const resolved = await resolveCached(profile, env);
       if (!resolved.ok) throw new CommandError(resolved.error);
-
-      // Only what the profile sets, resolved as the console sees it (`${env:NAME}`), + the config dir.
-      const explicitEnv: Record<string, string> = {};
-      for (const name of Object.keys(profile.env)) {
-        const value = getEnvVar(env, name);
-        if (value !== undefined) explicitEnv[name] = value;
-      }
       if (profile.configDir !== null) setEnvVar(explicitEnv, 'CLAUDE_CONFIG_DIR', profile.configDir);
-      registerEnvSecrets(explicitEnv);
 
       // profile.args are C.12-checked; the CLI takes them as written (bypass flags included).
       const args = [...profile.args, '--resume', req.resumeSessionId];

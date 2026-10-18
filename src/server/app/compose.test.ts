@@ -55,7 +55,7 @@ async function start(
     port?: number;
     webRoot?: string | null;
     homeLock?: HomeLock;
-    homeAccess?: (home: string) => Promise<unknown>;
+    homeAccess?: (home: string, signal: AbortSignal) => Promise<unknown>;
     signals?: SignalTarget;
     systemIntegration?: SystemIntegration;
   } = {},
@@ -390,6 +390,85 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
     const changed = vi.spyOn(server.manager, 'onProfileChanged');
     await server.manager.handleCommand({ name: 'profile.save', profile: sampleProfileInput() }, ctx());
     expect(changed).toHaveBeenCalled();
+  });
+
+  it('R4-06: a changed config dir is checked again in the background (no stale "ok")', async () => {
+    const home = await tempHome();
+    const { server } = await start(home);
+    const { manager } = server;
+    const input = sampleProfileInput({ env: {}, configDir: null });
+    const saved = await manager.handleCommand({ name: 'profile.save', profile: input }, ctx());
+    const profileId = (saved as { profileId: string }).profileId;
+    const claude = () => manager.hostState().profiles.find((p) => p.id === profileId)?.claude;
+    await vi.waitFor(() => {
+      expect(claude()?.state).toBe('ok');
+    });
+    const first = claude()?.checkedAt ?? null;
+    expect(first).not.toBeNull();
+    // A later check gets a later timestamp (real clock of the fake integration).
+    await vi.waitFor(() => {
+      expect(Date.now()).toBeGreaterThan(Date.parse(first ?? ''));
+    });
+    await manager.handleCommand(
+      { name: 'profile.save', profile: { ...input, id: profileId, configDir: path.join(home, 'cfg') } },
+      ctx(),
+    );
+    await vi.waitFor(() => {
+      expect(claude()).toMatchObject({ state: 'ok' });
+      expect(claude()?.checkedAt).not.toBe(first);
+    });
+  });
+
+  it('R4-13 / V3-15 b: the shutdown waits for the profile checks and ends a running access check', async () => {
+    const home = await tempHome();
+    const lines: string[] = [];
+    const logger = createLogger({
+      level: 'info',
+      destination: { write: (line: string) => lines.push(line) },
+    });
+    const config = loadConfig({
+      argv: ['--backend=fake', '--port=0', `--home=${home}`, '--validate=throw', '--toasts=off'],
+      env: {},
+    });
+    let signal: AbortSignal | null = null;
+    const server = await startServer({
+      config,
+      webRoot: null,
+      signals: null,
+      fakeSpeed: 0,
+      exit: () => undefined,
+      homeLock: null,
+      logger,
+      // An access check that only ends when the shutdown aborts it.
+      homeAccess: (_home, abort) => {
+        signal = abort;
+        return new Promise<void>((resolve) => {
+          abort.addEventListener('abort', () => {
+            resolve();
+          });
+        });
+      },
+    });
+    cleanups.push(() => server.shutdown.stop('command'));
+    await vi.waitFor(() => {
+      expect(signal).not.toBeNull();
+    });
+    await server.shutdown.stop('command');
+    expect((signal as AbortSignal | null)?.aborted).toBe(true);
+    const done = lines
+      .map((line) => JSON.parse(line) as { msg?: string; stepsMs?: Record<string, number> })
+      .find((entry) => entry.msg === 'shutdown: done');
+    expect(Object.keys(done?.stepsMs ?? {})).toEqual([
+      'sessions',
+      'http',
+      'system',
+      'profileChecks',
+      'stores',
+      'homeAccess',
+      'lock',
+      'homeLock',
+    ]);
+    expect(lines.filter((line) => line.includes('step did not complete'))).toEqual([]);
   });
 
   it('system integration: applied after listen and after every settings.update; warnings and changes reach the host state', async () => {

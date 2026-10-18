@@ -31,7 +31,10 @@ import {
   frame,
   input,
   events as join,
+  streamedText,
   toEvents,
+  toolResultMessage,
+  toolUseBlock,
   turnClose,
   turnOpen,
 } from '../backend/fake/dsl';
@@ -216,6 +219,65 @@ describe('idle sleep from the settings (ADR-105)', () => {
     await h.cmd({ name: 'settings.update', patch: { idleSleep: { enabled: true, minutes: 5 } } });
     await h.waitFor(() => h.facts(entryId).runState === 'sleeping');
     expect(sessionsExited(h, entryId)).toBe(true);
+  });
+
+  it.each(['ScheduleWakeup', 'CronCreate'])(
+    'ADR-121 (R4-02): a %s tool call keeps the process awake; the next process may sleep again',
+    async (tool) => {
+      const c = dslContext({ sessionId: '5e550000-0000-4000-8000-0000000003b3' });
+      const prompt = c.ids.uuid();
+      const toolUseId = c.ids.toolUseId();
+      const events = join(
+        input(c, prompt, 'check again in an hour'),
+        turnOpen(c, prompt),
+        toolUseBlock(c, tool, { delaySeconds: 3600, prompt: 'check the deploy' }, { toolUseId }),
+        toolResultMessage(c, toolUseId, 'Scheduled.'),
+        streamedText(c, 'I will check again in an hour.'),
+        turnClose(c, prompt),
+        closeGate(),
+      );
+      const h = await setup({ sleepPolicy: 'settings', scenario: () => eventsScenario('planned', events) });
+      const entryId = await h.create('check again in an hour');
+      await h.waitFor(() => h.facts(entryId).runState === 'idle');
+      await h.settle();
+      expect(h.manager.inspect(entryId)?.scheduledTurn).toBe(true);
+      expect(h.timers.pending()).toEqual([]);
+      // Presence changes and settings re-plan – still no sleep.
+      setPresence(h, [client(null)]);
+      await h.cmd({ name: 'settings.update', patch: { idleSleep: { enabled: true, minutes: 5 } } });
+      expect(h.timers.pending()).toEqual([]);
+      h.timers.advance(120 * MINUTE);
+      await h.settle();
+      expect(h.facts(entryId).runState).toBe('idle');
+      expect(sessionsExited(h, entryId)).toBe(false);
+      // A new process starts without the mark (the plan died with the old one).
+      await h.cmd({ name: 'session.close', entryId });
+      await h.cmd({ name: 'session.resume', entryId });
+      await h.waitFor(() => h.facts(entryId).runState === 'idle');
+      await h.settle();
+      expect(h.manager.inspect(entryId)?.scheduledTurn).toBe(false);
+      expect(pendingMs(h)).toEqual([5 * MINUTE]);
+    },
+  );
+
+  it('ADR-121 (R4-02): a /loop prompt keeps the process awake; other tools and prompts do not', async () => {
+    const h = await setup({ sleepPolicy: 'settings' });
+    const entryId = await idleEntry(h);
+    expect(h.manager.inspect(entryId)?.scheduledTurn).toBe(false);
+    // Neither an ordinary tool nor a prompt that only mentions /loop.
+    await h.cmd({ name: 'session.sendPrompt', entryId, prompt: { text: 'explain /loop to me' } });
+    await h.waitFor(() => h.facts(entryId).runState === 'idle');
+    await h.settle();
+    expect(pendingMs(h)).toEqual([30 * MINUTE]);
+    await h.cmd({ name: 'session.sendPrompt', entryId, prompt: { text: '  /loop 40m check the deploy' } });
+    await h.waitFor(() => h.facts(entryId).runState === 'idle');
+    await h.settle();
+    expect(h.manager.inspect(entryId)?.scheduledTurn).toBe(true);
+    expect(h.timers.pending()).toEqual([]);
+    h.timers.advance(120 * MINUTE);
+    await h.settle();
+    expect(h.facts(entryId).runState).toBe('idle');
+    expect(sessionsExited(h, entryId)).toBe(false);
   });
 });
 
@@ -555,6 +617,20 @@ describe('switchConversation (ADR-107)', () => {
     await h.cmd({ name: 'session.switchConversation', entryId: entry.id, conversationId: CV_CUR });
     expect(h.publisher.opsOf(entry.id)).toHaveLength(ops);
     expect(h.stores.registry.get(entry.id)?.conversations.map((c) => c.id)).toEqual([CV_NEW, CV_CUR]);
+  });
+
+  it('R4-08: a scheduled "continue" belongs to the conversation that is left – the switch drops it', async () => {
+    const entry = seededEntry({ continueAt: sampleTime(600) });
+    const h = await setup({ seed: { entries: [entry], transcripts: transcripts(entry.id) } });
+    expect(h.manager.inspect(entry.id)?.continueScheduled).toBe(true);
+    expect(h.facts(entry.id).wakeupAt).toBe(sampleTime(600));
+    await h.cmd({ name: 'session.switchConversation', entryId: entry.id, conversationId: CV_OLD });
+    expect(h.stores.registry.get(entry.id)?.continueAt).toBeNull();
+    expect(h.facts(entry.id).wakeupAt).toBeNull();
+    expect(h.manager.inspect(entry.id)?.continueScheduled).toBe(false);
+    h.timers.advance(600_000);
+    await h.settle();
+    expect(h.backend.starts).toEqual([]);
   });
 
   it('SESSION_BUSY with an open decision (the process keeps running)', async () => {

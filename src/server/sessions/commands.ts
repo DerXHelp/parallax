@@ -2,7 +2,8 @@
  * Commands of the engine (WP-13 §3.5.6; WP-02 §7.5, vorrangig architecture §5.2; Phase 2 WP-30
  * §4.12). General rules: shutdown running → SERVER_SHUTTING_DOWN; unknown entry → ENTRY_NOT_FOUND;
  * runState `external` → only the console-safe commands, else SESSION_EXTERNAL; archived entry →
- * only the read-mode commands, else SESSION_ARCHIVED (ADR-106); host commands (`profile.*`,
+ * only the read-mode commands, else SESSION_ARCHIVED (ADR-106) – both gates are checked again
+ * inside the lifecycle lock (`assertEntryGate`, R4-01); host commands (`profile.*`,
  * `fs.listDirectory`) go to the `HostCommandHandler` with that name (ADR-101), none →
  * NOT_IMPLEMENTED; unexpected errors → logged, INTERNAL_ERROR. Results match
  * `commandResultSchemas` (the hub checks them again). WP-34: image attachments (attachments.ts,
@@ -18,13 +19,20 @@ import {
   type CommandOf,
   type CommandResult,
   type HostCommand,
-  type HostCommandName,
   type SessionOp,
 } from '@shared/protocol';
 import { CommandError, type CommandContext, type HostCommandHandler } from '../sync/ports';
 import { resolveAttachments } from './attachments';
 import { cancelContinue, planContinue } from './continuePlan';
-import { assertWithoutWork, commandError, gaugeOf, type EngineCore, type EntryState } from './entryState';
+import {
+  assertEntryGate,
+  assertWithoutWork,
+  commandError,
+  gaugeOf,
+  type EngineCore,
+  type EntryCommand,
+  type EntryState,
+} from './entryState';
 import { consoleCommand, openExternal, returnFromExternal } from './external';
 import { catalogOrFallback, toModelCatalog } from './models';
 import { closeRuntime, deliverPrompt, startRuntime } from './runtime';
@@ -44,30 +52,6 @@ export interface CommandEngine {
   /** After a successful settings.update: host state, sleep re-plan, `onSettingsChanged`. */
   settingsChanged(prev: Settings, next: Settings): void;
 }
-
-type EntryCommand = Exclude<
-  Command,
-  { name: 'session.create' | 'settings.update' | 'server.shutdown' | HostCommandName }
->;
-type EntryCommandName = EntryCommand['name'];
-
-/** WP-30 §4.12: an archived entry is read-only until it is restored. */
-const ARCHIVED_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryCommandName>([
-  'session.setArchived',
-  'session.setPinned',
-  'session.rename',
-  'transcript.loadEarlier',
-  'session.consoleCommand',
-]);
-
-/** WP-30 §4.12: open in an external console – never a second writer on the Claude session. */
-const EXTERNAL_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryCommandName>([
-  'transcript.loadEarlier',
-  'session.reclaim',
-  'session.consoleCommand',
-  'session.setPinned',
-  'session.rename',
-]);
 
 export async function handleCommand(
   engine: CommandEngine,
@@ -204,12 +188,8 @@ async function createSession(
 async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: ClientId): Promise<unknown> {
   const s = engine.state(cmd.entryId);
   if (s === undefined) throw commandError('ENTRY_NOT_FOUND', { entryId: cmd.entryId });
-  if (s.facts.runState === 'external' && !EXTERNAL_ALLOWED.has(cmd.name)) {
-    throw commandError('SESSION_EXTERNAL', { entryId: s.id });
-  }
-  if (s.entry.archived && !ARCHIVED_ALLOWED.has(cmd.name)) {
-    throw commandError('SESSION_ARCHIVED', { entryId: s.id });
-  }
+  // Checked again inside the lifecycle lock by every command that waits for it (R4-01).
+  assertEntryGate(s, cmd.name);
   const core = engine.core;
   switch (cmd.name) {
     case 'session.sendPrompt':
@@ -276,6 +256,7 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
     case 'session.resume':
       s.cancelRetry();
       await s.lifecycle.run(async () => {
+        assertEntryGate(s, cmd.name);
         if (s.runtime === null) await startRuntime(s, core, { byClientId: clientId });
       });
       return {} satisfies CommandResult<'session.resume'>;
@@ -347,6 +328,8 @@ async function sendPrompt(
   // Text only: at once (the title shows while a start may still wait for the lock).
   if (list.length === 0) accept();
   const messageUuid = await s.lifecycle.run(async () => {
+    // R4-01: handed off or archived while this prompt waited for the lock.
+    assertEntryGate(s, cmd.name);
     // ADR-103: the attachments are checked before anything starts, is sent or changes – inside the
     // lock, so a Stop right after this prompt still waits for it (R2-15).
     const attachments = await resolveAttachments(core.stores.blobs, list);
@@ -386,9 +369,13 @@ async function setArchived(
   if (s.entry.archived) return {};
   s.cancelRetry();
   await s.lifecycle.run(async () => {
+    // R4-01: handed off while waiting (never "archived + external") – or archived meanwhile.
+    assertEntryGate(s, 'session.setArchived');
+    if (s.entry.archived) return;
     assertWithoutWork(s);
     // The flag first: from here on every other command answers SESSION_ARCHIVED (also one that
-    // waits for this lock – startRuntime refuses archived entries).
+    // waits for this lock – the lock bodies check the gate again, startRuntime refuses archived
+    // entries).
     s.patch((e) => ({ ...e, archived: true }));
     // ADR-112: a scheduled "continue" is dropped (timer, continueAt, wakeupAt).
     cancelContinue(s);
@@ -469,6 +456,8 @@ async function switchConversation(
 ): Promise<CommandResult<'session.switchConversation'>> {
   s.cancelRetry();
   await s.lifecycle.run(async () => {
+    // R4-01: never switch while (or after) a console took the conversation over.
+    assertEntryGate(s, 'session.switchConversation');
     const target = s.entry.conversations.find((c) => c.id === conversationId);
     if (target === undefined) throw commandError('CONVERSATION_NOT_FOUND', { conversationId });
     const previous = s.conversation();
@@ -477,6 +466,8 @@ async function switchConversation(
     assertWithoutWork(s);
     // Read first: a failing read changes nothing.
     const tail = await core.stores.transcripts.readTail(s.id, target.id, LIMITS.snapshotItems);
+    // R4-08 (ADR-112): a scheduled "continue" belongs to the conversation that is left.
+    cancelContinue(s);
     await closeRuntime(s, core, 'switch');
     // Expired cards (A.10) belong to the conversation that is left.
     s.broker.closeExpired(clientId);
@@ -538,6 +529,7 @@ async function respond(
   s.cancelRetry();
   try {
     await s.lifecycle.run(async () => {
+      assertEntryGate(s, 'decision.respond');
       const runtime = running(s);
       if (runtime === null) {
         await startRuntime(s, core, { byClientId: clientId, permissionMode: result.mode });

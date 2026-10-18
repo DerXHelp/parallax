@@ -5,8 +5,8 @@
  * (the last rate-limit info per profile, only from subscription sessions – `apiKeySource 'none'`).
  * Server-internal schemas (no contract), `schemaVersion: 1`, both over `JsonStore` (WP-10: atomic,
  * `.bak`, quarantine of corrupt files, a NEWER schemaVersion aborts the start like ADR-020).
- * `createMemoryCatalogStore()` is the test double (and the default of the manager until the
- * composition passes the file store).
+ * `createMemoryCatalogStore()` is the test double and the manager's default when no store is passed
+ * (engine tests); compose.ts passes the file store (`openCatalogStore`).
  */
 import path from 'node:path';
 import type { Logger } from 'pino';

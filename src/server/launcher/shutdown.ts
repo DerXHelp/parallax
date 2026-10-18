@@ -9,7 +9,8 @@
  * `stop()`: `stopSessions()` (engine: `close()` of every query, flush stores, `backend.dispose()`)
  * – if it is still running after `graceMs` (5 s, C.8), the remaining child process trees of the
  * server are ended with `taskkill /T /F` – then the close steps in order (compose.ts: `http` → WS
- * close 4503, `stores`, `homeAccess`, `lock`, `homeLock`), each bounded by a timeout, then
+ * close 4503, `system`, `profileChecks`, `stores`, `homeAccess`, `lock`, `homeLock`), each bounded
+ * by a timeout, then
  * `exit(code)` (the log file is closed by the exit wrapper of compose.ts).
  * The engine logic itself belongs to WP-13b; this module only orders and bounds the steps.
  * Reason `error` (exit code 1): the global crash handler of main.ts (app/crash.ts, R3-06).

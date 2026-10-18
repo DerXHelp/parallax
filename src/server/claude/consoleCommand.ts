@@ -4,6 +4,9 @@
  *
  *   Set-Location -LiteralPath '<cwd>'; $env:NAME='<value>'; …; & { $PSNativeCommandArgumentPassing='Legacy'; & '<exe>' '<arg>' … }
  *
+ * ADR-123: a variable with a secret name (`isSecretEnvKey`, ADR-124) gets no value in the line but a
+ * hidden prompt (`Read-Host -AsSecureString`) – the copied text never carries profile secrets.
+ *
  * PowerShell literals are single-quoted with every quote character doubled (PowerShell also treats
  * ‘ ’ ‚ ‛ as single quotes); a value with a line break becomes a double-quoted literal with
  * backtick escapes so the command stays one line.
@@ -18,6 +21,8 @@
  * (e.g. `"a b"` with its quotes) is re-quoted by PowerShell and arrives split – the external
  * console itself (WP-33, Start-Process with a complete command line) is not affected.
  */
+import { isSecretEnvKey } from '@shared/secrets';
+import { quotedArgBody } from '../lib/cmdline';
 import type { ConsoleLaunchSpec } from './ports';
 
 const SIMPLE_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -40,21 +45,12 @@ export function powerShellEnvVariable(name: string): string {
   return `\${env:${name.replace(/[`{}]/g, (char) => `\`${char}`)}}`;
 }
 
-/** MSVC escaping without the surrounding quotes: `"` → `\"`, backslashes before a quote doubled. */
-function quotedBody(arg: string): string {
-  let body = '';
-  let backslashes = 0;
-  for (const char of arg) {
-    if (char === '\\') {
-      backslashes += 1;
-      continue;
-    }
-    if (char === '"') body += `${'\\'.repeat(backslashes * 2 + 1)}"`;
-    else body += '\\'.repeat(backslashes) + char;
-    backslashes = 0;
-  }
-  // The closing quote follows: trailing backslashes are doubled.
-  return body + '\\'.repeat(backslashes * 2);
+/**
+ * ADR-123: the value of a secret variable is asked for, hidden, when the line runs – it never
+ * travels in the copied text (clipboard history, sync). Works in Windows PowerShell 5.1 and 7.
+ */
+export function secretPrompt(name: string): string {
+  return `[Net.NetworkCredential]::new('', (Read-Host ${powerShellLiteral(name)} -AsSecureString)).Password`;
 }
 
 /** For every whitespace of `arg`: is the number of `"` before it even? */
@@ -76,7 +72,7 @@ function quoteParityAtWhitespace(arg: string): boolean[] {
 export function nativeCommandArg(arg: string): string {
   // `--%` alone is PowerShell's stop-parsing token even when quoted: quote it for the program.
   if (arg !== '' && arg !== '--%' && !/[\s"]/.test(arg)) return arg;
-  const body = quotedBody(arg);
+  const body = quotedArgBody(arg);
   const parity = quoteParityAtWhitespace(arg);
   // Every whitespace after an even number of `"` (or none at all): PowerShell keeps `"…"` as is.
   if (parity.every((even) => even)) return `"${body}"`;
@@ -85,11 +81,15 @@ export function nativeCommandArg(arg: string): string {
   return body;
 }
 
-/** One PowerShell line: cwd, the profile's explicit env, then `& '<exe>' <args>` (see module comment). */
+/**
+ * One PowerShell line: cwd, the profile's explicit env (secret names as a hidden prompt, ADR-123),
+ * then `& '<exe>' <args>` (see module comment).
+ */
 export function consoleCommandText(spec: ConsoleLaunchSpec): string {
   const parts = [`Set-Location -LiteralPath ${powerShellLiteral(spec.cwd)}`];
   for (const [name, value] of Object.entries(spec.explicitEnv)) {
-    parts.push(`${powerShellEnvVariable(name)}=${powerShellLiteral(value)}`);
+    const assigned = isSecretEnvKey(name) ? secretPrompt(name) : powerShellLiteral(value);
+    parts.push(`${powerShellEnvVariable(name)}=${assigned}`);
   }
   const call = [
     powerShellLiteral(spec.executablePath),
