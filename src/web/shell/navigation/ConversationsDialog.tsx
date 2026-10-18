@@ -1,26 +1,31 @@
 import { useMemo, useState } from 'react';
 import type { ConversationId } from '@shared/common';
+import type { ErrorPayload } from '@shared/errors';
 import type { Conversation } from '@shared/model';
-import { useFormat, useT } from '@web/i18n';
+import { useI18n } from '@web/i18n';
 import { earlierConversations } from '@web/lib/conversations';
+import { useReturnFocus } from '@web/lib/return-focus';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand, useSessionDetail, useSummary } from '@web/state/hooks';
-import { showErrorNotice } from '@web/state/notices';
+import { Alert } from '@web/ui/alert';
 import { Button } from '@web/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@web/ui/dialog';
 import { Skeleton } from '@web/ui/skeleton';
+import { sessionFocusTarget } from './focus';
 
 /**
  * "Earlier conversations" (request `conversations`, header menu, `/resume` of WP-37): title, start,
- * end and reason of each conversation before the current one; "Open" = `session.switchConversation`
- * (the server refuses busy sessions with SESSION_BUSY – shown as a notice).
+ * end and reason of each conversation before the current one; "Open" = `session.switchConversation`.
+ * A refusal (SESSION_BUSY while a turn runs …) shows inside the dialog (ADR-126, R4W-05). Closing
+ * gives the focus back to where it was (composer, menu → the header's "…").
  */
 export function ConversationsDialog({ sessionKey, onClose }: { sessionKey: string; onClose: () => void }) {
-  const t = useT();
-  const format = useFormat();
+  const { t, tError, format } = useI18n();
   const summary = useSummary(sessionKey);
   const detail = useSessionDetail(sessionKey);
   const [pending, setPending] = useState<ConversationId | null>(null);
+  const [error, setError] = useState<ErrorPayload | null>(null);
+  const returnFocus = useReturnFocus(true, () => sessionFocusTarget(sessionKey));
   const conversations = useMemo(
     () => (detail === null ? null : earlierConversations(detail.conversations, detail.conversationId)),
     [detail],
@@ -29,6 +34,7 @@ export function ConversationsDialog({ sessionKey, onClose }: { sessionKey: strin
   const open = (conversation: Conversation) => {
     if (summary === null) return;
     setPending(conversation.id);
+    setError(null);
     sendCommand(sessionKey, {
       name: 'session.switchConversation',
       entryId: summary.entryId,
@@ -38,10 +44,9 @@ export function ConversationsDialog({ sessionKey, onClose }: { sessionKey: strin
         setPending(null);
         onClose();
       },
-      (error: unknown) => {
+      (caught: unknown) => {
         setPending(null);
-        const payload = errorPayloadOf(error);
-        showErrorNotice(payload, { sessionKey, tone: payload.code === 'SESSION_BUSY' ? 'warning' : 'error' });
+        setError(errorPayloadOf(caught));
       },
     );
   };
@@ -53,11 +58,20 @@ export function ConversationsDialog({ sessionKey, onClose }: { sessionKey: strin
         if (!next) onClose();
       }}
     >
-      <DialogContent data-slot="conversations-dialog" className="sm:max-w-lg">
+      <DialogContent data-slot="conversations-dialog" className="sm:max-w-lg" onCloseAutoFocus={returnFocus}>
         <DialogHeader>
           <DialogTitle>{t('navigation.conversations.title')}</DialogTitle>
           <DialogDescription>{t('navigation.conversations.description')}</DialogDescription>
         </DialogHeader>
+        {error === null ? null : (
+          <Alert
+            tone={error.code === 'SESSION_BUSY' ? 'warning' : 'error'}
+            role="alert"
+            data-slot="conversations-error"
+          >
+            {tError(error)}
+          </Alert>
+        )}
         {conversations === null ? (
           <div className="grid gap-2" aria-busy="true" aria-label={t('common.loading')}>
             <Skeleton className="h-12" />

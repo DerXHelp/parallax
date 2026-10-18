@@ -11,6 +11,7 @@ import type { TranslationKey } from '@web/i18n';
  *
  * Scopes: `scope: 'decision-bar'` (focus inside `[data-shortcut-scope="decision-bar"]`, any pane)
  * or – exact with several panes – `scopeRef` (focus inside that element). Both may be combined.
+ * While a dialog or menu is open, only scoped shortcuts fire (R4W-11).
  *
  * Key syntax: `Mod+K` (Mod = Ctrl), `Alt+1`, `Shift+Enter`, `?`, `Escape`. Symbol keys (`?`, `/`)
  * match regardless of Shift (layout-dependent).
@@ -149,6 +150,15 @@ function isEditable(target: Element | null): boolean {
 const OVERLAY_SELECTOR =
   '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-radix-popper-content-wrapper]';
 
+/** An open dialog, alert dialog or menu anywhere in the document (Radix marks it `data-state="open"`). */
+const OPEN_OVERLAY_SELECTOR =
+  '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"], [role="menu"][data-state="open"]';
+
+function overlayOpen(target: Element | null): boolean {
+  const doc = target?.ownerDocument ?? (typeof document === 'undefined' ? null : document);
+  return doc !== null && doc.querySelector(OPEN_OVERLAY_SELECTOR) !== null;
+}
+
 interface Registered {
   definition: ShortcutDefinition;
   parsed: ShortcutKeys[];
@@ -236,11 +246,16 @@ export class ShortcutRegistry {
       }
     }
     const typing = isEditable(target);
+    // R4W-11: window-wide shortcuts sleep while a dialog or menu is open (Alt+2 would switch the
+    // session behind the settings, Ctrl+K stack the switcher on top); scoped ones still fire
+    // when the focus is inside their scope.
+    const overlay = overlayOpen(target);
     for (let i = this.entries.length - 1; i >= 0; i--) {
       const entry = this.entries[i];
       if (entry === undefined) continue;
       const { definition } = entry;
       if (typing && definition.allowInInputs !== true) continue;
+      if (overlay && definition.scope === undefined && definition.scopeRef === undefined) continue;
       if (!isInScope(target, definition)) continue;
       const index = entry.parsed.findIndex((keys) => matchesShortcut(event, keys));
       if (index < 0) continue;

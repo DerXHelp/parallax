@@ -1,5 +1,5 @@
 import { EllipsisIcon } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { SessionSummary } from '@shared/model';
 import { useT } from '@web/i18n';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@web/ui/dropdown-menu';
@@ -7,8 +7,8 @@ import { IconButton } from '@web/ui/icon-button';
 import {
   HEADER_ACTIONS,
   SessionActionItems,
-  onSessionMenuCloseAutoFocus,
   sessionActions,
+  sessionMenuCloseAutoFocus,
 } from './session-actions';
 
 /**
@@ -29,6 +29,7 @@ export function SessionMenu({
   const t = useT();
   const [open, setOpen] = useState(defaultOpen);
   const actions = open ? sessionActions(HEADER_ACTIONS, sessionKey, summary, 'header') : [];
+  const onCloseAutoFocus = useMemo(() => sessionMenuCloseAutoFocus(sessionKey, 'header'), [sessionKey]);
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
@@ -36,7 +37,7 @@ export function SessionMenu({
           <EllipsisIcon aria-hidden />
         </IconButton>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-56" onCloseAutoFocus={onSessionMenuCloseAutoFocus}>
+      <DropdownMenuContent align="end" className="min-w-56" onCloseAutoFocus={onCloseAutoFocus}>
         <SessionActionItems actions={actions} kind="dropdown" />
       </DropdownMenuContent>
     </DropdownMenu>

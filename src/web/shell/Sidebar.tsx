@@ -8,11 +8,10 @@ import {
   PlusIcon,
   SquarePenIcon,
 } from 'lucide-react';
-import { useId, useMemo, type KeyboardEvent, type ReactNode } from 'react';
-import type { HostId } from '@shared/common';
-import type { ProfileSummary } from '@shared/model';
+import { useEffect, useId, useMemo, type KeyboardEvent, type ReactNode } from 'react';
 import { PRODUCT_NAME } from '@shared/product';
 import { useT } from '@web/i18n';
+import { focusElement, focusedElement } from '@web/lib/return-focus';
 import {
   archivedOrder,
   flatSidebarOrder,
@@ -26,9 +25,10 @@ import { knownVersion } from '@web/lib/version';
 import { useNow } from '@web/state/clock';
 import {
   useHostState,
-  useHostStates,
+  useProfilesByHost,
   useSelectedSession,
   useSummaries,
+  type ProfilesByHost,
   type SummaryEntry,
 } from '@web/state/hooks';
 import { Badge } from '@web/ui/badge';
@@ -72,6 +72,10 @@ const LIST_MOVES: Readonly<Record<string, number | 'first' | 'last'>> = {
 function onListKeyDown(event: KeyboardEvent<HTMLElement>): void {
   const move = LIST_MOVES[event.key];
   if (move === undefined || event.altKey || event.ctrlKey || event.metaKey) return;
+  // R4W-12: keys of the row menus (portals – their React events bubble through the list) and of
+  // anything that handled the key already are not list moves.
+  if (event.defaultPrevented) return;
+  if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
   // Not inside an inline title field.
   if (event.target instanceof HTMLInputElement) return;
   event.preventDefault();
@@ -82,13 +86,9 @@ interface RowContext {
   now: number;
   selected: string | null;
   tabStopKey: string | null;
-  profiles: ReadonlyMap<string, ProfileSummary>;
+  profiles: ProfilesByHost;
   requiredCli: string | null;
   onSelect: (sessionKey: string) => void;
-}
-
-function profileKey(hostId: HostId, profileId: string): string {
-  return `${hostId}|${profileId}`;
 }
 
 function Rows({
@@ -105,7 +105,7 @@ function Rows({
     // time and unread dot stay visible, no horizontal scrollbar (V1-03).
     <ul role="list" className="grid grid-cols-[minmax(0,1fr)] gap-px">
       {items.map(({ entry, status }) => {
-        const profile = context.profiles.get(profileKey(entry.hostId, entry.summary.profileId));
+        const profile = context.profiles.get(entry.hostId, entry.summary.profileId);
         return (
           <SessionRow
             key={entry.sessionKey}
@@ -127,10 +127,15 @@ function Rows({
   );
 }
 
-/** A project group of the grouped view: folder label (full path in the tooltip), "+" and context menu. */
+/**
+ * A project group of the grouped view: folder label (full path in the tooltip), "+" and context
+ * menu. The "+" is no tab stop (R4W-13: the list stays one tab stop) – the keyboard reaches
+ * "New session in this project…" through each row's menu.
+ */
 function GroupSection({ group, context }: { group: SessionGroup<SummaryEntry>; context: RowContext }) {
   const t = useT();
   const labelId = useId();
+  const groupName = t('navigation.sidebar.group', { name: group.cwd });
   return (
     <div role="group" aria-labelledby={labelId} data-group={group.key} className="grid gap-px pb-1.5">
       <ContextMenu>
@@ -141,7 +146,7 @@ function GroupSection({ group, context }: { group: SessionGroup<SummaryEntry>; c
               <TooltipTrigger asChild>
                 <span className="min-w-0 flex-1 truncate">
                   <span id={labelId}>
-                    <span className="sr-only">{t('navigation.sidebar.group', { name: group.cwd })}</span>
+                    <span className="sr-only">{groupName}</span>
                     <span aria-hidden>{group.label}</span>
                   </span>
                 </span>
@@ -156,6 +161,7 @@ function GroupSection({ group, context }: { group: SessionGroup<SummaryEntry>; c
             <IconButton
               label={t('navigation.actions.newSessionHere')}
               size="icon-xs"
+              tabIndex={-1}
               data-action="new-session-here"
               onClick={() => {
                 newSessionIn(group.cwd);
@@ -165,7 +171,7 @@ function GroupSection({ group, context }: { group: SessionGroup<SummaryEntry>; c
             </IconButton>
           </div>
         </ContextMenuTrigger>
-        <ContextMenuContent>
+        <ContextMenuContent aria-label={groupName}>
           <ContextMenuItem
             onSelect={() => {
               newSessionIn(group.cwd);
@@ -192,7 +198,7 @@ export function Sidebar() {
   const now = useNow(30_000);
   const [selected, select] = useSelectedSession();
   const hostState = useHostState();
-  const hostStates = useHostStates();
+  const profiles = useProfilesByHost();
   const mode = useSidebarMode();
   const archive = useArchiveView();
 
@@ -205,13 +211,22 @@ export function Sidebar() {
   const mainOrder = useMemo(() => (groups === null ? flat : groupedOrder(groups)), [groups, flat]);
   const visible = archive ? archived : mainOrder;
   const waitingCount = flat.filter((item) => item.status.needsAttention).length;
-  const profiles = useMemo(() => {
-    const map = new Map<string, ProfileSummary>();
-    for (const [hostId, state] of Object.entries(hostStates)) {
-      for (const profile of state.profiles) map.set(profileKey(hostId, profile.id), profile);
+
+  // V3-14: the last archived session was restored (or deleted) – back to the sessions instead of
+  // an empty "Archive (0)"; a focus that went down with the row moves to the list.
+  const archiveEmpty = archive && archived.length === 0;
+  useEffect(() => {
+    if (!archiveEmpty) return;
+    const lost = focusedElement() === null;
+    setArchiveView(false);
+    if (lost) {
+      setTimeout(() => {
+        if (focusedElement() === null) {
+          focusElement(document.querySelector<HTMLElement>('[data-session-row][tabindex="0"]'));
+        }
+      }, 0);
     }
-    return map;
-  }, [hostStates]);
+  }, [archiveEmpty]);
 
   const goToNextWaiting = (): boolean => {
     const target = nextWaiting(mainOrder, selected, (entry) => entry.sessionKey);
@@ -280,9 +295,10 @@ export function Sidebar() {
         <span className="font-semibold tracking-tight">{PRODUCT_NAME}</span>
         {hostState?.backend === 'fake' ? (
           // R3-02: never mistake the FakeBackend for the real claude (e.g. a forgotten fake server).
+          // Without the tinted fill (V3-12): 11 px warning text reaches 4.5:1 on the light sidebar.
           <Tooltip>
             <TooltipTrigger asChild>
-              <Badge variant="warning" data-slot="backend-fake">
+              <Badge variant="warning" data-slot="backend-fake" className="bg-transparent">
                 {t('shell.sidebar.fakeBadge')}
                 <span className="sr-only">{t('shell.sidebar.fakeHint')}</span>
               </Badge>

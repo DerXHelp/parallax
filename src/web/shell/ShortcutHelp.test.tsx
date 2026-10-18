@@ -1,8 +1,9 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLanguage } from '@web/i18n';
 import { TooltipProvider } from '@web/ui/tooltip';
-import { ShortcutHelp, openShortcutHelp } from './ShortcutHelp';
+import { ShortcutHelp, closeShortcutHelp, openShortcutHelp } from './ShortcutHelp';
 import { useShortcut } from './shortcuts';
 
 function InFields() {
@@ -19,10 +20,33 @@ function InFields() {
 afterEach(() => {
   act(() => {
     setLanguage('en');
+    closeShortcutHelp();
   });
 });
 
 describe('ShortcutHelp (R2W-11)', () => {
+  it('Esc gives the focus back to where it was (no trigger button – V3-04, R4W-04)', async () => {
+    const user = userEvent.setup();
+    render(
+      <TooltipProvider>
+        <textarea aria-label="Message" />
+        <ShortcutHelp />
+      </TooltipProvider>,
+    );
+    const field = screen.getByRole('textbox', { name: 'Message' });
+    act(() => {
+      field.focus();
+    });
+    act(() => {
+      openShortcutHelp();
+    });
+    await screen.findByRole('dialog', { name: 'Keyboard shortcuts' });
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(document.activeElement).toBe(field);
+    });
+  });
+
   it('marks shortcuts that also fire in text fields and explains Mod+Enter', () => {
     render(
       <TooltipProvider>

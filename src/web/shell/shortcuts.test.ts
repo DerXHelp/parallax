@@ -56,6 +56,44 @@ describe('parseShortcut / matchesShortcut', () => {
 });
 
 describe('ShortcutRegistry', () => {
+  it('window-wide shortcuts sleep while a dialog or menu is open, scoped ones keep working (R4W-11)', () => {
+    const registry = new ShortcutRegistry();
+    const select = vi.fn(() => true);
+    const scoped = vi.fn(() => true);
+    registry.register({
+      id: 'select',
+      keys: 'Alt+2',
+      description: 'shell.shortcuts.selectSession',
+      run: select,
+    });
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    dialog.dataset.state = 'open';
+    dialog.dataset.shortcutScope = 'in-dialog';
+    const field = document.createElement('button');
+    dialog.append(field);
+    registry.register({
+      id: 'scoped',
+      keys: 'Alt+3',
+      description: 'shell.shortcuts.selectSession',
+      scope: 'in-dialog',
+      run: scoped,
+    });
+    document.body.append(dialog);
+    try {
+      expect(registry.handleKeyDown(key({ key: '2', altKey: true }, field))).toBe(false);
+      expect(select).not.toHaveBeenCalled();
+      expect(registry.handleKeyDown(key({ key: '3', altKey: true }, field))).toBe(true);
+      expect(scoped).toHaveBeenCalledOnce();
+      // Closing (Radix: data-state="closed" during the exit animation) wakes them up again.
+      dialog.dataset.state = 'closed';
+      expect(registry.handleKeyDown(key({ key: '2', altKey: true }))).toBe(true);
+      expect(select).toHaveBeenCalledOnce();
+    } finally {
+      dialog.remove();
+    }
+  });
+
   it('runs the newest matching shortcut and passes the index of the combination', () => {
     const registry = new ShortcutRegistry();
     const run = vi.fn(() => true);
