@@ -27,8 +27,9 @@ function applyLocally(store: ClientStore, hostId: HostId, settings: Settings): v
 }
 
 /**
- * `settings.update` with an optimistic local change; the ack (and the following `host.state`)
- * confirm it, an error restores the previous value and rethrows (ClientCommandError).
+ * `settings.update` with an optimistic local change of every given top-level field (each replaced
+ * as a whole, like the server does – R4W-15); the ack (and the following `host.state`) confirm it,
+ * an error restores the previous value and rethrows (ClientCommandError).
  */
 export async function updateSettings(
   patch: SettingsPatch,
@@ -49,9 +50,12 @@ export async function updateSettings(
   }
 }
 
-function definedOnly(patch: SettingsPatch): Partial<Settings> {
-  const result: Partial<Settings> = {};
-  if (patch.language !== undefined) result.language = patch.language;
-  if (patch.theme !== undefined) result.theme = patch.theme;
+/** The patch without keys that are present but `undefined` (they would erase the field locally). */
+function definedOnly(patch: SettingsPatch): SettingsPatch {
+  const result: SettingsPatch = {};
+  for (const key of Object.keys(patch)) {
+    const value: unknown = Reflect.get(patch, key);
+    if (value !== undefined) Reflect.set(result, key, value);
+  }
   return result;
 }

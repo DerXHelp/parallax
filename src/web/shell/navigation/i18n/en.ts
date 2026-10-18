@@ -7,7 +7,6 @@ import type { ConversationEndReason } from '@shared/model';
  */
 export const en = {
   sidebar: {
-    viewMode: 'Sidebar view',
     flat: 'Flat list',
     grouped: 'Group by project',
     nextWaiting: 'Next session waiting for you (Alt+N)',
@@ -16,15 +15,12 @@ export const en = {
     archiveBack: 'Back to the sessions',
     archiveEmpty: 'No archived sessions.',
     group: 'Project {name}',
-    groupSessions: { one: '{count} session', other: '{count} sessions' },
   },
   row: {
     actions: 'Actions for “{title}”',
     branch: 'Branch',
     model: 'Model',
     context: 'Context',
-    archived: 'Archived',
-    external: 'In an external console',
   },
   actions: {
     menu: 'Session actions',
@@ -47,7 +43,7 @@ export const en = {
   },
   console: {
     copied:
-      'Console command copied. Do not use this session in Parallax while claude runs in the console – two writers would mix up the conversation.',
+      'Console command copied. Secret values of the profile are not in it – the console asks for them. Do not use this session in Parallax while claude runs in the console – two writers would mix up the conversation.',
     copyFailed: 'The console command could not be copied to the clipboard.',
   },
   switcher: {
@@ -101,6 +97,26 @@ export const en = {
     none: 'None',
     unknown: 'Unknown',
     notStarted: 'Not started yet – the details appear after the first message.',
+    /** `init.apiKeySource` (SDK `ApiKeySource`); unknown values are shown raw. */
+    apiKeySources: {
+      subscription: 'Subscription (claude.ai)',
+      envKey: 'API key (ANTHROPIC_API_KEY)',
+      helper: 'API key helper (apiKeyHelper)',
+      loginManaged: 'Key managed by /login',
+      user: 'API key from the user settings',
+      project: 'API key from the project settings',
+      org: 'API key of the organization',
+      temporary: 'Temporary API key',
+      oauth: 'OAuth sign-in',
+    },
+    /** Status of an MCP server; unknown values are shown raw. */
+    mcpStatus: {
+      connected: 'Connected',
+      failed: 'Failed',
+      needsAuth: 'Sign-in needed',
+      pending: 'Starting',
+      disabled: 'Disabled',
+    },
   },
   pane: {
     externalTitle: 'Opened in an external console (since {time})',
@@ -121,5 +137,9 @@ export const en = {
     window: 'Limit ({name})',
     resetsAt: 'Resets at {time}',
     resetsOn: 'Resets on {date}',
+  },
+  /** Actions of window hints (NotificationCenter, `ClientNotice.action`). */
+  notices: {
+    enableSounds: 'Enable sounds',
   },
 };

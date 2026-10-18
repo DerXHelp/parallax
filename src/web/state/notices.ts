@@ -5,6 +5,7 @@ import {
   clientStore,
   type ClientNotice,
   type ClientStore,
+  type NoticeAction,
   type NoticeContent,
   type NoticeTone,
 } from './store';
@@ -13,12 +14,14 @@ import {
  * Local in-app hints of this window (R1W-07, ADR-033): "copied", "prompt not sent",
  * DECISION_ALREADY_RESOLVED from another window, a setting that could not be saved … Features
  * never build their own toast regions; they call `showNotice` and the shell shows the hint in the
- * NotificationCenter region (bottom right; `role="status"`, errors `role="alert"`). Texts are
- * translation keys or error payloads and are translated when rendered (language switch).
- * Inline errors next to the triggering control stay fine for form validation.
+ * NotificationCenter region (bottom right, above modal dialogs; `role="status"`, errors
+ * `role="alert"`). Texts are translation keys or error payloads and are translated when rendered
+ * (language switch). Inline errors next to the triggering control stay fine for form validation;
+ * a failed action of an open dialog shows inside that dialog (ADR-126). A notice may carry one
+ * button (`action`, e.g. "Enable sounds").
  */
 
-export type { ClientNotice, NoticeContent, NoticeTone } from './store';
+export type { ClientNotice, NoticeAction, NoticeContent, NoticeTone } from './store';
 
 export interface NoticeOptions {
   /** Default: 'error' for `{ error }`, else 'info'. */
@@ -29,6 +32,8 @@ export interface NoticeOptions {
   durationMs?: number | null;
   /** A notice with the same id is replaced (no stacking of repeated failures). */
   id?: string;
+  /** A button of the notice (ADR-126); the notice closes after it ran. */
+  action?: NoticeAction;
   store?: ClientStore;
 }
 
@@ -63,6 +68,7 @@ export function showNotice(content: NoticeContent, options: NoticeOptions = {}):
     content,
     sessionKey: options.sessionKey ?? null,
     durationMs,
+    ...(options.action === undefined ? {} : { action: options.action }),
   };
   store.setState((state) => ({
     notices: [...state.notices.filter((n) => n.id !== id), notice].slice(-MAX_NOTICES),

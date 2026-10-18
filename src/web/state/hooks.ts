@@ -10,7 +10,14 @@ import {
   type HostId,
 } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
-import type { Decision, HostState, SessionDetail, SessionSummary, TranscriptItem } from '@shared/model';
+import type {
+  Decision,
+  HostState,
+  ProfileSummary,
+  SessionDetail,
+  SessionSummary,
+  TranscriptItem,
+} from '@shared/model';
 import type { Command, CommandResult } from '@shared/protocol';
 import { deriveDisplayStatus, type DisplayStatus } from '@shared/status';
 import type { SessionViewState } from '@shared/sync';
@@ -80,6 +87,26 @@ export function selectHostStates(state: ClientState): Record<HostId, HostState> 
 /** All host states by host id; re-renders only when one of them changes (shallow). */
 export function useHostStates(): Readonly<Record<HostId, HostState>> {
   return useStore(clientStore, useShallow(selectHostStates));
+}
+
+/** Profiles of all hosts (sidebar rows, quick switcher – R4W-21). */
+export interface ProfilesByHost {
+  /** The profile of a session: its host plus `summary.profileId`; undefined when unknown. */
+  get(hostId: HostId, profileId: string): ProfileSummary | undefined;
+  /** Number of profiles over all hosts (names are worth showing from two on). */
+  readonly size: number;
+}
+
+/** Profiles per host; a new object only when a host state changes. */
+export function useProfilesByHost(): ProfilesByHost {
+  const hostStates = useHostStates();
+  return useMemo(() => {
+    const map = new Map<string, ProfileSummary>();
+    for (const [hostId, state] of Object.entries(hostStates)) {
+      for (const profile of state.profiles) map.set(`${hostId}|${profile.id}`, profile);
+    }
+    return { get: (hostId, profileId) => map.get(`${hostId}|${profileId}`), size: map.size };
+  }, [hostStates]);
 }
 
 export function useConnectionStatus(hostId: HostId = LOCAL_HOST_ID): ConnectionStatus {

@@ -13,7 +13,7 @@ Web Notifications zeigen darf – `systemNotifications`) meldet `state/presence.
 |---|---|
 | `channel.ts` | `chooseDeliveryChannel({ delivery, focused, visible, permission, focusedElsewhere, osAllowed })` (rein): folgt dem Server und korrigiert nur veraltete Präsenz – `system` an ein Fenster im Blick → `in_app` (außer `focusedElsewhere: 'system'`), `in_app` an ein Fenster im Hintergrund → `system`, wenn OS-Benachrichtigungen erlaubt sind (nie gegen „Nicht stören“); ohne Berechtigung `in_app` |
 | `system.ts` | `SystemNotifier` (`permission`, `requestPermission`, `show({ title, body, tag, silent?, onClick })`), `browserNotifier`, `getSystemNotifier`/`setSystemNotifier` (Tests) |
-| `sounds.ts` | Töne (ADR-109): `SOUNDS` (fünf synthetisierte Klänge, Oszillator + Hüllkurve, ≤ 600 ms), `playSound(id, volume)` → `'played' \| 'locked' \| 'unsupported'`, `unlockAudio()`, `installAudioUnlock(window)` (erstes `pointerdown`/`keydown`), `audioState()`, `subscribeAudioUnlock`, `SoundPlayer`/`webAudioPlayer`, `resetAudio()` (Tests) |
+| `sounds.ts` | Töne (ADR-109): `SOUNDS` (fünf synthetisierte Klänge, Oszillator + Hüllkurve, ≤ 600 ms), `playSound(id, volume)` → `'played' \| 'locked' \| 'unsupported'`, `unlockAudio()`, `installAudioUnlock(window)` (erstes `pointerdown`/`keydown`), `audioState()`, `subscribeAudioUnlock`, `SoundPlayer` (`state`, `play`, `onUnlock`, optional `unlock`)/`webAudioPlayer`, `resetAudio()` (Tests) |
 | `delivery.ts` | `startNotificationDelivery({ store?, notifier?, focusWindow?, sounds? })` → Stop-Funktion; `IN_APP_NOTIFICATION_MS` (10 s), `noticeIdOf(id)`, `SOUNDS_LOCKED_NOTICE_ID` |
 | `permission.ts` | `useNotificationPermission`, `requestNotificationPermission` (nur aus einem Klick; meldet das Ergebnis sofort als Präsenz), `useNotificationHintDismissed`, `dismissNotificationHint` (localStorage `parallax.notifications.permissionHint`) |
 | `testing.ts` | nur Tests: `FakeAudioContext` (zeichnet den Web-Audio-Graphen auf) |
@@ -29,7 +29,10 @@ Regeln:
 - Autoplay: Töne sind bis zur ersten Interaktion im Fenster gesperrt; der `AudioContext` entsteht
   erst danach beim ersten Ton und wird in Pausen suspendiert. Ein gesperrter Ton zeigt einmal je
   Fensterlauf den Hinweis „Töne aktivieren“ (`preferences.sounds.locked`, bleibt bis zur
-  Interaktion, die ihn auch schließt). Vorhören (Einstellungsseite) ruft `unlockAudio()` im Klick.
+  Interaktion, die ihn auch schließt) mit gleichnamigem Knopf (`ClientNotice.action`,
+  `navigation.notices.enableSounds`, ruft `SoundPlayer.unlock` – ADR-126, R4W-05). Seit ADR-120 nur
+  noch Rückfall für Fenster, die nicht der Launcher geöffnet hat. Vorhören (Einstellungsseite) ruft
+  `unlockAudio()` im Klick.
 - Toast-Klick: `window.focus()`, Session wählen (`#session=…`), Toast schließen.
 - Berechtigung nur auf Klick: Hinweis-Banner „Benachrichtigungen aktivieren“ (`ShellBanners`) bzw.
   Eintrag im Einstellungsmenü, solange sie `default` ist. Ohne Berechtigung bleibt alles in-app.
