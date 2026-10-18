@@ -35,6 +35,7 @@ function NoticeCard({
   const text =
     'error' in notice.content ? tError(notice.content.error) : t(notice.content.text, notice.content.params);
   const sessionKey = shown ? null : notice.sessionKey;
+  const { action } = notice;
   return (
     <div
       data-notice={notice.id}
@@ -45,18 +46,34 @@ function NoticeCard({
       <Icon aria-hidden className={cn('mt-0.5 size-3.5 shrink-0', NOTICE_ICON_TONE[notice.tone])} />
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <span className="break-words">{text}</span>
-        {sessionKey === null ? null : (
-          <Button
-            size="sm"
-            variant="outline"
-            className="w-fit"
-            onClick={() => {
-              onShow(sessionKey);
-              dismissNotice(notice.id);
-            }}
-          >
-            {t('shell.notifications.show')}
-          </Button>
+        {sessionKey === null && action === undefined ? null : (
+          <div className="flex flex-wrap gap-1.5">
+            {action === undefined ? null : (
+              <Button
+                size="sm"
+                variant="outline"
+                data-notice-action
+                onClick={() => {
+                  action.run();
+                  dismissNotice(notice.id);
+                }}
+              >
+                {t(action.label)}
+              </Button>
+            )}
+            {sessionKey === null ? null : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  onShow(sessionKey);
+                  dismissNotice(notice.id);
+                }}
+              >
+                {t('shell.notifications.show')}
+              </Button>
+            )}
+          </div>
         )}
       </div>
       <IconButton
@@ -79,6 +96,12 @@ function NoticeCard({
  * src/web/notifications/delivery.ts turns each `notify` into a notice with "Show session" or into a
  * Web Notification). The region stays mounted (empty), so screen readers know it before the first
  * hint arrives.
+ *
+ * Above modal dialogs (ADR-126, R4W-05): `z-[60]` over their overlay (`z-50`); `aria-live` keeps
+ * it out of the `aria-hidden` that a modal dialog puts on the rest of the page (Radix uses
+ * `hideOthers`, which skips `[aria-live]` nodes) – "off", because the cards are the live regions
+ * (`status`/`alert`). A pointerdown on a card stays here, so using a notice does not count as a
+ * click outside the open dialog (which would close it).
  */
 export function NotificationCenter() {
   const { t } = useI18n();
@@ -87,8 +110,12 @@ export function NotificationCenter() {
   return (
     <section
       aria-label={t('shell.notifications.region')}
+      aria-live="off"
       data-slot="notification-center"
-      className="pointer-events-none fixed right-3 bottom-3 z-40 flex w-80 flex-col gap-2"
+      className="pointer-events-none fixed right-3 bottom-3 z-[60] flex w-80 flex-col gap-2"
+      onPointerDown={(event) => {
+        event.stopPropagation();
+      }}
     >
       {notices.slice(-MAX_VISIBLE).map((notice) => (
         <NoticeCard

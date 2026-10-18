@@ -21,7 +21,8 @@ import { getSystemNotifier, type SystemNotifier, type SystemToast } from './syst
  * disturb", the toast switches, the focus rule and the "done" threshold; the window adds the sound
  * (`events[kind].sound`, not "Do not disturb", Web Audio – sounds.ts) and makes its own Web
  * Notifications silent then. A sound locked by the autoplay policy shows the hint "Enable sounds"
- * once per window run (until the first interaction unlocks them). A `notify.clear` (decision
+ * with a button of that name once per window run (until the first interaction unlocks them;
+ * ADR-120 makes this the fallback for windows not opened by the launcher). A `notify.clear` (decision
  * answered elsewhere) retracts hint and toast; showing a session clears its notifications (they
  * are seen). Runs outside React (started by bootApp and for the playground in main.tsx).
  */
@@ -95,7 +96,19 @@ export function startNotificationDelivery(options: NotificationDeliveryOptions =
     lockedHintShown = true;
     showNotice(
       { text: 'preferences.sounds.locked' },
-      { id: SOUNDS_LOCKED_NOTICE_ID, tone: 'info', durationMs: null, store },
+      {
+        id: SOUNDS_LOCKED_NOTICE_ID,
+        tone: 'info',
+        durationMs: null,
+        store,
+        // ADR-126: a button to click (any click or key in the window unlocks as well).
+        action: {
+          label: 'navigation.notices.enableSounds',
+          run: () => {
+            sounds.unlock?.();
+          },
+        },
+      },
     );
     // The first interaction unlocks the sounds (installAudioUnlock): the hint has done its job.
     const hide = () => {

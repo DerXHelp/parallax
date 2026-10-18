@@ -216,10 +216,13 @@ export interface SoundPlayer {
   state(): AudioState;
   play(id: SoundId, volume: number): Promise<PlayResult>;
   onUnlock(listener: () => void): () => void;
+  /** The user asked for sounds (button "Enable sounds" of the hint, R4W-05): a user interaction. */
+  unlock?(): void;
 }
 
 export const webAudioPlayer: SoundPlayer = {
   state: audioState,
   play: playSound,
   onUnlock: subscribeAudioUnlock,
+  unlock: unlockAudio,
 };
