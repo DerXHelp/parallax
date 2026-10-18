@@ -1405,3 +1405,19 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   erhalten (harmlos, ADR-021).
 - **Folgen:** Normaler Start (Launcher, Autostart, `parallax.cmd`) ist unverändert, weil ohne aufrufende
   Session nichts greift. Umsetzung und Tests: FIX-41 F1 (`src/server/claude/env.ts`, `env.test.ts`).
+
+## ADR-129 – Ziel einer Benachrichtigung bei Fokus-Gleichstand; Fokus übersteht Reconnects
+- **Datum/WP:** 18.10.2026, Koordinator nach FIX-41 F1 (Befund WP41-04). Ergänzt ADR-109 (Text bleibt).
+- **Kontext:** Ohne fokussiertes sichtbares Fenster geht eine Benachrichtigung an den zuletzt fokussierten
+  Client; bei Gleichstand bzw. „nie fokussiert“ an den zuletzt verbundenen. Der Hub setzte `lastFocusAt`
+  je Verbindung und beim Hello eines unfokussierten Fensters auf `null`. Live (WP-41) waren dadurch das
+  App-Fenster und unsichtbare Hilfsclients gleichauf, und das `notify` ging an einen unsichtbaren Client –
+  kein Popup.
+- **Entscheidung:** (1) Stufen der Zielwahl ohne fokussiertes sichtbares Fenster: jüngstes `lastFocusAt`;
+  bei Gleichstand Clients mit `systemNotifications !== false` vor solchen ohne, dann sichtbare vor
+  unsichtbaren, dann zuletzt verbunden. Die Stufe „anderes fokussiertes sichtbares Fenster“ bleibt.
+  (2) Der Hub merkt sich `lastFocusAt` je `clientId` (begrenzt) und übernimmt den Wert beim Hello eines
+  bekannten, unfokussierten Fensters, statt ihn auf `null` zu setzen. (3) Je Benachrichtigung eine
+  `debug`-Zeile `notification route` mit Kanal, Ziel, Grund und Präsenz-Zusammenfassung, ohne Titel/Texte.
+- **Folgen:** Ein Fenster nach Server-Neustart oder Verbindungsabbruch behält seinen Fokus-Rang. Umsetzung
+  und Tests: FIX-41 F1 (`sessions/notifier.ts`, `sessions/manager.ts`, `sync/hub.ts`).

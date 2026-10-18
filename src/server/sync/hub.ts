@@ -96,6 +96,8 @@ export const HUB_LIMITS = {
   maxBufferedBytes: 16 * 1024 * 1024,
   /** Ring buffer budget per entry in JSON chars (in addition to LIMITS.ringBufferOps). */
   ringBufferChars: 16 * 1024 * 1024,
+  /** Windows whose last focus is remembered across reconnects (ADR-129); the oldest go first. */
+  focusMemory: 256,
 } as const;
 
 /** Close code for a slow consumer (standard "try again later"). */
@@ -359,6 +361,23 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
   }
 
   // ---- presence ----
+
+  /**
+   * Last focus per window (`clientId`) across reconnects (ADR-129, WP41-04): a window that comes
+   * back unfocused (server restart, network, standby) keeps its rank for the notification target
+   * instead of starting as "never focused". Map order = age of the last focus; bounded by
+   * HUB_LIMITS.focusMemory (oldest out first).
+   */
+  const focusMemory = new Map<ClientId, Date>();
+
+  function rememberFocus(clientId: ClientId, at: Date): void {
+    focusMemory.delete(clientId);
+    focusMemory.set(clientId, at);
+    for (const oldest of focusMemory.keys()) {
+      if (focusMemory.size <= HUB_LIMITS.focusMemory) break;
+      focusMemory.delete(oldest);
+    }
+  }
 
   function presenceList(): ClientPresence[] {
     const list: ClientPresence[] = [];
@@ -733,7 +752,12 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
     conn.state = 'open';
     conn.clientId = message.clientId;
     conn.presence = message.presence;
-    conn.lastFocusAt = message.presence.focused ? now() : null;
+    if (message.presence.focused) {
+      conn.lastFocusAt = now();
+      rememberFocus(message.clientId, conn.lastFocusAt);
+    } else {
+      conn.lastFocusAt = focusMemory.get(message.clientId) ?? null;
+    }
     if (checkOutgoing(hostStateSchema, host, 'host state')) send(conn, { type: 'host.state', host });
     const valid = list.filter((summary) =>
       checkOutgoing(sessionSummarySchema, summary, `summary ${summary.entryId}`),
@@ -788,7 +812,10 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
         return;
       case 'presence':
         conn.presence = message.presence;
-        if (message.presence.focused) conn.lastFocusAt = now();
+        if (message.presence.focused) {
+          conn.lastFocusAt = now();
+          if (conn.clientId !== null) rememberFocus(conn.clientId, conn.lastFocusAt);
+        }
         notifyPresence();
         return;
       case 'subscribe':
