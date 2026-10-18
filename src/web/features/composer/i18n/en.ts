@@ -200,6 +200,11 @@ export const en = {
     tooMany: 'At most {max} images per message.',
     pending: 'Uploading images…',
     removeFailed: 'Remove the failed image to send.',
+    /** ADR-125: on the chips beyond the total limit of one message (`max` e.g. "20 MB"). */
+    overTotal: 'All images together over {max}',
+    removeTooLarge: 'The images are too large together – remove one to send.',
+    /** R4W-26: an answer to a decision carries no images. */
+    notWithAnswer: 'The images stay for your next message – an answer is sent without them.',
     drop: 'Drop images to attach them',
   },
   /** Prompt suggestion as ghost text (ADR-117). */
@@ -218,6 +223,6 @@ export const en = {
   /** Archived or handed off: no input field (the pane banner offers the actions). */
   disabled: {
     archived: 'Archived – read only.',
-    external: 'Open in an external console – take it back to write here.',
+    external: 'Opened in an external console – take it back to write here.',
   },
 };

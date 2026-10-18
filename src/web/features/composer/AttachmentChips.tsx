@@ -1,10 +1,16 @@
 import { CircleAlertIcon, ImageIcon, XIcon } from 'lucide-react';
 import { memo, useRef, type KeyboardEvent } from 'react';
+import { LIMITS } from '@shared/common';
 import { useI18n } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { IconButton } from '@web/ui/icon-button';
 import { Spinner } from '@web/ui/spinner';
-import { removeAttachment, useAttachments, type ComposerAttachment } from './state/attachments';
+import {
+  attachmentsOverTotal,
+  removeAttachment,
+  useAttachments,
+  type ComposerAttachment,
+} from './state/attachments';
 
 function useFailureText(): (attachment: ComposerAttachment) => string | null {
   const { t, tError } = useI18n();
@@ -20,6 +26,7 @@ function useFailureText(): (attachment: ComposerAttachment) => string | null {
  * Image chips above the message field (ADR-103, WP-37 §4): preview (object URL of the picked
  * file), name, state (preparing/uploading with a spinner, error text), remove via the × button or
  * Delete/Backspace on the focused chip – the focus then moves to the next chip or the field.
+ * Chips beyond the total limit of one message (ADR-125) show that error too.
  */
 export const AttachmentChips = memo(function AttachmentChips({
   sessionKey,
@@ -28,11 +35,23 @@ export const AttachmentChips = memo(function AttachmentChips({
   sessionKey: string;
   onFocusField: () => void;
 }) {
-  const { t } = useI18n();
+  const { t, format } = useI18n();
   const attachments = useAttachments(sessionKey);
   const failureText = useFailureText();
   const listRef = useRef<HTMLUListElement>(null);
   if (attachments.length === 0) return null;
+  // ADR-125: chips beyond the total limit of one message carry the error.
+  const overTotal = attachmentsOverTotal(attachments);
+  const overTotalText =
+    overTotal.size === 0
+      ? null
+      : t('composer.attachments.overTotal', {
+          max: format.number(LIMITS.attachmentsTotalBytes / 1_000_000, {
+            style: 'unit',
+            unit: 'megabyte',
+            maximumFractionDigits: 1,
+          }),
+        });
 
   const remove = (index: number, id: string) => {
     removeAttachment(sessionKey, id);
@@ -59,7 +78,9 @@ export const AttachmentChips = memo(function AttachmentChips({
       className="mb-1.5 flex flex-wrap gap-1.5"
     >
       {attachments.map((attachment, index) => {
-        const failure = failureText(attachment);
+        const tooMuch = overTotal.has(attachment.id);
+        const failure = tooMuch ? overTotalText : failureText(attachment);
+        const invalid = attachment.status === 'error' || tooMuch;
         const status = t(`composer.attachments.status.${attachment.status}`);
         const busy = attachment.status === 'preparing' || attachment.status === 'uploading';
         return (
@@ -67,16 +88,20 @@ export const AttachmentChips = memo(function AttachmentChips({
             key={attachment.id}
             data-slot="attachment-chip"
             data-status={attachment.status}
+            data-over-total={tooMuch ? '' : undefined}
             className={cn(
               'bg-secondary/60 flex max-w-64 items-center gap-1.5 rounded-md border py-1 pr-0.5 pl-1',
-              attachment.status === 'error' && 'border-destructive/50 bg-destructive/8',
+              invalid && 'border-destructive/50 bg-destructive/8',
             )}
           >
             <span
               tabIndex={0}
               data-chip-focus=""
               role="group"
-              aria-label={t('composer.attachments.chip', { name: attachment.name, status })}
+              aria-label={t('composer.attachments.chip', {
+                name: attachment.name,
+                status: tooMuch ? (failure ?? status) : status,
+              })}
               title={failure ?? attachment.name}
               onKeyDown={(event) => {
                 onKeyDown(event, index, attachment.id);
@@ -99,13 +124,11 @@ export const AttachmentChips = memo(function AttachmentChips({
                 <span
                   className={cn(
                     'flex min-w-0 items-center gap-1 text-2xs',
-                    attachment.status === 'error' ? 'text-destructive' : 'text-muted-foreground',
+                    invalid ? 'text-destructive' : 'text-muted-foreground',
                   )}
                 >
                   {busy ? <Spinner className="size-3" label={status} /> : null}
-                  {attachment.status === 'error' ? (
-                    <CircleAlertIcon aria-hidden className="size-3 shrink-0" />
-                  ) : null}
+                  {invalid ? <CircleAlertIcon aria-hidden className="size-3 shrink-0" /> : null}
                   <span className="truncate">{failure ?? status}</span>
                 </span>
               </span>

@@ -170,7 +170,8 @@ describe('disabled composer (WP-37 §7)', () => {
     });
     expect(screen.queryByRole('textbox')).toBeNull();
     expect(document.querySelector('[data-slot="composer"]')?.textContent).toBe(
-      'Open in an external console – take it back to write here.',
+      // V3-13: a state ("Opened …"), not an instruction.
+      'Opened in an external console – take it back to write here.',
     );
     act(() => {
       h.host.patchSummary(DEMO_ENTRIES.idle, { external: null });
