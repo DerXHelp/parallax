@@ -1,26 +1,36 @@
+import type { SoundId } from '@shared/model';
 import type { NotificationKind } from '@shared/status';
 import { t, type TranslationKey } from '@web/i18n';
 import { sessionTitle } from '@web/lib/session-title';
 import { dismissNotification, dismissSessionNotifications, selectSummary } from '@web/state/hooks';
 import { dismissNotice, showNotice } from '@web/state/notices';
 import { setSelectedSession } from '@web/state/selection';
+import { selectSettings } from '@web/state/settings';
 import { clientStore, type ClientNotification, type ClientStore, type NoticeTone } from '@web/state/store';
 import { chooseDeliveryChannel } from './channel';
+import { installAudioUnlock, webAudioPlayer, type SoundPlayer } from './sounds';
 import { getSystemNotifier, type SystemNotifier, type SystemToast } from './system';
 
 /**
  * Delivers the server's `notify` messages of this window (A.9, Plan "Benachrichtigungen",
- * Phase-1 minimum): the connection keeps them in `ClientState.notifications` until `notify.clear`;
- * this module shows each one exactly once – an in-app hint over the notices API
- * (state/notices.ts, NotificationCenter region, "Show session") or a Web Notification (Windows
- * toast via Edge, `tag = sessionKey`, click → focus the window and show the session), chosen by
- * `chooseDeliveryChannel`. A `notify.clear` (decision answered elsewhere) retracts both; showing a
- * session clears its notifications (they are seen). Runs outside React (started by bootApp and
- * for the playground in main.tsx).
+ * ADR-109): the connection keeps them in `ClientState.notifications` until `notify.clear`; this
+ * module shows each one exactly once – an in-app hint over the notices API (state/notices.ts,
+ * NotificationCenter region, "Show session") or a Web Notification (Windows toast via Edge,
+ * `tag = sessionKey`, click → focus the window and show the session), on the server's channel
+ * (`chooseDeliveryChannel` only corrects a stale presence). The server already applied "Do not
+ * disturb", the toast switches, the focus rule and the "done" threshold; the window adds the sound
+ * (`events[kind].sound`, not "Do not disturb", Web Audio – sounds.ts) and makes its own Web
+ * Notifications silent then. A sound locked by the autoplay policy shows the hint "Enable sounds"
+ * once per window run (until the first interaction unlocks them). A `notify.clear` (decision
+ * answered elsewhere) retracts hint and toast; showing a session clears its notifications (they
+ * are seen). Runs outside React (started by bootApp and for the playground in main.tsx).
  */
 
 /** In-app hints stay this long unless the user acts. */
 export const IN_APP_NOTIFICATION_MS = 10_000;
+
+/** Notice id of the hint "sounds are locked until you interact with the window". */
+export const SOUNDS_LOCKED_NOTICE_ID = 'notifications:sounds-locked';
 
 const TONE: Readonly<Record<NotificationKind, NoticeTone>> = {
   permission: 'warning',
@@ -46,6 +56,11 @@ export interface NotificationDeliveryOptions {
   notifier?: SystemNotifier;
   /** Brings this window to the front on a toast click; default `window.focus()`. */
   focusWindow?: () => void;
+  /**
+   * Notification sounds; default Web Audio (`webAudioPlayer`), unlocked by the first
+   * pointerdown/keydown in this window (`installAudioUnlock`). Tests inject a fake.
+   */
+  sounds?: SoundPlayer;
 }
 
 interface Delivered {
@@ -63,28 +78,70 @@ export function startNotificationDelivery(options: NotificationDeliveryOptions =
     (() => {
       window.focus();
     });
+  const sounds = options.sounds ?? webAudioPlayer;
+  const removeUnlock = options.sounds === undefined ? installAudioUnlock(window) : null;
   const delivered = new Map<string, Delivered>();
   let selected = store.getState().selectedSession;
   let syncing = false;
   /** Counts sync requests; a request during a step makes the step run again. */
   let requests = 0;
+  let stopped = false;
+  /** "Enable sounds" was shown in this window run (once is enough). */
+  let lockedHintShown = false;
+  let removeUnlockListener: (() => void) | null = null;
+
+  function showLockedHint(): void {
+    if (stopped || lockedHintShown) return;
+    lockedHintShown = true;
+    showNotice(
+      { text: 'preferences.sounds.locked' },
+      { id: SOUNDS_LOCKED_NOTICE_ID, tone: 'info', durationMs: null, store },
+    );
+    // The first interaction unlocks the sounds (installAudioUnlock): the hint has done its job.
+    const hide = () => {
+      removeUnlockListener?.();
+      removeUnlockListener = null;
+      dismissNotice(SOUNDS_LOCKED_NOTICE_ID, store);
+    };
+    removeUnlockListener = sounds.onUnlock(hide);
+    if (sounds.state() === 'ready') hide();
+  }
+
+  function ring(soundId: SoundId, volume: number): void {
+    sounds.play(soundId, volume).then(
+      (result) => {
+        if (result === 'locked') showLockedHint();
+      },
+      () => undefined,
+    );
+  }
 
   function deliver(notification: ClientNotification): void {
     const state = store.getState();
     const { presence } = state;
+    const settings = selectSettings(state, notification.hostId).notifications;
+    const event = settings.events[notification.kind];
+    const withSound = event.sound && !settings.doNotDisturb;
     // A session without a title yet (created without a prompt) is named by its folder (V2-05).
     const summary = notification.title.trim() === '' ? selectSummary(state, notification.sessionKey) : null;
     const params = { title: summary === null ? notification.title : sessionTitle(summary) };
     const channel = chooseDeliveryChannel({
+      delivery: notification.delivery,
       focused: presence.focused,
       visible: presence.visible,
       permission: notifier.permission(),
+      focusedElsewhere: settings.focusedElsewhere,
+      osAllowed: event.toast && !settings.doNotDisturb,
     });
+    if (withSound) ring(event.soundId, settings.volume);
     if (channel === 'system') {
       const toast = notifier.show({
         title: t(textKey(notification.kind), params),
         body: t('shell.notifications.toastBody'),
         tag: notification.sessionKey,
+        // Silent when the window plays the sound itself or the event has none; a locked or
+        // missing Web Audio leaves the sound to the browser.
+        silent: !withSound || sounds.state() === 'ready',
         onClick: () => {
           focusWindow();
           setSelectedSession(notification.sessionKey, { store });
@@ -165,7 +222,11 @@ export function startNotificationDelivery(options: NotificationDeliveryOptions =
   });
   sync();
   return () => {
+    stopped = true;
     unsubscribe();
+    removeUnlock?.();
+    removeUnlockListener?.();
+    removeUnlockListener = null;
     delivered.clear();
   };
 }
