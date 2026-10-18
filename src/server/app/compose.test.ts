@@ -1,16 +1,22 @@
 /**
  * `startServer()` in-process (FakeBackend speed 0, temp PARALLAX_HOME, port 0, no signal handlers,
  * `exit` recorded): lock file, static UI, shutdown hook, single instance (5), newer store (3),
- * port in use (4) with a complete cleanup. The process view (tsx, real exit codes, WS flow) is in
+ * port in use (4) with a complete cleanup; the Phase-2 wiring (WP-40): host state (port, system
+ * integration), host commands over the persistent profile store, the system integration seam and
+ * the fake console. The process view (tsx, real exit codes, WS flow) is in
  * `main.integration.test.ts`.
  */
+import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { sampleId } from '@shared/samples';
+import type { EntryId } from '@shared/common';
+import { makeError } from '@shared/errors';
+import type { HostWarning, Settings } from '@shared/model';
+import { sampleId, sampleProfileInput, sampleTime } from '@shared/samples';
 import { loadConfig } from '../config';
 import { makeTempHome, rawRequest } from '../http/testServer';
 import { checkHealth } from '../launcher/client';
@@ -20,7 +26,8 @@ import type { ServerShutdown, SignalTarget } from '../launcher/shutdown';
 import { acquireHomeLock, type HomeLock } from '../lib/homeLock';
 import { createLogger } from '../lib/logger';
 import type { CommandContext } from '../sync/ports';
-import { StartupError, startServer, type RunningServer } from './compose';
+import type { SystemIntegration } from '../system/ports';
+import { resumedSessionId, StartupError, startServer, type RunningServer } from './compose';
 import { installCrashHandlers } from './crash';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
@@ -50,6 +57,7 @@ async function start(
     homeLock?: HomeLock;
     homeAccess?: (home: string) => Promise<unknown>;
     signals?: SignalTarget;
+    systemIntegration?: SystemIntegration;
   } = {},
 ): Promise<Started> {
   const exits: number[] = [];
@@ -66,6 +74,7 @@ async function start(
     homeLock: options.homeLock ?? null,
     // No PowerShell in the in-process tests unless a test asks for the check.
     homeAccess: options.homeAccess ?? null,
+    ...(options.systemIntegration === undefined ? {} : { systemIntegration: options.systemIntegration }),
   });
   cleanups.push(() => server.shutdown.stop('command'));
   return { server, exits };
@@ -313,8 +322,172 @@ describe('startServer (composition)', () => {
     const again = await start(home);
     expect(await checkHealth(again.server.port)).toMatchObject({ kind: 'ok' });
   });
+
+  it.each(['profiles.json', 'model-catalogs.json', 'account-limits.json'])(
+    'aborts with exit code 3 on a %s of a newer Parallax (Phase-2 stores)',
+    async (name) => {
+      const home = await tempHome();
+      const file = path.join(home, name);
+      const content = `${JSON.stringify({ schemaVersion: 9, profiles: {} })}\n`;
+      await writeFile(file, content);
+      const error = await startError(start(home));
+      expect(error.exitCode).toBe(SERVER_EXIT_CODES.storeVersionTooNew);
+      expect(error.message).toContain(`${name} was written by a newer Parallax`);
+      expect(await readFile(file, 'utf8')).toBe(content);
+      expect(await readServerLock(home)).toEqual({ kind: 'missing' });
+    },
+  );
+});
+
+describe('startServer: Phase-2 wiring (WP-40)', () => {
+  it('host state: actual port, no system integration; profile.* and fs.listDirectory reach their handlers', async () => {
+    const home = await tempHome();
+    const project = path.join(home, 'project');
+    await mkdir(project);
+    const { server } = await start(home);
+    const { manager } = server;
+    expect(manager.hostState()).toMatchObject({ port: server.port, systemIntegration: false });
+
+    const saved = await manager.handleCommand({ name: 'profile.save', profile: sampleProfileInput() }, ctx());
+    const profileId = (saved as { profileId: string }).profileId;
+    expect(manager.hostState().profiles.map((p) => p.name)).toEqual(['Standard', 'Work']);
+    // A new profile is checked in the background – it never stays "checking" (WP-40).
+    await vi.waitFor(() => {
+      expect(manager.hostState().profiles.find((p) => p.id === profileId)?.claude.state).toBe('ok');
+    });
+    // The fake integration reads the same store: "Profil testen" works for the new profile.
+    expect(await manager.handleCommand({ name: 'profile.test', profileId }, ctx())).toMatchObject({
+      claude: { state: 'ok' },
+    });
+
+    // entryCount comes from the registry: a session of the profile protects it against deletion.
+    await manager.handleCommand({ name: 'session.create', cwd: project, profileId }, ctx());
+    await expect(manager.handleCommand({ name: 'profile.delete', profileId }, ctx())).rejects.toMatchObject({
+      error: { code: 'PROFILE_IN_USE', params: { count: 1 } },
+    });
+    expect(await manager.handleCommand({ name: 'profile.get', profileId }, ctx())).toMatchObject({
+      entryCount: 1,
+    });
+    expect(manager.hostState().profiles.find((p) => p.id === profileId)?.entryCount).toBe(1);
+
+    const listing = await manager.handleCommand(
+      { name: 'fs.listDirectory', path: home, showHidden: false },
+      ctx(),
+    );
+    expect(listing).toMatchObject({ path: home });
+    const entries = (listing as { entries: { name: string; kind: string }[] }).entries;
+    expect(entries.map((entry) => `${entry.name}:${entry.kind}`)).toContain('project:directory');
+
+    // The profile store is flushed and closed with the other stores.
+    await server.shutdown.stop('command');
+    const file: unknown = JSON.parse(await readFile(path.join(home, 'profiles.json'), 'utf8'));
+    expect(file).toMatchObject({ profiles: [{ id: 'standard' }, { id: profileId, name: 'Work' }] });
+  });
+
+  it('a profile change reaches the engine (onProfileChanged → host state)', async () => {
+    const home = await tempHome();
+    const { server } = await start(home);
+    const changed = vi.spyOn(server.manager, 'onProfileChanged');
+    await server.manager.handleCommand({ name: 'profile.save', profile: sampleProfileInput() }, ctx());
+    expect(changed).toHaveBeenCalled();
+  });
+
+  it('system integration: applied after listen and after every settings.update; warnings and changes reach the host state', async () => {
+    const home = await tempHome();
+    const applied: Settings[] = [];
+    let warnings: HostWarning[] = [];
+    const listeners = new Set<() => void>();
+    const system: SystemIntegration = {
+      available: true,
+      apply: (settings) => {
+        applied.push(settings);
+        return Promise.resolve();
+      },
+      toastLaunchUri: () => null,
+      warnings: () => warnings,
+      onChange: (listener) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    };
+    const { server } = await start(home, { systemIntegration: system });
+    expect(server.manager.hostState().systemIntegration).toBe(true);
+    await vi.waitFor(() => {
+      expect(applied).toHaveLength(1);
+    });
+    expect(applied[0]?.autostart).toEqual({ enabled: false, openWindow: true });
+
+    await server.manager.handleCommand(
+      { name: 'settings.update', patch: { autostart: { enabled: true, openWindow: false } } },
+      ctx(),
+    );
+    await vi.waitFor(() => {
+      expect(applied.at(-1)?.autostart).toEqual({ enabled: true, openWindow: false });
+    });
+
+    const publish = vi.spyOn(server.manager, 'publishHostState');
+    warnings = [
+      {
+        id: 'system:autostart',
+        error: makeError('AUTOSTART_FAILED', { reason: 'blocked' }),
+        at: sampleTime(1),
+      },
+    ];
+    for (const listener of listeners) listener();
+    expect(publish).toHaveBeenCalled();
+    expect(server.manager.hostState().warnings).toContainEqual(warnings[0]);
+  });
+
+  it('fake console: openExternal hands the session over; after it ended the console turn comes back', async () => {
+    const home = await tempHome();
+    const project = path.join(home, 'console');
+    await mkdir(project);
+    const { server } = await start(home);
+    const { manager } = server;
+    const created = await manager.handleCommand(
+      { name: 'session.create', cwd: project, prompt: { text: 'hello', attachments: [] } },
+      ctx(),
+    );
+    const entryId = (created as { entryId: EntryId }).entryId;
+    const summary = () => manager.listSummaries().find((s) => s.entryId === entryId);
+    await vi.waitFor(() => {
+      expect(summary()?.status.runState).toBe('idle');
+    });
+
+    const opened = await manager.handleCommand({ name: 'session.openExternal', entryId }, ctx());
+    expect((opened as { pid: number }).pid).toBeGreaterThanOrEqual(50_000);
+    expect(summary()?.external).toMatchObject({ running: true });
+
+    // Fake console: 1.5 s, then the engine's check (every 5 s) takes the session back.
+    await vi.waitFor(
+      () => {
+        expect(summary()?.external).toBeNull();
+      },
+      { timeout: 20_000, interval: 200 },
+    );
+    expect(summary()?.status.runState).toBe('sleeping');
+    const view = await manager.loadView(entryId);
+    const texts = (view?.items ?? []).map((item) =>
+      item.kind === 'system' && item.event === 'handoff'
+        ? `handoff:${item.phase}:${String(item.importedItems)}`
+        : item.kind === 'assistant_text'
+          ? item.text
+          : item.kind,
+    );
+    expect(texts).toContain('handoff:external:0');
+    expect(texts.some((text) => text.startsWith('handoff:returned:') && !text.endsWith(':0'))).toBe(true);
+  });
+
+  it('resumedSessionId reads the id after --resume of a console spec', () => {
+    expect(resumedSessionId(['--resume', 'abc'])).toBe('abc');
+    expect(resumedSessionId(['--model', 'haiku', '--resume', 'x-1'])).toBe('x-1');
+    expect(resumedSessionId(['--resume'])).toBeNull();
+    expect(resumedSessionId([])).toBeNull();
+  });
 });
 
 function ctx(): CommandContext {
-  return { clientId: sampleId('cl', 1), cmdId: '00000000-0000-4000-8000-000000000001' };
+  return { clientId: sampleId('cl', 1), cmdId: randomUUID() };
 }

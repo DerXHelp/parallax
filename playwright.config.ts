@@ -9,6 +9,13 @@ import { defineConfig, devices } from '@playwright/test';
  *   child process is left.
  * - Artifacts (screenshots, traces) go to test-results/ (git-ignored).
  */
+
+// V2-15: Playwright starts every worker with FORCE_COLOR=1; an inherited NO_COLOR next to it makes
+// Node warn once per worker ("The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being
+// set"). The runner reads this config before it starts the workers (they inherit its env), so only
+// FORCE_COLOR remains – the runner's own colours are already decided at this point.
+delete process.env.NO_COLOR;
+
 export default defineConfig({
   testDir: 'e2e',
   testMatch: '**/*.spec.ts',

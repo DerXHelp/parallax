@@ -1,74 +1,28 @@
 /**
- * Notifications Phase 1 (A.9, WP-20b §2.6): the server picks the channel from the windows'
- * presence, the window shows it. A context with the notification permission; `Notification` is
- * wrapped by an init script that records every toast; focus and visibility of a window are
- * switched through `document.hasFocus()` / `document.visibilityState` (headless Edge always
- * reports a focused, visible page).
+ * Notifications (A.9, WP-20b §2.6; Phase 2 ADR-109, WP-38): the server picks the channel from the
+ * windows' presence, the window shows it and plays the event's sound. A context with the
+ * notification permission; `Notification` and `AudioContext` are wrapped by an init script that
+ * records every toast and every started oscillator; focus and visibility of a window are switched
+ * through `document.hasFocus()` / `document.visibilityState` (support/presence.ts – headless Edge
+ * always reports a focused, visible page).
  * - Window in the background (not focused, hidden): "waiting for you" and "done" as Windows toast
- *   (Web Notification, tag = session); window title "(n) Parallax".
+ *   (Web Notification, tag = session, silent because the window plays its own sound: chime for the
+ *   permission, pop for done); window title "(n) Parallax"; a click on the toast selects the
+ *   session (also when another one is shown).
  * - Window in focus, another session shown: in-app hint with "Show session".
  */
-import type { Page } from '@playwright/test';
 import { ParallaxApp } from './support/app';
-import { connectNodeClient, nodeCommand } from './support/server';
 import { expect, test } from './support/fixtures';
+import { clickLastToast, recordNotifications, setPresence, tones, toasts } from './support/presence';
+import { connectNodeClient, nodeCommand } from './support/server';
 
 test.use({ permissions: ['notifications'] });
 
-interface Recorded {
-  title: string;
-  body: string | undefined;
-  tag: string | undefined;
-}
+/** First tone of the synthesized sounds (src/web/notifications/sounds.ts). */
+const CHIME_HZ = 659.25;
+const POP_HZ = 520;
 
-/** Init script: records toasts, lets the test switch focus/visibility of the window. */
-function recordNotifications(): void {
-  const w = window as unknown as {
-    __e2eFocused: boolean;
-    __e2eVisible: boolean;
-    __e2eToasts: Recorded[];
-    __e2eToastObjects: Notification[];
-  };
-  w.__e2eFocused = true;
-  w.__e2eVisible = true;
-  w.__e2eToasts = [];
-  w.__e2eToastObjects = [];
-  const Real = window.Notification;
-  class Recording extends Real {
-    constructor(title: string, options?: NotificationOptions) {
-      w.__e2eToasts.push({ title, body: options?.body, tag: options?.tag });
-      super(title, options);
-      w.__e2eToastObjects.push(this);
-    }
-  }
-  Object.defineProperty(window, 'Notification', { value: Recording, configurable: true, writable: true });
-  Document.prototype.hasFocus = function hasFocus() {
-    return w.__e2eFocused;
-  };
-  Object.defineProperty(Document.prototype, 'visibilityState', {
-    configurable: true,
-    get: () => (w.__e2eVisible ? 'visible' : 'hidden'),
-  });
-}
-
-/** Moves the window to the background (or back) and lets the presence reach the server. */
-async function setPresence(page: Page, presence: { focused: boolean; visible: boolean }): Promise<void> {
-  await page.evaluate((next) => {
-    const w = window as unknown as { __e2eFocused: boolean; __e2eVisible: boolean };
-    w.__e2eFocused = next.focused;
-    w.__e2eVisible = next.visible;
-    window.dispatchEvent(new Event(next.focused ? 'focus' : 'blur'));
-    document.dispatchEvent(new Event('visibilitychange'));
-  }, presence);
-  // presence is debounced 250 ms (connection.ts)
-  await page.waitForTimeout(700);
-}
-
-function toasts(page: Page): Promise<Recorded[]> {
-  return page.evaluate(() => (window as unknown as { __e2eToasts: Recorded[] }).__e2eToasts);
-}
-
-test('window in the background: "waiting for you" and "done" arrive as Windows toasts', async ({
+test('window in the background: "waiting for you" and "done" arrive as Windows toasts with a sound; a click selects the session', async ({
   page,
   context,
   server,
@@ -76,34 +30,46 @@ test('window in the background: "waiting for you" and "done" arrive as Windows t
   await context.addInitScript(recordNotifications);
   const app = await new ParallaxApp(page, server).open();
   expect(await page.evaluate(() => Notification.permission)).toBe('granted');
+  const other = await app.newSession(await server.makeProject('toast-other'));
   const session = await app.newSession(await server.makeProject('toast'));
   await session.send('hello first');
   await expect(session.assistantText('Echo: hello first')).toBeVisible();
   // The fake's AI title follows the first turn.
   await expect(session.header.locator('h1')).toHaveText('Fake: hello first');
   const title = 'Fake: hello first';
+  // The clicks so far were user interactions: the window may play sounds (WP-38 unlock).
+  expect(await tones(page)).toEqual([]);
 
   await setPresence(page, { focused: false, visible: false });
   await session.send('fake:permission while away');
   await expect
     .poll(() => toasts(page))
     .toEqual([
-      { title: `${title} – needs permission`, body: 'Click to show the session.', tag: session.key },
+      {
+        title: `${title} – needs permission`,
+        body: 'Click to show the session.',
+        tag: session.key,
+        // The window sounds itself (ADR-109): the Web Notification stays silent.
+        silent: true,
+      },
     ]);
   await expect(page).toHaveTitle('(1) Parallax');
+  await expect.poll(async () => (await tones(page)).map((tone) => tone.frequency)).toContain(CHIME_HZ);
 
   // Answer (the window stays "in the background") → the turn ends unseen → "done".
   await (await session.armedCard('permission')).locator('[data-action="allow-once"]').click();
   await expect
     .poll(async () => (await toasts(page)).map((toast) => toast.title))
     .toEqual([`${title} – needs permission`, `${title} – done`]);
+  await expect.poll(async () => (await tones(page)).map((tone) => tone.frequency)).toContain(POP_HZ);
   await expect(page).toHaveTitle('Parallax');
-  // Clicking the toast brings the session to the front and marks the notification as seen.
-  await page.evaluate(() => {
-    const list = (window as unknown as { __e2eToastObjects: Notification[] }).__e2eToastObjects;
-    list.at(-1)?.dispatchEvent(new Event('click', { cancelable: true }));
-  });
-  expect(await app.selectedSessionKey()).toBe(session.key);
+
+  // Another session in front, then the click on the toast brings the notified one back.
+  await app.selectSession(other.key);
+  expect(await app.selectedSessionKey()).toBe(other.key);
+  await clickLastToast(page);
+  await app.waitForSelection((key) => key === session.key);
+  await expect(app.session(session.key).pane).toBeVisible();
 });
 
 test('window in focus showing another session: in-app hint with "Show session"', async ({
@@ -135,6 +101,8 @@ test('window in focus showing another session: in-app hint with "Show session"',
   await expect(notice).toHaveAttribute('data-tone', 'warning');
   await expect(page).toHaveTitle('(1) Parallax');
   expect(await toasts(page)).toEqual([]);
+  // The in-app hint sounds as well (question: chime).
+  await expect.poll(async () => (await tones(page)).map((tone) => tone.frequency)).toContain(CHIME_HZ);
 
   await notice.getByRole('button', { name: 'Show session' }).click();
   await app.waitForSelection((key) => key === asking.key);

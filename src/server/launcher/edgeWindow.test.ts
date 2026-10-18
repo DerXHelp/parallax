@@ -7,6 +7,7 @@ import { sampleToken } from '@shared/samples';
 import { makeTempHome } from '../http/testServer';
 import type { SpawnHiddenOptions } from '../lib/process';
 import {
+  EDGE_AUTOPLAY_POLICY,
   EDGE_DISABLED_FEATURES,
   chromiumTime,
   edgeAppArgs,
@@ -52,7 +53,7 @@ function fakeSpawn(outcome: 'spawn' | Error) {
 }
 
 describe('Edge app window (C.9, A.8)', () => {
-  it('own profile, no first-run UI, no sign-in/sync (V2-01), app mode on the code URL', () => {
+  it('own profile, no first-run UI, no sign-in/sync (V2-01), sounds without a click (ADR-120), app mode on the code URL', () => {
     const url = appUrlWithCode(serverOrigin(4711), sampleToken(1));
     expect(edgeProfileDir(HOME)).toBe(`${HOME}\\edge`);
     const args = edgeAppArgs({ home: HOME, url });
@@ -63,8 +64,10 @@ describe('Edge app window (C.9, A.8)', () => {
       '--disable-sync',
       '--allow-browser-signin=false',
       `--disable-features=${EDGE_DISABLED_FEATURES.join(',')}`,
+      '--autoplay-policy=no-user-gesture-required',
       `--app=http://127.0.0.1:4711/#code=${sampleToken(1)}`,
     ]);
+    expect(EDGE_AUTOPLAY_POLICY).toBe('--autoplay-policy=no-user-gesture-required');
     // The operative switch against the implicit Windows-account sign-in (measured, ADR-060).
     expect(EDGE_DISABLED_FEATURES[0]).toBe('msImplicitSignin');
     // One --disable-features only (a second one would replace the first), the URL stays last.

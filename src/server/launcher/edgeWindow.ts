@@ -47,6 +47,13 @@ export const EDGE_DISABLED_FEATURES: readonly string[] = [
   'msQuickAuthToBrowserSignIn',
 ];
 
+/**
+ * ADR-120: the app profile only ever loads the Parallax origin on 127.0.0.1, so its windows may
+ * play the synthesized notification sounds (ADR-109) without a prior click – a window from the
+ * autostart or a toast click would otherwise stay silent until the first interaction.
+ */
+export const EDGE_AUTOPLAY_POLICY = '--autoplay-policy=no-user-gesture-required';
+
 /** Arguments for one app window on `url` (`http://127.0.0.1:<port>/#code=<code>`). */
 export function edgeAppArgs(options: { home: string; url: string }): string[] {
   return [
@@ -57,6 +64,7 @@ export function edgeAppArgs(options: { home: string; url: string }): string[] {
     '--disable-sync',
     '--allow-browser-signin=false',
     `--disable-features=${EDGE_DISABLED_FEATURES.join(',')}`,
+    EDGE_AUTOPLAY_POLICY,
     `--app=${options.url}`,
   ];
 }
