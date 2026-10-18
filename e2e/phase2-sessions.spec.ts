@@ -5,10 +5,14 @@
  *   folder with another spelling joins its group), two-line entries (path tail, model, context);
  * - the status chain working → needs-permission → working → done + unread → idle at one session
  *   (`fake:bash`, the window in the background makes the finished turn unread, selecting the
- *   session marks it read).
- * Own server per test: the sidebar must contain exactly the sessions of the test.
+ *   session marks it read);
+ * - the git branch of a fresh repository without a commit in the row (V3-11: the fake server's
+ *   launch env carries PATH, `git branch --show-current` names the branch).
+ * Own server per test where the sidebar must contain exactly the sessions of the test.
  */
 import type { Page } from '@playwright/test';
+import { runFile } from '../src/server/lib/process';
+import { resolveExecutable } from '../src/server/lib/windows';
 import { ParallaxApp, type SessionView } from './support/app';
 import { expect, keepServerLog, test } from './support/fixtures';
 import { recordNotifications, setPresence } from './support/presence';
@@ -98,24 +102,33 @@ test('three sessions in three folders work in parallel; the sidebar shows them f
   }
 });
 
-/** Records every `data-status` of the session header (MutationObserver – no transition is missed). */
+/**
+ * Records every `data-status` of the session header. A MutationObserver delivers the changes of one
+ * task in one batch; each record's `oldValue` is the value before it, so the value after record i
+ * is the `oldValue` of record i + 1 (the last one: the current value) – no intermediate state is
+ * merged away (R4W-27).
+ */
 async function recordHeaderStatus(page: Page, sessionKey: string): Promise<void> {
   await page.evaluate((key) => {
     const header = document.querySelector(`section[data-session-key="${key}"] [data-slot="session-header"]`);
     const log: string[] = [];
-    (window as unknown as { __e2eStatus: string[] }).__e2eStatus = log;
+    window.__e2eStatus = log;
     if (header === null) return;
-    const push = () => {
-      const value = header.getAttribute('data-status') ?? '';
-      if (log.at(-1) !== value) log.push(value);
+    const push = (value: string | null) => {
+      const status = value ?? '';
+      if (log.at(-1) !== status) log.push(status);
     };
-    push();
-    new MutationObserver(push).observe(header, { attributes: true, attributeFilter: ['data-status'] });
+    push(header.getAttribute('data-status'));
+    new MutationObserver((records) => {
+      records.forEach((_record, index) => {
+        push(records[index + 1]?.oldValue ?? header.getAttribute('data-status'));
+      });
+    }).observe(header, { attributes: true, attributeFilter: ['data-status'], attributeOldValue: true });
   }, sessionKey);
 }
 
 function statusLog(page: Page): Promise<string[]> {
-  return page.evaluate(() => (window as unknown as { __e2eStatus: string[] }).__e2eStatus);
+  return page.evaluate(() => window.__e2eStatus ?? []);
 }
 
 /** Status kinds of `log` in order, each kept once per run (subsequence check). */
@@ -161,6 +174,31 @@ test('status chain at one session: working → needs-permission → working → 
   await session.expectStatus('idle');
   await expect(app.rowStatus(session.key)).toHaveAttribute('data-status', 'idle');
   await expect(app.row(session.key)).not.toContainText('Unread');
+});
+
+test('git branch of a fresh repository (no commit yet) in the sidebar row (V3-11)', async ({
+  app,
+  server,
+}) => {
+  // Like the server: git only by its absolute path from PATH (never the bare name).
+  const git = await resolveExecutable('git', process.env);
+  test.skip(git === null, 'no git on the PATH of this machine');
+  if (git === null) return;
+  const cwd = await server.makeProject('git-fresh');
+  // No inherited GIT_DIR & co. (e.g. from a hook): the repository is created in `cwd`.
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && !key.toUpperCase().startsWith('GIT_')) env[key] = value;
+  }
+  const init = await runFile(git, ['init', '--initial-branch=e2e-fresh'], { cwd, env, timeoutMs: 30_000 });
+  expect(init.exitCode, init.stderr).toBe(0);
+
+  const session = await app.newSession(cwd);
+  await session.send('hello git');
+  await expect(session.assistantText('Echo: hello git')).toBeVisible();
+  // Read at the end of the turn: `rev-parse --abbrev-ref HEAD` fails without a commit, the
+  // fallback `branch --show-current` names it.
+  await expect(app.row(session.key).locator('[data-slot="row-branch"]')).toContainText('e2e-fresh');
 });
 
 /** Last two path segments as the sidebar shows them (`pathTail(cwd, 2)`). */

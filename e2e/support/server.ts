@@ -16,6 +16,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { appUrlWithCode, authCookieName, serverOrigin, type ServerLockFile } from '@shared/http';
+import type { Settings } from '@shared/model';
 import { PROTOCOL_VERSION } from '@shared/protocol';
 import {
   connectWs,
@@ -376,4 +377,20 @@ export async function connectNodeClient(server: E2eServer): Promise<TestWsClient
   });
   await client.next('summaries.snapshot');
   return client;
+}
+
+/**
+ * The settings the server has stored – from the `host.state` of a fresh node client's handshake
+ * (sent before `summaries.snapshot`), not the page's optimistic view (R4W-27). The client never
+ * had the focus, so it is never the target of a notification.
+ */
+export async function serverSettings(server: E2eServer): Promise<Settings> {
+  const client = await connectNodeClient(server);
+  try {
+    const state = client.all('host.state').at(-1);
+    if (state === undefined) throw new Error('no host.state in the handshake');
+    return state.host.settings;
+  } finally {
+    client.socket.terminate();
+  }
 }

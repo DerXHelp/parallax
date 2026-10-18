@@ -70,9 +70,14 @@ export class ParallaxApp {
     return session;
   }
 
+  /** The gear button of the settings menu in the sidebar. */
+  settingsButton(): Locator {
+    return this.page.locator('[data-action="settings"]');
+  }
+
   /** Opens the settings menu (gear in the sidebar). */
   async openSettings(): Promise<Locator> {
-    await this.page.getByRole('button', { name: /^(Settings|Einstellungen)$/ }).click();
+    await this.settingsButton().click();
     const menu = this.page.getByRole('menu');
     await expect(menu).toBeVisible();
     return menu;
@@ -84,9 +89,9 @@ export class ParallaxApp {
 
   // ---- Phase 2 (WP-35 sidebar, WP-38 settings page; WP-40) ----
 
-  /** The session list of the sidebar (`data-view` = flat | grouped | archive). */
+  /** The session list of the sidebar (`data-view` = flat | grouped | archive; no text, R4W-27). */
   sidebar(): Locator {
-    return this.page.getByRole('navigation', { name: 'Sessions' });
+    return this.page.locator('nav[data-view]');
   }
 
   /** The row button of a session in the sidebar. */

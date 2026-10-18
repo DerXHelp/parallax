@@ -85,8 +85,7 @@ async function attachText(testInfo: TestInfo, name: string, lines: readonly stri
 /** Runs in every document before its scripts: reports CSP violations to the test. */
 function reportCspViolations(): void {
   document.addEventListener('securitypolicyviolation', (event) => {
-    const report = (window as unknown as { __e2eCsp?: (blocked: string, detail: string) => void }).__e2eCsp;
-    report?.(
+    window.__e2eCsp?.(
       event.blockedURI,
       `${event.effectiveDirective} blocked ${event.blockedURI} (${event.sourceFile}:${String(event.lineNumber)})`,
     );
