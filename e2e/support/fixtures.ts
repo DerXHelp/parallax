@@ -9,7 +9,8 @@
  *   same context that is not in front stalled for many seconds under CPU load (no locator could
  *   resolve), although Playwright disables renderer backgrounding.
  * - Diagnostics in every context: a CSP violation (`securitypolicyviolation`, R2W-07 f) or an
- *   uncaught page error fails the test; console errors are attached to the report.
+ *   uncaught page error fails the test; console errors, WS frames and the server log are attached
+ *   to the report of a failed test (V2-15: not to green ones).
  */
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -158,10 +159,13 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       const diagnostics: Diagnostics = { csp: [], pageErrors: [], consoleErrors: [], frames: [] };
       await instrument(context, diagnostics);
       await use(diagnostics);
-      if (testInfo.status !== testInfo.expectedStatus && diagnostics.frames.length > 0) {
+      // Only for a failed test (V2-15): green tests have expected console errors (a refused
+      // foreign origin, security software injecting a script the CSP blocks).
+      const failed = testInfo.status !== testInfo.expectedStatus;
+      if (failed && diagnostics.frames.length > 0) {
         await attachText(testInfo, 'ws-frames.txt', diagnostics.frames);
       }
-      if (diagnostics.consoleErrors.length > 0) {
+      if (failed && diagnostics.consoleErrors.length > 0) {
         await attachText(testInfo, 'console-errors.txt', diagnostics.consoleErrors);
       }
       expect(diagnostics.csp, 'CSP violations (R2W-07 f)').toEqual([]);

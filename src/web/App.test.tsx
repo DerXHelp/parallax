@@ -16,6 +16,8 @@ import { Composer } from './features/composer/Composer';
 import { DecisionBar } from './features/decisions/DecisionBar';
 import { DecisionCard } from './features/decisions/DecisionCard';
 import { PlanSidePanel } from './features/decisions/PlanSidePanel';
+import { PREFERENCES_SLOTS, SettingsPage } from './features/preferences';
+import { ProfilesSettings } from './features/profiles';
 import { TRANSCRIPT_SLOTS } from './features/transcript/slots';
 import { installResizeObserver } from './features/transcript/testing';
 import { setLanguage } from './i18n';
@@ -26,6 +28,7 @@ import { PLAYGROUND_ENTRIES, PLAYGROUND_SESSION_KEYS } from './playground/scenar
 import { startScenario, type RunningScenario } from './playground/PlaygroundScenario';
 import { AppShell } from './shell/AppShell';
 import { closeNewSession } from './shell/NewSessionDialog';
+import { requestShell, type ShellRequest } from './shell/requests';
 import { closeShortcutHelp } from './shell/ShortcutHelp';
 import { installShortcutListener } from './shell/shortcuts';
 import { FeatureSlotsProvider } from './shell/slots';
@@ -307,18 +310,76 @@ describe('App shell over the memory transport', () => {
   });
 });
 
-describe('wired feature slots (WP-20b)', () => {
-  it('APP_SLOTS holds the components of WP-15 and WP-16', () => {
+describe('wired feature slots (WP-20b, WP-40)', () => {
+  it('APP_SLOTS holds the components of WP-15, WP-16, WP-36 and WP-38', () => {
     expect(APP_SLOTS).toEqual({
       ...TRANSCRIPT_SLOTS,
       DecisionBar,
       DecisionCard,
       SidePanel: PlanSidePanel,
       Composer,
+      SettingsPage,
+      ProfilesSettings,
     });
     expect(APP_SLOTS.Transcript).toBe(TRANSCRIPT_SLOTS.Transcript);
     expect(APP_SLOTS.Markdown).toBe(TRANSCRIPT_SLOTS.Markdown);
     expect(APP_SLOTS.ToolInputPreview).toBe(TRANSCRIPT_SLOTS.ToolInputPreview);
+    expect(APP_SLOTS.SettingsPage).toBe(PREFERENCES_SLOTS.SettingsPage);
+  });
+
+  it('"Settings…" opens the settings page; its section "Profiles" shows the profile editor (WP-40)', async () => {
+    start('overview');
+    const user = userEvent.setup();
+    render(<App />);
+    await sidebar();
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Settings…' }));
+    const page = await screen.findByRole('dialog', { name: 'Settings' });
+    await user.click(within(page).getByRole('tab', { name: 'Profiles' }));
+    const profiles = await within(page).findByRole('tabpanel', { name: 'Profiles' });
+    // The real slot of WP-36, not the "not available" hint of the placeholder.
+    expect(profiles.querySelector('[data-slot="profiles-settings"]')).not.toBeNull();
+    expect(profiles.querySelector('[data-slot="profile-list"]')).not.toBeNull();
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull();
+    });
+  });
+
+  it('every request of the shell channel has a mounted handler in the app (WP-40)', async () => {
+    start('overview');
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole('heading', { level: 1, name: 'Sample session' });
+    // false = nobody took it (shell/requests.ts) – a missing registration is an integration bug.
+    const requests: ShellRequest[] = [
+      { kind: 'quickSwitcher' },
+      { kind: 'conversations', sessionKey: PLAYGROUND_SESSION_KEYS.main },
+      { kind: 'sessionInfo', sessionKey: PLAYGROUND_SESSION_KEYS.main },
+      { kind: 'newSession', cwd: 'D:\\work\\parallax' },
+      { kind: 'settings', section: 'about' },
+      { kind: 'renameTitle', sessionKey: PLAYGROUND_SESSION_KEYS.main },
+    ];
+    for (const request of requests) {
+      let taken = false;
+      act(() => {
+        taken = requestShell(request);
+      });
+      expect(taken, request.kind).toBe(true);
+      if (request.kind !== 'renameTitle') {
+        await screen.findByRole('dialog');
+        await user.keyboard('{Escape}');
+        await waitFor(() => {
+          expect(screen.queryByRole('dialog')).toBeNull();
+        });
+      }
+    }
+    // The pre-filled folder reached the dialog (WP-36 handler).
+    act(() => {
+      requestShell({ kind: 'newSession', cwd: 'D:\\work\\parallax' });
+    });
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.querySelector<HTMLInputElement>('input[name="cwd"]')?.value).toBe('D:\\work\\parallax');
   });
 
   it('renders the transcript, the decision bar and the composer of the selected session', async () => {

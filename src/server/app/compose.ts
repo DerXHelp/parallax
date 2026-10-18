@@ -3,38 +3,57 @@
  * `main.ts` loads the config and the logging, then calls `startServer()`:
  *
  *  1. Single instance per PARALLAX_HOME: a live server behind `server.lock.json` → exit 5.
- *  2. Stores (registry, settings, processes, auth secret; blobs/decisions/transcripts lazily) –
- *     a file of a newer Parallax (`StoreVersionTooNewError`) → exit 3, files unchanged (ADR-020).
+ *  2. Stores (registry, settings, processes, profiles.json (ADR-102), model catalogs + account
+ *     limits (ADR-114), auth secret; blobs/decisions/transcripts/slash-command caches lazily) – a
+ *     file of a newer Parallax (`StoreVersionTooNewError`) → exit 3, files unchanged (ADR-020).
  *  3. Backend by `config.backend`: `fake` = FakeBackend (interactive dev scenario) + fake Claude
- *     integration (no `claude` process at all); `sdk` = SdkBackend (the SDK module is only imported
- *     here) + real Claude integration (profile "Standard", resolveClaude).
- *  4. SessionManager → SyncHub(source: manager) → `attachPublisher` → `manager.start()` (recovery;
- *     orphans in the background) → snapshot of the built UI in `PARALLAX_HOME/ui/<buildId>`
- *     (webSnapshot.ts, V2-03) → `createApp` (the app attaches the hub's WS route itself).
- *     Hub and transcript store validate outgoing values with `config.validation` (R3-05).
- *  5. Shutdown frame + signal handlers, then `listen` on 127.0.0.1 (EADDRINUSE → exit 4).
+ *     integration over the persistent profile store (no `claude` process at all) + fake console
+ *     (a "console turn" of the FakeBackend, ADR-104); `sdk` = SdkBackend (the SDK module is only
+ *     imported here) + real Claude integration (profiles.json, resolveClaude) + visible console
+ *     (PowerShell `Start-Process`). System integration (autostart, `parallax:` handler; ADR-109/110)
+ *     only for the productive server (`systemIntegrationAvailable`).
+ *  4. SessionManager (host commands `profile.*` + `fs.listDirectory`, ADR-101) → SyncHub(source:
+ *     manager) → `attachPublisher` → profile changes → `manager.onProfileChanged()`, system
+ *     integration changes → `publishHostState` → `manager.start()` (recovery; orphans in the
+ *     background) → snapshot of the built UI in `PARALLAX_HOME/ui/<buildId>` (webSnapshot.ts, V2-03)
+ *     → `createApp` (the app attaches the hub's WS route itself). Hub and transcript store validate
+ *     outgoing values with `config.validation` (R3-05).
+ *  5. Shutdown frame + signal handlers, then `listen` on 127.0.0.1 (EADDRINUSE → exit 4); the host
+ *     state then carries the actual port (`HostState.port`).
  *  6. `server.lock.json` with the actual port and `auth.launcherToken` – only now the launcher
  *     regards the server as ready; then in the background the access check of the home
- *     (`logHomeAccess`, R2-13) and "Profil testen" of the default profile.
+ *     (`logHomeAccess`, R2-13), "Profil testen" of every unchecked profile (default first; again
+ *     for a new profile after every profile change) and the first
+ *     `SystemIntegration.apply(settings)` (again after every settings.update).
  *
  * The exclusive home lock (R2-05) is taken by main.ts before logging and stores (`homeLock`).
  *
  * Shutdown (command `server.shutdown`, SIGINT/SIGTERM/SIGBREAK/SIGHUP): `manager.shutdown()` (close
  * all queries ≤ 15 s, taskkill after 5 s grace, flush, `backend.dispose()`) → `app.close()` (WS
- * close 4503) → close the stores → wait for the access check → release the lock file → release
- * the home lock → close the log → `exit(code)`.
+ * close 4503) → wait for a running system-integration step → close the stores → wait for the
+ * access check → release the lock file → release the home lock → close the log → `exit(code)`.
  */
 import { existsSync } from 'node:fs';
 import type { FastifyInstance } from 'fastify';
 import type { Logger } from 'pino';
+import type { ProfileId } from '@shared/common';
 import { serverOrigin } from '@shared/http';
+import type { Settings } from '@shared/model';
 import { createFakeBackend } from '../backend/fakeBackend';
 import { createFakeClaudeIntegration } from '../backend/fake/integration';
 import type { AgentBackend } from '../backend/types';
 import { createClaudeIntegration } from '../claude/integration';
 import type { ClaudeIntegration } from '../claude/ports';
+import { createProfileCommands } from '../claude/profileCommands';
+import { openProfileStore, type PersistentProfileStore } from '../claude/profileStore';
 import { readSdkManifest } from '../claude/resolveClaude';
-import { createServerInstance, type ServerConfig, type ServerInstance } from '../config';
+import {
+  createServerInstance,
+  systemIntegrationAvailable,
+  type ServerConfig,
+  type ServerInstance,
+} from '../config';
+import { createFsCommands } from '../host/fsCommands';
 import { createApp } from '../http/app';
 import { createAuthService, type AuthService } from '../http/auth';
 import { findRunningServer, type RunningServerCheck } from '../launcher/client';
@@ -51,6 +70,8 @@ import { logHomeAccess } from '../lib/homeAccess';
 import type { HomeLock } from '../lib/homeLock';
 import { logger as rootLogger, type LoggingHandle } from '../lib/logger';
 import { errnoCode } from '../lib/process';
+import { openCatalogStore } from '../sessions/catalogStore';
+import { createCommandCatalogStore, type CommandCatalogStore } from '../sessions/commandCatalog';
 import { createSessionManager, SHUTDOWN_SWEEP_GRACE_MS, type SessionManager } from '../sessions/manager';
 import { createNativeToasts } from '../sessions/nativeToasts';
 import { openProcessStore } from '../sessions/processStore';
@@ -61,6 +82,10 @@ import { openRegistryStore } from '../store/registry';
 import { openSettingsStore } from '../store/settings';
 import { createTranscriptStore } from '../store/transcripts';
 import { createSyncHub } from '../sync/hub';
+import { createConsoleLauncher } from '../system/console';
+import { createFakeConsoleLauncher, FAKE_CONSOLE_RUN_MS } from '../system/fakeConsole';
+import { createSystemIntegration } from '../system/index';
+import type { ConsoleLauncher, SystemIntegration } from '../system/ports';
 import { prepareWebRoot } from './webSnapshot';
 
 /** The server start failed before it was ready; `exitCode` from SERVER_EXIT_CODES. */
@@ -114,6 +139,14 @@ export interface StartServerOptions {
    * flushed, lock file removed) – also while `startServer` has not returned yet.
    */
   onShutdownFrame?: (shutdown: ServerShutdown) => void;
+  /**
+   * The checkout (launcher command of the autostart shortcut and the `parallax:` handler,
+   * ADR-109/110); main.ts derives it from its own location. Absent → no system integration
+   * (in-process tests; `HostState.systemIntegration` false).
+   */
+  repoRoot?: string;
+  /** Test seam: replaces `createSystemIntegration(…)` (in-process tests never touch HKCU). */
+  systemIntegration?: SystemIntegration;
   logger?: Logger;
 }
 
@@ -137,6 +170,12 @@ interface Stores {
   registry: Awaited<ReturnType<typeof openRegistryStore>>;
   settings: Awaited<ReturnType<typeof openSettingsStore>>;
   processes: Awaited<ReturnType<typeof openProcessStore>>;
+  /** profiles.json (ADR-102); the Claude integration and the `profile.*` commands use it. */
+  profiles: PersistentProfileStore;
+  /** model-catalogs.json + account-limits.json (ADR-114). */
+  catalogs: Awaited<ReturnType<typeof openCatalogStore>>;
+  /** entries/<id>/commands.json (ADR-108); `manager.shutdown()` flushes it, nothing to close. */
+  commandCatalogs: CommandCatalogStore;
   auth: AuthService;
   blobs: ReturnType<typeof createBlobStore>;
   decisions: ReturnType<typeof createDecisionStore>;
@@ -176,6 +215,11 @@ async function openStores(config: ServerConfig, instance: ServerInstance, log: L
     opened.push({ name: 'settings', close: () => settings.close() });
     const processes = await openProcessStore({ home, warnings });
     opened.push({ name: 'processes', close: () => processes.close() });
+    const profiles = await openProfileStore({ home, warnings });
+    opened.push({ name: 'profiles', close: () => profiles.close() });
+    const catalogs = await openCatalogStore({ home, warnings });
+    opened.push({ name: 'catalogs', close: () => catalogs.close() });
+    const commandCatalogs = createCommandCatalogStore({ home });
     const auth = await createAuthService({ home, serverInstanceId: instance.serverInstanceId, warnings });
     opened.push({ name: 'auth', close: () => auth.close() });
     const blobs = createBlobStore({ home });
@@ -190,6 +234,9 @@ async function openStores(config: ServerConfig, instance: ServerInstance, log: L
       registry,
       settings,
       processes,
+      profiles,
+      catalogs,
+      commandCatalogs,
       auth,
       blobs,
       decisions,
@@ -205,25 +252,49 @@ async function openStores(config: ServerConfig, instance: ServerInstance, log: L
 interface Engine {
   backend: AgentBackend;
   claude: ClaudeIntegration;
+  /** `session.openExternal` (ADR-104). */
+  consoleLauncher: ConsoleLauncher;
+}
+
+/** The session id after `--resume` in a console spec (fake console), or null. */
+export function resumedSessionId(args: readonly string[]): string | null {
+  const at = args.indexOf('--resume');
+  return at < 0 ? null : (args[at + 1] ?? null);
 }
 
 /**
- * `fake`: no `claude` process at all (dev, E2E, smoke tests of the launcher path). `sdk`: the SDK
- * module is loaded only here (dynamic import), the Claude integration resolves the real `claude`.
+ * `fake`: no `claude` process at all (dev, E2E, smoke tests of the launcher path); the fake console
+ * "runs" 1.5 s and leaves one console turn in the FakeBackend's history, which the engine imports
+ * on the automatic return (WP-34 §2.4). `sdk`: the SDK module is loaded only here (dynamic import),
+ * the Claude integration resolves the real `claude`, the console is a visible PowerShell window.
+ * Both integrations read the persistent profile store (ADR-102).
  */
 async function createEngine(
   config: ServerConfig,
   instance: ServerInstance,
   fakeSpeed: number,
+  profiles: PersistentProfileStore,
 ): Promise<Engine> {
   if (config.backend === 'fake') {
-    return { backend: createFakeBackend({ speed: fakeSpeed }), claude: createFakeClaudeIntegration() };
+    const fakeBackend = createFakeBackend({ speed: fakeSpeed });
+    return {
+      backend: fakeBackend,
+      claude: createFakeClaudeIntegration({ store: profiles }),
+      consoleLauncher: createFakeConsoleLauncher({
+        runMs: FAKE_CONSOLE_RUN_MS,
+        onRun: (spec) => {
+          const sessionId = resumedSessionId(spec.args);
+          if (sessionId !== null) fakeBackend.simulateConsoleTurn(sessionId, new Date());
+        },
+      }),
+    };
   }
   const { createSdkBackend, loadAgentSdk } = await import('../backend/sdkBackend');
   await loadAgentSdk();
   return {
     backend: createSdkBackend(),
-    claude: createClaudeIntegration({ appVersion: instance.serverVersion }),
+    claude: createClaudeIntegration({ appVersion: instance.serverVersion, profiles }),
+    consoleLauncher: createConsoleLauncher(),
   };
 }
 
@@ -272,6 +343,28 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   /** The background access check of the home (its PowerShell must not outlive the server). */
   let accessCheck: Promise<unknown> | null = null;
   const homeLock = options.homeLock ?? null;
+  /** HostState.port: the actual port once listening (also with `--port=0`), null before. */
+  let listeningPort: number | null = null;
+  /** "Profil testen" of unchecked profiles (set up with the engine; runs from step 6 on). */
+  let checkProfiles: (() => void) | null = null;
+  let profileChecksOn = false;
+
+  // Autostart + `parallax:` handler (ADR-109/110): only the productive server; never in tests.
+  const system =
+    options.systemIntegration ??
+    createSystemIntegration({
+      available: options.repoRoot !== undefined && systemIntegrationAvailable(config),
+      repoRoot: options.repoRoot ?? '',
+      home: config.home,
+      logger: options.logger,
+    });
+  /** The last reconciliation (its PowerShell must not outlive the server either). */
+  let systemApply: Promise<void> = Promise.resolve();
+  const applySystem = (settings: Settings): void => {
+    systemApply = system.apply(settings).catch((error: unknown) => {
+      log.warn({ err: error }, 'system integration could not be applied');
+    });
+  };
 
   /**
    * The close steps after `manager.shutdown()` (order: architecture "Komposition"). No backend
@@ -279,6 +372,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
    */
   const steps: ShutdownStep[] = [
     { name: 'http', run: () => app?.close() },
+    { name: 'system', run: () => systemApply },
     { name: 'stores', run: () => stores.close(), timeoutMs: 10_000 },
     { name: 'homeAccess', run: () => accessCheck },
     { name: 'lock', run: () => lock?.release() },
@@ -313,9 +407,12 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   };
 
   try {
-    engine = await createEngine(config, instance, options.fakeSpeed ?? DEFAULT_FAKE_SPEED);
-    const { backend, claude } = engine;
+    engine = await createEngine(config, instance, options.fakeSpeed ?? DEFAULT_FAKE_SPEED, stores.profiles);
+    const { backend, claude, consoleLauncher } = engine;
     const manifest = await readSdkManifest();
+    // Delete protection and `profile.get`: entries of the profile, archived ones included (ADR-102).
+    const entryCount = (profileId: ProfileId): number =>
+      stores.registry.list().filter((entry) => entry.profileId === profileId).length;
     // Native Windows toasts (WP22-03/-15, A.9): off under tests/E2E (config.toasts).
     const toasts = createNativeToasts({
       enabled: config.toasts === 'native',
@@ -339,6 +436,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         settings: stores.settings,
         warnings: stores.warnings,
         processes: stores.processes,
+        catalogs: stores.catalogs,
+        commandCatalogs: stores.commandCatalogs,
       },
       host: {
         serverVersion: instance.serverVersion,
@@ -347,7 +446,26 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         platform: process.platform,
         dataDirLabel: config.dataDirLabel,
         dev: config.dev,
+        port: () => listeningPort,
+        systemIntegration: system.available,
       },
+      // ADR-101: `profile.*` (WP-32) and `fs.listDirectory` (WP-33) – disjoint names.
+      hostCommands: [
+        createProfileCommands({
+          store: stores.profiles,
+          integration: claude,
+          entryCount,
+          now: () => new Date(),
+        }),
+        createFsCommands(),
+      ],
+      // Autostart and protocol handler follow every settings.update (ADR-110).
+      onSettingsChanged: (_prev, next) => {
+        applySystem(next);
+      },
+      extraWarnings: () => system.warnings(),
+      consoleLauncher,
+      systemIntegration: system,
       // The engine acks `server.shutdown` first and calls this via setImmediate (WP-13b).
       onShutdownRequested: () => {
         void shutdown?.stop('command');
@@ -359,6 +477,43 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     const hub = createSyncHub({ source: sessions, instance, validation: config.validation });
     sessions.attachPublisher(hub); // before start() (WP-13 §3.5, R1-18)
     stores.warnings.onChange(() => {
+      sessions.publishHostState();
+    });
+    // "Profil testen" of every profile nobody checked yet (status `checking`, `checkedAt` null): at
+    // the start the default first, then after every profile change – a new profile would show
+    // "checking" for ever otherwise (WP-40). One check at a time; none during the shutdown.
+    const checking = new Set<ProfileId>();
+    let checkQueue: Promise<void> = Promise.resolve();
+    checkProfiles = () => {
+      if (!profileChecksOn || shutdown?.stopping === true) return;
+      const defaultId = claude.profiles.getDefault().id;
+      const pending = claude.profiles
+        .summaries()
+        .filter((profile) => profile.claude.checkedAt === null && !checking.has(profile.id))
+        .sort((a, b) => Number(b.id === defaultId) - Number(a.id === defaultId));
+      for (const { id } of pending) {
+        checking.add(id);
+        checkQueue = checkQueue
+          .then(async () => {
+            if (shutdown?.stopping === true) return;
+            await claude.checkProfile(id);
+            sessions.publishHostState();
+          })
+          .catch((error: unknown) => {
+            log.warn({ err: error, profileId: id }, 'profile check failed');
+          })
+          .finally(() => {
+            checking.delete(id);
+          });
+      }
+    };
+    // ADR-102: a saved/deleted/re-checked profile drops the caches of a changed profile and
+    // publishes the host state (WP-34 §2.4; the store reports no id – the engine compares).
+    stores.profiles.onChange(() => {
+      sessions.onProfileChanged();
+      checkProfiles?.();
+    });
+    system.onChange(() => {
       sessions.publishHostState();
     });
     await sessions.start();
@@ -432,6 +587,9 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     return fail(SERVER_EXIT_CODES.failure, 'The Parallax server has no TCP address after listen.', address);
   }
   const port = address.port;
+  // HostState.port = the actual port (the settings' port only applies after a restart, ADR-111).
+  listeningPort = port;
+  sessions.publishHostState();
 
   // 6. Lock file: from now on the launcher regards the server as ready.
   try {
@@ -459,17 +617,14 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     });
   }
 
-  // "Profil testen" of the default profile in the background (real claude only with --backend=sdk).
-  const { claude } = engine;
-  const defaultProfile = claude.profiles.getDefault().id;
-  void claude
-    .checkProfile(defaultProfile)
-    .then(() => {
-      sessions.publishHostState();
-    })
-    .catch((error: unknown) => {
-      log.warn({ err: error, profileId: defaultProfile }, 'profile check failed');
-    });
+  // Autostart and protocol handler reconciled with the stored settings in the background (ADR-110;
+  // `available: false` – tests, dev, fake, another data directory – does nothing).
+  applySystem(stores.settings.get());
+
+  // "Profil testen" of every unchecked profile in the background, the default first (real claude
+  // only with --backend=sdk); from now on also after every profile change.
+  profileChecksOn = true;
+  checkProfiles();
 
   const origin = serverOrigin(port);
   log.info(
@@ -481,6 +636,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       dev: config.dev,
       validation: config.validation,
       toasts: config.toasts,
+      systemIntegration: system.available,
       home: config.home,
       buildId: instance.buildId,
       serverInstanceId: instance.serverInstanceId,

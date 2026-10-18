@@ -117,9 +117,13 @@ export function copyConsoleCommand(sessionKey: string, summary: SessionSummary):
     });
 }
 
-/** "New session in this project…": the dialog of WP-36 pre-filled; before WP-36 the plain dialog. */
+/**
+ * "New session in this project…": the dialog of WP-36 pre-filled. `openNewSession` asks the
+ * request channel itself and, without a mounted dialog, keeps the folder for its next opening
+ * (WP-40: the former fallback `openNewSession()` lost the folder).
+ */
 export function newSessionIn(cwd: string): void {
-  if (!requestShell({ kind: 'newSession', cwd })) openNewSession();
+  openNewSession({ cwd });
 }
 
 /** A process runs (the only states where "Put to sleep" = `session.close` means anything). */

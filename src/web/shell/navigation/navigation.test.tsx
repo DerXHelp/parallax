@@ -14,6 +14,7 @@ import { closeNewSession } from '../NewSessionDialog';
 import { registerShellRequestHandler, requestShell } from '../requests';
 import { installShortcutListener } from '../shortcuts';
 import { resetRename } from './rename';
+import { newSessionIn } from './session-actions';
 import { resetSidebarView, setSidebarMode } from './sidebar-view';
 
 // The whole shell renders per test: ~1 s alone, much longer when several runs load the machine
@@ -164,6 +165,20 @@ describe('sidebar entries (WP-35 §1)', () => {
     const group = await within(nav()).findByRole('group', { name: 'Project D:\\work\\db\\migrations' });
     await user.click(within(group).getByRole('button', { name: 'New session in this project…' }));
     expect(handler).toHaveBeenCalledWith({ kind: 'newSession', cwd: 'D:\\work\\db\\migrations' });
+  });
+
+  it('"New session in this project…" without a mounted dialog keeps the folder for its opening (WP-40)', async () => {
+    running = startScenario('navigation');
+    // Nobody handles `newSession` yet: the fallback opens the dialog as soon as it mounts …
+    act(() => {
+      newSessionIn('D:\\work\\db\\migrations');
+    });
+    render(<AppShell />);
+    const dialog = await screen.findByRole('dialog');
+    // … pre-filled with the folder (before WP-40 the fallback dropped it).
+    expect(dialog.querySelector<HTMLInputElement>('input[name="cwd"]')?.value).toBe(
+      'D:\\work\\db\\migrations',
+    );
   });
 
   it('Alt+N and "Waiting for you (n)" go to the next waiting session after the selection, cyclically', async () => {
