@@ -650,6 +650,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
             channel: routeChannel(route.planned),
             clientId: route.planned?.clientId ?? null,
             reason: route.reason,
+            tieBreak: route.tieBreak,
             filter: route.filter,
             presence: presenceSummary(clients, s.id),
           },
