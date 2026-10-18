@@ -26,6 +26,7 @@ import { redactText, REDACTED } from '../lib/logger';
 import type { ConsoleOpenResult, ConsoleProcess } from '../system/ports';
 import { cancelContinue } from './continuePlan';
 import {
+  assertEntryGate,
   assertWithoutWork,
   commandError,
   errorMessage,
@@ -118,11 +119,17 @@ export async function openExternal(
   s.cancelRetry();
   return s.lifecycle.run(async () => {
     core.assertRunning();
+    // R4-01: a second click (or a second window) that waited for this lock while the first
+    // handoff opened its console – never two consoles; archived meanwhile likewise.
+    assertEntryGate(s, 'session.openExternal');
     const sessionId = currentSessionId(s.entry);
     if (sessionId === null) throw commandError('SESSION_NOT_STARTED', { entryId: s.id });
     assertWithoutWork(s);
     const launcher = core.consoleLauncher;
     if (launcher === null) throw commandError('EXTERNAL_CONSOLE_FAILED', { reason: 'unavailable' });
+    // R4-09: a deleted folder or one replaced by a link (R1-17) fails like a start (CWD_*), before
+    // the query is closed.
+    await core.checkCwd(s.entry.cwd);
     // The console takes over: no scheduled "continue" and no auto-retry of this server.
     cancelContinue(s);
     s.cancelRetry();
@@ -135,6 +142,8 @@ export async function openExternal(
     const conversation = s.conversation();
     // Profile errors (PROFILE_INVALID, CLAUDE_NOT_FOUND …) pass through; the entry stays dormant.
     const spec = await core.claude.consoleLaunchFor(consoleRequest(core, s, sessionId));
+    // R4-03: nothing is opened once the shutdown began (it waits for this lock, bounded).
+    core.assertRunning();
     let result: ConsoleOpenResult;
     try {
       result = await launcher.open(spec);
@@ -146,7 +155,8 @@ export async function openExternal(
       core.log.warn({ entryId: s.id, reason }, 'external console could not be opened');
       throw commandError('EXTERNAL_CONSOLE_FAILED', { reason });
     }
-    // The console runs now: record it even if a shutdown began meanwhile (the next start checks it).
+    // The console runs now: record it even if a shutdown began meanwhile – the shutdown waits for
+    // this lock (bounded, R4-03) before it flushes the stores; the next start checks the console.
     const pid = positivePid(result.process.pid);
     const since = core.now().toISOString();
     s.patch((e) => ({
