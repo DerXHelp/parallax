@@ -340,7 +340,10 @@ export const DEFAULT_AUTOSTART = { enabled: false, openWindow: true } as const s
   typeof autostartSchema
 >;
 
-/** null = default port 4711 (config.ts); takes effect after a server restart (ADR-111). */
+/** Port of the productive server without flag, env or setting (ADR-111; server and settings page). */
+export const DEFAULT_PORT = 4711;
+
+/** null = `DEFAULT_PORT`; takes effect after a server restart (ADR-111). */
 export const portSettingSchema = z.number().int().min(1024).max(65535).nullable();
 
 /** Fields without defaults: the base of the patch schema (a patch must never inject defaults). */

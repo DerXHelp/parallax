@@ -1308,3 +1308,52 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   betrifft die Lockerung nur unsere synthetisierten Töne (ADR-109). Ohne das Flag bleibt ein Fenster
   aus Autostart oder Toast-Klick bis zur ersten Interaktion stumm. Der Hinweis „Töne aktivieren“
   (WP-38) bleibt als Rückfall für Fenster, die nicht über den Launcher geöffnet wurden.
+
+## ADR-121 – Leerlauf-Schlaf nur ohne geplante Turns
+- **Datum/WP:** 18.10.2026, Koordinator nach R4 (R4-02, architecture §10 / R0-27)
+- **Entscheidung:** Die Engine erkennt geplante Turns und lässt solche Sessions nie einschlafen: ein
+  `tool_use` `ScheduleWakeup` oder `CronCreate` im laufenden Prozess sowie ein gesendeter Prompt, der mit
+  `/loop` beginnt, markieren die Runtime als „geplant“; `sleepEligible` schließt sie aus, bis der Prozess
+  endet (konservativ: `CronDelete` hebt die Markierung nicht auf). Rein Engine-intern, kein Contract.
+  Der Default `DEFAULT_IDLE_SLEEP` (an, 30 min) bleibt. WP-41 prüft live „`/loop` bleibt wach“.
+
+## ADR-122 – Nativer Toast stumm, wenn ein Fenster selbst klingt
+- **Datum/WP:** 18.10.2026, Koordinator nach R4 (R4W-07), ergänzt ADR-109
+- **Entscheidung:** Bekommt bei einer Benachrichtigung zusätzlich zum nativen Toast ein Fenster das
+  `notify` (Fall ohne Web-Notification-Recht, ADR-082), ist der Toast `silent` – das Fenster spielt den Ton
+  per Web Audio (seit ADR-120 auch ohne vorherige Interaktion). Ohne Fenster klingt der Toast wie bisher
+  nach `events[kind].sound`. Kein Doppelton.
+
+## ADR-123 – Konsolenbefehl ohne Secret-Werte
+- **Datum/WP:** 18.10.2026, Koordinator nach R4 (R4W-08), schränkt ADR-104 ein
+- **Entscheidung:** `session.consoleCommand` schreibt Werte geheimer Variablen (`isSecretEnvKey`,
+  ADR-124) nicht mehr in die Kopierzeile, sondern eine verdeckte Abfrage in der Konsole, z. B.
+  `$env:NAME=[Net.NetworkCredential]::new('', (Read-Host 'NAME' -AsSecureString)).Password` (PowerShell
+  5.1 und 7). Übrige Werte bleiben im Befehl. Der Hinweistext beim Kopieren sagt, dass geheime Werte
+  abgefragt werden. Die von Parallax selbst geöffnete Konsole (ADR-104) übergibt Secrets weiter über die
+  Prozess-Umgebung, nie über die Zwischenablage.
+
+## ADR-124 – Eine Secret-Regel in `@shared/secrets`
+- **Datum/WP:** 18.10.2026, Koordinator nach R4 (R4-07, R4W-09; Contract-Änderung, additiv)
+- **Entscheidung:** `isSecretEnvKey(name)` liegt in `src/shared/secrets.ts` und wird von Server
+  (Redaction, `registerSecret`, Konsole) und Web (Maskierung im Profil-Editor) importiert; Kopien
+  entfallen. Regel: ein Namensteil (durch `_` getrennt, case-insensitiv) ist `KEY`, `APIKEY`, `TOKEN`,
+  `SECRET`, `PASSWORD`, `PASSWD`, `CREDENTIAL` oder `CREDENTIALS` (z. B. `AWS_BEARER_TOKEN_BEDROCK`,
+  `GH_TOKEN_CI`), dazu ausdrücklich `ANTHROPIC_CUSTOM_HEADERS`; nicht `KEYBOARD_LAYOUT`,
+  `TOKENIZER_PATH`. Aufgelöste Werte von Secret-Namen (auch `${env:…}`) registriert der Server bei jedem
+  Bau einer Launch-Spec (`launchSpecFor`, `checkProfile`, `consoleLaunchFor`), nicht nur für die Konsole.
+
+## ADR-125 – Summengrenze für Bild-Anhänge je Prompt
+- **Datum/WP:** 18.10.2026, Koordinator nach R4 (R4-16; Contract-Änderung, additiv)
+- **Entscheidung:** Neben der Einzelgrenze `LIMITS.imageBytes` gilt `LIMITS.attachmentsTotalBytes`
+  = 20 000 000 Byte roh je Prompt (base64 ≈ 26,7 MB, unter der Request-Grenze der Messages-API).
+  Server: `resolveAttachments` lehnt die Summe mit `PAYLOAD_TOO_LARGE` ab (Params im bestehenden Schema,
+  `bytes` = Summe, `max` = Grenze); Client: der Composer prüft vor dem Senden und zeigt den Fehler am Chip.
+
+## ADR-126 – Web-Regeln nach R4: Feature → Shell, Fehler aus Dialogen, Hinweise über Modals
+- **Datum/WP:** 18.10.2026, Koordinator nach R4 (R4W-05, R4W-22)
+- **Entscheidung:** (1) Features dürfen Shell-Bausteine (Komponenten, Kanäle, Helfer) importieren, die
+  Shell nie Features (ESLint erzwingt die Gegenrichtung); reine Helfer gehören nach `src/web/lib`.
+  (2) Fehler einer Aktion aus einem offenen Dialog zeigt der Dialog selbst (`Alert role="alert"`), nicht
+  die Hinweis-Region. (3) Die Hinweis-Region liegt über modalen Dialogen und bleibt für Screenreader
+  erreichbar; ein Hinweis kann eine Aktion tragen (`ClientNotice.action?`), z. B. „Töne aktivieren“.

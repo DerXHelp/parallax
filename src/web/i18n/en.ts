@@ -17,7 +17,6 @@ export const en = {
     reload: 'Reload',
     loading: 'Loading…',
     dismiss: 'Dismiss',
-    show: 'Show',
     unknown: 'Unknown',
     keys: {
       ctrl: 'Ctrl',
@@ -43,9 +42,7 @@ export const en = {
       count: { one: '{count} session', other: '{count} sessions' },
       empty: 'No sessions yet.',
       waiting: 'Waiting for you ({count})',
-      waitingAction: 'Go to the next session waiting for you',
       unread: 'Unread',
-      lastActivity: 'Last activity {time}',
       pinned: 'Pinned',
       newSession: 'New session',
       fakeBadge: 'Fake',
@@ -107,16 +104,12 @@ export const en = {
       description: 'Pick a session on the left or start a new one.',
       welcomeTitle: 'Welcome to {product}',
       welcomeDescription: 'Start your first Claude Code session in a project folder.',
-      recentProjects: 'Recent projects',
     },
     newSession: {
       title: 'New session',
-      description: 'Choose the project folder. Claude starts with your first message.',
       cwdLabel: 'Project folder',
       cwdPlaceholder: 'D:\\work\\my-project',
-      hint: 'Full path of an existing folder, e.g. copied from the Explorer address bar.',
       submit: 'Create session',
-      starting: 'Creating…',
     },
     placeholders: {
       transcript: {

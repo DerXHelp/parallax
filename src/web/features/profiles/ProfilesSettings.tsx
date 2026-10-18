@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ProfileId } from '@shared/common';
 import { useI18n, type TranslationKey, type TranslationParams } from '@web/i18n';
+import type { ProfilesSettingsSlotProps } from '@web/shell/slots';
 import { useHostState } from '@web/state/hooks';
 import { Alert } from '@web/ui/alert';
 import { Button } from '@web/ui/button';
@@ -20,7 +21,8 @@ interface Notice {
  */
 export function ProfilesSettings({
   initialSelection,
-}: {
+  onDirtyChange,
+}: ProfilesSettingsSlotProps & {
   /** Start with this profile (playground, tests); default: the default profile. */
   initialSelection?: ProfileSelection;
 }) {
@@ -31,6 +33,10 @@ export function ProfilesSettings({
   const [selection, setSelection] = useState<ProfileSelection | null>(initialSelection ?? null);
   const [editorVersion, setEditorVersion] = useState(0);
   const [dirty, setDirty] = useState(false);
+  // R4W-01: the settings page asks before it closes while the editor holds unsaved changes.
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
   const [pending, setPending] = useState<ProfileSelection | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
 

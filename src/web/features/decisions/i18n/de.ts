@@ -126,7 +126,6 @@ export const de: typeof en = {
     showLess: 'Weniger zeigen',
   },
   panel: {
-    label: 'Plan',
     title: 'Plan v{version}',
     close: 'Plan schließen',
     file: 'Plan-Datei',

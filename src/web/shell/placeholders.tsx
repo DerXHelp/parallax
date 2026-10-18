@@ -3,6 +3,7 @@ import type { DecisionId, JsonValue } from '@shared/common';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { useDecision, useDecisions, useItem, useTopLevelItemIds } from '@web/state/hooks';
+import type { ProfilesSettingsSlotProps } from './slots';
 
 /**
  * Neutral stand-ins for feature slots that are not wired yet (architecture §2.3 d/e). WP-20
@@ -125,7 +126,7 @@ export function SettingsPagePlaceholder(_props: { section: string | null; onClos
 }
 
 /** Phase 2: until WP-36 fills the slot the settings page shows no profile editor. */
-export function ProfilesSettingsPlaceholder(_props: Record<string, never>) {
+export function ProfilesSettingsPlaceholder(_props: ProfilesSettingsSlotProps) {
   return null;
 }
 
