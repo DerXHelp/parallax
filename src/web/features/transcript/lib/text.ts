@@ -1,4 +1,5 @@
-import type { CappedText, ToolCallItem, ToolResultContent } from '@shared/model';
+import type { BlobRef, CappedText, ToolCallItem, ToolResultContent } from '@shared/model';
+import { readFilePathInput } from './tool-input';
 
 /**
  * Text helpers of the transcript renderers (display only).
@@ -91,8 +92,39 @@ export function resultText(item: ToolCallItem): ResultText {
 }
 
 /** The image parts of a tool result (blobs). */
-export function resultImages(item: ToolCallItem) {
+export function resultImages(item: ToolCallItem): BlobRef[] {
   return (item.result?.content ?? []).flatMap((part) => (part.type === 'image' ? [part.image] : []));
+}
+
+const EMPTY_IMAGES: readonly BlobRef[] = Object.freeze([]);
+const previewCache = new WeakMap<ToolCallItem, readonly BlobRef[]>();
+
+/** Last segment of a Windows or POSIX path (`C:\shots\a.png` → `a.png`). */
+function baseName(path: string): string {
+  return path.split(/[\\/]/).findLast((segment) => segment !== '') ?? '';
+}
+
+/**
+ * The pictures of a tool result as the transcript previews them (R4W-03, V3-09): only `image/*`
+ * blobs; an image without its own name is named after the tool's `input.file_path` (Read of a
+ * screenshot), so thumbnail, lightbox title and "Save as" show the file name instead of "unnamed".
+ * Cached per item (stable array for memoized rows).
+ */
+export function previewImages(item: ToolCallItem): readonly BlobRef[] {
+  const cached = previewCache.get(item);
+  if (cached !== undefined) return cached;
+  const images = resultImages(item).filter((image) => image.mediaType.startsWith('image/'));
+  let result: readonly BlobRef[] = EMPTY_IMAGES;
+  if (images.length > 0) {
+    const input = readFilePathInput(item.input);
+    const name = input === null ? '' : baseName(input.file_path).trim();
+    result =
+      name === ''
+        ? images
+        : images.map((image) => ((image.name ?? '').trim() === '' ? { ...image, name } : image));
+  }
+  previewCache.set(item, result);
+  return result;
 }
 
 /** `<tool_use_error>…</tool_use_error>` wrappers of CLI error results → inner text. */

@@ -1,6 +1,7 @@
 import type { RuleDestination } from '@shared/common';
 import type { ToolCallStatus } from '@shared/model';
 import type { TurnOutcome } from '@shared/status';
+import type { RateLimitWindow } from '../lib/rate-limit';
 
 /**
  * English dictionary of the `transcript` namespace (owner WP-15): `t('transcript.<path>')`.
@@ -214,6 +215,14 @@ export const en = {
       rejected: 'Usage limit reached',
       utilization: '{percent} used',
       resetsAt: 'Resets {time}',
+      /** `rateLimitType` of the SDK (V3-13); unknown windows are shown as sent. */
+      windows: {
+        five_hour: '5-hour limit',
+        seven_day: 'weekly limit',
+        seven_day_opus: 'weekly Opus limit',
+        seven_day_sonnet: 'weekly Sonnet limit',
+        overage: 'extra usage',
+      } satisfies Record<RateLimitWindow, string>,
     },
     notification: 'Notification',
     informational: 'Note',

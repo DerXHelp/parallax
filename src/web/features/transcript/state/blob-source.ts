@@ -1,5 +1,6 @@
 import { blobPath } from '@shared/http';
 import type { BlobRef } from '@shared/model';
+import { extensionForMediaType } from '@web/lib/media-types';
 
 /**
  * Image sources of the transcript: `/api/blob/<id>` (same origin, cookie – CSP `img-src 'self'`).
@@ -20,18 +21,10 @@ export function blobSource(blobId: string): string {
   return resolver?.(blobId) ?? blobPath(blobId);
 }
 
-const EXTENSIONS: Readonly<Record<string, string>> = {
-  'image/png': 'png',
-  'image/jpeg': 'jpg',
-  'image/webp': 'webp',
-  'image/gif': 'gif',
-  'image/svg+xml': 'svg',
-};
-
 /** File name for "Save as": the blob's name, else `image-<id prefix>.<extension of the type>`. */
 export function downloadNameOf(ref: Pick<BlobRef, 'blobId' | 'mediaType' | 'name'>): string {
   const name = ref.name?.trim() ?? '';
   if (name !== '') return name;
-  const extension = EXTENSIONS[ref.mediaType] ?? 'bin';
+  const extension = extensionForMediaType(ref.mediaType) ?? 'bin';
   return `image-${ref.blobId.slice(0, 12)}.${extension}`;
 }

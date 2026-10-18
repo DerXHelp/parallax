@@ -1,12 +1,14 @@
 import { LIMITS } from '@shared/common';
 import { ATTACHMENT_MEDIA_TYPES, type AttachmentMediaType } from '@shared/http';
+import { fileNameForMediaType } from '@web/lib/media-types';
 
 /**
  * Client-side preparation of image attachments before the upload (ADR-103, WP-37 §4): decode with
  * `createImageBitmap`, scale the long edge to `LIMITS.imageMaxEdgePx`, encode as PNG; above
- * `LIMITS.imageBytes` as JPEG with quality 0.9 → 0.8 → 0.7, else an error. A GIF that is small
- * enough stays as it is (keeps its animation); so does any image that needs neither scaling nor a
- * smaller file (no needless re-encoding of a small JPEG as a larger PNG).
+ * `LIMITS.imageBytes` as JPEG with quality 0.9 → 0.8 → 0.7, else an error. An image that needs
+ * neither scaling nor a smaller file stays as it is (no needless re-encoding of a small JPEG as a
+ * larger PNG; a small GIF keeps its animation). A GIF above the edge limit is scaled like any other
+ * image (R4W-26) – its animation is lost then.
  */
 
 export function isAttachmentType(type: string): type is AttachmentMediaType {
@@ -105,19 +107,9 @@ export const decodeWithCanvas: ImageDecoder = async (file) => {
   };
 };
 
-const EXTENSIONS: Readonly<Record<AttachmentMediaType, string>> = {
-  'image/png': 'png',
-  'image/jpeg': 'jpg',
-  'image/webp': 'webp',
-  'image/gif': 'gif',
-};
-
 /** `name` with the extension of `type` (pasted images are often just "image.png"). */
 export function nameForType(name: string, type: AttachmentMediaType): string {
-  const trimmed = name.trim() === '' ? 'image' : name.trim();
-  const dot = trimmed.lastIndexOf('.');
-  const base = dot > 0 ? trimmed.slice(0, dot) : trimmed;
-  return `${base}.${EXTENSIONS[type]}`;
+  return fileNameForMediaType(name, type);
 }
 
 export interface PrepareOptions {
@@ -143,7 +135,7 @@ export async function prepareImage(file: File, options: PrepareOptions = {}): Pr
     const original: Size = { width: decoded.width, height: decoded.height };
     const target = fitWithin(original, maxEdge);
     const unscaled = target.width === original.width && target.height === original.height;
-    if (file.size <= maxBytes && (type === 'image/gif' || unscaled)) {
+    if (file.size <= maxBytes && unscaled) {
       return { blob: file, type, name: nameForType(file.name, type), ...original };
     }
     for (const step of ENCODE_STEPS) {

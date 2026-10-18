@@ -12,7 +12,7 @@ import { ModelBadge } from '../components/ModelBadge';
 import { ToolStatus } from '../components/ToolStatus';
 import { getToolRenderer } from '../renderers';
 import { GenericToolBody } from '../renderers/generic';
-import { toolLabel } from '../renderers/parts';
+import { ToolResultImages, toolLabel } from '../renderers/parts';
 import type { ToolRenderer } from '../renderers/types';
 import { expansionKey } from '../state/expansion';
 import { decisionOutcomeText, type OutcomeTone } from './decision-outcome';
@@ -82,7 +82,10 @@ function DecisionLine({ item, sessionKey }: { item: ToolCallItem; sessionKey: st
   return <p className={cn('ml-5 text-2xs', TONE_CLASS[tone])}>{text}</p>;
 }
 
-/** One tool call as one expandable line (Plan "Chat-Ansicht"); details from the renderer registry. */
+/**
+ * One tool call as one expandable line (Plan "Chat-Ansicht"); details from the renderer registry,
+ * pictures of the result as thumbnails below the line – also while it is collapsed (R4W-03).
+ */
 function ToolCallFrame({
   item,
   sessionKey,
@@ -140,6 +143,8 @@ function ToolCallFrame({
           )}
         </div>
       </Disclosure>
+      {/* Pictures of the result without expanding the line, exactly once (R4W-03, Plan). */}
+      <ToolResultImages item={item} className="mb-1 ml-5" />
       <DecisionLine item={item} sessionKey={sessionKey} />
     </div>
   );
