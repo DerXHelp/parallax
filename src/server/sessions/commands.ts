@@ -325,15 +325,15 @@ async function sendPrompt(
       }
     }
   };
-  // Text only: at once (the title shows while a start may still wait for the lock).
-  if (list.length === 0) accept();
   const messageUuid = await s.lifecycle.run(async () => {
     // R4-01: handed off or archived while this prompt waited for the lock.
     assertEntryGate(s, cmd.name);
     // ADR-103: the attachments are checked before anything starts, is sent or changes – inside the
     // lock, so a Stop right after this prompt still waits for it (R2-15).
     const attachments = await resolveAttachments(core.stores.blobs, list);
-    if (list.length > 0) accept();
+    // CR2-04: only a prompt past both checks changes plan, retry and title (the title still shows
+    // before its own start waits for an orphan check).
+    accept();
     if (s.runtime === null) await startRuntime(s, core, { byClientId: clientId });
     return deliverPrompt(s, core, text, cmd.priority, attachments);
   });

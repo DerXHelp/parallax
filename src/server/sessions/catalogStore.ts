@@ -19,12 +19,21 @@ export const MODEL_CATALOGS_FILE = 'model-catalogs.json';
 export const ACCOUNT_LIMITS_FILE = 'account-limits.json';
 export const CATALOGS_SCHEMA_VERSION = 1;
 
-/** One profile's model catalog: the options shown, alias → resolved model, time of the answer. */
+/**
+ * One profile's model catalog: the options shown, alias → resolved model, time of the answer and
+ * the profile it belongs to.
+ */
 export const storedModelCatalogSchema = z.object({
   options: z.array(modelOptionSchema),
   /** value → resolvedModel (matches the actual model of a dormant entry to its row). */
   resolved: z.record(z.string(), z.string()).default({}),
   at: isoDateTimeSchema,
+  /**
+   * CR2-05: `profileCacheKey` (manager.ts, ADR-102) of the profile when the catalog was stored; the
+   * next start ignores a catalog whose profile differs now (profiles.json changed while the server
+   * was down – another executable or config dir is another account). null = unknown (older file).
+   */
+  profileKey: z.string().nullable().default(null),
 });
 export type StoredModelCatalog = z.infer<typeof storedModelCatalogSchema>;
 
@@ -48,7 +57,12 @@ export interface CatalogStore {
   /** Debounced write. */
   setModels(
     profileId: ProfileId,
-    catalog: { options: ModelOption[]; resolved: Record<string, string>; at: string },
+    catalog: {
+      options: ModelOption[];
+      resolved: Record<string, string>;
+      at: string;
+      profileKey: string | null;
+    },
   ): void;
   /** Account limits per profile (copies). */
   limits(): Record<ProfileId, RateLimitInfo>;

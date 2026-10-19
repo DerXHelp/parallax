@@ -536,4 +536,43 @@ describe('profile caches (ADR-102, onProfileChanged)', () => {
     expect(h.stores.catalogs.models()[temp.id]).toBeUndefined();
     expect(h.publisher.hostStates.at(-1)?.accountLimits[temp.id]).toBeUndefined();
   });
+
+  const fallback = FALLBACK_MODEL_CATALOG.options.map((o) => o.value);
+  const dormantModels = async (h: EngineHarness, entryId: EntryId): Promise<string[]> =>
+    (await h.cmd({ name: 'session.refreshModels', entryId })).models.map((m) => m.value);
+
+  it('CR2-05: a catalog persisted for another configuration of the profile is ignored after a restart', async () => {
+    const h = await setup({ profileStore: mutableProfiles([sampleProfile(), work]) });
+    const onWork = await idleEntry(h, 'Reply with exactly: OK', { profileId: work.id });
+    const onStandard = await idleEntry(h);
+    await h.cmd({ name: 'session.close', entryId: onWork });
+    await h.cmd({ name: 'session.close', entryId: onStandard });
+    expect(await dormantModels(h, onWork)).not.toEqual(fallback);
+    // profiles.json changed while Parallax was stopped: the work profile now uses another account.
+    harnesses.splice(harnesses.indexOf(h), 1);
+    const next = await h.restart({
+      profileStore: mutableProfiles([sampleProfile(), { ...work, configDir: 'D:\\other-account' }]),
+    });
+    harnesses.push(next);
+    expect(await dormantModels(next, onWork)).toEqual(fallback);
+    expect(next.stores.catalogs.models()[work.id]).toBeUndefined();
+    // The unchanged standard profile keeps its catalog.
+    expect(await dormantModels(next, onStandard)).not.toEqual(fallback);
+    expect(next.stores.catalogs.models().standard).toBeDefined();
+  });
+
+  it('CR2-05: a persisted catalog without a profile key (older file) is ignored after a restart', async () => {
+    const h = await setup();
+    const entryId = await idleEntry(h);
+    await h.cmd({ name: 'session.close', entryId });
+    const stored = h.stores.catalogs.models().standard;
+    if (stored === undefined) throw new Error('no catalog');
+    harnesses.splice(harnesses.indexOf(h), 1);
+    await h.close();
+    h.stores.catalogs.setModels('standard', { ...stored, profileKey: null });
+    const next = await h.restart();
+    harnesses.push(next);
+    expect(await dormantModels(next, entryId)).toEqual(fallback);
+    expect(next.stores.catalogs.models().standard).toBeUndefined();
+  });
 });

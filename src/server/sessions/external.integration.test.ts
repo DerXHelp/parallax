@@ -13,12 +13,13 @@ import type { EntryId } from '@shared/common';
 import { makeError } from '@shared/errors';
 import { currentConversation, type TranscriptItem } from '@shared/model';
 import type { SessionOp } from '@shared/protocol';
-import { SAMPLE_TIME } from '@shared/samples';
+import { SAMPLE_TIME, sampleEntry, sampleId } from '@shared/samples';
 import { FAKE_CONSOLE_PROMPT, fakeConsoleAnswer } from '../backend/fakeBackend';
 import type { HistoryMessage } from '../backend/types';
 import { consoleCommandText, secretPrompt } from '../claude/consoleCommand';
 import { REDACTED } from '../lib/logger';
 import { CommandError } from '../sync/ports';
+import { CONTINUE_PROMPT } from './continuePlan';
 import { HANDOFF_IMPORT_SLACK_MS } from './external';
 import {
   createTestConsoleLauncher,
@@ -112,6 +113,35 @@ function handoffs(
 
 function pendingMs(h: EngineHarness): number[] {
   return h.timers.pending().map((t) => t.ms);
+}
+
+/** Texts of every prompt sent to the entry's processes. */
+function sentTexts(h: EngineHarness, entryId: EntryId): string[] {
+  return h
+    .sessions(entryId)
+    .flatMap((x) => x.sent)
+    .map((p) => p.content.map((c) => (c.type === 'text' ? c.text : '')).join(''));
+}
+
+/** `fake:ratelimit` (resets 60 s after SAMPLE_TIME) with a planned "continue" at the reset time. */
+async function plannedContinue(h: EngineHarness): Promise<{ entryId: EntryId; until: string }> {
+  const entryId = await h.create('fake:ratelimit');
+  await h.waitFor(() => h.facts(entryId).runState === 'idle' && h.facts(entryId).rateLimitedUntil !== null);
+  await h.settle();
+  const until = h.facts(entryId).rateLimitedUntil ?? '';
+  expect(await h.cmd({ name: 'session.continueAfterLimit', entryId, enabled: true })).toEqual({
+    continueAt: until,
+  });
+  return { entryId, until };
+}
+
+/** The scheduled "continue" as the entry, the facts and the engine see it. */
+function continuePlan(h: EngineHarness, entryId: EntryId): unknown {
+  return {
+    continueAt: h.stores.registry.get(entryId)?.continueAt,
+    wakeupAt: h.facts(entryId).wakeupAt,
+    scheduled: h.manager.inspect(entryId)?.continueScheduled,
+  };
 }
 
 /** Lets the console end and the next check bring the session back. */
@@ -246,6 +276,61 @@ describe('session.openExternal (ADR-104)', () => {
     expect(h.stores.registry.get(entryId)?.external).toMatchObject({ pid: null, processStartedAt: null });
     expect(h.summary(entryId).external).toMatchObject({ pid: null, running: true });
   });
+
+  it('CR2-02: a failed open keeps the scheduled continue (a profile error also the process); it still fires', async () => {
+    const { h, launcher } = await setup();
+    const { entryId, until } = await plannedContinue(h);
+    const kept = { continueAt: until, wakeupAt: until, scheduled: true };
+    // The console spec fails before anything changed: plan and running process stay.
+    h.claude.setLaunchError(makeError('PROFILE_INVALID', { profileId: 'standard' }));
+    expect((await h.cmdError({ name: 'session.openExternal', entryId })).code).toBe('PROFILE_INVALID');
+    h.claude.setLaunchError(null);
+    expect(continuePlan(h, entryId)).toEqual(kept);
+    expect(h.session(entryId).state).not.toBe('exited');
+    expect(h.facts(entryId).runState).toBe('idle');
+    // The console does not open (AppLocker): the query is closed already, the plan stays.
+    launcher.failNext('exit 3: Start-Process is blocked');
+    expect((await h.cmdError({ name: 'session.openExternal', entryId })).code).toBe(
+      'EXTERNAL_CONSOLE_FAILED',
+    );
+    expect(continuePlan(h, entryId)).toEqual(kept);
+    expect(h.facts(entryId).runState).toBe('sleeping');
+    // At the reset time the dormant entry resumes and sends "continue".
+    const starts = h.backend.starts.length;
+    h.timers.advance(Date.parse(until) - h.now().getTime());
+    await h.waitFor(() => sentTexts(h, entryId).includes(CONTINUE_PROMPT));
+    expect(h.backend.starts).toHaveLength(starts + 1);
+    expect(continuePlan(h, entryId)).toEqual({ continueAt: null, wakeupAt: null, scheduled: false });
+  });
+
+  it('CR2-02: a failed open keeps the auto-retry of an idle crash; an opened console drops it', async () => {
+    const { h, launcher } = await setup();
+    const entryId = await idleEntry(h);
+    h.session(entryId).crash(3);
+    await h.waitFor(() => h.manager.inspect(entryId)?.retryScheduled === true);
+    launcher.failNext('exit 3: Start-Process is blocked');
+    expect((await h.cmdError({ name: 'session.openExternal', entryId })).code).toBe(
+      'EXTERNAL_CONSOLE_FAILED',
+    );
+    expect(h.manager.inspect(entryId)?.retryScheduled).toBe(true);
+    const starts = h.backend.starts.length;
+    h.timers.advance(2_000);
+    await h.waitFor(() => h.backend.starts.length === starts + 1 && h.facts(entryId).runState === 'idle');
+    await h.settle();
+    // Crashed again: the console opens – no automatic restart next to it.
+    h.session(entryId).crash(3);
+    await h.waitFor(() => h.manager.inspect(entryId)?.retryScheduled === true);
+    expect(await h.cmd({ name: 'session.openExternal', entryId })).toEqual({ pid: PID });
+    expect(h.manager.inspect(entryId)?.retryScheduled).toBe(false);
+    expect(pendingMs(h)).toEqual([POLL_MS]);
+  });
+
+  it('CR2-02: an opened console still drops the scheduled continue', async () => {
+    const { h } = await setup();
+    const { entryId } = await plannedContinue(h);
+    expect(await h.cmd({ name: 'session.openExternal', entryId })).toEqual({ pid: PID });
+    expect(continuePlan(h, entryId)).toEqual({ continueAt: null, wakeupAt: null, scheduled: false });
+  });
 });
 
 // =====================================================================================
@@ -280,6 +365,37 @@ describe('commands and the shutdown while the console opens (R4-01, R4-03)', () 
     expect(h.facts(entryId).runState).toBe('external');
     expect(h.summary(entryId)).toMatchObject({ archived: false, external: { pid: PID, running: true } });
     expect(h.manager.inspect(entryId)).toMatchObject({ phase: 'dormant', externalWatched: true });
+  });
+
+  it('CR2-04: a text prompt refused after waiting for the lock changes neither the title nor the prompt title', async () => {
+    const entry = sampleEntry({
+      id: sampleId('en', 61),
+      title: '',
+      titleSource: 'none',
+      lastRunState: 'sleeping',
+    });
+    const { h, launcher } = await setup({ seed: { entries: [entry] } });
+    const entryId = entry.id;
+    const hold = launcher.holdNext();
+    const opening = h.cmd({ name: 'session.openExternal', entryId });
+    await hold.reached;
+    const refused = h.cmdError({
+      name: 'session.sendPrompt',
+      entryId,
+      prompt: { text: 'Fix the login bug' },
+    });
+    await h.settle();
+    hold.release();
+    expect(await opening).toEqual({ pid: PID });
+    expect(await refused).toEqual({ code: 'SESSION_EXTERNAL', params: { entryId } });
+    const titles = h.publisher.summaries.flatMap((x) =>
+      x.summary.entryId === entryId ? [x.summary.title] : [],
+    );
+    expect(titles).not.toContain('Fix the login bug');
+    expect(h.summary(entryId)).toMatchObject({ title: '', titleSource: 'none' });
+    // Back to the automatic title: the refused prompt left no prompt title behind.
+    await h.cmd({ name: 'session.rename', entryId, title: null });
+    expect(h.summary(entryId)).toMatchObject({ title: '', titleSource: 'none' });
   });
 
   it('R4-03: a shutdown while the console opens waits for it; the handoff survives the restart', async () => {
