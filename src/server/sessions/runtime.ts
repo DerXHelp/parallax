@@ -735,7 +735,6 @@ export function deliverPrompt(
   const messageUuid = core.ids.newUuid();
   const rename = parseRenameCommand(text);
   if (rename !== null) s.pendingRename = rename;
-  if (isLoopPrompt(text)) runtime.markScheduled('loop');
   if (priority === 'now' && s.broker.open().some((d) => d.requester.kind === 'main')) {
     s.broker.cancel('main', 'interrupted', 'deny');
   }
@@ -757,6 +756,8 @@ export function deliverPrompt(
     if (s.queue.remove(messageUuid)) s.publishQueue();
     throw commandError('SESSION_NOT_RUNNING', { entryId: s.id, reason: 'closed' });
   }
+  // ADR-121 / CR2-09: planned only once the CLI took the /loop prompt (a refused one plans nothing).
+  if (isLoopPrompt(text)) runtime.markScheduled('loop');
   s.patch((e) => ({ ...e, lastActivityAt: at.toISOString() }));
   return messageUuid;
 }

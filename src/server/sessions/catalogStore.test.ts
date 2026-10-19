@@ -27,6 +27,7 @@ const catalog: StoredModelCatalog = {
   ],
   resolved: { haiku: 'claude-haiku-5-5' },
   at: SAMPLE_TIME,
+  profileKey: 'a'.repeat(64),
 };
 
 const limit: RateLimitInfo = {
@@ -102,6 +103,21 @@ describe('openCatalogStore (ADR-114)', () => {
     const store = await openCatalogStore({ home });
     expect(store.models().standard?.resolved).toEqual({});
     await store.close();
+  });
+
+  it('CR2-05: the profile key is stored with each catalog; an older file without it reads as null', async () => {
+    const { profileKey: _profileKey, ...withoutKey } = catalog;
+    await writeFile(
+      path.join(home, MODEL_CATALOGS_FILE),
+      JSON.stringify({ schemaVersion: 1, profiles: { standard: withoutKey } }),
+    );
+    const store = await openCatalogStore({ home, debounceMs: 1 });
+    expect(store.models().standard?.profileKey).toBeNull();
+    store.setModels(sampleId('pf', 2), catalog);
+    await store.close();
+    const again = await openCatalogStore({ home });
+    expect(again.models()[sampleId('pf', 2)]?.profileKey).toBe(catalog.profileKey);
+    await again.close();
   });
 });
 

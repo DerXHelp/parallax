@@ -113,13 +113,16 @@ function isoOrNull(date: Date | null): string | null {
 
 // ---- session.openExternal ----
 
-/** WP-30 §4.12 `session.openExternal` (see the file comment). */
+/**
+ * WP-30 §4.12 `session.openExternal` (see the file comment). CR2-02: a scheduled "continue" and a
+ * pending auto-retry are dropped only once the console runs – a failure before (profile, cwd,
+ * console blocked) leaves them, so the entry still continues here at its time.
+ */
 export async function openExternal(
   core: EngineCore,
   s: EntryState,
   clientId: ClientId,
 ): Promise<CommandResult<'session.openExternal'>> {
-  s.cancelRetry();
   return s.lifecycle.run(async () => {
     core.assertRunning();
     // R4-01: a second click (or a second window) that waited for this lock while the first
@@ -133,20 +136,18 @@ export async function openExternal(
     // R4-09: a deleted folder or one replaced by a link (R1-17) fails like a start (CWD_*), before
     // the query is closed.
     await core.checkCwd(s.entry.cwd);
-    // The console takes over: no scheduled "continue" and no auto-retry of this server.
-    cancelContinue(s);
-    s.cancelRetry();
+    // CR2-02: the spec first – profile errors (PROFILE_INVALID, CLAUDE_NOT_FOUND …) pass through
+    // before anything changed; the query keeps running.
+    const spec = await core.claude.consoleLaunchFor(consoleRequest(core, s, sessionId));
+    core.assertRunning();
     await closeRuntime(s, core, 'handoff');
     // R2-02/R2-08: an orphaned claude.exe of an earlier run may still write the Claude JSONL.
     await s.orphanCleanup;
+    // R4-03: nothing is opened once the shutdown began (it waits for this lock, bounded).
     core.assertRunning();
     // Expired cards (A.10) are settled like by a resume – the console resumes the conversation.
     s.broker.closeExpired(clientId);
     const conversation = s.conversation();
-    // Profile errors (PROFILE_INVALID, CLAUDE_NOT_FOUND …) pass through; the entry stays dormant.
-    const spec = await core.claude.consoleLaunchFor(consoleRequest(core, s, sessionId));
-    // R4-03: nothing is opened once the shutdown began (it waits for this lock, bounded).
-    core.assertRunning();
     let result: ConsoleOpenResult;
     try {
       result = await launcher.open(spec);
@@ -154,10 +155,14 @@ export async function openExternal(
       result = { kind: 'failed', reason: errorMessage(error) };
     }
     if (result.kind === 'failed') {
+      // The entry stays dormant here; a scheduled "continue" or auto-retry still applies (CR2-02).
       const reason = scrubConsoleReason(result.reason, spec);
       core.log.warn({ entryId: s.id, reason }, 'external console could not be opened');
       throw commandError('EXTERNAL_CONSOLE_FAILED', { reason });
     }
+    // The console takes over: no scheduled "continue" and no auto-retry of this server.
+    cancelContinue(s);
+    s.cancelRetry();
     // The console runs now: record it even if a shutdown began meanwhile – the shutdown waits for
     // this lock (bounded, R4-03) before it flushes the stores; the next start checks the console.
     const pid = positivePid(result.process.pid);
