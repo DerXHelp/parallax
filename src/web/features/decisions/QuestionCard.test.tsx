@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sampleDecisions } from '@shared/samples';
 import { resetClientStore } from '@web/state/store';
-import { buildQuestionAnswer } from './components/QuestionCard';
+import { buildQuestionAnswer, QuestionCard } from './components/QuestionCard';
 import { DecisionBar } from './DecisionBar';
 import { renderWithHost, type Harness } from './lib/testing';
 import { resetDecisionBarState } from './state/bar-store';
@@ -22,9 +22,17 @@ afterEach(() => {
   localStorage.clear();
 });
 
+/** The demo question decision has two questions: "Format" (single select) and "Checks" (multi). */
 function start(): Harness {
   harness = renderWithHost((key) => <DecisionBar sessionKey={key('question')} />, { entries: ['question'] });
   return harness;
+}
+
+type User = ReturnType<typeof userEvent.setup>;
+
+/** Several questions are tabs: only the active question is in the DOM. */
+async function openTab(user: User, name: RegExp): Promise<void> {
+  await user.click(screen.getByRole('tab', { name }));
 }
 
 describe('QuestionCard (AskUserQuestion, F.5)', () => {
@@ -36,6 +44,7 @@ describe('QuestionCard (AskUserQuestion, F.5)', () => {
     expect(screen.getByText('Answer every question to send.')).toBeTruthy();
     await user.click(screen.getByRole('radio', { name: /JSON files/ }));
     expect(screen.getByRole('button', { name: 'Answer' }).hasAttribute('disabled')).toBe(true);
+    await openTab(user, /^Checks/);
     await user.click(screen.getByRole('checkbox', { name: /Typecheck/ }));
     expect(screen.getByRole('button', { name: 'Answer' }).hasAttribute('disabled')).toBe(false);
     expect(h.commands('decision.respond')).toEqual([]);
@@ -45,14 +54,11 @@ describe('QuestionCard (AskUserQuestion, F.5)', () => {
     const h = start();
     const user = userEvent.setup();
     await user.click(await screen.findByRole('radio', { name: /JSON files/ }));
-    const [notesFirst, notesSecond] = screen.getAllByRole('textbox', { name: 'Note for Claude (optional)' });
-    if (notesFirst === undefined || notesSecond === undefined) throw new Error('notes missing');
-    await user.type(notesFirst, 'Keep it readable');
+    await user.type(screen.getByRole('textbox', { name: 'Note for Claude (optional)' }), 'Keep it readable');
+    await openTab(user, /^Checks/);
     await user.click(screen.getByRole('checkbox', { name: /Typecheck/ }));
     await user.click(screen.getByRole('checkbox', { name: /Tests/ }));
-    const [, otherSecond] = screen.getAllByRole('textbox', { name: 'Other' });
-    if (otherSecond === undefined) throw new Error('other missing');
-    await user.type(otherSecond, 'prettier');
+    await user.type(screen.getByRole('textbox', { name: 'Other' }), 'prettier');
     await user.click(screen.getByRole('button', { name: 'Answer' }));
     expect(h.commands('decision.respond').map((cmd) => cmd.response)).toEqual([
       {
@@ -81,6 +87,73 @@ describe('QuestionCard (AskUserQuestion, F.5)', () => {
     });
   });
 
+  it('several questions are tabs: the header names the tab, one question at a time, a tick once answered', async () => {
+    start();
+    const user = userEvent.setup();
+    expect(await screen.findByRole('tablist', { name: 'Questions' })).toBeTruthy();
+    expect(screen.getAllByRole('tab').map((tab) => tab.getAttribute('aria-label'))).toEqual([
+      'Format (not answered yet)',
+      'Checks (not answered yet)',
+    ]);
+    expect(screen.getByText('Which storage format should the registry use?')).toBeTruthy();
+    expect(screen.queryByText('Which checks should run before every commit?')).toBeNull();
+    await user.click(screen.getByRole('radio', { name: /JSON files/ }));
+    expect(screen.getByRole('tab', { name: 'Format (answered)' }).dataset.answered).toBe('true');
+    expect(screen.getByRole('tab', { name: 'Checks (not answered yet)' }).dataset.answered).toBe('false');
+    await openTab(user, /^Checks/);
+    expect(screen.getByText('Which checks should run before every commit?')).toBeTruthy();
+    expect(screen.queryByText('Which storage format should the registry use?')).toBeNull();
+  });
+
+  it('switching tabs keeps every draft', async () => {
+    start();
+    const user = userEvent.setup();
+    await user.type(await screen.findByRole('textbox', { name: 'Other' }), 'YAML');
+    await user.type(screen.getByRole('textbox', { name: 'Note for Claude (optional)' }), 'short');
+    await openTab(user, /^Checks/);
+    await user.click(screen.getByRole('checkbox', { name: /Lint/ }));
+    await openTab(user, /^Format/);
+    expect(screen.getByRole('textbox', { name: 'Other' })).toHaveProperty('value', 'YAML');
+    expect(screen.getByRole('textbox', { name: 'Note for Claude (optional)' })).toHaveProperty(
+      'value',
+      'short',
+    );
+    expect(screen.getByRole('radio', { name: 'Other' }).getAttribute('aria-checked')).toBe('true');
+    await openTab(user, /^Checks/);
+    expect(screen.getByRole('checkbox', { name: /Lint/ }).getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('"Next question" opens and focuses the next tab; neither it nor a tab answers', async () => {
+    const h = start();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('radio', { name: /JSON files/ }));
+    await user.click(screen.getByRole('button', { name: 'Next question' }));
+    const checks = screen.getByRole('tab', { name: /^Checks/ });
+    expect(checks.getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(checks);
+    // The last question has no "Next question".
+    expect(screen.queryByRole('button', { name: 'Next question' })).toBeNull();
+    await user.click(screen.getByRole('checkbox', { name: /Lint/ }));
+    expect(screen.getByRole('button', { name: 'Answer' }).hasAttribute('disabled')).toBe(false);
+    // Complete, but the focus is on a tab: Mod+Enter there must not answer (card-shell).
+    await openTab(user, /^Format/);
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: /^Format/ }));
+    await user.keyboard('{Control>}{Enter}{/Control}');
+    await user.keyboard('{Enter}');
+    expect(h.commands('decision.respond')).toEqual([]);
+  });
+
+  it('a single question shows no tabs', async () => {
+    const decision = sampleDecisions.question();
+    harness = renderWithHost((key) => <QuestionCard sessionKey={key('question')} decision={decision} />, {
+      entries: ['question'],
+    });
+    expect(await screen.findByText('Which color should the button be?')).toBeTruthy();
+    expect(screen.getByText('Color')).toBeTruthy();
+    expect(screen.queryByRole('tablist')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Next question' })).toBeNull();
+  });
+
   it('shows the Markdown preview of the selected option through the Markdown slot', async () => {
     start();
     const user = userEvent.setup();
@@ -92,10 +165,9 @@ describe('QuestionCard (AskUserQuestion, F.5)', () => {
   it('"Other" in a single-select question answers with free text only', async () => {
     const h = start();
     const user = userEvent.setup();
-    const [otherFirst] = await screen.findAllByRole('textbox', { name: 'Other' });
-    if (otherFirst === undefined) throw new Error('other missing');
-    await user.type(otherFirst, 'YAML');
-    expect(screen.getAllByRole('radio', { name: 'Other' })[0]?.getAttribute('aria-checked')).toBe('true');
+    await user.type(await screen.findByRole('textbox', { name: 'Other' }), 'YAML');
+    expect(screen.getByRole('radio', { name: 'Other' }).getAttribute('aria-checked')).toBe('true');
+    await openTab(user, /^Checks/);
     await user.click(screen.getByRole('checkbox', { name: /Lint/ }));
     await user.click(screen.getByRole('button', { name: 'Answer' }));
     const response = h.commands('decision.respond')[0]?.response;
@@ -110,17 +182,14 @@ describe('QuestionCard (AskUserQuestion, F.5)', () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole('radio', { name: /JSON files/ }));
     expect(screen.getByText('Preview: JSON files')).toBeTruthy();
-    const [otherFirst] = screen.getAllByRole('textbox', { name: 'Other' });
-    if (otherFirst === undefined) throw new Error('other missing');
-    await user.type(otherFirst, 'TOML');
-    expect(screen.getAllByRole('radio', { name: 'Other' })[0]?.getAttribute('aria-checked')).toBe('true');
+    await user.type(screen.getByRole('textbox', { name: 'Other' }), 'TOML');
+    expect(screen.getByRole('radio', { name: 'Other' }).getAttribute('aria-checked')).toBe('true');
     expect(screen.getByRole('radio', { name: /JSON files/ }).getAttribute('aria-checked')).toBe('false');
     expect(screen.queryByText('Preview: JSON files')).toBeNull();
     // Multi select keeps its ticks next to "Other".
+    await openTab(user, /^Checks/);
     await user.click(screen.getByRole('checkbox', { name: /Lint/ }));
-    const [, otherSecond] = screen.getAllByRole('textbox', { name: 'Other' });
-    if (otherSecond === undefined) throw new Error('other missing');
-    await user.type(otherSecond, 'knip');
+    await user.type(screen.getByRole('textbox', { name: 'Other' }), 'knip');
     await user.click(screen.getByRole('button', { name: 'Answer' }));
     expect(h.commands('decision.respond')[0]?.response).toMatchObject({
       kind: 'question',
@@ -137,9 +206,8 @@ describe('QuestionCard (AskUserQuestion, F.5)', () => {
     const h = start();
     const user = userEvent.setup();
     await user.click(await screen.findByRole('radio', { name: /JSON files/ }));
-    const [, otherSecond] = screen.getAllByRole('textbox', { name: 'Other' });
-    if (otherSecond === undefined) throw new Error('other missing');
-    await user.type(otherSecond, 'none');
+    await openTab(user, /^Checks/);
+    await user.type(screen.getByRole('textbox', { name: 'Other' }), 'none');
     await user.keyboard('{Control>}{Enter}{/Control}');
     expect(h.commands('decision.respond')[0]?.response).toMatchObject({
       kind: 'question',
@@ -153,7 +221,10 @@ describe('QuestionCard (AskUserQuestion, F.5)', () => {
   it('Mod+Enter on a focused option answers (V2-02); Enter and Space on it never do', async () => {
     const h = start();
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('checkbox', { name: /Lint/ }));
+    await screen.findByRole('radio', { name: /JSON files/ });
+    await openTab(user, /^Checks/);
+    await user.click(screen.getByRole('checkbox', { name: /Lint/ }));
+    await openTab(user, /^Format/);
     // The focus is on the chosen option (Radix prevents Enter there, also Ctrl+Enter).
     await user.click(screen.getByRole('radio', { name: /SQLite/ }));
     const radio = screen.getByRole('radio', { name: /SQLite/ });
@@ -191,6 +262,7 @@ describe('QuestionCard (AskUserQuestion, F.5)', () => {
     const h = start();
     const user = userEvent.setup();
     await user.click(await screen.findByRole('radio', { name: /JSON files/ }));
+    await openTab(user, /^Checks/);
     await user.click(screen.getByRole('checkbox', { name: /Tests/ }));
     expect(document.activeElement).toBe(screen.getByRole('checkbox', { name: /Tests/ }));
     await user.keyboard(' ');
