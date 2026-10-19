@@ -9,7 +9,7 @@
  *
  * Only the own key is touched: an existing `parallax` key whose `shell\open\command` does not
  * contain `launcher\main.ts` – or that has no such command at all – belongs to another program; it
- * is never overwritten (`reason: 'foreign'`) and never removed. CR2-01: "key missing" and "query
+ * is never overwritten (`reason: 'foreign'`) and never removed. CR2-01 (ADR-133): "key missing" and "query
  * failed" are told apart by reg.exe's exit code (`regKeyReader`); a failed query writes nothing.
  * The launcher refuses anything after the URI (args.ts, R5).
  */

@@ -114,7 +114,7 @@ export const FOREIGN_SHORTCUT = 'foreign';
  * The constant script: create (WScript.Shell) or remove the shortcut; exit 3 with the reason. An
  * existing shortcut is read first and left alone (`foreign`) unless its arguments contain the
  * marker – for both actions (R4-11: e.g. a `Parallax.lnk` the user made on `parallax.cmd` in
- * Phase 1; CR2-03: creating must not replace it, or turning autostart off would delete it later).
+ * Phase 1; CR2-03/ADR-133: creating must not replace it, or turning autostart off would delete it later).
  */
 export const AUTOSTART_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
