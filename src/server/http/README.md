@@ -34,7 +34,7 @@ nur für `ATTACHMENT_MEDIA_TYPES` (Buffer, `bodyLimit = LIMITS.imageBytes`) – 
 (`lib/images.ts` `sniffImageType`) müssen einen Bildtyp der API zeigen, sonst 415 (auch leerer Körper);
 weicht der deklarierte Bildtyp davon ab (umbenannte Datei), gilt der erkannte (CR2-08, ADR-134).
 Dann `blobs.put(data, <erkannter Typ>, name ?? null, {width, height} | null)` → 200
-`attachmentUploadResponseSchema` `{attachment: BlobRef}` (inhaltsadressiert: gleiche Bytes → erster Ref).
+`attachmentUploadResponseSchema` `{attachment: BlobRef}` (inhaltsadressiert; liegen die Bytes schon mit anderer Meta im Store, liefert und speichert der Upload seinen erkannten Typ und – mit `width`/`height`, wie der Composer immer sendet – auch Name und Größe dieses Uploads; CR2-07, `store/blobs.ts`).
 
 Verdrahtung (WP-20, `main.ts`):
 
