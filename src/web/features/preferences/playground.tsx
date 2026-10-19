@@ -38,7 +38,8 @@ function variantOf(variant: HostVariant): Partial<HostState> {
         dev: false,
         warnings: [
           { id: 'w-protocol', error: makeError('PROTOCOL_HANDLER_FAILED'), at: AT },
-          { id: 'w-autostart', error: makeError('AUTOSTART_FAILED'), at: AT },
+          // CR2-03: a foreign Parallax.lnk – the warning says what to do.
+          { id: 'w-autostart', error: makeError('AUTOSTART_FAILED', { reason: 'foreign' }), at: AT },
         ],
       };
   }

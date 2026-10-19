@@ -332,7 +332,13 @@ export function NotificationsSection({
             }}
           />
         )}
-        below={() => <HostWarnings hostState={hostState} codes={['PROTOCOL_HANDLER_FAILED']} />}
+        below={() => (
+          <HostWarnings
+            hostState={hostState}
+            codes={['PROTOCOL_HANDLER_FAILED']}
+            foreignHint={t('preferences.notifications.openOnClickForeign')}
+          />
+        )}
       />
     </SettingList>
   );

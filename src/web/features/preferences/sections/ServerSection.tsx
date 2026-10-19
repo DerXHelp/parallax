@@ -69,7 +69,13 @@ export function ServerSection({
             }}
           />
         )}
-        below={() => <HostWarnings hostState={hostState} codes={['AUTOSTART_FAILED']} />}
+        below={() => (
+          <HostWarnings
+            hostState={hostState}
+            codes={['AUTOSTART_FAILED']}
+            foreignHint={t('preferences.server.autostartForeign')}
+          />
+        )}
       />
       <SettingField
         name="openWindow"
