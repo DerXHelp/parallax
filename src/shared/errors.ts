@@ -139,7 +139,9 @@ export const ERROR_CATALOG = {
   // files (Phase 2, ADR-119)
   /** fs.listDirectory: no permission to read the folder (`params.path`). */
   FOLDER_NOT_READABLE: { category: 'validation', http: 403, severity: 'error', retryable: false },
-  // Windows integration (Phase 2, ADR-109/110) – host warnings
+  // Windows integration (Phase 2, ADR-109/110) – host warnings. `params.reason`: free text, or
+  // 'foreign' = a `Parallax.lnk` / `parallax:` key of the user or another program, never replaced
+  // (R4-11, ADR-133; the settings explain it).
   AUTOSTART_FAILED: { category: 'internal', http: 500, severity: 'warning', retryable: true },
   PROTOCOL_HANDLER_FAILED: { category: 'internal', http: 500, severity: 'warning', retryable: true },
   // store (B Persistenz)

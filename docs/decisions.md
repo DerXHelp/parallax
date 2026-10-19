@@ -1465,3 +1465,60 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   (Rückfall auf die CLI-Aliasse, WP22-01). Abo-Limits unverändert. Umsetzung und Tests:
   `sessions/catalogStore.ts`, `sessions/manager.ts`, `phase2b.integration.test.ts` und `catalogStore.test.ts`
   „CR2-05: …“.
+
+## ADR-133 – Windows-Integration: fremde Einträge nie ersetzen, fehlgeschlagene Abfrage heißt nicht „frei“
+- **Datum/WP:** 19.10.2026, Code-Review Phase 2, Fix-Paket S2 (CR2-01, CR2-03). Ergänzt ADR-109, ADR-110
+  und R4-11.
+- **Kontext:** Der Protokoll-Handler las jeden `reg.exe`-Fehler (Timeout, Startfehler, Exit ≠ 0) als
+  „kein Handler“ und überschrieb dann `HKCU\Software\Classes\parallax` per `reg add /f`, auch den
+  Schlüssel einer anderen App ohne `shell\open\command`. Die Autostart-Verknüpfung ließ eine fremde
+  `Parallax.lnk` beim Entfernen stehen (R4-11), ersetzte sie aber beim Anlegen still; das spätere
+  Ausschalten löschte dann den Ersatz, und die Verknüpfung des Nutzers war weg.
+- **Entscheidung:** (1) Registry-Abfragen des Protokoll-Handlers werten den Exit-Code von
+  `reg query <key> /ve` aus: 0 = vorhanden (auch ohne Standardwert), 1 = fehlt, sonst
+  fehlgeschlagen. Eine fehlgeschlagene Abfrage schreibt und löscht nichts und wird zur Warnung
+  `PROTOCOL_HANDLER_FAILED {reason}`. (2) Fremd ist ein `parallax`-Schlüssel, dessen
+  `shell\open\command` `launcher\main.ts` nicht enthält oder der keinen solchen Befehl hat. Der eigene
+  Befehl wird zuerst geschrieben. (3) Das Autostart-Skript liest eine vorhandene `Parallax.lnk` vor
+  **beiden** Aktionen. Ohne Marker bleibt sie: Entfernen meldet `ok`, Anlegen lehnt mit
+  `AUTOSTART_FAILED {reason: 'foreign'}` ab. (4) Die Einstellungen erklären `reason: 'foreign'` mit
+  einem Hinweis, was zu tun ist.
+- **Folgen:** Ein fremder Eintrag oder ein Abfragefehler bleibt eine Warnung. Jeder weitere Abgleich
+  versucht es erneut, bis der Nutzer den fremden Eintrag umbenennt oder entfernt. `reg.exe` meldet auch
+  „Zugriff verweigert“ mit Exit 1 (gilt als „fehlt“); der folgende `reg add` scheitert dann ebenso. Ein
+  halb geschriebener Schlüssel aus der alten Schreibreihenfolge (ohne Befehl) gilt als fremd. Umsetzung:
+  `system/protocol.ts` (`regKeyReader`), `system/autostart.ts`,
+  `features/preferences/components/HostWarnings.tsx`.
+
+## ADR-134 – Bild-Upload: der erkannte Bildtyp gilt, die Meta des Uploads gewinnt
+- **Datum/WP:** 19.10.2026, Code-Review Phase 2, Fix-Paket S2 (CR2-07, CR2-08). Ergänzt ADR-103.
+- **Kontext:** Der Browser leitet `file.type` aus der Endung ab. Ein umbenanntes Bild (`photo.png`,
+  das ein JPEG ist) scheiterte mit 415, obwohl die Magic Bytes einen gültigen Bildtyp zeigen. Der
+  inhaltsadressierte BlobStore behielt die erste Meta eines Inhalts. Lagen die Bytes schon mit
+  anderem Typ im Store (Normalizer, z. B. `application/octet-stream`), lieferte der Upload die alte
+  Ref, oder nach einem Neustart blieb die alte Meta-Datei. Der Prompt scheiterte dann mit
+  `UNSUPPORTED_MEDIA_TYPE`.
+- **Entscheidung:** (1) Der Upload speichert den per Magic Bytes erkannten Typ, solange er ein Bildtyp
+  der API ist. Ohne erkannten Bildtyp bleibt es bei 415 (R7: der gespeicherte und ausgelieferte Typ
+  stammt immer aus den Bytes). (2) `BlobStore.put` ersetzt die Meta eines Inhalts nur durch eine
+  bessere: den bestätigten Bildtyp statt eines anderen gespeicherten Typs, oder als Upload (das
+  einzige `put` mit Pixelgröße) einen anderen Namen bzw. eine andere Größe dieses Typs, dann gewinnt
+  der letzte Upload. Ein `put` ohne beides (Normalizer) ersetzt nie. Die Regel gilt im Speicher und
+  gegen die Meta-Datei; Schreibvorgänge eines Inhalts laufen nacheinander.
+- **Folgen:** Kein Port geändert. Transkript-Items behalten ihre eingebettete Ref. Nur `GET
+  /api/blob` und spätere Refs sehen die neue Meta. Der Dateiname behält die Endung des Nutzers. Ein
+  Upload ohne `width`/`height` korrigiert nur den Typ. Umsetzung: `http/app.ts`, `store/blobs.ts`.
+
+## ADR-135 – Ordner-Browser: höchstens zwei Laufwerksproben, wartende behalten die letzte Antwort
+- **Datum/WP:** 19.10.2026, Code-Review Phase 2, Fix-Paket S2 (CR2-06). Ergänzt ADR-119 und R8.
+- **Kontext:** Die Wurzelliste startete 26 `stat('X:\')` gleichzeitig auf dem libuv-Pool (vier
+  Threads). Hängende Netzlaufwerke (≈ 20 s) belegten den Pool und blockierten jeden anderen
+  fs-Zugriff des Servers. Echte Laufwerke fielen nach 1,5 s aus der Liste.
+- **Entscheidung:** Höchstens zwei Laufwerks-`stat`s gleichzeitig, in Laufwerksreihenfolge, je
+  Laufwerk höchstens eines. Ein Platz wird erst frei, wenn sein `stat` wirklich endet, auch nach
+  dem Timeout und über Aufrufe hinweg. Eine Probe, die beim Timeout (1,5 s ab der Anfrage) noch auf
+  einen Platz wartet, behält die Antwort ihres letzten beendeten `stat`. Ein laufendes `stat`, das
+  zu lange braucht, gilt als langsam (entfällt).
+- **Folgen:** Mindestens zwei Pool-Threads bleiben für den Server frei. Ein nie gesehenes Laufwerk
+  hinter zwei hängenden fehlt, bis es geprüft ist. Ein entferntes Laufwerk kann in dieser Zeit noch
+  erscheinen (Öffnen → `CWD_NOT_FOUND`). Umsetzung: `host/fsCommands.ts`.
