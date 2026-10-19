@@ -132,11 +132,24 @@ describe('POST /api/attachments (ADR-103)', () => {
   });
 
   it.each([
-    ['JPEG bytes as PNG', 'image/png', JPEG],
+    ['JPEG bytes as PNG (a renamed photo.png)', 'image/png', JPEG, 'image/jpeg'],
+    ['PNG bytes as GIF', 'image/gif', PNG, 'image/png'],
+    ['WebP bytes as JPEG', 'image/jpeg', WEBP, 'image/webp'],
+  ])('CR2-08: %s is stored with the type of its magic bytes (ADR-134)', async (_name, type, body, real) => {
+    const f = await setup();
+    const res = await upload(f, body, type, '?name=photo.png&width=4&height=3');
+    expect(res.statusCode).toBe(200);
+    const { attachment } = attachmentUploadResponseSchema.parse(res.json());
+    expect(attachment).toMatchObject({ mediaType: real, name: 'photo.png', width: 4, height: 3 });
+    // What the prompt check (resolveAttachments) and GET /api/blob see.
+    expect((await f.blobs.get(attachment.blobId))?.ref.mediaType).toBe(real);
+  });
+
+  it.each([
     ['HTML as PNG', 'image/png', Buffer.from('<!doctype html><script>alert(1)</script>')],
-    ['PNG as GIF', 'image/gif', PNG],
+    ['SVG as PNG', 'image/png', Buffer.from('<svg onload="alert(1)"/>')],
     ['an empty body', 'image/png', Buffer.alloc(0)],
-  ])('415 when the magic bytes do not match: %s', async (_name, type, body) => {
+  ])('415 when the magic bytes show no image type: %s', async (_name, type, body) => {
     const f = await setup();
     const res = await upload(f, body, type);
     expect(res.statusCode).toBe(415);

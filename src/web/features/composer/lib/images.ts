@@ -8,7 +8,9 @@ import { fileNameForMediaType } from '@web/lib/media-types';
  * `LIMITS.imageBytes` as JPEG with quality 0.9 → 0.8 → 0.7, else an error. An image that needs
  * neither scaling nor a smaller file stays as it is (no needless re-encoding of a small JPEG as a
  * larger PNG; a small GIF keeps its animation). A GIF above the edge limit is scaled like any other
- * image (R4W-26) – its animation is lost then.
+ * image (R4W-26) – its animation is lost then. Such an unchanged file goes up with `file.type`
+ * (from the extension); the server stores the type its magic bytes show (CR2-08, ADR-134), so a
+ * renamed image (`photo.png` that is a JPEG) needs no re-encoding here.
  */
 
 export function isAttachmentType(type: string): type is AttachmentMediaType {

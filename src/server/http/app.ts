@@ -273,13 +273,17 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
       if (!query.success) return sendError(reply, makeError('VALIDATION_FAILED', { reason: 'query' }));
       const body = request.body;
       const declared = attachmentMediaTypeSchema.safeParse(mediaTypeEssence(request.headers['content-type']));
-      // The magic bytes must match the declared type (R7: no type spoofing, also no empty body).
-      if (!Buffer.isBuffer(body) || !declared.success || sniffImageType(body) !== declared.data) {
+      // R7: the magic bytes decide (no type spoofing, also no empty body) – they must show an image
+      // type of the API. CR2-08 (ADR-134): a declared image type that differs from them (the
+      // browser takes it from the extension: a renamed `photo.png` that is a JPEG) gives way to
+      // the real one; the SDK needs the type that matches the bytes anyway.
+      const sniffed = Buffer.isBuffer(body) ? sniffImageType(body) : null;
+      if (!Buffer.isBuffer(body) || !declared.success || sniffed === null) {
         return sendError(reply, makeError('UNSUPPORTED_MEDIA_TYPE'));
       }
       const { name, width, height } = query.data;
       const size = width !== undefined && height !== undefined ? { width, height } : null;
-      const attachment = blobs.put(body, declared.data, name ?? null, size);
+      const attachment = blobs.put(body, sniffed, name ?? null, size);
       log.debug(
         { blobId: attachment.blobId, bytes: attachment.bytes, mediaType: attachment.mediaType },
         'upload',
