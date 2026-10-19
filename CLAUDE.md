@@ -119,11 +119,25 @@ Besitz-Pfade ändern.
 - UI zweisprachig: Englisch (Default) und Deutsch.
 
 ## Git
-- Lokale Commits pro WP (Worktree-Branch `wp/xx`), Merge macht der Koordinator. **Subagenten pushen nie**;
-  `origin` = privates Repo `DerXHelp/parallax`, Push nur durch den Koordinator nach Freigabe des Nutzers.
+- **`main` ist der stabile Stand.** Aus `origin/main` aktualisiert der Nutzer seine produktive Instanz
+  (eigener Klon, `git pull`; README „Produktiv nutzen und weiterentwickeln“). Auf `main` wird nicht
+  entwickelt.
+- Entwicklung auf Branches: je Vorhaben ein Feature-Branch `feature/<name>` von `main` (Phase/Welle: ein
+  Integrations-Branch, z. B. `feature/phase-3`). WP- und Fix-Worktree-Branches (`wp/xx`, `fix/<name>`)
+  zweigen vom Feature-Branch ab; der Koordinator merged sie dorthin (`--no-ff --no-commit`, Checks, dann
+  Commit).
+- Nach `main` kommen nur fertige, geprüfte Stände: Merge `--no-ff` des Feature-Branches erst bei grünem
+  `pnpm check` + `pnpm build`, bei Code-Änderungen zusätzlich `pnpm e2e`, plus die im Plan vorgesehenen
+  Reviews und Live-Prüfungen. Fehler der produktiven Instanz: `fix/<name>` von `main`, nach `main`
+  mergen, danach `main` in den laufenden Feature-Branch.
+- Lokale Commits pro WP, Merge macht der Koordinator. **Subagenten pushen nie**; `origin` = privates
+  Repo `DerXHelp/parallax`, Push (jeder Branch) nur durch den Koordinator nach Freigabe des Nutzers.
 - Commit-Messages mit mehreren `-m`-Flags, **kein Heredoc**, keine Command-Substitution.
 - Worktrees liegen in `.worktrees/` (ignoriert, von tsconfig/Vitest/ESLint/Vite ausgeschlossen);
   pro Worktree `pnpm install --frozen-lockfile`. `core.longpaths` ist gesetzt.
+- In diesem Repo nie `parallax.cmd`/`pnpm start` auf `%LOCALAPPDATA%\Parallax` – immer mit eigenem
+  `--home`/`PARALLAX_HOME`. Sonst baut der Launcher den Entwicklungsstand, migriert womöglich die echten
+  Daten der produktiven Instanz und biegt Autostart und Protokoll-Handler auf dieses Repo um.
 
 ## Subagenten: Auftrag und Bericht
 - Rückfragen nie selbst an den Nutzer: im Bericht `BLOCKED: <frage>` melden.

@@ -167,6 +167,12 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
 - R3-01: CLI-/SDK-Version in der UI (Versionsregel C.7).
 
 ## Koordinator-Regeln (Ablauf)
+- **Ab 19.10.2026 (Nutzer-Entscheidung):** `main` ist der stabile Stand, aus dem der Nutzer seine
+  produktive Instanz aktualisiert (eigener Klon, `git pull`). Entwicklung nur auf Feature-Branches
+  (`feature/<name>`, je Phase ein Integrations-Branch); `wp/xx`/`fix/<name>` zweigen davon ab. Nach `main`
+  nur fertige, geprüfte Stände (Regeln: `CLAUDE.md` „Git“, README „Produktiv nutzen und
+  weiterentwickeln“). Keine technische Sperre gegen `pnpm start` auf dem echten Datenordner im
+  Entwicklungs-Repo – nur dokumentiert (Nutzer-Entscheidung).
 - Merges ab 15.10.2026 nur noch mit `git merge --no-ff --no-commit`, dann `pnpm check` + `pnpm build`, erst bei Grün committen
   (Anlass: semantischer Bruch `ProcessQueryResult` nach Merge `61e8e1f`, behoben in `2c3fb70`).
 - Doku nach R1/R2 nachgezogen (`d961201`); offen: `WP-13b.md` beschreibt noch den Kinder-Pfad (historisch).
@@ -181,7 +187,8 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
    6/6, 0,0105 USD). **Offen beim Nutzer:** Checkliste WP-41 §2.6. `/code-review` (high) über
    `fdc44f7..main`: 10 Funde, Fix-Runde S1/S2 gemergt (19.10.2026, `ae6b271`, `e6384ec`; 9 behoben,
    CR2-10 zurückgestellt; `docs/wp/CODE-REVIEW-2.md`). **Phase 2 damit abgeschlossen** bis auf die
-   Nutzer-Checkliste. Push nach `origin` nur nach Freigabe des Nutzers.
+   Nutzer-Checkliste; gepusht (`836f985`, 19.10.2026) – erster stabiler `main` für die produktive Instanz.
+   Weitere Arbeit (Phase 3, Follow-ups) nur auf Feature-Branches (Koordinator-Regeln oben).
 3. **Nutzer-Regel 18.10.2026:** keine Desktop-Bedienung per Skript (Klicks, Tastatur, Fenster-Fokus,
    Bildschirmfotos, UI Automation, Prozessspeicher) – auch nicht in freigegebenen Live-Tests; gilt für jeden
    Subagenten (in jeden Auftrag für Live-/UI-Arbeit schreiben). UI-Prüfung nur über Vitest/Playwright.
