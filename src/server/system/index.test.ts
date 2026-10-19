@@ -26,9 +26,19 @@ interface Call {
 
 /**
  * A simulated machine: PowerShell answers the shortcut script, reg.exe works on an in-memory
- * HKCU. `failShortcut`/`failReg` make the tools fail; `inFlight` checks that nothing overlaps.
+ * HKCU (`<key>|<value name>`; a key exists while it or a subkey has a value, and like reg.exe a
+ * `/ve` query of an existing key without a default value answers "(value not set)").
+ * `failShortcut`/`failReg` make the tools fail, `failQuery` the reg.exe queries; `inFlight`
+ * checks that nothing overlaps.
  */
-function machine(p: { failShortcut?: boolean; failReg?: boolean; hkcu?: Record<string, string> } = {}) {
+function machine(
+  p: {
+    failShortcut?: boolean;
+    failReg?: boolean;
+    failQuery?: 'timeout' | 'spawn' | 'exit';
+    hkcu?: Record<string, string>;
+  } = {},
+) {
   const calls: Call[] = [];
   const hkcu = new Map(Object.entries(p.hkcu ?? {}));
   let inFlight = 0;
@@ -49,10 +59,20 @@ function machine(p: { failShortcut?: boolean; failReg?: boolean; hkcu?: Record<s
     calls.push({ tool: 'reg', args, env });
     const [verb, key] = args;
     if (verb === 'query') {
+      if (p.failQuery === 'timeout') {
+        return { exitCode: null, signal: 'SIGKILL', stdout: '', stderr: '', timedOut: true };
+      }
+      if (p.failQuery === 'spawn') throw new Error('spawn EPERM');
+      if (p.failQuery === 'exit') return { ...fail('ERROR: out of memory'), exitCode: 5 };
       const value = hkcu.get(`${key ?? ''}|`);
-      return value === undefined
-        ? fail('ERROR: not found')
-        : ok(`\r\n${key ?? ''}\r\n    (Default)    REG_SZ    ${value}\r\n`);
+      if (value !== undefined) return ok(`\r\n${key ?? ''}\r\n    (Default)    REG_SZ    ${value}\r\n`);
+      const prefix = (key ?? '').toLowerCase();
+      const exists = [...hkcu.keys()].some(
+        (k) => k.toLowerCase().startsWith(`${prefix}\\`) || k.toLowerCase().startsWith(`${prefix}|`),
+      );
+      return exists
+        ? ok(`\r\n${key ?? ''}\r\n    (Default)    REG_SZ    (value not set)\r\n`)
+        : fail('ERROR: not found');
     }
     if (p.failReg === true) return fail('ERROR: Access is denied.');
     if (verb === 'add') {
@@ -265,6 +285,54 @@ describe('createSystemIntegration (ADR-109, ADR-110)', () => {
     ]);
     expect(w.m.hkcu.get(`${PROTOCOL_COMMAND_KEY}|`)).toBe(foreign);
     expect(integration.toastLaunchUri(SAMPLE_IDS.entry)).toBeNull();
+  });
+
+  it.each(['timeout', 'spawn', 'exit'] as const)(
+    'CR2-01: a failed registry query (%s) is no free key – nothing is written, a warning instead',
+    async (failQuery) => {
+      const w = await world({ failQuery });
+      const integration = createSystemIntegration({
+        available: true,
+        repoRoot: REPO,
+        home: w.home,
+        run: w.m.run,
+        env: w.env,
+        platform: 'win32',
+        command: w.command,
+      });
+      await integration.apply(settings(false, true));
+      expect(w.m.calls.filter((c) => c.tool === 'reg').map((c) => c.args[0])).not.toContain('add');
+      expect(integration.warnings().map((x) => x.error.code)).toEqual(['PROTOCOL_HANDLER_FAILED']);
+      expect(integration.toastLaunchUri(SAMPLE_IDS.entry)).toBeNull();
+    },
+  );
+
+  it('CR2-01: an existing parallax key without a recognizable own command is foreign (never overwritten)', async () => {
+    // E.g. a handler of another program with only the scheme key, or a verb other than shell\open.
+    const hkcu = {
+      [`${PROTOCOL_KEY}|`]: 'URL:Other App',
+      [`${PROTOCOL_KEY}|URL Protocol`]: '',
+      [`${PROTOCOL_KEY}\\shell\\view\\command|`]: '"C:\\Other\\app.exe" "%1"',
+    };
+    const w = await world({ hkcu });
+    const integration = createSystemIntegration({
+      available: true,
+      repoRoot: REPO,
+      home: w.home,
+      run: w.m.run,
+      env: w.env,
+      platform: 'win32',
+      command: w.command,
+    });
+    await integration.apply(settings(false, true));
+    expect(integration.warnings().map((x) => x.error)).toEqual([
+      { code: 'PROTOCOL_HANDLER_FAILED', params: { reason: 'foreign' } },
+    ]);
+    expect(Object.fromEntries(w.m.hkcu)).toEqual(hkcu);
+    // Switching it off leaves the foreign key alone as well.
+    await integration.apply(settings(false, false));
+    expect(Object.fromEntries(w.m.hkcu)).toEqual(hkcu);
+    expect(w.m.calls.filter((c) => c.tool === 'reg').map((c) => c.args[0])).not.toContain('delete');
   });
 
   it('applies run one after another, never in parallel', async () => {

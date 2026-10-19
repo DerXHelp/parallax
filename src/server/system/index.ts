@@ -23,7 +23,7 @@ import { defaultHome } from '../config';
 import { toError } from '../lib/async';
 import { logger as rootLogger } from '../lib/logger';
 import type { RunFileFn } from '../lib/process';
-import { regAddValue, regDeleteKey, regQuery } from '../lib/registry';
+import { regAddValue, regDeleteKey } from '../lib/registry';
 import {
   autostartLinkExists,
   autostartLinkPath,
@@ -35,6 +35,7 @@ import {
 import type { SystemIntegration } from './ports';
 import {
   protocolCommand,
+  regKeyReader,
   registerProtocolHandler,
   unregisterProtocolHandler,
   type ProtocolRegistryDeps,
@@ -77,7 +78,7 @@ export function createSystemIntegration(opts: SystemIntegrationOptions): SystemI
     opts.command ??
     ((extra: readonly string[], home: string | null) => launcherCommand(opts.repoRoot, extra, { home }));
   const registry: ProtocolRegistryDeps = {
-    query: regQuery(run),
+    read: regKeyReader(run),
     add: regAddValue(run),
     remove: regDeleteKey(run),
     env,
