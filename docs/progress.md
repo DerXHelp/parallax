@@ -176,8 +176,9 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
    WP-40 (Integration + E2E) gemergt (`6373625`, 18.10.2026). R4/V3 und Fix-Runde (K, F1–F5) gemergt
    (`07d7197`, 18.10.2026). WP-41 (Live-Abnahme) teilweise gemergt (`31a1fe7`, 18.10.2026).
    FIX-41 gemergt (19.10.2026). A18 Live-Smoke nach Nutzer-Freigabe nachgeholt (19.10.2026, `0d81e5b`,
-   6/6, 0,0105 USD). **Offen beim Nutzer:** Checkliste WP-41 §2.6. **Läuft:** `/code-review` (high)
-   über `fdc44f7..main` (WP-30 §7).
+   6/6, 0,0105 USD). **Offen beim Nutzer:** Checkliste WP-41 §2.6. `/code-review` (high) über
+   `fdc44f7..main`: 10 Funde (`docs/wp/CODE-REVIEW-2.md`). **Läuft:** Fix-Runde S1 Engine / S2
+   System+Upload (Branches `fix/cr2-s1`, `fix/cr2-s2`).
 3. **Nutzer-Regel 18.10.2026:** keine Desktop-Bedienung per Skript (Klicks, Tastatur, Fenster-Fokus,
    Bildschirmfotos, UI Automation, Prozessspeicher) – auch nicht in freigegebenen Live-Tests; gilt für jeden
    Subagenten (in jeden Auftrag für Live-/UI-Arbeit schreiben). UI-Prüfung nur über Vitest/Playwright.
