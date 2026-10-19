@@ -44,9 +44,7 @@ export function isOwnCommand(command: string): boolean {
  * "(value not set)"), 1 = missing, anything else (timeout, not started, other exit code) = failed.
  */
 export type RegKeyRead =
-  | { state: 'present'; output: string }
-  | { state: 'missing' }
-  | { state: 'failed'; reason: string };
+  { state: 'present'; output: string } | { state: 'missing' } | { state: 'failed'; reason: string };
 
 export type RegKeyReader = (key: string) => Promise<RegKeyRead>;
 
@@ -64,9 +62,15 @@ export function regKeyReader(run: RunFileFn): RegKeyReader {
       if (result.exitCode === 0) return { state: 'present', output: result.stdout };
       if (result.exitCode === 1) return { state: 'missing' };
       const output = (result.stderr.trim() || result.stdout.trim()).slice(0, 300);
-      return { state: 'failed', reason: `registry query: reg.exe exit ${String(result.exitCode)}: ${output}` };
+      return {
+        state: 'failed',
+        reason: `registry query: reg.exe exit ${String(result.exitCode)}: ${output}`,
+      };
     } catch (error) {
-      return { state: 'failed', reason: `registry query: reg.exe could not be started: ${toError(error).message}` };
+      return {
+        state: 'failed',
+        reason: `registry query: reg.exe could not be started: ${toError(error).message}`,
+      };
     }
   };
 }
