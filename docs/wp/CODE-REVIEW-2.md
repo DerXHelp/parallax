@@ -63,6 +63,7 @@ Fix-Runde 19.10.2026, zwei Pakete parallel; Details je Fund in `docs/wp/CODE-REV
 | CR2-09 | ja (1 Test rot) | `/loop` erst nach erfolgreichem `send()` als geplant markiert (ADR-131) | `ae6b271` |
 | CR2-10 | nein – **zurückgestellt** | Der Transkript-Store liest bei jedem `readTail` die ganze Datei; ein kleineres Limit spart nichts. Sinnvoll erst mit einem Store, der Tails ohne Volllesen liefert, plus Handoff-Order | – |
 
-Nach beiden Merges: `pnpm check` 3790 Tests (215 Dateien), `pnpm build` ok. `errors.ts`: nur Kommentar
+Nach beiden Merges: `pnpm check` 3790 Tests (215 Dateien), `pnpm build` ok, `pnpm e2e` 45/45 (Edge,
+FakeBackend, `7e34b59`). `errors.ts`: nur Kommentar
 zu `params.reason: 'foreign'` (Contract-Changelog). Autostart-Ordner und `HKCU\Software\Classes\parallax`
 des Nutzers nach der Runde geprüft: unverändert (nur `desktop.ini`, kein Schlüssel).
