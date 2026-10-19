@@ -165,14 +165,24 @@ describe('regKeyReader (CR2-01): reg.exe query judged by the exit code', () => {
     const run: RunFileFn = (file, args) => {
       calls.push({ file, args });
       if (result instanceof Error) return Promise.reject(result);
-      return Promise.resolve({ exitCode: 0, signal: null, stdout: '', stderr: '', timedOut: false, ...result });
+      return Promise.resolve({
+        exitCode: 0,
+        signal: null,
+        stdout: '',
+        stderr: '',
+        timedOut: false,
+        ...result,
+      });
     };
     return { run, calls };
   }
 
   it('exit 0 → present with the output, exit 1 → missing', async () => {
     const present = fakeRun({ stdout: queryOutput('x') });
-    expect(await regKeyReader(present.run)(PROTOCOL_KEY)).toEqual({ state: 'present', output: queryOutput('x') });
+    expect(await regKeyReader(present.run)(PROTOCOL_KEY)).toEqual({
+      state: 'present',
+      output: queryOutput('x'),
+    });
     expect(present.calls[0]?.file.toLowerCase()).toMatch(/\\system32\\reg\.exe$/);
     expect(present.calls[0]?.args).toEqual(['query', PROTOCOL_KEY, '/ve', '/reg:64']);
     const missing = fakeRun({ exitCode: 1, stderr: 'FEHLER: … nicht gefunden.' });
