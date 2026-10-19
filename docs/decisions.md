@@ -1421,3 +1421,47 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   `debug`-Zeile `notification route` mit Kanal, Ziel, Grund und Präsenz-Zusammenfassung, ohne Titel/Texte.
 - **Folgen:** Ein Fenster nach Server-Neustart oder Verbindungsabbruch behält seinen Fokus-Rang. Umsetzung
   und Tests: FIX-41 F1 (`sessions/notifier.ts`, `sessions/manager.ts`, `sync/hub.ts`).
+
+## ADR-130 – Externe Konsole: geplantes Weiter und Auto-Retry erst nach geöffneter Konsole verwerfen
+- **Datum/WP:** 19.10.2026, Code-Review Phase 2, Fix-Paket S1 (CR2-02). Ergänzt ADR-104 und ADR-112 (Texte
+  bleiben).
+- **Kontext:** `session.openExternal` verwarf ein geplantes „Weiter nach Rate-Limit“ (`continueAt`,
+  `wakeupAt`) und einen anstehenden Auto-Retry, bevor die Konsolen-Spec gebaut und die Konsole geöffnet war.
+  Scheiterte einer dieser Schritte (`PROFILE_INVALID`, `CLAUDE_NOT_FOUND`, AppLocker →
+  `EXTERNAL_CONSOLE_FAILED`), blieb der Eintrag in Parallax, aber zur Reset-Zeit setzte nichts fort.
+- **Entscheidung:** Reihenfolge im Lock: Gates, Vorbedingungen, `checkCwd`, **Konsolen-Spec**
+  (`consoleLaunchFor`), Query schließen, Waisenprüfung abwarten, `launcher.open`. Plan und Retry werden erst
+  bei `result.kind === 'opened'` verworfen. Ein Profilfehler ändert nichts (die Query läuft weiter); scheitert
+  `open()`, ruht der Eintrag mit erhaltenem Plan/Retry.
+- **Folgen:** Ein während `open()` fälliger Timer wartet auf den Lock; nach geöffneter Konsole lehnt
+  `startRuntime` ihn ab (R4-01). Umsetzung und Tests: `sessions/external.ts`,
+  `external.integration.test.ts` „CR2-02: …“.
+
+## ADR-131 – Wirkungen eines Prompts erst, wenn er angenommen ist
+- **Datum/WP:** 19.10.2026, Code-Review Phase 2, Fix-Paket S1 (CR2-04, CR2-09). Ergänzt ADR-112, ADR-121 und
+  R4-01.
+- **Kontext:** Ein reiner Text-Prompt verwarf Plan und Retry und setzte den Prompt-Titel vor dem
+  Lifecycle-Lock; wies die zweite Gate-Prüfung im Lock ihn ab (`SESSION_EXTERNAL`, `SESSION_ARCHIVED`), blieben
+  Titel und `promptTitle` geändert. `deliverPrompt` markierte einen `/loop`-Prozess als geplant, bevor
+  `send()` den Prompt angenommen hatte; ein abgelehnter Prompt ließ den Prozess nie mehr schlafen.
+- **Entscheidung:** `session.sendPrompt` ändert Retry, Plan und Prompt-Titel – für Text- und Anhang-Prompts
+  gleich – erst im Lock nach `assertEntryGate` und der Anhangprüfung. `deliverPrompt` markiert einen
+  `/loop`-Prozess erst nach erfolgreichem `send()` als geplant.
+- **Folgen:** Hinter einer anderen Lifecycle-Operation erscheint der Prompt-Titel erst mit dem Lock; vor dem
+  eigenen Start (Waisenprüfung) weiterhin sofort. Umsetzung und Tests: `sessions/commands.ts`,
+  `sessions/runtime.ts`, `external.integration.test.ts` „CR2-04: …“, `phase2.integration.test.ts` „CR2-09: …“.
+
+## ADR-132 – Persistierte Modellkataloge tragen den Profil-Schlüssel
+- **Datum/WP:** 19.10.2026, Code-Review Phase 2, Fix-Paket S1 (CR2-05). Ergänzt ADR-102 und ADR-114.
+- **Kontext:** `model-catalogs.json` speicherte Kataloge und Alias-Auflösungen nur je Profil-ID; der Manager
+  säte `profileKeys` aus den Profilen beim Start. Wurde `profiles.json` bei gestopptem Parallax geändert oder
+  aus `.bak` geholt (andere `.exe`, anderes `CLAUDE_CONFIG_DIR` = anderes Konto), lieferte der Cache Modelle
+  und Aliasse des alten Kontos, und `onProfileChanged` verwarf nie.
+- **Entscheidung:** Jeder gespeicherte Katalog trägt `profileKey` (`profileCacheKey` des Profils, unter dem
+  der Cache steht; Feld mit Default `null`, `schemaVersion` bleibt 1). Beim Start übernimmt der Manager nur
+  Kataloge, deren Schlüssel zum Profil jetzt passt; andere – auch ältere Dateien ohne Schlüssel und Kataloge
+  gelöschter Profile – werden aus Datei und Cache entfernt und beim nächsten Start neu geholt.
+- **Folgen:** Nach einem Update auf diese Version fehlen die Kataloge einmalig bis zum ersten Start je Profil
+  (Rückfall auf die CLI-Aliasse, WP22-01). Abo-Limits unverändert. Umsetzung und Tests:
+  `sessions/catalogStore.ts`, `sessions/manager.ts`, `phase2b.integration.test.ts` und `catalogStore.test.ts`
+  „CR2-05: …“.
