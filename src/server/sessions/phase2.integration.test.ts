@@ -279,6 +279,31 @@ describe('idle sleep from the settings (ADR-105)', () => {
     expect(h.facts(entryId).runState).toBe('idle');
     expect(sessionsExited(h, entryId)).toBe(false);
   });
+
+  it('CR2-09: a /loop prompt that send() refuses leaves the process unplanned – it still falls asleep', async () => {
+    const h = await setup({ sleepPolicy: 'settings' });
+    const refuse = { value: false };
+    const start = h.backend.start.bind(h.backend);
+    h.backend.start = (req) => {
+      const agent = start(req);
+      const send = agent.send.bind(agent);
+      agent.send = (prompt) => {
+        if (refuse.value) throw new Error('session closed');
+        send(prompt);
+      };
+      return agent;
+    };
+    const entryId = await idleEntry(h);
+    expect(pendingMs(h)).toEqual([30 * MINUTE]);
+    refuse.value = true;
+    expect(
+      await h.cmdError({ name: 'session.sendPrompt', entryId, prompt: { text: '/loop 5m check CI' } }),
+    ).toEqual({ code: 'SESSION_NOT_RUNNING', params: { entryId, reason: 'closed' } });
+    expect(h.manager.inspect(entryId)?.scheduledTurn).toBe(false);
+    expect(pendingMs(h)).toEqual([30 * MINUTE]);
+    h.timers.advance(30 * MINUTE);
+    await h.waitFor(() => h.facts(entryId).runState === 'sleeping');
+  });
 });
 
 // =====================================================================================
