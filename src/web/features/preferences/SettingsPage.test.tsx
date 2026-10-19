@@ -470,6 +470,60 @@ describe('Server', () => {
   });
 });
 
+describe('CR2-03: a foreign shortcut or handler explains itself', () => {
+  it('AUTOSTART_FAILED / PROTOCOL_HANDLER_FAILED with reason "foreign" add what to do; other reasons do not', async () => {
+    await connect({
+      hostState: sampleHostState({
+        systemIntegration: true,
+        warnings: [
+          {
+            id: 'w-autostart',
+            error: makeError('AUTOSTART_FAILED', { reason: 'foreign' }),
+            at: sampleTime(),
+          },
+          {
+            id: 'w-protocol',
+            error: makeError('PROTOCOL_HANDLER_FAILED', { reason: 'foreign' }),
+            at: sampleTime(),
+          },
+        ],
+      }),
+    });
+    const user = userEvent.setup();
+    renderPage('server');
+    const server = screen.getByRole('tabpanel', { name: 'Server' });
+    const autostart = within(server)
+      .getByText('Autostart could not be set up.')
+      .closest('[data-slot="alert"]');
+    expect(autostart?.textContent).toContain(en.server.autostartForeign);
+    const panel = await openSection(user, 'Notifications');
+    const protocol = within(panel)
+      .getByText('Opening sessions from Windows notifications could not be set up.')
+      .closest('[data-slot="alert"]');
+    expect(protocol?.textContent).toContain(en.notifications.openOnClickForeign);
+    expect(de.server.autostartForeign).not.toBe(en.server.autostartForeign);
+    expect(de.notifications.openOnClickForeign).not.toBe(en.notifications.openOnClickForeign);
+  });
+
+  it('another reason shows only the error text', async () => {
+    await connect({
+      hostState: sampleHostState({
+        systemIntegration: true,
+        warnings: [
+          {
+            id: 'w-autostart',
+            error: makeError('AUTOSTART_FAILED', { reason: 'timeout' }),
+            at: sampleTime(),
+          },
+        ],
+      }),
+    });
+    renderPage('server');
+    const alert = screen.getByText('Autostart could not be set up.').closest('[data-slot="alert"]');
+    expect(alert?.textContent).toBe('Autostart could not be set up.');
+  });
+});
+
 describe('Profiles and About', () => {
   it('renders the ProfilesSettings slot of WP-36 (placeholder → a note)', async () => {
     await connect();

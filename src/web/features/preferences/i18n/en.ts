@@ -67,6 +67,8 @@ export const en = {
     openOnClick: 'Clicking a Windows notification opens the session',
     openOnClickHint:
       'Registers the link type “parallax:” for your Windows user; a click opens the session in a new app window.',
+    openOnClickForeign:
+      'Another program is already registered for “parallax:” links on your Windows user. Parallax does not replace it.',
   },
   sessions: {
     idleSleep: 'Put idle sessions to sleep',
@@ -87,6 +89,8 @@ export const en = {
     autostartHint: 'Starts the server in the background; Windows notifications work without a window.',
     openWindow: 'Also open a window at sign-in',
     openWindowNeedsAutostart: 'Only while “Start Parallax when you sign in to Windows” is on.',
+    autostartForeign:
+      'Your Startup folder already has a “Parallax.lnk” that Parallax did not create. Parallax does not replace it – rename or delete it to use this setting.',
   },
   profiles: {
     unavailable: 'The profile editor is not available in this view.',

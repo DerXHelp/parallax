@@ -5,7 +5,13 @@ import { settingsSchema, type Settings } from '@shared/model';
 import { SAMPLE_IDS } from '@shared/samples';
 import { makeTempHome } from '../http/testServer';
 import type { RunFileFn, RunFileOptions } from '../lib/process';
-import { AUTOSTART_ENV, autostartLinkPath, type StartCommand } from './autostart';
+import {
+  AUTOSTART_ENV,
+  FOREIGN_SHORTCUT,
+  LAUNCHER_MARKER,
+  autostartLinkPath,
+  type StartCommand,
+} from './autostart';
 import { AUTOSTART_WARNING_ID, PROTOCOL_WARNING_ID, createSystemIntegration } from './index';
 import { PROTOCOL_COMMAND_KEY, PROTOCOL_KEY } from './protocol';
 
@@ -36,6 +42,8 @@ function machine(
     failShortcut?: boolean;
     failReg?: boolean;
     failQuery?: 'timeout' | 'spawn' | 'exit';
+    /** A `Parallax.lnk` of the user: the script keeps it when it gets the marker, else it is replaced. */
+    foreignLink?: boolean;
     hkcu?: Record<string, string>;
   } = {},
 ) {
@@ -54,6 +62,8 @@ function machine(
     if (file.toLowerCase().endsWith('powershell.exe')) {
       calls.push({ tool: 'powershell', args, env });
       if (p.failShortcut === true) return { ...ok('error: Zugriff verweigert'), exitCode: 3 };
+      if (p.foreignLink === true && env[AUTOSTART_ENV.marker] === LAUNCHER_MARKER)
+        return ok(FOREIGN_SHORTCUT);
       return ok(env[AUTOSTART_ENV.action] === 'remove' ? 'removed' : 'created');
     }
     calls.push({ tool: 'reg', args, env });
@@ -333,6 +343,36 @@ describe('createSystemIntegration (ADR-109, ADR-110)', () => {
     await integration.apply(settings(false, false));
     expect(Object.fromEntries(w.m.hkcu)).toEqual(hkcu);
     expect(w.m.calls.filter((c) => c.tool === 'reg').map((c) => c.args[0])).not.toContain('delete');
+  });
+
+  it('CR2-03: a foreign Parallax.lnk is never replaced (AUTOSTART_FAILED foreign); off leaves it alone', async () => {
+    const w = await world({ foreignLink: true });
+    await mkdir(path.dirname(w.link), { recursive: true });
+    await writeFile(w.link, 'lnk of the user');
+    const integration = createSystemIntegration({
+      available: true,
+      repoRoot: REPO,
+      home: w.home,
+      run: w.m.run,
+      env: w.env,
+      platform: 'win32',
+      command: w.command,
+    });
+    await integration.apply(settings(true, false));
+    expect(integration.warnings().map((x) => x.error)).toEqual([
+      { code: 'AUTOSTART_FAILED', params: { reason: 'foreign' } },
+    ]);
+    // Off: the removal keeps the foreign shortcut too (R4-11) – no warning any more.
+    await integration.apply(settings(false, false));
+    expect(integration.warnings()).toEqual([]);
+    expect(
+      w.m.calls
+        .filter((c) => c.tool === 'powershell')
+        .map((c) => [c.env[AUTOSTART_ENV.action], c.env[AUTOSTART_ENV.marker]]),
+    ).toEqual([
+      ['create', LAUNCHER_MARKER],
+      ['remove', LAUNCHER_MARKER],
+    ]);
   });
 
   it('applies run one after another, never in parallel', async () => {
