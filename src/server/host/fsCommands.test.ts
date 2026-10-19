@@ -1,6 +1,6 @@
 import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { LIMITS } from '@shared/common';
 import type { ErrorPayload } from '@shared/errors';
 import { fsListingSchema, type FsListing } from '@shared/model';
@@ -8,6 +8,7 @@ import { SAMPLE_IDS } from '@shared/samples';
 import { makeTempHome } from '../http/testServer';
 import { CommandError } from '../sync/ports';
 import {
+  DRIVE_PROBE_LIMIT,
   childPath,
   createFsCommands,
   isHiddenName,
@@ -236,6 +237,63 @@ describe('fs.listDirectory: roots (path null)', () => {
     await listing(handler, null);
     expect(fs.stats.get('D:\\')).toBe(1);
     expect(fs.stats.get('C:\\')).toBe(2);
+  });
+
+  it('CR2-06: at most DRIVE_PROBE_LIMIT drive stats at once – given-up (still hanging) ones count, across listings', async () => {
+    // D: and E: hang like disconnected network drives until released; the others answer at once.
+    const hung = new Map<string, () => void>();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const stats: string[] = [];
+    const fs: DirFs = {
+      lstat: () => Promise.resolve({ isSymbolicLink: () => false }),
+      readlink: () => Promise.reject(errno('EINVAL')),
+      readdir: () => Promise.resolve([]),
+      stat: (p) => {
+        stats.push(p);
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        const settle = <T>(value: Promise<T>) =>
+          value.finally(() => {
+            inFlight -= 1;
+          });
+        if (p === 'D:\\' || p === 'E:\\') {
+          return settle(
+            new Promise((_resolve, reject) => {
+              hung.set(p, () => {
+                reject(errno('ETIMEDOUT'));
+              });
+            }),
+          );
+        }
+        if (p === 'C:\\' || p === 'Z:\\') return settle(Promise.resolve({ isDirectory: () => true }));
+        return settle(Promise.reject(errno('ENOENT')));
+      },
+    };
+    const handler = createFsCommands({ fs, home: 'C:\\Users\\u', platform: 'win32', driveTimeoutMs: 50 });
+    const drivesOf = async () =>
+      (await listing(handler, null)).entries.filter((e) => e.kind === 'drive').map((e) => e.name);
+    const first = await drivesOf();
+    // Never all 26 at once (libuv has 4 threads; two stay free for the rest of the server).
+    expect(maxInFlight).toBeLessThanOrEqual(2);
+    expect(DRIVE_PROBE_LIMIT).toBe(2);
+    // C: answers before the hanging drives take both slots; the drives behind them wait.
+    expect(first).toEqual(['C:']);
+    // A second listing while D:/E: still hang starts no further stat beyond the limit; C: waits
+    // behind them and keeps its last answer (a local drive does not vanish), D: gets no second stat.
+    expect(await drivesOf()).toEqual(['C:']);
+    expect(maxInFlight).toBeLessThanOrEqual(DRIVE_PROBE_LIMIT);
+    expect(stats.filter((p) => p === 'D:\\')).toHaveLength(1);
+    expect(stats.filter((p) => p === 'C:\\')).toHaveLength(1);
+    // Once the hanging stats end, the waiting probes run (still within the limit) and Z: is back.
+    for (const release of hung.values()) release();
+    await vi.waitFor(() => {
+      expect(stats).toContain('Z:\\');
+    });
+    await vi.waitFor(async () => {
+      expect(await drivesOf()).toEqual(['C:', 'Z:']);
+    });
+    expect(maxInFlight).toBeLessThanOrEqual(DRIVE_PROBE_LIMIT);
   });
 
   it('no drives off Windows; an unsafe user folder (roaming share) is left out', async () => {
