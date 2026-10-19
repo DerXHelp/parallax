@@ -5,9 +5,13 @@
  *
  * - `path: null` → the roots: the user folder (`kind: 'home'`, skipped if it is no safe drive
  *   path, e.g. a roaming profile on a share) and every drive `A:`…`Z:` whose `stat('X:\')`
- *   answers within `driveTimeoutMs` (1.5 s; slow and missing drives are skipped). A drive whose
- *   last `stat` still hangs gets no second one (libuv has four threadpool threads – hanging
- *   network drives must not block every other fs call of the server, R8).
+ *   answers within `driveTimeoutMs` (1.5 s from the request; slow and missing drives are
+ *   skipped). libuv has four threadpool threads – hanging network drives must not block every
+ *   other fs call of the server (R8): a drive whose last `stat` still hangs gets no second one, and
+ *   at most `DRIVE_PROBE_LIMIT` (2) drive stats run at once, in drive order; a slot is freed only
+ *   when its `stat` really ends, also after a listing gave up on it (CR2-06, ADR-135). A drive still waiting
+ *   for a slot at its timeout keeps the answer of its last finished stat (a local drive behind
+ *   hanging network drives stays listed; one never seen is left out until it is probed).
  * - Otherwise: `windowsPathIssue` → PATH_REJECTED {reason}; `assertNoUnsafeLink` →
  *   PATH_REJECTED {reason: 'link_target'}; `stat` + `readdir(withFileTypes)`; only folders and
  *   links to folders (a link's target is checked like a path – unsafe links are left out, never
@@ -61,11 +65,19 @@ export interface FsCommandsDeps {
 }
 
 export const DRIVE_TIMEOUT_MS = 1_500;
+/** Drive stats at once, counting those still hanging after their timeout (CR2-06, see the file comment). */
+export const DRIVE_PROBE_LIMIT = 2;
 /** `A:\` … `Z:\`. */
 const DRIVE_ROOTS: readonly string[] = Array.from(
   { length: 26 },
   (_, i) => `${String.fromCharCode(65 + i)}:\\`,
 );
+
+/** One drive stat: waiting for a slot (`started` false) or running; `answer` = is it a folder. */
+interface DriveProbe {
+  started: boolean;
+  answer: Promise<boolean>;
+}
 
 /** System folders Explorer hides (lower case); besides every name starting with `.`. */
 const HIDDEN_NAMES: ReadonlySet<string> = new Set([
@@ -130,26 +142,62 @@ export function createFsCommands(deps: FsCommandsDeps = {}): HostCommandHandler 
   const fs = deps.fs ?? nodeDirFs;
   const platform = deps.platform ?? process.platform;
   const driveTimeoutMs = deps.driveTimeoutMs ?? DRIVE_TIMEOUT_MS;
-  /** Drive stats still running (one per drive at most, see the file comment). */
-  const pendingDrives = new Map<string, Promise<boolean>>();
+  /** Drive stats waiting or running (one per drive at most, see the file comment). */
+  const pendingDrives = new Map<string, DriveProbe>();
+  /** Answer of the last stat of a drive that ended (CR2-06: for probes still waiting for a slot). */
+  const lastAnswers = new Map<string, boolean>();
+  let probing = 0;
+  const waitingProbes: (() => void)[] = [];
 
-  const driveAnswers = (root: string): Promise<boolean> => {
-    let pending = pendingDrives.get(root);
-    if (pending === undefined) {
-      pending = fs.stat(root).then(
+  /** `stat(root)` once one of the `DRIVE_PROBE_LIMIT` slots is free; held until the stat ends. */
+  const probeDrive = (root: string): DriveProbe => {
+    const probe: DriveProbe = { started: false, answer: Promise.resolve(false) };
+    probe.answer = new Promise<void>((resolve) => {
+      if (probing < DRIVE_PROBE_LIMIT) {
+        probing += 1;
+        resolve();
+      } else {
+        waitingProbes.push(resolve);
+      }
+    })
+      .then(() => {
+        probe.started = true;
+        return fs.stat(root);
+      })
+      .then(
         (info) => info.isDirectory(),
         () => false,
-      );
-      pendingDrives.set(root, pending);
-      void pending.finally(() => pendingDrives.delete(root));
+      )
+      .then((present) => {
+        lastAnswers.set(root, present);
+        return present;
+      })
+      .finally(() => {
+        const next = waitingProbes.shift();
+        if (next === undefined) probing -= 1;
+        else next(); // the slot passes on
+      });
+    return probe;
+  };
+
+  const driveAnswers = (root: string): Promise<boolean> => {
+    let probe = pendingDrives.get(root);
+    if (probe === undefined) {
+      const created = probeDrive(root);
+      pendingDrives.set(root, created);
+      void created.answer.finally(() => pendingDrives.delete(root));
+      probe = created;
     }
+    const current = probe;
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<boolean>((resolve) => {
       timer = setTimeout(() => {
-        resolve(false);
+        // Still waiting behind hanging drives: its last answer (a local drive stays listed); a
+        // stat that runs this long is a slow drive and skipped.
+        resolve(!current.started && lastAnswers.get(root) === true);
       }, driveTimeoutMs);
     });
-    return Promise.race([pending, timeout]).finally(() => {
+    return Promise.race([current.answer, timeout]).finally(() => {
       clearTimeout(timer);
     });
   };

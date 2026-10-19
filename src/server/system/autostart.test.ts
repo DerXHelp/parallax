@@ -135,6 +135,7 @@ describe('autostart shortcut (ADR-110)', () => {
       [AUTOSTART_ENV.args]: windowsCommandLine(COMMAND.args),
       [AUTOSTART_ENV.cwd]: REPO,
       [AUTOSTART_ENV.description]: 'Parallax',
+      [AUTOSTART_ENV.marker]: LAUNCHER_MARKER,
     });
     expect(AUTOSTART_SCRIPT).toContain('New-Object -ComObject WScript.Shell');
     expect(AUTOSTART_SCRIPT).toContain('$link.WindowStyle = 7');
@@ -178,6 +179,41 @@ describe('autostart shortcut (ADR-110)', () => {
       ok: false,
       reason: 'powershell could not be started: spawn EACCES',
     });
+  });
+
+  it('CR2-03: creating passes the marker and refuses a foreign shortcut (reason foreign, never replaced)', async () => {
+    const appData = await makeTempHome('appdata-');
+    const link = autostartLinkPath({ APPDATA: appData });
+    if (link === null) throw new Error('no link path');
+    const foreign = fakeRun(FOREIGN_SHORTCUT);
+    expect(await createAutostartShortcut(link, COMMAND, { run: foreign.run, env: {} })).toEqual({
+      ok: false,
+      reason: FOREIGN_SHORTCUT,
+    });
+    expect(foreign.calls[0]?.options.env).toMatchObject({
+      [AUTOSTART_ENV.action]: 'create',
+      [AUTOSTART_ENV.marker]: LAUNCHER_MARKER,
+    });
+    // An own shortcut (marker in its arguments) is refreshed as before.
+    expect(await createAutostartShortcut(link, COMMAND, { run: fakeRun('created').run, env: {} })).toEqual({
+      ok: true,
+    });
+  });
+
+  it('CR2-03: the script checks an existing shortcut before either action (create and remove, R4-11)', () => {
+    const lines = AUTOSTART_SCRIPT.split('\n');
+    const read = lines.findIndex((l) => l.includes('.CreateShortcut($path)'));
+    const check = lines.findIndex((l) => l.includes('.Arguments') && l.includes('Contains($marker)'));
+    const keep = lines.findIndex((l) => l.includes(`Write-Output '${FOREIGN_SHORTCUT}'`));
+    const branch = lines.findIndex((l) => l.includes(`$env:${AUTOSTART_ENV.action} -eq 'remove'`));
+    const save = lines.findIndex((l) => l.includes('$link.Save()'));
+    expect(read).toBeGreaterThan(0);
+    expect(read).toBeLessThan(check);
+    expect(check).toBeLessThan(keep);
+    // The check runs before the action branch, so it guards the creation as well.
+    expect(keep).toBeLessThan(branch);
+    expect(branch).toBeLessThan(save);
+    expect(lines.filter((l) => l.includes(`Write-Output '${FOREIGN_SHORTCUT}'`))).toHaveLength(1);
   });
 
   it('R4-11: the removal reads the shortcut first and keeps one without the launcher in its arguments', () => {

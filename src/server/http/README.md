@@ -20,7 +20,7 @@ Vite-Dev-Proxy greift), Auth per Einmal-Code und HttpOnly-Cookie, Origin-/Host-/
 | Datei | Exporte | Inhalt |
 | --- | --- | --- |
 | `app.ts` | `createApp(options)`, `AttachableHub`, `HubAttachOptions`, `safeMediaType`, `mediaTypeEssence` | App: Guard-Hook (auch für den WS-Upgrade), Security-Header (CSP aus `@shared/http`: `pageCsp(port)`, `BLOB_CSP`, R3-14), Error-/404-Handler (`ROUTE_NOT_FOUND`), `/api/health` (mit `backend`, wenn `config.backend` gesetzt ist, R3-02), Blob-Route, Bild-Upload `/api/attachments` (Phase 2, unten), `@fastify/websocket` (`maxPayload`), `hub.attach(app, { authorizeUpgrade })`, Static, Dev-Login-URL beim `listen` |
-| `upload.test.ts` | – | Upload per `app.inject`: OK (Name, Pixelgröße in der Meta-Datei), 413, 415 Typ, 415 Magic-Bytes, 400 Query, 401 ohne Cookie, 403 fremder Origin |
+| `upload.test.ts` | – | Upload per `app.inject`: OK (Name, Pixelgröße in der Meta-Datei), 413, 415 Typ, 415 Magic-Bytes ohne Bildtyp, abweichender Bildtyp → erkannter Typ (CR2-08), 400 Query, 401 ohne Cookie, 403 fremder Origin |
 | `auth.ts` | `createAuthService(options) → AuthService`, `registerAuthRoutes`, `authCookieHeader`, `readCookie`, `AUTH_SECRET_FILE` | Einmal-Codes (`issueAuthCode(ttlMs?)`, `exchangeCode`), Geräte-Cookie (HMAC, Secret `PARALLAX_HOME/auth-secret.json` ohne `.bak`, `rotateSecret`, `onRevoked`), Launcher-Token (`launcherToken`, `verifyLauncherToken`); Routen `POST /api/auth`, `GET /api/auth/status`, `POST /api/launcher/code` |
 | `origin.ts` | `checkRequest`, `classifyRequest`, `isApiRoute`, `requestPath`, `STATIC_ROUTE` | reine Request-Prüfung nach der Tabelle §5.1 (Routen-Muster statt Pfad; `needsCookie` prüft der Aufrufer) |
 | `reply.ts` | `sendError`, `replyError` | HTTP-Fehlerantwort mit Katalog-Status |
@@ -30,10 +30,11 @@ Vite-Dev-Proxy greift), Auth per Einmal-Code und HttpOnly-Cookie, Origin-/Host-/
 „mutation“ (Origin, `same-origin`, Cookie – unverändert, Default-deny). Rohbytes; Content-Type-Parser
 nur für `ATTACHMENT_MEDIA_TYPES` (Buffer, `bodyLimit = LIMITS.imageBytes`) – anderer Typ 415
 `UNSUPPORTED_MEDIA_TYPE`, zu groß 413 `PAYLOAD_TOO_LARGE` (beides über den Error-Handler); Query per
-`attachmentUploadQuerySchema` (400 `VALIDATION_FAILED {reason: 'query'}`); Magic-Bytes
-(`lib/images.ts` `sniffImageType`) müssen zum Content-Type passen, sonst 415 (auch leerer Körper).
-Dann `blobs.put(data, mediaType, name ?? null, {width, height} | null)` → 200
-`attachmentUploadResponseSchema` `{attachment: BlobRef}` (inhaltsadressiert: gleiche Bytes → erster Ref).
+`attachmentUploadQuerySchema` (400 `VALIDATION_FAILED {reason: 'query'}`); die Magic-Bytes
+(`lib/images.ts` `sniffImageType`) müssen einen Bildtyp der API zeigen, sonst 415 (auch leerer Körper);
+weicht der deklarierte Bildtyp davon ab (umbenannte Datei), gilt der erkannte (CR2-08, ADR-134).
+Dann `blobs.put(data, <erkannter Typ>, name ?? null, {width, height} | null)` → 200
+`attachmentUploadResponseSchema` `{attachment: BlobRef}` (inhaltsadressiert; liegen die Bytes schon mit anderer Meta im Store, liefert und speichert der Upload seinen erkannten Typ und – mit `width`/`height`, wie der Composer immer sendet – auch Name und Größe dieses Uploads; CR2-07, `store/blobs.ts`).
 
 Verdrahtung (WP-20, `main.ts`):
 

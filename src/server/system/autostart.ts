@@ -100,36 +100,42 @@ export const AUTOSTART_ENV = {
   args: 'PARALLAX_LNK_ARGS',
   cwd: 'PARALLAX_LNK_CWD',
   description: 'PARALLAX_LNK_DESCRIPTION',
-  /** R4-11: `LAUNCHER_MARKER` – a shortcut without it in its arguments is not removed. */
+  /** R4-11/CR2-03: `LAUNCHER_MARKER` – a shortcut without it in its arguments is neither removed nor replaced. */
   marker: 'PARALLAX_LNK_MARKER',
 } as const;
 
-/** Output of the remove action for a shortcut that belongs to the user or another program (R4-11). */
+/**
+ * Output of the script for a shortcut that belongs to the user or another program (R4-11): the
+ * removal leaves it alone (`ok`), the creation refuses to replace it (CR2-03, `reason: 'foreign'`).
+ */
 export const FOREIGN_SHORTCUT = 'foreign';
 
 /**
- * The constant script: create (WScript.Shell) or remove the shortcut; exit 3 with the reason. The
- * removal reads an existing shortcut first and leaves it alone (`foreign`) unless its arguments
- * contain the marker (R4-11: e.g. a `Parallax.lnk` the user made on `parallax.cmd` in Phase 1).
+ * The constant script: create (WScript.Shell) or remove the shortcut; exit 3 with the reason. An
+ * existing shortcut is read first and left alone (`foreign`) unless its arguments contain the
+ * marker – for both actions (R4-11: e.g. a `Parallax.lnk` the user made on `parallax.cmd` in
+ * Phase 1; CR2-03/ADR-133: creating must not replace it, or turning autostart off would delete it later).
  */
 export const AUTOSTART_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
   'try {',
   `  $path = $env:${AUTOSTART_ENV.path}`,
+  '  $shell = New-Object -ComObject WScript.Shell',
+  '  if (Test-Path -LiteralPath $path) {',
+  '    $existing = $shell.CreateShortcut($path)',
+  `    $marker = ([string]$env:${AUTOSTART_ENV.marker}).ToLowerInvariant()`,
+  '    if (-not $marker -or -not ([string]$existing.Arguments).ToLowerInvariant().Contains($marker)) {',
+  `      Write-Output '${FOREIGN_SHORTCUT}'`,
+  '      exit 0',
+  '    }',
+  '  }',
   `  if ($env:${AUTOSTART_ENV.action} -eq 'remove') {`,
   '    if (Test-Path -LiteralPath $path) {',
-  '      $existing = (New-Object -ComObject WScript.Shell).CreateShortcut($path)',
-  `      $marker = ([string]$env:${AUTOSTART_ENV.marker}).ToLowerInvariant()`,
-  '      if (-not $marker -or -not ([string]$existing.Arguments).ToLowerInvariant().Contains($marker)) {',
-  `        Write-Output '${FOREIGN_SHORTCUT}'`,
-  '        exit 0',
-  '      }',
   '      Remove-Item -LiteralPath $path -Force',
   '    }',
   "    Write-Output 'removed'",
   '    exit 0',
   '  }',
-  '  $shell = New-Object -ComObject WScript.Shell',
   '  $link = $shell.CreateShortcut($path)',
   `  $link.TargetPath = $env:${AUTOSTART_ENV.target}`,
   `  $link.Arguments = $env:${AUTOSTART_ENV.args}`,
@@ -152,10 +158,15 @@ export interface ShortcutOptions {
   timeoutMs?: number;
 }
 
+/**
+ * Runs the script with `vars`: an output ending in an `expected` word is success, one ending in a
+ * `refused` word a failure with that word as the reason (exit 0 both).
+ */
 async function runShortcutScript(
   vars: Record<string, string>,
   expected: readonly string[],
   opts: ShortcutOptions,
+  refused: readonly string[] = [],
 ): Promise<SystemOpResult> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(opts.env)) {
@@ -172,6 +183,8 @@ async function runShortcutScript(
     if (result.timedOut) return { ok: false, reason: 'timeout' };
     const output = result.stdout.trim();
     if (result.exitCode === 0 && expected.some((word) => output.endsWith(word))) return { ok: true };
+    const refusal = refused.find((word) => output.endsWith(word));
+    if (result.exitCode === 0 && refusal !== undefined) return { ok: false, reason: refusal };
     return {
       ok: false,
       reason: `exit ${String(result.exitCode)}: ${(output || result.stderr.trim()).slice(0, 300)}`,
@@ -181,7 +194,11 @@ async function runShortcutScript(
   }
 }
 
-/** Creates or replaces the shortcut `link` for `command` (Startup folder created if missing). */
+/**
+ * Creates the shortcut `link` for `command` or replaces the own one (Startup folder created if
+ * missing); a shortcut without `LAUNCHER_MARKER` in its arguments belongs to someone else and is
+ * never replaced (CR2-03: `{ ok: false, reason: FOREIGN_SHORTCUT }`, consistent with R4-11).
+ */
 export async function createAutostartShortcut(
   link: string,
   command: StartCommand,
@@ -200,9 +217,11 @@ export async function createAutostartShortcut(
       [AUTOSTART_ENV.args]: windowsCommandLine(command.args),
       [AUTOSTART_ENV.cwd]: command.cwd,
       [AUTOSTART_ENV.description]: PRODUCT_NAME,
+      [AUTOSTART_ENV.marker]: LAUNCHER_MARKER,
     },
     ['created'],
     opts,
+    [FOREIGN_SHORTCUT],
   );
 }
 
