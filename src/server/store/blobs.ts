@@ -18,7 +18,7 @@ import { writeFileAtomic } from './jsonStore';
  * (`width`/`height`, ADR-103).
  *
  * One meta per content: the first one wins, unless a later put brings a better one (CR2-07,
- * ADR-135, `replacesMeta`) – the image type its magic bytes confirm instead of another stored type
+ * ADR-134, `replacesMeta`) – the image type its magic bytes confirm instead of another stored type
  * (e.g. `application/octet-stream` from the normalizer), or as an upload (the only put with a pixel
  * size) a different name/size of that type. Decided against the in-memory ref and again against
  * the meta file (also after a restart); writes of one content run one after another.

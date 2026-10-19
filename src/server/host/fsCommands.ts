@@ -9,7 +9,7 @@
  *   skipped). libuv has four threadpool threads – hanging network drives must not block every
  *   other fs call of the server (R8): a drive whose last `stat` still hangs gets no second one, and
  *   at most `DRIVE_PROBE_LIMIT` (2) drive stats run at once, in drive order; a slot is freed only
- *   when its `stat` really ends, also after a listing gave up on it (CR2-06). A drive still waiting
+ *   when its `stat` really ends, also after a listing gave up on it (CR2-06, ADR-135). A drive still waiting
  *   for a slot at its timeout keeps the answer of its last finished stat (a local drive behind
  *   hanging network drives stays listed; one never seen is left out until it is probed).
  * - Otherwise: `windowsPathIssue` → PATH_REJECTED {reason}; `assertNoUnsafeLink` →

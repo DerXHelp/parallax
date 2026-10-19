@@ -16,7 +16,7 @@ Host-Befehle, die keine Session betreffen (ADR-101), als `HostCommandHandler`
   servergespeichertes Profil) und jedes Laufwerk `A:`…`Z:`, dessen `stat('X:\')` binnen
   `driveTimeoutMs` (1,5 s) antwortet. Langsame/fehlende Laufwerke entfallen; ein Laufwerk, dessen
   letztes `stat` noch hängt, bekommt kein zweites (libuv hat vier Threadpool-Threads – hängende
-  Netzlaufwerke dürfen nicht jeden fs-Aufruf des Servers blockieren, R8). CR2-06: höchstens
+  Netzlaufwerke dürfen nicht jeden fs-Aufruf des Servers blockieren, R8). CR2-06 (ADR-135): höchstens
   `DRIVE_PROBE_LIMIT` (2) Laufwerks-`stat`s gleichzeitig, in Laufwerksreihenfolge; ein Platz wird erst
   frei, wenn sein `stat` wirklich endet (auch nach dem Timeout). Ein Laufwerk, das beim Timeout noch
   auf einen Platz wartet, behält die Antwort seines letzten beendeten `stat` (ein lokales Laufwerk

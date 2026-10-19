@@ -47,7 +47,7 @@ einmal `STORE_WRITE_FAILED` an `warnings` (R1-16).
 
 **Blobs:** `put` hasht synchron (SHA-256) und schreibt asynchron; bis dahin liefert `get` aus dem
 Speicher. Eine Meta je Inhalt: die erste gewinnt, außer ein späteres `put` bringt eine bessere (CR2-07,
-ADR-135): den per Magic Bytes bestätigten Bildtyp statt eines anderen gespeicherten Typs (z. B.
+ADR-134): den per Magic Bytes bestätigten Bildtyp statt eines anderen gespeicherten Typs (z. B.
 `application/octet-stream` vom Normalizer) oder – als Upload, das einzige `put` mit Pixelgröße – einen
 anderen Namen/eine andere Größe dieses Typs (der letzte Upload gewinnt). Geprüft gegen den Ref im Speicher
 und erneut gegen die Meta-Datei (auch nach einem Neustart); Schreibvorgänge eines Inhalts laufen
