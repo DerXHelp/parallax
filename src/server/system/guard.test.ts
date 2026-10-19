@@ -80,7 +80,8 @@ describe('R6: the Windows integration never runs for real in a test run', () => 
     );
     expect(integration.warnings().map((w) => [w.id, w.error.params.reason])).toEqual([
       ['system:autostart', 'APPDATA is not set'],
-      ['system:protocol', `reg.exe could not be started: ${TEST_RUN_REFUSAL}`],
+      // CR2-01: already the query is refused – a failed query never leads to a write.
+      ['system:protocol', `registry query: reg.exe could not be started: ${TEST_RUN_REFUSAL}`],
     ]);
     expect(integration.toastLaunchUri(SAMPLE_IDS.entry)).toBeNull();
     expect(spawned).toEqual([]);

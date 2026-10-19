@@ -63,6 +63,8 @@ export const de: typeof en = {
     openOnClick: 'Klick auf eine Windows-Benachrichtigung öffnet die Session',
     openOnClickHint:
       'Registriert den Linktyp „parallax:“ für deinen Windows-Benutzer; ein Klick öffnet die Session in einem neuen App-Fenster.',
+    openOnClickForeign:
+      'Für „parallax:“-Links ist bei deinem Windows-Benutzer schon ein anderes Programm registriert. Parallax ersetzt es nicht.',
   },
   sessions: {
     idleSleep: 'Untätige Sessions schlafen legen',
@@ -84,6 +86,8 @@ export const de: typeof en = {
       'Startet den Server im Hintergrund; Windows-Benachrichtigungen funktionieren auch ohne Fenster.',
     openWindow: 'Beim Anmelden auch ein Fenster öffnen',
     openWindowNeedsAutostart: 'Nur, solange „Parallax beim Anmelden an Windows starten“ eingeschaltet ist.',
+    autostartForeign:
+      'Im Autostart-Ordner liegt schon eine „Parallax.lnk“, die nicht von Parallax stammt. Parallax ersetzt sie nicht – benenne sie um oder lösche sie, um diese Einstellung zu nutzen.',
   },
   profiles: {
     unavailable: 'Der Profil-Editor ist in dieser Ansicht nicht verfügbar.',

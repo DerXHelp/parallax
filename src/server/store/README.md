@@ -46,7 +46,12 @@ geloggt); nach 3 fehlgeschlagenen Schreibversuchen einer Datei gibt es
 einmal `STORE_WRITE_FAILED` an `warnings` (R1-16).
 
 **Blobs:** `put` hasht synchron (SHA-256) und schreibt asynchron; bis dahin liefert `get` aus dem
-Speicher; die erste Meta-Datei eines Inhalts gewinnt. Leerer/zu langer Medientyp →
+Speicher. Eine Meta je Inhalt: die erste gewinnt, außer ein späteres `put` bringt eine bessere (CR2-07,
+ADR-134): den per Magic Bytes bestätigten Bildtyp statt eines anderen gespeicherten Typs (z. B.
+`application/octet-stream` vom Normalizer) oder – als Upload, das einzige `put` mit Pixelgröße – einen
+anderen Namen/eine andere Größe dieses Typs (der letzte Upload gewinnt). Geprüft gegen den Ref im Speicher
+und erneut gegen die Meta-Datei (auch nach einem Neustart); Schreibvorgänge eines Inhalts laufen
+nacheinander, eine ungültige Meta-Datei wird ersetzt. Leerer/zu langer Medientyp →
 `application/octet-stream`, langer Name wird gekürzt (`put` wirft nie, R1-20). Phase 2 (ADR-103,
 WP-33): `put(…, size)` speichert die Pixelgröße eines hochgeladenen Bildes (`width`/`height`);
 nur ein vollständiges Paar positiver Ganzzahlen, sonst `null`.

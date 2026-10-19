@@ -9,14 +9,18 @@ Host-Befehle, die keine Session betreffen (ADR-101), als `HostCommandHandler`
 
 | Datei | Exporte | Inhalt |
 | --- | --- | --- |
-| `fsCommands.ts` | `createFsCommands({ fs?, home?, platform?, driveTimeoutMs? })` → `HostCommandHandler` (`names: ['fs.listDirectory']`), `DirFs`, `DirEntry`, `nodeDirFs`, `DRIVE_TIMEOUT_MS`, `isHiddenName`, `childPath`, `parentPath` | Ordner-Browser, nur lesend |
+| `fsCommands.ts` | `createFsCommands({ fs?, home?, platform?, driveTimeoutMs? })` → `HostCommandHandler` (`names: ['fs.listDirectory']`), `DirFs`, `DirEntry`, `nodeDirFs`, `DRIVE_TIMEOUT_MS`, `DRIVE_PROBE_LIMIT`, `isHiddenName`, `childPath`, `parentPath` | Ordner-Browser, nur lesend |
 
 **`fs.listDirectory` (ADR-119, WP-30 §4.12):**
 - `path: null` → Wurzeln: Benutzerordner (`kind: 'home'`, entfällt bei unsicherem Pfad, z. B.
   servergespeichertes Profil) und jedes Laufwerk `A:`…`Z:`, dessen `stat('X:\')` binnen
   `driveTimeoutMs` (1,5 s) antwortet. Langsame/fehlende Laufwerke entfallen; ein Laufwerk, dessen
   letztes `stat` noch hängt, bekommt kein zweites (libuv hat vier Threadpool-Threads – hängende
-  Netzlaufwerke dürfen nicht jeden fs-Aufruf des Servers blockieren, R8).
+  Netzlaufwerke dürfen nicht jeden fs-Aufruf des Servers blockieren, R8). CR2-06 (ADR-135): höchstens
+  `DRIVE_PROBE_LIMIT` (2) Laufwerks-`stat`s gleichzeitig, in Laufwerksreihenfolge; ein Platz wird erst
+  frei, wenn sein `stat` wirklich endet (auch nach dem Timeout). Ein Laufwerk, das beim Timeout noch
+  auf einen Platz wartet, behält die Antwort seines letzten beendeten `stat` (ein lokales Laufwerk
+  hinter hängenden Netzlaufwerken bleibt gelistet; ein nie gesehenes fehlt, bis es geprüft ist).
 - Sonst: `windowsPathIssue` → `PATH_REJECTED {reason}`; `assertNoUnsafeLink` (`lib/paths.ts`,
   `lstat`/`readlink` je Segment, R1-17) → `PATH_REJECTED {reason: 'link_target'}`; `stat` +
   `readdir(withFileTypes)`; nur Ordner und Links auf Ordner (Ziel wie ein Pfad geprüft, unsichere
@@ -30,4 +34,4 @@ Host-Befehle, die keine Session betreffen (ADR-101), als `HostCommandHandler`
 
 Tests: `fsCommands.test.ts` mit Temp-Baum (echte Junctions, auch eine verwaiste), Fake-`DirFs` für
 den Symlink auf `\\server\share` (braucht sonst Admin-Rechte), `truncated`, Fehlercodes und Wurzeln
-mit Fake-Laufwerken und Timeout.
+mit Fake-Laufwerken und Timeout (CR2-06: Zahl gleichzeitiger `stat`s über Aufrufe hinweg).
