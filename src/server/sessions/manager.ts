@@ -305,20 +305,30 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   const engineWarnings = new Map<string, HostWarning>();
   // ADR-114: the last catalogs and subscription limits of the previous run are known at once.
   const accountLimits = new Map<ProfileId, RateLimitInfo>(Object.entries(stores.catalogs.limits()));
-  const modelCache = new Map<ProfileId, ModelCatalog>(
-    Object.entries(stores.catalogs.models()).map(([profileId, stored]) => [
-      profileId,
-      { options: stored.options, resolved: stored.resolved, skipped: 0 },
-    ]),
-  );
   /**
-   * ADR-102: `profileCacheKey` of every profile as last seen – the persisted catalogs belong to the
-   * profiles as they are at this start; onProfileChanged compares against these keys.
+   * ADR-102: `profileCacheKey` of every profile as last seen – onProfileChanged compares against
+   * these keys; the model cache always belongs to them.
    */
   const profileKeys = new Map<ProfileId, string>();
   for (const profile of deps.claude.profiles.list()) {
     const key = profileCacheKey(profile);
     if (key !== null) profileKeys.set(profile.id, key);
+  }
+  // CR2-05: only a persisted catalog of the profile as it is now – profiles.json may have changed
+  // while the server was down (another executable or config dir = another account); the others
+  // (also those of an older file without a key) are dropped and fetched again by the next start.
+  const modelCache = new Map<ProfileId, ModelCatalog>();
+  for (const [profileId, stored] of Object.entries(stores.catalogs.models())) {
+    if (stored.profileKey !== null && stored.profileKey === profileKeys.get(profileId)) {
+      modelCache.set(profileId, { options: stored.options, resolved: stored.resolved, skipped: 0 });
+      continue;
+    }
+    log.info({ profileId }, 'persisted model catalog dropped – its profile changed meanwhile');
+    try {
+      stores.catalogs.removeModels(profileId);
+    } catch (error) {
+      log.warn({ err: error, profileId }, 'catalogs.removeModels failed');
+    }
   }
   /** ADR-104: the console checks of the server start (tests, diagnostics). */
   let externalChecks: Promise<void> = Promise.resolve();
@@ -614,6 +624,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           options: catalog.options,
           resolved: catalog.resolved,
           at: now().toISOString(),
+          // CR2-05: the key the cache belongs to (checked again at the next start).
+          profileKey: profileKeys.get(profileId) ?? null,
         });
       } catch (error) {
         reportError(error, 'catalogs.setModels');
