@@ -5,6 +5,7 @@ import { LIMITS } from '@shared/common';
 import { attachmentUploadResponseSchema, authCookieName } from '@shared/http';
 import { blobRefSchema } from '@shared/model';
 import { createServerInstance } from '../config';
+import { resolveAttachments } from '../sessions/attachments';
 import { blobMetaPath, createBlobStore, type FileBlobStore } from '../store/blobs';
 import { createApp } from './app';
 import { createAuthService } from './auth';
@@ -106,6 +107,41 @@ describe('POST /api/attachments (ADR-103)', () => {
       height: null,
       name: null,
     });
+  });
+
+  it('CR2-07: bytes the normalizer stored as application/octet-stream – the upload answers and stores its own meta', async () => {
+    const f = await setup();
+    const earlier = f.blobs.put(PNG, 'application/octet-stream', null);
+    const res = await upload(f, PNG, 'image/png', '?name=shot.png&width=4&height=3');
+    expect(res.statusCode).toBe(200);
+    const { attachment } = attachmentUploadResponseSchema.parse(res.json());
+    expect(attachment).toEqual({
+      blobId: earlier.blobId,
+      mediaType: 'image/png',
+      bytes: PNG.byteLength,
+      width: 4,
+      height: 3,
+      name: 'shot.png',
+    });
+    // The prompt check reads the stored ref – it accepts the image now (before: UNSUPPORTED_MEDIA_TYPE).
+    expect((await resolveAttachments(f.blobs, [{ blobId: attachment.blobId }])).refs).toEqual([attachment]);
+    await f.blobs.flush();
+    expect(
+      blobRefSchema.parse(JSON.parse(await readFile(blobMetaPath(f.home, attachment.blobId), 'utf8'))),
+    ).toEqual(attachment);
+  });
+
+  it('CR2-07: also after a restart (the meta file of an earlier run had another type)', async () => {
+    const f = await setup();
+    const earlier = createBlobStore({ home: f.home });
+    earlier.put(PNG, 'application/octet-stream', 'tool-result');
+    await earlier.close();
+    const res = await upload(f, PNG, 'image/png', '?name=shot.png&width=4&height=3');
+    const { attachment } = attachmentUploadResponseSchema.parse(res.json());
+    await f.blobs.flush();
+    const stored = await createBlobStore({ home: f.home }).get(attachment.blobId);
+    expect(stored?.ref).toEqual(attachment);
+    expect(attachment).toMatchObject({ mediaType: 'image/png', name: 'shot.png', width: 4, height: 3 });
   });
 
   it('413 PAYLOAD_TOO_LARGE above LIMITS.imageBytes', async () => {
