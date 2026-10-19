@@ -47,4 +47,22 @@ Koordinator beim Merge.
 
 ## Umsetzung
 
-(folgt nach dem Merge)
+Fix-Runde 19.10.2026, zwei Pakete parallel; Details je Fund in `docs/wp/CODE-REVIEW-2-S1.md` und
+`docs/wp/CODE-REVIEW-2-S2.md`. ADR-130 … ADR-135 (`docs/decisions.md`).
+
+| Nr. | Reproduziert | Fix (Kurzform) | Merge |
+|---|---|---|---|
+| CR2-01 | ja (4 Tests rot; Teilfall `DelegateExecute` war schon abgedeckt) | `regKeyReader`: Exit 0 vorhanden / 1 fehlt / sonst fehlgeschlagen → nichts schreiben; Schlüssel ohne eigenen Befehl = fremd; eigener Befehl zuerst geschrieben (ADR-133) | `e6384ec` |
+| CR2-02 | ja (2 Tests rot) | Konsolen-Spec vor dem Schließen der Query; Plan und Retry erst bei `opened` verworfen (ADR-130) | `ae6b271` |
+| CR2-03 | ja (3 Tests rot) | Skript prüft eine vorhandene `Parallax.lnk` vor beiden Aktionen; fremde → `AUTOSTART_FAILED {reason: 'foreign'}` mit Hinweis in den Einstellungen (ADR-133) | `e6384ec` |
+| CR2-04 | teilweise (Titel ja; „Plan weg“ nicht beobachtbar) | `accept()` im Lock nach Gate- und Anhangprüfung (ADR-131) | `ae6b271` |
+| CR2-05 | ja (2 Tests rot) | `profileKey` je persistiertem Katalog, abweichende beim Start verworfen (ADR-132) | `ae6b271` |
+| CR2-06 | ja (26 statt ≤ 2 gleichzeitig) | höchstens 2 Laufwerksproben, hängende zählen mit; wartende Probe behält die letzte Antwort (ADR-135) | `e6384ec` |
+| CR2-07 | ja (5 Tests rot; zusätzlich: nach Neustart blieb die alte Meta-Datei) | `put` ersetzt die Meta nur durch eine bessere (bestätigter Bildtyp, späterer Upload), auch gegen die Meta-Datei (ADR-134) | `e6384ec` |
+| CR2-08 | ja (3 Tests rot) | Server speichert den per Magic Bytes erkannten Bildtyp; ohne Bildtyp weiter 415 (ADR-134) | `e6384ec` |
+| CR2-09 | ja (1 Test rot) | `/loop` erst nach erfolgreichem `send()` als geplant markiert (ADR-131) | `ae6b271` |
+| CR2-10 | nein – **zurückgestellt** | Der Transkript-Store liest bei jedem `readTail` die ganze Datei; ein kleineres Limit spart nichts. Sinnvoll erst mit einem Store, der Tails ohne Volllesen liefert, plus Handoff-Order | – |
+
+Nach beiden Merges: `pnpm check` 3790 Tests (215 Dateien), `pnpm build` ok. `errors.ts`: nur Kommentar
+zu `params.reason: 'foreign'` (Contract-Changelog). Autostart-Ordner und `HKCU\Software\Classes\parallax`
+des Nutzers nach der Runde geprüft: unverändert (nur `desktop.ini`, kein Schlüssel).
