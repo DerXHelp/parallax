@@ -87,12 +87,35 @@ pnpm start --print-url         # Optionen direkt anhängen (pnpm reicht ein `--`
   `--toasts=native|off` (Windows-Toasts, siehe „Benachrichtigungen“). In `claude`-Sessions
   kommen von den `PARALLAX_*`-Variablen des Servers nur `PARALLAX=1` und `PARALLAX_ENTRY_ID` an –
   ein `pnpm test`/`pnpm start` in einer Parallax-Session greift nie auf dessen Datenordner zu. Für den
-  produktiven Einsatz einen eigenen Checkout verwenden, damit Entwicklungs-Neustarts nicht die
-  eigene Arbeit unterbrechen (Plan A.7).
+  produktiven Einsatz: siehe „Produktiv nutzen und weiterentwickeln“.
 - Ausprobieren ohne die eigenen Daten anzufassen (PowerShell):
   `$env:PARALLAX_BACKEND='fake'; $env:PARALLAX_HOME="$env:TEMP\px-try"; pnpm start`.
 - Startet ein Terminal den Launcher in einem Job-Objekt, das beim Schließen alle Prozesse beendet,
   endet auch der Server – im Zweifel `parallax.cmd` per Doppelklick starten.
+
+### Produktiv nutzen und weiterentwickeln
+- **Zwei Checkouts:** Benutzt wird ein eigener Klon von `origin` auf `main`; entwickelt wird im
+  Entwicklungs-Repo auf Feature-Branches. `main` ist immer der stabile, geprüfte Stand
+  (Branch-Regeln: `CLAUDE.md` „Git“).
+- **Einrichten:** `git clone https://github.com/DerXHelp/parallax.git <ordner>`, darin
+  `pnpm install --frozen-lockfile`, dann `parallax.cmd` (der erste Start baut `dist/`). Autostart und
+  „Klick öffnet die Session“ nur in dieser Instanz einschalten: Verknüpfung und `parallax:`-Eintrag
+  zeigen auf den Klon, aus dem der Server läuft.
+- **Aktualisieren:** Zahnrad → „Server beenden…“, im Klon `git pull` und
+  `pnpm install --frozen-lockfile`, dann `parallax.cmd` (baut selbst neu). Daten werden nur vorwärts
+  migriert: vor größeren Updates `%LOCALAPPDATA%\Parallax` sichern – eine ältere Version startet auf
+  migrierten Daten nicht mehr (Exit-Code 3).
+- **Getrennt:** Die produktive Instanz nutzt `%LOCALAPPDATA%\Parallax` (Sessions, Einstellungen, Logs,
+  Edge-Profil) und den Port aus den Einstellungen (Standard 4711). Die Entwicklung nutzt `pnpm dev` /
+  `pnpm dev:live` mit `.parallax-dev` und den Ports 4712/5173, die Tests nutzen Temp-Ordner und freie
+  Ports. Nur ein Server auf `%LOCALAPPDATA%\Parallax` richtet Autostart und Protokoll-Handler ein.
+- **Regel im Entwicklungs-Repo:** nie `parallax.cmd`/`pnpm start` ohne eigenes `--home`/`PARALLAX_HOME`.
+  Sonst baut der Launcher den Entwicklungsstand, migriert womöglich die echten Daten und biegt
+  Autostart und Protokoll-Handler auf das Entwicklungs-Repo um. Zum Ausprobieren dort:
+  `$env:PARALLAX_BACKEND='fake'; $env:PARALLAX_HOME="$env:TEMP\px-try"; pnpm start`.
+- Claude-Sessions, die Parallax weiterentwickeln, dürfen in der produktiven Instanz laufen (Arbeitsordner
+  = Entwicklungs-Repo); Entwicklungs-Neustarts betreffen sie nicht. Gemeinsam bleiben nur das
+  installierte `claude` und `~/.claude` – ein CLI-Update betrifft beide (`docs/sdk-upgrade.md`).
 
 ### Edge-Profil
 Das App-Fenster nutzt ein eigenes Edge-Profil (`<Datenordner>\edge`), das sich **nie** mit dem
