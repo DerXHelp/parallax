@@ -1,6 +1,7 @@
 /**
- * Image type by magic bytes (ADR-103, R7: the upload never trusts the Content-Type alone).
- * Exactly the SDK's Base64ImageSource types (`ATTACHMENT_MEDIA_TYPES`).
+ * Image type by magic bytes (ADR-103, R7: the upload never trusts the Content-Type alone – it
+ * stores this type, CR2-08/ADR-134). Exactly the SDK's Base64ImageSource types
+ * (`ATTACHMENT_MEDIA_TYPES`).
  */
 import type { AttachmentMediaType } from '@shared/http';
 
