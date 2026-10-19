@@ -38,7 +38,7 @@
 | Paket | Pfade (exklusiv in dieser Runde) | Funde | ADR-Nummern (Vorschläge) |
 |---|---|---|---|
 | **S1 Engine** | `src/server/sessions/**` (ohne `ports.ts`, ohne `README.md`) | CR2-02, CR2-04, CR2-05, CR2-09, CR2-10 | ADR-130 … ADR-132 |
-| **S2 System/Upload** | `src/server/{system,host,http,store}/**` (ohne `ports.ts`), `src/server/lib/images.ts` (+ Test), `src/web/features/composer/**` | CR2-01, CR2-03, CR2-06, CR2-07, CR2-08 | ADR-133 … ADR-135 |
+| **S2 System/Upload** | `src/server/{system,host,http,store}/**` (ohne `ports.ts`), `src/server/lib/images.ts` (+ Test), `src/web/features/composer/**`, `src/web/features/preferences/**` (nur für eine UI-Meldung) | CR2-01, CR2-03, CR2-06, CR2-07, CR2-08 | ADR-133 … ADR-135 |
 
 Ergebnis je Paket in `docs/wp/CODE-REVIEW-2-S1.md` bzw. `CODE-REVIEW-2-S2.md` (Tabelle je Fund:
 reproduziert, Fix, Regressionstest, Commit). ADR-Texte und README-Änderungen schreiben die Pakete als
