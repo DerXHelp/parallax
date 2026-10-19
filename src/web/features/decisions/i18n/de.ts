@@ -87,6 +87,11 @@ export const de: typeof en = {
     answer: 'Antworten',
     decline: 'Überspringen',
     incomplete: 'Beantworte alle Fragen, um zu senden.',
+    tabs: 'Fragen',
+    tab: 'Frage {number}',
+    tabAnswered: '{label} (beantwortet)',
+    tabOpen: '{label} (noch offen)',
+    next: 'Nächste Frage',
   },
   plan: {
     ready: 'Plan v{version} bereit',

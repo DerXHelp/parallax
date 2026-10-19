@@ -96,6 +96,12 @@ export const en = {
     answer: 'Answer',
     decline: 'Skip',
     incomplete: 'Answer every question to send.',
+    /** Several questions: one tab per question (name = the question's header). */
+    tabs: 'Questions',
+    tab: 'Question {number}',
+    tabAnswered: '{label} (answered)',
+    tabOpen: '{label} (not answered yet)',
+    next: 'Next question',
   },
   plan: {
     ready: 'Plan v{version} ready',
