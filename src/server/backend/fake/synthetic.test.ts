@@ -1,9 +1,14 @@
 /**
  * Synthetic engine scenarios (`backend/fake/<name>.ts`): fixture format v1, the real normalizer
  * (schema-true ops), and playback through the FakeBackend with the expected gates and exits.
- * The WP-12 streams play through the FakeBackend unchanged.
+ * The WP-12 streams play through the FakeBackend unchanged. Phase 3 (WP-52): what the
+ * interactive scenario emits for each new keyword is valid fixture format v1 as well and
+ * normalizes schema-true without unknown types.
  */
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterAll, describe, expect, it } from 'vitest';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { SAMPLE_IDS } from '@shared/samples';
 import { sessionOpSchema } from '@shared/protocol';
@@ -210,6 +215,67 @@ describe('fake scenarios â€“ behaviour', () => {
     expect(exitOf(events)).toMatchObject({ code: 1, expected: false });
     expect(handle.diagnostics).toEqual([]);
   });
+});
+
+describe('interactive Phase-3 keywords as fixture format v1 (WP-52)', () => {
+  const filesRoot = mkdtempSync(path.join(os.tmpdir(), 'parallax-fake-files-synthetic-'));
+  afterAll(() => {
+    rmSync(filesRoot, { recursive: true, force: true });
+  });
+  const approve: PermissionHandler = (req) =>
+    Promise.resolve(
+      req.toolName === 'ExitPlanMode'
+        ? {
+            behavior: 'allow',
+            updatedInput: req.input,
+            updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
+          }
+        : { behavior: 'allow', updatedInput: req.input, decisionClassification: 'user_temporary' },
+    );
+
+  it.each(['fake:plan', 'fake:background', 'fake:todo', 'fake:files', 'fake:writes-lost'])(
+    '%s',
+    async (keyword) => {
+      const backend = createFakeBackend({ ids: sequentialIds(), filesRoot });
+      const agent = backend.start(request(approve));
+      const handle = backend.sessions[0];
+      if (handle === undefined) throw new Error('no handle');
+      const messages: unknown[] = [];
+      const consumed = (async () => {
+        for await (const event of agent.events) if (event.type === 'message') messages.push(event.message);
+      })();
+      agent.send({
+        uuid: '00000000-0000-4000-b000-000000000001',
+        content: [{ type: 'text', text: keyword }],
+        priority: 'next',
+      });
+      await backend.settle();
+      await agent.close();
+      await consumed;
+      expect(handle.diagnostics).toEqual([]);
+
+      const ev: FixtureEvent[] = messages.map((payload, i) => ({ seq: i + 1, tMs: i * 10, kind: 'message', payload }));
+      for (const event of ev) expect(fixtureEventSchema.safeParse(event).success).toBe(true);
+      const header = {
+        fixtureVersion: FIXTURE_VERSION,
+        scenario: keyword,
+        sdkVersion: '0.3.322',
+        cliVersion: '2.1.322',
+        recordedAt: '2026-11-11T08:00:00.000Z',
+        options: { synthetic: true },
+      };
+      expect(parseFixture([header, ...ev].map((l) => JSON.stringify(l)).join('\n'), keyword).events).toHaveLength(
+        ev.length,
+      );
+      const r = replayLive({ events: ev });
+      for (const op of r.steps.flatMap((s) => s.ops)) expect(sessionOpSchema.parse(op)).toStrictEqual(op);
+      expect(r.normalizer.unknownCounts).toEqual({});
+      const results = signalList(r).filter((s) => s.type === 'turn_result');
+      // fake:background: settle() waited for the agent (speed 0) and its follow-up turn.
+      expect(results).toHaveLength(keyword === 'fake:background' ? 2 : 1);
+      expect(results.every((s) => s.outcome === 'success')).toBe(true);
+    },
+  );
 });
 
 describe('WP-12 synthetic streams play through the FakeBackend unchanged', () => {

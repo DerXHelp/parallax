@@ -25,12 +25,7 @@ import {
   sampleId,
   sampleTime,
 } from '@shared/samples';
-import {
-  eventsScenario,
-  interactiveScenario,
-  type FakeScenario,
-  type FakeScriptContext,
-} from '../backend/fakeBackend';
+import { eventsScenario, type FakeScenario, type FakeScriptContext } from '../backend/fakeBackend';
 import {
   clearCommand,
   closeGate,
@@ -39,7 +34,6 @@ import {
   input,
   events as join,
   streamedText,
-  subagentLaunch,
   toEvents,
   toolResultMessage,
   toolUseBlock,
@@ -48,7 +42,11 @@ import {
   type DslContext,
 } from '../backend/fake/dsl';
 import { FAKE_SHOT_PNG_BASE64 } from '../backend/fake/image';
+import { FAKE_BACKGROUND_MS } from '../backend/fake/phase3';
+import { implementPlanText } from '../backend/fake/plan';
+import { CANCEL_DENY, abortedByDecision, ask, type Turn } from '../backend/fake/turn';
 import type { StartSessionRequest } from '../backend/types';
+import { nextMacrotask } from '../lib/async';
 import { CommandError } from '../sync/ports';
 import { system } from './normalizer/synthetic/build';
 import { MEMORY_ATTACHMENTS_HOME } from './testing/memoryStores';
@@ -64,7 +62,6 @@ vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
 const PNG = Buffer.from(FAKE_SHOT_PNG_BASE64, 'base64');
 const PDF = Buffer.from('%PDF-1.4\n% fake document\n%%EOF\n', 'latin1');
-const FAKE_PLAN_FILE = 'C:\\Users\\user\\.claude\\plans\\fake-plan.md';
 const FRESH_DENY_MESSAGE = 'The user chose to implement the plan in a fresh session.';
 
 type PermissionResultOf = Awaited<ReturnType<StartSessionRequest['canUseTool']>>;
@@ -151,7 +148,7 @@ function attachmentsDir(entryId: EntryId): string {
   return `${MEMORY_ATTACHMENTS_HOME}\\entries\\${entryId}\\attachments`;
 }
 
-function freshPrompt(plan: string, planFile: string | null = FAKE_PLAN_FILE): string {
+function freshPrompt(plan: string, planFile: string | null): string {
   return `Implement the following approved plan.${planFile === null ? '' : `\nPlan file: ${planFile}`}\n\n${plan}`;
 }
 
@@ -222,48 +219,51 @@ function scriptContext(ctx: FakeScriptContext): DslContext {
 }
 
 /**
- * A background agent that runs until `released` settles; then the CLI reports it like after
- * `stopTask` (task_notification `stopped`, background_tasks_changed [], idle).
+ * FakeBackend timing for `fake:background` (WP-52): speed 1, every short delay on the next
+ * macrotask, the task's long waits (`FAKE_BACKGROUND_MS / 2`) never end – the task runs until
+ * `stopTask` (a sleeping task is a resting point of `settle()`).
  */
-function backgroundTaskScenario(released: Promise<void>): FakeScenario {
+const HOLD_BACKGROUND: EngineHarnessOptions['fakeTiming'] = {
+  speed: 1,
+  sleep: (ms) => (ms >= FAKE_BACKGROUND_MS / 2 ? new Promise<void>(() => undefined) : nextMacrotask()),
+};
+
+/**
+ * Rule (a) on its own: the plan file is written in the default mode (rule b does not apply), the
+ * `ExitPlanMode` request with its `planFilePath` comes afterwards.
+ */
+function retroPlanScenario(planFilePath: string): FakeScenario {
   return {
     kind: 'script',
-    name: 'background-task',
+    name: 'retro-plan',
     run: async (ctx) => {
       const c = scriptContext(ctx);
       const prompt = await ctx.nextInput();
-      const toolUseId = c.ids.toolUseId();
-      const taskId = `task_${toolUseId}`;
+      const turn: Turn = { prompt: prompt.uuid, toolUseId: null };
+      const writeId = c.ids.toolUseId();
       await ctx.play(
         join(
           turnOpen(c, prompt.uuid),
-          subagentLaunch(c, {
-            toolUseId,
-            taskId,
-            description: 'Long job',
-            prompt: 'Work for an hour.',
-            reply: '',
-          }),
-          streamedText(c, 'The agent works in the background.'),
-          turnClose(c, prompt.uuid, { idle: false }),
+          toolUseBlock(c, 'Write', { file_path: planFilePath, content: '# Plan' }, { toolUseId: writeId }),
+          toolResultMessage(c, writeId, `File created successfully at: ${planFilePath}`),
         ),
       );
-      await released;
+      const exitId = c.ids.toolUseId();
+      const input = { plan: '# Plan', planFilePath };
+      await ctx.play(toolUseBlock(c, 'ExitPlanMode', input, { toolUseId: exitId }));
+      const result = await ask(ctx, c, turn, 'ExitPlanMode', input, exitId, {
+        requiresUserInteraction: true,
+      });
+      if (CANCEL_DENY(result)) {
+        await abortedByDecision(ctx, c, turn);
+        return;
+      }
       await ctx.play(
-        toEvents([
-          frame(
-            c,
-            system(0, 'task_notification', {
-              task_id: taskId,
-              tool_use_id: toolUseId,
-              status: 'stopped',
-              output_file: '',
-              summary: 'Stopped by the user',
-            }),
-          ),
-          frame(c, system(0, 'background_tasks_changed', { tasks: [] })),
-          frame(c, system(0, 'session_state_changed', { state: 'idle' })),
-        ]),
+        join(
+          toolResultMessage(c, exitId, 'User has approved your plan. You can now start coding.'),
+          streamedText(c, 'Done.'),
+          turnClose(c, prompt.uuid),
+        ),
       );
     },
   };
@@ -549,25 +549,19 @@ describe('attachmentsDir', () => {
 
 describe('session.stopTask (ADR-149)', () => {
   it('a background task: agent.stopTask, the effect comes as task_notification stopped; then TASK_NOT_FOUND', async () => {
-    let release: () => void = () => undefined;
-    const released = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const h = await setup({
-      scenario: (_req, n) => (n === 0 ? backgroundTaskScenario(released) : interactiveScenario()),
-    });
-    const entryId = await h.create('start a long job');
-    // No settle() while the script waits for `released` (the backend is not at rest then).
+    const h = await setup({ fakeTiming: HOLD_BACKGROUND });
+    const entryId = await h.create('fake:background');
     await h.waitFor(() => h.facts(entryId).backgroundTasks === 1);
+    await h.settle();
     const [task] = (await view(h, entryId)).detail.backgroundTasks;
     if (task === undefined) throw new Error('no background task');
+    // The CLI holds idle back while the agent runs.
+    expect(h.facts(entryId).runState).not.toBe('idle');
     expect(await h.cmd({ name: 'session.stopTask', entryId, taskId: task.taskId })).toEqual({});
     expect(h.session(entryId).controls).toContainEqual({ method: 'stopTask', args: [task.taskId] });
-    // Nothing changes until the CLI reports it.
-    expect(h.facts(entryId).backgroundTasks).toBe(1);
-    release();
+    // The command answers at once; the effect comes from the CLI (task_notification stopped).
     await h.waitFor(() => h.facts(entryId).backgroundTasks === 0);
-    await h.settle();
+    await untilIdle(h, entryId);
     const agent = toolCallOf(h, entryId, 'Agent');
     expect(agent?.kind === 'tool_call' ? agent.task?.status : null).toBe('stopped');
     expect(await h.cmdError({ name: 'session.stopTask', entryId, taskId: task.taskId })).toEqual({
@@ -625,14 +619,7 @@ describe('session.stopTask (ADR-149)', () => {
       external: sampleExternalHandoff(),
     });
     const archived = sampleEntry({ id: sampleId('en', 4), archived: true, lastRunState: 'sleeping' });
-    let release: () => void = () => undefined;
-    const released = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const h = await setup({
-      seed: { entries: [external, archived] },
-      scenario: (_req, n) => (n === 0 ? backgroundTaskScenario(released) : interactiveScenario()),
-    });
+    const h = await setup({ seed: { entries: [external, archived] }, fakeTiming: HOLD_BACKGROUND });
     const stop = (entryId: EntryId, taskId = 'task_x'): CommandInput => ({
       name: 'session.stopTask',
       entryId,
@@ -656,8 +643,9 @@ describe('session.stopTask (ADR-149)', () => {
       agent.stopTask = () => Promise.reject(new Error('control channel closed'));
       return agent;
     };
-    const entryId = await h.create('start a long job');
+    const entryId = await h.create('fake:background');
     await h.waitFor(() => h.facts(entryId).backgroundTasks === 1);
+    await h.settle();
     const [task] = (await view(h, entryId)).detail.backgroundTasks;
     if (task === undefined) throw new Error('no background task');
     expect(await h.cmdError(stop(entryId, 'task_unknown'))).toEqual({
@@ -668,8 +656,8 @@ describe('session.stopTask (ADR-149)', () => {
       code: 'CLAUDE_CONTROL_FAILED',
       params: { method: 'stopTask' },
     });
-    release();
-    await untilIdle(h, entryId);
+    // Nothing changed: the agent still runs.
+    expect(h.facts(entryId).backgroundTasks).toBe(1);
   });
 });
 
@@ -685,9 +673,12 @@ describe('plan versions (ADR-148)', () => {
       expect.objectContaining({ latestPlanVersion: 1 }),
     ]);
     expect((await view(h, entryId)).detail.latestPlanVersion).toBe(1);
+    // The fake writes the plan file for real, below the harness's filesRoot (WP-52).
+    expect(v1.planFilePath?.startsWith(`${h.filesRoot}\\`)).toBe(true);
     await respondPlan(h, entryId, v1.id, { behavior: 'revise', feedback: 'Add a test step' });
     const v2 = await openPlan(h, entryId, 2);
     expect(v2.previousVersionPlan).toBe(v1.plan);
+    expect(v2.planFilePath).toBe(v1.planFilePath);
     expect((await view(h, entryId)).detail.latestPlanVersion).toBe(2);
     await respondPlan(h, entryId, v2.id, { behavior: 'approve', mode: 'default' });
     await untilIdle(h, entryId);
@@ -701,7 +692,7 @@ describe('plan versions (ADR-148)', () => {
         createdAt: v1.createdAt,
         resolvedAt: expect.any(String) as string,
         outcome: { type: 'plan_revised' },
-        planFilePath: FAKE_PLAN_FILE,
+        planFilePath: v1.planFilePath,
         stored: true,
       },
       {
@@ -711,7 +702,7 @@ describe('plan versions (ADR-148)', () => {
         createdAt: v2.createdAt,
         resolvedAt: expect.any(String) as string,
         outcome: { type: 'plan_approved', mode: 'default', edited: false, freshContext: false },
-        planFilePath: FAKE_PLAN_FILE,
+        planFilePath: v2.planFilePath,
         stored: true,
       },
     ]);
@@ -806,12 +797,38 @@ describe('plan versions (ADR-148)', () => {
 // =====================================================================================
 
 describe('planFile (ADR-148)', () => {
-  it("(a) the Write of the plan decision's planFilePath (seen before the decision); stays after approval; /clear → null", async () => {
+  it('(a) retroactive: a Write in the default mode becomes the plan file once the decision names it', async () => {
+    const planPath = `${HARNESS_CWD}\\PLAN.md`;
+    const h = await setup({ scenario: () => retroPlanScenario(planPath) });
+    const entryId = await h.create('plan it');
+    const decision = await openPlan(h, entryId);
+    expect(decision.planFilePath).toBe(planPath);
+    const write = toolCallOf(h, entryId, 'Write', planPath);
+    if (write?.kind !== 'tool_call' || write.result === null) throw new Error('no plan write');
+    const expected = { path: planPath, updatedAt: write.result.at, toolUseId: write.toolUseId };
+    // Not set by the Write itself (default mode, no decision yet) – only with the decision.
+    const patches = h.publisher
+      .opsOf(entryId)
+      .filter(
+        (op) =>
+          (op.op === 'detail.patch' && op.patch.planFile !== undefined) ||
+          (op.op === 'decision.upsert' && op.decision.kind === 'plan'),
+      )
+      .map((op) => op.op);
+    expect(patches).toEqual(['decision.upsert', 'detail.patch']);
+    expect((await view(h, entryId)).detail.planFile).toEqual(expected);
+    await respondPlan(h, entryId, decision.id, { behavior: 'approve', mode: 'default' });
+    await untilIdle(h, entryId);
+    expect((await view(h, entryId)).detail.planFile).toEqual(expected);
+  });
+
+  it('fake:plan (plan mode, rule b and a): set at the plan Write; stays after approval; /clear → null', async () => {
     const h = await setup();
     const { entryId, decision } = await planEntry(h);
-    const write = toolCallOf(h, entryId, 'Write', FAKE_PLAN_FILE);
+    const planPath = decision.planFilePath ?? '';
+    const write = toolCallOf(h, entryId, 'Write', planPath);
     if (write?.kind !== 'tool_call' || write.result === null) throw new Error('no plan write');
-    const expected = { path: FAKE_PLAN_FILE, updatedAt: write.result.at, toolUseId: write.toolUseId };
+    const expected = { path: planPath, updatedAt: write.result.at, toolUseId: write.toolUseId };
     expect((await view(h, entryId)).detail.planFile).toEqual(expected);
     expect(detailPatches(h, entryId).filter((p) => p.planFile !== undefined)).toEqual([
       { planFile: expected },
@@ -1049,7 +1066,9 @@ describe('approve_fresh_context (ADR-147)', () => {
     // 5. the first prompt: header, plan file, empty line, plan – nothing else (no client_composed).
     const prompt = second?.sent[0];
     expect(second?.sent).toHaveLength(1);
-    expect(prompt?.content).toEqual([{ type: 'text', text: freshPrompt(decision.plan) }]);
+    expect(prompt?.content).toEqual([
+      { type: 'text', text: freshPrompt(decision.plan, decision.planFilePath) },
+    ]);
     expect(prompt?.priority).toBe('next');
     expect(Object.keys(prompt ?? {}).sort()).toEqual(['content', 'priority', 'uuid']);
 
@@ -1090,8 +1109,11 @@ describe('approve_fresh_context (ADR-147)', () => {
       latestPlanVersion: 1,
     });
     expect(v.items.find((i) => i.kind === 'user_message')).toMatchObject({
-      text: { text: freshPrompt(decision.plan) },
+      text: { text: freshPrompt(decision.plan, decision.planFilePath) },
     });
+    // The fake CLI recognizes the fresh-context prompt (WP-52) and counts the plan lines.
+    const answer = implementPlanText(freshPrompt(decision.plan, decision.planFilePath));
+    expect(v.items.some((i) => i.kind === 'assistant_text' && i.text === answer)).toBe(true);
     expect((await h.cmd({ name: 'plan.list', entryId })).versions[0]?.outcome).toEqual(outcome);
   });
 
@@ -1105,7 +1127,9 @@ describe('approve_fresh_context (ADR-147)', () => {
       editedPlan,
     });
     expect(outcome).toEqual({ type: 'plan_approved', mode: 'default', edited: true, freshContext: true });
-    expect(h.session(entryId).sent[0]?.content).toEqual([{ type: 'text', text: freshPrompt(editedPlan) }]);
+    expect(h.session(entryId).sent[0]?.content).toEqual([
+      { type: 'text', text: freshPrompt(editedPlan, decision.planFilePath) },
+    ]);
     await untilIdle(h, entryId);
   });
 
@@ -1124,7 +1148,7 @@ describe('approve_fresh_context (ADR-147)', () => {
     expect(next.backend.starts).toHaveLength(1);
     expect(next.backend.starts[0]).toMatchObject({ resumeSessionId: null, permissionMode: 'default' });
     expect(next.session(entryId).sent[0]?.content).toEqual([
-      { type: 'text', text: freshPrompt(decision.plan) },
+      { type: 'text', text: freshPrompt(decision.plan, decision.planFilePath) },
     ]);
     await untilIdle(next, entryId);
     expect(results).toEqual([]);
@@ -1236,7 +1260,7 @@ describe('approve_fresh_context (ADR-147)', () => {
       sessionId: old.sessionId,
     });
     // The tail of the old conversation brings its plan file back.
-    expect((await view(h, entryId)).detail.planFile?.path).toBe(FAKE_PLAN_FILE);
+    expect((await view(h, entryId)).detail.planFile?.path).toBe(decision.planFilePath);
     await h.cmd({ name: 'session.sendPrompt', entryId, prompt: { text: 'continue' } });
     expect(h.backend.starts.at(-1)?.resumeSessionId).toBe(old.sessionId);
     await untilIdle(h, entryId);
