@@ -21,6 +21,24 @@ export const STATE_FILE = path.join(RECORDINGS_ROOT, 'spike-state.json');
 /** Hard budget for all live spike runs together (estimated USD from result.total_cost_usd). */
 export const BUDGET_USD = 2;
 
+/** Name of the variable that lowers the budget for one run (a WP permission with a smaller budget). */
+export const BUDGET_ENV = 'PARALLAX_RECORD_BUDGET_USD';
+
+const budgetEnvSchema = z.coerce.number().positive().max(BUDGET_USD);
+
+/**
+ * Budget of this run: `PARALLAX_RECORD_BUDGET_USD` if set (a number in (0, BUDGET_USD]; it can only
+ * lower the hard budget), else BUDGET_USD. Invalid values throw – the recorder never guesses.
+ * Like every `PARALLAX_*` variable it never reaches the started `claude` (buildEnv, ADR-083).
+ */
+export function budgetFromEnv(env: NodeJS.ProcessEnv): number {
+  const raw = env[BUDGET_ENV];
+  if (raw === undefined || raw.trim() === '') return BUDGET_USD;
+  const parsed = budgetEnvSchema.safeParse(raw.trim());
+  if (!parsed.success) throw new Error(`${BUDGET_ENV} must be a number in (0, ${BUDGET_USD}], got "${raw}"`);
+  return parsed.data;
+}
+
 const modelUsageSchema = z.object({
   inputTokens: z.number(),
   outputTokens: z.number(),
@@ -152,6 +170,8 @@ export function secretsFor(authStatus: AuthStatus): SanitizeSecrets {
 }
 
 export async function createRunContext(): Promise<RunContext> {
+  // Validate the budget before anything is created on disk.
+  const budgetUsd = budgetFromEnv(process.env);
   const stamp = timestamp(new Date());
   const scratchRoot = path.join(os.tmpdir(), `parallax-spike-${stamp}`);
   const workDir = path.join(scratchRoot, 'work');
@@ -184,7 +204,7 @@ export async function createRunContext(): Promise<RunContext> {
     envInfo,
     secrets,
     state,
-    budgetUsd: BUDGET_USD,
+    budgetUsd,
     sanitizer: () => createSanitizer(secrets),
     scenarioCwd(name, options = {}) {
       const dir = path.join(workDir, name);

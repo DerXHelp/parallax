@@ -522,7 +522,7 @@ describe('FakeBackend â€“ history, info, rename', () => {
     const parsed = await loadFixtureScenario('history');
     const backend = createFakeBackend();
     backend.history.seedFromHistoryFixture(parsed);
-    const sessionId = 'a0cb07c5-45cb-4164-b7d5-c808ecf195a6';
+    const sessionId = 'f406f5df-fee1-4f18-8d56-528330faa035';
     const messagesOf = await backend.readHistory({ sessionId, cwd: 'D:\\w', launch });
     expect(messagesOf.length).toBeGreaterThan(5);
     expect(messagesOf.some((m) => m.parentToolUseId !== null)).toBe(true);
@@ -533,7 +533,7 @@ describe('FakeBackend â€“ history, info, rename', () => {
       firstPrompt: expect.stringContaining('Use the Agent tool') as string,
     });
     // Only summary calls for this session â†’ no messages, but the info.
-    const summaryOnly = 'a2aa36f5-56fb-42f9-af06-3db55a33470f';
+    const summaryOnly = 'b5b08dcc-9154-4b5d-ab66-bd7ac894c16a';
     await expect(backend.readHistory({ sessionId: summaryOnly, cwd: 'D:\\w', launch })).resolves.toEqual([]);
     await expect(backend.getSessionInfo({ sessionId: 'unknown', cwd: 'D:\\w', launch })).resolves.toBeNull();
     await backend.renameSession({ sessionId, cwd: 'D:\\w', launch, title: 'Renamed' });

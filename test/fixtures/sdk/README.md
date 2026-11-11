@@ -1,8 +1,10 @@
 # test/fixtures/sdk – SDK-Fixtures (WP-01)
 
-Bereinigte Aufzeichnungen echter SDK-Message-Streams (CLI 2.1.300, SDK 0.3.296, Haiku), eine Datei
-pro Szenario (`<szenario>.jsonl`), erzeugt mit `PARALLAX_LIVE=1 pnpm record <szenario>`. Grundlage
-für Normalizer-Snapshots (WP-12) und das FakeBackend (WP-13).
+Bereinigte Aufzeichnungen echter SDK-Message-Streams (CLI 2.1.322, SDK 0.3.322, Haiku; neu aufgezeichnet
+am 11.11.2026, `docs/wp/SDK-0.3.322.md`), eine Datei pro Szenario (`<szenario>.jsonl`), erzeugt mit
+`PARALLAX_LIVE=1 pnpm record <szenario>`. Ausnahme: `interrupt-requesting` ist der erste Interrupt-Lauf
+aus WP-01 (CLI 2.1.300, SDK 0.3.296) und hat kein eigenes Szenario. Grundlage für Normalizer-Snapshots
+(WP-12) und das FakeBackend (WP-13).
 
 - **Format v1** (ADR-010): Zeile 1 Header `{fixtureVersion, scenario, description, sdkVersion,
   cliVersion, recordedAt, options}`, danach Events `{seq, tMs, kind, payload}`. Kinds und Bedeutung:

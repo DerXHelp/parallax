@@ -84,8 +84,8 @@ describe('auth-probe', () => {
     expect(summary.status.unread).toBe(true);
     expect(summary.model).toMatch(/^claude-haiku/);
     expect(summary.apiKeySource).toBe('none');
-    expect(summary.cliVersion).toBe('2.1.300');
-    expect(summary.sessionId).toBe('a2aa36f5-56fb-42f9-af06-3db55a33470f');
+    expect(summary.cliVersion).toBe('2.1.322');
+    expect(summary.sessionId).toBe('b5b08dcc-9154-4b5d-ab66-bd7ac894c16a');
     expect(summary.context?.totalTokens).toBeGreaterThan(0);
     expect(summary.lastResultExcerpt).toBe('OK');
     expect(summary.title).toBe('Reply with exactly: OK');
@@ -182,22 +182,22 @@ describe('permissions', () => {
       { type: 'denied', withMessage: true, interrupt: true },
       { type: 'allowed', remember: 'localSettings', acceptEdits: true },
     ]);
-    // ADR-012: the broker sends rules AND directories to the chosen destination (#46, #282).
-    expect(unexpectedDiagnostics(h, entryId, [46, 282])).toEqual([]);
+    // ADR-012: the broker sends rules AND directories to the chosen destination (#46, #336).
+    expect(unexpectedDiagnostics(h, entryId, [46, 336])).toEqual([]);
     expect(
       h
         .sessions(entryId)
         .flatMap((s) => s.diagnostics)
         .map((d) => d.seq),
-    ).toEqual([46, 282]);
-    expect(toolStatuses(h, entryId, 'toolu_017HddxmWoBefn6egFyGNKD5')).toEqual([
+    ).toEqual([46, 336]);
+    expect(toolStatuses(h, entryId, 'toolu_01Asidv82MUnTf92eiNu8dZp')).toEqual([
       'streaming_input',
       'pending',
       'awaiting_decision',
       'running',
       'done',
     ]);
-    expect(toolStatuses(h, entryId, 'toolu_01NFYoKD2fuexwfd7YVkjqfg').at(-1)).toBe('denied');
+    expect(toolStatuses(h, entryId, 'toolu_011eCK3B3yQ9B2CMaSHzunJr').at(-1)).toBe('denied');
     // remember localSettings + acceptEdits → the CLI switches the mode (system/status).
     expect(h.summary(entryId).permissionMode).toBe('acceptEdits');
     expect(runStates(h, entryId)).not.toContain('error');
@@ -221,9 +221,9 @@ describe('permissions-rules', () => {
     );
     expect(ruleDir).toHaveLength(2);
     expect(new Set(created.map((d) => d.id)).size).toBe(created.length);
-    expect(created).toHaveLength(6);
-    // #371: recorded only addRules → localSettings; the broker adds the offered directory too.
-    expect(unexpectedDiagnostics(h, entryId, [371])).toEqual([]);
+    expect(created).toHaveLength(4);
+    // #246: recorded only addRules → localSettings; the broker adds the offered directory too.
+    expect(unexpectedDiagnostics(h, entryId, [246])).toEqual([]);
   });
 });
 
@@ -273,9 +273,9 @@ describe('plan-mode', () => {
 
 describe('clear-rename', () => {
   const TITLE = 'Parallax Spike Title';
-  const OLD_SESSION = 'f04bd9b2-88ce-404f-83e3-3367a23f9b8a';
-  const NEW_SESSION = '9b779de6-73fd-4d10-8e3e-0580a3e09f7b';
-  const CORRELATION = '96ce35cc-c220-4460-93cb-8ec96ab9cfd7';
+  const OLD_SESSION = '617b6317-fc63-48cd-99be-15ecc3dee38a';
+  const NEW_SESSION = 'ca329d20-7261-496d-b936-cc64d08d1646';
+  const CORRELATION = 'fa6d3f62-93a8-45ad-bdfc-0e0e3670f926';
 
   it('session.rename → /rename prompt, custom at once, echo; /clear → new conversation, id from init', async () => {
     const { h, parsed } = await setup('clear-rename');
@@ -436,7 +436,7 @@ describe('subagent', () => {
     const { h, parsed } = await setup('subagent');
     const entryId = await h.create(firstPrompt(parsed));
     await h.drive(entryId, parsed, { close: false });
-    const agent = 'toolu_013x5wt9ahrMarqiBjss5AtL';
+    const agent = 'toolu_01BYY8GxDihmo9aq2BnQthns';
     const items = upserts(h.publisher.opsOf(entryId));
     const nested = items.filter((i) => i.parentToolUseId === agent);
     expect(nested.length).toBeGreaterThan(0);
@@ -454,7 +454,7 @@ describe('subagent', () => {
 });
 
 describe('resume', () => {
-  const SESSION = 'a2aa36f5-56fb-42f9-af06-3db55a33470f';
+  const SESSION = 'b5b08dcc-9154-4b5d-ab66-bd7ac894c16a';
 
   async function resumeWith(mode: 'default' | 'bypassPermissions', allowsBypass: boolean) {
     const parsed = await loadFixtureScenario('resume');
@@ -507,7 +507,7 @@ describe('history as source', () => {
     const entry = sampleEntry({
       id: sampleId('en', 8),
       conversations: [
-        sampleConversation({ id: sampleId('cv', 8), sessionId: 'a81548fd-0d35-40a2-97f8-c4091b6bd31c' }),
+        sampleConversation({ id: sampleId('cv', 8), sessionId: '8d6345bc-8000-47cb-ab61-4aa2fde7130a' }),
       ],
       lastRunState: 'sleeping',
     });

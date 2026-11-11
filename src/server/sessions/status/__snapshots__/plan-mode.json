@@ -17,37 +17,37 @@
       "display": "working"
     },
     {
-      "seq": 55,
+      "seq": 60,
       "event": "decisions_changed",
       "display": "needs-review"
     },
     {
-      "seq": 56,
+      "seq": 61,
       "event": "decisions_changed",
       "display": "working"
-    },
-    {
-      "seq": 98,
-      "event": "decisions_changed",
-      "display": "needs-review"
     },
     {
       "seq": 99,
       "event": "decisions_changed",
+      "display": "needs-review"
+    },
+    {
+      "seq": 100,
+      "event": "decisions_changed",
       "display": "working"
     },
     {
-      "seq": 198,
+      "seq": 199,
       "event": "turn_result",
       "display": "working+unread"
     },
     {
-      "seq": 200,
+      "seq": 201,
       "event": "session_state:idle",
       "display": "done+unread"
     },
     {
-      "seq": 207,
+      "seq": 208,
       "event": "process_exit",
       "display": "sleeping+unread"
     }
@@ -70,8 +70,8 @@
     "wakeupAt": null,
     "lastTurn": {
       "outcome": "success",
-      "endedAt": "2026-10-14T23:08:47.781Z",
-      "durationMs": 17032
+      "endedAt": "2026-11-11T17:22:16.508Z",
+      "durationMs": 13186
     },
     "errorCode": null
   }
