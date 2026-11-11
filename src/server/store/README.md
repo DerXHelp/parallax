@@ -11,9 +11,11 @@ Store-Ports stehen in `src/server/sync/ports.ts`.
 | `decisions.ts` | `createDecisionStore({ home, warnings?, … })` → `DecisionStore` + `flush()`/`close()`, `entryDir`, `planPath`, `ENTRIES_DIR`, `DECISIONS_FILE` | `entries/<entryId>/decisions.json`, `entries/<entryId>/plans/v<N>.md` |
 | `transcripts.ts` | `createTranscriptStore({ home, validation?, warnings?, flushMs?, cacheSize?, logger? })` → `TranscriptStore` + `stats()`/`close()`, `transcriptPath`, `isStreamingItem`, `TranscriptValidation`, `TRANSCRIPT_FAILURES_BEFORE_WARNING` | `entries/<entryId>/<conversationId>.transcript.jsonl` |
 | `blobs.ts` | `createBlobStore({ home, logger? })` → `BlobStore` (`put(data, mediaType, name?, size?)`) + `flush()`/`close()`, `blobFilePath`, `blobMetaPath` | `blobs/<blobId>`, `blobs/<blobId>.meta.json` (`blobRefSchema`, Phase 2 mit `width`/`height`) |
+| `attachments.ts` | `createAttachmentFileStore(home, blobs, { fs?, sizeOf? })` → `AttachmentFileStore`, `attachmentsDir`, `sanitizeAttachmentName`, `ATTACHMENTS_DIR`, `ATTACHMENT_NAME_MAX` (120) | `entries/<entryId>/attachments/<blobId[0..16]>/<Name>` (Phase 3, ADR-146) |
 
 Weitere Dateien über `JsonStore`, aber außerhalb dieses Ordners: `auth-secret.json`
-(`http/auth.ts`, `backup: false`), `processes.json` (`sessions/processStore.ts`, WP-13). Das
+(`http/auth.ts`, `backup: false`), `processes.json` (`sessions/processStore.ts`, WP-13),
+`entries/<entryId>/files.json` (`files/sessionIndex.ts`, Phase 3). Das
 Lockfile `server.lock.json` (`launcher/lockFile.ts`) nutzt nur `writeFileAtomic`/`withFsRetry` aus
 `lib/fs.ts`. Neue Nutzer außerhalb von `store/` importieren diese Helfer direkt aus `lib/fs.ts`
 (ADR-055), nicht über `jsonStore.ts`.
@@ -55,6 +57,18 @@ nacheinander, eine ungültige Meta-Datei wird ersetzt. Leerer/zu langer Medienty
 `application/octet-stream`, langer Name wird gekürzt (`put` wirft nie, R1-20). Phase 2 (ADR-103,
 WP-33): `put(…, size)` speichert die Pixelgröße eines hochgeladenen Bildes (`width`/`height`);
 nur ein vollständiges Paar positiver Ganzzahlen, sonst `null`.
+
+Phase 3 (WP-53): auch ein per `%PDF-` bestätigtes `application/pdf` zählt als bestätigter Typ
+(ein hochgeladenes PDF ersetzt z. B. eine `application/octet-stream`-Meta derselben Bytes).
+
+**Anhänge (Phase 3, ADR-146, WP-53):** `dir(entryId)` legt `entries/<entryId>/attachments` bei Bedarf
+an (die Engine gibt ihn jedem Start als `additionalDirectory`). `materialize(entryId, blobId, name)`
+kopiert den Blob nach `<dir>\<blobId[0..16]>\<Name>`: Name bereinigt (`sanitizeAttachmentName`: nur
+das letzte Segment, verbotene Zeichen und Steuerzeichen → `_`, Punkt/Leerzeichen am Ende weg,
+reservierte Gerätenamen mit `_`-Präfix, ≤ 120 Zeichen mit Endung; die Regeln selbst kommen aus
+`@shared/paths`), sonst `<blob16>.<ext>`; idempotent (gleiche Größe vorhanden → nichts tun), atomar
+(`writeFileAtomic`), `BLOB_NOT_FOUND` bei fehlendem Blob. Der Datei-Dienst behandelt den Ordner als
+Wurzel und listet seine Dateien als `attached`.
 
 **`settings.json` nur lesend:** `config.ts` (`readSettingsFile`) liest die Datei für Port und
 Autostart-Fenster vor dem Start (Launcher, ADR-111) – ohne zu schreiben, zu verschieben oder zu

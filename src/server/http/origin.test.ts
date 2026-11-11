@@ -67,8 +67,11 @@ describe('classifyRequest (by matched route pattern, default-deny)', () => {
     ['GET', API_PATHS.launcherCode, 'mutation'],
     ['POST', API_PATHS.health, 'mutation'],
     ['DELETE', STATIC_ROUTE, 'mutation'],
-    // a future route that is not in the table is protected automatically (e.g. GET /api/file)
-    ['GET', '/api/file', 'mutation'],
+    ['GET', API_PATHS.file, 'file'],
+    ['HEAD', API_PATHS.file, 'file'],
+    ['POST', API_PATHS.file, 'mutation'],
+    // a future route that is not in the table is protected automatically
+    ['GET', '/api/files', 'mutation'],
     ['GET', '/api/blob/:blobId/raw', 'mutation'],
     ['GET', null, 'not-found'],
     ['HEAD', null, 'not-found'],
@@ -147,6 +150,37 @@ describe('checkRequest (architecture §5.1)', () => {
     );
   });
 
+  describe('file (ADR-142): Sec-Fetch-Site same-origin required, Origin if present, cookie', () => {
+    const FILE_URL = `${API_PATHS.file}?entryId=en_1&path=C%3A%5Cx.txt`;
+    const sites = [undefined, 'same-origin', 'same-site', 'cross-site', 'none', 'garbage'] as const;
+    const origins = [undefined, ORIGIN, 'http://127.0.0.1:9999', 'http://evil.example', 'null'] as const;
+    const matrix = ['GET', 'HEAD'].flatMap((method) =>
+      sites.flatMap((site) => origins.map((origin) => [method, site, origin] as const)),
+    );
+
+    it.each(matrix)('%s Sec-Fetch-Site=%s Origin=%s', (method, site, origin) => {
+      const headers: Record<string, string> = {};
+      if (site !== undefined) headers['sec-fetch-site'] = site;
+      if (origin !== undefined) headers.origin = origin;
+      const result = check(method, FILE_URL, headers, { route: API_PATHS.file });
+      if (origin === 'null') {
+        expect(result).toMatchObject(rejected('origin-null'));
+      } else if (origin !== undefined && origin !== ORIGIN) {
+        expect(result).toMatchObject(rejected('origin'));
+      } else if (site !== 'same-origin') {
+        expect(result).toMatchObject(rejected('sec-fetch-site'));
+      } else {
+        expect(result).toEqual({ ok: true, route: 'file', needsCookie: true });
+      }
+    });
+
+    it('the dev origin is allowed in dev mode only', () => {
+      const dev = { origin: 'http://127.0.0.1:5173', 'sec-fetch-site': 'same-origin' };
+      expect(check('GET', FILE_URL, dev, { route: API_PATHS.file, dev: true }).ok).toBe(true);
+      expect(check('GET', FILE_URL, dev, { route: API_PATHS.file })).toMatchObject(rejected('origin'));
+    });
+  });
+
   it('POST /api/auth: Origin and same-origin required, no cookie', () => {
     expect(check('POST', '/api/auth', sameOrigin)).toEqual({
       ok: true,
@@ -191,7 +225,7 @@ describe('checkRequest (architecture §5.1)', () => {
     for (const [method, url, route] of [
       ['POST', '/api/attachments', API_PATHS.attachments],
       ['DELETE', '/api/anything', null],
-      ['GET', '/api/file', '/api/file'],
+      ['GET', '/api/files', '/api/files'],
     ] as const) {
       expect(check(method, url, sameOrigin, { route })).toMatchObject({ ok: true, needsCookie: true });
       expect(check(method, url, {}, { route })).toMatchObject(rejected('origin'));
