@@ -882,6 +882,11 @@ Das Problem in der Konsole: Bei `ExitPlanMode` ploppt ein Dialog auf und blockie
 - **Bestehende Konsolen-Sessions importieren**, **Worktrees** (erst bewerten).
 - Suche über Sessions.
 - Electron-Hülle (Tray, Setup-.exe).
+- **OpenCode als zweites Agent-Backend** (Ausblick, ganz hinten; Nutzer 11.11.2026): Anlass ist die Arbeit,
+  wo voraussichtlich auf OpenCode umgestellt wird. Machbar, aber eine eigene Phase: Kern mehr-backend-fähig
+  machen (Backend-Art am Profil, je Backend eigene Übersetzung und Entscheidungsregeln), OpenCode-Backend
+  über dessen HTTP-API/SSE, UI je Backend. Erst ansehen, wenn die OpenCode-V2-API stabiler ist.
+  Machbarkeitsprüfung: `docs/wp/MACHBARKEIT-OPENCODE.md`.
 
 ## Umsetzungsstrategie: Hauptkontext frei halten, Arbeit über Subagenten (Nutzerwunsch)
 ### Rollen
