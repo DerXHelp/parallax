@@ -24,7 +24,7 @@ vi.mock('react-markdown', async (importOriginal) => {
 // ~20 s in a full `pnpm test`, over 60 s when several runs load the machine – docs/wp/FLAKES.md).
 beforeAll(async () => {
   await import('./MarkdownRenderer');
-  await import('../lib/highlight');
+  await import('@web/lib/highlight');
 }, 180_000);
 
 vi.setConfig({ testTimeout: 60_000 });

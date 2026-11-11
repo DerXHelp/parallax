@@ -6,8 +6,9 @@ import { readStorage, storageKey, writeStorage } from '@web/lib/storage';
 
 /**
  * Feature state of the decision bar (architecture §2.4: feature state lives in
- * `features/<f>/state`): which decision the bar shows per session, the open plan panel, the
- * decisions this window answered itself (to tell them apart from answers in other windows) and
+ * `features/<f>/state`): which decision the bar shows per session, the plan shown in the side
+ * panel tab "Plan" (open/closed and focus belong to the host, shell/side-panel), the decisions this
+ * window answered itself (to tell them apart from answers in other windows) and
  * the remembered "Implement" choice. Never part of the client store (WP-14).
  */
 
@@ -23,18 +24,13 @@ interface BarState {
   /** Decision the user picked to view (else the bar shows the oldest open one). */
   selected: Readonly<Record<string, DecisionId>>;
   panels: Readonly<Record<string, PlanPanelState>>;
-  /** Sessions whose PlanSidePanel is mounted (ref count; else "Open plan" expands the plan inline). */
-  mounted: Readonly<Record<string, number>>;
 }
 
-const store = createStore<BarState>(() => ({ selected: {}, panels: {}, mounted: {} }));
+const store = createStore<BarState>(() => ({ selected: {}, panels: {} }));
 
 /** Decisions answered or cancelled by THIS window (insertion order, capped). */
 const local = new Set<DecisionId>();
 const LOCAL_MAX = 500;
-
-/** Elements that opened a plan panel (focus returns there on close). */
-const panelOpeners = new Map<string, HTMLElement>();
 
 export function useSelectedDecisionId(sessionKey: string): DecisionId | null {
   return useStore(store, (state) => state.selected[sessionKey] ?? null);
@@ -69,8 +65,8 @@ export function usePlanPanel(sessionKey: string): PlanPanelState | null {
   return useStore(store, (state) => state.panels[sessionKey] ?? null);
 }
 
-export function openPlanPanel(sessionKey: string, decision: PlanDecision, opener?: HTMLElement | null): void {
-  if (opener !== undefined && opener !== null) panelOpeners.set(sessionKey, opener);
+/** The plan the side panel tab "Plan" shows (the caller opens the tab via requestShell). */
+export function setPanelPlan(sessionKey: string, decision: PlanDecision): void {
   store.setState((state) => ({
     panels: {
       ...state.panels,
@@ -82,42 +78,6 @@ export function openPlanPanel(sessionKey: string, decision: PlanDecision, opener
       },
     },
   }));
-}
-
-/** Closes the panel; returns the element that opened it (if still in the document). */
-export function closePlanPanel(sessionKey: string): HTMLElement | null {
-  const opener = panelOpeners.get(sessionKey) ?? null;
-  panelOpeners.delete(sessionKey);
-  if (store.getState().panels[sessionKey] !== undefined) {
-    store.setState((state) => {
-      const { [sessionKey]: _closed, ...panels } = state.panels;
-      return { panels };
-    });
-  }
-  return opener?.isConnected === true ? opener : null;
-}
-
-/** Called by PlanSidePanel while mounted (ref-counted); returns the unregister function. */
-export function registerPlanPanel(sessionKey: string): () => void {
-  store.setState((state) => ({
-    mounted: { ...state.mounted, [sessionKey]: (state.mounted[sessionKey] ?? 0) + 1 },
-  }));
-  return () => {
-    store.setState((state) => {
-      const count = (state.mounted[sessionKey] ?? 1) - 1;
-      const { [sessionKey]: _previous, ...rest } = state.mounted;
-      return { mounted: count <= 0 ? rest : { ...rest, [sessionKey]: count } };
-    });
-  };
-}
-
-export function isPlanPanelMounted(sessionKey: string): boolean {
-  return (store.getState().mounted[sessionKey] ?? 0) > 0;
-}
-
-/** Re-renders when the session's PlanSidePanel mounts/unmounts (transcript "Open plan", R2W-15). */
-export function usePlanPanelMounted(sessionKey: string): boolean {
-  return useStore(store, (state) => (state.mounted[sessionKey] ?? 0) > 0);
 }
 
 // ---- answered by this window ----
@@ -159,7 +119,6 @@ export function writeApproveMode(mode: PermissionMode): void {
 
 /** Tests: forget everything (the module state is global). */
 export function resetDecisionBarState(): void {
-  store.setState({ selected: {}, panels: {}, mounted: {} });
+  store.setState({ selected: {}, panels: {} });
   local.clear();
-  panelOpeners.clear();
 }

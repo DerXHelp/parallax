@@ -143,7 +143,6 @@ export const en = {
   },
   panel: {
     title: 'Plan v{version}',
-    close: 'Close plan',
     file: 'Plan file',
     goTo: 'Go to decision',
     closed: 'This decision is no longer open.',

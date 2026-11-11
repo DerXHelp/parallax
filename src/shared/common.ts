@@ -234,6 +234,27 @@ export const LIMITS = {
   profileEnvValueChars: 10_000,
   profileArgsMax: 100,
   profileArgChars: 4_000,
+  // ---- Phase 3 (WP-50 §4.2) ----
+  /** Text preview of a file (ADR-142); larger files are cut at a line end. */
+  fileTextBytes: 2 * 1024 * 1024,
+  /** Largest image/PDF served by GET /api/file (ADR-142). */
+  fileBinaryBytes: 50_000_000,
+  /** One PDF attachment, sent base64 as a `document` block (ADR-146). */
+  pdfBytes: 10_000_000,
+  /** One other file attachment – materialized in the entry folder, not sent inline (ADR-146). */
+  fileAttachmentBytes: 10_000_000,
+  /** Paths per `file.statMany`. */
+  fileStatBatchMax: 100,
+  /** Entries of the session file index; the oldest `lastAt` is dropped first (ADR-145). */
+  sessionFilesMax: 1000,
+  /** Paths of one `files.project` answer; more → `truncated` (ADR-151). */
+  projectFilesMax: 20_000,
+  /** `prompt.pastes` (ADR-146). */
+  pastesMax: 20,
+  /** Items of a task list (ADR-149). */
+  todoItemsMax: 100,
+  /** Arguments of a custom editor template (ADR-144). */
+  editorArgsMax: 20,
 } as const;
 
 /**

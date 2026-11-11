@@ -12,10 +12,13 @@ import {
   BLOB_CSP_DIRECTIVES,
   DEV_AUTH_CODE_TTL_MS,
   DEV_WEB_PORT,
+  FILE_PDF_CSP,
+  FILE_PDF_CSP_DIRECTIVES,
   LOOPBACK_HOST,
   PROTOCOL_SCHEME,
   SERVER_LOCK_FILE,
   SESSION_HASH_PARAM,
+  UPLOAD_MEDIA_TYPES,
   allowedHosts,
   allowedOrigins,
   appUrlWithCode,
@@ -31,6 +34,8 @@ import {
   bearerAuthorization,
   blobPath,
   cspHeaderValue,
+  fileQuerySchema,
+  fileUrl,
   healthResponseSchema,
   httpErrorBodySchema,
   launcherCodeRequestSchema,
@@ -44,6 +49,7 @@ import {
   serverOrigin,
   sessionProtocolUri,
   takeAuthCodeFromHash,
+  uploadMediaTypeSchema,
 } from './http';
 import { WS_PATH } from './protocol';
 import {
@@ -68,6 +74,26 @@ describe('paths', () => {
 
   it('blobPath fills the route pattern', () => {
     expect(blobPath(sampleBlobId(1))).toBe(`/api/blob/${sampleBlobId(1)}`);
+  });
+
+  it('Phase 3: fileUrl encodes entry and path; the query schema reads it back', () => {
+    const path = 'D:\\work\\sample\\a b&c#d%e?.md';
+    const url = fileUrl(SAMPLE_IDS.entry, path);
+    expect(url.startsWith(`${API_PATHS.file}?entryId=${SAMPLE_IDS.entry}&path=`)).toBe(true);
+    expect(url).not.toContain(' ');
+    expect(url).not.toContain('#');
+    expect(url.split('&')).toHaveLength(2);
+    // src/shared has no DOM/Node lib: read the query by hand (no `+` in an encodeURIComponent value).
+    const search = url.slice(url.indexOf('?') + 1);
+    const query = Object.fromEntries(
+      search.split('&').map((pair) => {
+        const [key = '', value = ''] = pair.split('=');
+        return [decodeURIComponent(key), decodeURIComponent(value)];
+      }),
+    );
+    expect(fileQuerySchema.parse(query)).toEqual({ entryId: SAMPLE_IDS.entry, path });
+    expect(fileQuerySchema.safeParse({ entryId: SAMPLE_IDS.entry, path: '' }).success).toBe(false);
+    expect(fileQuerySchema.safeParse({ entryId: 'x', path }).success).toBe(false);
   });
 });
 
@@ -114,6 +140,14 @@ describe('content security policy (C.10, ADR-026, R3-14)', () => {
   it('blob CSP sandboxes every answer', () => {
     expect(BLOB_CSP).toBe("sandbox; default-src 'none'");
     expect(cspHeaderValue(BLOB_CSP_DIRECTIVES)).toBe(BLOB_CSP);
+  });
+
+  it('PDF CSP (Phase 3, ADR-142): no sandbox, nothing loads, same-origin framing only', () => {
+    expect(FILE_PDF_CSP).toBe(cspHeaderValue(FILE_PDF_CSP_DIRECTIVES));
+    expect(FILE_PDF_CSP).not.toContain('sandbox');
+    expect(FILE_PDF_CSP).toContain("default-src 'none'");
+    expect(FILE_PDF_CSP).toContain("frame-ancestors 'self'");
+    expect(FILE_PDF_CSP).not.toContain('script-src');
   });
 });
 
@@ -284,6 +318,16 @@ describe('image upload (Phase 2, ADR-103)', () => {
     });
     expect(ok.success).toBe(true);
     expect(attachmentUploadResponseSchema.safeParse({ attachment: { blobId: 'x' } }).success).toBe(false);
+  });
+
+  it('Phase 3 (ADR-146): uploads also accept PDF and octet-stream', () => {
+    expect([...UPLOAD_MEDIA_TYPES]).toEqual([
+      ...ATTACHMENT_MEDIA_TYPES,
+      'application/pdf',
+      'application/octet-stream',
+    ]);
+    expect(uploadMediaTypeSchema.safeParse('application/pdf').success).toBe(true);
+    expect(uploadMediaTypeSchema.safeParse('text/html').success).toBe(false);
   });
 });
 

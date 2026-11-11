@@ -10,11 +10,22 @@ import {
   decisionResponseSchema,
   decisionSchema,
   DEFAULT_NOTIFICATION_EVENTS,
+  DEFAULT_PROGRAM_EXTENSIONS,
+  defaultEditorSettings,
+  EDITOR_BLOCKED_EXECUTABLES,
+  EDITOR_PRESET_ARGS,
+  editorExecutableIssue,
+  editorSettingsSchema,
   entrySchema,
   externalHandoffSchema,
+  fileInfoSchema,
+  fileStatResultSchema,
   fsListingSchema,
   hostStateSchema,
+  isDefaultProgramAllowed,
   notificationSettingsSchema,
+  planFileRefSchema,
+  planVersionInfoSchema,
   profileInputSchema,
   profileIssueSchema,
   profileSchema,
@@ -23,13 +34,17 @@ import {
   previousSessionIds,
   REGISTRY_SCHEMA_VERSION,
   registryFileSchema,
+  SESSION_FILES_SCHEMA_VERSION,
   sessionDetailPatchSchema,
   sessionDetailSchema,
+  sessionFileSchema,
+  sessionFilesFileSchema,
   sessionSummarySchema,
   settingsFileSchema,
   settingsPatchSchema,
   settingsSchema,
   systemItemSchema,
+  todoListSchema,
   transcriptItemSchema,
   type Entry,
 } from './model';
@@ -41,21 +56,27 @@ import {
   sampleDetail,
   sampleEntry,
   sampleExternalHandoff,
+  sampleFileInfo,
+  sampleFileStatResult,
   sampleFsListing,
   sampleHostState,
   sampleId,
   sampleItems,
   sampleNotificationSettings,
   sampleOutcomes,
+  samplePlanFileRef,
+  samplePlanVersionInfo,
   sampleProfile,
   sampleProfileInput,
   sampleProfileIssue,
   sampleProfileSummary,
   sampleResponses,
+  sampleSessionFile,
   sampleSettings,
   sampleSummary,
   sampleSystemItems,
   sampleTime,
+  sampleTodoList,
 } from './samples';
 
 /** parse(JSON round trip) must reproduce the object exactly (wire / file stability). */
@@ -287,6 +308,7 @@ describe('round trips', () => {
           subagentType: 'Explore',
           isBackgrounded: true,
           summary: null,
+          outputFile: null,
           usage: { totalTokens: 10, toolUses: 1, durationMs: 100 },
           startedAt: sampleTime(),
           endedAt: null,
@@ -491,7 +513,8 @@ describe('Phase 2 contracts (WP-30 §4.5)', () => {
     expect(
       settingsPatchSchema.safeParse({ notifications: sampleNotificationSettings({ volume: 1.5 }) }).success,
     ).toBe(false);
-    expect('editor' in settingsSchema.shape).toBe(false);
+    // Phase 2 left the editor out (WP-30 F1); Phase 3 adds it (ADR-144).
+    expect('editor' in settingsSchema.shape).toBe(true);
   });
 
   it('host state: port and systemIntegration are additive', () => {
@@ -550,5 +573,149 @@ describe('Phase 2 contracts (WP-30 §4.5)', () => {
       entries: [{ name: 'x', path: 'x', kind: 'file', hidden: false }],
     };
     expect(fsListingSchema.safeParse(withFile).success).toBe(false);
+  });
+});
+
+describe('Phase 3 contracts (WP-50 §4.5)', () => {
+  const issuesOf = (value: unknown): string[] => {
+    const parsed = editorSettingsSchema.safeParse(value);
+    return parsed.success
+      ? []
+      : parsed.error.issues.map((issue) => `${issue.path.join('.')}:${issue.message}`);
+  };
+
+  it('editor: default is Notepad++ without override; old settings files get it', () => {
+    expect(defaultEditorSettings()).toEqual({ preset: 'notepadpp', executable: null, args: [] });
+    expect(defaultEditorSettings()).not.toBe(defaultEditorSettings());
+    expect(settingsSchema.parse({}).editor).toEqual(defaultEditorSettings());
+    expect(settingsPatchSchema.parse({}).editor).toBeUndefined();
+    expect(EDITOR_PRESET_ARGS.notepadpp).toContain('{file}');
+    expect(EDITOR_PRESET_ARGS.vscode.some((arg) => arg.includes('{file}'))).toBe(true);
+  });
+
+  it('editor: presets, overrides and a custom template', () => {
+    expect(issuesOf({ preset: 'vscode', executable: null, args: [] })).toEqual([]);
+    expect(issuesOf({ preset: 'system', executable: null, args: [] })).toEqual([]);
+    expect(
+      issuesOf({ preset: 'notepadpp', executable: 'D:\\Tools\\Notepad++\\notepad++.exe', args: [] }),
+    ).toEqual([]);
+    expect(
+      issuesOf({ preset: 'custom', executable: 'C:\\Tools\\Edit.EXE', args: ['-l', '{line}', '{file}'] }),
+    ).toEqual([]);
+    expect(issuesOf({ preset: 'emacs', executable: null, args: [] })).not.toEqual([]);
+  });
+
+  it('editor: the executable must be a safe absolute .exe outside the blocklist', () => {
+    const exe = (executable: string) => issuesOf({ preset: 'notepadpp', executable, args: [] });
+    expect(exe('notepad++.exe')).toEqual(['executable:path']);
+    expect(exe('\\\\server\\share\\edit.exe')).toEqual(['executable:path']);
+    expect(exe('C:\\Tools\\edit.bat')).toEqual(['executable:not_exe']);
+    expect(exe('C:\\Tools\\edit.exe.lnk')).toEqual(['executable:not_exe']);
+    expect(exe('C:\\Windows\\System32\\cmd.exe')).toEqual(['executable:blocked']);
+    expect(exe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\PowerShell.exe')).toEqual([
+      'executable:blocked',
+    ]);
+    expect(exe('C:\\Windows\\explorer.exe')).toEqual(['executable:blocked']);
+    expect(exe('D:\\x\\RunDll32.EXE')).toEqual(['executable:blocked']);
+    for (const name of EDITOR_BLOCKED_EXECUTABLES) {
+      expect(editorExecutableIssue(`C:\\x\\${name.toUpperCase()}`)).toBe('blocked');
+    }
+    expect(editorExecutableIssue('C:\\Program Files\\Microsoft VS Code\\Code.exe')).toBeNull();
+  });
+
+  it('editor: custom needs an executable and a {file} argument; limits apply', () => {
+    expect(issuesOf({ preset: 'custom', executable: null, args: ['{file}'] })).toEqual([
+      'executable:required',
+    ]);
+    expect(issuesOf({ preset: 'custom', executable: 'C:\\e.exe', args: ['-n', '{line}'] })).toEqual([
+      'args:file_placeholder',
+    ]);
+    expect(issuesOf({ preset: 'custom', executable: 'C:\\e.exe', args: [] })).toEqual([
+      'args:file_placeholder',
+    ]);
+    const many = Array.from({ length: LIMITS.editorArgsMax + 1 }, () => '{file}');
+    expect(issuesOf({ preset: 'custom', executable: 'C:\\e.exe', args: many })).not.toEqual([]);
+    expect(issuesOf({ preset: 'custom', executable: 'C:\\e.exe', args: ['', '{file}'] })).not.toEqual([]);
+  });
+
+  it('default program only for harmless extensions (C.10)', () => {
+    for (const ext of DEFAULT_PROGRAM_EXTENSIONS) {
+      expect(isDefaultProgramAllowed(`D:\\work\\file.${ext.toUpperCase()}`)).toBe(true);
+    }
+    expect(isDefaultProgramAllowed('D:\\work\\run.exe')).toBe(false);
+    expect(isDefaultProgramAllowed('D:\\work\\run.bat')).toBe(false);
+    expect(isDefaultProgramAllowed('D:\\work\\notes.txt.lnk')).toBe(false);
+    expect(isDefaultProgramAllowed('D:\\work\\page.html')).toBe(false);
+    expect(isDefaultProgramAllowed('D:\\work\\Makefile')).toBe(false);
+    expect(isDefaultProgramAllowed('D:\\work\\.md')).toBe(false);
+  });
+
+  it('additive defaults: task outputFile, plan_approved.freshContext, category id, detail fields', () => {
+    const task = transcriptItemSchema.parse({
+      ...sampleItems.toolCall(),
+      task: { taskId: 't', status: 'running' },
+    });
+    expect(task.kind === 'tool_call' ? task.task?.outputFile : 'x').toBeNull();
+    expect(decisionOutcomeSchema.parse({ type: 'plan_approved', mode: 'auto', edited: false })).toEqual({
+      type: 'plan_approved',
+      mode: 'auto',
+      edited: false,
+      freshContext: false,
+    });
+    const older: Record<string, unknown> = { ...sampleDetail() };
+    delete older.todos;
+    delete older.planFile;
+    delete older.latestPlanVersion;
+    expect(sessionDetailSchema.parse(older)).toEqual(sampleDetail());
+    expect(sessionDetailPatchSchema.parse({ todos: null })).toEqual({ todos: null });
+    expect(sessionDetailSchema.safeParse({ ...sampleDetail(), latestPlanVersion: 0 }).success).toBe(false);
+    expect(
+      decisionResponseSchema.parse({
+        kind: 'plan',
+        response: { behavior: 'approve_fresh_context', mode: 'auto' },
+      }),
+    ).toEqual(sampleResponses.planApproveFresh);
+  });
+
+  it('task list: capped items, known statuses', () => {
+    expectRoundTrip(todoListSchema, sampleTodoList());
+    const item = { id: '0', content: 'x', status: 'pending', activeForm: null };
+    const tooMany = {
+      ...sampleTodoList(),
+      items: Array.from({ length: LIMITS.todoItemsMax + 1 }, () => item),
+    };
+    expect(todoListSchema.safeParse(tooMany).success).toBe(false);
+    const unknownStatus = { ...sampleTodoList(), items: [{ ...item, status: 'blocked' }] };
+    expect(todoListSchema.safeParse(unknownStatus).success).toBe(false);
+  });
+
+  it('files: info, stat result, session index file', () => {
+    expectRoundTrip(fileInfoSchema, sampleFileInfo());
+    expectRoundTrip(fileStatResultSchema, sampleFileStatResult(false));
+    expect(fileStatResultSchema.safeParse({ path: 'x', ok: false, file: sampleFileInfo() }).success).toBe(
+      false,
+    );
+    expect(sessionFileSchema.safeParse(sampleSessionFile({ ops: [] })).success).toBe(false);
+    const file = sessionFilesFileSchema.parse({
+      schemaVersion: SESSION_FILES_SCHEMA_VERSION,
+      files: [sampleSessionFile()],
+    });
+    expect(file.backfilled).toBe(false);
+    expect(sessionFilesFileSchema.safeParse({ schemaVersion: 2, files: [] }).success).toBe(false);
+    const tooMany = Array.from({ length: LIMITS.sessionFilesMax + 1 }, () => sampleSessionFile());
+    expect(sessionFilesFileSchema.safeParse({ schemaVersion: 1, files: tooMany }).success).toBe(false);
+  });
+
+  it('plan versions and the plan file', () => {
+    expectRoundTrip(planVersionInfoSchema, samplePlanVersionInfo());
+    expectRoundTrip(
+      planVersionInfoSchema,
+      samplePlanVersionInfo({
+        resolvedAt: sampleTime(8),
+        outcome: sampleOutcomes.plan_approved,
+        stored: false,
+      }),
+    );
+    expectRoundTrip(planFileRefSchema, samplePlanFileRef());
   });
 });

@@ -13,7 +13,7 @@ import remarkGfm from 'remark-gfm';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { CodeBlock } from '../components/CodeBlock';
-import { resolveLanguage } from '../lib/languages';
+import { resolveLanguage } from '@web/lib/languages';
 import { splitMarkdownBlocks } from '../lib/markdown-blocks';
 import { markdownUrlTransform, safeHttpUrl } from '../lib/safe-url';
 import { preserveWindowsPaths } from '../lib/windows-paths';

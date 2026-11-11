@@ -340,7 +340,7 @@ describe('TranscriptView', () => {
             decisionId: sampleId('dc', 64),
             kind: 'plan',
             planVersion: 2,
-            outcome: { type: 'plan_approved', mode: 'auto', edited: false },
+            outcome: { type: 'plan_approved', mode: 'auto', edited: false, freshContext: false },
           },
         }),
         plan(3, {

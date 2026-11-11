@@ -5,10 +5,14 @@ import { de as composerDe } from '@web/features/composer/i18n/de';
 import { en as composerEn } from '@web/features/composer/i18n/en';
 import { de as decisionsDe } from '@web/features/decisions/i18n/de';
 import { en as decisionsEn } from '@web/features/decisions/i18n/en';
+import { de as filesDe } from '@web/features/files/i18n/de';
+import { en as filesEn } from '@web/features/files/i18n/en';
 import { de as preferencesDe } from '@web/features/preferences/i18n/de';
 import { en as preferencesEn } from '@web/features/preferences/i18n/en';
 import { de as profilesDe } from '@web/features/profiles/i18n/de';
 import { en as profilesEn } from '@web/features/profiles/i18n/en';
+import { de as tasksDe } from '@web/features/tasks/i18n/de';
+import { en as tasksEn } from '@web/features/tasks/i18n/en';
 import { de as transcriptDe } from '@web/features/transcript/i18n/de';
 import { en as transcriptEn } from '@web/features/transcript/i18n/en';
 import { de as navigationDe } from '@web/shell/navigation/i18n/de';
@@ -17,6 +21,8 @@ import { de as newSessionDe } from '@web/shell/new-session/i18n/de';
 import { en as newSessionEn } from '@web/shell/new-session/i18n/en';
 import { de as serverShutdownDe } from '@web/shell/server-shutdown/i18n/de';
 import { en as serverShutdownEn } from '@web/shell/server-shutdown/i18n/en';
+import { de as sidePanelDe } from '@web/shell/side-panel/i18n/de';
+import { en as sidePanelEn } from '@web/shell/side-panel/i18n/en';
 import { de } from './de';
 import { en } from './en';
 import { errorsDe } from './errors.de';
@@ -43,7 +49,9 @@ export type { PluralForms, TranslationParams } from './types';
  * (src/web/shell/server-shutdown/i18n, WP-21), all registered statically here; a new namespace is
  * registered by the coordinator (or the WP that owns this folder). Phase 2 (WP-30 §4.14 C):
  * `navigation` (shell/navigation, WP-35), `newSession` (shell/new-session, WP-36), `profiles`
- * (features/profiles, WP-36), `preferences` (features/preferences, WP-38).
+ * (features/profiles, WP-36), `preferences` (features/preferences, WP-38). Phase 3 (WP-50 §4.14 C):
+ * `files` (features/files, WP-54), `tasks` (features/tasks, WP-55), `sidePanel`
+ * (shell/side-panel, WP-54).
  */
 const enDictionary = {
   ...en,
@@ -56,6 +64,9 @@ const enDictionary = {
   newSession: newSessionEn,
   profiles: profilesEn,
   preferences: preferencesEn,
+  files: filesEn,
+  tasks: tasksEn,
+  sidePanel: sidePanelEn,
 };
 
 /** Shape of every language's dictionary (English is the reference). */
@@ -72,6 +83,9 @@ const deDictionary: Dictionary = {
   newSession: newSessionDe,
   profiles: profilesDe,
   preferences: preferencesDe,
+  files: filesDe,
+  tasks: tasksDe,
+  sidePanel: sidePanelDe,
 };
 
 export const DICTIONARIES: Readonly<Record<Language, Dictionary>> = { en: enDictionary, de: deDictionary };

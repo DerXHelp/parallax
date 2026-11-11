@@ -4,8 +4,8 @@
  * runState `external` → only the console-safe commands, else SESSION_EXTERNAL; archived entry →
  * only the read-mode commands, else SESSION_ARCHIVED (ADR-106) – both gates are checked again
  * inside the lifecycle lock (`assertEntryGate`, R4-01); host commands (`profile.*`,
- * `fs.listDirectory`) go to the `HostCommandHandler` with that name (ADR-101), none →
- * NOT_IMPLEMENTED; unexpected errors → logged, INTERNAL_ERROR. Results match
+ * `fs.listDirectory`; Phase 3 `file.*`, `files.*`, `editor.detect` – ADR-140) go to the
+ * `HostCommandHandler` with that name (ADR-101), none → NOT_IMPLEMENTED; unexpected errors → logged, INTERNAL_ERROR. Results match
  * `commandResultSchemas` (the hub checks them again). WP-34: image attachments (attachments.ts,
  * ADR-103), external console (external.ts, ADR-104), continue after the rate limit
  * (continuePlan.ts, ADR-112).
@@ -296,6 +296,11 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
         return { continueAt: null } satisfies CommandResult<'session.continueAfterLimit'>;
       }
       return { continueAt: planContinue(core, s) } satisfies CommandResult<'session.continueAfterLimit'>;
+    // Phase 3 (WP-50 §4.12): stop one task (ADR-149) and plan versions (ADR-148) follow in WP-51.
+    case 'session.stopTask':
+    case 'plan.list':
+    case 'plan.read':
+      throw notImplemented(cmd.name);
   }
 }
 
@@ -548,7 +553,7 @@ async function respond(
     s.broker.releaseExpired(cmd.decisionId);
     throw error;
   }
-  const outcome = { type: 'plan_approved', mode: result.mode, edited: false } as const;
+  const outcome = { type: 'plan_approved', mode: result.mode, edited: false, freshContext: false } as const;
   s.broker.resolveExpired(cmd.decisionId, outcome, clientId);
   return { outcome };
 }

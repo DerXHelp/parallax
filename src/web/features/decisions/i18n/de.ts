@@ -132,7 +132,6 @@ export const de: typeof en = {
   },
   panel: {
     title: 'Plan v{version}',
-    close: 'Plan schließen',
     file: 'Plan-Datei',
     goTo: 'Zur Entscheidung',
     closed: 'Diese Entscheidung ist nicht mehr offen.',

@@ -119,7 +119,7 @@ describe('Composer', () => {
       {
         name: 'session.sendPrompt',
         entryId: DEMO_ENTRIES.idle,
-        prompt: { text: 'first line\nsecond line', attachments: [] },
+        prompt: { text: 'first line\nsecond line', attachments: [], pastes: [] },
         priority: 'next',
       },
     ]);

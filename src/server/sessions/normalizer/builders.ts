@@ -575,6 +575,8 @@ export function emptyTask(taskId: string): TaskInfo {
     usage: null,
     startedAt: null,
     endedAt: null,
+    // Phase 3 contract field (task_notification.output_file); the normalizer fills it in WP-52.
+    outputFile: null,
   };
 }
 

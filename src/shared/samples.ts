@@ -11,6 +11,7 @@ import {
   DEFAULT_IDLE_SLEEP,
   DEFAULT_NOTIFICATION_EVENTS,
   DEFAULT_NOTIFICATION_SETTINGS,
+  defaultEditorSettings,
 } from './model';
 import type {
   AssistantTextItem,
@@ -22,14 +23,19 @@ import type {
   DecisionOutcome,
   DecisionRecord,
   DecisionResponse,
+  EditorSettings,
   Entry,
   ExternalHandoff,
+  FileInfo,
+  FileStatResult,
   FsListing,
   HostState,
   ModelOption,
   NotificationSettings,
   PermissionDecision,
   PlanDecision,
+  PlanFileRef,
+  PlanVersionInfo,
   Profile,
   ProfileInput,
   ProfileIssue,
@@ -38,11 +44,13 @@ import type {
   QuestionDecision,
   RateLimitInfo,
   SessionDetail,
+  SessionFile,
   SessionSummary,
   Settings,
   SystemEvent,
   SystemItem,
   ThinkingItem,
+  TodoList,
   ToolCallItem,
   TurnResultItem,
   UserMessageItem,
@@ -201,8 +209,14 @@ export function sampleSettings(p: Partial<Settings> = {}): Settings {
     promptSuggestions: false,
     port: null,
     autostart: { ...DEFAULT_AUTOSTART },
+    editor: sampleEditorSettings(),
     ...p,
   };
+}
+
+/** Phase 3 (ADR-144): the default editor setting (Notepad++, detected executable). */
+export function sampleEditorSettings(p: Partial<EditorSettings> = {}): EditorSettings {
+  return { ...defaultEditorSettings(), ...p };
 }
 
 export function sampleRateLimitInfo(p: Partial<RateLimitInfo> = {}): RateLimitInfo {
@@ -327,9 +341,9 @@ export function sampleContextBreakdown(p: Partial<ContextBreakdown> = {}): Conte
     ...sampleContextGauge(),
     detail: 'summary',
     categories: [
-      { name: 'System prompt', tokens: 20_000, kind: 'used' },
-      { name: 'Messages', tokens: 6_702, kind: 'used' },
-      { name: 'Free space', tokens: 973_298, kind: 'free' },
+      { name: 'System prompt', tokens: 20_000, kind: 'used', id: 'system_prompt' },
+      { name: 'Messages', tokens: 6_702, kind: 'used', id: 'messages' },
+      { name: 'Free space', tokens: 973_298, kind: 'free', id: null },
     ],
     autoCompactThreshold: null,
     isAutoCompactEnabled: true,
@@ -563,6 +577,7 @@ export const sampleSystemItems: SystemItemFactories = {
       usage: null,
       startedAt: sampleTime(1),
       endedAt: sampleTime(30),
+      outputFile: 'C:\\Users\\user\\AppData\\Local\\Temp\\claude\\tasks\\task_01.output',
     },
     ...p,
   }),
@@ -595,6 +610,86 @@ export function sampleFsListing(p: Partial<FsListing> = {}): FsListing {
       { name: 'sample', path: 'D:\\work\\sample', kind: 'link', hidden: false },
     ],
     truncated: false,
+    ...p,
+  };
+}
+
+// ---- Files, plan versions, task list (Phase 3) ----
+
+/** A text file below the sample cwd (`D:\work\sample`, see sampleEntry). */
+export function sampleFileInfo(p: Partial<FileInfo> = {}): FileInfo {
+  return {
+    path: 'D:\\work\\sample\\src\\main.ts',
+    realPath: 'D:\\work\\sample\\src\\main.ts',
+    kind: 'text',
+    mediaType: 'text/plain; charset=utf-8',
+    bytes: 1234,
+    mtimeMs: Date.parse(SAMPLE_TIME),
+    encoding: 'utf-8',
+    previewable: true,
+    truncated: false,
+    access: 'cwd',
+    ...p,
+  };
+}
+
+/** One answer of file.statMany: the sample file, or (`ok: false`) a missing one. */
+export function sampleFileStatResult(ok = true): FileStatResult {
+  return ok
+    ? { path: sampleFileInfo().path, ok: true, file: sampleFileInfo() }
+    : {
+        path: 'D:\\work\\sample\\missing.md',
+        ok: false,
+        error: { code: 'FILE_NOT_FOUND', params: {} },
+      };
+}
+
+export function sampleSessionFile(p: Partial<SessionFile> = {}): SessionFile {
+  return {
+    path: 'D:\\work\\sample\\src\\main.ts',
+    ops: ['read', 'edited'],
+    count: 3,
+    firstAt: sampleTime(4),
+    lastAt: sampleTime(40),
+    lastToolUseId: SAMPLE_IDS.toolUseId,
+    conversationId: SAMPLE_IDS.conversation,
+    ...p,
+  };
+}
+
+export function samplePlanVersionInfo(p: Partial<PlanVersionInfo> = {}): PlanVersionInfo {
+  return {
+    version: 1,
+    decisionId: sampleId('dc', 3),
+    conversationId: SAMPLE_IDS.conversation,
+    createdAt: sampleTime(3),
+    resolvedAt: null,
+    outcome: null,
+    planFilePath: 'C:\\Users\\user\\.claude\\plans\\sample.md',
+    stored: true,
+    ...p,
+  };
+}
+
+export function samplePlanFileRef(p: Partial<PlanFileRef> = {}): PlanFileRef {
+  return {
+    path: 'C:\\Users\\user\\.claude\\plans\\sample.md',
+    updatedAt: sampleTime(3),
+    toolUseId: 'toolu_01PlanWrite',
+    ...p,
+  };
+}
+
+export function sampleTodoList(p: Partial<TodoList> = {}): TodoList {
+  return {
+    source: 'todo_write',
+    items: [
+      { id: '0', content: 'Read the code', status: 'completed', activeForm: 'Reading the code' },
+      { id: '1', content: 'Write the tests', status: 'in_progress', activeForm: 'Writing the tests' },
+      { id: '2', content: 'Run the checks', status: 'pending', activeForm: null },
+    ],
+    updatedAt: sampleTime(20),
+    toolUseId: 'toolu_01TodoWrite',
     ...p,
   };
 }
@@ -710,7 +805,10 @@ export const sampleResponses = {
   questionDecline: { kind: 'question', response: { behavior: 'decline', message: '' } },
   planApprove: { kind: 'plan', response: { behavior: 'approve', mode: 'acceptEdits', editedPlan: null } },
   planRevise: { kind: 'plan', response: { behavior: 'revise', feedback: 'Also add tests.' } },
-  planApproveFresh: { kind: 'plan', response: { behavior: 'approve_fresh_context', mode: 'auto' } },
+  planApproveFresh: {
+    kind: 'plan',
+    response: { behavior: 'approve_fresh_context', mode: 'auto', editedPlan: null },
+  },
 } satisfies Record<string, DecisionResponse>;
 
 type OutcomeOf<T extends DecisionOutcome['type']> = Extract<DecisionOutcome, { type: T }>;
@@ -721,7 +819,7 @@ export const sampleOutcomes: { [T in DecisionOutcome['type']]: OutcomeOf<T> } = 
   denied: { type: 'denied', withMessage: true, interrupt: false },
   answered: { type: 'answered' },
   declined: { type: 'declined' },
-  plan_approved: { type: 'plan_approved', mode: 'acceptEdits', edited: true },
+  plan_approved: { type: 'plan_approved', mode: 'acceptEdits', edited: true, freshContext: false },
   plan_revised: { type: 'plan_revised' },
   cancelled: { type: 'cancelled', reason: 'signal_aborted' },
   expired: { type: 'expired' },
@@ -785,6 +883,9 @@ export function sampleDetail(p: Partial<SessionDetail> = {}): SessionDetail {
     promptSuggestion: null,
     rateLimit: null,
     unknownCounts: {},
+    todos: null,
+    planFile: null,
+    latestPlanVersion: null,
     ...p,
   };
 }

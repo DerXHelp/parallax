@@ -26,7 +26,7 @@ function resolveElsewhere(host: RefObject<DemoHost | null>, entry: keyof typeof 
   if (view === null || decision === undefined) return;
   const outcome =
     decision.kind === 'plan'
-      ? ({ type: 'plan_approved', mode: 'acceptEdits', edited: false } as const)
+      ? ({ type: 'plan_approved', mode: 'acceptEdits', edited: false, freshContext: false } as const)
       : decision.kind === 'question'
         ? ({ type: 'answered' } as const)
         : ({ type: 'allowed', remember: null, acceptEdits: false } as const);
@@ -166,5 +166,5 @@ export const demos: PlaygroundDemo[] = [
 export const slots: Partial<FeatureSlots> = {
   DecisionBar,
   DecisionCard,
-  SidePanel: PlanSidePanel,
+  PlanPanel: PlanSidePanel,
 };

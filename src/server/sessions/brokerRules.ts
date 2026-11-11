@@ -320,7 +320,7 @@ function planResult(
       updatedPermissions: [{ type: 'setMode', mode: response.mode, destination: 'session' }],
       decisionClassification: 'user_temporary',
     },
-    outcome: { type: 'plan_approved', mode: response.mode, edited },
+    outcome: { type: 'plan_approved', mode: response.mode, edited, freshContext: false },
   };
 }
 

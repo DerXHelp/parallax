@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   PATH_ISSUES,
   PATH_MAX_CHARS,
+  fromGitBashPath,
   isSafeWindowsPath,
   isWindowsPathInside,
+  resolveWindowsPath,
+  windowsBaseName,
+  windowsPathExtension,
   windowsPathIssue,
   windowsPathKey,
   windowsPathsEqual,
@@ -92,5 +96,53 @@ describe('comparison keys (B "case-insensitiv", cwd stays exact)', () => {
     expect(isWindowsPathInside('D:\\work\\xy', 'D:\\work\\x')).toBe(false);
     expect(isWindowsPathInside('D:\\work', 'D:\\work\\x')).toBe(false);
     expect(isWindowsPathInside('C:\\anything', 'C:\\')).toBe(true);
+  });
+});
+
+describe('file reference helpers (Phase 3, WP-50 §4.7)', () => {
+  it.each([
+    ['/c/Users/x', 'C:\\Users\\x'],
+    ['/d/work/a b/c.ts', 'D:\\work\\a b\\c.ts'],
+    ['/c', 'C:\\'],
+    ['/c/', 'C:\\'],
+  ])('fromGitBashPath(%j) = %j', (path, expected) => {
+    expect(fromGitBashPath(path)).toBe(expected);
+  });
+
+  it.each(['/cc/x', 'c/x', 'C:\\x', '//server/share', '/'])('fromGitBashPath(%j) = null', (path) => {
+    expect(fromGitBashPath(path)).toBeNull();
+  });
+
+  const resolved: [string, string, string | null][] = [
+    ['C:\\work\\p', 'src/a.ts', 'C:\\work\\p\\src\\a.ts'],
+    ['C:\\work\\p\\', './src\\a.ts', 'C:\\work\\p\\src\\a.ts'],
+    ['C:\\work\\p', '../q/b.md', 'C:\\work\\q\\b.md'],
+    ['C:\\work\\p', 'a//b', 'C:\\work\\p\\a\\b'],
+    ['C:\\work\\p', '../..', 'C:\\'],
+    ['C:\\work\\p', '../../..', null],
+    ['C:\\work\\p', 'D:/x/y.txt', 'D:\\x\\y.txt'],
+    ['C:\\work\\p', 'D:\\x\\..\\y', 'D:\\y'],
+    ['C:\\work\\p', '\\\\server\\share\\x', null],
+    ['C:\\work\\p', '//server/share/x', null],
+    ['C:\\work\\p', '\\x', null],
+    ['C:\\work\\p', 'C:x', null],
+    ['C:\\work\\p', 'a:b', null],
+    ['C:\\work\\p', 'CON', null],
+    ['C:\\work\\p', 'x*y', null],
+    ['\\\\server\\share', 'x', null],
+    ['work', 'x', null],
+  ];
+  it.each(resolved)('resolveWindowsPath(%j, %j) = %j', (base, relative, expected) => {
+    expect(resolveWindowsPath(base, relative)).toBe(expected);
+  });
+
+  it('base name and extension', () => {
+    expect(windowsBaseName('C:\\a\\b.txt')).toBe('b.txt');
+    expect(windowsBaseName('C:/a/b/')).toBe('b');
+    expect(windowsBaseName('C:\\')).toBe('');
+    expect(windowsPathExtension('C:\\a\\B.TXT')).toBe('txt');
+    expect(windowsPathExtension('C:\\a\\x.tar.gz')).toBe('gz');
+    expect(windowsPathExtension('C:\\a\\.gitignore')).toBe('');
+    expect(windowsPathExtension('C:\\a.d\\Makefile')).toBe('');
   });
 });

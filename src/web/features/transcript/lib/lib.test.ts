@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PLAIN_STYLE, applySgr, parseAnsi, stripAnsi } from './ansi';
-import { computeFallbackRows, contentToRows, diffStats, hunksToRows, peekFallbackRows } from './diff';
-import { languageForPath, resolveLanguage } from './languages';
 import { splitMarkdownBlocks } from './markdown-blocks';
 import { markdownUrlTransform, safeHttpUrl } from './safe-url';
-import { SizedLru } from './sized-cache';
 import { clipForDisplay, countLines, firstLine, normalizeTerminalText, stripToolUseError } from './text';
 
 const ESC = '\u001b';
@@ -144,90 +141,6 @@ describe('safeHttpUrl', () => {
     }
     expect(safeHttpUrl(null)).toBeNull();
     expect(markdownUrlTransform('javascript:alert(1)')).toBe('');
-  });
-});
-
-describe('diff rows', () => {
-  it('builds rows with line numbers from structuredPatch hunks', () => {
-    const rows = hunksToRows([
-      {
-        oldStart: 4,
-        oldLines: 3,
-        newStart: 4,
-        newLines: 3,
-        lines: [' a', '-b', '+c', ' d', '\\ No newline at end of file'],
-      },
-    ]);
-    expect(rows.map((r) => [r.kind, r.text, r.oldLine, r.newLine])).toEqual([
-      ['hunk', '@@ -4,3 +4,3 @@', null, null],
-      ['context', 'a', 4, 4],
-      ['remove', 'b', 5, null],
-      ['add', 'c', null, 5],
-      ['context', 'd', 6, 6],
-    ]);
-    expect(diffStats(rows)).toEqual({ added: 1, removed: 1 });
-  });
-
-  it('shows a new file as additions', () => {
-    expect(contentToRows('a\r\nb\n').map((r) => [r.kind, r.text, r.newLine])).toEqual([
-      ['add', 'a', 1],
-      ['add', 'b', 2],
-    ]);
-    expect(contentToRows('')).toEqual([]);
-  });
-
-  it('computes the jsdiff fallback from old_string/new_string and caches it', async () => {
-    expect(peekFallbackRows('alpha\nbeta', 'alpha\ngamma')).toBeNull();
-    const rows = await computeFallbackRows('alpha\nbeta', 'alpha\ngamma');
-    expect(rows.filter((r) => r.kind !== 'hunk').map((r) => `${r.kind}:${r.text}`)).toEqual([
-      'context:alpha',
-      'remove:beta',
-      'add:gamma',
-    ]);
-    expect(peekFallbackRows('alpha\nbeta', 'alpha\ngamma')).toBe(rows);
-  });
-});
-
-describe('languages', () => {
-  it('resolves fence info strings and file names', () => {
-    expect(resolveLanguage('ts')).toBe('typescript');
-    expect(resolveLanguage('TypeScript {1,3}')).toBe('typescript');
-    expect(resolveLanguage('ps1')).toBe('powershell');
-    expect(resolveLanguage('brainfuck')).toBeNull();
-    expect(resolveLanguage(null)).toBeNull();
-    expect(languageForPath('D:\\work\\a.tsx')).toBe('tsx');
-    expect(languageForPath('/x/Dockerfile')).toBe('docker');
-    expect(languageForPath('README')).toBeNull();
-  });
-});
-
-describe('SizedLru (R2W-06/R2W-18)', () => {
-  it('evicts the oldest entries over the count or the size budget, never the newest', () => {
-    const cache = new SizedLru<string, string>({ maxEntries: 3, maxSize: 10 });
-    cache.set('a', 'a', 4);
-    cache.set('b', 'b', 4);
-    expect(cache.count).toBe(2);
-    cache.set('c', 'c', 4);
-    expect([cache.peek('a'), cache.peek('b'), cache.peek('c')]).toEqual([undefined, 'b', 'c']);
-    expect(cache.totalSize).toBe(8);
-    cache.set('huge', 'h', 50);
-    expect([cache.peek('b'), cache.peek('c'), cache.peek('huge')]).toEqual([undefined, undefined, 'h']);
-    expect(cache.totalSize).toBe(50);
-  });
-
-  it('get refreshes an entry, peek does not; keep protects entries', () => {
-    const cache = new SizedLru<string, string>({ maxEntries: 2, maxSize: 100 });
-    cache.set('a', 'a', 1);
-    cache.set('b', 'b', 1);
-    expect(cache.get('a')).toBe('a');
-    cache.set('c', 'c', 1);
-    expect([cache.peek('a'), cache.peek('b')]).toEqual(['a', undefined]);
-    cache.set('d', 'd', 1, (value) => value === 'a');
-    expect([cache.peek('a'), cache.peek('c'), cache.peek('d')]).toEqual(['a', undefined, 'd']);
-    cache.set('a', 'a2', 5);
-    expect(cache.totalSize).toBe(6);
-    cache.clear();
-    expect([cache.count, cache.totalSize]).toEqual([0, 0]);
   });
 });
 

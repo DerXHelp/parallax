@@ -82,7 +82,7 @@ const ProfilesSettingsSlot = memo(function ProfilesSettingsSlot(props: ProfilesS
  * The real feature components in the shell and feature slots (architecture §2.3d, WP-20b):
  * WP-15 `Transcript` (lazy TranscriptView), `Markdown`, `ToolInputPreview`; WP-16 `DecisionBar`
  * (the only operable decision instance), `DecisionCard` (also used by the transcript's plan card),
- * `SidePanel` = the plan panel (the only side panel in Phase 1) and `Composer` (mode/model/context
+ * `PlanPanel` = the plan tab of the side panel host (Phase 3, ADR-150; until then `SidePanel`) and `Composer` (mode/model/context
  * pickers, ADR-042). Phase 2 (WP-40): WP-38 `SettingsPage` (the settings dialog, opened by the
  * request `settings` of `SettingsMenu`) and WP-36 `ProfilesSettings` (profile list + editor in its
  * section "Profiles"), both lazy (R4W-19). The handlers of the shell request channel
@@ -94,7 +94,7 @@ export const APP_SLOTS: Partial<FeatureSlots> = {
   ...TRANSCRIPT_SLOTS,
   DecisionBar,
   DecisionCard,
-  SidePanel: PlanSidePanel,
+  PlanPanel: PlanSidePanel,
   Composer,
   SettingsPage: SettingsPageSlot,
   ProfilesSettings: ProfilesSettingsSlot,

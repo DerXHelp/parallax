@@ -213,7 +213,7 @@ describe('ContextGauge (C.1)', () => {
       {
         name: 'session.sendPrompt',
         entryId: DEMO_ENTRIES.idle,
-        prompt: { text: '/compact', attachments: [] },
+        prompt: { text: '/compact', attachments: [], pastes: [] },
         priority: 'next',
       },
     ]);

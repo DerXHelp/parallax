@@ -81,6 +81,20 @@ Phase 2). Neue Querverbindungen ohne Importe: Host-Befehle über `HostCommandHan
 (`sync/ports.ts`, ADR-101), Windows-Integration über `system/ports.ts`, im Web der Anfragekanal
 `src/web/shell/requests.ts` und die Slots `SettingsPage`/`ProfilesSettings`.
 
+**Phase 3 (Dateien & Plan-Komfort, Design `docs/wp/WP-50.md`, ADR-140 … ADR-151):** Contracts v3 und
+Gerüst (WP-50 Teil 2), dann je Paket: WP-51 Engine (`sessions/**` ohne Normalizer: frischer Kontext,
+Plan-Versionen, Stop je Task, Detail-Felder `todos`/`planFile`/`latestPlanVersion`, PDF-/Datei-Anhänge,
+Pastes), WP-52 Normalizer und Backends (`sessions/normalizer/**`, `backend/**`: `outputFile`,
+`session_writes_lost`, Context-`id`, SDK-Optionen, Fake-Szenarien), WP-53 Datei-Dienst
+(`src/server/files/**` hinter dem Port `files/ports.ts`, dazu `http`, `store`, `lib`: `/api/file`,
+Uploads, `AttachmentFileStore`, `spawnGui`), WP-54 … 58 Web (Feature `files` mit `FileLink`, Viewer und
+Dateien-Panel + Panel-Host `shell/side-panel/` + Fake-Host; Transkript-Verweise + Feature `tasks`;
+Plan-Komfort in `decisions`; Composer; Shell und Einstellungen), WP-60 Verdrahtung + E2E. Dateigenaue
+Ownership: `CLAUDE.md` bzw. WP-50 §6. Neue Querverbindungen ohne Importe: Datei-Befehle als
+Host-Befehle an `FileService.commands` (ADR-140), Abgriff `FileService.observeOps` vor
+`publishOps` (Komposition, ADR-145), im Web die Slots `PlanPanel`, `FilePanel`, `FilesPanel`,
+`TasksPanel`, `TaskStrip`, `FileLink` und die Anfragen `openFile`, `sidePanel`, `attachFiles` (§2.3 m).
+
 **Import-Grenzen (ADR-003):** `src/shared` ist ein Blatt (nur `zod` und relative Shared-Module, keine
 Node-/DOM-APIs, keine SDK-Typen). Web ↛ Server, Server ↛ Web (tsconfig `rootDir` + ESLint
 `no-restricted-imports`). Server-Dateien dürfen SDK-Typen importieren; rohe SDK-Messages existieren
@@ -99,21 +113,23 @@ nur hinter `AgentBackend` (`BackendEvent.message: unknown`). Skripte dürfen Ser
 | `src/shared/sync.ts` | reine Reducer `applySessionOp`, `applySeqOps`, `mergeItems`, `trimItems` |
 | `src/shared/build.ts` | `BUILD_ID` (per `define` eingebettet, sonst `'dev'`) |
 | `src/shared/http.ts` | HTTP-/Auth-Contract (R0-01): `API_PATHS`, Request/Response-Schemas, `authCookieName(port)`, Einmal-Code/Launcher-Token, `takeAuthCodeFromHash`, Lockfile-Schema |
-| `src/shared/paths.ts` | reine Windows-Pfadregeln (C.10, R0-02): `windowsPathIssue`, `windowsPathKey`, `windowsPathsEqual`, `isWindowsPathInside` |
+| `src/shared/paths.ts` | reine Windows-Pfadregeln (C.10, R0-02): `windowsPathIssue`, `windowsPathKey`, `windowsPathsEqual`, `isWindowsPathInside`; Phase 3: `fromGitBashPath`, `resolveWindowsPath`, `windowsPathExtension`, `windowsBaseName` |
 | `src/shared/samples.ts` | gültige Beispielobjekte für Tests und Playground |
 | `src/shared/version.ts` | Versionsregel C.7 (`compareVersions`, `cliVersionStatus`) – Phase 2, einzige Implementierung |
 | `src/server/system/ports.ts` | Phase 2: `ConsoleLauncher`, `SystemIntegration` (Windows-Integration ↔ Engine/Komposition) |
 | `src/server/backend/types.ts` | Port `AgentBackend`, `AgentSession`, `BackendEvent`, `PermissionRequest` |
 | `src/server/backend/fixture.ts` | Fixture-Format v1 (einzige Quelle), Laden, Payload-Views |
 | `src/server/sessions/ports.ts` | Normalizer/Status ↔ Engine (`LiveNormalizer`, `StatusSignal`, `ReduceStatus`) |
-| `src/server/sync/ports.ts` | Hub/Stores ↔ Engine (`SessionPublisher`, `SessionSource`, Stores, `CommandError`, Transkript-Log) |
+| `src/server/sync/ports.ts` | Hub/Stores ↔ Engine (`SessionPublisher`, `SessionSource`, Stores, `CommandError`, Transkript-Log); Phase 3: `AttachmentFileStore` (ADR-146) |
+| `src/server/files/ports.ts` | Phase 3 (ADR-140): Datei-Dienst ↔ HTTP/Komposition (`FileService`, `FileContentProvider`, `FileContent`, `FileEntryLookup`, `FileEntryInfo`) |
 | `src/server/claude/ports.ts` | Claude-Integration ↔ Engine (`LaunchSpec`, `ClaudeIntegration`, `ProfileStore`, `ParseProfileArgs`) |
 
 ### 2.1 Datei-Ownership gemeinsamer Ordner (normativ, R0-02/R0-03)
 
 > Phase 2: Die Tabelle unten beschreibt Phase 1. Für Phase 2 gilt die Ownership-Tabelle in
 > `CLAUDE.md` (= `docs/wp/WP-30.md` §6); die Regeln dieses Abschnitts (keine Datei in zwei Paketen,
-> READMEs mehrfach besetzter Ordner beim Koordinator) gelten weiter.
+> READMEs mehrfach besetzter Ordner beim Koordinator) gelten weiter. Phase 3: `CLAUDE.md` =
+> `docs/wp/WP-50.md` §6.
 
 Ziel: Welle 1a (WP-10, 11, 12, 14) und Welle 1b (WP-13, 15, 16) bearbeiten **keine Datei
 gemeinsam**. Pakete legen in fremden Ordnern nichts an. `README.md` eines Ordners ändert nur sein
@@ -156,6 +172,11 @@ isSafeWindowsPath(path): boolean
 windowsPathKey(path): string               // Vergleichsschlüssel (case-insensitiv, / → \), nie als Pfad speichern
 windowsPathsEqual(a, b): boolean
 isWindowsPathInside(child, parent): boolean
+// Phase 3 (WP-50 §4.7)
+fromGitBashPath(path): string | null       // /c/Users/x → C:\Users\x
+resolveWindowsPath(base, relative): string | null  // relativ gegen sichere Basis; Ergebnis muss C.10 bestehen
+windowsPathExtension(path): string         // Endung klein, ohne Punkt ('' ohne)
+windowsBaseName(path): string              // letztes Segment
 
 // src/server/lib/paths.ts (WP-10; WP-13 nutzt; Phase 2 WP-33: Links, R1-17 erledigt)
 assertSafePath(path: string): void         // windowsPathIssue ≠ null → throw CommandError(PATH_REJECTED, {reason})
@@ -181,6 +202,9 @@ runFile(file, args: readonly string[], options: RunFileOptions): Promise<RunFile
 spawnHidden(file, args, options: SpawnHiddenOptions): ChildProcess  // SpawnOptions ohne shell/windowsHide + onStderr; stderr wird immer gelesen (F.16)
 killProcessTree(pid: number): Promise<void>  // taskkill /PID <pid> /T /F; „nicht gefunden“ ist kein Fehler
 assertSpawnableFile(file): void             // TypeError für nackte Namen, relative/UNC/Device/ADS-Pfade, Nicht-.exe
+// Phase 3 (WP-53, ADR-144): spawnGui – EINZIGE Ausnahme von windowsHide:true: sichtbare GUI-Programme nach
+//   Nutzerklick (Editor, Explorer, Standardprogramm); absolute .exe, Basisname ∉ EDITOR_BLOCKED_EXECUTABLES,
+//   PE-Subsystem GUI geprüft, shell:false, Argument-Array, detached + unref, Env ohne PARALLAX*/Claude-Variablen
 systemTool(name): string                    // %SystemRoot%\System32\<name>
 isProcessAlive(pid): boolean                // process.kill(pid, 0), EPERM = lebt; Sofort-Vorfilter der Waisen-Bereinigung
 errnoCode(error): string | undefined
@@ -327,11 +351,14 @@ export interface FeatureSlots {
   Transcript: ComponentType<{ sessionKey: string }>;   // WP-15 TranscriptView
   DecisionBar: ComponentType<{ sessionKey: string }>;  // WP-16
   Composer: ComponentType<{ sessionKey: string }>;     // WP-16
-  SidePanel: ComponentType<{ sessionKey: string }>;    // später (Phase 2)
+  PlanPanel: ComponentType<{ sessionKey: string }>;    // Phase 3 (ADR-150, vorher `SidePanel`): Inhalt des Plan-Tabs im Panel-Host (decisions)
   // Feature-Slots (ein Feature nutzt eine Komponente eines anderen, ohne es zu importieren)
   DecisionCard: ComponentType<{ sessionKey: string; decisionId: DecisionId; placement: 'transcript' | 'bar' }>; // WP-16 → WP-15 (Plan-Karte über tool_call.decision)
-  Markdown: ComponentType<{ text: string; sessionKey?: string }>;                                 // WP-15 → WP-16 (Plantext, Options-Previews)
+  Markdown: ComponentType<{ text: string; sessionKey?: string; baseDir?: string }>;               // WP-15 → WP-16 (Plantext, Options-Previews); Phase 3: baseDir für relative Ziele einer .md-Datei
   ToolInputPreview: ComponentType<{ toolName: string; input: JsonValue; sessionKey?: string }>;   // WP-15 → WP-16 (Diff-Vorschau in Permission-Karten)
+  // Phase 2: SettingsPage (preferences), ProfilesSettings (profiles)
+  // Phase 3 (ADR-150): FilePanel {sessionKey, path, line, col}, FilesPanel, TasksPanel, TaskStrip (je {sessionKey}),
+  //   FileLink: ComponentType<FileLinkSlotProps> (files → transcript, decisions, tasks; §2.3 m)
 }
 export function FeatureSlotsProvider(props: { slots: Partial<FeatureSlots>; children: ReactNode }): ReactNode;
 export function useFeatureSlots(): FeatureSlots;  // nicht gesetzte Slots = neutrale Platzhalter von WP-14 (mit t())
@@ -445,6 +472,28 @@ läuft.
   Session-Info, externe Konsole …). Die Sidebar ist `w-72` breit (zweizeilige Einträge); der
   „…“-Knopf je Zeile erscheint nur bei Hover oder Fokus, die Liste bleibt ein Tab-Stopp
   (Roving-Tabindex).
+
+**(m) Seitenpanel, Dateiverweise, Anfragen Phase 3 (normativ, WP-50 §4.14 C, ADR-150).**
+- **Panel-Host** `src/web/shell/side-panel/` (`SidePanelHost`, Zustand je `sessionKey`): Rahmen
+  (`aside`, Breite, Titelzeile mit Tabs Plan · Datei · Dateien · Aufgaben, Schließen, Esc im Panel,
+  Fokus-Rückgabe an den Auslöser); Inhalte nur über die Slots `PlanPanel`, `FilePanel`, `FilesPanel`,
+  `TasksPanel`. `SessionPane` rendert den Host neben dem Transkript und den Slot `TaskStrip` direkt
+  über dem Composer. Splitter und Überlagerung unter 1100 px liefert WP-54.
+- **`FileLink`** (`FileLinkSlotProps`: `sessionKey`, absoluter Windows-`path`, `line?`, `col?`,
+  `verify?` – Link erst nach erfolgreichem `file.statMany`, für Textverweise –, `variant?`
+  `'inline' | 'chip' | 'menu'`, `children?`). Aufrufer lösen relative Pfade mit
+  `resolveWindowsPath` gegen das `cwd` auf; Pfade, die `windowsPathIssue` nicht bestehen, bleiben
+  Text und gehen nie an den Server (C.10, ADR-141).
+- **Anfragen** (`src/web/shell/requests.ts`): `openFile {sessionKey, path, line?, col?}` (Datei-Tab),
+  `sidePanel {sessionKey, tab: SidePanelTab | null}` (`SIDE_PANEL_TABS` = `plan`, `file`, `files`,
+  `tasks`; `null` schließt), `attachFiles {sessionKey, files}` (Drop-Zone der Shell → Composer).
+  `SETTINGS_SECTIONS` enthält `files` (Editor-Einstellung, ADR-144).
+- **i18n/ESLint:** neue Namensräume `files` (`features/files/i18n`), `tasks` (`features/tasks/i18n`),
+  `sidePanel` (`shell/side-panel/i18n`); `FEATURES` in `eslint.config.js` um `files` und `tasks`
+  erweitert (keine Querimporte), `shell/side-panel` gehört zum Kern-Block (importiert keine Features).
+- **Gemeinsame Code-Bausteine** (WP-15-Follow-up): `ui/{code-block,diff-view,copy-button}.tsx`,
+  `ui/use-highlight.ts` und `lib/{highlight,languages,diff,sized-cache}.ts`; Texte (Kopieren, „mehr
+  Zeilen“) kommen als Props.
 
 ### 2.4 Weitere Regeln für Pakete der Welle 1
 - Feature-eigener State (z. B. Composer-Entwürfe) liegt in `features/<f>/state/`, Feature-Helfer in
@@ -590,8 +639,9 @@ Das Edge-Profil `<home>\edge` älterer Versionen bleibt liegen (README „Chrome
 ## 5. Sync-Protokoll (`src/shared/protocol.ts`)
 
 **Endpunkt** `GET /api/ws`; Auth per Geräte-Cookie und Origin/Host **im Upgrade**, `Sec-Fetch-Site`
-nur falls vorhanden (A.8, §5.1, V1-01). Ein JSON-Objekt pro Frame, Diskriminator `type`. `PROTOCOL_VERSION = 2`
-(Phase 2, ADR-100: neue Fehlercodes, System-Event `handoff`, neue Befehle). Vor dem
+nur falls vorhanden (A.8, §5.1, V1-01). Ein JSON-Objekt pro Frame, Diskriminator `type`. `PROTOCOL_VERSION = 3`
+(Phase 2, ADR-100: neue Fehlercodes, System-Event `handoff`, neue Befehle → 2; Phase 3, ADR-140:
+zehn neue Fehlercodes und neun Befehle → 3). Vor dem
 Verbinden fragt der Client `GET /api/auth/status` (ein abgelehnter Upgrade ist im Browser nur Close
 1006).
 
@@ -623,6 +673,16 @@ danach das Log-Ende der Unterhaltung als `item.upsert`.
 der `ack` an das anfragende Fenster. Neue Eintragsbefehle: `session.switchConversation`,
 `session.openExternal`, `session.reclaim`, `session.consoleCommand`, `session.continueAfterLimit`;
 `session.setPinned/setArchived/setFastMode` werden umgesetzt. Regeln: §5.2.
+
+**Phase 3 (ADR-140 … ADR-151):** Neue Host-Befehle `file.stat`, `file.statMany`, `file.open
+{target: editor|explorer|default, line?, col?}`, `files.session`, `files.project` (alle mit `entryId`,
+die der Datei-Dienst selbst prüft) und `editor.detect` (ohne) – sie stehen in `HOST_COMMAND_NAMES`,
+laufen an der Lebenszyklus-Sperre vorbei und gehen an `FileService.commands`. Neue Eintragsbefehle der
+Engine: `session.stopTask {taskId}`, `plan.list`, `plan.read {version}`; `decision.respond`
+`approve_fresh_context {mode, editedPlan}` ist umgesetzt (ADR-147). `promptInput` hat zusätzlich
+`pastes` (eingefügte Texte, die wörtlich in `text` stehen → SDK `inline_pastes`, ADR-146);
+`attachments` dürfen Bilder, PDFs und beliebige Dateien referenzieren. `conversation.reset.trigger`
+kann `fresh_session` sein. Inhalte von Dateien kommen nie über WS, sondern per `GET /api/file` (§5.1).
 
 **Delta-Bündelung:** Der Hub puffert `item.delta` je `(itemId, field)` und flusht alle
 `LIMITS.deltaFlushMs` (40 ms) **oder** sofort vor jeder anderen Op desselben Eintrags; zusammengelegte
@@ -833,8 +893,9 @@ sequenceDiagram
 | `POST /api/auth` | Einmal-Code → Geräte-Cookie (A.8) | 200 `authExchangeResponseSchema` + `Set-Cookie` | 401 `AUTH_CODE_INVALID` (unbekannt, benutzt oder abgelaufen – bewusst nicht unterscheidbar) |
 | `GET /api/auth/status` | „angemeldet?“ – vor dem WS und nach abnormalem Close | immer 200 `authStatusResponseSchema` `{authenticated, serverInstanceId}` | – |
 | `POST /api/launcher/code` | neuer Einmal-Code für ein weiteres Fenster | 200 `launcherCodeResponseSchema` `{code, expiresAt, serverInstanceId}` | 401 `LAUNCHER_TOKEN_INVALID`, 403 `ORIGIN_REJECTED` |
-| `GET /api/blob/:blobId` | Volltexte, Bilder (`blobPath(id)`) | Rohbytes mit `Content-Type` aus der Meta-Datei | 401 `AUTH_REQUIRED`, 404 `BLOB_NOT_FOUND` |
-| `POST /api/attachments?name=…&width=…&height=…` | Bild-Upload (Phase 2, ADR-103): Rohbytes, `Content-Type` ∈ `ATTACHMENT_MEDIA_TYPES`, ≤ `LIMITS.imageBytes`, Magic-Bytes geprüft (deren Bildtyp wird gespeichert, ADR-134) | 200 `attachmentUploadResponseSchema` `{attachment: BlobRef}` | 400 `VALIDATION_FAILED` (Query), 413 `PAYLOAD_TOO_LARGE`, 415 `UNSUPPORTED_MEDIA_TYPE`, Guard wie „jede andere Route“ |
+| `GET /api/blob/:blobId` | Volltexte, Bilder (`blobPath(id)`); Phase 3: PDF-Anhänge mit dem PDF-Header-Satz (unten) | Rohbytes mit `Content-Type` aus der Meta-Datei | 401 `AUTH_REQUIRED`, 404 `BLOB_NOT_FOUND` |
+| `GET`/`HEAD /api/file?entryId=…&path=…` | Phase 3 (ADR-142): Datei-Inhalt für Viewer/Panel (`fileQuerySchema`, `fileUrl(entryId, path)`); Zugriff nur nach ADR-141; Text ≤ `LIMITS.fileTextBytes` nach UTF-8 gewandelt (größer: am Zeilenende gekürzt), Bild/PDF ≤ `LIMITS.fileBinaryBytes` | Rohbytes, `Content-Type` aus `FileContent.mediaType`, `Cache-Control: no-store`, `Content-Disposition: inline` | 401 `AUTH_REQUIRED`, 403 `PATH_REJECTED`/`PATH_NOT_ALLOWED`/`FILE_NOT_READABLE`, 404 `ENTRY_NOT_FOUND`/`FILE_NOT_FOUND`, 413 `PAYLOAD_TOO_LARGE`, 415 `UNSUPPORTED_MEDIA_TYPE` (Binärdatei, Ordner) |
+| `POST /api/attachments?name=…&width=…&height=…` | Bild-Upload (Phase 2, ADR-103): Rohbytes, `Content-Type` ∈ `ATTACHMENT_MEDIA_TYPES`, ≤ `LIMITS.imageBytes`, Magic-Bytes geprüft (deren Bildtyp wird gespeichert, ADR-134). Phase 3 (ADR-146): `Content-Type` ∈ `UPLOAD_MEDIA_TYPES`; Typ per Magic-Bytes – Bild wie bisher, `%PDF-` → `application/pdf` (≤ `LIMITS.pdfBytes`), sonst `application/octet-stream` (≤ `LIMITS.fileAttachmentBytes`, `name` Pflicht); `bodyLimit` = größtes dieser Limits | 200 `attachmentUploadResponseSchema` `{attachment: BlobRef}` | 400 `VALIDATION_FAILED` (Query, fehlender `name`), 413 `PAYLOAD_TOO_LARGE`, 415 `UNSUPPORTED_MEDIA_TYPE`, Guard wie „jede andere Route“ |
 | `GET /api/ws` | WebSocket-Upgrade (§5) | `101` | 400/401/403 + `ErrorPayload` (Browser sieht nur Close 1006) |
 | jede andere Methode/Pfad, fehlende statische Datei | – | – | 404 `ROUTE_NOT_FOUND {path}` (R1-12, V1-06) |
 
@@ -869,9 +930,10 @@ andere Route“), auch bei GET. Vor der Tabelle gilt für **jeden** Request:
 | Static-Route `/*` GET/HEAD (Seite, Assets) | – | – | – |
 | `GET`/`HEAD` `/api/health`, `/api/auth/status`; GET/HEAD ohne Route (404) | falls vorhanden ∈ `allowedOrigins` | falls vorhanden ∈ {`same-origin`, `none`} | – |
 | `GET`/`HEAD` `/api/blob/:blobId` | falls vorhanden ∈ `allowedOrigins` | falls vorhanden ∈ {`same-origin`, `none`} | Cookie |
+| `GET`/`HEAD` `/api/file` (Phase 3, Guard-Klasse `file`, ADR-142) | falls vorhanden ∈ `allowedOrigins` | **Pflicht** `same-origin` | Cookie |
 | `POST /api/auth` | Pflicht ∈ `allowedOrigins` | Pflicht `same-origin` | Code |
 | WS-Upgrade `GET /api/ws` | Pflicht ∈ `allowedOrigins` | **falls vorhanden** `same-origin` (Chrome/Edge senden beim Handshake keins, V1-01) | Cookie |
-| jede andere Route/Methode (Default-deny, z. B. `POST /api/attachments`, künftig `GET /api/file`) | Pflicht ∈ `allowedOrigins` | Pflicht `same-origin` | Cookie |
+| jede andere Route/Methode (Default-deny, z. B. `POST /api/attachments`) | Pflicht ∈ `allowedOrigins` | Pflicht `same-origin` | Cookie |
 | `POST /api/launcher/code` | **muss fehlen** | fehlt oder `none` | `Authorization: Bearer <launcherToken>` |
 
 Die WS-Route wiederholt die komplette Prüfung selbst (`preValidation` und WS-Handler,
@@ -887,6 +949,17 @@ mit `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox; defaul
 `cspHeaderValue`; R3-14, ADR-067). Ist der Port noch unbekannt (Port 0 vor `listen`, nur per
 `inject` erreichbar), lehnt der Guard jede Anfrage mit `HOST_HEADER_REJECTED` ab und die Antwort
 trägt `BLOB_CSP` – nie ein `RangeError`/500 (CR-07).
+
+**Phase 3 – `/api/file` und PDFs (ADR-142):** Dateipfade sind anders als Blob-Hashes erratbar, daher
+verlangt die Guard-Klasse `file` `Sec-Fetch-Site: same-origin` (fehlend, `none`, `same-site`,
+`cross-site` → abgelehnt; Chrome sendet den Header bei `<img>`, `<iframe>`, `fetch` und
+`window.open`, ADR-136, L16). Antworten tragen `nosniff`, `Cross-Origin-Resource-Policy: same-origin`
+und `BLOB_CSP` mit `X-Frame-Options: DENY` – außer geprüften PDFs (`%PDF-`, auch PDF-Blobs):
+`FILE_PDF_CSP` (`default-src 'none'; object-src 'self'; frame-ancestors 'self'; base-uri 'none';
+form-action 'none'`, **ohne** `sandbox`, weil Chromes PDF-Viewer in Sandbox-Dokumenten nicht startet)
+und `X-Frame-Options: SAMEORIGIN`, damit das Seitenpanel sie per `<iframe>` zeigt. Die Seiten-CSP
+bleibt (`default-src 'self'` erlaubt das Frame auf `/api/file`). Upload-Typen: `UPLOAD_MEDIA_TYPES` =
+`ATTACHMENT_MEDIA_TYPES` + `application/pdf` + `application/octet-stream`.
 
 **Dev-Modus (`--dev`, ADR-006):** `allowedHosts`/`allowedOrigins` enthalten zusätzlich
 `127.0.0.1:5173` bzw. `http://127.0.0.1:5173` (der Vite-Proxy behält `Host`, kein `changeOrigin`).
@@ -1003,6 +1076,32 @@ bzw. das Profil.
 | `fs.listDirectory` | `null` → Laufwerke + Benutzerordner; sonst `windowsPathIssue`, je Segment `lstat`/`readlink` (Link auf unsicheres Ziel → `PATH_REJECTED{reason:'link_target'}`); nur Ordner, ≤ `LIMITS.fsListMax` | `CWD_NOT_FOUND`, `CWD_NOT_DIRECTORY`, `FOLDER_NOT_READABLE`, `PATH_REJECTED` |
 | `settings.update` | Top-Level-Felder ersetzen ganz; sofort: Schlaf-Policy, Benachrichtigungen, Systemintegration; nächster Start: `promptSuggestions`; Neustart: `port` | `VALIDATION_FAILED` |
 
+**Phase 3 (normativ für WP-51/52/53; WP-50 §4.12, ADR-140 … ADR-149):**
+
+| Befehl / Fall | Regel | Fehler |
+|---|---|---|
+| Lebenszyklus-Sperre (Phase-2-Tabelle oben) | `plan.list`, `plan.read` zusätzlich erlaubt bei `archived` und `external`; Host-Befehle `file.*`/`files.*`/`editor.detect` laufen nie durch die Sperre (`FileService.commands`, ADR-140) | – |
+| `file.*`, `files.*` (alle) | Eintrag existiert; nur absolute Pfade; Prüfkette ADR-141 in dieser Reihenfolge: (1) `windowsPathIssue` → `PATH_REJECTED{reason}`; (2) **Vorprüfung der Richtlinie am angefragten String** (Schlüssel unter einer Wurzel oder im Datei-Index) → sonst `PATH_NOT_ALLOWED` **ohne jeden fs-Zugriff**; (3) je Segment unterhalb der Wurzel `lstat`/`readlink`, unsicheres Link-Ziel → `PATH_REJECTED{reason:'link_target'}`; (4) `realpath` + Stringfilter auf dem Ziel; (5) Richtlinie auf dem Ziel → `PATH_NOT_ALLOWED`; `ENOENT` → `FILE_NOT_FOUND`; `EACCES`/`EPERM`/`EBUSY` bzw. > 3 s → `FILE_NOT_READABLE{reason}` | `ENTRY_NOT_FOUND`, s. links |
+| `file.stat` / `file.statMany` | Typ per Magic-Bytes (png, jpeg, gif, webp, bmp, ico, pdf), `svg` per Endung als Bild, sonst Text-Erkennung (BOM, UTF-8-Validität, NUL-Heuristik auf 64 KiB, Rückfall windows-1252) oder `binary`; Ordner → `directory`; `statMany` beantwortet jeden Pfad einzeln (Reihenfolge wie angefragt), höchstens 8 parallel | – (je Pfad `ok:false`) |
+| `GET /api/file` | wie `file.stat`, zusätzlich `previewable`; Text nach UTF-8 gewandelt, > `fileTextBytes` am Zeilenende gekürzt; Bild/PDF als Stream ≤ `fileBinaryBytes`; `binary`/`directory` → `UNSUPPORTED_MEDIA_TYPE` | wie oben, `UNSUPPORTED_MEDIA_TYPE`, `PAYLOAD_TOO_LARGE` |
+| `file.open` `editor` | nur Datei (Ordner → `VALIDATION_FAILED{reason:'directory'}`); Editor aus `settings.editor` (ADR-144): Preset-Exe (Override → Registry/App Paths → Standardpfade), PE-Subsystem GUI; Platzhalter je Argument; `system` → wie `default` | `EDITOR_NOT_FOUND`, `OPEN_FAILED`, `FILE_TYPE_BLOCKED` |
+| `file.open` `explorer` | Datei → `explorer.exe /select,"<p>"`, Ordner → `explorer.exe "<p>"` (`%SystemRoot%\explorer.exe`, `windowsVerbatimArguments`, Exit-Code wird ignoriert) | `OPEN_FAILED` |
+| `file.open` `default` | nur Datei mit `isDefaultProgramAllowed` für angefragten **und** aufgelösten Namen; `explorer.exe "<p>"` | `FILE_TYPE_BLOCKED`, `OPEN_FAILED` |
+| `files.session` | Index des Eintrags, neueste zuerst, ≤ `sessionFilesMax`; fehlt `files.json` → einmaliger Backfill aus den Transkript-Logs (danach `backfilled: true`) | – |
+| `files.project` | `cwd` existiert; `git -c core.fsmonitor=false -c core.quotepath=off ls-files -z --cached --others --exclude-standard` (git per `resolveExecutable`, Timeout 5 s); kein Repo/Fehler → Walk (keine Links/Junctions, Ignore-Liste, Tiefe ≤ 12, 3 s); ≤ `projectFilesMax`; Cache je Eintrag 30 s, verworfen bei jedem neuen Write/Edit-Item | `CWD_NOT_FOUND` |
+| `editor.detect` | sucht beide Presets und prüft eine eigene `.exe` (existiert) | – |
+| `session.stopTask` | Prozess läuft; `taskId` ∈ `backgroundTasks` oder `tool_call.task.taskId` mit Status `running`/`background`; `agent.stopTask(taskId)`; Wirkung kommt als `task_notification stopped` | `SESSION_NOT_RUNNING`, `SESSION_EXTERNAL`, `TASK_NOT_FOUND`, `CLAUDE_CONTROL_FAILED` |
+| `plan.list` | Records mit `planVersion` aus `decisions.json`, aufsteigend; `stored` = `readPlan ≠ null` | – |
+| `plan.read` | `readPlan(entryId, version)` | `PLAN_NOT_FOUND` |
+| `decision.respond` `approve_fresh_context` | offene oder abgelaufene Plan-Entscheidung; `mode ∈ approveModes`, Bypass nur mit Profilfreigabe; sonst „ohne Arbeit“ (keine weitere offene Entscheidung, Queue leer, keine nicht-ambienten Hintergrund-Tasks); Ablauf ADR-147; Outcome `plan_approved{mode, edited, freshContext:true}` | `DECISION_*`, `MODE_NOT_ALLOWED`, `SESSION_BUSY`, Startfehler |
+| `previousVersionPlan` | v(n-1) derselben Unterhaltung, nach Neustart per `readPlan` | – |
+| `prompt.attachments` (create/sendPrompt) | Blob existiert; Bild wie bisher (≤ `imageBytes`); `application/pdf` → `document`-Block (≤ `pdfBytes`); `application/octet-stream` mit `name` → `AttachmentFileStore.materialize` + Pfadliste am Textende (ADR-146); Summe Bild+PDF ≤ `attachmentsTotalBytes` | `BLOB_NOT_FOUND`, `UNSUPPORTED_MEDIA_TYPE`, `PAYLOAD_TOO_LARGE` |
+| `prompt.pastes` | jede Paste kommt in `text` vor (`includes`), sonst Ablehnung; an das Backend als `inlinePastes` | `VALIDATION_FAILED{reason:'paste_not_in_text'}` |
+| jeder Start (`startRuntime`) | `attachmentsDir = await attachments.dir(entryId)` (als `additionalDirectory`, ADR-146) | – |
+| `POST /api/attachments` | Typ per Magic-Bytes: Bild → wie bisher; `%PDF-` → `application/pdf` (≤ `pdfBytes`); sonst `application/octet-stream` (≤ `fileAttachmentBytes`, `name` Pflicht); `bodyLimit` = größtes dieser Limits; Header-`Content-Type` ∈ `UPLOAD_MEDIA_TYPES` | `VALIDATION_FAILED`, `PAYLOAD_TOO_LARGE`, `UNSUPPORTED_MEDIA_TYPE` |
+| `GET /api/blob/:id` | Meta `application/pdf` → Header-Satz `pdf` (§5.1, sonst unverändert) | – |
+| `settings.update` `editor` | Schema-Prüfung (WP-50 §4.5); wirkt beim nächsten `file.open` | `VALIDATION_FAILED` |
+
 ## 6. Item-Modell (`src/shared/model.ts`, §5.6)
 
 **Item-IDs** (live und Verlauf identisch; Annahmen in `src/server/backend/fixture.test.ts` gegen alle
@@ -1044,6 +1143,7 @@ Bilder immer als Blob. Assistant-Text wird nie gekappt.
 | `rate_limit_event` | `system/rate_limit` nur bei `allowed_warning`/`rejected` | `rate_limit`; bei `rejected` zusätzlich `assistant_error` (`RATE_LIMIT_REJECTED`, `credits_required` → `CLAUDE_BILLING`) |
 | Modell-Fallback (`model_refusal_fallback`) | `system/model_fallback`; zurückgezogene Items → `item.remove` | – |
 | `system/model_refusal_no_fallback` | `system/error` (`MODEL_REFUSAL`) | – |
+| `system/session_writes_lost` (Phase 3, WP-52) | `system/error` (`SESSION_WRITES_LOST{lost, errorCode}`, z. B. Platte voll) | – |
 | `system/task_started`/`task_updated`/`task_progress`, `tool_progress` | – (→ `tool_call.task`, `elapsedSeconds`) | – |
 | `system/task_notification` | `tool_call.task` bzw. `system/task_notification` ohne passendes `tool_call` | – |
 | `system/background_tasks_changed` | – (→ `detail.backgroundTasks`) | `background_tasks` |
@@ -1082,6 +1182,20 @@ Subagent-Messages werden immer über `parent_tool_use_id` unter das Agent-`tool_
   `unknownEnumCountKey` in `@shared/common`).
 - **Reducer defensiv (R0-15):** `applySessionOp` ignoriert `item.delta` auf Items, die nicht mehr
   streamen (`streaming:false` bzw. `tool_call.status ≠ 'streaming_input'`).
+
+**Phase 3 (WP-50 §4.5, alle Felder additiv mit Default):**
+- **Detail-Felder, Schreiber Engine** (Kopfkommentar `sessions/ports.ts`, je `.default(null)`):
+  `todos` (`TodoList`: `source` `todo_write`|`tasks`, ≤ `LIMITS.todoItemsMax` Einträge – aus dem
+  letzten `TodoWrite` bzw. der `TaskCreate`/`TaskUpdate`-Folge, ADR-149), `planFile` (`PlanFileRef`:
+  letzter fertiger `Write`/`Edit` auf den `planFilePath` der jüngsten Plan-Entscheidung oder, solange
+  `permissionMode === 'plan'`, auf eine `.md`-Datei, ADR-148) und `latestPlanVersion` (höchste
+  gespeicherte Planversion, ADR-148).
+- **`TaskInfo.outputFile`** (Default `null`): Normalizer (WP-52) aus `task_notification.output_file`
+  bzw. `AgentOutput.outputFile` (absolut, `''` → `null`); landet im Datei-Index als `output` (ADR-145).
+- **Entscheidungen:** `plan_approved.freshContext` (Default `false`; `true` nach ADR-147);
+  `approve_fresh_context` ist umgesetzt und trägt `mode` und `editedPlan` (Default `null`).
+- **Context:** `contextBreakdown.categories[].id` (Default `null`) – stabile SDK-IDs wie
+  `system_prompt`, `system_tools`, `mcp_tools`, `memory_files`, `skills`, `messages` (offene Menge).
 
 ## 7. Statusmodell (`src/shared/status.ts`)
 
@@ -1172,7 +1286,8 @@ sessions.json                         registryFileSchema v2 (Entry inkl. unread,
 profiles.json                         profilesFileSchema (Phase 2, ADR-102: alle Profile inkl. „Standard“;
                                       fehlt die Datei, gilt nur „Standard“)
 settings.json                         settingsFileSchema (Phase 2: notifications, idleSleep,
-                                      promptSuggestions, port, autostart – Felder mit Default)
+                                      promptSuggestions, port, autostart; Phase 3: editor, ADR-144 –
+                                      Felder mit Default)
 model-catalogs.json                   Phase 2 (ADR-114): supportedModels() je Profil (Server-intern)
 account-limits.json                   Phase 2 (ADR-114): letzte Abo-Limits je Profil (Server-intern)
 auth-secret.json                      Secret des Geräte-Cookies (WP-10, rotierbar, §5.1; ohne .bak, R1-11)
@@ -1188,8 +1303,13 @@ entries/<entryId>/plans/v<N>.md       Plan-Versionen (Text exakt wie in canUseTo
 entries/<entryId>/commands.json       Phase 2 (ADR-108/114): letzter Slash-Befehls-Katalog (Server-intern); nur Cache –
                                       unlesbar, ungültig oder neuere schemaVersion = „kein Cache“, wird
                                       überschrieben, kein Startabbruch (ADR-127)
-entries/<entryId>/attachments/<blobId>.<ext>   Datei-Anhänge (C.11, Phase 3), Ordner in additionalDirectories;
-                                      Bild-Uploads (Phase 2) liegen als Blobs in blobs/ (ADR-103)
+entries/<entryId>/files.json          Phase 3 (ADR-145): Datei-Index, sessionFilesFileSchema v1 (nur der
+                                      Datei-Dienst schreibt; atomar, 2 s entprellt, ≤ LIMITS.sessionFilesMax;
+                                      fehlt die Datei → einmaliger Backfill aus den Transkript-Logs)
+entries/<entryId>/attachments/<blob16>/<name>   Phase 3 (ADR-146): Kopien von Datei-Anhängen (AttachmentFileStore,
+                                      sync/ports.ts; <blob16> = erste 16 Zeichen der blobId, Name bereinigt,
+                                      idempotent); der Ordner ist bei jedem Start additionalDirectory (C.11);
+                                      Bild-/PDF-Uploads liegen nur als Blobs in blobs/ (ADR-103)
 logs/parallax.<datum>.<n>.log         pino-roll (lib/logger.ts)
 logs/server.out.log                   stdout/stderr des vom Launcher gestarteten Servers (sonst leer: Abstürze vor
                                       dem Logger, Ursache eines gescheiterten Starts als letzte Zeile, §3.3;
@@ -1318,6 +1438,18 @@ defekte Zeilen überspringen und zählen.
 - **Pfade (C.10):** UNC-, Device-, ADS-Pfade und reservierte Namen vor jedem Dateizugriff ablehnen
   (`@shared/paths`, eine Implementierung, §2.2); `cwd` exakt behalten, Vergleiche case-insensitiv
   über `windowsPathKey`.
+- **Dateizugriff (Phase 3, ADR-141/142):** `file.*`, `files.*`, `GET /api/file` und „Öffnen in …“ nur
+  für Pfade unter einer Wurzel (`cwd`, `--add-dir` des Profils, Anhangordner des Eintrags) oder im
+  Datei-Index des Eintrags (ADR-145); Prüfkette Stringfilter → Richtlinie am String (noch kein
+  fs-Zugriff, also nie ein SMB-Versuch) → `lstat`/`readlink` je Segment → `realpath` → Stringfilter und
+  Richtlinie auf dem Ziel, jeder fs-Aufruf mit 3 s Timeout; eine Implementierung `resolveAllowedPath`
+  (`lib/paths.ts`). Kein `fs.watch` (ADR-143). Inhalte nur über `/api/file` mit `Sec-Fetch-Site`
+  Pflicht `same-origin` und CSP je Typ (§5.1).
+- **GUI-Start (Phase 3, ADR-144):** einzige Ausnahme von `windowsHide: true` – sichtbare Programme
+  (Editor, Explorer, Standardprogramm) nur nach Nutzerklick über `spawnGui` (`lib/process.ts`):
+  absolute `.exe`, Blockliste `EDITOR_BLOCKED_EXECUTABLES`, PE-Subsystem GUI geprüft, ohne Shell,
+  `detached`, Env ohne `PARALLAX*`/Claude-Session-Variablen; Standardprogramm nur für
+  `DEFAULT_PROGRAM_EXTENSIONS`; nur lokaler Host; das FakeBackend startet nie Programme.
 - **XSS = Codeausführung:** kein `rehype-raw`, kein `dangerouslySetInnerHTML`; der Client sendet nur
   Absichten, nie rohe `updatedPermissions` (ADR-012).
 
@@ -1335,7 +1467,8 @@ defekte Zeilen überspringen und zählen.
 - **Settings:** additiv mit Defaults; `settings.update` patcht nur genannte Felder.
 - **Anhänge:** seit Phase 2 Bild-Anhänge (HTTP-Upload → `BlobRef`, Prompt referenziert `blobId`,
   ADR-103; Einzelgrenze `LIMITS.imageBytes`, Summe je Prompt `LIMITS.attachmentsTotalBytes`, ADR-125).
-  Datei-Anhänge mit Eintragsordner (`additionalDirectories`, C.11) folgen in Phase 3.
+  Phase 3: PDF als `document`-Block, andere Dateien im Eintragsordner (`additionalDirectories`, C.11),
+  Pastes als `inline_pastes` (ADR-146).
 - **Wakeups und `/loop` (R0-27, erfüllt durch ADR-121):** `wakeupAt` trägt seit Phase 2 das geplante
   „Fortsetzen“ nach einem Rate-Limit (ADR-112). Geplante Turns erkennt die Engine (`sessions/runtime.ts`):
   ein Tool-Call `ScheduleWakeup`/`CronCreate` (auch streamend oder im Subagent) oder ein gesendeter
@@ -1354,8 +1487,15 @@ defekte Zeilen überspringen und zählen.
 | `buildId` | `dev` ohne Bundle; sonst `<package.version>+<12 Zeichen des letzten Commits, der eine Build-Eingabe geändert hat>[.dirty-<Digest>]` (`resolveBuildId`, `repo.config.ts`, ADR-065; Doku/Tests zählen nicht), Override `PARALLAX_BUILD_ID`; Web-Build zusätzlich in `dist/web/build.json` (ADR-066) | jeder Build mit anderen Build-Eingaben (Client-Reload nach `git pull`) |
 | `REGISTRY_SCHEMA_VERSION`, `PROFILES_SCHEMA_VERSION`, `SETTINGS_SCHEMA_VERSION`, `DECISIONS_SCHEMA_VERSION` | `1` | Migration nötig (Umbenennung, Strukturwechsel); neue Felder mit Default → kein Bump |
 | Transkript-Log-Zeile `v` (`TRANSCRIPT_LOG_VERSION`) | `1` | wie oben; alte Zeilen bleiben lesbar |
+| `SESSION_FILES_SCHEMA_VERSION` (Phase 3, ADR-145) | `1` | wie oben (`entries/<id>/files.json`) |
 | `fixtureVersion` | `1` (ADR-010) | Formatänderung der Fixtures |
 | `SERVER_LOCK_SCHEMA_VERSION` | `1` | Strukturwechsel des Lockfiles (wird je Start neu geschrieben, keine Migration) |
+
+**Stand Phase 3 (Contracts v3, ADR-140):** `PROTOCOL_VERSION` 3 (Phase 1: 1, Phase 2: 2; zehn neue
+Fehlercodes, neun Befehle); neu `SESSION_FILES_SCHEMA_VERSION` 1. Unverändert, neue Felder mit
+Default: `REGISTRY_SCHEMA_VERSION` 2, `SETTINGS_SCHEMA_VERSION` 1 (`editor`),
+`DECISIONS_SCHEMA_VERSION` 1 (`plan_approved.freshContext`), `TRANSCRIPT_LOG_VERSION` 1
+(`TaskInfo.outputFile`), `PROFILES_SCHEMA_VERSION` 1.
 
 **Server→Client-Erweiterungen (R0-16):** Neue Item-Arten, System-Events, Ops, Fehlercodes oder
 Anzeige-Status lassen einen **alten** Client die ganze Nachricht verwerfen (`discriminatedUnion`,
