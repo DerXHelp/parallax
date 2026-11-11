@@ -19,6 +19,42 @@ function distanceFromEnd(list: Locator): Promise<number> {
   return list.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop);
 }
 
+/**
+ * Quiet time that counts as "settled": twice the 150 ms after which virtua ends an imperative
+ * scroll (`scrollToIndex`) that saw no size change.
+ */
+const SETTLE_MS = 300;
+
+/**
+ * Waits until the list has settled: neither its scroll height nor its offset changed for
+ * SETTLE_MS (every change starts the quiet time again – a state, not a fixed wait). After the
+ * reload the transcript scrolls to its end with `scrollToIndex`; virtua keeps that scroll alive
+ * while rows are measured and scrolls back to the end on every size change until 150 ms pass
+ * without one – an offset set before that is taken back (FIX-E2E-EDGE157: `scrollTop = 700` was
+ * back at the end two frames later, the anchor came from the end of the list).
+ */
+async function settle(list: Locator): Promise<void> {
+  await list.evaluate(
+    (el, quietMs) =>
+      new Promise<void>((resolve) => {
+        let height = el.scrollHeight;
+        let top = el.scrollTop;
+        let since = performance.now();
+        const tick = (): void => {
+          if (el.scrollHeight !== height || el.scrollTop !== top) {
+            height = el.scrollHeight;
+            top = el.scrollTop;
+            since = performance.now();
+          }
+          if (performance.now() - since >= quietMs) resolve();
+          else requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }),
+    SETTLE_MS,
+  );
+}
+
 /** Sends echo prompts over the protocol (faster than typing); they queue and run in order. */
 async function sendEchoes(server: E2eServer, entryId: string, count: number): Promise<void> {
   const client = await connectNodeClient(server);
@@ -87,28 +123,34 @@ test('(b) loading earlier items while scrolling up keeps the reading position', 
   const list = view.list();
   await expect(view.assistantText(`Echo: message ${String(TURNS)}`)).toBeVisible();
   await expect.poll(() => distanceFromEnd(list)).toBeLessThanOrEqual(STICK_PX);
+  await settle(list);
   await expect(view.userMessages().filter({ hasText: 'message 01' })).toHaveCount(0);
 
   // Close to the top, but above the loadEarlier threshold (240 px): pick an anchor message.
   await list.evaluate((el) => {
     el.scrollTop = 700;
   });
-  await app.page.waitForTimeout(300);
+  await settle(list);
+  // Still up there (measuring the rows may move the offset a little, the end would be > 4000).
+  const top = await list.evaluate((el) => el.scrollTop);
+  expect(Math.abs(top - 700)).toBeLessThanOrEqual(80);
   const anchor = view.userMessages().first();
   const anchorText = (await anchor.textContent()) ?? '';
   const anchored = view.userMessages().filter({ hasText: anchorText });
   const before = (await anchored.boundingBox())?.y ?? Number.NaN;
-  // Scroll 500 px further up → loadEarlier prepends the older items.
+  const heightBefore = await list.evaluate((el) => el.scrollHeight);
+  // Scroll ~500 px further up → loadEarlier prepends the older items (the list grows above).
   await list.evaluate((el) => {
     el.scrollTop = 200;
   });
-  await expect(view.transcript.getByRole('button', { name: 'Load earlier messages' })).toHaveCount(0, {
-    timeout: 30_000,
-  });
-  await app.page.waitForTimeout(500);
+  await expect
+    .poll(() => list.evaluate((el) => el.scrollHeight), { timeout: 30_000 })
+    .toBeGreaterThan(heightBefore);
+  await settle(list);
+  await expect(view.transcript.getByRole('button', { name: /Load(ing)? earlier/ })).toHaveCount(0);
   // Without virtua's `shift` the anchor would jump down by the height of everything prepended.
   const after = (await anchored.boundingBox())?.y ?? Number.NaN;
-  expect(Math.abs(after - (before + 500))).toBeLessThanOrEqual(80);
+  expect(Math.abs(after - (before + (top - 200)))).toBeLessThanOrEqual(80);
   // The oldest messages are there now.
   await list.evaluate((el) => {
     el.scrollTop = 0;
