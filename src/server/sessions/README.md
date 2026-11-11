@@ -56,3 +56,20 @@ CR2: Plan/Retry bei gescheitertem Öffnen, abgewiesener Prompt im Lock).
 
 Phase 2: Lebenszyklus, Archiv und Unterhaltungen `docs/wp/WP-31.md`; Konsole, Fortsetzen, Anhänge
 und Toast-Klick `docs/wp/WP-34.md` (jeweils §2 inkl. Verdrahtung für WP-40).
+
+## Phase 3 – Engine (WP-51)
+
+Ergebnis, Abbildung der `todos` und Verdrahtung für WP-60: `docs/wp/WP-51.md` §2. Die Zeile
+`attachments.ts` oben gilt in dieser Fassung.
+
+| Datei | Exporte | Inhalt |
+| --- | --- | --- |
+| `attachments.ts` | `checkAttachments`, `materializeAttachments`, `promptContent`, `sentText`, `checkPastes`, `resolveAttachments` (Kompatibilität, `files` erlaubt), `PromptAttachments`, `NO_ATTACHMENTS`, `ATTACHED_FILES_HEADER`, `PDF_MEDIA_TYPE`, `FILE_MEDIA_TYPE` | Anhänge (ADR-103, ADR-146): Bild → `image`, PDF → `document` (≤ `pdfBytes`), `application/octet-stream` → `AttachmentFileStore.materialize` (≤ `fileAttachmentBytes`; ohne Store `UNSUPPORTED_MEDIA_TYPE`) und Block `Attached files:` am Ende des **gesendeten** Texts; Bild + PDF ≤ `attachmentsTotalBytes`; Pastes müssen im Text stehen (`VALIDATION_FAILED {reason 'paste_not_in_text', index}`) |
+| `detailTracker.ts` | `DetailTracker`, `DetailContext`, `TODO_TEXT_CHARS`, `PLAN_FILE_CANDIDATES` | `todos` (ADR-149: `TodoWrite` bzw. `TaskCreate`/`TaskUpdate`/`TaskList`) und `planFile` (ADR-148, Regeln a/b) aus fertigen Haupt-Tool-Calls; `EntryState` füttert ihn im Op-Pfad und sät ihn beim Aufbau des Mirrors |
+| `freshContext.ts` | `approveFreshContext`, `FreshContextRequest` | „Mit frischem Kontext umsetzen“ (ADR-147): Prüfungen, deny + interrupt, Unterhaltung endet mit `fresh_session`, neue ohne Resume, erster Prompt `freshContextPrompt` (`summary.ts`) |
+
+Außerdem: `EngineStores.attachments?` (`entryState.ts`, fehlt → `null`), `attachmentsDir` bei jedem
+`startRuntime` (Fehler → Warnung, `null`), `session.stopTask`/`plan.list`/`plan.read` in `commands.ts`,
+Broker `check`/`latestPlanVersion`/`latestPlanFilePath`/`planRecords`/`loadLastPlan` und Ergebnis
+`fresh-context`, `deliverPrompt` setzt ein abgelehntes `/rename X` zurück (CR2). Harness-Option
+`attachments: false` (Engine ohne Anhang-Store). Integrationstest: `phase3.integration.test.ts`.

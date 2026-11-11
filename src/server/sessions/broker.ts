@@ -82,11 +82,27 @@ export type RespondResult =
    * expired plan + approve: the decision is now CLAIMED (a second respond → DECISION_ALREADY_RESOLVED,
    * closeExpired skips it); the manager resumes, then calls resolveExpired (A.10, diagram g).
    */
-  | { kind: 'resume-and-approve'; decision: PlanDecision; mode: PermissionMode };
+  | { kind: 'resume-and-approve'; decision: PlanDecision; mode: PermissionMode }
+  /**
+   * Phase 3 (ADR-147) `approve_fresh_context`: the decision is RESOLVED with
+   * `plan_approved{freshContext:true}` – an open request was answered deny + interrupt
+   * (`wasOpen`), an expired card only closed. The manager then starts the fresh conversation.
+   */
+  | {
+      kind: 'fresh-context';
+      decision: PlanDecision;
+      outcome: Extract<DecisionOutcome, { type: 'plan_approved' }>;
+      wasOpen: boolean;
+    };
+
+/** One plan version of the entry (plan.list, ADR-148). */
+export type PlanRecord = DecisionRecord & { planVersion: number };
 
 export interface Broker {
   /** StartSessionRequest.canUseTool */
   readonly handler: PermissionHandler;
+  /** The checks of `respond` without any change (throws CommandError like respond). */
+  check(decisionId: DecisionId, response: DecisionResponse): void;
   /** Synchronous check-and-set: first click wins. Throws CommandError. */
   respond(decisionId: DecisionId, response: DecisionResponse, byClientId: ClientId | null): RespondResult;
   resolveExpired(decisionId: DecisionId, outcome: DecisionOutcome, byClientId: ClientId | null): void;
@@ -104,6 +120,17 @@ export interface Broker {
   counts(): DecisionCounts;
   /** Shutdown: stop persisting and cancelling (open records stay open → expired after restart). */
   freeze(): void;
+  /** Phase 3 (ADR-148): highest plan version of the entry (`detail.latestPlanVersion`); null = none. */
+  latestPlanVersion(): number | null;
+  /** `planFilePath` of the newest plan decision (`planFile` rule a); null = none or without file. */
+  latestPlanFilePath(): string | null;
+  /** Kept records with a plan version, ascending by version (plan.list). */
+  planRecords(): PlanRecord[];
+  /**
+   * Server start, after `restore`: the newest plan text from `plans/v<N>.md` when no open record
+   * carries it – `previousVersionPlan` of the next plan decision (§4.12). Never throws (logged).
+   */
+  loadLastPlan(): Promise<void>;
 }
 
 type Status = 'open' | 'expired' | 'claimed' | 'resolved';
@@ -160,7 +187,8 @@ export function createBroker(deps: BrokerDeps): Broker {
   /** Restored records without snapshot: closed at once, only counted until closeExpired (A.10). */
   let countedOnly = 0;
   let planVersion = 0;
-  let lastPlan: { conversationId: ConversationId; text: string } | null = null;
+  /** Text of the newest plan version (previousVersionPlan of the next one in the same conversation). */
+  let lastPlan: { conversationId: ConversationId; text: string; version: number } | null = null;
   let frozen = false;
 
   const persist = (): void => {
@@ -276,7 +304,7 @@ export function createBroker(deps: BrokerDeps): Broker {
         const version = planVersion;
         const previousVersionPlan =
           lastPlan !== null && lastPlan.conversationId === base.conversationId ? lastPlan.text : null;
-        lastPlan = { conversationId: base.conversationId, text: plan.plan };
+        lastPlan = { conversationId: base.conversationId, text: plan.plan, version };
         deps.store.savePlan(deps.entryId, version, plan.plan).catch((error: unknown) => {
           log.error({ err: error, entryId: deps.entryId, version }, 'saving plan failed');
         });
@@ -349,7 +377,13 @@ export function createBroker(deps: BrokerDeps): Broker {
     });
     slots.set(decision.id, slot);
     persist();
-    deps.emit([{ op: 'decision.upsert', decision }]);
+    // ADR-148: a new plan version raises `latestPlanVersion` (single writer: the engine).
+    deps.emit([
+      { op: 'decision.upsert', decision },
+      ...(decision.kind === 'plan'
+        ? [{ op: 'detail.patch' as const, patch: { latestPlanVersion: decision.version } }]
+        : []),
+    ]);
     deps.attachDecision(decision.toolUseId, refOf(slot.record, null));
     notifyCounts(decision.kind);
     return promise;
@@ -364,18 +398,61 @@ export function createBroker(deps: BrokerDeps): Broker {
     return slot;
   };
 
+  /** The checks of respond (§3.4 "Prüfungen"); the slot and its decision when they pass. */
+  const checked = (
+    decisionId: DecisionId,
+    response: DecisionResponse,
+  ): { slot: Slot; decision: Decision } => {
+    const slot = slots.get(decisionId);
+    if (slot !== undefined && (slot.status === 'resolved' || slot.status === 'claimed')) {
+      throw new CommandError(makeError('DECISION_ALREADY_RESOLVED', { decisionId }));
+    }
+    const decision = slot?.decision ?? null;
+    const error = validateResponse(decision === null ? undefined : { decision, resolved: false }, response);
+    if (error !== null) throw new CommandError(error);
+    if (slot === undefined || decision === null) throw new CommandError(makeError('DECISION_NOT_FOUND'));
+    if (slot.status === 'open' && slot.pending === null) {
+      throw new CommandError(makeError('DECISION_ALREADY_RESOLVED', { decisionId }));
+    }
+    return { slot, decision };
+  };
+
+  /** The newest plan record (highest version). */
+  const newestPlanRecord = (): PlanRecord | null => {
+    let newest: PlanRecord | null = null;
+    for (const slot of slots.values()) {
+      const version = slot.record.planVersion;
+      if (version !== null && (newest === null || version > newest.planVersion)) {
+        newest = { ...slot.record, planVersion: version };
+      }
+    }
+    return newest;
+  };
+
   return {
     handler,
 
+    check(decisionId, response) {
+      checked(decisionId, response);
+    },
+
     respond(decisionId, response, byClientId) {
-      const slot = slots.get(decisionId);
-      if (slot !== undefined && (slot.status === 'resolved' || slot.status === 'claimed')) {
-        throw new CommandError(makeError('DECISION_ALREADY_RESOLVED', { decisionId }));
+      const { slot, decision } = checked(decisionId, response);
+
+      if (
+        decision.kind === 'plan' &&
+        response.kind === 'plan' &&
+        response.response.behavior === 'approve_fresh_context'
+      ) {
+        // ADR-147: an open request gets deny + interrupt, an expired card is only closed.
+        const wasOpen = slot.status === 'open';
+        const built = buildResult(decision, slot.pending?.input ?? {}, response);
+        if (built.outcome.type !== 'plan_approved') throw new Error('fresh context without plan_approved');
+        finish(slot, built.outcome, byClientId, wasOpen ? built.result : null);
+        persist();
+        notifyCounts(null);
+        return { kind: 'fresh-context', decision, outcome: built.outcome, wasOpen };
       }
-      const decision = slot?.decision ?? null;
-      const error = validateResponse(decision === null ? undefined : { decision, resolved: false }, response);
-      if (error !== null) throw new CommandError(error);
-      if (slot === undefined || decision === null) throw new CommandError(makeError('DECISION_NOT_FOUND'));
 
       if (slot.status === 'expired') {
         // validateResponse lets only plan approve through for an expired card (diagram g).
@@ -449,8 +526,12 @@ export function createBroker(deps: BrokerDeps): Broker {
             status: 'expired',
             pending: null,
           });
-          if (decision.kind === 'plan')
-            lastPlan = { conversationId: decision.conversationId, text: decision.plan };
+          if (decision.kind === 'plan' && decision.version >= (lastPlan?.version ?? 0))
+            lastPlan = {
+              conversationId: decision.conversationId,
+              text: decision.plan,
+              version: decision.version,
+            };
           continue;
         }
         // Without snapshot: no card, closed as expired right away and only counted (R0-07).
@@ -483,6 +564,33 @@ export function createBroker(deps: BrokerDeps): Broker {
 
     freeze() {
       frozen = true;
+    },
+
+    latestPlanVersion: () => (planVersion > 0 ? planVersion : null),
+
+    latestPlanFilePath: () => newestPlanRecord()?.planFilePath ?? null,
+
+    planRecords: () =>
+      [...slots.values()]
+        .flatMap((slot): PlanRecord[] =>
+          slot.record.planVersion === null ? [] : [{ ...slot.record, planVersion: slot.record.planVersion }],
+        )
+        .sort((a, b) => a.planVersion - b.planVersion),
+
+    async loadLastPlan() {
+      const newest = newestPlanRecord();
+      if (newest === null || (lastPlan !== null && lastPlan.version >= newest.planVersion)) return;
+      try {
+        const text = await deps.store.readPlan(deps.entryId, newest.planVersion);
+        // A plan decision of this run may have come meanwhile (it is newer then).
+        if (text === null || (lastPlan !== null && lastPlan.version >= newest.planVersion)) return;
+        lastPlan = { conversationId: newest.conversationId, text, version: newest.planVersion };
+      } catch (error) {
+        log.warn(
+          { err: error, entryId: deps.entryId, version: newest.planVersion },
+          'reading the last plan failed',
+        );
+      }
     },
   };
 }
