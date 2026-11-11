@@ -1,5 +1,5 @@
 # Parallax launcher without installation (Plan "Server-Betrieb", WP-21) for PowerShell: builds dist\
-# if needed, starts the server hidden in the background and opens an Edge app window - or, if
+# if needed, starts the server hidden in the background and opens a Chrome app window - or, if
 # Parallax already runs, only another window. Options: .\parallax.ps1 --help (README "Starten"),
 # e.g. --port=<n>, --home=<dir>, --print-url, --autostart (used by the autostart shortcut) and
 # --open parallax://session/<id> (used by the parallax: link handler; must be the last option).
