@@ -13,7 +13,7 @@ import { Button } from '@web/ui/button';
 
 /**
  * Asks for the Web Notification permission – only from a click (Plan B "Notification-Berechtigung
- * nur auf Klick"; Edge remembers it in the app profile). The result is confirmed with a hint.
+ * nur auf Klick"; Chrome remembers it in the app profile). The result is confirmed with a hint.
  */
 export function enableNotifications(): void {
   void requestNotificationPermission().then((result) => {
@@ -35,7 +35,7 @@ export function enableNotifications(): void {
  * "Enable notifications" banner while the browser was never asked (permission `default`) and the
  * user did not choose "Not now" (remembered in localStorage). Without permission every server
  * notification stays an in-app hint – unless the server shows native Windows toasts
- * (`HostState.nativeNotifications`, WP22-03/-15): then the banner is not needed (and in the Edge
+ * (`HostState.nativeNotifications`, WP22-03/-15): then the banner is not needed (and in the Chrome
  * app window the browser prompt would not appear anyway; the launcher allows the origin up front).
  */
 export function NotificationPermissionBanner() {

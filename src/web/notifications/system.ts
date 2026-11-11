@@ -1,8 +1,9 @@
 import type { NotificationPermissionState } from './channel';
 
 /**
- * Web Notifications (Plan "Benachrichtigungen – Technik": Edge shows them as Windows toasts; a
- * click focuses the window and the session). Behind an interface so tests and the playground can
+ * Web Notifications (Plan "Benachrichtigungen – Technik": the browser shows them – Chrome since
+ * ADR-136, presumably through the Windows notification system; a click focuses the window and the
+ * session). Behind an interface so tests and the playground can
  * replace the browser API (`setSystemNotifier`). Permission is only ever requested from a click
  * (Plan B "Notification- und Ton-Berechtigung nur auf Klick").
  */

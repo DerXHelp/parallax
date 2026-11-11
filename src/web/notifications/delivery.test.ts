@@ -340,7 +340,7 @@ describe('notification settings in the window (ADR-109: the server filters, the 
       vi.unstubAllGlobals();
     });
 
-    it("Parallax' Edge window (audio without a gesture, ADR-120): one sound from the window, a silent toast, no hint", async () => {
+    it("Parallax' Chrome window (audio without a gesture, ADR-120): one sound from the window, a silent toast, no hint", async () => {
       const notifier = fakeNotifier('granted');
       stop = startNotificationDelivery({ store, notifier });
       setFocus(store, false);

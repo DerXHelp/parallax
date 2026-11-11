@@ -52,6 +52,7 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
 | question-tabs | Frage-Karte: mehrere Fragen als Tabs (`feature/question-tabs`) | fertig | `aa8ba1d`, Merge `53d23c6` (19.10.2026, nur auf den Feature-Branch gepusht; am 11.11.2026 per Fast-Forward nach `main`) | Header als Tab-Name, Häkchen nach Antwort, „Nächste Frage“ fokussiert den nächsten Tab, Entwürfe bleiben beim Wechsel, einzelne Frage ohne Tabs; 3794 Tests | – |
 | FIX-E2E-EDGE157 | Zwei E2E-Fälle rot (`phase2-lifecycle:34`, `phase2-navigation:157`), zuerst dem Edge-Update 155 → 157 zugeschrieben (`docs/wp/FIX-E2E-EDGE157.md`) | fertig | `1757611`, Merge `0b90c36` | Ursache nicht Edge (Gegenprobe Edge 155 und Chromium 156 gleich rot): ein geschlossenes Radix-Menü bleibt während der Exit-Animation (150 ms) aktiv, schließt ein sofort neu geöffnetes Menü, fängt Esc ab und holt den Fokus zurück; Tests handelten nach 30–80 ms. Fix nur in `e2e/` (`chooseMenuItem`, `headerAction`, `rowAction`: warten, bis kein Menü mehr da ist); zusätzlich `transcript.spec.ts` (b) wartet auf ruhende Liste statt fester Zeiten; App bei menschlichem Tempo nicht betroffen; repeat-each=10 20/20, 2× 45/45 | `e2e/live` (`chooseManualMode`) auf `chooseMenuItem`; optional `ui/dropdown-menu.tsx` ignoriert `pointerdown` auf den eigenen Trigger; virtua holt evtl. auch einen Nutzer-Scroll zurück (WP-37, ungeprüft); offen, warum die Fälle bis 19.10. grün waren |
 | SDK-0.3.322 | Agent SDK 0.3.296 → 0.3.322 passend zu `claude` 2.1.322 (`docs/wp/SDK-0.3.322.md`, Ablauf `docs/sdk-upgrade.md`) | fertig | `a5bbfba`…`c793f8e`, Merge `f27156b` (`feature/sdk-0.3.322`) | Kein Code an der SDK-Grenze nötig (nur Versionskommentare), Peer-Ranges unverändert; 11 Fixtures neu aufgezeichnet (Haiku), Snapshot-Diff erklärt (Modellvarianz/Timing, `background_tasks_changed` bei `/clear`), `unknownCounts` leer, 0 Drops, Live-Smoke 6/6; Recorder-Budget per `PARALLAX_RECORD_BUDGET_USD` absenkbar; live 0,2005 USD; 3799 Tests | Neue SDK-Fähigkeiten (§5.8): Login-Ablauf `credential_expires_at`, `session_writes_lost`, `ask_user_question_unanswered_v1`, Context-Kategorien per `id`, 14 Modelle (`FAKE_MODELS`); optional eigene Fehlercodes für neue Startgründe (`config_file_invalid` …, Contract); `interrupt-requesting` neu aufzeichnen (Szenario fehlt) |
+| CHROME | App-Fenster in Google Chrome statt Edge (ADR-136, `docs/wp/CHROME.md`) | fertig | `2603afa`, Merge `ad32a72` (`feature/chrome`) | `lib/chrome.ts` (App Paths HKCU→HKLM, dann Program Files, (x86), %LOCALAPPDATA%; nur absolute `.exe`), `launcher/chromeWindow.ts` (Profil `<home>\chrome`, `--no-first-run`, `--no-default-browser-check`, `--disable-sync`, `--allow-browser-signin=false`, Autoplay, Benachrichtigungs-Freigabe in den Prefs); ohne Chrome Launcher-Fehler; Preflight „chrome policies“ + Version aus der Versionsressource; Edge-Code entfernt; gemessen: frisches Chrome-Profil meldet sich nicht implizit an; 3814 Tests, E2E in Chrome 2× 45/45 | Live-Checkliste `CHROME.md` §4.6 (Benachrichtigung als Windows-Toast? Klick holt das Parallax-Profil?); altes Profil `<home>\edge` darf der Nutzer löschen; verwaiste headless-Chrome-Prozesse vom 05.11. (nicht aus Parallax-Paketen) gemeldet |
 
 ### Sammelliste Welle 2 (Stand 18.10.2026, nach Merge `5f0d0cf`: 199 Dateien, 3509 Tests)
 - **WP-40 (Naht, beauftragt):** Slots `SettingsPage`/`PREFERENCES_SLOTS` (WP-38) und `ProfilesSettings` (WP-36)
@@ -170,8 +171,10 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
 - 11.11.2026: `feature/question-tabs` nach `main` mergen; SDK an die installierte CLI anpassen (→ SDK-0.3.322) mit
   Live-Neuaufzeichnung + Live-Smoke (Abo-Login, Haiku, Scratch-Ordner, Temp-Home, Budget ≤ 1 USD; verbraucht 0,2005 USD);
   `main` danach pushen (Frage-Tabs und SDK-Upgrade, jeweils nach grünem check/build/e2e).
-- 11.11.2026: Nutzer-Checkliste WP-41 §2.6 macht der Nutzer später. Der verwendete Browser (Edge) soll separat besprochen
-  werden – bis dahin keine Änderung an Browser-Wahl, Launcher-Edge-Logik oder Playwright-Kanal.
+- 11.11.2026: Nutzer-Checkliste WP-41 §2.6 macht der Nutzer später.
+- 11.11.2026 (Browser-Gespräch, ADR-136): App-Fenster **nur noch in Chrome** (Chrome ist auf allen Rechnern des Nutzers),
+  kein Rückfall auf Edge, keine Umschaltung (weder Startoption noch Einstellung), E2E-Tests in Chrome; `main` nach grünem
+  check/build/e2e pushen.
 
 ## Koordinator-Entscheidungen R3/V2 (15.10.2026)
 - V2-01: Parallax-Edge-Profil nie mit Microsoft-Konto anmelden/synchronisieren (Flags/Profil-Präferenzen, keine Policies).
@@ -209,5 +212,6 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
    starten, nicht blockierend durch die Tool-Pipe (Absturz der Koordinator-Session während A18).
 5. Nach ≥ 24 h: `react`/`react-dom` 19.3.1 prüfen und nachziehen (Koordinator, siehe WP-00.md).
 6. **11.11.2026:** Frage-Tabs, FIX-E2E-EDGE157 und SDK-0.3.322 nach `main` gemergt und gepusht (Tabelle „Nach Phase 2“).
-   Offen: Gespräch zum Browser (Nutzerwunsch), Nutzer-Checkliste WP-41 §2.6, danach Phase 3 („Dateien &
+   Danach CHROME (ADR-136) gemergt und gepusht. Offen beim Nutzer: Live-Checkliste `docs/wp/CHROME.md` §4.6
+   (vor allem Benachrichtigung + Klick in Chrome) und Checkliste WP-41 §2.6. Danach Phase 3 („Dateien &
    Plan-Komfort“) auf `feature/phase-3` mit Design-Paket vorweg; Kandidaten aus SDK-0.3.322 §5.8 einplanen.
