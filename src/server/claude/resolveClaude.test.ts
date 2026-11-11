@@ -403,8 +403,8 @@ describe('versions (C.7)', () => {
     expect(cliVersionStatus(cli, required)).toBe(status);
   });
 
-  it('reads the installed SDK manifest (0.3.296, claudeCodeVersion 2.1.296)', async () => {
-    expect(await readSdkManifest()).toEqual({ sdkVersion: '0.3.296', claudeCodeVersion: '2.1.296' });
+  it('reads the installed SDK manifest (0.3.322, claudeCodeVersion 2.1.322)', async () => {
+    expect(await readSdkManifest()).toEqual({ sdkVersion: '0.3.322', claudeCodeVersion: '2.1.322' });
   });
 });
 

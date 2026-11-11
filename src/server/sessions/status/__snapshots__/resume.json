@@ -50,8 +50,8 @@
     "wakeupAt": null,
     "lastTurn": {
       "outcome": "success",
-      "endedAt": "2026-10-14T23:21:54.237Z",
-      "durationMs": 3839
+      "endedAt": "2026-11-11T17:23:30.009Z",
+      "durationMs": 1415
     },
     "errorCode": null
   }

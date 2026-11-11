@@ -1,9 +1,9 @@
 [
   {
-    "seq": 103,
+    "seq": 102,
     "breakdown": {
       "percentage": 3,
-      "totalTokens": 32529,
+      "totalTokens": 32409,
       "maxTokens": 1000000,
       "source": "sdk",
       "model": "claude-haiku-5-5",
@@ -12,12 +12,12 @@
       "categories": [
         {
           "name": "System prompt",
-          "tokens": 3396,
+          "tokens": 3520,
           "kind": "used"
         },
         {
           "name": "System tools",
-          "tokens": 13814,
+          "tokens": 11015,
           "kind": "used"
         },
         {
@@ -27,27 +27,22 @@
         },
         {
           "name": "MCP tools (deferred)",
-          "tokens": 32131,
+          "tokens": 1876,
           "kind": "deferred"
         },
         {
           "name": "System tools (deferred)",
-          "tokens": 26355,
+          "tokens": 19802,
           "kind": "deferred"
         },
         {
-          "name": "Memory files",
-          "tokens": 344,
-          "kind": "used"
-        },
-        {
           "name": "Skills",
-          "tokens": 7709,
+          "tokens": 5674,
           "kind": "used"
         },
         {
           "name": "Messages",
-          "tokens": 6635,
+          "tokens": 11569,
           "kind": "used"
         },
         {
@@ -57,7 +52,7 @@
         },
         {
           "name": "Free space",
-          "tokens": 934471,
+          "tokens": 934591,
           "kind": "free"
         }
       ],
