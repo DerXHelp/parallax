@@ -14,25 +14,31 @@ import { LIMITS, blobIdSchema } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   API_PATHS,
-  ATTACHMENT_MEDIA_TYPES,
   BLOB_CSP,
   DEV_AUTH_CODE_TTL_MS,
   DEV_WEB_PORT,
+  FILE_PDF_CSP,
+  UPLOAD_MEDIA_TYPES,
   appUrlWithCode,
   attachmentMediaTypeSchema,
   attachmentUploadQuerySchema,
+  fileQuerySchema,
   pageCsp,
   serverOrigin,
+  uploadMediaTypeSchema,
   type AttachmentUploadResponse,
   type BackendKind,
   type HealthResponse,
 } from '@shared/http';
+import type { BlobRef } from '@shared/model';
 import { PRODUCT_ID } from '@shared/product';
 import { WS_CLOSE } from '@shared/protocol';
 import type { ServerConfig, ServerInstance } from '../config';
+import type { FileContent, FileContentProvider } from '../files/ports';
 import { sniffImageType } from '../lib/images';
 import { logger as rootLogger } from '../lib/logger';
-import type { BlobStore } from '../sync/ports';
+import { isPdf } from '../lib/sniff';
+import { CommandError, type BlobStore } from '../sync/ports';
 import { registerAuthRoutes, type AuthService } from './auth';
 import { STATIC_ROUTE, checkRequest, requestPath } from './origin';
 import { replyError, sendError } from './reply';
@@ -40,9 +46,10 @@ import { replyError, sendError } from './reply';
 /**
  * The Fastify app (docs/architecture.md §5.1): request guard (Host/Origin/Sec-Fetch-Site + device
  * cookie, also for the WS upgrade – @fastify/websocket dispatches upgrades through the normal
- * hook chain), security headers + CSP (C.10), `/api/health`, auth routes, blobs, the image upload
- * `POST /api/attachments` (ADR-103), the WS route of the hub and the static web UI. Never CORS headers. WP-20 wires it in main.ts:
- * `createApp({ config, instance, auth, blobs, hub })` → `app.listen({ host, port })`.
+ * hook chain), security headers + CSP (C.10), `/api/health`, auth routes, blobs, the upload
+ * `POST /api/attachments` (images ADR-103; PDFs and other files ADR-146), file content
+ * `GET /api/file` (ADR-142), the WS route of the hub and the static web UI. Never CORS headers.
+ * WP-20/WP-60 wire it: `createApp({ config, instance, auth, blobs, hub, files })` → `app.listen(…)`.
  *
  * The guard classifies by the matched route (`request.routeOptions.url`), not by the URL text
  * (R1-01, ADR-018); the WS route repeats the whole check itself (second line, `authorizeUpgrade`).
@@ -72,13 +79,24 @@ export interface CreateAppOptions {
   auth: AuthService;
   blobs: BlobStore;
   hub?: AttachableHub;
+  /** File service behind `GET /api/file` (Phase 3, ADR-142); missing → 501 NOT_IMPLEMENTED. */
+  files?: FileContentProvider;
   /** Built web UI (`dist/web`); not served when null or missing (dev mode uses Vite). */
   webRoot?: string | null;
   logger?: Logger;
 }
 
-/** Body limit of the JSON routes (the upload has its own: LIMITS.imageBytes, C.11/ADR-103). */
+/** Body limit of the JSON routes (the upload has its own: UPLOAD_BODY_LIMIT_BYTES, C.11). */
 export const JSON_BODY_LIMIT_BYTES = 64 * 1024;
+/**
+ * Body limit of `POST /api/attachments`: the largest per-type limit (ADR-146); the route checks
+ * the limit of the type the magic bytes show (image, PDF, other file).
+ */
+export const UPLOAD_BODY_LIMIT_BYTES = Math.max(
+  LIMITS.imageBytes,
+  LIMITS.pdfBytes,
+  LIMITS.fileAttachmentBytes,
+);
 /** Sockets that ignore the shutdown close frame are terminated after this delay. */
 export const WS_SHUTDOWN_GRACE_MS = 1000;
 
@@ -95,6 +113,51 @@ export function safeMediaType(mediaType: string): string {
 /** `type/subtype` of a Content-Type header, lower case, without parameters ('' if absent). */
 export function mediaTypeEssence(header: string | undefined): string {
   return (header ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+}
+
+/** Header set of a content answer (ADR-142): `blob` = sandbox CSP + DENY, `pdf` = PDF CSP + SAMEORIGIN. */
+export function contentPolicyHeaders(policy: FileContent['policy']): Record<string, string> {
+  return policy === 'pdf'
+    ? { 'content-security-policy': FILE_PDF_CSP, 'x-frame-options': 'SAMEORIGIN' }
+    : { 'content-security-policy': BLOB_CSP, 'x-frame-options': 'DENY' };
+}
+
+/** A blob served with the PDF header set: meta `application/pdf` and a body that starts with `%PDF-`. */
+export function isPdfBlob(ref: Pick<BlobRef, 'mediaType'>, data: Uint8Array): boolean {
+  return mediaTypeEssence(ref.mediaType) === 'application/pdf' && isPdf(data);
+}
+
+/**
+ * `Content-Disposition: inline; filename*=UTF-8''<name>` (RFC 6266/5987): every byte outside the
+ * attr-char set percent-encoded – no quote, no line break, no `;` can reach the header.
+ */
+export function inlineDisposition(name: string): string {
+  const encoded = encodeURIComponent(name).replace(
+    /['()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `inline; filename*=UTF-8''${encoded === '' ? 'file' : encoded}`;
+}
+
+/** Upload type by magic bytes and declared header type (ADR-103/134/146), or an error. */
+type UploadKind = { ok: true; mediaType: string; limit: number } | { ok: false; error: ErrorPayload };
+
+function uploadKind(body: Buffer, declared: string, name: string | undefined): UploadKind {
+  const image = sniffImageType(body);
+  const declaredImage = attachmentMediaTypeSchema.safeParse(declared).success;
+  if (image !== null && (declaredImage || declared === 'application/octet-stream')) {
+    // CR2-08: a declared image type that differs from the bytes gives way to the real one.
+    return { ok: true, mediaType: image, limit: LIMITS.imageBytes };
+  }
+  if (isPdf(body) && (declared === 'application/pdf' || declared === 'application/octet-stream')) {
+    return { ok: true, mediaType: 'application/pdf', limit: LIMITS.pdfBytes };
+  }
+  // A declared image/PDF must be one (R7: no type spoofing, also no empty body).
+  if (declared !== 'application/octet-stream' || body.length === 0) {
+    return { ok: false, error: makeError('UNSUPPORTED_MEDIA_TYPE') };
+  }
+  if (name === undefined) return { ok: false, error: makeError('VALIDATION_FAILED', { reason: 'name' }) };
+  return { ok: true, mediaType: 'application/octet-stream', limit: LIMITS.fileAttachmentBytes };
 }
 
 export async function createApp(options: CreateAppOptions): Promise<FastifyInstance> {
@@ -195,9 +258,10 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     void reply.headers({
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'no-referrer',
-      'x-frame-options': 'DENY',
       'cross-origin-opener-policy': 'same-origin',
     });
+    // DENY unless a route chose its header set itself (PDF answers: SAMEORIGIN, ADR-142).
+    if (!reply.hasHeader('x-frame-options')) void reply.header('x-frame-options', 'DENY');
     if (!reply.hasHeader('cross-origin-resource-policy'))
       void reply.header('cross-origin-resource-policy', 'same-origin');
     if (!reply.hasHeader('content-security-policy')) {
@@ -247,43 +311,80 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     if (!blobId.success) return sendError(reply, makeError('BLOB_NOT_FOUND'));
     const blob = await blobs.get(blobId.data);
     if (blob === null) return sendError(reply, makeError('BLOB_NOT_FOUND'));
+    const data = Buffer.from(blob.data.buffer, blob.data.byteOffset, blob.data.byteLength);
     void reply.headers({
       'content-type': safeMediaType(blob.ref.mediaType),
-      'content-security-policy': BLOB_CSP,
+      // A verified PDF opens in Chrome's viewer (side panel iframe); everything else stays sandboxed.
+      ...contentPolicyHeaders(isPdfBlob(blob.ref, data) ? 'pdf' : 'blob'),
       'cross-origin-resource-policy': 'same-origin',
       'cache-control': 'private, max-age=31536000, immutable',
     });
-    return Buffer.from(blob.data.buffer, blob.data.byteOffset, blob.data.byteLength);
+    return data;
   });
 
-  // Image upload (ADR-103): raw bytes of an ATTACHMENT_MEDIA_TYPES body, ≤ LIMITS.imageBytes. Any
-  // other Content-Type has no parser (415), a larger body hits the body limit (413); both map in
-  // the error handler above. Guard class "mutation" (Origin, same-origin, cookie) – unchanged.
+  // File content (ADR-142): the checks of file.stat (access policy ADR-141, kinds, limits) in the
+  // file service; text as UTF-8 (cut at a line end), images/PDFs streamed. Guard class "file"
+  // (Sec-Fetch-Site same-origin required, Origin if present allowed, cookie). Nothing of the
+  // content or the path reaches the log.
+  app.route<{ Querystring: Record<string, unknown> }>({
+    method: ['GET', 'HEAD'],
+    url: API_PATHS.file,
+    handler: async (request, reply) => {
+      const files = options.files;
+      if (files === undefined) return sendError(reply, makeError('NOT_IMPLEMENTED'));
+      const query = fileQuerySchema.safeParse(request.query);
+      if (!query.success) return sendError(reply, makeError('VALIDATION_FAILED', { reason: 'query' }));
+      let content: FileContent;
+      try {
+        content = await files.open(query.data.entryId, query.data.path);
+      } catch (error) {
+        if (error instanceof CommandError) return sendError(reply, error.error);
+        throw error;
+      }
+      void reply.headers({
+        'content-type': content.mediaType,
+        'content-length': String(content.bytes),
+        'content-disposition': inlineDisposition(content.name),
+        ...contentPolicyHeaders(content.policy),
+        'cross-origin-resource-policy': 'same-origin',
+        'cache-control': 'no-store',
+      });
+      if (request.method === 'HEAD') {
+        content.stream.destroy();
+        return reply.send();
+      }
+      return reply.send(content.stream);
+    },
+  });
+
+  // Upload (ADR-103, ADR-146): raw bytes with a Content-Type of UPLOAD_MEDIA_TYPES; any other type
+  // has no parser (415), a body over the largest limit hits the body limit (413); both map in the
+  // error handler above. The magic bytes decide the type and its limit (`uploadKind`). Guard class
+  // "mutation" (Origin, same-origin, cookie) – unchanged.
   await app.register((scope, _opts, done) => {
     scope.removeAllContentTypeParsers();
     scope.addContentTypeParser(
-      [...ATTACHMENT_MEDIA_TYPES],
-      { parseAs: 'buffer', bodyLimit: LIMITS.imageBytes },
+      [...UPLOAD_MEDIA_TYPES],
+      { parseAs: 'buffer', bodyLimit: UPLOAD_BODY_LIMIT_BYTES },
       (_request, body, parsed) => {
         parsed(null, body);
       },
     );
-    scope.post(API_PATHS.attachments, { bodyLimit: LIMITS.imageBytes }, (request, reply) => {
+    scope.post(API_PATHS.attachments, { bodyLimit: UPLOAD_BODY_LIMIT_BYTES }, (request, reply) => {
       const query = attachmentUploadQuerySchema.safeParse(request.query);
       if (!query.success) return sendError(reply, makeError('VALIDATION_FAILED', { reason: 'query' }));
       const body = request.body;
-      const declared = attachmentMediaTypeSchema.safeParse(mediaTypeEssence(request.headers['content-type']));
-      // R7: the magic bytes decide (no type spoofing, also no empty body) – they must show an image
-      // type of the API. CR2-08 (ADR-134): a declared image type that differs from them (the
-      // browser takes it from the extension: a renamed `photo.png` that is a JPEG) gives way to
-      // the real one; the SDK needs the type that matches the bytes anyway.
-      const sniffed = Buffer.isBuffer(body) ? sniffImageType(body) : null;
-      if (!Buffer.isBuffer(body) || !declared.success || sniffed === null) {
+      const declared = uploadMediaTypeSchema.safeParse(mediaTypeEssence(request.headers['content-type']));
+      if (!Buffer.isBuffer(body) || !declared.success) {
         return sendError(reply, makeError('UNSUPPORTED_MEDIA_TYPE'));
       }
       const { name, width, height } = query.data;
-      const size = width !== undefined && height !== undefined ? { width, height } : null;
-      const attachment = blobs.put(body, sniffed, name ?? null, size);
+      const kind = uploadKind(body, declared.data, name);
+      if (!kind.ok) return sendError(reply, kind.error);
+      if (body.length > kind.limit) return sendError(reply, makeError('PAYLOAD_TOO_LARGE'));
+      const isImage = kind.mediaType.startsWith('image/');
+      const size = isImage && width !== undefined && height !== undefined ? { width, height } : null;
+      const attachment = blobs.put(body, kind.mediaType, name ?? null, size);
       log.debug(
         { blobId: attachment.blobId, bytes: attachment.bytes, mediaType: attachment.mediaType },
         'upload',

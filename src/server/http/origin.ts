@@ -18,6 +18,7 @@ import { API_PATHS, API_PREFIX, allowedHosts, allowedOrigins } from '@shared/htt
  * | public-get    | GET/HEAD /api/health, /api/auth/status      | if present ∈ allowed | if present ∈ same-origin/none  | –      |
  * | not-found     | GET/HEAD without a matching route (404)     | if present ∈ allowed | if present ∈ same-origin/none  | –      |
  * | blob          | GET/HEAD /api/blob/:blobId                  | if present ∈ allowed | if present ∈ same-origin/none  | cookie |
+ * | file          | GET/HEAD /api/file (Phase 3, ADR-142)       | if present ∈ allowed | required same-origin           | cookie |
  * | auth-exchange | POST /api/auth                              | required ∈ allowed   | required same-origin           | code   |
  * | ws            | GET/HEAD /api/ws (WebSocket upgrade)        | required ∈ allowed   | if present: same-origin (V1-01)| cookie |
  * | mutation      | every other route/method (default-deny)     | required ∈ allowed   | required same-origin           | cookie |
@@ -37,7 +38,7 @@ import { API_PATHS, API_PREFIX, allowedHosts, allowedOrigins } from '@shared/htt
  */
 
 export type RouteClass =
-  'static' | 'public-get' | 'not-found' | 'blob' | 'auth-exchange' | 'launcher' | 'ws' | 'mutation';
+  'static' | 'public-get' | 'not-found' | 'blob' | 'file' | 'auth-exchange' | 'launcher' | 'ws' | 'mutation';
 
 export interface GuardContext {
   /** Port of this server (the actual listening port). */
@@ -75,6 +76,7 @@ const ROUTE_CLASSES: ReadonlyMap<string, ReadonlyMap<string, RouteClass>> = new 
   [API_PATHS.health, forMethods(READ_METHODS, 'public-get')],
   [API_PATHS.authStatus, forMethods(READ_METHODS, 'public-get')],
   [API_PATHS.blob, forMethods(READ_METHODS, 'blob')],
+  [API_PATHS.file, forMethods(READ_METHODS, 'file')],
   [API_PATHS.ws, forMethods(READ_METHODS, 'ws')],
   [API_PATHS.auth, forMethods(['POST'], 'auth-exchange')],
   [API_PATHS.launcherCode, forMethods(['POST'], 'launcher')],
@@ -154,6 +156,15 @@ export function checkRequest(request: GuardRequest, ctx: GuardContext): GuardRes
       if (site !== undefined && site !== 'same-origin' && site !== 'none')
         return reject(route, 'sec-fetch-site');
       return { ok: true, route, needsCookie: route === 'blob' };
+    }
+    case 'file': {
+      // ADR-142: file paths can be guessed (unlike blob hashes) – only the app's own pages may load
+      // them: Sec-Fetch-Site must be same-origin (missing, same-site, cross-site and none – a typed
+      // URL or a bookmark – are rejected); a present Origin must be allowed; cookie.
+      const issue = originIssue();
+      if (issue !== null) return issue;
+      if (site !== 'same-origin') return reject(route, 'sec-fetch-site');
+      return { ok: true, route, needsCookie: true };
     }
     case 'ws': {
       // V1-01: Chrome/Edge send no Sec-Fetch-Site on the WebSocket handshake. Origin (always sent

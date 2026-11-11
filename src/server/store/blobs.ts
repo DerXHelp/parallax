@@ -7,6 +7,7 @@ import { blobRefSchema, type BlobRef } from '@shared/model';
 import { sniffImageType } from '../lib/images';
 import { logger as rootLogger } from '../lib/logger';
 import { fsErrorCode } from '../lib/paths';
+import { isPdf } from '../lib/sniff';
 import type { BlobStore } from '../sync/ports';
 import { writeFileAtomic } from './jsonStore';
 
@@ -60,6 +61,14 @@ function isPixelCount(value: number): boolean {
  * upload's (pixel size given, ADR-103) a different name or size of that type – the latest upload
  * wins. A put without both (the normalizer) never replaces: otherwise the first meta wins.
  */
+/**
+ * The type the magic bytes confirm: an image type of the API, or – Phase 3 (ADR-146) – a PDF
+ * (`%PDF-`), so an uploaded PDF replaces e.g. an `application/octet-stream` meta like an image does.
+ */
+function verifiedMediaType(bytes: Uint8Array): string | null {
+  return sniffImageType(bytes) ?? (isPdf(bytes) ? 'application/pdf' : null);
+}
+
 function replacesMeta(stored: BlobRef, next: BlobRef, verified: string | null): boolean {
   if (verified === null || next.mediaType !== verified) return false;
   if (stored.mediaType !== verified) return true;
@@ -155,7 +164,7 @@ export function createBlobStore(options: BlobStoreOptions): FileBlobStore {
         ...blobMeta(mediaType, name, size),
         bytes: bytes.byteLength,
       });
-      const verified = sniffImageType(bytes);
+      const verified = verifiedMediaType(bytes);
       const known = refs.get(blobId);
       if (known !== undefined && !replacesMeta(known, ref, verified)) return known;
       refs.set(blobId, ref);
