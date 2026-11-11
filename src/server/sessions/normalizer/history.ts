@@ -189,6 +189,7 @@ class HistoryBuilder {
       summary: n.summary ?? previous.summary,
       usage: n.usage ?? previous.usage,
       endedAt: previous.endedAt ?? at,
+      outputFile: n.outputFile ?? previous.outputFile,
     };
     if (call === null) {
       this.put({ ...this.uuidBase(uuid, at, null), kind: 'system', event: 'task_notification', task });

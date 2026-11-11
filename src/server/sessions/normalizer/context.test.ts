@@ -56,7 +56,7 @@ describe('normalizeContextUsage', () => {
     isAutoCompactEnabled: true,
   };
 
-  it('keeps the SDK numbers and classifies rows by kind (unknown → deferred/used)', () => {
+  it('keeps the SDK numbers and classifies rows without id by kind (unknown → deferred/used)', () => {
     expect(normalizeContextUsage(raw, { contextWindow: null }, AT, 'full')).toEqual({
       percentage: 3,
       totalTokens: 26_702,
@@ -74,6 +74,35 @@ describe('normalizeContextUsage', () => {
       autoCompactThreshold: 967_000,
       isAutoCompactEnabled: true,
     });
+  });
+
+  it.each([
+    // [SDK row, expected kind, expected id] – a known id wins over kind/isDeferred (WP-52).
+    [{ id: 'free_space', kind: 'used' }, 'free', 'free_space'],
+    [{ id: 'autocompact_buffer' }, 'buffer', 'autocompact_buffer'],
+    [{ id: 'compact_buffer', kind: 'free' }, 'buffer', 'compact_buffer'],
+    [{ id: 'mcp_tools_deferred' }, 'deferred', 'mcp_tools_deferred'],
+    [{ id: 'system_tools_deferred', kind: 'used' }, 'deferred', 'system_tools_deferred'],
+    [{ id: 'messages', isDeferred: true }, 'used', 'messages'],
+    [{ id: 'memory_files', kind: 'used' }, 'used', 'memory_files'],
+    // Unknown id: passed through, classified like a row without id.
+    [{ id: 'future_row', kind: 'free' }, 'free', 'future_row'],
+    [{ id: 'future_deferred', isDeferred: true }, 'deferred', 'future_deferred'],
+    [{ id: 'constructor' }, 'used', 'constructor'],
+    // Without (usable) id → null, classification as before.
+    [{ kind: 'buffer' }, 'buffer', null],
+    [{ id: '', kind: 'free' }, 'free', null],
+    [{ id: 42, kind: 'deferred' }, 'deferred', null],
+    [{ id: 'x'.repeat(101) }, 'used', null],
+  ] as const)('category %j → kind %s, id %s', (row, kind, id) => {
+    const breakdown = normalizeContextUsage(
+      { categories: [{ name: 'Row', tokens: 1, color: 'x', ...row }], totalTokens: 1, maxTokens: 100 },
+      { contextWindow: null },
+      AT,
+      'summary',
+    );
+    expect(breakdown?.categories).toEqual([{ name: 'Row', tokens: 1, kind, id }]);
+    expect(contextBreakdownSchema.parse(breakdown)).toStrictEqual(breakdown);
   });
 
   it('applies the profile override of the context window (C.1)', () => {

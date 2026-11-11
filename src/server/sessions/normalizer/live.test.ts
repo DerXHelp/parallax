@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from '@shared/common';
 import type { TranscriptItem } from '@shared/model';
-import type { SessionOp } from '@shared/protocol';
+import { sessionOpSchema, type SessionOp } from '@shared/protocol';
 import { sampleId } from '@shared/samples';
 import type { LiveNormalizer, NormalizerOutput } from '../ports';
 import { createLiveNormalizer } from './index';
@@ -216,5 +216,86 @@ describe('live normalizer: sizes and tolerance', () => {
       model: 'claude-haiku-5-5',
       contextWindow: 200_000,
     });
+  });
+});
+
+describe('live normalizer: task output files and lost writes (WP-52)', () => {
+  const OUTPUT = 'C:\\Users\\user\\AppData\\Local\\Temp\\claude\\tasks\\task-1.output';
+  const agentInput = { description: 'Ping', prompt: 'Say PONG', subagent_type: 'general-purpose', run_in_background: true };
+  const system = (subtype: string, fields: Record<string, unknown>) => ({ type: 'system', subtype, uuid: `${subtype}-uuid`, session_id: SESSION, ...fields });
+  const asyncLaunched = (outputFile: string) =>
+    toolResult('toolu_agent', 'Async agent launched successfully.', false, {
+      tool_use_result: { isAsync: true, status: 'async_launched', agentId: 'task-1', description: 'Ping', prompt: 'Say PONG', outputFile },
+    });
+  const lastTask = (out: NormalizerOutput) => {
+    const call = upserts(out).findLast((i) => i.kind === 'tool_call');
+    return call?.kind === 'tool_call' ? call.task : undefined;
+  };
+  const validOps = (out: NormalizerOutput) => {
+    for (const op of out.ops) expect(sessionOpSchema.parse(op)).toStrictEqual(op);
+    return out;
+  };
+
+  it('takes AgentOutput.outputFile of the launch result and task_notification.output_file', () => {
+    const n = fresh();
+    n.push(toolUse('toolu_agent', 'Agent', agentInput), AT);
+    n.push(system('task_started', { task_id: 'task-1', tool_use_id: 'toolu_agent', task_type: 'local_agent', is_backgrounded: true }), AT);
+    expect(lastTask(validOps(n.push(asyncLaunched(OUTPUT), AT)))).toMatchObject({ taskId: 'task-1', status: 'running', outputFile: OUTPUT });
+    const done = validOps(n.push(system('task_notification', { task_id: 'task-1', tool_use_id: 'toolu_agent', status: 'completed', output_file: `${OUTPUT}2`, summary: 'PONG' }), AT));
+    expect(lastTask(done)).toMatchObject({ status: 'completed', summary: 'PONG', outputFile: `${OUTPUT}2` });
+  });
+
+  it('keeps a launch result that arrives before task_started for the task', () => {
+    const n = fresh();
+    n.push(toolUse('toolu_agent', 'Agent', agentInput), AT);
+    expect(lastTask(n.push(asyncLaunched(OUTPUT), AT))).toBeNull();
+    const started = n.push(system('task_started', { task_id: 'task-1', tool_use_id: 'toolu_agent', task_type: 'local_agent' }), AT);
+    expect(lastTask(started)).toMatchObject({ taskId: 'task-1', outputFile: OUTPUT });
+    // An empty output_file in the notification keeps the known path.
+    const done = n.push(system('task_notification', { task_id: 'task-1', tool_use_id: 'toolu_agent', status: 'stopped', output_file: '', summary: 'x' }), AT);
+    expect(lastTask(done)).toMatchObject({ status: 'stopped', outputFile: OUTPUT });
+  });
+
+  it("maps '' and missing output files to null and ignores outputFile of other tools", () => {
+    const n = fresh();
+    const empty = upserts(n.push(system('task_notification', { task_id: 'bash-1', status: 'stopped', output_file: '', summary: 's' }), AT));
+    expect(empty[0]).toMatchObject({ kind: 'system', event: 'task_notification', task: { taskId: 'bash-1', outputFile: null } });
+    const blank = upserts(n.push({ ...system('task_notification', { task_id: 'bash-2', status: 'completed', output_file: '   ' }), uuid: 'n-2' }, AT));
+    expect(blank[0]).toMatchObject({ task: { outputFile: null } });
+    const missing = upserts(n.push({ ...system('task_notification', { task_id: 'bash-3', status: 'completed', output_file: 42 }), uuid: 'n-3' }, AT));
+    expect(missing[0]).toMatchObject({ task: { outputFile: null } });
+    const tooLong = upserts(n.push({ ...system('task_notification', { task_id: 'bash-4', output_file: `C:\\${'x'.repeat(LIMITS.pathChars)}` }), uuid: 'n-4' }, AT));
+    expect(tooLong[0]).toMatchObject({ task: { outputFile: null } });
+    n.push(toolUse('toolu_bash', 'Bash', { command: 'sleep 9', run_in_background: true }), AT);
+    n.push(system('task_started', { task_id: 'bash-5', tool_use_id: 'toolu_bash', task_type: 'local_bash' }), AT);
+    const bash = n.push(toolResult('toolu_bash', 'moved', false, { tool_use_result: { backgroundTaskId: 'bash-5', outputFile: OUTPUT } }), AT);
+    expect(lastTask(bash)).toMatchObject({ taskId: 'bash-5', outputFile: null });
+  });
+
+  it('takes <output-file> of a live <task-notification> user text', () => {
+    const n = fresh();
+    const text = `<task-notification>\n<task-id>task-9</task-id>\n<output-file>${OUTPUT}</output-file>\n<status>completed</status>\n<summary>Done</summary>\n</task-notification>`;
+    const out = n.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, uuid: 'tn-1', session_id: SESSION }, AT);
+    expect(upserts(out)[0]).toMatchObject({ kind: 'system', event: 'task_notification', task: { taskId: 'task-9', outputFile: OUTPUT } });
+  });
+
+  it('turns system/session_writes_lost into an error item (tolerant of unknown values)', () => {
+    const n = fresh();
+    const out = validOps(
+      n.push(system('session_writes_lost', { error_code: 'ENOSPC', lost: ['transcript', 'global_config', 7], transcript_session_ids: [SESSION], future_field: { a: 1 } }), AT),
+    );
+    expect(upserts(out)).toEqual([
+      expect.objectContaining({
+        id: 'session_writes_lost-uuid',
+        kind: 'system',
+        event: 'error',
+        error: { code: 'SESSION_WRITES_LOST', params: { lost: 'transcript,global_config', errorCode: 'ENOSPC' } },
+      }),
+    ]);
+    // No status signal of its own (only the session id every first message carries).
+    expect(out.signals.filter((s) => s.type !== 'session_id')).toEqual([]);
+    const sparse = n.push({ type: 'system', subtype: 'session_writes_lost', lost: 'not-an-array', uuid: 'swl-2', session_id: SESSION }, AT);
+    expect(upserts(sparse)[0]).toMatchObject({ error: { code: 'SESSION_WRITES_LOST', params: { lost: '', errorCode: '' } } });
+    expect(n.unknownCounts).toEqual({});
   });
 });
