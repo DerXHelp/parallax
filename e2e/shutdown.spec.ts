@@ -4,7 +4,7 @@
  * window → "Parallax server stopped"; the process ends with 0, the lock file is gone and no child
  * process is left. Own server (the worker's server must survive).
  */
-import { ParallaxApp } from './support/app';
+import { ParallaxApp, chooseMenuItem } from './support/app';
 import { startE2eServer, type E2eServer } from './support/server';
 import { expect, keepServerLog, test } from './support/fixtures';
 
@@ -29,7 +29,7 @@ test('"Stop server…" asks first, then stops the server in every window', async
 
   // The confirmation names what is affected; "Cancel" keeps everything running.
   let menu = await app.openSettings();
-  await menu.getByRole('menuitem', { name: 'Stop server…' }).click();
+  await chooseMenuItem(menu.getByRole('menuitem', { name: 'Stop server…' }));
   let dialog = page.getByRole('dialog', { name: 'Stop the Parallax server?' });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText('Working (1)');
@@ -41,7 +41,7 @@ test('"Stop server…" asks first, then stops the server in every window', async
   await expect(working.assistantText(/Line 3 of a slow answer/)).toBeVisible();
 
   menu = await app.openSettings();
-  await menu.getByRole('menuitem', { name: 'Stop server…' }).click();
+  await chooseMenuItem(menu.getByRole('menuitem', { name: 'Stop server…' }));
   dialog = page.getByRole('dialog', { name: 'Stop the Parallax server?' });
   await dialog.getByRole('button', { name: 'Stop server' }).click();
 

@@ -4,7 +4,7 @@
  * window – so this test has its own server, the worker's server keeps English/dark.
  */
 import type { Page, TestInfo } from '@playwright/test';
-import { ParallaxApp } from './support/app';
+import { ParallaxApp, chooseMenuItem } from './support/app';
 import { startE2eServer, type E2eServer } from './support/server';
 import { expect, keepServerLog, test } from './support/fixtures';
 
@@ -23,8 +23,7 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 
 async function choose(app: ParallaxApp, item: string): Promise<void> {
   const menu = await app.openSettings();
-  await menu.getByRole('menuitemradio', { name: item }).click();
-  await expect(menu).toHaveCount(0);
+  await chooseMenuItem(menu.getByRole('menuitemradio', { name: item }));
 }
 
 test('language en/de and theme dark/light (screenshots)', async ({ page }, testInfo) => {

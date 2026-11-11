@@ -117,12 +117,12 @@ test('rename (F2, double click), context menu: pin, archive → archive view →
   await newer.send('hello again');
   await expect(newer.assistantText('Echo: hello again')).toBeVisible();
   await expect.poll(async () => (await app.rowKeys())[0]).toBe(newer.key);
-  await (await app.rowMenu(older.key)).locator('[data-action="pin"]').click();
+  await app.rowAction(older.key, 'pin');
   await expect(app.row(older.key).locator('[data-slot="row-pinned"]')).toBeVisible();
   await expect.poll(async () => (await app.rowKeys())[0]).toBe(older.key);
 
   // Archive the selected session: it leaves the list, the pane is read-only.
-  await (await app.rowMenu(newer.key)).locator('[data-action="archive"]').click();
+  await app.rowAction(newer.key, 'archive');
   await expect(app.row(newer.key)).toHaveCount(0);
   await expect(newer.pane.locator('[data-slot="pane-archived"]')).toBeVisible();
   await expect(newer.composerRoot).toHaveAttribute('data-reason', 'archived');
@@ -194,7 +194,7 @@ test('focus comes back after Esc: Ctrl+K, /status, /help, session info from "…
   await expect(session.composer).toBeFocused();
 
   // Session info from the header's "…" menu → Esc → the "…" button.
-  await (await session.headerMenu()).locator('[data-action="sessionInfo"]').click();
+  await session.headerAction('sessionInfo');
   await expect(info).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(info).toHaveCount(0);
@@ -274,7 +274,7 @@ test('"Open in new window": a new page on #session= with its own clientId (ADR-1
       resolve({ page: next, clientId: recordClientId(next) });
     });
   });
-  await (await app.rowMenu(target.key)).locator('[data-action="openWindow"]').click();
+  await app.rowAction(target.key, 'openWindow');
   await popup;
   const { page: second, clientId: secondClient } = await opened;
   await expect.poll(() => second.url()).toContain(`#session=${target.entryId}`);
