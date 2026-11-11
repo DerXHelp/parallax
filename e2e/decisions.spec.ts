@@ -7,6 +7,7 @@
  * The FakeBackend does not touch the disk: the "file effect" is the tool result the fake returns
  * after the answer (`fake-dir`, "File created successfully …"); a real file follows in WP-22.
  */
+import { chooseMenuItem } from './support/app';
 import { expect, test } from './support/fixtures';
 
 test('permission: allow once runs the tool', async ({ app, server }) => {
@@ -48,7 +49,7 @@ test('permission: deny with a reason sends the reason to Claude', async ({ app, 
   await session.send('fake:permission please');
   const card = await session.armedCard('permission');
   await card.getByRole('button', { name: 'More ways to deny' }).click();
-  await app.page.getByRole('menuitem', { name: 'Deny with a reason…' }).click();
+  await chooseMenuItem(app.page.getByRole('menuitem', { name: 'Deny with a reason…' }));
   const form = card.locator('[data-slot="deny-form"]');
   await expect(form.locator('textarea')).toBeFocused();
   await form.locator('textarea').fill('Use the existing folder instead.');
@@ -114,7 +115,7 @@ test('plan: feedback in the composer revises, v2 is implemented with the chosen 
 
   // Choose "Manual" in the ▾ menu, then implement (pointer click).
   await v2.getByRole('button', { name: 'How should Claude implement the plan?' }).click();
-  await app.page.getByRole('menuitemradio', { name: /Manual – approve each change/ }).click();
+  await chooseMenuItem(app.page.getByRole('menuitemradio', { name: /Manual – approve each change/ }));
   const approve = v2.locator('[data-action="approve"]');
   await expect(approve).toHaveText('Implement · Manual');
   await expect(approve).toHaveAttribute('data-mode', 'default');
