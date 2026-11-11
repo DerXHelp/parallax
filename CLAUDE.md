@@ -3,14 +3,14 @@
 ## Zweck
 Parallax ist eine lokale Mission-Control-App für viele parallele Claude-Code-Sessions unter Windows.
 Ein Node-Server (127.0.0.1) steuert je Session das **installierte** `claude` über das Agent SDK;
-die Web-UI (Edge im App-Modus) zeigt Status, Context, Chat und nicht-modale Entscheidungen.
+die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale Entscheidungen.
 
 ## Stack
 - Server: Node ≥ 22 (Standard 26), TypeScript, Fastify 5 + `@fastify/websocket`, zod 4, pino 10,
   `@anthropic-ai/claude-agent-sdk` **exakt 0.3.322** (Plattform-Binaries per pnpm ausgeschlossen).
 - Web: Vite 8, React 19, Tailwind v4, shadcn/ui (`radix-ui`), lucide-react, Zustand,
   react-markdown/streamdown, shiki, diff, virtua. Fonts lokal (@fontsource-variable).
-- Tests: Vitest 5 (Projekte `node` + `web`/happy-dom), Playwright mit `channel: 'msedge'`.
+- Tests: Vitest 5 (Projekte `node` + `web`/happy-dom), Playwright mit `channel: 'chrome'`.
 - Paketmanager: pnpm 12.8.2. Einstellungen in `pnpm-workspace.yaml`, nie in `package.json`.
 
 ## Befehle
@@ -21,10 +21,10 @@ die Web-UI (Edge im App-Modus) zeigt Status, Context, Chat und nicht-modale Ents
 | `pnpm dev:web` | nur Vite; Playground `#playground`; im Worktree eigener Port per `PARALLAX_DEV_WEB_PORT` |
 | `pnpm dev:live` | wie `dev`, aber SdkBackend (echtes `claude`) – nur mit WP-Freigabe |
 | `pnpm build` | `dist/web` (Vite) + `dist/server.js` (esbuild) |
-| `pnpm start` | Launcher: Build bei Bedarf, Server unsichtbar, Edge; ohne `claude`: `PARALLAX_BACKEND=fake` + eigenes `PARALLAX_HOME` |
+| `pnpm start` | Launcher: Build bei Bedarf, Server unsichtbar, Chrome; ohne `claude`: `PARALLAX_BACKEND=fake` + eigenes `PARALLAX_HOME` |
 | `pnpm check` | typecheck (`tsc -b`) + lint + test – muss vor jedem Commit grün sein |
 | `pnpm typecheck` / `lint` / `test` / `format` | Einzelschritte; eigene Pfade: `pnpm exec eslint <pfade>`, `pnpm exec vitest run <pfade>` |
-| `pnpm e2e` | Playwright in Edge gegen den Server-Build mit FakeBackend (ohne `e2e/live`) |
+| `pnpm e2e` | Playwright in Chrome gegen den Server-Build mit FakeBackend (ohne `e2e/live`) |
 | `$env:PARALLAX_LIVE='1'; pnpm e2e e2e/live` | Live-Smoke gegen das echte `claude` – nur mit Nutzer-Freigabe; SDK-/CLI-Upgrade: `docs/sdk-upgrade.md` |
 | `pnpm preflight` / `pnpm record <szenario>` | Umgebungscheck (WP-11) / Fixture-Recorder (WP-01) |
 

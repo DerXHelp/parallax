@@ -1,6 +1,6 @@
 /**
  * Window-wide drop guard (R4W-02): a file dropped next to the composer – on the transcript, the
- * sidebar, the header – would make Edge open it in the app window (`file:///…png`), Parallax and
+ * sidebar, the header – would make Chrome open it in the app window (`file:///…png`), Parallax and
  * its connection would be gone. A dragged link does the same unless it lands in a text field.
  *
  * Drop zones (the composer) handle `dragover`/`drop` themselves and call `preventDefault()`; this

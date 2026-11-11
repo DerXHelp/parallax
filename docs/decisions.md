@@ -1522,3 +1522,18 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
 - **Folgen:** Mindestens zwei Pool-Threads bleiben für den Server frei. Ein nie gesehenes Laufwerk
   hinter zwei hängenden fehlt, bis es geprüft ist. Ein entferntes Laufwerk kann in dieser Zeit noch
   erscheinen (Öffnen → `CWD_NOT_FOUND`). Umsetzung: `host/fsCommands.ts`.
+## ADR-136 – App-Fenster nur noch in Google Chrome (ersetzt Edge)
+- **Datum/WP:** 11.11.2026, Nutzer-Entscheidung, Umsetzung `docs/wp/CHROME.md`. Ersetzt die
+  Edge-spezifischen Teile von ADR-060, ADR-082 und ADR-120 (Profil, Anmelde-Sperren, Fundort);
+  deren Chromium-generische Mechanik (eigenes `--user-data-dir`, Benachrichtigungs-Freigabe über die
+  Profil-Prefs, `--autoplay-policy=no-user-gesture-required`, `--disable-sync`) gilt für Chrome weiter.
+- **Kontext:** Edge wurde gewählt, weil es auf jedem Windows vorinstalliert ist. Der Nutzer hat
+  Chrome auf jedem Rechner, auf dem er Parallax nutzt, und bevorzugt es.
+- **Entscheidung:** Der Launcher öffnet das App-Fenster ausschließlich in Chrome (eigenes Profil
+  `<home>\chrome`). Keine Umschaltung (keine Startoption, keine Einstellung), kein Rückfall auf Edge:
+  ohne Chrome meldet der Launcher einen Fehler (`--print-url` bleibt als Ausweg). `pnpm preflight`
+  prüft Chrome und dessen Richtlinien. E2E-Tests laufen in Chrome (Playwright `channel: 'chrome'`).
+  Das alte Profil `<home>\edge` wird nicht automatisch gelöscht.
+- **Folgen:** Chrome ist Voraussetzung. Benachrichtigungen kommen voraussichtlich über das
+  Windows-Benachrichtigungssystem statt als Edge-eigene Popups (live zu prüfen, Nutzer-Checkliste).
+  Firmen-Richtlinien für Chrome (`Policies\Google\Chrome`) können Schalter übersteuern.

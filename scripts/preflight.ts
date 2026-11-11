@@ -5,7 +5,9 @@
  * Checks (docs/plan.md "Paketmanager: pnpm 12", "Claude-Profile"): Node version (fail < 22, warn
  * if not 26), pnpm version, registry (`pnpm config get registry`), Agent SDK, for every profile
  * the resolved `claude` path + version (C.7) and the login (`claude auth status --json`, only
- * method/provider/subscription – never e-mail or organization), Microsoft Edge, and whether other
+ * method/provider/subscription – never e-mail or organization), Google Chrome (path and version
+ * from its version resource – chrome.exe is never started) with the Chrome policies that override
+ * the app window (ADR-136), and whether other
  * users can read the data folder (R2-13; `--home=<dir>` / PARALLAX_HOME like the server, default
  * %LOCALAPPDATA%\Parallax). The profiles are those of the data folder's `profiles.json`, read
  * without writing anything (WP-32; missing or newer file → only "Standard"), each with its

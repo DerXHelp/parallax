@@ -9,7 +9,7 @@ import {
   sampleUuid,
 } from '@shared/samples';
 import type { HealthCheck, LauncherCodeResult, RunningServerCheck } from './client';
-import { edgeAppArgs, edgeProfileDir } from './edgeWindow';
+import { chromeAppArgs, chromeProfileDir } from './chromeWindow';
 import {
   CODE_RETRY_DELAYS_MS,
   LauncherError,
@@ -21,7 +21,7 @@ import {
 import type { ServerExit, StartedServer } from './serverProcess';
 
 const HOME = 'C:\\Users\\u\\AppData\\Local\\Temp\\parallax-test\\home';
-const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const SERVER_PID = 5150;
 
 const options = (p: Partial<LauncherOptions> = {}): LauncherOptions => ({
@@ -47,7 +47,7 @@ const okHealth = (lock: ServerLockFile, p: Parameters<typeof sampleHealthRespons
 interface World {
   deps: LauncherDeps;
   out: string[];
-  edgeCalls: { edge: string; args: readonly string[] }[];
+  chromeCalls: { chrome: string; args: readonly string[] }[];
   /** allowNotifications calls (WP22-03). */
   grants: { home: string; origin: string }[];
   started: (readonly string[])[];
@@ -68,7 +68,7 @@ function world(w: WorldOptions = {}): World {
   let now = 0;
   const state: Omit<World, 'deps'> = {
     out: [],
-    edgeCalls: [],
+    chromeCalls: [],
     grants: [],
     started: [],
     builds: 0,
@@ -147,12 +147,11 @@ function world(w: WorldOptions = {}): World {
     },
     readServerOutput: () =>
       Promise.resolve(w.onStart !== undefined && 'output' in w.onStart ? (w.onStart.output ?? '') : ''),
-    locateEdge: () => Promise.resolve(EDGE),
-    openEdge: (edge, args) => {
-      state.edgeCalls.push({ edge, args });
+    locateChrome: () => Promise.resolve(CHROME),
+    openChrome: (chrome, args) => {
+      state.chromeCalls.push({ chrome, args });
       return Promise.resolve({ pid: 777 });
     },
-    edgeProfileSignedIn: () => Promise.resolve(false),
     allowNotifications: (home, origin) => {
       state.grants.push({ home, origin });
       return Promise.resolve({ kind: 'granted' });
@@ -183,7 +182,7 @@ function codeOf(url: string): string | null {
 }
 
 describe('launcher: fresh start (architecture §5.1 (h))', () => {
-  it('starts the server, waits for lock + health, opens an Edge app window with a code', async () => {
+  it('starts the server, waits for lock + health, opens a Chrome app window with a code', async () => {
     const w = world();
     const result = await runLauncher(options(), w.deps);
     expect(result).toEqual({
@@ -191,23 +190,24 @@ describe('launcher: fresh start (architecture §5.1 (h))', () => {
       port: 4711,
       pid: SERVER_PID,
       url: null,
-      edgePid: 777,
+      chromePid: 777,
       window: true,
     });
     expect(w.started).toEqual([[`--home=${HOME}`, '--port=4711']]);
     expect(w.builds).toBe(0);
-    expect(w.edgeCalls).toHaveLength(1);
-    const args = w.edgeCalls[0]?.args ?? [];
-    expect(w.edgeCalls[0]?.edge).toBe(EDGE);
-    // The own profile without sign-in/sync (V2-01), the code URL last.
-    expect(args.slice(0, -1)).toEqual(edgeAppArgs({ home: HOME, url: 'x' }).slice(0, -1));
-    expect(args).toContain(`--user-data-dir=${edgeProfileDir(HOME)}`);
+    expect(w.chromeCalls).toHaveLength(1);
+    const args = w.chromeCalls[0]?.args ?? [];
+    expect(w.chromeCalls[0]?.chrome).toBe(CHROME);
+    // The own profile without sign-in/sync (ADR-060/136), the code URL last.
+    expect(args.slice(0, -1)).toEqual(chromeAppArgs({ home: HOME, url: 'x' }).slice(0, -1));
+    expect(args).toContain(`--user-data-dir=${chromeProfileDir(HOME)}`);
     expect(args).toContain('--disable-sync');
+    expect(args).toContain('--allow-browser-signin=false');
     expect(args.at(-1)).toMatch(/^--app=http:\/\/127\.0\.0\.1:4711\/#code=[A-Za-z0-9_-]{43}$/);
     expect(codeOf((args.at(-1) ?? '').slice('--app='.length))).not.toBeNull();
   });
 
-  it('WP22-03: allows notifications for the server origin in the own profile before Edge opens', async () => {
+  it('WP22-03: allows notifications for the server origin in the own profile before Chrome opens', async () => {
     const w = world();
     await runLauncher(options(), w.deps);
     expect(w.grants).toEqual([{ home: HOME, origin: 'http://127.0.0.1:4711' }]);
@@ -216,17 +216,8 @@ describe('launcher: fresh start (architecture §5.1 (h))', () => {
       overrides: { allowNotifications: () => Promise.resolve({ kind: 'skipped', reason: 'locked' }) },
     });
     await runLauncher(options(), skipped.deps);
-    expect(skipped.edgeCalls).toHaveLength(1);
+    expect(skipped.chromeCalls).toHaveLength(1);
     expect(skipped.out.join('\n')).toContain('notifications could not be allowed');
-  });
-
-  it('a profile signed in by an earlier version gets a note (V2-01); a fresh one none', async () => {
-    const w = world({ overrides: { edgeProfileSignedIn: () => Promise.resolve(true) } });
-    await runLauncher(options(), w.deps);
-    expect(w.out.join('\n')).toContain('is signed in to an account from an earlier Parallax version');
-    const fresh = world();
-    await runLauncher(options(), fresh.deps);
-    expect(fresh.out.join('\n')).not.toContain('signed in');
   });
 
   it('with port 0 skips the port probe and uses the port from the lock file', async () => {
@@ -244,7 +235,7 @@ describe('launcher: fresh start (architecture §5.1 (h))', () => {
     expect(probed).toBe(false);
     expect(result.port).toBe(51234);
     expect(result.url).toMatch(/^http:\/\/127\.0\.0\.1:51234\/#code=/);
-    expect(w.edgeCalls).toEqual([]);
+    expect(w.chromeCalls).toEqual([]);
     expect(w.out.join('\n')).toContain('within 60 seconds');
   });
 
@@ -311,7 +302,7 @@ describe('launcher: server already running (architecture §5.1 (i))', () => {
     expect(result).toMatchObject({ mode: 'existing', port: 4711, pid: 4242 });
     expect(w.started).toEqual([]);
     expect(buildChecked).toBe(false);
-    expect(w.edgeCalls).toHaveLength(1);
+    expect(w.chromeCalls).toHaveLength(1);
   });
 
   it('hints at a different requested port and at an older running build', async () => {
@@ -462,7 +453,7 @@ describe('launcher: start failures', () => {
     expect(error.exitCode).toBe(3);
     expect(error.message).toContain('Update Parallax');
     expect(error.message).toContain('Server output: sessions.json was written by a newer Parallax');
-    expect(w.edgeCalls).toEqual([]);
+    expect(w.chromeCalls).toEqual([]);
   });
 
   it('exit code 4 or EADDRINUSE in the output = port in use (race after the probe)', async () => {
@@ -492,7 +483,7 @@ describe('launcher: start failures', () => {
       };
       const result = await runLauncher(options(), w.deps);
       expect(result).toMatchObject({ mode: 'existing', pid: 6000 });
-      expect(w.edgeCalls).toHaveLength(1);
+      expect(w.chromeCalls).toHaveLength(1);
     }
   });
 
@@ -530,22 +521,24 @@ describe('launcher: start failures', () => {
   });
 });
 
-describe('launcher: Edge', () => {
-  it('Edge not found: the server keeps running, the message offers --print-url', async () => {
-    const w = world({ overrides: { locateEdge: () => Promise.resolve(null) } });
+describe('launcher: Chrome (ADR-136)', () => {
+  it('Chrome not found: no other browser, the server keeps running, the message offers --print-url', async () => {
+    const w = world({ overrides: { locateChrome: () => Promise.resolve(null) } });
     const error = await failure(runLauncher(options(), w.deps));
-    expect(error.reason).toBe('edge_not_found');
-    expect(error.message).toContain('Microsoft Edge was not found');
+    expect(error.reason).toBe('chrome_not_found');
+    expect(error.exitCode).toBe(1);
+    expect(error.message).toContain('Google Chrome was not found');
+    expect(error.message).toContain('Install Google Chrome');
     expect(error.message).toContain('--print-url');
     expect(error.message).toContain(`PID ${String(SERVER_PID)}`);
     // The code never appears in an error message.
     expect(error.message).not.toContain('#code=');
   });
 
-  it('Edge cannot be started', async () => {
-    const w = world({ overrides: { openEdge: () => Promise.reject(new Error('spawn EACCES')) } });
+  it('Chrome cannot be started', async () => {
+    const w = world({ overrides: { openChrome: () => Promise.reject(new Error('spawn EACCES')) } });
     const error = await failure(runLauncher(options(), w.deps));
-    expect(error.reason).toBe('edge_failed');
+    expect(error.reason).toBe('chrome_failed');
     expect(error.message).toContain('spawn EACCES');
   });
 });
@@ -563,7 +556,7 @@ describe('launcher: backend of a running server (R3-02)', () => {
     expect(error.message).toContain('real claude backend (--backend=sdk)');
     expect(error.message).toContain('"parallax --backend=fake" opens a window of it');
     expect(error.message).toContain('PID 4242');
-    expect(w.edgeCalls).toEqual([]);
+    expect(w.chromeCalls).toEqual([]);
   });
 
   it('the same backend, an unknown one (older server) or no request open the window', async () => {
@@ -579,7 +572,7 @@ describe('launcher: backend of a running server (R3-02)', () => {
         w.deps,
       );
       expect(result.mode).toBe('existing');
-      expect(w.edgeCalls).toHaveLength(1);
+      expect(w.chromeCalls).toHaveLength(1);
     }
   });
 });
@@ -600,7 +593,7 @@ describe('launcher: concurrent starts (R3-04)', () => {
     const result = await runLauncher(options(), w.deps);
     expect(result).toMatchObject({ mode: 'existing', pid: 6000 });
     expect(w.started).toEqual([]);
-    expect(w.edgeCalls).toHaveLength(1);
+    expect(w.chromeCalls).toHaveLength(1);
     expect(w.out[0]).toContain('by another launcher - waiting for it');
   });
 
@@ -618,7 +611,7 @@ describe('launcher: concurrent starts (R3-04)', () => {
     await failure(
       runLauncher(
         options(),
-        world({ overrides: { acquireLaunchLock: lock, locateEdge: () => Promise.resolve(null) } }).deps,
+        world({ overrides: { acquireLaunchLock: lock, locateChrome: () => Promise.resolve(null) } }).deps,
       ),
     );
     expect(released).toBe(2);
@@ -721,7 +714,7 @@ describe('launcher: Phase 2 --open and --autostart (ADR-109, ADR-110)', () => {
   it('--open: the window URL selects the session (fresh start, running server, --print-url)', async () => {
     const fresh = world();
     await runLauncher(options({ entryId: ENTRY }), fresh.deps);
-    const app = fresh.edgeCalls[0]?.args.at(-1) ?? '';
+    const app = fresh.chromeCalls[0]?.args.at(-1) ?? '';
     expect(app).toMatch(
       new RegExp(`^--app=http://127\\.0\\.0\\.1:4711/#code=[A-Za-z0-9_-]{43}&session=${ENTRY}$`),
     );
@@ -737,7 +730,7 @@ describe('launcher: Phase 2 --open and --autostart (ADR-109, ADR-110)', () => {
     expect(existing.started).toEqual([]);
   });
 
-  it('--autostart without a window: the server starts, no code, no Edge', async () => {
+  it('--autostart without a window: the server starts, no code, no Chrome', async () => {
     let codes = 0;
     const w = world();
     const requestCode = w.deps.requestCode.bind(w.deps);
@@ -751,12 +744,12 @@ describe('launcher: Phase 2 --open and --autostart (ADR-109, ADR-110)', () => {
       port: 4711,
       pid: SERVER_PID,
       url: null,
-      edgePid: null,
+      chromePid: null,
       window: false,
     });
     expect(w.started).toHaveLength(1);
     expect(codes).toBe(0);
-    expect(w.edgeCalls).toEqual([]);
+    expect(w.chromeCalls).toEqual([]);
     expect(w.grants).toEqual([]);
     // A server that already runs: nothing at all.
     const running = sampleServerLockFile({ port: 4711, pid: 4242 });
@@ -765,15 +758,15 @@ describe('launcher: Phase 2 --open and --autostart (ADR-109, ADR-110)', () => {
       mode: 'existing',
       window: false,
     });
-    expect(again.edgeCalls).toEqual([]);
+    expect(again.chromeCalls).toEqual([]);
   });
 
   it('--autostart with a window: like a normal start', async () => {
     const w = world();
     expect(await runLauncher(options({ openWindow: true }), w.deps)).toMatchObject({
       window: true,
-      edgePid: 777,
+      chromePid: 777,
     });
-    expect(w.edgeCalls).toHaveLength(1);
+    expect(w.chromeCalls).toHaveLength(1);
   });
 });

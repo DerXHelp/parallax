@@ -4,7 +4,7 @@
  * 0. One launcher per data directory at a time (R3-04, ADR-062): a double click waits for the
  *    first launcher (named-pipe lock per home) and then finds its server.
  * 1. Single instance: lock file → `GET /api/health` with the instance UUID (never the PID).
- *    Running → one-time code via `POST /api/launcher/code` → only another Edge window – unless that
+ *    Running → one-time code via `POST /api/launcher/code` → only another Chrome window – unless that
  *    server runs another backend than requested (R3-02: clear error instead of a silent window).
  * 2. Otherwise: build `dist` if missing/stale (build id; one build per checkout at a time), check
  *    the port, start the server hidden and detached, wait until its lock file (same PID) and health
@@ -48,15 +48,13 @@ import {
   type RunningServerCheck,
 } from './client';
 import {
-  edgeAppArgs,
-  edgeProfileDir,
-  edgeProfileSignedIn,
-  grantEdgeNotifications,
-  locateEdge,
-  openEdgeWindow,
+  chromeAppArgs,
+  grantChromeNotifications,
+  locateChrome,
+  openChromeWindow,
   type NotificationGrant,
   type SpawnFn,
-} from './edgeWindow';
+} from './chromeWindow';
 import { SERVER_EXIT_CODES } from './exitCodes';
 import { readServerLock, serverLockPath, type LockReadResult } from './lockFile';
 import {
@@ -79,8 +77,8 @@ export type LauncherErrorReason =
   | 'server_exited'
   | 'server_timeout'
   | 'launcher_code_failed'
-  | 'edge_not_found'
-  | 'edge_failed'
+  | 'chrome_not_found'
+  | 'chrome_failed'
   | 'backend_mismatch'
   | 'launch_busy'
   | 'build_busy';
@@ -118,11 +116,10 @@ export interface LauncherDeps {
   startServer(args: readonly string[]): Promise<StartedServer>;
   /** server.out.log since `offset` (the started server's own output). */
   readServerOutput(offset: number): Promise<string>;
-  locateEdge(): Promise<string | null>;
-  openEdge(edgePath: string, args: readonly string[]): Promise<{ pid: number | null }>;
-  /** Is the Edge profile of `home` signed in to an account (from a version before V2-01)? */
-  edgeProfileSignedIn(home: string): Promise<boolean>;
-  /** WP22-03: Web Notifications allowed for `origin` in the own Edge profile (never throws). */
+  /** Absolute chrome.exe (lib/chrome.ts `findChrome`) or null. */
+  locateChrome(): Promise<string | null>;
+  openChrome(chromePath: string, args: readonly string[]): Promise<{ pid: number | null }>;
+  /** WP22-03: Web Notifications allowed for `origin` in the own Chrome profile (never throws). */
   allowNotifications(home: string, origin: string): Promise<NotificationGrant>;
   sleep(ms: number): Promise<void>;
   now(): number;
@@ -139,7 +136,7 @@ export interface LauncherOptions {
   serverArgs: readonly string[];
   /** Check `dist` and build if needed (false: `--no-build`). */
   build: boolean;
-  /** Print the URL with the one-time code instead of opening Edge (`--print-url`). */
+  /** Print the URL with the one-time code instead of opening Chrome (`--print-url`). */
   printUrl: boolean;
   /**
    * Requested backend (R3-02): a running server with another one is an error, not a window.
@@ -171,8 +168,8 @@ export interface LauncherResult {
   pid: number;
   /** Only with `printUrl`. */
   url: string | null;
-  /** PID of the started msedge.exe (null with `printUrl` or without a window). */
-  edgePid: number | null;
+  /** PID of the started chrome.exe (null with `printUrl` or without a window). */
+  chromePid: number | null;
   /** False when `openWindow: false` skipped code and window (autostart). */
   window: boolean;
 }
@@ -512,7 +509,7 @@ async function handleExit(
 
 /**
  * Waits before the 2nd/3rd/4th code request (R2-14): right after its start the server is busy
- * (recovery, orphan check, Edge) and a single 2-s request may time out. Never for `token_invalid`.
+ * (recovery, orphan check, Chrome) and a single 2-s request may time out. Never for `token_invalid`.
  */
 export const CODE_RETRY_DELAYS_MS: readonly number[] = [250, 750, 1_500];
 
@@ -534,7 +531,7 @@ async function openWindow(
 ): Promise<LauncherResult> {
   const base = { mode, port: lock.port, pid: lock.pid };
   // Autostart without a window (ADR-110): the server runs, native toasts work – nothing else to do.
-  if (options.openWindow === false) return { ...base, url: null, edgePid: null, window: false };
+  if (options.openWindow === false) return { ...base, url: null, chromePid: null, window: false };
   const code = await requestCodeWithRetry(lock, deps);
   if (code.kind !== 'ok') {
     throw new LauncherError(
@@ -554,40 +551,34 @@ async function openWindow(
   );
   if (options.printUrl) {
     deps.out(`Open this address within 60 seconds (one-time sign-in code): ${url}`);
-    return { ...base, url, edgePid: null, window: true };
+    return { ...base, url, chromePid: null, window: true };
   }
-  const edge = await deps.locateEdge();
-  if (edge === null) {
+  // ADR-136: Chrome only – no fallback to another browser; --print-url stays the way out.
+  const chrome = await deps.locateChrome();
+  if (chrome === null) {
     throw new LauncherError(
-      'edge_not_found',
-      `Microsoft Edge was not found (App Paths in HKCU/HKLM, Program Files). The Parallax server runs on ` +
-        `port ${String(lock.port)} (PID ${String(lock.pid)}). Install Edge, or start the launcher with ` +
-        '--print-url and open the printed address in a Chromium-based browser within 60 seconds.',
+      'chrome_not_found',
+      `Google Chrome was not found (App Paths in HKCU/HKLM, Program Files, %LOCALAPPDATA%). The Parallax ` +
+        `server runs on port ${String(lock.port)} (PID ${String(lock.pid)}). Install Google Chrome, or start ` +
+        'the launcher with --print-url and open the printed address in a Chromium-based browser within ' +
+        '60 seconds.',
     );
   }
-  if (await deps.edgeProfileSignedIn(options.home)) {
-    // V2-01: new profiles never sign in; one from an earlier version may still be (sync stays off).
-    deps.out(
-      `Note: the Parallax Edge profile (${edgeProfileDir(options.home)}) is signed in to an account from an ` +
-        'earlier Parallax version. Sync stays off; to remove the account, sign out in that window ' +
-        '(... > Settings > Profiles) or close all Parallax windows and delete that folder.',
-    );
-  }
-  // WP22-03: the app window cannot show Edge's permission prompt – allow the own origin up front.
+  // WP22-03: the app window cannot show Chrome's permission prompt – allow the own origin up front.
   const grant = await deps.allowNotifications(options.home, serverOrigin(lock.port));
   if (grant.kind === 'skipped') {
     deps.out(
-      `Note: notifications could not be allowed in the Parallax Edge profile (${grant.reason}); ` +
+      `Note: notifications could not be allowed in the Parallax Chrome profile (${grant.reason}); ` +
         'Parallax uses Windows notifications instead.',
     );
   }
   try {
-    const { pid } = await deps.openEdge(edge, edgeAppArgs({ home: options.home, url }));
-    return { ...base, url: null, edgePid: pid, window: true };
+    const { pid } = await deps.openChrome(chrome, chromeAppArgs({ home: options.home, url }));
+    return { ...base, url: null, chromePid: pid, window: true };
   } catch (error) {
     throw new LauncherError(
-      'edge_failed',
-      `Microsoft Edge (${edge}) could not be started: ${error instanceof Error ? error.message : String(error)}. ` +
+      'chrome_failed',
+      `Google Chrome (${chrome}) could not be started: ${error instanceof Error ? error.message : String(error)}. ` +
         'Company policies may block --user-data-dir or app windows.',
     );
   }
@@ -603,8 +594,8 @@ export interface NodeLauncherDepsOptions {
   nodePath?: string;
   env?: NodeJS.ProcessEnv;
   out?: (line: string) => void;
-  /** Edge spawn (default lib/process spawnHidden, see edgeWindow.ts). */
-  spawnEdge?: SpawnFn;
+  /** Chrome spawn (default lib/process spawnHidden, see chromeWindow.ts). */
+  spawnChrome?: SpawnFn;
 }
 
 /** One non-blocking try of the named-pipe lock `kind` of `dir` (held until released or exit). */
@@ -641,10 +632,9 @@ export function createNodeLauncherDeps(options: NodeLauncherDepsOptions): Launch
         env,
       }),
     readServerOutput: (offset) => readServerOutput(options.home, offset),
-    locateEdge: () => locateEdge(env),
-    openEdge: (edgePath, args) => openEdgeWindow(edgePath, args, options.spawnEdge),
-    edgeProfileSignedIn: (home) => edgeProfileSignedIn(home),
-    allowNotifications: (home, origin) => grantEdgeNotifications(home, origin),
+    locateChrome: () => locateChrome(env),
+    openChrome: (chromePath, args) => openChromeWindow(chromePath, args, options.spawnChrome),
+    allowNotifications: (home, origin) => grantChromeNotifications(home, origin),
     sleep,
     now: () => Date.now(),
     out: options.out ?? ((line) => process.stdout.write(`${line}\n`)),

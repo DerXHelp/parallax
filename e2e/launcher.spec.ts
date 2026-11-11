@@ -1,9 +1,9 @@
 /**
  * The real start path (`pnpm start` = launcher, WP-21) with the FakeBackend: the launcher checks
  * the build, starts `dist/server.js` hidden and detached, waits for lock file + health, fetches a
- * one-time code and prints the sign-in address (`--print-url` instead of an Edge window). The test
+ * one-time code and prints the sign-in address (`--print-url` instead of a Chrome window). The test
  * waits for the launcher's `exit` (not for its output to end – the detached server inherits the
- * handles, docs/wp/WP-20a.md gap 3), opens the address in Edge and stops the server again.
+ * handles, docs/wp/WP-20a.md gap 3), opens the address in Chrome and stops the server again.
  */
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, open, readFile, rm } from 'node:fs/promises';

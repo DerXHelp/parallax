@@ -142,7 +142,7 @@ describe('sounds without an interaction when the browser allows it (WP41-01, ADR
     Object.defineProperty(navigator, 'getAutoplayPolicy', { configurable: true, value: () => answer });
   }
 
-  it("Parallax' Edge window (a new context runs at once): the first sound plays and unlocks before it settles", async () => {
+  it("Parallax' Chrome window (a new context runs at once): the first sound plays and unlocks before it settles", async () => {
     const listener = vi.fn();
     subscribeAudioUnlock(listener);
     expect(audioState()).toBe('locked');

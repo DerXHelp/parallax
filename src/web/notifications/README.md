@@ -4,7 +4,8 @@ Der Server wählt je Ereignis genau ein Fenster und den Kanal (`notify{delivery:
 `src/server/sessions/notifier.ts`) und wendet dabei die Einstellungen an (ADR-109: „Nicht stören“,
 Toast je Ereignis, Fokus-Regel `focusedElsewhere`, Fertig-Schwelle). Dieses Fenster zeigt die
 Benachrichtigung genau einmal – als In-App-Hinweis über die Notices-API (`state/notices.ts`, Region
-des `NotificationCenter`) oder als Web Notification (Edge zeigt sie als eigenes Popup unten rechts) –
+des `NotificationCenter`) oder als Web Notification (Chrome zeigt sie, vermutlich über das
+Windows-Benachrichtigungssystem – live zu prüfen, ADR-136) –
 und spielt den Ton. Präsenz (Fokus, Sichtbarkeit, angezeigte Session, Tippen und ob dieses Fenster
 Web Notifications zeigen darf – `systemNotifications`) meldet `state/presence.ts` +
 `state/connection.ts`.
@@ -45,7 +46,7 @@ Regeln:
 - Toast-Klick: `window.focus()`, Session wählen (`#session=…`), Toast schließen.
 - Berechtigung nur auf Klick: Hinweis-Banner „Benachrichtigungen aktivieren“ (`ShellBanners`) bzw.
   Eintrag im Einstellungsmenü, solange sie `default` ist. Ohne Berechtigung bleibt alles in-app.
-- WP22-03/-15 (ADR-082): Im Edge-App-Fenster kann Edge die Berechtigungsanfrage nicht anzeigen
+- WP22-03/-15 (ADR-082): Im Chrome-App-Fenster kann Chrome die Berechtigungsanfrage nicht anzeigen
   (Chip in der fehlenden Adressleiste) – der Launcher erlaubt den eigenen Origin deshalb vorab im
   eigenen Profil. Darf ein Fenster trotzdem keine Web Notifications zeigen oder ist gar kein
   Fenster offen, zeigt der **Server** einen nativen Windows-Toast (Absender „Parallax“,

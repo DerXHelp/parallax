@@ -14,7 +14,7 @@ import { serverOutLogPath } from './serverProcess';
  * End to end with real processes: the launcher spawns a FAKE server script (temp folder) instead
  * of dist/server.js – detached, hidden, stdout into server.out.log – and talks to it over HTTP.
  * The fake speaks the launcher-relevant contract: lock file after listen, GET /api/health,
- * POST /api/launcher/code (Bearer token, no Origin). Edge is replaced by a recorder.
+ * POST /api/launcher/code (Bearer token, no Origin). Chrome is replaced by a recorder.
  * PARALLAX_HOME is a temp folder, the port 0.
  */
 const FAKE_SERVER = `
@@ -127,8 +127,8 @@ async function harness(mode = 'ok', options: { home?: string; delayMs?: number }
     env: { ...process.env, FAKE_SERVER_MODE: mode, FAKE_SERVER_DELAY_MS: String(options.delayMs ?? 0) },
     out: (line) => out.push(line),
   });
-  deps.locateEdge = () => Promise.resolve('C:\\Edge\\msedge.exe');
-  deps.openEdge = (_edge, args) => {
+  deps.locateChrome = () => Promise.resolve('C:\\Chrome\\chrome.exe');
+  deps.openChrome = (_chrome, args) => {
     const app = args.find((arg) => arg.startsWith('--app='));
     windows.push(app?.slice('--app='.length) ?? '');
     return Promise.resolve({ pid: null });
