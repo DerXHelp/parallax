@@ -6,12 +6,22 @@ import { currentModelOption, toModelCatalog } from './models';
 describe('toModelCatalog (F.12, R0-05)', () => {
   it('maps the recorded supportedModels answer schema-true, resolvedModel kept aside', () => {
     const catalog = toModelCatalog(FAKE_MODELS);
+    // FAKE_MODELS = CLI 2.1.322 (auth-probe, WP-52): aliases first, then full model ids.
     expect(catalog.options.map((o) => o.value)).toEqual([
       'default',
       'opus',
-      'claude-fable-5-1[1m]',
+      'fable',
       'sonnet',
       'haiku',
+      'claude-fable-5-1',
+      'claude-haiku-4-5-20251001',
+      'claude-sonnet-5',
+      'claude-opus-5',
+      'claude-fable-5',
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+      'claude-opus-4-6',
+      'claude-sonnet-4-6',
     ]);
     for (const option of catalog.options) expect(modelOptionSchema.parse(option)).toEqual(option);
     expect(catalog.resolved.haiku).toBe('claude-haiku-5-5');

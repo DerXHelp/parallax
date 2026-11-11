@@ -14,55 +14,55 @@
           "name": "System prompt",
           "tokens": 3520,
           "kind": "used",
-          "id": null
+          "id": "system_prompt"
         },
         {
           "name": "System tools",
           "tokens": 11015,
           "kind": "used",
-          "id": null
+          "id": "system_tools"
         },
         {
           "name": "MCP server instructions",
           "tokens": 631,
           "kind": "used",
-          "id": null
+          "id": "mcp_instructions"
         },
         {
           "name": "MCP tools (deferred)",
           "tokens": 1876,
           "kind": "deferred",
-          "id": null
+          "id": "mcp_tools_deferred"
         },
         {
           "name": "System tools (deferred)",
           "tokens": 19802,
           "kind": "deferred",
-          "id": null
+          "id": "system_tools_deferred"
         },
         {
           "name": "Skills",
           "tokens": 5674,
           "kind": "used",
-          "id": null
+          "id": "skills"
         },
         {
           "name": "Messages",
           "tokens": 11569,
           "kind": "used",
-          "id": null
+          "id": "messages"
         },
         {
           "name": "Autocompact buffer",
           "tokens": 33000,
           "kind": "buffer",
-          "id": null
+          "id": "autocompact_buffer"
         },
         {
           "name": "Free space",
           "tokens": 934591,
           "kind": "free",
-          "id": null
+          "id": "free_space"
         }
       ],
       "autoCompactThreshold": 967000,

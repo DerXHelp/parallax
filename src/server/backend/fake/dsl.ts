@@ -192,7 +192,7 @@ function startOf(block: Block): Record<string, unknown> {
   }
 }
 
-function deltasOf(block: Block, count: number): Record<string, unknown>[] {
+function deltasOf(block: Block, count: number, inputChunks: number | undefined): Record<string, unknown>[] {
   switch (block.type) {
     case 'text':
       return chunks(block.text, count).map((text) => ({ type: 'text_delta', text }));
@@ -202,10 +202,9 @@ function deltasOf(block: Block, count: number): Record<string, unknown>[] {
         { type: 'signature_delta', signature: '<SIGNATURE>' },
       ];
     case 'tool_use':
-      return chunks(JSON.stringify(block.input), Math.max(2, Math.min(count, 4))).map((partial) => ({
-        type: 'input_json_delta',
-        partial_json: partial,
-      }));
+      return chunks(JSON.stringify(block.input), inputChunks ?? Math.max(2, Math.min(count, 4))).map(
+        (partial) => ({ type: 'input_json_delta', partial_json: partial }),
+      );
   }
 }
 
@@ -225,6 +224,8 @@ export interface AssistantMessageOptions {
   error?: string;
   /** Deltas per block (default 3). */
   chunks?: number;
+  /** input_json_delta parts of a tool_use block (default 2–4; Phase 3 `fake:plan`: ≥ 5). */
+  inputChunks?: number;
   stepMs?: number;
   extra?: Record<string, unknown>;
 }
@@ -249,7 +250,7 @@ export function assistantMessage(
   blocks.forEach((block, index) => {
     if (streamed) {
       steps.push(streamStep({ type: 'content_block_start', index, content_block: startOf(block) }));
-      for (const delta of deltasOf(block, o.chunks ?? 3))
+      for (const delta of deltasOf(block, o.chunks ?? 3, o.inputChunks))
         steps.push(streamStep({ type: 'content_block_delta', index, delta }));
     }
     steps.push(
@@ -564,12 +565,41 @@ export function planStep(
 
 // ---- Subagents (F.11) ----
 
+export interface TaskUsageSpec {
+  totalTokens: number;
+  toolUses: number;
+  durationMs: number;
+}
+
+const usageFrame = (u: TaskUsageSpec) => ({
+  total_tokens: u.totalTokens,
+  tool_uses: u.toolUses,
+  duration_ms: u.durationMs,
+});
+
+const backgroundTasksStep = (c: DslContext, tasks: readonly { taskId: string; description: string }[]): Step =>
+  frame(
+    c,
+    system(0, 'background_tasks_changed', {
+      tasks: tasks.map((t) => ({
+        task_id: t.taskId,
+        task_type: 'local_agent',
+        subagent_type: 'general-purpose',
+        description: t.description,
+      })),
+    }),
+  );
+
 export interface SubagentSpec {
   toolUseId?: string;
   taskId?: string;
   description: string;
   prompt: string;
   reply: string;
+  /** Phase 3: `run_in_background: true` in the Agent input (explicit background agent). */
+  runInBackground?: boolean;
+  /** Phase 3: `AgentOutput.outputFile` of the async launch (absolute path). */
+  outputFile?: string;
 }
 
 /** Agent tool launch in the background: background_tasks_changed, task_started, async tool result. */
@@ -577,24 +607,18 @@ export function subagentLaunch(
   c: DslContext,
   spec: SubagentSpec & { toolUseId: string; taskId: string },
 ): FixtureEvent[] {
-  const input = { subagent_type: 'general-purpose', description: spec.description, prompt: spec.prompt };
+  const input = {
+    subagent_type: 'general-purpose',
+    description: spec.description,
+    prompt: spec.prompt,
+    ...(spec.runInBackground === true ? { run_in_background: true } : {}),
+  };
+  const launched = `Async agent launched successfully.\nagentId: ${spec.taskId}`;
   return events(
     toolUseBlock(c, 'Agent', input, { toolUseId: spec.toolUseId }),
     toEvents(
       [
-        frame(
-          c,
-          system(0, 'background_tasks_changed', {
-            tasks: [
-              {
-                task_id: spec.taskId,
-                task_type: 'local_agent',
-                subagent_type: 'general-purpose',
-                description: spec.description,
-              },
-            ],
-          }),
-        ),
+        backgroundTasksStep(c, [spec]),
         frame(
           c,
           system(0, 'task_started', {
@@ -614,7 +638,12 @@ export function subagentLaunch(
     toolResultMessage(
       c,
       spec.toolUseId,
-      [{ type: 'text', text: `Async agent launched successfully.\nagentId: ${spec.taskId}` }],
+      [
+        {
+          type: 'text',
+          text: spec.outputFile === undefined ? launched : `${launched}\noutput_file: ${spec.outputFile}`,
+        },
+      ],
       {
         toolUseResult: {
           isAsync: true,
@@ -622,10 +651,39 @@ export function subagentLaunch(
           agentId: spec.taskId,
           description: spec.description,
           prompt: spec.prompt,
+          ...(spec.outputFile === undefined ? {} : { outputFile: spec.outputFile, canReadOutputFile: true }),
         },
       },
     ),
   );
+}
+
+/** `system/background_tasks_changed` with these (non-ambient) agent tasks. */
+export function backgroundTasksChanged(
+  c: DslContext,
+  tasks: readonly { taskId: string; description: string }[],
+): FixtureEvent[] {
+  return toEvents([backgroundTasksStep(c, tasks)]);
+}
+
+/** Phase 3: `system/task_progress` of a running agent (with `agentProgressSummaries`: a summary). */
+export function taskProgress(
+  c: DslContext,
+  spec: { taskId: string; toolUseId: string; description: string; summary: string; usage: TaskUsageSpec },
+): FixtureEvent[] {
+  return toEvents([
+    frame(
+      c,
+      system(0, 'task_progress', {
+        task_id: spec.taskId,
+        tool_use_id: spec.toolUseId,
+        description: spec.description,
+        subagent_type: 'general-purpose',
+        summary: spec.summary,
+        usage: usageFrame(spec.usage),
+      }),
+    ),
+  ]);
 }
 
 /** End of a background agent: task_updated, task_notification, background_tasks_changed (rest). */
@@ -636,15 +694,21 @@ export function subagentEnd(
     taskId: string;
     summary: string;
     remaining?: { taskId: string; description: string }[];
+    /** Phase 3: `task_notification.output_file` (default '' like a CLI without one). */
+    outputFile?: string;
+    /** Default completed; `stopped` after stopTask (the CLI's internal status is `killed`). */
+    status?: 'completed' | 'failed' | 'stopped';
+    usage?: TaskUsageSpec;
   },
 ): FixtureEvent[] {
+  const status = spec.status ?? 'completed';
   return toEvents(
     [
       frame(
         c,
         system(0, 'task_updated', {
           task_id: spec.taskId,
-          patch: { status: 'completed', end_time: BASE_TIME },
+          patch: { status: status === 'stopped' ? 'killed' : status, end_time: BASE_TIME },
         }),
       ),
       frame(
@@ -652,23 +716,13 @@ export function subagentEnd(
         system(0, 'task_notification', {
           task_id: spec.taskId,
           tool_use_id: spec.toolUseId,
-          status: 'completed',
-          output_file: '',
+          status,
+          output_file: spec.outputFile ?? '',
           summary: spec.summary,
-          usage: { total_tokens: 1200, tool_uses: 0, duration_ms: 2000 },
+          usage: usageFrame(spec.usage ?? { totalTokens: 1200, toolUses: 0, durationMs: 2000 }),
         }),
       ),
-      frame(
-        c,
-        system(0, 'background_tasks_changed', {
-          tasks: (spec.remaining ?? []).map((t) => ({
-            task_id: t.taskId,
-            task_type: 'local_agent',
-            subagent_type: 'general-purpose',
-            description: t.description,
-          })),
-        }),
-      ),
+      backgroundTasksStep(c, spec.remaining ?? []),
     ],
     c.stepMs,
   );

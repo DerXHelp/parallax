@@ -732,6 +732,33 @@ describe('SdkBackend – send', () => {
     expect(h.fq().inputs.map((input) => input.uuid)).toEqual([sampleUuid(8), sampleUuid(9)]);
   });
 
+  it('Phase 3: inlinePastes → inline_pastes only when not empty, documents unchanged, no client_composed', async () => {
+    const h = harness();
+    const session = h.backend.start(request());
+    const content = [
+      { type: 'text' as const, text: 'See\npasted one\nand pasted two' },
+      { type: 'document' as const, mediaType: 'application/pdf' as const, base64: 'JVBERi0=' },
+    ];
+    session.send({ uuid: sampleUuid(10), priority: 'next', content, inlinePastes: ['pasted one', 'pasted two'] });
+    session.send({ uuid: sampleUuid(11), priority: 'next', content: [{ type: 'text', text: 'none' }], inlinePastes: [] });
+    session.send({ uuid: sampleUuid(12), priority: 'next', content: [{ type: 'text', text: 'absent' }] });
+    await settle();
+    const [withPastes, empty, absent] = h.fq().inputs;
+    expect(withPastes).toMatchObject({
+      uuid: sampleUuid(10),
+      inline_pastes: ['pasted one', 'pasted two'],
+      message: {
+        content: [
+          { type: 'text', text: 'See\npasted one\nand pasted two' },
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERi0=' } },
+        ],
+      },
+    });
+    expect(empty).not.toHaveProperty('inline_pastes');
+    expect(absent).not.toHaveProperty('inline_pastes');
+    for (const input of h.fq().inputs) expect(input).not.toHaveProperty('client_composed');
+  });
+
   it('rejects a prompt uuid that is not a UUID', () => {
     expect(() => toSdkUserMessage({ uuid: 'not-a-uuid', content: [], priority: 'next' })).toThrow(TypeError);
   });
@@ -950,7 +977,15 @@ describe('SdkBackend – autoCompactWindow with a settings file (C.1)', () => {
     expect(h.fq().applyFlagSettings).not.toHaveBeenCalled();
     readiness.resolve([]);
     await settle();
-    expect(h.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({ autoCompactWindow: 400_000 });
+    expect(h.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({ autoCompactWindow: 400_000, todoFeatureEnabled: true });
+  });
+
+  it('Phase 3: a settings file alone still gets todoFeatureEnabled after the start (WP-52)', async () => {
+    const h = harness();
+    h.backend.start(request({ launch: launch({ sdkOptions: { settings: 'D:\\cfg\\settings.json' } }) }));
+    await settle();
+    expect(h.fq().options.settings).toBe('D:\\cfg\\settings.json');
+    expect(h.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({ todoFeatureEnabled: true });
   });
 
   it('waits up to readyMs (not controlMs) for the readiness before the flag settings (R2-04)', async () => {
@@ -966,7 +1001,7 @@ describe('SdkBackend – autoCompactWindow with a settings file (C.1)', () => {
     await vi.advanceTimersByTimeAsync(SDK_TIMEOUTS.controlMs + 1);
     readiness.resolve([]);
     await settle();
-    expect(h.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({ autoCompactWindow: 400_000 });
+    expect(h.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({ autoCompactWindow: 400_000, todoFeatureEnabled: true });
     expect(rec.events.some((event) => event.type === 'error')).toBe(false);
   });
 
@@ -974,7 +1009,7 @@ describe('SdkBackend – autoCompactWindow with a settings file (C.1)', () => {
     const h = harness();
     h.backend.start(request({ launch: launch({ autoCompactWindow: 400_000 }) }));
     await settle();
-    expect(h.fq().options.settings).toEqual({ autoCompactWindow: 400_000 });
+    expect(h.fq().options.settings).toEqual({ autoCompactWindow: 400_000, todoFeatureEnabled: true });
     expect(h.fq().applyFlagSettings).not.toHaveBeenCalled();
   });
 
@@ -982,7 +1017,7 @@ describe('SdkBackend – autoCompactWindow with a settings file (C.1)', () => {
     const inline = harness();
     inline.backend.start(request({ fastMode: true }));
     await settle();
-    expect(inline.fq().options.settings).toEqual({ fastMode: true });
+    expect(inline.fq().options.settings).toEqual({ fastMode: true, todoFeatureEnabled: true });
     expect(inline.fq().applyFlagSettings).not.toHaveBeenCalled();
     const file = harness();
     file.backend.start(request({ fastMode: false, launch: both }));
@@ -991,6 +1026,7 @@ describe('SdkBackend – autoCompactWindow with a settings file (C.1)', () => {
     expect(file.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({
       autoCompactWindow: 400_000,
       fastMode: false,
+      todoFeatureEnabled: true,
     });
   });
 
