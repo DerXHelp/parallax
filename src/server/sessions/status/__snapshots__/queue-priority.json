@@ -17,47 +17,47 @@
       "display": "working"
     },
     {
-      "seq": 80,
+      "seq": 69,
       "event": "turn_result",
       "display": "working+unread"
     },
     {
-      "seq": 82,
+      "seq": 71,
       "event": "session_state:idle",
       "display": "done+unread"
     },
     {
-      "seq": 83,
+      "seq": 72,
       "event": "queue_changed",
       "display": "background+unread"
     },
     {
-      "seq": 84,
+      "seq": 73,
       "event": "session_state:running",
       "display": "working+unread"
     },
     {
-      "seq": 158,
+      "seq": 150,
       "event": "session_state:idle",
       "display": "background+unread"
     },
     {
-      "seq": 161,
+      "seq": 153,
       "event": "background_tasks",
       "display": "done+unread"
     },
     {
-      "seq": 162,
+      "seq": 154,
       "event": "session_state:running",
       "display": "working+unread"
     },
     {
-      "seq": 217,
+      "seq": 227,
       "event": "session_state:idle",
       "display": "done+unread"
     },
     {
-      "seq": 221,
+      "seq": 231,
       "event": "process_exit",
       "display": "sleeping+unread"
     }
@@ -80,8 +80,8 @@
     "wakeupAt": null,
     "lastTurn": {
       "outcome": "success",
-      "endedAt": "2026-10-14T23:12:10.523Z",
-      "durationMs": 3998
+      "endedAt": "2026-11-11T17:22:54.440Z",
+      "durationMs": 2461
     },
     "errorCode": null
   }

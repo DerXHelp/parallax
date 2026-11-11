@@ -37,68 +37,33 @@
       "display": "working"
     },
     {
-      "seq": 58,
+      "seq": 95,
       "event": "turn_result",
       "display": "working+unread"
     },
     {
-      "seq": 60,
+      "seq": 97,
       "event": "session_state:idle",
       "display": "done+unread"
     },
     {
-      "seq": 63,
+      "seq": 100,
       "event": "queue_changed",
       "display": "background+unread"
     },
     {
-      "seq": 64,
+      "seq": 101,
       "event": "session_state:running",
       "display": "working+unread"
     },
     {
-      "seq": 157,
+      "seq": 182,
       "event": "decisions_changed",
       "display": "needs-permission+unread"
-    },
-    {
-      "seq": 158,
-      "event": "decisions_changed",
-      "display": "working+unread"
-    },
-    {
-      "seq": 162,
-      "event": "decisions_changed",
-      "display": "needs-permission+unread"
-    },
-    {
-      "seq": 163,
-      "event": "decisions_changed",
-      "display": "working+unread"
-    },
-    {
-      "seq": 167,
-      "event": "decisions_changed",
-      "display": "needs-permission+unread"
-    },
-    {
-      "seq": 168,
-      "event": "decisions_changed",
-      "display": "working+unread"
-    },
-    {
-      "seq": 181,
-      "event": "session_state:idle",
-      "display": "done+unread"
     },
     {
       "seq": 183,
-      "event": "queue_changed",
-      "display": "background+unread"
-    },
-    {
-      "seq": 184,
-      "event": "session_state:running",
+      "event": "decisions_changed",
       "display": "working+unread"
     },
     {
@@ -112,92 +77,127 @@
       "display": "working+unread"
     },
     {
-      "seq": 216,
+      "seq": 219,
+      "event": "decisions_changed",
+      "display": "needs-permission+unread"
+    },
+    {
+      "seq": 220,
+      "event": "decisions_changed",
+      "display": "working+unread"
+    },
+    {
+      "seq": 233,
       "event": "session_state:idle",
       "display": "done+unread"
-    },
-    {
-      "seq": 218,
-      "event": "queue_changed",
-      "display": "background+unread"
-    },
-    {
-      "seq": 219,
-      "event": "session_state:running",
-      "display": "working+unread"
     },
     {
       "seq": 235,
-      "event": "decisions_changed",
-      "display": "needs-permission+unread"
+      "event": "queue_changed",
+      "display": "background+unread"
     },
     {
       "seq": 236,
-      "event": "decisions_changed",
-      "display": "working+unread"
-    },
-    {
-      "seq": 244,
-      "event": "session_state:idle",
-      "display": "done+unread"
-    },
-    {
-      "seq": 246,
-      "event": "queue_changed",
-      "display": "background+unread"
-    },
-    {
-      "seq": 247,
       "event": "session_state:running",
       "display": "working+unread"
     },
     {
-      "seq": 261,
-      "event": "session_state:idle",
-      "display": "done+unread"
-    },
-    {
-      "seq": 263,
-      "event": "queue_changed",
-      "display": "background+unread"
-    },
-    {
-      "seq": 264,
-      "event": "session_state:running",
-      "display": "working+unread"
-    },
-    {
-      "seq": 281,
+      "seq": 253,
       "event": "decisions_changed",
       "display": "needs-permission+unread"
     },
     {
-      "seq": 282,
+      "seq": 254,
       "event": "decisions_changed",
       "display": "working+unread"
     },
     {
-      "seq": 298,
+      "seq": 268,
       "event": "session_state:idle",
       "display": "done+unread"
     },
     {
-      "seq": 300,
+      "seq": 270,
       "event": "queue_changed",
       "display": "background+unread"
     },
     {
-      "seq": 301,
+      "seq": 271,
       "event": "session_state:running",
       "display": "working+unread"
     },
     {
-      "seq": 329,
+      "seq": 288,
+      "event": "decisions_changed",
+      "display": "needs-permission+unread"
+    },
+    {
+      "seq": 289,
+      "event": "decisions_changed",
+      "display": "working+unread"
+    },
+    {
+      "seq": 296,
       "event": "session_state:idle",
       "display": "done+unread"
     },
     {
-      "seq": 334,
+      "seq": 298,
+      "event": "queue_changed",
+      "display": "background+unread"
+    },
+    {
+      "seq": 299,
+      "event": "session_state:running",
+      "display": "working+unread"
+    },
+    {
+      "seq": 313,
+      "event": "session_state:idle",
+      "display": "done+unread"
+    },
+    {
+      "seq": 315,
+      "event": "queue_changed",
+      "display": "background+unread"
+    },
+    {
+      "seq": 316,
+      "event": "session_state:running",
+      "display": "working+unread"
+    },
+    {
+      "seq": 335,
+      "event": "decisions_changed",
+      "display": "needs-permission+unread"
+    },
+    {
+      "seq": 336,
+      "event": "decisions_changed",
+      "display": "working+unread"
+    },
+    {
+      "seq": 351,
+      "event": "session_state:idle",
+      "display": "done+unread"
+    },
+    {
+      "seq": 353,
+      "event": "queue_changed",
+      "display": "background+unread"
+    },
+    {
+      "seq": 354,
+      "event": "session_state:running",
+      "display": "working+unread"
+    },
+    {
+      "seq": 382,
+      "event": "session_state:idle",
+      "display": "done+unread"
+    },
+    {
+      "seq": 387,
       "event": "process_exit",
       "display": "sleeping+unread"
     }
@@ -220,8 +220,8 @@
     "wakeupAt": null,
     "lastTurn": {
       "outcome": "success",
-      "endedAt": "2026-10-14T23:06:38.728Z",
-      "durationMs": 3473
+      "endedAt": "2026-11-11T17:21:26.955Z",
+      "durationMs": 2289
     },
     "errorCode": null
   }

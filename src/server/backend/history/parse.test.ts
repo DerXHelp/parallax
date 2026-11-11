@@ -138,7 +138,7 @@ describe('mergeHistory', () => {
   });
 
   it('equals the WP-12 harness merge for the recorded subagent history', () => {
-    const subagentSession = 'a0cb07c5-45cb-4164-b7d5-c808ecf195a6';
+    const subagentSession = 'f406f5df-fee1-4f18-8d56-528330faa035';
     const mainCall = calls.find(
       (c) => c.fn === 'getSessionMessages' && c.args[0] === subagentSession && Array.isArray(c.result),
     );
@@ -163,11 +163,11 @@ describe('toSessionInfo', () => {
     }
     const first = toSessionInfo(infos[0]?.result);
     expect(first).toEqual({
-      sessionId: 'a2aa36f5-56fb-42f9-af06-3db55a33470f',
-      summary: 'Simple OK reply',
-      customTitle: 'Simple OK reply',
+      sessionId: 'b5b08dcc-9154-4b5d-ab66-bd7ac894c16a',
+      summary: 'Reply with exact OK',
+      customTitle: 'Reply with exact OK',
       firstPrompt: 'Reply with exactly: OK',
-      lastModified: 1792020142411,
+      lastModified: 1794417835573,
     });
   });
 

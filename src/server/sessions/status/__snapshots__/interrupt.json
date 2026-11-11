@@ -17,57 +17,57 @@
       "display": "working"
     },
     {
-      "seq": 25,
+      "seq": 26,
       "event": "decisions_changed",
       "display": "needs-permission"
     },
     {
-      "seq": 26,
+      "seq": 27,
       "event": "decisions_changed",
       "display": "working"
     },
     {
-      "seq": 36,
+      "seq": 39,
       "event": "session_state:idle",
       "display": "idle"
     },
     {
-      "seq": 38,
+      "seq": 41,
       "event": "queue_changed",
       "display": "background"
     },
     {
-      "seq": 39,
+      "seq": 42,
       "event": "session_state:running",
       "display": "working"
     },
     {
-      "seq": 51,
+      "seq": 82,
       "event": "turn_result",
       "display": "working+unread"
     },
     {
-      "seq": 53,
+      "seq": 84,
       "event": "session_state:idle",
       "display": "done+unread"
     },
     {
-      "seq": 54,
+      "seq": 85,
       "event": "queue_changed",
       "display": "background+unread"
     },
     {
-      "seq": 55,
+      "seq": 86,
       "event": "session_state:running",
       "display": "working+unread"
     },
     {
-      "seq": 171,
+      "seq": 191,
       "event": "session_state:idle",
       "display": "done+unread"
     },
     {
-      "seq": 176,
+      "seq": 194,
       "event": "process_exit",
       "display": "sleeping+unread"
     }
@@ -89,9 +89,9 @@
     "retrying": false,
     "wakeupAt": null,
     "lastTurn": {
-      "outcome": "success",
-      "endedAt": "2026-10-14T23:20:13.994Z",
-      "durationMs": 3359
+      "outcome": "interrupted",
+      "endedAt": "2026-11-11T17:23:10.590Z",
+      "durationMs": 2173
     },
     "errorCode": null
   }
