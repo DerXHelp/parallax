@@ -1,7 +1,7 @@
 /**
  * Native toasts of the session engine (WP22-03/-15, Plan A.9): the channel when no window is open
  * or the chosen window cannot show Web Notifications (presence `systemNotifications: false`, e.g.
- * the permission prompt that the Edge app window never shows). The texts are the server's own (it
+ * the permission prompt the app window cannot show). The texts are the server's own (it
  * has no i18n): English/German after `settings.language`, mirroring `shell.notifications.kinds`
  * of the web. Calls run one after the other (one PowerShell at a time, a short queue). CR-05
  * (ADR-091): only a DETERMINISTIC failure (`permanent`: CLM/AppLocker, WinRT missing, no

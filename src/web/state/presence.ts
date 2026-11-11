@@ -25,7 +25,7 @@ function setPresence(store: ClientStore, patch: Partial<WindowPresence>): void {
 }
 
 export interface PresenceTrackingOptions {
-  /** Re-read with every focus/visibility change (the user may change it in the Edge settings). */
+  /** Re-read with every focus/visibility change (the user may change it in the Chrome settings). */
   systemNotifications?: () => boolean;
 }
 

@@ -1522,3 +1522,32 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
 - **Folgen:** Mindestens zwei Pool-Threads bleiben für den Server frei. Ein nie gesehenes Laufwerk
   hinter zwei hängenden fehlt, bis es geprüft ist. Ein entferntes Laufwerk kann in dieser Zeit noch
   erscheinen (Öffnen → `CWD_NOT_FOUND`). Umsetzung: `host/fsCommands.ts`.
+## ADR-136 – App-Fenster nur noch in Google Chrome (ersetzt Edge)
+- **Datum/WP:** 11.11.2026, Nutzer-Entscheidung, Umsetzung `docs/wp/CHROME.md`. Ersetzt die
+  Edge-spezifischen Teile von ADR-060, ADR-082 und ADR-120 (Profil, Anmelde-Sperren, Fundort);
+  deren Chromium-generische Mechanik (eigenes `--user-data-dir`, Benachrichtigungs-Freigabe über die
+  Profil-Prefs, `--autoplay-policy=no-user-gesture-required`, `--disable-sync`) gilt für Chrome weiter.
+- **Kontext:** Edge wurde gewählt, weil es auf jedem Windows vorinstalliert ist. Der Nutzer hat
+  Chrome auf jedem Rechner, auf dem er Parallax nutzt, und bevorzugt es.
+- **Entscheidung:** Der Launcher öffnet das App-Fenster ausschließlich in Chrome (eigenes Profil
+  `<home>\chrome`). Keine Umschaltung (keine Startoption, keine Einstellung), kein Rückfall auf Edge:
+  ohne Chrome meldet der Launcher einen Fehler (`--print-url` bleibt als Ausweg). `pnpm preflight`
+  prüft Chrome und dessen Richtlinien. E2E-Tests laufen in Chrome (Playwright `channel: 'chrome'`).
+  Das alte Profil `<home>\edge` wird nicht automatisch gelöscht.
+- **Folgen:** Chrome ist Voraussetzung. Benachrichtigungen kommen voraussichtlich über das
+  Windows-Benachrichtigungssystem statt als Edge-eigene Popups (live zu prüfen, Nutzer-Checkliste).
+  Firmen-Richtlinien für Chrome (`Policies\Google\Chrome`) können Schalter übersteuern.
+- **Nachtrag 11.11.2026 (Ergebnis `docs/wp/CHROME.md` §4):** Fundreihenfolge `App Paths\chrome.exe`
+  HKCU → HKLM (64/32 Bit), dann `%ProgramFiles%`, `%ProgramFiles(x86)%`, `%LOCALAPPDATA%`
+  (`…\Google\Chrome\Application\chrome.exe`; nur absolute, existierende `.exe`, nie PATH/cwd;
+  `lib/chrome.ts`). Schalter: `--user-data-dir=<home>\chrome`, `--no-first-run`,
+  `--no-default-browser-check`, `--disable-sync`, `--allow-browser-signin=false`,
+  `--autoplay-policy=no-user-gesture-required`, `--app=<url>` (`launcher/chromeWindow.ts`). Gemessen
+  (Chrome 156, headless, Temp-Profile): ein frisches Profil meldet sich auch ohne Schalter nicht
+  implizit an; mit `--allow-browser-signin=false` gilt `signin.allowed=false`, „Account Consistency:
+  None“; die vorab geschriebene Benachrichtigungs-Freigabe wirkt. Damit entfallen aus ADR-060 die
+  `ms*`-Features und der Hinweis `edgeProfileSignedIn` ersatzlos. `pnpm preflight` liest die
+  Chrome-Version aus der Versionsressource (ohne Start) und warnt bei Richtlinien, die das App-Fenster
+  stören: erzwungene Anmeldung, `UserDataDir`, Gast-/Inkognito-Zwang, erzwungene Profilauswahl,
+  blockierte Benachrichtigungen, `AutoplayAllowed=0`, `URLBlocklist` mit `127.0.0.1`. Live-Prüfung
+  (Benachrichtigung + Klick, Autostart, `parallax:`) durch den Nutzer: Checkliste `CHROME.md` §4.6.

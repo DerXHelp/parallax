@@ -14,7 +14,8 @@ auf (kein Modell-Aufruf, keine Tokens). Geprüft werden: Node (Fehler unter 22, 
 (≥ 12.8), Registry (`pnpm config get registry`, ohne Zugangsdaten angezeigt), Agent SDK, für jedes
 Profil (Phase 1: „Standard“) der aufgelöste `claude`-Pfad mit Version (rot, wenn älter als
 `claudeCodeVersion` des SDK) und der Login (Methode, Provider, Abo – nie E-Mail/Organisation),
-Microsoft Edge (App Paths bzw. Program Files) und – seit den R1-Fixes – registrierte Virenscanner
+Google Chrome (App Paths bzw. Program Files/%LOCALAPPDATA%, mit Version aus der Versionsressource
+von `chrome.exe` – Chrome wird dafür nicht gestartet; ADR-136) und – seit den R1-Fixes – registrierte Virenscanner
 (Windows-Sicherheitscenter per CIM, ohne Admin-Rechte): Warnung bei Produkten mit Web-Traffic-Scan
 (Kaspersky, ESET, Bitdefender, Avast, AVG; README „Virenscanner mit Web-Traffic-Scan“), sonst Info;
 ist das Sicherheitscenter nicht lesbar (z. B. Windows Server), entfällt die Zeile.
@@ -34,7 +35,7 @@ Seit WP-11 nutzt der Recorder `buildEnvReport()` und `parseAuthStatus()` aus `sr
 spike-eigen bleiben nur das Entfernen von `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/
 `ANTHROPIC_BASE_URL`, der `PARALLAX_LIVE`-Guard und `PARALLAX_ENTRY_ID=spike`.
 
-Der Launcher für `pnpm start` (unsichtbarer Server, Edge-App-Fenster) liegt in
+Der Launcher für `pnpm start` (unsichtbarer Server, Chrome-App-Fenster) liegt in
 `src/server/launcher/` (WP-21, README dort).
 
 ## `pnpm build:server` und die Build-ID
@@ -51,6 +52,9 @@ wird er nicht erneut genommen. `pnpm build` (`build.ts` → `buildUnderLock`) ni
 für beide Schritte (`build:web` + `build:server`); ein zweiter Build desselben Checkouts wartet
 (ADR-094). Die Ausgabe der Schritte zeigt es nur bei einem Fehler.
 
-`pnpm preflight` meldet seit V2-01 zusätzlich Edge-Richtlinien (HKLM/HKCU
-`SOFTWARE\Policies\Microsoft\Edge`), die das App-Profil trotz seiner Schalter anmelden oder
-synchronisieren könnten (`warn`), bzw. hilfreiche Sign-in/Sync-Richtlinien (`info`).
+`pnpm preflight` meldet seit ADR-136 Chrome-Richtlinien (HKLM/HKCU
+`SOFTWARE\Policies\Google\Chrome`, dazu die Listen `URLBlocklist` und `NotificationsBlockedForUrls`),
+die das App-Fenster übersteuern (`warn`: Anmeldung erzwungen, `UserDataDir`, Gast-/Inkognito-Zwang,
+erzwungene Profilauswahl, blockierte Benachrichtigungen, `AutoplayAllowed=0`, gesperrte
+`127.0.0.1`), bzw. übrige Sign-in/Sync-Richtlinien (`info`); ohne relevante Richtlinie
+`OK chrome policies none`.

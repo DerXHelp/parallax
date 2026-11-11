@@ -19,13 +19,13 @@ die genannten Pakete und werden dort tabellengetestet.
 ## 1. Überblick
 
 Parallax ist ein lokaler Node-Server (nur `127.0.0.1`) mit Web-UI. **Sessions leben im Server**:
-Jede Session ist ein `claude`-Prozess, den der Server über das Agent SDK steuert. Fenster (Edge im
-App-Modus) sind austauschbare Ansichten; ein Reload, ein zweites Fenster oder ein Reconnect ändern an
+Jede Session ist ein `claude`-Prozess, den der Server über das Agent SDK steuert. Fenster (Chrome im
+App-Modus, ADR-136) sind austauschbare Ansichten; ein Reload, ein zweites Fenster oder ein Reconnect ändern an
 der Session nichts.
 
 ```mermaid
 flowchart LR
-  subgraph Browser["Browser (Edge App-Modus, n Fenster)"]
+  subgraph Browser["Browser (Chrome App-Modus, n Fenster)"]
     UI["Features: Transkript, Entscheidungen, Composer"]
     ST["State: ConnectionManager, Stores, Reducer (@shared/sync)"]
     UI --- ST
@@ -59,14 +59,14 @@ flowchart LR
 |---|---|---|---|
 | WP-02 | `src/shared/{common,errors,status,model,protocol,sync,build,samples}.ts`; Ports `src/server/backend/types.ts`, `src/server/backend/fixture.ts`, `src/server/sessions/ports.ts`, `src/server/sync/ports.ts`, `src/server/claude/ports.ts` | – | zod-Roundtrips, Typ-Tests, Fixture-Tests |
 | WP-10 | `sync/hub.ts` → `SessionPublisher`; `store/*` → `TranscriptStore`, `BlobStore`, `RegistryStore`, `DecisionStore`, `SettingsStore`; `http/{app,auth,origin}.ts` (HTTP-/Auth-Contract §5.1); `config.ts`; `lib/{logger,ids,paths}.ts` | `SessionSource` (Port), Shared | `createMemorySessionSource()`, echter `ws`-Client, Port 0, Temp-Home |
-| WP-11 | `claude/integration.ts` → `ClaudeIntegration`; `resolveClaude`, `buildEnv`, `parseProfileArgs`, `parseAuthStatus`, Profil „Standard“; `lib/process.ts`, `lib/{windows,registry,edge}.ts` (R1-08); `scripts/preflight.ts` | Shared (`@shared/paths`) | Fake-Dateisystem/`where`-Stub, `.cmd`-Shim-Fixture |
+| WP-11 | `claude/integration.ts` → `ClaudeIntegration`; `resolveClaude`, `buildEnv`, `parseProfileArgs`, `parseAuthStatus`, Profil „Standard“; `lib/process.ts`, `lib/{windows,registry}.ts`, Edge-Suche `lib/edge.ts` (R1-08; seit ADR-136 `lib/chrome.ts`); `scripts/preflight.ts` | Shared (`@shared/paths`) | Fake-Dateisystem/`where`-Stub, `.cmd`-Shim-Fixture |
 | WP-12 | `sessions/normalizer/*` → `createLiveNormalizer`, `normalizeHistory`, `normalizeContextUsage`; `sessions/status/machine.ts` → `reduceStatus` | Shared, `backend/fixture.ts`, Ports §9.4 | Fixture-Snapshots, synthetische Streams (§2.5) |
 | WP-14 | `web/state/*` (Transport, ConnectionManager, Hooks, `auth.ts`), `web/i18n/*`, `web/ui/*`, `web/shell/*` (Shell + Slots), `web/playground/*`, Theme | Shared (`protocol`, `sync`, `status`, `errors`, `http`, `samples`) | In-Memory-Transport |
 | WP-13 | `backend/{sdk,fake}Backend.ts` → `AgentBackend`; `sessions/manager.ts` → `SessionSource`; `sessions/broker.ts` | alle Server-Ports, `lib/{ids,paths,process}.ts` | FakeBackend + Memory-Publisher |
 | WP-15 | `web/features/transcript/*` (`TranscriptView`, Renderer-Registry, Slots `Markdown`, `ToolInputPreview`) | WP-14-State, Slot `DecisionCard` | Playground + Komponenten-Tests |
 | WP-16 | `web/features/{decisions,composer}/*` (`DecisionBar`, `DecisionCard`, `Composer`, `ContextGauge`, `ModelPicker`, `ModePicker`) | WP-14-State, Slots `Markdown`, `ToolInputPreview` | Playground + Komponenten-Tests |
 | WP-20 | `main.ts` (Config, Logging, Exit-Codes) + `app/compose.ts` (`startServer`: Stores, `createApp` + `createSyncHub` + `createSessionManager` + Backend nach `--backend`, Shutdown-Rahmen, Lockfile; §3.3); `App.tsx`: Slots mit den echten Komponenten füllen | alles | E2E |
-| WP-21 | `src/server/launcher/**`: Lockfile schreiben/lesen, Health-Ping, Launcher-Code, Edge-Start, „Server beenden“ | `@shared/http`, `lib/process.ts` | Temp-Home, Port 0 |
+| WP-21 | `src/server/launcher/**`: Lockfile schreiben/lesen, Health-Ping, Launcher-Code, Browser-Start (Edge; seit ADR-136 Chrome), „Server beenden“ | `@shared/http`, `lib/process.ts` | Temp-Home, Port 0 |
 | Koordinator (R2-Fixes) | `lib/async.ts`, `lib/fs.ts` (ADR-055), `lib/homeLock.ts` (ADR-054), `lib/homeAccess.ts` (ADR-056); Exporte §2.2 | Shared (`@shared/paths`), `lib/{logger,paths,process}.ts` | Nähte (`FsOps`, `run`, `platform`), Temp-Ordner, zwei Prozesse (Home-Lock) |
 
 **Phase 2 (Mission Control, Design `docs/wp/WP-30.md`, ADR-100 … ADR-119):** Contracts v2 und Gerüst
@@ -126,7 +126,7 @@ im Bericht).
 | `src/shared/**`, `src/server/**/ports.ts`, `src/server/backend/{types,fixture}.ts` (+ Tests) | Koordinator (eingefroren) | Änderung nur per Contract-Änderung |
 | `src/server/lib/logger.ts`, `lib/ids.ts`, `lib/paths.ts` | WP-10 | Exporte §2.2 |
 | `src/server/lib/process.ts` | WP-11 | Exporte §2.2; WP-13/21 nutzen nur |
-| `src/server/lib/windows.ts`, `lib/registry.ts`, `lib/edge.ts` | WP-11 | Exporte §2.2 (aus `claude/` verschoben, R1-08, ADR-024); WP-13/21 nutzen nur |
+| `src/server/lib/windows.ts`, `lib/registry.ts`, `lib/chrome.ts` | WP-11 (`chrome.ts`: CHROME, ersetzt `edge.ts`, ADR-136) | Exporte §2.2 (aus `claude/` verschoben, R1-08, ADR-024); WP-13/21 nutzen nur |
 | `src/server/lib/async.ts`, `lib/fs.ts`, `lib/homeLock.ts`, `lib/homeAccess.ts` | Koordinator (R2-Fixes) | Exporte §2.2 (ADR-054 … ADR-056); alle Pakete nutzen nur, Erweiterungen im Bericht anfragen |
 | `src/server/lib/toast.ts` | WP-22-Fixes | nativer Windows-Toast (ADR-082, ADR-091); Exporte §2.2; Nutzer `sessions/nativeToasts.ts` |
 | `src/server/config.ts`, `src/server/{http,sync,store}/**` | WP-10 | |
@@ -225,7 +225,11 @@ POWERSHELL_UTC_ISO_FORMAT                  // kulturunabhängiges ISO-UTC-Format
 
 // src/server/lib/images.ts (WP-33, ADR-103): sniffImageType(bytes): AttachmentMediaType | null  // Magic Bytes PNG/JPEG/GIF/WebP
 
-// src/server/lib/edge.ts (WP-11): findEdge({ regQuery, fs, env }): Promise<string | null>  // Preflight, Launcher (WP-21)
+// src/server/lib/chrome.ts (CHROME, ADR-136; ersetzt lib/edge.ts): App Paths chrome.exe HKCU → HKLM 64/32,
+//   dann Program Files, Program Files (x86), %LOCALAPPDATA% – nur absolute, existierende .exe
+findChrome({ regQuery, fs, env }): Promise<string | null>   // Preflight, Launcher (WP-21)
+exeProductVersion(bytes): string | null                     // Produktversion hinter VS_VERSION_INFO
+readExeVersion(file): Promise<string | null>                // Preflight: Chrome-Version, ohne chrome.exe zu starten
 
 // src/server/lib/toast.ts (WP-22-Fixes, ADR-082, ADR-091) – nativer Windows-Toast, wirft nie
 showToast({ title, body, tag }, options?): Promise<{kind:'shown'} | {kind:'failed', reason, permanent}>
@@ -552,13 +556,18 @@ Prod `log` (verwerfen, zählen, gedrosselt loggen). Das FakeBackend auf (oder un
 **Launcher (WP-21, R3-04/ADR-062):** ein Launcher je Datenordner gleichzeitig (Pipe
 `parallax-launch-…`; ein zweiter wartet und öffnet dann ein Fenster des Servers), ein Build je
 Checkout (`parallax-build-…`); läuft ein Server mit anderem Backend als angefordert (Health
-`backend`), bricht er mit `backend_mismatch` ab. Edge startet mit eigenem Profil ohne Anmeldung
-und Sync (`--disable-sync`, `--disable-features=msImplicitSignin,…`, ADR-060) und ohne
-Autoplay-Sperre (`--autoplay-policy=no-user-gesture-required`, nur der eigene Origin, ADR-120). Vor jedem Fenster
+`backend`), bricht er mit `backend_mismatch` ab. Das Fenster ist **nur Chrome** (ADR-136; kein
+Rückfall, keine Umschaltung; ohne Chrome `chrome_not_found`, Exit 1, der Server läuft weiter,
+`--print-url` als Ausweg). Chrome startet mit eigenem Profil `<home>\chrome` ohne Anmeldung und Sync
+(`--disable-sync`, `--allow-browser-signin=false` → `signin.allowed=false`; ein frisches Chrome-Profil
+meldet sich auch ohne Schalter nicht implizit an, gemessen mit Chrome 156; ADR-060/136), mit
+`--no-first-run`, `--no-default-browser-check` und ohne Autoplay-Sperre
+(`--autoplay-policy=no-user-gesture-required`, nur der eigene Origin, ADR-120). Vor jedem Fenster
 erlaubt der Launcher Web Notifications für den eigenen Origin in diesem Profil
-(`grantEdgeNotifications`, `<home>\edge\Default\Preferences`: `profile.content_settings.exceptions.
+(`grantChromeNotifications`, `<home>\chrome\Default\Preferences`: `profile.content_settings.exceptions.
 notifications["http://127.0.0.1:<port>,*"] = {setting: 1}`, zusammengeführt und atomar; unlesbare
 Prefs bleiben unangetastet → Hinweis „Parallax uses Windows notifications instead“; ADR-082).
+Das Edge-Profil `<home>\edge` älterer Versionen bleibt liegen (README „Chrome-Profil“).
 
 ## 4. Source of Truth (A.3)
 
@@ -643,8 +652,9 @@ verbundene (ADR-129). Der Hub merkt sich `lastFocusAt` je `clientId` über Recon
 Mit nativen Toasts (`HostState.nativeNotifications`, ADR-082): darf dieser Client keine Web
 Notifications zeigen (`systemNotifications: false`) → nativer Windows-Toast des Servers +
 `in_app` an ihn; ohne Client → nur der native Toast (sonst nichts). Welches Ereignis:
-`notificationFor` (§7). Das Edge-App-Fenster bekommt die Berechtigung vom Launcher (eigenes Profil,
-§3.3); seine Web Notifications sind Edge-eigene Popups, keine Windows-Toasts. `systemNotifications`
+`notificationFor` (§7). Das Chrome-App-Fenster bekommt die Berechtigung vom Launcher (eigenes Profil,
+§3.3); seine Web Notifications zeigt Chrome voraussichtlich über das Windows-Benachrichtigungssystem
+(Absender „Google Chrome“; live zu prüfen, ADR-136) – Edge zeigte eigene Popups. `systemNotifications`
 meldet das Fenster als `Notification.permission === 'granted'`; fehlt die Freigabe, übernimmt der
 native Toast. Der native Toast (`sessions/nativeToasts.ts` → `lib/toast.ts`, Texte en/de nach
 `settings.language`) läuft je Aufruf als eigene PowerShell, nacheinander; ist die letzte offene
@@ -905,12 +915,12 @@ regulären Beenden.
 ### (h) Erster Start: Code über den Launcher-Endpunkt, Tausch gegen Cookie
 Auch beim ersten Start holt der Launcher den Einmal-Code über `POST /api/launcher/code` (ein
 Codepfad für beide Fälle, WP-21 Entscheidung 2); der Server stellt im Prozess keinen Code aus und
-startet kein Edge. Nur der Dev-Modus loggt seine Anmelde-Adresse selbst (oben).
+startet kein Chrome. Nur der Dev-Modus loggt seine Anmelde-Adresse selbst (oben).
 ```mermaid
 sequenceDiagram
   participant L as Launcher (pnpm start)
   participant S as Server (neu)
-  participant E as Edge (eigenes Profil)
+  participant E as Chrome (eigenes Profil)
   L->>S: Start (detached, process.execPath dist/server.js --home --port --backend)
   S->>S: Stores, Engine, listen, server.lock.json schreiben (pid, port, serverInstanceId, launcherToken)
   L->>L: server.lock.json mit der PID des Starts lesen
@@ -932,7 +942,7 @@ sequenceDiagram
 sequenceDiagram
   participant L as Launcher (zweiter Start)
   participant S as laufender Server
-  participant E as Edge
+  participant E as Chrome
   L->>L: server.lock.json lesen (serverLockFileSchema)
   L->>S: GET /api/health
   alt serverInstanceId gleich Lockfile
@@ -1184,10 +1194,12 @@ logs/parallax.<datum>.<n>.log         pino-roll (lib/logger.ts)
 logs/server.out.log                   stdout/stderr des vom Launcher gestarteten Servers (sonst leer: Abstürze vor
                                       dem Logger, Ursache eines gescheiterten Starts als letzte Zeile, §3.3;
                                       > 1 MiB → server.out.1.log beim nächsten Start)
-edge/                                 Edge-Profil des App-Fensters (--user-data-dir, WP-21; nie angemeldet, kein
-                                      Sync – --disable-sync, --disable-features=msImplicitSignin,…, ADR-060;
+chrome/                               Chrome-Profil des App-Fensters (--user-data-dir, WP-21/ADR-136; nie angemeldet,
+                                      kein Sync – --disable-sync, --allow-browser-signin=false, ADR-060/136;
                                       Benachrichtigungs-Freigabe des eigenen Origins in Default\Preferences,
                                       vom Launcher vor jedem Fenster gesetzt, ADR-082)
+edge/                                 nur aus Versionen vor ADR-136: früheres Edge-Profil, unbenutzt, nie
+                                      automatisch gelöscht (README „Chrome-Profil“)
 ui/<buildId>/                         beim Serverstart fixierte Kopie von dist/web (nur die des laufenden Builds;
                                       ältere werden beim Start gelöscht; V2-03, ADR-066)
 ```
@@ -1280,8 +1292,9 @@ defekte Zeilen überspringen und zählen.
   stderr (F.16). Prozessabfragen sind dreiwertig (`unknown` heißt nie „weg“, ADR-051); Waisen beim
   Start: der verifizierte `claude.exe`-Wurzelprozess und exakt passende Prozesse des letzten
   Herzschlag-Schnappschusses (ADR-081, §8).
-- **Benachrichtigungen (ADR-082, §5 „Präsenz“):** Web Notifications im Edge-App-Fenster (Origin vom
-  Launcher im eigenen Profil erlaubt, Edge-eigene Popups); ohne Fenster bzw. ohne Berechtigung ein
+- **Benachrichtigungen (ADR-082, §5 „Präsenz“):** Web Notifications im Chrome-App-Fenster (Origin vom
+  Launcher im eigenen Profil erlaubt; Darstellung durch Chrome, voraussichtlich über Windows, live zu
+  prüfen – ADR-136); ohne Fenster bzw. ohne Berechtigung ein
   nativer Windows-Toast des Servers (PowerShell 5.1 + WinRT, Skript konstant per `-EncodedCommand`,
   Daten nur über Umgebungsvariablen, XML per DOM; Absender `Parallax.App` per HKCU-AppUserModelId).
   `--toasts=native|off`/`PARALLAX_TOASTS`, unter Tests aus; ein deterministischer Fehler
@@ -1290,9 +1303,11 @@ defekte Zeilen überspringen und zählen.
 - **Ein Server je Home (ADR-054):** Home-Lock per Named Pipe, `busy` → Exit 5 (`main.ts`, §8);
   Home-Rechte werden nur gewarnt (ADR-056). Das FakeBackend läuft nie auf dem echten Datenordner
   (ADR-061).
-- **Edge-Profil (ADR-060):** eigenes `--user-data-dir`, nie mit einem Microsoft-/Windows-Konto
-  angemeldet, nie synchronisiert; Edge-Richtlinien eines verwalteten Rechners können das
-  übersteuern (`pnpm preflight` warnt).
+- **Chrome-Profil (ADR-060, ADR-136):** nur Chrome, eigenes `--user-data-dir`, nie mit einem
+  Google-Konto angemeldet (`--allow-browser-signin=false`), nie synchronisiert (`--disable-sync`);
+  Chrome-Richtlinien eines verwalteten Rechners können Schalter und Profil-Einstellungen
+  übersteuern (`pnpm preflight` „chrome policies“ warnt, z. B. `BrowserSignin=2`, `UserDataDir`,
+  blockierte Benachrichtigungen, `AutoplayAllowed=0`, `URLBlocklist` mit `127.0.0.1`).
 - **Unerwartete Fehler (ADR-064):** unbehandelte Rejection/Exception → `fatal`-Log und geordneter
   Shutdown mit Exit 1.
 - **Auto-Retry (A.10, ADR-025):** nur nach einem Absturz im **Leerlauf** (`runState idle`, keine
