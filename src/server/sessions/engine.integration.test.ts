@@ -498,7 +498,7 @@ describe('restart', () => {
     expect(approved.outcome).toEqual({ type: 'plan_approved', mode: 'acceptEdits', edited: false });
     expect(h2.backend.starts[0]).toMatchObject({
       permissionMode: 'acceptEdits',
-      resumeSessionId: '84a2a7ef-261a-478f-83b7-8718d711c257',
+      resumeSessionId: '3d894db4-9619-4875-93eb-adb9abcea05b',
     });
     const sent = h2.session(entryId).sent[0];
     const text = sent?.content[0];

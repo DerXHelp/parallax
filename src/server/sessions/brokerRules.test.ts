@@ -97,9 +97,9 @@ describe('decisionKindFor / parseQuestions / parsePlan', () => {
   });
 
   it('parses the recorded ExitPlanMode input; no plan text → null', () => {
-    expect(parsePlan(recorded('plan-mode', 55).input)).toEqual({
-      plan: expect.stringContaining('## Plan') as string,
-      planFilePath: '<HOME>\\.claude\\plans\\plan-how-to-create-velvet-quail.md',
+    expect(parsePlan(recorded('plan-mode', 60).input)).toEqual({
+      plan: expect.stringContaining('# Plan') as string,
+      planFilePath: '<HOME>\\.claude\\plans\\plan-how-to-create-jolly-nest.md',
     });
     expect(parsePlan({ plan: 'x' })).toEqual({ plan: 'x', planFilePath: null });
     expect(parsePlan({ plan: 3 })).toBeNull();
@@ -127,8 +127,8 @@ describe('buildOffer (F.3, ADR-012)', () => {
     });
   });
 
-  it('PowerShell: addDirectories + setMode without rules (permissions#167)', () => {
-    expect(buildOffer(recorded('permissions', 167), 'default')).toMatchObject({
+  it('PowerShell: addDirectories + setMode without rules (permissions#219)', () => {
+    expect(buildOffer(recorded('permissions', 219), 'default')).toMatchObject({
       rules: [],
       directories: ['<SCRATCH>\\work\\permissions'],
       ruleDestinations: [...RULE_DESTINATIONS],
