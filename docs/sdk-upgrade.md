@@ -2,7 +2,8 @@
 
 Plan B „SDK-Upgrade-Prozess“ (`docs/plan.md`): *Version anheben → typecheck → Fixture-Tests → neu
 aufzeichnen → Snapshot-Diff → Zähler für unbekannte Message-Typen prüfen → Live-Smoke.* Diese Datei
-beschreibt die Schritte für dieses Repo. Stand: WP-22 (15.10.2026, SDK 0.3.296, CLI 2.1.300).
+beschreibt die Schritte für dieses Repo. Stand: SDK-0.3.322 (11.11.2026, SDK 0.3.322, CLI 2.1.322;
+zuvor WP-22, SDK 0.3.296). Letzter Durchlauf: `docs/wp/SDK-0.3.322.md` §5.
 
 Grundregeln: Das SDK ist **exakt** gepinnt (`CLAUDE.md` „Stack“); ein Upgrade ist ein eigenes
 Arbeitspaket mit Koordinator-Freigabe (`package.json`/Lockfile sind tabu). Live-Schritte (Schritt 4
@@ -21,7 +22,11 @@ der Prozess nach Schritt 3 mit „live offen“.
   `pnpm-workspace.yaml`): `node_modules` darf keine `claude-agent-sdk-win32-*` enthalten.
 - Neue Mindest-CLI ablesen: `claudeCodeVersion` im SDK-Manifest. Die Versionsregel C.7 (UI
   „zu alt“, `pnpm preflight`) liest sie automatisch – mit `pnpm preflight` prüfen, ob das
-  installierte `claude` reicht (`agent sdk … (expects claude >= …)`).
+  installierte `claude` reicht (`agent sdk … (expects claude >= …)`). Im Worktree mit eigenem
+  Datenordner aufrufen (`pnpm preflight --home=<Temp-Ordner>`), damit der Check nicht den echten
+  `%LOCALAPPDATA%\Parallax` liest.
+- Der Test `src/server/claude/resolveClaude.test.ts` liest das installierte Manifest und muss auf
+  die neue SDK-/`claudeCodeVersion` umgestellt werden (rot ist hier erwartet).
 
 ## 2. Typecheck
 
@@ -49,18 +54,38 @@ der Prozess nach Schritt 3 mit „live offen“.
   (Haiku, Scratch-Ordner `%TEMP%\parallax-spike-<stamp>`, Guards aus ADR-011: Abo-Login,
   `apiKeySource: none`, Abbruch bei Auth-/Billing-Fehler und > 2 USD gesamt).
 - **Vor dem Lauf** das Budget bewusst zurücksetzen (`.recordings/spike-state.json`, ADR-011 „Folgen“)
-  und `pnpm record --stats` notieren.
+  und `pnpm record --stats` notieren. Die Datei liegt im jeweiligen Checkout bzw. Worktree; ein frischer
+  Worktree beginnt bei 0.
+- Ist die Freigabe kleiner als der harte Guard (2 USD), das Budget für den Lauf senken:
+  `PARALLAX_RECORD_BUDGET_USD=<usd>` (Wert in (0, 2]; ungültig → Abbruch vor dem ersten Scratch-Ordner).
+  Live-Smoke und Aufnahme teilen sich die Freigabe; der Smoke hat ein eigenes Budget (Schritt 7).
+- `record all` zeichnet alle Szenarien aus `pnpm record --list` auf. `interrupt-requesting` ist kein
+  Szenario (erster Interrupt-Lauf aus WP-01) und bleibt bei einer Neuaufzeichnung unverändert (Header
+  zeigt die alte Version).
+- Danach Tests mit aufgezeichneten Werten nachziehen (Session-/Tool-IDs, `seq`-Belege, Anzahl Messages,
+  Plan-Dateiname, Titel). Betroffen waren zuletzt `backend/history/parse.test.ts`,
+  `backend/fake/{history,testing}.test.ts`, `backend/fakeBackend.test.ts`,
+  `sessions/{brokerRules,mirror}.test.ts` und `sessions/{engine,fixtures}.integration.test.ts`.
 - Rohdaten bleiben in `.recordings/` (git-ignoriert, persönliche Daten); die bereinigten Fixtures
   landen in `test/fixtures/sdk/*.jsonl`. Nach dem Lauf `git diff --stat test/fixtures` und eine
   Stichprobe auf persönliche Daten (`<USER>`/`<EMAIL>`-Platzhalter vorhanden, kein Klartext).
 - Plan-Modus kann mit Haiku auf ein anderes Modell wechseln (Findings Punkt 6, WP-22: Sonnet 5.5) –
-  das Szenario `plan-mode` ist das teuerste.
+  das Szenario `plan-mode` ist das teuerste (11.11.2026: 0,15 von 0,20 USD der ganzen Aufnahme).
+- **Rückbau nach dem Lauf** (außerhalb des Repos, nur nachweislich eigene Daten): Scratch-Ordner
+  `%TEMP%\parallax-spike-<stamp>`; Transkriptordner `~/.claude/projects/*-Temp-parallax-spike-<stamp>-work-*`
+  (`cwd` in den Transkripten prüfen; `clear-rename` mit kleinem Laufwerksbuchstaben `c--…`); CLI-Task-Ordner
+  `%TEMP%\claude\<hash>\<session-id>` mit den Session-IDs aus `spike-state.json`. Die Plan-Datei unter
+  `~/.claude/plans/` und den Projekteintrag in `~/.claude.json` nur aufführen.
 
 ## 5. Snapshot-Diff
 
-- `pnpm exec vitest run src/server/sessions/normalizer -u` aktualisiert die Datei-Snapshots
-  (`src/server/sessions/normalizer/__snapshots__/{live,history,synthetic}/*.json`), danach
-  `git diff -- src/server/sessions/normalizer/__snapshots__` lesen:
+- `pnpm exec vitest run src/server/sessions -u` aktualisiert die Datei-Snapshots
+  (`src/server/sessions/normalizer/__snapshots__/{live,history,context,synthetic}/*.json` und
+  `src/server/sessions/status/__snapshots__/*.json`), danach
+  `git diff -- src/server/sessions/normalizer/__snapshots__ src/server/sessions/status/__snapshots__` lesen.
+  Vorher die alten Snapshots sichern; ein Strukturvergleich je Fixture (Item-Arten, Tool-Status,
+  Signale, Message-Typen, Turn-Ergebnisse) trennt Modellvarianz von echten Änderungen schneller als
+  der Text-Diff:
   - neue/verschwundene Items oder Item-Arten (`kind`), geänderte Status-Signale, Kosten-/Usage-Felder,
   - `unknownCounts` je Snapshot (siehe 6),
   - Text-Unterschiede durch das Modell sind normal (neue Aufzeichnung), Struktur-Unterschiede nicht.
@@ -97,9 +122,11 @@ $env:PARALLAX_LIVE='1'; pnpm e2e e2e/live      # ≈ 1,5 min, ≈ 0,01 USD (Haik
   Fehlerzeile im Log).
 - Ohne `PARALLAX_LIVE=1` ignoriert `playwright.config.ts` den Ordner `e2e/live` (zusätzlich
   überspringt sich die Datei selbst) – `pnpm e2e` bleibt ohne Live-Aufruf.
-- Artefakte in `test-results/` (git-ignoriert): `server-live.log`, `live-cost.txt`. Transkripte der
-  Live-Sessions entstehen unter `~/.claude/projects/C--…-Temp-parallax-live-e2e-*` (nicht im Repo,
-  bei Bedarf von Hand löschen).
+- Artefakte in `test-results/` (git-ignoriert): `server-live.log`, `live-cost.txt` und
+  `unknown-counts.json` (im Ausgabeordner des letzten Tests, `test-results/live-live-real-SDK-data-…/`).
+  Transkripte der Live-Sessions entstehen unter `~/.claude/projects/C--…-Temp-parallax-live-e2e-*`,
+  CLI-Task-Ordner unter `%TEMP%\claude\<hash>\<session-id>` (nicht im Repo, nach dem Lauf löschen;
+  die Session-ID steht im Namen der Transkriptdatei). 11.11.2026: 6/6 in 25 s, 0,0054 USD.
 - Für eine vollständige Abnahme zusätzlich die Checkliste aus `docs/wp/R3.md` („Checkliste WP-22“)
   bzw. das Protokoll in `docs/wp/WP-22.md` durchgehen (Notifications, Doppelstart, harter Abbruch,
   „Server beenden“ – nicht automatisiert).
@@ -109,4 +136,5 @@ $env:PARALLAX_LIVE='1'; pnpm e2e e2e/live      # ≈ 1,5 min, ≈ 0,01 USD (Haik
 - WP-Bericht mit: alte/neue SDK- und CLI-Version, Peer-Ranges, Snapshot-Diff (Zusammenfassung),
   neue `unknownCounts`-Schlüssel, Anzahl Validierungs-Drops, Live-Smoke-Ergebnis, Verbrauch.
 - `docs/sdk-findings.md` um neue Beobachtungen ergänzen (Kopfzeile „Stand“ mit Versionen).
-- CLAUDE.md „Stack“ (exakte SDK-Version) und ggf. ADR durch den Koordinator.
+- CLAUDE.md „Stack“ (exakte SDK-Version), der Versionskommentar bei `ignoredOptionalDependencies` in
+  `pnpm-workspace.yaml` und ggf. ADR durch den Koordinator.
