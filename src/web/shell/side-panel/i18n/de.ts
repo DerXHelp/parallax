@@ -10,4 +10,9 @@ export const de: typeof en = {
     files: 'Dateien',
     tasks: 'Aufgaben',
   },
+  resize: 'Panelbreite ändern',
+  width: '{width} px',
+  fileTab: 'Datei: {name}',
+  back: 'Zurück zu {name}',
+  history: 'Zuletzt geöffnete Dateien',
 };

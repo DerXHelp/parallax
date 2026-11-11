@@ -1,8 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LIMITS } from '@shared/common';
-import { parseServerMessage, type Command, type ServerMessage } from '@shared/protocol';
-import { SAMPLE_IDS, sampleDecisions, sampleItems, sampleSessionSnapshot } from '@shared/samples';
-import { FakeHost } from './fake-host';
+import { makeError } from '@shared/errors';
+import { parseCommandResult, parseServerMessage, type Command, type ServerMessage } from '@shared/protocol';
+import {
+  SAMPLE_IDS,
+  sampleDecisions,
+  sampleDetail,
+  sampleFileInfo,
+  sampleId,
+  sampleItems,
+  sampleSessionSnapshot,
+  sampleSummary,
+  sampleSystemItems,
+  sampleTime,
+} from '@shared/samples';
+import { FAKE_FILE_PATHS, FAKE_FILE_ROOT, FAKE_LOG_LINES, FAKE_PLAN_TEXTS, FakeHost } from './fake-host';
 import { createMemoryTransport } from './transport';
 
 const ENTRY = SAMPLE_IDS.entry;
@@ -111,6 +123,305 @@ describe('FakeHost defaults for WP-15/16 demos (R1W-22)', () => {
       ok: true,
       result: { items: [{ id: 'u2' }, { id: 'u3' }], hasEarlier: true },
     });
+    host.dispose();
+  });
+});
+
+describe('FakeHost Phase 3 commands (WP-54)', () => {
+  function setup(options: Partial<ConstructorParameters<typeof FakeHost>[0]> = {}) {
+    const transport = createMemoryTransport();
+    const host = new FakeHost({ transport, sessions: [sampleSessionSnapshot()], ...options });
+    const received = connect(transport);
+    let next = 0;
+    const run = (cmd: Command) => {
+      const cmdId = `00000000-0000-4000-8000-${String(++next).padStart(12, '0')}`;
+      command(transport, cmd, cmdId);
+      return ackOf(received, cmdId);
+    };
+    return { host, received, transport, run };
+  }
+
+  it('file.stat answers from the table; missing below the root, refused outside, rejected for UNC', () => {
+    const { host, run } = setup();
+    expect(run({ name: 'file.stat', entryId: ENTRY, path: FAKE_FILE_PATHS.readme })).toMatchObject({
+      ok: true,
+      result: { file: { path: FAKE_FILE_PATHS.readme, kind: 'markdown', previewable: true, access: 'cwd' } },
+    });
+    // Case-insensitive lookup, the answer keeps the requested spelling.
+    const lower = FAKE_FILE_PATHS.main.toLowerCase();
+    expect(run({ name: 'file.stat', entryId: ENTRY, path: lower })).toMatchObject({
+      ok: true,
+      result: { file: { path: lower, kind: 'text' } },
+    });
+    expect(run({ name: 'file.stat', entryId: ENTRY, path: FAKE_FILE_PATHS.missing })).toMatchObject({
+      ok: false,
+      error: { code: 'FILE_NOT_FOUND' },
+    });
+    expect(run({ name: 'file.stat', entryId: ENTRY, path: FAKE_FILE_PATHS.outside })).toMatchObject({
+      ok: false,
+      error: { code: 'PATH_NOT_ALLOWED' },
+    });
+    expect(run({ name: 'file.stat', entryId: ENTRY, path: '\\\\server\\share\\a.md' })).toMatchObject({
+      ok: false,
+      error: { code: 'PATH_REJECTED' },
+    });
+    expect(
+      run({ name: 'file.stat', entryId: sampleId('en', 77), path: FAKE_FILE_PATHS.readme }),
+    ).toMatchObject({
+      ok: false,
+      error: { code: 'ENTRY_NOT_FOUND' },
+    });
+    host.dispose();
+  });
+
+  it('file.statMany answers every path in order, never failing the command', () => {
+    const { host, run } = setup();
+    const paths = [
+      FAKE_FILE_PATHS.log,
+      FAKE_FILE_PATHS.outside,
+      FAKE_FILE_PATHS.missing,
+      FAKE_FILE_PATHS.plan,
+    ];
+    expect(run({ name: 'file.statMany', entryId: ENTRY, paths })).toMatchObject({
+      ok: true,
+      result: {
+        results: [
+          { path: FAKE_FILE_PATHS.log, ok: true, file: { truncated: true } },
+          { path: FAKE_FILE_PATHS.outside, ok: false, error: { code: 'PATH_NOT_ALLOWED' } },
+          { path: FAKE_FILE_PATHS.missing, ok: false, error: { code: 'FILE_NOT_FOUND' } },
+          { path: FAKE_FILE_PATHS.plan, ok: true, file: { access: 'session' } },
+        ],
+      },
+    });
+    host.dispose();
+  });
+
+  it('file.open records the call, checks kind and default-program extension, fails on the switch', () => {
+    const { host, run } = setup();
+    expect(
+      run({
+        name: 'file.open',
+        entryId: ENTRY,
+        path: FAKE_FILE_PATHS.main,
+        target: 'editor',
+        line: 12,
+        col: 3,
+      }),
+    ).toMatchObject({ ok: true });
+    expect(host.fileOpens).toEqual([
+      { name: 'file.open', entryId: ENTRY, path: FAKE_FILE_PATHS.main, target: 'editor', line: 12, col: 3 },
+    ]);
+    expect(
+      run({
+        name: 'file.open',
+        entryId: ENTRY,
+        path: FAKE_FILE_PATHS.main,
+        target: 'default',
+        line: null,
+        col: null,
+      }),
+    ).toMatchObject({ ok: false, error: { code: 'FILE_TYPE_BLOCKED' } });
+    expect(
+      run({
+        name: 'file.open',
+        entryId: ENTRY,
+        path: FAKE_FILE_PATHS.folder,
+        target: 'editor',
+        line: null,
+        col: null,
+      }),
+    ).toMatchObject({ ok: false, error: { code: 'VALIDATION_FAILED' } });
+    expect(
+      run({
+        name: 'file.open',
+        entryId: ENTRY,
+        path: FAKE_FILE_PATHS.folder,
+        target: 'explorer',
+        line: null,
+        col: null,
+      }),
+    ).toMatchObject({ ok: true });
+    host.fileOpenError = makeError('EDITOR_NOT_FOUND');
+    expect(
+      run({
+        name: 'file.open',
+        entryId: ENTRY,
+        path: FAKE_FILE_PATHS.pdf,
+        target: 'default',
+        line: null,
+        col: null,
+      }),
+    ).toMatchObject({ ok: false, error: { code: 'EDITOR_NOT_FOUND' } });
+    expect(host.fileOpens.map((cmd) => cmd.target)).toEqual(['editor', 'explorer', 'default']);
+    host.dispose();
+  });
+
+  it('files.session lists the index newest first; files.project lists the root relative with "/"', () => {
+    const { host, run } = setup({ summaries: [sampleSummary()] });
+    const session = run({ name: 'files.session', entryId: ENTRY });
+    expect(session).toMatchObject({ ok: true, result: { truncated: false } });
+    const files =
+      session?.type === 'ack' && session.ok
+        ? (parseCommandResult('files.session', session.result)?.files ?? [])
+        : [];
+    expect(files[0]?.path).toBe(FAKE_FILE_PATHS.main);
+    const times = files.map((file) => Date.parse(file.lastAt));
+    expect(times).toEqual([...times].sort((a, b) => b - a));
+    expect(run({ name: 'files.project', entryId: ENTRY })).toMatchObject({
+      ok: true,
+      result: {
+        root: FAKE_FILE_ROOT,
+        source: 'git',
+        files: [
+          'README.md',
+          'assets/diagram.png',
+          'bin/tool.dat',
+          'docs/guide.md',
+          'docs/spec.pdf',
+          'logs/build.log',
+          'package.json',
+          'src/main.ts',
+        ],
+      },
+    });
+    host.dispose();
+  });
+
+  it('editor.detect reports the presets and a custom executable', () => {
+    const { host, run } = setup();
+    expect(run({ name: 'editor.detect' })).toMatchObject({
+      ok: true,
+      result: { notepadpp: 'C:\\Program Files\\Notepad++\\notepad++.exe', vscode: null, custom: null },
+    });
+    host.hostState = {
+      ...host.hostState,
+      settings: {
+        ...host.hostState.settings,
+        editor: { preset: 'custom', executable: 'D:\\tools\\edit.exe', args: ['{file}'] },
+      },
+    };
+    expect(run({ name: 'editor.detect' })).toMatchObject({
+      ok: true,
+      result: { custom: { executable: 'D:\\tools\\edit.exe', exists: true } },
+    });
+    host.dispose();
+  });
+
+  it('plan.list returns two versions, plan.read their texts, PLAN_NOT_FOUND otherwise', () => {
+    const { host, run } = setup();
+    expect(run({ name: 'plan.list', entryId: ENTRY })).toMatchObject({
+      ok: true,
+      result: {
+        versions: [
+          { version: 1, outcome: { type: 'plan_revised' } },
+          { version: 2, outcome: null },
+        ],
+      },
+    });
+    expect(run({ name: 'plan.read', entryId: ENTRY, version: 1 })).toMatchObject({
+      ok: true,
+      result: { version: 1, text: FAKE_PLAN_TEXTS[0] },
+    });
+    expect(run({ name: 'plan.read', entryId: ENTRY, version: 2 })).toMatchObject({
+      ok: true,
+      result: { version: 2, text: FAKE_PLAN_TEXTS[1] },
+    });
+    expect(run({ name: 'plan.read', entryId: ENTRY, version: 3 })).toMatchObject({
+      ok: false,
+      error: { code: 'PLAN_NOT_FOUND' },
+    });
+    host.dispose();
+  });
+
+  it('session.stopTask reports the task as stopped and drops it from the background tasks', () => {
+    const task = { ...sampleSystemItems.task_notification().task, status: 'running', endedAt: null };
+    const agent = sampleItems.toolCall({ toolName: 'Agent', toolUseId: 'toolu_agent', task });
+    const { host, run } = setup({
+      sessions: [
+        sampleSessionSnapshot({
+          items: [agent],
+          detail: sampleDetail({
+            backgroundTasks: [
+              {
+                taskId: task.taskId,
+                taskType: 'local_bash',
+                description: 'Background command',
+                subagentType: null,
+                parentTaskId: null,
+                ambient: false,
+              },
+            ],
+          }),
+        }),
+      ],
+      now: () => sampleTime(60),
+    });
+    expect(run({ name: 'session.stopTask', entryId: ENTRY, taskId: task.taskId })).toMatchObject({
+      ok: true,
+    });
+    const view = host.view(ENTRY);
+    expect(view?.items[0]).toMatchObject({
+      task: { taskId: task.taskId, status: 'stopped', endedAt: sampleTime(60) },
+    });
+    expect(view?.items.at(-1)).toMatchObject({
+      kind: 'system',
+      event: 'task_notification',
+      task: { taskId: task.taskId, status: 'stopped' },
+    });
+    expect(view?.detail.backgroundTasks).toEqual([]);
+    expect(run({ name: 'session.stopTask', entryId: ENTRY, taskId: task.taskId })).toMatchObject({
+      ok: false,
+      error: { code: 'TASK_NOT_FOUND' },
+    });
+    host.dispose();
+  });
+
+  it('emitFileToolCall pushes a finished tool call, touches the file and updates the index', () => {
+    const { host, run } = setup({ now: () => sampleTime(90) });
+    const before = host.file(FAKE_FILE_PATHS.guide)?.info.mtimeMs ?? 0;
+    const item = host.emitFileToolCall(ENTRY, { toolName: 'Write', path: FAKE_FILE_PATHS.guide });
+    expect(host.view(ENTRY)?.items.at(-1)).toMatchObject({
+      kind: 'tool_call',
+      toolUseId: item.toolUseId,
+      toolName: 'Write',
+      status: 'done',
+      input: { file_path: FAKE_FILE_PATHS.guide },
+      result: { isError: false },
+    });
+    expect(host.file(FAKE_FILE_PATHS.guide)?.info.mtimeMs).toBe(before + 1000);
+    expect(host.sessionFilesOf(ENTRY)[0]).toMatchObject({
+      path: FAKE_FILE_PATHS.guide,
+      ops: ['written'],
+      count: 2,
+      lastAt: sampleTime(90),
+      lastToolUseId: item.toolUseId,
+    });
+    expect(run({ name: 'files.session', entryId: ENTRY })).toMatchObject({ ok: true });
+    // A Read does not change the file; a NotebookEdit uses notebook_path.
+    host.emitFileToolCall(ENTRY, { toolName: 'Read', path: FAKE_FILE_PATHS.readme });
+    expect(host.file(FAKE_FILE_PATHS.readme)?.info.mtimeMs).toBe(sampleFileInfo().mtimeMs);
+    host.emitFileToolCall(ENTRY, {
+      toolName: 'NotebookEdit',
+      path: 'D:\\work\\sample\\nb.ipynb',
+      status: 'running',
+    });
+    expect(host.view(ENTRY)?.items.at(-1)).toMatchObject({
+      input: { notebook_path: 'D:\\work\\sample\\nb.ipynb' },
+      status: 'running',
+      result: null,
+    });
+    host.dispose();
+  });
+
+  it('touchFile changes mtime and text; fileText serves the table texts', () => {
+    const { host } = setup();
+    expect(host.fileText(FAKE_FILE_PATHS.readme)).toContain('# Sample project');
+    expect(host.fileText(FAKE_FILE_PATHS.log)?.split('\n')).toHaveLength(FAKE_LOG_LINES);
+    expect(host.fileText(FAKE_FILE_PATHS.image)).toBeNull();
+    const info = host.touchFile(FAKE_FILE_PATHS.main, { text: 'ä' });
+    expect(info).toMatchObject({ bytes: 2, mtimeMs: sampleFileInfo().mtimeMs + 1000 });
+    expect(host.fileText(FAKE_FILE_PATHS.main)).toBe('ä');
+    expect(host.touchFile(FAKE_FILE_PATHS.missing)).toBeNull();
     host.dispose();
   });
 });
