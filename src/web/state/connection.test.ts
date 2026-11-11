@@ -335,7 +335,7 @@ describe('commands', () => {
     const invalid = connection.send({
       name: 'session.sendPrompt',
       entryId: ENTRY,
-      prompt: { text: 'hi', attachments: [] },
+      prompt: { text: 'hi', attachments: [], pastes: [] },
       priority: 'next',
     });
     const invalidId = transport.sentOfType('cmd')[1]?.cmdId ?? '';

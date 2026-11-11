@@ -50,14 +50,19 @@ afterEach(() => {
  * `failUpdate` those it returns true for.
  */
 async function connect(
-  options: { hostState?: HostState; failUpdates?: boolean; failUpdate?: (patch: SettingsPatch) => boolean } = {},
+  options: {
+    hostState?: HostState;
+    failUpdates?: boolean;
+    failUpdate?: (patch: SettingsPatch) => boolean;
+  } = {},
 ) {
   const transport = createMemoryTransport();
   const host = new FakeHost({
     transport,
     hostState: options.hostState ?? sampleHostState(),
     onCommand: (cmd) =>
-      cmd.name === 'settings.update' && (options.failUpdates === true || options.failUpdate?.(cmd.patch) === true)
+      cmd.name === 'settings.update' &&
+      (options.failUpdates === true || options.failUpdate?.(cmd.patch) === true)
         ? { ok: false, error: makeError('STORE_WRITE_FAILED') }
         : undefined,
   });
@@ -102,7 +107,7 @@ async function openSection(user: ReturnType<typeof userEvent.setup>, name: strin
 }
 
 describe('settings page (WP-38): dialog, sections, Esc', () => {
-  it('lists the six sections on the left and starts at the first one', async () => {
+  it('lists the seven sections on the left and starts at the first one', async () => {
     await connect();
     renderPage();
     const list = screen.getByRole('tablist', { name: 'Settings sections' });
@@ -110,7 +115,7 @@ describe('settings page (WP-38): dialog, sections, Esc', () => {
       within(list)
         .getAllByRole('tab')
         .map((tab) => tab.textContent),
-    ).toEqual(['General', 'Notifications', 'Sessions', 'Profiles', 'Server', 'About']);
+    ).toEqual(['General', 'Notifications', 'Sessions', 'Files', 'Profiles', 'Server', 'About']);
     expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe('true');
     expect(list.getAttribute('aria-orientation')).toBe('vertical');
     expect(screen.getByRole('tabpanel', { name: 'General' })).toBeTruthy();
@@ -605,7 +610,9 @@ describe('unsaved profile drafts (R4W-01)', () => {
     await user.type(draftField(), 'x');
     await user.keyboard('{Escape}');
     expect(onClose).not.toHaveBeenCalled();
-    const confirm = within(dialog).getByText('Discard the unsaved profile changes?').closest('[data-slot="settings-close-confirm"]');
+    const confirm = within(dialog)
+      .getByText('Discard the unsaved profile changes?')
+      .closest('[data-slot="settings-close-confirm"]');
     expect(confirm).not.toBeNull();
     // R4W-24: the harmless choice has the focus.
     expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Keep editing' }));

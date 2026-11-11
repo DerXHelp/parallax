@@ -162,7 +162,8 @@
             "durationMs": 5000
           },
           "startedAt": "2026-10-15T08:00:00.024Z",
-          "endedAt": "2026-10-15T08:00:00.000Z"
+          "endedAt": "2026-10-15T08:00:00.000Z",
+          "outputFile": null
         },
         "decision": null
       },
@@ -222,7 +223,8 @@
           "summary": "Monitor done",
           "usage": null,
           "startedAt": null,
-          "endedAt": "2026-10-15T08:00:00.134Z"
+          "endedAt": "2026-10-15T08:00:00.134Z",
+          "outputFile": null
         }
       },
       {

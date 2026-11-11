@@ -145,7 +145,7 @@ export function outcomeFor(kind: DecisionKind, decision: unknown, input: unknown
       inputPlan.success && updatedPlan.success && updatedPlan.data.plan !== undefined
         ? updatedPlan.data.plan !== inputPlan.data.plan
         : false;
-    return { type: 'plan_approved', mode, edited };
+    return { type: 'plan_approved', mode, edited, freshContext: false };
   }
   if (parsed.behavior === 'deny') {
     return {

@@ -1,5 +1,6 @@
 import {
   BellIcon,
+  FolderOpenIcon,
   InfoIcon,
   LayersIcon,
   ServerIcon,
@@ -29,6 +30,7 @@ const SECTION_ICONS: Readonly<Record<SettingsSection, LucideIcon>> = {
   general: SlidersHorizontalIcon,
   notifications: BellIcon,
   sessions: LayersIcon,
+  files: FolderOpenIcon,
   profiles: UsersIcon,
   server: ServerIcon,
   about: InfoIcon,
@@ -54,6 +56,12 @@ function ProfilesSection({ onDirtyChange }: { onDirtyChange: (dirty: boolean) =>
   return <ProfilesSettings onDirtyChange={onDirtyChange} />;
 }
 
+/** Section "Files" until WP-58 fills it. */
+function FilesSection() {
+  const t = useT();
+  return <p className="text-muted-foreground text-xs">{t('preferences.files.pending')}</p>;
+}
+
 function SectionContent({
   section,
   editor,
@@ -72,6 +80,9 @@ function SectionContent({
       return <NotificationsSection editor={editor} hostState={hostState} />;
     case 'sessions':
       return <SessionsSection editor={editor} />;
+    case 'files':
+      // Phase 3 scaffold (WP-50): WP-58 adds the editor setting (settings.editor, ADR-144).
+      return <FilesSection />;
     case 'profiles':
       return <ProfilesSection onDirtyChange={onProfilesDirtyChange} />;
     case 'server':
@@ -216,7 +227,12 @@ export function SettingsPage({ section, onClose }: SettingsPageSlotProps) {
               tone="error"
               title={t('settings.saveFailed')}
               actions={
-                <Button size="sm" variant="outline" data-action="settings-error-dismiss" onClick={editor.dismissError}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  data-action="settings-error-dismiss"
+                  onClick={editor.dismissError}
+                >
                   {t('preferences.dismissError')}
                 </Button>
               }

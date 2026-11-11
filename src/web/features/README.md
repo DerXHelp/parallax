@@ -13,6 +13,11 @@ Koordinator):
   Screenshots, Lightbox), `profiles/` (WP-36, Slot `ProfilesSettings`), `preferences/` (WP-38, Slot
   `SettingsPage`); `decisions/` bleibt unverändert. Querverbindungen zur Shell laufen zusätzlich über
   den Anfragekanal `src/web/shell/requests.ts`.
+- Phase 3 (Ownership `docs/wp/WP-50.md` §6): neu `files/` (WP-54: Viewer, `FileLink`, Dateien-Panel; Slots
+  `FilePanel`, `FilesPanel`, `FileLink`) und `tasks/` (WP-55: Task-Panel, Aufgabenleiste; Slots `TasksPanel`,
+  `TaskStrip`); `decisions/` liefert den Slot `PlanPanel` (Tab „Plan“ des Seitenpanel-Hosts
+  `shell/side-panel`, ADR-150). Code-Block, Diff-Ansicht und Kopierknopf liegen seit WP-50 Teil 2 in
+  `src/web/ui`, Shiki/Diff-Helfer in `src/web/lib` (für Transkript und Viewer).
 
 Aufbau eines Feature-Ordners (R0-03): `i18n/{en,de}.ts` (Namespace = Ordnername, Stubs von WP-14),
 `playground.tsx` (`export const demos: PlaygroundDemo[]`, per `import.meta.glob` gefunden),

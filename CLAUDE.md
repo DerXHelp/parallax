@@ -28,22 +28,22 @@ die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale En
 | `$env:PARALLAX_LIVE='1'; pnpm e2e e2e/live` | Live-Smoke gegen das echte `claude` – nur mit Nutzer-Freigabe; SDK-/CLI-Upgrade: `docs/sdk-upgrade.md` |
 | `pnpm preflight` / `pnpm record <szenario>` | Umgebungscheck (WP-11) / Fixture-Recorder (WP-01) |
 
-## Ordner und Ownership Phase 2 (datei-genau; Details: `docs/wp/WP-30.md` §6, `docs/architecture.md` §2)
+## Ordner und Ownership Phase 3 (datei-genau; Details: `docs/wp/WP-50.md` §6, `docs/architecture.md` §2)
 | Pfad | Inhalt | Owner |
 |---|---|---|
-| `src/shared/**`, `src/server/**/ports.ts` (inkl. `system/ports.ts`), `src/server/backend/{types,fixture}.ts` | Contracts v2 | Koordinator (eingefroren) |
+| `src/shared/**`, `src/server/**/ports.ts` (inkl. `system/ports.ts`, neu `files/ports.ts`), `src/server/backend/{types,fixture}.ts` | Contracts v3 | Koordinator (eingefroren) |
 | `src/server/lib/{async,fs,homeLock,homeAccess}.ts` | Basis-Helfer (`toError`, `writeFileAtomic`, Home-Lock, Home-Rechte) | Koordinator |
-| `src/server/sessions/**` (ohne `ports.ts`), `src/server/backend/**` (ohne `types/fixture`) | Engine, Normalizer/Status, Fake-/SdkBackend | WP-31 (Welle 1), dann WP-34 |
-| `src/server/claude/**` (ohne `ports.ts`), `scripts/preflight.ts` | Profile, Claude-Integration, Preflight | WP-32 |
-| `src/server/{http,store,host}/**`, `src/server/system/**` (ohne `ports.ts`), übrige `src/server/lib/**`, `src/server/launcher/**`, `src/server/config.ts` | HTTP/Uploads, Stores, Ordner-Browser, Windows-Integration, Launcher | WP-33 |
-| `src/server/sync/**` (ohne `ports.ts`) | Hub (unverändert) | Koordinator |
-| `src/server/main.ts`, `src/server/app/**`, `src/web/{App,main}.tsx`, `e2e/**` | Komposition, Verdrahtung, E2E | WP-40 |
-| `src/web/shell/**` (ohne die Zeilen unten), `src/web/{state,lib,playground}/**`, neue `src/web/ui/{context-menu,command-list}.tsx` | Navigation (Sidebar, Strg+K, Kopfzeile, Fenster) | WP-35 |
-| `src/web/shell/{NewSessionDialog,NewSessionForm,EmptyState}.tsx`, `src/web/shell/new-session/**`, `src/web/features/profiles/**` | Neue Session, Profil-Editor | WP-36 |
-| `src/web/features/{composer,transcript}/**`, neue `src/web/ui/lightbox.tsx` | Composer, Transkript | WP-37 |
-| `src/web/features/preferences/**`, `src/web/notifications/**`, `src/web/shell/SettingsMenu.tsx`, neue `src/web/ui/slider.tsx` | Einstellungen, Töne | WP-38 |
-| `src/web/shell/{requests,slots,placeholders}.ts(x)`, `src/web/shell/server-shutdown/**`, `src/web/i18n/**`, bestehende `src/web/ui/*`, `src/web/features/decisions/**`, `index.{html,css}` | Gerüst / unverändert | Koordinator |
-| `scripts/` (übrige), `test/`, Root-Configs, `package.json`, Lockfile | Recorder, `test/setup`, Bootstrap | Koordinator |
+| `src/server/sessions/**` (ohne `ports.ts`, ohne `normalizer/**`) | Engine: frischer Kontext, Plan-Versionen, Stop je Task, Detail-Felder, Anhänge/Pastes | WP-51 |
+| `src/server/sessions/normalizer/**`, `src/server/backend/**` (ohne `types/fixture`) | Normalizer, SDK-Optionen, Fake-Szenarien | WP-52 |
+| `src/server/files/**` (ohne `ports.ts`), `src/server/{http,store}/**`, `src/server/lib/**` (übrige) | Datei-Dienst, `/api/file`, Uploads, Anhang-Store, Programmstart | WP-53 |
+| `src/web/features/files/**`, `src/web/shell/side-panel/**`, `src/web/state/fake-host{,.test}.ts`, `src/web/ui/{code-block,diff-view,copy-button}.tsx`, `src/web/ui/use-highlight.ts` und `src/web/lib/{highlight,languages,diff,sized-cache}.ts` (aus WP-50 Teil 2), neu `src/web/ui/splitter.tsx` | Viewer, `FileLink`, Dateien-Panel, Panel-Host, Fake-Host | WP-54 |
+| `src/web/features/{transcript,tasks}/**`, neu `src/web/lib/file-refs.ts` (+ Test) | Verweise im Transkript, Task-Panel, Aufgabenleiste | WP-55 |
+| `src/web/features/decisions/**` | Plan-Komfort | WP-56 |
+| `src/web/features/composer/**` | Anhänge, Paste-Chips, @-Picker | WP-57 |
+| `src/web/shell/**` (ohne die Zeilen oben/unten), `src/web/state/**` (ohne `fake-host`), `src/web/lib/**` (übrige), `src/web/features/preferences/**` | Shell: Kopfzeile, Session-Menü, Drop-Zone, schmales Fenster, Editor-Einstellung, Slot-Fehlergrenze | WP-58 |
+| `src/server/main.ts`, `src/server/app/**`, `src/web/{App,main}.tsx`, `e2e/**` | Komposition, Verdrahtung, E2E | WP-60 |
+| `src/web/shell/{requests,slots,placeholders}.ts(x)`, `src/web/shell/server-shutdown/**`, `src/web/shell/new-session/**`, `src/web/shell/{NewSessionDialog,NewSessionForm,EmptyState}.tsx`, `src/web/i18n/**`, übrige `src/web/ui/*`, `src/web/features/profiles/**`, `src/web/notifications/**`, `src/web/playground/**`, `src/web/index.{html,css}` | Gerüst / unverändert | Koordinator |
+| `src/server/{claude,host,system,sync,launcher}/**` (ohne `ports.ts`), `src/server/config.ts`, `scripts/**`, `test/**`, Root-Configs, `package.json`, Lockfile | unverändert / Bootstrap | Koordinator |
 
 - Keine Datei wird von zwei Paketen bearbeitet; nichts in fremden Ordnern anlegen. `README.md` von
   Ordnern mit mehreren Ownern (`src/server`, `server/lib`, `server/sessions`, `server/backend`,
@@ -53,7 +53,8 @@ die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale En
   `src/web/shell/requests.ts`. Features dürfen Shell-Bausteine importieren, die Shell nie Features;
   reine Helfer gehören nach `src/web/lib` (ADR-126). Fehler aus einem offenen Dialog zeigt der Dialog
   selbst (`Alert role="alert"`). Wörterbücher je Bereich: `features/<f>/i18n/{en,de}.ts` bzw.
-  `shell/<bereich>/i18n/{en,de}.ts` (Namensräume `navigation`, `newSession`, `profiles`, `preferences`).
+  `shell/<bereich>/i18n/{en,de}.ts` (Namensräume `navigation`, `newSession`, `profiles`, `preferences`;
+  Phase 3 neu `files`, `tasks`, `sidePanel`).
 - Aliase: `@shared/*` (überall), `@web/*` (nur Web). Jeder Ordner hat eine `README.md`.
 
 ## Contracts (Kurzregeln, Details `docs/architecture.md`)
@@ -105,7 +106,9 @@ Besitz-Pfade ändern.
 - Pfadregeln nur aus `@shared/paths` (Server: `lib/paths.ts`): case-insensitiv vergleichen,
   `cwd`-String exakt behalten, UNC/Device/ADS vor jedem Dateizugriff ablehnen. Nie duplizieren.
 - Prozessbäume mit `taskkill /PID <pid> /T /F` beenden; **jeder** Spawn mit `windowsHide: true`
-  und ohne Shell (Argument-Array). Nie `cmd /c start`. Nur **absolute `.exe`-Pfade** starten
+  und ohne Shell (Argument-Array). **Ausnahme:** sichtbare GUI-Programme nach einem Nutzerklick
+  (Editor, Explorer, Standardprogramm) nur über `spawnGui` aus `lib/process.ts` (absolute `.exe`,
+  PE-Subsystem GUI geprüft, Blockliste, `detached`, ADR-144). Nie `cmd /c start`. Nur **absolute `.exe`-Pfade** starten
   (`resolveExecutable` aus `lib/windows.ts`), nie nackte Namen wie `git` – sonst gewinnt das `cwd`.
 - Gestartete Hintergrundprozesse (Dev-Server, Vite, Tests) am Ende immer beenden.
 - **Session-Variablen der aufrufenden Claude-Session** (`CLAUDECODE`, `CLAUDE_CODE_*`,

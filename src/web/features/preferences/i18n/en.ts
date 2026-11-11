@@ -13,6 +13,7 @@ export const en = {
     general: 'General',
     notifications: 'Notifications',
     sessions: 'Sessions',
+    files: 'Files',
     profiles: 'Profiles',
     server: 'Server',
     about: 'About',
@@ -94,6 +95,9 @@ export const en = {
   },
   profiles: {
     unavailable: 'The profile editor is not available in this view.',
+  },
+  files: {
+    pending: 'The editor for “Open in editor” can be chosen here soon.',
   },
   /** Autostart and the protocol handler (ADR-110): only the productive server. */
   systemIntegrationOff:

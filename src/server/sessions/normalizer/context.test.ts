@@ -27,7 +27,10 @@ describe('recorded getContextUsage answers', () => {
   });
 
   it.each(withUsage)('%s → ContextBreakdown snapshot', async (scenario, calls) => {
-    const breakdowns = calls.map((c) => ({ seq: c.seq, breakdown: normalizeContextUsage(c.result, { contextWindow: null }, AT, 'summary') }));
+    const breakdowns = calls.map((c) => ({
+      seq: c.seq,
+      breakdown: normalizeContextUsage(c.result, { contextWindow: null }, AT, 'summary'),
+    }));
     for (const { breakdown } of breakdowns) {
       expect(breakdown).not.toBeNull();
       expect(contextBreakdownSchema.parse(breakdown)).toStrictEqual(breakdown);
@@ -63,10 +66,10 @@ describe('normalizeContextUsage', () => {
       at: AT.toISOString(),
       detail: 'full',
       categories: [
-        { name: 'System prompt', tokens: 3000, kind: 'used' },
-        { name: 'MCP tools (deferred)', tokens: 2000, kind: 'deferred' },
-        { name: 'Future row', tokens: 5, kind: 'used' },
-        { name: 'Free space', tokens: 900_000, kind: 'free' },
+        { name: 'System prompt', tokens: 3000, kind: 'used', id: null },
+        { name: 'MCP tools (deferred)', tokens: 2000, kind: 'deferred', id: null },
+        { name: 'Future row', tokens: 5, kind: 'used', id: null },
+        { name: 'Free space', tokens: 900_000, kind: 'free', id: null },
       ],
       autoCompactThreshold: 967_000,
       isAutoCompactEnabled: true,
@@ -79,15 +82,29 @@ describe('normalizeContextUsage', () => {
   });
 
   it('prefers rawMaxTokens over maxTokens and tolerates missing optional fields', () => {
-    const breakdown = normalizeContextUsage({ totalTokens: 150_000, maxTokens: 1_000_000, rawMaxTokens: 200_000 }, { contextWindow: null }, AT, 'summary');
-    expect(breakdown).toMatchObject({ maxTokens: 200_000, percentage: 75, categories: [], model: null, autoCompactThreshold: null, isAutoCompactEnabled: null });
+    const breakdown = normalizeContextUsage(
+      { totalTokens: 150_000, maxTokens: 1_000_000, rawMaxTokens: 200_000 },
+      { contextWindow: null },
+      AT,
+      'summary',
+    );
+    expect(breakdown).toMatchObject({
+      maxTokens: 200_000,
+      percentage: 75,
+      categories: [],
+      model: null,
+      autoCompactThreshold: null,
+      isAutoCompactEnabled: null,
+    });
   });
 
   it('returns null for unusable answers', () => {
     expect(normalizeContextUsage(null, { contextWindow: null }, AT, 'summary')).toBeNull();
     expect(normalizeContextUsage({ totalTokens: 'many' }, { contextWindow: null }, AT, 'summary')).toBeNull();
     expect(normalizeContextUsage({ totalTokens: 5 }, { contextWindow: null }, AT, 'summary')).toBeNull();
-    expect(normalizeContextUsage({ totalTokens: -1, maxTokens: 10 }, { contextWindow: null }, AT, 'summary')).toBeNull();
+    expect(
+      normalizeContextUsage({ totalTokens: -1, maxTokens: 10 }, { contextWindow: null }, AT, 'summary'),
+    ).toBeNull();
   });
 });
 
@@ -101,25 +118,54 @@ describe('in-turn estimate', () => {
 
   it('falls back to the window carried by the signal (R1-07)', () => {
     const withWindow = { ...estimate, contextWindow: 200_000 };
-    expect(estimateContextGauge(withWindow, { override: null, lastSdkMaxTokens: null }, AT)?.maxTokens).toBe(200_000);
-    expect(
-      estimateContextGauge(withWindow, { override: null, lastSdkMaxTokens: null, modelContextWindow: null }, AT)
-        ?.maxTokens,
-    ).toBe(200_000);
-    expect(estimateContextGauge(withWindow, { override: 100_000, lastSdkMaxTokens: null }, AT)?.maxTokens).toBe(
-      100_000,
+    expect(estimateContextGauge(withWindow, { override: null, lastSdkMaxTokens: null }, AT)?.maxTokens).toBe(
+      200_000,
     );
+    expect(
+      estimateContextGauge(
+        withWindow,
+        { override: null, lastSdkMaxTokens: null, modelContextWindow: null },
+        AT,
+      )?.maxTokens,
+    ).toBe(200_000);
+    expect(
+      estimateContextGauge(withWindow, { override: 100_000, lastSdkMaxTokens: null }, AT)?.maxTokens,
+    ).toBe(100_000);
   });
 
   it('uses override, then the last SDK maxTokens, then modelUsage.contextWindow', () => {
-    expect(estimateContextGauge(estimate, { override: 100_000, lastSdkMaxTokens: 1_000_000, modelContextWindow: 1_000_000 }, AT)).toMatchObject({
+    expect(
+      estimateContextGauge(
+        estimate,
+        { override: 100_000, lastSdkMaxTokens: 1_000_000, modelContextWindow: 1_000_000 },
+        AT,
+      ),
+    ).toMatchObject({
       maxTokens: 100_000,
       percentage: 50,
       source: 'estimate',
     });
-    expect(estimateContextGauge(estimate, { override: null, lastSdkMaxTokens: 200_000, modelContextWindow: 1_000_000 }, AT)?.maxTokens).toBe(200_000);
-    expect(estimateContextGauge(estimate, { override: null, lastSdkMaxTokens: null, modelContextWindow: 1_000_000 }, AT)?.percentage).toBe(5);
-    expect(estimateContextGauge(estimate, { override: null, lastSdkMaxTokens: null, modelContextWindow: null }, AT)).toBeNull();
+    expect(
+      estimateContextGauge(
+        estimate,
+        { override: null, lastSdkMaxTokens: 200_000, modelContextWindow: 1_000_000 },
+        AT,
+      )?.maxTokens,
+    ).toBe(200_000);
+    expect(
+      estimateContextGauge(
+        estimate,
+        { override: null, lastSdkMaxTokens: null, modelContextWindow: 1_000_000 },
+        AT,
+      )?.percentage,
+    ).toBe(5);
+    expect(
+      estimateContextGauge(
+        estimate,
+        { override: null, lastSdkMaxTokens: null, modelContextWindow: null },
+        AT,
+      ),
+    ).toBeNull();
   });
 
   it('matches the SDK value after the turn in a recorded session (auth-probe)', () => {
@@ -129,12 +175,18 @@ describe('in-turn estimate', () => {
     const estimates = replay.steps.flatMap((s) => s.signals).filter((s) => s.type === 'context_estimate');
     const last = estimates.at(-1);
     if (last === undefined) throw new Error('no estimate');
-    const resultEvent = fixture.events.find((e) => e.kind === 'message' && JSON.stringify(e.payload).startsWith('{"duration_api_ms"'));
+    const resultEvent = fixture.events.find(
+      (e) => e.kind === 'message' && JSON.stringify(e.payload).startsWith('{"duration_api_ms"'),
+    );
     const window = modelContextWindow(resultEvent?.payload, last.model);
     expect(window).toBe(1_000_000);
     // auth-probe has one turn: its estimates come before the first result, so they carry no window.
     expect(estimates.map((s) => s.contextWindow)).toEqual(estimates.map(() => null));
-    const gauge = estimateContextGauge(last, { override: null, lastSdkMaxTokens: null, modelContextWindow: window }, AT);
+    const gauge = estimateContextGauge(
+      last,
+      { override: null, lastSdkMaxTokens: null, modelContextWindow: window },
+      AT,
+    );
     expect(contextGaugeSchema.parse(gauge)).toStrictEqual(gauge);
     const sdk = normalizeContextUsage(
       fixtureCallPayloadSchema.parse(fixture.events.find((e) => e.kind === 'call')?.payload).result,
@@ -147,7 +199,11 @@ describe('in-turn estimate', () => {
   });
 
   it('modelContextWindow: exact model, else the largest window, null without result', () => {
-    const result = { type: 'result', subtype: 'success', modelUsage: { a: { contextWindow: 200_000 }, b: { contextWindow: 1_000_000 } } };
+    const result = {
+      type: 'result',
+      subtype: 'success',
+      modelUsage: { a: { contextWindow: 200_000 }, b: { contextWindow: 1_000_000 } },
+    };
     expect(modelContextWindow(result, 'a')).toBe(200_000);
     expect(modelContextWindow(result, 'unknown')).toBe(1_000_000);
     expect(modelContextWindow(result, null)).toBe(1_000_000);

@@ -2,6 +2,7 @@ import { render } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import {
   SETTINGS_SECTIONS,
+  SIDE_PANEL_TABS,
   registerShellRequestHandler,
   requestShell,
   useShellRequestHandler,
@@ -48,7 +49,17 @@ describe('shell request channel (WP-30 §4.14 C)', () => {
     expect(seen).toEqual(['local:en_1']);
   });
 
-  it('settings sections include profiles (slot of WP-36)', () => {
+  it('settings sections include profiles (slot of WP-36) and files (Phase 3, before profiles)', () => {
     expect(SETTINGS_SECTIONS).toContain('profiles');
+    expect(SETTINGS_SECTIONS.indexOf('files')).toBe(SETTINGS_SECTIONS.indexOf('profiles') - 1);
+  });
+
+  it('Phase 3 side panel requests pass between hosts by session key', () => {
+    expect([...SIDE_PANEL_TABS]).toEqual(['plan', 'file', 'files', 'tasks']);
+    const remove = registerShellRequestHandler('sidePanel', (request) => request.sessionKey === 'local:en_1');
+    expect(requestShell({ kind: 'sidePanel', sessionKey: 'local:en_1', tab: 'plan' })).toBe(true);
+    expect(requestShell({ kind: 'sidePanel', sessionKey: 'local:en_2', tab: null })).toBe(false);
+    remove();
+    expect(requestShell({ kind: 'openFile', sessionKey: 'local:en_1', path: 'D:\\work\\a.md' })).toBe(false);
   });
 });

@@ -14,7 +14,8 @@
  * rateLimit, unknownCounts; engine → conversationId, conversations, queue, models. Phase 2
  * (ADR-108): `commands` has two writers that both REPLACE the whole list (the last one wins): the
  * normalizer (`system/commands_changed`) and the engine (`supportedCommands()` at readiness, the
- * per-entry cache for dormant entries).
+ * per-entry cache for dormant entries). Phase 3 (ADR-148, ADR-149): the engine also writes `todos`,
+ * `planFile` and `latestPlanVersion` (from the normalized tool calls and the decision store).
  *
  * Normalizer rules (normative, tested by WP-12):
  * - Unknown enum values of a newer CLI (permission mode, effort) become null and are counted as

@@ -1033,6 +1033,15 @@ Diese **Variante ohne Live-Aufrufe** greift, wenn der Abo-Login im SDK nicht fun
   - Ein Toast erscheint, ein Klick führt zur Session.
   - Nach einem Server-Neustart lassen sich die Sessions fortsetzen.
   - Eine Session lässt sich auch in der Konsole mit `claude --resume <id>` fortsetzen.
+- **Phase 3** (Nachtrag Phase 3, WP-50, 11.11.2026):
+  - Im Plan-Modus (Haiku) erscheint die Plan-Datei live im Panel. v1 → Feedback → v2 zeigt den Diff.
+  - „Mit frischem Kontext umsetzen“ startet eine neue Unterhaltung im gewählten Modus, die den Plan umsetzt. Die Aufgabenliste zeigt den Fortschritt (falls L5). „Plan“ in der Kopfzeile öffnet ihn.
+  - Dateiverweise in Text und Tool-Karten sind klickbar. Der Viewer zeigt Markdown (gerendert/roh), Code mit Sprung zur Zeile, Bild und PDF und aktualisiert sich, während Claude die Datei ändert.
+  - Das Panel „Dateien dieser Session“ listet gelesene/geschriebene Dateien.
+  - PDF- und Datei-Anhang werden verstanden (Datei ohne Permission-Rückfrage gelesen). Große Pastes erscheinen als Chip. Der @-Picker fügt einen Pfad ein, den Claude liest.
+  - Ein Hintergrund-Subagent lässt sich im Task-Panel einzeln stoppen. Stop im Composer beendet nur den Turn.
+  - „Im Editor öffnen“ (Notepad++ an der Zeile) und „Im Explorer zeigen“ (Datei markiert) – Nutzer-Checkliste.
+  - Ein UNC-Pfad im Assistant-Text löst keinen SMB-Verbindungsversuch aus.
 - **UI-Checks** über das chrome-devtools-MCP (Seite unter localhost), Screenshots.
 - **Arbeitsrechner:**
   - `git clone` + `pnpm install` + `pnpm start` laufen über den Nexus-Mirror, ohne Admin-Rechte und ohne weitere Installation.

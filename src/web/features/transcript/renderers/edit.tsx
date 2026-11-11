@@ -13,7 +13,7 @@ import {
   hunksToRows,
   peekFallbackRows,
   type DiffRow,
-} from '../lib/diff';
+} from '@web/lib/diff';
 import {
   readEditInput,
   readMultiEditInput,

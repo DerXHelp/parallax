@@ -100,9 +100,10 @@ export interface SessionSource {
 }
 
 /**
- * Phase 2 (ADR-101): handler of host commands (`HOST_COMMAND_NAMES`: profile.*, fs.listDirectory).
- * Implemented by WP-32 (profiles) and WP-33 (folder browser); the engine routes by name (names are
- * disjoint across handlers; no handler → NOT_IMPLEMENTED); WP-40 wires them.
+ * Phase 2 (ADR-101): handler of host commands (`HOST_COMMAND_NAMES`: profile.*, fs.listDirectory;
+ * Phase 3: file.*, files.*, editor.detect – ADR-140). Implemented by WP-32 (profiles), WP-33 (folder
+ * browser) and WP-53 (file service, src/server/files/ports.ts); the engine routes by name (names are
+ * disjoint across handlers; no handler → NOT_IMPLEMENTED); WP-40/WP-60 wire them.
  */
 export interface HostCommandHandler {
   readonly names: readonly HostCommandName[];
@@ -189,6 +190,18 @@ export interface SettingsStore {
   get(): Settings;
   /** Only the given fields change. */
   update(patch: SettingsPatch): Settings;
+}
+
+/** Phase 3 (ADR-146): file attachments materialized per entry (implementation store/attachments.ts, WP-53). */
+export interface AttachmentFileStore {
+  /** `<home>\entries\<entryId>\attachments`, created on demand (an additionalDirectory of every start). */
+  dir(entryId: EntryId): Promise<string>;
+  /**
+   * Copies the blob to `<dir>\<first 16 hex of blobId>\<safe name>` (idempotent; the name is
+   * sanitized so that windowsPathIssue is null, fallback `<blobId16>.<ext>`) and returns the
+   * absolute path. Throws CommandError(BLOB_NOT_FOUND).
+   */
+  materialize(entryId: EntryId, blobId: BlobId, name: string | null): Promise<string>;
 }
 
 /** Quarantine messages (B). */

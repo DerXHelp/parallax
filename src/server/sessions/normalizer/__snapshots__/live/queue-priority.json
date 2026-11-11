@@ -512,7 +512,8 @@
           "summary": "Sleep for 4 seconds",
           "usage": null,
           "startedAt": "2026-11-11T17:22:39.359Z",
-          "endedAt": "2026-11-11T17:22:40.433Z"
+          "endedAt": "2026-11-11T17:22:40.433Z",
+          "outputFile": null
         },
         "decision": null
       },
@@ -655,7 +656,8 @@
           "summary": "Background command \"Sleep for 8 seconds\" completed (exit code 0)",
           "usage": null,
           "startedAt": "2026-11-11T17:22:46.786Z",
-          "endedAt": "2026-11-11T17:22:53.442Z"
+          "endedAt": "2026-11-11T17:22:53.442Z",
+          "outputFile": null
         },
         "decision": null
       },

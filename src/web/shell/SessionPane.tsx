@@ -8,6 +8,7 @@ import { Button } from '@web/ui/button';
 import { Skeleton } from '@web/ui/skeleton';
 import { PaneBanners } from './navigation/PaneBanners';
 import { SessionHeader } from './SessionHeader';
+import { SidePanelHost } from './side-panel/SidePanelHost';
 import { useFeatureSlots } from './slots';
 
 function TranscriptSkeleton() {
@@ -28,9 +29,10 @@ const TranscriptSlot = memo(function TranscriptSlot({ sessionKey }: { sessionKey
   return <Transcript sessionKey={sessionKey} />;
 });
 
-const SidePanelSlot = memo(function SidePanelSlot({ sessionKey }: { sessionKey: string }) {
-  const { SidePanel } = useFeatureSlots();
-  return <SidePanel sessionKey={sessionKey} />;
+/** Phase 3 (ADR-149): the pinned task list directly above the composer. */
+const TaskStripSlot = memo(function TaskStripSlot({ sessionKey }: { sessionKey: string }) {
+  const { TaskStrip } = useFeatureSlots();
+  return <TaskStrip sessionKey={sessionKey} />;
 });
 
 /**
@@ -60,7 +62,8 @@ const selectTitle = (summary: { title: string; cwd: string }) => sessionTitle(su
 
 /**
  * One session (pane-capable: the layout may render several side by side): header, transcript
- * slot, decision bar slot, composer slot and the optional side panel slot (architecture §2.3d).
+ * slot, the side panel host (Phase 3, ADR-150: tabs plan/file/files/tasks), decision bar slot, task
+ * strip slot and composer slot (architecture §2.3d).
  * Subscribes the session while mounted. Reads only narrow selectors (title, meta), so deltas and
  * summary updates of this or other sessions do not re-render the slots (R1W-04).
  */
@@ -114,9 +117,10 @@ export function SessionPane({ sessionKey }: { sessionKey: string }) {
             <TranscriptSkeleton />
           ) : null}
         </div>
-        <SidePanelSlot sessionKey={sessionKey} />
+        <SidePanelHost sessionKey={sessionKey} />
       </div>
       <DecisionBarSlot sessionKey={sessionKey} />
+      <TaskStripSlot sessionKey={sessionKey} />
       <ComposerSlot sessionKey={sessionKey} />
     </section>
   );

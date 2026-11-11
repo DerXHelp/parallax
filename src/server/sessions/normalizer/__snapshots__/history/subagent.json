@@ -67,7 +67,8 @@
           "durationMs": 1216
         },
         "startedAt": null,
-        "endedAt": "2026-11-11T17:23:19.452Z"
+        "endedAt": "2026-11-11T17:23:19.452Z",
+        "outputFile": null
       },
       "decision": null
     },

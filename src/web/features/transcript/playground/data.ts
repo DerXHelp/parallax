@@ -579,7 +579,7 @@ function planSession(): DemoSession {
         decisionId: sampleId('dc', 254),
         kind: 'plan',
         planVersion: 2,
-        outcome: { type: 'plan_approved', mode: 'acceptEdits', edited: true },
+        outcome: { type: 'plan_approved', mode: 'acceptEdits', edited: true, freshContext: false },
       },
     }),
     tool('msg_plan3', 0, 4, {
@@ -658,6 +658,7 @@ function subagentSession(now: number): DemoSession {
         usage: { totalTokens: 22_609, toolUses: 2, durationMs: 9_400 },
         startedAt: sampleTime(2),
         endedAt: sampleTime(12),
+        outputFile: null,
       },
     }),
     sampleItems.thinking({
@@ -706,6 +707,7 @@ function subagentSession(now: number): DemoSession {
         usage: null,
         startedAt: new Date(now - 42_000).toISOString(),
         endedAt: null,
+        outputFile: null,
       },
     }),
     tool('msg_child3', 0, 7, {
