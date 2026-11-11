@@ -51,6 +51,8 @@ export interface OutgoingPrompt {
   uuid: string;
   content: OutgoingContent[];
   priority: 'next' | 'now';
+  /** Phase 3 (ADR-146): pasted texts that occur verbatim in the text content → SDKUserMessage.inline_pastes. */
+  inlinePastes?: string[];
 }
 
 export interface StartSessionRequest {
@@ -66,6 +68,8 @@ export interface StartSessionRequest {
   promptSuggestions: boolean;
   /** Phase 2: fast mode as flag setting (`settings.fastMode`); null/absent = the CLI decides. */
   fastMode?: boolean | null;
+  /** Phase 3 (ADR-146, C.11): attachment folder of the entry, appended to additionalDirectories. */
+  attachmentsDir?: string | null;
   canUseTool: PermissionHandler;
 }
 

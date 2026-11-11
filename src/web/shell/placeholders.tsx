@@ -3,7 +3,7 @@ import type { DecisionId, JsonValue } from '@shared/common';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { useDecision, useDecisions, useItem, useTopLevelItemIds } from '@web/state/hooks';
-import type { ProfilesSettingsSlotProps } from './slots';
+import type { FileLinkSlotProps, FilePanelSlotProps, ProfilesSettingsSlotProps } from './slots';
 
 /**
  * Neutral stand-ins for feature slots that are not wired yet (architecture §2.3 d/e). WP-20
@@ -116,8 +116,33 @@ export function ComposerPlaceholder(_props: { sessionKey: string }) {
   );
 }
 
-export function SidePanelPlaceholder(_props: { sessionKey: string }) {
+export function PlanPanelPlaceholder(_props: { sessionKey: string }) {
   return null;
+}
+
+/** Phase 3: until WP-54 fills the slot the viewer tab stays empty. */
+export function FilePanelPlaceholder(_props: FilePanelSlotProps) {
+  return null;
+}
+
+/** Phase 3: until WP-54 fills the slot the "files" tab stays empty. */
+export function FilesPanelPlaceholder(_props: { sessionKey: string }) {
+  return null;
+}
+
+/** Phase 3: until WP-55 fills the slot the "tasks" tab stays empty. */
+export function TasksPanelPlaceholder(_props: { sessionKey: string }) {
+  return null;
+}
+
+/** Phase 3: until WP-55 fills the slot there is no task strip above the composer. */
+export function TaskStripPlaceholder(_props: { sessionKey: string }) {
+  return null;
+}
+
+/** Phase 3: until WP-54 fills the slot a file reference is plain text (no link, no fs access). */
+export function FileLinkPlaceholder({ path, children }: FileLinkSlotProps) {
+  return <span data-slot="file-link-placeholder">{children ?? path}</span>;
 }
 
 /** Phase 2: until WP-38 fills the slot nothing opens (the menu keeps its quick settings). */
@@ -153,7 +178,7 @@ export function DecisionCardPlaceholder({
 }
 
 /** Plain text, line breaks kept – never interpreted as Markdown/HTML. */
-export function MarkdownPlaceholder({ text }: { text: string; sessionKey?: string }) {
+export function MarkdownPlaceholder({ text }: { text: string; sessionKey?: string; baseDir?: string }) {
   return <div className="text-ui break-words whitespace-pre-wrap">{text}</div>;
 }
 

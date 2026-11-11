@@ -1,45 +1,27 @@
-import { ArrowDownToLineIcon, FileTextIcon, XIcon } from 'lucide-react';
-import { memo, useEffect, useRef } from 'react';
+import { ArrowDownToLineIcon, FileTextIcon } from 'lucide-react';
+import { memo } from 'react';
 import { useT } from '@web/i18n';
 import { shortPath } from '@web/lib/path-display';
 import { focusDecision } from '@web/shell/decision-focus';
-import { useEscapeHandler } from '@web/shell/shortcuts';
 import { useFeatureSlots } from '@web/shell/slots';
 import { useDecision } from '@web/state/hooks';
 import { Badge } from '@web/ui/badge';
 import { Button } from '@web/ui/button';
-import { IconButton } from '@web/ui/icon-button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
-import { closePlanPanel, registerPlanPanel, usePlanPanel } from './state/bar-store';
+import { usePlanPanel } from './state/bar-store';
 
 /**
- * Slot `SidePanel` (Plan "Plan-Modus": the plan "vollständig im Seitenpanel"): the full plan as
- * Markdown (slot `Markdown`, never raw HTML) next to the chat, opened by "Open plan". It is a
- * plain complementary region – non-modal, no focus trap; Esc inside it closes it and the focus
- * returns to the button that opened it. It keeps a copy of the plan, so it stays readable after
- * the decision was answered. Answers live only in the decision bar ("Go to decision").
+ * Slot `PlanPanel` (Plan "Plan-Modus": the plan "vollständig im Seitenpanel"): the content of the
+ * side panel tab "Plan" – the full plan as Markdown (slot `Markdown`, never raw HTML), opened by
+ * "Open plan". The frame (region, tab row, close, Esc, focus return) belongs to the side panel host
+ * (shell/side-panel, ADR-150). It keeps a copy of the plan, so it stays readable after the decision
+ * was answered. Answers live only in the decision bar ("Go to decision").
  */
 export const PlanSidePanel = memo(function PlanSidePanel({ sessionKey }: { sessionKey: string }) {
   const t = useT();
   const { Markdown } = useFeatureSlots();
   const panel = usePlanPanel(sessionKey);
   const live = useDecision(sessionKey, panel?.decisionId ?? '');
-  const ref = useRef<HTMLElement>(null);
-
-  useEffect(() => registerPlanPanel(sessionKey), [sessionKey]);
-
-  const close = () => {
-    const opener = closePlanPanel(sessionKey);
-    opener?.focus();
-  };
-  useEscapeHandler(
-    () => {
-      close();
-      return true;
-    },
-    panel !== null,
-    { scopeRef: ref },
-  );
 
   if (panel === null) return null;
   const open = live?.kind === 'plan';
@@ -47,13 +29,11 @@ export const PlanSidePanel = memo(function PlanSidePanel({ sessionKey }: { sessi
   const headingId = `plan-panel-${panel.decisionId}`;
 
   return (
-    <aside
-      ref={ref}
+    <section
       data-plan-panel={sessionKey}
       data-slot="plan-panel"
       aria-labelledby={headingId}
-      tabIndex={-1}
-      className="bg-background focus-visible:ring-ring flex w-[min(42rem,45%)] min-w-72 shrink-0 flex-col border-l outline-none focus-visible:ring-2 focus-visible:ring-inset"
+      className="flex min-h-0 flex-1 flex-col"
     >
       <header className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
         <FileTextIcon aria-hidden className="text-muted-foreground size-3.5" />
@@ -74,9 +54,6 @@ export const PlanSidePanel = memo(function PlanSidePanel({ sessionKey }: { sessi
             {t('decisions.panel.goTo')}
           </Button>
         ) : null}
-        <IconButton label={t('decisions.panel.close')} onClick={close}>
-          <XIcon aria-hidden />
-        </IconButton>
       </header>
       {panel.planFilePath === null ? null : (
         <div className="text-muted-foreground flex min-w-0 items-center gap-1 border-b px-3 py-1 text-2xs">
@@ -94,6 +71,6 @@ export const PlanSidePanel = memo(function PlanSidePanel({ sessionKey }: { sessi
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
         <Markdown text={plan} sessionKey={sessionKey} />
       </div>
-    </aside>
+    </section>
   );
 });

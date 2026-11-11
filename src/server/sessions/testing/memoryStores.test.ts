@@ -125,4 +125,22 @@ describe('createMemoryStores', () => {
     stores.transcripts.readDelayMs = 0;
     await stores.transcripts.readTail(E, CV, 10);
   });
+
+  it('attachments (Phase 3, ADR-146): fixed folder, materialize without copying', async () => {
+    const stores = createMemoryStores();
+    const dir = await stores.attachments.dir(E);
+    expect(dir).toBe(`C:\\work\\sample\\.home\\entries\\${E}\\attachments`);
+    const ref = stores.blobs.put('data', 'application/octet-stream', 'notes.zip');
+    const blob16 = ref.blobId.slice(0, 16);
+    await expect(stores.attachments.materialize(E, ref.blobId, 'notes.zip')).resolves.toBe(
+      `${dir}\\${blob16}\\notes.zip`,
+    );
+    await expect(stores.attachments.materialize(E, ref.blobId, null)).resolves.toBe(
+      `${dir}\\${blob16}\\${blob16}.bin`,
+    );
+    expect(stores.attachments.materialized).toHaveLength(2);
+    await expect(stores.attachments.materialize(E, 'f'.repeat(64), null)).rejects.toMatchObject({
+      error: { code: 'BLOB_NOT_FOUND' },
+    });
+  });
 });

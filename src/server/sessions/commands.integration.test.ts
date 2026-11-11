@@ -517,7 +517,7 @@ describe('commands of a running entry', () => {
       decisionId: plan.id,
       response: { kind: 'plan', response: { behavior: 'approve', mode: 'default' } },
     });
-    expect(ok.outcome).toEqual({ type: 'plan_approved', mode: 'default', edited: false });
+    expect(ok.outcome).toEqual({ type: 'plan_approved', mode: 'default', edited: false, freshContext: false });
   });
 
   it('server.shutdown counts the running sessions before closing (R0-19)', async () => {

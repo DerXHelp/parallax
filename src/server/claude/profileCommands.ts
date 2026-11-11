@@ -86,7 +86,8 @@ export function createProfileCommands(deps: ProfileCommandDeps): HostCommandHand
           const result: CommandResult<'profile.validate'> = { issues: store.issuesOf(cmd.profile) };
           return result;
         }
-        case 'fs.listDirectory':
+        default:
+          // Names of other handlers (fs.listDirectory, file service) never reach this one.
           throw new CommandError(makeError('NOT_IMPLEMENTED', { command: cmd.name }));
       }
     },

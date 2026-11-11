@@ -531,7 +531,8 @@
           "outcome": {
             "type": "plan_approved",
             "mode": "acceptEdits",
-            "edited": true
+            "edited": true,
+            "freshContext": false
           }
         }
       },

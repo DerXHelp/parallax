@@ -323,7 +323,17 @@ const EVERY_REQUEST: { [K in ShellRequestKind]: ShellRequestOf<K> } = {
   newSession: { kind: 'newSession', cwd: 'D:\\work\\parallax' },
   settings: { kind: 'settings', section: 'about' },
   renameTitle: { kind: 'renameTitle', sessionKey: PLAYGROUND_SESSION_KEYS.main },
+  sidePanel: { kind: 'sidePanel', sessionKey: PLAYGROUND_SESSION_KEYS.main, tab: 'files' },
+  openFile: {
+    kind: 'openFile',
+    sessionKey: PLAYGROUND_SESSION_KEYS.main,
+    path: 'D:\\work\\sample\\README.md',
+  },
+  attachFiles: { kind: 'attachFiles', sessionKey: PLAYGROUND_SESSION_KEYS.main, files: [] },
 };
+
+/** Phase 3 kinds whose handler arrives with a later package (WP-50 Teil 2: attachFiles → WP-57). */
+const PENDING_REQUEST_KINDS: ReadonlySet<ShellRequestKind> = new Set(['attachFiles']);
 
 describe('wired feature slots (WP-20b, WP-40)', () => {
   it('APP_SLOTS holds the components of WP-15 and WP-16 and lazy slots of WP-36 and WP-38 (R4W-19)', () => {
@@ -332,7 +342,7 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
       ...TRANSCRIPT_SLOTS,
       DecisionBar,
       DecisionCard,
-      SidePanel: PlanSidePanel,
+      PlanPanel: PlanSidePanel,
       Composer,
     });
     expect(APP_SLOTS.Transcript).toBe(TRANSCRIPT_SLOTS.Transcript);
@@ -449,7 +459,25 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
       act(() => {
         taken = requestShell(request);
       });
-      expect(taken, request.kind).toBe(true);
+      expect(taken, request.kind).toBe(!PENDING_REQUEST_KINDS.has(request.kind));
+      if (PENDING_REQUEST_KINDS.has(request.kind)) continue;
+      if (request.kind === 'sidePanel' || request.kind === 'openFile') {
+        // The side panel host of the pane (ADR-150) opens the tab and takes the focus; "Close panel"
+        // closes it (this test installs no shortcut listener, so no Esc).
+        const tab = request.kind === 'sidePanel' ? request.tab : 'file';
+        const panel = await waitFor(() => {
+          const element = document.querySelector<HTMLElement>('[data-slot="side-panel"]');
+          if (element === null) throw new Error('no side panel');
+          return element;
+        });
+        expect(panel.dataset.tab).toBe(tab);
+        expect(document.activeElement).toBe(panel);
+        await user.click(within(panel).getByRole('button', { name: 'Close panel' }));
+        await waitFor(() => {
+          expect(document.querySelector('[data-slot="side-panel"]')).toBeNull();
+        });
+        continue;
+      }
       if (request.kind === 'renameTitle') {
         // The inline title field of the header (no dialog); Esc cancels.
         const field = await waitFor(() => {
@@ -511,7 +539,7 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
       expect(scenario.host.commands).toContainEqual({
         name: 'session.sendPrompt',
         entryId: PLAYGROUND_ENTRIES.main,
-        prompt: { text: 'Hello there', attachments: [] },
+        prompt: { text: 'Hello there', attachments: [], pastes: [] },
         priority: 'next',
       });
     });

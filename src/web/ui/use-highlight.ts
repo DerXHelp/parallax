@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import type * as HighlightNamespace from '../lib/highlight';
-import type { HighlightedLine } from '../lib/highlight';
-import { HIGHLIGHT_MAX_CHARS, type LanguageId } from '../lib/languages';
+import type * as HighlightNamespace from '@web/lib/highlight';
+import type { HighlightedLine } from '@web/lib/highlight';
+import { HIGHLIGHT_MAX_CHARS, type LanguageId } from '@web/lib/languages';
 
 type HighlightModule = typeof HighlightNamespace;
 
@@ -10,7 +10,7 @@ let loadedModule: HighlightModule | null = null;
 let loadingModule: Promise<HighlightModule> | null = null;
 
 function loadHighlighter(): Promise<HighlightModule> {
-  loadingModule ??= import('../lib/highlight').then((module) => {
+  loadingModule ??= import('@web/lib/highlight').then((module) => {
     loadedModule = module;
     return module;
   });

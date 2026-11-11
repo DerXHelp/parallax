@@ -5,7 +5,7 @@ import { useT } from '@web/i18n';
 import { shortPath } from '@web/lib/path-display';
 import { CappedContent } from '../components/CappedContent';
 import { CodeBlock } from '../components/CodeBlock';
-import { languageForPath } from '../lib/languages';
+import { languageForPath } from '@web/lib/languages';
 import { previewImages, resultText, stripToolUseError } from '../lib/text';
 import { readReadInput, readReadResult } from '../lib/tool-input';
 import { GenericToolBody } from './generic';
@@ -81,7 +81,9 @@ function ReadBody({ item, sessionKey }: ToolBodyProps) {
         <p className="text-muted-foreground text-2xs">{t('transcript.read.pages', { pages: input.pages })}</p>
       )}
       {text.trim() === '' ? (
-        hasImages ? null : <p className="text-muted-foreground text-xs italic">{t('transcript.read.empty')}</p>
+        hasImages ? null : (
+          <p className="text-muted-foreground text-xs italic">{t('transcript.read.empty')}</p>
+        )
       ) : (
         <CappedContent text={text} truncated={truncated} sessionKey={sessionKey}>
           {(value) => {

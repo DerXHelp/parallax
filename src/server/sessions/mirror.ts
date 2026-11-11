@@ -47,6 +47,9 @@ export function emptyDetail(o: {
     promptSuggestion: null,
     rateLimit: null,
     unknownCounts: {},
+    todos: null,
+    planFile: null,
+    latestPlanVersion: null,
   };
 }
 

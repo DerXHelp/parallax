@@ -9,8 +9,8 @@ import type { LanguageId } from './languages';
 import { SizedLru } from './sized-cache';
 
 /**
- * Syntax highlighting (lazy chunk, only loaded through `import('./highlight')`): `shiki/core` with
- * the JavaScript regex engine – no Oniguruma WebAssembly, so the page CSP needs no
+ * Syntax highlighting (lazy chunk, only loaded through `import('@web/lib/highlight')` in
+ * ui/use-highlight.ts): `shiki/core` with the JavaScript regex engine – no Oniguruma WebAssembly, so the page CSP needs no
  * `'wasm-unsafe-eval'` (architecture §2.3j, R1-web). One grammar per language, imported on demand.
  * The theme only references CSS variables (`--shiki-token-*`), which the code block maps to the
  * design tokens – the output works in dark and light without re-highlighting.

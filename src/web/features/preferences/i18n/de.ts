@@ -10,6 +10,7 @@ export const de: typeof en = {
     general: 'Allgemein',
     notifications: 'Benachrichtigungen',
     sessions: 'Sessions',
+    files: 'Dateien',
     profiles: 'Profile',
     server: 'Server',
     about: 'Über',
@@ -91,6 +92,9 @@ export const de: typeof en = {
   },
   profiles: {
     unavailable: 'Der Profil-Editor ist in dieser Ansicht nicht verfügbar.',
+  },
+  files: {
+    pending: 'Hier lässt sich bald der Editor für „Im Editor öffnen“ wählen.',
   },
   systemIntegrationOff:
     'Nur beim installierten Parallax-Server verfügbar (Standard-Datenordner, echtes Claude Code, kein Entwicklungsmodus).',

@@ -105,7 +105,8 @@ function outcomeFor(response: DecisionResponse): DecisionOutcome {
       return {
         type: 'plan_approved',
         mode: response.response.mode,
-        edited: response.response.behavior === 'approve' && response.response.editedPlan !== null,
+        edited: response.response.editedPlan !== null,
+        freshContext: response.response.behavior === 'approve_fresh_context',
       };
   }
 }
@@ -554,7 +555,8 @@ export class FakeHost {
         return this.ok({ models: [sampleModelOption()] });
       case 'server.shutdown':
         return this.ok({ sessionsStopped: 0 });
-      // Phase 2 commands (WP-30) included: the packages answer them in their tests via `onCommand`.
+      // Phase 2 commands (WP-30) and Phase 3 commands (WP-50; WP-54 answers the file commands with fake
+      // data) included: the packages answer them in their tests via `onCommand`.
       case 'session.setFastMode':
       case 'session.switchConversation':
       case 'session.openExternal':
@@ -568,6 +570,15 @@ export class FakeHost {
       case 'profile.test':
       case 'profile.validate':
       case 'fs.listDirectory':
+      case 'session.stopTask':
+      case 'plan.list':
+      case 'plan.read':
+      case 'file.stat':
+      case 'file.statMany':
+      case 'file.open':
+      case 'files.session':
+      case 'files.project':
+      case 'editor.detect':
         return { ok: false, error: makeError('NOT_IMPLEMENTED', { name: cmd.name satisfies CommandName }) };
     }
   }

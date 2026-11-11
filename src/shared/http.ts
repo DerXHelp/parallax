@@ -37,6 +37,12 @@ export const API_PATHS = {
    */
   attachments: '/api/attachments',
   /**
+   * GET/HEAD file content (Phase 3, ADR-142), query `fileQuerySchema` – build URLs with fileUrl().
+   * Guard class "file": Sec-Fetch-Site REQUIRED `same-origin`, Origin if present ∈ allowedOrigins,
+   * cookie (file paths can be guessed, unlike blob hashes).
+   */
+  file: '/api/file',
+  /**
    * WebSocket upgrade (src/shared/protocol.ts). Guard (§5.1, ADR-019): Origin ∈ allowedOrigins,
    * Host and device cookie required; Sec-Fetch-Site only checked when present (browsers send none
    * on the handshake) and then must be `same-origin`. Only this route accepts an upgrade.
@@ -47,6 +53,18 @@ export const API_PATHS = {
 /** `/api/blob/<blobId>` (full content of capped texts, images). */
 export function blobPath(blobId: BlobId): string {
   return API_PATHS.blob.replace(':blobId', blobId);
+}
+
+/** Query of `GET /api/file` (Phase 3, ADR-142); the server runs the checks of file.stat (ADR-141). */
+export const fileQuerySchema = z.object({
+  entryId: entryIdSchema,
+  path: z.string().min(1).max(LIMITS.pathChars),
+});
+export type FileQuery = z.infer<typeof fileQuerySchema>;
+
+/** `/api/file?entryId=…&path=…` (both encoded with encodeURIComponent). */
+export function fileUrl(entryId: EntryId, path: string): string {
+  return `${API_PATHS.file}?entryId=${encodeURIComponent(entryId)}&path=${encodeURIComponent(path)}`;
 }
 
 // =====================================================================================
@@ -181,7 +199,7 @@ export type HealthResponse = z.infer<typeof healthResponseSchema>;
 export const httpErrorBodySchema = errorPayloadSchema;
 
 // =====================================================================================
-// Image upload (Phase 2, ADR-103)
+// Upload (images: Phase 2, ADR-103; PDFs and other files: Phase 3, ADR-146)
 // =====================================================================================
 
 /** Image types of an upload = the SDK's Base64ImageSource media types. */
@@ -204,6 +222,18 @@ export type AttachmentUploadQuery = z.infer<typeof attachmentUploadQuerySchema>;
 /** `POST /api/attachments` success (200). */
 export const attachmentUploadResponseSchema = z.object({ attachment: blobRefSchema });
 export type AttachmentUploadResponse = z.infer<typeof attachmentUploadResponseSchema>;
+
+/**
+ * Header `Content-Type` of `POST /api/attachments` (Phase 3, ADR-146): images, PDF, any other file
+ * as octet-stream. The server decides by magic bytes; octet-stream requires the query `name`.
+ */
+export const UPLOAD_MEDIA_TYPES = [
+  ...ATTACHMENT_MEDIA_TYPES,
+  'application/pdf',
+  'application/octet-stream',
+] as const;
+export const uploadMediaTypeSchema = z.enum(UPLOAD_MEDIA_TYPES);
+export type UploadMediaType = z.infer<typeof uploadMediaTypeSchema>;
 
 // =====================================================================================
 // Content-Security-Policy (C.10, ADR-026; R1W-23/R3-14: one source for every server of the UI)
@@ -249,6 +279,23 @@ export function pageCsp(port: number): string {
 
 /** `Content-Security-Policy` of blob answers. */
 export const BLOB_CSP = cspHeaderValue(BLOB_CSP_DIRECTIVES);
+
+/**
+ * PDF answers (Phase 3, ADR-142: GET /api/file and /api/blob with a verified `%PDF-` body): the
+ * Chrome PDF viewer does not run in sandboxed documents, so no `sandbox` – but nothing else may
+ * load, and only same-origin framing (side panel iframe; then X-Frame-Options SAMEORIGIN). Every
+ * other answer keeps BLOB_CSP.
+ */
+export const FILE_PDF_CSP_DIRECTIVES: CspDirectives = [
+  ['default-src', ["'none'"]],
+  ['object-src', ["'self'"]],
+  ['frame-ancestors', ["'self'"]],
+  ['base-uri', ["'none'"]],
+  ['form-action', ["'none'"]],
+];
+
+/** `Content-Security-Policy` of PDF answers. */
+export const FILE_PDF_CSP = cspHeaderValue(FILE_PDF_CSP_DIRECTIVES);
 
 // =====================================================================================
 // Launcher authorization header
