@@ -6,6 +6,41 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import type { E2eServer } from './server';
 
+/**
+ * Every Radix menu of the page (dropdown and context menus), open or still closing – also one that
+ * a modal dialog hides from the accessibility tree (`aria-hidden`), hence CSS, not `getByRole`.
+ */
+function menus(page: Page): Locator {
+  return page.locator('[role="menu"]');
+}
+
+/**
+ * Chooses `item` of an open menu and waits until the menu is gone (FIX-E2E-EDGE157).
+ *
+ * A closed Radix menu stays mounted for its exit animation (`animate-out`, 150 ms from the next
+ * frame on) and stays a full layer of Radix' layer stack until then: its outside-`pointerdown`
+ * listener closes the same menu again when its trigger is clicked (the trigger reopens it first),
+ * as the top layer it takes the next Escape before a dialog opened meanwhile becomes the top layer
+ * (that update runs in a React effect Chromium defers past the next frame after an input), and its
+ * unmount gives the focus back to its trigger. A user is never that fast; a test acting within
+ * milliseconds is. So every menu choice waits for the state a user sees: no menu left.
+ */
+export async function chooseMenuItem(item: Locator): Promise<void> {
+  await item.click();
+  await expect(menus(item.page())).toHaveCount(0);
+}
+
+/**
+ * Opens a menu with `open` (click or right click on its trigger) and returns it once visible. A menu
+ * still closing would close the new one right away (see `chooseMenuItem`) – none may be left.
+ */
+async function openMenu(page: Page, open: () => Promise<void>, menu: Locator): Promise<Locator> {
+  await expect(menus(page)).toHaveCount(0);
+  await open();
+  await expect(menu).toBeVisible();
+  return menu;
+}
+
 export class ParallaxApp {
   constructor(
     readonly page: Page,
@@ -77,10 +112,7 @@ export class ParallaxApp {
 
   /** Opens the settings menu (gear in the sidebar). */
   async openSettings(): Promise<Locator> {
-    await this.settingsButton().click();
-    const menu = this.page.getByRole('menu');
-    await expect(menu).toBeVisible();
-    return menu;
+    return openMenu(this.page, () => this.settingsButton().click(), this.page.getByRole('menu'));
   }
 
   notices(): Locator {
@@ -113,16 +145,22 @@ export class ParallaxApp {
 
   /** Right click on a session row: its context menu (WP-35). */
   async rowMenu(sessionKey: string): Promise<Locator> {
-    await this.row(sessionKey).click({ button: 'right' });
-    const menu = this.page.locator(`[data-session-menu="${sessionKey}"]`);
-    await expect(menu).toBeVisible();
-    return menu;
+    return openMenu(
+      this.page,
+      () => this.row(sessionKey).click({ button: 'right' }),
+      this.page.locator(`[data-session-menu="${sessionKey}"]`),
+    );
+  }
+
+  /** Chooses the action `action` (`data-action`) in the context menu of a session row. */
+  async rowAction(sessionKey: string, action: string): Promise<void> {
+    await chooseMenuItem((await this.rowMenu(sessionKey)).locator(`[data-action="${action}"]`));
   }
 
   /** "Settings…" in the settings menu → the settings page (WP-38), optionally on a section. */
   async openSettingsPage(section?: string): Promise<Locator> {
     const menu = await this.openSettings();
-    await menu.locator('[data-action="open-settings"]').click();
+    await chooseMenuItem(menu.locator('[data-action="open-settings"]'));
     const page = this.page.locator('[data-slot="settings-page"]');
     await expect(page).toBeVisible();
     if (section !== undefined) await page.locator(`[role="tab"][data-section="${section}"]`).click();
@@ -194,9 +232,15 @@ export class SessionView {
 
   /** The "…" menu next to the header (WP-35 §8). */
   async headerMenu(): Promise<Locator> {
-    await this.pane.locator('[data-slot="session-menu"]').click();
-    const menu = this.page.getByRole('menu');
-    await expect(menu).toBeVisible();
-    return menu;
+    return openMenu(
+      this.page,
+      () => this.pane.locator('[data-slot="session-menu"]').click(),
+      this.page.getByRole('menu'),
+    );
+  }
+
+  /** Chooses the action `action` (`data-action`) in the "…" menu of the header. */
+  async headerAction(action: string): Promise<void> {
+    await chooseMenuItem((await this.headerMenu()).locator(`[data-action="${action}"]`));
   }
 }
