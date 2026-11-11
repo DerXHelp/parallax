@@ -10,6 +10,7 @@ import type {
   StartSessionRequest,
 } from './types';
 import { mapUuids } from './fake/common';
+import { FAKE_MODELS } from './fake/defaults';
 import {
   closeGate,
   crash,
@@ -456,7 +457,7 @@ describe('FakeBackend â€“ gates', () => {
     await backend.settle();
     // Not played yet: the first one of the file answers.
     await expect(agent.getContextUsage('summary')).resolves.toEqual({ totalTokens: 2, maxTokens: 10 });
-    await expect(agent.supportedModels()).resolves.toHaveLength(5);
+    await expect(agent.supportedModels()).resolves.toEqual(FAKE_MODELS);
     await expect(agent.supportedCommands()).resolves.toContainEqual(
       expect.objectContaining({ name: 'clear' }),
     );

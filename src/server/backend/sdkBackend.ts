@@ -37,7 +37,7 @@ import { mergeHistory, toHistoryMessages, toSessionInfo } from './history/parse'
 import { createHistoryPool, type HistoryPool } from './history/pool';
 import { AsyncQueue } from './lib/asyncQueue';
 import { toPermissionRequest } from './permissionRequest';
-import { buildQueryOptions, flagSettingsAfterStart, optionIssues } from './sdkOptions';
+import { buildQueryOptions, flagSettingsAfterStart, optionIssues, type StartFlagSettings } from './sdkOptions';
 import { createSpawner } from './spawn';
 import type {
   AgentBackend,
@@ -177,13 +177,15 @@ function toUserBlock(content: OutgoingContent): UserBlock {
 /**
  * OutgoingPrompt → SDKUserMessage (F.1, WP-01): content is a plain string for exactly one text
  * block, else content blocks (image/document as base64 source); origin human, no parent tool use.
+ * Phase 3 (ADR-146): pasted texts → `inline_pastes`, only when there are any; never
+ * `client_composed`.
  */
 export function toSdkUserMessage(prompt: OutgoingPrompt): SDKUserMessage {
   if (!isUuid(prompt.uuid)) throw new TypeError('prompt uuid must be a UUID');
   const [first] = prompt.content;
   const content: UserContent =
     prompt.content.length === 1 && first?.type === 'text' ? first.text : prompt.content.map(toUserBlock);
-  return {
+  const message: SDKUserMessage = {
     type: 'user',
     message: { role: 'user', content },
     parent_tool_use_id: null,
@@ -191,6 +193,10 @@ export function toSdkUserMessage(prompt: OutgoingPrompt): SDKUserMessage {
     priority: prompt.priority,
     origin: { kind: 'human' },
   };
+  if (prompt.inlinePastes !== undefined && prompt.inlinePastes.length > 0) {
+    message.inline_pastes = [...prompt.inlinePastes];
+  }
+  return message;
 }
 
 const interruptReceiptSchema = z.object({ still_queued: z.array(z.unknown()) });
@@ -317,13 +323,10 @@ class SdkSession implements AgentSession {
   }
 
   /**
-   * C.1 (+ Phase 2 fast mode): settings file + profile autoCompactWindow / entry fast mode → flag
-   * settings once the CLI is ready.
+   * C.1 (+ Phase 2 fast mode, Phase 3 todo feature): settings file + profile autoCompactWindow /
+   * entry fast mode / `todoFeatureEnabled` → flag settings once the CLI is ready.
    */
-  private async applyAfterReady(
-    q: SdkQueryHandle,
-    flags: { autoCompactWindow?: number; fastMode?: boolean },
-  ): Promise<void> {
+  private async applyAfterReady(q: SdkQueryHandle, flags: StartFlagSettings): Promise<void> {
     const { controlMs, readyMs } = this.ctx.timeouts;
     try {
       await withTimeout(q.supportedModels(), readyMs, 'supportedModels');

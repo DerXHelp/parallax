@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeContextUsage } from '../../sessions/normalizer';
+import { fixtureCallPayloadSchema } from '../fixture';
 import { toPermissionRequest } from '../permissionRequest';
 import { FAKE_MODELS, fakeContextUsage, resolveFakeModel } from './defaults';
 import { fixtureDecisionResponder, loadFixtureScenario, recordedPrompts, recordedResult } from './testing';
@@ -70,18 +71,30 @@ describe('fake defaults', () => {
     expect(zero).toMatchObject({ totalTokens: 20_000, maxTokens: 200_000, percentage: 10, source: 'sdk' });
     expect(three?.totalTokens).toBe(24_500);
     expect(three?.categories.map((c) => c.kind)).toEqual(['used', 'used', 'used', 'buffer', 'free']);
+    // WP-52: stable SDK category ids.
+    expect(three?.categories.map((c) => c.id)).toEqual([
+      'system_prompt',
+      'system_tools',
+      'messages',
+      'autocompact_buffer',
+      'free_space',
+    ]);
   });
 
-  it('models like auth-probe#24; aliases resolve to full ids', () => {
-    expect(FAKE_MODELS.map((m) => m.value)).toEqual([
-      'default',
-      'opus',
-      'claude-fable-5-1[1m]',
-      'sonnet',
-      'haiku',
-    ]);
+  it('models exactly like auth-probe#23 (CLI 2.1.322, 14 rows incl. fable); aliases resolve to full ids', async () => {
+    const probe = await loadFixtureScenario('auth-probe');
+    const recorded = probe.events.flatMap((e) => {
+      if (e.kind !== 'call') return [];
+      const call = fixtureCallPayloadSchema.parse(e.payload);
+      return call.fn === 'supportedModels' ? [call.result] : [];
+    });
+    expect(recorded).toHaveLength(1);
+    expect(FAKE_MODELS).toEqual(recorded[0]);
+    expect(FAKE_MODELS).toHaveLength(14);
+    expect(FAKE_MODELS.slice(0, 5).map((m) => m.value)).toEqual(['default', 'opus', 'fable', 'sonnet', 'haiku']);
     expect(resolveFakeModel(null)).toBe('claude-haiku-5-5');
     expect(resolveFakeModel('sonnet')).toBe('claude-sonnet-5-5');
+    expect(resolveFakeModel('fable')).toBe('claude-fable-5-2');
     expect(resolveFakeModel('claude-x')).toBe('claude-x');
   });
 });

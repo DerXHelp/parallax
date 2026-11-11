@@ -12,7 +12,41 @@ import { contextUsageSchema, opt } from './sdk-schemas';
 
 type Category = ContextBreakdown['categories'][number];
 
-function categoryKind(kind: string | undefined, isDeferred: boolean | undefined): Category['kind'] {
+/**
+ * Stable SDK category ids (SDK 0.3.322 `SDKControlGetContextUsageResponse.categories[].id`) and
+ * what they are. The SDK may add ids: an unknown id classifies like an absent one.
+ */
+const CATEGORY_KIND_BY_ID: Readonly<Record<string, Category['kind']>> = {
+  system_prompt: 'used',
+  system_tools: 'used',
+  mcp_tools: 'used',
+  mcp_instructions: 'used',
+  custom_agents: 'used',
+  memory_files: 'used',
+  skills: 'used',
+  messages: 'used',
+  mcp_tools_deferred: 'deferred',
+  system_tools_deferred: 'deferred',
+  autocompact_buffer: 'buffer',
+  compact_buffer: 'buffer',
+  free_space: 'free',
+};
+
+/** Longest id passed through; longer values are not ids (WP-52). */
+const MAX_CATEGORY_ID_CHARS = 100;
+
+function categoryId(id: string | undefined): string | null {
+  return id !== undefined && id !== '' && id.length <= MAX_CATEGORY_ID_CHARS ? id : null;
+}
+
+/** Classification: known `id` first, then the SDK `kind`, then `isDeferred` (WP-52). */
+function categoryKind(
+  id: string | null,
+  kind: string | undefined,
+  isDeferred: boolean | undefined,
+): Category['kind'] {
+  const byId = id === null || !Object.hasOwn(CATEGORY_KIND_BY_ID, id) ? undefined : CATEGORY_KIND_BY_ID[id];
+  if (byId !== undefined) return byId;
   if (kind === 'used' || kind === 'free' || kind === 'buffer' || kind === 'deferred') return kind;
   return isDeferred === true ? 'deferred' : 'used';
 }
@@ -30,7 +64,8 @@ function percentage(totalTokens: number, maxTokens: number): number {
 /**
  * Raw `getContextUsage` answer → ContextBreakdown (null if unusable). `maxTokens` =
  * override ?? rawMaxTokens ?? maxTokens; the percentage is always total/max (= the SDK's own
- * value without override). Categories keep their SDK `kind` (unknown kinds: deferred/used).
+ * value without override). Categories keep their stable SDK `id` (absent → null) and are
+ * classified by id, then by their SDK `kind` (unknown kinds: deferred/used).
  */
 export const normalizeContextUsage: NormalizeContextUsage = (raw, override, at, detail) => {
   const parsed = contextUsageSchema.safeParse(raw);
@@ -48,13 +83,10 @@ export const normalizeContextUsage: NormalizeContextUsage = (raw, override, at, 
     model: usage.model ?? null,
     at: at.toISOString(),
     detail,
-    categories: (usage.categories ?? []).map((c) => ({
-      name: c.name,
-      tokens: c.tokens,
-      kind: categoryKind(c.kind, c.isDeferred),
-      // Phase 3 contract field (stable SDK ids); the normalizer fills it in WP-52.
-      id: null,
-    })),
+    categories: (usage.categories ?? []).map((c) => {
+      const id = categoryId(c.id);
+      return { name: c.name, tokens: c.tokens, kind: categoryKind(id, c.kind, c.isDeferred), id };
+    }),
     autoCompactThreshold: usage.autoCompactThreshold ?? null,
     isAutoCompactEnabled: usage.isAutoCompactEnabled ?? null,
   };
