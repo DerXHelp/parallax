@@ -5,7 +5,7 @@ import type { SoundId } from '@shared/model';
  * with an attack/decay envelope, at most 600 ms, no audio files, nothing from the network.
  *
  * Browser autoplay policy: before the first user interaction of the window a sound is `locked` –
- * unless the browser lets audio start without one. Parallax' own Edge window runs with
+ * unless the browser lets audio start without one. Parallax' own Chrome window runs with
  * `--autoplay-policy=no-user-gesture-required` (ADR-120), so the first sound requested before any
  * interaction asks the browser once (WP41-01): `navigator.getAutoplayPolicy('audiocontext')` where
  * it exists (no context needed; also checked by `installAudioUnlock`), otherwise a context is

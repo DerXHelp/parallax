@@ -1,8 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * E2E tests (WP-20c) in the installed Microsoft Edge (channel 'msedge', headless) against the real
- * server bundle `dist/server.js` with the FakeBackend – no browser download, no live `claude`.
+ * E2E tests (WP-20c) in the installed Google Chrome (channel 'chrome', headless; ADR-136 – the app
+ * window is Chrome, too) against the real server bundle `dist/server.js` with the FakeBackend – no
+ * browser download, no live `claude`, never a visible window.
  * - globalSetup builds `dist/` when it is missing or stale (build id, like the launcher).
  * - Every worker starts its own server (temp PARALLAX_HOME, port 0, e2e/support/server.ts); tests
  *   that end a server start their own. Teardown stops it with `server.shutdown` and checks that no
@@ -25,7 +26,7 @@ export default defineConfig({
   fullyParallel: false,
   forbidOnly: true,
   retries: 0,
-  // One server + one Edge per worker; more workers mostly add CPU contention on a dev machine.
+  // One server + one Chrome per worker; more workers mostly add CPU contention on a dev machine.
   workers: 3,
   timeout: 120_000,
   expect: { timeout: 15_000 },
@@ -39,8 +40,8 @@ export default defineConfig({
   },
   projects: [
     {
-      name: 'msedge',
-      use: { ...devices['Desktop Edge'], channel: 'msedge', headless: true },
+      name: 'chrome',
+      use: { ...devices['Desktop Chrome'], channel: 'chrome', headless: true },
     },
   ],
 });

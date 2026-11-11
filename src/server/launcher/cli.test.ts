@@ -32,7 +32,7 @@ function harness(
         port: options.port,
         pid: 4242,
         url: null,
-        edgePid: options.openWindow === false ? null : 777,
+        chromePid: options.openWindow === false ? null : 777,
         window: options.openWindow !== false,
         ...p.result,
       });

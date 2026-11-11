@@ -47,7 +47,7 @@ test('without a cookie, and with a used code, the window is not signed in (no WS
       'open',
     );
 
-    // … a second context (own Edge profile, no cookie) with the same, now used code is rejected.
+    // … a second context (own browser profile, no cookie) with the same, now used code is rejected.
     const second = await browser.newContext();
     try {
       const page = await second.newPage();

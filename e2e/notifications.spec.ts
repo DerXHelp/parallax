@@ -3,7 +3,7 @@
  * windows' presence, the window shows it and plays the event's sound. A context with the
  * notification permission; `Notification` and `AudioContext` are wrapped by an init script that
  * records every toast and every started oscillator; focus and visibility of a window are switched
- * through `document.hasFocus()` / `document.visibilityState` (support/presence.ts – headless Edge
+ * through `document.hasFocus()` / `document.visibilityState` (support/presence.ts – headless Chrome
  * always reports a focused, visible page).
  * - Window in the background (not focused, hidden): "waiting for you" and "done" as Windows toast
  *   (Web Notification, tag = session, silent because the window plays its own sound: chime for the

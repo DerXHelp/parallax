@@ -146,7 +146,7 @@ export const en = {
         later: 'Not now',
         granted: 'Notifications are on.',
         denied:
-          'Notifications are blocked. Allow them in the Edge settings (edge://settings/content/notifications) to get toasts.',
+          'Notifications are blocked. Allow them in the Chrome settings (chrome://settings/content/notifications) to get toasts.',
       },
       kinds: {
         permission: '{title} – needs permission',

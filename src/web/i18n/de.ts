@@ -138,7 +138,7 @@ export const de: typeof en = {
         later: 'Nicht jetzt',
         granted: 'Benachrichtigungen sind aktiv.',
         denied:
-          'Benachrichtigungen sind blockiert. Erlaube sie in den Edge-Einstellungen (edge://settings/content/notifications), um Toasts zu erhalten.',
+          'Benachrichtigungen sind blockiert. Erlaube sie in den Chrome-Einstellungen (chrome://settings/content/notifications), um Toasts zu erhalten.',
       },
       kinds: {
         permission: '{title} – braucht eine Freigabe',
