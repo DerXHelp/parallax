@@ -6,14 +6,24 @@
  * ADR-022). Resolve bare names with `resolveExecutable`/`searchPath` (lib/windows.ts) or
  * `systemTool()`. stderr of a piped child is always read (F.16: a full stderr pipe blocks the
  * child). Process trees end with `taskkill /PID <pid> /T /F`. Contract: docs/architecture.md §2.2.
+ *
+ * The ONE exception from `windowsHide: true` (CLAUDE.md "Windows", ADR-144, proposal WP-50 §6):
+ * `spawnGui`/`spawnExplorer` below start visible GUI programs after a user click (editor, Explorer,
+ * default program) – absolute `.exe` only, block list, PE subsystem GUI, no shell, detached.
  */
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import path from 'node:path';
 import { z } from 'zod';
+import { makeError } from '@shared/errors';
+import { EDITOR_BLOCKED_EXECUTABLES } from '@shared/model';
 import { windowsPathIssue } from '@shared/paths';
+import { TERMINAL_TOOL_SHELL_VARS, envRemovalReason } from '../claude/env';
+import { CommandError } from '../sync/ports';
 import { toError } from './async';
+import { readFileHead } from './fileRead';
 import { logger } from './logger';
 import { fsErrorCode } from './paths';
+import { PE_HEADER_BYTES, PE_SUBSYSTEM_WINDOWS_GUI, peSubsystem } from './pe';
 
 export interface RunFileOptions {
   cwd?: string;
@@ -94,6 +104,12 @@ export function assertSpawnableFile(file: string, platform: NodeJS.Platform = pr
 export function systemTool(name: string, env: NodeJS.ProcessEnv = process.env): string {
   const root = env.SystemRoot ?? env.SYSTEMROOT ?? env.windir ?? 'C:\\Windows';
   return path.win32.join(root, 'System32', name);
+}
+
+/** `%SystemRoot%\explorer.exe` (Explorer lives in the Windows folder, not in System32). */
+export function explorerPath(env: NodeJS.ProcessEnv = process.env): string {
+  const root = env.SystemRoot ?? env.SYSTEMROOT ?? env.windir ?? 'C:\\Windows';
+  return path.win32.join(root, 'explorer.exe');
 }
 
 /**
@@ -559,4 +575,170 @@ export async function childProcesses(
   const result = await queryProcesses({ parentPids: [pid] }, options);
   if (result.kind === 'unknown') return result;
   return { kind: 'ok', processes: result.processes.filter((p) => p.parentPid === pid) };
+}
+
+// =====================================================================================
+// Visible GUI programs (Phase 3, ADR-144) – the one exception from `windowsHide: true`
+// =====================================================================================
+
+/**
+ * Environment of a started GUI program: the server's env without the variables of a calling
+ * Claude session and every `PARALLAX*` (filter `session` of claude/env.ts – an editor's terminal
+ * must not believe it runs inside Claude Code or reach the server's home) and without the
+ * `pnpm run` state (`run_state`: the launcher starts the server through pnpm). When the server
+ * itself runs inside a Claude session (`CLAUDECODE` set, dev only), the tool-shell settings of that
+ * session go too, like for an interactive terminal (TERMINAL_TOOL_SHELL_VARS: an editor's terminal
+ * would inherit `GIT_TERMINAL_PROMPT=0`, `NO_COLOR` …). Machine variables (`NPM_CONFIG_REGISTRY`,
+ * `NODE_OPTIONS` …) stay: the program sees the user's normal environment.
+ */
+export function guiEnvironment(base: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const fromClaudeSession = Object.keys(base).some((name) => name.toUpperCase() === 'CLAUDECODE');
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries(base)) {
+    if (value === undefined) continue;
+    const reason = envRemovalReason(name);
+    if (reason === 'session' || reason === 'run_state') continue;
+    if (fromClaudeSession && TERMINAL_TOOL_SHELL_VARS.includes(name.toUpperCase())) continue;
+    env[name] = value;
+  }
+  return env;
+}
+
+/** What `spawnGui`/`spawnExplorer` need of a started child (ChildProcess; fakes in tests). */
+export interface GuiChild {
+  once(event: 'spawn' | 'error', listener: (error?: Error) => void): unknown;
+  unref(): void;
+}
+
+/** Spawn seam of the GUI start (default: `child_process.spawn`). */
+export type GuiSpawnFn = (file: string, args: readonly string[], options: SpawnOptions) => GuiChild;
+
+const defaultGuiSpawn: GuiSpawnFn = (file, args, options) => spawn(file, [...args], options);
+
+export interface GuiStartOptions {
+  /** Base environment (default `process.env`), filtered by `guiEnvironment`. */
+  env?: NodeJS.ProcessEnv;
+  spawn?: GuiSpawnFn;
+  platform?: NodeJS.Platform;
+}
+
+export interface SpawnGuiOptions extends GuiStartOptions {
+  /** Working folder of the program (the folder of the opened file). */
+  cwd: string;
+  /** Reads the PE header (default `readFileHead`). */
+  readHead?: (file: string, length: number) => Promise<Uint8Array>;
+}
+
+function openFailed(reason: string): CommandError {
+  return new CommandError(makeError('OPEN_FAILED', { reason }));
+}
+
+/**
+ * Starts a prepared child and waits for `spawn` (success, then `unref`) or `error` (ENOENT, an
+ * AppLocker EACCES/EPERM …) → OPEN_FAILED {reason: <errno code>}. Exit codes are never awaited.
+ */
+function startDetached(start: () => GuiChild): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let child: GuiChild;
+    try {
+      child = start();
+    } catch (error) {
+      reject(openFailed(errnoCode(error) ?? 'spawn'));
+      return;
+    }
+    child.once('spawn', () => {
+      child.unref();
+      resolve();
+    });
+    child.once('error', (error) => {
+      reject(openFailed(errnoCode(error) ?? 'spawn'));
+    });
+  });
+}
+
+/**
+ * Starts a VISIBLE GUI program after a user click (editor; ADR-144) – the one exception from
+ * `windowsHide: true` (CLAUDE.md "Windows"): `windowsHide: true` sets SW_HIDE in STARTUPINFO, and a
+ * GUI program that takes its first ShowWindow from there would stay invisible. Rules:
+ * - only an absolute `.exe` (`assertSpawnableFile`), base name not in EDITOR_BLOCKED_EXECUTABLES
+ *   (shells, script hosts, LOLBins, explorer.exe – Explorer has `spawnExplorer`);
+ * - PE subsystem "Windows GUI" (2), otherwise OPEN_FAILED {reason: 'not_gui'} (a console program
+ *   would open a console window);
+ * - `shell: false`, argument array, `windowsHide: false`, `detached: true`, `stdio: 'ignore'`,
+ *   `unref()`; working folder `cwd`; environment `guiEnvironment()`.
+ * Errors: OPEN_FAILED {reason: 'path' | 'blocked' | 'not_gui' | <errno code>}.
+ */
+export async function spawnGui(
+  file: string,
+  args: readonly string[],
+  options: SpawnGuiOptions,
+): Promise<void> {
+  try {
+    assertSpawnableFile(file, options.platform);
+  } catch {
+    throw openFailed('path');
+  }
+  const base = path.win32.basename(file).toLowerCase();
+  if ((EDITOR_BLOCKED_EXECUTABLES as readonly string[]).includes(base)) throw openFailed('blocked');
+  let head: Uint8Array;
+  try {
+    head = await (options.readHead ?? readFileHead)(file, PE_HEADER_BYTES);
+  } catch (error) {
+    throw openFailed(errnoCode(error) ?? 'read');
+  }
+  if (peSubsystem(head) !== PE_SUBSYSTEM_WINDOWS_GUI) throw openFailed('not_gui');
+  const spawnOptions: SpawnOptions = {
+    cwd: options.cwd,
+    env: guiEnvironment(options.env),
+    shell: false,
+    windowsHide: false,
+    detached: true,
+    stdio: 'ignore',
+  };
+  const spawnFn = options.spawn ?? defaultGuiSpawn;
+  await startDetached(() => spawnFn(file, args, spawnOptions));
+}
+
+/** How Explorer shows a path: `select` marks a file in its folder, `open` opens a folder or a file. */
+export type ExplorerMode = 'select' | 'open';
+
+/** Explorer's one argument: `/select,"<path>"` or `"<path>"` (a checked path never contains `"`). */
+export function explorerArgument(target: string, mode: ExplorerMode): string {
+  return mode === 'select' ? `/select,"${target}"` : `"${target}"`;
+}
+
+/**
+ * `%SystemRoot%\explorer.exe` with ONE verbatim argument (ADR-144): `/select,"<path>"` marks a
+ * file, `"<path>"` opens a folder – or a file with its default program (callers check the
+ * extension list first). Explorer parses its command line itself, so the argument is passed with
+ * `windowsVerbatimArguments` (libuv's quoting would turn `/select,"…"` into `"/select,\"…\""`).
+ * Visible and detached like `spawnGui`; Explorer's exit code (1 also on success) is never awaited.
+ * Errors: OPEN_FAILED {reason: 'path' | <errno code>}.
+ */
+export async function spawnExplorer(
+  target: string,
+  mode: ExplorerMode,
+  options: GuiStartOptions = {},
+): Promise<void> {
+  // Never a UNC/device path, a quote or a control character in the verbatim command line.
+  if (windowsPathIssue(target) !== null) throw openFailed('path');
+  const explorer = explorerPath(options.env);
+  try {
+    assertSpawnableFile(explorer, options.platform);
+  } catch {
+    throw openFailed('path');
+  }
+  const spawnOptions: SpawnOptions = {
+    cwd: path.win32.dirname(explorer),
+    env: guiEnvironment(options.env),
+    shell: false,
+    windowsHide: false,
+    detached: true,
+    stdio: 'ignore',
+    windowsVerbatimArguments: true,
+    // Verbatim means unquoted: quote the program name of the command line ourselves.
+    argv0: `"${explorer}"`,
+  };
+  const spawnFn = options.spawn ?? defaultGuiSpawn;
+  await startDetached(() => spawnFn(explorer, [explorerArgument(target, mode)], spawnOptions));
 }

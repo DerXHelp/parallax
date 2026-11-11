@@ -19,10 +19,11 @@ Vite-Dev-Proxy greift), Auth per Einmal-Code und HttpOnly-Cookie, Origin-/Host-/
 
 | Datei | Exporte | Inhalt |
 | --- | --- | --- |
-| `app.ts` | `createApp(options)`, `AttachableHub`, `HubAttachOptions`, `safeMediaType`, `mediaTypeEssence` | App: Guard-Hook (auch für den WS-Upgrade), Security-Header (CSP aus `@shared/http`: `pageCsp(port)`, `BLOB_CSP`, R3-14), Error-/404-Handler (`ROUTE_NOT_FOUND`), `/api/health` (mit `backend`, wenn `config.backend` gesetzt ist, R3-02), Blob-Route, Bild-Upload `/api/attachments` (Phase 2, unten), `@fastify/websocket` (`maxPayload`), `hub.attach(app, { authorizeUpgrade })`, Static, Dev-Login-URL beim `listen` |
-| `upload.test.ts` | – | Upload per `app.inject`: OK (Name, Pixelgröße in der Meta-Datei), 413, 415 Typ, 415 Magic-Bytes ohne Bildtyp, abweichender Bildtyp → erkannter Typ (CR2-08), 400 Query, 401 ohne Cookie, 403 fremder Origin |
+| `app.ts` | `createApp(options)`, `AttachableHub`, `HubAttachOptions`, `safeMediaType`, `mediaTypeEssence`, `contentPolicyHeaders`, `isPdfBlob`, `inlineDisposition`, `UPLOAD_BODY_LIMIT_BYTES` | App: Guard-Hook (auch für den WS-Upgrade), Security-Header (CSP aus `@shared/http`: `pageCsp(port)`, `BLOB_CSP`, `FILE_PDF_CSP`, R3-14; `X-Frame-Options` `DENY`, außer eine Route setzt `SAMEORIGIN`), Error-/404-Handler (`ROUTE_NOT_FOUND`), `/api/health` (mit `backend`, wenn `config.backend` gesetzt ist, R3-02), Blob-Route (PDF-Header-Satz, Phase 3), `GET`/`HEAD /api/file` (Phase 3, unten), Upload `/api/attachments` (unten), `@fastify/websocket` (`maxPayload`), `hub.attach(app, { authorizeUpgrade })`, Static, Dev-Login-URL beim `listen` |
+| `upload.test.ts` | – | Upload per `app.inject`: Bilder (Name, Pixelgröße in der Meta-Datei), PDFs, andere Dateien (mit/ohne `name`), Größen je Typ, 415 Typ/Magic-Bytes, abweichender Bildtyp → erkannter Typ (CR2-08), 400 Query, 401 ohne Cookie, 403 fremder Origin |
+| `file.test.ts` | – | `GET`/`HEAD /api/file`: Guard-Matrix `Sec-Fetch-Site` × `Origin` × Cookie, Header-Sätze Text/Bild/SVG/PDF, `filename*`, Fehlerstatus, kein Dateiinhalt im Log, Blob-PDF-Header, Ende-zu-Ende mit dem echten Datei-Dienst |
 | `auth.ts` | `createAuthService(options) → AuthService`, `registerAuthRoutes`, `authCookieHeader`, `readCookie`, `AUTH_SECRET_FILE` | Einmal-Codes (`issueAuthCode(ttlMs?)`, `exchangeCode`), Geräte-Cookie (HMAC, Secret `PARALLAX_HOME/auth-secret.json` ohne `.bak`, `rotateSecret`, `onRevoked`), Launcher-Token (`launcherToken`, `verifyLauncherToken`); Routen `POST /api/auth`, `GET /api/auth/status`, `POST /api/launcher/code` |
-| `origin.ts` | `checkRequest`, `classifyRequest`, `isApiRoute`, `requestPath`, `STATIC_ROUTE` | reine Request-Prüfung nach der Tabelle §5.1 (Routen-Muster statt Pfad; `needsCookie` prüft der Aufrufer) |
+| `origin.ts` | `checkRequest`, `classifyRequest`, `isApiRoute`, `requestPath`, `STATIC_ROUTE` | reine Request-Prüfung nach der Tabelle §5.1 (Routen-Muster statt Pfad; `needsCookie` prüft der Aufrufer); Phase 3: Klasse `file` (`Sec-Fetch-Site` Pflicht `same-origin`, `Origin` falls vorhanden erlaubt, Cookie) |
 | `reply.ts` | `sendError`, `replyError` | HTTP-Fehlerantwort mit Katalog-Status |
 | `testServer.ts` | `startTestServer`, `connectWs`, `connectAndHello`, `rawRequest`, `rawUpgrade`, `TestWsClient`, `makeTempHome` | **nur Tests**: echter Server auf Port 0, Temp-Home, Memory-Source, optional `webRoot`, `ws`-Client (ohne `Sec-Fetch-Site` wie Edge/Chrome), roher Upgrade über `net` |
 
@@ -35,6 +36,23 @@ nur für `ATTACHMENT_MEDIA_TYPES` (Buffer, `bodyLimit = LIMITS.imageBytes`) – 
 weicht der deklarierte Bildtyp davon ab (umbenannte Datei), gilt der erkannte (CR2-08, ADR-134).
 Dann `blobs.put(data, <erkannter Typ>, name ?? null, {width, height} | null)` → 200
 `attachmentUploadResponseSchema` `{attachment: BlobRef}` (inhaltsadressiert; liegen die Bytes schon mit anderer Meta im Store, liefert und speichert der Upload seinen erkannten Typ und – mit `width`/`height`, wie der Composer immer sendet – auch Name und Größe dieses Uploads; CR2-07, `store/blobs.ts`).
+
+**Upload Phase 3 (ADR-146, WP-53):** Header-`Content-Type` ∈ `UPLOAD_MEDIA_TYPES` (Bilder,
+`application/pdf`, `application/octet-stream`), `bodyLimit = UPLOAD_BODY_LIMIT_BYTES` (größtes
+Typ-Limit). Die Magic-Bytes entscheiden: Bild (deklariert als Bild oder octet-stream) ≤
+`imageBytes`; `%PDF-` (deklariert als PDF oder octet-stream) → `application/pdf` ≤ `pdfBytes`, ohne
+Pixelgröße; sonst nur bei octet-stream eine Datei `application/octet-stream` ≤ `fileAttachmentBytes`,
+`name` Pflicht (400 `VALIDATION_FAILED {reason: 'name'}`). Ein deklariertes Bild/PDF, das keines ist,
+und ein leerer Körper → 415; über dem Typ-Limit → 413. Antwort unverändert.
+
+**Dateiinhalt (Phase 3, ADR-142, WP-53):** `GET`/`HEAD /api/file?entryId=…&path=…`
+(`fileQuerySchema`, sonst 400 `VALIDATION_FAILED {reason: 'query'}`), Guard-Klasse `file`.
+`options.files` (`FileContentProvider`, `files/service.ts`) prüft wie `file.stat`; ohne Dienst 501
+`NOT_IMPLEMENTED`. Header: `Content-Type` des Dienstes, `Content-Length`, `Content-Disposition:
+inline; filename*=UTF-8''…` (alles außerhalb der attr-chars kodiert), `Cache-Control: no-store`,
+CORP `same-origin`, `BLOB_CSP` + `X-Frame-Options: DENY` bzw. für PDFs `FILE_PDF_CSP` +
+`SAMEORIGIN`. Fehler `ErrorPayload` mit Katalog-Status. `HEAD` liefert dieselben Header ohne Körper.
+Blobs mit Meta `application/pdf` und `%PDF-`-Körper bekommen ebenfalls den PDF-Header-Satz.
 
 Verdrahtung (WP-20, `main.ts`):
 
