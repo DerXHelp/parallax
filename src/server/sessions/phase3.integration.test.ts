@@ -303,7 +303,7 @@ describe('attachments (ADR-146)', () => {
       prompt: { text: 'Compare both', attachments: [{ blobId: pdf.blobId }, { blobId: image.blobId }] },
     });
     expect(sent(h, entryId).at(-1)?.content).toEqual([
-      { type: 'document', mediaType: 'application/pdf', base64: PDF.toString('base64') },
+      { type: 'document', mediaType: 'application/pdf', base64: PDF.toString('base64'), title: 'spec.pdf' },
       { type: 'image', mediaType: 'image/png', base64: FAKE_SHOT_PNG_BASE64 },
       { type: 'text', text: 'Compare both' },
     ]);

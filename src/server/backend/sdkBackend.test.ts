@@ -732,6 +732,26 @@ describe('SdkBackend – send', () => {
     expect(h.fq().inputs.map((input) => input.uuid)).toEqual([sampleUuid(8), sampleUuid(9)]);
   });
 
+  it('a document title goes into DocumentBlockParam.title', async () => {
+    const h = harness();
+    const session = h.backend.start(request());
+    session.send({
+      uuid: sampleUuid(8),
+      priority: 'next',
+      content: [{ type: 'document', mediaType: 'application/pdf', base64: 'JVBERi0=', title: 'Angebot.pdf' }],
+    });
+    await settle();
+    expect(h.fq().inputs.map((input) => input.message.content)).toEqual([
+      [
+        {
+          type: 'document',
+          source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERi0=' },
+          title: 'Angebot.pdf',
+        },
+      ],
+    ]);
+  });
+
   it('Phase 3: inlinePastes → inline_pastes only when not empty, documents unchanged, no client_composed', async () => {
     const h = harness();
     const session = h.backend.start(request());
@@ -739,8 +759,18 @@ describe('SdkBackend – send', () => {
       { type: 'text' as const, text: 'See\npasted one\nand pasted two' },
       { type: 'document' as const, mediaType: 'application/pdf' as const, base64: 'JVBERi0=' },
     ];
-    session.send({ uuid: sampleUuid(10), priority: 'next', content, inlinePastes: ['pasted one', 'pasted two'] });
-    session.send({ uuid: sampleUuid(11), priority: 'next', content: [{ type: 'text', text: 'none' }], inlinePastes: [] });
+    session.send({
+      uuid: sampleUuid(10),
+      priority: 'next',
+      content,
+      inlinePastes: ['pasted one', 'pasted two'],
+    });
+    session.send({
+      uuid: sampleUuid(11),
+      priority: 'next',
+      content: [{ type: 'text', text: 'none' }],
+      inlinePastes: [],
+    });
     session.send({ uuid: sampleUuid(12), priority: 'next', content: [{ type: 'text', text: 'absent' }] });
     await settle();
     const [withPastes, empty, absent] = h.fq().inputs;
@@ -977,7 +1007,10 @@ describe('SdkBackend – autoCompactWindow with a settings file (C.1)', () => {
     expect(h.fq().applyFlagSettings).not.toHaveBeenCalled();
     readiness.resolve([]);
     await settle();
-    expect(h.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({ autoCompactWindow: 400_000, todoFeatureEnabled: true });
+    expect(h.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({
+      autoCompactWindow: 400_000,
+      todoFeatureEnabled: true,
+    });
   });
 
   it('Phase 3: a settings file alone still gets todoFeatureEnabled after the start (WP-52)', async () => {
@@ -1001,7 +1034,10 @@ describe('SdkBackend – autoCompactWindow with a settings file (C.1)', () => {
     await vi.advanceTimersByTimeAsync(SDK_TIMEOUTS.controlMs + 1);
     readiness.resolve([]);
     await settle();
-    expect(h.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({ autoCompactWindow: 400_000, todoFeatureEnabled: true });
+    expect(h.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({
+      autoCompactWindow: 400_000,
+      todoFeatureEnabled: true,
+    });
     expect(rec.events.some((event) => event.type === 'error')).toBe(false);
   });
 
