@@ -11,4 +11,12 @@ export const en = {
     files: 'Files',
     tasks: 'Tasks',
   },
+  /** Splitter between transcript and panel. */
+  resize: 'Resize panel',
+  width: '{width} px',
+  /** Accessible name of the viewer tab with an open file. */
+  fileTab: 'File: {name}',
+  /** Viewer tab: back to the previous file. */
+  back: 'Back to {name}',
+  history: 'Recently opened files',
 };
