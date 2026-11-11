@@ -20,7 +20,7 @@ test.afterEach(async () => {
 
 /** The Claude session id from "Session info…" of the header menu. */
 async function sessionIdOf(session: SessionView): Promise<string> {
-  await (await session.headerMenu()).locator('[data-action="sessionInfo"]').click();
+  await session.headerAction('sessionInfo');
   const info = session.page.locator('[data-slot="session-info"]');
   await expect(info).toBeVisible();
   const text = (await info.textContent()) ?? '';
@@ -48,7 +48,7 @@ test('earlier conversation: after /clear it opens again in the same entry and co
   await expect(session.assistantText('Echo: hello after the clear')).toBeVisible();
   expect(await sessionIdOf(session)).not.toBe(before);
 
-  await (await session.headerMenu()).locator('[data-action="conversations"]').click();
+  await session.headerAction('conversations');
   const dialog = page.locator('[data-slot="conversations-dialog"]');
   await expect(dialog).toBeVisible();
   const earlier = dialog.locator('[data-conversation]').filter({ hasText: 'Cleared (/clear)' });
@@ -63,7 +63,7 @@ test('earlier conversation: after /clear it opens again in the same entry and co
   await session.send('continue the earlier one');
   await expect(session.assistantText('Echo: continue the earlier one')).toBeVisible();
   expect(await sessionIdOf(session)).toBe(before);
-  await (await session.headerMenu()).locator('[data-action="conversations"]').click();
+  await session.headerAction('conversations');
   await expect(
     dialog.locator('[data-conversation]').filter({ hasText: 'Switched to another conversation' }),
   ).toHaveCount(1);
@@ -79,7 +79,7 @@ test('external console (fake): open → external + banner → back on its own wi
   await expect(session.assistantText('Echo: hello before the console')).toBeVisible();
   await session.expectStatus('idle');
 
-  await (await session.headerMenu()).locator('[data-action="openExternal"]').click();
+  await session.headerAction('openExternal');
   await session.expectStatus('external');
   const banner = session.pane.locator('[data-slot="pane-external"]');
   await expect(banner).toBeVisible();

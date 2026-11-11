@@ -67,7 +67,7 @@ test('dialog: default profile pre-selected, the folder browser takes the folder 
   await expect(app.row(key).locator('[data-slot="row-path"]')).toHaveText('app\\src');
 
   // "New session in this project…" (context menu of the row) pre-fills the folder.
-  await (await app.rowMenu(key)).locator('[data-action="newSessionHere"]').click();
+  await app.rowAction(key, 'newSessionHere');
   await expect(dialog).toBeVisible();
   await expect(dialog.locator('input[name="cwd"]')).toHaveValue(chosen);
   await page.keyboard.press('Escape');
