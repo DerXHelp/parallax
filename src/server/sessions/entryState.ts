@@ -38,6 +38,7 @@ import type { ProcessFilter, ProcessQueryResult } from '../lib/process';
 import { isStreamingItem } from '../store/transcripts';
 import {
   CommandError,
+  type AttachmentFileStore,
   type BlobStore,
   type DecisionStore,
   type RegistryStore,
@@ -50,6 +51,7 @@ import type { ConsoleLauncher } from '../system/ports';
 import { createBroker, type Broker } from './broker';
 import type { CatalogStore } from './catalogStore';
 import type { CommandCatalogStore } from './commandCatalog';
+import { DetailTracker, type DetailContext, type DetailFields } from './detailTracker';
 import { createSerial, type Serial } from './lib/serial';
 import type { TimerHandle, Timers } from './lib/timers';
 import { applyToMirror, baseView, findToolCallIn, readMirrorItems } from './mirror';
@@ -143,7 +145,17 @@ export interface EngineStores {
    * Absent (engine tests): in memory.
    */
   commandCatalogs?: CommandCatalogStore;
+  /**
+   * Phase 3 (ADR-146): file attachments per entry (`store/attachments.ts`, WP-53; WP-60 wires it).
+   * Absent: file attachments → UNSUPPORTED_MEDIA_TYPE, every start without an attachment folder.
+   */
+  attachments?: AttachmentFileStore;
 }
+
+/** The stores as the engine uses them: the in-memory fallbacks filled in, no file store = null. */
+export type EngineCoreStores = Required<Omit<EngineStores, 'attachments'>> & {
+  readonly attachments: AttachmentFileStore | null;
+};
 
 export interface NormalizerFns {
   createLiveNormalizer: CreateLiveNormalizer;
@@ -192,7 +204,7 @@ export interface EngineCore {
   readonly claude: ClaudeIntegration;
   /** Phase 2 (ADR-104): the visible console of `session.openExternal`; null = not available. */
   readonly consoleLauncher: ConsoleLauncher | null;
-  readonly stores: Required<EngineStores>;
+  readonly stores: EngineCoreStores;
   readonly normalizer: NormalizerFns;
   readonly reduceStatus: ReduceStatus;
   readonly ids: { newId: typeof newId; newUuid: () => string };
@@ -282,6 +294,13 @@ export class EntryState {
   externalRunning = true;
   /** ADR-112: the scheduled "continue" (`Entry.continueAt`); survives process ends, not the shutdown. */
   continueTimer: TimerHandle | null = null;
+  /** ADR-147: "implement with a fresh context" runs (every further decision.respond → SESSION_BUSY). */
+  freshContextRunning = false;
+  /**
+   * Phase 3: `todos` / `planFile` of the current conversation (ADR-148/149). Fed only while a
+   * mirror exists; (re)seeded from the mirror's items whenever a mirror is built.
+   */
+  private readonly detail = new DetailTracker();
   private titleTimer: TimerHandle | null = null;
   private lastSummary: SessionSummary | null = null;
   private dirty = false;
@@ -380,6 +399,76 @@ export class EntryState {
     if (lastOrder !== conv.lastOrder) {
       this.entry = withCurrentConversation(this.entry, (c) => ({ ...c, lastOrder }));
       this.touch();
+    }
+    // Phase 3: the derived fields follow the items (only with a mirror: it is (re)seeded on load).
+    if (this.mirror !== null && this.loading === null) {
+      const patch = this.trackDetail(ops);
+      if (patch !== null) this.emit([{ op: 'detail.patch', patch }]);
+    }
+  }
+
+  /** `todos` / `planFile` after these ops; the changed fields as patch, else null. */
+  private trackDetail(ops: readonly SessionOp[]): Partial<DetailFields> | null {
+    const before = this.detail.current();
+    let changed = false;
+    for (const op of ops) {
+      if (op.op === 'conversation.reset') {
+        changed = this.detail.reset() || changed;
+      } else if (op.op === 'item.upsert' && op.item.kind === 'tool_call') {
+        changed = this.detail.apply(op.item, this.detailContext()) || changed;
+      } else if (op.op === 'decision.upsert' && op.decision.kind === 'plan' && op.decision.state === 'open') {
+        changed = this.detail.planDecision(op.decision.planFilePath) || changed;
+      }
+    }
+    if (!changed) return null;
+    const after = this.detail.current();
+    const patch: Partial<DetailFields> = {};
+    if (!isDeepStrictEqual(before.todos, after.todos)) patch.todos = after.todos;
+    if (!isDeepStrictEqual(before.planFile, after.planFile)) patch.planFile = after.planFile;
+    return Object.keys(patch).length === 0 ? null : patch;
+  }
+
+  private detailContext(): DetailContext {
+    return { planFilePath: this.broker.latestPlanFilePath(), planMode: this.entry.permissionMode === 'plan' };
+  }
+
+  /** The derived fields of the current conversation (fresh-context prompt: the known plan file). */
+  detailFields(): DetailFields {
+    return this.detail.current();
+  }
+
+  /**
+   * Seeds the tracker when a mirror is built: the items of the current conversation (in order),
+   * then the ops published while it was read. Rule (a) uses the newest plan decision of now; rule
+   * (b) the current mode (the mode of past writes is not recorded – an approximation, WP-51 §2).
+   */
+  private seedDetail(items: readonly TranscriptItem[], buffer: readonly SessionOp[]): DetailFields {
+    this.detail.reset();
+    const context = this.detailContext();
+    const sorted = [...items].sort((a, b) => a.order - b.order);
+    for (const item of sorted) if (item.kind === 'tool_call') this.detail.apply(item, context);
+    this.trackDetail(buffer);
+    return this.detail.current();
+  }
+
+  /** Items for the seed: a longer tail than the view's when the view was cut (a task list may start earlier). */
+  private async detailSeedItems(read: {
+    items: TranscriptItem[];
+    hasEarlier: boolean;
+    imported: TranscriptItem[];
+  }) {
+    if (read.imported.length > 0) return read.imported;
+    if (!read.hasEarlier) return read.items;
+    try {
+      const tail = await this.core.stores.transcripts.readTail(
+        this.entry.id,
+        this.conversationId(),
+        DETAIL_SEED_ITEMS,
+      );
+      return tail.items;
+    } catch (error) {
+      this.core.log.debug({ err: error, entryId: this.entry.id }, 'detail seed: longer tail unreadable');
+      return read.items;
     }
   }
 
@@ -543,6 +632,7 @@ export class EntryState {
           }),
         ]);
         if (read.imported.length > 0) this.importHistory(read.imported);
+        const seedItems = await this.detailSeedItems(read);
         // The base is built now (current broker, queue, conversations); ops published while
         // reading are applied on top – the view contains every op published so far (WP-10 Nr. 5).
         const base = baseView({
@@ -553,8 +643,12 @@ export class EntryState {
           models: catalogOrFallback(this.core.models(this.entry.profileId)).options,
           commands,
           queue: this.queue.list(),
+          latestPlanVersion: this.broker.latestPlanVersion(),
         });
-        const view = applyToMirror(base, buffer);
+        // Phase 3: todos/planFile derived from the items (the base view carries them; no op).
+        const { todos, planFile } = this.seedDetail(seedItems, buffer);
+        const applied = applyToMirror(base, buffer);
+        const view: SessionViewState = { ...applied, detail: { ...applied.detail, todos, planFile } };
         this.mirror = view;
         return view;
       } finally {
@@ -575,7 +669,9 @@ export class EntryState {
       models: catalogOrFallback(this.core.models(this.entry.profileId)).options,
       commands: null,
       queue: this.queue.list(),
+      latestPlanVersion: this.broker.latestPlanVersion(),
     });
+    this.detail.reset();
     this.mirror = view;
     return view;
   }
@@ -772,6 +868,9 @@ export class EntryState {
 
 /** `Entry.gitBranch` max length (entrySchema). */
 const GIT_BRANCH_CHARS = 200;
+
+/** Items read to seed `todos`/`planFile` when the view's tail was cut (WP-51). */
+export const DETAIL_SEED_ITEMS = 1000;
 
 /** ContextBreakdown → the gauge fields stored on the entry. */
 export function gaugeOf(breakdown: ContextBreakdown): ContextGauge {

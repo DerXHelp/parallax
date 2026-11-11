@@ -128,6 +128,11 @@ export interface EngineHarnessOptions {
   profileStore?: MutableProfileStore;
   /** Engine logger (default: the root logger). */
   logger?: Logger;
+  /**
+   * Phase 3 (ADR-146): pass the memory attachment store to the engine (default true); false = the
+   * engine runs without one (file attachments → UNSUPPORTED_MEDIA_TYPE, no attachmentsDir).
+   */
+  attachments?: boolean;
 }
 
 export type CommandInput = z.input<typeof commandSchema>;
@@ -242,10 +247,11 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
   });
   const proc = createHarnessProc(options.proc);
   const errors: { error: unknown; context: string }[] = [];
+  const { attachments, ...withoutAttachments } = stores;
   const manager = createSessionManager({
     backend,
     claude,
-    stores,
+    stores: options.attachments === false ? withoutAttachments : { ...withoutAttachments, attachments },
     host: {
       ...HARNESS_HOST,
       ...(options.port === undefined ? {} : { port: options.port }),
