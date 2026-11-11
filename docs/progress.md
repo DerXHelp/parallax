@@ -45,6 +45,24 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
 | FIX-41 | Fix-Runde nach WP-41 (`docs/wp/FIX-41.md`): F1 Server (WP41-04, -08/ADR-128), F2 Web (WP41-01, -02, -05, -06, -07) | 4b | 41 | fertig | F1 `f5863b6`/`378a228` (Merge `7c8dbe1`), F2 `85c0a00` (Merge `4794352`), Nacharbeit siehe Log | Alle 7 Befunde behoben mit Test (Gegenproben rot): Töne ohne Geste im App-Fenster, `PathTail` (Sidebar-Zeile, Gruppenüberschrift, Kopfzeile, Strg+K), Limits je Konto (`windowsPathKey`), Hinweis `.claude.json`, Handoff-Sperre im Composer + Cursor am Ende, `PSExecutionPolicyPreference` (ADR-128), Benachrichtigungsziel bei Gleichstand + Fokus-Gedächtnis im Hub + `debug`-Zeile (ADR-129); 3760 Tests, 45/45 E2E | Live-Nachprüfung in der Nutzer-Checkliste WP-41 §2.6; Ergebnisse `FIX-41-F1.md`, `FIX-41-F2.md`; ein ausdrücklich eingetragener Standardordner zählt bei den Limits als eigenes Konto (bewusst) |
 | CR2 | Abschließendes `/code-review` (high) Phase 2 über `fdc44f7..main` + Fix-Runde (`docs/wp/CODE-REVIEW-2.md`): S1 Engine, S2 System/Upload | 4b | FIX-41 | fertig | Review `d8648ab`; S1 `c0098a0`/`0530692` (Merge `ae6b271`), S2 `0832ed4`…`b974094` (Merge `e6384ec`), Doku siehe Log | 10 Funde (0 BLOCKER); 9 reproduziert und behoben mit Regressionstest (Gegenproben rot), CR2-10 begründet zurückgestellt; ADR-130…135; 3790 Tests, Build ok, 45/45 E2E (Edge, FakeBackend) | CR2-10 erst mit einem Store, der Tails ohne Volllesen liefert (+ Handoff-Order); `pendingRename` vor `send()` (klein); `regKeyReader` nach `lib/registry.ts`; Live-Probe fremder `parallax:`-Schlüssel/`Parallax.lnk` und getrenntes Netzlaufwerk nur mit Freigabe; Test-Double `memoryStores` behält „erste Meta gewinnt“ |
 
+## Phase 3 „Dateien & Plan-Komfort“ – Arbeitspakete (Design: `docs/wp/WP-50.md`, Wellenplan §7)
+Integrations-Branch `feature/phase-3`. Kritischer Pfad: 50 (Teil 2) → 54 → 56 → 60 → R5/V4 → 61.
+
+| WP | Inhalt | Welle | Abhängig | Status | Commit | Ergebnis (eine Zeile) | Follow-ups |
+|---|---|---|---|---|---|---|---|
+| 50 | Design, Contracts v3, Gerüst, Doku (ADR-140…151, Ownership Phase 3) | 0 | – | Teil 1 fertig, Teil 2 läuft | `4d4cee9`, `84bff46`, `f3b398b` | Lückenanalyse, 12 Grundentscheidungen, Contracts v3 spezifiziert (Protokoll 3, 10 Fehlercodes, 9 Befehle, `/api/file`), Aufträge WP-51…58, 60, 61, R5, R5-web, V4; Nutzerfragen F1–F6 wie empfohlen beantwortet | – |
+| 51 | Engine: frischer Kontext, Plan-Versionen, Stop je Task, Detail-Felder, Anhänge/Pastes | 1 | 50 | offen | – | – | – |
+| 52 | Normalizer und Backends: `outputFile`, `session_writes_lost`, Context-`id`, SDK-Optionen, Fake-Szenarien | 1 | 50 | offen | – | – | – |
+| 53 | Datei-Dienst, `/api/file`, Uploads, Anhang-Store, Programmstart | 1 | 50 | offen | – | – | – |
+| 54 | Datei-Viewer, `FileLink`, Dateien-Panel, Panel-Host, Fake-Host | 1 | 50 | offen | – | – | – |
+| 55 | Transkript-Verweise, Task-Panel, Aufgabenleiste | 2 | 54 | offen | – | – | – |
+| 56 | Plan-Komfort: Versionen + Diff, Plan-Datei live, frischer Kontext, Split-Button | 2 | 54 | offen | – | – | – |
+| 57 | Composer: PDF-/Datei-Anhänge, Paste-Chips, @-Picker | 2 | 54 | offen | – | – | – |
+| 58 | Shell: Kopfzeile, Session-Menü, Drop-Zone, schmales Fenster, Editor-Einstellung | 2 | 54 | offen | – | – | – |
+| 60 | Integration + E2E Phase 3 | 3 | 51–58 | offen | – | – | – |
+| R5/R5-web/V4 | Review Server, Review Web, Verifier, danach Fix-Runde | 3b | 60 | offen | – | – | – |
+| 61 | Live-Abnahme Phase 3 (freigegeben, F6) | 4 | 60 + Fixes | offen | – | – | – |
+
 ## Nach Phase 2 – Pflege auf Feature-/Fix-Branches (ab 19.10.2026)
 
 | Paket | Inhalt | Status | Commit | Ergebnis (eine Zeile) | Follow-ups |
@@ -179,6 +197,15 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
 - 11.11.2026 (OpenCode): Machbarkeit geprüft (`docs/wp/MACHBARKEIT-OPENCODE.md`). Anlass: auf der Arbeit wird
   voraussichtlich auf OpenCode umgestellt. Entscheidung: **nicht jetzt**, ganz ans Ende des Ausblicks
   (`docs/plan.md` „Backlog“), später gemeinsam ansehen; das Phase-3-Design bekommt keine Vorgabe zur Backend-Neutralität.
+- 11.11.2026: Push von `main` (`dfbddf8`) freigegeben und erledigt. Alte Plan-Datei
+  `~/.claude/plans/plan-how-to-create-jolly-nest.md` (Spike aus einem Live-Test) gelöscht; die drei verwaisten
+  headless-Chrome-Prozesse vom 05.11. beendet (Windows hält sie bis zum Neustart als Reste).
+- 11.11.2026 (Phase 3, Nutzer: „Setze phase 3 um“): Fragen WP-50 §11 alle wie empfohlen – F1 Viewer liest nur Wurzeln
+  (Projekt, Zusatzordner, Anhänge) und von Claude angefasste Dateien; F2 nur lesen; F3 Notepad++ als Default, dazu
+  VS Code, eigene `.exe`, Standardprogramm mit Endungsliste; F4 Stop beendet nur den Turn, Hintergrund-Agents im
+  Task-Panel stoppen; F5 Aufgabenliste und Fortschritts-Zusammenfassungen standardmäßig an; F6 Live-Abnahme WP-61
+  freigegeben (Abo, Haiku, Temp-Home, Scratch-Ordner, ≤ 1 USD, Nutzer-Checkliste). Ausnahme von der Windows-Regel für
+  GUI-Starts (ADR-144, `windowsHide:false` nur für geprüfte GUI-Programme) freigegeben.
 
 ## Koordinator-Entscheidungen R3/V2 (15.10.2026)
 - V2-01: Parallax-Edge-Profil nie mit Microsoft-Konto anmelden/synchronisieren (Flags/Profil-Präferenzen, keine Policies).
@@ -216,7 +243,10 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
    starten, nicht blockierend durch die Tool-Pipe (Absturz der Koordinator-Session während A18).
 5. Nach ≥ 24 h: `react`/`react-dom` 19.3.1 prüfen und nachziehen (Koordinator, siehe WP-00.md).
 6. **11.11.2026:** Frage-Tabs, FIX-E2E-EDGE157 und SDK-0.3.322 nach `main` gemergt und gepusht (Tabelle „Nach Phase 2“).
-   Danach CHROME (ADR-136) gemergt und gepusht. WP-50 (Phase-3-Design) läuft auf `feature/phase-3`. OpenCode als
-   zweites Backend steht ganz hinten im Ausblick (`docs/wp/MACHBARKEIT-OPENCODE.md`). Offen beim Nutzer:
-   Live-Checkliste `docs/wp/CHROME.md` §4.6 (vor allem Benachrichtigung + Klick in Chrome) und Checkliste WP-41 §2.6. Danach Phase 3 („Dateien &
-   Plan-Komfort“) auf `feature/phase-3` mit Design-Paket vorweg; Kandidaten aus SDK-0.3.322 §5.8 einplanen.
+   Danach CHROME (ADR-136) gemergt und gepusht. OpenCode als zweites Backend steht ganz hinten im Ausblick
+   (`docs/wp/MACHBARKEIT-OPENCODE.md`). Offen beim Nutzer: Live-Checkliste `docs/wp/CHROME.md` §4.6 (vor allem
+   Benachrichtigung + Klick in Chrome) und Checkliste WP-41 §2.6.
+7. **Phase 3 „Dateien & Plan-Komfort“ beauftragt (11.11.2026, Nutzer: „Setze phase 3 um“).** Design WP-50 Teil 1
+   fertig, Nutzerfragen beantwortet; Teil 2 (Contracts v3 + Gerüst) läuft auf `wp/50`. Danach Welle 1 (51–54),
+   Welle 2 (55–58), WP-60, R5/R5-web/V4 + Fix-Runde, WP-61 (live), `/code-review` (high); Merge nach `main` erst
+   nach Nutzer-Freigabe des Pushs.
