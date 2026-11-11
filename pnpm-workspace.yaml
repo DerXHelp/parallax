@@ -10,7 +10,7 @@
 
 # Platform binaries of @anthropic-ai/claude-agent-sdk (~270 MB each) are never installed,
 # Parallax uses the installed `claude` CLI (pathToClaudeCodeExecutable).
-# SDK 0.3.296 declares: -win32-x64, -win32-arm64, -darwin-x64, -darwin-arm64,
+# SDK 0.3.322 declares: -win32-x64, -win32-arm64, -darwin-x64, -darwin-arm64,
 # -linux-x64, -linux-arm64, -linux-x64-musl, -linux-arm64-musl.
 ignoredOptionalDependencies:
   - '@anthropic-ai/claude-agent-sdk-*'

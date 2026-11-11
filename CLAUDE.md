@@ -7,7 +7,7 @@ die Web-UI (Edge im App-Modus) zeigt Status, Context, Chat und nicht-modale Ents
 
 ## Stack
 - Server: Node ≥ 22 (Standard 26), TypeScript, Fastify 5 + `@fastify/websocket`, zod 4, pino 10,
-  `@anthropic-ai/claude-agent-sdk` **exakt 0.3.296** (Plattform-Binaries per pnpm ausgeschlossen).
+  `@anthropic-ai/claude-agent-sdk` **exakt 0.3.322** (Plattform-Binaries per pnpm ausgeschlossen).
 - Web: Vite 8, React 19, Tailwind v4, shadcn/ui (`radix-ui`), lucide-react, Zustand,
   react-markdown/streamdown, shiki, diff, virtua. Fonts lokal (@fontsource-variable).
 - Tests: Vitest 5 (Projekte `node` + `web`/happy-dom), Playwright mit `channel: 'msedge'`.
