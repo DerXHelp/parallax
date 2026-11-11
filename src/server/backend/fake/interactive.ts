@@ -3,14 +3,16 @@
  * every prompt by keyword (first word, case-insensitive) – `fake:bash`, `fake:edit`,
  * `fake:question`, `fake:plan`, `fake:subagent`, `fake:parallel`, `fake:slow`, `fake:compact`,
  * `fake:ratelimit` (rejected, resets in 60 s – "continue at" in E2E), `fake:image` (Read of a PNG
- * with an image result), `fake:error`, `fake:crash`, `fake:held`, `/rename X`, `/clear`; a prompt
- * with images gets "Fake: received N image(s)" (Phase 2, ADR-103); anything else gets a thought
- * plus a streamed "Echo: …". Decisions really wait for the engine; interrupt() and prompts with
- * priority 'now' abort the running turn (F.9/F.10, simplified).
+ * with an image result), `fake:error`, `fake:crash`, `fake:held`, `/rename X`, `/clear`; Phase 3
+ * (WP-52): `fake:background`, `fake:todo`, `fake:files`, `fake:writes-lost` (phase3.ts) and the
+ * plan file of `fake:plan` (plan.ts). A prompt with images, PDFs, attached files or inline pastes
+ * gets "Fake: received …" (ADR-103, ADR-146); the first prompt of a start without resume that is
+ * the engine's fresh-context prompt gets "Fake: implementing plan (N lines)"; anything else gets a
+ * thought plus a streamed "Echo: …". Decisions really wait for the engine; interrupt() and
+ * prompts with priority 'now' abort the running turn (F.9/F.10, simplified).
  */
-import type { PermissionResult, PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
+import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { parsePermissionMode } from '@shared/common';
 import { system as systemFrame, msg } from '../../sessions/normalizer/synthetic/build';
 import type { OutgoingPrompt } from '../types';
 import { TurnInterrupted, promptText } from './common';
@@ -18,7 +20,6 @@ import {
   assistantErrorTurn,
   assistantMessage,
   clearCommand,
-  dslContext,
   events,
   frame,
   interruptEpilogue,
@@ -37,76 +38,14 @@ import {
   turnOpen,
   type DslContext,
 } from './dsl';
-import {
-  FAKE_SHOT_HEIGHT,
-  FAKE_SHOT_NAME,
-  FAKE_SHOT_PNG_BASE64,
-  FAKE_SHOT_WIDTH,
-  promptImageCount,
-  receivedImagesText,
-} from './image';
+import { FAKE_SHOT_HEIGHT, FAKE_SHOT_NAME, FAKE_SHOT_PNG_BASE64, FAKE_SHOT_WIDTH } from './image';
+import { background, files, receivedCounts, receivedText, todo, writesLost } from './phase3';
+import { implementPlan, isImplementPlanPrompt, plan } from './plan';
+import { CANCEL_DENY, abortedByDecision, answerTurn, ask, contextFor, firstWords, type Turn } from './turn';
 import type { FakeScenario, FakeScriptContext } from './types';
 
 /** `fake:ratelimit`: the rejected window resets this long after the turn (E2E "continue at"). */
 export const FAKE_RATE_LIMIT_RESET_S = 60;
-
-/** Per turn: what an interrupt epilogue needs. */
-interface Turn {
-  prompt: string;
-  toolUseId: string | null;
-}
-
-/** Thinking + answer stream of ~1 s at speed 1. */
-const ANSWER_STEP_MS = 40;
-
-function firstWords(text: string, count = 5): string {
-  const words = text.trim().split(/\s+/).slice(0, count).join(' ');
-  return words.length > 60 ? `${words.slice(0, 59)}…` : words;
-}
-
-function contextFor(ctx: FakeScriptContext, sessionId: string): DslContext {
-  return dslContext({
-    sessionId,
-    ids: ctx.ids,
-    model: ctx.state.model,
-    permissionMode: ctx.state.permissionMode,
-    cwd: ctx.req.cwd,
-    timestamp: () => ctx.now().toISOString(),
-    stepMs: ANSWER_STEP_MS,
-  });
-}
-
-const CANCEL_DENY = (result: PermissionResult): boolean =>
-  result.behavior === 'deny' && result.interrupt === true;
-
-/** Asks canUseTool like the CLI (requires_action → gate → running). */
-async function ask(
-  ctx: FakeScriptContext,
-  c: DslContext,
-  turn: Turn,
-  toolName: string,
-  input: Record<string, unknown>,
-  toolUseId: string,
-  options: Record<string, unknown>,
-): Promise<PermissionResult> {
-  turn.toolUseId = toolUseId;
-  await ctx.play(toEvents([frame(c, systemFrame(0, 'session_state_changed', { state: 'requires_action' }))]));
-  const result = await ctx.canUseTool(toolName, input, {
-    displayName: toolName,
-    toolUseID: toolUseId,
-    requestId: ctx.ids.uuid(),
-    ...options,
-  });
-  if (!CANCEL_DENY(result)) {
-    await ctx.play(toEvents([frame(c, systemFrame(0, 'session_state_changed', { state: 'running' }))]));
-  }
-  return result;
-}
-
-/** deny with interrupt: the CLI ends the turn as aborted (F.3, permissions#236). */
-async function abortedByDecision(ctx: FakeScriptContext, c: DslContext, turn: Turn): Promise<void> {
-  await ctx.play(interruptEpilogue(c, { prompt: turn.prompt, toolUseId: turn.toolUseId }));
-}
 
 async function echo(ctx: FakeScriptContext, c: DslContext, turn: Turn, text: string): Promise<void> {
   await ctx.play(
@@ -264,83 +203,6 @@ async function question(ctx: FakeScriptContext, c: DslContext, turn: Turn): Prom
       turnClose(c, turn.prompt, { result: { result: answer } }),
     ),
   );
-}
-
-function setModeOf(result: PermissionResult): string | null {
-  if (result.behavior !== 'allow') return null;
-  const setMode = (result.updatedPermissions ?? []).find((u) => u.type === 'setMode');
-  return setMode?.type === 'setMode' ? setMode.mode : null;
-}
-
-async function plan(ctx: FakeScriptContext, c: DslContext, turn: Turn): Promise<void> {
-  const planFilePath = 'C:\\Users\\user\\.claude\\plans\\fake-plan.md';
-  let text = '## Plan\n- Create `hello.txt` with the content `hello`.\n- Reply with exactly: IMPLEMENTED\n';
-  await ctx.play(turnOpen(c, turn.prompt));
-  for (let version = 1; version <= 5; version += 1) {
-    // Plan mode: the plan file is written without a permission card (F.6).
-    const writeId = ctx.ids.toolUseId();
-    await ctx.play(
-      events(
-        toolUseBlock(
-          c,
-          'Write',
-          { file_path: planFilePath, content: text },
-          { toolUseId: writeId, thinking: 'Writing the plan.' },
-        ),
-        toolResultMessage(c, writeId, `File created successfully at: ${planFilePath}`),
-      ),
-    );
-    const exitId = ctx.ids.toolUseId();
-    const input = { plan: text, planFilePath };
-    await ctx.play(toolUseBlock(c, 'ExitPlanMode', input, { toolUseId: exitId }));
-    const result = await ask(ctx, c, turn, 'ExitPlanMode', input, exitId, { requiresUserInteraction: true });
-    if (CANCEL_DENY(result)) return abortedByDecision(ctx, c, turn);
-    if (result.behavior === 'deny') {
-      // Revise (F.6): the feedback goes back to Claude, a new version follows.
-      await ctx.play(
-        toolResultMessage(c, exitId, result.message, {
-          isError: true,
-          toolUseResult: `Error: ${result.message}`,
-        }),
-      );
-      text = `${text}- Revision ${String(version)}: ${firstWords(result.message, 12)}\n`;
-      continue;
-    }
-    const mode = parsePermissionMode(setModeOf(result)) ?? 'default';
-    ctx.state.permissionMode = mode;
-    const approved = typeof result.updatedInput?.plan === 'string' ? result.updatedInput.plan : text;
-    const implementId = ctx.ids.toolUseId();
-    turn.toolUseId = null;
-    await ctx.play(
-      events(
-        toEvents([frame(c, systemFrame(0, 'status', { status: null, permissionMode: mode }))]),
-        toolResultMessage(
-          c,
-          exitId,
-          `User has approved your plan. You can now start coding.\n\n## Approved Plan:\n${approved}`,
-          {
-            toolUseResult: {
-              plan: approved,
-              isAgent: false,
-              filePath: planFilePath,
-              planWasEdited: approved !== text,
-            },
-          },
-        ),
-        toolUseBlock(
-          c,
-          'Write',
-          { file_path: `${ctx.req.cwd}\\hello.txt`, content: 'hello' },
-          { toolUseId: implementId },
-        ),
-        toolResultMessage(c, implementId, `File created successfully at: ${ctx.req.cwd}\\hello.txt`),
-        streamedText(c, 'IMPLEMENTED'),
-        turnClose(c, turn.prompt, { result: { result: 'IMPLEMENTED' } }),
-      ),
-    );
-    return;
-  }
-  await ctx.play(events(streamedText(c, 'Giving up after five plan revisions.'), turnClose(c, turn.prompt)));
 }
 
 async function subagent(ctx: FakeScriptContext, c: DslContext, turn: Turn): Promise<void> {
@@ -544,23 +406,6 @@ async function image(ctx: FakeScriptContext, c: DslContext, turn: Turn): Promise
   );
 }
 
-/** A prompt with images (ADR-103): the fake CLI counts them. */
-async function receivedImages(
-  ctx: FakeScriptContext,
-  c: DslContext,
-  turn: Turn,
-  count: number,
-): Promise<void> {
-  const answer = receivedImagesText(count);
-  await ctx.play(
-    events(
-      turnOpen(c, turn.prompt),
-      streamedText(c, answer),
-      turnClose(c, turn.prompt, { result: { result: answer } }),
-    ),
-  );
-}
-
 async function handle(
   ctx: FakeScriptContext,
   prompt: OutgoingPrompt,
@@ -569,13 +414,30 @@ async function handle(
 ): Promise<string> {
   const c = contextFor(ctx, sessionId);
   const text = promptText(prompt).trim();
-  const images = promptImageCount(prompt);
-  if (images > 0) {
-    await receivedImages(ctx, c, turn, images);
+  // Images (ADR-103), PDFs, attached files and inline pastes (ADR-146): the fake CLI counts them.
+  const received = receivedText(receivedCounts(prompt, text));
+  if (received !== '') {
+    await answerTurn(ctx, c, turn, received);
+    return sessionId;
+  }
+  if (isImplementPlanPrompt(ctx, text)) {
+    await implementPlan(ctx, c, turn, text);
     return sessionId;
   }
   const keyword = (text.split(/\s+/)[0] ?? '').toLowerCase();
   switch (keyword) {
+    case 'fake:background':
+      await background(ctx, c, turn, sessionId);
+      break;
+    case 'fake:todo':
+      await todo(ctx, c, turn);
+      break;
+    case 'fake:files':
+      await files(ctx, c, turn);
+      break;
+    case 'fake:writes-lost':
+      await writesLost(ctx, c, turn, sessionId);
+      break;
     case 'fake:image':
       await image(ctx, c, turn);
       break;

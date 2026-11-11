@@ -10,6 +10,7 @@ import type { FixtureEvent, ParsedFixture } from './fixture';
 import { mergeHistory, toHistoryMessages, toSessionInfo } from './history/parse';
 import { FAKE_CONSOLE_PROMPT, consoleTurnMessages } from './fake/console';
 import { randomIds } from './fake/dsl';
+import { defaultFakeFilesRoot } from './fake/files';
 import { createFakeHistoryStore } from './fake/history';
 import { interactiveScenario } from './fake/interactive';
 import { FakeSession } from './fake/session';
@@ -18,6 +19,7 @@ import type { FakeBackend, FakeBackendOptions, FakeEventsOptions, FakeScenario }
 export type {
   FakeBackend,
   FakeBackendOptions,
+  FakeBackgroundTask,
   FakeDiagnostic,
   FakeDiagnosticKind,
   FakeEventsOptions,
@@ -27,8 +29,10 @@ export type {
   FakeScriptState,
   FakeSessionHandle,
   FakeSessionState,
+  FakeTaskControl,
 } from './fake/types';
 export type { FakeHistoryStore } from './fake/history';
+export { FAKE_FILES_DIR_NAME, FakeFiles, defaultFakeFilesRoot } from './fake/files';
 export { createFakeHistoryStore } from './fake/history';
 export { interactiveScenario } from './fake/interactive';
 export { SessionStopped, TurnInterrupted } from './fake/common';
@@ -122,6 +126,7 @@ export function createFakeBackend(options: FakeBackendOptions = {}): FakeBackend
         now,
         history,
         ids,
+        filesRoot: options.filesRoot ?? defaultFakeFilesRoot(),
         onStateChange,
       });
       sessions.push(session);

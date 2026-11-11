@@ -6,6 +6,7 @@ import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { EffortLevel, PermissionMode } from '@shared/common';
 import type { FixtureEvent } from '../fixture';
 import type { AgentBackend, OutgoingPrompt, StartSessionRequest } from '../types';
+import type { FakeFiles } from './files';
 import type { FakeHistoryStore } from './history';
 
 export type FakeScenario =
@@ -47,6 +48,11 @@ export interface FakeBackendOptions {
   keepSessions?: number;
   /** Ids of the script mode (session ids, message ids, tool use ids); default random. */
   ids?: FakeIds;
+  /**
+   * Phase 3 (WP-52): folder of the real files the scripts write (plan file, task output,
+   * `fake:files`), one subfolder per session id. Default `%TEMP%\parallax-fake-files`.
+   */
+  filesRoot?: string;
 }
 
 export interface FakeBackend extends AgentBackend {
@@ -144,4 +150,38 @@ export interface FakeScriptContext {
   /** Aborted by interrupt() or a prompt with priority 'now' during the turn. */
   readonly turnSignal: AbortSignal;
   crash(code?: number): Promise<never>;
+  /** Phase 3 (WP-52): real files of this session under the fake files root. */
+  readonly files: FakeFiles;
+  /**
+   * Phase 3: a background task beside the turns that `stopTask(taskId)` can end at once; its
+   * `run` starts when the launching turn has ended (same order at every speed).
+   */
+  startTask(task: FakeBackgroundTask): void;
+  /** Phase 3: messages emitted on a graceful close (exit 0), right before the exit event. */
+  onClose(messages: () => readonly unknown[]): void;
+}
+
+/** What a background task may do (FakeBackgroundTask.run). */
+export interface FakeTaskControl {
+  /** Sleeps `ms × speed` (not capped by maxDelayMs); rejects once the task was stopped or the session ended. */
+  wait(ms: number): Promise<void>;
+  /** Emits raw SDK messages at once (also in the middle of a turn, like the CLI's task_* frames). */
+  emit(messages: readonly unknown[]): void;
+  /** The task has ended (`status` as the CLI's error text shows it); stopTask then answers "not running". */
+  finish(status: string): void;
+  /** Plays events once no turn runs (the CLI's follow-up turn after a task notification). */
+  betweenTurns(events: readonly FixtureEvent[]): Promise<void>;
+}
+
+/**
+ * A background task of the script mode (Phase 3, `fake:background`). While it runs, the
+ * session holds back `session_state_changed: idle` like the CLI (idle only after the
+ * background agents ended, SDKSessionStateChangedMessage).
+ */
+export interface FakeBackgroundTask {
+  readonly taskId: string;
+  /** The task's life; ends quietly when `wait` rejects because the task was stopped. */
+  run(control: FakeTaskControl): Promise<void>;
+  /** Messages emitted at once when stopTask(taskId) ends the running task. */
+  stopped(): readonly unknown[];
 }
