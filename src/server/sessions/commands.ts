@@ -8,7 +8,9 @@
  * `HostCommandHandler` with that name (ADR-101), none → NOT_IMPLEMENTED; unexpected errors → logged, INTERNAL_ERROR. Results match
  * `commandResultSchemas` (the hub checks them again). WP-34: image attachments (attachments.ts,
  * ADR-103), external console (external.ts, ADR-104), continue after the rate limit
- * (continuePlan.ts, ADR-112).
+ * (continuePlan.ts, ADR-112). Phase 3 (WP-51, WP-50 §4.12): PDF/file attachments and pastes
+ * (attachments.ts, ADR-146), `session.stopTask` (ADR-149), `plan.list`/`plan.read` (ADR-148) and
+ * `approve_fresh_context` (freshContext.ts, ADR-147).
  */
 import { LIMITS, type ClientId, type ProfileId } from '@shared/common';
 import { makeError } from '@shared/errors';
@@ -22,18 +24,21 @@ import {
   type SessionOp,
 } from '@shared/protocol';
 import { CommandError, type CommandContext, type HostCommandHandler } from '../sync/ports';
-import { resolveAttachments } from './attachments';
+import { checkAttachments, checkPastes, materializeAttachments, type PromptAttachments } from './attachments';
 import { cancelContinue, planContinue } from './continuePlan';
 import {
   assertEntryGate,
   assertWithoutWork,
   commandError,
+  errorMessage,
+  errorPayloadOf,
   gaugeOf,
   type EngineCore,
   type EntryCommand,
   type EntryState,
 } from './entryState';
 import { consoleCommand, openExternal, returnFromExternal } from './external';
+import { approveFreshContext } from './freshContext';
 import { catalogOrFallback, toModelCatalog } from './models';
 import { closeRuntime, deliverPrompt, startRuntime } from './runtime';
 import { capTitle, implementPlanPrompt, newConversation, titleFromPrompt } from './summary';
@@ -131,8 +136,12 @@ async function createSession(
   await core.checkCwd(cmd.cwd);
   const permissionMode = cmd.permissionMode ?? profile.defaults.permissionMode;
   assertModeAllowed(core, profileId, permissionMode);
-  // ADR-103: checked before the entry exists (a bad attachment creates nothing).
-  const attachments = await resolveAttachments(core.stores.blobs, cmd.prompt?.attachments ?? []);
+  // ADR-103/146: pastes and attachments are checked before the entry exists (a bad one creates
+  // nothing); files are materialized once the entry exists.
+  const pastes = checkPastes(cmd.prompt?.text ?? '', cmd.prompt?.pastes ?? []);
+  const checked = await checkAttachments(core.stores.blobs, cmd.prompt?.attachments ?? [], {
+    files: core.stores.attachments !== null,
+  });
   core.assertRunning();
 
   const now = core.now().toISOString();
@@ -171,8 +180,9 @@ async function createSession(
   if (prompt === undefined) return { entryId: entry.id, messageUuid: null };
   try {
     const messageUuid = await s.lifecycle.run(async () => {
+      const attachments = await materializeForNewEntry(core, s, checked);
       await startRuntime(s, core, { byClientId: clientId });
-      return deliverPrompt(s, core, prompt.text, 'next', attachments);
+      return deliverPrompt(s, core, prompt.text, 'next', { attachments, pastes });
     });
     return { entryId: entry.id, messageUuid };
   } catch (error) {
@@ -180,6 +190,25 @@ async function createSession(
     // The entry exists; the start failure shows as status `error` in its summary.
     core.log.warn({ err: error, entryId: entry.id }, 'session.create: start failed');
     return { entryId: entry.id, messageUuid: null };
+  }
+}
+
+/**
+ * ADR-146: the files of the first prompt go into the new entry's attachment folder before its
+ * start; a failure ends like a failed start (status `error`, px item, lastError) – nothing starts.
+ */
+async function materializeForNewEntry(
+  core: EngineCore,
+  s: EntryState,
+  checked: PromptAttachments,
+): Promise<PromptAttachments> {
+  try {
+    return await materializeAttachments(core.stores.attachments, s.id, checked);
+  } catch (error) {
+    core.log.warn({ err: error, entryId: s.id }, 'session.create: attachments could not be materialized');
+    const payload = errorPayloadOf(error, makeError('INTERNAL_ERROR', {}, errorMessage(error)));
+    s.failStart(payload);
+    throw new CommandError(payload);
   }
 }
 
@@ -296,11 +325,71 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
         return { continueAt: null } satisfies CommandResult<'session.continueAfterLimit'>;
       }
       return { continueAt: planContinue(core, s) } satisfies CommandResult<'session.continueAfterLimit'>;
-    // Phase 3 (WP-50 §4.12): stop one task (ADR-149) and plan versions (ADR-148) follow in WP-51.
+    // Phase 3 (WP-50 §4.12): stop one task (ADR-149) and the plan versions (ADR-148).
     case 'session.stopTask':
+      return stopTask(core, s, cmd.taskId);
     case 'plan.list':
-    case 'plan.read':
-      throw notImplemented(cmd.name);
+      return planList(core, s);
+    case 'plan.read': {
+      const text = await core.stores.decisions.readPlan(s.id, cmd.version);
+      if (text === null) throw commandError('PLAN_NOT_FOUND', { version: cmd.version });
+      return { version: cmd.version, text } satisfies CommandResult<'plan.read'>;
+    }
+  }
+}
+
+/**
+ * ADR-149: the process runs (else SESSION_NOT_RUNNING; external → SESSION_EXTERNAL at the gate);
+ * the task is a background task or a running/background tool-call task (else TASK_NOT_FOUND).
+ * The effect arrives later as `task_notification stopped`.
+ */
+async function stopTask(
+  core: EngineCore,
+  s: EntryState,
+  taskId: string,
+): Promise<CommandResult<'session.stopTask'>> {
+  const runtime = running(s);
+  if (runtime === null) throw commandError('SESSION_NOT_RUNNING', { entryId: s.id });
+  if (!hasStoppableTask(s, taskId)) throw commandError('TASK_NOT_FOUND', { taskId });
+  await controlCall('stopTask', () => runtime.agent.stopTask(taskId), core, s.id);
+  return {};
+}
+
+function hasStoppableTask(s: EntryState, taskId: string): boolean {
+  const view = s.mirror;
+  if (view === null) return false;
+  if (view.detail.backgroundTasks.some((t) => t.taskId === taskId)) return true;
+  return view.items.some(
+    (item) =>
+      item.kind === 'tool_call' &&
+      item.task?.taskId === taskId &&
+      (item.status === 'running' || item.status === 'background'),
+  );
+}
+
+/** ADR-148: every kept record with a plan version, ascending; `stored` = plans/v<N>.md readable. */
+async function planList(core: EngineCore, s: EntryState): Promise<CommandResult<'plan.list'>> {
+  const versions = await Promise.all(
+    s.broker.planRecords().map(async (record) => ({
+      version: record.planVersion,
+      decisionId: record.id,
+      conversationId: record.conversationId,
+      createdAt: record.createdAt,
+      resolvedAt: record.resolvedAt,
+      outcome: record.outcome,
+      planFilePath: record.planFilePath,
+      stored: await planStored(core, s.id, record.planVersion),
+    })),
+  );
+  return { versions };
+}
+
+async function planStored(core: EngineCore, entryId: string, version: number): Promise<boolean> {
+  try {
+    return (await core.stores.decisions.readPlan(entryId, version)) !== null;
+  } catch (error) {
+    core.log.warn({ err: error, entryId, version }, 'plan version unreadable');
+    return false;
   }
 }
 
@@ -330,17 +419,22 @@ async function sendPrompt(
       }
     }
   };
+  // ADR-146: every paste occurs in the text (nothing changes otherwise).
+  const pastes = checkPastes(text, cmd.prompt.pastes);
   const messageUuid = await s.lifecycle.run(async () => {
     // R4-01: handed off or archived while this prompt waited for the lock.
     assertEntryGate(s, cmd.name);
-    // ADR-103: the attachments are checked before anything starts, is sent or changes – inside the
-    // lock, so a Stop right after this prompt still waits for it (R2-15).
-    const attachments = await resolveAttachments(core.stores.blobs, list);
+    // ADR-103/146: the attachments are checked (and files materialized) before anything starts, is
+    // sent or changes – inside the lock, so a Stop right after this prompt still waits for it (R2-15).
+    const checked = await checkAttachments(core.stores.blobs, list, {
+      files: core.stores.attachments !== null,
+    });
+    const attachments = await materializeAttachments(core.stores.attachments, s.id, checked);
     // CR2-04: only a prompt past both checks changes plan, retry and title (the title still shows
     // before its own start waits for an orphan check).
     accept();
     if (s.runtime === null) await startRuntime(s, core, { byClientId: clientId });
-    return deliverPrompt(s, core, text, cmd.priority, attachments);
+    return deliverPrompt(s, core, text, cmd.priority, { attachments, pastes });
   });
   return { messageUuid };
 }
@@ -434,9 +528,11 @@ async function rename(
   return {};
 }
 
-/** Running: the CLI renames itself through its `/rename` command (F.8); the echo is recognized. */
+/**
+ * Running: the CLI renames itself through its `/rename` command (F.8); the echo is recognized.
+ * deliverPrompt sets `pendingRename` – and resets it when send() refuses the prompt (CR2 follow-up).
+ */
 function renameRunning(core: EngineCore, s: EntryState, title: string): void {
-  s.pendingRename = title;
   try {
     deliverPrompt(s, core, `/rename ${title}`, 'next');
   } catch (error) {
@@ -524,11 +620,20 @@ async function respond(
   clientId: ClientId,
 ): Promise<CommandResult<'decision.respond'>> {
   const response = cmd.response;
+  // ADR-147: while "implement with a fresh context" runs, nothing else is answered (double click).
+  if (s.freshContextRunning) throw commandError('SESSION_BUSY', { entryId: s.id });
   if (response.kind === 'plan' && response.response.behavior !== 'revise') {
     assertModeAllowed(core, s.entry.profileId, response.response.mode);
   }
+  if (response.kind === 'plan') {
+    const approval = response.response;
+    if (approval.behavior === 'approve_fresh_context') {
+      return approveFreshContext(core, s, { decisionId: cmd.decisionId, response, approval }, clientId);
+    }
+  }
   const result = s.broker.respond(cmd.decisionId, response, clientId);
   if (result.kind === 'resolved') return { outcome: result.outcome };
+  if (result.kind === 'fresh-context') return { outcome: result.outcome };
 
   // "Fortsetzen & Plan freigeben" (A.10, diagram g): resume with the mode, then the plan prompt.
   s.cancelRetry();

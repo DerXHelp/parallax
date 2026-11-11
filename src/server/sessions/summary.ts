@@ -163,7 +163,9 @@ export function aiTitleFrom(
 
 /** conversation_reset trigger → endReason of the ended conversation. */
 export function endReasonFor(trigger: string | null): ConversationEndReason {
-  return trigger === 'clear' || trigger === 'plan_mode_exit' ? trigger : 'unknown';
+  return trigger === 'clear' || trigger === 'plan_mode_exit' || trigger === 'fresh_session'
+    ? trigger
+    : 'unknown';
 }
 
 export function newConversation(
@@ -199,4 +201,16 @@ export function cwdLabel(cwd: string): string {
 /** Plan approval after a restart (A.10, diagram g): the prompt that resumes the work. */
 export function implementPlanPrompt(planFilePath: string | null, plan: string): string {
   return planFilePath === null ? `Implement this plan:\n\n${plan}` : `Implement the plan in ${planFilePath}`;
+}
+
+/** First line of the fresh-context prompt (ADR-147; fixed English text, never shown as UI text). */
+export const FRESH_CONTEXT_PROMPT_HEADER = 'Implement the following approved plan.';
+
+/**
+ * ADR-147: first prompt of the fresh conversation – the header, `Plan file: <path>` when known, an
+ * empty line, then the approved plan text (or the edited one).
+ */
+export function freshContextPrompt(planFilePath: string | null, plan: string): string {
+  const file = planFilePath === null ? '' : `\nPlan file: ${planFilePath}`;
+  return `${FRESH_CONTEXT_PROMPT_HEADER}${file}\n\n${plan}`;
 }
