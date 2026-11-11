@@ -173,8 +173,12 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
   `main` danach pushen (Frage-Tabs und SDK-Upgrade, jeweils nach grünem check/build/e2e).
 - 11.11.2026: Nutzer-Checkliste WP-41 §2.6 macht der Nutzer später.
 - 11.11.2026 (Browser-Gespräch, ADR-136): App-Fenster **nur noch in Chrome** (Chrome ist auf allen Rechnern des Nutzers),
-  kein Rückfall auf Edge, keine Umschaltung (weder Startoption noch Einstellung), E2E-Tests in Chrome; `main` nach grünem
-  check/build/e2e pushen.
+  kein Rückfall auf Edge, keine Umschaltung (weder Startoption noch Einstellung), E2E-Tests in Chrome. Korrektur: Den
+  Push des CHROME-Stands (`109c073`) hatte der Koordinator nur angekündigt, eine ausdrückliche Freigabe lag nicht vor.
+  Künftig vor jedem Push fragen.
+- 11.11.2026 (OpenCode): Machbarkeit geprüft (`docs/wp/MACHBARKEIT-OPENCODE.md`). Anlass: auf der Arbeit wird
+  voraussichtlich auf OpenCode umgestellt. Entscheidung: **nicht jetzt**, ganz ans Ende des Ausblicks
+  (`docs/plan.md` „Backlog“), später gemeinsam ansehen; das Phase-3-Design bekommt keine Vorgabe zur Backend-Neutralität.
 
 ## Koordinator-Entscheidungen R3/V2 (15.10.2026)
 - V2-01: Parallax-Edge-Profil nie mit Microsoft-Konto anmelden/synchronisieren (Flags/Profil-Präferenzen, keine Policies).
@@ -212,6 +216,7 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
    starten, nicht blockierend durch die Tool-Pipe (Absturz der Koordinator-Session während A18).
 5. Nach ≥ 24 h: `react`/`react-dom` 19.3.1 prüfen und nachziehen (Koordinator, siehe WP-00.md).
 6. **11.11.2026:** Frage-Tabs, FIX-E2E-EDGE157 und SDK-0.3.322 nach `main` gemergt und gepusht (Tabelle „Nach Phase 2“).
-   Danach CHROME (ADR-136) gemergt und gepusht. Offen beim Nutzer: Live-Checkliste `docs/wp/CHROME.md` §4.6
-   (vor allem Benachrichtigung + Klick in Chrome) und Checkliste WP-41 §2.6. Danach Phase 3 („Dateien &
+   Danach CHROME (ADR-136) gemergt und gepusht. WP-50 (Phase-3-Design) läuft auf `feature/phase-3`. OpenCode als
+   zweites Backend steht ganz hinten im Ausblick (`docs/wp/MACHBARKEIT-OPENCODE.md`). Offen beim Nutzer:
+   Live-Checkliste `docs/wp/CHROME.md` §4.6 (vor allem Benachrichtigung + Klick in Chrome) und Checkliste WP-41 §2.6. Danach Phase 3 („Dateien &
    Plan-Komfort“) auf `feature/phase-3` mit Design-Paket vorweg; Kandidaten aus SDK-0.3.322 §5.8 einplanen.
