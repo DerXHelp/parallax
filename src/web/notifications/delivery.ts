@@ -15,7 +15,7 @@ import { getSystemNotifier, type SystemNotifier, type SystemToast } from './syst
  * Delivers the server's `notify` messages of this window (A.9, Plan "Benachrichtigungen",
  * ADR-109): the connection keeps them in `ClientState.notifications` until `notify.clear`; this
  * module shows each one exactly once – an in-app hint over the notices API (state/notices.ts,
- * NotificationCenter region, "Show session") or a Web Notification (Windows toast via Edge,
+ * NotificationCenter region, "Show session") or a Web Notification (shown by Chrome,
  * `tag = sessionKey`, click → focus the window and show the session), on the server's channel
  * (`chooseDeliveryChannel` only corrects a stale presence). The server already applied "Do not
  * disturb", the toast switches, the focus rule and the "done" threshold; the window adds the sound

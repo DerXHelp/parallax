@@ -39,7 +39,7 @@ process.exitCode = await runLauncherCli(process.argv.slice(2), {
       }),
     ),
 });
-// Nothing may keep the launcher alive (server and Edge are detached and unref'd).
+// Nothing may keep the launcher alive (server and Chrome are detached and unref'd).
 setTimeout(() => {
   process.exit();
 }, 2_000).unref();

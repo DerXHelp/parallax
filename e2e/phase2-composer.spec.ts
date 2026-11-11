@@ -77,7 +77,7 @@ test('slash menu: fuzzy, /model, /rename, /clear, terminal command hint', async 
   await page.keyboard.press('Escape');
 });
 
-/** Pastes a generated PNG into the composer (a clipboard event as Edge fires it for Ctrl+V). */
+/** Pastes a generated PNG into the composer (a clipboard event as Chrome fires it for Ctrl+V). */
 async function pasteImage(composer: Locator): Promise<void> {
   await composer.evaluate(async (field) => {
     const canvas = document.createElement('canvas');
@@ -152,9 +152,9 @@ interface DropResult {
 
 /**
  * Drags a PNG file over `target` and drops it (DragEvents with a DataTransfer that holds a File, as
- * Edge fires them for a screenshot from the Explorer). Synthetic events never navigate by
+ * Chrome fires them for a screenshot from the Explorer). Synthetic events never navigate by
  * themselves; what counts is whether somebody cancelled them – a real drop that nobody cancels
- * makes Edge open the file in the app window (R4W-02). The cursor (`dropEffect`) is not
+ * makes Chrome open the file in the app window (R4W-02). The cursor (`dropEffect`) is not
  * observable here: Chromium ignores setting it on a constructed DataTransfer (only a real drag
  * has one) – `shell/drop-guard.test.tsx` checks it.
  */

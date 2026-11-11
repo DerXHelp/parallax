@@ -2,7 +2,7 @@
 
 Lokale Mission-Control-App für viele parallele Claude-Code-Sessions unter Windows: ein Node-Server
 auf `127.0.0.1` steuert je Session das installierte `claude` über das Claude Agent SDK, die Web-UI
-läuft als Edge-App-Fenster. Status: Phase 2 „Mission Control“ abgeschlossen, Phase 3 in Planung (siehe
+läuft als Chrome-App-Fenster. Status: Phase 2 „Mission Control“ abgeschlossen, Phase 3 in Planung (siehe
 `docs/progress.md`).
 
 ## Voraussetzungen
@@ -11,7 +11,8 @@ läuft als Edge-App-Fenster. Status: Phase 2 „Mission Control“ abgeschlossen
   Version; ein pnpm ≥ 10 lädt sie bei Abweichung selbst nach (`managePackageManagerVersions`, nicht
   separat getestet). Ein zu altes pnpm scheitert an `engines.pnpm: ">=12.8"`.
 - Das installierte **`claude`**-CLI mit Login (Parallax liefert kein Claude-Binary mit).
-- Microsoft Edge (für das App-Fenster und die E2E-Tests; Playwright lädt keine Browser).
+- **Google Chrome** (für das App-Fenster und die E2E-Tests; Playwright lädt keine Browser). Parallax
+  nutzt nur Chrome – ohne Chrome öffnet der Launcher kein Fenster (Ausweg `--print-url`, ADR-136).
 
 ## Installation und Start
 ```powershell
@@ -19,7 +20,7 @@ pnpm install          # bzw. pnpm install --frozen-lockfile
 pnpm dev              # Server (FakeBackend, Port 4712) + Vite: http://127.0.0.1:5173
 pnpm check            # typecheck + lint + test
 pnpm build            # dist/web + dist/server.js
-pnpm start            # Launcher: baut bei Bedarf, startet den Server unsichtbar, öffnet Edge
+pnpm start            # Launcher: baut bei Bedarf, startet den Server unsichtbar, öffnet Chrome
 ```
 `pnpm dev` verbraucht keine Tokens (FakeBackend) und nutzt `.parallax-dev/` statt
 `%LOCALAPPDATA%\Parallax`. Die Anmelde-Adresse `http://127.0.0.1:5173/#code=…` (10 min gültig)
@@ -28,8 +29,8 @@ steht beim Start im Server-Log; Vite leitet `/api` (auch den WebSocket) an Port 
 „Server beenden“ beendet im Dev-Modus nur den Server – `tsx watch` und Vite laufen weiter, bis
 `Ctrl+C` oder die nächste Dateiänderung kommt. `pnpm dev:live` nutzt das echte `claude`; der
 Vite-Dev-Server liefert die Seite ohne CSP aus und das Dev-Cookie gilt für jede Seite auf
-`127.0.0.1:5173` – `dev:live` daher nur in einem eigenen Edge-Profil öffnen (z. B.
-`msedge --user-data-dir=%TEMP%\px-dev-edge --disable-sync http://127.0.0.1:5173/#code=…`, R3-14).
+`127.0.0.1:5173` – `dev:live` daher nur in einem eigenen Chrome-Profil öffnen (z. B. per Win+R
+`chrome --user-data-dir=%TEMP%\px-dev-chrome --disable-sync http://127.0.0.1:5173/#code=…`, R3-14).
 
 Die SDK-Plattform-Binaries (~270 MB) werden per `ignoredOptionalDependencies` in
 `pnpm-workspace.yaml` nicht installiert. Install-Skripte darf nur `esbuild` ausführen
@@ -37,7 +38,7 @@ Die SDK-Plattform-Binaries (~270 MB) werden per `ignoredOptionalDependencies` in
 `blockExoticSubdeps` bleiben aktiv.
 
 ## Starten
-Parallax läuft als unsichtbarer Hintergrund-Server mit Edge-App-Fenstern (ohne Installation):
+Parallax läuft als unsichtbarer Hintergrund-Server mit Chrome-App-Fenstern (ohne Installation):
 
 ```powershell
 .\parallax.cmd                 # Doppelklick genügt; alternativ .\parallax.ps1 oder pnpm start
@@ -49,8 +50,8 @@ pnpm start --print-url         # Optionen direkt anhängen (pnpm reicht ein `--`
 - **Erster Start / nach `git pull`:** Der Launcher baut `dist/`, wenn es fehlt oder die Build-ID
   nicht zum Checkout passt (dauert beim ersten Mal etwa eine Minute), startet den Server
   unsichtbar im Hintergrund (`node dist/server.js`, Ausgabe in
-  `%LOCALAPPDATA%\Parallax\logs\server.out.log`, Log `parallax.*.log`) und öffnet Edge als
-  App-Fenster mit eigenem Profil (`%LOCALAPPDATA%\Parallax\edge`). Das Konsolenfenster schließt
+  `%LOCALAPPDATA%\Parallax\logs\server.out.log`, Log `parallax.*.log`) und öffnet Chrome als
+  App-Fenster mit eigenem Profil (`%LOCALAPPDATA%\Parallax\chrome`). Das Konsolenfenster schließt
   sich danach von selbst; bei einem Fehler bleibt es mit der Meldung offen.
 - **Läuft Parallax schon,** öffnet ein weiterer Start nur ein zusätzliches Fenster (Erkennung über
   `server.lock.json` + Health-Ping; ein verwaistes Lockfile nach einem Absturz wird ignoriert).
@@ -75,8 +76,9 @@ pnpm start --print-url         # Optionen direkt anhängen (pnpm reicht ein `--`
   bearbeiten); die Nachricht erscheint im Verlauf als „nicht zugestellt“.
 - **Fehlermeldungen:** Port belegt → `--port=<n>` wählen; „written by a newer Parallax“ (Exit-Code
   3) → Parallax aktualisieren (`git pull`, `pnpm install`), die Daten bleiben unverändert; Server
-  startet nicht → Pfad der Logdatei steht in der Meldung; Edge nicht gefunden → Edge installieren
-  oder `--print-url` (Adresse mit Einmal-Code, 60 s gültig) in einem Chromium-Browser öffnen.
+  startet nicht → Pfad der Logdatei steht in der Meldung; „Google Chrome was not found“ → Chrome
+  installieren (es gibt keinen Rückfall auf Edge) oder `--print-url` (Adresse mit Einmal-Code, 60 s
+  gültig) in einem Chromium-Browser öffnen.
 - Exit-Codes von `dist/server.js` (zeigt der Launcher an): 0 regulär beendet, 1 Fehler (auch
   ungültige Option), 3 Daten einer neueren Parallax-Version, 4 Port belegt, 5 für dieses
   Datenverzeichnis läuft schon ein Server.
@@ -107,7 +109,7 @@ pnpm start --print-url         # Optionen direkt anhängen (pnpm reicht ein `--`
   migriert: vor größeren Updates `%LOCALAPPDATA%\Parallax` sichern – eine ältere Version startet auf
   migrierten Daten nicht mehr (Exit-Code 3).
 - **Getrennt:** Die produktive Instanz nutzt `%LOCALAPPDATA%\Parallax` (Sessions, Einstellungen, Logs,
-  Edge-Profil) und den Port aus den Einstellungen (Standard 4711). Die Entwicklung nutzt `pnpm dev` /
+  Chrome-Profil) und den Port aus den Einstellungen (Standard 4711). Die Entwicklung nutzt `pnpm dev` /
   `pnpm dev:live` mit `.parallax-dev` und den Ports 4712/5173, die Tests nutzen Temp-Ordner und freie
   Ports. Nur ein Server auf `%LOCALAPPDATA%\Parallax` richtet Autostart und Protokoll-Handler ein.
 - **Regel im Entwicklungs-Repo:** nie `parallax.cmd`/`pnpm start` ohne eigenes `--home`/`PARALLAX_HOME`.
@@ -118,33 +120,43 @@ pnpm start --print-url         # Optionen direkt anhängen (pnpm reicht ein `--`
   = Entwicklungs-Repo); Entwicklungs-Neustarts betreffen sie nicht. Gemeinsam bleiben nur das
   installierte `claude` und `~/.claude` – ein CLI-Update betrifft beide (`docs/sdk-upgrade.md`).
 
-### Edge-Profil
-Das App-Fenster nutzt ein eigenes Edge-Profil (`<Datenordner>\edge`), das sich **nie** mit dem
-Microsoft-/Windows-Konto anmeldet und **nie** synchronisiert: Der Launcher startet Edge mit
-`--disable-sync`, `--allow-browser-signin=false` und
-`--disable-features=msImplicitSignin,…` (ohne diese Schalter meldet Edge ein frisches Profil
-implizit mit dem Windows-Konto an und richtet Sync ein; ADR-060). Es werden keine Richtlinien,
-keine Registry-Einträge und keine Admin-Rechte gebraucht. Prüfen lässt es sich in einem
-Parallax-Fenster unter `edge://signin-internals` („Signin Status: Not Signed In“).
+### Chrome-Profil
+Das App-Fenster nutzt ein eigenes Chrome-Profil (`<Datenordner>\chrome`), getrennt vom normalen
+Chrome des Nutzers. Es meldet sich **nie** bei einem Google-Konto an und synchronisiert **nie**: Der
+Launcher startet Chrome mit `--disable-sync` und `--allow-browser-signin=false` (schaltet „Anmeldung
+in Chrome zulassen“ für dieses Profil aus – auch nach einem Google-Login auf einer aus Parallax
+geöffneten Seite bietet Chrome keine Anmeldung an). Anders als Edge meldet Chrome ein frisches Profil
+nicht implizit mit dem Windows-Konto an (gemessen mit Chrome 156; ADR-060, ADR-136). Es werden keine
+Richtlinien, keine Registry-Einträge und keine Admin-Rechte gebraucht. Prüfen lässt es sich in einem
+Fenster des Parallax-Profils unter `chrome://signin-internals` („Signin Status: Not Signed In“,
+„Account Consistency: None“); das App-Fenster hat keine Adressleiste, Strg+T öffnet einen normalen
+Tab desselben Profils.
 
-- Ein Profil, das eine ältere Parallax-Version schon angemeldet hat, bleibt angemeldet (Sync bleibt
-  trotzdem aus); der Launcher weist darauf hin. Abmelden im Fenster („…“ → Einstellungen →
-  Profile) oder alle Parallax-Fenster schließen und den Ordner `edge` löschen (die
-  Benachrichtigungs-Freigabe setzt der Launcher beim nächsten Fenster neu).
-- **Firmenrechner:** Edge-Richtlinien (Gruppenrichtlinie/Intune, `HKLM`/`HKCU\SOFTWARE\Policies\
-  Microsoft\Edge`) gehen Kommandozeilenschaltern vor – z. B. `BrowserSignin=2` (Anmeldung
-  erzwingen), `ForceSync`, `ImplicitSignInEnabled=1`, `FeatureFlagOverridesControl=0` (ignoriert
-  `--disable-features`) oder `UserDataDir`. `pnpm preflight` warnt bei solchen Richtlinien
-  (Prüfung „edge policies“, ohne relevante Richtlinie `OK edge policies none`); dann nach dem
-  ersten Start `edge://signin-internals` und `edge://policy` im Parallax-Fenster ansehen.
+- **Nur Chrome:** Parallax nutzt keinen anderen Browser und hat dafür keine Option. Links aus Parallax
+  öffnen sich in einem normalen Chrome-Fenster des Parallax-Profils, nicht im eigenen Chrome-Profil.
+- **Altes Edge-Profil:** Versionen vor ADR-136 legten `<Datenordner>\edge` an. Parallax nutzt es nicht
+  mehr und löscht es nicht selbst; es kann entfernt werden (Parallax-Fenster schließen, Ordner `edge`
+  löschen) – es enthält nur Daten der früheren Edge-App-Fenster.
+- **Firmenrechner:** Chrome-Richtlinien (Gruppenrichtlinie/Intune, `HKLM`/`HKCU\SOFTWARE\Policies\
+  Google\Chrome`, auch Chrome Browser Cloud Management) gehen Kommandozeilenschaltern und
+  Profil-Einstellungen vor – z. B. `BrowserSignin=2` (Anmeldung erzwingen), `UserDataDir` (ersetzt das
+  eigene Profil), `BrowserGuestModeEnforced`/`IncognitoModeAvailability=2`,
+  `DefaultNotificationsSetting=2` bzw. `NotificationsBlockedForUrls` (keine Web Notifications →
+  Windows-Toasts), `AutoplayAllowed=0` (Töne erst nach einem Klick) oder `URLBlocklist` mit
+  `127.0.0.1`. `pnpm preflight` warnt bei solchen Richtlinien in der Registry (Prüfung „chrome
+  policies“, ohne relevante Richtlinie `OK chrome policies none`); Cloud-Richtlinien stehen nicht in
+  der Registry – nach dem ersten Start `chrome://policy` und `chrome://signin-internals` in einem
+  Fenster des Parallax-Profils ansehen.
 
 ### Benachrichtigungen
-- **Im App-Fenster:** Edge kann die Berechtigungsanfrage dort nicht anzeigen (sie erscheint als
+- **Im App-Fenster:** Chrome kann die Berechtigungsanfrage dort nicht anzeigen (sie erscheint als
   Symbol in der Adressleiste, die das App-Fenster nicht hat). Der Launcher erlaubt deshalb vor
   jedem Fenster Benachrichtigungen für `http://127.0.0.1:<port>` **nur im eigenen Parallax-Profil**
-  (`<Datenordner>\edge\Default\Preferences`, keine Richtlinie; geht das nicht, meldet er es und
-  Parallax nimmt den Windows-Toast). Edge zeigt sie als eigenes Popup unten rechts; ein Klick holt
-  das Fenster und die Session nach vorn.
+  (`<Datenordner>\chrome\Default\Preferences`, keine Richtlinie; geht das nicht, meldet er es und
+  Parallax nimmt den Windows-Toast). Chrome zeigt Web Notifications unter Windows voraussichtlich über
+  das Windows-Benachrichtigungssystem (Absender „Google Chrome“, auch im Benachrichtigungscenter) statt
+  wie Edge als eigenes Popup – **live zu prüfen** (ADR-136); ein Klick soll das Fenster und die
+  Session nach vorn holen.
 - **Ohne offenes Fenster** (oder wenn ein Fenster keine Benachrichtigungen zeigen darf) zeigt der
   Server einen **Windows-Toast** mit Absender „Parallax“ (PowerShell-Helfer, ohne Installation).
   Ein Klick auf diesen Toast schließt ihn nur (Öffnen der Session per `parallax:`-Protokoll folgt
@@ -162,9 +174,9 @@ Parallax-Fenster unter `edge://signin-internals` („Signin Status: Not Signed I
   ```
 - **Windows-Einstellungen** (Einstellungen → System → Benachrichtigungen): Bei aktivem „Nicht
   stören“, deaktiviertem Absender „Parallax“ oder ausgeschaltetem Bildschirm erscheint kein
-  Banner; Windows-Toasts liegen dann im Benachrichtigungscenter. Die Popups des App-Fensters sind
-  Edge-eigene Popups, keine Windows-Toasts – sie erscheinen nicht im Benachrichtigungscenter und
-  verschwinden bei ausgeschaltetem Bildschirm ungesehen. Unter Constrained Language Mode/AppLocker
+  Banner; Windows-Toasts liegen dann im Benachrichtigungscenter. Für die Benachrichtigungen des
+  App-Fensters gilt (sofern Chrome sie wie erwartet über Windows zeigt, live zu prüfen) dasselbe mit
+  dem Absender „Google Chrome“ – ist er in Windows deaktiviert, erscheinen sie nicht. Unter Constrained Language Mode/AppLocker
   (Firmenrechner) kann der Toast-Helfer gesperrt sein – Parallax schaltet ihn dann für den
   Serverlauf ab und bleibt bei Hinweisen im Fenster. Ein einzelner Fehler (z. B. Zeitüberschreitung
   unter Last) schaltet ihn nicht ab; erst nach drei Fehlern in Folge pausiert er (1 min, dann

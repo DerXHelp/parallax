@@ -10,11 +10,11 @@ import type { RunFileOptions, RunFileResult } from '../lib/process';
 import { createClaudeIntegration } from './integration';
 import { createMemoryFs } from '../lib/windows';
 import {
-  EDGE_POLICY_KEYS,
+  CHROME_POLICY_KEYS,
   antivirusProducts,
   checkAntivirus,
-  checkEdge,
-  checkEdgePolicies,
+  checkChrome,
+  checkChromePolicies,
   checkHomeAccessResult,
   checkNode,
   checkPnpm,
@@ -22,8 +22,9 @@ import {
   checkProfileStatus,
   checkProfilesSource,
   checkRegistry,
+  chromePolicyValues,
+  coversParallaxOrigin,
   describeProfileIssue,
-  edgePolicyValues,
   findPnpm,
   formatPreflight,
   loadPreflightProfiles,
@@ -125,22 +126,31 @@ describe('rating', () => {
     ).toEqual(levels);
   });
 
-  it('rates Edge and computes the exit code', () => {
-    expect(checkEdge(null).level).toBe('fail');
-    expect(checkEdge('C:\\edge\\msedge.exe').level).toBe('ok');
+  it('rates Chrome (path and version) and computes the exit code', () => {
+    expect(checkChrome(null).level).toBe('fail');
+    expect(checkChrome({ path: 'C:\\c\\chrome.exe', version: '156.0.8078.76' })).toEqual({
+      id: 'chrome',
+      title: 'chrome',
+      level: 'ok',
+      detail: 'C:\\c\\chrome.exe, 156.0.8078.76',
+    });
+    expect(checkChrome({ path: 'C:\\c\\chrome.exe', version: null })).toMatchObject({
+      level: 'ok',
+      detail: 'C:\\c\\chrome.exe (version unknown)',
+    });
     expect(preflightExitCode([checkNode('v24.0.0'), checkRegistry(null)])).toBe(0);
-    expect(preflightExitCode([checkNode('v26.0.0'), checkEdge(null)])).toBe(1);
+    expect(preflightExitCode([checkNode('v26.0.0'), checkChrome(null)])).toBe(1);
   });
 
   it('formats an English report', () => {
-    const text = formatPreflight([checkNode('v24.0.0'), checkEdge(null), checkRegistry('https://r/')]);
+    const text = formatPreflight([checkNode('v24.0.0'), checkChrome(null), checkRegistry('https://r/')]);
     expect(text).toBe(
       [
         'Parallax preflight',
         '  WARN  node      v24.0.0',
         '                  -> Node 26 is the standard version of this project.',
-        '  FAIL  edge      not found',
-        '                  -> Parallax opens its window with Microsoft Edge (App Paths or Program Files).',
+        '  FAIL  chrome    not found',
+        '                  -> Parallax opens its window with Google Chrome (App Paths, Program Files or %LOCALAPPDATA%) - install Chrome.',
         '  INFO  registry  https://r/',
         'Result: FAILED (1 failure, 1 warning)',
         '',
@@ -235,60 +245,114 @@ describe('pnpm', () => {
   });
 });
 
-describe('Edge policies (V2-01)', () => {
+describe('Chrome policies (ADR-136)', () => {
   const v = (name: string, data: string) => ({
-    key: 'HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge',
+    key: 'HKLM\\SOFTWARE\\Policies\\Google\\Chrome',
     name,
     data,
   });
 
   it('no relevant policy: an OK line "none" (WP22-11 – the output shows that it was checked)', () => {
-    const none = { id: 'edge-policies', title: 'edge policies', level: 'ok', detail: 'none' };
-    expect(checkEdgePolicies([])).toEqual(none);
-    expect(checkEdgePolicies([v('HomepageLocation', 'https://intranet')])).toEqual(none);
+    const none = { id: 'chrome-policies', title: 'chrome policies', level: 'ok', detail: 'none' };
+    expect(checkChromePolicies([])).toEqual(none);
+    expect(checkChromePolicies([v('HomepageLocation', 'https://intranet')])).toEqual(none);
   });
 
-  it('policies that help (sign-in off, sync off) are only info', () => {
-    expect(checkEdgePolicies([v('BrowserSignin', '0x0'), v('SyncDisabled', '0x1')])).toMatchObject({
-      id: 'edge-policies',
+  it('policies that do not override Parallax are only info (sync stays off by --disable-sync)', () => {
+    expect(
+      checkChromePolicies([
+        v('BrowserSignin', '0x0'),
+        v('SyncDisabled', '0x0'),
+        v('DefaultNotificationsSetting', '0x1'),
+        v('AutoplayAllowed', '0x1'),
+        v('URLBlocklist', 'https://ads.example.invalid'),
+      ]),
+    ).toEqual({
+      id: 'chrome-policies',
+      title: 'chrome policies',
       level: 'info',
-      detail: 'BrowserSignin=0x0, SyncDisabled=0x1',
+      detail:
+        'BrowserSignin=0x0, SyncDisabled=0x0, DefaultNotificationsSetting=0x1, AutoplayAllowed=0x1, ' +
+        'URLBlocklist=https://ads.example.invalid',
     });
   });
 
   it.each([
-    ['BrowserSignin', '0x2'],
-    ['ForceSync', '0x1'],
-    ['ImplicitSignInEnabled', '0x1'],
-    ['FeatureFlagOverridesControl', '0x0'],
-    ['UserDataDir', 'D:\\EdgeData'],
-    ['ConfigureOnPremisesAccountAutoSignIn', '0x1'],
-  ])('%s=%s can override the switches → warn', (name, data) => {
-    const check = checkEdgePolicies([v(name, data)]);
-    expect(check).toMatchObject({ level: 'warn' });
-    expect(check.hint).toContain(name);
+    ['BrowserSignin', '0x2', 'forces a Google sign-in'],
+    ['ForceBrowserSignin', '0x1', 'forces a Google sign-in'],
+    ['UserDataDir', 'D:\\ChromeData', 'replaces the own profile folder'],
+    ['BrowserGuestModeEnforced', '0x1', 'guest'],
+    ['IncognitoModeAvailability', '0x2', 'incognito'],
+    ['ProfilePickerOnStartupAvailability', '0x2', 'profile picker'],
+    ['DefaultNotificationsSetting', '0x2', 'Windows notifications instead'],
+    ['NotificationsBlockedForUrls', 'http://127.0.0.1:*', 'Windows notifications instead'],
+    ['AutoplayAllowed', '0x0', 'mutes sounds'],
+    ['URLBlocklist', '*', 'blocks the Parallax page'],
+  ])('%s=%s overrides the app window → warn', (name, data, effect) => {
+    const check = checkChromePolicies([v(name, data)]);
+    expect(check).toMatchObject({ id: 'chrome-policies', level: 'warn', detail: `${name}=${data}` });
+    expect(check.hint).toContain(`${name} `);
+    expect(check.hint).toContain(effect);
+    expect(check.hint).toContain('chrome://policy');
   });
 
-  it('reads machine and user policies with reg query (64-bit view); missing keys have none', async () => {
+  it('several risky entries of one list name it once in the hint', () => {
+    const check = checkChromePolicies([v('URLBlocklist', '127.0.0.1'), v('URLBlocklist', 'http://*')]);
+    expect(check.detail).toBe('URLBlocklist=127.0.0.1, URLBlocklist=http://*');
+    expect(check.hint?.match(/URLBlocklist/g)).toHaveLength(1);
+  });
+
+  it.each<[string, boolean]>([
+    ['*', true],
+    ['127.0.0.1', true],
+    ['http://127.0.0.1:4711', true],
+    ['[*.]127.0.0.1', true],
+    ['http://*', true],
+    ['HTTP://*:*/', true],
+    ['https://*', false],
+    ['localhost', false],
+    ['example.invalid', false],
+  ])('coversParallaxOrigin(%s) = %s', (pattern, expected) => {
+    expect(coversParallaxOrigin(pattern)).toBe(expected);
+  });
+
+  it('reads machine and user policies plus the list subkeys (64-bit view); missing keys have none', async () => {
     const asked: string[] = [];
-    const values = await edgePolicyValues((key, view) => {
+    const HKLM = CHROME_POLICY_KEYS[0];
+    const values = await chromePolicyValues((key, view) => {
       asked.push(`${key} ${String(view)}`);
-      return Promise.resolve(
-        key.startsWith('HKCU') ? null : `\r\n${key}\r\n    BrowserSignin    REG_DWORD    0x2\r\n`,
-      );
+      if (key === HKLM) return Promise.resolve(`\r\n${key}\r\n    BrowserSignin    REG_DWORD    0x2\r\n`);
+      if (key === `${HKLM}\\URLBlocklist`) {
+        return Promise.resolve(
+          `\r\n${key}\r\n    1    REG_SZ    *\r\n    2    REG_SZ    example.invalid\r\n`,
+        );
+      }
+      return Promise.resolve(null);
     });
     expect(asked).toEqual([
-      'HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge 64',
-      'HKCU\\SOFTWARE\\Policies\\Microsoft\\Edge 64',
+      'HKLM\\SOFTWARE\\Policies\\Google\\Chrome 64',
+      'HKLM\\SOFTWARE\\Policies\\Google\\Chrome\\URLBlocklist 64',
+      'HKLM\\SOFTWARE\\Policies\\Google\\Chrome\\NotificationsBlockedForUrls 64',
+      'HKCU\\SOFTWARE\\Policies\\Google\\Chrome 64',
     ]);
-    expect(values).toEqual([{ key: EDGE_POLICY_KEYS[0], name: 'BrowserSignin', data: '0x2' }]);
+    expect(values).toEqual([
+      { key: HKLM, name: 'BrowserSignin', data: '0x2' },
+      { key: `${HKLM}\\URLBlocklist`, name: 'URLBlocklist', data: '*' },
+      { key: `${HKLM}\\URLBlocklist`, name: 'URLBlocklist', data: 'example.invalid' },
+    ]);
   });
 });
 
 describe('runPreflight', () => {
   const LOCAL = 'C:\\Users\\u\\.local\\bin\\claude.exe';
   const PNPM_EXE = 'C:\\pnpm\\pnpm.exe';
-  const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+  const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+  const versions: string[] = [];
+  /** Never reads a real exe (a test path may exist on the machine). */
+  const exeVersion = (file: string) => {
+    versions.push(file);
+    return Promise.resolve('156.0.8078.76');
+  };
   const ok = (stdout: string): RunFileResult => ({
     exitCode: 0,
     signal: null,
@@ -327,11 +391,11 @@ describe('runPreflight', () => {
     return { fs, runFile, integration, calls, envs };
   }
 
-  const env = { npm_execpath: PNPM_EXE, 'ProgramFiles(x86)': 'C:\\Program Files (x86)' };
+  const env = { npm_execpath: PNPM_EXE, ProgramFiles: 'C:\\Program Files' };
   const sdk = { sdkVersion: '0.3.296', claudeCodeVersion: '2.1.296' };
 
   it('checks everything and exits 0', async () => {
-    const { fs, runFile, integration, calls } = stubs({ [LOCAL]: '', [PNPM_EXE]: '', [EDGE]: '' });
+    const { fs, runFile, integration, calls } = stubs({ [LOCAL]: '', [PNPM_EXE]: '', [CHROME]: '' });
     const report = await runPreflight({
       integration,
       nodeVersion: 'v26.4.0',
@@ -343,6 +407,7 @@ describe('runPreflight', () => {
       runFile,
       regQuery: () => Promise.resolve(null),
       regKeyQuery: () => Promise.resolve(null),
+      exeVersion,
       antivirus: () => Promise.resolve(['Windows Defender']),
     });
     expect(report.checks.map((check) => [check.id, check.level])).toEqual([
@@ -352,12 +417,14 @@ describe('runPreflight', () => {
       ['sdk', 'info'],
       [`claude:${STANDARD_PROFILE_ID}`, 'ok'],
       [`login:${STANDARD_PROFILE_ID}`, 'ok'],
-      ['edge', 'ok'],
-      ['edge-policies', 'ok'],
+      ['chrome', 'ok'],
+      ['chrome-policies', 'ok'],
       ['antivirus', 'info'],
     ]);
     expect(report.exitCode).toBe(0);
-    // Only version/status commands – never a model call.
+    expect(report.checks.find((check) => check.id === 'chrome')?.detail).toBe(`${CHROME}, 156.0.8078.76`);
+    expect(versions.at(-1)).toBe(CHROME);
+    // Only version/status commands – never a model call (and never chrome.exe).
     expect(calls).toEqual([
       `${PNPM_EXE} --version`,
       `${PNPM_EXE} config get registry`,
@@ -395,7 +462,7 @@ describe('runPreflight', () => {
 
     const { profiles, source } = await loadPreflightProfiles(home);
     const { fs, runFile, integration, calls, envs } = stubs(
-      { [LOCAL]: '', [PNPM_EXE]: '', [EDGE]: '' },
+      { [LOCAL]: '', [PNPM_EXE]: '', [CHROME]: '' },
       profiles,
     );
     const report = await runPreflight({
@@ -409,6 +476,7 @@ describe('runPreflight', () => {
       runFile,
       regQuery: () => Promise.resolve(null),
       regKeyQuery: () => Promise.resolve(null),
+      exeVersion,
       antivirus: () => Promise.resolve(['Windows Defender']),
       profilesSource: source,
       profileIssues: (profile) =>
@@ -426,8 +494,8 @@ describe('runPreflight', () => {
       [`login:${work}`, 'ok'],
       [`config:${broken}`, 'fail'],
       [`claude:${broken}`, 'fail'],
-      ['edge', 'ok'],
-      ['edge-policies', 'ok'],
+      ['chrome', 'ok'],
+      ['chrome-policies', 'ok'],
       ['antivirus', 'info'],
     ]);
     expect(report.checks.find((check) => check.id === 'profiles')?.detail).toBe('3 from profiles.json');
@@ -444,7 +512,7 @@ describe('runPreflight', () => {
     expect(await readdir(home)).toEqual([PROFILES_FILE]);
   });
 
-  it('fails without claude and Edge', async () => {
+  it('fails without claude and Chrome', async () => {
     const { fs, runFile, integration } = stubs({ [PNPM_EXE]: '' });
     const report = await runPreflight({
       integration,
@@ -457,18 +525,19 @@ describe('runPreflight', () => {
       runFile,
       regQuery: () => Promise.resolve(null),
       regKeyQuery: () => Promise.resolve(null),
+      exeVersion,
       antivirus: () => Promise.resolve(['Windows Defender']),
     });
     expect(report.checks.filter((check) => check.level === 'fail').map((check) => check.id)).toEqual([
       'sdk',
       `claude:${STANDARD_PROFILE_ID}`,
-      'edge',
+      'chrome',
     ]);
     expect(report.exitCode).toBe(1);
   });
 
   it('checks the data folder when a home is given (R2-13: a warning, never a failure)', async () => {
-    const { fs, runFile, integration } = stubs({ [LOCAL]: '', [PNPM_EXE]: '', [EDGE]: '' });
+    const { fs, runFile, integration } = stubs({ [LOCAL]: '', [PNPM_EXE]: '', [CHROME]: '' });
     const homes: string[] = [];
     const report = await runPreflight({
       integration,
@@ -481,6 +550,7 @@ describe('runPreflight', () => {
       runFile,
       regQuery: () => Promise.resolve(null),
       regKeyQuery: () => Promise.resolve(null),
+      exeVersion,
       antivirus: () => Promise.resolve(null),
       home: 'D:\\px-data',
       homeAccess: (home) => {
