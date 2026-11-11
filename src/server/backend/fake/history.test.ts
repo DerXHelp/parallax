@@ -81,17 +81,17 @@ describe('FakeHistoryStore', () => {
   it('seedFromHistoryFixture: first array/object answer per session, summary calls skipped', async () => {
     const store = createFakeHistoryStore();
     store.seedFromHistoryFixture(await loadFixtureScenario('history'));
-    // permissions: full getSessionMessages array (33 messages).
-    expect(toHistoryMessages(store.messages('a81548fd-0d35-40a2-97f8-c4091b6bd31c'))).toHaveLength(33);
+    // permissions: full getSessionMessages array (36 messages).
+    expect(toHistoryMessages(store.messages('8d6345bc-8000-47cb-ab61-4aa2fde7130a'))).toHaveLength(36);
     // auth-probe: only summary answers ({count, types}) → no messages, but the info.
-    expect(store.messages('a2aa36f5-56fb-42f9-af06-3db55a33470f')).toEqual([]);
-    expect(toSessionInfo(store.info('a2aa36f5-56fb-42f9-af06-3db55a33470f'))).toMatchObject({
-      summary: 'Simple OK reply',
+    expect(store.messages('b5b08dcc-9154-4b5d-ab66-bd7ac894c16a')).toEqual([]);
+    expect(toSessionInfo(store.info('b5b08dcc-9154-4b5d-ab66-bd7ac894c16a'))).toMatchObject({
+      summary: 'Reply with exact OK',
       firstPrompt: 'Reply with exactly: OK',
     });
-    expect(store.info('a2aa36f5-56fb-42f9-af06-3db55a33470f')).toMatchObject({ gitBranch: 'HEAD' });
-    const subagents = store.subagents('a0cb07c5-45cb-4164-b7d5-c808ecf195a6');
-    expect(subagents.map((s) => s.agentId)).toEqual(['a21769cfed6286bb5']);
+    expect(store.info('b5b08dcc-9154-4b5d-ab66-bd7ac894c16a')).toMatchObject({ gitBranch: 'HEAD' });
+    const subagents = store.subagents('f406f5df-fee1-4f18-8d56-528330faa035');
+    expect(subagents.map((s) => s.agentId)).toEqual(['a09720160328a4872']);
     expect(subagents[0]?.messages.length).toBeGreaterThan(0);
   });
 });

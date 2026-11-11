@@ -165,7 +165,7 @@ export function parseClaudeVersion(output: string): string | null {
 export { cliVersionStatus, compareVersions } from '@shared/version';
 
 export interface SdkManifest {
-  /** `@anthropic-ai/claude-agent-sdk` version (0.3.296). */
+  /** `@anthropic-ai/claude-agent-sdk` version (0.3.322). */
   sdkVersion: string;
   /** Minimum CLI the SDK was built for (`package.json#claudeCodeVersion`). */
   claudeCodeVersion: string;
