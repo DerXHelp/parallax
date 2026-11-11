@@ -10,7 +10,7 @@ describe('fake testing helpers', () => {
     const responder = fixtureDecisionResponder(parsed);
     const signal = new AbortController().signal;
     const allow = await responder(
-      toPermissionRequest('Bash', {}, { toolUseID: 'toolu_01TFCa1bkp5TtrSeYxbDMKWU', requestId: 'r' }),
+      toPermissionRequest('Bash', {}, { toolUseID: 'toolu_0139FpvTG8SGjaxf5CR1tmPG', requestId: 'r' }),
       signal,
     );
     expect(allow).toMatchObject({
@@ -19,7 +19,7 @@ describe('fake testing helpers', () => {
       updatedPermissions: [{ type: 'addRules', destination: 'session' }],
     });
     const deny = await responder(
-      toPermissionRequest('Bash', {}, { toolUseID: 'toolu_01QGg8JT4H4khkjVKDncyDFD', requestId: 'r' }),
+      toPermissionRequest('Bash', {}, { toolUseID: 'toolu_0152mxkbwVgAc2MyUgrphuDy', requestId: 'r' }),
       signal,
     );
     expect(deny).toEqual({

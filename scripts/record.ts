@@ -14,7 +14,8 @@
  *
  * Guards: refuses without PARALLAX_LIVE=1; requires `claude auth status` = claude.ai login;
  * every scenario after a failed auth probe is refused; stops on an API key in use, auth/credit
- * errors or when the estimated spend of all spike runs exceeds the budget (2 USD).
+ * errors or when the estimated spend of all spike runs exceeds the budget (2 USD; lower it for one run
+ * with PARALLAX_RECORD_BUDGET_USD=<usd>, e.g. a WP permission of 1 USD for recording + live smoke).
  */
 import { parseAuthStatus } from '../src/server/claude/authStatus';
 import { BUDGET_USD, createRunContext, loadState, saveState, STATE_FILE } from './record/context';
@@ -83,7 +84,9 @@ async function main(argv: readonly string[]): Promise<number> {
 
   const ctx = await createRunContext();
   out(`record: claude ${ctx.cliVersion}, SDK ${ctx.sdkVersion}, scratch ${ctx.scratchRoot}`);
-  out(`record: spent so far ${ctx.spentUsd().toFixed(4)} USD of ${BUDGET_USD} USD`);
+  out(
+    `record: spent so far ${ctx.spentUsd().toFixed(4)} USD of ${ctx.budgetUsd} USD (hard limit ${BUDGET_USD} USD)`,
+  );
   const auth = parseAuthStatus(ctx.authStatus);
   if (auth.state !== 'logged_in' || auth.method !== 'claude.ai' || auth.apiProvider !== 'firstParty') {
     ctx.state.blocked = {

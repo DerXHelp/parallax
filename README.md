@@ -2,7 +2,8 @@
 
 Lokale Mission-Control-App für viele parallele Claude-Code-Sessions unter Windows: ein Node-Server
 auf `127.0.0.1` steuert je Session das installierte `claude` über das Claude Agent SDK, die Web-UI
-läuft als Edge-App-Fenster. Status: im Aufbau (Phase 1, siehe `docs/progress.md`).
+läuft als Edge-App-Fenster. Status: Phase 2 „Mission Control“ abgeschlossen, Phase 3 in Planung (siehe
+`docs/progress.md`).
 
 ## Voraussetzungen
 - **Node.js 26** (Minimum 22). `.node-version` enthält `26` für fnm, nvm-windows oder Volta.

@@ -123,7 +123,7 @@ describe('readMirrorItems (A.3 fallback)', () => {
     const entry = sampleEntry({
       id: sampleId('en', 3),
       conversations: [
-        sampleConversation({ id: sampleId('cv', 3), sessionId: '8bd89597-a855-4639-b491-86fb5b099719' }),
+        sampleConversation({ id: sampleId('cv', 3), sessionId: '18f45fad-7c8f-4ed1-b71f-91780c0fa50a' }),
       ],
     });
     const read = await readMirrorItems(entry, deps);

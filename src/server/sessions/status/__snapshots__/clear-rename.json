@@ -52,27 +52,27 @@
       "display": "working+unread"
     },
     {
-      "seq": 45,
+      "seq": 46,
       "event": "session_state:idle",
       "display": "done+unread"
     },
     {
-      "seq": 48,
+      "seq": 49,
       "event": "queue_changed",
       "display": "background+unread"
     },
     {
-      "seq": 49,
+      "seq": 50,
       "event": "session_state:running",
       "display": "working+unread"
     },
     {
-      "seq": 64,
+      "seq": 97,
       "event": "session_state:idle",
       "display": "done+unread"
     },
     {
-      "seq": 76,
+      "seq": 109,
       "event": "process_exit",
       "display": "sleeping+unread"
     }
@@ -95,8 +95,8 @@
     "wakeupAt": null,
     "lastTurn": {
       "outcome": "success",
-      "endedAt": "2026-10-14T23:10:26.435Z",
-      "durationMs": 1922
+      "endedAt": "2026-11-11T17:22:25.199Z",
+      "durationMs": 1722
     },
     "errorCode": null
   }

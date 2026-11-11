@@ -45,6 +45,14 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
 | FIX-41 | Fix-Runde nach WP-41 (`docs/wp/FIX-41.md`): F1 Server (WP41-04, -08/ADR-128), F2 Web (WP41-01, -02, -05, -06, -07) | 4b | 41 | fertig | F1 `f5863b6`/`378a228` (Merge `7c8dbe1`), F2 `85c0a00` (Merge `4794352`), Nacharbeit siehe Log | Alle 7 Befunde behoben mit Test (Gegenproben rot): Töne ohne Geste im App-Fenster, `PathTail` (Sidebar-Zeile, Gruppenüberschrift, Kopfzeile, Strg+K), Limits je Konto (`windowsPathKey`), Hinweis `.claude.json`, Handoff-Sperre im Composer + Cursor am Ende, `PSExecutionPolicyPreference` (ADR-128), Benachrichtigungsziel bei Gleichstand + Fokus-Gedächtnis im Hub + `debug`-Zeile (ADR-129); 3760 Tests, 45/45 E2E | Live-Nachprüfung in der Nutzer-Checkliste WP-41 §2.6; Ergebnisse `FIX-41-F1.md`, `FIX-41-F2.md`; ein ausdrücklich eingetragener Standardordner zählt bei den Limits als eigenes Konto (bewusst) |
 | CR2 | Abschließendes `/code-review` (high) Phase 2 über `fdc44f7..main` + Fix-Runde (`docs/wp/CODE-REVIEW-2.md`): S1 Engine, S2 System/Upload | 4b | FIX-41 | fertig | Review `d8648ab`; S1 `c0098a0`/`0530692` (Merge `ae6b271`), S2 `0832ed4`…`b974094` (Merge `e6384ec`), Doku siehe Log | 10 Funde (0 BLOCKER); 9 reproduziert und behoben mit Regressionstest (Gegenproben rot), CR2-10 begründet zurückgestellt; ADR-130…135; 3790 Tests, Build ok, 45/45 E2E (Edge, FakeBackend) | CR2-10 erst mit einem Store, der Tails ohne Volllesen liefert (+ Handoff-Order); `pendingRename` vor `send()` (klein); `regKeyReader` nach `lib/registry.ts`; Live-Probe fremder `parallax:`-Schlüssel/`Parallax.lnk` und getrenntes Netzlaufwerk nur mit Freigabe; Test-Double `memoryStores` behält „erste Meta gewinnt“ |
 
+## Nach Phase 2 – Pflege auf Feature-/Fix-Branches (ab 19.10.2026)
+
+| Paket | Inhalt | Status | Commit | Ergebnis (eine Zeile) | Follow-ups |
+|---|---|---|---|---|---|
+| question-tabs | Frage-Karte: mehrere Fragen als Tabs (`feature/question-tabs`) | fertig | `aa8ba1d`, Merge `53d23c6` (19.10.2026, nur auf den Feature-Branch gepusht; am 11.11.2026 per Fast-Forward nach `main`) | Header als Tab-Name, Häkchen nach Antwort, „Nächste Frage“ fokussiert den nächsten Tab, Entwürfe bleiben beim Wechsel, einzelne Frage ohne Tabs; 3794 Tests | – |
+| FIX-E2E-EDGE157 | Zwei E2E-Fälle rot (`phase2-lifecycle:34`, `phase2-navigation:157`), zuerst dem Edge-Update 155 → 157 zugeschrieben (`docs/wp/FIX-E2E-EDGE157.md`) | fertig | `1757611`, Merge `0b90c36` | Ursache nicht Edge (Gegenprobe Edge 155 und Chromium 156 gleich rot): ein geschlossenes Radix-Menü bleibt während der Exit-Animation (150 ms) aktiv, schließt ein sofort neu geöffnetes Menü, fängt Esc ab und holt den Fokus zurück; Tests handelten nach 30–80 ms. Fix nur in `e2e/` (`chooseMenuItem`, `headerAction`, `rowAction`: warten, bis kein Menü mehr da ist); zusätzlich `transcript.spec.ts` (b) wartet auf ruhende Liste statt fester Zeiten; App bei menschlichem Tempo nicht betroffen; repeat-each=10 20/20, 2× 45/45 | `e2e/live` (`chooseManualMode`) auf `chooseMenuItem`; optional `ui/dropdown-menu.tsx` ignoriert `pointerdown` auf den eigenen Trigger; virtua holt evtl. auch einen Nutzer-Scroll zurück (WP-37, ungeprüft); offen, warum die Fälle bis 19.10. grün waren |
+| SDK-0.3.322 | Agent SDK 0.3.296 → 0.3.322 passend zu `claude` 2.1.322 (`docs/wp/SDK-0.3.322.md`, Ablauf `docs/sdk-upgrade.md`) | fertig | `a5bbfba`…`c793f8e`, Merge `f27156b` (`feature/sdk-0.3.322`) | Kein Code an der SDK-Grenze nötig (nur Versionskommentare), Peer-Ranges unverändert; 11 Fixtures neu aufgezeichnet (Haiku), Snapshot-Diff erklärt (Modellvarianz/Timing, `background_tasks_changed` bei `/clear`), `unknownCounts` leer, 0 Drops, Live-Smoke 6/6; Recorder-Budget per `PARALLAX_RECORD_BUDGET_USD` absenkbar; live 0,2005 USD; 3799 Tests | Neue SDK-Fähigkeiten (§5.8): Login-Ablauf `credential_expires_at`, `session_writes_lost`, `ask_user_question_unanswered_v1`, Context-Kategorien per `id`, 14 Modelle (`FAKE_MODELS`); optional eigene Fehlercodes für neue Startgründe (`config_file_invalid` …, Contract); `interrupt-requesting` neu aufzeichnen (Szenario fehlt) |
+
 ### Sammelliste Welle 2 (Stand 18.10.2026, nach Merge `5f0d0cf`: 199 Dateien, 3509 Tests)
 - **WP-40 (Naht, beauftragt):** Slots `SettingsPage`/`PREFERENCES_SLOTS` (WP-38) und `ProfilesSettings` (WP-36)
   in `App.tsx`; Verdrahtung laut WP-31/32/33/34 §2.4; `profileStore.onChange → manager.onProfileChanged()`;
@@ -159,6 +167,11 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
   `parallax:` und Autostart-Verknüpfung, alles mit Rückbau am Ende.
 - 16.10.2026: WP22-04 – neue Sessions bekommen **keinen** von Parallax gesetzten Permission-Modus; CLI bzw. `defaultMode` entscheidet (Plan C.3 bleibt).
 - 16.10.2026: Kurze Live-Nachprüfung der WP-22-Fixes erlaubt (Rahmen wie WP-22, Budget ≤ 0,50 USD).
+- 11.11.2026: `feature/question-tabs` nach `main` mergen; SDK an die installierte CLI anpassen (→ SDK-0.3.322) mit
+  Live-Neuaufzeichnung + Live-Smoke (Abo-Login, Haiku, Scratch-Ordner, Temp-Home, Budget ≤ 1 USD; verbraucht 0,2005 USD);
+  `main` danach pushen (Frage-Tabs und SDK-Upgrade, jeweils nach grünem check/build/e2e).
+- 11.11.2026: Nutzer-Checkliste WP-41 §2.6 macht der Nutzer später. Der verwendete Browser (Edge) soll separat besprochen
+  werden – bis dahin keine Änderung an Browser-Wahl, Launcher-Edge-Logik oder Playwright-Kanal.
 
 ## Koordinator-Entscheidungen R3/V2 (15.10.2026)
 - V2-01: Parallax-Edge-Profil nie mit Microsoft-Konto anmelden/synchronisieren (Flags/Profil-Präferenzen, keine Policies).
@@ -195,3 +208,6 @@ Kritischer Pfad: 30 → 31 → 34 → 40 → R4/V3 → 41.
 4. **Ablauf-Regel 18.10.2026:** lange Läufe (`pnpm check`, `pnpm e2e`) im Hintergrund mit Ausgabe in Dateien
    starten, nicht blockierend durch die Tool-Pipe (Absturz der Koordinator-Session während A18).
 5. Nach ≥ 24 h: `react`/`react-dom` 19.3.1 prüfen und nachziehen (Koordinator, siehe WP-00.md).
+6. **11.11.2026:** Frage-Tabs, FIX-E2E-EDGE157 und SDK-0.3.322 nach `main` gemergt und gepusht (Tabelle „Nach Phase 2“).
+   Offen: Gespräch zum Browser (Nutzerwunsch), Nutzer-Checkliste WP-41 §2.6, danach Phase 3 („Dateien &
+   Plan-Komfort“) auf `feature/phase-3` mit Design-Paket vorweg; Kandidaten aus SDK-0.3.322 §5.8 einplanen.

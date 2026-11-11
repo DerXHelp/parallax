@@ -25,7 +25,7 @@ const rulesUpdate = <T extends 'addRules' | 'replaceRules' | 'removeRules'>(type
 const directoriesUpdate = <T extends 'addDirectories' | 'removeDirectories'>(type: T) =>
   z.object({ type: z.literal(type), directories: z.array(z.string()), destination: destinationSchema });
 
-/** SDK 0.3.296 `PermissionUpdate` (unknown keys are stripped). */
+/** SDK 0.3.322 `PermissionUpdate` (unchanged since 0.3.296; unknown keys are stripped). */
 export const permissionUpdateSchema: z.ZodType<PermissionUpdate> = z.discriminatedUnion('type', [
   rulesUpdate('addRules'),
   rulesUpdate('replaceRules'),

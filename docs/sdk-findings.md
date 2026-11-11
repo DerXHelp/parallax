@@ -1,12 +1,16 @@
 # SDK-Findings (WP-01: Spike gegen das echte `claude`)
 
-**Stand:** 15.10.2026 · **CLI** 2.1.300 (`C:\Users\<USER>\.local\bin\claude.exe`, Abo-Login „Claude Max“)
-· **SDK** `@anthropic-ai/claude-agent-sdk` 0.3.296 (`claudeCodeVersion` im SDK-Manifest: 2.1.296)
-· **Modell** `haiku` (= `claude-haiku-5-5`, 1M-Kontextfenster) · Node 26.4.0 · Windows 11.
+**Stand:** 11.11.2026 · **CLI** 2.1.322 · **SDK** `@anthropic-ai/claude-agent-sdk` 0.3.322
+(`claudeCodeVersion` 2.1.322) · Fixtures neu aufgezeichnet (außer `interrupt-requesting`), siehe
+„Nachtrag 11.11.2026 (SDK-0.3.322)“ am Ende.
+Ursprünglicher Spike: 15.10.2026 · **CLI** 2.1.300 (`C:\Users\<USER>\.local\bin\claude.exe`, Abo-Login
+„Claude Max“) · **SDK** 0.3.296 (`claudeCodeVersion` im SDK-Manifest: 2.1.296) · **Modell** `haiku`
+(= `claude-haiku-5-5`, 1M-Kontextfenster) · Node 26.4.0 · Windows 11.
 
 **Nachträge:** 16.10.2026 aus der Live-Abnahme WP-22 (`docs/wp/WP-22.md`, Abnahme 15.10., Nachprüfung
 16.10.2026; gleiche CLI 2.1.300 und SDK 0.3.296). Sie stehen als „Nachtrag 16.10.2026 (WP-22)“ bei den
-betroffenen Punkten; die ursprünglichen Befunde bleiben unverändert stehen.
+betroffenen Punkten; die ursprünglichen Befunde bleiben unverändert stehen. 18.10.2026 (WP-41) und
+11.11.2026 (SDK-Upgrade 0.3.322) stehen am Ende.
 
 Der Plan wurde gegen SDK 0.3.299 / CLI 2.1.299 geprüft. Alle dort zitierten APIs existieren auch in
 0.3.296 (`perTaskStopAffordance`, `suppressAlwaysAllowRule`, `defaultToNo`, `toolConfig.askUserQuestion`,
@@ -16,6 +20,9 @@ in `sdk.d.ts`, ist aber in `sdk.mjs` vorhanden. Abweichungen betreffen fast nur 
 und **untypisierte Zusatzfelder** (siehe unten).
 
 **Belege:** `szenario#seq` = Datei `test/fixtures/sdk/<szenario>.jsonl`, Event mit dieser `seq`.
+Belege in den Punkten 1–17 (und in Code-Kommentaren, die sie zitieren) meinen die Aufnahme mit CLI
+2.1.300; seit dem 11.11.2026 liegen in `test/fixtures/sdk/` die Aufnahmen mit 2.1.322 (andere `seq`/IDs).
+Frühere Fassungen der Fixtures finden sich in der Git-Historie (z. B. `git show a5bbfba:test/fixtures/sdk/<szenario>.jsonl`).
 Befehlsausgaben sind mit `$` markiert (E-Mail/Org geschwärzt). Aufgezeichnet mit `pnpm record`
 (siehe „Recorder“). Rohaufzeichnungen liegen nur lokal in `.recordings/` (git-ignoriert).
 
@@ -671,3 +678,51 @@ Task-Ausgaben unter `%TEMP%\claude\C--Users-<USER>-…-parallax-spike-…` (5 Or
 >   mit Zeitstempeln zurück, ohne Dubletten (A6, A20). `/clear` liefert die neue Session-ID im nächsten
 >   `init` (bestätigt F.7).
 > - Abo-Limits (5 h/Woche) stimmen mit `/usage` überein (A12).
+
+## Nachtrag 11.11.2026 (SDK-0.3.322)
+
+SDK 0.3.296 → **0.3.322**, CLI 2.1.322, Haiku, Abo-Login (`apiKeySource: none`). Details, Kosten und
+Rückbau: `docs/wp/SDK-0.3.322.md` §5. Alle Fixtures außer `interrupt-requesting` sind neu aufgezeichnet
+(`record all`, 10 Sessions); die Belege `szenario#seq` in den Punkten 1–17 meinen die alte Aufnahme.
+
+- **Keine Contract- oder Normalizer-Lücke:** `unknownCounts` ist in allen Snapshots und im Live-Smoke
+  `{}`, `ignoredCounts` unverändert, 0 Validierungs-Drops. Es gibt keine neuen Message-Typen in den
+  Fixtures. Die tolerant gelesenen Felder (`command_lifecycle`, `system/session_title_changed`,
+  `autocompactSource`, `initializationResult().pid`) sind in 0.3.322 weiter untypisiert.
+- **`message_start.usage`** trägt bei kurzen Antworten schon die finalen `output_tokens`. Das
+  `message_delta` danach hat dann dasselbe Total und erzeugt kein zweites `context_estimate`
+  (Dedup, gewollt).
+- **`/clear`** sendet nach `conversation_reset` zusätzlich `system/background_tasks_changed` mit
+  `tasks: []` (`clear-rename#40`).
+- **Lange Vordergrund-Bash** meldet `task_started`/`task_notification` (`local_bash`,
+  `is_backgrounded:false`, beim Interrupt `status: stopped`) wie schon in `queue-priority`
+  (`interrupt#31`, `#34`).
+- **Stream-Interrupt** ist jetzt in `interrupt` enthalten (`#182`–`#189`). Ergebnis:
+  `error_during_execution` mit `terminal_reason: aborted_streaming`, Text-Item `aborted`,
+  `system/interrupted`.
+- **Punkt 3 bestätigt** (`permissions-rules`): Beide „immer erlauben“-Varianten verhindern die
+  Wiederholungsfrage nicht (`Bash:denied=2`). Haiku weicht diesmal nicht auf PowerShell aus.
+- **Punkt 5 bestätigt:** Der Plan-Modus mit Haiku plant auf `claude-sonnet-5-5` (0,1463 von 0,1951 USD
+  der Aufnahme).
+- **`init`** hat neu `original_cwd`, `additional_directories`, `ultrathink_available`,
+  `ultrathink_typed_raises` und `user_message_uuids`. Neue Capabilities: `interrupt_requeue_taken_v1`,
+  `ask_user_question_unanswered_v1`, `lifecycle_wakeup_source_v1`, `mcp_call_result_not_for_model_v1`
+  und `mcp_call_check_permissions_v1`.
+- **`getContextUsage()`**: Die Kategorien haben eine stabile `id` (`system_prompt`, `system_tools`,
+  `mcp_tools`, `memory_files`, `skills`, `messages` …). Neu sind außerdem `mcpInstructions` je Server
+  und die Plugin-Herkunft bei Skills und Agents.
+- **`supportedModels()`**: 14 statt 5 Einträge (Aliase `default`, `opus`, `fable`, `sonnet`, `haiku`
+  plus volle Modell-IDs; `claude-fable-5-1` ohne `[1m]`). Das FakeBackend (`FAKE_MODELS`) zeigt weiter
+  den alten Stand.
+- **Neu in den Typen, live nicht ausgelöst:** `system/session_writes_lost` (`ENOSPC`/`EDQUOT`),
+  `result.credential_expires_at`, die Startgründe `config_file_invalid`, `initialize_not_first` und
+  `sandbox_required_unavailable` (Parallax: Fallback `CLAUDE_STARTUP_FAILED`) sowie
+  `pending_elicitation_requests`. Weitere neue Fähigkeiten: SDK-0.3.322.md §5.8.
+- **Recorder:** `PARALLAX_RECORD_BUDGET_USD` senkt den 2-USD-Guard für einen Lauf (Wert in (0, 2]).
+
+| Verbrauch 11.11.2026 | Sessions | `result`s | API-Antworten | USD |
+|---|---|---|---|---|
+| Aufnahme, `claude-haiku-5-5` | 10 | 28 | 47 | 0,0487 |
+| Aufnahme, `claude-sonnet-5-5` (Plan-Modus) | – | – | – | 0,1463 |
+| Live-Smoke `e2e/live` (6/6) | 1 | – | – | 0,0054 |
+| **Summe** | **11** | | | **0,2005** |

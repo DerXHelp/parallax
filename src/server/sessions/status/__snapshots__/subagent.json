@@ -17,17 +17,17 @@
       "display": "working"
     },
     {
-      "seq": 87,
+      "seq": 86,
       "event": "turn_result",
       "display": "working+unread"
     },
     {
-      "seq": 102,
+      "seq": 101,
       "event": "session_state:idle",
       "display": "done+unread"
     },
     {
-      "seq": 106,
+      "seq": 105,
       "event": "process_exit",
       "display": "sleeping+unread"
     }
@@ -50,8 +50,8 @@
     "wakeupAt": null,
     "lastTurn": {
       "outcome": "success",
-      "endedAt": "2026-10-14T23:21:02.682Z",
-      "durationMs": 1316
+      "endedAt": "2026-11-11T17:23:20.590Z",
+      "durationMs": 1141
     },
     "errorCode": null
   }
