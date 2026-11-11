@@ -37,7 +37,12 @@ import { mergeHistory, toHistoryMessages, toSessionInfo } from './history/parse'
 import { createHistoryPool, type HistoryPool } from './history/pool';
 import { AsyncQueue } from './lib/asyncQueue';
 import { toPermissionRequest } from './permissionRequest';
-import { buildQueryOptions, flagSettingsAfterStart, optionIssues, type StartFlagSettings } from './sdkOptions';
+import {
+  buildQueryOptions,
+  flagSettingsAfterStart,
+  optionIssues,
+  type StartFlagSettings,
+} from './sdkOptions';
 import { createSpawner } from './spawn';
 import type {
   AgentBackend,
@@ -170,6 +175,7 @@ function toUserBlock(content: OutgoingContent): UserBlock {
       return {
         type: 'document',
         source: { type: 'base64', media_type: content.mediaType, data: content.base64 },
+        ...(content.title !== undefined ? { title: content.title } : {}),
       };
   }
 }

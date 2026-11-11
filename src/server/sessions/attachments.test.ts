@@ -61,6 +61,20 @@ describe('checkAttachments (ADR-146)', () => {
     expect(await checkAttachments(blobStore([]), [], { files: true })).toBe(NO_ATTACHMENTS);
   });
 
+  it('a named PDF carries its file name as the document title; empty names are left out', async () => {
+    const named = ref(1, PDF_MEDIA_TYPE, 10, 'Angebot März.pdf');
+    const empty = ref(2, PDF_MEDIA_TYPE, 10, '');
+    const checked = await checkAttachments(
+      blobStore([named, empty]),
+      [{ blobId: named.blobId }, { blobId: empty.blobId }],
+      { files: true },
+    );
+    expect(checked.blocks).toEqual([
+      { type: 'document', mediaType: PDF_MEDIA_TYPE, base64: 'AQID', title: 'Angebot März.pdf' },
+      { type: 'document', mediaType: PDF_MEDIA_TYPE, base64: 'AQID' },
+    ]);
+  });
+
   it('limits per kind (declared size): image, PDF, file; at the limit is fine', async () => {
     const atLimit = [
       ref(1, 'image/jpeg', LIMITS.imageBytes),

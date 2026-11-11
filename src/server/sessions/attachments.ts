@@ -94,7 +94,12 @@ export async function checkAttachments(
     blocks.push(
       image.success
         ? { type: 'image', mediaType: image.data, base64 }
-        : { type: 'document', mediaType: PDF_MEDIA_TYPE, base64 },
+        : {
+            type: 'document',
+            mediaType: PDF_MEDIA_TYPE,
+            base64,
+            ...(blob.ref.name !== null && blob.ref.name !== '' ? { title: blob.ref.name } : {}),
+          },
     );
   }
   return { refs, blocks, files, paths: [] };
