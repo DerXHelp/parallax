@@ -1,9 +1,9 @@
 /**
  * Checks of `pnpm preflight` (Plan "Paketmanager: pnpm 12", "Claude-Profile"): Node version,
- * pnpm version, registry, every profile's `claude` (path, version, C.7 rule) and login, Microsoft
- * Edge and Edge policies that can sign in/sync its app profile (V2-01), a hint for antivirus
- * products that scan local web traffic (V1-08) and whether other users
- * can read PARALLAX_HOME (R2-13). Phase 2 (WP-32): the profiles come from the data folder's
+ * pnpm version, registry, every profile's `claude` (path, version, C.7 rule) and login, Google
+ * Chrome (path, version) and Chrome policies that override the app profile's switches or block its
+ * notifications, sounds or page (ADR-136), a hint for antivirus products that scan local web
+ * traffic (V1-08) and whether other users can read PARALLAX_HOME (R2-13). Phase 2 (WP-32): the profiles come from the data folder's
  * `profiles.json`, read without writing (`loadPreflightProfiles`), and every profile's findings
  * (profileIssues) are listed before its claude check. Pure
  * formatting/rating functions plus `runPreflight` with injectable seams. Output is English (Plan:
@@ -14,7 +14,7 @@ import { z } from 'zod';
 import type { ErrorPayload } from '@shared/errors';
 import type { ClaudeInstallStatus, Profile, ProfileIssue } from '@shared/model';
 import { windowsPathIssue } from '@shared/paths';
-import { findEdge } from '../lib/edge';
+import { findChrome, readExeVersion } from '../lib/chrome';
 import type { FsOps } from '../lib/fs';
 import { checkHomeAccess, type HomeAccess } from '../lib/homeAccess';
 import { errnoCode, powerShellPath, runFile, type RunFileFn } from '../lib/process';
@@ -260,75 +260,133 @@ export async function loadPreflightProfiles(
   return { profiles: profilesOf(read), source: checkProfilesSource(read) };
 }
 
-/** Where Edge reads group/MDM policies (machine and user). */
-export const EDGE_POLICY_KEYS = [
-  'HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge',
-  'HKCU\\SOFTWARE\\Policies\\Microsoft\\Edge',
+/** Where Chrome reads mandatory group/MDM policies (machine, user; `Recommended` ones are not binding). */
+export const CHROME_POLICY_KEYS = [
+  'HKLM\\SOFTWARE\\Policies\\Google\\Chrome',
+  'HKCU\\SOFTWARE\\Policies\\Google\\Chrome',
 ] as const;
 
+/** List policies (a subkey with the values "1", "2", …) that can cover the Parallax origin. */
+export const CHROME_LIST_POLICIES = ['URLBlocklist', 'NotificationsBlockedForUrls'] as const;
+
 /**
- * Edge policies that can override the app profile's "never sign in, never sync" switches (V2-01,
- * ADR-060), with the values that do. A policy beats a command-line switch; `FeatureFlagOverridesControl`
- * = 0 even makes Edge ignore `--disable-features=msImplicitSignin`.
+ * Does a URL/content-settings pattern of a list policy cover `http://127.0.0.1:<port>`? A heuristic
+ * for the warning: `*`, `http://*…` and every pattern naming 127.0.0.1 (`localhost` is not the
+ * Parallax origin).
  */
-const RISKY_EDGE_POLICIES: Readonly<Record<string, (data: string) => boolean>> = {
-  BrowserSignin: (data) => data === '0x2', // force sign-in
-  ForceSync: (data) => data === '0x1',
-  ImplicitSignInEnabled: (data) => data === '0x1',
-  ConfigureOnPremisesAccountAutoSignIn: (data) => data !== '0x0',
-  FeatureFlagOverridesControl: (data) => data === '0x0', // command-line feature switches ignored
-  UserDataDir: () => true, // the own --user-data-dir is replaced
+export function coversParallaxOrigin(pattern: string): boolean {
+  const p = pattern.trim().toLowerCase();
+  return p === '*' || p.includes('127.0.0.1') || /^http:\/\/\*(?:[:/].*)?$/.test(p);
+}
+
+interface PolicyRule {
+  /** True for a value (`0x2`, a pattern …) that overrides Parallax (lowercased). */
+  risky: (data: string) => boolean;
+  /** What it does to the Parallax window (preflight hint). */
+  effect: string;
+}
+
+/**
+ * Chrome policies that beat the app profile's switches and settings (ADR-060/082/120/136), with the
+ * values that do. Not listed: `SyncDisabled` (`--disable-sync` turns the sync service off whatever
+ * it says – shown as info), `CommandLineFlagSecurityWarningsEnabled` (none of the switches is on
+ * Chrome's "unsupported flag" list), `BrowserAddPersonEnabled` (only the "add person" UI).
+ */
+const CHROME_POLICY_RULES: Readonly<Record<string, PolicyRule>> = {
+  BrowserSignin: { risky: (d) => d === '0x2', effect: 'forces a Google sign-in' },
+  ForceBrowserSignin: { risky: (d) => d === '0x1', effect: 'forces a Google sign-in' },
+  UserDataDir: {
+    risky: () => true,
+    effect: 'replaces the own profile folder (sign-in codes land in that profile)',
+  },
+  BrowserGuestModeEnforced: { risky: (d) => d === '0x1', effect: 'forces guest windows (nothing is kept)' },
+  IncognitoModeAvailability: {
+    risky: (d) => d === '0x2',
+    effect: 'forces incognito windows (nothing is kept)',
+  },
+  ProfilePickerOnStartupAvailability: { risky: (d) => d === '0x2', effect: 'forces the profile picker' },
+  DefaultNotificationsSetting: {
+    risky: (d) => d === '0x2',
+    effect: 'blocks web notifications (Parallax uses Windows notifications instead)',
+  },
+  NotificationsBlockedForUrls: {
+    risky: coversParallaxOrigin,
+    effect: 'blocks web notifications (Parallax uses Windows notifications instead)',
+  },
+  AutoplayAllowed: {
+    risky: (d) => d === '0x0',
+    effect: 'mutes sounds until the first click (unless AutoplayAllowlist covers http://127.0.0.1)',
+  },
+  URLBlocklist: {
+    risky: coversParallaxOrigin,
+    effect: 'blocks the Parallax page (unless URLAllowlist allows http://127.0.0.1)',
+  },
 };
 
-/** Relevant Edge policies (`<name>=<data>`): warn if one can sign in/sync the app profile; none → no line. */
-export function checkEdgePolicies(
+/**
+ * Relevant Chrome policies (`<name>=<data>`, a list policy once per entry): warn if one overrides the
+ * app window (sign-in, profile, notifications, sounds, page); other sign-in/sync policies are info.
+ */
+export function checkChromePolicies(
   values: readonly { key: string; name: string; data: string }[],
 ): PreflightCheck {
+  const base = { id: 'chrome-policies', title: 'chrome policies' };
   const relevant = values.filter(
-    (v) => Object.hasOwn(RISKY_EDGE_POLICIES, v.name) || /sync|signin/i.test(v.name),
+    (v) => Object.hasOwn(CHROME_POLICY_RULES, v.name) || /sync|signin/i.test(v.name),
   );
   // WP22-11: always one line, so the output shows that the policies were checked.
-  if (relevant.length === 0)
-    return { id: 'edge-policies', title: 'edge policies', level: 'ok', detail: 'none' };
-  const risky = relevant.filter((v) => RISKY_EDGE_POLICIES[v.name]?.(v.data.toLowerCase()) === true);
+  if (relevant.length === 0) return { ...base, level: 'ok', detail: 'none' };
+  const risky = relevant.filter((v) => CHROME_POLICY_RULES[v.name]?.risky(v.data.toLowerCase()) === true);
   const detail = relevant.map((v) => `${v.name}=${v.data}`).join(', ');
-  if (risky.length === 0) return { id: 'edge-policies', title: 'edge policies', level: 'info', detail };
+  if (risky.length === 0) return { ...base, level: 'info', detail };
+  const effects = [...new Set(risky.map((v) => `${v.name} ${CHROME_POLICY_RULES[v.name]?.effect ?? ''}`))];
   return {
-    id: 'edge-policies',
-    title: 'edge policies',
+    ...base,
     level: 'warn',
     detail,
     hint:
-      `${risky.map((v) => v.name).join(', ')} can sign the Parallax Edge profile in to the Windows/work ` +
-      'account or turn on sync despite its switches (README "Edge-Profil"). Check edge://signin-internals ' +
-      'in a Parallax window after the first start.',
+      `${effects.join('; ')}. Policies beat the switches and settings of the Parallax Chrome profile ` +
+      '(README "Chrome-Profil"); check chrome://policy in a Parallax window after the first start.',
   };
 }
 
-/** The values of EDGE_POLICY_KEYS (`reg query`; a missing key has none). */
-export async function edgePolicyValues(
+/** The values of CHROME_POLICY_KEYS and their list subkeys (`reg query`; a missing key has none). */
+export async function chromePolicyValues(
   query: RegKeyQuery,
 ): Promise<{ key: string; name: string; data: string }[]> {
   const values: { key: string; name: string; data: string }[] = [];
-  for (const key of EDGE_POLICY_KEYS) {
+  for (const key of CHROME_POLICY_KEYS) {
     const output = await query(key, 64);
     if (output === null) continue;
     for (const value of parseRegValues(output)) values.push({ key, name: value.name, data: value.data });
+    for (const list of CHROME_LIST_POLICIES) {
+      const listKey = `${key}\\${list}`;
+      const entries = await query(listKey, 64);
+      if (entries === null) continue;
+      for (const entry of parseRegValues(entries)) {
+        values.push({ key: listKey, name: list, data: entry.data });
+      }
+    }
   }
   return values;
 }
 
-export function checkEdge(edgePath: string | null): PreflightCheck {
-  if (edgePath === null) {
+export function checkChrome(chrome: { path: string; version: string | null } | null): PreflightCheck {
+  const base = { id: 'chrome', title: 'chrome' };
+  if (chrome === null) {
     return {
-      id: 'edge',
-      title: 'edge',
+      ...base,
       level: 'fail',
       detail: 'not found',
-      hint: 'Parallax opens its window with Microsoft Edge (App Paths or Program Files).',
+      hint: 'Parallax opens its window with Google Chrome (App Paths, Program Files or %LOCALAPPDATA%) - install Chrome.',
     };
   }
-  return { id: 'edge', title: 'edge', level: 'ok', detail: edgePath };
+  return {
+    ...base,
+    level: 'ok',
+    detail:
+      chrome.version === null ? `${chrome.path} (version unknown)` : `${chrome.path}, ${chrome.version}`,
+  };
 }
 
 /**
@@ -490,7 +548,7 @@ async function runText(
 export interface PreflightDeps {
   integration: ClaudeIntegrationImpl;
   nodeVersion: string;
-  /** For pnpm/registry/Edge lookups (normally process.env). */
+  /** For pnpm/registry/Chrome lookups (normally process.env). */
   env: Readonly<Record<string, string | undefined>>;
   /** Working directory for `pnpm config get registry` (repo root). */
   cwd: string;
@@ -500,8 +558,10 @@ export interface PreflightDeps {
   fs?: FsProbe;
   runFile?: RunFileFn;
   regQuery?: RegQuery;
-  /** Edge policy keys (`reg query <key>`, default reg.exe); V2-01. */
+  /** Chrome policy keys (`reg query <key>`, default reg.exe); ADR-136. */
   regKeyQuery?: RegKeyQuery;
+  /** Product version of an executable (default lib/chrome.ts `readExeVersion`); null = unknown. */
+  exeVersion?: (file: string) => Promise<string | null>;
   /** Registered antivirus products (default: Windows Security Center via CIM); null = unknown. */
   antivirus?: () => Promise<string[] | null>;
   /** PARALLAX_HOME to check for other readers (R2-13); omitted/null = no check. */
@@ -554,9 +614,10 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightReport
     }
   }
 
-  const edge = await findEdge({ regQuery: deps.regQuery ?? regQuery(run), fs, env: deps.env });
-  checks.push(checkEdge(edge));
-  checks.push(checkEdgePolicies(await edgePolicyValues(deps.regKeyQuery ?? regKeyQuery(run))));
+  const chrome = await findChrome({ regQuery: deps.regQuery ?? regQuery(run), fs, env: deps.env });
+  const chromeVersion = chrome === null ? null : await (deps.exeVersion ?? readExeVersion)(chrome);
+  checks.push(checkChrome(chrome === null ? null : { path: chrome, version: chromeVersion }));
+  checks.push(checkChromePolicies(await chromePolicyValues(deps.regKeyQuery ?? regKeyQuery(run))));
   const antivirus = checkAntivirus(await (deps.antivirus ?? (() => antivirusProducts(run)))());
   if (antivirus !== null) checks.push(antivirus);
   const home = deps.home ?? null;

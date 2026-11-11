@@ -3,11 +3,12 @@
  * - `server` (worker): one real server per worker (FakeBackend, own temp PARALLAX_HOME, port 0),
  *   stopped with `server.shutdown` + clean-exit check at the end of the worker.
  * - `app`: the default page, signed in like the launcher (`/#code=…`) and connected.
- * - `newWindow()`: another signed-in window – a second page of the same context (same Edge
+ * - `newWindow()`: another signed-in window – a second page of the same context (same browser
  *   profile, same cookie) or, with `{ context: 'new' }`, of a fresh context (own cookie/storage,
- *   own window). Tests that work in two windows AT ONCE use 'new': in headless Edge a page of the
- *   same context that is not in front stalled for many seconds under CPU load (no locator could
- *   resolve), although Playwright disables renderer backgrounding.
+ *   own window). Tests that work in two windows AT ONCE use 'new': in headless Chromium a page of
+ *   the same context that is not in front stalled for many seconds under CPU load (no locator
+ *   could resolve; seen in Edge before ADR-136), although Playwright disables renderer
+ *   backgrounding.
  * - Diagnostics in every context: a CSP violation (`securitypolicyviolation`, R2W-07 f) or an
  *   uncaught page error fails the test; console errors, WS frames and the server log are attached
  *   to the report of a failed test (V2-15: not to green ones).

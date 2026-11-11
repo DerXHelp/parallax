@@ -1,5 +1,5 @@
 /**
- * Presence and notification recording for E2E (WP-20c, WP-40). headless Edge reports every page as
+ * Presence and notification recording for E2E (WP-20c, WP-40). headless Chrome reports every page as
  * focused and visible – an init script lets a test move a window "to the background"
  * (`document.hasFocus()` / `document.visibilityState`), wraps `Notification` (every Web Notification
  * is recorded, the toast objects stay reachable for a click) and wraps `AudioContext` (every started
@@ -120,7 +120,7 @@ export function toasts(page: Page): Promise<RecordedToast[]> {
   return page.evaluate(() => window.__e2eToasts ?? []);
 }
 
-/** Clicks the last recorded Web Notification (like a click on the Edge popup). */
+/** Clicks the last recorded Web Notification (like a click on the notification Chrome shows). */
 export async function clickLastToast(page: Page): Promise<void> {
   await page.evaluate(() => {
     window.__e2eToastObjects?.at(-1)?.dispatchEvent(new Event('click', { cancelable: true }));

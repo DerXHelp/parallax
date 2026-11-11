@@ -11,7 +11,7 @@
 import type { ServerConfig } from '../config';
 
 export interface LauncherArgs {
-  /** `--print-url`: print the address with the one-time code instead of opening Edge. */
+  /** `--print-url`: print the address with the one-time code instead of opening Chrome. */
   printUrl: boolean;
   /** `--no-build`: do not check/build `dist`. */
   build: boolean;
@@ -125,7 +125,7 @@ export const LAUNCHER_USAGE = [
   '                [--system-integration=auto|on|off] [--no-build] [--print-url]',
   '                [--autostart] [--help] [--open <parallax://session/<id>>]',
   '',
-  'Starts the Parallax server in the background (building it first if needed) and opens an Edge',
+  'Starts the Parallax server in the background (building it first if needed) and opens a Chrome',
   'app window. If Parallax already runs, only another window is opened.',
   '  --port=<n>     server port (default: the port in the settings, else 4711; also PARALLAX_PORT)',
   '  --home=<dir>   data directory (default %LOCALAPPDATA%\\Parallax; also PARALLAX_HOME)',
@@ -141,7 +141,7 @@ export const LAUNCHER_USAGE = [
   '                 server on the default data directory with the real claude), on (also on',
   '                 another --home, for tests by hand), off (also PARALLAX_SYSTEM_INTEGRATION)',
   '  --no-build     do not check or rebuild dist/',
-  '  --print-url    print the sign-in address (valid 60 s) instead of opening Edge',
+  '  --print-url    print the sign-in address (valid 60 s) instead of opening Chrome',
   '  --autostart    used by the autostart shortcut: starts the server, opens a window only if',
   '                 "open a window at logon" is on in the settings',
   '  --open <link>  open the session of a parallax://session/<id> link (Windows notification',

@@ -6,7 +6,7 @@ import { getSystemNotifier } from './system';
 
 /**
  * Notification permission for the UI (hint banner, settings menu): reactive, re-read when the
- * window gets the focus again (the user may have changed it in the Edge site settings) and after
+ * window gets the focus again (the user may have changed it in the Chrome site settings) and after
  * a request. The hint "Enable notifications" can be dismissed per browser profile (localStorage).
  */
 

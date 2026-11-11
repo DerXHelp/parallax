@@ -1,6 +1,6 @@
-# e2e – Playwright-Tests in Edge (WP-20c)
+# e2e – Playwright-Tests in Chrome (WP-20c, ADR-136)
 
-E2E-Tests (`*.spec.ts`) mit `@playwright/test` im installierten Microsoft Edge (`channel: 'msedge'`,
+E2E-Tests (`*.spec.ts`) mit `@playwright/test` im installierten Google Chrome (`channel: 'chrome'`,
 headless, siehe `playwright.config.ts`). **Kein Browser-Download, kein Live-`claude`.** Die App läuft
 als echter Server-Build (`dist/server.js`) mit dem FakeBackend (interaktives Szenario,
 Schlüsselwörter `fake:permission`, `fake:question`, `fake:plan`, `fake:slow`, `fake:crash` … –
