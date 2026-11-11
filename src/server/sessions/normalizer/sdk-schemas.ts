@@ -311,7 +311,21 @@ export const taskNotificationMessageSchema = z.looseObject({
   status: opt(str),
   summary: opt(str),
   usage: opt(taskUsageSchema),
+  /** Agent transcript/output file; `''` when the task has none (WP-52). */
+  output_file: opt(str),
 });
+
+/** CLI-owned: transcript or `~/.claude.json` writes failed (disk full, quota) – SDK-0.3.322 §5.8. */
+export const sessionWritesLostMessageSchema = z.looseObject({
+  subtype: z.literal('session_writes_lost'),
+  error_code: opt(str),
+  /** `'transcript' | 'global_config'`; more values may be added, non-strings are dropped. */
+  lost: opt(z.array(z.unknown())),
+  transcript_session_ids: opt(strArray),
+});
+
+/** `outputFile` of an Agent/Task `tool_use_result` (AgentOutput async_launched/remote_launched). */
+export const agentOutputFileSchema = z.looseObject({ outputFile: opt(str) });
 
 export const backgroundTasksMessageSchema = z.looseObject({
   subtype: z.literal('background_tasks_changed'),
@@ -392,7 +406,9 @@ export const toolProgressMessageSchema = z.looseObject({
 
 export const contextUsageSchema = z.looseObject({
   categories: opt(
-    z.array(z.looseObject({ name: str, tokens: num, kind: opt(str), isDeferred: opt(bool) })),
+    z.array(
+      z.looseObject({ id: opt(str), name: str, tokens: num, kind: opt(str), isDeferred: opt(bool) }),
+    ),
   ),
   totalTokens: num,
   maxTokens: opt(num),

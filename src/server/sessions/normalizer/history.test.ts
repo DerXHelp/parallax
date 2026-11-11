@@ -122,6 +122,8 @@ function comparable(item: TranscriptItem): unknown {
                 subagentType: call.task.subagentType,
                 summary: call.task.summary,
                 usage: call.task.usage,
+                // WP-52: live (task_notification.output_file) and history (<output-file>) agree.
+                outputFile: call.task.outputFile,
               },
       };
     }
@@ -261,6 +263,29 @@ describe('normalizeHistory details', () => {
       result: null,
       input: { old_string: 'a', new_string: 'b' },
     });
+  });
+
+  it("takes <output-file> of a task notification into the task; '' and a missing tag → null (WP-52)", () => {
+    const output = 'C:\\Users\\user\\AppData\\Local\\Temp\\claude\\tasks\\task-1.output';
+    const notification = (taskId: string, toolUseId: string | null, outputTag: string) =>
+      `<task-notification>\n<task-id>${taskId}</task-id>\n${toolUseId === null ? '' : `<tool-use-id>${toolUseId}</tool-use-id>\n`}${outputTag}<status>completed</status>\n<summary>Done</summary>\n</task-notification>`;
+    const { items } = normalizeHistory(
+      [
+        assistant('a1', 'msg_1', [
+          { type: 'tool_use', id: 'toolu_1', name: 'Agent', input: { description: 'Ping', prompt: 'x', subagent_type: 'general-purpose' } },
+        ]),
+        user('u1', [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Async agent launched successfully.' }]),
+        user('u2', notification('task-1', 'toolu_1', `<output-file>${output}</output-file>\n`)),
+        user('u3', notification('task-2', null, '<output-file></output-file>\n')),
+        user('u4', notification('task-3', null, '')),
+      ],
+      ctx,
+    );
+    expect(items.map((i) => (i.kind === 'tool_call' || (i.kind === 'system' && i.event === 'task_notification') ? [i.id, i.task?.taskId, i.task?.outputFile] : i.id))).toEqual([
+      ['msg_1:0', 'task-1', output],
+      ['u3', 'task-2', null],
+      ['u4', 'task-3', null],
+    ]);
   });
 
   it('counts system messages and broken messages instead of failing', () => {
