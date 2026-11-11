@@ -4,7 +4,7 @@
  * for assistant blocks, the SDK `uuid` for prompts/system/result frames, `px:${conversationId}:${n}`
  * for items Parallax creates itself (n = the item's order, unique per conversation).
  */
-import type { ConversationId, JsonValue } from '@shared/common';
+import { LIMITS, type ConversationId, type JsonValue } from '@shared/common';
 import { errorCodeForAssistantError, makeError, type ErrorPayload } from '@shared/errors';
 import type {
   AssistantTextItem,
@@ -24,6 +24,7 @@ import type {
 } from '@shared/model';
 import { capInput, capStructured, capText, dedupeStructured, fitToolCall, type BlobSink } from './limits';
 import {
+  agentOutputFileSchema,
   contentBlockSchema,
   imageBlockSchema,
   redactedThinkingBlockSchema,
@@ -112,6 +113,8 @@ export interface TaskNotificationText {
   status: string;
   summary: string | null;
   usage: TaskInfo['usage'];
+  /** `<output-file>` (WP-52); null when absent or empty. */
+  outputFile: string | null;
 }
 
 function tag(body: string, name: string): string | null {
@@ -141,6 +144,7 @@ function parseTaskNotification(body: string): TaskNotificationText | null {
       totalTokens !== null && toolUses !== null && durationMs !== null
         ? { totalTokens, toolUses, durationMs }
         : null,
+    outputFile: taskOutputFile(tag(body, 'output-file')),
   };
 }
 
@@ -575,9 +579,26 @@ export function emptyTask(taskId: string): TaskInfo {
     usage: null,
     startedAt: null,
     endedAt: null,
-    // Phase 3 contract field (task_notification.output_file); the normalizer fills it in WP-52.
     outputFile: null,
   };
+}
+
+/**
+ * `task_notification.output_file`, `AgentOutput.outputFile` or `<output-file>` → TaskInfo.outputFile
+ * (WP-52): absolute path as the CLI wrote it; empty (the SDK sends `''` when there is none), absent
+ * or longer than `LIMITS.pathChars` → null.
+ */
+export function taskOutputFile(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const path = value.trim();
+  return path === '' || path.length > LIMITS.pathChars ? null : path;
+}
+
+/** `outputFile` of an Agent/Task tool result (`async_launched`, `remote_launched` …; WP-52). */
+export function agentResultOutputFile(toolName: string, structured: unknown): string | null {
+  if (toolName !== 'Agent' && toolName !== 'Task') return null;
+  const parsed = agentOutputFileSchema.safeParse(structured);
+  return parsed.success ? taskOutputFile(parsed.data.outputFile) : null;
 }
 
 /** Task info of an Agent/Task tool call derived from its input (history has no task_started). */
