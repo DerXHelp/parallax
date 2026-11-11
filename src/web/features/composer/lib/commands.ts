@@ -62,7 +62,7 @@ export async function sendPrompt(
     await sendCommand(sessionKey, {
       name: 'session.sendPrompt',
       entryId: parsed.entryId,
-      prompt: { text, attachments: attachments.map((blobId) => ({ blobId })) },
+      prompt: { text, attachments: attachments.map((blobId) => ({ blobId })), pastes: [] },
       priority,
     });
     return true;

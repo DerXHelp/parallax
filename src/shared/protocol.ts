@@ -29,14 +29,19 @@ import {
   decisionOutcomeSchema,
   decisionResponseSchema,
   decisionSchema,
+  fileInfoSchema,
+  fileOpenTargetSchema,
+  fileStatResultSchema,
   fsListingSchema,
   hostStateSchema,
   modelOptionSchema,
+  planVersionInfoSchema,
   profileInputSchema,
   profileIssueSchema,
   profileSchema,
   sessionDetailPatchSchema,
   sessionDetailSchema,
+  sessionFileSchema,
   sessionSummarySchema,
   settingsPatchSchema,
   settingsSchema,
@@ -48,8 +53,9 @@ import { notificationKindSchema } from './status';
  * Bump rules: docs/wp/WP-02.md §13 (not for new optional fields, server message types or commands).
  * 2 (Phase 2, ADR-100): new error codes, the system event `handoff` and new commands are members of
  * closed unions a v1 client cannot parse; with several hosts build ids differ legitimately.
+ * 3 (Phase 3, ADR-140): new error codes and commands (file service, plan versions, stopTask).
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 /**
  * A rejected upgrade (cookie, Origin, Host, Sec-Fetch-Site) is an HTTP 401/403 with an
  * `ErrorPayload` body – the browser only sees close 1006, so the client asks
@@ -225,11 +231,13 @@ export const sessionUnavailableSchema = z.object({
 export const promptInputSchema = z
   .object({
     text: z.string().max(LIMITS.promptChars),
-    /** Images uploaded via `POST /api/attachments` before (Phase 2, ADR-103). */
+    /** Images, PDFs and other files uploaded via `POST /api/attachments` before (ADR-103, ADR-146). */
     attachments: z
       .array(z.object({ blobId: blobIdSchema }))
       .max(LIMITS.attachmentsMax)
       .default([]),
+    /** Phase 3 (ADR-146): pasted texts that occur verbatim in `text` (→ SDK inline_pastes). */
+    pastes: z.array(z.string().min(1).max(LIMITS.promptChars)).max(LIMITS.pastesMax).default([]),
   })
   .refine((p) => p.text.trim() !== '' || p.attachments.length > 0, { message: 'empty prompt' });
 export type PromptInput = z.infer<typeof promptInputSchema>;
@@ -339,6 +347,42 @@ export const commandSchema = z.discriminatedUnion('name', [
     path: z.string().min(1).max(LIMITS.pathChars).nullable(),
     showHidden: z.boolean().default(false),
   }),
+  // ---- Phase 3 (WP-50 §4.6; rules: architecture §5.2) ----
+  /** Stop one background task (agent.stopTask, ADR-149). */
+  z.object({
+    name: z.literal('session.stopTask'),
+    entryId: entryIdSchema,
+    taskId: z.string().min(1).max(200),
+  }),
+  /** Stored plan versions of the entry, ascending (ADR-148). */
+  z.object({ name: z.literal('plan.list'), entryId: entryIdSchema }),
+  z.object({ name: z.literal('plan.read'), entryId: entryIdSchema, version: z.number().int().positive() }),
+  /** File service (ADR-140/141): routed like host commands, the handler checks the entry itself. */
+  z.object({
+    name: z.literal('file.stat'),
+    entryId: entryIdSchema,
+    path: z.string().min(1).max(LIMITS.pathChars),
+  }),
+  z.object({
+    name: z.literal('file.statMany'),
+    entryId: entryIdSchema,
+    paths: z.array(z.string().min(1).max(LIMITS.pathChars)).min(1).max(LIMITS.fileStatBatchMax),
+  }),
+  /** Open in the editor, show in Explorer, or open with the default program (ADR-144). */
+  z.object({
+    name: z.literal('file.open'),
+    entryId: entryIdSchema,
+    path: z.string().min(1).max(LIMITS.pathChars),
+    target: fileOpenTargetSchema,
+    line: z.number().int().positive().nullable().default(null),
+    col: z.number().int().positive().nullable().default(null),
+  }),
+  /** "Dateien dieser Session" (ADR-145). */
+  z.object({ name: z.literal('files.session'), entryId: entryIdSchema }),
+  /** File list of the project for the @ picker (ADR-151). */
+  z.object({ name: z.literal('files.project'), entryId: entryIdSchema }),
+  /** Installed editor presets and the custom executable (settings "Dateien"). */
+  z.object({ name: z.literal('editor.detect') }),
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export type CommandName = Command['name'];
@@ -347,8 +391,10 @@ export type CommandOf<N extends CommandName> = Extract<Command, { name: N }>;
 
 /**
  * Commands that concern the host, not one session (ADR-101): the engine routes them to the
- * HostCommandHandlers (src/server/sync/ports.ts) of the profile store (WP-32) and the folder
- * browser (WP-33).
+ * HostCommandHandlers (src/server/sync/ports.ts) of the profile store (WP-32), the folder browser
+ * (WP-33) and – Phase 3 (ADR-140) – the file service. The file commands carry an entryId but are
+ * routed like host commands: no lifecycle gating (archived/external/sleeping entries can be read);
+ * the handler answers ENTRY_NOT_FOUND itself.
  */
 export const HOST_COMMAND_NAMES = [
   'profile.get',
@@ -358,13 +404,19 @@ export const HOST_COMMAND_NAMES = [
   'profile.test',
   'profile.validate',
   'fs.listDirectory',
+  'file.stat',
+  'file.statMany',
+  'file.open',
+  'files.session',
+  'files.project',
+  'editor.detect',
 ] as const satisfies readonly CommandName[];
 export type HostCommandName = (typeof HOST_COMMAND_NAMES)[number];
 export type HostCommand = Extract<Command, { name: HostCommandName }>;
 
 const HOST_COMMANDS: ReadonlySet<string> = new Set(HOST_COMMAND_NAMES);
 
-/** Is this a host command (no entryId, routed to a HostCommandHandler)? */
+/** Is this a host command (routed to a HostCommandHandler, never through the lifecycle gate)? */
 export function isHostCommand(cmd: Command): cmd is HostCommand {
   return HOST_COMMANDS.has(cmd.name);
 }
@@ -412,6 +464,28 @@ export const commandResultSchemas = {
   'profile.test': z.object({ claude: claudeInstallStatusSchema }),
   'profile.validate': z.object({ issues: z.array(profileIssueSchema) }),
   'fs.listDirectory': fsListingSchema,
+  'session.stopTask': z.object({}),
+  'plan.list': z.object({ versions: z.array(planVersionInfoSchema) }),
+  'plan.read': z.object({ version: z.number().int().positive(), text: z.string() }),
+  'file.stat': z.object({ file: fileInfoSchema }),
+  /** One result per requested path, in request order. */
+  'file.statMany': z.object({ results: z.array(fileStatResultSchema) }),
+  'file.open': z.object({}),
+  /** Newest `lastAt` first. */
+  'files.session': z.object({ files: z.array(sessionFileSchema), truncated: z.boolean() }),
+  /** `files` relative to `root` (= cwd), separator '/'. */
+  'files.project': z.object({
+    root: z.string(),
+    files: z.array(z.string()),
+    truncated: z.boolean(),
+    source: z.enum(['git', 'walk']),
+  }),
+  /** Detected executables of the presets (null = not found) and the check of a custom one. */
+  'editor.detect': z.object({
+    notepadpp: z.string().nullable(),
+    vscode: z.string().nullable(),
+    custom: z.object({ executable: z.string(), exists: z.boolean() }).nullable(),
+  }),
 } as const satisfies Record<CommandName, z.ZodType>;
 export type CommandResult<N extends CommandName> = z.infer<(typeof commandResultSchemas)[N]>;
 

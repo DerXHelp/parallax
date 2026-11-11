@@ -1,11 +1,19 @@
 import { SizedLru } from './sized-cache';
-import type { Hunk } from './tool-input';
 
 /**
  * Diff rows for the Edit/Write renderers: hunks from `structuredPatch` (live `tool_use_result`)
  * or – in the history, where `structured` is null (A.3, WP-12 §6) – computed with jsdiff from
  * `old_string`/`new_string`. jsdiff is loaded lazily (`import('diff')`, architecture §2.3j).
  */
+
+/** One unified-diff hunk (Edit/Write `structuredPatch`; the transcript parses it with zod). */
+export interface DiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: readonly string[];
+}
 
 export type DiffRowKind = 'context' | 'add' | 'remove' | 'hunk' | 'note';
 
@@ -23,7 +31,7 @@ export interface DiffStats {
 }
 
 /** Rows of a list of unified-diff hunks (lines prefixed with ' ', '+', '-', '\'). */
-export function hunksToRows(hunks: readonly Hunk[]): DiffRow[] {
+export function hunksToRows(hunks: readonly DiffHunk[]): DiffRow[] {
   const rows: DiffRow[] = [];
   for (const hunk of hunks) {
     rows.push({

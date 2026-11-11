@@ -1,12 +1,13 @@
-import { act, screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SidePanelHost } from '@web/shell/side-panel/SidePanelHost';
+import { resetSidePanelState } from '@web/shell/side-panel/state';
 import { resetClientStore } from '@web/state/store';
 import { Composer } from '../composer/Composer';
 import { getDraft, resetDraftStore, setDraft } from '../composer/state/drafts';
 import { DecisionBar } from './DecisionBar';
 import { renderWithHost, type Harness } from './lib/testing';
-import { PlanSidePanel } from './PlanSidePanel';
 import { readApproveMode, resetDecisionBarState } from './state/bar-store';
 
 // UI tests with many key strokes: 2.5–6 s in a full `pnpm test`, up to 21 s when several runs load
@@ -20,6 +21,7 @@ afterEach(() => {
   harness = null;
   resetClientStore();
   resetDecisionBarState();
+  resetSidePanelState();
   resetDraftStore();
   localStorage.clear();
 });
@@ -28,7 +30,7 @@ function start(options: { panel?: boolean; composer?: boolean } = {}): Harness {
   harness = renderWithHost(
     (key) => (
       <>
-        {options.panel === false ? null : <PlanSidePanel sessionKey={key('plan')} />}
+        {options.panel === false ? null : <SidePanelHost sessionKey={key('plan')} />}
         <DecisionBar sessionKey={key('plan')} />
         {options.composer === true ? <Composer sessionKey={key('plan')} /> : null}
       </>
@@ -154,7 +156,8 @@ describe('PlanCard (Plan "Plan-Modus & Plan-Freigabe")', () => {
     const user = userEvent.setup();
     const open = await screen.findByRole('button', { name: 'Open plan' });
     await user.click(open);
-    const panel = await screen.findByRole('complementary', { name: 'Plan v2' });
+    const panel = await screen.findByRole('complementary', { name: 'Plan' });
+    expect(within(panel).getByRole('heading', { name: 'Plan v2' })).toBeTruthy();
     expect(panel.textContent).toContain('## Risks');
     expect(document.activeElement).toBe(panel);
     expect(screen.getByRole('button', { name: 'Close plan', expanded: true })).toBeTruthy();

@@ -1551,3 +1551,224 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   stören: erzwungene Anmeldung, `UserDataDir`, Gast-/Inkognito-Zwang, erzwungene Profilauswahl,
   blockierte Benachrichtigungen, `AutoplayAllowed=0`, `URLBlocklist` mit `127.0.0.1`. Live-Prüfung
   (Benachrichtigung + Klick, Autostart, `parallax:`) durch den Nutzer: Checkliste `CHROME.md` §4.6.
+
+## ADR-140 – Phase-3-Contracts: Protokoll v3, Datei-Befehle als eintragsgebundene Host-Befehle
+- **Datum/WP:** 11.11.2026, WP-50 (Phase-3-Design, Contracts v3); angenommen (11.11.2026)
+- **Kontext:** Viewer, Dateien-Panel, @-Picker und „Öffnen in …“ brauchen Metadaten, Inhalte und
+  Programmstarts – auch für archivierte, ruhende oder extern geöffnete Einträge (Lesen ist dort
+  harmlos). Die Lebenszyklus-Sperre der Engine (architecture §5.2) würde sie blockieren. Neue
+  Fehlercodes in der geschlossenen Union machen v2-Clients blind (R0-16).
+- **Entscheidung:** `file.stat`, `file.statMany`, `file.open`, `files.session`, `files.project` und
+  `editor.detect` stehen in `HOST_COMMAND_NAMES`; alle außer `editor.detect` tragen eine `entryId`,
+  die der Datei-Dienst selbst prüft (`ENTRY_NOT_FOUND`). Die Engine routet sie an
+  `FileService.commands` (neuer Port `src/server/files/ports.ts`, Muster ADR-101). Inhalte kommen per
+  `GET /api/file` (ADR-100: HTTP nur für Binärdaten). `session.stopTask`, `plan.list` und `plan.read`
+  sind normale Eintragsbefehle der Engine. `PROTOCOL_VERSION` 3 (zehn neue Fehlercodes, neun
+  Befehle); neu `SESSION_FILES_SCHEMA_VERSION` 1, alle übrigen Schemas unverändert (neue Felder mit
+  Default).
+- **Begründung:** Kein neuer Weg durch den Hub; der Datei-Dienst ist ein eigenes Paket (WP-53) ohne
+  Engine-Dateien.
+- **Folgen:** Offene Fenster laden nach dem Update einmal neu. `memorySource`/`fake-host` antworten
+  bis zur Umsetzung `NOT_IMPLEMENTED`.
+
+## ADR-141 – Dateizugriff: Wurzeln und Session-Dateien, Prüfkette vor jedem fs-Zugriff
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026, Nutzerentscheidung F1 = A)
+- **Kontext:** Assistant-Text kann beliebige Pfade nennen – UNC (`\\host\share` → NTLM-Hash, C.10),
+  Gerätepfade, getrennte Netzlaufwerke, fremde Profile. Zugleich soll alles klickbar sein, was Claude
+  in dieser Session bearbeitet hat, auch die Plan-Datei im `configDir` (`<HOME>\.claude\plans\…`,
+  plan-mode#40) und Task-Ausgaben unter `%TEMP%\claude\…` (subagent#30).
+- **Entscheidung:** Ein Pfad ist für `file.*`, `GET /api/file` und „Öffnen in …“ nur erlaubt, wenn er
+  (a) unter einer **Wurzel** liegt – `cwd`, `additionalDirectories` des Profils (`--add-dir`),
+  Anhangordner des Eintrags – oder (b) im **Datei-Index** des Eintrags steht (ADR-145: ein Tool-Call
+  dieser Session hat ihn gelesen/geschrieben, Plan-Datei, Task-Ausgabe). Prüfkette: Stringfilter
+  `windowsPathIssue` → Vorprüfung der Richtlinie am String (noch **kein** fs-Zugriff) →
+  `lstat`/`readlink` je Segment unterhalb der Wurzel (Link auf UNC/Device → `PATH_REJECTED`) →
+  `realpath` → Stringfilter und Richtlinie auf dem Ziel. Wurzeln werden beim ersten Gebrauch je
+  Eintrag selbst per `realpath` normalisiert (Cache bis zur Profiländerung). Jeder fs-Aufruf hat 3 s
+  Timeout (getrennte Netzlaufwerke). Zugeordnete Laufwerksbuchstaben gelten als lokale Pfade (wie
+  ADR-119). `resolveAllowedPath` (`lib/paths.ts`) wird die eine Implementierung (WP-53 ergänzt Index
+  und Timeout).
+- **Begründung:** Der Viewer zeigt nie mehr, als Claude in dieser Session lesen durfte oder gelesen
+  hat; der lokale Server wird kein beliebiger Dateileser (ein gestohlenes Cookie öffnete sonst das
+  ganze Profil). Verworfen: (B) jede im Text genannte Datei (Risiko Netzlaufwerke/fremde Profile),
+  (C) nur der Projektordner (Plan-Dateien wären nicht klickbar).
+- **Folgen:** Eine Datei außerhalb der Wurzeln, die Claude nur per Bash angefasst hat, bleibt Text
+  (Tooltip „nicht freigegeben“).
+
+## ADR-142 – Datei-Inhalte: `GET /api/file`, Grenzen, Typ per Magic-Bytes, CSP je Typ
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026, F2: Viewer nur lesend)
+- **Entscheidung:** `GET`/`HEAD /api/file?entryId&path` (Prüfung wie ADR-141) liefert
+  Text ≤ 2 MiB (Kodierung: BOM, sonst gültiges UTF-8, sonst windows-1252; Antwort immer
+  `text/plain; charset=utf-8`, auch für Markdown, HTML und SVG-Quelltext; größere Dateien am
+  Zeilenende gekürzt, `truncated`), Bilder (png, jpeg, gif, webp, bmp, ico per Magic-Bytes; svg per
+  Endung als `image/svg+xml`) und PDFs (`%PDF-`) als Stream ≤ 50 MB. Header: `Cache-Control: no-store`,
+  `nosniff`, `Cross-Origin-Resource-Policy: same-origin`, `Content-Disposition: inline`. CSP: alles wie
+  Blobs (`sandbox; default-src 'none'`, `X-Frame-Options: DENY`) – außer PDFs: `FILE_PDF_CSP`
+  (`default-src 'none'; object-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action
+  'none'`, ohne `sandbox`, weil Chromes PDF-Viewer in Sandbox-Dokumenten nicht startet) und
+  `X-Frame-Options: SAMEORIGIN`, damit das Seitenpanel es per `<iframe>` zeigt. PDF-Blobs (Anhänge)
+  bekommen dieselbe Variante. Guard-Klasse `file`: Cookie, `Sec-Fetch-Site` **Pflicht** `same-origin`,
+  `Origin` falls vorhanden erlaubt. Der Viewer liest nur; bearbeitet wird im Editor (ADR-144).
+- **Begründung:** PDF und Bilder ohne neue Bibliothek (pdf.js wäre groß; ADR-136 erlaubt
+  Chrome-Funktionen); Dateipfade sind anders als Blob-Hashes erratbar, `same-site` ließe andere
+  Dienste auf 127.0.0.1 herein (gleiches Cookie, andere Ports). Ein schreibender Viewer wäre ein
+  zweiter Schreiber neben Claude.
+- **Folgen:** SVG wird nur per `<img>` angezeigt (keine Skripte). Chrome-Richtlinie
+  `AlwaysOpenPdfExternally` → Download statt Anzeige; Rückfall-Knöpfe (L10). Gekürzter Text: Hinweis
+  „gekürzt – im Editor öffnen“.
+
+## ADR-143 – Live-Aktualisierung ohne `fs.watch`
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026)
+- **Kontext:** `fs.watch` unter Windows hält Ordner-Handles offen (Umbenennen/Löschen durch Claude oder
+  den Editor scheitert dann mit `EBUSY`/`EPERM`), ist auf Netzlaufwerken unzuverlässig und rekursiv
+  teuer; für Git wurde schon darauf verzichtet (C.14, ADR-113).
+- **Entscheidung:** Der Viewer fragt alle 2 s `file.stat`, solange sein Tab sichtbar und
+  `document.visibilityState === 'visible'` ist, und lädt bei geänderter `mtimeMs`/`bytes` nach
+  (Scrollposition bleibt). Zusätzlich lädt er sofort nach jedem fertigen `tool_call`
+  (`Write`/`Edit`/`MultiEdit`/`NotebookEdit`) auf dieselbe Datei (`windowsPathsEqual`). Die
+  Plan-Ansicht zeigt den gestreamten Write-Input schon während des Schreibens (ADR-148).
+- **Folgen:** Höchstens 0,5 `stat`/s je sichtbarem Viewer; Fremdänderungen erscheinen ≤ 2 s später.
+
+## ADR-144 – Externe Programme: Editor-Presets, Explorer, Standardprogramm; GUI-Start
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026, F3 wie vorgeschlagen; Ausnahme von der
+  Windows-Regel vom Nutzer freigegeben)
+- **Kontext:** WP-30 F1 (Editor-Einstellung in Phase 3, Default Notepad++). CLAUDE.md verlangt für jeden
+  Spawn `windowsHide: true`; libuv setzt damit `SW_HIDE` im `STARTUPINFO`, und ein GUI-Programm, das
+  beim ersten `ShowWindow` den Startwert übernimmt, bleibt unsichtbar. `cmd /c start` ist verboten,
+  `explorer.exe` liegt in `%SystemRoot%` (nicht System32).
+- **Entscheidung:** `settings.editor` = `notepadpp` (Default) | `vscode` | `custom` (eigene `.exe` +
+  Argumentvorlage mit `{file}`, `{line}`, `{col}`) | `system` (Standardprogramm). Auflösung: Override-Pfad
+  → App Paths (HKCU, dann HKLM) bzw. Uninstall-`InstallLocation` → Standardpfade (`%ProgramFiles%`,
+  `%ProgramFiles(x86)%`, `%LOCALAPPDATA%\Programs`). Start nur über den neuen Helfer `spawnGui`
+  (`lib/process.ts`): absolute `.exe`, Basisname ∉ `EDITOR_BLOCKED_EXECUTABLES`, PE-Subsystem
+  „Windows GUI“ (2) geprüft (Konsolenprogramm → `OPEN_FAILED{reason:'not_gui'}`), `shell: false`,
+  Argument-Array, `windowsHide: false`, `detached: true`, `stdio: 'ignore'`, `unref()`, Arbeitsordner =
+  Ordner der Datei, Umgebung ohne `PARALLAX*` und ohne Claude-Session-Variablen (vorhandenen Filter
+  aus `claude/env.ts` nutzen). Explorer: `%SystemRoot%\explorer.exe /select,"<p>"`
+  (`windowsVerbatimArguments`; `"` kann im Pfad nicht vorkommen) bzw. `explorer.exe "<ordner>"`; Exit-Code
+  wird ignoriert (Explorer meldet 1 auch bei Erfolg). Standardprogramm: `explorer.exe "<datei>"` nur für
+  `DEFAULT_PROGRAM_EXTENSIONS` (angefragter **und** aufgelöster Name). Nur Pfade, die ADR-141 erlaubt;
+  nur auf dem lokalen Host.
+- **Begründung:** Einzige Ausnahme von `windowsHide: true`, eng gefasst (nur `spawnGui`, nur
+  GUI-Subsystem, nur nach Nutzerklick); `explorer.exe <datei>` ersetzt `ShellExecute` ohne Shell und
+  ohne PowerShell; die Endungsliste verhindert, dass ein Klick Skripte oder Programme ausführt.
+- **Folgen:** Die Windows-Regel in CLAUDE.md nennt die Ausnahme (WP-50 Teil 2). Mit FakeBackend (Dev,
+  E2E, Verifier) startet der Server nie Programme, sondern protokolliert nur (aufzeichnender
+  Fake-Spawn, WP-53/60). AppLocker kann eigene `.exe` sperren → `OPEN_FAILED`. L11/L12 prüft der
+  Nutzer per Checkliste (keine Desktop-Bedienung durch Agenten, Nutzer-Regel 18.10.2026).
+
+## ADR-145 – Datei-Index je Eintrag (`files.json`)
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026)
+- **Entscheidung:** Der Datei-Dienst liest jede Op, bevor der Hub sie veröffentlicht
+  (`FileService.observeOps`, Abgriff in der Komposition, WP-60). Erfasst werden `item.upsert` von
+  `tool_call`s mit Status `done` – `Read` → `read`, `Write` → `written`, `Edit`/`MultiEdit`/
+  `NotebookEdit` → `edited` (Felder `file_path` bzw. `notebook_path`), `ExitPlanMode`-Input
+  `planFilePath` → `plan` – sowie `task.outputFile` → `output`; auch Unteragenten (Items mit
+  `parentToolUseId`). Nur absolute Pfade, die den Stringfilter bestehen; `Grep`/`Glob`/`Bash` bewusst
+  nicht. Ablage `entries/<id>/files.json` (`sessionFilesFileSchema`, atomar, 2 s entprellt, `flush`
+  beim Beenden), höchstens 1000 Einträge (älteste `lastAt` fliegen). `files.session` ergänzt die
+  Dateien im Anhangordner als `attached` (ein `readdir`, zwei Ebenen). Fehlt `files.json`, baut der
+  erste Zugriff den Index einmal aus den Transkript-Logs aller Unterhaltungen (`backfilled: true`).
+- **Begründung:** Ein Index an einer Stelle statt Client-Suche über das Transkript (Pagination,
+  mehrere Fenster); er ist zugleich die Zugriffsliste von ADR-141.
+- **Folgen:** Was Claude per Bash schreibt, fehlt (dokumentiert). Neuer Contract
+  `SESSION_FILES_SCHEMA_VERSION` 1.
+
+## ADR-146 – Anhänge: PDF als `document`, andere Dateien im Eintragsordner, Pastes als `inline_pastes`
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026). Ergänzt ADR-103.
+- **Kontext:** C.11 sieht einen Eintragsordner als `additionalDirectory` vor; ADR-103 bindet Uploads
+  nicht an Einträge. PDFs kann Claude direkt als Dokument lesen; das Backend kann `document`-Blöcke
+  schon senden. Große Text-Pastes fluten das Eingabefeld; das SDK kennt `inline_pastes`
+  (sdk.d.ts:6775).
+- **Entscheidung:** Upload wie ADR-103 (roh, Typ per Magic-Bytes): Bild wie bisher, `%PDF-` →
+  `application/pdf` (≤ 10 MB), sonst `application/octet-stream` (≤ 10 MB, `name` Pflicht). Beim Senden
+  (Engine): Bild → `image`-Block; PDF → `document`-Block (base64, Titel = Name); andere Datei →
+  `AttachmentFileStore.materialize` kopiert nach `<home>\entries\<id>\attachments\<blob16>\<name>`
+  (Name bereinigt, idempotent), und an den **gesendeten** Text wird ein fester englischer Block
+  `Attached files:` mit den absoluten Pfaden gehängt; das `user_message`-Item zeigt den getippten Text
+  plus Chips. Der Ordner ist bei jedem Start `additionalDirectory` (C.11, L9). Pastes: der Composer
+  zeigt eingefügte Texte ab 2 000 Zeichen oder 30 Zeilen als Chip; gesendet steht der Text an seiner
+  Stelle im Prompt, `pastes` listet ihn (Server prüft „kommt vor“) → `inline_pastes`.
+  **Aufräumen:** Die Kopien gehören zum Eintrag und gehen mit ihm (endgültiges Löschen = Backlog);
+  Blobs bleiben inhaltsadressiert (Blob-Aufräumen = Backlog). Gleicher Inhalt unter anderem Namen
+  behält den ersten Namen (Blob-Meta „erste gewinnt“).
+- **Begründung:** Kein Multipart, keine Eintragsbindung beim Upload (Anhänge schon im Dialog „Neue
+  Session“); Pfade statt Inhalt halten den Prompt klein, Claude liest mit eigenen Werkzeugen.
+- **Folgen:** Der CLI-Verlauf (Konsole, Import) zeigt den Pfadblock als Text. Ordner-Drops werden
+  abgelehnt (Hinweis: per `@` einfügen). Live L6, L7, L9.
+
+## ADR-147 – „Mit frischem Kontext umsetzen“: neue CLI-Session im selben Eintrag
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026). Ersetzt C.4 (`/clear`-Emulation).
+- **Kontext:** Das SDK hat keine Freigabe-Option „Kontext leeren“ (`PermissionResult`, sdk.d.ts:2622);
+  `showClearContextOnPlanAccept` betrifft nur den CLI-Dialog; `conversation_reset.trigger`
+  `fresh_session` (:5460) ist nur eine Meldung. C.4 sah eine `/clear`-Emulation vor (zwei Turns,
+  Warten auf den Reset, abhängig vom Slash-Dispatch).
+- **Entscheidung (WP-51):** Prüfung (architecture §5.2) → offene `canUseTool`-Anfrage mit `deny`
+  beantworten (fester Text „The user chose to implement the plan in a fresh session.“,
+  `interrupt: true`) → Laufzeit schließen, die Unterhaltung endet mit `fresh_session` → neue
+  Unterhaltung **ohne Resume** mit `permissionMode` = Wahl (Bypass nur mit Profilfreigabe), gleichem
+  Profil, Modell und Effort → erster Prompt: fester englischer Rahmen („Implement the following
+  approved plan. Plan file: <pfad>“) plus Plan-Text bzw. `editedPlan`, **ohne** `client_composed`
+  (sonst fehlen CLAUDE.md, Regeln und Skills im ersten Turn, sdk.d.ts:6749). Outcome
+  `plan_approved{…, freshContext: true}`, Op `conversation.reset{trigger:'fresh_session',
+  hasEarlier:true}`. Ist die Entscheidung abgelaufen (Prozess weg), entfällt das `deny`. Startfehler:
+  Fehler im Transkript, die alte Unterhaltung bleibt über „Frühere Unterhaltungen“ erreichbar
+  (ADR-107).
+- **Begründung:** Deterministisch und aus vorhandenen Bausteinen (Start, Unterhaltungswechsel); Plan
+  bleibt als Datei und Version erhalten.
+- **Folgen:** Die UI hebt die Option ab 60 % Context hervor (WP-56). Live L2.
+
+## ADR-148 – Plan-Versionen und Plan-Datei live
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026)
+- **Entscheidung:** `plan.list` (Records mit `planVersion` aus `decisions.json`) und `plan.read`
+  (`plans/v<N>.md`); `latestPlanVersion` im Detail (Engine). `planFile` (Engine): der letzte fertige
+  `Write`/`Edit` auf (a) den `planFilePath` der jüngsten Plan-Entscheidung oder (b) – solange
+  `permissionMode === 'plan'` – eine `.md`-Datei (der Plan-Modus erlaubt ohne Rückfrage nur die
+  Plan-Datei, plan-mode#40). Live-Vorschau (WP-56): solange der passende `Write` läuft, liest das
+  Plan-Panel `content` tolerant aus dem gestreamten `inputPartial` (Teil-JSON) und rendert Markdown;
+  danach lädt es die Datei per `GET /api/file`. Diff v(n−1) ↔ v(n) über `plan.read` und
+  `web/lib/diff.ts`.
+- **Folgen:** Der Plan-Tab bleibt nach der Freigabe nutzbar; „Plan“ in der Kopfzeile erscheint, sobald
+  `latestPlanVersion` oder `planFile` gesetzt ist. Live L1.
+
+## ADR-149 – Hintergrund-Tasks: Stop je Task, Task-Panel, Aufgabenleiste
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026, F4 ja, F5 beide an)
+- **Entscheidung:** `perTaskStopAffordance: true` (WP-52): Stop im Composer (Interrupt) beendet nur
+  den Turn, laufende Hintergrund-Agents und -Workflows laufen weiter (sdk.d.ts:1872–1890).
+  `session.stopTask` → `AgentSession.stopTask`, Wirkung als `task_notification` `stopped`. Task-Panel
+  (Feature `tasks`): `detail.backgroundTasks` plus laufende `tool_call.task` mit Laufzeit, Tokens,
+  Zusammenfassung (`agentProgressSummaries: true`), Ausgabe-Datei (`FileLink`), Stop je Zeile und
+  „Alle stoppen“ (nacheinander). Aufgabenleiste: `detail.todos` aus dem letzten `TodoWrite` bzw. der
+  `TaskCreate`/`TaskUpdate`-Folge (Engine), angepinnt über dem Composer, einklappbar;
+  `todoFeatureEnabled: true` als Flag-Setting (L5). Beide Flags sind standardmäßig an, ohne eigene
+  Einstellung. „Ohne Arbeit“ zählt laufende Hintergrund-Tasks weiter als Arbeit (Archiv, Schlaf,
+  frischer Kontext gesperrt).
+- **Begründung:** Verhalten wie das Terminal mit Task-Liste; der Mehrverbrauch der Zusammenfassungen
+  (ein kurzer Zusatzaufruf etwa alle 30 s je laufendem Subagent) ist gering.
+- **Folgen:** Stop für Hintergrund-Bash nur, wenn L4 bestätigt; sonst nur für Agents. Scheitert L3,
+  gilt das bisherige Verhalten (Stop beendet alles). Eine Einstellung für die Flags folgt nur, wenn
+  die Abo-Nutzung spürbar steigt (WP-61 beobachtet).
+
+## ADR-150 – Seitenpanel-Host, Phase-3-Gerüst und Ownership
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026). Ergänzt ADR-126.
+- **Entscheidung:** Die Shell besitzt einen Panel-Host (`shell/side-panel/`) mit den Tabs Plan · Datei ·
+  Dateien · Aufgaben, Splitter (Breite je Fenster in `localStorage`, 320 px … 70 %), Esc schließt;
+  Inhalte kommen über Slots: `PlanPanel` (decisions), `FilePanel`/`FilesPanel` (files), `TasksPanel`
+  (tasks). `FileLink` ist ein Slot (files), den Transkript, Plan-Karte und Task-Panel rendern;
+  `TaskStrip` (tasks) rendert die Shell über dem Composer. Querverbindungen über die Anfragen
+  `openFile`, `sidePanel`, `attachFiles`. Unter 1100 px Fensterbreite liegt das Panel als Überlagerung
+  über dem Transkript (V3-14). Teil 2 legt Slots, Anfragen, i18n-Namensräume, ESLint-Gruppen und den
+  Stub-Host an; danach bearbeitet jedes Paket nur eigene Dateien (CLAUDE.md, WP-50 §6).
+- **Begründung:** ADR-126 (Features importieren einander nie); Panels ohne Kopplung an Entscheidungen.
+
+## ADR-151 – @-Datei-Picker
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026)
+- **Entscheidung:** `@` am Wortanfang öffnet im Composer eine Liste (Muster Slash-Menü:
+  `ui/command-list`, Tastatur, `aria-activedescendant`). Quelle `files.project` (je Öffnen, Server-Cache
+  30 s): `git -c core.fsmonitor=false -c core.quotepath=off ls-files -z --cached --others
+  --exclude-standard` (fsmonitor aus: ein Repo kann darüber Programme starten), sonst begrenzter Walk
+  (keine Links/Junctions, Ignore-Liste `node_modules`, `.git`, `dist`, `build`, `.venv`, `target` …,
+  Tiefe ≤ 12, 3 s, ≤ 20 000 Pfade). Gefiltert wird im Client (`lib/fuzzy.ts`); die Auswahl fügt
+  `@<relativer Pfad>` ein (mit Leerzeichen `@"<pfad>"`). Die CLI erweitert `@pfad` wie im Terminal (L8).
+- **Folgen:** Ordner erscheinen nicht (nur Dateien); große Repos werden gekürzt (`truncated`, Hinweis
+  „weiter tippen“).

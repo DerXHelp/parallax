@@ -526,7 +526,7 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
     const { server } = await start(home);
     const { manager } = server;
     const created = await manager.handleCommand(
-      { name: 'session.create', cwd: project, prompt: { text: 'hello', attachments: [] } },
+      { name: 'session.create', cwd: project, prompt: { text: 'hello', attachments: [], pastes: [] } },
       ctx(),
     );
     const entryId = (created as { entryId: EntryId }).entryId;

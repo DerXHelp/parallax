@@ -74,6 +74,18 @@ export const errorsDe: Record<ErrorCode, string> = {
   TURN_FAILED: 'Der Durchlauf ist fehlgeschlagen.',
   EXTERNAL_CONSOLE_FAILED: 'Die externe Konsole konnte nicht geöffnet werden.',
   FOLDER_NOT_READABLE: 'Dieser Ordner kann nicht gelesen werden (keine Berechtigung).',
+  FILE_NOT_FOUND: 'Die Datei existiert nicht (mehr).',
+  FILE_NOT_READABLE:
+    'Die Datei kann gerade nicht gelesen werden (keine Berechtigung, in Benutzung oder zu langsam).',
+  FILE_TYPE_BLOCKED: 'Dieser Dateityp wird aus Sicherheitsgründen nicht mit dem Standardprogramm geöffnet.',
+  EDITOR_NOT_FOUND: 'Der Editor wurde nicht gefunden. Wähle unter Einstellungen → Dateien einen anderen.',
+  OPEN_FAILED: 'Das Programm konnte nicht gestartet werden.',
+  TASK_NOT_FOUND: 'Diese Aufgabe läuft nicht mehr.',
+  PLAN_NOT_FOUND: 'Diese Plan-Version ist nicht verfügbar.',
+  SESSION_WRITES_LOST:
+    'Claude Code konnte nicht alles speichern (Platte voll) – der Verlauf ist eventuell unvollständig.',
+  CLAUDE_CONFIG_INVALID: 'Eine Einstellungsdatei von Claude Code ist ungültig. Prüfe sie und starte neu.',
+  CLAUDE_PROXY_INVALID: 'Die Proxy-Einstellung ist ungültig. Prüfe HTTPS_PROXY und starte neu.',
   AUTOSTART_FAILED: 'Autostart konnte nicht eingerichtet werden.',
   PROTOCOL_HANDLER_FAILED:
     'Das Öffnen von Sessions aus Windows-Benachrichtigungen konnte nicht eingerichtet werden.',

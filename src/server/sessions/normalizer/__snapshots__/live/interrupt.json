@@ -395,7 +395,8 @@
           "summary": "Run node timer script that prints finished after 25 seconds",
           "usage": null,
           "startedAt": "2026-11-11T17:23:06.647Z",
-          "endedAt": "2026-11-11T17:23:06.659Z"
+          "endedAt": "2026-11-11T17:23:06.659Z",
+          "outputFile": null
         },
         "decision": {
           "decisionId": "dc_00000000000000000000000000000001",

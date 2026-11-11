@@ -6,18 +6,21 @@ import { FeatureSlotsProvider, type FeatureSlots } from '@web/shell/slots';
 import type { FakeAck, FakeHost } from '@web/state/fake-host';
 import { TooltipProvider } from '@web/ui/tooltip';
 import { DecisionArmDelayContext } from '../components/card-shell';
+import { PlanSidePanel } from '../PlanSidePanel';
 import { DEMO_ENTRIES, demoData, demoHostState, type DemoEntry } from './demo-data';
 import { startDemoHost, type DemoHost } from './demo-host';
 
 /**
  * Test harness of WP-16 (component tests only, never imported by the app): a demo host with
- * immediate op application, stub slots for `Markdown`/`ToolInputPreview` (WP-15) and the
+ * immediate op application, stub slots for `Markdown`/`ToolInputPreview` (WP-15), the plan tab
+ * `PlanPanel` (rendered by a SidePanelHost the test mounts) and the
  * window's shortcut listener. Tests reset the global stores in `afterEach` (R1-web hints).
  */
 
 export const TEST_SLOTS: Partial<FeatureSlots> = {
   Markdown: ({ text }) => <div data-testid="markdown">{text}</div>,
   ToolInputPreview: ({ toolName }) => <div data-testid="tool-input-preview">{toolName}</div>,
+  PlanPanel: PlanSidePanel,
 };
 
 export interface Harness {

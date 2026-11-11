@@ -133,8 +133,8 @@ const webBase = [noServerInWeb, serverOnlyPackages, nodeBuiltinsInWeb];
 /** @param {object[]} patterns */
 const restrictImports = (patterns) => ({ 'no-restricted-imports': ['error', { patterns }] });
 
-/** Feature folders (Phase 2: + profiles, preferences – WP-30 §4.14 C). */
-const FEATURES = ['transcript', 'decisions', 'composer', 'profiles', 'preferences'];
+/** Feature folders (Phase 2: + profiles, preferences – WP-30 §4.14 C; Phase 3: + files, tasks – WP-50). */
+const FEATURES = ['transcript', 'decisions', 'composer', 'profiles', 'preferences', 'files', 'tasks'];
 /** Every feature except the given ones (a feature group may import its own members). */
 const otherFeatures = (/** @type {string[]} */ own) => FEATURES.filter((f) => !own.includes(f));
 
@@ -248,6 +248,25 @@ export default defineConfig([
     ]),
   },
   {
+    // Phase 3 features (WP-54, WP-55); the side panel host (shell/side-panel) is core code.
+    files: ['src/web/features/files/**/*.{ts,tsx}'],
+    rules: restrictImports([
+      ...webBase,
+      radixOnlyInUi,
+      noStoreWriters,
+      featureBoundary(otherFeatures(['files'])),
+    ]),
+  },
+  {
+    files: ['src/web/features/tasks/**/*.{ts,tsx}'],
+    rules: restrictImports([
+      ...webBase,
+      radixOnlyInUi,
+      noStoreWriters,
+      featureBoundary(otherFeatures(['tasks'])),
+    ]),
+  },
+  {
     // Feature tests may reset/inspect the store (resetClientStore in afterEach).
     files: ['src/web/features/transcript/**/*.test.{ts,tsx}'],
     rules: restrictImports([...webBase, radixOnlyInUi, featureBoundary(otherFeatures(['transcript']))]),
@@ -267,6 +286,14 @@ export default defineConfig([
   {
     files: ['src/web/features/preferences/**/*.test.{ts,tsx}'],
     rules: restrictImports([...webBase, radixOnlyInUi, featureBoundary(otherFeatures(['preferences']))]),
+  },
+  {
+    files: ['src/web/features/files/**/*.test.{ts,tsx}'],
+    rules: restrictImports([...webBase, radixOnlyInUi, featureBoundary(otherFeatures(['files']))]),
+  },
+  {
+    files: ['src/web/features/tasks/**/*.test.{ts,tsx}'],
+    rules: restrictImports([...webBase, radixOnlyInUi, featureBoundary(otherFeatures(['tasks']))]),
   },
   {
     files: ['src/server/**/*.ts'],

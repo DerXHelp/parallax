@@ -18,7 +18,9 @@ function categoryKind(kind: string | undefined, isDeferred: boolean | undefined)
 }
 
 function validWindow(value: number | null | undefined): number | null {
-  return value !== null && value !== undefined && Number.isFinite(value) && value >= 1 ? Math.round(value) : null;
+  return value !== null && value !== undefined && Number.isFinite(value) && value >= 1
+    ? Math.round(value)
+    : null;
 }
 
 function percentage(totalTokens: number, maxTokens: number): number {
@@ -50,6 +52,8 @@ export const normalizeContextUsage: NormalizeContextUsage = (raw, override, at, 
       name: c.name,
       tokens: c.tokens,
       kind: categoryKind(c.kind, c.isDeferred),
+      // Phase 3 contract field (stable SDK ids); the normalizer fills it in WP-52.
+      id: null,
     })),
     autoCompactThreshold: usage.autoCompactThreshold ?? null,
     isAutoCompactEnabled: usage.isAutoCompactEnabled ?? null,

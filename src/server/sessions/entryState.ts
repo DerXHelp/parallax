@@ -817,6 +817,9 @@ export const ARCHIVED_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryComm
   'session.rename',
   'transcript.loadEarlier',
   'session.consoleCommand',
+  // Phase 3 (WP-50 §4.12): reading stored plan versions is harmless.
+  'plan.list',
+  'plan.read',
 ]);
 
 /** WP-30 §4.12: open in an external console – never a second writer on the Claude session. */
@@ -826,6 +829,8 @@ export const EXTERNAL_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryComm
   'session.consoleCommand',
   'session.setPinned',
   'session.rename',
+  'plan.list',
+  'plan.read',
 ]);
 
 /** The entry is handed off to an external console (recorded, or its status says so). */

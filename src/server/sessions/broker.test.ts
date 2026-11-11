@@ -669,7 +669,11 @@ describe('broker – persistence, restore, expired, freeze', () => {
     // Resume failed → clickable again.
     t.broker.releaseExpired(plan.id);
     expect(t.broker.respond(plan.id, approve, CLIENT_2)).toMatchObject({ kind: 'resume-and-approve' });
-    t.broker.resolveExpired(plan.id, { type: 'plan_approved', mode: 'acceptEdits', edited: false }, CLIENT_2);
+    t.broker.resolveExpired(
+      plan.id,
+      { type: 'plan_approved', mode: 'acceptEdits', edited: false, freshContext: false },
+      CLIENT_2,
+    );
     expect(t.publisher.opsOf(ENTRY).at(-1)).toMatchObject({
       op: 'decision.resolved',
       decisionId: plan.id,

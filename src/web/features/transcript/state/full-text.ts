@@ -2,7 +2,7 @@ import { useCallback, useSyncExternalStore } from 'react';
 import { errorPayloadSchema, type ErrorPayload } from '@shared/errors';
 import { blobPath } from '@shared/http';
 import { showErrorNotice, showTextNotice } from '@web/state/notices';
-import { SizedLru } from '../lib/sized-cache';
+import { SizedLru } from '@web/lib/sized-cache';
 
 /**
  * "Vollständig laden" for capped texts (B "Speicher", model.ts §5.5): the full text of a capped

@@ -142,7 +142,7 @@ describe('image attachments (ADR-103, WP-37 §4)', () => {
       {
         name: 'session.sendPrompt',
         entryId: DEMO_ENTRIES.idle,
-        prompt: { text: '', attachments: [{ blobId: sampleBlobId(1) }] },
+        prompt: { text: '', attachments: [{ blobId: sampleBlobId(1) }], pastes: [] },
         priority: 'next',
       },
     ]);
@@ -208,7 +208,7 @@ describe('image attachments (ADR-103, WP-37 §4)', () => {
     expect(sendButton().disabled).toBe(false);
     await user.keyboard('{Enter}');
     expect(h.commands('session.sendPrompt').map((cmd) => cmd.prompt)).toEqual([
-      { text: 'two images', attachments: [] },
+      { text: 'two images', attachments: [], pastes: [] },
     ]);
   });
 
@@ -272,7 +272,9 @@ describe('image attachments (ADR-103, WP-37 §4)', () => {
     const last = chips().at(-1) ?? document.body;
     expect(within(last).getByText('All images together over 20 MB')).toBeTruthy();
     expect(
-      within(last).getByRole('group', { name: `big-${String(count - 1)}.png: All images together over 20 MB` }),
+      within(last).getByRole('group', {
+        name: `big-${String(count - 1)}.png: All images together over 20 MB`,
+      }),
     ).toBeTruthy();
     expect(screen.getByText('The images are too large together – remove one to send.')).toBeTruthy();
     expect(sendButton().disabled).toBe(true);
@@ -324,7 +326,7 @@ describe('image attachments (ADR-103, WP-37 §4)', () => {
     await user.keyboard('{Enter}');
     await waitFor(() => {
       expect(h.commands('session.sendPrompt').map((cmd) => cmd.prompt)).toEqual([
-        { text: 'write the tests first', attachments: [{ blobId: sampleBlobId(3) }] },
+        { text: 'write the tests first', attachments: [{ blobId: sampleBlobId(3) }], pastes: [] },
       ]);
     });
     expect(h.commands('session.setPermissionMode').map((cmd) => cmd.mode)).toEqual(['plan']);

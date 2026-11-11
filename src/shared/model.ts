@@ -27,6 +27,7 @@ import {
   themeSchema,
 } from './common';
 import { errorCodeSchema, errorInfoSchema, errorPayloadSchema } from './errors';
+import { isSafeWindowsPath, windowsBaseName, windowsPathExtension } from './paths';
 import { runStateSchema, statusFactsSchema, turnOutcomeSchema, type NotificationKind } from './status';
 
 export { turnInfoSchema, type TurnInfo } from './status';
@@ -67,7 +68,16 @@ export type ContextGauge = z.infer<typeof contextGaugeSchema>;
 export const contextBreakdownSchema = contextGaugeSchema.extend({
   detail: z.enum(['summary', 'full']),
   categories: z.array(
-    z.object({ name: z.string(), tokens: z.number(), kind: z.enum(['used', 'free', 'buffer', 'deferred']) }),
+    z.object({
+      name: z.string(),
+      tokens: z.number(),
+      kind: z.enum(['used', 'free', 'buffer', 'deferred']),
+      /**
+       * Phase 3 (SDK 0.3.322): stable category id – 'system_prompt', 'system_tools', 'mcp_tools',
+       * 'memory_files', 'skills', 'messages' … (open set); null from older CLIs.
+       */
+      id: z.string().nullable().default(null),
+    }),
   ),
   /** Token count (not a percentage) at which the CLI compacts automatically (fixtures: 967 000). */
   autoCompactThreshold: z.number().nullable(),
@@ -346,6 +356,93 @@ export const DEFAULT_PORT = 4711;
 /** null = `DEFAULT_PORT`; takes effect after a server restart (ADR-111). */
 export const portSettingSchema = z.number().int().min(1024).max(65535).nullable();
 
+// ---- Editor for "Open in editor" (Phase 3, ADR-144; WP-30 F1) ----
+
+export const EDITOR_PRESETS = ['notepadpp', 'vscode', 'custom', 'system'] as const;
+export const editorPresetSchema = z.enum(EDITOR_PRESETS);
+export type EditorPreset = z.infer<typeof editorPresetSchema>;
+
+/** Argument templates of the presets; placeholders {file} {line} {col} (a missing line/col is 1). */
+export const EDITOR_PRESET_ARGS = {
+  notepadpp: ['-n{line}', '-c{col}', '{file}'],
+  vscode: ['--goto', '{file}:{line}:{col}'],
+} as const satisfies Record<'notepadpp' | 'vscode', readonly string[]>;
+
+/** Never accepted as editor executable (base name, case-insensitive): shells, script hosts, LOLBins. */
+export const EDITOR_BLOCKED_EXECUTABLES = [
+  'cmd.exe',
+  'powershell.exe',
+  'pwsh.exe',
+  'wscript.exe',
+  'cscript.exe',
+  'mshta.exe',
+  'rundll32.exe',
+  'regsvr32.exe',
+  'conhost.exe',
+  'wsl.exe',
+  'bash.exe',
+  'explorer.exe',
+] as const;
+
+/** "Open with default program" (`explorer.exe <file>`) only for these extensions (C.10, ADR-144). */
+export const DEFAULT_PROGRAM_EXTENSIONS = [
+  'txt',
+  'md',
+  'markdown',
+  'json',
+  'log',
+  'csv',
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'bmp',
+  'pdf',
+] as const;
+
+/** The server checks the requested AND the resolved path (ADR-144). */
+export function isDefaultProgramAllowed(path: string): boolean {
+  return (DEFAULT_PROGRAM_EXTENSIONS as readonly string[]).includes(windowsPathExtension(path));
+}
+
+/** Why an editor executable is not acceptable, or null (absolute `.exe`, not on the block list). */
+export function editorExecutableIssue(executable: string): 'path' | 'not_exe' | 'blocked' | null {
+  if (!isSafeWindowsPath(executable)) return 'path';
+  if (!/\.exe$/i.test(executable)) return 'not_exe';
+  const base = windowsBaseName(executable).toLowerCase();
+  return (EDITOR_BLOCKED_EXECUTABLES as readonly string[]).includes(base) ? 'blocked' : null;
+}
+
+export const editorSettingsSchema = z
+  .object({
+    preset: editorPresetSchema,
+    /** notepadpp/vscode: optional override of the detected exe; custom: required; system: ignored. */
+    executable: z.string().min(1).max(LIMITS.pathChars).nullable(),
+    /** custom only: one argument per element; at least one contains {file}. */
+    args: z.array(z.string().min(1).max(LIMITS.profileArgChars)).max(LIMITS.editorArgsMax),
+  })
+  .superRefine((editor, ctx) => {
+    if (editor.executable !== null) {
+      const issue = editorExecutableIssue(editor.executable);
+      if (issue !== null) ctx.addIssue({ code: 'custom', path: ['executable'], message: issue });
+    }
+    if (editor.preset === 'custom') {
+      if (editor.executable === null) {
+        ctx.addIssue({ code: 'custom', path: ['executable'], message: 'required' });
+      }
+      if (!editor.args.some((arg) => arg.includes('{file}'))) {
+        ctx.addIssue({ code: 'custom', path: ['args'], message: 'file_placeholder' });
+      }
+    }
+  });
+export type EditorSettings = z.infer<typeof editorSettingsSchema>;
+
+/** Notepad++ (Plan "Dateien", WP-30 F1), detected exe, no custom arguments. */
+export function defaultEditorSettings(): EditorSettings {
+  return { preset: 'notepadpp', executable: null, args: [] };
+}
+
 /** Fields without defaults: the base of the patch schema (a patch must never inject defaults). */
 const settingsFields = {
   language: languageSchema,
@@ -356,6 +453,8 @@ const settingsFields = {
   promptSuggestions: z.boolean(),
   port: portSettingSchema,
   autostart: autostartSchema,
+  /** Phase 3 (ADR-144): takes effect at the next `file.open`. */
+  editor: editorSettingsSchema,
 };
 
 export const settingsSchema = z.object({
@@ -366,6 +465,7 @@ export const settingsSchema = z.object({
   promptSuggestions: z.boolean().default(false),
   port: portSettingSchema.default(null),
   autostart: autostartSchema.default(DEFAULT_AUTOSTART),
+  editor: editorSettingsSchema.default(defaultEditorSettings),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
@@ -605,7 +705,13 @@ export const decisionOutcomeSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('denied'), withMessage: z.boolean(), interrupt: z.boolean() }),
   z.object({ type: z.literal('answered') }),
   z.object({ type: z.literal('declined') }),
-  z.object({ type: z.literal('plan_approved'), mode: permissionModeSchema, edited: z.boolean() }),
+  z.object({
+    type: z.literal('plan_approved'),
+    mode: permissionModeSchema,
+    edited: z.boolean(),
+    /** Phase 3 (ADR-147): implemented in a fresh session (new conversation). */
+    freshContext: z.boolean().default(false),
+  }),
   z.object({ type: z.literal('plan_revised') }),
   z.object({ type: z.literal('cancelled'), reason: z.enum(CANCEL_REASONS) }),
   /** After a restart (A.10). */
@@ -718,6 +824,8 @@ export const taskInfoSchema = z.object({
     .default(null),
   startedAt: isoDateTimeSchema.nullable().default(null),
   endedAt: isoDateTimeSchema.nullable().default(null),
+  /** Phase 3: `task_notification.output_file` / `AgentOutput.outputFile` (absolute; '' → null). */
+  outputFile: z.string().nullable().default(null),
 });
 export type TaskInfo = z.infer<typeof taskInfoSchema>;
 
@@ -1056,8 +1164,15 @@ export const planResponseSchema = z.discriminatedUnion('behavior', [
   }),
   /** deny + message. */
   z.object({ behavior: z.literal('revise'), feedback: z.string().min(1).max(LIMITS.planFeedbackChars) }),
-  /** C.4 fallback, Phase 3 → NOT_IMPLEMENTED. */
-  z.object({ behavior: z.literal('approve_fresh_context'), mode: permissionModeSchema }),
+  /**
+   * Phase 3 (ADR-147): deny + interrupt the open request, close the process, start a new
+   * conversation in `mode` with the plan (or `editedPlan`) as its first prompt.
+   */
+  z.object({
+    behavior: z.literal('approve_fresh_context'),
+    mode: permissionModeSchema,
+    editedPlan: z.string().max(LIMITS.planChars).nullable().default(null),
+  }),
 ]);
 export type PlanResponse = z.infer<typeof planResponseSchema>;
 
@@ -1223,6 +1338,39 @@ export const slashCommandInfoSchema = z.object({
 });
 export type SlashCommandInfo = z.infer<typeof slashCommandInfoSchema>;
 
+// ---- Phase 3: task list and plan file (ADR-148, ADR-149) ----
+
+export const TODO_STATUSES = ['pending', 'in_progress', 'completed'] as const;
+export const todoStatusSchema = z.enum(TODO_STATUSES);
+export type TodoStatus = z.infer<typeof todoStatusSchema>;
+
+export const todoItemSchema = z.object({
+  /** TodoWrite: the index as string; Task tools: the taskId. */
+  id: z.string(),
+  content: z.string().max(2000),
+  status: todoStatusSchema,
+  activeForm: z.string().max(2000).nullable(),
+});
+export type TodoItem = z.infer<typeof todoItemSchema>;
+
+/** The pinned task list (writer: engine – last TodoWrite or the TaskCreate/TaskUpdate calls). */
+export const todoListSchema = z.object({
+  source: z.enum(['todo_write', 'tasks']),
+  items: z.array(todoItemSchema).max(LIMITS.todoItemsMax),
+  updatedAt: isoDateTimeSchema,
+  toolUseId: z.string().nullable(),
+});
+export type TodoList = z.infer<typeof todoListSchema>;
+
+/** The plan file of the current conversation (writer: engine, ADR-148). */
+export const planFileRefSchema = z.object({
+  path: z.string(),
+  /** Time of the last finished Write/Edit of the file. */
+  updatedAt: isoDateTimeSchema,
+  toolUseId: z.string().nullable(),
+});
+export type PlanFileRef = z.infer<typeof planFileRefSchema>;
+
 /** Fields without top-level defaults: the base of the patch schema (a patch must never inject defaults). */
 const sessionDetailFields = {
   conversationId: conversationIdSchema,
@@ -1237,12 +1385,21 @@ const sessionDetailFields = {
   rateLimit: rateLimitInfoSchema.nullable(),
   /** Tolerant-parsing counters (dev display, SDK upgrade process B). */
   unknownCounts: z.record(z.string(), z.number().int()),
+  /** Phase 3 (ADR-149; writer: engine): pinned task list of the current conversation. */
+  todos: todoListSchema.nullable(),
+  /** Phase 3 (ADR-148; writer: engine): plan file of the current conversation. */
+  planFile: planFileRefSchema.nullable(),
+  /** Phase 3 (ADR-148; writer: engine): highest stored plan version of the entry. */
+  latestPlanVersion: z.number().int().positive().nullable(),
 };
 
 export const sessionDetailSchema = z.object({
   entryId: entryIdSchema,
   ...sessionDetailFields,
   unknownCounts: sessionDetailFields.unknownCounts.default({}),
+  todos: sessionDetailFields.todos.default(null),
+  planFile: sessionDetailFields.planFile.default(null),
+  latestPlanVersion: sessionDetailFields.latestPlanVersion.default(null),
 });
 export type SessionDetail = z.infer<typeof sessionDetailSchema>;
 
@@ -1276,3 +1433,98 @@ export const fsListingSchema = z.object({
   truncated: z.boolean(),
 });
 export type FsListing = z.infer<typeof fsListingSchema>;
+
+// =====================================================================================
+// 5.13 Files (Phase 3, ADR-141 … ADR-146)
+// =====================================================================================
+
+export const FILE_KINDS = ['text', 'markdown', 'image', 'pdf', 'binary', 'directory'] as const;
+export const fileKindSchema = z.enum(FILE_KINDS);
+export type FileKind = z.infer<typeof fileKindSchema>;
+
+/** Source encoding of a text file; GET /api/file always answers UTF-8 (ADR-142). */
+export const TEXT_ENCODINGS = ['utf-8', 'utf-16le', 'utf-16be', 'windows-1252'] as const;
+export const textEncodingSchema = z.enum(TEXT_ENCODINGS);
+export type TextEncoding = z.infer<typeof textEncodingSchema>;
+
+/** Why the path may be read (ADR-141): below a root, or listed in the session file index. */
+export const FILE_ACCESS = ['cwd', 'additional', 'attachments', 'session'] as const;
+export const fileAccessSchema = z.enum(FILE_ACCESS);
+export type FileAccess = z.infer<typeof fileAccessSchema>;
+
+export const fileInfoSchema = z.object({
+  /** As requested (absolute) – used for display and actions. */
+  path: z.string(),
+  /** After links (realpath); equals `path` without links. */
+  realPath: z.string(),
+  kind: fileKindSchema,
+  /** Content-Type of GET /api/file (text/markdown: 'text/plain; charset=utf-8'); null = not served. */
+  mediaType: z.string().nullable(),
+  bytes: z.number().int().nonnegative(),
+  mtimeMs: z.number().nonnegative(),
+  encoding: textEncodingSchema.nullable(),
+  /** The viewer can show it (text/markdown always, image/pdf up to LIMITS.fileBinaryBytes). */
+  previewable: z.boolean(),
+  /** Text larger than LIMITS.fileTextBytes: GET /api/file sends the first part (cut at a line end). */
+  truncated: z.boolean(),
+  access: fileAccessSchema,
+});
+export type FileInfo = z.infer<typeof fileInfoSchema>;
+
+/** One answer of file.statMany – never throws per path. */
+export const fileStatResultSchema = z.discriminatedUnion('ok', [
+  z.object({ path: z.string(), ok: z.literal(true), file: fileInfoSchema }),
+  z.object({ path: z.string(), ok: z.literal(false), error: errorPayloadSchema }),
+]);
+export type FileStatResult = z.infer<typeof fileStatResultSchema>;
+
+/** file.open targets (ADR-144). */
+export const FILE_OPEN_TARGETS = ['editor', 'explorer', 'default'] as const;
+export const fileOpenTargetSchema = z.enum(FILE_OPEN_TARGETS);
+export type FileOpenTarget = z.infer<typeof fileOpenTargetSchema>;
+
+/** "Dateien dieser Session" (ADR-145). */
+export const SESSION_FILE_OPS = ['read', 'written', 'edited', 'plan', 'output', 'attached'] as const;
+export const sessionFileOpSchema = z.enum(SESSION_FILE_OPS);
+export type SessionFileOp = z.infer<typeof sessionFileOpSchema>;
+
+export const sessionFileSchema = z.object({
+  path: z.string(),
+  /** Distinct, in first-seen order. */
+  ops: z.array(sessionFileOpSchema).min(1),
+  count: z.number().int().positive(),
+  firstAt: isoDateTimeSchema,
+  lastAt: isoDateTimeSchema,
+  /** Last tool call that touched it (jump to the transcript row); null for attachments. */
+  lastToolUseId: z.string().nullable(),
+  conversationId: conversationIdSchema.nullable(),
+});
+export type SessionFile = z.infer<typeof sessionFileSchema>;
+
+export const SESSION_FILES_SCHEMA_VERSION = 1;
+
+/** `entries/<entryId>/files.json` (only the file service writes it, ADR-145). */
+export const sessionFilesFileSchema = z.object({
+  schemaVersion: z.literal(SESSION_FILES_SCHEMA_VERSION),
+  /** The history before the index existed was read once from the transcript logs. */
+  backfilled: z.boolean().default(false),
+  files: z.array(sessionFileSchema).max(LIMITS.sessionFilesMax),
+});
+export type SessionFilesFile = z.infer<typeof sessionFilesFileSchema>;
+
+// =====================================================================================
+// 5.14 Plan versions (Phase 3, ADR-148; task list and plan file: see 5.11)
+// =====================================================================================
+
+export const planVersionInfoSchema = z.object({
+  version: z.number().int().positive(),
+  decisionId: decisionIdSchema,
+  conversationId: conversationIdSchema,
+  createdAt: isoDateTimeSchema,
+  resolvedAt: isoDateTimeSchema.nullable(),
+  outcome: decisionOutcomeSchema.nullable(),
+  planFilePath: z.string().nullable(),
+  /** plans/v<N>.md exists (false: the write failed or an older install). */
+  stored: z.boolean(),
+});
+export type PlanVersionInfo = z.infer<typeof planVersionInfoSchema>;

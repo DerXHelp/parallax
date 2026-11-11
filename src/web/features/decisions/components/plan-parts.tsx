@@ -1,24 +1,21 @@
 import { FileTextIcon } from 'lucide-react';
-import { useState, type MouseEvent } from 'react';
-import { flushSync } from 'react-dom';
+import { useState } from 'react';
 import type { PermissionMode } from '@shared/common';
 import type { PlanDecision } from '@shared/model';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
+import { requestShell } from '@web/shell/requests';
+import {
+  isSidePanelHostMounted,
+  useSidePanelHostMounted,
+  useSidePanelTab,
+} from '@web/shell/side-panel/state';
 import { useSummarySelector } from '@web/state/hooks';
 import { Button } from '@web/ui/button';
 import { Gauge } from '@web/ui/gauge';
 import { defaultApproveMode, orderedApproveModes } from '../lib/plan';
 import { respondToDecision } from '../lib/respond';
-import {
-  closePlanPanel,
-  isPlanPanelMounted,
-  openPlanPanel,
-  readApproveMode,
-  usePlanPanel,
-  usePlanPanelMounted,
-  writeApproveMode,
-} from '../state/bar-store';
+import { readApproveMode, setPanelPlan, usePlanPanel, writeApproveMode } from '../state/bar-store';
 import { ChoiceMenu, type Choice } from './ChoiceMenu';
 import { DecisionAction } from './card-shell';
 
@@ -93,19 +90,12 @@ export function ApproveSplit({
   );
 }
 
-/** Selector for the plan panel element of a session (focus after opening). */
-export function findPlanPanel(sessionKey: string): HTMLElement | null {
-  for (const element of document.querySelectorAll<HTMLElement>('[data-plan-panel]')) {
-    if (element.dataset.planPanel === sessionKey) return element;
-  }
-  return null;
-}
-
 /**
- * "Open plan": opens the side panel (slot `SidePanel` = PlanSidePanel) and moves the focus there
- * (user action); a second click closes it. Without a mounted panel (slot not wired) it toggles
- * the plan inside the card (`onInlineToggle`) – or is not shown at all without that fallback
- * (read-only transcript card, R2W-15). Never an answer.
+ * "Open plan": shows the plan in the side panel tab "Plan" (slot `PlanPanel` = PlanSidePanel) via
+ * the shell request `sidePanel` – the host moves the focus there (user action); a second click
+ * closes it. Without a mounted side panel host it toggles the plan inside the card
+ * (`onInlineToggle`) – or is not shown at all without that fallback (read-only transcript card,
+ * R2W-15). Never an answer.
  */
 export function OpenPlanButton({
   sessionKey,
@@ -120,24 +110,22 @@ export function OpenPlanButton({
 }) {
   const t = useT();
   const panel = usePlanPanel(sessionKey);
-  const mounted = usePlanPanelMounted(sessionKey);
-  const panelOpen = panel?.decisionId === decision.id;
+  const tab = useSidePanelTab(sessionKey);
+  const mounted = useSidePanelHostMounted(sessionKey);
+  const panelOpen = tab === 'plan' && panel?.decisionId === decision.id;
   const open = panelOpen || inlineOpen;
   if (!mounted && onInlineToggle === undefined) return null;
-  const onClick = (event: MouseEvent<HTMLButtonElement>) => {
+  const onClick = () => {
     if (panelOpen) {
-      closePlanPanel(sessionKey);
+      requestShell({ kind: 'sidePanel', sessionKey, tab: null });
       return;
     }
-    if (!isPlanPanelMounted(sessionKey)) {
+    if (!isSidePanelHostMounted(sessionKey)) {
       onInlineToggle?.();
       return;
     }
-    const opener = event.currentTarget;
-    flushSync(() => {
-      openPlanPanel(sessionKey, decision, opener);
-    });
-    findPlanPanel(sessionKey)?.focus();
+    setPanelPlan(sessionKey, decision);
+    requestShell({ kind: 'sidePanel', sessionKey, tab: 'plan' });
   };
   return (
     <Button variant="ghost" size="sm" data-action="open-plan" aria-expanded={open} onClick={onClick}>

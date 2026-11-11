@@ -444,7 +444,7 @@ describe('buildResult – plan (F.6, C.4)', () => {
         updatedPermissions: [{ type: 'setMode', mode: 'default', destination: 'session' }],
         decisionClassification: 'user_temporary',
       },
-      outcome: { type: 'plan_approved', mode: 'default', edited: false },
+      outcome: { type: 'plan_approved', mode: 'default', edited: false, freshContext: false },
     });
   });
 
@@ -459,12 +459,12 @@ describe('buildResult – plan (F.6, C.4)', () => {
       updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
       decisionClassification: 'user_temporary',
     });
-    expect(edited.outcome).toEqual({ type: 'plan_approved', mode: 'acceptEdits', edited: true });
+    expect(edited.outcome).toEqual({ type: 'plan_approved', mode: 'acceptEdits', edited: true, freshContext: false });
     const same = buildResult(plan, input, {
       kind: 'plan',
       response: { behavior: 'approve', mode: 'auto', editedPlan: plan.plan },
     });
-    expect(same.outcome).toEqual({ type: 'plan_approved', mode: 'auto', edited: false });
+    expect(same.outcome).toEqual({ type: 'plan_approved', mode: 'auto', edited: false, freshContext: false });
   });
 
   it('revise → deny with the feedback', () => {
@@ -480,7 +480,7 @@ describe('buildResult – plan (F.6, C.4)', () => {
     expect(() =>
       buildResult(plan, input, {
         kind: 'plan',
-        response: { behavior: 'approve_fresh_context', mode: 'auto' },
+        response: { behavior: 'approve_fresh_context', mode: 'auto', editedPlan: null },
       }),
     ).toThrow();
     expect(() => buildResult(plan, input, perm({ behavior: 'deny', message: '', interrupt: false }))).toThrow(
@@ -522,7 +522,7 @@ describe('validateResponse (§3.4 Prüfungen, architecture §5.2)', () => {
     expect(
       validateResponse(expiredPlan, {
         kind: 'plan',
-        response: { behavior: 'approve_fresh_context', mode: 'auto' },
+        response: { behavior: 'approve_fresh_context', mode: 'auto', editedPlan: null },
       })?.code,
     ).toBe('DECISION_EXPIRED');
     expect(
@@ -661,7 +661,7 @@ describe('validateResponse (§3.4 Prüfungen, architecture §5.2)', () => {
     expect(
       validateResponse(plan, {
         kind: 'plan',
-        response: { behavior: 'approve_fresh_context', mode: 'default' },
+        response: { behavior: 'approve_fresh_context', mode: 'default', editedPlan: null },
       })?.code,
     ).toBe('NOT_IMPLEMENTED');
     expect(
