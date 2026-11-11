@@ -14,6 +14,8 @@
  * Fix round R4: no idle sleep for a process with a planned turn (ADR-121), a silent toast when a
  * window sounds itself (ADR-122), the shutdown waits (bounded) for running lifecycle operations
  * (R4-03).
+ * Phase 3 (WP-51): the optional attachment store (ADR-146; absent until WP-60 wires it), the newest
+ * plan text after a restart (`broker.loadLastPlan`, ADR-148).
  */
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -63,6 +65,7 @@ import {
   EntryState,
   settingsSleepPolicy,
   type EngineCore,
+  type EngineCoreStores,
   type EngineStores,
   type NormalizerFns,
   type ProcDeps,
@@ -280,7 +283,7 @@ export function profileCacheKey(profile: Profile | undefined): string | null {
 }
 
 /** Real `capInput` (WP-12 limits) for broker decision cards: JSON value + blob of the full input. */
-function defaultCapInput(stores: EngineStores): EngineCore['capInput'] {
+function defaultCapInput(stores: Pick<EngineStores, 'blobs'>): EngineCore['capInput'] {
   return (input) => {
     const json = jsonValueSchema.safeParse(input);
     const value = json.success ? json.data : jsonValueSchema.parse(JSON.parse(JSON.stringify(input)));
@@ -294,10 +297,12 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   const log = (deps.logger ?? rootLogger).child({ module: 'sessions' });
   const now = deps.now ?? (() => new Date());
   const timers = deps.timers ?? realTimers;
-  const stores: Required<EngineStores> = {
+  const stores: EngineCoreStores = {
     ...deps.stores,
     catalogs: deps.stores.catalogs ?? createMemoryCatalogStore(),
     commandCatalogs: deps.stores.commandCatalogs ?? createMemoryCommandCatalogStore(),
+    // Phase 3 (ADR-146): without WP-53's store no file attachments and no attachment folder.
+    attachments: deps.stores.attachments ?? null,
   };
   const toasts = deps.toasts ?? DISABLED_NATIVE_TOASTS;
   const hostCommands = deps.hostCommands ?? [];
@@ -825,6 +830,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       log.error({ err: error, entryId: entry.id }, 'decisions could not be loaded');
     }
     const { hadOpen } = s.broker.restore(records);
+    // §4.12: previousVersionPlan of the next plan decision comes from plans/v<N>.md after a restart.
+    await s.broker.loadLastPlan();
     s.reduce({ type: 'server_restart', hadOpenDecisions: hadOpen });
     s.reduce({ type: 'decisions_changed', decisions: s.broker.counts() });
     if (wasActive(entry) || hadOpen) {

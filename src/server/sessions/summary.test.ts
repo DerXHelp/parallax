@@ -10,9 +10,11 @@ import {
 } from '@shared/samples';
 import type { BackendSessionInfo } from '../backend/types';
 import {
+  FRESH_CONTEXT_PROMPT_HEADER,
   aiTitleFrom,
   cwdLabel,
   endReasonFor,
+  freshContextPrompt,
   implementPlanPrompt,
   isPromptFallback,
   newConversation,
@@ -213,9 +215,10 @@ describe('AI title (C.6, F.8)', () => {
 });
 
 describe('conversations', () => {
-  it('endReasonFor maps clear / plan_mode_exit, everything else → unknown', () => {
+  it('endReasonFor maps clear / plan_mode_exit / fresh_session, everything else → unknown', () => {
     expect(endReasonFor('clear')).toBe('clear');
     expect(endReasonFor('plan_mode_exit')).toBe('plan_mode_exit');
+    expect(endReasonFor('fresh_session')).toBe('fresh_session');
     expect(endReasonFor('compact')).toBe('unknown');
     expect(endReasonFor(null)).toBe('unknown');
   });
@@ -249,5 +252,13 @@ describe('conversations', () => {
     expect(cwdLabel('D:\\')).toBe('D:\\');
     expect(implementPlanPrompt('C:\\plans\\a.md', '# Plan')).toBe('Implement the plan in C:\\plans\\a.md');
     expect(implementPlanPrompt(null, '# Plan')).toBe('Implement this plan:\n\n# Plan');
+  });
+
+  it('freshContextPrompt (ADR-147): header, plan file when known, empty line, plan', () => {
+    expect(freshContextPrompt('C:\\plans\\a.md', '# Plan\n\n1. Do it')).toBe(
+      'Implement the following approved plan.\nPlan file: C:\\plans\\a.md\n\n# Plan\n\n1. Do it',
+    );
+    expect(freshContextPrompt(null, '# Plan')).toBe('Implement the following approved plan.\n\n# Plan');
+    expect(freshContextPrompt(null, '# Plan').startsWith(FRESH_CONTEXT_PROMPT_HEADER)).toBe(true);
   });
 });
