@@ -1,5 +1,5 @@
 /**
- * Type tests: the SDK enums mirrored in src/shared/common.ts must match SDK 0.3.296, so an SDK
+ * Type tests: the SDK enums mirrored in src/shared/common.ts must match SDK 0.3.322, so an SDK
  * upgrade that changes them fails the typecheck (B "SDK-Upgrade-Prozess").
  */
 import type {

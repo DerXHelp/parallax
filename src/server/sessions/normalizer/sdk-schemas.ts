@@ -1,5 +1,5 @@
 /**
- * Tolerant zod views of the raw SDK messages (SDK 0.3.296 / CLI 2.1.300, docs/sdk-findings.md).
+ * Tolerant zod views of the raw SDK messages (SDK 0.3.322 / CLI 2.1.322, docs/sdk-findings.md).
  * Only the fields the normalizer reads are declared; every object is a `looseObject` (extra keys
  * are kept and ignored) and non-essential fields are wrapped in `opt()`, so a newer CLI that
  * changes or drops such a field degrades to "field missing" instead of rejecting the message.
@@ -347,7 +347,7 @@ export const commandsChangedMessageSchema = z.looseObject({
 
 // ---- other top-level types ----
 
-/** Untyped in 0.3.296 (F.9). */
+/** Untyped in 0.3.296 and still in 0.3.322 (F.9). */
 export const commandLifecycleMessageSchema = z.looseObject({
   type: z.literal('command_lifecycle'),
   command_uuid: str,
