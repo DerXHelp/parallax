@@ -193,7 +193,7 @@ describe('live normalizer: replays and Claude-app prompts (WP-64)', () => {
 });
 
 describe('live normalizer: bridge messages (WP-64)', () => {
-  it('bridge_state → signal, no ops; task_summary/post_turn_summary are counted, never unknown items', () => {
+  it('bridge_state → signal, no ops; task_summary/post_turn_summary never become unknown items', () => {
     const n = fresh();
     const out = n.push({ type: 'system', subtype: 'bridge_state', state: 'connected', bridge_epoch: 1, uuid: 'b1', session_id: SESSION }, AT);
     expect(out.ops).toEqual([]);
@@ -201,8 +201,9 @@ describe('live normalizer: bridge messages (WP-64)', () => {
       { type: 'bridge_state', state: 'connected', detail: null, failureKind: null, recovered: false },
     ]);
     expect(upserts(n.push({ type: 'system', subtype: 'task_summary', detail: 'Working', uuid: 'b2', session_id: SESSION }, AT))).toEqual([]);
+    // WP-65: a summary without summarizes_uuid belongs to no known turn – dropped as stale.
     expect(upserts(n.push({ type: 'system', subtype: 'post_turn_summary', status_detail: 'done', uuid: 'b3', session_id: SESSION }, AT))).toEqual([]);
-    expect(n.ignoredCounts).toMatchObject({ 'system/task_summary': 1, 'system/post_turn_summary': 1 });
+    expect(n.ignoredCounts).toMatchObject({ 'system/post_turn_summary:stale': 1 });
   });
 
   it('policy_disabled and a long detail (clipped to 500 chars)', () => {
@@ -455,5 +456,97 @@ describe('live normalizer: task output files and lost writes (WP-52)', () => {
     const sparse = n.push({ type: 'system', subtype: 'session_writes_lost', lost: 'not-an-array', uuid: 'swl-2', session_id: SESSION }, AT);
     expect(upserts(sparse)[0]).toMatchObject({ error: { code: 'SESSION_WRITES_LOST', params: { lost: '', errorCode: '' } } });
     expect(n.unknownCounts).toEqual({});
+  });
+});
+
+describe('live normalizer: live sentence and turn summary (WP-65)', () => {
+  const assistantText = (uuid: string, text: string) => ({
+    type: 'assistant',
+    uuid,
+    session_id: SESSION,
+    parent_tool_use_id: null,
+    message: {
+      id: `msg_${uuid}`,
+      model: 'claude-haiku-5-5',
+      role: 'assistant',
+      content: [{ type: 'text', text }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    },
+  });
+  const result = (uuid: string) => ({
+    type: 'result',
+    subtype: 'success',
+    uuid,
+    session_id: SESSION,
+    is_error: false,
+    result: 'ok',
+    duration_ms: 10,
+    num_turns: 1,
+    total_cost_usd: 0.001,
+  });
+  const summary = (uuid: string | undefined, extra: Record<string, unknown> = {}) => ({
+    type: 'system',
+    subtype: 'post_turn_summary',
+    uuid: `s-${uuid ?? 'none'}`,
+    session_id: SESSION,
+    ...(uuid === undefined ? {} : { summarizes_uuid: uuid }),
+    status_category: 'completed',
+    status_detail: '  Wrote   the notes  ',
+    needs_action: '',
+    ...extra,
+  });
+  const turnSummaries = (out: { signals: readonly { type: string }[] }) =>
+    out.signals.filter((x) => x.type === 'turn_summary');
+
+  it('task_summary → signal with the clipped sentence; null = no sentence', () => {
+    const n = fresh();
+    const out = n.push({ type: 'system', subtype: 'task_summary', detail: `  ${'w'.repeat(400)} `, uuid: 't1', session_id: SESSION }, AT);
+    const signal = out.signals.find((x) => x.type === 'task_summary');
+    expect(signal?.type === 'task_summary' ? signal.detail?.length : 0).toBe(300);
+    expect(n.push({ type: 'system', subtype: 'task_summary', detail: null, uuid: 't2', session_id: SESSION }, AT).signals).toContainEqual({
+      type: 'task_summary',
+      detail: null,
+    });
+    // Tolerant: a detail of another type counts as none.
+    expect(n.push({ type: 'system', subtype: 'task_summary', detail: 7, uuid: 't3', session_id: SESSION }, AT).signals).toContainEqual({
+      type: 'task_summary',
+      detail: null,
+    });
+  });
+
+  it('post_turn_summary of the running turn → turn_summary (before the result); needs_action text', () => {
+    const n = fresh();
+    n.push(assistantText('a-1', 'first'), AT);
+    expect(turnSummaries(n.push(summary('a-1'), AT))).toEqual([
+      { type: 'turn_summary', category: 'completed', detail: 'Wrote the notes', needsAction: null },
+    ]);
+    expect(turnSummaries(n.push(summary('a-1', { needs_action: 'Approve the plan' }), AT))).toEqual([
+      { type: 'turn_summary', category: 'completed', detail: 'Wrote the notes', needsAction: 'Approve the plan' },
+    ]);
+    // Without status_detail the needs_action text is the summary; neither → ignored.
+    expect(turnSummaries(n.push(summary('a-1', { status_detail: null, needs_action: 'Answer' }), AT))).toEqual([
+      { type: 'turn_summary', category: 'completed', detail: 'Answer', needsAction: 'Answer' },
+    ]);
+    expect(turnSummaries(n.push(summary('a-1', { status_detail: '', needs_action: '' }), AT))).toEqual([]);
+  });
+
+  it('a summary of the finished turn still counts until the next turn has an answer; older ones are stale', () => {
+    const n = fresh();
+    n.push(assistantText('a-1', 'first'), AT);
+    n.push(result('r-1'), AT);
+    expect(turnSummaries(n.push(summary('a-1'), AT))).toHaveLength(1);
+    n.push(assistantText('a-2', 'second'), AT);
+    expect(turnSummaries(n.push(summary('a-1'), AT))).toEqual([]);
+    expect(turnSummaries(n.push(summary('a-2'), AT))).toHaveLength(1);
+    expect(turnSummaries(n.push(summary('unknown'), AT))).toEqual([]);
+    expect(n.ignoredCounts['system/post_turn_summary:stale']).toBe(2);
+  });
+
+  it('subagent answers are no turn uuids; a summary with an unreadable uuid is stale', () => {
+    const n = fresh();
+    n.push({ ...assistantText('sub-1', 'inner'), parent_tool_use_id: 'toolu_1' }, AT);
+    expect(turnSummaries(n.push(summary('sub-1'), AT))).toEqual([]);
+    n.push({ type: 'system', subtype: 'post_turn_summary', summarizes_uuid: 5, status_detail: 'x', uuid: 'bad', session_id: SESSION }, AT);
+    expect(n.ignoredCounts['system/post_turn_summary:stale']).toBe(2);
   });
 });

@@ -140,6 +140,8 @@ describe('defaults for old files (B "fehlende Felder ergänzen")', () => {
       external: null,
       continueAt: null,
       remoteControlWanted: false,
+      turnSummary: null,
+      lastSeenAt: null,
     } satisfies Entry);
   });
 

@@ -108,6 +108,31 @@ export interface RemoteControlRequest {
  */
 export type RemoteControlResult = { ok: true; info: RemoteControlInfo | null } | { ok: false; error: ErrorPayload };
 
+/**
+ * WP-65: answer of `query.generateSessionTitle(description, { persist })` (SDK 0.3.322, internal).
+ * Never rejects: `unavailable` = the method is missing in SDK/CLI, `failed` = the request failed or
+ * timed out; `title: null` = the CLI found no usable title. With `persist` the CLI writes an
+ * `ai-title` into its transcript – and answers a title the session already has without a new one.
+ */
+export type TitleResult = { ok: true; title: string | null } | { ok: false; reason: 'unavailable' | 'failed' };
+
+/** WP-65: one plan window of the usage query; `utilization` as a FRACTION 0–1 (like rate_limit_event). */
+export interface UsageWindow {
+  utilization: number;
+  resetsAt: string | null;
+}
+
+/**
+ * WP-65: the plan limits of `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()` (checked,
+ * normalized): only windows with a value (`five_hour`, `seven_day`, … ; codename windows without a
+ * value are dropped; extra usage as `overage`); `cleared` = known windows the answer reports empty
+ * (their stored value is history). No session cost, no line counts.
+ */
+export interface UsageLimits {
+  windows: Record<string, UsageWindow>;
+  cleared: string[];
+}
+
 export interface AgentSession {
   readonly entryId: string;
   readonly pid: number | null;
@@ -134,6 +159,19 @@ export interface AgentSession {
    * (method missing, not set, unreadable). Never rejects.
    */
   readRemoteControlDefault(): Promise<boolean | null>;
+  /** WP-65: AI title for `description` (internal SDK method, checked at runtime). Never rejects. */
+  generateTitle(description: string, opts: { persist: boolean }): Promise<TitleResult>;
+  /**
+   * WP-65: `backgroundTasks(toolUseId?)` – null = every foreground task (Ctrl+B). Resolves false
+   * when a given tool use matched no foreground task; rejects when the request failed (also when
+   * the CLI disabled background tasks or the method is missing).
+   */
+  backgroundTasks(toolUseId: string | null): Promise<boolean>;
+  /**
+   * WP-65: plan limits of the experimental usage query (`skipBehaviors`: no transcript scan); null
+   * when unavailable (method missing, failed, unknown shape, no plan limits – API key). Never rejects.
+   */
+  readUsage(): Promise<UsageLimits | null>;
   /** close(), wait ≤ 5 s for exit, then taskkill /T /F (C.8). Resolves after 'exit'. */
   close(): Promise<void>;
 }

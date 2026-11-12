@@ -29,6 +29,7 @@ import { toModelCatalog } from './models';
 import type { LiveNormalizer, StatusSignal } from './ports';
 import { bridgeOf, onBridgeState, remoteControlAfterReady, remoteProcessEnded } from './remoteControl';
 import { afterSuccessfulTurn, decideRetry } from './retry';
+import { autoTitle } from './titles';
 import {
   endReasonFor,
   newConversation,
@@ -296,14 +297,30 @@ export class SessionRuntime {
         return;
       case 'title_changed': {
         const decision = titleChangeDecision(
-          { titleSource: s.entry.titleSource, pendingRename: s.pendingRename, resetInTurn: s.resetInTurn },
+          {
+            titleSource: s.entry.titleSource,
+            pendingRename: s.pendingRename,
+            pendingRenameSource: s.pendingRenameSource,
+            resetInTurn: s.resetInTurn,
+          },
           signal.title,
         );
         if (decision.kind === 'ignore') return;
-        if (decision.echo) s.pendingRename = null;
+        if (decision.echo) {
+          s.pendingRename = null;
+          s.pendingRenameSource = 'custom';
+        }
         s.patch((e) => ({ ...e, title: decision.title, titleSource: decision.titleSource }));
         return;
       }
+      case 'task_summary':
+        // WP-65: the CLI's live sentence (Remote Control only).
+        s.setActivitySentence(signal.detail);
+        return;
+      case 'turn_summary':
+        // WP-65: the CLI's summary of the latest turn (the normalizer dropped older ones).
+        s.setClaudeTurnSummary(signal.detail, signal.category, signal.needsAction !== null);
+        return;
       case 'prompt_lifecycle':
         if (s.queue.onLifecycle(signal.messageUuid, signal.state)) s.publishQueue();
         return;
@@ -327,7 +344,9 @@ export class SessionRuntime {
     s.scheduleContextRefresh();
     if (this.titleDue) {
       this.titleDue = false;
-      s.scheduleAiTitle();
+      // WP-65: the generated title after the first real turn of a conversation; else (and as its
+      // fallback) the AI-title query of the CLI's session info.
+      if (!autoTitle(s, this.core)) s.scheduleAiTitle();
     }
   }
 
@@ -360,7 +379,10 @@ export class SessionRuntime {
     if (!signal.synthetic && !this.core.shuttingDown()) {
       this.titleDue = true;
       void s.refreshGitBranch();
+      // WP-65: the CLI's turn summary came before the result; else the fallback from the answer.
+      s.finishTurnSummary(signal.outcome, signal.resultExcerpt);
     }
+    s.endTurnActivity();
     // Old CLI without session_state_changed: the result is the turn end (C.1).
     if (!this.sessionStateSeen) this.turnEnded();
     s.resetInTurn = false;
@@ -777,6 +799,8 @@ export interface DeliverExtras {
   attachments?: PromptAttachments;
   /** Checked pastes (`checkPastes`) → `OutgoingPrompt.inlinePastes`; empty → left out (ADR-146). */
   pastes?: readonly string[];
+  /** WP-65: what the echo of a `/rename X` in `text` becomes (default `custom`; `ai` = a generated title). */
+  renameSource?: 'custom' | 'ai';
 }
 
 /**
@@ -803,7 +827,11 @@ export function deliverPrompt(
   const messageUuid = core.ids.newUuid();
   const rename = parseRenameCommand(text);
   const renameBefore = s.pendingRename;
-  if (rename !== null) s.pendingRename = rename;
+  const renameSourceBefore = s.pendingRenameSource;
+  if (rename !== null) {
+    s.pendingRename = rename;
+    s.pendingRenameSource = extras.renameSource ?? 'custom';
+  }
   if (priority === 'now' && s.broker.open().some((d) => d.requester.kind === 'main')) {
     s.broker.cancel('main', 'interrupted', 'deny');
   }
@@ -829,7 +857,10 @@ export function deliverPrompt(
     core.log.warn({ err: error, entryId: s.id }, 'send() refused the prompt');
     // CR2 follow-up: a refused `/rename X` leaves no pending rename (a later title_changed X would
     // count as its echo and become `custom`).
-    if (rename !== null && s.pendingRename === rename) s.pendingRename = renameBefore;
+    if (rename !== null && s.pendingRename === rename) {
+      s.pendingRename = renameBefore;
+      s.pendingRenameSource = renameSourceBefore;
+    }
     if (s.queue.remove(messageUuid)) s.publishQueue();
     throw commandError('SESSION_NOT_RUNNING', { entryId: s.id, reason: 'closed' });
   }

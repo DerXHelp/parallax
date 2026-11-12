@@ -10,7 +10,9 @@
  * failure and a sentence in between), `fake:images` (burst of Read results with a PNG each),
  * `fake:limit-warning` (`allowed_warning`, the limit bar only); WP-64 (remote.ts, only with the fake
  * bridge connected): `fake:remote-prompt [text]` (a prompt from the Claude app follows),
- * `fake:remote-permission` (approval answered in the app), `fake:remote-fail`, `fake:remote-flaky`. A prompt with images, PDFs, attached files or inline pastes
+ * `fake:remote-permission` (approval answered in the app), `fake:remote-fail`, `fake:remote-flaky`;
+ * WP-65 (overview.ts): `fake:long-bash` (a foreground Bash until it is moved to the background) and
+ * `fake:summary` (live sentence and turn summary of the CLI while the fake bridge is connected). A prompt with images, PDFs, attached files or inline pastes
  * gets "Fake: received …" (ADR-103, ADR-146); the first prompt of a start without resume that is
  * the engine's fresh-context prompt gets "Fake: implementing plan (N lines)"; anything else gets a
  * thought plus a streamed "Echo: …". Decisions really wait for the engine; interrupt() and
@@ -46,6 +48,7 @@ import {
 import { images, limitWarning, steps } from './feedback';
 import { FAKE_SHOT_HEIGHT, FAKE_SHOT_NAME, FAKE_SHOT_PNG_BASE64, FAKE_SHOT_WIDTH } from './image';
 import { background, contextHigh, files, receivedCounts, receivedText, todo, writesLost } from './phase3';
+import { longBash, summaryTurn } from './overview';
 import { implementPlan, isImplementPlanPrompt, plan } from './plan';
 import { remoteFail, remoteFlaky, remotePermission, remotePrompt } from './remote';
 import { CANCEL_DENY, abortedByDecision, answerTurn, ask, contextFor, firstWords, type Turn } from './turn';
@@ -471,6 +474,12 @@ async function handle(
       break;
     case 'fake:remote-flaky':
       await remoteFlaky(ctx, c, turn);
+      break;
+    case 'fake:long-bash':
+      await longBash(ctx, c, turn, sessionId);
+      break;
+    case 'fake:summary':
+      await summaryTurn(ctx, c, turn);
       break;
     case 'fake:bash':
     case 'fake:permission':

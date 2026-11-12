@@ -129,6 +129,22 @@ export type StatusSignal =
       detail: string | null;
       failureKind: string | null;
       recovered: boolean;
+    }
+  /**
+   * WP-65: system/task_summary (untyped, only with a connected Remote Control bridge): the CLI's
+   * throttled live sentence of the running turn ("Writing handy.txt"); null = the turn ended.
+   */
+  | { type: 'task_summary'; detail: string | null }
+  /**
+   * WP-65: system/post_turn_summary (untyped, bridge only) of the CURRENT turn – the normalizer
+   * drops a summary whose `summarizes_uuid` is no assistant message of the latest turn.
+   * `needsAction` = the CLI's `needs_action` text (empty = nothing to do → null).
+   */
+  | {
+      type: 'turn_summary';
+      category: string | null;
+      detail: string;
+      needsAction: string | null;
     };
 
 /** WP-64: states of system/bridge_state seen in CLI 2.1.x ('unknown' = a newer CLI). */

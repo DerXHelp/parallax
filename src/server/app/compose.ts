@@ -67,6 +67,7 @@ import { createRecordingOpener, createSystemLauncher } from '../files/open';
 import type { FileEntryLookup, FileService } from '../files/ports';
 import { createFileService } from '../files/service';
 import { createFsCommands } from '../host/fsCommands';
+import { createLinkCommands, createRecordingLinkOpener, createSystemLinkOpener } from '../host/linkCommands';
 import { createApp } from '../http/app';
 import { createAuthService, type AuthService } from '../http/auth';
 import { findRunningServer, type RunningServerCheck } from '../launcher/client';
@@ -612,6 +613,12 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         }),
         createFsCommands(),
         fileService.commands,
+        // WP-65: links in the default browser; the FakeBackend records them (no browser starts).
+        createLinkCommands(
+          config.backend === 'fake'
+            ? createRecordingLinkOpener({ logger: options.logger })
+            : createSystemLinkOpener({ logger: options.logger }),
+        ),
       ],
       // Autostart and protocol handler follow every settings.update (ADR-110).
       onSettingsChanged: (_prev, next) => {
