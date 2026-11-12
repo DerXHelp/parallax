@@ -5,11 +5,14 @@ import {
   ListTodoIcon,
   LoaderCircleIcon,
   MessageCircleQuestionMarkIcon,
+  NotebookPenIcon,
 } from 'lucide-react';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
+import { shortPath } from '@web/lib/path-display';
 import { firstLine } from '../lib/text';
 import {
+  readNotebookEditInput,
   readQuestionInput,
   readQuestionResult,
   readTodoInput,
@@ -20,7 +23,7 @@ import { GenericToolBody } from './generic';
 import { ToolResultText } from './parts';
 import type { ToolBodyProps, ToolRenderer } from './types';
 
-/** Smaller renderers: AskUserQuestion, TodoWrite, WebFetch, WebSearch. */
+/** Smaller renderers: AskUserQuestion, TodoWrite, WebFetch, WebSearch, NotebookEdit. */
 
 // ---- AskUserQuestion (F.5): questions with the chosen answer (live `answers`, else the result text) ----
 
@@ -135,5 +138,20 @@ export const webFetchRenderer: ToolRenderer = {
 export const webSearchRenderer: ToolRenderer = {
   icon: GlobeIcon,
   summary: (item) => readWebSearchInput(item.input)?.query ?? null,
+  Body: GenericToolBody,
+};
+
+// ---- NotebookEdit: the notebook as a file link in the line (WP-55), generic details ----
+
+export const notebookEditRenderer: ToolRenderer = {
+  icon: NotebookPenIcon,
+  summary: (item) => {
+    const input = readNotebookEditInput(item.input);
+    return input === null ? null : shortPath(input.notebook_path, 3);
+  },
+  file: (item) => {
+    const input = readNotebookEditInput(item.input);
+    return input === null || input.notebook_path === '' ? null : { path: input.notebook_path, line: null };
+  },
   Body: GenericToolBody,
 };
