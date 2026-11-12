@@ -21,7 +21,7 @@ Vite-Dev-Proxy greift), Auth per Einmal-Code und HttpOnly-Cookie, Origin-/Host-/
 | --- | --- | --- |
 | `app.ts` | `createApp(options)`, `AttachableHub`, `HubAttachOptions`, `safeMediaType`, `mediaTypeEssence`, `contentPolicyHeaders`, `isPdfBlob`, `inlineDisposition`, `UPLOAD_BODY_LIMIT_BYTES` | App: Guard-Hook (auch für den WS-Upgrade), Security-Header (CSP aus `@shared/http`: `pageCsp(port)`, `BLOB_CSP`, `FILE_PDF_CSP`, R3-14; `X-Frame-Options` `DENY`, außer eine Route setzt `SAMEORIGIN`), Error-/404-Handler (`ROUTE_NOT_FOUND`), `/api/health` (mit `backend`, wenn `config.backend` gesetzt ist, R3-02), Blob-Route (PDF-Header-Satz, Phase 3), `GET`/`HEAD /api/file` (Phase 3, unten), Upload `/api/attachments` (unten), `@fastify/websocket` (`maxPayload`), `hub.attach(app, { authorizeUpgrade })`, Static, Dev-Login-URL beim `listen` |
 | `upload.test.ts` | – | Upload per `app.inject`: Bilder (Name, Pixelgröße in der Meta-Datei), PDFs, andere Dateien (mit/ohne `name`), Bild-Bytes als octet-stream bleiben Datei (CR3-03), Größen je Typ, 415 Typ/Magic-Bytes, abweichender Bildtyp → erkannter Typ (CR2-08), 400 Query, 401 ohne Cookie, 403 fremder Origin |
-| `file.test.ts` | – | `GET`/`HEAD /api/file`: Guard-Matrix `Sec-Fetch-Site` × `Origin` × Cookie, Header-Sätze Text/Bild/SVG/PDF, `filename*`, Fehlerstatus, kein Dateiinhalt im Log, Blob-PDF-Header, Ende-zu-Ende mit dem echten Datei-Dienst |
+| `file.test.ts` | – | `GET`/`HEAD /api/file`: Guard-Matrix `Sec-Fetch-Site` × `Origin` × Cookie, Header-Sätze Text/Bild/SVG/PDF, `filename*`, Fehlerstatus, kein Dateiinhalt im Log, Blob-PDF-Header, Ende-zu-Ende mit dem echten Datei-Dienst (auch Bild zwischen `stat` und Lesen ersetzt: `Content-Length` = Körper, CR3-05) |
 | `auth.ts` | `createAuthService(options) → AuthService`, `registerAuthRoutes`, `authCookieHeader`, `readCookie`, `AUTH_SECRET_FILE` | Einmal-Codes (`issueAuthCode(ttlMs?)`, `exchangeCode`), Geräte-Cookie (HMAC, Secret `PARALLAX_HOME/auth-secret.json` ohne `.bak`, `rotateSecret`, `onRevoked`), Launcher-Token (`launcherToken`, `verifyLauncherToken`); Routen `POST /api/auth`, `GET /api/auth/status`, `POST /api/launcher/code` |
 | `origin.ts` | `checkRequest`, `classifyRequest`, `isApiRoute`, `requestPath`, `STATIC_ROUTE` | reine Request-Prüfung nach der Tabelle §5.1 (Routen-Muster statt Pfad; `needsCookie` prüft der Aufrufer); Phase 3: Klasse `file` (`Sec-Fetch-Site` Pflicht `same-origin`, `Origin` falls vorhanden erlaubt, Cookie) |
 | `reply.ts` | `sendError`, `replyError` | HTTP-Fehlerantwort mit Katalog-Status |
@@ -50,7 +50,8 @@ Antwort unverändert.
 **Dateiinhalt (Phase 3, ADR-142, WP-53):** `GET`/`HEAD /api/file?entryId=…&path=…`
 (`fileQuerySchema`, sonst 400 `VALIDATION_FAILED {reason: 'query'}`), Guard-Klasse `file`.
 `options.files` (`FileContentProvider`, `files/service.ts`) prüft wie `file.stat`; ohne Dienst 501
-`NOT_IMPLEMENTED`. Header: `Content-Type` des Dienstes, `Content-Length`, `Content-Disposition:
+`NOT_IMPLEMENTED`. Header: `Content-Type` des Dienstes, `Content-Length` (= `FileContent.bytes`, seit
+CR3-05 immer die genaue Länge des Körpers, auch bei einer zwischendurch geänderten Datei), `Content-Disposition:
 inline; filename*=UTF-8''…` (alles außerhalb der attr-chars kodiert), `Cache-Control: no-store`,
 CORP `same-origin`, `BLOB_CSP` + `X-Frame-Options: DENY` bzw. für PDFs `FILE_PDF_CSP` +
 `SAMEORIGIN`. Fehler `ErrorPayload` mit Katalog-Status. `HEAD` liefert dieselben Header ohne Körper.

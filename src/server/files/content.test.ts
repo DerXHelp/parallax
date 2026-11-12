@@ -1,4 +1,4 @@
-import { Readable } from 'node:stream';
+import type { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from '@shared/common';
 import type { FileInfo } from '@shared/model';
@@ -7,21 +7,21 @@ import { CommandError } from '../sync/ports';
 import { openContent, readTextContent } from './content';
 import { nodeFileFs, type FileFs } from './fileFs';
 
-/** A FileFs serving `data` for any path; `streams` records createReadStream calls. */
-function dataFs(data: Buffer): FileFs & { streams: number[]; heads: number[] } {
-  const streams: number[] = [];
+/** A FileFs serving `data` for any path; `heads`/`wholes` record the reads (length / max). */
+function dataFs(data: Buffer): FileFs & { heads: number[]; wholes: number[] } {
   const heads: number[] = [];
+  const wholes: number[] = [];
   return {
     ...nodeFileFs,
-    streams,
     heads,
+    wholes,
     readHead: (_file, length) => {
       heads.push(length);
       return Promise.resolve(data.subarray(0, length));
     },
-    createReadStream: (_file, bytes) => {
-      streams.push(bytes);
-      return Readable.from([data.subarray(0, bytes)]);
+    readWhole: (_file, max) => {
+      wholes.push(max);
+      return Promise.resolve(data.length > max ? null : data);
     },
   };
 }
@@ -95,7 +95,7 @@ describe('openContent – text (ADR-142)', () => {
 });
 
 describe('openContent – images, PDFs, others', () => {
-  it('an image is streamed with its type; a PDF gets the pdf header set', async () => {
+  it('an image is sent with its type (read whole, up to fileBinaryBytes); a PDF gets the pdf header set', async () => {
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const fs = dataFs(png);
     const image = await openContent(
@@ -110,7 +110,7 @@ describe('openContent – images, PDFs, others', () => {
     );
     expect(image).toMatchObject({ mediaType: 'image/png', bytes: png.length, name: 'a.png', policy: 'blob' });
     expect((await body(image.stream)).equals(png)).toBe(true);
-    expect(fs.streams).toEqual([png.length]);
+    expect(fs.wholes).toEqual([LIMITS.fileBinaryBytes]);
     const pdf = await openContent(
       dataFs(Buffer.from('%PDF-1.7')),
       sampleFileInfo({
@@ -124,14 +124,48 @@ describe('openContent – images, PDFs, others', () => {
     expect(pdf).toMatchObject({ policy: 'pdf', mediaType: 'application/pdf', name: 'd.pdf' });
   });
 
-  it('an empty image opens no stream on the file', async () => {
+  it.each([
+    ['shrank', 250],
+    ['grew', 600],
+  ])('CR3-05: the file %s after file.stat – bytes, body and file agree', async (_name, size) => {
+    const now = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.alloc(size - 8, 7),
+    ]);
+    const stale = sampleFileInfo({
+      path: 'C:\\p\\a.png',
+      kind: 'image',
+      mediaType: 'image/png',
+      bytes: 400,
+      encoding: null,
+    });
+    const content = await openContent(dataFs(now), stale);
+    const sent = await body(content.stream);
+    expect(content.bytes).toBe(sent.length);
+    expect(sent.equals(now)).toBe(true);
+  });
+
+  it('CR3-05: an image that grew over fileBinaryBytes after file.stat → PAYLOAD_TOO_LARGE', async () => {
+    const fs = dataFs(Buffer.alloc(16));
+    fs.readWhole = (_file, max) => {
+      fs.wholes.push(max);
+      return Promise.resolve(null);
+    };
+    await expectCode(
+      openContent(fs, sampleFileInfo({ kind: 'image', mediaType: 'image/png', bytes: 16, encoding: null })),
+      'PAYLOAD_TOO_LARGE',
+    );
+    expect(fs.wholes).toEqual([LIMITS.fileBinaryBytes]);
+  });
+
+  it('an empty image: an empty body with length 0', async () => {
     const fs = dataFs(Buffer.alloc(0));
     const content = await openContent(
       fs,
-      sampleFileInfo({ kind: 'image', mediaType: 'image/png', bytes: 0 }),
+      sampleFileInfo({ kind: 'image', mediaType: 'image/svg+xml', bytes: 0 }),
     );
     expect((await body(content.stream)).length).toBe(0);
-    expect(fs.streams).toEqual([]);
+    expect(content.bytes).toBe(0);
   });
 
   it('PAYLOAD_TOO_LARGE over fileBinaryBytes, UNSUPPORTED_MEDIA_TYPE for binary files and folders', async () => {
@@ -151,6 +185,6 @@ describe('openContent – images, PDFs, others', () => {
       openContent(fs, sampleFileInfo({ kind: 'directory', mediaType: null })),
       'UNSUPPORTED_MEDIA_TYPE',
     );
-    expect(fs.streams).toEqual([]);
+    expect(fs.wholes).toEqual([]);
   });
 });

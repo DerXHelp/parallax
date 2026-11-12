@@ -329,7 +329,8 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   });
 
   // File content (ADR-142): the checks of file.stat (access policy ADR-141, kinds, limits) in the
-  // file service; text as UTF-8 (cut at a line end), images/PDFs streamed. Guard class "file"
+  // file service; text as UTF-8 (cut at a line end), images/PDFs read whole – `content.bytes` is the
+  // exact body length, also for a file changed since its stat (CR3-05). Guard class "file"
   // (Sec-Fetch-Site same-origin required, Origin if present allowed, cookie). Nothing of the
   // content or the path reaches the log.
   app.route<{ Querystring: Record<string, unknown> }>({
