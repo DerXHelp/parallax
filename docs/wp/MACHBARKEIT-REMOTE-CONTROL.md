@@ -106,5 +106,35 @@ nur mit Absicherung über `pnpm cli-check`.
 2. **WP-64 „Remote Control“** auf `feature/ux-feedback` nach WP-63 (gleiche Engine-Dateien:
    `sessions/commands.ts`, `runtime.ts`, `entryState.ts`), mit Contract-Freigabe nach dem Spike.
 
-## 8. Spike-Ergebnis
-(offen)
+## 8. Spike-Ergebnis (12.11.2026, live, Nutzer-Freigabe)
+
+Aufbau: Skript im Scratch-Ordner mit dem SDK aus `node_modules` (0.3.322), `claude` 2.1.322, Haiku, Abo,
+leeres Temp-Arbeitsverzeichnis, Env nach den Regeln von `buildEnv` (u. a. `CLAUDE_CODE_BRIDGE_SESSION_ID`
+der aufrufenden Session entfernt), `settingSources` wie Parallax, `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1`.
+Phase A: einschalten, Tests am Handy. Phase B: Prozess neu (`resume`) mit `reattachSessionId` und
+`--replay-user-messages`, am Ende `enableRemoteControl(false)`. Kosten zusammen **0,0182 USD**, keine
+Prozessreste.
+
+| Prüfpunkt | Ergebnis |
+|---|---|
+| `enableRemoteControl` im headless SDK-Modus | **funktioniert**: Antwort nach ≈ 1 s, `{session_url: "https://claude.ai/code/session_…", connect_url, environment_id: "", bridge_epoch: 1, bridge_session_id: "cse_…"}` |
+| Zustandsmeldungen an den Host | `system/bridge_state {state:"ready"}`, dann `{state:"connected", bridge_epoch:1}` |
+| Vorgabe aus den Einstellungen | `getSettings().effective.remoteControlAtStartup = true` (Nutzerwert); `remote_control_auto_enable` liefert dieses CLI nicht |
+| Prompt vom Handy | das CLI startet den Turn selbst. **Ohne** Replay: kein `user`-Echo, aber `command_lifecycle` (`queued`/`started`/`completed`) mit einer `command_uuid`, die Parallax nicht kennt. **Mit** `--replay-user-messages`: `user` mit `isReplay:true` und **`origin:{kind:"human"}`** (lokale Prompts ohne `origin`) |
+| Freigabe vom Handy (`Write`) | erteilt am Handy; im Host wird `canUseTool` per `AbortSignal` abgebrochen (`AbortError`, 7 s nach der Anfrage), danach läuft das Werkzeug, `tool_result` folgt. „Wer zuerst antwortet, gewinnt“ bestätigt |
+| Neustart mit `reattachSessionId` | **gleiche** `bridge_session_id`/`session_url` → derselbe Eintrag in der App; Prompt vom Handy danach funktioniert |
+| Ausschalten | `enableRemoteControl(false)` → ohne Fehler |
+| Nebenbei gesehen | `system/task_summary {detail:"Writing handy.txt"}` während des Turns, `system/post_turn_summary {status_category:"completed", status_detail:"handy.txt created with content 'hallo'", needs_action:""}` nach jedem Turn (siehe `docs/wp/SDK-MOEGLICHKEITEN.md`) |
+| Offen beim Nutzer | Session sofort in der App sichtbar? Push bei wartender Freigabe? |
+
+**Folgerungen für WP-64:**
+- Technisch alles Nötige bestätigt. Parallax setzt künftig `--replay-user-messages` (nur bei
+  Remote Control oder generell, Entscheidung im WP; Auswirkung auf F.9/Queue prüfen) und zeigt Prompts mit
+  `origin.kind === "human"` ohne eigene `command_uuid` als „vom Handy“.
+- Fremde Turns erkennt die Engine an `command_lifecycle` mit unbekannter `command_uuid`; Status „arbeitet“
+  folgt aus `session_state_changed`, das Parallax schon auswertet.
+- Eine Entscheidung, deren `canUseTool` per Signal endet, während Remote Control verbunden ist, heißt in
+  der UI „in der Claude-App beantwortet“.
+- `bridge_session_id` je Konversation speichern, beim Wiederanlauf `reattachSessionId`; `keepSessionOnExit`
+  an, damit Schlaf und Neustart die Session in der App nicht archivieren.
+- Probe für `pnpm cli-check`: Methode vorhanden, Antwort-Schema, `bridge_state connected`, Ausschalten.
