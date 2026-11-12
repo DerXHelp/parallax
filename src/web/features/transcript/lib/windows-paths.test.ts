@@ -11,6 +11,11 @@ describe('preserveWindowsPaths (V2-12)', () => {
     ['c:\\temp\\', 'c:\\temp\\\\'],
     ['C:\\\\Users', 'C:\\\\\\Users'],
     ['two: C:\\a\\.x and D:\\b\\.y', 'two: C:\\a\\\\.x and D:\\b\\\\.y'],
+    // V4-01: folder names with spaces – the rest of the path after a space is protected too.
+    ['C:\\Users\\Max Mustermann\\.claude', 'C:\\Users\\Max Mustermann\\\\.claude'],
+    ['C:\\Program Files\\_x\\a b\\.y.', 'C:\\Program Files\\\\_x\\a b\\\\.y.'],
+    // … but not an escape at the start of the next word.
+    ['C:\\x\\a.ts and \\*bold\\*', 'C:\\x\\a.ts and \\*bold\\*'],
     // No path: unchanged (counter checks – escapes outside paths stay escapes).
     ['\\*not bold\\*', '\\*not bold\\*'],
     ['snake\\_case and \\_\\_init\\_\\_', 'snake\\_case and \\_\\_init\\_\\_'],

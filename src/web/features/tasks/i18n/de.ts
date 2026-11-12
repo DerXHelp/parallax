@@ -23,6 +23,7 @@ export const de: typeof en = {
     background: 'Hintergrund-Tasks',
     running: { one: '{count} läuft', other: '{count} laufen' },
     recent: { one: '{count} kürzlich beendet', other: '{count} kürzlich beendet' },
+    summary: '{running} · {recent}',
     stopAll: 'Alle stoppen',
     confirmTitle: { one: 'Laufenden Task stoppen?', other: 'Alle {count} laufenden Tasks stoppen?' },
     confirmText: 'Die Tasks werden nacheinander gestoppt; was sie bisher erledigt haben, bleibt erhalten.',
@@ -46,6 +47,7 @@ export const de: typeof en = {
   strip: {
     label: 'Aufgabenliste',
     progress: '{done} von {total} erledigt',
+    line: '{progress} · {active}',
     openPanel: 'Aufgaben',
     openPanelLabel: 'Aufgaben im Seitenpanel anzeigen',
   },

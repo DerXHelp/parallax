@@ -2,12 +2,13 @@ import { createElement, lazy, memo, Suspense } from 'react';
 import type { SessionViewState } from '@shared/sync';
 import type { FeatureSlots } from '@web/shell/slots';
 import { useSessionSelector } from '@web/state/hooks';
-import { todoProgress } from './lib/rows';
+import { todoProgress } from './lib/todo-progress';
 
 /**
  * Feature `tasks` (WP-55): the slots `TasksPanel` (side panel tab "Tasks") and `TaskStrip` (above
  * the composer). Both are lazy chunks; the strip slot first checks for open todos with a cheap
- * selector, so a session without a task list loads nothing. WP-60 wires them in App.tsx
+ * selector, so a session without a task list loads nothing. Only `lib/todo-progress.ts` is static
+ * here (R5W-01: the panel rows `lib/rows.ts` stay in the panel chunk). WP-60 wires them in App.tsx
  * (`...TASKS_SLOTS`); tests and the playground import the modules directly.
  */
 

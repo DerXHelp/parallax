@@ -1,5 +1,5 @@
 import { createContext, useContext, type ReactNode } from 'react';
-import { findFileRefs, resolveFileRef, type FileTarget } from '@web/lib/file-refs';
+import { findCodeRefs, resolveFileRef, type FileTarget } from '@web/lib/file-refs';
 import { useFeatureSlots } from '@web/shell/slots';
 
 /**
@@ -38,10 +38,13 @@ export function FileReference({ target, children }: { target: FileTarget; childr
   );
 }
 
-/** Text with its file references as `FileReference` (inline code). */
+/**
+ * Inline code with its file references as `FileReference`: the whole span when it is one path, even
+ * with spaces (V4-01, `findCodeRefs`), else the references in its text.
+ */
 export function LinkedText({ text }: { text: string }): ReactNode {
   const context = useContext(FileRefContext);
-  const refs = context === null ? [] : findFileRefs(text);
+  const refs = context === null ? [] : findCodeRefs(text);
   if (refs.length === 0) return text;
   const parts: ReactNode[] = [];
   let position = 0;

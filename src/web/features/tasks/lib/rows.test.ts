@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BackgroundTask, TaskInfo, ToolCallItem, TranscriptItem } from '@shared/model';
-import { sampleItems, sampleSystemItems, sampleTime, sampleTodoList } from '@shared/samples';
+import { sampleItems, sampleSystemItems, sampleTime } from '@shared/samples';
 import {
   RECENT_TASK_MS,
   buildTaskRows,
@@ -8,7 +8,6 @@ import {
   finishedDuration,
   taskKind,
   taskSourceItems,
-  todoProgress,
   visibleTaskRows,
   type TaskRow,
 } from './rows';
@@ -215,23 +214,5 @@ describe('task helpers', () => {
       Date.parse(sampleTime(30)) - Date.parse(sampleTime(10)),
     );
     expect(unknown === undefined ? 0 : finishedDuration(unknown)).toBeNull();
-  });
-
-  it('todoProgress: done/total, the active form, open while not all are done', () => {
-    expect(todoProgress(null)).toEqual({ done: 0, total: 0, active: null, open: false });
-    expect(todoProgress(sampleTodoList())).toEqual({
-      done: 1,
-      total: 3,
-      active: 'Writing the tests',
-      open: true,
-    });
-    const allDone = sampleTodoList({
-      items: sampleTodoList().items.map((item) => ({ ...item, status: 'completed' as const })),
-    });
-    expect(todoProgress(allDone).open).toBe(false);
-    const noActiveForm = sampleTodoList({
-      items: [{ id: '0', content: 'Write it', status: 'in_progress', activeForm: null }],
-    });
-    expect(todoProgress(noActiveForm).active).toBe('Write it');
   });
 });

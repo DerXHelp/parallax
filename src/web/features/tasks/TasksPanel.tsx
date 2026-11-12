@@ -1,5 +1,5 @@
 import { LayersIcon, SquareIcon } from 'lucide-react';
-import { memo, useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useT } from '@web/i18n';
 import { useNow } from '@web/state/clock';
 import { Alert } from '@web/ui/alert';
@@ -7,14 +7,17 @@ import { Button } from '@web/ui/button';
 import { Spinner } from '@web/ui/spinner';
 import { TaskRowView } from './components/TaskRowView';
 import { TodoItems } from './components/TodoItems';
-import { canStopTask, todoProgress, visibleTaskRows, type TaskRow } from './lib/rows';
-import { stopTask, stopTasks, useTaskRows, useTodos } from './state/tasks';
+import { canStopTask, visibleTaskRows, type TaskRow } from './lib/rows';
+import { todoProgress } from './lib/todo-progress';
+import { stopTask, stopTasks, useTaskRows } from './state/tasks';
+import { useTodos } from './state/todos';
 
 /**
  * Slot `TasksPanel` (WP-55, ADR-149/150): tab "Tasks" of the side panel. The session's task list
  * (detail.todos) on top, then its background tasks – running ones with Stop (the composer's Stop
  * ends only the turn, F4), finished ones greyed out for 10 minutes – and "Stop all" with an inline
- * confirmation (tasks are stopped one after the other).
+ * confirmation (tasks are stopped one after the other). When the confirmation closes, the focus
+ * goes back to "Stop all", or to the panel when that button is gone (R5W-07).
  */
 
 /** The clock of the 10-minute window: coarse, nothing visible depends on the second. */
@@ -37,6 +40,21 @@ export const TasksPanel = memo(function TasksPanel({ sessionKey }: { sessionKey:
   const [stopping, setStopping] = useState<ReadonlySet<string>>(() => new Set());
   const [confirming, setConfirming] = useState(false);
   const [stopAll, setStopAll] = useState<StopAllState | null>(null);
+  const regionRef = useRef<HTMLDivElement>(null);
+  const stopAllRef = useRef<HTMLButtonElement>(null);
+  /** The confirmation just closed: its focused button is gone (the trigger was disabled meanwhile). */
+  const refocusRef = useRef(false);
+
+  useEffect(() => {
+    if (!refocusRef.current) return;
+    refocusRef.current = false;
+    (stopAllRef.current ?? regionRef.current)?.focus();
+  });
+
+  const closeConfirmation = () => {
+    refocusRef.current = true;
+    setConfirming(false);
+  };
 
   const markStopping = useCallback((taskId: string, on: boolean) => {
     setStopping((current) => {
@@ -65,7 +83,7 @@ export const TasksPanel = memo(function TasksPanel({ sessionKey }: { sessionKey:
 
   const runStopAll = () => {
     const ids = stoppable.map((row) => row.taskId);
-    setConfirming(false);
+    closeConfirmation();
     setStopAll({ done: 0, total: ids.length });
     stopTasks(sessionKey, ids, (done) => {
       setStopAll({ done, total: ids.length });
@@ -80,22 +98,26 @@ export const TasksPanel = memo(function TasksPanel({ sessionKey }: { sessionKey:
   };
 
   const progress = todoProgress(todos);
+  const runningText = t('tasks.panel.running', { count: running });
+  // The separator belongs to the language (R5W-06): a key with placeholders, not a join.
+  const summary =
+    recent === 0
+      ? runningText
+      : t('tasks.panel.summary', {
+          running: runningText,
+          recent: t('tasks.panel.recent', { count: recent }),
+        });
   return (
     <div
+      ref={regionRef}
       data-slot="tasks-panel"
       role="region"
       aria-label={t('tasks.panel.label')}
-      className="flex h-full min-h-0 flex-col"
+      tabIndex={-1}
+      className="flex h-full min-h-0 flex-col outline-none"
     >
       <div className="flex min-h-9 items-center gap-2 border-b px-3 py-1.5 text-xs">
-        <span className="text-muted-foreground min-w-0 truncate">
-          {[
-            t('tasks.panel.running', { count: running }),
-            recent === 0 ? null : t('tasks.panel.recent', { count: recent }),
-          ]
-            .filter((part) => part !== null)
-            .join(' · ')}
-        </span>
+        <span className="text-muted-foreground min-w-0 truncate">{summary}</span>
         <span className="flex-1" />
         {stopAll !== null ? (
           <span className="text-muted-foreground inline-flex items-center gap-1.5">
@@ -104,6 +126,7 @@ export const TasksPanel = memo(function TasksPanel({ sessionKey }: { sessionKey:
           </span>
         ) : stoppable.length > 0 ? (
           <Button
+            ref={stopAllRef}
             size="sm"
             variant="outline"
             data-slot="tasks-stop-all"
@@ -128,14 +151,7 @@ export const TasksPanel = memo(function TasksPanel({ sessionKey }: { sessionKey:
                 <Button size="sm" variant="destructive" onClick={runStopAll}>
                   {t('tasks.panel.confirmStop')}
                 </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  autoFocus
-                  onClick={() => {
-                    setConfirming(false);
-                  }}
-                >
+                <Button size="sm" variant="outline" autoFocus onClick={closeConfirmation}>
                   {t('tasks.panel.cancel')}
                 </Button>
               </>
