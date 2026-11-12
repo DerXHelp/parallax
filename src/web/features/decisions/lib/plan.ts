@@ -82,6 +82,17 @@ export function planSummary(plan: string): string | null {
   return summary === '' ? null : clip(summary, SUMMARY_MAX);
 }
 
+/**
+ * From this context fill (%, same source as the plan bar's gauge) the "With fresh context" option
+ * is highlighted as recommended (Plan "hervorgehoben, sobald die Context-Gauge über 60 % liegt",
+ * ADR-147) – never chosen automatically.
+ */
+export const FRESH_CONTEXT_RECOMMENDED_PERCENT = 60;
+
+export function isFreshContextRecommended(percent: number | null): boolean {
+  return percent !== null && percent >= FRESH_CONTEXT_RECOMMENDED_PERCENT;
+}
+
 /** Display order of the "Implement" options (Plan: auto, accept edits, each change; bypass last). */
 const APPROVE_ORDER: readonly PermissionMode[] = [
   'auto',
