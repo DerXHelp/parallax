@@ -1,9 +1,10 @@
 /**
  * Phase-3 helpers (WP-60): sample files of every viewer kind in a test project, the messages of the
  * server log (the recording opener of the FakeBackend logs `file.open (fake): <target> <path>`), the
- * requests the guard refused (a browser cannot read the status of a CORS-blocked answer) and
+ * requests the guard refused (a browser cannot read the status of a CORS-blocked answer),
  * a page recorder that notes every text a selector ever showed (for states that last only a few
- * frames, e.g. the plan file while Claude writes it – no fixed waits).
+ * frames, e.g. the plan file while Claude writes it – no fixed waits) and one that notes WHEN a text
+ * first showed (time bounds of the app without the retry lag of an assertion, FIX-R5-F6).
  */
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -129,4 +130,36 @@ export async function recordTexts(page: Page, selector: string): Promise<void> {
 
 export async function seenTexts(page: Page): Promise<string[]> {
   return page.evaluate(() => window.__e2eSeenTexts ?? []);
+}
+
+/**
+ * Starts watching for `text` in an element matching `selector` and notes the moment (`Date.now()`
+ * of the page – the same wall clock as the test process) it first shows; `textShownAt` returns it.
+ * For time bounds of the app itself: a web-first assertion only sees a change at its next retry
+ * (intervals grow to 1 s), which would eat most of a 3-s budget (R5W-11). One watcher per page.
+ */
+export async function recordTextShown(page: Page, selector: string, text: string): Promise<void> {
+  await page.evaluate(
+    ({ watched, wanted }) => {
+      window.__e2eShownAt = null;
+      const check = () => {
+        if (window.__e2eShownAt !== null) return;
+        for (const element of document.querySelectorAll(watched)) {
+          if (element.textContent.includes(wanted)) {
+            window.__e2eShownAt = Date.now();
+            observer.disconnect();
+            return;
+          }
+        }
+      };
+      const observer = new MutationObserver(check);
+      observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+      check();
+    },
+    { watched: selector, wanted: text },
+  );
+}
+
+export async function textShownAt(page: Page): Promise<number | null> {
+  return page.evaluate(() => window.__e2eShownAt ?? null);
 }
