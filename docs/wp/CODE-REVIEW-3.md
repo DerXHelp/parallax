@@ -62,3 +62,45 @@ Ergebnis je Paket in `docs/wp/CODE-REVIEW-3-S.md`, `-D.md`, `-W.md` (Tabelle je 
 Fix, Regressionstest, Commit). ADR-Texte und README-Änderungen schreiben die Pakete als Vorschlag in
 ihr Ergebnis; `docs/decisions.md` und die Ordner-READMEs mit mehreren Ownern pflegt der Koordinator
 beim Merge.
+
+## Umsetzung
+
+Fix-Runde 12.11.2026, drei Pakete parallel ohne schwere Läufe (CPU über die ganze Runde im Mittel 13 %,
+höchstens 74 %); Details je Fund in `docs/wp/CODE-REVIEW-3-S.md`, `-D.md`, `-W.md`. ADR-155 … ADR-159
+(`docs/decisions.md`, in Merge-Reihenfolge angehängt: 157, 158, 159, 155, 156).
+
+| Nr. | Reproduziert | Fix (Kurzform) | Merge |
+|---|---|---|---|
+| CR3-01 | ja | Ordnerprüfung als `@web/lib/transfer-files`, genutzt von Composer und Pane-Drop; Anfrage `attachFiles` mit `folders?` | `9c5a75c` |
+| CR3-02 | ja | eine Zählung für Kopfzeile und Task-Panel (`@web/lib/task-rows`, ohne Ambient), ADR-158 | `9c5a75c` |
+| CR3-03 | ja | octet-stream bleibt Datei, auch mit Bild-Bytes; Bild nur bei deklariertem Bildtyp, ADR-157 | `f3290f6` |
+| CR3-04 | ja | `truncated` exakt (Lesen nur, wenn Größe/Kodierung es offen lassen; LRU je Dateiversion), ADR-157 | `f3290f6` |
+| CR3-05 | ja | Bilder/PDFs über ein Handle ganz gelesen, `Content-Length` = gesendete Bytes, ADR-157 | `f3290f6` |
+| CR3-06 | ja | Stat-Cache verwirft Antworten über einen während des Requests beendeten Write | `9c5a75c` |
+| CR3-07 | ja | `pending` nicht laufend/stoppbar – im Task-Panel und (Nachtrag) in der Agent-Karte | `9c5a75c` |
+| CR3-08 | nur White-Box (Retry-Verlust nicht erreichbar, Begründung in `-S.md`) | `cancelRetry` erst im Lock nach Annahme, ADR-155 | `8cd41c0` |
+| CR3-09 | ja | Plan-Index je Serverlauf (`withPlanIndex`), jede Version höchstens einmal gelesen, ADR-155 | `8cd41c0` |
+| CR3-10 | ja | Backfill seitenweise rückwärts, höchstens eine Seite im Speicher, ADR-157 | `f3290f6` |
+| WP61-01 | ja | U+200B vor den `@`, die die CLI expandieren würde (`neutralizeAtMentions`), ADR-155 | `8cd41c0` |
+| WP61-02 | ja | `todoFeatureEnabled` entfernt, ADR-156; Prüfpunkt in `docs/sdk-upgrade.md` | `8cd41c0` |
+| WP61-03 | ja | nach deny + interrupt höchstens 3 s auf das `result` warten (live zu bestätigen), ADR-155 | `8cd41c0` |
+| WP61-04 | ja | `debug`-Zeile `credentialExpiresAt` beim ersten `result` je Prozess, ADR-156 | `8cd41c0` |
+| WP61-05 | ja | Dialogtext „Frühere Unterhaltungen“ neutral (en/de) | `9c5a75c` |
+| WP61-06 | ja | Vordergrund-Shells von Subagenten ausgeblendet, Zählung angeglichen, ADR-158 | `9c5a75c` |
+| WP61-07 | ja | `task_progress.description` nie als Task-Name; Fake sendet „Running …“ wie die CLI, ADR-156 | `8cd41c0` |
+| B18 | – | ohne laufenden Turn normales „Senden“, kein Stop (aus `turn_result`-Reihenfolge abgeleitet), ADR-159 | `9c5a75c` |
+
+**Checks nach dem letzten Merge (`8cd41c0`):** `pnpm check` grün (4934 Tests, 290 Dateien), `pnpm build`
+grün, Bundle-Budget ok (Start +3.464 B raw gegen `109c073`), `pnpm e2e` 65/65 grün (zwei Läufe: 5,3 und
+4,5 min).
+
+**Beobachtung E2E-Dauer:** Seit dem Nachmittag dauert `pnpm e2e` 4,5–6,2 statt 3,0 min (F6, 14:56);
+einzelne Tests mit mehreren Fenstern/Sessions brauchen +10 … +38 s (`windows.spec.ts:11` 10 → 41–48 s).
+Gegenproben: die Basis vor der Fix-Runde (`8b54b9c`) ist genauso langsam (5,4 min), ebenso ein frischer
+Worktree (6,2 min); einzeln laufen die Specs normal schnell; CPU im Mittel 16–19 %, keine übrig
+gebliebenen Prozesse, `claude --version` 26–80 ms. **Keine Regression der Fix-Runde**; Ursache in der
+Umgebung, nicht gefunden (Kandidaten: Sicherheitssoftware/Web-Traffic-Scan, Plattenlast, parallele Arbeit
+am Rechner). Bei Wiederauftreten mit `--log-level=debug` und Playwright-Trace untersuchen.
+
+**Offen für die nächste Live-Abnahme:** WP61-01 (B19 wiederholen), WP61-03 (`result` nach dem Interrupt?),
+Nutzer-Checkliste WP-61 §2.7 inkl. N18 (Ordner per Explorer auf die Pane).
