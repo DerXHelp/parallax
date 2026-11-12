@@ -25,7 +25,7 @@ Session“ (Slot `FilesPanel`) über die Host-Befehle `file.*`/`files.*` und `GE
 | `lib/` | reine Helfer: `actions` (`fileActions`, `activateFile`, `openInViewer`, `openExternally`, `copyFilePath` – Editor/Explorer nur für den lokalen Host (`isLocalSession` aus `@web/shell/navigation/session-actions`), Standardprogramm nur bei `isDefaultProgramAllowed`), `columns` (`columnOffset`: Spalte → `ch`-Versatz mit Tab-Stopps), `file-tools` (`toolFilePath`, `fileToolIndex`: letzte fertige Schreibzeit je Datei + Signatur aller fertigen Datei-Tools), `paths` (`relativeToRoot`, `parentPath`, `fileName`). Größen: `formatFileSize` aus `@web/lib/bytes` |
 | `state/` | `stat-cache` (`StatCache`/`statCache`/`useFileStat`: 50 ms Sammelzeit, ≤ 100 Pfade je Befehl, TTL 30 s, LRU 2000, Invalidierung durch Write/Edit, Benachrichtigung gebündelt je Microtask), `file-source` (Loader-Naht `FileSource {text, url}`, `httpFileSource` über `GET /api/file`, `setFileSource`), `file-document` (`FileDocumentLoader`/`useFileDocument`: Stat-Polling, Inhalt nur für Text/Markdown, `stale` = letzter bekannter Stand nach einem Fehler, derselbe Fehler erneut ohne neuen Zustand), `session-files` (`useSessionFiles`), `file-tools` (`useFileWriteStamp`, `useFileToolSignature`) |
 | `playground/` | `FilesDemo` (Szenario + FakeHost-Dateitabelle), `media.ts` (erzeugtes Bild/PDF ohne Server) |
-| `i18n/` | `en.ts`/`de.ts` (Namespace `files`, statisch registriert in `src/web/i18n/index.ts`) |
+| `i18n/` | `en.ts`/`de.ts` (Namespace `files`, registriert in `src/web/i18n/dictionaries.ts` bzw. `dictionary.de.ts`, ADR-153) |
 
 ## Regeln
 

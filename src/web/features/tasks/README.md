@@ -27,7 +27,7 @@ Task, „Alle stoppen“, `session.stopTask`) und die angeheftete Aufgabenleiste
 | `state/strip.ts` | Auf/Zu der Leiste je Session in localStorage (`storageKey('tasks','strip',…)`, Fehler geschluckt) |
 | `components/` | `TaskRowView` (Art, Beschreibung, Laufzeit über `useNow`, Tokens/Tool-Aufrufe, Zusammenfassung, Ausgabedatei als `FileLink`, Stop), `TodoItems` (Liste mit Status-Icons) |
 | `testing.ts` | Fixtures + FakeHost-Szenario (Tests, Playground) |
-| `i18n/en.ts`, `i18n/de.ts` | Namespace `tasks` (statisch registriert in `src/web/i18n/index.ts`) |
+| `i18n/en.ts`, `i18n/de.ts` | Namespace `tasks` (registriert in `src/web/i18n/dictionaries.ts` bzw. `dictionary.de.ts`, ADR-153) |
 
 ## Regeln
 

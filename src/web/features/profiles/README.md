@@ -17,7 +17,7 @@ Slot `ProfilesSettings` (`src/web/shell/slots.tsx`); WP-40 setzt den Slot in `Ap
 | `lib/draft.ts` | Arbeitskopie (`ProfileDraft`) ↔ `ProfileInput` (`buildInput`, zod an der Grenze), Grenzen und Env-Namensregel aus `profileInputSchema` (`numberRange`, `env.keyType`), `placeIssues` (Befunde an Feld/Zeile), `draftKey`, `configDirChanged` |
 | `lib/demo-host.ts` | nur Tests/Playground: `FakeProfileServer` (`profile.*`), Demo-Profile, `startProfilesDemo` |
 | `playground.tsx` | Demos: Dialog (mit/ohne Vorbelegung), Ordner-Browser, Editor, Einstellungsseite über den Slot `SettingsPage` (R4W-01); Slot `ProfilesSettings` für die Einstellungsseite des Playgrounds (Test: `playground.test.tsx`) |
-| `i18n/{en,de}.ts` | Namensraum `profiles` (registriert in `src/web/i18n/index.ts`) |
+| `i18n/{en,de}.ts` | Namensraum `profiles` (registriert in `src/web/i18n/dictionaries.ts` bzw. `dictionary.de.ts`, ADR-153) |
 
 Hinweis `configDir` (WP41-06, Live-Abnahme WP-41): Claude Code richtet einen Konfigurationsordner
 selbst ein – schon „Profil testen“ (`claude --version`/`auth status` mit `CLAUDE_CONFIG_DIR`) legt in
