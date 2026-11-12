@@ -48,7 +48,7 @@ Design: `docs/wp/WP-13.md` §3.3, Ergebnis und Stolpersteine: `docs/wp/WP-13a.md
 `readRemoteControlDefault()` = `FakeBackendOptions.remoteControl.atStartup` (Standard `false`, damit neue
 Sessions im Dev-Server/E2E nicht automatisch verbinden); `remoteControl.enable` = `unavailable` / `auth` /
 `policy` / `failed` für die Fehlerfälle. Test-Handle: `remoteControl`, `bridgeState(state, fields)`,
-`remotePrompt(text, answer?)` (Turn zwischen den Turns, nicht unterbrechbar).
+`remotePrompt(text, {answer?, totalCostUsd?})` (Turn zwischen den Turns, nicht unterbrechbar).
 
 | Eingabe (nur mit verbundener Fake-Bridge, sonst Hinweis-Antwort) | Ablauf |
 |---|---|

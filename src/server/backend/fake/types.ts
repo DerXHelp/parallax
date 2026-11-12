@@ -111,6 +111,12 @@ export interface FakeDiagnostic {
   actual?: unknown;
 }
 
+/** WP-64: FakeSessionHandle.remotePrompt. */
+export interface FakeRemotePromptOptions {
+  answer?: string;
+  totalCostUsd?: number;
+}
+
 export interface FakeSessionHandle {
   readonly entryId: string;
   readonly pid: number;
@@ -134,8 +140,9 @@ export interface FakeSessionHandle {
   /**
    * WP-64 test: a prompt typed in the Claude app (script mode, bridge connected): its whole turn is
    * played once no other turn runs. Resolves with the foreign uuid after the turn; rejects without a bridge.
+   * `answer` default "From the app: <text>"; `totalCostUsd` = the cumulative cost of its result.
    */
-  remotePrompt(text: string, answer?: string): Promise<string>;
+  remotePrompt(text: string, o?: FakeRemotePromptOptions): Promise<string>;
 }
 
 export interface FakeScriptState {

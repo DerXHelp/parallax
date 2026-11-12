@@ -55,6 +55,7 @@ import type {
   FakeDiagnosticKind,
   FakeIds,
   FakeRemoteControlOptions,
+  FakeRemotePromptOptions,
   FakeScenario,
   FakeScriptContext,
   FakeScriptState,
@@ -389,10 +390,16 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
     this.emitMessage(bridgeStateMessage(this.currentSessionId, this.deps.ids.uuid(), state, fields));
   }
 
-  async remotePrompt(text: string, answer = `From the app: ${text}`): Promise<string> {
+  async remotePrompt(text: string, o: FakeRemotePromptOptions = {}): Promise<string> {
     if (this.bridge === null) throw new Error('remotePrompt: Remote Control is off');
     if (this.script === null) throw new Error('remotePrompt: only in the script mode');
-    return this.busyWhile(this.script.remoteTurn(text, answer));
+    return this.busyWhile(
+      this.script.remoteTurn({
+        text,
+        answer: o.answer ?? `From the app: ${text}`,
+        ...(o.totalCostUsd === undefined ? {} : { totalCostUsd: o.totalCostUsd }),
+      }),
+    );
   }
 
   /** WP-64: waits `ms × speed` (≤ maxDelayMs) as busy work – settle() waits for it. */
@@ -916,11 +923,9 @@ class ScriptContext implements FakeScriptContext {
   }
 
   /** WP-64: the turn of a prompt typed in the Claude app, once no other turn runs (not interruptible). */
-  async remoteTurn(text: string, answer: string): Promise<string> {
+  async remoteTurn(o: { text: string; answer: string; totalCostUsd?: number }): Promise<string> {
     const uuid = this.ids.uuid();
-    await this.betweenTurns(
-      remotePromptTurn(contextFor(this, this.session.sessionId ?? this.sessionId), { uuid, text, answer }),
-    );
+    await this.betweenTurns(remotePromptTurn(contextFor(this, this.session.sessionId ?? this.sessionId), { uuid, ...o }));
     this.state.turns += 1;
     return uuid;
   }

@@ -100,12 +100,17 @@ function replayFrame(c: DslContext, uuid: string, text: string): FixtureEvent[] 
 }
 
 /** A whole turn of a prompt typed in the Claude app (foreign uuid; spike order: started, init, replay). */
-export function remotePromptTurn(c: DslContext, o: { uuid: string; text: string; answer: string }): FixtureEvent[] {
+export function remotePromptTurn(
+  c: DslContext,
+  o: { uuid: string; text: string; answer: string; totalCostUsd?: number },
+): FixtureEvent[] {
   return events(
     turnOpen(c, o.uuid),
     replayFrame(c, o.uuid, o.text),
     assistantMessage(c, [textBlock(o.answer)], { chunks: 6 }),
-    turnClose(c, o.uuid, { result: { result: o.answer } }),
+    turnClose(c, o.uuid, {
+      result: { result: o.answer, ...(o.totalCostUsd === undefined ? {} : { total_cost_usd: o.totalCostUsd }) },
+    }),
   );
 }
 
