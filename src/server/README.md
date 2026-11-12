@@ -15,7 +15,7 @@ Ownership: `docs/architecture.md` §2.1 (Phase 3: `CLAUDE.md` bzw. `docs/wp/WP-5
 | `lib/windows.ts`, `lib/registry.ts`, `lib/chrome.ts` | PATH-Suche/npm-Shims, Registry (`reg.exe`), Chrome-Suche und -Version (R1-08, ADR-136) | 11, CHROME |
 | `config.ts` | Config (`loadConfig`, Port-Default `DEFAULT_PORT` aus `@shared/model`), `isTestRun(env?)` – die eine Testlauf-Erkennung des Servers (Config, `system/run.ts`, `sync/hub.ts`, `store/transcripts.ts`; R4-14) | 10 |
 | `http/`, `sync/`, `store/` | Fastify-App, Auth, Origin/Host, CSP, WS, Sync, Stores | 10 |
-| `claude/` | `resolveClaude`, `buildEnv`, `parseProfileArgs`, Profil „Standard“, Preflight-Checks | 11 |
+| `claude/` | `resolveClaude`, `buildEnv`, `parseProfileArgs`, Profil „Standard“, Preflight-Checks; CLI-Profil `cliProfile.ts` + `cli-profile.json` (WP-62, ADR-160) | 11, 62 |
 | `sessions/normalizer/`, `sessions/status/` | Normalizer (zwei Adapter), Statusmaschine | 12 |
 | übrige Dateien in `sessions/`, `backend/` | SessionManager, Broker, `FakeBackend`, `SdkBackend` | 13 |
 | `main.ts`, `app/` | Einstieg, Komposition (`startServer`, `StartupError`), UI-Snapshot (`webSnapshot.ts`), Crash-Handler (`crash.ts`), Server-Integrationstest `main.integration.test.ts` | 20 |

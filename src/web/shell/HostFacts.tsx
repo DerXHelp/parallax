@@ -1,7 +1,7 @@
 import type { HostState } from '@shared/model';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
-import { knownVersion } from '@web/lib/version';
+import { knownVersion, newerThanTested } from '@web/lib/version';
 import { defaultProfileOf } from './ShellBanners';
 
 /** The default profile's claude (B "Claude-Auflösung": path + `claude --version`, rule C.7). */
@@ -10,6 +10,8 @@ function ClaudeInfo({ hostState }: { hostState: HostState }) {
   const claude = defaultProfileOf(hostState)?.claude;
   if (claude === undefined) return null;
   const version = knownVersion(claude.version);
+  // WP-62: newer than the version tested with Parallax – a quiet note, not an error (C.7 stays ok).
+  const tested = claude.state === 'ok' && claude.versionStatus !== 'too_old' ? newerThanTested(claude) : null;
   let line: string;
   if (claude.state === 'checking') line = t('shell.info.claudeChecking');
   else if (claude.state === 'not_found') line = t('shell.info.claudeMissing');
@@ -26,6 +28,11 @@ function ClaudeInfo({ hostState }: { hostState: HostState }) {
           {t('shell.info.claudeTooOld', { required: hostState.sdkClaudeCodeVersion })}
         </span>
       ) : null}
+      {tested === null || version === null ? null : (
+        <span data-slot="claude-untested" className="text-muted-foreground">
+          {t('shell.info.claudeNewerThanTested', { version, tested })}
+        </span>
+      )}
     </div>
   );
 }

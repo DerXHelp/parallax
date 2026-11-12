@@ -72,6 +72,7 @@ export const de: typeof en = {
       claudeMissing: 'Claude Code: nicht gefunden',
       claudeUnknown: 'Claude Code: Version unbekannt',
       claudeTooOld: 'Älter als vom Agent SDK erwartet (mindestens {required}).',
+      claudeNewerThanTested: 'Claude Code {version} ist neuer als die mit Parallax geprüfte Version {tested}.',
       sdk: 'Agent SDK {version} · erwartet Claude Code {required} oder neuer',
       parallax: 'Parallax {version}',
       data: 'Daten: {path}',

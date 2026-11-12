@@ -119,6 +119,11 @@ export const claudeInstallStatusSchema = z.object({
   version: z.string().nullable(),
   /** C.7: 'too_old' (red) if the CLI is older than the SDK's package.json#claudeCodeVersion. */
   versionStatus: z.enum(['ok', 'too_old', 'unknown']),
+  /**
+   * WP-62: the claude version last checked with Parallax (`pnpm cli-check --accept`, CLI profile in
+   * the repo); null = unknown. The UI hints (no error) when `version` is newer.
+   */
+  testedVersion: z.string().nullable().default(null),
   auth: z.object({
     state: z.enum(['unknown', 'logged_in', 'logged_out', 'error']),
     /** auth status: authMethod ('claude.ai' …). */

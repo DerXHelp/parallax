@@ -49,5 +49,7 @@ $env:PARALLAX_LIVE='1'; pnpm e2e e2e/live      # ≈ 1,5 min, ≈ 0,01 USD (Haik
   `apiKeySource: none` und Haiku, Budget je Prompt `PARALLAX_LIVE_BUDGET_USD` (Default 0,50).
 - Abläufe: CLI-Version, Permission „Einmal erlauben“ → echte Datei, AskUserQuestion, Stop, Reload
   mit offener Karte, keine Validierungs-Drops, sauberes Ende. Artefakte `test-results/server-live.log`,
-  `live-cost.txt`. Nur mit Nutzer-Freigabe ausführen (Abo-Login, Kosten) – Ablauf und Einordnung:
-  `docs/sdk-upgrade.md` Schritt 7.
+  `live-cost.txt`, `live-run.json` (Kosten + Temp-Wurzel für den Rückbau von `pnpm cli-check`, WP-62;
+  dort liegt der Ausgabeordner unter `test-results/cli-check/<zeit>-smoke/`). Nur mit Nutzer-Freigabe
+  ausführen (Abo-Login, Kosten; Dauerfreigabe nur über `pnpm cli-check`) – Ablauf und Einordnung:
+  `docs/sdk-upgrade.md` Schritt 7 und „Stufe 1“.

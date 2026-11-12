@@ -109,4 +109,29 @@ describe('profile findings', () => {
       ),
     ).toMatchObject({ tone: 'warning', key: 'newSession.status.loggedOut' });
   });
+
+  it('WP-62: a CLI newer than the tested version is a quiet hint (info tone), equal or older is not', () => {
+    expect(profileStatusText(sampleClaudeInstallStatus({ version: '2.1.330', testedVersion: '2.1.322' }))).toEqual({
+      tone: 'info',
+      key: 'newSession.status.untestedPlan',
+      params: { version: '2.1.330', plan: 'max', tested: '2.1.322' },
+    });
+    expect(
+      profileStatusText(
+        sampleClaudeInstallStatus({
+          version: '2.1.330',
+          testedVersion: '2.1.322',
+          auth: { state: 'logged_in', method: 'claude.ai', apiProvider: 'firstParty', subscriptionType: null },
+        }),
+      ),
+    ).toMatchObject({ tone: 'info', key: 'newSession.status.untested' });
+    for (const testedVersion of ['2.1.300', '2.1.330', null]) {
+      expect(profileStatusText(sampleClaudeInstallStatus({ version: '2.1.300', testedVersion })).tone).toBe('ok');
+    }
+    // Problems keep their own (stronger) text.
+    expect(
+      profileStatusText(sampleClaudeInstallStatus({ version: '2.1.330', testedVersion: '2.1.322', versionStatus: 'too_old' }))
+        .key,
+    ).toBe('newSession.status.tooOld');
+  });
 });

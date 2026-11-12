@@ -90,7 +90,9 @@ die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale En
   (`parallax-test-*` im OS-Temp; jedes andere geerbte Home wird ersetzt), `PARALLAX_PORT=0` und entfernt
   geerbte Server-Steuervariablen. Nie das echte `%LOCALAPPDATA%\Parallax` anfassen – auch nicht im Dev-Modus.
 - **Kein Live-`claude`** (kein `pnpm dev:live`, kein `record`, kein Live-Smoke, kein SdkBackend-Test),
-  außer das WP erlaubt es ausdrücklich. Standard ist das FakeBackend mit Fixtures.
+  außer das WP erlaubt es ausdrücklich. Standard ist das FakeBackend mit Fixtures. **Dauerfreigabe
+  (Nutzer 12.11.2026):** der Kurz-Check bei `claude`-Updates (`pnpm cli-check`, Skill `/claude-update`,
+  WP-62) darf ohne Rückfrage live laufen – Haiku, Abo, kein API-Key, höchstens 0,05 USD je Check.
 - Synthetische SDK-Streams als `.ts`-Module (Fixture-Format v1), nie `.jsonl` außerhalb
   `test/fixtures/sdk/` (git-ignoriert, fehlt nach dem Merge).
 
@@ -148,6 +150,9 @@ Der Rechner des Nutzers darf **nie** einfrieren oder spürbar hängen – auch n
   mergen, danach `main` in den laufenden Feature-Branch.
 - Lokale Commits pro WP, Merge macht der Koordinator. **Subagenten pushen nie**; `origin` = privates
   Repo `DerXHelp/parallax`, Push (jeder Branch) nur durch den Koordinator nach Freigabe des Nutzers.
+  **Dauerfreigabe (Nutzer 12.11.2026):** Nach einem grünen `claude`-Kurz-Check darf der Koordinator
+  nach `main` mergen und pushen, wenn nur das CLI-Profil oder kleine Anpassungen betroffen sind (Ablauf:
+  Skill `/claude-update`); größere Fixes vorher dem Nutzer zeigen.
 - Commit-Messages mit mehreren `-m`-Flags, **kein Heredoc**, keine Command-Substitution.
 - Worktrees liegen in `.worktrees/` (ignoriert, von tsconfig/Vitest/ESLint/Vite ausgeschlossen);
   pro Worktree `pnpm install --frozen-lockfile`. `core.longpaths` ist gesetzt.
