@@ -368,7 +368,11 @@ export const EDITOR_PRESET_ARGS = {
   vscode: ['--goto', '{file}:{line}:{col}'],
 } as const satisfies Record<'notepadpp' | 'vscode', readonly string[]>;
 
-/** Never accepted as editor executable (base name, case-insensitive): shells, script hosts, LOLBins. */
+/**
+ * Never accepted as editor executable (base name, case-insensitive): shells, script hosts, LOLBins –
+ * and GUI programs that execute or import the file they are given (R5-03: help files with script,
+ * installers, snap-ins, `.reg` imports, control panel items, diagnostics packages, ISE).
+ */
 export const EDITOR_BLOCKED_EXECUTABLES = [
   'cmd.exe',
   'powershell.exe',
@@ -382,6 +386,13 @@ export const EDITOR_BLOCKED_EXECUTABLES = [
   'wsl.exe',
   'bash.exe',
   'explorer.exe',
+  'hh.exe',
+  'msiexec.exe',
+  'mmc.exe',
+  'regedit.exe',
+  'control.exe',
+  'msdt.exe',
+  'powershell_ise.exe',
 ] as const;
 
 /** "Open with default program" (`explorer.exe <file>`) only for these extensions (C.10, ADR-144). */
