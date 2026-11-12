@@ -5,15 +5,18 @@ import { sampleTodoList } from '@shared/samples';
 import { APP_SLOTS } from './App';
 import { startTasksScenario, TASKS_SESSION_KEY } from './features/tasks/testing';
 import type { RunningScenario } from './playground/PlaygroundScenario';
+import { NotificationCenter } from './shell/NotificationCenter';
+import { QUIET_SLOT_NOTICE_ID, resetQuietSlotFailures } from './shell/SlotBoundary';
 import { FeatureSlotsProvider, type FeatureSlots } from './shell/slots';
-import { resetClientStore } from './state/store';
+import { clientStore, resetClientStore } from './state/store';
 import { TooltipProvider } from './ui/tooltip';
 
 /**
  * WP-60 (WP-58 "Lazy-Slot-Fehlergrenze", WP-50 §8): every lazy slot of APP_SLOTS sits in a
  * SlotBoundary OUTSIDE its own Suspense. Each lazily loaded module of a slot fails to load here
  * (as a chunk that cannot be downloaded) – the slot must show the boundary's card instead of
- * taking the whole tree down, and the content next to it must stay.
+ * taking the whole tree down, and the content next to it must stay. `FileLink` is the quiet
+ * exception (R5W-02): its references stay plain text, the window gets one notice.
  */
 
 vi.mock('./features/transcript/TranscriptView', () => {
@@ -56,6 +59,7 @@ afterEach(() => {
   running?.stop();
   running = null;
   resetClientStore();
+  resetQuietSlotFailures();
 });
 
 function slot<K extends keyof FeatureSlots>(key: K): FeatureSlots[K] {
@@ -78,7 +82,6 @@ const LAZY_SLOTS: [keyof FeatureSlots, () => ReactNode][] = [
   ['PlanPanel', () => createElement(slot('PlanPanel'), { sessionKey: KEY })],
   ['SettingsPage', () => createElement(slot('SettingsPage'), { section: 'about', onClose: () => undefined })],
   ['ProfilesSettings', () => createElement(slot('ProfilesSettings'), {})],
-  ['FileLink', () => createElement(slot('FileLink'), { sessionKey: KEY, path: FILE })],
   [
     'FilePanel',
     () => createElement(slot('FilePanel'), { sessionKey: KEY, path: FILE, line: null, col: null }),
@@ -109,5 +112,51 @@ describe('APP_SLOTS: a lazy slot whose chunk fails shows the SlotBoundary card (
     );
     expect(within(host).getByText('This area could not be loaded')).toBeTruthy();
     expect(screen.getByText('still here')).toBeTruthy();
+  });
+});
+
+describe('APP_SLOTS.FileLink: a failed chunk keeps the references as text (R5W-02)', () => {
+  it('20 references in a paragraph: plain text, no card, no div in the p, at most one alert in the window', async () => {
+    running = startTasksScenario({ todos: sampleTodoList() });
+    const FileLink = slot('FileLink');
+    const paths = Array.from({ length: 20 }, (_, index) => `D:\\work\\sample\\src\\file${String(index)}.ts`);
+    render(
+      <FeatureSlotsProvider slots={APP_SLOTS}>
+        <TooltipProvider>
+          <p data-testid="paragraph">
+            {paths.map((path, index) => (
+              <FileLink key={path} sessionKey={KEY} path={path} line={index === 0 ? 12 : null} />
+            ))}
+            <FileLink sessionKey={KEY} path={FILE}>
+              {'the README'}
+            </FileLink>
+          </p>
+          <FileLink sessionKey={KEY} path={FILE} variant="menu" />
+          <NotificationCenter />
+        </TooltipProvider>
+      </FeatureSlotsProvider>,
+    );
+    const paragraph = screen.getByTestId('paragraph');
+    await waitFor(
+      () => {
+        expect(paragraph.querySelectorAll('[data-slot="file-link-fallback"]')).toHaveLength(21);
+      },
+      { timeout: 10_000 },
+    );
+    const texts = [...paragraph.querySelectorAll('[data-slot="file-link-fallback"]')].map(
+      (element) => element.textContent,
+    );
+    expect(texts[0]).toBe('src\\file0.ts:12');
+    expect(texts[1]).toBe('src\\file1.ts');
+    expect(texts[20]).toBe('the README');
+    expect(document.querySelector('[data-slot="slot-error"]')).toBeNull();
+    expect(paragraph.querySelector('div')).toBeNull();
+    // The menu variant (actions only) shows nothing instead of a card.
+    expect(document.querySelectorAll('[data-slot="file-link-fallback"]')).toHaveLength(21);
+    // One loud message for the window: the notice of the NotificationCenter.
+    await waitFor(() => {
+      expect(screen.getAllByRole('alert')).toHaveLength(1);
+    });
+    expect(clientStore.getState().notices.map((notice) => notice.id)).toEqual([QUIET_SLOT_NOTICE_ID]);
   });
 });

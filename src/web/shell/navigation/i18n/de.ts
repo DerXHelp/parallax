@@ -29,6 +29,7 @@ export const de: typeof en = {
       other: 'Aufgaben – {count} Hintergrund-Tasks laufen',
     },
     tasksOpen: { one: 'Aufgaben – {count} offene Aufgabe', other: 'Aufgaben – {count} offene Aufgaben' },
+    countOverflow: '{max}+',
   },
   drop: {
     hint: 'Zum Anhängen ablegen',
@@ -43,6 +44,10 @@ export const de: typeof en = {
     confirmReload: 'Das ganze Fenster neu laden? Deine Sessions laufen auf dem Server weiter.',
     reloadWindow: 'Fenster neu laden',
     cancel: 'Abbrechen',
+    inlineChunk:
+      'Ein Teil der App konnte nicht geladen werden – vielleicht wurde Parallax inzwischen aktualisiert. Bis das Fenster neu geladen ist, erscheinen manche Inhalte (etwa Dateilinks) als einfacher Text.',
+    inlineRender:
+      'Manche Inhalte (etwa Dateilinks) konnten nicht angezeigt werden und erscheinen als einfacher Text.',
   },
   row: {
     actions: 'Aktionen für „{title}“',

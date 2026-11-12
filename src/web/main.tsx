@@ -12,6 +12,7 @@ import { startNotificationDelivery } from './notifications/delivery';
 import { isPlaygroundHash } from './playground/route';
 import { installShortcutListener } from './shell/shortcuts';
 import { bootApp } from './state/bootstrap';
+import { preloadInitialLanguage } from './state/language';
 import { applyInitialTheme } from './state/theme';
 
 const rootElement = document.getElementById('root');
@@ -26,6 +27,8 @@ function render(node: ReactNode): void {
 
 document.title = PRODUCT_NAME;
 applyInitialTheme();
+// The window starts in English; the German chunk (ADR-153) loads meanwhile when it was used last.
+preloadInitialLanguage();
 installShortcutListener();
 
 // Playground (#playground, dev server only): sample data over the in-memory transport, no server.

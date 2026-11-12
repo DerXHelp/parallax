@@ -91,7 +91,11 @@ function usePanelButtons(sessionKey: string): PanelButton[] {
   return buttons;
 }
 
+/** Larger counts show as "99+" (`navigation.panels.countOverflow`, R5W-06). */
+export const PANEL_COUNTER_MAX = 99;
+
 function Counter({ count, running }: { count: number; running: boolean }) {
+  const t = useT();
   return (
     <span
       aria-hidden
@@ -102,7 +106,7 @@ function Counter({ count, running }: { count: number; running: boolean }) {
         running ? 'bg-status-working/15 text-status-working' : 'text-muted-foreground',
       )}
     >
-      {count > 99 ? '99+' : count}
+      {count > PANEL_COUNTER_MAX ? t('navigation.panels.countOverflow', { max: PANEL_COUNTER_MAX }) : count}
     </span>
   );
 }

@@ -13,6 +13,7 @@ const numberCache = new Map<string, Intl.NumberFormat>();
 const dateCache = new Map<string, Intl.DateTimeFormat>();
 const relativeCache = new Map<string, Intl.RelativeTimeFormat>();
 const pluralCache = new Map<Language, Intl.PluralRules>();
+const listCache = new Map<string, Intl.ListFormat>();
 
 function numberFormat(language: Language, options: Intl.NumberFormatOptions = {}): Intl.NumberFormat {
   const key = `${language}|${JSON.stringify(options)}`;
@@ -35,7 +36,10 @@ function dateFormat(language: Language, options: Intl.DateTimeFormatOptions): In
 }
 
 /** German 'narrow' mixes "vor 2 m" and "vor 2 Std." – 'short' is consistent ("vor 2 Min.", V1-13). */
-function effectiveStyle(language: Language, style: Intl.RelativeTimeFormatStyle): Intl.RelativeTimeFormatStyle {
+function effectiveStyle(
+  language: Language,
+  style: Intl.RelativeTimeFormatStyle,
+): Intl.RelativeTimeFormatStyle {
   return language === 'de' && style === 'narrow' ? 'short' : style;
 }
 
@@ -131,6 +135,24 @@ export function formatRelativeTime(
     if (abs < limit) return format.format(Math.round(diffSeconds / seconds), unit);
   }
   return format.format(Math.round(diffSeconds / (365 * 86_400)), 'year');
+}
+
+/**
+ * A list in the language's words (R5W-06: never `join(', ')` in UI texts): en "txt, md, and pdf",
+ * de "txt, md und pdf" (default: conjunction, long).
+ */
+export function formatList(
+  items: readonly string[],
+  options: Intl.ListFormatOptions = { type: 'conjunction', style: 'long' },
+  language: Language = getLanguage(),
+): string {
+  const key = `${language}|${JSON.stringify(options)}`;
+  let format = listCache.get(key);
+  if (format === undefined) {
+    format = new Intl.ListFormat(LOCALES[language], options);
+    listCache.set(key, format);
+  }
+  return format.format(items);
 }
 
 /** Duration in ms: "850 ms", "2.1 s", "3 min 20 s", "1 h 5 min" (units via Intl). */

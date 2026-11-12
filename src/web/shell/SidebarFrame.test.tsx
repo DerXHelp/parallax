@@ -19,6 +19,32 @@ import {
 
 vi.setConfig({ testTimeout: 60_000 });
 
+/**
+ * A storage whose reads and writes throw (privacy settings, quota), recording the attempts. Tests
+ * hand it out through a spy on the `window.localStorage`/`sessionStorage` getter: in happy-dom a
+ * spy on `Storage.prototype` misses methods that were used before, and a spy on the storage
+ * instance (a Proxy) is not undone by `vi.restoreAllMocks()` (FIX-R5 F4/F5).
+ */
+function brokenStorage(attempts: string[]): Storage {
+  return {
+    length: 0,
+    clear: () => undefined,
+    key: () => null,
+    getItem: (key) => {
+      attempts.push(`get ${key}`);
+      throw new Error('SecurityError');
+    },
+    setItem: (key) => {
+      attempts.push(`set ${key}`);
+      throw new Error('QuotaExceededError');
+    },
+    removeItem: (key) => {
+      attempts.push(`remove ${key}`);
+      throw new Error('SecurityError');
+    },
+  };
+}
+
 let running: RunningScenario | null = null;
 const cleanups: (() => void)[] = [];
 const originalWidth = window.innerWidth;
@@ -88,10 +114,18 @@ describe('sidebar-layout', () => {
     expect(readSidebarCollapsed()).toBe(true);
     sessionStorage.setItem(STORAGE_KEYS.sidebarCollapsed, 'false');
     expect(readSidebarCollapsed()).toBe(false);
-    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
-      throw new Error('SecurityError');
-    });
+    // Both areas say "collapsed": only a broken storage leads back to the default (expanded).
+    sessionStorage.setItem(STORAGE_KEYS.sidebarCollapsed, 'true');
+    expect(readSidebarCollapsed()).toBe(true);
+    // Until FIX-R5 F5 this step spied on Storage.prototype, which happy-dom ignored.
+    const attempts: string[] = [];
+    vi.spyOn(window, 'localStorage', 'get').mockReturnValue(brokenStorage(attempts));
+    vi.spyOn(window, 'sessionStorage', 'get').mockReturnValue(brokenStorage(attempts));
     expect(readSidebarCollapsed()).toBe(false);
+    expect(attempts).toEqual([
+      `get ${STORAGE_KEYS.sidebarCollapsed}`,
+      `get ${STORAGE_KEYS.sidebarCollapsed}`,
+    ]);
   });
 });
 
@@ -231,18 +265,22 @@ describe('SidebarFrame (V3-14, WP-58)', () => {
   });
 
   it('broken localStorage: collapsing still works for this window, nothing throws', async () => {
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new Error('QuotaExceededError');
-    });
-    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
-      throw new Error('SecurityError');
-    });
+    // Only a working localStorage would start this window collapsed (control for the spies below).
+    localStorage.setItem(STORAGE_KEYS.sidebarCollapsed, 'true');
+    // Until FIX-R5 F5 this test spied on Storage.prototype, which happy-dom ignored: it was green
+    // with a working storage.
+    const attempts: string[] = [];
+    vi.spyOn(window, 'localStorage', 'get').mockReturnValue(brokenStorage(attempts));
     resetSidebarLayout();
     await start();
     const user = userEvent.setup();
     expect(frame().dataset.state).toBe('expanded');
+    expect(attempts).toContain(`get ${STORAGE_KEYS.sidebarCollapsed}`);
     await user.click(screen.getByRole('button', { name: 'Collapse the sidebar' }));
     expect(frame().dataset.state).toBe('collapsed');
+    expect(attempts).toContain(`set ${STORAGE_KEYS.sidebarCollapsed}`);
+    // This window still remembers its choice.
+    expect(sessionStorage.getItem(STORAGE_KEYS.sidebarCollapsed)).toBe('true');
     await user.click(showButton());
     await waitFor(() => {
       expect(frame().dataset.state).toBe('expanded');

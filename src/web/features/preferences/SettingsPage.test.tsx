@@ -6,7 +6,8 @@ import { LOCAL_HOST_ID } from '@shared/common';
 import { makeError } from '@shared/errors';
 import type { HostState, SettingsPatch } from '@shared/model';
 import { sampleHostState, sampleNotificationSettings, sampleSettings, sampleTime } from '@shared/samples';
-import { DICTIONARIES, setLanguage, translate } from '@web/i18n';
+import { EN_DICTIONARY, getDictionary, setLanguage, translate } from '@web/i18n';
+import { deDictionary } from '@web/i18n/dictionary.de';
 import { resetAudio } from '@web/notifications/sounds';
 import { FakeAudioContext } from '@web/notifications/testing';
 import { requestShell, type SettingsSection } from '@web/shell/requests';
@@ -802,8 +803,10 @@ describe('preferences texts', () => {
   });
 
   it('is registered as namespace preferences; sound names are translated', () => {
-    expect(DICTIONARIES.en.preferences).toBe(en);
-    expect(DICTIONARIES.de.preferences).toBe(de);
+    expect(EN_DICTIONARY.preferences).toBe(en);
+    // German is the lazy chunk of ADR-153 (in memory in tests).
+    expect(deDictionary.preferences).toBe(de);
+    expect(getDictionary('de')?.preferences).toBe(de);
     expect(translate('de', 'preferences.sounds.names.alert')).toBe('Warnton');
     expect(translate('de', 'preferences.notifications.kinds.plan')).toBe('Plan prüfen');
   });

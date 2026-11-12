@@ -16,7 +16,9 @@ import {
 } from 'lucide-react';
 import { Fragment } from 'react';
 import { LOCAL_HOST_ID, parseSessionKey } from '@shared/common';
+import { makeError } from '@shared/errors';
 import type { SessionSummary } from '@shared/model';
+import { windowsPathIssue } from '@shared/paths';
 import type { Command } from '@shared/protocol';
 import { useT, type TranslationKey } from '@web/i18n';
 import { copyText } from '@web/lib/clipboard';
@@ -137,8 +139,14 @@ export function newSessionIn(cwd: string): void {
  * "Open folder in Explorer" (WP-58, ADR-144): `file.open {target: 'explorer', path: cwd}` – the
  * `cwd` string exactly as stored; the server checks the path and starts Explorer (only on the local
  * host). A refusal (`OPEN_FAILED`, `PATH_NOT_ALLOWED`, `FILE_NOT_FOUND` …) becomes a notice.
+ * Defence in depth (R5W-10, C.10): a `cwd` that `windowsPathIssue` rejects (UNC, device, ADS …) is
+ * never sent – the same notice as the server's refusal instead.
  */
 export function openFolderInExplorer(sessionKey: string, summary: SessionSummary): void {
+  if (windowsPathIssue(summary.cwd) !== null) {
+    showErrorNotice(makeError('PATH_REJECTED'), { sessionKey });
+    return;
+  }
   runSessionCommand(sessionKey, {
     name: 'file.open',
     entryId: summary.entryId,

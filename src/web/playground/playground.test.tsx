@@ -1,15 +1,24 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { hostStateSchema, sessionDetailSchema, sessionSummarySchema } from '@shared/model';
 import { parseServerMessage, sessionOpSchema } from '@shared/protocol';
 import { sampleSessionSnapshot, sampleSettings } from '@shared/samples';
+import { resetQuietSlotFailures } from '@web/shell/SlotBoundary';
 import { unregisterConnection } from '@web/state/connection';
 import { FakeHost } from '@web/state/fake-host';
 import { resetClientStore } from '@web/state/store';
 import { createMemoryTransport } from '@web/state/transport';
+import { TooltipProvider } from '@web/ui/tooltip';
+import { shellDemos } from './demos';
 import { PlaygroundApp } from './PlaygroundApp';
 import { SCENARIOS, SCENARIO_IDS } from './scenarios';
+
+function shellDemo(id: string) {
+  const found = shellDemos.find((candidate) => candidate.id === id);
+  if (found === undefined) throw new Error(`demo ${id} missing`);
+  return found;
+}
 
 // The playground renders every demo: 2 s in a full `pnpm test`, up to 20 s when several runs load
 // the machine (docs/wp/FLAKES.md).
@@ -18,6 +27,8 @@ vi.setConfig({ testTimeout: 60_000 });
 afterEach(() => {
   unregisterConnection();
   resetClientStore();
+  resetQuietSlotFailures();
+  vi.restoreAllMocks();
   window.history.replaceState(null, '', '/');
 });
 
@@ -85,6 +96,53 @@ describe('PlaygroundApp', () => {
     ]) {
       expect(within(nav).getByText(title)).toBeTruthy();
     }
+  });
+
+  it('lists the Phase 3 shell demos of WP-58 with the shell demos (no longer via the preferences playground)', () => {
+    const ids = shellDemos.map((demo) => demo.id);
+    for (const id of [
+      'shell-header-panels',
+      'shell-header-todos',
+      'shell-session-menu',
+      'shell-drop-overlay',
+      'shell-window-900',
+      'shell-window-700',
+      'shell-app-busy',
+      'shell-slot-error',
+      'shell-slot-quiet',
+    ]) {
+      expect(ids, id).toContain(id);
+    }
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('the Phase 3 shell demos render: header buttons, slot error cards, the quiet variant', async () => {
+    const { unmount } = render(
+      <TooltipProvider>{shellDemo('shell-header-panels').render()}</TooltipProvider>,
+    );
+    // Two headers (900 and 480 px; happy-dom does not measure, so both stay wide here).
+    expect(await screen.findAllByRole('button', { name: 'Tasks – 2 background tasks running' })).toHaveLength(
+      2,
+    );
+    expect(screen.getAllByRole('button', { name: 'Plan' })).toHaveLength(2);
+    unmount();
+    act(() => {
+      unregisterConnection();
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const errors = render(<TooltipProvider>{shellDemo('shell-slot-error').render()}</TooltipProvider>);
+    // The render error at once, the missing chunk once its import rejected.
+    await waitFor(() => {
+      expect(screen.getAllByText('This area could not be loaded')).toHaveLength(2);
+    });
+    errors.unmount();
+    render(<TooltipProvider>{shellDemo('shell-slot-quiet').render()}</TooltipProvider>);
+    const paragraph = document.querySelector('[data-slot="quiet-demo"]');
+    await waitFor(() => {
+      expect(paragraph?.textContent).toContain('D:\\work\\auth-service\\docs\\api.md');
+    });
+    expect(screen.queryByText('This area could not be loaded')).toBeNull();
+    expect(paragraph?.querySelector('div')).toBeNull();
   });
 
   it('lists the demos and opens a deep link', async () => {

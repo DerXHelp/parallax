@@ -1,8 +1,15 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { lazy, Suspense } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { isChunkLoadError, SlotBoundary, withSlotBoundary } from './SlotBoundary';
+import { clientStore, resetClientStore } from '@web/state/store';
+import {
+  isChunkLoadError,
+  QUIET_SLOT_NOTICE_ID,
+  resetQuietSlotFailures,
+  SlotBoundary,
+  withSlotBoundary,
+} from './SlotBoundary';
 
 let broken = true;
 
@@ -19,6 +26,8 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  resetQuietSlotFailures();
+  resetClientStore();
 });
 
 describe('isChunkLoadError', () => {
@@ -125,5 +134,94 @@ describe('SlotBoundary (WP-58)', () => {
     broken = false;
     rerender(<Bounded label="two" />);
     expect(screen.getByText('two')).toBeTruthy();
+  });
+});
+
+function InlineFragile({ label }: { label: string }) {
+  if (broken) throw new Error('render failed');
+  return <a href="#x">{label}</a>;
+}
+
+describe('SlotBoundary, quiet variant for running text (R5W-02)', () => {
+  it('20 failing inline slots in a paragraph: plain text in place, no card, no div in the p, one notice', () => {
+    const Bounded = withSlotBoundary(
+      InlineFragile,
+      (props) => props.label,
+      (props) => <span data-testid="plain">{props.label}</span>,
+    );
+    const labels = Array.from({ length: 20 }, (_, index) => `file${String(index)}.ts`);
+    const { container } = render(
+      <p>
+        {labels.map((label) => (
+          <Bounded key={label} label={label} />
+        ))}
+      </p>,
+    );
+    expect(screen.getAllByTestId('plain').map((element) => element.textContent)).toEqual(labels);
+    expect(document.querySelector('[data-slot="slot-error"]')).toBeNull();
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+    expect(container.querySelector('p div')).toBeNull();
+    // One loud message for the whole window (rendered by the NotificationCenter as the alert).
+    const notices = clientStore.getState().notices;
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({
+      id: QUIET_SLOT_NOTICE_ID,
+      tone: 'error',
+      content: { text: 'navigation.slotError.inlineRender' },
+    });
+    expect(notices[0]?.action).toBeUndefined();
+  });
+
+  it('a failed chunk: the fallback learns it, the one notice offers "Reload window"; later failures stay silent', async () => {
+    const reload = vi.fn();
+    const Lazy = lazy(() =>
+      Promise.reject(new TypeError('Failed to fetch dynamically imported module: http://127.0.0.1/x.js')),
+    );
+    const quiet = (key: string) => (
+      <SlotBoundary
+        key={key}
+        onReloadWindow={reload}
+        fallback={(failure) => <span data-testid="plain">{failure.chunk ? 'chunk' : 'render'}</span>}
+      >
+        <Suspense fallback={null}>
+          <Lazy />
+        </Suspense>
+      </SlotBoundary>
+    );
+    const { rerender } = render(<p>{[quiet('a'), quiet('b')]}</p>);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('plain')).toHaveLength(2);
+    });
+    expect(screen.getAllByTestId('plain').map((element) => element.textContent)).toEqual(['chunk', 'chunk']);
+    const notices = clientStore.getState().notices;
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({
+      content: { text: 'navigation.slotError.inlineChunk' },
+      durationMs: null,
+    });
+    notices[0]?.action?.run();
+    expect(reload).toHaveBeenCalledOnce();
+
+    // Dismissed, then more references fail: no second notice in this window.
+    resetClientStore();
+    rerender(<p>{[quiet('a'), quiet('b'), quiet('c')]}</p>);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('plain')).toHaveLength(3);
+    });
+    expect(clientStore.getState().notices).toHaveLength(0);
+  });
+
+  it('a new reset key gives a quiet slot a fresh try', () => {
+    const Bounded = withSlotBoundary(
+      InlineFragile,
+      (props) => props.label,
+      (props) => <span data-testid="plain">{props.label}</span>,
+    );
+    const { rerender } = render(<Bounded label="a.ts" />);
+    expect(screen.getByTestId('plain').textContent).toBe('a.ts');
+    broken = false;
+    rerender(<Bounded label="b.ts" />);
+    expect(screen.getByRole('link', { name: 'b.ts' })).toBeTruthy();
+    expect(screen.queryByTestId('plain')).toBeNull();
   });
 });
