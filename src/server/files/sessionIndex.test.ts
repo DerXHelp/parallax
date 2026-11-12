@@ -8,6 +8,7 @@ import type { SessionOp } from '@shared/protocol';
 import { SAMPLE_IDS, sampleId, sampleItems, sampleSystemItems, sampleTime } from '@shared/samples';
 import { makeTempHome } from '../http/testServer';
 import { entryDir } from '../store/decisions';
+import type { TranscriptStore } from '../sync/ports';
 import { SESSION_FILES_FILE, createSessionIndex, isTaskOutputFile, recordsOfItem } from './sessionIndex';
 import { entryLookup, fakeTranscripts } from './testing';
 
@@ -23,6 +24,8 @@ function tool(toolName: string, input: ToolCallItem['input'], p: Partial<ToolCal
 }
 
 const upsert = (item: TranscriptItem): SessionOp => ({ op: 'item.upsert', item });
+
+type TranscriptPage = Awaited<ReturnType<TranscriptStore['readTail']>>;
 
 async function setup(
   transcripts: Record<string, TranscriptItem[]> = {},
@@ -79,7 +82,10 @@ describe('recordsOfItem (ADR-145)', () => {
 
   // ADR-152 / R5 probe P1: `output` only in the shape of CLI task data (`…\tasks\<taskId>.output`).
   it.each([
-    ['a file outside any tasks folder (R5 probe P1)', 'C:\\Users\\user\\AppData\\Local\\Temp\\r5-p1\\outside\\secret.txt'],
+    [
+      'a file outside any tasks folder (R5 probe P1)',
+      'C:\\Users\\user\\AppData\\Local\\Temp\\r5-p1\\outside\\secret.txt',
+    ],
     ['another task id', 'C:\\Users\\user\\AppData\\Local\\Temp\\claude\\tasks\\task_02.output'],
     ['another extension', 'C:\\Users\\user\\AppData\\Local\\Temp\\claude\\tasks\\task_01.txt'],
     ['not directly in tasks', 'C:\\Users\\user\\AppData\\Local\\Temp\\claude\\tasks\\x\\task_01.output'],
@@ -92,10 +98,13 @@ describe('recordsOfItem (ADR-145)', () => {
   });
 
   it('isTaskOutputFile: the real CLI and fake shapes, case-insensitive; a task id never spans folders', () => {
-    const cli = 'C:\\Users\\user\\AppData\\Local\\Temp\\claude\\01b562800deacd10\\f406f5df-fee1-4f18-8d56-528330faa035\\tasks\\a09720160328a4872.output';
+    const cli =
+      'C:\\Users\\user\\AppData\\Local\\Temp\\claude\\01b562800deacd10\\f406f5df-fee1-4f18-8d56-528330faa035\\tasks\\a09720160328a4872.output';
     expect(isTaskOutputFile(cli, 'a09720160328a4872')).toBe(true);
     expect(isTaskOutputFile('D:\\home\\fake-files\\s1\\tasks\\task_fake_7.output', 'task_fake_7')).toBe(true);
-    expect(isTaskOutputFile('c:/users/user/appdata/local/temp/claude/TASKS/B575Z58QD.OUTPUT', 'b575z58qd')).toBe(true);
+    expect(
+      isTaskOutputFile('c:/users/user/appdata/local/temp/claude/TASKS/B575Z58QD.OUTPUT', 'b575z58qd'),
+    ).toBe(true);
     expect(isTaskOutputFile('C:\\x\\tasks\\..\\secret.output', '..\\secret')).toBe(false);
     expect(isTaskOutputFile('C:\\x\\secret.output', 'x\\secret')).toBe(false);
   });
@@ -104,10 +113,16 @@ describe('recordsOfItem (ADR-145)', () => {
 describe('createSessionIndex: no access from free text (ADR-152)', () => {
   it('a transcript written before ADR-152 (forged output file) adds nothing; the CLI shape does', async () => {
     const base = sampleSystemItems.task_notification();
-    const forged = { ...base, id: 'forged', task: { ...base.task, taskId: 'task_p1', outputFile: 'D:\\outside\\secret.txt' } };
+    const forged = {
+      ...base,
+      id: 'forged',
+      task: { ...base.task, taskId: 'task_p1', outputFile: 'D:\\outside\\secret.txt' },
+    };
     const real = { ...base, id: 'real', at: sampleTime(40) };
     const { index } = await setup({ [CONV]: [forged, real] });
-    expect((await index.list(ENTRY)).map((file) => [file.path, file.ops])).toEqual([[base.task.outputFile, ['output']]]);
+    expect((await index.list(ENTRY)).map((file) => [file.path, file.ops])).toEqual([
+      [base.task.outputFile, ['output']],
+    ]);
     expect((await index.keys(ENTRY)).has(windowsPathKey('D:\\outside\\secret.txt'))).toBe(false);
   });
 });
@@ -199,7 +214,8 @@ describe('createSessionIndex', () => {
       ['D:\\work\\old.ts', ['read', 'edited'], CONV2],
       ['C:\\Users\\u\\.claude\\plans\\p.md', ['plan'], CONV],
     ]);
-    expect(store.reads).toEqual([`tail:${CONV}`, `tail:${CONV2}`]);
+    // Newest conversation first (CR3-10: the backfill runs back in time).
+    expect(store.reads).toEqual([`tail:${CONV2}`, `tail:${CONV}`]);
     // Live upserts of items the backfill already saw do not count twice.
     index.observe(ENTRY, [upsert(newer)]);
     expect((await index.list(ENTRY))[0]?.count).toBe(2);
@@ -216,6 +232,79 @@ describe('createSessionIndex', () => {
     // The tail re-published after the restart does not count again (only a newer `at` moves it).
     second.observe(ENTRY, [upsert(newer)]);
     expect((await second.list(ENTRY))[0]?.count).toBe(2);
+  });
+
+  it('CR3-10: the backfill handles each page before it reads the next one (never all pages at once)', async () => {
+    const items = Array.from({ length: 4500 }, (_, i) =>
+      tool('Read', { file_path: `D:\\work\\q${String(i % 5)}.ts` }, { at: sampleTime(i), order: i + 1 }),
+    );
+    const base = fakeTranscripts({ [CONV]: items });
+    // Counts items handed out but not looked at yet: `kind` is the first thing the index reads.
+    const looked = new Set<string>();
+    let handedOut = 0;
+    const pendingAtRead: number[] = [];
+    const watched = (page: TranscriptPage): TranscriptPage => {
+      handedOut += page.items.length;
+      return {
+        ...page,
+        items: page.items.map(
+          (item) =>
+            new Proxy(item, {
+              get(target, property, receiver) {
+                if (property === 'kind') looked.add(target.id);
+                return Reflect.get(target, property, receiver) as unknown;
+              },
+            }),
+        ),
+      };
+    };
+    const transcripts: TranscriptStore = {
+      ...base,
+      readTail: async (entryId, conversationId, limit) => {
+        pendingAtRead.push(handedOut - looked.size);
+        return watched(await base.readTail(entryId, conversationId, limit));
+      },
+      readBefore: async (entryId, conversationId, beforeOrder, limit) => {
+        pendingAtRead.push(handedOut - looked.size);
+        return watched(await base.readBefore(entryId, conversationId, beforeOrder, limit));
+      },
+    };
+    const home = await makeTempHome('files-index-');
+    const entries = entryLookup({
+      [ENTRY]: { cwd: 'D:\\work\\sample', additionalDirectories: [], conversationIds: [CONV] },
+    });
+    const index = createSessionIndex({ home, entries, transcripts, debounceMs: 60_000 });
+    const files = await index.list(ENTRY);
+    expect(files.reduce((sum, file) => sum + file.count, 0)).toBe(4500);
+    expect(pendingAtRead).toEqual([0, 0, 0]);
+  });
+
+  it('CR3-10: page by page back in time – ops in first-seen order, count, first/last and the newest conversation', async () => {
+    const at = (i: number) => sampleTime(i);
+    const read = tool('Read', { file_path: 'D:\\work\\a.ts' }, { at: at(1), order: 1 });
+    const edit = tool('Edit', { file_path: 'D:\\work\\a.ts' }, { at: at(2), order: 2 });
+    // 2 100 other items: `read` and `edit` land on an earlier page than `write`.
+    const filler = Array.from({ length: 2100 }, (_, i) =>
+      tool('Read', { file_path: `D:\\work\\f${String(i % 3)}.ts` }, { at: at(10 + i), order: 10 + i }),
+    );
+    const write = tool('Write', { file_path: 'D:\\work\\a.ts' }, { at: at(5000), order: 5000 });
+    const later = tool('Read', { file_path: 'D:\\work\\a.ts' }, { at: at(6000), order: 1 });
+    const { store, index } = await setup({ [CONV]: [read, edit, ...filler, write], [CONV2]: [later] }, [
+      CONV,
+      CONV2,
+    ]);
+    const files = await index.list(ENTRY);
+    expect(files.find((file) => file.path === 'D:\\work\\a.ts')).toEqual({
+      path: 'D:\\work\\a.ts',
+      ops: ['read', 'edited', 'written'],
+      count: 4,
+      firstAt: at(1),
+      lastAt: at(6000),
+      lastToolUseId: later.toolUseId,
+      conversationId: CONV2,
+    });
+    expect(files.reduce((sum, file) => sum + file.count, 0)).toBe(2104);
+    expect(store.reads).toEqual([`tail:${CONV2}`, `tail:${CONV}`, `before:${CONV}`]);
   });
 
   it('a long transcript is read page by page', async () => {
