@@ -26,6 +26,9 @@ export const en = {
     attachment: 'Attachment: {name}',
     image: 'Image: {name}',
     unnamed: 'unnamed',
+    /** A long message starts collapsed (V4-07). */
+    showAll: { one: 'Show all ({count} line)', other: 'Show all {count} lines' },
+    showLess: 'Show less',
   },
   /** Thumbnails and the lightbox (WP-37). */
   image: {

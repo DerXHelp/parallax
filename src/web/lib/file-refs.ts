@@ -10,6 +10,11 @@ import { fromGitBashPath, resolveWindowsPath } from '@shared/paths';
  * `unsafe`: they are never resolved, so nothing can touch them (an fs call would leak the NTLM hash,
  * C.10). Web URLs and e-mail addresses are never references. Rendering (FileLink, `verify`) is the
  * caller's business; this module is shared by every package that shows text.
+ *
+ * Spaces (V4-01): running text splits at whitespace, except that an absolute path continues over
+ * single spaces into folder names (`C:\Program Files\nodejs\node.exe`, `extendOverSpaces`); an
+ * inline code span is one candidate as a whole (`findCodeRefs`). A cut-off prefix of a name with
+ * spaces is never reported. All patterns run in linear time (R5W-05).
  */
 
 export type FileRefKind = 'drive' | 'git_bash' | 'file_url' | 'relative' | 'unc' | 'device';
@@ -37,10 +42,22 @@ export interface FileRef extends FileTarget {
 
 /** Characters that end a reference token (besides whitespace): quotes, list separators, glob/shell signs. */
 const TOKEN = /[^\s,;"'`<>|*?«»‹›“”„‘’]+/gu;
-/** Any URL with a scheme (`file://` is handled, the rest is excluded). */
-const URL_PATTERN = /(?<![\p{L}\p{N}])([A-Za-z][A-Za-z0-9+.-]*):\/\/[^\s<>"'`]*/gu;
+/** One token right at `lastIndex` (the word after a space, `extendOverSpaces`). */
+const WORD = /[^\s,;"'`<>|*?«»‹›“”„‘’]+/uy;
+/**
+ * Any URL with a scheme (`file://` is handled, the rest is excluded). The scheme is bounded: an
+ * unbounded `[A-Za-z0-9+.-]*` rescanned the rest of a long `b.b.b…`/`a-a-a…` word from every letter
+ * after a `.`/`-` (quadratic, R5W-05); real schemes are short.
+ */
+const URL_PATTERN = /(?<![\p{L}\p{N}])([A-Za-z][A-Za-z0-9+.-]{0,31}):\/\/[^\s<>"'`]*/gu;
 const WWW_PATTERN = /(?<![\p{L}\p{N}.])www\.[^\s<>"'`]*/giu;
-const EMAIL_PATTERN = /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)*\.\p{L}{2,}/gu;
+/**
+ * E-mail addresses. The lookbehind lets a match start only where the local part can start (R5W-05:
+ * without it every position of a long word without `@` rescanned the rest – quadratic); the
+ * leftmost match is the same, so the masked text does not change.
+ */
+const EMAIL_PATTERN =
+  /(?<![\p{L}\p{N}._%+-])[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)*\.\p{L}{2,}/gu;
 /** `:12`, `:12:4`, `#L12`, `#L12C4`, `#L12-L20`. */
 const LINE_SUFFIX = /(?::(\d{1,7})(?::(\d{1,7}))?|#L(\d{1,7})(?:C(\d{1,7}))?(?:-L?(\d{1,7})(?:C\d{1,7})?)?)$/;
 const DRIVE = /^[A-Za-z]:[\\/]/;
@@ -53,32 +70,59 @@ const GIT_BASH = /^\/[A-Za-z]\/[^\\/]/;
 /** One segment of a relative path. */
 const SEGMENT = String.raw`[\p{L}\p{N}_.@+~$%()\[\]-]+`;
 const RELATIVE = new RegExp(String.raw`^(?:\.{1,2}[\\/])*(?:${SEGMENT}[\\/])*${SEGMENT}$`, 'u');
-/** The last segment carries an extension with at least one letter (`a.ts`, not `1.5`, not `.env`). */
-const EXTENSION = /[^\\/.][^\\/]*\.[\p{L}\p{N}]*\p{L}[\p{L}\p{N}]*$/u;
+/** An extension: letters and digits with at least one letter (`ts`, `mp4`; not `5`). */
+const EXTENSION_TEXT = /^[\p{L}\p{N}]*\p{L}[\p{L}\p{N}]*$/u;
 const KEY_PREFIX = /^[\p{L}\p{N}_.-]+=(?=\S)/u;
+/** Characters no Windows path holds (besides the `:` of the drive and of a line suffix); controls: `\p{Cc}`. */
+const NOT_IN_PATH = /[<>"|?*\p{Cc}]/u;
+/** Whitespace other than a plain space (a path in a code span has none). */
+const OTHER_WHITESPACE = /[^\S ]/u;
 const OPENERS = new Set(['(', '[', '{']);
 const TRAILING = new Set(['.', ',', ':', ';', '!']);
 const CLOSERS: Readonly<Record<string, string>> = { ')': '(', ']': '[', '}': '{' };
 
-function count(text: string, char: string): number {
-  let n = 0;
-  for (const c of text) if (c === char) n++;
-  return n;
+/** The part after the last separator (the name; empty after a trailing separator). */
+function lastSegment(path: string): string {
+  return path.slice(Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/')) + 1);
 }
 
-/** Drops trailing punctuation and closing brackets without an opening one in the token. */
+/**
+ * Does the last segment carry an extension with at least one letter (`a.ts`, `.env.local`; not
+ * `1.5`, not `.env`)? A non-dot character must come before the last dot. Linear, unlike a regex
+ * that would retry every start position.
+ */
+function hasExtension(path: string): boolean {
+  const name = lastSegment(path);
+  const dot = name.lastIndexOf('.');
+  return dot > 0 && /[^.]/.test(name.slice(0, dot)) && EXTENSION_TEXT.test(name.slice(dot + 1));
+}
+
+/**
+ * Drops trailing punctuation and closing brackets without an opening one in the token. Counts the
+ * brackets once (linear – R5W-05: counting again per dropped character was quadratic).
+ */
 function trimEnd(token: string): string {
-  let value = token;
-  for (;;) {
-    const last = value.at(-1);
-    if (last === undefined) return value;
+  const counts = new Map<string, number>();
+  for (const char of token) {
+    if (OPENERS.has(char) || CLOSERS[char] !== undefined) counts.set(char, (counts.get(char) ?? 0) + 1);
+  }
+  let end = token.length;
+  while (end > 0) {
+    const last = token.charAt(end - 1);
     const opener = CLOSERS[last];
-    if (TRAILING.has(last) || (opener !== undefined && count(value, opener) < count(value, last))) {
-      value = value.slice(0, -1);
+    if (TRAILING.has(last)) {
+      end--;
       continue;
     }
-    return value;
+    const closers = counts.get(last) ?? 0;
+    if (opener !== undefined && (counts.get(opener) ?? 0) < closers) {
+      counts.set(last, closers - 1);
+      end--;
+      continue;
+    }
+    break;
   }
+  return token.slice(0, end);
 }
 
 function positive(value: string | undefined): number | null {
@@ -131,7 +175,7 @@ function classify(
   const segments = body.split(/[\\/]/);
   // Windows drops a trailing dot of a name – such a "segment" is prose (`e.g./i.e.`), not a path.
   if (segments.some((segment) => segment !== '.' && segment !== '..' && segment.endsWith('.'))) return null;
-  if (relativeNeedsExtension && (segments.length < 2 || !EXTENSION.test(body))) return null;
+  if (relativeNeedsExtension && (segments.length < 2 || !hasExtension(body))) return null;
   if (!/[^\\/.]/.test(body)) return null;
   return { path: body, kind: 'relative', unsafe: false };
 }
@@ -191,6 +235,64 @@ function tokenRef(text: string, tokenStart: number, token: string): FileRef | nu
   return makeRef(text, start, start + value.length, { ...target, line, col, endLine });
 }
 
+/**
+ * V4-01: an absolute path with spaces in folder names, in running text (`C:\Program Files\nodejs\
+ * node.exe`, `C:\Users\Max Mustermann\a.md`). Prose has no quotes around it, so the rule is narrow:
+ * - the path goes on over single spaces only into a folder name: a later word has to hold a
+ *   separator of the path's own style (`\` after `C:\`, `/` after `C:/` and `/c/`);
+ * - the result ends in a file with an extension or in a separator (no extensionless guess);
+ * - a word with an extension before a space ends the path (`C:\a\b.ts and c.md`,
+ *   `C:\a\b.ts and src\c.md`), and so do a colon (`… and C:\x`), punctuation and a line suffix.
+ * A base whose name has no extension and is directly followed by another word may be the start of
+ * a name with spaces (`…\Projekt mit Leerzeichen`, `…\My File.txt`): that base is dropped (null)
+ * instead of linking – or refusing – a mere prefix. Each step looks at most `LIMITS.pathChars`
+ * ahead and stops at the next drive, so long texts stay linear.
+ */
+function extendOverSpaces(text: string, working: string, ref: FileRef, tokenEnd: number): FileRef | null {
+  if (ref.kind !== 'drive' && ref.kind !== 'git_bash') return ref;
+  // Trimmed punctuation or brackets, a line suffix, a trailing separator or a file name: complete.
+  if (ref.end !== tokenEnd || splitSuffix(ref.raw).body !== ref.raw) return ref;
+  const tail = lastSegment(ref.raw);
+  if (tail === '' || hasExtension(tail)) return ref;
+  const separator = ref.kind === 'git_bash' ? '/' : ref.raw.charAt(2);
+  const otherSeparator = separator === '/' ? '\\' : '/';
+  let best: FileRef | null = null;
+  let previous = tail;
+  let position = ref.end;
+  while (working.charAt(position) === ' ') {
+    // No name starts with a space; a name with an extension before a space ends the path.
+    if (previous === '' || hasExtension(previous)) break;
+    WORD.lastIndex = position + 1;
+    const word = WORD.exec(working)?.[0];
+    if (word === undefined) break;
+    const end = position + 1 + word.length;
+    if (end - ref.start > LIMITS.pathChars || word.includes(otherSeparator)) break;
+    const first = word.indexOf(separator);
+    if (first < 0) {
+      if (word.includes(':')) break;
+      previous = word;
+      position = end;
+      continue;
+    }
+    if (first === 0 || word.slice(0, first).includes(':')) break;
+    const raw = trimEnd(text.slice(ref.start, end));
+    const { body, line, col, endLine } = splitSuffix(raw);
+    if (body.includes(':', 2)) break;
+    const name = lastSegment(body);
+    const target = name === '' || hasExtension(name) ? classify(body, true) : null;
+    if (target?.kind === ref.kind) {
+      best = makeRef(text, ref.start, ref.start + raw.length, { ...target, line, col, endLine });
+    }
+    if (raw.length < end - ref.start || line !== null) break;
+    previous = lastSegment(word);
+    position = end;
+  }
+  if (best !== null) return best;
+  WORD.lastIndex = ref.end + 1;
+  const continues = working.charAt(ref.end) === ' ' && WORD.test(working);
+  return continues ? null : ref;
+}
+
 /** Replaces the matches of `pattern` with spaces (same length, so offsets stay valid). */
 function mask(text: string, pattern: RegExp, onMatch?: (match: string, index: number) => void): string {
   let out = '';
@@ -220,12 +322,52 @@ export function findFileRefs(text: string): FileRef[] {
     if (value.length > 4) refs.push(makeRef(text, index, index + value.length, deviceTarget(value)));
   });
   working = mask(working, WWW_PATTERN);
-  working = mask(working, EMAIL_PATTERN);
+  if (working.includes('@')) working = mask(working, EMAIL_PATTERN);
+  let consumed = 0;
   for (const token of working.matchAll(TOKEN)) {
-    const ref = tokenRef(text, token.index, token[0]);
-    if (ref !== null) refs.push(ref);
+    // Words a path with spaces already took.
+    if (token.index < consumed) continue;
+    const base = tokenRef(text, token.index, token[0]);
+    const ref = base === null ? null : extendOverSpaces(text, working, base, token.index + token[0].length);
+    if (ref === null) continue;
+    refs.push(ref);
+    consumed = ref.end;
   }
   return refs.sort((a, b) => a.start - b.start);
+}
+
+/**
+ * The whole text of an inline code span as one absolute path (V4-01): spaces are allowed anywhere,
+ * also in the file name (`C:\Users\Max Mustermann\My File.txt`). Not for a command or several paths:
+ * no characters a path never holds, no colon after the drive (except a line suffix), no name that
+ * starts or ends with a space, and no word with an extension before a space (`C:\a\b.ts and c.md`,
+ * `C:\x\tool.exe --help`). Null when the span is something else.
+ */
+function wholeCodeRef(code: string): FileRef | null {
+  const value = code.trim();
+  if (!value.includes(' ') || value.length > LIMITS.pathChars) return null;
+  if (!DRIVE.test(value) && !GIT_BASH.test(value)) return null;
+  if (NOT_IN_PATH.test(value) || OTHER_WHITESPACE.test(value)) return null;
+  const { body, line, col, endLine } = splitSuffix(value);
+  if (body.includes(':', 2)) return null;
+  for (const segment of body.split(/[\\/]/)) {
+    if (segment !== segment.trim()) return null;
+    const words = segment.split(' ');
+    if (words.slice(0, -1).some((word) => hasExtension(word))) return null;
+  }
+  const target = classify(body, true);
+  if (target === null || (target.kind !== 'drive' && target.kind !== 'git_bash')) return null;
+  const start = code.indexOf(value);
+  return makeRef(code, start, start + value.length, { ...target, line, col, endLine });
+}
+
+/**
+ * File references of an inline code span (V4-01): the span as one path when it is one
+ * (`wholeCodeRef`), else the references of its text like running text (a command with a path).
+ */
+export function findCodeRefs(code: string): FileRef[] {
+  const whole = wholeCodeRef(code);
+  return whole === null ? findFileRefs(code) : [whole];
 }
 
 /**

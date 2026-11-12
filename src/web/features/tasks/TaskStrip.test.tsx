@@ -1,8 +1,9 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
 import type { TodoList } from '@shared/model';
-import { sampleTodoList } from '@shared/samples';
+import { sampleId, sampleTodoList } from '@shared/samples';
 import type { RunningScenario } from '@web/playground/PlaygroundScenario';
 import { registerShellRequestHandler, type ShellRequestOf } from '@web/shell/requests';
 import { storageKey } from '@web/lib/storage';
@@ -11,8 +12,15 @@ import { TASKS_SLOTS } from './index';
 import { TaskStrip } from './TaskStrip';
 import { startTasksScenario, TASKS_ENTRY, TASKS_SESSION_KEY } from './testing';
 
+// The slot test waits up to 10 s for the lazy strip chunk; the limit of the test has to be higher
+// than that (R5W-04: with the 5-s default the test was cut off before its `findBy*` gave up).
+// Without load each test takes well under a second (docs/wp/FLAKES.md).
+vi.setConfig({ testTimeout: 30_000 });
+
 let running: RunningScenario | null = null;
 const STORAGE_KEY = storageKey('tasks', 'strip', TASKS_SESSION_KEY);
+const OTHER_ENTRY = sampleId('en', 552);
+const OTHER_SESSION_KEY = makeSessionKey(LOCAL_HOST_ID, OTHER_ENTRY);
 
 afterEach(() => {
   running?.stop();
@@ -72,6 +80,37 @@ describe('TaskStrip', () => {
     });
     await user.click(screen.getByRole('button', { name: '1 of 3 done · Writing the tests' }));
     expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it('keeps the expanded state per session – also when the same strip switches sessions (R5W-11)', async () => {
+    const user = userEvent.setup();
+    running = startTasksScenario(
+      { todos: sampleTodoList() },
+      { entryId: OTHER_ENTRY, todos: sampleTodoList() },
+    );
+    const { rerender } = render(<TaskStrip sessionKey={TASKS_SESSION_KEY} />);
+    await user.click(await screen.findByRole('button', { name: '1 of 3 done · Writing the tests' }));
+    expect(strip()?.dataset.state).toBe('expanded');
+
+    // Another session in the same pane: its own (collapsed) state, the first one stays stored.
+    rerender(<TaskStrip sessionKey={OTHER_SESSION_KEY} />);
+    await waitFor(() => {
+      expect(strip()?.dataset.state).toBe('collapsed');
+    });
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('expanded');
+    expect(window.localStorage.getItem(storageKey('tasks', 'strip', OTHER_SESSION_KEY))).toBeNull();
+
+    // Back to the first one: expanded again; toggling the other one never touches it.
+    rerender(<TaskStrip sessionKey={TASKS_SESSION_KEY} />);
+    await waitFor(() => {
+      expect(strip()?.dataset.state).toBe('expanded');
+    });
+    rerender(<TaskStrip sessionKey={OTHER_SESSION_KEY} />);
+    await user.click(await screen.findByRole('button', { name: '1 of 3 done · Writing the tests' }));
+    expect(window.localStorage.getItem(storageKey('tasks', 'strip', OTHER_SESSION_KEY))).toBe('expanded');
+    await user.click(screen.getByRole('button', { name: '1 of 3 done · Writing the tests' }));
+    expect(window.localStorage.getItem(storageKey('tasks', 'strip', OTHER_SESSION_KEY))).toBeNull();
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('expanded');
   });
 
   it('works without a usable localStorage (throws): collapsed, toggles in memory', async () => {

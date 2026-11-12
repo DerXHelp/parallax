@@ -20,8 +20,10 @@ Task, „Alle stoppen“, `session.stopTask`) und die angeheftete Aufgabenleiste
 
 | Pfad | Inhalt |
 | --- | --- |
-| `lib/rows.ts` | rein: `buildTaskRows` (Hintergrund-Tasks + Tasks der Tool-Calls + `task_notification`, je `taskId` eine Zeile; „beendet“ gewinnt), `visibleTaskRows` (beendete 10 min), `canStopTask` + Schalter `TASK_STOP_BASH`, `todoProgress` |
-| `state/tasks.ts` | `useTaskRows` (rendert nur bei Änderungen an Task-Items/Hintergrundliste neu), `useTodos`, `stopTask` (Fehler als Notice, `TASK_NOT_FOUND` still), `stopTasks` (nacheinander) |
+| `lib/rows.ts` | rein: `buildTaskRows` (Hintergrund-Tasks + Tasks der Tool-Calls + `task_notification`, je `taskId` eine Zeile; „beendet“ gewinnt), `visibleTaskRows` (beendete 10 min), `canStopTask` + Schalter `TASK_STOP_BASH` – nur im Panel-Chunk |
+| `lib/todo-progress.ts` | rein: `todoProgress` (erledigt/gesamt, aktiver Eintrag, offen) – als einziges Modul statisch im Start-Chunk (`index.ts`, R5W-01) |
+| `state/tasks.ts` | `useTaskRows` (rendert nur bei Änderungen an Task-Items/Hintergrundliste neu), `stopTask` (Fehler als Notice, `TASK_NOT_FOUND` still), `stopTasks` (nacheinander) – nur im Panel-Chunk |
+| `state/todos.ts` | `useTodos` (Leiste und Panel; zieht `rows.ts` nicht in den Leisten-Chunk) |
 | `state/strip.ts` | Auf/Zu der Leiste je Session in localStorage (`storageKey('tasks','strip',…)`, Fehler geschluckt) |
 | `components/` | `TaskRowView` (Art, Beschreibung, Laufzeit über `useNow`, Tokens/Tool-Aufrufe, Zusammenfassung, Ausgabedatei als `FileLink`, Stop), `TodoItems` (Liste mit Status-Icons) |
 | `testing.ts` | Fixtures + FakeHost-Szenario (Tests, Playground) |

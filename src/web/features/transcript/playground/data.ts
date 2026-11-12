@@ -950,6 +950,16 @@ function mediaSession(): DemoSession {
       phase: 'returned',
       importedItems: 0,
     }),
+    // V4-07: a pasted log – long user messages start collapsed.
+    user(
+      'px:media:log',
+      8,
+      [
+        ...Array.from({ length: 40 }, (_, i) => `[build] step ${String(i + 1)} of 40 ----------`),
+        '',
+        'what is broken?',
+      ].join('\n'),
+    ),
   ];
   return { summary: summaryOf(entryId, 'Images and handoff'), snapshot: snapshotOf(entryId, items) };
 }
@@ -971,6 +981,8 @@ export const FILE_REFS_MARKDOWN = [
   'Changed src/main.ts:26 and docs/guide.md#L3 – the overview is D:\\work\\sample\\README.md.',
   'Git Bash: /d/work/sample/logs/build.log · file URL: file:///D:/work/sample/docs/spec.pdf',
   'Missing (stays text after the check): D:\\work\\sample\\missing.md · outside the roots (refused): D:\\private\\secret.txt',
+  '',
+  'Spaces (V4-01): D:\\private\\Mein Ordner\\notes.md (refused as a whole), `D:\\work\\sample\\Mein Ordner\\My File.txt` (one code span), the folder D:\\work\\sample\\Projekt mit Leerzeichen (no prefix piece), D:\\work\\sample\\README.md and c.md (two words).',
   '',
   'Never a link: \\\\server\\share\\notes.md, \\\\?\\C:\\secret.txt, file://server/share/x.md, https://example.com/src/main.ts, foo@example.com, and/or 1.5/2.0.',
   '',

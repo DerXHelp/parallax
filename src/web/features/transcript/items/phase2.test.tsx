@@ -20,6 +20,7 @@ afterEach(() => {
   setBlobSourceResolver(null);
   setLanguage('en');
   resetClientStore();
+  resetExpansion();
 });
 
 const KEY = 'local:en_00000000000000000000000000000001';
@@ -128,7 +129,9 @@ describe('pictures of tool results below the collapsed line, exactly once (R4W-0
     expect(screen.queryByText('The file is empty.')).toBeNull();
     await user.click(thumb);
     const dialog = await screen.findByRole('dialog', { name: 'Image: fake-shot.png' });
-    expect(within(dialog).getByRole('link', { name: 'Save as…' }).getAttribute('download')).toBe('fake-shot.png');
+    expect(within(dialog).getByRole('link', { name: 'Save as…' }).getAttribute('download')).toBe(
+      'fake-shot.png',
+    );
   });
 
   it.each([
@@ -247,11 +250,11 @@ describe('image thumbnails open the lightbox (WP-37 §8)', () => {
       />,
     );
     const sized = screen.getByRole('img', { name: 'Image: sized.png' });
-    expect([sized.getAttribute('loading'), sized.getAttribute('width'), sized.getAttribute('height')]).toEqual([
-      'lazy',
-      '640',
-      '480',
-    ]);
+    expect([
+      sized.getAttribute('loading'),
+      sized.getAttribute('width'),
+      sized.getAttribute('height'),
+    ]).toEqual(['lazy', '640', '480']);
     const unsized = screen.getByRole('img', { name: 'Image: unsized.png' });
     expect(unsized.hasAttribute('loading')).toBe(false);
     expect(unsized.hasAttribute('width')).toBe(false);
@@ -274,5 +277,35 @@ describe('image thumbnails open the lightbox (WP-37 §8)', () => {
     const save = await screen.findByRole('link', { name: 'Save as…' });
     expect(save.getAttribute('href')).toBe('data:image/png;base64,iVBORw0KGgo=');
     expect(save.getAttribute('download')).toBe(`image-${sampleBlobId(6).slice(0, 12)}.png`);
+  });
+
+  it('a long message (pasted log) starts collapsed; the choice survives a re-mount (V4-07)', async () => {
+    const user = userEvent.setup();
+    const log = Array.from({ length: 40 }, (_, i) => `log line ${String(i + 1)}`).join('\n');
+    const item = sampleItems.userMessage({
+      id: 'px:user:long',
+      text: { text: `${log}\nwhat is broken?`, truncated: null },
+    });
+    const { unmount } = render(<UserMessageRow item={item} sessionKey={KEY} />);
+    const text = () => document.querySelector<HTMLElement>('[data-slot="user-text"]');
+    expect(text()?.dataset.state).toBe('collapsed');
+    expect(text()?.textContent).toContain('log line 8');
+    expect(text()?.textContent).not.toContain('log line 9');
+    const toggle = screen.getByRole('button', { name: 'Show all 41 lines' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    await user.click(toggle);
+    expect(text()?.textContent).toContain('what is broken?');
+    // A re-mounted row (virtualized list) keeps it open; "Show less" closes it again.
+    unmount();
+    render(<UserMessageRow item={item} sessionKey={KEY} />);
+    expect(text()?.dataset.state).toBe('expanded');
+    await user.click(screen.getByRole('button', { name: 'Show less' }));
+    expect(text()?.dataset.state).toBe('collapsed');
+  });
+
+  it('a short message has no toggle', () => {
+    render(<UserMessageRow item={sampleItems.userMessage({ id: 'px:user:short' })} sessionKey={KEY} />);
+    expect(document.querySelector('[data-slot="user-text"]')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Show / })).toBeNull();
   });
 });

@@ -24,6 +24,8 @@ export const en = {
     background: 'Background tasks',
     running: { one: '{count} running', other: '{count} running' },
     recent: { one: '{count} finished recently', other: '{count} finished recently' },
+    /** `{running}` and `{recent}` are the two texts above. */
+    summary: '{running} · {recent}',
     stopAll: 'Stop all',
     confirmTitle: { one: 'Stop the running task?', other: 'Stop all {count} running tasks?' },
     confirmText: 'The tasks are stopped one after the other; what they have done so far is kept.',
@@ -47,6 +49,8 @@ export const en = {
   strip: {
     label: 'Task list',
     progress: '{done} of {total} done',
+    /** Collapsed strip: `{progress}` is the text above, `{active}` the item in progress. */
+    line: '{progress} · {active}',
     openPanel: 'Tasks',
     openPanelLabel: 'Show the tasks in the side panel',
   },
