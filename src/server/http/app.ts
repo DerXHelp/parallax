@@ -139,20 +139,26 @@ export function inlineDisposition(name: string): string {
   return `inline; filename*=UTF-8''${encoded === '' ? 'file' : encoded}`;
 }
 
-/** Upload type by magic bytes and declared header type (ADR-103/134/146), or an error. */
+/** Upload type by magic bytes and declared header type (ADR-103/134/146/157), or an error. */
 type UploadKind = { ok: true; mediaType: string; limit: number } | { ok: false; error: ErrorPayload };
 
+/**
+ * - Declared image type: the bytes must be an image; CR2-08: a differing image type gives way to the
+ *   real one (image limit).
+ * - `%PDF-` declared as PDF or octet-stream: a PDF (it needs no preparation, same limit as a file).
+ * - Octet-stream: always a file, also with image bytes (CR3-03, ADR-157) – only a declared image was
+ *   prepared (scaled) by the client, so only such an upload may become an image block.
+ * - Anything else (a declared image/PDF that is none, an empty body) → 415 (R7: no type spoofing).
+ */
 function uploadKind(body: Buffer, declared: string, name: string | undefined): UploadKind {
-  const image = sniffImageType(body);
-  const declaredImage = attachmentMediaTypeSchema.safeParse(declared).success;
-  if (image !== null && (declaredImage || declared === 'application/octet-stream')) {
-    // CR2-08: a declared image type that differs from the bytes gives way to the real one.
+  if (attachmentMediaTypeSchema.safeParse(declared).success) {
+    const image = sniffImageType(body);
+    if (image === null) return { ok: false, error: makeError('UNSUPPORTED_MEDIA_TYPE') };
     return { ok: true, mediaType: image, limit: LIMITS.imageBytes };
   }
   if (isPdf(body) && (declared === 'application/pdf' || declared === 'application/octet-stream')) {
     return { ok: true, mediaType: 'application/pdf', limit: LIMITS.pdfBytes };
   }
-  // A declared image/PDF must be one (R7: no type spoofing, also no empty body).
   if (declared !== 'application/octet-stream' || body.length === 0) {
     return { ok: false, error: makeError('UNSUPPORTED_MEDIA_TYPE') };
   }
@@ -359,7 +365,8 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
 
   // Upload (ADR-103, ADR-146): raw bytes with a Content-Type of UPLOAD_MEDIA_TYPES; any other type
   // has no parser (415), a body over the largest limit hits the body limit (413); both map in the
-  // error handler above. The magic bytes decide the type and its limit (`uploadKind`). Guard class
+  // error handler above. Declared type and magic bytes decide the type and its limit (`uploadKind`;
+  // octet-stream is never an image, CR3-03). Guard class
   // "mutation" (Origin, same-origin, cookie) – unchanged.
   await app.register((scope, _opts, done) => {
     scope.removeAllContentTypeParsers();
