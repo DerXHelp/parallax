@@ -236,16 +236,45 @@ describe('POST /api/attachments – PDFs and other files (ADR-146)', () => {
 
   it.each([
     ['a PDF', PDF, 'application/pdf'],
-    ['a PNG', PNG, 'image/png'],
-    ['a JPEG', JPEG, 'image/jpeg'],
-  ])('octet-stream: the magic bytes decide – %s', async (_name, body, mediaType) => {
+    ['a PNG', PNG, 'application/octet-stream'],
+    ['a JPEG', JPEG, 'application/octet-stream'],
+    ['a GIF', GIF, 'application/octet-stream'],
+    ['a WebP', WEBP, 'application/octet-stream'],
+  ])('octet-stream: %s → %s (CR3-03: never an image)', async (_name, body, mediaType) => {
     const f = await setup();
     const res = await upload(f, body, 'application/octet-stream', '?name=upload.bin');
     expect(res.statusCode).toBe(200);
     expect(attachmentUploadResponseSchema.parse(res.json()).attachment).toMatchObject({
       mediaType,
       name: 'upload.bin',
+      width: null,
+      height: null,
     });
+  });
+
+  it('CR3-03: an image sent as a file (octet-stream) stays a file – file limit, materialized, never an image block', async () => {
+    const f = await setup();
+    // 5 MB PNG without a usable browser type: over the image limit, within the file limit.
+    const big = Buffer.concat([PNG, Buffer.alloc(LIMITS.imageBytes + 1_000_000)]);
+    expect(big.byteLength).toBeLessThanOrEqual(LIMITS.fileAttachmentBytes);
+    const res = await upload(f, big, 'application/octet-stream', '?name=scan&width=9000&height=9000');
+    expect(res.statusCode).toBe(200);
+    const { attachment } = attachmentUploadResponseSchema.parse(res.json());
+    expect(attachment).toMatchObject({
+      mediaType: 'application/octet-stream',
+      name: 'scan',
+      bytes: big.byteLength,
+      width: null,
+      height: null,
+    });
+    // The prompt check copies it into the attachment folder instead of sending an image block.
+    const checked = await resolveAttachments(f.blobs, [{ blobId: attachment.blobId }]);
+    expect(checked.blocks).toEqual([]);
+    expect(checked.files).toEqual([attachment]);
+    // Like any file it needs a name.
+    const unnamed = await upload(f, PNG, 'application/octet-stream');
+    expect(unnamed.statusCode).toBe(400);
+    expect(unnamed.json()).toEqual({ code: 'VALIDATION_FAILED', params: { reason: 'name' } });
   });
 
   it('any other file: application/octet-stream with its name', async () => {
@@ -294,9 +323,12 @@ describe('POST /api/attachments – PDFs and other files (ADR-146)', () => {
     expect(tooBig.json()).toMatchObject({ code: 'PAYLOAD_TOO_LARGE' });
     const fileOver = Buffer.concat([ZIP, Buffer.alloc(LIMITS.fileAttachmentBytes - ZIP.byteLength + 1)]);
     expect((await upload(f, fileOver, 'application/octet-stream', '?name=a.zip')).statusCode).toBe(413);
-    // An image sent as octet-stream keeps the image limit.
+    // An image declared as an image keeps the image limit; sent as octet-stream it is a file (CR3-03).
     const imageOver = Buffer.concat([PNG, Buffer.alloc(LIMITS.imageBytes)]);
-    expect((await upload(f, imageOver, 'application/octet-stream', '?name=a.png')).statusCode).toBe(413);
+    expect((await upload(f, imageOver, 'image/png', '?name=a.png')).statusCode).toBe(413);
+    expect((await upload(f, imageOver, 'application/octet-stream', '?name=a.png')).statusCode).toBe(200);
+    const imageFileOver = Buffer.concat([PNG, Buffer.alloc(LIMITS.fileAttachmentBytes)]);
+    expect((await upload(f, imageFileOver, 'application/octet-stream', '?name=a.png')).statusCode).toBe(413);
   });
 
   it('an uploaded PDF replaces an octet-stream meta of the same bytes (verified type)', async () => {
