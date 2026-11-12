@@ -106,7 +106,7 @@ export const en = {
   conversations: {
     title: 'Earlier conversations',
     description:
-      'Conversations of this session before “/clear”. Opening one continues it here – the current one stays in this list.',
+      'Earlier conversations of this session. Opening one continues it here – the current one stays in this list.',
     empty: 'No earlier conversations.',
     list: 'Earlier conversations',
     untitled: 'Untitled conversation',
