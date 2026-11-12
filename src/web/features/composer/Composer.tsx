@@ -39,6 +39,7 @@ import type { Decision, ModelOption, SlashCommandInfo } from '@shared/model';
 import type { RunState } from '@shared/status';
 import { useT, type t as translateFn } from '@web/i18n';
 import { cn } from '@web/lib/cn';
+import { transferFiles, type IncomingFiles } from '@web/lib/transfer-files';
 import { isHandoffPending, openExternalConsole, useHandoffPending } from '@web/shell/navigation/handoff';
 import { useShellRequestHandler } from '@web/shell/requests';
 import { useEscapeHandler } from '@web/shell/shortcuts';
@@ -117,7 +118,6 @@ import {
   type NativeCommand,
   type SlashCatalog,
 } from './lib/slash';
-import { transferFiles, type IncomingFiles } from './lib/transfer';
 import { ModelPicker, type ModelPickerSection } from './ModelPicker';
 import { ModePicker } from './ModePicker';
 import { RateLimitBanner } from './RateLimitBanner';
@@ -764,11 +764,14 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
       );
   };
 
-  // WP-58: files dropped on the session pane (or picked in a menu) come as a shell request. An empty
-  // list, a remote host or another session is not taken (archived/external panes have no field).
+  // WP-58: files dropped on the session pane (or picked in a menu) come as a shell request; folders
+  // the drop zone left out come as a count (CR3-01) and get the same hint. Nothing at all, a remote
+  // host or another session is not taken (archived/external panes have no field).
   useShellRequestHandler('attachFiles', (request) => {
-    if (request.sessionKey !== sessionKey || !canAttach || request.files.length === 0) return false;
-    attachFiles({ files: [...request.files], folders: 0 }, true);
+    const folders = request.folders ?? 0;
+    if (request.sessionKey !== sessionKey || !canAttach) return false;
+    if (request.files.length === 0 && folders === 0) return false;
+    attachFiles({ files: [...request.files], folders }, true);
     textareaRef.current?.focus();
     return true;
   });
