@@ -22,6 +22,8 @@ export const en = {
     sending: 'Sending…',
     sendNow: 'Sent immediately',
     otherOrigin: 'Not typed by you (channel, hook or another tool)',
+    /** WP-64: a prompt typed in the Claude app or on claude.ai (Remote Control). */
+    fromClaudeApp: 'From the Claude app',
     slashCommand: 'Command',
     attachment: 'Attachment: {name}',
     image: 'Image: {name}',
@@ -127,6 +129,7 @@ export const en = {
       declined: 'Declined',
       cancelled: 'Cancelled',
       expired: 'Expired',
+      answeredElsewhere: 'Answered in the Claude app',
       destinations: {
         session: 'this session',
         localSettings: 'this project (local settings)',

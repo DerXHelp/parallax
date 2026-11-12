@@ -5,6 +5,7 @@ import {
   CircleStopIcon,
   ClockIcon,
   FileIcon,
+  SmartphoneIcon,
   SquareSlashIcon,
   ZapIcon,
 } from 'lucide-react';
@@ -142,8 +143,18 @@ export const UserMessageRow = memo(function UserMessageRow({
       }
     >
       <Attachments attachments={item.attachments} />
-      {item.slashCommand === null && item.origin === 'human' && item.priority !== 'now' ? null : (
+      {item.slashCommand === null &&
+      item.origin === 'human' &&
+      item.priority !== 'now' &&
+      item.source === 'local' ? null : (
         <div className="flex flex-wrap gap-1">
+          {/* WP-64: typed in the Claude app (Remote Control). */}
+          {item.source === 'remote' ? (
+            <Badge variant="outline" data-slot="user-remote">
+              <SmartphoneIcon aria-hidden />
+              {t('transcript.user.fromClaudeApp')}
+            </Badge>
+          ) : null}
           {item.slashCommand === null ? null : (
             <Badge variant="outline">
               <SquareSlashIcon aria-hidden />

@@ -85,6 +85,18 @@ export const en = {
     promptSuggestions: 'Prompt suggestions',
     promptSuggestionsHint:
       'Claude suggests the next prompt as grey text in the composer (Tab accepts it). Costs one extra request per turn. Takes effect from the next start of a session.',
+    /** WP-64. */
+    remoteControl: 'Remote Control for new sessions',
+    remoteControlHint:
+      'Opens a new session in the Claude app (phone or claude.ai) as well, so you can follow and answer it there. Existing sessions keep their own choice (header menu).',
+    remoteFollow: 'Like the Claude setting ({detected})',
+    remoteDetectedOn: 'currently on',
+    remoteDetectedOff: 'currently off',
+    remoteDetectedUnknown: 'not read yet – known after the first session start',
+    remoteOptions: {
+      on: 'Always on',
+      off: 'Off',
+    },
   },
   server: {
     port: 'Port',

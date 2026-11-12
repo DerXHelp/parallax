@@ -57,6 +57,7 @@ function takeOver(host: FakeHost, entryId: string): void {
       text: prompt.text,
       attachments: [],
       origin: 'human' as const,
+      source: 'local' as const,
       slashCommand: null,
       priority: prompt.priority,
     },
