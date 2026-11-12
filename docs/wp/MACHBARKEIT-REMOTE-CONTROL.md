@@ -125,7 +125,8 @@ Prozessreste.
 | Neustart mit `reattachSessionId` | **gleiche** `bridge_session_id`/`session_url` → derselbe Eintrag in der App; Prompt vom Handy danach funktioniert |
 | Ausschalten | `enableRemoteControl(false)` → ohne Fehler |
 | Nebenbei gesehen | `system/task_summary {detail:"Writing handy.txt"}` während des Turns, `system/post_turn_summary {status_category:"completed", status_detail:"handy.txt created with content 'hallo'", needs_action:""}` nach jedem Turn (siehe `docs/wp/SDK-MOEGLICHKEITEN.md`) |
-| Offen beim Nutzer | Session sofort in der App sichtbar? Push bei wartender Freigabe? |
+| Beobachtung Nutzer | Phase B lief in derselben App-Session (Wiederanbindung bestätigt). Sofortige Sichtbarkeit und Push bei wartender Freigabe nicht beobachtet → Live-Abnahme WP-64 |
+| Entscheidung Nutzer | Remote-Control-Sessions schlafen nicht (12.11.2026) |
 
 **Folgerungen für WP-64:**
 - Technisch alles Nötige bestätigt. Parallax setzt künftig `--replay-user-messages` (nur bei
