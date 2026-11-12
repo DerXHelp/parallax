@@ -253,3 +253,11 @@ Integrations-Branch `feature/phase-3`. Kritischer Pfad: 50 (Teil 2) → 54 → 5
    fertig, Nutzerfragen beantwortet; Teil 2 (Contracts v3 + Gerüst) gemergt (`04d892e`). Welle 1 (51–54),
    Welle 2 (55–58), WP-60, R5/R5-web/V4 + Fix-Runde, WP-61 (live), `/code-review` (high); Merge nach `main` erst
    nach Nutzer-Freigabe des Pushs.
+   **Stand 12.11.2026 ~13:00 (auf Wunsch des Nutzers unterbrochen, Rechner wurde gebraucht):** Welle 1, 2,
+   WP-60, Reviews und Fix-Runde Welle Fa (K, F1–F5) gemergt (`feature/phase-3` @ `23fa4ef`). **F6 (E2E/Bundle)
+   abgebrochen**, Arbeit **uncommitted** im Worktree `.worktrees/fix-r5-f6` (Branch `fix/r5-f6`, Basis
+   `0634a1a`): angepasste Specs (`phase2-new-session`, `phase3-*`, `smoke`, `support/{dom,files}`),
+   `e2e/README.md`, neu `scripts/bundle-budget.ts` und `docs/wp/FIX-R5-F6.md` (unvollständig); letzter
+   E2E-Lauf 1 laut Agent 65/65 grün (4,1 min), Lauf 2 unter Last abgebrochen. Alle Prozesse beendet,
+   E2E-Temp-Ordner gelöscht. **Weiter:** F6 im Worktree fortsetzen (Stand prüfen, `pnpm check`/`build`,
+   `pnpm e2e` 2×, Ergebnis schreiben, committen), mergen; danach WP-61 (live, F6-Freigabe), `/code-review`.
