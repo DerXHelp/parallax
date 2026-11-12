@@ -102,6 +102,8 @@ export class SessionRuntime {
   private costBase: number;
   private costOffset = 0;
   private lastCostTotal: number | null = null;
+  /** WP61-03: waiting for the next turn_result (or the end of this process). */
+  private turnResultWaiters: (() => void)[] = [];
 
   constructor(
     private readonly state: EntryState,
@@ -121,6 +123,21 @@ export class SessionRuntime {
   /** Starts the event loop (background). */
   run(): void {
     void this.loop();
+  }
+
+  /**
+   * WP61-03: settles once the next turn_result of this process was handled (cost, lastTurn), or
+   * when the process ends; at once for a process that already ended. Never rejects.
+   */
+  nextTurnResult(): Promise<void> {
+    if (!this.alive || this.exitHandled) return Promise.resolve();
+    return new Promise((resolve) => {
+      this.turnResultWaiters.push(resolve);
+    });
+  }
+
+  private releaseTurnResultWaiters(): void {
+    for (const resolve of this.turnResultWaiters.splice(0)) resolve();
   }
 
   private async loop(): Promise<void> {
@@ -335,6 +352,7 @@ export class SessionRuntime {
     // Old CLI without session_state_changed: the result is the turn end (C.1).
     if (!this.sessionStateSeen) this.turnEnded();
     s.resetInTurn = false;
+    this.releaseTurnResultWaiters();
   }
 
   /** WP22-10: summed over the query segments of the conversation (null = no cost reported). */
@@ -455,6 +473,7 @@ export class SessionRuntime {
       s.cancelProcessTimers();
       if (!this.core.shuttingDown()) s.dropMirrorIfUnused();
       this.core.processEnded();
+      this.releaseTurnResultWaiters();
       this.resolveExited();
     }
   }

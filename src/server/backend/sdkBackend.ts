@@ -125,6 +125,8 @@ export interface SdkBackendDeps {
   history?: HistoryPool;
   now?: () => Date;
   timeouts?: Partial<SdkTimeouts>;
+  /** Default: the server logger (tests capture the lines). */
+  logger?: Logger;
 }
 
 // ---- helpers ----
@@ -216,6 +218,15 @@ export function stillQueuedOf(raw: unknown): string[] {
 
 const agentIdsSchema = z.array(z.unknown());
 
+/**
+ * WP61-04 (B15): only `credential_expires_at` of a `result` (ISO instant of the claude.ai login's
+ * end; absent for API keys and older CLIs) – nothing else of the message reaches the log.
+ */
+const resultCredentialSchema = z.object({
+  type: z.literal('result'),
+  credential_expires_at: z.string().max(64).nullish().catch(null),
+});
+
 // ---- session ----
 
 interface SessionContext {
@@ -224,6 +235,7 @@ interface SessionContext {
   readonly killProcessTree: (pid: number) => Promise<void>;
   readonly now: () => Date;
   readonly timeouts: SdkTimeouts;
+  readonly log: Logger;
   disposed(): boolean;
   finished(session: SdkSession): void;
 }
@@ -248,6 +260,8 @@ class SdkSession implements AgentSession {
   private spawnFailed = false;
   private afterExitTimer: NodeJS.Timeout | null = null;
   private shutdownPromise: Promise<void> | null = null;
+  /** WP61-04: the first `result` of this process was logged (credential expiry). */
+  private firstResultSeen = false;
 
   constructor(
     private readonly req: StartSessionRequest,
@@ -255,7 +269,7 @@ class SdkSession implements AgentSession {
   ) {
     this.entryId = req.entryId;
     this.events = this.queue;
-    this.log = log.child({ entryId: req.entryId });
+    this.log = ctx.log.child({ entryId: req.entryId });
   }
 
   get pid(): number | null {
@@ -314,6 +328,7 @@ class SdkSession implements AgentSession {
     try {
       for await (const message of q) {
         if (this.exitSent) break;
+        if (!this.firstResultSeen) this.noteFirstResult(message);
         this.emit({ type: 'message', message, at: this.ctx.now() });
       }
     } catch (error) {
@@ -328,9 +343,20 @@ class SdkSession implements AgentSession {
     }
   }
 
+  /** WP61-04 (B15): one debug line with the credential expiry at the first `result` of the process. */
+  private noteFirstResult(message: unknown): void {
+    const parsed = resultCredentialSchema.safeParse(message);
+    if (!parsed.success) return;
+    this.firstResultSeen = true;
+    this.log.debug(
+      { credentialExpiresAt: parsed.data.credential_expires_at ?? null },
+      'first result: credential expiry',
+    );
+  }
+
   /**
-   * C.1 (+ Phase 2 fast mode, Phase 3 todo feature): settings file + profile autoCompactWindow /
-   * entry fast mode / `todoFeatureEnabled` → flag settings once the CLI is ready.
+   * C.1 (+ Phase 2 fast mode): settings file + profile autoCompactWindow / entry fast mode → flag
+   * settings once the CLI is ready (WP61-02: no `todoFeatureEnabled`).
    */
   private async applyAfterReady(q: SdkQueryHandle, flags: StartFlagSettings): Promise<void> {
     const { controlMs, readyMs } = this.ctx.timeouts;
@@ -595,12 +621,14 @@ export function createSdkBackend(deps: SdkBackendDeps = {}): AgentBackend & { re
   const history = deps.history ?? createHistoryPool();
   const live = new Set<SdkSession>();
   let disposed = false;
+  const backendLog = deps.logger === undefined ? log : deps.logger.child({ module: 'backend/sdk' });
   const ctx: SessionContext = {
     query,
     spawn: deps.spawn ?? spawnHidden,
     killProcessTree: deps.killProcessTree ?? killTree,
     now: deps.now ?? (() => new Date()),
     timeouts: { ...SDK_TIMEOUTS, ...deps.timeouts },
+    log: backendLog,
     disposed: () => disposed,
     finished: (session) => {
       live.delete(session);
@@ -611,7 +639,7 @@ export function createSdkBackend(deps: SdkBackendDeps = {}): AgentBackend & { re
     const raw = await history.run(req.launch, { op: 'subagents', sessionId: req.sessionId });
     const parsed = agentIdsSchema.safeParse(raw);
     if (!parsed.success) {
-      log.warn({ sessionId: req.sessionId }, 'listSubagents returned no list; ignored');
+      backendLog.warn({ sessionId: req.sessionId }, 'listSubagents returned no list; ignored');
       return [];
     }
     return parsed.data.filter((id): id is string => typeof id === 'string' && id !== '');
