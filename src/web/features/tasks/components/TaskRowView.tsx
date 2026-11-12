@@ -11,12 +11,13 @@ import { useI18n, useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { resolveFilePath } from '@web/lib/file-refs';
 import { pathTail } from '@web/lib/path-display';
+import type { TaskKind, TaskRow } from '@web/lib/task-rows';
 import { useFeatureSlots } from '@web/shell/slots';
 import { useNow } from '@web/state/clock';
 import { Badge } from '@web/ui/badge';
 import { Button } from '@web/ui/button';
 import { Spinner } from '@web/ui/spinner';
-import { canStopTask, finishedDuration, type TaskKind, type TaskRow } from '../lib/rows';
+import { canStopTask, finishedDuration } from '../lib/rows';
 
 const KIND_ICON: Readonly<Record<TaskKind, LucideIcon>> = {
   agent: BotIcon,

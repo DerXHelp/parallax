@@ -1,16 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { BackgroundTask, TaskInfo, ToolCallItem, TranscriptItem } from '@shared/model';
+import type { TaskInfo, ToolCallItem, TranscriptItem } from '@shared/model';
 import { sampleItems, sampleSystemItems, sampleTime } from '@shared/samples';
-import {
-  RECENT_TASK_MS,
-  buildTaskRows,
-  canStopTask,
-  finishedDuration,
-  taskKind,
-  taskSourceItems,
-  visibleTaskRows,
-  type TaskRow,
-} from './rows';
+import { buildTaskRows, type TaskRow } from '@web/lib/task-rows';
+import { RECENT_TASK_MS, canStopTask, finishedDuration, visibleTaskRows } from './rows';
+
+/** Panel helpers; the row model itself is tested in `@web/lib/task-rows.test.ts` (CR3-02). */
 
 function info(taskId: string, patch: Partial<TaskInfo> = {}): TaskInfo {
   return {
@@ -45,121 +39,15 @@ function notification(task: TaskInfo): TranscriptItem {
   return sampleSystemItems.task_notification({ id: `note:${task.taskId}`, task });
 }
 
-function background(taskId: string, patch: Partial<BackgroundTask> = {}): BackgroundTask {
-  return {
-    taskId,
-    taskType: 'local_agent',
-    description: `Background ${taskId}`,
-    subagentType: null,
-    parentTaskId: null,
-    ambient: false,
-    ...patch,
-  };
-}
-
 const ids = (rows: readonly TaskRow[]) =>
   rows.map((row) => `${row.taskId}:${row.running ? 'run' : row.status}`);
 
-describe('buildTaskRows', () => {
-  it('merges tool calls, notifications and the background list into one row per task', () => {
-    const items = [
-      sampleItems.userMessage(),
-      toolWith(
-        info('a', {
-          startedAt: sampleTime(5),
-          summary: 'Reading',
-          usage: { totalTokens: 10, toolUses: 1, durationMs: 1 },
-        }),
-      ),
-      sampleItems.assistantText(),
-      toolWith(info('b', { taskType: 'local_bash', startedAt: sampleTime(2) })),
-    ];
-    const rows = buildTaskRows(taskSourceItems(items), [
-      background('a', { subagentType: 'Explore' }),
-      background('c', { taskType: 'local_workflow', description: 'Nightly' }),
-    ]);
-    expect(ids(rows)).toEqual(['b:run', 'a:run', 'c:run']);
-    expect(rows[1]).toMatchObject({
-      kind: 'agent',
-      summary: 'Reading',
-      subagentType: 'Explore',
-      description: 'Task a',
-    });
-    expect(rows[0]?.kind).toBe('bash');
-    expect(rows[2]).toMatchObject({ kind: 'workflow', description: 'Nightly', startedAt: null, usage: null });
-  });
-
-  it('a finished state wins over stale running data (notification after the tool call, either order)', () => {
-    const ended = info('a', {
-      status: 'completed',
-      endedAt: sampleTime(30),
-      summary: 'Done',
-      outputFile: 'C:\\t\\a.output',
-    });
-    const rows = buildTaskRows([toolWith(info('a')), notification(ended)], [background('a')]);
-    expect(ids(rows)).toEqual(['a:completed']);
-    expect(rows[0]).toMatchObject({
-      summary: 'Done',
-      outputFile: 'C:\\t\\a.output',
-      endedAt: sampleTime(30),
-    });
-    const reversed = buildTaskRows([notification(ended), toolWith(info('a'))], []);
-    expect(ids(reversed)).toEqual(['a:completed']);
-  });
-
-  it('a tool call that is no longer running ends its task – unless the server still lists it', () => {
-    const stale = toolWith(info('a'), { status: 'interrupted' });
-    expect(buildTaskRows([stale], [])[0]).toMatchObject({ status: 'running', running: false });
-    // Async agent: the tool call returned ("launched"), the task still runs in the background.
-    const launched = toolWith(info('b'), { status: 'done' });
-    expect(buildTaskRows([launched], [background('b')])[0]?.running).toBe(true);
-    // An explicit end is never undone by the list.
-    const ended = toolWith(info('c', { status: 'stopped', endedAt: sampleTime(9) }), {
-      status: 'interrupted',
-    });
-    expect(buildTaskRows([ended], [background('c')])[0]?.running).toBe(false);
-  });
-
-  it('leaves out ambient background tasks; empty input gives no rows', () => {
-    expect(buildTaskRows([], [background('x', { ambient: true })])).toEqual([]);
-    expect(buildTaskRows([toolWith(info('x'))], [background('x', { ambient: true })])).toEqual([]);
-    expect(buildTaskRows([], [])).toEqual([]);
-  });
-
-  it('sorts running by start (oldest first, unknown last), finished by end (latest first)', () => {
-    const rows = buildTaskRows(
-      [
-        toolWith(info('late', { startedAt: sampleTime(9) })),
-        toolWith(info('early', { startedAt: sampleTime(1) })),
-        notification(info('old', { status: 'failed', endedAt: sampleTime(20) })),
-        notification(info('new', { status: 'completed', endedAt: sampleTime(40) })),
-      ],
-      [background('unknown')],
-    );
-    expect(ids(rows)).toEqual(['early:run', 'late:run', 'unknown:run', 'new:completed', 'old:failed']);
-  });
-
-  it('taskSourceItems keeps only task-bearing items', () => {
-    const items = [
-      sampleItems.toolCall(),
-      toolWith(info('a')),
-      sampleItems.thinking(),
-      notification(info('b')),
-    ];
-    expect(taskSourceItems(items).map((item) => item.id)).toEqual(['tool:a', 'note:b']);
-  });
-});
-
-describe('task helpers', () => {
-  it.each([
-    ['local_agent', 'agent'],
-    ['remote_agent', 'agent'],
-    ['local_bash', 'bash'],
-    ['local_workflow', 'workflow'],
-    ['something_new', 'other'],
-    [null, 'other'],
-  ] as const)('taskKind(%j) = %s', (type, kind) => {
-    expect(taskKind(type)).toBe(kind);
+describe('task panel helpers', () => {
+  it('a pending tool call offers no Stop – the server would answer TASK_NOT_FOUND (CR3-07)', () => {
+    const [pending] = buildTaskRows([toolWith(info('p'), { status: 'pending' })], []);
+    expect(pending === undefined ? true : canStopTask(pending)).toBe(false);
+    const [running] = buildTaskRows([toolWith(info('r'), { status: 'running' })], []);
+    expect(running === undefined ? false : canStopTask(running)).toBe(true);
   });
 
   it('canStopTask: running only; shell commands only with TASK_STOP_BASH', () => {
