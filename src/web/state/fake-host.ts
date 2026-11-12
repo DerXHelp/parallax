@@ -1,6 +1,7 @@
 import { LIMITS, type EntryId } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import {
+  DEFAULT_REMOTE_CONTROL_SUMMARY,
   isDefaultProgramAllowed,
   type AssistantTextItem,
   type Decision,
@@ -1018,6 +1019,19 @@ export class FakeHost {
       case 'session.setArchived':
         this.patchSummary(cmd.entryId, { archived: cmd.archived });
         return this.ok();
+      // WP-64: Remote Control connects at once (fake claude.ai link per entry).
+      case 'session.setRemoteControl':
+        this.patchSummary(cmd.entryId, {
+          remoteControl: cmd.enabled
+            ? {
+                state: 'connected',
+                sessionUrl: `https://claude.ai/code/session_fakeweb${cmd.entryId.replace(/[^a-z0-9]/gi, '')}`,
+                error: null,
+                wanted: true,
+              }
+            : DEFAULT_REMOTE_CONTROL_SUMMARY,
+        });
+        return this.ok();
       case 'session.remove': {
         // WP-63: like the hub – summary.remove for all, session.unavailable for a subscriber.
         if (!this.knowsEntry(cmd.entryId)) return { ok: false, error: makeError('ENTRY_NOT_FOUND') };
@@ -1147,6 +1161,7 @@ export class FakeHost {
       text: { text, truncated: null },
       attachments: [],
       origin: 'human',
+      source: 'local',
       slashCommand: text.startsWith('/') ? (text.split(/\s/)[0] ?? null) : null,
       priority,
     };

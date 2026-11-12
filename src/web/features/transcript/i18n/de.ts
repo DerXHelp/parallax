@@ -15,6 +15,7 @@ export const de: typeof en = {
     sending: 'Wird gesendet…',
     sendNow: 'Sofort gesendet',
     otherOrigin: 'Nicht von dir getippt (Kanal, Hook oder anderes Werkzeug)',
+    fromClaudeApp: 'Aus der Claude-App',
     slashCommand: 'Befehl',
     attachment: 'Anhang: {name}',
     image: 'Bild: {name}',
@@ -117,6 +118,7 @@ export const de: typeof en = {
       declined: 'Abgelehnt',
       cancelled: 'Abgebrochen',
       expired: 'Abgelaufen',
+      answeredElsewhere: 'In der Claude-App beantwortet',
       destinations: {
         session: 'diese Session',
         localSettings: 'dieses Projekt (lokale Einstellungen)',

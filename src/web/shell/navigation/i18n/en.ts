@@ -1,4 +1,4 @@
-import type { ConversationEndReason } from '@shared/model';
+import type { ConversationEndReason, RemoteControlState } from '@shared/model';
 import type { LabeledLimitWindow } from '@web/lib/account-limits';
 
 /**
@@ -86,6 +86,26 @@ export const en = {
     sessionInfo: 'Session info…',
     /** WP-63 §1.3. */
     remove: 'Remove from Parallax…',
+    /** WP-64: Remote Control. */
+    remoteOn: 'Turn on Remote Control',
+    remoteOff: 'Turn off Remote Control',
+    openRemote: 'Open in the Claude app',
+    copyRemoteLink: 'Copy Remote Control link',
+  },
+  /** WP-64: Remote Control (sidebar icon, header button and menu). */
+  remote: {
+    status: 'Remote Control: {state}',
+    states: {
+      off: 'off',
+      connecting: 'connecting…',
+      connected: 'connected – open in the Claude app',
+      reconnecting: 'connection lost, reconnecting…',
+      failed: 'not connected',
+    } satisfies Record<RemoteControlState, string>,
+    waiting: 'Remote Control: connects when the session starts',
+    button: 'Remote Control of “{title}”',
+    copied: 'Remote Control link copied.',
+    copyFailed: 'The link could not be copied to the clipboard.',
   },
   /** WP-63 §1.3: remove a session from Parallax only (files stay). */
   remove: {

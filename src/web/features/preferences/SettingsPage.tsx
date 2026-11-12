@@ -74,7 +74,7 @@ function SectionContent({
     case 'notifications':
       return <NotificationsSection editor={editor} hostState={hostState} />;
     case 'sessions':
-      return <SessionsSection editor={editor} />;
+      return <SessionsSection editor={editor} hostState={hostState} />;
     case 'files':
       // Phase 3 (WP-58): the editor for "Open in editor" (settings.editor, ADR-144).
       return <FilesSection editor={editor} />;
