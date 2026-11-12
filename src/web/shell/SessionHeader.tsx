@@ -11,6 +11,7 @@ import { Badge } from '@web/ui/badge';
 import { Gauge } from '@web/ui/gauge';
 import { StatusIcon } from '@web/ui/status-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
+import { HeaderPanelButtons, HeaderPanelMenuItems, useCompactHeader } from './header-panels';
 import { RenameField } from './navigation/RenameField';
 import { PathTail } from './navigation/PathTail';
 import { startRename, useRenameHeader, useRenaming } from './navigation/rename';
@@ -87,7 +88,8 @@ function HeaderCliVersion({ version, required }: { version: string; required: st
  * at a glance (folder, model, actual permission mode – C.3 –, Claude Code version – C.7 –, context
  * fill). Reads its own summary (memo: the pane above does not re-render on summary changes, R1W-04).
  * Phase 2 (WP-35): the title is edited inline (double click, F2, `/rename`); the "…" session menu
- * sits next to the status line.
+ * sits next to the status line. Phase 3 (WP-58): the side panel buttons "Plan", "Files", "Tasks"
+ * sit before the "…" – in a narrow bar they move into that menu (`data-compact`).
  */
 export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessionKey: string }) {
   const t = useT();
@@ -96,11 +98,17 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
   const hostState = useHostState(parseSessionKey(sessionKey)?.hostId ?? LOCAL_HOST_ID);
   useRenameHeader(sessionKey);
   const editing = useRenaming(sessionKey, 'header');
+  const [compact, barRef] = useCompactHeader();
   if (summary === null) return null;
   const model = summary.model ?? summary.modelSetting;
   const cliVersion = knownVersion(summary.cliVersion);
   return (
-    <div data-slot="session-bar" className="flex h-9 shrink-0 items-center border-b">
+    <div
+      ref={barRef}
+      data-slot="session-bar"
+      data-compact={compact ? 'true' : undefined}
+      className="flex h-9 shrink-0 items-center border-b"
+    >
       <header
         data-slot="session-header"
         data-status={status?.kind}
@@ -205,8 +213,13 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
           )}
         </dl>
       </header>
-      <div className="flex shrink-0 items-center pr-2">
-        <SessionMenu sessionKey={sessionKey} summary={summary} />
+      <div className="flex shrink-0 items-center gap-1 pr-2">
+        {compact ? null : <HeaderPanelButtons sessionKey={sessionKey} />}
+        <SessionMenu
+          sessionKey={sessionKey}
+          summary={summary}
+          leading={compact ? <HeaderPanelMenuItems sessionKey={sessionKey} /> : undefined}
+        />
       </div>
     </div>
   );

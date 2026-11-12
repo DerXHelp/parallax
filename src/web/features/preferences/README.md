@@ -1,6 +1,7 @@
 # src/web/features/preferences – Einstellungsseite (Phase 2)
 
-Owner: **WP-38**. Auftrag und Ergebnis: `docs/wp/WP-38.md`.
+Owner: **WP-38**, Phase 3: **WP-58** (Bereich „Dateien“). Auftrag und Ergebnis: `docs/wp/WP-38.md`,
+`docs/wp/WP-58.md`.
 
 Die Einstellungsseite als Slot `SettingsPage` (`src/web/shell/slots.tsx`): ein großer Dialog
 (modal erlaubt – Sessions laufen weiter, Esc schließt) mit den Bereichen links (vertikale Tabs,
@@ -16,6 +17,8 @@ ganzen Top-Level-Feld an den Server; Töne und ihre Zustellung liegen in `src/we
 | `sections/GeneralSection.tsx` | Sprache, Design (Radiogruppen; Namen aus dem Shell-Namensraum `settings`) |
 | `sections/NotificationsSection.tsx` | Tabelle über `NOTIFICATION_KINDS` (Toast, Ton, Klang, Anhören), Lautstärke (`ui/slider.tsx`; Zeiger: bei `onValueCommit`, Tastatur: 300 ms nach der letzten Taste, R4W-17), „Nicht stören“, Fokus-Regel, Fertig-Schwelle, „Klick öffnet die Session“ (ohne `systemIntegration` deaktiviert mit Begründung), Warnung `PROTOCOL_HANDLER_FAILED` (bei `foreign` mit Hinweis `notifications.openOnClickForeign`) |
 | `sections/SessionsSection.tsx` | Leerlauf-Schlaf (an/aus, Minuten), Prompt-Vorschläge |
+| `sections/FilesSection.tsx` | Editor für „Im Editor öffnen“ (WP-58, ADR-144): Notepad++ (Standard), VS Code, eigenes Programm, Windows-Standardprogramm (nur harmlose Endungen, `DEFAULT_PROGRAM_EXTENSIONS`); Ergebnis von `editor.detect` je Preset („Gefunden: …“/„nicht gefunden“, bei eigenem Programm „vorhanden“); Presets ohne eigenes Formular speichern sofort, Pfad/Argumente über „Editor speichern“ nach der Prüfung (Fehler am Feld, Fokus aufs erste Feld); Kommandozeilen-Vorschau; Pfade je Preset bleiben beim Umschalten erhalten |
+| `lib/editor.ts` | Formular ↔ `EditorSettings` (`draftOf`, `editorOfDraft`, `argLines`), Prüfung mit `editorSettingsSchema` (`editorIssues` → `executable`/`args`: `path`, `not_exe`, `blocked`, `required`, `file_placeholder`, `too_long`, `too_many`), Vorschau (`commandLinePreview`, `fillPlaceholders`, `quoteArg`) |
 | `sections/ServerSection.tsx` | Port (leer = `DEFAULT_PORT` aus `@shared/model`, aktueller Port aus `HostState.port`), Autostart + „Fenster öffnen“ (deaktiviert mit Begründung: ohne `systemIntegration` bzw. ohne Autostart, R4W-18), Warnung `AUTOSTART_FAILED` (bei `foreign` mit Hinweis `server.autostartForeign`) |
 | `sections/AboutSection.tsx` | Server-Infos über `HostFacts` aus `shell/HostFacts.tsx` (eine Quelle, auch im Einstellungsmenü) |
 | `components/SettingField.tsx` | Zeile: Label (`for` nur bei beschriftbarem Steuerelement, `labelFor`), Beschreibung, Begründung „deaktiviert“, Steuerelement (`aria-describedby` per Render-Prop), `SettingList` |
@@ -23,7 +26,7 @@ ganzen Top-Level-Feld an den Server; Töne und ihre Zustellung liegen in `src/we
 | `components/HostWarnings.tsx` | Host-Warnungen bestimmter Codes neben ihrer Einstellung; `foreignHint` erklärt `params.reason: 'foreign'` (fremde `Parallax.lnk` bzw. fremder `parallax:`-Handler, CR2-03) |
 | `state/settings-editor.ts` | `useSettingsEditor()`: gespeicherte Settings + noch unbestätigte Änderungen (Schalter bewegen sich sofort, zweite Änderung baut auf der ersten auf), Rücknahme + `error` bei Ablehnung; der Fehler bleibt, bis das Feld gespeichert oder ausgeblendet ist; nach dem Schließen geht er in die Hinweis-Region (R4W-16) |
 | `lib/limits.ts` | Grenzen aus den zod-Schemas über `numberRange` (`src/web/lib/zod-range.ts`): `IDLE_MINUTES`, `DONE_SECONDS`, `PORT_RANGE`; `parseWholeNumber` |
-| `playground.tsx` | Demos je Bereich (mit/ohne Systemintegration, mit Warnungen), Ton-Vorhören; `slots` für die Shell-Demos |
+| `playground.tsx` | Demos je Bereich (mit/ohne Systemintegration, mit Warnungen; „Dateien“: gefunden/nicht gefunden, eigenes Programm, eigenes Programm mit Fehlern), Ton-Vorhören; `slots` für die Shell-Demos; hängt die Shell-Demos von WP-58 an (`src/web/shell/phase3-demos.tsx` – der Playground findet nur Feature-Module) |
 | `i18n/{en,de}.ts` | Namensraum `preferences` (auch der Menüeintrag, Ton-Namen und der Hinweis „Töne aktivieren“) |
 
 Importgrenzen: kein Import aus anderen Features (ESLint), Store nur über `@web/state/*`-Hooks; den

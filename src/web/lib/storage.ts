@@ -16,6 +16,11 @@ export const STORAGE_KEYS = {
   theme: `${PRODUCT_ID}.theme`,
   /** localStorage: sidebar view `flat` | `grouped` (WP-35, Plan "Sidebar"). */
   sidebarMode: `${PRODUCT_ID}.sidebar.mode`,
+  /**
+   * sessionStorage (this window) + localStorage (default of new windows): the sidebar is collapsed
+   * into the rail in a wide window – `true` | `false` (V3-14, WP-58).
+   */
+  sidebarCollapsed: `${PRODUCT_ID}.sidebar.collapsed`,
 } as const;
 
 /**
