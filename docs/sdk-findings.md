@@ -726,3 +726,42 @@ Rückbau: `docs/wp/SDK-0.3.322.md` §5. Alle Fixtures außer `interrupt-requesti
 | Aufnahme, `claude-sonnet-5-5` (Plan-Modus) | – | – | – | 0,1463 |
 | Live-Smoke `e2e/live` (6/6) | 1 | – | – | 0,0054 |
 | **Summe** | **11** | | | **0,2005** |
+
+## Nachtrag 12.11.2026 (WP-61, live)
+
+CLI 2.1.322, SDK 0.3.322, Haiku, Abo-Login (`apiKeySource: none`). Belege und Kosten:
+`docs/wp/WP-61.md` §2 (Befunde WP61-01…07).
+
+- **`@` im SDK-Prompt:** Die CLI expandiert `@pfad` auch in Prompts, die per SDK (stream-json) ohne
+  `client_composed` kommen. Ein Plantext mit `@README.md` erzeugt ein Datei-Attachment samt Read
+  (WP61-01).
+- **Aufgabenliste:** `todoFeatureEnabled` (Flag-Settings, nach dem Start angewendet) bewirkt nichts.
+  Weder `TodoWrite` noch `TaskCreate` stehen in `init.tools` oder unter den deferred Tools (WP61-02).
+- **Plan-Modus:** läuft trotz `ANTHROPIC_MODEL=haiku` auf `claude-sonnet-5-5` (Punkt 5). Wird der
+  Prozess nach der Plan-Freigabe geschlossen (frischer Kontext), kommt kein `result` und damit kein
+  `total_cost_usd` für die Planung (WP61-03).
+- **`credential_expires_at`** kam live in keinem `result` an, das Parallax geloggt hätte; Parallax
+  schreibt das Feld nirgends hin (WP61-04).
+- **Bash-Tool:** Ein alleinstehendes `sleep N` wird blockiert (Hinweis der CLI: auf eine Bedingung
+  warten oder `run_in_background`). Für Hintergrund-Tests `ping -n N 127.0.0.1` verwenden.
+- **Task-Ereignisse:** `task_progress.description` ist die aktuelle Tätigkeit („Running
+  <Tool-Beschreibung>“), nicht der Task-Name (WP61-07). Die Vordergrund-Shell eines Subagenten
+  erscheint als `local_bash` mit `isBackgrounded:false`; `background_tasks_changed` zählt nur den
+  Agenten (WP61-06).
+- **Ausgabe-Dateien:** Das Agent-Tool-Ergebnis nennt `output_file:
+  %TEMP%\claude\<hash>\<sessionId>\tasks\<agentId>.output`. Gestoppte Hintergrund-Shells bekommen
+  `task_notification` mit `output_file …\tasks\<id>.output` (im Stream erst `killed`, dann
+  `stopped`). Im Verlauf steht die Meldung als `queue-operation` `<task-notification>`.
+- **Nur Hintergrund-Agent, kein Turn:** Die CLI meldet weiter Arbeit. Neue Prompts (`next` wie
+  `now`) werden sofort als neuer Turn beantwortet; `interrupt` ohne laufenden Turn bewirkt nichts
+  (WP-61 §2.3).
+- **Account-Limits (Abo max):** nur `seven_day` gemeldet, kein 5h-Fenster.
+- **Haiku 5.5:** 1 M Context (`maxTokens` 1 000 000). Prüfungen mit hohem Context-Anteil sind live
+  teuer (B28 übersprungen).
+
+| Verbrauch 12.11.2026 | Sessions | USD |
+|---|---|---|
+| Live-Läufe B2–B29, `claude-haiku-5-5` (25 Turns) | 5 | 0,0475 |
+| Planung B2/B3, `claude-sonnet-5-5` (ohne `result`, aus dem CLI-JSONL geschätzt) | – | ≈ 0,12 |
+| Live-Smoke `e2e/live` (6/6) | 1 | 0,0055 |
+| **Summe** | **6** | **≈ 0,17** |
