@@ -21,9 +21,9 @@ import type {
   ProfileStore,
 } from '../../claude/ports';
 import { CommandError } from '../../sync/ports';
+import { FAKE_CLAUDE_VERSION } from './defaults';
 
 export const FAKE_CLAUDE_PATH = 'C:\\fake\\claude.exe';
-export const FAKE_CLAUDE_VERSION = '2.1.300';
 
 export interface FakeClaudeIntegrationOptions {
   /** Default: only the built-in profile "Standard". Ignored when `store` is given. */

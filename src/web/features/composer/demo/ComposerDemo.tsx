@@ -14,15 +14,17 @@ import {
   type DemoEntry,
 } from '../../decisions/lib/demo-data';
 import { startDemoHost, type DemoHost } from '../../decisions/lib/demo-host';
+import { setProjectFilesLoader } from '../lib/project-files';
 import { setAttachmentUploader } from '../lib/upload';
 import { resetAttachments } from '../state/attachments';
-import { demoUploader } from './data';
+import { demoProjectFiles, demoUploader, setDemoFilesMode } from './data';
 
 /**
  * Playground frame of the WP-37 demos (dev only): a demo host with one sample session whose data
  * `setup` may change before the start (catalog, suggestion, limits …), shown in the real
  * SessionPane. The navigation layer answers `/rename`, `/status`, `/resume`; the shortcut help
- * opens from `/help`. Uploads go to a fake uploader (no server behind Vite).
+ * opens from `/help`. Uploads go to a fake uploader, the @ picker to a demo file list (no server
+ * behind Vite).
  */
 export function ComposerDemo({
   entry = 'idle',
@@ -43,6 +45,7 @@ export function ComposerDemo({
 
   useEffect(() => {
     setAttachmentUploader(demoUploader);
+    setProjectFilesLoader(demoProjectFiles);
     const host = startDemoHost({
       ...prepare(demoData([entry])),
       hostState: demoHostState(),
@@ -57,6 +60,8 @@ export function ComposerDemo({
       // Every demo starts without chips (they are kept per session key in memory).
       resetAttachments();
       setAttachmentUploader(null);
+      setProjectFilesLoader(null);
+      setDemoFilesMode('ready');
     };
   }, [entry, sessionKey]);
 

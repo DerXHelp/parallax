@@ -444,7 +444,7 @@ describe('buildResult – plan (F.6, C.4)', () => {
         updatedPermissions: [{ type: 'setMode', mode: 'default', destination: 'session' }],
         decisionClassification: 'user_temporary',
       },
-      outcome: { type: 'plan_approved', mode: 'default', edited: false },
+      outcome: { type: 'plan_approved', mode: 'default', edited: false, freshContext: false },
     });
   });
 
@@ -459,12 +459,17 @@ describe('buildResult – plan (F.6, C.4)', () => {
       updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
       decisionClassification: 'user_temporary',
     });
-    expect(edited.outcome).toEqual({ type: 'plan_approved', mode: 'acceptEdits', edited: true });
+    expect(edited.outcome).toEqual({
+      type: 'plan_approved',
+      mode: 'acceptEdits',
+      edited: true,
+      freshContext: false,
+    });
     const same = buildResult(plan, input, {
       kind: 'plan',
       response: { behavior: 'approve', mode: 'auto', editedPlan: plan.plan },
     });
-    expect(same.outcome).toEqual({ type: 'plan_approved', mode: 'auto', edited: false });
+    expect(same.outcome).toEqual({ type: 'plan_approved', mode: 'auto', edited: false, freshContext: false });
   });
 
   it('revise → deny with the feedback', () => {
@@ -476,13 +481,37 @@ describe('buildResult – plan (F.6, C.4)', () => {
     });
   });
 
-  it('approve_fresh_context and kind mismatches throw (validateResponse rejects them first)', () => {
-    expect(() =>
+  it('approve_fresh_context (ADR-147) → deny + interrupt with the fixed text; outcome freshContext, edited', () => {
+    expect(
       buildResult(plan, input, {
         kind: 'plan',
-        response: { behavior: 'approve_fresh_context', mode: 'auto' },
+        response: { behavior: 'approve_fresh_context', mode: 'auto', editedPlan: null },
       }),
-    ).toThrow();
+    ).toEqual({
+      result: {
+        behavior: 'deny',
+        message: 'The user chose to implement the plan in a fresh session.',
+        interrupt: true,
+        decisionClassification: 'user_reject',
+      },
+      outcome: { type: 'plan_approved', mode: 'auto', edited: false, freshContext: true },
+    });
+    expect(BROKER_MESSAGES.freshContext).toBe('The user chose to implement the plan in a fresh session.');
+    expect(
+      buildResult(plan, input, {
+        kind: 'plan',
+        response: { behavior: 'approve_fresh_context', mode: 'default', editedPlan: `${plan.plan}\n- more` },
+      }).outcome,
+    ).toEqual({ type: 'plan_approved', mode: 'default', edited: true, freshContext: true });
+    expect(
+      buildResult(plan, input, {
+        kind: 'plan',
+        response: { behavior: 'approve_fresh_context', mode: 'default', editedPlan: plan.plan },
+      }).outcome,
+    ).toMatchObject({ edited: false });
+  });
+
+  it('kind mismatches throw (validateResponse rejects them first)', () => {
     expect(() => buildResult(plan, input, perm({ behavior: 'deny', message: '', interrupt: false }))).toThrow(
       /does not match/,
     );
@@ -506,7 +535,7 @@ describe('validateResponse (§3.4 Prüfungen, architecture §5.2)', () => {
     ).toBe('DECISION_ALREADY_RESOLVED');
   });
 
-  it('expired: everything but plan approve → DECISION_EXPIRED', () => {
+  it('expired: everything but plan approve (also with a fresh context) → DECISION_EXPIRED', () => {
     const expiredPermission = { decision: { ...permission(), state: 'expired' as const }, resolved: false };
     expect(
       validateResponse(expiredPermission, perm({ behavior: 'allow', remember: null, acceptEdits: false }))
@@ -522,9 +551,9 @@ describe('validateResponse (§3.4 Prüfungen, architecture §5.2)', () => {
     expect(
       validateResponse(expiredPlan, {
         kind: 'plan',
-        response: { behavior: 'approve_fresh_context', mode: 'auto' },
-      })?.code,
-    ).toBe('DECISION_EXPIRED');
+        response: { behavior: 'approve_fresh_context', mode: 'acceptEdits', editedPlan: null },
+      }),
+    ).toBeNull();
     expect(
       validateResponse(expiredPlan, {
         kind: 'plan',
@@ -644,7 +673,7 @@ describe('validateResponse (§3.4 Prüfungen, architecture §5.2)', () => {
     });
   });
 
-  it('plan: mode not in approveModes, approve_fresh_context → NOT_IMPLEMENTED', () => {
+  it('plan: mode not in approveModes → DECISION_OPTION_UNAVAILABLE (approve and approve_fresh_context)', () => {
     const plan = {
       decision: sampleDecisions.plan({ approveModes: ['acceptEdits', 'default'] }),
       resolved: false,
@@ -661,9 +690,15 @@ describe('validateResponse (§3.4 Prüfungen, architecture §5.2)', () => {
     expect(
       validateResponse(plan, {
         kind: 'plan',
-        response: { behavior: 'approve_fresh_context', mode: 'default' },
-      })?.code,
-    ).toBe('NOT_IMPLEMENTED');
+        response: { behavior: 'approve_fresh_context', mode: 'auto', editedPlan: null },
+      }),
+    ).toMatchObject({ code: 'DECISION_OPTION_UNAVAILABLE', params: { path: 'mode' } });
+    expect(
+      validateResponse(plan, {
+        kind: 'plan',
+        response: { behavior: 'approve_fresh_context', mode: 'default', editedPlan: null },
+      }),
+    ).toBeNull();
     expect(
       validateResponse(plan, { kind: 'plan', response: { behavior: 'revise', feedback: 'x' } }),
     ).toBeNull();

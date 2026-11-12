@@ -14,6 +14,14 @@ export class SessionStopped extends Error {
   }
 }
 
+/** A background task was ended by stopTask (Phase 3): ends the task's run quietly. */
+export class TaskStopped extends Error {
+  constructor() {
+    super('fake task stopped');
+    this.name = 'TaskStopped';
+  }
+}
+
 /** The current turn was interrupted (interrupt() or a prompt with priority 'now'). */
 export class TurnInterrupted extends Error {
   readonly reason: 'interrupt' | 'now';

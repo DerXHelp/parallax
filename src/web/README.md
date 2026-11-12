@@ -10,7 +10,7 @@ WP-20 setzt dort die `FeatureSlots` mit den echten Komponenten). Design-Tokens (
 | `shell/` | App-Shell (Sidebar, Kopfleiste), `slots.tsx` (`FeatureSlots`, `FeatureSlotsProvider`) | 14 |
 | `ui/` | UI-Primitives (shadcn/ui auf Radix), nur mit Design-Tokens | 14 (Welle 1b: nur lesen) |
 | `lib/` | Web-Helfer (`cn.ts`, `ids.ts`, …) – vor dem Anlegen greppen | 14 (Welle 1b: nur lesen) |
-| `i18n/` | `t()`, Shell-Wörterbücher, `errors.*`, Registrierung der Feature-Namespaces | 14 (Welle 1b: nur lesen) |
+| `i18n/` | `t()`, Shell-Wörterbücher, `errors.*`, Registrierung der Feature-Namespaces (`dictionaries.ts` en statisch, `dictionary.de.ts` de als Lazy-Chunk, ADR-153) | 14 (Welle 1b: nur lesen) |
 | `state/` | Zustand-Stores, WS-Client / ConnectionManager (host-fähig), `auth.ts` | 14 (Welle 1b: nur lesen) |
 | `playground/` | Playground-Route (`#playground`, nur Dev), findet `features/*/playground.tsx` | 14 |
 | `public/` | statische Dateien ohne Hash (`favicon.svg`), landen in `dist/web/` | 14 |

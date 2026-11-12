@@ -33,6 +33,8 @@ export const BROKER_MESSAGES = {
   interrupted: 'The user interrupted.',
   newMessage: 'The user sent a new message instead.',
   cancelled: 'Cancelled.',
+  /** Phase 3 (ADR-147): deny + interrupt of the open ExitPlanMode request. */
+  freshContext: 'The user chose to implement the plan in a fresh session.',
 } as const;
 
 /** AskUserQuestion → question, ExitPlanMode → plan, everything else → permission. */
@@ -158,7 +160,8 @@ function validateQuestion(
 
 /**
  * Checks an intent against the stored decision (§3.4 "Prüfungen"). Order: not found → already
- * resolved → expired (only plan approve may answer an expired card) → kind → options.
+ * resolved → expired (only plan approve – also with a fresh context, ADR-147 – may answer an
+ * expired card) → kind → options.
  */
 export function validateResponse(
   target: ValidationTarget | undefined,
@@ -168,7 +171,9 @@ export function validateResponse(
   const { decision } = target;
   const params = { decisionId: decision.id };
   if (target.resolved) return makeError('DECISION_ALREADY_RESOLVED', params);
-  const planApprove = response.kind === 'plan' && response.response.behavior === 'approve';
+  const planApprove =
+    response.kind === 'plan' &&
+    (response.response.behavior === 'approve' || response.response.behavior === 'approve_fresh_context');
   if (decision.state === 'expired' && !planApprove) return makeError('DECISION_EXPIRED', params);
   if (response.kind !== decision.kind) return unavailable('kind', `decision is a ${decision.kind}`);
 
@@ -187,10 +192,7 @@ export function validateResponse(
     return validateQuestion(decision, response);
   if (decision.kind === 'plan' && response.kind === 'plan') {
     const r = response.response;
-    if (r.behavior === 'approve_fresh_context') {
-      return makeError('NOT_IMPLEMENTED', { feature: 'approve_fresh_context' });
-    }
-    if (r.behavior === 'approve' && !decision.approveModes.includes(r.mode)) {
+    if (r.behavior !== 'revise' && !decision.approveModes.includes(r.mode)) {
       return unavailable('mode', 'mode not offered');
     }
   }
@@ -309,9 +311,20 @@ function planResult(
       outcome: { type: 'plan_revised' },
     };
   }
-  if (response.behavior === 'approve_fresh_context')
-    throw new Error('approve_fresh_context is not implemented');
   const edited = response.editedPlan !== null && response.editedPlan !== decision.plan;
+  if (response.behavior === 'approve_fresh_context') {
+    // ADR-147: the CLI does not implement the plan in this session – deny + interrupt; the engine
+    // closes the process and starts a fresh conversation with the plan as its first prompt.
+    return {
+      result: {
+        behavior: 'deny',
+        message: BROKER_MESSAGES.freshContext,
+        interrupt: true,
+        decisionClassification: 'user_reject',
+      },
+      outcome: { type: 'plan_approved', mode: response.mode, edited, freshContext: true },
+    };
+  }
   return {
     result: {
       behavior: 'allow',
@@ -320,7 +333,7 @@ function planResult(
       updatedPermissions: [{ type: 'setMode', mode: response.mode, destination: 'session' }],
       decisionClassification: 'user_temporary',
     },
-    outcome: { type: 'plan_approved', mode: response.mode, edited },
+    outcome: { type: 'plan_approved', mode: response.mode, edited, freshContext: false },
   };
 }
 

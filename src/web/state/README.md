@@ -19,6 +19,7 @@ Verdrahtung: `docs/wp/WP-20b.md`. Feature-eigener State liegt in `features/<f>/s
 | `selection.ts` | `#session=…` ↔ Auswahl (`setSelectedSession`, `startSelectionSync`) |
 | `settings.ts` | `useSettings`, `updateSettings` (jedes Top-Level-Feld des Patches optimistisch, bei Fehler zurück – R4W-15; `settings.update`) |
 | `theme.ts` | Dark/Light/System: `resolveTheme`, `applyResolvedTheme`, `useThemeController`, `useResolvedTheme`, `applyInitialTheme` |
+| `language.ts` | Fenstersprache um `i18n/language.ts` (ADR-153): `useLanguageController(language)` (ShellEffects: `setLanguage` + merkt eine Nicht-Standard-Sprache in `localStorage` `parallax.language`), `preloadInitialLanguage()` (main.tsx: lädt den Lazy-Chunk der zuletzt genutzten Sprache vorab, schaltet nicht um), `readCachedLanguage()`. Liegt bewusst nicht in `src/web/i18n`: ein Import von `lib/storage` dort trennt den i18n-Kern als eigenen Start-Chunk ab |
 | `client-id.ts` | Fenster-ID (`cl_…`, sessionStorage), Reload-Schutz (30 s) |
 | `fake-host.ts` | `FakeHost`: In-Memory-Server hinter dem MemoryTransport (nur Tests/Playground) |
 

@@ -64,11 +64,18 @@ export function capTitle(title: string): string {
   return title.slice(0, LIMITS.titleChars);
 }
 
+/**
+ * U+200B in front of a prompt that starts with `/` only because of a pasted text (composer
+ * `SLASH_GUARD`, R5W-03): it keeps the text from being a command but is no part of the title.
+ */
+const LEADING_SLASH_GUARD = /^\u200b+/u;
+
 /** First non-empty line, whitespace collapsed, ≤ 80 chars at a word boundary (+ "…"); null for slash commands/empty. */
 export function titleFromPrompt(text: string): string | null {
   const trimmed = text.trim();
   if (trimmed === '' || trimmed.startsWith('/')) return null;
   const line = trimmed
+    .replace(LEADING_SLASH_GUARD, '')
     .split(/\r?\n/)
     .map((l) => l.replace(/\s+/g, ' ').trim())
     .find((l) => l !== '');
@@ -163,7 +170,9 @@ export function aiTitleFrom(
 
 /** conversation_reset trigger → endReason of the ended conversation. */
 export function endReasonFor(trigger: string | null): ConversationEndReason {
-  return trigger === 'clear' || trigger === 'plan_mode_exit' ? trigger : 'unknown';
+  return trigger === 'clear' || trigger === 'plan_mode_exit' || trigger === 'fresh_session'
+    ? trigger
+    : 'unknown';
 }
 
 export function newConversation(
@@ -196,7 +205,36 @@ export function cwdLabel(cwd: string): string {
   return path.win32.basename(trimmed) || cwd;
 }
 
+/**
+ * WP61-01: the CLI expands `@path` in every prompt (also without `client_composed`) into a file
+ * attachment plus a Read – for CLI 2.1.322 at the start of a whitespace-separated token or right
+ * after 。、？！ (`@"…"` likewise). In front of exactly those `@` goes U+200B (the slash guard of
+ * R5W-03): no whitespace for `\s`/`trim()`, invisible in the transcript, the path stays readable for
+ * Claude. Every other `@` (mail addresses, `'@scope/pkg'`) keeps its text; idempotent.
+ */
+const CLI_MENTION_AT = /(^|[\s\u3002\u3001\uff1f\uff01])@/gu;
+const MENTION_GUARD = '\u200b';
+
+export function neutralizeAtMentions(text: string): string {
+  return text.replace(CLI_MENTION_AT, `$1${MENTION_GUARD}@`);
+}
+
 /** Plan approval after a restart (A.10, diagram g): the prompt that resumes the work. */
 export function implementPlanPrompt(planFilePath: string | null, plan: string): string {
-  return planFilePath === null ? `Implement this plan:\n\n${plan}` : `Implement the plan in ${planFilePath}`;
+  return planFilePath === null
+    ? `Implement this plan:\n\n${neutralizeAtMentions(plan)}`
+    : `Implement the plan in ${planFilePath}`;
+}
+
+/** First line of the fresh-context prompt (ADR-147; fixed English text, never shown as UI text). */
+export const FRESH_CONTEXT_PROMPT_HEADER = 'Implement the following approved plan.';
+
+/**
+ * ADR-147: first prompt of the fresh conversation – the header, `Plan file: <path>` when known, an
+ * empty line, then the approved plan text (or the edited one) with its `@` mentions neutralized
+ * (WP61-01; the plan file and plans/v<N>.md keep the original text).
+ */
+export function freshContextPrompt(planFilePath: string | null, plan: string): string {
+  const file = planFilePath === null ? '' : `\nPlan file: ${planFilePath}`;
+  return `${FRESH_CONTEXT_PROMPT_HEADER}${file}\n\n${neutralizeAtMentions(plan)}`;
 }

@@ -176,6 +176,10 @@ export class SessionView {
   readonly transcript: Locator;
   readonly bar: Locator;
   readonly card: Locator;
+  /** Phase 3: the side panel of the session (`data-tab`, `data-mode` = inline | overlay). */
+  readonly sidePanel: Locator;
+  /** Phase 3: the file viewer in the side panel (`data-kind` = the file kind). */
+  readonly filePanel: Locator;
 
   constructor(
     readonly page: Page,
@@ -188,6 +192,8 @@ export class SessionView {
     this.transcript = this.pane.locator('[data-slot="transcript"]');
     this.bar = this.pane.locator('[data-slot="decision-bar"]');
     this.card = this.bar.locator('[data-slot="decision-card"]');
+    this.sidePanel = page.locator(`[data-side-panel="${key}"]`);
+    this.filePanel = this.sidePanel.locator('[data-slot="file-panel"]');
   }
 
   get entryId(): string {
@@ -242,5 +248,39 @@ export class SessionView {
   /** Chooses the action `action` (`data-action`) in the "…" menu of the header. */
   async headerAction(action: string): Promise<void> {
     await chooseMenuItem((await this.headerMenu()).locator(`[data-action="${action}"]`));
+  }
+
+  // ---- Phase 3 (WP-54 viewer, WP-55 tasks, WP-56 plan, WP-58 header/side panel; WP-60) ----
+
+  /** A side panel button next to the header ("Plan" only once the session has a plan). */
+  panelButton(tab: 'plan' | 'files' | 'tasks'): Locator {
+    return this.pane.locator(`[data-slot="header-panel"][data-tab="${tab}"]`);
+  }
+
+  /** Opens `tab` with its header button (a click on the open tab would close it). */
+  async openPanel(tab: 'plan' | 'files' | 'tasks'): Promise<Locator> {
+    const open = (await this.sidePanel.count()) > 0 ? await this.sidePanel.getAttribute('data-tab') : null;
+    if (open !== tab) await this.panelButton(tab).click();
+    await expect(this.sidePanel).toHaveAttribute('data-tab', tab);
+    return this.sidePanel;
+  }
+
+  /** A tab of the open side panel's tab row (also "Plan" before the header shows its button). */
+  panelTab(tab: 'plan' | 'file' | 'files' | 'tasks'): Locator {
+    return this.sidePanel.locator(`[role="tab"][data-tab="${tab}"]`);
+  }
+
+  /** The working file links (`data-state="link"`) in `scope` with `text`. */
+  fileLink(scope: Locator, text: string | RegExp): Locator {
+    return scope.locator('[data-slot="file-link"][data-state="link"]').filter({ hasText: text });
+  }
+
+  /** Clicks a file link and waits for the viewer of the file `name` (kind `kind`). */
+  async openFile(link: Locator, name: string, kind: string): Promise<Locator> {
+    await link.click();
+    await expect(this.sidePanel).toHaveAttribute('data-tab', 'file');
+    await expect(this.filePanel.locator('[data-slot="file-panel-title"]')).toContainText(name);
+    await expect(this.filePanel).toHaveAttribute('data-kind', kind);
+    return this.filePanel;
   }
 }

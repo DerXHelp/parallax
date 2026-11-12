@@ -10,16 +10,24 @@ import type { ProfileId } from '@shared/common';
  * Only ever called from a user action.
  */
 
-/** Sections of the settings page (WP-38; `profiles` renders the `ProfilesSettings` slot of WP-36). */
+/**
+ * Sections of the settings page (WP-38; `profiles` renders the `ProfilesSettings` slot of WP-36;
+ * Phase 3: `files` = editor and file settings, WP-58).
+ */
 export const SETTINGS_SECTIONS = [
   'general',
   'notifications',
   'sessions',
+  'files',
   'profiles',
   'server',
   'about',
 ] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
+
+/** Tabs of the side panel of a session pane (Phase 3, ADR-150; host: shell/side-panel). */
+export const SIDE_PANEL_TABS = ['plan', 'file', 'files', 'tasks'] as const;
+export type SidePanelTab = (typeof SIDE_PANEL_TABS)[number];
 
 export type ShellRequest =
   /** Open "New session", optionally pre-filled ("New session in this project…"). */
@@ -33,7 +41,17 @@ export type ShellRequest =
   /** Quick switcher (Ctrl+K). */
   | { kind: 'quickSwitcher' }
   /** Settings page, optionally at a section. */
-  | { kind: 'settings'; section?: SettingsSection };
+  | { kind: 'settings'; section?: SettingsSection }
+  // ---- Phase 3 (WP-50 §4.14 C, ADR-150) ----
+  /** Show a file in the viewer tab of the side panel (FileLink, "Dateien dieser Session"). */
+  | { kind: 'openFile'; sessionKey: string; path: string; line?: number | null; col?: number | null }
+  /** Open the side panel of a session at a tab; `null` closes it (handled by SidePanelHost). */
+  | { kind: 'sidePanel'; sessionKey: string; tab: SidePanelTab | null }
+  /**
+   * Files dropped on the session pane or picked in the menu → the composer attaches them.
+   * `folders`: folders the drop left out (`transferFiles`, CR3-01) – the composer shows its hint.
+   */
+  | { kind: 'attachFiles'; sessionKey: string; files: readonly File[]; folders?: number };
 
 export type ShellRequestKind = ShellRequest['kind'];
 export type ShellRequestOf<K extends ShellRequestKind> = Extract<ShellRequest, { kind: K }>;

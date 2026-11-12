@@ -1,14 +1,15 @@
 import { makeError, errorPayloadSchema, type ErrorPayload } from '@shared/errors';
-import { API_PATHS, attachmentUploadResponseSchema } from '@shared/http';
+import { API_PATHS, attachmentUploadResponseSchema, type UploadMediaType } from '@shared/http';
 import type { BlobRef } from '@shared/model';
-import type { PreparedImage } from './images';
 
 /**
- * Image upload (ADR-103, WP-33 route): `POST /api/attachments?name=…&width=…&height=…` with the raw
- * bytes and the image type as `Content-Type`, cookie auth (`same-origin`). The answer is parsed
- * with `attachmentUploadResponseSchema`, errors with `errorPayloadSchema` (413 PAYLOAD_TOO_LARGE,
- * 415 UNSUPPORTED_MEDIA_TYPE, 400 VALIDATION_FAILED); a failed request is CONNECTION_LOST.
- * The uploader is replaceable (playground: no server behind Vite; tests).
+ * Attachment upload (ADR-103, ADR-146; WP-33/53 route): `POST /api/attachments?name=…[&width=…&height=…]`
+ * with the raw bytes and the type as `Content-Type` – an image type (prepared image), PDF, or
+ * `application/octet-stream` for any other file (`name` required then; the server decides by magic
+ * bytes). Cookie auth (`same-origin`). The answer is parsed with `attachmentUploadResponseSchema`,
+ * errors with `errorPayloadSchema` (413 PAYLOAD_TOO_LARGE, 415 UNSUPPORTED_MEDIA_TYPE, 400
+ * VALIDATION_FAILED); a failed request is CONNECTION_LOST. The uploader is replaceable
+ * (playground: no server behind Vite; tests).
  */
 
 export class UploadError extends Error {
@@ -18,10 +19,19 @@ export class UploadError extends Error {
   }
 }
 
-export type AttachmentUploader = (image: PreparedImage, signal: AbortSignal) => Promise<BlobRef>;
+/** One upload: the bytes, their header type and the name; width/height only for images. */
+export interface UploadRequest {
+  blob: Blob;
+  type: UploadMediaType;
+  name: string;
+  width?: number | null;
+  height?: number | null;
+}
+
+export type AttachmentUploader = (upload: UploadRequest, signal: AbortSignal) => Promise<BlobRef>;
 
 /** Longest `name` the query schema accepts. */
-const NAME_MAX = 260;
+export const UPLOAD_NAME_MAX = 260;
 
 function fallbackError(status: number): ErrorPayload {
   if (status === 413) return makeError('PAYLOAD_TOO_LARGE');
@@ -31,23 +41,31 @@ function fallbackError(status: number): ErrorPayload {
   return makeError('INTERNAL_ERROR');
 }
 
-/** Query string of the upload (name cut to the schema limit). */
-export function uploadQuery(image: Pick<PreparedImage, 'name' | 'width' | 'height'>): string {
-  const query = new URLSearchParams({
-    name: image.name.slice(0, NAME_MAX),
-    width: String(image.width),
-    height: String(image.height),
-  });
+/** `name` cut to the schema limit; a short extension (≤ 10 characters) survives the cut. */
+export function uploadName(name: string): string {
+  if (name.length <= UPLOAD_NAME_MAX) return name;
+  const dot = name.lastIndexOf('.');
+  const extension = dot > 0 && name.length - dot <= 11 ? name.slice(dot) : '';
+  return `${name.slice(0, UPLOAD_NAME_MAX - extension.length)}${extension}`;
+}
+
+/** Query string of the upload (name cut to the schema limit, size only for images). */
+export function uploadQuery(upload: Pick<UploadRequest, 'name' | 'width' | 'height'>): string {
+  const query = new URLSearchParams({ name: uploadName(upload.name) });
+  if (typeof upload.width === 'number' && typeof upload.height === 'number') {
+    query.set('width', String(upload.width));
+    query.set('height', String(upload.height));
+  }
   return `${API_PATHS.attachments}?${query.toString()}`;
 }
 
-export const httpUploader: AttachmentUploader = async (image, signal) => {
+export const httpUploader: AttachmentUploader = async (upload, signal) => {
   let response: Response;
   try {
-    response = await fetch(uploadQuery(image), {
+    response = await fetch(uploadQuery(upload), {
       method: 'POST',
-      body: image.blob,
-      headers: { 'Content-Type': image.type },
+      body: upload.blob,
+      headers: { 'Content-Type': upload.type },
       credentials: 'same-origin',
       signal,
     });
@@ -72,6 +90,6 @@ export function setAttachmentUploader(next: AttachmentUploader | null): void {
   uploader = next ?? httpUploader;
 }
 
-export function uploadAttachment(image: PreparedImage, signal: AbortSignal): Promise<BlobRef> {
-  return uploader(image, signal);
+export function uploadAttachment(upload: UploadRequest, signal: AbortSignal): Promise<BlobRef> {
+  return uploader(upload, signal);
 }

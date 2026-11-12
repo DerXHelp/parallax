@@ -3,8 +3,7 @@ import {
   ChevronDownIcon,
   CircleDotIcon,
   CornerDownRightIcon,
-  ImageIcon,
-  ImagePlusIcon,
+  FilePlusIcon,
   PaperclipIcon,
   ReplyIcon,
   SendHorizontalIcon,
@@ -14,7 +13,9 @@ import {
   ZapIcon,
 } from 'lucide-react';
 import {
+  lazy,
   memo,
+  Suspense,
   useCallback,
   useContext,
   useEffect,
@@ -34,13 +35,15 @@ import {
   type PermissionMode,
   type PromptPriority,
 } from '@shared/common';
-import { ATTACHMENT_MEDIA_TYPES } from '@shared/http';
 import type { Decision, ModelOption, SlashCommandInfo } from '@shared/model';
 import type { RunState } from '@shared/status';
 import { useT, type t as translateFn } from '@web/i18n';
 import { cn } from '@web/lib/cn';
+import { transferFiles, type IncomingFiles } from '@web/lib/transfer-files';
 import { isHandoffPending, openExternalConsole, useHandoffPending } from '@web/shell/navigation/handoff';
+import { useShellRequestHandler } from '@web/shell/requests';
 import { useEscapeHandler } from '@web/shell/shortcuts';
+import { SlotBoundary } from '@web/shell/SlotBoundary';
 import { followTranscript } from '@web/shell/transcript-follow';
 import { errorPayloadOf } from '@web/state/connection';
 import {
@@ -76,7 +79,30 @@ import { AttachmentChips } from './AttachmentChips';
 import { ContextGauge } from './ContextGauge';
 import { HelpDialog } from './HelpDialog';
 import { answerFromText, interruptSession, isSingleQuestion, sendPrompt, textLimit } from './lib/commands';
+import {
+  applyMention,
+  indexPaths,
+  matchPaths,
+  mentionAt,
+  mentionMenuId,
+  type ProjectFilesState,
+} from './lib/mentions';
 import { runNativeCommand, type InlineError, type NativeContext } from './lib/native';
+import {
+  activePastes,
+  convertPaste,
+  expandPastes,
+  expandPrompt,
+  insertAt,
+  isLargePaste,
+  lineCount,
+  nextPasteId,
+  normalizePastedText,
+  pasteRefusal,
+  removePasteToken,
+  type DraftPaste,
+} from './lib/pastes';
+import { loadProjectFiles } from './lib/project-files';
 import {
   applyMenuEntry,
   buildMenuEntries,
@@ -92,6 +118,7 @@ import {
   type NativeCommand,
   type SlashCatalog,
 } from './lib/slash';
+import { lastTurnEnded, workOnlyInBackground } from './lib/turn';
 import { ModelPicker, type ModelPickerSection } from './ModelPicker';
 import { ModePicker } from './ModePicker';
 import { RateLimitBanner } from './RateLimitBanner';
@@ -105,7 +132,7 @@ import {
   takeAttachments,
   useAttachments,
 } from './state/attachments';
-import { clearDraft, getDraft, setDraft, useDraft } from './state/drafts';
+import { clearDraft, getDraftInput, getPastes, setDraft, useDraftInput, usePastes } from './state/drafts';
 import { useComposerFocusTarget } from './state/focus';
 
 /** `primary` = Enter / main button, `answer` = explicit "Send as answer" (decision not the Enter target). */
@@ -117,6 +144,30 @@ type TargetKind = 'permission' | 'question' | 'questions' | 'plan';
 const COUNTER_FROM = 0.8;
 
 const EMPTY_NAMES: readonly string[] = Object.freeze([]);
+
+/*
+ * R5W-01 (start-chunk budget): the @ list and the paste chips are chunks of their own; the composer
+ * keeps the keys, the filtering and the paste handling, so nothing waits for them. The first focus
+ * of a composer field preloads both, so the first `@` or paste finds them loaded. Each renders in
+ * its own `SlotBoundary` + `Suspense`: a chunk that cannot be loaded shows the small error card
+ * there instead of taking the composer (an eager slot without a boundary) down.
+ */
+const loadMentionMenu = () => import('./FileMentionMenu');
+const loadPasteChips = () => import('./PasteChips');
+const FileMentionMenu = lazy(() => loadMentionMenu().then((module) => ({ default: module.FileMentionMenu })));
+const PasteChips = lazy(() => loadPasteChips().then((module) => ({ default: module.PasteChips })));
+/** The error card of the @ list stands where the list would (above the field). */
+const MENTION_ERROR_CLASS = 'bg-popover absolute inset-x-0 bottom-full z-20 mb-1 rounded-md border shadow-lg';
+
+let partsPreloaded = false;
+
+/** Preload only; a failure shows up when the part renders (`lazy` loads again). */
+function preloadComposerParts(): void {
+  if (partsPreloaded) return;
+  partsPreloaded = true;
+  loadMentionMenu().catch(() => undefined);
+  loadPasteChips().catch(() => undefined);
+}
 
 /** Monotonic time of the arm delay; only read in effects and event handlers, never while rendering. */
 function monotonicNow(): number {
@@ -150,17 +201,6 @@ function decisionHint(decision: Decision, variant: 'target' | 'pending', t: type
   }
 }
 
-/** Image files of a paste/drop (`getAsFile` of the file items). */
-function clipboardFiles(data: DataTransfer): File[] {
-  const files: File[] = [];
-  for (const item of Array.from(data.items)) {
-    if (item.kind !== 'file') continue;
-    const file = item.getAsFile();
-    if (file !== null) files.push(file);
-  }
-  return files;
-}
-
 function hasFiles(event: DragEvent): boolean {
   return Array.from(event.dataTransfer.types).includes('Files');
 }
@@ -170,7 +210,8 @@ function hasFiles(event: DragEvent): boolean {
  * - Enter sends, Shift+Enter breaks the line (IME composition never sends).
  * - While Claude works, messages are queued (`priority: 'next'`; the transcript shows them grey,
  *   the header counts them – R2W-04); "Send now" sends with `priority: 'now'`; Stop (and Esc in
- *   an empty composer) interrupts.
+ *   an empty composer) interrupts. While only background tasks work and no turn runs (B18,
+ *   `lib/turn.ts`), the composer is idle: plain "Send", no Stop – the task panel stops tasks.
  * - Open decision (the one the bar shows) – target lock (R2W-01, ADR-040): Enter answers it only
  *   if it was already shown (≥ arm delay) when the current draft began, and only for the main
  *   agent – permission deny + message, one question answered with the text, several questions
@@ -181,10 +222,22 @@ function hasFiles(event: DragEvent): boolean {
  * - Slash commands (WP-37, ADR-108): menu while the caret is in the first word of a `/` draft
  *   (fuzzy, arrows, Tab/Enter, Esc); native commands run here, terminal-only ones offer the
  *   external console, all others go to Claude Code as a prompt.
- * - Images (ADR-103): paste, drop or the paper clip; chips above the field, uploads right away,
- *   sending waits for them. Prompt suggestion as placeholder, Tab takes it (ADR-117). Rate-limit
- *   banner (ADR-112). Archived / handed-off sessions get no field (the pane banner has the actions).
- * - Drafts per session survive remounts and reloads (state/drafts.ts); typing reports presence.
+ * - Attachments (ADR-103/146, WP-57): images, PDFs and any other file – paste, drop, the paper clip
+ *   (no type filter) or the shell request `attachFiles` (drop zone over the session pane, WP-58);
+ *   chips above the field, uploads right away, sending waits for them. Folders are left out with a
+ *   hint (insert their path with @). Prompt suggestion as placeholder, Tab takes it (ADR-117).
+ *   Rate-limit banner (ADR-112). Archived / handed-off sessions get no field (the pane banner has
+ *   the actions).
+ * - Paste chips (ADR-146, WP-57): a pasted text from 2 000 characters or 30 lines on becomes a
+ *   token in the field plus a chip; sending replaces the tokens and lists the texts in
+ *   `prompt.pastes` (answers to decisions get the replaced text only). Text after a paste starts a
+ *   line of its own (V4-07); a prompt that starts with `/` only because of a paste never goes as a
+ *   command (R5W-03, `expandPrompt`) – slash handling always looks at the field text.
+ * - @ file picker (ADR-151, WP-57): `@` at a word start opens the project files (`files.project`,
+ *   once per opening), keys like the slash menu (every change of the typed text makes the first
+ *   match active, V4-03); not while a decision is the Enter target.
+ * - Drafts per session (text and pastes) survive remounts and reloads (state/drafts.ts); typing
+ *   reports presence.
  * - Sending needs an open connection; failures restore the text (caret at its end, also in a field
  *   mounted later) and show a notice. While "Open in external console" is on its way (here or from
  *   a session menu, `shell/navigation/handoff.ts`) nothing is sent – the text stays (WP41-07).
@@ -220,12 +273,24 @@ const PICKER_CLOSED: PickerState = { open: false, section: 'all' };
 
 const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey: string }) {
   const t = useT();
-  const text = useDraft(sessionKey);
+  const text = useDraftInput(sessionKey);
+  const pastes = usePastes(sessionKey);
   const parsedKey = parseSessionKey(sessionKey);
   const entryId = parsedKey?.entryId ?? null;
   // Uploads go to the window's own server; a remote host could not resolve the blob (multi-host later).
   const canAttach = parsedKey?.hostId === LOCAL_HOST_ID;
   const runState = useSummarySelector<RunState | null>(sessionKey, (s) => s.status.runState, null);
+  // B18: the CLI works, but only background tasks – the transcript says whether a turn runs too.
+  const backgroundWork = useSummarySelector<boolean>(
+    sessionKey,
+    (s) => workOnlyInBackground(s.status),
+    false,
+  );
+  const turnEnded = useSessionSelector<boolean>(
+    sessionKey,
+    (v) => v.detail.queue.length === 0 && lastTurnEnded(v.items),
+    false,
+  );
   const modelSetting = useSummarySelector<string | null>(sessionKey, (s) => s.modelSetting, null);
   const fastMode = useSummarySelector<boolean | null>(sessionKey, (s) => s.fastMode, null);
   const permissionMode = useSummarySelector<PermissionMode | null>(sessionKey, (s) => s.permissionMode, null);
@@ -281,7 +346,14 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const handoffPending = useHandoffPending(sessionKey);
   const [slashError, setSlashError] = useState<InlineError | null>(null);
   const [dragging, setDragging] = useState(false);
-  const working = isWorking(runState);
+  /** @ picker: the `@` index of the current opening, its file list, dismissal, query and active row. */
+  const [mentionOpening, setMentionOpening] = useState<number | null>(null);
+  const [projectFiles, setProjectFiles] = useState<ProjectFilesState | null>(null);
+  const [mentionDismissed, setMentionDismissed] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  /** A turn runs: queue mode, "Send now", Stop. Not while only background tasks work (B18, ADR-159). */
+  const working = isWorking(runState) && !(backgroundWork && turnEnded);
 
   useEffect(() => {
     if (targetId !== null && shownRef.current?.id !== targetId) {
@@ -348,7 +420,65 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const menuIndex = Math.min(activeIndex, matches.length - 1);
   const activeEntry = menuOpen ? (matches[menuIndex] ?? null) : null;
 
+  // ---- @ file picker (ADR-151) ----
+  // Only primitives leave this block (the React compiler keeps the memo below).
+  const mentionFound =
+    answerTarget === null && query === null && entryId !== null ? mentionAt(text, caret) : null;
+  const mentionStart = mentionFound === null ? null : mentionFound.start;
+  const mentionText = mentionFound === null ? null : mentionFound.query;
+  if (mentionStart !== mentionOpening) {
+    // A new `@` word: the list is asked once for this opening (the server caches 30 s).
+    setMentionOpening(mentionStart);
+    setMentionDismissed(false);
+    setMentionIndex(0);
+    setProjectFiles(mentionStart === null ? null : { status: 'loading' });
+  }
+  if (mentionText !== mentionQuery) {
+    // V4-03: every change of the typed text makes the best match active again (like the slash
+    // menu) – Tab/Enter after ↓ and more typing never take a row that was only active before.
+    setMentionQuery(mentionText);
+    setMentionIndex(0);
+  }
+  useEffect(() => {
+    if (mentionOpening === null || entryId === null) return;
+    let cancelled = false;
+    loadProjectFiles(sessionKey, entryId).then(
+      (result) => {
+        if (!cancelled) {
+          setProjectFiles({ status: 'ready', index: indexPaths(result.files), truncated: result.truncated });
+        }
+      },
+      (caught: unknown) => {
+        if (!cancelled) setProjectFiles({ status: 'error', error: errorPayloadOf(caught) });
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [mentionOpening, sessionKey, entryId]);
+  const mentionResult = useMemo(
+    () =>
+      projectFiles?.status === 'ready' && mentionText !== null
+        ? matchPaths(projectFiles.index, mentionText)
+        : { matches: [], total: 0 },
+    [projectFiles, mentionText],
+  );
+  const mentionOpen = mentionStart !== null && projectFiles !== null && !mentionDismissed;
+  const mentionMatches = mentionResult.matches;
+  const mentionActive = Math.min(mentionIndex, mentionMatches.length - 1);
+  const activeMention = mentionOpen ? (mentionMatches[mentionActive] ?? null) : null;
+
+  // ---- paste chips (ADR-146) ----
+  const visiblePastes = useMemo(() => activePastes(text, pastes), [text, pastes]);
+
   const value = text.trim();
+  // What would be sent: paste tokens replaced (limits and the counter count this text); a prompt
+  // like `sendMessage` (R5W-03 guard), an answer like `submit`.
+  const answering = answerTarget !== null;
+  const sendLength = useMemo(
+    () => (answering ? expandPastes(value, pastes) : expandPrompt(value, pastes)).text.length,
+    [answering, value, pastes],
+  );
   const draftAction =
     answerTarget === null && value.startsWith('/') ? classifySlash(value, entries, terminal) : null;
   const commandDraft = draftAction?.kind === 'native' || draftAction?.kind === 'terminal';
@@ -366,7 +496,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const attachmentsBlocked = busyUploads || failedUploads || overTotal.size > 0;
 
   const limit = textLimit(answerTarget);
-  const tooLong = value.length > limit;
+  const tooLong = sendLength > limit;
   let canSend: boolean;
   if (handoffPending) canSend = false;
   else if (answerTarget !== null) canSend = online && value !== '' && !tooLong;
@@ -378,7 +508,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     online &&
     !handoffPending &&
     value !== '' &&
-    value.length <= textLimit(pendingTarget);
+    sendLength <= textLimit(pendingTarget);
   const suggestion =
     answerTarget === null && text === '' && promptSuggestion !== null && promptSuggestion.trim() !== ''
       ? promptSuggestion.trim()
@@ -398,7 +528,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
 
   useEscapeHandler(
     () => {
-      if (getDraft(sessionKey) !== '' || !online) return false;
+      if (getDraftInput(sessionKey) !== '' || !online) return false;
       stop();
       return true;
     },
@@ -406,8 +536,9 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     { scopeRef: rootRef },
   );
 
-  const changeText = (next: string, nextCaret?: number) => {
-    if (getDraft(sessionKey) === '' && next !== '') {
+  /** Sets the field text (and, when given, the kept pastes); `nextCaret` after a programmatic change. */
+  const changeText = (next: string, nextCaret?: number, nextPastes?: readonly DraftPaste[]) => {
+    if (getDraftInput(sessionKey) === '' && next !== '') {
       // The draft begins: fix its Enter target (an explicit choice for the same decision stays).
       let lock: DecisionId | null = null;
       if (
@@ -426,16 +557,16 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     }
     setSlashError(null);
     setTerminalHint(null);
-    setDraft(sessionKey, next);
+    setDraft(sessionKey, next, nextPastes);
     reportTyping();
   };
 
-  const restoreDraft = (previous: string, lock: DecisionId | null) => {
-    if (getDraft(sessionKey) !== '') return;
+  const restoreDraft = (previous: string, lock: DecisionId | null, previousPastes: readonly DraftPaste[]) => {
+    if (getDraftInput(sessionKey) !== '') return;
     // WP41-07: the caret goes to the end of the text that comes back (a field mounted later does
     // the same in its mount effect).
     if (previous !== '') pendingCaretRef.current = previous.length;
-    setDraft(sessionKey, previous);
+    setDraft(sessionKey, previous, previousPastes);
     setLockedId(lock);
   };
 
@@ -445,19 +576,25 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     return current.some((a) => a.status !== 'done') || attachmentsOverTotal(current).size > 0;
   };
 
-  /** Sends text (+ the finished images) as a prompt; restores both when it fails. */
+  /**
+   * Sends text (+ the finished attachments) as a prompt – paste tokens replaced, their texts in
+   * `pastes` (ADR-146); a text that starts with `/` only because of a paste never goes as a command
+   * (R5W-03, `expandPrompt`). Restores text, pastes and attachments when it fails.
+   */
   const sendMessage = (message: string, priority: PromptPriority): Promise<boolean> => {
     const ready = getAttachments(sessionKey).filter((a) => a.status === 'done');
+    const previousPastes = getPastes(sessionKey);
+    const expanded = expandPrompt(message, previousPastes);
     if (
       !online ||
       isHandoffPending(sessionKey) ||
       attachmentsHold() ||
-      (message === '' && ready.length === 0) ||
-      message.length > LIMITS.promptChars
+      (expanded.text === '' && ready.length === 0) ||
+      expanded.text.length > LIMITS.promptChars
     ) {
       return Promise.resolve(false);
     }
-    const previous = getDraft(sessionKey).trim();
+    const previous = getDraftInput(sessionKey).trim();
     clearDraft(sessionKey);
     setLockedId(null);
     // V2-06: the own message (and Claude's answer) must appear in view, even when scrolled up.
@@ -471,12 +608,12 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
       );
     }
     setSending((count) => count + 1);
-    return sendPrompt(sessionKey, message, priority, blobIds).then((ok) => {
+    return sendPrompt(sessionKey, expanded.text, priority, blobIds, expanded.pastes).then((ok) => {
       setSending((count) => count - 1);
       if (ok) {
         releaseAttachments(taken);
       } else {
-        restoreDraft(previous, null);
+        restoreDraft(previous, null, previousPastes);
         restoreAttachments(sessionKey, taken);
       }
       return ok;
@@ -491,7 +628,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   /** Runs a command Parallax handles itself; the draft goes only when it worked (WP-37 §2). */
   const runNative = (command: NativeCommand, args: string) => {
     if (entryId === null) return;
-    const before = getDraft(sessionKey);
+    const before = getDraftInput(sessionKey);
     const context: NativeContext = {
       sessionKey,
       entryId,
@@ -511,7 +648,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     void runNativeCommand(context, command, args).then((result) => {
       setSending((count) => count - 1);
       if (result.ok) {
-        if (getDraft(sessionKey) === before) {
+        if (getDraftInput(sessionKey) === before) {
           clearDraft(sessionKey);
           setLockedId(null);
         }
@@ -524,7 +661,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const submit = (via: Via) => {
     // WP41-07: the store, not the last render – an Enter right after the click is held as well.
     if (isHandoffPending(sessionKey)) return;
-    const message = getDraft(sessionKey).trim();
+    const message = getDraftInput(sessionKey).trim();
     let answer: Decision | null = null;
     if (via === 'primary' && target !== null && lockedId === target.id) answer = target;
     if (via === 'answer') {
@@ -533,15 +670,18 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     }
     if (!online) return;
     if (answer !== null) {
-      if (message === '' || message.length > textLimit(answer)) return;
+      // An answer has no `pastes` field: the tokens are replaced by their texts.
+      const previousPastes = getPastes(sessionKey);
+      const answerText = expandPastes(message, previousPastes).text;
+      if (answerText === '' || answerText.length > textLimit(answer)) return;
       const decision = answer;
       clearDraft(sessionKey);
       setLockedId(null);
       followTranscript(sessionKey);
       setSending((count) => count + 1);
-      void respondToDecision(sessionKey, decision, answerFromText(decision, message)).then((ok) => {
+      void respondToDecision(sessionKey, decision, answerFromText(decision, answerText)).then((ok) => {
         setSending((count) => count - 1);
-        if (!ok) restoreDraft(message, decision.id);
+        if (!ok) restoreDraft(message, decision.id, previousPastes);
       });
       return;
     }
@@ -567,34 +707,44 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
       runNative(entry.native, '');
       return;
     }
-    const next = applyMenuEntry(getDraft(sessionKey), entry.name);
+    const next = applyMenuEntry(getDraftInput(sessionKey), entry.name);
+    changeText(next.text, next.caret);
+    textareaRef.current?.focus();
+  };
+
+  /** Tab/Enter/click in the @ list: `@<path> ` replaces the typed word. */
+  const pickMention = (path: string) => {
+    const current = getDraftInput(sessionKey);
+    const mention = mentionAt(current, caret);
+    if (mention === null) return;
+    const next = applyMention(current, mention, path);
     changeText(next.text, next.caret);
     textareaRef.current?.focus();
   };
 
   const openExternal = () => {
     if (entryId === null) return;
-    const before = getDraft(sessionKey);
+    const before = getDraftInput(sessionKey);
     openExternalConsole(sessionKey, entryId)
       .then(() => {
         setTerminalHint(null);
-        if (getDraft(sessionKey) === before) clearDraft(sessionKey);
+        if (getDraftInput(sessionKey) === before) clearDraft(sessionKey);
       })
       .catch((caught: unknown) => {
         showErrorNotice(errorPayloadOf(caught), { sessionKey, id: `composer.external.${sessionKey}` });
       });
   };
 
-  const attachFiles = (files: readonly File[]) => {
-    if (!canAttach || files.length === 0) return;
-    const result = addAttachmentFiles(sessionKey, files);
-    if (result.notImages > 0) {
-      showTextNotice('composer.attachments.onlyImages', undefined, {
+  const addFiles = (files: readonly File[], folders: number) => {
+    if (folders > 0) {
+      showTextNotice('composer.attachments.folders', undefined, {
         sessionKey,
         tone: 'warning',
-        id: `composer.attach.${sessionKey}`,
+        id: `composer.attach-folders.${sessionKey}`,
       });
     }
+    if (files.length === 0) return;
+    const result = addAttachmentFiles(sessionKey, files);
     if (result.overLimit > 0) {
       showTextNotice(
         'composer.attachments.tooMany',
@@ -604,13 +754,99 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     }
   };
 
-  const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+  /**
+   * Files of a drop, a paste, the paper clip or the shell request `attachFiles` (all one way,
+   * ADR-146). `probe`: untyped files may be folders a plain file list cannot tell (lib/folders.ts,
+   * a chunk of its own – R5W-01; the `DataTransfer` was read before, in the event). Without that
+   * chunk the files go as they are: a folder then fails visibly as an upload chip.
+   */
+  const attachFiles = (incoming: IncomingFiles, probe: boolean) => {
     if (!canAttach) return;
-    const files = clipboardFiles(event.clipboardData);
+    if (!probe || incoming.files.every((file) => file.type !== '')) {
+      addFiles(incoming.files, incoming.folders);
+      return;
+    }
+    import('./lib/folders')
+      .then(({ withoutFolders }) => withoutFolders(incoming.files))
+      .then(
+        (checked) => {
+          addFiles(checked.files, incoming.folders + checked.folders);
+        },
+        () => {
+          addFiles(incoming.files, incoming.folders);
+        },
+      );
+  };
+
+  // WP-58: files dropped on the session pane (or picked in a menu) come as a shell request; folders
+  // the drop zone left out come as a count (CR3-01) and get the same hint. Nothing at all, a remote
+  // host or another session is not taken (archived/external panes have no field).
+  useShellRequestHandler('attachFiles', (request) => {
+    const folders = request.folders ?? 0;
+    if (request.sessionKey !== sessionKey || !canAttach) return false;
+    if (request.files.length === 0 && folders === 0) return false;
+    attachFiles({ files: [...request.files], folders }, true);
+    textareaRef.current?.focus();
+    return true;
+  });
+
+  /** A large pasted text becomes a token + chip (ADR-146); false = paste it as text. */
+  const pasteAsChip = (field: HTMLTextAreaElement, plain: string): boolean => {
+    const pasted = normalizePastedText(plain);
+    if (!isLargePaste(pasted)) return false;
+    const current = getDraftInput(sessionKey);
+    const kept = getPastes(sessionKey);
+    const refusal = pasteRefusal(current, kept, pasted);
+    if (refusal !== null) {
+      showTextNotice(
+        refusal === 'count' ? 'composer.pastes.asTextCount' : 'composer.pastes.asTextSize',
+        refusal === 'count' ? { max: LIMITS.pastesMax } : undefined,
+        { sessionKey, id: `composer.paste.${sessionKey}` },
+      );
+      return false;
+    }
+    const id = nextPasteId(kept);
+    const token = t('composer.pastes.token', { id: String(id), count: lineCount(pasted) });
+    const next = insertAt(current, field.selectionStart, field.selectionEnd, token);
+    // Pastes whose token was deleted earlier go now (they were only kept for undo).
+    changeText(next.text, next.caret, [...activePastes(current, kept), { id, token, text: pasted }]);
+    return true;
+  };
+
+  const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const plain = event.clipboardData.getData('text/plain');
     // Text wins: Word or Excel put a picture of the copied text next to it on the clipboard.
-    if (files.length === 0 || event.clipboardData.getData('text/plain') !== '') return;
+    if (plain !== '') {
+      if (pasteAsChip(event.currentTarget, plain)) event.preventDefault();
+      return;
+    }
+    if (!canAttach) return;
+    const incoming = transferFiles(event.clipboardData);
+    if (incoming.files.length === 0 && incoming.folders === 0) return;
     event.preventDefault();
-    attachFiles(files);
+    attachFiles(incoming, true);
+  };
+
+  const removePaste = (paste: DraftPaste) => {
+    const current = getDraftInput(sessionKey);
+    const at = current.indexOf(paste.token);
+    const next = removePasteToken(current, paste);
+    changeText(
+      next,
+      at < 0 ? next.length : at,
+      getPastes(sessionKey).filter((candidate) => candidate.id !== paste.id),
+    );
+    textareaRef.current?.focus();
+  };
+
+  const convertToText = (paste: DraftPaste) => {
+    const next = convertPaste(getDraftInput(sessionKey), paste);
+    changeText(
+      next.text,
+      next.caret,
+      getPastes(sessionKey).filter((candidate) => candidate.id !== paste.id),
+    );
+    textareaRef.current?.focus();
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -633,6 +869,27 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
           count: matches.length,
           activeIndex,
           onActiveIndexChange: setActiveIndex,
+          onSelectActive: () => undefined,
+        });
+        if (handled) return;
+      }
+    }
+    if (mentionOpen) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setMentionDismissed(true);
+        return;
+      }
+      if ((event.key === 'Tab' || event.key === 'Enter') && !modified && activeMention !== null) {
+        event.preventDefault();
+        pickMention(activeMention);
+        return;
+      }
+      if (event.key !== 'Enter' && mentionMatches.length > 0) {
+        const handled = handleCommandKey(event, {
+          count: mentionMatches.length,
+          activeIndex: mentionActive,
+          onActiveIndexChange: setMentionIndex,
           onSelectActive: () => undefined,
         });
         if (handled) return;
@@ -673,6 +930,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const hintId = `${inputId}-hint`;
   const menuId = slashMenuId(inputId);
   const menuHintId = `${inputId}-menu-hint`;
+  const mentionId = mentionMenuId(inputId);
   const suggestionId = `${inputId}-suggestion`;
   const argumentId = `${inputId}-argument`;
   const imagesHintId = `${inputId}-images-later`;
@@ -682,7 +940,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const describedBy = [
     hintTarget === null ? null : hintId,
     imagesWaitForMessage ? imagesHintId : null,
-    menuOpen ? menuHintId : null,
+    menuOpen || mentionOpen ? menuHintId : null,
     suggestion === null ? null : suggestionId,
     argumentHint === '' ? null : argumentId,
   ].filter((id): id is string => id !== null);
@@ -714,7 +972,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
         if (!canAttach || !hasFiles(event)) return;
         event.preventDefault();
         setDragging(false);
-        attachFiles(Array.from(event.dataTransfer.files));
+        attachFiles(transferFiles(event.dataTransfer), true);
       }}
     >
       <RateLimitBanner sessionKey={sessionKey} />
@@ -741,7 +999,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
           data-slot="composer-images-later"
           className="text-muted-foreground mb-1 flex items-start gap-1.5 text-2xs"
         >
-          <ImageIcon aria-hidden className="mt-px size-3 shrink-0" />
+          <PaperclipIcon aria-hidden className="mt-px size-3 shrink-0" />
           {t('composer.attachments.notWithAnswer')}
         </p>
       ) : null}
@@ -779,6 +1037,13 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
           textareaRef.current?.focus();
         }}
       />
+      {visiblePastes.length === 0 ? null : (
+        <SlotBoundary resetKey={sessionKey} className="mb-1.5 p-0">
+          <Suspense fallback={null}>
+            <PasteChips pastes={visiblePastes} onRemove={removePaste} onConvert={convertToText} />
+          </Suspense>
+        </SlotBoundary>
+      )}
       <div className="relative">
         {menuOpen ? (
           <SlashMenu
@@ -789,6 +1054,21 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
             onSelect={pickEntry}
           />
         ) : null}
+        {mentionOpen ? (
+          <SlotBoundary resetKey={sessionKey} className={MENTION_ERROR_CLASS}>
+            <Suspense fallback={null}>
+              <FileMentionMenu
+                id={mentionId}
+                state={projectFiles}
+                matches={mentionMatches}
+                total={mentionResult.total}
+                activeIndex={mentionActive}
+                onActiveIndexChange={setMentionIndex}
+                onSelect={pickMention}
+              />
+            </Suspense>
+          </SlotBoundary>
+        ) : null}
         <Textarea
           id={inputId}
           ref={textareaRef}
@@ -798,8 +1078,14 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
           aria-invalid={tooLong}
           aria-haspopup="listbox"
           aria-autocomplete="list"
-          aria-controls={menuOpen ? menuId : undefined}
-          aria-activedescendant={menuOpen ? commandOptionId(menuId, menuIndex) : undefined}
+          aria-controls={menuOpen ? menuId : mentionOpen ? mentionId : undefined}
+          aria-activedescendant={
+            menuOpen
+              ? commandOptionId(menuId, menuIndex)
+              : mentionOpen && mentionMatches.length > 0
+                ? commandOptionId(mentionId, mentionActive)
+                : undefined
+          }
           placeholder={placeholder}
           rows={1}
           className={cn('max-h-60 min-h-9 resize-none', suggestion !== null && 'pr-12')}
@@ -818,9 +1104,12 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
           }}
           onBlur={() => {
             setMenuDismissed(true);
+            setMentionDismissed(true);
           }}
           onFocus={() => {
+            preloadComposerParts();
             setMenuDismissed(false);
+            setMentionDismissed(false);
           }}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
@@ -846,13 +1135,13 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
             data-slot="drop-target"
             className="border-ring bg-background/85 text-muted-foreground pointer-events-none absolute inset-0 flex items-center justify-center gap-1.5 rounded-md border-2 border-dashed text-xs"
           >
-            <ImagePlusIcon className="size-4" />
+            <FilePlusIcon className="size-4" />
             {t('composer.attachments.drop')}
           </div>
         ) : null}
       </div>
       <span id={menuHintId} className="sr-only">
-        {menuOpen ? t('composer.slash.menuHint') : null}
+        {menuOpen ? t('composer.slash.menuHint') : mentionOpen ? t('composer.mention.menuHint') : null}
       </span>
       {suggestion === null ? null : (
         <span id={suggestionId} className="sr-only">
@@ -896,14 +1185,13 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
                 // V3-12: a form field needs an id or a name (DevTools issue), even a hidden one.
                 id={`${inputId}-files`}
                 type="file"
-                accept={ATTACHMENT_MEDIA_TYPES.join(',')}
                 multiple
                 hidden
                 tabIndex={-1}
                 aria-hidden
                 data-slot="attach-input"
                 onChange={(event) => {
-                  attachFiles(Array.from(event.target.files ?? []));
+                  attachFiles({ files: Array.from(event.target.files ?? []), folders: 0 }, false);
                   event.target.value = '';
                 }}
               />
@@ -943,12 +1231,12 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
               {t('composer.attachments.removeTooLarge')}
             </span>
           ) : null}
-          {value.length > limit * COUNTER_FROM ? (
+          {sendLength > limit * COUNTER_FROM ? (
             <span
               data-slot="composer-counter"
               className={cn('text-2xs tabular-nums', tooLong ? 'text-destructive' : 'text-muted-foreground')}
             >
-              {t('composer.counter', { count: value.length, max: limit })}
+              {t('composer.counter', { count: sendLength, max: limit })}
             </span>
           ) : null}
           {/* Left of the send buttons: appearing while the user types never moves them (R2W-01). */}

@@ -3,6 +3,7 @@ import {
   ArchiveIcon,
   ArchiveRestoreIcon,
   ClipboardCopyIcon,
+  FolderOpenIcon,
   FolderPlusIcon,
   HistoryIcon,
   InfoIcon,
@@ -15,7 +16,9 @@ import {
 } from 'lucide-react';
 import { Fragment } from 'react';
 import { LOCAL_HOST_ID, parseSessionKey } from '@shared/common';
+import { makeError } from '@shared/errors';
 import type { SessionSummary } from '@shared/model';
+import { windowsPathIssue } from '@shared/paths';
 import type { Command } from '@shared/protocol';
 import { useT, type TranslationKey } from '@web/i18n';
 import { copyText } from '@web/lib/clipboard';
@@ -42,6 +45,7 @@ export type SessionActionId =
   | 'rename'
   | 'pin'
   | 'openWindow'
+  | 'openFolder'
   | 'newSessionHere'
   | 'sleep'
   | 'openExternal'
@@ -62,11 +66,12 @@ export interface SessionAction {
   run: () => void;
 }
 
-/** Sidebar context menu and the "…" menu of a row (order of WP-35 §3). */
+/** Sidebar context menu and the "…" menu of a row (order of WP-35 §3; WP-58: + open folder). */
 export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
   'rename',
   'pin',
   'openWindow',
+  'openFolder',
   'newSessionHere',
   'separator',
   'sleep',
@@ -76,13 +81,14 @@ export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
   'archive',
 ];
 
-/** Header menu (WP-35 §8). */
+/** Header menu (WP-35 §8; WP-58: + open folder). */
 export const HEADER_ACTIONS: readonly SessionActionSlot[] = [
   'conversations',
   'sessionInfo',
   'rename',
   'separator',
   'openWindow',
+  'openFolder',
   'openExternal',
   'copyConsoleCommand',
   'separator',
@@ -129,6 +135,46 @@ export function newSessionIn(cwd: string): void {
   openNewSession({ cwd });
 }
 
+/**
+ * "Open folder in Explorer" (WP-58, ADR-144): `file.open {target: 'explorer', path: cwd}` – the
+ * `cwd` string exactly as stored; the server checks the path and starts Explorer (only on the local
+ * host). A refusal (`OPEN_FAILED`, `PATH_NOT_ALLOWED`, `FILE_NOT_FOUND` …) becomes a notice.
+ * Defence in depth (R5W-10, C.10): a `cwd` that `windowsPathIssue` rejects (UNC, device, ADS …) is
+ * never sent – the same notice as the server's refusal instead.
+ */
+export function openFolderInExplorer(sessionKey: string, summary: SessionSummary): void {
+  if (windowsPathIssue(summary.cwd) !== null) {
+    showErrorNotice(makeError('PATH_REJECTED'), { sessionKey });
+    return;
+  }
+  runSessionCommand(sessionKey, {
+    name: 'file.open',
+    entryId: summary.entryId,
+    path: summary.cwd,
+    target: 'explorer',
+    line: null,
+    col: null,
+  });
+}
+
+/** True for a session of the local host (Explorer, new window: only there). */
+export function isLocalSession(sessionKey: string): boolean {
+  return parseSessionKey(sessionKey)?.hostId === LOCAL_HOST_ID;
+}
+
+/** An action queued by a menu item for the moment its menu has closed (see sessionMenuCloseAutoFocus). */
+let afterMenu: { sessionKey: string; action: () => void } | null = null;
+
+/**
+ * Runs `action` once the session's menu has closed and the focus is back on its "…" (header) or
+ * row (sidebar) – for actions that move the focus themselves (opening the side panel: its opener
+ * must be the "…" button, not the menu item that is gone by then). Only the next close of a menu
+ * of the same session runs it; any other close drops it.
+ */
+export function runAfterMenu(sessionKey: string, action: () => void): void {
+  afterMenu = { sessionKey, action };
+}
+
 /** A process runs (the only states where "Put to sleep" = `session.close` means anything). */
 export function hasProcess(summary: SessionSummary): boolean {
   const { runState } = summary.status;
@@ -173,9 +219,21 @@ function build(
         label: 'navigation.actions.openWindow',
         icon: AppWindowIcon,
         // `#session=<entryId>` addresses the local host (state/selection.ts).
-        disabled: parseSessionKey(sessionKey)?.hostId !== LOCAL_HOST_ID,
+        disabled: !isLocalSession(sessionKey),
         run: () => {
           openSessionWindow(entryId);
+        },
+      };
+    case 'openFolder':
+      // Explorer would open on the host's machine: only for the local host (ADR-144).
+      if (!isLocalSession(sessionKey)) return null;
+      return {
+        id,
+        label: 'navigation.actions.openFolder',
+        icon: FolderOpenIcon,
+        disabled: false,
+        run: () => {
+          openFolderInExplorer(sessionKey, summary);
         },
       };
     case 'newSessionHere':
@@ -284,6 +342,8 @@ export function sessionActions(
  * `onCloseAutoFocus` of every menu with session actions (`place`: where the menu belongs):
  * - a chosen "Rename" opens its field now and keeps the focus there (instead of Radix returning it
  *   to the menu trigger);
+ * - an action queued with `runAfterMenu` runs now, after the focus went back to the session's "…"
+ *   (header) or row (sidebar) – e.g. opening the side panel, which then returns the focus there;
  * - otherwise Radix returns the focus to the trigger – but the row's "…" exists only on hover or
  *   focus, and a pinned row has moved meanwhile: if the focus ended on `<body>`, it goes to the
  *   session's row (sidebar) or the header's "…" (V3-04 "Anheften"). A dialog the action opened
@@ -293,6 +353,14 @@ export function sessionMenuCloseAutoFocus(sessionKey: string, place: RenamePlace
   return (event) => {
     if (takePendingRename()) {
       event.preventDefault();
+      return;
+    }
+    const queued = afterMenu;
+    afterMenu = null;
+    if (queued?.sessionKey === sessionKey) {
+      event.preventDefault();
+      focusElement(sessionFocusTarget(sessionKey, place));
+      queued.action();
       return;
     }
     // After Radix' own attempt (same task) and React's re-render of a moved row.

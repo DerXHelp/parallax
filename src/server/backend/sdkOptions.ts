@@ -3,18 +3,25 @@
  * the full table with sources is in docs/wp/WP-13c.md). No I/O, no logging: issues the backend
  * should log come from `optionIssues`, the post-start flag settings from `flagSettingsAfterStart`.
  *
+ * Phase 3 (WP-52): `perTaskStopAffordance` (stop per task, ADR-149) and `agentProgressSummaries`
+ * (task_progress.summary) are always on; `additionalDirectories` gets the entry's attachment
+ * folder. WP61-02: `todoFeatureEnabled` is NOT sent – with CLI 2.1.322 it has no effect (neither
+ * `TodoWrite` nor `TaskCreate` in `init.tools`); todo lists from the stream still reach the task bar.
+ *
  * Deliberately NOT set: enableFileCheckpointing, extraArgs 'replay-user-messages' (F.9),
- * perTaskStopAffordance (C.5, needs the task panel), sessionId, forkSession, maxTurns,
- * abortController (close() goes through Query.close() + the spawn wrapper, C.8).
+ * sessionId, forkSession, maxTurns, abortController (close() goes through Query.close() + the
+ * spawn wrapper, C.8).
  */
 import type {
   CanUseTool,
   Options,
   SdkBeta,
   SdkPluginConfig,
+  Settings,
   SpawnedProcess,
   SpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk';
+import { windowsPathsEqual } from '@shared/paths';
 import type { LaunchSpec } from '../claude/ports';
 import type { StartSessionRequest } from './types';
 
@@ -66,23 +73,36 @@ function permissionModeOf(req: StartSessionRequest): Options['permissionMode'] {
   return req.permissionMode;
 }
 
+/** Flag-tier settings Parallax sets at the start (`Settings` keys of SDK 0.3.322). */
+export type StartFlagSettings = Pick<Settings, 'autoCompactWindow' | 'fastMode'>;
+
 /**
  * Flag-tier settings of the start: the profile's `autoCompactWindow` (C.1) and the entry's fast
- * mode (Phase 2, `settings.fastMode`; null/absent = the CLI decides). Null when there is none.
+ * mode (Phase 2, `settings.fastMode`; null/absent = the CLI decides). Null when there is none
+ * (WP61-02: no setting without a value is sent).
  */
-export function startFlagSettings(
-  req: StartSessionRequest,
-): { autoCompactWindow?: number; fastMode?: boolean } | null {
-  const flags: { autoCompactWindow?: number; fastMode?: boolean } = {};
+export function startFlagSettings(req: StartSessionRequest): StartFlagSettings | null {
+  const flags: StartFlagSettings = {};
   if (req.launch.autoCompactWindow !== null) flags.autoCompactWindow = req.launch.autoCompactWindow;
   if (req.fastMode !== undefined && req.fastMode !== null) flags.fastMode = req.fastMode;
   return Object.keys(flags).length > 0 ? flags : null;
 }
 
+/** Profile directories + the attachment folder, without duplicates (case-insensitive, WP-52). */
+function additionalDirectoriesOf(req: StartSessionRequest): string[] {
+  const dirs: string[] = [];
+  const candidates = [...(req.launch.sdkOptions.additionalDirectories ?? [])];
+  if (req.attachmentsDir !== undefined && req.attachmentsDir !== null && req.attachmentsDir !== '') {
+    candidates.push(req.attachmentsDir);
+  }
+  for (const dir of candidates) {
+    if (!dirs.some((known) => windowsPathsEqual(known, dir))) dirs.push(dir);
+  }
+  return dirs;
+}
+
 function settingsOf(req: StartSessionRequest): Options['settings'] {
-  const path = req.launch.sdkOptions.settings;
-  if (path !== undefined) return path;
-  return startFlagSettings(req) ?? undefined;
+  return req.launch.sdkOptions.settings ?? startFlagSettings(req) ?? undefined;
 }
 
 function extraArgsOf(launch: LaunchSpec): Record<string, string | null> | undefined {
@@ -111,6 +131,9 @@ export function buildQueryOptions(req: StartSessionRequest, hooks: QueryOptionHo
     thinking: { type: 'adaptive', display: 'summarized' },
     toolConfig: { askUserQuestion: { previewFormat: 'markdown' } },
     promptSuggestions: req.promptSuggestions,
+    // Phase 3 (WP-52, F4/F5): stop a single task; summaries in task_progress for the task panel.
+    perTaskStopAffordance: true,
+    agentProgressSummaries: true,
     canUseTool: hooks.canUseTool,
     stderr: hooks.stderr,
     spawnClaudeCodeProcess: hooks.spawn,
@@ -123,7 +146,8 @@ export function buildQueryOptions(req: StartSessionRequest, hooks: QueryOptionHo
   if (req.effort !== null) options.effort = req.effort;
   if (req.resumeSessionId !== null) options.resume = req.resumeSessionId;
 
-  if (nonEmpty(sdk.additionalDirectories)) options.additionalDirectories = [...sdk.additionalDirectories];
+  const additionalDirectories = additionalDirectoriesOf(req);
+  if (additionalDirectories.length > 0) options.additionalDirectories = additionalDirectories;
   if (nonEmpty(sdk.allowedTools)) options.allowedTools = [...sdk.allowedTools];
   if (nonEmpty(sdk.disallowedTools)) options.disallowedTools = [...sdk.disallowedTools];
   const betas = betasOf(sdk.betas ?? []);
@@ -142,11 +166,9 @@ export function buildQueryOptions(req: StartSessionRequest, hooks: QueryOptionHo
 /**
  * C.1 (+ Phase 2 fast mode): with a settings FILE the flag settings (`autoCompactWindow`,
  * `fastMode`) cannot ride along in `settings`; the backend applies them via `applyFlagSettings`
- * once the session is ready.
+ * once the session is ready. Null when there is nothing to apply.
  */
-export function flagSettingsAfterStart(
-  req: StartSessionRequest,
-): { autoCompactWindow?: number; fastMode?: boolean } | null {
+export function flagSettingsAfterStart(req: StartSessionRequest): StartFlagSettings | null {
   if (req.launch.sdkOptions.settings === undefined) return null;
   return startFlagSettings(req);
 }

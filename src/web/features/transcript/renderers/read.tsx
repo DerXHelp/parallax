@@ -5,12 +5,12 @@ import { useT } from '@web/i18n';
 import { shortPath } from '@web/lib/path-display';
 import { CappedContent } from '../components/CappedContent';
 import { CodeBlock } from '../components/CodeBlock';
-import { languageForPath } from '../lib/languages';
+import { languageForPath } from '@web/lib/languages';
 import { previewImages, resultText, stripToolUseError } from '../lib/text';
 import { readReadInput, readReadResult } from '../lib/tool-input';
 import { GenericToolBody } from './generic';
 import { TerminalOutput } from './parts';
-import type { ToolBodyProps, ToolRenderer, Translate } from './types';
+import type { ToolBodyProps, ToolFileRef, ToolRenderer, Translate } from './types';
 
 /**
  * Read: file + line range (F.4: `{ type:'text', file:{ filePath, numLines, startLine, totalLines } }`
@@ -81,7 +81,9 @@ function ReadBody({ item, sessionKey }: ToolBodyProps) {
         <p className="text-muted-foreground text-2xs">{t('transcript.read.pages', { pages: input.pages })}</p>
       )}
       {text.trim() === '' ? (
-        hasImages ? null : <p className="text-muted-foreground text-xs italic">{t('transcript.read.empty')}</p>
+        hasImages ? null : (
+          <p className="text-muted-foreground text-xs italic">{t('transcript.read.empty')}</p>
+        )
       ) : (
         <CappedContent text={text} truncated={truncated} sessionKey={sessionKey}>
           {(value) => {
@@ -103,8 +105,18 @@ function ReadBody({ item, sessionKey }: ToolBodyProps) {
   );
 }
 
+/** The file read, at the requested `offset` (the first line shown). */
+function readFile(item: ToolCallItem): ToolFileRef | null {
+  const input = readReadInput(item.input);
+  if (input === null || input.file_path === '') return null;
+  const offset = input.offset;
+  const line = offset !== undefined && Number.isSafeInteger(offset) && offset > 0 ? offset : null;
+  return { path: input.file_path, line };
+}
+
 export const readRenderer: ToolRenderer = {
   icon: FileTextIcon,
+  file: readFile,
   summary: (item) => {
     const input = readReadInput(item.input);
     return input === null ? null : shortPath(input.file_path, 3);

@@ -1551,3 +1551,402 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   stören: erzwungene Anmeldung, `UserDataDir`, Gast-/Inkognito-Zwang, erzwungene Profilauswahl,
   blockierte Benachrichtigungen, `AutoplayAllowed=0`, `URLBlocklist` mit `127.0.0.1`. Live-Prüfung
   (Benachrichtigung + Klick, Autostart, `parallax:`) durch den Nutzer: Checkliste `CHROME.md` §4.6.
+
+## ADR-140 – Phase-3-Contracts: Protokoll v3, Datei-Befehle als eintragsgebundene Host-Befehle
+- **Datum/WP:** 11.11.2026, WP-50 (Phase-3-Design, Contracts v3); angenommen (11.11.2026)
+- **Kontext:** Viewer, Dateien-Panel, @-Picker und „Öffnen in …“ brauchen Metadaten, Inhalte und
+  Programmstarts – auch für archivierte, ruhende oder extern geöffnete Einträge (Lesen ist dort
+  harmlos). Die Lebenszyklus-Sperre der Engine (architecture §5.2) würde sie blockieren. Neue
+  Fehlercodes in der geschlossenen Union machen v2-Clients blind (R0-16).
+- **Entscheidung:** `file.stat`, `file.statMany`, `file.open`, `files.session`, `files.project` und
+  `editor.detect` stehen in `HOST_COMMAND_NAMES`; alle außer `editor.detect` tragen eine `entryId`,
+  die der Datei-Dienst selbst prüft (`ENTRY_NOT_FOUND`). Die Engine routet sie an
+  `FileService.commands` (neuer Port `src/server/files/ports.ts`, Muster ADR-101). Inhalte kommen per
+  `GET /api/file` (ADR-100: HTTP nur für Binärdaten). `session.stopTask`, `plan.list` und `plan.read`
+  sind normale Eintragsbefehle der Engine. `PROTOCOL_VERSION` 3 (zehn neue Fehlercodes, neun
+  Befehle); neu `SESSION_FILES_SCHEMA_VERSION` 1, alle übrigen Schemas unverändert (neue Felder mit
+  Default).
+- **Begründung:** Kein neuer Weg durch den Hub; der Datei-Dienst ist ein eigenes Paket (WP-53) ohne
+  Engine-Dateien.
+- **Folgen:** Offene Fenster laden nach dem Update einmal neu. `memorySource`/`fake-host` antworten
+  bis zur Umsetzung `NOT_IMPLEMENTED`.
+
+## ADR-141 – Dateizugriff: Wurzeln und Session-Dateien, Prüfkette vor jedem fs-Zugriff
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026, Nutzerentscheidung F1 = A)
+- **Kontext:** Assistant-Text kann beliebige Pfade nennen – UNC (`\\host\share` → NTLM-Hash, C.10),
+  Gerätepfade, getrennte Netzlaufwerke, fremde Profile. Zugleich soll alles klickbar sein, was Claude
+  in dieser Session bearbeitet hat, auch die Plan-Datei im `configDir` (`<HOME>\.claude\plans\…`,
+  plan-mode#40) und Task-Ausgaben unter `%TEMP%\claude\…` (subagent#30).
+- **Entscheidung:** Ein Pfad ist für `file.*`, `GET /api/file` und „Öffnen in …“ nur erlaubt, wenn er
+  (a) unter einer **Wurzel** liegt – `cwd`, `additionalDirectories` des Profils (`--add-dir`),
+  Anhangordner des Eintrags – oder (b) im **Datei-Index** des Eintrags steht (ADR-145: ein Tool-Call
+  dieser Session hat ihn gelesen/geschrieben, Plan-Datei, Task-Ausgabe). Prüfkette: Stringfilter
+  `windowsPathIssue` → Vorprüfung der Richtlinie am String (noch **kein** fs-Zugriff) →
+  `lstat`/`readlink` je Segment unterhalb der Wurzel (Link auf UNC/Device → `PATH_REJECTED`) →
+  `realpath` → Stringfilter und Richtlinie auf dem Ziel. Wurzeln werden beim ersten Gebrauch je
+  Eintrag selbst per `realpath` normalisiert (Cache bis zur Profiländerung). Jeder fs-Aufruf hat 3 s
+  Timeout (getrennte Netzlaufwerke). Zugeordnete Laufwerksbuchstaben gelten als lokale Pfade (wie
+  ADR-119). `resolveAllowedPath` (`lib/paths.ts`) wird die eine Implementierung (WP-53 ergänzt Index
+  und Timeout).
+- **Begründung:** Der Viewer zeigt nie mehr, als Claude in dieser Session lesen durfte oder gelesen
+  hat; der lokale Server wird kein beliebiger Dateileser (ein gestohlenes Cookie öffnete sonst das
+  ganze Profil). Verworfen: (B) jede im Text genannte Datei (Risiko Netzlaufwerke/fremde Profile),
+  (C) nur der Projektordner (Plan-Dateien wären nicht klickbar).
+- **Folgen:** Eine Datei außerhalb der Wurzeln, die Claude nur per Bash angefasst hat, bleibt Text
+  (Tooltip „nicht freigegeben“).
+
+## ADR-142 – Datei-Inhalte: `GET /api/file`, Grenzen, Typ per Magic-Bytes, CSP je Typ
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026, F2: Viewer nur lesend)
+- **Entscheidung:** `GET`/`HEAD /api/file?entryId&path` (Prüfung wie ADR-141) liefert
+  Text ≤ 2 MiB (Kodierung: BOM, sonst gültiges UTF-8, sonst windows-1252; Antwort immer
+  `text/plain; charset=utf-8`, auch für Markdown, HTML und SVG-Quelltext; größere Dateien am
+  Zeilenende gekürzt, `truncated`), Bilder (png, jpeg, gif, webp, bmp, ico per Magic-Bytes; svg per
+  Endung als `image/svg+xml`) und PDFs (`%PDF-`) als Stream ≤ 50 MB. Header: `Cache-Control: no-store`,
+  `nosniff`, `Cross-Origin-Resource-Policy: same-origin`, `Content-Disposition: inline`. CSP: alles wie
+  Blobs (`sandbox; default-src 'none'`, `X-Frame-Options: DENY`) – außer PDFs: `FILE_PDF_CSP`
+  (`default-src 'none'; object-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action
+  'none'`, ohne `sandbox`, weil Chromes PDF-Viewer in Sandbox-Dokumenten nicht startet) und
+  `X-Frame-Options: SAMEORIGIN`, damit das Seitenpanel es per `<iframe>` zeigt. PDF-Blobs (Anhänge)
+  bekommen dieselbe Variante. Guard-Klasse `file`: Cookie, `Sec-Fetch-Site` **Pflicht** `same-origin`,
+  `Origin` falls vorhanden erlaubt. Der Viewer liest nur; bearbeitet wird im Editor (ADR-144).
+- **Begründung:** PDF und Bilder ohne neue Bibliothek (pdf.js wäre groß; ADR-136 erlaubt
+  Chrome-Funktionen); Dateipfade sind anders als Blob-Hashes erratbar, `same-site` ließe andere
+  Dienste auf 127.0.0.1 herein (gleiches Cookie, andere Ports). Ein schreibender Viewer wäre ein
+  zweiter Schreiber neben Claude.
+- **Folgen:** SVG wird nur per `<img>` angezeigt (keine Skripte). Chrome-Richtlinie
+  `AlwaysOpenPdfExternally` → Download statt Anzeige; Rückfall-Knöpfe (L10). Gekürzter Text: Hinweis
+  „gekürzt – im Editor öffnen“.
+
+## ADR-143 – Live-Aktualisierung ohne `fs.watch`
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026)
+- **Kontext:** `fs.watch` unter Windows hält Ordner-Handles offen (Umbenennen/Löschen durch Claude oder
+  den Editor scheitert dann mit `EBUSY`/`EPERM`), ist auf Netzlaufwerken unzuverlässig und rekursiv
+  teuer; für Git wurde schon darauf verzichtet (C.14, ADR-113).
+- **Entscheidung:** Der Viewer fragt alle 2 s `file.stat`, solange sein Tab sichtbar und
+  `document.visibilityState === 'visible'` ist, und lädt bei geänderter `mtimeMs`/`bytes` nach
+  (Scrollposition bleibt). Zusätzlich lädt er sofort nach jedem fertigen `tool_call`
+  (`Write`/`Edit`/`MultiEdit`/`NotebookEdit`) auf dieselbe Datei (`windowsPathsEqual`). Die
+  Plan-Ansicht zeigt den gestreamten Write-Input schon während des Schreibens (ADR-148).
+- **Folgen:** Höchstens 0,5 `stat`/s je sichtbarem Viewer; Fremdänderungen erscheinen ≤ 2 s später.
+
+## ADR-144 – Externe Programme: Editor-Presets, Explorer, Standardprogramm; GUI-Start
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026, F3 wie vorgeschlagen; Ausnahme von der
+  Windows-Regel vom Nutzer freigegeben)
+- **Kontext:** WP-30 F1 (Editor-Einstellung in Phase 3, Default Notepad++). CLAUDE.md verlangt für jeden
+  Spawn `windowsHide: true`; libuv setzt damit `SW_HIDE` im `STARTUPINFO`, und ein GUI-Programm, das
+  beim ersten `ShowWindow` den Startwert übernimmt, bleibt unsichtbar. `cmd /c start` ist verboten,
+  `explorer.exe` liegt in `%SystemRoot%` (nicht System32).
+- **Entscheidung:** `settings.editor` = `notepadpp` (Default) | `vscode` | `custom` (eigene `.exe` +
+  Argumentvorlage mit `{file}`, `{line}`, `{col}`) | `system` (Standardprogramm). Auflösung: Override-Pfad
+  → App Paths (HKCU, dann HKLM) bzw. Uninstall-`InstallLocation` → Standardpfade (`%ProgramFiles%`,
+  `%ProgramFiles(x86)%`, `%LOCALAPPDATA%\Programs`). Start nur über den neuen Helfer `spawnGui`
+  (`lib/process.ts`): absolute `.exe`, Basisname ∉ `EDITOR_BLOCKED_EXECUTABLES`, PE-Subsystem
+  „Windows GUI“ (2) geprüft (Konsolenprogramm → `OPEN_FAILED{reason:'not_gui'}`), `shell: false`,
+  Argument-Array, `windowsHide: false`, `detached: true`, `stdio: 'ignore'`, `unref()`, Arbeitsordner =
+  Ordner der Datei, Umgebung ohne `PARALLAX*` und ohne Claude-Session-Variablen (vorhandenen Filter
+  aus `claude/env.ts` nutzen). Explorer: `%SystemRoot%\explorer.exe /select,"<p>"`
+  (`windowsVerbatimArguments`; `"` kann im Pfad nicht vorkommen) bzw. `explorer.exe "<ordner>"`; Exit-Code
+  wird ignoriert (Explorer meldet 1 auch bei Erfolg). Standardprogramm: `explorer.exe "<datei>"` nur für
+  `DEFAULT_PROGRAM_EXTENSIONS` (angefragter **und** aufgelöster Name). Nur Pfade, die ADR-141 erlaubt;
+  nur auf dem lokalen Host.
+- **Begründung:** Einzige Ausnahme von `windowsHide: true`, eng gefasst (nur `spawnGui`, nur
+  GUI-Subsystem, nur nach Nutzerklick); `explorer.exe <datei>` ersetzt `ShellExecute` ohne Shell und
+  ohne PowerShell; die Endungsliste verhindert, dass ein Klick Skripte oder Programme ausführt.
+- **Folgen:** Die Windows-Regel in CLAUDE.md nennt die Ausnahme (WP-50 Teil 2). Mit FakeBackend (Dev,
+  E2E, Verifier) startet der Server nie Programme, sondern protokolliert nur (aufzeichnender
+  Fake-Spawn, WP-53/60). AppLocker kann eigene `.exe` sperren → `OPEN_FAILED`. L11/L12 prüft der
+  Nutzer per Checkliste (keine Desktop-Bedienung durch Agenten, Nutzer-Regel 18.10.2026).
+
+## ADR-145 – Datei-Index je Eintrag (`files.json`)
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026)
+- **Entscheidung:** Der Datei-Dienst liest jede Op, bevor der Hub sie veröffentlicht
+  (`FileService.observeOps`, Abgriff in der Komposition, WP-60). Erfasst werden `item.upsert` von
+  `tool_call`s mit Status `done` – `Read` → `read`, `Write` → `written`, `Edit`/`MultiEdit`/
+  `NotebookEdit` → `edited` (Felder `file_path` bzw. `notebook_path`), `ExitPlanMode`-Input
+  `planFilePath` → `plan` – sowie `task.outputFile` → `output`; auch Unteragenten (Items mit
+  `parentToolUseId`). Nur absolute Pfade, die den Stringfilter bestehen; `Grep`/`Glob`/`Bash` bewusst
+  nicht. Ablage `entries/<id>/files.json` (`sessionFilesFileSchema`, atomar, 2 s entprellt, `flush`
+  beim Beenden), höchstens 1000 Einträge (älteste `lastAt` fliegen). `files.session` ergänzt die
+  Dateien im Anhangordner als `attached` (ein `readdir`, zwei Ebenen). Fehlt `files.json`, baut der
+  erste Zugriff den Index einmal aus den Transkript-Logs aller Unterhaltungen (`backfilled: true`).
+- **Begründung:** Ein Index an einer Stelle statt Client-Suche über das Transkript (Pagination,
+  mehrere Fenster); er ist zugleich die Zugriffsliste von ADR-141.
+- **Folgen:** Was Claude per Bash schreibt, fehlt (dokumentiert). Neuer Contract
+  `SESSION_FILES_SCHEMA_VERSION` 1.
+
+## ADR-146 – Anhänge: PDF als `document`, andere Dateien im Eintragsordner, Pastes als `inline_pastes`
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026). Ergänzt ADR-103.
+- **Kontext:** C.11 sieht einen Eintragsordner als `additionalDirectory` vor; ADR-103 bindet Uploads
+  nicht an Einträge. PDFs kann Claude direkt als Dokument lesen; das Backend kann `document`-Blöcke
+  schon senden. Große Text-Pastes fluten das Eingabefeld; das SDK kennt `inline_pastes`
+  (sdk.d.ts:6775).
+- **Entscheidung:** Upload wie ADR-103 (roh, Typ per Magic-Bytes): Bild wie bisher, `%PDF-` →
+  `application/pdf` (≤ 10 MB), sonst `application/octet-stream` (≤ 10 MB, `name` Pflicht). Beim Senden
+  (Engine): Bild → `image`-Block; PDF → `document`-Block (base64, Titel = Name); andere Datei →
+  `AttachmentFileStore.materialize` kopiert nach `<home>\entries\<id>\attachments\<blob16>\<name>`
+  (Name bereinigt, idempotent), und an den **gesendeten** Text wird ein fester englischer Block
+  `Attached files:` mit den absoluten Pfaden gehängt; das `user_message`-Item zeigt den getippten Text
+  plus Chips. Der Ordner ist bei jedem Start `additionalDirectory` (C.11, L9). Pastes: der Composer
+  zeigt eingefügte Texte ab 2 000 Zeichen oder 30 Zeilen als Chip; gesendet steht der Text an seiner
+  Stelle im Prompt, `pastes` listet ihn (Server prüft „kommt vor“) → `inline_pastes`.
+  **Aufräumen:** Die Kopien gehören zum Eintrag und gehen mit ihm (endgültiges Löschen = Backlog);
+  Blobs bleiben inhaltsadressiert (Blob-Aufräumen = Backlog). Gleicher Inhalt unter anderem Namen
+  behält den ersten Namen (Blob-Meta „erste gewinnt“).
+- **Begründung:** Kein Multipart, keine Eintragsbindung beim Upload (Anhänge schon im Dialog „Neue
+  Session“); Pfade statt Inhalt halten den Prompt klein, Claude liest mit eigenen Werkzeugen.
+- **Folgen:** Der CLI-Verlauf (Konsole, Import) zeigt den Pfadblock als Text. Ordner-Drops werden
+  abgelehnt (Hinweis: per `@` einfügen). Live L6, L7, L9.
+
+## ADR-147 – „Mit frischem Kontext umsetzen“: neue CLI-Session im selben Eintrag
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026). Ersetzt C.4 (`/clear`-Emulation).
+- **Kontext:** Das SDK hat keine Freigabe-Option „Kontext leeren“ (`PermissionResult`, sdk.d.ts:2622);
+  `showClearContextOnPlanAccept` betrifft nur den CLI-Dialog; `conversation_reset.trigger`
+  `fresh_session` (:5460) ist nur eine Meldung. C.4 sah eine `/clear`-Emulation vor (zwei Turns,
+  Warten auf den Reset, abhängig vom Slash-Dispatch).
+- **Entscheidung (WP-51):** Prüfung (architecture §5.2) → offene `canUseTool`-Anfrage mit `deny`
+  beantworten (fester Text „The user chose to implement the plan in a fresh session.“,
+  `interrupt: true`) → Laufzeit schließen, die Unterhaltung endet mit `fresh_session` → neue
+  Unterhaltung **ohne Resume** mit `permissionMode` = Wahl (Bypass nur mit Profilfreigabe), gleichem
+  Profil, Modell und Effort → erster Prompt: fester englischer Rahmen („Implement the following
+  approved plan. Plan file: <pfad>“) plus Plan-Text bzw. `editedPlan`, **ohne** `client_composed`
+  (sonst fehlen CLAUDE.md, Regeln und Skills im ersten Turn, sdk.d.ts:6749). Outcome
+  `plan_approved{…, freshContext: true}`, Op `conversation.reset{trigger:'fresh_session',
+  hasEarlier:true}`. Ist die Entscheidung abgelaufen (Prozess weg), entfällt das `deny`. Startfehler:
+  Fehler im Transkript, die alte Unterhaltung bleibt über „Frühere Unterhaltungen“ erreichbar
+  (ADR-107).
+- **Begründung:** Deterministisch und aus vorhandenen Bausteinen (Start, Unterhaltungswechsel); Plan
+  bleibt als Datei und Version erhalten.
+- **Folgen:** Die UI hebt die Option ab 60 % Context hervor (WP-56). Live L2.
+
+## ADR-148 – Plan-Versionen und Plan-Datei live
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026)
+- **Entscheidung:** `plan.list` (Records mit `planVersion` aus `decisions.json`) und `plan.read`
+  (`plans/v<N>.md`); `latestPlanVersion` im Detail (Engine). `planFile` (Engine): der letzte fertige
+  `Write`/`Edit` auf (a) den `planFilePath` der jüngsten Plan-Entscheidung oder (b) – solange
+  `permissionMode === 'plan'` – eine `.md`-Datei (der Plan-Modus erlaubt ohne Rückfrage nur die
+  Plan-Datei, plan-mode#40). Live-Vorschau (WP-56): solange der passende `Write` läuft, liest das
+  Plan-Panel `content` tolerant aus dem gestreamten `inputPartial` (Teil-JSON) und rendert Markdown;
+  danach lädt es die Datei per `GET /api/file`. Diff v(n−1) ↔ v(n) über `plan.read` und
+  `web/lib/diff.ts`.
+- **Folgen:** Der Plan-Tab bleibt nach der Freigabe nutzbar; „Plan“ in der Kopfzeile erscheint, sobald
+  `latestPlanVersion` oder `planFile` gesetzt ist. Live L1.
+
+## ADR-149 – Hintergrund-Tasks: Stop je Task, Task-Panel, Aufgabenleiste
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026, F4 ja, F5 beide an)
+- **Entscheidung:** `perTaskStopAffordance: true` (WP-52): Stop im Composer (Interrupt) beendet nur
+  den Turn, laufende Hintergrund-Agents und -Workflows laufen weiter (sdk.d.ts:1872–1890).
+  `session.stopTask` → `AgentSession.stopTask`, Wirkung als `task_notification` `stopped`. Task-Panel
+  (Feature `tasks`): `detail.backgroundTasks` plus laufende `tool_call.task` mit Laufzeit, Tokens,
+  Zusammenfassung (`agentProgressSummaries: true`), Ausgabe-Datei (`FileLink`), Stop je Zeile und
+  „Alle stoppen“ (nacheinander). Aufgabenleiste: `detail.todos` aus dem letzten `TodoWrite` bzw. der
+  `TaskCreate`/`TaskUpdate`-Folge (Engine), angepinnt über dem Composer, einklappbar;
+  `todoFeatureEnabled: true` als Flag-Setting (L5). Beide Flags sind standardmäßig an, ohne eigene
+  Einstellung. „Ohne Arbeit“ zählt laufende Hintergrund-Tasks weiter als Arbeit (Archiv, Schlaf,
+  frischer Kontext gesperrt).
+- **Begründung:** Verhalten wie das Terminal mit Task-Liste; der Mehrverbrauch der Zusammenfassungen
+  (ein kurzer Zusatzaufruf etwa alle 30 s je laufendem Subagent) ist gering.
+- **Folgen:** Stop für Hintergrund-Bash nur, wenn L4 bestätigt; sonst nur für Agents. Scheitert L3,
+  gilt das bisherige Verhalten (Stop beendet alles). Eine Einstellung für die Flags folgt nur, wenn
+  die Abo-Nutzung spürbar steigt (WP-61 beobachtet).
+
+## ADR-150 – Seitenpanel-Host, Phase-3-Gerüst und Ownership
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026). Ergänzt ADR-126.
+- **Entscheidung:** Die Shell besitzt einen Panel-Host (`shell/side-panel/`) mit den Tabs Plan · Datei ·
+  Dateien · Aufgaben, Splitter (Breite je Fenster in `localStorage`, 320 px … 70 %), Esc schließt;
+  Inhalte kommen über Slots: `PlanPanel` (decisions), `FilePanel`/`FilesPanel` (files), `TasksPanel`
+  (tasks). `FileLink` ist ein Slot (files), den Transkript, Plan-Karte und Task-Panel rendern;
+  `TaskStrip` (tasks) rendert die Shell über dem Composer. Querverbindungen über die Anfragen
+  `openFile`, `sidePanel`, `attachFiles`. Unter 1100 px Fensterbreite liegt das Panel als Überlagerung
+  über dem Transkript (V3-14). Teil 2 legt Slots, Anfragen, i18n-Namensräume, ESLint-Gruppen und den
+  Stub-Host an; danach bearbeitet jedes Paket nur eigene Dateien (CLAUDE.md, WP-50 §6).
+- **Begründung:** ADR-126 (Features importieren einander nie); Panels ohne Kopplung an Entscheidungen.
+
+## ADR-151 – @-Datei-Picker
+- **Datum/WP:** 11.11.2026, WP-50; angenommen (11.11.2026)
+- **Entscheidung:** `@` am Wortanfang öffnet im Composer eine Liste (Muster Slash-Menü:
+  `ui/command-list`, Tastatur, `aria-activedescendant`). Quelle `files.project` (je Öffnen, Server-Cache
+  30 s): `git -c core.fsmonitor=false -c core.quotepath=off ls-files -z --cached --others
+  --exclude-standard` (fsmonitor aus: ein Repo kann darüber Programme starten), sonst begrenzter Walk
+  (keine Links/Junctions, Ignore-Liste `node_modules`, `.git`, `dist`, `build`, `.venv`, `target` …,
+  Tiefe ≤ 12, 3 s, ≤ 20 000 Pfade). Gefiltert wird im Client (`lib/fuzzy.ts`); die Auswahl fügt
+  `@<relativer Pfad>` ein (mit Leerzeichen `@"<pfad>"`). Die CLI erweitert `@pfad` wie im Terminal (L8).
+- **Folgen:** Ordner erscheinen nicht (nur Dateien); große Repos werden gekürzt (`truncated`, Hinweis
+  „weiter tippen“).
+
+## ADR-152 – Task-Meldungen nur mit Herkunft der CLI
+- **Datum/WP:** 12.11.2026, FIX-R5 (Befund R5-01); angenommen (12.11.2026, Koordinator)
+- **Entscheidung:** Der Normalizer wertet eine Nutzernachricht nur dann als Task-Meldung
+  (`task_notification`, `outputFile`, Überschreiben des Tool-Calls zu `<tool-use-id>`), wenn sie von
+  der CLI stammt: `origin.kind === 'task-notification'` und Hauptagent (`parentToolUseId === null`) –
+  live (`u.origin`) wie im Verlauf (`HistoryMessage.origin`). Text in derselben Form ohne diese
+  Herkunft bleibt ein normaler Prompt bzw. wird bei Subagenten verworfen; ältere Transkripte ohne
+  `origin` zeigen die Meldung höchstens an, übernehmen aber kein `outputFile`. Tiefenverteidigung im
+  Datei-Index: `output`-Einträge entstehen nur aus Task-Daten der CLI (Systemevents bzw. so geprüfte
+  Meldungen), nie aus freiem Text.
+- **Begründung:** Die Zugriffsliste (ADR-141/145) darf nur aus fertigen Tool-Calls und Daten der CLI
+  wachsen. Die reine Textform kann der Nutzer (Einfügen eines Transkript-Ausschnitts) oder Claude
+  selbst (Agent-`prompt` im mitgeladenen Verlauf der Subagenten) erzeugen; R5 hat damit eine Datei
+  außerhalb aller Wurzeln lesbar gemacht.
+- **Folgen:** Normalizer- und Index-Tests mit der R5-Probe P1 als Negativfall; WP-61 bestätigt live,
+  dass CLI 2.1.322 echte Meldungen mit `origin.kind: 'task-notification'` liefert.
+
+## ADR-153 – Deutsche Wörterbücher als Lazy-Chunk
+- **Datum/WP:** 12.11.2026, FIX-R5 (Befund R5W-01, Bundle-Budget WP-50/WP-60); angenommen
+  (12.11.2026, Koordinator)
+- **Entscheidung:** Statisch im Start-Chunk bleiben nur die englischen Wörterbücher (Standard und
+  Rückfall). Alle `de`-Wörterbücher (Kern, Fehler, Feature- und Shell-Namensräume) lädt
+  `src/web/i18n` per `import()` als einen Chunk; `setLanguage('de')` schaltet erst um, wenn er
+  geladen ist (bis dahin Englisch – wie heute bis zum Eintreffen der Einstellungen, Start ist immer
+  Englisch). Optional wird der Chunk beim Start vorgeladen, wenn die zuletzt genutzte Sprache Deutsch
+  war (`localStorage`, `try/catch`). Schlägt das Laden fehl, bleibt Englisch und die Shell meldet es
+  einmal. Das Budget wird künftig als Summe aller Start-Chunks (gzip, inkl. modulepreload) gemessen.
+- **Begründung:** Die `de`-Wörterbücher sind mit ≈ 62 kB raw der größte lazy-fähige Block im Start-Chunk
+  (R5-web); allein bringen sie `index` etwa auf den Stand vor Phase 3. Englisch ist Standard.
+- **Folgen:** `i18n.test.tsx` („registers the feature namespaces statically“) prüft die Registrierung
+  beider Sprachen neu; der Schlüssel-Abgleich en/de bleibt statisch im Test.
+
+## ADR-154 – Test- und Build-Läufe bremsen nie den Rechner
+- **Datum/WP:** 12.11.2026, Koordinator (Nutzerregel nach der Fix-Runde FIX-R5); angenommen
+  (12.11.2026, Koordinator auf Vorgabe des Nutzers: „Das darf auf gar keinen Fall passieren“)
+- **Anlass:** Während der Fix-Runde fror der ganze Rechner des Nutzers mehrfach für 10–15 s ein und
+  lief nach dem Abbruch der Arbeit sofort wieder. Gleichzeitig liefen mehrere Agenten mit eigenem
+  `pnpm check`, künstliche Lastläufe (`docs/wp/FLAKES.md`: drei `vitest run` gleichzeitig, dazu ein
+  CPU-Last-Skript) und zuletzt ein E2E-Lauf „unter Last“ (Playwright mit drei Chrome neben einem
+  vollen `vitest run`). Vitest startete je Lauf bis zu 18 Worker (19 logische CPUs, Standard „alle bis
+  auf eine“), alles mit normaler Priorität.
+- **Entscheidung:**
+  1. Vitest, Playwright und `pnpm build` setzen ihren Prozess beim Laden der Konfiguration auf
+     „niedriger als normal“ (`lowerProcessPriority` aus `repo.config.ts`, nur absenken). Unter Windows
+     erben alle danach gestarteten Kindprozesse diese Prioritätsklasse (Worker, Testserver, Chrome,
+     Vite/esbuild). Der Build des Launchers (produktive Instanz) bleibt unverändert.
+  2. Vitest nutzt höchstens die Hälfte der logischen CPUs (`TEST_MAX_WORKERS = '50%'`).
+  3. Keine künstliche Last mehr: keine gleichzeitigen Testläufe, keine CPU-Last-Skripte, kein
+     „E2E unter Last“. Flake-Suche nur durch wiederholte Läufe nacheinander.
+  4. Höchstens ein schwerer Lauf (`pnpm check`/`test`/`build`/`e2e`/`install`, voller `vitest run`)
+     gleichzeitig auf der Maschine. Parallele Agenten laufen nur, wenn sie keine schweren Läufe
+     starten (nur gezielt `vitest run <eigene Pfade>`); volle Checks macht dann der Koordinator
+     beim Merge, nacheinander.
+- **Begründung:** Eine einzelne begrenzte Testsuite mit niedriger Priorität lässt dem Desktop Luft;
+  die Abstürze entstanden erst durch die Summe gleichzeitiger Läufe. Die Lastrobustheit der Tests
+  (großzügige Limits, Ereignisse statt Wanduhr) bleibt – sie schützt jetzt gegen die Arbeit des
+  Nutzers am selben Rechner statt gegen künstliche Last.
+- **Folgen:** `repo.config.test.ts` prüft, dass die Test-Worker die Priorität erben; CLAUDE.md
+  „Ressourcen“; `docs/wp/FLAKES.md` (Lastprotokoll L1/L2 abgeschafft); Läufe dauern etwas länger.
+
+## ADR-157 – Datei-Dienst: Upload-Typ nach Absicht, exakte Kürzungsanzeige, Inhalte mit genauer Länge, Backfill seitenweise
+- **Datum/WP:** 12.11.2026, Fix-Runde CR3 Paket D; angenommen (12.11.2026, Koordinator beim Merge). Ergänzt ADR-134, ADR-142, ADR-145 und
+  ADR-146.
+- **Kontext:** Das `/code-review` Phase 3 fand vier Fehler (CR3-03, CR3-04, CR3-05, CR3-10):
+  - ein octet-stream-Upload mit Bild-Bytes wurde zum unskalierten Bild mit Bild-Grenze;
+  - `truncated` übersah die Kürzung von UTF-16- und windows-1252-Texten;
+  - `Content-Length` kam aus einer veralteten `stat`-Größe;
+  - der Index-Backfill hielt ganze Unterhaltungen im Speicher.
+- **Entscheidung:**
+  1. **Upload:**
+     - Ein Bild entsteht nur aus einem als Bild deklarierten Upload; nur diesen hat der Client
+       vorbereitet.
+     - `application/octet-stream` ist immer eine Datei, auch mit Bild-Bytes: `fileAttachmentBytes`,
+       `name` Pflicht, Anhangordner.
+     - `%PDF-` bleibt bei `application/pdf` und octet-stream ein PDF (ADR-146).
+  2. **`FileInfo.truncated`** sagt genau, was `GET /api/file` kürzt: die Quelle oder ihre UTF-8-Form ist
+     größer als `fileTextBytes`.
+     - Gelesen wird nur, wenn die Obergrenze aus Größe und Kodierung offen lässt, ob die Grenze
+       überschritten wird.
+     - Das Ergebnis merkt sich der Dienst je Dateiversion (Pfad, Größe, `mtime`; LRU 256).
+     - `GET /api/file` braucht das Flag nicht.
+  3. **Bilder und PDFs** liest `GET /api/file` über ein Handle ganz (≤ `fileBinaryBytes`) und sendet sie
+     mit genauer Länge.
+     - `Content-Length` weicht nie vom Körper ab.
+     - Eine zwischendurch ersetzte Datei kommt vollständig.
+     - Das Lesen läuft wie zuvor der Stream ohne 3-s-Wächter.
+  4. **Der Index-Backfill** liest seitenweise rückwärts (neueste Unterhaltung und Seite zuerst) und hält
+     höchstens eine Seite.
+     - Gezählt wird nur ein Datensatz außerhalb der bekannten Zeitspanne einer Datei.
+     - `ops` bleiben in der Reihenfolge des ersten Auftretens.
+- **Begründung:**
+  - Der Client kennt die Absicht: Datei oder vorbereitetes Bild.
+  - Die Anzeige „gekürzt“ muss zum gesendeten Text passen. Die Kosten bleiben beim Pollen gering, weil
+    nur eine geänderte Dateiversion gelesen wird – und dann lädt der Viewer den Inhalt ohnehin.
+  - Eine Länge, die nicht aus den gesendeten Bytes stammt, kann nie garantiert stimmen.
+  - Seiten statt ganzer Unterhaltungen begrenzen die Speicherspitze nach einem Upgrade.
+- **Folgen:**
+  - Bild-Bytes ohne Browser-Typ liest Claude per `Read` aus dem Anhangordner statt als Bild-Block.
+  - Je gleichzeitiger Bild/PDF-Antwort bis 50 MB Speicher.
+  - `HEAD /api/file` liest die Datei ganz; die UI nutzt `HEAD` nicht, und der Port kennt die Methode
+    nicht.
+  - Verworfen wurden „Länge vom Handle + Stream“ und „ohne feste Länge“ (siehe
+    `docs/wp/CODE-REVIEW-3-D.md`).
+
+## ADR-158 – Ein Task-Modell für Panel und Kopfzeile
+- **Datum/WP:** 12.11.2026, Fix-Runde CR3 Paket W (CR3-02, CR3-07, WP61-06); angenommen (12.11.2026, Koordinator beim Merge)
+- **Entscheidung:** Das Zeilenmodell der Tasks (`buildTaskRows`, `TaskRow`, `runningTaskCount`,
+  `countRunningTasks`, `selectTaskSources`) liegt in `src/web/lib/task-rows.ts`. Task-Panel und der Zähler
+  des Knopfs „Aufgaben“ in der Kopfzeile zählen laufende Tasks nur über diese Funktion. Laufend (und damit
+  stoppbar) ist nur, was `session.stopTask` des Servers annimmt: ein nicht-ambienter Eintrag der
+  Hintergrundliste oder ein Tool-Call im Status `running`/`background` (`pending` nicht). Ambient-Tasks
+  und Vordergrund-Shells von Subagenten (`local_bash`, `isBackgrounded: false`, `parentToolUseId` gesetzt)
+  sind keine eigenen Zeilen, solange keine Quelle sie als Hintergrund meldet.
+- **Begründung:** Die Shell importiert keine Features (ADR-126); zwei Zählungen liefen auseinander
+  (Kopfzeile 1, Panel 2 – WP-61). Ein Stop-Knopf, den der Server mit `TASK_NOT_FOUND` beantwortet, ist
+  wirkungslos (CR3-07).
+- **Folgen:** Das Modul liegt im Start-Chunk (Budget prüfen). Die Kopfzeile zählt auch laufende
+  Tool-Call-Tasks ohne Listeneintrag. Die Agent-Karte im Transkript nutzt dieselbe Regel
+  (`isToolCallTaskLive`).
+
+## ADR-159 – Composer ohne Turn bei reinen Hintergrund-Tasks
+- **Datum/WP:** 12.11.2026, Fix-Runde CR3 Paket W (B18, Entscheidung des Koordinators nach WP-61 §2.3); angenommen (12.11.2026, Koordinator beim Merge)
+- **Entscheidung:** Arbeitet die CLI (`runState: 'working'`) nur für Hintergrund-Tasks
+  (`backgroundTasks > 0`, nichts eingereiht, kein Kompaktieren/Retry) und ist der letzte Austausch des
+  Haupt-Agents im Transkript ein `turn_result` (Prompts, Antworten, Tool-Calls und `task_notification`
+  zählen als Austausch; Subagent-Items nicht), zeigt der Composer den Ruhe-Modus: normales „Senden“
+  (`priority: 'next'`), kein Stop, kein „Jetzt senden“, Esc stoppt nicht. Gestoppt wird im Task-Panel.
+  Im Zweifel gilt der Einreihen-Modus wie bisher. Abgeleitet nur aus vorhandenen Contracts
+  (`StatusFacts`, `TranscriptItem`, `detail.queue`) in `features/composer/lib/turn.ts`.
+- **Begründung:** Ohne Turn beantwortet die CLI „Einreihen“ und „Jetzt senden“ gleich und sofort; ein
+  Interrupt bewirkt nichts (WP-61 §2.3). Die Reihenfolge der Items ist eindeutig, Zeitstempel sind es
+  nicht (eingereihte Prompts tragen ihre Sendezeit).
+- **Folgen:** Lücke bei einem von der CLI selbst gestarteten Turn ohne neues Item bis zur ersten Ausgabe.
+  Optionale spätere Contract-Erweiterung: Fakt „Turn läuft“ (z. B. `StatusFacts.turnActive` mit Default
+  `false`, gesetzt vom Engine-Zustand zwischen Prompt-Start und `result`).
+
+## ADR-155 – Frischer Kontext: Annahme vor Wirkung, `@` neutralisiert, Planungs-Turn mit Kosten
+- **Datum/WP:** 12.11.2026, Code-Review Phase 3, Fix-Paket S (CR3-08, CR3-09, WP61-01, WP61-03); angenommen (12.11.2026, Koordinator beim Merge). Ergänzt
+  ADR-147, ADR-148 und ADR-131 (Texte bleiben).
+- **Kontext:** „Mit frischem Kontext umsetzen“ brach einen geplanten Auto-Retry schon vor den Prüfungen im
+  Lock ab (CR3-08). Die CLI expandiert `@pfad` in jedem Prompt, auch ohne `client_composed`; ein Plantext mit
+  `@README.md` erzeugte im ersten Prompt des frischen Kontexts ein Datei-Attachment samt Read (B19). Der
+  Prozess wurde direkt nach `deny + interrupt` geschlossen, das `result` des Planungs-Turns kam nie an –
+  Kosten und Usage der Planung fehlten (B2/B3, ≈ 0,12 USD). `plan.list` las für `stored` jede Planversion
+  voll (CR3-09).
+- **Entscheidung:** (1) `cancelRetry` erst im Lock nach Gate, Broker-Prüfung und „ohne Arbeit“. (2) Plantext,
+  den Parallax an die CLI schickt (erster Prompt des frischen Kontexts, A.10-Freigabe mit Plan im Text),
+  bekommt vor jedes `@`, das die CLI expandieren würde (Textanfang, nach Whitespace oder nach 。、？！), ein
+  U+200B (`neutralizeAtMentions`, `sessions/summary.ts`); Plan-Datei und `plans/v<N>.md` bleiben im
+  Original. (3) Nach `deny + interrupt` wartet die Engine höchstens `freshContextResultMs` (Default 3000) auf
+  das `result` des abgewiesenen Turns, dann schließt sie den Prozess. (4) `plan.list` kennt gespeicherte und
+  gelesene Versionen je Serverlauf (`withPlanIndex`) und liest jede höchstens einmal.
+- **Folgen:** Die alte Unterhaltung trägt die Kosten der Planung, sofern die CLI das `result` innerhalb der
+  Frist liefert (live zu bestätigen). Der erste Prompt enthält unsichtbare U+200B vor geschützten `@`; wer
+  ihn aus dem Transkript kopiert, kopiert sie mit. Die CLI-Regel für `@` wird bei jedem CLI-Upgrade geprüft
+  (`docs/sdk-upgrade.md`). Umsetzung und Tests: `sessions/{freshContext,summary,runtime,planIndex,commands}.ts`,
+  `sessions/lib/timers.ts`, `phase3.integration.test.ts` „CR3-08/CR3-09/WP61-01/WP61-03: …“,
+  `summary.test.ts`, `planIndex.test.ts`.
+
+## ADR-156 – Backend nach WP-61: kein `todoFeatureEnabled`, Task-Name nicht aus `task_progress`, Anmeldeablauf im Debug-Log
+- **Datum/WP:** 12.11.2026, Code-Review Phase 3, Fix-Paket S (WP61-02, WP61-04, WP61-07); angenommen (12.11.2026, Koordinator beim Merge). Ersetzt in ADR-149
+  den Satz „`todoFeatureEnabled: true` als Flag-Setting (L5)“; ergänzt WP-50 §11 (B15).
+- **Kontext:** Mit CLI 2.1.322 bewirkt `todoFeatureEnabled` nichts – weder `TodoWrite` noch `TaskCreate` stehen
+  in `init.tools` (auch nicht deferred), mit und ohne Settings-Datei (B7, B25). Mit Settings-Datei löste das
+  Flag allein ein `applyFlagSettings` nach dem Start aus. `task_progress.description` ist die aktuelle
+  Tätigkeit der CLI („Running …“), nicht der Task-Name, und überschrieb ihn bis nach dem Ende (WP61-07).
+  `credential_expires_at` landete nirgends, B15 war nicht ablesbar (WP61-04).
+- **Entscheidung:** (1) Parallax sendet `todoFeatureEnabled` nicht mehr; Flag-Settings nur noch
+  `autoCompactWindow` (C.1) und `fastMode` (Phase 2), ohne Wert gar keine `settings`-Option bzw. kein
+  `applyFlagSettings`. Die Aufgabenleiste bleibt und zeigt `TodoWrite`/`TaskCreate`, sobald die CLI sie
+  anbietet. (2) Der Live-Normalizer übernimmt aus `task_progress` nur `summary`, Usage und
+  `subagent_type`, nie `description`. (3) Das SdkBackend schreibt beim ersten `result` je Prozess eine
+  `debug`-Zeile mit nur `credentialExpiresAt` (ISO-String oder `null`).
+- **Folgen:** Beim nächsten CLI-Upgrade `init.tools` auf `TodoWrite`/`TaskCreate` prüfen und das Flag ggf.
+  wieder aufnehmen (`docs/sdk-upgrade.md`). Die Tätigkeit aus `task_progress` wird nicht angezeigt (dafür
+  bräuchte es ein Contract-Feld). Umsetzung und Tests: `backend/sdkOptions.ts`, `backend/sdkBackend.ts`,
+  `sessions/normalizer/live.ts`, `backend/fake/{dsl,phase3}.ts` und die zugehörigen Tests „WP61-0x: …“.

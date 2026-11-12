@@ -112,3 +112,24 @@ export function createManualTimers(): ManualTimers {
     },
   };
 }
+
+/**
+ * True when `work` settled (fulfilled or rejected) within `ms` on the given engine clock, false on
+ * timeout; the cap timer is cancelled either way (shutdown bounds, WP61-03 fresh-context wait).
+ */
+export async function settledWithin(timers: Timers, work: Promise<unknown>, ms: number): Promise<boolean> {
+  const cap: { timer: TimerHandle | null } = { timer: null };
+  const settled = await Promise.race([
+    work.then(
+      () => true,
+      () => true,
+    ),
+    new Promise<boolean>((resolve) => {
+      cap.timer = timers.setTimeout(() => {
+        resolve(false);
+      }, ms);
+    }),
+  ]);
+  cap.timer?.cancel();
+  return settled;
+}

@@ -3,6 +3,7 @@ import { ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
+import { pino, type Logger } from 'pino';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { SAMPLE_IDS, sampleId, sampleUuid } from '@shared/samples';
 import type { LaunchSpec } from '../claude/ports';
@@ -201,6 +202,8 @@ interface HarnessOptions {
   kill?: (pid: number) => Promise<void>;
   timeouts?: Partial<SdkTimeouts>;
   history?: HistoryPool;
+  /** Backend logger (default: the module logger). */
+  logger?: Logger;
   /** Adjust the fake query before start() continues (readiness, failing calls …). */
   configure?: (q: FakeQuery) => void;
 }
@@ -249,6 +252,7 @@ function harness(p: HarnessOptions = {}) {
     history,
     now: () => NOW,
     ...(p.timeouts === undefined ? {} : { timeouts: p.timeouts }),
+    ...(p.logger === undefined ? {} : { logger: p.logger }),
   });
   backends.push(backend);
   const fq = (index = 0): FakeQuery => {
@@ -732,6 +736,63 @@ describe('SdkBackend – send', () => {
     expect(h.fq().inputs.map((input) => input.uuid)).toEqual([sampleUuid(8), sampleUuid(9)]);
   });
 
+  it('a document title goes into DocumentBlockParam.title', async () => {
+    const h = harness();
+    const session = h.backend.start(request());
+    session.send({
+      uuid: sampleUuid(8),
+      priority: 'next',
+      content: [{ type: 'document', mediaType: 'application/pdf', base64: 'JVBERi0=', title: 'Angebot.pdf' }],
+    });
+    await settle();
+    expect(h.fq().inputs.map((input) => input.message.content)).toEqual([
+      [
+        {
+          type: 'document',
+          source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERi0=' },
+          title: 'Angebot.pdf',
+        },
+      ],
+    ]);
+  });
+
+  it('Phase 3: inlinePastes → inline_pastes only when not empty, documents unchanged, no client_composed', async () => {
+    const h = harness();
+    const session = h.backend.start(request());
+    const content = [
+      { type: 'text' as const, text: 'See\npasted one\nand pasted two' },
+      { type: 'document' as const, mediaType: 'application/pdf' as const, base64: 'JVBERi0=' },
+    ];
+    session.send({
+      uuid: sampleUuid(10),
+      priority: 'next',
+      content,
+      inlinePastes: ['pasted one', 'pasted two'],
+    });
+    session.send({
+      uuid: sampleUuid(11),
+      priority: 'next',
+      content: [{ type: 'text', text: 'none' }],
+      inlinePastes: [],
+    });
+    session.send({ uuid: sampleUuid(12), priority: 'next', content: [{ type: 'text', text: 'absent' }] });
+    await settle();
+    const [withPastes, empty, absent] = h.fq().inputs;
+    expect(withPastes).toMatchObject({
+      uuid: sampleUuid(10),
+      inline_pastes: ['pasted one', 'pasted two'],
+      message: {
+        content: [
+          { type: 'text', text: 'See\npasted one\nand pasted two' },
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERi0=' } },
+        ],
+      },
+    });
+    expect(empty).not.toHaveProperty('inline_pastes');
+    expect(absent).not.toHaveProperty('inline_pastes');
+    for (const input of h.fq().inputs) expect(input).not.toHaveProperty('client_composed');
+  });
+
   it('rejects a prompt uuid that is not a UUID', () => {
     expect(() => toSdkUserMessage({ uuid: 'not-a-uuid', content: [], priority: 'next' })).toThrow(TypeError);
   });
@@ -953,6 +1014,19 @@ describe('SdkBackend – autoCompactWindow with a settings file (C.1)', () => {
     expect(h.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({ autoCompactWindow: 400_000 });
   });
 
+  it('WP61-02: a settings file alone gets no flag settings after the start (no todoFeatureEnabled)', async () => {
+    const h = harness();
+    h.backend.start(request({ launch: launch({ sdkOptions: { settings: 'D:\\cfg\\settings.json' } }) }));
+    await settle();
+    expect(h.fq().options.settings).toBe('D:\\cfg\\settings.json');
+    expect(h.fq().applyFlagSettings).not.toHaveBeenCalled();
+    const plain = harness();
+    plain.backend.start(request());
+    await settle();
+    expect(plain.fq().options).not.toHaveProperty('settings');
+    expect(plain.fq().applyFlagSettings).not.toHaveBeenCalled();
+  });
+
   it('waits up to readyMs (not controlMs) for the readiness before the flag settings (R2-04)', async () => {
     useFakeTimeouts();
     const readiness = Promise.withResolvers<unknown[]>();
@@ -1009,6 +1083,64 @@ describe('SdkBackend – autoCompactWindow with a settings file (C.1)', () => {
       where: 'control',
       message: 'unknown setting',
     });
+  });
+});
+
+describe('SdkBackend – credential expiry in the log (WP61-04, B15)', () => {
+  const EXPIRY_MSG = 'first result: credential expiry';
+
+  function capture() {
+    const lines: string[] = [];
+    const logger = pino({ level: 'debug' }, { write: (line: string) => lines.push(line) });
+    const expiry = () =>
+      lines
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter((line) => line.msg === EXPIRY_MSG);
+    return { logger, expiry };
+  }
+
+  const resultMessage = (extra: Record<string, unknown>) => ({
+    type: 'result',
+    subtype: 'success',
+    is_error: false,
+    total_cost_usd: 0.002,
+    session_id: SAMPLE_IDS.sessionId,
+    ...extra,
+  });
+
+  it('one debug line at the first result of a process – only the expiry, nothing else of the result', async () => {
+    const { logger, expiry } = capture();
+    const h = harness({ logger });
+    const session = h.backend.start(request());
+    const rec = record(session);
+    h.fq().push(
+      { type: 'system', subtype: 'init', session_id: SAMPLE_IDS.sessionId },
+      resultMessage({ credential_expires_at: '2026-12-10T08:00:00.000Z' }),
+      resultMessage({ credential_expires_at: '2026-12-11T08:00:00.000Z' }),
+    );
+    await settle();
+    expect(rec.events.filter((event) => event.type === 'message')).toHaveLength(3);
+    const lines = expiry();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      level: 20,
+      entryId: SAMPLE_IDS.entry,
+      credentialExpiresAt: '2026-12-10T08:00:00.000Z',
+    });
+    expect(Object.keys(lines[0] ?? {}).sort()).toEqual(
+      ['credentialExpiresAt', 'entryId', 'hostname', 'level', 'module', 'msg', 'pid', 'time'].sort(),
+    );
+  });
+
+  it('a result without the field logs null; every process logs its own first result', async () => {
+    const { logger, expiry } = capture();
+    const h = harness({ logger });
+    h.backend.start(request());
+    h.fq().push(resultMessage({}), resultMessage({ credential_expires_at: '2026-12-10T08:00:00.000Z' }));
+    h.backend.start(request());
+    h.fq(1).push(resultMessage({ credential_expires_at: 42 }));
+    await settle();
+    expect(expiry().map((line) => line.credentialExpiresAt)).toEqual([null, null]);
   });
 });
 

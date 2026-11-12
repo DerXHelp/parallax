@@ -5,8 +5,13 @@
  * on `timers.advance()`). Commands go through `commandSchema.parse` and their results through
  * `commandResultSchemas`, like the hub. `drive()` serves the FakeBackend's gates like the recorder
  * (prompts, interrupt, close, decisions via `answerFromFixture`). Only tests import this.
+ * Phase 3: the fake's real files (`fake:plan` …) go to a temp `filesRoot` below the test home that
+ * `close()` removes – never `%TEMP%\parallax-fake-files`.
  */
 import { randomUUID } from 'node:crypto';
+import { rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import type { Logger } from 'pino';
 import { z } from 'zod';
 import type { ClientId, EntryId, PromptPriority } from '@shared/common';
@@ -128,6 +133,35 @@ export interface EngineHarnessOptions {
   profileStore?: MutableProfileStore;
   /** Engine logger (default: the root logger). */
   logger?: Logger;
+  /**
+   * Phase 3 (ADR-146): pass the memory attachment store to the engine (default true); false = the
+   * engine runs without one (file attachments → UNSUPPORTED_MEDIA_TYPE, no attachmentsDir).
+   */
+  attachments?: boolean;
+  /**
+   * Phase 3 (WP-52): `FakeBackendOptions.filesRoot` – the real files of `fake:plan`,
+   * `fake:background`, `fake:files`. Default: a fresh folder below the test home
+   * (`PARALLAX_HOME`, else the OS temp), created on the first write and removed by `close()`; never
+   * `%TEMP%\parallax-fake-files`. A given folder is left alone.
+   */
+  filesRoot?: string;
+  /**
+   * Internal: `restart()` passes on that the default `filesRoot` is the harness's own (the new
+   * harness removes it on `close()` as well; removing twice is harmless).
+   */
+  ownFilesRoot?: boolean;
+  /**
+   * FakeBackend timing (default speed 0: nothing waits). A test that needs a long fake wait to
+   * hold – the 30-s `fake:background` task until `stopTask` – passes speed 1 and a `sleep` that
+   * holds only that wait (a sleeping task is a resting point of `settle()`).
+   */
+  fakeTiming?: Pick<FakeBackendOptions, 'speed' | 'sleep'>;
+}
+
+/** A not yet existing folder for the fake files of one harness (below the test home). */
+function harnessFilesRoot(): string {
+  const base = process.env.PARALLAX_HOME ?? os.tmpdir();
+  return path.join(base, `fake-files-${randomUUID()}`);
 }
 
 export type CommandInput = z.input<typeof commandSchema>;
@@ -178,9 +212,15 @@ export interface EngineHarness {
   /** Backend at rest + a few macrotasks (the engine handles every event synchronously). */
   settle(): Promise<void>;
   drive(entryId: EntryId, parsed: Pick<ParsedFixture, 'events'>, options?: DriveOptions): Promise<void>;
-  /** A new manager (and backend, publisher) on the same stores and Claude history (§5.2 restart). */
+  /**
+   * A new manager (and backend, publisher) on the same stores, Claude history and fake files
+   * (§5.2 restart).
+   */
   restart(options?: Partial<EngineHarnessOptions>): Promise<EngineHarness>;
+  /** Shuts the manager down and removes the harness's own fake-files folder. */
   close(): Promise<void>;
+  /** `FakeBackendOptions.filesRoot` of this harness (Phase 3 fake files). */
+  readonly filesRoot: string;
 }
 
 function createHarnessProc(overrides: Partial<ProcDeps> = {}): HarnessProc {
@@ -227,11 +267,15 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
   const sleepPolicy = options.sleepPolicy ?? NEVER_SLEEP;
   const publisher = createMemoryPublisher({ validate: options.validate ?? true });
   publisher.setPresence(options.presence ?? []);
+  const filesRoot = options.filesRoot ?? harnessFilesRoot();
+  const ownsFilesRoot = options.filesRoot === undefined || options.ownFilesRoot === true;
   const backend = createFakeBackend({
     ...(options.scenario === undefined ? {} : { scenario: options.scenario }),
     ...(options.history === undefined ? {} : { history: options.history }),
-    speed: 0,
+    speed: options.fakeTiming?.speed ?? 0,
+    ...(options.fakeTiming?.sleep === undefined ? {} : { sleep: options.fakeTiming.sleep }),
     now,
+    filesRoot,
   });
   const claude = createFakeClaudeIntegration({
     ...(options.profiles === undefined ? {} : { profiles: options.profiles }),
@@ -242,10 +286,11 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
   });
   const proc = createHarnessProc(options.proc);
   const errors: { error: unknown; context: string }[] = [];
+  const { attachments, ...withoutAttachments } = stores;
   const manager = createSessionManager({
     backend,
     claude,
-    stores,
+    stores: options.attachments === false ? withoutAttachments : { ...withoutAttachments, attachments },
     host: {
       ...HARNESS_HOST,
       ...(options.port === undefined ? {} : { port: options.port }),
@@ -314,6 +359,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     proc,
     errors,
     now,
+    filesRoot,
 
     async cmd<C extends CommandInput>(cmd: C, clientId: ClientId = HARNESS_CLIENT_ID): Promise<ResultOf<C>> {
       const result = await run(cmd, clientId);
@@ -444,16 +490,22 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
 
     async restart(next = {}) {
       await manager.shutdown();
+      // The fake files survive the restart (the plan file of a resumed session stays readable).
+      const keepRoot = next.filesRoot === undefined;
       return createEngineHarness({
         ...options,
         ...next,
         stores,
         history: backend.history,
+        filesRoot: keepRoot ? filesRoot : next.filesRoot,
+        ownFilesRoot: keepRoot ? ownsFilesRoot : next.ownFilesRoot === true,
       });
     },
 
     async close() {
       await manager.shutdown();
+      if (ownsFilesRoot)
+        await rm(filesRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     },
   };
   return harness;

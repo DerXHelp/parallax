@@ -59,6 +59,29 @@ describe('updateSettings (R4W-15: every top-level field optimistic)', () => {
     expect(settings()).toEqual(before);
   });
 
+  it('the editor (Phase 3, ADR-144) is a field like the others: optimistic, whole, rolled back on refusal', async () => {
+    const server = await connect(false);
+    const editor: Settings['editor'] = {
+      preset: 'custom',
+      executable: 'C:\\Tools\\Sublime\\sublime_text.exe',
+      args: ['{file}:{line}:{col}'],
+    };
+    const done = updateSettings({ editor });
+    expect(settings().editor).toEqual(editor);
+    await done;
+    expect(server.hostState.settings.editor).toEqual(editor);
+    expect(server.commands.at(-1)).toEqual({ name: 'settings.update', patch: { editor } });
+
+    unregisterConnection();
+    server.dispose();
+    await connect(true);
+    const before = settings();
+    const refused = updateSettings({ editor: { preset: 'vscode', executable: null, args: [] } });
+    expect(settings().editor.preset).toBe('vscode');
+    await expect(refused).rejects.toThrow();
+    expect(settings().editor).toEqual(before.editor);
+  });
+
   it('a key present with undefined never erases the field', async () => {
     await connect(false);
     const before = settings();

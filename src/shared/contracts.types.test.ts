@@ -16,12 +16,15 @@ import type {
   Decision,
   DecisionOutcome,
   DecisionResponse,
+  FileInfo,
+  FileStatResult,
   FsListing,
   SessionDetail,
   SessionDetailPatch,
   Settings,
   SettingsPatch,
   SystemEvent,
+  TodoList,
   TranscriptItem,
   TranscriptItemKind,
 } from './model';
@@ -167,11 +170,15 @@ describe('contract types', () => {
     expectTypeOf<CommandName>().toExtend<string>();
   });
 
-  it('host commands (Phase 2, ADR-101) carry no entryId', () => {
+  it('host commands (Phase 2, ADR-101; Phase 3 file service with entryId, ADR-140)', () => {
     expectTypeOf<HostCommandName>().toExtend<CommandName>();
     expectTypeOf<HostCommand>().toEqualTypeOf<Extract<Command, { name: HostCommandName }>>();
     expectTypeOf<Extract<keyof HostCommand, 'entryId'>>().toEqualTypeOf<never>();
+    expectTypeOf<CommandOf<'file.stat'>['entryId']>().toEqualTypeOf<EntryId>();
     expectTypeOf<CommandResult<'fs.listDirectory'>>().toEqualTypeOf<FsListing>();
+    expectTypeOf<CommandResult<'file.stat'>>().toEqualTypeOf<{ file: FileInfo }>();
+    expectTypeOf<CommandResult<'file.statMany'>['results'][number]>().toEqualTypeOf<FileStatResult>();
+    expectTypeOf<SessionDetail['todos']>().toEqualTypeOf<TodoList | null>();
   });
 
   it('SERVER_MESSAGE_TYPES is complete', () => {

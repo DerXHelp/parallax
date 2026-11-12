@@ -26,6 +26,9 @@ export const en = {
     attachment: 'Attachment: {name}',
     image: 'Image: {name}',
     unnamed: 'unnamed',
+    /** A long message starts collapsed (V4-07). */
+    showAll: { one: 'Show all ({count} line)', other: 'Show all {count} lines' },
+    showLess: 'Show less',
   },
   /** Thumbnails and the lightbox (WP-37). */
   image: {
@@ -159,6 +162,10 @@ export const en = {
     tokens: '{count} tokens',
     toolUses: { one: '{count} tool use', other: '{count} tool uses' },
     model: 'Model {model}',
+    stop: 'Stop',
+    stopLabel: 'Stop the agent “{title}”',
+    stopping: 'Stopping…',
+    output: 'Output file:',
   },
   question: {
     answer: 'Answer: {answer}',
@@ -179,12 +186,16 @@ export const en = {
     approved: 'Approved – {mode}',
     approvedPlain: 'Approved',
     approvedEdited: 'Approved with your edits – {mode}',
-    revised: 'Sent back for revision',
+    /** Same wording as the plan tab (features/decisions `versions.status.revised`, WP-56). */
+    revised: 'Rejected with feedback',
+    /** Approved with "fresh context" (ADR-147): implemented in a new conversation; wording of WP-56. */
+    freshContext: 'With fresh context',
+    freshContextHint: 'Implemented in a new conversation that only got the plan.',
     cancelled: 'Cancelled',
     denied: 'Not approved',
     pending: 'Waiting for your decision',
     unresolved: 'Not decided',
-    file: 'Plan file: {path}',
+    file: 'Plan file:',
   },
   turn: {
     label: 'Turn summary',
@@ -239,6 +250,7 @@ export const en = {
     conversationReset: 'New conversation',
     conversationResetTrigger: 'New conversation ({trigger})',
     taskNotification: 'Background task: {description}',
+    taskOutput: 'Output file:',
     error: 'Error',
     unknown: 'Unknown event {type}',
     handoff: {

@@ -1,13 +1,21 @@
-import { act, screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { makeError } from '@shared/errors';
+import type { Command } from '@shared/protocol';
+import { sampleContextGauge, sampleId } from '@shared/samples';
+import { NotificationCenter } from '@web/shell/NotificationCenter';
+import { SidePanelHost } from '@web/shell/side-panel/SidePanelHost';
+import { resetSidePanelState } from '@web/shell/side-panel/state';
+import type { FakeAck, FakeHost } from '@web/state/fake-host';
 import { resetClientStore } from '@web/state/store';
 import { Composer } from '../composer/Composer';
 import { getDraft, resetDraftStore, setDraft } from '../composer/state/drafts';
 import { DecisionBar } from './DecisionBar';
+import { DEMO_ENTRIES } from './lib/demo-data';
 import { renderWithHost, type Harness } from './lib/testing';
-import { PlanSidePanel } from './PlanSidePanel';
 import { readApproveMode, resetDecisionBarState } from './state/bar-store';
+import { resetPlanData } from './state/plan-data';
 
 // UI tests with many key strokes: 2.5–6 s in a full `pnpm test`, up to 21 s when several runs load
 // the machine (docs/wp/FLAKES.md). A timed-out test keeps typing into the next one, so keep a margin.
@@ -20,20 +28,30 @@ afterEach(() => {
   harness = null;
   resetClientStore();
   resetDecisionBarState();
+  resetSidePanelState();
   resetDraftStore();
+  resetPlanData();
   localStorage.clear();
 });
 
-function start(options: { panel?: boolean; composer?: boolean } = {}): Harness {
+function start(
+  options: {
+    panel?: boolean;
+    composer?: boolean;
+    notices?: boolean;
+    onCommand?: (cmd: Command, host: FakeHost) => FakeAck | undefined;
+  } = {},
+): Harness {
   harness = renderWithHost(
     (key) => (
       <>
-        {options.panel === false ? null : <PlanSidePanel sessionKey={key('plan')} />}
+        {options.panel === false ? null : <SidePanelHost sessionKey={key('plan')} />}
         <DecisionBar sessionKey={key('plan')} />
         {options.composer === true ? <Composer sessionKey={key('plan')} /> : null}
+        {options.notices === true ? <NotificationCenter /> : null}
       </>
     ),
-    { entries: ['plan'] },
+    { entries: ['plan'], onCommand: options.onCommand },
   );
   return harness;
 }
@@ -88,12 +106,189 @@ describe('PlanCard (Plan "Plan-Modus & Plan-Freigabe")', () => {
     expect(await screen.findByRole('button', { name: 'Implement · Auto' })).toBeTruthy();
   });
 
-  it('"With fresh context" is shown but disabled (Phase 3)', async () => {
-    start();
+  it('"With fresh context" in the ▾ menu: label, exact answer, remembered with the mode', async () => {
+    const seen: Command[] = [];
+    const h = start({
+      onCommand: (cmd) => {
+        seen.push(cmd);
+        return undefined;
+      },
+    });
     const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: 'How should Claude implement the plan?' }));
-    const fresh = await screen.findByRole('menuitem', { name: /With fresh context/ });
-    expect(fresh.getAttribute('aria-disabled')).toBe('true');
+    await user.click(await screen.findByRole('menuitemradio', { name: 'With auto mode' }));
+    await user.click(await screen.findByRole('button', { name: 'How should Claude implement the plan?' }));
+    const fresh = await screen.findByRole('menuitemcheckbox', { name: /With fresh context/ });
+    expect(fresh.getAttribute('aria-checked')).toBe('false');
+    await user.click(fresh);
+    // The toggle keeps the menu open (the mode may be picked next).
+    expect(
+      screen.getByRole('menuitemcheckbox', { name: /With fresh context/ }).getAttribute('aria-checked'),
+    ).toBe('true');
+    await user.keyboard('{Escape}');
+    expect(approvals(h)).toEqual([]);
+    const main = await screen.findByRole('button', { name: 'Implement · Auto · fresh context' });
+    expect(main.dataset.fresh).toBe('true');
+    await user.click(main);
+    const respond = seen.filter((cmd) => cmd.name === 'decision.respond');
+    expect(respond).toEqual([
+      {
+        name: 'decision.respond',
+        entryId: DEMO_ENTRIES.plan,
+        decisionId: sampleId('dc', 0xa41),
+        response: {
+          kind: 'plan',
+          response: { behavior: 'approve_fresh_context', mode: 'auto', editedPlan: null },
+        },
+      },
+    ]);
+    await waitFor(() => {
+      expect(localStorage.getItem('parallax.decisions.approveFresh')).toBe('true');
+    });
+    expect(readApproveMode()).toBe('auto');
+  });
+
+  it('starts from a remembered fresh choice; switching it off is remembered too', async () => {
+    localStorage.setItem('parallax.decisions.approveMode', 'auto');
+    localStorage.setItem('parallax.decisions.approveFresh', 'true');
+    const h = start();
+    const user = userEvent.setup();
+    expect(await screen.findByRole('button', { name: 'Implement · Auto · fresh context' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'How should Claude implement the plan?' }));
+    await user.click(await screen.findByRole('menuitemcheckbox', { name: /With fresh context/ }));
+    await user.keyboard('{Escape}');
+    await user.click(await screen.findByRole('button', { name: 'Implement · Auto' }));
+    expect(approvals(h)).toEqual([
+      { kind: 'plan', response: { behavior: 'approve', mode: 'auto', editedPlan: null } },
+    ]);
+    await waitFor(() => {
+      expect(localStorage.getItem('parallax.decisions.approveFresh')).toBe('false');
+    });
+  });
+
+  it('never remembers a bypass choice – neither the mode nor the fresh flag', async () => {
+    localStorage.setItem('parallax.decisions.approveMode', 'acceptEdits');
+    const h = start();
+    const user = userEvent.setup();
+    await screen.findByRole('button', { name: 'Implement · Accept edits' });
+    const decision = h.host.view(DEMO_ENTRIES.plan)?.decisions[0];
+    expect(decision?.kind).toBe('plan');
+    if (decision?.kind !== 'plan') return;
+    act(() => {
+      h.host.pushOps(DEMO_ENTRIES.plan, [
+        {
+          op: 'decision.upsert',
+          decision: { ...decision, approveModes: ['acceptEdits', 'bypassPermissions'] },
+        },
+      ]);
+    });
+    await user.click(screen.getByRole('button', { name: 'How should Claude implement the plan?' }));
+    await user.click(
+      await screen.findByRole('menuitemradio', { name: 'Without permission checks (bypass)' }),
+    );
+    await user.click(screen.getByRole('button', { name: 'How should Claude implement the plan?' }));
+    await user.click(await screen.findByRole('menuitemcheckbox', { name: /With fresh context/ }));
+    await user.keyboard('{Escape}');
+    await user.click(
+      await screen.findByRole('button', { name: 'Implement · Bypass permissions · fresh context' }),
+    );
+    expect(approvals(h)).toEqual([
+      {
+        kind: 'plan',
+        response: { behavior: 'approve_fresh_context', mode: 'bypassPermissions', editedPlan: null },
+      },
+    ]);
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /Implement/ })).toBeNull();
+    });
+    expect(localStorage.getItem('parallax.decisions.approveMode')).toBe('acceptEdits');
+    expect(localStorage.getItem('parallax.decisions.approveFresh')).toBeNull();
+  });
+
+  it.each([
+    [59, false],
+    [60, true],
+  ] as const)(
+    'at %i %% context "fresh context" is recommended: %s (never preselected)',
+    async (percent, shown) => {
+      const h = start();
+      const user = userEvent.setup();
+      await screen.findByRole('button', { name: 'Implement · Accept edits' });
+      act(() => {
+        h.host.patchSummary(DEMO_ENTRIES.plan, {
+          context: sampleContextGauge({
+            percentage: percent,
+            totalTokens: percent * 2000,
+            maxTokens: 200_000,
+          }),
+        });
+      });
+      await waitFor(() => {
+        expect(screen.getByRole('meter', { name: 'Context' }).getAttribute('aria-valuenow')).toBe(
+          String(percent),
+        );
+      });
+      expect(document.querySelector('[data-slot="choice-menu-indicator"]') !== null).toBe(shown);
+      await user.click(screen.getByRole('button', { name: 'How should Claude implement the plan?' }));
+      const fresh = await screen.findByRole('menuitemcheckbox', { name: /With fresh context/ });
+      expect(fresh.getAttribute('aria-checked')).toBe('false');
+      const badge = within(fresh).queryByText('Recommended');
+      expect(badge !== null).toBe(shown);
+      if (shown) expect(fresh.textContent).toContain(`Context is ${String(percent)}% full.`);
+      expect(screen.getByRole('button', { name: 'Implement · Accept edits' }).dataset.fresh).toBe('false');
+    },
+  );
+
+  it.each([
+    ['SESSION_BUSY', 'The session is busy. Try again in a moment.'],
+    ['MODE_NOT_ALLOWED', 'This permission mode is not allowed for the profile.'],
+  ] as const)('a %s answer to the fresh start shows in the card (role="alert")', async (code, text) => {
+    localStorage.setItem('parallax.decisions.approveFresh', 'true');
+    const h = start({
+      onCommand: (cmd) =>
+        cmd.name === 'decision.respond' ? { ok: false, error: makeError(code) } : undefined,
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Implement · Accept edits · fresh context' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Could not implement with a fresh context');
+    expect(alert.textContent).toContain(text);
+    // The card stays answerable; nothing was remembered.
+    expect(screen.getByRole('button', { name: 'Implement · Accept edits · fresh context' })).toBeTruthy();
+    expect(localStorage.getItem('parallax.decisions.approveMode')).toBeNull();
+    expect(approvals(h)).toHaveLength(1);
+    // Changing the choice clears the error.
+    await user.click(screen.getByRole('button', { name: 'How should Claude implement the plan?' }));
+    await user.click(await screen.findByRole('menuitemcheckbox', { name: /With fresh context/ }));
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+  });
+
+  it('a start error after the decision closed becomes a notice (the card is gone)', async () => {
+    localStorage.setItem('parallax.decisions.approveFresh', 'true');
+    start({
+      notices: true,
+      onCommand: (cmd, host) => {
+        if (cmd.name !== 'decision.respond') return undefined;
+        host.pushOps(cmd.entryId, [
+          {
+            op: 'decision.resolved',
+            decisionId: cmd.decisionId,
+            outcome: { type: 'plan_approved', mode: 'acceptEdits', edited: false, freshContext: true },
+            byClientId: null,
+            at: host.now(),
+          },
+        ]);
+        host.syncDecisionCounts(cmd.entryId);
+        return { ok: false, error: makeError('CLAUDE_STARTUP_FAILED') };
+      },
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Implement · Accept edits · fresh context' }));
+    expect(await screen.findByText('Claude Code failed to start.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Implement/ })).toBeNull();
+    expect(document.querySelector('[data-slot="fresh-context-error"]')).toBeNull();
   });
 
   it('"Keep planning" without text moves the focus into the composer', async () => {
@@ -154,7 +349,9 @@ describe('PlanCard (Plan "Plan-Modus & Plan-Freigabe")', () => {
     const user = userEvent.setup();
     const open = await screen.findByRole('button', { name: 'Open plan' });
     await user.click(open);
-    const panel = await screen.findByRole('complementary', { name: 'Plan v2' });
+    const panel = await screen.findByRole('complementary', { name: 'Plan' });
+    // The panel's content is a lazy chunk: in a busy full run it may still show its loading state.
+    expect(await within(panel).findByRole('heading', { name: 'Plan v2' })).toBeTruthy();
     expect(panel.textContent).toContain('## Risks');
     expect(document.activeElement).toBe(panel);
     expect(screen.getByRole('button', { name: 'Close plan', expanded: true })).toBeTruthy();
@@ -171,8 +368,12 @@ describe('PlanCard (Plan "Plan-Modus & Plan-Freigabe")', () => {
       setDraft(h.key('plan'), 'more detail');
     });
     await user.click(screen.getByRole('button', { name: 'Keep planning' }));
-    expect(await screen.findByText('This decision is no longer open.')).toBeTruthy();
-    expect(screen.getByRole('complementary').textContent).toContain('## Risks');
+    const panel = screen.getByRole('complementary');
+    await waitFor(() => {
+      expect(panel.querySelector('[data-slot="plan-status"]')?.textContent).toBe('Rejected with feedback');
+    });
+    expect(panel.textContent).toContain('## Risks');
+    expect(within(panel).getByRole('heading', { name: 'Plan v2' })).toBeTruthy();
   });
 
   it('without a mounted side panel the plan opens inside the card', async () => {

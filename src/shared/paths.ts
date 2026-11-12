@@ -92,3 +92,64 @@ export function isWindowsPathInside(child: string, parent: string): boolean {
   const p = windowsPathKey(parent);
   return c === p || c.startsWith(p.endsWith('\\') ? p : `${p}\\`);
 }
+
+// ---- Phase 3 (WP-50 §4.7): helpers for file references – pure string work, no resolution ----
+
+/** `/c/Users/x` (Git Bash/MSYS) → `C:\Users\x`; null if the path is not of that form. */
+export function fromGitBashPath(path: string): string | null {
+  const match = /^\/([A-Za-z])(?:\/(.*))?$/.exec(path);
+  if (match === null) return null;
+  const drive = (match[1] ?? '').toUpperCase();
+  const rest = (match[2] ?? '').replace(/\//g, '\\');
+  return `${drive}:\\${rest}`;
+}
+
+/**
+ * `relative` (separators `/` or `\`, `.`/`..` allowed) against the absolute `base`; an absolute
+ * drive path is only normalized. Separators become `\`, repeated separators collapse. Null if
+ * `base` is not a safe absolute path, the result would leave the drive root, `relative` is rooted
+ * without a drive (`\x`, `C:x`) or the RESULT has a PATH_ISSUE (C.10 applies to the result).
+ */
+export function resolveWindowsPath(base: string, relative: string): string | null {
+  let drive: string;
+  let segments: string[];
+  if (/^[A-Za-z]:[\\/]/.test(relative)) {
+    drive = relative.slice(0, 2);
+    segments = [];
+    relative = relative.slice(3);
+  } else if (/^[\\/]/.test(relative) || /^[A-Za-z]:/.test(relative)) {
+    return null;
+  } else {
+    if (windowsPathIssue(base) !== null) return null;
+    drive = base.slice(0, 2);
+    segments = base
+      .slice(3)
+      .split(/[\\/]+/)
+      .filter((segment) => segment !== '');
+  }
+  for (const segment of relative.split(/[\\/]+/)) {
+    if (segment === '' || segment === '.') continue;
+    if (segment === '..') {
+      if (segments.length === 0) return null;
+      segments.pop();
+      continue;
+    }
+    segments.push(segment);
+  }
+  const result = `${drive}\\${segments.join('\\')}`;
+  return windowsPathIssue(result) === null ? result : null;
+}
+
+/** Last segment (`C:\a\b.txt` → `b.txt`; trailing separators ignored; drive root → ''). */
+export function windowsBaseName(path: string): string {
+  const segments = path.split(/[\\/]+/).filter((segment) => segment !== '');
+  const last = segments.at(-1) ?? '';
+  return /^[A-Za-z]:$/.test(last) ? '' : last;
+}
+
+/** Lower-case extension without the dot ('' if none; `a.tar.gz` → 'gz', `.gitignore` → ''). */
+export function windowsPathExtension(path: string): string {
+  const name = windowsBaseName(path);
+  const dot = name.lastIndexOf('.');
+  return dot <= 0 ? '' : name.slice(dot + 1).toLowerCase();
+}

@@ -484,7 +484,7 @@ describe('commands of a running entry', () => {
     expect(h.publisher.hostStates.at(-1)?.settings.language).toBe('de');
   });
 
-  it('decision rows: kind mismatch → DECISION_OPTION_UNAVAILABLE; plan approve bypass → MODE_NOT_ALLOWED; fresh context → NOT_IMPLEMENTED', async () => {
+  it('decision rows: kind mismatch → DECISION_OPTION_UNAVAILABLE; plan approve (also fresh) bypass → MODE_NOT_ALLOWED', async () => {
     const h = await setup();
     const entryId = await h.create('fake:plan');
     await h.settle();
@@ -508,16 +508,21 @@ describe('commands of a running entry', () => {
       name: 'decision.respond',
       entryId,
       decisionId: plan.id,
-      response: { kind: 'plan', response: { behavior: 'approve_fresh_context', mode: 'default' } },
+      response: { kind: 'plan', response: { behavior: 'approve_fresh_context', mode: 'bypassPermissions' } },
     });
-    expect(fresh.code).toBe('NOT_IMPLEMENTED');
+    expect(fresh.code).toBe('MODE_NOT_ALLOWED');
     const ok = await h.cmd({
       name: 'decision.respond',
       entryId,
       decisionId: plan.id,
       response: { kind: 'plan', response: { behavior: 'approve', mode: 'default' } },
     });
-    expect(ok.outcome).toEqual({ type: 'plan_approved', mode: 'default', edited: false });
+    expect(ok.outcome).toEqual({
+      type: 'plan_approved',
+      mode: 'default',
+      edited: false,
+      freshContext: false,
+    });
   });
 
   it('server.shutdown counts the running sessions before closing (R0-19)', async () => {

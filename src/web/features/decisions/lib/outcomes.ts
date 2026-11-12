@@ -36,5 +36,6 @@ export const NO_OUTCOMES = EMPTY;
 export function resolvedElsewhereNotice(outcome: DecisionOutcome | null): TranslationKey {
   if (outcome === null) return 'decisions.notices.gone';
   if (outcome.type === 'cancelled') return `decisions.notices.withdrawn.${outcome.reason}`;
+  if (outcome.type === 'plan_approved' && outcome.freshContext) return 'decisions.notices.elsewhereFresh';
   return `decisions.notices.elsewhere.${outcome.type}`;
 }

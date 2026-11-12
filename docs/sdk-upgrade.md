@@ -131,6 +131,17 @@ $env:PARALLAX_LIVE='1'; pnpm e2e e2e/live      # ≈ 1,5 min, ≈ 0,01 USD (Haik
   bzw. das Protokoll in `docs/wp/WP-22.md` durchgehen (Notifications, Doppelstart, harter Abbruch,
   „Server beenden“ – nicht automatisiert).
 
+## Nach WP-61 bei jedem CLI-Upgrade prüfen (ADR-155, ADR-156)
+
+- `init.tools` (auch deferred) auf `TodoWrite`/`TaskCreate`: tauchen sie auf, `todoFeatureEnabled` wieder
+  erwägen (ADR-156) und die Aufgabenleiste live prüfen (WP-61 B7/B25).
+- `@`-Regel der CLI: Trenner vor `@` (2.1.322: `\s` und 。、？！; Anführungsform `@"…"`) mit
+  `neutralizeAtMentions` (`sessions/summary.ts`) und der Nachbildung in `summary.test.ts` abgleichen; Live-Fall:
+  Plan mit `@README.md` → „Mit frischem Kontext umsetzen“ → kein Datei-Attachment/Read im CLI-JSONL (B19).
+- Frischer Kontext: kommt das `result` des abgewiesenen Planungs-Turns innerhalb von `freshContextResultMs`
+  (Kosten der alten Unterhaltung > 0, keine Zeile „no result of the denied turn“)?
+- Server-Log mit `--log-level=debug`: Zeile `first result: credential expiry` je Prozess (B15).
+
 ## Abschluss
 
 - WP-Bericht mit: alte/neue SDK- und CLI-Version, Peer-Ranges, Snapshot-Diff (Zusammenfassung),

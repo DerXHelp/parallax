@@ -215,6 +215,8 @@ export const de: typeof en = {
     themes: { dark: 'Dunkel', light: 'Hell', system: 'System' },
     language: 'Sprache',
     languages: { en: 'English', de: 'Deutsch' },
+    languageLoadFailed:
+      'Die Texte der gewählten Sprache konnten nicht geladen werden – Parallax bleibt auf Englisch. Lade das Fenster neu, um es erneut zu versuchen.',
     shortcuts: 'Tastenkürzel',
     saveFailed: 'Die Einstellung konnte nicht gespeichert werden.',
   },

@@ -3,6 +3,8 @@
  * `FakeSessionHandle` tests inspect. Holds the gates (input, canUseTool, control interrupt,
  * close), the UUID mapping and the answers of control/read calls; the scenario (events player or
  * script) drives it. `exit` is always the last event; afterwards the event queue ends.
+ * Phase 3 (WP-52): background tasks of the script mode (`stopTask` like the CLI, idle held back
+ * while one runs), messages on a graceful close and the session's real files.
  */
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
@@ -21,6 +23,7 @@ import type {
 import {
   HANDLER_ERROR_RESULT,
   SessionStopped,
+  TaskStopped,
   TurnInterrupted,
   promptContent,
   promptText,
@@ -28,9 +31,11 @@ import {
 } from './common';
 import { FAKE_COMMANDS, FAKE_MODELS, fakeContextUsage, resolveFakeModel } from './defaults';
 import { dslContext, textTurn } from './dsl';
+import { FakeFiles } from './files';
 import type { FakeHistoryStore } from './history';
 import { EventPlayer } from './player';
 import type {
+  FakeBackgroundTask,
   FakeDiagnostic,
   FakeDiagnosticKind,
   FakeIds,
@@ -39,6 +44,7 @@ import type {
   FakeScriptState,
   FakeSessionHandle,
   FakeSessionState,
+  FakeTaskControl,
 } from './types';
 
 const log = logger.child({ module: 'fakeBackend' });
@@ -62,11 +68,23 @@ export interface FakeSessionDeps {
   now(): Date;
   history: FakeHistoryStore;
   ids: FakeIds;
+  /** Phase 3: root of the real files (FakeBackendOptions.filesRoot). */
+  filesRoot: string;
   onStateChange(): void;
 }
 
 const sessionIdSchema = z.looseObject({ session_id: z.string().min(1) });
 const resultSchema = z.looseObject({ type: z.literal('result') });
+const idleStateSchema = z.looseObject({
+  type: z.literal('system'),
+  subtype: z.literal('session_state_changed'),
+  state: z.literal('idle'),
+});
+
+interface RunningTask {
+  task: FakeBackgroundTask;
+  stop: AbortController;
+}
 
 function errorText(error: unknown): string {
   if (typeof error === 'string') return error;
@@ -108,6 +126,16 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
   private script: ScriptContext | null = null;
   /** Events mode: registered from the start, so interrupt() before the first event finds its gate. */
   private readonly mainPlayer: EventPlayer | null = null;
+  /** Phase 3: running background tasks of the script mode (stopTask targets). */
+  private readonly runningTasks = new Map<string, RunningTask>();
+  /** Phase 3: ended tasks → status (stopTask answers "not running" like the CLI). */
+  private readonly endedTasks = new Map<string, string>();
+  /** Phase 3: `session_state_changed: idle` held back while a background task runs. */
+  private heldIdle: unknown = null;
+  /** Phase 3: messages of a graceful close (fake:writes-lost). */
+  private readonly closeMessages: (() => readonly unknown[])[] = [];
+  /** Phase 3: background tasks executing right now (not sleeping, not waiting for a turn). */
+  private busyTasks = 0;
 
   constructor(private readonly deps: FakeSessionDeps) {
     this.entryId = deps.req.entryId;
@@ -130,8 +158,9 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
     }
   }
 
+  /** A background task that executes counts as running (settle() waits for it, speed 0). */
   get state(): FakeSessionState {
-    return this.currentState;
+    return this.busyTasks > 0 && !this.exited ? 'running' : this.currentState;
   }
 
   get sessionId(): string | null {
@@ -209,7 +238,7 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
 
   async getContextUsage(detail: 'summary' | 'full'): Promise<unknown> {
     return this.call('getContextUsage', [{ detail }], () =>
-      fakeContextUsage(this.turns(), this.script?.state.model),
+      fakeContextUsage(this.turns(), this.script?.state.model, this.script?.state.contextTokens ?? null),
     );
   }
 
@@ -225,8 +254,29 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
     return list.success ? list.data : [...FAKE_COMMANDS];
   }
 
+  /**
+   * Events mode: the recorded control answer. Script mode (Phase 3, WP-52): ends a running
+   * background task (its `stopped()` messages: task_notification `stopped` …); unknown or ended
+   * tasks fail with the CLI's texts.
+   */
   async stopTask(taskId: string): Promise<void> {
-    await this.control('stopTask', [taskId]);
+    if (this.deps.scenario.kind === 'events') {
+      await this.control('stopTask', [taskId]);
+      return;
+    }
+    this.controls.push({ method: 'stopTask', args: [taskId] });
+    if (this.exited) throw new Error('session closed');
+    const running = this.runningTasks.get(taskId);
+    if (running === undefined) {
+      const status = this.endedTasks.get(taskId);
+      throw new Error(
+        status === undefined ? `No task found with ID: ${taskId}` : `Task ${taskId} is not running (status: ${status})`,
+      );
+    }
+    this.endTask(taskId, 'killed');
+    running.stop.abort();
+    for (const message of running.task.stopped()) this.emitMessage(message);
+    this.releaseHeldIdle();
   }
 
   close(): Promise<void> {
@@ -238,6 +288,10 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
       this.closeWaiter = null;
       waiter();
     } else {
+      // Like the CLI on exit 0: e.g. system/session_writes_lost after the last result (WP-52).
+      for (const build of this.closeMessages.splice(0)) {
+        for (const message of build()) this.emitMessage(message);
+      }
       this.exit(0, null, true);
     }
     return this.exitDone.promise;
@@ -337,9 +391,16 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
     this.events.push(event);
   }
 
-  /** A raw SDK message: session id, history, event. */
+  /** A raw SDK message: session id, history, event. Idle waits while a background task runs. */
   emitMessage(raw: unknown): void {
     if (this.exited) return;
+    if (idleStateSchema.safeParse(raw).success) {
+      if (this.runningTasks.size > 0) {
+        this.heldIdle = raw;
+        return;
+      }
+      this.heldIdle = null;
+    }
     const id = sessionIdSchema.safeParse(raw);
     if (id.success) {
       this.currentSessionId = id.data.session_id;
@@ -481,6 +542,108 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
     this.deps.onStateChange();
   }
 
+  // ---- Phase 3: background tasks, close messages ----
+
+  /**
+   * Waits `ms × speed` – NOT capped by maxDelayMs (a 30-s background task) – and rejects with
+   * TaskStopped once `signal` aborts (stopTask), with SessionStopped when the session ends.
+   */
+  async wait(ms: number, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) throw new TaskStopped();
+    const scaled = Math.max(0, ms) * this.deps.speed;
+    const sleeping = scaled <= 0 ? nextMacrotask() : this.deps.sleep(scaled);
+    let onAbort = (): void => undefined;
+    const stopped = new Promise<never>((_resolve, reject) => {
+      onAbort = () => {
+        reject(new TaskStopped());
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+    const waiting = this.race(Promise.race([sleeping, stopped]));
+    try {
+      // A real sleep is a resting point (settle()); a speed-0 wait is not.
+      await (scaled <= 0 ? waiting : this.taskResting(waiting));
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+    }
+  }
+
+  /** A background task rests (sleeps, waits for a turn) until `promise` settles. */
+  async taskResting<T>(promise: Promise<T>): Promise<T> {
+    this.taskBusy(-1);
+    try {
+      return await promise;
+    } finally {
+      this.taskBusy(1);
+    }
+  }
+
+  private taskBusy(delta: number): void {
+    const before = this.state;
+    this.busyTasks += delta;
+    if (this.state !== before) this.deps.onStateChange();
+  }
+
+  /** Starts a background task; `betweenTurns` plays its follow-up turn once no turn runs. */
+  startTask(
+    task: FakeBackgroundTask,
+    betweenTurns: FakeTaskControl['betweenTurns'],
+    launchTurnEnded: () => Promise<void>,
+  ): void {
+    if (this.exited) return;
+    if (this.runningTasks.has(task.taskId)) throw new Error(`task ${task.taskId} already runs`);
+    const running: RunningTask = { task, stop: new AbortController() };
+    this.runningTasks.set(task.taskId, running);
+    const control: FakeTaskControl = {
+      wait: (ms) => this.wait(ms, running.stop.signal),
+      emit: (messages) => {
+        for (const message of messages) this.emitMessage(message);
+      },
+      finish: (status) => {
+        if (this.runningTasks.get(task.taskId) === running) this.endTask(task.taskId, status);
+      },
+      betweenTurns,
+    };
+    this.taskBusy(1);
+    void (async () => {
+      try {
+        // The task runs from the end of the launching turn on: same order at every speed.
+        await this.taskResting(this.race(launchTurnEnded()));
+        if (running.stop.signal.aborted) return;
+        await task.run(control);
+      } catch (error) {
+        if (error instanceof TaskStopped || error instanceof SessionStopped || this.exited) return;
+        const message = error instanceof Error ? error.message : String(error);
+        log.error({ err: error, entryId: this.entryId, taskId: task.taskId }, 'fake background task failed');
+        this.diagnostic('scenario-error', null, `background task ${task.taskId}: ${message}`);
+      } finally {
+        if (this.runningTasks.get(task.taskId) === running) this.endTask(task.taskId, 'completed');
+        this.taskBusy(-1);
+      }
+    })();
+  }
+
+  /** The script (or a follow-up turn) no longer runs: a held-back idle may go out now. */
+  releaseHeldIdle(): void {
+    if (this.heldIdle === null || this.runningTasks.size > 0 || (this.script?.busy() ?? false)) return;
+    const idle = this.heldIdle;
+    this.heldIdle = null;
+    this.emitMessage(idle);
+  }
+
+  addCloseMessages(build: () => readonly unknown[]): void {
+    this.closeMessages.push(build);
+  }
+
+  get filesRoot(): string {
+    return this.deps.filesRoot;
+  }
+
+  private endTask(taskId: string, status: string): void {
+    this.runningTasks.delete(taskId);
+    this.endedTasks.set(taskId, status);
+  }
+
   // ---- internals ----
 
   private turns(): number {
@@ -566,6 +729,11 @@ class ScriptContext implements FakeScriptContext {
   readonly history: FakeHistoryStore;
   private turn = new AbortController();
   private inTurn = false;
+  /** Phase 3: a background follow-up turn is being played (betweenTurns). */
+  private backgroundTurn: Promise<void> | null = null;
+  /** Phase 3: betweenTurns calls waiting for the current turn to end. */
+  private readonly turnEndWaiters: (() => void)[] = [];
+  private filesCache: FakeFiles | null = null;
 
   constructor(
     private readonly session: FakeSession,
@@ -577,10 +745,12 @@ class ScriptContext implements FakeScriptContext {
     this.history = deps.history;
     this.state = {
       model: resolveFakeModel(deps.req.model),
+      // init.permissionMode = the start mode (also the fresh-context start, WP-52).
       permissionMode: deps.req.permissionMode ?? 'default',
       effort: deps.req.effort,
       fastMode: deps.req.fastMode ?? null,
       turns: 0,
+      contextTokens: null,
     };
   }
 
@@ -594,11 +764,72 @@ class ScriptContext implements FakeScriptContext {
 
   async nextInput(): Promise<OutgoingPrompt> {
     this.inTurn = false;
+    for (const wake of this.turnEndWaiters.splice(0)) wake();
+    this.session.releaseHeldIdle();
     const prompt = await this.session.waitInput();
+    // A follow-up turn of a background task finishes first (the CLI runs one turn at a time).
+    while (this.backgroundTurn !== null) await this.session.race(this.backgroundTurn);
     this.turn = new AbortController();
     this.inTurn = true;
     this.session.recordPrompt(prompt);
     return prompt;
+  }
+
+  /** A turn (prompt or background follow-up) is running. */
+  busy(): boolean {
+    return this.inTurn || this.backgroundTurn !== null;
+  }
+
+  get files(): FakeFiles {
+    const sessionId = this.session.sessionId ?? this.sessionId;
+    if (this.filesCache?.dir.endsWith(`\\${sessionId}`) !== true) {
+      this.filesCache = new FakeFiles(this.session.filesRoot, sessionId);
+    }
+    return this.filesCache;
+  }
+
+  startTask(task: FakeBackgroundTask): void {
+    this.session.startTask(
+      task,
+      (events) => this.betweenTurns(events),
+      () => this.turnEnded(),
+    );
+  }
+
+  /** Resolves once the current prompt turn has ended (at once between turns). */
+  private turnEnded(): Promise<void> {
+    if (!this.inTurn) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this.turnEndWaiters.push(resolve);
+    });
+  }
+
+  onClose(messages: () => readonly unknown[]): void {
+    this.session.addCloseMessages(messages);
+  }
+
+  /** Plays `events` once neither a prompt turn nor another follow-up turn runs. */
+  private async betweenTurns(events: readonly FixtureEvent[]): Promise<void> {
+    while (this.busy()) {
+      const current = this.backgroundTurn;
+      await this.session.taskResting(
+        this.session.race(
+          current ??
+            new Promise<void>((resolve) => {
+              this.turnEndWaiters.push(resolve);
+            }),
+        ),
+      );
+    }
+    const done = Promise.withResolvers<undefined>();
+    this.backgroundTurn = done.promise;
+    try {
+      await new EventPlayer(this.session, events).play();
+    } finally {
+      this.backgroundTurn = null;
+      done.resolve(undefined);
+      this.session.releaseHeldIdle();
+    }
   }
 
   async emit(messages: readonly unknown[], gapMs = 0): Promise<void> {

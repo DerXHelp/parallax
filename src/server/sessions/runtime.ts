@@ -102,6 +102,8 @@ export class SessionRuntime {
   private costBase: number;
   private costOffset = 0;
   private lastCostTotal: number | null = null;
+  /** WP61-03: waiting for the next turn_result (or the end of this process). */
+  private turnResultWaiters: (() => void)[] = [];
 
   constructor(
     private readonly state: EntryState,
@@ -121,6 +123,21 @@ export class SessionRuntime {
   /** Starts the event loop (background). */
   run(): void {
     void this.loop();
+  }
+
+  /**
+   * WP61-03: settles once the next turn_result of this process was handled (cost, lastTurn), or
+   * when the process ends; at once for a process that already ended. Never rejects.
+   */
+  nextTurnResult(): Promise<void> {
+    if (!this.alive || this.exitHandled) return Promise.resolve();
+    return new Promise((resolve) => {
+      this.turnResultWaiters.push(resolve);
+    });
+  }
+
+  private releaseTurnResultWaiters(): void {
+    for (const resolve of this.turnResultWaiters.splice(0)) resolve();
   }
 
   private async loop(): Promise<void> {
@@ -335,6 +352,7 @@ export class SessionRuntime {
     // Old CLI without session_state_changed: the result is the turn end (C.1).
     if (!this.sessionStateSeen) this.turnEnded();
     s.resetInTurn = false;
+    this.releaseTurnResultWaiters();
   }
 
   /** WP22-10: summed over the query segments of the conversation (null = no cost reported). */
@@ -455,6 +473,7 @@ export class SessionRuntime {
       s.cancelProcessTimers();
       if (!this.core.shuttingDown()) s.dropMirrorIfUnused();
       this.core.processEnded();
+      this.releaseTurnResultWaiters();
       this.resolveExited();
     }
   }
@@ -637,6 +656,9 @@ export async function startRuntime(
     // C.3 / §5.2: a stored bypass mode is passed only while the profile still allows it.
     if (permissionMode === 'bypassPermissions' && !allowsBypass) permissionMode = null;
 
+    // Phase 3 (ADR-146, C.11): the entry's attachment folder is an additionalDirectory of every start.
+    const attachmentsDir = await attachmentsDirOf(s, core);
+    core.assertRunning();
     s.broker.closeExpired(options.byClientId);
     const conversation = currentConversation(entry);
     const normalizer = core.normalizer.createLiveNormalizer({
@@ -659,6 +681,7 @@ export async function startRuntime(
         // ADR-117: the setting applies from the next process start.
         promptSuggestions: core.stores.settings.get().promptSuggestions,
         fastMode: entry.fastMode,
+        attachmentsDir,
         canUseTool: s.broker.handler,
       });
     } catch (error) {
@@ -686,6 +709,18 @@ export async function startRuntime(
   }
 }
 
+/** ADR-146: `AttachmentFileStore.dir` (creates it); no store or an error (logged) → start without it. */
+async function attachmentsDirOf(s: EntryState, core: EngineCore): Promise<string | null> {
+  const store = core.stores.attachments;
+  if (store === null) return null;
+  try {
+    return await store.dir(s.id);
+  } catch (error) {
+    core.log.warn({ err: error, entryId: s.id }, 'attachment folder unavailable – starting without it');
+    return null;
+  }
+}
+
 /**
  * `closeRuntime(reason)` (§3.5.12): close() (5-s rule in the backend); onExit cleans up. Open
  * decisions are cancelled first (`process_exit`, R2-16): deterministic, whether or not the SDK
@@ -694,7 +729,7 @@ export async function startRuntime(
 export async function closeRuntime(
   s: EntryState,
   core: EngineCore,
-  reason: 'user' | 'sleep' | 'handoff' | 'not_ready' | 'archive' | 'switch',
+  reason: 'user' | 'sleep' | 'handoff' | 'not_ready' | 'archive' | 'switch' | 'fresh_context',
 ): Promise<void> {
   const runtime = s.runtime;
   if (runtime === null) return;
@@ -715,25 +750,37 @@ export async function closeRuntime(
   await runtime.exited;
 }
 
+export interface DeliverExtras {
+  /** Checked (and materialized) attachments – Phase 2 ADR-103, Phase 3 ADR-146. */
+  attachments?: PromptAttachments;
+  /** Checked pastes (`checkPastes`) → `OutgoingPrompt.inlinePastes`; empty → left out (ADR-146). */
+  pastes?: readonly string[];
+}
+
 /**
- * Sends one prompt to the running process (§3.5.6 sendPrompt): `/rename X` → pendingRename,
- * `now` cancels open main-agent decisions, registerPrompt BEFORE send (F.9), queue `sending`.
- * Phase 2 (ADR-103): checked image attachments go first as base64 blocks; the `user_message` item
- * and the queue entry carry their BlobRefs.
+ * Sends one prompt to the running process (§3.5.6 sendPrompt): `/rename X` → pendingRename (back
+ * to the previous value when send() refuses the prompt – CR2 follow-up), `now` cancels open
+ * main-agent decisions, registerPrompt BEFORE send (F.9), queue `sending`. Phase 2/3 (ADR-103,
+ * ADR-146): image and PDF blocks go first, materialized files as the `Attached files:` block at the
+ * end of the sent text; the `user_message` item and the queue entry keep the typed text and every
+ * BlobRef; pastes go as `inlinePastes`.
  */
 export function deliverPrompt(
   s: EntryState,
   core: EngineCore,
   text: string,
   priority: PromptPriority,
-  attachments: PromptAttachments = NO_ATTACHMENTS,
+  extras: DeliverExtras = {},
 ): string {
   const runtime = s.runtime;
   if (runtime === null || !runtime.alive || runtime.closing) {
     throw commandError('SESSION_NOT_RUNNING', { entryId: s.id });
   }
+  const attachments = extras.attachments ?? NO_ATTACHMENTS;
+  const pastes = extras.pastes ?? [];
   const messageUuid = core.ids.newUuid();
   const rename = parseRenameCommand(text);
+  const renameBefore = s.pendingRename;
   if (rename !== null) s.pendingRename = rename;
   if (priority === 'now' && s.broker.open().some((d) => d.requester.kind === 'main')) {
     s.broker.cancel('main', 'interrupted', 'deny');
@@ -750,9 +797,17 @@ export function deliverPrompt(
   s.publishQueue();
   runtime.sentSinceStart = true;
   try {
-    runtime.agent.send({ uuid: messageUuid, content: promptContent(text, attachments), priority });
+    runtime.agent.send({
+      uuid: messageUuid,
+      content: promptContent(text, attachments),
+      priority,
+      ...(pastes.length === 0 ? {} : { inlinePastes: [...pastes] }),
+    });
   } catch (error) {
     core.log.warn({ err: error, entryId: s.id }, 'send() refused the prompt');
+    // CR2 follow-up: a refused `/rename X` leaves no pending rename (a later title_changed X would
+    // count as its echo and become `custom`).
+    if (rename !== null && s.pendingRename === rename) s.pendingRename = renameBefore;
     if (s.queue.remove(messageUuid)) s.publishQueue();
     throw commandError('SESSION_NOT_RUNNING', { entryId: s.id, reason: 'closed' });
   }

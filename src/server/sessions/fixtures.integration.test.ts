@@ -252,7 +252,7 @@ describe('plan-mode', () => {
     expect(plans[1]?.previousVersionPlan).toBe(plans[0]?.plan);
     expect(outcomes(h, entryId)).toEqual([
       { type: 'plan_revised' },
-      { type: 'plan_approved', mode: 'acceptEdits', edited: true },
+      { type: 'plan_approved', mode: 'acceptEdits', edited: true, freshContext: false },
     ]);
     expect(h.stores.decisions.plan(entryId, 1)).toBe(plans[0]?.plan);
     expect(h.stores.decisions.plan(entryId, 2)).toBe(plans[1]?.plan);

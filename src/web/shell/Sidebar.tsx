@@ -5,6 +5,7 @@ import {
   FolderIcon,
   FolderTreeIcon,
   LayersIcon,
+  PanelLeftCloseIcon,
   PlusIcon,
   SquarePenIcon,
 } from 'lucide-react';
@@ -193,8 +194,18 @@ function GroupSection({ group, context }: { group: SessionGroup<SummaryEntry>; c
  * Sidebar (Plan "Sidebar", WP-35): flat (pinned first, then waiting → activity) or grouped by
  * project folder, two-line entries, "Waiting for you (n)" and Alt+N (next waiting, cyclic), Alt+1…9
  * (n-th visible entry), archive view, subscription limits at the bottom.
+ * WP-58 (V3-14): SidebarFrame keeps it mounted while collapsed (the shortcuts stay registered);
+ * `onCollapse` adds the collapse button, `onChoose` follows a chosen row (the overlay closes).
  */
-export function Sidebar() {
+export function Sidebar({
+  onCollapse,
+  onChoose,
+}: {
+  /** Collapse button in the header (wide window: into the rail; narrow window: closes the overlay). */
+  onCollapse?: () => void;
+  /** Called after a row was chosen (click, Enter) – not for the shortcuts. */
+  onChoose?: (sessionKey: string) => void;
+} = {}) {
   const t = useT();
   const entries = useSummaries();
   const now = useNow(30_000);
@@ -270,7 +281,13 @@ export function Sidebar() {
     tabStopKey,
     profiles,
     requiredCli: knownVersion(hostState?.sdkClaudeCodeVersion ?? null),
-    onSelect: select,
+    onSelect:
+      onChoose === undefined
+        ? select
+        : (sessionKey) => {
+            select(sessionKey);
+            onChoose(sessionKey);
+          },
   };
 
   let list: ReactNode;
@@ -331,6 +348,15 @@ export function Sidebar() {
           <SquarePenIcon aria-hidden />
         </IconButton>
         <SettingsMenu />
+        {onCollapse === undefined ? null : (
+          <IconButton
+            label={t('navigation.sidebar.collapse')}
+            data-action="collapse-sidebar"
+            onClick={onCollapse}
+          >
+            <PanelLeftCloseIcon aria-hidden />
+          </IconButton>
+        )}
       </div>
       {waitingCount > 0 ? (
         <button

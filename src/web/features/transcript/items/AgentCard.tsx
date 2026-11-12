@@ -1,24 +1,32 @@
-import { BotIcon } from 'lucide-react';
-import { memo } from 'react';
+import { BotIcon, SquareIcon } from 'lucide-react';
+import { memo, useState } from 'react';
 import type { TaskInfo } from '@shared/model';
-import { useI18n } from '@web/i18n';
+import { useI18n, useT } from '@web/i18n';
+import { shortPath } from '@web/lib/path-display';
+import { isLiveToolStatus, isToolCallTaskLive } from '@web/lib/task-rows';
 import { useNow } from '@web/state/clock';
 import { useChildItemIds } from '@web/state/hooks';
 import { Badge } from '@web/ui/badge';
+import { Button } from '@web/ui/button';
+import { Spinner } from '@web/ui/spinner';
 import { Disclosure } from '../components/Disclosure';
 import { ModelBadge } from '../components/ModelBadge';
+import { ToolFileLink } from '../components/ToolFileLink';
 import { ToolStatus } from '../components/ToolStatus';
 import { useTranscriptSettings } from '../context';
 import { readAgentInput, readAgentResult } from '../lib/tool-input';
 import { ToolResultImages, ToolResultText } from '../renderers/parts';
 import type { ToolBodyProps } from '../renderers/types';
 import { expansionKey } from '../state/expansion';
+import { stopTask } from '../state/tasks';
 
 /**
  * Agent card (Plan "Agent: Subagent-Karte mit Status und Laufzeit", F.11, B "Message-Routing"):
  * title, type, status, runtime, usage and the subagent's own items – grouped by
  * `parentToolUseId` (`useChildItemIds`), collapsed in Phase 1. The tool status already follows
  * the task (completed → done, failed → error, stopped/killed → interrupted, WP-12).
+ * WP-55: "Stop" while the task runs (`session.stopTask`; the composer's Stop ends only the turn,
+ * F4), the output file as a `FileLink`, the progress summary (`task_progress.summary`, F5).
  */
 
 function finishedDuration(task: TaskInfo | null): number | null {
@@ -39,6 +47,48 @@ function LiveRuntime({ since }: { since: string }) {
     <span className="tabular-nums">
       {t('transcript.agent.runtime', { duration: format.duration(Math.max(0, now - start)) })}
     </span>
+  );
+}
+
+/** Stops the agent's task; stays busy until the task ends (the card then drops the button). */
+function StopAgentButton({
+  sessionKey,
+  taskId,
+  title,
+}: {
+  sessionKey: string;
+  taskId: string;
+  title: string;
+}) {
+  const t = useT();
+  const [stopping, setStopping] = useState(false);
+  const onStop = () => {
+    setStopping(true);
+    stopTask(sessionKey, taskId).then(
+      (ok) => {
+        if (!ok) setStopping(false);
+      },
+      () => {
+        setStopping(false);
+      },
+    );
+  };
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      data-slot="agent-stop"
+      disabled={stopping}
+      aria-label={t('transcript.agent.stopLabel', { title })}
+      onClick={onStop}
+    >
+      {stopping ? (
+        <Spinner className="size-3" label={t('transcript.agent.stopping')} />
+      ) : (
+        <SquareIcon aria-hidden className="size-3" />
+      )}
+      {t('transcript.agent.stop')}
+    </Button>
   );
 }
 
@@ -76,12 +126,16 @@ export const AgentCard = memo(function AgentCard({ item, sessionKey }: ToolBodyP
   const taskDescription = task === null || task.description === '' ? null : task.description;
   const title = input?.description ?? taskDescription ?? item.toolName;
   const type = input?.subagent_type ?? task?.subagentType ?? null;
-  const running = item.status === 'running' || item.status === 'background' || item.status === 'pending';
+  // `pending` has not started: no live runtime, no Stop – the server would refuse it (CR3-07).
+  const running = isLiveToolStatus(item.status);
   const startedAt = task?.startedAt ?? null;
   const duration = finishedDuration(task);
   const usage = task?.usage ?? null;
   const summary = task?.summary ?? null;
   const model = result?.resolvedModel ?? null;
+  const outputFile = task?.outputFile ?? null;
+  // The task panel's rule (`@web/lib/task-rows`): what `session.stopTask` takes.
+  const stoppable = task !== null && isToolCallTaskLive(item);
   return (
     <div
       data-item-kind="tool_call"
@@ -113,9 +167,26 @@ export const AgentCard = memo(function AgentCard({ item, sessionKey }: ToolBodyP
           )}
           {model === null ? null : <span>{t('transcript.agent.model', { model })}</span>}
         </span>
+        {stoppable ? <StopAgentButton sessionKey={sessionKey} taskId={task.taskId} title={title} /> : null}
       </div>
       {summary === null || summary === '' ? null : (
-        <p className="text-ui break-words whitespace-pre-wrap">{summary}</p>
+        <p data-slot="agent-summary" className="text-ui break-words whitespace-pre-wrap">
+          {summary}
+        </p>
+      )}
+      {outputFile === null || outputFile === '' ? null : (
+        <p
+          data-slot="agent-output"
+          className="text-muted-foreground flex min-w-0 items-center gap-1 text-2xs"
+        >
+          <span className="shrink-0">{t('transcript.agent.output')}</span>
+          <span className="min-w-0 truncate *:max-w-full *:truncate *:align-bottom">
+            {/* Absolute (task_notification.output_file / AgentOutput.outputFile). */}
+            <ToolFileLink sessionKey={sessionKey} path={outputFile} cwd={null}>
+              {shortPath(outputFile, 3)}
+            </ToolFileLink>
+          </span>
+        </p>
       )}
       {input?.prompt === undefined ? null : (
         <Disclosure

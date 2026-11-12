@@ -4,10 +4,15 @@ import {
   ComposerPlaceholder,
   DecisionBarPlaceholder,
   DecisionCardPlaceholder,
+  FileLinkPlaceholder,
+  FilePanelPlaceholder,
+  FilesPanelPlaceholder,
   MarkdownPlaceholder,
+  PlanPanelPlaceholder,
   ProfilesSettingsPlaceholder,
   SettingsPagePlaceholder,
-  SidePanelPlaceholder,
+  TaskStripPlaceholder,
+  TasksPanelPlaceholder,
   ToolInputPreviewPlaceholder,
   TranscriptPlaceholder,
 } from './placeholders';
@@ -27,8 +32,20 @@ export interface FeatureSlots {
   DecisionBar: ComponentType<{ sessionKey: string }>;
   /** WP-16 Composer. */
   Composer: ComponentType<{ sessionKey: string }>;
-  /** Later (Phase 2): right side panel of a session pane. */
-  SidePanel: ComponentType<{ sessionKey: string }>;
+  /**
+   * Tab "Plan" of the side panel (shell/side-panel/SidePanelHost renders the frame, Phase 3
+   * ADR-150; until Phase 3 the slot `SidePanel`): the content only – header row, plan text.
+   */
+  PlanPanel: ComponentType<{ sessionKey: string }>;
+  // Phase 3 (WP-50 §4.14 C, ADR-150): further side panel tabs and the task strip
+  /** WP-54: tab "Datei" – the viewer of one file. */
+  FilePanel: ComponentType<FilePanelSlotProps>;
+  /** WP-54: tab "Dateien" – "Dateien dieser Session" (ADR-145). */
+  FilesPanel: ComponentType<{ sessionKey: string }>;
+  /** WP-55: tab "Aufgaben" – background tasks (ADR-149). */
+  TasksPanel: ComponentType<{ sessionKey: string }>;
+  /** WP-55: the pinned task list directly above the composer (SessionPane). */
+  TaskStrip: ComponentType<{ sessionKey: string }>;
   // Feature slots
   /**
    * WP-16 → WP-15 (plan card via tool_call.decision). Rule (architecture §2.3e, ADR-031):
@@ -38,8 +55,11 @@ export interface FeatureSlots {
    * resolution WP-15 draws the final state itself from `tool_call.decision.outcome` + `input`.
    */
   DecisionCard: ComponentType<DecisionCardSlotProps>;
-  /** WP-15 → WP-16 (plan text, option previews). `sessionKey`: host of blob links (R1W-20). */
-  Markdown: ComponentType<{ text: string; sessionKey?: string }>;
+  /**
+   * WP-15 → WP-16 (plan text, option previews). `sessionKey`: host of blob links (R1W-20).
+   * Phase 3: `baseDir` resolves relative file references (viewer of a Markdown file, WP-54).
+   */
+  Markdown: ComponentType<{ text: string; sessionKey?: string; baseDir?: string }>;
   /** WP-15 → WP-16 (diff preview in permission cards). `sessionKey`: host of capped inputs (blobs). */
   ToolInputPreview: ComponentType<{ toolName: string; input: JsonValue; sessionKey?: string }>;
   // Phase 2 (WP-30 §4.14 C)
@@ -50,6 +70,36 @@ export interface FeatureSlots {
   SettingsPage: ComponentType<SettingsPageSlotProps>;
   /** WP-36 (features/profiles): profile list + editor, rendered by the settings page (section `profiles`). */
   ProfilesSettings: ComponentType<ProfilesSettingsSlotProps>;
+  /**
+   * Phase 3, WP-54 (features/files) → transcript, decisions, panels: a clickable file reference
+   * with its actions (viewer, editor, Explorer – ADR-144). The placeholder renders the text only.
+   */
+  FileLink: ComponentType<FileLinkSlotProps>;
+}
+
+export interface FilePanelSlotProps {
+  sessionKey: string;
+  /** Absolute Windows path. */
+  path: string;
+  line: number | null;
+  col: number | null;
+}
+
+/** inline = text link, chip = file chip, menu = actions button only. */
+export type FileLinkVariant = 'inline' | 'chip' | 'menu';
+
+export interface FileLinkSlotProps {
+  sessionKey: string;
+  /** Absolute Windows path (callers resolve relative paths with resolveWindowsPath against the cwd). */
+  path: string;
+  line?: number | null;
+  col?: number | null;
+  /** true: link only after a successful file.statMany (text references); false: always (tool inputs). */
+  verify?: boolean;
+  /** inline = text link, chip = file chip, menu = actions button only. */
+  variant?: FileLinkVariant;
+  /** Visible text; default: path tail. */
+  children?: ReactNode;
 }
 
 export interface ProfilesSettingsSlotProps {
@@ -77,12 +127,17 @@ export const DEFAULT_FEATURE_SLOTS: FeatureSlots = {
   Transcript: TranscriptPlaceholder,
   DecisionBar: DecisionBarPlaceholder,
   Composer: ComposerPlaceholder,
-  SidePanel: SidePanelPlaceholder,
+  PlanPanel: PlanPanelPlaceholder,
+  FilePanel: FilePanelPlaceholder,
+  FilesPanel: FilesPanelPlaceholder,
+  TasksPanel: TasksPanelPlaceholder,
+  TaskStrip: TaskStripPlaceholder,
   DecisionCard: DecisionCardPlaceholder,
   Markdown: MarkdownPlaceholder,
   ToolInputPreview: ToolInputPreviewPlaceholder,
   SettingsPage: SettingsPagePlaceholder,
   ProfilesSettings: ProfilesSettingsPlaceholder,
+  FileLink: FileLinkPlaceholder,
 };
 
 const FeatureSlotsContext = createContext<FeatureSlots>(DEFAULT_FEATURE_SLOTS);
@@ -104,12 +159,17 @@ export function FeatureSlotsProvider({
       Transcript: slots.Transcript ?? parent.Transcript,
       DecisionBar: slots.DecisionBar ?? parent.DecisionBar,
       Composer: slots.Composer ?? parent.Composer,
-      SidePanel: slots.SidePanel ?? parent.SidePanel,
+      PlanPanel: slots.PlanPanel ?? parent.PlanPanel,
+      FilePanel: slots.FilePanel ?? parent.FilePanel,
+      FilesPanel: slots.FilesPanel ?? parent.FilesPanel,
+      TasksPanel: slots.TasksPanel ?? parent.TasksPanel,
+      TaskStrip: slots.TaskStrip ?? parent.TaskStrip,
       DecisionCard: slots.DecisionCard ?? parent.DecisionCard,
       Markdown: slots.Markdown ?? parent.Markdown,
       ToolInputPreview: slots.ToolInputPreview ?? parent.ToolInputPreview,
       SettingsPage: slots.SettingsPage ?? parent.SettingsPage,
       ProfilesSettings: slots.ProfilesSettings ?? parent.ProfilesSettings,
+      FileLink: slots.FileLink ?? parent.FileLink,
     }),
     [parent, slots],
   );
