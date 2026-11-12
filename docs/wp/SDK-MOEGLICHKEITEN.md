@@ -54,6 +54,12 @@ aus dem letzten Assistenten-Text). `away_summary` (4) ließ sich so nicht auslö
 - **6 (Vorbereitung):** Die experimentelle Nutzungsabfrage liefert `session` (Kosten, Dauer, Zeilen
   +/−, Tokens je Modell), `subscription_type`, `rate_limits` je Fenster (`utilization`, `resets_at`,
   Dollar-Felder; viele Fenster mit Codenamen, meist `null`) und `extra_usage`.
+- **6 (entschieden):** Limit-Leiste immer gefüllt: Abfrage etwa alle 5 min über eine laufende Session
+  (solange eine läuft), Auslastung je Fenster, Reset-Zeit im Tooltip; tolerant parsen, bei Fehler ausblenden
+  (heutiges Verhalten), Probe in `pnpm cli-check`. **Keine** Zeilenzahlen (Nutzer: interessiert nicht).
+- **7 (entschieden):** Knopf „In den Hintergrund“ an jedem laufenden Bash-Aufruf und an der laufenden
+  Agent-Karte (`backgroundTasks(toolUseId)`), „Alles in den Hintergrund“ neben Stop im Composer
+  (`backgroundTasks()`), Tastenkürzel Strg+B.
 
 ## 2. Steuerung im Arbeitsfluss
 
