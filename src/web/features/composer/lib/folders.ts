@@ -1,47 +1,13 @@
+import type { IncomingFiles } from './transfer';
+
 /**
  * Folders are not attached (ADR-146: the hint says to insert their path with @). A drop or paste
- * on the composer knows them from its `DataTransfer` (`webkitGetAsEntry().isDirectory`); a plain
- * file list (shell request `attachFiles` of the session drop zone, WP-58) does not – there a
- * dropped folder is a `File` without a type that cannot be read (Chrome rejects reading it), so
- * untyped files are probed by reading one byte.
+ * on the composer knows them from its `DataTransfer` (`lib/transfer.ts`); a plain file list (the
+ * paper clip has none, the shell request `attachFiles` of the session drop zone, WP-58) does not –
+ * there a dropped folder is a `File` without a type that cannot be read (Chrome rejects reading
+ * it), so untyped files are probed by reading one byte. A chunk of its own (R5W-01): the composer
+ * loads it with `import()` only when an untyped file has to be probed.
  */
-
-export interface IncomingFiles {
-  files: File[];
-  /** Folders that were left out. */
-  folders: number;
-}
-
-/** The part of a `DataTransfer` item read here (`webkitGetAsEntry` is missing in test DOMs). */
-interface TransferItem {
-  kind: string;
-  getAsFile(): File | null;
-  webkitGetAsEntry?: () => { isDirectory: boolean } | null;
-}
-
-/** The part of a `DataTransfer` read here (test doubles may come without `items`). */
-export interface FileTransfer {
-  items?: ArrayLike<TransferItem>;
-  files: ArrayLike<File>;
-}
-
-/** Files of a drop or paste; folders counted, not taken. */
-export function transferFiles(data: FileTransfer): IncomingFiles {
-  const fileItems = Array.from(data.items ?? []).filter((item) => item.kind === 'file');
-  if (fileItems.length === 0) return { files: Array.from(data.files), folders: 0 };
-  const files: File[] = [];
-  let folders = 0;
-  for (const item of fileItems) {
-    const entry = typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null;
-    if (entry?.isDirectory === true) {
-      folders += 1;
-      continue;
-    }
-    const file = item.getAsFile();
-    if (file !== null) files.push(file);
-  }
-  return { files, folders };
-}
 
 async function readable(file: File): Promise<boolean> {
   try {

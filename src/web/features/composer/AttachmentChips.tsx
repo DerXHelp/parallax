@@ -2,10 +2,10 @@ import { CircleAlertIcon, FileIcon, FileTextIcon, ImageIcon, XIcon } from 'lucid
 import { createElement, memo, useRef, type KeyboardEvent } from 'react';
 import { LIMITS } from '@shared/common';
 import { useI18n } from '@web/i18n';
+import { formatFileSize } from '@web/lib/bytes';
 import { cn } from '@web/lib/cn';
 import { IconButton } from '@web/ui/icon-button';
 import { Spinner } from '@web/ui/spinner';
-import { formatFileSize } from './lib/format';
 import {
   attachmentsOverTotal,
   removeAttachment,

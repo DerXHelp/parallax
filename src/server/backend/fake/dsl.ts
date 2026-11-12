@@ -23,7 +23,7 @@ import {
   usage,
 } from '../../sessions/normalizer/synthetic/build';
 import type { EventKind, FixtureEvent } from '../fixture';
-import { FAKE_TERMINAL_COMMANDS } from './defaults';
+import { FAKE_CLAUDE_VERSION, FAKE_TERMINAL_COMMANDS } from './defaults';
 import type { FakeIds } from './types';
 
 export type Step = readonly [EventKind, unknown];
@@ -39,6 +39,11 @@ export interface DslContext {
   timestamp(): string;
   /** tMs distance of consecutive events (recorded time, scaled by the player's speed). */
   readonly stepMs: number;
+  /**
+   * Context fill every streamed API message reports in its usage (the estimate during a turn);
+   * null = the default synthetic numbers (fake:context-high, V4-05).
+   */
+  readonly contextTokens: number | null;
 }
 
 /** Deterministic ids: `00000000-0000-4000-a000-<n>`, `msg_fake_<n>`, `toolu_fake_<n>`. */
@@ -73,7 +78,18 @@ export function dslContext(p: Partial<DslContext> = {}): DslContext {
     cwd: p.cwd ?? 'D:\\work\\fake',
     timestamp: p.timestamp ?? (() => new Date(BASE_TIME + (tick += 1)).toISOString()),
     stepMs: p.stepMs ?? 10,
+    contextTokens: p.contextTokens ?? null,
   };
+}
+
+/**
+ * API usage of a streamed message: the default synthetic numbers, or exactly `c.contextTokens`
+ * in total (input + output + cache read + cache creation; fake:context-high).
+ */
+function contextUsage(c: DslContext, output: number): Record<string, unknown> {
+  if (c.contextTokens === null) return usage(2, output);
+  const cacheCreation = 500;
+  return usage(2, output, Math.max(0, c.contextTokens - 2 - output - cacheCreation), cacheCreation);
 }
 
 // ---- Low-level helpers ----
@@ -137,6 +153,8 @@ const initFrame = (c: DslContext): Step =>
         cwd: c.cwd,
         model: c.model,
         permissionMode: c.permissionMode,
+        // V4-05: the CLI version the SDK expects (no "too old" warning in fake sessions).
+        claude_code_version: FAKE_CLAUDE_VERSION,
         // Phase 2 (ADR-108): like a CLI that reports its terminal-only commands.
         terminal_slash_commands: [...FAKE_TERMINAL_COMMANDS],
       },
@@ -246,7 +264,7 @@ export function assistantMessage(
   const streamStep = (event: Record<string, unknown>): Step =>
     frame(c, stream(0, id, event), { parent_tool_use_id: parent });
   const steps: Step[] = [];
-  if (streamed) steps.push(frame(c, messageStart(0, id, model), { parent_tool_use_id: parent }));
+  if (streamed) steps.push(frame(c, messageStart(0, id, model, contextUsage(c, 1)), { parent_tool_use_id: parent }));
   blocks.forEach((block, index) => {
     if (streamed) {
       steps.push(streamStep({ type: 'content_block_start', index, content_block: startOf(block) }));
@@ -274,7 +292,7 @@ export function assistantMessage(
   });
   if (streamed) {
     const stopReason = blocks.some((b) => b.type === 'tool_use') ? 'tool_use' : 'end_turn';
-    steps.push(streamStep({ type: 'message_delta', delta: { stop_reason: stopReason }, usage: usage() }));
+    steps.push(streamStep({ type: 'message_delta', delta: { stop_reason: stopReason }, usage: contextUsage(c, 10) }));
     steps.push(streamStep({ type: 'message_stop' }));
   }
   return toEvents(steps, o.stepMs ?? c.stepMs);
