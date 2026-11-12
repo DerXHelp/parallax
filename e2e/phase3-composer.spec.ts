@@ -5,11 +5,15 @@
  * a big paste becomes a chip and goes out as `inline_pastes` ("received 1 paste(s)"); the @ picker
  * lists the project files – from git (ignored files left out) and by walking a folder without
  * git – and inserts `@path`.
+ * FIX-R5-F6: R5W-03 – a paste starting with "/" at the start of the field goes out as a prompt
+ * (U+200B in front, invisible in the bubble, not in the title); V4-03 – typing after ↓ marks the
+ * best match of the @ picker again, no scattered hit, Tab inserts it.
  * Own server.
  */
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { Locator } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
+import { z } from 'zod';
 import { runFile } from '../src/server/lib/process';
 import { resolveExecutable } from '../src/server/lib/windows';
 import { expect, test } from './support/fixtures';
@@ -80,6 +84,97 @@ test('attachments: PDF through the paperclip, .xlsx dropped over the transcript 
   await expect.poll(() => filesBelow(folder)).toContain('data.xlsx');
 });
 
+/**
+ * U+200B ZERO WIDTH SPACE – the composer's `SLASH_GUARD` in front of a prompt that starts with "/"
+ * only because of a pasted text (R5W-03). Built from its code so the source shows no invisible
+ * character.
+ */
+const SLASH_GUARD = String.fromCharCode(0x200b);
+
+const sentPromptSchema = z.object({
+  type: z.literal('cmd'),
+  cmd: z.object({
+    name: z.literal('session.sendPrompt'),
+    prompt: z.object({ text: z.string(), pastes: z.array(z.string()).optional() }),
+  }),
+});
+
+/** Records the prompts the page sends (`session.sendPrompt` frames); reload the page after it. */
+function recordSentPrompts(page: Page): { text: string; pastes: string[] }[] {
+  const prompts: { text: string; pastes: string[] }[] = [];
+  page.on('websocket', (socket) => {
+    socket.on('framesent', (frame) => {
+      const payload = typeof frame.payload === 'string' ? frame.payload : frame.payload.toString('utf8');
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(payload);
+      } catch {
+        return;
+      }
+      const sent = sentPromptSchema.safeParse(parsed);
+      if (!sent.success) return;
+      prompts.push({ text: sent.data.cmd.prompt.text, pastes: sent.data.cmd.prompt.pastes ?? [] });
+    });
+  });
+  return prompts;
+}
+
+test('a pasted text starting with "/" at the start of the field goes as a prompt, not as a command (R5W-03)', async ({
+  app,
+  server,
+  page,
+}) => {
+  const prompts = recordSentPrompts(page);
+  // The recorder must see the socket from its start.
+  await page.reload();
+  await app.waitConnected();
+  const session = await app.newSession(await server.makeProject('paste-slash'));
+  const lines = ['/clear --all', ...Array.from({ length: 39 }, (_, i) => `log line ${String(i + 2)}`)];
+  const pasted = lines.join('\n');
+  await session.composer.click();
+  await pasteText(session, pasted);
+  await expect(session.composerRoot.locator('[data-slot="paste-chip"]')).toHaveCount(1);
+  // The field starts with the token, not with "/": no slash menu.
+  await expect(session.composer).toHaveValue(/^\[#1/);
+  await session.composer.press('End');
+  await session.composer.pressSequentially(' what failed?');
+  await session.composer.press('Enter');
+
+  // An answer of the model (the paste receipt), no command.
+  await expect(session.assistantText('Fake: received 1 paste(s)')).toBeVisible();
+  await expect.poll(() => prompts.length).toBe(1);
+  const [prompt] = prompts;
+  // The guard in front: the text never starts with "/", not even trimmed; the question goes on a
+  // line of its own (V4-07); the paste occurs verbatim (`prompt.pastes`).
+  expect(prompt?.text).toBe(`${SLASH_GUARD}${pasted}\nwhat failed?`);
+  expect(prompt?.text.trim().startsWith('/')).toBe(false);
+  expect(prompt?.pastes).toEqual([pasted]);
+
+  // The user bubble shows the text without a visible character in front of "/clear": the guard
+  // stands in the bubble's text and takes no width.
+  const bubble = session.userMessages().last();
+  await expect(bubble).toContainText('/clear --all');
+  const guardWidth = await bubble.evaluate((element, guard) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+      const at = node.textContent?.indexOf(`${guard}/clear`) ?? -1;
+      if (at < 0) continue;
+      const range = document.createRange();
+      range.setStart(node, at);
+      range.setEnd(node, at + 1);
+      return range.getBoundingClientRect().width;
+    }
+    return null;
+  }, SLASH_GUARD);
+  expect(guardWidth, 'width of the guard character in the bubble').toBe(0);
+
+  // The session title comes from the prompt – without the guard (coordinator rework e38a344).
+  const title = app.row(session.key).locator('[data-slot="row-title"]');
+  await expect(title).toHaveText('/clear --all');
+  expect(await title.textContent()).not.toContain(SLASH_GUARD);
+  await expect(session.header.locator('h1')).toHaveText('/clear --all');
+});
+
 test('a big paste becomes a chip and goes out as inline_pastes', async ({ app, server }) => {
   const session = await app.newSession(await server.makeProject('paste'));
   const big = Array.from({ length: 40 }, (_, i) => `log line ${String(i + 1)}: ${'-'.repeat(60)}`).join('\n');
@@ -147,4 +242,67 @@ test('@ picker: project files from git (ignored ones left out) and from a folder
   await expect(gitMenu).toHaveAttribute('data-state', 'ready');
   await expect(gitMenu.locator('[data-path="ignored.log"]')).toHaveCount(0);
   await second.composer.press('Escape');
+});
+
+/** The option of the @ picker that the field marks as active (`aria-activedescendant`). */
+async function activeOption(session: SessionView, menu: Locator): Promise<Locator> {
+  const id = await session.composer.getAttribute('aria-activedescendant');
+  expect(id, 'aria-activedescendant of the field').not.toBeNull();
+  return menu.locator(`[role="option"][id="${id ?? ''}"]`);
+}
+
+test('@ picker (V4-03): typing after ↓ marks the best match again, no scattered hit; Tab inserts it', async ({
+  app,
+  server,
+}) => {
+  const project = await server.makeProject('mention-rank');
+  const deep = path.join(project, 'verschachtelt', 'noch-tiefer', 'und-noch-eine');
+  await mkdir(path.join(project, 'docs'));
+  await mkdir(deep, { recursive: true });
+  for (const name of ['a-guide.md', 'b-notes.md', 'c-review.md']) {
+    await writeFile(path.join(project, 'docs', name), `# ${name}\n`);
+  }
+  await writeFile(
+    path.join(deep, 'mit-einem-sehr-langen-dateinamen-fuer-ueberlauf-tests-und-mehr.md'),
+    '# long\n',
+  );
+  await writeFile(path.join(project, 'Grüße-Übersicht.txt'), 'Grüße\n');
+  const session = await app.newSession(project);
+  const menu = session.composerRoot.locator('[data-slot="mention-menu"]');
+  const options = menu.getByRole('option');
+
+  // V4 repro: "@", 2× ↓, then "grü" – the list shrinks to the one real match, and it is active.
+  await session.composer.click();
+  await session.composer.pressSequentially('look at @');
+  await expect(menu).toHaveAttribute('data-state', 'ready');
+  await expect(options).toHaveCount(5);
+  await session.composer.press('ArrowDown');
+  await session.composer.press('ArrowDown');
+  await expect(await activeOption(session, menu)).toHaveAttribute('aria-selected', 'true');
+  expect(await (await activeOption(session, menu)).getAttribute('id')).toBe(
+    await options.nth(2).getAttribute('id'),
+  );
+  await session.composer.pressSequentially('grü');
+  // The scattered hit through the deep folder names (g…r…ü…) is gone (minimum quality).
+  await expect(options).toHaveCount(1);
+  await expect(options.first().locator('[data-path]')).toHaveAttribute('data-path', 'Grüße-Übersicht.txt');
+  await expect(options.first()).toHaveAttribute('aria-selected', 'true');
+  expect(await (await activeOption(session, menu)).getAttribute('id')).toBe(
+    await options.first().getAttribute('id'),
+  );
+  await session.composer.press('Tab');
+  await expect(session.composer).toHaveValue('look at @Grüße-Übersicht.txt ');
+  await expect(menu).toHaveCount(0);
+
+  // Several matches left: after ↓↓↓ and more typing the first (best) one is active again.
+  await session.composer.pressSequentially('@');
+  await expect(menu).toHaveAttribute('data-state', 'ready');
+  for (let i = 0; i < 3; i += 1) await session.composer.press('ArrowDown');
+  await session.composer.pressSequentially('md');
+  await expect(options).toHaveCount(4);
+  await expect(options.first()).toHaveAttribute('aria-selected', 'true');
+  expect(await (await activeOption(session, menu)).getAttribute('id')).toBe(
+    await options.first().getAttribute('id'),
+  );
+  await session.composer.press('Escape');
 });

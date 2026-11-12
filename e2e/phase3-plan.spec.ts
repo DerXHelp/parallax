@@ -4,6 +4,8 @@
  * the changes to v1; "With fresh context" starts a new conversation whose first prompt is the
  * engine's `Implement the following approved plan.` (the fake answers it); the split button keeps
  * the choice over a reload; after the approval the header offers "Plan".
+ * FIX-R5-F6: at 75 % context (`fake:context-high`, V4-05) the ▾ menu of the plan card recommends
+ * "With fresh context" (ADR-147: dot on the trigger, badge "Recommended" in the menu, not preselected).
  * Own server; 1600 px wide (the side panel next to the transcript).
  */
 import { chooseMenuItem } from './support/app';
@@ -90,4 +92,41 @@ test('plan: live file, v1 → feedback → v2 with diff, fresh context, remember
   await expect(session.userMessages().filter({ hasText: 'fake:plan once more' })).toHaveCount(0);
   await expect(session.assistantText(/Fake: implementing plan \(\d+ lines\)/)).toBeVisible();
   await session.expectStatus('idle');
+});
+
+test('plan at 75 % context (fake:context-high): the ▾ menu recommends "With fresh context" – dot on the trigger, badge in the menu, never preselected', async ({
+  app,
+  server,
+  page,
+}) => {
+  const session = await app.newSession(await server.makeProject('recommended'));
+  await session.send('fake:context-high');
+  await expect(session.assistantText('the context is now about 75 % full')).toBeVisible();
+  await expect(session.header.locator('[data-slot="header-context"] [data-slot="gauge"]')).toHaveAttribute(
+    'aria-valuenow',
+    '75',
+  );
+
+  await session.send('fake:plan make hello.txt');
+  const card = await session.armedCard('plan');
+  const approve = card.locator('[data-action="approve"]');
+  const trigger = card.getByRole('button', { name: 'How should Claude implement the plan?' });
+  // A fresh browser context: no remembered choice – recommended, but not chosen.
+  await expect(approve).toHaveAttribute('data-fresh', 'false');
+  await expect(trigger.locator('[data-slot="choice-menu-indicator"]')).toBeVisible();
+
+  await trigger.click();
+  const fresh = page.locator('[role="menu"] [data-toggle="fresh"]');
+  await expect(fresh).toHaveAttribute('aria-checked', 'false');
+  const badge = fresh.locator('[data-slot="fresh-recommended"]');
+  await expect(badge).toContainText('Recommended');
+  await expect(badge).toContainText('Context is 75% full.');
+
+  // Chosen: the toggle keeps the menu open; the dot goes, the main button says it.
+  await fresh.click();
+  await expect(fresh).toHaveAttribute('aria-checked', 'true');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[role="menu"]')).toHaveCount(0);
+  await expect(approve).toHaveAttribute('data-fresh', 'true');
+  await expect(trigger.locator('[data-slot="choice-menu-indicator"]')).toHaveCount(0);
 });

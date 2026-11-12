@@ -1,7 +1,8 @@
 /**
  * Smoke of language (en/de) and theme (dark/light) with a screenshot each (Playwright artifacts
  * in test-results/, git-ignored). The settings live on the server (settings.json) and reach every
- * window – so this test has its own server, the worker's server keeps English/dark.
+ * window – so this test has its own server, the worker's server keeps English/dark. The German
+ * dictionaries' chunk (`dictionary.de-*.js`, ADR-153) is requested only after switching to German.
  */
 import type { Page, TestInfo } from '@playwright/test';
 import { ParallaxApp, chooseMenuItem } from './support/app';
@@ -27,6 +28,13 @@ async function choose(app: ParallaxApp, item: string): Promise<void> {
 }
 
 test('language en/de and theme dark/light (screenshots)', async ({ page }, testInfo) => {
+  // ADR-153 (FIX-R5-F5): the German dictionaries are one lazy chunk, loaded only for German.
+  const dictionaries: string[] = [];
+  page.on('request', (request) => {
+    if (/\/assets\/dictionary\.de-[\w-]+\.js$/.test(new URL(request.url()).pathname)) {
+      dictionaries.push(request.url());
+    }
+  });
   own = await startE2eServer({ label: 'smoke' });
   const app = await new ParallaxApp(page, own).open();
   const html = page.locator('html');
@@ -43,8 +51,10 @@ test('language en/de and theme dark/light (screenshots)', async ({ page }, testI
   await expect(html).not.toHaveClass(/\bdark\b/);
   await shot(page, testInfo, 'en-light');
 
+  expect(dictionaries, 'German dictionary chunk before switching').toEqual([]);
   await choose(app, 'Deutsch');
   await expect(card).toContainText('Claude hat eine Frage');
+  expect(dictionaries.length, 'German dictionary chunk after switching').toBeGreaterThan(0);
   await expect(page.locator('[data-action="new-session"]')).toHaveAccessibleName('Neue Session');
   await expect(session.composer).toHaveAccessibleName('Nachricht an Claude');
   await shot(page, testInfo, 'de-light');
