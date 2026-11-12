@@ -1772,3 +1772,35 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   `@<relativer Pfad>` ein (mit Leerzeichen `@"<pfad>"`). Die CLI erweitert `@pfad` wie im Terminal (L8).
 - **Folgen:** Ordner erscheinen nicht (nur Dateien); große Repos werden gekürzt (`truncated`, Hinweis
   „weiter tippen“).
+
+## ADR-152 – Task-Meldungen nur mit Herkunft der CLI
+- **Datum/WP:** 12.11.2026, FIX-R5 (Befund R5-01); angenommen (12.11.2026, Koordinator)
+- **Entscheidung:** Der Normalizer wertet eine Nutzernachricht nur dann als Task-Meldung
+  (`task_notification`, `outputFile`, Überschreiben des Tool-Calls zu `<tool-use-id>`), wenn sie von
+  der CLI stammt: `origin.kind === 'task-notification'` und Hauptagent (`parentToolUseId === null`) –
+  live (`u.origin`) wie im Verlauf (`HistoryMessage.origin`). Text in derselben Form ohne diese
+  Herkunft bleibt ein normaler Prompt bzw. wird bei Subagenten verworfen; ältere Transkripte ohne
+  `origin` zeigen die Meldung höchstens an, übernehmen aber kein `outputFile`. Tiefenverteidigung im
+  Datei-Index: `output`-Einträge entstehen nur aus Task-Daten der CLI (Systemevents bzw. so geprüfte
+  Meldungen), nie aus freiem Text.
+- **Begründung:** Die Zugriffsliste (ADR-141/145) darf nur aus fertigen Tool-Calls und Daten der CLI
+  wachsen. Die reine Textform kann der Nutzer (Einfügen eines Transkript-Ausschnitts) oder Claude
+  selbst (Agent-`prompt` im mitgeladenen Verlauf der Subagenten) erzeugen; R5 hat damit eine Datei
+  außerhalb aller Wurzeln lesbar gemacht.
+- **Folgen:** Normalizer- und Index-Tests mit der R5-Probe P1 als Negativfall; WP-61 bestätigt live,
+  dass CLI 2.1.322 echte Meldungen mit `origin.kind: 'task-notification'` liefert.
+
+## ADR-153 – Deutsche Wörterbücher als Lazy-Chunk
+- **Datum/WP:** 12.11.2026, FIX-R5 (Befund R5W-01, Bundle-Budget WP-50/WP-60); angenommen
+  (12.11.2026, Koordinator)
+- **Entscheidung:** Statisch im Start-Chunk bleiben nur die englischen Wörterbücher (Standard und
+  Rückfall). Alle `de`-Wörterbücher (Kern, Fehler, Feature- und Shell-Namensräume) lädt
+  `src/web/i18n` per `import()` als einen Chunk; `setLanguage('de')` schaltet erst um, wenn er
+  geladen ist (bis dahin Englisch – wie heute bis zum Eintreffen der Einstellungen, Start ist immer
+  Englisch). Optional wird der Chunk beim Start vorgeladen, wenn die zuletzt genutzte Sprache Deutsch
+  war (`localStorage`, `try/catch`). Schlägt das Laden fehl, bleibt Englisch und die Shell meldet es
+  einmal. Das Budget wird künftig als Summe aller Start-Chunks (gzip, inkl. modulepreload) gemessen.
+- **Begründung:** Die `de`-Wörterbücher sind mit ≈ 62 kB raw der größte lazy-fähige Block im Start-Chunk
+  (R5-web); allein bringen sie `index` etwa auf den Stand vor Phase 3. Englisch ist Standard.
+- **Folgen:** `i18n.test.tsx` („registers the feature namespaces statically“) prüft die Registrierung
+  beider Sprachen neu; der Schlüssel-Abgleich en/de bleibt statisch im Test.

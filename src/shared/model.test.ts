@@ -617,6 +617,11 @@ describe('Phase 3 contracts (WP-50 §4.5)', () => {
     ]);
     expect(exe('C:\\Windows\\explorer.exe')).toEqual(['executable:blocked']);
     expect(exe('D:\\x\\RunDll32.EXE')).toEqual(['executable:blocked']);
+    // R5-03: GUI programs that execute the file they are given.
+    expect(exe('C:\\Windows\\hh.exe')).toEqual(['executable:blocked']);
+    expect(exe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell_ise.exe')).toEqual([
+      'executable:blocked',
+    ]);
     for (const name of EDITOR_BLOCKED_EXECUTABLES) {
       expect(editorExecutableIssue(`C:\\x\\${name.toUpperCase()}`)).toBe('blocked');
     }
