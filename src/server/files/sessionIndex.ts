@@ -14,10 +14,10 @@
  * - Stored in `entries/<entryId>/files.json` (`sessionFilesFileSchema`, JsonStore: atomic, `.bak`,
  *   quarantine), debounced 2 s, at most LIMITS.sessionFilesMax entries (oldest `lastAt` dropped).
  * - Missing file (or `backfilled: false`): the first use builds the index once from the transcript
- *   logs of all conversations, then `backfilled: true`.
+ *   logs of all conversations, then `backfilled: true` – page by page, newest first (CR3-10).
  * - One tool call counts once: the same op of the same tool call is ignored (in-process set), and
- *   `count`/`lastAt` move only for a newer `at` (items re-published after a restart, e.g. the tail
- *   of an earlier conversation, never count twice).
+ *   only a record outside the known time span of the file counts (items re-published after a
+ *   restart, e.g. the tail of an earlier conversation, never count twice).
  */
 import path from 'node:path';
 import type { Logger } from 'pino';
@@ -119,7 +119,8 @@ function usableOutputFile(value: string | null | undefined, taskId: string): val
 /** File references of one transcript item (pure; see the file comment). */
 export function recordsOfItem(item: TranscriptItem): IndexRecord[] {
   if (item.kind === 'system') {
-    if (item.event !== 'task_notification' || !usableOutputFile(item.task.outputFile, item.task.taskId)) return [];
+    if (item.event !== 'task_notification' || !usableOutputFile(item.task.outputFile, item.task.taskId))
+      return [];
     return [
       {
         path: item.task.outputFile,
@@ -222,7 +223,12 @@ export function createSessionIndex(deps: SessionIndexDeps): SessionIndex {
     }
   };
 
-  /** Merges one record; true if the index changed. */
+  /**
+   * Merges one record; true if the index changed. Only a record outside the known time span
+   * [`firstAt`, `lastAt`] counts: one inside may be a re-published tool call whose dedupe key is
+   * gone (restart, SEEN_MAX). Live records extend the span forward, the backfill – newest page
+   * first (CR3-10) – backward; an earlier record's op moves to the front (first-seen order).
+   */
   const apply = (state: EntryIndex, record: IndexRecord, conversationId: ConversationId | null): boolean => {
     if (state.seen.has(record.dedupeKey)) return false;
     remember(state, record.dedupeKey);
@@ -240,14 +246,23 @@ export function createSessionIndex(deps: SessionIndexDeps): SessionIndex {
       });
       return true;
     }
-    const newer = time(record.at) > time(existing.lastAt);
+    const at = time(record.at);
+    const newer = at > time(existing.lastAt);
+    const older = at < time(existing.firstAt);
     const hasOp = existing.ops.includes(record.op);
-    if (!newer && hasOp && time(record.at) >= time(existing.firstAt)) return false;
+    if (!newer && !older) {
+      if (hasOp) return false;
+      state.files.set(key, { ...existing, ops: [...existing.ops, record.op] });
+      return true;
+    }
+    let ops = existing.ops;
+    if (older) ops = [record.op, ...existing.ops.filter((op) => op !== record.op)];
+    else if (!hasOp) ops = [...existing.ops, record.op];
     state.files.set(key, {
       ...existing,
-      ops: hasOp ? existing.ops : [...existing.ops, record.op],
-      count: newer ? existing.count + 1 : existing.count,
-      firstAt: time(record.at) < time(existing.firstAt) ? record.at : existing.firstAt,
+      ops,
+      count: existing.count + 1,
+      firstAt: older ? record.at : existing.firstAt,
       lastAt: newer ? record.at : existing.lastAt,
       lastToolUseId: newer ? record.toolUseId : existing.lastToolUseId,
       conversationId: newer ? conversationId : existing.conversationId,
@@ -277,33 +292,40 @@ export function createSessionIndex(deps: SessionIndexDeps): SessionIndex {
     }
   };
 
-  /** Every item of a conversation, oldest first. */
-  const readConversation = async (
+  /**
+   * Visits every item of a conversation, newest first, one page at a time (CR3-10): a page is done
+   * before the next one is read, so the backfill never holds more than one page of items.
+   */
+  const visitNewestFirst = async (
     entryId: EntryId,
     conversationId: ConversationId,
-  ): Promise<TranscriptItem[]> => {
+    visit: (item: TranscriptItem) => void,
+  ): Promise<void> => {
     let page = await deps.transcripts.readTail(entryId, conversationId, BACKFILL_PAGE);
-    const pages: TranscriptItem[][] = [page.items];
-    while (page.hasEarlier) {
+    for (;;) {
+      for (let i = page.items.length - 1; i >= 0; i -= 1) {
+        const item = page.items[i];
+        if (item !== undefined) visit(item);
+      }
       const first = page.items[0];
-      if (first === undefined) break;
+      if (!page.hasEarlier || first === undefined) return;
       page = await deps.transcripts.readBefore(entryId, conversationId, first.order, BACKFILL_PAGE);
-      pages.unshift(page.items);
     }
-    return pages.flat();
   };
 
   const backfill = async (entryId: EntryId, state: EntryIndex): Promise<void> => {
     const info = deps.entries.entry(entryId);
     if (info === null) return;
     let records = 0;
-    for (const conversationId of info.conversationIds) {
+    // Newest conversation first: with its newest page first the whole backfill runs back in time,
+    // which `apply` counts like live records forward (CR3-10).
+    for (const conversationId of [...info.conversationIds].reverse()) {
       try {
-        for (const item of await readConversation(entryId, conversationId)) {
+        await visitNewestFirst(entryId, conversationId, (item) => {
           for (const record of recordsOfItem(item)) {
             if (apply(state, record, conversationId)) records += 1;
           }
-        }
+        });
       } catch (error) {
         log.warn(
           { err: error, entryId, conversationId },
