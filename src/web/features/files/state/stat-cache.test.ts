@@ -171,12 +171,33 @@ describe('StatCache (WP-54 C.10)', () => {
     const listener = vi.fn();
     const unsubscribe = cache.subscribe(listener);
     cache.ensure(KEY, 'D:\\work\\a.md');
+    await Promise.resolve();
     expect(listener).toHaveBeenCalledTimes(1);
     cache.flush();
     await vi.runAllTimersAsync();
     expect(listener).toHaveBeenCalledTimes(2);
+    cache.invalidate(KEY, 'D:\\work\\a.md');
+    await Promise.resolve();
+    expect(listener).toHaveBeenCalledTimes(3);
     unsubscribe();
     cache.clear();
+    expect(listener).toHaveBeenCalledTimes(3);
+  });
+
+  it('bundles the notifications of many ensure calls in one tick into one (R5W-10)', async () => {
+    const { cache } = setup();
+    const listener = vi.fn();
+    cache.subscribe(listener);
+    // Like 50 links mounting in one render: each effect calls ensure.
+    for (let index = 0; index < 50; index++) cache.ensure(KEY, `D:\\work\\f${String(index)}.md`);
+    expect(listener).not.toHaveBeenCalled();
+    // The snapshot is current before the notification.
+    expect(cache.peek(KEY, 'D:\\work\\f49.md')).toMatchObject({ loading: true });
+    await Promise.resolve();
+    expect(listener).toHaveBeenCalledTimes(1);
+    cache.flush();
+    await vi.runAllTimersAsync();
+    // One answer (one batch) → one more notification.
     expect(listener).toHaveBeenCalledTimes(2);
   });
 });

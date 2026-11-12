@@ -33,8 +33,9 @@ function linkState(safe: boolean, verify: boolean, entry: StatEntry | undefined)
 }
 
 const linkClasses: Readonly<Record<'inline' | 'chip', string>> = {
+  // `text-link`: >= 4.5:1 also inside inline code (muted background), V4-04.
   inline:
-    'text-primary decoration-primary/40 hover:decoration-primary focus-visible:ring-ring cursor-pointer break-all rounded-sm text-left underline underline-offset-2 outline-none focus-visible:ring-2',
+    'text-link decoration-link/40 hover:decoration-link focus-visible:ring-ring cursor-pointer break-all rounded-sm text-left underline underline-offset-2 outline-none focus-visible:ring-2',
   chip: 'bg-muted/60 hover:bg-muted focus-visible:ring-ring inline-flex h-6 max-w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-md border px-1.5 align-middle text-xs outline-none focus-visible:ring-2',
 };
 
@@ -83,7 +84,7 @@ export const FileLink = memo(function FileLink({
     // No auto-scroll cursor on a middle click (it opens the editor instead).
     if (event.button === 1) event.preventDefault();
   };
-  const tooltip = line === null ? path : `${path} – ${t('files.link.line', { line })}`;
+  const tooltip = line === null ? path : t('files.link.tooltip', { path, line });
 
   return (
     <ContextMenu>

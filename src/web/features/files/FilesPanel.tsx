@@ -12,6 +12,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '@web/ui/con
 import { Input } from '@web/ui/input';
 import { FileActionItems, FileActionsMenu } from './components/FileActionItems';
 import { FileIcon } from './components/FileIcon';
+import { PathText } from './components/PathText';
 import { fileActions, openInViewer } from './lib/actions';
 import { fileName, relativeToRoot } from './lib/paths';
 import { useSessionFiles } from './state/session-files';
@@ -72,10 +73,11 @@ const FileRow = memo(function FileRow({
           >
             <FileIcon path={file.path} className="text-muted-foreground mt-0.5 size-3.5 shrink-0" />
             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="truncate text-xs">
-                <span className="font-medium">{name}</span>
+              {/* The name keeps its room; the path gives way first and is shortened from the start. */}
+              <span className="flex min-w-0 items-baseline gap-1.5 text-xs">
+                <span className="max-w-full shrink-0 truncate font-medium">{name}</span>
                 {display === name ? null : (
-                  <span className="text-muted-foreground ml-1.5 font-mono text-2xs">{display}</span>
+                  <PathText path={display} className="text-muted-foreground flex-1 font-mono text-2xs" />
                 )}
               </span>
               <span className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-1 text-2xs">

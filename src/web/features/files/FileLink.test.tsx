@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeSessionKey } from '@shared/common';
 import { makeError } from '@shared/errors';
 import type { Command } from '@shared/protocol';
@@ -12,8 +12,11 @@ import { useNotices } from '@web/state/notices';
 import { resetClientStore } from '@web/state/store';
 import { TooltipProvider } from '@web/ui/tooltip';
 import { FileLink } from './FileLink';
-import { STAT_BATCH_MS, statCache } from './state/stat-cache';
+import { statCache } from './state/stat-cache';
 import { FILES_SESSION_KEY, startFilesScenario } from './testing';
+
+// 0.1–0.5 s per test alone, up to 4.4 s under parallel load (menus, tooltips; R5W-04).
+vi.setConfig({ testTimeout: 30_000 });
 
 let running: RunningScenario;
 let opened: ShellRequestOf<'openFile'>[];
@@ -23,10 +26,24 @@ function commandsNamed<N extends Command['name']>(name: N): Extract<Command, { n
   return running.host.commands.filter((cmd): cmd is Extract<Command, { name: N }> => cmd.name === name);
 }
 
-/** Lets the 50 ms batch go out and the answers arrive (MemoryTransport answers synchronously). */
+/** Lets every microtask run (MemoryTransport delivers ops and answers in microtasks). */
+function nextTask(): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
+/**
+ * Sends the waiting batch at once instead of sleeping past the 50 ms batch timer (a wall-clock
+ * assumption, R5W-11; the timer itself is tested with fake timers in state/stat-cache.test.ts):
+ * first pending ops arrive and the links' effects queue their paths, then the batch goes out and
+ * the answers arrive.
+ */
 async function flushStats(): Promise<void> {
+  await act(nextTask);
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, STAT_BATCH_MS + 10));
+    statCache.flush();
+    await nextTask();
   });
 }
 
@@ -134,6 +151,8 @@ describe('FileLink (WP-54, L15)', () => {
     );
     await flushStats();
     const inline = screen.getByRole('button', { name: 'src\\main.ts:12' });
+    // The link token (index.css --link): >= 4.5:1 also on inline code (V4-04).
+    expect(inline.className).toContain('text-link');
     await user.hover(inline);
     expect((await screen.findByRole('tooltip')).textContent).toBe(`${FAKE_FILE_PATHS.main} – line 12`);
     const chip = screen.getByRole('button', { name: /diagram\.png/ });

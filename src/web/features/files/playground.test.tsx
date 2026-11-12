@@ -9,6 +9,9 @@ import { installResizeObserver } from './testing';
 
 vi.setConfig({ testTimeout: 60_000 });
 
+/** Panels and links are lazy chunks: the host demo took up to 14 s under parallel load (R5W-04). */
+const LAZY = { timeout: 30_000 };
+
 let restoreResizeObserver: () => void;
 
 beforeEach(() => {
@@ -52,28 +55,30 @@ describe('files playground', () => {
 
   it('the host demo opens the viewer tab with the code view at the line', async () => {
     render(<TooltipProvider>{demo('host').render()}</TooltipProvider>);
-    expect(await screen.findByRole('complementary', { name: 'File' })).toBeTruthy();
-    expect(await screen.findByRole('region', { name: 'Content of main.ts' })).toBeTruthy();
+    expect(await screen.findByRole('complementary', { name: 'File' }, LAZY)).toBeTruthy();
+    expect(await screen.findByRole('region', { name: 'Content of main.ts' }, LAZY)).toBeTruthy();
   });
 
   it('the files panel demo lists the session files', async () => {
     render(<TooltipProvider>{demo('files-panel').render()}</TooltipProvider>);
     await waitFor(() => {
       expect(document.querySelectorAll('[data-slot="files-row"]').length).toBeGreaterThan(3);
-    });
+    }, LAZY);
   });
 
   it('the links demo shows verified links, refused and unsafe references as text', async () => {
     render(<TooltipProvider>{demo('links').render()}</TooltipProvider>);
     await waitFor(() => {
       expect(document.querySelector('[data-state="refused"]')).not.toBeNull();
-    });
+    }, LAZY);
     expect(document.querySelectorAll('[data-state="unsafe"]')).toHaveLength(2);
     expect(document.querySelector('[data-variant="chip"][data-kind="image"]')).not.toBeNull();
   });
 
   it('the error demo shows the alert', async () => {
     render(<TooltipProvider>{demo('viewer-error').render()}</TooltipProvider>);
-    expect((await screen.findByRole('alert')).textContent).toContain('The file could not be shown');
+    expect((await screen.findByRole('alert', undefined, LAZY)).textContent).toContain(
+      'The file could not be shown',
+    );
   });
 });

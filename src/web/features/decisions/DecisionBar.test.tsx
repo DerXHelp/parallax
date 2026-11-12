@@ -19,6 +19,9 @@ import { resetDecisionBarState } from './state/bar-store';
 // the machine (docs/wp/FLAKES.md). A timed-out test keeps typing into the next one, so keep a margin.
 vi.setConfig({ testTimeout: 60_000 });
 
+/** Waiting for the content of a lazy chunk (docs/wp/FLAKES.md: imports are slow under load). */
+const LAZY = { timeout: 15_000 };
+
 let harness: Harness | null = null;
 
 afterEach(() => {
@@ -242,7 +245,9 @@ describe('DecisionCard slot (architecture §2.3e)', () => {
     const article = await screen.findByRole('article', { name: /Plan v2 ready/ });
     await user.click(within(article).getByRole('button', { name: 'Open plan' }));
     const panel = await screen.findByRole('complementary', { name: 'Plan' });
-    expect(panel.textContent).toContain('Plan v2');
+    // The panel's content (PlanSidePanel → PlanPanel) is a lazy chunk: the frame comes first, the
+    // plan only once the chunk is there – 1.1–1.7 s late under parallel load (R5W-04).
+    expect(await within(panel).findByRole('heading', { name: 'Plan v2' }, LAZY)).toBeTruthy();
     expect(document.activeElement).toBe(panel);
     expect(h.commands('decision.respond')).toEqual([]);
     harness.stop();
