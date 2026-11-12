@@ -350,7 +350,8 @@ describe('PlanCard (Plan "Plan-Modus & Plan-Freigabe")', () => {
     const open = await screen.findByRole('button', { name: 'Open plan' });
     await user.click(open);
     const panel = await screen.findByRole('complementary', { name: 'Plan' });
-    expect(within(panel).getByRole('heading', { name: 'Plan v2' })).toBeTruthy();
+    // The panel's content is a lazy chunk: in a busy full run it may still show its loading state.
+    expect(await within(panel).findByRole('heading', { name: 'Plan v2' })).toBeTruthy();
     expect(panel.textContent).toContain('## Risks');
     expect(document.activeElement).toBe(panel);
     expect(screen.getByRole('button', { name: 'Close plan', expanded: true })).toBeTruthy();

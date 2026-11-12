@@ -85,7 +85,14 @@ export async function background(
       await ctx.files.append(output, `[fake] ${FAKE_BACKGROUND_SUMMARY}\n`);
       control.emit(
         messagesOf(
-          subagentEnd(c, { toolUseId, taskId, summary: FAKE_BACKGROUND_SUMMARY, outputFile, usage: usage(5_600, 3, FAKE_BACKGROUND_MS) }),
+          subagentEnd(c, {
+            toolUseId,
+            taskId,
+            summary: FAKE_BACKGROUND_SUMMARY,
+            outputFile,
+            usage: usage(5_600, 3, FAKE_BACKGROUND_MS),
+            endTime: ctx.now().getTime(),
+          }),
         ),
       );
       control.finish('completed');
@@ -108,6 +115,7 @@ export async function background(
           outputFile,
           status: 'stopped',
           usage: usage(2_400, 1, 5_000),
+          endTime: ctx.now().getTime(),
         }),
       ),
   });
