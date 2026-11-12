@@ -210,6 +210,16 @@ Integrations-Branch `feature/phase-3`. Kritischer Pfad: 50 (Teil 2) → 54 → 5
   Task-Panel stoppen; F5 Aufgabenliste und Fortschritts-Zusammenfassungen standardmäßig an; F6 Live-Abnahme WP-61
   freigegeben (Abo, Haiku, Temp-Home, Scratch-Ordner, ≤ 1 USD, Nutzer-Checkliste). Ausnahme von der Windows-Regel für
   GUI-Starts (ADR-144, `windowsHide:false` nur für geprüfte GUI-Programme) freigegeben.
+- 12.11.2026 (Remote Control, Nutzer: „essentiell wichtiges Feature“): Machbarkeit
+  (`docs/wp/MACHBARKEIT-REMOTE-CONTROL.md`) – `remoteControlAtStartup` wertet nur die TUI aus, headless Hosts
+  schalten per `enableRemoteControl` (intern) ein. **Live-Spike freigegeben und erledigt** (Haiku, Abo,
+  0,0182 USD): Einschalten, Prompt und Freigabe vom Handy, Wiederanbindung an dieselbe App-Session (vom Nutzer
+  bestätigt). Push und sofortige Sichtbarkeit nicht beobachtet → Live-Abnahme WP-64. **Entscheidung:**
+  Remote-Control-Sessions schlafen nicht. Umsetzung WP-64 (`docs/wp/WP-64.md`) nach dem Merge von WP-63.
+  SDK-Abgleich `docs/wp/SDK-MOEGLICHKEITEN.md` (29 Möglichkeiten, Reihenfolge-Empfehlung beim Nutzer).
+- 12.11.2026: Merge `feature/cli-update` (WP-62) nach `main` und Push freigegeben und erledigt (`2b1c79b`,
+  `pnpm check` 4992 Tests + `pnpm build` grün). Die Commit-Message trägt versehentlich den Session-Link der
+  Spike-Session statt der Koordinator-Session (kein Force-Push).
 
 ## Koordinator-Entscheidungen R3/V2 (15.10.2026)
 - V2-01: Parallax-Edge-Profil nie mit Microsoft-Konto anmelden/synchronisieren (Flags/Profil-Präferenzen, keine Policies).
