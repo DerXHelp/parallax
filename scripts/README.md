@@ -43,14 +43,17 @@ zu `pnpm check`/`build`/`e2e` (ADR-154). Dauer ≈ 1,5–3 min, Kosten ≈ 0,01 
    Werkzeuge verweigert), Temp-Scratch `%TEMP%\parallax-cli-check-<zeit>-*` mit Temp-Home, eine
    Haiku-Runde („Reply with exactly: OK“). Sammelt `system/init`, `initializationResult()` (nur
    Schlüssel), `supportedModels()`, `getContextUsage()` (Kategorie-`id`s). Guards wie der Recorder
-   (ADR-011).
+   (ADR-011). WP-64 (`cli-check/remoteControl.ts`): danach `enableRemoteControl(true, 'Parallax cli-check')`,
+   Antwort gegen `remoteControlAnswerSchema` (claude.ai-`session_url`), `bridge_state connected` in
+   15 s, dann immer `enableRemoteControl(false)` – Ergebnis `remoteControl: true/false` im Profil, ein
+   Fehlschlag bricht nie ab (er ist der Befund); kein Modell-Turn, keine Kosten.
 3. Live-Smoke `e2e/live` mit dem Restbudget (`cli-check/smoke.ts`; JSON-Reporter, eigener
    Playwright-Ausgabeordner `test-results/cli-check/<zeit>-smoke/` – Playwright leert ihn beim Start,
    frühere Berichte bleiben –, `live-run.json` mit Kosten und Temp-Wurzel).
 4. Vergleich mit `src/server/claude/cli-profile.json` (`cli-check/compare.ts`): Werkzeuge
    (Kern-Werkzeuge, `TodoWrite`/`TaskCreate` → ADR-156), Init-Schlüssel, `initializationResult`-Schlüssel,
    Capabilities, Modelle, Kontext-Kategorien, `permissionMode`-Default, deferred Werkzeuge (falls die CLI
-   sie meldet); Smoke-Fehler, `unknownCounts`, Validierungs-Drops. Nur Notizen: Slash-Commands, Agents,
+   sie meldet), Remote Control (`true` ↔ `false`, WP-64); Smoke-Fehler, `unknownCounts`, Validierungs-Drops. Nur Notizen: Slash-Commands, Agents,
    Skills, Modell-ID, Versionen.
 5. Bericht `test-results/cli-check/<zeit>.md` (Englisch, je Abweichung die betroffene Stelle) plus
    `last-run.json`; Konsolen-Zusammenfassung. Exit 0 = grün, 1 = Abweichungen, 2 = Abbruch/Fehler.

@@ -117,7 +117,22 @@ export type StatusSignal =
   | { type: 'prompt_lifecycle'; messageUuid: string; state: 'queued' | 'started' | 'completed' | 'cancelled' }
   | { type: 'rate_limit'; info: RateLimitInfo }
   /** C.5: rejected project MCP servers. */
-  | { type: 'mcp_servers'; notApproved: string[] };
+  | { type: 'mcp_servers'; notApproved: string[] }
+  /**
+   * WP-64: system/bridge_state (Remote Control, untyped). `state` as sent by the CLI; unknown states
+   * arrive as 'unknown' (counted by the normalizer). `failureKind` only for 'failed' (CLI default
+   * 'terminal'; anything else = the CLI retries), `recovered` = connected again after a reconnect.
+   */
+  | {
+      type: 'bridge_state';
+      state: BridgeState;
+      detail: string | null;
+      failureKind: string | null;
+      recovered: boolean;
+    };
+
+/** WP-64: states of system/bridge_state seen in CLI 2.1.x ('unknown' = a newer CLI). */
+export type BridgeState = 'ready' | 'connected' | 'failed' | 'policy_disabled' | 'unknown';
 
 export interface NormalizerOutput {
   ops: SessionOp[];

@@ -30,6 +30,7 @@ import path from 'node:path';
 import type { Logger } from 'pino';
 import { z } from 'zod';
 import { messageUuidSchema } from '@shared/common';
+import { makeError } from '@shared/errors';
 import { toError } from '../lib/async';
 import { logger } from '../lib/logger';
 import { killProcessTree as killTree, spawnHidden } from '../lib/process';
@@ -43,6 +44,7 @@ import {
   optionIssues,
   type StartFlagSettings,
 } from './sdkOptions';
+import { remoteControlDefaultOf, remoteControlErrorOf, toRemoteControlInfo } from './remoteControl';
 import { createSpawner } from './spawn';
 import type {
   AgentBackend,
@@ -52,6 +54,8 @@ import type {
   HistoryRequest,
   OutgoingContent,
   OutgoingPrompt,
+  RemoteControlRequest,
+  RemoteControlResult,
   StartSessionRequest,
 } from './types';
 
@@ -105,6 +109,16 @@ export interface SdkQueryHandle extends AsyncIterable<unknown> {
   supportedModels(): Promise<unknown[]>;
   supportedCommands(): Promise<unknown[]>;
   stopTask(taskId: string): Promise<void>;
+  /**
+   * WP-64: internal SDK methods (not in the public typings of 0.3.322); checked at runtime, a
+   * missing method means REMOTE_CONTROL_UNAVAILABLE.
+   */
+  enableRemoteControl?(
+    enabled: boolean,
+    name?: string,
+    opts?: { reattachSessionId?: string; keepSessionOnExit?: boolean },
+  ): Promise<unknown>;
+  getSettings?(): Promise<unknown>;
   close(): void;
 }
 
@@ -578,6 +592,44 @@ class SdkSession implements AgentSession {
 
   stopTask(taskId: string): Promise<void> {
     return this.control('stopTask', this.ctx.timeouts.controlMs, (q) => q.stopTask(taskId));
+  }
+
+  /**
+   * WP-64: always keepSessionOnExit – a close or server restart keeps the bridge session, so the next
+   * process reattaches to the same link. Never rejects (RemoteControlResult).
+   */
+  async setRemoteControl(enabled: boolean, req: RemoteControlRequest): Promise<RemoteControlResult> {
+    if (this.q !== null && typeof this.q.enableRemoteControl !== 'function') {
+      return { ok: false, error: makeError('REMOTE_CONTROL_UNAVAILABLE', { reason: 'sdk' }) };
+    }
+    const opts = {
+      keepSessionOnExit: true,
+      ...(req.reattachSessionId === null ? {} : { reattachSessionId: req.reattachSessionId }),
+    };
+    try {
+      const raw = await this.control('enableRemoteControl', this.ctx.timeouts.controlMs, (q) => {
+        if (q.enableRemoteControl === undefined) throw new Error('enableRemoteControl missing');
+        return q.enableRemoteControl(enabled, req.name ?? undefined, opts);
+      });
+      return enabled ? toRemoteControlInfo(raw) : { ok: true, info: null };
+    } catch (error) {
+      const payload = remoteControlErrorOf(error);
+      this.log.warn({ enabled, code: payload.code, params: payload.params }, 'remote control request failed');
+      return { ok: false, error: payload };
+    }
+  }
+
+  /** WP-64: Claude's own `remoteControlAtStartup` (getSettings().effective); null when unknown. */
+  async readRemoteControlDefault(): Promise<boolean | null> {
+    try {
+      const raw = await this.control('getSettings', this.ctx.timeouts.controlMs, (q) =>
+        q.getSettings === undefined ? Promise.resolve(null) : q.getSettings(),
+      );
+      return remoteControlDefaultOf(raw);
+    } catch (error) {
+      this.log.warn({ err: error }, 'reading the remote control default failed');
+      return null;
+    }
   }
 
   /** F.3: toPermissionRequest → req.canUseTool(request, signal); a throwing handler → deny. */

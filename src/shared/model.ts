@@ -464,6 +464,33 @@ export function defaultEditorSettings(): EditorSettings {
   return { preset: 'notepadpp', executable: null, args: [] };
 }
 
+// ---- Remote Control (WP-64) ----
+
+/**
+ * Remote Control for NEW sessions: `follow_claude` = like `remoteControlAtStartup` in the user's
+ * Claude settings (read after the first `init`, `HostState.remoteControlDefault`), `on`, `off`.
+ * Existing sessions keep their own wish (`Entry.remoteControlWanted`).
+ */
+export const REMOTE_CONTROL_NEW_SESSIONS = ['follow_claude', 'on', 'off'] as const;
+export const remoteControlNewSessionsSchema = z.enum(REMOTE_CONTROL_NEW_SESSIONS);
+export type RemoteControlNewSessions = z.infer<typeof remoteControlNewSessionsSchema>;
+
+export const remoteControlSettingsSchema = z.object({ newSessions: remoteControlNewSessionsSchema });
+export type RemoteControlSettings = z.infer<typeof remoteControlSettingsSchema>;
+export const DEFAULT_REMOTE_CONTROL_SETTINGS = { newSessions: 'follow_claude' } as const satisfies z.infer<
+  typeof remoteControlSettingsSchema
+>;
+
+/**
+ * A session link of the bridge (`session_url`): only `https://claude.ai/…` (or a subdomain) – the
+ * UI opens nothing else, the server drops anything else (WP-64).
+ */
+export function isClaudeSessionUrl(value: string): boolean {
+  return value.length <= 2000 && /^https:\/\/(?:[a-z0-9-]+\.)*claude\.ai(?:[/?#]\S*)?$/i.test(value);
+}
+
+export const claudeSessionUrlSchema = z.string().refine(isClaudeSessionUrl, { message: 'not a claude.ai link' });
+
 /** Fields without defaults: the base of the patch schema (a patch must never inject defaults). */
 const settingsFields = {
   language: languageSchema,
@@ -476,6 +503,8 @@ const settingsFields = {
   autostart: autostartSchema,
   /** Phase 3 (ADR-144): takes effect at the next `file.open`. */
   editor: editorSettingsSchema,
+  /** WP-64: Remote Control for new sessions (existing ones keep their own wish). */
+  remoteControl: remoteControlSettingsSchema,
 };
 
 export const settingsSchema = z.object({
@@ -487,6 +516,7 @@ export const settingsSchema = z.object({
   port: portSettingSchema.default(null),
   autostart: autostartSchema.default(DEFAULT_AUTOSTART),
   editor: editorSettingsSchema.default(defaultEditorSettings),
+  remoteControl: remoteControlSettingsSchema.default(DEFAULT_REMOTE_CONTROL_SETTINGS),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
@@ -550,6 +580,12 @@ export const hostStateSchema = z.object({
    * The UI disables both otherwise.
    */
   systemIntegration: z.boolean().default(false),
+  /**
+   * WP-64: `remoteControlAtStartup` of the default profile's Claude settings as the CLI reported it
+   * (`getSettings`, read after a session's `init`); null = not read yet / not available. Shown next
+   * to the setting `remoteControl.newSessions: follow_claude`.
+   */
+  remoteControlDefault: z.boolean().nullable().default(null),
 });
 export type HostState = z.infer<typeof hostStateSchema>;
 
@@ -587,6 +623,14 @@ export const conversationSchema = z.object({
   costUsd: z.number().nonnegative().nullable().default(null),
   /** Highest item `order` written so far (the normalizer continues from here, §5.6). */
   lastOrder: z.number().int().nonnegative().default(0),
+  /**
+   * WP-64: Remote Control bridge session of this conversation (`bridge_session_id`, e.g.
+   * `cse_…`) – passed as `reattachSessionId` on the next start, so the Claude app keeps ONE entry.
+   * null = never connected. A new conversation (/clear, fresh context) takes the live one over.
+   */
+  bridgeSessionId: z.string().min(1).max(200).nullable().default(null),
+  /** WP-64: its link in claude.ai / the Claude app (`https://claude.ai/code/session_…`). */
+  sessionUrl: claudeSessionUrlSchema.nullable().default(null),
 });
 export type Conversation = z.infer<typeof conversationSchema>;
 
@@ -647,6 +691,11 @@ export const entrySchema = z.object({
   external: externalHandoffSchema.nullable().default(null),
   /** Phase 2 (ADR-112): scheduled "continue" after a rate limit (→ StatusFacts.wakeupAt). */
   continueAt: isoDateTimeSchema.nullable().default(null),
+  /**
+   * WP-64: the user wants Remote Control for this session. A running process is switched at once,
+   * otherwise at the next start/resume/wake-up (with the conversation's `bridgeSessionId`).
+   */
+  remoteControlWanted: z.boolean().default(false),
 });
 export type Entry = z.infer<typeof entrySchema>;
 
@@ -737,6 +786,11 @@ export const decisionOutcomeSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('cancelled'), reason: z.enum(CANCEL_REASONS) }),
   /** After a restart (A.10). */
   z.object({ type: z.literal('expired') }),
+  /**
+   * WP-64: answered in the Claude app (Remote Control connected, the CLI aborted the request and no
+   * local answer came) – the following tool_result shows what was decided.
+   */
+  z.object({ type: z.literal('answered_elsewhere') }),
 ]);
 export type DecisionOutcome = z.infer<typeof decisionOutcomeSchema>;
 
@@ -766,6 +820,11 @@ export const userMessageItemSchema = z.object({
   slashCommand: z.string().nullable().default(null),
   /** As sent. */
   priority: promptPrioritySchema.nullable().default(null),
+  /**
+   * WP-64: where the prompt was typed – `remote` = in claude.ai / the Claude app (Remote Control:
+   * a replayed `user` with `origin.kind 'human'` and a uuid Parallax never sent).
+   */
+  source: z.enum(['local', 'remote']).default('local'),
 });
 export type UserMessageItem = z.infer<typeof userMessageItemSchema>;
 
@@ -1244,6 +1303,41 @@ export type DecisionRecordsFile = z.infer<typeof decisionRecordsFileSchema>;
 // 5.10 Session summary (channel 1, A.2)
 // =====================================================================================
 
+/**
+ * WP-64: Remote Control bridge state of the running process. `off` = not connected (no process, or
+ * not wanted); `connecting` = switched on, the bridge is not up yet; `reconnecting` = it was up and
+ * reconnects; `failed` = switching on failed or the connection is lost (`error`).
+ */
+export const REMOTE_CONTROL_STATES = ['off', 'connecting', 'connected', 'reconnecting', 'failed'] as const;
+export const remoteControlStateSchema = z.enum(REMOTE_CONTROL_STATES);
+export type RemoteControlState = z.infer<typeof remoteControlStateSchema>;
+
+export const remoteControlSummarySchema = z.object({
+  state: remoteControlStateSchema,
+  /** Link of the current conversation's bridge session; null while not wanted or never connected. */
+  sessionUrl: claudeSessionUrlSchema.nullable(),
+  /** REMOTE_CONTROL_* while `failed`, else null. */
+  error: errorPayloadSchema.nullable(),
+  /**
+   * `Entry.remoteControlWanted` (the menu toggles it; a dormant session connects at its next
+   * start). Additive to the approved shape (WP-64 report).
+   */
+  wanted: z.boolean().default(false),
+});
+export type RemoteControlSummary = z.infer<typeof remoteControlSummarySchema>;
+
+export const DEFAULT_REMOTE_CONTROL_SUMMARY = {
+  state: 'off',
+  sessionUrl: null,
+  error: null,
+  wanted: false,
+} as const satisfies RemoteControlSummary;
+
+/** States in which the bridge is (or is about to be) up – such a session never sleeps (ADR-105, WP-64). */
+export function isRemoteControlActive(state: RemoteControlState): boolean {
+  return state === 'connecting' || state === 'connected' || state === 'reconnecting';
+}
+
 /** Facts, not a finished display: server and UI call deriveDisplayStatus(facts, now) (A.4). */
 export const sessionSummarySchema = z.object({
   entryId: entryIdSchema,
@@ -1284,6 +1378,8 @@ export const sessionSummarySchema = z.object({
     })
     .nullable()
     .default(null),
+  /** WP-64: Remote Control (bridge to claude.ai / the Claude app). */
+  remoteControl: remoteControlSummarySchema.default(DEFAULT_REMOTE_CONTROL_SUMMARY),
 });
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 

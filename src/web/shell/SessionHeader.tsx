@@ -18,6 +18,8 @@ import { ContextCompactIcon, useContextTexts } from './context-display';
 import { HeaderPanelButtons, HeaderPanelMenuItems, useCompactHeader } from './header-panels';
 import { RenameField } from './navigation/RenameField';
 import { PathTail } from './navigation/PathTail';
+import { showsRemoteInHeader } from './navigation/remote-control';
+import { RemoteControlMenu } from './navigation/RemoteControlMenu';
 import { startRename, useRenameHeader, useRenaming } from './navigation/rename';
 import { SessionMenu } from './navigation/SessionMenu';
 
@@ -110,7 +112,8 @@ function HeaderCliVersion({ version, required }: { version: string; required: st
  * fill). Reads its own summary (memo: the pane above does not re-render on summary changes, R1W-04).
  * Phase 2 (WP-35): the title is edited inline (double click, F2, `/rename`); the "…" session menu
  * sits next to the status line. Phase 3 (WP-58): the side panel buttons "Plan", "Files", "Tasks"
- * sit before the "…" – in a narrow bar they move into that menu (`data-compact`).
+ * sit before the "…" – in a narrow bar they move into that menu (`data-compact`). WP-64: the
+ * Remote Control icon with its own menu while the bridge is live or wanted.
  */
 export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessionKey: string }) {
   const t = useT();
@@ -254,6 +257,9 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
         </dl>
       </header>
       <div className="flex shrink-0 items-center gap-1 pr-2">
+        {showsRemoteInHeader(summary.remoteControl) ? (
+          <RemoteControlMenu sessionKey={sessionKey} summary={summary} />
+        ) : null}
         {compact ? null : <HeaderPanelButtons sessionKey={sessionKey} />}
         <SessionMenu
           sessionKey={sessionKey}

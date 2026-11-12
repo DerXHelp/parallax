@@ -154,6 +154,41 @@ function scalarFinding(
   return { area, level, title: `${label}: ${before || '(empty)'} → ${after || '(empty)'}`, added: [after], removed: [before], hint };
 }
 
+const REMOTE_CONTROL_HINT =
+  'Remote Control (WP-64) uses internal SDK parts: Query.enableRemoteControl, getSettings() and ' +
+  'system/bridge_state (backend/remoteControl.ts, backend/sdkBackend.ts, sessions/normalizer/bridge.ts, ' +
+  'sessions/remoteControl.ts); check the report detail and docs/sdk-upgrade.md.';
+
+const availability = (value: boolean): string => (value ? 'available' : 'not available');
+
+/**
+ * WP-64: Remote Control of the probe against the profile – a change between true and false is a
+ * deviation; a first check (profile null) or a run that did not check (observation null) a note.
+ */
+export function remoteControlFinding(before: boolean | null, after: boolean | null): Finding | null {
+  if (before === after) return null;
+  const label = 'remote control (enableRemoteControl + bridge_state connected)';
+  if (before === null || after === null) {
+    return {
+      area: 'remoteControl',
+      level: 'note',
+      title:
+        after === null ? `${label}: not checked in this run` : `${label}: checked for the first time – ${availability(after)}`,
+      added: after === null ? [] : [availability(after)],
+      removed: [],
+      hint: REMOTE_CONTROL_HINT,
+    };
+  }
+  return {
+    area: 'remoteControl',
+    level: 'deviation',
+    title: `${label}: ${availability(before)} → ${availability(after)}`,
+    added: [availability(after)],
+    removed: [availability(before)],
+    hint: REMOTE_CONTROL_HINT,
+  };
+}
+
 /** Profile vs. observation (probe). Without a profile one deviation asks for the first `--accept`. */
 export function compareObservation(profile: CliProfile | null, observation: Observation): Finding[] {
   if (profile === null) {
@@ -232,6 +267,8 @@ export function compareObservation(profile: CliProfile | null, observation: Obse
         hint: spec.hint,
       });
   }
+
+  push(remoteControlFinding(profile.remoteControl, observation.remoteControl));
 
   // ADR-156: TodoWrite/TaskCreate are the reason the task bar stays empty – call them out.
   const todoAdded = TODO_TOOLS.filter((tool) => observation.tools.includes(tool) && !profile.tools.includes(tool));

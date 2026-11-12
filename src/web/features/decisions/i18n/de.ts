@@ -188,6 +188,7 @@ export const de: typeof en = {
       plan_approved: 'Der Plan wurde in einem anderen Fenster freigegeben.',
       plan_revised: 'Der Plan wurde in einem anderen Fenster zur Überarbeitung zurückgegeben.',
       expired: 'Eine abgelaufene Entscheidung wurde geschlossen.',
+      answered_elsewhere: 'Eine Anfrage wurde in der Claude-App beantwortet.',
     },
     elsewhereFresh:
       'Der Plan wurde in einem anderen Fenster freigegeben und wird in einer neuen Unterhaltung umgesetzt.',

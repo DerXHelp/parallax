@@ -8,7 +8,9 @@
  * (context stays at 75 % until /clear or a compaction, V4-05; phase3.ts) and the plan file of
  * `fake:plan` (plan.ts); WP-63 (feedback.ts): `fake:steps` (long run of Bash steps with one
  * failure and a sentence in between), `fake:images` (burst of Read results with a PNG each),
- * `fake:limit-warning` (`allowed_warning`, the limit bar only). A prompt with images, PDFs, attached files or inline pastes
+ * `fake:limit-warning` (`allowed_warning`, the limit bar only); WP-64 (remote.ts, only with the fake
+ * bridge connected): `fake:remote-prompt [text]` (a prompt from the Claude app follows),
+ * `fake:remote-permission` (approval answered in the app), `fake:remote-fail`, `fake:remote-flaky`. A prompt with images, PDFs, attached files or inline pastes
  * gets "Fake: received …" (ADR-103, ADR-146); the first prompt of a start without resume that is
  * the engine's fresh-context prompt gets "Fake: implementing plan (N lines)"; anything else gets a
  * thought plus a streamed "Echo: …". Decisions really wait for the engine; interrupt() and
@@ -45,6 +47,7 @@ import { images, limitWarning, steps } from './feedback';
 import { FAKE_SHOT_HEIGHT, FAKE_SHOT_NAME, FAKE_SHOT_PNG_BASE64, FAKE_SHOT_WIDTH } from './image';
 import { background, contextHigh, files, receivedCounts, receivedText, todo, writesLost } from './phase3';
 import { implementPlan, isImplementPlanPrompt, plan } from './plan';
+import { remoteFail, remoteFlaky, remotePermission, remotePrompt } from './remote';
 import { CANCEL_DENY, abortedByDecision, answerTurn, ask, contextFor, firstWords, type Turn } from './turn';
 import type { FakeScenario, FakeScriptContext } from './types';
 
@@ -456,6 +459,18 @@ async function handle(
       break;
     case 'fake:limit-warning':
       await limitWarning(ctx, c, turn);
+      break;
+    case 'fake:remote-prompt':
+      await remotePrompt(ctx, c, turn, text);
+      break;
+    case 'fake:remote-permission':
+      await remotePermission(ctx, c, turn);
+      break;
+    case 'fake:remote-fail':
+      await remoteFail(ctx, c, turn);
+      break;
+    case 'fake:remote-flaky':
+      await remoteFlaky(ctx, c, turn);
       break;
     case 'fake:bash':
     case 'fake:permission':

@@ -127,7 +127,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": "/compact",
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "00000000-0000-4000-9000-000000000006",

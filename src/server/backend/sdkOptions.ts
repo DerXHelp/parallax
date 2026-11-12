@@ -8,9 +8,13 @@
  * folder. WP61-02: `todoFeatureEnabled` is NOT sent – with CLI 2.1.322 it has no effect (neither
  * `TodoWrite` nor `TaskCreate` in `init.tools`); todo lists from the stream still reach the task bar.
  *
- * Deliberately NOT set: enableFileCheckpointing, extraArgs 'replay-user-messages' (F.9),
- * sessionId, forkSession, maxTurns, abortController (close() goes through Query.close() + the
- * spawn wrapper, C.8).
+ * WP-64: extraArgs 'replay-user-messages' is always set (F.9): Remote Control can be switched at
+ * runtime, and only the replay shows the text of a prompt sent from the Claude app. The normalizer drops
+ * the echoes of Parallax's own prompts (same uuid); queue and "grey until processed" keep using
+ * command_lifecycle.
+ *
+ * Deliberately NOT set: enableFileCheckpointing, sessionId, forkSession, maxTurns, abortController
+ * (close() goes through Query.close() + the spawn wrapper, C.8).
  */
 import type {
   CanUseTool,
@@ -105,12 +109,16 @@ function settingsOf(req: StartSessionRequest): Options['settings'] {
   return req.launch.sdkOptions.settings ?? startFlagSettings(req) ?? undefined;
 }
 
-function extraArgsOf(launch: LaunchSpec): Record<string, string | null> | undefined {
+/** WP-64: CLI flag behind the user-message replays (F.9), always on. */
+export const REPLAY_USER_MESSAGES_FLAG = 'replay-user-messages';
+
+function extraArgsOf(launch: LaunchSpec): Record<string, string | null> {
   const args: Record<string, string | null> = { ...launch.extraArgs };
   const mcpConfig = launch.sdkOptions.mcpConfig?.[0];
   // extraArgs is a record (C.12): one value per flag. Further values: optionIssues (Phase 2, §7).
   if (mcpConfig !== undefined) args['mcp-config'] = mcpConfig;
-  return Object.keys(args).length > 0 ? args : undefined;
+  args[REPLAY_USER_MESSAGES_FLAG] = null;
+  return args;
 }
 
 /** WP-13 §3.2 "Options-Abbildung". Keys with "omit" semantics are left out entirely. */
@@ -158,8 +166,7 @@ export function buildQueryOptions(req: StartSessionRequest, hooks: QueryOptionHo
 
   const settings = settingsOf(req);
   if (settings !== undefined) options.settings = settings;
-  const extraArgs = extraArgsOf(launch);
-  if (extraArgs !== undefined) options.extraArgs = extraArgs;
+  options.extraArgs = extraArgsOf(launch);
   return options;
 }
 

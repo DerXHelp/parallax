@@ -430,7 +430,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "msg_011CgwXXvbVcEx2LTB6VqCaV:0",
@@ -487,7 +488,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": "/rename",
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "425a0b11-9e33-488b-99fc-9030291bf048:0",
@@ -547,7 +549,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": "/clear",
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       }
     ],
     "cv_00000000000000000000000000000002": [
@@ -601,7 +604,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "msg_011CgwXY2vzDx6mBQi6KrSJb:0",

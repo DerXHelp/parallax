@@ -156,6 +156,8 @@ export interface EngineHarnessOptions {
    * holds only that wait (a sleeping task is a resting point of `settle()`).
    */
   fakeTiming?: Pick<FakeBackendOptions, 'speed' | 'sleep'>;
+  /** WP-64: `FakeBackendOptions.remoteControl` (Claude's default, failing enable requests). */
+  remoteControl?: FakeBackendOptions['remoteControl'];
 }
 
 /** A not yet existing folder for the fake files of one harness (below the test home). */
@@ -274,6 +276,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     ...(options.history === undefined ? {} : { history: options.history }),
     speed: options.fakeTiming?.speed ?? 0,
     ...(options.fakeTiming?.sleep === undefined ? {} : { sleep: options.fakeTiming.sleep }),
+    ...(options.remoteControl === undefined ? {} : { remoteControl: options.remoteControl }),
     now,
     filesRoot,
   });

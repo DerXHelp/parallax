@@ -1,7 +1,7 @@
 import { ArchiveRestoreIcon, EllipsisIcon, GitBranchIcon, PinIcon } from 'lucide-react';
 import { memo, useMemo, useState, type FocusEvent } from 'react';
 import type { EffortLevel } from '@shared/common';
-import type { ContextGauge, ProfileColor } from '@shared/model';
+import type { ContextGauge, ProfileColor, SessionSummary } from '@shared/model';
 import type { DisplayStatusKind } from '@shared/status';
 import { useFormat, useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
@@ -19,6 +19,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
 import { ContextCompactIcon, useContextTexts } from '../context-display';
 import { PathTail } from './PathTail';
 import { PROFILE_BG } from './profile-colors';
+import { RemoteControlIcon, showsRemoteInRow, useRemoteControlTexts } from './remote-control';
 import { startRename, useRenaming } from './rename';
 import { RenameField } from './RenameField';
 import {
@@ -86,6 +87,28 @@ function RowContextDetail({ context }: { context: ContextGauge }) {
     <span data-slot="row-context-detail" className="text-muted-foreground tabular-nums">
       {t('navigation.row.context')}: {texts.detail}
       {texts.compactSoon === null ? null : <span className="block">{texts.compactSoon}</span>}
+    </span>
+  );
+}
+
+/** WP-64: Remote Control in line 1 (quiet when connected, muted while connecting, warning on failure). */
+function RowRemote({ remote }: { remote: SessionSummary['remoteControl'] }) {
+  const { status } = useRemoteControlTexts(remote);
+  return (
+    <span data-slot="row-remote" data-remote-state={remote.state} className="flex shrink-0 items-center">
+      <RemoteControlIcon remote={remote} />
+      <span className="sr-only">{status}</span>
+    </span>
+  );
+}
+
+/** WP-64: Remote Control line of the row's tooltip (status and the readable error). */
+function RowRemoteDetail({ remote }: { remote: SessionSummary['remoteControl'] }) {
+  const { status, error } = useRemoteControlTexts(remote);
+  return (
+    <span data-slot="row-remote-detail" className="text-muted-foreground">
+      {status}
+      {error === null ? null : <span className="text-warning block">{error}</span>}
     </span>
   );
 }
@@ -221,6 +244,7 @@ export const SessionRow = memo(function SessionRow({
                   >
                     {title}
                   </span>
+                  {showsRemoteInRow(summary.remoteControl) ? <RowRemote remote={summary.remoteControl} /> : null}
                   {summary.pinned ? (
                     <span data-slot="row-pinned" className="text-muted-foreground shrink-0">
                       <PinIcon aria-hidden className="size-3" />
@@ -311,6 +335,9 @@ export const SessionRow = memo(function SessionRow({
                 {summary.context === null || summary.archived ? null : (
                   <RowContextDetail context={summary.context} />
                 )}
+                {showsRemoteInRow(summary.remoteControl) ? (
+                  <RowRemoteDetail remote={summary.remoteControl} />
+                ) : null}
                 {cliVersion === null ? null : (
                   <span data-slot="row-cli-version" className="text-muted-foreground">
                     {t('shell.session.cliVersion', { version: cliVersion })}

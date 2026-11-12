@@ -375,3 +375,58 @@ describe('synthetic behaviour', () => {
     ]);
   });
 });
+
+describe('synthetic remote control (WP-64)', () => {
+  const REMOTE = '21526cdc-968c-4fb8-8b09-487aa2e4113f';
+
+  it('own echoes are dropped, the Claude-app prompt becomes one remote user_message before its answer', () => {
+    const r = run('remote-control');
+    const users = items(r).filter((i) => i.kind === 'user_message');
+    expect(users).toMatchObject([
+      { id: uuid(3000), source: 'local', origin: 'human', text: { text: 'Antworte nur mit: OK (nach Neustart)' } },
+      {
+        id: REMOTE,
+        source: 'remote',
+        origin: 'human',
+        priority: null,
+        at: '2026-10-15T08:00:05.303Z',
+        text: { text: 'Antworte nur mit: Zweiter Test vom Handy' },
+      },
+    ]);
+    const remote = items(r).find((i) => i.id === REMOTE);
+    const answer = items(r).find((i) => i.kind === 'assistant_text' && i.id.includes('msg_syn_rc_2'));
+    expect(answer).toBeDefined();
+    expect(remote?.order ?? Infinity).toBeLessThan(answer?.order ?? -1);
+    expect(r.normalizer.ignoredCounts).toMatchObject({
+      'user/replay': 1,
+      'system/task_summary': 2,
+      'system/post_turn_summary': 1,
+    });
+    expect(items(r).some((i) => i.kind === 'system' && i.event === 'unknown')).toBe(false);
+  });
+
+  it('bridge_state → signals (failure kind, recovered, unknown state counted, invalid counted)', () => {
+    const r = run('remote-control');
+    expect(signals(r, 'bridge_state')).toEqual([
+      { type: 'bridge_state', state: 'ready', detail: null, failureKind: null, recovered: false },
+      { type: 'bridge_state', state: 'connected', detail: null, failureKind: null, recovered: false },
+      { type: 'bridge_state', state: 'failed', detail: 'network down', failureKind: 'transient', recovered: false },
+      { type: 'bridge_state', state: 'connected', detail: null, failureKind: null, recovered: true },
+      { type: 'bridge_state', state: 'failed', detail: 'session ended elsewhere', failureKind: 'terminal', recovered: false },
+      { type: 'bridge_state', state: 'unknown', detail: null, failureKind: null, recovered: false },
+    ]);
+    expect(r.normalizer.unknownCounts).toMatchObject({
+      'bridge_state:hibernating': 1,
+      'invalid:system/bridge_state': 1,
+    });
+  });
+
+  it('the foreign turn keeps its lifecycle signals (the engine marks it active)', () => {
+    const r = run('remote-control');
+    expect(
+      signals(r, 'prompt_lifecycle')
+        .filter((s) => s.messageUuid === REMOTE)
+        .map((s) => s.state),
+    ).toEqual(['queued', 'started', 'completed']);
+  });
+});

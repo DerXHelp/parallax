@@ -160,6 +160,18 @@ export const ERROR_CATALOG = {
   CLAUDE_CONFIG_INVALID: { category: 'setup', http: 503, severity: 'error', retryable: false },
   /** startup_failure_reason `proxy_invalid` (company machine: check HTTPS_PROXY). */
   CLAUDE_PROXY_INVALID: { category: 'setup', http: 503, severity: 'error', retryable: false },
+  // Remote Control (WP-64): the bridge of the installed claude to claude.ai / the Claude app.
+  /** The SDK/CLI lacks the (internal) Remote Control methods – CLI too old or too new (runtime check). */
+  REMOTE_CONTROL_UNAVAILABLE: { category: 'claude', http: 502, severity: 'warning', retryable: false },
+  /** Control error `remote_control_auth`: claude must sign in again (`claude` in a terminal, `/login`). */
+  REMOTE_CONTROL_AUTH: { category: 'claude', http: 502, severity: 'warning', retryable: true },
+  /** Control error / bridge state `remote_control_policy_disabled`: blocked by the organization. */
+  REMOTE_CONTROL_POLICY_DISABLED: { category: 'claude', http: 502, severity: 'warning', retryable: false },
+  /**
+   * Switching on failed or the connection was lost (`params.reason`: the CLI's error code or
+   * `failure_kind`, e.g. `remote_control_terminal`, `timeout`, `terminal`; `params.detail`).
+   */
+  REMOTE_CONTROL_FAILED: { category: 'claude', http: 502, severity: 'warning', retryable: true },
   // Windows integration (Phase 2, ADR-109/110) – host warnings. `params.reason`: free text, or
   // 'foreign' = a `Parallax.lnk` / `parallax:` key of the user or another program, never replaced
   // (R4-11, ADR-133; the settings explain it).

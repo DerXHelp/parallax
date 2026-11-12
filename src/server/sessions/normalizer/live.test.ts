@@ -127,6 +127,93 @@ describe('live normalizer: prompts', () => {
   });
 });
 
+describe('live normalizer: replays and Claude-app prompts (WP-64)', () => {
+  const OWN = '55555555-5555-4555-8555-555555555555';
+  const REMOTE = '66666666-6666-4666-8666-666666666666';
+  const replay = (uuid: string, content: unknown, extra: Record<string, unknown> = {}) => ({
+    type: 'user',
+    message: { role: 'user', content },
+    parent_tool_use_id: null,
+    uuid,
+    isReplay: true,
+    session_id: SESSION,
+    ...extra,
+  });
+
+  it('drops own echoes – before started (folded next prompt), after started, with or without origin', () => {
+    const n = fresh();
+    n.registerPrompt({ messageUuid: OWN, text: 'mine', attachments: [], priority: 'next', at: AT });
+    expect(upserts(n.push(replay(OWN, 'mine', { origin: { kind: 'human' } }), AT))).toEqual([]);
+    const [item] = upserts(n.push({ type: 'command_lifecycle', command_uuid: OWN, state: 'started' }, AT));
+    expect(item).toMatchObject({ id: OWN, kind: 'user_message', source: 'local', priority: 'next' });
+    expect(upserts(n.push(replay(OWN, 'mine', { origin: { kind: 'human' } }), AT))).toEqual([]);
+    expect(upserts(n.push(replay(OWN, 'mine'), AT))).toEqual([]);
+    n.push({ type: 'command_lifecycle', command_uuid: OWN, state: 'completed' }, AT);
+    // Still known after completed (the pending entry is gone): a late echo stays dropped.
+    expect(upserts(n.push(replay(OWN, 'mine', { origin: { kind: 'human' } }), AT))).toEqual([]);
+    expect(n.ignoredCounts['user/replay']).toBe(4);
+  });
+
+  it('a foreign replay with origin human becomes one remote user_message (idempotent)', () => {
+    const n = fresh();
+    n.push({ type: 'command_lifecycle', command_uuid: REMOTE, state: 'started' }, AT);
+    const [item] = upserts(
+      n.push(replay(REMOTE, 'vom Handy', { origin: { kind: 'human' }, timestamp: '2026-10-15T07:59:59.000Z' }), AT),
+    );
+    expect(item).toMatchObject({
+      id: REMOTE,
+      kind: 'user_message',
+      source: 'remote',
+      origin: 'human',
+      priority: null,
+      slashCommand: null,
+      at: '2026-10-15T07:59:59.000Z',
+      text: { text: 'vom Handy' },
+    });
+    expect(upserts(n.push(replay(REMOTE, 'vom Handy', { origin: { kind: 'human' } }), AT))).toEqual([]);
+  });
+
+  it('other replays stay ignored: no origin, other origin, subagent, tool results, empty, task notification', () => {
+    const n = fresh();
+    const ignoredBefore = n.ignoredCounts['user/replay'] ?? 0;
+    for (const message of [
+      replay('77777777-7777-4777-8777-000000000001', 'no origin'),
+      replay('77777777-7777-4777-8777-000000000002', 'channel', { origin: { kind: 'channel' } }),
+      replay('77777777-7777-4777-8777-000000000003', 'sub', { origin: { kind: 'human' }, parent_tool_use_id: 'toolu_x' }),
+      replay('77777777-7777-4777-8777-000000000004', [{ type: 'tool_result', tool_use_id: 'toolu_y', content: 'ok' }], {
+        origin: { kind: 'human' },
+      }),
+      replay('77777777-7777-4777-8777-000000000005', '   ', { origin: { kind: 'human' } }),
+      replay('77777777-7777-4777-8777-000000000006', '[Request interrupted by user]', { origin: { kind: 'human' } }),
+    ]) {
+      expect(upserts(n.push(message, AT))).toEqual([]);
+    }
+    expect((n.ignoredCounts['user/replay'] ?? 0) - ignoredBefore).toBe(6);
+  });
+});
+
+describe('live normalizer: bridge messages (WP-64)', () => {
+  it('bridge_state → signal, no ops; task_summary/post_turn_summary are counted, never unknown items', () => {
+    const n = fresh();
+    const out = n.push({ type: 'system', subtype: 'bridge_state', state: 'connected', bridge_epoch: 1, uuid: 'b1', session_id: SESSION }, AT);
+    expect(out.ops).toEqual([]);
+    expect(out.signals.filter((x) => x.type !== 'session_id')).toEqual([
+      { type: 'bridge_state', state: 'connected', detail: null, failureKind: null, recovered: false },
+    ]);
+    expect(upserts(n.push({ type: 'system', subtype: 'task_summary', detail: 'Working', uuid: 'b2', session_id: SESSION }, AT))).toEqual([]);
+    expect(upserts(n.push({ type: 'system', subtype: 'post_turn_summary', status_detail: 'done', uuid: 'b3', session_id: SESSION }, AT))).toEqual([]);
+    expect(n.ignoredCounts).toMatchObject({ 'system/task_summary': 1, 'system/post_turn_summary': 1 });
+  });
+
+  it('policy_disabled and a long detail (clipped to 500 chars)', () => {
+    const n = fresh();
+    const out = n.push({ type: 'system', subtype: 'bridge_state', state: 'policy_disabled', detail: 'x'.repeat(800), session_id: SESSION }, AT);
+    const signal = out.signals.find((x) => x.type === 'bridge_state');
+    expect(signal).toMatchObject({ type: 'bridge_state', state: 'policy_disabled', failureKind: null });
+    expect(signal?.type === 'bridge_state' ? signal.detail?.length : 0).toBe(501);
+  });
+});
+
 describe('live normalizer: finalizeOpen and conversations', () => {
   it('process_exit closes streaming items and interrupts open tool calls; compacting ends', () => {
     const n = fresh();

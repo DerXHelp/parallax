@@ -174,6 +174,8 @@ export const reduceStatus: ReduceStatus = (facts, event, now, ctx) => {
     case 'title_changed':
     case 'prompt_lifecycle':
     case 'mcp_servers':
+    case 'bridge_state':
+      // WP-64: Remote Control (bridge_state) is no run state – EntryState.remote, summary.remoteControl.
       return facts;
   }
 };

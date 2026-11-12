@@ -11,6 +11,7 @@ import type {
   PermissionResult,
   PermissionUpdate,
 } from '@anthropic-ai/claude-agent-sdk';
+import type { ErrorPayload } from '@shared/errors';
 import type { LaunchSpec } from '../claude/ports';
 
 /** canUseTool arguments, taken over tolerantly (F.3). */
@@ -84,6 +85,29 @@ export type BackendEvent =
   /** Always the last event. */
   | { type: 'exit'; code: number | null; signal: string | null; expected: boolean; at: Date };
 
+/**
+ * WP-64 (Remote Control): answer of `query.enableRemoteControl(true)` (SDK 0.3.322, internal), already
+ * checked. `sessionUrl` is null when the CLI sent no https://claude.ai link.
+ */
+export interface RemoteControlInfo {
+  bridgeSessionId: string;
+  sessionUrl: string | null;
+}
+
+export interface RemoteControlRequest {
+  /** Name of the remote session in the Claude app (Parallax title); null = the CLI decides. */
+  name: string | null;
+  /** Bridge session of the current conversation (`cse_…`) to reconnect to; null = new one. */
+  reattachSessionId: string | null;
+}
+
+/**
+ * Never rejects. Failures: REMOTE_CONTROL_UNAVAILABLE (method missing in SDK/CLI, unknown answer),
+ * REMOTE_CONTROL_AUTH, REMOTE_CONTROL_POLICY_DISABLED, REMOTE_CONTROL_FAILED {reason, detail?}.
+ * Disabling answers `info: null`.
+ */
+export type RemoteControlResult = { ok: true; info: RemoteControlInfo | null } | { ok: false; error: ErrorPayload };
+
 export interface AgentSession {
   readonly entryId: string;
   readonly pid: number | null;
@@ -100,6 +124,16 @@ export interface AgentSession {
   supportedModels(): Promise<unknown[]>;
   supportedCommands(): Promise<unknown[]>;
   stopTask(taskId: string): Promise<void>;
+  /**
+   * WP-64: switches Remote Control (always with keepSessionOnExit, so a close or server restart keeps
+   * the bridge for a reattach). The live state arrives as system/bridge_state messages.
+   */
+  setRemoteControl(enabled: boolean, req: RemoteControlRequest): Promise<RemoteControlResult>;
+  /**
+   * WP-64: Claude's own setting `remoteControlAtStartup` (getSettings().effective); null when unknown
+   * (method missing, not set, unreadable). Never rejects.
+   */
+  readRemoteControlDefault(): Promise<boolean | null>;
   /** close(), wait ≤ 5 s for exit, then taskkill /T /F (C.8). Resolves after 'exit'. */
   close(): Promise<void>;
 }
