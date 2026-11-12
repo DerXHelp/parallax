@@ -24,6 +24,7 @@ export type {
   FakeDiagnosticKind,
   FakeEventsOptions,
   FakeIds,
+  FakeRemoteControlOptions,
   FakeScenario,
   FakeScriptContext,
   FakeScriptState,
@@ -127,6 +128,7 @@ export function createFakeBackend(options: FakeBackendOptions = {}): FakeBackend
         history,
         ids,
         filesRoot: options.filesRoot ?? defaultFakeFilesRoot(),
+        remoteControl: options.remoteControl ?? {},
         onStateChange,
       });
       sessions.push(session);
