@@ -8,6 +8,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { DEV_WEB_PORT } from './src/shared/devPorts.ts';
@@ -69,6 +70,28 @@ export function insideDir(dir: string): (file: string) => boolean {
  */
 export function watchIgnores(repoRoot: string): ((file: string) => boolean)[] {
   return WATCH_IGNORED_DIRS.map((dir) => insideDir(path.join(repoRoot, dir)));
+}
+
+/**
+ * Upper bound for Vitest workers (ADR-154): half of the logical CPUs instead of Vitest's default
+ * (all but one), so a single test run leaves room for the desktop. `--maxWorkers` overrides it.
+ */
+export const TEST_MAX_WORKERS = '50%';
+
+/**
+ * Below-normal CPU priority for the current process (ADR-154, user rule 12.11.2026: test and build
+ * runs must never stall the desktop). On Windows every child process started afterwards – Vitest
+ * and Playwright workers, test servers, headless Chrome, Vite/esbuild – inherits a below-normal or
+ * idle priority class. Only ever lowers (an idle run stays idle). Best effort: if the priority
+ * cannot be changed the run keeps its current one.
+ */
+export function lowerProcessPriority(): void {
+  const belowNormal = os.constants.priority.PRIORITY_BELOW_NORMAL;
+  try {
+    if (os.getPriority() < belowNormal) os.setPriority(belowNormal);
+  } catch {
+    // keep the current priority
+  }
 }
 
 /** Import aliases: `@shared/*` -> src/shared/*, `@web/*` -> src/web/* (web only). */
