@@ -19,8 +19,7 @@ vi.mock('./lib/rows', async (importOriginal) => {
   const actual = await importOriginal<typeof RowsModule>();
   return {
     ...actual,
-    canStopTask: (row: TaskRow, stopBash: boolean = flags.stopBash) =>
-      actual.canStopTask(row, stopBash),
+    canStopTask: (row: TaskRow, stopBash: boolean = flags.stopBash) => actual.canStopTask(row, stopBash),
   };
 });
 
