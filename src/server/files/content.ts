@@ -21,7 +21,8 @@ function bufferStream(buffer: Buffer): Readable {
 
 /**
  * UTF-8 text of a file of `bytes` source bytes in `encoding`: the first LIMITS.fileTextBytes source
- * bytes, decoded, cut at a line end when the source was cut or its UTF-8 form is too long.
+ * bytes, decoded, cut at a line end when the source was cut or its UTF-8 form is too long – exactly
+ * what `truncated` of file.stat predicts (stat.ts, CR3-04).
  */
 export async function readTextContent(fs: FileFs, file: FileInfo): Promise<Buffer> {
   const limit = LIMITS.fileTextBytes;

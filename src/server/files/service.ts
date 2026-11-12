@@ -47,7 +47,7 @@ import { createRecordingOpener, type ProgramLauncher } from './open';
 import type { FileContent, FileEntryInfo, FileEntryLookup, FileService } from './ports';
 import { createProjectFiles } from './projectFiles';
 import { createSessionIndex, byLastAtDesc } from './sessionIndex';
-import { statAllowed, type AllowedFile } from './stat';
+import { createTruncationCache, statAllowed, type AllowedFile, type StatOptions } from './stat';
 
 /** The commands of this handler (disjoint from the profile store and the folder browser). */
 export const FILE_COMMAND_NAMES = [
@@ -130,6 +130,7 @@ export function createFileService(deps: FileServiceDeps): FileService {
     now,
   });
   const rootCaches = new Map<EntryId, RootCache>();
+  const truncationCache = createTruncationCache();
 
   const requireEntry = (entryId: EntryId): FileEntryInfo => {
     const entry = deps.entries.entry(entryId);
@@ -176,10 +177,16 @@ export function createFileService(deps: FileServiceDeps): FileService {
     return { path: file, realPath: allowed.realPath, access: allowed.access };
   };
 
-  const statFile = async (entryId: EntryId, entry: FileEntryInfo, file: string): Promise<FileInfo> => {
+  /** `truncated`: exact for the commands (cached per file version, CR3-04); GET /api/file skips it. */
+  const statFile = async (
+    entryId: EntryId,
+    entry: FileEntryInfo,
+    file: string,
+    truncation: StatOptions['truncation'] = truncationCache,
+  ): Promise<FileInfo> => {
     const allowed = await allow(entryId, entry, file);
     try {
-      return await statAllowed(fs, allowed);
+      return await statAllowed(fs, allowed, { truncation });
     } catch (error) {
       throw fileAccessError(error);
     }
@@ -347,7 +354,8 @@ export function createFileService(deps: FileServiceDeps): FileService {
     commands: { names: FILE_COMMAND_NAMES, handle },
     async open(entryId, file): Promise<FileContent> {
       const entry = requireEntry(entryId);
-      const info = await statFile(entryId, entry, file);
+      // The answer carries no `truncated`; reading the text for it would read the file twice.
+      const info = await statFile(entryId, entry, file, 'skip');
       try {
         return await openContent(fs, info);
       } catch (error) {
