@@ -10,7 +10,7 @@ import { resetClientStore } from '@web/state/store';
 import { AppShell } from '../AppShell';
 import { installShortcutListener } from '../shortcuts';
 import { resetRename } from './rename';
-import { HEADER_ACTIONS, SIDEBAR_ACTIONS, sessionActions } from './session-actions';
+import { HEADER_ACTIONS, openFolderInExplorer, SIDEBAR_ACTIONS, sessionActions } from './session-actions';
 import { resetSidebarView } from './sidebar-view';
 
 vi.setConfig({ testTimeout: 60_000 });
@@ -93,6 +93,29 @@ describe('"Open folder in Explorer" (WP-58, ADR-144)', () => {
     scenario.host.fileOpenError = null;
     await chooseOpenFolder(user);
     expect(await screen.findByText('The file does not exist (any more).')).toBeTruthy();
+  });
+
+  it('PATH_NOT_ALLOWED from the server becomes a notice of the session (R5W-11)', async () => {
+    const scenario = await start();
+    scenario.host.setFile({ info: sampleFileInfo({ path: AUTH_CWD, kind: 'directory' }), text: null });
+    scenario.host.fileOpenError = makeError('PATH_NOT_ALLOWED');
+    const user = userEvent.setup();
+    await chooseOpenFolder(user);
+    expect(await screen.findByText('Access to this path is not allowed.')).toBeTruthy();
+    expect(scenario.host.fileOpens.map((cmd) => cmd.path)).toEqual([AUTH_CWD]);
+  });
+
+  it('a cwd the path rules reject is never sent – the notice says so (R5W-10, C.10)', async () => {
+    const scenario = await start();
+    act(() => {
+      openFolderInExplorer(
+        NAVIGATION_SESSION_KEYS.auth,
+        sampleSummary({ entryId: NAVIGATION_ENTRIES.auth, cwd: '\\\\server\\share\\auth' }),
+      );
+    });
+    expect(await screen.findByText(/This path cannot be used/)).toBeTruthy();
+    // Not even sent (the fake server would refuse it with the same text, see fake-host.ts).
+    expect(scenario.host.commands.filter((cmd) => cmd.name === 'file.open')).toEqual([]);
   });
 
   it('the sidebar context menu of a row offers it, too', async () => {

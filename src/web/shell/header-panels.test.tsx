@@ -201,6 +201,13 @@ describe('header side panel buttons (WP-58)', () => {
     expect(count?.dataset.running).toBeUndefined();
   });
 
+  it('more than 99 shows "99+" from the dictionary; the button name keeps the exact count (R5W-06)', () => {
+    show({ backgroundTasks: Array.from({ length: 120 }, (_, index) => task(index)) });
+    renderHeader();
+    const tasks = screen.getByRole('button', { name: 'Tasks – 120 background tasks running' });
+    expect(tasks.querySelector('[data-slot="header-panel-count"]')?.textContent).toBe('99+');
+  });
+
   it('one background task: singular text', () => {
     show({ backgroundTasks: [task(1)] });
     renderHeader();

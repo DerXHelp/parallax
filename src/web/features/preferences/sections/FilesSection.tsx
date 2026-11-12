@@ -9,7 +9,7 @@ import {
   type EditorSettings,
 } from '@shared/model';
 import type { CommandResult } from '@shared/protocol';
-import { useT } from '@web/i18n';
+import { useFormat, useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { sendCommand } from '@web/state/hooks';
 import { Badge } from '@web/ui/badge';
@@ -178,6 +178,7 @@ export function FilesSection({
   initialDraft?: EditorDraft;
 }) {
   const t = useT();
+  const format = useFormat();
   const id = useId();
   const stored = editor.settings.editor;
   const [form, setForm] = useState<EditorForm>(() =>
@@ -294,7 +295,7 @@ export function FilesSection({
 
             {form.preset === 'system' ? (
               <p data-slot="editor-system-hint" className="text-muted-foreground text-2xs leading-relaxed">
-                {t('preferences.files.systemHint', { extensions: DEFAULT_PROGRAM_EXTENSIONS.join(', ') })}
+                {t('preferences.files.systemHint', { extensions: format.list(DEFAULT_PROGRAM_EXTENSIONS) })}
               </p>
             ) : (
               <div data-slot="editor-form" className="grid gap-3">
