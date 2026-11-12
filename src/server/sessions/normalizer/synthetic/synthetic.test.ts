@@ -402,7 +402,7 @@ describe('synthetic remote control (WP-64)', () => {
       'system/task_summary': 2,
       'system/post_turn_summary': 1,
     });
-    expect(items(r).some((i) => i.kind === 'unknown')).toBe(false);
+    expect(items(r).some((i) => i.kind === 'system' && i.event === 'unknown')).toBe(false);
   });
 
   it('bridge_state → signals (failure kind, recovered, unknown state counted, invalid counted)', () => {

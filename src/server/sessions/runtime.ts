@@ -27,6 +27,7 @@ import {
 } from './entryState';
 import { toModelCatalog } from './models';
 import type { LiveNormalizer, StatusSignal } from './ports';
+import { bridgeOf, onBridgeState, remoteControlAfterReady, remoteProcessEnded } from './remoteControl';
 import { afterSuccessfulTurn, decideRetry } from './retry';
 import {
   endReasonFor,
@@ -75,6 +76,8 @@ export class SessionRuntime {
   scheduled = false;
   /** close() was requested (an iterator end counts as expected). */
   closing = false;
+  /** WP-64: readiness done – Remote Control may be switched now (before: remoteControlAfterReady). */
+  remoteReady = false;
   /** The normalizer may still be used (false once the exit was handled). */
   alive = true;
   /** A turn_result reported a startup failure (its error item and lastError stay). */
@@ -304,6 +307,9 @@ export class SessionRuntime {
       case 'prompt_lifecycle':
         if (s.queue.onLifecycle(signal.messageUuid, signal.state)) s.publishQueue();
         return;
+      case 'bridge_state':
+        onBridgeState(s, signal);
+        return;
       case 'mcp_servers':
         this.core.setEngineWarning(
           `mcp:${s.id}`,
@@ -391,7 +397,8 @@ export class SessionRuntime {
           endReason: endReasonFor(signal.trigger),
           title: e.title === '' ? null : e.title,
         },
-        newConversation(conversationId, at, signal.correlationId),
+        // WP-64: the bridge belongs to the process – the new conversation keeps the remote session.
+        newConversation(conversationId, at, signal.correlationId, bridgeOf(previous)),
       ],
       // The CLI takes a custom title over (F.7); otherwise the new conversation starts untitled.
       title: keepCustom ? e.title : '',
@@ -434,6 +441,8 @@ export class SessionRuntime {
       }
       const idleBefore =
         s.facts.runState === 'idle' && s.queue.count() === 0 && openDecisionCount(s.facts) === 0;
+      // WP-64: the bridge went with the process (the wish stays; keepSessionOnExit keeps the link).
+      remoteProcessEnded(s);
       // Synchronously first: the CLI's signals of open canUseTool requests abort only afterwards.
       s.broker.cancel('all', 'process_exit', 'deny');
       const finalized = this.normalizer.finalizeOpen('process_exit');
@@ -557,6 +566,11 @@ export class SessionRuntime {
     // Phase 2: the slash-command catalog (ADR-108) and the git branch (ADR-113) after readiness.
     void this.refreshCommands();
     void s.refreshGitBranch();
+    // WP-64: Claude's default (host state, follow_claude) and the wanted bridge.
+    this.remoteReady = true;
+    remoteControlAfterReady(this.core, s, this).catch((error: unknown) => {
+      this.core.reportError(error, 'remote control after readiness');
+    });
   }
 
   /** ADR-108: `supportedCommands()` → `detail.patch {commands}` (+ cache via emit); errors only logged. */

@@ -12,6 +12,7 @@ import {
   type Conversation,
   type ConversationEndReason,
   type Entry,
+  type RemoteControlSummary,
   type SessionSummary,
   type TitleSource,
 } from '@shared/model';
@@ -24,12 +25,15 @@ export const PROMPT_TITLE_CHARS = 80;
 /**
  * ADR-113: `gitBranch` comes from the entry (persisted, shown for dormant entries too). ADR-104:
  * `external.running` is false once the engine saw the console end and brings the session back.
+ * WP-64: `remoteControl` = the live state of the running process (`remote`, default off) + the
+ * wish; a wanted entry without a live link shows the stored link of its current conversation.
  */
 export function summaryOf(
   entry: Entry,
   facts: StatusFacts,
-  o: { externalRunning?: boolean } = {},
+  o: { externalRunning?: boolean; remote?: Omit<RemoteControlSummary, 'wanted'> } = {},
 ): SessionSummary {
+  const remote = o.remote ?? { state: 'off', sessionUrl: null, error: null };
   return {
     entryId: entry.id,
     title: entry.title,
@@ -57,6 +61,13 @@ export function summaryOf(
       entry.external === null
         ? null
         : { since: entry.external.since, pid: entry.external.pid, running: o.externalRunning ?? true },
+    remoteControl: {
+      state: remote.state,
+      sessionUrl:
+        remote.sessionUrl ?? (entry.remoteControlWanted ? currentConversation(entry).sessionUrl : null),
+      error: remote.error,
+      wanted: entry.remoteControlWanted,
+    },
   };
 }
 
@@ -175,10 +186,12 @@ export function endReasonFor(trigger: string | null): ConversationEndReason {
     : 'unknown';
 }
 
+/** WP-64: `bridge` = the Remote Control session it continues (/clear, fresh context), else none. */
 export function newConversation(
   id: ConversationId,
   startedAt: string,
   resetCorrelationId: string | null = null,
+  bridge: Pick<Conversation, 'bridgeSessionId' | 'sessionUrl'> = { bridgeSessionId: null, sessionUrl: null },
 ): Conversation {
   return {
     id,
@@ -190,6 +203,8 @@ export function newConversation(
     resetCorrelationId,
     costUsd: null,
     lastOrder: 0,
+    bridgeSessionId: bridge.bridgeSessionId,
+    sessionUrl: bridge.sessionUrl,
   };
 }
 

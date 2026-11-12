@@ -1034,7 +1034,7 @@ describe('interactive scenario: Remote Control (WP-64)', () => {
     const h = harness();
     await enable(h);
     await h.backend.settle();
-    const uuid = await h.handle.remotePrompt('Status?', 'All green');
+    const uuid = await h.handle.remotePrompt('Status?', { answer: 'All green' });
     await h.turnDone(1);
     expect(h.items().find((i) => i.id === uuid)).toMatchObject({ kind: 'user_message', source: 'remote' });
     expect(texts(h.items())).toEqual(['All green']);

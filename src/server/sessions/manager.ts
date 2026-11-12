@@ -24,6 +24,7 @@ import { jsonValueSchema, type ClientId, type EntryId, type ProfileId } from '@s
 import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   currentConversation,
+  isRemoteControlActive,
   type Entry,
   type HostState,
   type HostWarning,
@@ -328,6 +329,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   // while the server was down (another executable or config dir = another account); the others
   // (also those of an older file without a key) are dropped and fetched again by the next start.
   const modelCache = new Map<ProfileId, ModelCatalog>();
+  /** WP-64: Claude's `remoteControlAtStartup` per profile, as the last ready process read it. */
+  const remoteDefaults = new Map<ProfileId, boolean>();
   for (const [profileId, stored] of Object.entries(stores.catalogs.models())) {
     if (stored.profileKey !== null && stored.profileKey === profileKeys.get(profileId)) {
       modelCache.set(profileId, { options: stored.options, resolved: stored.resolved, skipped: 0 });
@@ -418,6 +421,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       nativeNotifications: toasts.available(),
       port: deps.host.port?.() ?? null,
       systemIntegration: deps.host.systemIntegration ?? false,
+      // WP-64: the default profile's `remoteControlAtStartup`, once a process of it was ready.
+      remoteControlDefault: remoteDefaults.get(defaultProfile.id) ?? null,
     };
   };
 
@@ -514,6 +519,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     s.phase === 'running' &&
     // ADR-121 (R4-02): a planned turn (ScheduleWakeup/CronCreate, /loop) dies with the process.
     !s.runtime.scheduled &&
+    // WP-64 (ADR-105 extended): the Claude app could not reach a sleeping session.
+    !isRemoteControlActive(s.remote.state) &&
     canSleep(s.facts, now()) &&
     !isWatchedByFocusedClient(clients, s.id);
 
@@ -713,6 +720,13 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     processEnded: () => {
       if (runningProcesses().length === 0) cancelProcessSnapshot();
     },
+    setRemoteControlDefault: (profileId, value) => {
+      if (remoteDefaults.get(profileId) === value) return;
+      remoteDefaults.set(profileId, value);
+      // Once per profile and server run (a change is rare): at once, no debounce timer.
+      publishHostState();
+    },
+    remoteControlDefault: (profileId) => remoteDefaults.get(profileId) ?? null,
   };
 
   const engine: CommandEngine = {

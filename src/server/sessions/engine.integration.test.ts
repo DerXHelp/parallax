@@ -1331,6 +1331,9 @@ describe('start and stop edges', () => {
         supportedModels: closed,
         supportedCommands: closed,
         stopTask: closed,
+        setRemoteControl: () =>
+          Promise.resolve({ ok: false as const, error: { code: 'REMOTE_CONTROL_FAILED' as const, params: {} } }),
+        readRemoteControlDefault: () => Promise.resolve(null),
         close: () => Promise.resolve(),
       };
     };

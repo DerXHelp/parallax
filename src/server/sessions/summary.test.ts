@@ -3,6 +3,7 @@ import { LIMITS } from '@shared/common';
 import { sessionSummarySchema, type TitleSource } from '@shared/model';
 import {
   SAMPLE_TIME,
+  sampleConversation,
   sampleEntry,
   sampleExternalHandoff,
   sampleId,
@@ -48,6 +49,29 @@ describe('summaryOf', () => {
     expect(sessionSummarySchema.parse(running)).toEqual(running);
     expect(summaryOf(entry, facts, { externalRunning: false }).external?.running).toBe(false);
     expect(summaryOf(sampleEntry(), sampleStatusFacts(), { externalRunning: false }).external).toBeNull();
+  });
+
+  it('WP-64: remoteControl = live state + wish; a wanted dormant entry shows its stored link', () => {
+    const url = 'https://claude.ai/code/session_fakeabc';
+    const conv = sampleConversation({ bridgeSessionId: 'cse_fakeabc', sessionUrl: url });
+    expect(summaryOf(sampleEntry({ conversations: [conv] }), sampleStatusFacts()).remoteControl).toEqual({
+      state: 'off',
+      sessionUrl: null,
+      error: null,
+      wanted: false,
+    });
+    const wanted = sampleEntry({ conversations: [conv], remoteControlWanted: true });
+    expect(summaryOf(wanted, sampleStatusFacts()).remoteControl).toEqual({
+      state: 'off',
+      sessionUrl: url,
+      error: null,
+      wanted: true,
+    });
+    const live = summaryOf(wanted, sampleStatusFacts(), {
+      remote: { state: 'connected', sessionUrl: url, error: null },
+    });
+    expect(live.remoteControl).toMatchObject({ state: 'connected', sessionUrl: url, wanted: true });
+    expect(sessionSummarySchema.parse(live)).toEqual(live);
   });
 });
 
@@ -239,7 +263,12 @@ describe('conversations', () => {
       resetCorrelationId: 'corr',
       costUsd: null,
       lastOrder: 0,
+      bridgeSessionId: null,
+      sessionUrl: null,
     });
+    // WP-64: a conversation that continues the remote session keeps its bridge.
+    const bridge = { bridgeSessionId: 'cse_x', sessionUrl: 'https://claude.ai/code/session_x' };
+    expect(newConversation(sampleId('cv', 3), SAMPLE_TIME, null, bridge)).toMatchObject(bridge);
     const entry = sampleEntry();
     const next = withCurrentConversation(
       { ...entry, conversations: [...entry.conversations, conv] },
