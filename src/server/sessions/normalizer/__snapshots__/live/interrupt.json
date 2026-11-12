@@ -349,7 +349,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "msg_011CgwXapAdGHgaWfWf2ydNR:0",
@@ -459,7 +460,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "msg_011CgwXbDV5mBLBhacH7S35E:0",
@@ -532,7 +534,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "msg_011CgwXbLynUn2zDdzvnfyLh:0",

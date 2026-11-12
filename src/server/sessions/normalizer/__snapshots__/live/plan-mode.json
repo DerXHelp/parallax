@@ -292,7 +292,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "msg_011CgwXWZMH17etmNeWDRC5H:0",

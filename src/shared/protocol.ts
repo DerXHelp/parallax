@@ -390,6 +390,13 @@ export const commandSchema = z.discriminatedUnion('name', [
    * Parallax log, attachments, plan versions stay; `claude --resume` keeps working).
    */
   z.object({ name: z.literal('session.remove'), entryId: entryIdSchema }),
+  // ---- WP-64 (Remote Control) ----
+  /**
+   * The wish for Remote Control (`Entry.remoteControlWanted`): a running process is switched at
+   * once (failure: REMOTE_CONTROL_*, the wish stays), a dormant one at its next start. Not for
+   * archived (SESSION_ARCHIVED) or external entries (SESSION_EXTERNAL).
+   */
+  z.object({ name: z.literal('session.setRemoteControl'), entryId: entryIdSchema, enabled: z.boolean() }),
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export type CommandName = Command['name'];
@@ -494,6 +501,7 @@ export const commandResultSchemas = {
     custom: z.object({ executable: z.string(), exists: z.boolean() }).nullable(),
   }),
   'session.remove': z.object({}),
+  'session.setRemoteControl': z.object({}),
 } as const satisfies Record<CommandName, z.ZodType>;
 export type CommandResult<N extends CommandName> = z.infer<(typeof commandResultSchemas)[N]>;
 

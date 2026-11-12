@@ -950,7 +950,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "msg_011CgwXSGtxdkp4QGiqNceCN:0",
@@ -1126,7 +1127,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "msg_011CgwXSd7t9b99DnJnGSxxt:0",
@@ -1409,7 +1411,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "msg_011CgwXTA6xGL1YQueWG3Yv8:0",
@@ -1512,7 +1515,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "msg_011CgwXTJpamMf2npwVivHbq:0",
@@ -1610,7 +1614,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "msg_011CgwXTSVwnfEDXEQ8UXhEB:0",
@@ -1667,7 +1672,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "msg_011CgwXTYBW8kJbKXXQQ7vRV:0",
@@ -1774,7 +1780,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "msg_011CgwXThMQiZnUgAhJ9Xhmv:0",

@@ -12,6 +12,7 @@ import { events as largeOutput } from './large-output';
 import { events as legacyCli } from './legacy-cli';
 import { events as rateLimits } from './rate-limits';
 import { events as refusalFallback } from './refusal-fallback';
+import { events as remoteControl } from './remote-control';
 import { events as staleConversation } from './stale-conversation';
 import { events as tasksProgress } from './tasks-progress';
 import { events as unknownTypes } from './unknown-types';
@@ -26,6 +27,7 @@ export const SYNTHETIC_STREAMS: Readonly<Record<string, FixtureEvent[]>> = {
   'legacy-cli': legacyCli,
   'rate-limits': rateLimits,
   'refusal-fallback': refusalFallback,
+  'remote-control': remoteControl,
   'stale-conversation': staleConversation,
   'tasks-progress': tasksProgress,
   'unknown-types': unknownTypes,
