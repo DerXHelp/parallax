@@ -1,8 +1,10 @@
 import { FolderTreeIcon, ListTodoIcon, ScrollTextIcon, type LucideIcon } from 'lucide-react';
 import { useCallback, useState } from 'react';
+import type { BackgroundTask, TranscriptItem } from '@shared/model';
 import type { SessionViewState } from '@shared/sync';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
+import { countRunningTasks, selectTaskSources } from '@web/lib/task-rows';
 import { useSessionSelector } from '@web/state/hooks';
 import { DropdownMenuCheckboxItem, DropdownMenuSeparator } from '@web/ui/dropdown-menu';
 import { IconButton } from '@web/ui/icon-button';
@@ -12,7 +14,8 @@ import { closeSidePanel, getSidePanelTab, openSidePanel, useSidePanelTab } from 
 
 /**
  * Side panel buttons of the session header (WP-58): "Plan" (once the session has a plan), "Files"
- * and "Tasks" with a counter (running background tasks – highlighted – else open to-dos). A click
+ * and "Tasks" with a counter (running tasks – highlighted, counted like the task panel through
+ * `@web/lib/task-rows`, CR3-02 – else open to-dos). A click
  * asks the side panel host (`sidePanel {tab}`); clicking the open tab again closes it. In a narrow
  * header the buttons move into the "…" menu (`HeaderPanelMenuItems`). Outside the `<header>`
  * status line (ADR-042: the header itself has no buttons).
@@ -22,13 +25,33 @@ import { closeSidePanel, getSidePanelTab, openSidePanel, useSidePanelTab } from 
 export interface SidePanelFacts {
   /** A stored plan version or a plan file exists: "Plan" is shown. */
   plan: boolean;
-  /** Running background tasks (`backgroundTasks.length`). */
-  background: number;
+  /** Running tasks – the task panel's count (`countRunningTasks`, CR3-02). */
+  running: number;
   /** To-dos of the pinned list that are not completed. */
   openTodos: number;
 }
 
-const NO_FACTS: SidePanelFacts = { plan: false, background: 0, openTodos: 0 };
+const NO_FACTS: SidePanelFacts = { plan: false, running: 0, openTodos: 0 };
+
+/** Last count per background list: the rows are built again only when a task item changed. */
+const runningCache = new WeakMap<
+  readonly BackgroundTask[],
+  { sources: readonly TranscriptItem[]; count: number }
+>();
+
+function sameItems(a: readonly TranscriptItem[], b: readonly TranscriptItem[]): boolean {
+  return a.length === b.length && a.every((item, index) => item === b[index]);
+}
+
+function selectRunningTasks(view: SessionViewState): number {
+  const background = view.detail.backgroundTasks;
+  const sources = selectTaskSources(view);
+  const cached = runningCache.get(background);
+  if (cached !== undefined && sameItems(cached.sources, sources)) return cached.count;
+  const count = countRunningTasks(sources, background);
+  runningCache.set(background, { sources, count });
+  return count;
+}
 
 export function selectSidePanelFacts(view: SessionViewState): SidePanelFacts {
   const { detail } = view;
@@ -38,7 +61,7 @@ export function selectSidePanelFacts(view: SessionViewState): SidePanelFacts {
   }
   return {
     plan: detail.latestPlanVersion !== null || detail.planFile !== null,
-    background: detail.backgroundTasks.length,
+    running: selectRunningTasks(view),
     openTodos,
   };
 }
@@ -78,8 +101,8 @@ function usePanelButtons(sessionKey: string): PanelButton[] {
     buttons.push({ tab: 'plan', icon: ScrollTextIcon, label: t('navigation.panels.plan'), ...plain });
   buttons.push({ tab: 'files', icon: FolderTreeIcon, label: t('navigation.panels.files'), ...plain });
   let tasks: Pick<PanelButton, 'label' | 'count' | 'running'>;
-  if (facts.background > 0) {
-    const count = facts.background;
+  if (facts.running > 0) {
+    const count = facts.running;
     tasks = { label: t('navigation.panels.tasksRunning', { count }), count, running: true };
   } else if (facts.openTodos > 0) {
     const count = facts.openTodos;

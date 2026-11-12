@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { makeError } from '@shared/errors';
 import { sampleTodoList } from '@shared/samples';
+import type { TaskRow } from '@web/lib/task-rows';
 import type { RunningScenario } from '@web/playground/PlaygroundScenario';
 import { FeatureSlotsProvider, type FeatureSlots, type FileLinkSlotProps } from '@web/shell/slots';
 import { refreshClock } from '@web/state/clock';
@@ -18,8 +19,7 @@ vi.mock('./lib/rows', async (importOriginal) => {
   const actual = await importOriginal<typeof RowsModule>();
   return {
     ...actual,
-    canStopTask: (row: RowsModule.TaskRow, stopBash: boolean = flags.stopBash) =>
-      actual.canStopTask(row, stopBash),
+    canStopTask: (row: TaskRow, stopBash: boolean = flags.stopBash) => actual.canStopTask(row, stopBash),
   };
 });
 

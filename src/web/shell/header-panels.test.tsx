@@ -2,11 +2,12 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
-import type { BackgroundTask, SessionDetail } from '@shared/model';
+import type { BackgroundTask, SessionDetail, TaskInfo, TranscriptItem } from '@shared/model';
 import {
   SAMPLE_IDS,
   sampleDetail,
   sampleHostState,
+  sampleItems,
   samplePlanFileRef,
   sampleSessionSnapshot,
   sampleSummary,
@@ -33,7 +34,24 @@ function task(n: number): BackgroundTask {
   };
 }
 
-function show(detail: Partial<SessionDetail>): void {
+function taskInfo(taskId: string, patch: Partial<TaskInfo> = {}): TaskInfo {
+  return {
+    taskId,
+    taskType: 'local_agent',
+    status: 'running',
+    description: taskId,
+    subagentType: null,
+    isBackgrounded: true,
+    summary: null,
+    usage: null,
+    startedAt: null,
+    endedAt: null,
+    outputFile: null,
+    ...patch,
+  };
+}
+
+function show(detail: Partial<SessionDetail>, items?: TranscriptItem[]): void {
   clientStore.setState({
     hosts: {
       [LOCAL_HOST_ID]: {
@@ -44,7 +62,12 @@ function show(detail: Partial<SessionDetail>): void {
     },
     sessions: {
       [KEY]: {
-        view: viewStateFromSnapshot(sampleSessionSnapshot({ detail: sampleDetail(detail) })),
+        view: viewStateFromSnapshot(
+          sampleSessionSnapshot({
+            detail: sampleDetail(detail),
+            ...(items === undefined ? {} : { items }),
+          }),
+        ),
         unavailable: null,
         loading: false,
       },
@@ -138,10 +161,10 @@ describe('selectSidePanelFacts', () => {
   it('plan from a stored version or a plan file; background tasks; open to-dos', () => {
     const facts = (detail: Partial<SessionDetail>) =>
       selectSidePanelFacts(viewStateFromSnapshot(sampleSessionSnapshot({ detail: sampleDetail(detail) })));
-    expect(facts({})).toEqual({ plan: false, background: 0, openTodos: 0 });
+    expect(facts({})).toEqual({ plan: false, running: 0, openTodos: 0 });
     expect(facts({ latestPlanVersion: 2 }).plan).toBe(true);
     expect(facts({ planFile: samplePlanFileRef() }).plan).toBe(true);
-    expect(facts({ backgroundTasks: [task(1), task(2)] }).background).toBe(2);
+    expect(facts({ backgroundTasks: [task(1), task(2)] }).running).toBe(2);
     // sampleTodoList: one completed, one in progress, one pending.
     expect(facts({ todos: sampleTodoList() }).openTodos).toBe(2);
   });
@@ -206,6 +229,53 @@ describe('header side panel buttons (WP-58)', () => {
     renderHeader();
     const tasks = screen.getByRole('button', { name: 'Tasks – 120 background tasks running' });
     expect(tasks.querySelector('[data-slot="header-panel-count"]')?.textContent).toBe('99+');
+  });
+
+  it('ambient tasks do not count – like the panel and the server (CR3-02); the to-dos show instead', () => {
+    show({ backgroundTasks: [{ ...task(1), ambient: true }], todos: sampleTodoList() });
+    renderHeader();
+    const tasks = screen.getByRole('button', { name: 'Tasks – 2 open to-dos' });
+    expect(
+      tasks.querySelector<HTMLElement>('[data-slot="header-panel-count"]')?.dataset.running,
+    ).toBeUndefined();
+  });
+
+  it("counts like the panel: a subagent's foreground shell is not a task of its own (WP61-06)", () => {
+    const agent = sampleItems.toolCall({
+      id: 'agent-call',
+      toolUseId: 'toolu_agent',
+      toolName: 'Agent',
+      status: 'background',
+      result: null,
+      task: taskInfo('agent'),
+    });
+    const shell = sampleItems.toolCall({
+      id: 'shell-call',
+      order: agent.order + 1,
+      toolUseId: 'toolu_shell',
+      toolName: 'Bash',
+      status: 'running',
+      result: null,
+      parentToolUseId: 'toolu_agent',
+      task: taskInfo('shell', { taskType: 'local_bash', isBackgrounded: false }),
+    });
+    show({ backgroundTasks: [{ ...task(1), taskId: 'agent', taskType: 'local_agent' }] }, [agent, shell]);
+    renderHeader();
+    expect(screen.getByRole('button', { name: 'Tasks – 1 background task running' })).toBeTruthy();
+  });
+
+  it('counts like the panel: a running task the server does not list yet counts too (CR3-02)', () => {
+    const agent = sampleItems.toolCall({
+      id: 'agent-call',
+      toolUseId: 'toolu_agent',
+      toolName: 'Agent',
+      status: 'background',
+      result: null,
+      task: taskInfo('agent'),
+    });
+    show({}, [agent]);
+    renderHeader();
+    expect(screen.getByRole('button', { name: 'Tasks – 1 background task running' })).toBeTruthy();
   });
 
   it('one background task: singular text', () => {

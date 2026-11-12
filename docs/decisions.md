@@ -1876,3 +1876,35 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
     nicht.
   - Verworfen wurden „Länge vom Handle + Stream“ und „ohne feste Länge“ (siehe
     `docs/wp/CODE-REVIEW-3-D.md`).
+
+## ADR-158 – Ein Task-Modell für Panel und Kopfzeile
+- **Datum/WP:** 12.11.2026, Fix-Runde CR3 Paket W (CR3-02, CR3-07, WP61-06); angenommen (12.11.2026, Koordinator beim Merge)
+- **Entscheidung:** Das Zeilenmodell der Tasks (`buildTaskRows`, `TaskRow`, `runningTaskCount`,
+  `countRunningTasks`, `selectTaskSources`) liegt in `src/web/lib/task-rows.ts`. Task-Panel und der Zähler
+  des Knopfs „Aufgaben“ in der Kopfzeile zählen laufende Tasks nur über diese Funktion. Laufend (und damit
+  stoppbar) ist nur, was `session.stopTask` des Servers annimmt: ein nicht-ambienter Eintrag der
+  Hintergrundliste oder ein Tool-Call im Status `running`/`background` (`pending` nicht). Ambient-Tasks
+  und Vordergrund-Shells von Subagenten (`local_bash`, `isBackgrounded: false`, `parentToolUseId` gesetzt)
+  sind keine eigenen Zeilen, solange keine Quelle sie als Hintergrund meldet.
+- **Begründung:** Die Shell importiert keine Features (ADR-126); zwei Zählungen liefen auseinander
+  (Kopfzeile 1, Panel 2 – WP-61). Ein Stop-Knopf, den der Server mit `TASK_NOT_FOUND` beantwortet, ist
+  wirkungslos (CR3-07).
+- **Folgen:** Das Modul liegt im Start-Chunk (Budget prüfen). Die Kopfzeile zählt auch laufende
+  Tool-Call-Tasks ohne Listeneintrag. Die Agent-Karte im Transkript nutzt dieselbe Regel
+  (`isToolCallTaskLive`).
+
+## ADR-159 – Composer ohne Turn bei reinen Hintergrund-Tasks
+- **Datum/WP:** 12.11.2026, Fix-Runde CR3 Paket W (B18, Entscheidung des Koordinators nach WP-61 §2.3); angenommen (12.11.2026, Koordinator beim Merge)
+- **Entscheidung:** Arbeitet die CLI (`runState: 'working'`) nur für Hintergrund-Tasks
+  (`backgroundTasks > 0`, nichts eingereiht, kein Kompaktieren/Retry) und ist der letzte Austausch des
+  Haupt-Agents im Transkript ein `turn_result` (Prompts, Antworten, Tool-Calls und `task_notification`
+  zählen als Austausch; Subagent-Items nicht), zeigt der Composer den Ruhe-Modus: normales „Senden“
+  (`priority: 'next'`), kein Stop, kein „Jetzt senden“, Esc stoppt nicht. Gestoppt wird im Task-Panel.
+  Im Zweifel gilt der Einreihen-Modus wie bisher. Abgeleitet nur aus vorhandenen Contracts
+  (`StatusFacts`, `TranscriptItem`, `detail.queue`) in `features/composer/lib/turn.ts`.
+- **Begründung:** Ohne Turn beantwortet die CLI „Einreihen“ und „Jetzt senden“ gleich und sofort; ein
+  Interrupt bewirkt nichts (WP-61 §2.3). Die Reihenfolge der Items ist eindeutig, Zeitstempel sind es
+  nicht (eingereihte Prompts tragen ihre Sendezeit).
+- **Folgen:** Lücke bei einem von der CLI selbst gestarteten Turn ohne neues Item bis zur ersten Ausgabe.
+  Optionale spätere Contract-Erweiterung: Fakt „Turn läuft“ (z. B. `StatusFacts.turnActive` mit Default
+  `false`, gesetzt vom Engine-Zustand zwischen Prompt-Start und `result`).

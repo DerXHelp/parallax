@@ -97,7 +97,7 @@ export const de: typeof en = {
   conversations: {
     title: 'Frühere Unterhaltungen',
     description:
-      'Unterhaltungen dieser Session vor „/clear“. Öffnen setzt sie hier fort – die aktuelle bleibt in dieser Liste.',
+      'Frühere Unterhaltungen dieser Session. Öffnen setzt sie hier fort – die aktuelle bleibt in dieser Liste.',
     empty: 'Keine früheren Unterhaltungen.',
     list: 'Frühere Unterhaltungen',
     untitled: 'Unterhaltung ohne Titel',
