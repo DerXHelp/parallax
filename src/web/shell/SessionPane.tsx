@@ -1,8 +1,9 @@
-import { memo } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { parseSessionKey } from '@shared/common';
 import { useI18n, useT } from '@web/i18n';
 import { sessionTitle } from '@web/lib/session-title';
 import { useSelectedSession, useSessionMeta, useSummariesLoaded, useSummarySelector } from '@web/state/hooks';
+import { getSelectedSession } from '@web/state/selection';
 import { Alert } from '@web/ui/alert';
 import { Button } from '@web/ui/button';
 import { Skeleton } from '@web/ui/skeleton';
@@ -98,6 +99,14 @@ export function SessionPane({ sessionKey }: { sessionKey: string }) {
   const meta = useSessionMeta(sessionKey);
   const [, select] = useSelectedSession();
   const drop = useSessionDropZone(sessionKey, acceptsDrop && title !== null);
+  // WP-63 §1.3: a shown session that disappears (removed from Parallax – here or in another window)
+  // takes the window back to the overview instead of "This session no longer exists".
+  const [seen, setSeen] = useState(false);
+  if (title !== null && !seen) setSeen(true);
+  const removed = seen && title === null && summariesLoaded;
+  useEffect(() => {
+    if (removed && getSelectedSession() === sessionKey) select(null);
+  }, [removed, sessionKey, select]);
 
   if (title === null) {
     if (!summariesLoaded) return <TranscriptSkeleton />;

@@ -8,6 +8,7 @@ import {
   sampleDetail,
   sampleFileInfo,
   sampleId,
+  sampleClientHello,
   sampleItems,
   sampleSessionSnapshot,
   sampleSummary,
@@ -422,6 +423,35 @@ describe('FakeHost Phase 3 commands (WP-54)', () => {
     expect(info).toMatchObject({ bytes: 2, mtimeMs: sampleFileInfo().mtimeMs + 1000 });
     expect(host.fileText(FAKE_FILE_PATHS.main)).toBe('ä');
     expect(host.touchFile(FAKE_FILE_PATHS.missing)).toBeNull();
+    host.dispose();
+  });
+});
+
+describe('FakeHost session.remove (WP-63 §1.3)', () => {
+  it('like the hub: summary.remove for all, session.unavailable for the subscriber, then ENTRY_NOT_FOUND', () => {
+    const transport = createMemoryTransport();
+    const host = new FakeHost({
+      transport,
+      summaries: [sampleSummary()],
+      sessions: [sampleSessionSnapshot()],
+    });
+    const received = connect(transport);
+    transport.send(JSON.stringify(sampleClientHello()));
+    transport.send(JSON.stringify({ type: 'subscribe', entryId: ENTRY }));
+    command(transport, { name: 'session.remove', entryId: ENTRY }, SAMPLE_IDS.cmdId);
+    expect(ackOf(received, SAMPLE_IDS.cmdId)).toMatchObject({ ok: true, result: {} });
+    expect(parseCommandResult('session.remove', {})).toEqual({});
+    expect(received).toContainEqual({ type: 'summary.remove', entryId: ENTRY });
+    expect(received).toContainEqual({
+      type: 'session.unavailable',
+      entryId: ENTRY,
+      error: makeError('ENTRY_NOT_FOUND'),
+    });
+    expect(host.view(ENTRY)).toBeNull();
+
+    const again = '00000000-0000-4000-8000-000000000099';
+    command(transport, { name: 'session.remove', entryId: ENTRY }, again);
+    expect(ackOf(received, again)).toMatchObject({ ok: false, error: { code: 'ENTRY_NOT_FOUND' } });
     host.dispose();
   });
 });

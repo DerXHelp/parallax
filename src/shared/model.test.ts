@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 import { LIMITS } from './common';
 import {
+  contextBreakdownSchema,
+  contextGaugeSchema,
   currentConversation,
   currentSessionId,
   decisionOutcomeSchema,
@@ -50,6 +52,8 @@ import {
 } from './model';
 import {
   SAMPLE_IDS,
+  sampleContextBreakdown,
+  sampleContextGauge,
   sampleConversation,
   sampleDecisionRecord,
   sampleDecisions,
@@ -235,6 +239,28 @@ describe('round trips', () => {
   it('an entry keeps unread and the context gauge (R0-17)', () => {
     expectRoundTrip(entrySchema, sampleEntry({ unread: true, context: null }));
     expectRoundTrip(entrySchema, sampleEntry());
+  });
+
+  it('WP-63: a stored gauge without the autocompact fields loads with null; the fields round-trip', () => {
+    const { autoCompactThreshold: _threshold, isAutoCompactEnabled: _enabled, ...old } = sampleContextGauge();
+    expect(contextGaugeSchema.parse(old)).toEqual({
+      ...old,
+      autoCompactThreshold: null,
+      isAutoCompactEnabled: null,
+    });
+    expectRoundTrip(
+      contextGaugeSchema,
+      sampleContextGauge({ autoCompactThreshold: 400_000, isAutoCompactEnabled: true }),
+    );
+    // A token count: whole and not negative.
+    expect(contextGaugeSchema.safeParse({ ...old, autoCompactThreshold: -1 }).success).toBe(false);
+    expect(contextGaugeSchema.safeParse({ ...old, autoCompactThreshold: 1.5 }).success).toBe(false);
+    // The breakdown inherits both fields (no fields of its own any more).
+    const breakdown = sampleContextBreakdown({ autoCompactThreshold: 967_000 });
+    expectRoundTrip(contextBreakdownSchema, breakdown);
+    expect(contextBreakdownSchema.parse({ ...breakdown, autoCompactThreshold: undefined })).toMatchObject({
+      autoCompactThreshold: null,
+    });
   });
 
   it('init info accepts an unknown (null) permission mode of a newer CLI (R0-05)', () => {

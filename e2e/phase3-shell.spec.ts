@@ -118,7 +118,8 @@ test('the FileLink chunk cannot be loaded (R5W-02): references stay text, no car
   await expect(fallbacks.filter({ hasText: 'app.ts:12' })).toHaveCount(1);
   await expect(fallbacks.filter({ hasText: 'notes.md' })).toHaveCount(1);
   await expect(fallbacks.first()).toHaveAttribute('data-error-kind', 'chunk');
-  // The tool cards' file chips fall back the same way.
+  // The tool cards' file chips fall back the same way (the compact view, WP-63: steps opened first).
+  await session.expandSteps();
   await expect(session.toolCall('Read').locator('[data-slot="file-link-fallback"]')).not.toHaveCount(0);
   await expect(page.locator('[data-slot="file-link"][data-state="link"]')).toHaveCount(0);
   await expect(page.locator('[data-slot="slot-error"]')).toHaveCount(0);

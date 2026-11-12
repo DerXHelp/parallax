@@ -69,6 +69,28 @@ Ergebnis, Abbildung der `todos` und Verdrahtung für WP-60: `docs/wp/WP-51.md` �
 | `freshContext.ts` | `approveFreshContext`, `FreshContextRequest` | „Mit frischem Kontext umsetzen“ (ADR-147, ADR-155): Prüfungen; Retry-Abbruch erst nach Annahme im Lock (CR3-08), deny + interrupt, höchstens `freshContextResultMs` auf das `result` des Planungs-Turns warten (WP61-03), Unterhaltung endet mit `fresh_session`, neue ohne Resume, erster Prompt `freshContextPrompt` (`summary.ts`, `@` neutralisiert, WP61-01) |
 | `planIndex.ts` | `withPlanIndex`, `PlanIndexedDecisionStore` | bekannte Planversionen je Serverlauf (gespeichert oder gelesen); `planStored` ohne erneutes Lesen, unbekannte einmal (CR3-09, ADR-155); der Manager umhüllt `stores.decisions` |
 
+## Nutzer-Feedback 1 (WP-63)
+
+- **`session.remove {entryId}`** (`commands.ts` `removeSession`): Retry abbrechen, im Lifecycle-Lock
+  geplantes Fortsetzen löschen, laufenden Prozess wie `session.close` beenden (`closeRuntime(…,
+  'remove')` – offene Entscheidungen verfallen als `cancelled`/`process_exit`), dann
+  `CommandEngine.removeEntry` → Manager: `EntryState.removed = true` (kein `emit`/`flush`, kein Start
+  mehr – `startRuntime` und `assertEntryGate` antworten `ENTRY_NOT_FOUND`), Timer weg, aus Speicher
+  und Registry (`sessions.json`), Benachrichtigungen und Engine-Warnung weg, `summary.remove` an alle
+  (der Hub schickt Abonnenten `session.unavailable`), Host-State (`entryCount`). Erlaubt auch für
+  archivierte und externe Einträge.
+- **Auf der Platte bleibt alles:** das claude-Transkript (`<configDir>\projects\…\<sessionId>.jsonl`
+  des Profils), `PARALLAX_HOME\entries\<entryId>\` (Transkript-Log `*.transcript.jsonl`,
+  `decisions.json`, `plans\v<n>.md`, `attachments\`, Datei-Index, `commands.json`) und die Blobs
+  (`PARALLAX_HOME\blobs\`). Kein Aufräumlauf beim Start löscht sie (geprüft: gelöscht werden nur der
+  Web-Schnappschuss, Lock-Datei und `.bak` der Auth; die Waisen-Bereinigung betrifft Prozesse).
+  „Wiederherstellen“ gibt es nicht; `claude --resume <sessionId>` funktioniert weiter.
+- **Context:** `ContextGauge.autoCompactThreshold`/`isAutoCompactEnabled` aus `getContextUsage`; die
+  Schätzung während eines Turns übernimmt den letzten bekannten Wert (`runtime.ts`).
+- **Rate-Limit:** nur `rejected` wird ein Transkript-Item; `allowed`/`allowed_warning` speisen nur die
+  Limit-Leiste (Signal → `setAccountLimit`).
+- Integrationstest: `wp63.integration.test.ts`.
+
 Außerdem: `EngineStores.attachments?` (`entryState.ts`, fehlt → `null`), `attachmentsDir` bei jedem
 `startRuntime` (Fehler → Warnung, `null`), `session.stopTask`/`plan.list` (über `planStored` des Plan-Index, CR3-09)/`plan.read` in `commands.ts`,
 Broker `check`/`latestPlanVersion`/`latestPlanFilePath`/`planRecords`/`loadLastPlan` und Ergebnis

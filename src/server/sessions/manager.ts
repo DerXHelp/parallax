@@ -728,6 +728,24 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       publishHostState();
       return s;
     },
+    removeEntry: (s) => {
+      // WP-63: Parallax forgets the entry – list, memory, open views. Files on disk stay (claude
+      // transcript, entries/<id>/ with transcript cache, decisions, plan versions, attachments).
+      s.removed = true;
+      s.cancelTimers();
+      states.delete(s.id);
+      try {
+        stores.registry.remove(s.id);
+      } catch (error) {
+        reportError(error, 'registry.remove');
+      }
+      core.setEngineWarning(`mcp:${s.id}`, null);
+      clearNotifications(s.id);
+      publisherOrThrow().removeSummary(s.id);
+      // HostState.profiles[].entryCount changed.
+      publishHostState();
+      log.info({ entryId: s.id }, 'entry removed from Parallax (files kept)');
+    },
     runningCount: () => [...states.values()].filter((s) => s.runtime !== null).length,
     requestShutdown: () => {
       shuttingDown = true;

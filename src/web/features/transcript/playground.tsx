@@ -117,6 +117,12 @@ export const demos: PlaygroundDemo[] = [
     'Click a thumbnail: lightbox with zoom (buttons, wheel, + − 0 1), "Save as", Esc; handoff rows; V2-12 paths keep their backslashes',
   ),
   transcriptDemo(
+    'compact',
+    'compact',
+    'Compact transcript (WP-63)',
+    'Runs of work steps as one line (click opens; red error counter; running step), screenshots as a gallery with ← → in the lightbox, hidden limit warning; switch "Compact / All steps" in Settings → General',
+  ),
+  transcriptDemo(
     'files',
     'files',
     'File references and agent stop (WP-55)',

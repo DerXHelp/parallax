@@ -96,6 +96,76 @@ describe('subscription limits over time (R4W-06, V3-07)', () => {
   });
 });
 
+describe('every new value updates the bars at once (WP-63 §1.2)', () => {
+  function values(): Record<string, string> {
+    const region = document.querySelector<HTMLElement>('[data-slot="account-limits"]');
+    if (region === null) return {};
+    return Object.fromEntries(
+      within(region)
+        .getAllByRole('meter')
+        .map((meter) => [meter.getAttribute('aria-label') ?? '', meter.getAttribute('aria-valuenow') ?? '']),
+    );
+  }
+
+  it('allowed, allowed_warning and the warned window replace the shown values without delay', () => {
+    const windows = (fiveHour: number, weekly: number): RateLimitInfo['windows'] => ({
+      five_hour: { utilization: fiveHour, resetsAt: sampleTime(3600) },
+      seven_day: { utilization: weekly, resetsAt: sampleTime(3 * 86_400) },
+    });
+    setLimits(
+      sampleRateLimitInfo({
+        status: 'allowed',
+        windows: windows(0.1, 0.3),
+        utilization: 0.1,
+        at: sampleTime(0),
+      }),
+    );
+    render(<AccountLimits />);
+    expect(values()).toEqual({ '5-hour limit': '10', 'Weekly limit': '30' });
+
+    // The warning that used to be a transcript notice: the bar follows the same tick.
+    act(() => {
+      setLimits(
+        sampleRateLimitInfo({
+          status: 'allowed_warning',
+          windows: windows(0.82, 0.31),
+          utilization: 0.82,
+          at: sampleTime(10),
+        }),
+      );
+    });
+    expect(values()).toEqual({ '5-hour limit': '82', 'Weekly limit': '31' });
+
+    // A warning for a window outside unifiedWindows (weekly Opus) gets a bar of its own …
+    act(() => {
+      setLimits(
+        sampleRateLimitInfo({
+          status: 'allowed_warning',
+          windows: windows(0.83, 0.31),
+          rateLimitType: 'seven_day_opus',
+          utilization: 0.9,
+          resetsAt: sampleTime(2 * 86_400),
+          at: sampleTime(20),
+        }),
+      );
+    });
+    expect(values()).toEqual({ '5-hour limit': '83', 'Weekly limit': '31', 'Weekly limit Opus': '90' });
+
+    // … and the next event of another window replaces it again (the newest event is the state).
+    act(() => {
+      setLimits(
+        sampleRateLimitInfo({
+          status: 'allowed',
+          windows: windows(0.84, 0.32),
+          utilization: 0.84,
+          at: sampleTime(30),
+        }),
+      );
+    });
+    expect(values()).toEqual({ '5-hour limit': '84', 'Weekly limit': '32' });
+  });
+});
+
 describe('one block per account (WP41-05)', () => {
   const PLAIN = sampleProfileSummary({
     id: sampleId('pf', 1),

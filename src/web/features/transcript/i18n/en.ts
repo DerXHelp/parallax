@@ -39,6 +39,25 @@ export const en = {
     actualSize: 'Actual size (1)',
     save: 'Save as…',
     close: 'Close (Esc)',
+    /** WP-63: gallery navigation in the lightbox. */
+    previous: 'Previous image (←)',
+    next: 'Next image (→)',
+    position: 'Image {index} of {count}',
+  },
+  /** WP-63 §1.5: compact view – one line per run of work steps, pictures as a gallery. */
+  group: {
+    steps: { one: '{count} step', other: '{count} steps' },
+    thinking: { one: 'Thought', other: 'Thought {count} times' },
+    notices: { one: '{count} note', other: '{count} notes' },
+    toolCount: '{count}× {tool}',
+    moreTools: '+{count}',
+    errors: { one: '{count} error', other: '{count} errors' },
+    running: 'running: {step}',
+    runningThinking: 'running: thinking',
+    expand: 'Show the steps',
+    collapse: 'Hide the steps',
+    openErrors: 'Show the steps with errors',
+    gallery: { one: '{count} image', other: '{count} images' },
   },
   assistant: {
     label: 'Claude',
@@ -222,7 +241,6 @@ export const en = {
       status: 'HTTP {status}',
     },
     rateLimit: {
-      warning: 'Approaching the usage limit',
       rejected: 'Usage limit reached',
       utilization: '{percent} used',
       resetsAt: 'Resets {time}',

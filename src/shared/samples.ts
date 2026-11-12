@@ -332,6 +332,8 @@ export function sampleContextGauge(p: Partial<ContextGauge> = {}): ContextGauge 
     source: 'sdk',
     model: 'claude-haiku-5-5',
     at: sampleTime(60),
+    autoCompactThreshold: null,
+    isAutoCompactEnabled: null,
     ...p,
   };
 }
@@ -345,7 +347,6 @@ export function sampleContextBreakdown(p: Partial<ContextBreakdown> = {}): Conte
       { name: 'Messages', tokens: 6_702, kind: 'used', id: 'messages' },
       { name: 'Free space', tokens: 973_298, kind: 'free', id: null },
     ],
-    autoCompactThreshold: null,
     isAutoCompactEnabled: true,
     ...p,
   };

@@ -64,11 +64,41 @@ describe('rate-limit row: the window translated (V3-13)', () => {
     setLanguage(language);
     const item = sampleSystemItems.rate_limit();
     const { container } = render(
-      <SystemRow item={{ ...item, info: { ...item.info, rateLimitType: window } }} sessionKey={KEY} />,
+      <SystemRow
+        item={{ ...item, info: { ...item.info, status: 'rejected', rateLimitType: window } }}
+        sessionKey={KEY}
+      />,
     );
     const text = container.textContent;
     expect(text).toContain(` · ${label}`);
     if (window !== label) expect(text).not.toContain(window);
+  });
+});
+
+describe('rate-limit warnings stay out of the transcript (WP-63 §1.2)', () => {
+  it.each(['allowed', 'allowed_warning'] as const)(
+    '%s of any window renders nothing (older logs)',
+    (status) => {
+      for (const window of ['five_hour', 'seven_day', 'seven_day_opus', 'overage']) {
+        const item = sampleSystemItems.rate_limit();
+        const { container, unmount } = render(
+          <SystemRow
+            item={{ ...item, info: { ...item.info, status, rateLimitType: window } }}
+            sessionKey={KEY}
+          />,
+        );
+        expect(container.textContent).toBe('');
+        unmount();
+      }
+    },
+  );
+
+  it('rejected stays a notice: the session stops', () => {
+    const item = sampleSystemItems.rate_limit();
+    const { container } = render(
+      <SystemRow item={{ ...item, info: { ...item.info, status: 'rejected' } }} sessionKey={KEY} />,
+    );
+    expect(container.textContent).toContain('Usage limit reached');
   });
 });
 

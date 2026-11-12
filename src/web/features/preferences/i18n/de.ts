@@ -27,6 +27,10 @@ export const de: typeof en = {
   general: {
     languageHint: 'Sprache der App und der Windows-Benachrichtigungen.',
     themeHint: '„System“ folgt der Windows-Einstellung. Das Einstellungsmenü bietet dieselbe Schnellwahl.',
+    transcript: 'Transkript',
+    transcriptHint:
+      'Kompakt: Die Arbeitsschritte zwischen zwei Nachrichten bilden eine Zeile (Klick öffnet sie), Bilder bleiben als Galerie sichtbar. Alle Schritte: jeder Schritt in einer eigenen Zeile. Gilt in diesem Browser für alle Fenster.',
+    transcriptViews: { compact: 'Kompakt', all: 'Alle Schritte' },
   },
   notifications: {
     events: 'Ereignisse',

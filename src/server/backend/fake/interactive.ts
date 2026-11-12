@@ -6,7 +6,9 @@
  * with an image result), `fake:error`, `fake:crash`, `fake:held`, `/rename X`, `/clear`; Phase 3
  * (WP-52): `fake:background`, `fake:todo`, `fake:files`, `fake:writes-lost`, `fake:context-high`
  * (context stays at 75 % until /clear or a compaction, V4-05; phase3.ts) and the plan file of
- * `fake:plan` (plan.ts). A prompt with images, PDFs, attached files or inline pastes
+ * `fake:plan` (plan.ts); WP-63 (feedback.ts): `fake:steps` (long run of Bash steps with one
+ * failure and a sentence in between), `fake:images` (burst of Read results with a PNG each),
+ * `fake:limit-warning` (`allowed_warning`, the limit bar only). A prompt with images, PDFs, attached files or inline pastes
  * gets "Fake: received …" (ADR-103, ADR-146); the first prompt of a start without resume that is
  * the engine's fresh-context prompt gets "Fake: implementing plan (N lines)"; anything else gets a
  * thought plus a streamed "Echo: …". Decisions really wait for the engine; interrupt() and
@@ -39,6 +41,7 @@ import {
   turnOpen,
   type DslContext,
 } from './dsl';
+import { images, limitWarning, steps } from './feedback';
 import { FAKE_SHOT_HEIGHT, FAKE_SHOT_NAME, FAKE_SHOT_PNG_BASE64, FAKE_SHOT_WIDTH } from './image';
 import { background, contextHigh, files, receivedCounts, receivedText, todo, writesLost } from './phase3';
 import { implementPlan, isImplementPlanPrompt, plan } from './plan';
@@ -444,6 +447,15 @@ async function handle(
       break;
     case 'fake:image':
       await image(ctx, c, turn);
+      break;
+    case 'fake:steps':
+      await steps(ctx, c, turn);
+      break;
+    case 'fake:images':
+      await images(ctx, c, turn);
+      break;
+    case 'fake:limit-warning':
+      await limitWarning(ctx, c, turn);
       break;
     case 'fake:bash':
     case 'fake:permission':

@@ -106,6 +106,8 @@ const commands: Command[] = [
   { name: 'files.session', entryId },
   { name: 'files.project', entryId },
   { name: 'editor.detect' },
+  // WP-63
+  { name: 'session.remove', entryId },
 ];
 
 const clientMessages: ClientMessage[] = [

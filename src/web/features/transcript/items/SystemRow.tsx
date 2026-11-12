@@ -153,6 +153,9 @@ export const SystemRow = memo(function SystemRow({
     }
     case 'rate_limit': {
       const { info } = item;
+      // WP-63 §1.2: warnings only feed the limit bar (older logs still hold them; the list leaves
+      // them out – this is the safety net for nested rows).
+      if (info.status !== 'rejected') return null;
       const details = joined([
         info.utilization === null
           ? null
@@ -166,14 +169,7 @@ export const SystemRow = memo(function SystemRow({
           : info.rateLimitType,
       ]);
       return (
-        <Notice
-          tone={info.status === 'rejected' ? 'error' : 'warning'}
-          title={
-            info.status === 'rejected'
-              ? t('transcript.system.rateLimit.rejected')
-              : t('transcript.system.rateLimit.warning')
-          }
-        >
+        <Notice tone="error" title={t('transcript.system.rateLimit.rejected')}>
           {details === '' ? undefined : details}
         </Notice>
       );

@@ -43,9 +43,18 @@ export function useBlobImage(image: BlobRef): { name: string; lightbox: Lightbox
 /**
  * A blob image of the transcript (tool results, attachments of user messages) as a button: a
  * click (or Enter/Space) opens the lightbox with zoom and "Save as" (WP-37 §8) – the TranscriptView's
- * own one (`ImageViewerContext`), outside a TranscriptView one of its own.
+ * own one (`ImageViewerContext`), outside a TranscriptView one of its own. WP-63: a thumbnail of a
+ * gallery passes the gallery – the lightbox then has previous/next.
  */
-export function ImageThumb({ image, className }: { image: BlobRef; className?: string }) {
+export function ImageThumb({
+  image,
+  className,
+  gallery,
+}: {
+  image: BlobRef;
+  className?: string;
+  gallery?: readonly BlobRef[];
+}) {
   const { t } = useI18n();
   const openImage = useContext(ImageViewerContext);
   const { name, lightbox } = useBlobImage(image);
@@ -63,7 +72,7 @@ export function ImageThumb({ image, className }: { image: BlobRef; className?: s
         openImage === null
           ? undefined
           : (event) => {
-              openImage(image, event.currentTarget);
+              openImage(image, event.currentTarget, gallery);
             }
       }
     >

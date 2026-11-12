@@ -307,6 +307,12 @@ export class EntryState {
   /** ADR-147: "implement with a fresh context" runs (every further decision.respond → SESSION_BUSY). */
   freshContextRunning = false;
   /**
+   * WP-63: removed from Parallax (`session.remove`) – nothing is published or persisted any more
+   * (a late summary would put the entry back into the registry), every command answers
+   * ENTRY_NOT_FOUND.
+   */
+  removed = false;
+  /**
    * Phase 3: `todos` / `planFile` of the current conversation (ADR-148/149). Fed only while a
    * mirror exists; (re)seeded from the mirror's items whenever a mirror is built.
    */
@@ -374,7 +380,7 @@ export class EntryState {
    * `detail.patch` with `commands` also replaces the entry's command cache (ADR-108).
    */
   emit(ops: readonly SessionOp[], options: { log?: boolean } = {}): void {
-    if (ops.length === 0) return;
+    if (ops.length === 0 || this.removed) return;
     this.core.publisher().publishOps(this.entry.id, [...ops]);
     const log = options.log ?? true;
     const conv = this.conversation();
@@ -587,7 +593,8 @@ export class EntryState {
 
   flush(): void {
     this.flushQueued = false;
-    if (!this.dirty) return;
+    // WP-63: a removed entry is never written back (registry) nor published again.
+    if (!this.dirty || this.removed) return;
     this.dirty = false;
     const urgent = this.urgent;
     this.urgent = false;
@@ -882,7 +889,7 @@ const GIT_BRANCH_CHARS = 200;
 /** Items read to seed `todos`/`planFile` when the view's tail was cut (WP-51). */
 export const DETAIL_SEED_ITEMS = 1000;
 
-/** ContextBreakdown → the gauge fields stored on the entry. */
+/** ContextBreakdown → the gauge fields stored on the entry (WP-63: with the autocompact threshold). */
 export function gaugeOf(breakdown: ContextBreakdown): ContextGauge {
   return {
     percentage: breakdown.percentage,
@@ -891,6 +898,8 @@ export function gaugeOf(breakdown: ContextBreakdown): ContextGauge {
     source: breakdown.source,
     model: breakdown.model,
     at: breakdown.at,
+    autoCompactThreshold: breakdown.autoCompactThreshold,
+    isAutoCompactEnabled: breakdown.isAutoCompactEnabled,
   };
 }
 
@@ -929,6 +938,8 @@ export const ARCHIVED_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryComm
   // Phase 3 (WP-50 §4.12): reading stored plan versions is harmless.
   'plan.list',
   'plan.read',
+  // WP-63: "Clean up archive" removes archived entries from Parallax.
+  'session.remove',
 ]);
 
 /** WP-30 §4.12: open in an external console – never a second writer on the Claude session. */
@@ -940,6 +951,8 @@ export const EXTERNAL_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryComm
   'session.rename',
   'plan.list',
   'plan.read',
+  // WP-63: Parallax forgets the entry; the console keeps the Claude session (nothing is written).
+  'session.remove',
 ]);
 
 /** The entry is handed off to an external console (recorded, or its status says so). */
@@ -954,6 +967,8 @@ export function isExternal(s: EntryState): boolean {
  * ran must not continue past the gate it passed before.
  */
 export function assertEntryGate(s: EntryState, name: EntryCommandName): void {
+  // WP-63: removed while the command waited for the lifecycle lock.
+  if (s.removed) throw commandError('ENTRY_NOT_FOUND', { entryId: s.id });
   if (isExternal(s) && !EXTERNAL_ALLOWED.has(name)) {
     throw commandError('SESSION_EXTERNAL', { entryId: s.id });
   }
