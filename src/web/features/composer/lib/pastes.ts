@@ -134,7 +134,7 @@ export function expandPastes(
  * WIDTH SPACE – invisible in the transcript, and unlike a space or a line break it survives every
  * `trim()` (CLI, server title and `/rename` detection), so the text never arrives as a command.
  */
-export const SLASH_GUARD = '​';
+export const SLASH_GUARD = '\u200b';
 
 /**
  * The prompt to send for a draft (`expandPastes`), R5W-03: a draft that does not start with `/`
