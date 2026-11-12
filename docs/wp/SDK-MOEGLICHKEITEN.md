@@ -25,8 +25,19 @@
 | 5 | Automatischer Session-Titel | intern: `generateSessionTitle(description, {persist})` | sprechende Namen statt erstem Prompt | klein |
 | 6 | Limits und Kosten jederzeit aktuell | experimentell: `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()` (`get_usage`) | Limit-Leiste schon vor der ersten Warnung gefüllt | klein, instabil |
 
-Offen für 2–4: ob das CLI die Meldungen auch ohne Remote Control sendet (im Spike war die Bridge an;
-Parallax setzt `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1` ohnehin). Klärt ein Fixture-Lauf.
+**Probe 12.11.2026 (live, Haiku, 0,0143 USD, Nutzer-Freigabe):** je ein Turn mit `Write` ohne Remote
+Control in vier Env-Varianten – Basis wie Parallax (`CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1`), zusätzlich
+`CLAUDE_CODE_SDK_READS_SESSION_STATE=1`, `CLAUDE_CODE_CLASSIFIER_SUMMARY=1`, `CLAUDE_CODE_ENABLE_AWAY_SUMMARY=1`
+einzeln und zusammen. **In keiner Variante** kamen `task_summary` oder `post_turn_summary` (auch die
+Aufzeichnungen in `test/fixtures/sdk` haben sie nicht). Laut Code laufen Live-Satz und Turn-Fazit nur, wenn
+ein Metadaten-Abnehmer da ist – die Bridge (Remote Control). `CLAUDE_CODE_CLASSIFIER_SUMMARY` schaltet nur
+zwischen Heuristik und Modell um. **Folge:** 2 und 3 gibt es nur bei verbundener Remote Control; ohne sie
+braucht Parallax einen eigenen Rückfall (Live-Satz aus dem laufenden Werkzeugaufruf wie `ToolCallRow`, Fazit
+aus dem letzten Assistenten-Text). `away_summary` (4) ließ sich so nicht auslösen (braucht eine
+„weg“-Situation), bleibt offen.
+
+**Durchgang mit dem Nutzer (12.11.2026):** 2 + 3 als zweite, ruhige Zeile unter dem Session-Namen in der
+Seitenleiste (arbeitet: Live-Satz; fertig: Fazit; braucht dich: hervorgehoben); Englisch ist in Ordnung.
 
 ## 2. Steuerung im Arbeitsfluss
 
