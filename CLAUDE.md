@@ -116,6 +116,19 @@ Besitz-Pfade ändern.
   `claude`-Prozesse lecken: Env immer über `buildEnv()` bauen (Review C.2). `buildEnv` entfernt auch
   jedes geerbte `PARALLAX`/`PARALLAX_*`; gesetzt werden nur `PARALLAX=1` und `PARALLAX_ENTRY_ID` (ADR-083).
 
+## Ressourcen (Nutzerregel 12.11.2026, ADR-154)
+Der Rechner des Nutzers darf **nie** einfrieren oder spürbar hängen – auch nicht kurz.
+- **Höchstens ein schwerer Lauf gleichzeitig** auf der Maschine: `pnpm check`/`test`/`build`/`e2e`/
+  `install`, voller `vitest run`. Parallele Subagenten nur, wenn sie keine schweren Läufe starten
+  (gezielt `pnpm exec vitest run <eigene pfade>`, `eslint <pfade>` sind erlaubt); volle Checks macht
+  dann der Koordinator nacheinander.
+- **Keine künstliche Last:** keine gleichzeitigen Testläufe, keine CPU-Last-Skripte, kein „E2E unter
+  Last“. Flakes nur durch wiederholte Läufe nacheinander suchen.
+- Vitest, Playwright und `pnpm build` laufen mit Priorität „niedriger als normal“ (vererbt an alle
+  Kindprozesse), Vitest mit höchstens 50 % der CPUs (`repo.config.ts`). Nicht abschalten, nicht per
+  `--maxWorkers` erhöhen. Eigene schwere Befehle außerhalb dieser Werkzeuge in PowerShell mit
+  `(Get-Process -Id $PID).PriorityClass = 'BelowNormal'` davor starten.
+
 ## Sprache
 - Doku (README, `docs/**`, CLAUDE.md, WP-Aufträge/-Berichte) und Commit-Messages: **Deutsch**.
 - Code-Bezeichner und Code-Kommentare: **Englisch**. Logs und `pnpm preflight`: Englisch.

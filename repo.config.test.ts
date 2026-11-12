@@ -4,7 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { DEV_WEB_PORT as SHARED_DEV_WEB_PORT } from './src/shared/http.ts';
-import { DEV_WEB_PORT, devWebPort, insideDir, resolveBuildId, watchIgnores } from './repo.config.ts';
+import {
+  DEV_WEB_PORT,
+  devWebPort,
+  insideDir,
+  lowerProcessPriority,
+  resolveBuildId,
+  watchIgnores,
+} from './repo.config.ts';
 
 const root = path.resolve('/r');
 const at = (...parts: string[]) => path.join(root, ...parts);
@@ -151,5 +158,28 @@ describe('resolveBuildId (ADR-013/036, R3-13)', () => {
     const { dir } = await repo();
     expect(resolveBuildId(dir, { PARALLAX_BUILD_ID: '9.9.9+e2e' })).toBe('9.9.9+e2e');
     expect(() => resolveBuildId(dir, { PARALLAX_BUILD_ID: 'a b' })).toThrow();
+  });
+});
+
+describe('lowerProcessPriority (ADR-154)', () => {
+  const { PRIORITY_BELOW_NORMAL, PRIORITY_LOW } = os.constants.priority;
+
+  it('test workers inherit the below-normal priority set in vitest.config.ts', () => {
+    expect(os.getPriority()).toBeGreaterThanOrEqual(PRIORITY_BELOW_NORMAL);
+  });
+
+  it('only ever lowers the priority', () => {
+    const before = os.getPriority();
+    try {
+      os.setPriority(PRIORITY_LOW);
+      lowerProcessPriority();
+      expect(os.getPriority()).toBe(PRIORITY_LOW);
+    } finally {
+      try {
+        os.setPriority(before);
+      } catch {
+        // raising the priority again may need extra rights outside Windows
+      }
+    }
   });
 });
