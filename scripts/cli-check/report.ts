@@ -9,6 +9,7 @@
 import { z } from 'zod';
 import { compareObservation, compareSmoke, deviations, type Finding } from './compare';
 import { observationSchema } from './observation';
+import { remoteControlProbeResultSchema } from './remoteControl';
 import { smokeResultSchema } from './smoke';
 import type { CliProfile } from '../../src/server/claude/cliProfile';
 
@@ -49,6 +50,8 @@ export const runRecordSchema = z.object({
       messageTypes: z.record(z.string(), z.number()),
       contextDetail: z.enum(['full', 'summary']).nullable(),
       durationMs: z.number(),
+      /** WP-64 (absent in runs before WP-64). */
+      remoteControl: remoteControlProbeResultSchema.nullable().default(null),
     })
     .nullable(),
   smoke: smokeResultSchema.nullable(),
@@ -162,6 +165,17 @@ export function formatReport(input: {
       lines.push(
         `- probe messages: ${types.join(', ') || '(none)'}; result ${record.probe.resultSubtype}; ${String(record.probe.durationMs)} ms`,
       );
+      const remote = record.probe.remoteControl;
+      if (remote !== null) {
+        lines.push(
+          remote.available
+            ? `- remote control: available (bridge connected after ${String(remote.connectedMs ?? '?')} ms)`
+            : `- remote control: NOT available – ${remote.detail ?? '?'}`,
+        );
+        if (!remote.disabled) {
+          lines.push('- remote control: switching off failed – remove "Parallax cli-check" in the Claude app');
+        }
+      }
     }
     lines.push('');
   }
