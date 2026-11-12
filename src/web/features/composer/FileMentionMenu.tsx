@@ -1,27 +1,17 @@
 import { FileIcon } from 'lucide-react';
-import type { ErrorPayload } from '@shared/errors';
 import { useI18n } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { CommandList } from '@web/ui/command-list';
 import { Spinner } from '@web/ui/spinner';
-import { splitPath, type PathIndex } from './lib/mentions';
-
-/** DOM id of the @ list of a composer (the field's `aria-controls`). */
-export function mentionMenuId(inputId: string): string {
-  return `${inputId}-mention`;
-}
-
-/** The project files of one opening of the picker. */
-export type ProjectFilesState =
-  | { status: 'loading' }
-  | { status: 'ready'; index: PathIndex; truncated: boolean }
-  | { status: 'error'; error: ErrorPayload };
+import { splitPath, type ProjectFilesState } from './lib/mentions';
 
 /**
  * The @ file picker above the message field (ADR-151, WP-57): like the slash menu a listbox driven
  * from the field (the focus stays there – `aria-activedescendant`); the composer filters and
  * handles the keys. A row shows the file name and its folder; a status line says "loading", the
  * error, "no match", that only the first matches are shown or that the project list was cut.
+ * A chunk of its own (R5W-01): the composer loads it with `React.lazy`, its id comes from
+ * `mentionMenuId` (lib/mentions.ts).
  */
 export function FileMentionMenu({
   id,

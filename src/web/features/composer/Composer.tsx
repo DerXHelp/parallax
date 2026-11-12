@@ -13,7 +13,9 @@ import {
   ZapIcon,
 } from 'lucide-react';
 import {
+  lazy,
   memo,
+  Suspense,
   useCallback,
   useContext,
   useEffect,
@@ -40,6 +42,7 @@ import { cn } from '@web/lib/cn';
 import { isHandoffPending, openExternalConsole, useHandoffPending } from '@web/shell/navigation/handoff';
 import { useShellRequestHandler } from '@web/shell/requests';
 import { useEscapeHandler } from '@web/shell/shortcuts';
+import { SlotBoundary } from '@web/shell/SlotBoundary';
 import { followTranscript } from '@web/shell/transcript-follow';
 import { errorPayloadOf } from '@web/state/connection';
 import {
@@ -73,16 +76,22 @@ import {
 } from '../decisions/state/bar-store';
 import { AttachmentChips } from './AttachmentChips';
 import { ContextGauge } from './ContextGauge';
-import { FileMentionMenu, mentionMenuId, type ProjectFilesState } from './FileMentionMenu';
 import { HelpDialog } from './HelpDialog';
 import { answerFromText, interruptSession, isSingleQuestion, sendPrompt, textLimit } from './lib/commands';
-import { transferFiles, withoutFolders, type IncomingFiles } from './lib/folders';
-import { applyMention, indexPaths, matchPaths, mentionAt } from './lib/mentions';
+import {
+  applyMention,
+  indexPaths,
+  matchPaths,
+  mentionAt,
+  mentionMenuId,
+  type ProjectFilesState,
+} from './lib/mentions';
 import { runNativeCommand, type InlineError, type NativeContext } from './lib/native';
 import {
   activePastes,
   convertPaste,
   expandPastes,
+  expandPrompt,
   insertAt,
   isLargePaste,
   lineCount,
@@ -108,9 +117,9 @@ import {
   type NativeCommand,
   type SlashCatalog,
 } from './lib/slash';
+import { transferFiles, type IncomingFiles } from './lib/transfer';
 import { ModelPicker, type ModelPickerSection } from './ModelPicker';
 import { ModePicker } from './ModePicker';
-import { PasteChips } from './PasteChips';
 import { RateLimitBanner } from './RateLimitBanner';
 import { SlashMenu, slashMenuId } from './SlashMenu';
 import {
@@ -134,6 +143,30 @@ type TargetKind = 'permission' | 'question' | 'questions' | 'plan';
 const COUNTER_FROM = 0.8;
 
 const EMPTY_NAMES: readonly string[] = Object.freeze([]);
+
+/*
+ * R5W-01 (start-chunk budget): the @ list and the paste chips are chunks of their own; the composer
+ * keeps the keys, the filtering and the paste handling, so nothing waits for them. The first focus
+ * of a composer field preloads both, so the first `@` or paste finds them loaded. Each renders in
+ * its own `SlotBoundary` + `Suspense`: a chunk that cannot be loaded shows the small error card
+ * there instead of taking the composer (an eager slot without a boundary) down.
+ */
+const loadMentionMenu = () => import('./FileMentionMenu');
+const loadPasteChips = () => import('./PasteChips');
+const FileMentionMenu = lazy(() => loadMentionMenu().then((module) => ({ default: module.FileMentionMenu })));
+const PasteChips = lazy(() => loadPasteChips().then((module) => ({ default: module.PasteChips })));
+/** The error card of the @ list stands where the list would (above the field). */
+const MENTION_ERROR_CLASS = 'bg-popover absolute inset-x-0 bottom-full z-20 mb-1 rounded-md border shadow-lg';
+
+let partsPreloaded = false;
+
+/** Preload only; a failure shows up when the part renders (`lazy` loads again). */
+function preloadComposerParts(): void {
+  if (partsPreloaded) return;
+  partsPreloaded = true;
+  loadMentionMenu().catch(() => undefined);
+  loadPasteChips().catch(() => undefined);
+}
 
 /** Monotonic time of the arm delay; only read in effects and event handlers, never while rendering. */
 function monotonicNow(): number {
@@ -195,9 +228,12 @@ function hasFiles(event: DragEvent): boolean {
  *   the actions).
  * - Paste chips (ADR-146, WP-57): a pasted text from 2 000 characters or 30 lines on becomes a
  *   token in the field plus a chip; sending replaces the tokens and lists the texts in
- *   `prompt.pastes` (answers to decisions get the replaced text only).
+ *   `prompt.pastes` (answers to decisions get the replaced text only). Text after a paste starts a
+ *   line of its own (V4-07); a prompt that starts with `/` only because of a paste never goes as a
+ *   command (R5W-03, `expandPrompt`) – slash handling always looks at the field text.
  * - @ file picker (ADR-151, WP-57): `@` at a word start opens the project files (`files.project`,
- *   once per opening), keys like the slash menu; not while a decision is the Enter target.
+ *   once per opening), keys like the slash menu (every change of the typed text makes the first
+ *   match active, V4-03); not while a decision is the Enter target.
  * - Drafts per session (text and pastes) survive remounts and reloads (state/drafts.ts); typing
  *   reports presence.
  * - Sending needs an open connection; failures restore the text (caret at its end, also in a field
@@ -297,10 +333,11 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const handoffPending = useHandoffPending(sessionKey);
   const [slashError, setSlashError] = useState<InlineError | null>(null);
   const [dragging, setDragging] = useState(false);
-  /** @ picker: the `@` index of the current opening, its file list, dismissal and active row. */
+  /** @ picker: the `@` index of the current opening, its file list, dismissal, query and active row. */
   const [mentionOpening, setMentionOpening] = useState<number | null>(null);
   const [projectFiles, setProjectFiles] = useState<ProjectFilesState | null>(null);
   const [mentionDismissed, setMentionDismissed] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
   const working = isWorking(runState);
 
@@ -382,6 +419,12 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     setMentionIndex(0);
     setProjectFiles(mentionStart === null ? null : { status: 'loading' });
   }
+  if (mentionText !== mentionQuery) {
+    // V4-03: every change of the typed text makes the best match active again (like the slash
+    // menu) – Tab/Enter after ↓ and more typing never take a row that was only active before.
+    setMentionQuery(mentionText);
+    setMentionIndex(0);
+  }
   useEffect(() => {
     if (mentionOpening === null || entryId === null) return;
     let cancelled = false;
@@ -415,8 +458,13 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const visiblePastes = useMemo(() => activePastes(text, pastes), [text, pastes]);
 
   const value = text.trim();
-  // What would be sent: paste tokens replaced (limits and the counter count this text).
-  const sendLength = useMemo(() => expandPastes(value, pastes).text.length, [value, pastes]);
+  // What would be sent: paste tokens replaced (limits and the counter count this text); a prompt
+  // like `sendMessage` (R5W-03 guard), an answer like `submit`.
+  const answering = answerTarget !== null;
+  const sendLength = useMemo(
+    () => (answering ? expandPastes(value, pastes) : expandPrompt(value, pastes)).text.length,
+    [answering, value, pastes],
+  );
   const draftAction =
     answerTarget === null && value.startsWith('/') ? classifySlash(value, entries, terminal) : null;
   const commandDraft = draftAction?.kind === 'native' || draftAction?.kind === 'terminal';
@@ -516,12 +564,13 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
 
   /**
    * Sends text (+ the finished attachments) as a prompt – paste tokens replaced, their texts in
-   * `pastes` (ADR-146); restores text, pastes and attachments when it fails.
+   * `pastes` (ADR-146); a text that starts with `/` only because of a paste never goes as a command
+   * (R5W-03, `expandPrompt`). Restores text, pastes and attachments when it fails.
    */
   const sendMessage = (message: string, priority: PromptPriority): Promise<boolean> => {
     const ready = getAttachments(sessionKey).filter((a) => a.status === 'done');
     const previousPastes = getPastes(sessionKey);
-    const expanded = expandPastes(message, previousPastes);
+    const expanded = expandPrompt(message, previousPastes);
     if (
       !online ||
       isHandoffPending(sessionKey) ||
@@ -693,7 +742,9 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
 
   /**
    * Files of a drop, a paste, the paper clip or the shell request `attachFiles` (all one way,
-   * ADR-146). `probe`: untyped files may be folders a plain file list cannot tell (lib/folders.ts).
+   * ADR-146). `probe`: untyped files may be folders a plain file list cannot tell (lib/folders.ts,
+   * a chunk of its own – R5W-01; the `DataTransfer` was read before, in the event). Without that
+   * chunk the files go as they are: a folder then fails visibly as an upload chip.
    */
   const attachFiles = (incoming: IncomingFiles, probe: boolean) => {
     if (!canAttach) return;
@@ -701,9 +752,16 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
       addFiles(incoming.files, incoming.folders);
       return;
     }
-    void withoutFolders(incoming.files).then((checked) => {
-      addFiles(checked.files, incoming.folders + checked.folders);
-    });
+    import('./lib/folders')
+      .then(({ withoutFolders }) => withoutFolders(incoming.files))
+      .then(
+        (checked) => {
+          addFiles(checked.files, incoming.folders + checked.folders);
+        },
+        () => {
+          addFiles(incoming.files, incoming.folders);
+        },
+      );
   };
 
   // WP-58: files dropped on the session pane (or picked in a menu) come as a shell request. An empty
@@ -962,7 +1020,13 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
           textareaRef.current?.focus();
         }}
       />
-      <PasteChips pastes={visiblePastes} onRemove={removePaste} onConvert={convertToText} />
+      {visiblePastes.length === 0 ? null : (
+        <SlotBoundary resetKey={sessionKey} className="mb-1.5 p-0">
+          <Suspense fallback={null}>
+            <PasteChips pastes={visiblePastes} onRemove={removePaste} onConvert={convertToText} />
+          </Suspense>
+        </SlotBoundary>
+      )}
       <div className="relative">
         {menuOpen ? (
           <SlashMenu
@@ -974,15 +1038,19 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
           />
         ) : null}
         {mentionOpen ? (
-          <FileMentionMenu
-            id={mentionId}
-            state={projectFiles}
-            matches={mentionMatches}
-            total={mentionResult.total}
-            activeIndex={mentionActive}
-            onActiveIndexChange={setMentionIndex}
-            onSelect={pickMention}
-          />
+          <SlotBoundary resetKey={sessionKey} className={MENTION_ERROR_CLASS}>
+            <Suspense fallback={null}>
+              <FileMentionMenu
+                id={mentionId}
+                state={projectFiles}
+                matches={mentionMatches}
+                total={mentionResult.total}
+                activeIndex={mentionActive}
+                onActiveIndexChange={setMentionIndex}
+                onSelect={pickMention}
+              />
+            </Suspense>
+          </SlotBoundary>
         ) : null}
         <Textarea
           id={inputId}
@@ -1022,6 +1090,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
             setMentionDismissed(true);
           }}
           onFocus={() => {
+            preloadComposerParts();
             setMenuDismissed(false);
             setMentionDismissed(false);
           }}

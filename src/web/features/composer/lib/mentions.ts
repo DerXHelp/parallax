@@ -1,3 +1,4 @@
+import type { ErrorPayload } from '@shared/errors';
 import { fuzzyFilter } from '@web/lib/fuzzy';
 
 /**
@@ -9,6 +10,17 @@ import { fuzzyFilter } from '@web/lib/fuzzy';
 
 /** At most this many matches are shown. */
 export const MENTION_MATCHES_MAX = 50;
+
+/** DOM id of the @ list of a composer (the field's `aria-controls`; the list is a lazy chunk). */
+export function mentionMenuId(inputId: string): string {
+  return `${inputId}-mention`;
+}
+
+/** The project files of one opening of the picker. */
+export type ProjectFilesState =
+  | { status: 'loading' }
+  | { status: 'ready'; index: PathIndex; truncated: boolean }
+  | { status: 'error'; error: ErrorPayload };
 
 /** An `@` word under the caret: `[start, end)` is replaced by a pick, `query` filters. */
 export interface Mention {
@@ -97,21 +109,55 @@ function isSubsequence(needle: string, haystack: string): boolean {
   return true;
 }
 
+/** Last segment of a relative path (also of its folded form – folding keeps the `/`). */
+function nameOf(path: string): string {
+  return path.slice(path.lastIndexOf('/') + 1);
+}
+
 /**
- * The best `max` paths for `query` (`fuzzyFilter` over the relative path; an empty query keeps the
- * list order) and how many matched. A subsequence check on the folded paths first keeps a list of
- * 20 000 paths fast while typing.
+ * Rank groups of a match (V4-03), best first: every token as typed in the file name, fuzzy in the
+ * file name, every token as typed somewhere in the path, any other (strict) match.
+ */
+const GROUP = { nameContains: 0, nameFuzzy: 1, pathContains: 2, pathFuzzy: 3 } as const;
+
+/**
+ * The best `max` paths for `query` and how many matched; an empty query keeps the list order.
+ * - A subsequence check on the folded paths first keeps a list of 20 000 paths fast while typing.
+ * - Minimum quality (V4-03): `fuzzyFilter` in strict mode over the file name and the whole path
+ *   (each whitespace-separated token may hit either) – word starts and runs must pay for the gaps,
+ *   so `secret` no longer hits `verschachtelt/noch-tiefer/…/mit-…` letter by letter.
+ * - File-name hits rank before path hits, contiguous ones before fuzzy ones (`GROUP`); the fuzzy
+ *   score orders each group.
  */
 export function matchPaths(
   index: PathIndex,
   query: string,
   max: number = MENTION_MATCHES_MAX,
 ): { matches: string[]; total: number } {
-  const needle = fold(query).replace(/\s+/g, '');
-  const candidates =
-    needle === '' ? index.paths : index.paths.filter((_, i) => isSubsequence(needle, index.folded[i] ?? ''));
-  const sorted = needle === '' ? [...candidates] : fuzzyFilter(candidates, query, (path) => [path]);
-  return { matches: sorted.slice(0, max), total: sorted.length };
+  const tokens = fold(query)
+    .split(/\s+/)
+    .filter((token) => token !== '');
+  if (tokens.length === 0) return { matches: index.paths.slice(0, max), total: index.paths.length };
+  const needle = tokens.join('');
+  const candidates: number[] = [];
+  index.folded.forEach((folded, i) => {
+    if (isSubsequence(needle, folded)) candidates.push(i);
+  });
+  const pathAt = (i: number): string => index.paths[i] ?? '';
+  const scored = fuzzyFilter(candidates, query, (i) => [nameOf(pathAt(i)), pathAt(i)], { strict: true });
+  const fuzzyInName = new Set(fuzzyFilter(scored, query, (i) => [nameOf(pathAt(i))], { strict: true }));
+  const groupOf = (i: number): number => {
+    const folded = index.folded[i] ?? '';
+    const name = nameOf(folded);
+    if (tokens.every((token) => name.includes(token))) return GROUP.nameContains;
+    if (fuzzyInName.has(i)) return GROUP.nameFuzzy;
+    if (tokens.every((token) => folded.includes(token))) return GROUP.pathContains;
+    return GROUP.pathFuzzy;
+  };
+  const ranked = scored
+    .map((i, order) => ({ i, order, group: groupOf(i) }))
+    .sort((a, b) => a.group - b.group || a.order - b.order);
+  return { matches: ranked.slice(0, max).map((entry) => pathAt(entry.i)), total: ranked.length };
 }
 
 /** Last segment and the folder part of a relative path (`src/a/b.ts` → `b.ts`, `src/a`). */

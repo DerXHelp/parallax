@@ -76,6 +76,42 @@ describe('matchPaths', () => {
     expect(matchPaths(index, 'meeting notes').matches).toEqual(['docs/Meeting Notes/Review.md']);
   });
 
+  it('V4-03: no scattered hits letter by letter through deep folder names', () => {
+    const deep =
+      'verschachtelt/noch-tiefer/und-noch-eine/mit-einem-sehr-langen-dateinamen-fuer-ueberlauf-tests-und-mehr.md';
+    const files = indexPaths(['Grüße-Übersicht.txt', deep, 'src/secret-store.ts']);
+    expect(matchPaths(files, 'grü')).toEqual({ matches: ['Grüße-Übersicht.txt'], total: 1 });
+    expect(matchPaths(files, 'secret').matches).toEqual(['src/secret-store.ts']);
+    expect(matchPaths(indexPaths([deep]), 'secret')).toEqual({ matches: [], total: 0 });
+    // A folder name typed as it stands still finds the file.
+    expect(matchPaths(files, 'tiefer').matches).toEqual([deep]);
+  });
+
+  it('V4-03: file-name hits first, contiguous before fuzzy, then the folder hits', () => {
+    const files = indexPaths([
+      'src/web/features/composer/lib/mentions.ts',
+      'src/web/features/composer/ComposerDemo.tsx',
+      'src/web/features/composer/Composer.tsx',
+      'src/compat/config.ts',
+      'docs/composer.md',
+    ]);
+    // Names containing the query first (shorter names win ties), the folder hit last.
+    expect(matchPaths(files, 'composer').matches).toEqual([
+      'docs/composer.md',
+      'src/web/features/composer/Composer.tsx',
+      'src/web/features/composer/ComposerDemo.tsx',
+      'src/web/features/composer/lib/mentions.ts',
+    ]);
+    // Fuzzy in the name ("Composer" via c-m-p) before the hits that need a folder name.
+    expect(matchPaths(files, 'cmp').matches.slice(0, 3)).toEqual([
+      'docs/composer.md',
+      'src/web/features/composer/Composer.tsx',
+      'src/web/features/composer/ComposerDemo.tsx',
+    ]);
+    expect(matchPaths(files, 'cmp').total).toBe(5);
+    expect(matchPaths(files, 'compat').matches).toEqual(['src/compat/config.ts']);
+  });
+
   it(`shows at most ${String(MENTION_MATCHES_MAX)} and counts all matches`, () => {
     const many = indexPaths(Array.from({ length: 20_000 }, (_, i) => `pkg/module-${String(i)}/index.ts`));
     const result = matchPaths(many, 'index');
