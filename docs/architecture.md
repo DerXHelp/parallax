@@ -624,6 +624,29 @@ notifications["http://127.0.0.1:<port>,*"] = {setting: 1}`, zusammengeführt und
 Prefs bleiben unangetastet → Hinweis „Parallax uses Windows notifications instead“; ADR-082).
 Das Edge-Profil `<home>\edge` älterer Versionen bleibt liegen (README „Chrome-Profil“).
 
+### 3.4 Remote Control (WP-64)
+
+Remote Control verbindet das installierte `claude` einer Session mit claude.ai bzw. der Claude-App
+(interne SDK-Methode `query.enableRemoteControl`, SDK 0.3.322; Spike 12.11.2026).
+- **SDK-Grenze** (`backend/remoteControl.ts`, `AgentSession.setRemoteControl`/`readRemoteControlDefault`):
+  Laufzeit-Prüfung der internen Methoden (fehlen → `REMOTE_CONTROL_UNAVAILABLE`), Antwort per zod (Link
+  nur `https://claude.ai`, `isClaudeSessionUrl`), Control-Fehler → `REMOTE_CONTROL_AUTH`/
+  `POLICY_DISABLED`/`FAILED {reason}`; das Ergebnis ist eine Union, wirft nie. `--replay-user-messages`
+  ist immer gesetzt (Remote Control lässt sich zur Laufzeit schalten).
+- **Zustand:** Wunsch `Entry.remoteControlWanted` (persistiert), Bridge je Unterhaltung
+  (`Conversation.bridgeSessionId`/`sessionUrl`), Live-Zustand nur mit Prozess aus `system/bridge_state`
+  (`EntryState.remote`: off → connecting → connected, nicht-terminaler Fehler → reconnecting, terminal/
+  Richtlinie → failed). Die Summary trägt `remoteControl {state, sessionUrl, error, wanted}`;
+  `HostState.remoteControlDefault` zeigt Claudes eigene Einstellung (Standardprofil).
+- **Fremde Turns:** ein Prompt aus der App kommt als Replay mit fremder uuid → `user_message`
+  `source: 'remote'`; Status, Queue (ignoriert fremde uuids) und Kosten laufen wie bei eigenen Turns.
+  Eine Entscheidung, die die CLI abbricht, während die Bridge steht, endet `answered_elsewhere`.
+- **UI:** Telefon-Symbol in der Sidebar-Zeile (Zustand ≠ off) und in der Kopfzeile (auch nur gewünscht)
+  mit Menü (Ein/Aus, „In der Claude-App öffnen“, Link kopieren; geöffnet werden nur claude.ai-Links),
+  Hinweis „Aus der Claude-App“ am Prompt, Einstellung „Remote Control für neue Sessions“.
+- **Erweiterung (WP-65):** weitere Bridge-Messages sind je ein Eintrag in `normalizer/bridge.ts`
+  (`task_summary`/`post_turn_summary` heute gezählt-ignoriert).
+
 ## 4. Source of Truth (A.3)
 
 | Daten | maßgeblich | persistiert in | live über |
@@ -1109,6 +1132,19 @@ bzw. das Profil.
 | `GET /api/blob/:id` | Meta `application/pdf` → Header-Satz `pdf` (§5.1, sonst unverändert) | – |
 | `settings.update` `editor` | Schema-Prüfung (WP-50 §4.5); wirkt beim nächsten `file.open` | `VALIDATION_FAILED` |
 
+**Remote Control (WP-64, §3.4):**
+
+| Befehl / Fall | Regel | Fehler |
+|---|---|---|
+| `session.setRemoteControl` | Gates wie Phase 2 (nicht archiviert, nicht extern); speichert `Entry.remoteControlWanted`; laufender, bereiter Prozess → sofort `setRemoteControl`, sonst nach der nächsten Bereitschaft; ein Fehler beim Einschalten lässt den Befehl gelingen und zeigt `summary.remoteControl.state = failed` mit `REMOTE_CONTROL_*` | `SESSION_ARCHIVED`, `SESSION_EXTERNAL` |
+| Einschalten | Name = Parallax-Titel, `reattachSessionId` = `bridgeSessionId` der aktuellen Unterhaltung, immer `keepSessionOnExit`; ein gescheitertes Reattach einmal ohne; Antwort einer älteren Generation wird verworfen | – |
+| Ausschalten, `session.setArchived(true)`, `session.remove` | im laufenden Prozess abschalten (vor dem Schließen), `bridgeSessionId`/`sessionUrl` vergessen | – |
+| Schließen, Leerlauf-Schlaf, Absturz, Serverneustart | Wunsch und Link bleiben; der nächste Start verbindet dieselbe Remote-Session | – |
+| `/clear`, frischer Kontext | neue Unterhaltung erbt die Bridge (gleicher Link) | – |
+| neuer Eintrag | `settings.remoteControl.newSessions`: `on`/`off`; `follow_claude` = zuletzt gelesenes `remoteControlAtStartup` des Profils, nach der ersten Bereitschaft der frische Wert (eine eigene Wahl vorher gewinnt) | – |
+| Anfrage-Abbruch durch die CLI bei `connected`/`reconnecting` | Outcome `answered_elsewhere` statt `cancelled` (Heuristik) | – |
+| Leerlauf-Schlaf (ADR-105) | nie bei `connecting`/`connected`/`reconnecting` (`sleepEligible`) | – |
+
 ## 6. Item-Modell (`src/shared/model.ts`, §5.6)
 
 **Item-IDs** (live und Verlauf identisch; Annahmen in `src/server/backend/fixture.test.ts` gegen alle
@@ -1138,7 +1174,7 @@ Bilder immer als Blob. Assistant-Text wird nie gekappt.
 | `assistant` (fertiger Block) | ersetzt das Streaming-Item gleicher ID; ohne Stream direkt final | `assistant_model` (Haupt-Thread); `assistant.error` → zusätzlich `system/error` + `assistant_error` |
 | `user` Prompt (nach `registerPrompt`, `command_lifecycle started`) | `user_message` | – |
 | `user` nur mit `tool_result` | – (→ `tool_call.result`) | – |
-| `user` mit `isReplay` | – | – |
+| `user` mit `isReplay` (WP-64: `--replay-user-messages` immer an) | eigene uuid → –; fremde uuid mit `origin human` (in der Claude-App getippt) → `user_message` mit `source: 'remote'` | – |
 | `user` „[Request interrupted by user…]“ | `system/interrupted` | – |
 | `result` | `turn_result` (synthetisch bei `num_turns 0`) | `turn_result` |
 | `system/init` | – (→ `detail.init`) | `init` |
@@ -1156,6 +1192,7 @@ Bilder immer als Blob. Assistant-Text wird nie gekappt.
 | `system/background_tasks_changed` | – (→ `detail.backgroundTasks`) | `background_tasks` |
 | `command_lifecycle` (untypisiert) | – (→ Queue) | `prompt_lifecycle` |
 | `system/session_title_changed` (untypisiert) | – | `title_changed` |
+| `system/bridge_state` (untypisiert, WP-64; `normalizer/bridge.ts`) | – (→ `summary.remoteControl`) | `bridge_state` (`ready`/`connected`/`failed` + `failureKind`/`policy_disabled`, sonst `unknown`); `system/task_summary`/`post_turn_summary` gezählt-ignoriert (WP-65) |
 | `prompt_suggestion`, `system/commands_changed` | – (→ Detail) | – |
 | `conversation_reset` | Marker `system/conversation_reset` als erstes Item der neuen Unterhaltung – der Normalizer liefert ihn mit der ersten Ausgabe nach `startConversation` (WP-12 Entscheidung 1) | `conversation_reset` + Op `conversation.reset` (veröffentlicht die Engine) |
 | `system/thinking_tokens`, `keep_alive` | – | – |
@@ -1268,7 +1305,8 @@ ist „Fortsetzen & Plan freigeben“ bzw. „Fortsetzen“.
 
 **`canSleep(facts, now)`** – nur bei `idle` ohne offene/abgelaufene Entscheidungen, ohne
 Hintergrund-Tasks, ohne gequeuete Prompts, ohne künftigen Wakeup, nicht `compacting`/`retrying`
-(Handoff = `external` → nie).
+(Handoff = `external` → nie). Die Engine (`sleepEligible`) schließt zusätzlich geplante Turns (§10) und
+eine aktive Remote-Control-Bridge aus (`isRemoteControlActive`: connecting/connected/reconnecting, WP-64).
 
 **`notificationFor(prev, next, now, {minDoneTurnMs})`** (Vergleich der abgeleiteten `kind`s):
 
@@ -1289,12 +1327,14 @@ auf. „Fertig“ nie bei laufender Hintergrundarbeit und nie nach User-Stop (ke
 Unter `PARALLAX_HOME` (Default `%LOCALAPPDATA%\Parallax`, Dev `.parallax-dev`, Tests Temp-Ordner):
 ```
 sessions.json                         registryFileSchema v2 (Entry inkl. unread, context – R0-17; Phase 2:
-                                      gitBranch, external, continueAt; Migration 1 → 2 = Identität, ADR-107)
+                                      gitBranch, external, continueAt; Migration 1 → 2 = Identität, ADR-107;
+                                      WP-64: remoteControlWanted, Conversation.bridgeSessionId/sessionUrl –
+                                      Felder mit Default)
 profiles.json                         profilesFileSchema (Phase 2, ADR-102: alle Profile inkl. „Standard“;
                                       fehlt die Datei, gilt nur „Standard“)
 settings.json                         settingsFileSchema (Phase 2: notifications, idleSleep,
-                                      promptSuggestions, port, autostart; Phase 3: editor, ADR-144 –
-                                      Felder mit Default)
+                                      promptSuggestions, port, autostart; Phase 3: editor, ADR-144;
+                                      WP-64: remoteControl.newSessions – Felder mit Default)
 model-catalogs.json                   Phase 2 (ADR-114): supportedModels() je Profil (Server-intern)
 account-limits.json                   Phase 2 (ADR-114): letzte Abo-Limits je Profil (Server-intern)
 auth-secret.json                      Secret des Geräte-Cookies (WP-10, rotierbar, §5.1; ohne .bak, R1-11)
