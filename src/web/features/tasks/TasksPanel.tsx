@@ -1,13 +1,14 @@
 import { LayersIcon, SquareIcon } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useT } from '@web/i18n';
+import { runningTaskCount, type TaskRow } from '@web/lib/task-rows';
 import { useNow } from '@web/state/clock';
 import { Alert } from '@web/ui/alert';
 import { Button } from '@web/ui/button';
 import { Spinner } from '@web/ui/spinner';
 import { TaskRowView } from './components/TaskRowView';
 import { TodoItems } from './components/TodoItems';
-import { canStopTask, visibleTaskRows, type TaskRow } from './lib/rows';
+import { canStopTask, visibleTaskRows } from './lib/rows';
 import { todoProgress } from './lib/todo-progress';
 import { stopTask, stopTasks, useTaskRows } from './state/tasks';
 import { useTodos } from './state/todos';
@@ -35,7 +36,7 @@ export const TasksPanel = memo(function TasksPanel({ sessionKey }: { sessionKey:
   const now = useNow(EXPIRY_TICK_MS);
   const visible = useMemo(() => visibleTaskRows(rows, now), [rows, now]);
   const stoppable = useMemo(() => visible.filter((row) => canStopTask(row)), [visible]);
-  const running = visible.filter((row) => row.running).length;
+  const running = runningTaskCount(visible);
   const recent = visible.length - running;
   const [stopping, setStopping] = useState<ReadonlySet<string>>(() => new Set());
   const [confirming, setConfirming] = useState(false);
