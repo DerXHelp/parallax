@@ -64,11 +64,18 @@ export function capTitle(title: string): string {
   return title.slice(0, LIMITS.titleChars);
 }
 
+/**
+ * U+200B in front of a prompt that starts with `/` only because of a pasted text (composer
+ * `SLASH_GUARD`, R5W-03): it keeps the text from being a command but is no part of the title.
+ */
+const LEADING_SLASH_GUARD = /^\u200b+/u;
+
 /** First non-empty line, whitespace collapsed, ≤ 80 chars at a word boundary (+ "…"); null for slash commands/empty. */
 export function titleFromPrompt(text: string): string | null {
   const trimmed = text.trim();
   if (trimmed === '' || trimmed.startsWith('/')) return null;
   const line = trimmed
+    .replace(LEADING_SLASH_GUARD, '')
     .split(/\r?\n/)
     .map((l) => l.replace(/\s+/g, ' ').trim())
     .find((l) => l !== '');

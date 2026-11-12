@@ -62,6 +62,9 @@ describe('titleFromPrompt (§3.5.8)', () => {
       'This is a rather long prompt that keeps going and going well beyond the eighty…',
     ],
     ['x'.repeat(100), `${'x'.repeat(80)}…`],
+    // R5W-03: the composer's guard in front of a pasted `/…` text is not part of the title.
+    ['\u200b/usr/lib/x is missing\nwhy?', '/usr/lib/x is missing'],
+    ['\u200b\u200b/clear   now', '/clear now'],
   ])('%j → %j', (text, title) => {
     expect(titleFromPrompt(text)).toBe(title);
   });
