@@ -45,7 +45,10 @@ function request(p: Partial<StartSessionRequest> = {}): StartSessionRequest {
   };
 }
 
-/** Keys that are always present (WP-13 §3.2 table; Phase 3: stop per task, summaries, todo flag). */
+/**
+ * Keys that are always present (WP-13 §3.2 table; Phase 3: stop per task, summaries). WP61-02: no
+ * `settings` without a flag value – `todoFeatureEnabled` is not sent (no effect with CLI 2.1.322).
+ */
 const BASE_KEYS = [
   'agentProgressSummaries',
   'canUseTool',
@@ -56,16 +59,12 @@ const BASE_KEYS = [
   'perTaskStopAffordance',
   'promptSuggestions',
   'settingSources',
-  'settings',
   'spawnClaudeCodeProcess',
   'stderr',
   'systemPrompt',
   'thinking',
   'toolConfig',
 ];
-
-/** Flag settings every start carries (Phase 3, WP-52: TodoWrite on). */
-const TODO = { todoFeatureEnabled: true } as const;
 
 describe('buildQueryOptions – fixed rows', () => {
   const req = request();
@@ -90,7 +89,6 @@ describe('buildQueryOptions – fixed rows', () => {
     ['promptSuggestions from the request', 'promptSuggestions', false],
     ['perTaskStopAffordance on (Phase 3, ADR-149)', 'perTaskStopAffordance', true],
     ['agentProgressSummaries on (Phase 3, task_progress.summary)', 'agentProgressSummaries', true],
-    ['inline flag settings with todoFeatureEnabled (Phase 3)', 'settings', TODO],
   ])('%s', (_label, key, value) => {
     expect(options[key]).toEqual(value);
   });
@@ -129,6 +127,8 @@ describe('buildQueryOptions – fixed rows', () => {
       'additionalDirectories',
       'allowedTools',
       'disallowedTools',
+      // WP61-02: no flag settings without a value.
+      'settings',
     ] as const) {
       expect(options).not.toHaveProperty(key);
     }
@@ -227,7 +227,7 @@ describe('buildQueryOptions – profile options (launch.sdkOptions, C.12)', () =
     [
       'autoCompactWindow without a settings path → inline settings (C.1)',
       { autoCompactWindow: 400_000 },
-      { settings: { autoCompactWindow: 400_000, ...TODO } },
+      { settings: { autoCompactWindow: 400_000 } },
     ],
     [
       'settings path + autoCompactWindow → path here, window after start',
@@ -287,12 +287,12 @@ describe('flagSettingsAfterStart (C.1)', () => {
   it.each<[string, Partial<LaunchSpec>, object | null]>([
     ['nothing (inline settings)', {}, null],
     ['only autoCompactWindow (inline settings)', { autoCompactWindow: 300_000 }, null],
-    // Phase 3: a settings file always needs the todo flag after the start (WP-52).
-    ['only a settings path', { sdkOptions: { settings: 'D:\\s.json' } }, TODO],
+    // WP61-02: a settings file alone needs no flag settings after the start (no todo flag).
+    ['only a settings path', { sdkOptions: { settings: 'D:\\s.json' } }, null],
     [
       'settings path + autoCompactWindow',
       { sdkOptions: { settings: 'D:\\s.json' }, autoCompactWindow: 300_000 },
-      { autoCompactWindow: 300_000, ...TODO },
+      { autoCompactWindow: 300_000 },
     ],
   ])('%s', (_label, partial, expected) => {
     expect(flagSettingsAfterStart(request({ launch: launch(partial) }))).toEqual(expected);
@@ -302,27 +302,27 @@ describe('flagSettingsAfterStart (C.1)', () => {
 describe('fast mode as flag setting (Phase 2, WP-31)', () => {
   const path = { sdkOptions: { settings: 'D:\\cfg\\settings.json' } };
   it.each<[string, Partial<StartSessionRequest>, Options['settings'], object | null]>([
-    ['absent → the CLI decides', {}, TODO, null],
-    ['null → the CLI decides', { fastMode: null }, TODO, null],
-    ['true → inline settings.fastMode', { fastMode: true }, { fastMode: true, ...TODO }, null],
-    ['false → inline settings.fastMode false', { fastMode: false }, { fastMode: false, ...TODO }, null],
+    ['absent → the CLI decides', {}, undefined, null],
+    ['null → the CLI decides', { fastMode: null }, undefined, null],
+    ['true → inline settings.fastMode', { fastMode: true }, { fastMode: true }, null],
+    ['false → inline settings.fastMode false', { fastMode: false }, { fastMode: false }, null],
     [
       'together with autoCompactWindow',
       { fastMode: true, launch: launch({ autoCompactWindow: 400_000 }) },
-      { autoCompactWindow: 400_000, fastMode: true, ...TODO },
+      { autoCompactWindow: 400_000, fastMode: true },
       null,
     ],
     [
       'settings file → path inline, fast mode after the start',
       { fastMode: true, launch: launch(path) },
       'D:\\cfg\\settings.json',
-      { fastMode: true, ...TODO },
+      { fastMode: true },
     ],
     [
       'settings file + autoCompactWindow + fast mode → both after the start',
       { fastMode: false, launch: launch({ ...path, autoCompactWindow: 300_000 }) },
       'D:\\cfg\\settings.json',
-      { autoCompactWindow: 300_000, fastMode: false, ...TODO },
+      { autoCompactWindow: 300_000, fastMode: false },
     ],
   ])('%s', (_label, partial, settings, after) => {
     const req = request(partial);
@@ -336,22 +336,22 @@ describe('Phase 3 options (WP-52)', () => {
   const settingsFile = { sdkOptions: { settings: 'D:\\cfg\\settings.json' } };
   it.each<[string, Partial<StartSessionRequest>, Partial<Options>, object | null]>([
     [
-      'plain profile: stop per task, summaries, inline todo flag',
+      'plain profile: stop per task, summaries (WP61-02: no todo flag)',
       {},
-      { perTaskStopAffordance: true, agentProgressSummaries: true, settings: TODO },
+      { perTaskStopAffordance: true, agentProgressSummaries: true },
       null,
     ],
     [
-      'profile with a settings file: same options, todo flag after the start',
+      'profile with a settings file: same options, nothing after the start',
       { launch: launch(settingsFile) },
       { perTaskStopAffordance: true, agentProgressSummaries: true, settings: 'D:\\cfg\\settings.json' },
-      TODO,
+      null,
     ],
     [
       'settings file + resume + fast mode',
       { launch: launch(settingsFile), resumeSessionId: SAMPLE_IDS.sessionId, fastMode: true },
       { perTaskStopAffordance: true, agentProgressSummaries: true, resume: SAMPLE_IDS.sessionId },
-      { fastMode: true, ...TODO },
+      { fastMode: true },
     ],
   ])('%s', (_label, partial, expected, after) => {
     const req = request(partial);

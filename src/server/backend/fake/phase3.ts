@@ -68,7 +68,7 @@ export async function background(
         runInBackground: true,
         outputFile,
       }),
-      taskProgress(c, { taskId, toolUseId, description, summary: 'Reading the project files', usage: usage(1_800, 1, 1_500) }),
+      taskProgress(c, { taskId, toolUseId, activity: 'Running List the project files', summary: 'Reading the project files', usage: usage(1_800, 1, 1_500) }),
       streamedText(c, FAKE_BACKGROUND_STARTED),
     ),
   );
@@ -79,7 +79,7 @@ export async function background(
       await ctx.files.append(output, '[fake] halfway: writing the summary\n');
       control.emit(
         messagesOf(
-          taskProgress(c, { taskId, toolUseId, description, summary: 'Writing the summary', usage: usage(4_200, 3, 15_000) }),
+          taskProgress(c, { taskId, toolUseId, activity: 'Running Write the summary', summary: 'Writing the summary', usage: usage(4_200, 3, 15_000) }),
         ),
       );
       await control.wait(FAKE_BACKGROUND_MS / 2);
