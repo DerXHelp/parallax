@@ -1970,3 +1970,39 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   dann verschwindet der Hinweis. `pnpm e2e` leert `test-results/` samt Check-Bericht (`--last --accept`
   vorher). Stufe 2 (SDK-Upgrade, Neuaufzeichnung) bleibt `docs/sdk-upgrade.md`. Umsetzung:
   `src/server/claude/cliProfile.ts`, `scripts/cli-check/**`, `.claude/skills/claude-update/SKILL.md`.
+
+## ADR-161 – `session.remove` vergisst nur
+- **Datum/WP:** 12.11.2026, WP-63; angenommen (12.11.2026, Koordinator beim Merge).
+- **Kontext:** Nutzer-Feedback 1: Sessions endgültig aus Parallax entfernen, das Archiv aufräumen.
+- **Entscheidung:** Entfernen löscht keine Datei (claude-Transkript, `entries/<id>/`, Blobs bleiben), beendet einen
+  laufenden Prozess wie `session.close` (offene Entscheidungen `cancelled/process_exit`) und ist auch für archivierte
+  und externe Einträge erlaubt; danach `ENTRY_NOT_FOUND` für jeden Befehl (auch im Lock wartende) und kein Start
+  mehr. Kein Rückgängig; Wiederaufnahme nur über `claude --resume`. Keine neuen Fehlercodes.
+- **Folgen:** Kein Start-Aufräumlauf löscht die Dateien (`src/server/sessions/README.md`, `docs/architecture.md` §8).
+  Remote Control (WP-64) schaltet die Bridge vor dem Entfernen ab.
+
+## ADR-162 – Context-Anzeige: Füllstand bis Autocompact, Farbe nach Modellfenster
+- **Datum/WP:** 12.11.2026, WP-63; angenommen (12.11.2026, Koordinator beim Merge).
+- **Kontext:** Die Anzeige maß bisher am Modellfenster; Autocompact greift aber vorher.
+- **Entscheidung:** Füllstand = verbrauchte Tokens / Autocompact-Schwelle (nur bei `isAutoCompactEnabled === true`
+  und Schwelle < Fenster, sonst / Fenster); Farbe nach Anteil am Modellfenster (≥ 50 % Warnung, ≥ 80 % Gefahr);
+  „Autocompact bald“ ab 90 % der Schwelle als eigenes Symbol, nie nur als Farbe. Regel nur in
+  `@web/lib/context-display`.
+- **Folgen:** Gilt für Kopfzeile und Seitenleiste; die Composer-Gauge (70/85) zieht in WP-65 nach.
+
+## ADR-163 – Kompaktes Transkript
+- **Datum/WP:** 12.11.2026, WP-63; angenommen (12.11.2026, Koordinator beim Merge).
+- **Kontext:** Lange Turns mit vielen Werkzeugaufrufen machten das Transkript unübersichtlich.
+- **Entscheidung:** Rollen sichtbar/Schritt/versteckt wie in `features/transcript/README.md`; Gruppe ab 2 Schritten,
+  Schlüssel = erste Item-ID, Auf-Zustand nur im Fenster (nicht persistiert); Bilder einer Gruppe immer als Galerie
+  sichtbar; Agent-Karten werden nicht gruppiert; `rate_limit` allowed/allowed_warning erscheint nicht im Transkript
+  (nur in der Limit-Leiste, die jedes gemeldete Fenster zeigt). Standard „Kompakt“, umschaltbar auf „Alle Schritte“.
+- **Folgen:** Gruppierung als reine Funktionen (`features/transcript/lib/grouping.ts`, O(n)).
+
+## ADR-164 – Transkript-Ansicht vorerst in `localStorage`
+- **Datum/WP:** 12.11.2026, WP-63; angenommen als Übergang (12.11.2026, Koordinator beim Merge).
+- **Kontext:** Für ein Server-Setting fehlte die Contract-Freigabe.
+- **Entscheidung:** Die Wahl liegt je Browserprofil in `parallax.transcript.view`; Features lesen/schreiben nur über
+  `@web/state/transcript-view`.
+- **Folgen:** `settings.transcriptView` ist freigegeben (12.11.2026); WP-65 zieht die Wahl dorthin um (einmalige
+  Übernahme aus `localStorage`) und löst diesen ADR damit ab.
