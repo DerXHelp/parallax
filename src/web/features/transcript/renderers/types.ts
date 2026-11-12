@@ -17,6 +17,12 @@ export interface ToolPreviewProps {
   sessionKey?: string;
 }
 
+export interface ToolFileRef {
+  /** As in the input: absolute, Git Bash or relative to the cwd. */
+  path: string;
+  line: number | null;
+}
+
 /**
  * Renderer of one tool (Plan "Chat-Ansicht": one line per tool call, expandable). Everything is
  * optional except the icon; missing parts fall back to the generic renderer (JSON/text). New and
@@ -26,6 +32,11 @@ export interface ToolRenderer {
   icon: LucideIcon;
   /** Plain-text summary next to the tool name (command, path, pattern …); null = none. */
   summary?(item: ToolCallItem, t: Translate): string | null;
+  /**
+   * The file the call works on (Write/Edit/Read/NotebookEdit, WP-55): the line shows it as a
+   * `FileLink` (no `verify`) instead of the plain summary; `line` = where the change or read starts.
+   */
+  file?(item: ToolCallItem): ToolFileRef | null;
   /** Short meta at the end of the line ("+3 −1", "12 files"). */
   meta?(item: ToolCallItem, t: Translate): string | null;
   /** Details when expanded (default: generic input + result). */

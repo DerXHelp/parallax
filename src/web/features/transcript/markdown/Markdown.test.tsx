@@ -1,9 +1,12 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { ComponentProps } from 'react';
+import type { ComponentProps, ReactElement } from 'react';
 import type * as ReactMarkdownModule from 'react-markdown';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { resetClientStore } from '@web/state/store';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
+import { SAMPLE_IDS, sampleSummary } from '@shared/samples';
+import { FeatureSlotsProvider, type FeatureSlots, type FileLinkSlotProps } from '@web/shell/slots';
+import { clientStore, resetClientStore, updateHost } from '@web/state/store';
 import { SECURITY_MARKDOWN } from '../playground/data';
 import { Markdown } from './Markdown';
 
@@ -127,6 +130,165 @@ describe('Markdown', () => {
     ]);
     expect(container.querySelector('strong, em')).toBeNull();
     expect(container.querySelector('code')?.textContent).toBe('C:\\Users\\.claude');
+  });
+
+  describe('file references (WP-55)', () => {
+    const entryId = SAMPLE_IDS.entry;
+    const sessionKey = makeSessionKey(LOCAL_HOST_ID, entryId);
+
+    /** FileLink stand-in: shows the props it got. */
+    function ProbeFileLink({ path, line, col, verify, children }: FileLinkSlotProps) {
+      return (
+        <span
+          data-testid="file-link"
+          data-path={path}
+          data-line={line ?? ''}
+          data-col={col ?? ''}
+          data-verify={String(verify)}
+        >
+          {children ?? path}
+        </span>
+      );
+    }
+    const PROBE_SLOTS: Partial<FeatureSlots> = { FileLink: ProbeFileLink };
+
+    function renderWithSlots(element: ReactElement) {
+      return render(<FeatureSlotsProvider slots={PROBE_SLOTS}>{element}</FeatureSlotsProvider>);
+    }
+
+    function links(): { text: string | null; path: string | undefined; line: string | undefined }[] {
+      return screen.queryAllByTestId('file-link').map((link) => ({
+        text: link.textContent,
+        path: link.dataset.path,
+        line: link.dataset.line,
+      }));
+    }
+
+    beforeEach(() => {
+      updateHost(clientStore, LOCAL_HOST_ID, () => ({
+        summaries: { [entryId]: sampleSummary({ entryId }) },
+      }));
+    });
+
+    it('links paths in text and inline code (verify, relative to the cwd), never in code blocks', async () => {
+      renderWithSlots(
+        <Markdown
+          sessionKey={sessionKey}
+          text={[
+            'Changed src/main.ts:26 and C:\\Users\\user\\.claude\\plans\\x.md, see (README.md).',
+            '',
+            'Run `pnpm exec vitest run src/web/lib/file-refs.test.ts` or `D:/work/sample/docs/a.md#L4`.',
+            '',
+            '```',
+            'src/in/code.ts',
+            '```',
+          ].join('\n')}
+        />,
+      );
+      await screen.findByText(/Changed/, {}, LAZY);
+      expect(links()).toEqual([
+        { text: 'src/main.ts:26', path: 'D:\\work\\sample\\src\\main.ts', line: '26' },
+        {
+          text: 'C:\\Users\\user\\.claude\\plans\\x.md',
+          path: 'C:\\Users\\user\\.claude\\plans\\x.md',
+          line: '',
+        },
+        {
+          text: 'src/web/lib/file-refs.test.ts',
+          path: 'D:\\work\\sample\\src\\web\\lib\\file-refs.test.ts',
+          line: '',
+        },
+        { text: 'D:/work/sample/docs/a.md#L4', path: 'D:\\work\\sample\\docs\\a.md', line: '4' },
+      ]);
+      for (const link of screen.getAllByTestId('file-link')) expect(link.dataset.verify).toBe('true');
+      // Inline code keeps its code element around the link; the code block stays plain code.
+      expect(screen.getByText('src/web/lib/file-refs.test.ts').closest('code')).not.toBeNull();
+      expect(screen.getByText('src/in/code.ts').closest('[data-testid="file-link"]')).toBeNull();
+    });
+
+    it('UNC and device paths stay text and never reach FileLink (also as link targets)', async () => {
+      const { container } = renderWithSlots(
+        <Markdown
+          sessionKey={sessionKey}
+          text={[
+            'Share \\\\server\\share\\x.txt and \\\\?\\C:\\x\\a.txt and //host/share/y.txt.',
+            '',
+            '[unc link](file://server/share/x.txt) and [device](%5C%5C.%5Cpipe%5Cx)',
+          ].join('\n')}
+        />,
+      );
+      await screen.findByText(/Share/, {}, LAZY);
+      expect(links()).toEqual([]);
+      const paragraphs = [...container.querySelectorAll('p')].map((p) => p.textContent);
+      expect(paragraphs[0]).toBe(
+        'Share \\\\server\\share\\x.txt and \\\\?\\C:\\x\\a.txt and //host/share/y.txt.',
+      );
+      expect(container.querySelectorAll('[data-file-ref="unsafe"]')).toHaveLength(3);
+      expect(screen.getByText('unc link').closest('[data-blocked-link]')).not.toBeNull();
+      expect(screen.getByText('device').closest('[data-blocked-link]')).not.toBeNull();
+      expect(container.querySelector('a')).toBeNull();
+    });
+
+    it('turns local link targets into FileLinks; http(s) stays a web link', async () => {
+      const { container } = renderWithSlots(
+        <Markdown
+          sessionKey={sessionKey}
+          text={
+            '[the guide](docs/guide.md#L3), [abs](C:/x/a.ts), [url](file:///D:/work/b.md) and ' +
+            '[web](https://example.com/src/a.ts) or [`code` text](src/c.ts)'
+          }
+        />,
+      );
+      await screen.findByText('the guide', {}, LAZY);
+      expect(links()).toEqual([
+        { text: 'the guide', path: 'D:\\work\\sample\\docs\\guide.md', line: '3' },
+        { text: 'abs', path: 'C:\\x\\a.ts', line: '' },
+        { text: 'url', path: 'D:\\work\\b.md', line: '' },
+        { text: 'code text', path: 'D:\\work\\sample\\src\\c.ts', line: '' },
+      ]);
+      expect([...container.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual([
+        'https://example.com/src/a.ts',
+      ]);
+      // No link inside a link: the web link text and the code in the file link are plain.
+      expect(screen.getByText('web').querySelector('[data-testid="file-link"]')).toBeNull();
+    });
+
+    it('resolves relative references against baseDir instead of the cwd', async () => {
+      renderWithSlots(
+        <Markdown
+          sessionKey={sessionKey}
+          baseDir={'D:\\work\\sample\\docs'}
+          text="See ./api/x.md and [up](../README.md)."
+        />,
+      );
+      await screen.findByText(/See/, {}, LAZY);
+      expect(links()).toEqual([
+        { text: './api/x.md', path: 'D:\\work\\sample\\docs\\api\\x.md', line: '' },
+        { text: 'up', path: 'D:\\work\\sample\\README.md', line: '' },
+      ]);
+    });
+
+    it('links nothing without a session, and not in the block that is still streaming', async () => {
+      const { rerender } = renderWithSlots(<Markdown text="Plain src/a.ts here." />);
+      await screen.findByText(/Plain/, {}, LAZY);
+      expect(links()).toEqual([]);
+      const done = 'Done src/a.ts.';
+      rerender(
+        <FeatureSlotsProvider slots={PROBE_SLOTS}>
+          <Markdown sessionKey={sessionKey} streaming text={`${done}\n\nNow src/b.ts and\n`} />
+        </FeatureSlotsProvider>,
+      );
+      await screen.findByText(/Now/);
+      expect(links().map((link) => link.text)).toEqual(['src/a.ts']);
+      rerender(
+        <FeatureSlotsProvider slots={PROBE_SLOTS}>
+          <Markdown sessionKey={sessionKey} text={`${done}\n\nNow src/b.ts`} />
+        </FeatureSlotsProvider>,
+      );
+      await waitFor(() => {
+        expect(links().map((link) => link.text)).toEqual(['src/a.ts', 'src/b.ts']);
+      });
+    });
   });
 
   it('parses only the last block again while streaming', async () => {

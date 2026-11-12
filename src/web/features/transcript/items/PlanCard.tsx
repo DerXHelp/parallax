@@ -8,11 +8,13 @@ import { useFeatureSlots } from '@web/shell/slots';
 import { useDecision } from '@web/state/hooks';
 import { Disclosure } from '../components/Disclosure';
 import { ModelBadge } from '../components/ModelBadge';
+import { ToolFileLink } from '../components/ToolFileLink';
 import { readPlanInput, readPlanResult } from '../lib/tool-input';
 import { resultText, stripToolUseError } from '../lib/text';
 import { Markdown } from '../markdown/Markdown';
 import type { ToolBodyProps, Translate } from '../renderers/types';
 import { expansionKey } from '../state/expansion';
+import { useSessionCwd } from '../state/tasks';
 import { decisionOutcomeText, type OutcomeTone } from './decision-outcome';
 
 /**
@@ -62,9 +64,11 @@ function PlanFinal({ item, sessionKey }: ToolBodyProps) {
   const approved = readPlanResult(item.result?.structured ?? null);
   const outcome = item.decision?.outcome ?? null;
   const edited = outcome?.type === 'plan_approved' && outcome.edited;
+  const fresh = outcome?.type === 'plan_approved' && outcome.freshContext;
   const plan = (edited ? approved?.plan : undefined) ?? input?.plan ?? '';
   const version = item.decision?.planVersion ?? null;
   const status = planStatus(item, t);
+  const cwd = useSessionCwd(sessionKey);
   const feedback =
     outcome?.type === 'plan_revised' && item.result !== null
       ? stripToolUseError(resultText(item).text).trim()
@@ -85,6 +89,15 @@ function PlanFinal({ item, sessionKey }: ToolBodyProps) {
         <span className={cn('rounded-sm border px-1.5 py-px text-2xs font-medium', TONE_CLASS[status.tone])}>
           {status.text}
         </span>
+        {fresh ? (
+          <span
+            data-slot="plan-fresh"
+            title={t('transcript.plan.freshContextHint')}
+            className="border-brand/40 text-brand rounded-sm border px-1.5 py-px text-2xs font-medium"
+          >
+            {t('transcript.plan.freshContext')}
+          </span>
+        ) : null}
       </div>
       {plan === '' ? null : (
         <Disclosure
@@ -102,9 +115,14 @@ function PlanFinal({ item, sessionKey }: ToolBodyProps) {
           {feedback}
         </p>
       )}
-      {input?.planFilePath === undefined ? null : (
-        <p className="text-muted-foreground truncate text-2xs" title={input.planFilePath}>
-          {t('transcript.plan.file', { path: shortPath(input.planFilePath, 3) })}
+      {input?.planFilePath === undefined || input.planFilePath === '' ? null : (
+        <p data-slot="plan-file" className="text-muted-foreground flex min-w-0 items-center gap-1 text-2xs">
+          <span className="shrink-0">{t('transcript.plan.file')}</span>
+          <span className="min-w-0 truncate *:max-w-full *:truncate *:align-bottom">
+            <ToolFileLink sessionKey={sessionKey} path={input.planFilePath} cwd={cwd}>
+              {shortPath(input.planFilePath, 3)}
+            </ToolFileLink>
+          </span>
         </p>
       )}
     </div>

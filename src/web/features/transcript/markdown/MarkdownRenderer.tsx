@@ -10,13 +10,19 @@ import {
 } from 'react';
 import ReactMarkdown, { type Components, type ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import type { SessionSummary } from '@shared/model';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
-import { CodeBlock } from '../components/CodeBlock';
+import { parseFileTarget } from '@web/lib/file-refs';
 import { resolveLanguage } from '@web/lib/languages';
+import { useFeatureSlots } from '@web/shell/slots';
+import { useSummarySelector } from '@web/state/hooks';
+import { CodeBlock } from '../components/CodeBlock';
 import { splitMarkdownBlocks } from '../lib/markdown-blocks';
 import { markdownUrlTransform, safeHttpUrl } from '../lib/safe-url';
 import { preserveWindowsPaths } from '../lib/windows-paths';
+import { FileRefContext, FileReference, linkedPath, LinkedText, type FileRefBase } from './FileReference';
+import { fileRefOf, rehypeFileRefs } from './rehype-file-refs';
 
 /**
  * The heavy part of the Markdown renderer (lazy chunk). Security (Review C.10, CLAUDE.md):
@@ -24,15 +30,23 @@ import { preserveWindowsPaths } from '../lib/windows-paths';
  * `urlTransform` + the link/image renderers only allow absolute http(s) URLs; images never load
  * (CSP `img-src 'self'` blocks remote images anyway) but become links. Performance: the text is
  * split into blocks, each block is a memoized `ReactMarkdown` – while streaming only the last
- * block is parsed again (B "Speicher und Performance").
+ * block is parsed again (B "Speicher und Performance"). File references (WP-55): paths in text and
+ * inline code and local link targets become the `FileLink` slot (`verify`, FileReference.tsx) –
+ * not in code blocks, and not in the block that is still streaming (half a path would be checked).
  */
 
 const REMARK_PLUGINS = [remarkGfm];
+const NO_REHYPE_PLUGINS: [] = [];
+const FILE_REF_PLUGINS = [rehypeFileRefs];
+
+const selectCwd = (summary: SessionSummary): string | null => summary.cwd;
 
 /** The current block ends in an unclosed fence (no highlighting until it closes). */
 const OpenFenceContext = createContext(false);
 /** `code` inside `pre` is a code block, otherwise inline code. */
 const InPreContext = createContext(false);
+/** Inside a link (web, file or blocked): no file link in it. */
+const InLinkContext = createContext(false);
 
 function textOf(children: ReactNode): string {
   if (typeof children === 'string') return children;
@@ -45,9 +59,14 @@ type Props<K extends keyof JSX.IntrinsicElements> = ComponentProps<K> & ExtraPro
 
 function Code({ className, children }: Props<'code'>) {
   const inPre = useContext(InPreContext);
+  const inLink = useContext(InLinkContext);
   const openFence = useContext(OpenFenceContext);
   if (!inPre) {
-    return <code className="bg-muted rounded-sm px-1 py-px font-mono text-[0.85em]">{children}</code>;
+    return (
+      <code className="bg-muted rounded-sm px-1 py-px font-mono text-[0.85em]">
+        {typeof children === 'string' && !inLink ? <LinkedText text={children} /> : children}
+      </code>
+    );
   }
   const info = /(?:^|\s)language-(\S+)/.exec(className ?? '')?.[1] ?? null;
   const code = textOf(children).replace(/\n$/, '');
@@ -68,15 +87,29 @@ function Pre({ children }: Props<'pre'>) {
 
 function Link({ href, children }: Props<'a'>) {
   const t = useT();
+  const fileRefs = useContext(FileRefContext);
+  const { FileLink } = useFeatureSlots();
   const url = safeHttpUrl(href);
   if (url === null) {
+    // A local target (drive, relative, file:///C:/…): a file link, never an <a href> (WP-55).
+    const target = typeof href === 'string' && href !== '' ? parseFileTarget(href) : null;
+    const path = target === null ? null : linkedPath(target, fileRefs);
+    if (target !== null && path !== null && fileRefs !== null) {
+      return (
+        <InLinkContext value={true}>
+          <FileLink sessionKey={fileRefs.sessionKey} path={path} line={target.line} col={target.col} verify>
+            {children}
+          </FileLink>
+        </InLinkContext>
+      );
+    }
     return (
       <span
         data-blocked-link=""
         title={t('transcript.markdown.blockedLink')}
         className="decoration-muted-foreground underline decoration-dotted underline-offset-2"
       >
-        {children}
+        <InLinkContext value={true}>{children}</InLinkContext>
       </span>
     );
   }
@@ -88,9 +121,16 @@ function Link({ href, children }: Props<'a'>) {
       title={t('transcript.markdown.externalLink', { url })}
       className="text-brand underline-offset-2 hover:underline"
     >
-      {children}
+      <InLinkContext value={true}>{children}</InLinkContext>
     </a>
   );
+}
+
+/** Spans come only from `rehypeFileRefs` (raw HTML is dropped): file references. */
+function Span({ node, children }: Props<'span'>) {
+  const target = fileRefOf(node);
+  if (target === null) return <span>{children}</span>;
+  return <FileReference target={target}>{children}</FileReference>;
 }
 
 /** Images never load; a safe source becomes a link, otherwise only the alt text remains. */
@@ -137,6 +177,7 @@ const heading = 'mt-3 mb-1.5 font-semibold first:mt-0';
 const COMPONENTS: Components = {
   p: ({ children }) => <p className="my-2 first:mt-0 last:mb-0">{children}</p>,
   a: Link,
+  span: Span,
   img: Image,
   code: Code,
   pre: Pre,
@@ -187,28 +228,54 @@ const COMPONENTS: Components = {
 const MarkdownBlockView = memo(function MarkdownBlockView({
   text,
   openFence,
+  fileRefs,
 }: {
   text: string;
   openFence: boolean;
+  fileRefs: FileRefBase | null;
 }) {
   return (
     <OpenFenceContext value={openFence}>
-      <ReactMarkdown
-        remarkPlugins={REMARK_PLUGINS}
-        skipHtml
-        urlTransform={markdownUrlTransform}
-        components={COMPONENTS}
-      >
-        {text}
-      </ReactMarkdown>
+      <FileRefContext value={fileRefs}>
+        <ReactMarkdown
+          remarkPlugins={REMARK_PLUGINS}
+          rehypePlugins={fileRefs === null ? NO_REHYPE_PLUGINS : FILE_REF_PLUGINS}
+          skipHtml
+          urlTransform={markdownUrlTransform}
+          components={COMPONENTS}
+        >
+          {text}
+        </ReactMarkdown>
+      </FileRefContext>
     </OpenFenceContext>
   );
 });
 
-export function MarkdownRenderer({ text, streaming }: { text: string; streaming: boolean }) {
+export function MarkdownRenderer({
+  text,
+  streaming,
+  sessionKey,
+  baseDir,
+}: {
+  text: string;
+  streaming: boolean;
+  sessionKey?: string | undefined;
+  baseDir?: string | undefined;
+}) {
   // V2-12: backslashes of Windows paths in running text stay visible (`\.` is no escape there).
   const blocks = useMemo(() => splitMarkdownBlocks(preserveWindowsPaths(text)), [text]);
+  const cwd = useSummarySelector(sessionKey ?? null, selectCwd, null);
+  const base = baseDir ?? cwd;
+  const fileRefs = useMemo<FileRefBase | null>(
+    () => (sessionKey === undefined ? null : { sessionKey, base }),
+    [sessionKey, base],
+  );
   return blocks.map((block, index) => (
-    <MarkdownBlockView key={index} text={block.text} openFence={streaming && block.openFence} />
+    <MarkdownBlockView
+      key={index}
+      text={block.text}
+      openFence={streaming && block.openFence}
+      fileRefs={streaming && index === blocks.length - 1 ? null : fileRefs}
+    />
   ));
 }

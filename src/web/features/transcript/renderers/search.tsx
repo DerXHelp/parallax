@@ -5,8 +5,10 @@ import { useT } from '@web/i18n';
 import { shortPath } from '@web/lib/path-display';
 import { Button } from '@web/ui/button';
 import { CappedContent } from '../components/CappedContent';
+import { ToolFileLink } from '../components/ToolFileLink';
 import { resultText, stripToolUseError } from '../lib/text';
 import { readGlobInput, readGrepInput, readSearchResult } from '../lib/tool-input';
+import { useSessionCwd } from '../state/tasks';
 import { GenericToolBody } from './generic';
 import { TerminalOutput } from './parts';
 import type { ToolBodyProps, ToolRenderer, Translate } from './types';
@@ -14,7 +16,9 @@ import type { ToolBodyProps, ToolRenderer, Translate } from './types';
 /**
  * Grep / Glob as a result list. Live results carry `{ mode, filenames, numFiles, numLines … }`; the
  * history only has the CLI text (file per line, `path:line:text` in content mode, a leading
- * "Found N files"), so the list is parsed from the text when `structured` is missing.
+ * "Found N files"), so the list is parsed from the text when `structured` is missing. Every hit is
+ * a `FileLink` (WP-55, no `verify`; relative hits against the cwd), content groups at their first
+ * matching line.
  */
 
 const PAGE = 100;
@@ -62,7 +66,12 @@ function modeOf(item: ToolCallItem): string | undefined {
   return readGrepInput(item.input)?.output_mode ?? 'files_with_matches';
 }
 
-function FileList({ files }: { files: readonly string[] }) {
+interface LinkBase {
+  sessionKey: string;
+  cwd: string | null;
+}
+
+function FileList({ files, base }: { files: readonly string[]; base: LinkBase }) {
   const t = useT();
   const [limit, setLimit] = useState(PAGE);
   const hidden = files.length - Math.min(limit, files.length);
@@ -71,7 +80,9 @@ function FileList({ files }: { files: readonly string[] }) {
       <ul className="max-h-72 overflow-auto py-1 font-mono text-xs leading-5">
         {files.slice(0, limit).map((file, index) => (
           <li key={index} title={file} className="truncate px-2.5">
-            {shortPath(file, 4)}
+            <ToolFileLink sessionKey={base.sessionKey} path={file} cwd={base.cwd}>
+              {shortPath(file, 4)}
+            </ToolFileLink>
           </li>
         ))}
       </ul>
@@ -92,7 +103,7 @@ function FileList({ files }: { files: readonly string[] }) {
   );
 }
 
-function ContentList({ groups }: { groups: readonly FileGroup[] }) {
+function ContentList({ groups, base }: { groups: readonly FileGroup[]; base: LinkBase }) {
   const t = useT();
   const [limit, setLimit] = useState(PAGE / 4);
   const hidden = groups.length - Math.min(limit, groups.length);
@@ -102,7 +113,14 @@ function ContentList({ groups }: { groups: readonly FileGroup[] }) {
         {groups.slice(0, limit).map((group, index) => (
           <div key={index} className="px-2.5 pb-1">
             <div title={group.path} className="text-info truncate">
-              {shortPath(group.path, 4)}
+              <ToolFileLink
+                sessionKey={base.sessionKey}
+                path={group.path}
+                line={group.lines[0]?.line ?? null}
+                cwd={base.cwd}
+              >
+                {shortPath(group.path, 4)}
+              </ToolFileLink>
             </div>
             {group.lines.map((line, lineIndex) => (
               <div key={lineIndex} className="flex gap-2 whitespace-pre">
@@ -139,6 +157,8 @@ function SearchBody({ item, sessionKey }: ToolBodyProps) {
   const structured = readSearchResult(item.result?.structured ?? null);
   const parsed = useMemo(() => parseSearchText(text, mode), [text, mode]);
   const known = item.toolName === 'Glob' ? readGlobInput(item.input) : readGrepInput(item.input);
+  const cwd = useSessionCwd(sessionKey);
+  const base = useMemo<LinkBase>(() => ({ sessionKey, cwd }), [sessionKey, cwd]);
   if (known === null) return <GenericToolBody item={item} sessionKey={sessionKey} />;
   if (item.result === null) return null;
   if (item.result.isError) return <TerminalOutput text={stripToolUseError(text)} tone="error" />;
@@ -151,7 +171,7 @@ function SearchBody({ item, sessionKey }: ToolBodyProps) {
             return files.length === 0 ? (
               <p className="text-muted-foreground text-xs italic">{t('transcript.search.noResults')}</p>
             ) : (
-              <FileList files={files} />
+              <FileList files={files} base={base} />
             );
           }
           const view = value === text ? parsed : parseSearchText(value, mode);
@@ -161,9 +181,9 @@ function SearchBody({ item, sessionKey }: ToolBodyProps) {
                 <p className="text-muted-foreground text-xs italic">{t('transcript.search.noResults')}</p>
               );
             case 'files':
-              return <FileList files={view.files} />;
+              return <FileList files={view.files} base={base} />;
             case 'content':
-              return <ContentList groups={view.groups} />;
+              return <ContentList groups={view.groups} base={base} />;
             case 'raw':
               return <TerminalOutput text={value} />;
           }
