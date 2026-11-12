@@ -62,6 +62,8 @@ test('viewer: links in text and tool cards; Markdown, code at :12, image, PDF (L
   const answer = session.assistantText(FILES_ANSWER);
   await expect(answer).toBeVisible();
   await session.expectStatus('idle');
+  // The compact view (WP-63) shows the work steps as one line: open them.
+  await session.expandSteps();
 
   // Tool cards link the file they touched; the Read card opens the notes as rendered Markdown.
   for (const tool of ['Read', 'Write', 'Edit']) {

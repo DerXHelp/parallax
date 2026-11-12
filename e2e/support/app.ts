@@ -236,6 +236,25 @@ export class SessionView {
     return this.transcript.getByRole('region');
   }
 
+  /** WP-63: the group lines of the compact transcript (`data-state` = open | closed). */
+  stepGroups(): Locator {
+    return this.transcript.locator('[data-slot="step-group"]');
+  }
+
+  /**
+   * WP-63: opens every closed step group – the compact view (default) shows a run of work steps as
+   * one line; tests that look at single tool rows open them first.
+   */
+  async expandSteps(): Promise<void> {
+    const closed = this.transcript.locator(
+      '[data-slot="step-group"][data-state="closed"] [data-action="toggle-group"]',
+    );
+    for (let count = await closed.count(); count > 0; count--) {
+      await closed.first().click();
+      await expect(closed).toHaveCount(count - 1);
+    }
+  }
+
   /** The "…" menu next to the header (WP-35 §8). */
   async headerMenu(): Promise<Locator> {
     return openMenu(

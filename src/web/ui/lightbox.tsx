@@ -1,4 +1,13 @@
-import { DownloadIcon, ExpandIcon, ShrinkIcon, XIcon, ZoomInIcon, ZoomOutIcon } from 'lucide-react';
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  DownloadIcon,
+  ExpandIcon,
+  ShrinkIcon,
+  XIcon,
+  ZoomInIcon,
+  ZoomOutIcon,
+} from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
 import { useEffect, useEffectEvent, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { cn } from '@web/lib/cn';
@@ -12,6 +21,8 @@ import { IconButton } from './icon-button';
  * (`<a href download>`). All texts come from the caller (`t()` of the feature); the source is a
  * same-origin blob path or a `blob:`/`data:` URL (CSP `img-src`). With a trigger (`children`) it
  * opens itself; without one it is controlled (`open`) – e.g. one lightbox for a virtualized list.
+ * WP-63: with `navigation` it steps through a gallery (buttons, ← → while the image is fitted);
+ * a new image starts fitted again.
  */
 
 export interface LightboxImage {
@@ -35,6 +46,19 @@ export interface LightboxLabels {
   close: string;
   /** Zoom level text, e.g. "125 %". */
   zoom: (percent: number) => string;
+}
+
+/** Previous/next of a gallery (WP-63); texts from the caller. */
+export interface LightboxNavigation {
+  /** 0-based position of the shown image. */
+  index: number;
+  count: number;
+  onPrevious: () => void;
+  onNext: () => void;
+  previous: string;
+  next: string;
+  /** "Image 2 of 7". */
+  position: string;
 }
 
 /** Zoom steps: ×1.25 per step, between 10 % and 800 %. */
@@ -73,9 +97,19 @@ export interface LightboxProps {
   onOpenChange?: (open: boolean) => void;
   /** After closing (Radix): `preventDefault()` and focus an element of your own. */
   onCloseAutoFocus?: (event: Event) => void;
+  /** WP-63: step through a gallery. */
+  navigation?: LightboxNavigation;
 }
 
-export function Lightbox({ image, labels, children, open, onOpenChange, onCloseAutoFocus }: LightboxProps) {
+export function Lightbox({
+  image,
+  labels,
+  children,
+  open,
+  onOpenChange,
+  onCloseAutoFocus,
+  navigation,
+}: LightboxProps) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       {children === undefined ? null : <DialogPrimitive.Trigger asChild>{children}</DialogPrimitive.Trigger>}
@@ -85,31 +119,61 @@ export function Lightbox({ image, labels, children, open, onOpenChange, onCloseA
           data-slot="lightbox-overlay"
           className="bg-background/90 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50"
         />
-        <LightboxContent image={image} labels={labels} onCloseAutoFocus={onCloseAutoFocus} />
+        <LightboxContent
+          image={image}
+          labels={labels}
+          onCloseAutoFocus={onCloseAutoFocus}
+          navigation={navigation}
+        />
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
   );
+}
+
+function knownSize(image: LightboxImage): Size | null {
+  const { width, height } = image;
+  return width === null || width === undefined || height === null || height === undefined
+    ? null
+    : { width, height };
 }
 
 function LightboxContent({
   image,
   labels,
   onCloseAutoFocus,
+  navigation,
 }: {
   image: LightboxImage;
   labels: LightboxLabels;
   onCloseAutoFocus: ((event: Event) => void) | undefined;
+  navigation: LightboxNavigation | undefined;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   /** 'fit' = into the window; a number = scale of the natural size. */
   const [zoom, setZoom] = useState<number | 'fit'>('fit');
-  const [natural, setNatural] = useState<Size | null>(() => {
-    const { width, height } = image;
-    return width === null || width === undefined || height === null || height === undefined
-      ? null
-      : { width, height };
-  });
+  const [natural, setNatural] = useState<Size | null>(() => knownSize(image));
   const [box, setBox] = useState<Size | null>(null);
+  // WP-63: another image of the gallery starts fitted, with its own size.
+  const [shownSrc, setShownSrc] = useState(image.src);
+  if (shownSrc !== image.src) {
+    setShownSrc(image.src);
+    setZoom('fit');
+    setNatural(knownSize(image));
+  }
+  // A step to the first or last image disables the button that had the focus (click or ← →
+  // pressed on it): the focus would fall out of the box – the image area takes it back.
+  const index = navigation?.index;
+  useEffect(() => {
+    if (index === undefined) return;
+    const active = document.activeElement;
+    if (
+      active === null ||
+      active === document.body ||
+      (active instanceof HTMLButtonElement && active.disabled)
+    ) {
+      viewportRef.current?.focus();
+    }
+  }, [index]);
 
   const fitted = fitScale(natural, box);
   const scale = zoom === 'fit' ? fitted : zoom;
@@ -148,6 +212,19 @@ function LightboxContent({
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.ctrlKey || event.altKey || event.metaKey) return;
+    // A zoomed image keeps the arrow keys for scrolling.
+    if (navigation !== undefined && zoom === 'fit') {
+      if (event.key === 'ArrowLeft' && navigation.index > 0) {
+        event.preventDefault();
+        navigation.onPrevious();
+        return;
+      }
+      if (event.key === 'ArrowRight' && navigation.index < navigation.count - 1) {
+        event.preventDefault();
+        navigation.onNext();
+        return;
+      }
+    }
     switch (event.key) {
       case '+':
       case '=':
@@ -189,6 +266,32 @@ function LightboxContent({
         <DialogPrimitive.Title className="min-w-0 flex-1 truncate text-xs font-medium">
           {labels.title}
         </DialogPrimitive.Title>
+        {navigation === undefined || navigation.count < 2 ? null : (
+          <>
+            <IconButton
+              label={navigation.previous}
+              data-action="lightbox-previous"
+              onClick={navigation.onPrevious}
+              disabled={navigation.index <= 0}
+            >
+              <ChevronLeftIcon aria-hidden />
+            </IconButton>
+            <span
+              data-slot="lightbox-position"
+              className="text-muted-foreground text-2xs whitespace-nowrap tabular-nums"
+            >
+              {navigation.position}
+            </span>
+            <IconButton
+              label={navigation.next}
+              data-action="lightbox-next"
+              onClick={navigation.onNext}
+              disabled={navigation.index >= navigation.count - 1}
+            >
+              <ChevronRightIcon aria-hidden />
+            </IconButton>
+          </>
+        )}
         <IconButton
           label={labels.zoomOut}
           onClick={() => {

@@ -66,6 +66,7 @@ describe('header (WP-35 §8)', () => {
       'Copy console command',
       'Put to sleep',
       'Archive',
+      'Remove from Parallax…',
     ]);
   });
 

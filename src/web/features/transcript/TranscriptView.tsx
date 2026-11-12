@@ -1,22 +1,34 @@
 import { ArrowDownIcon, HistoryIcon } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { VList, type VListHandle } from 'virtua';
-import type { QueuedPrompt, SessionSummary } from '@shared/model';
+import type { QueuedPrompt, SessionSummary, TranscriptItem } from '@shared/model';
 import type { SessionViewState } from '@shared/sync';
 import { useT } from '@web/i18n';
+import { cn } from '@web/lib/cn';
 import { useTranscriptFollowHandler } from '@web/shell/transcript-follow';
 import { loadEarlier } from '@web/state/actions';
 import { errorPayloadOf } from '@web/state/connection';
-import { useSessionMeta, useSessionSelector, useSummarySelector, useTopLevelItemIds } from '@web/state/hooks';
+import {
+  selectTopLevelItemIds,
+  useSessionMeta,
+  useSessionSelector,
+  useSummarySelector,
+  useTopLevelItemIds,
+} from '@web/state/hooks';
 import { showErrorNotice } from '@web/state/notices';
+import { useTranscriptView } from '@web/state/transcript-view';
 import { Button } from '@web/ui/button';
 import { Skeleton } from '@web/ui/skeleton';
 import { Spinner } from '@web/ui/spinner';
+import { ToolImagesGallery } from './components/ImageGallery';
 import { ImageViewer } from './components/ImageViewer';
 import { QueuedIdsContext, TranscriptSettingsContext, type TranscriptSettings } from './context';
 import { QueuedPromptRow } from './items/MessageRows';
+import { StepGroupRow } from './items/StepGroupRow';
 import { TranscriptRow } from './items/TranscriptRow';
+import { buildRows, classifyItem, type ItemCode, type TranscriptRowModel } from './lib/grouping';
 import { preloadMarkdown } from './markdown/Markdown';
+import { useOpenGroups } from './state/groups';
 
 /**
  * The transcript of one session (slot `Transcript`, architecture §2.3d/g):
@@ -26,10 +38,13 @@ import { preloadMarkdown } from './markdown/Markdown';
  * - scrolling to the top loads earlier items (`loadEarlier`, `hasEarlier`), virtua's `shift` keeps
  *   the position while items are prepended;
  * - queued prompts (`detail.queue`) appear grey at the end until the CLI takes them over;
- * - one image lightbox next to the list (`ImageViewer`, WP-37): it survives its row unmounting.
+ * - one image lightbox next to the list (`ImageViewer`, WP-37): it survives its row unmounting;
+ * - WP-63 §1.5: the rows come from `buildRows` (lib/grouping.ts) – in the compact view (setting,
+ *   default) runs of work steps are one group line with their pictures as a gallery; the roles of
+ *   the items are compared shallowly, so deltas that change no role keep the rows.
  */
 
-type Row = { kind: 'earlier' } | { kind: 'item'; id: string } | { kind: 'queued'; prompt: QueuedPrompt };
+type Row = { kind: 'earlier' } | TranscriptRowModel | { kind: 'queued'; prompt: QueuedPrompt };
 
 const EARLIER_ROW: Row = { kind: 'earlier' };
 const EMPTY_QUEUE: readonly QueuedPrompt[] = Object.freeze([]);
@@ -44,12 +59,29 @@ const selectInitModel = (view: SessionViewState): string | null => view.detail.i
 const selectSummaryModel = (summary: SessionSummary): string | null => summary.model;
 const selectApiKeySource = (summary: SessionSummary): string | null => summary.apiKeySource;
 
+const EMPTY_CODES: readonly ItemCode[] = Object.freeze([]);
+const codesCache = new WeakMap<readonly TranscriptItem[], readonly ItemCode[]>();
+
+/** The role code of every top-level row id (same order); cached per items array. */
+function selectItemCodes(view: SessionViewState): readonly ItemCode[] {
+  const cached = codesCache.get(view.items);
+  if (cached !== undefined) return cached;
+  const byId = new Map<string, ItemCode>();
+  for (const item of view.items) byId.set(item.id, classifyItem(item));
+  const codes = selectTopLevelItemIds(view).map((id) => byId.get(id) ?? 'v');
+  codesCache.set(view.items, codes);
+  return codes;
+}
+
 function rowKey(row: Row): string {
   switch (row.kind) {
     case 'earlier':
       return 'earlier';
     case 'item':
       return row.id;
+    case 'group':
+    case 'gallery':
+      return row.key;
     case 'queued':
       return `queued:${row.prompt.messageUuid}`;
   }
@@ -90,6 +122,13 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
   const initModel = useSessionSelector(sessionKey, selectInitModel, null);
   const summaryModel = useSummarySelector(sessionKey, selectSummaryModel, null);
   const apiKeySource = useSummarySelector(sessionKey, selectApiKeySource, null);
+  const codes = useSessionSelector(sessionKey, selectItemCodes, EMPTY_CODES);
+  const mode = useTranscriptView();
+  const openGroups = useOpenGroups(sessionKey);
+  const itemRows = useMemo(
+    () => buildRows(ids, codes, mode, (key) => openGroups.has(key)),
+    [ids, codes, mode, openGroups],
+  );
 
   const settings = useMemo<TranscriptSettings>(
     () => ({
@@ -104,14 +143,14 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
   const rows = useMemo(() => {
     const result: Row[] = [];
     if (meta.hasEarlier) result.push(EARLIER_ROW);
-    for (const id of ids) result.push({ kind: 'item', id });
+    result.push(...itemRows);
     if (queue.length > 0) {
       const present = new Set(ids);
       for (const prompt of queue)
         if (!present.has(prompt.messageUuid)) result.push({ kind: 'queued', prompt });
     }
     return result;
-  }, [ids, meta.hasEarlier, queue]);
+  }, [ids, itemRows, meta.hasEarlier, queue]);
 
   // virtua `shift`: true exactly for the update that changed the start of the list – items
   // prepended, or the "earlier" row added/removed (derived from the previous shape); the next
@@ -169,11 +208,41 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
     element.scrollTop = Math.max(0, handle.scrollSize - handle.viewportSize);
   }, [scrollElement]);
 
+  // WP-63: opening or closing a step group is a click on a row in view. Following the end would push
+  // that group line out of view (its steps are rows after it), so the list keeps its offset – also
+  // while virtua measures the new rows (`onResize`); after that (two frames: it measures after the
+  // first one's layout) it sticks again only while the end is in view, otherwise "Jump to latest".
+  const openGroupsRef = useRef(openGroups);
+  const settleRef = useRef(0);
+  const settlingRef = useRef(false);
+  const settleAfterToggle = useCallback(() => {
+    cancelAnimationFrame(settleRef.current);
+    settlingRef.current = true;
+    settleRef.current = requestAnimationFrame(() => {
+      settleRef.current = requestAnimationFrame(() => {
+        settlingRef.current = false;
+        const handle = listRef.current;
+        if (handle === null) return;
+        stickRef.current = handle.scrollSize - handle.viewportSize - handle.scrollOffset <= STICK_PX;
+        setShowJump(!stickRef.current);
+      });
+    });
+  }, []);
+  useEffect(
+    () => () => {
+      cancelAnimationFrame(settleRef.current);
+    },
+    [],
+  );
+
   // New rows (and the first render): follow them while the user is at the bottom.
   useLayoutEffect(() => {
     rowCountRef.current = rows.length;
-    if (stickRef.current) scrollToEnd();
-  }, [rows.length, scrollToEnd]);
+    const toggled = openGroupsRef.current !== openGroups;
+    openGroupsRef.current = openGroups;
+    if (toggled) settleAfterToggle();
+    else if (stickRef.current) scrollToEnd();
+  }, [rows.length, openGroups, scrollToEnd, settleAfterToggle]);
 
   const requestEarlier = useCallback(() => {
     if (loadingRef.current || !hasEarlierRef.current) return;
@@ -209,6 +278,7 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
   // scroll event looks like a scroll towards the top and unsticks – with the sizes now current, the
   // list sticks again once the end is in view (WP-55).
   const onResize = useCallback(() => {
+    if (settlingRef.current) return;
     const handle = listRef.current;
     if (
       !stickRef.current &&
@@ -269,11 +339,40 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
                 className="focus-visible:ring-ring/60 h-full outline-none focus-visible:ring-2 focus-visible:ring-inset"
               >
                 {(row: Row) => (
-                  <div key={rowKey(row)} data-row={row.kind} className="mx-auto w-full max-w-4xl px-4 py-1.5">
+                  <div
+                    key={rowKey(row)}
+                    data-row={row.kind}
+                    data-nested={row.kind === 'item' && row.nested ? 'true' : undefined}
+                    className={cn(
+                      'mx-auto w-full max-w-4xl px-4',
+                      row.kind === 'item' && row.nested ? 'py-0.5' : 'py-1.5',
+                    )}
+                  >
                     {row.kind === 'earlier' ? (
                       <EarlierRow loading={loadingEarlier} onLoad={requestEarlier} />
                     ) : row.kind === 'item' ? (
-                      <TranscriptRow sessionKey={sessionKey} itemId={row.id} />
+                      row.nested ? (
+                        // A step of an open group: indented under its group line.
+                        <div className="border-border ml-2.5 border-l pl-3">
+                          <TranscriptRow
+                            sessionKey={sessionKey}
+                            itemId={row.id}
+                            hideImages={row.hideImages}
+                          />
+                        </div>
+                      ) : (
+                        <TranscriptRow sessionKey={sessionKey} itemId={row.id} hideImages={row.hideImages} />
+                      )
+                    ) : row.kind === 'group' ? (
+                      <StepGroupRow
+                        sessionKey={sessionKey}
+                        groupKey={row.key}
+                        ids={row.ids}
+                        imageIds={row.imageIds}
+                        open={row.open}
+                      />
+                    ) : row.kind === 'gallery' ? (
+                      <ToolImagesGallery sessionKey={sessionKey} ids={row.ids} className="ml-5" />
                     ) : (
                       <QueuedPromptRow prompt={row.prompt} />
                     )}

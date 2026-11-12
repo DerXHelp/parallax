@@ -1069,6 +1069,7 @@ bzw. das Profil.
 | `session.setPinned` | nur Flag | – |
 | `session.setArchived(true)` | „ohne Arbeit“; schließt einen laufenden Prozess, räumt Benachrichtigungen, löscht `continueAt` | `SESSION_BUSY` |
 | `session.setArchived(false)` | nur Flag | – |
+| `session.remove` (WP-63) | auch archiviert und extern erlaubt; Retry abbrechen, im Lock geplantes Fortsetzen löschen, laufenden Prozess wie `session.close` beenden (offene Entscheidungen → `cancelled`/`process_exit`), Eintrag aus Speicher und `sessions.json`, `summary.remove` (Abonnenten: `session.unavailable`); **keine Datei wird gelöscht** (§8); danach antwortet jeder Befehl zu dem Eintrag `ENTRY_NOT_FOUND`, auch einer, der auf den Lock wartete | `ENTRY_NOT_FOUND` |
 | `session.setFastMode` | laufend `applyFlagSettings({fastMode})`, dann `Entry.fastMode`; ruhend speichern, beim Start `StartSessionRequest.fastMode` | `CLAUDE_CONTROL_FAILED` |
 | `session.switchConversation` | Ziel ∈ `conversations`, ≠ aktuelle, mit `sessionId`; „ohne Arbeit“; Prozess schließen, aktuelle endet mit `switched`, Ziel ans Ende, `conversation.reset{trigger:'switch', hasEarlier}` + Log-Ende als `item.upsert` + `detail.patch`; Titel nicht `custom` → Titel des Ziels | `CONVERSATION_NOT_FOUND`, `SESSION_NOT_STARTED`, `SESSION_BUSY` |
 | `session.openExternal` | Session-ID vorhanden; „ohne Arbeit“; `checkCwd` (R4-09); Query schließen; `consoleLaunchFor` → `ConsoleLauncher.open` (nicht mehr nach Shutdown-Beginn, R4-03); Erfolg → `Entry.external`, `external{active:true}`, Item `handoff/external`; Fehler → bleibt ruhend; schon extern (auch ein zweites, auf den Lock wartendes `openExternal`) → Fehler, nie eine zweite Konsole | `SESSION_NOT_STARTED`, `SESSION_BUSY`, `SESSION_EXTERNAL`, `EXTERNAL_CONSOLE_FAILED`, `CWD_*`/`PATH_REJECTED`, `SERVER_SHUTTING_DOWN`, Profilfehler |
@@ -1146,7 +1147,7 @@ Bilder immer als Blob. Assistant-Text wird nie gekappt.
 | `system/compact_boundary`, `notification`, `informational`, `permission_denied`, `memory_recall`, `local_command_output` | gleichnamiges `system`-Item | – |
 | `system/api_retry` | `system/api_retry` (ein Item je Serie, `upsert`) | `retry` |
 | `system/hook_*` | `system/hook` (`upsert` je `hook_id`) | – |
-| `rate_limit_event` | `system/rate_limit` nur bei `allowed_warning`/`rejected` | `rate_limit`; bei `rejected` zusätzlich `assistant_error` (`RATE_LIMIT_REJECTED`, `credits_required` → `CLAUDE_BILLING`) |
+| `rate_limit_event` | `system/rate_limit` nur bei `rejected` (WP-63; `allowed_warning` speist nur die Limit-Leiste, alte Logs mit Warnungen blendet das Web aus) | `rate_limit`; bei `rejected` zusätzlich `assistant_error` (`RATE_LIMIT_REJECTED`, `credits_required` → `CLAUDE_BILLING`) |
 | Modell-Fallback (`model_refusal_fallback`) | `system/model_fallback`; zurückgezogene Items → `item.remove` | – |
 | `system/model_refusal_no_fallback` | `system/error` (`MODEL_REFUSAL`) | – |
 | `system/session_writes_lost` (Phase 3, WP-52) | `system/error` (`SESSION_WRITES_LOST{lost, errorCode}`, z. B. Platte voll) | – |
@@ -1329,6 +1330,11 @@ edge/                                 nur aus Versionen vor ADR-136: früheres E
 ui/<buildId>/                         beim Serverstart fixierte Kopie von dist/web (nur die des laufenden Builds;
                                       ältere werden beim Start gelöscht; V2-03, ADR-066)
 ```
+
+WP-63 `session.remove`: der Eintrag verschwindet nur aus `sessions.json`; `entries/<entryId>/`, die Blobs
+und das claude-Transkript im Konfigurationsordner des Profils bleiben liegen (kein Aufräumlauf löscht sie
+später als „verwaist“).
+
 Der **Home-Lock** (unten) ist eine Named Pipe und liegt nicht im Home. Phase 2 kommen – nur als
 Opt-in und nur auf dem produktiven Server (ADR-109/110) – `HKCU\Software\Classes\parallax`
 (Protokoll-Handler) und `Parallax.lnk` im Benutzer-Autostart hinzu. Sonst einzige Änderung, die

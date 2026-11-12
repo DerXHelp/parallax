@@ -127,6 +127,24 @@ describe('normalizeContextUsage', () => {
     });
   });
 
+  it('WP-63: keeps the autocompact threshold as a whole token count (anything else → null)', () => {
+    const base = { totalTokens: 260_000, maxTokens: 1_000_000 };
+    const of = (extra: Record<string, unknown>) =>
+      normalizeContextUsage({ ...base, ...extra }, { contextWindow: null }, AT, 'summary');
+    expect(of({ autoCompactThreshold: 400_000, isAutoCompactEnabled: true })).toMatchObject({
+      autoCompactThreshold: 400_000,
+      isAutoCompactEnabled: true,
+    });
+    expect(of({ autoCompactThreshold: 399_999.6 })?.autoCompactThreshold).toBe(400_000);
+    expect(of({ autoCompactThreshold: -5 })?.autoCompactThreshold).toBeNull();
+    expect(of({ autoCompactThreshold: null, isAutoCompactEnabled: false })).toMatchObject({
+      autoCompactThreshold: null,
+      isAutoCompactEnabled: false,
+    });
+    const breakdown = of({ autoCompactThreshold: 400_000, isAutoCompactEnabled: true });
+    expect(contextBreakdownSchema.parse(breakdown)).toStrictEqual(breakdown);
+  });
+
   it('returns null for unusable answers', () => {
     expect(normalizeContextUsage(null, { contextWindow: null }, AT, 'summary')).toBeNull();
     expect(normalizeContextUsage({ totalTokens: 'many' }, { contextWindow: null }, AT, 'summary')).toBeNull();
@@ -194,6 +212,29 @@ describe('in-turn estimate', () => {
         { override: null, lastSdkMaxTokens: null, modelContextWindow: null },
         AT,
       ),
+    ).toBeNull();
+  });
+
+  it('WP-63: carries the autocompact fields of the last measurement (unknown without one)', () => {
+    const sources = { override: null, lastSdkMaxTokens: 1_000_000 };
+    expect(estimateContextGauge(estimate, sources, AT)).toMatchObject({
+      autoCompactThreshold: null,
+      isAutoCompactEnabled: null,
+    });
+    const gauge = estimateContextGauge(
+      estimate,
+      { ...sources, autoCompact: { autoCompactThreshold: 400_000, isAutoCompactEnabled: true } },
+      AT,
+    );
+    expect(gauge).toMatchObject({
+      source: 'estimate',
+      totalTokens: 50_000,
+      autoCompactThreshold: 400_000,
+      isAutoCompactEnabled: true,
+    });
+    expect(contextGaugeSchema.parse(gauge)).toStrictEqual(gauge);
+    expect(
+      estimateContextGauge(estimate, { ...sources, autoCompact: null }, AT)?.autoCompactThreshold,
     ).toBeNull();
   });
 

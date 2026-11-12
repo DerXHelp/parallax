@@ -102,10 +102,10 @@ test('plan at 75 % context (fake:context-high): the ▾ menu recommends "With fr
   const session = await app.newSession(await server.makeProject('recommended'));
   await session.send('fake:context-high');
   await expect(session.assistantText('the context is now about 75 % full')).toBeVisible();
-  await expect(session.header.locator('[data-slot="header-context"] [data-slot="gauge"]')).toHaveAttribute(
-    'aria-valuenow',
-    '75',
-  );
+  // WP-63 §1.4: the bar runs up to the autocompact (150K of 167K = 90), the window share stays 75 %.
+  const gauge = session.header.locator('[data-slot="header-context"] [data-slot="gauge"]');
+  await expect(gauge).toHaveAttribute('aria-valuenow', '90');
+  await expect(gauge).toHaveAttribute('aria-valuetext', /model 200K \(75%\)/);
 
   await session.send('fake:plan make hello.txt');
   const card = await session.armedCard('plan');

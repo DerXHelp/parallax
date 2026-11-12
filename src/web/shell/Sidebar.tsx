@@ -5,6 +5,7 @@ import {
   FolderIcon,
   FolderTreeIcon,
   LayersIcon,
+  ListXIcon,
   PanelLeftCloseIcon,
   PlusIcon,
   SquarePenIcon,
@@ -41,6 +42,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
 import { ConnectionIndicator } from './ConnectionIndicator';
 import { PathTail } from './navigation/PathTail';
 import { AccountLimits } from './navigation/AccountLimits';
+import { openArchiveCleanup } from './navigation/remove-session';
 import { newSessionIn } from './navigation/session-actions';
 import { SessionRow } from './navigation/SessionRow';
 import { setArchiveView, setSidebarMode, useArchiveView, useSidebarMode } from './navigation/sidebar-view';
@@ -119,6 +121,7 @@ function Rows({
             tabStop={entry.sessionKey === context.tabStopKey}
             profileColor={profile?.color ?? null}
             profileName={profile?.name ?? null}
+            profileEffort={profile?.defaults.effort ?? null}
             requiredCli={context.requiredCli}
             showPath={showPath}
             onSelect={context.onSelect}
@@ -387,6 +390,20 @@ export function Sidebar({
               <ArrowLeftIcon aria-hidden />
             </IconButton>
             <h2 className="text-xs font-medium">{t('navigation.sidebar.archiveTitle')}</h2>
+            <span className="flex-1" />
+            {/* WP-63 §1.3: remove archived sessions from Parallax (files stay). */}
+            {archived.length === 0 ? null : (
+              <Button
+                variant="ghost"
+                size="sm"
+                data-action="archive-cleanup"
+                className="text-muted-foreground h-6 px-1.5 text-2xs"
+                onClick={openArchiveCleanup}
+              >
+                <ListXIcon aria-hidden />
+                {t('navigation.cleanup.open')}
+              </Button>
+            )}
           </div>
         ) : null}
         <div onKeyDown={onListKeyDown}>{list}</div>

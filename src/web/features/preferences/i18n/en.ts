@@ -32,6 +32,11 @@ export const en = {
   general: {
     languageHint: 'Language of the app and of the Windows notifications.',
     themeHint: 'System follows the Windows setting. The settings menu offers the same quick choice.',
+    /** WP-63 §1.5. */
+    transcript: 'Transcript',
+    transcriptHint:
+      'Compact: the work steps between two messages form one line (click to open), pictures stay visible as a gallery. All steps: every step on its own line. Kept in this browser for every window.',
+    transcriptViews: { compact: 'Compact', all: 'All steps' },
   },
   notifications: {
     events: 'Events',

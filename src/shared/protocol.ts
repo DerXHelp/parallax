@@ -383,6 +383,13 @@ export const commandSchema = z.discriminatedUnion('name', [
   z.object({ name: z.literal('files.project'), entryId: entryIdSchema }),
   /** Installed editor presets and the custom executable (settings "Dateien"). */
   z.object({ name: z.literal('editor.detect') }),
+  // ---- WP-63 (user feedback 1) ----
+  /**
+   * Remove the entry from Parallax only (list, memory, open views → `summary.remove`): a running
+   * process is closed first like `session.close`; nothing on disk is deleted (claude transcript,
+   * Parallax log, attachments, plan versions stay; `claude --resume` keeps working).
+   */
+  z.object({ name: z.literal('session.remove'), entryId: entryIdSchema }),
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export type CommandName = Command['name'];
@@ -486,6 +493,7 @@ export const commandResultSchemas = {
     vscode: z.string().nullable(),
     custom: z.object({ executable: z.string(), exists: z.boolean() }).nullable(),
   }),
+  'session.remove': z.object({}),
 } as const satisfies Record<CommandName, z.ZodType>;
 export type CommandResult<N extends CommandName> = z.infer<(typeof commandResultSchemas)[N]>;
 

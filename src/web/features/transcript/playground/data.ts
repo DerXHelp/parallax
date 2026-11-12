@@ -42,6 +42,7 @@ export const DEMO_ENTRIES = {
   queue: sampleId('en', 209),
   media: sampleId('en', 210),
   files: sampleId('en', 211),
+  compact: sampleId('en', 212),
 } as const;
 
 export type DemoEntry = keyof typeof DEMO_ENTRIES;
@@ -851,10 +852,19 @@ export const DEMO_IMAGE_BLOBS = {
   page: sampleBlobId(43),
 } as const;
 
+/** WP-63: the screenshots of the compact demo (a burst of Read results). */
+const DEMO_SHOT_BLOBS = [44, 45, 46, 47, 48, 49].map((n) => sampleBlobId(n));
+
 const DEMO_IMAGES: Readonly<Record<string, { width: number; height: number; label: string; hue: number }>> = {
   [DEMO_IMAGE_BLOBS.screenshot]: { width: 1568, height: 882, label: 'Screenshot 1568 × 882', hue: 215 },
   [DEMO_IMAGE_BLOBS.second]: { width: 600, height: 900, label: 'Portrait 600 × 900', hue: 150 },
   [DEMO_IMAGE_BLOBS.page]: { width: 2400, height: 1500, label: 'Browser screenshot 2400 × 1500', hue: 280 },
+  ...Object.fromEntries(
+    DEMO_SHOT_BLOBS.map((blobId, i) => [
+      blobId,
+      { width: 1280, height: 800, label: `E2E step ${String(i + 1)}`, hue: 20 + i * 45 },
+    ]),
+  ),
 };
 
 /** A generated SVG as `data:` URL for the demo blobs (CSP `img-src data:`), else null. */
@@ -962,6 +972,125 @@ function mediaSession(): DemoSession {
     ),
   ];
   return { summary: summaryOf(entryId, 'Images and handoff'), snapshot: snapshotOf(entryId, items) };
+}
+
+/**
+ * WP-63 §1.5: a long work session as the user reported it – runs of thinking + Bash between
+ * sentences to the user (one run with a failing command), a burst of screenshots (gallery), a
+ * hidden limit warning (§1.2) and a group that is still running at the end.
+ */
+function compactSession(): DemoSession {
+  const entryId = DEMO_ENTRIES.compact;
+  const order = counter();
+  const items: TranscriptItem[] = [];
+  let message = 0;
+  const think = (text: string) => {
+    const messageId = `msg_compact_${String(++message)}`;
+    const at = order();
+    items.push(
+      sampleItems.thinking({
+        id: `${messageId}:0`,
+        messageId,
+        blockIndex: 0,
+        order: at,
+        at: sampleTime(at * 7),
+        text: { text, truncated: null },
+      }),
+    );
+  };
+  const bash = (command: string, outcome: 'ok' | 'fail' | 'running' = 'ok') => {
+    const messageId = `msg_compact_${String(++message)}`;
+    const at = order();
+    items.push(
+      tool(messageId, 0, at, {
+        toolName: 'Bash',
+        input: { command, description: command },
+        at: sampleTime(at * 7),
+        status: outcome === 'running' ? 'running' : outcome === 'fail' ? 'error' : 'done',
+        result:
+          outcome === 'running'
+            ? null
+            : textResult(outcome === 'fail' ? 'Error: 1 test failed (login.spec.ts:42)' : `ok: ${command}`, {
+                isError: outcome === 'fail',
+                at: sampleTime(at * 7 + 5),
+              }),
+      }),
+    );
+  };
+  const say = (text: string) => {
+    const messageId = `msg_compact_${String(++message)}`;
+    const at = order();
+    items.push(
+      sampleItems.assistantText({
+        id: `${messageId}:0`,
+        messageId,
+        blockIndex: 0,
+        order: at,
+        at: sampleTime(at * 7),
+        text,
+      }),
+    );
+  };
+
+  items.push(user('px:compact:prompt', order(), 'Fix the flaky login E2E test and show me the screenshots.'));
+  const commands = [
+    'pnpm install --frozen-lockfile',
+    'pnpm exec playwright test e2e/login.spec.ts',
+    'git log --oneline -5 -- e2e/login.spec.ts',
+    'pnpm exec playwright test e2e/login.spec.ts --repeat-each=5',
+    'pnpm exec eslint e2e/login.spec.ts',
+  ];
+  for (const [i, command] of commands.entries()) {
+    think(`Step ${String(i + 1)}: ${command}.`);
+    bash(command, i === 3 ? 'fail' : 'ok');
+  }
+  // Older logs still hold limit warnings: hidden, they do not split the run (§1.2).
+  items.push(
+    sampleSystemItems.rate_limit({
+      id: sampleUuid(2120),
+      order: order(),
+      info: { ...sampleSystemItems.rate_limit().info, status: 'allowed_warning' },
+    }),
+  );
+  think('The test waits for a fixed 500 ms – replace that with an expectation.');
+  bash('pnpm exec playwright test e2e/login.spec.ts --repeat-each=20');
+  say('The flake came from a fixed timeout; it now waits for the redirect. Here are the screenshots:');
+  for (const [i, blobId] of DEMO_SHOT_BLOBS.entries()) {
+    const messageId = `msg_compact_${String(++message)}`;
+    const at = order();
+    items.push(
+      tool(messageId, 0, at, {
+        toolName: 'Read',
+        input: { file_path: `D:\\work\\app\\test-results\\login-step-${String(i + 1)}.png` },
+        at: sampleTime(at * 7),
+        result: {
+          isError: false,
+          content: [
+            {
+              type: 'image',
+              image: sampleBlobRef({
+                blobId,
+                name: `login-step-${String(i + 1)}.png`,
+                width: 1280,
+                height: 800,
+              }),
+            },
+          ],
+          structured: null,
+          structuredTruncated: null,
+          at: sampleTime(at * 7 + 2),
+        },
+      }),
+    );
+  }
+  say('All six steps look right. I will run the whole suite once more.');
+  think('Full run, then the build.');
+  bash('pnpm exec playwright test');
+  bash('pnpm build', 'running');
+  return {
+    summary: summaryOf(entryId, 'Compact transcript', { status: sampleStatusFacts({ runState: 'working' }) }),
+    snapshot: snapshotOf(entryId, items),
+  };
 }
 
 function streamingSession(): DemoSession {
@@ -1138,5 +1267,6 @@ export function demoSessions(now: number): DemoSession[] {
     queueSession(),
     mediaSession(),
     filesSession(now),
+    compactSession(),
   ];
 }
