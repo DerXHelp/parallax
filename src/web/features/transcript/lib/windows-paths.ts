@@ -12,11 +12,15 @@ import { closesFence, openingFence, type Fence } from './markdown-blocks';
  */
 
 /**
- * A drive path: letter + `:\` not inside a word (`file:\x` is none), up to whitespace; or a UNC
- * path with host and share (`\\server\share…`) or a device path (`\\?\…`, `\\.\…`) at the start of
- * a word – one match, so a drive inside a device path is not handled twice.
+ * A drive path: letter + `:\` not inside a word (`file:\x` is none), up to whitespace – and on over
+ * a single space into a word that holds a backslash after its first character, the rest of a folder
+ * name with spaces (V4-01: `C:\Users\Max Mustermann\.claude`; an escape at the start of a word,
+ * `\*bold\*`, stays an escape); or a UNC path with host and share (`\\server\share…`) or a device
+ * path (`\\?\…`, `\\.\…`) at the start of a word – one match, so a drive inside a device path is not
+ * handled twice.
  */
-const WINDOWS_PATH = /(?<![A-Za-z0-9])[A-Za-z]:\\\S*|(?<![^\s(["'<])\\\\(?:[^\s\\]+\\[^\s\\]|[?.]\\)\S*/g;
+const WINDOWS_PATH =
+  /(?<![A-Za-z0-9])[A-Za-z]:\\\S*(?: [^\s\\]+\\\S*)*|(?<![^\s(["'<])\\\\(?:[^\s\\]+\\[^\s\\]|[?.]\\)\S*/g;
 /** A backslash before ASCII punctuation (CommonMark escapable) or at the end of the path. */
 const ESCAPING_BACKSLASH = /\\(?=[!-/:-@[-`{-~]|$)/g;
 /** Indented code blocks (4 spaces or a tab) keep their backslashes literally anyway. */

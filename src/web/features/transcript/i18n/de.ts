@@ -19,6 +19,8 @@ export const de: typeof en = {
     attachment: 'Anhang: {name}',
     image: 'Bild: {name}',
     unnamed: 'ohne Namen',
+    showAll: { one: 'Alles anzeigen ({count} Zeile)', other: 'Alle {count} Zeilen anzeigen' },
+    showLess: 'Weniger anzeigen',
   },
   image: {
     open: 'Bild {name} vergrößern',

@@ -206,6 +206,40 @@ describe('Markdown', () => {
       expect(screen.getByText('src/in/code.ts').closest('[data-testid="file-link"]')).toBeNull();
     });
 
+    it('links absolute paths with spaces whole – in text up to the file, in inline code as one span (V4-01)', async () => {
+      const project = 'C:\\Users\\Max Mustermann\\proj\\Projekt mit Leerzeichen äöü';
+      const { container } = renderWithSlots(
+        <Markdown
+          sessionKey={sessionKey}
+          text={[
+            `Changed ${project}\\README.md:3 and C:\\Users\\Max Mustermann\\.claude\\x.md.`,
+            '',
+            `Code: \`${project}\` and \`C:\\Users\\Max\\My File.txt\`.`,
+            '',
+            `The folder ${project} stays text, so does C:\\Users\\Max\\My File.txt; C:\\a\\b.ts and c.md.`,
+          ].join('\n')}
+        />,
+      );
+      await screen.findByText(/Changed/, {}, LAZY);
+      expect(links()).toEqual([
+        { text: `${project}\\README.md:3`, path: `${project}\\README.md`, line: '3' },
+        // The backslash before `.claude` survives the Markdown parser (preserveWindowsPaths).
+        {
+          text: 'C:\\Users\\Max Mustermann\\.claude\\x.md',
+          path: 'C:\\Users\\Max Mustermann\\.claude\\x.md',
+          line: '',
+        },
+        { text: project, path: project, line: '' },
+        { text: 'C:\\Users\\Max\\My File.txt', path: 'C:\\Users\\Max\\My File.txt', line: '' },
+        { text: 'C:\\a\\b.ts', path: 'C:\\a\\b.ts', line: '' },
+      ]);
+      // No prefix of a name with spaces reaches FileLink (it would be checked and maybe refused).
+      const paragraphs = [...container.querySelectorAll('p')].map((p) => p.textContent);
+      expect(paragraphs[2]).toBe(
+        `The folder ${project} stays text, so does C:\\Users\\Max\\My File.txt; C:\\a\\b.ts and c.md.`,
+      );
+    });
+
     it('UNC and device paths stay text and never reach FileLink (also as link targets)', async () => {
       const { container } = renderWithSlots(
         <Markdown

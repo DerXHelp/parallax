@@ -5,9 +5,9 @@ import { requestShell } from '@web/shell/requests';
 import { Button } from '@web/ui/button';
 import { Disclosure } from '@web/ui/disclosure';
 import { TodoItems } from './components/TodoItems';
-import { todoProgress } from './lib/rows';
+import { todoProgress } from './lib/todo-progress';
 import { useStripExpanded } from './state/strip';
-import { useTodos } from './state/tasks';
+import { useTodos } from './state/todos';
 
 /**
  * Slot `TaskStrip` (WP-55, ADR-150): the pinned task list above the composer, only while
@@ -20,9 +20,12 @@ export const TaskStrip = memo(function TaskStrip({ sessionKey }: { sessionKey: s
   const [expanded, setExpanded] = useStripExpanded(sessionKey);
   const progress = todoProgress(todos);
   if (todos === null || !progress.open) return null;
-  const line = [t('tasks.strip.progress', { done: progress.done, total: progress.total }), progress.active]
-    .filter((part) => part !== null && part !== '')
-    .join(' · ');
+  const done = t('tasks.strip.progress', { done: progress.done, total: progress.total });
+  // The separator belongs to the language (R5W-06): a key with placeholders, not a join.
+  const line =
+    progress.active === null || progress.active === ''
+      ? done
+      : t('tasks.strip.line', { progress: done, active: progress.active });
   return (
     <section
       data-slot="task-strip"

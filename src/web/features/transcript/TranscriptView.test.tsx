@@ -92,6 +92,30 @@ function keyOf(entryId: EntryId): string {
   return makeSessionKey(LOCAL_HOST_ID, entryId);
 }
 
+/** Longer than virtua's own 150-ms windows (scroll end, re-applied scroll targets). */
+const SCROLL_SETTLE_MS = 200;
+
+/**
+ * Resolves once `region` had no scroll event for `SCROLL_SETTLE_MS`. On every event this timer is
+ * set after virtua's (its listener came first), and timers run in the order they are due – so
+ * everything virtua still does after a scroll has happened before this resolves, under any load.
+ * Replaces fixed 20/250-ms waits before "nothing moved" assertions (R5W-11).
+ */
+function scrollSettled(region: HTMLElement): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      region.removeEventListener('scroll', restart);
+      resolve();
+    };
+    let timer = setTimeout(done, SCROLL_SETTLE_MS);
+    function restart() {
+      clearTimeout(timer);
+      timer = setTimeout(done, SCROLL_SETTLE_MS);
+    }
+    region.addEventListener('scroll', restart);
+  });
+}
+
 function session(
   n: number,
   items: TranscriptItem[],
@@ -280,7 +304,7 @@ describe('TranscriptView', () => {
       await Promise.resolve();
       region.scrollTop = 1000;
       fireEvent.scroll(region);
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await scrollSettled(region);
     });
     expect(region.scrollTop).toBe(1000);
     expect(screen.getByRole('button', { name: 'Jump to latest' })).toBeTruthy();
@@ -288,7 +312,7 @@ describe('TranscriptView', () => {
     await act(async () => {
       scenario.host.pushOps(s.entryId, [{ op: 'item.upsert', item: message(2) }]);
       scenario.connection.flush();
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await scrollSettled(region);
     });
     expect(region.scrollTop).toBe(1000);
   });
@@ -311,7 +335,7 @@ describe('TranscriptView', () => {
     // 20 rows of 48 px in 600 px, at the end (360 px). Settled: nothing from the first render is
     // re-applied any more (virtua's own scroll-to-index re-applied for 150 ms and hid the bug).
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await scrollSettled(region);
     });
     expect(region.scrollTop).toBe(360);
     // The window grows to 1000 px: the browser clamps the offset to 0 before virtua has measured the

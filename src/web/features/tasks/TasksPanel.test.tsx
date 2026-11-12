@@ -8,8 +8,20 @@ import { FeatureSlotsProvider, type FeatureSlots, type FileLinkSlotProps } from 
 import { refreshClock } from '@web/state/clock';
 import { clientStore, resetClientStore } from '@web/state/store';
 import { TooltipProvider } from '@web/ui/tooltip';
+import type * as RowsModule from './lib/rows';
 import { TasksPanel } from './TasksPanel';
 import { mixedTaskSession, startTasksScenario, TASKS_SESSION_KEY } from './testing';
+
+/** The product switch `TASK_STOP_BASH` as the panel sees it (through `canStopTask`). */
+const flags = vi.hoisted(() => ({ stopBash: true }));
+vi.mock('./lib/rows', async (importOriginal) => {
+  const actual = await importOriginal<typeof RowsModule>();
+  return {
+    ...actual,
+    canStopTask: (row: RowsModule.TaskRow, stopBash: boolean = flags.stopBash) =>
+      actual.canStopTask(row, stopBash),
+  };
+});
 
 /** FileLink stand-in: shows the props it got. */
 function ProbeFileLink({ path, verify, children }: FileLinkSlotProps) {
@@ -23,12 +35,17 @@ const SLOTS: Partial<FeatureSlots> = { FileLink: ProbeFileLink };
 
 let running: RunningScenario | null = null;
 
+// Several clicks per test against the FakeHost: well under a second alone, more under parallel
+// load (docs/wp/FLAKES.md – limits per file).
+vi.setConfig({ testTimeout: 30_000 });
+
 afterEach(() => {
   running?.stop();
   running = null;
   resetClientStore();
   vi.useRealTimers();
   refreshClock();
+  flags.stopBash = true;
 });
 
 function renderPanel() {
@@ -144,9 +161,11 @@ describe('TasksPanel', () => {
     expect(confirm?.textContent).toContain('Stop all 3 running tasks?');
     // Cancel has the focus (no accidental stop with Enter).
     expect(document.activeElement?.textContent).toBe('Cancel');
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.keyboard('{Enter}');
     expect(document.querySelector('[data-slot="tasks-stop-all-confirm"]')).toBeNull();
     expect(stopCommands(scenario)).toEqual([]);
+    // R5W-07: the focus goes back to "Stop all" (not to the body).
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Stop all' }));
 
     await user.click(screen.getByRole('button', { name: 'Stop all' }));
     const confirmBox = document.querySelector<HTMLElement>('[data-slot="tasks-stop-all-confirm"]');
@@ -158,6 +177,35 @@ describe('TasksPanel', () => {
     // In list order (one after the other: state/tasks.test.ts).
     expect(stopCommands(scenario)).toEqual(['task_agent', 'task_bash', 'task_deploy']);
     expect(screen.queryByRole('button', { name: 'Stop all' })).toBeNull();
+    // "Stop all" is gone: the focus stays in the panel (R5W-07).
+    expect(document.activeElement).toBe(screen.getByRole('region', { name: 'Tasks of this session' }));
+  });
+
+  it('with TASK_STOP_BASH off, a running shell command has no Stop and "Stop all" skips it (R5W-11)', async () => {
+    flags.stopBash = false;
+    const user = userEvent.setup();
+    const scenario = startTasksScenario(mixedTaskSession(Date.now()));
+    running = scenario;
+    renderPanel();
+    await waitFor(() => {
+      expect(rows()).toContain('task_bash:running');
+    });
+    expect(within(row('task_bash')).queryByRole('button')).toBeNull();
+    expect(
+      within(row('task_agent')).getByRole('button', { name: 'Stop “Review the sync tests”' }),
+    ).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Stop all' }));
+    const confirmBox = document.querySelector<HTMLElement>('[data-slot="tasks-stop-all-confirm"]');
+    expect(confirmBox?.textContent).toContain('Stop all 2 running tasks?');
+    if (confirmBox === null) throw new Error('no confirmation');
+    await user.click(within(confirmBox).getByRole('button', { name: 'Stop all' }));
+    await waitFor(() => {
+      expect(stopCommands(scenario)).toEqual(['task_agent', 'task_deploy']);
+    });
+    await waitFor(() => {
+      expect(rows()).toContain('task_deploy:finished');
+    });
+    expect(rows()).toContain('task_bash:running');
   });
 
   it('a failed stop shows a notice and keeps the row; TASK_NOT_FOUND stays silent', async () => {

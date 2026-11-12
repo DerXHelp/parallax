@@ -1,4 +1,4 @@
-import type { BackgroundTask, TaskInfo, TodoList, TranscriptItem } from '@shared/model';
+import type { BackgroundTask, TaskInfo, TranscriptItem } from '@shared/model';
 
 /**
  * Rows of the task panel (WP-55, ADR-149/150), pure: the background tasks of `detail` plus the
@@ -190,26 +190,4 @@ export function finishedDuration(row: TaskRow): number | null {
   const start = startOf(row);
   const end = endOf(row);
   return Number.isFinite(start) && Number.isFinite(end) && end >= start ? end - start : null;
-}
-
-// ---- todo list (TaskStrip, panel section) ----
-
-export interface TodoProgress {
-  done: number;
-  total: number;
-  /** `activeForm` (else `content`) of the first item in progress, null when none. */
-  active: string | null;
-  open: boolean;
-}
-
-export function todoProgress(todos: TodoList | null): TodoProgress {
-  if (todos === null) return { done: 0, total: 0, active: null, open: false };
-  const done = todos.items.filter((item) => item.status === 'completed').length;
-  const current = todos.items.find((item) => item.status === 'in_progress');
-  return {
-    done,
-    total: todos.items.length,
-    active: current === undefined ? null : (nonEmpty(current.activeForm) ?? current.content),
-    open: done < todos.items.length,
-  };
 }
