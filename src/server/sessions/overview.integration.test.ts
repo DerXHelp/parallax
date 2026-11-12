@@ -8,11 +8,11 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EntryId } from '@shared/common';
-import type { ClientPresence } from '@shared/protocol';
 import { sampleId, SAMPLE_TIME } from '@shared/samples';
 import type { SessionActivity, ToolCallItem } from '@shared/model';
 import { FAKE_LONG_BASH_MOVED, FAKE_SUMMARY_DETAIL, FAKE_SUMMARY_SENTENCES } from '../backend/fake/overview';
 import { createEngineHarness, type EngineHarness, type EngineHarnessOptions } from './testing/harness';
+import type { ClientPresence } from '../sync/ports';
 import { resetTitleLogForTests } from './titles';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });

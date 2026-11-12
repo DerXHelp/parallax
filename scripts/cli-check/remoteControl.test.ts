@@ -228,7 +228,7 @@ describe('profile, comparison and report (WP-64 §1.5)', () => {
     const failed = sampleRecord({
       observation: sampleObservation({ remoteControl: false }),
       probe: {
-        ...(sampleRecord().probe ?? { costUsd: 0, sessionIds: [], apiKeySource: 'none', resultSubtype: 'success', messageTypes: {}, contextDetail: null, durationMs: 0 }),
+        ...(sampleRecord().probe ?? { costUsd: 0, sessionIds: [], apiKeySource: 'none', resultSubtype: 'success', messageTypes: {}, contextDetail: null, durationMs: 0, overview: null }),
         remoteControl: { available: false, detail: 'bridge_state policy_disabled', connectedMs: null, disabled: false },
       },
     });
