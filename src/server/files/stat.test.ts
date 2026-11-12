@@ -4,8 +4,17 @@ import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from '@shared/common';
 import { makeTempHome } from '../http/testServer';
+import { TEXT_SNIFF_BYTES, decodeText } from '../lib/textDecode';
+import { readTextContent } from './content';
 import { nodeFileFs, type FileFs } from './fileFs';
-import { SVG_MEDIA_TYPE, TEXT_MEDIA_TYPE, classifyFile, isPreviewable, statAllowed } from './stat';
+import {
+  SVG_MEDIA_TYPE,
+  TEXT_MEDIA_TYPE,
+  classifyFile,
+  createTruncationCache,
+  isPreviewable,
+  statAllowed,
+} from './stat';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 const PDF = Buffer.from('%PDF-1.7\n');
@@ -89,6 +98,28 @@ function sizedFs(size: number, head: Buffer): FileFs {
   };
 }
 
+/** A FileFs holding one file in memory; `heads` records the lengths read, `mtimeMs` can change. */
+function memoryFs(data: Buffer): FileFs & { heads: number[]; mtimeMs: number } {
+  const heads: number[] = [];
+  const fs = {
+    ...nodeFileFs,
+    heads,
+    mtimeMs: 1000,
+    stat: () =>
+      Promise.resolve({
+        isFile: () => true,
+        isDirectory: () => false,
+        size: data.length,
+        mtimeMs: fs.mtimeMs,
+      }),
+    readHead: (_file: string, length: number) => {
+      heads.push(length);
+      return Promise.resolve(data.subarray(0, length));
+    },
+  };
+  return fs;
+}
+
 describe('statAllowed', () => {
   it('real files and folders: kind, size, mtime, access as given', async () => {
     const dir = await makeTempHome('stat-');
@@ -147,6 +178,63 @@ describe('statAllowed', () => {
       access: 'cwd',
     });
     expect(image).toMatchObject({ kind: 'image', previewable: false, truncated: false });
+  });
+
+  it('CR3-04: truncated matches the cut of GET /api/file also when the UTF-8 form outgrows the limit', async () => {
+    const limit = LIMITS.fileTextBytes;
+    // windows-1252: 99 × "ä" per line → 100 source bytes, 199 UTF-8 bytes.
+    const cpLine = Buffer.concat([Buffer.alloc(99, 0xe4), Buffer.from([0x0a])]);
+    const cp = Buffer.concat(Array.from({ length: Math.floor(limit / 100) }, () => cpLine));
+    // UTF-16LE with BOM: "中" (2 bytes) is 3 UTF-8 bytes.
+    const cjk = Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from(`${'中'.repeat(63)}\n`.repeat(12_000), 'utf16le'),
+    ]);
+    // UTF-8 whose first 64 KiB are valid, followed by windows-1252 bytes (each → U+FFFD, 3 bytes).
+    const mixed = Buffer.concat([
+      Buffer.from('x'.repeat(TEXT_SNIFF_BYTES - 1) + '\n'),
+      Buffer.concat(Array.from({ length: Math.floor((limit - TEXT_SNIFF_BYTES) / 100) }, () => cpLine)),
+    ]);
+    const cases = [
+      ['windows-1252', cp, 'windows-1252', true],
+      ['UTF-16LE', cjk, 'utf-16le', true],
+      ['UTF-8 with invalid bytes after the sniffed head', mixed, 'utf-8', true],
+      ['windows-1252 that fits', cp.subarray(0, 1_000_000), 'windows-1252', false],
+    ] as const;
+    for (const [name, data, encoding, cut] of cases) {
+      expect([name, data.length <= limit]).toEqual([name, true]);
+      const fs = memoryFs(data);
+      const info = await statAllowed(fs, { path: 'C:\\p\\a.log', realPath: 'C:\\p\\a.log', access: 'cwd' });
+      expect([name, info.encoding, info.truncated]).toEqual([name, encoding, cut]);
+      // What GET /api/file sends: shorter than the whole text exactly when stat says truncated.
+      const sent = await readTextContent(fs, info);
+      const whole = Buffer.from(decodeText(data, encoding, false), 'utf8');
+      expect([name, sent.length < whole.length]).toEqual([name, cut]);
+    }
+  });
+
+  it('CR3-04: the exact check reads only where the UTF-8 form can outgrow the limit, once per file version', async () => {
+    const line = Buffer.concat([Buffer.alloc(49, 0xe4), Buffer.from([0x0a])]);
+    // 600 kB windows-1252: even 3 UTF-8 bytes per byte stay below 2 MiB → only the head is read.
+    const small = memoryFs(Buffer.concat(Array.from({ length: 12_000 }, () => line)));
+    const file = { path: 'C:\\p\\a.txt', realPath: 'C:\\p\\a.txt', access: 'cwd' } as const;
+    const cache = createTruncationCache();
+    expect((await statAllowed(small, file, { truncation: cache })).truncated).toBe(false);
+    expect(small.heads).toEqual([TEXT_SNIFF_BYTES]);
+    // 1 MB mostly ASCII windows-1252: one full read, then the cache answers until size/mtime change.
+    const ascii = Buffer.concat([Buffer.from([0xe4]), Buffer.from('x'.repeat(999_999))]);
+    const big = memoryFs(ascii);
+    const first = await statAllowed(big, file, { truncation: cache });
+    expect(first).toMatchObject({ encoding: 'windows-1252', truncated: false });
+    expect((await statAllowed(big, file, { truncation: cache })).truncated).toBe(false);
+    expect(big.heads).toEqual([TEXT_SNIFF_BYTES, ascii.length, TEXT_SNIFF_BYTES]);
+    big.mtimeMs = 2000;
+    await statAllowed(big, file, { truncation: cache });
+    expect(big.heads.filter((length) => length === ascii.length)).toHaveLength(2);
+    // GET /api/file reads the content anyway: its stat skips the exact check.
+    const content = memoryFs(ascii);
+    await statAllowed(content, file, { truncation: 'skip' });
+    expect(content.heads).toEqual([TEXT_SNIFF_BYTES]);
   });
 
   it('a special file (neither file nor folder) is binary and never read', async () => {
