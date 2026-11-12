@@ -49,12 +49,16 @@ export function answerFromText(decision: Decision, text: string): DecisionRespon
   }
 }
 
-/** Sends a prompt; `attachments` are blob ids of uploaded images (ADR-103) – the text may then be empty. */
+/**
+ * Sends a prompt; `attachments` are blob ids of uploaded images, PDFs and files (ADR-103/146) – the
+ * text may then be empty; `pastes` are pasted texts that stand verbatim in `text` (ADR-146).
+ */
 export async function sendPrompt(
   sessionKey: string,
   text: string,
   priority: PromptPriority,
   attachments: readonly BlobId[] = [],
+  pastes: readonly string[] = [],
 ): Promise<boolean> {
   const parsed = parseSessionKey(sessionKey);
   if (parsed === null) return false;
@@ -62,7 +66,7 @@ export async function sendPrompt(
     await sendCommand(sessionKey, {
       name: 'session.sendPrompt',
       entryId: parsed.entryId,
-      prompt: { text, attachments: attachments.map((blobId) => ({ blobId })), pastes: [] },
+      prompt: { text, attachments: attachments.map((blobId) => ({ blobId })), pastes: [...pastes] },
       priority,
     });
     return true;

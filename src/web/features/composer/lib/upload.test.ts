@@ -3,7 +3,7 @@ import { makeError } from '@shared/errors';
 import { API_PATHS } from '@shared/http';
 import { sampleBlobRef } from '@shared/samples';
 import type { PreparedImage } from './images';
-import { httpUploader, UploadError, uploadQuery } from './upload';
+import { httpUploader, UPLOAD_NAME_MAX, UploadError, uploadName, uploadQuery } from './upload';
 
 const IMAGE: PreparedImage = {
   blob: new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' }),
@@ -39,6 +39,28 @@ describe('httpUploader (ADR-103, WP-33 route)', () => {
       credentials: 'same-origin',
     });
     expect(uploadQuery({ ...IMAGE, name: 'x'.repeat(300) })).toContain(`name=${'x'.repeat(260)}&`);
+  });
+
+  it.each([
+    ['application/pdf', 'Architecture review.pdf'],
+    ['application/octet-stream', 'build output.zip'],
+  ] as const)('ADR-146: %s goes raw with its type and name, without a size', async (type, name) => {
+    const ref = sampleBlobRef({ mediaType: type, name, width: null, height: null });
+    const fetchMock = vi.fn((_url: string, _init: RequestInit) =>
+      Promise.resolve(json(200, { attachment: ref })),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const blob = new Blob([new Uint8Array([37, 80, 68, 70])]);
+    await expect(httpUploader({ blob, type, name }, new AbortController().signal)).resolves.toEqual(ref);
+    const call = fetchMock.mock.calls[0];
+    expect(call?.[0]).toBe(`${API_PATHS.attachments}?${new URLSearchParams({ name }).toString()}`);
+    expect(call?.[1]).toMatchObject({ body: blob, headers: { 'Content-Type': type } });
+  });
+
+  it('a long name keeps its extension when cut', () => {
+    const name = uploadName(`${'n'.repeat(300)}.pdf`);
+    expect(name).toHaveLength(UPLOAD_NAME_MAX);
+    expect(name.endsWith('.pdf')).toBe(true);
   });
 
   it.each([

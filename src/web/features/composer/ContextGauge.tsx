@@ -17,6 +17,7 @@ import { Gauge, gaugeLevel } from '@web/ui/gauge';
 import { Popover, PopoverContent, PopoverTrigger } from '@web/ui/popover';
 import { Spinner } from '@web/ui/spinner';
 import { sendPrompt } from './lib/commands';
+import { categoryKey, knownCategoryId } from './lib/context';
 
 type Breakdown =
   | { state: 'idle' }
@@ -31,7 +32,8 @@ export const COMPACT_COMMAND = '/compact';
  * Context gauge (C.1, Plan "Kopfleiste"): percentage + bar (from 70 % yellow, from 85 % red –
  * thresholds of the `Gauge` primitive, never color only: the percentage is always written). A
  * click shows the facts of the summary and loads the breakdown (`session.getContext`, only while
- * the session runs); "Compact now" sends `/compact` as a prompt.
+ * the session runs); "Compact now" sends `/compact` as a prompt. Categories are identified by their
+ * stable SDK `id` (WP-57; named in the UI language when known), else by kind and name as before.
  */
 export const ContextGauge = memo(function ContextGauge({ sessionKey }: { sessionKey: string }) {
   const { t, format, tError } = useI18n();
@@ -59,6 +61,12 @@ export const ContextGauge = memo(function ContextGauge({ sessionKey }: { session
     } catch (caught) {
       setBreakdown({ state: 'failed', error: errorPayloadOf(caught) });
     }
+  };
+
+  // WP-57: a known stable id names the category in the UI language; else the SDK's name as before.
+  const categoryLabel = (category: ContextBreakdown['categories'][number]): string => {
+    const id = knownCategoryId(category.id);
+    return id === null ? category.name : t(`composer.context.categories.${id}`);
   };
 
   const percent = context?.percentage ?? null;
@@ -139,9 +147,13 @@ export const ContextGauge = memo(function ContextGauge({ sessionKey }: { session
               <>
                 <ul data-slot="context-categories" className="grid gap-1">
                   {breakdown.data.categories.map((category) => (
-                    <li key={`${category.kind}:${category.name}`} className="grid gap-0.5">
+                    <li
+                      key={categoryKey(category)}
+                      data-category={categoryKey(category)}
+                      className="grid gap-0.5"
+                    >
                       <span className="flex items-center gap-2">
-                        <span className="min-w-0 flex-1 truncate">{category.name}</span>
+                        <span className="min-w-0 flex-1 truncate">{categoryLabel(category)}</span>
                         <span className="text-muted-foreground tabular-nums">
                           {format.compact(category.tokens)}
                         </span>
