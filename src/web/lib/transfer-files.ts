@@ -1,8 +1,11 @@
 /**
- * Files of a drop or paste on the composer (ADR-146). A `DataTransfer` can only be read while its
- * event runs, so this part stays in the composer's chunk; folders are known from their entry
- * (`webkitGetAsEntry().isDirectory`), counted and left out (the hint says to insert their path
- * with @). Probing a plain file list for folders is `lib/folders.ts` (loaded on demand).
+ * Files of a drop or paste (ADR-146), shared by the composer and the drop zone of the session pane
+ * (CR3-01, ADR-126: the shell imports no feature). A `DataTransfer` can only be read while its event
+ * runs, so callers read it inside the event; folders are known from their entry
+ * (`webkitGetAsEntry().isDirectory`), counted and left out (the composer's hint says to insert their
+ * path with @). Chrome lists a dropped folder in `files` too – as a `File` without type – so the
+ * plain file list is only taken when there are no items. Probing a plain file list for folders is
+ * the composer's `lib/folders.ts` (loaded on demand).
  */
 
 export interface IncomingFiles {

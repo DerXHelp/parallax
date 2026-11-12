@@ -47,8 +47,11 @@ export type ShellRequest =
   | { kind: 'openFile'; sessionKey: string; path: string; line?: number | null; col?: number | null }
   /** Open the side panel of a session at a tab; `null` closes it (handled by SidePanelHost). */
   | { kind: 'sidePanel'; sessionKey: string; tab: SidePanelTab | null }
-  /** Files dropped on the session pane or picked in the menu → the composer attaches them. */
-  | { kind: 'attachFiles'; sessionKey: string; files: readonly File[] };
+  /**
+   * Files dropped on the session pane or picked in the menu → the composer attaches them.
+   * `folders`: folders the drop left out (`transferFiles`, CR3-01) – the composer shows its hint.
+   */
+  | { kind: 'attachFiles'; sessionKey: string; files: readonly File[]; folders?: number };
 
 export type ShellRequestKind = ShellRequest['kind'];
 export type ShellRequestOf<K extends ShellRequestKind> = Extract<ShellRequest, { kind: K }>;

@@ -17,9 +17,17 @@ vi.setConfig({ testTimeout: 60_000 });
 
 const KEY = makeSessionKey(LOCAL_HOST_ID, SAMPLE_IDS.entry);
 
+/** A `DataTransfer` item with its entry (happy-dom has neither `items` nor `webkitGetAsEntry`). */
+interface FakeItem {
+  kind: string;
+  getAsFile(): File | null;
+  webkitGetAsEntry(): { isDirectory: boolean } | null;
+}
+
 interface FakeTransfer {
   types: string[];
   files: File[];
+  items?: FakeItem[];
   dropEffect: string;
 }
 
@@ -29,10 +37,11 @@ function drag(
   target: Element,
   types: string[] = ['Files'],
   files: File[] = [],
-  init: { relatedTarget?: EventTarget | null } = {},
+  init: { relatedTarget?: EventTarget | null; items?: FakeItem[] } = {},
 ): { event: Event; transfer: FakeTransfer } {
   const event = new Event(type, { bubbles: true, cancelable: true });
   const transfer: FakeTransfer = { types, files, dropEffect: 'uninitialized' };
+  if (init.items !== undefined) transfer.items = init.items;
   Object.defineProperty(event, 'dataTransfer', { value: transfer });
   Object.defineProperty(event, 'relatedTarget', { value: init.relatedTarget ?? null });
   act(() => {
@@ -110,7 +119,7 @@ describe('session drop zone (R4W-02, WP-58)', () => {
     const files = [png('a.png'), png('b.png')];
     const dropped = drag('drop', transcript, ['Files'], files);
     expect(dropped.event.defaultPrevented).toBe(true);
-    expect(requests).toEqual([{ kind: 'attachFiles', sessionKey: KEY, files }]);
+    expect(requests).toEqual([{ kind: 'attachFiles', sessionKey: KEY, files, folders: 0 }]);
     expect(overlay()).toBeNull();
   });
 
@@ -124,6 +133,27 @@ describe('session drop zone (R4W-02, WP-58)', () => {
     expect(overlay()).toBeNull();
     drag('drop', screen.getByTestId('composer'), ['Files'], [png('c.png')]);
     expect(requests).toEqual([]);
+  });
+
+  it('a folder is known by its entry and left out: the composer gets the files and the folder count (CR3-01)', () => {
+    const requests = captureAttach();
+    render(<Harness enabled />);
+    const transcript = screen.getByTestId('transcript');
+    // Chrome lists a dropped folder in `files` too: a `File` without type and with 0 bytes.
+    const folder = new File([], 'src', { type: '' });
+    const notes = new File(['# notes'], 'notes.md', { type: 'text/markdown' });
+    const items: FakeItem[] = [
+      { kind: 'file', getAsFile: () => folder, webkitGetAsEntry: () => ({ isDirectory: true }) },
+      { kind: 'file', getAsFile: () => notes, webkitGetAsEntry: () => ({ isDirectory: false }) },
+    ];
+    drag('dragover', transcript);
+    drag('drop', transcript, ['Files'], [folder, notes], { items });
+    expect(requests).toEqual([{ kind: 'attachFiles', sessionKey: KEY, files: [notes], folders: 1 }]);
+
+    // Only a folder: still a request, so the composer shows its hint ("insert the path with @").
+    drag('dragover', transcript);
+    drag('drop', transcript, ['Files'], [folder], { items: items.slice(0, 1) });
+    expect(requests.at(-1)).toEqual({ kind: 'attachFiles', sessionKey: KEY, files: [], folders: 1 });
   });
 
   it('a drop without files (empty list) sends no attachFiles request', () => {

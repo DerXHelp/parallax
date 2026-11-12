@@ -515,4 +515,29 @@ describe('PDFs and other files (ADR-146, WP-57)', () => {
     expect(noticeTexts()).toEqual([{ text: 'composer.attachments.folders' }]);
     expect(document.activeElement).toBe(textbox());
   });
+
+  it('folders the drop zone already left out (CR3-01): the same hint, no chip, no upload', async () => {
+    const uploads = controlledUploads();
+    const h = start();
+    const key = h.key('idle');
+    let handled = false;
+    act(() => {
+      handled = requestShell({ kind: 'attachFiles', sessionKey: key, files: [], folders: 2 });
+    });
+    expect(handled).toBe(true);
+    expect(noticeTexts()).toEqual([{ text: 'composer.attachments.folders' }]);
+    expect(chips()).toHaveLength(0);
+    // Folders and files together: the files are attached, the hint is shown once.
+    const pdf = sized('Plan.pdf', 'application/pdf', 2048);
+    act(() => {
+      handled = requestShell({ kind: 'attachFiles', sessionKey: key, files: [pdf], folders: 1 });
+    });
+    expect(handled).toBe(true);
+    await waitFor(() => {
+      expect(uploads.map((upload) => upload.name)).toEqual(['Plan.pdf']);
+    });
+    expect(noticeTexts()).toEqual([{ text: 'composer.attachments.folders' }]);
+    // Nothing at all is still not taken.
+    expect(requestShell({ kind: 'attachFiles', sessionKey: key, files: [], folders: 0 })).toBe(false);
+  });
 });
