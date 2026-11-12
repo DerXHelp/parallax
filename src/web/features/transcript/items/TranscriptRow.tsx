@@ -12,11 +12,14 @@ import { TurnFooter } from './TurnFooter';
 export const TranscriptRow = memo(function TranscriptRow({
   sessionKey,
   itemId,
+  hideImages = false,
 }: {
   sessionKey: string;
   itemId: string;
   /** Inside an Agent card (no outer spacing). */
   nested?: boolean;
+  /** WP-63 §1.5: a tool call's pictures stand in a gallery of the list. */
+  hideImages?: boolean;
 }) {
   const item = useItem(sessionKey, itemId);
   if (item === null) return null;
@@ -28,7 +31,7 @@ export const TranscriptRow = memo(function TranscriptRow({
     case 'thinking':
       return <ThinkingRow item={item} sessionKey={sessionKey} />;
     case 'tool_call':
-      return <ToolCallRow item={item} sessionKey={sessionKey} />;
+      return <ToolCallRow item={item} sessionKey={sessionKey} hideImages={hideImages} />;
     case 'system':
       return <SystemRow item={item} sessionKey={sessionKey} />;
     case 'turn_result':

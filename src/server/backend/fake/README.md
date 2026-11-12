@@ -16,6 +16,7 @@ Design: `docs/wp/WP-13.md` §3.3, Ergebnis und Stolpersteine: `docs/wp/WP-13a.md
 | `turn.ts` | Bausteine der interaktiven Turns: `Turn`, `contextFor`, `ask` (canUseTool wie das CLI), `answerTurn`, `abortedByDecision` |
 | `plan.ts` | `fake:plan` (Plan-Modus, Plan-Datei echt) und der Start mit frischem Kontext („Fake: implementing plan (N lines)“) |
 | `phase3.ts` | `fake:background` (sendet Tätigkeiten „Running …“), `fake:todo`, `fake:files`, `fake:writes-lost`, `fake:context-high` (V4-05), Antworten auf Anhänge/Pastes |
+| `feedback.ts` | WP-63: `fake:steps` (6 Bash-Schritte mit Thinking, einer schlägt fehl, ein Satz an den Nutzer, 3 weitere Schritte, Antwort – zwei Gruppen im kompakten Transkript), `fake:images` (4× `Read` mit je einem PNG – Galerie), `fake:limit-warning` (`allowed_warning` für das Wochenfenster mit `unifiedWindows` – nur die Limit-Leiste, kein Transkript-Hinweis) |
 | `files.ts` | `FakeFiles` (echte Dateien nur unter `<filesRoot>\<sessionId>\`, Pfade über `@shared/paths` geprüft), `defaultFakeFilesRoot()` = `%TEMP%\parallax-fake-files`, `patchHunks` |
 | `defaults.ts` | Fake-Antworten: `getContextUsage` (Kategorien mit `id`; fester Füllstand bei `fake:context-high`), `supportedModels` (`FAKE_MODELS` = CLI 2.1.322, 14 Einträge), `supportedCommands` (inkl. Terminal-Befehle); `FAKE_CLAUDE_VERSION` = die CLI-Version, die das SDK erwartet (V4-05; Test gegen `claudeCodeVersion` des SDK), auch in `init.claude_code_version`; `FAKE_CONTEXT_HIGH_TOKENS` |
 | `history.ts` | `FakeHistoryStore` (Rohformen wie das SDK, Import aus `history.jsonl`) |

@@ -61,10 +61,18 @@ export const contextGaugeSchema = z.object({
   source: z.enum(['sdk', 'estimate']),
   model: z.string().nullable(),
   at: isoDateTimeSchema,
+  /**
+   * WP-63: token count (not a percentage) at which the CLI compacts automatically (fixtures:
+   * 967 000) – from `getContextUsage('summary')` after each turn; an estimate during the turn keeps
+   * the last known value. null = unknown (older gauges, no measurement yet).
+   */
+  autoCompactThreshold: z.number().int().nonnegative().nullable().default(null),
+  /** WP-63: the CLI compacts automatically (null = unknown). */
+  isAutoCompactEnabled: z.boolean().nullable().default(null),
 });
 export type ContextGauge = z.infer<typeof contextGaugeSchema>;
 
-/** Click on the gauge (getContextUsage). */
+/** Click on the gauge (getContextUsage); the autocompact fields come from the gauge (WP-63). */
 export const contextBreakdownSchema = contextGaugeSchema.extend({
   detail: z.enum(['summary', 'full']),
   categories: z.array(
@@ -79,9 +87,6 @@ export const contextBreakdownSchema = contextGaugeSchema.extend({
       id: z.string().nullable().default(null),
     }),
   ),
-  /** Token count (not a percentage) at which the CLI compacts automatically (fixtures: 967 000). */
-  autoCompactThreshold: z.number().nullable(),
-  isAutoCompactEnabled: z.boolean().nullable(),
 });
 export type ContextBreakdown = z.infer<typeof contextBreakdownSchema>;
 
@@ -894,7 +899,10 @@ export const systemItemSchema = z.discriminatedUnion('event', [
     errorCode: errorCodeSchema,
     active: z.boolean(),
   }),
-  /** Only allowed_warning / rejected (C.5). */
+  /**
+   * WP-63: only `rejected` (C.5) – older logs may still hold `allowed_warning` items; the UI does
+   * not render them (the limit bar shows every value).
+   */
   systemBase.extend({ event: z.literal('rate_limit'), info: rateLimitInfoSchema }),
   /** system/notification. */
   systemBase.extend({

@@ -273,7 +273,13 @@ export class SessionRuntime {
       case 'context_estimate': {
         const gauge = this.core.normalizer.estimateContextGauge(
           signal,
-          { override: this.launch.contextWindow, lastSdkMaxTokens: s.lastSdkMaxTokens },
+          {
+            override: this.launch.contextWindow,
+            lastSdkMaxTokens: s.lastSdkMaxTokens,
+            // WP-63: the last gauge carries the autocompact threshold of the last measurement
+            // (null after /clear or a switch – the next measurement brings it back).
+            autoCompact: s.entry.context,
+          },
           this.core.now(),
         );
         if (gauge !== null) s.setContext(gauge);
@@ -607,6 +613,8 @@ export async function startRuntime(
 ): Promise<SessionRuntime> {
   if (s.runtime !== null) return s.runtime;
   core.assertRunning();
+  // WP-63: a removed entry never starts again (a start that waited for the removal's lock).
+  if (s.removed) throw commandError('ENTRY_NOT_FOUND', { entryId: s.id });
   // ADR-106: an archived entry never starts (also not a start queued before the archiving, a retry).
   if (s.entry.archived) throw commandError('SESSION_ARCHIVED', { entryId: s.id });
   // ADR-104 / R4-01: never a second writer next to the external console (prompt, resume, plan
@@ -729,7 +737,7 @@ async function attachmentsDirOf(s: EntryState, core: EngineCore): Promise<string
 export async function closeRuntime(
   s: EntryState,
   core: EngineCore,
-  reason: 'user' | 'sleep' | 'handoff' | 'not_ready' | 'archive' | 'switch' | 'fresh_context',
+  reason: 'user' | 'sleep' | 'handoff' | 'not_ready' | 'archive' | 'switch' | 'fresh_context' | 'remove',
 ): Promise<void> {
   const runtime = s.runtime;
   if (runtime === null) return;

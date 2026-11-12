@@ -32,6 +32,14 @@ import type {
 import { createFakeBackend, sequentialIds, type FakeBackendOptions } from '../fakeBackend';
 import { FAKE_CONSOLE_PROMPT, fakeConsoleAnswer } from './console';
 import { FAKE_CONTEXT_HIGH_TOKENS, FAKE_MODELS } from './defaults';
+import {
+  FAKE_IMAGE_BURST,
+  FAKE_IMAGES_ANSWER,
+  FAKE_LIMIT_WARNING_ANSWER,
+  FAKE_STEP_COMMANDS,
+  FAKE_STEPS_ANSWER,
+  FAKE_STEPS_MIDDLE,
+} from './feedback';
 import { FAKE_SHOT_HEIGHT, FAKE_SHOT_PNG_BASE64, FAKE_SHOT_WIDTH } from './image';
 import { FAKE_RATE_LIMIT_RESET_S } from './interactive';
 import { createFakeClaudeIntegration } from './integration';
@@ -68,7 +76,8 @@ async function until(predicate: () => boolean, what: string, timeoutMs = UNTIL_T
   const deadline = performance.now() + timeoutMs;
   for (;;) {
     if (predicate()) return;
-    if (performance.now() > deadline) throw new Error(`timeout waiting for ${what} (${String(timeoutMs)} ms)`);
+    if (performance.now() > deadline)
+      throw new Error(`timeout waiting for ${what} (${String(timeoutMs)} ms)`);
     await new Promise((resolve) => {
       realSetImmediate(resolve);
     });
@@ -697,10 +706,10 @@ describe('interactive scenario – Phase 3 (WP-52)', () => {
     // The follow-up turn answers the notification (F.11), then idle.
     expect(h.results()).toHaveLength(2);
     expect(texts(h.items()).at(-1)).toBe(FAKE_BACKGROUND_DONE);
-    expect(
-      h.signals.filter((s) => s.type === 'background_tasks').map((s) => s.count),
-    ).toEqual([1, 0]);
-    await expect(h.agent.stopTask(taskId)).rejects.toThrow(`Task ${taskId} is not running (status: completed)`);
+    expect(h.signals.filter((s) => s.type === 'background_tasks').map((s) => s.count)).toEqual([1, 0]);
+    await expect(h.agent.stopTask(taskId)).rejects.toThrow(
+      `Task ${taskId} is not running (status: completed)`,
+    );
     expect(h.handle.diagnostics).toEqual([]);
     await h.close();
   });
@@ -714,7 +723,10 @@ describe('interactive scenario – Phase 3 (WP-52)', () => {
     const taskId = agentCall(h.items()).task?.taskId ?? '';
     await h.agent.stopTask(taskId);
     await h.turnDone(1);
-    expect(agentCall(h.items()).task).toMatchObject({ status: 'stopped', outputFile: expect.stringMatching(/\.output$/) as string });
+    expect(agentCall(h.items()).task).toMatchObject({
+      status: 'stopped',
+      outputFile: expect.stringMatching(/\.output$/) as string,
+    });
     // WP-60: a real end time (the task panel lists finished tasks for 10 minutes after it).
     expect(Date.now() - Date.parse(agentCall(h.items()).task?.endedAt ?? '')).toBeLessThan(60_000);
     expect(h.results()).toHaveLength(1);
@@ -781,7 +793,11 @@ describe('interactive scenario – Phase 3 (WP-52)', () => {
     const seen = estimates().length;
     h.send('fake:todo');
     await h.turnDone(3);
-    expect(estimates().slice(seen).every((total) => total === FAKE_CONTEXT_HIGH_TOKENS)).toBe(true);
+    expect(
+      estimates()
+        .slice(seen)
+        .every((total) => total === FAKE_CONTEXT_HIGH_TOKENS),
+    ).toBe(true);
     expect(await percentage()).toBe(75);
 
     h.send('fake:compact');
@@ -813,7 +829,11 @@ describe('interactive scenario – Phase 3 (WP-52)', () => {
     expect(readFileSync(path.join(dir, 'new-file.txt'), 'utf8')).toBe('Created by fake:files.\n');
     expect(readFileSync(path.join(dir, 'app.ts'), 'utf8').split('\n')[11]).toBe('  const answer = 42;');
     expect(calls[2]?.result?.structured).toMatchObject({
-      structuredPatch: [expect.objectContaining({ lines: expect.arrayContaining(['-  const answer = 41;', '+  const answer = 42;']) as string[] })],
+      structuredPatch: [
+        expect.objectContaining({
+          lines: expect.arrayContaining(['-  const answer = 41;', '+  const answer = 42;']) as string[],
+        }),
+      ],
     });
     const answer = texts(h.items()).at(-1) ?? '';
     expect(answer).toContain(`${path.join(dir, 'app.ts')}:12`);
@@ -839,25 +859,40 @@ describe('interactive scenario – Phase 3 (WP-52)', () => {
 
   it('attachments: PDFs, an `Attached files:` block, inline pastes and images are counted', async () => {
     const h = harness();
-    h.send('Look at these\n\nAttached files:\n- D:\\work\\a.txt\n- D:\\work\\b.log', 'next', [pdf], ['one', 'two', 'three']);
+    h.send(
+      'Look at these\n\nAttached files:\n- D:\\work\\a.txt\n- D:\\work\\b.log',
+      'next',
+      [pdf],
+      ['one', 'two', 'three'],
+    );
     await h.turnDone(1);
     expect(texts(h.items())).toEqual(['Fake: received 1 document(s), 2 file(s)\nFake: received 3 paste(s)']);
     h.send('', 'next', [png, pdf]);
     await h.turnDone(2);
-    expect(texts(h.items()).at(-1)).toBe('Fake: received 1 image(s)\nFake: received 1 document(s), 0 file(s)');
+    expect(texts(h.items()).at(-1)).toBe(
+      'Fake: received 1 image(s)\nFake: received 1 document(s), 0 file(s)',
+    );
     h.send('Attached files:\n- D:\\work\\only.txt');
     await h.turnDone(3);
     expect(texts(h.items()).at(-1)).toBe('Fake: received 0 document(s), 1 file(s)');
-    const history = await h.backend.readHistory({ sessionId: h.handle.sessionId ?? '', cwd: 'D:\\work\\fake', launch });
+    const history = await h.backend.readHistory({
+      sessionId: h.handle.sessionId ?? '',
+      cwd: 'D:\\work\\fake',
+      launch,
+    });
     expect(history.find((m) => m.type === 'user')?.message).toMatchObject({
-      content: [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf' } }, { type: 'text' }],
+      content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf' } },
+        { type: 'text' },
+      ],
     });
     expect(h.handle.diagnostics).toEqual([]);
     await h.close();
   });
 
   it('fresh-context start: first prompt "Implement the following approved plan." without resume → plan lines; init mode = start mode', async () => {
-    const plan = 'Implement the following approved plan.\nPlan file: C:\\Users\\u\\.claude\\plans\\p.md\n\n## Plan\n- one\n- two\n';
+    const plan =
+      'Implement the following approved plan.\nPlan file: C:\\Users\\u\\.claude\\plans\\p.md\n\n## Plan\n- one\n- two\n';
     const h = harness({ permissionMode: 'acceptEdits' });
     h.send(plan);
     await h.turnDone(1);
@@ -873,6 +908,57 @@ describe('interactive scenario – Phase 3 (WP-52)', () => {
     await resumed.turnDone(1);
     expect(texts(resumed.items()).at(-1)).not.toContain('implementing plan');
     await resumed.close();
+  });
+});
+
+describe('WP-63 feedback scenarios', () => {
+  it('fake:steps → thinking + Bash runs, one failing, a sentence in between, the answer', async () => {
+    const h = harness();
+    h.send('fake:steps');
+    await h.turnDone(1);
+    const items = h.items();
+    const calls = items.flatMap((i) => (i.kind === 'tool_call' ? [i] : []));
+    expect(calls.map((call) => call.input)).toEqual(
+      [...FAKE_STEP_COMMANDS, ...FAKE_STEP_COMMANDS.filter((step) => step.fails !== true).slice(0, 3)].map(
+        (step) => ({ command: step.command, description: step.command }),
+      ),
+    );
+    // No decisions (plain work steps); the failing test run is the one error.
+    expect(calls.every((call) => call.decision === null)).toBe(true);
+    expect(calls.map((call) => call.status)).toEqual(
+      calls.map((_, index) => (index === 3 ? 'error' : 'done')),
+    );
+    expect(items.filter((i) => i.kind === 'thinking')).toHaveLength(calls.length);
+    expect(texts(items)).toEqual([FAKE_STEPS_MIDDLE, FAKE_STEPS_ANSWER]);
+    await h.close();
+  });
+
+  it('fake:images → a burst of Read results with one PNG each', async () => {
+    const h = harness();
+    h.send('fake:images');
+    await h.turnDone(1);
+    const calls = h.items().flatMap((i) => (i.kind === 'tool_call' ? [i] : []));
+    expect(calls).toHaveLength(FAKE_IMAGE_BURST);
+    for (const call of calls) {
+      expect(call.toolName).toBe('Read');
+      expect(call.result?.content.filter((part) => part.type === 'image')).toHaveLength(1);
+    }
+    expect(texts(h.items())).toEqual([FAKE_IMAGES_ANSWER]);
+    await h.close();
+  });
+
+  it('fake:limit-warning → the limit signal (weekly window) without a transcript item', async () => {
+    const h = harness();
+    h.send('fake:limit-warning');
+    await h.turnDone(1);
+    const limits = h.signals.flatMap((s) => (s.type === 'rate_limit' ? [s.info] : []));
+    expect(limits).toMatchObject([
+      { status: 'allowed_warning', rateLimitType: 'seven_day', utilization: 0.81 },
+    ]);
+    expect(Object.keys(limits[0]?.windows ?? {})).toEqual(['five_hour', 'seven_day']);
+    expect(h.items().some((i) => i.kind === 'system' && i.event === 'rate_limit')).toBe(false);
+    expect(texts(h.items())).toEqual([FAKE_LIMIT_WARNING_ANSWER]);
+    await h.close();
   });
 });
 

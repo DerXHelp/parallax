@@ -124,12 +124,14 @@ test('a pasted image: chip → upload → sent; tool images open in the lightbox
   // An image in a tool result (Read of a PNG) opens in the lightbox.
   await session.send('fake:image look at the screenshot');
   await expect(session.assistantText('The screenshot shows a window with an orange block.')).toBeVisible();
-  // R4W-03: the picture shows under the collapsed tool row – exactly once, without a click – and
-  // carries the name of the read file (`input.file_path`).
-  const read = session.toolCall('Read');
-  const thumb = read.locator('[data-slot="image-thumb"]');
+  // R4W-03, WP-63: the picture shows without a click – in the compact view in the gallery under the
+  // closed step line (thought + Read), exactly once – and carries the name of the read file
+  // (`input.file_path`).
+  const group = session.stepGroups().last();
+  await expect(group).toHaveAttribute('data-state', 'closed');
+  const thumb = group.locator('[data-slot="image-gallery"] [data-slot="image-thumb"]');
   await expect(thumb).toHaveCount(1);
-  await expect(read.locator('[aria-expanded]').first()).toHaveAttribute('aria-expanded', 'false');
+  await expect(session.transcript.locator('[data-slot="image-thumb"]')).toHaveCount(2);
   await expect(thumb).toHaveAccessibleName('Enlarge image fake-shot.png');
   await thumb.click();
   const lightbox = page.locator('[data-slot="lightbox"]');

@@ -31,17 +31,36 @@ export interface GaugeProps {
   className?: string;
   barClassName?: string;
   thresholds?: { warning: number; danger: number };
+  /**
+   * WP-63: the level from elsewhere (context: color = share of the model window, fill = up to the
+   * autocompact) instead of `gaugeLevel(value)`.
+   */
+  level?: GaugeLevel;
+  /** WP-63: visible text instead of the percentage (e.g. "260K"). */
+  valueText?: string;
+  /** WP-63: `aria-valuetext` instead of the visible text (e.g. "260K of 400K until autocompact"). */
+  valueLabel?: string;
 }
 
 /**
  * Horizontal level meter (base of WP-16's ContextGauge): `role="meter"` with the formatted
  * percentage as `aria-valuetext`.
  */
-export function Gauge({ value, label, showValue = true, className, barClassName, thresholds }: GaugeProps) {
+export function Gauge({
+  value,
+  label,
+  showValue = true,
+  className,
+  barClassName,
+  thresholds,
+  level: levelOverride,
+  valueText,
+  valueLabel,
+}: GaugeProps) {
   const format = useFormat();
   const clamped = Math.min(100, Math.max(0, value));
-  const level = gaugeLevel(value, thresholds);
-  const text = format.percent(value);
+  const level = levelOverride ?? gaugeLevel(value, thresholds);
+  const text = valueText ?? format.percent(value);
   return (
     <div
       data-slot="gauge"
@@ -51,7 +70,7 @@ export function Gauge({ value, label, showValue = true, className, barClassName,
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={Math.round(clamped)}
-      aria-valuetext={text}
+      aria-valuetext={valueLabel ?? text}
       className={cn('inline-flex items-center gap-1.5', className)}
     >
       <span className={cn('bg-muted relative h-1.5 w-16 overflow-hidden rounded-full', barClassName)}>

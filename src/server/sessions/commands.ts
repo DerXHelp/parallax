@@ -10,7 +10,8 @@
  * ADR-103), external console (external.ts, ADR-104), continue after the rate limit
  * (continuePlan.ts, ADR-112). Phase 3 (WP-51, WP-50 §4.12): PDF/file attachments and pastes
  * (attachments.ts, ADR-146), `session.stopTask` (ADR-149), `plan.list`/`plan.read` (ADR-148) and
- * `approve_fresh_context` (freshContext.ts, ADR-147).
+ * `approve_fresh_context` (freshContext.ts, ADR-147). WP-63: `session.remove` (remove from
+ * Parallax only, files stay).
  */
 import { LIMITS, type ClientId, type ProfileId } from '@shared/common';
 import { makeError } from '@shared/errors';
@@ -48,6 +49,11 @@ export interface CommandEngine {
   state(entryId: string): EntryState | undefined;
   /** Registers a new entry (registry + summary) and returns its state. */
   createEntry(entry: Entry, promptTitle: string | null): EntryState;
+  /**
+   * WP-63: drops a (closed) entry from the engine, the registry and every window (`summary.remove`,
+   * host state); its files stay on disk.
+   */
+  removeEntry(s: EntryState): void;
   /** Entries with a process (counted BEFORE closing, R0-19). */
   runningCount(): number;
   /** server.shutdown: flag + `setImmediate(onShutdownRequested)` after the ack. */
@@ -335,7 +341,32 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
       if (text === null) throw commandError('PLAN_NOT_FOUND', { version: cmd.version });
       return { version: cmd.version, text } satisfies CommandResult<'plan.read'>;
     }
+    // WP-63: remove from Parallax only (files stay on disk).
+    case 'session.remove':
+      return removeSession(engine, s);
   }
+}
+
+/**
+ * WP-63 `session.remove`: in the lifecycle lock a running process is closed first like
+ * `session.close` (also during a turn; open decisions end with the process, `process_exit`), a
+ * scheduled "continue" and every timer are dropped; then the entry leaves the engine, the registry
+ * and every window (`summary.remove`; subscribers get `session.unavailable`). Nothing on disk is
+ * deleted: the claude transcript, `entries/<entryId>/` (transcript log, decisions, plan versions,
+ * attachments, file index, command cache) and the blobs stay – no start-up cleanup touches them.
+ * Allowed for archived and external entries too (an external console keeps running on its own).
+ * A command that waited for the lock meanwhile answers ENTRY_NOT_FOUND (`assertEntryGate`).
+ */
+async function removeSession(engine: CommandEngine, s: EntryState): Promise<CommandResult<'session.remove'>> {
+  const core = engine.core;
+  s.cancelRetry();
+  await s.lifecycle.run(async () => {
+    if (s.removed) return;
+    cancelContinue(s);
+    await closeRuntime(s, core, 'remove');
+    engine.removeEntry(s);
+  });
+  return {};
 }
 
 /**

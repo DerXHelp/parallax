@@ -7,6 +7,7 @@ import {
   FolderPlusIcon,
   HistoryIcon,
   InfoIcon,
+  ListXIcon,
   MoonIcon,
   PencilIcon,
   PinIcon,
@@ -34,6 +35,7 @@ import { requestShell } from '../requests';
 import { shortcutKeyLabels } from '../shortcuts';
 import { sessionFocusTarget } from './focus';
 import { isHandoffPending, openExternalConsole } from './handoff';
+import { requestRemoveSession } from './remove-session';
 import { startRenameAfterMenu, takePendingRename, type RenamePlace } from './rename';
 
 /**
@@ -52,7 +54,9 @@ export type SessionActionId =
   | 'copyConsoleCommand'
   | 'archive'
   | 'conversations'
-  | 'sessionInfo';
+  | 'sessionInfo'
+  /** WP-63 §1.3: remove from Parallax only (confirmation dialog; files stay). */
+  | 'remove';
 
 export type SessionActionSlot = SessionActionId | 'separator';
 
@@ -66,7 +70,10 @@ export interface SessionAction {
   run: () => void;
 }
 
-/** Sidebar context menu and the "…" menu of a row (order of WP-35 §3; WP-58: + open folder). */
+/**
+ * Sidebar context menu and the "…" menu of a row (order of WP-35 §3; WP-58: + open folder; WP-63:
+ * + remove).
+ */
 export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
   'rename',
   'pin',
@@ -79,9 +86,10 @@ export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
   'copyConsoleCommand',
   'separator',
   'archive',
+  'remove',
 ];
 
-/** Header menu (WP-35 §8; WP-58: + open folder). */
+/** Header menu (WP-35 §8; WP-58: + open folder; WP-63: + remove). */
 export const HEADER_ACTIONS: readonly SessionActionSlot[] = [
   'conversations',
   'sessionInfo',
@@ -94,6 +102,7 @@ export const HEADER_ACTIONS: readonly SessionActionSlot[] = [
   'separator',
   'sleep',
   'archive',
+  'remove',
 ];
 
 /** Fire-and-forget command of a menu action; a refusal becomes a notice of that session. */
@@ -313,6 +322,16 @@ function build(
         disabled: false,
         run: () => {
           requestShell({ kind: 'sessionInfo', sessionKey });
+        },
+      };
+    case 'remove':
+      return {
+        id,
+        label: 'navigation.actions.remove',
+        icon: ListXIcon,
+        disabled: false,
+        run: () => {
+          requestRemoveSession(sessionKey);
         },
       };
   }
