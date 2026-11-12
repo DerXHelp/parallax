@@ -83,6 +83,15 @@ describe('i18n namespace navigation (WP-35)', () => {
     expect(unused).toEqual([]);
   });
 
+  it('"Earlier conversations" does not tie the list to /clear – a fresh context ends one too (WP61-05)', () => {
+    for (const dictionary of [en, de]) {
+      const description = dictionary.conversations.description;
+      expect(description).not.toMatch(/\/clear/);
+      // The list itself stays explained: what opening an entry does.
+      expect(description.length).toBeGreaterThan(40);
+    }
+  });
+
   it('has no literal text in accessibility attributes of its components', () => {
     expect(Object.keys(NAVIGATION).length).toBeGreaterThan(5);
     for (const [file, source] of Object.entries(NAVIGATION)) {
