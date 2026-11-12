@@ -109,6 +109,49 @@ describe('@ file picker (ADR-151, WP-57)', () => {
     expect(textbox().value).toBe('look at @"docs/Meeting Notes/Review.md" and @README.md @');
   });
 
+  it('V4-03: typing after ↓ makes the best match active again; Tab takes it', async () => {
+    start(
+      projectFiles([
+        'docs/a-guide.md',
+        'docs/b-notes.md',
+        'docs/c-review.md',
+        'verschachtelt/noch-tiefer/und-noch-eine/mit-einem-sehr-langen-dateinamen-fuer-ueberlauf-tests-und-mehr.md',
+        'Grüße-Übersicht.txt',
+      ]),
+    );
+    const user = userEvent.setup();
+    await user.type(textbox(), 'look at @');
+    expect(await options()).toHaveLength(5);
+    await user.keyboard('{ArrowDown}{ArrowDown}');
+    const field = textbox();
+    expect(field.getAttribute('aria-activedescendant')).toBe(
+      within(picker() ?? document.body).getAllByRole('option')[2]?.id,
+    );
+    await user.keyboard('grü');
+    // The scattered hit through the deep folder names is gone (minimum quality).
+    await waitFor(async () => {
+      expect(await options()).toEqual(['Grüße-Übersicht.txt']);
+    });
+    await user.keyboard('{Tab}');
+    expect(textbox().value).toBe('look at @Grüße-Übersicht.txt ');
+  });
+
+  it('V4-03: with several matches left, the first one is active after typing', async () => {
+    start(projectFiles(['src/one.ts', 'src/two.ts', 'src/three.ts', 'src/four.ts', 'docs/x.md']));
+    const user = userEvent.setup();
+    await user.type(textbox(), '@');
+    await options();
+    await user.keyboard('{ArrowDown}{ArrowDown}{ArrowDown}');
+    await user.keyboard('src');
+    await waitFor(async () => {
+      expect(await options()).toHaveLength(4);
+    });
+    const list = picker() ?? document.body;
+    const first = within(list).getAllByRole('option')[0];
+    expect(textbox().getAttribute('aria-activedescendant')).toBe(first?.id);
+    expect(first?.getAttribute('aria-selected')).toBe('true');
+  });
+
   it('a click inserts the path (nothing is sent)', async () => {
     const h = start(projectFiles(FILES));
     const user = userEvent.setup();

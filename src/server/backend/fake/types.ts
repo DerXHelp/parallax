@@ -126,6 +126,11 @@ export interface FakeScriptState {
   /** Phase 2: StartSessionRequest.fastMode, changed by applyFlagSettings({fastMode}); null = CLI default. */
   fastMode: boolean | null;
   turns: number;
+  /**
+   * V4-05 (`fake:context-high`): fixed context fill of getContextUsage and of the streamed usage
+   * until `/clear` or a compaction; null = the default growth per turn.
+   */
+  contextTokens: number | null;
 }
 
 export interface FakeScriptContext {

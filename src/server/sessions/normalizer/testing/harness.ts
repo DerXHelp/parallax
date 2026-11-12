@@ -478,9 +478,13 @@ const sessionMessageSchema = z.looseObject({
   message: z.unknown(),
   parent_tool_use_id: z.string().nullable().optional(),
   timestamp: z.string().nullable().optional(),
+  origin: z.looseObject({ kind: z.string() }).nullable().optional().catch(null),
 });
 
-/** Recorded `getSessionMessages` result → HistoryMessage[] (null if the call only has a summary). */
+/**
+ * Recorded `getSessionMessages` result → HistoryMessage[] (null if the call only has a summary).
+ * `origin` like `backend/history/parse.ts` (R1-07; ADR-152 needs it for task notifications).
+ */
 export function toHistoryMessages(result: unknown): HistoryMessage[] | null {
   const parsed = z.array(sessionMessageSchema).safeParse(result);
   if (!parsed.success) return null;
@@ -491,6 +495,7 @@ export function toHistoryMessages(result: unknown): HistoryMessage[] | null {
     message: m.message,
     parentToolUseId: m.parent_tool_use_id ?? null,
     timestamp: m.timestamp ?? null,
+    origin: m.origin === null || m.origin === undefined ? null : { kind: m.origin.kind },
   }));
 }
 

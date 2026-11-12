@@ -10,7 +10,7 @@ Rohe SDK-Messages → `TranscriptItem`s, `SessionOp`s und `StatusSignal`s. Port:
 | `live.ts` | Live-Adapter (Stream-Events, finale Messages per Message-ID, Tool-Paarung, Tasks, Reset, Zähler) |
 | `history.ts` | Verlaufs-Adapter (`getSessionMessages` + Subagent-Messages, nach Zeit gemischt) |
 | `context.ts` | Context-Gauge (C.1): `getContextUsage` → `ContextBreakdown`, Schätzung während des Turns |
-| `builders.ts` | gemeinsame Item-Bausteine beider Adapter (IDs, Tool-Status, Tasks, User-Text-Klassifikation) |
+| `builders.ts` | gemeinsame Item-Bausteine beider Adapter (IDs, Tool-Status, Tasks, User-Text-Klassifikation; `<task-notification>`-Text nur mit `origin.kind === 'task-notification'` beim Hauptagenten, ohne `origin` angezeigt ohne `outputFile` – ADR-152) |
 | `limits.ts` | Kappung, Blobs, Dedupe von `structured`, Item-Budget (`LIMITS`, R0-11) |
 | `sdk-schemas.ts` | tolerante zod-Sichten der SDK-Messages (`looseObject`, `opt()`) |
 | `synthetic/*.ts` | synthetische Streams (Fixture-Format v1, R0-06) für nicht aufgezeichnete SDK-Typen |

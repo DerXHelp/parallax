@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { defaultEditorSettings, type EditorSettings } from '@shared/model';
 import type { GuiChild, GuiSpawnFn } from '../lib/process';
-import { createMemoryFs } from '../lib/windows';
+import { createMemoryFs, type FsProbe } from '../lib/windows';
 import { CommandError } from '../sync/ports';
 import { createRecordingOpener, createSystemLauncher, type OpenRequest } from './open';
 
@@ -48,16 +48,30 @@ function recordingSpawn(): GuiSpawnFn & {
 
 function launcher(files: Record<string, string> = { [NPP]: '' }) {
   const spawn = recordingSpawn();
+  const clock = { now: 0 };
+  const registry: string[] = [];
+  const query = (key: string) => {
+    registry.push(key);
+    return Promise.resolve(null);
+  };
+  const memory = createMemoryFs(files);
+  /** Files removed later in a test (an uninstalled editor). */
+  const gone = new Set<string>();
+  const probe: FsProbe = {
+    isFile: (file) => (gone.has(file) ? Promise.resolve(false) : memory.isFile(file)),
+    readText: (file) => memory.readText(file),
+  };
   const system = createSystemLauncher({
-    regQuery: () => Promise.resolve(null),
-    regKeyQuery: () => Promise.resolve(null),
-    probe: createMemoryFs(files),
+    regQuery: query,
+    regKeyQuery: query,
+    probe,
     env: ENV,
     spawn,
     readHead: () => Promise.resolve(guiHead()),
     platform: 'win32',
+    now: () => clock.now,
   });
-  return { system, spawn };
+  return { system, spawn, clock, registry, gone };
 }
 
 const request = (p: Partial<OpenRequest> = {}): OpenRequest => ({
@@ -72,7 +86,7 @@ const request = (p: Partial<OpenRequest> = {}): OpenRequest => ({
 });
 
 describe('createSystemLauncher (ADR-144; spawn faked – nothing starts)', () => {
-  it('editor: the detected Notepad++ with per-argument placeholders, cwd = folder of the file', async () => {
+  it('editor: the detected Notepad++ with per-argument placeholders, cwd = folder of the editor (R5-02)', async () => {
     const { system, spawn } = launcher();
     await system.open(request());
     expect(spawn.calls).toHaveLength(1);
@@ -80,7 +94,7 @@ describe('createSystemLauncher (ADR-144; spawn faked – nothing starts)', () =>
       file: NPP,
       args: ['-n12', '-c1', 'D:\\work\\sample\\src\\a.ts'],
       options: {
-        cwd: 'D:\\work\\sample\\src',
+        cwd: 'C:\\Program Files\\Notepad++',
         shell: false,
         windowsHide: false,
         detached: true,
@@ -89,7 +103,7 @@ describe('createSystemLauncher (ADR-144; spawn faked – nothing starts)', () =>
     });
   });
 
-  it('editor: custom executable and arguments', async () => {
+  it('editor: custom executable and arguments; cwd = its folder, never the project (R5-02)', async () => {
     const custom: EditorSettings = {
       preset: 'custom',
       executable: 'D:\\Tools\\ed.exe',
@@ -100,7 +114,34 @@ describe('createSystemLauncher (ADR-144; spawn faked – nothing starts)', () =>
     expect(spawn.calls[0]).toMatchObject({
       file: 'D:\\Tools\\ed.exe',
       args: ['+4:2', 'D:\\work\\sample\\src\\a.ts'],
+      options: { cwd: 'D:\\Tools' },
     });
+  });
+
+  it('editor lookup (R5-04): one registry search per preset and minute; a vanished hit, a later click or detect look again', async () => {
+    const { system, spawn, clock, registry, gone } = launcher();
+    await system.open(request());
+    const perSearch = registry.length;
+    expect(perSearch).toBeGreaterThan(0);
+    clock.now = 59_999;
+    await system.open(request());
+    expect(registry).toHaveLength(perSearch);
+    // After the minute: a new search.
+    clock.now = 60_000;
+    await system.open(request());
+    expect(registry).toHaveLength(2 * perSearch);
+    // detect always searches afresh.
+    await system.detect(defaultEditorSettings());
+    expect(registry.length).toBeGreaterThan(2 * perSearch);
+    const afterDetect = registry.length;
+    await system.open(request());
+    expect(registry).toHaveLength(afterDetect);
+    // The cached editor is gone (uninstalled): searched again → EDITOR_NOT_FOUND, nothing started.
+    gone.add(NPP);
+    const error = await system.open(request()).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ error: { code: 'EDITOR_NOT_FOUND' } });
+    expect(registry.length).toBeGreaterThan(afterDetect);
+    expect(spawn.calls).toHaveLength(4);
   });
 
   it('editor not installed → EDITOR_NOT_FOUND, nothing started', async () => {

@@ -4,6 +4,7 @@ import type { RegView } from '../lib/registry';
 import { createMemoryFs } from '../lib/windows';
 import { CommandError } from '../sync/ports';
 import {
+  createEditorFinder,
   detectEditors,
   editorArguments,
   findEditor,
@@ -66,11 +67,25 @@ describe('findEditor (ADR-144)', () => {
       },
     );
     expect(await findEditor('notepadpp', d)).toBe(NPP_X86);
-    expect(d.asked.slice(0, 3)).toEqual([
+    // R5-04: the first hit ends the search – no Uninstall query after it.
+    expect(d.asked).toEqual([
       `HKCU\\${APP_PATHS}\\notepad++.exe@64`,
       `HKLM\\${APP_PATHS}\\notepad++.exe@64`,
       `HKLM\\${APP_PATHS}\\notepad++.exe@32`,
     ]);
+  });
+
+  it('stops at the first usable candidate (R5-04): a hit in HKCU asks nothing else', async () => {
+    const d = deps(
+      { [NPP]: '', [NPP_X86]: '' },
+      {
+        [`HKCU\\${APP_PATHS}\\notepad++.exe@64`]: defaultValue(NPP),
+        [`HKLM\\${APP_PATHS}\\notepad++.exe@64`]: defaultValue(NPP_X86),
+      },
+    );
+    expect(await findEditor('notepadpp', d)).toBe(NPP);
+    expect(d.asked).toEqual([`HKCU\\${APP_PATHS}\\notepad++.exe@64`]);
+    expect(d.touched).toEqual([NPP]);
   });
 
   it('then Uninstall InstallLocation, then the usual folders', async () => {
@@ -105,6 +120,63 @@ describe('findEditor (ADR-144)', () => {
     );
     expect(await findEditor('notepadpp', d)).toBe(NPP);
     expect(d.touched.some((file) => file.startsWith('\\\\') || /cmd\.exe$/i.test(file))).toBe(false);
+  });
+});
+
+describe('createEditorFinder (R5-04)', () => {
+  const appPath = { [`HKLM\\${APP_PATHS}\\notepad++.exe@64`]: defaultValue(NPP) };
+
+  it('keeps a hit per preset for the TTL, re-checked by one stat; misses are not cached', async () => {
+    let now = 1_000;
+    const finder = createEditorFinder({ ttlMs: 60_000, now: () => now });
+    const d = deps({ [NPP]: '' }, appPath);
+    expect(await finder.find('notepadpp', d)).toBe(NPP);
+    const asked = d.asked.length;
+    now += 59_999;
+    expect(await finder.find('notepadpp', d)).toBe(NPP);
+    expect(d.asked).toHaveLength(asked);
+    expect(d.touched.at(-1)).toBe(NPP);
+    // Another preset has its own entry; a miss is searched again each time.
+    expect(await finder.find('vscode', d)).toBeNull();
+    const afterMiss = d.asked.length;
+    expect(await finder.find('vscode', d)).toBeNull();
+    expect(d.asked.length).toBeGreaterThan(afterMiss);
+    // Expired → searched again.
+    now += 1;
+    const beforeExpiry = d.asked.length;
+    expect(await finder.find('notepadpp', d)).toBe(NPP);
+    expect(d.asked.length).toBeGreaterThan(beforeExpiry);
+  });
+
+  it('a cached executable that vanished is searched again; refresh always searches and replaces the hit', async () => {
+    const finder = createEditorFinder({ now: () => 0 });
+    expect(await finder.find('notepadpp', deps({ [NPP]: '' }, appPath))).toBe(NPP);
+    // Uninstalled (other file system): the stale hit is not returned.
+    const moved = deps({ [NPP_X86]: '' }, {}, {});
+    expect(await finder.find('notepadpp', moved)).toBe(NPP_X86);
+    expect(moved.asked.length).toBeGreaterThan(0);
+    const fresh = deps({ [NPP]: '' }, appPath);
+    expect(await finder.refresh('notepadpp', fresh)).toBe(NPP);
+    expect(fresh.asked.length).toBeGreaterThan(0);
+    const cached = deps({ [NPP]: '' }, appPath);
+    expect(await finder.find('notepadpp', cached)).toBe(NPP);
+    expect(cached.asked).toEqual([]);
+    // A refresh that finds nothing drops the hit.
+    expect(await finder.refresh('notepadpp', deps({}))).toBeNull();
+    const after = deps({ [NPP]: '' }, appPath);
+    expect(await finder.find('notepadpp', after)).toBe(NPP);
+    expect(after.asked.length).toBeGreaterThan(0);
+  });
+
+  it('resolveEditorExecutable and detectEditors take the finder', async () => {
+    const finder = createEditorFinder({ now: () => 0 });
+    const d = deps({ [NPP]: '' }, appPath);
+    expect(await resolveEditorExecutable(editor(), d, finder.find)).toBe(NPP);
+    const asked = d.asked.length;
+    expect(await resolveEditorExecutable(editor(), d, finder.find)).toBe(NPP);
+    expect(d.asked).toHaveLength(asked);
+    expect(await detectEditors(editor(), d, finder.refresh)).toEqual({ notepadpp: NPP, vscode: null, custom: null });
+    expect(d.asked.length).toBeGreaterThan(asked);
   });
 });
 

@@ -31,6 +31,7 @@ export function contextFor(ctx: FakeScriptContext, sessionId: string): DslContex
     cwd: ctx.req.cwd,
     timestamp: () => ctx.now().toISOString(),
     stepMs: ANSWER_STEP_MS,
+    contextTokens: ctx.state.contextTokens,
   });
 }
 

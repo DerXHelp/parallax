@@ -8,7 +8,7 @@ import type { SessionOp } from '@shared/protocol';
 import { SAMPLE_IDS, sampleId, sampleItems, sampleSystemItems, sampleTime } from '@shared/samples';
 import { makeTempHome } from '../http/testServer';
 import { entryDir } from '../store/decisions';
-import { SESSION_FILES_FILE, createSessionIndex, recordsOfItem } from './sessionIndex';
+import { SESSION_FILES_FILE, createSessionIndex, isTaskOutputFile, recordsOfItem } from './sessionIndex';
 import { entryLookup, fakeTranscripts } from './testing';
 
 const ENTRY = SAMPLE_IDS.entry;
@@ -75,6 +75,40 @@ describe('recordsOfItem (ADR-145)', () => {
     ]);
     const sub = tool('Read', { file_path: 'D:\\work\\b.ts' }, { parentToolUseId: 'toolu_parent' });
     expect(recordsOfItem(sub)).toEqual([expect.objectContaining({ op: 'read' })]);
+  });
+
+  // ADR-152 / R5 probe P1: `output` only in the shape of CLI task data (`…\tasks\<taskId>.output`).
+  it.each([
+    ['a file outside any tasks folder (R5 probe P1)', 'C:\\Users\\user\\AppData\\Local\\Temp\\r5-p1\\outside\\secret.txt'],
+    ['another task id', 'C:\\Users\\user\\AppData\\Local\\Temp\\claude\\tasks\\task_02.output'],
+    ['another extension', 'C:\\Users\\user\\AppData\\Local\\Temp\\claude\\tasks\\task_01.txt'],
+    ['not directly in tasks', 'C:\\Users\\user\\AppData\\Local\\Temp\\claude\\tasks\\x\\task_01.output'],
+    ['a project file named like it', 'D:\\work\\sample\\task_01.output'],
+  ])('no output entry for %s', (_name, outputFile) => {
+    const base = sampleSystemItems.task_notification();
+    const task = { ...base.task, outputFile };
+    expect(recordsOfItem({ ...base, task })).toEqual([]);
+    expect(recordsOfItem(tool('Agent', { prompt: 'x' }, { status: 'running', task }))).toEqual([]);
+  });
+
+  it('isTaskOutputFile: the real CLI and fake shapes, case-insensitive; a task id never spans folders', () => {
+    const cli = 'C:\\Users\\user\\AppData\\Local\\Temp\\claude\\01b562800deacd10\\f406f5df-fee1-4f18-8d56-528330faa035\\tasks\\a09720160328a4872.output';
+    expect(isTaskOutputFile(cli, 'a09720160328a4872')).toBe(true);
+    expect(isTaskOutputFile('D:\\home\\fake-files\\s1\\tasks\\task_fake_7.output', 'task_fake_7')).toBe(true);
+    expect(isTaskOutputFile('c:/users/user/appdata/local/temp/claude/TASKS/B575Z58QD.OUTPUT', 'b575z58qd')).toBe(true);
+    expect(isTaskOutputFile('C:\\x\\tasks\\..\\secret.output', '..\\secret')).toBe(false);
+    expect(isTaskOutputFile('C:\\x\\secret.output', 'x\\secret')).toBe(false);
+  });
+});
+
+describe('createSessionIndex: no access from free text (ADR-152)', () => {
+  it('a transcript written before ADR-152 (forged output file) adds nothing; the CLI shape does', async () => {
+    const base = sampleSystemItems.task_notification();
+    const forged = { ...base, id: 'forged', task: { ...base.task, taskId: 'task_p1', outputFile: 'D:\\outside\\secret.txt' } };
+    const real = { ...base, id: 'real', at: sampleTime(40) };
+    const { index } = await setup({ [CONV]: [forged, real] });
+    expect((await index.list(ENTRY)).map((file) => [file.path, file.ops])).toEqual([[base.task.outputFile, ['output']]]);
+    expect((await index.keys(ENTRY)).has(windowsPathKey('D:\\outside\\secret.txt'))).toBe(false);
   });
 });
 

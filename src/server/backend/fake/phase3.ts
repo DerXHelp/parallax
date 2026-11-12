@@ -3,8 +3,8 @@
  * agent with progress summaries and a real output file, done after 30 s or stopped earlier by
  * stopTask), `fake:todo` (TodoWrite with status updates), `fake:files` (Read/Write/Edit on real
  * files plus an answer with file references), `fake:writes-lost` (system/session_writes_lost on
- * exit) and the answers to prompts with PDFs, attached files and inline pastes. Real files only
- * under the fake files root (`ctx.files`).
+ * exit), `fake:context-high` (context stays at 75 %, V4-05) and the answers to prompts with PDFs,
+ * attached files and inline pastes. Real files only under the fake files root (`ctx.files`).
  */
 import type { FixtureEvent } from '../fixture';
 import type { OutgoingPrompt } from '../types';
@@ -21,6 +21,7 @@ import {
   type DslContext,
   type TaskUsageSpec,
 } from './dsl';
+import { FAKE_CONTEXT_HIGH_TOKENS } from './defaults';
 import { patchHunks } from './files';
 import { promptImageCount, receivedImagesText } from './image';
 import { answerTurn, contextFor, type Turn } from './turn';
@@ -283,6 +284,20 @@ export async function writesLost(ctx: FakeScriptContext, c: DslContext, turn: Tu
     ]);
   }
   await answerTurn(ctx, c, turn, FAKE_WRITES_LOST_TEXT);
+}
+
+// ---- fake:context-high (V4-05) ----
+
+export const FAKE_CONTEXT_HIGH_TEXT = 'Fake: the context is now about 75 % full and stays there until /clear or a compaction.';
+
+/**
+ * Raises the session's context fill to FAKE_CONTEXT_HIGH_TOKENS for good: getContextUsage after
+ * each turn and the usage of every streamed message (the estimate during later turns, e.g. a
+ * `fake:plan` decision) report it, so the "fresh context" recommendation (≥ 60 %) shows.
+ */
+export async function contextHigh(ctx: FakeScriptContext, c: DslContext, turn: Turn): Promise<void> {
+  ctx.state.contextTokens = FAKE_CONTEXT_HIGH_TOKENS;
+  await answerTurn(ctx, { ...c, contextTokens: FAKE_CONTEXT_HIGH_TOKENS }, turn, FAKE_CONTEXT_HIGH_TEXT);
 }
 
 // ---- attachments and pastes (ADR-146) ----
