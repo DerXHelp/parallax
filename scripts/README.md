@@ -6,6 +6,7 @@
 | `build-server.ts` | `pnpm build:server` | 00       | fertig                |
 | `preflight.ts`    | `pnpm preflight`    | 11       | fertig (WP-11)        |
 | `record.ts`       | `pnpm record <sz>`  | 01       | fertig (WP-01, Env/Auth seit WP-11 über `src/server/claude`) |
+| `bundle-budget.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/bundle-budget.ts [--lazy]` | FIX-R5-F6 | fertig (Start-Chunks gegen `109c073`, nach `pnpm build`; liest nur `dist/web`) |
 
 ## `pnpm preflight` (WP-11)
 

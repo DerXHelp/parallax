@@ -8,6 +8,7 @@
  */
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { FAKE_CLAUDE_VERSION } from '../src/server/backend/fake/defaults';
 import { ParallaxApp } from './support/app';
 import { expect, keepServerLog, test } from './support/fixtures';
 import { startE2eServer, type E2eServer } from './support/server';
@@ -104,9 +105,9 @@ test('profiles: create (colour, masked *_TOKEN), test, make default, delete bloc
   await expect(section.locator(`[data-profile-row="${profileId}"]`)).toContainText('Work');
   await expect(editor.locator('[data-env-row] input[data-part="value"]')).toHaveAttribute('type', 'password');
 
-  // "Test profile" (fake integration: ok, logged in).
+  // "Test profile" (fake integration: ok, logged in) – with the CLI version the SDK expects (V4-05).
   await editor.locator('[data-action="profile-test"]').click();
-  await expect(editor.locator('[data-slot="profile-test-result"]')).toContainText('2.1.300');
+  await expect(editor.locator('[data-slot="profile-test-result"]')).toContainText(FAKE_CLAUDE_VERSION);
 
   // Default: the dialog pre-selects it from now on.
   await editor.locator('[data-action="profile-default"]').click();
