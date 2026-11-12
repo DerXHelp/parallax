@@ -1,6 +1,7 @@
 import { Component, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
+import { showTextNotice } from '@web/state/notices';
 import { Alert } from '@web/ui/alert';
 import { Button } from '@web/ui/button';
 
@@ -11,6 +12,10 @@ import { Button } from '@web/ui/button';
  * stays usable. "Reload" resets the boundary (render error) – a failed chunk stays failed in
  * `React.lazy`'s cache, so there it reloads the window after a confirmation. The error is only
  * shown, never logged (code rule: no `console.*`).
+ *
+ * Quiet variant (R5W-02): slots inside running text (a file reference in a paragraph, dozens per
+ * transcript) pass a `fallback` – it replaces the card in place (inline, no `div` in a `p`, no
+ * alert per reference), and the first quiet failure of the window is announced once as a notice.
  *
  * WP-60 wraps the lazy slots in App.tsx: `<SlotBoundary resetKey={sessionKey}>…</SlotBoundary>` or
  * `withSlotBoundary(Slot, (props) => props.sessionKey)`; inside a `Suspense`, the boundary goes
@@ -26,8 +31,46 @@ export function isChunkLoadError(error: unknown): boolean {
   return CHUNK_ERROR.test(`${error.name}: ${error.message}`);
 }
 
-function reloadWindow(): void {
+export function reloadWindow(): void {
   window.location.reload();
+}
+
+/** What a quiet boundary's `fallback` learns about the failure. */
+export interface SlotFailure {
+  /** True for a chunk that could not be downloaded (only a window reload helps). */
+  chunk: boolean;
+}
+
+/** Id of the one notice of quiet failures (R5W-02). */
+export const QUIET_SLOT_NOTICE_ID = 'shell-slot-quiet-failure';
+
+let quietFailureAnnounced = false;
+
+/**
+ * The first failure of a quiet boundary in this window becomes one notice (an error, so it is the
+ * one `role="alert"`); every later one stays silent – the fallback already shows the content.
+ */
+function announceQuietFailure(chunk: boolean, reload: () => void): void {
+  if (quietFailureAnnounced) return;
+  quietFailureAnnounced = true;
+  if (chunk) {
+    showTextNotice('navigation.slotError.inlineChunk', undefined, {
+      tone: 'error',
+      id: QUIET_SLOT_NOTICE_ID,
+      durationMs: null,
+      action: { label: 'navigation.slotError.reloadWindow', run: reload },
+    });
+  } else {
+    showTextNotice('navigation.slotError.inlineRender', undefined, {
+      tone: 'error',
+      id: QUIET_SLOT_NOTICE_ID,
+    });
+  }
+}
+
+/** Tests: the next quiet failure is announced again. */
+export function resetQuietSlotFailures(): void {
+  quietFailureAnnounced = false;
 }
 
 function SlotErrorCard({
@@ -109,6 +152,12 @@ export interface SlotBoundaryProps {
   className?: string;
   /** Tests/playground: replaces `window.location.reload()`. */
   onReloadWindow?: () => void;
+  /**
+   * Quiet variant for slots inside running text (R5W-02): rendered instead of the card – e.g. a
+   * file reference as plain text. Must be inline content when the slot sits in a paragraph. The
+   * first quiet failure of the window is announced once as a notice.
+   */
+  fallback?: (failure: SlotFailure) => ReactNode;
 }
 
 interface SlotBoundaryState {
@@ -125,6 +174,11 @@ export class SlotBoundary extends Component<SlotBoundaryProps, SlotBoundaryState
     return { failed: true, chunk: isChunkLoadError(error) };
   }
 
+  override componentDidCatch(error: unknown): void {
+    if (this.props.fallback === undefined) return;
+    announceQuietFailure(isChunkLoadError(error), this.props.onReloadWindow ?? reloadWindow);
+  }
+
   override componentDidUpdate(previous: SlotBoundaryProps): void {
     if (this.state.failed && !Object.is(previous.resetKey, this.props.resetKey)) this.retry();
   }
@@ -135,6 +189,7 @@ export class SlotBoundary extends Component<SlotBoundaryProps, SlotBoundaryState
 
   override render(): ReactNode {
     if (this.state.failed) {
+      if (this.props.fallback !== undefined) return this.props.fallback({ chunk: this.state.chunk });
       return (
         <SlotErrorCard
           chunk={this.state.chunk}
@@ -155,15 +210,20 @@ function SlotAttempt({ children }: { children: ReactNode }) {
 
 /**
  * `Slot` inside a SlotBoundary – for the FeatureSlots map (WP-60). `resetKeyOf` picks the reset key
- * from the props (usually the session key).
+ * from the props (usually the session key); `fallbackOf` makes it the quiet variant (R5W-02) with
+ * the slot's own replacement, e.g. a file reference as plain text.
  */
 export function withSlotBoundary<P extends object>(
   Slot: ComponentType<P>,
   resetKeyOf?: (props: P) => unknown,
+  fallbackOf?: (props: P, failure: SlotFailure) => ReactNode,
 ): ComponentType<P> {
   function Bounded(props: P) {
     return (
-      <SlotBoundary resetKey={resetKeyOf?.(props)}>
+      <SlotBoundary
+        resetKey={resetKeyOf?.(props)}
+        fallback={fallbackOf === undefined ? undefined : (failure) => fallbackOf(props, failure)}
+      >
         <Slot {...props} />
       </SlotBoundary>
     );

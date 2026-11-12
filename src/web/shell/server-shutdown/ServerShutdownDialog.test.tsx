@@ -5,7 +5,8 @@ import { LOCAL_HOST_ID } from '@shared/common';
 import { makeError } from '@shared/errors';
 import { sampleHostState, sampleSettings, sampleStatusFacts, sampleSummary } from '@shared/samples';
 import { App } from '@web/App';
-import { DICTIONARIES, setLanguage, translate } from '@web/i18n';
+import { EN_DICTIONARY, getDictionary, setLanguage, translate } from '@web/i18n';
+import { deDictionary } from '@web/i18n/dictionary.de';
 import { startScenario, type RunningScenario } from '@web/playground/PlaygroundScenario';
 import { createHostConnection, registerConnection, unregisterConnection } from '@web/state/connection';
 import { FakeHost } from '@web/state/fake-host';
@@ -262,8 +263,10 @@ describe('serverShutdown texts', () => {
   });
 
   it('is registered as namespace serverShutdown (WP-20b) with the shell plural rules', () => {
-    expect(DICTIONARIES.en.serverShutdown).toBe(en);
-    expect(DICTIONARIES.de.serverShutdown).toBe(de);
+    expect(EN_DICTIONARY.serverShutdown).toBe(en);
+    // German is the lazy chunk of ADR-153 (in memory in tests).
+    expect(deDictionary.serverShutdown).toBe(de);
+    expect(getDictionary('de')?.serverShutdown).toBe(de);
     expect(translate('en', 'serverShutdown.working', { count: 1200 })).toBe('Working (1,200)');
     expect(translate('de', 'serverShutdown.working', { count: 1200 })).toBe('Arbeitet (1.200)');
     expect(translate('en', 'serverShutdown.idle', { count: 1 })).toBe(

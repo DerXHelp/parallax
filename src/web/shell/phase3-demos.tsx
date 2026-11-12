@@ -15,11 +15,11 @@ import { SidebarFrame } from './SidebarFrame';
 import { SlotBoundary } from './SlotBoundary';
 
 /**
- * Playground demos of the WP-58 shell parts (no playground registry of its own – the preferences
- * playground lists them, see its README): header buttons with counters (wide and narrow), the
- * session menu with "Open folder in Explorer", the drop overlay, the sidebar in a 900 px and a
- * 700 px frame, and the SlotBoundary error cards. Data: the navigation scenario plus a detail patch
- * of the selected session (plan, background tasks, to-dos).
+ * Playground demos of the WP-58 shell parts (listed with the shell demos, playground/demos.tsx):
+ * header buttons with counters (wide and narrow), the session menu with "Open folder in Explorer",
+ * the drop overlay, the sidebar in a 900 px and a 700 px frame, the SlotBoundary error cards and
+ * its quiet variant (R5W-02). Data: the navigation scenario plus a detail patch of the selected
+ * session (plan, background tasks, to-dos).
  */
 
 const AUTH = NAVIGATION_SESSION_KEYS.auth;
@@ -114,6 +114,16 @@ const MissingChunk = lazy(() =>
 );
 
 const noReload = () => undefined;
+
+/** References of the quiet demo (R5W-02): each one a slot whose chunk is missing. */
+const QUIET_DEMO_PATHS = [
+  'D:\\work\\auth-service\\src\\login.ts',
+  'D:\\work\\auth-service\\src\\token.ts',
+  'D:\\work\\auth-service\\README.md',
+  'D:\\work\\auth-service\\package.json',
+  'D:\\work\\auth-service\\src\\session\\store.ts',
+  'D:\\work\\auth-service\\docs\\api.md',
+];
 
 export const shellPhase3Demos: readonly PlaygroundDemo[] = [
   {
@@ -224,6 +234,29 @@ export const shellPhase3Demos: readonly PlaygroundDemo[] = [
             <MissingChunk />
           </Suspense>
         </SlotBoundary>
+      </div>
+    ),
+  },
+  {
+    id: 'shell-slot-quiet',
+    title: 'Shell – SlotBoundary, quiet variant: references in running text stay plain text',
+    description:
+      'R5W-02: six references whose chunk is missing – no card per reference; the first failure of the window shows one notice.',
+    render: () => (
+      <div className="max-w-xl p-6">
+        <p data-slot="quiet-demo" className="flex flex-wrap gap-x-2 text-ui">
+          {QUIET_DEMO_PATHS.map((path) => (
+            <SlotBoundary
+              key={path}
+              onReloadWindow={noReload}
+              fallback={() => <span className="break-all">{path}</span>}
+            >
+              <Suspense fallback={<span className="break-all">{path}</span>}>
+                <MissingChunk />
+              </Suspense>
+            </SlotBoundary>
+          ))}
+        </p>
       </div>
     ),
   },

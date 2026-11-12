@@ -3,6 +3,7 @@ import { useState, type ReactNode } from 'react';
 import { makeError } from '@shared/errors';
 import { useI18n } from '@web/i18n';
 import { AppShell } from '@web/shell/AppShell';
+import { shellPhase3Demos } from '@web/shell/phase3-demos';
 import { Alert, Banner } from '@web/ui/alert';
 import { Badge } from '@web/ui/badge';
 import { Button } from '@web/ui/button';
@@ -283,6 +284,9 @@ export const shellDemos: readonly PlaygroundDemo[] = [
   shellDemo('signed-out'),
   shellDemo('outdated'),
   ...navigationDemos,
+  // WP-58 / FIX-R5: the shell's Phase 3 parts (header buttons, menu, drop overlay, narrow window,
+  // slot errors) – formerly listed by the preferences playground.
+  ...shellPhase3Demos,
   {
     id: 'ui-status-icons',
     title: 'UI – Status icons (all display statuses)',

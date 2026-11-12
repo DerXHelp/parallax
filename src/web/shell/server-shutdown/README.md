@@ -9,4 +9,4 @@ danach `server.shutdown`. Der Server bestätigt zuerst und schließt dann jede V
 | --- | --- |
 | `ServerShutdownDialog.tsx` | `ServerShutdownDialog` (einmal neben dem Menü gemountet), `openServerShutdown`, `closeServerShutdown` |
 | `impact.ts` | `shutdownImpact(entries, now)` → `{ working, waiting, idle }` (rein, über `deriveDisplayStatus`/`orderSessions`) |
-| `i18n/en.ts`, `i18n/de.ts` | Texte des Namespace `serverShutdown` (`de: typeof en`), statisch registriert in `src/web/i18n/index.ts` (WP-20b) – Aufruf `t('serverShutdown.<key>')` |
+| `i18n/en.ts`, `i18n/de.ts` | Texte des Namespace `serverShutdown` (`de: typeof en`), registriert in `src/web/i18n/dictionaries.ts` (en, statisch) bzw. `dictionary.de.ts` (de, Lazy-Chunk, ADR-153; vorher `index.ts`, WP-20b) – Aufruf `t('serverShutdown.<key>')` |

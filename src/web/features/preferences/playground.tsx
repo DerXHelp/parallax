@@ -6,7 +6,6 @@ import { useT } from '@web/i18n';
 import { playSound, unlockAudio } from '@web/notifications/sounds';
 import { startScenario } from '@web/playground/PlaygroundScenario';
 import type { PlaygroundDemo } from '@web/playground/types';
-import { shellPhase3Demos } from '@web/shell/phase3-demos';
 import type { SettingsSection } from '@web/shell/requests';
 import type { FeatureSlots } from '@web/shell/slots';
 import { Button } from '@web/ui/button';
@@ -211,9 +210,6 @@ export const demos: PlaygroundDemo[] = [
     description: 'Five synthesized sounds, ≤ 600 ms; the first click unlocks audio.',
     render: () => <SoundsDemo />,
   },
-  // WP-58: the shell's Phase 3 parts (header buttons, menu, drop overlay, narrow window, slot
-  // errors) – listed here because the playground discovers feature modules only.
-  ...shellPhase3Demos,
 ];
 
 export const slots: Partial<FeatureSlots> = { SettingsPage };
