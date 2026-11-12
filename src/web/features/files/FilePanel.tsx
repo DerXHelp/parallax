@@ -4,12 +4,13 @@ import { LIMITS } from '@shared/common';
 import type { FileInfo } from '@shared/model';
 import { windowsPathKey } from '@shared/paths';
 import { useI18n } from '@web/i18n';
+import { formatFileSize } from '@web/lib/bytes';
 import { cn } from '@web/lib/cn';
 import { languageForPath } from '@web/lib/languages';
-import { pathTail } from '@web/lib/path-display';
 import { useFeatureSlots, type FilePanelSlotProps } from '@web/shell/slots';
 import { useNow } from '@web/state/clock';
 import { Alert } from '@web/ui/alert';
+import { Badge } from '@web/ui/badge';
 import { Button } from '@web/ui/button';
 import { IconButton } from '@web/ui/icon-button';
 import { Skeleton } from '@web/ui/skeleton';
@@ -17,8 +18,8 @@ import { ToggleGroup, ToggleGroupItem } from '@web/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
 import { FileIcon } from './components/FileIcon';
 import { ImageView } from './components/ImageView';
+import { PathText } from './components/PathText';
 import { fileActions, openExternally, type FileAction } from './lib/actions';
-import { formatBytes } from './lib/format';
 import { fileName, parentPath } from './lib/paths';
 import { useFileDocument, type FileDocumentHandle } from './state/file-document';
 
@@ -30,11 +31,12 @@ type MarkdownMode = 'rendered' | 'source';
 
 /**
  * Slot `FilePanel` (WP-54, ADR-142/143): the viewer of one file in the tab "File" of the side panel –
- * header (name, path tail with the full path as tooltip, kind, size, modified; refresh, editor,
- * Explorer, default program, copy path; Markdown rendered/source), then the content by kind: Markdown
- * through the slot `Markdown` (relative links against the file's folder), text/code in the
- * virtualized code view (line jump), image, PDF; binary files and folders get the actions only.
- * Read-only (F2). Live: see state/file-document.ts. Mounted per path (`key`).
+ * header (name, folder shortened from the start with the full path as tooltip, kind, size in decimal
+ * units like everywhere (`@web/lib/bytes`), modified, "Last known state" when a later check failed;
+ * refresh, editor, Explorer, default program, copy path; Markdown rendered/source), then the content
+ * by kind: Markdown through the slot `Markdown` (relative links against the file's folder), text/code
+ * in the virtualized code view (line jump, column mark), image, PDF; binary files and folders get the
+ * actions only. Read-only (F2). Live: see state/file-document.ts. Mounted per path (`key`).
  */
 export function FilePanel(props: FilePanelSlotProps) {
   return <FileViewer key={windowsPathKey(props.path)} {...props} />;
@@ -81,21 +83,23 @@ function Header({
 }) {
   const { t, format } = useI18n();
   const now = useNow(30_000);
+  const folder = parentPath(path);
   return (
     <div data-slot="file-panel-header" className="flex shrink-0 flex-col gap-1 border-b px-3 py-2">
       <div className="flex min-w-0 items-center gap-1.5">
         <FileIcon path={path} kind={info?.kind ?? null} className="text-muted-foreground size-4 shrink-0" />
         <Tooltip>
           <TooltipTrigger asChild>
+            {/* The name keeps its room; the folder gives way first and is shortened from the start. */}
             <h2
               tabIndex={0}
-              className="min-w-0 flex-1 truncate text-sm outline-none"
+              className="flex min-w-0 flex-1 items-baseline gap-1.5 text-sm outline-none"
               data-slot="file-panel-title"
             >
-              <span className="font-medium">{fileName(path)}</span>
-              <span className="text-muted-foreground ml-1.5 font-mono text-2xs">
-                {pathTail(parentPath(path), 3)}
-              </span>
+              <span className="max-w-full shrink-0 truncate font-medium">{fileName(path)}</span>
+              {folder === '' ? null : (
+                <PathText path={folder} className="text-muted-foreground flex-1 font-mono text-2xs" />
+              )}
             </h2>
           </TooltipTrigger>
           <TooltipContent className="font-mono break-all">{path}</TooltipContent>
@@ -122,11 +126,16 @@ function Header({
           className="text-muted-foreground flex min-h-6 flex-wrap items-center gap-x-1.5 text-xs"
           data-slot="file-panel-meta"
         >
+          {doc.stale ? (
+            <Badge variant="warning" data-slot="file-panel-stale">
+              {t('files.viewer.stale')}
+            </Badge>
+          ) : null}
           <span>{t(`files.kind.${info.kind}`)}</span>
           {info.kind === 'directory' ? null : (
             <>
               <span aria-hidden>·</span>
-              <span>{formatBytes(info.bytes, format)}</span>
+              <span>{formatFileSize(info.bytes, format)}</span>
             </>
           )}
           <span aria-hidden>·</span>
@@ -163,6 +172,7 @@ function Content({
   sessionKey,
   path,
   line,
+  col,
   doc,
   info,
   mode,
@@ -171,6 +181,7 @@ function Content({
   sessionKey: string;
   path: string;
   line: number | null;
+  col: number | null;
   doc: FileDocumentHandle;
   info: FileInfo;
   mode: MarkdownMode;
@@ -224,6 +235,7 @@ function Content({
         text={doc.text}
         language={info.kind === 'markdown' ? 'markdown' : languageForPath(path)}
         line={line}
+        col={col}
         label={t('files.viewer.code', { name })}
       />
     </Suspense>
@@ -242,6 +254,7 @@ function FileViewer({ sessionKey, path, line, col }: FilePanelSlotProps) {
     <section
       data-slot="file-panel"
       data-kind={info?.kind}
+      data-stale={doc.stale ? 'true' : undefined}
       aria-label={t('files.viewer.label')}
       aria-busy={doc.loading || doc.busy}
       className="flex min-h-0 flex-1 flex-col"
@@ -265,7 +278,7 @@ function FileViewer({ sessionKey, path, line, col }: FilePanelSlotProps) {
       {info?.truncated === true && doc.text !== null ? (
         <div className="shrink-0 px-3 pt-3" data-slot="file-truncated">
           <Alert tone="warning">
-            {t('files.viewer.truncated', { size: formatBytes(LIMITS.fileTextBytes, format) })}
+            {t('files.viewer.truncated', { size: formatFileSize(LIMITS.fileTextBytes, format) })}
           </Alert>
         </div>
       ) : null}
@@ -278,6 +291,7 @@ function FileViewer({ sessionKey, path, line, col }: FilePanelSlotProps) {
           sessionKey={sessionKey}
           path={path}
           line={line}
+          col={col}
           doc={doc}
           info={info}
           mode={mode}

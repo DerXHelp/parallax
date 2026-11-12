@@ -1,8 +1,18 @@
 import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@web/ui/tooltip';
 import { FILES_SLOTS } from './index';
 import { FILES_SESSION_KEY } from './testing';
+
+// About 1 s alone, but 5–16 s under parallel load (R5W-04): most of it is importing the FileLink
+// chunk's module graph (stat cache, actions, menus, the shell's session actions).
+vi.setConfig({ testTimeout: 30_000 });
+
+beforeAll(async () => {
+  // Import the chunk's modules up front (cost in the hook): React.lazy still suspends once on the
+  // first render, so the plain-text fallback is still checked.
+  await import('./FileLink');
+}, 120_000);
 
 afterEach(() => {
   cleanup();
@@ -22,7 +32,7 @@ describe('FILES_SLOTS', () => {
     expect(fallback?.getAttribute('data-state')).toBe('checking');
     expect(fallback?.textContent).toBe('sample\\README.md:3');
 
-    const link = await screen.findByRole('button', { name: 'sample\\README.md:3' });
+    const link = await screen.findByRole('button', { name: 'sample\\README.md:3' }, { timeout: 15_000 });
     expect(link.getAttribute('data-state')).toBe('link');
   });
 

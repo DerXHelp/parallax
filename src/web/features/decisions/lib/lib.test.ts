@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sampleDecisions, sampleItems, sampleOutcomes, sampleSessionSnapshot } from '@shared/samples';
 import { viewStateFromSnapshot } from '@shared/sync';
 import { defaultDestination } from '../components/PermissionCard';
@@ -80,6 +80,33 @@ describe('remembered approve choice', () => {
     expect(readApproveFresh()).toBe(false);
     localStorage.setItem('parallax.decisions.approveFresh', 'yes');
     expect(readApproveFresh()).toBe(false);
+  });
+
+  it('a throwing storage (privacy settings, quota): defaults, writes never throw (R5W-11)', () => {
+    writeApproveMode('auto');
+    writeApproveFresh(true);
+    // On the instance: happy-dom binds Storage methods to it on first use (a prototype spy is bypassed).
+    const getItem = vi.spyOn(localStorage, 'getItem').mockImplementation(() => {
+      throw new Error('SecurityError');
+    });
+    const setItem = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError');
+    });
+    try {
+      expect(readApproveMode()).toBeNull();
+      expect(readApproveFresh()).toBe(false);
+      expect(() => {
+        writeApproveMode('acceptEdits');
+        writeApproveFresh(false);
+      }).not.toThrow();
+      expect(setItem).toHaveBeenCalledTimes(2);
+    } finally {
+      getItem.mockRestore();
+      setItem.mockRestore();
+    }
+    // The earlier values are untouched.
+    expect(readApproveMode()).toBe('auto');
+    expect(readApproveFresh()).toBe(true);
   });
 });
 

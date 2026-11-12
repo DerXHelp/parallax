@@ -5,18 +5,20 @@ import type { HighlightedLine } from '@web/lib/highlight';
 import type { LanguageId } from '@web/lib/languages';
 import { SHIKI_TOKENS } from '@web/ui/code-block';
 import { useHighlight } from '@web/ui/use-highlight';
+import { columnOffset } from '../lib/columns';
 
 /**
  * Virtualized code view of the viewer (WP-54, lazy chunk): one row per line with its number, Shiki
  * colors up to HIGHLIGHT_MAX_CHARS (ui/use-highlight, plain text above), no wrapping (horizontal
  * scroll, sticky numbers). A `line` is scrolled to the middle, marked (`aria-current`) and the view
  * takes the focus when the focus is in the side panel (or nowhere) – keyboard scrolling works at once.
- * The scroll position survives new text (live reload): the rows change, the list stays.
+ * A `col` on that line is underlined and scrolled into view (R5W-10). The scroll position survives
+ * new text (live reload): the rows change, the list stays.
  */
 
 export const CODE_LINE_HEIGHT = 20;
 
-/** Frames to wait for virtua's viewport measurement before the line jump. */
+/** Frames to wait for virtua's viewport measurement before the line jump (and for the row after it). */
 const JUMP_MAX_FRAMES = 10;
 
 export interface CodeViewProps {
@@ -24,6 +26,8 @@ export interface CodeViewProps {
   language: LanguageId | null;
   /** 1-based line to jump to; null = none. */
   line?: number | null;
+  /** 1-based column on `line` to mark (characters, a tab counts 1 like in editors); null = none. */
+  col?: number | null;
   /** Accessible name of the scroll region. */
   label: string;
   className?: string;
@@ -59,6 +63,18 @@ function longestLine(lines: readonly string[]): number {
   return longest;
 }
 
+function ColumnMarker({ plain, col }: { plain: string; col: number }) {
+  return (
+    <span
+      aria-hidden
+      data-slot="code-column"
+      data-col={col}
+      style={{ left: `calc(0.75rem + ${String(columnOffset(plain, col))}ch)` }}
+      className="border-warning pointer-events-none absolute top-0.5 bottom-0.5 w-[1ch] border-b-2"
+    />
+  );
+}
+
 function focusAllowed(element: HTMLElement): boolean {
   const active = document.activeElement;
   if (active === null || active === document.body) return true;
@@ -69,6 +85,7 @@ export const CodeView = memo(function CodeView({
   text,
   language,
   line = null,
+  col = null,
   label,
   className,
 }: CodeViewProps) {
@@ -80,6 +97,7 @@ export const CodeView = memo(function CodeView({
   const scrollRef = useRef<HTMLDivElement>(null);
   const handle = useRef<VirtualizerHandle>(null);
   const target = line !== null && line >= 1 && line <= lines.length ? line : null;
+  const column = target !== null && col !== null && col >= 1 ? col : null;
 
   // Jump once per target (a live reload keeps the position the reader scrolled to).
   const jumped = useRef<number | null>(null);
@@ -89,6 +107,18 @@ export const CodeView = memo(function CodeView({
     const region = scrollRef.current;
     if (region !== null && focusAllowed(region)) region.focus({ preventScroll: true });
     let frames = 0;
+    // A far column: once virtua rendered the row, scroll the marker into view sideways.
+    const reveal = () => {
+      const marker = region?.querySelector<HTMLElement>('[data-slot="code-column"]') ?? null;
+      if (marker === null) {
+        if (frames < JUMP_MAX_FRAMES * 2) {
+          frames += 1;
+          requestAnimationFrame(reveal);
+        }
+        return;
+      }
+      marker.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    };
     const jump = () => {
       const list = handle.current;
       if (list === null) return;
@@ -100,9 +130,11 @@ export const CodeView = memo(function CodeView({
         return;
       }
       list.scrollToIndex(target - 1, { align: 'center' });
+      if (column !== null) requestAnimationFrame(reveal);
     };
     jump();
-  }, [target]);
+    // A new column alone does not jump again (`jumped` guards per target line).
+  }, [target, column]);
 
   return (
     <div
@@ -128,7 +160,8 @@ export const CodeView = memo(function CodeView({
                 key={index}
                 data-line={number}
                 aria-current={current ? 'true' : undefined}
-                className={cn('flex min-h-5', current ? 'bg-warning/15' : 'hover:bg-muted/40')}
+                // `/10`: every syntax color keeps >= 4.5:1 on the marked line (V4-04; /15 gave 4.3:1).
+                className={cn('flex min-h-5', current ? 'bg-warning/10' : 'hover:bg-muted/40')}
               >
                 <span
                   aria-hidden
@@ -143,8 +176,9 @@ export const CodeView = memo(function CodeView({
                 >
                   {number}
                 </span>
-                <span className="text-foreground pr-3 pl-3 whitespace-pre">
+                <span className="text-foreground relative pr-3 pl-3 whitespace-pre">
                   <LineContent plain={plain} tokens={highlighted?.[index]} />
+                  {current && column !== null ? <ColumnMarker plain={plain} col={column} /> : null}
                 </span>
               </div>
             );

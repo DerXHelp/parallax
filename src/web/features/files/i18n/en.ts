@@ -30,7 +30,8 @@ export const en = {
   link: {
     /** Tooltip of a reference the server refused (PATH_NOT_ALLOWED). */
     notAllowed: 'Not shared with this session',
-    line: 'line {line}',
+    /** Tooltip of a reference with a line (without one, the tooltip is the bare path). */
+    tooltip: '{path} – line {line}',
   },
   viewer: {
     label: 'File viewer',
@@ -41,6 +42,8 @@ export const en = {
     source: 'Source',
     truncated: 'Shortened – only the first {size} are shown. Open the file in the editor to see all of it.',
     error: 'The file could not be shown',
+    /** Metadata and content below an error are from the last successful load (deleted file). */
+    stale: 'Last known state',
     retry: 'Try again',
     noPreview: 'No preview for this file.',
     folder: 'This is a folder.',

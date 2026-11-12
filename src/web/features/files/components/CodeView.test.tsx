@@ -33,6 +33,9 @@ vi.mock('virtua', async () => {
   return { Virtualizer };
 });
 
+// The first render loads the module graph: up to 3.9 s under parallel load (R5W-04).
+vi.setConfig({ testTimeout: 30_000 });
+
 beforeEach(() => {
   mocks.viewport.size = 0;
   mocks.scrollToIndex.mockClear();
@@ -56,6 +59,35 @@ describe('CodeView line jump', () => {
       expect(mocks.scrollToIndex).toHaveBeenCalledWith(249, { align: 'center' });
     });
     expect(mocks.scrollToIndex).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks the column on the target line and scrolls it into view (R5W-10)', async () => {
+    mocks.viewport.size = 400;
+    const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView');
+    try {
+      render(
+        <CodeView text={'a\nb\n\tvalue = 1;'} language={null} line={3} col={2} label="Content of a.txt" />,
+      );
+      const marks = document.querySelectorAll<HTMLElement>('[data-slot="code-column"]');
+      expect(marks).toHaveLength(1);
+      expect(marks[0]?.closest('[data-line]')?.getAttribute('data-line')).toBe('3');
+      // After the tab: the next tab stop (4 ch) behind the left padding.
+      expect(marks[0]?.style.left).toBe('calc(0.75rem + 4ch)');
+      await waitFor(() => {
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' });
+      });
+      expect(scrollIntoView.mock.contexts[0]).toBe(marks[0]);
+    } finally {
+      scrollIntoView.mockRestore();
+    }
+  });
+
+  it('no column mark without a target line or a column', () => {
+    mocks.viewport.size = 400;
+    const { rerender } = render(<CodeView text={TEXT} language={null} col={3} label="Content of a.txt" />);
+    expect(document.querySelector('[data-slot="code-column"]')).toBeNull();
+    rerender(<CodeView text={TEXT} language={null} line={5} label="Content of a.txt" />);
+    expect(document.querySelector('[data-slot="code-column"]')).toBeNull();
   });
 
   it('jumps at once when the viewport is known; a line outside the text marks nothing', () => {

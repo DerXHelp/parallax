@@ -25,6 +25,11 @@ export interface FileDocument {
   text: string | null;
   /** Failure of the last stat/load (shown above an older content when there is one). */
   error: ErrorPayload | null;
+  /**
+   * The shown metadata/content are the last known state, not the current one: the last stat or
+   * load failed after an earlier success (e.g. the file was deleted; V4-06 c).
+   */
+  stale: boolean;
   /** True until the first load finished (successfully or not). */
   loading: boolean;
   /** A load is under way (refresh button, `aria-busy`). */
@@ -33,7 +38,15 @@ export interface FileDocument {
   version: number;
 }
 
-const INITIAL: FileDocument = { info: null, text: null, error: null, loading: true, busy: false, version: 0 };
+const INITIAL: FileDocument = {
+  info: null,
+  text: null,
+  error: null,
+  stale: false,
+  loading: true,
+  busy: false,
+  version: 0,
+};
 
 /** Reads metadata; rejects with the server's ErrorPayload wrapped in ClientCommandError. */
 export type FileStatter = (file: FileRef) => Promise<FileInfo>;
@@ -55,6 +68,10 @@ function sameContent(a: FileInfo, b: FileInfo): boolean {
   return (
     a.mtimeMs === b.mtimeMs && a.bytes === b.bytes && a.kind === b.kind && a.previewable === b.previewable
   );
+}
+
+function sameError(a: ErrorPayload | null, b: ErrorPayload): boolean {
+  return a !== null && a.code === b.code && JSON.stringify(a.params) === JSON.stringify(b.params);
 }
 
 export interface FileDocumentDeps {
@@ -121,7 +138,12 @@ export class FileDocumentLoader {
     } catch (error) {
       if (!current()) return;
       this.inFlight = false;
-      this.update({ error: errorPayloadOf(error), loading: false, busy: false });
+      const payload = errorPayloadOf(error);
+      const stale = this.state.info !== null;
+      const { state } = this;
+      // The same failure again (poll every 2 s on a deleted file): no new state, no re-render (R5W-10).
+      if (sameError(state.error, payload) && !state.loading && !state.busy && state.stale === stale) return;
+      this.update({ error: payload, stale, loading: false, busy: false });
       return;
     }
     if (!current()) return;
@@ -130,7 +152,9 @@ export class FileDocumentLoader {
     if (!force && !changed) {
       this.inFlight = false;
       // Unchanged: no new state (no re-render every 2 s), except to clear an earlier failure.
-      if (this.state.error !== null || this.state.loading) this.update({ info, error: null, loading: false });
+      if (this.state.error !== null || this.state.loading) {
+        this.update({ info, error: null, stale: false, loading: false });
+      }
       return;
     }
     if (!needsText(info)) {
@@ -139,6 +163,7 @@ export class FileDocumentLoader {
         info,
         text: null,
         error: null,
+        stale: false,
         loading: false,
         busy: false,
         version: this.state.version + 1,
@@ -151,10 +176,25 @@ export class FileDocumentLoader {
     try {
       const text = await this.source().text(this.file, controller.signal);
       if (!current()) return;
-      this.update({ info, text, error: null, loading: false, busy: false, version: this.state.version + 1 });
+      this.update({
+        info,
+        text,
+        error: null,
+        stale: false,
+        loading: false,
+        busy: false,
+        version: this.state.version + 1,
+      });
     } catch (error) {
       if (!current()) return;
-      this.update({ info, error: loadErrorOf(error), loading: false, busy: false });
+      // Metadata are current; an older text stays visible as the last known state.
+      this.update({
+        info,
+        error: loadErrorOf(error),
+        stale: this.state.text !== null,
+        loading: false,
+        busy: false,
+      });
     } finally {
       if (current()) {
         this.inFlight = false;

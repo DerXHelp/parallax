@@ -1,19 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { LOCAL_HOST_ID, makeSessionKey, type Language } from '@shared/common';
+import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
 import { SAMPLE_IDS, sampleItems, sampleSystemItems, sampleTime } from '@shared/samples';
-import { formatNumber } from '@web/i18n/format';
 import { fileActions } from './actions';
+import { columnOffset } from './columns';
 import { fileToolIndex, toolFilePath } from './file-tools';
-import { formatBytes, scaleBytes } from './format';
 import { fileName, parentPath, relativeToRoot } from './paths';
 
 const KEY = makeSessionKey(LOCAL_HOST_ID, SAMPLE_IDS.entry);
-
-function bindFormatForTests(language: Language) {
-  return {
-    number: (value: number, options?: Intl.NumberFormatOptions) => formatNumber(value, options, language),
-  };
-}
 
 describe('files lib/paths', () => {
   it('relativeToRoot keeps the spelling of the path, null outside or for the root itself', () => {
@@ -33,14 +26,15 @@ describe('files lib/paths', () => {
   });
 });
 
-describe('files lib/format', () => {
-  it('scales in 1024 steps and formats per language', () => {
-    expect(scaleBytes(512)).toEqual({ value: 512, unit: 'byte' });
-    expect(scaleBytes(2048)).toEqual({ value: 2, unit: 'kilobyte' });
-    expect(scaleBytes(3 * 1024 * 1024)).toEqual({ value: 3, unit: 'megabyte' });
-    expect(formatBytes(1536, bindFormatForTests('en'))).toBe('1.5 kB');
-    expect(formatBytes(1536, bindFormatForTests('de'))).toBe('1,5 kB');
-    expect(formatBytes(2 * 1024 * 1024, bindFormatForTests('en'))).toBe('2 MB');
+describe('files lib/columns', () => {
+  it('columnOffset counts characters, tabs advance to the next tab stop, past the end = end', () => {
+    expect(columnOffset('const a = 1;', 1)).toBe(0);
+    expect(columnOffset('const a = 1;', 7)).toBe(6);
+    expect(columnOffset('\tx', 2)).toBe(4);
+    expect(columnOffset('ab\tx', 4)).toBe(4);
+    expect(columnOffset('abcd\tx', 6)).toBe(8);
+    expect(columnOffset('abc', 99)).toBe(3);
+    expect(columnOffset('abc', 0)).toBe(0);
   });
 });
 
