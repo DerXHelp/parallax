@@ -36,8 +36,24 @@ braucht Parallax einen eigenen Rückfall (Live-Satz aus dem laufenden Werkzeugau
 aus dem letzten Assistenten-Text). `away_summary` (4) ließ sich so nicht auslösen (braucht eine
 „weg“-Situation), bleibt offen.
 
-**Durchgang mit dem Nutzer (12.11.2026):** 2 + 3 als zweite, ruhige Zeile unter dem Session-Namen in der
-Seitenleiste (arbeitet: Live-Satz; fertig: Fazit; braucht dich: hervorgehoben); Englisch ist in Ordnung.
+**Durchgang mit dem Nutzer (12.11.2026):**
+- **2 + 3:** zweite, ruhige Zeile unter dem Session-Namen in der Seitenleiste (arbeitet: Live-Satz; fertig:
+  Fazit; braucht dich: hervorgehoben); Englisch ist in Ordnung. Ohne Remote Control Rückfall aus Parallax-Daten
+  (laufender Werkzeugaufruf, erste Zeile der letzten Antwort).
+- **4:** Stufe 1 (WP-65): Karte „Seit du zuletzt hier warst“ aus Parallax-Daten (Turns, geänderte Dateien,
+  Freigaben, Kosten, letztes Fazit, Sprung zur letzten Stelle), gemessen am letzten Blick in Parallax.
+  **Ausbaustufe** (Nutzerwunsch): Verfolgen und Antworten in der Claude-App zählt als „gesehen“ (Prompts/
+  Freigaben aus der App sicher erkennbar; reines Mitlesen: Signal noch zu klären, z. B. `mark_read`,
+  App-Client-Anmeldung an der Bridge).
+- **5:** automatischer Titel nach dem ersten Turn, derselbe in Parallax, claude-Transkript und App; eigene
+  Umbenennung wird nie überschrieben; „Titel neu erzeugen“ im Session-Menü; nach `/clear`/frischem Kontext
+  automatisch neu, solange der Titel nicht selbst vergeben wurde. **Probe live (12.11.2026, ≈ 0,005 USD):**
+  `generateSessionTitle(prompt, {persist})` → „Login-Fehlschlag nach Token-Ablauf“ (Sprache des Prompts,
+  1,1 s; gleiche Beschreibung ein zweites Mal 0 ms), Kosten ≈ 0,00014 USD je Titel (gemessen über die
+  Nutzungsabfrage), `persist:true` schreibt `{"type":"ai-title","aiTitle":…}` ins claude-Transkript.
+- **6 (Vorbereitung):** Die experimentelle Nutzungsabfrage liefert `session` (Kosten, Dauer, Zeilen
+  +/−, Tokens je Modell), `subscription_type`, `rate_limits` je Fenster (`utilization`, `resets_at`,
+  Dollar-Felder; viele Fenster mit Codenamen, meist `null`) und `extra_usage`.
 
 ## 2. Steuerung im Arbeitsfluss
 
