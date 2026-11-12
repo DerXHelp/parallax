@@ -33,6 +33,9 @@ describe('preferences playground', () => {
       'notifications',
       'notifications-integration',
       'sessions',
+      'files',
+      'files-custom',
+      'files-custom-errors',
       'profiles',
       'server',
       'server-integration',
@@ -41,6 +44,24 @@ describe('preferences playground', () => {
       'sounds',
     ]);
     expect(slots.SettingsPage).toBeDefined();
+  });
+
+  it('the editor demos: found/not found, own program with preview, own program with errors', async () => {
+    const { unmount } = render(<TooltipProvider>{demo('files-custom').render()}</TooltipProvider>);
+    const dialog = await screen.findByRole('dialog', { name: 'Settings' });
+    expect(within(dialog).getByRole('tab', { name: 'Files' }).getAttribute('aria-selected')).toBe('true');
+    await waitFor(() => {
+      expect(within(dialog).getByText('Found: C:\\Program Files\\Notepad++\\notepad++.exe')).toBeTruthy();
+    });
+    expect(dialog.querySelector('[data-slot="editor-preview"]')?.textContent).toContain('sublime_text.exe');
+    unmount();
+    act(() => {
+      unregisterConnection();
+    });
+
+    render(<TooltipProvider>{demo('files-custom-errors').render()}</TooltipProvider>);
+    const issues = await screen.findAllByText(/cannot be the editor|must contain \{file\}/);
+    expect(issues).toHaveLength(2);
   });
 
   it('a page demo opens the page over the FakeHost with the variant applied', async () => {

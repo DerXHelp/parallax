@@ -15,6 +15,48 @@ export const en = {
     archiveBack: 'Back to the sessions',
     archiveEmpty: 'No archived sessions.',
     group: 'Project {name}',
+    /** WP-58 (V3-14): collapses the sidebar into the rail (narrow window: closes the overlay). */
+    collapse: 'Collapse the sidebar',
+  },
+  /** The collapsed sidebar (V3-14, WP-58): status icons of the sessions, "Show sessions". */
+  rail: {
+    label: 'Sessions (collapsed sidebar)',
+    show: 'Show sessions',
+    session: '{title} – {status}',
+    sessionUnread: '{title} – {status}, unread',
+  },
+  /** Side panel buttons of the session header (WP-58); "…" menu items in a narrow header. */
+  panels: {
+    label: 'Side panel',
+    plan: 'Plan',
+    files: 'Files of this session',
+    tasks: 'Tasks',
+    tasksRunning: {
+      one: 'Tasks – {count} background task running',
+      other: 'Tasks – {count} background tasks running',
+    },
+    tasksOpen: { one: 'Tasks – {count} open to-do', other: 'Tasks – {count} open to-dos' },
+    /** Counter above its maximum (R5W-06: no literal in the component). */
+    countOverflow: '{max}+',
+  },
+  /** Drop zone over the session pane (R4W-02, WP-58). */
+  drop: {
+    hint: 'Drop to attach',
+    unavailable: 'Files cannot be attached to this session here.',
+  },
+  /** Error boundary of a lazily loaded area (shell/SlotBoundary.tsx, WP-58). */
+  slotError: {
+    title: 'This area could not be loaded',
+    render: 'Something went wrong while showing it. The rest of Parallax keeps working.',
+    chunk: 'A part of the app could not be downloaded – maybe Parallax was updated meanwhile.',
+    retry: 'Reload',
+    confirmReload: 'Reload the whole window? Your sessions keep running on the server.',
+    reloadWindow: 'Reload window',
+    cancel: 'Cancel',
+    /** Quiet slots in running text (R5W-02): one notice per window, the content stays as text. */
+    inlineChunk:
+      'A part of the app could not be downloaded – maybe Parallax was updated meanwhile. Until the window is reloaded, some content (such as file links) shows as plain text.',
+    inlineRender: 'Some content (such as file links) could not be shown and appears as plain text.',
   },
   row: {
     actions: 'Actions for “{title}”',
@@ -28,6 +70,7 @@ export const en = {
     pin: 'Pin',
     unpin: 'Unpin',
     openWindow: 'Open in new window',
+    openFolder: 'Open folder in Explorer',
     newSessionHere: 'New session in this project…',
     sleep: 'Put to sleep',
     openExternal: 'Open in external console',
@@ -63,7 +106,7 @@ export const en = {
   conversations: {
     title: 'Earlier conversations',
     description:
-      'Conversations of this session before “/clear”. Opening one continues it here – the current one stays in this list.',
+      'Earlier conversations of this session. Opening one continues it here – the current one stays in this list.',
     empty: 'No earlier conversations.',
     list: 'Earlier conversations',
     untitled: 'Untitled conversation',

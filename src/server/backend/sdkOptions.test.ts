@@ -45,13 +45,18 @@ function request(p: Partial<StartSessionRequest> = {}): StartSessionRequest {
   };
 }
 
-/** Keys that are always present (WP-13 §3.2 table). */
+/**
+ * Keys that are always present (WP-13 §3.2 table; Phase 3: stop per task, summaries). WP61-02: no
+ * `settings` without a flag value – `todoFeatureEnabled` is not sent (no effect with CLI 2.1.322).
+ */
 const BASE_KEYS = [
+  'agentProgressSummaries',
   'canUseTool',
   'cwd',
   'env',
   'includePartialMessages',
   'pathToClaudeCodeExecutable',
+  'perTaskStopAffordance',
   'promptSuggestions',
   'settingSources',
   'spawnClaudeCodeProcess',
@@ -82,6 +87,8 @@ describe('buildQueryOptions – fixed rows', () => {
       { askUserQuestion: { previewFormat: 'markdown' } },
     ],
     ['promptSuggestions from the request', 'promptSuggestions', false],
+    ['perTaskStopAffordance on (Phase 3, ADR-149)', 'perTaskStopAffordance', true],
+    ['agentProgressSummaries on (Phase 3, task_progress.summary)', 'agentProgressSummaries', true],
   ])('%s', (_label, key, value) => {
     expect(options[key]).toEqual(value);
   });
@@ -105,7 +112,6 @@ describe('buildQueryOptions – fixed rows', () => {
   it('never sets the deliberately omitted options', () => {
     for (const key of [
       'enableFileCheckpointing',
-      'perTaskStopAffordance',
       'sessionId',
       'forkSession',
       'maxTurns',
@@ -115,13 +121,14 @@ describe('buildQueryOptions – fixed rows', () => {
       'model',
       'effort',
       'resume',
-      'settings',
       'extraArgs',
       'plugins',
       'betas',
       'additionalDirectories',
       'allowedTools',
       'disallowedTools',
+      // WP61-02: no flag settings without a value.
+      'settings',
     ] as const) {
       expect(options).not.toHaveProperty(key);
     }
@@ -277,9 +284,10 @@ describe('buildQueryOptions – profile options (launch.sdkOptions, C.12)', () =
 });
 
 describe('flagSettingsAfterStart (C.1)', () => {
-  it.each<[string, Partial<LaunchSpec>, { autoCompactWindow: number } | null]>([
-    ['nothing', {}, null],
+  it.each<[string, Partial<LaunchSpec>, object | null]>([
+    ['nothing (inline settings)', {}, null],
     ['only autoCompactWindow (inline settings)', { autoCompactWindow: 300_000 }, null],
+    // WP61-02: a settings file alone needs no flag settings after the start (no todo flag).
     ['only a settings path', { sdkOptions: { settings: 'D:\\s.json' } }, null],
     [
       'settings path + autoCompactWindow',
@@ -293,7 +301,7 @@ describe('flagSettingsAfterStart (C.1)', () => {
 
 describe('fast mode as flag setting (Phase 2, WP-31)', () => {
   const path = { sdkOptions: { settings: 'D:\\cfg\\settings.json' } };
-  it.each<[string, Partial<StartSessionRequest>, Options['settings'] | undefined, object | null]>([
+  it.each<[string, Partial<StartSessionRequest>, Options['settings'], object | null]>([
     ['absent → the CLI decides', {}, undefined, null],
     ['null → the CLI decides', { fastMode: null }, undefined, null],
     ['true → inline settings.fastMode', { fastMode: true }, { fastMode: true }, null],
@@ -319,9 +327,52 @@ describe('fast mode as flag setting (Phase 2, WP-31)', () => {
   ])('%s', (_label, partial, settings, after) => {
     const req = request(partial);
     const options = buildQueryOptions(req, hooks);
-    if (settings === undefined) expect(options).not.toHaveProperty('settings');
-    else expect(options.settings).toEqual(settings);
+    expect(options.settings).toEqual(settings);
     expect(flagSettingsAfterStart(req)).toEqual(after);
+  });
+});
+
+describe('Phase 3 options (WP-52)', () => {
+  const settingsFile = { sdkOptions: { settings: 'D:\\cfg\\settings.json' } };
+  it.each<[string, Partial<StartSessionRequest>, Partial<Options>, object | null]>([
+    [
+      'plain profile: stop per task, summaries (WP61-02: no todo flag)',
+      {},
+      { perTaskStopAffordance: true, agentProgressSummaries: true },
+      null,
+    ],
+    [
+      'profile with a settings file: same options, nothing after the start',
+      { launch: launch(settingsFile) },
+      { perTaskStopAffordance: true, agentProgressSummaries: true, settings: 'D:\\cfg\\settings.json' },
+      null,
+    ],
+    [
+      'settings file + resume + fast mode',
+      { launch: launch(settingsFile), resumeSessionId: SAMPLE_IDS.sessionId, fastMode: true },
+      { perTaskStopAffordance: true, agentProgressSummaries: true, resume: SAMPLE_IDS.sessionId },
+      { fastMode: true },
+    ],
+  ])('%s', (_label, partial, expected, after) => {
+    const req = request(partial);
+    expect(buildQueryOptions(req, hooks)).toMatchObject(expected);
+    expect(flagSettingsAfterStart(req)).toEqual(after);
+  });
+
+  it.each<[string, readonly string[] | undefined, string | null | undefined, string[] | undefined]>([
+    ['no folders → omitted', undefined, undefined, undefined],
+    ['attachment folder null → omitted', [], null, undefined],
+    ['empty attachment folder string → omitted', undefined, '', undefined],
+    ['only the attachment folder', undefined, 'C:\\px\\attachments\\en_1', ['C:\\px\\attachments\\en_1']],
+    ['profile folders + attachment folder', ['D:\\shared'], 'C:\\px\\att', ['D:\\shared', 'C:\\px\\att']],
+    ['attachment folder already in the profile (case/slash differ)', ['C:\\PX\\Att\\'], 'c:/px/att', ['C:\\PX\\Att\\']],
+    ['duplicate profile folders are dropped too', ['D:\\a', 'd:\\A', 'D:\\b'], null, ['D:\\a', 'D:\\b']],
+  ])('additionalDirectories: %s', (_label, profileDirs, attachmentsDir, expected) => {
+    const sdkOptions = profileDirs === undefined ? {} : { additionalDirectories: [...profileDirs] };
+    const req = request({ launch: launch({ sdkOptions }), ...(attachmentsDir === undefined ? {} : { attachmentsDir }) });
+    const options = buildQueryOptions(req, hooks);
+    if (expected === undefined) expect(options).not.toHaveProperty('additionalDirectories');
+    else expect(options.additionalDirectories).toEqual(expected);
   });
 });
 

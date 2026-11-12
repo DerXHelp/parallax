@@ -14,6 +14,8 @@
  * Fix round R4: no idle sleep for a process with a planned turn (ADR-121), a silent toast when a
  * window sounds itself (ADR-122), the shutdown waits (bounded) for running lifecycle operations
  * (R4-03).
+ * Phase 3 (WP-51): the optional attachment store (ADR-146; absent until WP-60 wires it), the newest
+ * plan text after a restart (`broker.loadLastPlan`, ADR-148).
  */
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -63,6 +65,7 @@ import {
   EntryState,
   settingsSleepPolicy,
   type EngineCore,
+  type EngineCoreStores,
   type EngineStores,
   type NormalizerFns,
   type ProcDeps,
@@ -71,7 +74,7 @@ import {
 } from './entryState';
 import { restoreExternal } from './external';
 import { readGitBranch } from './lib/gitBranch';
-import { realTimers, type TimerHandle, type Timers } from './lib/timers';
+import { realTimers, settledWithin, type TimerHandle, type Timers } from './lib/timers';
 import { catalogOrFallback, type ModelCatalog } from './models';
 import {
   capInput as normalizerCapInput,
@@ -91,6 +94,7 @@ import {
   routeNotification,
 } from './notifier';
 import type { ReduceStatus } from './ports';
+import { withPlanIndex } from './planIndex';
 import type { ProcessRecord, ProcessStore } from './processStore';
 import {
   cleanupOrphans,
@@ -126,6 +130,8 @@ export const DEFAULT_SESSION_MANAGER_OPTIONS: SessionManagerOptions = {
   externalPollMs: 5_000,
   // ADR-112: a plan at most 1 h overdue is still sent after a restart.
   continueGraceMs: 3_600_000,
+  // WP61-03: the result of the denied planning turn usually follows the interrupt at once.
+  freshContextResultMs: 3_000,
 };
 
 /** WP22-05: bound of the interrupt sent at shutdown to a session that waits for a decision. */
@@ -280,7 +286,7 @@ export function profileCacheKey(profile: Profile | undefined): string | null {
 }
 
 /** Real `capInput` (WP-12 limits) for broker decision cards: JSON value + blob of the full input. */
-function defaultCapInput(stores: EngineStores): EngineCore['capInput'] {
+function defaultCapInput(stores: Pick<EngineStores, 'blobs'>): EngineCore['capInput'] {
   return (input) => {
     const json = jsonValueSchema.safeParse(input);
     const value = json.success ? json.data : jsonValueSchema.parse(JSON.parse(JSON.stringify(input)));
@@ -294,10 +300,14 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   const log = (deps.logger ?? rootLogger).child({ module: 'sessions' });
   const now = deps.now ?? (() => new Date());
   const timers = deps.timers ?? realTimers;
-  const stores: Required<EngineStores> = {
+  const stores: EngineCoreStores = {
     ...deps.stores,
     catalogs: deps.stores.catalogs ?? createMemoryCatalogStore(),
     commandCatalogs: deps.stores.commandCatalogs ?? createMemoryCommandCatalogStore(),
+    // Phase 3 (ADR-146): without WP-53's store no file attachments and no attachment folder.
+    attachments: deps.stores.attachments ?? null,
+    // CR3-09: plan.list answers known plan versions without reading their text again.
+    decisions: withPlanIndex(deps.stores.decisions),
   };
   const toasts = deps.toasts ?? DISABLED_NATIVE_TOASTS;
   const hostCommands = deps.hostCommands ?? [];
@@ -825,6 +835,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       log.error({ err: error, entryId: entry.id }, 'decisions could not be loaded');
     }
     const { hadOpen } = s.broker.restore(records);
+    // §4.12: previousVersionPlan of the next plan decision comes from plans/v<N>.md after a restart.
+    await s.broker.loadLastPlan();
     s.reduce({ type: 'server_restart', hadOpenDecisions: hadOpen });
     s.reduce({ type: 'decisions_changed', decisions: s.broker.counts() });
     if (wasActive(entry) || hadOpen) {
@@ -883,22 +895,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           s.broker.freeze();
         }
         /** True when `work` settled within `ms` on the engine clock (timers seam), false on timeout. */
-        const within = async (work: Promise<unknown>, ms: number): Promise<boolean> => {
-          const cap: { timer: TimerHandle | null } = { timer: null };
-          const settled = await Promise.race([
-            work.then(
-              () => true,
-              () => true,
-            ),
-            new Promise<boolean>((resolve) => {
-              cap.timer = timers.setTimeout(() => {
-                resolve(false);
-              }, ms);
-            }),
-          ]);
-          cap.timer?.cancel();
-          return settled;
-        };
+        const within = (work: Promise<unknown>, ms: number): Promise<boolean> =>
+          settledWithin(timers, work, ms);
         // R4-03: lifecycle operations still running – `openExternal` while PowerShell opens the
         // console (its query is already closed, so the closes below do not wait for it), a return
         // import – finish before the stores are flushed; bounded, alongside the closes.

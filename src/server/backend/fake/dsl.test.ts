@@ -14,6 +14,7 @@ import {
 } from '../../sessions/normalizer/testing/harness';
 import {
   assistantErrorTurn,
+  backgroundTasksChanged,
   clearCommand,
   closeGate,
   crash,
@@ -27,7 +28,10 @@ import {
   renameCommand,
   startupFailure,
   streamedText,
+  subagentEnd,
+  subagentLaunch,
   subagentRun,
+  taskProgress,
   textTurn,
   thinkingBlock,
   toolResultMessage,
@@ -222,6 +226,97 @@ describe('DSL building blocks', () => {
         .filter((s) => s.type === 'background_tasks')
         .map((s) => s.count),
     ).toEqual([1, 0]);
+  });
+
+  it('Phase 3: toolUseBlock with inputChunks streams that many input_json_delta parts; the input arrives whole', () => {
+    const c = dslContext();
+    const content = '## Plan\n- one\n- two\n- three\n';
+    const ev = events(
+      turnOpen(c, null),
+      toolUseBlock(c, 'Write', { file_path: 'C:\\t\\plan.md', content }, { toolUseId: 'toolu_w', inputChunks: 8 }),
+      toolResultMessage(c, 'toolu_w', 'File created successfully at: C:\\t\\plan.md'),
+      turnClose(c, null),
+    );
+    valid(ev);
+    const deltas = ev.filter((e) => JSON.stringify(e.payload).includes('"input_json_delta"'));
+    expect(deltas).toHaveLength(8);
+    const { items } = replay(ev);
+    expect(items.find((i) => i.kind === 'tool_call')).toMatchObject({
+      toolName: 'Write',
+      status: 'done',
+      input: { file_path: 'C:\\t\\plan.md', content },
+    });
+  });
+
+  it('Phase 3: background agent (run_in_background, outputFile, task_progress summaries) → task with outputFile; stopped → status stopped', () => {
+    const c = dslContext();
+    const outputFile = 'C:\\Temp\\parallax-fake-files\\s\\tasks\\task_toolu_bg.output';
+    const usage = { totalTokens: 900, toolUses: 1, durationMs: 1500 };
+    const ev = events(
+      turnOpen(c, null),
+      subagentLaunch(c, {
+        toolUseId: 'toolu_bg',
+        taskId: 'task_toolu_bg',
+        description: 'Research',
+        prompt: 'Look around',
+        reply: 'unused',
+        runInBackground: true,
+        outputFile,
+      }),
+      taskProgress(c, {
+        taskId: 'task_toolu_bg',
+        toolUseId: 'toolu_bg',
+        activity: 'Running Read README.md',
+        summary: 'Reading files',
+        usage,
+      }),
+      turnClose(c, null, { idle: false }),
+      subagentEnd(c, { toolUseId: 'toolu_bg', taskId: 'task_toolu_bg', summary: 'All read.', outputFile, usage }),
+      backgroundTasksChanged(c, []),
+    );
+    valid(ev);
+    const launchResult = ev.find((e) => JSON.stringify(e.payload).includes('"async_launched"'));
+    expect(JSON.stringify(launchResult?.payload)).toContain('output_file: ');
+    const { r, items, kinds } = replay(ev);
+    expect(subset(kinds, fixtureKinds('subagent'))).toEqual([]);
+    const call = items.find((i) => i.kind === 'tool_call' && i.toolUseId === 'toolu_bg');
+    expect(call).toMatchObject({
+      toolName: 'Agent',
+      input: { run_in_background: true },
+      // WP61-07: the CLI's activity line of task_progress never becomes the task's name.
+      task: {
+        taskId: 'task_toolu_bg',
+        description: 'Research',
+        status: 'completed',
+        summary: 'All read.',
+        outputFile,
+        isBackgrounded: true,
+      },
+    });
+    const summaries = r.steps
+      .flatMap((s) => s.ops)
+      .flatMap((op) =>
+        op.op === 'item.upsert' && op.item.kind === 'tool_call' && op.item.task !== null ? [op.item.task.summary] : [],
+      );
+    expect(summaries).toContain('Reading files');
+    expect(
+      signalList(r)
+        .filter((s) => s.type === 'background_tasks')
+        .map((s) => s.count),
+    ).toEqual([1, 0, 0]);
+
+    const s = dslContext();
+    const stopped = events(
+      turnOpen(s, null),
+      subagentLaunch(s, { toolUseId: 'toolu_st', taskId: 'task_st', description: 'Long', prompt: 'p', reply: 'r' }),
+      turnClose(s, null, { idle: false }),
+      subagentEnd(s, { toolUseId: 'toolu_st', taskId: 'task_st', summary: 'Long was stopped.', status: 'stopped' }),
+    );
+    valid(stopped);
+    expect(JSON.stringify(stopped)).toContain('"status":"killed"');
+    const stoppedCall = replay(stopped).items.find((i) => i.kind === 'tool_call' && i.toolUseId === 'toolu_st');
+    // '' (the default output_file) → null; the launch without outputFile has none either.
+    expect(stoppedCall).toMatchObject({ task: { status: 'stopped', outputFile: null } });
   });
 
   it('interruptEpilogue (tool / streaming / now) = interrupt kinds, outcome interrupted', () => {

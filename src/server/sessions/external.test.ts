@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { sampleExternalHandoff, sampleTime } from '@shared/samples';
 import type { ConsoleLaunchSpec } from '../claude/ports';
 import { REDACTED } from '../lib/logger';
-import { NO_ATTACHMENTS, promptContent } from './attachments';
+import { ATTACHED_FILES_HEADER, NO_ATTACHMENTS, checkPastes, promptContent, sentText } from './attachments';
 import { CONSOLE_REASON_CHARS, consoleProcessOf, scrubConsoleReason } from './external';
 
 function spec(p: Partial<ConsoleLaunchSpec> = {}): ConsoleLaunchSpec {
@@ -56,14 +56,41 @@ describe('scrubConsoleReason (secrets of the console env)', () => {
   });
 });
 
-describe('promptContent (ADR-103)', () => {
-  it('images first, then the text; an empty or blank text is left out', () => {
-    const image = { type: 'image', mediaType: 'image/png', base64: 'AAAA' } as const;
-    const attachments = { refs: [], images: [image, image] };
-    expect(promptContent('look', attachments)).toEqual([image, image, { type: 'text', text: 'look' }]);
-    expect(promptContent(' \n ', attachments)).toEqual([image, image]);
+describe('promptContent (ADR-103, ADR-146)', () => {
+  const image = { type: 'image', mediaType: 'image/png', base64: 'AAAA' } as const;
+  const pdf = { type: 'document', mediaType: 'application/pdf', base64: 'JVBE' } as const;
+
+  it('images and PDFs first (list order), then the text; an empty or blank text is left out', () => {
+    const attachments = { refs: [], blocks: [image, pdf, image], files: [], paths: [] };
+    expect(promptContent('look', attachments)).toEqual([image, pdf, image, { type: 'text', text: 'look' }]);
+    expect(promptContent(' \n ', attachments)).toEqual([image, pdf, image]);
     expect(promptContent('  keep spaces ', NO_ATTACHMENTS)).toEqual([
       { type: 'text', text: '  keep spaces ' },
     ]);
+  });
+
+  it('materialized files: the `Attached files:` block at the end of the sent text (alone without text)', () => {
+    const paths = ['C:\\home\\entries\\en_1\\attachments\\ab\\a b.zip', 'C:\\x\\y.bin'];
+    expect(sentText('Look at these.', paths)).toBe(
+      `Look at these.\n\n${ATTACHED_FILES_HEADER}\n- ${paths[0] ?? ''}\n- ${paths[1] ?? ''}`,
+    );
+    expect(sentText('  ', paths.slice(0, 1))).toBe(`Attached files:\n- ${paths[0] ?? ''}`);
+    expect(sentText('unchanged', [])).toBe('unchanged');
+    expect(promptContent('', { refs: [], blocks: [pdf], files: [], paths: ['C:\\x\\y.bin'] })).toEqual([
+      pdf,
+      { type: 'text', text: 'Attached files:\n- C:\\x\\y.bin' },
+    ]);
+  });
+});
+
+describe('checkPastes (ADR-146)', () => {
+  it('every paste occurs verbatim in the text; else VALIDATION_FAILED {paste_not_in_text, index}', () => {
+    expect(checkPastes('a\nBIG PASTE\nb', ['BIG PASTE', 'a'])).toEqual(['BIG PASTE', 'a']);
+    expect(checkPastes('x', [])).toEqual([]);
+    expect(() => checkPastes('a BIG paste', ['BIG paste', 'big paste'])).toThrow(
+      expect.objectContaining({
+        error: { code: 'VALIDATION_FAILED', params: { reason: 'paste_not_in_text', index: 1 } },
+      }) as Error,
+    );
   });
 });

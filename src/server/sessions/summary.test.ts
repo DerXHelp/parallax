@@ -10,11 +10,14 @@ import {
 } from '@shared/samples';
 import type { BackendSessionInfo } from '../backend/types';
 import {
+  FRESH_CONTEXT_PROMPT_HEADER,
   aiTitleFrom,
   cwdLabel,
   endReasonFor,
+  freshContextPrompt,
   implementPlanPrompt,
   isPromptFallback,
+  neutralizeAtMentions,
   newConversation,
   parseRenameCommand,
   summaryOf,
@@ -60,6 +63,9 @@ describe('titleFromPrompt (§3.5.8)', () => {
       'This is a rather long prompt that keeps going and going well beyond the eighty…',
     ],
     ['x'.repeat(100), `${'x'.repeat(80)}…`],
+    // R5W-03: the composer's guard in front of a pasted `/…` text is not part of the title.
+    ['\u200b/usr/lib/x is missing\nwhy?', '/usr/lib/x is missing'],
+    ['\u200b\u200b/clear   now', '/clear now'],
   ])('%j → %j', (text, title) => {
     expect(titleFromPrompt(text)).toBe(title);
   });
@@ -213,9 +219,10 @@ describe('AI title (C.6, F.8)', () => {
 });
 
 describe('conversations', () => {
-  it('endReasonFor maps clear / plan_mode_exit, everything else → unknown', () => {
+  it('endReasonFor maps clear / plan_mode_exit / fresh_session, everything else → unknown', () => {
     expect(endReasonFor('clear')).toBe('clear');
     expect(endReasonFor('plan_mode_exit')).toBe('plan_mode_exit');
+    expect(endReasonFor('fresh_session')).toBe('fresh_session');
     expect(endReasonFor('compact')).toBe('unknown');
     expect(endReasonFor(null)).toBe('unknown');
   });
@@ -249,5 +256,79 @@ describe('conversations', () => {
     expect(cwdLabel('D:\\')).toBe('D:\\');
     expect(implementPlanPrompt('C:\\plans\\a.md', '# Plan')).toBe('Implement the plan in C:\\plans\\a.md');
     expect(implementPlanPrompt(null, '# Plan')).toBe('Implement this plan:\n\n# Plan');
+  });
+
+  it('freshContextPrompt (ADR-147): header, plan file when known, empty line, plan', () => {
+    expect(freshContextPrompt('C:\\plans\\a.md', '# Plan\n\n1. Do it')).toBe(
+      'Implement the following approved plan.\nPlan file: C:\\plans\\a.md\n\n# Plan\n\n1. Do it',
+    );
+    expect(freshContextPrompt(null, '# Plan')).toBe('Implement the following approved plan.\n\n# Plan');
+    expect(freshContextPrompt(null, '# Plan').startsWith(FRESH_CONTEXT_PROMPT_HEADER)).toBe(true);
+  });
+});
+
+/**
+ * The `@` rule of CLI 2.1.322 (read from its bundled code, WP61-01): a whitespace-separated token
+ * that starts with `@` – or has `@` right after 。、？！ – is a file mention, and so is `@"…"` after
+ * whitespace or 。、？！. U+200B is no whitespace for JS `\s`.
+ */
+const CLI_MENTION_DELIMITERS = '\u3002\u3001\uFF1F\uFF01';
+
+function cliMentions(text: string): string[] {
+  const found: string[] = [];
+  const quoted = new RegExp(String.raw`(^|[\s${CLI_MENTION_DELIMITERS}])@"([^"]+)"`, 'gu');
+  for (const match of text.matchAll(quoted)) if (match[2] !== undefined) found.push(match[2]);
+  for (const [token] of text.matchAll(/[^\s]+/gu)) {
+    let at = token.indexOf('@');
+    while (at > 0 && !CLI_MENTION_DELIMITERS.includes(token[at - 1] ?? '')) at = token.indexOf('@', at + 1);
+    if (at !== -1 && token.length >= at + 2 && !token.startsWith('"', at + 1))
+      found.push(token.slice(at + 1));
+  }
+  return found;
+}
+
+describe('WP61-01: `@` in a plan text sent to the CLI', () => {
+  const PLAN = [
+    '@README.md first',
+    'See @docs/plan.md and @"docs/my plan.md".',
+    '- update @src/a.ts\u3001@src/b.ts',
+    '```ts',
+    '  @Component()',
+    "import x from '@shared/samples';",
+    '```',
+    'Mail dev@example.com about @@twice',
+  ].join('\n');
+
+  it('control: the CLI rule finds the mentions of the raw plan', () => {
+    expect(cliMentions(PLAN)).toEqual(
+      expect.arrayContaining(['README.md', 'docs/plan.md', 'docs/my plan.md', 'Component()']),
+    );
+  });
+
+  it('freshContextPrompt: nothing left for the CLI to expand, the visible text unchanged', () => {
+    const prompt = freshContextPrompt('C:\\plans\\a.md', PLAN);
+    expect(cliMentions(prompt)).toEqual([]);
+    expect(prompt.replaceAll('\u200b', '')).toBe(
+      `${FRESH_CONTEXT_PROMPT_HEADER}\nPlan file: C:\\plans\\a.md\n\n${PLAN}`,
+    );
+    expect(prompt).toContain('\n\u200b@README.md first');
+    expect(prompt).toContain('\u3001\u200b@src/b.ts');
+    // Only where the CLI expands: an import and a mail address stay byte for byte.
+    expect(prompt).toContain("import x from '@shared/samples';");
+    expect(prompt).toContain('Mail dev@example.com');
+  });
+
+  it('implementPlanPrompt (A.10) with the plan inline as well; the file form has no plan text', () => {
+    expect(cliMentions(implementPlanPrompt(null, PLAN))).toEqual([]);
+    expect(implementPlanPrompt(null, PLAN).replaceAll('\u200b', '')).toBe(`Implement this plan:\n\n${PLAN}`);
+    expect(implementPlanPrompt('C:\\plans\\a.md', PLAN)).toBe('Implement the plan in C:\\plans\\a.md');
+  });
+
+  it('neutralizeAtMentions: idempotent, only the `@` the CLI would expand', () => {
+    const once = neutralizeAtMentions(PLAN);
+    expect(neutralizeAtMentions(once)).toBe(once);
+    expect(neutralizeAtMentions('a@b.c x@y (@z)')).toBe('a@b.c x@y (@z)');
+    expect(neutralizeAtMentions('@a\t@b\r\n@c\u3002@d')).toBe('\u200b@a\t\u200b@b\r\n\u200b@c\u3002\u200b@d');
+    expect(neutralizeAtMentions('')).toBe('');
   });
 });

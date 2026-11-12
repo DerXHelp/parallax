@@ -3,21 +3,31 @@ import { closesFence, openingFence, type Fence } from './markdown-blocks';
 /**
  * V2-12: CommonMark turns `\.` `\_` `\*` … into the bare punctuation, so `C:\Users\user\.claude`
  * in running text showed as `C:\Users\user.claude`. Before parsing, every backslash of a Windows
- * path (`X:\…` up to the next whitespace) that stands before an ASCII punctuation character (or
- * ends the line – a hard break) is doubled, so the renderer shows it as typed. Everything else
+ * path (`X:\…` or UNC/device `\\server\share…`, `\\?\…`, up to the next whitespace) that stands
+ * before an ASCII punctuation character (or ends the line – a hard break) is doubled, so the
+ * renderer shows it as typed (WP-55: a UNC path keeps its `\\`, so it is recognized – and refused –
+ * as one instead of turning into a rooted `\server\…`). Everything else
  * stays untouched: code spans, fenced code, indented lines (possible code blocks) and escapes
  * outside paths (`\*not bold\*`).
  */
 
-/** A drive path: letter + `:\` not inside a word (`file:\x` is none), up to whitespace. */
-const DRIVE_PATH = /(?<![A-Za-z0-9])[A-Za-z]:\\\S*/g;
+/**
+ * A drive path: letter + `:\` not inside a word (`file:\x` is none), up to whitespace – and on over
+ * a single space into a word that holds a backslash after its first character, the rest of a folder
+ * name with spaces (V4-01: `C:\Users\Max Mustermann\.claude`; an escape at the start of a word,
+ * `\*bold\*`, stays an escape); or a UNC path with host and share (`\\server\share…`) or a device
+ * path (`\\?\…`, `\\.\…`) at the start of a word – one match, so a drive inside a device path is not
+ * handled twice.
+ */
+const WINDOWS_PATH =
+  /(?<![A-Za-z0-9])[A-Za-z]:\\\S*(?: [^\s\\]+\\\S*)*|(?<![^\s(["'<])\\\\(?:[^\s\\]+\\[^\s\\]|[?.]\\)\S*/g;
 /** A backslash before ASCII punctuation (CommonMark escapable) or at the end of the path. */
 const ESCAPING_BACKSLASH = /\\(?=[!-/:-@[-`{-~]|$)/g;
 /** Indented code blocks (4 spaces or a tab) keep their backslashes literally anyway. */
 const INDENTED = /^(?: {4}|\t)/;
 
 function protectText(text: string): string {
-  return text.replace(DRIVE_PATH, (path) => path.replace(ESCAPING_BACKSLASH, '\\\\'));
+  return text.replace(WINDOWS_PATH, (path) => path.replace(ESCAPING_BACKSLASH, '\\\\'));
 }
 
 /** Is the character at `index` escaped by an odd number of backslashes before it? */
@@ -45,8 +55,13 @@ function closingRun(line: string, from: number, length: number): number {
 }
 
 /** One line outside fenced code: paths in the text parts, code spans unchanged. */
+/** Can the text hold a Windows path at all (a drive `:\` or a UNC/device `\\`)? */
+function mayHoldPath(text: string): boolean {
+  return text.includes(':\\') || text.includes('\\\\');
+}
+
 function protectLine(line: string): string {
-  if (!line.includes(':\\')) return line;
+  if (!mayHoldPath(line)) return line;
   let out = '';
   let position = 0;
   let search = 0;
@@ -71,7 +86,7 @@ function protectLine(line: string): string {
 }
 
 export function preserveWindowsPaths(markdown: string): string {
-  if (!markdown.includes(':\\')) return markdown;
+  if (!mayHoldPath(markdown)) return markdown;
   const lines = markdown.split('\n');
   let fence: Fence | null = null;
   for (const [index, line] of lines.entries()) {

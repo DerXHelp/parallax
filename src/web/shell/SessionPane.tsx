@@ -7,7 +7,11 @@ import { Alert } from '@web/ui/alert';
 import { Button } from '@web/ui/button';
 import { Skeleton } from '@web/ui/skeleton';
 import { PaneBanners } from './navigation/PaneBanners';
+import { SessionDropOverlay, useSessionDropZone } from './session-drop';
 import { SessionHeader } from './SessionHeader';
+import { SidePanelHost } from './side-panel/SidePanelHost';
+import { useSidePanelTab } from './side-panel/state';
+import { SlotBoundary } from './SlotBoundary';
 import { useFeatureSlots } from './slots';
 
 function TranscriptSkeleton() {
@@ -28,9 +32,10 @@ const TranscriptSlot = memo(function TranscriptSlot({ sessionKey }: { sessionKey
   return <Transcript sessionKey={sessionKey} />;
 });
 
-const SidePanelSlot = memo(function SidePanelSlot({ sessionKey }: { sessionKey: string }) {
-  const { SidePanel } = useFeatureSlots();
-  return <SidePanel sessionKey={sessionKey} />;
+/** Phase 3 (ADR-149): the pinned task list directly above the composer. */
+const TaskStripSlot = memo(function TaskStripSlot({ sessionKey }: { sessionKey: string }) {
+  const { TaskStrip } = useFeatureSlots();
+  return <TaskStrip sessionKey={sessionKey} />;
 });
 
 /**
@@ -56,20 +61,43 @@ const ComposerSlot = memo(function ComposerSlot({ sessionKey }: { sessionKey: st
   return <Composer sessionKey={sessionKey} />;
 });
 
+/**
+ * The side panel host inside a SlotBoundary (its frame is a lazy chunk): another tab, closing the
+ * panel or another session gives a failed panel a fresh try – the header buttons still work then
+ * (header-panels.tsx falls back to the panel state while no host serves the request).
+ */
+const SidePanelSlot = memo(function SidePanelSlot({ sessionKey }: { sessionKey: string }) {
+  const tab = useSidePanelTab(sessionKey);
+  return (
+    <SlotBoundary resetKey={`${sessionKey}|${tab ?? ''}`} className="w-80 shrink-0 border-l">
+      <SidePanelHost sessionKey={sessionKey} />
+    </SlotBoundary>
+  );
+});
+
 const selectTitle = (summary: { title: string; cwd: string }) => sessionTitle(summary);
+
+/** Files may be dropped on the pane: not for an archived entry or one open in an external console. */
+const selectAcceptsDrop = (summary: { archived: boolean; external: unknown }) =>
+  !summary.archived && summary.external === null;
 
 /**
  * One session (pane-capable: the layout may render several side by side): header, transcript
- * slot, decision bar slot, composer slot and the optional side panel slot (architecture §2.3d).
+ * slot, the side panel host (Phase 3, ADR-150: tabs plan/file/files/tasks), decision bar slot, task
+ * strip slot and composer slot (architecture §2.3d).
  * Subscribes the session while mounted. Reads only narrow selectors (title, meta), so deltas and
  * summary updates of this or other sessions do not re-render the slots (R1W-04).
+ * Phase 3 (WP-58): the whole pane is a drop zone for attachments (R4W-02, session-drop.tsx); the
+ * side panel (a lazy chunk) sits in a SlotBoundary, so a failed frame leaves the transcript usable.
  */
 export function SessionPane({ sessionKey }: { sessionKey: string }) {
   const { t, tError } = useI18n();
   const title = useSummarySelector<string | null>(sessionKey, selectTitle, null);
+  const acceptsDrop = useSummarySelector(sessionKey, selectAcceptsDrop, false);
   const summariesLoaded = useSummariesLoaded(parseSessionKey(sessionKey)?.hostId);
   const meta = useSessionMeta(sessionKey);
   const [, select] = useSelectedSession();
+  const drop = useSessionDropZone(sessionKey, acceptsDrop && title !== null);
 
   if (title === null) {
     if (!summariesLoaded) return <TranscriptSkeleton />;
@@ -96,7 +124,14 @@ export function SessionPane({ sessionKey }: { sessionKey: string }) {
   }
 
   return (
-    <section aria-label={title} data-session-key={sessionKey} className="flex h-full min-h-0 flex-col">
+    <section
+      aria-label={title}
+      data-session-key={sessionKey}
+      data-drop-zone={acceptsDrop ? 'true' : undefined}
+      className="relative flex h-full min-h-0 flex-col"
+      {...drop.handlers}
+    >
+      {drop.dragging ? <SessionDropOverlay /> : null}
       <SessionHeader sessionKey={sessionKey} />
       <PaneBanners sessionKey={sessionKey} />
       {meta.unavailable === null ? null : (
@@ -117,6 +152,7 @@ export function SessionPane({ sessionKey }: { sessionKey: string }) {
         <SidePanelSlot sessionKey={sessionKey} />
       </div>
       <DecisionBarSlot sessionKey={sessionKey} />
+      <TaskStripSlot sessionKey={sessionKey} />
       <ComposerSlot sessionKey={sessionKey} />
     </section>
   );

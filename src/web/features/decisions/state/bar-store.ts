@@ -1,14 +1,18 @@
 import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
 import { permissionModeSchema, type DecisionId, type PermissionMode } from '@shared/common';
+import type { ErrorPayload } from '@shared/errors';
 import type { Decision, PlanDecision } from '@shared/model';
 import { readStorage, storageKey, writeStorage } from '@web/lib/storage';
+import type { PlanViewChoice } from '../lib/plan-versions';
 
 /**
  * Feature state of the decision bar (architecture §2.4: feature state lives in
- * `features/<f>/state`): which decision the bar shows per session, the open plan panel, the
- * decisions this window answered itself (to tell them apart from answers in other windows) and
- * the remembered "Implement" choice. Never part of the client store (WP-14).
+ * `features/<f>/state`): which decision the bar shows per session, the plan shown in the side
+ * panel tab "Plan" (open/closed and focus belong to the host, shell/side-panel) and which of its
+ * versions the user picked, the decisions this window answered itself (to tell them apart from
+ * answers in other windows), failed "fresh context" answers and the remembered "Implement" choice.
+ * Never part of the client store (WP-14).
  */
 
 /** Plan shown in the side panel; a copy keeps it readable after the decision closed. */
@@ -19,22 +23,27 @@ export interface PlanPanelState {
   planFilePath: string | null;
 }
 
+/** A failed "Implement with fresh context" (WP-56): shown in the card of `decisionId`. */
+export interface FreshContextError {
+  decisionId: DecisionId;
+  error: ErrorPayload;
+}
+
 interface BarState {
   /** Decision the user picked to view (else the bar shows the oldest open one). */
   selected: Readonly<Record<string, DecisionId>>;
   panels: Readonly<Record<string, PlanPanelState>>;
-  /** Sessions whose PlanSidePanel is mounted (ref count; else "Open plan" expands the plan inline). */
-  mounted: Readonly<Record<string, number>>;
+  /** Version picked in the plan tab per session (absent = automatic, lib/plan-versions.ts). */
+  views: Readonly<Record<string, PlanViewChoice>>;
+  /** Last failed fresh-context answer per session. */
+  freshErrors: Readonly<Record<string, FreshContextError>>;
 }
 
-const store = createStore<BarState>(() => ({ selected: {}, panels: {}, mounted: {} }));
+const store = createStore<BarState>(() => ({ selected: {}, panels: {}, views: {}, freshErrors: {} }));
 
 /** Decisions answered or cancelled by THIS window (insertion order, capped). */
 const local = new Set<DecisionId>();
 const LOCAL_MAX = 500;
-
-/** Elements that opened a plan panel (focus returns there on close). */
-const panelOpeners = new Map<string, HTMLElement>();
 
 export function useSelectedDecisionId(sessionKey: string): DecisionId | null {
   return useStore(store, (state) => state.selected[sessionKey] ?? null);
@@ -69,8 +78,11 @@ export function usePlanPanel(sessionKey: string): PlanPanelState | null {
   return useStore(store, (state) => state.panels[sessionKey] ?? null);
 }
 
-export function openPlanPanel(sessionKey: string, decision: PlanDecision, opener?: HTMLElement | null): void {
-  if (opener !== undefined && opener !== null) panelOpeners.set(sessionKey, opener);
+/**
+ * The plan the side panel tab "Plan" shows (the caller opens the tab via requestShell): a copy of
+ * the decision and its version as the tab's view while the decision is open or expired.
+ */
+export function setPanelPlan(sessionKey: string, decision: PlanDecision): void {
   store.setState((state) => ({
     panels: {
       ...state.panels,
@@ -81,43 +93,43 @@ export function openPlanPanel(sessionKey: string, decision: PlanDecision, opener
         planFilePath: decision.planFilePath,
       },
     },
+    views: {
+      ...state.views,
+      [sessionKey]: {
+        view: decision.version,
+        decisionId: decision.id,
+        basisVersion: null,
+        basisLiveItemId: null,
+      },
+    },
   }));
 }
 
-/** Closes the panel; returns the element that opened it (if still in the document). */
-export function closePlanPanel(sessionKey: string): HTMLElement | null {
-  const opener = panelOpeners.get(sessionKey) ?? null;
-  panelOpeners.delete(sessionKey);
-  if (store.getState().panels[sessionKey] !== undefined) {
-    store.setState((state) => {
-      const { [sessionKey]: _closed, ...panels } = state.panels;
-      return { panels };
-    });
-  }
-  return opener?.isConnected === true ? opener : null;
+export function usePlanViewChoice(sessionKey: string): PlanViewChoice | null {
+  return useStore(store, (state) => state.views[sessionKey] ?? null);
 }
 
-/** Called by PlanSidePanel while mounted (ref-counted); returns the unregister function. */
-export function registerPlanPanel(sessionKey: string): () => void {
-  store.setState((state) => ({
-    mounted: { ...state.mounted, [sessionKey]: (state.mounted[sessionKey] ?? 0) + 1 },
-  }));
-  return () => {
-    store.setState((state) => {
-      const count = (state.mounted[sessionKey] ?? 1) - 1;
-      const { [sessionKey]: _previous, ...rest } = state.mounted;
-      return { mounted: count <= 0 ? rest : { ...rest, [sessionKey]: count } };
-    });
-  };
+/** The user picked a version (or the plan file) in the plan tab. */
+export function choosePlanView(sessionKey: string, choice: PlanViewChoice): void {
+  store.setState((state) => ({ views: { ...state.views, [sessionKey]: choice } }));
 }
 
-export function isPlanPanelMounted(sessionKey: string): boolean {
-  return (store.getState().mounted[sessionKey] ?? 0) > 0;
+// ---- failed "fresh context" answers (WP-56) ----
+
+export function useFreshContextError(sessionKey: string): FreshContextError | null {
+  return useStore(store, (state) => state.freshErrors[sessionKey] ?? null);
 }
 
-/** Re-renders when the session's PlanSidePanel mounts/unmounts (transcript "Open plan", R2W-15). */
-export function usePlanPanelMounted(sessionKey: string): boolean {
-  return useStore(store, (state) => (state.mounted[sessionKey] ?? 0) > 0);
+export function setFreshContextError(sessionKey: string, decisionId: DecisionId, error: ErrorPayload): void {
+  store.setState((state) => ({ freshErrors: { ...state.freshErrors, [sessionKey]: { decisionId, error } } }));
+}
+
+export function clearFreshContextError(sessionKey: string): void {
+  if (store.getState().freshErrors[sessionKey] === undefined) return;
+  store.setState((state) => {
+    const { [sessionKey]: _cleared, ...rest } = state.freshErrors;
+    return { freshErrors: rest };
+  });
 }
 
 // ---- answered by this window ----
@@ -147,19 +159,30 @@ export function isLocalResolution(decisionId: DecisionId): boolean {
 // ---- remembered "Implement" choice (Plan "Split-Button merkt sich die letzte Wahl") ----
 
 const APPROVE_MODE_KEY = storageKey('decisions', 'approveMode');
+/** WP-56 (ADR-147): "with fresh context" is remembered next to the mode. */
+const APPROVE_FRESH_KEY = storageKey('decisions', 'approveFresh');
 
 export function readApproveMode(): PermissionMode | null {
   const parsed = permissionModeSchema.safeParse(readStorage('local', APPROVE_MODE_KEY));
   return parsed.success ? parsed.data : null;
 }
 
+/** Remembers the mode – never bypass (it must be picked every time, C.3). */
 export function writeApproveMode(mode: PermissionMode): void {
+  if (mode === 'bypassPermissions') return;
   writeStorage('local', APPROVE_MODE_KEY, mode);
+}
+
+export function readApproveFresh(): boolean {
+  return readStorage('local', APPROVE_FRESH_KEY) === 'true';
+}
+
+export function writeApproveFresh(fresh: boolean): void {
+  writeStorage('local', APPROVE_FRESH_KEY, fresh ? 'true' : 'false');
 }
 
 /** Tests: forget everything (the module state is global). */
 export function resetDecisionBarState(): void {
-  store.setState({ selected: {}, panels: {}, mounted: {} });
+  store.setState({ selected: {}, panels: {}, views: {}, freshErrors: {} });
   local.clear();
-  panelOpeners.clear();
 }

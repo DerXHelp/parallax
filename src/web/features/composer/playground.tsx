@@ -11,7 +11,20 @@ import type { DemoHost } from '../decisions/lib/demo-host';
 import { DemoButton, DemoSession } from '../decisions/lib/demo-session';
 import { Composer } from './Composer';
 import { ComposerDemo } from './demo/ComposerDemo';
-import { DEMO_COMMANDS, sampleScreenshot, withDetail, withSummary } from './demo/data';
+import {
+  DEMO_COMMANDS,
+  DEMO_MODELS_14,
+  dropFolderOnComposer,
+  oversizedPdf,
+  pasteIntoComposer,
+  sampleFile,
+  sampleLog,
+  samplePdf,
+  sampleScreenshot,
+  setDemoFilesMode,
+  withDetail,
+  withSummary,
+} from './demo/data';
 import { addAttachmentFiles } from './state/attachments';
 
 /**
@@ -180,6 +193,10 @@ async function addScreenshot(entryId: EntryId, name: string): Promise<void> {
   addAttachmentFiles(makeSessionKey(LOCAL_HOST_ID, entryId), [await sampleScreenshot(name)]);
 }
 
+function addFiles(entryId: EntryId, files: File[]): void {
+  addAttachmentFiles(makeSessionKey(LOCAL_HOST_ID, entryId), files);
+}
+
 let lateCounter = 0;
 
 /** Opens a permission of the main agent or a subagent in the `working` demo session. */
@@ -310,6 +327,121 @@ export const demos: PlaygroundDemo[] = [
             />
           </>
         )}
+      />
+    ),
+  },
+  {
+    id: 'files',
+    title: 'Composer – PDFs and other files (WP-57, ADR-146)',
+    description:
+      'PDF and file chips with icon, name and size; over the limit = error chip without upload; "fail" = 413. A dropped folder is left out with a hint.',
+    render: () => (
+      <ComposerDemo
+        onCommand={phase2Commands}
+        controls={() => (
+          <>
+            <DemoButton
+              label="Add PDF + zip + log"
+              onClick={() => {
+                addFiles(DEMO_ENTRIES.idle, [
+                  samplePdf('Architecture review.pdf'),
+                  sampleFile('build-output.zip', 'application/zip', 2_400_000),
+                  sampleFile('server.log', 'text/plain', 48_200),
+                ]);
+              }}
+            />
+            <DemoButton
+              label="PDF over 10 MB"
+              onClick={() => {
+                addFiles(DEMO_ENTRIES.idle, [oversizedPdf()]);
+              }}
+            />
+            <DemoButton
+              label="File that fails (413)"
+              onClick={() => {
+                addFiles(DEMO_ENTRIES.idle, [sampleFile('fail-dump.bin', 'application/octet-stream', 9_000)]);
+              }}
+            />
+            <DemoButton label="Drop a folder + a file" onClick={dropFolderOnComposer} />
+          </>
+        )}
+      />
+    ),
+  },
+  {
+    id: 'pastes',
+    title: 'Composer – paste chips (WP-57, ADR-146)',
+    description:
+      'From 2 000 characters or 30 lines a paste becomes a token + chip: click it for the preview, "Convert to text" or remove (= delete the token). Sending replaces the tokens.',
+    render: () => (
+      <ComposerDemo
+        onCommand={phase2Commands}
+        controls={() => (
+          <>
+            <DemoButton
+              label="Paste a 120-line log"
+              onClick={() => {
+                pasteIntoComposer(sampleLog(120));
+              }}
+            />
+            <DemoButton
+              label="Paste 29 lines (stays text)"
+              onClick={() => {
+                pasteIntoComposer(sampleLog(29).slice(0, 1990));
+              }}
+            />
+          </>
+        )}
+      />
+    ),
+  },
+  {
+    id: 'mention',
+    title: 'Composer – @ file picker (WP-57, ADR-151)',
+    description:
+      'Type @ at a word start: project files (fuzzy, at most 50), arrows, Tab/Enter, Esc. The mode applies to the next opening.',
+    render: () => (
+      <ComposerDemo
+        onCommand={phase2Commands}
+        controls={() => (
+          <>
+            <DemoButton
+              label="Hits (fast)"
+              onClick={() => {
+                setDemoFilesMode('ready');
+              }}
+            />
+            <DemoButton
+              label="Slow (4 s loading)"
+              onClick={() => {
+                setDemoFilesMode('slow');
+              }}
+            />
+            <DemoButton
+              label="Cut at 20 000 files"
+              onClick={() => {
+                setDemoFilesMode('truncated');
+              }}
+            />
+            <DemoButton
+              label="Error"
+              onClick={() => {
+                setDemoFilesMode('error');
+              }}
+            />
+          </>
+        )}
+      />
+    ),
+  },
+  {
+    id: 'models',
+    title: 'Composer – model picker with 14 models (WP-57)',
+    description: 'Aliases first, full model ids under "More models"; the list scrolls.',
+    render: () => (
+      <ComposerDemo
+        setup={(data) => withDetail(data, { models: DEMO_MODELS_14 })}
+        onCommand={phase2Commands}
       />
     ),
   },

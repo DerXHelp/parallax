@@ -224,6 +224,9 @@ export const en = {
     themes: { dark: 'Dark', light: 'Light', system: 'System' },
     language: 'Language',
     languages: { en: 'English', de: 'Deutsch' },
+    /** ADR-153: the lazy dictionary of the chosen language could not be loaded (shown once). */
+    languageLoadFailed:
+      'The texts of the chosen language could not be loaded – Parallax stays in English. Reload the window to try again.',
     shortcuts: 'Keyboard shortcuts',
     saveFailed: 'The setting could not be saved.',
   },

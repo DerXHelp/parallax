@@ -1,7 +1,8 @@
 /**
  * Playwright fixtures of the Parallax E2E tests (WP-20c):
  * - `server` (worker): one real server per worker (FakeBackend, own temp PARALLAX_HOME, port 0),
- *   stopped with `server.shutdown` + clean-exit check at the end of the worker.
+ *   stopped with `server.shutdown` + clean-exit check at the end of the worker. A file with
+ *   `test.use({ ownServer: '<label>' })` gets a worker – and so a server and a home – of its own.
  * - `app`: the default page, signed in like the launcher (`/#code=…`) and connected.
  * - `newWindow()`: another signed-in window – a second page of the same context (same browser
  *   profile, same cookie) or, with `{ context: 'new' }`, of a fresh context (own cookie/storage,
@@ -69,6 +70,12 @@ interface TestFixtures {
 
 interface WorkerFixtures {
   server: E2eServer;
+  /**
+   * Worker option (WP-60): a spec file with `test.use({ ownServer: '<label>' })` runs in a worker of
+   * its own – its own server, temp PARALLAX_HOME and projects, shared with no other file. null
+   * (default): the files share the workers' servers as before.
+   */
+  ownServer: string | null;
 }
 
 /** For `E2eServer.stop()` of a test's own server: keeps its log as `server.log` of the test. */
@@ -133,10 +140,11 @@ async function instrument(context: BrowserContext, diagnostics: Diagnostics): Pr
 }
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
+  ownServer: [null, { scope: 'worker', option: true }],
+
   server: [
-    // eslint-disable-next-line no-empty-pattern -- Playwright requires the object pattern
-    async ({}, use, workerInfo) => {
-      const label = `w${String(workerInfo.workerIndex)}`;
+    async ({ ownServer }, use, workerInfo) => {
+      const label = `${ownServer ?? 'w'}${String(workerInfo.workerIndex)}`;
       const server = await startE2eServer({ label });
       try {
         await use(server);

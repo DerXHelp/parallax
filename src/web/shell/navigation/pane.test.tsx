@@ -61,6 +61,7 @@ describe('header (WP-35 §8)', () => {
       'Session info…',
       'RenameF2',
       'Open in new window',
+      'Open folder in Explorer',
       'Open in external console',
       'Copy console command',
       'Put to sleep',

@@ -203,7 +203,8 @@
           "summary": null,
           "usage": null,
           "startedAt": "2026-10-15T08:00:00.014Z",
-          "endedAt": null
+          "endedAt": null,
+          "outputFile": null
         },
         "decision": null
       },

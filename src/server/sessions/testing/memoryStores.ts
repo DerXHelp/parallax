@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import type { BlobId, ConversationId, EntryId } from '@shared/common';
-import type { ErrorPayload } from '@shared/errors';
+import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   blobRefSchema,
   decisionRecordSchema,
@@ -26,7 +26,9 @@ import {
 import { sleep } from '../../lib/async';
 import { isStreamingItem } from '../../store/transcripts';
 import {
+  CommandError,
   transcriptLogLineSchema,
+  type AttachmentFileStore,
   type BlobStore,
   type DecisionStore,
   type RegistryStore,
@@ -93,6 +95,15 @@ export interface MemoryStoreWarnings extends StoreWarnings {
   onChange(listener: (warnings: HostWarning[]) => void): () => void;
 }
 
+/** Phase 3 (ADR-146): attachment folder per entry; `materialize` copies nothing. */
+export interface MemoryAttachmentFileStore extends AttachmentFileStore {
+  /** Every successful materialize call, in call order. */
+  readonly materialized: readonly { entryId: EntryId; blobId: BlobId; name: string | null; path: string }[];
+}
+
+/** Fixed home of the attachment double (never touched on disk). */
+export const MEMORY_ATTACHMENTS_HOME = 'C:\\work\\sample\\.home';
+
 export interface MemoryStores {
   registry: MemoryRegistryStore;
   transcripts: MemoryTranscriptStore;
@@ -100,6 +111,7 @@ export interface MemoryStores {
   blobs: MemoryBlobStore;
   settings: MemorySettingsStore;
   warnings: MemoryStoreWarnings;
+  attachments: MemoryAttachmentFileStore;
 }
 
 function lowerBound(items: readonly TranscriptItem[], order: number): number {
@@ -331,16 +343,41 @@ function createWarnings(seed: readonly HostWarning[], options: MemoryStoresOptio
   };
 }
 
+/**
+ * `<home>\entries\<entryId>\attachments`; materialize answers `<dir>\<blob16>\<name>` (fallback
+ * `<blob16>.bin`) for a blob of `blobs` and throws BLOB_NOT_FOUND otherwise – like the file store,
+ * but without sanitizing or copying.
+ */
+function createAttachments(blobs: MemoryBlobStore): MemoryAttachmentFileStore {
+  const materialized: { entryId: EntryId; blobId: BlobId; name: string | null; path: string }[] = [];
+  const dirOf = (entryId: EntryId): string => `${MEMORY_ATTACHMENTS_HOME}\\entries\\${entryId}\\attachments`;
+  return {
+    materialized,
+    dir: (entryId) => Promise.resolve(dirOf(entryId)),
+    materialize: (entryId, blobId, name) => {
+      if (!blobs.blobs.has(blobId)) {
+        return Promise.reject(new CommandError(makeError('BLOB_NOT_FOUND', { blobId })));
+      }
+      const blob16 = blobId.slice(0, 16);
+      const path = `${dirOf(entryId)}\\${blob16}\\${name ?? `${blob16}.bin`}`;
+      materialized.push({ entryId, blobId, name, path });
+      return Promise.resolve(path);
+    },
+  };
+}
+
 export function createMemoryStores(
   seed: MemoryStoresSeed = {},
   options: MemoryStoresOptions = {},
 ): MemoryStores {
+  const blobs = createBlobs();
   return {
     registry: createRegistry(seed.entries ?? []),
     transcripts: createTranscripts(seed.transcripts, options),
     decisions: createDecisions(seed, options),
-    blobs: createBlobs(),
+    blobs,
     settings: createSettings(seed.settings),
     warnings: createWarnings(seed.warnings ?? [], options),
+    attachments: createAttachments(blobs),
   };
 }

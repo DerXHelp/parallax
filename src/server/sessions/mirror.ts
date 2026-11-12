@@ -34,6 +34,8 @@ export function emptyDetail(o: {
   /** ADR-108: the cached catalog of a dormant entry (null = none yet). */
   commands?: SlashCommandInfo[] | null;
   queue: QueuedPrompt[];
+  /** Phase 3 (ADR-148): highest plan version of the entry (null = none). */
+  latestPlanVersion?: number | null;
 }): SessionDetail {
   return {
     entryId: o.entryId,
@@ -47,6 +49,9 @@ export function emptyDetail(o: {
     promptSuggestion: null,
     rateLimit: null,
     unknownCounts: {},
+    todos: null,
+    planFile: null,
+    latestPlanVersion: o.latestPlanVersion ?? null,
   };
 }
 
@@ -127,6 +132,7 @@ export function baseView(o: {
   models: ModelOption[] | null;
   commands?: SlashCommandInfo[] | null;
   queue: QueuedPrompt[];
+  latestPlanVersion?: number | null;
 }): SessionViewState {
   const current = currentConversation(o.entry);
   return {
@@ -143,6 +149,7 @@ export function baseView(o: {
       models: o.models,
       commands: o.commands ?? null,
       queue: o.queue,
+      latestPlanVersion: o.latestPlanVersion ?? null,
     }),
   };
 }

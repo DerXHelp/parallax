@@ -139,6 +139,27 @@ export const ERROR_CATALOG = {
   // files (Phase 2, ADR-119)
   /** fs.listDirectory: no permission to read the folder (`params.path`). */
   FOLDER_NOT_READABLE: { category: 'validation', http: 403, severity: 'error', retryable: false },
+  // files (Phase 3, WP-50 §4.3; ADR-141 … 146)
+  /** The file or folder does not exist (any more). */
+  FILE_NOT_FOUND: { category: 'not_found', http: 404, severity: 'error', retryable: false },
+  /** EACCES/EPERM/EBUSY or a timeout (`params.reason`: 'access' | 'busy' | 'timeout'). */
+  FILE_NOT_READABLE: { category: 'validation', http: 403, severity: 'error', retryable: true },
+  /** "Open with default program" for an extension outside DEFAULT_PROGRAM_EXTENSIONS (ADR-144). */
+  FILE_TYPE_BLOCKED: { category: 'validation', http: 403, severity: 'warning', retryable: false },
+  /** The editor preset is not installed or the custom `.exe` is missing (`params.preset`). */
+  EDITOR_NOT_FOUND: { category: 'setup', http: 503, severity: 'warning', retryable: false },
+  /** Starting the external program failed (AppLocker, not a GUI program …; `params.reason`). */
+  OPEN_FAILED: { category: 'internal', http: 500, severity: 'error', retryable: true },
+  /** session.stopTask for an unknown or finished task (ADR-149). */
+  TASK_NOT_FOUND: { category: 'not_found', http: 404, severity: 'info', retryable: false },
+  /** plan.read for an unknown version or a missing plan file (ADR-148). */
+  PLAN_NOT_FOUND: { category: 'not_found', http: 404, severity: 'error', retryable: false },
+  /** `system/session_writes_lost` – disk full (`params.lost`, `params.errorCode`). */
+  SESSION_WRITES_LOST: { category: 'claude', http: 502, severity: 'warning', retryable: false },
+  /** startup_failure_reason `config_file_invalid`: a settings file of Claude Code is invalid. */
+  CLAUDE_CONFIG_INVALID: { category: 'setup', http: 503, severity: 'error', retryable: false },
+  /** startup_failure_reason `proxy_invalid` (company machine: check HTTPS_PROXY). */
+  CLAUDE_PROXY_INVALID: { category: 'setup', http: 503, severity: 'error', retryable: false },
   // Windows integration (Phase 2, ADR-109/110) – host warnings. `params.reason`: free text, or
   // 'foreign' = a `Parallax.lnk` / `parallax:` key of the user or another program, never replaced
   // (R4-11, ADR-133; the settings explain it).
@@ -208,6 +229,10 @@ const STARTUP_FAILURE_CODES: Readonly<Record<string, ErrorCode>> = {
   gateway_signin_required: 'CLAUDE_AUTH_FAILED',
   gateway_access_denied: 'CLAUDE_AUTH_FAILED',
   session_held_by_background: 'SESSION_HELD_ELSEWHERE',
+  // Phase 3 (SDK 0.3.322, WP-50 §4.3); other new reasons stay CLAUDE_STARTUP_FAILED.
+  config_file_invalid: 'CLAUDE_CONFIG_INVALID',
+  proxy_invalid: 'CLAUDE_PROXY_INVALID',
+  sandbox_required_unavailable: 'CLAUDE_ORG_POLICY',
 };
 
 const ASSISTANT_ERROR_CODES: Readonly<Record<string, ErrorCode>> = {

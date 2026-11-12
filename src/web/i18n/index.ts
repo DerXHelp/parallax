@@ -1,80 +1,31 @@
 import { useMemo } from 'react';
 import type { Language } from '@shared/common';
 import type { ErrorPayload } from '@shared/errors';
-import { de as composerDe } from '@web/features/composer/i18n/de';
-import { en as composerEn } from '@web/features/composer/i18n/en';
-import { de as decisionsDe } from '@web/features/decisions/i18n/de';
-import { en as decisionsEn } from '@web/features/decisions/i18n/en';
-import { de as preferencesDe } from '@web/features/preferences/i18n/de';
-import { en as preferencesEn } from '@web/features/preferences/i18n/en';
-import { de as profilesDe } from '@web/features/profiles/i18n/de';
-import { en as profilesEn } from '@web/features/profiles/i18n/en';
-import { de as transcriptDe } from '@web/features/transcript/i18n/de';
-import { en as transcriptEn } from '@web/features/transcript/i18n/en';
-import { de as navigationDe } from '@web/shell/navigation/i18n/de';
-import { en as navigationEn } from '@web/shell/navigation/i18n/en';
-import { de as newSessionDe } from '@web/shell/new-session/i18n/de';
-import { en as newSessionEn } from '@web/shell/new-session/i18n/en';
-import { de as serverShutdownDe } from '@web/shell/server-shutdown/i18n/de';
-import { en as serverShutdownEn } from '@web/shell/server-shutdown/i18n/en';
-import { de } from './de';
-import { en } from './en';
-import { errorsDe } from './errors.de';
-import { errorsEn } from './errors.en';
+import { EN_DICTIONARY, getDictionary, type Dictionary } from './dictionaries';
 import * as format from './format';
 import { getLanguage, useLanguage } from './language';
 import type { KeyPaths, PluralForms, TranslationParams } from './types';
 
+export { EN_DICTIONARY, getDictionary, type Dictionary } from './dictionaries';
 export {
   DEFAULT_LANGUAGE,
   LANGUAGES,
   getLanguage,
+  getLanguageLoadFailure,
+  preloadLanguage,
   setLanguage,
   subscribeLanguage,
   useLanguage,
+  useLanguageLoadFailure,
 } from './language';
 export type { PluralForms, TranslationParams } from './types';
 
 /**
  * i18n core (Plan Punkt 5, architecture §2.3a): typed dictionaries, `t()` with interpolation and
- * plurals, `tError()` for every error code. Namespaces: shell (`common`, `shell`, `status`, `auth`,
- * `connection`, `settings` – en.ts), `errors` (errors.*.ts), one per feature (`transcript`,
- * `decisions`, `composer` – src/web/features/<f>/i18n) and `serverShutdown`
- * (src/web/shell/server-shutdown/i18n, WP-21), all registered statically here; a new namespace is
- * registered by the coordinator (or the WP that owns this folder). Phase 2 (WP-30 §4.14 C):
- * `navigation` (shell/navigation, WP-35), `newSession` (shell/new-session, WP-36), `profiles`
- * (features/profiles, WP-36), `preferences` (features/preferences, WP-38).
+ * plurals, `tError()` for every error code. The dictionaries and their namespaces: dictionaries.ts
+ * (English static, every other language one lazy chunk – ADR-153); the current language and the
+ * switch: language.ts.
  */
-const enDictionary = {
-  ...en,
-  errors: errorsEn,
-  transcript: transcriptEn,
-  decisions: decisionsEn,
-  composer: composerEn,
-  serverShutdown: serverShutdownEn,
-  navigation: navigationEn,
-  newSession: newSessionEn,
-  profiles: profilesEn,
-  preferences: preferencesEn,
-};
-
-/** Shape of every language's dictionary (English is the reference). */
-export type Dictionary = typeof enDictionary;
-
-const deDictionary: Dictionary = {
-  ...de,
-  errors: errorsDe,
-  transcript: transcriptDe,
-  decisions: decisionsDe,
-  composer: composerDe,
-  serverShutdown: serverShutdownDe,
-  navigation: navigationDe,
-  newSession: newSessionDe,
-  profiles: profilesDe,
-  preferences: preferencesDe,
-};
-
-export const DICTIONARIES: Readonly<Record<Language, Dictionary>> = { en: enDictionary, de: deDictionary };
 
 /** Every translatable key, e.g. `'shell.sidebar.label'`, `'status.needs-review'`, `'errors.CWD_NOT_FOUND'`. */
 export type TranslationKey = KeyPaths<Dictionary>;
@@ -116,12 +67,13 @@ function interpolate(template: string, params: TranslationParams | undefined, la
 }
 
 /**
- * Text of `key` in `language` (fallback English, then the key itself). Plural forms pick the
- * category of `params.count` (Intl.PluralRules); `{name}` is replaced by `params.name` (numbers are
- * formatted for the language). Unknown placeholders stay visible.
+ * Text of `key` in `language` (fallback English – also while the language's lazy dictionary is not
+ * loaded –, then the key itself). Plural forms pick the category of `params.count`
+ * (Intl.PluralRules); `{name}` is replaced by `params.name` (numbers are formatted for the
+ * language). Unknown placeholders stay visible.
  */
 export function translate(language: Language, key: TranslationKey, params?: TranslationParams): string {
-  const value = lookup(DICTIONARIES[language], key) ?? lookup(enDictionary, key);
+  const value = lookup(getDictionary(language) ?? EN_DICTIONARY, key) ?? lookup(EN_DICTIONARY, key);
   if (value === undefined) return key;
   if (typeof value === 'string') return interpolate(value, params, language);
   const count = params?.count;
@@ -172,6 +124,7 @@ export interface BoundFormat {
   time(value: format.DateInput): string;
   relative(target: format.DateInput, now: number, style?: Intl.RelativeTimeFormatStyle): string;
   duration(ms: number): string;
+  list(items: readonly string[], options?: Intl.ListFormatOptions): string;
 }
 
 export interface I18n {
@@ -191,6 +144,7 @@ function bindFormat(language: Language): BoundFormat {
     time: (value) => format.formatTime(value, language),
     relative: (target, now, style) => format.formatRelativeTime(target, now, style, language),
     duration: (ms) => format.formatDuration(ms, language),
+    list: (items, options) => format.formatList(items, options, language),
   };
 }
 

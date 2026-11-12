@@ -35,6 +35,7 @@ import type {
   StatusSignal,
 } from '../ports';
 import {
+  agentResultOutputFile,
   assistantErrorPayload,
   blockItemId,
   buildToolResult,
@@ -52,6 +53,7 @@ import {
   statusWithTask,
   streamingBlockItem,
   taskFromAgentInput,
+  taskOutputFile,
   taskUsage,
   toJson,
   toRateLimitInfo,
@@ -90,6 +92,7 @@ import {
   resultMessageSchema,
   sdkMessageBaseSchema,
   sessionStateMessageSchema,
+  sessionWritesLostMessageSchema,
   statusMessageSchema,
   streamEventMessageSchema,
   taskNotificationMessageSchema,
@@ -183,6 +186,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
   private readonly pendingResults = new Map<string, PendingResult>();
   /** task_id → task and its tool_use_id. */
   private readonly tasks = new Map<string, { toolUseId: string | null; task: TaskInfo }>();
+  /** tool_use_id → `AgentOutput.outputFile` of a result that arrived before its task (WP-52). */
+  private readonly pendingOutputFiles = new Map<string, string>();
   /** hook_id → item id (one hook item, upserted). */
   private readonly hooks = new Map<string, string>();
   /** Wire uuid of an assistant/system frame → item ids (model refusal fallback retractions). */
@@ -685,7 +690,24 @@ class LiveNormalizerImpl implements LiveNormalizer {
   private withResult(call: ToolCallItem, pending: PendingResult): ToolCallItem {
     const result = buildToolResult(pending.block, pending.structured, call.toolName, pending.at, this.ctx);
     const status = statusAfterResult(call, result, pending.meta, pending.structured, this.deniedByCli.has(call.toolUseId));
-    return { ...call, result, status, inputPartial: null };
+    return { ...call, task: this.taskWithResultOutputFile(call, pending.structured), result, status, inputPartial: null };
+  }
+
+  /**
+   * `AgentOutput.outputFile` (async/remote launch, WP-52) → the call's task. Without a task yet
+   * (task_started still to come) the path waits in `pendingOutputFiles` for `updateTask`.
+   */
+  private taskWithResultOutputFile(call: ToolCallItem, structured: unknown): TaskInfo | null {
+    const outputFile = agentResultOutputFile(call.toolName, structured);
+    if (outputFile === null) return call.task;
+    if (call.task === null) {
+      this.pendingOutputFiles.set(call.toolUseId, outputFile);
+      return null;
+    }
+    const task: TaskInfo = { ...call.task, outputFile };
+    const known = this.tasks.get(task.taskId);
+    this.tasks.set(task.taskId, { toolUseId: known?.toolUseId ?? call.toolUseId, task: known === undefined ? task : { ...known.task, outputFile } });
+    return task;
   }
 
   /** model_refusal_fallback / supersedes: evict the items of these wire uuids (idempotent). */
@@ -732,7 +754,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
     }
     if (content.text.trim() === '' && content.images.length === 0) return;
 
-    const kind = classifyUserText(content.text);
+    // ADR-152: a task notification needs the CLI's origin and the main agent.
+    const kind = classifyUserText(content.text, { originKind: u.origin?.kind ?? null, parentToolUseId: parent });
     switch (kind.kind) {
       case 'interrupted':
         this.put(
@@ -1220,9 +1243,10 @@ class LiveNormalizerImpl implements LiveNormalizer {
           return;
         }
         const d = t.data;
+        // WP61-07: `description` here is the CLI's current activity ("Running <tool description>",
+        // CLI 2.1.322), not the task's name – TaskInfo has no activity field, so it is dropped.
         this.updateTask(d.task_id, d.tool_use_id, (task) => ({
           ...task,
-          description: d.description ?? task.description,
           subagentType: d.subagent_type ?? task.subagentType,
           summary: d.summary ?? task.summary,
           usage: taskUsage(d.usage) ?? task.usage,
@@ -1242,6 +1266,7 @@ class LiveNormalizerImpl implements LiveNormalizer {
           summary: d.summary ?? task.summary,
           usage: taskUsage(d.usage) ?? task.usage,
           endedAt: task.endedAt ?? at,
+          outputFile: taskOutputFile(d.output_file) ?? task.outputFile,
         }), out);
         if (!matched.matched) {
           this.put({ ...this.uuidBase(msg.uuid, at), kind: 'system', event: 'task_notification', task: matched.task }, out);
@@ -1289,6 +1314,21 @@ class LiveNormalizerImpl implements LiveNormalizer {
           builtin: cmd.builtin ?? false,
         }));
         out.detail.commands = commands;
+        return;
+      }
+      case 'session_writes_lost': {
+        const w = sessionWritesLostMessageSchema.safeParse(raw);
+        if (!w.success) {
+          invalid();
+          return;
+        }
+        // ErrorPayload params are scalars: the list of lost writes becomes one comma-joined string.
+        const lost = (w.data.lost ?? []).filter((v): v is string => typeof v === 'string').join(',');
+        const error = makeError('SESSION_WRITES_LOST', {
+          lost: lost.slice(0, 200),
+          errorCode: (w.data.error_code ?? '').slice(0, 100),
+        });
+        this.put(errorItem(this.uuidBase(msg.uuid, at), error), out);
         return;
       }
       default:
@@ -1379,7 +1419,13 @@ class LiveNormalizerImpl implements LiveNormalizer {
     const tuid = toolUseId ?? known?.toolUseId ?? null;
     const call = tuid === null ? null : this.toolCall(tuid);
     const previous = known?.task ?? (call?.task?.taskId === taskId ? call.task : null);
-    const task = patch(previous ?? (call === null ? emptyTask(taskId) : taskFromAgentInput(call, taskId)));
+    let base = previous ?? (call === null ? emptyTask(taskId) : taskFromAgentInput(call, taskId));
+    const pendingOutputFile = tuid === null ? undefined : this.pendingOutputFiles.get(tuid);
+    if (tuid !== null && pendingOutputFile !== undefined) {
+      this.pendingOutputFiles.delete(tuid);
+      base = { ...base, outputFile: base.outputFile ?? pendingOutputFile };
+    }
+    const task = patch(base);
     this.tasks.set(taskId, { toolUseId: tuid, task });
     if (call === null) return { matched: false, task };
     this.put({ ...call, task, status: statusWithTask(call, task) }, out);
@@ -1393,6 +1439,7 @@ class LiveNormalizerImpl implements LiveNormalizer {
       summary: n.summary ?? task.summary,
       usage: n.usage ?? task.usage,
       endedAt: task.endedAt ?? at,
+      outputFile: n.outputFile ?? task.outputFile,
     }), out);
     if (!matched.matched) {
       this.put({ ...this.uuidBase(uuid, at), kind: 'system', event: 'task_notification', task: matched.task }, out);

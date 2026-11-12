@@ -5,18 +5,22 @@ import type { DecisionOutcome } from '@shared/model';
 import type { SessionOp } from '@shared/protocol';
 import { sampleDecisions, sampleId } from '@shared/samples';
 import { focusDecision } from '@web/shell/decision-focus';
+import { SidePanelHost } from '@web/shell/side-panel/SidePanelHost';
+import { resetSidePanelState } from '@web/shell/side-panel/state';
 import { clientStore, resetClientStore } from '@web/state/store';
 import { resetDraftStore } from '../composer/state/drafts';
 import { DecisionBar } from './DecisionBar';
 import { DecisionCard } from './DecisionCard';
 import { DEMO_ENTRIES } from './lib/demo-data';
 import { renderWithHost, type Harness } from './lib/testing';
-import { PlanSidePanel } from './PlanSidePanel';
 import { resetDecisionBarState } from './state/bar-store';
 
 // UI tests with many key strokes: 2.5–6 s in a full `pnpm test`, up to 21 s when several runs load
 // the machine (docs/wp/FLAKES.md). A timed-out test keeps typing into the next one, so keep a margin.
 vi.setConfig({ testTimeout: 60_000 });
+
+/** Waiting for the content of a lazy chunk (docs/wp/FLAKES.md: imports are slow under load). */
+const LAZY = { timeout: 15_000 };
 
 let harness: Harness | null = null;
 
@@ -25,6 +29,7 @@ afterEach(() => {
   harness = null;
   resetClientStore();
   resetDecisionBarState();
+  resetSidePanelState();
   resetDraftStore();
   localStorage.clear();
 });
@@ -229,7 +234,7 @@ describe('DecisionCard slot (architecture §2.3e)', () => {
       (key) => (
         <>
           <DecisionCard sessionKey={key('plan')} decisionId={sampleId('dc', 0xa41)} placement="transcript" />
-          <PlanSidePanel sessionKey={key('plan')} />
+          <SidePanelHost sessionKey={key('plan')} />
           <DecisionBar sessionKey={key('plan')} />
         </>
       ),
@@ -239,7 +244,10 @@ describe('DecisionCard slot (architecture §2.3e)', () => {
     const user = userEvent.setup();
     const article = await screen.findByRole('article', { name: /Plan v2 ready/ });
     await user.click(within(article).getByRole('button', { name: 'Open plan' }));
-    const panel = await screen.findByRole('complementary', { name: 'Plan v2' });
+    const panel = await screen.findByRole('complementary', { name: 'Plan' });
+    // The panel's content (PlanSidePanel → PlanPanel) is a lazy chunk: the frame comes first, the
+    // plan only once the chunk is there – 1.1–1.7 s late under parallel load (R5W-04).
+    expect(await within(panel).findByRole('heading', { name: 'Plan v2' }, LAZY)).toBeTruthy();
     expect(document.activeElement).toBe(panel);
     expect(h.commands('decision.respond')).toEqual([]);
     harness.stop();

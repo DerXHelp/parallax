@@ -17,7 +17,7 @@ Feature-Demos `#playground=transcript/<id>`. Theme und Sprache oben rechts.
 | `navigation-scenario.ts` | Daten von WP-35: zwei Profile, mehrere Sessions je Projekt, Branches, Modelle, Context 12/72/91 %, angeheftet, archiviert, extern, Abo-Limits, frühere Unterhaltungen; `navigationCommands` (Konsolenbefehl, externe Konsole, Zurückholen, Unterhaltung wechseln, SESSION_BUSY bei laufendem Turn) |
 | `navigation-demos.tsx` | Demos `nav-sidebar-flat`, `nav-sidebar-grouped`, `nav-sidebar-archive`, `nav-quick-switcher`, `nav-header-menu`, `nav-conversations`, `nav-session-info`, `nav-external`, `nav-archived` |
 | `PlaygroundScenario.tsx` | `<PlaygroundScenario scenario="…">` (für Demos), `startScenario()` (Tests) |
-| `demos.tsx` | Demos von WP-14 (Shell-Szenarien, Status-Icons, Primitives) |
+| `demos.tsx` | Demos von WP-14 (Shell-Szenarien, Status-Icons, Primitives); hängt die Navigations-Demos und die Phase-3-Shell-Demos (`src/web/shell/phase3-demos.tsx`, u. a. `shell-slot-quiet`) an (FIX-R5 F5; vorher über den Preferences-Playground) |
 | `route.ts` | `#playground`-Parameter (klein, auch im Build importiert) |
 
 **Feature-Demos (WP-15/16):** `src/web/features/<f>/playground.tsx` exportiert

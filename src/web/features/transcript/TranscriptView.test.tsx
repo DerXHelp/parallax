@@ -27,7 +27,7 @@ import { sendCommand, useDecision } from '@web/state/hooks';
 import { resetClientStore } from '@web/state/store';
 import { resetExpansion } from './state/expansion';
 import { resetFullTexts } from './state/full-text';
-import { installResizeObserver, startTranscriptScenario } from './testing';
+import { installResizeObserver, installScrollEvents, reportResize, startTranscriptScenario } from './testing';
 import { TranscriptView } from './TranscriptView';
 
 /** Render counters: the list (TranscriptList → VList) and the turn footer (formats its duration once). */
@@ -60,6 +60,7 @@ vi.mock('@web/i18n/format', async (importOriginal) => {
 
 let running: RunningScenario | null = null;
 let restoreResizeObserver: (() => void) | null = null;
+let restoreScrollEvents: (() => void) | null = null;
 
 // Rows render the whole transcript: up to 2.5 s in a full `pnpm test`, over 10 s when several runs
 // load the machine (docs/wp/FLAKES.md).
@@ -72,6 +73,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   restoreResizeObserver = installResizeObserver({ viewport: 600, item: 48 });
+  restoreScrollEvents = installScrollEvents();
 });
 
 afterEach(() => {
@@ -81,12 +83,37 @@ afterEach(() => {
   resetExpansion();
   resetFullTexts();
   restoreResizeObserver?.();
+  restoreScrollEvents?.();
   counts.list = 0;
   counts.duration = 0;
 });
 
 function keyOf(entryId: EntryId): string {
   return makeSessionKey(LOCAL_HOST_ID, entryId);
+}
+
+/** Longer than virtua's own 150-ms windows (scroll end, re-applied scroll targets). */
+const SCROLL_SETTLE_MS = 200;
+
+/**
+ * Resolves once `region` had no scroll event for `SCROLL_SETTLE_MS`. On every event this timer is
+ * set after virtua's (its listener came first), and timers run in the order they are due – so
+ * everything virtua still does after a scroll has happened before this resolves, under any load.
+ * Replaces fixed 20/250-ms waits before "nothing moved" assertions (R5W-11).
+ */
+function scrollSettled(region: HTMLElement): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      region.removeEventListener('scroll', restart);
+      resolve();
+    };
+    let timer = setTimeout(done, SCROLL_SETTLE_MS);
+    function restart() {
+      clearTimeout(timer);
+      timer = setTimeout(done, SCROLL_SETTLE_MS);
+    }
+    region.addEventListener('scroll', restart);
+  });
 }
 
 function session(
@@ -244,6 +271,88 @@ describe('TranscriptView', () => {
     });
   });
 
+  it('a scroll up by the user is not taken back by measurements or new items (FIX-E2E-EDGE157)', async () => {
+    const items = Array.from({ length: 120 }, (_, i) =>
+      sampleItems.userMessage({
+        id: `px:keep:${String(i)}`,
+        order: i + 1,
+        text: { text: `keep ${String(i)}`, truncated: null },
+      }),
+    );
+    const s = session(10, items);
+    const scenario = start(s);
+    render(<TranscriptView sessionKey={s.key} />);
+    const region = await screen.findByRole('region', { name: 'Transcript' });
+    await waitFor(() => {
+      expect(document.querySelectorAll('[data-row="item"]').length).toBeGreaterThan(0);
+    });
+    act(() => {
+      region.scrollTop = 5000;
+      fireEvent.scroll(region);
+    });
+    const message = (n: number) =>
+      sampleItems.userMessage({
+        id: `px:keep:new:${String(n)}`,
+        order: 1000 + n,
+        text: { text: `new ${String(n)}`, truncated: null },
+      });
+    // A new item while at the bottom follows it; right after that the user scrolls up – the rows
+    // mounted there are measured (a size change), which must not pull the list back to the end.
+    await act(async () => {
+      scenario.host.pushOps(s.entryId, [{ op: 'item.upsert', item: message(1) }]);
+      scenario.connection.flush();
+      await Promise.resolve();
+      region.scrollTop = 1000;
+      fireEvent.scroll(region);
+      await scrollSettled(region);
+    });
+    expect(region.scrollTop).toBe(1000);
+    expect(screen.getByRole('button', { name: 'Jump to latest' })).toBeTruthy();
+    // Further items while scrolled up do not move the list either.
+    await act(async () => {
+      scenario.host.pushOps(s.entryId, [{ op: 'item.upsert', item: message(2) }]);
+      scenario.connection.flush();
+      await scrollSettled(region);
+    });
+    expect(region.scrollTop).toBe(1000);
+  });
+
+  it('sticks again when a larger viewport brings the end into view (WP-55)', async () => {
+    const items = Array.from({ length: 20 }, (_, i) =>
+      sampleItems.userMessage({
+        id: `px:grow:${String(i)}`,
+        order: i + 1,
+        text: { text: `grow ${String(i)}`, truncated: null },
+      }),
+    );
+    const s = session(11, items);
+    start(s);
+    render(<TranscriptView sessionKey={s.key} />);
+    const region = await screen.findByRole('region', { name: 'Transcript' });
+    await waitFor(() => {
+      expect(document.querySelectorAll('[data-row="item"]').length).toBeGreaterThan(0);
+    });
+    // 20 rows of 48 px in 600 px, at the end (360 px). Settled: nothing from the first render is
+    // re-applied any more (virtua's own scroll-to-index re-applied for 150 ms and hid the bug).
+    await act(async () => {
+      await scrollSettled(region);
+    });
+    expect(region.scrollTop).toBe(360);
+    // The window grows to 1000 px: the browser clamps the offset to 0 before virtua has measured the
+    // viewport – that scroll event alone looks like a scroll towards the top (seen in Chrome).
+    act(() => {
+      region.scrollTop = 0;
+      fireEvent.scroll(region);
+    });
+    expect(screen.getByRole('button', { name: 'Jump to latest' })).toBeTruthy();
+    act(() => {
+      reportResize(region, 1000);
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Jump to latest' })).toBeNull();
+    });
+  });
+
   it('groups subagent items under the Agent card, collapsed in phase 1', async () => {
     const user = userEvent.setup();
     const agent = sampleItems.toolCall({
@@ -340,7 +449,7 @@ describe('TranscriptView', () => {
             decisionId: sampleId('dc', 64),
             kind: 'plan',
             planVersion: 2,
-            outcome: { type: 'plan_approved', mode: 'auto', edited: false },
+            outcome: { type: 'plan_approved', mode: 'auto', edited: false, freshContext: true },
           },
         }),
         plan(3, {
@@ -377,8 +486,12 @@ describe('TranscriptView', () => {
       ['transcript', 'open'],
       ['transcript', 'expired'],
     ]);
-    expect(screen.getByText('Sent back for revision')).toBeTruthy();
+    expect(screen.getByText('Rejected with feedback')).toBeTruthy();
     expect(screen.getByText('Approved – Auto')).toBeTruthy();
+    // Approved with a fresh context (WP-56): marked on the card, only there.
+    const fresh = document.querySelectorAll('[data-slot="plan-fresh"]');
+    expect([...fresh].map((badge) => badge.textContent)).toEqual(['With fresh context']);
+    expect(fresh[0]?.closest('[data-plan-state]')?.getAttribute('data-plan-state')).toBe('plan_approved');
     expect(await screen.findByText('Step 2')).toBeTruthy();
 
     await act(async () => {

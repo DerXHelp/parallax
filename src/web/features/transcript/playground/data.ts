@@ -41,6 +41,7 @@ export const DEMO_ENTRIES = {
   security: sampleId('en', 208),
   queue: sampleId('en', 209),
   media: sampleId('en', 210),
+  files: sampleId('en', 211),
 } as const;
 
 export type DemoEntry = keyof typeof DEMO_ENTRIES;
@@ -579,7 +580,8 @@ function planSession(): DemoSession {
         decisionId: sampleId('dc', 254),
         kind: 'plan',
         planVersion: 2,
-        outcome: { type: 'plan_approved', mode: 'acceptEdits', edited: true },
+        // Approved with edits and a fresh context (WP-56): both shown on the card.
+        outcome: { type: 'plan_approved', mode: 'acceptEdits', edited: true, freshContext: true },
       },
     }),
     tool('msg_plan3', 0, 4, {
@@ -658,6 +660,7 @@ function subagentSession(now: number): DemoSession {
         usage: { totalTokens: 22_609, toolUses: 2, durationMs: 9_400 },
         startedAt: sampleTime(2),
         endedAt: sampleTime(12),
+        outputFile: null,
       },
     }),
     sampleItems.thinking({
@@ -706,6 +709,7 @@ function subagentSession(now: number): DemoSession {
         usage: null,
         startedAt: new Date(now - 42_000).toISOString(),
         endedAt: null,
+        outputFile: null,
       },
     }),
     tool('msg_child3', 0, 7, {
@@ -946,6 +950,16 @@ function mediaSession(): DemoSession {
       phase: 'returned',
       importedItems: 0,
     }),
+    // V4-07: a pasted log – long user messages start collapsed.
+    user(
+      'px:media:log',
+      8,
+      [
+        ...Array.from({ length: 40 }, (_, i) => `[build] step ${String(i + 1)} of 40 ----------`),
+        '',
+        'what is broken?',
+      ].join('\n'),
+    ),
   ];
   return { summary: summaryOf(entryId, 'Images and handoff'), snapshot: snapshotOf(entryId, items) };
 }
@@ -956,6 +970,158 @@ function streamingSession(): DemoSession {
     summary: summaryOf(entryId, 'Streaming', { status: sampleStatusFacts({ runState: 'working' }) }),
     snapshot: snapshotOf(entryId, []),
   };
+}
+
+/**
+ * WP-55: every kind of file reference (cwd D:\work\sample, the FakeHost file table): text and
+ * inline code (verified), Markdown links, the negative cases (UNC, device, web URL, code block),
+ * tool cards with their file, agent cards running (Stop, output file) and stopped.
+ */
+export const FILE_REFS_MARKDOWN = [
+  'Changed src/main.ts:26 and docs/guide.md#L3 – the overview is D:\\work\\sample\\README.md.',
+  'Git Bash: /d/work/sample/logs/build.log · file URL: file:///D:/work/sample/docs/spec.pdf',
+  'Missing (stays text after the check): D:\\work\\sample\\missing.md · outside the roots (refused): D:\\private\\secret.txt',
+  '',
+  'Spaces (V4-01): D:\\private\\Mein Ordner\\notes.md (refused as a whole), `D:\\work\\sample\\Mein Ordner\\My File.txt` (one code span), the folder D:\\work\\sample\\Projekt mit Leerzeichen (no prefix piece), D:\\work\\sample\\README.md and c.md (two words).',
+  '',
+  'Never a link: \\\\server\\share\\notes.md, \\\\?\\C:\\secret.txt, file://server/share/x.md, https://example.com/src/main.ts, foo@example.com, and/or 1.5/2.0.',
+  '',
+  'Links: [the guide](docs/guide.md), [main at line 26](src/main.ts#L26), [UNC link](file://server/share/x.md); inline code `src/main.ts:26` and `pnpm exec vitest run src/main.ts`.',
+  '',
+  '```ts',
+  "import { main } from 'src/main.ts'; // code blocks stay code",
+  '```',
+].join('\n');
+
+function filesSession(now: number): DemoSession {
+  const entryId = DEMO_ENTRIES.files;
+  const order = counter();
+  const outputFile = 'C:\\Users\\user\\AppData\\Local\\Temp\\claude\\tasks\\task_01.output';
+  const items: TranscriptItem[] = [
+    user('px:files:prompt', order(), 'Show me every kind of file reference.'),
+    sampleItems.assistantText({
+      id: 'msg_files1:0',
+      messageId: 'msg_files1',
+      blockIndex: 0,
+      order: order(),
+      text: FILE_REFS_MARKDOWN,
+    }),
+    tool('msg_files2', 0, order(), {
+      toolName: 'Read',
+      input: { file_path: 'D:\\work\\sample\\README.md', offset: 3, limit: 10 },
+      result: textResult('     3\tA sample project.\n     4\t'),
+    }),
+    tool('msg_files2', 1, order(), {
+      toolName: 'Edit',
+      input: { file_path: 'src\\main.ts', old_string: 'run()', new_string: 'run(options)' },
+      result: textResult('The file src\\main.ts has been updated successfully.', {
+        structured: {
+          structuredPatch: [
+            {
+              oldStart: 24,
+              oldLines: 3,
+              newStart: 24,
+              newLines: 3,
+              lines: [' export function main() {', ' // entry', '-  run()', '+  run(options)'],
+            },
+          ],
+        },
+      }),
+    }),
+    tool('msg_files2', 2, order(), {
+      toolName: 'Write',
+      input: { file_path: 'D:\\work\\sample\\docs\\new.md', content: '# New\n' },
+      result: textResult('File created successfully.'),
+    }),
+    tool('msg_files2', 3, order(), {
+      toolName: 'NotebookEdit',
+      input: {
+        notebook_path: 'D:\\work\\sample\\docs\\analysis.ipynb',
+        new_source: 'print(1)',
+        edit_mode: 'replace',
+      },
+      result: textResult('Updated cell 2.'),
+    }),
+    tool('msg_files2', 4, order(), {
+      toolName: 'Glob',
+      input: { pattern: '**/*.md' },
+      result: textResult('D:\\work\\sample\\README.md\nD:\\work\\sample\\docs\\guide.md', {
+        structured: {
+          mode: 'files_with_matches',
+          filenames: ['D:\\work\\sample\\README.md', 'D:\\work\\sample\\docs\\guide.md'],
+          numFiles: 2,
+        },
+      }),
+    }),
+    tool('msg_files2', 5, order(), {
+      toolName: 'Grep',
+      input: { pattern: 'main', output_mode: 'content' },
+      result: textResult(
+        'src/main.ts:24:export function main() {\nsrc/main.ts:26:  run(options)\ndocs/guide.md:3:Call main().',
+      ),
+    }),
+    tool('msg_files3', 0, order(), {
+      toolName: 'Agent',
+      toolUseId: 'toolu_files_agent_running',
+      input: {
+        description: 'Scan the docs',
+        subagent_type: 'Explore',
+        prompt: 'Scan docs/ for broken links.',
+      },
+      status: 'background',
+      result: textResult('Async agent launched successfully.', {
+        structured: { isAsync: true, status: 'async_launched' },
+      }),
+      task: {
+        taskId: 'task_files_scan',
+        taskType: 'local_agent',
+        status: 'running',
+        description: 'Scan the docs',
+        subagentType: 'Explore',
+        isBackgrounded: true,
+        summary: 'Checked 4 of 9 files, one broken link in docs/guide.md',
+        usage: { totalTokens: 8_400, toolUses: 5, durationMs: 21_000 },
+        startedAt: new Date(now - 21_000).toISOString(),
+        endedAt: null,
+        outputFile,
+      },
+    }),
+    tool('msg_files3', 1, order(), {
+      toolName: 'Agent',
+      toolUseId: 'toolu_files_agent_stopped',
+      input: {
+        description: 'Rewrite the guide',
+        subagent_type: 'general-purpose',
+        prompt: 'Rewrite docs/guide.md.',
+      },
+      status: 'interrupted',
+      result: null,
+      task: {
+        taskId: 'task_files_rewrite',
+        taskType: 'local_agent',
+        status: 'stopped',
+        description: 'Rewrite the guide',
+        subagentType: 'general-purpose',
+        isBackgrounded: true,
+        summary: 'Stopped after the first section',
+        usage: { totalTokens: 3_100, toolUses: 2, durationMs: 9_000 },
+        startedAt: sampleTime(2),
+        endedAt: sampleTime(11),
+        outputFile,
+      },
+    }),
+    sampleSystemItems.task_notification({ id: sampleUuid(2201), order: order(), at: sampleTime(40) }),
+    tool('msg_files4', 0, order(), {
+      toolName: 'ExitPlanMode',
+      input: {
+        plan: '# Plan\n\n1. Fix the link in docs/guide.md',
+        planFilePath: 'C:\\Users\\user\\.claude\\plans\\sample.md',
+      },
+      status: 'done',
+      result: textResult('User approved the plan.'),
+    }),
+  ];
+  return { summary: summaryOf(entryId, 'File references'), snapshot: snapshotOf(entryId, items) };
 }
 
 /** All demo sessions (built once per scenario start). */
@@ -971,5 +1137,6 @@ export function demoSessions(now: number): DemoSession[] {
     securitySession(),
     queueSession(),
     mediaSession(),
+    filesSession(now),
   ];
 }

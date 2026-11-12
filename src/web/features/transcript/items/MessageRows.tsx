@@ -1,17 +1,28 @@
-import { BrainIcon, CircleStopIcon, ClockIcon, FileIcon, SquareSlashIcon, ZapIcon } from 'lucide-react';
-import { memo, useContext, type ReactNode } from 'react';
+import {
+  BrainIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  CircleStopIcon,
+  ClockIcon,
+  FileIcon,
+  SquareSlashIcon,
+  ZapIcon,
+} from 'lucide-react';
+import { memo, useContext, useMemo, type ReactNode } from 'react';
 import type { AssistantTextItem, BlobRef, QueuedPrompt, ThinkingItem, UserMessageItem } from '@shared/model';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { Badge } from '@web/ui/badge';
+import { Button } from '@web/ui/button';
 import { Spinner } from '@web/ui/spinner';
 import { CappedContent } from '../components/CappedContent';
 import { Disclosure } from '../components/Disclosure';
 import { ImageThumb } from '../components/ImageThumb';
 import { ModelBadge } from '../components/ModelBadge';
 import { QueuedIdsContext } from '../context';
+import { collapsedPreview, countLines } from '../lib/text';
 import { Markdown } from '../markdown/Markdown';
-import { expansionKey } from '../state/expansion';
+import { expansionKey, useExpanded } from '../state/expansion';
 
 /** User text, assistant text (streaming Markdown), thinking and queued prompts. */
 
@@ -79,6 +90,39 @@ function UserBubble({
   );
 }
 
+/**
+ * The text of a user message; a long one (a pasted log, V4-07) starts collapsed to its first lines
+ * (`collapsedPreview`) with "Show all n lines" – the choice survives the virtualized list
+ * (expansion state).
+ */
+function UserText({ text, stateKey }: { text: string; stateKey: string }) {
+  const t = useT();
+  const [open, setOpen] = useExpanded(stateKey, false);
+  const preview = useMemo(() => collapsedPreview(text), [text]);
+  if (preview === null) return <p className="text-ui break-words whitespace-pre-wrap">{text}</p>;
+  return (
+    <div data-slot="user-text" data-state={open ? 'expanded' : 'collapsed'} className="grid min-w-0 gap-1">
+      <p className="text-ui break-words whitespace-pre-wrap">{open ? text : preview}</p>
+      <Button
+        size="sm"
+        variant="ghost"
+        aria-expanded={open}
+        className="text-muted-foreground h-6 justify-self-start px-1.5 text-2xs"
+        onClick={() => {
+          setOpen(!open);
+        }}
+      >
+        {open ? (
+          <ChevronUpIcon aria-hidden className="size-3" />
+        ) : (
+          <ChevronDownIcon aria-hidden className="size-3" />
+        )}
+        {open ? t('transcript.user.showLess') : t('transcript.user.showAll', { count: countLines(text) })}
+      </Button>
+    </div>
+  );
+}
+
 export const UserMessageRow = memo(function UserMessageRow({
   item,
   sessionKey,
@@ -93,7 +137,7 @@ export const UserMessageRow = memo(function UserMessageRow({
       queued={queuedIds.has(item.id)}
       text={
         <CappedContent text={item.text.text} truncated={item.text.truncated} sessionKey={sessionKey}>
-          {(text) => <p className="text-ui break-words whitespace-pre-wrap">{text}</p>}
+          {(text) => <UserText text={text} stateKey={expansionKey(sessionKey, item.id, 'text')} />}
         </CappedContent>
       }
     >

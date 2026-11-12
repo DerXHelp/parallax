@@ -13,9 +13,10 @@ import {
   hunksToRows,
   peekFallbackRows,
   type DiffRow,
-} from '../lib/diff';
+} from '@web/lib/diff';
 import {
   readEditInput,
+  readFilePathInput,
   readMultiEditInput,
   readPatchResult,
   readWriteInput,
@@ -24,7 +25,7 @@ import {
 import { countLines } from '../lib/text';
 import { GenericToolBody, GenericToolPreview } from './generic';
 import { InputCapNotice, ToolResultText, useToolInput } from './parts';
-import type { ToolBodyProps, ToolPreviewProps, ToolRenderer, Translate } from './types';
+import type { ToolBodyProps, ToolFileRef, ToolPreviewProps, ToolRenderer, Translate } from './types';
 
 /**
  * Edit / MultiEdit / Write as a diff (F.4): from `structuredPatch` of the live result; without it
@@ -179,6 +180,30 @@ function WriteBody({ item, sessionKey }: ToolBodyProps) {
   );
 }
 
+/** First changed line of the new file: start of the first hunk plus its leading context lines. */
+export function firstChangedLine(item: ToolCallItem): number | null {
+  const hunk = readPatchResult(item.result?.structured ?? null)?.structuredPatch?.[0];
+  if (hunk === undefined) return null;
+  let line = hunk.newStart;
+  for (const text of hunk.lines) {
+    if (!text.startsWith(' ')) break;
+    line++;
+  }
+  return Number.isSafeInteger(line) && line > 0 ? line : null;
+}
+
+function editFile(item: ToolCallItem): ToolFileRef | null {
+  const input = readFilePathInput(item.input);
+  return input === null || input.file_path === ''
+    ? null
+    : { path: input.file_path, line: firstChangedLine(item) };
+}
+
+function writeFile(item: ToolCallItem): ToolFileRef | null {
+  const input = readFilePathInput(item.input);
+  return input === null || input.file_path === '' ? null : { path: input.file_path, line: null };
+}
+
 function pathSummary(item: ToolCallItem): string | null {
   const input = item.input;
   if (typeof input !== 'object' || input === null || Array.isArray(input)) return null;
@@ -222,6 +247,7 @@ function WritePreview({ toolName, input }: ToolPreviewProps) {
 export const editRenderer: ToolRenderer = {
   icon: FilePenIcon,
   summary: pathSummary,
+  file: editFile,
   meta: (item, t) => statsMeta(cachedPatchRows(item), t),
   Body: EditBody,
   defaultOpen: (item) => {
@@ -236,6 +262,7 @@ export const editRenderer: ToolRenderer = {
 export const writeRenderer: ToolRenderer = {
   icon: FilePlusIcon,
   summary: pathSummary,
+  file: writeFile,
   meta: (item, t) => {
     const input = readWriteInput(item.input);
     if (input === null) return null;

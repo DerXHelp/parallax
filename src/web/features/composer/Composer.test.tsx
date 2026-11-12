@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
 import { makeError } from '@shared/errors';
 import type { Decision } from '@shared/model';
-import { sampleDecisions, sampleExternalHandoff, sampleId } from '@shared/samples';
+import { sampleDecisions, sampleExternalHandoff, sampleId, sampleItems } from '@shared/samples';
 import { resetHandoffs, trackHandoff } from '@web/shell/navigation/handoff';
 import { clientStore, resetClientStore } from '@web/state/store';
 import { DecisionBar } from '../decisions/DecisionBar';
@@ -119,7 +119,7 @@ describe('Composer', () => {
       {
         name: 'session.sendPrompt',
         entryId: DEMO_ENTRIES.idle,
-        prompt: { text: 'first line\nsecond line', attachments: [] },
+        prompt: { text: 'first line\nsecond line', attachments: [], pastes: [] },
         priority: 'next',
       },
     ]);
@@ -148,6 +148,51 @@ describe('Composer', () => {
       ['urgent', 'now'],
     ]);
     expect(screen.getByRole('button', { name: 'Queue' })).toBeTruthy();
+  });
+
+  it('only background tasks, no turn (B18): a plain "Send", no Stop, no "Send now", Esc does nothing', async () => {
+    const h = start('working');
+    const entryId = DEMO_ENTRIES.working;
+    // The turn launched a background agent and ended (turn_result); the CLI still reports work.
+    // The demo session's queue ran empty meanwhile.
+    act(() => {
+      h.host.pushOps(entryId, [
+        { op: 'detail.patch', patch: { queue: [] } },
+        { op: 'item.upsert', item: sampleItems.assistantText({ id: 'b18-reply', order: 2 }) },
+        { op: 'item.upsert', item: sampleItems.turnResult({ id: 'b18-result', order: 3 }) },
+        {
+          op: 'item.upsert',
+          item: sampleItems.assistantText({ id: 'b18-sub', order: 4, parentToolUseId: 'toolu_agent' }),
+        },
+      ]);
+      h.host.patchSummary(entryId, {}, { runState: 'working', backgroundTasks: 1, queuedPrompts: 0 });
+    });
+    const composer = document.querySelector<HTMLElement>('[data-slot="composer"]');
+    await waitFor(() => {
+      expect(composer?.dataset.mode).toBe('idle');
+    });
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send now' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Queue' })).toBeNull();
+    expect(textbox().placeholder).toBe('Message Claude…');
+    const user = userEvent.setup();
+    await user.click(textbox());
+    await user.keyboard('{Escape}');
+    expect(h.commands('session.interrupt')).toEqual([]);
+    await user.type(textbox(), 'next question{Enter}');
+    expect(prompts(h)).toEqual([['next question', 'next']]);
+
+    // The prompt starts a turn: queue mode with Stop and "Send now" again.
+    act(() => {
+      h.host.pushOps(entryId, [
+        { op: 'item.upsert', item: sampleItems.userMessage({ id: 'b18-prompt', order: 5 }) },
+      ]);
+    });
+    await waitFor(() => {
+      expect(composer?.dataset.mode).toBe('queue');
+    });
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Send now' })).toBeTruthy();
   });
 
   it('Stop interrupts the session', async () => {

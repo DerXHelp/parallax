@@ -22,6 +22,8 @@ import {
   sampleClientHello,
   sampleContextBreakdown,
   sampleDecisions,
+  sampleFileInfo,
+  sampleFileStatResult,
   sampleFsListing,
   sampleHello,
   sampleHostState,
@@ -29,11 +31,13 @@ import {
   sampleItems,
   sampleModelOption,
   sampleOutcomes,
+  samplePlanVersionInfo,
   samplePresence,
   sampleProfile,
   sampleProfileInput,
   sampleProfileIssue,
   sampleResponses,
+  sampleSessionFile,
   sampleSessionSnapshot,
   sampleSummary,
   sampleTime,
@@ -43,8 +47,13 @@ const entryId = SAMPLE_IDS.entry;
 
 /** One valid command per name. */
 const commands: Command[] = [
-  { name: 'session.create', cwd: 'D:\\work\\x', prompt: { text: 'Hello', attachments: [] } },
-  { name: 'session.sendPrompt', entryId, prompt: { text: 'Next', attachments: [] }, priority: 'now' },
+  { name: 'session.create', cwd: 'D:\\work\\x', prompt: { text: 'Hello', attachments: [], pastes: [] } },
+  {
+    name: 'session.sendPrompt',
+    entryId,
+    prompt: { text: 'Next', attachments: [], pastes: ['Next'] },
+    priority: 'now',
+  },
   { name: 'session.interrupt', entryId },
   { name: 'session.setModel', entryId, model: null },
   { name: 'session.setPermissionMode', entryId, mode: 'acceptEdits' },
@@ -86,6 +95,17 @@ const commands: Command[] = [
   { name: 'profile.validate', profile: sampleProfileInput({ id: sampleId('pf', 2) }) },
   { name: 'fs.listDirectory', path: null, showHidden: false },
   { name: 'fs.listDirectory', path: 'D:\\work', showHidden: true },
+  // Phase 3 (WP-50 §4.6)
+  { name: 'session.stopTask', entryId, taskId: 'task_01' },
+  { name: 'plan.list', entryId },
+  { name: 'plan.read', entryId, version: 2 },
+  { name: 'file.stat', entryId, path: 'D:\\work\\sample\\src\\main.ts' },
+  { name: 'file.statMany', entryId, paths: ['D:\\work\\sample\\a.md', 'D:\\work\\sample\\b.md'] },
+  { name: 'file.open', entryId, path: 'D:\\work\\sample\\a.md', target: 'editor', line: 12, col: 3 },
+  { name: 'file.open', entryId, path: 'D:\\work\\sample', target: 'explorer', line: null, col: null },
+  { name: 'files.session', entryId },
+  { name: 'files.project', entryId },
+  { name: 'editor.detect' },
 ];
 
 const clientMessages: ClientMessage[] = [
@@ -205,7 +225,7 @@ describe('client messages', () => {
     expect(parseClientMessage(JSON.stringify(invalid)).ok).toBe(false);
   });
 
-  it('fills command defaults (priority next, attachments [])', () => {
+  it('fills command defaults (priority next, attachments [], pastes [])', () => {
     const parsed = parseClientMessage(
       JSON.stringify({
         type: 'cmd',
@@ -215,8 +235,59 @@ describe('client messages', () => {
     );
     expect(parsed).toMatchObject({
       ok: true,
-      message: { cmd: { priority: 'next', prompt: { attachments: [] } } },
+      message: { cmd: { priority: 'next', prompt: { attachments: [], pastes: [] } } },
     });
+  });
+
+  it('file.open: line/col default to null; target and positive positions are checked', () => {
+    const open = (cmd: Record<string, unknown>) =>
+      parseClientMessage(
+        JSON.stringify({
+          type: 'cmd',
+          cmdId: SAMPLE_IDS.cmdId,
+          cmd: { name: 'file.open', entryId, path: 'D:\\work\\a.md', ...cmd },
+        }),
+      );
+    expect(open({ target: 'default' })).toMatchObject({
+      ok: true,
+      message: { cmd: { target: 'default', line: null, col: null } },
+    });
+    expect(open({ target: 'browser' }).ok).toBe(false);
+    expect(open({ target: 'editor', line: 0 }).ok).toBe(false);
+    expect(open({ target: 'editor', path: '' }).ok).toBe(false);
+  });
+
+  it('file.statMany: 1 … LIMITS.fileStatBatchMax paths', () => {
+    const statMany = (count: number) =>
+      parseClientMessage(
+        JSON.stringify({
+          type: 'cmd',
+          cmdId: SAMPLE_IDS.cmdId,
+          cmd: {
+            name: 'file.statMany',
+            entryId,
+            paths: Array.from({ length: count }, () => 'D:\\work\\a.md'),
+          },
+        }),
+      ).ok;
+    expect(statMany(0)).toBe(false);
+    expect(statMany(1)).toBe(true);
+    expect(statMany(LIMITS.fileStatBatchMax)).toBe(true);
+    expect(statMany(LIMITS.fileStatBatchMax + 1)).toBe(false);
+  });
+
+  it('pastes per prompt are capped (LIMITS.pastesMax) and never empty', () => {
+    const prompt = (pastes: string[]) =>
+      parseClientMessage(
+        JSON.stringify({
+          type: 'cmd',
+          cmdId: SAMPLE_IDS.cmdId,
+          cmd: { name: 'session.sendPrompt', entryId, prompt: { text: 'x', pastes } },
+        }),
+      ).ok;
+    expect(prompt(Array.from({ length: LIMITS.pastesMax }, () => 'x'))).toBe(true);
+    expect(prompt(Array.from({ length: LIMITS.pastesMax + 1 }, () => 'x'))).toBe(false);
+    expect(prompt([''])).toBe(false);
   });
 
   it('settings.update does not inject defaults into the patch', () => {
@@ -440,14 +511,60 @@ describe('command results', () => {
     expect(parseCommandResult('fs.listDirectory', sampleFsListing())).toEqual(sampleFsListing());
   });
 
-  it('host commands are exactly the commands without entryId besides create/settings/shutdown', () => {
+  it('Phase 3 results (WP-50 §4.6)', () => {
+    expect(parseCommandResult('session.stopTask', {})).toEqual({});
+    expect(parseCommandResult('plan.list', { versions: [samplePlanVersionInfo()] })).toEqual({
+      versions: [samplePlanVersionInfo()],
+    });
+    expect(
+      parseCommandResult('plan.list', {
+        versions: [
+          samplePlanVersionInfo({ resolvedAt: sampleTime(9), outcome: sampleOutcomes.plan_approved }),
+        ],
+      }),
+    ).not.toBeNull();
+    expect(parseCommandResult('plan.read', { version: 1, text: '# Plan' })).not.toBeNull();
+    expect(parseCommandResult('plan.read', { version: 0, text: '' })).toBeNull();
+    expect(parseCommandResult('file.stat', { file: sampleFileInfo() })).toEqual({ file: sampleFileInfo() });
+    expect(parseCommandResult('file.stat', { file: { ...sampleFileInfo(), kind: 'archive' } })).toBeNull();
+    const results = [sampleFileStatResult(), sampleFileStatResult(false)];
+    expect(parseCommandResult('file.statMany', { results })).toEqual({ results });
+    expect(parseCommandResult('file.open', {})).toEqual({});
+    expect(
+      parseCommandResult('files.session', { files: [sampleSessionFile()], truncated: false }),
+    ).not.toBeNull();
+    expect(
+      parseCommandResult('files.project', {
+        root: 'D:\\work\\sample',
+        files: ['src/main.ts', 'README.md'],
+        truncated: false,
+        source: 'git',
+      }),
+    ).not.toBeNull();
+    expect(
+      parseCommandResult('files.project', { root: 'x', files: [], truncated: false, source: 'svn' }),
+    ).toBeNull();
+    expect(
+      parseCommandResult('editor.detect', {
+        notepadpp: 'C:\\Program Files\\Notepad++\\notepad++.exe',
+        vscode: null,
+        custom: { executable: 'D:\\tools\\edit.exe', exists: false },
+      }),
+    ).not.toBeNull();
+  });
+
+  it('host commands: the commands without entryId besides create/settings/shutdown, plus the file service (ADR-140)', () => {
     const withoutEntry = commandSchema.options
       .filter((option) => !('entryId' in option.shape))
       .map((option) => option.shape.name.value)
       .filter((name) => !['session.create', 'settings.update', 'server.shutdown'].includes(name));
-    expect([...withoutEntry].sort()).toEqual([...HOST_COMMAND_NAMES].sort());
+    const fileCommands = ['file.stat', 'file.statMany', 'file.open', 'files.session', 'files.project'];
+    expect([...withoutEntry, ...fileCommands].sort()).toEqual([...HOST_COMMAND_NAMES].sort());
     expect(isHostCommand({ name: 'fs.listDirectory', path: null, showHidden: false })).toBe(true);
+    expect(isHostCommand({ name: 'files.session', entryId })).toBe(true);
+    expect(isHostCommand({ name: 'editor.detect' })).toBe(true);
     expect(isHostCommand({ name: 'session.reclaim', entryId })).toBe(false);
+    expect(isHostCommand({ name: 'plan.list', entryId })).toBe(false);
   });
 
   it('attachments per prompt are capped (LIMITS.attachmentsMax)', () => {
@@ -470,7 +587,7 @@ describe('command results', () => {
     expect(prompt(LIMITS.attachmentsMax + 1)).toBe(false);
   });
 
-  it('PROTOCOL_VERSION is 2 (Phase 2, ADR-100)', () => {
-    expect(PROTOCOL_VERSION).toBe(2);
+  it('PROTOCOL_VERSION is 3 (Phase 3, ADR-140)', () => {
+    expect(PROTOCOL_VERSION).toBe(3);
   });
 });

@@ -1,5 +1,6 @@
 import {
   BellIcon,
+  FolderOpenIcon,
   InfoIcon,
   LayersIcon,
   ServerIcon,
@@ -19,6 +20,7 @@ import { Button } from '@web/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@web/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@web/ui/tabs';
 import { AboutSection } from './sections/AboutSection';
+import { FilesSection } from './sections/FilesSection';
 import { GeneralSection } from './sections/GeneralSection';
 import { NotificationsSection } from './sections/NotificationsSection';
 import { ServerSection } from './sections/ServerSection';
@@ -29,6 +31,7 @@ const SECTION_ICONS: Readonly<Record<SettingsSection, LucideIcon>> = {
   general: SlidersHorizontalIcon,
   notifications: BellIcon,
   sessions: LayersIcon,
+  files: FolderOpenIcon,
   profiles: UsersIcon,
   server: ServerIcon,
   about: InfoIcon,
@@ -72,6 +75,9 @@ function SectionContent({
       return <NotificationsSection editor={editor} hostState={hostState} />;
     case 'sessions':
       return <SessionsSection editor={editor} />;
+    case 'files':
+      // Phase 3 (WP-58): the editor for "Open in editor" (settings.editor, ADR-144).
+      return <FilesSection editor={editor} />;
     case 'profiles':
       return <ProfilesSection onDirtyChange={onProfilesDirtyChange} />;
     case 'server':
@@ -216,7 +222,12 @@ export function SettingsPage({ section, onClose }: SettingsPageSlotProps) {
               tone="error"
               title={t('settings.saveFailed')}
               actions={
-                <Button size="sm" variant="outline" data-action="settings-error-dismiss" onClick={editor.dismissError}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  data-action="settings-error-dismiss"
+                  onClick={editor.dismissError}
+                >
                   {t('preferences.dismissError')}
                 </Button>
               }

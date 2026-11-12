@@ -1,11 +1,24 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sampleDecisions, sampleItems, sampleOutcomes, sampleSessionSnapshot } from '@shared/samples';
 import { viewStateFromSnapshot } from '@shared/sync';
 import { defaultDestination } from '../components/PermissionCard';
-import { pickDisplayedDecision } from '../state/bar-store';
+import {
+  pickDisplayedDecision,
+  readApproveFresh,
+  readApproveMode,
+  writeApproveFresh,
+  writeApproveMode,
+} from '../state/bar-store';
 import { NO_OUTCOMES, resolvedElsewhereNotice, selectDecisionOutcomes } from './outcomes';
 import { DEMO_PLAN } from './demo-data';
-import { defaultApproveMode, orderedApproveModes, planSummary, planTitle } from './plan';
+import {
+  defaultApproveMode,
+  FRESH_CONTEXT_RECOMMENDED_PERCENT,
+  isFreshContextRecommended,
+  orderedApproveModes,
+  planSummary,
+  planTitle,
+} from './plan';
 import { isFileChangeTool, ruleLabel, summarizeToolInput } from './tool-input';
 
 describe('plan helpers', () => {
@@ -37,6 +50,63 @@ describe('plan helpers', () => {
     expect(defaultApproveMode(['default', 'acceptEdits'], 'auto')).toBe('acceptEdits');
     expect(defaultApproveMode(['bypassPermissions', 'default'], 'bypassPermissions')).toBe('default');
     expect(defaultApproveMode(['bypassPermissions'], null)).toBe('bypassPermissions');
+  });
+
+  it('recommends a fresh context from 60 % (ADR-147)', () => {
+    expect(FRESH_CONTEXT_RECOMMENDED_PERCENT).toBe(60);
+    expect(isFreshContextRecommended(59)).toBe(false);
+    expect(isFreshContextRecommended(59.9)).toBe(false);
+    expect(isFreshContextRecommended(60)).toBe(true);
+    expect(isFreshContextRecommended(97)).toBe(true);
+    expect(isFreshContextRecommended(null)).toBe(false);
+  });
+});
+
+describe('remembered approve choice', () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it('stores mode and fresh flag; never a bypass mode; tolerates broken values', () => {
+    writeApproveMode('auto');
+    writeApproveFresh(true);
+    expect(localStorage.getItem('parallax.decisions.approveMode')).toBe('auto');
+    expect(localStorage.getItem('parallax.decisions.approveFresh')).toBe('true');
+    expect(readApproveMode()).toBe('auto');
+    expect(readApproveFresh()).toBe(true);
+    writeApproveMode('bypassPermissions');
+    expect(readApproveMode()).toBe('auto');
+    writeApproveFresh(false);
+    expect(readApproveFresh()).toBe(false);
+    localStorage.setItem('parallax.decisions.approveFresh', 'yes');
+    expect(readApproveFresh()).toBe(false);
+  });
+
+  it('a throwing storage (privacy settings, quota): defaults, writes never throw (R5W-11)', () => {
+    writeApproveMode('auto');
+    writeApproveFresh(true);
+    // On the instance: happy-dom binds Storage methods to it on first use (a prototype spy is bypassed).
+    const getItem = vi.spyOn(localStorage, 'getItem').mockImplementation(() => {
+      throw new Error('SecurityError');
+    });
+    const setItem = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError');
+    });
+    try {
+      expect(readApproveMode()).toBeNull();
+      expect(readApproveFresh()).toBe(false);
+      expect(() => {
+        writeApproveMode('acceptEdits');
+        writeApproveFresh(false);
+      }).not.toThrow();
+      expect(setItem).toHaveBeenCalledTimes(2);
+    } finally {
+      getItem.mockRestore();
+      setItem.mockRestore();
+    }
+    // The earlier values are untouched.
+    expect(readApproveMode()).toBe('auto');
+    expect(readApproveFresh()).toBe(true);
   });
 });
 
@@ -103,6 +173,9 @@ describe('outcomes and display', () => {
       'decisions.notices.withdrawn.signal_aborted',
     );
     expect(resolvedElsewhereNotice(null)).toBe('decisions.notices.gone');
+    expect(
+      resolvedElsewhereNotice({ type: 'plan_approved', mode: 'auto', edited: false, freshContext: true }),
+    ).toBe('decisions.notices.elsewhereFresh');
   });
 
   it('shows the picked decision, else the oldest open one, else an expired one', () => {

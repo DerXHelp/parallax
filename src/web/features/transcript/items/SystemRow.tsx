@@ -17,9 +17,11 @@ import { memo, type ReactNode } from 'react';
 import type { SystemItem } from '@shared/model';
 import { useI18n } from '@web/i18n';
 import { cn } from '@web/lib/cn';
+import { shortPath } from '@web/lib/path-display';
 import { TONE_ICON, type AlertTone } from '@web/ui/alert';
 import { CappedContent } from '../components/CappedContent';
 import { Disclosure } from '../components/Disclosure';
+import { ToolFileLink } from '../components/ToolFileLink';
 import { isKnownRateLimitWindow } from '../lib/rate-limit';
 import { TerminalOutput } from '../renderers/parts';
 import { expansionKey } from '../state/expansion';
@@ -296,6 +298,15 @@ export const SystemRow = memo(function SystemRow({
           ])}
           {item.task.summary === null || item.task.summary === '' ? null : (
             <span className="block whitespace-pre-wrap">{item.task.summary}</span>
+          )}
+          {item.task.outputFile === null || item.task.outputFile === '' ? null : (
+            <span data-slot="task-output" className="flex min-w-0 items-center gap-1">
+              <span className="shrink-0">{t('transcript.system.taskOutput')}</span>
+              {/* The output file is absolute (task_notification.output_file). */}
+              <ToolFileLink sessionKey={sessionKey} path={item.task.outputFile} cwd={null}>
+                {shortPath(item.task.outputFile, 3)}
+              </ToolFileLink>
+            </span>
           )}
         </Line>
       );
