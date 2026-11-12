@@ -108,6 +108,9 @@ const commands: Command[] = [
   { name: 'editor.detect' },
   // WP-63
   { name: 'session.remove', entryId },
+  // WP-64
+  { name: 'session.setRemoteControl', entryId, enabled: true },
+  { name: 'session.setRemoteControl', entryId, enabled: false },
 ];
 
 const clientMessages: ClientMessage[] = [

@@ -346,6 +346,20 @@ export const titleChangedMessageSchema = z.looseObject({
   title: str,
 });
 
+/**
+ * WP-64: system/bridge_state of Remote Control (untyped; spike 12.11.2026 and CLI 2.1.x:
+ * `state` ready | connected | failed | policy_disabled, `detail`, `failure_kind` only for failed,
+ * `recovered` on a connected after a reconnect, `bridge_epoch`).
+ */
+export const bridgeStateMessageSchema = z.looseObject({
+  subtype: z.literal('bridge_state'),
+  state: str,
+  detail: opt(str.nullable()),
+  failure_kind: opt(str.nullable()),
+  recovered: opt(bool.nullable()),
+  bridge_epoch: opt(num.nullable()),
+});
+
 export const commandsChangedMessageSchema = z.looseObject({
   subtype: z.literal('commands_changed'),
   commands: z.array(

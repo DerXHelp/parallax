@@ -93,6 +93,9 @@ class FakeQuery implements SdkQueryHandle {
   supportedModels = vi.fn<SdkQueryHandle['supportedModels']>(() => Promise.resolve([{ value: 'haiku' }]));
   supportedCommands = vi.fn<SdkQueryHandle['supportedCommands']>(() => Promise.resolve([{ name: 'clear' }]));
   stopTask = vi.fn<SdkQueryHandle['stopTask']>(() => Promise.resolve());
+  /** WP-64: internal SDK methods – absent unless a test sets them (runtime check). */
+  enableRemoteControl?: SdkQueryHandle['enableRemoteControl'];
+  getSettings?: SdkQueryHandle['getSettings'];
 
   constructor(
     readonly options: Options,
@@ -931,6 +934,144 @@ describe('SdkBackend – control methods', () => {
     await expect(session.setModel('x')).rejects.toThrow('session closed');
     expect(h.fq().setModel).not.toHaveBeenCalled();
     h.fq().cliExit(0);
+  });
+});
+
+describe('SdkBackend – Remote Control (WP-64)', () => {
+  /** Answer of the spike (rc-events.log, 12.11.2026). */
+  const ANSWER = {
+    session_url: 'https://claude.ai/code/session_01QKkfSZajXxCTUVAWr5SbHm',
+    connect_url: 'https://claude.ai/code?environment=',
+    environment_id: '',
+    bridge_epoch: 1,
+    bridge_session_id: 'cse_01QKkfSZajXxCTUVAWr5SbHm',
+  };
+
+  function withRemoteControl(answer: () => Promise<unknown>) {
+    const enable = vi.fn<NonNullable<SdkQueryHandle['enableRemoteControl']>>(answer);
+    const settings = vi.fn<NonNullable<SdkQueryHandle['getSettings']>>(() =>
+      Promise.resolve({ effective: { remoteControlAtStartup: true }, sources: [] }),
+    );
+    const h = harness({
+      configure: (q) => {
+        q.enableRemoteControl = enable;
+        q.getSettings = settings;
+      },
+    });
+    return { h, enable, settings, session: h.backend.start(request()) };
+  }
+
+  it('enables with keepSessionOnExit, name and reattach id and returns the checked answer', async () => {
+    const { enable, session } = withRemoteControl(() => Promise.resolve(ANSWER));
+    await expect(
+      session.setRemoteControl(true, { name: 'Fix login', reattachSessionId: 'cse_01QKkfSZajXxCTUVAWr5SbHm' }),
+    ).resolves.toEqual({
+      ok: true,
+      info: {
+        bridgeSessionId: 'cse_01QKkfSZajXxCTUVAWr5SbHm',
+        sessionUrl: 'https://claude.ai/code/session_01QKkfSZajXxCTUVAWr5SbHm',
+      },
+    });
+    expect(enable).toHaveBeenCalledWith(true, 'Fix login', {
+      keepSessionOnExit: true,
+      reattachSessionId: 'cse_01QKkfSZajXxCTUVAWr5SbHm',
+    });
+  });
+
+  it('without name and reattach id passes neither; disabling answers info null', async () => {
+    const { enable, session } = withRemoteControl(() => Promise.resolve(undefined));
+    await expect(session.setRemoteControl(false, { name: null, reattachSessionId: null })).resolves.toEqual({
+      ok: true,
+      info: null,
+    });
+    expect(enable).toHaveBeenCalledWith(false, undefined, { keepSessionOnExit: true });
+  });
+
+  it('a session url that is not https://claude.ai is dropped, a garbage answer is UNAVAILABLE', async () => {
+    const answers = [
+      { ...ANSWER, session_url: 'http://evil.example/x' },
+      { session_url: ANSWER.session_url },
+    ];
+    const { session } = withRemoteControl(() => Promise.resolve(answers.shift()));
+    await expect(session.setRemoteControl(true, { name: null, reattachSessionId: null })).resolves.toEqual({
+      ok: true,
+      info: { bridgeSessionId: ANSWER.bridge_session_id, sessionUrl: null },
+    });
+    await expect(session.setRemoteControl(true, { name: null, reattachSessionId: null })).resolves.toEqual({
+      ok: false,
+      error: { code: 'REMOTE_CONTROL_UNAVAILABLE', params: { reason: 'answer' } },
+    });
+  });
+
+  it('runtime check: without the SDK methods → REMOTE_CONTROL_UNAVAILABLE and default null, no crash', async () => {
+    const h = harness();
+    const session = h.backend.start(request());
+    await expect(session.setRemoteControl(true, { name: null, reattachSessionId: null })).resolves.toEqual({
+      ok: false,
+      error: { code: 'REMOTE_CONTROL_UNAVAILABLE', params: { reason: 'sdk' } },
+    });
+    await expect(session.readRemoteControlDefault()).resolves.toBeNull();
+  });
+
+  it.each<[string, Error, string, Record<string, unknown>]>([
+    [
+      'auth',
+      Object.assign(new Error('Remote Control requires a claude.ai login'), { errorCode: 'remote_control_auth' }),
+      'REMOTE_CONTROL_AUTH',
+      {},
+    ],
+    [
+      'policy',
+      Object.assign(new Error('disabled by policy'), { errorCode: 'remote_control_policy_disabled' }),
+      'REMOTE_CONTROL_POLICY_DISABLED',
+      {},
+    ],
+    [
+      'other code',
+      Object.assign(new Error('ended'), { errorCode: 'remote_control_ended_elsewhere' }),
+      'REMOTE_CONTROL_FAILED',
+      { reason: 'remote_control_ended_elsewhere', detail: 'ended' },
+    ],
+    [
+      'old CLI',
+      new Error('Unsupported control request subtype: remote_control'),
+      'REMOTE_CONTROL_UNAVAILABLE',
+      { reason: 'cli' },
+    ],
+    ['plain error', new Error('boom'), 'REMOTE_CONTROL_FAILED', { reason: 'control', detail: 'boom' }],
+  ])('control error %s → %s (never rejects)', async (_label, error, code, params) => {
+    const { session } = withRemoteControl(() => Promise.reject(error));
+    const result = await session.setRemoteControl(true, { name: null, reattachSessionId: null });
+    expect(result).toMatchObject({ ok: false, error: { code, params } });
+  });
+
+  it('a hanging enable request fails with reason timeout after controlMs', async () => {
+    useFakeTimeouts();
+    const { session } = withRemoteControl(() => new Promise(() => undefined));
+    const pending = session.setRemoteControl(true, { name: null, reattachSessionId: null });
+    await vi.advanceTimersByTimeAsync(SDK_TIMEOUTS.controlMs);
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'REMOTE_CONTROL_FAILED', params: { reason: 'timeout' } },
+    });
+  });
+
+  it.each<[string, unknown, boolean | null]>([
+    ['true', { effective: { remoteControlAtStartup: true } }, true],
+    ['false', { effective: { remoteControlAtStartup: false } }, false],
+    ['not set', { effective: {} }, null],
+    ['garbage', 'x', null],
+    ['not a boolean', { effective: { remoteControlAtStartup: 'yes' } }, null],
+  ])('readRemoteControlDefault: %s', async (_label, answer, expected) => {
+    const { settings, session } = withRemoteControl(() => Promise.resolve(ANSWER));
+    settings.mockResolvedValueOnce(answer);
+    await expect(session.readRemoteControlDefault()).resolves.toBe(expected);
+  });
+
+  it('readRemoteControlDefault: a failing getSettings is null', async () => {
+    const { settings, session } = withRemoteControl(() => Promise.resolve(ANSWER));
+    settings.mockRejectedValueOnce(new Error('nope'));
+    await expect(session.readRemoteControlDefault()).resolves.toBeNull();
   });
 });
 

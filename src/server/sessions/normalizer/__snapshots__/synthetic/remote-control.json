@@ -1,0 +1,367 @@
+{
+  "name": "remote-control",
+  "conversations": [
+    "cv_00000000000000000000000000000001"
+  ],
+  "timeline": [
+    "#2 system/bridge_state: !session_id | !bridge_state",
+    "#4 system/session_state_changed: !session_state:running",
+    "#5 command_lifecycle/queued: !prompt_lifecycle:queued",
+    "#6 command_lifecycle/started: upsert 00000000-0000-4000-9000-000000000bb8 user_message o1 | !prompt_lifecycle:started",
+    "#7 system/init: detail.patch {init} | !init",
+    "#8 system/bridge_state: !bridge_state",
+    "#10 assistant: upsert msg_syn_rc_1:0 assistant_text o2 final 18ch | !assistant_model",
+    "#12 result/success: upsert 00000000-0000-4000-9000-000000000009 turn_result o3 success | !turn_result:success",
+    "#13 command_lifecycle/completed: !prompt_lifecycle:completed",
+    "#14 system/session_state_changed: !session_state:idle",
+    "#15 system/session_state_changed: !session_state:running",
+    "#16 command_lifecycle/queued: !prompt_lifecycle:queued",
+    "#17 command_lifecycle/started: !prompt_lifecycle:started",
+    "#18 system/init: !init",
+    "#19 user: upsert 21526cdc-968c-4fb8-8b09-487aa2e4113f user_message o4",
+    "#21 assistant: upsert msg_syn_rc_2:0 assistant_text o5 final 22ch",
+    "#22 result/success: upsert 00000000-0000-4000-9000-000000000012 turn_result o6 success | !turn_result:success",
+    "#23 command_lifecycle/completed: !prompt_lifecycle:completed",
+    "#25 system/session_state_changed: !session_state:idle",
+    "#26 system/bridge_state: !bridge_state",
+    "#27 system/bridge_state: !bridge_state",
+    "#28 system/bridge_state: !bridge_state",
+    "#29 system/bridge_state: detail.patch {unknownCounts} | !bridge_state",
+    "#30 system/bridge_state: detail.patch {unknownCounts}"
+  ],
+  "signals": [
+    {
+      "seq": 2,
+      "type": "session_id",
+      "sessionId": "5e550000-0000-4000-8000-000000000001"
+    },
+    {
+      "seq": 2,
+      "type": "bridge_state",
+      "state": "ready",
+      "detail": null,
+      "failureKind": null,
+      "recovered": false
+    },
+    {
+      "seq": 4,
+      "type": "session_state",
+      "state": "running"
+    },
+    {
+      "seq": 5,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-000000000bb8",
+      "state": "queued"
+    },
+    {
+      "seq": 6,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-000000000bb8",
+      "state": "started"
+    },
+    {
+      "seq": 7,
+      "type": "init",
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "cliVersion": "2.1.300",
+      "apiKeySource": "none",
+      "capabilities": [
+        "msg_lifecycle_v1"
+      ]
+    },
+    {
+      "seq": 8,
+      "type": "bridge_state",
+      "state": "connected",
+      "detail": null,
+      "failureKind": null,
+      "recovered": false
+    },
+    {
+      "seq": 10,
+      "type": "assistant_model",
+      "model": "claude-haiku-5-5"
+    },
+    {
+      "seq": 12,
+      "type": "turn_result",
+      "outcome": "success",
+      "durationMs": 1200,
+      "costUsdTotal": 0.001,
+      "error": null,
+      "resultExcerpt": "OK",
+      "userMessageUuids": [
+        "00000000-0000-4000-9000-000000000bb8"
+      ],
+      "synthetic": false,
+      "startupFailure": false
+    },
+    {
+      "seq": 13,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-000000000bb8",
+      "state": "completed"
+    },
+    {
+      "seq": 14,
+      "type": "session_state",
+      "state": "idle"
+    },
+    {
+      "seq": 15,
+      "type": "session_state",
+      "state": "running"
+    },
+    {
+      "seq": 16,
+      "type": "prompt_lifecycle",
+      "messageUuid": "21526cdc-968c-4fb8-8b09-487aa2e4113f",
+      "state": "queued"
+    },
+    {
+      "seq": 17,
+      "type": "prompt_lifecycle",
+      "messageUuid": "21526cdc-968c-4fb8-8b09-487aa2e4113f",
+      "state": "started"
+    },
+    {
+      "seq": 18,
+      "type": "init",
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "cliVersion": "2.1.300",
+      "apiKeySource": "none",
+      "capabilities": [
+        "msg_lifecycle_v1"
+      ]
+    },
+    {
+      "seq": 22,
+      "type": "turn_result",
+      "outcome": "success",
+      "durationMs": 1200,
+      "costUsdTotal": 0.002,
+      "error": null,
+      "resultExcerpt": "OK",
+      "userMessageUuids": [
+        "21526cdc-968c-4fb8-8b09-487aa2e4113f"
+      ],
+      "synthetic": false,
+      "startupFailure": false
+    },
+    {
+      "seq": 23,
+      "type": "prompt_lifecycle",
+      "messageUuid": "21526cdc-968c-4fb8-8b09-487aa2e4113f",
+      "state": "completed"
+    },
+    {
+      "seq": 25,
+      "type": "session_state",
+      "state": "idle"
+    },
+    {
+      "seq": 26,
+      "type": "bridge_state",
+      "state": "failed",
+      "detail": "network down",
+      "failureKind": "transient",
+      "recovered": false
+    },
+    {
+      "seq": 27,
+      "type": "bridge_state",
+      "state": "connected",
+      "detail": null,
+      "failureKind": null,
+      "recovered": true
+    },
+    {
+      "seq": 28,
+      "type": "bridge_state",
+      "state": "failed",
+      "detail": "session ended elsewhere",
+      "failureKind": "terminal",
+      "recovered": false
+    },
+    {
+      "seq": 29,
+      "type": "bridge_state",
+      "state": "unknown",
+      "detail": null,
+      "failureKind": null,
+      "recovered": false
+    }
+  ],
+  "items": {
+    "cv_00000000000000000000000000000001": [
+      {
+        "id": "00000000-0000-4000-9000-000000000bb8",
+        "order": 1,
+        "at": "2026-10-15T08:00:00.731Z",
+        "parentToolUseId": null,
+        "kind": "user_message",
+        "text": {
+          "text": "Antworte nur mit: OK (nach Neustart)",
+          "truncated": null
+        },
+        "attachments": [],
+        "origin": "human",
+        "slashCommand": null,
+        "priority": "next",
+        "source": "local"
+      },
+      {
+        "id": "msg_syn_rc_1:0",
+        "order": 2,
+        "at": "2026-10-15T08:00:00.007Z",
+        "parentToolUseId": null,
+        "kind": "assistant_text",
+        "messageId": "msg_syn_rc_1",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "text": "OK (nach Neustart)",
+        "streaming": false,
+        "aborted": false,
+        "localCommand": null
+      },
+      {
+        "id": "00000000-0000-4000-9000-000000000009",
+        "order": 3,
+        "at": "2026-10-15T08:00:00.821Z",
+        "parentToolUseId": null,
+        "kind": "turn_result",
+        "outcome": "success",
+        "subtype": "success",
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 1200,
+        "durationApiMs": 1000,
+        "numTurns": 1,
+        "usage": {
+          "input": 2,
+          "output": 10,
+          "cacheRead": 20000,
+          "cacheCreation": 500
+        },
+        "costUsdTotal": 0.001,
+        "costUsdTurn": null,
+        "permissionDenials": 0,
+        "errors": [],
+        "userMessageUuids": [
+          "00000000-0000-4000-9000-000000000bb8"
+        ],
+        "synthetic": false
+      },
+      {
+        "id": "21526cdc-968c-4fb8-8b09-487aa2e4113f",
+        "order": 4,
+        "at": "2026-10-15T08:00:05.303Z",
+        "parentToolUseId": null,
+        "kind": "user_message",
+        "text": {
+          "text": "Antworte nur mit: Zweiter Test vom Handy",
+          "truncated": null
+        },
+        "attachments": [],
+        "origin": "human",
+        "slashCommand": null,
+        "priority": null,
+        "source": "remote"
+      },
+      {
+        "id": "msg_syn_rc_2:0",
+        "order": 5,
+        "at": "2026-10-15T08:00:00.017Z",
+        "parentToolUseId": null,
+        "kind": "assistant_text",
+        "messageId": "msg_syn_rc_2",
+        "blockIndex": 0,
+        "model": "claude-haiku-5-5",
+        "text": "Zweiter Test vom Handy",
+        "streaming": false,
+        "aborted": false,
+        "localCommand": null
+      },
+      {
+        "id": "00000000-0000-4000-9000-000000000012",
+        "order": 6,
+        "at": "2026-10-15T08:00:00.921Z",
+        "parentToolUseId": null,
+        "kind": "turn_result",
+        "outcome": "success",
+        "subtype": "success",
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 1200,
+        "durationApiMs": 1000,
+        "numTurns": 1,
+        "usage": {
+          "input": 2,
+          "output": 10,
+          "cacheRead": 20000,
+          "cacheCreation": 500
+        },
+        "costUsdTotal": 0.002,
+        "costUsdTurn": 0.001,
+        "permissionDenials": 0,
+        "errors": [],
+        "userMessageUuids": [
+          "21526cdc-968c-4fb8-8b09-487aa2e4113f"
+        ],
+        "synthetic": false
+      }
+    ]
+  },
+  "detail": {
+    "init": {
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "cwd": "D:\\work\\synthetic",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "apiKeySource": "none",
+      "cliVersion": "2.1.300",
+      "tools": [
+        "Bash",
+        "Read",
+        "Write",
+        "Edit",
+        "Agent"
+      ],
+      "slashCommands": [
+        "clear",
+        "compact"
+      ],
+      "terminalSlashCommands": [],
+      "mcpServers": [],
+      "skills": [],
+      "agents": [
+        "general-purpose"
+      ],
+      "plugins": [],
+      "capabilities": [
+        "msg_lifecycle_v1"
+      ],
+      "outputStyle": "default",
+      "fastModeState": "off",
+      "effort": null
+    },
+    "unknownCounts": {
+      "bridge_state:hibernating": 1,
+      "invalid:system/bridge_state": 1
+    }
+  },
+  "unknownCounts": {
+    "bridge_state:hibernating": 1,
+    "invalid:system/bridge_state": 1
+  },
+  "ignoredCounts": {
+    "user/replay": 1,
+    "system/post_turn_summary": 1,
+    "system/task_summary": 2
+  }
+}

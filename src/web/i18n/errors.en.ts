@@ -85,6 +85,11 @@ export const errorsEn: Record<ErrorCode, string> = {
   SESSION_WRITES_LOST: 'Claude Code could not save everything (disk full) – the history may be incomplete.',
   CLAUDE_CONFIG_INVALID: 'A settings file of Claude Code is invalid. Check it and start again.',
   CLAUDE_PROXY_INVALID: 'The proxy setting is invalid. Check HTTPS_PROXY and start again.',
+  REMOTE_CONTROL_UNAVAILABLE:
+    'Remote Control is not available with this Claude Code version (too old or too new for Parallax).',
+  REMOTE_CONTROL_AUTH: 'Remote Control needs a new sign-in: run `claude` in a terminal and enter /login.',
+  REMOTE_CONTROL_POLICY_DISABLED: 'Remote Control is turned off by your organization.',
+  REMOTE_CONTROL_FAILED: 'The Remote Control connection failed or was lost.',
   AUTOSTART_FAILED: 'Autostart could not be set up.',
   PROTOCOL_HANDLER_FAILED: 'Opening sessions from Windows notifications could not be set up.',
   STORE_CORRUPT_QUARANTINED: 'A damaged data file was set aside and replaced by a fresh one.',

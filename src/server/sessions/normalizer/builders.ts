@@ -217,7 +217,13 @@ export function slashCommandOf(text: string): string | null {
 export function userMessageItem(
   base: ItemBase,
   text: CappedText,
-  opts: { attachments: BlobRef[]; origin: 'human' | 'other'; priority: 'next' | 'now' | null },
+  opts: {
+    attachments: BlobRef[];
+    origin: 'human' | 'other';
+    priority: 'next' | 'now' | null;
+    /** WP-64: 'remote' = sent from the Claude app (Remote Control); default 'local'. */
+    source?: 'local' | 'remote';
+  },
 ): UserMessageItem {
   return {
     ...base,
@@ -227,6 +233,7 @@ export function userMessageItem(
     origin: opts.origin,
     slashCommand: slashCommandOf(text.text),
     priority: opts.priority,
+    source: opts.source ?? 'local',
   };
 }
 
