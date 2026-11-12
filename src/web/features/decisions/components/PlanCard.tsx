@@ -10,7 +10,14 @@ import { requestComposerFocus } from '../../composer/state/focus';
 import { planSummary, planTitle } from '../lib/plan';
 import { respondToDecision } from '../lib/respond';
 import { DecisionAction, DecisionCardShell } from './card-shell';
-import { ApproveSplit, OpenPlanButton, PlanContextGauge, approvePlan, useApproveMode } from './plan-parts';
+import {
+  ApproveSplit,
+  FreshContextAlert,
+  OpenPlanButton,
+  PlanContextGauge,
+  approvePlan,
+  useApproveChoice,
+} from './plan-parts';
 
 /**
  * Plan card in the bar (Plan "Plan-Modus & Plan-Freigabe"):
@@ -31,7 +38,7 @@ export function PlanCard({
 }) {
   const t = useT();
   const { Markdown } = useFeatureSlots();
-  const [mode, setMode] = useApproveMode(decision.approveModes);
+  const [choice, setChoice] = useApproveChoice(decision.approveModes);
   const [inlineOpen, setInlineOpen] = useState(false);
   const draft = useDraft(sessionKey).trim();
   const title = planTitle(decision.plan);
@@ -71,16 +78,18 @@ export function PlanCard({
           {headerExtra}
         </>
       }
-      primary={mode === null ? null : approvePlan(sessionKey, decision, mode)}
+      primary={choice === null ? null : approvePlan(sessionKey, decision, choice)}
       actions={
         <>
-          {mode === null ? null : (
+          {choice === null ? null : (
             <ApproveSplit
               sessionKey={sessionKey}
               decision={decision}
-              mode={mode}
-              onModeChange={setMode}
-              label={(modeLabel) => t('decisions.plan.approve', { mode: modeLabel })}
+              choice={choice}
+              onChoiceChange={setChoice}
+              label={(modeLabel, fresh) =>
+                t(fresh ? 'decisions.plan.approveFresh' : 'decisions.plan.approve', { mode: modeLabel })
+              }
             />
           )}
           {feedbackReady ? (
@@ -119,6 +128,7 @@ export function PlanCard({
       }
     >
       {summary === null ? null : <p className="text-muted-foreground line-clamp-2 text-xs">{summary}</p>}
+      <FreshContextAlert sessionKey={sessionKey} decision={decision} />
       {inlineOpen ? (
         <div
           data-slot="plan-inline"
