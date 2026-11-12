@@ -1832,3 +1832,47 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   Nutzers am selben Rechner statt gegen künstliche Last.
 - **Folgen:** `repo.config.test.ts` prüft, dass die Test-Worker die Priorität erben; CLAUDE.md
   „Ressourcen“; `docs/wp/FLAKES.md` (Lastprotokoll L1/L2 abgeschafft); Läufe dauern etwas länger.
+
+## ADR-157 – Datei-Dienst: Upload-Typ nach Absicht, exakte Kürzungsanzeige, Inhalte mit genauer Länge, Backfill seitenweise
+- **Datum/WP:** 12.11.2026, Fix-Runde CR3 Paket D; angenommen (12.11.2026, Koordinator beim Merge). Ergänzt ADR-134, ADR-142, ADR-145 und
+  ADR-146.
+- **Kontext:** Das `/code-review` Phase 3 fand vier Fehler (CR3-03, CR3-04, CR3-05, CR3-10):
+  - ein octet-stream-Upload mit Bild-Bytes wurde zum unskalierten Bild mit Bild-Grenze;
+  - `truncated` übersah die Kürzung von UTF-16- und windows-1252-Texten;
+  - `Content-Length` kam aus einer veralteten `stat`-Größe;
+  - der Index-Backfill hielt ganze Unterhaltungen im Speicher.
+- **Entscheidung:**
+  1. **Upload:**
+     - Ein Bild entsteht nur aus einem als Bild deklarierten Upload; nur diesen hat der Client
+       vorbereitet.
+     - `application/octet-stream` ist immer eine Datei, auch mit Bild-Bytes: `fileAttachmentBytes`,
+       `name` Pflicht, Anhangordner.
+     - `%PDF-` bleibt bei `application/pdf` und octet-stream ein PDF (ADR-146).
+  2. **`FileInfo.truncated`** sagt genau, was `GET /api/file` kürzt: die Quelle oder ihre UTF-8-Form ist
+     größer als `fileTextBytes`.
+     - Gelesen wird nur, wenn die Obergrenze aus Größe und Kodierung offen lässt, ob die Grenze
+       überschritten wird.
+     - Das Ergebnis merkt sich der Dienst je Dateiversion (Pfad, Größe, `mtime`; LRU 256).
+     - `GET /api/file` braucht das Flag nicht.
+  3. **Bilder und PDFs** liest `GET /api/file` über ein Handle ganz (≤ `fileBinaryBytes`) und sendet sie
+     mit genauer Länge.
+     - `Content-Length` weicht nie vom Körper ab.
+     - Eine zwischendurch ersetzte Datei kommt vollständig.
+     - Das Lesen läuft wie zuvor der Stream ohne 3-s-Wächter.
+  4. **Der Index-Backfill** liest seitenweise rückwärts (neueste Unterhaltung und Seite zuerst) und hält
+     höchstens eine Seite.
+     - Gezählt wird nur ein Datensatz außerhalb der bekannten Zeitspanne einer Datei.
+     - `ops` bleiben in der Reihenfolge des ersten Auftretens.
+- **Begründung:**
+  - Der Client kennt die Absicht: Datei oder vorbereitetes Bild.
+  - Die Anzeige „gekürzt“ muss zum gesendeten Text passen. Die Kosten bleiben beim Pollen gering, weil
+    nur eine geänderte Dateiversion gelesen wird – und dann lädt der Viewer den Inhalt ohnehin.
+  - Eine Länge, die nicht aus den gesendeten Bytes stammt, kann nie garantiert stimmen.
+  - Seiten statt ganzer Unterhaltungen begrenzen die Speicherspitze nach einem Upgrade.
+- **Folgen:**
+  - Bild-Bytes ohne Browser-Typ liest Claude per `Read` aus dem Anhangordner statt als Bild-Block.
+  - Je gleichzeitiger Bild/PDF-Antwort bis 50 MB Speicher.
+  - `HEAD /api/file` liest die Datei ganz; die UI nutzt `HEAD` nicht, und der Port kennt die Methode
+    nicht.
+  - Verworfen wurden „Länge vom Handle + Stream“ und „ohne feste Länge“ (siehe
+    `docs/wp/CODE-REVIEW-3-D.md`).
