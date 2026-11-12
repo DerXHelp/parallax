@@ -116,6 +116,12 @@ export const demos: PlaygroundDemo[] = [
     'Images, lightbox, console handoff, Windows paths (WP-37)',
     'Click a thumbnail: lightbox with zoom (buttons, wheel, + − 0 1), "Save as", Esc; handoff rows; V2-12 paths keep their backslashes',
   ),
+  transcriptDemo(
+    'files',
+    'files',
+    'File references and agent stop (WP-55)',
+    'Paths in text/inline code (verified via file.statMany), Markdown links, UNC/device/web negatives, tool cards with their file, Grep/Glob hits, agent running (Stop, output file) and stopped, task output, plan file',
+  ),
   {
     id: 'slots',
     title: 'Markdown and ToolInputPreview slots',

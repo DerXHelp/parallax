@@ -22,6 +22,14 @@ function rect(width: number, height: number): DOMRectReadOnly {
   };
 }
 
+/** Reports of the installed fake ResizeObservers, keyed by observed element (`reportResize`). */
+const resizeReporters = new Set<(target: Element, height: number) => void>();
+
+/** Simulates a new height of an observed element (e.g. a larger window for the list's region). */
+export function reportResize(target: Element, height: number): void {
+  for (const report of resizeReporters) report(target, height);
+}
+
 /**
  * happy-dom does not lay out: a ResizeObserver that reports `viewport` px for the transcript's
  * scroll container (role="region") and `item` px for every row, so virtua renders a window of rows.
@@ -34,28 +42,35 @@ export function installResizeObserver(options: { viewport?: number; item?: numbe
   class FakeResizeObserver implements ResizeObserver {
     private readonly callback: ResizeObserverCallback;
     private readonly targets = new Set<Element>();
+    private readonly reporter = (target: Element, height: number): void => {
+      if (this.targets.has(target)) this.report(target, height);
+    };
 
     constructor(callback: ResizeObserverCallback) {
       this.callback = callback;
+      resizeReporters.add(this.reporter);
+    }
+
+    private report(target: Element, height: number): void {
+      this.callback(
+        [
+          {
+            target,
+            contentRect: rect(800, height),
+            borderBoxSize: [],
+            contentBoxSize: [],
+            devicePixelContentBoxSize: [],
+          },
+        ],
+        this,
+      );
     }
 
     observe(target: Element): void {
       this.targets.add(target);
       const height = target.getAttribute('role') === 'region' ? viewport : item;
       queueMicrotask(() => {
-        if (!this.targets.has(target)) return;
-        this.callback(
-          [
-            {
-              target,
-              contentRect: rect(800, height),
-              borderBoxSize: [],
-              contentBoxSize: [],
-              devicePixelContentBoxSize: [],
-            },
-          ],
-          this,
-        );
+        if (this.targets.has(target)) this.report(target, height);
       });
     }
 
@@ -65,6 +80,7 @@ export function installResizeObserver(options: { viewport?: number; item?: numbe
 
     disconnect(): void {
       this.targets.clear();
+      resizeReporters.delete(this.reporter);
     }
   }
 
@@ -80,10 +96,46 @@ export function installResizeObserver(options: { viewport?: number; item?: numbe
     },
   });
   return () => {
+    resizeReporters.clear();
     window.ResizeObserver = original;
     globalThis.ResizeObserver = original;
     if (offsetParent === undefined) Reflect.deleteProperty(HTMLElement.prototype, 'offsetParent');
     else Object.defineProperty(HTMLElement.prototype, 'offsetParent', offsetParent);
+  };
+}
+
+/**
+ * happy-dom stores `scrollTop` but never fires `scroll` for a programmatic change; browsers do (after
+ * the change, asynchronously). The transcript scrolls to the end by writing `scrollTop`, and virtua
+ * learns the offset only from that event – this emulates it (a microtask after a real change).
+ */
+export function installScrollEvents(): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop');
+  const getter: unknown = descriptor === undefined ? undefined : Reflect.get(descriptor, 'get');
+  const setter: unknown = descriptor === undefined ? undefined : Reflect.get(descriptor, 'set');
+  if (descriptor === undefined || typeof getter !== 'function' || typeof setter !== 'function')
+    return () => undefined;
+  const read = (element: Element): unknown => Reflect.apply(getter, element, []);
+  const write = (element: Element, value: number): void => {
+    Reflect.apply(setter, element, [value]);
+  };
+  Object.defineProperty(Element.prototype, 'scrollTop', {
+    configurable: true,
+    get(this: Element): unknown {
+      return read(this);
+    },
+    set(this: Element, value: number) {
+      const before = read(this);
+      write(this, value);
+      const after = read(this);
+      if (after === before) return;
+      queueMicrotask(() => {
+        this.dispatchEvent(new Event('scroll'));
+      });
+    },
+  });
+  return () => {
+    Object.defineProperty(Element.prototype, 'scrollTop', descriptor);
   };
 }
 

@@ -152,12 +152,22 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
     preloadMarkdown();
   }, []);
 
+  const rootRef = useRef<HTMLDivElement>(null);
+  const scrollElement = useCallback(
+    () => rootRef.current?.querySelector<HTMLElement>('[role="region"]') ?? null,
+    [],
+  );
+
+  // Not virtua's `scrollToIndex`: that one re-applies its target on every size change until 150 ms
+  // pass without one, so a user scroll that starts meanwhile – during streaming nearly always – is
+  // pulled back to the end (FIX-E2E-EDGE157, WP-55). The list re-applies the end itself (`onResize`)
+  // and only while it sticks to the bottom; a scroll towards the top ends that at once.
   const scrollToEnd = useCallback(() => {
     const handle = listRef.current;
-    const count = rowCountRef.current;
-    if (handle === null || count === 0) return;
-    handle.scrollToIndex(count - 1, { align: 'end' });
-  }, []);
+    const element = scrollElement();
+    if (handle === null || element === null || rowCountRef.current === 0) return;
+    element.scrollTop = Math.max(0, handle.scrollSize - handle.viewportSize);
+  }, [scrollElement]);
 
   // New rows (and the first render): follow them while the user is at the bottom.
   useLayoutEffect(() => {
@@ -194,8 +204,20 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
     [requestEarlier],
   );
 
-  // Growing content (streaming text, expanded rows at the end) keeps the bottom in view.
+  // Growing content (streaming text, expanded rows at the end) keeps the bottom in view. A larger
+  // window can make the browser clamp `scrollTop` before virtua has measured the new viewport: that
+  // scroll event looks like a scroll towards the top and unsticks – with the sizes now current, the
+  // list sticks again once the end is in view (WP-55).
   const onResize = useCallback(() => {
+    const handle = listRef.current;
+    if (
+      !stickRef.current &&
+      handle !== null &&
+      handle.scrollSize - handle.viewportSize - handle.scrollOffset <= STICK_PX
+    ) {
+      stickRef.current = true;
+      setShowJump(false);
+    }
     if (stickRef.current) scrollToEnd();
   }, [scrollToEnd]);
 
@@ -209,17 +231,11 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
   // that follow – own message, queue entry, answer – then stick as usual).
   useTranscriptFollowHandler(sessionKey, jumpToLatest);
 
-  const rootRef = useRef<HTMLDivElement>(null);
-  const listFocus = useCallback(
-    () => rootRef.current?.querySelector<HTMLElement>('[role="region"]') ?? null,
-    [],
-  );
-
   const empty = rows.length === 0;
   return (
     <TranscriptSettingsContext value={settings}>
       <QueuedIdsContext value={queuedIds}>
-        <ImageViewer fallbackFocus={listFocus}>
+        <ImageViewer fallbackFocus={scrollElement}>
           <div
             ref={rootRef}
             data-slot="transcript"
