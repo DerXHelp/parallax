@@ -11,6 +11,38 @@ export const de: typeof en = {
     archiveBack: 'Zurück zu den Sessions',
     archiveEmpty: 'Keine archivierten Sessions.',
     group: 'Projekt {name}',
+    collapse: 'Seitenleiste einklappen',
+  },
+  rail: {
+    label: 'Sessions (eingeklappte Seitenleiste)',
+    show: 'Sessions anzeigen',
+    session: '{title} – {status}',
+    sessionUnread: '{title} – {status}, ungelesen',
+  },
+  panels: {
+    label: 'Seitenpanel',
+    plan: 'Plan',
+    files: 'Dateien dieser Session',
+    tasks: 'Aufgaben',
+    tasksRunning: {
+      one: 'Aufgaben – {count} Hintergrund-Task läuft',
+      other: 'Aufgaben – {count} Hintergrund-Tasks laufen',
+    },
+    tasksOpen: { one: 'Aufgaben – {count} offene Aufgabe', other: 'Aufgaben – {count} offene Aufgaben' },
+  },
+  drop: {
+    hint: 'Zum Anhängen ablegen',
+    unavailable: 'An diese Session lassen sich hier keine Dateien anhängen.',
+  },
+  slotError: {
+    title: 'Bereich konnte nicht geladen werden',
+    render: 'Beim Anzeigen ist ein Fehler aufgetreten. Der Rest von Parallax funktioniert weiter.',
+    chunk:
+      'Ein Teil der App konnte nicht geladen werden – vielleicht wurde Parallax inzwischen aktualisiert.',
+    retry: 'Neu laden',
+    confirmReload: 'Das ganze Fenster neu laden? Deine Sessions laufen auf dem Server weiter.',
+    reloadWindow: 'Fenster neu laden',
+    cancel: 'Abbrechen',
   },
   row: {
     actions: 'Aktionen für „{title}“',
@@ -24,6 +56,7 @@ export const de: typeof en = {
     pin: 'Anheften',
     unpin: 'Lösen',
     openWindow: 'In neuem Fenster öffnen',
+    openFolder: 'Ordner im Explorer öffnen',
     newSessionHere: 'Neue Session in diesem Projekt…',
     sleep: 'Schlafen legen',
     openExternal: 'In externer Konsole öffnen',

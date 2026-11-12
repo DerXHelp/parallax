@@ -24,6 +24,9 @@ export default defineConfig({
     watch: { ignored: watchIgnores(repoRoot) },
   },
   test: {
+    // Off: the persistent module cache keeps an unchanged test file's expanded `import.meta.glob`,
+    // so new or removed source files go unseen (stale "every key is used" guards, Phase 3 WP-58).
+    fsModuleCache: false,
     globalSetup: ['test/setup/global.ts'],
     projects: [
       {

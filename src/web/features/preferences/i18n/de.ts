@@ -94,7 +94,47 @@ export const de: typeof en = {
     unavailable: 'Der Profil-Editor ist in dieser Ansicht nicht verfügbar.',
   },
   files: {
-    pending: 'Hier lässt sich bald der Editor für „Im Editor öffnen“ wählen.',
+    editor: 'Editor für „Im Editor öffnen“',
+    editorHint:
+      'Parallax öffnet eine Datei in diesem Programm an der genannten Zeile. Standard ist Notepad++; die Änderung gilt ab der nächsten geöffneten Datei.',
+    presets: {
+      notepadpp: 'Notepad++',
+      vscode: 'Visual Studio Code',
+      custom: 'Eigenes Programm',
+      system: 'Windows-Standardprogramm',
+    },
+    defaultBadge: 'Standard',
+    detecting: 'Programm wird gesucht…',
+    found: 'Gefunden: {path}',
+    notFound: 'Auf diesem Computer nicht gefunden',
+    detectFailed: 'Es ließ sich nicht prüfen, welche Editoren installiert sind.',
+    systemHint:
+      'Öffnet eine Datei mit dem Programm, das Windows ihrem Typ zuordnet – nur für harmlose Typen ({extensions}). Andere Dateien lassen sich so nicht öffnen.',
+    path: 'Programm (.exe)',
+    pathOptional: 'Eigener Pfad (optional)',
+    pathOptionalHint:
+      'Leer = die Installation, die Parallax gefunden hat. Gib den vollständigen Pfad einer .exe an, um eine andere zu nutzen.',
+    customHint: 'Der vollständige lokale Pfad der .exe-Datei des Programms.',
+    pathPlaceholder: 'C:\\Programme\\Editor\\editor.exe',
+    pathExists: 'Das Programm ist vorhanden.',
+    pathMissing: 'Unter diesem Pfad gibt es kein Programm (mehr).',
+    args: 'Argumente',
+    argsHint: 'Ein Argument pro Zeile. Platzhalter: {file} (Pflicht), {line} und {col} (1, wenn unbekannt).',
+    preview: 'Kommandozeile (Beispiel)',
+    previewHint: 'Für Zeile {line}, Spalte {col} von {sample}.',
+    save: 'Editor speichern',
+    unsaved: 'Noch nicht gespeichert',
+    issues: {
+      path: 'Gib einen vollständigen lokalen Pfad an (etwa C:\\…) – keinen Netzwerk- und keinen relativen Pfad.',
+      not_exe: 'Das Programm muss eine .exe-Datei sein.',
+      blocked:
+        'Dieses Programm kann nicht der Editor sein (Shells, Skript-Hosts und der Explorer sind gesperrt).',
+      required: 'Gib den Pfad des Programms an.',
+      file_placeholder: 'Ein Argument muss {placeholder} enthalten.',
+      too_long: 'Dieser Eintrag ist zu lang.',
+      too_many: 'Höchstens {max} Argumente.',
+      invalid: 'Dieser Eintrag ist ungültig.',
+    },
   },
   systemIntegrationOff:
     'Nur beim installierten Parallax-Server verfügbar (Standard-Datenordner, echtes Claude Code, kein Entwicklungsmodus).',

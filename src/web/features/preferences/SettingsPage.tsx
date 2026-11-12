@@ -20,6 +20,7 @@ import { Button } from '@web/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@web/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@web/ui/tabs';
 import { AboutSection } from './sections/AboutSection';
+import { FilesSection } from './sections/FilesSection';
 import { GeneralSection } from './sections/GeneralSection';
 import { NotificationsSection } from './sections/NotificationsSection';
 import { ServerSection } from './sections/ServerSection';
@@ -56,12 +57,6 @@ function ProfilesSection({ onDirtyChange }: { onDirtyChange: (dirty: boolean) =>
   return <ProfilesSettings onDirtyChange={onDirtyChange} />;
 }
 
-/** Section "Files" until WP-58 fills it. */
-function FilesSection() {
-  const t = useT();
-  return <p className="text-muted-foreground text-xs">{t('preferences.files.pending')}</p>;
-}
-
 function SectionContent({
   section,
   editor,
@@ -81,8 +76,8 @@ function SectionContent({
     case 'sessions':
       return <SessionsSection editor={editor} />;
     case 'files':
-      // Phase 3 scaffold (WP-50): WP-58 adds the editor setting (settings.editor, ADR-144).
-      return <FilesSection />;
+      // Phase 3 (WP-58): the editor for "Open in editor" (settings.editor, ADR-144).
+      return <FilesSection editor={editor} />;
     case 'profiles':
       return <ProfilesSection onDirtyChange={onProfilesDirtyChange} />;
     case 'server':

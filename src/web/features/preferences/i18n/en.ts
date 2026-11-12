@@ -96,8 +96,48 @@ export const en = {
   profiles: {
     unavailable: 'The profile editor is not available in this view.',
   },
+  /** Section "Files" (WP-58, ADR-144): the editor for "Open in editor". */
   files: {
-    pending: 'The editor for “Open in editor” can be chosen here soon.',
+    editor: 'Editor for “Open in editor”',
+    editorHint:
+      'Parallax opens a file in this program at the referenced line. Notepad++ is the default; the change applies to the next file you open.',
+    presets: {
+      notepadpp: 'Notepad++',
+      vscode: 'Visual Studio Code',
+      custom: 'Own program',
+      system: 'Windows default program',
+    },
+    defaultBadge: 'Default',
+    detecting: 'Looking for the program…',
+    found: 'Found: {path}',
+    notFound: 'Not found on this computer',
+    detectFailed: 'Could not check which editors are installed.',
+    systemHint:
+      'Opens a file with the program Windows assigns to its type – only for harmless types ({extensions}). Other files cannot be opened this way.',
+    path: 'Program (.exe)',
+    pathOptional: 'Own path (optional)',
+    pathOptionalHint:
+      'Empty = the installation Parallax found. Enter the full path of an .exe to use another one.',
+    customHint: 'The full local path of the program’s .exe file.',
+    pathPlaceholder: 'C:\\Program Files\\Editor\\editor.exe',
+    pathExists: 'The program exists.',
+    pathMissing: 'There is no program at this path (any more).',
+    args: 'Arguments',
+    argsHint: 'One argument per line. Placeholders: {file} (required), {line} and {col} (1 when unknown).',
+    preview: 'Command line (example)',
+    previewHint: 'For line {line}, column {col} of {sample}.',
+    save: 'Save editor',
+    unsaved: 'Not saved yet',
+    issues: {
+      path: 'Enter a full local path (like C:\\…) – no network path, no relative path.',
+      not_exe: 'The program must be an .exe file.',
+      blocked: 'This program cannot be the editor (shells, script hosts and Explorer are blocked).',
+      required: 'Enter the path of the program.',
+      file_placeholder: 'One argument must contain {placeholder}.',
+      too_long: 'This entry is too long.',
+      too_many: 'At most {max} arguments.',
+      invalid: 'This entry is not valid.',
+    },
   },
   /** Autostart and the protocol handler (ADR-110): only the productive server. */
   systemIntegrationOff:

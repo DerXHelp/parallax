@@ -181,7 +181,7 @@ async function dropFile(target: Locator): Promise<DropResult> {
   });
 }
 
-test('a file dropped next to the composer is refused (no navigation); on the composer it becomes a chip (R4W-02)', async ({
+test('a file dropped outside the session pane is refused (no navigation); on the pane or the composer it becomes a chip (R4W-02, WP-58)', async ({
   app,
   server,
   page,
@@ -192,18 +192,19 @@ test('a file dropped next to the composer is refused (no navigation); on the com
   const url = page.url();
   const chips = session.composerRoot.locator('[data-slot="attachment-chip"]');
 
-  // Transcript, sidebar, header: no drop zone there – the window-wide guard cancels the drop.
-  for (const target of [session.transcript, app.sidebar(), session.header]) {
-    expect(await dropFile(target)).toEqual({ overCancelled: true, dropCancelled: true });
-  }
+  // Sidebar: no drop zone there – the window-wide guard cancels the drop.
+  expect(await dropFile(app.sidebar())).toEqual({ overCancelled: true, dropCancelled: true });
   expect(page.url()).toBe(url);
   await app.waitConnected();
   await expect(chips).toHaveCount(0);
 
-  // The composer is the drop zone: it takes the file – a chip, uploaded.
-  expect(await dropFile(session.composer)).toEqual({ overCancelled: true, dropCancelled: true });
-  await expect(chips).toHaveCount(1);
-  await expect(chips).toHaveAttribute('data-status', 'done');
+  // Phase 3 (WP-58): the whole session pane is a drop zone – transcript and header hand the file to
+  // the composer (`attachFiles`); the composer takes its own drops. Each drop is a chip, uploaded.
+  for (const target of [session.transcript, session.header, session.composer]) {
+    expect(await dropFile(target)).toEqual({ overCancelled: true, dropCancelled: true });
+  }
+  await expect(chips).toHaveCount(3);
+  for (const chip of await chips.all()) await expect(chip).toHaveAttribute('data-status', 'done');
   expect(page.url()).toBe(url);
 });
 
