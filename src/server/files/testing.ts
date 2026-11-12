@@ -3,7 +3,6 @@
  * transcript store for the index backfill, a fixed entry lookup, and a counting file system that
  * wraps the real one (L15: a rejected path must leave `calls` empty). Never used in production.
  */
-import type { Readable } from 'node:stream';
 import type { ConversationId, EntryId } from '@shared/common';
 import type { TranscriptItem } from '@shared/model';
 import type { TranscriptStore } from '../sync/ports';
@@ -68,9 +67,9 @@ export function countingFileFs(base: FileFs = nodeFileFs): FileFs & { calls: str
       record('readHead', file);
       return base.readHead(file, length);
     },
-    createReadStream: (file, bytes): Readable => {
-      record('createReadStream', file);
-      return base.createReadStream(file, bytes);
+    readWhole: (file, max) => {
+      record('readWhole', file);
+      return base.readWhole(file, max);
     },
     readdir: (dir): Promise<FileDirEntry[]> => {
       record('readdir', dir);
