@@ -45,6 +45,11 @@ const test = base.extend<object, { live: LiveServer }>({
           path.join(workerInfo.project.outputDir, 'live-cost.txt'),
           `estimated cost of this live run: ${cost.toFixed(4)} USD (turn_result.costUsdTotal)\n`,
         );
+        // WP-62: `pnpm cli-check` reads cost and temp root (its CLI transcripts are cleaned up).
+        await writeFile(
+          path.join(workerInfo.project.outputDir, 'live-run.json'),
+          `${JSON.stringify({ root: live.root, costUsd: cost })}\n`,
+        );
         await live.server.stop(async (lines) => {
           await writeFile(
             path.join(workerInfo.project.outputDir, 'server-live.log'),

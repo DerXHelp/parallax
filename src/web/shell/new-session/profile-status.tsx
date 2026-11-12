@@ -9,6 +9,7 @@ import {
 import type { ClaudeInstallStatus, ProfileColor, ProfileIssue, ProfileSummary } from '@shared/model';
 import { useI18n, type TranslationKey, type TranslationParams } from '@web/i18n';
 import { cn } from '@web/lib/cn';
+import { newerThanTested } from '@web/lib/version';
 import { PROFILE_BG } from '@web/shell/navigation/profile-colors';
 import { issueDetail } from './profile-issues';
 
@@ -18,7 +19,8 @@ import { issueDetail } from './profile-issues';
  * ADR-102). Used by the "New session" dialog and the profile editor (features/profiles).
  */
 
-export type ProfileStatusTone = 'ok' | 'warning' | 'error' | 'checking';
+/** `info` (WP-62): ready, but newer than the version tested with Parallax – a hint, not a warning. */
+export type ProfileStatusTone = 'ok' | 'info' | 'warning' | 'error' | 'checking';
 
 export interface ProfileStatusText {
   tone: ProfileStatusTone;
@@ -46,6 +48,12 @@ export function profileStatusText(claude: ClaudeInstallStatus): ProfileStatusTex
   if (claude.auth.state === 'error') return { tone: 'warning', key: 'newSession.status.authError', params: { version } };
   const plan = claude.auth.subscriptionType;
   if (version === '') return { tone: 'ok', key: 'newSession.status.readyNoVersion', params: {} };
+  const tested = newerThanTested(claude);
+  if (tested !== null) {
+    return plan === null
+      ? { tone: 'info', key: 'newSession.status.untested', params: { version, tested } }
+      : { tone: 'info', key: 'newSession.status.untestedPlan', params: { version, plan, tested } };
+  }
   return plan === null
     ? { tone: 'ok', key: 'newSession.status.ready', params: { version } }
     : { tone: 'ok', key: 'newSession.status.readyPlan', params: { version, plan } };
@@ -53,6 +61,7 @@ export function profileStatusText(claude: ClaudeInstallStatus): ProfileStatusTex
 
 const TONE_ICON: Readonly<Record<ProfileStatusTone, LucideIcon>> = {
   ok: CircleCheckIcon,
+  info: InfoIcon,
   warning: TriangleAlertIcon,
   error: CircleAlertIcon,
   checking: LoaderCircleIcon,
@@ -60,6 +69,7 @@ const TONE_ICON: Readonly<Record<ProfileStatusTone, LucideIcon>> = {
 
 const TONE_CLASS: Readonly<Record<ProfileStatusTone, string>> = {
   ok: 'text-success',
+  info: 'text-info',
   warning: 'text-warning',
   error: 'text-destructive',
   checking: 'text-muted-foreground motion-safe:animate-spin',

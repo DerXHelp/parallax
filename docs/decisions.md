@@ -1950,3 +1950,23 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   wieder aufnehmen (`docs/sdk-upgrade.md`). Die Tätigkeit aus `task_progress` wird nicht angezeigt (dafür
   bräuchte es ein Contract-Feld). Umsetzung und Tests: `backend/sdkOptions.ts`, `backend/sdkBackend.ts`,
   `sessions/normalizer/live.ts`, `backend/fake/{dsl,phase3}.ts` und die zugehörigen Tests „WP61-0x: …“.
+
+## ADR-160 – `claude`-Updates: CLI-Profil im Repo, Kurz-Check, Hinweis „neuer als geprüft“
+- **Datum/WP:** 12.11.2026, WP-62; angenommen (12.11.2026, Koordinator beim Merge).
+- **Kontext:** `claude` erscheint oft mehrmals pro Woche und aktualisiert sich selbst (Nutzer: „Parallax muss
+  immer aktuell gehalten werden“). Die Änderungen der CLI 2.1.322 (ADR-155/156) fielen erst in der großen
+  Live-Abnahme WP-61 auf, nicht im Live-Smoke. Dauerfreigaben des Nutzers vom 12.11.2026 (`progress.md`).
+- **Entscheidung:** Die zuletzt geprüfte CLI steht als Profil `src/server/claude/cli-profile.json` im Repo
+  (Schema v1, zod, sortierte Listen, ohne MCP-Werkzeuge und Kontowerte) und kommt per JSON-Import ins
+  Server-Bundle; der Server meldet `ClaudeInstallStatus.testedVersion`. Ist die installierte Version neuer,
+  zeigt die UI einen Info-Hinweis (kein Fehler, blockiert nichts), `pnpm preflight` warnt. `pnpm cli-check`
+  (Stufe 1): Vorprüfung ohne Kosten, isolierte Haiku-Probe über die echten Startpfade (`settingSources: []`,
+  keine MCP-Server, Werkzeuge verweigert), Live-Smoke `e2e/live`, Vergleich, Bericht, Rückbau nur
+  nachweislich eigener Daten; Budget 0,05 USD; Exit 0/1/2; nur `--accept` schreibt Profil und Protokoll
+  (`docs/cli-updates.md`). Abweichungen: Werkzeuge, Init-/`initializationResult`-Schlüssel, Capabilities,
+  Modelle, Kontext-Kategorien, `permissionMode`, Smoke-Fehler, `unknownCounts`, Drops; nur Notiz:
+  Slash-Commands, Agents, Skills, Modell-ID, Versionen. Ablauf als Projekt-Skill `/claude-update`.
+- **Folgen:** Ein neues Profil ändert die Build-ID → die produktive Instanz baut nach `git pull` neu, erst
+  dann verschwindet der Hinweis. `pnpm e2e` leert `test-results/` samt Check-Bericht (`--last --accept`
+  vorher). Stufe 2 (SDK-Upgrade, Neuaufzeichnung) bleibt `docs/sdk-upgrade.md`. Umsetzung:
+  `src/server/claude/cliProfile.ts`, `scripts/cli-check/**`, `.claude/skills/claude-update/SKILL.md`.
