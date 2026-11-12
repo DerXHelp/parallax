@@ -17,6 +17,11 @@ describe('createFakeClaudeIntegration', () => {
     expect(summary?.claude).toMatchObject({ version: FAKE_CLAUDE_VERSION, versionStatus: 'ok' });
   });
 
+  it('WP-62: the fake claude is the tested version – no "newer than tested" hint', () => {
+    const [summary] = createFakeClaudeIntegration().profiles.summaries();
+    expect(summary?.claude.testedVersion).toBe(FAKE_CLAUDE_VERSION);
+  });
+
   it('profiles report ok/logged_in (no setup screen); summaries are schema-true', () => {
     const claude = createFakeClaudeIntegration();
     const [summary] = claude.profiles.summaries();

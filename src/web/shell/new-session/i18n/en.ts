@@ -52,6 +52,9 @@ export const en = {
     ready: 'Claude Code {version}',
     readyPlan: 'Claude Code {version} · {plan}',
     readyNoVersion: 'Claude Code ready',
+    /** WP-62: ready, but newer than the version tested with Parallax (a hint, not a warning). */
+    untested: 'Claude Code {version} – newer than tested ({tested})',
+    untestedPlan: 'Claude Code {version} · {plan} – newer than tested ({tested})',
   },
   /** Findings of the profile check (ProfileIssue): level word and details. Never env values. */
   issues: {

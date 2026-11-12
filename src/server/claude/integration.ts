@@ -20,6 +20,7 @@ import { readPersistentEnvironment, type PersistentEnvironment } from '../lib/re
 import { getEnvVar, nodeFsProbe, searchPath, type FsProbe } from '../lib/windows';
 import { CommandError } from '../sync/ports';
 import { parseAuthStatus, UNKNOWN_AUTH, type AuthStatusView } from './authStatus';
+import { testedCliVersion } from './cliProfile';
 import { buildEnv, buildEnvReport, clientAppId, setEnvVar } from './env';
 import { parseProfileArgs } from './profileArgs';
 import { errorCount, profileIssues } from './profileIssues';
@@ -58,6 +59,8 @@ export interface ClaudeIntegrationDeps {
   runFile?: RunFileFn;
   /** Minimum CLI version (SDK package.json#claudeCodeVersion); default: read from the installed SDK. */
   sdkClaudeCodeVersion?: string | null;
+  /** WP-62: the claude version last checked with Parallax; default: the bundled CLI profile. */
+  testedVersion?: string | null;
   now?: () => Date;
   /** How long launchSpecFor reuses a resolved executable (default 5 min; the path is re-checked). */
   resolveCacheMs?: number;
@@ -128,6 +131,7 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
   const now = deps.now ?? (() => new Date());
   const cacheMs = deps.resolveCacheMs ?? DEFAULT_RESOLVE_CACHE_MS;
   const clientApp = clientAppId(deps.appVersion);
+  const testedVersion = deps.testedVersion === undefined ? testedCliVersion() : deps.testedVersion;
   const cache = new Map<ProfileId, CacheEntry>();
   /** Keyed by profile id + resolutionKey: a changed profile never joins an older resolution. */
   const inFlight = new Map<string, Promise<ResolveClaudeResult>>();
@@ -242,6 +246,7 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
       path: null,
       version: null,
       versionStatus: 'unknown',
+      testedVersion,
       auth: { ...UNKNOWN_AUTH },
       error: null,
       checkedAt: now().toISOString(),
