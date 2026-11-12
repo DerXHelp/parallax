@@ -2,7 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { PLAIN_STYLE, applySgr, parseAnsi, stripAnsi } from './ansi';
 import { splitMarkdownBlocks } from './markdown-blocks';
 import { markdownUrlTransform, safeHttpUrl } from './safe-url';
-import { clipForDisplay, countLines, firstLine, normalizeTerminalText, stripToolUseError } from './text';
+import {
+  COLLAPSE_AFTER,
+  clipForDisplay,
+  collapsedPreview,
+  countLines,
+  firstLine,
+  normalizeTerminalText,
+  stripToolUseError,
+} from './text';
 
 const ESC = '\u001b';
 
@@ -162,5 +170,19 @@ describe('clipForDisplay (R2W-06)', () => {
     const clipped = clipForDisplay(log);
     expect(clipped.clipped).toBe(true);
     expect(countLines(clipped.text)).toBe(20_000);
+  });
+});
+
+describe('collapsedPreview (V4-07)', () => {
+  const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${String(i + 1)}`).join('\n');
+
+  it('keeps short texts whole (null) and cuts long ones to their first lines or characters', () => {
+    expect(collapsedPreview('')).toBeNull();
+    expect(collapsedPreview(lines(COLLAPSE_AFTER.lines))).toBeNull();
+    expect(collapsedPreview('x'.repeat(COLLAPSE_AFTER.chars))).toBeNull();
+    expect(collapsedPreview(`${lines(40)}\n\nwhat is broken?`)).toBe(lines(8));
+    expect(collapsedPreview('x'.repeat(COLLAPSE_AFTER.chars + 1))).toBe('x'.repeat(800));
+    // Trailing blank lines of the preview are dropped.
+    expect(collapsedPreview(`${lines(3)}\n\n\n\n\n\n\n${lines(20)}`)).toBe(lines(3));
   });
 });

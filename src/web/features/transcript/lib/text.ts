@@ -33,6 +33,27 @@ export function countLines(text: string): number {
   return text.endsWith('\n') ? count - 1 : count;
 }
 
+/** A user message with more lines or characters than this starts collapsed (V4-07). */
+export const COLLAPSE_AFTER = { lines: 14, chars: 2000 } as const;
+/** The collapsed view: the first lines, at most this many characters. */
+const COLLAPSED_PREVIEW = { lines: 8, chars: 800 } as const;
+
+/** The start of a long text for its collapsed view (`COLLAPSE_AFTER`), null when it is short. */
+export function collapsedPreview(text: string): string | null {
+  if (countLines(text) <= COLLAPSE_AFTER.lines && text.length <= COLLAPSE_AFTER.chars) return null;
+  let end = Math.min(text.length, COLLAPSED_PREVIEW.chars);
+  let lines = 0;
+  for (let i = 0; i < end; i++) {
+    if (text.charCodeAt(i) !== 10) continue;
+    lines++;
+    if (lines >= COLLAPSED_PREVIEW.lines) {
+      end = i;
+      break;
+    }
+  }
+  return text.slice(0, end).trimEnd();
+}
+
 /**
  * Inline budget of a loaded full text (R2W-06): a multi-MB build log or file would freeze the
  * renderer (ANSI scan, one huge text node / thousands of line spans). Beyond it the view is clipped.

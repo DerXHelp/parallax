@@ -1,6 +1,6 @@
 import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
 import type { ToolCallItem, ToolResult } from '@shared/model';
 import { SAMPLE_IDS, sampleBlobId, sampleItems, sampleTime } from '@shared/samples';
@@ -20,6 +20,16 @@ vi.mock('@web/shell/decision-focus', () => ({ focusDecision }));
 // Some rows load lazy chunks (highlighter, grammars) on first use: up to 2.6 s in a full
 // `pnpm test`, 5–7 s when several runs load the machine (docs/wp/FLAKES.md).
 vi.setConfig({ testTimeout: 30_000 });
+
+// The jsdiff fallback computes in the lazy `diff` chunk: its first import alone can take longer than
+// a `findBy*` waits under load (WP-60 follow-up 4). Load it once up front – the test still takes the
+// asynchronous path (the rows cache is empty), only the module comes from the cache.
+beforeAll(async () => {
+  await import('diff');
+}, 180_000);
+
+/** Waiting for a lazy chunk (diff, highlighter) – longer than the 5-s default of `findBy*`. */
+const LAZY = { timeout: 15_000 };
 
 const SESSION = makeSessionKey(LOCAL_HOST_ID, SAMPLE_IDS.entry);
 const ESC = '\u001b';
@@ -255,7 +265,7 @@ describe('Edit / Write', () => {
     const user = userEvent.setup();
     renderRow(toolItem({ toolName: 'Edit', input: editInput, result: result('updated') }));
     await expand(user);
-    expect(await screen.findByText(/line numbers count from the changed text/)).toBeTruthy();
+    expect(await screen.findByText(/line numbers count from the changed text/, {}, LAZY)).toBeTruthy();
     expect(document.querySelector('[data-slot="diff"] tr[data-kind="remove"]')?.textContent).toContain(
       'const a = 1;',
     );
@@ -460,7 +470,7 @@ describe('ToolInputPreview slot', () => {
         input={{ file_path: 'a.ts', old_string: 'one', new_string: 'two' }}
       />,
     );
-    const diff = await screen.findByText('two');
+    const diff = await screen.findByText('two', {}, LAZY);
     expect(diff.closest('tr')?.getAttribute('data-kind')).toBe('add');
     unmount();
     const { unmount: unmountWrite } = render(
