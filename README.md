@@ -2,8 +2,8 @@
 
 Lokale Mission-Control-App für viele parallele Claude-Code-Sessions unter Windows: ein Node-Server
 auf `127.0.0.1` steuert je Session das installierte `claude` über das Claude Agent SDK, die Web-UI
-läuft als Chrome-App-Fenster. Status: Phase 2 „Mission Control“ abgeschlossen, Phase 3 in Planung (siehe
-`docs/progress.md`).
+läuft als Chrome-App-Fenster. Status: Phase 3 „Dateien und Plan-Komfort“ abgeschlossen (auf `main`;
+siehe `docs/progress.md`).
 
 ## Voraussetzungen
 - **Node.js 26** (Minimum 22). `.node-version` enthält `26` für fnm, nvm-windows oder Volta.
@@ -120,6 +120,20 @@ pnpm start --print-url         # Optionen direkt anhängen (pnpm reicht ein `--`
   = Entwicklungs-Repo); Entwicklungs-Neustarts betreffen sie nicht. Gemeinsam bleiben nur das
   installierte `claude` und `~/.claude` – ein CLI-Update betrifft beide (`docs/sdk-upgrade.md`).
 
+### `claude`-Updates
+- `claude` aktualisiert sich selbst, oft mehrmals pro Woche. Parallax kennt die zuletzt mit Parallax
+  geprüfte Version (CLI-Profil `src/server/claude/cli-profile.json`). Ist die installierte Version
+  neuer, zeigen die Kopfzeile und der Profilstatus beim Anlegen einer Session einen dezenten Hinweis
+  („Claude Code <v> ist neuer als die mit Parallax geprüfte Version <t>“), `pnpm preflight` eine
+  Warnung. Parallax läuft trotzdem normal weiter – der Hinweis heißt nur „noch nicht geprüft“.
+- **Routine:** In einer Claude-Session im Entwicklungs-Repo `/claude-update` aufrufen (Projekt-Skill).
+  Er führt `pnpm cli-check` aus (live, Haiku, Abo-Login, höchstens 0,05 USD, ≈ 2 min), vergleicht mit
+  dem Profil und übernimmt es bei grünem Ergebnis nach `main`. Abweichungen, die mehr als kleine
+  Anpassungen brauchen, legt er zur Entscheidung vor. Danach in der produktiven Instanz wie unter
+  „Aktualisieren“ beschrieben `git pull` – der Hinweis verschwindet nach dem Neustart.
+- Protokoll der geprüften Versionen: `docs/cli-updates.md`; Ablauf und Stufe 2 (SDK-Upgrade):
+  `docs/sdk-upgrade.md`.
+
 ### Chrome-Profil
 Das App-Fenster nutzt ein eigenes Chrome-Profil (`<Datenordner>\chrome`), getrennt vom normalen
 Chrome des Nutzers. Es meldet sich **nie** bei einem Google-Konto an und synchronisiert **nie**: Der
@@ -159,8 +173,9 @@ Tab desselben Profils.
   Session nach vorn holen.
 - **Ohne offenes Fenster** (oder wenn ein Fenster keine Benachrichtigungen zeigen darf) zeigt der
   Server einen **Windows-Toast** mit Absender „Parallax“ (PowerShell-Helfer, ohne Installation).
-  Ein Klick auf diesen Toast schließt ihn nur (Öffnen der Session per `parallax:`-Protokoll folgt
-  in Phase 2). Abschalten: `--toasts=off` bzw. `PARALLAX_TOASTS=off`; in Tests ist er immer aus.
+  Ist in den Einstellungen „Klick auf eine Windows-Benachrichtigung öffnet die Session“ an, öffnet ein
+  Klick auf den Toast die Session in einem neuen App-Fenster (`parallax:`-Protokoll unter HKCU, nur auf
+  dem produktiven Server, ADR-109/ADR-110); sonst schließt der Klick ihn nur. Abschalten: `--toasts=off` bzw. `PARALLAX_TOASTS=off`; in Tests ist er immer aus.
 - **Was Parallax dafür unter HKCU einträgt** (nur der eigene Benutzer, keine Admin-Rechte): den
   Anzeigenamen „Parallax“ unter `HKCU\Software\Classes\AppUserModelId\Parallax.App` – die einzige
   Änderung, die Parallax selbst außerhalb des Datenordners macht. Der Helfer legt den Schlüssel bei

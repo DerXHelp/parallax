@@ -77,6 +77,8 @@ export const en = {
       claudeMissing: 'Claude Code: not found',
       claudeUnknown: 'Claude Code: version unknown',
       claudeTooOld: 'Older than the Agent SDK expects (at least {required}).',
+      /** WP-62: quiet hint, no error – a newer CLI stays supported. */
+      claudeNewerThanTested: 'Claude Code {version} is newer than the version tested with Parallax ({tested}).',
       sdk: 'Agent SDK {version} · expects Claude Code {required} or newer',
       parallax: 'Parallax {version}',
       data: 'Data: {path}',

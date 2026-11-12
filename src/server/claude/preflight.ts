@@ -20,6 +20,7 @@ import { checkHomeAccess, type HomeAccess } from '../lib/homeAccess';
 import { errnoCode, powerShellPath, runFile, type RunFileFn } from '../lib/process';
 import { parseRegValues, regKeyQuery, regQuery, type RegKeyQuery, type RegQuery } from '../lib/registry';
 import { getEnvVar, nodeFsProbe, resolveExecutable, type FsProbe } from '../lib/windows';
+import { isNewerThanTested } from './cliProfile';
 import type { ClaudeIntegrationImpl } from './integration';
 import { PROFILES_FILE, profilesOf, readProfilesFile, type ProfilesFileRead } from './profileStore';
 import { compareVersions } from './resolveClaude';
@@ -147,7 +148,9 @@ export function checkProfileStatus(
     return [claude];
   }
   const version = status.version ?? 'unknown version';
-  claude.detail = `${status.path}, ${version} (${label})`;
+  // WP-62: `claude <v> (tested <t>)` – the version last checked with Parallax (CLI profile).
+  const tested = status.testedVersion;
+  claude.detail = `${status.path}, ${version} (${tested === null ? '' : `tested ${tested}, `}${label})`;
   if (status.state === 'error') {
     claude.level = 'fail';
     claude.hint = `\`claude --version\` failed: ${status.error?.code ?? 'error'} ${JSON.stringify(status.error?.params ?? {})}`;
@@ -159,6 +162,10 @@ export function checkProfileStatus(
   } else if (status.versionStatus === 'unknown') {
     claude.level = 'warn';
     claude.hint = 'The version could not be compared with the SDK requirement.';
+  } else if (isNewerThanTested(status.version, tested)) {
+    claude.level = 'warn';
+    claude.detail = `${claude.detail} – newer than tested`;
+    claude.hint = `claude ${version} is newer than the version tested with Parallax (${tested ?? '?'}) – run \`pnpm cli-check\` (docs/sdk-upgrade.md, "Stufe 1").`;
   }
 
   const auth = status.auth;
