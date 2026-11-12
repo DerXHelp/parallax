@@ -9,6 +9,7 @@ import { REDACTED, logger, redactText } from '../lib/logger';
 import type { RunFileOptions, RunFileResult } from '../lib/process';
 import { createStoreWarnings } from '../store/jsonStore';
 import { CommandError } from '../sync/ports';
+import { testedCliVersion } from './cliProfile';
 import { createClaudeIntegration, profileNeedsSetup } from './integration';
 import type { ConsoleLaunchRequest } from './ports';
 import { openProfileStore, type PersistentProfileStore } from './profileStore';
@@ -56,6 +57,8 @@ function setup(
     profileList?: Profile[];
     profiles?: PersistentProfileStore;
     sdkClaudeCodeVersion?: string | null;
+    /** WP-62: undefined = the bundled CLI profile; the default here is null (sample status). */
+    testedVersion?: string | null;
     resolveCacheMs?: number;
     persistentEnv?: () => Promise<ReadonlyMap<string, string> | null>;
     baseEnv?: Record<string, string>;
@@ -84,6 +87,7 @@ function setup(
     sdkClaudeCodeVersion:
       options.sdkClaudeCodeVersion === undefined ? '2.1.296' : options.sdkClaudeCodeVersion,
     now: () => new Date('2026-10-15T08:00:00.000Z'),
+    testedVersion: options.testedVersion === undefined ? null : options.testedVersion,
     ...(options.profileList === undefined ? {} : { profiles: createProfileStore(options.profileList) }),
     ...(options.profiles === undefined ? {} : { profiles: options.profiles }),
     ...(options.resolveCacheMs === undefined ? {} : { resolveCacheMs: options.resolveCacheMs }),
@@ -288,6 +292,23 @@ describe('checkProfile ("Profil testen")', () => {
     expect(profileNeedsSetup(status)).toBe(false);
   });
 
+  it('WP-62: reports the tested version (deps, default: the bundled CLI profile)', async () => {
+    const tested = await setup({ testedVersion: '2.1.290' }).integration.checkProfile(STANDARD_PROFILE_ID);
+    expect(tested).toEqual(sampleClaudeInstallStatus({ path: LOCAL, testedVersion: '2.1.290' }));
+    const bundled = createClaudeIntegration({
+      appVersion: '1.2.3',
+      baseEnv: () => BASE_ENV,
+      persistentEnv: () => Promise.resolve(null),
+      fs: createMemoryFs({ [LOCAL]: '' }),
+      where: () => Promise.resolve([LOCAL]),
+      runFile: (_file, args) =>
+        Promise.resolve(args[0] === '--version' ? result('2.1.300 (Claude Code)\n') : result(AUTH_OK)),
+      sdkClaudeCodeVersion: '2.1.296',
+    });
+    expect((await bundled.checkProfile(STANDARD_PROFILE_ID)).testedVersion).toBe(testedCliVersion());
+    expect(testedCliVersion()).not.toBeNull();
+  });
+
   it('never logs or returns e-mail/org', async () => {
     const debug = vi.spyOn(logger, 'debug');
     const { integration } = setup();
@@ -364,6 +385,7 @@ describe('checkProfile ("Profil testen")', () => {
       path: null,
       version: null,
       versionStatus: 'unknown',
+      testedVersion: null,
       auth: { state: 'unknown', method: null, apiProvider: null, subscriptionType: null },
       error: { code: 'CLAUDE_NOT_FOUND', params: { source: 'path', candidates: 0 } },
       checkedAt: '2026-10-15T08:00:00.000Z',

@@ -46,6 +46,8 @@ export const de: typeof en = {
     ready: 'Claude Code {version}',
     readyPlan: 'Claude Code {version} · {plan}',
     readyNoVersion: 'Claude Code bereit',
+    untested: 'Claude Code {version} – neuer als geprüft ({tested})',
+    untestedPlan: 'Claude Code {version} · {plan} – neuer als geprüft ({tested})',
   },
   issues: {
     levels: {

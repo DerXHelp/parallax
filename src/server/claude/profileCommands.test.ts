@@ -50,6 +50,7 @@ async function setup(counts: Record<string, number> = {}) {
     where: () => Promise.resolve([LOCAL]),
     runFile: run,
     sdkClaudeCodeVersion: '2.1.296',
+    testedVersion: null,
     now: () => new Date('2026-10-15T08:00:00.000Z'),
   });
   const commands = createProfileCommands({

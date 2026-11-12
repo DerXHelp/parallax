@@ -13,7 +13,7 @@ Dialog merkt sich beim Öffnen das fokussierte Element und gibt ihm den Fokus be
 | --- | --- |
 | `FolderBrowser.tsx` | `FolderBrowser` (Dialog mit Trigger-Kind): Wurzeln/Start-Ordner, Brotkrumen (bei langen Pfaden ans Ende gescrollt, V3-01), „Nach oben“, „Versteckte anzeigen“, Tastatur, „Diesen Ordner wählen“ übernimmt `path` exakt; `breadcrumbs(path)`. Auch vom Profil-Editor genutzt (`configDir`) |
 | `ProfileSelect.tsx` | `ProfileSelect` (Menü: Farbe, Name, „Standard“, Claude-Code-Zustand; Profile mit Fehler-Befunden gesperrt, Gründe im Tooltip) |
-| `profile-status.tsx` | `ProfileStatus`, `profileStatusText`, `ProfileColorDot`, `ProfileIssueText`, `profileErrors` (leer = Profil nutzbar) – gemeinsam mit `features/profiles` |
+| `profile-status.tsx` | `ProfileStatus`, `profileStatusText`, `ProfileColorDot`, `ProfileIssueText`, `profileErrors` (leer = Profil nutzbar) – gemeinsam mit `features/profiles`; WP-62: Ton `info` „neuer als geprüft“ (`newSession.status.untested`/`untestedPlan`), wenn `version` neuer als `testedVersion` |
 | `profile-issues.ts` | Details eines Befunds (`issueDetail`, `issueArgIndex`, `issueField`, `issueEnvKey`, `issueCounts`) – nie Env-Werte |
 | `recent-projects.ts` | `recentProjects(entries)` (max. 8, case-insensitiv per `windowsPathKey`, archivierte inklusive), `filterRecentProjects` (Fuzzy, `lib/fuzzy.ts`) |
 | `demo-folders.ts`, `demo-host.ts` | nur Tests/Playground: Ordnerbaum für `fs.listDirectory`, FakeHost hinter einer echten `HostConnection` (`startNewSessionDemo`) |
