@@ -28,7 +28,8 @@
     "e2e": "playwright test",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run test",
     "preflight": "tsx --tsconfig tsconfig.tools.json scripts/preflight.ts",
-    "record": "tsx --tsconfig tsconfig.tools.json scripts/record.ts"
+    "record": "tsx --tsconfig tsconfig.tools.json scripts/record.ts",
+    "cli-check": "tsx --tsconfig tsconfig.tools.json scripts/cli-check.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.322",
