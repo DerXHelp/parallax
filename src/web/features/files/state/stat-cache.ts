@@ -54,6 +54,8 @@ export class StatCache {
   private readonly listeners = new Set<() => void>();
   /** Waiting paths per session: key → path as first requested. */
   private readonly pending = new Map<string, Map<string, string>>();
+  /** Keys invalidated while their request was on its way: the answer is stored stale (CR3-06). */
+  private readonly staleOnArrival = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   /** A notification is queued (microtask): changes of one render/answer reach the listeners once. */
   private notifyQueued = false;
@@ -105,19 +107,31 @@ export class StatCache {
     this.queueNotify();
   }
 
-  /** Drops the freshness of an answer (it stays visible until the new one arrives). */
+  /**
+   * Drops the freshness of an answer (it stays visible until the new one arrives). While a request
+   * is on its way, its answer may predate the change: it arrives stale and the next `ensure` asks
+   * again (CR3-06). A request still waiting for its batch is answered after the change – nothing to do.
+   */
   invalidate(sessionKey: string, path: string): void {
     const key = cacheKey(sessionKey, path);
     const entry = this.entries.peek(key);
-    if (entry === undefined || entry.loading || entry.at === 0) return;
+    if (entry === undefined) return;
+    if (entry.loading) {
+      if (this.pending.get(sessionKey)?.has(key) !== true) this.staleOnArrival.add(key);
+      return;
+    }
+    if (entry.at === 0) return;
     this.write(key, { ...entry, at: 0 });
     this.queueNotify();
   }
 
-  /** Invalidates the answer when it is older than `at` (a write finished after it was fetched). */
+  /**
+   * Invalidates the answer when it is older than `at` (a write finished after it was fetched) or
+   * still on its way (it may have been computed before the write).
+   */
   invalidateBefore(sessionKey: string, path: string, at: number): void {
     const entry = this.entries.peek(cacheKey(sessionKey, path));
-    if (entry !== undefined && !entry.loading && entry.at < at) this.invalidate(sessionKey, path);
+    if (entry !== undefined && (entry.loading || entry.at < at)) this.invalidate(sessionKey, path);
   }
 
   /** Sends the waiting requests now (tests; normally the 50 ms timer does it). */
@@ -139,6 +153,7 @@ export class StatCache {
     if (this.timer !== null) clearTimeout(this.timer);
     this.timer = null;
     this.pending.clear();
+    this.staleOnArrival.clear();
     this.entries.clear();
     this.notify();
   }
@@ -150,11 +165,15 @@ export class StatCache {
       const at = this.now();
       items.forEach(([key], index) => {
         const result = results[index];
+        const stale = this.staleOnArrival.delete(key);
         if (result === undefined) this.fail(key);
-        else this.write(key, { result, at, loading: false });
+        else this.write(key, { result, at: stale ? 0 : at, loading: false });
       });
     } catch {
-      for (const [key] of items) this.fail(key);
+      for (const [key] of items) {
+        this.staleOnArrival.delete(key);
+        this.fail(key);
+      }
     }
     this.queueNotify();
   }

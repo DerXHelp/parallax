@@ -121,6 +121,54 @@ describe('StatCache (WP-54 C.10)', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it('a write that ends while the answer is on its way makes that answer stale (CR3-06)', async () => {
+    let now = 1_000_000;
+    const answers: ((results: readonly FileStatResult[]) => void)[] = [];
+    const calls: (readonly string[])[] = [];
+    const send = vi.fn<StatSender>((_sessionKey, paths) => {
+      calls.push(paths);
+      return new Promise((resolve) => {
+        answers.push(resolve);
+      });
+    });
+    const cache = new StatCache({ send, now: () => now });
+    const path = 'D:\\work\\new.md';
+    // FileLink with verify on a file that does not exist yet: file.statMany is under way …
+    cache.ensure(KEY, path);
+    cache.flush();
+    expect(calls).toHaveLength(1);
+    // … Claude's Write ends now (useFileStat: invalidateBefore with the write stamp) …
+    now += 10;
+    cache.invalidateBefore(KEY, path, now);
+    // … and the answer computed before it arrives later: "missing".
+    now += 10;
+    answers[0]?.([{ path, ok: false, error: makeError('FILE_NOT_FOUND', { path }) }]);
+    await vi.runAllTimersAsync();
+    expect(cache.peek(KEY, path)).toMatchObject({ loading: false, at: 0, result: { ok: false } });
+    // The next ensure (the link's effect on the new entry) asks again instead of 30 s "missing".
+    cache.ensure(KEY, path);
+    cache.flush();
+    expect(calls).toHaveLength(2);
+    answers[1]?.([ok(path)]);
+    await vi.runAllTimersAsync();
+    expect(cache.peek(KEY, path)).toMatchObject({ loading: false, at: now, result: { ok: true } });
+  });
+
+  it('a write before the batch is sent needs no second request (the answer is newer)', async () => {
+    const { cache, calls, advance } = setup();
+    cache.ensure(KEY, 'D:\\work\\a.md');
+    advance(10);
+    cache.invalidateBefore(KEY, 'D:\\work\\a.md', 1_000_010);
+    cache.invalidate(KEY, 'D:\\work\\a.md');
+    cache.flush();
+    await vi.runAllTimersAsync();
+    expect(cache.peek(KEY, 'D:\\work\\a.md')).toMatchObject({ loading: false, result: { ok: true } });
+    expect(cache.peek(KEY, 'D:\\work\\a.md')?.at).not.toBe(0);
+    cache.ensure(KEY, 'D:\\work\\a.md');
+    cache.flush();
+    expect(calls).toHaveLength(1);
+  });
+
   it('evicts the least recently used entries beyond maxEntries', async () => {
     const { cache } = setup({ maxEntries: 3 });
     for (const name of ['a', 'b', 'c']) cache.ensure(KEY, `D:\\work\\${name}.md`);
