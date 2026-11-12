@@ -2006,3 +2006,46 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   `@web/state/transcript-view`.
 - **Folgen:** `settings.transcriptView` ist freigegeben (12.11.2026); WP-65 zieht die Wahl dorthin um (einmalige
   Übernahme aus `localStorage`) und löst diesen ADR damit ab.
+
+## ADR-166 – Remote Control: Wunsch je Session, Live-Zustand je Prozess, Bridge je Unterhaltung
+- **Datum/WP:** 12.11.2026, WP-64; angenommen (12.11.2026, Koordinator beim Merge).
+- **Kontext:** `remoteControlAtStartup` wertet nur die TUI aus; headless Hosts schalten per `enableRemoteControl`
+  (intern) ein (`docs/wp/MACHBARKEIT-REMOTE-CONTROL.md`, Spike).
+- **Entscheidung:** `Entry.remoteControlWanted` wird persistiert; der Live-Zustand kommt nur aus `system/bridge_state`;
+  `bridgeSessionId`/`sessionUrl` hängen an der Unterhaltung. Immer `keepSessionOnExit` + `reattachSessionId` (ein
+  gescheitertes Reattach einmal ohne); `/clear` und frischer Kontext erben die Bridge, Aus/Archiv/Entfernen vergessen
+  sie. Neue Sessions folgen `settings.remoteControl.newSessions` (Default „wie Claude-Einstellung“).
+- **Folgen:** Schließen, Schlaf, Absturz und Serverneustart behalten denselben Link. Ruhende archivierte/entfernte
+  Sessions können die Bridge nicht abschalten (kein Prozess) – der Eintrag bleibt in der App.
+
+## ADR-167 – Kein Leerlauf-Schlaf bei aktiver Bridge
+- **Datum/WP:** 12.11.2026, WP-64 (Nutzerentscheidung); angenommen (12.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Ergänzt ADR-105: Sessions mit Remote-Control-Zustand `connecting`/`connected`/`reconnecting`
+  schlafen nie (`isRemoteControlActive` in `@shared/model`); `failed`/`off` → normale Regel.
+- **Folgen:** Verbundene Sessions halten ihren Prozess; der Nutzer kann sie jederzeit vom Handy aus erreichen.
+
+## ADR-168 – `--replay-user-messages` immer an, Echo-Filter über die uuid
+- **Datum/WP:** 12.11.2026, WP-64; angenommen (12.11.2026, Koordinator beim Merge).
+- **Kontext:** Remote Control ist zur Laufzeit schaltbar; Prompts aus der App erkennt Parallax nur über Replays.
+- **Entscheidung:** Das Flag ist immer gesetzt. Eigene Prompts (auch mit `origin human`, das Parallax selbst sendet)
+  verwirft der Normalizer über die registrierte uuid; fremde Replays mit `origin human` werden `user_message` mit
+  `source: 'remote'` (Hinweis „Aus der Claude-App“).
+- **Folgen:** Queue, „grau bis verarbeitet“ und `command_lifecycle` bleiben unverändert; aus dem Verlauf importierte
+  Turns tragen keine Herkunft.
+
+## ADR-169 – `answered_elsewhere` als Heuristik
+- **Datum/WP:** 12.11.2026, WP-64; angenommen (12.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Endet `canUseTool` per Signal, während die Bridge `connected`/`reconnecting` ist und lokal keine
+  Antwort kam, ist der Ausgang `answered_elsewhere`; sonst wie bisher `cancelled`. Was entschieden wurde, zeigt erst
+  das folgende `tool_result`.
+- **Folgen:** In seltenen Fällen (Abbruch aus anderem Grund bei verbundener Bridge) steht „in der Claude-App
+  beantwortet“, obwohl es ein Abbruch war; Live-Abnahme prüft das.
+
+## ADR-170 – Remote-Control-Fehler sind Zustand, kein Befehlsfehler
+- **Datum/WP:** 12.11.2026, WP-64; angenommen (12.11.2026, Koordinator beim Merge).
+- **Entscheidung:** `session.setRemoteControl` gelingt; Fehler erscheinen als
+  `summary.remoteControl { state: 'failed', error }`. Die internen SDK-Methoden werden zur Laufzeit geprüft
+  (`REMOTE_CONTROL_UNAVAILABLE`); `pnpm cli-check` prüft Remote Control als Frühwarnung (Profilfeld `remoteControl`
+  nullable, `null` = nicht geprüft). Session-Links nur `https://claude.ai/…` (`isClaudeSessionUrl`).
+- **Folgen:** Muster für die weiteren internen Methoden (WP-65 bis WP-67): Laufzeitprüfung, tolerantes Parsen,
+  Probe im Kurz-Check.
