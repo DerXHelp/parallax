@@ -74,7 +74,7 @@ import {
 } from './entryState';
 import { restoreExternal } from './external';
 import { readGitBranch } from './lib/gitBranch';
-import { realTimers, type TimerHandle, type Timers } from './lib/timers';
+import { realTimers, settledWithin, type TimerHandle, type Timers } from './lib/timers';
 import { catalogOrFallback, type ModelCatalog } from './models';
 import {
   capInput as normalizerCapInput,
@@ -94,6 +94,7 @@ import {
   routeNotification,
 } from './notifier';
 import type { ReduceStatus } from './ports';
+import { withPlanIndex } from './planIndex';
 import type { ProcessRecord, ProcessStore } from './processStore';
 import {
   cleanupOrphans,
@@ -129,6 +130,8 @@ export const DEFAULT_SESSION_MANAGER_OPTIONS: SessionManagerOptions = {
   externalPollMs: 5_000,
   // ADR-112: a plan at most 1 h overdue is still sent after a restart.
   continueGraceMs: 3_600_000,
+  // WP61-03: the result of the denied planning turn usually follows the interrupt at once.
+  freshContextResultMs: 3_000,
 };
 
 /** WP22-05: bound of the interrupt sent at shutdown to a session that waits for a decision. */
@@ -303,6 +306,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     commandCatalogs: deps.stores.commandCatalogs ?? createMemoryCommandCatalogStore(),
     // Phase 3 (ADR-146): without WP-53's store no file attachments and no attachment folder.
     attachments: deps.stores.attachments ?? null,
+    // CR3-09: plan.list answers known plan versions without reading their text again.
+    decisions: withPlanIndex(deps.stores.decisions),
   };
   const toasts = deps.toasts ?? DISABLED_NATIVE_TOASTS;
   const hostCommands = deps.hostCommands ?? [];
@@ -890,22 +895,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           s.broker.freeze();
         }
         /** True when `work` settled within `ms` on the engine clock (timers seam), false on timeout. */
-        const within = async (work: Promise<unknown>, ms: number): Promise<boolean> => {
-          const cap: { timer: TimerHandle | null } = { timer: null };
-          const settled = await Promise.race([
-            work.then(
-              () => true,
-              () => true,
-            ),
-            new Promise<boolean>((resolve) => {
-              cap.timer = timers.setTimeout(() => {
-                resolve(false);
-              }, ms);
-            }),
-          ]);
-          cap.timer?.cancel();
-          return settled;
-        };
+        const within = (work: Promise<unknown>, ms: number): Promise<boolean> =>
+          settledWithin(timers, work, ms);
         // R4-03: lifecycle operations still running – `openExternal` while PowerShell opens the
         // console (its query is already closed, so the closes below do not wait for it), a return
         // import – finish before the stores are flushed; bounded, alongside the closes.

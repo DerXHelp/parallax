@@ -263,7 +263,13 @@ describe('DSL building blocks', () => {
         runInBackground: true,
         outputFile,
       }),
-      taskProgress(c, { taskId: 'task_toolu_bg', toolUseId: 'toolu_bg', description: 'Research', summary: 'Reading files', usage }),
+      taskProgress(c, {
+        taskId: 'task_toolu_bg',
+        toolUseId: 'toolu_bg',
+        activity: 'Running Read README.md',
+        summary: 'Reading files',
+        usage,
+      }),
       turnClose(c, null, { idle: false }),
       subagentEnd(c, { toolUseId: 'toolu_bg', taskId: 'task_toolu_bg', summary: 'All read.', outputFile, usage }),
       backgroundTasksChanged(c, []),
@@ -277,7 +283,15 @@ describe('DSL building blocks', () => {
     expect(call).toMatchObject({
       toolName: 'Agent',
       input: { run_in_background: true },
-      task: { taskId: 'task_toolu_bg', status: 'completed', summary: 'All read.', outputFile, isBackgrounded: true },
+      // WP61-07: the CLI's activity line of task_progress never becomes the task's name.
+      task: {
+        taskId: 'task_toolu_bg',
+        description: 'Research',
+        status: 'completed',
+        summary: 'All read.',
+        outputFile,
+        isBackgrounded: true,
+      },
     });
     const summaries = r.steps
       .flatMap((s) => s.ops)

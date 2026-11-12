@@ -245,6 +245,32 @@ describe('live normalizer: task output files and lost writes (WP-52)', () => {
     expect(lastTask(done)).toMatchObject({ status: 'completed', summary: 'PONG', outputFile: `${OUTPUT}2` });
   });
 
+  it('WP61-07: task_progress.description (the current activity) never renames the task', () => {
+    const n = fresh();
+    n.push(toolUse('toolu_agent', 'Agent', agentInput), AT);
+    n.push(system('task_started', { task_id: 'task-1', tool_use_id: 'toolu_agent', task_type: 'local_agent', description: 'Ping', is_backgrounded: true }), AT);
+    const progress = validOps(
+      n.push(
+        system('task_progress', {
+          task_id: 'task-1',
+          tool_use_id: 'toolu_agent',
+          description: 'Running Wait 60 seconds',
+          subagent_type: 'general-purpose',
+          summary: 'Waiting for the timer',
+          usage: { total_tokens: 900, tool_uses: 1, duration_ms: 1500 },
+        }),
+        AT,
+      ),
+    );
+    expect(lastTask(progress)).toMatchObject({
+      description: 'Ping',
+      summary: 'Waiting for the timer',
+      usage: { totalTokens: 900, toolUses: 1, durationMs: 1500 },
+    });
+    const done = n.push(system('task_notification', { task_id: 'task-1', tool_use_id: 'toolu_agent', status: 'completed', output_file: '', summary: 'PONG' }), AT);
+    expect(lastTask(done)).toMatchObject({ description: 'Ping', status: 'completed', summary: 'PONG' });
+  });
+
   it('keeps a launch result that arrives before task_started for the task', () => {
     const n = fresh();
     n.push(toolUse('toolu_agent', 'Agent', agentInput), AT);
