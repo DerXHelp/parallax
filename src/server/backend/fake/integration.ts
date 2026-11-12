@@ -91,6 +91,8 @@ function okStatus(at: Date): ClaudeInstallStatus {
     path: FAKE_CLAUDE_PATH,
     version: FAKE_CLAUDE_VERSION,
     versionStatus: 'ok',
+    // WP-62: the fake "installed" CLI is the tested one – no "newer than tested" hint.
+    testedVersion: FAKE_CLAUDE_VERSION,
     auth: { state: 'logged_in', method: 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'max' },
     error: null,
     checkedAt: at.toISOString(),

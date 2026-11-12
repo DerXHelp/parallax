@@ -10,6 +10,37 @@ Arbeitspaket mit Koordinator-Freigabe (`package.json`/Lockfile sind tabu). Live-
 und 7) brauchen eine **Nutzer-Freigabe** (Abo-Login, Haiku, Budget, ADR-011) – ohne Freigabe endet
 der Prozess nach Schritt 3 mit „live offen“.
 
+Zwei Stufen (WP-62): **Stufe 1** ist der Kurz-Check bei jedem neuen `claude` (eigener Abschnitt
+direkt hier unten, Skill `/claude-update`). **Stufe 2** ist der Ablauf ab Schritt 1 – für echte
+SDK-Upgrades oder wenn Stufe 1 echte Änderungen zeigt.
+
+## Stufe 1: Kurz-Check (`pnpm cli-check`, Skill `/claude-update`)
+
+`claude` erscheint oft mehrmals pro Woche und aktualisiert sich selbst. Parallax kennt die zuletzt
+geprüfte Version aus dem CLI-Profil `src/server/claude/cli-profile.json` (`testedVersion` im
+`ClaudeInstallStatus`). Ist die installierte Version neuer, zeigen die Kopfzeile (`HostFacts`) und der
+Profil-/Neue-Session-Status einen dezenten Hinweis („neuer als die mit Parallax geprüfte Version“),
+`pnpm preflight` eine Warnung `newer than tested`.
+
+- **Ablauf für den Koordinator:** Skill `.claude/skills/claude-update/SKILL.md` (`/claude-update`):
+  Version vergleichen → `pnpm cli-check` im Worktree `fix/cli-<version>` von `main` → grün:
+  `pnpm cli-check --last --accept`, `pnpm check` + `pnpm build`, Merge nach `main`, Push → sonst
+  Abweichungen einordnen (klein: Fix + wie grün; größer: Nutzer) → ggf. Stufe 2 vorschlagen → Kurzbericht.
+- **Freigabe:** Dauerfreigabe des Nutzers (12.11.2026): live ohne Rückfrage, Haiku, Abo-Login, kein
+  API-Key, höchstens 0,05 USD je Check; nach grünem Check Merge nach `main` und Push, wenn nur das Profil
+  oder kleine Anpassungen betroffen sind.
+- **Was der Check macht** (Details `scripts/README.md`): Vorprüfung ohne Kosten (Version, Abo-Login, keine
+  API-Key-Variablen, C.7) → Probe (eine isolierte Haiku-Runde: `system/init`, `initializationResult()`,
+  `supportedModels()`, `getContextUsage()`) → Live-Smoke `e2e/live` (Schritt 7 unten) → Vergleich mit dem
+  Profil → Bericht `test-results/cli-check/<zeit>.md` → Rückbau eigener Daten (Scratch, CLI-Transkripte,
+  CLI-Task-Ordner; Plan-Dateien und `~/.claude.json` nur gemeldet). Exit 0 = grün, 1 = Abweichungen,
+  2 = Abbruch (Auth-/Billing-Stopp nie wiederholen).
+- **Kosten/Dauer:** ≈ 0,01 USD (Probe ≈ 0,002–0,005, Smoke ≈ 0,005), ≈ 1,5–3 min.
+- **Protokoll:** `docs/cli-updates.md` (eine Zeile je `--accept`).
+- **Was Stufe 1 nicht abdeckt:** Snapshot-Diff der Fixtures, neue Szenarien, Verhalten im Detail (z. B.
+  die Punkte unter „Nach WP-61 bei jedem CLI-Upgrade prüfen“ – `@`-Regel, frischer Kontext). Werkzeuge
+  (auch `TodoWrite`/`TaskCreate`, ADR-156) vergleicht der Check automatisch.
+
 ## 1. Version anheben
 
 - In einem Worktree (`.worktrees/sdk-<version>`, Branch `wp/sdk-<version>`):
@@ -134,7 +165,8 @@ $env:PARALLAX_LIVE='1'; pnpm e2e e2e/live      # ≈ 1,5 min, ≈ 0,01 USD (Haik
 ## Nach WP-61 bei jedem CLI-Upgrade prüfen (ADR-155, ADR-156)
 
 - `init.tools` (auch deferred) auf `TodoWrite`/`TaskCreate`: tauchen sie auf, `todoFeatureEnabled` wieder
-  erwägen (ADR-156) und die Aufgabenleiste live prüfen (WP-61 B7/B25).
+  erwägen (ADR-156) und die Aufgabenleiste live prüfen (WP-61 B7/B25). Seit WP-62 meldet `pnpm cli-check`
+  das automatisch (Abweichung „task tools offered again“).
 - `@`-Regel der CLI: Trenner vor `@` (2.1.322: `\s` und 。、？！; Anführungsform `@"…"`) mit
   `neutralizeAtMentions` (`sessions/summary.ts`) und der Nachbildung in `summary.test.ts` abgleichen; Live-Fall:
   Plan mit `@README.md` → „Mit frischem Kontext umsetzen“ → kein Datei-Attachment/Read im CLI-JSONL (B19).
