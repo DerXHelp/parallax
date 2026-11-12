@@ -2,7 +2,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { configDefaults, defineConfig } from 'vitest/config';
-import { repoAliases, watchIgnores, worktreeGlobs } from './repo.config.ts';
+import {
+  TEST_MAX_WORKERS,
+  lowerProcessPriority,
+  repoAliases,
+  watchIgnores,
+  worktreeGlobs,
+} from './repo.config.ts';
+
+// ADR-154: a test run must never stall the desktop – below-normal priority for this process and
+// every worker it starts (inherited on Windows), at most TEST_MAX_WORKERS workers.
+lowerProcessPriority();
 
 const repoRoot = path.dirname(fileURLToPath(import.meta.url));
 /** Root-relative globs (tinyglobby with cwd = root), so `.worktrees/**` never hides this checkout. */
@@ -27,6 +37,7 @@ export default defineConfig({
     // Off: the persistent module cache keeps an unchanged test file's expanded `import.meta.glob`,
     // so new or removed source files go unseen (stale "every key is used" guards, Phase 3 WP-58).
     fsModuleCache: false,
+    maxWorkers: TEST_MAX_WORKERS,
     globalSetup: ['test/setup/global.ts'],
     projects: [
       {
