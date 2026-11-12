@@ -1,9 +1,12 @@
 import type { EntryId } from '@shared/common';
 import type {
   Decision,
+  DecisionOutcome,
   ModelOption,
   PlanDecision,
+  PlanVersionInfo,
   QueuedPrompt,
+  SessionDetail,
   SessionSummary,
   TranscriptItem,
 } from '@shared/model';
@@ -16,12 +19,15 @@ import {
   sampleId,
   sampleItems,
   sampleModelOption,
+  samplePlanFileRef,
+  samplePlanVersionInfo,
   sampleProfileSummary,
   sampleQueuedPrompt,
   sampleSessionSnapshot,
   sampleStatusFacts,
   sampleSummary,
   sampleSystemItems,
+  sampleTime,
   sampleUuid,
 } from '@shared/samples';
 import type { StatusFacts } from '@shared/status';
@@ -44,6 +50,11 @@ export const DEMO_ENTRIES = {
   idle: sampleId('en', 0xa8),
   working: sampleId('en', 0xa9),
   bypass: sampleId('en', 0xaa),
+  // WP-56: plan comfort (live plan file, versions, approved, fresh context).
+  planning: sampleId('en', 0xab),
+  approved: sampleId('en', 0xac),
+  approvedFresh: sampleId('en', 0xad),
+  fresh: sampleId('en', 0xae),
 } as const satisfies Record<string, EntryId>;
 
 export type DemoEntry = keyof typeof DEMO_ENTRIES;
@@ -72,6 +83,50 @@ export const DEMO_PLAN = [
   "expect(await readFile('sessions.json', 'utf8')).toContain('schemaVersion');",
   '```',
 ].join('\n');
+
+/** v1 of the demo plan (sent back with feedback; the diff to v2 shows the additions). */
+export const DEMO_PLAN_V1 = [
+  '# Move the session registry to JSON files',
+  '',
+  'Replace the SQLite registry with JSON files.',
+  '',
+  '1. Add `JsonStore<T>` (temp file + rename)',
+  '2. Migrate `sessions.json`',
+  '3. Remove the SQLite dependency',
+  '',
+  '## Risks',
+  '',
+  '- A virus scanner may hold the file during the rename',
+].join('\n');
+
+/** v3 (the `fresh` demo): v2 plus a rollout section. */
+export const DEMO_PLAN_V3 = [
+  DEMO_PLAN,
+  '',
+  '## Rollout',
+  '',
+  '1. Ship behind the `jsonRegistry` flag',
+  '2. Keep the SQLite file one release as a backup',
+].join('\n');
+
+/** The plan file of the demo sessions (the FakeHost serves its text, lib/demo-host.ts). */
+export const DEMO_PLAN_PATH = 'C:\\Users\\user\\.claude\\plans\\json-registry.md';
+/** Plan file of the `fresh` demo (v3). */
+export const DEMO_FRESH_PLAN_PATH = 'C:\\Users\\user\\.claude\\plans\\json-registry-rollout.md';
+/** Plan file the `planning` demo writes (missing until the write finished, lib/demo-plan.ts). */
+export const DEMO_PLANNING_PATH = 'C:\\Users\\user\\.claude\\plans\\json-registry-draft.md';
+
+/** Texts of the plan files that exist from the start. */
+export const DEMO_PLAN_FILES: Readonly<Record<string, string>> = {
+  [DEMO_PLAN_PATH]: DEMO_PLAN,
+  [DEMO_FRESH_PLAN_PATH]: DEMO_PLAN_V3,
+};
+
+/** One stored plan version of a demo session (`plan.list` entry + `plan.read` text). */
+export interface DemoPlanVersion {
+  info: PlanVersionInfo;
+  text: string;
+}
 
 export const DEMO_MODELS: ModelOption[] = [
   sampleModelOption({
@@ -146,6 +201,66 @@ interface DemoSessionSpec {
   summary?: Partial<SessionSummary>;
   queue?: QueuedPrompt[];
   extraItems?: TranscriptItem[];
+  /** WP-56: stored plan versions (ascending) and the plan-related detail fields. */
+  plans?: (entryId: EntryId) => DemoPlanVersion[];
+  detail?: Pick<Partial<SessionDetail>, 'planFile' | 'latestPlanVersion'>;
+}
+
+/** A stored version: `decision` = low id part of its plan decision, `minute` = creation time. */
+function storedPlan(
+  version: number,
+  decision: number,
+  text: string,
+  outcome: DecisionOutcome | null,
+  minute: number,
+  planFilePath = DEMO_PLAN_PATH,
+): DemoPlanVersion {
+  return {
+    info: samplePlanVersionInfo({
+      version,
+      decisionId: sampleId('dc', decision),
+      createdAt: sampleTime(minute * 60),
+      resolvedAt: outcome === null ? null : sampleTime((minute + 2) * 60),
+      outcome,
+      planFilePath,
+    }),
+    text,
+  };
+}
+
+/** The resolved ExitPlanMode call of a stored version (the transcript draws its final state). */
+function resolvedPlanCall(stored: DemoPlanVersion, order: number): TranscriptItem {
+  const id = stored.info.decisionId;
+  return sampleItems.toolCall({
+    id: `msg_demo_${id}:0`,
+    messageId: `msg_demo_${id}`,
+    blockIndex: 0,
+    order,
+    toolUseId: `toolu_demo_plan_${id}`,
+    toolName: 'ExitPlanMode',
+    input: { plan: stored.text, planFilePath: DEMO_PLAN_PATH },
+    status: stored.info.outcome?.type === 'plan_approved' ? 'done' : 'denied',
+    result: null,
+    decision: {
+      decisionId: id,
+      kind: 'plan',
+      planVersion: stored.info.version,
+      outcome: stored.info.outcome,
+    },
+  });
+}
+
+function approvedPlans(fresh: boolean): DemoPlanVersion[] {
+  return [
+    storedPlan(1, 0xc1, DEMO_PLAN_V1, { type: 'plan_revised' }, 2),
+    storedPlan(
+      2,
+      0xc2,
+      DEMO_PLAN,
+      { type: 'plan_approved', mode: fresh ? 'auto' : 'acceptEdits', edited: false, freshContext: fresh },
+      6,
+    ),
+  ];
 }
 
 function permissionDecisions(entryId: EntryId): Decision[] {
@@ -233,12 +348,20 @@ function planDecision(entryId: EntryId, n: number, p: Partial<PlanDecision> = {}
     id: sampleId('dc', n),
     toolUseId: `toolu_demo_plan_${String(n)}`,
     plan: DEMO_PLAN,
-    planFilePath: 'C:\\Users\\user\\.claude\\plans\\json-registry.md',
+    planFilePath: DEMO_PLAN_PATH,
     version: 2,
-    previousVersionPlan: '# Move the session registry\n\n1. Replace SQLite',
+    previousVersionPlan: DEMO_PLAN_V1,
     approveModes: ['acceptEdits', 'auto', 'default'],
     ...p,
   });
+}
+
+/** v1 (revised) and the open v2 of the `plan` demo (decision 0xa41) – as `plan.list` reports them. */
+function openPlanVersions(decision: number): DemoPlanVersion[] {
+  return [
+    storedPlan(1, decision - 1, DEMO_PLAN_V1, { type: 'plan_revised' }, 1),
+    storedPlan(2, decision, DEMO_PLAN, null, 3),
+  ];
 }
 
 function queueDecisions(entryId: EntryId): Decision[] {
@@ -339,6 +462,8 @@ const SPECS: Readonly<Record<DemoEntry, DemoSessionSpec>> = {
         source: 'estimate',
       }),
     },
+    plans: () => openPlanVersions(0xa41),
+    detail: { latestPlanVersion: 2 },
   },
   queue: {
     title: 'Three decisions at once',
@@ -346,6 +471,8 @@ const SPECS: Readonly<Record<DemoEntry, DemoSessionSpec>> = {
     prompt: 'Check the tree, explore the store and plan the migration.',
     status: { runState: 'working' },
     decisions: queueDecisions,
+    plans: () => [storedPlan(1, 0xa53, DEMO_PLAN, null, 3)],
+    detail: { latestPlanVersion: 1 },
   },
   expired: {
     title: 'Plan approval after restart',
@@ -354,6 +481,8 @@ const SPECS: Readonly<Record<DemoEntry, DemoSessionSpec>> = {
     status: { runState: 'interrupted' },
     decisions: expiredDecisions,
     extraItems: [sampleSystemItems.interrupted({ order: 50 })],
+    plans: () => openPlanVersions(0xa61),
+    detail: { latestPlanVersion: 2 },
   },
   cautious: {
     title: 'Clean up the shared cache',
@@ -401,11 +530,71 @@ const SPECS: Readonly<Record<DemoEntry, DemoSessionSpec>> = {
     status: { runState: 'idle' },
     summary: { profileId: BYPASS_PROFILE_ID, permissionMode: 'bypassPermissions' },
   },
+  planning: {
+    title: 'Planning – the plan file is written',
+    cwd: 'D:\\work\\parallax',
+    prompt: 'Plan how to move the registry to JSON files.',
+    status: { runState: 'working' },
+    summary: { permissionMode: 'plan' },
+  },
+  approved: {
+    title: 'Plan approved',
+    cwd: 'D:\\work\\parallax',
+    prompt: 'Plan how to move the registry to JSON files.',
+    status: { runState: 'working' },
+    summary: { permissionMode: 'acceptEdits' },
+    plans: () => approvedPlans(false),
+    extraItems: approvedPlans(false).map((stored, index) => resolvedPlanCall(stored, 10 + index)),
+    detail: {
+      latestPlanVersion: 2,
+      planFile: samplePlanFileRef({ path: DEMO_PLAN_PATH, updatedAt: sampleTime(300) }),
+    },
+  },
+  approvedFresh: {
+    title: 'Plan implemented with a fresh context',
+    cwd: 'D:\\work\\parallax',
+    prompt: 'Plan how to move the registry to JSON files.',
+    status: { runState: 'working' },
+    summary: { permissionMode: 'auto' },
+    plans: () => approvedPlans(true),
+    detail: { latestPlanVersion: 2 },
+  },
+  fresh: {
+    title: 'Plan v3 at 75 % context',
+    cwd: 'D:\\work\\parallax',
+    prompt: 'Plan how to move the registry to JSON files.',
+    status: { runState: 'working' },
+    decisions: (entryId) => [
+      planDecision(entryId, 0xae3, {
+        version: 3,
+        plan: DEMO_PLAN_V3,
+        planFilePath: DEMO_FRESH_PLAN_PATH,
+        previousVersionPlan: DEMO_PLAN,
+      }),
+    ],
+    summary: {
+      permissionMode: 'plan',
+      context: sampleContextGauge({ percentage: 75, totalTokens: 150_000, maxTokens: 200_000 }),
+    },
+    plans: () => [
+      storedPlan(1, 0xae1, DEMO_PLAN_V1, { type: 'plan_revised' }, 1, DEMO_FRESH_PLAN_PATH),
+      storedPlan(2, 0xae2, DEMO_PLAN, { type: 'plan_revised' }, 4, DEMO_FRESH_PLAN_PATH),
+      storedPlan(3, 0xae3, DEMO_PLAN_V3, null, 8, DEMO_FRESH_PLAN_PATH),
+    ],
+    detail: {
+      latestPlanVersion: 3,
+      planFile: samplePlanFileRef({ path: DEMO_FRESH_PLAN_PATH, updatedAt: sampleTime(450) }),
+    },
+  },
 };
 
 export interface DemoData {
   summaries: SessionSummary[];
   sessions: SessionSnapshot[];
+  /** Stored plan versions per entry (lib/demo-host.ts answers `plan.list`/`plan.read` with them). */
+  planVersions: Partial<Record<EntryId, DemoPlanVersion[]>>;
+  /** Plan files of the FakeHost's file table (path → text). */
+  planFiles: Readonly<Record<string, string>>;
 }
 
 /** Summaries and snapshots of the given demo sessions (default: all). */
@@ -420,12 +609,17 @@ export const DEMO_ENTRY_NAMES: readonly DemoEntry[] = [
   'idle',
   'working',
   'bypass',
+  'planning',
+  'approved',
+  'approvedFresh',
+  'fresh',
 ];
 
 export function demoData(entries: readonly DemoEntry[] = DEMO_ENTRY_NAMES): DemoData {
   const baseInit = sampleDetail().init;
   const summaries: SessionSummary[] = [];
   const sessions: SessionSnapshot[] = [];
+  const planVersions: Partial<Record<EntryId, DemoPlanVersion[]>> = {};
   entries.forEach((name, index) => {
     const entryId = DEMO_ENTRIES[name];
     const spec = SPECS[name];
@@ -464,11 +658,14 @@ export function demoData(entries: readonly DemoEntry[] = DEMO_ENTRY_NAMES): Demo
             baseInit === null
               ? null
               : { ...baseInit, cwd: spec.cwd, permissionMode: spec.summary?.permissionMode ?? 'default' },
+          ...spec.detail,
         }),
       }),
     );
+    const plans = spec.plans?.(entryId);
+    if (plans !== undefined) planVersions[entryId] = plans;
   });
-  return { summaries, sessions };
+  return { summaries, sessions, planVersions, planFiles: DEMO_PLAN_FILES };
 }
 
 /** Host with the standard profile plus a profile that allows bypass. */
