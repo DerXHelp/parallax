@@ -1,4 +1,4 @@
-import type { BackgroundTask, TaskInfo, TranscriptItem } from '@shared/model';
+import type { BackgroundTask, TaskInfo, ToolCallItem, ToolCallStatus, TranscriptItem } from '@shared/model';
 import type { SessionViewState } from '@shared/sync';
 
 /**
@@ -17,7 +17,7 @@ import type { SessionViewState } from '@shared/sync';
 
 const OPEN_STATUSES: ReadonlySet<string> = new Set(['started', 'running', 'pending']);
 /** Tool call states whose task runs (= `hasStoppableTask` of the server). */
-const LIVE_TOOL_STATUSES: ReadonlySet<string> = new Set(['running', 'background']);
+const LIVE_TOOL_STATUSES: ReadonlySet<ToolCallStatus> = new Set<ToolCallStatus>(['running', 'background']);
 
 export type TaskKind = 'agent' | 'bash' | 'workflow' | 'other';
 
@@ -60,6 +60,24 @@ function explicitlyEnded(row: Pick<TaskRow, 'status' | 'endedAt'>): boolean {
   return row.endedAt !== null || !OPEN_STATUSES.has(row.status);
 }
 
+/** A tool call in a state whose task runs: `running` or `background` (not `pending`, CR3-07). */
+export function isLiveToolStatus(status: ToolCallStatus): boolean {
+  return LIVE_TOOL_STATUSES.has(status);
+}
+
+/** The task is open: no end time, status in the open set (unknown statuses count as finished). */
+function taskOpen(task: TaskInfo): boolean {
+  return task.endedAt === null && OPEN_STATUSES.has(task.status);
+}
+
+/**
+ * The task of this tool call runs – and the server's `session.stopTask` takes it (tool call
+ * `running`/`background`, task open). One rule for the task panel and the agent card (CR3-07).
+ */
+export function isToolCallTaskLive(item: Pick<ToolCallItem, 'status' | 'task'>): boolean {
+  return item.task !== null && isLiveToolStatus(item.status) && taskOpen(item.task);
+}
+
 function fromInfo(task: TaskInfo, live: boolean): TaskRow {
   return {
     taskId: task.taskId,
@@ -68,7 +86,7 @@ function fromInfo(task: TaskInfo, live: boolean): TaskRow {
     description: task.description,
     subagentType: task.subagentType,
     status: task.status,
-    running: live && task.endedAt === null && OPEN_STATUSES.has(task.status),
+    running: live && taskOpen(task),
     startedAt: task.startedAt,
     endedAt: task.endedAt,
     usage: task.usage,
@@ -158,7 +176,7 @@ export function buildTaskRows(
   for (const item of sources) {
     if (item.kind === 'tool_call' && item.task !== null) {
       note(item, item.task);
-      put(fromInfo(item.task, LIVE_TOOL_STATUSES.has(item.status)));
+      put(fromInfo(item.task, isLiveToolStatus(item.status)));
     } else if (item.kind === 'system' && item.event === 'task_notification') {
       note(item, item.task);
       put(fromInfo(item.task, true));

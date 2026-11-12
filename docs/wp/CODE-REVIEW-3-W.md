@@ -22,6 +22,8 @@ gezielten Vitest-Laufs vor dem Fix.
 | WP61-06 | ja – Agent + Vordergrund-Shell des Subagenten: `expected ['agent:run','shell:run'] to deeply equal ['agent:run']` | Vordergrund-Shells **von Subagenten** (`parentToolUseId !== null`, `local_bash`, `isBackgrounded: false`) sind keine eigenen Zeilen (ausgeblendet) – außer eine Quelle meldet den Task als Hintergrund (`isBackgrounded` später `true` oder Eintrag in `backgroundTasks`). Die lange Vordergrund-Shell des Haupt-Agents bleibt (der Server kann sie stoppen) | `lib/task-rows.test.ts` („a subagent's foreground shell is part of the agent“), `shell/header-panels.test.tsx` („counts like the panel: a subagent's foreground shell …“) | `9a2f495` |
 | B18 | ja – Composer nach beendetem Turn mit nur einem Hintergrund-Agenten: `expected 'queue' to be 'idle'` (Gegenprobe: alte Zeile `const working = isWorking(runState)` eingesetzt → rot, wiederhergestellt → grün) | **Nicht blockiert.** `composer/lib/turn.ts` leitet „Turn läuft“ aus vorhandenem Zustand ab: Status-Fakten (`runState: 'working'`, `backgroundTasks > 0`, `queuedPrompts === 0`, nicht `compacting`/`retrying`) **und** Transkript: der letzte Austausch des Haupt-Agents (Items mit `parentToolUseId === null`: Prompt, Antwort, Denken, Tool-Call, `task_notification`) ist ein `turn_result`; dazu `detail.queue` leer. Dann ist der Composer im Modus `idle`: normales „Senden“ (`priority: 'next'`), kein Stop, kein „Jetzt senden“, Esc stoppt nicht. Im Zweifel (kein `turn_result` geladen, etwas eingereiht) bleibt das alte Verhalten | `composer/Composer.test.tsx` („only background tasks, no turn (B18)“, inkl. Rückkehr in den Einreihen-Modus mit Stop nach neuem Prompt), `composer/lib/turn.test.ts` (4 Fälle) | `8316d96` |
 
+| CR3-07 Nachtrag Agent-Karte (Freigabe Koordinator) | ja – `pending (not started yet): no Stop`: `expected <button …> to be null` (Stop-Knopf erschien) | Neue Funktionen in `@web/lib/task-rows`: `isLiveToolStatus` (`running`/`background`) und `isToolCallTaskLive` (Tool-Call live + Task offen); `buildTaskRows` und `features/transcript/items/AgentCard.tsx` nutzen dieselbe Regel – `pending` zeigt weder Laufzeit-Ticker noch Stop. `isTaskOpen` in `transcript/state/tasks.ts` wird dadurch nicht mehr genutzt (Datei nicht freigegeben, nicht entfernt) | `transcript/items/file-links.test.tsx` (Fall „pending (not started yet): no Stop“, rot→grün), `lib/task-rows.test.ts` („isToolCallTaskLive …“) | s. Commit „CR3-07 Nachtrag“ |
+
 Formatierungs-Nachtrag: `2e0a0c3` (Prettier, `TasksPanel.test.tsx`).
 
 ## 2. Entscheidungen und Abweichungen
@@ -86,8 +88,8 @@ Build erlaubt). Bitte beim Merge `scripts/bundle-budget.ts` prüfen (Reserve lau
   (Kopfzeile 1, Panel 2 – WP-61). Ein Stop-Knopf, den der Server mit `TASK_NOT_FOUND` beantwortet, ist
   wirkungslos (CR3-07).
 - **Folgen:** Das Modul liegt im Start-Chunk (Budget prüfen). Die Kopfzeile zählt auch laufende
-  Tool-Call-Tasks ohne Listeneintrag. Die Agent-Karte im Transkript prüft `pending` noch selbst
-  (Follow-up).
+  Tool-Call-Tasks ohne Listeneintrag. Die Agent-Karte im Transkript nutzt dieselbe Regel
+  (`isToolCallTaskLive`).
 
 ### ADR-159 – Composer ohne Turn bei reinen Hintergrund-Tasks
 - **Datum/WP:** 12.11.2026, CR3-W (B18, Entscheidung des Koordinators nach WP-61 §2.3)
@@ -126,9 +128,8 @@ Build erlaubt). Bitte beim Merge `scripts/bundle-budget.ts` prüfen (Reserve lau
   - Zeile `requests.ts`: `attachFiles` (`files`, `folders?` – CR3-01).
 
 ### Follow-ups
-- **Agent-Karte im Transkript** (`features/transcript/items/AgentCard.tsx:128`, nicht Paket W): zählt
-  `pending` wie CR3-07 als laufend und zeigt dann „Stop“ → `TASK_NOT_FOUND` still. Gleiche Korrektur
-  (`running`/`background`) empfohlen.
+- ~~Agent-Karte im Transkript~~: im Nachtrag behoben (s. Tabelle). Offen: das ungenutzte `isTaskOpen` in
+  `features/transcript/state/tasks.ts` entfernen (Datei war nicht freigegeben).
 - Vordergrund-Shells des Haupt-Agents erscheinen weiter als „Hintergrund-Task“ im Panel und zählen in der
   Kopfzeile; falls unerwünscht, in `task-rows.ts` die Bedingung `parentToolUseId !== null` streichen.
 - Nutzer-Checkliste WP-61 N18 (echter Explorer-Ordner auf die Pane) nach dem Merge erneut prüfen.

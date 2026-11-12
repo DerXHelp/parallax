@@ -270,6 +270,8 @@ describe('agent card (WP-55)', () => {
     ['finished', { status: 'done', task: agentTask({ status: 'completed', endedAt: sampleTime(30) }) }],
     ['stopped', { status: 'interrupted', task: agentTask({ status: 'stopped', endedAt: sampleTime(30) }) }],
     ['without task', { status: 'running', task: null }],
+    // The server stops only running/background tool calls (`hasStoppableTask`, CR3-07).
+    ['pending (not started yet)', { status: 'pending' }],
   ])('%s: no Stop', (_label, patch) => {
     renderWithSlots(<AgentCard item={agent(patch)} sessionKey={KEY} />);
     expect(screen.queryByRole('button', { name: /Stop the agent/ })).toBeNull();

@@ -11,6 +11,8 @@ import { viewStateFromSnapshot } from '@shared/sync';
 import {
   buildTaskRows,
   countRunningTasks,
+  isLiveToolStatus,
+  isToolCallTaskLive,
   runningTaskCount,
   selectTaskSources,
   taskKind,
@@ -198,6 +200,22 @@ describe('task helpers', () => {
     [null, 'other'],
   ] as const)('taskKind(%j) = %s', (type, kind) => {
     expect(taskKind(type)).toBe(kind);
+  });
+
+  it('isToolCallTaskLive: running/background with an open task – the rule of panel and agent card (CR3-07)', () => {
+    expect(isToolCallTaskLive(toolWith(info('a'), { status: 'background' }))).toBe(true);
+    expect(isToolCallTaskLive(toolWith(info('a'), { status: 'running' }))).toBe(true);
+    expect(isToolCallTaskLive(toolWith(info('a'), { status: 'pending' }))).toBe(false);
+    expect(isToolCallTaskLive(toolWith(info('a'), { status: 'done' }))).toBe(false);
+    expect(isToolCallTaskLive(toolWith(info('a', { status: 'stopped' }), { status: 'background' }))).toBe(
+      false,
+    );
+    expect(isToolCallTaskLive(toolWith(info('a', { endedAt: sampleTime(9) }), { status: 'running' }))).toBe(
+      false,
+    );
+    expect(isToolCallTaskLive({ status: 'running', task: null })).toBe(false);
+    expect(isLiveToolStatus('pending')).toBe(false);
+    expect(isLiveToolStatus('background')).toBe(true);
   });
 
   it('runningTaskCount / countRunningTasks: the running rows – one count for panel and header (CR3-02)', () => {
