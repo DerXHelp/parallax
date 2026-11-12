@@ -25,7 +25,10 @@ import type {
   RemoteControlRequest,
   RemoteControlResult,
   StartSessionRequest,
+  TitleResult,
+  UsageLimits,
 } from '../types';
+import { usageLimitsOf } from '../overview';
 import {
   HANDLER_ERROR_RESULT,
   SessionStopped,
@@ -39,6 +42,7 @@ import { FAKE_COMMANDS, FAKE_MODELS, fakeContextUsage, resolveFakeModel } from '
 import { dslContext, textTurn } from './dsl';
 import { FakeFiles } from './files';
 import type { FakeHistoryStore } from './history';
+import { fakeTitle, type FakeUsage } from './overview';
 import { EventPlayer } from './player';
 import {
   FAKE_REMOTE_CONNECT_MS,
@@ -54,6 +58,7 @@ import type {
   FakeDiagnostic,
   FakeDiagnosticKind,
   FakeIds,
+  FakeOverviewOptions,
   FakeRemoteControlOptions,
   FakeRemotePromptOptions,
   FakeScenario,
@@ -89,6 +94,10 @@ export interface FakeSessionDeps {
   filesRoot: string;
   /** WP-64: FakeBackendOptions.remoteControl. */
   remoteControl: FakeRemoteControlOptions;
+  /** WP-65: FakeBackendOptions.overview. */
+  overview: FakeOverviewOptions;
+  /** WP-65: the fake account's plan usage (one per backend). */
+  usage: FakeUsage;
   onStateChange(): void;
 }
 
@@ -157,6 +166,8 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
   private busyTasks = 0;
   /** WP-64: the fake bridge (set by setRemoteControl(true), cleared by disable or a terminal failure). */
   private bridge: RemoteControlInfo | null = null;
+  /** WP-65: foreground tool uses of the running turn that backgroundTasks() can move. */
+  private readonly foreground = new Map<string, () => void>();
 
   constructor(private readonly deps: FakeSessionDeps) {
     this.entryId = deps.req.entryId;
@@ -328,6 +339,68 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
     this.calls.push({ fn: 'readRemoteControlDefault', args: [] });
     if (this.exited) return null;
     return Promise.resolve(this.deps.remoteControl.atStartup ?? false);
+  }
+
+  /** WP-65: the fake title generator (fakeTitle); events mode: unavailable (no recorded answer). */
+  async generateTitle(description: string, opts: { persist: boolean }): Promise<TitleResult> {
+    this.calls.push({ fn: 'generateTitle', args: [description, { ...opts }] });
+    const mode = this.deps.overview.titles ?? 'ok';
+    if (this.deps.scenario.kind === 'events' || mode === 'unavailable') return { ok: false, reason: 'unavailable' };
+    if (this.exited || mode === 'failed') return { ok: false, reason: 'failed' };
+    return Promise.resolve(fakeTitle(this.deps.history, this.currentSessionId, description, opts.persist));
+  }
+
+  /**
+   * WP-65: events mode – the recorded control answer (default true). Script mode: moves the given
+   * foreground tool use (false when none matches) or every one (null) to the background.
+   */
+  async backgroundTasks(toolUseId: string | null): Promise<boolean> {
+    if (this.deps.scenario.kind === 'events') {
+      const answer = await this.control('backgroundTasks', [toolUseId]);
+      return answer !== false;
+    }
+    this.controls.push({ method: 'backgroundTasks', args: [toolUseId] });
+    if (this.exited) throw new Error('session closed');
+    if (this.deps.overview.backgroundTasks === 'disabled') throw new Error('Background tasks are disabled');
+    if (toolUseId === null) {
+      for (const move of [...this.foreground.values()]) move();
+      return Promise.resolve(true);
+    }
+    const move = this.foreground.get(toolUseId);
+    if (move === undefined) return false;
+    move();
+    return true;
+  }
+
+  /** WP-65: the fake account's plan usage through the SdkBackend's parser; events mode: null. */
+  async readUsage(): Promise<UsageLimits | null> {
+    this.calls.push({ fn: 'readUsage', args: [] });
+    if (this.exited || this.deps.scenario.kind === 'events') return null;
+    try {
+      return await Promise.resolve(usageLimitsOf(this.deps.usage.answer()));
+    } catch {
+      return null;
+    }
+  }
+
+  /** WP-65: see FakeScriptContext.foregroundTool. */
+  async foregroundTool(toolUseId: string, ms: number, turn: AbortSignal): Promise<'background' | 'done'> {
+    const moved = Promise.withResolvers<'background'>();
+    this.foreground.set(toolUseId, () => {
+      moved.resolve('background');
+    });
+    const scaled = Math.max(0, ms) * this.deps.speed;
+    const ended =
+      scaled > 0
+        ? this.deps.sleep(scaled).then(() => 'done' as const)
+        : new Promise<'done'>(() => {
+            // Speed 0: only a move or an interrupt ends the command.
+          });
+    try {
+      return await this.blockOn('waiting-control', this.race(Promise.race([moved.promise, ended]), turn));
+    } finally {
+      this.foreground.delete(toolUseId);
+    }
   }
 
   private async connectLater(info: RemoteControlInfo): Promise<void> {
@@ -505,6 +578,7 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
       this.flushHistoryPrompts();
     }
     if (resultSchema.safeParse(raw).success) this.resultCount += 1;
+    this.deps.usage.observe(raw);
     if (this.currentSessionId !== null) this.deps.history.record(this.currentSessionId, raw);
     this.push({ type: 'message', message: raw, at: this.deps.now() });
   }
@@ -920,6 +994,10 @@ class ScriptContext implements FakeScriptContext {
 
   pause(ms: number): Promise<void> {
     return this.session.pause(ms);
+  }
+
+  foregroundTool(toolUseId: string, ms: number): Promise<'background' | 'done'> {
+    return this.session.foregroundTool(toolUseId, ms, this.turn.signal);
   }
 
   /** WP-64: the turn of a prompt typed in the Claude app, once no other turn runs (not interruptible). */

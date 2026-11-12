@@ -5,7 +5,7 @@
  * - the echo of an own prompt: `user` isReplay with the SAME uuid (Parallax sends origin human) – dropped;
  * - a prompt typed in the Claude app: `command_lifecycle` queued/started with a foreign uuid, then
  *   `init`, then the `user` replay with `origin: {kind:'human'}` and that uuid → user_message 'remote';
- * - `task_summary` / `post_turn_summary` (only with a connected bridge; WP-65) – counted as ignored;
+ * - `task_summary` / `post_turn_summary` (only with a connected bridge) – signals since WP-65;
  * - a retrying failure (`failure_kind` other than terminal), `connected` with `recovered`, a terminal
  *   failure, an unknown state of a newer CLI and a bridge_state without `state` (invalid).
  */

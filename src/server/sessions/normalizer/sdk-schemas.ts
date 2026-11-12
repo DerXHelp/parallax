@@ -360,6 +360,28 @@ export const bridgeStateMessageSchema = z.looseObject({
   bridge_epoch: opt(num.nullable()),
 });
 
+/**
+ * WP-65: system/task_summary (untyped in SDK 0.3.322, only sent while a Remote Control bridge is
+ * connected): `detail` = the throttled live sentence of the running turn, null = idle.
+ */
+export const taskSummaryMessageSchema = z.looseObject({
+  subtype: z.literal('task_summary'),
+  detail: opt(str.nullable()),
+});
+
+/**
+ * WP-65: system/post_turn_summary (untyped, bridge only): `summarizes_uuid` = the last assistant
+ * message of the summarized turn; `needs_action` is a text ('' = nothing to do) – a boolean of a
+ * newer CLI is taken as well.
+ */
+export const postTurnSummaryMessageSchema = z.looseObject({
+  subtype: z.literal('post_turn_summary'),
+  summarizes_uuid: opt(str.nullable()),
+  status_category: opt(str.nullable()),
+  status_detail: opt(str.nullable()),
+  needs_action: opt(z.union([str, bool]).nullable()),
+});
+
 export const commandsChangedMessageSchema = z.looseObject({
   subtype: z.literal('commands_changed'),
   commands: z.array(

@@ -22,6 +22,8 @@ export interface FakeHistoryStore {
   setAiTitle(sessionId: string, title: string): void;
   /** renameSession (custom title). */
   rename(sessionId: string, title: string): void;
+  /** WP-65: the session's title as the CLI knows it (custom ‖ AI), null = none. */
+  title(sessionId: string): string | null;
   /** Imports the first array/object answer per session id of the `history` fixture. */
   seedFromHistoryFixture(parsed: ParsedFixture): void;
   sessionIds(): string[];
@@ -163,6 +165,11 @@ export function createFakeHistoryStore(options: { now?: () => Date } = {}): Fake
       const record = recordFor(sessionId);
       record.customTitle = title;
       record.lastModified = now().getTime();
+    },
+
+    title(sessionId) {
+      const record = sessions.get(sessionId);
+      return record === undefined ? null : (record.customTitle ?? record.aiTitle);
     },
 
     seedFromHistoryFixture(parsed) {

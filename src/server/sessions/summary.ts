@@ -13,6 +13,7 @@ import {
   type ConversationEndReason,
   type Entry,
   type RemoteControlSummary,
+  type SessionActivity,
   type SessionSummary,
   type TitleSource,
 } from '@shared/model';
@@ -27,11 +28,17 @@ export const PROMPT_TITLE_CHARS = 80;
  * `external.running` is false once the engine saw the console end and brings the session back.
  * WP-64: `remoteControl` = the live state of the running process (`remote`, default off) + the
  * wish; a wanted entry without a live link shows the stored link of its current conversation.
+ * WP-65: `activity` = the live activity of the running turn (runtime only, default null);
+ * `turnSummary` and `lastSeenAt` come from the entry.
  */
 export function summaryOf(
   entry: Entry,
   facts: StatusFacts,
-  o: { externalRunning?: boolean; remote?: Omit<RemoteControlSummary, 'wanted'> } = {},
+  o: {
+    externalRunning?: boolean;
+    remote?: Omit<RemoteControlSummary, 'wanted'>;
+    activity?: SessionActivity | null;
+  } = {},
 ): SessionSummary {
   const remote = o.remote ?? { state: 'off', sessionUrl: null, error: null };
   return {
@@ -68,6 +75,9 @@ export function summaryOf(
       error: remote.error,
       wanted: entry.remoteControlWanted,
     },
+    activity: o.activity ?? null,
+    turnSummary: entry.turnSummary,
+    lastSeenAt: entry.lastSeenAt,
   };
 }
 
@@ -108,6 +118,11 @@ export function parseRenameCommand(text: string): string | null {
 export interface TitleContext {
   titleSource: TitleSource;
   pendingRename: string | null;
+  /**
+   * WP-65: what the echo of the pending `/rename X` becomes – `custom` (the user renamed) or `ai`
+   * (Parallax sent a generated title on to the CLI and the Remote Control bridge). Default custom.
+   */
+  pendingRenameSource?: 'custom' | 'ai';
   /** A turn after a conversation_reset is running (the CLI echoes the old title, clear-rename#40/41). */
   resetInTurn: boolean;
 }
@@ -120,7 +135,7 @@ export type TitleDecision =
 export function titleChangeDecision(ctx: TitleContext, rawTitle: string): TitleDecision {
   const title = capTitle(rawTitle.trim());
   if (ctx.pendingRename !== null && ctx.pendingRename === title) {
-    return { kind: 'set', title, titleSource: 'custom', echo: true };
+    return { kind: 'set', title, titleSource: ctx.pendingRenameSource ?? 'custom', echo: true };
   }
   if (title === '') return { kind: 'ignore', reason: 'empty' };
   if (ctx.titleSource === 'custom') return { kind: 'ignore', reason: 'custom' };

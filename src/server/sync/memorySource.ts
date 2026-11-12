@@ -174,6 +174,9 @@ export function createMemorySessionSource(options: { host?: HostState } = {}): M
       case 'files.session':
       case 'files.project':
       case 'editor.detect':
+      case 'session.backgroundTasks':
+      case 'session.regenerateTitle':
+      case 'link.open':
         throw new CommandError(makeError('NOT_IMPLEMENTED', { command: cmd.name }));
     }
   }

@@ -44,6 +44,7 @@ import {
   optionIssues,
   type StartFlagSettings,
 } from './sdkOptions';
+import { titleOf, usageLimitsOf } from './overview';
 import { remoteControlDefaultOf, remoteControlErrorOf, toRemoteControlInfo } from './remoteControl';
 import { createSpawner } from './spawn';
 import type {
@@ -57,6 +58,8 @@ import type {
   RemoteControlRequest,
   RemoteControlResult,
   StartSessionRequest,
+  TitleResult,
+  UsageLimits,
 } from './types';
 
 const log = logger.child({ module: 'backend/sdk' });
@@ -78,6 +81,11 @@ export interface SdkTimeouts {
   readyMs: number;
   /** After the process exit wait at most this long for the end of the iterator. */
   iteratorAfterExitMs: number;
+  /**
+   * WP-65: `generateSessionTitle` (one small model request, live ≈ 1 s) – may follow right after a
+   * start, so it gets the bound of the readiness rather than `controlMs`.
+   */
+  titleMs: number;
 }
 
 export const SDK_TIMEOUTS: Readonly<SdkTimeouts> = Object.freeze({
@@ -87,6 +95,7 @@ export const SDK_TIMEOUTS: Readonly<SdkTimeouts> = Object.freeze({
   contextFullMs: 60_000,
   readyMs: 60_000,
   iteratorAfterExitMs: 2_000,
+  titleMs: 60_000,
 });
 
 /** Answer to the CLI when the permission handler throws (F.3). */
@@ -119,6 +128,12 @@ export interface SdkQueryHandle extends AsyncIterable<unknown> {
     opts?: { reattachSessionId?: string; keepSessionOnExit?: boolean },
   ): Promise<unknown>;
   getSettings?(): Promise<unknown>;
+  /** WP-65: internal (not typed in 0.3.322) – a missing method means "no AI titles". */
+  generateSessionTitle?(description: string, opts?: { persist?: boolean }): Promise<unknown>;
+  /** WP-65: public in 0.3.322; optional so a missing method is a clean failure. */
+  backgroundTasks?(toolUseId?: string): Promise<unknown>;
+  /** WP-65: experimental (typed, name will change) – checked at runtime like the internal ones. */
+  usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?(opts?: { skipBehaviors?: boolean }): Promise<unknown>;
   close(): void;
 }
 
@@ -252,6 +267,8 @@ interface SessionContext {
   readonly log: Logger;
   disposed(): boolean;
   finished(session: SdkSession): void;
+  /** WP-65: at most one warning per server process for a failing/missing usage query. */
+  warnUsageOnce(fields: Record<string, unknown>, message: string): void;
 }
 
 type ProcessState = 'none' | 'running' | 'exited';
@@ -632,6 +649,55 @@ class SdkSession implements AgentSession {
     }
   }
 
+  /** WP-65: AI title (internal method, checked at runtime); never rejects. */
+  async generateTitle(description: string, opts: { persist: boolean }): Promise<TitleResult> {
+    if (this.q !== null && typeof this.q.generateSessionTitle !== 'function') {
+      return { ok: false, reason: 'unavailable' };
+    }
+    try {
+      const raw = await this.control('generateSessionTitle', this.ctx.timeouts.titleMs, (q) => {
+        if (q.generateSessionTitle === undefined) throw new Error('generateSessionTitle missing');
+        return q.generateSessionTitle(description, { persist: opts.persist });
+      });
+      return { ok: true, title: titleOf(raw) };
+    } catch (error) {
+      this.log.warn({ err: error, persist: opts.persist }, 'generateSessionTitle failed');
+      return { ok: false, reason: 'failed' };
+    }
+  }
+
+  /** WP-65: `backgroundTasks(toolUseId?)` (Ctrl+B); rejects when the request fails. */
+  async backgroundTasks(toolUseId: string | null): Promise<boolean> {
+    const raw = await this.control('backgroundTasks', this.ctx.timeouts.controlMs, (q) => {
+      if (q.backgroundTasks === undefined) throw new Error('backgroundTasks missing');
+      return toolUseId === null ? q.backgroundTasks() : q.backgroundTasks(toolUseId);
+    });
+    // `true` when at least one task went to the background; an old CLI may answer nothing.
+    return raw !== false;
+  }
+
+  /** WP-65: plan limits of the experimental usage query (no transcript scan); never rejects. */
+  async readUsage(): Promise<UsageLimits | null> {
+    if (this.q !== null && typeof this.q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET !== 'function') {
+      this.ctx.warnUsageOnce({ reason: 'missing' }, 'usage query not available in this SDK/CLI');
+      return null;
+    }
+    try {
+      const raw = await this.control('usage', this.ctx.timeouts.controlMs, (q) => {
+        if (q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET === undefined) {
+          throw new Error('usage query missing');
+        }
+        return q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true });
+      });
+      const limits = usageLimitsOf(raw);
+      if (limits === null) this.log.debug('usage query: no plan limits in the answer');
+      return limits;
+    } catch (error) {
+      this.ctx.warnUsageOnce({ err: error }, 'usage query failed');
+      return null;
+    }
+  }
+
   /** F.3: toPermissionRequest → req.canUseTool(request, signal); a throwing handler → deny. */
   private readonly canUseTool: CanUseTool = async (toolName, input, options) => {
     try {
@@ -673,6 +739,7 @@ export function createSdkBackend(deps: SdkBackendDeps = {}): AgentBackend & { re
   const history = deps.history ?? createHistoryPool();
   const live = new Set<SdkSession>();
   let disposed = false;
+  let usageWarned = false;
   const backendLog = deps.logger === undefined ? log : deps.logger.child({ module: 'backend/sdk' });
   const ctx: SessionContext = {
     query,
@@ -684,6 +751,14 @@ export function createSdkBackend(deps: SdkBackendDeps = {}): AgentBackend & { re
     disposed: () => disposed,
     finished: (session) => {
       live.delete(session);
+    },
+    warnUsageOnce: (fields, message) => {
+      if (usageWarned) {
+        backendLog.debug(fields, message);
+        return;
+      }
+      usageWarned = true;
+      backendLog.warn(fields, `${message} – the limit bar keeps the last rate-limit values`);
     },
   };
 

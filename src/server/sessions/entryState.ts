@@ -21,6 +21,7 @@ import {
   type Entry,
   type Profile,
   type RateLimitInfo,
+  type SessionActivity,
   type SessionSummary,
   type Settings,
   type SlashCommandInfo,
@@ -69,6 +70,7 @@ import type { PlanIndexedDecisionStore } from './planIndex';
 import type { ProcessStore } from './processStore';
 import { PromptQueue } from './promptQueue';
 import { REMOTE_OFF, type RemoteState } from './remoteControl';
+import { ActivityTracker, fallbackSummary } from './overview';
 import { INITIAL_RETRY_STATE, type AutoRetryPolicy, type RetryState } from './retry';
 import type { SessionRuntime } from './runtime';
 import { acceptsAiTitle, aiTitleFrom, summaryOf, withCurrentConversation } from './summary';
@@ -105,6 +107,18 @@ export interface SessionManagerOptions {
    * asynchronously after the result. Default 2000.
    */
   aiTitleDelayMs: number;
+  /**
+   * WP-65: the live activity of the sidebar's second line changes at most this often (the newest
+   * value follows after the pause; null - the turn ended - at once). Default 2000; tests 0.
+   */
+  activityMinMs: number;
+  /**
+   * WP-65: interval of the usage query (plan limits) while a session of a profile runs - one
+   * running session per profile. 0 = off. Default 300000.
+   */
+  usagePollMs: number;
+  /** WP-65: first usage query this long after a claude process was spawned. Default 10000. */
+  usageFirstMs: number;
   /**
    * WP22-06: interval of the heartbeat snapshot of the process trees below every running
    * claude.exe (`processes.json` `aliveAt` + `children`, one CIM query for all). 0 = off. Default 30000.
@@ -281,8 +295,18 @@ export class EntryState {
   loading: { buffer: SessionOp[]; promise: Promise<SessionViewState> } | null = null;
   runtime: SessionRuntime | null = null;
   phase: EntryPhase = 'dormant';
-  /** Title of the own pending `/rename X` (its echo becomes `custom`). */
+  /** Title of the own pending `/rename X` (its echo becomes `custom`, or `ai` - pendingRenameSource). */
   pendingRename: string | null = null;
+  /** WP-65: `ai` = the pending `/rename X` carries a generated title on to the CLI and the bridge. */
+  pendingRenameSource: 'custom' | 'ai' = 'custom';
+  /** WP-65: the conversation whose auto title was requested (once per conversation, this server run). */
+  titleGeneratedFor: ConversationId | null = null;
+  /** WP-65: a generateSessionTitle request runs (one at a time). */
+  titleGenerating = false;
+  /** WP-65: the CLI sent a turn summary for the running turn (the fallback then stays out). */
+  turnSummaryFromClaude = false;
+  /** WP-65: live activity of the running turn as published (null = not working). */
+  activity: SessionActivity | null = null;
   /** A turn after a conversation_reset is running (title_changed echoes are ignored). */
   resetInTurn = false;
   promptTitle: string | null;
@@ -339,6 +363,9 @@ export class EntryState {
   private contextAgain = false;
   private titleBusy = false;
   private gitBusy = false;
+  private readonly activityTracker = new ActivityTracker();
+  private activityTimer: TimerHandle | null = null;
+  private activityChangedAt = 0;
 
   constructor(
     private readonly core: EngineCore,
@@ -424,6 +451,7 @@ export class EntryState {
         this.saveCommands(op.patch.commands);
       }
     }
+    this.observeOverview(ops);
     if (this.loading !== null) this.loading.buffer.push(...ops);
     else if (this.mirror !== null) this.mirror = applyToMirror(this.mirror, ops);
     if (lastOrder !== conv.lastOrder) {
@@ -435,6 +463,100 @@ export class EntryState {
       const patch = this.trackDetail(ops);
       if (patch !== null) this.emit([{ op: 'detail.patch', patch }]);
     }
+  }
+
+  /**
+   * WP-65: the live activity follows the main-thread tool calls; a prompt typed in the Claude app
+   * (Remote Control) or a decision answered there counts as "seen" at its time (section 1.2).
+   */
+  private observeOverview(ops: readonly SessionOp[]): void {
+    let changed = false;
+    for (const op of ops) {
+      if (op.op === 'item.upsert') {
+        changed = this.activityTracker.apply(op.item) || changed;
+        if (op.item.kind === 'user_message' && op.item.source === 'remote') this.markSeen(op.item.at);
+      } else if (op.op === 'conversation.reset') {
+        this.activityTracker.reset();
+        changed = true;
+      } else if (op.op === 'decision.resolved' && op.outcome.type === 'answered_elsewhere') {
+        this.markSeen(op.at);
+      }
+    }
+    if (changed) this.updateActivity();
+  }
+
+  /** WP-65: the CLI's live sentence (`task_summary`, Remote Control only); null = it has none. */
+  setActivitySentence(text: string | null): void {
+    if (this.activityTracker.setSentence(text)) this.updateActivity();
+  }
+
+  /**
+   * WP-65: the live activity to publish - null unless a turn runs; changes are throttled to one per
+   * `activityMinMs` (the newest value follows), null and the first value go out at once.
+   */
+  updateActivity(): void {
+    const next = this.facts.runState === 'working' && !this.removed ? this.activityTracker.current() : null;
+    if (isDeepStrictEqual(next, this.activity)) {
+      this.activityTimer?.cancel();
+      this.activityTimer = null;
+      return;
+    }
+    const now = this.core.now().getTime();
+    const wait = this.activityChangedAt + this.core.options.activityMinMs - now;
+    if (next === null || this.activity === null || wait <= 0) {
+      this.activityTimer?.cancel();
+      this.activityTimer = null;
+      this.activity = next;
+      this.activityChangedAt = now;
+      this.publishSummary(false);
+      return;
+    }
+    if (this.activityTimer !== null) return;
+    this.activityTimer = this.core.timers.setTimeout(() => {
+      this.activityTimer = null;
+      this.updateActivity();
+    }, wait);
+  }
+
+  /** WP-65: the turn ended - activity off; the next turn starts without the old sentence/tools. */
+  endTurnActivity(): void {
+    this.activityTracker.reset();
+    this.updateActivity();
+  }
+
+  /**
+   * WP-65: the CLI's summary of the latest turn (post_turn_summary) - replaces any summary; the
+   * fallback of this turn stays out.
+   */
+  setClaudeTurnSummary(text: string, category: string | null, needsAction: boolean): void {
+    this.turnSummaryFromClaude = true;
+    const at = this.core.now().toISOString();
+    this.patch((e) => ({ ...e, turnSummary: { source: 'claude', text, category, needsAction, at } }));
+  }
+
+  /**
+   * WP-65: end of a real (non-synthetic) turn - without a summary of the CLI the first meaningful
+   * line of the answer (successful turns only; errors and interrupts show their state instead).
+   */
+  finishTurnSummary(outcome: 'success' | 'error' | 'interrupted', answer: string | null): void {
+    const fromClaude = this.turnSummaryFromClaude;
+    this.turnSummaryFromClaude = false;
+    if (fromClaude || outcome !== 'success') return;
+    const text = fallbackSummary(answer);
+    if (text === null) return;
+    const at = this.core.now().toISOString();
+    this.patch((e) => ({
+      ...e,
+      turnSummary: { source: 'parallax', text, category: null, needsAction: false, at },
+    }));
+  }
+
+  /** WP-65 (section 1.2): the session was seen at `at` (presence ended, answered in the app); never backwards. */
+  markSeen(at: string): void {
+    if (this.removed) return;
+    const current = this.entry.lastSeenAt;
+    if (current !== null && Date.parse(current) >= Date.parse(at)) return;
+    this.patch((e) => ({ ...e, lastSeenAt: at }));
   }
 
   /** `todos` / `planFile` after these ops; the changed fields as patch, else null. */
@@ -568,6 +690,8 @@ export class EntryState {
       this.entry = { ...this.entry, lastRunState: next.runState, unread: next.unread };
     }
     this.touch(true);
+    // WP-65: the live activity exists only while working (set at the turn start, cleared after).
+    if (prev.runState !== next.runState) this.updateActivity();
     this.core.factsChanged(this, prev, next);
   }
 
@@ -621,7 +745,11 @@ export class EntryState {
   }
 
   summary(): SessionSummary {
-    return summaryOf(this.entry, this.facts, { externalRunning: this.externalRunning, remote: this.remote });
+    return summaryOf(this.entry, this.facts, {
+      externalRunning: this.externalRunning,
+      remote: this.remote,
+      activity: this.activity,
+    });
   }
 
   /** WP-64: next live Remote Control state – summary, and the idle sleep when the bridge came or went. */
@@ -777,6 +905,8 @@ export class EntryState {
     this.sleepSince = null;
     this.titleTimer?.cancel();
     this.titleTimer = null;
+    this.activityTimer?.cancel();
+    this.activityTimer = null;
   }
 
   /** After a non-synthetic turn: AI-title query, debounced (the CLI writes the title after the result). */

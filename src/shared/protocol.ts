@@ -34,6 +34,7 @@ import {
   fileStatResultSchema,
   fsListingSchema,
   hostStateSchema,
+  httpUrlSchema,
   modelOptionSchema,
   planVersionInfoSchema,
   profileInputSchema,
@@ -397,6 +398,31 @@ export const commandSchema = z.discriminatedUnion('name', [
    * archived (SESSION_ARCHIVED) or external entries (SESSION_EXTERNAL).
    */
   z.object({ name: z.literal('session.setRemoteControl'), entryId: entryIdSchema, enabled: z.boolean() }),
+  // ---- WP-65 (overview) ----
+  /**
+   * Send foreground work to the background (`backgroundTasks`, like Ctrl+B in the terminal): with
+   * `toolUseId` the running Bash call or subagent of that tool_use (TASK_NOT_FOUND when nothing
+   * matches), with null everything in the foreground. Needs a running process (SESSION_NOT_RUNNING);
+   * not for archived (SESSION_ARCHIVED) or external entries (SESSION_EXTERNAL).
+   */
+  z.object({
+    name: z.literal('session.backgroundTasks'),
+    entryId: entryIdSchema,
+    toolUseId: z.string().min(1).max(200).nullable(),
+  }),
+  /**
+   * A new AI title from the first prompt, the last prompt and the start of the last answer – the
+   * result is `titleSource 'ai'` even over a custom title (the user asked for it). A dormant entry is
+   * started for it; CLAUDE_CONTROL_FAILED when the CLI cannot make titles. Not for archived or
+   * external entries.
+   */
+  z.object({ name: z.literal('session.regenerateTitle'), entryId: entryIdSchema }),
+  /**
+   * Host: open an http(s) link in the Windows default browser (the Parallax window is a Chrome app
+   * profile without any sign-in). OPEN_FAILED when no default browser could be started – the client
+   * then falls back to `window.open`.
+   */
+  z.object({ name: z.literal('link.open'), url: httpUrlSchema }),
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export type CommandName = Command['name'];
@@ -424,6 +450,7 @@ export const HOST_COMMAND_NAMES = [
   'files.session',
   'files.project',
   'editor.detect',
+  'link.open',
 ] as const satisfies readonly CommandName[];
 export type HostCommandName = (typeof HOST_COMMAND_NAMES)[number];
 export type HostCommand = Extract<Command, { name: HostCommandName }>;
@@ -502,6 +529,9 @@ export const commandResultSchemas = {
   }),
   'session.remove': z.object({}),
   'session.setRemoteControl': z.object({}),
+  'session.backgroundTasks': z.object({}),
+  'session.regenerateTitle': z.object({}),
+  'link.open': z.object({}),
 } as const satisfies Record<CommandName, z.ZodType>;
 export type CommandResult<N extends CommandName> = z.infer<(typeof commandResultSchemas)[N]>;
 

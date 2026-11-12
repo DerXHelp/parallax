@@ -393,6 +393,9 @@ export class FakeHost {
   readonly fileOpens: CommandOf<'file.open'>[] = [];
   /** When set, file.open fails with this error after the checks (e.g. EDITOR_NOT_FOUND). */
   fileOpenError: ErrorPayload | null = null;
+  /** WP-65: every link.open (assertions); `linkOpenError` fails them (the web then opens the link itself). */
+  readonly linkOpens: string[] = [];
+  linkOpenError: ErrorPayload | null = null;
   /** Session file index per entry (files.session); a known entry without one starts with fakeSessionFiles(). */
   readonly sessionFiles = new Map<EntryId, SessionFile[]>();
   /** `truncated` of every files.session answer (more than LIMITS.sessionFilesMax on a real host). */
@@ -757,6 +760,31 @@ export class FakeHost {
    * session.stopTask like the engine (ADR-149): the task of the tool call is reported `stopped`
    * (task_notification), a background task leaves `detail.backgroundTasks`.
    */
+  /**
+   * WP-65: like the CLI's backgroundTasks – the given running main-thread Bash/Agent call (or every
+   * one) gets status `background`; TASK_NOT_FOUND when none matches.
+   */
+  private backgroundTasks(entryId: EntryId, toolUseId: string | null): FakeAck {
+    const view = this.view(entryId);
+    if (view === null) return { ok: false, error: makeError('ENTRY_NOT_FOUND') };
+    const running = view.items.filter(
+      (item): item is ToolCallItem =>
+        item.kind === 'tool_call' &&
+        item.parentToolUseId === null &&
+        item.status === 'running' &&
+        (toolUseId === null || item.toolUseId === toolUseId),
+    );
+    if (running.length === 0) {
+      if (toolUseId === null) return this.ok();
+      return { ok: false, error: makeError('TASK_NOT_FOUND', { taskId: toolUseId }) };
+    }
+    this.pushOps(
+      entryId,
+      running.map((item): SessionOp => ({ op: 'item.upsert', item: { ...item, status: 'background' } })),
+    );
+    return this.ok();
+  }
+
   private stopTask(entryId: EntryId, taskId: string): FakeAck {
     const view = this.view(entryId);
     if (view === null) return { ok: false, error: makeError('ENTRY_NOT_FOUND') };
@@ -1129,6 +1157,18 @@ export class FakeHost {
       }
       case 'session.stopTask':
         return this.stopTask(cmd.entryId, cmd.taskId);
+      // WP-65: background moves, generated titles, links in the default browser.
+      case 'session.backgroundTasks':
+        return this.backgroundTasks(cmd.entryId, cmd.toolUseId);
+      case 'session.regenerateTitle': {
+        const summary = this.summaries.get(cmd.entryId);
+        if (summary === undefined) return { ok: false, error: makeError('ENTRY_NOT_FOUND') };
+        this.patchSummary(cmd.entryId, { title: `Generated: ${summary.title}`.slice(0, 200), titleSource: 'ai' });
+        return this.ok();
+      }
+      case 'link.open':
+        this.linkOpens.push(cmd.url);
+        return this.linkOpenError === null ? this.ok() : { ok: false, error: this.linkOpenError };
       // Phase 2 commands (WP-30) included: the packages answer them in their tests via `onCommand`.
       case 'session.setFastMode':
       case 'session.switchConversation':
