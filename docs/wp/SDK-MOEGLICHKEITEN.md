@@ -71,6 +71,14 @@ aus dem letzten Assistenten-Text). `away_summary` (4) ließ sich so nicht auslö
 | 10 | Ausweichmodell bei Überlast | öffentlich: Option `fallbackModel` | weniger Abbrüche bei Überlastung | klein |
 | 11 | Bereits gesendete Nachricht aus der CLI-Warteschlange zurückholen | öffentlich: `cancelAsyncMessage(uuid)` | ergänzt das heutige Entfernen vor dem Senden (`runtime.ts`) | klein |
 
+**Durchgang mit dem Nutzer (12.11.2026):**
+- **8 (entschieden, WP-66):** `/btw` bzw. Umschalter im Composer, Karte „Seitenfrage · nicht im Kontext“ im
+  Transkript mit Nachfragen, „Kurz fragen…“ aus dem Kontextmenü der Seitenleiste (Popover), von Parallax
+  gespeichert und löschbar. **Probe live (Haiku, ≈ 0,0042 USD):** während eines laufenden Bash-Aufrufs Antwort
+  nach 1,1 s, Turn läuft ungestört weiter; Nachfrage mit `history` funktioniert; **keine Werkzeuge**; ≈ 0,0004 USD je
+  Frage (zählt ins kumulierte `total_cost_usd`, darum keine eigene Kostenanzeige je Karte); nichts im Hauptgespräch
+  und im claude-Transkript; Fortschritt als `system/control_request_progress`.
+
 ## 3. Session-Infos als Daten statt Terminal-Dialog
 
 Das CLI liefert die Inhalte seiner Terminal-Dialoge als Daten, „for a host that draws the dialog with
