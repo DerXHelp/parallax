@@ -41,7 +41,8 @@ declare global {
     __e2ePresence?: SentPresence | null;
     // ---- phase2-sessions.spec.ts (status recorder of the session header) ----
     __e2eStatus?: string[];
-    // ---- support/files.ts (`recordTexts`, WP-60) ----
+    // ---- support/files.ts (`recordTexts`, WP-60; `recordTextShown`, FIX-R5-F6) ----
     __e2eSeenTexts?: string[];
+    __e2eShownAt?: number | null;
   }
 }

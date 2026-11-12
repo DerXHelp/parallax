@@ -12,15 +12,26 @@
  * 8. editor/Explorer – a custom editor saved in the settings "Files"; "Open in editor" and "Open
  *    folder in Explorer" reach the server's opener, which with the FakeBackend only logs
  *    `file.open (fake): <target> <path>` (no program starts).
+ * FIX-R5-F6: V4-01 – in a project folder with spaces and umlauts, absolute paths in running text,
+ * in backticks and as a Markdown link are links and open the viewer; no prefix piece is marked. The
+ * 3-s bound of the live change is measured in the page (R5W-11).
  * The file runs on a server of its own (temp home, projects); 1600 px wide, so the side panel lies
  * next to the transcript instead of over it.
  */
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { join } from 'node:path';
 import type { Page, Request } from '@playwright/test';
 import { API_PATHS, FILE_PDF_CSP, fileUrl } from '@shared/http';
 import { rawRequest } from '../src/server/http/testServer';
-import { README_TITLE, logMessages, rejectedRequests, writeSampleFiles } from './support/files';
+import {
+  README_TITLE,
+  logMessages,
+  recordTextShown,
+  rejectedRequests,
+  textShownAt,
+  writeSampleFiles,
+} from './support/files';
 import { expect, test } from './support/fixtures';
 import { serverSettings } from './support/server';
 
@@ -111,14 +122,57 @@ test('viewer: links in text and tool cards; Markdown, code at :12, image, PDF (L
   await expect(viewer.locator('[data-slot="file-truncated"]')).toBeVisible();
   await expect(viewer.locator('[data-slot="code-view"] [data-line="1"]')).toContainText('xxxx');
 
-  // A change on disk shows by itself (stat every 2 s while visible) – within 3 s.
+  // A change on disk shows by itself (stat every 2 s while visible) – within 3 s. The page notes the
+  // moment the new text shows, so the bound applies to the app and not to the retry interval of
+  // the assertion (up to 1 s; with a 2-s poll that left too little room under load, R5W-11).
   viewer = await session.openFile(session.fileLink(echo, 'notes.txt'), 'notes.txt', 'text');
   await expect(viewer.locator('[data-slot="code-view"]')).toContainText('first version of the notes');
-  await writeFile(files.notes, 'second version of the notes\n');
-  await expect(viewer.locator('[data-slot="code-view"]')).toContainText('second version of the notes', {
-    timeout: 3_000,
-  });
+  const second = 'second version of the notes';
+  await recordTextShown(page, `[data-side-panel="${session.key}"] [data-slot="code-view"]`, second);
+  const written = Date.now();
+  await writeFile(files.notes, `${second}\n`);
+  await expect(viewer.locator('[data-slot="code-view"]')).toContainText(second);
+  const shownAt = await textShownAt(page);
+  expect(shownAt, 'the page noted the new text').not.toBeNull();
+  const latency = (shownAt ?? Number.POSITIVE_INFINITY) - written;
+  test.info().annotations.push({ type: 'live change (ms)', description: String(latency) });
+  expect(latency, 'disk change → viewer (ms)').toBeLessThanOrEqual(3_000);
   expect(downloads).toEqual([]);
+});
+
+test('paths with spaces and umlauts (V4-01): absolute paths in text, in backticks and as a Markdown link are links and open the viewer; no prefix is marked', async ({
+  app,
+  server,
+}) => {
+  const project = await server.makeProject('Projekt mit Leerzeichen äöü');
+  await mkdir(join(project, 'Unter Ordner'));
+  const readme = join(project, 'README.md');
+  const notes = join(project, 'Meine Notizen.txt');
+  const plan = join(project, 'Unter Ordner', 'Plan für später.md');
+  await writeFile(readme, `# ${README_TITLE}\n`);
+  await writeFile(notes, 'notes with a space in the name\n');
+  await writeFile(plan, '# Plan für später\n');
+  const session = await app.newSession(project);
+
+  // Running text (folder names with spaces – the path goes on to the file with its extension), an
+  // inline code span (as a whole – also a file name with spaces) and a Markdown link.
+  await session.send(`see ${readme} and \`${notes}\` and [the plan](<${plan.replaceAll('\\', '/')}>) please`);
+  const echo = session.assistantText('Echo: see');
+  await expect(echo).toBeVisible();
+  const links = echo.locator('[data-slot="file-link"][data-state="link"]');
+  await expect(links).toHaveCount(3);
+  // Nothing else is a reference: no refused, missing or unchecked prefix ("…\02-Projekt") is left.
+  await expect(echo.locator('[data-slot="file-link"]')).toHaveCount(3);
+  await expect(links.nth(0)).toHaveText(readme);
+  await expect(links.nth(1)).toHaveText(notes);
+  await expect(links.nth(2)).toHaveText('the plan');
+
+  let viewer = await session.openFile(links.nth(0), 'README.md', 'markdown');
+  await expect(viewer.locator('[data-slot="markdown-view"] h1')).toHaveText(README_TITLE);
+  viewer = await session.openFile(links.nth(1), 'Meine Notizen.txt', 'text');
+  await expect(viewer.locator('[data-slot="code-view"]')).toContainText('notes with a space in the name');
+  viewer = await session.openFile(links.nth(2), 'Plan für später.md', 'markdown');
+  await expect(viewer.locator('[data-slot="markdown-view"] h1')).toHaveText('Plan für später');
 });
 
 test('guard of /api/file (L16): the page sends Sec-Fetch-Site same-origin; another origin and a direct call are refused', async ({

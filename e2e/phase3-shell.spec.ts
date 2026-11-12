@@ -5,6 +5,8 @@
  * 10. errors – `fake:writes-lost` shows the lost writes of the session's end as an error row; a lazy
  *    slot whose chunk cannot be loaded (route blocked) shows the SlotBoundary card while the rest
  *    of the app keeps working.
+ * FIX-R5-F6 (R5W-02): the chunk of the inline `FileLink` slot blocked – every reference stays text
+ * (quiet fallback), no card in running text, exactly one alert for the window.
  * Own server.
  */
 import { expect, test } from './support/fixtures';
@@ -92,4 +94,48 @@ test('a lazy slot whose chunk cannot be loaded shows the SlotBoundary card; the 
   await expect(session.sidePanel).toHaveCount(0);
   await session.send('still working');
   await expect(session.assistantText('Echo: still working')).toBeVisible();
+});
+
+test('the FileLink chunk cannot be loaded (R5W-02): references stay text, no card in the text, one alert for the window', async ({
+  app,
+  server,
+  page,
+}) => {
+  const blocked: string[] = [];
+  await page.route(/\/assets\/FileLink-[\w-]+\.js$/, async (route) => {
+    blocked.push(route.request().url());
+    await route.abort();
+  });
+  const project = await server.makeProject('filelink-chunk');
+  const session = await app.newSession(project);
+  await session.send('fake:files');
+  const answer = session.assistantText('I read, wrote and changed files');
+  await expect(answer).toBeVisible();
+  await session.expectStatus('idle');
+
+  // Every reference of the answer is the quiet fallback: its text, no link, no error card.
+  const fallbacks = answer.locator('[data-slot="file-link-fallback"]');
+  await expect(fallbacks.filter({ hasText: 'app.ts:12' })).toHaveCount(1);
+  await expect(fallbacks.filter({ hasText: 'notes.md' })).toHaveCount(1);
+  await expect(fallbacks.first()).toHaveAttribute('data-error-kind', 'chunk');
+  // The tool cards' file chips fall back the same way.
+  await expect(session.toolCall('Read').locator('[data-slot="file-link-fallback"]')).not.toHaveCount(0);
+  await expect(page.locator('[data-slot="file-link"][data-state="link"]')).toHaveCount(0);
+  await expect(page.locator('[data-slot="slot-error"]')).toHaveCount(0);
+  expect(blocked.length).toBeGreaterThan(0);
+
+  // One notice for the window (role="alert", with "Reload window") – the only alert of the page.
+  const notice = page.locator('[data-notice="shell-slot-quiet-failure"]');
+  await expect(notice).toHaveAttribute('role', 'alert');
+  await expect(notice).toContainText('some content (such as file links) shows as plain text');
+  await expect(notice.locator('[data-notice-action]')).toHaveText('Reload window');
+  await expect(page.locator('[role="alert"]')).toHaveCount(1);
+
+  // More references later (new paths, a fresh try each): still text, still one alert.
+  await session.send(`look at ${project}\\a.txt and ${project}\\b.txt`);
+  const echo = session.assistantText('Echo: look at');
+  await expect(echo).toBeVisible();
+  await expect(echo.locator('[data-slot="file-link-fallback"]')).toHaveCount(2);
+  await expect(page.locator('[role="alert"]')).toHaveCount(1);
+  await expect(page.locator('[data-slot="slot-error"]')).toHaveCount(0);
 });
