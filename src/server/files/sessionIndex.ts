@@ -7,8 +7,10 @@
  *   `Edit`/`MultiEdit`/`NotebookEdit` → `edited` (input `file_path` / `notebook_path`),
  *   `ExitPlanMode` input `planFilePath` → `plan` – and `task.outputFile` → `output` (any status: a
  *   running background task's output is meant to be opened), also from `task_notification` system
- *   items. Subagent items (`parentToolUseId`) count like any other. Only absolute paths that pass
- *   the string filter; Grep/Glob/Bash on purpose not. Tool inputs are read tolerantly with zod.
+ *   items; only CLI task data (`…\tasks\<taskId>.output`, ADR-152 – the normalizer takes a task
+ *   notification text only with the CLI's origin). Subagent items (`parentToolUseId`) count like any
+ *   other. Only absolute paths that pass the string filter; Grep/Glob/Bash on purpose not. Tool
+ *   inputs are read tolerantly with zod.
  * - Stored in `entries/<entryId>/files.json` (`sessionFilesFileSchema`, JsonStore: atomic, `.bak`,
  *   quarantine), debounced 2 s, at most LIMITS.sessionFilesMax entries (oldest `lastAt` dropped).
  * - Missing file (or `backfilled: false`): the first use builds the index once from the transcript
@@ -98,10 +100,26 @@ function usablePath(value: string | null | undefined): value is string {
   return typeof value === 'string' && value.length <= LIMITS.pathChars && windowsPathIssue(value) === null;
 }
 
+/**
+ * ADR-152 (defense in depth behind the normalizer): an `output` entry only for the shape of the
+ * CLI's task data – the CLI writes a task's output to `…\tasks\<taskId>.output`
+ * (`%TEMP%\claude\<hash>\<sessionId>\tasks\`, CLI 2.1.322, Agent and Bash tasks alike; the fake
+ * `<home>\fake-files\<sessionId>\tasks\`). Any other `outputFile` did not come from the CLI and
+ * never enters the access list – also from transcripts written before ADR-152.
+ */
+export function isTaskOutputFile(file: string, taskId: string): boolean {
+  const segments = windowsPathKey(file).split('\\');
+  return segments.at(-2) === 'tasks' && segments.at(-1) === `${taskId}.output`.toLowerCase();
+}
+
+function usableOutputFile(value: string | null | undefined, taskId: string): value is string {
+  return usablePath(value) && isTaskOutputFile(value, taskId);
+}
+
 /** File references of one transcript item (pure; see the file comment). */
 export function recordsOfItem(item: TranscriptItem): IndexRecord[] {
   if (item.kind === 'system') {
-    if (item.event !== 'task_notification' || !usablePath(item.task.outputFile)) return [];
+    if (item.event !== 'task_notification' || !usableOutputFile(item.task.outputFile, item.task.taskId)) return [];
     return [
       {
         path: item.task.outputFile,
@@ -115,7 +133,7 @@ export function recordsOfItem(item: TranscriptItem): IndexRecord[] {
   if (item.kind !== 'tool_call') return [];
   const records: IndexRecord[] = [];
   const outputFile = item.task?.outputFile;
-  if (usablePath(outputFile)) {
+  if (item.task !== null && usableOutputFile(outputFile, item.task.taskId)) {
     records.push({
       path: outputFile,
       op: 'output',

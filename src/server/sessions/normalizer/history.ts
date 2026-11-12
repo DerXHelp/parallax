@@ -148,7 +148,8 @@ class HistoryBuilder {
     }
     if (content.text.trim() === '' && content.images.length === 0) return;
 
-    const kind = classifyUserText(content.text);
+    // ADR-152: a task notification needs the CLI's origin and the main agent.
+    const kind = classifyUserText(content.text, { originKind: message.origin?.kind ?? null, parentToolUseId: parent });
     switch (kind.kind) {
       case 'interrupted':
         this.put({ ...this.uuidBase(message.uuid, at, parent), kind: 'system', event: 'interrupted', forToolUse: kind.forToolUse });

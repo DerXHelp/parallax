@@ -4,8 +4,9 @@
  * `fake:question`, `fake:plan`, `fake:subagent`, `fake:parallel`, `fake:slow`, `fake:compact`,
  * `fake:ratelimit` (rejected, resets in 60 s – "continue at" in E2E), `fake:image` (Read of a PNG
  * with an image result), `fake:error`, `fake:crash`, `fake:held`, `/rename X`, `/clear`; Phase 3
- * (WP-52): `fake:background`, `fake:todo`, `fake:files`, `fake:writes-lost` (phase3.ts) and the
- * plan file of `fake:plan` (plan.ts). A prompt with images, PDFs, attached files or inline pastes
+ * (WP-52): `fake:background`, `fake:todo`, `fake:files`, `fake:writes-lost`, `fake:context-high`
+ * (context stays at 75 % until /clear or a compaction, V4-05; phase3.ts) and the plan file of
+ * `fake:plan` (plan.ts). A prompt with images, PDFs, attached files or inline pastes
  * gets "Fake: received …" (ADR-103, ADR-146); the first prompt of a start without resume that is
  * the engine's fresh-context prompt gets "Fake: implementing plan (N lines)"; anything else gets a
  * thought plus a streamed "Echo: …". Decisions really wait for the engine; interrupt() and
@@ -39,7 +40,7 @@ import {
   type DslContext,
 } from './dsl';
 import { FAKE_SHOT_HEIGHT, FAKE_SHOT_NAME, FAKE_SHOT_PNG_BASE64, FAKE_SHOT_WIDTH } from './image';
-import { background, files, receivedCounts, receivedText, todo, writesLost } from './phase3';
+import { background, contextHigh, files, receivedCounts, receivedText, todo, writesLost } from './phase3';
 import { implementPlan, isImplementPlanPrompt, plan } from './plan';
 import { CANCEL_DENY, abortedByDecision, answerTurn, ask, contextFor, firstWords, type Turn } from './turn';
 import type { FakeScenario, FakeScriptContext } from './types';
@@ -438,6 +439,9 @@ async function handle(
     case 'fake:writes-lost':
       await writesLost(ctx, c, turn, sessionId);
       break;
+    case 'fake:context-high':
+      await contextHigh(ctx, c, turn);
+      break;
     case 'fake:image':
       await image(ctx, c, turn);
       break;
@@ -465,7 +469,9 @@ async function handle(
       break;
     case 'fake:compact':
     case '/compact':
-      await compact(ctx, c, turn);
+      // A compaction empties the context (V4-05: also after fake:context-high).
+      ctx.state.contextTokens = null;
+      await compact(ctx, { ...c, contextTokens: null }, turn);
       break;
     case 'fake:ratelimit':
       await ratelimit(ctx, c, turn);
@@ -498,6 +504,8 @@ async function handle(
           ? info.customTitle
           : null;
       await ctx.play(clearCommand(c, { prompt: turn.prompt, newSessionId: next, title }));
+      // The new conversation starts with an empty context (V4-05: also after fake:context-high).
+      ctx.state.contextTokens = null;
       // F.7: the custom title is taken over by the new session.
       if (title !== null) ctx.history.rename(next, title);
       return next;

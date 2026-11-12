@@ -31,7 +31,7 @@ import type {
 } from '../types';
 import { createFakeBackend, sequentialIds, type FakeBackendOptions } from '../fakeBackend';
 import { FAKE_CONSOLE_PROMPT, fakeConsoleAnswer } from './console';
-import { FAKE_MODELS } from './defaults';
+import { FAKE_CONTEXT_HIGH_TOKENS, FAKE_MODELS } from './defaults';
 import { FAKE_SHOT_HEIGHT, FAKE_SHOT_PNG_BASE64, FAKE_SHOT_WIDTH } from './image';
 import { FAKE_RATE_LIMIT_RESET_S } from './interactive';
 import { createFakeClaudeIntegration } from './integration';
@@ -40,6 +40,7 @@ import {
   FAKE_BACKGROUND_MS,
   FAKE_BACKGROUND_STARTED,
   FAKE_BACKGROUND_SUMMARY,
+  FAKE_CONTEXT_HIGH_TEXT,
   FAKE_UNC_PATH,
   FAKE_WRITES_LOST_TEXT,
 } from './phase3';
@@ -53,14 +54,25 @@ afterAll(() => {
   rmSync(filesRoot, { recursive: true, force: true });
 });
 
-async function until(predicate: () => boolean, what: string, limit = 20_000): Promise<void> {
-  for (let i = 0; i < limit; i += 1) {
+/**
+ * Wall-clock limit of `until` (V4-02, docs/wp/FLAKES.md "Wanduhr-Annahme"): `fake:files` does real
+ * file I/O, which under parallel load outlasted a fixed number of event-loop rounds. Below the
+ * node project's 20-s test timeout, so a missing event still fails with this message.
+ */
+const UNTIL_TIMEOUT_MS = 10_000;
+
+/** The web's mark of the "fresh context" recommendation (decisions/lib/plan.ts, ADR-147). */
+const FRESH_CONTEXT_PERCENT = 60;
+
+async function until(predicate: () => boolean, what: string, timeoutMs = UNTIL_TIMEOUT_MS): Promise<void> {
+  const deadline = performance.now() + timeoutMs;
+  for (;;) {
     if (predicate()) return;
+    if (performance.now() > deadline) throw new Error(`timeout waiting for ${what} (${String(timeoutMs)} ms)`);
     await new Promise((resolve) => {
       realSetImmediate(resolve);
     });
   }
-  throw new Error(`timeout waiting for ${what}`);
 }
 
 interface Pending {
@@ -233,6 +245,23 @@ function agentCall(items: TranscriptItem[]) {
   if (call?.kind !== 'tool_call') throw new Error('no Agent call');
   return call;
 }
+
+describe('until (test helper, V4-02)', () => {
+  it('waits by wall clock, not by event-loop rounds: slow I/O (a 1.5-s timer) still arrives', async () => {
+    let done = false;
+    setTimeout(() => {
+      done = true;
+    }, 1_500);
+    await until(() => done, 'the slow timer');
+    expect(done).toBe(true);
+  });
+
+  it('gives up after its wall-clock limit with the reason', async () => {
+    const started = performance.now();
+    await expect(until(() => false, 'nothing', 50)).rejects.toThrow('timeout waiting for nothing (50 ms)');
+    expect(performance.now() - started).toBeGreaterThanOrEqual(45);
+  });
+});
 
 describe('interactive scenario', () => {
   it('echo: thinking + streamed "Echo: …", result, idle; AI title after the first turn', async () => {
@@ -729,6 +758,41 @@ describe('interactive scenario – Phase 3 (WP-52)', () => {
       statuses(['completed', 'pending', 'pending']),
     ]);
     expect(texts(h.items()).at(-1)).toBe('The first item is done; two are left.');
+    expect(h.handle.diagnostics).toEqual([]);
+    await h.close();
+  });
+
+  it('fake:context-high – the context stays at 75 % (getContextUsage and streamed usage) until a compaction or /clear (V4-05)', async () => {
+    const h = harness();
+    const percentage = async () =>
+      z.looseObject({ percentage: z.number() }).parse(await h.agent.getContextUsage('summary')).percentage;
+    const estimates = () => h.signals.flatMap((s) => (s.type === 'context_estimate' ? [s.totalTokens] : []));
+    h.send('hello');
+    await h.turnDone(1);
+    expect(await percentage()).toBeLessThan(FRESH_CONTEXT_PERCENT);
+    expect(estimates().at(-1)).toBeLessThan(FAKE_CONTEXT_HIGH_TOKENS / 2);
+
+    h.send('fake:context-high');
+    await h.turnDone(2);
+    expect(texts(h.items()).at(-1)).toBe(FAKE_CONTEXT_HIGH_TEXT);
+    expect(await percentage()).toBe(75);
+    expect(estimates().at(-1)).toBe(FAKE_CONTEXT_HIGH_TOKENS);
+    // Later turns (here a tool turn) keep streaming the high usage; the answer stays at 75 %.
+    const seen = estimates().length;
+    h.send('fake:todo');
+    await h.turnDone(3);
+    expect(estimates().slice(seen).every((total) => total === FAKE_CONTEXT_HIGH_TOKENS)).toBe(true);
+    expect(await percentage()).toBe(75);
+
+    h.send('fake:compact');
+    await h.turnDone(4);
+    expect(await percentage()).toBeLessThan(FRESH_CONTEXT_PERCENT);
+    h.send('fake:context-high');
+    await h.turnDone(5);
+    expect(await percentage()).toBe(75);
+    h.send('/clear');
+    await h.turnDone(6);
+    expect(await percentage()).toBeLessThan(FRESH_CONTEXT_PERCENT);
     expect(h.handle.diagnostics).toEqual([]);
     await h.close();
   });

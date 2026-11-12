@@ -1031,6 +1031,22 @@ describe('todos (ADR-149)', () => {
 // =====================================================================================
 
 describe('approve_fresh_context (ADR-147)', () => {
+  it('fake:context-high (V4-05): the gauge stays at 75 % – after the turn and during a later plan decision; the fresh start empties it', async () => {
+    const h = await setup();
+    const entryId = await idleEntry(h, 'fake:context-high');
+    const { context } = await h.cmd({ name: 'session.getContext', entryId, detail: 'summary' });
+    expect(context).toMatchObject({ percentage: 75, totalTokens: 150_000, maxTokens: 200_000, source: 'sdk' });
+    await h.cmd({ name: 'session.sendPrompt', entryId, prompt: { text: 'fake:plan' } });
+    const decision = await openPlan(h, entryId);
+    // During the turn the streamed usage keeps the gauge there (a lower usage would move the estimate).
+    expect(h.summary(entryId).context).toMatchObject({ percentage: 75, maxTokens: 200_000 });
+    await respondPlan(h, entryId, decision.id, { behavior: 'approve_fresh_context', mode: 'acceptEdits' });
+    await h.waitFor(() => h.sessions(entryId).length === 2 && h.facts(entryId).runState === 'idle');
+    await h.settle();
+    const fresh = await h.cmd({ name: 'session.getContext', entryId, detail: 'summary' });
+    expect(fresh.context.percentage).toBeLessThan(60);
+  });
+
   it('open decision: deny + interrupt, outcome, process closed, new conversation without resume, exact first prompt', async () => {
     const h = await setup();
     const results = captureResults(h);

@@ -133,10 +133,15 @@ export function stream(n: number, messageId: string, event: Record<string, unkno
   return msg({ type: 'stream_event', event, parent_tool_use_id: null, uuid: uuid(n), api_message_id: messageId });
 }
 
-export function messageStart(n: number, messageId: string, model = 'claude-haiku-5-5'): readonly [EventKind, unknown] {
+export function messageStart(
+  n: number,
+  messageId: string,
+  model = 'claude-haiku-5-5',
+  startUsage: Record<string, unknown> = usage(2, 1),
+): readonly [EventKind, unknown] {
   return stream(n, messageId, {
     type: 'message_start',
-    message: { id: messageId, model, type: 'message', role: 'assistant', content: [], usage: usage(2, 1) },
+    message: { id: messageId, model, type: 'message', role: 'assistant', content: [], usage: startUsage },
   });
 }
 

@@ -4,7 +4,9 @@
  * override path from the settings → App Paths (HKCU, then HKLM 64/32 bit) → Uninstall
  * `InstallLocation` → the usual install folders. Every candidate must be an existing, absolute,
  * safe `.exe` with the preset's file name and not on the block list (`editorExecutableIssue`);
- * registry values are never trusted beyond that. Reads only (reg.exe query, file stat).
+ * registry values are never trusted beyond that. Reads only (reg.exe query, file stat). Each
+ * candidate is checked as soon as it is known (no query after the first hit); a launcher keeps
+ * the hit per preset for a minute (`createEditorFinder`, R5-04).
  */
 import path from 'node:path';
 import { makeError } from '@shared/errors';
@@ -75,14 +77,16 @@ async function presetCandidate(candidate: string, preset: DetectablePreset, fs: 
   return usableExecutable(candidate, fs);
 }
 
-/** The installed executable of a preset (registry, then the usual folders), or null. */
-export async function findEditor(preset: DetectablePreset, deps: EditorLocatorDeps): Promise<string | null> {
+/**
+ * Candidates of a preset in lookup order, produced lazily: the caller checks each one at once, so
+ * no further `reg.exe` starts after the first hit (R5-04).
+ */
+async function* editorCandidates(preset: DetectablePreset, deps: EditorLocatorDeps): AsyncGenerator<string> {
   const exe = EDITOR_EXE_NAMES[preset];
-  const candidates: string[] = [];
   for (const [hive, view] of HIVES) {
     const output = await deps.regQuery(`${hive}\\${APP_PATHS_KEY}\\${exe}`, view);
     const value = output === null ? null : parseRegDefaultValue(output, deps.env);
-    if (value !== null) candidates.push(value);
+    if (value !== null) yield value;
   }
   for (const name of UNINSTALL_NAMES[preset]) {
     for (const [hive, view] of HIVES) {
@@ -97,27 +101,69 @@ export async function findEditor(preset: DetectablePreset, deps: EditorLocatorDe
       const raw = location.data.trim().replace(/^"(.*)"$/, '$1');
       const folder = location.type === 'REG_EXPAND_SZ' ? expandRegValue(raw, deps.env) : raw;
       // path.win32.join on an unsafe folder would only give an unsafe candidate: the check drops it.
-      if (folder !== '') candidates.push(path.win32.join(folder, exe));
+      if (folder !== '') yield path.win32.join(folder, exe);
     }
   }
   for (const [variable, folder] of STANDARD_PATHS[preset]) {
     const root = getEnvVar(deps.env, variable);
-    if (root !== undefined && root !== '') candidates.push(path.win32.join(root, folder, exe));
+    if (root !== undefined && root !== '') yield path.win32.join(root, folder, exe);
   }
-  for (const candidate of candidates) {
+}
+
+/** The installed executable of a preset (registry, then the usual folders), or null. */
+export async function findEditor(preset: DetectablePreset, deps: EditorLocatorDeps): Promise<string | null> {
+  for await (const candidate of editorCandidates(preset, deps)) {
     if (await presetCandidate(candidate, preset, deps.fs)) return candidate;
   }
   return null;
 }
 
+export type FindEditor = (preset: DetectablePreset, deps: EditorLocatorDeps) => Promise<string | null>;
+
+/** How long a found editor is reused without a new lookup (R5-04). */
+export const EDITOR_CACHE_MS = 60_000;
+
+export interface EditorFinder {
+  /**
+   * `findEditor` with the last hit per preset for `ttlMs` – reused only while it is still an
+   * acceptable existing `.exe` (one stat); a miss is never cached (a fresh install is found at once).
+   */
+  find: FindEditor;
+  /** Always a fresh lookup (`editor.detect`, the settings dialog); its result replaces the cached one. */
+  refresh: FindEditor;
+}
+
+/** The editor lookup of one launcher (R5-04: at most one registry search per preset and minute). */
+export function createEditorFinder(options: { ttlMs?: number; now?: () => number } = {}): EditorFinder {
+  const ttlMs = options.ttlMs ?? EDITOR_CACHE_MS;
+  const now = options.now ?? Date.now;
+  const hits = new Map<DetectablePreset, { executable: string; at: number }>();
+  const refresh: FindEditor = async (preset, deps) => {
+    const found = await findEditor(preset, deps);
+    if (found === null) hits.delete(preset);
+    else hits.set(preset, { executable: found, at: now() });
+    return found;
+  };
+  return {
+    refresh,
+    async find(preset, deps) {
+      const hit = hits.get(preset);
+      if (hit !== undefined && now() - hit.at < ttlMs && (await presetCandidate(hit.executable, preset, deps.fs)))
+        return hit.executable;
+      return refresh(preset, deps);
+    },
+  };
+}
+
 /**
  * Executable for "Open in editor" (preset `notepadpp`/`vscode`/`custom`; `system` never gets here):
- * an existing override wins, otherwise the detected install; `custom` needs its own `.exe`.
- * Missing → EDITOR_NOT_FOUND {preset}.
+ * an existing override wins, otherwise the detected install (`find`, default an uncached lookup);
+ * `custom` needs its own `.exe`. Missing → EDITOR_NOT_FOUND {preset}.
  */
 export async function resolveEditorExecutable(
   editor: EditorSettings,
   deps: EditorLocatorDeps,
+  find: FindEditor = findEditor,
 ): Promise<string> {
   const notFound = (): CommandError =>
     new CommandError(makeError('EDITOR_NOT_FOUND', { preset: editor.preset }));
@@ -125,7 +171,7 @@ export async function resolveEditorExecutable(
   if (editor.executable !== null && (await usableExecutable(editor.executable, deps.fs)))
     return editor.executable;
   if (editor.preset === 'custom') throw notFound();
-  const found = await findEditor(editor.preset, deps);
+  const found = await find(editor.preset, deps);
   if (found === null) throw notFound();
   return found;
 }
@@ -154,12 +200,16 @@ export function editorArguments(
   );
 }
 
-/** `editor.detect`: both presets searched; a configured executable (custom or override) checked. */
+/**
+ * `editor.detect`: both presets searched (`find`, default an uncached lookup); a configured
+ * executable (custom or override) checked.
+ */
 export async function detectEditors(
   editor: EditorSettings,
   deps: EditorLocatorDeps,
+  find: FindEditor = findEditor,
 ): Promise<EditorDetection> {
-  const [notepadpp, vscode] = await Promise.all([findEditor('notepadpp', deps), findEditor('vscode', deps)]);
+  const [notepadpp, vscode] = await Promise.all([find('notepadpp', deps), find('vscode', deps)]);
   const custom =
     editor.executable === null
       ? null
