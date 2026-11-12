@@ -20,7 +20,7 @@ Task, „Alle stoppen“, `session.stopTask`) und die angeheftete Aufgabenleiste
 
 | Pfad | Inhalt |
 | --- | --- |
-| `lib/rows.ts` | rein: `buildTaskRows` (Hintergrund-Tasks + Tasks der Tool-Calls + `task_notification`, je `taskId` eine Zeile; „beendet“ gewinnt), `visibleTaskRows` (beendete 10 min), `canStopTask` + Schalter `TASK_STOP_BASH` – nur im Panel-Chunk |
+| `lib/rows.ts` | rein, Panel-Helfer: `visibleTaskRows` (beendete 10 min), `canStopTask` + Schalter `TASK_STOP_BASH`, `finishedDuration` – nur im Panel-Chunk. Das Zeilenmodell (`buildTaskRows`, `TaskRow`, `runningTaskCount`, `selectTaskSources`) liegt seit CR3-02 in `@web/lib/task-rows`, weil der Zähler der Kopfzeile dieselbe Funktion nutzt (ohne Ambient-Tasks, ohne Vordergrund-Shells von Subagenten – WP61-06, `pending`-Tool-Calls nicht laufend – CR3-07) |
 | `lib/todo-progress.ts` | rein: `todoProgress` (erledigt/gesamt, aktiver Eintrag, offen) – als einziges Modul statisch im Start-Chunk (`index.ts`, R5W-01) |
 | `state/tasks.ts` | `useTaskRows` (rendert nur bei Änderungen an Task-Items/Hintergrundliste neu), `stopTask` (Fehler als Notice, `TASK_NOT_FOUND` still), `stopTasks` (nacheinander) – nur im Panel-Chunk |
 | `state/todos.ts` | `useTodos` (Leiste und Panel; zieht `rows.ts` nicht in den Leisten-Chunk) |

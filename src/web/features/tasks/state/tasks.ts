@@ -2,34 +2,27 @@ import { useMemo } from 'react';
 import { parseSessionKey } from '@shared/common';
 import type { BackgroundTask, TranscriptItem } from '@shared/model';
 import type { SessionViewState } from '@shared/sync';
+import { buildTaskRows, selectTaskSources, type TaskRow } from '@web/lib/task-rows';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand, useSessionSelector } from '@web/state/hooks';
 import { showErrorNotice } from '@web/state/notices';
-import { buildTaskRows, taskSourceItems, type TaskRow } from '../lib/rows';
 
 /**
  * Store access of the task panel (WP-55): the task rows of a session (re-rendered only when a
  * task-bearing item or the background list changes – not on every text delta) and stopping tasks
- * (`session.stopTask`, ADR-149). The todo list: `state/todos.ts`.
+ * (`session.stopTask`, ADR-149). The rows come from `@web/lib/task-rows`, the model the header's
+ * counter shares (CR3-02). The todo list: `state/todos.ts`.
  */
 
 const EMPTY_ITEMS: readonly TranscriptItem[] = Object.freeze([]);
 const EMPTY_BACKGROUND: readonly BackgroundTask[] = Object.freeze([]);
 
-const sourceCache = new WeakMap<readonly TranscriptItem[], TranscriptItem[]>();
-function selectSources(view: SessionViewState): readonly TranscriptItem[] {
-  const cached = sourceCache.get(view.items);
-  if (cached !== undefined) return cached;
-  const sources = taskSourceItems(view.items);
-  sourceCache.set(view.items, sources);
-  return sources;
-}
 const selectBackground = (view: SessionViewState): readonly BackgroundTask[] => view.detail.backgroundTasks;
 
 /** All task rows of the session (running first); the 10-minute window is the caller's (clock). */
 export function useTaskRows(sessionKey: string): readonly TaskRow[] {
   // Shallow comparison: the same task items → the same array → no new rows.
-  const sources = useSessionSelector(sessionKey, selectSources, EMPTY_ITEMS);
+  const sources = useSessionSelector(sessionKey, selectTaskSources, EMPTY_ITEMS);
   const background = useSessionSelector(sessionKey, selectBackground, EMPTY_BACKGROUND);
   return useMemo(() => buildTaskRows(sources, background), [sources, background]);
 }

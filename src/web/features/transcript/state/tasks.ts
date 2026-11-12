@@ -1,5 +1,5 @@
 import { parseSessionKey } from '@shared/common';
-import type { SessionSummary, TaskInfo } from '@shared/model';
+import type { SessionSummary } from '@shared/model';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand, useSummarySelector } from '@web/state/hooks';
 import { showErrorNotice } from '@web/state/notices';
@@ -14,13 +14,6 @@ const selectCwd = (summary: SessionSummary): string | null => summary.cwd;
 /** The session's working directory, null while its summary is unknown. */
 export function useSessionCwd(sessionKey: string | null): string | null {
   return useSummarySelector(sessionKey, selectCwd, null);
-}
-
-const OPEN_TASK_STATUSES: ReadonlySet<string> = new Set(['started', 'running', 'pending']);
-
-/** Is the task still running (open status set – unknown statuses count as finished)? */
-export function isTaskOpen(task: TaskInfo | null): boolean {
-  return task !== null && OPEN_TASK_STATUSES.has(task.status);
 }
 
 /**

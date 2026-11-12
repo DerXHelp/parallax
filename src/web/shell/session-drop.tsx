@@ -1,6 +1,7 @@
 import { FileUpIcon } from 'lucide-react';
 import { useEffect, useState, type DragEvent } from 'react';
 import { useT } from '@web/i18n';
+import { transferFiles } from '@web/lib/transfer-files';
 import { showTextNotice } from '@web/state/notices';
 import { requestShell } from './requests';
 
@@ -8,7 +9,8 @@ import { requestShell } from './requests';
  * Drop zone over the whole session pane (R4W-02, WP-58): files dropped on the transcript, the
  * header or the side panel go to the composer (`attachFiles` request, taken by WP-57) instead of
  * being refused by the window-wide drop guard. A zone of its own inside the pane (the composer)
- * handles its drops first (`preventDefault`); the pane then leaves them alone. Without a zone –
+ * handles its drops first (`preventDefault`); the pane then leaves them alone. Folders are counted
+ * and left out like on the composer (`transferFiles`, CR3-01); the composer shows the hint. Without a zone –
  * no session (overview), archived or external entry – the drop guard (drop-guard.ts) refuses the
  * drop as everywhere else.
  */
@@ -75,9 +77,11 @@ export function useSessionDropZone(sessionKey: string, enabled: boolean): Sessio
         show(false);
         if (event.defaultPrevented || !hasFiles(event)) return;
         event.preventDefault();
-        const files = Array.from(event.dataTransfer.files);
-        if (files.length === 0) return;
-        if (!requestShell({ kind: 'attachFiles', sessionKey, files })) {
+        // Folders by their entry, like a drop on the composer (CR3-01): Chrome lists a dropped
+        // folder in `files` too, as an untyped `File` that would become a failing upload chip.
+        const { files, folders } = transferFiles(event.dataTransfer);
+        if (files.length === 0 && folders === 0) return;
+        if (!requestShell({ kind: 'attachFiles', sessionKey, files, folders })) {
           // No composer took them (e.g. it cannot attach right now).
           showTextNotice('navigation.drop.unavailable', undefined, {
             sessionKey,

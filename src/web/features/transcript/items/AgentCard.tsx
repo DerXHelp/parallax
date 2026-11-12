@@ -3,6 +3,7 @@ import { memo, useState } from 'react';
 import type { TaskInfo } from '@shared/model';
 import { useI18n, useT } from '@web/i18n';
 import { shortPath } from '@web/lib/path-display';
+import { isLiveToolStatus, isToolCallTaskLive } from '@web/lib/task-rows';
 import { useNow } from '@web/state/clock';
 import { useChildItemIds } from '@web/state/hooks';
 import { Badge } from '@web/ui/badge';
@@ -17,7 +18,7 @@ import { readAgentInput, readAgentResult } from '../lib/tool-input';
 import { ToolResultImages, ToolResultText } from '../renderers/parts';
 import type { ToolBodyProps } from '../renderers/types';
 import { expansionKey } from '../state/expansion';
-import { isTaskOpen, stopTask } from '../state/tasks';
+import { stopTask } from '../state/tasks';
 
 /**
  * Agent card (Plan "Agent: Subagent-Karte mit Status und Laufzeit", F.11, B "Message-Routing"):
@@ -125,14 +126,16 @@ export const AgentCard = memo(function AgentCard({ item, sessionKey }: ToolBodyP
   const taskDescription = task === null || task.description === '' ? null : task.description;
   const title = input?.description ?? taskDescription ?? item.toolName;
   const type = input?.subagent_type ?? task?.subagentType ?? null;
-  const running = item.status === 'running' || item.status === 'background' || item.status === 'pending';
+  // `pending` has not started: no live runtime, no Stop – the server would refuse it (CR3-07).
+  const running = isLiveToolStatus(item.status);
   const startedAt = task?.startedAt ?? null;
   const duration = finishedDuration(task);
   const usage = task?.usage ?? null;
   const summary = task?.summary ?? null;
   const model = result?.resolvedModel ?? null;
   const outputFile = task?.outputFile ?? null;
-  const stoppable = running && task !== null && isTaskOpen(task);
+  // The task panel's rule (`@web/lib/task-rows`): what `session.stopTask` takes.
+  const stoppable = task !== null && isToolCallTaskLive(item);
   return (
     <div
       data-item-kind="tool_call"

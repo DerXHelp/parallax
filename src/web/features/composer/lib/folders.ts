@@ -1,12 +1,13 @@
-import type { IncomingFiles } from './transfer';
+import type { IncomingFiles } from '@web/lib/transfer-files';
 
 /**
  * Folders are not attached (ADR-146: the hint says to insert their path with @). A drop or paste
- * on the composer knows them from its `DataTransfer` (`lib/transfer.ts`); a plain file list (the
- * paper clip has none, the shell request `attachFiles` of the session drop zone, WP-58) does not –
- * there a dropped folder is a `File` without a type that cannot be read (Chrome rejects reading
- * it), so untyped files are probed by reading one byte. A chunk of its own (R5W-01): the composer
- * loads it with `import()` only when an untyped file has to be probed.
+ * – on the composer or on the session pane (shell request `attachFiles` with `folders`, CR3-01) –
+ * knows them from its `DataTransfer` (`@web/lib/transfer-files`); a plain file list without entries
+ * does not – there a dropped folder is a `File` without a type that cannot be read (Chrome rejects
+ * reading it), so untyped files are probed by reading one byte (second line of defence). A chunk
+ * of its own (R5W-01): the composer loads it with `import()` only when an untyped file has to be
+ * probed.
  */
 
 async function readable(file: File): Promise<boolean> {
