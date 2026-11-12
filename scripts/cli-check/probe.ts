@@ -11,6 +11,9 @@
  * `strictMcpConfig` + `disableClaudeAiConnectors` (no MCP servers), `maxTurns: 1`, every tool denied,
  * no permission mode (the CLI default is part of the profile).
  *
+ * WP-64: after the turn the Remote Control step (remoteControl.ts: enable, schema, `bridge_state
+ * connected` ≤ 15 s, disable) – its result is part of the observation, a failure never stops the probe.
+ *
  * Guards like the recorder (ADR-011): `apiKeySource` must be `none`, the model Haiku; auth/billing
  * errors, `credits_required`, a rejected rate limit, a startup failure or a cost above the budget
  * stop at once (ProbeStop, exit 2 – never retried).
@@ -31,6 +34,12 @@ import type { StartSessionRequest } from '../../src/server/backend/types';
 import { sleep } from '../../src/server/lib/async';
 import { killProcessTree, spawnHidden } from '../../src/server/lib/process';
 import { observationFrom, type Observation } from './observation';
+import {
+  BridgeWatch,
+  probeRemoteControl,
+  type RemoteControlProbeHandle,
+  type RemoteControlProbeResult,
+} from './remoteControl';
 
 /** The probe's prompt: no tool, one word. */
 export const PROBE_PROMPT = 'Reply with exactly: OK';
@@ -169,6 +178,8 @@ export interface ProbeResult {
   messageTypes: Record<string, number>;
   contextDetail: 'full' | 'summary' | null;
   durationMs: number;
+  /** WP-64: the Remote Control step. */
+  remoteControl: RemoteControlProbeResult;
 }
 
 /** Partial facts of a stopped probe (cleanup needs the session ids, the report the cost). */
@@ -212,6 +223,7 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
     exitResolve = resolve;
   });
   const listeners = new Set<() => void>();
+  const bridge = new BridgeWatch();
   const notify = (): void => {
     for (const listener of [...listeners]) listener();
   };
@@ -264,6 +276,7 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
       if (sessionId !== undefined && sessionId !== '') trace.sessionIds.add(sessionId);
       if (type === 'system' && subtype === 'init') state.init ??= message;
     }
+    bridge.push(message);
     const result = resultSchema.safeParse(message);
     if (result.success) {
       state.result = { subtype: result.data.subtype, costUsd: result.data.total_cost_usd };
@@ -327,8 +340,17 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
       contextDetail = 'summary';
     }
     if (state.stop !== null) throw state.stop;
+    // WP-64: the internal method is not in the SDK typings – checked at runtime.
+    const remoteHandle: RemoteControlProbeHandle = q;
+    const remoteControl = await probeRemoteControl(remoteHandle, bridge, { controlMs, log });
     const observation = observationFrom(
-      { init: state.init, initializationResult: initialization, supportedModels: models, contextUsage },
+      {
+        init: state.init,
+        initializationResult: initialization,
+        supportedModels: models,
+        contextUsage,
+        remoteControl: remoteControl.available,
+      },
       options.sdkVersion,
     );
     const result = state.result ?? { subtype: '?', costUsd: 0 };
@@ -341,6 +363,7 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
       messageTypes,
       contextDetail,
       durationMs: Date.now() - started,
+      remoteControl,
     };
   } catch (error) {
     if (error instanceof ProbeStop) throw error;

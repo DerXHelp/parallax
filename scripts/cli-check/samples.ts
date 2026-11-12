@@ -25,6 +25,7 @@ export function sampleObservation(p: Partial<Observation> = {}): Observation {
     slashCommands: ['clear', 'compact', 'context'],
     agents: ['Explore', 'general-purpose'],
     skills: ['simplify'],
+    remoteControl: true,
     ...p,
   };
 }
@@ -70,6 +71,7 @@ export function sampleRecord(p: Partial<RunRecord> = {}): RunRecord {
       messageTypes: { 'system/init': 1, assistant: 1, result: 1 },
       contextDetail: 'full',
       durationMs: 9000,
+      remoteControl: { available: true, detail: null, connectedMs: 420, disabled: true },
     },
     smoke: sampleSmoke(),
     cost: { probeUsd: 0.003, smokeUsd: 0.0055, totalUsd: 0.0085, budgetUsd: 0.05 },

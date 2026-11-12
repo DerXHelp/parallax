@@ -51,6 +51,8 @@ describe('observationFrom (WP-62)', () => {
       slashCommands: ['clear', 'compact'],
       agents: ['Explore', 'general-purpose'],
       skills: ['simplify'],
+      // WP-64: not checked in this raw probe.
+      remoteControl: null,
     });
     expect(JSON.stringify(observation)).not.toContain('example.com');
   });
