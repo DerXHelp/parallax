@@ -12,6 +12,9 @@ import { FilesPanel } from './FilesPanel';
 import { SESSION_FILES_DEBOUNCE_MS } from './state/session-files';
 import { FILES_SESSION_KEY, installResizeObserver, startFilesScenario } from './testing';
 
+// Under 0.5 s per test alone, up to 5.3 s under parallel load (typing into the filter, menus; R5W-04).
+vi.setConfig({ testTimeout: 30_000 });
+
 let running: RunningScenario;
 let restoreResizeObserver: () => void;
 let opened: ShellRequestOf<'openFile'>[];

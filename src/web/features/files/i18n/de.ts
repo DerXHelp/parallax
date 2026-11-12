@@ -27,7 +27,7 @@ export const de: typeof en = {
   },
   link: {
     notAllowed: 'Für diese Session nicht freigegeben',
-    line: 'Zeile {line}',
+    tooltip: '{path} – Zeile {line}',
   },
   viewer: {
     label: 'Datei-Viewer',
@@ -38,6 +38,7 @@ export const de: typeof en = {
     source: 'Quelltext',
     truncated: 'Gekürzt – nur die ersten {size} werden gezeigt. Im Editor öffnen, um alles zu sehen.',
     error: 'Die Datei kann nicht angezeigt werden',
+    stale: 'Letzter bekannter Stand',
     retry: 'Erneut versuchen',
     noPreview: 'Keine Vorschau für diese Datei.',
     folder: 'Das ist ein Ordner.',

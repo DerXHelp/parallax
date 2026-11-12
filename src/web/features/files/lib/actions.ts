@@ -6,11 +6,13 @@ import {
   SquarePenIcon,
   type LucideIcon,
 } from 'lucide-react';
-import { LOCAL_HOST_ID, parseSessionKey } from '@shared/common';
+import { parseSessionKey } from '@shared/common';
 import { isDefaultProgramAllowed, type FileKind, type FileOpenTarget } from '@shared/model';
 import { windowsPathIssue } from '@shared/paths';
 import type { TranslationKey } from '@web/i18n';
 import { copyText } from '@web/lib/clipboard';
+// Programs may only be started on the machine of the local host (ADR-144) – the shell's rule.
+import { isLocalSession } from '@web/shell/navigation/session-actions';
 import { requestShell } from '@web/shell/requests';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand } from '@web/state/hooks';
@@ -30,11 +32,6 @@ export interface FileTarget {
   path: string;
   line?: number | null;
   col?: number | null;
-}
-
-/** Programs may only be started on the machine of the local host (ADR-144). */
-export function isLocalSession(sessionKey: string): boolean {
-  return parseSessionKey(sessionKey)?.hostId === LOCAL_HOST_ID;
 }
 
 /** Shows the file in the viewer tab of the session's side panel; false when no host took it. */

@@ -65,6 +65,15 @@
   --status-error: var(--destructive);
   --status-idle: var(--muted-foreground);
 
+  /*
+   * Code and links (FIX-R5 V4-04, WCAG AA >= 4.5:1 at 11-12 px): keywords of the Shiki theme
+   * (ui/code-block SHIKI_TOKENS) – 5.6:1 on code blocks (muted/40), 5.1:1 on the marked line; file
+   * references (FileLink) – 5.1:1 on inline code (muted), 5.7:1 on the background. Own tokens: the
+   * profile color violet and the brand stay as they are.
+   */
+  --syntax-keyword: oklch(0.52 0.18 295);
+  --link: oklch(0.52 0.14 40);
+
   /* Profile colors (`profile.color`, model.ts PROFILE_COLORS) – left stripe in the sidebar. */
   --profile-slate: oklch(0.6 0.02 264);
   --profile-blue: oklch(0.6 0.16 255);
@@ -110,6 +119,10 @@
   --success: oklch(0.74 0.15 150);
   --warning: oklch(0.82 0.14 80);
   --info: oklch(0.72 0.13 250);
+
+  /* V4-04: keywords 6.7:1 on code blocks, 7.0:1 on the background (was 3.9:1); links 5.6:1 on muted. */
+  --syntax-keyword: oklch(0.72 0.15 295);
+  --link: var(--brand);
 }
 
 @theme inline {
@@ -162,6 +175,7 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-info: var(--info);
+  --color-link: var(--link);
   --color-status-working: var(--status-working);
   --color-status-waiting: var(--status-waiting);
   --color-status-done: var(--status-done);
