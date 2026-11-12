@@ -4,20 +4,25 @@
  *
  *  1. Single instance per PARALLAX_HOME: a live server behind `server.lock.json` → exit 5.
  *  2. Stores (registry, settings, processes, profiles.json (ADR-102), model catalogs + account
- *     limits (ADR-114), auth secret; blobs/decisions/transcripts/slash-command caches lazily) – a
- *     file of a newer Parallax (`StoreVersionTooNewError`) → exit 3, files unchanged (ADR-020).
- *  3. Backend by `config.backend`: `fake` = FakeBackend (interactive dev scenario) + fake Claude
- *     integration over the persistent profile store (no `claude` process at all) + fake console
- *     (a "console turn" of the FakeBackend, ADR-104); `sdk` = SdkBackend (the SDK module is only
- *     imported here) + real Claude integration (profiles.json, resolveClaude) + visible console
- *     (PowerShell `Start-Process`). System integration (autostart, `parallax:` handler; ADR-109/110)
- *     only for the productive server (`systemIntegrationAvailable`).
- *  4. SessionManager (host commands `profile.*` + `fs.listDirectory`, ADR-101) → SyncHub(source:
- *     manager) → `attachPublisher` → profile changes → `manager.onProfileChanged()`, system
- *     integration changes → `publishHostState` → `manager.start()` (recovery; orphans in the
- *     background) → snapshot of the built UI in `PARALLAX_HOME/ui/<buildId>` (webSnapshot.ts, V2-03)
- *     → `createApp` (the app attaches the hub's WS route itself). Hub and transcript store validate
- *     outgoing values with `config.validation` (R3-05).
+ *     limits (ADR-114), auth secret; blobs/decisions/transcripts/slash-command caches lazily; the
+ *     attachment file store, Phase 3 ADR-146) – a file of a newer Parallax
+ *     (`StoreVersionTooNewError`) → exit 3, files unchanged (ADR-020).
+ *  3. Backend by `config.backend`: `fake` = FakeBackend (interactive dev scenario, its real files
+ *     under `<home>\fake-files`) + fake Claude integration over the persistent profile store (no
+ *     `claude` process at all) + fake console (a "console turn" of the FakeBackend, ADR-104); `sdk` =
+ *     SdkBackend (the SDK module is only imported here) + real Claude integration (profiles.json,
+ *     resolveClaude) + visible console (PowerShell `Start-Process`). System integration (autostart,
+ *     `parallax:` handler; ADR-109/110) only for the productive server (`systemIntegrationAvailable`).
+ *  4. File service (Phase 3, WP-53: roots from registry + profile, index `files.json`; programs
+ *     start only with `sdk` – the fake records `file.open (fake): …` in the log) → SessionManager
+ *     (host commands `profile.*` + `fs.listDirectory` + `file.*`/`files.*`/`editor.detect`, ADR-101/
+ *     140; stores incl. attachments) → SyncHub(source: manager) → `attachPublisher` with the index
+ *     tap (`observeOps` before every `publishOps`, ADR-145) → profile changes →
+ *     `manager.onProfileChanged()`, system integration changes → `publishHostState` →
+ *     `manager.start()` (recovery; orphans in the background) → snapshot of the built UI in
+ *     `PARALLAX_HOME/ui/<buildId>` (webSnapshot.ts, V2-03) → `createApp` (the app attaches the hub's
+ *     WS route itself; `files` serves GET /api/file). Hub and transcript store validate outgoing
+ *     values with `config.validation` (R3-05).
  *  5. Shutdown frame + signal handlers, then `listen` on 127.0.0.1 (EADDRINUSE → exit 4); the host
  *     state then carries the actual port (`HostState.port`).
  *  6. `server.lock.json` with the actual port and `auth.launcherToken` – only now the launcher
@@ -31,21 +36,25 @@
  * Shutdown (command `server.shutdown`, SIGINT/SIGTERM/SIGBREAK/SIGHUP): `manager.shutdown()` (close
  * all queries ≤ 15 s, taskkill after 5 s grace, flush, `backend.dispose()`) → `app.close()` (WS
  * close 4503) → wait for a running system-integration step → wait for a running "Profil testen"
- * (R4-13) → close the stores → end a still running access check (V3-15 b) → release the lock file
+ * (R4-13) → flush the session file index (Phase 3) → close the stores → end a still running access
+ * check (V3-15 b) → release the lock file
  * → release the home lock → close the log → `exit(code)`.
  */
 import { existsSync } from 'node:fs';
+import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { Logger } from 'pino';
-import type { ProfileId } from '@shared/common';
+import type { EntryId, ProfileId } from '@shared/common';
 import { serverOrigin } from '@shared/http';
 import type { Settings } from '@shared/model';
+import type { SessionOp } from '@shared/protocol';
 import { createFakeBackend } from '../backend/fakeBackend';
 import { createFakeClaudeIntegration } from '../backend/fake/integration';
 import type { AgentBackend } from '../backend/types';
 import { createClaudeIntegration } from '../claude/integration';
 import type { ClaudeIntegration } from '../claude/ports';
 import { createProfileCommands } from '../claude/profileCommands';
+import { parseProfileArgs } from '../claude/profileArgs';
 import { openProfileStore, type PersistentProfileStore } from '../claude/profileStore';
 import { readSdkManifest } from '../claude/resolveClaude';
 import {
@@ -54,6 +63,9 @@ import {
   type ServerConfig,
   type ServerInstance,
 } from '../config';
+import { createRecordingOpener, createSystemLauncher } from '../files/open';
+import type { FileEntryLookup, FileService } from '../files/ports';
+import { createFileService } from '../files/service';
 import { createFsCommands } from '../host/fsCommands';
 import { createApp } from '../http/app';
 import { createAuthService, type AuthService } from '../http/auth';
@@ -76,6 +88,7 @@ import { createCommandCatalogStore, type CommandCatalogStore } from '../sessions
 import { createSessionManager, SHUTDOWN_SWEEP_GRACE_MS, type SessionManager } from '../sessions/manager';
 import { createNativeToasts } from '../sessions/nativeToasts';
 import { openProcessStore } from '../sessions/processStore';
+import { createAttachmentFileStore } from '../store/attachments';
 import { createBlobStore } from '../store/blobs';
 import { createDecisionStore } from '../store/decisions';
 import { StoreVersionTooNewError, createStoreWarnings, type StoreWarningRegistry } from '../store/jsonStore';
@@ -83,6 +96,7 @@ import { openRegistryStore } from '../store/registry';
 import { openSettingsStore } from '../store/settings';
 import { createTranscriptStore } from '../store/transcripts';
 import { createSyncHub } from '../sync/hub';
+import type { AttachmentFileStore, SessionPublisher } from '../sync/ports';
 import { createConsoleLauncher } from '../system/console';
 import { createFakeConsoleLauncher, FAKE_CONSOLE_RUN_MS } from '../system/fakeConsole';
 import { createSystemIntegration } from '../system/index';
@@ -182,6 +196,11 @@ interface Stores {
   blobs: ReturnType<typeof createBlobStore>;
   decisions: ReturnType<typeof createDecisionStore>;
   transcripts: ReturnType<typeof createTranscriptStore>;
+  /**
+   * Phase 3 (ADR-146, WP-53): file attachments copied to `entries/<id>/attachments` – the engine's
+   * `materialize()` and the attachment folder of every start; nothing to close (no cache).
+   */
+  attachments: AttachmentFileStore;
   /** Closes every store (errors are logged, never thrown). */
   close(): Promise<void>;
 }
@@ -231,6 +250,7 @@ async function openStores(config: ServerConfig, instance: ServerInstance, log: L
     // Invalid lines are logged and counted, also in production (R1-16, R3-05); tests: throw.
     const transcripts = createTranscriptStore({ home, warnings, validation: config.validation });
     opened.push({ name: 'transcripts', close: () => transcripts.close() });
+    const attachments = createAttachmentFileStore(home, blobs);
     return {
       warnings,
       registry,
@@ -243,6 +263,7 @@ async function openStores(config: ServerConfig, instance: ServerInstance, log: L
       blobs,
       decisions,
       transcripts,
+      attachments,
       close: closeOpened,
     };
   } catch (error) {
@@ -265,6 +286,94 @@ export function resumedSessionId(args: readonly string[]): string | null {
 }
 
 /**
+ * Folder of the FakeBackend's real files (`fake:plan`, `fake:files`, `fake:background`; WP-52) below
+ * PARALLAX_HOME – never `%TEMP%\parallax-fake-files`: a fake server's files go with its home
+ * (E2E temp homes, `.parallax-dev`), nothing piles up in %TEMP%. The fake never runs on the real
+ * data directory (R3-02).
+ */
+export const FAKE_FILES_HOME_DIR = 'fake-files';
+
+/**
+ * What the file service knows about an entry (WP-53 `FileEntryLookup`): the cwd exactly as stored
+ * and all conversations from the registry, the `--add-dir` folders of the entry's profile
+ * (`parseProfileArgs`, like the start; a deleted profile → none).
+ */
+export function fileEntryLookup(
+  registry: Pick<Stores['registry'], 'get'>,
+  profiles: Pick<PersistentProfileStore, 'get'>,
+): FileEntryLookup {
+  return {
+    entry(entryId) {
+      const entry = registry.get(entryId);
+      if (entry === undefined) return null;
+      const profile = profiles.get(entry.profileId);
+      const additionalDirectories =
+        profile === undefined
+          ? []
+          : (parseProfileArgs(profile.args, profile.passRawArgs).sdkOptions.additionalDirectories ?? []);
+      return {
+        cwd: entry.cwd,
+        additionalDirectories,
+        conversationIds: entry.conversations.map((conversation) => conversation.id),
+      };
+    },
+  };
+}
+
+/** A failing ops observer is logged at most this often (it sees every delta of every session). */
+const OBSERVER_LOG_INTERVAL_MS = 60_000;
+
+/**
+ * The publisher the engine gets (WP-60, ADR-145): every `publishOps(entryId, ops)` first goes to
+ * `observe` (the file service's index tap), then to the hub; everything else goes to the hub
+ * unchanged. A throwing observer is logged (throttled) and never blocks or breaks the hub.
+ */
+export function observedPublisher(
+  publisher: SessionPublisher,
+  observe: (entryId: EntryId, ops: readonly SessionOp[]) => void,
+  log: Logger,
+  now: () => number = () => Date.now(),
+): SessionPublisher {
+  let lastLogAt = Number.NEGATIVE_INFINITY;
+  let suppressed = 0;
+  return {
+    publishOps(entryId, ops) {
+      try {
+        observe(entryId, ops);
+      } catch (error) {
+        if (now() - lastLogAt >= OBSERVER_LOG_INTERVAL_MS) {
+          log.warn({ err: error, entryId, suppressed }, 'file index: observing ops failed');
+          lastLogAt = now();
+          suppressed = 0;
+        } else {
+          suppressed += 1;
+        }
+      }
+      publisher.publishOps(entryId, ops);
+    },
+    publishSummary: (summary, urgent) => {
+      publisher.publishSummary(summary, urgent);
+    },
+    removeSummary: (entryId) => {
+      publisher.removeSummary(entryId);
+    },
+    publishHostState: (host) => {
+      publisher.publishHostState(host);
+    },
+    notify: (clientId, notification) => {
+      publisher.notify(clientId, notification);
+    },
+    clearNotification: (entryId) => {
+      publisher.clearNotification(entryId);
+    },
+    presence: () => publisher.presence(),
+    closeAll: (code) => {
+      publisher.closeAll(code);
+    },
+  };
+}
+
+/**
  * `fake`: no `claude` process at all (dev, E2E, smoke tests of the launcher path); the fake console
  * "runs" 1.5 s and leaves one console turn in the FakeBackend's history, which the engine imports
  * on the automatic return (WP-34 §2.4). `sdk`: the SDK module is loaded only here (dynamic import),
@@ -278,7 +387,10 @@ async function createEngine(
   profiles: PersistentProfileStore,
 ): Promise<Engine> {
   if (config.backend === 'fake') {
-    const fakeBackend = createFakeBackend({ speed: fakeSpeed });
+    const fakeBackend = createFakeBackend({
+      speed: fakeSpeed,
+      filesRoot: path.join(config.home, FAKE_FILES_HOME_DIR),
+    });
     return {
       backend: fakeBackend,
       // V3-11: the launch specs carry PATH & co., so the git branch shows in the fake server too.
@@ -338,6 +450,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
 
   // 3.–4. Engine, hub, app. From here on a failure runs the same cleanup as the shutdown.
   let engine: Engine | null = null;
+  /** Phase 3 (WP-53): file commands, GET /api/file, the session file index (`files.json`). */
+  let files: FileService | null = null;
   let manager: SessionManager | null = null;
   let app: FastifyInstance | null = null;
   let lock: ServerLockHandle | null = null;
@@ -383,6 +497,9 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     // R4-13: no new check starts during the shutdown; a running one (claude --version + auth
     // status, ≤ 20 s) is awaited – bounded – before its result could meet closed stores.
     { name: 'profileChecks', run: () => profileChecks },
+    // The session file index (`entries/<id>/files.json`, debounced) – after the engine's last ops,
+    // before the stores close (ADR-145).
+    { name: 'files', run: () => files?.flush() },
     { name: 'stores', run: () => stores.close(), timeoutMs: 10_000 },
     {
       name: 'homeAccess',
@@ -439,6 +556,22 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         manager?.publishHostState();
       },
     });
+    // Phase 3 (WP-53, ADR-140 … 146): roots from registry + profile, index from the published ops;
+    // programs start for real only with the real backend – the FakeBackend (dev, E2E, verifier)
+    // always gets the recording opener (`file.open (fake): <target> <path>` in the log, no process).
+    const fileService = createFileService({
+      home: config.home,
+      entries: fileEntryLookup(stores.registry, stores.profiles),
+      transcripts: stores.transcripts,
+      settings: () => stores.settings.get(),
+      launcher:
+        config.backend === 'fake'
+          ? createRecordingOpener({ logger: options.logger })
+          : createSystemLauncher(),
+      warnings: stores.warnings,
+      logger: options.logger,
+    });
+    files = fileService;
     const sessions = createSessionManager({
       toasts,
       // WP22-06: the FakeBackend has no real process tree (fake PIDs) – no heartbeat snapshots.
@@ -455,6 +588,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         processes: stores.processes,
         catalogs: stores.catalogs,
         commandCatalogs: stores.commandCatalogs,
+        // Phase 3 (ADR-146): without it file attachments are refused (UNSUPPORTED_MEDIA_TYPE).
+        attachments: stores.attachments,
       },
       host: {
         serverVersion: instance.serverVersion,
@@ -466,7 +601,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         port: () => listeningPort,
         systemIntegration: system.available,
       },
-      // ADR-101: `profile.*` (WP-32) and `fs.listDirectory` (WP-33) – disjoint names.
+      // ADR-101: `profile.*` (WP-32), `fs.listDirectory` (WP-33) and the file commands `file.*`,
+      // `files.*`, `editor.detect` (WP-53, ADR-140) – disjoint names.
       hostCommands: [
         createProfileCommands({
           store: stores.profiles,
@@ -475,6 +611,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
           now: () => new Date(),
         }),
         createFsCommands(),
+        fileService.commands,
       ],
       // Autostart and protocol handler follow every settings.update (ADR-110).
       onSettingsChanged: (_prev, next) => {
@@ -492,7 +629,16 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     // Invalid outgoing values are logged, counted and dropped – also in production, where real SDK
     // data reaches the contract for the first time (R3-05); tests and E2E: throw.
     const hub = createSyncHub({ source: sessions, instance, validation: config.validation });
-    sessions.attachPublisher(hub); // before start() (WP-13 §3.5, R1-18)
+    // Before start() (WP-13 §3.5, R1-18). ADR-145: the file index sees every op batch before the hub.
+    sessions.attachPublisher(
+      observedPublisher(
+        hub,
+        (entryId, ops) => {
+          fileService.observeOps(entryId, ops);
+        },
+        log,
+      ),
+    );
     stores.warnings.onChange(() => {
       sessions.publishHostState();
     });
@@ -549,6 +695,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       auth: stores.auth,
       blobs: stores.blobs,
       hub,
+      // GET/HEAD /api/file (ADR-142; guard class `file`: Sec-Fetch-Site same-origin required).
+      files: fileService,
       webRoot,
     });
   } catch (error) {

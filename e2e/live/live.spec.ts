@@ -13,7 +13,7 @@
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { ParallaxApp, type SessionView } from '../support/app';
+import { ParallaxApp, chooseMenuItem, type SessionView } from '../support/app';
 import { expect, test as base } from '../support/fixtures';
 import {
   LIVE,
@@ -101,7 +101,8 @@ async function sendLive(live: LiveServer, session: SessionView, text: string): P
  */
 async function chooseManualMode(app: ParallaxApp, session: SessionView): Promise<void> {
   await session.composerRoot.getByRole('button', { name: /^(Permission mode|Berechtigungsmodus)/ }).click();
-  await app.page.getByRole('menuitemradio', { name: /^Manual/ }).click();
+  // FIX-E2E-EDGE157: wait until the menu is gone, its exit animation would swallow the next input.
+  await chooseMenuItem(app.page.getByRole('menuitemradio', { name: /^Manual/ }));
   await expect(session.composerRoot.getByRole('button', { name: /Manual/ })).toBeVisible();
 }
 

@@ -663,6 +663,8 @@ describe('interactive scenario – Phase 3 (WP-52)', () => {
       outputFile,
     });
     expect(readFileSync(outputFile, 'utf8')).toContain(FAKE_BACKGROUND_SUMMARY);
+    // WP-60: a real end time (the task panel lists finished tasks for 10 minutes after it).
+    expect(Date.now() - Date.parse(agentCall(h.items()).task?.endedAt ?? '')).toBeLessThan(60_000);
     // The follow-up turn answers the notification (F.11), then idle.
     expect(h.results()).toHaveLength(2);
     expect(texts(h.items()).at(-1)).toBe(FAKE_BACKGROUND_DONE);
@@ -684,6 +686,8 @@ describe('interactive scenario – Phase 3 (WP-52)', () => {
     await h.agent.stopTask(taskId);
     await h.turnDone(1);
     expect(agentCall(h.items()).task).toMatchObject({ status: 'stopped', outputFile: expect.stringMatching(/\.output$/) as string });
+    // WP-60: a real end time (the task panel lists finished tasks for 10 minutes after it).
+    expect(Date.now() - Date.parse(agentCall(h.items()).task?.endedAt ?? '')).toBeLessThan(60_000);
     expect(h.results()).toHaveLength(1);
     await expect(h.agent.stopTask(taskId)).rejects.toThrow(`Task ${taskId} is not running (status: killed)`);
     expect(h.handle.controls.map((c) => [c.method, c.args])).toEqual([

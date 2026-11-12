@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_HOST_ID } from '@shared/common';
 import { makeError } from '@shared/errors';
 import {
+  sampleBlobRef,
   sampleClaudeInstallStatus,
   sampleContextGauge,
   sampleHostState,
@@ -13,12 +14,15 @@ import {
 } from '@shared/samples';
 import { APP_SLOTS, App } from './App';
 import { Composer } from './features/composer/Composer';
+import { setAttachmentUploader } from './features/composer/lib/upload';
 import { DecisionBar } from './features/decisions/DecisionBar';
 import { DecisionCard } from './features/decisions/DecisionCard';
 import { PlanSidePanel } from './features/decisions/PlanSidePanel';
+import { FILES_SLOTS } from './features/files';
 import { PREFERENCES_SLOTS, SettingsPage } from './features/preferences';
 import { ProfilesSettings } from './features/profiles';
 import { startProfilesDemo } from './features/profiles/lib/demo-host';
+import { TASKS_SLOTS } from './features/tasks';
 import { TRANSCRIPT_SLOTS } from './features/transcript/slots';
 import { installResizeObserver } from './features/transcript/testing';
 import { setLanguage } from './i18n';
@@ -32,7 +36,7 @@ import { closeNewSession } from './shell/NewSessionDialog';
 import { requestShell, type ShellRequestKind, type ShellRequestOf } from './shell/requests';
 import { closeShortcutHelp } from './shell/ShortcutHelp';
 import { installShortcutListener } from './shell/shortcuts';
-import { DEFAULT_FEATURE_SLOTS, FeatureSlotsProvider } from './shell/slots';
+import { DEFAULT_FEATURE_SLOTS, FeatureSlotsProvider, type FeatureSlots } from './shell/slots';
 import { createHostConnection, registerConnection, unregisterConnection } from './state/connection';
 import { FakeHost } from './state/fake-host';
 import { resetClientStore } from './state/store';
@@ -329,33 +333,54 @@ const EVERY_REQUEST: { [K in ShellRequestKind]: ShellRequestOf<K> } = {
     sessionKey: PLAYGROUND_SESSION_KEYS.main,
     path: 'D:\\work\\sample\\README.md',
   },
-  attachFiles: { kind: 'attachFiles', sessionKey: PLAYGROUND_SESSION_KEYS.main, files: [] },
+  // WP-57: the composer of the session takes at least one file (an empty list is not taken).
+  attachFiles: {
+    kind: 'attachFiles',
+    sessionKey: PLAYGROUND_SESSION_KEYS.main,
+    files: [new File(['hello'], 'notes.txt', { type: 'text/plain' })],
+  },
 };
 
-/** Phase 3 kinds whose handler arrives with a later package (WP-50 Teil 2: attachFiles → WP-57). */
-const PENDING_REQUEST_KINDS: ReadonlySet<ShellRequestKind> = new Set(['attachFiles']);
+/** Kinds whose handler arrives with a later package – none since WP-60 (attachFiles: WP-57). */
+const PENDING_REQUEST_KINDS: ReadonlySet<ShellRequestKind> = new Set();
 
 describe('wired feature slots (WP-20b, WP-40)', () => {
-  it('APP_SLOTS holds the components of WP-15 and WP-16 and lazy slots of WP-36 and WP-38 (R4W-19)', () => {
-    const { SettingsPage: settingsSlot, ProfilesSettings: profilesSlot, ...eager } = APP_SLOTS;
-    expect(eager).toEqual({
-      ...TRANSCRIPT_SLOTS,
-      DecisionBar,
-      DecisionCard,
-      PlanPanel: PlanSidePanel,
-      Composer,
-    });
-    expect(APP_SLOTS.Transcript).toBe(TRANSCRIPT_SLOTS.Transcript);
-    expect(APP_SLOTS.Markdown).toBe(TRANSCRIPT_SLOTS.Markdown);
-    expect(APP_SLOTS.ToolInputPreview).toBe(TRANSCRIPT_SLOTS.ToolInputPreview);
-    // R4W-19: own chunks behind a Suspense wrapper – neither the component itself (that would put
-    // it into the start chunk) nor the placeholder (the shell would hide the entry points).
-    expect(settingsSlot).toBeDefined();
-    expect(settingsSlot).not.toBe(SettingsPage);
-    expect(settingsSlot).not.toBe(DEFAULT_FEATURE_SLOTS.SettingsPage);
-    expect(profilesSlot).toBeDefined();
-    expect(profilesSlot).not.toBe(ProfilesSettings);
-    expect(profilesSlot).not.toBe(DEFAULT_FEATURE_SLOTS.ProfilesSettings);
+  it('APP_SLOTS wires every slot: the eager components of WP-16/57, every lazy slot behind a SlotBoundary (R4W-19, WP-58, WP-60)', () => {
+    // Every slot of the shell has its real component – none is left on the placeholder.
+    expect(Object.keys(APP_SLOTS).sort()).toEqual(Object.keys(DEFAULT_FEATURE_SLOTS).sort());
+    // Eager (no chunk of their own, so no boundary): the decision bar/card and the composer.
+    expect(APP_SLOTS.DecisionBar).toBe(DecisionBar);
+    expect(APP_SLOTS.DecisionCard).toBe(DecisionCard);
+    expect(APP_SLOTS.Composer).toBe(Composer);
+    // Every slot the features export is wired (a new one there must reach App.tsx on purpose).
+    for (const key of [
+      ...Object.keys(TRANSCRIPT_SLOTS),
+      ...Object.keys(FILES_SLOTS),
+      ...Object.keys(TASKS_SLOTS),
+    ]) {
+      expect(APP_SLOTS, key).toHaveProperty(key);
+    }
+    // The lazy slots are wrapped (SlotBoundary, App.slots.test.tsx checks the card): neither the
+    // feature's own slot nor the component itself (R4W-19: that would put it into the start chunk)
+    // nor the placeholder (the shell would hide the entry points).
+    const lazy: [keyof FeatureSlots, unknown][] = [
+      ['Transcript', TRANSCRIPT_SLOTS.Transcript],
+      ['Markdown', TRANSCRIPT_SLOTS.Markdown],
+      ['ToolInputPreview', TRANSCRIPT_SLOTS.ToolInputPreview],
+      ['PlanPanel', PlanSidePanel],
+      ['SettingsPage', SettingsPage],
+      ['ProfilesSettings', ProfilesSettings],
+      ['FileLink', FILES_SLOTS.FileLink],
+      ['FilePanel', FILES_SLOTS.FilePanel],
+      ['FilesPanel', FILES_SLOTS.FilesPanel],
+      ['TasksPanel', TASKS_SLOTS.TasksPanel],
+      ['TaskStrip', TASKS_SLOTS.TaskStrip],
+    ];
+    for (const [key, own] of lazy) {
+      expect(APP_SLOTS[key], key).toBeDefined();
+      expect(APP_SLOTS[key], key).not.toBe(own);
+      expect(APP_SLOTS[key], key).not.toBe(DEFAULT_FEATURE_SLOTS[key]);
+    }
     // App.tsx loads only `SettingsPage` of WP-38 – a new slot there must be wired here on purpose.
     expect(Object.keys(PREFERENCES_SLOTS)).toEqual(['SettingsPage']);
     expect(PREFERENCES_SLOTS.SettingsPage).toBe(SettingsPage);
@@ -450,6 +475,11 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
 
   it('every request of the shell channel has a mounted handler in the app (WP-40, R4W-28)', async () => {
     start('overview');
+    // attachFiles: the chip uploads through this seam (no HTTP in happy-dom).
+    setAttachmentUploader(() => Promise.resolve(sampleBlobRef({ mediaType: 'application/octet-stream' })));
+    cleanups.push(() => {
+      setAttachmentUploader(null);
+    });
     const user = userEvent.setup();
     render(<App />);
     await screen.findByRole('heading', { level: 1, name: 'Sample session' });
@@ -475,6 +505,24 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
         await user.click(within(panel).getByRole('button', { name: 'Close panel' }));
         await waitFor(() => {
           expect(document.querySelector('[data-slot="side-panel"]')).toBeNull();
+        });
+        continue;
+      }
+      if (request.kind === 'attachFiles') {
+        // WP-57/58: the composer of the session takes the files as chips and focuses its field.
+        const composer = screen.getByRole('textbox', { name: 'Message to Claude' });
+        const chip = await waitFor(() => {
+          const element = document.querySelector<HTMLElement>('[data-slot="attachment-chip"]');
+          if (element === null) throw new Error('no attachment chip');
+          return element;
+        });
+        expect(chip.dataset.kind).toBe('file');
+        await waitFor(() => {
+          expect(document.activeElement).toBe(composer);
+        });
+        await user.click(within(chip).getByRole('button', { name: 'Remove notes.txt' }));
+        await waitFor(() => {
+          expect(document.querySelector('[data-slot="attachment-chip"]')).toBeNull();
         });
         continue;
       }

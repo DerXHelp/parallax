@@ -1,12 +1,16 @@
-import { lazy, memo, Suspense } from 'react';
+import { lazy, memo, Suspense, type ComponentType } from 'react';
 import { Composer } from './features/composer/Composer';
 import { DecisionBar } from './features/decisions/DecisionBar';
 import { DecisionCard } from './features/decisions/DecisionCard';
 import { PlanSidePanel } from './features/decisions/PlanSidePanel';
-import { TRANSCRIPT_SLOTS } from './features/transcript/slots';
+import { FILES_SLOTS } from './features/files';
+import { TASKS_SLOTS } from './features/tasks';
+import { Markdown } from './features/transcript/markdown/Markdown';
+import { ToolInputPreviewSlot, TranscriptSlot } from './features/transcript/slots';
 import { useT } from './i18n';
 import { AppShell } from './shell/AppShell';
 import { ShellEffects } from './shell/ShellEffects';
+import { withSlotBoundary } from './shell/SlotBoundary';
 import {
   FeatureSlotsProvider,
   type FeatureSlots,
@@ -79,25 +83,54 @@ const ProfilesSettingsSlot = memo(function ProfilesSettingsSlot(props: ProfilesS
 });
 
 /**
+ * A lazy slot inside the error boundary of WP-58 (`shell/SlotBoundary.tsx`, WP-50 §8): a chunk that
+ * cannot be loaded or a render error shows the card "This area could not be loaded" in place of the
+ * slot – the rest of the app stays usable. The boundary sits OUTSIDE the slot's own `Suspense`
+ * (every lazy slot below brings its Suspense), so it also catches the failed dynamic import.
+ * `resetKeyOf`: a new value (another session, file, text) gives a render error a fresh try.
+ */
+function bounded<P extends object>(
+  Slot: ComponentType<P>,
+  resetKeyOf?: (props: P) => unknown,
+): ComponentType<P> {
+  return memo(withSlotBoundary(Slot, resetKeyOf));
+}
+
+const bySessionKey = (props: { sessionKey: string }): string => props.sessionKey;
+
+/**
  * The real feature components in the shell and feature slots (architecture §2.3d, WP-20b):
  * WP-15 `Transcript` (lazy TranscriptView), `Markdown`, `ToolInputPreview`; WP-16 `DecisionBar`
  * (the only operable decision instance), `DecisionCard` (also used by the transcript's plan card),
- * `PlanPanel` = the plan tab of the side panel host (Phase 3, ADR-150; until then `SidePanel`) and `Composer` (mode/model/context
- * pickers, ADR-042). Phase 2 (WP-40): WP-38 `SettingsPage` (the settings dialog, opened by the
- * request `settings` of `SettingsMenu`) and WP-36 `ProfilesSettings` (profile list + editor in its
- * section "Profiles"), both lazy (R4W-19). The handlers of the shell request channel
- * (`shell/requests.ts`) register themselves where they are mounted (NewSessionDialog,
- * NavigationLayer, SettingsMenu). A module-level constant: a new object per render would re-render
- * every slot.
+ * `PlanPanel` = the plan tab of the side panel host (Phase 3, ADR-150; WP-56: versions, diff, live
+ * plan file) and `Composer` (mode/model/context pickers, ADR-042; Phase 3 attachments, paste chips,
+ * @-picker). Phase 2 (WP-40): WP-38 `SettingsPage` (the settings dialog, opened by the request
+ * `settings` of `SettingsMenu`) and WP-36 `ProfilesSettings` (profile list + editor in its section
+ * "Profiles"), both lazy (R4W-19). Phase 3 (WP-60): WP-54 `FileLink`, `FilePanel` (viewer),
+ * `FilesPanel` ("Files of this session") and WP-55 `TasksPanel`, `TaskStrip` – all lazy chunks.
+ * Every lazy slot is wrapped in a `SlotBoundary` (WP-58); the eager ones (DecisionBar,
+ * DecisionCard, Composer) are not lazy and need none.
+ *
+ * The handlers of the shell request channel (`shell/requests.ts`) register themselves where they
+ * are mounted (NewSessionDialog, NavigationLayer, SettingsMenu, the side panel host for `openFile`
+ * and `sidePanel`, the composer for `attachFiles`). A module-level constant: a new object per render
+ * would re-render every slot.
  */
 export const APP_SLOTS: Partial<FeatureSlots> = {
-  ...TRANSCRIPT_SLOTS,
+  Transcript: bounded(TranscriptSlot, bySessionKey),
+  Markdown: bounded(Markdown, (props) => props.text),
+  ToolInputPreview: bounded(ToolInputPreviewSlot, (props) => props.sessionKey),
   DecisionBar,
   DecisionCard,
-  PlanPanel: PlanSidePanel,
+  PlanPanel: bounded(PlanSidePanel, bySessionKey),
   Composer,
-  SettingsPage: SettingsPageSlot,
-  ProfilesSettings: ProfilesSettingsSlot,
+  SettingsPage: bounded(SettingsPageSlot, (props) => props.section),
+  ProfilesSettings: bounded(ProfilesSettingsSlot),
+  FileLink: bounded(FILES_SLOTS.FileLink, (props) => props.path),
+  FilePanel: bounded(FILES_SLOTS.FilePanel, (props) => `${props.sessionKey}|${props.path}`),
+  FilesPanel: bounded(FILES_SLOTS.FilesPanel, bySessionKey),
+  TasksPanel: bounded(TASKS_SLOTS.TasksPanel, bySessionKey),
+  TaskStrip: bounded(TASKS_SLOTS.TaskStrip, bySessionKey),
 };
 
 /**
