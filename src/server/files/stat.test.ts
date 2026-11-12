@@ -1,6 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from '@shared/common';
 import { makeTempHome } from '../http/testServer';
@@ -94,7 +93,6 @@ function sizedFs(size: number, head: Buffer): FileFs {
     ...nodeFileFs,
     stat: () => Promise.resolve({ isFile: () => true, isDirectory: () => false, size, mtimeMs: 1000 }),
     readHead: (_file, length) => Promise.resolve(head.subarray(0, length)),
-    createReadStream: () => Readable.from([]),
   };
 }
 

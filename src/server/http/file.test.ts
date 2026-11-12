@@ -1,3 +1,4 @@
+import { writeFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
@@ -9,6 +10,7 @@ import { BLOB_CSP, FILE_PDF_CSP, authCookieName, fileUrl } from '@shared/http';
 import { settingsSchema } from '@shared/model';
 import { SAMPLE_IDS } from '@shared/samples';
 import { createServerInstance } from '../config';
+import { nodeFileFs, type FileFs } from '../files/fileFs';
 import { createRecordingOpener } from '../files/open';
 import type { FileContent, FileContentProvider } from '../files/ports';
 import { createFileService } from '../files/service';
@@ -345,4 +347,62 @@ describe('GET /api/file with the real file service', () => {
     expect(unc.json()).toEqual({ code: 'PATH_REJECTED', params: { reason: 'unc' } });
     await service.flush();
   });
+
+  it.each([
+    ['smaller', 250],
+    ['larger', 600],
+  ])(
+    'CR3-05: an image replaced by a %s one between stat and read – Content-Length = body = the new file',
+    async (_name, size) => {
+      const f = await setup('none');
+      await f.app.close();
+      const cwd = path.join(f.home, 'project');
+      await mkdir(cwd, { recursive: true });
+      const file = path.join(cwd, 'shot.png');
+      const png = (length: number, fill: number) =>
+        Buffer.concat([PNG, Buffer.alloc(length - PNG.length, fill)]);
+      await writeFile(file, png(400, 1));
+      const replacement = png(size, 2);
+      let replaced = false;
+      // Claude writes the new image right after the classification read of file.stat.
+      const racingFs: FileFs = {
+        ...nodeFileFs,
+        readHead: async (target, length) => {
+          const head = await nodeFileFs.readHead(target, length);
+          // By name: the physical path may differ in case or 8.3 parts of the temp folder.
+          if (!replaced && path.basename(target).toLowerCase() === 'shot.png') {
+            replaced = true;
+            writeFileSync(file, replacement);
+          }
+          return head;
+        },
+      };
+      const service = createFileService({
+        home: f.home,
+        entries: entryLookup({ [ENTRY]: { cwd, additionalDirectories: [], conversationIds: [] } }),
+        transcripts: fakeTranscripts(),
+        settings: () => settingsSchema.parse({}),
+        launcher: createRecordingOpener(),
+        fs: racingFs,
+      });
+      const instance = createServerInstance({ serverVersion: '1.2.3' });
+      const auth = await createAuthService({ home: f.home, serverInstanceId: instance.serverInstanceId });
+      const app = await createApp({
+        config: { port: PORT, dev: false },
+        instance,
+        auth,
+        blobs: f.blobs,
+        webRoot: null,
+        files: service,
+      });
+      f.app = app;
+      const headers = { ...goodHeaders(f), cookie: `${authCookieName(PORT)}=${auth.createCookieValue()}` };
+      const res = await app.inject({ method: 'GET', url: fileUrl(ENTRY, file), headers });
+      expect(replaced).toBe(true);
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-length']).toBe(String(res.rawPayload.length));
+      expect(res.rawPayload.equals(replacement)).toBe(true);
+      await service.flush();
+    },
+  );
 });

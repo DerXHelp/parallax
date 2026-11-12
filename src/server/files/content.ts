@@ -1,8 +1,9 @@
 /**
  * Content of an allowed file for GET /api/file (ADR-142): text converted to UTF-8 and cut at the
- * last line end within LIMITS.fileTextBytes; images and PDFs as a stream up to
- * LIMITS.fileBinaryBytes (larger → PAYLOAD_TOO_LARGE); binary files and folders →
- * UNSUPPORTED_MEDIA_TYPE. Nothing of the content is ever logged.
+ * last line end within LIMITS.fileTextBytes; images and PDFs read whole up to
+ * LIMITS.fileBinaryBytes (larger → PAYLOAD_TOO_LARGE; CR3-05/ADR-157: `bytes` is always the exact
+ * length of the body); binary files and folders → UNSUPPORTED_MEDIA_TYPE. Nothing of the content is
+ * ever logged.
  */
 import { Readable } from 'node:stream';
 import { LIMITS } from '@shared/common';
@@ -47,11 +48,14 @@ export async function openContent(fs: FileFs, file: FileInfo): Promise<FileConte
   }
   if ((file.kind === 'image' || file.kind === 'pdf') && file.mediaType !== null) {
     if (file.bytes > LIMITS.fileBinaryBytes) throw new CommandError(makeError('PAYLOAD_TOO_LARGE'));
+    // CR3-05: read whole through one handle – Content-Length is the length of exactly these bytes,
+    // also when the file was replaced, shrank or grew since the stat (no stale length, no stale end).
+    const data = await fs.readWhole(file.realPath, LIMITS.fileBinaryBytes);
+    if (data === null) throw new CommandError(makeError('PAYLOAD_TOO_LARGE'));
     return {
-      stream:
-        file.bytes === 0 ? bufferStream(Buffer.alloc(0)) : fs.createReadStream(file.realPath, file.bytes),
+      stream: bufferStream(data),
       mediaType: file.mediaType,
-      bytes: file.bytes,
+      bytes: data.length,
       name,
       policy: file.kind === 'pdf' ? 'pdf' : 'blob',
     };
