@@ -55,6 +55,8 @@ export class StatCache {
   /** Waiting paths per session: key → path as first requested. */
   private readonly pending = new Map<string, Map<string, string>>();
   private timer: ReturnType<typeof setTimeout> | null = null;
+  /** A notification is queued (microtask): changes of one render/answer reach the listeners once. */
+  private notifyQueued = false;
 
   constructor(options: StatCacheOptions) {
     this.send = options.send;
@@ -100,7 +102,7 @@ export class StatCache {
     this.timer ??= setTimeout(() => {
       this.flush();
     }, this.batchMs);
-    this.notify();
+    this.queueNotify();
   }
 
   /** Drops the freshness of an answer (it stays visible until the new one arrives). */
@@ -109,7 +111,7 @@ export class StatCache {
     const entry = this.entries.peek(key);
     if (entry === undefined || entry.loading || entry.at === 0) return;
     this.write(key, { ...entry, at: 0 });
-    this.notify();
+    this.queueNotify();
   }
 
   /** Invalidates the answer when it is older than `at` (a write finished after it was fetched). */
@@ -154,7 +156,7 @@ export class StatCache {
     } catch {
       for (const [key] of items) this.fail(key);
     }
-    this.notify();
+    this.queueNotify();
   }
 
   /** No answer: keep an earlier one, retry after STAT_RETRY_MS. */
@@ -169,6 +171,20 @@ export class StatCache {
 
   private write(key: string, entry: StatEntry): void {
     this.entries.set(key, entry, 1, (value) => value.loading);
+  }
+
+  /**
+   * Notifies once per microtask (R5W-10): n links mounting in one render each call `ensure` from
+   * their effect – notifying every time would run all n selectors n times (O(n²)). The snapshot
+   * (`peek`) is always current, so a late notification only delays the re-render check.
+   */
+  private queueNotify(): void {
+    if (this.notifyQueued) return;
+    this.notifyQueued = true;
+    queueMicrotask(() => {
+      this.notifyQueued = false;
+      this.notify();
+    });
   }
 
   private notify(): void {

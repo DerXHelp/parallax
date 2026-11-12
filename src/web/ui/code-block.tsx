@@ -11,7 +11,7 @@ import { useHighlight } from './use-highlight';
  */
 export const SHIKI_TOKENS = [
   '[--shiki-foreground:var(--foreground)] [--shiki-background:transparent]',
-  '[--shiki-token-keyword:var(--profile-violet)] [--shiki-token-string:var(--success)]',
+  '[--shiki-token-keyword:var(--syntax-keyword)] [--shiki-token-string:var(--success)]',
   '[--shiki-token-string-expression:var(--success)] [--shiki-token-comment:var(--muted-foreground)]',
   '[--shiki-token-constant:var(--info)] [--shiki-token-function:var(--warning)]',
   '[--shiki-token-parameter:var(--foreground)] [--shiki-token-punctuation:var(--muted-foreground)]',
