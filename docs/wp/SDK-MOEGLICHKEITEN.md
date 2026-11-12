@@ -107,6 +107,10 @@ its own widgets“:
 Nutzen: ein Info-Bereich je Session („Warum hat Claude diese Regel? Welche Skills kosten wie viel
 Kontext? Welcher MCP-Server hängt?“), ohne Terminal.
 
+**Durchgang mit dem Nutzer (12.11.2026):** 12–19 entschieden (Nutzer: „Ja, alle Reiter“) → WP-67: „Session-Info“
+mit Reitern Übersicht, MCP (neu verbinden, an/aus), Berechtigungen, Skills (+ neu laden), CLAUDE.md, Hooks, Status,
+Export; Daten nur auf Anfrage. 20 (`getTaskOutput`) entfällt – Parallax liest die Ausgabe selbst.
+
 ## 4. Sessions erweitern
 
 | # | Möglichkeit | Schnittstelle | Nutzen | Aufwand |
