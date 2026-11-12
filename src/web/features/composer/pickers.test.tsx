@@ -1,11 +1,12 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { sampleContextGauge } from '@shared/samples';
+import { sampleContextBreakdown, sampleContextGauge } from '@shared/samples';
 import { resetClientStore } from '@web/state/store';
 import { DEMO_ENTRIES, type DemoEntry } from '../decisions/lib/demo-data';
 import { renderWithHost, type Harness } from '../decisions/lib/testing';
 import { ContextGauge } from './ContextGauge';
+import { DEMO_MODELS_14 } from './demo/data';
 import { ModelPicker } from './ModelPicker';
 import { ModePicker } from './ModePicker';
 
@@ -168,6 +169,49 @@ describe('ModelPicker (F.12)', () => {
     expect(await screen.findByRole('button', { name: 'Model: Opus' })).toBeTruthy();
   });
 
+  it('WP-57: 14 models – aliases first, full ids under "More models" in a scrolling list', async () => {
+    const h = start('idle', 'model');
+    act(() => {
+      h.host.pushOps(DEMO_ENTRIES.idle, [{ op: 'detail.patch', patch: { models: DEMO_MODELS_14 } }]);
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Model: Haiku 5.5' }));
+    const list = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>('[data-slot="model-list"]');
+      if (found === null) throw new Error('no model list');
+      return found;
+    });
+    expect(list.className).toContain('overflow-y-auto');
+    const rows = Array.from(list.children).map((child) =>
+      child.getAttribute('data-slot') === 'model-more'
+        ? '— more —'
+        : child.getAttribute('role') === 'separator'
+          ? '———'
+          : (child.querySelector('.grid')?.firstElementChild?.textContent ?? ''),
+    );
+    expect(rows).toEqual([
+      'Default (recommended)',
+      'Opus 5.5',
+      'Fable 5.2',
+      'Sonnet 5.5',
+      'Haiku 5.5',
+      '———',
+      '— more —',
+      'Fable 5.1',
+      'Haiku 4.5',
+      'Sonnet 5',
+      'Opus 5',
+      'Fable 5',
+      'Opus 4.8',
+      'Opus 4.7',
+      'Opus 4.6',
+      'Sonnet 4.6',
+    ]);
+    expect(within(list).getByText('More models')).toBeTruthy();
+    await user.click(screen.getByRole('menuitemradio', { name: /^Opus 4\.8/ }));
+    expect(h.commands('session.setModel').at(-1)).toMatchObject({ model: 'claude-opus-4-8' });
+  });
+
   it('loads the model list on first open when the detail has none', async () => {
     const h = start('idle', 'model');
     act(() => {
@@ -217,6 +261,37 @@ describe('ContextGauge (C.1)', () => {
         priority: 'next',
       },
     ]);
+  });
+
+  it('WP-57: categories go by their stable id (named in the UI language), else by their name', async () => {
+    harness = renderWithHost((key) => <ContextGauge sessionKey={key('idle')} />, {
+      entries: ['idle'],
+      onCommand: (cmd) =>
+        cmd.name === 'session.getContext'
+          ? {
+              ok: true,
+              result: {
+                context: sampleContextBreakdown({
+                  categories: [
+                    { name: 'Custom agents (project)', tokens: 1_200, kind: 'used', id: 'custom_agents' },
+                    { name: 'Hooks', tokens: 300, kind: 'used', id: 'hooks_future' },
+                    { name: 'Messages', tokens: 6_702, kind: 'used', id: null },
+                    { name: 'Messages', tokens: 50, kind: 'deferred', id: null },
+                  ],
+                }),
+              },
+            }
+          : undefined,
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Context 71% – show details' }));
+    expect(await screen.findByText('Custom agents')).toBeTruthy();
+    expect(screen.queryByText('Custom agents (project)')).toBeNull();
+    expect(screen.getByText('Hooks')).toBeTruthy();
+    const keys = Array.from(document.querySelectorAll('[data-slot="context-categories"] > li')).map((li) =>
+      li.getAttribute('data-category'),
+    );
+    expect(keys).toEqual(['custom_agents', 'hooks_future', 'used:Messages', 'deferred:Messages']);
   });
 
   it('says so when the breakdown is not available (session not running)', async () => {
