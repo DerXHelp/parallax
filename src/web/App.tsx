@@ -1,19 +1,21 @@
-import { lazy, memo, Suspense, type ComponentType } from 'react';
+import { lazy, memo, Suspense, type ComponentType, type ReactNode } from 'react';
 import { Composer } from './features/composer/Composer';
 import { DecisionBar } from './features/decisions/DecisionBar';
 import { DecisionCard } from './features/decisions/DecisionCard';
 import { PlanSidePanel } from './features/decisions/PlanSidePanel';
 import { FILES_SLOTS } from './features/files';
+import { defaultFileLinkLabel, PlainReference } from './features/files/components/PlainReference';
 import { TASKS_SLOTS } from './features/tasks';
 import { Markdown } from './features/transcript/markdown/Markdown';
 import { ToolInputPreviewSlot, TranscriptSlot } from './features/transcript/slots';
 import { useT } from './i18n';
 import { AppShell } from './shell/AppShell';
 import { ShellEffects } from './shell/ShellEffects';
-import { withSlotBoundary } from './shell/SlotBoundary';
+import { withSlotBoundary, type SlotFailure } from './shell/SlotBoundary';
 import {
   FeatureSlotsProvider,
   type FeatureSlots,
+  type FileLinkSlotProps,
   type ProfilesSettingsSlotProps,
   type SettingsPageSlotProps,
 } from './shell/slots';
@@ -22,7 +24,8 @@ import { Skeleton } from './ui/skeleton';
 /**
  * R4W-19: the settings page (WP-38) and the profile editor (WP-36) open rarely – they are lazy
  * chunks, not part of the start chunk (architecture §2.3j). Nothing else imports the two features
- * (only their dictionaries are in `i18n/index.ts`); `features/preferences/index.ts` has exactly one
+ * (only their dictionaries are registered in `i18n/dictionaries.ts` and the lazy German chunk
+ * `i18n/dictionary.de.ts`, ADR-153); `features/preferences/index.ts` has exactly one
  * slot (`SettingsPage`, guarded by App.test.tsx).
  */
 const loadProfiles = () => import('./features/profiles');
@@ -88,15 +91,36 @@ const ProfilesSettingsSlot = memo(function ProfilesSettingsSlot(props: ProfilesS
  * slot – the rest of the app stays usable. The boundary sits OUTSIDE the slot's own `Suspense`
  * (every lazy slot below brings its Suspense), so it also catches the failed dynamic import.
  * `resetKeyOf`: a new value (another session, file, text) gives a render error a fresh try.
+ * `fallbackOf`: the quiet variant for slots inside running text (R5W-02) – replaces the card.
  */
 function bounded<P extends object>(
   Slot: ComponentType<P>,
   resetKeyOf?: (props: P) => unknown,
+  fallbackOf?: (props: P, failure: SlotFailure) => ReactNode,
 ): ComponentType<P> {
-  return memo(withSlotBoundary(Slot, resetKeyOf));
+  return memo(withSlotBoundary(Slot, resetKeyOf, fallbackOf));
 }
 
 const bySessionKey = (props: { sessionKey: string }): string => props.sessionKey;
+
+/**
+ * R5W-02: file references sit in paragraphs, inline code, tool cards and task output – dozens per
+ * transcript. When the FileLink chunk cannot be loaded (Parallax rebuilt while the window is open)
+ * or a link fails to render, each one stays what it shows while its chunk loads: the text as plain
+ * `PlainReference` (inline, no card, no `div` in a `p`); the shell announces the failure once per
+ * window (quiet SlotBoundary). The menu variant (actions button only) has nothing to show.
+ */
+function fileLinkFallback(
+  { path, line = null, variant = 'inline', children }: FileLinkSlotProps,
+  failure: SlotFailure,
+): ReactNode {
+  if (variant === 'menu') return null;
+  return (
+    <span data-slot="file-link-fallback" data-error-kind={failure.chunk ? 'chunk' : 'render'}>
+      <PlainReference state="checking" label={children ?? defaultFileLinkLabel(path, line)} tooltip={null} />
+    </span>
+  );
+}
 
 /**
  * The real feature components in the shell and feature slots (architecture §2.3d, WP-20b):
@@ -108,8 +132,9 @@ const bySessionKey = (props: { sessionKey: string }): string => props.sessionKey
  * `settings` of `SettingsMenu`) and WP-36 `ProfilesSettings` (profile list + editor in its section
  * "Profiles"), both lazy (R4W-19). Phase 3 (WP-60): WP-54 `FileLink`, `FilePanel` (viewer),
  * `FilesPanel` ("Files of this session") and WP-55 `TasksPanel`, `TaskStrip` – all lazy chunks.
- * Every lazy slot is wrapped in a `SlotBoundary` (WP-58); the eager ones (DecisionBar,
- * DecisionCard, Composer) are not lazy and need none.
+ * Every lazy slot is wrapped in a `SlotBoundary` (WP-58) – `FileLink` in its quiet variant (plain
+ * text instead of a card, R5W-02); the eager ones (DecisionBar, DecisionCard, Composer) are not
+ * lazy and need none.
  *
  * The handlers of the shell request channel (`shell/requests.ts`) register themselves where they
  * are mounted (NewSessionDialog, NavigationLayer, SettingsMenu, the side panel host for `openFile`
@@ -126,7 +151,7 @@ export const APP_SLOTS: Partial<FeatureSlots> = {
   Composer,
   SettingsPage: bounded(SettingsPageSlot, (props) => props.section),
   ProfilesSettings: bounded(ProfilesSettingsSlot),
-  FileLink: bounded(FILES_SLOTS.FileLink, (props) => props.path),
+  FileLink: bounded(FILES_SLOTS.FileLink, (props) => props.path, fileLinkFallback),
   FilePanel: bounded(FILES_SLOTS.FilePanel, (props) => `${props.sessionKey}|${props.path}`),
   FilesPanel: bounded(FILES_SLOTS.FilesPanel, bySessionKey),
   TasksPanel: bounded(TASKS_SLOTS.TasksPanel, bySessionKey),

@@ -95,6 +95,8 @@ describe('settings section "Files" (WP-58)', () => {
     });
     const hint = document.querySelector('[data-slot="editor-system-hint"]');
     expect(hint?.textContent).toContain('only for harmless types (txt, md, markdown, json, log, csv, png');
+    // A list in the language's words (Intl.ListFormat, R5W-06), not a literal ', ' join.
+    expect(hint?.textContent).toMatch(/, and \w+\)/);
     expect(document.querySelector('[data-slot="editor-form"]')).toBeNull();
   });
 

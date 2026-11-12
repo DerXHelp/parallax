@@ -1,5 +1,6 @@
 import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useEffect } from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
 import { SAMPLE_IDS, sampleId } from '@shared/samples';
@@ -25,6 +26,32 @@ const SLOTS: Partial<FeatureSlots> = {
   FilesPanel: () => <p>files content</p>,
   TasksPanel: () => <p>tasks content</p>,
 };
+
+/**
+ * A storage whose reads and writes throw (privacy settings, quota), recording the attempts. Tests
+ * hand it out through a spy on the `window.localStorage`/`sessionStorage` getter: in happy-dom a
+ * spy on `Storage.prototype` misses methods that were used before, and a spy on the storage
+ * instance (a Proxy) is not undone by `vi.restoreAllMocks()` (FIX-R5 F4/F5).
+ */
+function brokenStorage(attempts: string[]): Storage {
+  return {
+    length: 0,
+    clear: () => undefined,
+    key: () => null,
+    getItem: (key) => {
+      attempts.push(`get ${key}`);
+      throw new Error('SecurityError');
+    },
+    setItem: (key) => {
+      attempts.push(`set ${key}`);
+      throw new Error('QuotaExceededError');
+    },
+    removeItem: (key) => {
+      attempts.push(`remove ${key}`);
+      throw new Error('SecurityError');
+    },
+  };
+}
 
 let areaWidth = 1400;
 let originalResizeObserver: typeof ResizeObserver;
@@ -119,9 +146,10 @@ afterEach(() => {
   window.ResizeObserver = originalResizeObserver;
   globalThis.ResizeObserver = originalResizeObserver;
   resetSidePanelState();
+  // Restore first: a test may have replaced the storages (brokenStorage).
+  vi.restoreAllMocks();
   localStorage.clear();
   sessionStorage.clear();
-  vi.restoreAllMocks();
 });
 
 describe('SidePanelHost (WP-54, ADR-150)', () => {
@@ -270,12 +298,15 @@ describe('SidePanelHost (WP-54, ADR-150)', () => {
 
   it('works with broken storage (throws on access): default width, no error', async () => {
     const user = userEvent.setup();
-    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
-      throw new Error('SecurityError');
-    });
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new Error('QuotaExceededError');
-    });
+    // A remembered width that only a working storage would deliver (control for the spies below).
+    localStorage.setItem(SIDE_PANEL_WIDTH_KEY, '900');
+    sessionStorage.setItem(SIDE_PANEL_WIDTH_KEY, '900');
+    // Until FIX-R5 F5 this test spied on Storage.prototype, which happy-dom ignored: it was green
+    // with a working storage.
+    const local: string[] = [];
+    const session: string[] = [];
+    vi.spyOn(window, 'localStorage', 'get').mockReturnValue(brokenStorage(local));
+    vi.spyOn(window, 'sessionStorage', 'get').mockReturnValue(brokenStorage(session));
     renderHost();
     act(() => {
       requestShell({ kind: 'sidePanel', sessionKey: KEY, tab: 'plan' });
@@ -285,6 +316,11 @@ describe('SidePanelHost (WP-54, ADR-150)', () => {
     splitter.focus();
     await user.keyboard('{ArrowLeft}');
     expect(splitter.getAttribute('aria-valuenow')).toBe('646');
+    // Both areas were really asked (and failed) for reading and for writing the width.
+    for (const attempts of [local, session]) {
+      expect(attempts).toContain(`get ${SIDE_PANEL_WIDTH_KEY}`);
+      expect(attempts).toContain(`set ${SIDE_PANEL_WIDTH_KEY}`);
+    }
   });
 
   it('below 1100 px of session area the panel lies over the transcript (overlay), Esc still closes', async () => {
@@ -298,10 +334,85 @@ describe('SidePanelHost (WP-54, ADR-150)', () => {
     expect(panel().style.width).toBe('450px');
     // The anchor takes no room in the row: the transcript keeps the full width.
     expect(anchorWidth()).toBe('');
-    // No focus trap: Tab leaves the panel.
-    expect(screen.getByRole('button', { name: 'opener' })).toBeTruthy();
+    // No focus trap (R5W-11: really pressed): from the last control of the panel, Tab leaves it.
+    const controls = [...panel().querySelectorAll<HTMLElement>('button, [tabindex="0"]')].filter(
+      (element) => !element.hasAttribute('disabled'),
+    );
+    const last = controls.at(-1);
+    if (last === undefined) throw new Error('no control in the panel');
+    last.focus();
+    expect(panel().contains(document.activeElement)).toBe(true);
+    await user.tab();
+    expect(panel().contains(document.activeElement)).toBe(false);
+    // …and Shift+Tab from the first control leaves it backwards (to the opener before it).
+    const first = controls[0];
+    if (first === undefined) throw new Error('no control in the panel');
+    first.focus();
+    await user.tab({ shift: true });
+    expect(panel().contains(document.activeElement)).toBe(false);
+    panel().focus();
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('complementary')).toBeNull();
+  });
+
+  it('a tab that is not shown is not mounted: its polling stops and starts again with it (R5W-11)', () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      let ticks = 0;
+      const POLL_MS = 2000;
+      function PollingViewer() {
+        useEffect(() => {
+          const timer = setInterval(() => {
+            ticks += 1;
+          }, POLL_MS);
+          return () => {
+            clearInterval(timer);
+          };
+        }, []);
+        return <p>polling viewer</p>;
+      }
+      render(
+        <TooltipProvider>
+          <FeatureSlotsProvider slots={{ ...SLOTS, FilePanel: PollingViewer }}>
+            <SidePanelHost sessionKey={KEY} />
+          </FeatureSlotsProvider>
+        </TooltipProvider>,
+      );
+      act(() => {
+        requestShell({ kind: 'openFile', sessionKey: KEY, path: 'D:\\work\\a.ts', line: null, col: null });
+      });
+      act(() => {
+        vi.advanceTimersByTime(3 * POLL_MS);
+      });
+      expect(ticks).toBe(3);
+      // Another tab: the viewer is unmounted, its poll is gone.
+      act(() => {
+        requestShell({ kind: 'sidePanel', sessionKey: KEY, tab: 'tasks' });
+      });
+      expect(screen.queryByText('polling viewer')).toBeNull();
+      act(() => {
+        vi.advanceTimersByTime(5 * POLL_MS);
+      });
+      expect(ticks).toBe(3);
+      // Back on the file tab: polling again.
+      act(() => {
+        requestShell({ kind: 'sidePanel', sessionKey: KEY, tab: 'file' });
+      });
+      act(() => {
+        vi.advanceTimersByTime(POLL_MS);
+      });
+      expect(ticks).toBe(4);
+      // A closed panel does not poll either.
+      act(() => {
+        requestShell({ kind: 'sidePanel', sessionKey: KEY, tab: null });
+      });
+      act(() => {
+        vi.advanceTimersByTime(5 * POLL_MS);
+      });
+      expect(ticks).toBe(4);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('1100 px and more: inline next to the transcript', () => {

@@ -27,7 +27,7 @@ function demo(id: string) {
 }
 
 describe('preferences playground', () => {
-  it('has a page demo per section (with and without system integration), the sound preview and the WP-58 shell demos', () => {
+  it('has a page demo per section (with and without system integration) and the sound preview', () => {
     expect(demos.map((d) => d.id)).toEqual([
       'general',
       'notifications',
@@ -42,14 +42,6 @@ describe('preferences playground', () => {
       'server-warnings',
       'about',
       'sounds',
-      'shell-header-panels',
-      'shell-header-todos',
-      'shell-session-menu',
-      'shell-drop-overlay',
-      'shell-window-900',
-      'shell-window-700',
-      'shell-app-busy',
-      'shell-slot-error',
     ]);
     expect(slots.SettingsPage).toBeDefined();
   });
@@ -70,25 +62,6 @@ describe('preferences playground', () => {
     render(<TooltipProvider>{demo('files-custom-errors').render()}</TooltipProvider>);
     const issues = await screen.findAllByText(/cannot be the editor|must contain \{file\}/);
     expect(issues).toHaveLength(2);
-  });
-
-  it('the shell demos render: header buttons with counters, slot error cards', async () => {
-    const { unmount } = render(<TooltipProvider>{demo('shell-header-panels').render()}</TooltipProvider>);
-    // Two headers (900 and 480 px; happy-dom does not measure, so both stay wide here).
-    expect(await screen.findAllByRole('button', { name: 'Tasks – 2 background tasks running' })).toHaveLength(
-      2,
-    );
-    expect(screen.getAllByRole('button', { name: 'Plan' })).toHaveLength(2);
-    unmount();
-    act(() => {
-      unregisterConnection();
-    });
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    render(<TooltipProvider>{demo('shell-slot-error').render()}</TooltipProvider>);
-    // The render error at once, the missing chunk once its import rejected.
-    await waitFor(() => {
-      expect(screen.getAllByText('This area could not be loaded')).toHaveLength(2);
-    });
   });
 
   it('a page demo opens the page over the FakeHost with the variant applied', async () => {

@@ -36,6 +36,8 @@ export const en = {
       other: 'Tasks – {count} background tasks running',
     },
     tasksOpen: { one: 'Tasks – {count} open to-do', other: 'Tasks – {count} open to-dos' },
+    /** Counter above its maximum (R5W-06: no literal in the component). */
+    countOverflow: '{max}+',
   },
   /** Drop zone over the session pane (R4W-02, WP-58). */
   drop: {
@@ -51,6 +53,10 @@ export const en = {
     confirmReload: 'Reload the whole window? Your sessions keep running on the server.',
     reloadWindow: 'Reload window',
     cancel: 'Cancel',
+    /** Quiet slots in running text (R5W-02): one notice per window, the content stays as text. */
+    inlineChunk:
+      'A part of the app could not be downloaded – maybe Parallax was updated meanwhile. Until the window is reloaded, some content (such as file links) shows as plain text.',
+    inlineRender: 'Some content (such as file links) could not be shown and appears as plain text.',
   },
   row: {
     actions: 'Actions for “{title}”',
