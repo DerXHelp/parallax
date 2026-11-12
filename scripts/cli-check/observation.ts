@@ -58,6 +58,8 @@ export interface RawProbe {
   initializationResult: unknown;
   supportedModels: unknown;
   contextUsage: unknown;
+  /** WP-64: result of the Remote Control step (remoteControl.ts); absent/null = not checked. */
+  remoteControl?: boolean | null;
 }
 
 /** MCP tools come from the user's/account's configuration, not from the CLI. */
@@ -102,6 +104,7 @@ export function observationFrom(raw: RawProbe, sdkVersion: string): Observation 
     slashCommands: sortedUnique(init.slash_commands),
     agents: sortedUnique(init.agents),
     skills: sortedUnique(init.skills),
+    remoteControl: raw.remoteControl ?? null,
   };
 }
 

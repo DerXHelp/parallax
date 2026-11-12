@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { makeError } from '@shared/errors';
 import { sampleClaudeInstallStatus } from '@shared/samples';
-import { breadcrumbs } from './FolderBrowser';
+import { breadcrumbs } from './FolderBrowserContent';
 import { listDemoFolder } from './demo-folders';
 import { issueArgIndex, issueDetail, issueEnvKey, issueField } from './profile-issues';
 import { profileStatusText } from './profile-status';

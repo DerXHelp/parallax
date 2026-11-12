@@ -91,6 +91,32 @@ Ergebnis, Abbildung der `todos` und Verdrahtung für WP-60: `docs/wp/WP-51.md` �
   Limit-Leiste (Signal → `setAccountLimit`).
 - Integrationstest: `wp63.integration.test.ts`.
 
+## Remote Control (WP-64)
+
+| Datei | Exporte | Inhalt |
+| --- | --- | --- |
+| `remoteControl.ts` | `RemoteState`, `REMOTE_OFF`, `nextRemoteState`, `onBridgeState`, `bridgeOf`, `enableRemote`, `remoteControlAfterReady`, `setRemoteControl`, `endRemoteBeforeClose`, `remoteProcessEnded` | Wunsch `Entry.remoteControlWanted` (persistiert) und Live-Zustand `EntryState.remote` (nur mit Prozess: `bridge_state` ready → `connecting`, connected → `connected`, failed nicht-terminal → `reconnecting`, terminal → `failed` `REMOTE_CONTROL_FAILED`, policy_disabled → `failed` `REMOTE_CONTROL_POLICY_DISABLED`); Einschalten sofort bei laufendem, bereitem Prozess, sonst nach der nächsten Bereitschaft mit `reattachSessionId` der aktuellen Unterhaltung (gleicher Link); ein gescheitertes Reattach einmal ohne; Generationen verwerfen veraltete Antworten; Fehler beim Einschalten → `failed` mit Fehler (der Befehl gelingt) |
+
+- **Neue Einträge:** `settings.remoteControl.newSessions` – `on`/`off` sofort, `follow_claude` startet mit
+  dem zuletzt gelesenen `remoteControlAtStartup` des Profils und übernimmt nach der ersten Bereitschaft
+  den frisch gelesenen Wert (`EntryState.followClaudeDefault`; eine eigene Wahl vorher gewinnt). Jede
+  Bereitschaft liest den Wert (`readRemoteControlDefault`) → Host-State `remoteControlDefault`
+  (Standardprofil, sofort veröffentlicht).
+- **Bridge je Unterhaltung:** `Conversation.bridgeSessionId`/`sessionUrl`; `/clear` und frischer Kontext
+  erben die Bridge (`bridgeOf`, gleicher Link); Ausschalten, Archivieren und Entfernen vergessen sie
+  (`endRemoteBeforeClose` schaltet vorher im laufenden Prozess ab). Schließen, Absturz und Serverneustart
+  behalten Wunsch und Link (`keepSessionOnExit`), die Summary zeigt den gespeicherten Link.
+- **Kein Leerlauf-Schlaf** bei `connecting`/`connected`/`reconnecting` (`sleepEligible`, ADR-105 erweitert;
+  `EntryState.setRemote` plant den Schlaf neu, wenn die Bridge kommt oder geht).
+- **Turns aus der Claude-App:** der Normalizer liefert das `user`-Item mit `source: 'remote'`; Status über
+  `session_state`/`command_lifecycle` wie sonst, die Queue ignoriert fremde uuids, Kosten über `result`.
+- **„In der Claude-App beantwortet“:** `BrokerDeps.answeredElsewhere` – bricht die CLI eine Anfrage ab,
+  während die Bridge `connected`/`reconnecting` ist, wird das Ergebnis `answered_elsewhere` statt
+  `cancelled` (Heuristik; ein Interrupt beendet Entscheidungen vorher selbst).
+- Befehl `session.setRemoteControl` (nicht für archivierte/externe Einträge). Harness-Option
+  `remoteControl` (`FakeBackendOptions.remoteControl`). Integrationstest:
+  `remoteControl.integration.test.ts`.
+
 Außerdem: `EngineStores.attachments?` (`entryState.ts`, fehlt → `null`), `attachmentsDir` bei jedem
 `startRuntime` (Fehler → Warnung, `null`), `session.stopTask`/`plan.list` (über `planStored` des Plan-Index, CR3-09)/`plan.read` in `commands.ts`,
 Broker `check`/`latestPlanVersion`/`latestPlanFilePath`/`planRecords`/`loadLastPlan` und Ergebnis

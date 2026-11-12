@@ -11,7 +11,8 @@
  * (continuePlan.ts, ADR-112). Phase 3 (WP-51, WP-50 §4.12): PDF/file attachments and pastes
  * (attachments.ts, ADR-146), `session.stopTask` (ADR-149), `plan.list`/`plan.read` (ADR-148) and
  * `approve_fresh_context` (freshContext.ts, ADR-147). WP-63: `session.remove` (remove from
- * Parallax only, files stay).
+ * Parallax only, files stay). WP-64: `session.setRemoteControl` and the Remote Control default of
+ * new entries (remoteControl.ts); archive/remove end the remote session first.
  */
 import { LIMITS, type ClientId, type ProfileId } from '@shared/common';
 import { makeError } from '@shared/errors';
@@ -41,6 +42,7 @@ import {
 import { consoleCommand, openExternal, returnFromExternal } from './external';
 import { approveFreshContext } from './freshContext';
 import { catalogOrFallback, toModelCatalog } from './models';
+import { endRemoteBeforeClose, setRemoteControl } from './remoteControl';
 import { closeRuntime, deliverPrompt, startRuntime } from './runtime';
 import { capTitle, implementPlanPrompt, newConversation, titleFromPrompt } from './summary';
 
@@ -151,6 +153,11 @@ async function createSession(
   core.assertRunning();
 
   const now = core.now().toISOString();
+  // WP-64: `on`/`off` decide now; `follow_claude` starts from the last known default of this
+  // profile and takes Claude's own setting after the first readiness.
+  const newSessions = core.stores.settings.get().remoteControl.newSessions;
+  const remoteControlWanted =
+    newSessions === 'on' || (newSessions === 'follow_claude' && core.remoteControlDefault(profileId) === true);
   const given = cmd.title?.trim() ?? '';
   const promptTitle = cmd.prompt === undefined ? null : titleFromPrompt(cmd.prompt.text);
   const entry: Entry = {
@@ -180,8 +187,10 @@ async function createSession(
     gitBranch: null,
     external: null,
     continueAt: null,
+    remoteControlWanted,
   };
   const s = engine.createEntry(entry, promptTitle);
+  s.followClaudeDefault = newSessions === 'follow_claude';
   const prompt = cmd.prompt;
   if (prompt === undefined) return { entryId: entry.id, messageUuid: null };
   try {
@@ -344,6 +353,9 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
     // WP-63: remove from Parallax only (files stay on disk).
     case 'session.remove':
       return removeSession(engine, s);
+    // WP-64: Remote Control (the wish; a running process is switched at once).
+    case 'session.setRemoteControl':
+      return setRemoteControl(core, s, cmd.enabled);
   }
 }
 
@@ -363,6 +375,8 @@ async function removeSession(engine: CommandEngine, s: EntryState): Promise<Comm
   await s.lifecycle.run(async () => {
     if (s.removed) return;
     cancelContinue(s);
+    // WP-64: the remote session in the Claude app ends with the entry.
+    await endRemoteBeforeClose(core, s);
     await closeRuntime(s, core, 'remove');
     engine.removeEntry(s);
   });
@@ -512,6 +526,8 @@ async function setArchived(
     s.patch((e) => ({ ...e, archived: true }));
     // ADR-112: a scheduled "continue" is dropped (timer, continueAt, wakeupAt).
     cancelContinue(s);
+    // WP-64: the remote session in the Claude app ends with the archiving (the wish stays).
+    await endRemoteBeforeClose(core, s);
     await closeRuntime(s, core, 'archive');
   });
   s.cancelRetry();

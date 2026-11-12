@@ -64,6 +64,8 @@ describe('header (WP-35 §8)', () => {
       'Open folder in Explorer',
       'Open in external console',
       'Copy console command',
+      // WP-64 (no link yet: neither open nor copy).
+      'Turn on Remote Control',
       'Put to sleep',
       'Archive',
       'Remove from Parallax…',

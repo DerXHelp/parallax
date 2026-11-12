@@ -17,6 +17,7 @@ Design: `docs/wp/WP-13.md` §3.3, Ergebnis und Stolpersteine: `docs/wp/WP-13a.md
 | `plan.ts` | `fake:plan` (Plan-Modus, Plan-Datei echt) und der Start mit frischem Kontext („Fake: implementing plan (N lines)“) |
 | `phase3.ts` | `fake:background` (sendet Tätigkeiten „Running …“), `fake:todo`, `fake:files`, `fake:writes-lost`, `fake:context-high` (V4-05), Antworten auf Anhänge/Pastes |
 | `feedback.ts` | WP-63: `fake:steps` (6 Bash-Schritte mit Thinking, einer schlägt fehl, ein Satz an den Nutzer, 3 weitere Schritte, Antwort – zwei Gruppen im kompakten Transkript), `fake:images` (4× `Read` mit je einem PNG – Galerie), `fake:limit-warning` (`allowed_warning` für das Wochenfenster mit `unifiedWindows` – nur die Limit-Leiste, kein Transkript-Hinweis) |
+| `remote.ts` | WP-64 Remote Control: `fakeBridgeInfo` (`cse_fake<id>` ↔ `https://claude.ai/code/session_fake<id>`), `fakeEnableFailure`, `bridgeStateMessage`, `remotePromptTurn` (Turn eines Prompts aus der Claude-App: `command_lifecycle` mit fremder uuid, `init`, `user`-Replay mit `origin:{kind:'human'}`, Antwort); Hebel `fake:remote-prompt [text]`, `fake:remote-permission`, `fake:remote-fail`, `fake:remote-flaky` (siehe unten) |
 | `files.ts` | `FakeFiles` (echte Dateien nur unter `<filesRoot>\<sessionId>\`, Pfade über `@shared/paths` geprüft), `defaultFakeFilesRoot()` = `%TEMP%\parallax-fake-files`, `patchHunks` |
 | `defaults.ts` | Fake-Antworten: `getContextUsage` (Kategorien mit `id`; fester Füllstand bei `fake:context-high`), `supportedModels` (`FAKE_MODELS` = CLI 2.1.322, 14 Einträge), `supportedCommands` (inkl. Terminal-Befehle); `FAKE_CLAUDE_VERSION` = die CLI-Version, die das SDK erwartet (V4-05; Test gegen `claudeCodeVersion` des SDK), auch in `init.claude_code_version`; `FAKE_CONTEXT_HIGH_TOKENS` |
 | `history.ts` | `FakeHistoryStore` (Rohformen wie das SDK, Import aus `history.jsonl`) |
@@ -38,6 +39,23 @@ Design: `docs/wp/WP-13.md` §3.3, Ergebnis und Stolpersteine: `docs/wp/WP-13a.md
 | `fake:context-high` | Context ab jetzt dauerhaft 75 % (150 000 von 200 000): `getContextUsage` und die `usage` jeder gestreamten Nachricht (Schätzung während späterer Turns, z. B. der Plan-Entscheidung von `fake:plan` – Hervorhebung „Empfohlen“ ab 60 %); zurück auf Normal nach `/clear` oder einer Kompaktierung (V4-05, FIX-R5) |
 | Prompt mit PDF / `Attached files:` / `inlinePastes` | „Fake: received N document(s), M file(s)“ bzw. „Fake: received K paste(s)“ (Bilder wie bisher; je Art eine Zeile) |
 | erster Prompt ohne Resume `Implement the following approved plan.` | „Fake: implementing plan (N lines)“; `init.permissionMode` = Startmodus |
+
+## Remote Control (WP-64)
+
+`FakeSession.setRemoteControl(true, {name, reattachSessionId})` sendet sofort `bridge_state ready`, nach
+`FAKE_REMOTE_CONNECT_MS` (300 ms × `speed`) `connected`; Antwort `{bridgeSessionId: 'cse_fake<id>', sessionUrl:
+'https://claude.ai/code/session_fake<id>'}`, mit `reattachSessionId` (oder schon verbunden) dieselbe Bridge.
+`readRemoteControlDefault()` = `FakeBackendOptions.remoteControl.atStartup` (Standard `false`, damit neue
+Sessions im Dev-Server/E2E nicht automatisch verbinden); `remoteControl.enable` = `unavailable` / `auth` /
+`policy` / `failed` für die Fehlerfälle. Test-Handle: `remoteControl`, `bridgeState(state, fields)`,
+`remotePrompt(text, {answer?, totalCostUsd?})` (Turn zwischen den Turns, nicht unterbrechbar).
+
+| Eingabe (nur mit verbundener Fake-Bridge, sonst Hinweis-Antwort) | Ablauf |
+|---|---|
+| `fake:remote-prompt [text]` | lokaler Turn mit eigenem Echo (Replay gleiche uuid – der Normalizer verwirft es), danach ein Turn „aus der Claude-App“ mit `text` (Standard „Hello from the phone“), Antwort „From the app: …“; ein Interrupt im zweiten Teil bricht den fremden Prompt ab |
+| `fake:remote-permission` | `Write` `handy.txt` mit Freigabe; nach `FAKE_REMOTE_ANSWER_MS` (1,5 s × `speed`) bricht die „App“ `canUseTool` ab, das Werkzeug läuft („approved in the Claude app“); vorher lokal beantwortet wie `fake:edit` |
+| `fake:remote-fail` | `bridge_state failed` (terminal) – Bridge weg |
+| `fake:remote-flaky` | `bridge_state failed` (`failure_kind: transient`), nach `FAKE_REMOTE_RECONNECT_MS` `connected` mit `recovered` |
 
 Echte Fake-Dateien liegen nur unter `FakeBackendOptions.filesRoot` (Standard
 `%TEMP%\parallax-fake-files`), nie im Projekt; sie werden nicht automatisch gelöscht. Tests geben ein

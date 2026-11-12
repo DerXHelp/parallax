@@ -53,6 +53,7 @@ import {
   FAKE_WRITES_LOST_TEXT,
 } from './phase3';
 import { FAKE_PLAN_INPUT_CHUNKS } from './plan';
+import { FAKE_REMOTE_OFF_TEXT } from './remote';
 
 const launch = await createFakeClaudeIntegration().launchSpecFor('standard', SAMPLE_IDS.entry);
 
@@ -958,6 +959,124 @@ describe('WP-63 feedback scenarios', () => {
     expect(Object.keys(limits[0]?.windows ?? {})).toEqual(['five_hour', 'seven_day']);
     expect(h.items().some((i) => i.kind === 'system' && i.event === 'rate_limit')).toBe(false);
     expect(texts(h.items())).toEqual([FAKE_LIMIT_WARNING_ANSWER]);
+    await h.close();
+  });
+});
+
+describe('interactive scenario: Remote Control (WP-64)', () => {
+  const bridgeStates = (signals: readonly StatusSignal[]) =>
+    signals.flatMap((s) => (s.type === 'bridge_state' ? [s.state] : []));
+  const enable = (h: ReturnType<typeof harness>, reattachSessionId: string | null = null) =>
+    h.agent.setRemoteControl(true, { name: 'Fake title', reattachSessionId });
+
+  it('setRemoteControl: ready → connected, fake claude.ai link, same bridge on reattach, off again', async () => {
+    const h = harness();
+    const result = await enable(h);
+    expect(result.ok).toBe(true);
+    const info = result.ok ? result.info : null;
+    expect(info?.bridgeSessionId).toMatch(/^cse_fake[0-9a-f]{20}$/);
+    expect(info?.sessionUrl).toBe(`https://claude.ai/code/session_${(info?.bridgeSessionId ?? '').slice(4)}`);
+    await h.backend.settle();
+    expect(bridgeStates(h.signals)).toEqual(['ready', 'connected']);
+    expect(h.handle.remoteControl).toEqual(info);
+    expect(h.handle.controls.at(-1)).toEqual({
+      method: 'setRemoteControl',
+      args: [true, { name: 'Fake title', reattachSessionId: null }],
+    });
+    await expect(h.agent.setRemoteControl(false, { name: null, reattachSessionId: null })).resolves.toEqual({
+      ok: true,
+      info: null,
+    });
+    expect(h.handle.remoteControl).toBeNull();
+    const again = await enable(h, info?.bridgeSessionId ?? null);
+    expect(again).toEqual({ ok: true, info });
+    await h.close();
+  });
+
+  it('failures per option; the default of Claude\'s setting; closed sessions', async () => {
+    for (const [mode, code] of [
+      ['unavailable', 'REMOTE_CONTROL_UNAVAILABLE'],
+      ['auth', 'REMOTE_CONTROL_AUTH'],
+      ['policy', 'REMOTE_CONTROL_POLICY_DISABLED'],
+      ['failed', 'REMOTE_CONTROL_FAILED'],
+    ] as const) {
+      const h = harness({}, { remoteControl: { enable: mode, atStartup: true } });
+      await expect(enable(h)).resolves.toMatchObject({ ok: false, error: { code } });
+      await expect(h.agent.readRemoteControlDefault()).resolves.toBe(true);
+      await h.close();
+      await expect(enable(h)).resolves.toMatchObject({ ok: false, error: { code: 'REMOTE_CONTROL_FAILED' } });
+    }
+    const plain = harness();
+    await expect(plain.agent.readRemoteControlDefault()).resolves.toBe(false);
+    await plain.close();
+  });
+
+  it('fake:remote-prompt: own echo dropped, then a remote user_message with its answer', async () => {
+    const h = harness();
+    await enable(h);
+    await h.backend.settle();
+    h.send('fake:remote-prompt Was macht der Build?');
+    await h.turnDone(2);
+    const users = h.items().filter((i) => i.kind === 'user_message');
+    expect(users).toMatchObject([
+      { source: 'local', text: { text: 'fake:remote-prompt Was macht der Build?' } },
+      { source: 'remote', origin: 'human', text: { text: 'Was macht der Build?' } },
+    ]);
+    expect(texts(h.items()).at(-1)).toBe('From the app: Was macht der Build?');
+    const remoteUuid = users[1]?.id ?? '';
+    expect(
+      h.signals.flatMap((s) => (s.type === 'prompt_lifecycle' && s.messageUuid === remoteUuid ? [s.state] : [])),
+    ).toEqual(['queued', 'started', 'completed']);
+    await h.close();
+  });
+
+  it('remotePrompt() of the handle plays a foreign turn between turns', async () => {
+    const h = harness();
+    await enable(h);
+    await h.backend.settle();
+    const uuid = await h.handle.remotePrompt('Status?', { answer: 'All green' });
+    await h.turnDone(1);
+    expect(h.items().find((i) => i.id === uuid)).toMatchObject({ kind: 'user_message', source: 'remote' });
+    expect(texts(h.items())).toEqual(['All green']);
+    await h.close();
+  });
+
+  it('fake:remote-permission: canUseTool aborted (answered in the app), the tool runs', async () => {
+    const h = harness();
+    await enable(h);
+    await h.backend.settle();
+    h.send('fake:remote-permission');
+    const pending = await h.decision();
+    expect(pending.req.toolName).toBe('Write');
+    await until(() => pending.signal.aborted, 'the abort of canUseTool');
+    await h.turnDone(1);
+    const call = h.items().find((i) => i.kind === 'tool_call');
+    expect(call).toMatchObject({ toolName: 'Write', status: 'done' });
+    expect(texts(h.items()).at(-1)).toBe('handy.txt was written (approved in the Claude app).');
+    await h.close();
+  });
+
+  it('fake:remote-fail → terminal failure, bridge gone; fake:remote-flaky → failed (transient), connected again', async () => {
+    const h = harness();
+    await enable(h);
+    await h.backend.settle();
+    h.send('fake:remote-flaky');
+    await h.turnDone(1);
+    await h.backend.settle();
+    h.send('fake:remote-fail');
+    await h.turnDone(2);
+    const bridge = h.signals.flatMap((s) => (s.type === 'bridge_state' ? [[s.state, s.failureKind, s.recovered]] : []));
+    expect(bridge).toEqual([
+      ['ready', null, false],
+      ['connected', null, false],
+      ['failed', 'transient', false],
+      ['connected', null, true],
+      ['failed', 'terminal', false],
+    ]);
+    expect(h.handle.remoteControl).toBeNull();
+    h.send('fake:remote-prompt x');
+    await h.turnDone(3);
+    expect(texts(h.items()).at(-1)).toBe(FAKE_REMOTE_OFF_TEXT);
     await h.close();
   });
 });

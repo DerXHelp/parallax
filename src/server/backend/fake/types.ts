@@ -5,7 +5,7 @@
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { EffortLevel, PermissionMode } from '@shared/common';
 import type { FixtureEvent } from '../fixture';
-import type { AgentBackend, OutgoingPrompt, StartSessionRequest } from '../types';
+import type { AgentBackend, OutgoingPrompt, RemoteControlInfo, StartSessionRequest } from '../types';
 import type { FakeFiles } from './files';
 import type { FakeHistoryStore } from './history';
 
@@ -53,6 +53,16 @@ export interface FakeBackendOptions {
    * `fake:files`), one subfolder per session id. Default `%TEMP%\parallax-fake-files`.
    */
   filesRoot?: string;
+  /** WP-64: Remote Control of the fake sessions (default: available, Claude setting off). */
+  remoteControl?: FakeRemoteControlOptions;
+}
+
+/** WP-64: levers of the fake Remote Control (tests; the interactive levers are prompts, remote.ts). */
+export interface FakeRemoteControlOptions {
+  /** Claude's `remoteControlAtStartup` as readRemoteControlDefault() answers it; default false. */
+  atStartup?: boolean | null;
+  /** Answer of setRemoteControl(true): 'ok' (default) or one of the failures. */
+  enable?: 'ok' | 'unavailable' | 'auth' | 'policy' | 'failed';
 }
 
 export interface FakeBackend extends AgentBackend {
@@ -101,6 +111,12 @@ export interface FakeDiagnostic {
   actual?: unknown;
 }
 
+/** WP-64: FakeSessionHandle.remotePrompt. */
+export interface FakeRemotePromptOptions {
+  answer?: string;
+  totalCostUsd?: number;
+}
+
 export interface FakeSessionHandle {
   readonly entryId: string;
   readonly pid: number;
@@ -117,6 +133,16 @@ export interface FakeSessionHandle {
   crash(code?: number): void;
   /** Test: CLI cancels canUseTool (signal); default the oldest open request. */
   abortDecision(toolUseId?: string): void;
+  /** WP-64: the connected fake bridge (null = Remote Control off). */
+  readonly remoteControl: RemoteControlInfo | null;
+  /** WP-64 test: emits system/bridge_state now (`failed` with failure_kind terminal also disconnects). */
+  bridgeState(state: string, fields?: Record<string, unknown>): void;
+  /**
+   * WP-64 test: a prompt typed in the Claude app (script mode, bridge connected): its whole turn is
+   * played once no other turn runs. Resolves with the foreign uuid after the turn; rejects without a bridge.
+   * `answer` default "From the app: <text>"; `totalCostUsd` = the cumulative cost of its result.
+   */
+  remotePrompt(text: string, o?: FakeRemotePromptOptions): Promise<string>;
 }
 
 export interface FakeScriptState {
@@ -164,6 +190,14 @@ export interface FakeScriptContext {
   startTask(task: FakeBackgroundTask): void;
   /** Phase 3: messages emitted on a graceful close (exit 0), right before the exit event. */
   onClose(messages: () => readonly unknown[]): void;
+  /** WP-64: the connected fake bridge (null = Remote Control off). */
+  readonly remoteControl: RemoteControlInfo | null;
+  /** WP-64: emits system/bridge_state now (see FakeSessionHandle.bridgeState). */
+  bridgeState(state: string, fields?: Record<string, unknown>): void;
+  /** WP-64: the CLI aborts canUseTool (answered elsewhere); false when no request was open. */
+  abortDecision(toolUseId: string): boolean;
+  /** WP-64: waits `ms × speed` (≤ maxDelayMs); settle() waits for it. */
+  pause(ms: number): Promise<void>;
 }
 
 /** What a background task may do (FakeBackgroundTask.run). */

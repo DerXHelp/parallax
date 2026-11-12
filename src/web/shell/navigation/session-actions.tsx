@@ -3,7 +3,9 @@ import {
   ArchiveIcon,
   ArchiveRestoreIcon,
   ClipboardCopyIcon,
+  ExternalLinkIcon,
   FolderOpenIcon,
+  LinkIcon,
   FolderPlusIcon,
   HistoryIcon,
   InfoIcon,
@@ -12,6 +14,7 @@ import {
   PencilIcon,
   PinIcon,
   PinOffIcon,
+  SmartphoneIcon,
   SquareTerminalIcon,
   type LucideIcon,
 } from 'lucide-react';
@@ -24,7 +27,7 @@ import type { Command } from '@shared/protocol';
 import { useT, type TranslationKey } from '@web/i18n';
 import { copyText } from '@web/lib/clipboard';
 import { focusElement, focusedElement } from '@web/lib/return-focus';
-import { openSessionWindow } from '@web/lib/windows';
+import { openClaudeSessionUrl, openSessionWindow } from '@web/lib/windows';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand } from '@web/state/hooks';
 import { showErrorNotice, showTextNotice } from '@web/state/notices';
@@ -35,6 +38,7 @@ import { requestShell } from '../requests';
 import { shortcutKeyLabels } from '../shortcuts';
 import { sessionFocusTarget } from './focus';
 import { isHandoffPending, openExternalConsole } from './handoff';
+import { copyRemoteLink, remoteLinkOf } from './remote-control';
 import { requestRemoveSession } from './remove-session';
 import { startRenameAfterMenu, takePendingRename, type RenamePlace } from './rename';
 
@@ -56,7 +60,11 @@ export type SessionActionId =
   | 'conversations'
   | 'sessionInfo'
   /** WP-63 §1.3: remove from Parallax only (confirmation dialog; files stay). */
-  | 'remove';
+  | 'remove'
+  /** WP-64: Remote Control on/off, open the claude.ai link, copy it. */
+  | 'remoteControl'
+  | 'openRemote'
+  | 'copyRemoteLink';
 
 export type SessionActionSlot = SessionActionId | 'separator';
 
@@ -72,7 +80,7 @@ export interface SessionAction {
 
 /**
  * Sidebar context menu and the "…" menu of a row (order of WP-35 §3; WP-58: + open folder; WP-63:
- * + remove).
+ * + remove; WP-64: + Remote Control).
  */
 export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
   'rename',
@@ -85,11 +93,15 @@ export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
   'openExternal',
   'copyConsoleCommand',
   'separator',
+  'remoteControl',
+  'openRemote',
+  'copyRemoteLink',
+  'separator',
   'archive',
   'remove',
 ];
 
-/** Header menu (WP-35 §8; WP-58: + open folder; WP-63: + remove). */
+/** Header menu (WP-35 §8; WP-58: + open folder; WP-63: + remove; WP-64: + Remote Control). */
 export const HEADER_ACTIONS: readonly SessionActionSlot[] = [
   'conversations',
   'sessionInfo',
@@ -99,6 +111,10 @@ export const HEADER_ACTIONS: readonly SessionActionSlot[] = [
   'openFolder',
   'openExternal',
   'copyConsoleCommand',
+  'separator',
+  'remoteControl',
+  'openRemote',
+  'copyRemoteLink',
   'separator',
   'sleep',
   'archive',
@@ -334,6 +350,46 @@ function build(
           requestRemoveSession(sessionKey);
         },
       };
+    case 'remoteControl': {
+      // WP-64: the wish – a running session switches at once, a dormant one at its next start.
+      const on = summary.remoteControl.wanted;
+      return {
+        id,
+        label: on ? 'navigation.actions.remoteOff' : 'navigation.actions.remoteOn',
+        icon: SmartphoneIcon,
+        // The server refuses both (SESSION_ARCHIVED / SESSION_EXTERNAL).
+        disabled: summary.archived || external,
+        run: () => {
+          runSessionCommand(sessionKey, { name: 'session.setRemoteControl', entryId, enabled: !on });
+        },
+      };
+    }
+    case 'openRemote': {
+      const url = remoteLinkOf(summary.remoteControl);
+      if (url === null) return null;
+      return {
+        id,
+        label: 'navigation.actions.openRemote',
+        icon: ExternalLinkIcon,
+        disabled: false,
+        run: () => {
+          openClaudeSessionUrl(url);
+        },
+      };
+    }
+    case 'copyRemoteLink': {
+      const url = remoteLinkOf(summary.remoteControl);
+      if (url === null) return null;
+      return {
+        id,
+        label: 'navigation.actions.copyRemoteLink',
+        icon: LinkIcon,
+        disabled: false,
+        run: () => {
+          copyRemoteLink(url);
+        },
+      };
+    }
   }
 }
 

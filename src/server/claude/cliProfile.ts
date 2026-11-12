@@ -54,6 +54,11 @@ export const cliProfileSchema = z.object({
   agents: list,
   /** `system/init.skills`. */
   skills: list,
+  /**
+   * WP-64: Remote Control worked in the probe (`enableRemoteControl` answer schema + `bridge_state
+   * connected` within 15 s); null = not checked (profile older than WP-64).
+   */
+  remoteControl: z.boolean().nullable().default(null),
 });
 export type CliProfile = z.infer<typeof cliProfileSchema>;
 

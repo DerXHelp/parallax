@@ -461,7 +461,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "msg_011CgwXYw34SnPJ5DdYPKYXU:0",
@@ -530,7 +531,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "msg_011CgwXZPzJUxH8kJsGS8vkj:0",
@@ -604,7 +606,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "msg_011CgwXZYhfokpaqj2PE3GeY:0",
@@ -702,7 +705,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "now"
+        "priority": "now",
+        "source": "local"
       },
       {
         "id": "msg_011CgwXZwWNN6fQprTgMUmop:0",

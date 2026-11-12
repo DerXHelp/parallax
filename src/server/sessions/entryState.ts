@@ -13,6 +13,7 @@ import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   currentConversation,
   currentSessionId,
+  isRemoteControlActive,
   type CappedText,
   type ContextBreakdown,
   type ContextGauge,
@@ -67,6 +68,7 @@ import type { estimateContextGauge } from './normalizer';
 import type { PlanIndexedDecisionStore } from './planIndex';
 import type { ProcessStore } from './processStore';
 import { PromptQueue } from './promptQueue';
+import { REMOTE_OFF, type RemoteState } from './remoteControl';
 import { INITIAL_RETRY_STATE, type AutoRetryPolicy, type RetryState } from './retry';
 import type { SessionRuntime } from './runtime';
 import { acceptsAiTitle, aiTitleFrom, summaryOf, withCurrentConversation } from './summary';
@@ -254,6 +256,10 @@ export interface EngineCore {
   processSpawned(): void;
   /** A claude.exe ended: the heartbeat stops with the last one. */
   processEnded(): void;
+  /** WP-64: Claude's `remoteControlAtStartup` as a process of this profile read it (host state). */
+  setRemoteControlDefault(profileId: ProfileId, value: boolean): void;
+  /** WP-64: the last value read for this profile (this server run); null = unknown. */
+  remoteControlDefault(profileId: ProfileId): boolean | null;
 }
 
 export type EntryPhase = 'dormant' | 'starting' | 'running' | 'closing';
@@ -312,6 +318,12 @@ export class EntryState {
    * ENTRY_NOT_FOUND.
    */
   removed = false;
+  /** WP-64: live Remote Control state of the running process (off without one); see remoteControl.ts. */
+  remote: RemoteState = REMOTE_OFF;
+  /** WP-64: a new entry follows Claude's own `remoteControlAtStartup` (read after its first readiness). */
+  followClaudeDefault = false;
+  /** WP-64: every enable/disable/process end gets a new generation; older answers are ignored. */
+  remoteGeneration = 0;
   /**
    * Phase 3: `todos` / `planFile` of the current conversation (ADR-148/149). Fed only while a
    * mirror exists; (re)seeded from the mirror's items whenever a mirror is built.
@@ -357,6 +369,8 @@ export class EntryState {
       onCountsChanged: (counts) => {
         this.reduce({ type: 'decisions_changed', decisions: counts });
       },
+      // WP-64: the CLI cancels a request answered in the Claude app (Remote Control).
+      answeredElsewhere: () => this.remote.state === 'connected' || this.remote.state === 'reconnecting',
     });
   }
 
@@ -607,7 +621,21 @@ export class EntryState {
   }
 
   summary(): SessionSummary {
-    return summaryOf(this.entry, this.facts, { externalRunning: this.externalRunning });
+    return summaryOf(this.entry, this.facts, { externalRunning: this.externalRunning, remote: this.remote });
+  }
+
+  /** WP-64: next live Remote Control state – summary, and the idle sleep when the bridge came or went. */
+  setRemote(next: RemoteState): void {
+    if (isDeepStrictEqual(next, this.remote)) return;
+    const wasActive = isRemoteControlActive(this.remote.state);
+    this.remote = next;
+    this.touch();
+    if (wasActive !== isRemoteControlActive(next.state)) this.core.considerSleep(this);
+  }
+
+  nextRemoteGeneration(): number {
+    this.remoteGeneration += 1;
+    return this.remoteGeneration;
   }
 
   publishSummary(urgent: boolean): void {

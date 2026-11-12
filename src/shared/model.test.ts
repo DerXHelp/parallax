@@ -17,6 +17,7 @@ import {
   EDITOR_BLOCKED_EXECUTABLES,
   EDITOR_PRESET_ARGS,
   editorExecutableIssue,
+  conversationSchema,
   editorSettingsSchema,
   entrySchema,
   externalHandoffSchema,
@@ -24,7 +25,9 @@ import {
   fileStatResultSchema,
   fsListingSchema,
   hostStateSchema,
+  isClaudeSessionUrl,
   isDefaultProgramAllowed,
+  isRemoteControlActive,
   notificationSettingsSchema,
   planFileRefSchema,
   planVersionInfoSchema,
@@ -116,6 +119,8 @@ describe('defaults for old files (B "fehlende Felder ergänzen")', () => {
           resetCorrelationId: null,
           costUsd: null,
           lastOrder: 0,
+          bridgeSessionId: null,
+          sessionUrl: null,
         },
       ],
       modelSetting: null,
@@ -134,6 +139,7 @@ describe('defaults for old files (B "fehlende Felder ergänzen")', () => {
       gitBranch: null,
       external: null,
       continueAt: null,
+      remoteControlWanted: false,
     } satisfies Entry);
   });
 
@@ -198,6 +204,7 @@ describe('defaults for old files (B "fehlende Felder ergänzen")', () => {
       origin: 'human',
       slashCommand: null,
       priority: null,
+      source: 'local',
     });
   });
 });
@@ -748,5 +755,85 @@ describe('Phase 3 contracts (WP-50 §4.5)', () => {
       }),
     );
     expectRoundTrip(planFileRefSchema, samplePlanFileRef());
+  });
+});
+
+describe('WP-64 contracts (Remote Control)', () => {
+  it('old files and summaries load with Remote Control off', () => {
+    const { remoteControlWanted: _wanted, ...oldEntry } = sampleEntry();
+    expect(entrySchema.parse(oldEntry).remoteControlWanted).toBe(false);
+    const { bridgeSessionId: _bridge, sessionUrl: _url, ...oldConversation } = sampleConversation();
+    expect(conversationSchema.parse(oldConversation)).toMatchObject({ bridgeSessionId: null, sessionUrl: null });
+    const { remoteControl: _rc, ...oldSummary } = sampleSummary();
+    expect(sessionSummarySchema.parse(oldSummary).remoteControl).toEqual({
+      state: 'off',
+      sessionUrl: null,
+      error: null,
+      wanted: false,
+    });
+    expect(settingsSchema.parse({}).remoteControl).toEqual({ newSessions: 'follow_claude' });
+    expect(settingsPatchSchema.parse({})).toEqual({});
+    const { remoteControlDefault: _default, ...oldHost } = sampleHostState();
+    expect(hostStateSchema.parse(oldHost).remoteControlDefault).toBeNull();
+    const { source: _source, ...oldItem } = sampleItems.userMessage();
+    expect(transcriptItemSchema.parse(oldItem)).toMatchObject({ source: 'local' });
+  });
+
+  it('round trips with a connected bridge, a remote prompt and answered_elsewhere', () => {
+    const url = 'https://claude.ai/code/session_01QKkfSZajXxCTUVAWr5SbHm';
+    expectRoundTrip(
+      entrySchema,
+      sampleEntry({
+        remoteControlWanted: true,
+        conversations: [sampleConversation({ bridgeSessionId: 'cse_01QKkfSZajXxCTUVAWr5SbHm', sessionUrl: url })],
+      }),
+    );
+    expectRoundTrip(
+      sessionSummarySchema,
+      sampleSummary({ remoteControl: { state: 'connected', sessionUrl: url, error: null, wanted: true } }),
+    );
+    expectRoundTrip(
+      sessionSummarySchema,
+      sampleSummary({
+        remoteControl: {
+          state: 'failed',
+          sessionUrl: null,
+          error: { code: 'REMOTE_CONTROL_AUTH', params: {} },
+          wanted: true,
+        },
+      }),
+    );
+    expectRoundTrip(transcriptItemSchema, sampleItems.userMessage({ source: 'remote', priority: null }));
+    expectRoundTrip(decisionOutcomeSchema, sampleOutcomes.answered_elsewhere);
+    expectRoundTrip(settingsSchema, sampleSettings({ remoteControl: { newSessions: 'on' } }));
+  });
+
+  it('session links: only https://claude.ai (and subdomains), nothing else', () => {
+    expect(isClaudeSessionUrl('https://claude.ai/code/session_01QKkfSZajXxCTUVAWr5SbHm')).toBe(true);
+    expect(isClaudeSessionUrl('https://claude.ai')).toBe(true);
+    expect(isClaudeSessionUrl('https://app.claude.ai/code?environment=')).toBe(true);
+    for (const bad of [
+      'http://claude.ai/code/session_x',
+      'https://claude.ai.evil.com/x',
+      'https://evil.com@claude.ai/x',
+      'https://claude.ai:8443/x',
+      'https://evilclaude.ai/x',
+      'javascript:alert(1)',
+      'https://claude.ai/ x',
+      '',
+    ]) {
+      expect(isClaudeSessionUrl(bad), bad).toBe(false);
+    }
+    expect(conversationSchema.safeParse(sampleConversation({ sessionUrl: 'https://example.com/' })).success).toBe(
+      false,
+    );
+  });
+
+  it('active bridge states (never sleep, ADR-105)', () => {
+    expect(isRemoteControlActive('connecting')).toBe(true);
+    expect(isRemoteControlActive('connected')).toBe(true);
+    expect(isRemoteControlActive('reconnecting')).toBe(true);
+    expect(isRemoteControlActive('off')).toBe(false);
+    expect(isRemoteControlActive('failed')).toBe(false);
   });
 });

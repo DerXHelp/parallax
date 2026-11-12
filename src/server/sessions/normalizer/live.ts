@@ -69,6 +69,7 @@ import {
   type ItemBase,
   type TaskNotificationText,
 } from './builders';
+import { normalizeBridgeMessage, type BridgeResult } from './bridge';
 import { modelContextWindow } from './context';
 import { capText, fitToolCall, shareBudget } from './limits';
 import {
@@ -113,6 +114,7 @@ import {
   type SdkToolResultBlock,
   type SdkToolResultMeta,
   type SdkUsage,
+  type SdkUserMessage,
 } from './sdk-schemas';
 
 /** Known types/subtypes without an item or signal (WP-02 §5.6): only counted in ignoredCounts. */
@@ -129,6 +131,8 @@ const IGNORED_SYSTEM_SUBTYPES: ReadonlySet<string> = new Set([
 const NOT_APPROVED_MCP_STATUS: ReadonlySet<string> = new Set(['disabled', 'needs-approval', 'rejected']);
 const SYNTHETIC_MODEL = '<synthetic>';
 const LIFECYCLE_CAPABILITY = 'msg_lifecycle_v1';
+/** WP-64: own prompt uuids kept for the replay filter (far more than a session sends per process). */
+const OWN_PROMPTS_LIMIT = 5_000;
 
 interface ItemEntry {
   item: TranscriptItem;
@@ -187,6 +191,12 @@ class LiveNormalizerImpl implements LiveNormalizer {
   /** Ids of items that are still streaming (`streaming: true` / `streaming_input`). */
   private readonly streaming = new Set<string>();
   private readonly pendingPrompts = new Map<string, PendingPrompt>();
+  /**
+   * WP-64: uuids of every prompt Parallax sent through this normalizer (never cleared, bounded). With
+   * --replay-user-messages each of them comes back as an `isReplay` echo – also with origin human
+   * (toSdkUserMessage) – so the uuid, not the origin, tells an own echo from a Claude-app prompt.
+   */
+  private readonly ownPrompts = new Set<string>();
   private readonly pendingDecisions = new Map<string, ToolDecisionRef>();
   private readonly pendingResults = new Map<string, PendingResult>();
   /** task_id → task and its tool_use_id. */
@@ -293,6 +303,11 @@ class LiveNormalizerImpl implements LiveNormalizer {
 
   registerPrompt(prompt: PendingPrompt): void {
     this.pendingPrompts.set(prompt.messageUuid, prompt);
+    this.ownPrompts.add(prompt.messageUuid);
+    if (this.ownPrompts.size > OWN_PROMPTS_LIMIT) {
+      const oldest = this.ownPrompts.values().next();
+      if (oldest.done !== true) this.ownPrompts.delete(oldest.value);
+    }
   }
 
   attachDecision(toolUseId: string, ref: ToolDecisionRef): NormalizerOutput {
@@ -773,7 +788,7 @@ class LiveNormalizerImpl implements LiveNormalizer {
     }
     const u = parsed.data;
     if (u.isReplay === true) {
-      bump(this.ignored, 'user/replay');
+      if (!this.remotePrompt(u, receivedAt, out)) bump(this.ignored, 'user/replay');
       return;
     }
     const at = isoTime(u.timestamp, receivedAt);
@@ -846,6 +861,32 @@ class LiveNormalizerImpl implements LiveNormalizer {
         );
       }
     }
+  }
+
+  /**
+   * WP-64: a replayed prompt with origin human whose uuid Parallax never sent was typed in the Claude
+   * app (Remote Control, spike 12.11.2026: replay after `command_lifecycle started`, foreign uuid). It
+   * becomes a user_message with source 'remote'; every other replay (own echoes, tool results,
+   * subagent prompts) stays ignored. Returns whether the replay was taken.
+   */
+  private remotePrompt(u: SdkUserMessage, receivedAt: Date, out: Out): boolean {
+    const uuid = u.uuid;
+    if (u.origin?.kind !== 'human' || uuid === undefined || (u.parent_tool_use_id ?? null) !== null) return false;
+    if (this.ownPrompts.has(uuid) || this.pendingPrompts.has(uuid) || this.items.has(uuid)) return false;
+    const content = userContent(u.message.content, this.ctx);
+    if (content.toolResults.length > 0 || (content.text.trim() === '' && content.images.length === 0)) return false;
+    const kind = classifyUserText(content.text, { originKind: 'human', parentToolUseId: null });
+    if (kind.kind !== 'prompt') return false;
+    this.put(
+      userMessageItem(this.uuidBase(uuid, isoTime(u.timestamp, receivedAt)), capText(kind.text, this.ctx), {
+        attachments: content.images,
+        origin: 'human',
+        priority: null,
+        source: 'remote',
+      }),
+      out,
+    );
+    return true;
   }
 
   private applyToolResult(pending: PendingResult, out: Out): void {
@@ -1423,12 +1464,33 @@ class LiveNormalizerImpl implements LiveNormalizer {
         this.put(errorItem(this.uuidBase(msg.uuid, at), error), out);
         return;
       }
-      default:
+      default: {
+        const bridge = normalizeBridgeMessage(subtype, raw);
+        if (bridge !== null) {
+          this.onBridge(subtype, bridge, out);
+          return;
+        }
         if (IGNORED_SYSTEM_SUBTYPES.has(subtype)) {
           bump(this.ignored, `system/${subtype}`);
           return;
         }
         this.unknownMessage(raw, msg, receivedAt, out);
+      }
+    }
+  }
+
+  /** WP-64: Remote Control bridge messages (bridge.ts: one table, WP-65 adds summaries). */
+  private onBridge(subtype: string, result: BridgeResult, out: Out): void {
+    if (result.unknownKey !== null) this.countUnknown(result.unknownKey);
+    switch (result.outcome.kind) {
+      case 'signal':
+        out.signals.push(result.outcome.signal);
+        return;
+      case 'ignored':
+        bump(this.ignored, `system/${subtype}`);
+        return;
+      case 'invalid':
+        this.countUnknown(`invalid:system/${subtype}`);
     }
   }
 
