@@ -69,7 +69,7 @@ aus dem letzten Assistenten-Text). `away_summary` (4) ließ sich so nicht auslö
 | 8 | **Seitenfrage** (`/btw`): kurze Frage, ohne den Kontext der Session zu belasten | intern: `askSideQuestion(question, {history})` | Rückfrage an eine laufende Session, ohne sie zu stören | mittel |
 | 9 | **Zurückspulen / Abzweigen** ab einer Nachricht, inkl. Dateien | öffentlich: `rewindFiles(userMessageId, {dryRun})` + `enableFileCheckpointing`; `resumeSessionAt`, `forkSession` | Fehlversuch rückgängig machen, Variante ausprobieren | groß (Checkpointing bisher bewusst aus) |
 | 10 | Ausweichmodell bei Überlast | öffentlich: Option `fallbackModel` | weniger Abbrüche bei Überlastung | klein |
-| 11 | Bereits gesendete Nachricht aus der CLI-Warteschlange zurückholen | öffentlich: `cancelAsyncMessage(uuid)` | ergänzt das heutige Entfernen vor dem Senden (`runtime.ts`) | klein |
+| 11 | Bereits gesendete Nachricht aus der CLI-Warteschlange zurückholen | intern (Laufzeit, nicht in `sdk.d.ts`): `cancelAsyncMessage(uuid)` → `cancelled` | ergänzt das heutige Entfernen vor dem Senden (`runtime.ts`) | klein |
 
 **Durchgang mit dem Nutzer (12.11.2026):**
 - **8 (entschieden, WP-66):** `/btw` bzw. Umschalter im Composer, Karte „Seitenfrage · nicht im Kontext“ im
@@ -78,6 +78,14 @@ aus dem letzten Assistenten-Text). `away_summary` (4) ließ sich so nicht auslö
   nach 1,1 s, Turn läuft ungestört weiter; Nachfrage mit `history` funktioniert; **keine Werkzeuge**; ≈ 0,0004 USD je
   Frage (zählt ins kumulierte `total_cost_usd`, darum keine eigene Kostenanzeige je Karte); nichts im Hauptgespräch
   und im claude-Transkript; Fortschritt als `system/control_request_progress`.
+- **9 (abgelehnt, vorerst):** Zurückspulen/Abzweigen – Nutzer: „habe ich nie benutzt und sehe keinen Einsatzzweck
+  dafür erstmal“. Kein Checkpointing (`enableFileCheckpointing` bleibt aus). Falls später gewünscht: Abzweigen zuerst,
+  „Ab hier neu“ mit Datei-Vorschau und Warnung, wenn eine parallele Session dieselben Dateien angefasst hat.
+- **10 (entschieden):** nichts in Parallax bauen. Parallax lädt `~/.claude/settings.json`; ein Eintrag
+  `"fallbackModel": ["sonnet"]` gilt damit für Parallax-Sessions und das Terminal (Auswertung im Headless-Betrieb
+  nicht live geprüft).
+- **11 (entschieden, WP-66):** „Zurückholen“ an jeder wartenden Nachricht → `cancelAsyncMessage(uuid)`, Text zurück
+  ins Eingabefeld; `cancelled:false` (schon übernommen, z. B. in den laufenden Turn gefaltet) → Hinweis.
 
 ## 3. Session-Infos als Daten statt Terminal-Dialog
 
