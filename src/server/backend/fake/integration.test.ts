@@ -4,10 +4,19 @@ import { profileSummarySchema } from '@shared/model';
 import { SAMPLE_IDS, sampleId, sampleProfile } from '@shared/samples';
 import { profileNeedsSetup } from '../../claude/integration';
 import { createProfileStore } from '../../claude/profiles';
+import { readSdkManifest } from '../../claude/resolveClaude';
 import { CommandError } from '../../sync/ports';
+import { FAKE_CLAUDE_VERSION } from './defaults';
 import { FAKE_CLAUDE_PATH, FAKE_LAUNCH_ENV_KEYS, createFakeClaudeIntegration } from './integration';
 
 describe('createFakeClaudeIntegration', () => {
+  it('reports the CLI version the installed SDK expects (V4-05: no "too old" warning in fake sessions)', async () => {
+    const manifest = await readSdkManifest();
+    expect(manifest?.claudeCodeVersion).toBe(FAKE_CLAUDE_VERSION);
+    const [summary] = createFakeClaudeIntegration().profiles.summaries();
+    expect(summary?.claude).toMatchObject({ version: FAKE_CLAUDE_VERSION, versionStatus: 'ok' });
+  });
+
   it('profiles report ok/logged_in (no setup screen); summaries are schema-true', () => {
     const claude = createFakeClaudeIntegration();
     const [summary] = claude.profiles.summaries();
@@ -35,7 +44,7 @@ describe('createFakeClaudeIntegration', () => {
     expect(spec).toEqual({
       profileId: custom.id,
       executablePath: FAKE_CLAUDE_PATH,
-      executableVersion: '2.1.300',
+      executableVersion: FAKE_CLAUDE_VERSION,
       env: {},
       configDir: 'D:\\cfg',
       sdkOptions: {},

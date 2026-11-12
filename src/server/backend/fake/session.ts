@@ -238,7 +238,7 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
 
   async getContextUsage(detail: 'summary' | 'full'): Promise<unknown> {
     return this.call('getContextUsage', [{ detail }], () =>
-      fakeContextUsage(this.turns(), this.script?.state.model),
+      fakeContextUsage(this.turns(), this.script?.state.model, this.script?.state.contextTokens ?? null),
     );
   }
 
@@ -750,6 +750,7 @@ class ScriptContext implements FakeScriptContext {
       effort: deps.req.effort,
       fastMode: deps.req.fastMode ?? null,
       turns: 0,
+      contextTokens: null,
     };
   }
 

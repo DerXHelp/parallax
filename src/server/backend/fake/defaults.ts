@@ -5,12 +5,34 @@
  * fixture files), a short `supportedCommands` list.
  */
 
+/**
+ * The CLI version the installed Agent SDK expects (`package.json#claudeCodeVersion`, V4-05): fake
+ * sessions (install status, launch spec, `init.claude_code_version`) never show the "older than
+ * the SDK expects" warning. integration.test.ts checks it against the SDK, so an SDK upgrade
+ * (docs/sdk-upgrade.md) flags it.
+ */
+export const FAKE_CLAUDE_VERSION = '2.1.322';
+
 /** Context window of the fake answers. */
 export const FAKE_CONTEXT_WINDOW = 200_000;
 
-/** Raw `getContextUsage({detail})` answer: 20 000 + 1 500 × turns of 200 000 tokens. */
-export function fakeContextUsage(turns: number, model = 'claude-haiku-5-5'): Record<string, unknown> {
-  const totalTokens = 20_000 + 1_500 * Math.max(0, turns);
+/**
+ * `fake:context-high` (V4-05): from then on the session's context stays at this fill – 75 % of
+ * FAKE_CONTEXT_WINDOW, above the 60-% mark of the "fresh context" recommendation (ADR-147) –
+ * in `getContextUsage` and in the usage of every API message (the estimate during a turn).
+ */
+export const FAKE_CONTEXT_HIGH_TOKENS = 150_000;
+
+/**
+ * Raw `getContextUsage({detail})` answer: 20 000 + 1 500 × turns of 200 000 tokens, or a fixed
+ * `contextTokens` (fake:context-high).
+ */
+export function fakeContextUsage(
+  turns: number,
+  model = 'claude-haiku-5-5',
+  contextTokens: number | null = null,
+): Record<string, unknown> {
+  const totalTokens = contextTokens ?? 20_000 + 1_500 * Math.max(0, turns);
   const system = 14_000;
   const messages = totalTokens - system;
   return {

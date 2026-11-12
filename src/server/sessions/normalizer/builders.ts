@@ -155,19 +155,45 @@ export type UserTextKind =
   | { kind: 'caveat' }
   | { kind: 'prompt'; text: string };
 
+/** `origin.kind` of the CLI's own task notifications (SDKMessageOrigin; CLI 2.1.322, ADR-152). */
+export const TASK_NOTIFICATION_ORIGIN = 'task-notification';
+
+/** Where a user message came from: live `u.origin` / `HistoryMessage.origin` and its subagent link. */
+export interface UserTextSource {
+  /** `origin.kind`; null when the message carries none (transcripts of older CLIs). */
+  originKind: string | null;
+  parentToolUseId: string | null;
+}
+
+/**
+ * ADR-152: a `<task-notification>` text counts only when the CLI sent it – main agent
+ * (`parentToolUseId === null`) and `origin.kind === 'task-notification'`. The same text from the
+ * user (origin human, channel, peer …) stays a prompt, from a subagent (a Claude-written Agent
+ * `prompt` in the loaded subagent history) it is dropped by the caller. Without any origin
+ * (transcripts of older CLIs) it is shown, but its `<output-file>` is never taken – the file
+ * index (ADR-145) must not grow from free text.
+ */
+function taskNotificationOf(text: string, source: UserTextSource): TaskNotificationText | null {
+  if (source.parentToolUseId !== null) return null;
+  if (source.originKind !== null && source.originKind !== TASK_NOTIFICATION_ORIGIN) return null;
+  const body = TASK_NOTIFICATION_RE.exec(text)?.[1];
+  if (body === undefined) return null;
+  const parsed = parseTaskNotification(body);
+  if (parsed === null) return null;
+  return source.originKind === null ? { ...parsed, outputFile: null } : parsed;
+}
+
 /**
  * What a user text is. Live prompts come from `registerPrompt` (F.9); the CLI-internal tag
  * formats (`<command-name>`, `<local-command-stdout>`, `<task-notification>`) appear in the
  * history JSONL (assumption for the local-command tags: not recorded in full, docs/wp/WP-12.md).
+ * Task notifications only with the CLI's origin (`taskNotificationOf`, ADR-152).
  */
-export function classifyUserText(text: string): UserTextKind {
+export function classifyUserText(text: string, source: UserTextSource): UserTextKind {
   const interrupt = INTERRUPT_RE.exec(text.trim());
   if (interrupt !== null) return { kind: 'interrupted', forToolUse: interrupt[1] !== undefined };
-  const task = TASK_NOTIFICATION_RE.exec(text);
-  if (task?.[1] !== undefined) {
-    const parsed = parseTaskNotification(task[1]);
-    if (parsed !== null) return { kind: 'task_notification', task: parsed };
-  }
+  const task = taskNotificationOf(text, source);
+  if (task !== null) return { kind: 'task_notification', task };
   const output = LOCAL_OUTPUT_RE.exec(text);
   if (output?.[2] !== undefined) return { kind: 'local_output', text: output[2] };
   if (CAVEAT_RE.test(text)) return { kind: 'caveat' };

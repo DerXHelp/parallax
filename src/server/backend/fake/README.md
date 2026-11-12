@@ -15,9 +15,9 @@ Design: `docs/wp/WP-13.md` §3.3, Ergebnis und Stolpersteine: `docs/wp/WP-13a.md
 | `interactive.ts` | Dev-Szenario mit Schlüsselwörtern (`fake:bash` … `/clear`; Phase 2: `fake:image` = Read mit Bild-Ergebnis, `fake:ratelimit` mit Reset in 60 s; Prompt mit Bildern → „Fake: received N image(s)“; Phase 3 siehe unten) |
 | `turn.ts` | Bausteine der interaktiven Turns: `Turn`, `contextFor`, `ask` (canUseTool wie das CLI), `answerTurn`, `abortedByDecision` |
 | `plan.ts` | `fake:plan` (Plan-Modus, Plan-Datei echt) und der Start mit frischem Kontext („Fake: implementing plan (N lines)“) |
-| `phase3.ts` | `fake:background`, `fake:todo`, `fake:files`, `fake:writes-lost`, Antworten auf Anhänge/Pastes |
+| `phase3.ts` | `fake:background`, `fake:todo`, `fake:files`, `fake:writes-lost`, `fake:context-high` (V4-05), Antworten auf Anhänge/Pastes |
 | `files.ts` | `FakeFiles` (echte Dateien nur unter `<filesRoot>\<sessionId>\`, Pfade über `@shared/paths` geprüft), `defaultFakeFilesRoot()` = `%TEMP%\parallax-fake-files`, `patchHunks` |
-| `defaults.ts` | Fake-Antworten: `getContextUsage` (Kategorien mit `id`), `supportedModels` (`FAKE_MODELS` = CLI 2.1.322, 14 Einträge), `supportedCommands` (inkl. Terminal-Befehle) |
+| `defaults.ts` | Fake-Antworten: `getContextUsage` (Kategorien mit `id`; fester Füllstand bei `fake:context-high`), `supportedModels` (`FAKE_MODELS` = CLI 2.1.322, 14 Einträge), `supportedCommands` (inkl. Terminal-Befehle); `FAKE_CLAUDE_VERSION` = die CLI-Version, die das SDK erwartet (V4-05; Test gegen `claudeCodeVersion` des SDK), auch in `init.claude_code_version`; `FAKE_CONTEXT_HIGH_TOKENS` |
 | `history.ts` | `FakeHistoryStore` (Rohformen wie das SDK, Import aus `history.jsonl`) |
 | `integration.ts` | `createFakeClaudeIntegration({store?, consoleEnv?, launchEnv?})` (Port `ClaudeIntegration` ohne `claude`, `consoleLaunchFor` → Fake-Konsolen-Spec; `launchEnv` → Launch-Specs mit `FAKE_LAUNCH_ENV_KEYS` (PATH & Co.) für die Git-Branch-Suche, V3-11; der Fake-Server übergibt `process.env`) |
 | `console.ts` | `FAKE_CONSOLE_PROMPT`, `fakeConsoleAnswer`, `consoleTurnMessages` – Turns einer simulierten externen Konsole (`FakeBackend.simulateConsoleTurn`, WP-34) |
@@ -34,6 +34,7 @@ Design: `docs/wp/WP-13.md` §3.3, Ergebnis und Stolpersteine: `docs/wp/WP-13a.md
 | `fake:todo` | `TodoWrite` mit drei Punkten, dann `in_progress`, dann `completed` |
 | `fake:files` | `Read`/`Write`/`Edit` auf echten Dateien unter `files\`; Antwort mit `<pfad>:12`, relativem Pfad, Markdown-Link und UNC-Pfad (Negativfall, nur Text) |
 | `fake:writes-lost` | Antwort; beim geordneten Ende `system/session_writes_lost` (`ENOSPC`, `transcript`) vor dem Exit |
+| `fake:context-high` | Context ab jetzt dauerhaft 75 % (150 000 von 200 000): `getContextUsage` und die `usage` jeder gestreamten Nachricht (Schätzung während späterer Turns, z. B. der Plan-Entscheidung von `fake:plan` – Hervorhebung „Empfohlen“ ab 60 %); zurück auf Normal nach `/clear` oder einer Kompaktierung (V4-05, FIX-R5) |
 | Prompt mit PDF / `Attached files:` / `inlinePastes` | „Fake: received N document(s), M file(s)“ bzw. „Fake: received K paste(s)“ (Bilder wie bisher; je Art eine Zeile) |
 | erster Prompt ohne Resume `Implement the following approved plan.` | „Fake: implementing plan (N lines)“; `init.permissionMode` = Startmodus |
 

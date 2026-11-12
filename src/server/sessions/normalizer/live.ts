@@ -754,7 +754,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
     }
     if (content.text.trim() === '' && content.images.length === 0) return;
 
-    const kind = classifyUserText(content.text);
+    // ADR-152: a task notification needs the CLI's origin and the main agent.
+    const kind = classifyUserText(content.text, { originKind: u.origin?.kind ?? null, parentToolUseId: parent });
     switch (kind.kind) {
       case 'interrupted':
         this.put(

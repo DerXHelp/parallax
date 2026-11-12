@@ -2,7 +2,8 @@
  * Program start of `file.open` (ADR-144) behind one seam: the file service checks the path
  * (access policy, kind, extension list) and hands a checked `OpenRequest` to a `ProgramLauncher`.
  * - `createSystemLauncher`: the real one – editor via `spawnGui` (executable from the settings,
- *   App Paths, Uninstall, usual folders; files/editors.ts), Explorer and the default program via
+ *   App Paths, Uninstall, usual folders – the hit kept for a minute; files/editors.ts; working
+ *   folder = the editor's own folder, R5-02), Explorer and the default program via
  *   `spawnExplorer` (lib/process.ts). Visible GUI programs: the approved exception from
  *   `windowsHide: true` (CLAUDE.md "Windows").
  * - `createRecordingOpener`: starts NOTHING, logs `file.open (fake): <target> <path>` and records
@@ -16,6 +17,7 @@ import { spawnExplorer, spawnGui, type GuiSpawnFn } from '../lib/process';
 import { regKeyQuery, regQuery, type RegKeyQuery, type RegQuery } from '../lib/registry';
 import { nodeFsProbe, type FsProbe } from '../lib/windows';
 import {
+  createEditorFinder,
   detectEditors,
   editorArguments,
   resolveEditorExecutable,
@@ -58,6 +60,8 @@ export interface SystemLauncherDeps {
   spawn?: GuiSpawnFn;
   readHead?: (file: string, length: number) => Promise<Uint8Array>;
   platform?: NodeJS.Platform;
+  /** Clock of the editor lookup cache (R5-04; default `Date.now`). */
+  now?: () => number;
 }
 
 export function createSystemLauncher(deps: SystemLauncherDeps = {}): ProgramLauncher {
@@ -68,15 +72,19 @@ export function createSystemLauncher(deps: SystemLauncherDeps = {}): ProgramLaun
     fs: deps.probe ?? nodeFsProbe,
     env,
   };
+  // R5-04: a click reuses the editor found within the last minute; `editor.detect` looks afresh.
+  const editorFinder = createEditorFinder({ now: deps.now });
   const gui = { env, spawn: deps.spawn, platform: deps.platform };
   return {
     async open(request) {
       if (request.target === 'editor') {
-        const executable = await resolveEditorExecutable(request.editor, locator);
+        const executable = await resolveEditorExecutable(request.editor, locator, editorFinder.find);
         const args = editorArguments(request.editor, request.realPath, request.line, request.col);
         await spawnGui(executable, args, {
           ...gui,
-          cwd: path.win32.dirname(request.realPath),
+          // R5-02: the editor's own folder, never the (possibly foreign) project folder – Windows
+          // also searches the working folder for DLLs. The file goes along as an absolute argument.
+          cwd: path.win32.dirname(executable),
           readHead: deps.readHead,
         });
         return;
@@ -87,7 +95,7 @@ export function createSystemLauncher(deps: SystemLauncherDeps = {}): ProgramLaun
       }
       await spawnExplorer(request.realPath, 'open', gui);
     },
-    detect: (editor) => detectEditors(editor, locator),
+    detect: (editor) => detectEditors(editor, locator, editorFinder.refresh),
   };
 }
 
