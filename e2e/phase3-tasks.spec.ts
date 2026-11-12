@@ -1,6 +1,7 @@
 /**
  * Phase-3 verification "tasks" (WP-60 E2E 6; WP-51/52/55/58): a background agent (`fake:background`)
- * in the side panel tab "Tasks" with its progress summary, "Stop" ends it (`stopped`); the
+ * in the side panel tab "Tasks" with its progress summary, "Stop" ends it (`stopped`); without a
+ * turn the composer offers a plain "Send" and no Stop (B18); the
  * composer's Stop ends the turn while the background agent keeps running; `fake:todo` pins the
  * to-do list as a strip above the composer.
  * Own server; 1600 px wide (the side panel next to the transcript).
@@ -17,6 +18,9 @@ test('background agent: the panel shows its summary; "Stop" ends it as stopped',
   await expect(session.assistantText(STARTED)).toBeVisible();
   // The header counts the running agent.
   await expect(session.panelButton('tasks').locator('[data-slot="header-panel-count"]')).toHaveText('1');
+  // B18: the launch turn ended and only the agent works – a plain "Send", no Stop in the composer.
+  await expect(session.composerRoot).toHaveAttribute('data-mode', 'idle');
+  await expect(session.composerRoot.locator('[data-action="stop"]')).toHaveCount(0);
 
   const panel = (await session.openPanel('tasks')).locator('[data-slot="tasks-panel"]');
   const row = panel.locator('[data-slot="task-row"]');
