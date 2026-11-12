@@ -142,6 +142,15 @@ describe('safeHttpUrl', () => {
     expect(safeHttpUrl(null)).toBeNull();
     expect(markdownUrlTransform('javascript:alert(1)')).toBe('');
   });
+
+  it('markdownUrlTransform keeps local file link targets (WP-55), never UNC/device or image sources', () => {
+    for (const url of ['src/a.ts', '../secrets.txt', 'C:%5Cx%5Ca.ts', 'file:///C:/Windows/a.txt'])
+      expect(markdownUrlTransform(url, 'href')).toBe(url);
+    for (const url of ['file://server/share/a', '%5C%5Cserver%5Cshare', '//evil.example', 'mailto:a@b.c'])
+      expect(markdownUrlTransform(url, 'href')).toBe('');
+    expect(markdownUrlTransform('src/a.png', 'src')).toBe('');
+    expect(markdownUrlTransform('https://example.com/a.png', 'src')).toBe('https://example.com/a.png');
+  });
 });
 
 describe('clipForDisplay (R2W-06)', () => {

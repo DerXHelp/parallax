@@ -4,13 +4,19 @@ import { PlanCard } from '../items/PlanCard';
 import { readAgentInput } from '../lib/tool-input';
 import { editRenderer, writeRenderer } from './edit';
 import { genericToolRenderer, isMcpTool, mcpToolRenderer } from './generic';
-import { questionRenderer, todoRenderer, webFetchRenderer, webSearchRenderer } from './misc';
+import {
+  notebookEditRenderer,
+  questionRenderer,
+  todoRenderer,
+  webFetchRenderer,
+  webSearchRenderer,
+} from './misc';
 import { readRenderer } from './read';
 import { globRenderer, grepRenderer } from './search';
 import { shellRenderer } from './shell';
 import type { ToolRenderer } from './types';
 
-export type { ToolBodyProps, ToolPreviewProps, ToolRenderer, Translate } from './types';
+export type { ToolBodyProps, ToolFileRef, ToolPreviewProps, ToolRenderer, Translate } from './types';
 export { genericToolRenderer } from './generic';
 
 const agentRenderer: ToolRenderer = {
@@ -31,6 +37,7 @@ export const toolRenderers: Record<string, ToolRenderer> = {
   MultiEdit: editRenderer,
   Write: writeRenderer,
   Read: readRenderer,
+  NotebookEdit: notebookEditRenderer,
   Grep: grepRenderer,
   Glob: globRenderer,
   Agent: agentRenderer,

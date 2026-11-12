@@ -111,6 +111,14 @@ export type ReadResult = z.infer<typeof readResultSchema>;
 /** Any tool input with a file path (Read, Edit, Write, NotebookEdit …) – names result images. */
 export const filePathInputSchema = z.object({ file_path: z.string() });
 
+/** NotebookEdit: the notebook and how a cell changes (WP-55: the line links the notebook). */
+export const notebookEditInputSchema = z.object({
+  notebook_path: z.string(),
+  cell_id: z.string().optional(),
+  cell_type: z.string().optional(),
+  edit_mode: z.string().optional(),
+});
+
 // ---- Grep / Glob ----
 
 export const grepInputSchema = z.object({
@@ -216,6 +224,7 @@ export const readPatchResult = reader(patchResultSchema);
 export const readReadInput = reader(readInputSchema);
 export const readReadResult = reader(readResultSchema);
 export const readFilePathInput = reader(filePathInputSchema);
+export const readNotebookEditInput = reader(notebookEditInputSchema);
 export const readGrepInput = reader(grepInputSchema);
 export const readGlobInput = reader(globInputSchema);
 export const readSearchResult = reader(searchResultSchema);
