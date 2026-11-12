@@ -77,10 +77,17 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** Spaces and tabs right after a token (sticky: matched at `lastIndex`). */
+const AFTER_TOKEN = /[ \t]*/y;
+
 /**
  * The text to send: every token replaced by its paste (one pass – a paste that happens to contain
  * another token stays as it is). `pastes` = the distinct texts used, in order; each occurs verbatim
  * in `text`.
+ *
+ * V4-07: a paste that does not end with a line break gets one when the text goes on in the same
+ * line – "[#1 · 40 lines] what is wrong?" sends the 40 lines and "what is wrong?" on a line of its
+ * own (the spaces between token and text go), not glued to the last pasted line.
  */
 export function expandPastes(
   text: string,
@@ -97,13 +104,51 @@ export function expandPastes(
     'g',
   );
   const used: string[] = [];
-  const expanded = text.replace(pattern, (token) => {
+  let expanded = '';
+  let last = 0;
+  for (const match of text.matchAll(pattern)) {
+    const token = match[0];
     const paste = byToken.get(token);
-    if (paste === undefined) return token;
+    expanded += text.slice(last, match.index);
+    last = match.index + token.length;
+    if (paste === undefined) {
+      expanded += token;
+      continue;
+    }
     if (!used.includes(paste.text)) used.push(paste.text);
-    return paste.text;
-  });
-  return { text: expanded, pastes: used };
+    expanded += paste.text;
+    if (paste.text.endsWith('\n')) continue;
+    AFTER_TOKEN.lastIndex = last;
+    const gap = AFTER_TOKEN.exec(text)?.[0].length ?? 0;
+    const next = text.charAt(last + gap);
+    if (next !== '' && next !== '\n') {
+      expanded += '\n';
+      last += gap;
+    }
+  }
+  return { text: expanded + text.slice(last), pastes: used };
+}
+
+/**
+ * Put in front of a prompt that would start with `/` only because of a paste (R5W-03): U+200B ZERO
+ * WIDTH SPACE – invisible in the transcript, and unlike a space or a line break it survives every
+ * `trim()` (CLI, server title and `/rename` detection), so the text never arrives as a command.
+ */
+export const SLASH_GUARD = '​';
+
+/**
+ * The prompt to send for a draft (`expandPastes`), R5W-03: a draft that does not start with `/`
+ * itself never reaches the CLI as a slash command – when a paste token at its start expands to a
+ * text beginning with `/` (a Unix path, a Git Bash log, a copied command), `SLASH_GUARD` goes in
+ * front. A typed `/command [#1 …]` stays a command; the pastes still occur verbatim in the text.
+ */
+export function expandPrompt(
+  text: string,
+  pastes: readonly DraftPaste[],
+): { text: string; pastes: string[] } {
+  const expanded = expandPastes(text, pastes);
+  if (text.trimStart().startsWith('/') || !expanded.text.trimStart().startsWith('/')) return expanded;
+  return { text: `${SLASH_GUARD}${expanded.text}`, pastes: expanded.pastes };
 }
 
 /** The draft without the token(s) of `paste` ("Remove" on the chip). */

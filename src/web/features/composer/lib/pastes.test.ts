@@ -5,6 +5,7 @@ import {
   convertPaste,
   DRAFT_PASTES_MAX_CHARS,
   expandPastes,
+  expandPrompt,
   insertAt,
   isLargePaste,
   lineCount,
@@ -12,6 +13,7 @@ import {
   normalizePastedText,
   pasteRefusal,
   removePasteToken,
+  SLASH_GUARD,
   type DraftPaste,
 } from './pastes';
 
@@ -57,7 +59,7 @@ describe('tokens', () => {
   it('expand: every token replaced, each used text once and verbatim in the result', () => {
     const text = `see ${one.token} and ${two.token} and again ${one.token}`;
     const result = expandPastes(text, [one, two, paste(3, 'unused')]);
-    expect(result.text).toBe(`see ${one.text} and ${two.text} and again ${one.text}`);
+    expect(result.text).toBe(`see ${one.text}\nand ${two.text}\nand again ${one.text}`);
     expect(result.pastes).toEqual([one.text, two.text]);
     for (const pasted of result.pastes) expect(result.text.includes(pasted)).toBe(true);
     expect(expandPastes('plain', [one])).toEqual({ text: 'plain', pastes: [] });
@@ -67,8 +69,46 @@ describe('tokens', () => {
     const inner = paste(1, 'inner text');
     const outer = paste(2, `quoted ${inner.token} verbatim`);
     const result = expandPastes(`${outer.token} ${inner.token}`, [inner, outer]);
-    expect(result.text).toBe(`quoted ${inner.token} verbatim ${inner.text}`);
+    expect(result.text).toBe(`quoted ${inner.token} verbatim\n${inner.text}`);
     expect(result.pastes).toEqual([outer.text, inner.text]);
+  });
+
+  it('V4-07: text after a paste in the same line starts a line of its own', () => {
+    // The spaces between token and text go; the paste itself stays verbatim.
+    expect(expandPastes(`${one.token} what is wrong?`, [one]).text).toBe(`${one.text}\nwhat is wrong?`);
+    expect(expandPastes(`${one.token}\t  x`, [one]).text).toBe(`${one.text}\nx`);
+    // Two tokens in a row: each paste on its own lines.
+    expect(expandPastes(`${one.token}${two.token}`, [one, two]).text).toBe(`${one.text}\n${two.text}`);
+  });
+
+  it('V4-07: no extra line break at the end, before a line break or after a paste ending with one', () => {
+    expect(expandPastes(`look: ${one.token}`, [one]).text).toBe(`look: ${one.text}`);
+    expect(expandPastes(`${one.token}  `, [one]).text).toBe(`${one.text}  `);
+    expect(expandPastes(`${one.token}\nnext`, [one]).text).toBe(`${one.text}\nnext`);
+    expect(expandPastes(`${one.token}  \nnext`, [one]).text).toBe(`${one.text}  \nnext`);
+    const ending = paste(4, `${lines(30)}\n`);
+    expect(expandPastes(`${ending.token} more`, [ending]).text).toBe(`${ending.text} more`);
+  });
+
+  it('R5W-03: a prompt that starts with "/" only because of a paste gets the guard in front', () => {
+    const command = paste(1, `/clear\n${lines(40)}`);
+    const result = expandPrompt(`${command.token} why?`, [command]);
+    expect(result.text).toBe(`${SLASH_GUARD}${command.text}\nwhy?`);
+    expect(result.text.startsWith('/')).toBe(false);
+    expect(result.text.trim().startsWith('/')).toBe(false);
+    expect(result.pastes).toEqual([command.text]);
+    expect(result.text.includes(command.text)).toBe(true);
+    // Leading whitespace in the paste does not help a command through either.
+    const indented = paste(2, `  /model opus\n${lines(30)}`);
+    expect(expandPrompt(indented.token, [indented]).text).toBe(`${SLASH_GUARD}${indented.text}`);
+  });
+
+  it('R5W-03: a typed command stays a command; other prompts stay as they are', () => {
+    const command = paste(1, `/clear\n${lines(40)}`);
+    expect(expandPrompt(`/review ${command.token}`, [command]).text).toBe(`/review ${command.text}`);
+    expect(expandPrompt('/compact', []).text).toBe('/compact');
+    expect(expandPrompt(`see ${command.token}`, [command]).text).toBe(`see ${command.text}`);
+    expect(expandPrompt(one.token, [one]).text).toBe(one.text);
   });
 
   it('remove deletes the token, convert puts the text in its place (caret behind it)', () => {
