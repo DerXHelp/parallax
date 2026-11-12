@@ -132,7 +132,8 @@ describe('default browser from the registry', () => {
   });
 
   it('no choice, a strange ProgId or no command → OPEN_FAILED no_default_browser (nothing starts)', async () => {
-    for (const entries of [{}, { [CHOICE]: userChoice('..\\evil') }, { [CHOICE]: userChoice('ChromeHTML') }]) {
+    const cases: Record<string, string>[] = [{}, { [CHOICE]: userChoice('..\\evil') }, { [CHOICE]: userChoice('ChromeHTML') }];
+    for (const entries of cases) {
       const { system, spawn } = opener(entries);
       expect(await reason(system.open(URL))).toEqual({ code: 'OPEN_FAILED', params: { reason: 'no_default_browser' } });
       expect(spawn.calls).toEqual([]);

@@ -13,6 +13,8 @@
  *
  * WP-64: after the turn the Remote Control step (remoteControl.ts: enable, schema, `bridge_state
  * connected` ≤ 15 s, disable) – its result is part of the observation, a failure never stops the probe.
+ * WP-65: then the overview step (overview.ts: one `generateSessionTitle`, the usage query,
+ * `backgroundTasks` present) – same rules.
  *
  * Guards like the recorder (ADR-011): `apiKeySource` must be `none`, the model Haiku; auth/billing
  * errors, `credits_required`, a rejected rate limit, a startup failure or a cost above the budget
@@ -34,6 +36,7 @@ import type { StartSessionRequest } from '../../src/server/backend/types';
 import { sleep } from '../../src/server/lib/async';
 import { killProcessTree, spawnHidden } from '../../src/server/lib/process';
 import { observationFrom, type Observation } from './observation';
+import { probeOverview, type OverviewProbeHandle, type OverviewProbeResult } from './overview';
 import {
   BridgeWatch,
   probeRemoteControl,
@@ -180,6 +183,8 @@ export interface ProbeResult {
   durationMs: number;
   /** WP-64: the Remote Control step. */
   remoteControl: RemoteControlProbeResult;
+  /** WP-65: title, usage query, backgroundTasks. */
+  overview: OverviewProbeResult;
 }
 
 /** Partial facts of a stopped probe (cleanup needs the session ids, the report the cost). */
@@ -343,6 +348,9 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
     // WP-64: the internal method is not in the SDK typings – checked at runtime.
     const remoteHandle: RemoteControlProbeHandle = q;
     const remoteControl = await probeRemoteControl(remoteHandle, bridge, { controlMs, log });
+    // WP-65: internal/experimental methods, checked at runtime as well.
+    const overviewHandle: OverviewProbeHandle = q;
+    const overview = await probeOverview(overviewHandle, { controlMs, log });
     const observation = observationFrom(
       {
         init: state.init,
@@ -350,6 +358,9 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
         supportedModels: models,
         contextUsage,
         remoteControl: remoteControl.available,
+        sessionTitle: overview.sessionTitle.available,
+        usageQuery: overview.usage.available,
+        backgroundTasks: overview.backgroundTasks,
       },
       options.sdkVersion,
     );
@@ -364,6 +375,7 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
       contextDetail,
       durationMs: Date.now() - started,
       remoteControl,
+      overview,
     };
   } catch (error) {
     if (error instanceof ProbeStop) throw error;

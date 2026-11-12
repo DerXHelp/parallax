@@ -162,31 +162,81 @@ const REMOTE_CONTROL_HINT =
 const availability = (value: boolean): string => (value ? 'available' : 'not available');
 
 /**
- * WP-64: Remote Control of the probe against the profile – a change between true and false is a
+ * A yes/no capability of the probe against the profile – a change between true and false is a
  * deviation; a first check (profile null) or a run that did not check (observation null) a note.
  */
-export function remoteControlFinding(before: boolean | null, after: boolean | null): Finding | null {
+function availabilityFinding(
+  area: string,
+  label: string,
+  hint: string,
+  before: boolean | null,
+  after: boolean | null,
+): Finding | null {
   if (before === after) return null;
-  const label = 'remote control (enableRemoteControl + bridge_state connected)';
   if (before === null || after === null) {
     return {
-      area: 'remoteControl',
+      area,
       level: 'note',
       title:
         after === null ? `${label}: not checked in this run` : `${label}: checked for the first time – ${availability(after)}`,
       added: after === null ? [] : [availability(after)],
       removed: [],
-      hint: REMOTE_CONTROL_HINT,
+      hint,
     };
   }
   return {
-    area: 'remoteControl',
+    area,
     level: 'deviation',
     title: `${label}: ${availability(before)} → ${availability(after)}`,
     added: [availability(after)],
     removed: [availability(before)],
-    hint: REMOTE_CONTROL_HINT,
+    hint,
   };
+}
+
+/** WP-64: Remote Control of the probe against the profile. */
+export function remoteControlFinding(before: boolean | null, after: boolean | null): Finding | null {
+  return availabilityFinding(
+    'remoteControl',
+    'remote control (enableRemoteControl + bridge_state connected)',
+    REMOTE_CONTROL_HINT,
+    before,
+    after,
+  );
+}
+
+/** WP-65: the overview step (overview.ts) – where a change matters in Parallax. */
+const OVERVIEW_AREAS: readonly { area: 'sessionTitle' | 'usageQuery' | 'backgroundTasks'; label: string; hint: string }[] = [
+  {
+    area: 'sessionTitle',
+    label: 'session title (Query.generateSessionTitle)',
+    hint:
+      'Auto title and „Titel neu erzeugen“ (WP-65) use the internal generateSessionTitle: ' +
+      'backend/sdkBackend.ts generateTitle, backend/overview.ts titleOf, sessions/titles.ts; without it ' +
+      'the old title-from-prompt fallback stays.',
+  },
+  {
+    area: 'usageQuery',
+    label: 'usage query (rate_limits with utilization/resets_at)',
+    hint:
+      'The limit bar without a rate-limit event (WP-65) reads the experimental usage query: ' +
+      'backend/sdkBackend.ts readUsage, backend/overview.ts usageLimitsOf, sessions/usagePoll.ts.',
+  },
+  {
+    area: 'backgroundTasks',
+    label: 'Query.backgroundTasks',
+    hint:
+      '„In den Hintergrund“ / Ctrl+B (WP-65): backend/sdkBackend.ts backgroundTasks, ' +
+      'sessions/commands.ts session.backgroundTasks; hide the buttons if it is gone.',
+  },
+];
+
+/** WP-65: the overview capabilities of the probe against the profile. */
+export function overviewFindings(profile: CliProfile, observation: Observation): Finding[] {
+  return OVERVIEW_AREAS.flatMap((spec) => {
+    const finding = availabilityFinding(spec.area, spec.label, spec.hint, profile[spec.area], observation[spec.area]);
+    return finding === null ? [] : [finding];
+  });
 }
 
 /** Profile vs. observation (probe). Without a profile one deviation asks for the first `--accept`. */
@@ -269,6 +319,7 @@ export function compareObservation(profile: CliProfile | null, observation: Obse
   }
 
   push(remoteControlFinding(profile.remoteControl, observation.remoteControl));
+  findings.push(...overviewFindings(profile, observation));
 
   // ADR-156: TodoWrite/TaskCreate are the reason the task bar stays empty – call them out.
   const todoAdded = TODO_TOOLS.filter((tool) => observation.tools.includes(tool) && !profile.tools.includes(tool));
