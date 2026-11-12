@@ -5,10 +5,18 @@ import type { Decision } from '@shared/model';
 import { useT, type t as translateFn } from '@web/i18n';
 import { findDecisionBar, useDecisionFocusHandler } from '@web/shell/decision-focus';
 import { useDecisions } from '@web/state/hooks';
+import { showErrorNotice } from '@web/state/notices';
 import { DecisionView } from './components/DecisionView';
 import { QueueMenu } from './components/QueueMenu';
+import { failsBeforeResolving } from './lib/respond';
 import { useResolvedElsewhereNotices } from './lib/use-resolved-notices';
-import { pickDisplayedDecision, selectDecision, useSelectedDecisionId } from './state/bar-store';
+import {
+  clearFreshContextError,
+  pickDisplayedDecision,
+  selectDecision,
+  useFreshContextError,
+  useSelectedDecisionId,
+} from './state/bar-store';
 
 function announcement(decision: Decision | null, t: typeof translateFn): string {
   if (decision === null) return '';
@@ -23,6 +31,22 @@ function announcement(decision: Decision | null, t: typeof translateFn): string 
     case 'plan':
       return t('decisions.bar.announce.plan', { version: decision.version });
   }
+}
+
+/**
+ * A failed "fresh context" answer whose card is gone (WP-56): the start of the new conversation
+ * failed after the server had closed the decision, so the card cannot show it – a notice does
+ * (the session's error status and transcript line come from the server). Errors the server checks
+ * before closing (SESSION_BUSY …) stay with their card and are only dropped.
+ */
+function useOrphanedFreshContextError(sessionKey: string, decisions: readonly Decision[]): void {
+  const failure = useFreshContextError(sessionKey);
+  useEffect(() => {
+    if (failure === null || decisions.some((decision) => decision.id === failure.decisionId)) return;
+    clearFreshContextError(sessionKey);
+    if (failsBeforeResolving(failure.error.code)) return;
+    showErrorNotice(failure.error, { sessionKey, id: `decisions.fresh.${failure.decisionId}` });
+  }, [decisions, failure, sessionKey]);
 }
 
 function findCard(root: HTMLElement | null, decisionId: DecisionId): HTMLElement | null {
@@ -53,6 +77,7 @@ export const DecisionBar = memo(function DecisionBar({ sessionKey }: { sessionKe
   const interacting = useRef(false);
 
   useResolvedElsewhereNotices(sessionKey, decisions);
+  useOrphanedFreshContextError(sessionKey, decisions);
 
   useDecisionFocusHandler(sessionKey, (decisionId) => {
     if (!decisions.some((decision) => decision.id === decisionId)) return false;

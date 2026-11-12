@@ -2,7 +2,7 @@ import { FileTextIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { PermissionMode } from '@shared/common';
 import type { PlanDecision } from '@shared/model';
-import { useT } from '@web/i18n';
+import { useI18n, useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { requestShell } from '@web/shell/requests';
 import {
@@ -11,82 +11,186 @@ import {
   useSidePanelTab,
 } from '@web/shell/side-panel/state';
 import { useSummarySelector } from '@web/state/hooks';
+import { Alert } from '@web/ui/alert';
+import { Badge } from '@web/ui/badge';
 import { Button } from '@web/ui/button';
 import { Gauge } from '@web/ui/gauge';
-import { defaultApproveMode, orderedApproveModes } from '../lib/plan';
-import { respondToDecision } from '../lib/respond';
-import { readApproveMode, setPanelPlan, usePlanPanel, writeApproveMode } from '../state/bar-store';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
+import { defaultApproveMode, isFreshContextRecommended, orderedApproveModes } from '../lib/plan';
+import { respondInCard, respondToDecision } from '../lib/respond';
+import {
+  clearFreshContextError,
+  readApproveFresh,
+  readApproveMode,
+  setFreshContextError,
+  setPanelPlan,
+  useFreshContextError,
+  usePlanPanel,
+  writeApproveFresh,
+  writeApproveMode,
+} from '../state/bar-store';
 import { ChoiceMenu, type Choice } from './ChoiceMenu';
 import { DecisionAction } from './card-shell';
 
-/** "Implement" split button (Plan "Umsetzen ▾", C.4): the client sends only the chosen mode. */
-export function useApproveMode(
-  approveModes: readonly PermissionMode[],
-): [PermissionMode | null, (mode: PermissionMode) => void] {
-  const [mode, setMode] = useState<PermissionMode | null>(() =>
-    defaultApproveMode(approveModes, readApproveMode()),
-  );
-  return [mode, setMode];
+/** What "Implement" does (Plan "Umsetzen ▾", C.4, ADR-147): a mode, optionally in a fresh conversation. */
+export interface ApproveChoice {
+  mode: PermissionMode;
+  /** "With fresh context": a new conversation that gets only the plan (approve_fresh_context). */
+  fresh: boolean;
 }
 
-/** The approve answer for `mode`; remembers the choice (Plan: "merkt sich die letzte Wahl"). */
-export function approvePlan(sessionKey: string, decision: PlanDecision, mode: PermissionMode) {
+/** The split button's choice, starting from the remembered one (mode never bypass, fresh flag). */
+export function useApproveChoice(
+  approveModes: readonly PermissionMode[],
+): [ApproveChoice | null, (next: ApproveChoice) => void] {
+  const [choice, setChoice] = useState<ApproveChoice | null>(() => {
+    const mode = defaultApproveMode(approveModes, readApproveMode());
+    return mode === null ? null : { mode, fresh: readApproveFresh() };
+  });
+  return [choice, setChoice];
+}
+
+/**
+ * Remembers the choice for the next plan (Plan: "merkt sich die letzte Wahl"). A bypass choice is
+ * never remembered – neither its mode nor its fresh flag (the next plan starts from the last safe one).
+ */
+function rememberChoice(choice: ApproveChoice): void {
+  if (choice.mode === 'bypassPermissions') return;
+  writeApproveMode(choice.mode);
+  writeApproveFresh(choice.fresh);
+}
+
+/**
+ * The answer for `choice`. A fresh context sends `approve_fresh_context` (the server denies and
+ * interrupts the open request, starts a new conversation in `mode` with the plan, ADR-147); its
+ * failures (SESSION_BUSY, MODE_NOT_ALLOWED, start errors) land in the card (FreshContextAlert).
+ */
+export function approvePlan(sessionKey: string, decision: PlanDecision, choice: ApproveChoice) {
   return async () => {
-    const ok = await respondToDecision(sessionKey, decision, {
+    if (!choice.fresh) {
+      const ok = await respondToDecision(sessionKey, decision, {
+        kind: 'plan',
+        response: { behavior: 'approve', mode: choice.mode, editedPlan: null },
+      });
+      if (ok) rememberChoice(choice);
+      return ok;
+    }
+    clearFreshContextError(sessionKey);
+    const result = await respondInCard(sessionKey, decision, {
       kind: 'plan',
-      response: { behavior: 'approve', mode, editedPlan: null },
+      response: { behavior: 'approve_fresh_context', mode: choice.mode, editedPlan: null },
     });
-    if (ok) writeApproveMode(mode);
-    return ok;
+    if (result.ok) {
+      rememberChoice(choice);
+      return true;
+    }
+    if (result.error.code !== 'DECISION_ALREADY_RESOLVED') {
+      setFreshContextError(sessionKey, decision.id, result.error);
+    }
+    return false;
   };
+}
+
+/** Context fill of the session in % (the plan bar's gauge), null without a value. */
+export function useContextPercent(sessionKey: string): number | null {
+  return useSummarySelector<number | null>(sessionKey, (s) => s.context?.percentage ?? null, null);
+}
+
+/** "Recommended" next to "With fresh context" (≥ 60 % context, ADR-147); the tooltip names the fill. */
+function FreshRecommendedBadge({ percent }: { percent: number }) {
+  const { t, format } = useI18n();
+  const hint = t('decisions.plan.freshRecommendedHint', { percent: format.percent(percent) });
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge variant="info" data-slot="fresh-recommended">
+          {t('decisions.plan.freshRecommended')}
+          <span className="sr-only">{hint}</span>
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent>{hint}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 export function ApproveSplit({
   sessionKey,
   decision,
-  mode,
-  onModeChange,
+  choice,
+  onChoiceChange,
   label,
 }: {
   sessionKey: string;
   decision: PlanDecision;
-  mode: PermissionMode;
-  onModeChange: (mode: PermissionMode) => void;
-  /** Main button text for the mode (live: "Implement · …", expired: "Continue & implement · …"). */
-  label: (modeLabel: string) => string;
+  choice: ApproveChoice;
+  onChoiceChange: (choice: ApproveChoice) => void;
+  /** Main button text (live: "Implement · …", expired: "Continue & implement · …"). */
+  label: (modeLabel: string, fresh: boolean) => string;
 }) {
   const t = useT();
+  const percent = useContextPercent(sessionKey);
+  const recommended = isFreshContextRecommended(percent);
   const choices: Choice<PermissionMode>[] = orderedApproveModes(decision.approveModes).map((value) => ({
     value,
     label: t(`decisions.plan.modes.${value}`),
     destructive: value === 'bypassPermissions',
   }));
+  const change = (next: ApproveChoice) => {
+    clearFreshContextError(sessionKey);
+    onChoiceChange(next);
+  };
   return (
     <span className="inline-flex items-center gap-px">
       <DecisionAction
-        variant={mode === 'bypassPermissions' ? 'destructive' : 'default'}
+        variant={choice.mode === 'bypassPermissions' ? 'destructive' : 'default'}
         data-action="approve"
-        data-mode={mode}
-        onAnswer={approvePlan(sessionKey, decision, mode)}
+        data-mode={choice.mode}
+        data-fresh={choice.fresh ? 'true' : 'false'}
+        onAnswer={approvePlan(sessionKey, decision, choice)}
       >
         {/* One label per mode everywhere ("Manual" for default, R2W-03). */}
-        {label(t(`shell.permissionMode.${mode}`))}
+        {label(t(`shell.permissionMode.${choice.mode}`), choice.fresh)}
       </DecisionAction>
       <ChoiceMenu
         label={t('decisions.plan.approveMenu')}
         heading={t('decisions.plan.approveMenu')}
-        value={mode}
+        value={choice.mode}
         choices={choices}
-        onChange={onModeChange}
-        notes={[
+        onChange={(mode) => {
+          change({ ...choice, mode });
+        }}
+        indicator={recommended && !choice.fresh}
+        toggles={[
           {
             key: 'fresh',
             label: t('decisions.plan.freshContext'),
             hint: t('decisions.plan.freshContextHint'),
+            badge: recommended && percent !== null ? <FreshRecommendedBadge percent={percent} /> : undefined,
+            checked: choice.fresh,
+            onCheckedChange: (fresh) => {
+              change({ ...choice, fresh });
+            },
           },
         ]}
       />
     </span>
+  );
+}
+
+/** A failed "fresh context" answer of this decision (`role="alert"`, ADR-126: errors stay in the card). */
+export function FreshContextAlert({ sessionKey, decision }: { sessionKey: string; decision: PlanDecision }) {
+  const { t, tError } = useI18n();
+  const failure = useFreshContextError(sessionKey);
+  if (failure?.decisionId !== decision.id) return null;
+  return (
+    <Alert
+      tone="error"
+      data-slot="fresh-context-error"
+      title={t('decisions.plan.freshError')}
+      className="mt-1"
+    >
+      {tError(failure.error)}
+    </Alert>
   );
 }
 
@@ -95,7 +199,7 @@ export function ApproveSplit({
  * the shell request `sidePanel` – the host moves the focus there (user action); a second click
  * closes it. Without a mounted side panel host it toggles the plan inside the card
  * (`onInlineToggle`) – or is not shown at all without that fallback (read-only transcript card,
- * R2W-15). Never an answer.
+ * R2W-15). Never an answer; a new plan decision never opens the panel by itself.
  */
 export function OpenPlanButton({
   sessionKey,
@@ -138,7 +242,7 @@ export function OpenPlanButton({
 /** "Kontext 78 %" in the plan bar (read-only gauge; thresholds 70/85 %). */
 export function PlanContextGauge({ sessionKey, className }: { sessionKey: string; className?: string }) {
   const t = useT();
-  const percent = useSummarySelector<number | null>(sessionKey, (s) => s.context?.percentage ?? null, null);
+  const percent = useContextPercent(sessionKey);
   if (percent === null) return null;
   return (
     <span className={cn('text-muted-foreground inline-flex items-center gap-1.5 text-2xs', className)}>

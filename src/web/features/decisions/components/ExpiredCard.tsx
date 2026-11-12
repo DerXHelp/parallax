@@ -9,7 +9,7 @@ import { planTitle } from '../lib/plan';
 import { resumeSession } from '../lib/respond';
 import { summarizeToolInput } from '../lib/tool-input';
 import { DecisionAction, DecisionCardShell } from './card-shell';
-import { ApproveSplit, OpenPlanButton, approvePlan, useApproveMode } from './plan-parts';
+import { ApproveSplit, FreshContextAlert, OpenPlanButton, approvePlan, useApproveChoice } from './plan-parts';
 
 const NO_MODES: readonly PermissionMode[] = [];
 
@@ -57,7 +57,7 @@ export function ExpiredCard({
   const decisions = useDecisions(sessionKey);
   const [inlineOpen, setInlineOpen] = useState(false);
   const plan = decision.kind === 'plan' ? decision : null;
-  const [mode, setMode] = useApproveMode(plan?.approveModes ?? NO_MODES);
+  const [choice, setChoice] = useApproveChoice(plan?.approveModes ?? NO_MODES);
   const expiredIds = decisions.filter((d) => d.state === 'expired').map((d) => d.id);
   const resume = () => resumeSession(sessionKey, expiredIds);
   // Not "Plan v1 ready" next to the "Expired" badge (V2-08): the plan is no longer up for review.
@@ -72,16 +72,21 @@ export function ExpiredCard({
       decision={decision}
       title={title}
       headerExtra={headerExtra}
-      primary={plan !== null && mode !== null ? approvePlan(sessionKey, plan, mode) : resume}
+      primary={plan !== null && choice !== null ? approvePlan(sessionKey, plan, choice) : resume}
       actions={
         <>
-          {plan === null || mode === null ? null : (
+          {plan === null || choice === null ? null : (
             <ApproveSplit
               sessionKey={sessionKey}
               decision={plan}
-              mode={mode}
-              onModeChange={setMode}
-              label={(modeLabel) => t('decisions.expired.resumeApprove', { mode: modeLabel })}
+              choice={choice}
+              onChoiceChange={setChoice}
+              // A fresh context starts a new conversation – nothing is "continued" (ADR-147).
+              label={(modeLabel, fresh) =>
+                t(fresh ? 'decisions.plan.approveFresh' : 'decisions.expired.resumeApprove', {
+                  mode: modeLabel,
+                })
+              }
             />
           )}
           <DecisionAction
@@ -107,6 +112,7 @@ export function ExpiredCard({
     >
       <p className="text-xs">{t('decisions.expired.description')}</p>
       <ExpiredSummary decision={decision} />
+      {plan === null ? null : <FreshContextAlert sessionKey={sessionKey} decision={plan} />}
       {plan !== null && inlineOpen ? (
         <div
           data-slot="plan-inline"
