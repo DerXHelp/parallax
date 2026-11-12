@@ -95,10 +95,12 @@ function ToolCallFrame({
   item,
   sessionKey,
   renderer,
+  hideImages,
 }: {
   item: ToolCallItem;
   sessionKey: string;
   renderer: ToolRenderer;
+  hideImages: boolean;
 }) {
   const { t, format } = useI18n();
   const Icon = renderer.icon;
@@ -172,8 +174,9 @@ function ToolCallFrame({
           )}
         </div>
       </Disclosure>
-      {/* Pictures of the result without expanding the line, exactly once (R4W-03, Plan). */}
-      <ToolResultImages item={item} className="mb-1 ml-5" />
+      {/* Pictures of the result without expanding the line, exactly once (R4W-03, Plan) – or in the
+          gallery of its group / image run (WP-63 §1.5). */}
+      {hideImages ? null : <ToolResultImages item={item} className="mb-1 ml-5" />}
       <DecisionLine item={item} sessionKey={sessionKey} />
     </div>
   );
@@ -182,12 +185,15 @@ function ToolCallFrame({
 export const ToolCallRow = memo(function ToolCallRow({
   item,
   sessionKey,
+  hideImages = false,
 }: {
   item: ToolCallItem;
   sessionKey: string;
+  /** WP-63 §1.5: the pictures stand in a gallery (group, image run) – not again below the line. */
+  hideImages?: boolean;
 }) {
   const renderer = getToolRenderer(item.toolName);
   const Row = renderer.Row;
   if (Row !== undefined) return <Row item={item} sessionKey={sessionKey} />;
-  return <ToolCallFrame item={item} sessionKey={sessionKey} renderer={renderer} />;
+  return <ToolCallFrame item={item} sessionKey={sessionKey} renderer={renderer} hideImages={hideImages} />;
 });

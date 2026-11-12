@@ -1,44 +1,65 @@
 import { FolderIcon } from 'lucide-react';
 import { memo } from 'react';
 import { LOCAL_HOST_ID, parseSessionKey } from '@shared/common';
+import type { EffortLevel } from '@shared/common';
 import type { ContextGauge } from '@shared/model';
-import { useI18n, useT } from '@web/i18n';
+import type { SessionViewState } from '@shared/sync';
+import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
+import { effectiveEffort } from '@web/lib/effort';
 import { sessionTitle } from '@web/lib/session-title';
 import { cliVersionStatus, knownVersion } from '@web/lib/version';
-import { useDisplayStatus, useHostState, useSummary } from '@web/state/hooks';
+import { useDisplayStatus, useHostState, useSessionSelector, useSummary } from '@web/state/hooks';
 import { Badge } from '@web/ui/badge';
 import { Gauge } from '@web/ui/gauge';
 import { StatusIcon } from '@web/ui/status-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
+import { ContextCompactIcon, useContextTexts } from './context-display';
 import { HeaderPanelButtons, HeaderPanelMenuItems, useCompactHeader } from './header-panels';
 import { RenameField } from './navigation/RenameField';
 import { PathTail } from './navigation/PathTail';
 import { startRename, useRenameHeader, useRenaming } from './navigation/rename';
 import { SessionMenu } from './navigation/SessionMenu';
 
-/** Context fill as a compact, read-only meter; tokens and source in the tooltip. */
+/**
+ * Context fill as a compact, read-only meter (WP-63 §1.4): the bar runs up to the autocompact, the
+ * color says "really full" (share of the model window), a symbol says "autocompact soon"; the
+ * details and the source in the tooltip.
+ */
 function HeaderContext({ context }: { context: ContextGauge }) {
-  const { t, format } = useI18n();
+  const t = useT();
+  const texts = useContextTexts(context);
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span data-slot="header-context" className="inline-flex">
-          <Gauge value={context.percentage} label={t('shell.session.context')} barClassName="w-10" />
+        <span
+          data-slot="header-context"
+          data-compact-soon={texts.compactSoon === null ? undefined : 'true'}
+          className="inline-flex items-center gap-1"
+        >
+          <Gauge
+            value={texts.display.fill}
+            level={texts.display.level}
+            valueText={texts.short}
+            valueLabel={texts.compactSoon === null ? texts.detail : `${texts.detail} · ${texts.compactSoon}`}
+            label={t('shell.session.context')}
+            barClassName="w-10"
+          />
+          {texts.compactSoon === null ? null : <ContextCompactIcon />}
         </span>
       </TooltipTrigger>
       <TooltipContent>
-        <span className="tabular-nums">
-          {t('shell.session.contextTokens', {
-            used: format.compact(context.totalTokens),
-            max: format.compact(context.maxTokens),
-            source: t(`shell.session.contextSource.${context.source}`),
-          })}
+        <span className="grid gap-0.5 tabular-nums">
+          <span>{texts.detail}</span>
+          {texts.compactSoon === null ? null : <span>{texts.compactSoon}</span>}
+          <span className="text-muted-foreground">{texts.source}</span>
         </span>
       </TooltipContent>
     </Tooltip>
   );
 }
+
+const selectInitEffort = (view: SessionViewState): EffortLevel | null => view.detail.init?.effort ?? null;
 
 /**
  * Claude Code version of THIS session (Plan C.7: per session, the CLI updates itself; R3-01):
@@ -99,8 +120,15 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
   useRenameHeader(sessionKey);
   const editing = useRenaming(sessionKey, 'header');
   const [compact, barRef] = useCompactHeader();
+  // The header sits in a pane that holds the subscription; this only reads the reported effort.
+  const initEffort = useSessionSelector(sessionKey, selectInitEffort, null);
   if (summary === null) return null;
   const model = summary.model ?? summary.modelSetting;
+  const effort = effectiveEffort({
+    effort: summary.effort,
+    initEffort,
+    profileEffort: hostState?.profiles.find((p) => p.id === summary.profileId)?.defaults.effort ?? null,
+  });
   const cliVersion = knownVersion(summary.cliVersion);
   return (
     <div
@@ -186,6 +214,18 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
             <dd className="truncate" data-slot="header-model">
               {model ?? t('shell.session.modelDefault')}
             </dd>
+            {/* WP-63 §1.1: the effective effort next to the model ("opus · high"). */}
+            {effort === null ? null : (
+              <>
+                <dt className="sr-only">{t('shell.session.effort')}</dt>
+                <dd data-slot="header-effort" data-effort={effort} className="shrink-0">
+                  <span aria-hidden className="mr-1">
+                    ·
+                  </span>
+                  {t(`shell.effortLevels.${effort}`)}
+                </dd>
+              </>
+            )}
           </div>
           {summary.permissionMode === null ? null : (
             <div className="flex shrink-0 items-center gap-1">

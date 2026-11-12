@@ -11,6 +11,11 @@ export const createLiveNormalizer: CreateLiveNormalizer = createLiveNormalizerIm
 export const normalizeHistory: NormalizeHistory = normalizeHistoryImpl;
 export const normalizeContextUsage: NormalizeContextUsage = normalizeContextUsageImpl;
 
-export { estimateContextGauge, modelContextWindow, type ContextWindowSources } from './context';
+export {
+  estimateContextGauge,
+  modelContextWindow,
+  type AutoCompactInfo,
+  type ContextWindowSources,
+} from './context';
 /** Capping with blob for the engine (queue texts, decision inputs) – no second implementation (WP-13 §6 Nr. 6). */
 export { capInput, capText } from './limits';

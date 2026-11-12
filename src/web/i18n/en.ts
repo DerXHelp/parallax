@@ -62,6 +62,12 @@ export const en = {
       context: 'Context',
       contextTokens: '{used} of {max} tokens · {source}',
       contextSource: { sdk: 'measured', estimate: 'estimated' },
+      /** WP-63 §1.4: the bar runs up to the autocompact; the color is the share of the model window. */
+      contextUntilCompact: '{used} of {threshold} until autocompact · model {max} ({percent})',
+      contextOfWindow: '{used} of {max} ({percent})',
+      contextCompactSoon: 'Autocompact in about {left}',
+      /** WP-63 §1.1: effective effort next to the model. */
+      effort: 'Effort',
       /** Per session (C.7): `init.claude_code_version` of its last start. */
       cliVersionLabel: 'Claude Code version',
       cliVersionShort: 'CLI {version}',
@@ -82,6 +88,9 @@ export const en = {
       data: 'Data: {path}',
       backendFake: 'FakeBackend – no real Claude Code',
     },
+    /** WP-63 §1.1: effort levels next to the model (header) and short in the sidebar row. */
+    effortLevels: { low: 'low', medium: 'medium', high: 'high', xhigh: 'extra high', max: 'max' },
+    effortShort: { low: 'low', medium: 'med', high: 'high', xhigh: 'xhigh', max: 'max' },
     badges: {
       background: 'Background tasks',
       compacting: 'Compacting',

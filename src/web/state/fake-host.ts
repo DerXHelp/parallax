@@ -1018,6 +1018,21 @@ export class FakeHost {
       case 'session.setArchived':
         this.patchSummary(cmd.entryId, { archived: cmd.archived });
         return this.ok();
+      case 'session.remove': {
+        // WP-63: like the hub – summary.remove for all, session.unavailable for a subscriber.
+        if (!this.knowsEntry(cmd.entryId)) return { ok: false, error: makeError('ENTRY_NOT_FOUND') };
+        this.interruptStreams(cmd.entryId);
+        this.removeSummary(cmd.entryId);
+        this.sessions.delete(cmd.entryId);
+        if (this.subscribed.delete(cmd.entryId)) {
+          this.send({
+            type: 'session.unavailable',
+            entryId: cmd.entryId,
+            error: makeError('ENTRY_NOT_FOUND'),
+          });
+        }
+        return this.ok();
+      }
       case 'session.setEffort':
       case 'session.close':
       case 'session.resume':

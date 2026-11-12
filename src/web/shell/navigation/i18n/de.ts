@@ -54,6 +54,8 @@ export const de: typeof en = {
     branch: 'Branch',
     model: 'Modell',
     context: 'Kontext',
+    effort: 'Aufwand',
+    compactSoon: 'Autocompact steht bald an',
   },
   actions: {
     menu: 'Session-Aktionen',
@@ -70,6 +72,38 @@ export const de: typeof en = {
     restore: 'Wiederherstellen',
     conversations: 'Frühere Unterhaltungen…',
     sessionInfo: 'Session-Info…',
+    remove: 'Aus Parallax entfernen…',
+  },
+  remove: {
+    title: 'Session aus Parallax entfernen?',
+    description:
+      '„{title}“ verschwindet aus der Liste und aus Parallax. Ihre Dateien bleiben auf der Platte: das Claude-Code-Transkript, Anhänge und Plan-Versionen – „claude --resume“ funktioniert weiter.',
+    working:
+      'Diese Session arbeitet gerade. Entfernen beendet den laufenden Turn und den Claude-Code-Prozess; offene Entscheidungen verfallen.',
+    running: 'Der Claude-Code-Prozess dieser Session wird vorher beendet.',
+    confirm: 'Entfernen',
+    removing: 'Wird entfernt…',
+    cancel: 'Abbrechen',
+  },
+  cleanup: {
+    open: 'Archiv aufräumen…',
+    title: 'Archiv aufräumen',
+    description:
+      'Entfernt die gewählten Sessions aus Parallax. Ihre Dateien bleiben auf der Platte, „claude --resume“ funktioniert weiter.',
+    list: 'Archivierte Sessions',
+    selectAll: 'Alle auswählen',
+    olderThan: 'Älter als {days} Tage',
+    lastActive: 'Zuletzt aktiv {time}',
+    folder: 'Ordner',
+    empty: 'Keine archivierten Sessions.',
+    remove: { one: 'Entfernen ({count})', other: 'Entfernen ({count})' },
+    removing: 'Wird entfernt…',
+    cancel: 'Abbrechen',
+    failed: {
+      one: '{count} Session konnte nicht entfernt werden:',
+      other: '{count} Sessions konnten nicht entfernt werden:',
+    },
+    failure: '{title}: {error}',
   },
   rename: {
     label: 'Titel der Session',
@@ -166,6 +200,9 @@ export const de: typeof en = {
     windows: {
       five_hour: '5-Stunden-Limit',
       seven_day: 'Wochenlimit',
+      seven_day_opus: 'Wochenlimit Opus',
+      seven_day_sonnet: 'Wochenlimit Sonnet',
+      overage: 'Zusatznutzung',
     },
     window: 'Limit ({name})',
     resetsAt: 'Reset um {time}',

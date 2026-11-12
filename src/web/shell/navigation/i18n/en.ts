@@ -1,4 +1,5 @@
 import type { ConversationEndReason } from '@shared/model';
+import type { LabeledLimitWindow } from '@web/lib/account-limits';
 
 /**
  * English texts of namespace `navigation` – WP-35 (sidebar, quick switcher, header, windows).
@@ -63,6 +64,10 @@ export const en = {
     branch: 'Branch',
     model: 'Model',
     context: 'Context',
+    /** WP-63 §1.1. */
+    effort: 'Effort',
+    /** WP-63 §1.4: screen-reader text of the context symbol. */
+    compactSoon: 'Autocompact soon',
   },
   actions: {
     menu: 'Session actions',
@@ -79,6 +84,38 @@ export const en = {
     restore: 'Restore',
     conversations: 'Earlier conversations…',
     sessionInfo: 'Session info…',
+    /** WP-63 §1.3. */
+    remove: 'Remove from Parallax…',
+  },
+  /** WP-63 §1.3: remove a session from Parallax only (files stay). */
+  remove: {
+    title: 'Remove session from Parallax?',
+    description:
+      '“{title}” disappears from the list and from Parallax. Its files stay on disk: the Claude Code transcript, attachments and plan versions – “claude --resume” keeps working.',
+    working:
+      'This session is working right now. Removing it ends the running turn and the Claude Code process; open decisions are dropped.',
+    running: 'The Claude Code process of this session is closed first.',
+    confirm: 'Remove',
+    removing: 'Removing…',
+    cancel: 'Cancel',
+  },
+  /** WP-63 §1.3: "Clean up archive…" in the archive view. */
+  cleanup: {
+    open: 'Clean up archive…',
+    title: 'Clean up archive',
+    description:
+      'Removes the selected sessions from Parallax. Their files stay on disk, “claude --resume” keeps working.',
+    list: 'Archived sessions',
+    selectAll: 'Select all',
+    olderThan: 'Older than {days} days',
+    lastActive: 'Last active {time}',
+    folder: 'Folder',
+    empty: 'No archived sessions.',
+    remove: { one: 'Remove ({count})', other: 'Remove ({count})' },
+    removing: 'Removing…',
+    cancel: 'Cancel',
+    failed: { one: '{count} session could not be removed:', other: '{count} sessions could not be removed:' },
+    failure: '{title}: {error}',
   },
   rename: {
     label: 'Session title',
@@ -178,7 +215,10 @@ export const en = {
     windows: {
       five_hour: '5-hour limit',
       seven_day: 'Weekly limit',
-    },
+      seven_day_opus: 'Weekly limit Opus',
+      seven_day_sonnet: 'Weekly limit Sonnet',
+      overage: 'Extra usage',
+    } satisfies Record<LabeledLimitWindow, string>,
     window: 'Limit ({name})',
     resetsAt: 'Resets at {time}',
     resetsOn: 'Resets on {date}',

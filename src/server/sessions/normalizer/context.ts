@@ -3,7 +3,8 @@
  * `normalizeContextUsage`; during the turn an estimate from the last main-thread usage
  * (input + cache_creation + cache_read + output, signal `context_estimate`) divided by
  * rawMaxTokens resp. `modelUsage[model].contextWindow` → `estimateContextGauge`.
- * The profile override `contextWindow` (100k–1M) wins over both.
+ * The profile override `contextWindow` (100k–1M) wins over both. WP-63: every gauge carries the
+ * autocompact threshold of the last measurement (`autoCompactThreshold`, `isAutoCompactEnabled`).
  */
 import { z } from 'zod';
 import type { ContextBreakdown, ContextGauge } from '@shared/model';
@@ -61,6 +62,24 @@ function percentage(totalTokens: number, maxTokens: number): number {
   return Math.round((totalTokens / maxTokens) * 100);
 }
 
+/** WP-63: the autocompact threshold is a token count – whole, not negative; anything else → null. */
+function validThreshold(value: number | null | undefined): number | null {
+  return value !== null && value !== undefined && Number.isFinite(value) && value >= 0
+    ? Math.round(value)
+    : null;
+}
+
+/** WP-63: the autocompact fields of a gauge (last known values, carried into estimates). */
+export interface AutoCompactInfo {
+  autoCompactThreshold: number | null;
+  isAutoCompactEnabled: boolean | null;
+}
+
+export const UNKNOWN_AUTO_COMPACT: AutoCompactInfo = {
+  autoCompactThreshold: null,
+  isAutoCompactEnabled: null,
+};
+
 /**
  * Raw `getContextUsage` answer → ContextBreakdown (null if unusable). `maxTokens` =
  * override ?? rawMaxTokens ?? maxTokens; the percentage is always total/max (= the SDK's own
@@ -87,7 +106,7 @@ export const normalizeContextUsage: NormalizeContextUsage = (raw, override, at, 
       const id = categoryId(c.id);
       return { name: c.name, tokens: c.tokens, kind: categoryKind(id, c.kind, c.isDeferred), id };
     }),
-    autoCompactThreshold: usage.autoCompactThreshold ?? null,
+    autoCompactThreshold: validThreshold(usage.autoCompactThreshold),
     isAutoCompactEnabled: usage.isAutoCompactEnabled ?? null,
   };
 };
@@ -102,11 +121,17 @@ export interface ContextWindowSources {
    * signal's own `contextWindow` (the normalizer fills it, R1-07).
    */
   modelContextWindow?: number | null;
+  /**
+   * WP-63: the autocompact fields of the last measured gauge (getContextUsage) – an estimate keeps
+   * them, so the display of "autocompact soon" does not flicker during a turn. Default: unknown.
+   */
+  autoCompact?: AutoCompactInfo | null;
 }
 
 /**
  * Gauge during the turn from a `context_estimate` signal (C.1): source 'estimate', window =
  * override ?? last getContextUsage maxTokens ?? modelUsage contextWindow; null without a window.
+ * The autocompact fields are the last known ones (WP-63).
  */
 export function estimateContextGauge(
   estimate: Extract<StatusSignal, { type: 'context_estimate' }>,
@@ -119,6 +144,7 @@ export function estimateContextGauge(
     validWindow(windows.modelContextWindow ?? estimate.contextWindow);
   if (maxTokens === null || estimate.totalTokens < 0) return null;
   const totalTokens = Math.round(estimate.totalTokens);
+  const autoCompact = windows.autoCompact ?? UNKNOWN_AUTO_COMPACT;
   return {
     percentage: percentage(totalTokens, maxTokens),
     totalTokens,
@@ -126,6 +152,8 @@ export function estimateContextGauge(
     source: 'estimate',
     model: estimate.model,
     at: at.toISOString(),
+    autoCompactThreshold: validThreshold(autoCompact.autoCompactThreshold),
+    isAutoCompactEnabled: autoCompact.isAutoCompactEnabled,
   };
 }
 

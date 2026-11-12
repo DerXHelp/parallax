@@ -13,7 +13,12 @@ import {
   type EffortLevel,
   type PermissionMode,
 } from '@shared/common';
-import { errorCodeForRateLimitError, errorCodeForStartupFailure, makeError, type ErrorPayload } from '@shared/errors';
+import {
+  errorCodeForRateLimitError,
+  errorCodeForStartupFailure,
+  makeError,
+  type ErrorPayload,
+} from '@shared/errors';
 import type {
   BackgroundTask,
   SessionDetailPatch,
@@ -381,7 +386,9 @@ class LiveNormalizerImpl implements LiveNormalizer {
 
   /** Base keyed by the SDK uuid, else a px id. */
   private uuidBase(uuid: string | undefined, at: string, parentToolUseId: string | null = null): ItemBase {
-    return uuid === undefined || uuid === '' ? this.pxBase(at, parentToolUseId) : this.base(uuid, at, parentToolUseId);
+    return uuid === undefined || uuid === ''
+      ? this.pxBase(at, parentToolUseId)
+      : this.base(uuid, at, parentToolUseId);
   }
 
   /** Store an item and emit `item.upsert` – unless it belongs to an older conversation (R0-05f). */
@@ -406,7 +413,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
    * frame of the old conversation must not switch the new conversation back.
    */
   private trackSessionId(sessionId: string | undefined, out: Out): void {
-    if (sessionId === undefined || sessionId === '' || sessionId.length > 100 || sessionId === this.sessionId) return;
+    if (sessionId === undefined || sessionId === '' || sessionId.length > 100 || sessionId === this.sessionId)
+      return;
     if (this.retiredSessionIds.has(sessionId)) return;
     this.sessionId = sessionId;
     out.signals.push({ type: 'session_id', sessionId });
@@ -476,13 +484,17 @@ class LiveNormalizerImpl implements LiveNormalizer {
           return;
         }
         const stream = this.streams.get(messageId);
-        const item = streamingBlockItem(this.base(id, receivedAt.toISOString(), parent ?? stream?.parent ?? null), block, {
-          messageId,
-          blockIndex: start.data.index,
-          model: stream?.model ?? null,
-          aborted: false,
-          localCommand: null,
-        });
+        const item = streamingBlockItem(
+          this.base(id, receivedAt.toISOString(), parent ?? stream?.parent ?? null),
+          block,
+          {
+            messageId,
+            blockIndex: start.data.index,
+            model: stream?.model ?? null,
+            aborted: false,
+            localCommand: null,
+          },
+        );
         if (item === null) return;
         if (item.kind === 'tool_call') {
           const decision = this.pendingDecisions.get(item.toolUseId);
@@ -526,11 +538,17 @@ class LiveNormalizerImpl implements LiveNormalizer {
 
   private onDelta(
     id: string,
-    delta: { type: string; text?: string | undefined; thinking?: string | undefined; partial_json?: string | undefined },
+    delta: {
+      type: string;
+      text?: string | undefined;
+      thinking?: string | undefined;
+      partial_json?: string | undefined;
+    },
     out: Out,
   ): void {
     const entry = this.items.get(id);
-    if (entry === undefined || !this.streaming.has(id) || entry.conversationId !== this.conversationId) return;
+    if (entry === undefined || !this.streaming.has(id) || entry.conversationId !== this.conversationId)
+      return;
     const item = entry.item;
     switch (delta.type) {
       case 'text_delta': {
@@ -544,7 +562,10 @@ class LiveNormalizerImpl implements LiveNormalizer {
         if (item.kind !== 'thinking') return;
         const append = this.clip(item.text.text.length, delta.thinking ?? '');
         if (append === '') return;
-        this.items.set(id, { ...entry, item: { ...item, text: { ...item.text, text: item.text.text + append } } });
+        this.items.set(id, {
+          ...entry,
+          item: { ...item, text: { ...item.text, text: item.text.text + append } },
+        });
         out.ops.push({ op: 'item.delta', itemId: id, field: 'thinking', append });
         return;
       }
@@ -578,7 +599,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
       if (entry?.conversationId !== this.conversationId) continue;
       const item = entry.item;
       if (item.kind === 'assistant_text') this.put({ ...item, streaming: false, aborted: true }, out);
-      else if (item.kind === 'thinking') this.put({ ...item, streaming: false, text: capText(item.text.text, this.ctx) }, out);
+      else if (item.kind === 'thinking')
+        this.put({ ...item, streaming: false, text: capText(item.text.text, this.ctx) }, out);
       else if (item.kind === 'tool_call' && item.status === 'streaming_input') {
         this.put(fitToolCall({ ...item, status: 'interrupted', ...this.partialInput(item) }, this.ctx), out);
       }
@@ -689,8 +711,20 @@ class LiveNormalizerImpl implements LiveNormalizer {
 
   private withResult(call: ToolCallItem, pending: PendingResult): ToolCallItem {
     const result = buildToolResult(pending.block, pending.structured, call.toolName, pending.at, this.ctx);
-    const status = statusAfterResult(call, result, pending.meta, pending.structured, this.deniedByCli.has(call.toolUseId));
-    return { ...call, task: this.taskWithResultOutputFile(call, pending.structured), result, status, inputPartial: null };
+    const status = statusAfterResult(
+      call,
+      result,
+      pending.meta,
+      pending.structured,
+      this.deniedByCli.has(call.toolUseId),
+    );
+    return {
+      ...call,
+      task: this.taskWithResultOutputFile(call, pending.structured),
+      result,
+      status,
+      inputPartial: null,
+    };
   }
 
   /**
@@ -706,7 +740,10 @@ class LiveNormalizerImpl implements LiveNormalizer {
     }
     const task: TaskInfo = { ...call.task, outputFile };
     const known = this.tasks.get(task.taskId);
-    this.tasks.set(task.taskId, { toolUseId: known?.toolUseId ?? call.toolUseId, task: known === undefined ? task : { ...known.task, outputFile } });
+    this.tasks.set(task.taskId, {
+      toolUseId: known?.toolUseId ?? call.toolUseId,
+      task: known === undefined ? task : { ...known.task, outputFile },
+    });
     return task;
   }
 
@@ -755,11 +792,19 @@ class LiveNormalizerImpl implements LiveNormalizer {
     if (content.text.trim() === '' && content.images.length === 0) return;
 
     // ADR-152: a task notification needs the CLI's origin and the main agent.
-    const kind = classifyUserText(content.text, { originKind: u.origin?.kind ?? null, parentToolUseId: parent });
+    const kind = classifyUserText(content.text, {
+      originKind: u.origin?.kind ?? null,
+      parentToolUseId: parent,
+    });
     switch (kind.kind) {
       case 'interrupted':
         this.put(
-          { ...this.uuidBase(u.uuid, at, parent), kind: 'system', event: 'interrupted', forToolUse: kind.forToolUse },
+          {
+            ...this.uuidBase(u.uuid, at, parent),
+            kind: 'system',
+            event: 'interrupted',
+            forToolUse: kind.forToolUse,
+          },
           out,
         );
         return;
@@ -768,7 +813,12 @@ class LiveNormalizerImpl implements LiveNormalizer {
         return;
       case 'local_output':
         this.put(
-          { ...this.uuidBase(u.uuid, at, parent), kind: 'system', event: 'local_command_output', text: capText(kind.text, this.ctx) },
+          {
+            ...this.uuidBase(u.uuid, at, parent),
+            kind: 'system',
+            event: 'local_command_output',
+            text: capText(kind.text, this.ctx),
+          },
           out,
         );
         return;
@@ -867,7 +917,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
     this.closeStreaming(out);
     this.endRetrySeries(out);
 
-    const listed = r.user_message_uuids ?? (r.user_message_uuid === undefined ? undefined : [r.user_message_uuid]);
+    const listed =
+      r.user_message_uuids ?? (r.user_message_uuid === undefined ? undefined : [r.user_message_uuid]);
     if (this.lifecycleSupported !== true) {
       // R0-29: at the latest with the turn_result (no list at all: every pending prompt).
       for (const uuid of listed ?? [...this.pendingPrompts.keys()]) this.createPrompt(uuid, out);
@@ -1017,7 +1068,12 @@ class LiveNormalizerImpl implements LiveNormalizer {
         const base =
           existing === undefined
             ? this.uuidBase(msg.uuid, at)
-            : { id: existing.item.id, order: existing.item.order, at: existing.item.at, parentToolUseId: null };
+            : {
+                id: existing.item.id,
+                order: existing.item.order,
+                at: existing.item.at,
+                parentToolUseId: null,
+              };
         this.retryItemId = base.id;
         this.put(
           {
@@ -1047,12 +1103,16 @@ class LiveNormalizerImpl implements LiveNormalizer {
         const existing = known === undefined ? undefined : this.items.get(known)?.item;
         const prev = existing?.kind === 'system' && existing.event === 'hook' ? existing : null;
         const base =
-          prev === null ? this.uuidBase(msg.uuid, at) : { id: prev.id, order: prev.order, at: prev.at, parentToolUseId: null };
+          prev === null
+            ? this.uuidBase(msg.uuid, at)
+            : { id: prev.id, order: prev.order, at: prev.at, parentToolUseId: null };
         this.hooks.set(h.data.hook_id, base.id);
         const text =
           h.data.output !== undefined && h.data.output !== ''
             ? h.data.output
-            : [h.data.stdout, h.data.stderr].filter((s): s is string => s !== undefined && s !== '').join('\n');
+            : [h.data.stdout, h.data.stderr]
+                .filter((s): s is string => s !== undefined && s !== '')
+                .join('\n');
         this.put(
           {
             ...base,
@@ -1127,7 +1187,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
           out,
         );
         const call = this.toolCall(toolUseId);
-        if (call?.result?.isError === true && call.status === 'error') this.put({ ...call, status: 'denied' }, out);
+        if (call?.result?.isError === true && call.status === 'error')
+          this.put({ ...call, status: 'denied' }, out);
         return;
       }
       case 'memory_recall': {
@@ -1197,7 +1258,10 @@ class LiveNormalizerImpl implements LiveNormalizer {
           return;
         }
         this.put(
-          errorItem(this.uuidBase(msg.uuid, at), makeError('MODEL_REFUSAL', { model: (f.data.original_model ?? '').slice(0, 200) })),
+          errorItem(
+            this.uuidBase(msg.uuid, at),
+            makeError('MODEL_REFUSAL', { model: (f.data.original_model ?? '').slice(0, 200) }),
+          ),
           out,
         );
         return;
@@ -1209,15 +1273,20 @@ class LiveNormalizerImpl implements LiveNormalizer {
           return;
         }
         const d = t.data;
-        this.updateTask(d.task_id, d.tool_use_id, (task) => ({
-          ...task,
-          taskType: d.task_type ?? task.taskType,
-          description: d.description ?? task.description,
-          subagentType: d.subagent_type ?? task.subagentType,
-          isBackgrounded: d.is_backgrounded ?? task.isBackgrounded,
-          status: 'running',
-          startedAt: task.startedAt ?? at,
-        }), out);
+        this.updateTask(
+          d.task_id,
+          d.tool_use_id,
+          (task) => ({
+            ...task,
+            taskType: d.task_type ?? task.taskType,
+            description: d.description ?? task.description,
+            subagentType: d.subagent_type ?? task.subagentType,
+            isBackgrounded: d.is_backgrounded ?? task.isBackgrounded,
+            status: 'running',
+            startedAt: task.startedAt ?? at,
+          }),
+          out,
+        );
         return;
       }
       case 'task_updated': {
@@ -1227,13 +1296,18 @@ class LiveNormalizerImpl implements LiveNormalizer {
           return;
         }
         const patch = t.data.patch ?? {};
-        this.updateTask(t.data.task_id, undefined, (task) => ({
-          ...task,
-          status: patch.status ?? task.status,
-          description: patch.description ?? task.description,
-          isBackgrounded: patch.is_backgrounded ?? task.isBackgrounded,
-          endedAt: millisToIso(patch.end_time) ?? task.endedAt,
-        }), out);
+        this.updateTask(
+          t.data.task_id,
+          undefined,
+          (task) => ({
+            ...task,
+            status: patch.status ?? task.status,
+            description: patch.description ?? task.description,
+            isBackgrounded: patch.is_backgrounded ?? task.isBackgrounded,
+            endedAt: millisToIso(patch.end_time) ?? task.endedAt,
+          }),
+          out,
+        );
         return;
       }
       case 'task_progress': {
@@ -1245,12 +1319,17 @@ class LiveNormalizerImpl implements LiveNormalizer {
         const d = t.data;
         // WP61-07: `description` here is the CLI's current activity ("Running <tool description>",
         // CLI 2.1.322), not the task's name – TaskInfo has no activity field, so it is dropped.
-        this.updateTask(d.task_id, d.tool_use_id, (task) => ({
-          ...task,
-          subagentType: d.subagent_type ?? task.subagentType,
-          summary: d.summary ?? task.summary,
-          usage: taskUsage(d.usage) ?? task.usage,
-        }), out);
+        this.updateTask(
+          d.task_id,
+          d.tool_use_id,
+          (task) => ({
+            ...task,
+            subagentType: d.subagent_type ?? task.subagentType,
+            summary: d.summary ?? task.summary,
+            usage: taskUsage(d.usage) ?? task.usage,
+          }),
+          out,
+        );
         return;
       }
       case 'task_notification': {
@@ -1260,16 +1339,29 @@ class LiveNormalizerImpl implements LiveNormalizer {
           return;
         }
         const d = t.data;
-        const matched = this.updateTask(d.task_id, d.tool_use_id, (task) => ({
-          ...task,
-          status: d.status ?? 'completed',
-          summary: d.summary ?? task.summary,
-          usage: taskUsage(d.usage) ?? task.usage,
-          endedAt: task.endedAt ?? at,
-          outputFile: taskOutputFile(d.output_file) ?? task.outputFile,
-        }), out);
+        const matched = this.updateTask(
+          d.task_id,
+          d.tool_use_id,
+          (task) => ({
+            ...task,
+            status: d.status ?? 'completed',
+            summary: d.summary ?? task.summary,
+            usage: taskUsage(d.usage) ?? task.usage,
+            endedAt: task.endedAt ?? at,
+            outputFile: taskOutputFile(d.output_file) ?? task.outputFile,
+          }),
+          out,
+        );
         if (!matched.matched) {
-          this.put({ ...this.uuidBase(msg.uuid, at), kind: 'system', event: 'task_notification', task: matched.task }, out);
+          this.put(
+            {
+              ...this.uuidBase(msg.uuid, at),
+              kind: 'system',
+              event: 'task_notification',
+              task: matched.task,
+            },
+            out,
+          );
         }
         return;
       }
@@ -1342,7 +1434,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
 
   private readPermissionMode(value: unknown): PermissionMode | null {
     const mode = parsePermissionMode(value);
-    if (mode === null && typeof value === 'string') this.countUnknown(unknownEnumCountKey('permissionMode', value));
+    if (mode === null && typeof value === 'string')
+      this.countUnknown(unknownEnumCountKey('permissionMode', value));
     return mode;
   }
 
@@ -1372,7 +1465,11 @@ class LiveNormalizerImpl implements LiveNormalizer {
       tools: i.tools ?? [],
       slashCommands: i.slash_commands ?? [],
       terminalSlashCommands: i.terminal_slash_commands ?? [],
-      mcpServers: (i.mcp_servers ?? []).map((s) => ({ name: s.name, status: s.status, source: s.source ?? null })),
+      mcpServers: (i.mcp_servers ?? []).map((s) => ({
+        name: s.name,
+        status: s.status,
+        source: s.source ?? null,
+      })),
       skills: i.skills ?? [],
       agents: i.agents ?? [],
       plugins: (i.plugins ?? []).map((p) => ({ name: p.name, version: p.version ?? null })),
@@ -1432,17 +1529,30 @@ class LiveNormalizerImpl implements LiveNormalizer {
     return { matched: true, task };
   }
 
-  private applyTaskNotificationText(n: TaskNotificationText, uuid: string | undefined, at: string, out: Out): void {
-    const matched = this.updateTask(n.taskId, n.toolUseId ?? undefined, (task) => ({
-      ...task,
-      status: n.status,
-      summary: n.summary ?? task.summary,
-      usage: n.usage ?? task.usage,
-      endedAt: task.endedAt ?? at,
-      outputFile: n.outputFile ?? task.outputFile,
-    }), out);
+  private applyTaskNotificationText(
+    n: TaskNotificationText,
+    uuid: string | undefined,
+    at: string,
+    out: Out,
+  ): void {
+    const matched = this.updateTask(
+      n.taskId,
+      n.toolUseId ?? undefined,
+      (task) => ({
+        ...task,
+        status: n.status,
+        summary: n.summary ?? task.summary,
+        usage: n.usage ?? task.usage,
+        endedAt: task.endedAt ?? at,
+        outputFile: n.outputFile ?? task.outputFile,
+      }),
+      out,
+    );
     if (!matched.matched) {
-      this.put({ ...this.uuidBase(uuid, at), kind: 'system', event: 'task_notification', task: matched.task }, out);
+      this.put(
+        { ...this.uuidBase(uuid, at), kind: 'system', event: 'task_notification', task: matched.task },
+        out,
+      );
     }
   }
 
@@ -1465,7 +1575,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
     if (id === null) return;
     this.retryItemId = null;
     const entry = this.items.get(id);
-    if (entry?.item.kind === 'system' && entry.item.event === 'api_retry') this.put({ ...entry.item, active: false }, out);
+    if (entry?.item.kind === 'system' && entry.item.event === 'api_retry')
+      this.put({ ...entry.item, active: false }, out);
     out.signals.push({ type: 'retry', active: false });
   }
 
@@ -1498,13 +1609,16 @@ class LiveNormalizerImpl implements LiveNormalizer {
     }
     out.detail.rateLimit = info;
     out.signals.push({ type: 'rate_limit', info });
-    if (info.status === 'allowed') return;
+    // WP-63: `allowed`/`allowed_warning` only feed the limit bar (signal above) – no transcript item
+    // for any window; only `rejected` ("limit reached", the session stops) stays a notice.
+    if (info.status !== 'rejected') return;
     this.put({ ...this.uuidBase(msg.uuid, info.at), kind: 'system', event: 'rate_limit', info }, out);
-    if (info.status === 'rejected') {
-      // C.5: only `rejected` is an error (credits_required → CLAUDE_BILLING, a setup error).
-      const code = errorCodeForRateLimitError(parsed.data.rate_limit_info.errorCode ?? '');
-      out.signals.push({ type: 'assistant_error', error: makeError(code, { rateLimitType: info.rateLimitType }) });
-    }
+    // C.5: only `rejected` is an error (credits_required → CLAUDE_BILLING, a setup error).
+    const code = errorCodeForRateLimitError(parsed.data.rate_limit_info.errorCode ?? '');
+    out.signals.push({
+      type: 'assistant_error',
+      error: makeError(code, { rateLimitType: info.rateLimitType }),
+    });
   }
 
   private unknownMessage(raw: unknown, msg: SdkMessageBase, receivedAt: Date, out: Out): void {

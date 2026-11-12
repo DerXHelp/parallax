@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { fitScale, Lightbox, type LightboxLabels } from './lightbox';
 import { TooltipProvider } from './tooltip';
@@ -107,6 +108,73 @@ describe('Lightbox (WP-37 §8)', () => {
     expect(zoom()).toBe('80');
     await user.click(within(dialog).getByRole('button', { name: 'Zoom out' }));
     expect(zoom()).toBe('64');
+  });
+});
+
+/** A controlled lightbox over three images (as the transcript's ImageViewer drives it, WP-63). */
+function GalleryBox() {
+  const [index, setIndex] = useState(0);
+  const name = `shot-${String(index + 1)}.png`;
+  return (
+    <TooltipProvider>
+      <Lightbox
+        open
+        image={{
+          src: `${SRC.slice(0, -1)}${String(index)}`,
+          alt: name,
+          downloadName: name,
+          width: 400,
+          height: 300,
+        }}
+        labels={{ ...LABELS, title: `Image: ${name}` }}
+        navigation={{
+          index,
+          count: 3,
+          onPrevious: () => {
+            setIndex((value) => Math.max(0, value - 1));
+          },
+          onNext: () => {
+            setIndex((value) => Math.min(2, value + 1));
+          },
+          previous: 'Previous image',
+          next: 'Next image',
+          position: `Image ${String(index + 1)} of 3`,
+        }}
+      />
+    </TooltipProvider>
+  );
+}
+
+describe('Lightbox gallery navigation (WP-63 §1.5)', () => {
+  it('buttons and ← → step through; the zoom goes back to fit; zoomed, the arrows stay for scrolling', async () => {
+    render(<GalleryBox />);
+    const user = userEvent.setup();
+    const dialog = await screen.findByRole('dialog', { name: 'Image: shot-1.png' });
+    expect(dialog.querySelector('[data-slot="lightbox-position"]')?.textContent).toBe('Image 1 of 3');
+    expect(within(dialog).getByRole('button', { name: 'Previous image' }).hasAttribute('disabled')).toBe(
+      true,
+    );
+
+    await user.click(within(dialog).getByRole('button', { name: 'Next image' }));
+    expect(await screen.findByRole('dialog', { name: 'Image: shot-2.png' })).toBeTruthy();
+    await user.keyboard('{ArrowRight}');
+    expect(await screen.findByRole('dialog', { name: 'Image: shot-3.png' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Next image' }).hasAttribute('disabled')).toBe(true);
+
+    // Zoomed: ← does not change the image; the next image starts fitted again.
+    await user.keyboard('1');
+    expect(zoom()).toBe('100');
+    await user.keyboard('{ArrowLeft}');
+    expect(screen.getByRole('dialog', { name: 'Image: shot-3.png' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Previous image' }));
+    expect(await screen.findByRole('dialog', { name: 'Image: shot-2.png' })).toBeTruthy();
+    expect(zoom()).toBe('fit');
+    // At the first image the button turns disabled: the focus stays in the box (← → keep working).
+    await user.click(screen.getByRole('button', { name: 'Previous image' }));
+    expect(await screen.findByRole('dialog', { name: 'Image: shot-1.png' })).toBeTruthy();
+    expect(document.activeElement?.getAttribute('data-slot')).toBe('lightbox-viewport');
+    await user.keyboard('{ArrowRight}');
+    expect(await screen.findByRole('dialog', { name: 'Image: shot-2.png' })).toBeTruthy();
   });
 });
 
