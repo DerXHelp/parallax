@@ -118,6 +118,7 @@ import {
   type NativeCommand,
   type SlashCatalog,
 } from './lib/slash';
+import { lastTurnEnded, workOnlyInBackground } from './lib/turn';
 import { ModelPicker, type ModelPickerSection } from './ModelPicker';
 import { ModePicker } from './ModePicker';
 import { RateLimitBanner } from './RateLimitBanner';
@@ -209,7 +210,8 @@ function hasFiles(event: DragEvent): boolean {
  * - Enter sends, Shift+Enter breaks the line (IME composition never sends).
  * - While Claude works, messages are queued (`priority: 'next'`; the transcript shows them grey,
  *   the header counts them – R2W-04); "Send now" sends with `priority: 'now'`; Stop (and Esc in
- *   an empty composer) interrupts.
+ *   an empty composer) interrupts. While only background tasks work and no turn runs (B18,
+ *   `lib/turn.ts`), the composer is idle: plain "Send", no Stop – the task panel stops tasks.
  * - Open decision (the one the bar shows) – target lock (R2W-01, ADR-040): Enter answers it only
  *   if it was already shown (≥ arm delay) when the current draft began, and only for the main
  *   agent – permission deny + message, one question answered with the text, several questions
@@ -278,6 +280,17 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   // Uploads go to the window's own server; a remote host could not resolve the blob (multi-host later).
   const canAttach = parsedKey?.hostId === LOCAL_HOST_ID;
   const runState = useSummarySelector<RunState | null>(sessionKey, (s) => s.status.runState, null);
+  // B18: the CLI works, but only background tasks – the transcript says whether a turn runs too.
+  const backgroundWork = useSummarySelector<boolean>(
+    sessionKey,
+    (s) => workOnlyInBackground(s.status),
+    false,
+  );
+  const turnEnded = useSessionSelector<boolean>(
+    sessionKey,
+    (v) => v.detail.queue.length === 0 && lastTurnEnded(v.items),
+    false,
+  );
   const modelSetting = useSummarySelector<string | null>(sessionKey, (s) => s.modelSetting, null);
   const fastMode = useSummarySelector<boolean | null>(sessionKey, (s) => s.fastMode, null);
   const permissionMode = useSummarySelector<PermissionMode | null>(sessionKey, (s) => s.permissionMode, null);
@@ -339,7 +352,8 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const [mentionDismissed, setMentionDismissed] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
-  const working = isWorking(runState);
+  /** A turn runs: queue mode, "Send now", Stop. Not while only background tasks work (B18, ADR-159). */
+  const working = isWorking(runState) && !(backgroundWork && turnEnded);
 
   useEffect(() => {
     if (targetId !== null && shownRef.current?.id !== targetId) {
