@@ -7,7 +7,11 @@
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { lowerProcessPriority } from '../repo.config.ts';
 import { buildUnderLock, readBundleBuildId } from '../src/server/launcher/build.ts';
+
+// ADR-154: `pnpm build` (not the launcher's build) runs below normal priority, Vite/esbuild inherit it.
+lowerProcessPriority();
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = (line: string): void => {

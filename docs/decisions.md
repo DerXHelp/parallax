@@ -1804,3 +1804,31 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   (R5-web); allein bringen sie `index` etwa auf den Stand vor Phase 3. Englisch ist Standard.
 - **Folgen:** `i18n.test.tsx` („registers the feature namespaces statically“) prüft die Registrierung
   beider Sprachen neu; der Schlüssel-Abgleich en/de bleibt statisch im Test.
+
+## ADR-154 – Test- und Build-Läufe bremsen nie den Rechner
+- **Datum/WP:** 12.11.2026, Koordinator (Nutzerregel nach der Fix-Runde FIX-R5); angenommen
+  (12.11.2026, Koordinator auf Vorgabe des Nutzers: „Das darf auf gar keinen Fall passieren“)
+- **Anlass:** Während der Fix-Runde fror der ganze Rechner des Nutzers mehrfach für 10–15 s ein und
+  lief nach dem Abbruch der Arbeit sofort wieder. Gleichzeitig liefen mehrere Agenten mit eigenem
+  `pnpm check`, künstliche Lastläufe (`docs/wp/FLAKES.md`: drei `vitest run` gleichzeitig, dazu ein
+  CPU-Last-Skript) und zuletzt ein E2E-Lauf „unter Last“ (Playwright mit drei Chrome neben einem
+  vollen `vitest run`). Vitest startete je Lauf bis zu 18 Worker (19 logische CPUs, Standard „alle bis
+  auf eine“), alles mit normaler Priorität.
+- **Entscheidung:**
+  1. Vitest, Playwright und `pnpm build` setzen ihren Prozess beim Laden der Konfiguration auf
+     „niedriger als normal“ (`lowerProcessPriority` aus `repo.config.ts`, nur absenken). Unter Windows
+     erben alle danach gestarteten Kindprozesse diese Prioritätsklasse (Worker, Testserver, Chrome,
+     Vite/esbuild). Der Build des Launchers (produktive Instanz) bleibt unverändert.
+  2. Vitest nutzt höchstens die Hälfte der logischen CPUs (`TEST_MAX_WORKERS = '50%'`).
+  3. Keine künstliche Last mehr: keine gleichzeitigen Testläufe, keine CPU-Last-Skripte, kein
+     „E2E unter Last“. Flake-Suche nur durch wiederholte Läufe nacheinander.
+  4. Höchstens ein schwerer Lauf (`pnpm check`/`test`/`build`/`e2e`/`install`, voller `vitest run`)
+     gleichzeitig auf der Maschine. Parallele Agenten laufen nur, wenn sie keine schweren Läufe
+     starten (nur gezielt `vitest run <eigene Pfade>`); volle Checks macht dann der Koordinator
+     beim Merge, nacheinander.
+- **Begründung:** Eine einzelne begrenzte Testsuite mit niedriger Priorität lässt dem Desktop Luft;
+  die Abstürze entstanden erst durch die Summe gleichzeitiger Läufe. Die Lastrobustheit der Tests
+  (großzügige Limits, Ereignisse statt Wanduhr) bleibt – sie schützt jetzt gegen die Arbeit des
+  Nutzers am selben Rechner statt gegen künstliche Last.
+- **Folgen:** `repo.config.test.ts` prüft, dass die Test-Worker die Priorität erben; CLAUDE.md
+  „Ressourcen“; `docs/wp/FLAKES.md` (Lastprotokoll L1/L2 abgeschafft); Läufe dauern etwas länger.

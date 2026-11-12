@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { lowerProcessPriority } from './repo.config.ts';
 
 /**
  * E2E tests (WP-20c) in the installed Google Chrome (channel 'chrome', headless; ADR-136 – the app
@@ -16,6 +17,10 @@ import { defineConfig, devices } from '@playwright/test';
 // set"). The runner reads this config before it starts the workers (they inherit its env), so only
 // FORCE_COLOR remains – the runner's own colours are already decided at this point.
 delete process.env.NO_COLOR;
+
+// ADR-154: an E2E run must never stall the desktop – below-normal priority for the runner and, by
+// inheritance on Windows, for its workers, the test servers and headless Chrome.
+lowerProcessPriority();
 
 export default defineConfig({
   testDir: 'e2e',

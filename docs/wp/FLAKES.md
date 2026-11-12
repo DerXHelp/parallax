@@ -1,5 +1,11 @@
 # Flakes unter Parallel-Last – Protokoll und Fixes
 
+> **Abgeschafft seit 12.11.2026 (ADR-154):** künstliche Last (L1: mehrere `vitest run` gleichzeitig,
+> L2: zusätzlich CPU-Last-Skript) und „E2E unter Last“ – solche Läufe haben den Rechner des Nutzers
+> mehrfach für 10–15 s einfrieren lassen. Flakes nur noch durch wiederholte Läufe **nacheinander**
+> suchen; Vitest/Playwright/`pnpm build` laufen mit niedriger Priorität, Vitest mit höchstens 50 %
+> der CPUs. Die Fix-Muster unten gelten weiter.
+
 > Querschnittsauftrag „Tests lastrobust“. Worktree `.worktrees/fix-flakes`, Branch `fix/flakes`,
 > Basis `main` = `7380153`. Anlass: `pnpm check` wurde sporadisch rot, wenn mehrere Agenten
 > gleichzeitig testeten, und war beim zweiten Lauf grün.
