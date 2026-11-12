@@ -5,12 +5,13 @@ import { LIMITS } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import type { BlobRef } from '@shared/model';
 import { sampleBlobId, sampleBlobRef } from '@shared/samples';
+import { requestShell } from '@web/shell/requests';
 import { clientStore, resetClientStore } from '@web/state/store';
 import { DEMO_ENTRIES } from '../decisions/lib/demo-data';
 import { renderWithHost, type Harness } from '../decisions/lib/testing';
 import { Composer } from './Composer';
 import type { DecodedImage } from './lib/images';
-import { setAttachmentUploader, UploadError } from './lib/upload';
+import { setAttachmentUploader, UploadError, type UploadRequest } from './lib/upload';
 import {
   attachmentsOverTotal,
   resetAttachments,
@@ -47,6 +48,7 @@ function smallImages(): void {
 
 interface PendingUpload {
   name: string;
+  request: UploadRequest;
   resolve(ref: BlobRef): void;
   reject(error: ErrorPayload): void;
 }
@@ -55,10 +57,11 @@ interface PendingUpload {
 function controlledUploads(): PendingUpload[] {
   const pending: PendingUpload[] = [];
   setAttachmentUploader(
-    (image) =>
+    (request) =>
       new Promise<BlobRef>((resolve, reject) => {
         pending.push({
-          name: image.name,
+          name: request.name,
+          request,
           resolve,
           reject: (error) => {
             reject(new UploadError(error));
@@ -90,7 +93,7 @@ function sendButton(): HTMLButtonElement {
 }
 
 function chips(): HTMLElement[] {
-  const list = screen.queryByRole('list', { name: 'Attached images' });
+  const list = screen.queryByRole('list', { name: 'Attachments' });
   return list === null ? [] : within(list).getAllByRole('listitem');
 }
 
@@ -123,7 +126,7 @@ describe('image attachments (ADR-103, WP-37 §4)', () => {
     expect(within(chip).getByRole('group', { name: 'image.png: Uploading…' })).toBeTruthy();
     expect(chip.querySelector('img')?.getAttribute('src')).toMatch(/^blob:/);
     expect(sendButton().disabled).toBe(true);
-    expect(screen.getByText('Uploading images…')).toBeTruthy();
+    expect(screen.getByText('Uploading attachments…')).toBeTruthy();
     // Enter does not send while the upload runs.
     const user = userEvent.setup();
     await user.type(textbox(), 'look at this');
@@ -151,17 +154,18 @@ describe('image attachments (ADR-103, WP-37 §4)', () => {
     });
   });
 
-  it('a paste with text stays a text paste; other files: "only images"', () => {
+  it('a paste with text stays a text paste; other files become file chips (ADR-146)', async () => {
     smallImages();
-    controlledUploads();
+    const uploads = controlledUploads();
     start();
     paste([png('chart.png')], 'cell A1');
     expect(chips()).toEqual([]);
     paste([new File(['x'], 'notes.txt', { type: 'text/plain' })]);
-    expect(chips()).toEqual([]);
-    expect(clientStore.getState().notices.map((notice) => notice.content)).toEqual([
-      { text: 'composer.attachments.onlyImages' },
-    ]);
+    await waitFor(() => {
+      expect(uploads.map((upload) => upload.name)).toEqual(['notes.txt']);
+    });
+    expect(chips().map((chip) => chip.getAttribute('data-kind'))).toEqual(['file']);
+    expect(clientStore.getState().notices).toEqual([]);
   });
 
   it('drop and paper clip; 413/415 show on the chip and block sending until removed (button, Delete)', async () => {
@@ -173,13 +177,14 @@ describe('image attachments (ADR-103, WP-37 §4)', () => {
     if (root === null) throw new Error('no composer');
     fireEvent.dragEnter(root, { dataTransfer: { types: ['Files'], files: [] } });
     expect(document.querySelector('[data-slot="drop-target"]')?.textContent).toBe(
-      'Drop images to attach them',
+      'Drop files to attach them',
     );
     fireEvent.drop(root, { dataTransfer: { types: ['Files'], files: [png('big.png')] } });
     expect(document.querySelector('[data-slot="drop-target"]')).toBeNull();
     const input = document.querySelector<HTMLInputElement>('[data-slot="attach-input"]');
     if (input === null) throw new Error('no file input');
-    expect(input.accept).toBe('image/png,image/jpeg,image/webp,image/gif');
+    // ADR-146: the paper clip takes any file.
+    expect(input.hasAttribute('accept')).toBe(false);
     await user.upload(input, png('odd.png'));
     await waitFor(() => {
       expect(uploads).toHaveLength(2);
@@ -195,7 +200,7 @@ describe('image attachments (ADR-103, WP-37 §4)', () => {
     expect(within(chips()[1] ?? document.body).getByText('This file type is not supported.')).toBeTruthy();
     await user.type(textbox(), 'two images');
     expect(sendButton().disabled).toBe(true);
-    expect(screen.getByText('Remove the failed image to send.')).toBeTruthy();
+    expect(screen.getByText('Remove the failed attachment to send.')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Remove big.png' }));
     expect(chips()).toHaveLength(1);
     const focusable = screen.getByRole('group', { name: 'odd.png: Failed' });
@@ -270,13 +275,13 @@ describe('image attachments (ADR-103, WP-37 §4)', () => {
       true,
     ]);
     const last = chips().at(-1) ?? document.body;
-    expect(within(last).getByText('All images together over 20 MB')).toBeTruthy();
+    expect(within(last).getByText('Images and PDFs together over 20 MB')).toBeTruthy();
     expect(
       within(last).getByRole('group', {
-        name: `big-${String(count - 1)}.png: All images together over 20 MB`,
+        name: `big-${String(count - 1)}.png: Images and PDFs together over 20 MB`,
       }),
     ).toBeTruthy();
-    expect(screen.getByText('The images are too large together – remove one to send.')).toBeTruthy();
+    expect(screen.getByText('Images and PDFs are too large together – remove one to send.')).toBeTruthy();
     expect(sendButton().disabled).toBe(true);
     const user = userEvent.setup();
     await user.type(textbox(), 'many screenshots{Enter}');
@@ -292,6 +297,8 @@ describe('image attachments (ADR-103, WP-37 §4)', () => {
     const chip = (id: string, bytes: number | null): ComposerAttachment => ({
       id,
       name: `${id}.png`,
+      kind: 'image',
+      bytes: bytes ?? 0,
       previewUrl: null,
       status: bytes === null ? 'uploading' : 'done',
       failure: null,
@@ -316,7 +323,7 @@ describe('image attachments (ADR-103, WP-37 §4)', () => {
     await user.keyboard('{Enter}');
     expect(h.commands('session.setPermissionMode')).toEqual([]);
     expect(textbox().value).toBe('/plan write the tests first');
-    expect(screen.getByText('Uploading images…')).toBeTruthy();
+    expect(screen.getByText('Uploading attachments…')).toBeTruthy();
     act(() => {
       uploads[0]?.resolve(blob(3, 'plan.png'));
     });
@@ -342,7 +349,7 @@ describe('image attachments (ADR-103, WP-37 §4)', () => {
     expect(document.querySelector('[data-slot="composer-images-later"]')).toBeNull();
     paste([png('proof.png')]);
     const hint = await screen.findByText(
-      'The images stay for your next message – an answer is sent without them.',
+      'The attachments stay for your next message – an answer is sent without them.',
     );
     expect(textbox().getAttribute('aria-describedby')?.split(' ')).toContain(hint.closest('p')?.id);
   });
@@ -356,5 +363,156 @@ describe('image attachments (ADR-103, WP-37 §4)', () => {
       expect(chips()[0]?.getAttribute('data-status')).toBe('error');
     });
     expect(screen.getByText('The image could not be read.')).toBeTruthy();
+  });
+});
+
+/** A file that claims `size` bytes (no large buffers in tests). */
+function sized(name: string, type: string, size: number): File {
+  const file = new File([new Uint8Array([37, 80, 68, 70])], name, { type });
+  Object.defineProperty(file, 'size', { value: size });
+  return file;
+}
+
+/** An untyped `File` that cannot be read – how a folder arrives in a plain file list. */
+function folderFile(name: string): File {
+  const file = new File([], name, { type: '' });
+  Object.defineProperty(file, 'slice', {
+    value: () => ({ arrayBuffer: () => Promise.reject(new Error('NotReadableError')) }),
+  });
+  return file;
+}
+
+function noticeTexts(): unknown[] {
+  return clientStore.getState().notices.map((notice) => notice.content);
+}
+
+describe('PDFs and other files (ADR-146, WP-57)', () => {
+  it('a PDF goes raw as application/pdf, another file as octet-stream with its name; chips show kind and size', async () => {
+    const uploads = controlledUploads();
+    const h = start();
+    const pdf = sized('Review.pdf', 'application/pdf', 184_320);
+    const zip = sized('build.zip', 'application/zip', 2_400_000);
+    paste([pdf, zip]);
+    await waitFor(() => {
+      expect(uploads).toHaveLength(2);
+    });
+    expect(uploads.map(({ request }) => [request.type, request.name, request.blob, request.width])).toEqual([
+      ['application/pdf', 'Review.pdf', pdf, undefined],
+      ['application/octet-stream', 'build.zip', zip, undefined],
+    ]);
+    expect(chips().map((chip) => chip.getAttribute('data-kind'))).toEqual(['pdf', 'file']);
+    expect(screen.getByRole('group', { name: 'Review.pdf (PDF, 184 kB): Uploading…' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'build.zip (File, 2.4 MB): Uploading…' })).toBeTruthy();
+    expect(chips()[0]?.querySelector('img')).toBeNull();
+    act(() => {
+      uploads[0]?.resolve(
+        sampleBlobRef({
+          blobId: sampleBlobId(5),
+          mediaType: 'application/pdf',
+          bytes: 184_320,
+          name: 'Review.pdf',
+          width: null,
+          height: null,
+        }),
+      );
+      uploads[1]?.resolve(
+        sampleBlobRef({
+          blobId: sampleBlobId(6),
+          mediaType: 'application/octet-stream',
+          bytes: 2_400_000,
+          name: 'build.zip',
+          width: null,
+          height: null,
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(sendButton().disabled).toBe(false);
+    });
+    await userEvent.setup().click(sendButton());
+    expect(h.commands('session.sendPrompt')[0]?.prompt.attachments).toEqual([
+      { blobId: sampleBlobId(5) },
+      { blobId: sampleBlobId(6) },
+    ]);
+  });
+
+  it('over its limit a PDF or file is an error chip without an upload; 413/415 show on the chip', async () => {
+    const uploads = controlledUploads();
+    start();
+    paste([
+      sized('scan.pdf', 'application/pdf', LIMITS.pdfBytes + 1),
+      sized('dump.bin', '', LIMITS.fileAttachmentBytes + 1),
+      sized('ok.pdf', 'application/pdf', LIMITS.pdfBytes),
+      sized('odd.bin', 'application/x-thing', 10),
+    ]);
+    await waitFor(() => {
+      expect(uploads.map((upload) => upload.name)).toEqual(['ok.pdf', 'odd.bin']);
+    });
+    expect(chips().map((chip) => chip.getAttribute('data-status'))).toEqual([
+      'error',
+      'error',
+      'uploading',
+      'uploading',
+    ]);
+    expect(within(chips()[0] ?? document.body).getByText('File too large (max. 10 MB)')).toBeTruthy();
+    expect(within(chips()[1] ?? document.body).getByText('File too large (max. 10 MB)')).toBeTruthy();
+    act(() => {
+      uploads[0]?.reject(makeError('PAYLOAD_TOO_LARGE'));
+      uploads[1]?.reject(makeError('UNSUPPORTED_MEDIA_TYPE'));
+    });
+    await waitFor(() => {
+      expect(within(chips()[2] ?? document.body).getByText('The data is too large.')).toBeTruthy();
+    });
+    expect(within(chips()[3] ?? document.body).getByText('This file type is not supported.')).toBeTruthy();
+    expect(screen.getByText('Remove the failed attachment to send.')).toBeTruthy();
+  });
+
+  it('a dropped folder is left out with a hint; the files of the drop are attached', async () => {
+    const uploads = controlledUploads();
+    start();
+    const root = document.querySelector<HTMLElement>('[data-slot="composer"]');
+    if (root === null) throw new Error('no composer');
+    const notes = new File(['# notes'], 'notes.md', { type: 'text/markdown' });
+    fireEvent.drop(root, {
+      dataTransfer: {
+        types: ['Files'],
+        files: [notes],
+        items: [
+          { kind: 'file', getAsFile: () => null, webkitGetAsEntry: () => ({ isDirectory: true }) },
+          { kind: 'file', getAsFile: () => notes, webkitGetAsEntry: () => ({ isDirectory: false }) },
+        ],
+      },
+    });
+    await waitFor(() => {
+      expect(uploads.map((upload) => upload.name)).toEqual(['notes.md']);
+    });
+    expect(noticeTexts()).toEqual([{ text: 'composer.attachments.folders' }]);
+  });
+
+  it('the shell request attachFiles takes the same way (folders probed); empty or foreign requests pass on', async () => {
+    const uploads = controlledUploads();
+    const h = start();
+    const key = h.key('idle');
+    const pdf = sized('Plan.pdf', 'application/pdf', 2048);
+    const readable = new File(['all:'], 'Makefile', { type: '' });
+    expect(requestShell({ kind: 'attachFiles', sessionKey: key, files: [] })).toBe(false);
+    expect(requestShell({ kind: 'attachFiles', sessionKey: `${key}-other`, files: [pdf] })).toBe(false);
+    let handled = false;
+    act(() => {
+      handled = requestShell({
+        kind: 'attachFiles',
+        sessionKey: key,
+        files: [pdf, folderFile('src'), readable],
+      });
+    });
+    expect(handled).toBe(true);
+    await waitFor(() => {
+      expect(uploads.map((upload) => [upload.name, upload.request.type])).toEqual([
+        ['Plan.pdf', 'application/pdf'],
+        ['Makefile', 'application/octet-stream'],
+      ]);
+    });
+    expect(noticeTexts()).toEqual([{ text: 'composer.attachments.folders' }]);
+    expect(document.activeElement).toBe(textbox());
   });
 });

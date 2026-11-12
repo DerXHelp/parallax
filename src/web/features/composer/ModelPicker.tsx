@@ -25,7 +25,7 @@ import {
   DropdownMenuTrigger,
 } from '@web/ui/dropdown-menu';
 import { Spinner } from '@web/ui/spinner';
-import { currentModelOption, DEFAULT_MODEL_VALUE } from './lib/models';
+import { currentModelOption, DEFAULT_MODEL_VALUE, groupModels } from './lib/models';
 
 const DEFAULT_EFFORT = 'default';
 
@@ -58,7 +58,8 @@ export interface ModelPickerProps {
  * session detail (`detail.models`, loaded with `session.refreshModels` on first open when
  * missing); effort only when the model supports it, fast mode only when the model offers it
  * (`session.setFastMode`). The label shows the model setting, else the last model seen (F.6).
- * `/model` and `/effort` open it from the composer (controlled `open`, `section`).
+ * `/model` and `/effort` open it from the composer (controlled `open`, `section`). WP-57: aliases
+ * (`default`, `opus` …) first, the full model ids under "More models"; the model list scrolls.
  */
 export const ModelPicker = memo(function ModelPicker({
   sessionKey,
@@ -120,6 +121,23 @@ export const ModelPicker = memo(function ModelPicker({
       setLoad('failed');
     }
   };
+
+  const groups = groupModels(models ?? []);
+  const renderModel = (model: ModelOption) => (
+    <DropdownMenuRadioItem key={model.value} value={model.value} className="items-start">
+      <span className="grid min-w-0 gap-0.5">
+        <span>{model.displayName}</span>
+        {model.description === '' ? null : (
+          <span className="text-muted-foreground text-2xs">{model.description}</span>
+        )}
+        {model.value === DEFAULT_MODEL_VALUE && actualForDefault !== null ? (
+          <span data-slot="model-actual" className="text-muted-foreground text-2xs">
+            {t('composer.model.actual', { model: actualForDefault })}
+          </span>
+        ) : null}
+      </span>
+    </DropdownMenuRadioItem>
+  );
 
   const effortOnly = section === 'effort';
   const effortGroup =
@@ -202,6 +220,9 @@ export const ModelPicker = memo(function ModelPicker({
           </DropdownMenuItem>
         ) : (
           <DropdownMenuRadioGroup
+            data-slot="model-list"
+            // WP-57: 14 entries (CLI 2.1.322) – the list scrolls, effort and fast mode stay in view.
+            className="max-h-[min(20rem,50vh)] overflow-y-auto"
             value={current?.value ?? ''}
             onValueChange={(value) => {
               const option = models.find((model) => model.value === value);
@@ -210,21 +231,14 @@ export const ModelPicker = memo(function ModelPicker({
               void run((entryId) => ({ name: 'session.setModel', entryId, model }));
             }}
           >
-            {models.map((model) => (
-              <DropdownMenuRadioItem key={model.value} value={model.value} className="items-start">
-                <span className="grid min-w-0 gap-0.5">
-                  <span>{model.displayName}</span>
-                  {model.description === '' ? null : (
-                    <span className="text-muted-foreground text-2xs">{model.description}</span>
-                  )}
-                  {model.value === DEFAULT_MODEL_VALUE && actualForDefault !== null ? (
-                    <span data-slot="model-actual" className="text-muted-foreground text-2xs">
-                      {t('composer.model.actual', { model: actualForDefault })}
-                    </span>
-                  ) : null}
-                </span>
-              </DropdownMenuRadioItem>
-            ))}
+            {groups.aliases.map(renderModel)}
+            {groups.aliases.length > 0 && groups.fullIds.length > 0 ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel data-slot="model-more">{t('composer.model.more')}</DropdownMenuLabel>
+              </>
+            ) : null}
+            {groups.fullIds.map(renderModel)}
           </DropdownMenuRadioGroup>
         )}
         {effortOnly ? null : effortGroup}

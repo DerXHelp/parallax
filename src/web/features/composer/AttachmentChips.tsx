@@ -1,32 +1,43 @@
-import { CircleAlertIcon, ImageIcon, XIcon } from 'lucide-react';
-import { memo, useRef, type KeyboardEvent } from 'react';
+import { CircleAlertIcon, FileIcon, FileTextIcon, ImageIcon, XIcon } from 'lucide-react';
+import { createElement, memo, useRef, type KeyboardEvent } from 'react';
 import { LIMITS } from '@shared/common';
 import { useI18n } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { IconButton } from '@web/ui/icon-button';
 import { Spinner } from '@web/ui/spinner';
+import { formatFileSize } from './lib/format';
 import {
   attachmentsOverTotal,
   removeAttachment,
   useAttachments,
+  type AttachmentKind,
   type ComposerAttachment,
 } from './state/attachments';
 
+const KIND_ICONS = { image: ImageIcon, pdf: FileTextIcon, file: FileIcon } satisfies Record<
+  AttachmentKind,
+  unknown
+>;
+
 function useFailureText(): (attachment: ComposerAttachment) => string | null {
-  const { t, tError } = useI18n();
+  const { t, tError, format } = useI18n();
   return (attachment) => {
     const failure = attachment.failure;
     if (failure === null) return null;
     if ('problem' in failure) return t(`composer.attachments.problem.${failure.problem}`);
+    if ('tooLarge' in failure) {
+      return t('composer.attachments.fileTooLarge', { max: formatFileSize(failure.tooLarge, format) });
+    }
     return tError(failure.error);
   };
 }
 
 /**
- * Image chips above the message field (ADR-103, WP-37 §4): preview (object URL of the picked
- * file), name, state (preparing/uploading with a spinner, error text), remove via the × button or
- * Delete/Backspace on the focused chip – the focus then moves to the next chip or the field.
- * Chips beyond the total limit of one message (ADR-125) show that error too.
+ * Attachment chips above the message field (ADR-103/146, WP-37 §4, WP-57): an image shows its
+ * preview (object URL of the picked file), a PDF or other file an icon with its size; name and
+ * state (preparing/uploading with a spinner, error text – also "File too large (max. …)" and the
+ * total limit of images and PDFs, ADR-125). Remove via the × button or Delete/Backspace on the
+ * focused chip – the focus then moves to the next chip or the field.
  */
 export const AttachmentChips = memo(function AttachmentChips({
   sessionKey,
@@ -45,13 +56,7 @@ export const AttachmentChips = memo(function AttachmentChips({
   const overTotalText =
     overTotal.size === 0
       ? null
-      : t('composer.attachments.overTotal', {
-          max: format.number(LIMITS.attachmentsTotalBytes / 1_000_000, {
-            style: 'unit',
-            unit: 'megabyte',
-            maximumFractionDigits: 1,
-          }),
-        });
+      : t('composer.attachments.overTotal', { max: formatFileSize(LIMITS.attachmentsTotalBytes, format) });
 
   const remove = (index: number, id: string) => {
     removeAttachment(sessionKey, id);
@@ -83,10 +88,22 @@ export const AttachmentChips = memo(function AttachmentChips({
         const invalid = attachment.status === 'error' || tooMuch;
         const status = t(`composer.attachments.status.${attachment.status}`);
         const busy = attachment.status === 'preparing' || attachment.status === 'uploading';
+        const isImage = attachment.kind === 'image';
+        const size = formatFileSize(attachment.bytes, format);
+        const shownStatus = tooMuch ? (failure ?? status) : status;
+        const label = isImage
+          ? t('composer.attachments.chip', { name: attachment.name, status: shownStatus })
+          : t('composer.attachments.chipFile', {
+              name: attachment.name,
+              kind: t(`composer.attachments.kind.${attachment.kind}`),
+              size,
+              status: shownStatus,
+            });
         return (
           <li
             key={attachment.id}
             data-slot="attachment-chip"
+            data-kind={attachment.kind}
             data-status={attachment.status}
             data-over-total={tooMuch ? '' : undefined}
             className={cn(
@@ -98,10 +115,7 @@ export const AttachmentChips = memo(function AttachmentChips({
               tabIndex={0}
               data-chip-focus=""
               role="group"
-              aria-label={t('composer.attachments.chip', {
-                name: attachment.name,
-                status: tooMuch ? (failure ?? status) : status,
-              })}
+              aria-label={label}
               title={failure ?? attachment.name}
               onKeyDown={(event) => {
                 onKeyDown(event, index, attachment.id);
@@ -110,7 +124,10 @@ export const AttachmentChips = memo(function AttachmentChips({
             >
               {attachment.previewUrl === null ? (
                 <span className="bg-muted flex size-8 shrink-0 items-center justify-center rounded-sm">
-                  <ImageIcon aria-hidden className="text-muted-foreground size-4" />
+                  {createElement(KIND_ICONS[attachment.kind], {
+                    'aria-hidden': true,
+                    className: 'text-muted-foreground size-4',
+                  })}
                 </span>
               ) : (
                 <img
@@ -129,6 +146,16 @@ export const AttachmentChips = memo(function AttachmentChips({
                 >
                   {busy ? <Spinner className="size-3" label={status} /> : null}
                   {invalid ? <CircleAlertIcon aria-hidden className="size-3 shrink-0" /> : null}
+                  {isImage || invalid ? null : (
+                    <span data-slot="attachment-size" className="shrink-0 tabular-nums">
+                      {size}
+                    </span>
+                  )}
+                  {isImage || invalid ? null : (
+                    <span aria-hidden className="shrink-0">
+                      ·
+                    </span>
+                  )}
                   <span className="truncate">{failure ?? status}</span>
                 </span>
               </span>
