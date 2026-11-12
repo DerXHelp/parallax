@@ -64,6 +64,7 @@ import type {
   StatusEvent,
 } from './ports';
 import type { estimateContextGauge } from './normalizer';
+import type { PlanIndexedDecisionStore } from './planIndex';
 import type { ProcessStore } from './processStore';
 import { PromptQueue } from './promptQueue';
 import { INITIAL_RETRY_STATE, type AutoRetryPolicy, type RetryState } from './retry';
@@ -124,6 +125,11 @@ export interface SessionManagerOptions {
    * sent at the next start when it is at most this overdue; older plans are dropped. Default 3 600 000.
    */
   continueGraceMs: number;
+  /**
+   * WP61-03 (ADR-147): "implement with a fresh context" waits this long for the `result` of the
+   * denied planning turn (its cost and usage) before it closes the process. Default 3000.
+   */
+  freshContextResultMs: number;
 }
 
 export interface EngineStores {
@@ -152,9 +158,13 @@ export interface EngineStores {
   attachments?: AttachmentFileStore;
 }
 
-/** The stores as the engine uses them: the in-memory fallbacks filled in, no file store = null. */
-export type EngineCoreStores = Required<Omit<EngineStores, 'attachments'>> & {
+/**
+ * The stores as the engine uses them: the in-memory fallbacks filled in, no file store = null; the
+ * decision store knows which plan versions exist (CR3-09, planIndex.ts).
+ */
+export type EngineCoreStores = Required<Omit<EngineStores, 'attachments' | 'decisions'>> & {
   readonly attachments: AttachmentFileStore | null;
+  readonly decisions: PlanIndexedDecisionStore;
 };
 
 export interface NormalizerFns {

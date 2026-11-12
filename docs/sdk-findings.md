@@ -734,12 +734,16 @@ CLI 2.1.322, SDK 0.3.322, Haiku, Abo-Login (`apiKeySource: none`). Belege und Ko
 
 - **`@` im SDK-Prompt:** Die CLI expandiert `@pfad` auch in Prompts, die per SDK (stream-json) ohne
   `client_composed` kommen. Ein Plantext mit `@README.md` erzeugt ein Datei-Attachment samt Read
-  (WP61-01).
+  (WP61-01). Regel der CLI 2.1.322 (aus dem Binary): ohne Anführungszeichen ein Token aus `[^\s]+`,
+  dessen `@` am Tokenanfang oder direkt nach 。、？！ steht; mit Anführungszeichen
+  `(^|[\s。、？！])@"([^"]+)"`. U+200B ist kein `\s` – ein vorangestelltes U+200B verhindert die
+  Expansion (Fix CR3-S, ADR-155).
 - **Aufgabenliste:** `todoFeatureEnabled` (Flag-Settings, nach dem Start angewendet) bewirkt nichts.
   Weder `TodoWrite` noch `TaskCreate` stehen in `init.tools` oder unter den deferred Tools (WP61-02).
 - **Plan-Modus:** läuft trotz `ANTHROPIC_MODEL=haiku` auf `claude-sonnet-5-5` (Punkt 5). Wird der
   Prozess nach der Plan-Freigabe geschlossen (frischer Kontext), kommt kein `result` und damit kein
-  `total_cost_usd` für die Planung (WP61-03).
+  `total_cost_usd` für die Planung (WP61-03). Seit CR3-S wartet die Engine nach `deny + interrupt` bis zu
+  3 s auf das `result`; live noch nicht bestätigt.
 - **`credential_expires_at`** kam live in keinem `result` an, das Parallax geloggt hätte; Parallax
   schreibt das Feld nirgends hin (WP61-04).
 - **Bash-Tool:** Ein alleinstehendes `sleep N` wird blockiert (Hinweis der CLI: auf eine Bedingung

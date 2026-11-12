@@ -1243,9 +1243,10 @@ class LiveNormalizerImpl implements LiveNormalizer {
           return;
         }
         const d = t.data;
+        // WP61-07: `description` here is the CLI's current activity ("Running <tool description>",
+        // CLI 2.1.322), not the task's name – TaskInfo has no activity field, so it is dropped.
         this.updateTask(d.task_id, d.tool_use_id, (task) => ({
           ...task,
-          description: d.description ?? task.description,
           subagentType: d.subagent_type ?? task.subagentType,
           summary: d.summary ?? task.summary,
           usage: taskUsage(d.usage) ?? task.usage,

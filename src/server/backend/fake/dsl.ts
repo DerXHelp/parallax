@@ -684,10 +684,14 @@ export function backgroundTasksChanged(
   return toEvents([backgroundTasksStep(c, tasks)]);
 }
 
-/** Phase 3: `system/task_progress` of a running agent (with `agentProgressSummaries`: a summary). */
+/**
+ * Phase 3: `system/task_progress` of a running agent (with `agentProgressSummaries`: a summary).
+ * `activity` goes into `description` like the CLI does: its current activity ("Running <tool
+ * description>", CLI 2.1.322, WP61-07) – not the task's name.
+ */
 export function taskProgress(
   c: DslContext,
-  spec: { taskId: string; toolUseId: string; description: string; summary: string; usage: TaskUsageSpec },
+  spec: { taskId: string; toolUseId: string; activity: string; summary: string; usage: TaskUsageSpec },
 ): FixtureEvent[] {
   return toEvents([
     frame(
@@ -695,7 +699,7 @@ export function taskProgress(
       system(0, 'task_progress', {
         task_id: spec.taskId,
         tool_use_id: spec.toolUseId,
-        description: spec.description,
+        description: spec.activity,
         subagent_type: 'general-purpose',
         summary: spec.summary,
         usage: usageFrame(spec.usage),

@@ -3,6 +3,7 @@ import { ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
+import { pino, type Logger } from 'pino';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { SAMPLE_IDS, sampleId, sampleUuid } from '@shared/samples';
 import type { LaunchSpec } from '../claude/ports';
@@ -201,6 +202,8 @@ interface HarnessOptions {
   kill?: (pid: number) => Promise<void>;
   timeouts?: Partial<SdkTimeouts>;
   history?: HistoryPool;
+  /** Backend logger (default: the module logger). */
+  logger?: Logger;
   /** Adjust the fake query before start() continues (readiness, failing calls …). */
   configure?: (q: FakeQuery) => void;
 }
@@ -249,6 +252,7 @@ function harness(p: HarnessOptions = {}) {
     history,
     now: () => NOW,
     ...(p.timeouts === undefined ? {} : { timeouts: p.timeouts }),
+    ...(p.logger === undefined ? {} : { logger: p.logger }),
   });
   backends.push(backend);
   const fq = (index = 0): FakeQuery => {
@@ -1007,18 +1011,20 @@ describe('SdkBackend – autoCompactWindow with a settings file (C.1)', () => {
     expect(h.fq().applyFlagSettings).not.toHaveBeenCalled();
     readiness.resolve([]);
     await settle();
-    expect(h.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({
-      autoCompactWindow: 400_000,
-      todoFeatureEnabled: true,
-    });
+    expect(h.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({ autoCompactWindow: 400_000 });
   });
 
-  it('Phase 3: a settings file alone still gets todoFeatureEnabled after the start (WP-52)', async () => {
+  it('WP61-02: a settings file alone gets no flag settings after the start (no todoFeatureEnabled)', async () => {
     const h = harness();
     h.backend.start(request({ launch: launch({ sdkOptions: { settings: 'D:\\cfg\\settings.json' } }) }));
     await settle();
     expect(h.fq().options.settings).toBe('D:\\cfg\\settings.json');
-    expect(h.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({ todoFeatureEnabled: true });
+    expect(h.fq().applyFlagSettings).not.toHaveBeenCalled();
+    const plain = harness();
+    plain.backend.start(request());
+    await settle();
+    expect(plain.fq().options).not.toHaveProperty('settings');
+    expect(plain.fq().applyFlagSettings).not.toHaveBeenCalled();
   });
 
   it('waits up to readyMs (not controlMs) for the readiness before the flag settings (R2-04)', async () => {
@@ -1034,10 +1040,7 @@ describe('SdkBackend – autoCompactWindow with a settings file (C.1)', () => {
     await vi.advanceTimersByTimeAsync(SDK_TIMEOUTS.controlMs + 1);
     readiness.resolve([]);
     await settle();
-    expect(h.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({
-      autoCompactWindow: 400_000,
-      todoFeatureEnabled: true,
-    });
+    expect(h.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({ autoCompactWindow: 400_000 });
     expect(rec.events.some((event) => event.type === 'error')).toBe(false);
   });
 
@@ -1045,7 +1048,7 @@ describe('SdkBackend – autoCompactWindow with a settings file (C.1)', () => {
     const h = harness();
     h.backend.start(request({ launch: launch({ autoCompactWindow: 400_000 }) }));
     await settle();
-    expect(h.fq().options.settings).toEqual({ autoCompactWindow: 400_000, todoFeatureEnabled: true });
+    expect(h.fq().options.settings).toEqual({ autoCompactWindow: 400_000 });
     expect(h.fq().applyFlagSettings).not.toHaveBeenCalled();
   });
 
@@ -1053,7 +1056,7 @@ describe('SdkBackend – autoCompactWindow with a settings file (C.1)', () => {
     const inline = harness();
     inline.backend.start(request({ fastMode: true }));
     await settle();
-    expect(inline.fq().options.settings).toEqual({ fastMode: true, todoFeatureEnabled: true });
+    expect(inline.fq().options.settings).toEqual({ fastMode: true });
     expect(inline.fq().applyFlagSettings).not.toHaveBeenCalled();
     const file = harness();
     file.backend.start(request({ fastMode: false, launch: both }));
@@ -1062,7 +1065,6 @@ describe('SdkBackend – autoCompactWindow with a settings file (C.1)', () => {
     expect(file.fq().applyFlagSettings).toHaveBeenCalledExactlyOnceWith({
       autoCompactWindow: 400_000,
       fastMode: false,
-      todoFeatureEnabled: true,
     });
   });
 
@@ -1081,6 +1083,64 @@ describe('SdkBackend – autoCompactWindow with a settings file (C.1)', () => {
       where: 'control',
       message: 'unknown setting',
     });
+  });
+});
+
+describe('SdkBackend – credential expiry in the log (WP61-04, B15)', () => {
+  const EXPIRY_MSG = 'first result: credential expiry';
+
+  function capture() {
+    const lines: string[] = [];
+    const logger = pino({ level: 'debug' }, { write: (line: string) => lines.push(line) });
+    const expiry = () =>
+      lines
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter((line) => line.msg === EXPIRY_MSG);
+    return { logger, expiry };
+  }
+
+  const resultMessage = (extra: Record<string, unknown>) => ({
+    type: 'result',
+    subtype: 'success',
+    is_error: false,
+    total_cost_usd: 0.002,
+    session_id: SAMPLE_IDS.sessionId,
+    ...extra,
+  });
+
+  it('one debug line at the first result of a process – only the expiry, nothing else of the result', async () => {
+    const { logger, expiry } = capture();
+    const h = harness({ logger });
+    const session = h.backend.start(request());
+    const rec = record(session);
+    h.fq().push(
+      { type: 'system', subtype: 'init', session_id: SAMPLE_IDS.sessionId },
+      resultMessage({ credential_expires_at: '2026-12-10T08:00:00.000Z' }),
+      resultMessage({ credential_expires_at: '2026-12-11T08:00:00.000Z' }),
+    );
+    await settle();
+    expect(rec.events.filter((event) => event.type === 'message')).toHaveLength(3);
+    const lines = expiry();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      level: 20,
+      entryId: SAMPLE_IDS.entry,
+      credentialExpiresAt: '2026-12-10T08:00:00.000Z',
+    });
+    expect(Object.keys(lines[0] ?? {}).sort()).toEqual(
+      ['credentialExpiresAt', 'entryId', 'hostname', 'level', 'module', 'msg', 'pid', 'time'].sort(),
+    );
+  });
+
+  it('a result without the field logs null; every process logs its own first result', async () => {
+    const { logger, expiry } = capture();
+    const h = harness({ logger });
+    h.backend.start(request());
+    h.fq().push(resultMessage({}), resultMessage({ credential_expires_at: '2026-12-10T08:00:00.000Z' }));
+    h.backend.start(request());
+    h.fq(1).push(resultMessage({ credential_expires_at: 42 }));
+    await settle();
+    expect(expiry().map((line) => line.credentialExpiresAt)).toEqual([null, null]);
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createManualTimers, realTimers } from './timers';
+import { createManualTimers, realTimers, settledWithin } from './timers';
 
 const realSetImmediate = setImmediate;
 const macrotask = () =>
@@ -57,5 +57,23 @@ describe('createManualTimers', () => {
     });
     expect(callback).toHaveBeenCalledTimes(1);
     expect(cancelled).not.toHaveBeenCalled();
+  });
+});
+
+describe('settledWithin', () => {
+  it('true when the work settles first (also rejected) – the cap timer is gone', async () => {
+    const timers = createManualTimers();
+    expect(await settledWithin(timers, Promise.resolve('x'), 3_000)).toBe(true);
+    expect(await settledWithin(timers, Promise.reject(new Error('boom')), 3_000)).toBe(true);
+    expect(timers.pending()).toEqual([]);
+  });
+
+  it('false once the cap elapsed on the engine clock', async () => {
+    const timers = createManualTimers();
+    const result = settledWithin(timers, new Promise<void>(() => undefined), 3_000);
+    expect(timers.pending().map((t) => t.ms)).toEqual([3_000]);
+    timers.advance(3_000);
+    expect(await result).toBe(false);
+    expect(timers.pending()).toEqual([]);
   });
 });

@@ -367,7 +367,10 @@ function hasStoppableTask(s: EntryState, taskId: string): boolean {
   );
 }
 
-/** ADR-148: every kept record with a plan version, ascending; `stored` = plans/v<N>.md readable. */
+/**
+ * ADR-148: every kept record with a plan version, ascending; `stored` = plans/v<N>.md exists (CR3-09:
+ * known versions without reading their text, planIndex.ts).
+ */
 async function planList(core: EngineCore, s: EntryState): Promise<CommandResult<'plan.list'>> {
   const versions = await Promise.all(
     s.broker.planRecords().map(async (record) => ({
@@ -386,7 +389,7 @@ async function planList(core: EngineCore, s: EntryState): Promise<CommandResult<
 
 async function planStored(core: EngineCore, entryId: string, version: number): Promise<boolean> {
   try {
-    return (await core.stores.decisions.readPlan(entryId, version)) !== null;
+    return await core.stores.decisions.planStored(entryId, version);
   } catch (error) {
     core.log.warn({ err: error, entryId, version }, 'plan version unreadable');
     return false;

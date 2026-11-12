@@ -42,12 +42,14 @@ import {
   type DslContext,
 } from '../backend/fake/dsl';
 import { FAKE_SHOT_PNG_BASE64 } from '../backend/fake/image';
+import { interactiveScenario } from '../backend/fake/interactive';
 import { FAKE_BACKGROUND_MS } from '../backend/fake/phase3';
 import { implementPlanText } from '../backend/fake/plan';
 import { CANCEL_DENY, abortedByDecision, ask, type Turn } from '../backend/fake/turn';
 import type { StartSessionRequest } from '../backend/types';
 import { nextMacrotask } from '../lib/async';
 import { CommandError } from '../sync/ports';
+import { EntryState } from './entryState';
 import { system } from './normalizer/synthetic/build';
 import { MEMORY_ATTACHMENTS_HOME } from './testing/memoryStores';
 import {
@@ -230,9 +232,14 @@ const HOLD_BACKGROUND: EngineHarnessOptions['fakeTiming'] = {
 
 /**
  * Rule (a) on its own: the plan file is written in the default mode (rule b does not apply), the
- * `ExitPlanMode` request with its `planFilePath` comes afterwards.
+ * `ExitPlanMode` request with its `planFilePath` comes afterwards. `resultAfterDeny: false` = a CLI
+ * that never ends the denied turn with a `result` (WP61-03: the engine waits only so long).
  */
-function retroPlanScenario(planFilePath: string): FakeScenario {
+function retroPlanScenario(
+  planFilePath: string,
+  plan = '# Plan',
+  o: { resultAfterDeny?: boolean } = {},
+): FakeScenario {
   return {
     kind: 'script',
     name: 'retro-plan',
@@ -244,17 +251,18 @@ function retroPlanScenario(planFilePath: string): FakeScenario {
       await ctx.play(
         join(
           turnOpen(c, prompt.uuid),
-          toolUseBlock(c, 'Write', { file_path: planFilePath, content: '# Plan' }, { toolUseId: writeId }),
+          toolUseBlock(c, 'Write', { file_path: planFilePath, content: plan }, { toolUseId: writeId }),
           toolResultMessage(c, writeId, `File created successfully at: ${planFilePath}`),
         ),
       );
       const exitId = c.ids.toolUseId();
-      const input = { plan: '# Plan', planFilePath };
+      const input = { plan, planFilePath };
       await ctx.play(toolUseBlock(c, 'ExitPlanMode', input, { toolUseId: exitId }));
       const result = await ask(ctx, c, turn, 'ExitPlanMode', input, exitId, {
         requiresUserInteraction: true,
       });
       if (CANCEL_DENY(result)) {
+        if (o.resultAfterDeny === false) await new Promise<void>(() => undefined);
         await abortedByDecision(ctx, c, turn);
         return;
       }
@@ -267,6 +275,17 @@ function retroPlanScenario(planFilePath: string): FakeScenario {
       );
     },
   };
+}
+
+/** Records the version of every `readPlan` on the (shared, also after a restart) decision store. */
+function recordPlanReads(h: EngineHarness): number[] {
+  const versions: number[] = [];
+  const readPlan = h.stores.decisions.readPlan.bind(h.stores.decisions);
+  h.stores.decisions.readPlan = (entryId, version) => {
+    versions.push(version);
+    return readPlan(entryId, version);
+  };
+  return versions;
 }
 
 /** Prompt of an attachment command (sendPrompt). */
@@ -734,6 +753,38 @@ describe('plan versions (ADR-148)', () => {
     expect(detailPatches(next, entryId).some((p) => p.latestPlanVersion === 2)).toBe(true);
   });
 
+  it('CR3-09: plan.list reads a plan file at most once per server run (saved or read before = known)', async () => {
+    const h = await setup();
+    const { entryId, decision: v1 } = await planEntry(h);
+    await respondPlan(h, entryId, v1.id, { behavior: 'revise', feedback: 'Add a test step' });
+    const v2 = await openPlan(h, entryId, 2);
+    await respondPlan(h, entryId, v2.id, { behavior: 'approve', mode: 'default' });
+    await untilIdle(h, entryId);
+    const listed = async (harness: EngineHarness) =>
+      (await harness.cmd({ name: 'plan.list', entryId })).versions.map((v) => [v.version, v.stored]);
+    const reads = recordPlanReads(h);
+    expect(await listed(h)).toEqual([
+      [1, true],
+      [2, true],
+    ]);
+    expect(await listed(h)).toEqual([
+      [1, true],
+      [2, true],
+    ]);
+    // Both versions were written in this run: plan.list reads no plan file.
+    expect(reads).toEqual([]);
+
+    const next = await restart(h);
+    const after = recordPlanReads(next);
+    for (let i = 0; i < 3; i += 1) {
+      expect(await listed(next)).toEqual([
+        [1, true],
+        [2, true],
+      ]);
+    }
+    for (const version of [1, 2]) expect(after.filter((v) => v === version).length).toBeLessThanOrEqual(1);
+  });
+
   it('external and seeded: a missing or unreadable file → stored false, plan.read PLAN_NOT_FOUND', async () => {
     const entry = sampleEntry({ lastRunState: 'external', external: sampleExternalHandoff() });
     const approved: DecisionRecord = sampleDecisionRecord({
@@ -769,10 +820,13 @@ describe('plan versions (ADR-148)', () => {
           { entryId: entry.id, version: 3, text: '# Plan v3' },
         ],
       },
+      // v3 is unreadable from the start (the server start already reads the newest plan, CR3-09).
+      start: false,
     });
     const readPlan = h.stores.decisions.readPlan.bind(h.stores.decisions);
     h.stores.decisions.readPlan = (entryId, version) =>
       version === 3 ? Promise.reject(new Error('EACCES')) : readPlan(entryId, version);
+    await h.manager.start();
     const { versions } = await h.cmd({ name: 'plan.list', entryId: entry.id });
     expect(versions.map((v) => [v.version, v.stored, v.outcome?.type])).toEqual([
       [1, true, 'plan_approved'],
@@ -1105,6 +1159,9 @@ describe('approve_fresh_context (ADR-147)', () => {
       endReason: 'fresh_session',
     });
     expect(entry?.conversations[0]?.endedAt).not.toBeNull();
+    // WP61-03: the denied planning turn ended with its result before the close – its cost counts.
+    expect(entry?.conversations[0]?.costUsd ?? null).not.toBeNull();
+    expect(entry?.conversations[0]?.costUsd ?? 0).toBeGreaterThan(0);
     expect(entry?.conversations[1]).toMatchObject({
       id: reset?.conversationId,
       endedAt: null,
@@ -1222,6 +1279,79 @@ describe('approve_fresh_context (ADR-147)', () => {
     ).toEqual({ code: 'SESSION_BUSY', params: { entryId } });
     expect((await h.decisions(entryId)).map((d) => d.state)).toEqual(['open']);
     expect(h.sessions(entryId)).toHaveLength(1);
+  });
+
+  it('CR3-08: refused inside the lock (SESSION_BUSY) → the auto-retry is not touched', async () => {
+    // CR-06: the shutdown ends a waiting session with queued work by taskkill – here the fake exits.
+    const holder: { h: EngineHarness | null } = { h: null };
+    const h = await setup({
+      proc: {
+        killProcessTree: (pid) => {
+          holder.h?.backend.sessions.find((s) => s.pid === pid && s.state !== 'exited')?.crash(1);
+          return Promise.resolve();
+        },
+      },
+    });
+    holder.h = h;
+    const { entryId, decision } = await planEntry(h);
+    await h.cmd({ name: 'session.sendPrompt', entryId, prompt: { text: 'Also update the docs' } });
+    const cancelRetry = vi.spyOn(EntryState.prototype, 'cancelRetry');
+    try {
+      expect(
+        await respondPlanError(h, entryId, decision.id, { behavior: 'approve_fresh_context', mode: 'default' }),
+      ).toEqual({ code: 'SESSION_BUSY', params: { entryId } });
+      expect(cancelRetry).not.toHaveBeenCalled();
+    } finally {
+      cancelRetry.mockRestore();
+    }
+  });
+
+  it('CR3-08: an accepted request still cancels the auto-retry (once, inside the lock)', async () => {
+    const h = await setup();
+    const { entryId, decision } = await planEntry(h);
+    const cancelRetry = vi.spyOn(EntryState.prototype, 'cancelRetry');
+    try {
+      await respondPlan(h, entryId, decision.id, { behavior: 'approve_fresh_context', mode: 'default' });
+      expect(cancelRetry).toHaveBeenCalledOnce();
+    } finally {
+      cancelRetry.mockRestore();
+    }
+    expect(h.manager.inspect(entryId)?.retryScheduled).toBe(false);
+    await untilIdle(h, entryId);
+  });
+
+  it('WP61-01: `@` mentions of the plan reach the fresh session neutralized (U+200B); the plan file keeps them', async () => {
+    const planPath = `${HARNESS_CWD}\\PLAN.md`;
+    const plan = '# Plan\n\n1. Read @README.md\n2. Update @"docs/my notes.md" (mail dev@example.com)\n';
+    const h = await setup({ scenario: (_req, n) => (n === 0 ? retroPlanScenario(planPath, plan) : interactiveScenario()) });
+    const entryId = await h.create('plan it');
+    const decision = await openPlan(h, entryId);
+    expect(decision.plan).toBe(plan);
+    await respondPlan(h, entryId, decision.id, { behavior: 'approve_fresh_context', mode: 'default' });
+    const neutral = '# Plan\n\n1. Read \u200b@README.md\n2. Update \u200b@"docs/my notes.md" (mail dev@example.com)\n';
+    expect(h.session(entryId).sent[0]?.content).toEqual([{ type: 'text', text: freshPrompt(neutral, planPath) }]);
+    expect(h.stores.decisions.plan(entryId, 1)).toBe(plan);
+    await untilIdle(h, entryId);
+  });
+
+  it('WP61-03: without a result of the denied turn the close waits at most freshContextResultMs', async () => {
+    const planPath = `${HARNESS_CWD}\\PLAN.md`;
+    const h = await setup({
+      options: { freshContextResultMs: 3_000 },
+      scenario: (_req, n) => (n === 0 ? retroPlanScenario(planPath, '# Plan', { resultAfterDeny: false }) : interactiveScenario()),
+    });
+    const entryId = await h.create('plan it');
+    const decision = await openPlan(h, entryId);
+    const answered = respondPlan(h, entryId, decision.id, { behavior: 'approve_fresh_context', mode: 'default' });
+    await h.waitFor(() => h.timers.pending().some((t) => t.ms === 3_000));
+    expect(h.sessions(entryId)).toHaveLength(1);
+    expect(h.session(entryId).state).not.toBe('exited');
+    h.timers.advance(3_000);
+    expect((await answered).outcome).toMatchObject({ type: 'plan_approved', freshContext: true });
+    expect(h.sessions(entryId)).toHaveLength(2);
+    expect(h.sessions(entryId)[0]?.state).toBe('exited');
+    expect(h.timers.pending().some((t) => t.ms === 3_000)).toBe(false);
+    await untilIdle(h, entryId);
   });
 
   it('double click: the second answer → SESSION_BUSY, a later one → DECISION_ALREADY_RESOLVED; one new process', async () => {

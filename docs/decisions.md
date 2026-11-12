@@ -1908,3 +1908,45 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
 - **Folgen:** Lücke bei einem von der CLI selbst gestarteten Turn ohne neues Item bis zur ersten Ausgabe.
   Optionale spätere Contract-Erweiterung: Fakt „Turn läuft“ (z. B. `StatusFacts.turnActive` mit Default
   `false`, gesetzt vom Engine-Zustand zwischen Prompt-Start und `result`).
+
+## ADR-155 – Frischer Kontext: Annahme vor Wirkung, `@` neutralisiert, Planungs-Turn mit Kosten
+- **Datum/WP:** 12.11.2026, Code-Review Phase 3, Fix-Paket S (CR3-08, CR3-09, WP61-01, WP61-03); angenommen (12.11.2026, Koordinator beim Merge). Ergänzt
+  ADR-147, ADR-148 und ADR-131 (Texte bleiben).
+- **Kontext:** „Mit frischem Kontext umsetzen“ brach einen geplanten Auto-Retry schon vor den Prüfungen im
+  Lock ab (CR3-08). Die CLI expandiert `@pfad` in jedem Prompt, auch ohne `client_composed`; ein Plantext mit
+  `@README.md` erzeugte im ersten Prompt des frischen Kontexts ein Datei-Attachment samt Read (B19). Der
+  Prozess wurde direkt nach `deny + interrupt` geschlossen, das `result` des Planungs-Turns kam nie an –
+  Kosten und Usage der Planung fehlten (B2/B3, ≈ 0,12 USD). `plan.list` las für `stored` jede Planversion
+  voll (CR3-09).
+- **Entscheidung:** (1) `cancelRetry` erst im Lock nach Gate, Broker-Prüfung und „ohne Arbeit“. (2) Plantext,
+  den Parallax an die CLI schickt (erster Prompt des frischen Kontexts, A.10-Freigabe mit Plan im Text),
+  bekommt vor jedes `@`, das die CLI expandieren würde (Textanfang, nach Whitespace oder nach 。、？！), ein
+  U+200B (`neutralizeAtMentions`, `sessions/summary.ts`); Plan-Datei und `plans/v<N>.md` bleiben im
+  Original. (3) Nach `deny + interrupt` wartet die Engine höchstens `freshContextResultMs` (Default 3000) auf
+  das `result` des abgewiesenen Turns, dann schließt sie den Prozess. (4) `plan.list` kennt gespeicherte und
+  gelesene Versionen je Serverlauf (`withPlanIndex`) und liest jede höchstens einmal.
+- **Folgen:** Die alte Unterhaltung trägt die Kosten der Planung, sofern die CLI das `result` innerhalb der
+  Frist liefert (live zu bestätigen). Der erste Prompt enthält unsichtbare U+200B vor geschützten `@`; wer
+  ihn aus dem Transkript kopiert, kopiert sie mit. Die CLI-Regel für `@` wird bei jedem CLI-Upgrade geprüft
+  (`docs/sdk-upgrade.md`). Umsetzung und Tests: `sessions/{freshContext,summary,runtime,planIndex,commands}.ts`,
+  `sessions/lib/timers.ts`, `phase3.integration.test.ts` „CR3-08/CR3-09/WP61-01/WP61-03: …“,
+  `summary.test.ts`, `planIndex.test.ts`.
+
+## ADR-156 – Backend nach WP-61: kein `todoFeatureEnabled`, Task-Name nicht aus `task_progress`, Anmeldeablauf im Debug-Log
+- **Datum/WP:** 12.11.2026, Code-Review Phase 3, Fix-Paket S (WP61-02, WP61-04, WP61-07); angenommen (12.11.2026, Koordinator beim Merge). Ersetzt in ADR-149
+  den Satz „`todoFeatureEnabled: true` als Flag-Setting (L5)“; ergänzt WP-50 §11 (B15).
+- **Kontext:** Mit CLI 2.1.322 bewirkt `todoFeatureEnabled` nichts – weder `TodoWrite` noch `TaskCreate` stehen
+  in `init.tools` (auch nicht deferred), mit und ohne Settings-Datei (B7, B25). Mit Settings-Datei löste das
+  Flag allein ein `applyFlagSettings` nach dem Start aus. `task_progress.description` ist die aktuelle
+  Tätigkeit der CLI („Running …“), nicht der Task-Name, und überschrieb ihn bis nach dem Ende (WP61-07).
+  `credential_expires_at` landete nirgends, B15 war nicht ablesbar (WP61-04).
+- **Entscheidung:** (1) Parallax sendet `todoFeatureEnabled` nicht mehr; Flag-Settings nur noch
+  `autoCompactWindow` (C.1) und `fastMode` (Phase 2), ohne Wert gar keine `settings`-Option bzw. kein
+  `applyFlagSettings`. Die Aufgabenleiste bleibt und zeigt `TodoWrite`/`TaskCreate`, sobald die CLI sie
+  anbietet. (2) Der Live-Normalizer übernimmt aus `task_progress` nur `summary`, Usage und
+  `subagent_type`, nie `description`. (3) Das SdkBackend schreibt beim ersten `result` je Prozess eine
+  `debug`-Zeile mit nur `credentialExpiresAt` (ISO-String oder `null`).
+- **Folgen:** Beim nächsten CLI-Upgrade `init.tools` auf `TodoWrite`/`TaskCreate` prüfen und das Flag ggf.
+  wieder aufnehmen (`docs/sdk-upgrade.md`). Die Tätigkeit aus `task_progress` wird nicht angezeigt (dafür
+  bräuchte es ein Contract-Feld). Umsetzung und Tests: `backend/sdkOptions.ts`, `backend/sdkBackend.ts`,
+  `sessions/normalizer/live.ts`, `backend/fake/{dsl,phase3}.ts` und die zugehörigen Tests „WP61-0x: …“.

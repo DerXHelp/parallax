@@ -4,8 +4,9 @@
  * should log come from `optionIssues`, the post-start flag settings from `flagSettingsAfterStart`.
  *
  * Phase 3 (WP-52): `perTaskStopAffordance` (stop per task, ADR-149) and `agentProgressSummaries`
- * (task_progress.summary) are always on; `todoFeatureEnabled` rides in the flag settings;
- * `additionalDirectories` gets the entry's attachment folder.
+ * (task_progress.summary) are always on; `additionalDirectories` gets the entry's attachment
+ * folder. WP61-02: `todoFeatureEnabled` is NOT sent – with CLI 2.1.322 it has no effect (neither
+ * `TodoWrite` nor `TaskCreate` in `init.tools`); todo lists from the stream still reach the task bar.
  *
  * Deliberately NOT set: enableFileCheckpointing, extraArgs 'replay-user-messages' (F.9),
  * sessionId, forkSession, maxTurns, abortController (close() goes through Query.close() + the
@@ -73,19 +74,18 @@ function permissionModeOf(req: StartSessionRequest): Options['permissionMode'] {
 }
 
 /** Flag-tier settings Parallax sets at the start (`Settings` keys of SDK 0.3.322). */
-export type StartFlagSettings = Pick<Settings, 'autoCompactWindow' | 'fastMode' | 'todoFeatureEnabled'>;
+export type StartFlagSettings = Pick<Settings, 'autoCompactWindow' | 'fastMode'>;
 
 /**
- * Flag-tier settings of the start: the profile's `autoCompactWindow` (C.1), the entry's fast
- * mode (Phase 2, `settings.fastMode`; null/absent = the CLI decides) and, since Phase 3, always
- * `todoFeatureEnabled: true` (TodoWrite for the todo list, WP-52) – so never empty.
+ * Flag-tier settings of the start: the profile's `autoCompactWindow` (C.1) and the entry's fast
+ * mode (Phase 2, `settings.fastMode`; null/absent = the CLI decides). Null when there is none
+ * (WP61-02: no setting without a value is sent).
  */
-export function startFlagSettings(req: StartSessionRequest): StartFlagSettings {
+export function startFlagSettings(req: StartSessionRequest): StartFlagSettings | null {
   const flags: StartFlagSettings = {};
   if (req.launch.autoCompactWindow !== null) flags.autoCompactWindow = req.launch.autoCompactWindow;
   if (req.fastMode !== undefined && req.fastMode !== null) flags.fastMode = req.fastMode;
-  flags.todoFeatureEnabled = true;
-  return flags;
+  return Object.keys(flags).length > 0 ? flags : null;
 }
 
 /** Profile directories + the attachment folder, without duplicates (case-insensitive, WP-52). */
@@ -102,7 +102,7 @@ function additionalDirectoriesOf(req: StartSessionRequest): string[] {
 }
 
 function settingsOf(req: StartSessionRequest): Options['settings'] {
-  return req.launch.sdkOptions.settings ?? startFlagSettings(req);
+  return req.launch.sdkOptions.settings ?? startFlagSettings(req) ?? undefined;
 }
 
 function extraArgsOf(launch: LaunchSpec): Record<string, string | null> | undefined {
@@ -164,9 +164,9 @@ export function buildQueryOptions(req: StartSessionRequest, hooks: QueryOptionHo
 }
 
 /**
- * C.1 (+ Phase 2 fast mode, Phase 3 todo feature): with a settings FILE the flag settings
- * (`autoCompactWindow`, `fastMode`, `todoFeatureEnabled`) cannot ride along in `settings`; the
- * backend applies them via `applyFlagSettings` once the session is ready.
+ * C.1 (+ Phase 2 fast mode): with a settings FILE the flag settings (`autoCompactWindow`,
+ * `fastMode`) cannot ride along in `settings`; the backend applies them via `applyFlagSettings`
+ * once the session is ready. Null when there is nothing to apply.
  */
 export function flagSettingsAfterStart(req: StartSessionRequest): StartFlagSettings | null {
   if (req.launch.sdkOptions.settings === undefined) return null;

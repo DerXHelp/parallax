@@ -205,9 +205,25 @@ export function cwdLabel(cwd: string): string {
   return path.win32.basename(trimmed) || cwd;
 }
 
+/**
+ * WP61-01: the CLI expands `@path` in every prompt (also without `client_composed`) into a file
+ * attachment plus a Read – for CLI 2.1.322 at the start of a whitespace-separated token or right
+ * after 。、？！ (`@"…"` likewise). In front of exactly those `@` goes U+200B (the slash guard of
+ * R5W-03): no whitespace for `\s`/`trim()`, invisible in the transcript, the path stays readable for
+ * Claude. Every other `@` (mail addresses, `'@scope/pkg'`) keeps its text; idempotent.
+ */
+const CLI_MENTION_AT = /(^|[\s\u3002\u3001\uff1f\uff01])@/gu;
+const MENTION_GUARD = '\u200b';
+
+export function neutralizeAtMentions(text: string): string {
+  return text.replace(CLI_MENTION_AT, `$1${MENTION_GUARD}@`);
+}
+
 /** Plan approval after a restart (A.10, diagram g): the prompt that resumes the work. */
 export function implementPlanPrompt(planFilePath: string | null, plan: string): string {
-  return planFilePath === null ? `Implement this plan:\n\n${plan}` : `Implement the plan in ${planFilePath}`;
+  return planFilePath === null
+    ? `Implement this plan:\n\n${neutralizeAtMentions(plan)}`
+    : `Implement the plan in ${planFilePath}`;
 }
 
 /** First line of the fresh-context prompt (ADR-147; fixed English text, never shown as UI text). */
@@ -215,9 +231,10 @@ export const FRESH_CONTEXT_PROMPT_HEADER = 'Implement the following approved pla
 
 /**
  * ADR-147: first prompt of the fresh conversation – the header, `Plan file: <path>` when known, an
- * empty line, then the approved plan text (or the edited one).
+ * empty line, then the approved plan text (or the edited one) with its `@` mentions neutralized
+ * (WP61-01; the plan file and plans/v<N>.md keep the original text).
  */
 export function freshContextPrompt(planFilePath: string | null, plan: string): string {
   const file = planFilePath === null ? '' : `\nPlan file: ${planFilePath}`;
-  return `${FRESH_CONTEXT_PROMPT_HEADER}${file}\n\n${plan}`;
+  return `${FRESH_CONTEXT_PROMPT_HEADER}${file}\n\n${neutralizeAtMentions(plan)}`;
 }
