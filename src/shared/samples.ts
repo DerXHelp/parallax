@@ -112,6 +112,7 @@ export function sampleClaudeInstallStatus(p: Partial<ClaudeInstallStatus> = {}):
     path: 'C:\\Users\\user\\.local\\bin\\claude.exe',
     version: '2.1.300',
     versionStatus: 'ok',
+    testedVersion: null,
     auth: { state: 'logged_in', method: 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'max' },
     error: null,
     checkedAt: sampleTime(),

@@ -100,6 +100,39 @@ describe('rating', () => {
     ]);
   });
 
+  it('WP-62: shows the tested version; a newer claude is a warning with the cli-check hint', () => {
+    const same = checkProfileStatus(STANDARD, sampleClaudeInstallStatus({ testedVersion: '2.1.300' }), '2.1.296');
+    expect(same[0]).toEqual({
+      id: 'claude:standard',
+      title: 'claude',
+      level: 'ok',
+      detail: 'C:\\Users\\user\\.local\\bin\\claude.exe, 2.1.300 (tested 2.1.300, profile "Standard")',
+    });
+    const newer = checkProfileStatus(
+      STANDARD,
+      sampleClaudeInstallStatus({ version: '2.1.330', testedVersion: '2.1.322' }),
+      '2.1.296',
+    );
+    expect(newer[0]).toMatchObject({
+      level: 'warn',
+      detail: 'C:\\Users\\user\\.local\\bin\\claude.exe, 2.1.330 (tested 2.1.322, profile "Standard") – newer than tested',
+    });
+    expect(newer[0]?.hint).toContain('pnpm cli-check');
+    expect(newer[1]?.level).toBe('ok');
+    // Older than tested (e.g. a second profile with its own claude) is fine; too old stays a failure.
+    expect(
+      checkProfileStatus(STANDARD, sampleClaudeInstallStatus({ version: '2.1.300', testedVersion: '2.1.322' }), '2.1.296')[0]
+        ?.level,
+    ).toBe('ok');
+    expect(
+      checkProfileStatus(
+        STANDARD,
+        sampleClaudeInstallStatus({ version: '2.1.330', testedVersion: '2.1.322', versionStatus: 'too_old' }),
+        '2.1.296',
+      )[0]?.level,
+    ).toBe('fail');
+  });
+
   it.each<[string, Parameters<typeof sampleClaudeInstallStatus>[0], PreflightCheck['level'][]]>([
     ['too old (C.7: red)', { versionStatus: 'too_old' }, ['fail', 'ok']],
     ['unknown version', { versionStatus: 'unknown', version: null }, ['warn', 'ok']],

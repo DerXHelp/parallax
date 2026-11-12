@@ -1,0 +1,9 @@
+# `claude`-Updates – Protokoll
+
+Eine Zeile je `pnpm cli-check --accept` (WP-62; Ablauf: Skill `/claude-update`, `docs/sdk-upgrade.md`
+„Stufe 1: Kurz-Check“). Die Zeilen schreibt das Skript, das Profil steht in
+`src/server/claude/cli-profile.json`.
+
+| Datum | `claude` alt → neu | SDK | Ergebnis | Kosten (USD) |
+|---|---|---|---|---|
+| 2026-11-12 | – → 2.1.322 | 0.3.322 | erstes Profil (WP-62) | 0,0107 |

@@ -15,6 +15,7 @@ import {
 import { isSecretEnvKey } from '@shared/secrets';
 import { registerSecret } from '../lib/logger';
 import { UNKNOWN_AUTH } from './authStatus';
+import { testedCliVersion } from './cliProfile';
 import { parseProfileArgs } from './profileArgs';
 import type { ProfileStore } from './ports';
 
@@ -75,6 +76,7 @@ export function uncheckedClaudeStatus(): ClaudeInstallStatus {
     path: null,
     version: null,
     versionStatus: 'unknown',
+    testedVersion: testedCliVersion(),
     auth: { ...UNKNOWN_AUTH },
     error: null,
     checkedAt: null,
