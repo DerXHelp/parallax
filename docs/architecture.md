@@ -326,6 +326,10 @@ Shell: `common`, `shell`, `status` – `status.<DisplayStatusKind>` inkl. `needs
 `composer`). WP-14 legt diese drei Stub-Paare (leere Objekte) an und registriert sie **statisch**
 in `i18n/index.ts` (typisierte Schlüssel `t('transcript.toolCall.running')`); WP-15/16 füllen nur
 ihre eigenen Dateien. Ein neuer Namespace (späteres Feature) wird vom Koordinator registriert.
+Seit FIX-R5 (ADR-153): englisch statisch in `i18n/dictionaries.ts`, deutsch als **ein** Lazy-Chunk in
+`i18n/dictionary.de.ts` (geladen vor `setLanguage('de')`, gemerkte Sprache und Vorladen in
+`state/language.ts`); ein neuer Namespace wird in **beiden** Dateien registriert – `bundle.test.ts`
+und der Schlüssel-Abgleich in `i18n.test.tsx` fangen Lücken.
 
 **(b) `src/web/ui` (Primitives).** WP-14 liefert für Welle 1b mindestens: Button, Badge, Card,
 Tooltip, DropdownMenu, Popover, Dialog, Select, Collapsible, ScrollArea, Separator, Input, Textarea,
