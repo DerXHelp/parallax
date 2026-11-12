@@ -15,19 +15,40 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EntryId } from '@shared/common';
 import { makeError } from '@shared/errors';
-import type { HostWarning, Settings } from '@shared/model';
-import { sampleId, sampleProfileInput, sampleTime } from '@shared/samples';
+import { API_PATHS, attachmentUploadResponseSchema, authCookieName, fileUrl } from '@shared/http';
+import { sessionFilesFileSchema, type HostWarning, type Settings } from '@shared/model';
+import { commandResultSchemas, type Command } from '@shared/protocol';
+import {
+  sampleConversation,
+  sampleEntry,
+  sampleHostState,
+  sampleId,
+  sampleProfile,
+  sampleProfileInput,
+  sampleTime,
+} from '@shared/samples';
 import { loadConfig } from '../config';
-import { makeTempHome, rawRequest } from '../http/testServer';
+import { SESSION_FILES_FILE } from '../files/sessionIndex';
+import { cookieFromSetCookie, makeTempHome, rawRequest } from '../http/testServer';
 import { checkHealth } from '../launcher/client';
 import { SERVER_EXIT_CODES } from '../launcher/exitCodes';
 import { readServerLock, serverLockPath } from '../launcher/lockFile';
 import type { ServerShutdown, SignalTarget } from '../launcher/shutdown';
 import { acquireHomeLock, type HomeLock } from '../lib/homeLock';
 import { createLogger } from '../lib/logger';
+import { attachmentsDir } from '../store/attachments';
+import { entryDir } from '../store/decisions';
 import type { CommandContext } from '../sync/ports';
 import type { SystemIntegration } from '../system/ports';
-import { resumedSessionId, StartupError, startServer, type RunningServer } from './compose';
+import {
+  FAKE_FILES_HOME_DIR,
+  fileEntryLookup,
+  observedPublisher,
+  resumedSessionId,
+  StartupError,
+  startServer,
+  type RunningServer,
+} from './compose';
 import { installCrashHandlers } from './crash';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
@@ -463,6 +484,7 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
       'http',
       'system',
       'profileChecks',
+      'files',
       'stores',
       'homeAccess',
       'lock',
@@ -559,11 +581,218 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
     expect(texts.some((text) => text.startsWith('handoff:returned:') && !text.endsWith(':0'))).toBe(true);
   });
 
+  it('fileEntryLookup: cwd exactly as stored, every conversation, the --add-dir folders of the profile', () => {
+    let entry = sampleEntry({
+      cwd: 'D:\\work\\Sample',
+      conversations: [
+        sampleConversation({ id: sampleId('cv', 1) }),
+        sampleConversation({ id: sampleId('cv', 2) }),
+      ],
+    });
+    const profile = sampleProfile({ args: ['--add-dir', 'D:\\shared', '--add-dir', 'E:\\docs'] });
+    const lookup = fileEntryLookup(
+      { get: (id) => (id === entry.id ? entry : undefined) },
+      { get: (id) => (id === profile.id ? profile : undefined) },
+    );
+    expect(entry.profileId).toBe(profile.id);
+    expect(lookup.entry(entry.id)).toEqual({
+      cwd: 'D:\\work\\Sample',
+      additionalDirectories: ['D:\\shared', 'E:\\docs'],
+      conversationIds: [sampleId('cv', 1), sampleId('cv', 2)],
+    });
+    expect(lookup.entry(sampleId('en', 999))).toBeNull();
+    // A deleted profile: no extra roots.
+    entry = { ...entry, profileId: sampleId('pf', 999) };
+    expect(lookup.entry(entry.id)?.additionalDirectories).toEqual([]);
+  });
+
+  it('observedPublisher: the observer sees each op batch first; a throwing observer is logged (throttled), the hub still gets it', () => {
+    const calls: string[] = [];
+    const hub = {
+      publishOps: (entryId: EntryId) => calls.push(`hub:${entryId}`),
+      publishSummary: () => calls.push('summary'),
+      removeSummary: () => calls.push('remove'),
+      publishHostState: () => calls.push('host'),
+      notify: () => calls.push('notify'),
+      clearNotification: () => calls.push('clear'),
+      presence: () => [],
+      closeAll: () => calls.push('closeAll'),
+    };
+    const lines: string[] = [];
+    const log = createLogger({ level: 'info', destination: { write: (line: string) => lines.push(line) } });
+    let clock = 0;
+    let fail = false;
+    const publisher = observedPublisher(
+      hub,
+      (entryId, ops) => {
+        calls.push(`observe:${entryId}:${String(ops.length)}`);
+        if (fail) throw new Error('index broken');
+      },
+      log,
+      () => clock,
+    );
+    const entryId = sampleId('en', 1);
+    publisher.publishOps(entryId, [{ op: 'detail.patch', patch: { todos: null } }]);
+    expect(calls).toEqual([`observe:${entryId}:1`, `hub:${entryId}`]);
+    fail = true;
+    publisher.publishOps(entryId, []);
+    publisher.publishOps(entryId, []);
+    clock = 60_000;
+    publisher.publishOps(entryId, []);
+    expect(calls.filter((call) => call.startsWith('hub:'))).toHaveLength(4);
+    const warnings = lines.filter((line) => line.includes('observing ops failed'));
+    expect(warnings).toHaveLength(2);
+    expect(warnings[1]).toContain('"suppressed":1');
+    // Everything else goes through unchanged.
+    publisher.publishHostState(sampleHostState());
+    publisher.closeAll(4503);
+    expect(calls.slice(-2)).toEqual(['host', 'closeAll']);
+  });
+
   it('resumedSessionId reads the id after --resume of a console spec', () => {
     expect(resumedSessionId(['--resume', 'abc'])).toBe('abc');
     expect(resumedSessionId(['--model', 'haiku', '--resume', 'x-1'])).toBe('x-1');
     expect(resumedSessionId(['--resume'])).toBeNull();
     expect(resumedSessionId([])).toBeNull();
+  });
+});
+
+describe('startServer: Phase-3 wiring (WP-60)', () => {
+  it('fake:files feeds the session index; file.*, /api/file and the recording opener work end to end; files.json after the shutdown', async () => {
+    const home = await tempHome();
+    const project = path.join(home, 'project');
+    await mkdir(project);
+    await writeFile(path.join(project, 'README.md'), '# Project\n');
+    const lines: string[] = [];
+    const logger = createLogger({
+      level: 'info',
+      destination: { write: (line: string) => lines.push(line) },
+    });
+    const config = loadConfig({
+      argv: ['--backend=fake', '--port=0', `--home=${home}`, '--validate=throw', '--toasts=off'],
+      env: {},
+    });
+    const server = await startServer({
+      config,
+      webRoot: null,
+      signals: null,
+      fakeSpeed: 0,
+      exit: () => undefined,
+      homeLock: null,
+      homeAccess: null,
+      logger,
+    });
+    cleanups.push(() => server.shutdown.stop('command'));
+    const { manager } = server;
+    const run = (cmd: Command): Promise<unknown> => manager.handleCommand(cmd, ctx());
+
+    const created = await manager.handleCommand(
+      { name: 'session.create', cwd: project, prompt: { text: 'fake:files', attachments: [], pastes: [] } },
+      ctx(),
+    );
+    const entryId = (created as { entryId: EntryId }).entryId;
+    const summary = () => manager.listSummaries().find((s) => s.entryId === entryId);
+    await vi.waitFor(() => {
+      expect(summary()?.status.runState).toBe('idle');
+    });
+
+    // The engine's ops reached the file index (observedPublisher → observeOps): read, written, edited
+    // – real files of the FakeBackend below <home>\fake-files, never in the project.
+    const listed = commandResultSchemas['files.session'].parse(await run({ name: 'files.session', entryId }));
+    const byName = new Map(listed.files.map((file) => [path.basename(file.path), file]));
+    expect(byName.get('notes.md')?.ops).toEqual(['read']);
+    expect(byName.get('new-file.txt')?.ops).toEqual(['written']);
+    expect(byName.get('app.ts')?.ops).toEqual(['edited']);
+    const fakeRoot = path.join(home, FAKE_FILES_HOME_DIR);
+    for (const file of listed.files) expect(file.path.startsWith(`${fakeRoot}${path.sep}`)).toBe(true);
+    const appPath = byName.get('app.ts')?.path ?? '';
+
+    // Listed files are readable for the session (access 'session'); the project readme via the cwd.
+    const stat = async (file: string) =>
+      commandResultSchemas['file.stat'].parse(await run({ name: 'file.stat', entryId, path: file })).file;
+    expect(await stat(appPath)).toMatchObject({ kind: 'text', access: 'session' });
+    const readme = path.join(project, 'README.md');
+    expect((await stat(readme)).access).toBe('cwd');
+    // L15: a network path is refused before any file system access.
+    await expect(
+      manager.handleCommand({ name: 'file.stat', entryId, path: '\\\\fake-host\\share\\x.txt' }, ctx()),
+    ).rejects.toMatchObject({ error: { code: 'PATH_REJECTED' } });
+
+    // FakeBackend → recording opener: logs, starts nothing.
+    await run({ name: 'file.open', entryId, path: appPath, target: 'editor', line: 12, col: null });
+    await run({ name: 'file.open', entryId, path: project, target: 'explorer', line: null, col: null });
+    const opened = lines
+      .map((line) => JSON.parse(line) as { msg?: string })
+      .flatMap((entry) => (entry.msg?.startsWith('file.open (fake): ') === true ? [entry.msg] : []));
+    expect(opened).toEqual([`file.open (fake): editor ${appPath}`, `file.open (fake): explorer ${project}`]);
+
+    // GET /api/file: guard class "file" – Sec-Fetch-Site same-origin is required (L16).
+    const { code } = server.auth.issueAuthCode();
+    const login = await rawRequest(server.port, {
+      method: 'POST',
+      path: API_PATHS.auth,
+      headers: { origin: server.origin, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' },
+      body: JSON.stringify({ code }),
+    });
+    const cookie = cookieFromSetCookie(login.headers['set-cookie'], authCookieName(server.port)) ?? '';
+    expect(cookie).not.toBe('');
+    const page = await rawRequest(server.port, {
+      method: 'GET',
+      path: fileUrl(entryId, readme),
+      headers: { cookie, 'sec-fetch-site': 'same-origin' },
+    });
+    expect(page.status).toBe(200);
+    expect(page.body).toBe('# Project\n');
+    const direct = await rawRequest(server.port, {
+      method: 'GET',
+      path: fileUrl(entryId, readme),
+      headers: { cookie },
+    });
+    expect(direct.status).toBe(403);
+
+    // Upload of a non-image file → the engine materializes it in the attachment store of the home.
+    const uploaded = await rawRequest(server.port, {
+      method: 'POST',
+      path: `${API_PATHS.attachments}?name=data.xlsx`,
+      headers: {
+        cookie,
+        origin: server.origin,
+        'sec-fetch-site': 'same-origin',
+        'content-type': 'application/octet-stream',
+      },
+      body: 'fake spreadsheet',
+    });
+    expect(uploaded.status).toBe(200);
+    const { attachment } = attachmentUploadResponseSchema.parse(JSON.parse(uploaded.body));
+    await manager.handleCommand(
+      {
+        name: 'session.sendPrompt',
+        entryId,
+        prompt: { text: 'Here is the sheet', attachments: [{ blobId: attachment.blobId }], pastes: [] },
+        priority: 'next',
+      },
+      ctx(),
+    );
+    const assistantTexts = async () =>
+      ((await manager.loadView(entryId))?.items ?? []).flatMap((item) =>
+        item.kind === 'assistant_text' ? [item.text] : [],
+      );
+    await vi.waitFor(async () => {
+      expect(await assistantTexts()).toContain('Fake: received 0 document(s), 1 file(s)');
+    });
+    const materialized = path.join(
+      attachmentsDir(home, entryId),
+      attachment.blobId.slice(0, 16),
+      'data.xlsx',
+    );
+    expect(await readFile(materialized, 'utf8')).toBe('fake spreadsheet');
+
+    // The shutdown flushes the debounced index before the stores close.
+    await server.shutdown.stop('command');
+    const index = sessionFilesFileSchema.parse(
+      JSON.parse(await readFile(path.join(entryDir(home, entryId), SESSION_FILES_FILE), 'utf8')),
+    );
+    expect(index.files.map((file) => file.path)).toContain(appPath);
   });
 });
 

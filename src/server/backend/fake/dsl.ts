@@ -699,6 +699,12 @@ export function subagentEnd(
     /** Default completed; `stopped` after stopTask (the CLI's internal status is `killed`). */
     status?: 'completed' | 'failed' | 'stopped';
     usage?: TaskUsageSpec;
+    /**
+     * `task_updated.patch.end_time` (epoch ms). Default: the fixed time of the synthetic scenarios;
+     * the interactive scenario passes the real time (WP-60: the task panel shows finished tasks
+     * for 10 minutes after their end – a month-old end hid them at once).
+     */
+    endTime?: number;
   },
 ): FixtureEvent[] {
   const status = spec.status ?? 'completed';
@@ -708,7 +714,7 @@ export function subagentEnd(
         c,
         system(0, 'task_updated', {
           task_id: spec.taskId,
-          patch: { status: status === 'stopped' ? 'killed' : status, end_time: BASE_TIME },
+          patch: { status: status === 'stopped' ? 'killed' : status, end_time: spec.endTime ?? BASE_TIME },
         }),
       ),
       frame(
