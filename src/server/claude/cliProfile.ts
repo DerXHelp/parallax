@@ -97,6 +97,17 @@ export const cliProfileSchema = z.object({
     })
     .nullable()
     .default(null),
+  /**
+   * WP-70: the internal login methods exist (`claudeAuthenticate`, `claudeOAuthCallback`,
+   * `claudeOAuthWaitForCompletion` – never called); null = not checked (profile older than WP-70).
+   */
+  login: z.boolean().nullable().default(null),
+  /**
+   * WP-70: `updateSettings('localSettings', { outputStyle })` wrote `settings.local.json` and
+   * `getSettings()` reported the style (a probe session without a prompt). Named apart from
+   * `outputStyle` (the init value above); null = not checked.
+   */
+  outputStyleSetting: z.boolean().nullable().default(null),
 });
 export type CliProfile = z.infer<typeof cliProfileSchema>;
 

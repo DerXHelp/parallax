@@ -68,6 +68,7 @@ import type { FileEntryLookup, FileService } from '../files/ports';
 import { createFileService } from '../files/service';
 import { createFsCommands } from '../host/fsCommands';
 import { createLinkCommands, createRecordingLinkOpener, createSystemLinkOpener } from '../host/linkCommands';
+import { createLoginService, LOGIN_HOME_DIR, type LoginService } from '../host/login';
 import { createApp } from '../http/app';
 import { createAuthService, type AuthService } from '../http/auth';
 import { findRunningServer, type RunningServerCheck } from '../launcher/client';
@@ -453,6 +454,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   let engine: Engine | null = null;
   /** Phase 3 (WP-53): file commands, GET /api/file, the session file index (`files.json`). */
   let files: FileService | null = null;
+  /** WP-70: login processes per profile (closed before the stores). */
+  let login: LoginService | null = null;
   let manager: SessionManager | null = null;
   let app: FastifyInstance | null = null;
   let lock: ServerLockHandle | null = null;
@@ -498,6 +501,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     // R4-13: no new check starts during the shutdown; a running one (claude --version + auth
     // status, ≤ 20 s) is awaited – bounded – before its result could meet closed stores.
     { name: 'profileChecks', run: () => profileChecks },
+    // WP-70: open login processes end (the backend closed them with the sessions), timers cleared.
+    { name: 'login', run: () => login?.dispose() },
     // The session file index (`entries/<id>/files.json`, debounced) – after the engine's last ops,
     // before the stores close (ADR-145).
     { name: 'files', run: () => files?.flush() },
@@ -573,6 +578,26 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       logger: options.logger,
     });
     files = fileService;
+    // WP-65: links in the default browser; the FakeBackend records them (no browser starts). WP-70:
+    // the same opener shows the sign-in page of a login.
+    const linkOpener =
+      config.backend === 'fake'
+        ? createRecordingLinkOpener({ logger: options.logger })
+        : createSystemLinkOpener({ logger: options.logger });
+    const loginService = createLoginService({
+      claude,
+      backend,
+      links: linkOpener,
+      cwd: path.join(config.home, LOGIN_HOME_DIR),
+      onChange: () => {
+        manager?.publishHostState();
+      },
+      onLoggedIn: (profileId) => {
+        manager?.onProfileLoggedIn(profileId);
+      },
+      logger: options.logger,
+    });
+    login = loginService;
     const sessions = createSessionManager({
       toasts,
       // WP22-06: the FakeBackend has no real process tree (fake PIDs) – no heartbeat snapshots.
@@ -614,12 +639,11 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         createFsCommands(),
         fileService.commands,
         // WP-65: links in the default browser; the FakeBackend records them (no browser starts).
-        createLinkCommands(
-          config.backend === 'fake'
-            ? createRecordingLinkOpener({ logger: options.logger })
-            : createSystemLinkOpener({ logger: options.logger }),
-        ),
+        createLinkCommands(linkOpener),
+        // WP-70: `profile.login`, `profile.loginCode`, `profile.loginCancel`.
+        loginService,
       ],
+      loginState: (profileId) => loginService.state(profileId),
       // Autostart and protocol handler follow every settings.update (ADR-110).
       onSettingsChanged: (_prev, next) => {
         applySystem(next);

@@ -19,6 +19,9 @@
  * runs, `cancelAsyncMessage` present) – same rules.
  * WP-67: then the session-info step (sessionInfo.ts: each read method once, parsed like the server;
  * the actions only checked for existence; no values kept) – same rules.
+ * WP-70: then the login/output-style step (outputStyle.ts: the login methods only checked for
+ * existence – never called; the output style in a SECOND session without a prompt and with
+ * `settingSources: ['local']`, round trip in the scratch folder, restored) – same rules.
  *
  * Guards like the recorder (ADR-011): `apiKeySource` must be `none`, the model Haiku; auth/billing
  * errors, `credits_required`, a rejected rate limit, a startup failure or a cost above the budget
@@ -41,6 +44,12 @@ import { sleep } from '../../src/server/lib/async';
 import { killProcessTree, spawnHidden } from '../../src/server/lib/process';
 import { observationFrom, type Observation } from './observation';
 import { probeOverview, type OverviewProbeHandle, type OverviewProbeResult } from './overview';
+import {
+  loginMethodsPresent,
+  probeOutputStyle,
+  type OutputStyleProbeHandle,
+  type OutputStyleProbeResult,
+} from './outputStyle';
 import {
   probeSessionInfo,
   sessionInfoProfile,
@@ -200,6 +209,8 @@ export interface ProbeResult {
   sideQuestion: SideQuestionProbeResult;
   /** WP-67: the session-info read methods (no actions called). */
   sessionInfo: SessionInfoProbeResult;
+  /** WP-70: login methods present (never called), output-style round trip. */
+  loginStyle: OutputStyleProbeResult;
 }
 
 /** Partial facts of a stopped probe (cleanup needs the session ids, the report the cost). */
@@ -401,6 +412,11 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
     // WP-67: internal read methods (and the actions' existence), checked at runtime as well.
     const infoHandle: SessionInfoProbeHandle & Pick<Query, 'close'> = q;
     const sessionInfo = await probeSessionInfo(infoHandle, { timeoutMs: SESSION_INFO_TIMEOUT_MS, log });
+    // WP-70: the login methods only checked for existence (never called – no login, no browser).
+    const login = loginMethodsPresent(q);
+    log(`cli-check: login methods ${login ? 'present' : 'MISSING'} (never called)`);
+    const outputStyle = await runOutputStyleSession(options, controlMs, log);
+    const loginStyle: OutputStyleProbeResult = { login, outputStyle };
     const observation = observationFrom(
       {
         init: state.init,
@@ -414,6 +430,8 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
         sideQuestion: sideQuestion.sideQuestion.available,
         withdrawQueued: sideQuestion.withdrawQueued,
         sessionInfo: sessionInfoProfile(sessionInfo),
+        login,
+        outputStyleSetting: outputStyle.available,
       },
       options.sdkVersion,
     );
@@ -431,6 +449,7 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
       overview,
       sideQuestion,
       sessionInfo,
+      loginStyle,
     };
   } catch (error) {
     if (error instanceof ProbeStop) throw error;
@@ -448,5 +467,83 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
       await killProcessTree(state.pid).catch(() => undefined);
     }
     await Promise.race([pump, sleep(5_000)]);
+  }
+}
+
+/**
+ * WP-70: the output-style round trip in a second session of the scratch folder – no prompt (no model
+ * request, no cost), `settingSources: ['local']` (`updateSettings` refuses sessions without the target
+ * source), no MCP servers, no transcript. Always closed (EOF + Query.close(), taskkill after 10 s).
+ */
+async function runOutputStyleSession(
+  options: ProbeOptions,
+  controlMs: number,
+  log: (line: string) => void,
+): Promise<OutputStyleProbeResult['outputStyle']> {
+  const proc: { pid: number | null } = { pid: null };
+  let exitResolve: () => void = () => undefined;
+  const exited = new Promise<void>((resolve) => {
+    exitResolve = resolve;
+  });
+  const spawn = createSpawner({
+    spawn: spawnHidden,
+    killProcessTree,
+    now: () => new Date(),
+    expectedCommand: options.launch.executablePath,
+    onSpawned: (spawned) => {
+      proc.pid = spawned;
+    },
+    onStderr: () => undefined,
+    onExit: () => {
+      exitResolve();
+    },
+    onError: () => {
+      exitResolve();
+    },
+  });
+  const request: StartSessionRequest = {
+    entryId: options.entryId,
+    cwd: options.cwd,
+    launch: options.launch,
+    resumeSessionId: null,
+    model: 'haiku',
+    permissionMode: null,
+    effort: null,
+    promptSuggestions: false,
+    canUseTool: () => Promise.resolve({ behavior: 'deny', message: 'cli-check probe: no tools.' }),
+  };
+  const sdkOptions = buildQueryOptions(request, { canUseTool: denyAll(() => undefined), spawn, stderr: () => undefined });
+  sdkOptions.settingSources = ['local'];
+  sdkOptions.strictMcpConfig = true;
+  sdkOptions.settings = { disableClaudeAiConnectors: true };
+  sdkOptions.persistSession = false;
+  const input = new PromptQueue();
+  const q: Query = query({ prompt: input, options: sdkOptions });
+  const drain = (async () => {
+    try {
+      const iterator = q[Symbol.asyncIterator]();
+      while (!(await iterator.next()).done) {
+        // Drained: the settings session's stream carries nothing the check needs.
+      }
+    } catch {
+      // The stream of the settings session carries nothing the check needs.
+    }
+  })();
+  try {
+    const handle: OutputStyleProbeHandle & Pick<Query, 'close'> = q;
+    return await probeOutputStyle(handle, { cwd: options.cwd, controlMs, log });
+  } catch (error) {
+    const detail = `settings session failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 300);
+    log(`cli-check: output style NOT ok (${detail})`);
+    return { available: false, detail, style: null, styles: 0, written: false, effective: false, restored: false };
+  } finally {
+    input.close();
+    q.close();
+    const exitedInTime = await Promise.race([exited.then(() => true), sleep(10_000).then(() => false)]);
+    if (!exitedInTime && proc.pid !== null) {
+      log(`cli-check: settings session ${String(proc.pid)} did not exit – taskkill /T /F`);
+      await killProcessTree(proc.pid).catch(() => undefined);
+    }
+    await Promise.race([drain, sleep(5_000)]);
   }
 }

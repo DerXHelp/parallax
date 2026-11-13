@@ -53,8 +53,9 @@ export const errorsDe: Record<ErrorCode, string> = {
     'Claude Code wurde nicht gefunden. Installiere es und sorge dafür, dass „claude“ im PATH liegt.',
   CLAUDE_VERSION_TOO_OLD: 'Das installierte Claude Code ist zu alt. Aktualisiere es mit „claude update“.',
   CLAUDE_NOT_LOGGED_IN:
-    'Claude Code ist nicht angemeldet. Starte „claude“ einmal im Terminal und melde dich an.',
-  CLAUDE_AUTH_FAILED: 'Claude Code konnte sich nicht anmelden. Prüfe deine Anmeldung.',
+    'Claude Code ist nicht angemeldet. Nutze „Anmelden“ – oder starte „claude“ im Terminal und gib /login ein.',
+  CLAUDE_AUTH_FAILED:
+    'Claude Code braucht eine neue Anmeldung. Nutze „Anmelden“ – oder starte „claude“ im Terminal und gib /login ein.',
   CLAUDE_ORG_POLICY: 'Eine Richtlinie der Organisation verhindert den Start.',
   CLAUDE_BILLING: 'Für dieses Konto gibt es keinen nutzbaren Plan bzw. kein Guthaben.',
   SHELL_TOOL_MISSING: 'Claude Code findet keine nutzbare Shell (Git Bash oder PowerShell).',
@@ -89,9 +90,14 @@ export const errorsDe: Record<ErrorCode, string> = {
   REMOTE_CONTROL_UNAVAILABLE:
     'Remote Control ist mit dieser Claude-Code-Version nicht verfügbar (zu alt oder zu neu für Parallax).',
   REMOTE_CONTROL_AUTH:
-    'Remote Control braucht eine neue Anmeldung: `claude` im Terminal starten und /login eingeben.',
+    'Remote Control braucht eine neue Anmeldung. Nutze „Anmelden“ – oder starte „claude“ im Terminal und gib /login ein.',
   REMOTE_CONTROL_POLICY_DISABLED: 'Remote Control ist durch deine Organisation gesperrt.',
   REMOTE_CONTROL_FAILED: 'Die Remote-Control-Verbindung ist fehlgeschlagen oder abgebrochen.',
+  LOGIN_UNAVAILABLE:
+    'Anmelden aus Parallax ist mit dieser Claude-Code-Version nicht verfügbar – starte „claude“ im Terminal und gib /login ein.',
+  LOGIN_FAILED: 'Die Anmeldung wurde nicht abgeschlossen. Starte sie erneut.',
+  LOGIN_BLOCKED:
+    'Die verwalteten Einstellungen deiner Organisation erlauben diese Anmeldung hier nicht. Details: „claude auth login“ im Terminal.',
   AUTOSTART_FAILED: 'Autostart konnte nicht eingerichtet werden.',
   PROTOCOL_HANDLER_FAILED:
     'Das Öffnen von Sessions aus Windows-Benachrichtigungen konnte nicht eingerichtet werden.',

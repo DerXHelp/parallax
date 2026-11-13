@@ -44,6 +44,8 @@ export interface DslContext {
    * null = the default synthetic numbers (fake:context-high, V4-05).
    */
   readonly contextTokens: number | null;
+  /** WP-70: `system/init.output_style` (null = the synthetic default). */
+  readonly outputStyle: string | null;
 }
 
 /** Deterministic ids: `00000000-0000-4000-a000-<n>`, `msg_fake_<n>`, `toolu_fake_<n>`. */
@@ -79,6 +81,7 @@ export function dslContext(p: Partial<DslContext> = {}): DslContext {
     timestamp: p.timestamp ?? (() => new Date(BASE_TIME + (tick += 1)).toISOString()),
     stepMs: p.stepMs ?? 10,
     contextTokens: p.contextTokens ?? null,
+    outputStyle: p.outputStyle ?? null,
   };
 }
 
@@ -157,6 +160,8 @@ const initFrame = (c: DslContext): Step =>
         claude_code_version: FAKE_CLAUDE_VERSION,
         // Phase 2 (ADR-108): like a CLI that reports its terminal-only commands.
         terminal_slash_commands: [...FAKE_TERMINAL_COMMANDS],
+        // WP-70: the project's output style (changed through updateSettings).
+        ...(c.outputStyle === null ? {} : { output_style: c.outputStyle }),
       },
       c.sessionId,
     ),

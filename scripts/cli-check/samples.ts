@@ -31,6 +31,8 @@ export function sampleObservation(p: Partial<Observation> = {}): Observation {
     backgroundTasks: true,
     sideQuestion: true,
     withdrawQueued: true,
+    login: true,
+    outputStyleSetting: true,
     sessionInfo: {
       status: true,
       memory: true,
@@ -109,6 +111,18 @@ export function sampleRecord(p: Partial<RunRecord> = {}): RunRecord {
         ],
         mcpActions: true,
         reload: true,
+      },
+      loginStyle: {
+        login: true,
+        outputStyle: {
+          available: true,
+          detail: null,
+          style: 'Explanatory',
+          styles: 5,
+          written: true,
+          effective: true,
+          restored: true,
+        },
       },
     },
     smoke: sampleSmoke(),

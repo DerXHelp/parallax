@@ -241,6 +241,41 @@ export const profileIssueSchema = z.object({
 });
 export type ProfileIssue = z.infer<typeof profileIssueSchema>;
 
+/**
+ * WP-70: the login of a profile from Parallax (the CLI's OAuth flow in a short-lived `claude` of the
+ * profile; writer: the login service). `idle` = none since the server start; `starting` = process
+ * and flow are being set up; `waiting` = the link is open in the browser, the CLI waits for the
+ * redirect or the pasted code; `verifying` = a pasted code is being checked; `done` = signed in
+ * (`subscriptionType`, e.g. `max`); `failed` = `error` (LOGIN_UNAVAILABLE/LOGIN_FAILED/LOGIN_BLOCKED).
+ * Never the account's e-mail or organization. Runtime only, not persisted.
+ */
+export const PROFILE_LOGIN_STATES = ['idle', 'starting', 'waiting', 'verifying', 'done', 'failed'] as const;
+export const profileLoginStateSchema = z.enum(PROFILE_LOGIN_STATES);
+export type ProfileLoginState = z.infer<typeof profileLoginStateSchema>;
+
+export const profileLoginSchema = z.object({
+  state: profileLoginStateSchema,
+  /** The link opened in the browser (`automaticUrl`, else `manualUrl`); set while waiting/verifying. */
+  url: z.string().refine(isHttpUrl, { message: 'not an http(s) link' }).nullable(),
+  /** The link whose page shows a code to paste (works on any device); set while waiting/verifying. */
+  manualUrl: z.string().refine(isHttpUrl, { message: 'not an http(s) link' }).nullable(),
+  /** `done`: the plan the CLI reported (`max`, `pro`, …; null = not reported). */
+  subscriptionType: z.string().max(40).nullable(),
+  error: errorPayloadSchema.nullable(),
+  /** Last change of the state (null while idle). */
+  at: isoDateTimeSchema.nullable(),
+});
+export type ProfileLogin = z.infer<typeof profileLoginSchema>;
+
+export const IDLE_PROFILE_LOGIN: ProfileLogin = {
+  state: 'idle',
+  url: null,
+  manualUrl: null,
+  subscriptionType: null,
+  error: null,
+  at: null,
+};
+
 /** What the UI sees (never env values, never args): HostState.profiles. */
 export const profileSummarySchema = z.object({
   id: profileIdSchema,
@@ -259,6 +294,8 @@ export const profileSummarySchema = z.object({
   issues: z.array(profileIssueSchema).default([]),
   /** Phase 2: entries bound to the profile, archived ones included (delete protection, configDir warning). */
   entryCount: z.number().int().nonnegative().default(0),
+  /** WP-70: the login from Parallax (runtime only; default idle). */
+  login: profileLoginSchema.default(IDLE_PROFILE_LOGIN),
 });
 export type ProfileSummary = z.infer<typeof profileSummarySchema>;
 
@@ -1500,6 +1537,11 @@ export const sessionSummarySchema = z.object({
   turnSummary: turnSummarySchema.nullable().default(null),
   /** WP-65: `Entry.lastSeenAt` – the transcript's "since you were last here" card starts there. */
   lastSeenAt: isoDateTimeSchema.nullable().default(null),
+  /**
+   * WP-70: the output style of the session's project (`system/init.output_style` of the last turn,
+   * `initializationResult`, or the style just set; runtime only, null = not known yet).
+   */
+  outputStyle: z.string().max(100).nullable().default(null),
 });
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 
@@ -1631,6 +1673,11 @@ const sessionDetailFields = {
   planFile: planFileRefSchema.nullable(),
   /** Phase 3 (ADR-148; writer: engine): highest stored plan version of the entry. */
   latestPlanVersion: z.number().int().positive().nullable(),
+  /**
+   * WP-70 (writer: engine): the output styles the CLI offers in this project
+   * (`initializationResult().available_output_styles`; empty = not known yet).
+   */
+  availableOutputStyles: z.array(z.string().max(100)).max(200),
 };
 
 export const sessionDetailSchema = z.object({
@@ -1640,6 +1687,7 @@ export const sessionDetailSchema = z.object({
   todos: sessionDetailFields.todos.default(null),
   planFile: sessionDetailFields.planFile.default(null),
   latestPlanVersion: sessionDetailFields.latestPlanVersion.default(null),
+  availableOutputStyles: sessionDetailFields.availableOutputStyles.default([]),
 });
 export type SessionDetail = z.infer<typeof sessionDetailSchema>;
 

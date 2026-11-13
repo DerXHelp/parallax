@@ -185,6 +185,10 @@ export function createMemorySessionSource(options: { host?: HostState } = {}): M
       case 'session.reload':
       case 'session.subagentTranscript':
       case 'link.open':
+      case 'profile.login':
+      case 'profile.loginCode':
+      case 'profile.loginCancel':
+      case 'session.setOutputStyle':
         throw new CommandError(makeError('NOT_IMPLEMENTED', { command: cmd.name }));
     }
   }

@@ -14,6 +14,8 @@ import { defaultFakeFilesRoot } from './fake/files';
 import { createFakeHistoryStore } from './fake/history';
 import { FakeUsage } from './fake/overview';
 import { interactiveScenario } from './fake/interactive';
+import { FakeLoginSession } from './fake/login';
+import { FakeOutputStyles } from './fake/outputStyle';
 import { FakeSession } from './fake/session';
 import type { FakeBackend, FakeBackendOptions, FakeEventsOptions, FakeScenario } from './fake/types';
 
@@ -45,6 +47,9 @@ export { SessionStopped, TurnInterrupted } from './fake/common';
 export { randomIds, sequentialIds } from './fake/dsl';
 export { FAKE_CONSOLE_PROMPT, fakeConsoleAnswer } from './fake/console';
 export { FAKE_FRESH_SKILL, FAKE_INFO_ACTION_ERROR } from './fake/sessionInfo';
+export type { FakeLoginHandle, FakeLoginOptions } from './fake/login';
+export { FAKE_LOGIN_EXPIRED_CODE, FAKE_LOGIN_HOST, FAKE_LOGIN_REFUSED_CODE } from './fake/login';
+export { FAKE_OUTPUT_STYLES, FakeOutputStyles } from './fake/outputStyle';
 
 export const DEFAULT_FAKE_PID_BASE = 40_000;
 export const DEFAULT_FAKE_MAX_DELAY_MS = 3_000;
@@ -90,6 +95,8 @@ export function createFakeBackend(options: FakeBackendOptions = {}): FakeBackend
   const listeners = new Set<() => void>();
   /** Start counter n (scenario choice, PIDs) – independent of the trimmed lists. */
   let started = 0;
+  const outputStyles = new FakeOutputStyles();
+  const logins: FakeLoginSession[] = [];
 
   /** R2-12: drop the oldest exited sessions and start requests beyond `keep`. */
   const prune = (): void => {
@@ -111,11 +118,14 @@ export function createFakeBackend(options: FakeBackendOptions = {}): FakeBackend
 
   const allSettled = (): boolean => sessions.every((s) => s.state !== 'running');
 
-  return {
+  const backend: FakeBackend = {
     kind: 'fake',
     starts,
     sessions,
     history,
+    logins,
+    loginOptions: { ...options.login },
+    outputStyles,
 
     start(req) {
       prune();
@@ -140,6 +150,8 @@ export function createFakeBackend(options: FakeBackendOptions = {}): FakeBackend
         usage,
         sideQuestions: options.sideQuestions ?? {},
         sessionInfo: options.sessionInfo ?? {},
+        outputStyles,
+        outputStyleError: options.outputStyleError ?? false,
         onStateChange,
       });
       sessions.push(session);
@@ -170,6 +182,16 @@ export function createFakeBackend(options: FakeBackendOptions = {}): FakeBackend
       return Promise.resolve();
     },
 
+    /** WP-70: a fake login process (no real `claude`, no browser). */
+    startLogin(req) {
+      const n = started;
+      started += 1;
+      const login = new FakeLoginSession(req, pidBase + n, () => backend.loginOptions);
+      logins.push(login);
+      if (logins.length > keep) logins.splice(0, logins.length - keep);
+      return login;
+    },
+
     simulateConsoleTurn(sessionId, at, text = FAKE_CONSOLE_PROMPT) {
       for (const message of consoleTurnMessages({ sessionId, at, text, ids })) {
         history.record(sessionId, message);
@@ -177,7 +199,7 @@ export function createFakeBackend(options: FakeBackendOptions = {}): FakeBackend
     },
 
     async dispose() {
-      await Promise.all(sessions.map((s) => s.close()));
+      await Promise.all([...sessions.map((s) => s.close()), ...logins.map((l) => l.close())]);
     },
 
     settle() {
@@ -198,4 +220,5 @@ export function createFakeBackend(options: FakeBackendOptions = {}): FakeBackend
       });
     },
   };
+  return backend;
 }

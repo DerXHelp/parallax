@@ -14,7 +14,9 @@
  * `bridge_state connected`, off – scripts/cli-check/remoteControl.ts; WP-65: one session title, the
  * usage query, `backgroundTasks` present – scripts/cli-check/overview.ts; WP-66: one side question,
  * `cancelAsyncMessage` present – scripts/cli-check/sideQuestion.ts; WP-67: each session-info read
- * method once, the actions only present – scripts/cli-check/sessionInfo.ts); 3. live smoke `e2e/live`
+ * method once, the actions only present – scripts/cli-check/sessionInfo.ts; WP-70: the login methods
+ * only present, the output style round trip in a second session without a prompt –
+ * scripts/cli-check/outputStyle.ts); 3. live smoke `e2e/live`
  * with the remaining budget; 4. comparison with the profile (compare.ts); 5. report under
  * test-results/cli-check/ + console summary; 6. budget guard (probe + smoke ≤ 0.05 USD); 7. cleanup
  * of own data outside the repo (cleanup.ts). Exit: 0 = green, 1 = deviations, 2 = error/abort;
@@ -202,6 +204,7 @@ async function liveRun(started: Date): Promise<RunRecord> {
       overview: probe.overview,
       sideQuestion: probe.sideQuestion,
       sessionInfo: probe.sessionInfo,
+      loginStyle: probe.loginStyle,
     };
     record.cost.probeUsd = probe.costUsd;
     out(`cli-check: probe done – ${probe.costUsd.toFixed(4)} USD, ${String(probe.observation.tools.length)} tools`);
