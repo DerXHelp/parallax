@@ -11,13 +11,14 @@ import { Button } from '@web/ui/button';
 import { ToggleGroup, ToggleGroupItem } from '@web/ui/toggle-group';
 import { TooltipProvider } from '@web/ui/tooltip';
 import { shellDemos } from './demos';
-import { demoIdFromHash, hashForDemo } from './route';
+import { demoIdFromHash, hashForDemo, isBareHash } from './route';
 import type { PlaygroundDemo, PlaygroundModule } from './types';
 
 /**
  * Playground (`#playground`, dev server only): every demo runs without a server – shell demos over
  * the FakeHost/MemoryTransport, feature demos from `src/web/features/<f>/playground.tsx` (found by
- * `import.meta.glob`, no central list). Deep link: `#playground=<demo id>` (screenshots, WP-20).
+ * `import.meta.glob`, no central list). Deep link: `#playground=<demo id>` (screenshots, WP-20);
+ * `&bare` renders only the demo, window-filling (README screenshots, WP-68).
  */
 
 interface DemoGroup {
@@ -133,12 +134,46 @@ function SettingsBar() {
   );
 }
 
+/** One demo inside its error boundary (keyed: a new demo mounts fresh). */
+function DemoView({ demo }: { demo: PlaygroundDemo }) {
+  const { t } = useI18n();
+  return (
+    <DemoBoundary
+      demoId={demo.id}
+      fallback={(error) => (
+        <div className="p-6">
+          <Alert tone="error" title={t('shell.playground.demoFailed')}>
+            <span className="font-mono">{error.message}</span>
+          </Alert>
+        </div>
+      )}
+    >
+      <div key={demo.id} className="h-full">
+        {demo.render()}
+      </div>
+    </DemoBoundary>
+  );
+}
+
 export function PlaygroundApp() {
   const { t } = useI18n();
   const hash = useSyncExternalStore(subscribeHash, getHash, getHash);
   const selectedId = demoIdFromHash(hash);
   const demo = ALL_DEMOS.find((candidate) => candidate.id === selectedId) ?? ALL_DEMOS[0] ?? null;
   const deepLink = demo === null ? '' : `#playground=${demo.id}`;
+
+  if (isBareHash(hash) && demo !== null) {
+    return (
+      <FeatureSlotsProvider slots={DISCOVERED_SLOTS}>
+        <ShellEffects />
+        <TooltipProvider>
+          <div className="h-full min-h-0" data-demo={demo.id}>
+            <DemoView demo={demo} />
+          </div>
+        </TooltipProvider>
+      </FeatureSlotsProvider>
+    );
+  }
 
   return (
     <FeatureSlotsProvider slots={DISCOVERED_SLOTS}>
@@ -203,20 +238,7 @@ export function PlaygroundApp() {
               {demo === null ? (
                 <p className="text-muted-foreground p-6 text-xs">{t('shell.playground.noDemos')}</p>
               ) : (
-                <DemoBoundary
-                  demoId={demo.id}
-                  fallback={(error) => (
-                    <div className="p-6">
-                      <Alert tone="error" title={t('shell.playground.demoFailed')}>
-                        <span className="font-mono">{error.message}</span>
-                      </Alert>
-                    </div>
-                  )}
-                >
-                  <div key={demo.id} className="h-full">
-                    {demo.render()}
-                  </div>
-                </DemoBoundary>
+                <DemoView demo={demo} />
               )}
             </div>
           </div>
