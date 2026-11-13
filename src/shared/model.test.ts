@@ -41,6 +41,7 @@ import {
   previousSessionIds,
   REGISTRY_SCHEMA_VERSION,
   registryFileSchema,
+  runningTasksSchema,
   SESSION_FILES_SCHEMA_VERSION,
   sessionDetailPatchSchema,
   sessionDetailSchema,
@@ -872,5 +873,25 @@ describe('WP-70 contracts (login per profile, output style per project)', () => 
     expect(sessionDetailSchema.parse(oldDetail).availableOutputStyles).toEqual([]);
     expectRoundTrip(sessionDetailSchema, sampleDetail({ availableOutputStyles: ['default', 'Explanatory'] }));
     expect(sessionDetailPatchSchema.parse({ queue: [] })).not.toHaveProperty('availableOutputStyles');
+  });
+
+  it('WP-71: summary.runningTasks defaults to null; counts, at most 5 items, labels ≤ 120 chars', () => {
+    const { runningTasks: _running, ...oldSummary } = sampleSummary();
+    expect(sessionSummarySchema.parse(oldSummary).runningTasks).toBeNull();
+    const running = {
+      agents: 2,
+      shells: 1,
+      other: 0,
+      items: [
+        { kind: 'agent' as const, subagentType: 'Explore', label: 'Reading the project files' },
+        { kind: 'bash' as const, subagentType: null, label: 'pnpm dev' },
+      ],
+    };
+    expectRoundTrip(sessionSummarySchema, sampleSummary({ runningTasks: running }));
+    const item = { kind: 'other' as const, subagentType: null, label: 'x' };
+    expect(runningTasksSchema.safeParse({ ...running, items: Array.from({ length: 6 }, () => item) }).success).toBe(false);
+    expect(runningTasksSchema.safeParse({ ...running, items: [{ ...item, label: 'x'.repeat(121) }] }).success).toBe(false);
+    expect(runningTasksSchema.safeParse({ ...running, items: [{ ...item, kind: 'robot' }] }).success).toBe(false);
+    expect(runningTasksSchema.safeParse({ ...running, agents: -1 }).success).toBe(false);
   });
 });

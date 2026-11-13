@@ -232,6 +232,19 @@ describe('live normalizer: finalizeOpen and conversations', () => {
     expect(n.finalizeOpen('turn_end').ops).toEqual([]);
   });
 
+  it('WP-71: process_exit empties a listed background list (no signal); nothing when none was listed', () => {
+    const n = fresh();
+    const tasks = [{ task_id: 't1', task_type: 'local_agent', description: 'Research' }];
+    n.push({ type: 'system', subtype: 'background_tasks_changed', tasks, session_id: SESSION }, AT);
+    const out = n.finalizeOpen('process_exit');
+    expect(out.ops).toContainEqual({ op: 'detail.patch', patch: { backgroundTasks: [] } });
+    expect(out.signals).toEqual([]);
+    expect(n.finalizeOpen('process_exit').ops).toEqual([]);
+    const empty = fresh();
+    empty.push({ type: 'system', subtype: 'background_tasks_changed', tasks: [], session_id: SESSION }, AT);
+    expect(empty.finalizeOpen('process_exit').ops).toEqual([]);
+  });
+
   it('startConversation without a reset message adds no marker; orders restart', () => {
     const n = fresh(10);
     n.startConversation(sampleId('cv', 9), 1);

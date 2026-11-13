@@ -43,6 +43,11 @@ describe('activityTarget (the transcript line wording)', () => {
     ['TodoWrite', { todos: [] }, null],
     ['mcp__github__search', { query: 'issue', page: 2 }, 'issue'],
     ['Bash', 'not an object', null],
+    // WP-71: the tools behind a question / a plan decision.
+    ['AskUserQuestion', { questions: [{ question: 'Which database?', options: [] }] }, 'Which database?'],
+    ['AskUserQuestion', { questions: [] }, null],
+    ['ExitPlanMode', { plan: '\n# Plan: add the login\n\n1. Step', planFilePath: 'C:\\p.md' }, 'Plan: add the login'],
+    ['ExitPlanMode', { plan: '#' }, null],
   ])('%s %j → %s', (name, input, expected) => {
     expect(activityTarget(name, input)).toBe(expected);
   });
@@ -64,6 +69,25 @@ describe('ActivityTracker', () => {
     expect(t.setSentence('Reading the notes')).toBe(true);
     expect(t.current()).toEqual({ kind: 'claude', text: 'Reading the notes' });
     t.reset();
+    expect(t.current()).toEqual({ kind: 'thinking' });
+  });
+
+  it('WP-71: a tool waiting for a decision stays the activity and wins over running tools', () => {
+    const t = new ActivityTracker();
+    const bash = { toolUseId: 'b', order: 1, toolName: 'Bash', input: { command: 'pnpm test' } };
+    expect(t.apply(tool({ ...bash, status: 'pending' }))).toBe(true);
+    // pending → awaiting_decision: still the activity, no fallback to "thinking".
+    expect(t.apply(tool({ ...bash, status: 'awaiting_decision' }))).toBe(true);
+    expect(t.current()).toEqual({ kind: 'tool', tool: 'Bash', target: 'pnpm test' });
+    // A newer running tool does not hide the one that waits.
+    expect(t.apply(tool({ toolUseId: 'r', order: 2, toolName: 'Read', input: { file_path: 'a.md' }, status: 'running' }))).toBe(true);
+    expect(t.current()).toEqual({ kind: 'tool', tool: 'Bash', target: 'pnpm test' });
+    // Approved: it runs like the others – the newest wins again.
+    expect(t.apply(tool({ ...bash, status: 'running' }))).toBe(true);
+    expect(t.current()).toEqual({ kind: 'tool', tool: 'Read', target: 'a.md' });
+    // Denied: out.
+    expect(t.apply(tool({ ...bash, status: 'denied' }))).toBe(true);
+    expect(t.apply(tool({ toolUseId: 'r', order: 2, toolName: 'Read', status: 'done' }))).toBe(true);
     expect(t.current()).toEqual({ kind: 'thinking' });
   });
 });

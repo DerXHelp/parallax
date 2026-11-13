@@ -20,6 +20,12 @@ import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { Tooltip, TooltipContent, TooltipTrigger } from './tooltip';
 
+/**
+ * WP-71: the pulse of a working session in dense lists (sidebar row, rail) – `strong` while it works
+ * or starts, `soft` (slower, fainter) while only background tasks run.
+ */
+export type StatusPulse = 'strong' | 'soft';
+
 /** Icon and color per display status (`DisplayStatusKind`, architecture §7). Text: `status.<kind>`. */
 export interface StatusPresentation {
   icon: LucideIcon;
@@ -47,6 +53,13 @@ export const STATUS_PRESENTATION: Readonly<Record<DisplayStatusKind, StatusPrese
   external: { icon: ExternalLinkIcon, tone: 'text-status-idle', spin: false },
 };
 
+/** WP-71: the kinds that pulse with `pulse` (all others never). */
+export const STATUS_PULSE: Readonly<Partial<Record<DisplayStatusKind, StatusPulse>>> = {
+  starting: 'strong',
+  working: 'strong',
+  background: 'soft',
+};
+
 /** All kinds (playground gallery, tests). */
 export const STATUS_KINDS = DISPLAY_STATUS_KINDS;
 
@@ -56,6 +69,11 @@ export interface StatusIconProps {
   showLabel?: boolean;
   /** Tooltip with the text (icon-only usage in dense lists). */
   withTooltip?: boolean;
+  /**
+   * WP-71: working, starting and background sessions pulse (sidebar row, rail) – instead of the
+   * spin, so a row has at most one animation.
+   */
+  pulse?: boolean;
   className?: string;
   iconClassName?: string;
 }
@@ -65,6 +83,7 @@ export function StatusIcon({
   kind,
   showLabel = false,
   withTooltip = false,
+  pulse: pulsing = false,
   className,
   iconClassName,
 }: StatusIconProps) {
@@ -72,21 +91,44 @@ export function StatusIcon({
   const presentation = STATUS_PRESENTATION[kind];
   const Icon = presentation.icon;
   const label = t(`status.${kind}`);
+  const pulse = pulsing ? (STATUS_PULSE[kind] ?? null) : null;
+  const icon = (
+    <Icon
+      aria-hidden
+      className={cn(
+        'size-3.5 shrink-0',
+        presentation.tone,
+        pulse === null ? presentation.spin && 'motion-safe:animate-spin' : 'relative',
+        iconClassName,
+      )}
+    />
+  );
   const content = (
     <span
       data-slot="status-icon"
       data-status={kind}
+      data-pulse={pulse ?? undefined}
       className={cn('inline-flex min-w-0 items-center gap-1.5', className)}
     >
-      <Icon
-        aria-hidden
-        className={cn(
-          'size-3.5 shrink-0',
-          presentation.tone,
-          presentation.spin && 'motion-safe:animate-spin',
-          iconClassName,
-        )}
-      />
+      {pulse === null ? (
+        icon
+      ) : (
+        <span className="relative inline-flex shrink-0">
+          {/* A disc in `status-working` that grows and fades (Tailwind `ping`) while motion is
+              allowed – one CSS animation, no timer; with "reduce motion" a calm dot. Slower than
+              Tailwind's 1 s (calm enough for many rows), `soft` slower and fainter still. */}
+          <span
+            aria-hidden
+            data-slot="status-pulse"
+            className={cn(
+              'pointer-events-none absolute inset-0 rounded-full motion-safe:animate-ping',
+              pulse === 'strong' ? 'bg-status-working/30' : 'bg-status-working/15',
+            )}
+            style={{ animationDuration: pulse === 'strong' ? '1.6s' : '3s' }}
+          />
+          {icon}
+        </span>
+      )}
       {showLabel ? <span className="truncate">{label}</span> : <span className="sr-only">{label}</span>}
     </span>
   );

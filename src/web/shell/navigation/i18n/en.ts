@@ -32,10 +32,8 @@ export const en = {
     plan: 'Plan',
     files: 'Files of this session',
     tasks: 'Tasks',
-    tasksRunning: {
-      one: 'Tasks – {count} background task running',
-      other: 'Tasks – {count} background tasks running',
-    },
+    /** WP-71: `{list}` = `running.agents/shells/misc` joined ("2 agents and 1 shell"). */
+    tasksRunning: 'Tasks – running: {list}',
     tasksOpen: { one: 'Tasks – {count} open to-do', other: 'Tasks – {count} open to-dos' },
     /** Counter above its maximum (R5W-06: no literal in the component). */
     countOverflow: '{max}+',
@@ -70,6 +68,16 @@ export const en = {
     compactSoon: 'Autocompact soon',
     /** WP-65 §1.1: screen-reader prefix of a highlighted line (open decision, error, needs_action). */
     needsYou: 'Needs you:',
+  },
+  /** WP-71: what runs in a session – row counters (screen reader), its tooltip, the header button. */
+  running: {
+    label: 'Running: {list}',
+    agents: { one: '{count} agent', other: '{count} agents' },
+    shells: { one: '{count} shell', other: '{count} shells' },
+    misc: { one: '{count} other task', other: '{count} other tasks' },
+    title: 'Running now',
+    more: 'and {count} more',
+    kind: { agent: 'Agent', bash: 'Shell', workflow: 'Workflow', task: 'Task' },
   },
   /** WP-65 §1.1: Parallax's live line while no CLI sentence comes (no Remote Control). */
   activity: {

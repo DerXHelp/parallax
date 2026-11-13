@@ -1,8 +1,8 @@
-import type { TaskRow } from '@web/lib/task-rows';
+import type { TaskRow } from '@shared/tasks';
 
 /**
  * Panel helpers of the task rows (WP-55, ADR-149/150), pure. The rows themselves – and the running
- * count the header shares – are `@web/lib/task-rows` (CR3-02: one model for panel and header).
+ * count the header shares – are `@shared/tasks` (CR3-02, WP-71: one model for panel, header and sidebar).
  */
 
 /** Stop also for background shell commands (`local_bash`) – product switch, on by default. */
