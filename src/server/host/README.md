@@ -10,6 +10,7 @@ Host-Befehle, die keine Session betreffen (ADR-101), als `HostCommandHandler`
 | Datei | Exporte | Inhalt |
 | --- | --- | --- |
 | `fsCommands.ts` | `createFsCommands({ fs?, home?, platform?, driveTimeoutMs? })` → `HostCommandHandler` (`names: ['fs.listDirectory']`), `DirFs`, `DirEntry`, `nodeDirFs`, `DRIVE_TIMEOUT_MS`, `DRIVE_PROBE_LIMIT`, `isHiddenName`, `childPath`, `parentPath` | Ordner-Browser, nur lesend |
+| `linkCommands.ts` | `createLinkCommands(opener)` → `HostCommandHandler` (`names: ['link.open']`), `LinkOpener`, `createSystemLinkOpener(deps?)`, `createRecordingLinkOpener()`, `defaultBrowserCommand`, `browserLaunch`, `splitCommandLine` | WP-65 §1.6b: http(s)-Link im **Standardbrowser** – Registry HKCU `…\UrlAssociations\https\UserChoice` (`ProgId`, Rückfall `http`) → `<ProgId>\shell\open\command` (HKCU, dann HKLM), nur absolute `.exe`, Start über `spawnGui` (ADR-144) mit der URL statt `%1`; nie `cmd /c start`. Fehler → `OPEN_FAILED {reason}` (die Web-UI öffnet den Link dann selbst, mit Hinweis). Mit dem FakeBackend der aufzeichnende Öffner (startet nichts, loggt `link.open (fake): <url>`) |
 
 **`fs.listDirectory` (ADR-119, WP-30 §4.12):**
 - `path: null` → Wurzeln: Benutzerordner (`kind: 'home'`, entfällt bei unsicherem Pfad, z. B.

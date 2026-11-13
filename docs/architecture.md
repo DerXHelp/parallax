@@ -645,7 +645,34 @@ Remote Control verbindet das installierte `claude` einer Session mit claude.ai b
   mit Menü (Ein/Aus, „In der Claude-App öffnen“, Link kopieren; geöffnet werden nur claude.ai-Links),
   Hinweis „Aus der Claude-App“ am Prompt, Einstellung „Remote Control für neue Sessions“.
 - **Erweiterung (WP-65):** weitere Bridge-Messages sind je ein Eintrag in `normalizer/bridge.ts`
-  (`task_summary`/`post_turn_summary` heute gezählt-ignoriert).
+  (`task_summary`/`post_turn_summary` speisen seit WP-65 Live-Satz und Turn-Fazit, §3.5).
+
+### 3.5 Übersicht (WP-65)
+
+Was eine Session gerade tut und getan hat, ohne sie zu öffnen; dazu Titel, Limits, Hintergrund, Links.
+- **Live-Satz und Turn-Fazit:** `SessionSummary.activity` (nur während eines Turns; CLI-Satz aus
+  `system/task_summary` – nur mit Remote Control –, sonst das neueste laufende Haupt-Tool mit Ziel, sonst
+  „thinking“; gedrosselt auf 2 s, `sessions/overview.ts` `ActivityTracker`) und `turnSummary` (CLI-Fazit
+  `system/post_turn_summary` des letzten Turns, sonst Rückfall: erste Zeile der Antwort ohne Markdown;
+  persistiert). Die Web-UI zeigt beides als zweite Zeile unter dem Namen und in der Kopfzeile
+  (`@web/lib/activity` `sessionLine`, Parallax-Wörter je Werkzeug, „braucht dich“ mit Symbol).
+- **„Seit du zuletzt hier warst“:** `SessionSummary.lastSeenAt` (Server: Präsenz eines sichtbaren
+  Fensters endet, Prompt/Freigabe aus der Claude-App; nie rückwärts). Die Karte rechnet der Client aus den
+  geladenen Items (`features/transcript/lib/since.ts`); der Wert beim Öffnen gilt.
+- **Auto-Titel:** nach dem ersten echten Turn je Unterhaltung `generateSessionTitle(…, {persist: true})`
+  (SDK intern, `backend/overview.ts`), nur solange kein eigener Titel gesetzt ist; „Titel neu erzeugen“
+  (`session.regenerateTitle`, `persist: false`, danach `/rename` an die CLI). Fehlt die Methode, bleibt die
+  bisherige AI-Titel-Abfrage.
+- **Limits:** die experimentelle Nutzungsabfrage (`readUsage`, alle 5 min solange ein Prozess läuft, die
+  erste 10 s nach einem Spawn; je Profil eine Abo-Session) mischt ihre Fenster in die Abo-Limits des Profils
+  (`mergeUsage`, ADR-114); `rate_limit`-Ereignisse wirken weiter sofort.
+- **Hintergrund:** `session.backgroundTasks {toolUseId|null}` → `query.backgroundTasks()` (Ctrl+B des
+  Terminals); UI an laufendem Bash/Agent, „Alles in den Hintergrund“ und Strg+B im Composer.
+- **Externe Links:** Host-Befehl `link.open {url}` öffnet http(s)-Links im Standardbrowser
+  (`host/linkCommands.ts`: Registry → `spawnGui`); kann der Host nicht, öffnet die Web-UI den Link selbst
+  (`window.open`, Hinweis). Mit dem FakeBackend wird nur aufgezeichnet.
+- **Transkript-Ansicht:** `Settings.transcriptView` (`compact`/`all`) statt `localStorage`; der alte Wert
+  wird einmal übernommen.
 
 ## 4. Source of Truth (A.3)
 
@@ -1145,6 +1172,16 @@ bzw. das Profil.
 | Anfrage-Abbruch durch die CLI bei `connected`/`reconnecting` | Outcome `answered_elsewhere` statt `cancelled` (Heuristik) | – |
 | Leerlauf-Schlaf (ADR-105) | nie bei `connecting`/`connected`/`reconnecting` (`sleepEligible`) | – |
 
+**Übersicht (WP-65, §3.5):**
+
+| Befehl / Fall | Regel | Fehler |
+|---|---|---|
+| `session.backgroundTasks {toolUseId}` | laufender Prozess; `toolUseId` = ein laufender Vordergrund-Aufruf, `null` = alles (Ctrl+B) | `SESSION_NOT_RUNNING`, `TASK_NOT_FOUND`, `CLAUDE_CONTROL_FAILED` |
+| `session.regenerateTitle` | Gates wie Phase 2; ein ruhender Eintrag startet zuerst; neuer Titel (`persist: false`) → Quelle `ai`, `/rename` an die CLI (Echo bleibt `ai`); auch über einem eigenen Titel | `SESSION_ARCHIVED`, `SESSION_EXTERNAL`, `CLAUDE_CONTROL_FAILED` |
+| Auto-Titel nach einem echten Turn | einmal je Unterhaltung, nur bei Titelquelle `none`/`prompt`; ein eigener Titel gewinnt, auch während der Abfrage | – |
+| Präsenz endet (sichtbares Fenster zeigte den Eintrag) | `lastSeenAt = jetzt` (nie rückwärts) | – |
+| `link.open {url}` (Host-Befehl) | nur http(s) (`isHttpUrl`); Standardbrowser aus der Registry, nur absolute `.exe`, `spawnGui` | `OPEN_FAILED {reason}` |
+
 ## 6. Item-Modell (`src/shared/model.ts`, §5.6)
 
 **Item-IDs** (live und Verlauf identisch; Annahmen in `src/server/backend/fixture.test.ts` gegen alle
@@ -1192,7 +1229,9 @@ Bilder immer als Blob. Assistant-Text wird nie gekappt.
 | `system/background_tasks_changed` | – (→ `detail.backgroundTasks`) | `background_tasks` |
 | `command_lifecycle` (untypisiert) | – (→ Queue) | `prompt_lifecycle` |
 | `system/session_title_changed` (untypisiert) | – | `title_changed` |
-| `system/bridge_state` (untypisiert, WP-64; `normalizer/bridge.ts`) | – (→ `summary.remoteControl`) | `bridge_state` (`ready`/`connected`/`failed` + `failureKind`/`policy_disabled`, sonst `unknown`); `system/task_summary`/`post_turn_summary` gezählt-ignoriert (WP-65) |
+| `system/bridge_state` (untypisiert, WP-64; `normalizer/bridge.ts`) | – (→ `summary.remoteControl`) | `bridge_state` (`ready`/`connected`/`failed` + `failureKind`/`policy_disabled`, sonst `unknown`) |
+| `system/task_summary` (untypisiert, WP-65; `normalizer/bridge.ts`) | – (→ `summary.activity`) | `task_summary` (`detail`, `null` beendet den Satz) |
+| `system/post_turn_summary` (untypisiert, WP-65) | – (→ `summary.turnSummary`) | `turn_summary` nur für eine Hauptthread-Antwort des laufenden bzw. zuletzt beendeten Turns (`summarizes_uuid`), sonst gezählt `system/post_turn_summary:stale` |
 | `prompt_suggestion`, `system/commands_changed` | – (→ Detail) | – |
 | `conversation_reset` | Marker `system/conversation_reset` als erstes Item der neuen Unterhaltung – der Normalizer liefert ihn mit der ersten Ausgabe nach `startConversation` (WP-12 Entscheidung 1) | `conversation_reset` + Op `conversation.reset` (veröffentlicht die Engine) |
 | `system/thinking_tokens`, `keep_alive` | – | – |
@@ -1328,13 +1367,14 @@ Unter `PARALLAX_HOME` (Default `%LOCALAPPDATA%\Parallax`, Dev `.parallax-dev`, T
 ```
 sessions.json                         registryFileSchema v2 (Entry inkl. unread, context – R0-17; Phase 2:
                                       gitBranch, external, continueAt; Migration 1 → 2 = Identität, ADR-107;
-                                      WP-64: remoteControlWanted, Conversation.bridgeSessionId/sessionUrl –
-                                      Felder mit Default)
+                                      WP-64: remoteControlWanted, Conversation.bridgeSessionId/sessionUrl;
+                                      WP-65: turnSummary, lastSeenAt – Felder mit Default)
 profiles.json                         profilesFileSchema (Phase 2, ADR-102: alle Profile inkl. „Standard“;
                                       fehlt die Datei, gilt nur „Standard“)
 settings.json                         settingsFileSchema (Phase 2: notifications, idleSleep,
                                       promptSuggestions, port, autostart; Phase 3: editor, ADR-144;
-                                      WP-64: remoteControl.newSessions – Felder mit Default)
+                                      WP-64: remoteControl.newSessions; WP-65: transcriptView – Felder mit
+                                      Default)
 model-catalogs.json                   Phase 2 (ADR-114): supportedModels() je Profil (Server-intern)
 account-limits.json                   Phase 2 (ADR-114): letzte Abo-Limits je Profil (Server-intern)
 auth-secret.json                      Secret des Geräte-Cookies (WP-10, rotierbar, §5.1; ohne .bak, R1-11)
