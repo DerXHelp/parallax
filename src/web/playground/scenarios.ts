@@ -19,6 +19,7 @@ import type { StatusFacts } from '@shared/status';
 import type { AuthCheckResult } from '@web/state/auth';
 import type { FakeHost, FakeHostOptions } from '@web/state/fake-host';
 import { NAVIGATION_SESSION_KEYS, navigationData } from './navigation-scenario';
+import { prepareShowcaseHost, SHOWCASE_SESSION_KEYS, showcaseData } from './showcase/data';
 
 /**
  * Playground scenarios: sample data from @shared/samples (fixed ids; times relative to "now" only
@@ -55,6 +56,7 @@ export const SCENARIO_IDS = [
   'navigation',
   'navigation-external',
   'navigation-archived',
+  'showcase',
 ] as const;
 export type ScenarioId = (typeof SCENARIO_IDS)[number];
 
@@ -484,5 +486,15 @@ export const SCENARIOS: Readonly<Record<ScenarioId, Scenario>> = {
     title: 'Navigation: archived session (WP-35)',
     select: NAVIGATION_SESSION_KEYS.prototype,
     build: navigationData,
+  },
+  showcase: {
+    id: 'showcase',
+    title: 'README showcase: a workday with four projects (WP-68)',
+    select: SHOWCASE_SESSION_KEYS.paypal,
+    build: showcaseData,
+    start: (host, now) => {
+      prepareShowcaseHost(host, now());
+      return () => undefined;
+    },
   },
 };
