@@ -211,6 +211,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
   private readonly deniedByCli = new Set<string>();
   private retryItemId: string | null = null;
   private compacting = false;
+  /** WP-71: the last `background_tasks_changed` listed tasks (cleared when the process ends). */
+  private backgroundListed = false;
   private sessionId: string | null = null;
   /** Session ids of conversations ended by a conversation_reset. */
   private readonly retiredSessionIds = new Set<string>();
@@ -342,6 +344,13 @@ class LiveNormalizerImpl implements LiveNormalizer {
       if (this.compacting) {
         this.compacting = false;
         out.signals.push({ type: 'compacting', active: false });
+      }
+      // WP-71: the CLI's background tasks end with its process – no stale list (header, task panel,
+      // `SessionSummary.runningTasks` after the next start). No signal: `process_exit` zeroes the
+      // count anyway, an extra step before it could look like "done" to the notifier.
+      if (this.backgroundListed) {
+        this.backgroundListed = false;
+        out.detail.backgroundTasks = [];
       }
     }
     return this.end(out);
@@ -1440,6 +1449,7 @@ class LiveNormalizerImpl implements LiveNormalizer {
           ambient: t.ambient ?? false,
         }));
         out.detail.backgroundTasks = tasks;
+        this.backgroundListed = tasks.length > 0;
         out.signals.push({ type: 'background_tasks', count: tasks.filter((t) => !t.ambient).length });
         return;
       }

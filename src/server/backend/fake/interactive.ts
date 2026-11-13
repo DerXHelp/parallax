@@ -17,7 +17,8 @@
  * `fake:info-reset` (levers of the session info of this session); WP-69 (wp69.ts): `fake:hooks` (hook
  * runs: four successful, one blocking PreToolUse with exit 2), and `fake:subagent`/`fake:background`
  * fill the agent's own transcript while it runs; WP-70: `fake:auth-failed` (like `fake:error`, the
- * assistant error `authentication_failed`) and `fake:output-style` (names the project's style). A prompt with images, PDFs, attached files or inline pastes
+ * assistant error `authentication_failed`) and `fake:output-style` (names the project's style); WP-71 (workers.ts):
+ * `fake:workers` (two background agents and a background shell at once). A prompt with images, PDFs, attached files or inline pastes
  * gets "Fake: received …" (ADR-103, ADR-146); the first prompt of a start without resume that is
  * the engine's fresh-context prompt gets "Fake: implementing plan (N lines)"; anything else gets a
  * thought plus a streamed "Echo: …". Decisions really wait for the engine; interrupt() and
@@ -54,6 +55,7 @@ import { images, limitWarning, steps } from './feedback';
 import { FAKE_SHOT_HEIGHT, FAKE_SHOT_NAME, FAKE_SHOT_PNG_BASE64, FAKE_SHOT_WIDTH } from './image';
 import { background, contextHigh, files, receivedCounts, receivedText, todo, writesLost } from './phase3';
 import { longBash, summaryTurn } from './overview';
+import { workers } from './workers';
 import { implementPlan, isImplementPlanPrompt, plan } from './plan';
 import { remoteFail, remoteFlaky, remotePermission, remotePrompt } from './remote';
 import { infoKeyword, isFakeInfoKeyword } from './sessionInfo';
@@ -509,6 +511,9 @@ async function handle(
       break;
     case 'fake:summary':
       await summaryTurn(ctx, c, turn);
+      break;
+    case 'fake:workers':
+      await workers(ctx, c, turn, sessionId);
       break;
     case 'fake:hooks':
       await hooks(ctx, c, turn);

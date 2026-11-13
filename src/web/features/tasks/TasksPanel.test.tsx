@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { makeError } from '@shared/errors';
 import { sampleTodoList } from '@shared/samples';
-import type { TaskRow } from '@web/lib/task-rows';
+import type { TaskRow } from '@shared/tasks';
 import type { RunningScenario } from '@web/playground/PlaygroundScenario';
 import { FeatureSlotsProvider, type FeatureSlots, type FileLinkSlotProps } from '@web/shell/slots';
 import { refreshClock } from '@web/state/clock';

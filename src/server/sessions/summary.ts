@@ -13,6 +13,7 @@ import {
   type ConversationEndReason,
   type Entry,
   type RemoteControlSummary,
+  type RunningTasks,
   type SessionActivity,
   type SessionSummary,
   type TitleSource,
@@ -29,7 +30,8 @@ export const PROMPT_TITLE_CHARS = 80;
  * WP-64: `remoteControl` = the live state of the running process (`remote`, default off) + the
  * wish; a wanted entry without a live link shows the stored link of its current conversation.
  * WP-65: `activity` = the live activity of the running turn (runtime only, default null);
- * `turnSummary` and `lastSeenAt` come from the entry.
+ * `turnSummary` and `lastSeenAt` come from the entry. WP-71: `runningTasks` = what runs in the
+ * process (runtime only, default null).
  */
 export function summaryOf(
   entry: Entry,
@@ -40,6 +42,8 @@ export function summaryOf(
     activity?: SessionActivity | null;
     /** WP-70: the project's output style (runtime only). */
     outputStyle?: string | null;
+    /** WP-71: running agents/shells/other tasks (runtime only). */
+    runningTasks?: RunningTasks | null;
   } = {},
 ): SessionSummary {
   const remote = o.remote ?? { state: 'off', sessionUrl: null, error: null };
@@ -81,6 +85,7 @@ export function summaryOf(
     turnSummary: entry.turnSummary,
     lastSeenAt: entry.lastSeenAt,
     outputStyle: o.outputStyle ?? null,
+    runningTasks: o.runningTasks ?? null,
   };
 }
 
