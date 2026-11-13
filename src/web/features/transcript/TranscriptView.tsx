@@ -211,10 +211,13 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
   // pass without one, so a user scroll that starts meanwhile – during streaming nearly always – is
   // pulled back to the end (FIX-E2E-EDGE157, WP-55). The list re-applies the end itself (`onResize`)
   // and only while it sticks to the bottom; a scroll towards the top ends that at once.
+  // Since virtua 0.53.6 the first render runs before the viewport is measured (`viewportSize` 0):
+  // writing the offset then is a needless scroll (and virtua blocks pointer events for 150 ms after
+  // every scroll) – `onResize` applies the end once the viewport has its size.
   const scrollToEnd = useCallback(() => {
     const handle = listRef.current;
     const element = scrollElement();
-    if (handle === null || element === null || rowCountRef.current === 0) return;
+    if (handle === null || element === null || rowCountRef.current === 0 || handle.viewportSize === 0) return;
     element.scrollTop = Math.max(0, handle.scrollSize - handle.viewportSize);
   }, [scrollElement]);
 

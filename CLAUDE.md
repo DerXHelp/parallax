@@ -11,7 +11,7 @@ die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale En
 - Web: Vite 8, React 19, Tailwind v4, shadcn/ui (`radix-ui`), lucide-react, Zustand,
   react-markdown/streamdown, shiki, diff, virtua. Fonts lokal (@fontsource-variable).
 - Tests: Vitest 5 (Projekte `node` + `web`/happy-dom), Playwright mit `channel: 'chrome'`.
-- Paketmanager: pnpm 12.8.2. Einstellungen in `pnpm-workspace.yaml`, nie in `package.json`.
+- Paketmanager: pnpm 12.17.0. Einstellungen in `pnpm-workspace.yaml`, nie in `package.json`.
 
 ## Befehle
 | Befehl | Zweck |
