@@ -125,6 +125,9 @@ Export; Daten nur auf Anfrage. 20 (`getTaskOutput`) entfällt – Parallax liest
 | 28 | Effort/Output-Style dauerhaft in die Einstellungen schreiben | öffentlich: `updateSettings()` | Auswahl gilt auch im Terminal | klein |
 | 29 | Token-Budget je Aufgabe | alpha: Option `taskBudget` | Claude teilt sich lange Aufgaben ein | klein, alpha |
 
+**Durchgang mit dem Nutzer (13.11.2026):** 21 abgelehnt (Nutzer: „Ich wüsste nicht, wozu ich das brauche“) –
+weder Stufe 1 (Benachrichtigen, Datei im Viewer öffnen) noch Stufe 2 (Orchestrierung). 22–29 offen.
+
 ## 5. Empfehlung (Reihenfolge)
 
 1. **Remote Control** (WP-64, nach dem Spike) – vom Nutzer als essentiell eingestuft.
