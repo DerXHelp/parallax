@@ -29,6 +29,8 @@ export type {
   FakeRemoteControlOptions,
   FakeScenario,
   FakeScriptContext,
+  FakeSideQuestionMode,
+  FakeSideQuestionOptions,
   FakeScriptState,
   FakeSessionHandle,
   FakeSessionState,
@@ -134,6 +136,7 @@ export function createFakeBackend(options: FakeBackendOptions = {}): FakeBackend
         remoteControl: options.remoteControl ?? {},
         overview: options.overview ?? {},
         usage,
+        sideQuestions: options.sideQuestions ?? {},
         onStateChange,
       });
       sessions.push(session);

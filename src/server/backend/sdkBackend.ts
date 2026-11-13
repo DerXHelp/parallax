@@ -46,6 +46,7 @@ import {
 } from './sdkOptions';
 import { titleOf, usageLimitsOf } from './overview';
 import { remoteControlDefaultOf, remoteControlErrorOf, toRemoteControlInfo } from './remoteControl';
+import { controlRetryOf, sideAnswerOf, sideQuestionFailure, withdrawnOf } from './sideQuestion';
 import { createSpawner } from './spawn';
 import type {
   AgentBackend,
@@ -57,6 +58,8 @@ import type {
   OutgoingPrompt,
   RemoteControlRequest,
   RemoteControlResult,
+  SideQuestionOptions,
+  SideQuestionResult,
   StartSessionRequest,
   TitleResult,
   UsageLimits,
@@ -86,6 +89,11 @@ export interface SdkTimeouts {
    * start, so it gets the bound of the readiness rather than `controlMs`.
    */
   titleMs: number;
+  /**
+   * WP-66: `askSideQuestion` (one model request from the session's prompt cache, live 1–2 s; the CLI
+   * retries overloaded requests itself) – after this the request is cancelled (status failed).
+   */
+  sideQuestionMs: number;
 }
 
 export const SDK_TIMEOUTS: Readonly<SdkTimeouts> = Object.freeze({
@@ -96,6 +104,7 @@ export const SDK_TIMEOUTS: Readonly<SdkTimeouts> = Object.freeze({
   readyMs: 60_000,
   iteratorAfterExitMs: 2_000,
   titleMs: 60_000,
+  sideQuestionMs: 120_000,
 });
 
 /** Answer to the CLI when the permission handler throws (F.3). */
@@ -134,6 +143,13 @@ export interface SdkQueryHandle extends AsyncIterable<unknown> {
   backgroundTasks?(toolUseId?: string): Promise<unknown>;
   /** WP-65: experimental (typed, name will change) – checked at runtime like the internal ones. */
   usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?(opts?: { skipBehaviors?: boolean }): Promise<unknown>;
+  /** WP-66: internal (not typed in 0.3.322) – a missing method means "no side questions". */
+  askSideQuestion?(
+    question: string,
+    opts?: { history?: { question: string; response: string }[]; signal?: AbortSignal },
+  ): Promise<unknown>;
+  /** WP-66: internal (not typed in 0.3.322) – a missing method means "cannot withdraw". */
+  cancelAsyncMessage?(messageUuid: string): Promise<unknown>;
   close(): void;
 }
 
@@ -293,6 +309,10 @@ class SdkSession implements AgentSession {
   private shutdownPromise: Promise<void> | null = null;
   /** WP61-04: the first `result` of this process was logged (credential expiry). */
   private firstResultSeen = false;
+  /** WP-66: open side questions (a retry progress is attributed only while exactly one is open). */
+  private readonly openSideQuestions = new Set<SideQuestionOptions>();
+  /** WP-66: open title requests (they share the CLI's progress messages with side questions). */
+  private openTitles = 0;
 
   constructor(
     private readonly req: StartSessionRequest,
@@ -360,6 +380,7 @@ class SdkSession implements AgentSession {
       for await (const message of q) {
         if (this.exitSent) break;
         if (!this.firstResultSeen) this.noteFirstResult(message);
+        this.noteControlProgress(message);
         this.emit({ type: 'message', message, at: this.ctx.now() });
       }
     } catch (error) {
@@ -398,6 +419,22 @@ class SdkSession implements AgentSession {
     } catch (error) {
       if (this.exitSent || this.shutdownPromise !== null) return;
       this.emitError('control', error);
+    }
+  }
+
+  /**
+   * WP-66: `system/control_request_progress api_retry` → the open side question, but only when it is
+   * the only open control request that reports progress (the CLI's request_id is unknown here).
+   */
+  private noteControlProgress(message: unknown): void {
+    if (this.openSideQuestions.size !== 1 || this.openTitles > 0) return;
+    const retry = controlRetryOf(message);
+    if (retry === null) return;
+    const [only] = this.openSideQuestions;
+    try {
+      only?.onRetry?.(retry);
+    } catch (error) {
+      this.log.warn({ err: error }, 'side question retry callback failed');
     }
   }
 
@@ -654,6 +691,7 @@ class SdkSession implements AgentSession {
     if (this.q !== null && typeof this.q.generateSessionTitle !== 'function') {
       return { ok: false, reason: 'unavailable' };
     }
+    this.openTitles += 1;
     try {
       const raw = await this.control('generateSessionTitle', this.ctx.timeouts.titleMs, (q) => {
         if (q.generateSessionTitle === undefined) throw new Error('generateSessionTitle missing');
@@ -663,6 +701,8 @@ class SdkSession implements AgentSession {
     } catch (error) {
       this.log.warn({ err: error, persist: opts.persist }, 'generateSessionTitle failed');
       return { ok: false, reason: 'failed' };
+    } finally {
+      this.openTitles -= 1;
     }
   }
 
@@ -696,6 +736,52 @@ class SdkSession implements AgentSession {
       this.ctx.warnUsageOnce({ err: error }, 'usage query failed');
       return null;
     }
+  }
+
+  /**
+   * WP-66: side question (internal method, checked at runtime); never rejects. The caller's signal
+   * cancels it (→ `cancelled`); after `sideQuestionMs` it is cancelled as `failed`.
+   */
+  async askSideQuestion(question: string, opts: SideQuestionOptions): Promise<SideQuestionResult> {
+    if (this.q !== null && typeof this.q.askSideQuestion !== 'function') return { ok: false, reason: 'unavailable' };
+    if (opts.signal.aborted) return { ok: false, reason: 'cancelled' };
+    const abort = new AbortController();
+    const onAbort = (): void => {
+      abort.abort(new Error('Side question cancelled'));
+    };
+    opts.signal.addEventListener('abort', onAbort, { once: true });
+    const history = opts.history.map((turn) => ({ question: turn.question, response: turn.response }));
+    this.openSideQuestions.add(opts);
+    try {
+      const raw = await this.control('askSideQuestion', this.ctx.timeouts.sideQuestionMs, (q) => {
+        if (q.askSideQuestion === undefined) throw new Error('askSideQuestion missing');
+        return q.askSideQuestion(question, { ...(history.length > 0 ? { history } : {}), signal: abort.signal });
+      });
+      const answer = sideAnswerOf(raw);
+      if (answer === 'invalid') {
+        this.log.warn('askSideQuestion: unknown answer shape');
+        return { ok: false, reason: 'unavailable' };
+      }
+      return { ok: true, answer };
+    } catch (error) {
+      const reason = sideQuestionFailure(error, opts.signal.aborted);
+      // A timeout leaves the CLI request open: cancel it (control_cancel_request).
+      if (!abort.signal.aborted) abort.abort(new Error('Side question timed out'));
+      if (reason !== 'cancelled') this.log.warn({ err: error, reason }, 'askSideQuestion failed');
+      return { ok: false, reason };
+    } finally {
+      this.openSideQuestions.delete(opts);
+      opts.signal.removeEventListener('abort', onAbort);
+    }
+  }
+
+  /** WP-66: `cancelAsyncMessage(uuid)` (internal method); rejects when it fails or is missing. */
+  async withdrawQueued(messageUuid: string): Promise<boolean> {
+    const raw = await this.control('cancelAsyncMessage', this.ctx.timeouts.controlMs, (q) => {
+      if (q.cancelAsyncMessage === undefined) throw new Error('cancelAsyncMessage missing');
+      return q.cancelAsyncMessage(messageUuid);
+    });
+    return withdrawnOf(raw);
   }
 
   /** F.3: toPermissionRequest → req.canUseTool(request, signal); a throwing handler → deny. */

@@ -116,6 +116,12 @@ const commands: Command[] = [
   { name: 'session.backgroundTasks', entryId, toolUseId: null },
   { name: 'session.regenerateTitle', entryId },
   { name: 'link.open', url: 'https://claude.ai/code/session_01' },
+  // WP-66
+  { name: 'session.askSideQuestion', entryId, question: 'Why?', threadId: null },
+  { name: 'session.askSideQuestion', entryId, question: 'And then?', threadId: 'px:cv:3' },
+  { name: 'session.cancelSideQuestion', entryId, itemId: 'px:cv:3' },
+  { name: 'session.deleteSideQuestion', entryId, threadId: 'px:cv:3' },
+  { name: 'session.withdrawQueued', entryId, messageUuid: SAMPLE_IDS.messageUuid },
 ];
 
 const clientMessages: ClientMessage[] = [
@@ -530,6 +536,32 @@ describe('command results', () => {
     expect(parseCommandResult('link.open', {})).toEqual({});
     expect(parseCommandResult('session.backgroundTasks', {})).toEqual({});
     expect(parseCommandResult('session.regenerateTitle', {})).toEqual({});
+  });
+
+  it('WP-66: side question (trimmed, 1 … LIMITS.sideQuestionChars) and withdraw results', () => {
+    const ask = (question: string) =>
+      parseClientMessage(
+        JSON.stringify({
+          type: 'cmd',
+          cmdId: SAMPLE_IDS.cmdId,
+          cmd: { name: 'session.askSideQuestion', entryId, question, threadId: null },
+        }),
+      );
+    expect(ask('   ').ok).toBe(false);
+    expect(ask('x'.repeat(LIMITS.sideQuestionChars + 1)).ok).toBe(false);
+    const ok = ask('  why?  ');
+    expect(ok.ok && ok.message.type === 'cmd' && ok.message.cmd.name === 'session.askSideQuestion').toBe(true);
+    if (ok.ok && ok.message.type === 'cmd' && ok.message.cmd.name === 'session.askSideQuestion') {
+      expect(ok.message.cmd.question).toBe('why?');
+    }
+    expect(parseCommandResult('session.askSideQuestion', { itemId: 'px:cv:1' })).toEqual({ itemId: 'px:cv:1' });
+    expect(parseCommandResult('session.cancelSideQuestion', {})).toEqual({});
+    expect(parseCommandResult('session.deleteSideQuestion', {})).toEqual({});
+    expect(parseCommandResult('session.withdrawQueued', { withdrawn: true, text: 'x' })).toEqual({
+      withdrawn: true,
+      text: 'x',
+    });
+    expect(parseCommandResult('session.withdrawQueued', { withdrawn: true })).toBeNull();
   });
 
   it('Phase 3 results (WP-50 §4.6)', () => {

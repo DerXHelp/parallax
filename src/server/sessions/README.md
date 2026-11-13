@@ -139,3 +139,23 @@ Broker `check`/`latestPlanVersion`/`latestPlanFilePath`/`planRecords`/`loadLastP
   `SESSION_NOT_RUNNING` ohne Prozess, Ablehnung → `CLAUDE_CONTROL_FAILED`), `session.regenerateTitle`
   (startet einen ruhenden Prozess; nicht für archivierte/externe Einträge).
 - Integrationstest: `overview.integration.test.ts` (Fake: `fake:summary`, `fake:long-bash`, Titel, Nutzung).
+
+## Seitenfragen und wartende Nachricht zurückholen (WP-66)
+
+| Datei | Exporte | Inhalt |
+| --- | --- | --- |
+| `sideQuestions.ts` | `askSideQuestion`, `cancelSideQuestion`, `deleteSideQuestionThread`, `endSideQuestions`, `threadHistory`, `finishedItem`, `SIDE_HISTORY_MAX` (10), `PendingSideQuestion` | Item `side_question` gehört der Engine (der Normalizer sieht es nie): sofort `pending` in der aktuellen Unterhaltung (`order` über `LiveNormalizer.claimOrder()`, id `px:<conversationId>:<order>`), Anfrage im Hintergrund, Ergebnis per `item.upsert` (`answered`/`failed`/`cancelled`, `retry` während `api_retry`). Thread = id der ersten Frage; Nachfragen schicken die beantworteten, nicht synthetischen Fragen des Threads als `history` (älteste zuerst, höchstens die letzten 10). Prozessende/Server-Stopp → `failed` (`SESSION_NOT_RUNNING {reason: exited|shutdown}`); ein nach Absturz `pending` gebliebenes Item repariert `EntryState.repairStaleSideQuestions` beim Laden des Spiegels. Löschen = `item.remove` für den ganzen Thread. Kein Einfluss auf unread, Benachrichtigungen, Status, `lastActivityAt`; eine offene Frage hält den Prozess wach (Leerlauf-Schlaf wartet, `considerSleep` danach) |
+
+- **Befehle** (`commands.ts`): `session.askSideQuestion {question, threadId|null}` → `{itemId}` (im
+  Lifecycle-Lock; ruhender Eintrag wird ohne Turn gestartet; nicht für archivierte/externe Einträge –
+  Fehler der Anfrage landen am Item: `side_question_busy` → `SESSION_BUSY`, fehlende Methode/sonstiges →
+  `CLAUDE_CONTROL_FAILED`), `session.cancelSideQuestion {itemId}` (offene Frage → `cancelled`, sonst
+  nichts), `session.deleteSideQuestion {threadId}`, `session.withdrawQueued {messageUuid}` →
+  `{withdrawn, text}` (`cancelAsyncMessage`; `true` oder ein noch `sending` Eintrag → aus der Queue,
+  Text zurück; `false` bei `queued` = schon übernommen, unbekannte uuid → nicht zurückgeholt, Fehler →
+  `CLAUDE_CONTROL_FAILED`).
+- Persistenz: im Transkript-Log der Unterhaltung, in der gefragt wurde (eine späte Antwort nach `/clear`
+  nur ins Log, ohne Op). Der Spiegel lädt nur die letzten 150 Items – ein `pending` weiter vorn bleibt bis
+  `loadEarlier` unrepariert (in der Praxis nicht erreichbar, siehe WP-66 „Abweichungen“).
+- Harness-Option `sideQuestions` (= `FakeBackendOptions.sideQuestions`). Integrationstest:
+  `sideQuestions.integration.test.ts`.
