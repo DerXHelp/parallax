@@ -1,7 +1,16 @@
 import { ArchiveRestoreIcon, EllipsisIcon, GitBranchIcon, PinIcon } from 'lucide-react';
-import { memo, useMemo, useState, type FocusEvent } from 'react';
+import {
+  lazy,
+  memo,
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentType,
+  type FocusEvent,
+} from 'react';
 import type { EffortLevel } from '@shared/common';
-import type { ContextGauge, ProfileColor, RunningTasks, SessionSummary, TaskKind } from '@shared/model';
+import type { ContextGauge, ProfileColor, RunningTasks, SessionSummary } from '@shared/model';
 import type { DisplayStatusKind } from '@shared/status';
 import { runningTaskTotal } from '@shared/tasks';
 import { useFormat, useT } from '@web/i18n';
@@ -19,7 +28,7 @@ import { IconButton } from '@web/ui/icon-button';
 import { StatusIcon } from '@web/ui/status-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
 import { ContextCompactIcon, useContextTexts } from '../context-display';
-import { RunningCounts, TASK_KIND_ICON, useRunningWords } from '../running-tasks';
+import { RunningCounts, useRunningWords } from '../running-tasks';
 import { PathTail } from './PathTail';
 import { PROFILE_BG } from './profile-colors';
 import { RemoteControlIcon, showsRemoteInRow, useRemoteControlTexts } from './remote-control';
@@ -117,6 +126,20 @@ function RowRemoteDetail({ remote }: { remote: SessionSummary['remoteControl'] }
   );
 }
 
+/**
+ * WP-71: "Running now" of the row's tooltip – its own chunk (start bundle, §1.5), loaded once a row
+ * shows running tasks, so the tooltip has it at hand. A failed load leaves the section out.
+ */
+let detailChunk: Promise<{ default: ComponentType<{ tasks: RunningTasks; more: number }> }> | null = null;
+function loadRowTasksDetail() {
+  detailChunk ??= import('./RowTasksDetail').then(
+    (module) => ({ default: module.RowTasksDetail }),
+    () => ({ default: () => null }),
+  );
+  return detailChunk;
+}
+const RowTasksDetail = lazy(loadRowTasksDetail);
+
 /** Counters above this show as "9+" – the row stays narrow. */
 const ROW_COUNTER_MAX = 9;
 
@@ -127,59 +150,13 @@ const ROW_COUNTER_MAX = 9;
 function RowTasks({ tasks }: { tasks: RunningTasks }) {
   const t = useT();
   const words = useRunningWords(tasks);
+  useEffect(() => {
+    void loadRowTasksDetail();
+  }, []);
   return (
     <span data-slot="row-tasks" className="text-status-working flex shrink-0 items-center text-2xs">
       <RunningCounts counts={tasks} max={ROW_COUNTER_MAX} />
       <span className="sr-only">{t('navigation.running.label', { list: words })}</span>
-    </span>
-  );
-}
-
-const KIND_KEY: Readonly<Record<TaskKind, 'agent' | 'bash' | 'workflow' | 'task'>> = {
-  agent: 'agent',
-  bash: 'bash',
-  workflow: 'workflow',
-  other: 'task',
-};
-
-/** WP-71: "Running now" in the row's tooltip – up to five tasks (kind, type, label), then "and n more". */
-function RowTasksDetail({ tasks }: { tasks: RunningTasks }) {
-  const t = useT();
-  const more = runningTaskTotal(tasks) - tasks.items.length;
-  return (
-    <span data-slot="row-tasks-detail" className="mt-0.5 grid gap-0.5">
-      <span className="font-medium">{t('navigation.running.title')}</span>
-      {tasks.items.map((item, index) => {
-        const Icon = TASK_KIND_ICON[item.kind];
-        return (
-          <span
-            key={`${item.kind}:${String(index)}`}
-            data-slot="row-task"
-            data-kind={item.kind}
-            className="flex min-w-0 items-start gap-1.5"
-          >
-            <Icon aria-hidden className="text-status-working mt-0.5 size-3 shrink-0" />
-            <span className="min-w-0 break-words">
-              <span className="text-muted-foreground">
-                {t(`navigation.running.kind.${KIND_KEY[item.kind]}`)}
-                {item.subagentType === null ? null : (
-                  <>
-                    <span aria-hidden className="mx-1">
-                      ·
-                    </span>
-                    {item.subagentType}
-                  </>
-                )}
-                {item.label === '' ? null : ':'}
-              </span>
-              {item.label === '' ? null : <span className="ml-1">{item.label}</span>}
-            </span>
-          </span>
-        );
-      })}
-      {more > 0 ? (
-        <span className="text-muted-foreground">{t('navigation.running.more', { count: more })}</span>
-      ) : null}
     </span>
   );
 }
@@ -393,7 +370,14 @@ export const SessionRow = memo(function SessionRow({
                 <span className="font-medium">{title}</span>
                 <span>{t(`status.${statusKind}`)}</span>
                 {lineText === null ? null : <span className="break-words">{lineText}</span>}
-                {summary.runningTasks === null ? null : <RowTasksDetail tasks={summary.runningTasks} />}
+                {summary.runningTasks === null ? null : (
+                  <Suspense fallback={null}>
+                    <RowTasksDetail
+                      tasks={summary.runningTasks}
+                      more={runningTaskTotal(summary.runningTasks) - summary.runningTasks.items.length}
+                    />
+                  </Suspense>
+                )}
                 <span className="text-muted-foreground font-mono break-all">{summary.cwd}</span>
                 {summary.gitBranch === null ? null : (
                   <span className="text-muted-foreground">

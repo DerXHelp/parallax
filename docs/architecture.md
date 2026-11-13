@@ -844,7 +844,7 @@ Welche Sessions arbeiten und was in ihnen läuft – in der Seitenleiste, ohne s
   `ExitPlanMode` = erste Planzeile) – die Zeile zeigt „Braucht dich: …“ statt zu verschwinden.
 - **Web:** Sidebar-Zeile neben dem Titel Agent-/Terminal-Symbol + Zahl (`shell/running-tasks.tsx`
   `RunningCounts`, „9+“, für Screenreader in Worten), Tooltip-Abschnitt „Läuft gerade“ (bis 5 Einträge, „und
-  n weitere“); Kopfzeilen-Knopf „Tasks“ mit hervorgehobenen Zählern nach Art (aus dem Detail der Session,
+  n weitere“; eigener Chunk `navigation/RowTasksDetail.tsx`, geladen, sobald eine Zeile Tasks zeigt); Kopfzeilen-Knopf „Tasks“ mit hervorgehobenen Zählern nach Art (aus dem Detail der Session,
   gleiche Zahlen wie das Panel) und Name „Aufgaben – es läuft: 2 Agenten und 1 Shell“. Arbeitende, startende
   und Hintergrund-Sessions pulsieren in Zeile und Rail (§7).
 - **FakeBackend:** `fake:workers` (zwei Hintergrund-Agenten + eine Hintergrund-Shell, enden nacheinander);
@@ -1540,7 +1540,7 @@ ist „Fortsetzen & Plan freigeben“ bzw. „Fortsetzen“.
 (1,6 s) und `background` sanft (3 s): eine Scheibe in `status-working` hinter dem Symbol mit Tailwinds
 `ping`, nur `motion-safe` (mit „Bewegung reduzieren“ bleibt ein ruhiger Punkt). Der Puls ersetzt dort
 das Drehen – höchstens eine Animation je Zeile; Kopfzeile und Karten drehen weiter
-(`StatusIcon pulse`, `STATUS_PRESENTATION[kind].pulse`).
+(`StatusIcon pulse`, `STATUS_PULSE`).
 
 **`canSleep(facts, now)`** – nur bei `idle` ohne offene/abgelaufene Entscheidungen, ohne
 Hintergrund-Tasks, ohne gequeuete Prompts, ohne künftigen Wakeup, nicht `compacting`/`retrying`
