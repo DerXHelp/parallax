@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "cliVersion": "2.1.322",
+  "cliVersion": "2.1.323",
   "sdkVersion": "0.3.322",
-  "checkedAt": "2026-11-12T18:59:02.005Z",
+  "checkedAt": "2026-11-13T03:41:15.797Z",
   "model": "claude-haiku-5-5",
   "permissionMode": "default",
   "outputStyle": "default",
@@ -90,7 +90,10 @@
     "request_marker_lists_v1",
     "sdk_mcp_manifests",
     "sdk_mcp_tools_list_changed",
-    "ui_surface_v1"
+    "ui_pane_widget_v1",
+    "ui_surface_v1",
+    "voice_call_talk_line_v1",
+    "withdrawn_files_note_v2"
   ],
   "initializationKeys": [
     "account",
