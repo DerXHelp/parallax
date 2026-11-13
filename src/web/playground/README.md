@@ -7,18 +7,21 @@ Entwicklungs-Spielwiese ohne Server: Shell und Feature-Komponenten laufen über
 **Öffnen:** `pnpm dev:web` (oder `pnpm dev`) → `http://127.0.0.1:5173/#playground`; Deep-Link
 für Screenshots: `#playground=<demo-id>`, z. B. `#playground=shell-overview`,
 `#playground=shell-streaming`, `#playground=shell-decisions`, `#playground=ui-primitives`,
-Feature-Demos `#playground=transcript/<id>`. Theme und Sprache oben rechts.
+Feature-Demos `#playground=transcript/<id>`. Theme und Sprache oben rechts. Mit `&bare` (oder
+`&bare=1`) erscheint nur die Demo, fensterfüllend, ohne Rahmen und Demo-Liste (WP-68, z. B.
+`#playground=showcase-overview&bare`).
 
 | Datei | Inhalt |
 |---|---|
 | `PlaygroundApp.tsx` | Route-UI; findet Feature-Demos per `import.meta.glob('../features/*/playground.tsx', { eager: true })` |
 | `types.ts` | `PlaygroundDemo` (`{ id, title, description?, render() }`), `PlaygroundModule` (`{ demos?, slots? }`) |
-| `scenarios.ts` | Szenarien `overview` (alle 14 Anzeige-Status), `streaming` (Text-Deltas), `decisions` (drei offene Entscheidungen), `empty`, `setup`, `offline`, `signed-out`, `navigation`, `navigation-external`, `navigation-archived` (WP-35); `PLAYGROUND_ENTRIES`, `PLAYGROUND_SESSION_KEYS`; `ScenarioData.onCommand` (eigene Befehlsbehandlung des FakeHost) |
+| `scenarios.ts` | Szenarien `overview` (alle 14 Anzeige-Status), `streaming` (Text-Deltas), `decisions` (drei offene Entscheidungen), `empty`, `setup`, `offline`, `signed-out`, `navigation`, `navigation-external`, `navigation-archived` (WP-35), `showcase` (WP-68); `PLAYGROUND_ENTRIES`, `PLAYGROUND_SESSION_KEYS`; `ScenarioData.onCommand` (eigene Befehlsbehandlung des FakeHost) |
 | `navigation-scenario.ts` | Daten von WP-35: zwei Profile, mehrere Sessions je Projekt, Branches, Modelle, Context 12/72/91 %, angeheftet, archiviert, extern, Abo-Limits, frühere Unterhaltungen; `navigationCommands` (Konsolenbefehl, externe Konsole, Zurückholen, Unterhaltung wechseln, SESSION_BUSY bei laufendem Turn) |
 | `navigation-demos.tsx` | Demos `nav-sidebar-flat`, `nav-sidebar-grouped`, `nav-sidebar-archive`, `nav-quick-switcher`, `nav-header-menu`, `nav-conversations`, `nav-session-info`, `nav-external`, `nav-archived` |
 | `PlaygroundScenario.tsx` | `<PlaygroundScenario scenario="…">` (für Demos), `startScenario()` (Tests) |
-| `demos.tsx` | Demos von WP-14 (Shell-Szenarien, Status-Icons, Primitives); hängt die Navigations-Demos und die Phase-3-Shell-Demos (`src/web/shell/phase3-demos.tsx`, u. a. `shell-slot-quiet`) an (FIX-R5 F5; vorher über den Preferences-Playground) |
-| `route.ts` | `#playground`-Parameter (klein, auch im Build importiert) |
+| `demos.tsx` | Demos von WP-14 (Shell-Szenarien, Status-Icons, Primitives); hängt die Navigations-Demos, die Phase-3-Shell-Demos (`src/web/shell/phase3-demos.tsx`, u. a. `shell-slot-quiet`; FIX-R5 F5, vorher über den Preferences-Playground) und die Showcase-Demos (WP-68) an |
+| `route.ts` | `#playground`-Parameter und `&bare` (`isBareHash`; klein, auch im Build importiert) |
+| `showcase/` | README-Screenshots (WP-68): erfundener Arbeitstag, Szenario `showcase`, Demos `showcase-overview`, `showcase-plan`, `showcase-files`; Details `showcase/README.md` |
 
 **Feature-Demos (WP-15/16):** `src/web/features/<f>/playground.tsx` exportiert
 `demos: PlaygroundDemo[]` und optional `slots: Partial<FeatureSlots>` (dann zeigen die

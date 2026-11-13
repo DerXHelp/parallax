@@ -8,6 +8,26 @@
 | `record.ts`       | `pnpm record <sz>`  | 01       | fertig (WP-01, Env/Auth seit WP-11 über `src/server/claude`) |
 | `cli-check.ts`    | `pnpm cli-check [--accept] [--last] [--profile=<f>]` | 62 | fertig (WP-62, Kurz-Check nach `claude`-Updates; Module in `cli-check/`) |
 | `bundle-budget.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/bundle-budget.ts [--lazy]` | FIX-R5-F6 | fertig (Start-Chunks gegen `109c073`, nach `pnpm build`; liest nur `dist/web`) |
+| `screenshots.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/screenshots.ts [--only=…] [--theme=…]` | 68 | fertig (README-Bilder `docs/screenshots/`, Playground + headless Chrome) |
+
+## `scripts/screenshots.ts` (WP-68)
+
+Erzeugt die README-Bilder `docs/screenshots/{overview,plan,files}-{light,dark}.png` aus den
+Showcase-Demos des Playgrounds (`src/web/playground/showcase/`, erfundene Daten). Kein
+Parallax-Server, kein `claude`: Das Skript startet Vite programmatisch mit der Repo-Konfiguration
+auf einem freien Port (ohne Watcher und HMR) und öffnet `#playground=<demo>&bare` in **headless**
+Chrome über Playwright (`channel: 'chrome'`, nie ein sichtbares Fenster). Viewport 1440×900,
+`deviceScaleFactor` 2, Deutsch (`de-DE`, Europe/Berlin), feste Uhr (`SHOWCASE_NOW`, muss zu
+`showcase/clock.ts` passen), Hell/Dunkel per `emulateMedia` (die Showcase-Einstellung ist „System“).
+Vor jedem Bild wartet es auf die Bereit-Markierung der Demo, Schriften, ruhiges Netz (Lazy-Chunks,
+Wörterbuch), fertige Shiki-Hervorhebung und eine kurze Ruhezeit; Animationen sind eingefroren.
+Konsolenfehler der Seite werden gemeldet; am Ende stehen die Dateigrößen (Ziel: je ≤ ≈ 1 MB).
+
+Schwerer Lauf (ADR-154): niedrige Priorität vorab (`lowerProcessPriority`, vererbt an Vite und Chrome),
+nie parallel zu `pnpm check`/`build`/`e2e`; Chrome und Vite werden immer beendet. Optionen:
+`--only=overview,plan`, `--theme=light|dark`, `--base-url=http://127.0.0.1:<port>` (laufendes
+`pnpm dev:web` wiederverwenden), `--demo=<playground-id>` (beliebige Demo, Dateiname = ID) und
+`--out=<ordner>`.
 
 ## `pnpm preflight` (WP-11)
 
