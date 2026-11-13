@@ -494,7 +494,8 @@ läuft.
   `tasks`, WP-69 `subagent`; `null` schließt), `openSubagent {sessionKey, agentId, title, subagentType?}`
   (WP-69: Agent-Karte → Tab „Agent“ mit diesem Subagenten, §3.8), `attachFiles {sessionKey, files}` (Drop-Zone der Shell → Composer),
   `composerText {sessionKey, text}` (WP-66: „Zurückholen“ einer wartenden Nachricht → Text ins Feld bzw.
-  als neuer Absatz an den Entwurf; ohne Composer `false`, dann Zwischenablage).
+  als neuer Absatz an den Entwurf; ohne Composer `false`, dann Zwischenablage), WP-70 `login {profileId,
+  hostId?, modal?}` (Anmelde-Dialog des Profils, §3.9) und `outputStyle {sessionKey}` (Ausgabestil-Dialog).
   `SETTINGS_SECTIONS` enthält `files` (Editor-Einstellung, ADR-144).
 - **i18n/ESLint:** neue Namensräume `files` (`features/files/i18n`), `tasks` (`features/tasks/i18n`),
   `sidePanel` (`shell/side-panel/i18n`); `FEATURES` in `eslint.config.js` um `files` und `tasks`
@@ -780,6 +781,48 @@ Zeile; `off` keine Hook-Zeilen, ein fehlgeschlagener SessionStart/Setup-Hook ble
 Rollen-Codes (`k` erfolgreich, `f` fehlgeschlagen, `F` fehlgeschlagener Start-Hook), die `buildRows` erst mit der
 Einstellung auflöst. History enthält keine Hook-Läufe (die CLI schreibt sie nicht ins JSONL). FakeBackend:
 `fake:hooks`.
+
+### 3.9 Anmelden aus Parallax und Ausgabestil je Projekt (WP-70)
+
+**Anmelden je Profil** – ohne Terminal, Ablauf als Zustand (Muster wie ADR-170; ADR-Vorschläge in WP-70 §3).
+- **Backend** (`AgentBackend.startLogin {launch, cwd}` → `LoginSession`): ein eigener, kurzlebiger CLI-Prozess
+  (`SdkSession` im Anmelde-Modus: `settingSources: []`, `persistSession: false`, `strictMcpConfig`, keine
+  Profil-Flags, stderr nur als Länge geloggt) mit den **internen** SDK-Methoden `claudeAuthenticate(true)` →
+  `{manualUrl, automaticUrl}`, `claudeOAuthCallback(code, state)`, `claudeOAuthWaitForCompletion()`; sie stehen
+  nicht in `sdk.d.ts` und werden zur Laufzeit geprüft (`backend/login.ts`, `hasLoginMethods`; fehlen sie →
+  `LOGIN_UNAVAILABLE`, Rückfall „/login im Terminal“). Links nur `https`; aus dem Ergebnis verlässt nur
+  `account.subscriptionType` das Backend (zod-Schema ohne E-Mail/Organisation); CLI-Texte werden klassifiziert,
+  nie weitergegeben (`loginErrorOf`: „No active claude_authenticate flow“/Timeout → `expired`, „Login blocked“/
+  `forceLoginMethod` → `LOGIN_BLOCKED`, Prozessende → `process`, sonst `code`/`failed`). `LoginSession` lehnt nie ab
+  (Union-Ergebnisse) und leert den Event-Strom bis zum Prozessende.
+- **Host** (`host/login.ts`, Befehle `profile.login`/`profile.loginCode`/`profile.loginCancel`): je Profil höchstens
+  ein Ablauf (Generationszähler), `cwd` `<PARALLAX_HOME>\login`, Launch-Spec des Profils ohne `PARALLAX_ENTRY_ID`.
+  `starting` → `waiting` (Link per `link.open` im Standardbrowser; zweiter Klick öffnet ihn erneut) → `verifying`
+  (Code `code#state`, Link mit `code`/`state` oder nackter Code + `state` des manuellen Links) → `done`/`failed`;
+  10 min Lebenszeit wie die CLI; ein falscher Code beendet den CLI-Ablauf (`LOGIN_FAILED code`, „Erneut versuchen“
+  startet neu). Nach Erfolg `checkProfile` (Status/Banner) und `SessionManager.onProfileLoggedIn` (Remote Control,
+  das mit `REMOTE_CONTROL_AUTH` scheiterte, verbindet neu).
+- **Zustand an die Clients:** `ProfileSummary.login {state, url, manualUrl, subscriptionType, error, at}` (Default
+  `idle`), von der Engine über `loginState` in `host.state` gemischt; nichts persistiert.
+- **UI:** Knopf „Anmelden“ (`shell/login/LoginButton.tsx`, Start-Chunk) an Fehler-Items `CLAUDE_AUTH_FAILED`/
+  `CLAUDE_NOT_LOGGED_IN` (weg, sobald `login.at` nach dem Fehler `done` meldet), am Einrichtungshinweis, in „Neue
+  Session“, im Profiltest und als Aktion `signIn` bei `REMOTE_CONTROL_AUTH`; der Dialog (`LoginDialog.tsx`,
+  Lazy-Chunk + Lazy-Namensraum) ist nicht-modal (modal nur aus einem modalen Dialog heraus).
+
+**Ausgabestil je Projekt.** Der Stil steht in `<cwd>\.claude\settings.local.json` (`outputStyle`) und gilt für
+alle Sessions des Projekts ab ihrem nächsten Turn.
+- **Lesen:** bei `ready()` der Runtime `AgentSession.readOutputStyles()` (`initializationResult()` → `output_style`,
+  `available_output_styles`; das Konto daraus wird nie gelesen) → `SessionSummary.outputStyle` und
+  `SessionDetail.availableOutputStyles` (`detail.patch`); jedes `init` aktualisiert `outputStyle`.
+- **Schreiben:** `session.setOutputStyle {style}` → `AgentSession.setOutputStyle` =
+  `updateSettings('localSettings', {outputStyle})` im Prozess der Session (nur dieser Schlüssel; ein ruhender
+  Eintrag startet ohne Turn). Andere laufende Sessions desselben Projekts zeigen den neuen Stil erst mit ihrem
+  nächsten `init`.
+- **UI:** Kopfzeilen-„…“ → „Ausgabestil…“ (Dialog) und Session-Info-Reiter „Status“ (`shell/output-style/`,
+  Lazy-Namensraum); archiviert/extern nur lesend.
+- **cli-check:** prüft die drei Anmelde-Methoden nur auf Existenz (nie aufgerufen) und macht einen Stil-Rundlauf in
+  einer zweiten, isolierten Session mit `settingSources: ['local']` (die Probe-Session hat `[]`, `updateSettings`
+  lehnt sie ab); Profilfelder `login`, `outputStyleSetting`.
 
 ## 4. Source of Truth (A.3)
 
@@ -1302,6 +1345,8 @@ bzw. das Profil.
 | `session.mcpAction {server, action}` | `reconnect` → `reconnectMcpServer`, `enable`/`disable` → `toggleMcpServer`; → `{}` | wie oben, `CLAUDE_CONTROL_FAILED {method: 'mcpAction', detail}` (CLI-Text ≤ 300 Zeichen) |
 | `session.reload {what}` | `skills` → `reloadSkills`, `plugins` → `reloadPlugins`; → `{}` | wie oben, `CLAUDE_CONTROL_FAILED {method: 'reload', detail}` |
 | `session.subagentTranscript {agentId, conversationId?, offset?, limit?}` (WP-69) | liest `agent-<agentId>.jsonl` der Claude-Session der Unterhaltung (`null` = aktuelle) ohne Prozess, auch archiviert/extern; → `{items, offset, total, running}` (eigene Liste, `offset` null = die letzten `limit`); Datei fehlt → leere Seite; nichts gespeichert, nichts geloggt (§3.8) | `ENTRY_NOT_FOUND`, `CONVERSATION_NOT_FOUND`, `SESSION_NOT_STARTED`, `FILE_NOT_READABLE {agentId}` |
+| `session.setOutputStyle {style}` (WP-70) | Gates wie ein Steuerbefehl (nicht archiviert, nicht extern), ein ruhender Eintrag startet ohne Turn; ist die Stil-Liste bekannt, muss `style` darin stehen; `updateSettings('localSettings', {outputStyle})` → `summary.outputStyle` sofort; → `{}` (§3.9) | `SESSION_ARCHIVED`, `SESSION_EXTERNAL`, `SESSION_NOT_RUNNING`, `VALIDATION_FAILED {field: 'style', reason: 'unknown'}`, `CLAUDE_CONTROL_FAILED {method: 'updateSettings'}` |
+| `profile.login` / `profile.loginCode {code}` / `profile.loginCancel` (WP-70, Host-Befehle) | Start (läuft schon einer: Link erneut öffnen) bzw. Code bzw. Abbruch → sofort `{}`; Ergebnis als `ProfileSummary.login` (§3.9) | `PROFILE_NOT_FOUND`, `VALIDATION_FAILED` (Code unbrauchbar), `LOGIN_FAILED {reason: 'expired'}` (Code ohne wartende Anmeldung), `SERVER_SHUTTING_DOWN` |
 
 ## 6. Item-Modell (`src/shared/model.ts`, §5.6)
 
