@@ -12,6 +12,7 @@ import type {
   PermissionUpdate,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { ErrorPayload } from '@shared/errors';
+import type { McpAction, ReloadTarget, SessionInfoSection, SessionInfoSectionName } from '@shared/model';
 import type { LaunchSpec } from '../claude/ports';
 
 /** canUseTool arguments, taken over tolerantly (F.3). */
@@ -217,6 +218,18 @@ export interface AgentSession {
    * the method is missing.
    */
   withdrawQueued(messageUuid: string): Promise<boolean>;
+  /**
+   * WP-67: the data of one "Session info" tab, normalized and checked (backend/sessionInfo.ts):
+   * status/memory/skills/hooks/permissions/export through internal SDK methods (checked at
+   * runtime), mcp through `mcpServerStatus()`. Resolves null when this CLI cannot answer it (method
+   * missing in SDK/CLI, unknown answer shape, a CLI that does not know the request); rejects when
+   * the request failed (timeout, CLI error, session closed). Never logs the answer (account rows).
+   */
+  readInfo(section: SessionInfoSectionName): Promise<SessionInfoSection | null>;
+  /** WP-67: `reconnectMcpServer(name)` / `toggleMcpServer(name, enabled)`; rejects when it failed. */
+  mcpAction(server: string, action: McpAction): Promise<void>;
+  /** WP-67: `reloadSkills()` / `reloadPlugins()`; rejects when it failed. */
+  reload(what: ReloadTarget): Promise<void>;
   /** close(), wait ≤ 5 s for exit, then taskkill /T /F (C.8). Resolves after 'exit'. */
   close(): Promise<void>;
 }

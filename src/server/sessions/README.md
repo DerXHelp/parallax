@@ -159,3 +159,12 @@ Broker `check`/`latestPlanVersion`/`latestPlanFilePath`/`planRecords`/`loadLastP
   `loadEarlier` unrepariert (in der Praxis nicht erreichbar, siehe WP-66 „Abweichungen“).
 - Harness-Option `sideQuestions` (= `FakeBackendOptions.sideQuestions`). Integrationstest:
   `sideQuestions.integration.test.ts`.
+
+## Session-Info mit Reitern (WP-67)
+
+| Datei | Exporte | Inhalt |
+| --- | --- | --- |
+| `sessionInfo.ts` | `readSessionInfo`, `mcpAction`, `reloadSession` | `session.info {section}` → `{available, data}`, `session.mcpAction {server, action}` → `{}`, `session.reload {what}` → `{}` – nur auf Anfrage, kein Polling, kein Cache. Ein Start im Lifecycle-Lock wird abgewartet (wie `session.interrupt`), ohne laufenden Prozess `SESSION_NOT_RUNNING` (kein Auto-Wake – der Dialog bietet „Session starten“). Backend `null` → `{available:false, data:null}` ohne Fehler; Fehler → `CLAUDE_CONTROL_FAILED {method: readInfo|mcpAction|reload, detail}` (`detail` = Reiter bzw. CLI-Fehlertext, ≤ 300 Zeichen). Antworten werden nie geloggt (Status-Zeilen enthalten Kontodaten). Archiviert/extern → `SESSION_ARCHIVED`/`SESSION_EXTERNAL` (nicht in den Gate-Listen) |
+
+- Harness-Option `sessionInfo` (= `FakeBackendOptions.sessionInfo`). Integrationstest:
+  `sessionInfo.integration.test.ts`.

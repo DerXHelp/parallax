@@ -33,6 +33,7 @@ export type {
   FakeSideQuestionOptions,
   FakeScriptState,
   FakeSessionHandle,
+  FakeSessionInfoOptions,
   FakeSessionState,
   FakeTaskControl,
 } from './fake/types';
@@ -43,6 +44,7 @@ export { interactiveScenario } from './fake/interactive';
 export { SessionStopped, TurnInterrupted } from './fake/common';
 export { randomIds, sequentialIds } from './fake/dsl';
 export { FAKE_CONSOLE_PROMPT, fakeConsoleAnswer } from './fake/console';
+export { FAKE_FRESH_SKILL, FAKE_INFO_ACTION_ERROR } from './fake/sessionInfo';
 
 export const DEFAULT_FAKE_PID_BASE = 40_000;
 export const DEFAULT_FAKE_MAX_DELAY_MS = 3_000;
@@ -137,6 +139,7 @@ export function createFakeBackend(options: FakeBackendOptions = {}): FakeBackend
         overview: options.overview ?? {},
         usage,
         sideQuestions: options.sideQuestions ?? {},
+        sessionInfo: options.sessionInfo ?? {},
         onStateChange,
       });
       sessions.push(session);

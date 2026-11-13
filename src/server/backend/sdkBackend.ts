@@ -31,6 +31,7 @@ import type { Logger } from 'pino';
 import { z } from 'zod';
 import { messageUuidSchema } from '@shared/common';
 import { makeError } from '@shared/errors';
+import type { McpAction, ReloadTarget, SessionInfoSection, SessionInfoSectionName } from '@shared/model';
 import { toError } from '../lib/async';
 import { logger } from '../lib/logger';
 import { killProcessTree as killTree, spawnHidden } from '../lib/process';
@@ -46,6 +47,7 @@ import {
 } from './sdkOptions';
 import { titleOf, usageLimitsOf } from './overview';
 import { remoteControlDefaultOf, remoteControlErrorOf, toRemoteControlInfo } from './remoteControl';
+import { sessionInfoFailure, sessionInfoOf } from './sessionInfo';
 import { controlRetryOf, sideAnswerOf, sideQuestionFailure, withdrawnOf } from './sideQuestion';
 import { createSpawner } from './spawn';
 import type {
@@ -94,6 +96,13 @@ export interface SdkTimeouts {
    * retries overloaded requests itself) – after this the request is cancelled (status failed).
    */
   sideQuestionMs: number;
+  /**
+   * WP-67: one "Session info" request (`getStatus`, `getMemoryDialog`, … , `exportConversation` –
+   * the export renders the whole conversation as text, so it gets more than `controlMs`).
+   */
+  infoMs: number;
+  /** WP-67: MCP reconnect/toggle and reloading skills/plugins (a server connect or plugin load). */
+  infoActionMs: number;
 }
 
 export const SDK_TIMEOUTS: Readonly<SdkTimeouts> = Object.freeze({
@@ -105,6 +114,8 @@ export const SDK_TIMEOUTS: Readonly<SdkTimeouts> = Object.freeze({
   iteratorAfterExitMs: 2_000,
   titleMs: 60_000,
   sideQuestionMs: 120_000,
+  infoMs: 30_000,
+  infoActionMs: 60_000,
 });
 
 /** Answer to the CLI when the permission handler throws (F.3). */
@@ -150,6 +161,19 @@ export interface SdkQueryHandle extends AsyncIterable<unknown> {
   ): Promise<unknown>;
   /** WP-66: internal (not typed in 0.3.322) – a missing method means "cannot withdraw". */
   cancelAsyncMessage?(messageUuid: string): Promise<unknown>;
+  /** WP-67: internal dialog requests (not typed in 0.3.322) – a missing method means "tab not available". */
+  getStatus?(): Promise<unknown>;
+  getMemoryDialog?(): Promise<unknown>;
+  getSkillsDialog?(): Promise<unknown>;
+  getHooksListing?(): Promise<unknown>;
+  listPermissionRules?(): Promise<unknown>;
+  exportConversation?(): Promise<unknown>;
+  /** WP-67: public in 0.3.322; optional so a missing method is a clean failure. */
+  mcpServerStatus?(): Promise<unknown>;
+  reconnectMcpServer?(serverName: string): Promise<void>;
+  toggleMcpServer?(serverName: string, enabled: boolean): Promise<void>;
+  reloadSkills?(): Promise<unknown>;
+  reloadPlugins?(): Promise<unknown>;
   close(): void;
 }
 
@@ -285,6 +309,8 @@ interface SessionContext {
   finished(session: SdkSession): void;
   /** WP-65: at most one warning per server process for a failing/missing usage query. */
   warnUsageOnce(fields: Record<string, unknown>, message: string): void;
+  /** WP-67: one line per server process and `key` (later ones at debug) – never with answer values. */
+  logInfoOnce(key: string, fields: Record<string, unknown>, message: string): void;
 }
 
 type ProcessState = 'none' | 'running' | 'exited';
@@ -775,6 +801,68 @@ class SdkSession implements AgentSession {
     }
   }
 
+  /**
+   * WP-67: one "Session info" tab (internal methods checked at runtime, `mcpServerStatus` typed);
+   * null when this CLI cannot answer it, rejects when the request failed. The answer is never logged
+   * (status rows hold account data) – only the unknown keys and why a tab is not available, once.
+   */
+  async readInfo(section: SessionInfoSectionName): Promise<SessionInfoSection | null> {
+    const method = INFO_METHODS[section];
+    if (this.q !== null && typeof this.q[method] !== 'function') {
+      this.ctx.logInfoOnce(`${section}:missing`, { section, method }, 'session info: method missing in this SDK/CLI');
+      return null;
+    }
+    let raw: unknown;
+    try {
+      raw = await this.control(method, this.ctx.timeouts.infoMs, (q) => {
+        const call = q[method]?.();
+        if (call === undefined) throw new Error(`${method} missing`);
+        return call;
+      });
+    } catch (error) {
+      if (sessionInfoFailure(error) === 'unavailable') {
+        this.ctx.logInfoOnce(`${section}:refused`, { section, err: error }, 'session info: this CLI does not answer the request');
+        return null;
+      }
+      this.log.warn({ err: error, section }, 'session info request failed');
+      throw error;
+    }
+    const parsed = sessionInfoOf(section, raw);
+    if (parsed.unknown.length > 0) {
+      this.ctx.logInfoOnce(
+        `${section}:unknown:${parsed.unknown.join(',')}`,
+        { section, unknown: parsed.unknown },
+        'session info: unknown fields ignored',
+      );
+    }
+    if (parsed.data === null) {
+      this.ctx.logInfoOnce(`${section}:shape`, { section }, 'session info: unknown answer shape – tab not available');
+      return null;
+    }
+    return parsed.data;
+  }
+
+  /** WP-67: `reconnectMcpServer` / `toggleMcpServer`; rejects when it fails or is missing. */
+  async mcpAction(server: string, action: McpAction): Promise<void> {
+    await this.control(`mcp ${action}`, this.ctx.timeouts.infoActionMs, (q) => {
+      if (action === 'reconnect') {
+        if (q.reconnectMcpServer === undefined) throw new Error('reconnectMcpServer missing');
+        return q.reconnectMcpServer(server);
+      }
+      if (q.toggleMcpServer === undefined) throw new Error('toggleMcpServer missing');
+      return q.toggleMcpServer(server, action === 'enable');
+    });
+  }
+
+  /** WP-67: `reloadSkills` / `reloadPlugins` (applied at once); rejects when it fails or is missing. */
+  async reload(what: ReloadTarget): Promise<void> {
+    await this.control(`reload ${what}`, this.ctx.timeouts.infoActionMs, (q) => {
+      const call = what === 'skills' ? q.reloadSkills?.() : q.reloadPlugins?.();
+      if (call === undefined) throw new Error(`reload ${what} missing`);
+      return call;
+    });
+  }
+
   /** WP-66: `cancelAsyncMessage(uuid)` (internal method); rejects when it fails or is missing. */
   async withdrawQueued(messageUuid: string): Promise<boolean> {
     const raw = await this.control('cancelAsyncMessage', this.ctx.timeouts.controlMs, (q) => {
@@ -798,6 +886,17 @@ class SdkSession implements AgentSession {
 }
 
 // ---- backend ----
+
+/** WP-67: the SDK method behind each "Session info" tab. */
+const INFO_METHODS = {
+  status: 'getStatus',
+  memory: 'getMemoryDialog',
+  skills: 'getSkillsDialog',
+  hooks: 'getHooksListing',
+  permissions: 'listPermissionRules',
+  mcp: 'mcpServerStatus',
+  export: 'exportConversation',
+} as const satisfies Record<SessionInfoSectionName, keyof SdkQueryHandle>;
 
 let loadedSdkQuery: SdkQueryFn | null = null;
 
@@ -826,6 +925,7 @@ export function createSdkBackend(deps: SdkBackendDeps = {}): AgentBackend & { re
   const live = new Set<SdkSession>();
   let disposed = false;
   let usageWarned = false;
+  const infoLogged = new Set<string>();
   const backendLog = deps.logger === undefined ? log : deps.logger.child({ module: 'backend/sdk' });
   const ctx: SessionContext = {
     query,
@@ -845,6 +945,14 @@ export function createSdkBackend(deps: SdkBackendDeps = {}): AgentBackend & { re
       }
       usageWarned = true;
       backendLog.warn(fields, `${message} – the limit bar keeps the last rate-limit values`);
+    },
+    logInfoOnce: (key, fields, message) => {
+      if (infoLogged.has(key)) {
+        backendLog.debug(fields, message);
+        return;
+      }
+      infoLogged.add(key);
+      backendLog.info(fields, message);
     },
   };
 
