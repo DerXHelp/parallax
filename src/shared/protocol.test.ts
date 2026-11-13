@@ -122,6 +122,13 @@ const commands: Command[] = [
   { name: 'session.cancelSideQuestion', entryId, itemId: 'px:cv:3' },
   { name: 'session.deleteSideQuestion', entryId, threadId: 'px:cv:3' },
   { name: 'session.withdrawQueued', entryId, messageUuid: SAMPLE_IDS.messageUuid },
+  // WP-67
+  { name: 'session.info', entryId, section: 'status' },
+  { name: 'session.info', entryId, section: 'export' },
+  { name: 'session.mcpAction', entryId, server: 'docs', action: 'reconnect' },
+  { name: 'session.mcpAction', entryId, server: 'docs', action: 'disable' },
+  { name: 'session.reload', entryId, what: 'skills' },
+  { name: 'session.reload', entryId, what: 'plugins' },
 ];
 
 const clientMessages: ClientMessage[] = [
@@ -562,6 +569,28 @@ describe('command results', () => {
       text: 'x',
     });
     expect(parseCommandResult('session.withdrawQueued', { withdrawn: true })).toBeNull();
+  });
+
+  it('WP-67: session info, MCP actions and reloads (sections, actions, results)', () => {
+    const cmd = (body: Record<string, unknown>) =>
+      parseClientMessage(JSON.stringify({ type: 'cmd', cmdId: SAMPLE_IDS.cmdId, cmd: { entryId, ...body } })).ok;
+    expect(cmd({ name: 'session.info', section: 'status' })).toBe(true);
+    expect(cmd({ name: 'session.info', section: 'account' })).toBe(false);
+    expect(cmd({ name: 'session.mcpAction', server: '', action: 'reconnect' })).toBe(false);
+    expect(cmd({ name: 'session.mcpAction', server: 'docs', action: 'restart' })).toBe(false);
+    expect(cmd({ name: 'session.reload', what: 'agents' })).toBe(false);
+    expect(parseCommandResult('session.info', { available: false, data: null })).toEqual({ available: false, data: null });
+    const status = { section: 'status', groups: [{ title: 'Session', rows: [{ label: null, value: 'x' }] }], extra: [] };
+    expect(parseCommandResult('session.info', { available: true, data: status })).toEqual({ available: true, data: status });
+    expect(parseCommandResult('session.info', { available: true, data: { section: 'status' } })).toBeNull();
+    expect(
+      parseCommandResult('session.info', {
+        available: true,
+        data: { section: 'export', text: 'hi', filename: '', totalChars: 2, truncated: false },
+      }),
+    ).toBeNull();
+    expect(parseCommandResult('session.mcpAction', {})).toEqual({});
+    expect(parseCommandResult('session.reload', {})).toEqual({});
   });
 
   it('Phase 3 results (WP-50 §4.6)', () => {

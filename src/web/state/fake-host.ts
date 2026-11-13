@@ -1203,6 +1203,9 @@ export class FakeHost {
       case 'session.reclaim':
       case 'session.consoleCommand':
       case 'session.continueAfterLimit':
+      case 'session.info':
+      case 'session.mcpAction':
+      case 'session.reload':
       case 'profile.get':
       case 'profile.save':
       case 'profile.delete':

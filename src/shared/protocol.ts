@@ -35,14 +35,18 @@ import {
   fsListingSchema,
   hostStateSchema,
   httpUrlSchema,
+  mcpActionSchema,
   modelOptionSchema,
   planVersionInfoSchema,
   profileInputSchema,
   profileIssueSchema,
   profileSchema,
+  reloadTargetSchema,
   sessionDetailPatchSchema,
   sessionDetailSchema,
   sessionFileSchema,
+  sessionInfoSectionNameSchema,
+  sessionInfoSectionSchema,
   sessionSummarySchema,
   settingsPatchSchema,
   settingsSchema,
@@ -441,6 +445,27 @@ export const commandSchema = z.discriminatedUnion('name', [
    * Needs a running process (SESSION_NOT_RUNNING); CLAUDE_CONTROL_FAILED when the CLI cannot do it.
    */
   z.object({ name: z.literal('session.withdrawQueued'), entryId: entryIdSchema, messageUuid: messageUuidSchema }),
+  // ---- WP-67 (session info with tabs) ----
+  /**
+   * The data of one "Session info" tab from the running CLI (`/status`, `/memory`, `/skills`,
+   * `/hooks`, `/permissions`, MCP servers, `/export`) – read-only, only on request (never polled or
+   * cached). `available: false` (data null) = this `claude` cannot answer it (method missing,
+   * unknown answer shape). Needs a running process (SESSION_NOT_RUNNING – no wake-up just to show
+   * data); a failed request → CLAUDE_CONTROL_FAILED. Not for archived or external entries.
+   */
+  z.object({ name: z.literal('session.info'), entryId: entryIdSchema, section: sessionInfoSectionNameSchema }),
+  /**
+   * Reconnect an MCP server or switch it on/off (`reconnectMcpServer`, `toggleMcpServer`); the tab
+   * then asks again. Needs a running process (SESSION_NOT_RUNNING); failure → CLAUDE_CONTROL_FAILED.
+   */
+  z.object({
+    name: z.literal('session.mcpAction'),
+    entryId: entryIdSchema,
+    server: z.string().min(1).max(500),
+    action: mcpActionSchema,
+  }),
+  /** Reload skills or plugins from disk (`reloadSkills`, `reloadPlugins`); rules as `session.mcpAction`. */
+  z.object({ name: z.literal('session.reload'), entryId: entryIdSchema, what: reloadTargetSchema }),
   /**
    * Host: open an http(s) link in the Windows default browser (the Parallax window is a Chrome app
    * profile without any sign-in). OPEN_FAILED when no default browser could be started – the client
@@ -559,6 +584,10 @@ export const commandResultSchemas = {
   'session.cancelSideQuestion': z.object({}),
   'session.deleteSideQuestion': z.object({}),
   'session.withdrawQueued': z.object({ withdrawn: z.boolean(), text: z.string().nullable() }),
+  /** `data` is null exactly when `available` is false. */
+  'session.info': z.object({ available: z.boolean(), data: sessionInfoSectionSchema.nullable() }),
+  'session.mcpAction': z.object({}),
+  'session.reload': z.object({}),
   'link.open': z.object({}),
 } as const satisfies Record<CommandName, z.ZodType>;
 export type CommandResult<N extends CommandName> = z.infer<(typeof commandResultSchemas)[N]>;

@@ -1754,3 +1754,266 @@ export const planVersionInfoSchema = z.object({
   stored: z.boolean(),
 });
 export type PlanVersionInfo = z.infer<typeof planVersionInfoSchema>;
+
+// =====================================================================================
+// 5.15 Session info (WP-67): the data of the CLI's terminal dialogs, normalized for display
+// =====================================================================================
+
+/**
+ * The tabs of "Session info" that ask the running CLI (`session.info`): `/status`, `/memory`
+ * (CLAUDE.md files), `/skills`, `/hooks`, `/permissions`, the MCP servers and `/export`. Only on
+ * request (a tab opens, "Refresh") – never polled, never cached by the server.
+ */
+export const SESSION_INFO_SECTIONS = ['status', 'memory', 'skills', 'hooks', 'permissions', 'mcp', 'export'] as const;
+export const sessionInfoSectionNameSchema = z.enum(SESSION_INFO_SECTIONS);
+export type SessionInfoSectionName = z.infer<typeof sessionInfoSectionNameSchema>;
+
+/** `session.mcpAction`: reconnect a server, or switch it on/off (`toggleMcpServer`). */
+export const MCP_ACTIONS = ['reconnect', 'enable', 'disable'] as const;
+export const mcpActionSchema = z.enum(MCP_ACTIONS);
+export type McpAction = z.infer<typeof mcpActionSchema>;
+
+/** `session.reload`: `reloadSkills()` or `reloadPlugins()`. */
+export const RELOAD_TARGETS = ['skills', 'plugins'] as const;
+export const reloadTargetSchema = z.enum(RELOAD_TARGETS);
+export type ReloadTarget = z.infer<typeof reloadTargetSchema>;
+
+/** Caps of the normalized data: the producer (server) cuts, the schemas check the same bounds. */
+export const SESSION_INFO_LIMITS = {
+  /** Rows per list (skills, hooks, rules, files, servers …); beyond it `truncated: true`. */
+  listMax: 1000,
+  /** Characters of one text field (a hook command, a rule, a description …). */
+  textChars: 8000,
+  /** Characters of the export text (larger conversations: `truncated`, the rest via `/export`). */
+  exportChars: 2_000_000,
+  /** Characters of the suggested export file name. */
+  fileNameChars: 120,
+} as const;
+
+const infoText = z.string().max(SESSION_INFO_LIMITS.textChars);
+const infoList = <T extends z.ZodType>(item: T) => z.array(item).max(SESSION_INFO_LIMITS.listMax);
+
+/**
+ * One "label: value" row – the `/status` rows (values already rendered as text by the CLI) and the
+ * generic fallback: scalar top-level fields a newer CLI adds show as rows (`extra`) instead of being
+ * lost. `label: null` = a row that is a sentence on its own.
+ */
+export const infoRowSchema = z.object({ label: infoText.nullable(), value: infoText });
+export type InfoRow = z.infer<typeof infoRowSchema>;
+
+/** A settings file the CLI skipped (parse/validation error) – its rules/hooks are not in effect. */
+export const infoSettingsErrorSchema = z.object({ file: infoText.nullable(), path: infoText, message: infoText });
+export type InfoSettingsError = z.infer<typeof infoSettingsErrorSchema>;
+
+const infoCommon = {
+  /** Unknown scalar top-level fields of the answer as rows (newer CLI). */
+  extra: infoList(infoRowSchema),
+};
+
+/** `/status`: the screen's sections in its order (Session, Environment, …), every value as text. */
+export const statusInfoSchema = z.object({
+  section: z.literal('status'),
+  groups: infoList(z.object({ title: infoText, rows: infoList(infoRowSchema) })),
+  ...infoCommon,
+});
+
+/** `/memory` file kinds; anything newer is `other`. */
+export const MEMORY_FILE_KINDS = ['user', 'project', 'project-alt', 'local', 'other'] as const;
+export const memoryFileKindSchema = z.enum(MEMORY_FILE_KINDS);
+export type MemoryFileKind = z.infer<typeof memoryFileKindSchema>;
+
+/**
+ * `/memory`: the instruction files (CLAUDE.md of the user, the project, the local one, imported
+ * ones), the memory folders, the saved auto memories and the two switches (display only – the host
+ * opens files itself).
+ */
+export const memoryInfoSchema = z.object({
+  section: z.literal('memory'),
+  files: infoList(
+    z.object({
+      kind: memoryFileKindSchema,
+      /** Absolute path on the session's file system. */
+      path: infoText,
+      label: infoText,
+      description: infoText,
+      exists: z.boolean(),
+    }),
+  ),
+  folders: infoList(z.object({ kind: infoText, path: infoText, label: infoText, description: infoText })),
+  memories: infoList(
+    z.object({
+      name: infoText,
+      path: infoText,
+      description: infoText.nullable(),
+      type: infoText.nullable(),
+      modifiedAt: isoDateTimeSchema.nullable(),
+    }),
+  ),
+  /** `Auto-memory:` row (null = the CLI sent none). */
+  autoMemory: z.object({ enabled: z.boolean(), toggleable: z.boolean(), status: infoText }).nullable(),
+  /** `Auto-dream:` row (null = the CLI sent none). */
+  autoDream: z
+    .object({ shown: z.boolean(), enabled: z.boolean(), toggleable: z.boolean(), status: infoText, detail: infoText })
+    .nullable(),
+  truncated: z.boolean(),
+  ...infoCommon,
+});
+
+/** Skill states of `/skills` the UI translates; any other value is shown as the CLI sent it. */
+export const SKILL_STATES = ['on', 'name-only', 'user-invocable-only', 'off'] as const;
+
+/** `/skills`: each skill with source, token estimate, effective state and what locks it (read-only). */
+export const skillsInfoSchema = z.object({
+  section: z.literal('skills'),
+  skills: infoList(
+    z.object({
+      name: infoText,
+      displayName: infoText,
+      description: infoText,
+      /** 'user', 'project', 'plugin', 'built-in', … as the menu shows it. */
+      source: infoText,
+      /** Token estimate of the skill's listing in the system prompt; null = unknown. */
+      tokens: z.number().nonnegative().nullable(),
+      /** One of SKILL_STATES, or a newer value (shown raw). */
+      state: infoText,
+      /** 'author', 'plugin', 'policy', 'flag', 'reserved-name', … or null (not locked). */
+      lockedBy: infoText.nullable(),
+    }),
+  ),
+  truncated: z.boolean(),
+  ...infoCommon,
+});
+
+/** `/hooks`: hooks of settings files, session and plugins by event and matcher, display-ready. */
+export const hooksInfoSchema = z.object({
+  section: z.literal('hooks'),
+  /** Events with at least one hook, in the lifecycle order of the CLI. */
+  events: infoList(
+    z.object({ name: infoText, summary: infoText, matcherSupported: z.boolean(), count: z.number().int().nonnegative() }),
+  ),
+  hooks: infoList(
+    z.object({
+      event: infoText,
+      /** '' = no matcher; control characters revealed by the CLI. */
+      matcher: infoText,
+      source: infoText,
+      sourceLabel: infoText,
+      pluginName: infoText.nullable(),
+      /** command, prompt, agent, http, mcp_tool, … */
+      type: infoText,
+      displayText: infoText,
+      /** The literal command/prompt/URL that runs (control characters as the CLI reveals them). */
+      command: infoText,
+      /** Label of `command` (Command, Prompt, URL, …). */
+      contentLabel: infoText,
+      condition: infoText.nullable(),
+      timeoutSec: z.number().nonnegative().nullable(),
+      statusMessage: infoText.nullable(),
+      once: z.boolean(),
+      background: z.boolean(),
+      /** The session's mode or policy keeps this hook from running. */
+      disabled: z.boolean(),
+    }),
+  ),
+  policy: z
+    .object({
+      disabledByPolicy: z.boolean(),
+      managedOnly: z.boolean(),
+      pluginOnly: z.boolean(),
+      allDisabled: z.boolean(),
+      policyHookCount: z.number().int().nonnegative(),
+      policyUnreadable: z.boolean(),
+    })
+    .nullable(),
+  /** Present under `--safe-mode`. */
+  safeMode: z.object({ managedHooksStillApply: z.boolean(), exitHint: infoText }).nullable(),
+  /** Present under `--bare` (settings, flag, policy and plugin hooks never fire). */
+  bareMode: z.object({ exitHint: infoText }).nullable(),
+  errors: infoList(infoSettingsErrorSchema),
+  truncated: z.boolean(),
+  ...infoCommon,
+});
+
+export const PERMISSION_BEHAVIORS = ['allow', 'ask', 'deny'] as const;
+export const permissionBehaviorSchema = z.enum(PERMISSION_BEHAVIORS);
+export type PermissionBehavior = z.infer<typeof permissionBehaviorSchema>;
+
+/** `/permissions`: the live rules with their source, the working directories (read-only). */
+export const permissionsInfoSchema = z.object({
+  section: z.literal('permissions'),
+  rules: infoList(
+    z.object({
+      behavior: permissionBehaviorSchema,
+      /** userSettings, projectSettings, localSettings, session, cliArg, policySettings, … */
+      source: infoText,
+      /** Verbatim as the session holds it (may carry invisible characters – escape at display). */
+      rule: infoText,
+      /** The CLI's plain-language reading ("Any Bash command starting with" + **npm run**). */
+      description: z.object({ prefix: infoText, emphasis: infoText.nullable(), suffix: infoText.nullable() }).nullable(),
+      /** persistent, session, readonly, … */
+      editability: infoText,
+      /** Ignored by the session (managed settings allow policy rules only). */
+      notInEffect: z.boolean(),
+    }),
+  ),
+  /** Additional working directories (`--add-dir`, `/add-dir`, settings). */
+  directories: infoList(z.object({ path: infoText, source: infoText })),
+  /** The session's original working directory (null = not reported). */
+  cwd: infoText.nullable(),
+  /** Managed settings allow policy rules only. */
+  managedOnly: z.boolean(),
+  errors: infoList(infoSettingsErrorSchema),
+  truncated: z.boolean(),
+  ...infoCommon,
+});
+
+/** MCP servers (`mcpServerStatus()`): status, error, origin, tools – never the configuration. */
+export const mcpInfoSchema = z.object({
+  section: z.literal('mcp'),
+  servers: infoList(
+    z.object({
+      name: infoText,
+      /** connected, failed, needs-auth, pending, disabled – or a newer value (shown raw). */
+      status: infoText,
+      /** Error text of the CLI (status failed). */
+      error: infoText.nullable(),
+      /** Configuration scope (project, user, local, claudeai, managed …). */
+      scope: infoText.nullable(),
+      /** sdk, plugin or the config scope. */
+      source: infoText.nullable(),
+      /** stdio, http, sse, … (`config.type`). */
+      transport: infoText.nullable(),
+      /** `serverInfo` of a connected server ("name version"). */
+      serverVersion: infoText.nullable(),
+      /** Tool names of a connected server. */
+      tools: infoList(infoText),
+    }),
+  ),
+  truncated: z.boolean(),
+  ...infoCommon,
+});
+
+/** `/export`: the conversation as plain text with the file name the terminal would offer. */
+export const exportInfoSchema = z.object({
+  section: z.literal('export'),
+  text: z.string().max(SESSION_INFO_LIMITS.exportChars),
+  /** Windows-safe file name ending in `.txt`. */
+  filename: z.string().min(1).max(SESSION_INFO_LIMITS.fileNameChars),
+  /** Characters of the whole export (> text.length when truncated). */
+  totalChars: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+});
+
+/** The data of one tab (answer of `session.info`), discriminated by `section`. */
+export const sessionInfoSectionSchema = z.discriminatedUnion('section', [
+  statusInfoSchema,
+  memoryInfoSchema,
+  skillsInfoSchema,
+  hooksInfoSchema,
+  permissionsInfoSchema,
+  mcpInfoSchema,
+  exportInfoSchema,
+]);
+export type SessionInfoSection = z.infer<typeof sessionInfoSectionSchema>;
+/** The data of one named tab, e.g. `SessionInfoOf<'mcp'>`. */
+export type SessionInfoOf<S extends SessionInfoSectionName> = Extract<SessionInfoSection, { section: S }>;
