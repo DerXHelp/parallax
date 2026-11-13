@@ -18,6 +18,6 @@ Kontodaten tragen: nichts davon wird gespeichert oder geloggt.
 | `HooksTab.tsx` | Hooks nach Event und Matcher, Befehl in Monospace, Policy-/Safe-/Bare-Mode-Hinweise |
 | `StatusTab.tsx` | Zeilen von `/status` in ihren Abschnitten |
 | `ExportTab.tsx` | Vorschau (≤ 20 000 Zeichen), Kopieren, Speichern per Browser-Download (`@web/lib/download`) |
-| `tabs.ts`, `labels.ts` | Reiter-Reihenfolge, letzter Reiter (localStorage), Quellen-Namen, Filter |
+| `tabs.ts`, `labels.ts` | Reiter-Reihenfolge, letzter Reiter (sessionStorage des Fensters, sonst localStorage), Quellen-Namen, Filter |
 | `i18n/{en,de,index}.ts` | Lazy-Namensraum (`useInfoT`, `translateFrom`) – kommt mit dem Dialog-Chunk, nie mit dem Start-Chunk |
 | `*.test.tsx`, `i18n/i18n.test.ts` | Zustände des Rahmens, Wörterbuch-Parität und Nutzung; der ganze Dialog: `../session-info.test.tsx` |

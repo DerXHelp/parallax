@@ -4,7 +4,8 @@
  * running process: a start still in the lifecycle lock is awaited first (like `session.interrupt`),
  * without a process → SESSION_NOT_RUNNING (no auto-wake: the dialog offers "start session").
  * A CLI that lacks the method answers `{available:false}` (no error, logged once by the backend);
- * failures → CLAUDE_CONTROL_FAILED (`method` + `section` for a read, `detail` = the CLI's error text, clipped, for an action).
+ * failures → CLAUDE_CONTROL_FAILED: a read with `method` + `section` (no CLI text – it may carry account
+ * data), an action with `detail` = the CLI's error text, clipped.
  * Archived/external entries are refused by the entry gate (not in ARCHIVED_ALLOWED/EXTERNAL_ALLOWED).
  * Info answers (status rows may carry account data) are never logged.
  */
