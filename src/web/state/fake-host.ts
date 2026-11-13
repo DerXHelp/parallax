@@ -51,6 +51,7 @@ import {
 } from '@shared/samples';
 import { applySessionOp, trimItems, viewStateFromSnapshot, type SessionViewState } from '@shared/sync';
 import { pathTail } from '@web/lib/path-display';
+import { FakeSessionInfoData } from './fake-session-info';
 import type { MemoryTransport } from './transport';
 
 /**
@@ -403,6 +404,8 @@ export class FakeHost {
   sessionFilesTruncated = false;
   /** One-shot failures per command name (failNext). */
   private readonly failures = new Map<CommandName, ErrorPayload[]>();
+  /** WP-67: session info answers and actions; levers `unavailable`, `actionError`, `long`. */
+  readonly info = new FakeSessionInfoData();
   /** Stored plan versions, ascending (plan.list, plan.read; `stored: false` → PLAN_NOT_FOUND). */
   planVersions: { info: PlanVersionInfo; text: string }[] = [
     {
@@ -837,6 +840,17 @@ export class FakeHost {
     return this.sessions.has(entryId) || this.summaries.has(entryId);
   }
 
+  /** WP-67: the engine's gates of session.info/mcpAction/reload (no auto-wake). */
+  private infoGate(entryId: EntryId): ErrorPayload | null {
+    const summary = this.summaries.get(entryId);
+    if (summary === undefined) return makeError(this.knowsEntry(entryId) ? 'SESSION_NOT_RUNNING' : 'ENTRY_NOT_FOUND', { entryId });
+    if (summary.archived) return makeError('SESSION_ARCHIVED', { entryId });
+    const runState = summary.status.runState;
+    if (runState === 'external') return makeError('SESSION_EXTERNAL', { entryId });
+    if (runState === 'sleeping' || runState === 'error') return makeError('SESSION_NOT_RUNNING', { entryId });
+    return null;
+  }
+
   dispose(): void {
     for (const cleanup of this.cleanups) cleanup();
     this.cleanups.length = 0;
@@ -1078,8 +1092,37 @@ export class FakeHost {
       }
       case 'session.setEffort':
       case 'session.close':
-      case 'session.resume':
         return this.ok();
+      case 'session.resume': {
+        // WP-67: a sleeping session wakes (no prompt) – the info dialog's "start session".
+        const summary = this.summaries.get(cmd.entryId);
+        if (summary !== undefined && (summary.status.runState === 'sleeping' || summary.status.runState === 'error')) {
+          this.patchSummary(cmd.entryId, {}, { runState: 'idle' });
+        }
+        return this.ok();
+      }
+      // ---- WP-67: session info, MCP actions, reloads (fake-session-info.ts) ----
+      case 'session.info': {
+        const gate = this.infoGate(cmd.entryId);
+        if (gate !== null) return { ok: false, error: gate };
+        const summary = this.summaries.get(cmd.entryId);
+        if (summary === undefined || !this.info.available(cmd.section)) return this.ok({ available: false, data: null });
+        return this.ok({ available: true, data: this.info.section(cmd.entryId, cmd.section, summary) });
+      }
+      case 'session.mcpAction': {
+        const gate = this.infoGate(cmd.entryId);
+        if (gate !== null) return { ok: false, error: gate };
+        const failure = this.info.mcpAction(cmd.entryId, cmd.server, cmd.action);
+        if (failure !== null) return { ok: false, error: makeError('CLAUDE_CONTROL_FAILED', { method: 'mcpAction', detail: failure }) };
+        return this.ok();
+      }
+      case 'session.reload': {
+        const gate = this.infoGate(cmd.entryId);
+        if (gate !== null) return { ok: false, error: gate };
+        const failure = this.info.reload(cmd.entryId, cmd.what);
+        if (failure !== null) return { ok: false, error: makeError('CLAUDE_CONTROL_FAILED', { method: 'reload', detail: failure }) };
+        return this.ok();
+      }
       case 'transcript.loadEarlier': {
         // The server view keeps every item; snapshots are trimmed to LIMITS.snapshotItems.
         const view = this.view(cmd.entryId);
@@ -1203,9 +1246,6 @@ export class FakeHost {
       case 'session.reclaim':
       case 'session.consoleCommand':
       case 'session.continueAfterLimit':
-      case 'session.info':
-      case 'session.mcpAction':
-      case 'session.reload':
       case 'profile.get':
       case 'profile.save':
       case 'profile.delete':

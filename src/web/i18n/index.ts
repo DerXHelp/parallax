@@ -18,7 +18,7 @@ export {
   useLanguage,
   useLanguageLoadFailure,
 } from './language';
-export type { PluralForms, TranslationParams } from './types';
+export type { KeyPaths, PluralForms, TranslationParams } from './types';
 
 /**
  * i18n core (Plan Punkt 5, architecture §2.3a): typed dictionaries, `t()` with interpolation and
@@ -40,7 +40,7 @@ function isPluralForms(value: unknown): value is PluralForms {
   return typeof value === 'object' && value !== null && typeof Reflect.get(value, 'other') === 'string';
 }
 
-function lookup(dictionary: Dictionary, key: string): string | PluralForms | undefined {
+function lookup(dictionary: object, key: string): string | PluralForms | undefined {
   let node: unknown = dictionary;
   for (const part of key.split('.')) {
     node = child(node, part);
@@ -73,7 +73,23 @@ function interpolate(template: string, params: TranslationParams | undefined, la
  * language). Unknown placeholders stay visible.
  */
 export function translate(language: Language, key: TranslationKey, params?: TranslationParams): string {
-  const value = lookup(getDictionary(language) ?? EN_DICTIONARY, key) ?? lookup(EN_DICTIONARY, key);
+  return translateFrom(getDictionary(language) ?? EN_DICTIONARY, EN_DICTIONARY, language, key, params);
+}
+
+/**
+ * `translate` for a dictionary outside the registered namespaces – a lazy namespace whose
+ * dictionaries come with the lazy chunk that uses them, never with the start chunk (WP-67, session
+ * info): `dictionary` of `language`, else `fallback` (English), else the key; same plurals and
+ * placeholders.
+ */
+export function translateFrom<D extends object>(
+  dictionary: D,
+  fallback: D,
+  language: Language,
+  key: KeyPaths<D>,
+  params?: TranslationParams,
+): string {
+  const value = lookup(dictionary, key) ?? lookup(fallback, key);
   if (value === undefined) return key;
   if (typeof value === 'string') return interpolate(value, params, language);
   const count = params?.count;

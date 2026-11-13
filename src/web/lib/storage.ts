@@ -28,6 +28,8 @@ export const STORAGE_KEYS = {
   sidebarCollapsed: `${PRODUCT_ID}.sidebar.collapsed`,
   /** localStorage: transcript view `all` (missing = `compact`, the default; WP-63 §1.5). */
   transcriptView: `${PRODUCT_ID}.transcript.view`,
+  /** localStorage: last tab of the session info dialog (WP-67; missing/unknown = overview). */
+  sessionInfoTab: `${PRODUCT_ID}.sessionInfo.tab`,
 } as const;
 
 /**
