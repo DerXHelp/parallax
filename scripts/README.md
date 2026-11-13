@@ -53,14 +53,19 @@ zu `pnpm check`/`build`/`e2e` (ADR-154). Dauer ≈ 1,5–3 min, Kosten ≈ 0,01 
    über `usageLimitsOf`) und nur die Existenz von `backgroundTasks` (nie aufgerufen) – Ergebnis
    `sessionTitle`/`usageQuery`/`backgroundTasks: true/false` im Profil; Fehlschläge sind Befunde.
    `system/task_summary`/`post_turn_summary` werden bei laufender Remote Control nur gezählt (Bericht,
-   informativ: die Probe-Runde läuft vor Remote Control, 0 ist normal).
+   informativ: die Probe-Runde läuft vor Remote Control, 0 ist normal). WP-66
+   (`cli-check/sideQuestion.ts`): danach eine Seitenfrage `askSideQuestion('Antworte nur mit: OK')`
+   (Haiku-Nebenanfrage ohne `result`, ihre Kosten stehen daher nicht in `total_cost_usd` – Bruchteil eines
+   Cents), Schema `{response: string, synthetic: boolean}`, eine synthetische Antwort oder ein
+   `canUseTool`-Aufruf während der Frage gilt als nicht verfügbar; `cancelAsyncMessage` nur auf Existenz
+   geprüft (nie aufgerufen) – Ergebnis `sideQuestion`/`withdrawQueued: true/false` im Profil.
 3. Live-Smoke `e2e/live` mit dem Restbudget (`cli-check/smoke.ts`; JSON-Reporter, eigener
    Playwright-Ausgabeordner `test-results/cli-check/<zeit>-smoke/` – Playwright leert ihn beim Start,
    frühere Berichte bleiben –, `live-run.json` mit Kosten und Temp-Wurzel).
 4. Vergleich mit `src/server/claude/cli-profile.json` (`cli-check/compare.ts`): Werkzeuge
    (Kern-Werkzeuge, `TodoWrite`/`TaskCreate` → ADR-156), Init-Schlüssel, `initializationResult`-Schlüssel,
    Capabilities, Modelle, Kontext-Kategorien, `permissionMode`-Default, deferred Werkzeuge (falls die CLI
-   sie meldet), Remote Control (`true` ↔ `false`, WP-64), Titel/Nutzungsabfrage/`backgroundTasks` (WP-65); Smoke-Fehler, `unknownCounts`, Validierungs-Drops. Nur Notizen: Slash-Commands, Agents,
+   sie meldet), Remote Control (`true` ↔ `false`, WP-64), Titel/Nutzungsabfrage/`backgroundTasks` (WP-65), Seitenfrage/`cancelAsyncMessage` (WP-66); Smoke-Fehler, `unknownCounts`, Validierungs-Drops. Nur Notizen: Slash-Commands, Agents,
    Skills, Modell-ID, Versionen.
 5. Bericht `test-results/cli-check/<zeit>.md` (Englisch, je Abweichung die betroffene Stelle) plus
    `last-run.json`; Konsolen-Zusammenfassung. Exit 0 = grün, 1 = Abweichungen, 2 = Abbruch/Fehler.

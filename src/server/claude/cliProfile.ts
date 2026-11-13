@@ -71,6 +71,13 @@ export const cliProfileSchema = z.object({
   usageQuery: z.boolean().nullable().default(null),
   /** WP-65: `Query.backgroundTasks` exists („In den Hintergrund“, never called); null = not checked. */
   backgroundTasks: z.boolean().nullable().default(null),
+  /**
+   * WP-66: the internal `Query.askSideQuestion` answered `{response: string, synthetic: boolean}` with a
+   * model answer and no `canUseTool` call (side questions, `/btw`); null = not checked.
+   */
+  sideQuestion: z.boolean().nullable().default(null),
+  /** WP-66: `Query.cancelAsyncMessage` exists („Zurückholen“, never called); null = not checked. */
+  withdrawQueued: z.boolean().nullable().default(null),
 });
 export type CliProfile = z.infer<typeof cliProfileSchema>;
 

@@ -51,11 +51,13 @@ describe('observationFrom (WP-62)', () => {
       slashCommands: ['clear', 'compact'],
       agents: ['Explore', 'general-purpose'],
       skills: ['simplify'],
-      // WP-64/WP-65: not checked in this raw probe.
+      // WP-64/WP-65/WP-66: not checked in this raw probe.
       remoteControl: null,
       sessionTitle: null,
       usageQuery: null,
       backgroundTasks: null,
+      sideQuestion: null,
+      withdrawQueued: null,
     });
     expect(JSON.stringify(observation)).not.toContain('example.com');
   });
