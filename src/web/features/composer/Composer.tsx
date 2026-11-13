@@ -77,7 +77,6 @@ import {
 } from '../decisions/state/bar-store';
 import { AttachmentChips } from './AttachmentChips';
 import { ContextGauge } from './ContextGauge';
-import { HelpDialog } from './HelpDialog';
 import { answerFromText, interruptSession, isSingleQuestion, sendPrompt, textLimit } from './lib/commands';
 import {
   applyMention,
@@ -156,6 +155,14 @@ const loadMentionMenu = () => import('./FileMentionMenu');
 const loadPasteChips = () => import('./PasteChips');
 const FileMentionMenu = lazy(() => loadMentionMenu().then((module) => ({ default: module.FileMentionMenu })));
 const PasteChips = lazy(() => loadPasteChips().then((module) => ({ default: module.PasteChips })));
+/*
+ * WP-65 (start-chunk budget): "Move all to background" (only while a Bash call or subagent runs;
+ * preloaded with the parts above) and the `/help` dialog (opened by the user; mounted from its first
+ * opening on so it closes with its animation and gives the focus back) are chunks of their own.
+ */
+const loadBackgroundAll = () => import('./BackgroundAll');
+const BackgroundAll = lazy(() => loadBackgroundAll().then((module) => ({ default: module.BackgroundAll })));
+const HelpDialog = lazy(() => import('./HelpDialog').then((module) => ({ default: module.HelpDialog })));
 /** The error card of the @ list stands where the list would (above the field). */
 const MENTION_ERROR_CLASS = 'bg-popover absolute inset-x-0 bottom-full z-20 mb-1 rounded-md border shadow-lg';
 
@@ -167,6 +174,7 @@ function preloadComposerParts(): void {
   partsPreloaded = true;
   loadMentionMenu().catch(() => undefined);
   loadPasteChips().catch(() => undefined);
+  loadBackgroundAll().catch(() => undefined);
 }
 
 /** Monotonic time of the arm delay; only read in effects and event handlers, never while rendering. */
@@ -341,6 +349,8 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const [activeIndex, setActiveIndex] = useState(0);
   const [picker, setPicker] = useState<PickerState>(PICKER_CLOSED);
   const [helpOpen, setHelpOpen] = useState(false);
+  /** The lazy help dialog stays mounted after its first opening (closing animation, focus return). */
+  const [helpMounted, setHelpMounted] = useState(false);
   const [terminalHint, setTerminalHint] = useState<string | null>(null);
   /** WP41-07: "Open in external console" is on its way (from here or a session menu) – send nothing. */
   const handoffPending = useHandoffPending(sessionKey);
@@ -638,6 +648,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
       permissionMode,
       openPicker,
       openHelp: () => {
+        setHelpMounted(true);
         setHelpOpen(true);
       },
       sendText: (message) => sendMessage(message, 'next'),
@@ -1254,6 +1265,14 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
               {answerLabel(pendingTarget)}
             </Button>
           )}
+          {/* WP-65 §1.5: only while a Bash call or subagent runs in the foreground (+ Ctrl+B). */}
+          {working ? (
+            <SlotBoundary resetKey={sessionKey} fallback={() => null}>
+              <Suspense fallback={null}>
+                <BackgroundAll sessionKey={sessionKey} composerRef={rootRef} online={online} />
+              </Suspense>
+            </SlotBoundary>
+          ) : null}
           {working ? (
             <Button
               variant="outline"
@@ -1331,16 +1350,22 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
           </span>
         </div>
       </div>
-      <HelpDialog
-        open={helpOpen}
-        onOpenChange={setHelpOpen}
-        entries={entries}
-        terminal={[...terminal].sort()}
-        hasCatalog={commands !== null}
-        returnFocus={() => {
-          textareaRef.current?.focus();
-        }}
-      />
+      {helpMounted ? (
+        <SlotBoundary resetKey={sessionKey} className="fixed inset-x-0 top-16 z-50">
+          <Suspense fallback={null}>
+            <HelpDialog
+              open={helpOpen}
+              onOpenChange={setHelpOpen}
+              entries={entries}
+              terminal={[...terminal].sort()}
+              hasCatalog={commands !== null}
+              returnFocus={() => {
+                textareaRef.current?.focus();
+              }}
+            />
+          </Suspense>
+        </SlotBoundary>
+      ) : null}
     </div>
   );
 });

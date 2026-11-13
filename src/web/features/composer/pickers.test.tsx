@@ -226,22 +226,47 @@ describe('ModelPicker (F.12)', () => {
 });
 
 describe('ContextGauge (C.1)', () => {
+  // WP-65 §1.6: the WP-63 rule – color by the share of the model window (50/80 %), fill up to the
+  // autocompact, the used tokens as text.
   it.each([
-    [69, 'normal'],
-    [70, 'warning'],
-    [84, 'warning'],
-    [85, 'danger'],
-  ] as const)('%i %% is %s', async (percentage, level) => {
+    [490_000, 'normal'],
+    [500_000, 'warning'],
+    [799_000, 'warning'],
+    [800_000, 'danger'],
+  ] as const)('%i of 1M tokens is %s', async (totalTokens, level) => {
     const h = start('idle', 'gauge');
     act(() => {
-      h.host.patchSummary(DEMO_ENTRIES.idle, { context: sampleContextGauge({ percentage }) });
+      h.host.patchSummary(DEMO_ENTRIES.idle, {
+        context: sampleContextGauge({ totalTokens, percentage: Math.round(totalTokens / 10_000) }),
+      });
     });
     await waitFor(() => {
       expect(document.querySelector('[data-slot="context-gauge"]')?.getAttribute('data-level')).toBe(level);
     });
     expect(screen.getByRole('meter', { name: 'Context' }).getAttribute('aria-valuenow')).toBe(
-      String(percentage),
+      String(Math.round(totalTokens / 10_000)),
     );
+  });
+
+  it('runs up to the autocompact and shows "autocompact soon" as a symbol (WP-63 rule)', async () => {
+    const h = start('idle', 'gauge');
+    act(() => {
+      h.host.patchSummary(DEMO_ENTRIES.idle, {
+        context: sampleContextGauge({
+          totalTokens: 380_000,
+          percentage: 38,
+          autoCompactThreshold: 400_000,
+          isAutoCompactEnabled: true,
+        }),
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('meter', { name: 'Context' }).getAttribute('aria-valuenow')).toBe('95');
+    });
+    const button = document.querySelector('[data-slot="context-gauge"]');
+    expect(button?.getAttribute('data-level')).toBe('normal');
+    expect(button?.querySelector('[data-slot="context-compact-soon"]')).not.toBeNull();
+    expect(screen.getByRole('meter', { name: 'Context' }).textContent).toBe('380K');
   });
 
   it('a click loads the breakdown; "Compact now" sends /compact as a prompt', async () => {

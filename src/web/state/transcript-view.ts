@@ -1,67 +1,60 @@
-import { useSyncExternalStore } from 'react';
+import { LOCAL_HOST_ID, type HostId } from '@shared/common';
+import { TRANSCRIPT_VIEWS, type TranscriptView } from '@shared/model';
 import { STORAGE_KEYS, readStorage, writeStorage } from '@web/lib/storage';
+import { selectSettings, updateSettings, useSettings } from './settings';
+import { clientStore, type ClientStore } from './store';
 
 /**
  * Transcript view (WP-63 §1.5): `compact` (default – work steps between two visible entries form
  * one group line, pictures as a gallery) or `all` (every step as its own line, the former view).
  * Set in the settings page (features/preferences), read by the transcript (features/transcript) –
  * both only through this module (features never import each other).
- * Kept in localStorage `parallax.transcript.view` (shared by every window of this browser profile,
- * other windows follow through the `storage` event): the server settings have no field for it –
- * a contract change that WP-63 did not get (requested in its report).
+ * WP-65 §1.6: kept in the server settings (`settings.transcriptView`, every window and browser
+ * follows `host.state`); WP-63's localStorage value `parallax.transcript.view` is taken over once
+ * (`migrateLegacyTranscriptView`, ShellEffects) and then removed.
  */
-export const TRANSCRIPT_VIEWS = ['compact', 'all'] as const;
-export type TranscriptViewMode = (typeof TRANSCRIPT_VIEWS)[number];
+export { TRANSCRIPT_VIEWS };
+export type TranscriptViewMode = TranscriptView;
 export const DEFAULT_TRANSCRIPT_VIEW: TranscriptViewMode = 'compact';
 
-function parse(value: string | null): TranscriptViewMode {
-  return value === 'all' ? 'all' : DEFAULT_TRANSCRIPT_VIEW;
+export function useTranscriptView(hostId: HostId = LOCAL_HOST_ID): TranscriptViewMode {
+  return useSettings(hostId).transcriptView;
 }
 
-let mode: TranscriptViewMode = parse(readStorage('local', STORAGE_KEYS.transcriptView));
-const listeners = new Set<() => void>();
-
-function emit(): void {
-  for (const listener of [...listeners]) listener();
+export function getTranscriptView(hostId: HostId = LOCAL_HOST_ID, store: ClientStore = clientStore): TranscriptViewMode {
+  return selectSettings(store.getState(), hostId).transcriptView;
 }
 
-function onStorage(event: StorageEvent): void {
-  if (event.key !== STORAGE_KEYS.transcriptView) return;
-  const next = parse(event.newValue);
-  if (next === mode) return;
-  mode = next;
-  emit();
+/** `settings.update` (optimistic; an error restores the previous value and rejects). */
+export async function setTranscriptView(
+  next: TranscriptViewMode,
+  hostId: HostId = LOCAL_HOST_ID,
+  store: ClientStore = clientStore,
+): Promise<void> {
+  await updateSettings({ transcriptView: next }, hostId, store);
 }
 
-function subscribe(listener: () => void): () => void {
-  if (listeners.size === 0 && typeof window !== 'undefined') window.addEventListener('storage', onStorage);
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-    if (listeners.size === 0 && typeof window !== 'undefined') {
-      window.removeEventListener('storage', onStorage);
-    }
-  };
-}
+let migrating = false;
 
-export function getTranscriptView(): TranscriptViewMode {
-  return mode;
-}
-
-export function setTranscriptView(next: TranscriptViewMode): void {
-  writeStorage('local', STORAGE_KEYS.transcriptView, next === DEFAULT_TRANSCRIPT_VIEW ? null : next);
-  if (next === mode) return;
-  mode = next;
-  emit();
-}
-
-export function useTranscriptView(): TranscriptViewMode {
-  return useSyncExternalStore(subscribe, getTranscriptView, getTranscriptView);
-}
-
-/** Tests: back to the default (the stored choice is removed). */
-export function resetTranscriptView(): void {
-  writeStorage('local', STORAGE_KEYS.transcriptView, null);
-  mode = DEFAULT_TRANSCRIPT_VIEW;
-  emit();
+/**
+ * Once per browser profile, after `host.state` arrived: a stored `all` of WP-63 becomes the setting
+ * (unless the setting already says `all`), then the key is removed – any other value is just
+ * removed. A failed update keeps the key for the next start. True when the setting was changed.
+ */
+export async function migrateLegacyTranscriptView(
+  hostId: HostId = LOCAL_HOST_ID,
+  store: ClientStore = clientStore,
+): Promise<boolean> {
+  if (migrating || (store.getState().hosts[hostId]?.hostState ?? null) === null) return false;
+  const legacy = readStorage('local', STORAGE_KEYS.transcriptView);
+  if (legacy === null) return false;
+  migrating = true;
+  try {
+    const change = legacy === 'all' && getTranscriptView(hostId, store) !== 'all';
+    if (change) await updateSettings({ transcriptView: 'all' }, hostId, store);
+    writeStorage('local', STORAGE_KEYS.transcriptView, null);
+    return change;
+  } finally {
+    migrating = false;
+  }
 }

@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from 'react';
 import { jsonValueSchema, type JsonValue } from '@shared/common';
 import type { BlobRef, ToolCallItem } from '@shared/model';
 import { useT } from '@web/i18n';
+import { parseMcpName } from '@web/lib/activity';
 import { cn } from '@web/lib/cn';
 import { AnsiText } from '../components/AnsiText';
 import { CappedContent, TruncationNotice } from '../components/CappedContent';
@@ -12,17 +13,6 @@ import { normalizeTerminalText, previewImages, resultText, stripToolUseError } f
 import type { Translate } from './types';
 
 /** Building blocks shared by the tool renderers. */
-
-const MCP_PREFIX = 'mcp__';
-
-/** `mcp__<server>__<tool>` → `{ server, tool }`; null for built-in tools. */
-export function parseMcpName(toolName: string): { server: string; tool: string } | null {
-  if (!toolName.startsWith(MCP_PREFIX)) return null;
-  const rest = toolName.slice(MCP_PREFIX.length);
-  const split = rest.indexOf('__');
-  if (split <= 0 || split + 2 >= rest.length) return null;
-  return { server: rest.slice(0, split), tool: rest.slice(split + 2) };
-}
 
 /** Display name of a tool (MCP tools as "tool · MCP server"). */
 export function toolLabel(toolName: string, t: Translate): string {

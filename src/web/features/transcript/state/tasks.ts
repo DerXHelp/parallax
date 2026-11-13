@@ -6,7 +6,8 @@ import { showErrorNotice } from '@web/state/notices';
 
 /**
  * Session facts the transcript's file links and task controls need (WP-55): the cwd (relative paths
- * of tool inputs and search hits) and stopping one background task (`session.stopTask`, ADR-149).
+ * of tool inputs and search hits) and stopping one background task (`session.stopTask`, ADR-149);
+ * WP-65 §1.5: moving a running Bash call or subagent to the background (`session.backgroundTasks`).
  */
 
 const selectCwd = (summary: SessionSummary): string | null => summary.cwd;
@@ -14,6 +15,23 @@ const selectCwd = (summary: SessionSummary): string | null => summary.cwd;
 /** The session's working directory, null while its summary is unknown. */
 export function useSessionCwd(sessionKey: string | null): string | null {
   return useSummarySelector(sessionKey, selectCwd, null);
+}
+
+/**
+ * WP-65 §1.5: "Move to background" of one running Bash call or subagent (like Ctrl+B in the
+ * terminal). Every refusal (`CLAUDE_CONTROL_FAILED`, `TASK_NOT_FOUND`, `SESSION_NOT_RUNNING`) shows
+ * as a notice. Resolves whether the command succeeded.
+ */
+export async function moveToBackground(sessionKey: string, toolUseId: string): Promise<boolean> {
+  const parsed = parseSessionKey(sessionKey);
+  if (parsed === null) return false;
+  try {
+    await sendCommand(sessionKey, { name: 'session.backgroundTasks', entryId: parsed.entryId, toolUseId });
+    return true;
+  } catch (error: unknown) {
+    showErrorNotice(errorPayloadOf(error), { sessionKey, id: `transcript-background-${toolUseId}` });
+    return false;
+  }
 }
 
 /**

@@ -1,6 +1,6 @@
 import { languageSchema, themeSchema } from '@shared/common';
 import { useT } from '@web/i18n';
-import { TRANSCRIPT_VIEWS, setTranscriptView, useTranscriptView } from '@web/state/transcript-view';
+import { TRANSCRIPT_VIEWS } from '@web/state/transcript-view';
 import { Label } from '@web/ui/label';
 import { RadioGroup, RadioGroupItem } from '@web/ui/radio-group';
 import { SettingField, SettingList } from '../components/SettingField';
@@ -8,12 +8,11 @@ import type { SettingsEditor } from '../state/settings-editor';
 
 /**
  * Language and theme – the same choice as the settings menu (which keeps its quick choice); WP-63:
- * the transcript view (compact / all steps, kept in localStorage – `@web/state/transcript-view`).
+ * the transcript view (compact / all steps; WP-65: a server setting like the others).
  */
 export function GeneralSection({ editor }: { editor: SettingsEditor }) {
   const t = useT();
   const { settings, save } = editor;
-  const transcriptView = useTranscriptView();
   return (
     <SettingList>
       <SettingField
@@ -76,10 +75,10 @@ export function GeneralSection({ editor }: { editor: SettingsEditor }) {
           <RadioGroup
             aria-labelledby={labelId}
             aria-describedby={describedBy}
-            value={transcriptView}
+            value={settings.transcriptView}
             onValueChange={(value) => {
               const view = TRANSCRIPT_VIEWS.find((candidate) => candidate === value);
-              if (view !== undefined) setTranscriptView(view);
+              if (view !== undefined) save({ transcriptView: view });
             }}
             className="flex flex-wrap gap-x-5 gap-y-2"
           >

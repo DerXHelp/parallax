@@ -3,8 +3,10 @@ import { memo, useState } from 'react';
 import { parseSessionKey } from '@shared/common';
 import type { ErrorPayload } from '@shared/errors';
 import type { ContextBreakdown, ContextGauge as ContextGaugeData } from '@shared/model';
-import { useI18n } from '@web/i18n';
+import { useI18n, useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
+import { contextDisplay } from '@web/lib/context-display';
+import { ContextCompactIcon, useContextTexts } from '@web/shell/context-display';
 import { errorPayloadOf } from '@web/state/connection';
 import {
   sendCommand,
@@ -13,7 +15,7 @@ import {
   useSummarySelector,
 } from '@web/state/hooks';
 import { Button } from '@web/ui/button';
-import { Gauge, gaugeLevel } from '@web/ui/gauge';
+import { Gauge } from '@web/ui/gauge';
 import { Popover, PopoverContent, PopoverTrigger } from '@web/ui/popover';
 import { Spinner } from '@web/ui/spinner';
 import { sendPrompt } from './lib/commands';
@@ -29,11 +31,32 @@ type Breakdown =
 export const COMPACT_COMMAND = '/compact';
 
 /**
- * Context gauge (C.1, Plan "Kopfleiste"): percentage + bar (from 70 % yellow, from 85 % red –
- * thresholds of the `Gauge` primitive, never color only: the percentage is always written). A
- * click shows the facts of the summary and loads the breakdown (`session.getContext`, only while
- * the session runs); "Compact now" sends `/compact` as a prompt. Categories are identified by their
- * stable SDK `id` (WP-57; named in the UI language when known), else by kind and name as before.
+ * The gauge in the button – WP-65 §1.6: the context rule of WP-63 (`@web/lib/context-display`, as in
+ * the sidebar and the header): the bar runs up to the autocompact, the color says "really full"
+ * (share of the model window, 50/80 %), a symbol says "autocompact soon"; the used tokens as text.
+ */
+function GaugeFace({ context }: { context: ContextGaugeData }) {
+  const t = useT();
+  const texts = useContextTexts(context);
+  return (
+    <span className="inline-flex items-center gap-1">
+      <Gauge
+        value={texts.display.fill}
+        level={texts.display.level}
+        valueText={texts.short}
+        valueLabel={texts.compactSoon === null ? texts.detail : `${texts.detail} · ${texts.compactSoon}`}
+        label={t('composer.context.label')}
+      />
+      {texts.compactSoon === null ? null : <ContextCompactIcon />}
+    </span>
+  );
+}
+
+/**
+ * Context gauge (C.1, Plan "Kopfleiste"; WP-65: the WP-63 rule, `GaugeFace`). A click shows the
+ * facts of the summary and loads the breakdown (`session.getContext`, only while the session runs);
+ * "Compact now" sends `/compact` as a prompt. Categories are identified by their stable SDK `id`
+ * (WP-57; named in the UI language when known), else by kind and name as before.
  */
 export const ContextGauge = memo(function ContextGauge({ sessionKey }: { sessionKey: string }) {
   const { t, format, tError } = useI18n();
@@ -71,6 +94,7 @@ export const ContextGauge = memo(function ContextGauge({ sessionKey }: { session
 
   const percent = context?.percentage ?? null;
   const shown = breakdown.state === 'ready' ? breakdown.data : context;
+  const shownDisplay = shown === null ? null : contextDisplay(shown);
   const total = shown === null ? 0 : shown.maxTokens;
 
   return (
@@ -84,29 +108,31 @@ export const ContextGauge = memo(function ContextGauge({ sessionKey }: { session
           variant="ghost"
           size="sm"
           data-slot="context-gauge"
-          data-level={percent === null ? 'unknown' : gaugeLevel(percent)}
+          data-level={context === null ? 'unknown' : contextDisplay(context).level}
           aria-label={
             percent === null
               ? t('composer.context.unknown')
               : t('composer.context.button', { percent: format.percent(percent) })
           }
         >
-          {percent === null ? (
+          {context === null ? (
             <span className="text-muted-foreground text-2xs">{t('composer.context.label')}</span>
           ) : (
-            <Gauge value={percent} label={t('composer.context.label')} />
+            <GaugeFace context={context} />
           )}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80">
         <div className="grid gap-2 text-xs">
           <div className="font-semibold">{t('composer.context.title')}</div>
-          {shown === null ? (
+          {shown === null || shownDisplay === null ? (
             <p className="text-muted-foreground">{t('composer.context.unknown')}</p>
           ) : (
             <div className="grid gap-1">
               <Gauge
-                value={shown.percentage}
+                value={shownDisplay.fill}
+                level={shownDisplay.level}
+                valueText={format.percent(Math.floor(shownDisplay.windowPercent))}
                 label={t('composer.context.label')}
                 barClassName="w-full"
                 className="w-full"

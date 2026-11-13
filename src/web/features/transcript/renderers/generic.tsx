@@ -1,5 +1,6 @@
 import { PlugIcon, WrenchIcon } from 'lucide-react';
 import { useT } from '@web/i18n';
+import { parseMcpName } from '@web/lib/activity';
 import { Disclosure } from '../components/Disclosure';
 import { firstLine } from '../lib/text';
 import { expansionKey } from '../state/expansion';
@@ -9,7 +10,6 @@ import {
   Section,
   ToolResultText,
   firstStringValue,
-  parseMcpName,
   useToolInput,
 } from './parts';
 import type { ToolBodyProps, ToolPreviewProps, ToolRenderer } from './types';

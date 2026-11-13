@@ -56,6 +56,19 @@ export const de: typeof en = {
     context: 'Kontext',
     effort: 'Aufwand',
     compactSoon: 'Autocompact steht bald an',
+    needsYou: 'Braucht dich:',
+  },
+  activity: {
+    thinking: 'Denkt nach…',
+    run: 'Führt aus: {target}',
+    write: 'Schreibt {target}',
+    edit: 'Bearbeitet {target}',
+    read: 'Liest {target}',
+    search: 'Sucht: {target}',
+    fetch: 'Ruft {target} ab',
+    agent: 'Subagent: {target}',
+    tool: '{tool}: {target}',
+    toolOnly: 'Nutzt {tool}',
   },
   actions: {
     menu: 'Session-Aktionen',
@@ -77,6 +90,7 @@ export const de: typeof en = {
     remoteOff: 'Remote Control ausschalten',
     openRemote: 'In der Claude-App öffnen',
     copyRemoteLink: 'Remote-Control-Link kopieren',
+    regenerateTitle: 'Titel neu erzeugen',
   },
   remote: {
     status: 'Remote Control: {state}',
@@ -225,6 +239,7 @@ export const de: typeof en = {
     window: 'Limit ({name})',
     resetsAt: 'Reset um {time}',
     resetsOn: 'Reset am {date}',
+    resetsIn: '{percent} verbraucht · Reset {when}',
   },
   notices: {
     enableSounds: 'Töne aktivieren',
