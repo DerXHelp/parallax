@@ -1,8 +1,8 @@
 /**
  * WP-65 (overview): pure helpers of the session engine for the sidebar's second line and the
  * auto title – the live activity of a turn (`ActivityTracker`: the CLI's live sentence, else the
- * running main-thread tool call with the same target text as the transcript line, else
- * "thinking"), the fallback turn summary (first meaningful line of the answer, Markdown removed),
+ * main-thread tool call waiting for a decision (WP-71) or running, with the same target text as the
+ * transcript line, else "thinking"), the fallback turn summary (first meaningful line of the answer, Markdown removed),
  * the descriptions handed to `generateSessionTitle` and the merge of the usage query into the
  * account limits (ADR-114).
  */
@@ -78,6 +78,16 @@ export function activityTarget(toolName: string, input: unknown): string | null 
     case 'Task':
       value = str(o.description);
       break;
+    // WP-71: the tools behind a question / a plan decision – the line names what waits for the user.
+    case 'AskUserQuestion':
+      value = Array.isArray(o.questions) && isRecord(o.questions[0]) ? str(o.questions[0].question) : null;
+      break;
+    case 'ExitPlanMode': {
+      // The plan's first line without its Markdown heading marks.
+      const plan = str(o.plan);
+      const line = plan === null ? '' : firstLine(plan.replace(/^\s*#+\s*/, ''), TARGET_CHARS);
+      return line === '' ? null : line;
+    }
     case 'TodoWrite':
       return null;
     default:
@@ -86,28 +96,44 @@ export function activityTarget(toolName: string, input: unknown): string | null 
   return value === null ? null : firstLine(value, TARGET_CHARS);
 }
 
-const ACTIVE_TOOL_STATUSES = new Set(['streaming_input', 'pending', 'running']);
+/**
+ * Tool call states that are the turn's activity. WP-71: `awaiting_decision` stays the activity (the
+ * line names the tool that waits; "needs you" is the status icon's job) instead of falling back to
+ * "thinking" (rest of WP-68).
+ */
+const ACTIVE_TOOL_STATUSES = new Set(['streaming_input', 'pending', 'awaiting_decision', 'running']);
+
+interface ActiveTool {
+  tool: string;
+  target: string | null;
+  order: number;
+  /** Waits for a decision of the user – wins over running tools. */
+  awaiting: boolean;
+}
 
 /**
  * Live activity of the running turn: the CLI's sentence (`task_summary`, Remote Control only) wins,
- * else the newest running main-thread tool call, else `thinking`. Fed with every item upsert of
- * the current conversation; reset when the turn ends.
+ * else the newest main-thread tool call waiting for a decision, else the newest running one, else
+ * `thinking`. Fed with every item upsert of the current conversation; reset when the turn ends.
  */
 export class ActivityTracker {
   private sentence: string | null = null;
-  private readonly tools = new Map<string, { tool: string; target: string | null; order: number }>();
+  private readonly tools = new Map<string, ActiveTool>();
 
   /** True when the item changed what `current()` answers. */
   apply(item: TranscriptItem): boolean {
     if (item.kind !== 'tool_call' || item.parentToolUseId !== null) return false;
     if (ACTIVE_TOOL_STATUSES.has(item.status)) {
       const before = this.tools.get(item.toolUseId);
-      const next = {
+      const next: ActiveTool = {
         tool: item.toolName.slice(0, TOOL_CHARS),
         target: activityTarget(item.toolName, item.input),
         order: item.order,
+        awaiting: item.status === 'awaiting_decision',
       };
-      if (before?.tool === next.tool && before.target === next.target) return false;
+      if (before?.tool === next.tool && before.target === next.target && before.awaiting === next.awaiting) {
+        return false;
+      }
       this.tools.set(item.toolUseId, next);
       return true;
     }
@@ -128,8 +154,14 @@ export class ActivityTracker {
 
   current(): SessionActivity {
     if (this.sentence !== null) return { kind: 'claude', text: this.sentence };
-    let newest: { tool: string; target: string | null; order: number } | null = null;
-    for (const tool of this.tools.values()) if (newest === null || tool.order >= newest.order) newest = tool;
+    let newest: ActiveTool | null = null;
+    for (const tool of this.tools.values()) {
+      const wins =
+        newest === null ||
+        (tool.awaiting && !newest.awaiting) ||
+        (tool.awaiting === newest.awaiting && tool.order >= newest.order);
+      if (wins) newest = tool;
+    }
     return newest === null ? { kind: 'thinking' } : { kind: 'tool', tool: newest.tool, target: newest.target };
   }
 }

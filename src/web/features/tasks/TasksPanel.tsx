@@ -1,7 +1,7 @@
 import { LayersIcon, SquareIcon } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useT } from '@web/i18n';
-import { runningTaskCount, type TaskRow } from '@web/lib/task-rows';
+import { runningTaskCount, type TaskRow } from '@shared/tasks';
 import { useNow } from '@web/state/clock';
 import { Alert } from '@web/ui/alert';
 import { Button } from '@web/ui/button';

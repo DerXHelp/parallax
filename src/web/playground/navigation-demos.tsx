@@ -102,6 +102,11 @@ export const navigationDemos: readonly PlaygroundDemo[] = [
     description: 'Right-click a row or hover it for “…”; double-click a title or press F2 to rename.',
   }),
   demo('nav-sidebar-grouped', 'Navigation – Sidebar grouped by project', { mode: 'grouped' }),
+  demo('nav-sidebar-running', 'Navigation – What runs where (WP-71)', {
+    scenario: 'navigation-running',
+    description:
+      'A working session pulses and counts its agents and shells, a background session pulses softly; hover a row for “Running now”.',
+  }),
   demo('nav-sidebar-archive', 'Navigation – Archive view (restore)', { archive: true }),
   demo('nav-quick-switcher', 'Navigation – Quick switcher (Ctrl+K)', {
     extra: <Request request={{ kind: 'quickSwitcher' }} />,

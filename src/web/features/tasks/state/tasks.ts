@@ -2,7 +2,8 @@ import { useMemo } from 'react';
 import { parseSessionKey } from '@shared/common';
 import type { BackgroundTask, TranscriptItem } from '@shared/model';
 import type { SessionViewState } from '@shared/sync';
-import { buildTaskRows, selectTaskSources, type TaskRow } from '@web/lib/task-rows';
+import { buildTaskRows, type TaskRow } from '@shared/tasks';
+import { selectTaskSources } from '@web/lib/task-rows';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand, useSessionSelector } from '@web/state/hooks';
 import { showErrorNotice } from '@web/state/notices';
@@ -10,7 +11,7 @@ import { showErrorNotice } from '@web/state/notices';
 /**
  * Store access of the task panel (WP-55): the task rows of a session (re-rendered only when a
  * task-bearing item or the background list changes – not on every text delta) and stopping tasks
- * (`session.stopTask`, ADR-149). The rows come from `@web/lib/task-rows`, the model the header's
+ * (`session.stopTask`, ADR-149). The rows come from `@shared/tasks`, the model the header's
  * counter shares (CR3-02). The todo list: `state/todos.ts`.
  */
 

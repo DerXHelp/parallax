@@ -396,6 +396,7 @@ export function sampleSummary(p: Partial<SessionSummary> = {}): SessionSummary {
     turnSummary: null,
     lastSeenAt: null,
     outputStyle: null,
+    runningTasks: null,
     ...p,
   };
 }

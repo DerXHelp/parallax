@@ -511,6 +511,8 @@ export class SessionRuntime {
         s.phase = 'dormant';
       }
       s.cancelProcessTimers();
+      // WP-71: nothing runs without the process (null at once, no throttle).
+      if (!this.core.shuttingDown()) s.updateRunningTasks();
       if (!this.core.shuttingDown()) s.dropMirrorIfUnused();
       this.core.processEnded();
       this.releaseTurnResultWaiters();
