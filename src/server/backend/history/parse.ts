@@ -5,7 +5,7 @@
  */
 import { z } from 'zod';
 import { logger } from '../../lib/logger';
-import type { BackendSessionInfo, HistoryMessage } from '../types';
+import type { BackendSessionInfo, HistoryMessage, SubagentHistorySlice } from '../types';
 
 const log = logger.child({ module: 'history' });
 
@@ -47,6 +47,49 @@ export function toHistoryMessages(raw: unknown): HistoryMessage[] {
   }
   if (skipped > 0) log.debug({ skipped, total: raw.length }, 'history: skipped unknown/invalid messages');
   return out;
+}
+
+const subagentSliceSchema = z.looseObject({
+  total: z.number().int().nonnegative(),
+  previousUuid: z.string().nullable().catch(null),
+  lastUuid: z.string().nullable().catch(null),
+  messages: z.array(z.unknown()),
+});
+
+const uuidOf = (raw: unknown): string | null => {
+  const parsed = z.looseObject({ uuid: z.string() }).safeParse(raw);
+  return parsed.success ? parsed.data.uuid : null;
+};
+
+/**
+ * WP-69: the worker's `subagentSlice` answer → port type. Unusable answers count as an empty file
+ * (logged); invalid messages are skipped like in `toHistoryMessages` – `total` stays the CLI's count.
+ */
+export function toSubagentSlice(raw: unknown): SubagentHistorySlice {
+  const parsed = subagentSliceSchema.safeParse(raw);
+  if (!parsed.success) {
+    log.warn({ issue: parsed.error.issues[0]?.message ?? 'invalid' }, 'subagent history answer unusable');
+    return { total: 0, previousUuid: null, lastUuid: null, messages: [] };
+  }
+  return {
+    total: parsed.data.total,
+    previousUuid: parsed.data.previousUuid,
+    lastUuid: parsed.data.lastUuid,
+    messages: toHistoryMessages(parsed.data.messages),
+  };
+}
+
+/**
+ * WP-69: the same slice from a full message list (FakeBackend: the FakeHistoryStore holds raw lists).
+ */
+export function sliceSubagentMessages(raw: readonly unknown[], from: number): SubagentHistorySlice {
+  const start = Math.max(0, Math.min(Math.trunc(from), raw.length));
+  return {
+    total: raw.length,
+    previousUuid: start > 0 ? uuidOf(raw[start - 1]) : null,
+    lastUuid: raw.length > 0 ? uuidOf(raw[raw.length - 1]) : null,
+    messages: toHistoryMessages(raw.slice(start)),
+  };
 }
 
 interface Keyed {

@@ -3,7 +3,12 @@ import type { DecisionId, JsonValue } from '@shared/common';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { useDecision, useDecisions, useItem, useTopLevelItemIds } from '@web/state/hooks';
-import type { FileLinkSlotProps, FilePanelSlotProps, ProfilesSettingsSlotProps } from './slots';
+import type {
+  FileLinkSlotProps,
+  FilePanelSlotProps,
+  ProfilesSettingsSlotProps,
+  SubagentPanelSlotProps,
+} from './slots';
 
 /**
  * Neutral stand-ins for feature slots that are not wired yet (architecture §2.3 d/e). WP-20
@@ -132,6 +137,11 @@ export function FilesPanelPlaceholder(_props: { sessionKey: string }) {
 
 /** Phase 3: until WP-55 fills the slot the "tasks" tab stays empty. */
 export function TasksPanelPlaceholder(_props: { sessionKey: string }) {
+  return null;
+}
+
+/** WP-69: until the transcript feature fills the slot the subagent tab stays empty. */
+export function SubagentPanelPlaceholder(_props: SubagentPanelSlotProps) {
   return null;
 }
 

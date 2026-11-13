@@ -7,7 +7,7 @@
  */
 import { realSetImmediate } from '../lib/async';
 import type { FixtureEvent, ParsedFixture } from './fixture';
-import { mergeHistory, toHistoryMessages, toSessionInfo } from './history/parse';
+import { mergeHistory, sliceSubagentMessages, toHistoryMessages, toSessionInfo } from './history/parse';
 import { FAKE_CONSOLE_PROMPT, consoleTurnMessages } from './fake/console';
 import { randomIds } from './fake/dsl';
 import { defaultFakeFilesRoot } from './fake/files';
@@ -155,6 +155,11 @@ export function createFakeBackend(options: FakeBackendOptions = {}): FakeBackend
 
     getSessionInfo(req) {
       return Promise.resolve(toSessionInfo(history.info(req.sessionId)));
+    },
+
+    /** WP-69: like the SdkBackend's worker slice, from the FakeHistoryStore (grows while a fake agent runs). */
+    readSubagentHistory(req) {
+      return Promise.resolve(sliceSubagentMessages(history.subagentMessages(req.sessionId, req.agentId), req.from));
     },
 
     renameSession(req) {

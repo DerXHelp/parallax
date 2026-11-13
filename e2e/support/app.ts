@@ -285,7 +285,7 @@ export class SessionView {
   }
 
   /** A tab of the open side panel's tab row (also "Plan" before the header shows its button). */
-  panelTab(tab: 'plan' | 'file' | 'files' | 'tasks'): Locator {
+  panelTab(tab: 'plan' | 'file' | 'files' | 'tasks' | 'subagent'): Locator {
     return this.sidePanel.locator(`[role="tab"][data-tab="${tab}"]`);
   }
 

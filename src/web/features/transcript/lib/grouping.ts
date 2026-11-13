@@ -1,4 +1,5 @@
 import type { SideQuestionItem, SystemItem, ToolCallItem, TranscriptItem } from '@shared/model';
+import type { HookDisplay } from '@web/state/hook-display';
 import type { TranscriptViewMode } from '@web/state/transcript-view';
 
 /**
@@ -18,17 +19,25 @@ import type { TranscriptViewMode } from '@web/state/transcript-view';
  *   permission denied, interruptions, handoffs, task notifications, local command output,
  *   informational warnings/errors and side questions (WP-66: never inside a group) – all of them
  *   change what happens next or answer the user;
- * - step: thinking, every other tool call with its result, and the quiet system items (hooks,
- *   memory recall, system notifications, informational at level info, unknown SDK messages) –
- *   bookkeeping of the work, interesting only when looking into it;
+ * - step: thinking, every other tool call with its result, and the quiet system items (memory
+ *   recall, system notifications, informational at level info, unknown SDK messages) – bookkeeping
+ *   of the work, interesting only when looking into it;
  * - hidden: `rate_limit` allowed / allowed_warning (§1.2 – older logs still hold such items; the
  *   limit bar shows every value) and the later questions of a side-question thread (WP-66: the card
  *   of its earliest loaded question shows the whole thread). Hidden items are skipped and do not
  *   split a group.
+ * - hook runs (WP-69) have codes of their own, resolved by `buildRows` with the setting
+ *   `hookDisplay` (`resolveHookCode`): a successful (or still running) run is a step with `all`,
+ *   hidden otherwise; a failed one (blocking included) is visible unless `off`; a failed
+ *   SessionStart/Setup hook is always visible (start problems are never hidden). So the codes stay
+ *   independent of the setting (one cached code list per items array).
  */
 
-/** v visible, s step, i step with pictures in its result, h hidden. */
-export type ItemCode = 'v' | 's' | 'i' | 'h';
+/**
+ * v visible, s step, i step with pictures in its result, h hidden; hook runs: k succeeded or
+ * running, f failed, F failed at the session start (SessionStart/Setup).
+ */
+export type ItemCode = 'v' | 's' | 'i' | 'h' | 'k' | 'f' | 'F';
 
 /** A run shorter than this stays plain rows (one step needs no extra click). */
 export const MIN_GROUP_SIZE = 2;
@@ -36,13 +45,47 @@ export const MIN_GROUP_SIZE = 2;
 /** Tool calls that are decisions or cards of their own (always visible). */
 const VISIBLE_TOOLS: ReadonlySet<string> = new Set(['Agent', 'Task', 'ExitPlanMode', 'AskUserQuestion']);
 
-/** System events that are work steps; every other event stays visible. */
-const QUIET_SYSTEM_EVENTS: ReadonlySet<SystemItem['event']> = new Set([
-  'hook',
-  'memory_recall',
-  'notification',
-  'unknown',
-]);
+/** System events that are work steps; every other event stays visible (hooks: `hookCode`). */
+const QUIET_SYSTEM_EVENTS: ReadonlySet<SystemItem['event']> = new Set(['memory_recall', 'notification', 'unknown']);
+
+/** Hook events of the session start: a failure there stays visible even with `hookDisplay: 'off'`. */
+const SESSION_START_HOOK_EVENTS: ReadonlySet<string> = new Set(['SessionStart', 'Setup']);
+
+type HookItem = Extract<SystemItem, { event: 'hook' }>;
+
+/** A run that ended without success (`outcome` other than `success`; null = still running). */
+export function isFailedHook(item: HookItem): boolean {
+  return item.outcome !== null && item.outcome !== 'success';
+}
+
+/** A failed run that stopped something (exit code 2: the tool call, the prompt, the stop). */
+export function isBlockingHook(item: HookItem): boolean {
+  return isFailedHook(item) && item.exitCode === 2;
+}
+
+function hookCode(item: HookItem): ItemCode {
+  if (!isFailedHook(item)) return 'k';
+  return SESSION_START_HOOK_EVENTS.has(item.hookEvent) ? 'F' : 'f';
+}
+
+/** The role of a hook code under the setting (other codes stay as they are). */
+export function resolveHookCode(code: ItemCode, hooks: HookDisplay): ItemCode {
+  switch (code) {
+    case 'k':
+      return hooks === 'all' ? 's' : 'h';
+    case 'f':
+      return hooks === 'off' ? 'h' : 'v';
+    case 'F':
+      return 'v';
+    default:
+      return code;
+  }
+}
+
+/** Is a hook item shown at all under the setting (nested rows check it themselves)? */
+export function isHookShown(item: HookItem, hooks: HookDisplay): boolean {
+  return resolveHookCode(hookCode(item), hooks) !== 'h';
+}
 
 /** The result holds at least one picture (blob image). */
 export function hasResultImages(item: ToolCallItem): boolean {
@@ -58,6 +101,7 @@ export function isHiddenRateLimit(item: TranscriptItem): boolean {
 }
 
 function systemCode(item: SystemItem): ItemCode {
+  if (item.event === 'hook') return hookCode(item);
   if (item.event === 'rate_limit') return item.info.status === 'rejected' ? 'v' : 'h';
   if (item.event === 'informational') return item.level === 'warning' || item.level === 'error' ? 'v' : 's';
   return QUIET_SYSTEM_EVENTS.has(item.event) ? 's' : 'v';
@@ -121,15 +165,19 @@ function pushPlain(rows: TranscriptRowModel[], ids: readonly string[]): void {
 
 /**
  * The rows of the list. `codes[i]` belongs to `ids[i]` (a missing code counts as visible);
- * `isOpen(groupKey)` says which groups the user opened.
+ * `isOpen(groupKey)` says which groups the user opened; `hooks` resolves the hook codes (WP-69).
  */
 export function buildRows(
   ids: readonly string[],
   codes: readonly ItemCode[],
   mode: TranscriptViewMode,
   isOpen: (key: string) => boolean,
+  hooks: HookDisplay = 'failed',
 ): TranscriptRowModel[] {
-  return mode === 'compact' ? compactRows(ids, codes, isOpen) : allRows(ids, codes);
+  const resolved = codes.some((code) => code === 'k' || code === 'f' || code === 'F')
+    ? codes.map((code) => resolveHookCode(code, hooks))
+    : codes;
+  return mode === 'compact' ? compactRows(ids, resolved, isOpen) : allRows(ids, resolved);
 }
 
 function compactRows(
@@ -210,6 +258,8 @@ export interface GroupSummary {
   /** Tool calls (the "steps" of the line). */
   tools: number;
   thoughts: number;
+  /** WP-69: hook runs (steps of the line as well, listed as "n× Hook"). */
+  hooks: number;
   /** Quiet system items. */
   notices: number;
   /** Per tool name, most frequent first (ties by name). */
@@ -245,6 +295,7 @@ function timeOf(value: string | undefined): number | null {
 export function summarizeGroup(items: readonly (TranscriptItem | null)[]): GroupSummary {
   let tools = 0;
   let thoughts = 0;
+  let hooks = 0;
   let notices = 0;
   let errors = 0;
   let running: TranscriptItem | null = null;
@@ -266,10 +317,11 @@ export function summarizeGroup(items: readonly (TranscriptItem | null)[]): Group
       if (isFailed(item)) errors++;
       const end = timeOf(item.result?.at);
       if (end !== null) endAt = endAt === null ? end : Math.max(endAt, end);
-    } else notices++;
+    } else if (item.kind === 'system' && item.event === 'hook') hooks++;
+    else notices++;
   }
   const toolCounts = [...counts]
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
-  return { tools, thoughts, notices, toolCounts, errors, running, startAt, endAt };
+  return { tools, thoughts, hooks, notices, toolCounts, errors, running, startAt, endAt };
 }

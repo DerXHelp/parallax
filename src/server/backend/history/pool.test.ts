@@ -23,7 +23,10 @@ export async function getSessionMessages(sessionId) {
     parent_tool_use_id: null, timestamp: '2026-10-15T08:00:00.000Z', ...where() }];
 }
 export async function listSubagents(sessionId) { return ['agent-1', 'agent-2']; }
-export async function getSubagentMessages(sessionId, agentId) { return [{ sessionId, agentId, ...where() }]; }
+export async function getSubagentMessages(sessionId, agentId) {
+  if (agentId === 'growing') return ['g1', 'g2', 'g3'].map((uuid) => ({ uuid, sessionId, agentId, ...where() }));
+  return [{ sessionId, agentId, ...where() }];
+}
 export async function getSessionInfo(sessionId) {
   if (sessionId === 'missing') return undefined;
   return { sessionId, summary: renamed.get(sessionId) ?? 'AI title', customTitle: renamed.get(sessionId),
@@ -156,6 +159,25 @@ describe(
       expect(await p.run(l, { op: 'subagentMessages', sessionId: 's1', agentId: 'agent-2' })).toEqual([
         expect.objectContaining({ sessionId: 's1', agentId: 'agent-2' }),
       ]);
+      // WP-69: the slice from a known count – the uuid before it and the last one, only the new part.
+      expect(await p.run(l, { op: 'subagentSlice', sessionId: 's1', agentId: 'growing', from: 2 })).toEqual({
+        total: 3,
+        previousUuid: 'g2',
+        lastUuid: 'g3',
+        messages: [expect.objectContaining({ uuid: 'g3', agentId: 'growing', configDir: 'C:\\cfg\\a' })],
+      });
+      expect(await p.run(l, { op: 'subagentSlice', sessionId: 's1', agentId: 'growing', from: 9 })).toEqual({
+        total: 3,
+        previousUuid: 'g3',
+        lastUuid: 'g3',
+        messages: [],
+      });
+      expect(await p.run(l, { op: 'subagentSlice', sessionId: 's1', agentId: 'agent-2', from: 0 })).toEqual({
+        total: 1,
+        previousUuid: null,
+        lastUuid: null,
+        messages: [expect.objectContaining({ agentId: 'agent-2' })],
+      });
       expect(await p.run(l, { op: 'info', sessionId: 's1' })).toEqual(
         expect.objectContaining({ sessionId: 's1', summary: 'AI title' }),
       );

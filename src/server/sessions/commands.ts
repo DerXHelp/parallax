@@ -14,7 +14,8 @@
  * Parallax only, files stay). WP-64: `session.setRemoteControl` and the Remote Control default of
  * new entries (remoteControl.ts); archive/remove end the remote session first. WP-67:
  * `session.info`, `session.mcpAction`, `session.reload` (sessionInfo.ts; only with a running
- * process, no auto-wake).
+ * process, no auto-wake). WP-69: `session.subagentTranscript` (subagentTranscript.ts; reads the CLI's
+ * agent transcript, no process needed).
  */
 import { LIMITS, type ClientId, type ProfileId } from '@shared/common';
 import { makeError } from '@shared/errors';
@@ -48,6 +49,7 @@ import { endRemoteBeforeClose, setRemoteControl } from './remoteControl';
 import { closeRuntime, deliverPrompt, startRuntime } from './runtime';
 import { mcpAction, readSessionInfo, reloadSession } from './sessionInfo';
 import { askSideQuestion, cancelSideQuestion, deleteSideQuestionThread } from './sideQuestions';
+import { readSubagentTranscript } from './subagentTranscript';
 import { capTitle, implementPlanPrompt, newConversation, titleFromPrompt } from './summary';
 import { regenerateTitle } from './titles';
 
@@ -400,6 +402,9 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
       return mcpAction(core, s, cmd.server, cmd.action);
     case 'session.reload':
       return reloadSession(core, s, cmd.what);
+    // WP-69: a subagent's own transcript (file only, also dormant/archived/external).
+    case 'session.subagentTranscript':
+      return readSubagentTranscript(core, s, cmd);
   }
 }
 

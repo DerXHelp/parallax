@@ -215,6 +215,7 @@ export function sampleSettings(p: Partial<Settings> = {}): Settings {
     editor: sampleEditorSettings(),
     remoteControl: { ...DEFAULT_REMOTE_CONTROL_SETTINGS },
     transcriptView: 'compact',
+    hookDisplay: 'failed',
     ...p,
   };
 }
@@ -546,6 +547,7 @@ export const sampleSystemItems: SystemItemFactories = {
     hookEvent: 'PreToolUse',
     outcome: 'success',
     output: capped(''),
+    exitCode: 0,
     ...p,
   }),
   permission_denied: (p = {}) => ({

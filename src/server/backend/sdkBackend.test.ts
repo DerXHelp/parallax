@@ -1691,6 +1691,29 @@ describe('SdkBackend – history (A.3, F.15)', () => {
     expect(history.runs.every((run) => run.launch === l)).toBe(true);
   });
 
+  it('WP-69: readSubagentHistory → subagentSlice op in the profile’s worker; answer checked, unusable → empty', async () => {
+    const history = fakeHistory((op) =>
+      op.op === 'subagentSlice' && op.agentId === 'agent-a'
+        ? { total: 3, previousUuid: 'a1', lastUuid: 'a3', messages: [msg('a2', null, 'toolu_a'), { bad: 1 }, msg('a3', null)] }
+        : { total: 'many' },
+    );
+    const h = harness({ history });
+    const l = launch({ configDir: 'D:\\cfg' });
+    const req = { sessionId: SAMPLE_IDS.sessionId, cwd: 'c:\\Work', launch: l, agentId: 'agent-a', from: 1 };
+    const slice = await h.backend.readSubagentHistory(req);
+    expect(slice).toMatchObject({ total: 3, previousUuid: 'a1', lastUuid: 'a3' });
+    expect(slice.messages.map((m) => m.uuid)).toEqual(['a2', 'a3']);
+    expect(history.runs).toEqual([
+      { launch: l, op: { op: 'subagentSlice', sessionId: SAMPLE_IDS.sessionId, agentId: 'agent-a', from: 1 } },
+    ]);
+    await expect(h.backend.readSubagentHistory({ ...req, agentId: 'agent-b' })).resolves.toEqual({
+      total: 0,
+      previousUuid: null,
+      lastUuid: null,
+      messages: [],
+    });
+  });
+
   it('readHistory tolerates a non-list subagent answer and rejects when the main lookup fails', async () => {
     const tolerant = harness({
       history: fakeHistory((op) => (op.op === 'messages' ? [msg('m1', null)] : { not: 'a list' })),

@@ -25,8 +25,11 @@ export const SETTINGS_SECTIONS = [
 ] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
-/** Tabs of the side panel of a session pane (Phase 3, ADR-150; host: shell/side-panel). */
-export const SIDE_PANEL_TABS = ['plan', 'file', 'files', 'tasks'] as const;
+/**
+ * Tabs of the side panel of a session pane (Phase 3, ADR-150; host: shell/side-panel). WP-69:
+ * `subagent` = the read-only transcript of one subagent (shown once one was opened).
+ */
+export const SIDE_PANEL_TABS = ['plan', 'file', 'files', 'tasks', 'subagent'] as const;
 export type SidePanelTab = (typeof SIDE_PANEL_TABS)[number];
 
 export type ShellRequest =
@@ -47,6 +50,11 @@ export type ShellRequest =
   | { kind: 'openFile'; sessionKey: string; path: string; line?: number | null; col?: number | null }
   /** Open the side panel of a session at a tab; `null` closes it (handled by SidePanelHost). */
   | { kind: 'sidePanel'; sessionKey: string; tab: SidePanelTab | null }
+  /**
+   * WP-69: the transcript of one subagent in the tab `subagent` (the Agent card's "Open
+   * transcript"; the tab shows the latest one). `title`: the card's title (description, else type).
+   */
+  | { kind: 'openSubagent'; sessionKey: string; agentId: string; title: string; subagentType?: string | null }
   /**
    * Files dropped on the session pane or picked in the menu → the composer attaches them.
    * `folders`: folders the drop left out (`transferFiles`, CR3-01) – the composer shows its hint.
