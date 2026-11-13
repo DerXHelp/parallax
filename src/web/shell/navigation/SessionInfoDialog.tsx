@@ -1,65 +1,65 @@
-import type { ReactNode } from 'react';
-import { LOCAL_HOST_ID, parseSessionKey } from '@shared/common';
-import { useT, type TranslationKey } from '@web/i18n';
-import { cn } from '@web/lib/cn';
+import { lazy, Suspense, useState, type ComponentType } from 'react';
+import { useT } from '@web/i18n';
 import { useReturnFocus } from '@web/lib/return-focus';
-import { knownVersion } from '@web/lib/version';
-import { useHostState, useSessionDetail, useSummary } from '@web/state/hooks';
+import { useNarrowWindow } from '@web/shell/sidebar-layout';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@web/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@web/ui/select';
+import { Spinner } from '@web/ui/spinner';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@web/ui/tabs';
+import { SlotBoundary } from '../SlotBoundary';
 import { sessionFocusTarget } from './focus';
+import { useInfoT } from './session-info/i18n';
+import { OverviewTab } from './session-info/OverviewTab';
+import { INFO_TABS, isInfoTab, readLastTab, writeLastTab, type InfoTab } from './session-info/tabs';
+
+type TabBody = ComponentType<{ sessionKey: string }>;
 
 /**
- * Known values of `init.apiKeySource` (SDK `ApiKeySource`) and of an MCP server's `status`
- * (R4W-14): shown translated, anything newer stays raw.
+ * Every tab but the overview is its own lazy chunk (WP-67 start-chunk budget): it is fetched when
+ * the tab opens and asks the running CLI then (`session.info`), never before.
  */
-const API_KEY_SOURCES: Readonly<Record<string, TranslationKey>> = {
-  none: 'navigation.info.apiKeySources.subscription',
-  ANTHROPIC_API_KEY: 'navigation.info.apiKeySources.envKey',
-  apiKeyHelper: 'navigation.info.apiKeySources.helper',
-  '/login managed key': 'navigation.info.apiKeySources.loginManaged',
-  user: 'navigation.info.apiKeySources.user',
-  project: 'navigation.info.apiKeySources.project',
-  org: 'navigation.info.apiKeySources.org',
-  temporary: 'navigation.info.apiKeySources.temporary',
-  oauth: 'navigation.info.apiKeySources.oauth',
+const TAB_BODIES: Readonly<Record<Exclude<InfoTab, 'overview'>, TabBody>> = {
+  mcp: lazy(() => import('./session-info/McpTab').then((module) => ({ default: module.McpTab }))),
+  permissions: lazy(() =>
+    import('./session-info/PermissionsTab').then((module) => ({ default: module.PermissionsTab })),
+  ),
+  skills: lazy(() => import('./session-info/SkillsTab').then((module) => ({ default: module.SkillsTab }))),
+  memory: lazy(() => import('./session-info/MemoryTab').then((module) => ({ default: module.MemoryTab }))),
+  hooks: lazy(() => import('./session-info/HooksTab').then((module) => ({ default: module.HooksTab }))),
+  status: lazy(() => import('./session-info/StatusTab').then((module) => ({ default: module.StatusTab }))),
+  export: lazy(() => import('./session-info/ExportTab').then((module) => ({ default: module.ExportTab }))),
 };
 
-const MCP_STATUS: Readonly<Record<string, TranslationKey>> = {
-  connected: 'navigation.info.mcpStatus.connected',
-  failed: 'navigation.info.mcpStatus.failed',
-  'needs-auth': 'navigation.info.mcpStatus.needsAuth',
-  pending: 'navigation.info.mcpStatus.pending',
-  disabled: 'navigation.info.mcpStatus.disabled',
-};
-
-function Row({ label, children, mono = false }: { label: string; children: ReactNode; mono?: boolean }) {
+function TabBodyView({ tab, sessionKey }: { tab: InfoTab; sessionKey: string }) {
+  if (tab === 'overview') return <OverviewTab sessionKey={sessionKey} />;
+  const Body = TAB_BODIES[tab];
   return (
-    <>
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className={cn('min-w-0 break-words', mono && 'font-mono text-2xs leading-5 break-all')}>
-        {children}
-      </dd>
-    </>
+    <SlotBoundary resetKey={`${sessionKey}|${tab}`}>
+      <Suspense fallback={<Spinner />}>
+        <Body sessionKey={sessionKey} />
+      </Suspense>
+    </SlotBoundary>
   );
 }
 
 /**
- * Session info (request `sessionInfo`, header menu, `/status` of WP-37): model, mode, folder,
- * branch, Claude Code version, sign-in source, session id, profile and MCP servers (from
- * `detail.init`, i.e. the last start). Read-only; closing gives the focus back to where it was.
+ * Session info (request `sessionInfo`, header menu, `/status` of WP-37), tabbed since WP-67:
+ * Overview (from `detail.init`, the last start) · MCP · Permissions · Skills · CLAUDE.md · Hooks ·
+ * Status · Export (each asks the running CLI when it opens). A narrow window shows a select instead
+ * of the tab row; the last tab is remembered (localStorage). Closing gives the focus back.
  */
 export function SessionInfoDialog({ sessionKey, onClose }: { sessionKey: string; onClose: () => void }) {
   const t = useT();
-  const summary = useSummary(sessionKey);
-  const detail = useSessionDetail(sessionKey);
-  const hostState = useHostState(parseSessionKey(sessionKey)?.hostId ?? LOCAL_HOST_ID);
+  const it = useInfoT();
+  const narrow = useNarrowWindow();
   const returnFocus = useReturnFocus(true, () => sessionFocusTarget(sessionKey));
-  const init = detail?.init ?? null;
-  const unknown = t('navigation.info.unknown');
-  const profile = hostState?.profiles.find((candidate) => candidate.id === summary?.profileId);
-  const mode = init?.permissionMode ?? summary?.permissionMode ?? null;
-  const apiKeySource = init?.apiKeySource ?? summary?.apiKeySource ?? null;
-  const apiKeySourceKey = apiKeySource === null ? undefined : API_KEY_SOURCES[apiKeySource];
+  const [tab, setTab] = useState<InfoTab>(readLastTab);
+
+  const choose = (value: string): void => {
+    if (!isInfoTab(value)) return;
+    setTab(value);
+    writeLastTab(value);
+  };
 
   return (
     <Dialog
@@ -68,57 +68,67 @@ export function SessionInfoDialog({ sessionKey, onClose }: { sessionKey: string;
         if (!next) onClose();
       }}
     >
-      <DialogContent data-slot="session-info" className="sm:max-w-lg" onCloseAutoFocus={returnFocus}>
-        <DialogHeader>
+      <DialogContent
+        data-slot="session-info"
+        data-tab={tab}
+        className="flex h-[min(85vh,44rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl"
+        onCloseAutoFocus={returnFocus}
+      >
+        <DialogHeader className="shrink-0 px-6 pt-6 pb-3">
           <DialogTitle>{t('navigation.info.title')}</DialogTitle>
           <DialogDescription>{t('navigation.info.description')}</DialogDescription>
         </DialogHeader>
-        {summary === null ? null : (
-          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-xs">
-            <Row label={t('navigation.info.model')}>
-              {init?.model ?? summary.model ?? summary.modelSetting ?? t('shell.session.modelDefault')}
-            </Row>
-            <Row label={t('navigation.info.mode')}>
-              {mode === null ? unknown : t(`shell.permissionMode.${mode}`)}
-            </Row>
-            <Row label={t('navigation.info.cwd')} mono>
-              {summary.cwd}
-            </Row>
-            <Row label={t('navigation.info.branch')}>{summary.gitBranch ?? t('navigation.info.none')}</Row>
-            <Row label={t('navigation.info.cliVersion')}>
-              {knownVersion(init?.cliVersion ?? summary.cliVersion) ?? unknown}
-            </Row>
-            <Row label={t('navigation.info.apiKeySource')}>
-              {apiKeySourceKey === undefined ? (apiKeySource ?? unknown) : t(apiKeySourceKey)}
-            </Row>
-            <Row label={t('navigation.info.sessionId')} mono>
-              {summary.sessionId ?? init?.sessionId ?? unknown}
-            </Row>
-            <Row label={t('navigation.info.profile')}>{profile?.name ?? summary.profileId}</Row>
-            <Row label={t('navigation.info.mcpServers')}>
-              {init === null || init.mcpServers.length === 0 ? (
-                t('navigation.info.none')
-              ) : (
-                <ul className="grid gap-0.5">
-                  {init.mcpServers.map((server) => {
-                    const statusKey = MCP_STATUS[server.status];
-                    return (
-                      <li key={server.name} className="flex min-w-0 items-center gap-1.5">
-                        <span className="truncate font-mono text-2xs">{server.name}</span>
-                        <span className="text-muted-foreground text-2xs" data-status={server.status}>
-                          {statusKey === undefined ? server.status : t(statusKey)}
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </Row>
-          </dl>
+        {narrow ? (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="shrink-0 px-6 pb-3">
+              <Select value={tab} onValueChange={choose}>
+                <SelectTrigger
+                  size="sm"
+                  className="w-full"
+                  aria-label={it('tabs.choose')}
+                  data-slot="session-info-select"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {INFO_TABS.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {it(`tabs.${value}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div
+              role="region"
+              aria-label={it(`tabs.${tab}`)}
+              className="min-h-0 flex-1 overflow-y-auto px-6 pb-6"
+              data-slot="session-info-body"
+            >
+              <TabBodyView tab={tab} sessionKey={sessionKey} />
+            </div>
+          </div>
+        ) : (
+          <Tabs value={tab} onValueChange={choose} className="min-h-0 flex-1 gap-0">
+            <TabsList aria-label={it('tabs.label')} className="mx-6 w-auto shrink-0 flex-wrap justify-start">
+              {INFO_TABS.map((value) => (
+                <TabsTrigger key={value} value={value} data-tab={value}>
+                  {it(`tabs.${value}`)}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+            {INFO_TABS.map((value) => (
+              <TabsContent
+                key={value}
+                value={value}
+                className="min-h-0 overflow-y-auto px-6 pt-3 pb-6"
+                data-slot="session-info-body"
+              >
+                <TabBodyView tab={value} sessionKey={sessionKey} />
+              </TabsContent>
+            ))}
+          </Tabs>
         )}
-        {init === null ? (
-          <p className="text-muted-foreground text-2xs">{t('navigation.info.notStarted')}</p>
-        ) : null}
       </DialogContent>
     </Dialog>
   );

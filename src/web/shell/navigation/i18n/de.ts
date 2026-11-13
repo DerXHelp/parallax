@@ -199,7 +199,7 @@ export const de: typeof en = {
   },
   info: {
     title: 'Session-Info',
-    description: 'Fakten dieser Session, wie Claude Code sie beim letzten Start gemeldet hat.',
+    description: 'Fakten dieser Session: vom letzten Start, in den anderen Reitern live aus Claude Code.',
     model: 'Modell',
     mode: 'Modus',
     cwd: 'Arbeitsverzeichnis',
