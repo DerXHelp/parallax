@@ -4,10 +4,12 @@
  */
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { EffortLevel, PermissionMode } from '@shared/common';
+import type { SessionInfoSectionName } from '@shared/model';
 import type { FixtureEvent } from '../fixture';
 import type { AgentBackend, OutgoingPrompt, RemoteControlInfo, StartSessionRequest } from '../types';
 import type { FakeFiles } from './files';
 import type { FakeHistoryStore } from './history';
+import type { FakeSessionInfo } from './sessionInfo';
 
 export type FakeScenario =
   | { kind: 'events'; name: string; events: readonly FixtureEvent[]; options?: FakeEventsOptions }
@@ -59,6 +61,21 @@ export interface FakeBackendOptions {
   overview?: FakeOverviewOptions;
   /** WP-66: side questions and withdrawing queued prompts (default: both work). */
   sideQuestions?: FakeSideQuestionOptions;
+  /** WP-67: session info, MCP actions and reloads (default: every section answers, actions work). */
+  sessionInfo?: FakeSessionInfoOptions;
+}
+
+/**
+ * WP-67: levers of the fake session info (tests; the interactive levers are the keywords
+ * `fake:info-unavailable [section …]`, `fake:info-fail`, `fake:info-long`, `fake:info-reset`).
+ */
+export interface FakeSessionInfoOptions {
+  /** Sections whose CLI method is missing (readInfo → null, "not available"); 'all' = every one. */
+  unavailable?: readonly SessionInfoSectionName[] | 'all';
+  /** mcpAction / reload: 'failed' = the CLI rejects the request. Default 'ok'. */
+  actions?: 'ok' | 'failed';
+  /** Long lists (skills beyond the list cap, many rules, servers, hooks and export lines). */
+  long?: boolean;
 }
 
 /**
@@ -245,6 +262,8 @@ export interface FakeScriptContext {
    * settle(); throws TurnInterrupted like emit.
    */
   foregroundTool(toolUseId: string, ms: number): Promise<'background' | 'done'>;
+  /** WP-67: the session info state of this session (levers of the `fake:info-*` keywords). */
+  readonly info: FakeSessionInfo;
 }
 
 /** What a background task may do (FakeBackgroundTask.run). */

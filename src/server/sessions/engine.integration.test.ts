@@ -1339,6 +1339,9 @@ describe('start and stop edges', () => {
         readUsage: () => Promise.resolve(null),
         askSideQuestion: () => Promise.resolve({ ok: false as const, reason: 'failed' as const }),
         withdrawQueued: closed,
+        readInfo: closed,
+        mcpAction: closed,
+        reload: closed,
         close: () => Promise.resolve(),
       };
     };

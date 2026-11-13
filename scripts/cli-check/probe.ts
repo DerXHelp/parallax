@@ -17,6 +17,8 @@
  * `backgroundTasks` present) – same rules.
  * WP-66: then the side-question step (sideQuestion.ts: one `askSideQuestion`, no `canUseTool` while it
  * runs, `cancelAsyncMessage` present) – same rules.
+ * WP-67: then the session-info step (sessionInfo.ts: each read method once, parsed like the server;
+ * the actions only checked for existence; no values kept) – same rules.
  *
  * Guards like the recorder (ADR-011): `apiKeySource` must be `none`, the model Haiku; auth/billing
  * errors, `credits_required`, a rejected rate limit, a startup failure or a cost above the budget
@@ -39,6 +41,12 @@ import { sleep } from '../../src/server/lib/async';
 import { killProcessTree, spawnHidden } from '../../src/server/lib/process';
 import { observationFrom, type Observation } from './observation';
 import { probeOverview, type OverviewProbeHandle, type OverviewProbeResult } from './overview';
+import {
+  probeSessionInfo,
+  sessionInfoProfile,
+  type SessionInfoProbeHandle,
+  type SessionInfoProbeResult,
+} from './sessionInfo';
 import { probeSideQuestion, type SideQuestionProbeHandle, type SideQuestionProbeResult } from './sideQuestion';
 import {
   BridgeWatch,
@@ -190,6 +198,8 @@ export interface ProbeResult {
   overview: OverviewProbeResult;
   /** WP-66: side question, cancelAsyncMessage. */
   sideQuestion: SideQuestionProbeResult;
+  /** WP-67: the session-info read methods (no actions called). */
+  sessionInfo: SessionInfoProbeResult;
 }
 
 /** Partial facts of a stopped probe (cleanup needs the session ids, the report the cost). */
@@ -208,6 +218,9 @@ function denyAll(onCall: () => void): CanUseTool {
 
 /** Time limit of the probe's side question (live 1–2 s; like the server's `sideQuestionMs`). */
 const SIDE_QUESTION_TIMEOUT_MS = 120_000;
+
+/** Time limit of each session-info request (like the server's `infoMs`). */
+const SESSION_INFO_TIMEOUT_MS = 30_000;
 
 const resultSchema = z.looseObject({
   type: z.literal('result'),
@@ -385,6 +398,9 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
       toolRequests: () => state.toolRequests,
       log,
     });
+    // WP-67: internal read methods (and the actions' existence), checked at runtime as well.
+    const infoHandle: SessionInfoProbeHandle & Pick<Query, 'close'> = q;
+    const sessionInfo = await probeSessionInfo(infoHandle, { timeoutMs: SESSION_INFO_TIMEOUT_MS, log });
     const observation = observationFrom(
       {
         init: state.init,
@@ -397,6 +413,7 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
         backgroundTasks: overview.backgroundTasks,
         sideQuestion: sideQuestion.sideQuestion.available,
         withdrawQueued: sideQuestion.withdrawQueued,
+        sessionInfo: sessionInfoProfile(sessionInfo),
       },
       options.sdkVersion,
     );
@@ -413,6 +430,7 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
       remoteControl,
       overview,
       sideQuestion,
+      sessionInfo,
     };
   } catch (error) {
     if (error instanceof ProbeStop) throw error;

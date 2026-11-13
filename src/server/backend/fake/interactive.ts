@@ -12,7 +12,9 @@
  * bridge connected): `fake:remote-prompt [text]` (a prompt from the Claude app follows),
  * `fake:remote-permission` (approval answered in the app), `fake:remote-fail`, `fake:remote-flaky`;
  * WP-65 (overview.ts): `fake:long-bash` (a foreground Bash until it is moved to the background) and
- * `fake:summary` (live sentence and turn summary of the CLI while the fake bridge is connected). A prompt with images, PDFs, attached files or inline pastes
+ * `fake:summary` (live sentence and turn summary of the CLI while the fake bridge is connected); WP-67
+ * (sessionInfo.ts): `fake:info-unavailable [section …]`, `fake:info-fail`, `fake:info-long`,
+ * `fake:info-reset` (levers of the session info of this session). A prompt with images, PDFs, attached files or inline pastes
  * gets "Fake: received …" (ADR-103, ADR-146); the first prompt of a start without resume that is
  * the engine's fresh-context prompt gets "Fake: implementing plan (N lines)"; anything else gets a
  * thought plus a streamed "Echo: …". Decisions really wait for the engine; interrupt() and
@@ -51,6 +53,7 @@ import { background, contextHigh, files, receivedCounts, receivedText, todo, wri
 import { longBash, summaryTurn } from './overview';
 import { implementPlan, isImplementPlanPrompt, plan } from './plan';
 import { remoteFail, remoteFlaky, remotePermission, remotePrompt } from './remote';
+import { infoKeyword, isFakeInfoKeyword } from './sessionInfo';
 import { CANCEL_DENY, abortedByDecision, answerTurn, ask, contextFor, firstWords, type Turn } from './turn';
 import type { FakeScenario, FakeScriptContext } from './types';
 
@@ -435,6 +438,10 @@ async function handle(
     return sessionId;
   }
   const keyword = (text.split(/\s+/)[0] ?? '').toLowerCase();
+  if (isFakeInfoKeyword(keyword)) {
+    await infoKeyword(ctx, c, turn, keyword, text);
+    return sessionId;
+  }
   switch (keyword) {
     case 'fake:background':
       await background(ctx, c, turn, sessionId);

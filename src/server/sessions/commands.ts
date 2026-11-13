@@ -12,7 +12,9 @@
  * (attachments.ts, ADR-146), `session.stopTask` (ADR-149), `plan.list`/`plan.read` (ADR-148) and
  * `approve_fresh_context` (freshContext.ts, ADR-147). WP-63: `session.remove` (remove from
  * Parallax only, files stay). WP-64: `session.setRemoteControl` and the Remote Control default of
- * new entries (remoteControl.ts); archive/remove end the remote session first.
+ * new entries (remoteControl.ts); archive/remove end the remote session first. WP-67:
+ * `session.info`, `session.mcpAction`, `session.reload` (sessionInfo.ts; only with a running
+ * process, no auto-wake).
  */
 import { LIMITS, type ClientId, type ProfileId } from '@shared/common';
 import { makeError } from '@shared/errors';
@@ -44,6 +46,7 @@ import { approveFreshContext } from './freshContext';
 import { catalogOrFallback, toModelCatalog } from './models';
 import { endRemoteBeforeClose, setRemoteControl } from './remoteControl';
 import { closeRuntime, deliverPrompt, startRuntime } from './runtime';
+import { mcpAction, readSessionInfo, reloadSession } from './sessionInfo';
 import { askSideQuestion, cancelSideQuestion, deleteSideQuestionThread } from './sideQuestions';
 import { capTitle, implementPlanPrompt, newConversation, titleFromPrompt } from './summary';
 import { regenerateTitle } from './titles';
@@ -390,6 +393,13 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
       return {} satisfies CommandResult<'session.deleteSideQuestion'>;
     case 'session.withdrawQueued':
       return withdrawQueued(core, s, cmd.messageUuid);
+    // WP-67: session info with tabs, MCP actions and reloads (sessionInfo.ts).
+    case 'session.info':
+      return readSessionInfo(core, s, cmd.section);
+    case 'session.mcpAction':
+      return mcpAction(core, s, cmd.server, cmd.action);
+    case 'session.reload':
+      return reloadSession(core, s, cmd.what);
   }
 }
 
