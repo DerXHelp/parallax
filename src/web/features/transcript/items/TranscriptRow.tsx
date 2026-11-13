@@ -1,4 +1,5 @@
 import { lazy, memo, Suspense } from 'react';
+import type { TranscriptItem } from '@shared/model';
 import { SlotBoundary } from '@web/shell/SlotBoundary';
 import { useItem } from '@web/state/hooks';
 import { AssistantTextRow, ThinkingRow, UserMessageRow } from './MessageRows';
@@ -16,23 +17,19 @@ const SideQuestionCard = lazy(() =>
 );
 
 /**
- * One transcript item by id: `useItem` re-renders exactly this row when the item changes (its own
- * deltas, its final upsert) – the list never re-renders for a delta (architecture §2.3g).
+ * One transcript item drawn from the item itself (WP-69: the subagent panel holds items of its own,
+ * not in the store – it renders them with the same components).
  */
-export const TranscriptRow = memo(function TranscriptRow({
+export const TranscriptItemView = memo(function TranscriptItemView({
+  item,
   sessionKey,
-  itemId,
   hideImages = false,
 }: {
+  item: TranscriptItem;
   sessionKey: string;
-  itemId: string;
-  /** Inside an Agent card (no outer spacing). */
-  nested?: boolean;
   /** WP-63 §1.5: a tool call's pictures stand in a gallery of the list. */
   hideImages?: boolean;
 }) {
-  const item = useItem(sessionKey, itemId);
-  if (item === null) return null;
   switch (item.kind) {
     case 'user_message':
       return <UserMessageRow item={item} sessionKey={sessionKey} />;
@@ -55,4 +52,25 @@ export const TranscriptRow = memo(function TranscriptRow({
         </SlotBoundary>
       );
   }
+});
+
+/**
+ * One transcript item by id: `useItem` re-renders exactly this row when the item changes (its own
+ * deltas, its final upsert) – the list never re-renders for a delta (architecture §2.3g).
+ */
+export const TranscriptRow = memo(function TranscriptRow({
+  sessionKey,
+  itemId,
+  hideImages = false,
+}: {
+  sessionKey: string;
+  itemId: string;
+  /** Inside an Agent card (no outer spacing). */
+  nested?: boolean;
+  /** WP-63 §1.5: a tool call's pictures stand in a gallery of the list. */
+  hideImages?: boolean;
+}) {
+  const item = useItem(sessionKey, itemId);
+  if (item === null) return null;
+  return <TranscriptItemView item={item} sessionKey={sessionKey} hideImages={hideImages} />;
 });

@@ -157,6 +157,8 @@ export const agentResultSchema = z.object({
   status: z.string().optional(),
   resolvedModel: z.string().optional(),
   isAsync: z.boolean().optional(),
+  /** WP-69: the agent id (its transcript `agent-<id>.jsonl`); live only. */
+  agentId: z.string().optional(),
 });
 export type AgentResult = z.infer<typeof agentResultSchema>;
 

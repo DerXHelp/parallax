@@ -9,7 +9,13 @@ import { requestShell } from '../requests';
 import { installShortcutListener } from '../shortcuts';
 import { FeatureSlotsProvider, type FeatureSlots } from '../slots';
 import { SidePanelHost } from './SidePanelHost';
-import { getSidePanelFile, getSidePanelTab, resetSidePanelState, SIDE_PANEL_HISTORY_MAX } from './state';
+import {
+  getSidePanelFile,
+  getSidePanelSubagent,
+  getSidePanelTab,
+  resetSidePanelState,
+  SIDE_PANEL_HISTORY_MAX,
+} from './state';
 import { SIDE_PANEL_MIN_WIDTH, SIDE_PANEL_WIDTH_KEY } from './width';
 
 const KEY = makeSessionKey(LOCAL_HOST_ID, SAMPLE_IDS.entry);
@@ -25,6 +31,9 @@ const SLOTS: Partial<FeatureSlots> = {
   ),
   FilesPanel: () => <p>files content</p>,
   TasksPanel: () => <p>tasks content</p>,
+  SubagentPanel: ({ agentId, title, subagentType }) => (
+    <p data-testid="subagent">{`${agentId}|${title}|${String(subagentType)}`}</p>
+  ),
 };
 
 /**
@@ -189,6 +198,38 @@ describe('SidePanelHost (WP-54, ADR-150)', () => {
     });
     expect(screen.getByTestId('viewer')).not.toBe(viewer);
     expect(getSidePanelFile(KEY)?.revision).toBe(1);
+  });
+
+  it('WP-69: openSubagent shows the tab "Agent" with the latest subagent; it stays while other tabs show', async () => {
+    const user = userEvent.setup();
+    renderHost();
+    act(() => {
+      expect(
+        requestShell({ kind: 'openSubagent', sessionKey: KEY, agentId: 'a1', title: 'Explore', subagentType: 'Explore' }),
+      ).toBe(true);
+    });
+    expect(panel().getAttribute('data-tab')).toBe('subagent');
+    expect(document.activeElement).toBe(panel());
+    const tab = screen.getByRole('tab', { name: 'Agent transcript: Explore' });
+    expect(tab.getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('subagent').textContent).toBe('a1|Explore|Explore');
+    const tabs = within(screen.getByRole('tablist', { name: 'Side panel' })).getAllByRole('tab');
+    expect(tabs.map((candidate) => candidate.getAttribute('data-tab'))).toEqual(['plan', 'files', 'tasks', 'subagent']);
+    // Another agent replaces the tab's agent (a fresh panel).
+    const first = screen.getByTestId('subagent');
+    act(() => {
+      requestShell({ kind: 'openSubagent', sessionKey: KEY, agentId: 'b2', title: 'Fix the build' });
+    });
+    expect(screen.getByTestId('subagent')).not.toBe(first);
+    expect(screen.getByTestId('subagent').textContent).toBe('b2|Fix the build|null');
+    expect(getSidePanelSubagent(KEY)).toEqual({ agentId: 'b2', title: 'Fix the build', subagentType: null });
+    // Other tabs unmount the panel (its polling stops); the tab stays and brings it back.
+    await user.click(screen.getByRole('tab', { name: 'Tasks' }));
+    expect(screen.queryByTestId('subagent')).toBeNull();
+    await user.click(screen.getByRole('tab', { name: 'Agent transcript: Fix the build' }));
+    expect(screen.getByTestId('subagent').textContent).toBe('b2|Fix the build|null');
+    // A request for another session is not ours.
+    expect(requestShell({ kind: 'openSubagent', sessionKey: OTHER, agentId: 'c3', title: 'x' })).toBe(false);
   });
 
   it('opening by request focuses the panel; Esc inside and the close button return the focus', async () => {

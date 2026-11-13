@@ -517,6 +517,15 @@ export const TRANSCRIPT_VIEWS = ['compact', 'all'] as const;
 export const transcriptViewSchema = z.enum(TRANSCRIPT_VIEWS);
 export type TranscriptView = z.infer<typeof transcriptViewSchema>;
 
+/**
+ * WP-69 (1.3): which hook runs the transcript shows – `all` (every run; successful ones are work
+ * steps), `failed` (default: only runs that did not succeed, blocking ones included) or `off` (none;
+ * failed SessionStart/Setup hooks stay visible – start problems are never hidden).
+ */
+export const HOOK_DISPLAYS = ['all', 'failed', 'off'] as const;
+export const hookDisplaySchema = z.enum(HOOK_DISPLAYS);
+export type HookDisplay = z.infer<typeof hookDisplaySchema>;
+
 /** Fields without defaults: the base of the patch schema (a patch must never inject defaults). */
 const settingsFields = {
   language: languageSchema,
@@ -533,6 +542,8 @@ const settingsFields = {
   remoteControl: remoteControlSettingsSchema,
   /** WP-65: transcript view of every window (was localStorage `parallax.transcript.view`, WP-63). */
   transcriptView: transcriptViewSchema,
+  /** WP-69: hook runs in the transcript of every window. */
+  hookDisplay: hookDisplaySchema,
 };
 
 export const settingsSchema = z.object({
@@ -546,6 +557,7 @@ export const settingsSchema = z.object({
   editor: editorSettingsSchema.default(defaultEditorSettings),
   remoteControl: remoteControlSettingsSchema.default(DEFAULT_REMOTE_CONTROL_SETTINGS),
   transcriptView: transcriptViewSchema.default('compact'),
+  hookDisplay: hookDisplaySchema.default('failed'),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
@@ -1041,6 +1053,8 @@ export const systemItemSchema = z.discriminatedUnion('event', [
     hookEvent: z.string(),
     outcome: z.string().nullable(),
     output: cappedTextSchema,
+    /** WP-69: `hook_response.exit_code` (2 = blocking); null while running or unknown (older logs). */
+    exitCode: z.number().int().nullable().default(null),
   }),
   systemBase.extend({
     event: z.literal('permission_denied'),
@@ -2017,3 +2031,40 @@ export const sessionInfoSectionSchema = z.discriminatedUnion('section', [
 export type SessionInfoSection = z.infer<typeof sessionInfoSectionSchema>;
 /** The data of one named tab, e.g. `SessionInfoOf<'mcp'>`. */
 export type SessionInfoOf<S extends SessionInfoSectionName> = Extract<SessionInfoSection, { section: S }>;
+
+// =====================================================================================
+// WP-69 Subagent transcript (read-only, on request)
+// =====================================================================================
+
+/** Bounds of `session.subagentTranscript` (items per answer; texts are capped like every item). */
+export const SUBAGENT_TRANSCRIPT_LIMITS = {
+  /** Items of one answer when the client asks for no `limit`. */
+  pageItems: 100,
+  /** Largest `limit` a client may ask for (like `LIMITS.loadEarlierMax`). */
+  maxPageItems: 200,
+  /** Characters of an agent id (`agent-<id>.jsonl`). */
+  agentIdChars: 200,
+} as const;
+
+/**
+ * Id of a subagent (`task_started.task_id` = the agent id, file `agent-<id>.jsonl`): letters, digits,
+ * `_` and `-` only – it becomes part of a file name in the SDK, so no path characters.
+ */
+export const subagentIdSchema = z
+  .string()
+  .min(1)
+  .max(SUBAGENT_TRANSCRIPT_LIMITS.agentIdChars)
+  .regex(/^[A-Za-z0-9_-]+$/);
+
+/**
+ * One page of a subagent's transcript: `items` are the list positions `offset … offset+items.length-1`
+ * of `total` (in `order`, oldest first; orders are the list's own, stable while it grows); `running`
+ * = the subagent still works (the client polls then).
+ */
+export const subagentTranscriptPageSchema = z.object({
+  items: z.array(transcriptItemSchema).max(SUBAGENT_TRANSCRIPT_LIMITS.maxPageItems),
+  offset: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  running: z.boolean(),
+});
+export type SubagentTranscriptPage = z.infer<typeof subagentTranscriptPageSchema>;

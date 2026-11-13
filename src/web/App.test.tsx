@@ -341,6 +341,14 @@ const EVERY_REQUEST: { [K in ShellRequestKind]: ShellRequestOf<K> } = {
   },
   // WP-66: a withdrawn waiting message goes back into the composer of its session.
   composerText: { kind: 'composerText', sessionKey: PLAYGROUND_SESSION_KEYS.main, text: 'taken back' },
+  // WP-69: the transcript of one subagent in the side panel tab "Agent".
+  openSubagent: {
+    kind: 'openSubagent',
+    sessionKey: PLAYGROUND_SESSION_KEYS.main,
+    agentId: 'a655391549dc96788',
+    title: 'Explore the project',
+    subagentType: 'Explore',
+  },
 };
 
 /** Kinds whose handler arrives with a later package – none since WP-60 (attachFiles: WP-57). */
@@ -377,6 +385,7 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
       ['FilesPanel', FILES_SLOTS.FilesPanel],
       ['TasksPanel', TASKS_SLOTS.TasksPanel],
       ['TaskStrip', TASKS_SLOTS.TaskStrip],
+      ['SubagentPanel', TRANSCRIPT_SLOTS.SubagentPanel],
     ];
     for (const [key, own] of lazy) {
       expect(APP_SLOTS[key], key).toBeDefined();
@@ -493,10 +502,11 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
       });
       expect(taken, request.kind).toBe(!PENDING_REQUEST_KINDS.has(request.kind));
       if (PENDING_REQUEST_KINDS.has(request.kind)) continue;
-      if (request.kind === 'sidePanel' || request.kind === 'openFile') {
+      if (request.kind === 'sidePanel' || request.kind === 'openFile' || request.kind === 'openSubagent') {
         // The side panel host of the pane (ADR-150) opens the tab and takes the focus; "Close panel"
         // closes it (this test installs no shortcut listener, so no Esc).
-        const tab = request.kind === 'sidePanel' ? request.tab : 'file';
+        const tab =
+          request.kind === 'sidePanel' ? request.tab : request.kind === 'openFile' ? 'file' : 'subagent';
         const panel = await waitFor(() => {
           const element = document.querySelector<HTMLElement>('[data-slot="side-panel"]');
           if (element === null) throw new Error('no side panel');

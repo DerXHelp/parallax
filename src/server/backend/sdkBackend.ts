@@ -35,7 +35,7 @@ import type { McpAction, ReloadTarget, SessionInfoSection, SessionInfoSectionNam
 import { toError } from '../lib/async';
 import { logger } from '../lib/logger';
 import { killProcessTree as killTree, spawnHidden } from '../lib/process';
-import { mergeHistory, toHistoryMessages, toSessionInfo } from './history/parse';
+import { mergeHistory, toHistoryMessages, toSessionInfo, toSubagentSlice } from './history/parse';
 import { createHistoryPool, type HistoryPool } from './history/pool';
 import { AsyncQueue } from './lib/asyncQueue';
 import { toPermissionRequest } from './permissionRequest';
@@ -986,6 +986,18 @@ export function createSdkBackend(deps: SdkBackendDeps = {}): AgentBackend & { re
 
     async getSessionInfo(req) {
       return toSessionInfo(await history.run(req.launch, { op: 'info', sessionId: req.sessionId }));
+    },
+
+    /** WP-69: one subagent's transcript from `from` on, sliced in the worker (only the new part crosses). */
+    async readSubagentHistory(req) {
+      return toSubagentSlice(
+        await history.run(req.launch, {
+          op: 'subagentSlice',
+          sessionId: req.sessionId,
+          agentId: req.agentId,
+          from: req.from,
+        }),
+      );
     },
 
     /** Only for dormant sessions – the manager guarantees it (C.6). */

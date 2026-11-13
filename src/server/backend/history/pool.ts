@@ -28,6 +28,8 @@ export type HistoryOp =
   | { op: 'messages'; sessionId: string }
   | { op: 'subagents'; sessionId: string }
   | { op: 'subagentMessages'; sessionId: string; agentId: string }
+  /** WP-69: `{total, previousUuid, messages}` – the messages from index `from` on (sliced in the worker). */
+  | { op: 'subagentSlice'; sessionId: string; agentId: string; from: number }
   | { op: 'info'; sessionId: string }
   | { op: 'rename'; sessionId: string; title: string };
 

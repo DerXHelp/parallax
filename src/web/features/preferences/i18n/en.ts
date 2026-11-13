@@ -37,6 +37,11 @@ export const en = {
     transcriptHint:
       'Compact: the work steps between two messages form one line (click to open), pictures stay visible as a gallery. All steps: every step on its own line. Applies to every window and browser.',
     transcriptViews: { compact: 'Compact', all: 'All steps' },
+    /** WP-69: hook runs in the transcript. */
+    hooks: 'Hook runs',
+    hooksHint:
+      'Failed runs show as errors with their output. All: successful ones too, as steps. Off: none – a failed start hook still shows.',
+    hookDisplays: { all: 'All', failed: 'Failed and blocking only', off: 'Off' },
   },
   notifications: {
     events: 'Events',

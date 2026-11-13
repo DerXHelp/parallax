@@ -16,6 +16,11 @@ export interface TranscriptSettings {
   showCost: boolean;
   /** Row component for nested items (Agent card children) – avoids an import cycle. */
   Row: ComponentType<{ sessionKey: string; itemId: string; nested?: boolean }>;
+  /**
+   * WP-69: a read-only transcript (the subagent panel): no actions that act on the session (Stop,
+   * "Background") – its items are a copy from the agent's transcript file.
+   */
+  readOnly?: boolean;
 }
 
 export const TranscriptSettingsContext = createContext<TranscriptSettings | null>(null);
