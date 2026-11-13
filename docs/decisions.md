@@ -2049,3 +2049,52 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   nullable, `null` = nicht geprüft). Session-Links nur `https://claude.ai/…` (`isClaudeSessionUrl`).
 - **Folgen:** Muster für die weiteren internen Methoden (WP-65 bis WP-67): Laufzeitprüfung, tolerantes Parsen,
   Probe im Kurz-Check.
+
+## ADR-171 – Live-Satz und Turn-Fazit
+- **Datum/WP:** 12.11.2026, WP-65; angenommen (13.11.2026, Koordinator beim Merge).
+- **Kontext:** Nutzerwunsch: auf einen Blick sehen, was jede Session tut bzw. getan hat (`SDK-MOEGLICHKEITEN.md` 2+3).
+- **Entscheidung:** Quelle ist das CLI (`task_summary`/`post_turn_summary`, nur mit Remote Control) vor dem
+  Parallax-Rückfall (laufendes Werkzeug mit Ziel bzw. erste Zeile der Antwort). Fazit nur für den letzten Turn,
+  persistiert; Live-Satz nur Laufzeit, höchstens alle 2 s; „braucht dich“ nie nur über Farbe.
+- **Folgen:** Zweite Zeile in der Seitenleiste und Kopfzeile (ab `lg`); CLI-Texte bleiben Englisch.
+
+## ADR-172 – `lastSeenAt`
+- **Datum/WP:** 12.11.2026, WP-65; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** `lastSeenAt` = Ende der Sichtbarkeit in einem sichtbaren Fenster bzw. Prompt/Freigabe aus der
+  Claude-App; nie rückwärts. Die Karte „Seit du zuletzt hier warst“ rechnet der Client, es gilt der Wert beim Öffnen.
+- **Folgen:** Reines Mitlesen in der Claude-App zählt (noch) nicht als gesehen – Ausbaustufe.
+
+## ADR-173 – Generierte Titel
+- **Datum/WP:** 12.11.2026, WP-65; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** `generateSessionTitle(persist: true)` nach dem ersten echten Turn je Unterhaltung; ein eigener Titel
+  gewinnt immer. „Titel neu erzeugen“ mit `persist: false` + `/rename` (Quelle `ai`, auch über einem eigenen Titel). Die
+  AI-Titel-Abfrage über `getSessionInfo` bleibt Rückfall.
+- **Folgen:** Mit Bridge und nach „Titel neu erzeugen“ erscheint eine `/rename`-Zeile im Transkript. Nach `/clear` kann
+  das CLI den alten Titel liefern (F.7, Live-Abnahme).
+
+## ADR-174 – Nutzungsabfrage als zweite Quelle der Abo-Limits
+- **Datum/WP:** 12.11.2026, WP-65; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Experimentelle Nutzungsabfrage alle 5 min (erste 10 s nach einem Spawn) über eine Abo-Session je
+  Profil; Anteil 0–1 wie `rate_limit_event`; `mergeUsage` behält Status/Typ des letzten Ereignisses (ADR-114). Keine
+  Zeilenzahlen (Nutzer). Fehler oder fehlende Methode → ausblenden wie bisher.
+- **Folgen:** Probe in `pnpm cli-check` (`usageQuery`), weil die Schnittstelle als instabil markiert ist.
+
+## ADR-175 – Externe Links im Standardbrowser
+- **Datum/WP:** 12.11.2026, WP-65 (Follow-up WP-64); angenommen (13.11.2026, Koordinator beim Merge).
+- **Kontext:** Links öffneten im Chrome-App-Profil von Parallax, in dem der Nutzer nirgends angemeldet ist.
+- **Entscheidung:** Host-Befehl `link.open` (nur http(s) ohne Leerraum): Registry (`UserChoice` → ProgId →
+  `shell\open\command`) → absolute `.exe` → `spawnGui` (ADR-144). Rückfall `window.open` ohne Opener/Referrer mit
+  Hinweis; nur schlichte Primärklicks. Mit dem FakeBackend zeichnet `link.open` nur auf.
+- **Folgen:** Gilt für Markdown-Links und „In der Claude-App öffnen“.
+
+## ADR-176 – Transkript-Ansicht in den Server-Einstellungen
+- **Datum/WP:** 12.11.2026, WP-65; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** `settings.transcriptView` (Default `compact`) mit einmaliger Übernahme des `localStorage`-Werts aus
+  WP-63. Löst ADR-164 ab.
+
+## ADR-177 – Seltene Composer-Teile als Lazy-Chunks
+- **Datum/WP:** 12.11.2026, WP-65; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** „Alles in den Hintergrund“ (leise `SlotBoundary`, vorgeladen) und der `/help`-Dialog (ab dem ersten
+  Öffnen montiert) sind Lazy-Chunks – Ausgleich für das Start-Chunk-Budget.
+- **Folgen:** Das Budget gegen `109c073` ist danach fast ausgeschöpft (`index` +9 031 B von 10 000); WP-66/67 müssen neue
+  UI von Anfang an lazy bauen oder an anderer Stelle ausgleichen.
