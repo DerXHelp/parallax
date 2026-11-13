@@ -102,7 +102,10 @@ describe('login state and Remote Control after a login (WP-70)', () => {
     expect(h.publisher.hostStates.at(-1)?.profiles[0]?.login).toEqual(IDLE_PROFILE_LOGIN);
     login = { ...IDLE_PROFILE_LOGIN, state: 'done', subscriptionType: 'max', at: h.now().toISOString() };
     h.manager.publishHostState();
-    expect(h.publisher.hostStates.at(-1)?.profiles[0]?.login).toMatchObject({ state: 'done', subscriptionType: 'max' });
+    expect(h.publisher.hostStates.at(-1)?.profiles[0]?.login).toMatchObject({
+      state: 'done',
+      subscriptionType: 'max',
+    });
   });
 
   it('a bridge that failed for the sign-in connects again after the login of its profile', async () => {
@@ -111,7 +114,10 @@ describe('login state and Remote Control after a login (WP-70)', () => {
     const entryId = await idleEntry(h);
     await h.cmd({ name: 'session.setRemoteControl', entryId, enabled: true });
     await h.settle();
-    expect(h.summary(entryId).remoteControl).toMatchObject({ state: 'failed', error: { code: 'REMOTE_CONTROL_AUTH' } });
+    expect(h.summary(entryId).remoteControl).toMatchObject({
+      state: 'failed',
+      error: { code: 'REMOTE_CONTROL_AUTH' },
+    });
     remoteControl.enable = 'ok';
     h.manager.onProfileLoggedIn(h.summary(entryId).profileId);
     await h.waitFor(() => h.summary(entryId).remoteControl.state !== 'failed');

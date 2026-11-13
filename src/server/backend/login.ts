@@ -82,7 +82,8 @@ export type LoginStep = 'start' | 'code' | 'wait';
 
 const BLOCKED = /login blocked|managed settings|forceLoginMethod|allowedProviders/i;
 const NO_FLOW = /no active claude_authenticate flow/i;
-const UNSUPPORTED = /unsupported control request|unknown control request|unknown subtype|not supported in this/i;
+const UNSUPPORTED =
+  /unsupported control request|unknown control request|unknown subtype|not supported in this/i;
 const CLOSED = /session closed|backend disposed|process exited|terminated/i;
 
 /**
@@ -97,7 +98,8 @@ export function loginErrorOf(error: unknown, step: LoginStep): ErrorPayload {
   if (UNSUPPORTED.test(message)) return makeError('LOGIN_UNAVAILABLE', { detail: 'request' });
   if (BLOCKED.test(message)) return makeError('LOGIN_BLOCKED');
   if (NO_FLOW.test(message)) return makeError('LOGIN_FAILED', { reason: 'expired' });
-  if (name === LOGIN_TIMEOUT_NAME) return makeError('LOGIN_FAILED', { reason: step === 'start' ? 'failed' : 'expired' });
+  if (name === LOGIN_TIMEOUT_NAME)
+    return makeError('LOGIN_FAILED', { reason: step === 'start' ? 'failed' : 'expired' });
   if (CLOSED.test(message)) return makeError('LOGIN_FAILED', { reason: 'process' });
   return makeError('LOGIN_FAILED', { reason: step === 'code' ? 'code' : 'failed' });
 }
@@ -158,7 +160,8 @@ export function createLoginSession(proc: LoginProcess, timeouts: LoginTimeouts, 
     async submitCode(code, state) {
       try {
         const raw = await proc.control('claudeOAuthCallback', timeouts.loginCodeMs, (q) => {
-          if (typeof q.claudeOAuthCallback !== 'function') throw new LoginMethodMissing('claudeOAuthCallback');
+          if (typeof q.claudeOAuthCallback !== 'function')
+            throw new LoginMethodMissing('claudeOAuthCallback');
           return q.claudeOAuthCallback(code, state);
         });
         return loginResultOf(raw);

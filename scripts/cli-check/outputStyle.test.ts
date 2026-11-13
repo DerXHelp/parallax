@@ -34,13 +34,17 @@ function handle(fs: MemoryFs, o: { effective?: boolean; write?: boolean } = {}):
   let current = 'default';
   return {
     initializationResult: () =>
-      Promise.resolve({ output_style: 'default', available_output_styles: ['default', 'Concise', 'Explanatory'] }),
+      Promise.resolve({
+        output_style: 'default',
+        available_output_styles: ['default', 'Concise', 'Explanatory'],
+      }),
     updateSettings: (_source, settings) => {
       current = String(settings.outputStyle);
       if (o.write !== false) fs.files.set(FILE, JSON.stringify({ outputStyle: current }));
       return Promise.resolve();
     },
-    getSettings: () => Promise.resolve({ effective: { outputStyle: o.effective === false ? 'default' : current } }),
+    getSettings: () =>
+      Promise.resolve({ effective: { outputStyle: o.effective === false ? 'default' : current } }),
   };
 }
 
@@ -80,7 +84,11 @@ describe('cli-check output style step (WP-70)', () => {
     expect(probeStyleFor('default', ['default'])).toBeNull();
     const never = (): Promise<unknown> => Promise.reject(new Error('never called'));
     expect(
-      loginMethodsPresent({ claudeAuthenticate: never, claudeOAuthCallback: never, claudeOAuthWaitForCompletion: never }),
+      loginMethodsPresent({
+        claudeAuthenticate: never,
+        claudeOAuthCallback: never,
+        claudeOAuthWaitForCompletion: never,
+      }),
     ).toBe(true);
     expect(loginMethodsPresent({})).toBe(false);
   });

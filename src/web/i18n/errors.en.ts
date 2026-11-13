@@ -54,8 +54,10 @@ export const errorsEn: Record<ErrorCode, string> = {
   PROFILE_NOT_DELETABLE: 'The built-in profile cannot be deleted.',
   CLAUDE_NOT_FOUND: 'Claude Code was not found. Install it and make sure “claude” is on the PATH.',
   CLAUDE_VERSION_TOO_OLD: 'The installed Claude Code is too old. Update it with “claude update”.',
-  CLAUDE_NOT_LOGGED_IN: 'Claude Code is not signed in. Use “Sign in” – or run “claude” in a terminal and enter /login.',
-  CLAUDE_AUTH_FAILED: 'Claude Code needs a new sign-in. Use “Sign in” – or run “claude” in a terminal and enter /login.',
+  CLAUDE_NOT_LOGGED_IN:
+    'Claude Code is not signed in. Use “Sign in” – or run “claude” in a terminal and enter /login.',
+  CLAUDE_AUTH_FAILED:
+    'Claude Code needs a new sign-in. Use “Sign in” – or run “claude” in a terminal and enter /login.',
   CLAUDE_ORG_POLICY: 'An organization policy prevents the start.',
   CLAUDE_BILLING: 'No usable plan or credits for this account.',
   SHELL_TOOL_MISSING: 'Claude Code cannot find a usable shell (Git Bash or PowerShell).',

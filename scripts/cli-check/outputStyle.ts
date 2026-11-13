@@ -138,17 +138,21 @@ export async function probeOutputStyle(
     effective: false,
     restored: false,
   };
-  if (typeof handle.updateSettings !== 'function') return { ...result, detail: 'Query.updateSettings is missing (SDK)' };
+  if (typeof handle.updateSettings !== 'function')
+    return { ...result, detail: 'Query.updateSettings is missing (SDK)' };
   if (typeof handle.initializationResult !== 'function') {
     return { ...result, detail: 'Query.initializationResult is missing (SDK)' };
   }
   let styles: ReturnType<typeof outputStylesOf>;
   try {
-    styles = outputStylesOf(await withTimeout(handle.initializationResult(), o.controlMs, 'initializationResult'));
+    styles = outputStylesOf(
+      await withTimeout(handle.initializationResult(), o.controlMs, 'initializationResult'),
+    );
   } catch (error) {
     return { ...result, detail: `initializationResult failed: ${message(error)}` };
   }
-  if (styles === null) return { ...result, detail: 'initializationResult has no output_style/available_output_styles' };
+  if (styles === null)
+    return { ...result, detail: 'initializationResult has no output_style/available_output_styles' };
   result.styles = styles.available.length;
   const style = probeStyleFor(styles.current, styles.available);
   if (style === null) return { ...result, detail: 'no second output style to switch to' };
@@ -157,7 +161,11 @@ export async function probeOutputStyle(
   const before = await fs.read(file);
   const gitignoreBefore = await fs.read(gitignore);
   try {
-    await withTimeout(handle.updateSettings('localSettings', { outputStyle: style }), o.controlMs, 'updateSettings');
+    await withTimeout(
+      handle.updateSettings('localSettings', { outputStyle: style }),
+      o.controlMs,
+      'updateSettings',
+    );
     const waitMs = o.waitMs ?? 2_000;
     const pollMs = o.pollMs ?? 50;
     for (let waited = 0; ; waited += pollMs) {
@@ -175,7 +183,8 @@ export async function probeOutputStyle(
       result.effective = effective.success && effective.data.effective.outputStyle === style;
     }
     if (!result.written) result.detail = 'settings.local.json does not hold the written style';
-    else if (!result.effective) result.detail = 'getSettings().effective.outputStyle does not report the style';
+    else if (!result.effective)
+      result.detail = 'getSettings().effective.outputStyle does not report the style';
   } catch (error) {
     result.detail = `updateSettings failed: ${message(error)}`;
   } finally {

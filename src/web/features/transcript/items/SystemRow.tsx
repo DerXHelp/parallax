@@ -19,7 +19,9 @@ import type { SystemItem } from '@shared/model';
 import { useI18n } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { shortPath } from '@web/lib/path-display';
+import { LoginButton } from '@web/shell/login/LoginButton';
 import { useHookDisplay } from '@web/state/hook-display';
+import { useSummarySelector } from '@web/state/hooks';
 import { TONE_ICON, type AlertTone } from '@web/ui/alert';
 import { CappedContent } from '../components/CappedContent';
 import { Disclosure } from '../components/Disclosure';
@@ -177,6 +179,20 @@ const HookRow = memo(function HookRow({ item, sessionKey }: { item: HookItem; se
 });
 
 /** Parts joined with " · " (computed outside JSX). */
+/** WP-70: error codes that "Sign in" (the profile's sign-in from Parallax) can fix. */
+const SIGN_IN_CODES: ReadonlySet<string> = new Set(['CLAUDE_AUTH_FAILED', 'CLAUDE_NOT_LOGGED_IN']);
+
+/** "Sign in" under a sign-in error of the session's profile; gone once the profile signed in after it. */
+function SignInAction({ sessionKey, at }: { sessionKey: string; at: string }) {
+  const profileId = useSummarySelector(sessionKey, (summary) => summary.profileId, null);
+  if (profileId === null) return null;
+  return (
+    <div className="mt-1">
+      <LoginButton profileId={profileId} hostId={parseSessionKey(sessionKey)?.hostId} since={at} />
+    </div>
+  );
+}
+
 function joined(parts: readonly (string | null | undefined)[]): string {
   return parts
     .filter((part): part is string => part !== null && part !== undefined && part !== '')
@@ -376,6 +392,7 @@ export const SystemRow = memo(function SystemRow({
       return (
         <Notice tone="error" title={t('transcript.system.error')}>
           {tError(item.error)}
+          {SIGN_IN_CODES.has(item.error.code) ? <SignInAction sessionKey={sessionKey} at={item.at} /> : null}
         </Notice>
       );
     case 'handoff': {

@@ -92,6 +92,8 @@ export const de: typeof en = {
     copyRemoteLink: 'Remote-Control-Link kopieren',
     regenerateTitle: 'Titel neu erzeugen',
     quickAsk: 'Kurz fragen…',
+    signIn: 'Anmelden',
+    outputStyle: 'Ausgabestil…',
   },
   quickAsk: {
     title: 'Kurz fragen · {title}',

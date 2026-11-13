@@ -25,7 +25,9 @@ describe('backend/login (WP-70)', () => {
       manualUrl: 'https://claude.ai/x',
       automaticUrl: null,
     });
-    expect(loginStartOf({ manualUrl: 'https://claude.ai/x', automaticUrl: 'javascript:alert(1)' })).toMatchObject({
+    expect(
+      loginStartOf({ manualUrl: 'https://claude.ai/x', automaticUrl: 'javascript:alert(1)' }),
+    ).toMatchObject({
       automaticUrl: null,
     });
     expect(loginStartOf({ manualUrl: 'http://claude.ai/x' })).toEqual({
@@ -37,7 +39,12 @@ describe('backend/login (WP-70)', () => {
 
   it('loginResultOf: only subscriptionType leaves – never e-mail or organization', () => {
     const result = loginResultOf({
-      account: { email: 'someone@example.invalid', organization: 'Org', subscriptionType: 'max', tokenSource: 'oauth' },
+      account: {
+        email: 'someone@example.invalid',
+        organization: 'Org',
+        subscriptionType: 'max',
+        tokenSource: 'oauth',
+      },
     });
     expect(result).toEqual({ ok: true, subscriptionType: 'max' });
     expect(JSON.stringify(result)).not.toContain('example.invalid');
@@ -46,10 +53,12 @@ describe('backend/login (WP-70)', () => {
   });
 
   it('loginErrorOf classifies without passing the CLI text on', () => {
-    expect(loginErrorOf(new LoginMethodMissing('claudeAuthenticate'), 'start').code).toBe('LOGIN_UNAVAILABLE');
-    expect(loginErrorOf(new Error('Unsupported control request subtype: claude_authenticate'), 'start').code).toBe(
+    expect(loginErrorOf(new LoginMethodMissing('claudeAuthenticate'), 'start').code).toBe(
       'LOGIN_UNAVAILABLE',
     );
+    expect(
+      loginErrorOf(new Error('Unsupported control request subtype: claude_authenticate'), 'start').code,
+    ).toBe('LOGIN_UNAVAILABLE');
     const blocked = loginErrorOf(
       new Error("Login blocked: this machine's managed settings do not permit signing in (allowedProviders)"),
       'start',
@@ -64,17 +73,17 @@ describe('backend/login (WP-70)', () => {
     expect(loginErrorOf(timeout(), 'wait').params).toEqual({ reason: 'expired' });
     expect(loginErrorOf(timeout(), 'start').params).toEqual({ reason: 'failed' });
     expect(loginErrorOf(new Error('session closed'), 'wait').params).toEqual({ reason: 'process' });
-    expect(loginErrorOf(new Error('Request failed with status code 400 (someone@example.invalid)'), 'code')).toEqual(
-      makeError('LOGIN_FAILED', { reason: 'code' }),
-    );
+    expect(
+      loginErrorOf(new Error('Request failed with status code 400 (someone@example.invalid)'), 'code'),
+    ).toEqual(makeError('LOGIN_FAILED', { reason: 'code' }));
     expect(loginErrorOf('odd', 'wait')).toEqual(makeError('LOGIN_FAILED', { reason: 'failed' }));
   });
 
   it('hasLoginMethods checks existence only', () => {
     const fn = (): Promise<unknown> => Promise.reject(new Error('never called'));
-    expect(hasLoginMethods({ claudeAuthenticate: fn, claudeOAuthCallback: fn, claudeOAuthWaitForCompletion: fn })).toBe(
-      true,
-    );
+    expect(
+      hasLoginMethods({ claudeAuthenticate: fn, claudeOAuthCallback: fn, claudeOAuthWaitForCompletion: fn }),
+    ).toBe(true);
     expect(hasLoginMethods({ claudeAuthenticate: fn, claudeOAuthCallback: fn })).toBe(false);
     expect(hasLoginMethods({})).toBe(false);
   });
