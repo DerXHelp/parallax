@@ -265,6 +265,28 @@ export interface HistoryRequest {
   launch: LaunchSpec;
 }
 
+/**
+ * WP-69: one subagent's transcript (`getSubagentMessages(sessionId, agentId)`, the CLI's
+ * `agent-<agentId>.jsonl`) from message index `from` on – the engine keeps what it read before, so
+ * a poll transfers only the new messages.
+ */
+export interface SubagentHistoryRequest extends HistoryRequest {
+  /** Checked like `subagentIdSchema` (no path characters). */
+  agentId: string;
+  from: number;
+}
+
+export interface SubagentHistorySlice {
+  /** Messages of the whole transcript now (0 = no file, or nothing in it yet). */
+  total: number;
+  /** uuid of message `from - 1` (null for `from` 0) – the engine checks its cache with it. */
+  previousUuid: string | null;
+  /** uuid of message `total - 1` (null without messages) – what the next read's `previousUuid` must be. */
+  lastUuid: string | null;
+  /** Messages `from … total-1`, in order. */
+  messages: HistoryMessage[];
+}
+
 export interface AgentBackend {
   readonly kind: 'sdk' | 'fake';
   /** Synchronous; failures arrive as events. */
@@ -275,6 +297,12 @@ export interface AgentBackend {
    */
   readHistory(req: HistoryRequest): Promise<HistoryMessage[]>;
   getSessionInfo(req: HistoryRequest): Promise<BackendSessionInfo | null>;
+  /**
+   * WP-69: a subagent's own transcript from message `from` on (file only, no process needed; the
+   * profile's config dir like `readHistory`). A missing file is `total: 0`; rejects when the read
+   * failed or timed out.
+   */
+  readSubagentHistory(req: SubagentHistoryRequest): Promise<SubagentHistorySlice>;
   /** Only dormant sessions (C.6). */
   renameSession(req: HistoryRequest & { title: string }): Promise<void>;
   /** Close all sessions (server shutdown). */

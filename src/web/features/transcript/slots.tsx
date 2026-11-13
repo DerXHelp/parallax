@@ -1,14 +1,14 @@
 import { lazy, memo, Suspense } from 'react';
 import type { JsonValue } from '@shared/common';
 import { useT } from '@web/i18n';
-import type { FeatureSlots } from '@web/shell/slots';
+import type { FeatureSlots, SubagentPanelSlotProps } from '@web/shell/slots';
 import { Skeleton } from '@web/ui/skeleton';
 import { Markdown } from './markdown/Markdown';
 
 /**
  * The slots this feature provides (architecture §2.3d): WP-20 spreads `TRANSCRIPT_SLOTS` into
- * `APP_SLOTS` (App.tsx); the playground discovers them via `playground.tsx`. Transcript and
- * ToolInputPreview are lazy chunks (architecture §2.3j, ADR-035: the start bundle stays as it is);
+ * `APP_SLOTS` (App.tsx); the playground discovers them via `playground.tsx`. Transcript,
+ * ToolInputPreview and SubagentPanel (WP-69) are lazy chunks (architecture §2.3j, ADR-035: the start bundle stays as it is);
  * Markdown is a small wrapper that loads its renderer lazily itself. A module constant – a new
  * object per render would re-render every slot consumer.
  */
@@ -18,6 +18,10 @@ const LazyTranscriptView = lazy(() =>
 );
 const LazyToolInputPreview = lazy(() =>
   import('./ToolInputPreview').then((module) => ({ default: module.ToolInputPreview })),
+);
+/** WP-69: the subagent tab of the side panel – a chunk of its own (opened rarely). */
+const LazySubagentPanel = lazy(() =>
+  import('./subagent/SubagentPanel').then((module) => ({ default: module.SubagentPanel })),
 );
 
 function TranscriptLoading() {
@@ -59,8 +63,18 @@ export const ToolInputPreviewSlot = memo(function ToolInputPreviewSlot(props: {
   );
 });
 
+/** Slot `SubagentPanel` (WP-69, lazy): the read-only transcript of one subagent. */
+export const SubagentPanelSlot = memo(function SubagentPanelSlot(props: SubagentPanelSlotProps) {
+  return (
+    <Suspense fallback={<TranscriptLoading />}>
+      <LazySubagentPanel {...props} />
+    </Suspense>
+  );
+});
+
 export const TRANSCRIPT_SLOTS: Partial<FeatureSlots> = {
   Transcript: TranscriptSlot,
   Markdown,
   ToolInputPreview: ToolInputPreviewSlot,
+  SubagentPanel: SubagentPanelSlot,
 };

@@ -168,3 +168,12 @@ Broker `check`/`latestPlanVersion`/`latestPlanFilePath`/`planRecords`/`loadLastP
 
 - Harness-Option `sessionInfo` (= `FakeBackendOptions.sessionInfo`). Integrationstest:
   `sessionInfo.integration.test.ts`.
+
+## Subagent-Verlauf (WP-69)
+
+| Datei | Exporte | Inhalt |
+| --- | --- | --- |
+| `subagentTranscript.ts` | `readSubagentTranscript`, `isSubagentRunning`, `SUBAGENT_CACHE_MAX` (8), `SUBAGENT_CACHE_IDLE_MS` (5 min), `SUBAGENT_LAUNCH_REUSE_MS` (60 s) | `session.subagentTranscript {agentId, conversationId, …}` → Seite mit Items einer **eigenen** Liste (Order ab 1, nie in der Unterhaltung, kein Log), nur auf Anfrage (das Panel pollt, solange der Agent läuft – ADR-185). Je (Eintrag, Claude-Session, Agent) ein inkrementeller Akkumulator (`createHistoryAccumulator` aus `normalizer/history.ts`), das Backend liefert nur neue Nachrichten (`readSubagentHistory`); passt die uuid vor dem Stück nicht, wird neu gelesen. Ohne Prozess (nur Datei): auch schlafend, archiviert, extern. `running` = Prozess läuft und die Aufgabe des Agenten ist live. Fehler `CONVERSATION_NOT_FOUND`, `SESSION_NOT_STARTED`, `FILE_NOT_READABLE`; fehlende Datei = leere Seite |
+
+- Integrationstest: `subagentTranscript.integration.test.ts`. Hook-Läufe (`exitCode`) übernimmt nur der
+  Live-Normalizer; nach einem History-Import gibt es keine Hook-Zeilen (WP-69 §3.3).

@@ -333,6 +333,35 @@ export interface FakeFileToolCall {
   isError?: boolean;
 }
 
+/**
+ * WP-69: the transcript of a subagent as the fake host answers it – the agent's prompt, a thought,
+ * one tool call and its answer (orders from 1, ids per agent).
+ */
+function fakeSubagentItems(agentId: string): TranscriptItem[] {
+  const messageId = `msg_${agentId}`;
+  return [
+    sampleItems.userMessage({ id: `${agentId}-prompt`, order: 1, text: { text: 'Look through the project.', truncated: null } }),
+    sampleItems.thinking({ id: `${messageId}:0`, messageId, order: 2, text: { text: 'First the notes.', truncated: null } }),
+    sampleItems.toolCall({
+      id: `${messageId}:1`,
+      messageId,
+      blockIndex: 1,
+      order: 3,
+      toolUseId: `toolu_${agentId}`,
+      toolName: 'Read',
+      input: { file_path: 'D:\\work\\sample\\notes.md' },
+      result: {
+        isError: false,
+        content: [{ type: 'text', text: { text: '1\t# Notes', truncated: null } }],
+        structured: null,
+        structuredTruncated: null,
+        at: sampleTime(4),
+      },
+    }),
+    sampleItems.assistantText({ id: `${messageId}:2`, messageId, blockIndex: 2, order: 4, text: 'The notes are short.' }),
+  ];
+}
+
 /** Status of the gated tool call after the answer (playground approximation of the engine). */
 function toolStatusAfter(outcome: DecisionOutcome): ToolCallStatus {
   switch (outcome.type) {
@@ -1130,6 +1159,13 @@ export class FakeHost {
         const failure = this.info.reload(cmd.entryId, cmd.what);
         if (failure !== null) return { ok: false, error: makeError('CLAUDE_CONTROL_FAILED', { method: 'reload', detail: failure }) };
         return this.ok();
+      }
+      // ---- WP-69: the transcript of one subagent (a fixed short list; tests answer via onCommand) ----
+      case 'session.subagentTranscript': {
+        if (!this.knowsEntry(cmd.entryId)) return { ok: false, error: makeError('ENTRY_NOT_FOUND', { entryId: cmd.entryId }) };
+        const items = fakeSubagentItems(cmd.agentId);
+        const offset = cmd.offset === null ? Math.max(0, items.length - cmd.limit) : Math.min(cmd.offset, items.length);
+        return this.ok({ items: items.slice(offset, offset + cmd.limit), offset, total: items.length, running: false });
       }
       case 'transcript.loadEarlier': {
         // The server view keeps every item; snapshots are trimmed to LIMITS.snapshotItems.

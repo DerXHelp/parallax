@@ -5,6 +5,9 @@
 import type { CreateLiveNormalizer, NormalizeContextUsage, NormalizeHistory } from '../ports';
 import { normalizeContextUsage as normalizeContextUsageImpl } from './context';
 import { normalizeHistory as normalizeHistoryImpl } from './history';
+
+/** WP-69: incremental history adapter for a growing transcript (a running subagent). */
+export { createHistoryAccumulator, type HistoryAccumulator, type HistoryOpenStatus } from './history';
 import { createLiveNormalizer as createLiveNormalizerImpl } from './live';
 
 export const createLiveNormalizer: CreateLiveNormalizer = createLiveNormalizerImpl;

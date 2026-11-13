@@ -65,7 +65,7 @@ import type {
   ReduceStatus,
   StatusEvent,
 } from './ports';
-import type { estimateContextGauge } from './normalizer';
+import type { createHistoryAccumulator, estimateContextGauge } from './normalizer';
 import type { PlanIndexedDecisionStore } from './planIndex';
 import type { ProcessStore } from './processStore';
 import { PromptQueue } from './promptQueue';
@@ -189,6 +189,8 @@ export interface NormalizerFns {
   normalizeHistory: NormalizeHistory;
   normalizeContextUsage: NormalizeContextUsage;
   estimateContextGauge: typeof estimateContextGauge;
+  /** WP-69: incremental history adapter (subagent transcripts, subagentTranscript.ts). */
+  createHistoryAccumulator: typeof createHistoryAccumulator;
 }
 
 export interface ProcDeps {
@@ -1131,6 +1133,8 @@ export const ARCHIVED_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryComm
   'plan.read',
   // WP-63: "Clean up archive" removes archived entries from Parallax.
   'session.remove',
+  // WP-69: reading a subagent's transcript file changes nothing.
+  'session.subagentTranscript',
 ]);
 
 /** WP-30 §4.12: open in an external console – never a second writer on the Claude session. */
@@ -1144,6 +1148,8 @@ export const EXTERNAL_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryComm
   'plan.read',
   // WP-63: Parallax forgets the entry; the console keeps the Claude session (nothing is written).
   'session.remove',
+  // WP-69: only reads the CLI's subagent transcript (no second writer).
+  'session.subagentTranscript',
 ]);
 
 /** The entry is handed off to an external console (recorded, or its status says so). */

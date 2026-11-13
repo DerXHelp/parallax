@@ -363,6 +363,7 @@ export interface FeatureSlots {
   // Phase 2: SettingsPage (preferences), ProfilesSettings (profiles)
   // Phase 3 (ADR-150): FilePanel {sessionKey, path, line, col}, FilesPanel, TasksPanel, TaskStrip (je {sessionKey}),
   //   FileLink: ComponentType<FileLinkSlotProps> (files → transcript, decisions, tasks; §2.3 m)
+  // WP-69: SubagentPanel {sessionKey, agentId, title, subagentType} (transcript, Lazy-Chunk; Inhalt des Tabs „Agent“, §3.8)
 }
 export function FeatureSlotsProvider(props: { slots: Partial<FeatureSlots>; children: ReactNode }): ReactNode;
 export function useFeatureSlots(): FeatureSlots;  // nicht gesetzte Slots = neutrale Platzhalter von WP-14 (mit t())
@@ -490,7 +491,8 @@ läuft.
   Text und gehen nie an den Server (C.10, ADR-141).
 - **Anfragen** (`src/web/shell/requests.ts`): `openFile {sessionKey, path, line?, col?}` (Datei-Tab),
   `sidePanel {sessionKey, tab: SidePanelTab | null}` (`SIDE_PANEL_TABS` = `plan`, `file`, `files`,
-  `tasks`; `null` schließt), `attachFiles {sessionKey, files}` (Drop-Zone der Shell → Composer),
+  `tasks`, WP-69 `subagent`; `null` schließt), `openSubagent {sessionKey, agentId, title, subagentType?}`
+  (WP-69: Agent-Karte → Tab „Agent“ mit diesem Subagenten, §3.8), `attachFiles {sessionKey, files}` (Drop-Zone der Shell → Composer),
   `composerText {sessionKey, text}` (WP-66: „Zurückholen“ einer wartenden Nachricht → Text ins Feld bzw.
   als neuer Absatz an den Entwurf; ohne Composer `false`, dann Zwischenablage).
   `SETTINGS_SECTIONS` enthält `files` (Editor-Einstellung, ADR-144).
@@ -735,6 +737,49 @@ Cache.
   (Option `sessionInfo` bzw. Schlüsselwörter `fake:info-*`; Web: `host.info`).
 - **`pnpm cli-check`** (Schritt 2e): jede Lese-Methode einmal, Schema geprüft; Profilfeld `sessionInfo` (neun
   Booleans), eine Abweichung ist ein Befund.
+
+### 3.8 Subagent-Verlauf und Hook-Läufe (WP-69)
+
+**Subagent-Verlauf** – lesend, nur auf Anfrage, nichts gespeichert.
+- **Quelle:** die CLI schreibt den ganzen Verlauf eines Subagenten nach
+  `<projekt>/<sessionId>/subagents/agent-<agentId>.jsonl` (Prompt, Thinking, Texte, Werkzeuge); der Live-Stream
+  trägt davon nur die Werkzeugaufrufe. Agent-ID = `task_started.task_id` (`tool_call.task.taskId`); nach einem
+  History-Import ohne Task steht sie im Agent-Ergebnis (`agentId` strukturiert bzw. Zeile `agentId: …` im Text,
+  Web `features/transcript/lib/agent-id.ts`), geprüft mit `subagentIdSchema` (keine Pfadzeichen).
+- **Backend** (`AgentBackend.readSubagentHistory {sessionId, cwd, launch, agentId, from}`): Worker-Pool-Op
+  `subagentSlice` im History-Worker des Profils (`CLAUDE_CONFIG_DIR`) – `getSubagentMessages`, aber nur die
+  Nachrichten ab `from` gehen über die Thread-Grenze, dazu `total`, `previousUuid` (Nachricht `from-1`) und
+  `lastUuid`. Datei fehlt → `total: 0`.
+- **Engine** (`sessions/subagentTranscript.ts`, Befehl `session.subagentTranscript`, §5.2): je (Eintrag,
+  Claude-Session, Agent) ein inkrementeller History-Akkumulator (`createHistoryAccumulator`, dieselben Bausteine wie
+  der Import, Subagent-`parent_tool_use_id` entfernt) – ein Poll liest nur neue Nachrichten. Stimmt `previousUuid`
+  nicht mit der zuletzt gelesenen uuid überein (Datei neu geschrieben), wird von vorn gelesen. LRU mit höchstens
+  8 Verläufen, 5 min nach dem letzten Lesen verworfen; Lesevorgänge eines Verlaufs nacheinander. Eigene Liste mit
+  `order` ab 1 (stabil, solange sie wächst), Seiten `offset`/`limit` (≤ 200, Standard 100, `offset` null = Ende),
+  `running` = Prozess läuft und der Task des Agenten ist live (Werkzeugaufruf in `pending`/`running`/`background`
+  oder gelisteter Hintergrund-Task); das letzte offene Item endet dann `running`, sonst `interrupted`. Kein Prozess
+  nötig: ruhende, archivierte und externe Einträge lesen die Datei.
+- **UI** (Slot `SubagentPanel`, Lazy-Chunk in `features/transcript/subagent/`): Agent-Karte → „Verlauf“
+  (`OpenTranscriptButton`, nur mit Panel-Host und bekannter Agent-ID) → Anfrage `openSubagent` → Seitenpanel-Tab
+  „Agent“ (ein Subagent je Session, der zuletzt geöffnete). `useSubagentTranscript` liest beim Öffnen das Ende,
+  danach alle 1,5 s ab dem ersten noch offenen Item (`pollOffset`), solange `running`; Stopp beim Schließen/Wechsel
+  des Tabs (Unmount), bei verborgenem Fenster (beim Sichtbarwerden ein Lesen) und nach einem Fehler („Erneut
+  versuchen“). Zeilen mit denselben Komponenten wie das Haupttranskript (`TranscriptItemView`, `StepGroupLine`,
+  kompakt/ausführlich nach `transcriptView`), `readOnly` blendet Stop und „Hintergrund“ aus; folgt dem Ende wie das
+  Transkript, „Frühere Einträge laden“ holt die Seite davor. Texte von Panel, Knopf und Hook-Zeilen liegen im
+  Lazy-Namensraum `features/transcript/i18n-lazy/` (wie WP-67, nicht im Start-Chunk).
+- **FakeBackend:** `fake:subagent` und `fake:background` legen über `FakeHistoryStore.recordSubagent` einen
+  Verlauf an, der während des Laufs wächst (`fake/wp69.ts`).
+
+**Hook-Läufe.** `includeHookEvents: true` (SDK-Optionen): je Lauf ein `hook_started` + ein `hook_response`
+(`outcome`, `exit_code`, `output`) → Item `system/hook` (`upsert` je `hook_id`) mit `exitCode` (2 = blockierend).
+`Settings.hookDisplay` (Standard `failed`): `failed` zeigt nur Läufe mit `outcome !== 'success'` als
+Fehlerhinweis („Hook PreToolUse hat Write blockiert“ bzw. „… fehlgeschlagen (Exit-Code n)“, Ausgabe aufklappbar);
+`all` zeigt zusätzlich erfolgreiche Läufe – kompakt als Schritt „Hook“ in den Schrittgruppen, ausführlich als dezente
+Zeile; `off` keine Hook-Zeilen, ein fehlgeschlagener SessionStart/Setup-Hook bleibt sichtbar. Gruppierung: eigene
+Rollen-Codes (`k` erfolgreich, `f` fehlgeschlagen, `F` fehlgeschlagener Start-Hook), die `buildRows` erst mit der
+Einstellung auflöst. History enthält keine Hook-Läufe (die CLI schreibt sie nicht ins JSONL). FakeBackend:
+`fake:hooks`.
 
 ## 4. Source of Truth (A.3)
 
@@ -1256,6 +1301,7 @@ bzw. das Profil.
 | `session.info {section}` | nur mit laufendem Prozess (Start im Lock abgewartet, kein Auto-Wake); Methode fehlt/„not available“ → `{available: false, data: null}`; sonst `{available: true, data}` (`SessionInfoSection`); nichts geloggt | `SESSION_NOT_RUNNING`, `SESSION_ARCHIVED`, `SESSION_EXTERNAL`, `CLAUDE_CONTROL_FAILED {method: 'readInfo', section}` |
 | `session.mcpAction {server, action}` | `reconnect` → `reconnectMcpServer`, `enable`/`disable` → `toggleMcpServer`; → `{}` | wie oben, `CLAUDE_CONTROL_FAILED {method: 'mcpAction', detail}` (CLI-Text ≤ 300 Zeichen) |
 | `session.reload {what}` | `skills` → `reloadSkills`, `plugins` → `reloadPlugins`; → `{}` | wie oben, `CLAUDE_CONTROL_FAILED {method: 'reload', detail}` |
+| `session.subagentTranscript {agentId, conversationId?, offset?, limit?}` (WP-69) | liest `agent-<agentId>.jsonl` der Claude-Session der Unterhaltung (`null` = aktuelle) ohne Prozess, auch archiviert/extern; → `{items, offset, total, running}` (eigene Liste, `offset` null = die letzten `limit`); Datei fehlt → leere Seite; nichts gespeichert, nichts geloggt (§3.8) | `ENTRY_NOT_FOUND`, `CONVERSATION_NOT_FOUND`, `SESSION_NOT_STARTED`, `FILE_NOT_READABLE {agentId}` |
 
 ## 6. Item-Modell (`src/shared/model.ts`, §5.6)
 
@@ -1294,7 +1340,7 @@ Bilder immer als Blob. Assistant-Text wird nie gekappt.
 | `system/session_state_changed` | – | `session_state` |
 | `system/compact_boundary`, `notification`, `informational`, `permission_denied`, `memory_recall`, `local_command_output` | gleichnamiges `system`-Item | – |
 | `system/api_retry` | `system/api_retry` (ein Item je Serie, `upsert`) | `retry` |
-| `system/hook_*` | `system/hook` (`upsert` je `hook_id`) | – |
+| `system/hook_*` | `system/hook` (`upsert` je `hook_id`; WP-69: `exitCode` aus `hook_response.exit_code`, seit `includeHookEvents` alle Hook-Ereignisse) | – |
 | `rate_limit_event` | `system/rate_limit` nur bei `rejected` (WP-63; `allowed_warning` speist nur die Limit-Leiste, alte Logs mit Warnungen blendet das Web aus) | `rate_limit`; bei `rejected` zusätzlich `assistant_error` (`RATE_LIMIT_REJECTED`, `credits_required` → `CLAUDE_BILLING`) |
 | Modell-Fallback (`model_refusal_fallback`) | `system/model_fallback`; zurückgezogene Items → `item.remove` | – |
 | `system/model_refusal_no_fallback` | `system/error` (`MODEL_REFUSAL`) | – |
@@ -1450,8 +1496,8 @@ profiles.json                         profilesFileSchema (Phase 2, ADR-102: alle
                                       fehlt die Datei, gilt nur „Standard“)
 settings.json                         settingsFileSchema (Phase 2: notifications, idleSleep,
                                       promptSuggestions, port, autostart; Phase 3: editor, ADR-144;
-                                      WP-64: remoteControl.newSessions; WP-65: transcriptView – Felder mit
-                                      Default)
+                                      WP-64: remoteControl.newSessions; WP-65: transcriptView; WP-69:
+                                      hookDisplay – Felder mit Default)
 model-catalogs.json                   Phase 2 (ADR-114): supportedModels() je Profil (Server-intern)
 account-limits.json                   Phase 2 (ADR-114): letzte Abo-Limits je Profil (Server-intern)
 auth-secret.json                      Secret des Geräte-Cookies (WP-10, rotierbar, §5.1; ohne .bak, R1-11)

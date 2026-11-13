@@ -79,6 +79,10 @@ const LAZY_NAMESPACES = [
     dir: '/src/web/shell/navigation/session-info/i18n/',
     chunk: '/src/web/shell/navigation/session-info/McpTab.tsx',
   },
+  {
+    dir: '/src/web/features/transcript/i18n-lazy/',
+    chunk: '/src/web/features/transcript/subagent/SubagentPanel.tsx',
+  },
 ];
 
 function inLazyNamespace(file: string): boolean {

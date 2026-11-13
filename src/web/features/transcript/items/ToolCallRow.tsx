@@ -13,6 +13,7 @@ import { Disclosure } from '../components/Disclosure';
 import { ModelBadge } from '../components/ModelBadge';
 import { ToolFileLink } from '../components/ToolFileLink';
 import { ToolStatus } from '../components/ToolStatus';
+import { useTranscriptSettings } from '../context';
 import { getToolRenderer } from '../renderers';
 import { GenericToolBody } from '../renderers/generic';
 import { ToolResultImages, toolLabel } from '../renderers/parts';
@@ -113,9 +114,11 @@ function ToolCallFrame({
   const cwd = useSessionCwd(sessionKey);
   // While the input streams the path may still be incomplete.
   const file = item.status === 'streaming_input' ? null : (renderer.file?.(item) ?? null);
-  // WP-65 §1.5: a running Bash call can move to the background (Ctrl+B in the terminal).
+  // WP-65 §1.5: a running Bash call can move to the background (Ctrl+B in the terminal) – not in a
+  // read-only transcript (WP-69: the subagent panel).
+  const readOnly = useTranscriptSettings()?.readOnly === true;
   const background =
-    item.toolName === 'Bash' && item.status === 'running' ? (
+    item.toolName === 'Bash' && item.status === 'running' && !readOnly ? (
       <BackgroundButton sessionKey={sessionKey} toolUseId={item.toolUseId} title={summary ?? label} />
     ) : null;
   const metaParts: ReactNode = (

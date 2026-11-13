@@ -2157,3 +2157,31 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
 - **Entscheidung:** Der Server liefert Text + vorgeschlagenen Dateinamen; gespeichert wird per Blob-Download im
   Browser (`lib/download`), der Server schreibt nichts in Nutzerpfade. E2E prüfen „Kopieren“ nur gegen eine in der
   Seite ersetzte Zwischenablage.
+
+## ADR-185 – Subagent-Verlauf nur auf Anfrage, inkrementell gelesen
+- **Datum/WP:** 13.11.2026, WP-69; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Der Verlauf eines Subagenten (`agent-<id>.jsonl`) wird weder gepusht noch persistiert. Der Client
+  pollt `session.subagentTranscript` alle 1,5 s, nur solange der Tab „Agent“ offen, das Fenster sichtbar und der Agent
+  live ist. Der Server hält je (Eintrag, Claude-Session, Agent) einen inkrementellen Akkumulator (LRU 8, 5 min) und
+  lässt den Verlaufs-Worker nur neue Nachrichten schneiden (`subagentSlice`); passt die uuid vor dem Stück nicht, wird
+  neu aufgebaut. Lesend, eine eigene Item-Liste, nie in der Unterhaltung der Session.
+- **Begründung:** Die Dateien sind groß (≈ 200 kB bei 12 Nachrichten) und wachsen live; volles Neulesen je Abfrage
+  widerspräche ADR-154. Nutzerentscheidung SDK-Punkt 22 („Verlauf lesend reicht“).
+
+## ADR-186 – Hook-Läufe: Rollen-Code unabhängig von der Einstellung
+- **Datum/WP:** 13.11.2026, WP-69; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** `includeHookEvents` ist immer an. `classifyItem` vergibt für Hook-Items feste Codes (`k` ok, `f`
+  fehlgeschlagen, `F` immer sichtbar), erst `buildRows` löst sie nach `settings.hookDisplay` (`all`/`failed`/`off`,
+  Default `failed`) auf; Hook-Zeilen prüfen die Einstellung selbst. Fehlgeschlagene SessionStart/Setup-Hooks sind
+  immer sichtbar. `exitCode` kommt nur aus dem Live-Stream (`getSessionMessages` liefert keine Hook-Läufe).
+- **Begründung:** Ein Wechsel der Einstellung soll keine Neuklassifizierung des Transkripts brauchen; ein blockierender
+  Hook (Exit 2) muss im Standard sichtbar sein, erfolgreiche Läufe nicht. Nutzerentscheidung SDK-Punkt 27.
+
+## ADR-187 – Items außerhalb des Stores
+- **Datum/WP:** 13.11.2026, WP-69; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Item-Listen, die nicht zur Unterhaltung einer Session gehören (zuerst der Subagent-Verlauf),
+  rendern über `TranscriptItemView`/`StepGroupLine` mit denselben Komponenten wie das Transkript;
+  `TranscriptSettings.readOnly` blendet Session-Aktionen (Entscheiden, Zurückholen, Verlauf öffnen …) aus. Kein
+  zweiter Renderer.
+- **Begründung:** Gleiches Aussehen und gleiche Pflege wie im Hauptverlauf, ohne die Liste in den Session-Store zu
+  mischen.
