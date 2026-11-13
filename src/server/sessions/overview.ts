@@ -179,6 +179,12 @@ interface Exchange {
   answer: string | null;
 }
 
+/**
+ * U+200B in front of a prompt that starts with `/` only because of a pasted text (composer
+ * `SLASH_GUARD`, R5W-03; like `titleFromPrompt`): no part of what the title describes.
+ */
+const LEADING_SLASH_GUARD = /^\u200b+/u;
+
 /** Main-thread prompts typed by a person (no slash commands) and Claude's answers, in order. */
 function exchanges(items: readonly TranscriptItem[]): { first: Exchange; last: Exchange } {
   const sorted = [...items].filter((i) => i.parentToolUseId === null).sort((a, b) => a.order - b.order);
@@ -186,7 +192,7 @@ function exchanges(items: readonly TranscriptItem[]): { first: Exchange; last: E
   for (const item of sorted) {
     if (item.kind === 'user_message') {
       if (item.slashCommand !== null || item.origin !== 'human' || item.text.text.trim() === '') continue;
-      list.push({ prompt: item.text.text, answer: null });
+      list.push({ prompt: item.text.text.trim().replace(LEADING_SLASH_GUARD, ''), answer: null });
     } else if (item.kind === 'assistant_text' && item.localCommand === null && item.text.trim() !== '') {
       const current = list.at(-1);
       if (current === undefined) list.push({ prompt: null, answer: item.text });
