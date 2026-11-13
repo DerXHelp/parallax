@@ -6,6 +6,7 @@
  */
 import { STANDARD_PROFILE_ID, type ProfileId } from '@shared/common';
 import {
+  IDLE_PROFILE_LOGIN,
   profileSchema,
   type ClaudeInstallStatus,
   type Profile,
@@ -104,6 +105,7 @@ export function profileSummary(
     configDir: profile.configDir,
     issues: [...issues],
     entryCount: 0,
+    login: { ...IDLE_PROFILE_LOGIN },
   };
 }
 

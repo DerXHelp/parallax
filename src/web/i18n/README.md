@@ -38,7 +38,9 @@ registriert der Koordinator – in `dictionaries.ts` (en) **und** `dictionary.de
 Start-Chunk-Budget sprengen würden, liegen in einem eigenen Wörterbuchpaar, das **nur** dieser Chunk
 statisch importiert und nicht in `dictionaries.ts`/`dictionary.de.ts` registriert ist. Übersetzt wird
 mit `translateFrom(dictionary, en, language, key, params)` (gleiche Plural-, Platzhalter- und
-Rückfallregeln wie `t`), gebunden über einen eigenen Hook. Bisher einziger: die Reiter der
-Session-Info (`src/web/shell/navigation/session-info/i18n/`, `useInfoT()`). `bundle.test.ts` prüft,
+Rückfallregeln wie `t`), gebunden über einen eigenen Hook (ADR-183). Bisher: die Reiter der
+Session-Info (`src/web/shell/navigation/session-info/i18n/`, `useInfoT()`), WP-69 der Tab „Agent“
+(`features/transcript/i18n-lazy/`), WP-70 Anmelde-Dialog (`shell/login/i18n/`) und Ausgabestil
+(`shell/output-style/i18n/`). `bundle.test.ts` prüft,
 dass beide Sprachen weder im Start-Chunk noch in `dictionary.de` landen, aber vom Chunk erreicht
 werden (`LAZY_NAMESPACES`).

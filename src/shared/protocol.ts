@@ -64,6 +64,8 @@ import { notificationKindSchema } from './status';
  * 3 (Phase 3, ADR-140): new error codes and commands (file service, plan versions, stopTask).
  */
 export const PROTOCOL_VERSION = 3;
+/** WP-70: longest pasted sign-in code (`profile.loginCode`; a link with code and state fits). */
+export const LOGIN_CODE_CHARS = 4000;
 /**
  * A rejected upgrade (cookie, Origin, Host, Sec-Fetch-Site) is an HTTP 401/403 with an
  * `ErrorPayload` body – the browser only sees close 1006, so the client asks
@@ -497,6 +499,38 @@ export const commandSchema = z.discriminatedUnion('name', [
    * then falls back to `window.open`.
    */
   z.object({ name: z.literal('link.open'), url: httpUrlSchema }),
+  // ---- WP-70 (login per profile, output style per project) ----
+  /**
+   * Host: sign the profile in from Parallax – the CLI's OAuth flow in a short-lived `claude` of the
+   * profile (its config folder: all sessions of the profile); the server opens the link in the
+   * default browser. Progress and result: `ProfileSummary.login` (host state). A login of the
+   * profile that is still starting/waiting is kept (no second process). PROFILE_NOT_FOUND.
+   */
+  z.object({ name: z.literal('profile.login'), profileId: profileIdSchema }),
+  /**
+   * Host: the code the sign-in page showed (manual way): `code#state`, a link with `code`/`state` or
+   * the bare code (tolerant). The check runs in the background (`login.state` `verifying` → `done` or
+   * `failed`). LOGIN_FAILED {reason:'expired'} when the profile has no waiting login.
+   */
+  z.object({
+    name: z.literal('profile.loginCode'),
+    profileId: profileIdSchema,
+    code: z.string().trim().min(1).max(LOGIN_CODE_CHARS),
+  }),
+  /** Host: end the profile's login (process closed, state back to idle); none running → no-op. */
+  z.object({ name: z.literal('profile.loginCancel'), profileId: profileIdSchema }),
+  /**
+   * The output style of the entry's project: `updateSettings('localSettings', {outputStyle})` in the
+   * session's process (`<cwd>\.claude\settings.local.json`, all sessions in this project; from the
+   * next turn on). A dormant entry is started without a turn. VALIDATION_FAILED for a style the CLI
+   * does not offer (when the list is known); CLAUDE_CONTROL_FAILED {method:'updateSettings'}. Not
+   * for archived or external entries.
+   */
+  z.object({
+    name: z.literal('session.setOutputStyle'),
+    entryId: entryIdSchema,
+    style: z.string().trim().min(1).max(100),
+  }),
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export type CommandName = Command['name'];
@@ -525,6 +559,9 @@ export const HOST_COMMAND_NAMES = [
   'files.project',
   'editor.detect',
   'link.open',
+  'profile.login',
+  'profile.loginCode',
+  'profile.loginCancel',
 ] as const satisfies readonly CommandName[];
 export type HostCommandName = (typeof HOST_COMMAND_NAMES)[number];
 export type HostCommand = Extract<Command, { name: HostCommandName }>;
@@ -615,6 +652,10 @@ export const commandResultSchemas = {
   'session.reload': z.object({}),
   'session.subagentTranscript': subagentTranscriptPageSchema,
   'link.open': z.object({}),
+  'profile.login': z.object({}),
+  'profile.loginCode': z.object({}),
+  'profile.loginCancel': z.object({}),
+  'session.setOutputStyle': z.object({}),
 } as const satisfies Record<CommandName, z.ZodType>;
 export type CommandResult<N extends CommandName> = z.infer<(typeof commandResultSchemas)[N]>;
 

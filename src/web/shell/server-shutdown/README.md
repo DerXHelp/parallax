@@ -7,6 +7,7 @@ danach `server.shutdown`. Der Server bestätigt zuerst und schließt dann jede V
 
 | Datei | Inhalt |
 | --- | --- |
-| `ServerShutdownDialog.tsx` | `ServerShutdownDialog` (einmal neben dem Menü gemountet), `openServerShutdown`, `closeServerShutdown` |
+| `ServerShutdownDialog.tsx` | `ServerShutdownDialog` (einmal neben dem Menü gemountet; lädt den Inhalt erst beim Öffnen), `openServerShutdown`, `closeServerShutdown` |
+| `ShutdownConfirmation.tsx` | WP-70: der Inhalt der Rückfrage (Sessions, Fehler, Bestätigen) als Lazy-Chunk – erst nach dem Klick im Menü gebraucht (Start-Chunk-Budget) |
 | `impact.ts` | `shutdownImpact(entries, now)` → `{ working, waiting, idle }` (rein, über `deriveDisplayStatus`/`orderSessions`) |
 | `i18n/en.ts`, `i18n/de.ts` | Texte des Namespace `serverShutdown` (`de: typeof en`), registriert in `src/web/i18n/dictionaries.ts` (en, statisch) bzw. `dictionary.de.ts` (de, Lazy-Chunk, ADR-153; vorher `index.ts`, WP-20b) – Aufruf `t('serverShutdown.<key>')` |

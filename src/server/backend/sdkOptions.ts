@@ -30,7 +30,7 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import { windowsPathsEqual } from '@shared/paths';
 import type { LaunchSpec } from '../claude/ports';
-import type { StartSessionRequest } from './types';
+import type { LoginRequest, StartSessionRequest } from './types';
 
 export interface QueryOptionHooks {
   /** Wrapper around req.canUseTool (toPermissionRequest + error handling, sdkBackend.ts). */
@@ -174,6 +174,26 @@ export function buildQueryOptions(req: StartSessionRequest, hooks: QueryOptionHo
   if (settings !== undefined) options.settings = settings;
   options.extraArgs = extraArgsOf(launch);
   return options;
+}
+
+/**
+ * WP-70: options of a login process (no prompt is ever sent): the profile's executable, env and
+ * config folder, a neutral cwd, no settings sources (managed settings still apply – `forceLoginMethod`,
+ * `allowedProviders`), no MCP servers, no transcript (`persistSession: false`), no profile args.
+ */
+export function buildLoginOptions(req: LoginRequest, hooks: QueryOptionHooks): Options {
+  return {
+    cwd: req.cwd,
+    pathToClaudeCodeExecutable: req.launch.executablePath,
+    // The SDK mutates the object it gets: pass a copy.
+    env: { ...req.launch.env },
+    settingSources: [],
+    strictMcpConfig: true,
+    persistSession: false,
+    canUseTool: hooks.canUseTool,
+    stderr: hooks.stderr,
+    spawnClaudeCodeProcess: hooks.spawn,
+  };
 }
 
 /**

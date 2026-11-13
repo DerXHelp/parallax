@@ -9,6 +9,7 @@ import type {
   ProfileSummary,
   SessionSummary,
 } from '@shared/model';
+import { IDLE_PROFILE_LOGIN } from '@shared/model';
 import { windowsPathIssue } from '@shared/paths';
 import type { Command } from '@shared/protocol';
 import { sampleClaudeInstallStatus, sampleHostState, sampleId, sampleProfile, sampleTime } from '@shared/samples';
@@ -159,6 +160,7 @@ export class FakeProfileServer {
       configDir: profile.configDir,
       issues: this.issuesOf(profile),
       entryCount: this.entryCounts[profile.id] ?? 0,
+      login: { ...IDLE_PROFILE_LOGIN },
     }));
   }
 

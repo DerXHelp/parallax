@@ -13,6 +13,7 @@ import {
   DEFAULT_NOTIFICATION_SETTINGS,
   DEFAULT_REMOTE_CONTROL_SETTINGS,
   DEFAULT_REMOTE_CONTROL_SUMMARY,
+  IDLE_PROFILE_LOGIN,
   defaultEditorSettings,
 } from './model';
 import type {
@@ -155,6 +156,7 @@ export function sampleProfileSummary(p: Partial<ProfileSummary> = {}): ProfileSu
     configDir: null,
     issues: [],
     entryCount: 0,
+    login: { ...IDLE_PROFILE_LOGIN },
     ...p,
   };
 }
@@ -393,6 +395,7 @@ export function sampleSummary(p: Partial<SessionSummary> = {}): SessionSummary {
     activity: null,
     turnSummary: null,
     lastSeenAt: null,
+    outputStyle: null,
     ...p,
   };
 }
@@ -906,6 +909,7 @@ export function sampleDetail(p: Partial<SessionDetail> = {}): SessionDetail {
     todos: null,
     planFile: null,
     latestPlanVersion: null,
+    availableOutputStyles: [],
     ...p,
   };
 }

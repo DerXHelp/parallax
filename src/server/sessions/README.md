@@ -177,3 +177,13 @@ Broker `check`/`latestPlanVersion`/`latestPlanFilePath`/`planRecords`/`loadLastP
 
 - Integrationstest: `subagentTranscript.integration.test.ts`. Hook-Läufe (`exitCode`) übernimmt nur der
   Live-Normalizer; nach einem History-Import gibt es keine Hook-Zeilen (WP-69 §3.3).
+
+## Ausgabestil und Anmeldung (WP-70)
+
+| Datei | Exporte | Inhalt |
+| --- | --- | --- |
+| `outputStyle.ts` | `setOutputStyle` | `session.setOutputStyle {style}` → `{}`: im Prozess der Session (den schlafenden Eintrag startet der Aufrufer ohne Turn, wie bei `session.regenerateTitle`), nur Stile aus `availableOutputStyles` (sonst `VALIDATION_FAILED`), ohne Prozess `SESSION_NOT_RUNNING`; die Summary zeigt den Stil sofort, das nächste `system/init` bestätigt ihn. Stil und Liste liest die Engine bei `ready()` (`readOutputStyles`) und aus jedem `system/init` (`Summary.outputStyle`, Detail `availableOutputStyles`) (ADR-191) |
+
+- `remoteControl.ts`: `retryRemoteAfterLogin` – nach erfolgreicher Anmeldung (`onProfileLoggedIn` des Managers,
+  Dep `loginState`) verbinden Einträge des Profils mit gewünschtem Remote Control und Fehler `REMOTE_CONTROL_AUTH`
+  neu. Der Anmelde-Dienst selbst liegt in `server/host/login.ts` (ADR-188/189).

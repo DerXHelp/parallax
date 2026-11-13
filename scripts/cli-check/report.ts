@@ -9,6 +9,7 @@
 import { z } from 'zod';
 import { compareObservation, compareSmoke, deviations, type Finding } from './compare';
 import { observationSchema } from './observation';
+import { outputStyleProbeResultSchema } from './outputStyle';
 import { bridgeSummaryCounts, overviewProbeResultSchema } from './overview';
 import { remoteControlProbeResultSchema } from './remoteControl';
 import { sessionInfoProbeResultSchema } from './sessionInfo';
@@ -61,6 +62,8 @@ export const runRecordSchema = z.object({
       sideQuestion: sideQuestionProbeResultSchema.nullable().default(null),
       /** WP-67 (absent in runs before WP-67): availability, row counts, unknown field names – no values. */
       sessionInfo: sessionInfoProbeResultSchema.nullable().default(null),
+      /** WP-70 (absent in runs before WP-70): login methods present, output-style round trip. */
+      loginStyle: outputStyleProbeResultSchema.nullable().default(null),
     })
     .nullable(),
   smoke: smokeResultSchema.nullable(),
@@ -226,6 +229,17 @@ export function formatReport(input: {
           `- MCP actions (reconnectMcpServer, toggleMcpServer): ${info.mcpActions ? 'present' : 'MISSING'}`,
           `- reloads (reloadSkills, reloadPlugins): ${info.reload ? 'present' : 'MISSING'}`,
         );
+      }
+      const loginStyle = record.probe.loginStyle;
+      if (loginStyle !== null) {
+        const style = loginStyle.outputStyle;
+        lines.push(
+          `- login methods (claudeAuthenticate, claudeOAuthCallback, claudeOAuthWaitForCompletion): ${loginStyle.login ? 'present' : 'MISSING'} (never called)`,
+          style.available
+            ? `- output style: ok ("${style.style ?? ''}" written and effective, ${String(style.styles)} styles)`
+            : `- output style: NOT ok – ${style.detail ?? '?'}`,
+        );
+        if (!style.restored) lines.push('- output style: the scratch folder was NOT restored');
       }
     }
     lines.push('');

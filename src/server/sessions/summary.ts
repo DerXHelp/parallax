@@ -38,6 +38,8 @@ export function summaryOf(
     externalRunning?: boolean;
     remote?: Omit<RemoteControlSummary, 'wanted'>;
     activity?: SessionActivity | null;
+    /** WP-70: the project's output style (runtime only). */
+    outputStyle?: string | null;
   } = {},
 ): SessionSummary {
   const remote = o.remote ?? { state: 'off', sessionUrl: null, error: null };
@@ -78,6 +80,7 @@ export function summaryOf(
     activity: o.activity ?? null,
     turnSummary: entry.turnSummary,
     lastSeenAt: entry.lastSeenAt,
+    outputStyle: o.outputStyle ?? null,
   };
 }
 
