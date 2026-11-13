@@ -41,6 +41,17 @@ export interface ParsedSessionInfo {
 
 const { listMax, textChars, exportChars, fileNameChars } = SESSION_INFO_LIMITS;
 
+/** The SDK 0.3.322 `Query` method behind each section (SdkBackend, cli-check probe). */
+export const SESSION_INFO_METHODS = {
+  status: 'getStatus',
+  memory: 'getMemoryDialog',
+  skills: 'getSkillsDialog',
+  hooks: 'getHooksListing',
+  permissions: 'listPermissionRules',
+  mcp: 'mcpServerStatus',
+  export: 'exportConversation',
+} as const satisfies Record<SessionInfoSectionName, string>;
+
 /** A text cut to `max` characters. */
 export function clip(text: string, max: number = textChars): string {
   return text.length > max ? text.slice(0, max) : text;

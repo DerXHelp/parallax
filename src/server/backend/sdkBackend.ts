@@ -47,7 +47,7 @@ import {
 } from './sdkOptions';
 import { titleOf, usageLimitsOf } from './overview';
 import { remoteControlDefaultOf, remoteControlErrorOf, toRemoteControlInfo } from './remoteControl';
-import { sessionInfoFailure, sessionInfoOf } from './sessionInfo';
+import { SESSION_INFO_METHODS, sessionInfoFailure, sessionInfoOf } from './sessionInfo';
 import { controlRetryOf, sideAnswerOf, sideQuestionFailure, withdrawnOf } from './sideQuestion';
 import { createSpawner } from './spawn';
 import type {
@@ -887,16 +887,8 @@ class SdkSession implements AgentSession {
 
 // ---- backend ----
 
-/** WP-67: the SDK method behind each "Session info" tab. */
-const INFO_METHODS = {
-  status: 'getStatus',
-  memory: 'getMemoryDialog',
-  skills: 'getSkillsDialog',
-  hooks: 'getHooksListing',
-  permissions: 'listPermissionRules',
-  mcp: 'mcpServerStatus',
-  export: 'exportConversation',
-} as const satisfies Record<SessionInfoSectionName, keyof SdkQueryHandle>;
+/** WP-67: the SDK method behind each "Session info" tab (checked against the handle type). */
+const INFO_METHODS = SESSION_INFO_METHODS satisfies Record<SessionInfoSectionName, keyof SdkQueryHandle>;
 
 let loadedSdkQuery: SdkQueryFn | null = null;
 

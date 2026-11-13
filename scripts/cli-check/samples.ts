@@ -31,6 +31,17 @@ export function sampleObservation(p: Partial<Observation> = {}): Observation {
     backgroundTasks: true,
     sideQuestion: true,
     withdrawQueued: true,
+    sessionInfo: {
+      status: true,
+      memory: true,
+      skills: true,
+      hooks: true,
+      permissions: true,
+      mcp: true,
+      export: true,
+      mcpActions: true,
+      reload: true,
+    },
     ...p,
   };
 }
@@ -85,6 +96,19 @@ export function sampleRecord(p: Partial<RunRecord> = {}): RunRecord {
       sideQuestion: {
         sideQuestion: { available: true, detail: null, response: 'OK', synthetic: false, toolRequests: 0 },
         withdrawQueued: true,
+      },
+      sessionInfo: {
+        sections: [
+          { section: 'status', available: true, detail: null, rows: 3, unknown: [] },
+          { section: 'memory', available: true, detail: null, rows: 4, unknown: [] },
+          { section: 'skills', available: true, detail: null, rows: 12, unknown: [] },
+          { section: 'hooks', available: true, detail: null, rows: 0, unknown: [] },
+          { section: 'permissions', available: true, detail: null, rows: 0, unknown: [] },
+          { section: 'mcp', available: true, detail: null, rows: 0, unknown: [] },
+          { section: 'export', available: true, detail: null, rows: null, unknown: [] },
+        ],
+        mcpActions: true,
+        reload: true,
       },
     },
     smoke: sampleSmoke(),
