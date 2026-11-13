@@ -1,0 +1,25 @@
+import type { en } from './en';
+
+export const de: typeof en = {
+  title: 'Anmelden · {profile}',
+  description: 'Meldet Claude Code für dieses Profil an – wie /login im Terminal.',
+  starting: 'Anmeldung wird gestartet…',
+  waiting: 'Anmeldung im Browser geöffnet – warte auf Abschluss…',
+  openAgain: 'Link erneut öffnen',
+  copy: 'Link kopieren',
+  copied: 'Link kopiert.',
+  copyFailed: 'Der Link konnte nicht kopiert werden.',
+  codeLabel: 'Code einfügen',
+  codeHint: 'Zeigt der Browser einen Code, füge ihn hier ein.',
+  codePlaceholder: 'Code aus dem Browser',
+  submit: 'Anmelden',
+  verifying: 'Code wird geprüft…',
+  done: 'Angemeldet ({plan})',
+  doneNoPlan: 'Angemeldet',
+  doneHint: 'Neue Turns nutzen die neue Anmeldung.',
+  failed: 'Die Anmeldung hat nicht geklappt',
+  refused: 'Parallax konnte das nicht ausführen',
+  retry: 'Erneut versuchen',
+  cancel: 'Abbrechen',
+  close: 'Schließen',
+};

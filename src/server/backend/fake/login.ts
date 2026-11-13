@@ -59,26 +59,34 @@ export class FakeLoginSession implements LoginSession, FakeLoginHandle {
   }
 
   authenticate(): Promise<LoginStartResult> {
-    if (this.closed) return Promise.resolve({ ok: false, error: makeError('LOGIN_FAILED', { reason: 'process' }) });
+    if (this.closed)
+      return Promise.resolve({ ok: false, error: makeError('LOGIN_FAILED', { reason: 'process' }) });
     const o = this.options();
-    if (o.start === 'unavailable') return Promise.resolve({ ok: false, error: makeError('LOGIN_UNAVAILABLE') });
+    if (o.start === 'unavailable')
+      return Promise.resolve({ ok: false, error: makeError('LOGIN_UNAVAILABLE') });
     if (o.start === 'blocked') return Promise.resolve({ ok: false, error: makeError('LOGIN_BLOCKED') });
     // Like the CLI: a second attempt joins the open flow (same links).
     if (this.flow === null) {
       this.flows += 1;
-      this.flow = { state: `fake-state-${String(this.pid)}-${String(this.flows)}`, done: Promise.withResolvers() };
+      this.flow = {
+        state: `fake-state-${String(this.pid)}-${String(this.flows)}`,
+        done: Promise.withResolvers(),
+      };
     }
     const state = this.flow.state;
     const manualUrl = `${FAKE_LOGIN_HOST}/oauth/authorize?code=true&state=${state}`;
-    const automaticUrl = o.automatic === true ? `${FAKE_LOGIN_HOST}/oauth/authorize?state=${state}&port=0` : null;
+    const automaticUrl =
+      o.automatic === true ? `${FAKE_LOGIN_HOST}/oauth/authorize?state=${state}&port=0` : null;
     return Promise.resolve({ ok: true, manualUrl, automaticUrl });
   }
 
   submitCode(code: string, state: string): Promise<LoginResult> {
     this.codes.push({ code, state });
     const flow = this.flow;
-    if (flow === null) return Promise.resolve({ ok: false, error: makeError('LOGIN_FAILED', { reason: 'expired' }) });
-    if (code === FAKE_LOGIN_EXPIRED_CODE) this.end({ ok: false, error: makeError('LOGIN_FAILED', { reason: 'expired' }) });
+    if (flow === null)
+      return Promise.resolve({ ok: false, error: makeError('LOGIN_FAILED', { reason: 'expired' }) });
+    if (code === FAKE_LOGIN_EXPIRED_CODE)
+      this.end({ ok: false, error: makeError('LOGIN_FAILED', { reason: 'expired' }) });
     else if (code === FAKE_LOGIN_REFUSED_CODE || state !== flow.state) {
       this.end({ ok: false, error: makeError('LOGIN_FAILED', { reason: 'code' }) });
     } else this.end({ ok: true, subscriptionType: this.subscription(undefined) });
@@ -87,7 +95,8 @@ export class FakeLoginSession implements LoginSession, FakeLoginHandle {
 
   waitForCompletion(): Promise<LoginResult> {
     const flow = this.flow;
-    if (flow === null) return Promise.resolve({ ok: false, error: makeError('LOGIN_FAILED', { reason: 'expired' }) });
+    if (flow === null)
+      return Promise.resolve({ ok: false, error: makeError('LOGIN_FAILED', { reason: 'expired' }) });
     return flow.done.promise;
   }
 

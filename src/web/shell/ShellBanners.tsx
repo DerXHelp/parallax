@@ -7,6 +7,7 @@ import { useHostRecord, useHostState } from '@web/state/hooks';
 import { Banner } from '@web/ui/alert';
 import { Button } from '@web/ui/button';
 import { RetryCountdown } from './HostGate';
+import { LoginButton, needsSignIn } from './login/LoginButton';
 import { NotificationPermissionBanner } from './NotificationPermissionBanner';
 
 /** Connection lost / outdated window (after the first successful handshake). */
@@ -113,6 +114,12 @@ function SetupHint() {
       tone={hostState.setupRequired ? 'warning' : 'info'}
       data-slot="setup-hint"
       data-state={hostState.setupRequired ? 'required' : 'too-old'}
+      // WP-70: not signed in → sign in from here (the server checks the profile again afterwards).
+      actions={
+        profile !== undefined && needsSignIn(profile.claude) ? (
+          <LoginButton profileId={profile.id} />
+        ) : undefined
+      }
     >
       <span className="inline-flex flex-wrap gap-x-1.5">
         <span className="font-medium">{t('shell.setup.title')}</span>

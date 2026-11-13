@@ -7,7 +7,13 @@
 import { windowsPathKey } from '@shared/paths';
 
 /** `available_output_styles` of the fake CLI (the built-in styles of claude 2.1.323). */
-export const FAKE_OUTPUT_STYLES: readonly string[] = ['default', 'Proactive', 'Concise', 'Explanatory', 'Learning'];
+export const FAKE_OUTPUT_STYLES: readonly string[] = [
+  'default',
+  'Proactive',
+  'Concise',
+  'Explanatory',
+  'Learning',
+];
 
 export const FAKE_DEFAULT_OUTPUT_STYLE = 'default';
 

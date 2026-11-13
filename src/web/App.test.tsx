@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { LOCAL_HOST_ID } from '@shared/common';
+import { LOCAL_HOST_ID, STANDARD_PROFILE_ID } from '@shared/common';
 import { makeError } from '@shared/errors';
 import {
   sampleBlobRef,
@@ -349,6 +349,9 @@ const EVERY_REQUEST: { [K in ShellRequestKind]: ShellRequestOf<K> } = {
     title: 'Explore the project',
     subagentType: 'Explore',
   },
+  // WP-70: sign in a profile (dialog of the NavigationLayer); the output style of a project.
+  login: { kind: 'login', profileId: STANDARD_PROFILE_ID },
+  outputStyle: { kind: 'outputStyle', sessionKey: PLAYGROUND_SESSION_KEYS.main },
 };
 
 /** Kinds whose handler arrives with a later package – none since WP-60 (attachFiles: WP-57). */
@@ -725,7 +728,8 @@ describe('server facts (R3-01, R3-02) and the setup check (R3-03)', () => {
     expect(document.querySelector('[data-slot="backend-fake"]')?.textContent).toContain('Fake');
     await user.click(screen.getByRole('button', { name: 'Settings' }));
     const info = await screen.findByRole('group', { name: 'About this server' });
-    expect(within(info).getByText('Claude Code 2.1.300')).toBeTruthy();
+    // WP-70: the facts are a lazy chunk of the menu.
+    expect(await within(info).findByText('Claude Code 2.1.300')).toBeTruthy();
     expect(within(info).getByText('C:\\Users\\user\\.local\\bin\\claude.exe')).toBeTruthy();
     expect(within(info).getByText('Agent SDK 0.3.296 · expects Claude Code 2.1.296 or newer')).toBeTruthy();
     expect(within(info).getByText('Parallax 0.0.0')).toBeTruthy();
@@ -762,7 +766,10 @@ describe('server facts (R3-01, R3-02) and the setup check (R3-03)', () => {
     });
     await user.click(screen.getByRole('button', { name: 'Settings' }));
     const info = await screen.findByRole('group', { name: 'About this server' });
-    expect(within(info).getByText('Older than the Agent SDK expects (at least 2.1.296).')).toBeTruthy();
+    // WP-70: the facts are a lazy chunk of the menu.
+    expect(
+      await within(info).findByText('Older than the Agent SDK expects (at least 2.1.296).'),
+    ).toBeTruthy();
     expect(info.querySelector('[data-info="claude"]')?.getAttribute('data-version-status')).toBe('too_old');
     expect(within(info).getByText('Data: %LOCALAPPDATA%\\Parallax')).toBeTruthy();
     expect(info.querySelector('[data-info="backend"]')).toBeNull();

@@ -1,5 +1,5 @@
 import { BellRingIcon, KeyboardIcon, PowerIcon, SettingsIcon, SlidersHorizontalIcon } from 'lucide-react';
-import { useId, useRef, useState } from 'react';
+import { lazy, Suspense, useId, useRef, useState } from 'react';
 import { languageSchema, themeSchema } from '@shared/common';
 import { useT } from '@web/i18n';
 import { useNotificationPermission } from '@web/notifications/permission';
@@ -19,7 +19,6 @@ import {
   DropdownMenuTrigger,
 } from '@web/ui/dropdown-menu';
 import { IconButton } from '@web/ui/icon-button';
-import { HostFacts } from './HostFacts';
 import { enableNotifications } from './NotificationPermissionBanner';
 import { requestShell, useShellRequestHandler, type SettingsSection } from './requests';
 import { ServerShutdownDialog, openServerShutdown } from './server-shutdown/ServerShutdownDialog';
@@ -34,6 +33,9 @@ function save(patch: Parameters<typeof updateSettings>[0]): void {
   });
 }
 
+/** WP-70: the facts come with a lazy chunk – they show only once the menu is open (start-chunk budget). */
+const HostFacts = lazy(() => import('./HostFacts').then((module) => ({ default: module.HostFacts })));
+
 /** The server facts in the menu: no menu items – the arrow keys skip them, a labelled group. */
 function HostInfo() {
   const t = useT();
@@ -45,7 +47,9 @@ function HostInfo() {
       <DropdownMenuSeparator />
       <DropdownMenuGroup aria-labelledby={labelId}>
         <DropdownMenuLabel id={labelId}>{t('shell.info.title')}</DropdownMenuLabel>
-        <HostFacts hostState={hostState} className="px-2 pt-0.5 pb-1.5" />
+        <Suspense fallback={null}>
+          <HostFacts hostState={hostState} className="px-2 pt-0.5 pb-1.5" />
+        </Suspense>
       </DropdownMenuGroup>
     </>
   );

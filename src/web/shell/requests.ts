@@ -1,5 +1,5 @@
 import { useEffect, useEffectEvent } from 'react';
-import type { ProfileId } from '@shared/common';
+import type { HostId, ProfileId } from '@shared/common';
 
 /**
  * Shell request channel (Phase 2 scaffold, WP-30 §4.14 C, ADR-115): cross links between shell parts
@@ -65,7 +65,17 @@ export type ShellRequest =
    * Text back into the composer of a session (a withdrawn queued message, „Zurückholen“): the
    * composer appends it to a draft (new paragraph) or fills the empty field, and takes the focus.
    */
-  | { kind: 'composerText'; sessionKey: string; text: string };
+  | { kind: 'composerText'; sessionKey: string; text: string }
+  // ---- WP-70 ----
+  /**
+   * Sign in a profile from Parallax: the small sign-in dialog (NavigationLayer, lazy chunk). `hostId`:
+   * the profile's host (default local). `modal`: asked from inside a modal dialog (new session,
+   * settings) – the sign-in dialog is modal then too (a non-modal layer outside that dialog's tree
+   * would dismiss it).
+   */
+  | { kind: 'login'; profileId: ProfileId; hostId?: HostId; modal?: boolean }
+  /** The output style of a session's project (header "…" menu; small dialog, lazy chunk). */
+  | { kind: 'outputStyle'; sessionKey: string };
 
 export type ShellRequestKind = ShellRequest['kind'];
 export type ShellRequestOf<K extends ShellRequestKind> = Extract<ShellRequest, { kind: K }>;

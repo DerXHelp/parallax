@@ -115,7 +115,9 @@ describe('Remote Control in the header (WP-64)', () => {
     const user = userEvent.setup();
     await user.click(button);
     const menu = await screen.findByRole('menu');
-    expect(within(menu).getByText(/run `claude` in a terminal/)).toBeTruthy();
+    // WP-70: the error names "Sign in" (the terminal only as the fallback) – and the menu has it.
+    expect(within(menu).getByText(/Use “Sign in” – or run “claude” in a terminal/)).toBeTruthy();
+    expect(within(menu).getByRole('menuitem', { name: 'Sign in' })).toBeTruthy();
     // No link: neither open nor copy.
     expect(within(menu).queryByRole('menuitem', { name: 'Open in the Claude app' })).toBeNull();
     expect(within(menu).getByRole('menuitem', { name: 'Turn off Remote Control' })).toBeTruthy();
@@ -123,7 +125,9 @@ describe('Remote Control in the header (WP-64)', () => {
 
   it('wanted but dormant: muted icon, "connects when the session starts"', () => {
     renderHeader(remote({ state: 'off', wanted: true, sessionUrl: URL }));
-    expect(headerButton().getAttribute('aria-label')).toBe('Remote Control: connects when the session starts');
+    expect(headerButton().getAttribute('aria-label')).toBe(
+      'Remote Control: connects when the session starts',
+    );
   });
 
   it('menu: "Open in the Claude app" opens only the claude.ai link (no opener), "Copy link" copies it', async () => {
@@ -153,7 +157,9 @@ describe('Remote Control in the header (WP-64)', () => {
       setLanguage('de');
     });
     renderHeader(remote());
-    expect(headerButton().getAttribute('aria-label')).toBe('Remote Control: verbunden – in der Claude-App offen');
+    expect(headerButton().getAttribute('aria-label')).toBe(
+      'Remote Control: verbunden – in der Claude-App offen',
+    );
     const user = userEvent.setup();
     await user.click(headerButton());
     const menu = await screen.findByRole('menu');

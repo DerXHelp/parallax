@@ -34,7 +34,9 @@ afterEach(async () => {
   for (const service of services.splice(0)) await service.dispose();
 });
 
-function setup(o: { login?: FakeLoginOptions; deps?: Partial<LoginServiceDeps>; openFails?: boolean } = {}): Setup {
+function setup(
+  o: { login?: FakeLoginOptions; deps?: Partial<LoginServiceDeps>; openFails?: boolean } = {},
+): Setup {
   const backend = createFakeBackend(o.login === undefined ? {} : { login: o.login });
   const claude = createFakeClaudeIntegration();
   const checks: string[] = [];
@@ -89,7 +91,9 @@ describe('parseLoginCode (WP-70)', () => {
 
   it('takes code#state, a link with code/state, or the bare code with the state of the manual link', () => {
     expect(parseLoginCode('  abc_DEF-123#st4te \n', manual)).toEqual({ code: 'abc_DEF-123', state: 'st4te' });
-    expect(parseLoginCode('https://console.anthropic.com/oauth/code/callback?code=abc&state=xyz', manual)).toEqual({
+    expect(
+      parseLoginCode('https://console.anthropic.com/oauth/code/callback?code=abc&state=xyz', manual),
+    ).toEqual({
       code: 'abc',
       state: 'xyz',
     });
@@ -119,7 +123,9 @@ describe('createLoginService (WP-70)', () => {
     expect(s.opened).toEqual([state.url]);
     const [process] = s.backend.logins;
     expect(process?.req.cwd).toBe(CWD);
-    expect(Object.keys(process?.req.launch.env ?? {}).some((k) => k.toUpperCase() === 'PARALLAX_ENTRY_ID')).toBe(false);
+    expect(
+      Object.keys(process?.req.launch.env ?? {}).some((k) => k.toUpperCase() === 'PARALLAX_ENTRY_ID'),
+    ).toBe(false);
     // A second click keeps the process and shows the link again.
     await login(s);
     expect(s.backend.logins).toHaveLength(1);
@@ -131,7 +137,10 @@ describe('createLoginService (WP-70)', () => {
     await login(s);
     await until(() => s.service.state(STANDARD_PROFILE_ID).state === 'waiting');
     const flowState = s.backend.logins[0]?.flowState ?? '';
-    await s.service.handle({ name: 'profile.loginCode', profileId: STANDARD_PROFILE_ID, code: `c0de#${flowState}` }, ctx);
+    await s.service.handle(
+      { name: 'profile.loginCode', profileId: STANDARD_PROFILE_ID, code: `c0de#${flowState}` },
+      ctx,
+    );
     await until(() => s.loggedIn.length === 1);
     const state = s.service.state(STANDARD_PROFILE_ID);
     expect(state).toMatchObject({ state: 'done', subscriptionType: 'max', url: null, error: null });
@@ -157,7 +166,11 @@ describe('createLoginService (WP-70)', () => {
     await until(() => s.service.state(STANDARD_PROFILE_ID).state === 'waiting');
     const flowState = s.backend.logins[0]?.flowState ?? '';
     await s.service.handle(
-      { name: 'profile.loginCode', profileId: STANDARD_PROFILE_ID, code: `${FAKE_LOGIN_REFUSED_CODE}#${flowState}` },
+      {
+        name: 'profile.loginCode',
+        profileId: STANDARD_PROFILE_ID,
+        code: `${FAKE_LOGIN_REFUSED_CODE}#${flowState}`,
+      },
       ctx,
     );
     await until(() => s.service.state(STANDARD_PROFILE_ID).state === 'failed');
@@ -211,7 +224,9 @@ describe('createLoginService (WP-70)', () => {
     const s = setup({ deps: { flowMs: 50 } });
     await login(s);
     await until(() => s.service.state(STANDARD_PROFILE_ID).state === 'failed');
-    expect(s.service.state(STANDARD_PROFILE_ID).error).toEqual(makeError('LOGIN_FAILED', { reason: 'expired' }));
+    expect(s.service.state(STANDARD_PROFILE_ID).error).toEqual(
+      makeError('LOGIN_FAILED', { reason: 'expired' }),
+    );
     expect(s.backend.logins[0]?.closed).toBe(true);
 
     const t = setup();

@@ -457,9 +457,11 @@ export class EntryState {
           });
         }
       } else if (op.op === 'detail.patch') {
-        if (op.patch.commands !== undefined && op.patch.commands !== null) this.saveCommands(op.patch.commands);
+        if (op.patch.commands !== undefined && op.patch.commands !== null)
+          this.saveCommands(op.patch.commands);
         // WP-70: every system/init reports the project's output style (from the next turn after a change).
-        if (op.patch.init !== undefined && op.patch.init !== null) this.setOutputStyle(op.patch.init.outputStyle);
+        if (op.patch.init !== undefined && op.patch.init !== null)
+          this.setOutputStyle(op.patch.init.outputStyle);
       }
     }
     this.observeOverview(ops);

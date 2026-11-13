@@ -85,7 +85,10 @@ function stateOfUrl(url: string | null): string | null {
  * with `code` (and `state`) parameters, or the bare code (state from the manual link). Null when no
  * usable pair comes out.
  */
-export function parseLoginCode(input: string, manualUrl: string | null): { code: string; state: string } | null {
+export function parseLoginCode(
+  input: string,
+  manualUrl: string | null,
+): { code: string; state: string } | null {
   const text = input.trim();
   let code: string | null = null;
   let state: string | null = null;
@@ -215,8 +218,10 @@ export function createLoginService(deps: LoginServiceDeps): LoginService {
       session = deps.backend.startLogin({ launch: { ...launch, env }, cwd: deps.cwd });
       flow.session = session;
     } catch (error) {
-      const payload = error instanceof CommandError ? error.error : makeError('LOGIN_FAILED', { reason: 'process' });
-      if (!(error instanceof CommandError)) log.warn({ err: error, profileId }, 'login process could not be started');
+      const payload =
+        error instanceof CommandError ? error.error : makeError('LOGIN_FAILED', { reason: 'process' });
+      if (!(error instanceof CommandError))
+        log.warn({ err: error, profileId }, 'login process could not be started');
       fail(profileId, generation, payload);
       return;
     }
@@ -224,7 +229,8 @@ export function createLoginService(deps: LoginServiceDeps): LoginService {
     track(
       session.exited.then(() => {
         const flow = current(profileId, generation);
-        if (flow?.session === session) fail(profileId, generation, makeError('LOGIN_FAILED', { reason: 'process' }));
+        if (flow?.session === session)
+          fail(profileId, generation, makeError('LOGIN_FAILED', { reason: 'process' }));
       }),
     );
     const start = await session.authenticate();
