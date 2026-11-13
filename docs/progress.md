@@ -253,6 +253,11 @@ Integrations-Branch `feature/phase-3`. Kritischer Pfad: 50 (Teil 2) → 54 → 5
   Checkpointing); 10 Ausweichmodell: nichts bauen (`fallbackModel` in `~/.claude/settings.json` wirkt schon); 11
   „Zurückholen“ wartender Nachrichten → WP-66.
 - 12.11.2026 (Punkte 12–20, Nutzer: „Ja, alle Reiter“): Session-Info mit Reitern → WP-67; Punkt 20 entfällt.
+- 13.11.2026 (`claude` 2.1.323, Dauerfreigabe): Kurz-Check live (0,0107 USD, Smoke 6/6), eine kleine Abweichung (drei neue
+  Capabilities `ui_pane_widget_v1`, `voice_call_talk_line_v1`, `withdrawn_files_note_v2`) → Profil über `fix/cli-2.1.323` nach
+  `main` (`7d7b267`) und gepusht, `main` in `feature/ux-feedback` (`923a869`). Produktive Instanz braucht `git pull`.
+  Befund für WP-64: `initializationResult` meldet jetzt `remote_control_auto_enable`, `remote_control_auto_on_by_default`,
+  `remote_control_available` – bei der Live-Abnahme prüfen, ob „wie Claude-Einstellung“ diese Werte nutzen sollte.
 
 ## Koordinator-Entscheidungen R3/V2 (15.10.2026)
 - V2-01: Parallax-Edge-Profil nie mit Microsoft-Konto anmelden/synchronisieren (Flags/Profil-Präferenzen, keine Policies).
