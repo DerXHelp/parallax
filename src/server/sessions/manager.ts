@@ -29,6 +29,7 @@ import {
   type HostState,
   type HostWarning,
   type Profile,
+  type ProfileLogin,
   type QueuedPrompt,
   type RateLimitInfo,
   type Settings,
@@ -108,6 +109,7 @@ import {
   wasActive,
   type OrphanResult,
 } from './recovery';
+import { retryRemoteAfterLogin } from './remoteControl';
 import { DEFAULT_AUTO_RETRY } from './retry';
 import { closeRuntime } from './runtime';
 import { endSideQuestions } from './sideQuestions';
@@ -210,6 +212,8 @@ export interface SessionManagerDeps {
   consoleLauncher?: ConsoleLauncher;
   /** Phase 2 (ADR-109, WP-34): click target of native toasts (`toastLaunchUri`); absent → none. */
   systemIntegration?: Pick<SystemIntegration, 'toastLaunchUri'>;
+  /** WP-70: the login state of a profile (`ProfileSummary.login`; host/login.ts); absent → idle. */
+  loginState?: (profileId: ProfileId) => ProfileLogin;
   // Defaults = the real modules (tests override):
   normalizer?: Partial<NormalizerFns>;
   reduceStatus?: ReduceStatus;
@@ -277,6 +281,11 @@ export interface SessionManager extends SessionSource {
    * cache). Always publishes the host state afterwards.
    */
   onProfileChanged(profileId?: ProfileId | null): void;
+  /**
+   * WP-70: the profile signed in again (login from Parallax) – running entries of the profile whose
+   * Remote Control failed for the sign-in (REMOTE_CONTROL_AUTH) try to connect again.
+   */
+  onProfileLoggedIn(profileId: ProfileId): void;
   inspect(entryId: EntryId): EngineEntryInfo | null;
   /** Settles when the orphan cleanup of the server start is done (tests, diagnostics). */
   orphansDone(): Promise<void>;
@@ -407,9 +416,11 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     for (const s of states.values()) {
       entryCounts.set(s.entry.profileId, (entryCounts.get(s.entry.profileId) ?? 0) + 1);
     }
-    const profiles = deps.claude.profiles
-      .summaries()
-      .map((p) => ({ ...p, entryCount: entryCounts.get(p.id) ?? 0 }));
+    const profiles = deps.claude.profiles.summaries().map((p) => ({
+      ...p,
+      entryCount: entryCounts.get(p.id) ?? 0,
+      ...(deps.loginState === undefined ? {} : { login: deps.loginState(p.id) }),
+    }));
     const defaultProfile = deps.claude.profiles.getDefault();
     const defaultSummary = profiles.find((p) => p.id === defaultProfile.id);
     return {
@@ -1193,6 +1204,15 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         dropProfileCaches(id, key === null);
       }
       publishHostState();
+    },
+
+    onProfileLoggedIn(profileId) {
+      for (const s of states.values()) {
+        if (s.entry.profileId !== profileId) continue;
+        retryRemoteAfterLogin(core, s).catch((error: unknown) => {
+          core.reportError(error, 'remote control after the login');
+        });
+      }
     },
 
     orphansDone: () => orphans,

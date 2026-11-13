@@ -189,6 +189,19 @@ export async function setRemoteControl(
   return {};
 }
 
+/**
+ * WP-70: after a login of the entry's profile – a wanted bridge of a running, ready process that
+ * failed for the sign-in (REMOTE_CONTROL_AUTH) connects again. Anything else stays as it is.
+ */
+export async function retryRemoteAfterLogin(core: EngineCore, s: EntryState): Promise<void> {
+  const rt = s.runtime;
+  if (rt === null || !rt.alive || rt.closing || !rt.remoteReady) return;
+  if (!s.entry.remoteControlWanted || s.entry.archived || s.removed) return;
+  if (s.remote.state !== 'failed' || s.remote.error?.code !== 'REMOTE_CONTROL_AUTH') return;
+  core.log.info({ entryId: s.id }, 'remote control: new attempt after the login');
+  await enableRemote(core, s, rt);
+}
+
 /** Archive / remove: the remote session ends with Parallax's entry (before the process closes). */
 export async function endRemoteBeforeClose(core: EngineCore, s: EntryState): Promise<void> {
   if (s.remote.state === 'off' && s.conversation().bridgeSessionId === null) return;

@@ -1,8 +1,9 @@
 import { lazy, Suspense, useState, type ReactNode } from 'react';
+import { LOCAL_HOST_ID } from '@shared/common';
 import { getSelectedSession } from '@web/state/selection';
 import { selectSummary } from '@web/state/hooks';
 import { clientStore } from '@web/state/store';
-import { useShellRequestHandler } from '../requests';
+import { useShellRequestHandler, type ShellRequestOf } from '../requests';
 import { useShortcut } from '../shortcuts';
 import { SlotBoundary } from '../SlotBoundary';
 import { useQuickAsk } from './quick-ask';
@@ -32,6 +33,14 @@ const QuickAskPopover = lazy(() =>
   import('./QuickAskPopover').then((module) => ({ default: module.QuickAskPopover })),
 );
 
+/** WP-70: the sign-in dialog of a profile and the output style of a session's project. */
+const LoginDialog = lazy(() =>
+  import('../login/LoginDialog').then((module) => ({ default: module.LoginDialog })),
+);
+const OutputStyleDialog = lazy(() =>
+  import('../output-style/OutputStyleDialog').then((module) => ({ default: module.OutputStyleDialog })),
+);
+
 /**
  * A lazy dialog: like the settings page it appears whole once its chunk is there (no fallback; the
  * opener keeps the focus until then, so the dialog still returns it on close). A failed chunk shows
@@ -55,8 +64,9 @@ function sessionExists(sessionKey: string): boolean {
  * the shell request channel `renameTitle`, `conversations`, `sessionInfo`, `quickSwitcher`
  * (WP-30 §4.14 C – e.g. `/rename`, `/resume`, `/status` of WP-37), the shortcuts Ctrl+K and F2
  * (ADR-118) and the dialogs they open. WP-63: "Remove from Parallax…" and "Clean up archive…"
- * (`remove-session.ts`); WP-66: the popover of "Quick question…" (`quick-ask.ts`); every dialog
- * except the quick switcher is a lazy chunk.
+ * (`remove-session.ts`); WP-66: the popover of "Quick question…" (`quick-ask.ts`); WP-70: `login`
+ * (sign in a profile, one dialog at a time – a new request mounts it anew and starts again) and
+ * `outputStyle`; every dialog except the quick switcher is a lazy chunk.
  */
 export function NavigationLayer() {
   const [switcher, setSwitcher] = useState(false);
@@ -64,6 +74,8 @@ export function NavigationLayer() {
   const [info, setInfo] = useState<string | null>(null);
   const removeDialog = useRemoveDialog();
   const quickAsk = useQuickAsk();
+  const [login, setLogin] = useState<{ request: ShellRequestOf<'login'>; n: number } | null>(null);
+  const [outputStyle, setOutputStyle] = useState<string | null>(null);
 
   useShellRequestHandler('quickSwitcher', () => {
     setSwitcher(true);
@@ -77,6 +89,15 @@ export function NavigationLayer() {
   useShellRequestHandler('sessionInfo', (request) => {
     if (!sessionExists(request.sessionKey)) return false;
     setInfo(request.sessionKey);
+    return true;
+  });
+  useShellRequestHandler('login', (request) => {
+    setLogin((current) => ({ request, n: (current?.n ?? 0) + 1 }));
+    return true;
+  });
+  useShellRequestHandler('outputStyle', (request) => {
+    if (!sessionExists(request.sessionKey)) return false;
+    setOutputStyle(request.sessionKey);
     return true;
   });
   useShellRequestHandler('renameTitle', (request) => {
@@ -143,6 +164,29 @@ export function NavigationLayer() {
           ) : (
             <ArchiveCleanupDialog onClose={closeRemoveDialog} />
           )}
+        </LazyDialog>
+      )}
+      {login === null ? null : (
+        <LazyDialog resetKey={login.n}>
+          <LoginDialog
+            key={login.n}
+            hostId={login.request.hostId ?? LOCAL_HOST_ID}
+            profileId={login.request.profileId}
+            modal={login.request.modal === true}
+            onClose={() => {
+              setLogin(null);
+            }}
+          />
+        </LazyDialog>
+      )}
+      {outputStyle === null ? null : (
+        <LazyDialog resetKey={outputStyle}>
+          <OutputStyleDialog
+            sessionKey={outputStyle}
+            onClose={() => {
+              setOutputStyle(null);
+            }}
+          />
         </LazyDialog>
       )}
       {quickAsk === null || !sessionExists(quickAsk.sessionKey) ? null : (

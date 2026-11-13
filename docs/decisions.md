@@ -2185,3 +2185,46 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   zweiter Renderer.
 - **Begründung:** Gleiches Aussehen und gleiche Pflege wie im Hauptverlauf, ohne die Liste in den Session-Store zu
   mischen.
+
+## ADR-188 – Anmelden in einem eigenen, kurzlebigen Prozess je Profil
+- **Datum/WP:** 13.11.2026, WP-70; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** „Anmelden“ startet je Profil einen eigenen `claude`-Prozess (Env über `buildEnv`, neutrales `cwd`
+  im Parallax-Home, `settingSources: []`, kein Prompt, kein Transkript), der nur den OAuth-Ablauf
+  (`claudeAuthenticate`/`claudeOAuthCallback`/`claudeOAuthWaitForCompletion`, interne Methoden mit Laufzeitprüfung)
+  führt und nach Erfolg, Abbruch oder 10 min schließt. Nicht im Prozess einer laufenden Session.
+- **Begründung:** Die Anmeldung wird gerade dann gebraucht, wenn keine Session läuft (Neue Session, Profiltest, Banner)
+  oder die Session wegen des Fehlers steht; der Prozess einer Session trägt Projekt-Settings und Hooks und ist im Turn
+  beschäftigt. Die Anmeldung gilt je `CLAUDE_CONFIG_DIR`, also für alle Sessions des Profils. Nutzerentscheidung
+  SDK-Punkt 25.
+
+## ADR-189 – Anmeldeablauf als Profilzustand, Befehle antworten sofort
+- **Datum/WP:** 13.11.2026, WP-70; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** `profile.login`/`profile.loginCode`/`profile.loginCancel` antworten sofort `{}`; der Ablauf ist
+  Zustand `ProfileSummary.login` (`idle`/`starting`/`waiting`/`verifying`/`done`/`failed` mit Fehlercode, nur zur Laufzeit) und
+  erreicht alle Clients (Muster ADR-170). Der Dialog ist nur eine Ansicht, Schließen beendet nichts; ein Fehler-Item
+  blendet seinen Knopf über `login.at` aus.
+- **Begründung:** Mehrere Fenster sehen denselben Stand, kein eigener Client-Zustand, kein hängender Befehl während
+  der Nutzer im Browser ist.
+
+## ADR-190 – Kontodaten verlassen das Backend nie
+- **Datum/WP:** 13.11.2026, WP-70; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Das zod-Schema der Abschluss-Antwort kennt nur `account.subscriptionType`; E-Mail, Organisation
+  und Token-Quelle werden verworfen, bevor sie Code außerhalb von `backend/login.ts` erreichen. CLI-Fehlertexte werden
+  dort zu `reason`-Codes klassifiziert und nie geloggt; stderr des Anmelde-Prozesses nur als Länge; weder URL (mit
+  `state`) noch eingefügter Code im Log.
+- **Begründung:** Datenschutz des Nutzers; Logs und WS-Nachrichten sollen keine Kontodaten tragen können.
+
+## ADR-191 – Ausgabestil über `updateSettings('localSettings')` im Prozess der Session
+- **Datum/WP:** 13.11.2026, WP-70; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** „Ausgabestil“ ruft `updateSettings('localSettings', {outputStyle})` im Prozess der Session auf
+  (schlafend: Start ohne Turn); Parallax schreibt `.claude\settings.local.json` nie selbst und nichts außer
+  `outputStyle`. Der Stil gilt je Projekt ab dem nächsten Turn; andere laufende Sessions desselben Projekts zeigen ihn
+  erst mit ihrem nächsten `init`. Effort bleibt nur in Parallax.
+- **Begründung:** Das CLI besitzt Format, Merge und Schlüsselprüfung der Datei. Nutzerentscheidung SDK-Punkt 28.
+
+## ADR-192 – Nicht-modaler Anmelde-Dialog, modal nur aus modalen Dialogen
+- **Datum/WP:** 13.11.2026, WP-70; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Der Anmelde-Dialog ist nicht-modal (Arbeiten in Parallax geht weiter, während der Nutzer im Browser
+  ist); geöffnet aus einem modalen Dialog (Neue Session, Profile) ist er modal.
+- **Begründung:** Eine nicht-modale Radix-Ebene außerhalb des React-Baums eines modalen Dialogs zählt dort als Klick
+  „außerhalb“ und würde den modalen Dialog schließen.

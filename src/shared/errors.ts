@@ -172,6 +172,17 @@ export const ERROR_CATALOG = {
    * `failure_kind`, e.g. `remote_control_terminal`, `timeout`, `terminal`; `params.detail`).
    */
   REMOTE_CONTROL_FAILED: { category: 'claude', http: 502, severity: 'warning', retryable: true },
+  // Login from Parallax (WP-70): the CLI's OAuth flow through internal SDK control requests.
+  /** The SDK/CLI lacks the (internal) login methods – CLI too old or too new (runtime check). */
+  LOGIN_UNAVAILABLE: { category: 'setup', http: 503, severity: 'warning', retryable: false },
+  /**
+   * The login did not finish (`params.reason`: `expired` = no active flow / timed out, `code` = the
+   * code was refused, `process` = the login process ended, `url` = no usable link, `failed` = other).
+   * Never carries the CLI's text (it may name the account).
+   */
+  LOGIN_FAILED: { category: 'setup', http: 503, severity: 'error', retryable: true },
+  /** Managed settings forbid this login here (`forceLoginMethod`, `allowedProviders`). */
+  LOGIN_BLOCKED: { category: 'setup', http: 503, severity: 'error', retryable: false },
   // Windows integration (Phase 2, ADR-109/110) – host warnings. `params.reason`: free text, or
   // 'foreign' = a `Parallax.lnk` / `parallax:` key of the user or another program, never replaced
   // (R4-11, ADR-133; the settings explain it).

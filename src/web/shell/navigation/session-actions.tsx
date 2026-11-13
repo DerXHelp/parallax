@@ -8,9 +8,11 @@ import {
   LinkIcon,
   FolderPlusIcon,
   MessageCircleQuestionIcon,
+  MessageSquareTextIcon,
   HistoryIcon,
   InfoIcon,
   ListXIcon,
+  LogInIcon,
   MoonIcon,
   PencilIcon,
   PinIcon,
@@ -71,7 +73,11 @@ export type SessionActionId =
   /** WP-65 §1.3: a new AI title from the conversation (also over an own title – asked for). */
   | 'regenerateTitle'
   /** WP-66: "Quick question…" – a side question in a popover at the row. */
-  | 'quickAsk';
+  | 'quickAsk'
+  /** WP-70: sign in the profile (only while Remote Control failed for the sign-in). */
+  | 'signIn'
+  /** WP-70: the output style of the project (small dialog). */
+  | 'outputStyle';
 
 export type SessionActionSlot = SessionActionId | 'separator';
 
@@ -103,6 +109,7 @@ export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
   'openExternal',
   'copyConsoleCommand',
   'separator',
+  'signIn',
   'remoteControl',
   'openRemote',
   'copyRemoteLink',
@@ -111,10 +118,14 @@ export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
   'remove',
 ];
 
-/** Header menu (WP-35 §8; WP-58: + open folder; WP-63: + remove; WP-64: + Remote Control; WP-65: + title). */
+/**
+ * Header menu (WP-35 §8; WP-58: + open folder; WP-63: + remove; WP-64: + Remote Control; WP-65: + title;
+ * WP-70: + output style, sign in).
+ */
 export const HEADER_ACTIONS: readonly SessionActionSlot[] = [
   'conversations',
   'sessionInfo',
+  'outputStyle',
   'rename',
   'regenerateTitle',
   'separator',
@@ -123,6 +134,7 @@ export const HEADER_ACTIONS: readonly SessionActionSlot[] = [
   'openExternal',
   'copyConsoleCommand',
   'separator',
+  'signIn',
   'remoteControl',
   'openRemote',
   'copyRemoteLink',
@@ -376,6 +388,30 @@ function build(
           requestShell({ kind: 'sessionInfo', sessionKey });
         },
       };
+    case 'outputStyle':
+      return {
+        id,
+        label: 'navigation.actions.outputStyle',
+        icon: MessageSquareTextIcon,
+        // The server refuses both (SESSION_ARCHIVED / SESSION_EXTERNAL); a dormant session starts.
+        disabled: summary.archived || external,
+        run: () => {
+          requestShell({ kind: 'outputStyle', sessionKey });
+        },
+      };
+    case 'signIn': {
+      if (summary.remoteControl.error?.code !== 'REMOTE_CONTROL_AUTH') return null;
+      const hostId = parseSessionKey(sessionKey)?.hostId;
+      return {
+        id,
+        label: 'navigation.actions.signIn',
+        icon: LogInIcon,
+        disabled: false,
+        run: () => {
+          requestShell({ kind: 'login', profileId: summary.profileId, hostId });
+        },
+      };
+    }
     case 'remove':
       return {
         id,

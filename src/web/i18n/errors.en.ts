@@ -54,8 +54,10 @@ export const errorsEn: Record<ErrorCode, string> = {
   PROFILE_NOT_DELETABLE: 'The built-in profile cannot be deleted.',
   CLAUDE_NOT_FOUND: 'Claude Code was not found. Install it and make sure “claude” is on the PATH.',
   CLAUDE_VERSION_TOO_OLD: 'The installed Claude Code is too old. Update it with “claude update”.',
-  CLAUDE_NOT_LOGGED_IN: 'Claude Code is not signed in. Run “claude” once in a terminal and sign in.',
-  CLAUDE_AUTH_FAILED: 'Claude Code could not authenticate. Check your sign-in.',
+  CLAUDE_NOT_LOGGED_IN:
+    'Claude Code is not signed in. Use “Sign in” – or run “claude” in a terminal and enter /login.',
+  CLAUDE_AUTH_FAILED:
+    'Claude Code needs a new sign-in. Use “Sign in” – or run “claude” in a terminal and enter /login.',
   CLAUDE_ORG_POLICY: 'An organization policy prevents the start.',
   CLAUDE_BILLING: 'No usable plan or credits for this account.',
   SHELL_TOOL_MISSING: 'Claude Code cannot find a usable shell (Git Bash or PowerShell).',
@@ -87,9 +89,15 @@ export const errorsEn: Record<ErrorCode, string> = {
   CLAUDE_PROXY_INVALID: 'The proxy setting is invalid. Check HTTPS_PROXY and start again.',
   REMOTE_CONTROL_UNAVAILABLE:
     'Remote Control is not available with this Claude Code version (too old or too new for Parallax).',
-  REMOTE_CONTROL_AUTH: 'Remote Control needs a new sign-in: run `claude` in a terminal and enter /login.',
+  REMOTE_CONTROL_AUTH:
+    'Remote Control needs a new sign-in. Use “Sign in” – or run “claude” in a terminal and enter /login.',
   REMOTE_CONTROL_POLICY_DISABLED: 'Remote Control is turned off by your organization.',
   REMOTE_CONTROL_FAILED: 'The Remote Control connection failed or was lost.',
+  LOGIN_UNAVAILABLE:
+    'Signing in from Parallax is not available with this Claude Code version – run “claude” in a terminal and enter /login.',
+  LOGIN_FAILED: 'The sign-in did not finish. Start it again.',
+  LOGIN_BLOCKED:
+    'Your organization’s managed settings do not allow this sign-in here. Run “claude auth login” in a terminal for details.',
   AUTOSTART_FAILED: 'Autostart could not be set up.',
   PROTOCOL_HANDLER_FAILED: 'Opening sessions from Windows notifications could not be set up.',
   STORE_CORRUPT_QUARANTINED: 'A damaged data file was set aside and replaced by a fresh one.',

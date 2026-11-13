@@ -110,6 +110,9 @@ export const en = {
     regenerateTitle: 'Generate title again',
     /** WP-66: a side question from the sidebar. */
     quickAsk: 'Quick question…',
+    /** WP-70: sign in from Parallax (at sign-in errors); the output style of the project. */
+    signIn: 'Sign in',
+    outputStyle: 'Output style…',
   },
   /** WP-66: the popover of "Quick question…" (a side question, never part of the conversation). */
   quickAsk: {

@@ -310,6 +310,10 @@ export class EntryState {
   turnSummaryFromClaude = false;
   /** WP-65: live activity of the running turn as published (null = not working). */
   activity: SessionActivity | null = null;
+  /** WP-70: the project's output style as last reported or set (runtime only; null = unknown). */
+  outputStyle: string | null = null;
+  /** WP-70: the styles the CLI offers in the project (`initializationResult`; [] = unknown). */
+  availableOutputStyles: string[] = [];
   /** A turn after a conversation_reset is running (title_changed echoes are ignored). */
   resetInTurn = false;
   promptTitle: string | null;
@@ -452,8 +456,12 @@ export class EntryState {
             itemId: op.itemId,
           });
         }
-      } else if (op.op === 'detail.patch' && op.patch.commands !== undefined && op.patch.commands !== null) {
-        this.saveCommands(op.patch.commands);
+      } else if (op.op === 'detail.patch') {
+        if (op.patch.commands !== undefined && op.patch.commands !== null)
+          this.saveCommands(op.patch.commands);
+        // WP-70: every system/init reports the project's output style (from the next turn after a change).
+        if (op.patch.init !== undefined && op.patch.init !== null)
+          this.setOutputStyle(op.patch.init.outputStyle);
       }
     }
     this.observeOverview(ops);
@@ -521,6 +529,23 @@ export class EntryState {
       this.activityTimer = null;
       this.updateActivity();
     }, wait);
+  }
+
+  /** WP-70: the output style reported by the CLI (init, initializationResult) or just set. */
+  setOutputStyle(style: string | null): void {
+    if (style === null || style === this.outputStyle || this.removed) return;
+    this.outputStyle = style;
+    this.publishSummary(false);
+  }
+
+  /** WP-70: `initializationResult` of a (re)started process – the list to the detail, the style to the summary. */
+  setOutputStyles(styles: { current: string | null; available: string[] }): void {
+    if (this.removed) return;
+    if (styles.available.length > 0 && !isDeepStrictEqual(styles.available, this.availableOutputStyles)) {
+      this.availableOutputStyles = [...styles.available];
+      this.emit([{ op: 'detail.patch', patch: { availableOutputStyles: [...styles.available] } }]);
+    }
+    this.setOutputStyle(styles.current);
   }
 
   /** WP-65: the turn ended - activity off; the next turn starts without the old sentence/tools. */
@@ -754,6 +779,7 @@ export class EntryState {
       externalRunning: this.externalRunning,
       remote: this.remote,
       activity: this.activity,
+      outputStyle: this.outputStyle,
     });
   }
 
@@ -822,6 +848,7 @@ export class EntryState {
           commands,
           queue: this.queue.list(),
           latestPlanVersion: this.broker.latestPlanVersion(),
+          availableOutputStyles: this.availableOutputStyles,
         });
         // Phase 3: todos/planFile derived from the items (the base view carries them; no op).
         const { todos, planFile } = this.seedDetail(seedItems, buffer);
@@ -878,6 +905,7 @@ export class EntryState {
       commands: null,
       queue: this.queue.list(),
       latestPlanVersion: this.broker.latestPlanVersion(),
+      availableOutputStyles: this.availableOutputStyles,
     });
     this.detail.reset();
     this.mirror = view;

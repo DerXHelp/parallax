@@ -164,6 +164,10 @@ export interface EngineHarnessOptions {
   sideQuestions?: FakeBackendOptions['sideQuestions'];
   /** WP-67: `FakeBackendOptions.sessionInfo` (session info, MCP actions, reloads). */
   sessionInfo?: FakeBackendOptions['sessionInfo'];
+  /** WP-70: `FakeBackendOptions.outputStyleError` (updateSettings fails). */
+  outputStyleError?: boolean;
+  /** WP-70: `SessionManagerDeps.loginState` (ProfileSummary.login in the host state). */
+  loginState?: SessionManagerDeps['loginState'];
 }
 
 /** A not yet existing folder for the fake files of one harness (below the test home). */
@@ -286,6 +290,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     ...(options.overview === undefined ? {} : { overview: options.overview }),
     ...(options.sideQuestions === undefined ? {} : { sideQuestions: options.sideQuestions }),
     ...(options.sessionInfo === undefined ? {} : { sessionInfo: options.sessionInfo }),
+    ...(options.outputStyleError === undefined ? {} : { outputStyleError: options.outputStyleError }),
     now,
     filesRoot,
   });
@@ -311,6 +316,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     ...(options.hostCommands === undefined ? {} : { hostCommands: options.hostCommands }),
     ...(options.onSettingsChanged === undefined ? {} : { onSettingsChanged: options.onSettingsChanged }),
     ...(options.extraWarnings === undefined ? {} : { extraWarnings: options.extraWarnings }),
+    ...(options.loginState === undefined ? {} : { loginState: options.loginState }),
     checkCwd:
       options.checkCwd ??
       ((cwd) => {

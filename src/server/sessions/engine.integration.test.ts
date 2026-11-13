@@ -1338,6 +1338,9 @@ describe('start and stop edges', () => {
         backgroundTasks: closed,
         readUsage: () => Promise.resolve(null),
         askSideQuestion: () => Promise.resolve({ ok: false as const, reason: 'failed' as const }),
+        readOutputStyles: () => Promise.resolve(null),
+        setOutputStyle: () =>
+          Promise.resolve({ ok: false as const, error: { code: 'CLAUDE_CONTROL_FAILED' as const, params: {} } }),
         withdrawQueued: closed,
         readInfo: closed,
         mcpAction: closed,
