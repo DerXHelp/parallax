@@ -2228,3 +2228,14 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   ist); geöffnet aus einem modalen Dialog (Neue Session, Profile) ist er modal.
 - **Begründung:** Eine nicht-modale Radix-Ebene außerhalb des React-Baums eines modalen Dialogs zählt dort als Klick
   „außerhalb“ und würde den modalen Dialog schließen.
+
+## ADR-193 – Neue Basis für das Start-Budget (Stand nach WP-70)
+- **Datum/WP:** 13.11.2026, Koordinator (vor WP-71).
+- **Entscheidung:** `scripts/bundle-budget.ts` misst ab jetzt gegen den Merge von WP-70 (`2fe8a9b`: `index` 323 111 B,
+  Start-Chunks 889 270 B roh, 9 Dateien) statt gegen WP-60 (`109c073`); erlaubtes Wachstum bleibt +10 kB roh für
+  `index` und für die Summe der Start-Chunks. Eine neue Basis gibt es nur per ADR.
+- **Begründung:** Die +10 kB gegen `109c073` sind nach WP-63 bis WP-70 verbraucht (Start +9 315 B), obwohl `index`
+  durch konsequentes Nachladen um rund 60 kB geschrumpft ist – das Budget hat seinen Zweck erfüllt (jede Zunahme war
+  bewusst, alles nach einem Klick lädt lazy). WP-71 braucht sichtbare Teile in der Sidebar (Zähler, Puls), die im
+  Start-Chunk liegen müssen. Für eine lokal ausgelieferte App ist die Ladezeit dieser Größe unkritisch; die Regel
+  „nur das Nötigste in den Start-Chunk“ gilt weiter.
