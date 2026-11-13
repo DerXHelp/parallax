@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "cliVersion": "2.1.323",
   "sdkVersion": "0.3.322",
-  "checkedAt": "2026-11-13T07:39:50.987Z",
+  "checkedAt": "2026-11-13T13:14:06.287Z",
   "model": "claude-haiku-5-5",
   "permissionMode": "default",
   "outputStyle": "default",
@@ -249,5 +249,7 @@
     "export": true,
     "mcpActions": true,
     "reload": true
-  }
+  },
+  "login": true,
+  "outputStyleSetting": true
 }
