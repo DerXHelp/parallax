@@ -4,6 +4,7 @@ import type { EffortLevel } from '@shared/common';
 import type { ContextGauge, ProfileColor, SessionSummary } from '@shared/model';
 import type { DisplayStatusKind } from '@shared/status';
 import { useFormat, useT } from '@web/i18n';
+import { sessionLine } from '@web/lib/activity';
 import { cn } from '@web/lib/cn';
 import type { ContextLevel } from '@web/lib/context-display';
 import { effectiveEffort } from '@web/lib/effort';
@@ -22,6 +23,7 @@ import { PROFILE_BG } from './profile-colors';
 import { RemoteControlIcon, showsRemoteInRow, useRemoteControlTexts } from './remote-control';
 import { startRename, useRenaming } from './rename';
 import { RenameField } from './RenameField';
+import { SessionLineText, useSessionLineText } from './session-line';
 import {
   SIDEBAR_ACTIONS,
   SessionActionItems,
@@ -137,8 +139,9 @@ export interface SessionRowProps {
 }
 
 /**
- * Two-line sidebar entry (Plan "Sidebar"): line 1 status icon (+ text for screen readers), title,
- * pin, relative time, unread dot; line 2 last two path segments (the last one never cut first,
+ * Sidebar entry (Plan "Sidebar"): line 1 status icon (+ text for screen readers), title,
+ * pin, relative time, unread dot; WP-65: then the quiet session line (live sentence / turn summary,
+ * `@web/lib/activity`) when there is one; last line: the last two path segments (the last one never cut first,
  * WP41-02), ⎇ branch, short model name,
  * context fill. Profile color stripe on the left, details in the tooltip. Right click (or
  * Shift+F10) opens the context menu; the "…" button (on hover/focus) the same actions. Double
@@ -175,6 +178,9 @@ export const SessionRow = memo(function SessionRow({
   const model = shortModelName(summary.model ?? summary.modelSetting);
   const effort = effectiveEffort({ effort: summary.effort, profileEffort });
   const showActions = !editing && (hovered || focusWithin || menuOpen || contextOpen);
+  // WP-65 §1.1: live sentence while working, turn summary afterwards (null = nothing to say).
+  const line = useMemo(() => sessionLine(summary, statusKind), [summary, statusKind]);
+  const lineText = useSessionLineText(line);
   const actions =
     contextOpen || menuOpen ? sessionActions(SIDEBAR_ACTIONS, sessionKey, summary, 'sidebar') : [];
 
@@ -269,6 +275,11 @@ export const SessionRow = memo(function SessionRow({
                     </span>
                   ) : null}
                 </span>
+                {line === null ? null : (
+                  <span className="flex h-4 min-w-0 items-center pl-5.5 text-2xs">
+                    <SessionLineText line={line} />
+                  </span>
+                )}
                 <span
                   data-slot="row-details"
                   className="text-muted-foreground flex h-4 min-w-0 items-center gap-1.5 pl-5.5 text-2xs"
@@ -308,6 +319,7 @@ export const SessionRow = memo(function SessionRow({
               <div className="grid gap-0.5">
                 <span className="font-medium">{title}</span>
                 <span>{t(`status.${statusKind}`)}</span>
+                {lineText === null ? null : <span className="break-words">{lineText}</span>}
                 <span className="text-muted-foreground font-mono break-all">{summary.cwd}</span>
                 {summary.gitBranch === null ? null : (
                   <span className="text-muted-foreground">

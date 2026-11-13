@@ -9,6 +9,7 @@ import { useChildItemIds } from '@web/state/hooks';
 import { Badge } from '@web/ui/badge';
 import { Button } from '@web/ui/button';
 import { Spinner } from '@web/ui/spinner';
+import { BackgroundButton } from '../components/BackgroundButton';
 import { Disclosure } from '../components/Disclosure';
 import { ModelBadge } from '../components/ModelBadge';
 import { ToolFileLink } from '../components/ToolFileLink';
@@ -167,6 +168,10 @@ export const AgentCard = memo(function AgentCard({ item, sessionKey }: ToolBodyP
           )}
           {model === null ? null : <span>{t('transcript.agent.model', { model })}</span>}
         </span>
+        {/* WP-65 §1.5: a subagent in the foreground can move to the background. */}
+        {item.status === 'running' ? (
+          <BackgroundButton sessionKey={sessionKey} toolUseId={item.toolUseId} title={title} />
+        ) : null}
         {stoppable ? <StopAgentButton sessionKey={sessionKey} taskId={task.taskId} title={title} /> : null}
       </div>
       {summary === null || summary === '' ? null : (
