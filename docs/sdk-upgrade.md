@@ -33,7 +33,8 @@ Profil-/Neue-Session-Status einen dezenten Hinweis („neuer als die mit Paralla
   API-Key-Variablen, C.7) → Probe (eine isolierte Haiku-Runde: `system/init`, `initializationResult()`,
   `supportedModels()`, `getContextUsage()`, danach Remote Control ein/aus ohne Modell-Turn, WP-64, und
   ein Sitzungstitel, die Nutzungsabfrage und `backgroundTasks` vorhanden, WP-65, eine Seitenfrage und
-  `cancelAsyncMessage` vorhanden, WP-66) → Live-Smoke `e2e/live` (Schritt 7 unten) → Vergleich mit dem
+  `cancelAsyncMessage` vorhanden, WP-66, jede Lese-Methode der Session-Info einmal, Aktionen nur
+  vorhanden, WP-67) → Live-Smoke `e2e/live` (Schritt 7 unten) → Vergleich mit dem
   Profil → Bericht `test-results/cli-check/<zeit>.md` → Rückbau eigener Daten (Scratch, CLI-Transkripte,
   CLI-Task-Ordner; Plan-Dateien und `~/.claude.json` nur gemeldet). Exit 0 = grün, 1 = Abweichungen,
   2 = Abbruch (Auth-/Billing-Stopp nie wiederholen).
@@ -71,6 +72,9 @@ Profil-/Neue-Session-Status einen dezenten Hinweis („neuer als die mit Paralla
   `getSettings().effective.remoteControlAtStartup`, `system/bridge_state`, `isReplay`-Prompts mit
   `origin human`, WP-65: `Query.generateSessionTitle`, `usage_EXPERIMENTAL_…`, `backgroundTasks`,
   WP-66: `Query.askSideQuestion`, `cancelAsyncMessage`, `system/control_request_progress`,
+  WP-67: `Query.getStatus`, `getMemoryDialog`, `getSkillsDialog`, `getHooksListing`,
+  `listPermissionRules`, `exportConversation`, `reloadSkills`/`reloadPlugins` (Antwortformen in
+  `docs/wp/WP-67.md` §3, Parser `backend/sessionInfo.ts`),
   `system/task_summary`/`post_turn_summary` …) – sind sie jetzt typisiert
   oder umbenannt? Die SDK-Grenze ist `src/server/backend/sdkBackend.ts` (`SdkQueryHandle`),
   `sdkOptions.ts` und `src/server/sessions/normalizer/sdk-schemas.ts` (zod, tolerant).

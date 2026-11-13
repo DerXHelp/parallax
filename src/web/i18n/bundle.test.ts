@@ -70,6 +70,21 @@ function startGraph(entry: string): Set<string> {
 
 const GERMAN = /\/i18n\/(?:de|errors\.de|dictionary\.de)\.ts$/;
 
+/**
+ * Lazy namespaces (WP-67): English and German come with a lazy chunk of their own (`translateFrom`)
+ * – neither is part of the start chunk nor of dictionary.de.
+ */
+const LAZY_NAMESPACES = [
+  {
+    dir: '/src/web/shell/navigation/session-info/i18n/',
+    chunk: '/src/web/shell/navigation/session-info/McpTab.tsx',
+  },
+];
+
+function inLazyNamespace(file: string): boolean {
+  return LAZY_NAMESPACES.some((namespace) => file.startsWith(namespace.dir));
+}
+
 describe('start chunk (R5W-01, ADR-153)', () => {
   const graph = startGraph('/src/web/main.tsx');
 
@@ -86,10 +101,26 @@ describe('start chunk (R5W-01, ADR-153)', () => {
     expect(german).toEqual([]);
     // Every German dictionary of the app is part of that chunk.
     const lazy = startGraph('/src/web/i18n/dictionary.de.ts');
-    const all = Object.keys(SOURCES).filter((file) => /\/i18n\/(?:de|errors\.de)\.ts$/.test(file));
+    const all = Object.keys(SOURCES).filter(
+      (file) => /\/i18n\/(?:de|errors\.de)\.ts$/.test(file) && !inLazyNamespace(file),
+    );
     expect(all.length).toBeGreaterThan(10);
     for (const file of all) expect(lazy.has(file), file).toBe(true);
     expect(SOURCES['/src/web/i18n/dictionaries.ts']).toContain("import('./dictionary.de')");
+  });
+
+  it('keeps the lazy namespaces (English and German) out of the start chunk and out of dictionary.de (WP-67)', () => {
+    const lazyGerman = startGraph('/src/web/i18n/dictionary.de.ts');
+    for (const namespace of LAZY_NAMESPACES) {
+      const files = [`${namespace.dir}en.ts`, `${namespace.dir}de.ts`];
+      const chunk = startGraph(namespace.chunk);
+      for (const file of files) {
+        expect(Object.hasOwn(SOURCES, file), file).toBe(true);
+        expect(graph.has(file), file).toBe(false);
+        expect(lazyGerman.has(file), file).toBe(false);
+        expect(chunk.has(file), file).toBe(true);
+      }
+    }
   });
 
   it('the i18n core imports no app module outside its dictionaries (an import of lib/storage gave it a start chunk of its own)', () => {

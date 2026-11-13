@@ -11,6 +11,7 @@
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { makeError } from '@shared/errors';
+import type { McpAction, ReloadTarget, SessionInfoSection, SessionInfoSectionName } from '@shared/model';
 import { nextMacrotask, realSetImmediate, toError } from '../../lib/async';
 import { logger } from '../../lib/logger';
 import type { FixtureEvent } from '../fixture';
@@ -31,6 +32,7 @@ import type {
   UsageLimits,
 } from '../types';
 import { usageLimitsOf } from '../overview';
+import { sessionInfoOf } from '../sessionInfo';
 import {
   HANDLER_ERROR_RESULT,
   SessionStopped,
@@ -55,6 +57,7 @@ import {
   fakeSideMode,
 } from './sideQuestion';
 import { EventPlayer } from './player';
+import { FakeSessionInfo } from './sessionInfo';
 import {
   FAKE_REMOTE_CONNECT_MS,
   bridgeStateMessage,
@@ -74,6 +77,7 @@ import type {
   FakeRemotePromptOptions,
   FakeScenario,
   FakeSideQuestionOptions,
+  FakeSessionInfoOptions,
   FakeScriptContext,
   FakeScriptState,
   FakeSessionHandle,
@@ -112,6 +116,8 @@ export interface FakeSessionDeps {
   usage: FakeUsage;
   /** WP-66: FakeBackendOptions.sideQuestions. */
   sideQuestions: FakeSideQuestionOptions;
+  /** WP-67: FakeBackendOptions.sessionInfo. */
+  sessionInfo: FakeSessionInfoOptions;
   onStateChange(): void;
 }
 
@@ -184,11 +190,14 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
   private readonly foreground = new Map<string, () => void>();
   /** WP-66: request ids of the fake side questions (control_request_progress). */
   private sideRequests = 0;
+  /** WP-67: session info, MCP servers and reload state of this session (levers: fake:info-*). */
+  readonly info: FakeSessionInfo;
 
   constructor(private readonly deps: FakeSessionDeps) {
     this.entryId = deps.req.entryId;
     this.pid = deps.pid;
     this.scenario = deps.scenario.name;
+    this.info = new FakeSessionInfo(deps.sessionInfo);
     this.currentSessionId =
       deps.scenario.kind === 'script' ? (deps.req.resumeSessionId ?? deps.ids.uuid()) : null;
     const scenario = deps.scenario;
@@ -432,6 +441,45 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
     }
     if (mode === 'none') return { ok: true, answer: null };
     return { ok: true, answer: fakeSideAnswer(question, opts.history, turnRunning, mode) };
+  }
+
+  /**
+   * WP-67: one section of the session info as the CLI answers it, through the SdkBackend's parser
+   * (fake/sessionInfo.ts). null = this (fake) CLI lacks the method (lever) or events mode (no
+   * recorded answer). Rejects when the session has ended.
+   */
+  async readInfo(section: SessionInfoSectionName): Promise<SessionInfoSection | null> {
+    this.calls.push({ fn: 'readInfo', args: [section] });
+    if (this.deps.scenario.kind === 'events' || !this.info.available(section)) return null;
+    if (this.exited) throw new Error('session closed');
+    const state = this.script?.state;
+    const raw = this.info.answer(section, {
+      sessionId: this.currentSessionId,
+      cwd: this.deps.req.cwd,
+      model: state?.model ?? resolveFakeModel(this.deps.req.model),
+      permissionMode: state?.permissionMode ?? this.deps.req.permissionMode ?? 'default',
+      now: this.deps.now(),
+      messages: this.currentSessionId === null ? [] : this.deps.history.messages(this.currentSessionId),
+    });
+    return Promise.resolve(sessionInfoOf(section, raw).data);
+  }
+
+  /** WP-67: reconnect / enable / disable an MCP server of this session (rejects like the CLI). */
+  async mcpAction(server: string, action: McpAction): Promise<void> {
+    this.controls.push({ method: 'mcpAction', args: [server, action] });
+    if (this.deps.scenario.kind === 'events') throw new Error('mcpAction is not recorded');
+    if (this.exited) throw new Error('session closed');
+    this.info.mcpAction(server, action);
+    return Promise.resolve();
+  }
+
+  /** WP-67: reloadSkills / reloadPlugins (rejects with the 'failed' lever). */
+  async reload(what: ReloadTarget): Promise<void> {
+    this.controls.push({ method: 'reload', args: [what] });
+    if (this.deps.scenario.kind === 'events') throw new Error('reload is not recorded');
+    if (this.exited) throw new Error('session closed');
+    this.info.reload(what);
+    return Promise.resolve();
   }
 
   /**
@@ -1113,6 +1161,10 @@ class ScriptContext implements FakeScriptContext {
 
   foregroundTool(toolUseId: string, ms: number): Promise<'background' | 'done'> {
     return this.session.foregroundTool(toolUseId, ms, this.turn.signal);
+  }
+
+  get info(): FakeSessionInfo {
+    return this.session.info;
   }
 
   /** WP-64: the turn of a prompt typed in the Claude app, once no other turn runs (not interruptible). */

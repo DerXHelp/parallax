@@ -258,6 +258,49 @@ export function overviewFindings(profile: CliProfile, observation: Observation):
   });
 }
 
+/** WP-67: the session-info step (sessionInfo.ts) – one capability per tab plus the actions. */
+type SessionInfoKey = keyof NonNullable<CliProfile['sessionInfo']>;
+
+const SESSION_INFO_HINT =
+  'The "Session info" dialog (WP-67) reads the internal dialog requests: backend/sdkBackend.ts readInfo, ' +
+  'backend/sessionInfo.ts sessionInfoOf (parser per tab), sessions/sessionInfo.ts; a tab whose method is ' +
+  'gone or whose answer changed shape shows „nicht verfügbar mit dieser claude-Version“ – compare the ' +
+  'answer forms in docs/wp/WP-67.md §3.';
+
+const SESSION_INFO_AREAS: readonly { key: SessionInfoKey; label: string; hint: string }[] = [
+  { key: 'status', label: 'session info: status (Query.getStatus)', hint: SESSION_INFO_HINT },
+  { key: 'memory', label: 'session info: CLAUDE.md (Query.getMemoryDialog)', hint: SESSION_INFO_HINT },
+  { key: 'skills', label: 'session info: skills (Query.getSkillsDialog)', hint: SESSION_INFO_HINT },
+  { key: 'hooks', label: 'session info: hooks (Query.getHooksListing)', hint: SESSION_INFO_HINT },
+  { key: 'permissions', label: 'session info: permissions (Query.listPermissionRules)', hint: SESSION_INFO_HINT },
+  { key: 'mcp', label: 'session info: MCP (Query.mcpServerStatus)', hint: SESSION_INFO_HINT },
+  { key: 'export', label: 'session info: export (Query.exportConversation)', hint: SESSION_INFO_HINT },
+  {
+    key: 'mcpActions',
+    label: 'Query.reconnectMcpServer + toggleMcpServer',
+    hint: 'MCP „Neu verbinden“ / „An/Aus“ (WP-67): backend/sdkBackend.ts mcpAction, sessions/sessionInfo.ts.',
+  },
+  {
+    key: 'reload',
+    label: 'Query.reloadSkills + reloadPlugins',
+    hint: '„Skills neu laden“ / „Plugins neu laden“ (WP-67): backend/sdkBackend.ts reload, sessions/sessionInfo.ts.',
+  },
+];
+
+/** WP-67: the session-info capabilities of the probe against the profile (`sessionInfo.<key>`). */
+export function sessionInfoFindings(profile: CliProfile, observation: Observation): Finding[] {
+  return SESSION_INFO_AREAS.flatMap((spec) => {
+    const finding = availabilityFinding(
+      `sessionInfo.${spec.key}`,
+      spec.label,
+      spec.hint,
+      profile.sessionInfo?.[spec.key] ?? null,
+      observation.sessionInfo?.[spec.key] ?? null,
+    );
+    return finding === null ? [] : [finding];
+  });
+}
+
 /** Profile vs. observation (probe). Without a profile one deviation asks for the first `--accept`. */
 export function compareObservation(profile: CliProfile | null, observation: Observation): Finding[] {
   if (profile === null) {
@@ -339,6 +382,7 @@ export function compareObservation(profile: CliProfile | null, observation: Obse
 
   push(remoteControlFinding(profile.remoteControl, observation.remoteControl));
   findings.push(...overviewFindings(profile, observation));
+  findings.push(...sessionInfoFindings(profile, observation));
 
   // ADR-156: TodoWrite/TaskCreate are the reason the task bar stays empty – call them out.
   const todoAdded = TODO_TOOLS.filter((tool) => observation.tools.includes(tool) && !profile.tools.includes(tool));

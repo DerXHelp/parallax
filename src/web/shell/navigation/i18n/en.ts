@@ -218,7 +218,7 @@ export const en = {
   },
   info: {
     title: 'Session info',
-    description: 'Facts of this session as reported by Claude Code at its last start.',
+    description: 'Facts of this session: from its last start, and in the other tabs live from Claude Code.',
     model: 'Model',
     mode: 'Mode',
     cwd: 'Working directory',

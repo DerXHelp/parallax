@@ -324,6 +324,8 @@ describe('SdkBackend – start, events, close', () => {
       iteratorAfterExitMs: 2000,
       titleMs: 60000,
       sideQuestionMs: 120000,
+      infoMs: 30000,
+      infoActionMs: 60000,
     });
   });
 
@@ -1319,6 +1321,116 @@ describe('SdkBackend – side questions and withdraw (WP-66)', () => {
 
     const { session: old } = withSide(() => undefined);
     await expect(old.withdrawQueued(sampleUuid(1))).rejects.toThrow(/cancelAsyncMessage/);
+  });
+});
+
+describe('SdkBackend – session info, MCP actions, reloads (WP-67)', () => {
+  function withInfo(configure: (q: SdkQueryHandle) => void, logger?: Logger) {
+    const h = harness({ configure, ...(logger === undefined ? {} : { logger }) });
+    const session = h.backend.start(request());
+    record(session);
+    return { h, session };
+  }
+
+  function capture() {
+    const lines: Record<string, unknown>[] = [];
+    const logger = pino({ level: 'debug' }, { write: (line: string) => lines.push(JSON.parse(line) as Record<string, unknown>) });
+    return { logger, lines };
+  }
+
+  it('each tab calls its method once and parses the answer (mcpServerStatus typed, the rest internal)', async () => {
+    const status = vi.fn(() => Promise.resolve({ sections: [{ title: 'Session', rows: [{ label: 'Version', value: '2.1.323' }] }] }));
+    const mcp = vi.fn(() => Promise.resolve([{ name: 'docs', status: 'connected' }]));
+    const exportConversation = vi.fn(() => Promise.resolve({ text: 'hi', default_filename: 'a.txt' }));
+    const { session } = withInfo((q) => {
+      q.getStatus = status;
+      q.mcpServerStatus = mcp;
+      q.exportConversation = exportConversation;
+    });
+    await expect(session.readInfo('status')).resolves.toEqual({
+      section: 'status',
+      groups: [{ title: 'Session', rows: [{ label: 'Version', value: '2.1.323' }] }],
+      extra: [],
+    });
+    await expect(session.readInfo('mcp')).resolves.toMatchObject({ servers: [{ name: 'docs', status: 'connected' }] });
+    await expect(session.readInfo('export')).resolves.toMatchObject({ text: 'hi', filename: 'a.txt' });
+    expect([status.mock.calls.length, mcp.mock.calls.length, exportConversation.mock.calls.length]).toEqual([1, 1, 1]);
+  });
+
+  it('missing method, refused request, unknown shape → null (logged once, never the answer); other errors reject', async () => {
+    const { logger, lines } = capture();
+    const skills = vi.fn<() => Promise<unknown>>(() => Promise.reject(new Error('Unsupported control request subtype: get_skills_dialog')));
+    const status = vi.fn<() => Promise<unknown>>(() => Promise.resolve({ unexpected: 'user@example.com' }));
+    const memory = vi.fn<() => Promise<unknown>>(() => Promise.reject(new Error('Request timed out')));
+    const { session } = withInfo((q) => {
+      q.getSkillsDialog = skills;
+      q.getStatus = status;
+      q.getMemoryDialog = memory;
+    }, logger);
+    await expect(session.readInfo('hooks')).resolves.toBeNull();
+    await expect(session.readInfo('hooks')).resolves.toBeNull();
+    await expect(session.readInfo('skills')).resolves.toBeNull();
+    await expect(session.readInfo('status')).resolves.toBeNull();
+    await expect(session.readInfo('memory')).rejects.toThrow('Request timed out');
+    const info = lines.filter((line) => typeof line.msg === 'string' && line.msg.startsWith('session info'));
+    // The second "hooks" request only logs at debug level.
+    expect(info.filter((line) => line.section === 'hooks').map((line) => line.level)).toEqual([30, 20]);
+    expect(info.map((line) => line.msg)).toEqual(
+      expect.arrayContaining([
+        'session info: method missing in this SDK/CLI',
+        'session info: this CLI does not answer the request',
+        'session info: unknown answer shape – tab not available',
+        'session info request failed',
+      ]),
+    );
+    expect(JSON.stringify(lines)).not.toContain('user@example.com');
+  });
+
+  it('unknown fields are logged once as keys only', async () => {
+    const { logger, lines } = capture();
+    const { session } = withInfo((q) => {
+      q.getSkillsDialog = () => Promise.resolve({ skills: [{ name: 'a', secretField: 'value-xyz' }] });
+    }, logger);
+    await session.readInfo('skills');
+    await session.readInfo('skills');
+    const unknown = lines.filter((line) => line.msg === 'session info: unknown fields ignored');
+    expect(unknown.map((line) => [line.level, line.unknown])).toEqual([
+      [30, ['skills.skills:secretField']],
+      [20, ['skills.skills:secretField']],
+    ]);
+    expect(JSON.stringify(lines)).not.toContain('value-xyz');
+  });
+
+  it('mcpAction: reconnect / toggle(true|false); reload: skills / plugins; missing methods and failures reject', async () => {
+    const reconnect = vi.fn<NonNullable<SdkQueryHandle['reconnectMcpServer']>>(() => Promise.resolve());
+    const toggle = vi.fn<NonNullable<SdkQueryHandle['toggleMcpServer']>>(() => Promise.resolve());
+    const reloadSkills = vi.fn(() => Promise.resolve({ skills: [] }));
+    const reloadPlugins = vi.fn(() => Promise.resolve({ commands: [], error_count: 0 }));
+    const { session } = withInfo((q) => {
+      q.reconnectMcpServer = reconnect;
+      q.toggleMcpServer = toggle;
+      q.reloadSkills = reloadSkills;
+      q.reloadPlugins = reloadPlugins;
+    });
+    await session.mcpAction('docs', 'reconnect');
+    await session.mcpAction('docs', 'disable');
+    await session.mcpAction('docs', 'enable');
+    expect(reconnect.mock.calls).toEqual([['docs']]);
+    expect(toggle.mock.calls).toEqual([
+      ['docs', false],
+      ['docs', true],
+    ]);
+    await session.reload('skills');
+    await session.reload('plugins');
+    expect([reloadSkills.mock.calls.length, reloadPlugins.mock.calls.length]).toEqual([1, 1]);
+    reconnect.mockRejectedValueOnce(new Error('MCP server "docs" is disabled'));
+    await expect(session.mcpAction('docs', 'reconnect')).rejects.toThrow('is disabled');
+
+    const { session: old } = withInfo(() => undefined);
+    await expect(old.mcpAction('docs', 'reconnect')).rejects.toThrow(/reconnectMcpServer/);
+    await expect(old.mcpAction('docs', 'enable')).rejects.toThrow(/toggleMcpServer/);
+    await expect(old.reload('skills')).rejects.toThrow(/reload skills/);
+    await expect(old.reload('plugins')).rejects.toThrow(/reload plugins/);
   });
 });
 

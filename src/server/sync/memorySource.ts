@@ -180,6 +180,9 @@ export function createMemorySessionSource(options: { host?: HostState } = {}): M
       case 'session.cancelSideQuestion':
       case 'session.deleteSideQuestion':
       case 'session.withdrawQueued':
+      case 'session.info':
+      case 'session.mcpAction':
+      case 'session.reload':
       case 'link.open':
         throw new CommandError(makeError('NOT_IMPLEMENTED', { command: cmd.name }));
     }

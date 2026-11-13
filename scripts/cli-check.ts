@@ -13,7 +13,8 @@
  * variables, C.7); 2. probe (scripts/cli-check/probe.ts, one Haiku turn; WP-64: Remote Control on,
  * `bridge_state connected`, off – scripts/cli-check/remoteControl.ts; WP-65: one session title, the
  * usage query, `backgroundTasks` present – scripts/cli-check/overview.ts; WP-66: one side question,
- * `cancelAsyncMessage` present – scripts/cli-check/sideQuestion.ts); 3. live smoke `e2e/live`
+ * `cancelAsyncMessage` present – scripts/cli-check/sideQuestion.ts; WP-67: each session-info read
+ * method once, the actions only present – scripts/cli-check/sessionInfo.ts); 3. live smoke `e2e/live`
  * with the remaining budget; 4. comparison with the profile (compare.ts); 5. report under
  * test-results/cli-check/ + console summary; 6. budget guard (probe + smoke ≤ 0.05 USD); 7. cleanup
  * of own data outside the repo (cleanup.ts). Exit: 0 = green, 1 = deviations, 2 = error/abort;
@@ -200,6 +201,7 @@ async function liveRun(started: Date): Promise<RunRecord> {
       remoteControl: probe.remoteControl,
       overview: probe.overview,
       sideQuestion: probe.sideQuestion,
+      sessionInfo: probe.sessionInfo,
     };
     record.cost.probeUsd = probe.costUsd;
     out(`cli-check: probe done – ${probe.costUsd.toFixed(4)} USD, ${String(probe.observation.tools.length)} tools`);
