@@ -1,4 +1,11 @@
-import { FlaskConicalIcon, FolderSearchIcon, SaveIcon, StarIcon, Trash2Icon, TriangleAlertIcon } from 'lucide-react';
+import {
+  FlaskConicalIcon,
+  FolderSearchIcon,
+  SaveIcon,
+  StarIcon,
+  Trash2Icon,
+  TriangleAlertIcon,
+} from 'lucide-react';
 import { useEffect, useEffectEvent, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { EFFORT_LEVELS, type EffortLevel, type PermissionMode, type ProfileId } from '@shared/common';
 import type { ErrorPayload } from '@shared/errors';
@@ -94,7 +101,10 @@ export function SavedProfileEditor({
 
   if (loaded === null) {
     return (
-      <div className="text-muted-foreground flex items-center gap-2 p-4 text-xs" data-slot="profile-editor-loading">
+      <div
+        className="text-muted-foreground flex items-center gap-2 p-4 text-xs"
+        data-slot="profile-editor-loading"
+      >
         <Spinner label={t('profiles.editor.loading')} />
         {t('profiles.editor.loading')}
       </div>
@@ -241,7 +251,10 @@ function ProfileForm({
   const deleteRef = useRef<HTMLButtonElement>(null);
 
   const allowsBypass = bypassAllowed(validation.issues);
-  const built = useMemo(() => buildInput(draft, profileId, { allowsBypass }), [draft, profileId, allowsBypass]);
+  const built = useMemo(
+    () => buildInput(draft, profileId, { allowsBypass }),
+    [draft, profileId, allowsBypass],
+  );
   const currentKey = inputKey(built);
   const changed = draftKey(draft) !== baseline;
   /** Something to save: every new profile, a saved one only when changed. */
@@ -251,10 +264,13 @@ function ProfileForm({
     [validation, draft.env],
   );
   const counts = issueCounts(validation.issues);
-  const visibleProblems = attempted ? built.problems : built.problems.filter((problem) => problem.field !== 'name');
+  const visibleProblems = attempted
+    ? built.problems
+    : built.problems.filter((problem) => problem.field !== 'name');
   const isDefault = summary?.isDefault === true;
   const savedErrors = summary === null ? 0 : issueCounts(summary.issues).error;
-  const showConfigDirWarning = profileId !== null && entryCount > 0 && configDirChanged(savedConfigDir, draft.configDir);
+  const showConfigDirWarning =
+    profileId !== null && entryCount > 0 && configDirChanged(savedConfigDir, draft.configDir);
 
   const reportDirty = useEffectEvent((value: boolean) => {
     events.onDirtyChange(value);
@@ -490,7 +506,8 @@ function ProfileForm({
               aria-label={t('profiles.fields.executablePathLabel')}
               placeholder={t('profiles.fields.executablePlaceholder')}
               aria-invalid={
-                executableProblems.length > 0 || placed.executable.some((finding) => finding.level === 'error')
+                executableProblems.length > 0 ||
+                placed.executable.some((finding) => finding.level === 'error')
                   ? true
                   : undefined
               }
@@ -513,9 +530,7 @@ function ProfileForm({
               spellCheck={false}
               autoComplete="off"
               placeholder={t('profiles.fields.configDirPlaceholder')}
-              aria-invalid={
-                configDirProblems.length > 0 || placed.configDir.length > 0 ? true : undefined
-              }
+              aria-invalid={configDirProblems.length > 0 || placed.configDir.length > 0 ? true : undefined}
               aria-describedby={ids.configDirHint}
               className="font-mono text-xs"
               onChange={(event) => {
@@ -542,7 +557,11 @@ function ProfileForm({
                 {t('profiles.fields.configDirWrites')}
               </p>
             )}
-            <FieldNotes id={`${ids.configDirHint}-notes`} problems={configDirProblems} issues={placed.configDir} />
+            <FieldNotes
+              id={`${ids.configDirHint}-notes`}
+              problems={configDirProblems}
+              issues={placed.configDir}
+            />
             {showConfigDirWarning ? (
               <Alert tone="warning" data-slot="config-dir-warning">
                 {t('profiles.fields.configDirWarning', { count: entryCount })}
@@ -695,7 +714,7 @@ function ProfileForm({
 
       {testResult === null && actionError === null ? null : (
         <div ref={resultsRef} data-slot="profile-results" className="grid gap-3">
-          {testResult === null ? null : <TestResult claude={testResult} />}
+          {testResult === null ? null : <TestResult claude={testResult} profileId={profileId} />}
           {actionError === null ? null : (
             <Alert tone="error" data-slot="profile-action-error">
               {tError(actionError)}
@@ -723,7 +742,11 @@ function ProfileForm({
                   });
                 }}
               >
-                {busy === 'delete' ? <Spinner label={t('profiles.editor.deleting')} /> : <Trash2Icon aria-hidden />}
+                {busy === 'delete' ? (
+                  <Spinner label={t('profiles.editor.deleting')} />
+                ) : (
+                  <Trash2Icon aria-hidden />
+                )}
                 {t('profiles.editor.deleteConfirmAction')}
               </Button>
               <Button
@@ -790,7 +813,11 @@ function ProfileForm({
                   });
                 }}
               >
-                {busy === 'test' ? <Spinner label={t('profiles.editor.testing')} /> : <FlaskConicalIcon aria-hidden />}
+                {busy === 'test' ? (
+                  <Spinner label={t('profiles.editor.testing')} />
+                ) : (
+                  <FlaskConicalIcon aria-hidden />
+                )}
                 {busy === 'test' ? t('profiles.editor.testing') : t('profiles.editor.test')}
               </Button>
               <Button

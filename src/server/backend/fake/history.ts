@@ -16,6 +16,14 @@ export interface FakeHistoryStore {
   messages(sessionId: string): unknown[];
   /** Subagent conversations (listSubagents + getSubagentMessages). */
   subagents(sessionId: string): { agentId: string; messages: unknown[] }[];
+  /** WP-69: getSubagentMessages of one agent (raw; [] = no such transcript). */
+  subagentMessages(sessionId: string, agentId: string): unknown[];
+  /**
+   * WP-69: a message only the subagent's transcript holds (`agent-<id>.jsonl`: its prompt, texts,
+   * thinking – the live stream carries only its tool calls, §0). `raw` like a live message
+   * (type/uuid/message/timestamp); `parent_tool_use_id` = the Agent tool use.
+   */
+  recordSubagent(sessionId: string, agentId: string, raw: unknown): void;
   /** Raw SDKSessionInfo or null. */
   info(sessionId: string): unknown;
   /** The CLI's AI title (summary) of a session. */
@@ -32,6 +40,8 @@ export interface FakeHistoryStore {
 interface SessionRecord {
   messages: unknown[];
   subagents: Map<string, unknown[]>;
+  /** WP-69: Agent tool use → agent id (`system/task_started`), so its messages land in `agent-<id>`. */
+  agentByToolUse: Map<string, string>;
   customTitle: string | null;
   aiTitle: string | null;
   firstPrompt: string | null;
@@ -53,6 +63,14 @@ const liveMessageSchema = z.looseObject({
   origin: z.unknown().optional(),
   isReplay: z.boolean().optional().catch(undefined),
   agent_id: z.string().optional().catch(undefined),
+});
+
+/** WP-69: `system/task_started` links an Agent tool use to its agent id (the CLI's transcript file). */
+const taskStartedSchema = z.looseObject({
+  type: z.literal('system'),
+  subtype: z.literal('task_started'),
+  task_id: z.string().min(1),
+  tool_use_id: z.string().min(1),
 });
 
 const textContentSchema = z.union([
@@ -79,6 +97,7 @@ export function createFakeHistoryStore(options: { now?: () => Date } = {}): Fake
       record = {
         messages: [],
         subagents: new Map(),
+        agentByToolUse: new Map(),
         customTitle: null,
         aiTitle: null,
         firstPrompt: null,
@@ -96,6 +115,11 @@ export function createFakeHistoryStore(options: { now?: () => Date } = {}): Fake
   return {
     record(sessionId, raw) {
       if (sessionId === '') return;
+      const started = taskStartedSchema.safeParse(raw);
+      if (started.success) {
+        recordFor(sessionId).agentByToolUse.set(started.data.tool_use_id, started.data.task_id);
+        return;
+      }
       const parsed = liveMessageSchema.safeParse(raw);
       if (!parsed.success || parsed.data.isReplay === true) return;
       const m = parsed.data;
@@ -112,8 +136,9 @@ export function createFakeHistoryStore(options: { now?: () => Date } = {}): Fake
       };
       if (m.origin !== undefined) entry.origin = m.origin;
       if (parentToolUseId !== null) {
-        // Subagent messages are not part of the main transcript (F.15, getSubagentMessages).
-        const agentId = m.agent_id ?? parentToolUseId;
+        // Subagent messages are not part of the main transcript (F.15, getSubagentMessages); the
+        // file is named after the agent id (task_started.task_id, WP-69).
+        const agentId = m.agent_id ?? record.agentByToolUse.get(parentToolUseId) ?? parentToolUseId;
         const list = record.subagents.get(agentId) ?? [];
         list.push(entry);
         record.subagents.set(agentId, list);
@@ -129,6 +154,28 @@ export function createFakeHistoryStore(options: { now?: () => Date } = {}): Fake
     },
 
     messages: (sessionId) => [...(sessions.get(sessionId)?.messages ?? [])],
+
+    subagentMessages: (sessionId, agentId) => [...(sessions.get(sessionId)?.subagents.get(agentId) ?? [])],
+
+    recordSubagent(sessionId, agentId, raw) {
+      if (sessionId === '' || agentId === '') return;
+      const parsed = liveMessageSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const m = parsed.data;
+      const record = recordFor(sessionId);
+      const list = record.subagents.get(agentId) ?? [];
+      list.push({
+        type: m.type,
+        uuid: m.uuid,
+        session_id: sessionId,
+        message: m.message,
+        parent_tool_use_id: m.parent_tool_use_id ?? null,
+        parent_agent_id: null,
+        timestamp: m.timestamp ?? now().toISOString(),
+      });
+      record.subagents.set(agentId, list);
+      record.lastModified = now().getTime();
+    },
 
     subagents: (sessionId) =>
       [...(sessions.get(sessionId)?.subagents ?? new Map<string, unknown[]>())].map(

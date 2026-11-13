@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { TaskInfo, ToolCallItem, TranscriptItem } from '@shared/model';
 import { sampleItems, sampleSystemItems, sampleTime } from '@shared/samples';
-import { buildTaskRows, type TaskRow } from '@web/lib/task-rows';
+import { buildTaskRows, type TaskRow } from '@shared/tasks';
 import { RECENT_TASK_MS, canStopTask, finishedDuration, visibleTaskRows } from './rows';
 
-/** Panel helpers; the row model itself is tested in `@web/lib/task-rows.test.ts` (CR3-02). */
+/** Panel helpers; the row model itself is tested in `@shared/tasks.test.ts` (CR3-02, WP-71). */
 
 function info(taskId: string, patch: Partial<TaskInfo> = {}): TaskInfo {
   return {

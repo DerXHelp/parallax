@@ -1,5 +1,7 @@
+import type { ProfileId } from '@shared/common';
 import type { ClaudeInstallStatus } from '@shared/model';
 import { useI18n, type TranslationKey } from '@web/i18n';
+import { LoginButton, needsSignIn } from '@web/shell/login/LoginButton';
 import { ProfileStatus } from '@web/shell/new-session/profile-status';
 
 const LOGIN_KEYS: Readonly<Record<ClaudeInstallStatus['auth']['state'], TranslationKey>> = {
@@ -12,9 +14,16 @@ const LOGIN_KEYS: Readonly<Record<ClaudeInstallStatus['auth']['state'], Translat
 /**
  * Result of "Test profile" (`profile.test` → `claude --version` + `claude auth status` with this
  * profile's environment): version, program, sign-in (method, plan), time of the check. Never an
- * e-mail or organization (F.17 – the server does not send them).
+ * e-mail or organization (F.17 – the server does not send them). WP-70: not signed in → "Sign in"
+ * (a saved profile only, `profileId`).
  */
-export function TestResult({ claude }: { claude: ClaudeInstallStatus }) {
+export function TestResult({
+  claude,
+  profileId = null,
+}: {
+  claude: ClaudeInstallStatus;
+  profileId?: ProfileId | null;
+}) {
   const { t, tError, format } = useI18n();
   const login =
     claude.auth.state === 'logged_in' && claude.auth.method !== null
@@ -59,6 +68,9 @@ export function TestResult({ claude }: { claude: ClaudeInstallStatus }) {
         )}
       </dl>
       {claude.error === null ? null : <p className="text-destructive">{tError(claude.error)}</p>}
+      {profileId !== null && needsSignIn(claude) ? (
+        <LoginButton profileId={profileId} className="justify-self-start" />
+      ) : null}
     </div>
   );
 }

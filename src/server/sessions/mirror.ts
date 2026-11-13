@@ -36,6 +36,8 @@ export function emptyDetail(o: {
   queue: QueuedPrompt[];
   /** Phase 3 (ADR-148): highest plan version of the entry (null = none). */
   latestPlanVersion?: number | null;
+  /** WP-70: output styles the CLI offers in the project (runtime only; [] = unknown). */
+  availableOutputStyles?: string[];
 }): SessionDetail {
   return {
     entryId: o.entryId,
@@ -52,6 +54,7 @@ export function emptyDetail(o: {
     todos: null,
     planFile: null,
     latestPlanVersion: o.latestPlanVersion ?? null,
+    availableOutputStyles: o.availableOutputStyles ?? [],
   };
 }
 
@@ -133,6 +136,7 @@ export function baseView(o: {
   commands?: SlashCommandInfo[] | null;
   queue: QueuedPrompt[];
   latestPlanVersion?: number | null;
+  availableOutputStyles?: string[];
 }): SessionViewState {
   const current = currentConversation(o.entry);
   return {
@@ -150,6 +154,7 @@ export function baseView(o: {
       commands: o.commands ?? null,
       queue: o.queue,
       latestPlanVersion: o.latestPlanVersion ?? null,
+      availableOutputStyles: o.availableOutputStyles ?? [],
     }),
   };
 }

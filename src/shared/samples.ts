@@ -13,6 +13,7 @@ import {
   DEFAULT_NOTIFICATION_SETTINGS,
   DEFAULT_REMOTE_CONTROL_SETTINGS,
   DEFAULT_REMOTE_CONTROL_SUMMARY,
+  IDLE_PROFILE_LOGIN,
   defaultEditorSettings,
 } from './model';
 import type {
@@ -155,6 +156,7 @@ export function sampleProfileSummary(p: Partial<ProfileSummary> = {}): ProfileSu
     configDir: null,
     issues: [],
     entryCount: 0,
+    login: { ...IDLE_PROFILE_LOGIN },
     ...p,
   };
 }
@@ -215,6 +217,7 @@ export function sampleSettings(p: Partial<Settings> = {}): Settings {
     editor: sampleEditorSettings(),
     remoteControl: { ...DEFAULT_REMOTE_CONTROL_SETTINGS },
     transcriptView: 'compact',
+    hookDisplay: 'failed',
     ...p,
   };
 }
@@ -392,6 +395,8 @@ export function sampleSummary(p: Partial<SessionSummary> = {}): SessionSummary {
     activity: null,
     turnSummary: null,
     lastSeenAt: null,
+    outputStyle: null,
+    runningTasks: null,
     ...p,
   };
 }
@@ -546,6 +551,7 @@ export const sampleSystemItems: SystemItemFactories = {
     hookEvent: 'PreToolUse',
     outcome: 'success',
     output: capped(''),
+    exitCode: 0,
     ...p,
   }),
   permission_denied: (p = {}) => ({
@@ -904,6 +910,7 @@ export function sampleDetail(p: Partial<SessionDetail> = {}): SessionDetail {
     todos: null,
     planFile: null,
     latestPlanVersion: null,
+    availableOutputStyles: [],
     ...p,
   };
 }

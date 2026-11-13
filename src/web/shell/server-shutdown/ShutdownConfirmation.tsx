@@ -1,0 +1,113 @@
+import { useMemo, useState } from 'react';
+import type { ErrorPayload } from '@shared/errors';
+import { useI18n } from '@web/i18n';
+import { useNow } from '@web/state/clock';
+import { errorPayloadOf } from '@web/state/connection';
+import { sendCommand, useConnectionStatus, useSummaries } from '@web/state/hooks';
+import { Alert } from '@web/ui/alert';
+import { Button } from '@web/ui/button';
+import { DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@web/ui/dialog';
+import { StatusIcon } from '@web/ui/status-icon';
+import { shutdownImpact, type AffectedSession } from './impact';
+import { closeServerShutdown } from './ServerShutdownDialog';
+
+/**
+ * The content of "Stop server" (WP-21): the working and waiting sessions, then `server.shutdown`.
+ * A lazy chunk (WP-70, start-chunk budget): it is needed only after the click in the settings menu
+ * – `ServerShutdownDialog` (start chunk) keeps the open state and loads it.
+ */
+
+function SessionList({ label, sessions }: { label: string; sessions: readonly AffectedSession[] }) {
+  if (sessions.length === 0) return null;
+  return (
+    <section className="grid gap-1">
+      <h3 className="text-xs font-medium">{label}</h3>
+      <ul className="bg-muted/40 grid max-h-40 gap-0.5 overflow-y-auto rounded-md px-2 py-1.5 text-xs">
+        {sessions.map((session) => (
+          <li key={session.sessionKey} className="flex min-w-0 items-center gap-2">
+            <StatusIcon kind={session.kind} className="shrink-0" />
+            <span className="min-w-0 truncate">{session.title}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+export function ShutdownConfirmation() {
+  const { t, tError } = useI18n();
+  const entries = useSummaries();
+  const now = useNow(5_000);
+  const impact = useMemo(() => shutdownImpact(entries, new Date(now)), [entries, now]);
+  const connected = useConnectionStatus() === 'open';
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<ErrorPayload | null>(null);
+  const nothing = impact.working.length === 0 && impact.waiting.length === 0 && impact.idle === 0;
+
+  const confirm = () => {
+    setPending(true);
+    setError(null);
+    sendCommand(null, { name: 'server.shutdown' }).then(
+      () => {
+        closeServerShutdown();
+      },
+      (caught: unknown) => {
+        setPending(false);
+        setError(errorPayloadOf(caught));
+      },
+    );
+  };
+
+  return (
+    <DialogContent
+      className="sm:max-w-md"
+      onCloseAutoFocus={(event) => {
+        // Opened from a menu item that no longer exists (V2-07): back to the settings button,
+        // never to <body>.
+        const trigger = document.querySelector<HTMLElement>('[data-action="settings"]');
+        if (trigger === null) return;
+        event.preventDefault();
+        trigger.focus();
+      }}
+    >
+      <DialogHeader>
+        <DialogTitle>{t('serverShutdown.title')}</DialogTitle>
+        <DialogDescription>{t('serverShutdown.description')}</DialogDescription>
+      </DialogHeader>
+      {nothing ? <p className="text-muted-foreground text-xs">{t('serverShutdown.nothingRunning')}</p> : null}
+      <SessionList
+        label={t('serverShutdown.working', { count: impact.working.length })}
+        sessions={impact.working}
+      />
+      <SessionList
+        label={t('serverShutdown.waiting', { count: impact.waiting.length })}
+        sessions={impact.waiting}
+      />
+      {impact.waiting.length > 0 ? (
+        <p className="text-muted-foreground text-xs">{t('serverShutdown.waitingHint')}</p>
+      ) : null}
+      {impact.idle > 0 ? (
+        <p className="text-muted-foreground text-xs">{t('serverShutdown.idle', { count: impact.idle })}</p>
+      ) : null}
+      {connected ? null : <Alert tone="warning" title={t('serverShutdown.notConnected')} />}
+      {error === null ? null : (
+        <Alert tone="error" title={t('serverShutdown.failed')}>
+          {tError(error)}
+        </Alert>
+      )}
+      <DialogFooter>
+        <Button
+          variant="ghost"
+          onClick={() => {
+            closeServerShutdown();
+          }}
+        >
+          {t('common.cancel')}
+        </Button>
+        <Button variant="destructive" disabled={pending || !connected} onClick={confirm}>
+          {pending ? t('serverShutdown.stopping') : t('serverShutdown.confirm')}
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  );
+}

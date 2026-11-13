@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { loadAllFixtures, mergeByTime } from '../../sessions/normalizer/testing/harness';
 import { fixtureCallPayloadSchema } from '../fixture';
 import type { HistoryMessage } from '../types';
-import { mergeHistory, toHistoryMessages, toSessionInfo } from './parse';
+import { mergeHistory, sliceSubagentMessages, toHistoryMessages, toSessionInfo, toSubagentSlice } from './parse';
 
 const fixtures = await loadAllFixtures();
 const history = fixtures.get('history');
@@ -183,5 +183,39 @@ describe('toSessionInfo', () => {
       firstPrompt: null,
       lastModified: 0,
     });
+  });
+});
+
+describe('WP-69: subagent slices', () => {
+  const raw = (uuid: string) => ({
+    type: 'assistant',
+    uuid,
+    session_id: 's1',
+    message: {},
+    parent_tool_use_id: 'toolu_a',
+    timestamp: null,
+  });
+
+  it('sliceSubagentMessages: from the known count, the uuid before it and the last; from is clamped', () => {
+    const list = [raw('a1'), raw('a2'), raw('a3')];
+    const slice = sliceSubagentMessages(list, 1);
+    expect(slice).toMatchObject({ total: 3, previousUuid: 'a1', lastUuid: 'a3' });
+    expect(slice.messages.map((m) => m.uuid)).toEqual(['a2', 'a3']);
+    expect(sliceSubagentMessages(list, 0)).toMatchObject({ previousUuid: null, lastUuid: 'a3' });
+    expect(sliceSubagentMessages(list, 7)).toEqual({ total: 3, previousUuid: 'a3', lastUuid: 'a3', messages: [] });
+    expect(sliceSubagentMessages(list, -2).messages).toHaveLength(3);
+    expect(sliceSubagentMessages([], 0)).toEqual({ total: 0, previousUuid: null, lastUuid: null, messages: [] });
+  });
+
+  it('toSubagentSlice: checked answer, invalid messages skipped (total stays), unusable → empty', () => {
+    const slice = toSubagentSlice({ total: 4, previousUuid: 'a1', lastUuid: 'a3', messages: [raw('a2'), 'x', raw('a3')] });
+    expect(slice).toMatchObject({ total: 4, previousUuid: 'a1', lastUuid: 'a3' });
+    expect(slice.messages.map((m) => m.uuid)).toEqual(['a2', 'a3']);
+    expect(toSubagentSlice({ total: 1, previousUuid: 5, lastUuid: null, messages: [] })).toMatchObject({
+      previousUuid: null,
+    });
+    for (const unusable of [null, 'x', { total: -1, messages: [] }, { total: 1 }]) {
+      expect(toSubagentSlice(unusable)).toEqual({ total: 0, previousUuid: null, lastUuid: null, messages: [] });
+    }
   });
 });

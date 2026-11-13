@@ -49,6 +49,9 @@ import {
   sessionInfoSectionSchema,
   sessionSummarySchema,
   settingsPatchSchema,
+  subagentIdSchema,
+  subagentTranscriptPageSchema,
+  SUBAGENT_TRANSCRIPT_LIMITS,
   settingsSchema,
   transcriptItemSchema,
 } from './model';
@@ -61,6 +64,8 @@ import { notificationKindSchema } from './status';
  * 3 (Phase 3, ADR-140): new error codes and commands (file service, plan versions, stopTask).
  */
 export const PROTOCOL_VERSION = 3;
+/** WP-70: longest pasted sign-in code (`profile.loginCode`; a link with code and state fits). */
+export const LOGIN_CODE_CHARS = 4000;
 /**
  * A rejected upgrade (cookie, Origin, Host, Sec-Fetch-Site) is an HTTP 401/403 with an
  * `ErrorPayload` body – the browser only sees close 1006, so the client asks
@@ -466,12 +471,66 @@ export const commandSchema = z.discriminatedUnion('name', [
   }),
   /** Reload skills or plugins from disk (`reloadSkills`, `reloadPlugins`); rules as `session.mcpAction`. */
   z.object({ name: z.literal('session.reload'), entryId: entryIdSchema, what: reloadTargetSchema }),
+  // ---- WP-69 (subagent transcript) ----
+  /**
+   * Read a subagent's own transcript (`getSubagentMessages`, the CLI's `agent-<id>.jsonl`) as items of
+   * a list of its own – never part of the session's conversation, nothing is stored. Only on request
+   * (the side panel polls while `running`). `conversationId` null = the current conversation;
+   * `offset` null = the newest `limit` items. Works without a process (reads the file) and for
+   * archived/external entries. A missing file is an empty page; CONVERSATION_NOT_FOUND,
+   * SESSION_NOT_STARTED (no Claude session yet), FILE_NOT_READABLE (the read failed or timed out).
+   */
+  z.object({
+    name: z.literal('session.subagentTranscript'),
+    entryId: entryIdSchema,
+    agentId: subagentIdSchema,
+    conversationId: conversationIdSchema.nullable().default(null),
+    offset: z.number().int().nonnegative().nullable().default(null),
+    limit: z
+      .number()
+      .int()
+      .positive()
+      .max(SUBAGENT_TRANSCRIPT_LIMITS.maxPageItems)
+      .default(SUBAGENT_TRANSCRIPT_LIMITS.pageItems),
+  }),
   /**
    * Host: open an http(s) link in the Windows default browser (the Parallax window is a Chrome app
    * profile without any sign-in). OPEN_FAILED when no default browser could be started – the client
    * then falls back to `window.open`.
    */
   z.object({ name: z.literal('link.open'), url: httpUrlSchema }),
+  // ---- WP-70 (login per profile, output style per project) ----
+  /**
+   * Host: sign the profile in from Parallax – the CLI's OAuth flow in a short-lived `claude` of the
+   * profile (its config folder: all sessions of the profile); the server opens the link in the
+   * default browser. Progress and result: `ProfileSummary.login` (host state). A login of the
+   * profile that is still starting/waiting is kept (no second process). PROFILE_NOT_FOUND.
+   */
+  z.object({ name: z.literal('profile.login'), profileId: profileIdSchema }),
+  /**
+   * Host: the code the sign-in page showed (manual way): `code#state`, a link with `code`/`state` or
+   * the bare code (tolerant). The check runs in the background (`login.state` `verifying` → `done` or
+   * `failed`). LOGIN_FAILED {reason:'expired'} when the profile has no waiting login.
+   */
+  z.object({
+    name: z.literal('profile.loginCode'),
+    profileId: profileIdSchema,
+    code: z.string().trim().min(1).max(LOGIN_CODE_CHARS),
+  }),
+  /** Host: end the profile's login (process closed, state back to idle); none running → no-op. */
+  z.object({ name: z.literal('profile.loginCancel'), profileId: profileIdSchema }),
+  /**
+   * The output style of the entry's project: `updateSettings('localSettings', {outputStyle})` in the
+   * session's process (`<cwd>\.claude\settings.local.json`, all sessions in this project; from the
+   * next turn on). A dormant entry is started without a turn. VALIDATION_FAILED for a style the CLI
+   * does not offer (when the list is known); CLAUDE_CONTROL_FAILED {method:'updateSettings'}. Not
+   * for archived or external entries.
+   */
+  z.object({
+    name: z.literal('session.setOutputStyle'),
+    entryId: entryIdSchema,
+    style: z.string().trim().min(1).max(100),
+  }),
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export type CommandName = Command['name'];
@@ -500,6 +559,9 @@ export const HOST_COMMAND_NAMES = [
   'files.project',
   'editor.detect',
   'link.open',
+  'profile.login',
+  'profile.loginCode',
+  'profile.loginCancel',
 ] as const satisfies readonly CommandName[];
 export type HostCommandName = (typeof HOST_COMMAND_NAMES)[number];
 export type HostCommand = Extract<Command, { name: HostCommandName }>;
@@ -588,7 +650,12 @@ export const commandResultSchemas = {
   'session.info': z.object({ available: z.boolean(), data: sessionInfoSectionSchema.nullable() }),
   'session.mcpAction': z.object({}),
   'session.reload': z.object({}),
+  'session.subagentTranscript': subagentTranscriptPageSchema,
   'link.open': z.object({}),
+  'profile.login': z.object({}),
+  'profile.loginCode': z.object({}),
+  'profile.loginCancel': z.object({}),
+  'session.setOutputStyle': z.object({}),
 } as const satisfies Record<CommandName, z.ZodType>;
 export type CommandResult<N extends CommandName> = z.infer<(typeof commandResultSchemas)[N]>;
 

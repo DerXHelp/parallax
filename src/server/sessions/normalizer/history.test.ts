@@ -10,7 +10,7 @@ import type { ToolCallItem, TranscriptItem } from '@shared/model';
 import { transcriptItemSchema } from '@shared/model';
 import { fixtureCallPayloadSchema } from '../../backend/fixture';
 import type { HistoryMessage } from '../../backend/types';
-import { normalizeHistory } from './index';
+import { createHistoryAccumulator, normalizeHistory } from './index';
 import {
   finalItems,
   loadAllFixtures,
@@ -341,6 +341,35 @@ describe('normalizeHistory details', () => {
       ctx,
     );
     expect(taskView(items)).toEqual([['msg_1:0', 'task-1', 'completed', null]]);
+  });
+
+  it('WP-69 accumulator: pieces equal normalizeHistory over all messages; orders from nextOrder; open calls running or interrupted', () => {
+    const messages: HistoryMessage[] = [
+      user('p1', 'Look around.'),
+      assistant('a1', 'msg_1', [
+        { type: 'thinking', thinking: 'First the layout.', signature: '' },
+        { type: 'tool_use', id: 'toolu_1', name: 'Glob', input: { pattern: '*.md' } },
+      ]),
+      user('r1', [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'README.md' }]),
+      assistant('a2', 'msg_2', [{ type: 'tool_use', id: 'toolu_2', name: 'Read', input: { file_path: 'README.md' } }]),
+    ];
+    const acc = createHistoryAccumulator({ ...ctx, nextOrder: 1 });
+    acc.add(messages.slice(0, 2));
+    const early = acc.items('running');
+    expect(early.map((i) => [i.order, i.kind, i.kind === 'tool_call' ? i.status : null])).toEqual([
+      [1, 'user_message', null],
+      [2, 'thinking', null],
+      [3, 'tool_call', 'running'],
+    ]);
+    expect(acc.items('interrupted').at(-1)).toMatchObject({ status: 'interrupted' });
+    acc.add(messages.slice(2));
+    const all = acc.items('interrupted');
+    // The later result finished the earlier call; ids and orders of the earlier items stay.
+    expect(all.slice(0, 2)).toEqual(early.slice(0, 2));
+    expect(all[2]).toMatchObject({ id: early[2]?.id, order: 3, status: 'done' });
+    expect(all).toEqual(normalizeHistory(messages, { ...ctx, nextOrder: 1 }).items);
+    expect(acc.items('running').at(-1)).toMatchObject({ toolName: 'Read', status: 'running' });
+    expect(acc.unknownCounts).toEqual({});
   });
 
   it('counts system messages and broken messages instead of failing', () => {

@@ -219,6 +219,8 @@ export const hookMessageSchema = z.looseObject({
   stdout: opt(str),
   stderr: opt(str),
   outcome: opt(str),
+  /** WP-69: process exit code of `hook_response` (2 = blocking). */
+  exit_code: opt(z.number().int()),
 });
 
 export const informationalMessageSchema = z.looseObject({

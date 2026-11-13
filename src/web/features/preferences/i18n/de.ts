@@ -31,6 +31,10 @@ export const de: typeof en = {
     transcriptHint:
       'Kompakt: Die Arbeitsschritte zwischen zwei Nachrichten bilden eine Zeile (Klick öffnet sie), Bilder bleiben als Galerie sichtbar. Alle Schritte: jeder Schritt in einer eigenen Zeile. Gilt für alle Fenster und Browser.',
     transcriptViews: { compact: 'Kompakt', all: 'Alle Schritte' },
+    hooks: 'Hook-Läufe',
+    hooksHint:
+      'Fehlgeschlagene Läufe erscheinen als Fehler mit ihrer Ausgabe. Alle: auch erfolgreiche, als Schritte. Aus: keine – ein fehlgeschlagener Start-Hook bleibt sichtbar.',
+    hookDisplays: { all: 'Alle', failed: 'Nur fehlgeschlagene und blockierende', off: 'Aus' },
   },
   notifications: {
     events: 'Ereignisse',

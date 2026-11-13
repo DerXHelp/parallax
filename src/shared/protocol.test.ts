@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from './common';
+import { SUBAGENT_TRANSCRIPT_LIMITS } from './model';
 import {
   HOST_COMMAND_NAMES,
+  LOGIN_CODE_CHARS,
   PROTOCOL_VERSION,
   SERVER_MESSAGE_TYPES,
   clientMessageSchema,
@@ -129,6 +131,21 @@ const commands: Command[] = [
   { name: 'session.mcpAction', entryId, server: 'docs', action: 'disable' },
   { name: 'session.reload', entryId, what: 'skills' },
   { name: 'session.reload', entryId, what: 'plugins' },
+  // WP-69
+  { name: 'session.subagentTranscript', entryId, agentId: 'a655391549dc96788', conversationId: null, offset: null, limit: 100 },
+  {
+    name: 'session.subagentTranscript',
+    entryId,
+    agentId: 'task_toolu_fake-1',
+    conversationId: SAMPLE_IDS.conversation,
+    offset: 40,
+    limit: 200,
+  },
+  // WP-70
+  { name: 'profile.login', profileId: 'standard' },
+  { name: 'profile.loginCode', profileId: sampleId('pf', 2), code: 'abc123#fake-state' },
+  { name: 'profile.loginCancel', profileId: 'standard' },
+  { name: 'session.setOutputStyle', entryId, style: 'Explanatory' },
 ];
 
 const clientMessages: ClientMessage[] = [
@@ -545,6 +562,22 @@ describe('command results', () => {
     expect(parseCommandResult('session.regenerateTitle', {})).toEqual({});
   });
 
+  it('WP-70: login commands are host commands; code and style are trimmed and bounded; results are {}', () => {
+    expect(isHostCommand({ name: 'profile.login', profileId: 'standard' })).toBe(true);
+    expect(isHostCommand({ name: 'profile.loginCode', profileId: 'standard', code: 'x' })).toBe(true);
+    expect(isHostCommand({ name: 'profile.loginCancel', profileId: 'standard' })).toBe(true);
+    expect(isHostCommand({ name: 'session.setOutputStyle', entryId, style: 'Concise' })).toBe(false);
+    const send = (cmd: unknown) => parseClientMessage(JSON.stringify({ type: 'cmd', cmdId: SAMPLE_IDS.cmdId, cmd }));
+    expect(send({ name: 'profile.loginCode', profileId: 'standard', code: '  abc#def  ' }).ok).toBe(true);
+    expect(send({ name: 'profile.loginCode', profileId: 'standard', code: '   ' }).ok).toBe(false);
+    expect(send({ name: 'profile.loginCode', profileId: 'standard', code: 'x'.repeat(LOGIN_CODE_CHARS + 1) }).ok).toBe(false);
+    expect(send({ name: 'session.setOutputStyle', entryId, style: '' }).ok).toBe(false);
+    expect(send({ name: 'session.setOutputStyle', entryId, style: 'x'.repeat(101) }).ok).toBe(false);
+    for (const name of ['profile.login', 'profile.loginCode', 'profile.loginCancel', 'session.setOutputStyle'] as const) {
+      expect(parseCommandResult(name, {})).toEqual({});
+    }
+  });
+
   it('WP-66: side question (trimmed, 1 … LIMITS.sideQuestionChars) and withdraw results', () => {
     const ask = (question: string) =>
       parseClientMessage(
@@ -591,6 +624,25 @@ describe('command results', () => {
     ).toBeNull();
     expect(parseCommandResult('session.mcpAction', {})).toEqual({});
     expect(parseCommandResult('session.reload', {})).toEqual({});
+  });
+
+  it('WP-69: subagent transcript (agent id without path characters, defaults, page result)', () => {
+    const parse = (body: Record<string, unknown>) =>
+      parseClientMessage(JSON.stringify({ type: 'cmd', cmdId: SAMPLE_IDS.cmdId, cmd: { entryId, ...body } }));
+    const ok = parse({ name: 'session.subagentTranscript', agentId: 'a655391549dc96788' });
+    expect(ok).toMatchObject({
+      ok: true,
+      message: { cmd: { conversationId: null, offset: null, limit: SUBAGENT_TRANSCRIPT_LIMITS.pageItems } },
+    });
+    for (const agentId of ['', '..\\x', 'a/b', 'a b', 'x'.repeat(SUBAGENT_TRANSCRIPT_LIMITS.agentIdChars + 1)]) {
+      expect(parse({ name: 'session.subagentTranscript', agentId }).ok).toBe(false);
+    }
+    const tooMany = SUBAGENT_TRANSCRIPT_LIMITS.maxPageItems + 1;
+    expect(parse({ name: 'session.subagentTranscript', agentId: 'a1', limit: tooMany }).ok).toBe(false);
+    expect(parse({ name: 'session.subagentTranscript', agentId: 'a1', offset: -1 }).ok).toBe(false);
+    const page = { items: [sampleItems.assistantText()], offset: 3, total: 4, running: true };
+    expect(parseCommandResult('session.subagentTranscript', page)).toEqual(page);
+    expect(parseCommandResult('session.subagentTranscript', { items: [], offset: 0, total: 0 })).toBeNull();
   });
 
   it('Phase 3 results (WP-50 §4.6)', () => {

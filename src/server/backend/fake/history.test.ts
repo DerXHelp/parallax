@@ -59,6 +59,30 @@ describe('FakeHistoryStore', () => {
     expect(store.info('unknown')).toBeNull();
   });
 
+  it('WP-69: task_started links the Agent tool use to its agent id; recordSubagent appends transcript-only messages', () => {
+    const store = createFakeHistoryStore({ now: () => new Date('2026-10-15T08:00:00.000Z') });
+    store.record(S, { type: 'system', subtype: 'task_started', task_id: 'task_toolu_a', tool_use_id: 'toolu_a' });
+    store.recordSubagent(S, 'task_toolu_a', {
+      type: 'user',
+      uuid: 'p1',
+      message: { role: 'user', content: 'Look around.' },
+      parent_tool_use_id: 'toolu_a',
+    });
+    store.record(S, { type: 'assistant', uuid: 'sa1', message: { content: [] }, parent_tool_use_id: 'toolu_a' });
+    store.record(S, { type: 'assistant', uuid: 'sb1', message: { content: [] }, parent_tool_use_id: 'toolu_b' });
+    store.recordSubagent(S, '', { type: 'user', uuid: 'ignored', message: {} });
+    store.recordSubagent(S, 'task_toolu_a', { type: 'system', uuid: 'not-a-message' });
+    expect(store.subagentMessages(S, 'task_toolu_a')).toEqual([
+      expect.objectContaining({ uuid: 'p1', session_id: S, timestamp: '2026-10-15T08:00:00.000Z' }),
+      expect.objectContaining({ uuid: 'sa1', parent_tool_use_id: 'toolu_a' }),
+    ]);
+    // Without task_started the tool use id names the file (as before).
+    expect(store.subagentMessages(S, 'toolu_b')).toEqual([expect.objectContaining({ uuid: 'sb1' })]);
+    expect(store.subagentMessages(S, 'unknown')).toEqual([]);
+    expect(store.subagentMessages('other', 'task_toolu_a')).toEqual([]);
+    expect(store.messages(S)).toEqual([]);
+  });
+
   it('summary: custom title > AI title > first prompt', () => {
     const store = createFakeHistoryStore();
     store.record(S, {

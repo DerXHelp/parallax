@@ -80,7 +80,10 @@ function saveWork(store: PersistentProfileStore): ProfileId {
 describe('createProfileCommands', () => {
   it('handles exactly the profile.* host commands', async () => {
     const { commands } = await setup();
-    expect([...commands.names]).toEqual(HOST_COMMAND_NAMES.filter((name) => name.startsWith('profile.')));
+    // WP-70: `profile.login*` belong to the login service (host/login.ts).
+    expect([...commands.names]).toEqual(
+      HOST_COMMAND_NAMES.filter((name) => name.startsWith('profile.') && !name.startsWith('profile.login')),
+    );
     expect(PROFILE_COMMAND_NAMES).toHaveLength(6);
   });
 

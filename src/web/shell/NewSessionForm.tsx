@@ -21,6 +21,7 @@ import { Input } from '@web/ui/input';
 import { Label } from '@web/ui/label';
 import { Spinner } from '@web/ui/spinner';
 import { FolderBrowser } from './new-session/FolderBrowser';
+import { LoginButton, needsSignIn } from './login/LoginButton';
 import { ProfileIssueText, profileErrors } from './new-session/profile-status';
 import { ProfileSelect } from './new-session/ProfileSelect';
 import { filterRecentProjects, recentProjects } from './new-session/recent-projects';
@@ -156,14 +157,17 @@ export function NewSessionForm({
 
   const defaults = profile?.defaults ?? { model: null, permissionMode: null, effort: null };
   const defaultParts: string[] = [];
-  if (defaults.model !== null) defaultParts.push(t('newSession.profile.defaultModel', { model: defaults.model }));
+  if (defaults.model !== null)
+    defaultParts.push(t('newSession.profile.defaultModel', { model: defaults.model }));
   if (defaults.permissionMode !== null) {
     defaultParts.push(
       t('newSession.profile.defaultMode', { mode: t(`shell.permissionMode.${defaults.permissionMode}`) }),
     );
   }
   if (defaults.effort !== null) {
-    defaultParts.push(t('newSession.profile.defaultEffort', { effort: t(`newSession.efforts.${defaults.effort}`) }));
+    defaultParts.push(
+      t('newSession.profile.defaultEffort', { effort: t(`newSession.efforts.${defaults.effort}`) }),
+    );
   }
 
   return (
@@ -265,6 +269,9 @@ export function NewSessionForm({
               {t('newSession.profile.defaults', { list: defaultParts.join(' · ') })}
             </p>
           )}
+          {profile !== null && needsSignIn(profile.claude) ? (
+            <LoginButton profileId={profile.id} className="justify-self-start" />
+          ) : null}
           {blocking.length === 0 ? null : (
             <Alert tone="error" title={t('newSession.profile.unusable')} data-slot="profile-unusable">
               <span className="grid gap-1">

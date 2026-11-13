@@ -25,6 +25,7 @@ import {
   fileStatResultSchema,
   fsListingSchema,
   hostStateSchema,
+  IDLE_PROFILE_LOGIN,
   isClaudeSessionUrl,
   isDefaultProgramAllowed,
   isRemoteControlActive,
@@ -33,12 +34,14 @@ import {
   planVersionInfoSchema,
   profileInputSchema,
   profileIssueSchema,
+  profileLoginSchema,
   profileSchema,
   profileSummarySchema,
   profilesFileSchema,
   previousSessionIds,
   REGISTRY_SCHEMA_VERSION,
   registryFileSchema,
+  runningTasksSchema,
   SESSION_FILES_SCHEMA_VERSION,
   sessionDetailPatchSchema,
   sessionDetailSchema,
@@ -837,5 +840,58 @@ describe('WP-64 contracts (Remote Control)', () => {
     expect(isRemoteControlActive('reconnecting')).toBe(true);
     expect(isRemoteControlActive('off')).toBe(false);
     expect(isRemoteControlActive('failed')).toBe(false);
+  });
+});
+
+describe('WP-70 contracts (login per profile, output style per project)', () => {
+  it('a profile summary without login loads idle; a login state round-trips without account data', () => {
+    const { login: _login, ...old } = sampleProfileSummary();
+    expect(profileSummarySchema.parse(old).login).toEqual(IDLE_PROFILE_LOGIN);
+    const waiting = sampleProfileSummary({
+      login: {
+        state: 'waiting',
+        url: 'https://login.parallax.invalid/oauth/authorize?code=true&state=s1',
+        manualUrl: 'https://login.parallax.invalid/oauth/authorize?code=true&state=s1',
+        subscriptionType: null,
+        error: null,
+        at: sampleTime(5),
+      },
+    });
+    expectRoundTrip(profileSummarySchema, waiting);
+    const failed = { ...IDLE_PROFILE_LOGIN, state: 'failed' as const, error: { code: 'LOGIN_BLOCKED' as const, params: {} }, at: sampleTime(6) };
+    expect(profileLoginSchema.parse(failed)).toEqual(failed);
+    // Only http(s) links; unknown keys (e-mail, organization) are dropped by the schema.
+    expect(profileLoginSchema.safeParse({ ...failed, url: 'javascript:alert(1)' }).success).toBe(false);
+    expect(profileLoginSchema.parse({ ...failed, email: 'x@example.invalid' })).not.toHaveProperty('email');
+  });
+
+  it('summary.outputStyle and detail.availableOutputStyles default for old data; the patch never injects them', () => {
+    const { outputStyle: _style, ...oldSummary } = sampleSummary();
+    expect(sessionSummarySchema.parse(oldSummary).outputStyle).toBeNull();
+    expectRoundTrip(sessionSummarySchema, sampleSummary({ outputStyle: 'Explanatory' }));
+    const { availableOutputStyles: _available, ...oldDetail } = sampleDetail();
+    expect(sessionDetailSchema.parse(oldDetail).availableOutputStyles).toEqual([]);
+    expectRoundTrip(sessionDetailSchema, sampleDetail({ availableOutputStyles: ['default', 'Explanatory'] }));
+    expect(sessionDetailPatchSchema.parse({ queue: [] })).not.toHaveProperty('availableOutputStyles');
+  });
+
+  it('WP-71: summary.runningTasks defaults to null; counts, at most 5 items, labels ≤ 120 chars', () => {
+    const { runningTasks: _running, ...oldSummary } = sampleSummary();
+    expect(sessionSummarySchema.parse(oldSummary).runningTasks).toBeNull();
+    const running = {
+      agents: 2,
+      shells: 1,
+      other: 0,
+      items: [
+        { kind: 'agent' as const, subagentType: 'Explore', label: 'Reading the project files' },
+        { kind: 'bash' as const, subagentType: null, label: 'pnpm dev' },
+      ],
+    };
+    expectRoundTrip(sessionSummarySchema, sampleSummary({ runningTasks: running }));
+    const item = { kind: 'other' as const, subagentType: null, label: 'x' };
+    expect(runningTasksSchema.safeParse({ ...running, items: Array.from({ length: 6 }, () => item) }).success).toBe(false);
+    expect(runningTasksSchema.safeParse({ ...running, items: [{ ...item, label: 'x'.repeat(121) }] }).success).toBe(false);
+    expect(runningTasksSchema.safeParse({ ...running, items: [{ ...item, kind: 'robot' }] }).success).toBe(false);
+    expect(runningTasksSchema.safeParse({ ...running, agents: -1 }).success).toBe(false);
   });
 });

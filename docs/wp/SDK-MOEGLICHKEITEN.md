@@ -126,7 +126,43 @@ Export; Daten nur auf Anfrage. 20 (`getTaskOutput`) entfällt – Parallax liest
 | 29 | Token-Budget je Aufgabe | alpha: Option `taskBudget` | Claude teilt sich lange Aufgaben ein | klein, alpha |
 
 **Durchgang mit dem Nutzer (13.11.2026):** 21 abgelehnt (Nutzer: „Ich wüsste nicht, wozu ich das brauche“) –
-weder Stufe 1 (Benachrichtigen, Datei im Viewer öffnen) noch Stufe 2 (Orchestrierung). 22–29 offen.
+weder Stufe 1 (Benachrichtigen, Datei im Viewer öffnen) noch Stufe 2 (Orchestrierung). 22 umgedeutet und
+entschieden (Nutzer: „reicht mir der Verlauf lesend“): **nicht** in der Hauptsession (`forwardSubagentText` in die
+Agent-Karte), sondern „Verlauf öffnen“ an der Agent-Karte → vollständiges Subagent-Transkript im Seitenpanel (öffentlich
+`listSubagents`/`getSubagentMessages`, Dateien `…/<session>/subagents/agent-<id>.jsonl`; live solange er läuft,
+nachträglich und nach Neustart). Direkt an Subagenten schreiben bietet weder SDK noch CLI 2.1.323 (nur TUI-intern für
+benannte Agenten/Teams); der Umweg über die Hauptsession (`SendMessage`) entfällt. 23 vorerst nicht bauen (Nutzer: „Einverstanden“): an
+SDK-Hosts relevant sind im CLI 2.1.323 vor allem `refusal_fallback_prompt` (Ergebnis `retry_fallback`/`edit_prompt`/
+`cancelled`; das konfigurierte `fallbackModel` greift schon automatisch, Parallax zeigt `model_refusal_fallback` bzw.
+`MODEL_REFUSAL`) und `fable_overage_consent_prompt` (Zusatzguthaben für Fable; ohne Erklärung in
+`supportedDialogKinds` übersprungen – Verhalten nur live mit erschöpftem Kontingent prüfbar). Nachholen, falls eine
+Session ungefragt von Fable wegwechselt. 24 abgelehnt (Nutzer: „Ne, nicht bauen“): `prewarm()`/`claim()` (inzwischen
+öffentlich, alpha) spart nur bei **neuen** Sessions 1–3 s (kein Resume beim Claim), kostet dauerhaft ≈ 230–260 MB je
+Profil, die Umgebung steht vor dem Claim fest (bricht `PARALLAX_ENTRY_ID`, ADR-083), Projekte mit eigenem
+`env`/`model`/`agent` lehnen den Claim ab. 25 gewünscht (Nutzer: „Ich möchte den Anmelde-Knopf haben“, gegen die
+Empfehlung „nur Fehlertext“): Knopf „Anmelden“ an Anmeldefehlern (Session, Profil-Status, Remote Control) → intern
+`claudeAuthenticate(true)` → `{manualUrl, automaticUrl}` (CLI 2.1.323; `automaticUrl` nur mit lokalem
+Rückruf-Listener) → `link.open` im Standardbrowser → `claudeOAuthWaitForCompletion()` (Antwort enthält
+`account.email` – nie loggen/persistieren); ohne Listener Code-Feld → `claudeOAuthCallback(code, state)`. Läuft im
+Prozess einer Session (ohne Turn starten wie „Kurz fragen…“), gilt danach für alle Sessions des Profils; das CLI legt
+Versuche binnen 10 min zusammen. Keine Vorwarnung aus `credential_expires_at` (Kurzzeit-Token, erneuert sich still).
+Live-Test nur mit isoliertem Profil (eigenes `CLAUDE_CONFIG_DIR`, echtes Login des Nutzers bleibt unberührt). 26
+abgelehnt (Nutzer: „ja“ zur Empfehlung): `planModeInstructions` ersetzt die abgestimmten Plan-Phasen des CLI; ein
+einheitliches Plan-Format geht ohne Risiko über die `~/.claude/CLAUDE.md` (gilt auch im Terminal). 27 gewünscht
+(Nutzer: „Doch bauen. Auf einem anderen Rechner benutze ich Hooks“): `includeHookEvents: true`; Normalizer und
+Transkript können Hook-Items schon (`system`/`event: 'hook'`, heute nur SessionStart/Setup). Vorschlag: Einstellung
+„Hook-Läufe im Transkript“ (alle / nur fehlgeschlagene und blockierende / aus, Standard: nur fehlgeschlagene und
+blockierende); erfolgreiche Läufe fallen im kompakten Transkript in die Schrittgruppen. 28 teilweise gewünscht
+(Nutzer: „Ausgabestil klingt gut, ich möchte das bauen. EffortLevel ist ok, wenn das nur in Parallax einstellbar
+ist“): Ausgabestil je Projekt wählbar – Liste aus `initializationResult.available_output_styles` (+ aktueller
+`output_style`), Schreiben über `updateSettings('localSettings', { outputStyle })` (CLI-eigener Writer, wirkt sofort,
+landet in `<projekt>\.claude\settings.local.json`); Effort bleibt nur in Parallax (kein Schreiben nach
+`~/.claude/settings.json`). 29 abgelehnt (Nutzer: „Einverstanden“): `taskBudget` ist alpha auf einer Beta-API,
+Wirkung mit Abo-Login und Zählweise undokumentiert; beim Max-Abo zählen die Limits (sichtbar), API-Key-Profile haben
+`maxBudgetUsd`. Wieder ansehen, wenn die Option stabil ist.
+
+**Durchgang abgeschlossen (13.11.2026).** Zu bauen: 22 (Subagent-Verlauf lesend im Seitenpanel), 25 (Anmelde-Knopf),
+27 (Hook-Läufe mit Einstellung), 28 (Ausgabestil je Projekt).
 
 ## 5. Empfehlung (Reihenfolge)
 

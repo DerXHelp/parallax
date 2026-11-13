@@ -8,6 +8,9 @@
  * folder. WP61-02: `todoFeatureEnabled` is NOT sent – with CLI 2.1.322 it has no effect (neither
  * `TodoWrite` nor `TaskCreate` in `init.tools`); todo lists from the stream still reach the task bar.
  *
+ * WP-69: `includeHookEvents` is always on (every hook run as hook_started/hook_response; the
+ * transcript filters by `settings.hookDisplay`) – takes effect from the next process start.
+ *
  * WP-64: extraArgs 'replay-user-messages' is always set (F.9): Remote Control can be switched at
  * runtime, and only the replay shows the text of a prompt sent from the Claude app. The normalizer drops
  * the echoes of Parallax's own prompts (same uuid); queue and "grey until processed" keep using
@@ -27,7 +30,7 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import { windowsPathsEqual } from '@shared/paths';
 import type { LaunchSpec } from '../claude/ports';
-import type { StartSessionRequest } from './types';
+import type { LoginRequest, StartSessionRequest } from './types';
 
 export interface QueryOptionHooks {
   /** Wrapper around req.canUseTool (toPermissionRequest + error handling, sdkBackend.ts). */
@@ -142,6 +145,9 @@ export function buildQueryOptions(req: StartSessionRequest, hooks: QueryOptionHo
     // Phase 3 (WP-52, F4/F5): stop a single task; summaries in task_progress for the task panel.
     perTaskStopAffordance: true,
     agentProgressSummaries: true,
+    // WP-69: hook_started/hook_response of every hook (not only SessionStart/Setup); the transcript
+    // shows them according to `settings.hookDisplay`.
+    includeHookEvents: true,
     canUseTool: hooks.canUseTool,
     stderr: hooks.stderr,
     spawnClaudeCodeProcess: hooks.spawn,
@@ -168,6 +174,26 @@ export function buildQueryOptions(req: StartSessionRequest, hooks: QueryOptionHo
   if (settings !== undefined) options.settings = settings;
   options.extraArgs = extraArgsOf(launch);
   return options;
+}
+
+/**
+ * WP-70: options of a login process (no prompt is ever sent): the profile's executable, env and
+ * config folder, a neutral cwd, no settings sources (managed settings still apply – `forceLoginMethod`,
+ * `allowedProviders`), no MCP servers, no transcript (`persistSession: false`), no profile args.
+ */
+export function buildLoginOptions(req: LoginRequest, hooks: QueryOptionHooks): Options {
+  return {
+    cwd: req.cwd,
+    pathToClaudeCodeExecutable: req.launch.executablePath,
+    // The SDK mutates the object it gets: pass a copy.
+    env: { ...req.launch.env },
+    settingSources: [],
+    strictMcpConfig: true,
+    persistSession: false,
+    canUseTool: hooks.canUseTool,
+    stderr: hooks.stderr,
+    spawnClaudeCodeProcess: hooks.spawn,
+  };
 }
 
 /**

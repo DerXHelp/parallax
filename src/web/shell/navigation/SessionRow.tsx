@@ -1,8 +1,18 @@
 import { ArchiveRestoreIcon, EllipsisIcon, GitBranchIcon, PinIcon } from 'lucide-react';
-import { memo, useMemo, useState, type FocusEvent } from 'react';
+import {
+  lazy,
+  memo,
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentType,
+  type FocusEvent,
+} from 'react';
 import type { EffortLevel } from '@shared/common';
-import type { ContextGauge, ProfileColor, SessionSummary } from '@shared/model';
+import type { ContextGauge, ProfileColor, RunningTasks, SessionSummary } from '@shared/model';
 import type { DisplayStatusKind } from '@shared/status';
+import { runningTaskTotal } from '@shared/tasks';
 import { useFormat, useT } from '@web/i18n';
 import { sessionLine } from '@web/lib/activity';
 import { cn } from '@web/lib/cn';
@@ -18,6 +28,7 @@ import { IconButton } from '@web/ui/icon-button';
 import { StatusIcon } from '@web/ui/status-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
 import { ContextCompactIcon, useContextTexts } from '../context-display';
+import { RunningCounts, useRunningWords } from '../running-tasks';
 import { PathTail } from './PathTail';
 import { PROFILE_BG } from './profile-colors';
 import { RemoteControlIcon, showsRemoteInRow, useRemoteControlTexts } from './remote-control';
@@ -116,6 +127,41 @@ function RowRemoteDetail({ remote }: { remote: SessionSummary['remoteControl'] }
 }
 
 /**
+ * WP-71: "Running now" of the row's tooltip – its own chunk (start bundle, §1.5), loaded once a row
+ * shows running tasks, so the tooltip has it at hand. A failed load leaves the section out.
+ */
+let detailChunk: Promise<{ default: ComponentType<{ tasks: RunningTasks; more: number }> }> | null = null;
+function loadRowTasksDetail() {
+  detailChunk ??= import('./RowTasksDetail').then(
+    (module) => ({ default: module.RowTasksDetail }),
+    () => ({ default: () => null }),
+  );
+  return detailChunk;
+}
+const RowTasksDetail = lazy(loadRowTasksDetail);
+
+/** Counters above this show as "9+" – the row stays narrow. */
+const ROW_COUNTER_MAX = 9;
+
+/**
+ * WP-71: what runs, next to the title – agent symbol + number, terminal symbol + number, the rest;
+ * not clickable (the row is the button), named in words for screen readers.
+ */
+function RowTasks({ tasks }: { tasks: RunningTasks }) {
+  const t = useT();
+  const words = useRunningWords(tasks);
+  useEffect(() => {
+    void loadRowTasksDetail();
+  }, []);
+  return (
+    <span data-slot="row-tasks" className="text-status-working flex shrink-0 items-center text-2xs">
+      <RunningCounts counts={tasks} max={ROW_COUNTER_MAX} />
+      <span className="sr-only">{t('navigation.running.label', { list: words })}</span>
+    </span>
+  );
+}
+
+/**
  * Only primitives and stable references (R1W-05): `entry` keeps its identity while its summary is
  * unchanged (hooks.ts), so a `summary.upsert` re-renders just that row.
  */
@@ -143,7 +189,10 @@ export interface SessionRowProps {
  * pin, relative time, unread dot; WP-65: then the quiet session line (live sentence / turn summary,
  * `@web/lib/activity`) when there is one; last line: the last two path segments (the last one never cut first,
  * WP41-02), ⎇ branch, short model name,
- * context fill. Profile color stripe on the left, details in the tooltip. Right click (or
+ * context fill. Profile color stripe on the left, details in the tooltip. WP-71: a working,
+ * starting or background session pulses (status icon, `status-working`; one CSS animation per row,
+ * motion-safe) and shows what runs (agents, shells, the rest) next to the title and in the
+ * tooltip – from `summary.runningTasks`, so a text delta never re-renders a row. Right click (or
  * Shift+F10) opens the context menu; the "…" button (on hover/focus) the same actions. Double
  * click on the title or F2 edits it inline.
  */
@@ -239,7 +288,7 @@ export const SessionRow = memo(function SessionRow({
                   />
                 )}
                 <span className="flex h-5 min-w-0 items-center gap-2">
-                  <StatusIcon kind={statusKind} className="shrink-0" />
+                  <StatusIcon kind={statusKind} pulse className="shrink-0" />
                   <span
                     data-slot="row-title"
                     className={cn('min-w-0 flex-1 truncate', unread && 'font-semibold')}
@@ -250,6 +299,7 @@ export const SessionRow = memo(function SessionRow({
                   >
                     {title}
                   </span>
+                  {summary.runningTasks === null ? null : <RowTasks tasks={summary.runningTasks} />}
                   {showsRemoteInRow(summary.remoteControl) ? <RowRemote remote={summary.remoteControl} /> : null}
                   {summary.pinned ? (
                     <span data-slot="row-pinned" className="text-muted-foreground shrink-0">
@@ -320,6 +370,14 @@ export const SessionRow = memo(function SessionRow({
                 <span className="font-medium">{title}</span>
                 <span>{t(`status.${statusKind}`)}</span>
                 {lineText === null ? null : <span className="break-words">{lineText}</span>}
+                {summary.runningTasks === null ? null : (
+                  <Suspense fallback={null}>
+                    <RowTasksDetail
+                      tasks={summary.runningTasks}
+                      more={runningTaskTotal(summary.runningTasks) - summary.runningTasks.items.length}
+                    />
+                  </Suspense>
+                )}
                 <span className="text-muted-foreground font-mono break-all">{summary.cwd}</span>
                 {summary.gitBranch === null ? null : (
                   <span className="text-muted-foreground">

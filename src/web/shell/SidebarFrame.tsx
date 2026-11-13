@@ -37,7 +37,10 @@ function sidebarFocusTarget(frame: HTMLElement | null): HTMLElement | null {
   );
 }
 
-/** The rail of a collapsed sidebar: "Show sessions" and one status button per session. */
+/**
+ * The rail of a collapsed sidebar: "Show sessions" and one status button per session (WP-71: a
+ * working session pulses like its row).
+ */
 const SidebarRail = memo(function SidebarRail({
   expanded,
   controls,
@@ -108,7 +111,7 @@ const SidebarRail = memo(function SidebarRail({
                       select(entry.sessionKey);
                     }}
                   >
-                    <StatusIcon kind={status.kind} iconClassName="size-3.5" />
+                    <StatusIcon kind={status.kind} pulse iconClassName="size-3.5" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="right">{label}</TooltipContent>

@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { LOCAL_HOST_ID } from '@shared/common';
+import { LOCAL_HOST_ID, STANDARD_PROFILE_ID } from '@shared/common';
 import { makeError } from '@shared/errors';
 import {
   sampleBlobRef,
@@ -341,6 +341,17 @@ const EVERY_REQUEST: { [K in ShellRequestKind]: ShellRequestOf<K> } = {
   },
   // WP-66: a withdrawn waiting message goes back into the composer of its session.
   composerText: { kind: 'composerText', sessionKey: PLAYGROUND_SESSION_KEYS.main, text: 'taken back' },
+  // WP-69: the transcript of one subagent in the side panel tab "Agent".
+  openSubagent: {
+    kind: 'openSubagent',
+    sessionKey: PLAYGROUND_SESSION_KEYS.main,
+    agentId: 'a655391549dc96788',
+    title: 'Explore the project',
+    subagentType: 'Explore',
+  },
+  // WP-70: sign in a profile (dialog of the NavigationLayer); the output style of a project.
+  login: { kind: 'login', profileId: STANDARD_PROFILE_ID },
+  outputStyle: { kind: 'outputStyle', sessionKey: PLAYGROUND_SESSION_KEYS.main },
 };
 
 /** Kinds whose handler arrives with a later package – none since WP-60 (attachFiles: WP-57). */
@@ -377,6 +388,7 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
       ['FilesPanel', FILES_SLOTS.FilesPanel],
       ['TasksPanel', TASKS_SLOTS.TasksPanel],
       ['TaskStrip', TASKS_SLOTS.TaskStrip],
+      ['SubagentPanel', TRANSCRIPT_SLOTS.SubagentPanel],
     ];
     for (const [key, own] of lazy) {
       expect(APP_SLOTS[key], key).toBeDefined();
@@ -493,10 +505,11 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
       });
       expect(taken, request.kind).toBe(!PENDING_REQUEST_KINDS.has(request.kind));
       if (PENDING_REQUEST_KINDS.has(request.kind)) continue;
-      if (request.kind === 'sidePanel' || request.kind === 'openFile') {
+      if (request.kind === 'sidePanel' || request.kind === 'openFile' || request.kind === 'openSubagent') {
         // The side panel host of the pane (ADR-150) opens the tab and takes the focus; "Close panel"
         // closes it (this test installs no shortcut listener, so no Esc).
-        const tab = request.kind === 'sidePanel' ? request.tab : 'file';
+        const tab =
+          request.kind === 'sidePanel' ? request.tab : request.kind === 'openFile' ? 'file' : 'subagent';
         const panel = await waitFor(() => {
           const element = document.querySelector<HTMLElement>('[data-slot="side-panel"]');
           if (element === null) throw new Error('no side panel');
@@ -715,7 +728,8 @@ describe('server facts (R3-01, R3-02) and the setup check (R3-03)', () => {
     expect(document.querySelector('[data-slot="backend-fake"]')?.textContent).toContain('Fake');
     await user.click(screen.getByRole('button', { name: 'Settings' }));
     const info = await screen.findByRole('group', { name: 'About this server' });
-    expect(within(info).getByText('Claude Code 2.1.300')).toBeTruthy();
+    // WP-70: the facts are a lazy chunk of the menu.
+    expect(await within(info).findByText('Claude Code 2.1.300')).toBeTruthy();
     expect(within(info).getByText('C:\\Users\\user\\.local\\bin\\claude.exe')).toBeTruthy();
     expect(within(info).getByText('Agent SDK 0.3.296 · expects Claude Code 2.1.296 or newer')).toBeTruthy();
     expect(within(info).getByText('Parallax 0.0.0')).toBeTruthy();
@@ -752,7 +766,10 @@ describe('server facts (R3-01, R3-02) and the setup check (R3-03)', () => {
     });
     await user.click(screen.getByRole('button', { name: 'Settings' }));
     const info = await screen.findByRole('group', { name: 'About this server' });
-    expect(within(info).getByText('Older than the Agent SDK expects (at least 2.1.296).')).toBeTruthy();
+    // WP-70: the facts are a lazy chunk of the menu.
+    expect(
+      await within(info).findByText('Older than the Agent SDK expects (at least 2.1.296).'),
+    ).toBeTruthy();
     expect(info.querySelector('[data-info="claude"]')?.getAttribute('data-version-status')).toBe('too_old');
     expect(within(info).getByText('Data: %LOCALAPPDATA%\\Parallax')).toBeTruthy();
     expect(info.querySelector('[data-info="backend"]')).toBeNull();

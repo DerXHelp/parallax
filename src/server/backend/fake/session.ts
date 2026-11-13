@@ -10,7 +10,7 @@
  */
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { makeError } from '@shared/errors';
+import { makeError, type ErrorPayload } from '@shared/errors';
 import type { McpAction, ReloadTarget, SessionInfoSection, SessionInfoSectionName } from '@shared/model';
 import { nextMacrotask, realSetImmediate, toError } from '../../lib/async';
 import { logger } from '../../lib/logger';
@@ -21,6 +21,7 @@ import type {
   AgentSession,
   BackendEvent,
   OutgoingPrompt,
+  OutputStyles,
   PermissionRequest,
   RemoteControlInfo,
   RemoteControlRequest,
@@ -45,6 +46,7 @@ import {
 import { FAKE_COMMANDS, FAKE_MODELS, fakeContextUsage, resolveFakeModel } from './defaults';
 import { dslContext, textTurn } from './dsl';
 import { FakeFiles } from './files';
+import { FAKE_OUTPUT_STYLES, type FakeOutputStyles } from './outputStyle';
 import type { FakeHistoryStore } from './history';
 import { fakeTitle, type FakeUsage } from './overview';
 import {
@@ -118,6 +120,10 @@ export interface FakeSessionDeps {
   sideQuestions: FakeSideQuestionOptions;
   /** WP-67: FakeBackendOptions.sessionInfo. */
   sessionInfo: FakeSessionInfoOptions;
+  /** WP-70: output style per project (one per backend). */
+  outputStyles: FakeOutputStyles;
+  /** WP-70: FakeBackendOptions.outputStyleError. */
+  outputStyleError: boolean;
   onStateChange(): void;
 }
 
@@ -474,6 +480,25 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
   }
 
   /** WP-67: reloadSkills / reloadPlugins (rejects with the 'failed' lever). */
+  /**
+   * WP-70: `initializationResult` – the project's style and the fake list; null in the events mode
+   * (a recorded fixture has no such answer).
+   */
+  async readOutputStyles(): Promise<OutputStyles | null> {
+    if (this.deps.scenario.kind === 'events' || this.exited) return Promise.resolve(null);
+    return Promise.resolve({ current: this.deps.outputStyles.get(this.deps.req.cwd), available: [...FAKE_OUTPUT_STYLES] });
+  }
+
+  /** WP-70: `updateSettings('localSettings', { outputStyle })` – the project's style from the next turn. */
+  async setOutputStyle(style: string): Promise<{ ok: true } | { ok: false; error: ErrorPayload }> {
+    this.controls.push({ method: 'updateSettings', args: ['localSettings', { outputStyle: style }] });
+    if (this.exited || this.deps.outputStyleError) {
+      return Promise.resolve({ ok: false, error: makeError('CLAUDE_CONTROL_FAILED', { method: 'updateSettings' }) });
+    }
+    this.deps.outputStyles.set(this.deps.req.cwd, style);
+    return Promise.resolve({ ok: true });
+  }
+
   async reload(what: ReloadTarget): Promise<void> {
     this.controls.push({ method: 'reload', args: [what] });
     if (this.deps.scenario.kind === 'events') throw new Error('reload is not recorded');
@@ -1086,6 +1111,10 @@ class ScriptContext implements FakeScriptContext {
       fastMode: deps.req.fastMode ?? null,
       turns: 0,
       contextTokens: null,
+      // WP-70: read live – another session of the project may have changed it.
+      get outputStyle(): string {
+        return deps.outputStyles.get(deps.req.cwd);
+      },
     };
   }
 

@@ -484,6 +484,7 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
       'http',
       'system',
       'profileChecks',
+      'login',
       'files',
       'stores',
       'homeAccess',

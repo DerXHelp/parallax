@@ -59,6 +59,8 @@ describe('header (WP-35 §8)', () => {
     ).toEqual([
       'Earlier conversations…',
       'Session info…',
+      // WP-70.
+      'Output style…',
       'RenameF2',
       'Generate title again',
       'Open in new window',

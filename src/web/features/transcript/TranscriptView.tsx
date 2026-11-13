@@ -16,6 +16,7 @@ import {
   useTopLevelItemIds,
 } from '@web/state/hooks';
 import { showErrorNotice } from '@web/state/notices';
+import { useHookDisplay } from '@web/state/hook-display';
 import { useTranscriptView } from '@web/state/transcript-view';
 import { Button } from '@web/ui/button';
 import { Skeleton } from '@web/ui/skeleton';
@@ -44,7 +45,8 @@ import { useOpenGroups } from './state/groups';
  *   default) runs of work steps are one group line with their pictures as a gallery; the roles of
  *   the items are compared shallowly, so deltas that change no role keep the rows;
  * - WP-65 §1.2: the card "Since you were last here" at the top (`SinceLastVisit`, from the session's
- *   `lastSeenAt` held at opening), closable, with a jump to the first new item.
+ *   `lastSeenAt` held at opening), closable, with a jump to the first new item;
+ * - WP-69: hook runs per the setting `hookDisplay` (resolved by `buildRows`).
  */
 
 type Row = { kind: 'earlier' } | TranscriptRowModel | { kind: 'queued'; prompt: QueuedPrompt };
@@ -131,10 +133,11 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
   const [sinceClosed, setSinceClosed] = useState(false);
   const codes = useSessionSelector(sessionKey, selectItemCodes, EMPTY_CODES);
   const mode = useTranscriptView();
+  const hooks = useHookDisplay();
   const openGroups = useOpenGroups(sessionKey);
   const itemRows = useMemo(
-    () => buildRows(ids, codes, mode, (key) => openGroups.has(key)),
-    [ids, codes, mode, openGroups],
+    () => buildRows(ids, codes, mode, (key) => openGroups.has(key), hooks),
+    [ids, codes, mode, openGroups, hooks],
   );
 
   const settings = useMemo<TranscriptSettings>(

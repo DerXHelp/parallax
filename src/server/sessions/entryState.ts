@@ -21,6 +21,7 @@ import {
   type Entry,
   type Profile,
   type RateLimitInfo,
+  type RunningTasks,
   type SessionActivity,
   type SessionSummary,
   type Settings,
@@ -33,6 +34,7 @@ import {
 import type { Command, HostCommandName, SessionOp } from '@shared/protocol';
 import { openDecisionCount, type StatusFacts } from '@shared/status';
 import type { SessionViewState } from '@shared/sync';
+import { buildTaskRows, isTaskSourceItem, summarizeRunningTasks, taskSourceItems } from '@shared/tasks';
 import type { AgentBackend } from '../backend/types';
 import type { ClaudeIntegration, LaunchSpec } from '../claude/ports';
 import type { newId } from '../lib/ids';
@@ -65,7 +67,7 @@ import type {
   ReduceStatus,
   StatusEvent,
 } from './ports';
-import type { estimateContextGauge } from './normalizer';
+import type { createHistoryAccumulator, estimateContextGauge } from './normalizer';
 import type { PlanIndexedDecisionStore } from './planIndex';
 import type { ProcessStore } from './processStore';
 import { PromptQueue } from './promptQueue';
@@ -113,6 +115,11 @@ export interface SessionManagerOptions {
    * value follows after the pause; null - the turn ended - at once). Default 2000; tests 0.
    */
   activityMinMs: number;
+  /**
+   * WP-71: `SessionSummary.runningTasks` is recounted at most this often (the first change at once,
+   * later ones after the pause; null after the process end at once). Default 2000; tests 0.
+   */
+  runningTasksMinMs: number;
   /**
    * WP-65: interval of the usage query (plan limits) while a session of a profile runs - one
    * running session per profile. 0 = off. Default 300000.
@@ -189,6 +196,8 @@ export interface NormalizerFns {
   normalizeHistory: NormalizeHistory;
   normalizeContextUsage: NormalizeContextUsage;
   estimateContextGauge: typeof estimateContextGauge;
+  /** WP-69: incremental history adapter (subagent transcripts, subagentTranscript.ts). */
+  createHistoryAccumulator: typeof createHistoryAccumulator;
 }
 
 export interface ProcDeps {
@@ -279,6 +288,24 @@ export interface EngineCore {
 
 export type EntryPhase = 'dormant' | 'starting' | 'running' | 'closing';
 
+/**
+ * WP-71: the op can change what runs – a task-bearing item (tool call with a task, task
+ * notification), a removed item, the background list, a new conversation. Never a text delta.
+ */
+function touchesTasks(op: SessionOp): boolean {
+  switch (op.op) {
+    case 'item.upsert':
+      return isTaskSourceItem(op.item);
+    case 'item.remove':
+    case 'conversation.reset':
+      return true;
+    case 'detail.patch':
+      return op.patch.backgroundTasks !== undefined;
+    default:
+      return false;
+  }
+}
+
 export interface EntryStateInit {
   /** Title derived from the first prompt (session.create); the AI-title heuristic needs it. */
   promptTitle?: string | null;
@@ -308,6 +335,12 @@ export class EntryState {
   turnSummaryFromClaude = false;
   /** WP-65: live activity of the running turn as published (null = not working). */
   activity: SessionActivity | null = null;
+  /** WP-71: running tasks as published (runtime only; null = none or no process). */
+  runningTasks: RunningTasks | null = null;
+  /** WP-70: the project's output style as last reported or set (runtime only; null = unknown). */
+  outputStyle: string | null = null;
+  /** WP-70: the styles the CLI offers in the project (`initializationResult`; [] = unknown). */
+  availableOutputStyles: string[] = [];
   /** A turn after a conversation_reset is running (title_changed echoes are ignored). */
   resetInTurn = false;
   promptTitle: string | null;
@@ -369,6 +402,9 @@ export class EntryState {
   private readonly activityTracker = new ActivityTracker();
   private activityTimer: TimerHandle | null = null;
   private activityChangedAt = 0;
+  private runningTasksTimer: TimerHandle | null = null;
+  /** WP-71: time (ms) of the last recount; the next one at most `runningTasksMinMs` later. */
+  private runningTasksCountedAt = Number.NEGATIVE_INFINITY;
 
   constructor(
     private readonly core: EngineCore,
@@ -450,8 +486,12 @@ export class EntryState {
             itemId: op.itemId,
           });
         }
-      } else if (op.op === 'detail.patch' && op.patch.commands !== undefined && op.patch.commands !== null) {
-        this.saveCommands(op.patch.commands);
+      } else if (op.op === 'detail.patch') {
+        if (op.patch.commands !== undefined && op.patch.commands !== null)
+          this.saveCommands(op.patch.commands);
+        // WP-70: every system/init reports the project's output style (from the next turn after a change).
+        if (op.patch.init !== undefined && op.patch.init !== null)
+          this.setOutputStyle(op.patch.init.outputStyle);
       }
     }
     this.observeOverview(ops);
@@ -466,6 +506,8 @@ export class EntryState {
       const patch = this.trackDetail(ops);
       if (patch !== null) this.emit([{ op: 'detail.patch', patch }]);
     }
+    // WP-71: only task-bearing items and the background list change what runs (no text delta).
+    if (ops.some(touchesTasks)) this.updateRunningTasks();
   }
 
   /**
@@ -519,6 +561,58 @@ export class EntryState {
       this.activityTimer = null;
       this.updateActivity();
     }, wait);
+  }
+
+  /**
+   * WP-71: `runningTasks` of the summary – the task model of `@shared/tasks` (the one count of task
+   * panel and header) over the mirror's items and background list. Only while a process runs;
+   * without one null at once. Recounted at most once per `runningTasksMinMs` (the first change at
+   * once, later ones together after the pause); a summary goes out only when the result changed.
+   */
+  updateRunningTasks(): void {
+    if (this.loading !== null) return; // the finished load counts again
+    const view = this.mirror;
+    if (this.runtime === null || view === null || this.removed) {
+      this.runningTasksTimer?.cancel();
+      this.runningTasksTimer = null;
+      this.setRunningTasks(null);
+      return;
+    }
+    const now = this.core.now().getTime();
+    const wait = this.runningTasksCountedAt + this.core.options.runningTasksMinMs - now;
+    if (wait > 0) {
+      this.runningTasksTimer ??= this.core.timers.setTimeout(() => {
+        this.runningTasksTimer = null;
+        this.updateRunningTasks();
+      }, wait);
+      return;
+    }
+    this.runningTasksCountedAt = now;
+    const rows = buildTaskRows(taskSourceItems(view.items), view.detail.backgroundTasks);
+    this.setRunningTasks(summarizeRunningTasks(rows));
+  }
+
+  private setRunningTasks(next: RunningTasks | null): void {
+    if (isDeepStrictEqual(next, this.runningTasks)) return;
+    this.runningTasks = next;
+    this.publishSummary(false);
+  }
+
+  /** WP-70: the output style reported by the CLI (init, initializationResult) or just set. */
+  setOutputStyle(style: string | null): void {
+    if (style === null || style === this.outputStyle || this.removed) return;
+    this.outputStyle = style;
+    this.publishSummary(false);
+  }
+
+  /** WP-70: `initializationResult` of a (re)started process – the list to the detail, the style to the summary. */
+  setOutputStyles(styles: { current: string | null; available: string[] }): void {
+    if (this.removed) return;
+    if (styles.available.length > 0 && !isDeepStrictEqual(styles.available, this.availableOutputStyles)) {
+      this.availableOutputStyles = [...styles.available];
+      this.emit([{ op: 'detail.patch', patch: { availableOutputStyles: [...styles.available] } }]);
+    }
+    this.setOutputStyle(styles.current);
   }
 
   /** WP-65: the turn ended - activity off; the next turn starts without the old sentence/tools. */
@@ -752,6 +846,8 @@ export class EntryState {
       externalRunning: this.externalRunning,
       remote: this.remote,
       activity: this.activity,
+      outputStyle: this.outputStyle,
+      runningTasks: this.runningTasks,
     });
   }
 
@@ -820,6 +916,7 @@ export class EntryState {
           commands,
           queue: this.queue.list(),
           latestPlanVersion: this.broker.latestPlanVersion(),
+          availableOutputStyles: this.availableOutputStyles,
         });
         // Phase 3: todos/planFile derived from the items (the base view carries them; no op).
         const { todos, planFile } = this.seedDetail(seedItems, buffer);
@@ -836,6 +933,8 @@ export class EntryState {
     promise.then(
       (view) => {
         this.repairStaleSideQuestions(view.items);
+        // WP-71: ops that arrived while loading went to the buffer – count with the full view.
+        this.updateRunningTasks();
       },
       () => undefined,
     );
@@ -876,6 +975,7 @@ export class EntryState {
       commands: null,
       queue: this.queue.list(),
       latestPlanVersion: this.broker.latestPlanVersion(),
+      availableOutputStyles: this.availableOutputStyles,
     });
     this.detail.reset();
     this.mirror = view;
@@ -940,6 +1040,8 @@ export class EntryState {
     this.titleTimer = null;
     this.activityTimer?.cancel();
     this.activityTimer = null;
+    this.runningTasksTimer?.cancel();
+    this.runningTasksTimer = null;
   }
 
   /** After a non-synthetic turn: AI-title query, debounced (the CLI writes the title after the result). */
@@ -1131,6 +1233,8 @@ export const ARCHIVED_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryComm
   'plan.read',
   // WP-63: "Clean up archive" removes archived entries from Parallax.
   'session.remove',
+  // WP-69: reading a subagent's transcript file changes nothing.
+  'session.subagentTranscript',
 ]);
 
 /** WP-30 §4.12: open in an external console – never a second writer on the Claude session. */
@@ -1144,6 +1248,8 @@ export const EXTERNAL_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryComm
   'plan.read',
   // WP-63: Parallax forgets the entry; the console keeps the Claude session (nothing is written).
   'session.remove',
+  // WP-69: only reads the CLI's subagent transcript (no second writer).
+  'session.subagentTranscript',
 ]);
 
 /** The entry is handed off to an external console (recorded, or its status says so). */

@@ -7,7 +7,7 @@
 | `preflight.ts`    | `pnpm preflight`    | 11       | fertig (WP-11)        |
 | `record.ts`       | `pnpm record <sz>`  | 01       | fertig (WP-01, Env/Auth seit WP-11 über `src/server/claude`) |
 | `cli-check.ts`    | `pnpm cli-check [--accept] [--last] [--profile=<f>]` | 62 | fertig (WP-62, Kurz-Check nach `claude`-Updates; Module in `cli-check/`) |
-| `bundle-budget.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/bundle-budget.ts [--lazy]` | FIX-R5-F6 | fertig (Start-Chunks gegen `109c073`, nach `pnpm build`; liest nur `dist/web`) |
+| `bundle-budget.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/bundle-budget.ts [--lazy]` | FIX-R5-F6 | fertig (Start-Chunks gegen die Basis `2fe8a9b`, ADR-193 – vorher `109c073`; nach `pnpm build`; liest nur `dist/web`) |
 | `screenshots.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/screenshots.ts [--only=…] [--theme=…]` | 68 | fertig (README-Bilder `docs/screenshots/`, Playground + headless Chrome) |
 
 ## `scripts/screenshots.ts` (WP-68)
@@ -86,7 +86,11 @@ zu `pnpm check`/`build`/`e2e` (ADR-154). Dauer ≈ 1,5–3 min, Kosten ≈ 0,01 
    `reloadPlugins`) nur auf Existenz geprüft, nie aufgerufen. Gespeichert werden nur Verfügbarkeit,
    Grund, Zeilenzahl und Namen unbekannter Felder – nie Werte (Status-Zeilen enthalten Kontodaten) –,
    Ergebnis `sessionInfo: {status, memory, skills, hooks, permissions, mcp, export, mcpActions, reload}`
-   im Profil.
+   im Profil. WP-70: die Anmelde-Methoden (`claudeAuthenticate`, `claudeOAuthCallback`,
+   `claudeOAuthWaitForCompletion`) nur auf Existenz geprüft, **nie aufgerufen** (Profilfeld `login`);
+   Ausgabestil-Rundlauf in einer zweiten Session mit `settingSources ['local']` im Probe-Projekt
+   (`updateSettings('localSettings', {outputStyle})`, Datei und `getSettings` geprüft, Datei danach
+   zurückgebaut; Profilfeld `outputStyleSetting`).
 3. Live-Smoke `e2e/live` mit dem Restbudget (`cli-check/smoke.ts`; JSON-Reporter, eigener
    Playwright-Ausgabeordner `test-results/cli-check/<zeit>-smoke/` – Playwright leert ihn beim Start,
    frühere Berichte bleiben –, `live-run.json` mit Kosten und Temp-Wurzel).

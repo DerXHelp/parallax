@@ -11,6 +11,7 @@ import {
   PlanPanelPlaceholder,
   ProfilesSettingsPlaceholder,
   SettingsPagePlaceholder,
+  SubagentPanelPlaceholder,
   TaskStripPlaceholder,
   TasksPanelPlaceholder,
   ToolInputPreviewPlaceholder,
@@ -46,6 +47,11 @@ export interface FeatureSlots {
   TasksPanel: ComponentType<{ sessionKey: string }>;
   /** WP-55: the pinned task list directly above the composer (SessionPane). */
   TaskStrip: ComponentType<{ sessionKey: string }>;
+  /**
+   * WP-69 (features/transcript): tab "Agent" – the read-only transcript of one subagent, polled
+   * while it runs (request `openSubagent`).
+   */
+  SubagentPanel: ComponentType<SubagentPanelSlotProps>;
   // Feature slots
   /**
    * WP-16 → WP-15 (plan card via tool_call.decision). Rule (architecture §2.3e, ADR-031):
@@ -83,6 +89,15 @@ export interface FilePanelSlotProps {
   path: string;
   line: number | null;
   col: number | null;
+}
+
+export interface SubagentPanelSlotProps {
+  sessionKey: string;
+  /** The agent id (`task_started.task_id`, the name of its transcript file `agent-<id>.jsonl`). */
+  agentId: string;
+  /** Title of its Agent card (description, else type). */
+  title: string;
+  subagentType: string | null;
 }
 
 /** inline = text link, chip = file chip, menu = actions button only. */
@@ -132,6 +147,7 @@ export const DEFAULT_FEATURE_SLOTS: FeatureSlots = {
   FilesPanel: FilesPanelPlaceholder,
   TasksPanel: TasksPanelPlaceholder,
   TaskStrip: TaskStripPlaceholder,
+  SubagentPanel: SubagentPanelPlaceholder,
   DecisionCard: DecisionCardPlaceholder,
   Markdown: MarkdownPlaceholder,
   ToolInputPreview: ToolInputPreviewPlaceholder,
@@ -164,6 +180,7 @@ export function FeatureSlotsProvider({
       FilesPanel: slots.FilesPanel ?? parent.FilesPanel,
       TasksPanel: slots.TasksPanel ?? parent.TasksPanel,
       TaskStrip: slots.TaskStrip ?? parent.TaskStrip,
+      SubagentPanel: slots.SubagentPanel ?? parent.SubagentPanel,
       DecisionCard: slots.DecisionCard ?? parent.DecisionCard,
       Markdown: slots.Markdown ?? parent.Markdown,
       ToolInputPreview: slots.ToolInputPreview ?? parent.ToolInputPreview,
