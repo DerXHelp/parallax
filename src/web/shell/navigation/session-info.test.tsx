@@ -40,6 +40,7 @@ afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
   resetClientStore();
   window.localStorage.removeItem(STORAGE_KEYS.sessionInfoTab);
+  window.sessionStorage.removeItem(STORAGE_KEYS.sessionInfoTab);
   Object.defineProperty(window, 'innerWidth', { value: originalWidth, configurable: true, writable: true });
   window.history.replaceState(null, '', '/');
 });
@@ -146,11 +147,12 @@ describe('session info dialog (WP-67)', () => {
     ]);
   });
 
-  it('remembers the last tab for the next opening (localStorage); broken storage opens the overview', async () => {
+  it('remembers the last tab (this window, else the last of any window); broken storage opens the overview', async () => {
     await start();
     const user = userEvent.setup();
     let dialog = await openInfo();
     await settled(await openTab(user, dialog, 'Skills'));
+    expect(window.sessionStorage.getItem(STORAGE_KEYS.sessionInfoTab)).toBe('skills');
     expect(window.localStorage.getItem(STORAGE_KEYS.sessionInfoTab)).toBe('skills');
     await user.keyboard('{Escape}');
     await waitFor(() => {
@@ -163,9 +165,21 @@ describe('session info dialog (WP-67)', () => {
       expect(screen.queryByRole('dialog', { name: 'Session info' })).toBeNull();
     });
 
-    vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
-      throw new Error('denied');
+    // A new window starts with the last tab of any window (localStorage).
+    window.sessionStorage.removeItem(STORAGE_KEYS.sessionInfoTab);
+    window.localStorage.setItem(STORAGE_KEYS.sessionInfoTab, 'hooks');
+    dialog = await openInfo();
+    expect(within(dialog).getByRole('tab', { name: 'Hooks', selected: true })).toBeTruthy();
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Session info' })).toBeNull();
     });
+
+    for (const area of ['localStorage', 'sessionStorage'] as const) {
+      vi.spyOn(window, area, 'get').mockImplementation(() => {
+        throw new Error('denied');
+      });
+    }
     dialog = await openInfo();
     expect(within(dialog).getByRole('tab', { name: 'Overview', selected: true })).toBeTruthy();
   });

@@ -710,6 +710,32 @@ claude-Transkript, Resume und Kontext bleiben unberührt).
   `fake:none`, `fake:synthetic`, `fake:fallback`, `fake:retry`, `fake:slow`); eine wartende Nachricht mit
   `fake:taken` gilt als schon übernommen.
 
+### 3.7 Session-Info mit Reitern (WP-67)
+
+Der Dialog „Session-Info“ zeigt außer der Übersicht (`detail.init`, letzter Start) sieben Reiter, die der
+**laufende** `claude`-Prozess beantwortet – nur auf Anfrage (Reiter öffnen, „Aktualisieren“), kein Polling, kein
+Cache.
+- **SDK-Grenze** (`backend/sessionInfo.ts`, `AgentSession.readInfo(section)`/`mcpAction(server, action)`/
+  `reload(what)`): interne Query-Methoden des SDK 0.3.322 (`getStatus`, `getMemoryDialog`, `getSkillsDialog`,
+  `getHooksListing`, `listPermissionRules`, `mcpServerStatus`, `exportConversation`; Aktionen
+  `reconnectMcpServer`, `toggleMcpServer`, `reloadSkills`, `reloadPlugins`), zur Laufzeit geprüft
+  (`SESSION_INFO_METHODS`). Fehlt eine Methode oder meldet die CLI „is not available in this build/on this
+  connection/in a cloud-hosted session“ → `null` (= nicht verfügbar, einmal geloggt, kein Fehler-Toast). Parser je
+  Reiter tolerant (zod), Listen gekappt (`SESSION_INFO_LIMITS`), unbekannte Felder nur gezählt bzw. skalare als
+  Zeilen (`extra`); MCP-Konfiguration (außer `type`) und Hook-`editable` werden nie weitergegeben. Zeitlimits
+  `infoMs` 30 s, `infoActionMs` 60 s.
+- **Engine** (`sessions/sessionInfo.ts`): ein Start im Lifecycle-Lock wird abgewartet, ohne laufenden Prozess
+  `SESSION_NOT_RUNNING` (kein Auto-Wake – der Reiter bietet „Session starten“ = `session.resume`). Archiviert/extern
+  über die Entry-Gates. Antworten werden nie geloggt oder gespeichert (Status-Zeilen tragen Kontodaten).
+- **UI** (`web/shell/navigation/session-info/`): jeder Live-Reiter ein eigener Lazy-Chunk; Texte als
+  **Lazy-Namensraum** (`translateFrom`, nicht im Start-Chunk, nicht in `dictionary.de`); schmales Fenster → Select;
+  letzter Reiter je Fenster (sessionStorage, localStorage als Vorgabe neuer Fenster). Export: Text + Dateiname vom Server, Download im Browser (`lib/download`).
+- **FakeBackend/FakeHost:** alle Reiter ohne Kontodaten, MCP-Zustandsautomat (`fake-search` failed → Neu verbinden →
+  connected), `fresh-skill` nach „Skills neu laden“; Hebel `unavailable`, fehlschlagende Aktionen, lange Listen
+  (Option `sessionInfo` bzw. Schlüsselwörter `fake:info-*`; Web: `host.info`).
+- **`pnpm cli-check`** (Schritt 2e): jede Lese-Methode einmal, Schema geprüft; Profilfeld `sessionInfo` (neun
+  Booleans), eine Abweichung ist ein Befund.
+
 ## 4. Source of Truth (A.3)
 
 | Daten | maßgeblich | persistiert in | live über |
@@ -1227,6 +1253,9 @@ bzw. das Profil.
 | `session.deleteSideQuestion {threadId}` | alle Items des Fadens in der aktuellen Unterhaltung → `item.remove` (offene vorher abgebrochen), auch im Log; nichts gefunden → `{}` | – |
 | `session.withdrawQueued {messageUuid}` | nicht in der Queue → `{withdrawn: false, text: null}` ohne Steuerbefehl; sonst `cancelAsyncMessage`: `true` (oder Eintrag noch `sending`) → Eintrag weg, `{withdrawn: true, text}`; `false` → nichts ändert sich, `{withdrawn: false, text: null}` | `SESSION_NOT_RUNNING`, `CLAUDE_CONTROL_FAILED` (Methode fehlt/Fehler; Queue bleibt) |
 | Seitenfrage offen | Leerlauf-Schlaf wartet; `unread`, Benachrichtigungen, Status, `lastActivityAt` unverändert | – |
+| `session.info {section}` | nur mit laufendem Prozess (Start im Lock abgewartet, kein Auto-Wake); Methode fehlt/„not available“ → `{available: false, data: null}`; sonst `{available: true, data}` (`SessionInfoSection`); nichts geloggt | `SESSION_NOT_RUNNING`, `SESSION_ARCHIVED`, `SESSION_EXTERNAL`, `CLAUDE_CONTROL_FAILED {method: 'readInfo', section}` |
+| `session.mcpAction {server, action}` | `reconnect` → `reconnectMcpServer`, `enable`/`disable` → `toggleMcpServer`; → `{}` | wie oben, `CLAUDE_CONTROL_FAILED {method: 'mcpAction', detail}` (CLI-Text ≤ 300 Zeichen) |
+| `session.reload {what}` | `skills` → `reloadSkills`, `plugins` → `reloadPlugins`; → `{}` | wie oben, `CLAUDE_CONTROL_FAILED {method: 'reload', detail}` |
 
 ## 6. Item-Modell (`src/shared/model.ts`, §5.6)
 
