@@ -42,8 +42,14 @@ function buildInfo(buildId: string): Plugin {
   };
 }
 
-/** Modules of the start bundle from node_modules (`$initial`: lazy imports keep their own chunks). */
-const NODE_MODULES = /[\\/]node_modules[\\/]/;
+/**
+ * Modules of the start bundle from node_modules (`$initial`: lazy imports keep their own chunks) –
+ * plus `src/web/lib/zod-jitless.ts` (WP-66): it must run before any module creates a zod schema
+ * (CSP, V1-09). Rolldown may put the shared contracts into start chunks of their own, which run
+ * before the body of `index`; every chunk with schemas imports zod from `vendor`, so `vendor`
+ * always runs first – with the switch inside.
+ */
+const NODE_MODULES = /[\\/]node_modules[\\/]|[\\/]src[\\/]web[\\/]lib[\\/]zod-jitless\.ts$/;
 const REACT_RUNTIME = /[\\/]node_modules[\\/](?:react|react-dom|scheduler)[\\/]/;
 
 export default defineConfig(({ command }) => {
