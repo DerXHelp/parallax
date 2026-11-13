@@ -78,6 +78,25 @@ export const cliProfileSchema = z.object({
   sideQuestion: z.boolean().nullable().default(null),
   /** WP-66: `Query.cancelAsyncMessage` exists („Zurückholen“, never called); null = not checked. */
   withdrawQueued: z.boolean().nullable().default(null),
+  /**
+   * WP-67: the "Session info" tabs – per read method: it answered a shape the server's parser reads
+   * (`backend/sessionInfo.ts`); `mcpActions`/`reload`: the action methods exist (never called).
+   * null = not checked (profile older than WP-67).
+   */
+  sessionInfo: z
+    .object({
+      status: z.boolean(),
+      memory: z.boolean(),
+      skills: z.boolean(),
+      hooks: z.boolean(),
+      permissions: z.boolean(),
+      mcp: z.boolean(),
+      export: z.boolean(),
+      mcpActions: z.boolean(),
+      reload: z.boolean(),
+    })
+    .nullable()
+    .default(null),
 });
 export type CliProfile = z.infer<typeof cliProfileSchema>;
 

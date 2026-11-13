@@ -3,7 +3,7 @@
  * (`schemaVersion`, `checkedAt`) – and the pure extraction from the raw SDK answers. The raw values
  * are parsed tolerantly (zod, unknown fields kept as keys only): `system/init`,
  * `initializationResult()`, `supportedModels()`, `getContextUsage()` (plus the booleans of the Remote
- * Control, overview and side-question steps). Never stores values of
+ * Control, overview, side-question and session-info steps). Never stores values of
  * account fields (`initializationResult().account` holds e-mail/org: only its key is kept).
  */
 import { z } from 'zod';
@@ -68,6 +68,8 @@ export interface RawProbe {
   /** WP-66: results of the side-question step (sideQuestion.ts); absent/null = not checked. */
   sideQuestion?: boolean | null;
   withdrawQueued?: boolean | null;
+  /** WP-67: results of the session-info step (sessionInfo.ts `sessionInfoProfile`); absent/null = not checked. */
+  sessionInfo?: CliProfile['sessionInfo'];
 }
 
 /** MCP tools come from the user's/account's configuration, not from the CLI. */
@@ -118,6 +120,7 @@ export function observationFrom(raw: RawProbe, sdkVersion: string): Observation 
     backgroundTasks: raw.backgroundTasks ?? null,
     sideQuestion: raw.sideQuestion ?? null,
     withdrawQueued: raw.withdrawQueued ?? null,
+    sessionInfo: raw.sessionInfo ?? null,
   };
 }
 

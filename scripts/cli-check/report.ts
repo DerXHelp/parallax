@@ -11,6 +11,7 @@ import { compareObservation, compareSmoke, deviations, type Finding } from './co
 import { observationSchema } from './observation';
 import { bridgeSummaryCounts, overviewProbeResultSchema } from './overview';
 import { remoteControlProbeResultSchema } from './remoteControl';
+import { sessionInfoProbeResultSchema } from './sessionInfo';
 import { sideQuestionProbeResultSchema } from './sideQuestion';
 import { smokeResultSchema } from './smoke';
 import type { CliProfile } from '../../src/server/claude/cliProfile';
@@ -58,6 +59,8 @@ export const runRecordSchema = z.object({
       overview: overviewProbeResultSchema.nullable().default(null),
       /** WP-66 (absent in runs before WP-66). */
       sideQuestion: sideQuestionProbeResultSchema.nullable().default(null),
+      /** WP-67 (absent in runs before WP-67): availability, row counts, unknown field names – no values. */
+      sessionInfo: sessionInfoProbeResultSchema.nullable().default(null),
     })
     .nullable(),
   smoke: smokeResultSchema.nullable(),
@@ -206,6 +209,22 @@ export function formatReport(input: {
         lines.push(
           ask.available ? `- side question: ok ("${ask.response ?? ''}")` : `- side question: NOT ok – ${ask.detail ?? '?'}`,
           `- cancelAsyncMessage: ${side.withdrawQueued ? 'present' : 'MISSING'}`,
+        );
+      }
+      const info = record.probe.sessionInfo;
+      if (info !== null) {
+        for (const check of info.sections) {
+          const rows = check.rows === null ? '' : `${String(check.rows)} row(s), `;
+          const unknown = check.unknown.length === 0 ? 'no unknown fields' : `unknown: ${check.unknown.join(', ')}`;
+          lines.push(
+            check.available
+              ? `- session info ${check.section}: ok (${rows}${unknown})`
+              : `- session info ${check.section}: NOT ok – ${check.detail ?? '?'}`,
+          );
+        }
+        lines.push(
+          `- MCP actions (reconnectMcpServer, toggleMcpServer): ${info.mcpActions ? 'present' : 'MISSING'}`,
+          `- reloads (reloadSkills, reloadPlugins): ${info.reload ? 'present' : 'MISSING'}`,
         );
       }
     }
