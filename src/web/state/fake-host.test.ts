@@ -15,7 +15,15 @@ import {
   sampleSystemItems,
   sampleTime,
 } from '@shared/samples';
-import { FAKE_FILE_PATHS, FAKE_FILE_ROOT, FAKE_LOG_LINES, FAKE_PLAN_TEXTS, FakeHost } from './fake-host';
+import { SHOWCASE_FILES } from '@web/playground/showcase/files';
+import {
+  FAKE_FILE_PATHS,
+  FAKE_FILE_ROOT,
+  FAKE_LOG_LINES,
+  FAKE_PLAN_TEXTS,
+  FakeHost,
+  fakeFileTable,
+} from './fake-host';
 import { createMemoryTransport } from './transport';
 
 const ENTRY = SAMPLE_IDS.entry;
@@ -423,6 +431,21 @@ describe('FakeHost Phase 3 commands (WP-54)', () => {
     expect(info).toMatchObject({ bytes: 2, mtimeMs: sampleFileInfo().mtimeMs + 1000 });
     expect(host.fileText(FAKE_FILE_PATHS.main)).toBe('ä');
     expect(host.touchFile(FAKE_FILE_PATHS.missing)).toBeNull();
+    host.dispose();
+  });
+
+  it('the table carries the README showcase files with their texts and times (WP-68)', () => {
+    const { host } = setup();
+    const table = fakeFileTable();
+    for (const file of SHOWCASE_FILES) {
+      expect(host.fileText(file.path), file.path).toBe(file.text);
+      const info = table.find((candidate) => candidate.info.path === file.path)?.info;
+      expect(info, file.path).toMatchObject({ kind: file.kind, mtimeMs: file.mtimeMs, previewable: true });
+    }
+    // The sample files stay ahead of the showcase files.
+    expect(table.slice(0, -SHOWCASE_FILES.length).map((file) => file.info.path)).toContain(
+      FAKE_FILE_PATHS.readme,
+    );
     host.dispose();
   });
 });
