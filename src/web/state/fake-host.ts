@@ -1,6 +1,7 @@
 import { LIMITS, type EntryId } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import {
+  DEFAULT_REMOTE_CONTROL_SUMMARY,
   isDefaultProgramAllowed,
   type AssistantTextItem,
   type Decision,
@@ -14,6 +15,7 @@ import {
   type SessionFile,
   type SessionFileOp,
   type SessionSummary,
+  type SideQuestionItem,
   type TaskInfo,
   type ToolCallItem,
   type ToolCallStatus,
@@ -49,6 +51,7 @@ import {
 } from '@shared/samples';
 import { applySessionOp, trimItems, viewStateFromSnapshot, type SessionViewState } from '@shared/sync';
 import { pathTail } from '@web/lib/path-display';
+import { FakeSessionInfoData } from './fake-session-info';
 import type { MemoryTransport } from './transport';
 
 /**
@@ -392,12 +395,17 @@ export class FakeHost {
   readonly fileOpens: CommandOf<'file.open'>[] = [];
   /** When set, file.open fails with this error after the checks (e.g. EDITOR_NOT_FOUND). */
   fileOpenError: ErrorPayload | null = null;
+  /** WP-65: every link.open (assertions); `linkOpenError` fails them (the web then opens the link itself). */
+  readonly linkOpens: string[] = [];
+  linkOpenError: ErrorPayload | null = null;
   /** Session file index per entry (files.session); a known entry without one starts with fakeSessionFiles(). */
   readonly sessionFiles = new Map<EntryId, SessionFile[]>();
   /** `truncated` of every files.session answer (more than LIMITS.sessionFilesMax on a real host). */
   sessionFilesTruncated = false;
   /** One-shot failures per command name (failNext). */
   private readonly failures = new Map<CommandName, ErrorPayload[]>();
+  /** WP-67: session info answers and actions; levers `unavailable`, `actionError`, `long`. */
+  readonly info = new FakeSessionInfoData();
   /** Stored plan versions, ascending (plan.list, plan.read; `stored: false` → PLAN_NOT_FOUND). */
   planVersions: { info: PlanVersionInfo; text: string }[] = [
     {
@@ -756,6 +764,31 @@ export class FakeHost {
    * session.stopTask like the engine (ADR-149): the task of the tool call is reported `stopped`
    * (task_notification), a background task leaves `detail.backgroundTasks`.
    */
+  /**
+   * WP-65: like the CLI's backgroundTasks – the given running main-thread Bash/Agent call (or every
+   * one) gets status `background`; TASK_NOT_FOUND when none matches.
+   */
+  private backgroundTasks(entryId: EntryId, toolUseId: string | null): FakeAck {
+    const view = this.view(entryId);
+    if (view === null) return { ok: false, error: makeError('ENTRY_NOT_FOUND') };
+    const running = view.items.filter(
+      (item): item is ToolCallItem =>
+        item.kind === 'tool_call' &&
+        item.parentToolUseId === null &&
+        item.status === 'running' &&
+        (toolUseId === null || item.toolUseId === toolUseId),
+    );
+    if (running.length === 0) {
+      if (toolUseId === null) return this.ok();
+      return { ok: false, error: makeError('TASK_NOT_FOUND', { taskId: toolUseId }) };
+    }
+    this.pushOps(
+      entryId,
+      running.map((item): SessionOp => ({ op: 'item.upsert', item: { ...item, status: 'background' } })),
+    );
+    return this.ok();
+  }
+
   private stopTask(entryId: EntryId, taskId: string): FakeAck {
     const view = this.view(entryId);
     if (view === null) return { ok: false, error: makeError('ENTRY_NOT_FOUND') };
@@ -805,6 +838,17 @@ export class FakeHost {
 
   private knowsEntry(entryId: EntryId): boolean {
     return this.sessions.has(entryId) || this.summaries.has(entryId);
+  }
+
+  /** WP-67: the engine's gates of session.info/mcpAction/reload (no auto-wake). */
+  private infoGate(entryId: EntryId): ErrorPayload | null {
+    const summary = this.summaries.get(entryId);
+    if (summary === undefined) return makeError(this.knowsEntry(entryId) ? 'SESSION_NOT_RUNNING' : 'ENTRY_NOT_FOUND', { entryId });
+    if (summary.archived) return makeError('SESSION_ARCHIVED', { entryId });
+    const runState = summary.status.runState;
+    if (runState === 'external') return makeError('SESSION_EXTERNAL', { entryId });
+    if (runState === 'sleeping' || runState === 'error') return makeError('SESSION_NOT_RUNNING', { entryId });
+    return null;
   }
 
   dispose(): void {
@@ -1018,10 +1062,67 @@ export class FakeHost {
       case 'session.setArchived':
         this.patchSummary(cmd.entryId, { archived: cmd.archived });
         return this.ok();
+      // WP-64: Remote Control connects at once (fake claude.ai link per entry).
+      case 'session.setRemoteControl':
+        this.patchSummary(cmd.entryId, {
+          remoteControl: cmd.enabled
+            ? {
+                state: 'connected',
+                sessionUrl: `https://claude.ai/code/session_fakeweb${cmd.entryId.replace(/[^a-z0-9]/gi, '')}`,
+                error: null,
+                wanted: true,
+              }
+            : DEFAULT_REMOTE_CONTROL_SUMMARY,
+        });
+        return this.ok();
+      case 'session.remove': {
+        // WP-63: like the hub – summary.remove for all, session.unavailable for a subscriber.
+        if (!this.knowsEntry(cmd.entryId)) return { ok: false, error: makeError('ENTRY_NOT_FOUND') };
+        this.interruptStreams(cmd.entryId);
+        this.removeSummary(cmd.entryId);
+        this.sessions.delete(cmd.entryId);
+        if (this.subscribed.delete(cmd.entryId)) {
+          this.send({
+            type: 'session.unavailable',
+            entryId: cmd.entryId,
+            error: makeError('ENTRY_NOT_FOUND'),
+          });
+        }
+        return this.ok();
+      }
       case 'session.setEffort':
       case 'session.close':
-      case 'session.resume':
         return this.ok();
+      case 'session.resume': {
+        // WP-67: a sleeping session wakes (no prompt) – the info dialog's "start session".
+        const summary = this.summaries.get(cmd.entryId);
+        if (summary !== undefined && (summary.status.runState === 'sleeping' || summary.status.runState === 'error')) {
+          this.patchSummary(cmd.entryId, {}, { runState: 'idle' });
+        }
+        return this.ok();
+      }
+      // ---- WP-67: session info, MCP actions, reloads (fake-session-info.ts) ----
+      case 'session.info': {
+        const gate = this.infoGate(cmd.entryId);
+        if (gate !== null) return { ok: false, error: gate };
+        const summary = this.summaries.get(cmd.entryId);
+        if (summary === undefined || !this.info.available(cmd.section)) return this.ok({ available: false, data: null });
+        return this.ok({ available: true, data: this.info.section(cmd.entryId, cmd.section, summary) });
+      }
+      case 'session.mcpAction': {
+        const gate = this.infoGate(cmd.entryId);
+        if (gate !== null) return { ok: false, error: gate };
+        const failure = this.info.mcpAction(cmd.entryId, cmd.server, cmd.action);
+        if (failure !== null) return { ok: false, error: makeError('CLAUDE_CONTROL_FAILED', { method: 'mcpAction', detail: failure }) };
+        return this.ok();
+      }
+      case 'session.reload': {
+        const gate = this.infoGate(cmd.entryId);
+        if (gate !== null) return { ok: false, error: gate };
+        const failure = this.info.reload(cmd.entryId, cmd.what);
+        if (failure !== null) return { ok: false, error: makeError('CLAUDE_CONTROL_FAILED', { method: 'reload', detail: failure }) };
+        return this.ok();
+      }
       case 'transcript.loadEarlier': {
         // The server view keeps every item; snapshots are trimmed to LIMITS.snapshotItems.
         const view = this.view(cmd.entryId);
@@ -1100,6 +1201,44 @@ export class FakeHost {
       }
       case 'session.stopTask':
         return this.stopTask(cmd.entryId, cmd.taskId);
+      // WP-65: background moves, generated titles, links in the default browser.
+      case 'session.backgroundTasks':
+        return this.backgroundTasks(cmd.entryId, cmd.toolUseId);
+      case 'session.regenerateTitle': {
+        const summary = this.summaries.get(cmd.entryId);
+        if (summary === undefined) return { ok: false, error: makeError('ENTRY_NOT_FOUND') };
+        this.patchSummary(cmd.entryId, { title: `Generated: ${summary.title}`.slice(0, 200), titleSource: 'ai' });
+        return this.ok();
+      }
+      case 'link.open':
+        this.linkOpens.push(cmd.url);
+        return this.linkOpenError === null ? this.ok() : { ok: false, error: this.linkOpenError };
+      // WP-66: side questions and withdrawing a waiting message.
+      case 'session.askSideQuestion':
+        return this.ok({ itemId: this.askSideQuestion(cmd.entryId, cmd.question, cmd.threadId) });
+      case 'session.cancelSideQuestion': {
+        const item = this.view(cmd.entryId)?.items.find((i) => i.id === cmd.itemId);
+        if (item?.kind === 'side_question' && item.status === 'pending') {
+          this.pushOps(cmd.entryId, [{ op: 'item.upsert', item: { ...item, status: 'cancelled' } }]);
+        }
+        return this.ok();
+      }
+      case 'session.deleteSideQuestion': {
+        const ids = (this.view(cmd.entryId)?.items ?? [])
+          .filter((i) => i.kind === 'side_question' && i.threadId === cmd.threadId)
+          .map((i) => i.id);
+        if (ids.length > 0) this.pushOps(cmd.entryId, ids.map((itemId) => ({ op: 'item.remove' as const, itemId })));
+        return this.ok();
+      }
+      case 'session.withdrawQueued': {
+        const queue = this.view(cmd.entryId)?.detail.queue ?? [];
+        const prompt = queue.find((q) => q.messageUuid === cmd.messageUuid);
+        if (prompt === undefined) return this.ok({ withdrawn: false, text: null });
+        this.pushOps(cmd.entryId, [
+          { op: 'detail.patch', patch: { queue: queue.filter((q) => q.messageUuid !== cmd.messageUuid) } },
+        ]);
+        return this.ok({ withdrawn: true, text: prompt.text.text });
+      }
       // Phase 2 commands (WP-30) included: the packages answer them in their tests via `onCommand`.
       case 'session.setFastMode':
       case 'session.switchConversation':
@@ -1118,6 +1257,42 @@ export class FakeHost {
     }
   }
 
+  /**
+   * WP-66: a pending side question (id like the engine's `px:<conversation>:<order>`); with
+   * `replyToPrompts` (playground) answered a moment later. Returns its item id.
+   */
+  private askSideQuestion(entryId: EntryId, question: string, threadId: string | null): string {
+    const order = this.nextOrder(entryId);
+    const id = `px:fake:${String(order)}`;
+    const item: SideQuestionItem = {
+      kind: 'side_question',
+      id,
+      order,
+      at: this.now(),
+      parentToolUseId: null,
+      threadId: threadId ?? id,
+      question,
+      status: 'pending',
+      response: null,
+      synthetic: false,
+      fallbackModel: null,
+      retry: null,
+      error: null,
+      answeredAt: null,
+    };
+    this.pushOps(entryId, [{ op: 'item.upsert', item }]);
+    if (this.options.replyToPrompts === true) {
+      this.later(() => {
+        const current = this.view(entryId)?.items.find((i) => i.id === id);
+        if (current?.kind !== 'side_question' || current.status !== 'pending') return;
+        const response = `A playground side answer to “${question.slice(0, 80)}”. No model was called.`;
+        const answered: SideQuestionItem = { ...current, status: 'answered', response, answeredAt: this.now() };
+        this.pushOps(entryId, [{ op: 'item.upsert', item: answered }]);
+      }, 600);
+    }
+    return id;
+  }
+
   /** Adds the user message (and optionally a streamed reply); returns its messageUuid. */
   private acceptPrompt(entryId: EntryId, text: string, priority: 'next' | 'now'): string {
     const messageUuid = crypto.randomUUID();
@@ -1132,6 +1307,7 @@ export class FakeHost {
       text: { text, truncated: null },
       attachments: [],
       origin: 'human',
+      source: 'local',
       slashCommand: text.startsWith('/') ? (text.split(/\s/)[0] ?? null) : null,
       priority,
     };

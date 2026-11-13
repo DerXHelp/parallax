@@ -32,6 +32,14 @@ import type {
 import { createFakeBackend, sequentialIds, type FakeBackendOptions } from '../fakeBackend';
 import { FAKE_CONSOLE_PROMPT, fakeConsoleAnswer } from './console';
 import { FAKE_CONTEXT_HIGH_TOKENS, FAKE_MODELS } from './defaults';
+import {
+  FAKE_IMAGE_BURST,
+  FAKE_IMAGES_ANSWER,
+  FAKE_LIMIT_WARNING_ANSWER,
+  FAKE_STEP_COMMANDS,
+  FAKE_STEPS_ANSWER,
+  FAKE_STEPS_MIDDLE,
+} from './feedback';
 import { FAKE_SHOT_HEIGHT, FAKE_SHOT_PNG_BASE64, FAKE_SHOT_WIDTH } from './image';
 import { FAKE_RATE_LIMIT_RESET_S } from './interactive';
 import { createFakeClaudeIntegration } from './integration';
@@ -45,6 +53,7 @@ import {
   FAKE_WRITES_LOST_TEXT,
 } from './phase3';
 import { FAKE_PLAN_INPUT_CHUNKS } from './plan';
+import { FAKE_REMOTE_OFF_TEXT } from './remote';
 
 const launch = await createFakeClaudeIntegration().launchSpecFor('standard', SAMPLE_IDS.entry);
 
@@ -68,7 +77,8 @@ async function until(predicate: () => boolean, what: string, timeoutMs = UNTIL_T
   const deadline = performance.now() + timeoutMs;
   for (;;) {
     if (predicate()) return;
-    if (performance.now() > deadline) throw new Error(`timeout waiting for ${what} (${String(timeoutMs)} ms)`);
+    if (performance.now() > deadline)
+      throw new Error(`timeout waiting for ${what} (${String(timeoutMs)} ms)`);
     await new Promise((resolve) => {
       realSetImmediate(resolve);
     });
@@ -697,10 +707,10 @@ describe('interactive scenario – Phase 3 (WP-52)', () => {
     // The follow-up turn answers the notification (F.11), then idle.
     expect(h.results()).toHaveLength(2);
     expect(texts(h.items()).at(-1)).toBe(FAKE_BACKGROUND_DONE);
-    expect(
-      h.signals.filter((s) => s.type === 'background_tasks').map((s) => s.count),
-    ).toEqual([1, 0]);
-    await expect(h.agent.stopTask(taskId)).rejects.toThrow(`Task ${taskId} is not running (status: completed)`);
+    expect(h.signals.filter((s) => s.type === 'background_tasks').map((s) => s.count)).toEqual([1, 0]);
+    await expect(h.agent.stopTask(taskId)).rejects.toThrow(
+      `Task ${taskId} is not running (status: completed)`,
+    );
     expect(h.handle.diagnostics).toEqual([]);
     await h.close();
   });
@@ -714,7 +724,10 @@ describe('interactive scenario – Phase 3 (WP-52)', () => {
     const taskId = agentCall(h.items()).task?.taskId ?? '';
     await h.agent.stopTask(taskId);
     await h.turnDone(1);
-    expect(agentCall(h.items()).task).toMatchObject({ status: 'stopped', outputFile: expect.stringMatching(/\.output$/) as string });
+    expect(agentCall(h.items()).task).toMatchObject({
+      status: 'stopped',
+      outputFile: expect.stringMatching(/\.output$/) as string,
+    });
     // WP-60: a real end time (the task panel lists finished tasks for 10 minutes after it).
     expect(Date.now() - Date.parse(agentCall(h.items()).task?.endedAt ?? '')).toBeLessThan(60_000);
     expect(h.results()).toHaveLength(1);
@@ -781,7 +794,11 @@ describe('interactive scenario – Phase 3 (WP-52)', () => {
     const seen = estimates().length;
     h.send('fake:todo');
     await h.turnDone(3);
-    expect(estimates().slice(seen).every((total) => total === FAKE_CONTEXT_HIGH_TOKENS)).toBe(true);
+    expect(
+      estimates()
+        .slice(seen)
+        .every((total) => total === FAKE_CONTEXT_HIGH_TOKENS),
+    ).toBe(true);
     expect(await percentage()).toBe(75);
 
     h.send('fake:compact');
@@ -813,7 +830,11 @@ describe('interactive scenario – Phase 3 (WP-52)', () => {
     expect(readFileSync(path.join(dir, 'new-file.txt'), 'utf8')).toBe('Created by fake:files.\n');
     expect(readFileSync(path.join(dir, 'app.ts'), 'utf8').split('\n')[11]).toBe('  const answer = 42;');
     expect(calls[2]?.result?.structured).toMatchObject({
-      structuredPatch: [expect.objectContaining({ lines: expect.arrayContaining(['-  const answer = 41;', '+  const answer = 42;']) as string[] })],
+      structuredPatch: [
+        expect.objectContaining({
+          lines: expect.arrayContaining(['-  const answer = 41;', '+  const answer = 42;']) as string[],
+        }),
+      ],
     });
     const answer = texts(h.items()).at(-1) ?? '';
     expect(answer).toContain(`${path.join(dir, 'app.ts')}:12`);
@@ -839,25 +860,40 @@ describe('interactive scenario – Phase 3 (WP-52)', () => {
 
   it('attachments: PDFs, an `Attached files:` block, inline pastes and images are counted', async () => {
     const h = harness();
-    h.send('Look at these\n\nAttached files:\n- D:\\work\\a.txt\n- D:\\work\\b.log', 'next', [pdf], ['one', 'two', 'three']);
+    h.send(
+      'Look at these\n\nAttached files:\n- D:\\work\\a.txt\n- D:\\work\\b.log',
+      'next',
+      [pdf],
+      ['one', 'two', 'three'],
+    );
     await h.turnDone(1);
     expect(texts(h.items())).toEqual(['Fake: received 1 document(s), 2 file(s)\nFake: received 3 paste(s)']);
     h.send('', 'next', [png, pdf]);
     await h.turnDone(2);
-    expect(texts(h.items()).at(-1)).toBe('Fake: received 1 image(s)\nFake: received 1 document(s), 0 file(s)');
+    expect(texts(h.items()).at(-1)).toBe(
+      'Fake: received 1 image(s)\nFake: received 1 document(s), 0 file(s)',
+    );
     h.send('Attached files:\n- D:\\work\\only.txt');
     await h.turnDone(3);
     expect(texts(h.items()).at(-1)).toBe('Fake: received 0 document(s), 1 file(s)');
-    const history = await h.backend.readHistory({ sessionId: h.handle.sessionId ?? '', cwd: 'D:\\work\\fake', launch });
+    const history = await h.backend.readHistory({
+      sessionId: h.handle.sessionId ?? '',
+      cwd: 'D:\\work\\fake',
+      launch,
+    });
     expect(history.find((m) => m.type === 'user')?.message).toMatchObject({
-      content: [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf' } }, { type: 'text' }],
+      content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf' } },
+        { type: 'text' },
+      ],
     });
     expect(h.handle.diagnostics).toEqual([]);
     await h.close();
   });
 
   it('fresh-context start: first prompt "Implement the following approved plan." without resume → plan lines; init mode = start mode', async () => {
-    const plan = 'Implement the following approved plan.\nPlan file: C:\\Users\\u\\.claude\\plans\\p.md\n\n## Plan\n- one\n- two\n';
+    const plan =
+      'Implement the following approved plan.\nPlan file: C:\\Users\\u\\.claude\\plans\\p.md\n\n## Plan\n- one\n- two\n';
     const h = harness({ permissionMode: 'acceptEdits' });
     h.send(plan);
     await h.turnDone(1);
@@ -873,6 +909,175 @@ describe('interactive scenario – Phase 3 (WP-52)', () => {
     await resumed.turnDone(1);
     expect(texts(resumed.items()).at(-1)).not.toContain('implementing plan');
     await resumed.close();
+  });
+});
+
+describe('WP-63 feedback scenarios', () => {
+  it('fake:steps → thinking + Bash runs, one failing, a sentence in between, the answer', async () => {
+    const h = harness();
+    h.send('fake:steps');
+    await h.turnDone(1);
+    const items = h.items();
+    const calls = items.flatMap((i) => (i.kind === 'tool_call' ? [i] : []));
+    expect(calls.map((call) => call.input)).toEqual(
+      [...FAKE_STEP_COMMANDS, ...FAKE_STEP_COMMANDS.filter((step) => step.fails !== true).slice(0, 3)].map(
+        (step) => ({ command: step.command, description: step.command }),
+      ),
+    );
+    // No decisions (plain work steps); the failing test run is the one error.
+    expect(calls.every((call) => call.decision === null)).toBe(true);
+    expect(calls.map((call) => call.status)).toEqual(
+      calls.map((_, index) => (index === 3 ? 'error' : 'done')),
+    );
+    expect(items.filter((i) => i.kind === 'thinking')).toHaveLength(calls.length);
+    expect(texts(items)).toEqual([FAKE_STEPS_MIDDLE, FAKE_STEPS_ANSWER]);
+    await h.close();
+  });
+
+  it('fake:images → a burst of Read results with one PNG each', async () => {
+    const h = harness();
+    h.send('fake:images');
+    await h.turnDone(1);
+    const calls = h.items().flatMap((i) => (i.kind === 'tool_call' ? [i] : []));
+    expect(calls).toHaveLength(FAKE_IMAGE_BURST);
+    for (const call of calls) {
+      expect(call.toolName).toBe('Read');
+      expect(call.result?.content.filter((part) => part.type === 'image')).toHaveLength(1);
+    }
+    expect(texts(h.items())).toEqual([FAKE_IMAGES_ANSWER]);
+    await h.close();
+  });
+
+  it('fake:limit-warning → the limit signal (weekly window) without a transcript item', async () => {
+    const h = harness();
+    h.send('fake:limit-warning');
+    await h.turnDone(1);
+    const limits = h.signals.flatMap((s) => (s.type === 'rate_limit' ? [s.info] : []));
+    expect(limits).toMatchObject([
+      { status: 'allowed_warning', rateLimitType: 'seven_day', utilization: 0.81 },
+    ]);
+    expect(Object.keys(limits[0]?.windows ?? {})).toEqual(['five_hour', 'seven_day']);
+    expect(h.items().some((i) => i.kind === 'system' && i.event === 'rate_limit')).toBe(false);
+    expect(texts(h.items())).toEqual([FAKE_LIMIT_WARNING_ANSWER]);
+    await h.close();
+  });
+});
+
+describe('interactive scenario: Remote Control (WP-64)', () => {
+  const bridgeStates = (signals: readonly StatusSignal[]) =>
+    signals.flatMap((s) => (s.type === 'bridge_state' ? [s.state] : []));
+  const enable = (h: ReturnType<typeof harness>, reattachSessionId: string | null = null) =>
+    h.agent.setRemoteControl(true, { name: 'Fake title', reattachSessionId });
+
+  it('setRemoteControl: ready → connected, fake claude.ai link, same bridge on reattach, off again', async () => {
+    const h = harness();
+    const result = await enable(h);
+    expect(result.ok).toBe(true);
+    const info = result.ok ? result.info : null;
+    expect(info?.bridgeSessionId).toMatch(/^cse_fake[0-9a-f]{20}$/);
+    expect(info?.sessionUrl).toBe(`https://claude.ai/code/session_${(info?.bridgeSessionId ?? '').slice(4)}`);
+    await h.backend.settle();
+    expect(bridgeStates(h.signals)).toEqual(['ready', 'connected']);
+    expect(h.handle.remoteControl).toEqual(info);
+    expect(h.handle.controls.at(-1)).toEqual({
+      method: 'setRemoteControl',
+      args: [true, { name: 'Fake title', reattachSessionId: null }],
+    });
+    await expect(h.agent.setRemoteControl(false, { name: null, reattachSessionId: null })).resolves.toEqual({
+      ok: true,
+      info: null,
+    });
+    expect(h.handle.remoteControl).toBeNull();
+    const again = await enable(h, info?.bridgeSessionId ?? null);
+    expect(again).toEqual({ ok: true, info });
+    await h.close();
+  });
+
+  it('failures per option; the default of Claude\'s setting; closed sessions', async () => {
+    for (const [mode, code] of [
+      ['unavailable', 'REMOTE_CONTROL_UNAVAILABLE'],
+      ['auth', 'REMOTE_CONTROL_AUTH'],
+      ['policy', 'REMOTE_CONTROL_POLICY_DISABLED'],
+      ['failed', 'REMOTE_CONTROL_FAILED'],
+    ] as const) {
+      const h = harness({}, { remoteControl: { enable: mode, atStartup: true } });
+      await expect(enable(h)).resolves.toMatchObject({ ok: false, error: { code } });
+      await expect(h.agent.readRemoteControlDefault()).resolves.toBe(true);
+      await h.close();
+      await expect(enable(h)).resolves.toMatchObject({ ok: false, error: { code: 'REMOTE_CONTROL_FAILED' } });
+    }
+    const plain = harness();
+    await expect(plain.agent.readRemoteControlDefault()).resolves.toBe(false);
+    await plain.close();
+  });
+
+  it('fake:remote-prompt: own echo dropped, then a remote user_message with its answer', async () => {
+    const h = harness();
+    await enable(h);
+    await h.backend.settle();
+    h.send('fake:remote-prompt Was macht der Build?');
+    await h.turnDone(2);
+    const users = h.items().filter((i) => i.kind === 'user_message');
+    expect(users).toMatchObject([
+      { source: 'local', text: { text: 'fake:remote-prompt Was macht der Build?' } },
+      { source: 'remote', origin: 'human', text: { text: 'Was macht der Build?' } },
+    ]);
+    expect(texts(h.items()).at(-1)).toBe('From the app: Was macht der Build?');
+    const remoteUuid = users[1]?.id ?? '';
+    expect(
+      h.signals.flatMap((s) => (s.type === 'prompt_lifecycle' && s.messageUuid === remoteUuid ? [s.state] : [])),
+    ).toEqual(['queued', 'started', 'completed']);
+    await h.close();
+  });
+
+  it('remotePrompt() of the handle plays a foreign turn between turns', async () => {
+    const h = harness();
+    await enable(h);
+    await h.backend.settle();
+    const uuid = await h.handle.remotePrompt('Status?', { answer: 'All green' });
+    await h.turnDone(1);
+    expect(h.items().find((i) => i.id === uuid)).toMatchObject({ kind: 'user_message', source: 'remote' });
+    expect(texts(h.items())).toEqual(['All green']);
+    await h.close();
+  });
+
+  it('fake:remote-permission: canUseTool aborted (answered in the app), the tool runs', async () => {
+    const h = harness();
+    await enable(h);
+    await h.backend.settle();
+    h.send('fake:remote-permission');
+    const pending = await h.decision();
+    expect(pending.req.toolName).toBe('Write');
+    await until(() => pending.signal.aborted, 'the abort of canUseTool');
+    await h.turnDone(1);
+    const call = h.items().find((i) => i.kind === 'tool_call');
+    expect(call).toMatchObject({ toolName: 'Write', status: 'done' });
+    expect(texts(h.items()).at(-1)).toBe('handy.txt was written (approved in the Claude app).');
+    await h.close();
+  });
+
+  it('fake:remote-fail → terminal failure, bridge gone; fake:remote-flaky → failed (transient), connected again', async () => {
+    const h = harness();
+    await enable(h);
+    await h.backend.settle();
+    h.send('fake:remote-flaky');
+    await h.turnDone(1);
+    await h.backend.settle();
+    h.send('fake:remote-fail');
+    await h.turnDone(2);
+    const bridge = h.signals.flatMap((s) => (s.type === 'bridge_state' ? [[s.state, s.failureKind, s.recovered]] : []));
+    expect(bridge).toEqual([
+      ['ready', null, false],
+      ['connected', null, false],
+      ['failed', 'transient', false],
+      ['connected', null, true],
+      ['failed', 'terminal', false],
+    ]);
+    expect(h.handle.remoteControl).toBeNull();
+    h.send('fake:remote-prompt x');
+    await h.turnDone(3);
+    expect(texts(h.items()).at(-1)).toBe(FAKE_REMOTE_OFF_TEXT);
+    await h.close();
   });
 });
 

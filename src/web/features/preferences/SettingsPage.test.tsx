@@ -17,6 +17,7 @@ import { FeatureSlotsProvider, type FeatureSlots, type ProfilesSettingsSlotProps
 import { createHostConnection, registerConnection, unregisterConnection } from '@web/state/connection';
 import { FakeHost } from '@web/state/fake-host';
 import { resetClientStore } from '@web/state/store';
+import { getTranscriptView } from '@web/state/transcript-view';
 import { createMemoryTransport } from '@web/state/transport';
 import { TooltipProvider } from '@web/ui/tooltip';
 import { de } from './i18n/de';
@@ -157,6 +158,20 @@ describe('General', () => {
     expect(await screen.findByRole('dialog', { name: 'Einstellungen' })).toBeTruthy();
     expect(screen.getByRole('radiogroup', { name: 'Design' })).toBeTruthy();
     expect(screen.getByRole('radio', { name: 'Hell' }).getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('transcript view: compact by default, "All steps" is a server setting (WP-65 §1.6)', async () => {
+    const host = await connect();
+    const user = userEvent.setup();
+    renderPage();
+    const group = screen.getByRole('radiogroup', { name: 'Transcript' });
+    expect(within(group).getByRole('radio', { name: 'Compact' }).getAttribute('aria-checked')).toBe('true');
+    await user.click(within(group).getByRole('radio', { name: 'All steps' }));
+    await waitFor(() => {
+      expect(patches(host)).toEqual([{ transcriptView: 'all' }]);
+    });
+    expect(getTranscriptView()).toBe('all');
+    expect(within(group).getByRole('radio', { name: 'All steps' }).getAttribute('aria-checked')).toBe('true');
   });
 });
 
@@ -387,6 +402,37 @@ describe('Sessions', () => {
     });
     // Without idle sleep the minutes cannot be edited.
     expect(minutes.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('WP-64: Remote Control for new sessions – like Claude (with the detected value), always on, off', async () => {
+    const host = await connect({ hostState: sampleHostState({ remoteControlDefault: true }) });
+    const user = userEvent.setup();
+    renderPage();
+    const panel = await openSection(user, 'Sessions');
+    const group = within(panel).getByRole('radiogroup', { name: 'Remote Control for new sessions' });
+    const follow = within(group).getByRole('radio', { name: 'Like the Claude setting (currently on)' });
+    expect(follow.getAttribute('aria-checked')).toBe('true');
+    await user.click(within(group).getByRole('radio', { name: 'Always on' }));
+    await user.click(within(group).getByRole('radio', { name: 'Off' }));
+    await waitFor(() => {
+      expect(patches(host)).toEqual([
+        { remoteControl: { newSessions: 'on' } },
+        { remoteControl: { newSessions: 'off' } },
+      ]);
+    });
+  });
+
+  it('WP-64: the Claude value is not known yet / German texts', async () => {
+    await connect({ hostState: sampleHostState({ settings: sampleSettings({ language: 'de' }) }) });
+    renderPage('sessions');
+    const panel = await screen.findByRole('tabpanel', { name: 'Sessions' });
+    const group = within(panel).getByRole('radiogroup', { name: 'Remote Control für neue Sessions' });
+    expect(
+      within(group).getByRole('radio', {
+        name: 'Wie Claude-Einstellung (noch nicht gelesen – bekannt nach dem ersten Session-Start)',
+      }),
+    ).toBeTruthy();
+    expect(within(group).getByRole('radio', { name: 'Immer an' })).toBeTruthy();
   });
 });
 

@@ -4,10 +4,12 @@
  */
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { EffortLevel, PermissionMode } from '@shared/common';
+import type { SessionInfoSectionName } from '@shared/model';
 import type { FixtureEvent } from '../fixture';
-import type { AgentBackend, OutgoingPrompt, StartSessionRequest } from '../types';
+import type { AgentBackend, OutgoingPrompt, RemoteControlInfo, StartSessionRequest } from '../types';
 import type { FakeFiles } from './files';
 import type { FakeHistoryStore } from './history';
+import type { FakeSessionInfo } from './sessionInfo';
 
 export type FakeScenario =
   | { kind: 'events'; name: string; events: readonly FixtureEvent[]; options?: FakeEventsOptions }
@@ -53,6 +55,72 @@ export interface FakeBackendOptions {
    * `fake:files`), one subfolder per session id. Default `%TEMP%\parallax-fake-files`.
    */
   filesRoot?: string;
+  /** WP-64: Remote Control of the fake sessions (default: available, Claude setting off). */
+  remoteControl?: FakeRemoteControlOptions;
+  /** WP-65: title generator, usage query and background moves of the fake sessions (default: all work). */
+  overview?: FakeOverviewOptions;
+  /** WP-66: side questions and withdrawing queued prompts (default: both work). */
+  sideQuestions?: FakeSideQuestionOptions;
+  /** WP-67: session info, MCP actions and reloads (default: every section answers, actions work). */
+  sessionInfo?: FakeSessionInfoOptions;
+}
+
+/**
+ * WP-67: levers of the fake session info (tests; the interactive levers are the keywords
+ * `fake:info-unavailable [section …]`, `fake:info-fail`, `fake:info-long`, `fake:info-reset`).
+ */
+export interface FakeSessionInfoOptions {
+  /** Sections whose CLI method is missing (readInfo → null, "not available"); 'all' = every one. */
+  unavailable?: readonly SessionInfoSectionName[] | 'all';
+  /** mcpAction / reload: 'failed' = the CLI rejects the request. Default 'ok'. */
+  actions?: 'ok' | 'failed';
+  /** Long lists (skills beyond the list cap, many rules, servers, hooks and export lines). */
+  long?: boolean;
+}
+
+/**
+ * WP-66: levers of the fake side questions and of `withdrawQueued` (tests; the interactive levers
+ * are keywords in the question / the queued prompt, fake/sideQuestion.ts). Default 'ok' each.
+ */
+export interface FakeSideQuestionOptions {
+  /**
+   * askSideQuestion: 'unavailable' = method missing, 'busy' = side_question_busy, 'failed' = the
+   * request fails, 'none' = the CLI has no answer (null), 'synthetic', 'fallback' = refusal fallback
+   * (another model answered), 'retry' = one api_retry progress first, 'slow' = answers only after
+   * FAKE_SIDE_SLOW_MS (never at speed 0 – for cancelling).
+   */
+  mode?: FakeSideQuestionMode;
+  /** withdrawQueued: 'taken' = always false, 'unavailable' = method missing (rejects). */
+  withdraw?: 'ok' | 'taken' | 'unavailable';
+}
+
+export type FakeSideQuestionMode =
+  | 'ok'
+  | 'unavailable'
+  | 'busy'
+  | 'failed'
+  | 'none'
+  | 'synthetic'
+  | 'fallback'
+  | 'retry'
+  | 'slow';
+
+/** WP-65: levers of the fake overview methods (tests; default 'ok' each). */
+export interface FakeOverviewOptions {
+  /** generateTitle: 'unavailable' = the method is missing, 'failed' = the request fails. */
+  titles?: 'ok' | 'unavailable' | 'failed';
+  /** readUsage: 'no-plan' = no plan limits (API key), 'unavailable' / 'failed' → null. */
+  usage?: 'ok' | 'no-plan' | 'unavailable' | 'failed';
+  /** backgroundTasks: 'disabled' = the CLI refuses (CLAUDE_CODE_DISABLE_BACKGROUND_TASKS). */
+  backgroundTasks?: 'ok' | 'disabled';
+}
+
+/** WP-64: levers of the fake Remote Control (tests; the interactive levers are prompts, remote.ts). */
+export interface FakeRemoteControlOptions {
+  /** Claude's `remoteControlAtStartup` as readRemoteControlDefault() answers it; default false. */
+  atStartup?: boolean | null;
+  /** Answer of setRemoteControl(true): 'ok' (default) or one of the failures. */
+  enable?: 'ok' | 'unavailable' | 'auth' | 'policy' | 'failed';
 }
 
 export interface FakeBackend extends AgentBackend {
@@ -101,6 +169,12 @@ export interface FakeDiagnostic {
   actual?: unknown;
 }
 
+/** WP-64: FakeSessionHandle.remotePrompt. */
+export interface FakeRemotePromptOptions {
+  answer?: string;
+  totalCostUsd?: number;
+}
+
 export interface FakeSessionHandle {
   readonly entryId: string;
   readonly pid: number;
@@ -117,6 +191,16 @@ export interface FakeSessionHandle {
   crash(code?: number): void;
   /** Test: CLI cancels canUseTool (signal); default the oldest open request. */
   abortDecision(toolUseId?: string): void;
+  /** WP-64: the connected fake bridge (null = Remote Control off). */
+  readonly remoteControl: RemoteControlInfo | null;
+  /** WP-64 test: emits system/bridge_state now (`failed` with failure_kind terminal also disconnects). */
+  bridgeState(state: string, fields?: Record<string, unknown>): void;
+  /**
+   * WP-64 test: a prompt typed in the Claude app (script mode, bridge connected): its whole turn is
+   * played once no other turn runs. Resolves with the foreign uuid after the turn; rejects without a bridge.
+   * `answer` default "From the app: <text>"; `totalCostUsd` = the cumulative cost of its result.
+   */
+  remotePrompt(text: string, o?: FakeRemotePromptOptions): Promise<string>;
 }
 
 export interface FakeScriptState {
@@ -164,6 +248,22 @@ export interface FakeScriptContext {
   startTask(task: FakeBackgroundTask): void;
   /** Phase 3: messages emitted on a graceful close (exit 0), right before the exit event. */
   onClose(messages: () => readonly unknown[]): void;
+  /** WP-64: the connected fake bridge (null = Remote Control off). */
+  readonly remoteControl: RemoteControlInfo | null;
+  /** WP-64: emits system/bridge_state now (see FakeSessionHandle.bridgeState). */
+  bridgeState(state: string, fields?: Record<string, unknown>): void;
+  /** WP-64: the CLI aborts canUseTool (answered elsewhere); false when no request was open. */
+  abortDecision(toolUseId: string): boolean;
+  /** WP-64: waits `ms × speed` (≤ maxDelayMs); settle() waits for it. */
+  pause(ms: number): Promise<void>;
+  /**
+   * WP-65: a running foreground tool use that `backgroundTasks()` may move to the background:
+   * 'background' once moved, 'done' after `ms × speed` (never at speed 0); a resting point for
+   * settle(); throws TurnInterrupted like emit.
+   */
+  foregroundTool(toolUseId: string, ms: number): Promise<'background' | 'done'>;
+  /** WP-67: the session info state of this session (levers of the `fake:info-*` keywords). */
+  readonly info: FakeSessionInfo;
 }
 
 /** What a background task may do (FakeBackgroundTask.run). */

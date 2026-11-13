@@ -24,6 +24,7 @@ import { jsonValueSchema, type ClientId, type EntryId, type ProfileId } from '@s
 import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   currentConversation,
+  isRemoteControlActive,
   type Entry,
   type HostState,
   type HostWarning,
@@ -108,8 +109,11 @@ import {
 } from './recovery';
 import { DEFAULT_AUTO_RETRY } from './retry';
 import { closeRuntime } from './runtime';
+import { endSideQuestions } from './sideQuestions';
 import { reduceStatus as realReduceStatus } from './status/machine';
+import { mergeUsage } from './overview';
 import { cwdLabel } from './summary';
+import { createUsagePoller } from './usagePoll';
 
 export type { SessionManagerOptions, SleepPolicy } from './entryState';
 
@@ -122,6 +126,10 @@ export const DEFAULT_SESSION_MANAGER_OPTIONS: SessionManagerOptions = {
   lifecycleShutdownWaitMs: 10_000,
   gitRefreshMs: 60_000,
   aiTitleDelayMs: 2_000,
+  // WP-65: the live activity changes at most every 2 s; usage query every 5 min (first after 10 s).
+  activityMinMs: 2_000,
+  usagePollMs: 300_000,
+  usageFirstMs: 10_000,
   processSnapshotMs: 30_000,
   processSnapshotFirstMs: 10_000,
   // C.8 (CR-02, ADR-090): up to 5 s after close() for a clean end (SessionEnd hooks, transcript).
@@ -328,6 +336,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   // while the server was down (another executable or config dir = another account); the others
   // (also those of an older file without a key) are dropped and fetched again by the next start.
   const modelCache = new Map<ProfileId, ModelCatalog>();
+  /** WP-64: Claude's `remoteControlAtStartup` per profile, as the last ready process read it. */
+  const remoteDefaults = new Map<ProfileId, boolean>();
   for (const [profileId, stored] of Object.entries(stores.catalogs.models())) {
     if (stored.profileKey !== null && stored.profileKey === profileKeys.get(profileId)) {
       modelCache.set(profileId, { options: stored.options, resolved: stored.resolved, skipped: 0 });
@@ -418,6 +428,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       nativeNotifications: toasts.available(),
       port: deps.host.port?.() ?? null,
       systemIntegration: deps.host.systemIntegration ?? false,
+      // WP-64: the default profile's `remoteControlAtStartup`, once a process of it was ready.
+      remoteControlDefault: remoteDefaults.get(defaultProfile.id) ?? null,
     };
   };
 
@@ -433,6 +445,18 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   };
 
   const presence = (): readonly ClientPresence[] => publisher?.presence() ?? [];
+
+  /** WP-65: plan limits of the usage query, merged into the profile's account limits (ADR-114). */
+  const usagePoller = createUsagePoller({
+    options,
+    timers,
+    states: () => states.values(),
+    merge: (profileId, usage) => {
+      core.setAccountLimit(profileId, mergeUsage(accountLimits.get(profileId), usage, now().toISOString()));
+    },
+    shuttingDown: () => shuttingDown,
+    log,
+  });
 
   /** Entries with a live claude.exe (PID known). */
   const runningProcesses = (): { s: EntryState; pid: number }[] =>
@@ -514,6 +538,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     s.phase === 'running' &&
     // ADR-121 (R4-02): a planned turn (ScheduleWakeup/CronCreate, /loop) dies with the process.
     !s.runtime.scheduled &&
+    // WP-64 (ADR-105 extended): the Claude app could not reach a sleeping session.
+    !isRemoteControlActive(s.remote.state) &&
     canSleep(s.facts, now()) &&
     !isWatchedByFocusedClient(clients, s.id);
 
@@ -534,10 +560,13 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         planSleep(s, presence());
         return;
       }
+      // WP-66: an open side question keeps the process awake; its end re-plans (considerSleep) –
+      // `sleepSince` stays, so the process then sleeps at once.
+      if (s.sideQuestions.size > 0) return;
       s.lifecycle
         .run(async () => {
           // Re-checked inside the lock (a prompt may have started a turn meanwhile).
-          if (sleepEligible(s, presence())) await closeRuntime(s, core, 'sleep');
+          if (sleepEligible(s, presence()) && s.sideQuestions.size === 0) await closeRuntime(s, core, 'sleep');
         })
         .catch((error: unknown) => {
           log.warn({ err: error, entryId: s.id }, 'idle sleep failed');
@@ -709,10 +738,21 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     },
     processSpawned: () => {
       scheduleProcessSnapshot(options.processSnapshotFirstMs);
+      usagePoller.spawned();
     },
     processEnded: () => {
-      if (runningProcesses().length === 0) cancelProcessSnapshot();
+      if (runningProcesses().length === 0) {
+        cancelProcessSnapshot();
+        usagePoller.stop();
+      }
     },
+    setRemoteControlDefault: (profileId, value) => {
+      if (remoteDefaults.get(profileId) === value) return;
+      remoteDefaults.set(profileId, value);
+      // Once per profile and server run (a change is rare): at once, no debounce timer.
+      publishHostState();
+    },
+    remoteControlDefault: (profileId) => remoteDefaults.get(profileId) ?? null,
   };
 
   const engine: CommandEngine = {
@@ -727,6 +767,24 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       // HostState.profiles[].entryCount changed.
       publishHostState();
       return s;
+    },
+    removeEntry: (s) => {
+      // WP-63: Parallax forgets the entry – list, memory, open views. Files on disk stay (claude
+      // transcript, entries/<id>/ with transcript cache, decisions, plan versions, attachments).
+      s.removed = true;
+      s.cancelTimers();
+      states.delete(s.id);
+      try {
+        stores.registry.remove(s.id);
+      } catch (error) {
+        reportError(error, 'registry.remove');
+      }
+      core.setEngineWarning(`mcp:${s.id}`, null);
+      clearNotifications(s.id);
+      publisherOrThrow().removeSummary(s.id);
+      // HostState.profiles[].entryCount changed.
+      publishHostState();
+      log.info({ entryId: s.id }, 'entry removed from Parallax (files kept)');
     },
     runningCount: () => [...states.values()].filter((s) => s.runtime !== null).length,
     requestShutdown: () => {
@@ -889,10 +947,13 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         hostTimer = null;
         cancelGitRefresh();
         cancelProcessSnapshot();
+        usagePoller.stop();
         for (const s of states.values()) {
           s.cancelTimers();
           // Never cancel at shutdown: open records stay open → `expired` after the restart (A.10).
           s.broker.freeze();
+          // WP-66: a side question cannot survive its process – it ends `failed` (logged before the flush).
+          endSideQuestions(core, s, null, 'shutdown');
         }
         /** True when `work` settled within `ms` on the engine clock (timers seam), false on timeout. */
         const within = (work: Promise<unknown>, ms: number): Promise<boolean> =>
@@ -1040,6 +1101,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     onPresenceChanged(all: readonly ClientPresence[]) {
       for (const s of states.values()) {
         const visible = isViewedByVisibleClient(all, s.id);
+        // WP-65 (§1.2): the moment a session stops being visible is its `lastSeenAt`.
+        if (s.viewedByVisibleClient && !visible && !shuttingDown) s.markSeen(now().toISOString());
         s.viewedByVisibleClient = visible;
         if (visible && s.facts.unread) {
           s.reduce({ type: 'viewed' });

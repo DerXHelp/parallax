@@ -34,14 +34,19 @@ import {
   fileStatResultSchema,
   fsListingSchema,
   hostStateSchema,
+  httpUrlSchema,
+  mcpActionSchema,
   modelOptionSchema,
   planVersionInfoSchema,
   profileInputSchema,
   profileIssueSchema,
   profileSchema,
+  reloadTargetSchema,
   sessionDetailPatchSchema,
   sessionDetailSchema,
   sessionFileSchema,
+  sessionInfoSectionNameSchema,
+  sessionInfoSectionSchema,
   sessionSummarySchema,
   settingsPatchSchema,
   settingsSchema,
@@ -383,6 +388,90 @@ export const commandSchema = z.discriminatedUnion('name', [
   z.object({ name: z.literal('files.project'), entryId: entryIdSchema }),
   /** Installed editor presets and the custom executable (settings "Dateien"). */
   z.object({ name: z.literal('editor.detect') }),
+  // ---- WP-63 (user feedback 1) ----
+  /**
+   * Remove the entry from Parallax only (list, memory, open views → `summary.remove`): a running
+   * process is closed first like `session.close`; nothing on disk is deleted (claude transcript,
+   * Parallax log, attachments, plan versions stay; `claude --resume` keeps working).
+   */
+  z.object({ name: z.literal('session.remove'), entryId: entryIdSchema }),
+  // ---- WP-64 (Remote Control) ----
+  /**
+   * The wish for Remote Control (`Entry.remoteControlWanted`): a running process is switched at
+   * once (failure: REMOTE_CONTROL_*, the wish stays), a dormant one at its next start. Not for
+   * archived (SESSION_ARCHIVED) or external entries (SESSION_EXTERNAL).
+   */
+  z.object({ name: z.literal('session.setRemoteControl'), entryId: entryIdSchema, enabled: z.boolean() }),
+  // ---- WP-65 (overview) ----
+  /**
+   * Send foreground work to the background (`backgroundTasks`, like Ctrl+B in the terminal): with
+   * `toolUseId` the running Bash call or subagent of that tool_use (TASK_NOT_FOUND when nothing
+   * matches), with null everything in the foreground. Needs a running process (SESSION_NOT_RUNNING);
+   * not for archived (SESSION_ARCHIVED) or external entries (SESSION_EXTERNAL).
+   */
+  z.object({
+    name: z.literal('session.backgroundTasks'),
+    entryId: entryIdSchema,
+    toolUseId: z.string().min(1).max(200).nullable(),
+  }),
+  /**
+   * A new AI title from the first prompt, the last prompt and the start of the last answer – the
+   * result is `titleSource 'ai'` even over a custom title (the user asked for it). A dormant entry is
+   * started for it; CLAUDE_CONTROL_FAILED when the CLI cannot make titles. Not for archived or
+   * external entries.
+   */
+  z.object({ name: z.literal('session.regenerateTitle'), entryId: entryIdSchema }),
+  // ---- WP-66 (side question, withdraw a queued prompt) ----
+  /**
+   * A side question (`/btw`): answered from the current conversation state without tools and never
+   * part of the conversation. The engine creates a `side_question` item (status `pending`) in the
+   * current conversation at once and answers with its id; the answer arrives as an item update. A
+   * dormant entry is started for it (no turn). `threadId`: a follow-up of that thread (its answered
+   * questions go along as history), null = a new thread. Not for archived or external entries.
+   */
+  z.object({
+    name: z.literal('session.askSideQuestion'),
+    entryId: entryIdSchema,
+    question: z.string().trim().min(1).max(LIMITS.sideQuestionChars),
+    threadId: itemIdSchema.nullable(),
+  }),
+  /** Cancel a pending side question (→ status `cancelled`); anything else is a no-op. */
+  z.object({ name: z.literal('session.cancelSideQuestion'), entryId: entryIdSchema, itemId: itemIdSchema }),
+  /** Remove a whole side-question thread from Parallax (`item.remove` of each of its items). */
+  z.object({ name: z.literal('session.deleteSideQuestion'), entryId: entryIdSchema, threadId: itemIdSchema }),
+  /**
+   * Take a queued prompt back (`cancelAsyncMessage`): `withdrawn` → it left the queue and `text` is
+   * the typed text (for the composer); false = already taken over by the CLI (nothing changes).
+   * Needs a running process (SESSION_NOT_RUNNING); CLAUDE_CONTROL_FAILED when the CLI cannot do it.
+   */
+  z.object({ name: z.literal('session.withdrawQueued'), entryId: entryIdSchema, messageUuid: messageUuidSchema }),
+  // ---- WP-67 (session info with tabs) ----
+  /**
+   * The data of one "Session info" tab from the running CLI (`/status`, `/memory`, `/skills`,
+   * `/hooks`, `/permissions`, MCP servers, `/export`) – read-only, only on request (never polled or
+   * cached). `available: false` (data null) = this `claude` cannot answer it (method missing,
+   * unknown answer shape). Needs a running process (SESSION_NOT_RUNNING – no wake-up just to show
+   * data); a failed request → CLAUDE_CONTROL_FAILED. Not for archived or external entries.
+   */
+  z.object({ name: z.literal('session.info'), entryId: entryIdSchema, section: sessionInfoSectionNameSchema }),
+  /**
+   * Reconnect an MCP server or switch it on/off (`reconnectMcpServer`, `toggleMcpServer`); the tab
+   * then asks again. Needs a running process (SESSION_NOT_RUNNING); failure → CLAUDE_CONTROL_FAILED.
+   */
+  z.object({
+    name: z.literal('session.mcpAction'),
+    entryId: entryIdSchema,
+    server: z.string().min(1).max(500),
+    action: mcpActionSchema,
+  }),
+  /** Reload skills or plugins from disk (`reloadSkills`, `reloadPlugins`); rules as `session.mcpAction`. */
+  z.object({ name: z.literal('session.reload'), entryId: entryIdSchema, what: reloadTargetSchema }),
+  /**
+   * Host: open an http(s) link in the Windows default browser (the Parallax window is a Chrome app
+   * profile without any sign-in). OPEN_FAILED when no default browser could be started – the client
+   * then falls back to `window.open`.
+   */
+  z.object({ name: z.literal('link.open'), url: httpUrlSchema }),
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export type CommandName = Command['name'];
@@ -410,6 +499,7 @@ export const HOST_COMMAND_NAMES = [
   'files.session',
   'files.project',
   'editor.detect',
+  'link.open',
 ] as const satisfies readonly CommandName[];
 export type HostCommandName = (typeof HOST_COMMAND_NAMES)[number];
 export type HostCommand = Extract<Command, { name: HostCommandName }>;
@@ -486,6 +576,19 @@ export const commandResultSchemas = {
     vscode: z.string().nullable(),
     custom: z.object({ executable: z.string(), exists: z.boolean() }).nullable(),
   }),
+  'session.remove': z.object({}),
+  'session.setRemoteControl': z.object({}),
+  'session.backgroundTasks': z.object({}),
+  'session.regenerateTitle': z.object({}),
+  'session.askSideQuestion': z.object({ itemId: itemIdSchema }),
+  'session.cancelSideQuestion': z.object({}),
+  'session.deleteSideQuestion': z.object({}),
+  'session.withdrawQueued': z.object({ withdrawn: z.boolean(), text: z.string().nullable() }),
+  /** `data` is null exactly when `available` is false. */
+  'session.info': z.object({ available: z.boolean(), data: sessionInfoSectionSchema.nullable() }),
+  'session.mcpAction': z.object({}),
+  'session.reload': z.object({}),
+  'link.open': z.object({}),
 } as const satisfies Record<CommandName, z.ZodType>;
 export type CommandResult<N extends CommandName> = z.infer<(typeof commandResultSchemas)[N]>;
 

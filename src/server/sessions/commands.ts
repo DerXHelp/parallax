@@ -10,7 +10,11 @@
  * ADR-103), external console (external.ts, ADR-104), continue after the rate limit
  * (continuePlan.ts, ADR-112). Phase 3 (WP-51, WP-50 §4.12): PDF/file attachments and pastes
  * (attachments.ts, ADR-146), `session.stopTask` (ADR-149), `plan.list`/`plan.read` (ADR-148) and
- * `approve_fresh_context` (freshContext.ts, ADR-147).
+ * `approve_fresh_context` (freshContext.ts, ADR-147). WP-63: `session.remove` (remove from
+ * Parallax only, files stay). WP-64: `session.setRemoteControl` and the Remote Control default of
+ * new entries (remoteControl.ts); archive/remove end the remote session first. WP-67:
+ * `session.info`, `session.mcpAction`, `session.reload` (sessionInfo.ts; only with a running
+ * process, no auto-wake).
  */
 import { LIMITS, type ClientId, type ProfileId } from '@shared/common';
 import { makeError } from '@shared/errors';
@@ -40,14 +44,23 @@ import {
 import { consoleCommand, openExternal, returnFromExternal } from './external';
 import { approveFreshContext } from './freshContext';
 import { catalogOrFallback, toModelCatalog } from './models';
+import { endRemoteBeforeClose, setRemoteControl } from './remoteControl';
 import { closeRuntime, deliverPrompt, startRuntime } from './runtime';
+import { mcpAction, readSessionInfo, reloadSession } from './sessionInfo';
+import { askSideQuestion, cancelSideQuestion, deleteSideQuestionThread } from './sideQuestions';
 import { capTitle, implementPlanPrompt, newConversation, titleFromPrompt } from './summary';
+import { regenerateTitle } from './titles';
 
 export interface CommandEngine {
   readonly core: EngineCore;
   state(entryId: string): EntryState | undefined;
   /** Registers a new entry (registry + summary) and returns its state. */
   createEntry(entry: Entry, promptTitle: string | null): EntryState;
+  /**
+   * WP-63: drops a (closed) entry from the engine, the registry and every window (`summary.remove`,
+   * host state); its files stay on disk.
+   */
+  removeEntry(s: EntryState): void;
   /** Entries with a process (counted BEFORE closing, R0-19). */
   runningCount(): number;
   /** server.shutdown: flag + `setImmediate(onShutdownRequested)` after the ack. */
@@ -145,6 +158,11 @@ async function createSession(
   core.assertRunning();
 
   const now = core.now().toISOString();
+  // WP-64: `on`/`off` decide now; `follow_claude` starts from the last known default of this
+  // profile and takes Claude's own setting after the first readiness.
+  const newSessions = core.stores.settings.get().remoteControl.newSessions;
+  const remoteControlWanted =
+    newSessions === 'on' || (newSessions === 'follow_claude' && core.remoteControlDefault(profileId) === true);
   const given = cmd.title?.trim() ?? '';
   const promptTitle = cmd.prompt === undefined ? null : titleFromPrompt(cmd.prompt.text);
   const entry: Entry = {
@@ -174,8 +192,12 @@ async function createSession(
     gitBranch: null,
     external: null,
     continueAt: null,
+    remoteControlWanted,
+    turnSummary: null,
+    lastSeenAt: null,
   };
   const s = engine.createEntry(entry, promptTitle);
+  s.followClaudeDefault = newSessions === 'follow_claude';
   const prompt = cmd.prompt;
   if (prompt === undefined) return { entryId: entry.id, messageUuid: null };
   try {
@@ -328,6 +350,18 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
     // Phase 3 (WP-50 §4.12): stop one task (ADR-149) and the plan versions (ADR-148).
     case 'session.stopTask':
       return stopTask(core, s, cmd.taskId);
+    // WP-65: move foreground work to the background, generate the title again.
+    case 'session.backgroundTasks':
+      return backgroundTasks(core, s, cmd.toolUseId);
+    case 'session.regenerateTitle':
+      s.cancelRetry();
+      await s.lifecycle.run(async () => {
+        assertEntryGate(s, cmd.name);
+        // generateSessionTitle needs a process: a dormant session starts like session.resume.
+        if (s.runtime === null) await startRuntime(s, core, { byClientId: clientId });
+      });
+      await regenerateTitle(s, core);
+      return {} satisfies CommandResult<'session.regenerateTitle'>;
     case 'plan.list':
       return planList(core, s);
     case 'plan.read': {
@@ -335,7 +369,87 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
       if (text === null) throw commandError('PLAN_NOT_FOUND', { version: cmd.version });
       return { version: cmd.version, text } satisfies CommandResult<'plan.read'>;
     }
+    // WP-63: remove from Parallax only (files stay on disk).
+    case 'session.remove':
+      return removeSession(engine, s);
+    // WP-64: Remote Control (the wish; a running process is switched at once).
+    case 'session.setRemoteControl':
+      return setRemoteControl(core, s, cmd.enabled);
+    // WP-66: side questions (sideQuestions.ts) and taking a queued prompt back.
+    case 'session.askSideQuestion': {
+      const itemId = await s.lifecycle.run(async () => {
+        assertEntryGate(s, cmd.name);
+        // Like a prompt: a dormant session is started (no turn) – the CLI answers from its state.
+        if (s.runtime === null) await startRuntime(s, core, { byClientId: clientId });
+        return askSideQuestion(core, s, cmd.question, cmd.threadId);
+      });
+      return { itemId } satisfies CommandResult<'session.askSideQuestion'>;
+    }
+    case 'session.cancelSideQuestion':
+      cancelSideQuestion(core, s, cmd.itemId);
+      return {} satisfies CommandResult<'session.cancelSideQuestion'>;
+    case 'session.deleteSideQuestion':
+      await deleteSideQuestionThread(core, s, cmd.threadId);
+      return {} satisfies CommandResult<'session.deleteSideQuestion'>;
+    case 'session.withdrawQueued':
+      return withdrawQueued(core, s, cmd.messageUuid);
+    // WP-67: session info with tabs, MCP actions and reloads (sessionInfo.ts).
+    case 'session.info':
+      return readSessionInfo(core, s, cmd.section);
+    case 'session.mcpAction':
+      return mcpAction(core, s, cmd.server, cmd.action);
+    case 'session.reload':
+      return reloadSession(core, s, cmd.what);
   }
+}
+
+/**
+ * WP-66 `session.withdrawQueued` (`cancelAsyncMessage`): a prompt the CLI still holds in its queue
+ * leaves it (true; the `command_lifecycle cancelled` that follows changes nothing more). A prompt
+ * still `sending` (not acknowledged by the CLI) leaves the queue in any case – the CLI marks one it
+ * holds before its queue as cancelled. `false` for a `queued` one = already taken over (also folded
+ * into the running turn, sdk-findings Nr. 9): nothing changes. Unknown uuid → not withdrawn.
+ */
+async function withdrawQueued(
+  core: EngineCore,
+  s: EntryState,
+  messageUuid: string,
+): Promise<CommandResult<'session.withdrawQueued'>> {
+  const entry = s.queue.list().find((p) => p.messageUuid === messageUuid);
+  if (entry === undefined) return { withdrawn: false, text: null };
+  const runtime = running(s);
+  if (runtime === null) throw commandError('SESSION_NOT_RUNNING', { entryId: s.id });
+  const cancelled = await controlCall('cancelAsyncMessage', () => runtime.agent.withdrawQueued(messageUuid), core, s.id);
+  const current = s.queue.list().find((p) => p.messageUuid === messageUuid);
+  // Taken over meanwhile (started/completed removed it) or reported as taken over.
+  if (!cancelled && current?.state !== 'sending') return { withdrawn: false, text: null };
+  if (s.queue.remove(messageUuid)) s.publishQueue();
+  core.log.info({ entryId: s.id, messageUuid, cancelled }, 'queued prompt withdrawn');
+  return { withdrawn: true, text: entry.text.text };
+}
+
+/**
+ * WP-63 `session.remove`: in the lifecycle lock a running process is closed first like
+ * `session.close` (also during a turn; open decisions end with the process, `process_exit`), a
+ * scheduled "continue" and every timer are dropped; then the entry leaves the engine, the registry
+ * and every window (`summary.remove`; subscribers get `session.unavailable`). Nothing on disk is
+ * deleted: the claude transcript, `entries/<entryId>/` (transcript log, decisions, plan versions,
+ * attachments, file index, command cache) and the blobs stay – no start-up cleanup touches them.
+ * Allowed for archived and external entries too (an external console keeps running on its own).
+ * A command that waited for the lock meanwhile answers ENTRY_NOT_FOUND (`assertEntryGate`).
+ */
+async function removeSession(engine: CommandEngine, s: EntryState): Promise<CommandResult<'session.remove'>> {
+  const core = engine.core;
+  s.cancelRetry();
+  await s.lifecycle.run(async () => {
+    if (s.removed) return;
+    cancelContinue(s);
+    // WP-64: the remote session in the Claude app ends with the entry.
+    await endRemoteBeforeClose(core, s);
+    await closeRuntime(s, core, 'remove');
+    engine.removeEntry(s);
+  });
+  return {};
 }
 
 /**
@@ -352,6 +466,29 @@ async function stopTask(
   if (runtime === null) throw commandError('SESSION_NOT_RUNNING', { entryId: s.id });
   if (!hasStoppableTask(s, taskId)) throw commandError('TASK_NOT_FOUND', { taskId });
   await controlCall('stopTask', () => runtime.agent.stopTask(taskId), core, s.id);
+  return {};
+}
+
+/**
+ * WP-65: `backgroundTasks(toolUseId?)` like Ctrl+B in the terminal. The process runs (else
+ * SESSION_NOT_RUNNING); a given tool use is a running main-thread Bash/Agent call and the CLI found it
+ * (else TASK_NOT_FOUND); a failed request → CLAUDE_CONTROL_FAILED. The task panel shows the result.
+ */
+async function backgroundTasks(
+  core: EngineCore,
+  s: EntryState,
+  toolUseId: string | null,
+): Promise<CommandResult<'session.backgroundTasks'>> {
+  const runtime = running(s);
+  if (runtime === null) throw commandError('SESSION_NOT_RUNNING', { entryId: s.id });
+  if (toolUseId !== null) {
+    const call = s.findToolCall(toolUseId);
+    if (call === null || (call.status !== 'running' && call.status !== 'pending')) {
+      throw commandError('TASK_NOT_FOUND', { taskId: toolUseId });
+    }
+  }
+  const moved = await controlCall('backgroundTasks', () => runtime.agent.backgroundTasks(toolUseId), core, s.id);
+  if (!moved) throw commandError('TASK_NOT_FOUND', { taskId: toolUseId ?? '' });
   return {};
 }
 
@@ -481,6 +618,8 @@ async function setArchived(
     s.patch((e) => ({ ...e, archived: true }));
     // ADR-112: a scheduled "continue" is dropped (timer, continueAt, wakeupAt).
     cancelContinue(s);
+    // WP-64: the remote session in the Claude app ends with the archiving (the wish stays).
+    await endRemoteBeforeClose(core, s);
     await closeRuntime(s, core, 'archive');
   });
   s.cancelRetry();
@@ -612,6 +751,8 @@ async function switchConversation(
     ];
     // The tail is already in the target's log.
     s.emit(ops, { log: false });
+    // WP-66: a side question left pending in that log (server crash) ends `failed`.
+    s.repairStaleSideQuestions(tail.items);
   });
   return {};
 }

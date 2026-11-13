@@ -490,7 +490,9 @@ läuft.
   Text und gehen nie an den Server (C.10, ADR-141).
 - **Anfragen** (`src/web/shell/requests.ts`): `openFile {sessionKey, path, line?, col?}` (Datei-Tab),
   `sidePanel {sessionKey, tab: SidePanelTab | null}` (`SIDE_PANEL_TABS` = `plan`, `file`, `files`,
-  `tasks`; `null` schließt), `attachFiles {sessionKey, files}` (Drop-Zone der Shell → Composer).
+  `tasks`; `null` schließt), `attachFiles {sessionKey, files}` (Drop-Zone der Shell → Composer),
+  `composerText {sessionKey, text}` (WP-66: „Zurückholen“ einer wartenden Nachricht → Text ins Feld bzw.
+  als neuer Absatz an den Entwurf; ohne Composer `false`, dann Zwischenablage).
   `SETTINGS_SECTIONS` enthält `files` (Editor-Einstellung, ADR-144).
 - **i18n/ESLint:** neue Namensräume `files` (`features/files/i18n`), `tasks` (`features/tasks/i18n`),
   `sidePanel` (`shell/side-panel/i18n`); `FEATURES` in `eslint.config.js` um `files` und `tasks`
@@ -623,6 +625,116 @@ erlaubt der Launcher Web Notifications für den eigenen Origin in diesem Profil
 notifications["http://127.0.0.1:<port>,*"] = {setting: 1}`, zusammengeführt und atomar; unlesbare
 Prefs bleiben unangetastet → Hinweis „Parallax uses Windows notifications instead“; ADR-082).
 Das Edge-Profil `<home>\edge` älterer Versionen bleibt liegen (README „Chrome-Profil“).
+
+### 3.4 Remote Control (WP-64)
+
+Remote Control verbindet das installierte `claude` einer Session mit claude.ai bzw. der Claude-App
+(interne SDK-Methode `query.enableRemoteControl`, SDK 0.3.322; Spike 12.11.2026).
+- **SDK-Grenze** (`backend/remoteControl.ts`, `AgentSession.setRemoteControl`/`readRemoteControlDefault`):
+  Laufzeit-Prüfung der internen Methoden (fehlen → `REMOTE_CONTROL_UNAVAILABLE`), Antwort per zod (Link
+  nur `https://claude.ai`, `isClaudeSessionUrl`), Control-Fehler → `REMOTE_CONTROL_AUTH`/
+  `POLICY_DISABLED`/`FAILED {reason}`; das Ergebnis ist eine Union, wirft nie. `--replay-user-messages`
+  ist immer gesetzt (Remote Control lässt sich zur Laufzeit schalten).
+- **Zustand:** Wunsch `Entry.remoteControlWanted` (persistiert), Bridge je Unterhaltung
+  (`Conversation.bridgeSessionId`/`sessionUrl`), Live-Zustand nur mit Prozess aus `system/bridge_state`
+  (`EntryState.remote`: off → connecting → connected, nicht-terminaler Fehler → reconnecting, terminal/
+  Richtlinie → failed). Die Summary trägt `remoteControl {state, sessionUrl, error, wanted}`;
+  `HostState.remoteControlDefault` zeigt Claudes eigene Einstellung (Standardprofil).
+- **Fremde Turns:** ein Prompt aus der App kommt als Replay mit fremder uuid → `user_message`
+  `source: 'remote'`; Status, Queue (ignoriert fremde uuids) und Kosten laufen wie bei eigenen Turns.
+  Eine Entscheidung, die die CLI abbricht, während die Bridge steht, endet `answered_elsewhere`.
+- **UI:** Telefon-Symbol in der Sidebar-Zeile (Zustand ≠ off) und in der Kopfzeile (auch nur gewünscht)
+  mit Menü (Ein/Aus, „In der Claude-App öffnen“, Link kopieren; geöffnet werden nur claude.ai-Links),
+  Hinweis „Aus der Claude-App“ am Prompt, Einstellung „Remote Control für neue Sessions“.
+- **Erweiterung (WP-65):** weitere Bridge-Messages sind je ein Eintrag in `normalizer/bridge.ts`
+  (`task_summary`/`post_turn_summary` speisen seit WP-65 Live-Satz und Turn-Fazit, §3.5).
+
+### 3.5 Übersicht (WP-65)
+
+Was eine Session gerade tut und getan hat, ohne sie zu öffnen; dazu Titel, Limits, Hintergrund, Links.
+- **Live-Satz und Turn-Fazit:** `SessionSummary.activity` (nur während eines Turns; CLI-Satz aus
+  `system/task_summary` – nur mit Remote Control –, sonst das neueste laufende Haupt-Tool mit Ziel, sonst
+  „thinking“; gedrosselt auf 2 s, `sessions/overview.ts` `ActivityTracker`) und `turnSummary` (CLI-Fazit
+  `system/post_turn_summary` des letzten Turns, sonst Rückfall: erste Zeile der Antwort ohne Markdown;
+  persistiert). Die Web-UI zeigt beides als zweite Zeile unter dem Namen und in der Kopfzeile
+  (`@web/lib/activity` `sessionLine`, Parallax-Wörter je Werkzeug, „braucht dich“ mit Symbol).
+- **„Seit du zuletzt hier warst“:** `SessionSummary.lastSeenAt` (Server: Präsenz eines sichtbaren
+  Fensters endet, Prompt/Freigabe aus der Claude-App; nie rückwärts). Die Karte rechnet der Client aus den
+  geladenen Items (`features/transcript/lib/since.ts`); der Wert beim Öffnen gilt.
+- **Auto-Titel:** nach dem ersten echten Turn je Unterhaltung `generateSessionTitle(…, {persist: true})`
+  (SDK intern, `backend/overview.ts`), nur solange kein eigener Titel gesetzt ist; „Titel neu erzeugen“
+  (`session.regenerateTitle`, `persist: false`, danach `/rename` an die CLI). Fehlt die Methode, bleibt die
+  bisherige AI-Titel-Abfrage.
+- **Limits:** die experimentelle Nutzungsabfrage (`readUsage`, alle 5 min solange ein Prozess läuft, die
+  erste 10 s nach einem Spawn; je Profil eine Abo-Session) mischt ihre Fenster in die Abo-Limits des Profils
+  (`mergeUsage`, ADR-114); `rate_limit`-Ereignisse wirken weiter sofort.
+- **Hintergrund:** `session.backgroundTasks {toolUseId|null}` → `query.backgroundTasks()` (Ctrl+B des
+  Terminals); UI an laufendem Bash/Agent, „Alles in den Hintergrund“ und Strg+B im Composer.
+- **Externe Links:** Host-Befehl `link.open {url}` öffnet http(s)-Links im Standardbrowser
+  (`host/linkCommands.ts`: Registry → `spawnGui`); kann der Host nicht, öffnet die Web-UI den Link selbst
+  (`window.open`, Hinweis). Mit dem FakeBackend wird nur aufgezeichnet.
+- **Transkript-Ansicht:** `Settings.transcriptView` (`compact`/`all`) statt `localStorage`; der alte Wert
+  wird einmal übernommen.
+
+### 3.6 Seitenfragen und Zurückholen (WP-66)
+
+Eine **Seitenfrage** (`/btw`) beantwortet das installierte `claude` aus der laufenden Unterhaltung, ohne sie
+zu verändern (interne SDK-Methode `query.askSideQuestion`, SDK 0.3.322; nichts davon steht im
+claude-Transkript, Resume und Kontext bleiben unberührt).
+- **SDK-Grenze** (`backend/sideQuestion.ts`, `AgentSession.askSideQuestion(question, {history, signal,
+  onRetry?})`): Laufzeit-Prüfung der Methode, Antwort per zod (`response` String, `synthetic` Boolean optional,
+  `refusalFallback.fallbackModel` optional; andere Form = nicht verfügbar), Ergebnis als Union `SideQuestionResult` (wirft nie): `ok` (Antwort oder
+  `null`), `unavailable`, `busy` (`side_question_busy`), `cancelled`, `failed`.
+  `system/control_request_progress` `api_retry` geht an die einzige offene Seitenfrage (`onRetry`), sonst
+  wird es nur gezählt (`ignoredCounts`).
+- **Engine** (`sessions/sideQuestions.ts`): die Engine besitzt die Items `side_question` (der Normalizer sieht
+  sie nie) – `pending` sofort in der aktuellen Unterhaltung (`order` per `LiveNormalizer.claimOrder()`, ID
+  `px:<conversationId>:<order>`), dann ein `item.upsert` mit Antwort bzw. Fehler; persistiert im Item-Log wie
+  jedes andere Item. **Faden:** `threadId` = ID der ersten Frage, Nachfragen schicken die beantworteten
+  Fragen des Fadens als `history` (älteste zuerst, höchstens 10). Abbrechen über `AbortSignal` (sofort
+  `cancelled`, eine späte Antwort fällt weg); Prozessende oder Server-Stopp → offene Fragen `failed`
+  (`SESSION_NOT_RUNNING`), ein nach einem Absturz noch `pending` geloggtes Item wird beim Laden repariert.
+  Löschen entfernt den ganzen Faden (`item.remove`). Seitenfragen ändern weder `unread`, Benachrichtigungen,
+  Status noch `lastActivityAt`; eine offene hält den Prozess aber wach (Leerlauf-Schlaf wartet).
+- **Zurückholen** einer wartenden Nachricht: `session.withdrawQueued` → `query.cancelAsyncMessage(uuid)`
+  (`AgentSession.withdrawQueued`); `true` = aus der CLI-Warteschlange entfernt (Queue-Eintrag weg, das folgende
+  `command_lifecycle cancelled` ändert nichts mehr), `false` = schon übernommen (nichts ändert sich). Noch nicht
+  quittierte Einträge (`sending`) verlassen die Queue immer.
+- **UI:** Karte im Transkript an der Stelle der frühesten geladenen Frage des Fadens (eigener Chunk, Token
+  `--side-question`/`--side-question-surface`, Rolle „sichtbar“, nie in einer Schrittgruppe), Seitenfragen-
+  Modus im Composer (Umschalter, `/btw`), „Kurz fragen…“ im Sidebar-Kontextmenü (Popover an der Zeile; zu,
+  bevor die Antwort kam → Hinweis der Session), „Zurückholen“ an wartenden Nachrichten (Shell-Anfrage
+  `composerText`, §2.3). Keine Kosten je Karte (sie stecken in den Session-Kosten).
+- **FakeBackend:** Antwort nach 600 ms mit Frage, Nachfrage-Nummer und Turn-Zustand; Hebel per Option
+  (`sideQuestions`) oder Schlüsselwort in der Frage (`fake:busy`, `fake:unavailable`, `fake:fail`,
+  `fake:none`, `fake:synthetic`, `fake:fallback`, `fake:retry`, `fake:slow`); eine wartende Nachricht mit
+  `fake:taken` gilt als schon übernommen.
+
+### 3.7 Session-Info mit Reitern (WP-67)
+
+Der Dialog „Session-Info“ zeigt außer der Übersicht (`detail.init`, letzter Start) sieben Reiter, die der
+**laufende** `claude`-Prozess beantwortet – nur auf Anfrage (Reiter öffnen, „Aktualisieren“), kein Polling, kein
+Cache.
+- **SDK-Grenze** (`backend/sessionInfo.ts`, `AgentSession.readInfo(section)`/`mcpAction(server, action)`/
+  `reload(what)`): interne Query-Methoden des SDK 0.3.322 (`getStatus`, `getMemoryDialog`, `getSkillsDialog`,
+  `getHooksListing`, `listPermissionRules`, `mcpServerStatus`, `exportConversation`; Aktionen
+  `reconnectMcpServer`, `toggleMcpServer`, `reloadSkills`, `reloadPlugins`), zur Laufzeit geprüft
+  (`SESSION_INFO_METHODS`). Fehlt eine Methode oder meldet die CLI „is not available in this build/on this
+  connection/in a cloud-hosted session“ → `null` (= nicht verfügbar, einmal geloggt, kein Fehler-Toast). Parser je
+  Reiter tolerant (zod), Listen gekappt (`SESSION_INFO_LIMITS`), unbekannte Felder nur gezählt bzw. skalare als
+  Zeilen (`extra`); MCP-Konfiguration (außer `type`) und Hook-`editable` werden nie weitergegeben. Zeitlimits
+  `infoMs` 30 s, `infoActionMs` 60 s.
+- **Engine** (`sessions/sessionInfo.ts`): ein Start im Lifecycle-Lock wird abgewartet, ohne laufenden Prozess
+  `SESSION_NOT_RUNNING` (kein Auto-Wake – der Reiter bietet „Session starten“ = `session.resume`). Archiviert/extern
+  über die Entry-Gates. Antworten werden nie geloggt oder gespeichert (Status-Zeilen tragen Kontodaten).
+- **UI** (`web/shell/navigation/session-info/`): jeder Live-Reiter ein eigener Lazy-Chunk; Texte als
+  **Lazy-Namensraum** (`translateFrom`, nicht im Start-Chunk, nicht in `dictionary.de`); schmales Fenster → Select;
+  letzter Reiter je Fenster (sessionStorage, localStorage als Vorgabe neuer Fenster). Export: Text + Dateiname vom Server, Download im Browser (`lib/download`).
+- **FakeBackend/FakeHost:** alle Reiter ohne Kontodaten, MCP-Zustandsautomat (`fake-search` failed → Neu verbinden →
+  connected), `fresh-skill` nach „Skills neu laden“; Hebel `unavailable`, fehlschlagende Aktionen, lange Listen
+  (Option `sessionInfo` bzw. Schlüsselwörter `fake:info-*`; Web: `host.info`).
+- **`pnpm cli-check`** (Schritt 2e): jede Lese-Methode einmal, Schema geprüft; Profilfeld `sessionInfo` (neun
+  Booleans), eine Abweichung ist ein Befund.
 
 ## 4. Source of Truth (A.3)
 
@@ -1069,6 +1181,7 @@ bzw. das Profil.
 | `session.setPinned` | nur Flag | – |
 | `session.setArchived(true)` | „ohne Arbeit“; schließt einen laufenden Prozess, räumt Benachrichtigungen, löscht `continueAt` | `SESSION_BUSY` |
 | `session.setArchived(false)` | nur Flag | – |
+| `session.remove` (WP-63) | auch archiviert und extern erlaubt; Retry abbrechen, im Lock geplantes Fortsetzen löschen, laufenden Prozess wie `session.close` beenden (offene Entscheidungen → `cancelled`/`process_exit`), Eintrag aus Speicher und `sessions.json`, `summary.remove` (Abonnenten: `session.unavailable`); **keine Datei wird gelöscht** (§8); danach antwortet jeder Befehl zu dem Eintrag `ENTRY_NOT_FOUND`, auch einer, der auf den Lock wartete | `ENTRY_NOT_FOUND` |
 | `session.setFastMode` | laufend `applyFlagSettings({fastMode})`, dann `Entry.fastMode`; ruhend speichern, beim Start `StartSessionRequest.fastMode` | `CLAUDE_CONTROL_FAILED` |
 | `session.switchConversation` | Ziel ∈ `conversations`, ≠ aktuelle, mit `sessionId`; „ohne Arbeit“; Prozess schließen, aktuelle endet mit `switched`, Ziel ans Ende, `conversation.reset{trigger:'switch', hasEarlier}` + Log-Ende als `item.upsert` + `detail.patch`; Titel nicht `custom` → Titel des Ziels | `CONVERSATION_NOT_FOUND`, `SESSION_NOT_STARTED`, `SESSION_BUSY` |
 | `session.openExternal` | Session-ID vorhanden; „ohne Arbeit“; `checkCwd` (R4-09); Query schließen; `consoleLaunchFor` → `ConsoleLauncher.open` (nicht mehr nach Shutdown-Beginn, R4-03); Erfolg → `Entry.external`, `external{active:true}`, Item `handoff/external`; Fehler → bleibt ruhend; schon extern (auch ein zweites, auf den Lock wartendes `openExternal`) → Fehler, nie eine zweite Konsole | `SESSION_NOT_STARTED`, `SESSION_BUSY`, `SESSION_EXTERNAL`, `EXTERNAL_CONSOLE_FAILED`, `CWD_*`/`PATH_REJECTED`, `SERVER_SHUTTING_DOWN`, Profilfehler |
@@ -1108,6 +1221,42 @@ bzw. das Profil.
 | `GET /api/blob/:id` | Meta `application/pdf` → Header-Satz `pdf` (§5.1, sonst unverändert) | – |
 | `settings.update` `editor` | Schema-Prüfung (WP-50 §4.5); wirkt beim nächsten `file.open` | `VALIDATION_FAILED` |
 
+**Remote Control (WP-64, §3.4):**
+
+| Befehl / Fall | Regel | Fehler |
+|---|---|---|
+| `session.setRemoteControl` | Gates wie Phase 2 (nicht archiviert, nicht extern); speichert `Entry.remoteControlWanted`; laufender, bereiter Prozess → sofort `setRemoteControl`, sonst nach der nächsten Bereitschaft; ein Fehler beim Einschalten lässt den Befehl gelingen und zeigt `summary.remoteControl.state = failed` mit `REMOTE_CONTROL_*` | `SESSION_ARCHIVED`, `SESSION_EXTERNAL` |
+| Einschalten | Name = Parallax-Titel, `reattachSessionId` = `bridgeSessionId` der aktuellen Unterhaltung, immer `keepSessionOnExit`; ein gescheitertes Reattach einmal ohne; Antwort einer älteren Generation wird verworfen | – |
+| Ausschalten, `session.setArchived(true)`, `session.remove` | im laufenden Prozess abschalten (vor dem Schließen), `bridgeSessionId`/`sessionUrl` vergessen | – |
+| Schließen, Leerlauf-Schlaf, Absturz, Serverneustart | Wunsch und Link bleiben; der nächste Start verbindet dieselbe Remote-Session | – |
+| `/clear`, frischer Kontext | neue Unterhaltung erbt die Bridge (gleicher Link) | – |
+| neuer Eintrag | `settings.remoteControl.newSessions`: `on`/`off`; `follow_claude` = zuletzt gelesenes `remoteControlAtStartup` des Profils, nach der ersten Bereitschaft der frische Wert (eine eigene Wahl vorher gewinnt) | – |
+| Anfrage-Abbruch durch die CLI bei `connected`/`reconnecting` | Outcome `answered_elsewhere` statt `cancelled` (Heuristik) | – |
+| Leerlauf-Schlaf (ADR-105) | nie bei `connecting`/`connected`/`reconnecting` (`sleepEligible`) | – |
+
+**Übersicht (WP-65, §3.5):**
+
+| Befehl / Fall | Regel | Fehler |
+|---|---|---|
+| `session.backgroundTasks {toolUseId}` | laufender Prozess; `toolUseId` = ein laufender Vordergrund-Aufruf, `null` = alles (Ctrl+B) | `SESSION_NOT_RUNNING`, `TASK_NOT_FOUND`, `CLAUDE_CONTROL_FAILED` |
+| `session.regenerateTitle` | Gates wie Phase 2; ein ruhender Eintrag startet zuerst; neuer Titel (`persist: false`) → Quelle `ai`, `/rename` an die CLI (Echo bleibt `ai`); auch über einem eigenen Titel | `SESSION_ARCHIVED`, `SESSION_EXTERNAL`, `CLAUDE_CONTROL_FAILED` |
+| Auto-Titel nach einem echten Turn | einmal je Unterhaltung, nur bei Titelquelle `none`/`prompt`; ein eigener Titel gewinnt, auch während der Abfrage | – |
+| Präsenz endet (sichtbares Fenster zeigte den Eintrag) | `lastSeenAt = jetzt` (nie rückwärts) | – |
+| `link.open {url}` (Host-Befehl) | nur http(s) (`isHttpUrl`); Standardbrowser aus der Registry, nur absolute `.exe`, `spawnGui` | `OPEN_FAILED {reason}` |
+
+**Seitenfragen und Zurückholen (WP-66, §3.6):**
+
+| Befehl / Fall | Regel | Fehler |
+|---|---|---|
+| `session.askSideQuestion {question, threadId}` | Gates wie ein Prompt (nicht archiviert, nicht extern, `ENTRY_NOT_FOUND`), ein ruhender/geschlossener Eintrag startet ohne Turn; legt das Item `pending` an → `{itemId}`; `threadId` = erste Frage des Fadens (`history` aus dessen beantworteten Fragen; ein unbekannter Faden hat keine). Antwort und Fehler kommen als Item-Update: `busy` → `SESSION_BUSY {reason: 'side_question_busy'}`, Methode fehlt/sonst → `CLAUDE_CONTROL_FAILED`, Prozessende → `SESSION_NOT_RUNNING` | `SESSION_ARCHIVED`, `SESSION_EXTERNAL`, `SESSION_NOT_RUNNING` (Start misslungen) |
+| `session.cancelSideQuestion {itemId}` | offene Seitenfrage → sofort `cancelled` (Abbruch per Signal, späte Antwort fällt weg); fertig oder unbekannt → `{}` ohne Wirkung | – |
+| `session.deleteSideQuestion {threadId}` | alle Items des Fadens in der aktuellen Unterhaltung → `item.remove` (offene vorher abgebrochen), auch im Log; nichts gefunden → `{}` | – |
+| `session.withdrawQueued {messageUuid}` | nicht in der Queue → `{withdrawn: false, text: null}` ohne Steuerbefehl; sonst `cancelAsyncMessage`: `true` (oder Eintrag noch `sending`) → Eintrag weg, `{withdrawn: true, text}`; `false` → nichts ändert sich, `{withdrawn: false, text: null}` | `SESSION_NOT_RUNNING`, `CLAUDE_CONTROL_FAILED` (Methode fehlt/Fehler; Queue bleibt) |
+| Seitenfrage offen | Leerlauf-Schlaf wartet; `unread`, Benachrichtigungen, Status, `lastActivityAt` unverändert | – |
+| `session.info {section}` | nur mit laufendem Prozess (Start im Lock abgewartet, kein Auto-Wake); Methode fehlt/„not available“ → `{available: false, data: null}`; sonst `{available: true, data}` (`SessionInfoSection`); nichts geloggt | `SESSION_NOT_RUNNING`, `SESSION_ARCHIVED`, `SESSION_EXTERNAL`, `CLAUDE_CONTROL_FAILED {method: 'readInfo', section}` |
+| `session.mcpAction {server, action}` | `reconnect` → `reconnectMcpServer`, `enable`/`disable` → `toggleMcpServer`; → `{}` | wie oben, `CLAUDE_CONTROL_FAILED {method: 'mcpAction', detail}` (CLI-Text ≤ 300 Zeichen) |
+| `session.reload {what}` | `skills` → `reloadSkills`, `plugins` → `reloadPlugins`; → `{}` | wie oben, `CLAUDE_CONTROL_FAILED {method: 'reload', detail}` |
+
 ## 6. Item-Modell (`src/shared/model.ts`, §5.6)
 
 **Item-IDs** (live und Verlauf identisch; Annahmen in `src/server/backend/fixture.test.ts` gegen alle
@@ -1118,7 +1267,7 @@ Fixtures geprüft):
 | Assistant-Content-Block (text/thinking/tool_use) | `${message.id}:${blockIndex}` – `blockIndex` = `content_block_start.index` bzw. Ordinalzahl je `message.id` |
 | User-Prompt | gesendete `uuid` (`MessageUuid`) |
 | andere SDK-Message mit `uuid` (System, Result, Interrupt-Marker) | `uuid` |
-| von Parallax erzeugt (Fehler ohne SDK-Message, Reset-Marker) | `px:${conversationId}:${n}` |
+| von Parallax erzeugt (Fehler ohne SDK-Message, Reset-Marker; WP-66 Seitenfragen der Engine, `n` = `claimOrder()`) | `px:${conversationId}:${n}` |
 
 `tool_result` erzeugt kein Item, sondern füllt `tool_call.result` (gleiche `toolUseId`).
 **Reihenfolge:** `order` (≥ 1, pro Unterhaltung streng steigend, nie geändert); sortiert wird nur nach
@@ -1137,7 +1286,7 @@ Bilder immer als Blob. Assistant-Text wird nie gekappt.
 | `assistant` (fertiger Block) | ersetzt das Streaming-Item gleicher ID; ohne Stream direkt final | `assistant_model` (Haupt-Thread); `assistant.error` → zusätzlich `system/error` + `assistant_error` |
 | `user` Prompt (nach `registerPrompt`, `command_lifecycle started`) | `user_message` | – |
 | `user` nur mit `tool_result` | – (→ `tool_call.result`) | – |
-| `user` mit `isReplay` | – | – |
+| `user` mit `isReplay` (WP-64: `--replay-user-messages` immer an) | eigene uuid → –; fremde uuid mit `origin human` (in der Claude-App getippt) → `user_message` mit `source: 'remote'` | – |
 | `user` „[Request interrupted by user…]“ | `system/interrupted` | – |
 | `result` | `turn_result` (synthetisch bei `num_turns 0`) | `turn_result` |
 | `system/init` | – (→ `detail.init`) | `init` |
@@ -1146,7 +1295,7 @@ Bilder immer als Blob. Assistant-Text wird nie gekappt.
 | `system/compact_boundary`, `notification`, `informational`, `permission_denied`, `memory_recall`, `local_command_output` | gleichnamiges `system`-Item | – |
 | `system/api_retry` | `system/api_retry` (ein Item je Serie, `upsert`) | `retry` |
 | `system/hook_*` | `system/hook` (`upsert` je `hook_id`) | – |
-| `rate_limit_event` | `system/rate_limit` nur bei `allowed_warning`/`rejected` | `rate_limit`; bei `rejected` zusätzlich `assistant_error` (`RATE_LIMIT_REJECTED`, `credits_required` → `CLAUDE_BILLING`) |
+| `rate_limit_event` | `system/rate_limit` nur bei `rejected` (WP-63; `allowed_warning` speist nur die Limit-Leiste, alte Logs mit Warnungen blendet das Web aus) | `rate_limit`; bei `rejected` zusätzlich `assistant_error` (`RATE_LIMIT_REJECTED`, `credits_required` → `CLAUDE_BILLING`) |
 | Modell-Fallback (`model_refusal_fallback`) | `system/model_fallback`; zurückgezogene Items → `item.remove` | – |
 | `system/model_refusal_no_fallback` | `system/error` (`MODEL_REFUSAL`) | – |
 | `system/session_writes_lost` (Phase 3, WP-52) | `system/error` (`SESSION_WRITES_LOST{lost, errorCode}`, z. B. Platte voll) | – |
@@ -1155,11 +1304,16 @@ Bilder immer als Blob. Assistant-Text wird nie gekappt.
 | `system/background_tasks_changed` | – (→ `detail.backgroundTasks`) | `background_tasks` |
 | `command_lifecycle` (untypisiert) | – (→ Queue) | `prompt_lifecycle` |
 | `system/session_title_changed` (untypisiert) | – | `title_changed` |
+| `system/bridge_state` (untypisiert, WP-64; `normalizer/bridge.ts`) | – (→ `summary.remoteControl`) | `bridge_state` (`ready`/`connected`/`failed` + `failureKind`/`policy_disabled`, sonst `unknown`) |
+| `system/task_summary` (untypisiert, WP-65; `normalizer/bridge.ts`) | – (→ `summary.activity`) | `task_summary` (`detail`, `null` beendet den Satz) |
+| `system/post_turn_summary` (untypisiert, WP-65) | – (→ `summary.turnSummary`) | `turn_summary` nur für eine Hauptthread-Antwort des laufenden bzw. zuletzt beendeten Turns (`summarizes_uuid`), sonst gezählt `system/post_turn_summary:stale` |
 | `prompt_suggestion`, `system/commands_changed` | – (→ Detail) | – |
 | `conversation_reset` | Marker `system/conversation_reset` als erstes Item der neuen Unterhaltung – der Normalizer liefert ihn mit der ersten Ausgabe nach `startConversation` (WP-12 Entscheidung 1) | `conversation_reset` + Op `conversation.reset` (veröffentlicht die Engine) |
 | `system/thinking_tokens`, `keep_alive` | – | – |
 | bekannte, bewusst ignorierte Typen (`files_persisted`, `auth_status`, `tool_use_summary` …) | – | Zähler `ignoredCounts` |
 | – (Engine, Phase 2: Übergabe an/Rückkehr aus der externen Konsole, ADR-104) | `system/handoff` (`phase` `external`/`returned`, `importedItems`) als px-Item | Status-Event `external` |
+| – (Engine, WP-66: `session.askSideQuestion`, Antwort von `query.askSideQuestion`) | `side_question` als px-Item (`pending` → `answered`/`failed`/`cancelled`, §3.6) | – (kein Status, kein `unread`) |
+| `system/control_request_progress` (untypisiert, WP-66) | – (`api_retry` → `side_question.retry` der einzigen offenen Seitenfrage, im Backend) | Zähler `ignoredCounts` |
 | unbekannte `type/subtype` | `system/unknown` | Zähler `unknownCounts` (Detail) |
 
 Subagent-Messages werden immer über `parent_tool_use_id` unter das Agent-`tool_call` sortiert;
@@ -1267,7 +1421,8 @@ ist „Fortsetzen & Plan freigeben“ bzw. „Fortsetzen“.
 
 **`canSleep(facts, now)`** – nur bei `idle` ohne offene/abgelaufene Entscheidungen, ohne
 Hintergrund-Tasks, ohne gequeuete Prompts, ohne künftigen Wakeup, nicht `compacting`/`retrying`
-(Handoff = `external` → nie).
+(Handoff = `external` → nie). Die Engine (`sleepEligible`) schließt zusätzlich geplante Turns (§10) und
+eine aktive Remote-Control-Bridge aus (`isRemoteControlActive`: connecting/connected/reconnecting, WP-64).
 
 **`notificationFor(prev, next, now, {minDoneTurnMs})`** (Vergleich der abgeleiteten `kind`s):
 
@@ -1288,12 +1443,15 @@ auf. „Fertig“ nie bei laufender Hintergrundarbeit und nie nach User-Stop (ke
 Unter `PARALLAX_HOME` (Default `%LOCALAPPDATA%\Parallax`, Dev `.parallax-dev`, Tests Temp-Ordner):
 ```
 sessions.json                         registryFileSchema v2 (Entry inkl. unread, context – R0-17; Phase 2:
-                                      gitBranch, external, continueAt; Migration 1 → 2 = Identität, ADR-107)
+                                      gitBranch, external, continueAt; Migration 1 → 2 = Identität, ADR-107;
+                                      WP-64: remoteControlWanted, Conversation.bridgeSessionId/sessionUrl;
+                                      WP-65: turnSummary, lastSeenAt – Felder mit Default)
 profiles.json                         profilesFileSchema (Phase 2, ADR-102: alle Profile inkl. „Standard“;
                                       fehlt die Datei, gilt nur „Standard“)
 settings.json                         settingsFileSchema (Phase 2: notifications, idleSleep,
-                                      promptSuggestions, port, autostart; Phase 3: editor, ADR-144 –
-                                      Felder mit Default)
+                                      promptSuggestions, port, autostart; Phase 3: editor, ADR-144;
+                                      WP-64: remoteControl.newSessions; WP-65: transcriptView – Felder mit
+                                      Default)
 model-catalogs.json                   Phase 2 (ADR-114): supportedModels() je Profil (Server-intern)
 account-limits.json                   Phase 2 (ADR-114): letzte Abo-Limits je Profil (Server-intern)
 auth-secret.json                      Secret des Geräte-Cookies (WP-10, rotierbar, §5.1; ohne .bak, R1-11)
@@ -1329,6 +1487,11 @@ edge/                                 nur aus Versionen vor ADR-136: früheres E
 ui/<buildId>/                         beim Serverstart fixierte Kopie von dist/web (nur die des laufenden Builds;
                                       ältere werden beim Start gelöscht; V2-03, ADR-066)
 ```
+
+WP-63 `session.remove`: der Eintrag verschwindet nur aus `sessions.json`; `entries/<entryId>/`, die Blobs
+und das claude-Transkript im Konfigurationsordner des Profils bleiben liegen (kein Aufräumlauf löscht sie
+später als „verwaist“).
+
 Der **Home-Lock** (unten) ist eine Named Pipe und liegt nicht im Home. Phase 2 kommen – nur als
 Opt-in und nur auf dem produktiven Server (ADR-109/110) – `HKCU\Software\Classes\parallax`
 (Protokoll-Handler) und `Parallax.lnk` im Benutzer-Autostart hinzu. Sonst einzige Änderung, die

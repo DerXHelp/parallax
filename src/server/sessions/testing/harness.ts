@@ -156,6 +156,14 @@ export interface EngineHarnessOptions {
    * holds only that wait (a sleeping task is a resting point of `settle()`).
    */
   fakeTiming?: Pick<FakeBackendOptions, 'speed' | 'sleep'>;
+  /** WP-64: `FakeBackendOptions.remoteControl` (Claude's default, failing enable requests). */
+  remoteControl?: FakeBackendOptions['remoteControl'];
+  /** WP-65: `FakeBackendOptions.overview` (title generator, usage query, background moves). */
+  overview?: FakeBackendOptions['overview'];
+  /** WP-66: `FakeBackendOptions.sideQuestions` (side questions, withdrawing queued prompts). */
+  sideQuestions?: FakeBackendOptions['sideQuestions'];
+  /** WP-67: `FakeBackendOptions.sessionInfo` (session info, MCP actions, reloads). */
+  sessionInfo?: FakeBackendOptions['sessionInfo'];
 }
 
 /** A not yet existing folder for the fake files of one harness (below the test home). */
@@ -274,6 +282,10 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     ...(options.history === undefined ? {} : { history: options.history }),
     speed: options.fakeTiming?.speed ?? 0,
     ...(options.fakeTiming?.sleep === undefined ? {} : { sleep: options.fakeTiming.sleep }),
+    ...(options.remoteControl === undefined ? {} : { remoteControl: options.remoteControl }),
+    ...(options.overview === undefined ? {} : { overview: options.overview }),
+    ...(options.sideQuestions === undefined ? {} : { sideQuestions: options.sideQuestions }),
+    ...(options.sessionInfo === undefined ? {} : { sessionInfo: options.sessionInfo }),
     now,
     filesRoot,
   });
@@ -322,13 +334,16 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     onInternalError: (error, context) => {
       errors.push({ error, context });
     },
-    // The heartbeat snapshot (WP22-06) and the git refresh (ADR-113) are off unless a test enables
-    // them (their timers would show in `timers.pending()`).
+    // The heartbeat snapshot (WP22-06), the git refresh (ADR-113) and the usage query (WP-65) are
+    // off unless a test enables them (their timers would show in `timers.pending()`).
     options: {
       contextRefreshDelayMs: 0,
       aiTitleDelayMs: 0,
       processSnapshotMs: 0,
       gitRefreshMs: 0,
+      // WP-65: no throttle of the live activity, no usage query unless a test enables it.
+      activityMinMs: 0,
+      usagePollMs: 0,
       ...options.options,
     },
   });

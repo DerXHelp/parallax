@@ -173,6 +173,10 @@ describe('outcomes and display', () => {
       'decisions.notices.withdrawn.signal_aborted',
     );
     expect(resolvedElsewhereNotice(null)).toBe('decisions.notices.gone');
+    // WP-64: answered in the Claude app (Remote Control).
+    expect(resolvedElsewhereNotice(sampleOutcomes.answered_elsewhere)).toBe(
+      'decisions.notices.elsewhere.answered_elsewhere',
+    );
     expect(
       resolvedElsewhereNotice({ type: 'plan_approved', mode: 'auto', edited: false, freshContext: true }),
     ).toBe('decisions.notices.elsewhereFresh');

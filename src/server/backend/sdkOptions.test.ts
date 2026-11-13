@@ -54,6 +54,7 @@ const BASE_KEYS = [
   'canUseTool',
   'cwd',
   'env',
+  'extraArgs',
   'includePartialMessages',
   'pathToClaudeCodeExecutable',
   'perTaskStopAffordance',
@@ -99,6 +100,10 @@ describe('buildQueryOptions – fixed rows', () => {
     expect(options.stderr).toBe(stderr);
   });
 
+  it('always asks for user-message replays (WP-64, F.9) – Remote Control is switched at runtime', () => {
+    expect(options.extraArgs).toEqual({ 'replay-user-messages': null });
+  });
+
   it('passes launch.env unchanged, as a copy (the SDK mutates it)', () => {
     expect(options.env).toEqual(req.launch.env);
     expect(options.env).not.toBe(req.launch.env);
@@ -121,7 +126,6 @@ describe('buildQueryOptions – fixed rows', () => {
       'model',
       'effort',
       'resume',
-      'extraArgs',
       'plugins',
       'betas',
       'additionalDirectories',
@@ -235,14 +239,14 @@ describe('buildQueryOptions – profile options (launch.sdkOptions, C.12)', () =
       { settings: 'D:\\cfg\\settings.json' },
     ],
     [
-      'extraArgs passed through',
+      'extraArgs passed through (plus the replay flag, WP-64)',
       { extraArgs: { verbose: null, 'some-flag': 'x' } },
-      { extraArgs: { verbose: null, 'some-flag': 'x' } },
+      { extraArgs: { verbose: null, 'some-flag': 'x', 'replay-user-messages': null } },
     ],
     [
       'mcpConfig → extraArgs mcp-config (first value)',
       { sdkOptions: { mcpConfig: ['D:\\mcp\\a.json', 'D:\\mcp\\b.json'] }, extraArgs: { 'some-flag': null } },
-      { extraArgs: { 'some-flag': null, 'mcp-config': 'D:\\mcp\\a.json' } },
+      { extraArgs: { 'some-flag': null, 'mcp-config': 'D:\\mcp\\a.json', 'replay-user-messages': null } },
     ],
   ])('%s', (_label, partial, expected) => {
     const options = buildQueryOptions(request({ launch: launch(partial) }), hooks);

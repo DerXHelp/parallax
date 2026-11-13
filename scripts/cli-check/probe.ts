@@ -11,6 +11,15 @@
  * `strictMcpConfig` + `disableClaudeAiConnectors` (no MCP servers), `maxTurns: 1`, every tool denied,
  * no permission mode (the CLI default is part of the profile).
  *
+ * WP-64: after the turn the Remote Control step (remoteControl.ts: enable, schema, `bridge_state
+ * connected` ≤ 15 s, disable) – its result is part of the observation, a failure never stops the probe.
+ * WP-65: then the overview step (overview.ts: one `generateSessionTitle`, the usage query,
+ * `backgroundTasks` present) – same rules.
+ * WP-66: then the side-question step (sideQuestion.ts: one `askSideQuestion`, no `canUseTool` while it
+ * runs, `cancelAsyncMessage` present) – same rules.
+ * WP-67: then the session-info step (sessionInfo.ts: each read method once, parsed like the server;
+ * the actions only checked for existence; no values kept) – same rules.
+ *
  * Guards like the recorder (ADR-011): `apiKeySource` must be `none`, the model Haiku; auth/billing
  * errors, `credits_required`, a rejected rate limit, a startup failure or a cost above the budget
  * stop at once (ProbeStop, exit 2 – never retried).
@@ -31,6 +40,20 @@ import type { StartSessionRequest } from '../../src/server/backend/types';
 import { sleep } from '../../src/server/lib/async';
 import { killProcessTree, spawnHidden } from '../../src/server/lib/process';
 import { observationFrom, type Observation } from './observation';
+import { probeOverview, type OverviewProbeHandle, type OverviewProbeResult } from './overview';
+import {
+  probeSessionInfo,
+  sessionInfoProfile,
+  type SessionInfoProbeHandle,
+  type SessionInfoProbeResult,
+} from './sessionInfo';
+import { probeSideQuestion, type SideQuestionProbeHandle, type SideQuestionProbeResult } from './sideQuestion';
+import {
+  BridgeWatch,
+  probeRemoteControl,
+  type RemoteControlProbeHandle,
+  type RemoteControlProbeResult,
+} from './remoteControl';
 
 /** The probe's prompt: no tool, one word. */
 export const PROBE_PROMPT = 'Reply with exactly: OK';
@@ -169,6 +192,14 @@ export interface ProbeResult {
   messageTypes: Record<string, number>;
   contextDetail: 'full' | 'summary' | null;
   durationMs: number;
+  /** WP-64: the Remote Control step. */
+  remoteControl: RemoteControlProbeResult;
+  /** WP-65: title, usage query, backgroundTasks. */
+  overview: OverviewProbeResult;
+  /** WP-66: side question, cancelAsyncMessage. */
+  sideQuestion: SideQuestionProbeResult;
+  /** WP-67: the session-info read methods (no actions called). */
+  sessionInfo: SessionInfoProbeResult;
 }
 
 /** Partial facts of a stopped probe (cleanup needs the session ids, the report the cost). */
@@ -177,8 +208,19 @@ export interface ProbeTrace {
   costUsd: number;
 }
 
-const denyAll: CanUseTool = () =>
-  Promise.resolve({ behavior: 'deny', message: 'cli-check probe: no tools in this session.' });
+/** Every tool is denied; `onCall` counts the requests (WP-66: none may come during the side question). */
+function denyAll(onCall: () => void): CanUseTool {
+  return () => {
+    onCall();
+    return Promise.resolve({ behavior: 'deny', message: 'cli-check probe: no tools in this session.' });
+  };
+}
+
+/** Time limit of the probe's side question (live 1–2 s; like the server's `sideQuestionMs`). */
+const SIDE_QUESTION_TIMEOUT_MS = 120_000;
+
+/** Time limit of each session-info request (like the server's `infoMs`). */
+const SESSION_INFO_TIMEOUT_MS = 30_000;
 
 const resultSchema = z.looseObject({
   type: z.literal('result'),
@@ -194,6 +236,8 @@ interface ProbeState {
   pid: number | null;
   stderr: string;
   ended: boolean;
+  /** WP-66: canUseTool calls of the session. */
+  toolRequests: number;
 }
 
 /**
@@ -206,12 +250,21 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
   const turnMs = options.turnTimeoutMs ?? 180_000;
   const controlMs = options.controlTimeoutMs ?? 60_000;
   const messageTypes: Record<string, number> = {};
-  const state: ProbeState = { init: null, result: null, stop: null, pid: null, stderr: '', ended: false };
+  const state: ProbeState = {
+    init: null,
+    result: null,
+    stop: null,
+    pid: null,
+    stderr: '',
+    ended: false,
+    toolRequests: 0,
+  };
   let exitResolve: () => void = () => undefined;
   const exited = new Promise<void>((resolve) => {
     exitResolve = resolve;
   });
   const listeners = new Set<() => void>();
+  const bridge = new BridgeWatch();
   const notify = (): void => {
     for (const listener of [...listeners]) listener();
   };
@@ -248,7 +301,10 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
     promptSuggestions: false,
     canUseTool: () => Promise.resolve({ behavior: 'deny', message: 'cli-check probe: no tools.' }),
   };
-  const sdkOptions = buildQueryOptions(request, { canUseTool: denyAll, spawn, stderr: () => undefined });
+  const canUseTool = denyAll(() => {
+    state.toolRequests += 1;
+  });
+  const sdkOptions = buildQueryOptions(request, { canUseTool, spawn, stderr: () => undefined });
   sdkOptions.settingSources = [];
   sdkOptions.strictMcpConfig = true;
   sdkOptions.settings = { disableClaudeAiConnectors: true };
@@ -264,6 +320,7 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
       if (sessionId !== undefined && sessionId !== '') trace.sessionIds.add(sessionId);
       if (type === 'system' && subtype === 'init') state.init ??= message;
     }
+    bridge.push(message);
     const result = resultSchema.safeParse(message);
     if (result.success) {
       state.result = { subtype: result.data.subtype, costUsd: result.data.total_cost_usd };
@@ -327,8 +384,37 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
       contextDetail = 'summary';
     }
     if (state.stop !== null) throw state.stop;
+    // WP-64: the internal method is not in the SDK typings – checked at runtime.
+    const remoteHandle: RemoteControlProbeHandle = q;
+    const remoteControl = await probeRemoteControl(remoteHandle, bridge, { controlMs, log });
+    // WP-65: internal/experimental methods, checked at runtime as well.
+    const overviewHandle: OverviewProbeHandle = q;
+    const overview = await probeOverview(overviewHandle, { controlMs, log });
+    // WP-66: internal methods, checked at runtime as well.
+    // (`close` keeps the all-optional handle type from being a "weak type" TypeScript refuses for Query.)
+    const sideHandle: SideQuestionProbeHandle & Pick<Query, 'close'> = q;
+    const sideQuestion = await probeSideQuestion(sideHandle, {
+      timeoutMs: SIDE_QUESTION_TIMEOUT_MS,
+      toolRequests: () => state.toolRequests,
+      log,
+    });
+    // WP-67: internal read methods (and the actions' existence), checked at runtime as well.
+    const infoHandle: SessionInfoProbeHandle & Pick<Query, 'close'> = q;
+    const sessionInfo = await probeSessionInfo(infoHandle, { timeoutMs: SESSION_INFO_TIMEOUT_MS, log });
     const observation = observationFrom(
-      { init: state.init, initializationResult: initialization, supportedModels: models, contextUsage },
+      {
+        init: state.init,
+        initializationResult: initialization,
+        supportedModels: models,
+        contextUsage,
+        remoteControl: remoteControl.available,
+        sessionTitle: overview.sessionTitle.available,
+        usageQuery: overview.usage.available,
+        backgroundTasks: overview.backgroundTasks,
+        sideQuestion: sideQuestion.sideQuestion.available,
+        withdrawQueued: sideQuestion.withdrawQueued,
+        sessionInfo: sessionInfoProfile(sessionInfo),
+      },
       options.sdkVersion,
     );
     const result = state.result ?? { subtype: '?', costUsd: 0 };
@@ -341,6 +427,10 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
       messageTypes,
       contextDetail,
       durationMs: Date.now() - started,
+      remoteControl,
+      overview,
+      sideQuestion,
+      sessionInfo,
     };
   } catch (error) {
     if (error instanceof ProbeStop) throw error;

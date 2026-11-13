@@ -35,6 +35,8 @@ interface SetupOptions {
   toolCalls?: ToolCallItem[];
   recordsKeep?: number;
   seed?: DecisionRecord[];
+  /** WP-64: BrokerDeps.answeredElsewhere. */
+  answeredElsewhere?: () => boolean;
 }
 
 function setup(o: SetupOptions = {}) {
@@ -72,6 +74,7 @@ function setup(o: SetupOptions = {}) {
       countsLog.push({ counts, added });
     },
     ...(o.recordsKeep === undefined ? {} : { recordsKeep: o.recordsKeep }),
+    ...(o.answeredElsewhere === undefined ? {} : { answeredElsewhere: o.answeredElsewhere }),
   });
   return { broker, stores, publisher, attached, countsLog, capInput, state, toolCalls };
 }
@@ -390,6 +393,31 @@ describe('broker – responding', () => {
     expect(errorCode(() => t.broker.respond(sampleId('dc', 1), allowOnce, CLIENT_1))).toBe(
       'DECISION_ALREADY_RESOLVED',
     );
+  });
+
+  it('WP-64: a signal abort while Remote Control is connected → answered_elsewhere (else cancelled)', async () => {
+    const connected = { value: true };
+    const t = setup({ answeredElsewhere: () => connected.value });
+    const first = new AbortController();
+    const a = t.broker.handler(request({ toolUseId: 'a' }), first.signal);
+    first.abort();
+    await expect(a).resolves.toMatchObject({ behavior: 'deny', interrupt: false });
+    expect(t.publisher.opsOf(ENTRY).at(-1)).toMatchObject({
+      op: 'decision.resolved',
+      outcome: { type: 'answered_elsewhere' },
+      byClientId: null,
+    });
+    expect(t.broker.open()).toEqual([]);
+    expect(t.countsLog.at(-1)?.counts.permission).toBe(0);
+    connected.value = false;
+    const second = new AbortController();
+    const b = t.broker.handler(request({ toolUseId: 'b' }), second.signal);
+    second.abort();
+    await b;
+    expect(t.publisher.opsOf(ENTRY).at(-1)).toMatchObject({
+      op: 'decision.resolved',
+      outcome: { type: 'cancelled', reason: 'signal_aborted' },
+    });
   });
 
   it('several open decisions: counts per kind, oldestKind, answers in any order', async () => {

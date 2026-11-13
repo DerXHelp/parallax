@@ -255,6 +255,9 @@ export const LIMITS = {
   todoItemsMax: 100,
   /** Arguments of a custom editor template (ADR-144). */
   editorArgsMax: 20,
+  // ---- WP-66 ----
+  /** One side question (`session.askSideQuestion`, `/btw`). */
+  sideQuestionChars: 10_000,
 } as const;
 
 /**

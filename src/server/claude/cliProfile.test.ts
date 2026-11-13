@@ -22,6 +22,16 @@ describe('CLI profile (WP-62)', () => {
     expect(testedCliVersion()).toBe(profile.cliVersion);
   });
 
+  it('WP-64: remoteControl – a profile written before WP-64 reads as null (not checked)', () => {
+    const raw: unknown = JSON.parse(readFileSync(path.join(here, 'cli-profile.json'), 'utf8'));
+    const profile = parseCliProfile(raw);
+    if (profile === null) throw new Error('profile invalid');
+    const { remoteControl: _ignored, ...older } = profile;
+    expect(parseCliProfile(older)?.remoteControl).toBeNull();
+    expect(parseCliProfile({ ...older, remoteControl: true })?.remoteControl).toBe(true);
+    expect(parseCliProfile({ ...older, remoteControl: 'yes' })).toBeNull();
+  });
+
   it('rejects files that do not match the schema', () => {
     expect(parseCliProfile({})).toBeNull();
     expect(parseCliProfile({ schemaVersion: 2 })).toBeNull();

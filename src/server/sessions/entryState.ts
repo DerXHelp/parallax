@@ -13,6 +13,7 @@ import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   currentConversation,
   currentSessionId,
+  isRemoteControlActive,
   type CappedText,
   type ContextBreakdown,
   type ContextGauge,
@@ -20,6 +21,7 @@ import {
   type Entry,
   type Profile,
   type RateLimitInfo,
+  type SessionActivity,
   type SessionSummary,
   type Settings,
   type SlashCommandInfo,
@@ -67,8 +69,11 @@ import type { estimateContextGauge } from './normalizer';
 import type { PlanIndexedDecisionStore } from './planIndex';
 import type { ProcessStore } from './processStore';
 import { PromptQueue } from './promptQueue';
+import { REMOTE_OFF, type RemoteState } from './remoteControl';
+import { ActivityTracker, fallbackSummary } from './overview';
 import { INITIAL_RETRY_STATE, type AutoRetryPolicy, type RetryState } from './retry';
 import type { SessionRuntime } from './runtime';
+import type { PendingSideQuestion } from './sideQuestions';
 import { acceptsAiTitle, aiTitleFrom, summaryOf, withCurrentConversation } from './summary';
 
 // =====================================================================================
@@ -103,6 +108,18 @@ export interface SessionManagerOptions {
    * asynchronously after the result. Default 2000.
    */
   aiTitleDelayMs: number;
+  /**
+   * WP-65: the live activity of the sidebar's second line changes at most this often (the newest
+   * value follows after the pause; null - the turn ended - at once). Default 2000; tests 0.
+   */
+  activityMinMs: number;
+  /**
+   * WP-65: interval of the usage query (plan limits) while a session of a profile runs - one
+   * running session per profile. 0 = off. Default 300000.
+   */
+  usagePollMs: number;
+  /** WP-65: first usage query this long after a claude process was spawned. Default 10000. */
+  usageFirstMs: number;
   /**
    * WP22-06: interval of the heartbeat snapshot of the process trees below every running
    * claude.exe (`processes.json` `aliveAt` + `children`, one CIM query for all). 0 = off. Default 30000.
@@ -254,6 +271,10 @@ export interface EngineCore {
   processSpawned(): void;
   /** A claude.exe ended: the heartbeat stops with the last one. */
   processEnded(): void;
+  /** WP-64: Claude's `remoteControlAtStartup` as a process of this profile read it (host state). */
+  setRemoteControlDefault(profileId: ProfileId, value: boolean): void;
+  /** WP-64: the last value read for this profile (this server run); null = unknown. */
+  remoteControlDefault(profileId: ProfileId): boolean | null;
 }
 
 export type EntryPhase = 'dormant' | 'starting' | 'running' | 'closing';
@@ -275,8 +296,18 @@ export class EntryState {
   loading: { buffer: SessionOp[]; promise: Promise<SessionViewState> } | null = null;
   runtime: SessionRuntime | null = null;
   phase: EntryPhase = 'dormant';
-  /** Title of the own pending `/rename X` (its echo becomes `custom`). */
+  /** Title of the own pending `/rename X` (its echo becomes `custom`, or `ai` - pendingRenameSource). */
   pendingRename: string | null = null;
+  /** WP-65: `ai` = the pending `/rename X` carries a generated title on to the CLI and the bridge. */
+  pendingRenameSource: 'custom' | 'ai' = 'custom';
+  /** WP-65: the conversation whose auto title was requested (once per conversation, this server run). */
+  titleGeneratedFor: ConversationId | null = null;
+  /** WP-65: a generateSessionTitle request runs (one at a time). */
+  titleGenerating = false;
+  /** WP-65: the CLI sent a turn summary for the running turn (the fallback then stays out). */
+  turnSummaryFromClaude = false;
+  /** WP-65: live activity of the running turn as published (null = not working). */
+  activity: SessionActivity | null = null;
   /** A turn after a conversation_reset is running (title_changed echoes are ignored). */
   resetInTurn = false;
   promptTitle: string | null;
@@ -307,6 +338,20 @@ export class EntryState {
   /** ADR-147: "implement with a fresh context" runs (every further decision.respond → SESSION_BUSY). */
   freshContextRunning = false;
   /**
+   * WP-63: removed from Parallax (`session.remove`) – nothing is published or persisted any more
+   * (a late summary would put the entry back into the registry), every command answers
+   * ENTRY_NOT_FOUND.
+   */
+  removed = false;
+  /** WP-64: live Remote Control state of the running process (off without one); see remoteControl.ts. */
+  remote: RemoteState = REMOTE_OFF;
+  /** WP-64: a new entry follows Claude's own `remoteControlAtStartup` (read after its first readiness). */
+  followClaudeDefault = false;
+  /** WP-64: every enable/disable/process end gets a new generation; older answers are ignored. */
+  remoteGeneration = 0;
+  /** WP-66: open side questions of the running process by item id (sideQuestions.ts). */
+  readonly sideQuestions = new Map<string, PendingSideQuestion>();
+  /**
    * Phase 3: `todos` / `planFile` of the current conversation (ADR-148/149). Fed only while a
    * mirror exists; (re)seeded from the mirror's items whenever a mirror is built.
    */
@@ -321,6 +366,9 @@ export class EntryState {
   private contextAgain = false;
   private titleBusy = false;
   private gitBusy = false;
+  private readonly activityTracker = new ActivityTracker();
+  private activityTimer: TimerHandle | null = null;
+  private activityChangedAt = 0;
 
   constructor(
     private readonly core: EngineCore,
@@ -351,6 +399,8 @@ export class EntryState {
       onCountsChanged: (counts) => {
         this.reduce({ type: 'decisions_changed', decisions: counts });
       },
+      // WP-64: the CLI cancels a request answered in the Claude app (Remote Control).
+      answeredElsewhere: () => this.remote.state === 'connected' || this.remote.state === 'reconnecting',
     });
   }
 
@@ -374,7 +424,7 @@ export class EntryState {
    * `detail.patch` with `commands` also replaces the entry's command cache (ADR-108).
    */
   emit(ops: readonly SessionOp[], options: { log?: boolean } = {}): void {
-    if (ops.length === 0) return;
+    if (ops.length === 0 || this.removed) return;
     this.core.publisher().publishOps(this.entry.id, [...ops]);
     const log = options.log ?? true;
     const conv = this.conversation();
@@ -404,6 +454,7 @@ export class EntryState {
         this.saveCommands(op.patch.commands);
       }
     }
+    this.observeOverview(ops);
     if (this.loading !== null) this.loading.buffer.push(...ops);
     else if (this.mirror !== null) this.mirror = applyToMirror(this.mirror, ops);
     if (lastOrder !== conv.lastOrder) {
@@ -415,6 +466,100 @@ export class EntryState {
       const patch = this.trackDetail(ops);
       if (patch !== null) this.emit([{ op: 'detail.patch', patch }]);
     }
+  }
+
+  /**
+   * WP-65: the live activity follows the main-thread tool calls; a prompt typed in the Claude app
+   * (Remote Control) or a decision answered there counts as "seen" at its time (section 1.2).
+   */
+  private observeOverview(ops: readonly SessionOp[]): void {
+    let changed = false;
+    for (const op of ops) {
+      if (op.op === 'item.upsert') {
+        changed = this.activityTracker.apply(op.item) || changed;
+        if (op.item.kind === 'user_message' && op.item.source === 'remote') this.markSeen(op.item.at);
+      } else if (op.op === 'conversation.reset') {
+        this.activityTracker.reset();
+        changed = true;
+      } else if (op.op === 'decision.resolved' && op.outcome.type === 'answered_elsewhere') {
+        this.markSeen(op.at);
+      }
+    }
+    if (changed) this.updateActivity();
+  }
+
+  /** WP-65: the CLI's live sentence (`task_summary`, Remote Control only); null = it has none. */
+  setActivitySentence(text: string | null): void {
+    if (this.activityTracker.setSentence(text)) this.updateActivity();
+  }
+
+  /**
+   * WP-65: the live activity to publish - null unless a turn runs; changes are throttled to one per
+   * `activityMinMs` (the newest value follows), null and the first value go out at once.
+   */
+  updateActivity(): void {
+    const next = this.facts.runState === 'working' && !this.removed ? this.activityTracker.current() : null;
+    if (isDeepStrictEqual(next, this.activity)) {
+      this.activityTimer?.cancel();
+      this.activityTimer = null;
+      return;
+    }
+    const now = this.core.now().getTime();
+    const wait = this.activityChangedAt + this.core.options.activityMinMs - now;
+    if (next === null || this.activity === null || wait <= 0) {
+      this.activityTimer?.cancel();
+      this.activityTimer = null;
+      this.activity = next;
+      this.activityChangedAt = now;
+      this.publishSummary(false);
+      return;
+    }
+    if (this.activityTimer !== null) return;
+    this.activityTimer = this.core.timers.setTimeout(() => {
+      this.activityTimer = null;
+      this.updateActivity();
+    }, wait);
+  }
+
+  /** WP-65: the turn ended - activity off; the next turn starts without the old sentence/tools. */
+  endTurnActivity(): void {
+    this.activityTracker.reset();
+    this.updateActivity();
+  }
+
+  /**
+   * WP-65: the CLI's summary of the latest turn (post_turn_summary) - replaces any summary; the
+   * fallback of this turn stays out.
+   */
+  setClaudeTurnSummary(text: string, category: string | null, needsAction: boolean): void {
+    this.turnSummaryFromClaude = true;
+    const at = this.core.now().toISOString();
+    this.patch((e) => ({ ...e, turnSummary: { source: 'claude', text, category, needsAction, at } }));
+  }
+
+  /**
+   * WP-65: end of a real (non-synthetic) turn - without a summary of the CLI the first meaningful
+   * line of the answer (successful turns only; errors and interrupts show their state instead).
+   */
+  finishTurnSummary(outcome: 'success' | 'error' | 'interrupted', answer: string | null): void {
+    const fromClaude = this.turnSummaryFromClaude;
+    this.turnSummaryFromClaude = false;
+    if (fromClaude || outcome !== 'success') return;
+    const text = fallbackSummary(answer);
+    if (text === null) return;
+    const at = this.core.now().toISOString();
+    this.patch((e) => ({
+      ...e,
+      turnSummary: { source: 'parallax', text, category: null, needsAction: false, at },
+    }));
+  }
+
+  /** WP-65 (section 1.2): the session was seen at `at` (presence ended, answered in the app); never backwards. */
+  markSeen(at: string): void {
+    if (this.removed) return;
+    const current = this.entry.lastSeenAt;
+    if (current !== null && Date.parse(current) >= Date.parse(at)) return;
+    this.patch((e) => ({ ...e, lastSeenAt: at }));
   }
 
   /** `todos` / `planFile` after these ops; the changed fields as patch, else null. */
@@ -548,6 +693,8 @@ export class EntryState {
       this.entry = { ...this.entry, lastRunState: next.runState, unread: next.unread };
     }
     this.touch(true);
+    // WP-65: the live activity exists only while working (set at the turn start, cleared after).
+    if (prev.runState !== next.runState) this.updateActivity();
     this.core.factsChanged(this, prev, next);
   }
 
@@ -587,7 +734,8 @@ export class EntryState {
 
   flush(): void {
     this.flushQueued = false;
-    if (!this.dirty) return;
+    // WP-63: a removed entry is never written back (registry) nor published again.
+    if (!this.dirty || this.removed) return;
     this.dirty = false;
     const urgent = this.urgent;
     this.urgent = false;
@@ -600,7 +748,25 @@ export class EntryState {
   }
 
   summary(): SessionSummary {
-    return summaryOf(this.entry, this.facts, { externalRunning: this.externalRunning });
+    return summaryOf(this.entry, this.facts, {
+      externalRunning: this.externalRunning,
+      remote: this.remote,
+      activity: this.activity,
+    });
+  }
+
+  /** WP-64: next live Remote Control state – summary, and the idle sleep when the bridge came or went. */
+  setRemote(next: RemoteState): void {
+    if (isDeepStrictEqual(next, this.remote)) return;
+    const wasActive = isRemoteControlActive(this.remote.state);
+    this.remote = next;
+    this.touch();
+    if (wasActive !== isRemoteControlActive(next.state)) this.core.considerSleep(this);
+  }
+
+  nextRemoteGeneration(): number {
+    this.remoteGeneration += 1;
+    return this.remoteGeneration;
   }
 
   publishSummary(urgent: boolean): void {
@@ -666,7 +832,37 @@ export class EntryState {
       }
     })();
     this.loading = { buffer, promise };
+    // WP-66: after the load (the ops then reach the mirror, not the discarded buffer).
+    promise.then(
+      (view) => {
+        this.repairStaleSideQuestions(view.items);
+      },
+      () => undefined,
+    );
     return promise;
+  }
+
+  /**
+   * WP-66: a side question still `pending` in the log although no request runs (the server stopped
+   * without ending it) ends `failed` – never a card that waits forever.
+   */
+  repairStaleSideQuestions(items: readonly TranscriptItem[]): void {
+    const ops: SessionOp[] = items.flatMap((item): SessionOp[] =>
+      item.kind === 'side_question' && item.status === 'pending' && !this.sideQuestions.has(item.id)
+        ? [
+            {
+              op: 'item.upsert',
+              item: {
+                ...item,
+                status: 'failed',
+                retry: null,
+                error: makeError('SESSION_NOT_RUNNING', { entryId: this.entry.id, reason: 'restart' }),
+              },
+            },
+          ]
+        : [],
+    );
+    if (ops.length > 0) this.emit(ops);
   }
 
   /** A mirror without log items (the log could not be read; the session still needs one). */
@@ -742,6 +938,8 @@ export class EntryState {
     this.sleepSince = null;
     this.titleTimer?.cancel();
     this.titleTimer = null;
+    this.activityTimer?.cancel();
+    this.activityTimer = null;
   }
 
   /** After a non-synthetic turn: AI-title query, debounced (the CLI writes the title after the result). */
@@ -882,7 +1080,7 @@ const GIT_BRANCH_CHARS = 200;
 /** Items read to seed `todos`/`planFile` when the view's tail was cut (WP-51). */
 export const DETAIL_SEED_ITEMS = 1000;
 
-/** ContextBreakdown → the gauge fields stored on the entry. */
+/** ContextBreakdown → the gauge fields stored on the entry (WP-63: with the autocompact threshold). */
 export function gaugeOf(breakdown: ContextBreakdown): ContextGauge {
   return {
     percentage: breakdown.percentage,
@@ -891,6 +1089,8 @@ export function gaugeOf(breakdown: ContextBreakdown): ContextGauge {
     source: breakdown.source,
     model: breakdown.model,
     at: breakdown.at,
+    autoCompactThreshold: breakdown.autoCompactThreshold,
+    isAutoCompactEnabled: breakdown.isAutoCompactEnabled,
   };
 }
 
@@ -929,6 +1129,8 @@ export const ARCHIVED_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryComm
   // Phase 3 (WP-50 §4.12): reading stored plan versions is harmless.
   'plan.list',
   'plan.read',
+  // WP-63: "Clean up archive" removes archived entries from Parallax.
+  'session.remove',
 ]);
 
 /** WP-30 §4.12: open in an external console – never a second writer on the Claude session. */
@@ -940,6 +1142,8 @@ export const EXTERNAL_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryComm
   'session.rename',
   'plan.list',
   'plan.read',
+  // WP-63: Parallax forgets the entry; the console keeps the Claude session (nothing is written).
+  'session.remove',
 ]);
 
 /** The entry is handed off to an external console (recorded, or its status says so). */
@@ -954,6 +1158,8 @@ export function isExternal(s: EntryState): boolean {
  * ran must not continue past the gate it passed before.
  */
 export function assertEntryGate(s: EntryState, name: EntryCommandName): void {
+  // WP-63: removed while the command waited for the lifecycle lock.
+  if (s.removed) throw commandError('ENTRY_NOT_FOUND', { entryId: s.id });
   if (isExternal(s) && !EXTERNAL_ALLOWED.has(name)) {
     throw commandError('SESSION_EXTERNAL', { entryId: s.id });
   }

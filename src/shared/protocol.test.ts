@@ -106,6 +106,29 @@ const commands: Command[] = [
   { name: 'files.session', entryId },
   { name: 'files.project', entryId },
   { name: 'editor.detect' },
+  // WP-63
+  { name: 'session.remove', entryId },
+  // WP-64
+  { name: 'session.setRemoteControl', entryId, enabled: true },
+  { name: 'session.setRemoteControl', entryId, enabled: false },
+  // WP-65
+  { name: 'session.backgroundTasks', entryId, toolUseId: 'toolu_01' },
+  { name: 'session.backgroundTasks', entryId, toolUseId: null },
+  { name: 'session.regenerateTitle', entryId },
+  { name: 'link.open', url: 'https://claude.ai/code/session_01' },
+  // WP-66
+  { name: 'session.askSideQuestion', entryId, question: 'Why?', threadId: null },
+  { name: 'session.askSideQuestion', entryId, question: 'And then?', threadId: 'px:cv:3' },
+  { name: 'session.cancelSideQuestion', entryId, itemId: 'px:cv:3' },
+  { name: 'session.deleteSideQuestion', entryId, threadId: 'px:cv:3' },
+  { name: 'session.withdrawQueued', entryId, messageUuid: SAMPLE_IDS.messageUuid },
+  // WP-67
+  { name: 'session.info', entryId, section: 'status' },
+  { name: 'session.info', entryId, section: 'export' },
+  { name: 'session.mcpAction', entryId, server: 'docs', action: 'reconnect' },
+  { name: 'session.mcpAction', entryId, server: 'docs', action: 'disable' },
+  { name: 'session.reload', entryId, what: 'skills' },
+  { name: 'session.reload', entryId, what: 'plugins' },
 ];
 
 const clientMessages: ClientMessage[] = [
@@ -509,6 +532,65 @@ describe('command results', () => {
     expect(parseCommandResult('profile.test', { claude: sampleClaudeInstallStatus() })).not.toBeNull();
     expect(parseCommandResult('profile.validate', { issues: [] })).toEqual({ issues: [] });
     expect(parseCommandResult('fs.listDirectory', sampleFsListing())).toEqual(sampleFsListing());
+  });
+
+  it('WP-65: link.open only takes http(s) links; the new commands answer {}', () => {
+    const cmd = (url: string) => ({ type: 'cmd', cmdId: SAMPLE_IDS.cmdId, cmd: { name: 'link.open', url } });
+    expect(parseClientMessage(JSON.stringify(cmd('http://localhost:3000/a?b#c'))).ok).toBe(true);
+    for (const bad of ['javascript:alert(1)', 'file:///C:/x', 'https://', 'https://a b', 'https://user@host/x', 'ftp://x']) {
+      expect(parseClientMessage(JSON.stringify(cmd(bad))).ok).toBe(false);
+    }
+    expect(parseCommandResult('link.open', {})).toEqual({});
+    expect(parseCommandResult('session.backgroundTasks', {})).toEqual({});
+    expect(parseCommandResult('session.regenerateTitle', {})).toEqual({});
+  });
+
+  it('WP-66: side question (trimmed, 1 … LIMITS.sideQuestionChars) and withdraw results', () => {
+    const ask = (question: string) =>
+      parseClientMessage(
+        JSON.stringify({
+          type: 'cmd',
+          cmdId: SAMPLE_IDS.cmdId,
+          cmd: { name: 'session.askSideQuestion', entryId, question, threadId: null },
+        }),
+      );
+    expect(ask('   ').ok).toBe(false);
+    expect(ask('x'.repeat(LIMITS.sideQuestionChars + 1)).ok).toBe(false);
+    const ok = ask('  why?  ');
+    expect(ok.ok && ok.message.type === 'cmd' && ok.message.cmd.name === 'session.askSideQuestion').toBe(true);
+    if (ok.ok && ok.message.type === 'cmd' && ok.message.cmd.name === 'session.askSideQuestion') {
+      expect(ok.message.cmd.question).toBe('why?');
+    }
+    expect(parseCommandResult('session.askSideQuestion', { itemId: 'px:cv:1' })).toEqual({ itemId: 'px:cv:1' });
+    expect(parseCommandResult('session.cancelSideQuestion', {})).toEqual({});
+    expect(parseCommandResult('session.deleteSideQuestion', {})).toEqual({});
+    expect(parseCommandResult('session.withdrawQueued', { withdrawn: true, text: 'x' })).toEqual({
+      withdrawn: true,
+      text: 'x',
+    });
+    expect(parseCommandResult('session.withdrawQueued', { withdrawn: true })).toBeNull();
+  });
+
+  it('WP-67: session info, MCP actions and reloads (sections, actions, results)', () => {
+    const cmd = (body: Record<string, unknown>) =>
+      parseClientMessage(JSON.stringify({ type: 'cmd', cmdId: SAMPLE_IDS.cmdId, cmd: { entryId, ...body } })).ok;
+    expect(cmd({ name: 'session.info', section: 'status' })).toBe(true);
+    expect(cmd({ name: 'session.info', section: 'account' })).toBe(false);
+    expect(cmd({ name: 'session.mcpAction', server: '', action: 'reconnect' })).toBe(false);
+    expect(cmd({ name: 'session.mcpAction', server: 'docs', action: 'restart' })).toBe(false);
+    expect(cmd({ name: 'session.reload', what: 'agents' })).toBe(false);
+    expect(parseCommandResult('session.info', { available: false, data: null })).toEqual({ available: false, data: null });
+    const status = { section: 'status', groups: [{ title: 'Session', rows: [{ label: null, value: 'x' }] }], extra: [] };
+    expect(parseCommandResult('session.info', { available: true, data: status })).toEqual({ available: true, data: status });
+    expect(parseCommandResult('session.info', { available: true, data: { section: 'status' } })).toBeNull();
+    expect(
+      parseCommandResult('session.info', {
+        available: true,
+        data: { section: 'export', text: 'hi', filename: '', totalChars: 2, truncated: false },
+      }),
+    ).toBeNull();
+    expect(parseCommandResult('session.mcpAction', {})).toEqual({});
+    expect(parseCommandResult('session.reload', {})).toEqual({});
   });
 
   it('Phase 3 results (WP-50 §4.6)', () => {

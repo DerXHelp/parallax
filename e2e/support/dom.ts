@@ -44,5 +44,7 @@ declare global {
     // ---- support/files.ts (`recordTexts`, WP-60; `recordTextShown`, FIX-R5-F6) ----
     __e2eSeenTexts?: string[];
     __e2eShownAt?: number | null;
+    // ---- wp64-remote-control.spec.ts (window.open recorder; WP-65: must stay empty) ----
+    __e2eOpened?: string[];
   }
 }

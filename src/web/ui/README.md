@@ -28,11 +28,11 @@ Primitive, **kein Barrel** (`index.ts`). Kompakt: Standardhöhe 28 px, Text `tex
 | `radio-group.tsx`, `checkbox.tsx`, `switch.tsx` | `RadioGroup`, `RadioGroupItem`, `Checkbox`, `Switch` |
 | `tabs.tsx` | `Tabs`, `TabsList`, `TabsTrigger`, `TabsContent` |
 | `kbd.tsx` | `Kbd`, `KbdGroup` (Tastennamen übersetzt: `shortcutKeyLabels` in `shell/shortcuts.ts`) |
-| `progress.tsx`, `gauge.tsx` | `Progress` (Fortschritt), `Gauge` (Pegel, `role="meter"`, Schwellen 70/85 %), `gaugeLevel`, `GAUGE_THRESHOLDS` |
+| `progress.tsx`, `gauge.tsx` | `Progress` (Fortschritt), `Gauge` (Pegel, `role="meter"`, Schwellen 70/85 %; WP-63: `level` von außen, `valueText` statt Prozent, `valueLabel` als `aria-valuetext`), `gaugeLevel`, `GAUGE_THRESHOLDS` |
 | `skeleton.tsx`, `spinner.tsx` | `Skeleton`, `Spinner` (`role="status"`, Label per `t()`) |
 | `alert.tsx` | `Alert` (`tone`: info/warning/error/success, `title`, `actions`), `Banner` (Streifen oben), `TONE_ICON`, `AlertTone` |
 | `slider.tsx` | `Slider` (Radix; Pflicht-`thumbLabel`, `valueText(value)` → `aria-valuetext`, `onValueChange` beim Ziehen, `onValueCommit` am Ende eines Ziehens, aber bei **jeder** Taste – wer dort speichert oder abspielt, bündelt gehaltene Tasten selbst, z. B. die Lautstärke 300 ms nach der letzten Taste, R4W-17; WP-38) |
-| `lightbox.tsx` | `Lightbox` (Bild im Vollbild-Dialog, Zoom `ZOOM_STEP`/`ZOOM_MIN`/`ZOOM_MAX`, `fitScale`, Labels per Prop, Fokus-Rückgabe über `onCloseAutoFocus`), `LightboxImage`, `LightboxLabels` (WP-37) |
+| `lightbox.tsx` | `Lightbox` (Bild im Vollbild-Dialog, Zoom `ZOOM_STEP`/`ZOOM_MIN`/`ZOOM_MAX`, `fitScale`, Labels per Prop, Fokus-Rückgabe über `onCloseAutoFocus`), `LightboxImage`, `LightboxLabels` (WP-37); WP-63: `navigation` (`LightboxNavigation`: Knöpfe vor/zurück, Position, ← → solange eingepasst; ein neues Bild startet eingepasst; wird der fokussierte Knopf am Ende deaktiviert, nimmt die Bildfläche den Fokus) |
 | `status-icon.tsx` | `StatusIcon` (`DisplayStatusKind` → Icon + `t('status.<kind>')`, `showLabel`, `withTooltip`; nie nur Farbe), `STATUS_PRESENTATION`, `STATUS_KINDS` |
 | `code-block.tsx`, `use-highlight.ts` | Phase 3 (WP-50 Teil 2, aus `features/transcript`): `CodeBlock` (Shiki erst bei geschlossenem Block, Sprache aus `@web/lib/languages`, Kopierknopf; Texte per Prop `labels: CodeBlockLabels {plain, copy}`, `onCopied?`), `SHIKI_TOKENS`; `useHighlight(code, lang, enabled)` (Lazy-Chunk über `@web/lib/highlight`) – genutzt von Transkript und Datei-Viewer |
 | `diff-view.tsx` | Phase 3 (WP-50 Teil 2, aus `features/transcript`): `DiffView` (Hunks aus `@web/lib/diff`, alte/neue Zeilennummern, „+n weitere Zeilen“; Texte per Prop `labels: DiffViewLabels {oldLine, newLine, moreLines}`), `DIFF_ROWS_INITIAL` |

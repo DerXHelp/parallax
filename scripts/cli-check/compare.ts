@@ -154,6 +154,153 @@ function scalarFinding(
   return { area, level, title: `${label}: ${before || '(empty)'} → ${after || '(empty)'}`, added: [after], removed: [before], hint };
 }
 
+const REMOTE_CONTROL_HINT =
+  'Remote Control (WP-64) uses internal SDK parts: Query.enableRemoteControl, getSettings() and ' +
+  'system/bridge_state (backend/remoteControl.ts, backend/sdkBackend.ts, sessions/normalizer/bridge.ts, ' +
+  'sessions/remoteControl.ts); check the report detail and docs/sdk-upgrade.md.';
+
+const availability = (value: boolean): string => (value ? 'available' : 'not available');
+
+/**
+ * A yes/no capability of the probe against the profile – a change between true and false is a
+ * deviation; a first check (profile null) or a run that did not check (observation null) a note.
+ */
+function availabilityFinding(
+  area: string,
+  label: string,
+  hint: string,
+  before: boolean | null,
+  after: boolean | null,
+): Finding | null {
+  if (before === after) return null;
+  if (before === null || after === null) {
+    return {
+      area,
+      level: 'note',
+      title:
+        after === null ? `${label}: not checked in this run` : `${label}: checked for the first time – ${availability(after)}`,
+      added: after === null ? [] : [availability(after)],
+      removed: [],
+      hint,
+    };
+  }
+  return {
+    area,
+    level: 'deviation',
+    title: `${label}: ${availability(before)} → ${availability(after)}`,
+    added: [availability(after)],
+    removed: [availability(before)],
+    hint,
+  };
+}
+
+/** WP-64: Remote Control of the probe against the profile. */
+export function remoteControlFinding(before: boolean | null, after: boolean | null): Finding | null {
+  return availabilityFinding(
+    'remoteControl',
+    'remote control (enableRemoteControl + bridge_state connected)',
+    REMOTE_CONTROL_HINT,
+    before,
+    after,
+  );
+}
+
+/** WP-65: the overview step (overview.ts) – where a change matters in Parallax. */
+const OVERVIEW_AREAS: readonly { area: 'sessionTitle' | 'usageQuery' | 'backgroundTasks'; label: string; hint: string }[] = [
+  {
+    area: 'sessionTitle',
+    label: 'session title (Query.generateSessionTitle)',
+    hint:
+      'Auto title and „Titel neu erzeugen“ (WP-65) use the internal generateSessionTitle: ' +
+      'backend/sdkBackend.ts generateTitle, backend/overview.ts titleOf, sessions/titles.ts; without it ' +
+      'the old title-from-prompt fallback stays.',
+  },
+  {
+    area: 'usageQuery',
+    label: 'usage query (rate_limits with utilization/resets_at)',
+    hint:
+      'The limit bar without a rate-limit event (WP-65) reads the experimental usage query: ' +
+      'backend/sdkBackend.ts readUsage, backend/overview.ts usageLimitsOf, sessions/usagePoll.ts.',
+  },
+  {
+    area: 'backgroundTasks',
+    label: 'Query.backgroundTasks',
+    hint:
+      '„In den Hintergrund“ / Ctrl+B (WP-65): backend/sdkBackend.ts backgroundTasks, ' +
+      'sessions/commands.ts session.backgroundTasks; hide the buttons if it is gone.',
+  },
+];
+
+/** WP-66: the side-question step (sideQuestion.ts). */
+const SIDE_QUESTION_AREAS: readonly { area: 'sideQuestion' | 'withdrawQueued'; label: string; hint: string }[] = [
+  {
+    area: 'sideQuestion',
+    label: 'side question (Query.askSideQuestion)',
+    hint:
+      'Side questions (`/btw`, „Kurz fragen…“, WP-66) use the internal askSideQuestion: ' +
+      'backend/sdkBackend.ts askSideQuestion, backend/sideQuestion.ts sideAnswerOf, sessions/sideQuestions.ts; ' +
+      'without it every side question ends „Seitenfrage nicht verfügbar“.',
+  },
+  {
+    area: 'withdrawQueued',
+    label: 'Query.cancelAsyncMessage',
+    hint:
+      '„Zurückholen“ of a waiting message (WP-66): backend/sdkBackend.ts withdrawQueued, ' +
+      'sessions/commands.ts session.withdrawQueued; without it the button answers CLAUDE_CONTROL_FAILED.',
+  },
+];
+
+/** WP-65/66: the overview and side-question capabilities of the probe against the profile. */
+export function overviewFindings(profile: CliProfile, observation: Observation): Finding[] {
+  return [...OVERVIEW_AREAS, ...SIDE_QUESTION_AREAS].flatMap((spec) => {
+    const finding = availabilityFinding(spec.area, spec.label, spec.hint, profile[spec.area], observation[spec.area]);
+    return finding === null ? [] : [finding];
+  });
+}
+
+/** WP-67: the session-info step (sessionInfo.ts) – one capability per tab plus the actions. */
+type SessionInfoKey = keyof NonNullable<CliProfile['sessionInfo']>;
+
+const SESSION_INFO_HINT =
+  'The "Session info" dialog (WP-67) reads the internal dialog requests: backend/sdkBackend.ts readInfo, ' +
+  'backend/sessionInfo.ts sessionInfoOf (parser per tab), sessions/sessionInfo.ts; a tab whose method is ' +
+  'gone or whose answer changed shape shows „nicht verfügbar mit dieser claude-Version“ – compare the ' +
+  'answer forms in docs/wp/WP-67.md §3.';
+
+const SESSION_INFO_AREAS: readonly { key: SessionInfoKey; label: string; hint: string }[] = [
+  { key: 'status', label: 'session info: status (Query.getStatus)', hint: SESSION_INFO_HINT },
+  { key: 'memory', label: 'session info: CLAUDE.md (Query.getMemoryDialog)', hint: SESSION_INFO_HINT },
+  { key: 'skills', label: 'session info: skills (Query.getSkillsDialog)', hint: SESSION_INFO_HINT },
+  { key: 'hooks', label: 'session info: hooks (Query.getHooksListing)', hint: SESSION_INFO_HINT },
+  { key: 'permissions', label: 'session info: permissions (Query.listPermissionRules)', hint: SESSION_INFO_HINT },
+  { key: 'mcp', label: 'session info: MCP (Query.mcpServerStatus)', hint: SESSION_INFO_HINT },
+  { key: 'export', label: 'session info: export (Query.exportConversation)', hint: SESSION_INFO_HINT },
+  {
+    key: 'mcpActions',
+    label: 'Query.reconnectMcpServer + toggleMcpServer',
+    hint: 'MCP „Neu verbinden“ / „An/Aus“ (WP-67): backend/sdkBackend.ts mcpAction, sessions/sessionInfo.ts.',
+  },
+  {
+    key: 'reload',
+    label: 'Query.reloadSkills + reloadPlugins',
+    hint: '„Skills neu laden“ / „Plugins neu laden“ (WP-67): backend/sdkBackend.ts reload, sessions/sessionInfo.ts.',
+  },
+];
+
+/** WP-67: the session-info capabilities of the probe against the profile (`sessionInfo.<key>`). */
+export function sessionInfoFindings(profile: CliProfile, observation: Observation): Finding[] {
+  return SESSION_INFO_AREAS.flatMap((spec) => {
+    const finding = availabilityFinding(
+      `sessionInfo.${spec.key}`,
+      spec.label,
+      spec.hint,
+      profile.sessionInfo?.[spec.key] ?? null,
+      observation.sessionInfo?.[spec.key] ?? null,
+    );
+    return finding === null ? [] : [finding];
+  });
+}
+
 /** Profile vs. observation (probe). Without a profile one deviation asks for the first `--accept`. */
 export function compareObservation(profile: CliProfile | null, observation: Observation): Finding[] {
   if (profile === null) {
@@ -232,6 +379,10 @@ export function compareObservation(profile: CliProfile | null, observation: Obse
         hint: spec.hint,
       });
   }
+
+  push(remoteControlFinding(profile.remoteControl, observation.remoteControl));
+  findings.push(...overviewFindings(profile, observation));
+  findings.push(...sessionInfoFindings(profile, observation));
 
   // ADR-156: TodoWrite/TaskCreate are the reason the task bar stays empty – call them out.
   const todoAdded = TODO_TOOLS.filter((tool) => observation.tools.includes(tool) && !profile.tools.includes(tool));

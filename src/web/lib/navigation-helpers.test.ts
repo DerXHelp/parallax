@@ -84,6 +84,42 @@ describe('limitBars', () => {
     ).toEqual([]);
   });
 
+  it('adds the window of the event when unifiedWindows does not cover it (WP-63 §1.2)', () => {
+    const windows = {
+      five_hour: { utilization: 0.2, resetsAt: sampleTime(3600) },
+      seven_day: { utilization: 0.4, resetsAt: sampleTime(86_400) },
+    };
+    expect(
+      limitBars(
+        sampleRateLimitInfo({
+          windows,
+          rateLimitType: 'seven_day_opus',
+          utilization: 0.91,
+          resetsAt: sampleTime(2 * 86_400),
+        }),
+        NOW,
+      ),
+    ).toEqual([
+      { window: 'five_hour', percent: 20, resetsAt: sampleTime(3600) },
+      { window: 'seven_day', percent: 40, resetsAt: sampleTime(86_400) },
+      { window: 'seven_day_opus', percent: 91, resetsAt: sampleTime(2 * 86_400) },
+    ]);
+    // A covered window is not doubled; without a name the event adds nothing next to known windows.
+    expect(
+      limitBars(sampleRateLimitInfo({ windows, rateLimitType: 'seven_day', utilization: 0.9 }), NOW),
+    ).toHaveLength(2);
+    expect(
+      limitBars(sampleRateLimitInfo({ windows, rateLimitType: null, utilization: 0.9 }), NOW),
+    ).toHaveLength(2);
+    // The event window from the old fallback (only the 5-hour window is known).
+    expect(
+      limitBars(
+        sampleRateLimitInfo({ rateLimitType: 'seven_day', utilization: 0.85, resetsAt: sampleTime(7200) }),
+        NOW,
+      ).map((bar) => bar.window),
+    ).toEqual(['five_hour', 'seven_day']);
+  });
+
   it('leaves out windows whose reset has passed (R4W-06, V3-07)', () => {
     const info = sampleRateLimitInfo({
       windows: {

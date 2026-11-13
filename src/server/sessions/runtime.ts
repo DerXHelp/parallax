@@ -27,7 +27,10 @@ import {
 } from './entryState';
 import { toModelCatalog } from './models';
 import type { LiveNormalizer, StatusSignal } from './ports';
+import { bridgeOf, onBridgeState, remoteControlAfterReady, remoteProcessEnded } from './remoteControl';
 import { afterSuccessfulTurn, decideRetry } from './retry';
+import { endSideQuestions } from './sideQuestions';
+import { autoTitle } from './titles';
 import {
   endReasonFor,
   newConversation,
@@ -75,6 +78,8 @@ export class SessionRuntime {
   scheduled = false;
   /** close() was requested (an iterator end counts as expected). */
   closing = false;
+  /** WP-64: readiness done – Remote Control may be switched now (before: remoteControlAfterReady). */
+  remoteReady = false;
   /** The normalizer may still be used (false once the exit was handled). */
   alive = true;
   /** A turn_result reported a startup failure (its error item and lastError stay). */
@@ -273,7 +278,13 @@ export class SessionRuntime {
       case 'context_estimate': {
         const gauge = this.core.normalizer.estimateContextGauge(
           signal,
-          { override: this.launch.contextWindow, lastSdkMaxTokens: s.lastSdkMaxTokens },
+          {
+            override: this.launch.contextWindow,
+            lastSdkMaxTokens: s.lastSdkMaxTokens,
+            // WP-63: the last gauge carries the autocompact threshold of the last measurement
+            // (null after /clear or a switch – the next measurement brings it back).
+            autoCompact: s.entry.context,
+          },
           this.core.now(),
         );
         if (gauge !== null) s.setContext(gauge);
@@ -287,16 +298,35 @@ export class SessionRuntime {
         return;
       case 'title_changed': {
         const decision = titleChangeDecision(
-          { titleSource: s.entry.titleSource, pendingRename: s.pendingRename, resetInTurn: s.resetInTurn },
+          {
+            titleSource: s.entry.titleSource,
+            pendingRename: s.pendingRename,
+            pendingRenameSource: s.pendingRenameSource,
+            resetInTurn: s.resetInTurn,
+          },
           signal.title,
         );
         if (decision.kind === 'ignore') return;
-        if (decision.echo) s.pendingRename = null;
+        if (decision.echo) {
+          s.pendingRename = null;
+          s.pendingRenameSource = 'custom';
+        }
         s.patch((e) => ({ ...e, title: decision.title, titleSource: decision.titleSource }));
         return;
       }
+      case 'task_summary':
+        // WP-65: the CLI's live sentence (Remote Control only).
+        s.setActivitySentence(signal.detail);
+        return;
+      case 'turn_summary':
+        // WP-65: the CLI's summary of the latest turn (the normalizer dropped older ones).
+        s.setClaudeTurnSummary(signal.detail, signal.category, signal.needsAction !== null);
+        return;
       case 'prompt_lifecycle':
         if (s.queue.onLifecycle(signal.messageUuid, signal.state)) s.publishQueue();
+        return;
+      case 'bridge_state':
+        onBridgeState(s, signal);
         return;
       case 'mcp_servers':
         this.core.setEngineWarning(
@@ -315,7 +345,9 @@ export class SessionRuntime {
     s.scheduleContextRefresh();
     if (this.titleDue) {
       this.titleDue = false;
-      s.scheduleAiTitle();
+      // WP-65: the generated title after the first real turn of a conversation; else (and as its
+      // fallback) the AI-title query of the CLI's session info.
+      if (!autoTitle(s, this.core)) s.scheduleAiTitle();
     }
   }
 
@@ -348,7 +380,10 @@ export class SessionRuntime {
     if (!signal.synthetic && !this.core.shuttingDown()) {
       this.titleDue = true;
       void s.refreshGitBranch();
+      // WP-65: the CLI's turn summary came before the result; else the fallback from the answer.
+      s.finishTurnSummary(signal.outcome, signal.resultExcerpt);
     }
+    s.endTurnActivity();
     // Old CLI without session_state_changed: the result is the turn end (C.1).
     if (!this.sessionStateSeen) this.turnEnded();
     s.resetInTurn = false;
@@ -385,7 +420,8 @@ export class SessionRuntime {
           endReason: endReasonFor(signal.trigger),
           title: e.title === '' ? null : e.title,
         },
-        newConversation(conversationId, at, signal.correlationId),
+        // WP-64: the bridge belongs to the process – the new conversation keeps the remote session.
+        newConversation(conversationId, at, signal.correlationId, bridgeOf(previous)),
       ],
       // The CLI takes a custom title over (F.7); otherwise the new conversation starts untitled.
       title: keepCustom ? e.title : '',
@@ -428,11 +464,15 @@ export class SessionRuntime {
       }
       const idleBefore =
         s.facts.runState === 'idle' && s.queue.count() === 0 && openDecisionCount(s.facts) === 0;
+      // WP-64: the bridge went with the process (the wish stays; keepSessionOnExit keeps the link).
+      remoteProcessEnded(s);
       // Synchronously first: the CLI's signals of open canUseTool requests abort only afterwards.
       s.broker.cancel('all', 'process_exit', 'deny');
       const finalized = this.normalizer.finalizeOpen('process_exit');
       s.emit(finalized.ops);
       for (const signal of finalized.signals) this.onSignal(signal);
+      // WP-66: open side questions end with the process (never left pending).
+      endSideQuestions(this.core, s, this, 'exited');
       this.alive = false;
 
       const undelivered = s.queue.drain();
@@ -551,6 +591,11 @@ export class SessionRuntime {
     // Phase 2: the slash-command catalog (ADR-108) and the git branch (ADR-113) after readiness.
     void this.refreshCommands();
     void s.refreshGitBranch();
+    // WP-64: Claude's default (host state, follow_claude) and the wanted bridge.
+    this.remoteReady = true;
+    remoteControlAfterReady(this.core, s, this).catch((error: unknown) => {
+      this.core.reportError(error, 'remote control after readiness');
+    });
   }
 
   /** ADR-108: `supportedCommands()` → `detail.patch {commands}` (+ cache via emit); errors only logged. */
@@ -607,6 +652,8 @@ export async function startRuntime(
 ): Promise<SessionRuntime> {
   if (s.runtime !== null) return s.runtime;
   core.assertRunning();
+  // WP-63: a removed entry never starts again (a start that waited for the removal's lock).
+  if (s.removed) throw commandError('ENTRY_NOT_FOUND', { entryId: s.id });
   // ADR-106: an archived entry never starts (also not a start queued before the archiving, a retry).
   if (s.entry.archived) throw commandError('SESSION_ARCHIVED', { entryId: s.id });
   // ADR-104 / R4-01: never a second writer next to the external console (prompt, resume, plan
@@ -729,7 +776,7 @@ async function attachmentsDirOf(s: EntryState, core: EngineCore): Promise<string
 export async function closeRuntime(
   s: EntryState,
   core: EngineCore,
-  reason: 'user' | 'sleep' | 'handoff' | 'not_ready' | 'archive' | 'switch' | 'fresh_context',
+  reason: 'user' | 'sleep' | 'handoff' | 'not_ready' | 'archive' | 'switch' | 'fresh_context' | 'remove',
 ): Promise<void> {
   const runtime = s.runtime;
   if (runtime === null) return;
@@ -755,6 +802,8 @@ export interface DeliverExtras {
   attachments?: PromptAttachments;
   /** Checked pastes (`checkPastes`) → `OutgoingPrompt.inlinePastes`; empty → left out (ADR-146). */
   pastes?: readonly string[];
+  /** WP-65: what the echo of a `/rename X` in `text` becomes (default `custom`; `ai` = a generated title). */
+  renameSource?: 'custom' | 'ai';
 }
 
 /**
@@ -781,7 +830,11 @@ export function deliverPrompt(
   const messageUuid = core.ids.newUuid();
   const rename = parseRenameCommand(text);
   const renameBefore = s.pendingRename;
-  if (rename !== null) s.pendingRename = rename;
+  const renameSourceBefore = s.pendingRenameSource;
+  if (rename !== null) {
+    s.pendingRename = rename;
+    s.pendingRenameSource = extras.renameSource ?? 'custom';
+  }
   if (priority === 'now' && s.broker.open().some((d) => d.requester.kind === 'main')) {
     s.broker.cancel('main', 'interrupted', 'deny');
   }
@@ -807,7 +860,10 @@ export function deliverPrompt(
     core.log.warn({ err: error, entryId: s.id }, 'send() refused the prompt');
     // CR2 follow-up: a refused `/rename X` leaves no pending rename (a later title_changed X would
     // count as its echo and become `custom`).
-    if (rename !== null && s.pendingRename === rename) s.pendingRename = renameBefore;
+    if (rename !== null && s.pendingRename === rename) {
+      s.pendingRename = renameBefore;
+      s.pendingRenameSource = renameSourceBefore;
+    }
     if (s.queue.remove(messageUuid)) s.publishQueue();
     throw commandError('SESSION_NOT_RUNNING', { entryId: s.id, reason: 'closed' });
   }

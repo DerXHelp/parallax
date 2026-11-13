@@ -11,7 +11,8 @@ Dialog merkt sich beim Öffnen das fokussierte Element und gibt ihm den Fokus be
 
 | Pfad | Inhalt |
 | --- | --- |
-| `FolderBrowser.tsx` | `FolderBrowser` (Dialog mit Trigger-Kind): Wurzeln/Start-Ordner, Brotkrumen (bei langen Pfaden ans Ende gescrollt, V3-01), „Nach oben“, „Versteckte anzeigen“, Tastatur, „Diesen Ordner wählen“ übernimmt `path` exakt; `breadcrumbs(path)`. Auch vom Profil-Editor genutzt (`configDir`) |
+| `FolderBrowser.tsx` | `FolderBrowser` (Dialog mit Trigger-Kind): Wurzeln/Start-Ordner, Brotkrumen (bei langen Pfaden ans Ende gescrollt, V3-01), „Nach oben“, „Versteckte anzeigen“, Tastatur, „Diesen Ordner wählen“ übernimmt `path` exakt. Auch vom Profil-Editor genutzt (`configDir`). WP-64: nur noch Dialog + Trigger; der Inhalt ist ein Lazy-Chunk (Start-Chunk-Budget) |
+| `FolderBrowserContent.tsx` | Inhalt des Ordner-Browsers (Default-Export, lazy geladen beim Öffnen; Fehler des Chunks → Karte der `SlotBoundary`), `breadcrumbs(path)` |
 | `ProfileSelect.tsx` | `ProfileSelect` (Menü: Farbe, Name, „Standard“, Claude-Code-Zustand; Profile mit Fehler-Befunden gesperrt, Gründe im Tooltip) |
 | `profile-status.tsx` | `ProfileStatus`, `profileStatusText`, `ProfileColorDot`, `ProfileIssueText`, `profileErrors` (leer = Profil nutzbar) – gemeinsam mit `features/profiles`; WP-62: Ton `info` „neuer als geprüft“ (`newSession.status.untested`/`untestedPlan`), wenn `version` neuer als `testedVersion` |
 | `profile-issues.ts` | Details eines Befunds (`issueDetail`, `issueArgIndex`, `issueField`, `issueEnvKey`, `issueCounts`) – nie Env-Werte |

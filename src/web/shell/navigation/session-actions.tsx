@@ -3,14 +3,20 @@ import {
   ArchiveIcon,
   ArchiveRestoreIcon,
   ClipboardCopyIcon,
+  ExternalLinkIcon,
   FolderOpenIcon,
+  LinkIcon,
   FolderPlusIcon,
+  MessageCircleQuestionIcon,
   HistoryIcon,
   InfoIcon,
+  ListXIcon,
   MoonIcon,
   PencilIcon,
   PinIcon,
   PinOffIcon,
+  SmartphoneIcon,
+  SparklesIcon,
   SquareTerminalIcon,
   type LucideIcon,
 } from 'lucide-react';
@@ -23,7 +29,7 @@ import type { Command } from '@shared/protocol';
 import { useT, type TranslationKey } from '@web/i18n';
 import { copyText } from '@web/lib/clipboard';
 import { focusElement, focusedElement } from '@web/lib/return-focus';
-import { openSessionWindow } from '@web/lib/windows';
+import { openClaudeSessionUrl, openSessionWindow } from '@web/lib/windows';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand } from '@web/state/hooks';
 import { showErrorNotice, showTextNotice } from '@web/state/notices';
@@ -34,6 +40,9 @@ import { requestShell } from '../requests';
 import { shortcutKeyLabels } from '../shortcuts';
 import { sessionFocusTarget } from './focus';
 import { isHandoffPending, openExternalConsole } from './handoff';
+import { openQuickAsk } from './quick-ask';
+import { copyRemoteLink, remoteLinkOf } from './remote-control';
+import { requestRemoveSession } from './remove-session';
 import { startRenameAfterMenu, takePendingRename, type RenamePlace } from './rename';
 
 /**
@@ -52,7 +61,17 @@ export type SessionActionId =
   | 'copyConsoleCommand'
   | 'archive'
   | 'conversations'
-  | 'sessionInfo';
+  | 'sessionInfo'
+  /** WP-63 §1.3: remove from Parallax only (confirmation dialog; files stay). */
+  | 'remove'
+  /** WP-64: Remote Control on/off, open the claude.ai link, copy it. */
+  | 'remoteControl'
+  | 'openRemote'
+  | 'copyRemoteLink'
+  /** WP-65 §1.3: a new AI title from the conversation (also over an own title – asked for). */
+  | 'regenerateTitle'
+  /** WP-66: "Quick question…" – a side question in a popover at the row. */
+  | 'quickAsk';
 
 export type SessionActionSlot = SessionActionId | 'separator';
 
@@ -66,9 +85,15 @@ export interface SessionAction {
   run: () => void;
 }
 
-/** Sidebar context menu and the "…" menu of a row (order of WP-35 §3; WP-58: + open folder). */
+/**
+ * Sidebar context menu and the "…" menu of a row (order of WP-35 §3; WP-58: + open folder; WP-63:
+ * + remove; WP-64: + Remote Control; WP-65: + generate title again; WP-66: + quick question).
+ */
 export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
+  'quickAsk',
+  'separator',
   'rename',
+  'regenerateTitle',
   'pin',
   'openWindow',
   'openFolder',
@@ -78,22 +103,33 @@ export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
   'openExternal',
   'copyConsoleCommand',
   'separator',
+  'remoteControl',
+  'openRemote',
+  'copyRemoteLink',
+  'separator',
   'archive',
+  'remove',
 ];
 
-/** Header menu (WP-35 §8; WP-58: + open folder). */
+/** Header menu (WP-35 §8; WP-58: + open folder; WP-63: + remove; WP-64: + Remote Control; WP-65: + title). */
 export const HEADER_ACTIONS: readonly SessionActionSlot[] = [
   'conversations',
   'sessionInfo',
   'rename',
+  'regenerateTitle',
   'separator',
   'openWindow',
   'openFolder',
   'openExternal',
   'copyConsoleCommand',
   'separator',
+  'remoteControl',
+  'openRemote',
+  'copyRemoteLink',
+  'separator',
   'sleep',
   'archive',
+  'remove',
 ];
 
 /** Fire-and-forget command of a menu action; a refusal becomes a notice of that session. */
@@ -191,6 +227,20 @@ function build(
   const external = summary.external !== null;
   const started = summary.sessionId !== null;
   switch (id) {
+    case 'quickAsk':
+      return {
+        id,
+        label: 'navigation.actions.quickAsk',
+        icon: MessageCircleQuestionIcon,
+        // The server refuses both (SESSION_ARCHIVED / SESSION_EXTERNAL); a dormant session starts.
+        disabled: summary.archived || external,
+        // After the menu closed: the popover then takes the focus and gives it back to the row.
+        run: () => {
+          runAfterMenu(sessionKey, () => {
+            openQuickAsk(sessionKey);
+          });
+        },
+      };
     case 'rename':
       return {
         id,
@@ -201,6 +251,17 @@ function build(
         // Menus only: the field opens once the menu has closed (rename.ts).
         run: () => {
           startRenameAfterMenu(sessionKey, place);
+        },
+      };
+    case 'regenerateTitle':
+      return {
+        id,
+        label: 'navigation.actions.regenerateTitle',
+        icon: SparklesIcon,
+        // Needs a conversation; the server refuses archived and external sessions as well.
+        disabled: !started || external || summary.archived,
+        run: () => {
+          runSessionCommand(sessionKey, { name: 'session.regenerateTitle', entryId });
         },
       };
     case 'pin':
@@ -315,6 +376,56 @@ function build(
           requestShell({ kind: 'sessionInfo', sessionKey });
         },
       };
+    case 'remove':
+      return {
+        id,
+        label: 'navigation.actions.remove',
+        icon: ListXIcon,
+        disabled: false,
+        run: () => {
+          requestRemoveSession(sessionKey);
+        },
+      };
+    case 'remoteControl': {
+      // WP-64: the wish – a running session switches at once, a dormant one at its next start.
+      const on = summary.remoteControl.wanted;
+      return {
+        id,
+        label: on ? 'navigation.actions.remoteOff' : 'navigation.actions.remoteOn',
+        icon: SmartphoneIcon,
+        // The server refuses both (SESSION_ARCHIVED / SESSION_EXTERNAL).
+        disabled: summary.archived || external,
+        run: () => {
+          runSessionCommand(sessionKey, { name: 'session.setRemoteControl', entryId, enabled: !on });
+        },
+      };
+    }
+    case 'openRemote': {
+      const url = remoteLinkOf(summary.remoteControl);
+      if (url === null) return null;
+      return {
+        id,
+        label: 'navigation.actions.openRemote',
+        icon: ExternalLinkIcon,
+        disabled: false,
+        run: () => {
+          openClaudeSessionUrl(url);
+        },
+      };
+    }
+    case 'copyRemoteLink': {
+      const url = remoteLinkOf(summary.remoteControl);
+      if (url === null) return null;
+      return {
+        id,
+        label: 'navigation.actions.copyRemoteLink',
+        icon: LinkIcon,
+        disabled: false,
+        run: () => {
+          copyRemoteLink(url);
+        },
+      };
+    }
   }
 }
 
