@@ -74,6 +74,14 @@
   --syntax-keyword: oklch(0.52 0.18 295);
   --link: oklch(0.52 0.14 40);
 
+  /*
+   * WP-66: side questions (`/btw`) – never part of the conversation, so their card and the
+   * composer's side mode stand apart: an accent for border, icon and hint text (5.3:1 on the
+   * surface) and a faint surface of the same hue.
+   */
+  --side-question: oklch(0.5 0.15 295);
+  --side-question-surface: oklch(0.975 0.012 295);
+
   /* Profile colors (`profile.color`, model.ts PROFILE_COLORS) – left stripe in the sidebar. */
   --profile-slate: oklch(0.6 0.02 264);
   --profile-blue: oklch(0.6 0.16 255);
@@ -123,6 +131,9 @@
   /* V4-04: keywords 6.7:1 on code blocks, 7.0:1 on the background (was 3.9:1); links 5.6:1 on muted. */
   --syntax-keyword: oklch(0.72 0.15 295);
   --link: var(--brand);
+
+  --side-question: oklch(0.76 0.12 295);
+  --side-question-surface: oklch(0.235 0.018 295);
 }
 
 @theme inline {
@@ -176,6 +187,8 @@
   --color-warning: var(--warning);
   --color-info: var(--info);
   --color-link: var(--link);
+  --color-side-question: var(--side-question);
+  --color-side-question-surface: var(--side-question-surface);
   --color-status-working: var(--status-working);
   --color-status-waiting: var(--status-waiting);
   --color-status-done: var(--status-done);

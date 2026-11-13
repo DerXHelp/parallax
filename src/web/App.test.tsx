@@ -339,6 +339,8 @@ const EVERY_REQUEST: { [K in ShellRequestKind]: ShellRequestOf<K> } = {
     sessionKey: PLAYGROUND_SESSION_KEYS.main,
     files: [new File(['hello'], 'notes.txt', { type: 'text/plain' })],
   },
+  // WP-66: a withdrawn waiting message goes back into the composer of its session.
+  composerText: { kind: 'composerText', sessionKey: PLAYGROUND_SESSION_KEYS.main, text: 'taken back' },
 };
 
 /** Kinds whose handler arrives with a later package – none since WP-60 (attachFiles: WP-57). */
@@ -524,6 +526,19 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
         await waitFor(() => {
           expect(document.querySelector('[data-slot="attachment-chip"]')).toBeNull();
         });
+        continue;
+      }
+      if (request.kind === 'composerText') {
+        // WP-66: the composer of the session takes the text back and focuses its field (the draft
+        // is cleared again – drafts outlive the test in localStorage).
+        const composer = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message to Claude' });
+        await waitFor(() => {
+          expect(composer.value).toBe('taken back');
+        });
+        await waitFor(() => {
+          expect(document.activeElement).toBe(composer);
+        });
+        await user.clear(composer);
         continue;
       }
       if (request.kind === 'renameTitle') {

@@ -108,6 +108,23 @@ export const en = {
     copyRemoteLink: 'Copy Remote Control link',
     /** WP-65 §1.3. */
     regenerateTitle: 'Generate title again',
+    /** WP-66: a side question from the sidebar. */
+    quickAsk: 'Quick question…',
+  },
+  /** WP-66: the popover of "Quick question…" (a side question, never part of the conversation). */
+  quickAsk: {
+    title: 'Quick question · {title}',
+    hint: 'Answered from the conversation – does not go into the context.',
+    placeholder: 'Ask about this session…',
+    followUp: 'Follow up…',
+    ask: 'Ask',
+    pending: 'asking…',
+    cancel: 'Cancel',
+    open: 'Open session',
+    noAnswer: 'No answer available',
+    busy: 'Too many side questions right now – try again in a moment',
+    unavailable: 'Side question not available',
+    answered: '{title}: {answer}',
   },
   /** WP-64: Remote Control (sidebar icon, header button and menu). */
   remote: {
