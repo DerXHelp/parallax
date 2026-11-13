@@ -14,14 +14,20 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { memo, type ReactNode } from 'react';
+import { parseSessionKey } from '@shared/common';
 import type { SystemItem } from '@shared/model';
 import { useI18n } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { shortPath } from '@web/lib/path-display';
+import { LoginButton } from '@web/shell/login/LoginButton';
+import { useHookDisplay } from '@web/state/hook-display';
+import { useSummarySelector } from '@web/state/hooks';
 import { TONE_ICON, type AlertTone } from '@web/ui/alert';
 import { CappedContent } from '../components/CappedContent';
 import { Disclosure } from '../components/Disclosure';
 import { ToolFileLink } from '../components/ToolFileLink';
+import { useLazyTranscriptT } from '../i18n-lazy';
+import { isBlockingHook, isFailedHook, isHookShown } from '../lib/grouping';
 import { isKnownRateLimitWindow } from '../lib/rate-limit';
 import { TerminalOutput } from '../renderers/parts';
 import { expansionKey } from '../state/expansion';
@@ -90,7 +96,103 @@ function Divider({ icon: Icon, children, slot }: { icon: LucideIcon; children: R
   );
 }
 
+type HookItem = Extract<SystemItem, { event: 'hook' }>;
+
+/** `PreToolUse:Write` → `Write` (the tool a tool hook ran for); null for other hooks. */
+function hookTool(item: HookItem): string | null {
+  const colon = item.hookName.indexOf(':');
+  if (colon < 0 || !item.hookEvent.endsWith('ToolUse')) return null;
+  const tool = item.hookName.slice(colon + 1).trim();
+  return tool === '' ? null : tool;
+}
+
+/**
+ * A hook run (WP-69, setting `hookDisplay` – the list hides what the setting leaves out; nested rows
+ * check it here): a failed run as an error notice – "blocked" for exit code 2 (the tool call, the
+ * prompt, the stop), else "failed" with its exit code – and its output to open; a successful or
+ * running one as a quiet line (output to open when there is any).
+ */
+const HookRow = memo(function HookRow({ item, sessionKey }: { item: HookItem; sessionKey: string }) {
+  const { t } = useI18n();
+  const lt = useLazyTranscriptT();
+  const hooks = useHookDisplay(parseSessionKey(sessionKey)?.hostId);
+  if (!isHookShown(item, hooks)) return null;
+  const output =
+    item.output.text.trim() === '' ? null : (
+      <CappedContent text={item.output.text} truncated={item.output.truncated} sessionKey={sessionKey}>
+        {(text) => <TerminalOutput text={text} />}
+      </CappedContent>
+    );
+  if (isFailedHook(item)) {
+    const tool = hookTool(item);
+    let title: string;
+    if (isBlockingHook(item)) {
+      title =
+        tool === null
+          ? lt('system.hookBlocked', { name: item.hookName })
+          : lt('system.hookBlockedTool', { event: item.hookEvent, tool });
+    } else {
+      title =
+        item.exitCode === null
+          ? lt('system.hookFailed', { name: item.hookName })
+          : lt('system.hookFailedCode', { name: item.hookName, code: item.exitCode });
+    }
+    return (
+      <div data-slot="hook-failed" data-hook={item.hookName}>
+        <Notice tone="error" title={title}>
+          {output === null ? undefined : (
+            <Disclosure
+              stateKey={expansionKey(sessionKey, item.id)}
+              header={<span className="text-muted-foreground text-xs">{lt('system.hookOutput')}</span>}
+            >
+              <div className="mt-1">{output}</div>
+            </Disclosure>
+          )}
+        </Notice>
+      </div>
+    );
+  }
+  const label = (
+    <span className="text-muted-foreground text-xs">
+      {joined([
+        t('transcript.system.hook', { name: item.hookName }),
+        item.outcome === null
+          ? null
+          : t('transcript.system.hookOutcome', { event: item.hookEvent, outcome: item.outcome }),
+      ])}
+    </span>
+  );
+  if (output === null) {
+    return (
+      <div data-slot="hook" data-hook={item.hookName}>
+        <Line icon={WebhookIcon}>{label}</Line>
+      </div>
+    );
+  }
+  return (
+    <div data-slot="hook" data-hook={item.hookName}>
+      <Disclosure stateKey={expansionKey(sessionKey, item.id)} header={label}>
+        <div className="mt-1 ml-5">{output}</div>
+      </Disclosure>
+    </div>
+  );
+});
+
 /** Parts joined with " · " (computed outside JSX). */
+/** WP-70: error codes that "Sign in" (the profile's sign-in from Parallax) can fix. */
+const SIGN_IN_CODES: ReadonlySet<string> = new Set(['CLAUDE_AUTH_FAILED', 'CLAUDE_NOT_LOGGED_IN']);
+
+/** "Sign in" under a sign-in error of the session's profile; gone once the profile signed in after it. */
+function SignInAction({ sessionKey, at }: { sessionKey: string; at: string }) {
+  const profileId = useSummarySelector(sessionKey, (summary) => summary.profileId, null);
+  if (profileId === null) return null;
+  return (
+    <div className="mt-1">
+      <LoginButton profileId={profileId} hostId={parseSessionKey(sessionKey)?.hostId} since={at} />
+    </div>
+  );
+}
+
 function joined(parts: readonly (string | null | undefined)[]): string {
   return parts
     .filter((part): part is string => part !== null && part !== undefined && part !== '')
@@ -197,28 +299,8 @@ export const SystemRow = memo(function SystemRow({
         </Notice>
       );
     }
-    case 'hook': {
-      const label = (
-        <span className="text-muted-foreground text-xs">
-          {joined([
-            t('transcript.system.hook', { name: item.hookName }),
-            item.outcome === null
-              ? null
-              : t('transcript.system.hookOutcome', { event: item.hookEvent, outcome: item.outcome }),
-          ])}
-        </span>
-      );
-      if (item.output.text.trim() === '') return <Line icon={WebhookIcon}>{label}</Line>;
-      return (
-        <Disclosure stateKey={expansionKey(sessionKey, item.id)} header={label}>
-          <div className="mt-1 ml-5">
-            <CappedContent text={item.output.text} truncated={item.output.truncated} sessionKey={sessionKey}>
-              {(text) => <TerminalOutput text={text} />}
-            </CappedContent>
-          </div>
-        </Disclosure>
-      );
-    }
+    case 'hook':
+      return <HookRow item={item} sessionKey={sessionKey} />;
     case 'permission_denied':
       return (
         <Line icon={ShieldXIcon} className="text-destructive">
@@ -310,6 +392,7 @@ export const SystemRow = memo(function SystemRow({
       return (
         <Notice tone="error" title={t('transcript.system.error')}>
           {tError(item.error)}
+          {SIGN_IN_CODES.has(item.error.code) ? <SignInAction sessionKey={sessionKey} at={item.at} /> : null}
         </Notice>
       );
     case 'handoff': {

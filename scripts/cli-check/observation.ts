@@ -70,6 +70,9 @@ export interface RawProbe {
   withdrawQueued?: boolean | null;
   /** WP-67: results of the session-info step (sessionInfo.ts `sessionInfoProfile`); absent/null = not checked. */
   sessionInfo?: CliProfile['sessionInfo'];
+  /** WP-70: results of the login/output-style step (outputStyle.ts); absent/null = not checked. */
+  login?: boolean | null;
+  outputStyleSetting?: boolean | null;
 }
 
 /** MCP tools come from the user's/account's configuration, not from the CLI. */
@@ -121,6 +124,8 @@ export function observationFrom(raw: RawProbe, sdkVersion: string): Observation 
     sideQuestion: raw.sideQuestion ?? null,
     withdrawQueued: raw.withdrawQueued ?? null,
     sessionInfo: raw.sessionInfo ?? null,
+    login: raw.login ?? null,
+    outputStyleSetting: raw.outputStyleSetting ?? null,
   };
 }
 

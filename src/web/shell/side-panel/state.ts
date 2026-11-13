@@ -23,6 +23,13 @@ export interface SidePanelFile {
   revision: number;
 }
 
+/** WP-69: target of the subagent tab (request `openSubagent`; the latest one per session). */
+export interface SidePanelSubagent {
+  agentId: string;
+  title: string;
+  subagentType: string | null;
+}
+
 /** Files kept for "Back" per session (WP-54: the last 10). */
 export const SIDE_PANEL_HISTORY_MAX = 10;
 
@@ -34,11 +41,13 @@ interface SidePanelState {
   history: Readonly<Record<string, readonly SidePanelFile[]>>;
   /** Mounted hosts per session (ref count). */
   mounted: Readonly<Record<string, number>>;
+  /** WP-69: the subagent of the subagent tab per session (kept while other tabs show). */
+  subagents: Readonly<Record<string, SidePanelSubagent>>;
 }
 
 const EMPTY_HISTORY: readonly SidePanelFile[] = Object.freeze([]);
 
-const store = createStore<SidePanelState>(() => ({ tabs: {}, files: {}, history: {}, mounted: {} }));
+const store = createStore<SidePanelState>(() => ({ tabs: {}, files: {}, history: {}, mounted: {}, subagents: {} }));
 
 /** Elements that opened the panel (focus returns there on close). */
 const openers = new Map<string, HTMLElement>();
@@ -64,6 +73,27 @@ export function useSidePanelFile(sessionKey: string): SidePanelFile | null {
 
 export function getSidePanelFile(sessionKey: string): SidePanelFile | null {
   return store.getState().files[sessionKey] ?? null;
+}
+
+export function useSidePanelSubagent(sessionKey: string): SidePanelSubagent | null {
+  return useStore(store, (state) => state.subagents[sessionKey] ?? null);
+}
+
+export function getSidePanelSubagent(sessionKey: string): SidePanelSubagent | null {
+  return store.getState().subagents[sessionKey] ?? null;
+}
+
+/** Sets the subagent of the tab `subagent` (the caller opens the tab); the same one again keeps it. */
+export function setSidePanelSubagent(sessionKey: string, subagent: SidePanelSubagent): void {
+  const current = store.getState().subagents[sessionKey];
+  if (
+    current?.agentId === subagent.agentId &&
+    current.title === subagent.title &&
+    current.subagentType === subagent.subagentType
+  ) {
+    return;
+  }
+  store.setState((state) => ({ subagents: { ...state.subagents, [sessionKey]: { ...subagent } } }));
 }
 
 /** Back stack of the viewer tab (most recent first). */
@@ -160,6 +190,6 @@ export function useSidePanelHostMounted(sessionKey: string): boolean {
 
 /** Tests: forget everything (the module state is global). */
 export function resetSidePanelState(): void {
-  store.setState({ tabs: {}, files: {}, history: {}, mounted: {} });
+  store.setState({ tabs: {}, files: {}, history: {}, mounted: {}, subagents: {} });
   openers.clear();
 }

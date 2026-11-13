@@ -1,5 +1,5 @@
 import { useEffect, useEffectEvent } from 'react';
-import type { ProfileId } from '@shared/common';
+import type { HostId, ProfileId } from '@shared/common';
 
 /**
  * Shell request channel (Phase 2 scaffold, WP-30 §4.14 C, ADR-115): cross links between shell parts
@@ -25,8 +25,11 @@ export const SETTINGS_SECTIONS = [
 ] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
-/** Tabs of the side panel of a session pane (Phase 3, ADR-150; host: shell/side-panel). */
-export const SIDE_PANEL_TABS = ['plan', 'file', 'files', 'tasks'] as const;
+/**
+ * Tabs of the side panel of a session pane (Phase 3, ADR-150; host: shell/side-panel). WP-69:
+ * `subagent` = the read-only transcript of one subagent (shown once one was opened).
+ */
+export const SIDE_PANEL_TABS = ['plan', 'file', 'files', 'tasks', 'subagent'] as const;
 export type SidePanelTab = (typeof SIDE_PANEL_TABS)[number];
 
 export type ShellRequest =
@@ -48,6 +51,11 @@ export type ShellRequest =
   /** Open the side panel of a session at a tab; `null` closes it (handled by SidePanelHost). */
   | { kind: 'sidePanel'; sessionKey: string; tab: SidePanelTab | null }
   /**
+   * WP-69: the transcript of one subagent in the tab `subagent` (the Agent card's "Open
+   * transcript"; the tab shows the latest one). `title`: the card's title (description, else type).
+   */
+  | { kind: 'openSubagent'; sessionKey: string; agentId: string; title: string; subagentType?: string | null }
+  /**
    * Files dropped on the session pane or picked in the menu → the composer attaches them.
    * `folders`: folders the drop left out (`transferFiles`, CR3-01) – the composer shows its hint.
    */
@@ -57,7 +65,17 @@ export type ShellRequest =
    * Text back into the composer of a session (a withdrawn queued message, „Zurückholen“): the
    * composer appends it to a draft (new paragraph) or fills the empty field, and takes the focus.
    */
-  | { kind: 'composerText'; sessionKey: string; text: string };
+  | { kind: 'composerText'; sessionKey: string; text: string }
+  // ---- WP-70 ----
+  /**
+   * Sign in a profile from Parallax: the small sign-in dialog (NavigationLayer, lazy chunk). `hostId`:
+   * the profile's host (default local). `modal`: asked from inside a modal dialog (new session,
+   * settings) – the sign-in dialog is modal then too (a non-modal layer outside that dialog's tree
+   * would dismiss it).
+   */
+  | { kind: 'login'; profileId: ProfileId; hostId?: HostId; modal?: boolean }
+  /** The output style of a session's project (header "…" menu; small dialog, lazy chunk). */
+  | { kind: 'outputStyle'; sessionKey: string };
 
 export type ShellRequestKind = ShellRequest['kind'];
 export type ShellRequestOf<K extends ShellRequestKind> = Extract<ShellRequest, { kind: K }>;

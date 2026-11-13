@@ -1,9 +1,11 @@
-import { BotIcon, SquareIcon } from 'lucide-react';
+import { BotIcon, ScrollTextIcon, SquareIcon } from 'lucide-react';
 import { memo, useState } from 'react';
 import type { TaskInfo } from '@shared/model';
 import { useI18n, useT } from '@web/i18n';
 import { shortPath } from '@web/lib/path-display';
 import { isLiveToolStatus, isToolCallTaskLive } from '@web/lib/task-rows';
+import { requestShell } from '@web/shell/requests';
+import { useSidePanelHostMounted } from '@web/shell/side-panel/state';
 import { useNow } from '@web/state/clock';
 import { useChildItemIds } from '@web/state/hooks';
 import { Badge } from '@web/ui/badge';
@@ -15,6 +17,8 @@ import { ModelBadge } from '../components/ModelBadge';
 import { ToolFileLink } from '../components/ToolFileLink';
 import { ToolStatus } from '../components/ToolStatus';
 import { useTranscriptSettings } from '../context';
+import { agentIdOf } from '../lib/agent-id';
+import { useLazyTranscriptT } from '../i18n-lazy';
 import { readAgentInput, readAgentResult } from '../lib/tool-input';
 import { ToolResultImages, ToolResultText } from '../renderers/parts';
 import type { ToolBodyProps } from '../renderers/types';
@@ -28,6 +32,9 @@ import { stopTask } from '../state/tasks';
  * the task (completed → done, failed → error, stopped/killed → interrupted, WP-12).
  * WP-55: "Stop" while the task runs (`session.stopTask`; the composer's Stop ends only the turn,
  * F4), the output file as a `FileLink`, the progress summary (`task_progress.summary`, F5).
+ * WP-69: "Open transcript" once the agent id is known (`agentIdOf`) – the agent's whole transcript
+ * in the side panel tab "Agent" (request `openSubagent`; only with a side panel host). A read-only
+ * transcript (the subagent panel itself) shows neither Stop nor "Background".
  */
 
 function finishedDuration(task: TaskInfo | null): number | null {
@@ -93,6 +100,35 @@ function StopAgentButton({
   );
 }
 
+/** "Open transcript": the side panel tab of this agent (it shows the latest one opened). */
+function OpenTranscriptButton({
+  sessionKey,
+  agentId,
+  title,
+  subagentType,
+}: {
+  sessionKey: string;
+  agentId: string;
+  title: string;
+  subagentType: string | null;
+}) {
+  const lt = useLazyTranscriptT();
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      data-slot="agent-open-transcript"
+      aria-label={lt('agent.openTranscriptLabel', { title })}
+      onClick={() => {
+        requestShell({ kind: 'openSubagent', sessionKey, agentId, title, subagentType });
+      }}
+    >
+      <ScrollTextIcon aria-hidden className="size-3" />
+      {lt('agent.openTranscript')}
+    </Button>
+  );
+}
+
 function AgentSteps({ item, sessionKey }: ToolBodyProps) {
   const { t } = useI18n();
   const settings = useTranscriptSettings();
@@ -121,6 +157,8 @@ function AgentSteps({ item, sessionKey }: ToolBodyProps) {
 
 export const AgentCard = memo(function AgentCard({ item, sessionKey }: ToolBodyProps) {
   const { t, format } = useI18n();
+  const readOnly = useTranscriptSettings()?.readOnly === true;
+  const hostMounted = useSidePanelHostMounted(sessionKey);
   const input = readAgentInput(item.input);
   const result = readAgentResult(item.result?.structured ?? null);
   const task = item.task;
@@ -136,7 +174,8 @@ export const AgentCard = memo(function AgentCard({ item, sessionKey }: ToolBodyP
   const model = result?.resolvedModel ?? null;
   const outputFile = task?.outputFile ?? null;
   // The task panel's rule (`@web/lib/task-rows`): what `session.stopTask` takes.
-  const stoppable = task !== null && isToolCallTaskLive(item);
+  const stoppable = !readOnly && task !== null && isToolCallTaskLive(item);
+  const agentId = hostMounted ? agentIdOf(item) : null;
   return (
     <div
       data-item-kind="tool_call"
@@ -169,9 +208,12 @@ export const AgentCard = memo(function AgentCard({ item, sessionKey }: ToolBodyP
           {model === null ? null : <span>{t('transcript.agent.model', { model })}</span>}
         </span>
         {/* WP-65 §1.5: a subagent in the foreground can move to the background. */}
-        {item.status === 'running' ? (
+        {item.status === 'running' && !readOnly ? (
           <BackgroundButton sessionKey={sessionKey} toolUseId={item.toolUseId} title={title} />
         ) : null}
+        {agentId === null ? null : (
+          <OpenTranscriptButton sessionKey={sessionKey} agentId={agentId} title={title} subagentType={type} />
+        )}
         {stoppable ? <StopAgentButton sessionKey={sessionKey} taskId={task.taskId} title={title} /> : null}
       </div>
       {summary === null || summary === '' ? null : (

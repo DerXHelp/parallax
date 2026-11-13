@@ -241,6 +241,41 @@ export const profileIssueSchema = z.object({
 });
 export type ProfileIssue = z.infer<typeof profileIssueSchema>;
 
+/**
+ * WP-70: the login of a profile from Parallax (the CLI's OAuth flow in a short-lived `claude` of the
+ * profile; writer: the login service). `idle` = none since the server start; `starting` = process
+ * and flow are being set up; `waiting` = the link is open in the browser, the CLI waits for the
+ * redirect or the pasted code; `verifying` = a pasted code is being checked; `done` = signed in
+ * (`subscriptionType`, e.g. `max`); `failed` = `error` (LOGIN_UNAVAILABLE/LOGIN_FAILED/LOGIN_BLOCKED).
+ * Never the account's e-mail or organization. Runtime only, not persisted.
+ */
+export const PROFILE_LOGIN_STATES = ['idle', 'starting', 'waiting', 'verifying', 'done', 'failed'] as const;
+export const profileLoginStateSchema = z.enum(PROFILE_LOGIN_STATES);
+export type ProfileLoginState = z.infer<typeof profileLoginStateSchema>;
+
+export const profileLoginSchema = z.object({
+  state: profileLoginStateSchema,
+  /** The link opened in the browser (`automaticUrl`, else `manualUrl`); set while waiting/verifying. */
+  url: z.string().refine(isHttpUrl, { message: 'not an http(s) link' }).nullable(),
+  /** The link whose page shows a code to paste (works on any device); set while waiting/verifying. */
+  manualUrl: z.string().refine(isHttpUrl, { message: 'not an http(s) link' }).nullable(),
+  /** `done`: the plan the CLI reported (`max`, `pro`, …; null = not reported). */
+  subscriptionType: z.string().max(40).nullable(),
+  error: errorPayloadSchema.nullable(),
+  /** Last change of the state (null while idle). */
+  at: isoDateTimeSchema.nullable(),
+});
+export type ProfileLogin = z.infer<typeof profileLoginSchema>;
+
+export const IDLE_PROFILE_LOGIN: ProfileLogin = {
+  state: 'idle',
+  url: null,
+  manualUrl: null,
+  subscriptionType: null,
+  error: null,
+  at: null,
+};
+
 /** What the UI sees (never env values, never args): HostState.profiles. */
 export const profileSummarySchema = z.object({
   id: profileIdSchema,
@@ -259,6 +294,8 @@ export const profileSummarySchema = z.object({
   issues: z.array(profileIssueSchema).default([]),
   /** Phase 2: entries bound to the profile, archived ones included (delete protection, configDir warning). */
   entryCount: z.number().int().nonnegative().default(0),
+  /** WP-70: the login from Parallax (runtime only; default idle). */
+  login: profileLoginSchema.default(IDLE_PROFILE_LOGIN),
 });
 export type ProfileSummary = z.infer<typeof profileSummarySchema>;
 
@@ -517,6 +554,15 @@ export const TRANSCRIPT_VIEWS = ['compact', 'all'] as const;
 export const transcriptViewSchema = z.enum(TRANSCRIPT_VIEWS);
 export type TranscriptView = z.infer<typeof transcriptViewSchema>;
 
+/**
+ * WP-69 (1.3): which hook runs the transcript shows – `all` (every run; successful ones are work
+ * steps), `failed` (default: only runs that did not succeed, blocking ones included) or `off` (none;
+ * failed SessionStart/Setup hooks stay visible – start problems are never hidden).
+ */
+export const HOOK_DISPLAYS = ['all', 'failed', 'off'] as const;
+export const hookDisplaySchema = z.enum(HOOK_DISPLAYS);
+export type HookDisplay = z.infer<typeof hookDisplaySchema>;
+
 /** Fields without defaults: the base of the patch schema (a patch must never inject defaults). */
 const settingsFields = {
   language: languageSchema,
@@ -533,6 +579,8 @@ const settingsFields = {
   remoteControl: remoteControlSettingsSchema,
   /** WP-65: transcript view of every window (was localStorage `parallax.transcript.view`, WP-63). */
   transcriptView: transcriptViewSchema,
+  /** WP-69: hook runs in the transcript of every window. */
+  hookDisplay: hookDisplaySchema,
 };
 
 export const settingsSchema = z.object({
@@ -546,6 +594,7 @@ export const settingsSchema = z.object({
   editor: editorSettingsSchema.default(defaultEditorSettings),
   remoteControl: remoteControlSettingsSchema.default(DEFAULT_REMOTE_CONTROL_SETTINGS),
   transcriptView: transcriptViewSchema.default('compact'),
+  hookDisplay: hookDisplaySchema.default('failed'),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
@@ -1041,6 +1090,8 @@ export const systemItemSchema = z.discriminatedUnion('event', [
     hookEvent: z.string(),
     outcome: z.string().nullable(),
     output: cappedTextSchema,
+    /** WP-69: `hook_response.exit_code` (2 = blocking); null while running or unknown (older logs). */
+    exitCode: z.number().int().nullable().default(null),
   }),
   systemBase.extend({
     event: z.literal('permission_denied'),
@@ -1438,6 +1489,40 @@ export const sessionActivitySchema = z.discriminatedUnion('kind', [
 ]);
 export type SessionActivity = z.infer<typeof sessionActivitySchema>;
 
+/**
+ * WP-71: the kind of a task (`taskKind` in `tasks.ts`): agent (`local_agent`/`remote_agent`), shell
+ * (`local_bash`), workflow (`local_workflow`), anything else.
+ */
+export const TASK_KINDS = ['agent', 'bash', 'workflow', 'other'] as const;
+export const taskKindSchema = z.enum(TASK_KINDS);
+export type TaskKind = z.infer<typeof taskKindSchema>;
+
+/** WP-71: at most this many running tasks are named in `SessionSummary.runningTasks.items`. */
+export const RUNNING_TASK_ITEMS_MAX = 5;
+/** WP-71: `RunningTaskItem.label` limit (chars). */
+export const RUNNING_TASK_LABEL_MAX = 120;
+
+/** WP-71: one running task for the sidebar's tooltip: kind, subagent type, short description. */
+export const runningTaskItemSchema = z.object({
+  kind: taskKindSchema,
+  subagentType: z.string().max(100).nullable(),
+  /** Agents: the progress summary (`task.summary`) when there is one, else the description. */
+  label: z.string().max(RUNNING_TASK_LABEL_MAX),
+});
+export type RunningTaskItem = z.infer<typeof runningTaskItemSchema>;
+
+/**
+ * WP-71: what runs in a session (counted like the task panel, `tasks.ts`): agents, shells and the
+ * rest (workflows, unknown kinds), plus the first running tasks (oldest start first).
+ */
+export const runningTasksSchema = z.object({
+  agents: z.number().int().nonnegative(),
+  shells: z.number().int().nonnegative(),
+  other: z.number().int().nonnegative(),
+  items: z.array(runningTaskItemSchema).max(RUNNING_TASK_ITEMS_MAX),
+});
+export type RunningTasks = z.infer<typeof runningTasksSchema>;
+
 /** Facts, not a finished display: server and UI call deriveDisplayStatus(facts, now) (A.4). */
 export const sessionSummarySchema = z.object({
   entryId: entryIdSchema,
@@ -1486,6 +1571,16 @@ export const sessionSummarySchema = z.object({
   turnSummary: turnSummarySchema.nullable().default(null),
   /** WP-65: `Entry.lastSeenAt` – the transcript's "since you were last here" card starts there. */
   lastSeenAt: isoDateTimeSchema.nullable().default(null),
+  /**
+   * WP-70: the output style of the session's project (`system/init.output_style` of the last turn,
+   * `initializationResult`, or the style just set; runtime only, null = not known yet).
+   */
+  outputStyle: z.string().max(100).nullable().default(null),
+  /**
+   * WP-71: running agents, shells and other tasks of the current conversation (runtime only, never
+   * persisted; the engine recounts at most every ~2 s); null = nothing runs or no process.
+   */
+  runningTasks: runningTasksSchema.nullable().default(null),
 });
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 
@@ -1617,6 +1712,11 @@ const sessionDetailFields = {
   planFile: planFileRefSchema.nullable(),
   /** Phase 3 (ADR-148; writer: engine): highest stored plan version of the entry. */
   latestPlanVersion: z.number().int().positive().nullable(),
+  /**
+   * WP-70 (writer: engine): the output styles the CLI offers in this project
+   * (`initializationResult().available_output_styles`; empty = not known yet).
+   */
+  availableOutputStyles: z.array(z.string().max(100)).max(200),
 };
 
 export const sessionDetailSchema = z.object({
@@ -1626,6 +1726,7 @@ export const sessionDetailSchema = z.object({
   todos: sessionDetailFields.todos.default(null),
   planFile: sessionDetailFields.planFile.default(null),
   latestPlanVersion: sessionDetailFields.latestPlanVersion.default(null),
+  availableOutputStyles: sessionDetailFields.availableOutputStyles.default([]),
 });
 export type SessionDetail = z.infer<typeof sessionDetailSchema>;
 
@@ -2017,3 +2118,40 @@ export const sessionInfoSectionSchema = z.discriminatedUnion('section', [
 export type SessionInfoSection = z.infer<typeof sessionInfoSectionSchema>;
 /** The data of one named tab, e.g. `SessionInfoOf<'mcp'>`. */
 export type SessionInfoOf<S extends SessionInfoSectionName> = Extract<SessionInfoSection, { section: S }>;
+
+// =====================================================================================
+// WP-69 Subagent transcript (read-only, on request)
+// =====================================================================================
+
+/** Bounds of `session.subagentTranscript` (items per answer; texts are capped like every item). */
+export const SUBAGENT_TRANSCRIPT_LIMITS = {
+  /** Items of one answer when the client asks for no `limit`. */
+  pageItems: 100,
+  /** Largest `limit` a client may ask for (like `LIMITS.loadEarlierMax`). */
+  maxPageItems: 200,
+  /** Characters of an agent id (`agent-<id>.jsonl`). */
+  agentIdChars: 200,
+} as const;
+
+/**
+ * Id of a subagent (`task_started.task_id` = the agent id, file `agent-<id>.jsonl`): letters, digits,
+ * `_` and `-` only – it becomes part of a file name in the SDK, so no path characters.
+ */
+export const subagentIdSchema = z
+  .string()
+  .min(1)
+  .max(SUBAGENT_TRANSCRIPT_LIMITS.agentIdChars)
+  .regex(/^[A-Za-z0-9_-]+$/);
+
+/**
+ * One page of a subagent's transcript: `items` are the list positions `offset … offset+items.length-1`
+ * of `total` (in `order`, oldest first; orders are the list's own, stable while it grows); `running`
+ * = the subagent still works (the client polls then).
+ */
+export const subagentTranscriptPageSchema = z.object({
+  items: z.array(transcriptItemSchema).max(SUBAGENT_TRANSCRIPT_LIMITS.maxPageItems),
+  offset: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  running: z.boolean(),
+});
+export type SubagentTranscriptPage = z.infer<typeof subagentTranscriptPageSchema>;

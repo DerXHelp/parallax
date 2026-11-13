@@ -35,6 +35,40 @@ describe('StatusIcon', () => {
     expect(live.has(STATUS_PRESENTATION['needs-resume'].icon)).toBe(false);
   });
 
+  it('WP-71 pulse: working/starting strong, background soft – only motion-safe, instead of the spin', () => {
+    const pulseOf = (kind: (typeof DISPLAY_STATUS_KINDS)[number], pulse = true) => {
+      const { container, unmount } = render(<StatusIcon kind={kind} pulse={pulse} />);
+      const root = container.querySelector<HTMLElement>('[data-slot="status-icon"]');
+      const disc = container.querySelector<HTMLElement>('[data-slot="status-pulse"]');
+      const svg = container.querySelector('svg');
+      const result = {
+        pulse: root?.dataset.pulse ?? null,
+        disc: disc?.className ?? null,
+        duration: disc?.style.animationDuration ?? null,
+        spin: svg?.getAttribute('class')?.includes('animate-spin') ?? false,
+      };
+      unmount();
+      return result;
+    };
+    const working = pulseOf('working');
+    expect(working).toMatchObject({ pulse: 'strong', duration: '1.6s', spin: false });
+    // The animation only with motion allowed; with "reduce motion" a calm dot stays.
+    expect(working.disc).toContain('motion-safe:animate-ping');
+    expect(
+      working.disc?.split(/\s+/).filter((c) => c.includes('animate-') && !c.startsWith('motion-safe:')),
+    ).toEqual([]);
+    expect(working.disc).toContain('bg-status-working/30');
+    expect(pulseOf('starting').pulse).toBe('strong');
+    const background = pulseOf('background');
+    expect(background).toMatchObject({ pulse: 'soft', duration: '3s' });
+    expect(background.disc).toContain('bg-status-working/15');
+    for (const kind of ['idle', 'done', 'sleeping', 'needs-permission', 'error'] as const) {
+      expect(pulseOf(kind)).toMatchObject({ pulse: null, disc: null });
+    }
+    // Without `pulse` (header, decision cards): the spin as before, no disc.
+    expect(pulseOf('working', false)).toMatchObject({ pulse: null, disc: null, spin: true });
+  });
+
   it('shows the label visibly on request and follows the language', () => {
     render(<StatusIcon kind="needs-review" showLabel />);
     expect(screen.getByText('Plan ready for review').className).not.toContain('sr-only');

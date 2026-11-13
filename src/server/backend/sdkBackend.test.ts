@@ -102,6 +102,12 @@ class FakeQuery implements SdkQueryHandle {
   /** WP-64: internal SDK methods – absent unless a test sets them (runtime check). */
   enableRemoteControl?: SdkQueryHandle['enableRemoteControl'];
   getSettings?: SdkQueryHandle['getSettings'];
+  /** WP-70: public/internal methods – absent unless a test sets them (runtime check). */
+  initializationResult?: SdkQueryHandle['initializationResult'];
+  updateSettings?: SdkQueryHandle['updateSettings'];
+  claudeAuthenticate?: SdkQueryHandle['claudeAuthenticate'];
+  claudeOAuthCallback?: SdkQueryHandle['claudeOAuthCallback'];
+  claudeOAuthWaitForCompletion?: SdkQueryHandle['claudeOAuthWaitForCompletion'];
 
   constructor(
     readonly options: Options,
@@ -326,6 +332,9 @@ describe('SdkBackend – start, events, close', () => {
       sideQuestionMs: 120000,
       infoMs: 30000,
       infoActionMs: 60000,
+      loginStartMs: 60000,
+      loginCodeMs: 60000,
+      loginFlowMs: 600000,
     });
   });
 
@@ -1691,6 +1700,29 @@ describe('SdkBackend – history (A.3, F.15)', () => {
     expect(history.runs.every((run) => run.launch === l)).toBe(true);
   });
 
+  it('WP-69: readSubagentHistory → subagentSlice op in the profile’s worker; answer checked, unusable → empty', async () => {
+    const history = fakeHistory((op) =>
+      op.op === 'subagentSlice' && op.agentId === 'agent-a'
+        ? { total: 3, previousUuid: 'a1', lastUuid: 'a3', messages: [msg('a2', null, 'toolu_a'), { bad: 1 }, msg('a3', null)] }
+        : { total: 'many' },
+    );
+    const h = harness({ history });
+    const l = launch({ configDir: 'D:\\cfg' });
+    const req = { sessionId: SAMPLE_IDS.sessionId, cwd: 'c:\\Work', launch: l, agentId: 'agent-a', from: 1 };
+    const slice = await h.backend.readSubagentHistory(req);
+    expect(slice).toMatchObject({ total: 3, previousUuid: 'a1', lastUuid: 'a3' });
+    expect(slice.messages.map((m) => m.uuid)).toEqual(['a2', 'a3']);
+    expect(history.runs).toEqual([
+      { launch: l, op: { op: 'subagentSlice', sessionId: SAMPLE_IDS.sessionId, agentId: 'agent-a', from: 1 } },
+    ]);
+    await expect(h.backend.readSubagentHistory({ ...req, agentId: 'agent-b' })).resolves.toEqual({
+      total: 0,
+      previousUuid: null,
+      lastUuid: null,
+      messages: [],
+    });
+  });
+
   it('readHistory tolerates a non-list subagent answer and rejects when the main lookup fails', async () => {
     const tolerant = harness({
       history: fakeHistory((op) => (op.op === 'messages' ? [msg('m1', null)] : { not: 'a list' })),
@@ -1832,5 +1864,85 @@ describe('SdkBackend – dispose and defaults', () => {
       where: 'spawn',
       message: 'real spawnHidden must not run in tests',
     });
+  });
+});
+
+describe('SdkBackend – login and output styles (WP-70)', () => {
+  it('readOutputStyles: initializationResult without account; missing/unknown → null', async () => {
+    const h = harness({
+      configure: (q) => {
+        q.initializationResult = () =>
+          Promise.resolve({
+            output_style: 'Concise',
+            available_output_styles: ['default', 'Concise', 'Concise', 42],
+            account: { email: 'someone@example.invalid', organization: 'Org' },
+          });
+      },
+    });
+    const session = h.backend.start(request());
+    await expect(session.readOutputStyles()).resolves.toEqual({ current: 'Concise', available: ['default', 'Concise'] });
+    const old = harness().backend.start(request());
+    await expect(old.readOutputStyles()).resolves.toBeNull();
+  });
+
+  it('setOutputStyle: updateSettings(localSettings, {outputStyle}); missing/failing → CLAUDE_CONTROL_FAILED', async () => {
+    const update = vi.fn<NonNullable<SdkQueryHandle['updateSettings']>>(() => Promise.resolve());
+    const h = harness({
+      configure: (q) => {
+        q.updateSettings = update;
+      },
+    });
+    const session = h.backend.start(request());
+    await expect(session.setOutputStyle('Explanatory')).resolves.toEqual({ ok: true });
+    expect(update).toHaveBeenCalledWith('localSettings', { outputStyle: 'Explanatory' });
+    update.mockRejectedValueOnce(new Error('refused'));
+    await expect(session.setOutputStyle('x')).resolves.toEqual({
+      ok: false,
+      error: { code: 'CLAUDE_CONTROL_FAILED', params: { method: 'updateSettings' } },
+    });
+    const old = harness().backend.start(request());
+    await expect(old.setOutputStyle('x')).resolves.toMatchObject({ ok: false });
+  });
+
+  it('startLogin: own options (no settings sources, no MCP, no transcript), links checked, only the plan, nothing logged', async () => {
+    const lines: string[] = [];
+    const logger = pino({ level: 'debug' }, { write: (line: string) => lines.push(line) });
+    const h = harness({
+      logger,
+      configure: (q) => {
+        q.claudeAuthenticate = (loginWithClaudeAi) =>
+          Promise.resolve({
+            manualUrl: `https://claude.ai/oauth/authorize?code=true&state=s1&ai=${String(loginWithClaudeAi)}`,
+            automaticUrl: 'http://localhost:1234/callback',
+          });
+        q.claudeOAuthWaitForCompletion = () =>
+          Promise.resolve({ account: { email: 'someone@example.invalid', organization: 'Secret Org', subscriptionType: 'max' } });
+        q.claudeOAuthCallback = () => Promise.reject(new Error('Login blocked: managed settings (someone@example.invalid)'));
+      },
+    });
+    const login = h.backend.startLogin({ launch: launch(), cwd: 'C:\\px-home\\login' });
+    const options = h.queries[0]?.options;
+    expect(options).toMatchObject({ cwd: 'C:\\px-home\\login', settingSources: [], strictMcpConfig: true, persistSession: false });
+    expect(options?.includeHookEvents).toBeUndefined();
+    await expect(login.authenticate()).resolves.toEqual({
+      ok: true,
+      manualUrl: 'https://claude.ai/oauth/authorize?code=true&state=s1&ai=true',
+      automaticUrl: null,
+    });
+    await expect(login.waitForCompletion()).resolves.toEqual({ ok: true, subscriptionType: 'max' });
+    await expect(login.submitCode('c', 's1')).resolves.toEqual({ ok: false, error: { code: 'LOGIN_BLOCKED', params: {} } });
+    await login.close();
+    await login.exited;
+    const log = lines.join('\n');
+    expect(log).not.toContain('example.invalid');
+    expect(log).not.toContain('Secret Org');
+  });
+
+  it('startLogin: missing methods → LOGIN_UNAVAILABLE (never thrown)', async () => {
+    const h = harness();
+    const login = h.backend.startLogin({ launch: launch(), cwd: 'C:\\px-home\\login' });
+    await expect(login.authenticate()).resolves.toMatchObject({ ok: false, error: { code: 'LOGIN_UNAVAILABLE' } });
+    await expect(login.waitForCompletion()).resolves.toMatchObject({ ok: false, error: { code: 'LOGIN_UNAVAILABLE' } });
+    await login.close();
   });
 });

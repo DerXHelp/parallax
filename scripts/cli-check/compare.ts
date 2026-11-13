@@ -250,9 +250,28 @@ const SIDE_QUESTION_AREAS: readonly { area: 'sideQuestion' | 'withdrawQueued'; l
   },
 ];
 
-/** WP-65/66: the overview and side-question capabilities of the probe against the profile. */
+/** WP-70: the login methods and the output style per project (outputStyle.ts). */
+const LOGIN_STYLE_AREAS: readonly { area: 'login' | 'outputStyleSetting'; label: string; hint: string }[] = [
+  {
+    area: 'login',
+    label: 'login methods (Query.claudeAuthenticate / claudeOAuthCallback / claudeOAuthWaitForCompletion)',
+    hint:
+      '„Anmelden“ from Parallax (WP-70) uses the internal login methods: backend/login.ts, backend/sdkBackend.ts ' +
+      'startLogin, host/login.ts; without them the dialog shows LOGIN_UNAVAILABLE and the terminal way ' +
+      '(`claude` → /login). Never called by the check – a live login belongs to the joint acceptance.',
+  },
+  {
+    area: 'outputStyleSetting',
+    label: 'output style (updateSettings localSettings + getSettings)',
+    hint:
+      '„Ausgabestil“ per project (WP-70): backend/sdkBackend.ts setOutputStyle/readOutputStyles, ' +
+      'backend/outputStyle.ts, sessions/outputStyle.ts; without it the menu answers CLAUDE_CONTROL_FAILED.',
+  },
+];
+
+/** WP-65/66/70: the overview, side-question, login and output-style capabilities against the profile. */
 export function overviewFindings(profile: CliProfile, observation: Observation): Finding[] {
-  return [...OVERVIEW_AREAS, ...SIDE_QUESTION_AREAS].flatMap((spec) => {
+  return [...OVERVIEW_AREAS, ...SIDE_QUESTION_AREAS, ...LOGIN_STYLE_AREAS].flatMap((spec) => {
     const finding = availabilityFinding(spec.area, spec.label, spec.hint, profile[spec.area], observation[spec.area]);
     return finding === null ? [] : [finding];
   });

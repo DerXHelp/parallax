@@ -47,7 +47,7 @@ describe('ShortcutHelp (R2W-11)', () => {
     });
   });
 
-  it('marks shortcuts that also fire in text fields and explains Mod+Enter', () => {
+  it('marks shortcuts that also fire in text fields and explains Mod+Enter', async () => {
     render(
       <TooltipProvider>
         <ShortcutHelp />
@@ -57,7 +57,8 @@ describe('ShortcutHelp (R2W-11)', () => {
     act(() => {
       openShortcutHelp();
     });
-    const dialog = screen.getByRole('dialog', { name: 'Keyboard shortcuts' });
+    // WP-70: the list is a lazy chunk.
+    const dialog = await screen.findByRole('dialog', { name: 'Keyboard shortcuts' });
     expect(dialog.textContent).toContain('Ctrl+Enter answers only from the fields of the decision bar');
     const marked = [...dialog.querySelectorAll('[data-slot="shortcut-in-inputs"]')];
     expect(marked).toHaveLength(1);

@@ -14,7 +14,11 @@
  * WP-65 (overview.ts): `fake:long-bash` (a foreground Bash until it is moved to the background) and
  * `fake:summary` (live sentence and turn summary of the CLI while the fake bridge is connected); WP-67
  * (sessionInfo.ts): `fake:info-unavailable [section …]`, `fake:info-fail`, `fake:info-long`,
- * `fake:info-reset` (levers of the session info of this session). A prompt with images, PDFs, attached files or inline pastes
+ * `fake:info-reset` (levers of the session info of this session); WP-69 (wp69.ts): `fake:hooks` (hook
+ * runs: four successful, one blocking PreToolUse with exit 2), and `fake:subagent`/`fake:background`
+ * fill the agent's own transcript while it runs; WP-70: `fake:auth-failed` (like `fake:error`, the
+ * assistant error `authentication_failed`) and `fake:output-style` (names the project's style); WP-71 (workers.ts):
+ * `fake:workers` (two background agents and a background shell at once). A prompt with images, PDFs, attached files or inline pastes
  * gets "Fake: received …" (ADR-103, ADR-146); the first prompt of a start without resume that is
  * the engine's fresh-context prompt gets "Fake: implementing plan (N lines)"; anything else gets a
  * thought plus a streamed "Echo: …". Decisions really wait for the engine; interrupt() and
@@ -51,11 +55,20 @@ import { images, limitWarning, steps } from './feedback';
 import { FAKE_SHOT_HEIGHT, FAKE_SHOT_NAME, FAKE_SHOT_PNG_BASE64, FAKE_SHOT_WIDTH } from './image';
 import { background, contextHigh, files, receivedCounts, receivedText, todo, writesLost } from './phase3';
 import { longBash, summaryTurn } from './overview';
+import { workers } from './workers';
 import { implementPlan, isImplementPlanPrompt, plan } from './plan';
 import { remoteFail, remoteFlaky, remotePermission, remotePrompt } from './remote';
 import { infoKeyword, isFakeInfoKeyword } from './sessionInfo';
 import { CANCEL_DENY, abortedByDecision, answerTurn, ask, contextFor, firstWords, type Turn } from './turn';
 import type { FakeScenario, FakeScriptContext } from './types';
+import {
+  FAKE_SUBAGENT_STEPS,
+  FAKE_SUBAGENT_STEP_MS,
+  hooks,
+  recordSubagent,
+  subagentPromptMessage,
+  subagentStepMessages,
+} from './wp69';
 
 /** `fake:ratelimit`: the rejected window resets this long after the turn (E2E "continue at"). */
 export const FAKE_RATE_LIMIT_RESET_S = 60;
@@ -228,13 +241,24 @@ async function subagent(ctx: FakeScriptContext, c: DslContext, turn: Turn): Prom
     prompt: 'Reply with exactly the word PONG.',
     reply: 'PONG',
   };
+  await ctx.play(events(turnOpen(c, turn.prompt), subagentLaunch(c, spec)));
+  // WP-69: the agent's own transcript (agent-<id>.jsonl) grows while it runs – prompt, then one
+  // step per FAKE_SUBAGENT_STEP_MS (transcript only; the stream keeps its old shape).
+  recordSubagent(ctx, c.sessionId, taskId, [subagentPromptMessage(c, toolUseId, spec.prompt)]);
   await ctx.play(
     events(
-      turnOpen(c, turn.prompt),
-      subagentLaunch(c, spec),
       streamedText(c, 'The subagent is still running; I will report once it is done.'),
       // F.11: the first result comes while the agent still runs – no idle yet.
       turnClose(c, turn.prompt, { result: { result: 'The subagent is still running.' }, idle: false }),
+    ),
+  );
+  for (const step of FAKE_SUBAGENT_STEPS) {
+    await ctx.pause(FAKE_SUBAGENT_STEP_MS);
+    recordSubagent(ctx, c.sessionId, taskId, subagentStepMessages(c, toolUseId, step));
+  }
+  await ctx.pause(FAKE_SUBAGENT_STEP_MS);
+  await ctx.play(
+    events(
       assistantMessage(c, [thinkingContent('Simple task.'), textBlock('PONG')], {
         parentToolUseId: toolUseId,
       }),
@@ -488,6 +512,12 @@ async function handle(
     case 'fake:summary':
       await summaryTurn(ctx, c, turn);
       break;
+    case 'fake:workers':
+      await workers(ctx, c, turn, sessionId);
+      break;
+    case 'fake:hooks':
+      await hooks(ctx, c, turn);
+      break;
     case 'fake:bash':
     case 'fake:permission':
       await bash(ctx, c, turn);
@@ -519,8 +549,14 @@ async function handle(
     case 'fake:ratelimit':
       await ratelimit(ctx, c, turn);
       break;
+    // WP-70: `fake:auth-failed` = `fake:error` (assistant error authentication_failed → „Anmelden“).
+    case 'fake:auth-failed':
     case 'fake:error':
       await ctx.play(assistantErrorTurn(c, { prompt: turn.prompt, error: 'authentication_failed' }));
+      break;
+    // WP-70: the answer names the project's output style of this turn (init.output_style).
+    case 'fake:output-style':
+      await answerTurn(ctx, c, turn, `Fake: output style ${ctx.state.outputStyle}`);
       break;
     case 'fake:crash':
       await ctx.play(

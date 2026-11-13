@@ -2,6 +2,7 @@ import { LIMITS, type EntryId } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   DEFAULT_REMOTE_CONTROL_SUMMARY,
+  IDLE_PROFILE_LOGIN,
   isDefaultProgramAllowed,
   type AssistantTextItem,
   type Decision,
@@ -12,6 +13,7 @@ import {
   type FileStatResult,
   type HostState,
   type PlanVersionInfo,
+  type ProfileLogin,
   type SessionFile,
   type SessionFileOp,
   type SessionSummary,
@@ -217,6 +219,9 @@ const TASK_OUTPUT_TEXT = [
 /** Lines of the big log (plain text in the viewer: far above the highlighting limit). */
 export const FAKE_LOG_LINES = 6000;
 
+/** WP-70: the harmless link of a fake sign-in (never a real sign-in page). */
+export const FAKE_LOGIN_URL = 'https://login.parallax.invalid/oauth/authorize?code=true&state=fake-state';
+
 let logText: string | null = null;
 function bigLog(): string {
   logText ??= Array.from({ length: FAKE_LOG_LINES }, (_, index) => {
@@ -333,6 +338,35 @@ export interface FakeFileToolCall {
   isError?: boolean;
 }
 
+/**
+ * WP-69: the transcript of a subagent as the fake host answers it – the agent's prompt, a thought,
+ * one tool call and its answer (orders from 1, ids per agent).
+ */
+function fakeSubagentItems(agentId: string): TranscriptItem[] {
+  const messageId = `msg_${agentId}`;
+  return [
+    sampleItems.userMessage({ id: `${agentId}-prompt`, order: 1, text: { text: 'Look through the project.', truncated: null } }),
+    sampleItems.thinking({ id: `${messageId}:0`, messageId, order: 2, text: { text: 'First the notes.', truncated: null } }),
+    sampleItems.toolCall({
+      id: `${messageId}:1`,
+      messageId,
+      blockIndex: 1,
+      order: 3,
+      toolUseId: `toolu_${agentId}`,
+      toolName: 'Read',
+      input: { file_path: 'D:\\work\\sample\\notes.md' },
+      result: {
+        isError: false,
+        content: [{ type: 'text', text: { text: '1\t# Notes', truncated: null } }],
+        structured: null,
+        structuredTruncated: null,
+        at: sampleTime(4),
+      },
+    }),
+    sampleItems.assistantText({ id: `${messageId}:2`, messageId, blockIndex: 2, order: 4, text: 'The notes are short.' }),
+  ];
+}
+
 /** Status of the gated tool call after the answer (playground approximation of the engine). */
 function toolStatusAfter(outcome: DecisionOutcome): ToolCallStatus {
   switch (outcome.type) {
@@ -406,6 +440,11 @@ export class FakeHost {
   /** WP-65: every link.open (assertions); `linkOpenError` fails them (the web then opens the link itself). */
   readonly linkOpens: string[] = [];
   linkOpenError: ErrorPayload | null = null;
+  /**
+   * WP-70: the sign-in of `profile.login` – `waiting` with a harmless fake link (recorded in
+   * `linkOpens`); `loginResult` decides how a pasted code ends (null = signed in as `max`).
+   */
+  loginResult: ErrorPayload | null = null;
   /** Session file index per entry (files.session); a known entry without one starts with fakeSessionFiles(). */
   readonly sessionFiles = new Map<EntryId, SessionFile[]>();
   /** `truncated` of every files.session answer (more than LIMITS.sessionFilesMax on a real host). */
@@ -1131,6 +1170,13 @@ export class FakeHost {
         if (failure !== null) return { ok: false, error: makeError('CLAUDE_CONTROL_FAILED', { method: 'reload', detail: failure }) };
         return this.ok();
       }
+      // ---- WP-69: the transcript of one subagent (a fixed short list; tests answer via onCommand) ----
+      case 'session.subagentTranscript': {
+        if (!this.knowsEntry(cmd.entryId)) return { ok: false, error: makeError('ENTRY_NOT_FOUND', { entryId: cmd.entryId }) };
+        const items = fakeSubagentItems(cmd.agentId);
+        const offset = cmd.offset === null ? Math.max(0, items.length - cmd.limit) : Math.min(cmd.offset, items.length);
+        return this.ok({ items: items.slice(offset, offset + cmd.limit), offset, total: items.length, running: false });
+      }
       case 'transcript.loadEarlier': {
         // The server view keeps every item; snapshots are trimmed to LIMITS.snapshotItems.
         const view = this.view(cmd.entryId);
@@ -1221,6 +1267,19 @@ export class FakeHost {
       case 'link.open':
         this.linkOpens.push(cmd.url);
         return this.linkOpenError === null ? this.ok() : { ok: false, error: this.linkOpenError };
+      // WP-70: sign in per profile, output style per project.
+      case 'profile.login':
+        return this.login(cmd.profileId);
+      case 'profile.loginCode':
+        return this.loginCode(cmd.profileId);
+      case 'profile.loginCancel':
+        this.patchLogin(cmd.profileId, { ...IDLE_PROFILE_LOGIN });
+        return this.ok();
+      case 'session.setOutputStyle': {
+        if (!this.summaries.has(cmd.entryId)) return { ok: false, error: makeError('ENTRY_NOT_FOUND') };
+        this.patchSummary(cmd.entryId, { outputStyle: cmd.style });
+        return this.ok();
+      }
       // WP-66: side questions and withdrawing a waiting message.
       case 'session.askSideQuestion':
         return this.ok({ itemId: this.askSideQuestion(cmd.entryId, cmd.question, cmd.threadId) });
@@ -1263,6 +1322,34 @@ export class FakeHost {
       case 'fs.listDirectory':
         return { ok: false, error: makeError('NOT_IMPLEMENTED', { name: cmd.name satisfies CommandName }) };
     }
+  }
+
+  /** WP-70: replaces the login state of one profile (host state broadcast). */
+  patchLogin(profileId: string, login: ProfileLogin): boolean {
+    if (!this.hostState.profiles.some((p) => p.id === profileId)) return false;
+    const profiles = this.hostState.profiles.map((p) => (p.id === profileId ? { ...p, login } : p));
+    this.setHostState({ ...this.hostState, profiles });
+    return true;
+  }
+
+  private login(profileId: string): FakeAck {
+    const url = FAKE_LOGIN_URL;
+    const login: ProfileLogin = { ...IDLE_PROFILE_LOGIN, state: 'waiting', url, manualUrl: url, at: this.now() };
+    if (!this.patchLogin(profileId, login)) return { ok: false, error: makeError('PROFILE_NOT_FOUND') };
+    this.linkOpens.push(url);
+    return this.ok();
+  }
+
+  private loginCode(profileId: string): FakeAck {
+    const current = this.hostState.profiles.find((p) => p.id === profileId)?.login;
+    if (current?.state !== 'waiting') return { ok: false, error: makeError('LOGIN_FAILED', { reason: 'expired' }) };
+    const at = this.now();
+    const login: ProfileLogin =
+      this.loginResult === null
+        ? { ...IDLE_PROFILE_LOGIN, state: 'done', subscriptionType: 'max', at }
+        : { ...IDLE_PROFILE_LOGIN, state: 'failed', error: this.loginResult, at };
+    this.patchLogin(profileId, login);
+    return this.ok();
   }
 
   /**

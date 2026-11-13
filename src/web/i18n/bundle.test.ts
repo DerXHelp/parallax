@@ -79,6 +79,19 @@ const LAZY_NAMESPACES = [
     dir: '/src/web/shell/navigation/session-info/i18n/',
     chunk: '/src/web/shell/navigation/session-info/McpTab.tsx',
   },
+  {
+    dir: '/src/web/features/transcript/i18n-lazy/',
+    chunk: '/src/web/features/transcript/subagent/SubagentPanel.tsx',
+  },
+  // WP-70: the sign-in dialog and the output style (dialog of the header menu, session info).
+  {
+    dir: '/src/web/shell/login/i18n/',
+    chunk: '/src/web/shell/login/LoginDialog.tsx',
+  },
+  {
+    dir: '/src/web/shell/output-style/i18n/',
+    chunk: '/src/web/shell/output-style/OutputStyleDialog.tsx',
+  },
 ];
 
 function inLazyNamespace(file: string): boolean {

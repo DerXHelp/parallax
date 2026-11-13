@@ -11,7 +11,7 @@ import { useI18n, useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { resolveFilePath } from '@web/lib/file-refs';
 import { pathTail } from '@web/lib/path-display';
-import type { TaskKind, TaskRow } from '@web/lib/task-rows';
+import type { TaskKind, TaskRow } from '@shared/tasks';
 import { useFeatureSlots } from '@web/shell/slots';
 import { useNow } from '@web/state/clock';
 import { Badge } from '@web/ui/badge';

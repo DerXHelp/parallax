@@ -2157,3 +2157,117 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
 - **Entscheidung:** Der Server liefert Text + vorgeschlagenen Dateinamen; gespeichert wird per Blob-Download im
   Browser (`lib/download`), der Server schreibt nichts in Nutzerpfade. E2E prüfen „Kopieren“ nur gegen eine in der
   Seite ersetzte Zwischenablage.
+
+## ADR-185 – Subagent-Verlauf nur auf Anfrage, inkrementell gelesen
+- **Datum/WP:** 13.11.2026, WP-69; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Der Verlauf eines Subagenten (`agent-<id>.jsonl`) wird weder gepusht noch persistiert. Der Client
+  pollt `session.subagentTranscript` alle 1,5 s, nur solange der Tab „Agent“ offen, das Fenster sichtbar und der Agent
+  live ist. Der Server hält je (Eintrag, Claude-Session, Agent) einen inkrementellen Akkumulator (LRU 8, 5 min) und
+  lässt den Verlaufs-Worker nur neue Nachrichten schneiden (`subagentSlice`); passt die uuid vor dem Stück nicht, wird
+  neu aufgebaut. Lesend, eine eigene Item-Liste, nie in der Unterhaltung der Session.
+- **Begründung:** Die Dateien sind groß (≈ 200 kB bei 12 Nachrichten) und wachsen live; volles Neulesen je Abfrage
+  widerspräche ADR-154. Nutzerentscheidung SDK-Punkt 22 („Verlauf lesend reicht“).
+
+## ADR-186 – Hook-Läufe: Rollen-Code unabhängig von der Einstellung
+- **Datum/WP:** 13.11.2026, WP-69; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** `includeHookEvents` ist immer an. `classifyItem` vergibt für Hook-Items feste Codes (`k` ok, `f`
+  fehlgeschlagen, `F` immer sichtbar), erst `buildRows` löst sie nach `settings.hookDisplay` (`all`/`failed`/`off`,
+  Default `failed`) auf; Hook-Zeilen prüfen die Einstellung selbst. Fehlgeschlagene SessionStart/Setup-Hooks sind
+  immer sichtbar. `exitCode` kommt nur aus dem Live-Stream (`getSessionMessages` liefert keine Hook-Läufe).
+- **Begründung:** Ein Wechsel der Einstellung soll keine Neuklassifizierung des Transkripts brauchen; ein blockierender
+  Hook (Exit 2) muss im Standard sichtbar sein, erfolgreiche Läufe nicht. Nutzerentscheidung SDK-Punkt 27.
+
+## ADR-187 – Items außerhalb des Stores
+- **Datum/WP:** 13.11.2026, WP-69; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Item-Listen, die nicht zur Unterhaltung einer Session gehören (zuerst der Subagent-Verlauf),
+  rendern über `TranscriptItemView`/`StepGroupLine` mit denselben Komponenten wie das Transkript;
+  `TranscriptSettings.readOnly` blendet Session-Aktionen (Entscheiden, Zurückholen, Verlauf öffnen …) aus. Kein
+  zweiter Renderer.
+- **Begründung:** Gleiches Aussehen und gleiche Pflege wie im Hauptverlauf, ohne die Liste in den Session-Store zu
+  mischen.
+
+## ADR-188 – Anmelden in einem eigenen, kurzlebigen Prozess je Profil
+- **Datum/WP:** 13.11.2026, WP-70; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** „Anmelden“ startet je Profil einen eigenen `claude`-Prozess (Env über `buildEnv`, neutrales `cwd`
+  im Parallax-Home, `settingSources: []`, kein Prompt, kein Transkript), der nur den OAuth-Ablauf
+  (`claudeAuthenticate`/`claudeOAuthCallback`/`claudeOAuthWaitForCompletion`, interne Methoden mit Laufzeitprüfung)
+  führt und nach Erfolg, Abbruch oder 10 min schließt. Nicht im Prozess einer laufenden Session.
+- **Begründung:** Die Anmeldung wird gerade dann gebraucht, wenn keine Session läuft (Neue Session, Profiltest, Banner)
+  oder die Session wegen des Fehlers steht; der Prozess einer Session trägt Projekt-Settings und Hooks und ist im Turn
+  beschäftigt. Die Anmeldung gilt je `CLAUDE_CONFIG_DIR`, also für alle Sessions des Profils. Nutzerentscheidung
+  SDK-Punkt 25.
+
+## ADR-189 – Anmeldeablauf als Profilzustand, Befehle antworten sofort
+- **Datum/WP:** 13.11.2026, WP-70; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** `profile.login`/`profile.loginCode`/`profile.loginCancel` antworten sofort `{}`; der Ablauf ist
+  Zustand `ProfileSummary.login` (`idle`/`starting`/`waiting`/`verifying`/`done`/`failed` mit Fehlercode, nur zur Laufzeit) und
+  erreicht alle Clients (Muster ADR-170). Der Dialog ist nur eine Ansicht, Schließen beendet nichts; ein Fehler-Item
+  blendet seinen Knopf über `login.at` aus.
+- **Begründung:** Mehrere Fenster sehen denselben Stand, kein eigener Client-Zustand, kein hängender Befehl während
+  der Nutzer im Browser ist.
+
+## ADR-190 – Kontodaten verlassen das Backend nie
+- **Datum/WP:** 13.11.2026, WP-70; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Das zod-Schema der Abschluss-Antwort kennt nur `account.subscriptionType`; E-Mail, Organisation
+  und Token-Quelle werden verworfen, bevor sie Code außerhalb von `backend/login.ts` erreichen. CLI-Fehlertexte werden
+  dort zu `reason`-Codes klassifiziert und nie geloggt; stderr des Anmelde-Prozesses nur als Länge; weder URL (mit
+  `state`) noch eingefügter Code im Log.
+- **Begründung:** Datenschutz des Nutzers; Logs und WS-Nachrichten sollen keine Kontodaten tragen können.
+
+## ADR-191 – Ausgabestil über `updateSettings('localSettings')` im Prozess der Session
+- **Datum/WP:** 13.11.2026, WP-70; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** „Ausgabestil“ ruft `updateSettings('localSettings', {outputStyle})` im Prozess der Session auf
+  (schlafend: Start ohne Turn); Parallax schreibt `.claude\settings.local.json` nie selbst und nichts außer
+  `outputStyle`. Der Stil gilt je Projekt ab dem nächsten Turn; andere laufende Sessions desselben Projekts zeigen ihn
+  erst mit ihrem nächsten `init`. Effort bleibt nur in Parallax.
+- **Begründung:** Das CLI besitzt Format, Merge und Schlüsselprüfung der Datei. Nutzerentscheidung SDK-Punkt 28.
+
+## ADR-192 – Nicht-modaler Anmelde-Dialog, modal nur aus modalen Dialogen
+- **Datum/WP:** 13.11.2026, WP-70; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Der Anmelde-Dialog ist nicht-modal (Arbeiten in Parallax geht weiter, während der Nutzer im Browser
+  ist); geöffnet aus einem modalen Dialog (Neue Session, Profile) ist er modal.
+- **Begründung:** Eine nicht-modale Radix-Ebene außerhalb des React-Baums eines modalen Dialogs zählt dort als Klick
+  „außerhalb“ und würde den modalen Dialog schließen.
+
+## ADR-193 – Neue Basis für das Start-Budget (Stand nach WP-70)
+- **Datum/WP:** 13.11.2026, Koordinator (vor WP-71).
+- **Entscheidung:** `scripts/bundle-budget.ts` misst ab jetzt gegen den Merge von WP-70 (`2fe8a9b`: `index` 323 111 B,
+  Start-Chunks 889 270 B roh, 9 Dateien) statt gegen WP-60 (`109c073`); erlaubtes Wachstum bleibt +10 kB roh für
+  `index` und für die Summe der Start-Chunks. Eine neue Basis gibt es nur per ADR.
+- **Begründung:** Die +10 kB gegen `109c073` sind nach WP-63 bis WP-70 verbraucht (Start +9 315 B), obwohl `index`
+  durch konsequentes Nachladen um rund 60 kB geschrumpft ist – das Budget hat seinen Zweck erfüllt (jede Zunahme war
+  bewusst, alles nach einem Klick lädt lazy). WP-71 braucht sichtbare Teile in der Sidebar (Zähler, Puls), die im
+  Start-Chunk liegen müssen. Für eine lokal ausgelieferte App ist die Ladezeit dieser Größe unkritisch; die Regel
+  „nur das Nötigste in den Start-Chunk“ gilt weiter.
+
+## ADR-194 – Ein Task-Zählmodell für Server und Web (`@shared/tasks`)
+- **Datum/WP:** 13.11.2026, WP-71; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Das reine Task-Zeilen- und Zählmodell (`buildTaskRows`, `runningTaskCounts`,
+  `summarizeRunningTasks` …) liegt in `@shared/tasks` (vorher `web/lib/task-rows.ts`, ADR-158 erweitert).
+  Task-Panel, Kopfzeile und Übersicht (`SessionSummary.runningTasks`, nur Laufzeit) zählen damit gleich. Der Server
+  rechnet nur bei Task-Ops, gedrosselt auf 2 s, und sendet nur Änderungen; die Sidebar liest nur die Summary.
+- **Begründung:** Die Sidebar muss für jede Session wissen, was läuft, ohne deren Detail zu abonnieren; eine zweite
+  Zählregel würde auseinanderlaufen. Nutzerwunsch „was läuft wo“ (13.11.2026).
+
+## ADR-195 – Puls statt Drehen in dichten Listen
+- **Datum/WP:** 13.11.2026, WP-71; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** In Sidebar-Zeile und Rail zeigt eine arbeitende Session einen pulsierenden Punkt in
+  `status-working` (Blau, Nutzerentscheidung) statt des drehenden Symbols: arbeitend/startend kräftig (1,6 s),
+  nur Hintergrund-Tasks sanft (3 s). Nur `motion-safe`, eine CSS-Animation je Zeile, kein JS-Timer; Kopfzeile und
+  Karten drehen weiter. Grün bleibt „fertig“.
+- **Begründung:** Bei vielen Sessions fällt ein kleines drehendes Symbol kaum auf; der Puls ist auf einen Blick
+  sichtbar, ohne Rechenlast (ADR-154).
+
+## ADR-196 – Wartendes Werkzeug bleibt die Tätigkeit
+- **Datum/WP:** 13.11.2026, WP-71; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Ein Werkzeug in `awaiting_decision` zählt im `ActivityTracker` und hat Vorrang; die Live-Zeile
+  zeigt es (z. B. „Bash: pnpm test“) statt „Denkt nach…“. Keine eigene `SessionActivity`-Variante – „braucht dich“
+  kommt aus dem Status.
+- **Begründung:** Rest aus WP-68; der Nutzer soll sehen, worauf die Session wartet.
+
+## ADR-197 – Hintergrundliste endet mit dem Prozess
+- **Datum/WP:** 13.11.2026, WP-71; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Der Normalizer (einziger Schreiber von `detail.backgroundTasks`) leert eine gemeldete Liste beim
+  `process_exit`, ohne Status-Signal.
+- **Begründung:** Sonst zeigten Sidebar-Zähler und Status „Hintergrund“ nach dem Prozessende noch Tasks, die mit dem
+  Prozess beendet sind.

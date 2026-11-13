@@ -59,6 +59,8 @@ describe('observationFrom (WP-62)', () => {
       sideQuestion: null,
       withdrawQueued: null,
       sessionInfo: null,
+      login: null,
+      outputStyleSetting: null,
     });
     expect(JSON.stringify(observation)).not.toContain('example.com');
   });

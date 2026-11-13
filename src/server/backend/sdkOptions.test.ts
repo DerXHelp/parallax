@@ -46,7 +46,8 @@ function request(p: Partial<StartSessionRequest> = {}): StartSessionRequest {
 }
 
 /**
- * Keys that are always present (WP-13 §3.2 table; Phase 3: stop per task, summaries). WP61-02: no
+ * Keys that are always present (WP-13 §3.2 table; Phase 3: stop per task, summaries; WP-69: hook
+ * events). WP61-02: no
  * `settings` without a flag value – `todoFeatureEnabled` is not sent (no effect with CLI 2.1.322).
  */
 const BASE_KEYS = [
@@ -55,6 +56,7 @@ const BASE_KEYS = [
   'cwd',
   'env',
   'extraArgs',
+  'includeHookEvents',
   'includePartialMessages',
   'pathToClaudeCodeExecutable',
   'perTaskStopAffordance',
@@ -90,6 +92,7 @@ describe('buildQueryOptions – fixed rows', () => {
     ['promptSuggestions from the request', 'promptSuggestions', false],
     ['perTaskStopAffordance on (Phase 3, ADR-149)', 'perTaskStopAffordance', true],
     ['agentProgressSummaries on (Phase 3, task_progress.summary)', 'agentProgressSummaries', true],
+    ['includeHookEvents on (WP-69: every hook run in the transcript)', 'includeHookEvents', true],
   ])('%s', (_label, key, value) => {
     expect(options[key]).toEqual(value);
   });

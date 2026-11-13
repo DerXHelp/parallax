@@ -55,3 +55,9 @@ von Tests und E2E sie mit aufräumen.
 **WP-65:** `hostCommands` bekommt `createLinkCommands(…)` (`link.open`) – mit dem FakeBackend den
 aufzeichnenden Öffner (`createRecordingLinkOpener`, startet nichts; Dev und E2E), sonst den Standardbrowser
 (`createSystemLinkOpener`, Registry + `spawnGui`).
+
+**WP-70:** `createLoginService` (`src/server/host/login.ts`) mit demselben Link-Öffner wie `link.open`
+(FakeBackend: aufzeichnend), `cwd` `<home>\login`; als Host-Befehle `profile.login`/`loginCode`/
+`loginCancel`, der Engine als `loginState` (Host-Zustand `ProfileSummary.login`); `onChange` →
+`publishHostState`, `onLoggedIn` → `manager.onProfileLoggedIn` (Remote Control nach `REMOTE_CONTROL_AUTH`
+neu). Shutdown-Schritt `login` nach `profileChecks` schließt offene Anmelde-Prozesse.

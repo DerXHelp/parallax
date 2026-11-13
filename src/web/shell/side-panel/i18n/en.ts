@@ -10,12 +10,15 @@ export const en = {
     file: 'File',
     files: 'Files',
     tasks: 'Tasks',
+    subagent: 'Agent',
   },
   /** Splitter between transcript and panel. */
   resize: 'Resize panel',
   width: '{width} px',
   /** Accessible name of the viewer tab with an open file. */
   fileTab: 'File: {name}',
+  /** WP-69: accessible name of the subagent tab. */
+  subagentTab: 'Agent transcript: {title}',
   /** Viewer tab: back to the previous file. */
   back: 'Back to {name}',
   history: 'Recently opened files',

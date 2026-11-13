@@ -230,7 +230,67 @@ export interface AgentSession {
   mcpAction(server: string, action: McpAction): Promise<void>;
   /** WP-67: `reloadSkills()` / `reloadPlugins()`; rejects when it failed. */
   reload(what: ReloadTarget): Promise<void>;
+  /**
+   * WP-70: the project's output styles from `initializationResult()` (`output_style`,
+   * `available_output_styles`; never `account`). Resolves null when unknown (method missing,
+   * unknown shape, failed). Never rejects.
+   */
+  readOutputStyles(): Promise<OutputStyles | null>;
+  /**
+   * WP-70: `updateSettings('localSettings', { outputStyle })` – `<cwd>\.claude\settings.local.json`
+   * of the session's project, effective from the next turn. Never rejects: CLAUDE_CONTROL_FAILED
+   * {method:'updateSettings'} when the method is missing or the request failed.
+   */
+  setOutputStyle(style: string): Promise<{ ok: true } | { ok: false; error: ErrorPayload }>;
   /** close(), wait ≤ 5 s for exit, then taskkill /T /F (C.8). Resolves after 'exit'. */
+  close(): Promise<void>;
+}
+
+/** WP-70: output styles of a project (`initializationResult`). */
+export interface OutputStyles {
+  /** `output_style` (null = not reported). */
+  current: string | null;
+  /** `available_output_styles` (names; empty = not reported). */
+  available: string[];
+}
+
+/** WP-70: a login process of one profile (no prompt, no transcript, neutral cwd). */
+export interface LoginRequest {
+  /** The profile's launch spec (env through buildEnv, config dir); no entry id in the env. */
+  launch: LaunchSpec;
+  /** Neutral working directory in the Parallax home (exists). */
+  cwd: string;
+}
+
+/**
+ * WP-70: answer of `claudeAuthenticate(true)` (internal): the links of the CLI's OAuth flow – the
+ * CLI never opens a browser itself. `automaticUrl` only when the CLI listens on localhost for the
+ * redirect (finishes without a code). Failures: LOGIN_UNAVAILABLE (method missing / unknown answer),
+ * LOGIN_BLOCKED (managed settings), LOGIN_FAILED {reason}.
+ */
+export type LoginStartResult =
+  | { ok: true; manualUrl: string; automaticUrl: string | null }
+  | { ok: false; error: ErrorPayload };
+
+/**
+ * WP-70: end of the flow (`claudeOAuthCallback` / `claudeOAuthWaitForCompletion`): only the plan
+ * (`account.subscriptionType`) – never e-mail or organization. Failures: LOGIN_UNAVAILABLE,
+ * LOGIN_BLOCKED, LOGIN_FAILED {reason: 'expired' | 'code' | 'process' | 'failed'}.
+ */
+export type LoginResult = { ok: true; subscriptionType: string | null } | { ok: false; error: ErrorPayload };
+
+/** WP-70: the short-lived login process. All methods never reject; the CLI's text is never logged. */
+export interface LoginSession {
+  readonly pid: number | null;
+  /** Starts (or joins, within 10 min) the OAuth flow. */
+  authenticate(): Promise<LoginStartResult>;
+  /** The pasted code of the manual way; resolves when the CLI finished the flow with it. */
+  submitCode(code: string, state: string): Promise<LoginResult>;
+  /** Resolves when the flow ends (redirect to localhost, a submitted code, or a failure). */
+  waitForCompletion(): Promise<LoginResult>;
+  /** Resolves when the process has exited (also after close). */
+  readonly exited: Promise<void>;
+  /** close(), wait ≤ 5 s for exit, then taskkill /T /F. Resolves after exit. */
   close(): Promise<void>;
 }
 
@@ -265,6 +325,28 @@ export interface HistoryRequest {
   launch: LaunchSpec;
 }
 
+/**
+ * WP-69: one subagent's transcript (`getSubagentMessages(sessionId, agentId)`, the CLI's
+ * `agent-<agentId>.jsonl`) from message index `from` on – the engine keeps what it read before, so
+ * a poll transfers only the new messages.
+ */
+export interface SubagentHistoryRequest extends HistoryRequest {
+  /** Checked like `subagentIdSchema` (no path characters). */
+  agentId: string;
+  from: number;
+}
+
+export interface SubagentHistorySlice {
+  /** Messages of the whole transcript now (0 = no file, or nothing in it yet). */
+  total: number;
+  /** uuid of message `from - 1` (null for `from` 0) – the engine checks its cache with it. */
+  previousUuid: string | null;
+  /** uuid of message `total - 1` (null without messages) – what the next read's `previousUuid` must be. */
+  lastUuid: string | null;
+  /** Messages `from … total-1`, in order. */
+  messages: HistoryMessage[];
+}
+
 export interface AgentBackend {
   readonly kind: 'sdk' | 'fake';
   /** Synchronous; failures arrive as events. */
@@ -275,8 +357,16 @@ export interface AgentBackend {
    */
   readHistory(req: HistoryRequest): Promise<HistoryMessage[]>;
   getSessionInfo(req: HistoryRequest): Promise<BackendSessionInfo | null>;
+  /**
+   * WP-69: a subagent's own transcript from message `from` on (file only, no process needed; the
+   * profile's config dir like `readHistory`). A missing file is `total: 0`; rejects when the read
+   * failed or timed out.
+   */
+  readSubagentHistory(req: SubagentHistoryRequest): Promise<SubagentHistorySlice>;
   /** Only dormant sessions (C.6). */
   renameSession(req: HistoryRequest & { title: string }): Promise<void>;
+  /** WP-70: a login process of a profile (synchronous; failures arrive as results). */
+  startLogin(req: LoginRequest): LoginSession;
   /** Close all sessions (server shutdown). */
   dispose(): Promise<void>;
 }

@@ -511,6 +511,8 @@ export class SessionRuntime {
         s.phase = 'dormant';
       }
       s.cancelProcessTimers();
+      // WP-71: nothing runs without the process (null at once, no throttle).
+      if (!this.core.shuttingDown()) s.updateRunningTasks();
       if (!this.core.shuttingDown()) s.dropMirrorIfUnused();
       this.core.processEnded();
       this.releaseTurnResultWaiters();
@@ -591,6 +593,8 @@ export class SessionRuntime {
     // Phase 2: the slash-command catalog (ADR-108) and the git branch (ADR-113) after readiness.
     void this.refreshCommands();
     void s.refreshGitBranch();
+    // WP-70: the project's output styles (initializationResult; the style itself also comes with init).
+    void this.refreshOutputStyles();
     // WP-64: Claude's default (host state, follow_claude) and the wanted bridge.
     this.remoteReady = true;
     remoteControlAfterReady(this.core, s, this).catch((error: unknown) => {
@@ -611,6 +615,13 @@ export class SessionRuntime {
     }
     if (!this.alive || this.state.runtime !== this) return;
     this.state.emit([{ op: 'detail.patch', patch: { commands: toSlashCommands(raw) } }]);
+  }
+
+  /** WP-70: `initializationResult` → detail `availableOutputStyles` + summary `outputStyle`; never throws. */
+  private async refreshOutputStyles(): Promise<void> {
+    const styles = await this.agent.readOutputStyles();
+    if (styles === null || !this.alive || this.state.runtime !== this) return;
+    this.state.setOutputStyles(styles);
   }
 
   /** Readiness failed twice (R2-04): close the process, the exit reports `failure`. */

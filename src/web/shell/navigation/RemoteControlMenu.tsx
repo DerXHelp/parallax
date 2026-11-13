@@ -19,8 +19,16 @@ import {
   type SessionActionSlot,
 } from './session-actions';
 
-/** The actions of the header's Remote Control menu (the same ones are in the "…" menus). */
-export const REMOTE_ACTIONS: readonly SessionActionSlot[] = ['remoteControl', 'openRemote', 'copyRemoteLink'];
+/**
+ * The actions of the header's Remote Control menu (the same ones are in the "…" menus); WP-70:
+ * "Sign in" while the bridge failed for the sign-in (REMOTE_CONTROL_AUTH).
+ */
+export const REMOTE_ACTIONS: readonly SessionActionSlot[] = [
+  'signIn',
+  'remoteControl',
+  'openRemote',
+  'copyRemoteLink',
+];
 
 /**
  * WP-64: Remote Control in the session header – the phone icon in its state colour (tooltip: status

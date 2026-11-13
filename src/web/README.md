@@ -24,4 +24,8 @@ Regeln: nie Server-Code importieren (tsconfig `rootDir` + ESLint); kein UI-Strin
 nie (gemeinsame Komponenten über `FeatureSlots`; ESLint erzwingt die Grenzen, architecture §2.3h).
 Features dürfen Shell-Bausteine importieren (z. B. `shell/HostFacts.tsx`), die Shell nie Features;
 reine Helfer gehören nach `lib/` (ADR-126).
+Start-Chunk-Budget (`scripts/bundle-budget.ts`): was erst nach einem Klick gebraucht wird, lädt lazy – u. a.
+Session-Info-Reiter (WP-67), Tab „Agent“ (WP-69), Anmelde-Dialog, Ausgabestil-Dialog, Inhalt der
+Tastenkürzel-Hilfe, Bestätigung „Server beenden“ und `HostFacts` (WP-70); Texte solcher Chunks in
+Lazy-Namensräumen (`i18n/README.md`, ADR-183).
 Dev-Server: `pnpm dev:web` (Port 5173, je Worktree `PARALLAX_DEV_WEB_PORT`).

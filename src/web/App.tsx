@@ -7,7 +7,7 @@ import { FILES_SLOTS } from './features/files';
 import { defaultFileLinkLabel, PlainReference } from './features/files/components/PlainReference';
 import { TASKS_SLOTS } from './features/tasks';
 import { Markdown } from './features/transcript/markdown/Markdown';
-import { ToolInputPreviewSlot, TranscriptSlot } from './features/transcript/slots';
+import { SubagentPanelSlot, ToolInputPreviewSlot, TranscriptSlot } from './features/transcript/slots';
 import { useT } from './i18n';
 import { AppShell } from './shell/AppShell';
 import { ShellEffects } from './shell/ShellEffects';
@@ -131,7 +131,8 @@ function fileLinkFallback(
  * @-picker). Phase 2 (WP-40): WP-38 `SettingsPage` (the settings dialog, opened by the request
  * `settings` of `SettingsMenu`) and WP-36 `ProfilesSettings` (profile list + editor in its section
  * "Profiles"), both lazy (R4W-19). Phase 3 (WP-60): WP-54 `FileLink`, `FilePanel` (viewer),
- * `FilesPanel` ("Files of this session") and WP-55 `TasksPanel`, `TaskStrip` – all lazy chunks.
+ * `FilesPanel` ("Files of this session") and WP-55 `TasksPanel`, `TaskStrip` – all lazy chunks;
+ * WP-69 `SubagentPanel` (the side panel tab "Agent", lazy).
  * Every lazy slot is wrapped in a `SlotBoundary` (WP-58) – `FileLink` in its quiet variant (plain
  * text instead of a card, R5W-02); the eager ones (DecisionBar, DecisionCard, Composer) are not
  * lazy and need none.
@@ -156,6 +157,7 @@ export const APP_SLOTS: Partial<FeatureSlots> = {
   FilesPanel: bounded(FILES_SLOTS.FilesPanel, bySessionKey),
   TasksPanel: bounded(TASKS_SLOTS.TasksPanel, bySessionKey),
   TaskStrip: bounded(TASKS_SLOTS.TaskStrip, bySessionKey),
+  SubagentPanel: bounded(SubagentPanelSlot, (props) => `${props.sessionKey}|${props.agentId}`),
 };
 
 /**

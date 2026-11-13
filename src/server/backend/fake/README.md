@@ -21,9 +21,13 @@ Design: `docs/wp/WP-13.md` §3.3, Ergebnis und Stolpersteine: `docs/wp/WP-13a.md
 | `sideQuestion.ts` | WP-66: `fakeSideMode`, `fakeSideAnswer` („Fake side answer (follow-up n): “Frage” – Claude is idle / working on a turn.“), `controlProgressMessage` (wie die CLI ein `started` je Seitenfrage, bei `retry` ein `api_retry`); Hebel `FakeBackendOptions.sideQuestions` (`mode`, `withdraw`) und Schlüsselwörter (siehe unten) |
 | `sessionInfo.ts` | WP-67: `FakeSessionInfo` (Zustand je Session: Rohantworten aller sieben Reiter in CLI-Form, laufen durch denselben Parser wie das SdkBackend; ohne Kontodaten), MCP-Zustand `fake-docs` connected / `fake-search` failed / `fake-auth` needs-auth / `fake-off` disabled, `reloadSkills` ergänzt `fresh-skill` (`FAKE_FRESH_SKILL`), Export aus dem Fake-Verlauf mit CLI-Dateinamen; Hebel `FakeBackendOptions.sessionInfo` (`unavailable`, `actions`, `long`) und Schlüsselwörter (siehe unten) |
 | `remote.ts` | WP-64 Remote Control: `fakeBridgeInfo` (`cse_fake<id>` ↔ `https://claude.ai/code/session_fake<id>`), `fakeEnableFailure`, `bridgeStateMessage`, `remotePromptTurn` (Turn eines Prompts aus der Claude-App: `command_lifecycle` mit fremder uuid, `init`, `user`-Replay mit `origin:{kind:'human'}`, Antwort); Hebel `fake:remote-prompt [text]`, `fake:remote-permission`, `fake:remote-fail`, `fake:remote-flaky` (siehe unten) |
+| `workers.ts` | WP-71: `fake:workers` (zwei Hintergrund-Agenten + eine Hintergrund-Shell, Konstanten `FAKE_WORKERS_*`; siehe unten) |
+| `login.ts` | WP-70: `FakeLoginSession` (Port `LoginSession` + `FakeLoginHandle`): Links auf die harmlose Adresse `FAKE_LOGIN_HOST` (`https://login.parallax.invalid/oauth/authorize?code=true&state=fake-state-<pid>-<n>`, mit `automatic` zusätzlich ein Link mit `port=0`), jeder Code meldet „angemeldet“ (`subscriptionType` Standard `max`), außer `FAKE_LOGIN_REFUSED_CODE` (`LOGIN_FAILED code`) und `FAKE_LOGIN_EXPIRED_CODE` (`expired`); Test-Handle `complete()`/`fail()`/`close()`; Hebel `FakeBackendOptions.login` (`start: 'ok' \| 'unavailable' \| 'blocked'`, `automatic`, `subscriptionType`), Prozesse in `FakeBackend.logins` |
+| `outputStyle.ts` | WP-70: `FAKE_OUTPUT_STYLES` (`default`, `Proactive`, `Concise`, `Explanatory`, `Learning`), `FakeOutputStyles` (Stil je Projekt, Schlüssel `windowsPathKey(cwd)`, `writes` für Tests) – `readOutputStyles` (nur Script-Modus; Events-Modus `null`), `setOutputStyle` zeichnet das Control `updateSettings` auf, `init.output_style` jedes Turns zeigt den Stil; Hebel `FakeBackendOptions.outputStyleError` |
 | `files.ts` | `FakeFiles` (echte Dateien nur unter `<filesRoot>\<sessionId>\`, Pfade über `@shared/paths` geprüft), `defaultFakeFilesRoot()` = `%TEMP%\parallax-fake-files`, `patchHunks` |
 | `defaults.ts` | Fake-Antworten: `getContextUsage` (Kategorien mit `id`; fester Füllstand bei `fake:context-high`), `supportedModels` (`FAKE_MODELS` = CLI 2.1.322, 14 Einträge), `supportedCommands` (inkl. Terminal-Befehle); `FAKE_CLAUDE_VERSION` = die CLI-Version, die das SDK erwartet (V4-05; Test gegen `claudeCodeVersion` des SDK), auch in `init.claude_code_version`; `FAKE_CONTEXT_HIGH_TOKENS` |
-| `history.ts` | `FakeHistoryStore` (Rohformen wie das SDK, Import aus `history.jsonl`) |
+| `history.ts` | `FakeHistoryStore` (Rohformen wie das SDK, Import aus `history.jsonl`); WP-69: `recordSubagent(sessionId, agentId, messages)` hängt Nachrichten an den Verlauf eines Subagenten (`agent-<id>.jsonl` des SDK), `task_started` ordnet gespielte Subagent-Nachrichten (`parent_tool_use_id`) der Agent-ID zu, `subagentMessages` liest sie (das FakeBackend schneidet in `readSubagentHistory` ab `from` wie die Worker-Op `subagentSlice`) |
+| `wp69.ts` | WP-69: Subagent-Verläufe (`FAKE_SUBAGENT_STEPS`, `FAKE_BACKGROUND_STEPS`, `subagentPromptMessage`, `subagentStepMessages`, `recordSubagent` – Prompt, je Schritt Thinking + Werkzeug + Ergebnis, nur im Verlauf, der Stream bleibt wie vorher) und `fake:hooks` (`hookRun`: je Lauf `hook_started` + `hook_response` wie CLI 2.1.323; `FAKE_HOOK_BLOCK_OUTPUT`, `FAKE_HOOK_BLOCK_COMMAND`, `FAKE_HOOKS_ANSWER`) |
 | `integration.ts` | `createFakeClaudeIntegration({store?, consoleEnv?, launchEnv?})` (Port `ClaudeIntegration` ohne `claude`, `consoleLaunchFor` → Fake-Konsolen-Spec; `launchEnv` → Launch-Specs mit `FAKE_LAUNCH_ENV_KEYS` (PATH & Co.) für die Git-Branch-Suche, V3-11; der Fake-Server übergibt `process.env`); `testedVersion` = `FAKE_CLAUDE_VERSION` – kein Hinweis „neuer als geprüft“ (WP-62) |
 | `console.ts` | `FAKE_CONSOLE_PROMPT`, `fakeConsoleAnswer`, `consoleTurnMessages` – Turns einer simulierten externen Konsole (`FakeBackend.simulateConsoleTurn`, WP-34) |
 | `image.ts` | `FAKE_SHOT_PNG_BASE64` (gültiges 24×16-PNG), `promptImageCount`, `receivedImagesText` |
@@ -35,7 +39,7 @@ Design: `docs/wp/WP-13.md` §3.3, Ergebnis und Stolpersteine: `docs/wp/WP-13a.md
 | Eingabe | Ablauf |
 |---|---|
 | `fake:plan` | Modus → `plan` (system/status), Plan-Datei per `Write` (Eingabe in 8 `input_json_delta`-Teilen) als **echte** Datei `<filesRoot>\<sessionId>\plans\fake-plan.md`, dann `ExitPlanMode` mit `planFilePath`; Ablehnen mit Feedback → v2 in dieselbe Datei (`type:'update'` mit `structuredPatch`); Freigabe → Modus, `IMPLEMENTED` (`hello.txt` nur im Transkript) |
-| `fake:background` | Agent mit `run_in_background`, `task_started`, `task_progress` mit `summary`, `background_tasks_changed`, Ergebnis sofort; nach 30 s (× `speed`, nicht durch `maxDelayMs` gekappt) `task_notification completed` mit `output_file` (echte Datei `tasks\task_<id>.output`) und Folge-Turn; `idle` erst danach. `stopTask(taskId)` beendet ihn vorher (`stopped`) |
+| `fake:background` | Agent mit `run_in_background`, `task_started`, `task_progress` mit `summary`, `background_tasks_changed`, Ergebnis sofort; nach 30 s (× `speed`, nicht durch `maxDelayMs` gekappt) `task_notification completed` mit `output_file` (echte Datei `tasks\task_<id>.output`) und Folge-Turn; `idle` erst danach. `stopTask(taskId)` beendet ihn vorher (`stopped`). WP-69: sein Verlauf wächst beim Start, zur Hälfte und vor dem Ende (`FAKE_BACKGROUND_STEPS`) |
 | `fake:todo` | `TodoWrite` mit drei Punkten, dann `in_progress`, dann `completed` |
 | `fake:files` | `Read`/`Write`/`Edit` auf echten Dateien unter `files\`; Antwort mit `<pfad>:12`, relativem Pfad, Markdown-Link und UNC-Pfad (Negativfall, nur Text) |
 | `fake:writes-lost` | Antwort; beim geordneten Ende `system/session_writes_lost` (`ENOSPC`, `transcript`) vor dem Exit |
@@ -108,3 +112,24 @@ MCP: „Neu verbinden“ verbindet einen fehlgeschlagenen Server (`connected`), 
 |---|---|
 | `fake:long-bash` | Vordergrund-`Bash` „Run the test suite“ (`pnpm test --watch`) mit `tool_progress`; läuft `FAKE_LONG_BASH_MS` (60 s × `speed`, bei `speed` 0 endlos), bis `backgroundTasks()` sie verschiebt: dann `task_started` (`local_bash`, `is_backgrounded`), Tool-Ergebnis mit `backgroundTaskId`, Antwort, Turn-Ende; nach `FAKE_LONG_BASH_BACKGROUND_MS` (20 s × `speed`) `task_notification` und ein eigener Turn mit dem Bericht. Kein `background_tasks_changed` (ob die CLI eine verschobene Shell dort zählt, ist eine Live-Frage) |
 | `fake:summary` | `Read` von `notes.md`, Pausen von `FAKE_SUMMARY_STEP_MS` (2,5 s × `speed`), Antwort; mit verbundener Fake-Bridge vor jedem Schritt `task_summary` (CLI-Satz) und vor dem `result` `post_turn_summary` des letzten Assistenten-Beitrags; ohne Bridge keins von beiden (Rückfall der Engine) |
+
+## Subagent-Verlauf und Hooks (WP-69)
+
+| Eingabe | Ablauf |
+|---|---|
+| `fake:subagent` | wie bisher (erstes Ergebnis, während der Agent läuft; Antwort `SUBAGENT SAID PONG`); dazu wächst der Verlauf des Agenten: Prompt beim Start, dann je `FAKE_SUBAGENT_STEP_MS` (1,5 s × `speed`, ≤ `maxDelayMs`) ein Schritt (Glob, Read, Grep mit Thinking), am Ende Thinking + `PONG` aus dem Stream – 9 Einträge |
+| `fake:background` | siehe Phase 3; Verlauf mit zwei Schritten (Bash, Write) |
+| `fake:hooks` | Hook-Läufe wie mit `includeHookEvents`: UserPromptSubmit, PreToolUse/PostToolUse eines `Read` (alle `success`), ein blockierender PreToolUse eines `Write` (`outcome: 'error'`, `exit_code: 2`, Ausgabe `FAKE_HOOK_BLOCK_OUTPUT`; das `Write` endet `is_error`), Antwort, Stop |
+
+## Anmelden und Ausgabestil (WP-70)
+
+| Eingabe | Ablauf |
+|---|---|
+| `fake:auth-failed` | wie `fake:error`: Assistant-Fehler `authentication_failed` → Fehler-Item `CLAUDE_AUTH_FAILED` mit „Anmelden“ |
+| `fake:output-style` | Antwort „Fake: output style <stil>“ – der Stil des Projekts, den das `init` dieses Turns meldet |
+
+## Was läuft wo (WP-71)
+
+| Eingabe | Ablauf |
+|---|---|
+| `fake:workers` | zwei Hintergrund-Agenten (`subagentLaunch` mit `runInBackground`, `general-purpose`, `task_progress` mit `summary`) und eine Hintergrund-Shell (`Bash` `pnpm dev`, `task_started` `local_bash` mit `is_backgrounded`, Ergebnis mit `backgroundTaskId`) gleichzeitig, eine volle `background_tasks_changed`-Liste (Agenten `local_agent`, Shell `local_bash`), Antwort `FAKE_WORKERS_STARTED`, Turn-Ende. Die Shell endet nach `FAKE_WORKERS_SHELL_MS` (6 s × `speed`), die Agenten nach `FAKE_WORKERS_AGENT_MS` (9 s / 12 s × `speed`, nicht durch `maxDelayMs` gekappt); jedes Ende sendet `task_updated` (Agenten), `task_notification` und die Liste der übrigen; das letzte spielt den Folge-Turn (`FAKE_WORKERS_DONE`), `idle` erst danach. `stopTask(taskId)` beendet jeden vorher (`stopped`) |

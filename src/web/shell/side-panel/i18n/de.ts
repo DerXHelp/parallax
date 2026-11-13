@@ -9,10 +9,12 @@ export const de: typeof en = {
     file: 'Datei',
     files: 'Dateien',
     tasks: 'Aufgaben',
+    subagent: 'Agent',
   },
   resize: 'Panelbreite ändern',
   width: '{width} px',
   fileTab: 'Datei: {name}',
+  subagentTab: 'Agent-Verlauf: {title}',
   back: 'Zurück zu {name}',
   history: 'Zuletzt geöffnete Dateien',
 };

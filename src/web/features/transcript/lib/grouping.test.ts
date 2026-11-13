@@ -13,6 +13,9 @@ import {
   buildRows,
   classifyItem,
   groupKey,
+  isBlockingHook,
+  isHookShown,
+  resolveHookCode,
   summarizeGroup,
   type ItemCode,
   type TranscriptRowModel,
@@ -87,7 +90,6 @@ describe('classifyItem (WP-63 §1.5 roles)', () => {
     const steps: TranscriptItem[] = [
       thinking('k'),
       bash('b'),
-      sampleSystemItems.hook(),
       sampleSystemItems.memory_recall(),
       sampleSystemItems.informational({ level: 'info' }),
     ];
@@ -207,6 +209,55 @@ describe('buildRows – all steps', () => {
   });
 });
 
+describe('WP-69: hook runs per hookDisplay', () => {
+  const ok = (id: string, hookEvent = 'PreToolUse') =>
+    sampleSystemItems.hook({ id, hookName: `${hookEvent}:Read`, hookEvent, outcome: 'success', exitCode: 0 });
+  const blocked = (id: string) =>
+    sampleSystemItems.hook({ id, hookName: 'PreToolUse:Write', hookEvent: 'PreToolUse', outcome: 'error', exitCode: 2 });
+  const startFailed = (id: string) =>
+    sampleSystemItems.hook({ id, hookName: 'SessionStart:startup', hookEvent: 'SessionStart', outcome: 'error', exitCode: 1 });
+  const running = (id: string) => sampleSystemItems.hook({ id, outcome: null, exitCode: null });
+
+  it('hook codes: k succeeded or running, f failed, F failed at the session start', () => {
+    expect([ok('a'), running('r'), blocked('b'), startFailed('s')].map(classifyItem)).toEqual(['k', 'k', 'f', 'F']);
+    expect(resolveHookCode('k', 'all')).toBe('s');
+    expect([resolveHookCode('k', 'failed'), resolveHookCode('k', 'off')]).toEqual(['h', 'h']);
+    expect([resolveHookCode('f', 'all'), resolveHookCode('f', 'failed'), resolveHookCode('f', 'off')]).toEqual(['v', 'v', 'h']);
+    expect([resolveHookCode('F', 'off'), resolveHookCode('v', 'off'), resolveHookCode('s', 'all')]).toEqual(['v', 'v', 's']);
+    expect(isHookShown(blocked('b'), 'off')).toBe(false);
+    expect(isHookShown(startFailed('s'), 'off')).toBe(true);
+    expect(isBlockingHook(blocked('b'))).toBe(true);
+    expect(isBlockingHook(startFailed('s'))).toBe(false);
+  });
+
+  it('compact: successful runs join the step group with all, vanish otherwise; a blocking one ends the group', () => {
+    const items = [user('u'), ok('h1'), bash('b1'), blocked('h2'), bash('b2'), ok('h3', 'PostToolUse'), text('t')];
+    const rows = (hooks: 'all' | 'failed' | 'off') =>
+      shape(buildRows(items.map((i) => i.id), items.map(classifyItem), 'compact', () => false, hooks));
+    expect(rows('all')).toEqual(['item:u', 'group:h1,b1', 'item:h2', 'group:b2,h3', 'item:t']);
+    expect(rows('failed')).toEqual(['item:u', 'item:b1', 'item:h2', 'item:b2', 'item:t']);
+    expect(rows('off')).toEqual(['item:u', 'group:b1,b2', 'item:t']);
+    // A start failure stays even with "off".
+    const start = [startFailed('s'), user('u')];
+    expect(shape(buildRows(start.map((i) => i.id), start.map(classifyItem), 'all', () => false, 'off'))).toEqual([
+      'item:s',
+      'item:u',
+    ]);
+  });
+
+  it('all steps: a successful run is its own line with all, hidden with failed (the default)', () => {
+    const items = [user('u'), ok('h1'), bash('b1')];
+    const codes = items.map(classifyItem);
+    const ids = items.map((i) => i.id);
+    expect(shape(buildRows(ids, codes, 'all', () => false, 'all'))).toEqual(['item:u', 'item:h1', 'item:b1']);
+    expect(shape(buildRows(ids, codes, 'all', () => false))).toEqual(['item:u', 'item:b1']);
+  });
+
+  it('summarizeGroup counts hook runs as steps of their own', () => {
+    expect(summarizeGroup([ok('h1'), bash('b1'), ok('h2')])).toMatchObject({ tools: 1, hooks: 2, notices: 0 });
+  });
+});
+
 describe('summarizeGroup', () => {
   it('counts tools (most frequent first), thoughts, notices and errors; times from first to last result', () => {
     const summary = summarizeGroup([
@@ -229,7 +280,8 @@ describe('summarizeGroup', () => {
     expect(summary).toMatchObject({
       tools: 4,
       thoughts: 1,
-      notices: 1,
+      hooks: 1,
+      notices: 0,
       errors: 2,
       running: null,
       toolCounts: [

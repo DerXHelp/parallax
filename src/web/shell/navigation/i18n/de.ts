@@ -24,10 +24,7 @@ export const de: typeof en = {
     plan: 'Plan',
     files: 'Dateien dieser Session',
     tasks: 'Aufgaben',
-    tasksRunning: {
-      one: 'Aufgaben – {count} Hintergrund-Task läuft',
-      other: 'Aufgaben – {count} Hintergrund-Tasks laufen',
-    },
+    tasksRunning: 'Aufgaben – es läuft: {list}',
     tasksOpen: { one: 'Aufgaben – {count} offene Aufgabe', other: 'Aufgaben – {count} offene Aufgaben' },
     countOverflow: '{max}+',
   },
@@ -57,6 +54,15 @@ export const de: typeof en = {
     effort: 'Aufwand',
     compactSoon: 'Autocompact steht bald an',
     needsYou: 'Braucht dich:',
+  },
+  running: {
+    label: 'Es läuft: {list}',
+    agents: { one: '{count} Agent', other: '{count} Agenten' },
+    shells: { one: '{count} Shell', other: '{count} Shells' },
+    misc: { one: '{count} weitere Aufgabe', other: '{count} weitere Aufgaben' },
+    title: 'Läuft gerade',
+    more: 'und {count} weitere',
+    kind: { agent: 'Agent', bash: 'Shell', workflow: 'Workflow', task: 'Aufgabe' },
   },
   activity: {
     thinking: 'Denkt nach…',
@@ -92,6 +98,8 @@ export const de: typeof en = {
     copyRemoteLink: 'Remote-Control-Link kopieren',
     regenerateTitle: 'Titel neu erzeugen',
     quickAsk: 'Kurz fragen…',
+    signIn: 'Anmelden',
+    outputStyle: 'Ausgabestil…',
   },
   quickAsk: {
     title: 'Kurz fragen · {title}',

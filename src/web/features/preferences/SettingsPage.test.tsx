@@ -16,6 +16,7 @@ import { ShellEffects } from '@web/shell/ShellEffects';
 import { FeatureSlotsProvider, type FeatureSlots, type ProfilesSettingsSlotProps } from '@web/shell/slots';
 import { createHostConnection, registerConnection, unregisterConnection } from '@web/state/connection';
 import { FakeHost } from '@web/state/fake-host';
+import { getHookDisplay } from '@web/state/hook-display';
 import { resetClientStore } from '@web/state/store';
 import { getTranscriptView } from '@web/state/transcript-view';
 import { createMemoryTransport } from '@web/state/transport';
@@ -172,6 +173,23 @@ describe('General', () => {
     });
     expect(getTranscriptView()).toBe('all');
     expect(within(group).getByRole('radio', { name: 'All steps' }).getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('hook runs (WP-69): failed and blocking only by default, each choice a server setting', async () => {
+    const host = await connect();
+    const user = userEvent.setup();
+    renderPage();
+    const group = screen.getByRole('radiogroup', { name: 'Hook runs' });
+    expect(within(group).getAllByRole('radio')).toHaveLength(3);
+    expect(within(group).getByRole('radio', { name: 'Failed and blocking only' }).getAttribute('aria-checked')).toBe(
+      'true',
+    );
+    await user.click(within(group).getByRole('radio', { name: 'All' }));
+    await user.click(within(group).getByRole('radio', { name: 'Off' }));
+    await waitFor(() => {
+      expect(patches(host)).toEqual([{ hookDisplay: 'all' }, { hookDisplay: 'off' }]);
+    });
+    expect(getHookDisplay()).toBe('off');
   });
 });
 

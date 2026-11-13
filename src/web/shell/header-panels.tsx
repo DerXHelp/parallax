@@ -2,55 +2,60 @@ import { FolderTreeIcon, ListTodoIcon, ScrollTextIcon, type LucideIcon } from 'l
 import { useCallback, useState } from 'react';
 import type { BackgroundTask, TranscriptItem } from '@shared/model';
 import type { SessionViewState } from '@shared/sync';
+import { buildTaskRows, runningTaskCounts, runningTaskTotal, type RunningTaskCounts } from '@shared/tasks';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
-import { countRunningTasks, selectTaskSources } from '@web/lib/task-rows';
+import { selectTaskSources } from '@web/lib/task-rows';
 import { useSessionSelector } from '@web/state/hooks';
 import { DropdownMenuCheckboxItem, DropdownMenuSeparator } from '@web/ui/dropdown-menu';
 import { IconButton } from '@web/ui/icon-button';
 import { runAfterMenu } from './navigation/session-actions';
 import { requestShell, type SidePanelTab } from './requests';
+import { RunningCounts, useRunningWords } from './running-tasks';
 import { closeSidePanel, getSidePanelTab, openSidePanel, useSidePanelTab } from './side-panel/state';
 
 /**
  * Side panel buttons of the session header (WP-58): "Plan" (once the session has a plan), "Files"
- * and "Tasks" with a counter (running tasks – highlighted, counted like the task panel through
- * `@web/lib/task-rows`, CR3-02 – else open to-dos). A click
+ * and "Tasks" with a counter – WP-71: the running tasks by kind (agent symbol + number, terminal
+ * symbol + number, the rest; highlighted, counted like the task panel through `@shared/tasks`,
+ * CR3-02), else the open to-dos. A click
  * asks the side panel host (`sidePanel {tab}`); clicking the open tab again closes it. In a narrow
  * header the buttons move into the "…" menu (`HeaderPanelMenuItems`). Outside the `<header>`
  * status line (ADR-042: the header itself has no buttons).
  */
 
-/** Facts the buttons depend on – a narrow selector: deltas of the transcript never re-render them. */
-export interface SidePanelFacts {
+/**
+ * Facts the buttons depend on – a narrow selector of primitives: deltas of the transcript never
+ * re-render them. `agents`/`shells`/`other` = running tasks by kind (the task panel's rows,
+ * `runningTaskCounts`, CR3-02, WP-71).
+ */
+export interface SidePanelFacts extends RunningTaskCounts {
   /** A stored plan version or a plan file exists: "Plan" is shown. */
   plan: boolean;
-  /** Running tasks – the task panel's count (`countRunningTasks`, CR3-02). */
-  running: number;
   /** To-dos of the pinned list that are not completed. */
   openTodos: number;
 }
 
-const NO_FACTS: SidePanelFacts = { plan: false, running: 0, openTodos: 0 };
+const NO_FACTS: SidePanelFacts = { plan: false, agents: 0, shells: 0, other: 0, openTodos: 0 };
 
-/** Last count per background list: the rows are built again only when a task item changed. */
+/** Last counts per background list: the rows are built again only when a task item changed. */
 const runningCache = new WeakMap<
   readonly BackgroundTask[],
-  { sources: readonly TranscriptItem[]; count: number }
+  { sources: readonly TranscriptItem[]; counts: RunningTaskCounts }
 >();
 
 function sameItems(a: readonly TranscriptItem[], b: readonly TranscriptItem[]): boolean {
   return a.length === b.length && a.every((item, index) => item === b[index]);
 }
 
-function selectRunningTasks(view: SessionViewState): number {
+function selectRunningTasks(view: SessionViewState): RunningTaskCounts {
   const background = view.detail.backgroundTasks;
   const sources = selectTaskSources(view);
   const cached = runningCache.get(background);
-  if (cached !== undefined && sameItems(cached.sources, sources)) return cached.count;
-  const count = countRunningTasks(sources, background);
-  runningCache.set(background, { sources, count });
-  return count;
+  if (cached !== undefined && sameItems(cached.sources, sources)) return cached.counts;
+  const counts = runningTaskCounts(buildTaskRows(sources, background));
+  runningCache.set(background, { sources, counts });
+  return counts;
 }
 
 export function selectSidePanelFacts(view: SessionViewState): SidePanelFacts {
@@ -61,7 +66,7 @@ export function selectSidePanelFacts(view: SessionViewState): SidePanelFacts {
   }
   return {
     plan: detail.latestPlanVersion !== null || detail.planFile !== null,
-    running: selectRunningTasks(view),
+    ...selectRunningTasks(view),
     openTodos,
   };
 }
@@ -86,27 +91,27 @@ interface PanelButton {
   tab: Extract<SidePanelTab, 'plan' | 'files' | 'tasks'>;
   icon: LucideIcon;
   label: string;
-  /** Counter next to the icon (tasks), null = none. */
+  /** Counter next to the icon (open to-dos), null = none. */
   count: number | null;
-  /** The counter shows running background tasks (highlighted). */
-  running: boolean;
+  /** WP-71: running tasks by kind (highlighted counters instead of `count`), null = none run. */
+  running: RunningTaskCounts | null;
 }
 
 function usePanelButtons(sessionKey: string): PanelButton[] {
   const t = useT();
   const facts = useSidePanelFacts(sessionKey);
-  const plain = { count: null, running: false };
+  const words = useRunningWords(facts);
+  const plain = { count: null, running: null };
   const buttons: PanelButton[] = [];
   if (facts.plan)
     buttons.push({ tab: 'plan', icon: ScrollTextIcon, label: t('navigation.panels.plan'), ...plain });
   buttons.push({ tab: 'files', icon: FolderTreeIcon, label: t('navigation.panels.files'), ...plain });
   let tasks: Pick<PanelButton, 'label' | 'count' | 'running'>;
-  if (facts.running > 0) {
-    const count = facts.running;
-    tasks = { label: t('navigation.panels.tasksRunning', { count }), count, running: true };
+  if (runningTaskTotal(facts) > 0) {
+    tasks = { label: t('navigation.panels.tasksRunning', { list: words }), count: null, running: facts };
   } else if (facts.openTodos > 0) {
     const count = facts.openTodos;
-    tasks = { label: t('navigation.panels.tasksOpen', { count }), count, running: false };
+    tasks = { label: t('navigation.panels.tasksOpen', { count }), count, running: null };
   } else {
     tasks = { label: t('navigation.panels.tasks'), ...plain };
   }
@@ -117,19 +122,31 @@ function usePanelButtons(sessionKey: string): PanelButton[] {
 /** Larger counts show as "99+" (`navigation.panels.countOverflow`, R5W-06). */
 export const PANEL_COUNTER_MAX = 99;
 
-function Counter({ count, running }: { count: number; running: boolean }) {
+const COUNTER_CLASS = 'min-w-3.5 rounded-sm px-0.5 text-center text-2xs leading-4 font-semibold tabular-nums';
+
+/** Open to-dos (quiet) or – WP-71 – the running tasks by kind (highlighted). */
+function Counter({ button: { running, count } }: { button: PanelButton }) {
   const t = useT();
+  if (running === null && count === null) return null;
   return (
     <span
       aria-hidden
       data-slot="header-panel-count"
-      data-running={running ? 'true' : undefined}
+      data-running={running === null ? undefined : 'true'}
       className={cn(
-        'min-w-3.5 rounded-sm px-0.5 text-center text-2xs leading-4 font-semibold tabular-nums',
-        running ? 'bg-status-working/15 text-status-working' : 'text-muted-foreground',
+        COUNTER_CLASS,
+        running === null
+          ? 'text-muted-foreground'
+          : 'bg-status-working/15 text-status-working flex items-center',
       )}
     >
-      {count > PANEL_COUNTER_MAX ? t('navigation.panels.countOverflow', { max: PANEL_COUNTER_MAX }) : count}
+      {running !== null ? (
+        <RunningCounts counts={running} max={PANEL_COUNTER_MAX} className="gap-1" />
+      ) : count !== null && count > PANEL_COUNTER_MAX ? (
+        t('navigation.panels.countOverflow', { max: PANEL_COUNTER_MAX })
+      ) : (
+        count
+      )}
     </span>
   );
 }
@@ -148,6 +165,7 @@ export function HeaderPanelButtons({ sessionKey }: { sessionKey: string }) {
     >
       {buttons.map((button) => {
         const Icon = button.icon;
+        const counted = button.count !== null || button.running !== null;
         return (
           <IconButton
             key={button.tab}
@@ -156,17 +174,17 @@ export function HeaderPanelButtons({ sessionKey }: { sessionKey: string }) {
             aria-pressed={open === button.tab}
             data-slot="header-panel"
             data-tab={button.tab}
-            size={button.count === null ? 'icon-sm' : 'sm'}
+            size={counted ? 'sm' : 'icon-sm'}
             className={cn(
               'text-muted-foreground aria-pressed:bg-accent aria-pressed:text-accent-foreground',
-              button.count !== null && 'gap-0.5 px-1',
+              counted && 'gap-0.5 px-1',
             )}
             onClick={() => {
               toggleSidePanel(sessionKey, button.tab);
             }}
           >
             <Icon aria-hidden />
-            {button.count === null ? null : <Counter count={button.count} running={button.running} />}
+            <Counter button={button} />
           </IconButton>
         );
       })}
