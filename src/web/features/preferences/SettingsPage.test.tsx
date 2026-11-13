@@ -17,7 +17,7 @@ import { FeatureSlotsProvider, type FeatureSlots, type ProfilesSettingsSlotProps
 import { createHostConnection, registerConnection, unregisterConnection } from '@web/state/connection';
 import { FakeHost } from '@web/state/fake-host';
 import { resetClientStore } from '@web/state/store';
-import { getTranscriptView, resetTranscriptView } from '@web/state/transcript-view';
+import { getTranscriptView } from '@web/state/transcript-view';
 import { createMemoryTransport } from '@web/state/transport';
 import { TooltipProvider } from '@web/ui/tooltip';
 import { de } from './i18n/de';
@@ -160,19 +160,18 @@ describe('General', () => {
     expect(screen.getByRole('radio', { name: 'Hell' }).getAttribute('aria-checked')).toBe('true');
   });
 
-  it('transcript view: compact by default, "All steps" kept in this browser, no settings.update (WP-63)', async () => {
+  it('transcript view: compact by default, "All steps" is a server setting (WP-65 §1.6)', async () => {
     const host = await connect();
     const user = userEvent.setup();
     renderPage();
     const group = screen.getByRole('radiogroup', { name: 'Transcript' });
     expect(within(group).getByRole('radio', { name: 'Compact' }).getAttribute('aria-checked')).toBe('true');
     await user.click(within(group).getByRole('radio', { name: 'All steps' }));
+    await waitFor(() => {
+      expect(patches(host)).toEqual([{ transcriptView: 'all' }]);
+    });
     expect(getTranscriptView()).toBe('all');
     expect(within(group).getByRole('radio', { name: 'All steps' }).getAttribute('aria-checked')).toBe('true');
-    expect(patches(host)).toEqual([]);
-    act(() => {
-      resetTranscriptView();
-    });
   });
 });
 

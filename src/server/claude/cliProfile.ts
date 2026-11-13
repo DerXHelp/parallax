@@ -59,6 +59,18 @@ export const cliProfileSchema = z.object({
    * connected` within 15 s); null = not checked (profile older than WP-64).
    */
   remoteControl: z.boolean().nullable().default(null),
+  /**
+   * WP-65: the internal `Query.generateSessionTitle` answered a usable title (auto title, „Titel neu
+   * erzeugen“); null = not checked (profile older than WP-65).
+   */
+  sessionTitle: z.boolean().nullable().default(null),
+  /**
+   * WP-65: the experimental usage query answered a `rate_limits` object with `utilization`/`resets_at`
+   * windows (limit bar without a rate-limit event); null = not checked.
+   */
+  usageQuery: z.boolean().nullable().default(null),
+  /** WP-65: `Query.backgroundTasks` exists („In den Hintergrund“, never called); null = not checked. */
+  backgroundTasks: z.boolean().nullable().default(null),
 });
 export type CliProfile = z.infer<typeof cliProfileSchema>;
 

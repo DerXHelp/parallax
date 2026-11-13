@@ -37,6 +37,8 @@ export const en = {
   shell: {
     /** Window title with sessions waiting for the user (Plan "Fenstertitel"). */
     windowTitle: '({count}) {product}',
+    /** WP-65 §1.6b: the default browser could not be started – the link opened in this window. */
+    linkFallback: 'The default browser could not be started – the link opened here.',
     sidebar: {
       label: 'Sessions',
       count: { one: '{count} session', other: '{count} sessions' },

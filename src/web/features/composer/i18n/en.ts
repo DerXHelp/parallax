@@ -34,6 +34,10 @@ export const en = {
   sendAsMessage: 'Send as new message instead',
   stop: 'Stop',
   stopHint: 'Stops Claude (Esc in an empty message field).',
+  /** WP-65 §1.5: `session.backgroundTasks` without a tool call (like Ctrl+B in the terminal). */
+  backgroundAll: 'Move all to background',
+  backgroundAllHint: 'Running commands and subagents continue as background tasks (Ctrl+B).',
+  backgroundAllShortcut: 'Move running commands and subagents to the background',
   notConnected: 'Not connected',
   tooLong: 'Too long – at most {max} characters.',
   counter: '{count} / {max} characters',

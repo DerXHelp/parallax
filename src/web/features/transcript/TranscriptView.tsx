@@ -22,6 +22,7 @@ import { Skeleton } from '@web/ui/skeleton';
 import { Spinner } from '@web/ui/spinner';
 import { ToolImagesGallery } from './components/ImageGallery';
 import { ImageViewer } from './components/ImageViewer';
+import { SinceLastVisit } from './components/SinceLastVisit';
 import { QueuedIdsContext, TranscriptSettingsContext, type TranscriptSettings } from './context';
 import { QueuedPromptRow } from './items/MessageRows';
 import { StepGroupRow } from './items/StepGroupRow';
@@ -41,7 +42,9 @@ import { useOpenGroups } from './state/groups';
  * - one image lightbox next to the list (`ImageViewer`, WP-37): it survives its row unmounting;
  * - WP-63 §1.5: the rows come from `buildRows` (lib/grouping.ts) – in the compact view (setting,
  *   default) runs of work steps are one group line with their pictures as a gallery; the roles of
- *   the items are compared shallowly, so deltas that change no role keep the rows.
+ *   the items are compared shallowly, so deltas that change no role keep the rows;
+ * - WP-65 §1.2: the card "Since you were last here" at the top (`SinceLastVisit`, from the session's
+ *   `lastSeenAt` held at opening), closable, with a jump to the first new item.
  */
 
 type Row = { kind: 'earlier' } | TranscriptRowModel | { kind: 'queued'; prompt: QueuedPrompt };
@@ -58,6 +61,7 @@ const selectQueue = (view: SessionViewState): readonly QueuedPrompt[] => view.de
 const selectInitModel = (view: SessionViewState): string | null => view.detail.init?.model ?? null;
 const selectSummaryModel = (summary: SessionSummary): string | null => summary.model;
 const selectApiKeySource = (summary: SessionSummary): string | null => summary.apiKeySource;
+const selectLastSeenAt = (summary: SessionSummary): string | null => summary.lastSeenAt;
 
 const EMPTY_CODES: readonly ItemCode[] = Object.freeze([]);
 const codesCache = new WeakMap<readonly TranscriptItem[], readonly ItemCode[]>();
@@ -122,6 +126,10 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
   const initModel = useSessionSelector(sessionKey, selectInitModel, null);
   const summaryModel = useSummarySelector(sessionKey, selectSummaryModel, null);
   const apiKeySource = useSummarySelector(sessionKey, selectApiKeySource, null);
+  // WP-65 §1.2: `lastSeenAt` as it was when the transcript opened (the list is keyed per session).
+  const lastSeenAt = useSummarySelector(sessionKey, selectLastSeenAt, null);
+  const [since] = useState(lastSeenAt);
+  const [sinceClosed, setSinceClosed] = useState(false);
   const codes = useSessionSelector(sessionKey, selectItemCodes, EMPTY_CODES);
   const mode = useTranscriptView();
   const openGroups = useOpenGroups(sessionKey);
@@ -291,6 +299,18 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
     if (stickRef.current) scrollToEnd();
   }, [scrollToEnd]);
 
+  // WP-65 §1.2: "To the first new message" – the row of that item (or the group/gallery holding it).
+  const jumpToItem = (itemId: string) => {
+    const index = rows.findIndex((row) =>
+      row.kind === 'item' ? row.id === itemId : row.kind === 'group' || row.kind === 'gallery' ? row.ids.includes(itemId) : false,
+    );
+    const handle = listRef.current;
+    if (index < 0 || handle === null) return;
+    stickRef.current = false;
+    setShowJump(true);
+    handle.scrollToIndex(index, { align: 'start' });
+  };
+
   const jumpToLatest = () => {
     stickRef.current = true;
     setShowJump(false);
@@ -379,6 +399,16 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
                   </div>
                 )}
               </VList>
+            )}
+            {since === null || sinceClosed || !meta.hasView ? null : (
+              <SinceLastVisit
+                sessionKey={sessionKey}
+                since={since}
+                onJump={jumpToItem}
+                onClose={() => {
+                  setSinceClosed(true);
+                }}
+              />
             )}
             {showJump && !empty ? (
               <Button

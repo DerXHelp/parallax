@@ -35,7 +35,7 @@ export const en = {
     /** WP-63 §1.5. */
     transcript: 'Transcript',
     transcriptHint:
-      'Compact: the work steps between two messages form one line (click to open), pictures stay visible as a gallery. All steps: every step on its own line. Kept in this browser for every window.',
+      'Compact: the work steps between two messages form one line (click to open), pictures stay visible as a gallery. All steps: every step on its own line. Applies to every window and browser.',
     transcriptViews: { compact: 'Compact', all: 'All steps' },
   },
   notifications: {

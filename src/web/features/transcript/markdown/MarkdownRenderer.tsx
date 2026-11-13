@@ -13,6 +13,7 @@ import remarkGfm from 'remark-gfm';
 import type { SessionSummary } from '@shared/model';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
+import { onExternalLinkClick } from '@web/lib/external-link';
 import { parseFileTarget } from '@web/lib/file-refs';
 import { resolveLanguage } from '@web/lib/languages';
 import { useFeatureSlots } from '@web/shell/slots';
@@ -120,6 +121,9 @@ function Link({ href, children }: Props<'a'>) {
       rel="noopener noreferrer"
       title={t('transcript.markdown.externalLink', { url })}
       className="text-brand underline-offset-2 hover:underline"
+      onClick={(event) => {
+        onExternalLinkClick(event, url);
+      }}
     >
       <InLinkContext value={true}>{children}</InLinkContext>
     </a>
@@ -159,6 +163,9 @@ function Image({ src, alt }: Props<'img'>) {
       rel="noopener noreferrer"
       title={t('transcript.markdown.externalLink', { url })}
       className="text-brand inline-flex items-center gap-1 align-middle underline-offset-2 hover:underline"
+      onClick={(event) => {
+        onExternalLinkClick(event, url);
+      }}
     >
       {content}
     </a>

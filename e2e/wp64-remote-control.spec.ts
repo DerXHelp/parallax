@@ -8,11 +8,14 @@
  * - `fake:remote-fail` → warning state with the readable error;
  * - a server restart keeps the wish and the link (the dormant session shows "connects when the
  *   session starts", the next prompt reattaches – "Open in the Claude app" opens the same link).
+ *   WP-65 §1.6b: the link goes to the default browser (host command `link.open`; the recording
+ *   opener of the FakeBackend logs `link.open (fake): <url>`), never `window.open` of the app.
  * The idle sleep (minimum 5 minutes) is covered in the engine test (remoteControl.integration.test.ts).
  * Own server per test (the restart needs its own home).
  */
 import type { Locator, Page } from '@playwright/test';
 import { chooseMenuItem, ParallaxApp, type SessionView } from './support/app';
+import { logMessages } from './support/files';
 import { expect, keepServerLog, test } from './support/fixtures';
 import { startE2eServer, type E2eServer } from './support/server';
 
@@ -25,7 +28,7 @@ test.afterEach(async () => {
   own = null;
 });
 
-/** window.open only records the links (the test never leaves the app). */
+/** window.open only records the links (the test never leaves the app; WP-65: it stays unused). */
 function recordOpenedLinks(): void {
   const opened: string[] = [];
   window.__e2eOpened = opened;
@@ -39,13 +42,27 @@ function remoteButton(session: SessionView): Locator {
   return session.pane.locator('[data-slot="header-remote"]');
 }
 
-/** "Open in the Claude app" from the header's Remote Control menu → the recorded link. */
-async function openedLink(page: Page, session: SessionView): Promise<string> {
+const LINK_OPEN = 'link.open (fake): ';
+
+/** The links the server opened in the default browser so far (recording opener, server log). */
+async function linksOpened(server: E2eServer): Promise<string[]> {
+  return (await logMessages(server))
+    .filter((message) => message.startsWith(LINK_OPEN))
+    .map((message) => message.slice(LINK_OPEN.length));
+}
+
+/**
+ * "Open in the Claude app" from the header's Remote Control menu → the link the server opened in
+ * the default browser (WP-65 §1.6b); the app's own window opens nothing.
+ */
+async function openedLink(page: Page, server: E2eServer, session: SessionView): Promise<string> {
+  const before = (await linksOpened(server)).length;
   await expect(page.locator('[role="menu"]')).toHaveCount(0);
   await remoteButton(session).click();
   await chooseMenuItem(page.getByRole('menu').locator('[data-action="openRemote"]'));
-  const opened = await page.evaluate(() => window.__e2eOpened ?? []);
-  const last = opened.at(-1);
+  await expect.poll(async () => (await linksOpened(server)).length).toBe(before + 1);
+  expect(await page.evaluate(() => window.__e2eOpened ?? [])).toEqual([]);
+  const last = (await linksOpened(server)).at(-1);
   if (last === undefined) throw new Error('no link opened');
   return last;
 }
@@ -110,7 +127,7 @@ test('server restart: the wish and the link stay – the next start reattaches t
   own = first;
   const app = await new ParallaxApp(page, first).open();
   const session = await connectedSession(app, first, 'restart');
-  const link = await openedLink(page, session);
+  const link = await openedLink(page, first, session);
   expect(link).toMatch(FAKE_LINK);
 
   await first.requestShutdown();
@@ -126,5 +143,5 @@ test('server restart: the wish and the link stay – the next start reattaches t
 
   await view.send('hello after the restart');
   await expect(remoteButton(view)).toHaveAttribute('data-remote-state', 'connected');
-  expect(await openedLink(page, view)).toBe(link);
+  expect(await openedLink(page, second, view)).toBe(link);
 });

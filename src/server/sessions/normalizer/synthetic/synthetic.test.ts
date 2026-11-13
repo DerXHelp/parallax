@@ -397,11 +397,15 @@ describe('synthetic remote control (WP-64)', () => {
     const answer = items(r).find((i) => i.kind === 'assistant_text' && i.id.includes('msg_syn_rc_2'));
     expect(answer).toBeDefined();
     expect(remote?.order ?? Infinity).toBeLessThan(answer?.order ?? -1);
-    expect(r.normalizer.ignoredCounts).toMatchObject({
-      'user/replay': 1,
-      'system/task_summary': 2,
-      'system/post_turn_summary': 1,
-    });
+    expect(r.normalizer.ignoredCounts).toMatchObject({ 'user/replay': 1 });
+    // WP-65: live sentences and the summary of the latest turn are signals now.
+    expect(signals(r, 'task_summary')).toEqual([
+      { type: 'task_summary', detail: 'Replying to the phone test' },
+      { type: 'task_summary', detail: null },
+    ]);
+    expect(signals(r, 'turn_summary')).toEqual([
+      { type: 'turn_summary', category: 'completed', detail: "replied 'OK (nach Neustart)' as requested", needsAction: null },
+    ]);
     expect(items(r).some((i) => i.kind === 'system' && i.event === 'unknown')).toBe(false);
   });
 

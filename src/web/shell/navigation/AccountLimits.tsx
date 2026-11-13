@@ -4,12 +4,28 @@ import { windowsPathKey } from '@shared/paths';
 import { useFormat, useT } from '@web/i18n';
 import { isKnownLimitWindow, limitBars, limitDeadlines, type LimitBar } from '@web/lib/account-limits';
 import { cn } from '@web/lib/cn';
-import { useNowUntil } from '@web/state/clock';
+import { useNow, useNowUntil } from '@web/state/clock';
 import { useHostState } from '@web/state/hooks';
 import { Gauge } from '@web/ui/gauge';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
 import { PROFILE_BG } from './profile-colors';
 
 const DAY_MS = 24 * 3_600_000;
+
+/** WP-65 §1.4: tooltip of a bar – used share and the reset as relative time (mounted while open). */
+function ResetIn({ bar, resetsAt }: { bar: LimitBar; resetsAt: string }) {
+  const t = useT();
+  const format = useFormat();
+  const now = useNow(30_000);
+  return (
+    <span data-slot="limit-resets-in" className="tabular-nums">
+      {t('navigation.limits.resetsIn', {
+        percent: format.percent(Math.round(bar.percent)),
+        when: format.relative(resetsAt, now),
+      })}
+    </span>
+  );
+}
 
 function LimitRow({ bar, now }: { bar: LimitBar; now: number }) {
   const t = useT();
@@ -25,7 +41,7 @@ function LimitRow({ bar, now }: { bar: LimitBar; now: number }) {
       : Date.parse(bar.resetsAt) - now < DAY_MS
         ? t('navigation.limits.resetsAt', { time: format.time(bar.resetsAt) })
         : t('navigation.limits.resetsOn', { date: format.dateTime(bar.resetsAt) });
-  return (
+  const row = (
     <div data-limit={bar.window} className="grid gap-0.5">
       <div className="text-muted-foreground flex min-w-0 items-baseline justify-between gap-2 text-2xs">
         <span className="truncate">{label}</span>
@@ -33,6 +49,15 @@ function LimitRow({ bar, now }: { bar: LimitBar; now: number }) {
       </div>
       <Gauge value={bar.percent} label={label} className="w-full" barClassName="w-auto flex-1" />
     </div>
+  );
+  if (bar.resetsAt === null) return row;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{row}</TooltipTrigger>
+      <TooltipContent side="right">
+        <ResetIn bar={bar} resetsAt={bar.resetsAt} />
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

@@ -46,14 +46,21 @@ zu `pnpm check`/`build`/`e2e` (ADR-154). Dauer ≈ 1,5–3 min, Kosten ≈ 0,01 
    (ADR-011). WP-64 (`cli-check/remoteControl.ts`): danach `enableRemoteControl(true, 'Parallax cli-check')`,
    Antwort gegen `remoteControlAnswerSchema` (claude.ai-`session_url`), `bridge_state connected` in
    15 s, dann immer `enableRemoteControl(false)` – Ergebnis `remoteControl: true/false` im Profil, ein
-   Fehlschlag bricht nie ab (er ist der Befund); kein Modell-Turn, keine Kosten.
+   Fehlschlag bricht nie ab (er ist der Befund); kein Modell-Turn, keine Kosten. WP-65
+   (`cli-check/overview.ts`): danach ein `generateSessionTitle(<feste Beschreibung>, { persist: false })`
+   (kleine Haiku-Nebenanfrage, Antwort über `titleOf`), die Nutzungsabfrage
+   `usage_EXPERIMENTAL_…({ skipBehaviors: true })` (Schema: `rate_limits` mit `utilization`/`resets_at`,
+   über `usageLimitsOf`) und nur die Existenz von `backgroundTasks` (nie aufgerufen) – Ergebnis
+   `sessionTitle`/`usageQuery`/`backgroundTasks: true/false` im Profil; Fehlschläge sind Befunde.
+   `system/task_summary`/`post_turn_summary` werden bei laufender Remote Control nur gezählt (Bericht,
+   informativ: die Probe-Runde läuft vor Remote Control, 0 ist normal).
 3. Live-Smoke `e2e/live` mit dem Restbudget (`cli-check/smoke.ts`; JSON-Reporter, eigener
    Playwright-Ausgabeordner `test-results/cli-check/<zeit>-smoke/` – Playwright leert ihn beim Start,
    frühere Berichte bleiben –, `live-run.json` mit Kosten und Temp-Wurzel).
 4. Vergleich mit `src/server/claude/cli-profile.json` (`cli-check/compare.ts`): Werkzeuge
    (Kern-Werkzeuge, `TodoWrite`/`TaskCreate` → ADR-156), Init-Schlüssel, `initializationResult`-Schlüssel,
    Capabilities, Modelle, Kontext-Kategorien, `permissionMode`-Default, deferred Werkzeuge (falls die CLI
-   sie meldet), Remote Control (`true` ↔ `false`, WP-64); Smoke-Fehler, `unknownCounts`, Validierungs-Drops. Nur Notizen: Slash-Commands, Agents,
+   sie meldet), Remote Control (`true` ↔ `false`, WP-64), Titel/Nutzungsabfrage/`backgroundTasks` (WP-65); Smoke-Fehler, `unknownCounts`, Validierungs-Drops. Nur Notizen: Slash-Commands, Agents,
    Skills, Modell-ID, Versionen.
 5. Bericht `test-results/cli-check/<zeit>.md` (Englisch, je Abweichung die betroffene Stelle) plus
    `last-run.json`; Konsolen-Zusammenfassung. Exit 0 = grün, 1 = Abweichungen, 2 = Abbruch/Fehler.

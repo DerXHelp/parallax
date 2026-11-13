@@ -60,6 +60,7 @@ describe('header (WP-35 §8)', () => {
       'Earlier conversations…',
       'Session info…',
       'RenameF2',
+      'Generate title again',
       'Open in new window',
       'Open folder in Explorer',
       'Open in external console',

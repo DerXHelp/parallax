@@ -111,6 +111,11 @@ const commands: Command[] = [
   // WP-64
   { name: 'session.setRemoteControl', entryId, enabled: true },
   { name: 'session.setRemoteControl', entryId, enabled: false },
+  // WP-65
+  { name: 'session.backgroundTasks', entryId, toolUseId: 'toolu_01' },
+  { name: 'session.backgroundTasks', entryId, toolUseId: null },
+  { name: 'session.regenerateTitle', entryId },
+  { name: 'link.open', url: 'https://claude.ai/code/session_01' },
 ];
 
 const clientMessages: ClientMessage[] = [
@@ -514,6 +519,17 @@ describe('command results', () => {
     expect(parseCommandResult('profile.test', { claude: sampleClaudeInstallStatus() })).not.toBeNull();
     expect(parseCommandResult('profile.validate', { issues: [] })).toEqual({ issues: [] });
     expect(parseCommandResult('fs.listDirectory', sampleFsListing())).toEqual(sampleFsListing());
+  });
+
+  it('WP-65: link.open only takes http(s) links; the new commands answer {}', () => {
+    const cmd = (url: string) => ({ type: 'cmd', cmdId: SAMPLE_IDS.cmdId, cmd: { name: 'link.open', url } });
+    expect(parseClientMessage(JSON.stringify(cmd('http://localhost:3000/a?b#c'))).ok).toBe(true);
+    for (const bad of ['javascript:alert(1)', 'file:///C:/x', 'https://', 'https://a b', 'https://user@host/x', 'ftp://x']) {
+      expect(parseClientMessage(JSON.stringify(cmd(bad))).ok).toBe(false);
+    }
+    expect(parseCommandResult('link.open', {})).toEqual({});
+    expect(parseCommandResult('session.backgroundTasks', {})).toEqual({});
+    expect(parseCommandResult('session.regenerateTitle', {})).toEqual({});
   });
 
   it('Phase 3 results (WP-50 §4.6)', () => {

@@ -26,6 +26,9 @@ export function sampleObservation(p: Partial<Observation> = {}): Observation {
     agents: ['Explore', 'general-purpose'],
     skills: ['simplify'],
     remoteControl: true,
+    sessionTitle: true,
+    usageQuery: true,
+    backgroundTasks: true,
     ...p,
   };
 }
@@ -72,6 +75,11 @@ export function sampleRecord(p: Partial<RunRecord> = {}): RunRecord {
       contextDetail: 'full',
       durationMs: 9000,
       remoteControl: { available: true, detail: null, connectedMs: 420, disabled: true },
+      overview: {
+        sessionTitle: { available: true, detail: null, title: 'CLI test prompt check' },
+        usage: { available: true, detail: null, windows: ['five_hour', 'seven_day'] },
+        backgroundTasks: true,
+      },
     },
     smoke: sampleSmoke(),
     cost: { probeUsd: 0.003, smokeUsd: 0.0055, totalUsd: 0.0085, budgetUsd: 0.05 },

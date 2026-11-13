@@ -5,6 +5,7 @@ import type { EffortLevel } from '@shared/common';
 import type { ContextGauge } from '@shared/model';
 import type { SessionViewState } from '@shared/sync';
 import { useT } from '@web/i18n';
+import { sessionLine } from '@web/lib/activity';
 import { cn } from '@web/lib/cn';
 import { effectiveEffort } from '@web/lib/effort';
 import { sessionTitle } from '@web/lib/session-title';
@@ -21,6 +22,7 @@ import { PathTail } from './navigation/PathTail';
 import { showsRemoteInHeader } from './navigation/remote-control';
 import { RemoteControlMenu } from './navigation/RemoteControlMenu';
 import { startRename, useRenameHeader, useRenaming } from './navigation/rename';
+import { SessionLineText, useSessionLineText } from './navigation/session-line';
 import { SessionMenu } from './navigation/SessionMenu';
 
 /**
@@ -113,7 +115,8 @@ function HeaderCliVersion({ version, required }: { version: string; required: st
  * Phase 2 (WP-35): the title is edited inline (double click, F2, `/rename`); the "…" session menu
  * sits next to the status line. Phase 3 (WP-58): the side panel buttons "Plan", "Files", "Tasks"
  * sit before the "…" – in a narrow bar they move into that menu (`data-compact`). WP-64: the
- * Remote Control icon with its own menu while the bridge is live or wanted.
+ * Remote Control icon with its own menu while the bridge is live or wanted. WP-65: the session line
+ * (live sentence / turn summary) after the badges – not in a compact bar or a narrow window.
  */
 export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessionKey: string }) {
   const t = useT();
@@ -125,6 +128,9 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
   const [compact, barRef] = useCompactHeader();
   // The header sits in a pane that holds the subscription; this only reads the reported effort.
   const initEffort = useSessionSelector(sessionKey, selectInitEffort, null);
+  // WP-65 §1.1: the sidebar's session line, after the badges while the bar is wide enough.
+  const line = summary === null || status === null ? null : sessionLine(summary, status.kind);
+  const lineText = useSessionLineText(line);
   if (summary === null) return null;
   const model = summary.model ?? summary.modelSetting;
   const effort = effectiveEffort({
@@ -188,6 +194,12 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
             {t('shell.badges.expiredDecisions', { count: status.badges.expiredDecisions })}
           </Badge>
         ) : null}
+        {compact || line === null ? null : (
+          // Gives way before the title (shrink 12); the whole text in the native tooltip.
+          <span data-slot="header-line" title={lineText ?? undefined} className="hidden min-w-0 shrink-[12] text-xs lg:flex">
+            <SessionLineText line={line} />
+          </span>
+        )}
         <span className="flex-1" />
         {/* Only path and model shrink (with an ellipsis); every other fact keeps its width. */}
         <dl

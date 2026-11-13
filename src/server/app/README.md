@@ -51,3 +51,7 @@ ein Fehler dort wird nur (höchstens einmal je Minute, mit Zähler) geloggt und 
 Verifier), sonst `createSystemLauncher()`. Die echten Fake-Dateien (`fake:files`, `fake:plan`,
 `fake:background`) liegen unter `<home>\fake-files` (`FakeBackendOptions.filesRoot`), damit Temp-Homes
 von Tests und E2E sie mit aufräumen.
+
+**WP-65:** `hostCommands` bekommt `createLinkCommands(…)` (`link.open`) – mit dem FakeBackend den
+aufzeichnenden Öffner (`createRecordingLinkOpener`, startet nichts; Dev und E2E), sonst den Standardbrowser
+(`createSystemLinkOpener`, Registry + `spawnGui`).

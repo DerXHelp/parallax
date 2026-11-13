@@ -16,6 +16,19 @@ export const en = {
     loadingEarlier: 'Loading earlier messages…',
     jumpToLatest: 'Jump to latest',
   },
+  /** WP-65 §1.2: the card at the top of the transcript. */
+  since: {
+    title: 'Since you were last here',
+    turns: { one: '{count} turn', other: '{count} turns' },
+    answered: { one: '{count} decision answered', other: '{count} decisions answered' },
+    open: { one: '{count} decision open', other: '{count} decisions open' },
+    cost: 'Cost {cost}',
+    files: { one: 'Changed file:', other: '{count} changed files:' },
+    more: 'and {count} more',
+    summary: 'Last summary:',
+    jump: 'To the first new message',
+    close: 'Close the summary',
+  },
   user: {
     label: 'You',
     queued: 'Queued – sent after the current step',
@@ -115,6 +128,10 @@ export const en = {
     noOutput: 'No output',
     preparing: 'Claude is writing the tool input…',
     mcp: '{tool} · MCP {server}',
+    /** WP-65 §1.5: running Bash call / subagent → background task. */
+    background: 'Move to background',
+    backgroundLabel: 'Move “{title}” to the background',
+    backgroundHint: 'Keeps running as a background task while Claude continues (Ctrl+B: everything that runs)',
     goToDecision: 'Go to decision',
     waitingForDecision: 'Waiting for your decision in the decision bar.',
     decisionExpired: 'Expired – continue in the decision bar.',

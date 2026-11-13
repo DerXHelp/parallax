@@ -122,3 +122,20 @@ Außerdem: `EngineStores.attachments?` (`entryState.ts`, fehlt → `null`), `att
 Broker `check`/`latestPlanVersion`/`latestPlanFilePath`/`planRecords`/`loadLastPlan` und Ergebnis
 `fresh-context`, `deliverPrompt` setzt ein abgelehntes `/rename X` zurück (CR2). Harness-Option
 `attachments: false` (Engine ohne Anhang-Store). Integrationstest: `phase3.integration.test.ts`.
+
+## Übersicht (WP-65)
+
+| Datei | Exporte | Inhalt |
+| --- | --- | --- |
+| `overview.ts` | `ActivityTracker`, `activityTarget`, `fallbackSummary`, `autoTitleDescription`, `regenerateTitleDescription`, `mergeUsage` | rein: Live-Aktivität (CLI-Satz aus `task_summary` > neuestes laufendes Haupt-Tool mit Ziel > „thinking“), Rückfall-Fazit (erste Zeile der Antwort ohne Markdown, ≤ 200 Zeichen), Beschreibungen für `generateSessionTitle`, Nutzungsabfrage in die Limits des Profils mischen (ADR-114: Fenster ersetzen, `cleared` entfernen, Status/Typ des letzten `rate_limit` bleiben) |
+| `titles.ts` | `autoTitle`, `regenerateTitle` | Auto-Titel nach dem ersten echten Turn je Unterhaltung (`persist: true`, nur bei Titelquelle `none`/`prompt`; ein eigener Titel gewinnt, auch während der Abfrage), sonst wie bisher die AI-Titel-Abfrage; „Titel neu erzeugen“ (`persist: false`, Quelle `ai`, `/rename` an die CLI – das Echo behält `ai`). Fehlt die Methode, einmal je Eintrag eine Warnung |
+| `usagePoll.ts` | `createUsagePoller`, `usageSources` | Nutzungsabfrage: solange ein Prozess läuft alle `usagePollMs` (5 min), die erste `usageFirstMs` (10 s) nach einem Spawn; je Profil eine laufende Abo-Session (`apiKeySource 'none'`), nie zwei Runden gleichzeitig, Fehler leise |
+
+- **Summary-Felder:** `activity` (nur mit laufendem Turn, gedrosselt auf `activityMinMs` 2 s – der erste
+  Wert und `null` sofort), `turnSummary` (CLI-`post_turn_summary` des letzten Turns, sonst Rückfall aus dem
+  Ergebnis; persistiert), `lastSeenAt` (Präsenz endet – `onPresenceChanged` –, Prompt bzw. Freigabe aus
+  der Claude-App; nie rückwärts, `markSeen`).
+- **Befehle** (`commands.ts`): `session.backgroundTasks {toolUseId|null}` (Ctrl+B des Terminals,
+  `SESSION_NOT_RUNNING` ohne Prozess, Ablehnung → `CLAUDE_CONTROL_FAILED`), `session.regenerateTitle`
+  (startet einen ruhenden Prozess; nicht für archivierte/externe Einträge).
+- Integrationstest: `overview.integration.test.ts` (Fake: `fake:summary`, `fake:long-bash`, Titel, Nutzung).
