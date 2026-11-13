@@ -173,6 +173,11 @@ export interface LiveNormalizer {
    * old conversation finishing) – they are only logged (R0-05f); `order` restarts at nextOrder.
    */
   startConversation(conversationId: ConversationId, nextOrder: number): void;
+  /**
+   * WP-66: hands the next `order` of the current conversation to an item the ENGINE creates while
+   * this normalizer runs (a side question) – the normalizer never assigns it to one of its own items.
+   */
+  claimOrder(): number;
   readonly unknownCounts: Readonly<Record<string, number>>;
   readonly ignoredCounts: Readonly<Record<string, number>>;
 }

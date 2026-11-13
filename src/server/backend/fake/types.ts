@@ -57,7 +57,36 @@ export interface FakeBackendOptions {
   remoteControl?: FakeRemoteControlOptions;
   /** WP-65: title generator, usage query and background moves of the fake sessions (default: all work). */
   overview?: FakeOverviewOptions;
+  /** WP-66: side questions and withdrawing queued prompts (default: both work). */
+  sideQuestions?: FakeSideQuestionOptions;
 }
+
+/**
+ * WP-66: levers of the fake side questions and of `withdrawQueued` (tests; the interactive levers
+ * are keywords in the question / the queued prompt, fake/sideQuestion.ts). Default 'ok' each.
+ */
+export interface FakeSideQuestionOptions {
+  /**
+   * askSideQuestion: 'unavailable' = method missing, 'busy' = side_question_busy, 'failed' = the
+   * request fails, 'none' = the CLI has no answer (null), 'synthetic', 'fallback' = refusal fallback
+   * (another model answered), 'retry' = one api_retry progress first, 'slow' = answers only after
+   * FAKE_SIDE_SLOW_MS (never at speed 0 – for cancelling).
+   */
+  mode?: FakeSideQuestionMode;
+  /** withdrawQueued: 'taken' = always false, 'unavailable' = method missing (rejects). */
+  withdraw?: 'ok' | 'taken' | 'unavailable';
+}
+
+export type FakeSideQuestionMode =
+  | 'ok'
+  | 'unavailable'
+  | 'busy'
+  | 'failed'
+  | 'none'
+  | 'synthetic'
+  | 'fallback'
+  | 'retry'
+  | 'slow';
 
 /** WP-65: levers of the fake overview methods (tests; default 'ok' each). */
 export interface FakeOverviewOptions {

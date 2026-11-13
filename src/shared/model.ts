@@ -1121,6 +1121,39 @@ export const turnResultItemSchema = z.object({
 });
 export type TurnResultItem = z.infer<typeof turnResultItemSchema>;
 
+export const SIDE_QUESTION_STATUSES = ['pending', 'answered', 'failed', 'cancelled'] as const;
+export const sideQuestionStatusSchema = z.enum(SIDE_QUESTION_STATUSES);
+export type SideQuestionStatus = z.infer<typeof sideQuestionStatusSchema>;
+
+/**
+ * WP-66: a side question (`/btw`, the CLI's internal `askSideQuestion`): asked from the current
+ * conversation state, answered without tools and never part of the conversation (Parallax keeps it
+ * in its own transcript log only). Created by the ENGINE (not the normalizer); follow-ups of a thread
+ * share `threadId` = the item id of the thread's first question.
+ */
+export const sideQuestionItemSchema = z.object({
+  ...itemBase,
+  kind: z.literal('side_question'),
+  threadId: itemIdSchema,
+  question: z.string().min(1).max(LIMITS.sideQuestionChars),
+  status: sideQuestionStatusSchema,
+  /** The answer (Markdown, never capped like assistant text); null while pending, on failure or no answer. */
+  response: z.string().nullable().default(null),
+  /** The CLI had no real answer (e.g. no conversation yet, or a synthetic reply). */
+  synthetic: z.boolean().default(false),
+  /** `refusalFallback.fallbackModel`: another model answered after a refusal. */
+  fallbackModel: z.string().nullable().default(null),
+  /** Retry of the request while pending (`control_request_progress api_retry`); null otherwise. */
+  retry: z
+    .object({ attempt: z.number().int().nonnegative(), maxRetries: z.number().int().nonnegative() })
+    .nullable()
+    .default(null),
+  /** Why it failed (`failed`): SESSION_BUSY, CLAUDE_CONTROL_FAILED, the process ended … */
+  error: errorPayloadSchema.nullable().default(null),
+  answeredAt: isoDateTimeSchema.nullable().default(null),
+});
+export type SideQuestionItem = z.infer<typeof sideQuestionItemSchema>;
+
 /** Discriminator `kind`; system items additionally by `event`. */
 export const transcriptItemSchema = z.discriminatedUnion('kind', [
   userMessageItemSchema,
@@ -1129,6 +1162,7 @@ export const transcriptItemSchema = z.discriminatedUnion('kind', [
   toolCallItemSchema,
   systemItemSchema,
   turnResultItemSchema,
+  sideQuestionItemSchema,
 ]);
 export type TranscriptItem = z.infer<typeof transcriptItemSchema>;
 export type TranscriptItemKind = TranscriptItem['kind'];

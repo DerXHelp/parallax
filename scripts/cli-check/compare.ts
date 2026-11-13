@@ -231,9 +231,28 @@ const OVERVIEW_AREAS: readonly { area: 'sessionTitle' | 'usageQuery' | 'backgrou
   },
 ];
 
-/** WP-65: the overview capabilities of the probe against the profile. */
+/** WP-66: the side-question step (sideQuestion.ts). */
+const SIDE_QUESTION_AREAS: readonly { area: 'sideQuestion' | 'withdrawQueued'; label: string; hint: string }[] = [
+  {
+    area: 'sideQuestion',
+    label: 'side question (Query.askSideQuestion)',
+    hint:
+      'Side questions (`/btw`, „Kurz fragen…“, WP-66) use the internal askSideQuestion: ' +
+      'backend/sdkBackend.ts askSideQuestion, backend/sideQuestion.ts sideAnswerOf, sessions/sideQuestions.ts; ' +
+      'without it every side question ends „Seitenfrage nicht verfügbar“.',
+  },
+  {
+    area: 'withdrawQueued',
+    label: 'Query.cancelAsyncMessage',
+    hint:
+      '„Zurückholen“ of a waiting message (WP-66): backend/sdkBackend.ts withdrawQueued, ' +
+      'sessions/commands.ts session.withdrawQueued; without it the button answers CLAUDE_CONTROL_FAILED.',
+  },
+];
+
+/** WP-65/66: the overview and side-question capabilities of the probe against the profile. */
 export function overviewFindings(profile: CliProfile, observation: Observation): Finding[] {
-  return OVERVIEW_AREAS.flatMap((spec) => {
+  return [...OVERVIEW_AREAS, ...SIDE_QUESTION_AREAS].flatMap((spec) => {
     const finding = availabilityFinding(spec.area, spec.label, spec.hint, profile[spec.area], observation[spec.area]);
     return finding === null ? [] : [finding];
   });

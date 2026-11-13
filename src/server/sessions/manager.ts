@@ -109,6 +109,7 @@ import {
 } from './recovery';
 import { DEFAULT_AUTO_RETRY } from './retry';
 import { closeRuntime } from './runtime';
+import { endSideQuestions } from './sideQuestions';
 import { reduceStatus as realReduceStatus } from './status/machine';
 import { mergeUsage } from './overview';
 import { cwdLabel } from './summary';
@@ -559,10 +560,13 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         planSleep(s, presence());
         return;
       }
+      // WP-66: an open side question keeps the process awake; its end re-plans (considerSleep) –
+      // `sleepSince` stays, so the process then sleeps at once.
+      if (s.sideQuestions.size > 0) return;
       s.lifecycle
         .run(async () => {
           // Re-checked inside the lock (a prompt may have started a turn meanwhile).
-          if (sleepEligible(s, presence())) await closeRuntime(s, core, 'sleep');
+          if (sleepEligible(s, presence()) && s.sideQuestions.size === 0) await closeRuntime(s, core, 'sleep');
         })
         .catch((error: unknown) => {
           log.warn({ err: error, entryId: s.id }, 'idle sleep failed');
@@ -948,6 +952,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           s.cancelTimers();
           // Never cancel at shutdown: open records stay open → `expired` after the restart (A.10).
           s.broker.freeze();
+          // WP-66: a side question cannot survive its process – it ends `failed` (logged before the flush).
+          endSideQuestions(core, s, null, 'shutdown');
         }
         /** True when `work` settled within `ms` on the engine clock (timers seam), false on timeout. */
         const within = (work: Promise<unknown>, ms: number): Promise<boolean> =>

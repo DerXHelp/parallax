@@ -133,6 +133,39 @@ export interface UsageLimits {
   cleared: string[];
 }
 
+/** WP-66: one answered question of a side-question thread (`history`, oldest first). */
+export interface SideQuestionTurn {
+  question: string;
+  response: string;
+}
+
+/** WP-66: the answer of `query.askSideQuestion` (checked); `fallbackModel` = `refusalFallback.fallbackModel`. */
+export interface SideQuestionAnswer {
+  response: string;
+  synthetic: boolean;
+  fallbackModel: string | null;
+}
+
+/**
+ * WP-66: result of a side question; never rejects. `answer: null` = the CLI could not answer (no
+ * conversation state yet). Failures: `unavailable` (method missing in SDK/CLI, unknown answer shape),
+ * `busy` (`side_question_busy`: the CLI already runs as many side questions/title requests as it
+ * may), `cancelled` (the signal aborted), `failed` (anything else, also a closed session).
+ */
+export type SideQuestionResult =
+  | { ok: true; answer: SideQuestionAnswer | null }
+  | { ok: false; reason: 'unavailable' | 'busy' | 'cancelled' | 'failed' };
+
+export interface SideQuestionOptions {
+  history: readonly SideQuestionTurn[];
+  signal: AbortSignal;
+  /**
+   * `system/control_request_progress api_retry` while this is the only open side question of the
+   * process (the CLI's request_id is unknown to the caller, so nothing is attributed otherwise).
+   */
+  onRetry?: (retry: { attempt: number; maxRetries: number }) => void;
+}
+
 export interface AgentSession {
   readonly entryId: string;
   readonly pid: number | null;
@@ -172,6 +205,18 @@ export interface AgentSession {
    * when unavailable (method missing, failed, unknown shape, no plan limits – API key). Never rejects.
    */
   readUsage(): Promise<UsageLimits | null>;
+  /**
+   * WP-66: side question (`query.askSideQuestion`, internal, checked at runtime) – forks the current
+   * conversation state (also mid-turn), no tools, nothing written to the conversation. Never rejects.
+   */
+  askSideQuestion(question: string, opts: SideQuestionOptions): Promise<SideQuestionResult>;
+  /**
+   * WP-66: `query.cancelAsyncMessage(uuid)` (internal, checked at runtime): true = removed from the
+   * CLI's queue (a `command_lifecycle cancelled` follows); false = not in the queue (already taken
+   * over, or held before it – the CLI then marks it cancelled). Rejects when the request failed or
+   * the method is missing.
+   */
+  withdrawQueued(messageUuid: string): Promise<boolean>;
   /** close(), wait ≤ 5 s for exit, then taskkill /T /F (C.8). Resolves after 'exit'. */
   close(): Promise<void>;
 }

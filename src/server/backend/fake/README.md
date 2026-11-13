@@ -18,6 +18,7 @@ Design: `docs/wp/WP-13.md` §3.3, Ergebnis und Stolpersteine: `docs/wp/WP-13a.md
 | `phase3.ts` | `fake:background` (sendet Tätigkeiten „Running …“), `fake:todo`, `fake:files`, `fake:writes-lost`, `fake:context-high` (V4-05), Antworten auf Anhänge/Pastes |
 | `feedback.ts` | WP-63: `fake:steps` (6 Bash-Schritte mit Thinking, einer schlägt fehl, ein Satz an den Nutzer, 3 weitere Schritte, Antwort – zwei Gruppen im kompakten Transkript), `fake:images` (4× `Read` mit je einem PNG – Galerie), `fake:limit-warning` (`allowed_warning` für das Wochenfenster mit `unifiedWindows` – nur die Limit-Leiste, kein Transkript-Hinweis) |
 | `overview.ts` | WP-65: `FakeUsage` (Planfenster des Fake-Kontos, Standard 5 h 8 %, Woche 23 %; jedes gespielte `rate_limit_event` aktualisiert sie; `readUsage` antwortet in der Rohform des SDK), `fakeTitle` (wie die CLI: mit `persist` gewinnt ein vorhandener Titel, sonst `Fake: <erste Wörter>`; ohne `persist` `Fake (new): …`), `fake:long-bash`, `fake:summary` (Hebel `FakeBackendOptions.overview`: `titles`/`usage`/`backgroundTasks`) |
+| `sideQuestion.ts` | WP-66: `fakeSideMode`, `fakeSideAnswer` („Fake side answer (follow-up n): “Frage” – Claude is idle / working on a turn.“), `controlProgressMessage` (wie die CLI ein `started` je Seitenfrage, bei `retry` ein `api_retry`); Hebel `FakeBackendOptions.sideQuestions` (`mode`, `withdraw`) und Schlüsselwörter (siehe unten) |
 | `remote.ts` | WP-64 Remote Control: `fakeBridgeInfo` (`cse_fake<id>` ↔ `https://claude.ai/code/session_fake<id>`), `fakeEnableFailure`, `bridgeStateMessage`, `remotePromptTurn` (Turn eines Prompts aus der Claude-App: `command_lifecycle` mit fremder uuid, `init`, `user`-Replay mit `origin:{kind:'human'}`, Antwort); Hebel `fake:remote-prompt [text]`, `fake:remote-permission`, `fake:remote-fail`, `fake:remote-flaky` (siehe unten) |
 | `files.ts` | `FakeFiles` (echte Dateien nur unter `<filesRoot>\<sessionId>\`, Pfade über `@shared/paths` geprüft), `defaultFakeFilesRoot()` = `%TEMP%\parallax-fake-files`, `patchHunks` |
 | `defaults.ts` | Fake-Antworten: `getContextUsage` (Kategorien mit `id`; fester Füllstand bei `fake:context-high`), `supportedModels` (`FAKE_MODELS` = CLI 2.1.322, 14 Einträge), `supportedCommands` (inkl. Terminal-Befehle); `FAKE_CLAUDE_VERSION` = die CLI-Version, die das SDK erwartet (V4-05; Test gegen `claudeCodeVersion` des SDK), auch in `init.claude_code_version`; `FAKE_CONTEXT_HIGH_TOKENS` |
@@ -66,6 +67,24 @@ Regeln: synthetische Szenarien nur als `.ts` (R0-06, nie `.jsonl`); jedes Event 
 `fixtureEventSchema` und den echten Normalizer (`synthetic.test.ts`, `dsl.test.ts`). Nullverzögerungen
 nutzen das beim Import gesicherte echte `setImmediate` – Fake-Timer der Tests halten das Abspielen
 nicht an.
+
+## Seitenfragen und Zurückholen (WP-66)
+
+Die Seitenfrage (`askSideQuestion`) antwortet nach `FAKE_SIDE_ANSWER_MS` (600 ms × `speed`) mit einem
+`control_request_progress started` davor; Schlüsselwörter in der Frage gewinnen über
+`FakeBackendOptions.sideQuestions.mode`. Im Events-Modus (Fixtures) immer `unavailable`.
+
+| Eingabe | Ablauf |
+|---|---|
+| `fake:busy` | `side_question_busy` → Item `failed` mit `SESSION_BUSY` |
+| `fake:unavailable` | Methode fehlt → `CLAUDE_CONTROL_FAILED` |
+| `fake:fail` | Anfrage scheitert → `CLAUDE_CONTROL_FAILED` |
+| `fake:none` | CLI hat keine Antwort (`null`) → wie synthetisch ohne Text |
+| `fake:synthetic` | synthetische Antwort („No response available …“) |
+| `fake:fallback` | Antwort eines anderen Modells (`refusalFallback`, `FAKE_FALLBACK_MODEL`) |
+| `fake:retry` | nach `FAKE_SIDE_RETRY_MS` ein `api_retry` (1/10), dann die Antwort |
+| `fake:slow` | antwortet erst nach `FAKE_SIDE_SLOW_MS` (30 s × `speed`, bei `speed` 0 nie) – zum Abbrechen |
+| `fake:taken` (in einer wartenden Nachricht) | `withdrawQueued` antwortet `false` („schon übernommen“); sonst verlässt eine noch nicht übernommene Nachricht den Puffer (`command_lifecycle cancelled`, `true`) |
 
 ## Übersicht (WP-65)
 

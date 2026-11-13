@@ -7,6 +7,7 @@ import {
   FolderOpenIcon,
   LinkIcon,
   FolderPlusIcon,
+  MessageCircleQuestionIcon,
   HistoryIcon,
   InfoIcon,
   ListXIcon,
@@ -39,6 +40,7 @@ import { requestShell } from '../requests';
 import { shortcutKeyLabels } from '../shortcuts';
 import { sessionFocusTarget } from './focus';
 import { isHandoffPending, openExternalConsole } from './handoff';
+import { openQuickAsk } from './quick-ask';
 import { copyRemoteLink, remoteLinkOf } from './remote-control';
 import { requestRemoveSession } from './remove-session';
 import { startRenameAfterMenu, takePendingRename, type RenamePlace } from './rename';
@@ -67,7 +69,9 @@ export type SessionActionId =
   | 'openRemote'
   | 'copyRemoteLink'
   /** WP-65 §1.3: a new AI title from the conversation (also over an own title – asked for). */
-  | 'regenerateTitle';
+  | 'regenerateTitle'
+  /** WP-66: "Quick question…" – a side question in a popover at the row. */
+  | 'quickAsk';
 
 export type SessionActionSlot = SessionActionId | 'separator';
 
@@ -83,9 +87,11 @@ export interface SessionAction {
 
 /**
  * Sidebar context menu and the "…" menu of a row (order of WP-35 §3; WP-58: + open folder; WP-63:
- * + remove; WP-64: + Remote Control; WP-65: + generate title again).
+ * + remove; WP-64: + Remote Control; WP-65: + generate title again; WP-66: + quick question).
  */
 export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
+  'quickAsk',
+  'separator',
   'rename',
   'regenerateTitle',
   'pin',
@@ -221,6 +227,20 @@ function build(
   const external = summary.external !== null;
   const started = summary.sessionId !== null;
   switch (id) {
+    case 'quickAsk':
+      return {
+        id,
+        label: 'navigation.actions.quickAsk',
+        icon: MessageCircleQuestionIcon,
+        // The server refuses both (SESSION_ARCHIVED / SESSION_EXTERNAL); a dormant session starts.
+        disabled: summary.archived || external,
+        // After the menu closed: the popover then takes the focus and gives it back to the row.
+        run: () => {
+          runAfterMenu(sessionKey, () => {
+            openQuickAsk(sessionKey);
+          });
+        },
+      };
     case 'rename':
       return {
         id,

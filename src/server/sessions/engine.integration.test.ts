@@ -1337,6 +1337,8 @@ describe('start and stop edges', () => {
         generateTitle: () => Promise.resolve({ ok: false as const, reason: 'failed' as const }),
         backgroundTasks: closed,
         readUsage: () => Promise.resolve(null),
+        askSideQuestion: () => Promise.resolve({ ok: false as const, reason: 'failed' as const }),
+        withdrawQueued: closed,
         close: () => Promise.resolve(),
       };
     };

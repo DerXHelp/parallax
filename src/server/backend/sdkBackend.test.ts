@@ -23,7 +23,13 @@ import {
   type SdkQueryHandle,
   type SdkTimeouts,
 } from './sdkBackend';
-import type { AgentSession, BackendEvent, PermissionHandler, StartSessionRequest } from './types';
+import type {
+  AgentSession,
+  BackendEvent,
+  PermissionHandler,
+  SideQuestionOptions,
+  StartSessionRequest,
+} from './types';
 
 // No real SDK and no real process helpers in this file (WP-13 §5.3): a forgotten injection fails loudly.
 const sdkQueryMock = vi.hoisted(() => vi.fn());
@@ -317,6 +323,7 @@ describe('SdkBackend – start, events, close', () => {
       readyMs: 60000,
       iteratorAfterExitMs: 2000,
       titleMs: 60000,
+      sideQuestionMs: 120000,
     });
   });
 
@@ -1150,6 +1157,168 @@ describe('SdkBackend – overview methods (WP-65)', () => {
 
     const { session: old } = withOverview(() => undefined);
     await expect(old.readUsage()).resolves.toBeNull();
+  });
+});
+
+describe('SdkBackend – side questions and withdraw (WP-66)', () => {
+  type Ask = NonNullable<SdkQueryHandle['askSideQuestion']>;
+
+  function withSide(configure: (q: SdkQueryHandle) => void, timeouts?: Partial<SdkTimeouts>) {
+    const h = harness({ configure, ...(timeouts === undefined ? {} : { timeouts }) });
+    const session = h.backend.start(request());
+    record(session);
+    return { h, session };
+  }
+
+  function sideOptions(o: Partial<SideQuestionOptions> = {}): SideQuestionOptions {
+    return { history: [], signal: new AbortController().signal, ...o };
+  }
+
+  /** A request that only ends when its signal aborts (rejects like the SDK). */
+  const hanging: Ask = (_question, opts) =>
+    new Promise((_resolve, reject) => {
+      opts?.signal?.addEventListener('abort', () => {
+        reject(new Error('aborted'));
+      });
+    });
+
+  it('askSideQuestion: answer checked, history only when given; null answer; unknown shape and missing → unavailable', async () => {
+    const ask = vi.fn<Ask>(() =>
+      Promise.resolve({ response: 'It is fine.', synthetic: false, refusalFallback: { fallbackModel: 'sonnet' } }),
+    );
+    const { session } = withSide((q) => {
+      q.askSideQuestion = ask;
+    });
+    await expect(session.askSideQuestion('Why?', sideOptions())).resolves.toEqual({
+      ok: true,
+      answer: { response: 'It is fine.', synthetic: false, fallbackModel: 'sonnet' },
+    });
+    expect(ask.mock.calls[0]?.[1]).not.toHaveProperty('history');
+    expect(ask.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+    const history = [{ question: 'Why?', response: 'It is fine.' }];
+    ask.mockResolvedValueOnce({ response: 'Because.' });
+    await expect(session.askSideQuestion('And?', sideOptions({ history }))).resolves.toEqual({
+      ok: true,
+      answer: { response: 'Because.', synthetic: false, fallbackModel: null },
+    });
+    expect(ask.mock.calls[1]?.[1]?.history).toEqual(history);
+    ask.mockResolvedValueOnce(null);
+    await expect(session.askSideQuestion('x', sideOptions())).resolves.toEqual({ ok: true, answer: null });
+    ask.mockResolvedValueOnce({ text: 'other shape' });
+    await expect(session.askSideQuestion('x', sideOptions())).resolves.toEqual({ ok: false, reason: 'unavailable' });
+
+    const { session: old } = withSide(() => undefined);
+    await expect(old.askSideQuestion('x', sideOptions())).resolves.toEqual({ ok: false, reason: 'unavailable' });
+  });
+
+  it('side_question_busy (errorCode or message) → busy; any other error → failed', async () => {
+    const ask = vi.fn<Ask>(() => Promise.reject(Object.assign(new Error('busy'), { errorCode: 'side_question_busy' })));
+    const { session } = withSide((q) => {
+      q.askSideQuestion = ask;
+    });
+    await expect(session.askSideQuestion('x', sideOptions())).resolves.toEqual({ ok: false, reason: 'busy' });
+    ask.mockRejectedValueOnce(new Error('control error: side_question_busy'));
+    await expect(session.askSideQuestion('x', sideOptions())).resolves.toEqual({ ok: false, reason: 'busy' });
+    ask.mockRejectedValueOnce(new Error('model error'));
+    await expect(session.askSideQuestion('x', sideOptions())).resolves.toEqual({ ok: false, reason: 'failed' });
+  });
+
+  it('the caller aborts → cancelled (the SDK request is aborted too); an aborted signal never asks', async () => {
+    const ask = vi.fn<Ask>(hanging);
+    const { session } = withSide((q) => {
+      q.askSideQuestion = ask;
+    });
+    const controller = new AbortController();
+    const pending = session.askSideQuestion('x', sideOptions({ signal: controller.signal }));
+    await settle();
+    controller.abort();
+    await expect(pending).resolves.toEqual({ ok: false, reason: 'cancelled' });
+    expect(ask.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    await expect(session.askSideQuestion('x', sideOptions({ signal: controller.signal }))).resolves.toEqual({
+      ok: false,
+      reason: 'cancelled',
+    });
+    expect(ask).toHaveBeenCalledTimes(1);
+  });
+
+  it('a hanging request fails after sideQuestionMs and is aborted (control_cancel_request)', async () => {
+    useFakeTimeouts();
+    const ask = vi.fn<Ask>(hanging);
+    const { session } = withSide((q) => {
+      q.askSideQuestion = ask;
+    });
+    const pending = session.askSideQuestion('x', sideOptions());
+    await vi.advanceTimersByTimeAsync(SDK_TIMEOUTS.sideQuestionMs);
+    await expect(pending).resolves.toEqual({ ok: false, reason: 'failed' });
+    expect(ask.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+  });
+
+  it('api_retry progress reaches the only open side question – not while a title request runs or two are open', async () => {
+    const answers: ((value: unknown) => void)[] = [];
+    let titleDone: (value: unknown) => void = () => undefined;
+    const { h, session } = withSide((q) => {
+      q.askSideQuestion = () =>
+        new Promise((resolve) => {
+          answers.push(resolve);
+        });
+      q.generateSessionTitle = () =>
+        new Promise((resolve) => {
+          titleDone = resolve;
+        });
+    });
+    const retry = (attempt: number) => ({
+      type: 'system',
+      subtype: 'control_request_progress',
+      request_id: 'r1',
+      status: 'api_retry',
+      attempt,
+      max_retries: 10,
+    });
+    const onRetry = vi.fn();
+    const first = session.askSideQuestion('x', sideOptions({ onRetry }));
+    await settle();
+    h.fq().push({ type: 'system', subtype: 'control_request_progress', request_id: 'r1', status: 'started' });
+    h.fq().push(retry(1));
+    await settle();
+    expect(onRetry.mock.calls).toEqual([[{ attempt: 1, maxRetries: 10 }]]);
+
+    const title = session.generateTitle('x', { persist: false });
+    await settle();
+    h.fq().push(retry(2));
+    await settle();
+    titleDone('A title');
+    await title;
+
+    const onRetry2 = vi.fn();
+    const second = session.askSideQuestion('y', sideOptions({ onRetry: onRetry2 }));
+    await settle();
+    h.fq().push(retry(3));
+    await settle();
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onRetry2).not.toHaveBeenCalled();
+    for (const answer of answers) answer({ response: 'ok' });
+    await expect(first).resolves.toMatchObject({ ok: true });
+    await expect(second).resolves.toMatchObject({ ok: true });
+  });
+
+  it('withdrawQueued: the cancelled flag of the CLI; a missing method and a failure reject', async () => {
+    const cancel = vi.fn<NonNullable<SdkQueryHandle['cancelAsyncMessage']>>(() => Promise.resolve(true));
+    const { session } = withSide((q) => {
+      q.cancelAsyncMessage = cancel;
+    });
+    await expect(session.withdrawQueued(sampleUuid(1))).resolves.toBe(true);
+    expect(cancel).toHaveBeenCalledWith(sampleUuid(1));
+    cancel.mockResolvedValueOnce(false);
+    await expect(session.withdrawQueued(sampleUuid(1))).resolves.toBe(false);
+    cancel.mockResolvedValueOnce({ cancelled: true });
+    await expect(session.withdrawQueued(sampleUuid(1))).resolves.toBe(true);
+    cancel.mockResolvedValueOnce('yes');
+    await expect(session.withdrawQueued(sampleUuid(1))).resolves.toBe(false);
+    cancel.mockRejectedValueOnce(new Error('nope'));
+    await expect(session.withdrawQueued(sampleUuid(1))).rejects.toThrow('nope');
+
+    const { session: old } = withSide(() => undefined);
+    await expect(old.withdrawQueued(sampleUuid(1))).rejects.toThrow(/cancelAsyncMessage/);
   });
 });
 

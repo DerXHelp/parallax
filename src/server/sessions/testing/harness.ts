@@ -160,6 +160,8 @@ export interface EngineHarnessOptions {
   remoteControl?: FakeBackendOptions['remoteControl'];
   /** WP-65: `FakeBackendOptions.overview` (title generator, usage query, background moves). */
   overview?: FakeBackendOptions['overview'];
+  /** WP-66: `FakeBackendOptions.sideQuestions` (side questions, withdrawing queued prompts). */
+  sideQuestions?: FakeBackendOptions['sideQuestions'];
 }
 
 /** A not yet existing folder for the fake files of one harness (below the test home). */
@@ -280,6 +282,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     ...(options.fakeTiming?.sleep === undefined ? {} : { sleep: options.fakeTiming.sleep }),
     ...(options.remoteControl === undefined ? {} : { remoteControl: options.remoteControl }),
     ...(options.overview === undefined ? {} : { overview: options.overview }),
+    ...(options.sideQuestions === undefined ? {} : { sideQuestions: options.sideQuestions }),
     now,
     filesRoot,
   });

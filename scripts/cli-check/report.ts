@@ -11,6 +11,7 @@ import { compareObservation, compareSmoke, deviations, type Finding } from './co
 import { observationSchema } from './observation';
 import { bridgeSummaryCounts, overviewProbeResultSchema } from './overview';
 import { remoteControlProbeResultSchema } from './remoteControl';
+import { sideQuestionProbeResultSchema } from './sideQuestion';
 import { smokeResultSchema } from './smoke';
 import type { CliProfile } from '../../src/server/claude/cliProfile';
 
@@ -55,6 +56,8 @@ export const runRecordSchema = z.object({
       remoteControl: remoteControlProbeResultSchema.nullable().default(null),
       /** WP-65 (absent in runs before WP-65). */
       overview: overviewProbeResultSchema.nullable().default(null),
+      /** WP-66 (absent in runs before WP-66). */
+      sideQuestion: sideQuestionProbeResultSchema.nullable().default(null),
     })
     .nullable(),
   smoke: smokeResultSchema.nullable(),
@@ -195,6 +198,14 @@ export function formatReport(input: {
             : `- session title: NOT ok – ${sessionTitle.detail ?? '?'}`,
           usage.available ? `- usage query: ok (${usage.windows.join(', ')})` : `- usage query: NOT ok – ${usage.detail ?? '?'}`,
           `- backgroundTasks: ${overview.backgroundTasks ? 'present' : 'MISSING'}`,
+        );
+      }
+      const side = record.probe.sideQuestion;
+      if (side !== null) {
+        const ask = side.sideQuestion;
+        lines.push(
+          ask.available ? `- side question: ok ("${ask.response ?? ''}")` : `- side question: NOT ok – ${ask.detail ?? '?'}`,
+          `- cancelAsyncMessage: ${side.withdrawQueued ? 'present' : 'MISSING'}`,
         );
       }
     }
