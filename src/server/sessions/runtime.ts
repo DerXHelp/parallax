@@ -29,6 +29,7 @@ import { toModelCatalog } from './models';
 import type { LiveNormalizer, StatusSignal } from './ports';
 import { bridgeOf, onBridgeState, remoteControlAfterReady, remoteProcessEnded } from './remoteControl';
 import { afterSuccessfulTurn, decideRetry } from './retry';
+import { endSideQuestions } from './sideQuestions';
 import { autoTitle } from './titles';
 import {
   endReasonFor,
@@ -470,6 +471,8 @@ export class SessionRuntime {
       const finalized = this.normalizer.finalizeOpen('process_exit');
       s.emit(finalized.ops);
       for (const signal of finalized.signals) this.onSignal(signal);
+      // WP-66: open side questions end with the process (never left pending).
+      endSideQuestions(this.core, s, this, 'exited');
       this.alive = false;
 
       const undelivered = s.queue.drain();

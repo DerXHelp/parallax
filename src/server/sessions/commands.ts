@@ -44,6 +44,7 @@ import { approveFreshContext } from './freshContext';
 import { catalogOrFallback, toModelCatalog } from './models';
 import { endRemoteBeforeClose, setRemoteControl } from './remoteControl';
 import { closeRuntime, deliverPrompt, startRuntime } from './runtime';
+import { askSideQuestion, cancelSideQuestion, deleteSideQuestionThread } from './sideQuestions';
 import { capTitle, implementPlanPrompt, newConversation, titleFromPrompt } from './summary';
 import { regenerateTitle } from './titles';
 
@@ -371,7 +372,50 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
     // WP-64: Remote Control (the wish; a running process is switched at once).
     case 'session.setRemoteControl':
       return setRemoteControl(core, s, cmd.enabled);
+    // WP-66: side questions (sideQuestions.ts) and taking a queued prompt back.
+    case 'session.askSideQuestion': {
+      const itemId = await s.lifecycle.run(async () => {
+        assertEntryGate(s, cmd.name);
+        // Like a prompt: a dormant session is started (no turn) – the CLI answers from its state.
+        if (s.runtime === null) await startRuntime(s, core, { byClientId: clientId });
+        return askSideQuestion(core, s, cmd.question, cmd.threadId);
+      });
+      return { itemId } satisfies CommandResult<'session.askSideQuestion'>;
+    }
+    case 'session.cancelSideQuestion':
+      cancelSideQuestion(core, s, cmd.itemId);
+      return {} satisfies CommandResult<'session.cancelSideQuestion'>;
+    case 'session.deleteSideQuestion':
+      await deleteSideQuestionThread(core, s, cmd.threadId);
+      return {} satisfies CommandResult<'session.deleteSideQuestion'>;
+    case 'session.withdrawQueued':
+      return withdrawQueued(core, s, cmd.messageUuid);
   }
+}
+
+/**
+ * WP-66 `session.withdrawQueued` (`cancelAsyncMessage`): a prompt the CLI still holds in its queue
+ * leaves it (true; the `command_lifecycle cancelled` that follows changes nothing more). A prompt
+ * still `sending` (not acknowledged by the CLI) leaves the queue in any case – the CLI marks one it
+ * holds before its queue as cancelled. `false` for a `queued` one = already taken over (also folded
+ * into the running turn, sdk-findings Nr. 9): nothing changes. Unknown uuid → not withdrawn.
+ */
+async function withdrawQueued(
+  core: EngineCore,
+  s: EntryState,
+  messageUuid: string,
+): Promise<CommandResult<'session.withdrawQueued'>> {
+  const entry = s.queue.list().find((p) => p.messageUuid === messageUuid);
+  if (entry === undefined) return { withdrawn: false, text: null };
+  const runtime = running(s);
+  if (runtime === null) throw commandError('SESSION_NOT_RUNNING', { entryId: s.id });
+  const cancelled = await controlCall('cancelAsyncMessage', () => runtime.agent.withdrawQueued(messageUuid), core, s.id);
+  const current = s.queue.list().find((p) => p.messageUuid === messageUuid);
+  // Taken over meanwhile (started/completed removed it) or reported as taken over.
+  if (!cancelled && current?.state !== 'sending') return { withdrawn: false, text: null };
+  if (s.queue.remove(messageUuid)) s.publishQueue();
+  core.log.info({ entryId: s.id, messageUuid, cancelled }, 'queued prompt withdrawn');
+  return { withdrawn: true, text: entry.text.text };
 }
 
 /**
@@ -697,6 +741,8 @@ async function switchConversation(
     ];
     // The tail is already in the target's log.
     s.emit(ops, { log: false });
+    // WP-66: a side question left pending in that log (server crash) ends `failed`.
+    s.repairStaleSideQuestions(tail.items);
   });
   return {};
 }

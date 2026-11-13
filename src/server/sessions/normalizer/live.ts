@@ -372,6 +372,10 @@ class LiveNormalizerImpl implements LiveNormalizer {
     }
   }
 
+  claimOrder(): number {
+    return this.nextOrder++;
+  }
+
   // ---- Output plumbing ----
 
   private begin(): Out {

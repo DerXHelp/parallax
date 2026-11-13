@@ -24,6 +24,8 @@ import type {
   RemoteControlInfo,
   RemoteControlRequest,
   RemoteControlResult,
+  SideQuestionOptions,
+  SideQuestionResult,
   StartSessionRequest,
   TitleResult,
   UsageLimits,
@@ -43,6 +45,15 @@ import { dslContext, textTurn } from './dsl';
 import { FakeFiles } from './files';
 import type { FakeHistoryStore } from './history';
 import { fakeTitle, type FakeUsage } from './overview';
+import {
+  FAKE_SIDE_ANSWER_MS,
+  FAKE_SIDE_RETRY_MS,
+  FAKE_SIDE_SLOW_MS,
+  FAKE_TAKEN_KEYWORD,
+  controlProgressMessage,
+  fakeSideAnswer,
+  fakeSideMode,
+} from './sideQuestion';
 import { EventPlayer } from './player';
 import {
   FAKE_REMOTE_CONNECT_MS,
@@ -62,6 +73,7 @@ import type {
   FakeRemoteControlOptions,
   FakeRemotePromptOptions,
   FakeScenario,
+  FakeSideQuestionOptions,
   FakeScriptContext,
   FakeScriptState,
   FakeSessionHandle,
@@ -98,6 +110,8 @@ export interface FakeSessionDeps {
   overview: FakeOverviewOptions;
   /** WP-65: the fake account's plan usage (one per backend). */
   usage: FakeUsage;
+  /** WP-66: FakeBackendOptions.sideQuestions. */
+  sideQuestions: FakeSideQuestionOptions;
   onStateChange(): void;
 }
 
@@ -168,6 +182,8 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
   private bridge: RemoteControlInfo | null = null;
   /** WP-65: foreground tool uses of the running turn that backgroundTasks() can move. */
   private readonly foreground = new Map<string, () => void>();
+  /** WP-66: request ids of the fake side questions (control_request_progress). */
+  private sideRequests = 0;
 
   constructor(private readonly deps: FakeSessionDeps) {
     this.entryId = deps.req.entryId;
@@ -380,6 +396,105 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
       return await Promise.resolve(usageLimitsOf(this.deps.usage.answer()));
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * WP-66: the fake side question (fake/sideQuestion.ts): one `control_request_progress started`,
+   * the answer after FAKE_SIDE_ANSWER_MS × speed (busy work – settle() waits for it); levers from the
+   * options or keywords in the question. Events mode: unavailable (no recorded answer). Never rejects.
+   */
+  async askSideQuestion(question: string, opts: SideQuestionOptions): Promise<SideQuestionResult> {
+    this.calls.push({
+      fn: 'askSideQuestion',
+      args: [question, { history: opts.history.map((turn) => ({ ...turn })) }],
+    });
+    const mode = fakeSideMode(question, this.deps.sideQuestions.mode);
+    if (this.deps.scenario.kind === 'events' || mode === 'unavailable') return { ok: false, reason: 'unavailable' };
+    if (this.exited || this.closeRequested || mode === 'failed') return { ok: false, reason: 'failed' };
+    if (mode === 'busy') return { ok: false, reason: 'busy' };
+    if (opts.signal.aborted) return { ok: false, reason: 'cancelled' };
+    const turnRunning = this.script?.busy() ?? false;
+    const requestId = `fakesq${String(++this.sideRequests)}`;
+    try {
+      this.emitProgress({ requestId, status: 'started' });
+      if (mode === 'retry') {
+        await this.sideWait(FAKE_SIDE_RETRY_MS, opts.signal, false);
+        const retry = { attempt: 1, maxRetries: 10 };
+        this.emitProgress({ requestId, status: 'api_retry', ...retry });
+        opts.onRetry?.(retry);
+      }
+      await this.sideWait(mode === 'slow' ? FAKE_SIDE_SLOW_MS : FAKE_SIDE_ANSWER_MS, opts.signal, mode === 'slow');
+    } catch {
+      // The wait rejected: our signal (cancelled) or the session ended (failed).
+      const { signal } = opts;
+      return signal.aborted ? { ok: false, reason: 'cancelled' } : { ok: false, reason: 'failed' };
+    }
+    if (mode === 'none') return { ok: true, answer: null };
+    return { ok: true, answer: fakeSideAnswer(question, opts.history, turnRunning, mode) };
+  }
+
+  /**
+   * WP-66: like `cancelAsyncMessage` – a prompt still waiting for its turn (the fake's input buffer)
+   * leaves it (`command_lifecycle cancelled`, true); anything else (or `fake:taken` in its text) false.
+   */
+  async withdrawQueued(messageUuid: string): Promise<boolean> {
+    if (this.deps.scenario.kind === 'events') {
+      const answer = await this.control('cancelAsyncMessage', [messageUuid]);
+      return answer === true;
+    }
+    this.controls.push({ method: 'cancelAsyncMessage', args: [messageUuid] });
+    const mode = this.deps.sideQuestions.withdraw ?? 'ok';
+    if (mode === 'unavailable') throw new Error('cancelAsyncMessage missing');
+    if (this.exited) throw new Error('session closed');
+    const index = this.inputs.findIndex((prompt) => prompt.uuid === messageUuid);
+    const prompt = this.inputs[index];
+    if (prompt === undefined || mode === 'taken' || promptText(prompt).includes(FAKE_TAKEN_KEYWORD)) {
+      return Promise.resolve(false);
+    }
+    this.inputs.splice(index, 1);
+    this.emitMessage({
+      type: 'command_lifecycle',
+      command_uuid: messageUuid,
+      state: 'cancelled',
+      uuid: this.deps.ids.uuid(),
+      session_id: this.currentSessionId ?? '',
+    });
+    return Promise.resolve(true);
+  }
+
+  private emitProgress(o: Parameters<typeof controlProgressMessage>[0]): void {
+    this.emitMessage(
+      controlProgressMessage(o, { uuid: this.deps.ids.uuid(), sessionId: this.currentSessionId ?? '' }),
+    );
+  }
+
+  /**
+   * Waits `ms × speed` (≤ maxDelayMs unless `slow`) as busy work; a `slow` wait rests (settle() does
+   * not wait for it) and never ends at speed 0. Rejects when `signal` aborts or the session stops.
+   */
+  private async sideWait(ms: number, signal: AbortSignal, slow: boolean): Promise<void> {
+    if (signal.aborted) throw new Error('Side question cancelled');
+    const scaled = Math.max(0, ms) * this.deps.speed;
+    const sleeping = slow
+      ? scaled > 0
+        ? this.deps.sleep(scaled)
+        : new Promise<void>(() => {
+            // Speed 0: only a cancel or the session end finishes it.
+          })
+      : this.delay(ms);
+    let onAbort = (): void => undefined;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      onAbort = () => {
+        reject(new Error('Side question cancelled'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+    const waiting = this.race(Promise.race([sleeping, aborted]));
+    try {
+      await (slow ? waiting : this.busyWhile(waiting));
+    } finally {
+      signal.removeEventListener('abort', onAbort);
     }
   }
 
