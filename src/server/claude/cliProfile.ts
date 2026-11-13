@@ -54,6 +54,49 @@ export const cliProfileSchema = z.object({
   agents: list,
   /** `system/init.skills`. */
   skills: list,
+  /**
+   * WP-64: Remote Control worked in the probe (`enableRemoteControl` answer schema + `bridge_state
+   * connected` within 15 s); null = not checked (profile older than WP-64).
+   */
+  remoteControl: z.boolean().nullable().default(null),
+  /**
+   * WP-65: the internal `Query.generateSessionTitle` answered a usable title (auto title, „Titel neu
+   * erzeugen“); null = not checked (profile older than WP-65).
+   */
+  sessionTitle: z.boolean().nullable().default(null),
+  /**
+   * WP-65: the experimental usage query answered a `rate_limits` object with `utilization`/`resets_at`
+   * windows (limit bar without a rate-limit event); null = not checked.
+   */
+  usageQuery: z.boolean().nullable().default(null),
+  /** WP-65: `Query.backgroundTasks` exists („In den Hintergrund“, never called); null = not checked. */
+  backgroundTasks: z.boolean().nullable().default(null),
+  /**
+   * WP-66: the internal `Query.askSideQuestion` answered `{response: string, synthetic: boolean}` with a
+   * model answer and no `canUseTool` call (side questions, `/btw`); null = not checked.
+   */
+  sideQuestion: z.boolean().nullable().default(null),
+  /** WP-66: `Query.cancelAsyncMessage` exists („Zurückholen“, never called); null = not checked. */
+  withdrawQueued: z.boolean().nullable().default(null),
+  /**
+   * WP-67: the "Session info" tabs – per read method: it answered a shape the server's parser reads
+   * (`backend/sessionInfo.ts`); `mcpActions`/`reload`: the action methods exist (never called).
+   * null = not checked (profile older than WP-67).
+   */
+  sessionInfo: z
+    .object({
+      status: z.boolean(),
+      memory: z.boolean(),
+      skills: z.boolean(),
+      hooks: z.boolean(),
+      permissions: z.boolean(),
+      mcp: z.boolean(),
+      export: z.boolean(),
+      mcpActions: z.boolean(),
+      reload: z.boolean(),
+    })
+    .nullable()
+    .default(null),
 });
 export type CliProfile = z.infer<typeof cliProfileSchema>;
 

@@ -153,7 +153,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "msg_syn_bg_1:0",
@@ -247,7 +248,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": "/clear",
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       }
     ],
     "cv_00000000000000000000000000000002": [

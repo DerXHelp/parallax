@@ -23,7 +23,13 @@ import {
   type SdkQueryHandle,
   type SdkTimeouts,
 } from './sdkBackend';
-import type { AgentSession, BackendEvent, PermissionHandler, StartSessionRequest } from './types';
+import type {
+  AgentSession,
+  BackendEvent,
+  PermissionHandler,
+  SideQuestionOptions,
+  StartSessionRequest,
+} from './types';
 
 // No real SDK and no real process helpers in this file (WP-13 §5.3): a forgotten injection fails loudly.
 const sdkQueryMock = vi.hoisted(() => vi.fn());
@@ -93,6 +99,9 @@ class FakeQuery implements SdkQueryHandle {
   supportedModels = vi.fn<SdkQueryHandle['supportedModels']>(() => Promise.resolve([{ value: 'haiku' }]));
   supportedCommands = vi.fn<SdkQueryHandle['supportedCommands']>(() => Promise.resolve([{ name: 'clear' }]));
   stopTask = vi.fn<SdkQueryHandle['stopTask']>(() => Promise.resolve());
+  /** WP-64: internal SDK methods – absent unless a test sets them (runtime check). */
+  enableRemoteControl?: SdkQueryHandle['enableRemoteControl'];
+  getSettings?: SdkQueryHandle['getSettings'];
 
   constructor(
     readonly options: Options,
@@ -313,6 +322,10 @@ describe('SdkBackend – start, events, close', () => {
       contextFullMs: 60000,
       readyMs: 60000,
       iteratorAfterExitMs: 2000,
+      titleMs: 60000,
+      sideQuestionMs: 120000,
+      infoMs: 30000,
+      infoActionMs: 60000,
     });
   });
 
@@ -931,6 +944,493 @@ describe('SdkBackend – control methods', () => {
     await expect(session.setModel('x')).rejects.toThrow('session closed');
     expect(h.fq().setModel).not.toHaveBeenCalled();
     h.fq().cliExit(0);
+  });
+});
+
+describe('SdkBackend – Remote Control (WP-64)', () => {
+  /** Answer of the spike (rc-events.log, 12.11.2026). */
+  const ANSWER = {
+    session_url: 'https://claude.ai/code/session_01QKkfSZajXxCTUVAWr5SbHm',
+    connect_url: 'https://claude.ai/code?environment=',
+    environment_id: '',
+    bridge_epoch: 1,
+    bridge_session_id: 'cse_01QKkfSZajXxCTUVAWr5SbHm',
+  };
+
+  function withRemoteControl(answer: () => Promise<unknown>) {
+    const enable = vi.fn<NonNullable<SdkQueryHandle['enableRemoteControl']>>(answer);
+    const settings = vi.fn<NonNullable<SdkQueryHandle['getSettings']>>(() =>
+      Promise.resolve({ effective: { remoteControlAtStartup: true }, sources: [] }),
+    );
+    const h = harness({
+      configure: (q) => {
+        q.enableRemoteControl = enable;
+        q.getSettings = settings;
+      },
+    });
+    return { h, enable, settings, session: h.backend.start(request()) };
+  }
+
+  it('enables with keepSessionOnExit, name and reattach id and returns the checked answer', async () => {
+    const { enable, session } = withRemoteControl(() => Promise.resolve(ANSWER));
+    await expect(
+      session.setRemoteControl(true, { name: 'Fix login', reattachSessionId: 'cse_01QKkfSZajXxCTUVAWr5SbHm' }),
+    ).resolves.toEqual({
+      ok: true,
+      info: {
+        bridgeSessionId: 'cse_01QKkfSZajXxCTUVAWr5SbHm',
+        sessionUrl: 'https://claude.ai/code/session_01QKkfSZajXxCTUVAWr5SbHm',
+      },
+    });
+    expect(enable).toHaveBeenCalledWith(true, 'Fix login', {
+      keepSessionOnExit: true,
+      reattachSessionId: 'cse_01QKkfSZajXxCTUVAWr5SbHm',
+    });
+  });
+
+  it('without name and reattach id passes neither; disabling answers info null', async () => {
+    const { enable, session } = withRemoteControl(() => Promise.resolve(undefined));
+    await expect(session.setRemoteControl(false, { name: null, reattachSessionId: null })).resolves.toEqual({
+      ok: true,
+      info: null,
+    });
+    expect(enable).toHaveBeenCalledWith(false, undefined, { keepSessionOnExit: true });
+  });
+
+  it('a session url that is not https://claude.ai is dropped, a garbage answer is UNAVAILABLE', async () => {
+    const answers = [
+      { ...ANSWER, session_url: 'http://evil.example/x' },
+      { session_url: ANSWER.session_url },
+    ];
+    const { session } = withRemoteControl(() => Promise.resolve(answers.shift()));
+    await expect(session.setRemoteControl(true, { name: null, reattachSessionId: null })).resolves.toEqual({
+      ok: true,
+      info: { bridgeSessionId: ANSWER.bridge_session_id, sessionUrl: null },
+    });
+    await expect(session.setRemoteControl(true, { name: null, reattachSessionId: null })).resolves.toEqual({
+      ok: false,
+      error: { code: 'REMOTE_CONTROL_UNAVAILABLE', params: { reason: 'answer' } },
+    });
+  });
+
+  it('runtime check: without the SDK methods → REMOTE_CONTROL_UNAVAILABLE and default null, no crash', async () => {
+    const h = harness();
+    const session = h.backend.start(request());
+    await expect(session.setRemoteControl(true, { name: null, reattachSessionId: null })).resolves.toEqual({
+      ok: false,
+      error: { code: 'REMOTE_CONTROL_UNAVAILABLE', params: { reason: 'sdk' } },
+    });
+    await expect(session.readRemoteControlDefault()).resolves.toBeNull();
+  });
+
+  it.each<[string, Error, string, Record<string, unknown>]>([
+    [
+      'auth',
+      Object.assign(new Error('Remote Control requires a claude.ai login'), { errorCode: 'remote_control_auth' }),
+      'REMOTE_CONTROL_AUTH',
+      {},
+    ],
+    [
+      'policy',
+      Object.assign(new Error('disabled by policy'), { errorCode: 'remote_control_policy_disabled' }),
+      'REMOTE_CONTROL_POLICY_DISABLED',
+      {},
+    ],
+    [
+      'other code',
+      Object.assign(new Error('ended'), { errorCode: 'remote_control_ended_elsewhere' }),
+      'REMOTE_CONTROL_FAILED',
+      { reason: 'remote_control_ended_elsewhere', detail: 'ended' },
+    ],
+    [
+      'old CLI',
+      new Error('Unsupported control request subtype: remote_control'),
+      'REMOTE_CONTROL_UNAVAILABLE',
+      { reason: 'cli' },
+    ],
+    ['plain error', new Error('boom'), 'REMOTE_CONTROL_FAILED', { reason: 'control', detail: 'boom' }],
+  ])('control error %s → %s (never rejects)', async (_label, error, code, params) => {
+    const { session } = withRemoteControl(() => Promise.reject(error));
+    const result = await session.setRemoteControl(true, { name: null, reattachSessionId: null });
+    expect(result).toMatchObject({ ok: false, error: { code, params } });
+  });
+
+  it('a hanging enable request fails with reason timeout after controlMs', async () => {
+    useFakeTimeouts();
+    const { session } = withRemoteControl(() => new Promise(() => undefined));
+    const pending = session.setRemoteControl(true, { name: null, reattachSessionId: null });
+    await vi.advanceTimersByTimeAsync(SDK_TIMEOUTS.controlMs);
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'REMOTE_CONTROL_FAILED', params: { reason: 'timeout' } },
+    });
+  });
+
+  it.each<[string, unknown, boolean | null]>([
+    ['true', { effective: { remoteControlAtStartup: true } }, true],
+    ['false', { effective: { remoteControlAtStartup: false } }, false],
+    ['not set', { effective: {} }, null],
+    ['garbage', 'x', null],
+    ['not a boolean', { effective: { remoteControlAtStartup: 'yes' } }, null],
+  ])('readRemoteControlDefault: %s', async (_label, answer, expected) => {
+    const { settings, session } = withRemoteControl(() => Promise.resolve(ANSWER));
+    settings.mockResolvedValueOnce(answer);
+    await expect(session.readRemoteControlDefault()).resolves.toBe(expected);
+  });
+
+  it('readRemoteControlDefault: a failing getSettings is null', async () => {
+    const { settings, session } = withRemoteControl(() => Promise.resolve(ANSWER));
+    settings.mockRejectedValueOnce(new Error('nope'));
+    await expect(session.readRemoteControlDefault()).resolves.toBeNull();
+  });
+});
+
+describe('SdkBackend – overview methods (WP-65)', () => {
+  function withOverview(configure: (q: SdkQueryHandle) => void) {
+    const h = harness({ configure });
+    return { h, session: h.backend.start(request()) };
+  }
+
+  it('generateTitle: persist goes through, the answer is checked; missing → unavailable, errors → failed', async () => {
+    const title = vi.fn<NonNullable<SdkQueryHandle['generateSessionTitle']>>(() =>
+      Promise.resolve('  Login-Fehlschlag   nach Token-Ablauf '),
+    );
+    const { session } = withOverview((q) => {
+      q.generateSessionTitle = title;
+    });
+    await expect(session.generateTitle('Login fails after the token expired', { persist: true })).resolves.toEqual({
+      ok: true,
+      title: 'Login-Fehlschlag nach Token-Ablauf',
+    });
+    expect(title).toHaveBeenCalledWith('Login fails after the token expired', { persist: true });
+    title.mockResolvedValueOnce(42);
+    await expect(session.generateTitle('x', { persist: false })).resolves.toEqual({ ok: true, title: null });
+    title.mockRejectedValueOnce(new Error('model error'));
+    await expect(session.generateTitle('x', { persist: false })).resolves.toEqual({ ok: false, reason: 'failed' });
+
+    const { session: old } = withOverview(() => undefined);
+    await expect(old.generateTitle('x', { persist: true })).resolves.toEqual({ ok: false, reason: 'unavailable' });
+  });
+
+  it('backgroundTasks: with and without tool use id; false = nothing matched; missing method rejects', async () => {
+    const move = vi.fn<NonNullable<SdkQueryHandle['backgroundTasks']>>(() => Promise.resolve(true));
+    const { session } = withOverview((q) => {
+      q.backgroundTasks = move;
+    });
+    await expect(session.backgroundTasks('toolu_1')).resolves.toBe(true);
+    await expect(session.backgroundTasks(null)).resolves.toBe(true);
+    expect(move.mock.calls).toEqual([['toolu_1'], []]);
+    move.mockResolvedValueOnce(false);
+    await expect(session.backgroundTasks('toolu_x')).resolves.toBe(false);
+    move.mockRejectedValueOnce(new Error('Background tasks are disabled'));
+    await expect(session.backgroundTasks(null)).rejects.toThrow();
+
+    const { session: old } = withOverview(() => undefined);
+    await expect(old.backgroundTasks(null)).rejects.toThrow();
+  });
+
+  it('readUsage: skipBehaviors, 0–100 → fractions; missing, failing, no plan → null', async () => {
+    const usage = vi.fn<NonNullable<SdkQueryHandle['usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET']>>(() =>
+      Promise.resolve({
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: 42, resets_at: '2026-11-12T18:00:00Z' },
+          seven_day: { utilization: 81.5, resets_at: null },
+          seven_day_opus: null,
+          seven_day_cowork: null,
+        },
+      }),
+    );
+    const { session } = withOverview((q) => {
+      q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET = usage;
+    });
+    await expect(session.readUsage()).resolves.toEqual({
+      windows: {
+        five_hour: { utilization: 0.42, resetsAt: '2026-11-12T18:00:00.000Z' },
+        seven_day: { utilization: 0.815, resetsAt: null },
+      },
+      cleared: ['seven_day_opus'],
+    });
+    expect(usage).toHaveBeenCalledWith({ skipBehaviors: true });
+    usage.mockResolvedValueOnce({ rate_limits_available: false, rate_limits: null });
+    await expect(session.readUsage()).resolves.toBeNull();
+    usage.mockRejectedValueOnce(new Error('nope'));
+    await expect(session.readUsage()).resolves.toBeNull();
+
+    const { session: old } = withOverview(() => undefined);
+    await expect(old.readUsage()).resolves.toBeNull();
+  });
+});
+
+describe('SdkBackend – side questions and withdraw (WP-66)', () => {
+  type Ask = NonNullable<SdkQueryHandle['askSideQuestion']>;
+
+  function withSide(configure: (q: SdkQueryHandle) => void, timeouts?: Partial<SdkTimeouts>) {
+    const h = harness({ configure, ...(timeouts === undefined ? {} : { timeouts }) });
+    const session = h.backend.start(request());
+    record(session);
+    return { h, session };
+  }
+
+  function sideOptions(o: Partial<SideQuestionOptions> = {}): SideQuestionOptions {
+    return { history: [], signal: new AbortController().signal, ...o };
+  }
+
+  /** A request that only ends when its signal aborts (rejects like the SDK). */
+  const hanging: Ask = (_question, opts) =>
+    new Promise((_resolve, reject) => {
+      opts?.signal?.addEventListener('abort', () => {
+        reject(new Error('aborted'));
+      });
+    });
+
+  it('askSideQuestion: answer checked, history only when given; null answer; unknown shape and missing → unavailable', async () => {
+    const ask = vi.fn<Ask>(() =>
+      Promise.resolve({ response: 'It is fine.', synthetic: false, refusalFallback: { fallbackModel: 'sonnet' } }),
+    );
+    const { session } = withSide((q) => {
+      q.askSideQuestion = ask;
+    });
+    await expect(session.askSideQuestion('Why?', sideOptions())).resolves.toEqual({
+      ok: true,
+      answer: { response: 'It is fine.', synthetic: false, fallbackModel: 'sonnet' },
+    });
+    expect(ask.mock.calls[0]?.[1]).not.toHaveProperty('history');
+    expect(ask.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+    const history = [{ question: 'Why?', response: 'It is fine.' }];
+    ask.mockResolvedValueOnce({ response: 'Because.' });
+    await expect(session.askSideQuestion('And?', sideOptions({ history }))).resolves.toEqual({
+      ok: true,
+      answer: { response: 'Because.', synthetic: false, fallbackModel: null },
+    });
+    expect(ask.mock.calls[1]?.[1]?.history).toEqual(history);
+    ask.mockResolvedValueOnce(null);
+    await expect(session.askSideQuestion('x', sideOptions())).resolves.toEqual({ ok: true, answer: null });
+    ask.mockResolvedValueOnce({ text: 'other shape' });
+    await expect(session.askSideQuestion('x', sideOptions())).resolves.toEqual({ ok: false, reason: 'unavailable' });
+
+    const { session: old } = withSide(() => undefined);
+    await expect(old.askSideQuestion('x', sideOptions())).resolves.toEqual({ ok: false, reason: 'unavailable' });
+  });
+
+  it('side_question_busy (errorCode or message) → busy; any other error → failed', async () => {
+    const ask = vi.fn<Ask>(() => Promise.reject(Object.assign(new Error('busy'), { errorCode: 'side_question_busy' })));
+    const { session } = withSide((q) => {
+      q.askSideQuestion = ask;
+    });
+    await expect(session.askSideQuestion('x', sideOptions())).resolves.toEqual({ ok: false, reason: 'busy' });
+    ask.mockRejectedValueOnce(new Error('control error: side_question_busy'));
+    await expect(session.askSideQuestion('x', sideOptions())).resolves.toEqual({ ok: false, reason: 'busy' });
+    ask.mockRejectedValueOnce(new Error('model error'));
+    await expect(session.askSideQuestion('x', sideOptions())).resolves.toEqual({ ok: false, reason: 'failed' });
+  });
+
+  it('the caller aborts → cancelled (the SDK request is aborted too); an aborted signal never asks', async () => {
+    const ask = vi.fn<Ask>(hanging);
+    const { session } = withSide((q) => {
+      q.askSideQuestion = ask;
+    });
+    const controller = new AbortController();
+    const pending = session.askSideQuestion('x', sideOptions({ signal: controller.signal }));
+    await settle();
+    controller.abort();
+    await expect(pending).resolves.toEqual({ ok: false, reason: 'cancelled' });
+    expect(ask.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    await expect(session.askSideQuestion('x', sideOptions({ signal: controller.signal }))).resolves.toEqual({
+      ok: false,
+      reason: 'cancelled',
+    });
+    expect(ask).toHaveBeenCalledTimes(1);
+  });
+
+  it('a hanging request fails after sideQuestionMs and is aborted (control_cancel_request)', async () => {
+    useFakeTimeouts();
+    const ask = vi.fn<Ask>(hanging);
+    const { session } = withSide((q) => {
+      q.askSideQuestion = ask;
+    });
+    const pending = session.askSideQuestion('x', sideOptions());
+    await vi.advanceTimersByTimeAsync(SDK_TIMEOUTS.sideQuestionMs);
+    await expect(pending).resolves.toEqual({ ok: false, reason: 'failed' });
+    expect(ask.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+  });
+
+  it('api_retry progress reaches the only open side question – not while a title request runs or two are open', async () => {
+    const answers: ((value: unknown) => void)[] = [];
+    let titleDone: (value: unknown) => void = () => undefined;
+    const { h, session } = withSide((q) => {
+      q.askSideQuestion = () =>
+        new Promise((resolve) => {
+          answers.push(resolve);
+        });
+      q.generateSessionTitle = () =>
+        new Promise((resolve) => {
+          titleDone = resolve;
+        });
+    });
+    const retry = (attempt: number) => ({
+      type: 'system',
+      subtype: 'control_request_progress',
+      request_id: 'r1',
+      status: 'api_retry',
+      attempt,
+      max_retries: 10,
+    });
+    const onRetry = vi.fn();
+    const first = session.askSideQuestion('x', sideOptions({ onRetry }));
+    await settle();
+    h.fq().push({ type: 'system', subtype: 'control_request_progress', request_id: 'r1', status: 'started' });
+    h.fq().push(retry(1));
+    await settle();
+    expect(onRetry.mock.calls).toEqual([[{ attempt: 1, maxRetries: 10 }]]);
+
+    const title = session.generateTitle('x', { persist: false });
+    await settle();
+    h.fq().push(retry(2));
+    await settle();
+    titleDone('A title');
+    await title;
+
+    const onRetry2 = vi.fn();
+    const second = session.askSideQuestion('y', sideOptions({ onRetry: onRetry2 }));
+    await settle();
+    h.fq().push(retry(3));
+    await settle();
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onRetry2).not.toHaveBeenCalled();
+    for (const answer of answers) answer({ response: 'ok' });
+    await expect(first).resolves.toMatchObject({ ok: true });
+    await expect(second).resolves.toMatchObject({ ok: true });
+  });
+
+  it('withdrawQueued: the cancelled flag of the CLI; a missing method and a failure reject', async () => {
+    const cancel = vi.fn<NonNullable<SdkQueryHandle['cancelAsyncMessage']>>(() => Promise.resolve(true));
+    const { session } = withSide((q) => {
+      q.cancelAsyncMessage = cancel;
+    });
+    await expect(session.withdrawQueued(sampleUuid(1))).resolves.toBe(true);
+    expect(cancel).toHaveBeenCalledWith(sampleUuid(1));
+    cancel.mockResolvedValueOnce(false);
+    await expect(session.withdrawQueued(sampleUuid(1))).resolves.toBe(false);
+    cancel.mockResolvedValueOnce({ cancelled: true });
+    await expect(session.withdrawQueued(sampleUuid(1))).resolves.toBe(true);
+    cancel.mockResolvedValueOnce('yes');
+    await expect(session.withdrawQueued(sampleUuid(1))).resolves.toBe(false);
+    cancel.mockRejectedValueOnce(new Error('nope'));
+    await expect(session.withdrawQueued(sampleUuid(1))).rejects.toThrow('nope');
+
+    const { session: old } = withSide(() => undefined);
+    await expect(old.withdrawQueued(sampleUuid(1))).rejects.toThrow(/cancelAsyncMessage/);
+  });
+});
+
+describe('SdkBackend – session info, MCP actions, reloads (WP-67)', () => {
+  function withInfo(configure: (q: SdkQueryHandle) => void, logger?: Logger) {
+    const h = harness({ configure, ...(logger === undefined ? {} : { logger }) });
+    const session = h.backend.start(request());
+    record(session);
+    return { h, session };
+  }
+
+  function capture() {
+    const lines: Record<string, unknown>[] = [];
+    const logger = pino({ level: 'debug' }, { write: (line: string) => lines.push(JSON.parse(line) as Record<string, unknown>) });
+    return { logger, lines };
+  }
+
+  it('each tab calls its method once and parses the answer (mcpServerStatus typed, the rest internal)', async () => {
+    const status = vi.fn(() => Promise.resolve({ sections: [{ title: 'Session', rows: [{ label: 'Version', value: '2.1.323' }] }] }));
+    const mcp = vi.fn(() => Promise.resolve([{ name: 'docs', status: 'connected' }]));
+    const exportConversation = vi.fn(() => Promise.resolve({ text: 'hi', default_filename: 'a.txt' }));
+    const { session } = withInfo((q) => {
+      q.getStatus = status;
+      q.mcpServerStatus = mcp;
+      q.exportConversation = exportConversation;
+    });
+    await expect(session.readInfo('status')).resolves.toEqual({
+      section: 'status',
+      groups: [{ title: 'Session', rows: [{ label: 'Version', value: '2.1.323' }] }],
+      extra: [],
+    });
+    await expect(session.readInfo('mcp')).resolves.toMatchObject({ servers: [{ name: 'docs', status: 'connected' }] });
+    await expect(session.readInfo('export')).resolves.toMatchObject({ text: 'hi', filename: 'a.txt' });
+    expect([status.mock.calls.length, mcp.mock.calls.length, exportConversation.mock.calls.length]).toEqual([1, 1, 1]);
+  });
+
+  it('missing method, refused request, unknown shape → null (logged once, never the answer); other errors reject', async () => {
+    const { logger, lines } = capture();
+    const skills = vi.fn<() => Promise<unknown>>(() => Promise.reject(new Error('Unsupported control request subtype: get_skills_dialog')));
+    const status = vi.fn<() => Promise<unknown>>(() => Promise.resolve({ unexpected: 'user@example.com' }));
+    const memory = vi.fn<() => Promise<unknown>>(() => Promise.reject(new Error('Request timed out')));
+    const { session } = withInfo((q) => {
+      q.getSkillsDialog = skills;
+      q.getStatus = status;
+      q.getMemoryDialog = memory;
+    }, logger);
+    await expect(session.readInfo('hooks')).resolves.toBeNull();
+    await expect(session.readInfo('hooks')).resolves.toBeNull();
+    await expect(session.readInfo('skills')).resolves.toBeNull();
+    await expect(session.readInfo('status')).resolves.toBeNull();
+    await expect(session.readInfo('memory')).rejects.toThrow('Request timed out');
+    const info = lines.filter((line) => typeof line.msg === 'string' && line.msg.startsWith('session info'));
+    // The second "hooks" request only logs at debug level.
+    expect(info.filter((line) => line.section === 'hooks').map((line) => line.level)).toEqual([30, 20]);
+    expect(info.map((line) => line.msg)).toEqual(
+      expect.arrayContaining([
+        'session info: method missing in this SDK/CLI',
+        'session info: this CLI does not answer the request',
+        'session info: unknown answer shape – tab not available',
+        'session info request failed',
+      ]),
+    );
+    expect(JSON.stringify(lines)).not.toContain('user@example.com');
+  });
+
+  it('unknown fields are logged once as keys only', async () => {
+    const { logger, lines } = capture();
+    const { session } = withInfo((q) => {
+      q.getSkillsDialog = () => Promise.resolve({ skills: [{ name: 'a', secretField: 'value-xyz' }] });
+    }, logger);
+    await session.readInfo('skills');
+    await session.readInfo('skills');
+    const unknown = lines.filter((line) => line.msg === 'session info: unknown fields ignored');
+    expect(unknown.map((line) => [line.level, line.unknown])).toEqual([
+      [30, ['skills.skills:secretField']],
+      [20, ['skills.skills:secretField']],
+    ]);
+    expect(JSON.stringify(lines)).not.toContain('value-xyz');
+  });
+
+  it('mcpAction: reconnect / toggle(true|false); reload: skills / plugins; missing methods and failures reject', async () => {
+    const reconnect = vi.fn<NonNullable<SdkQueryHandle['reconnectMcpServer']>>(() => Promise.resolve());
+    const toggle = vi.fn<NonNullable<SdkQueryHandle['toggleMcpServer']>>(() => Promise.resolve());
+    const reloadSkills = vi.fn(() => Promise.resolve({ skills: [] }));
+    const reloadPlugins = vi.fn(() => Promise.resolve({ commands: [], error_count: 0 }));
+    const { session } = withInfo((q) => {
+      q.reconnectMcpServer = reconnect;
+      q.toggleMcpServer = toggle;
+      q.reloadSkills = reloadSkills;
+      q.reloadPlugins = reloadPlugins;
+    });
+    await session.mcpAction('docs', 'reconnect');
+    await session.mcpAction('docs', 'disable');
+    await session.mcpAction('docs', 'enable');
+    expect(reconnect.mock.calls).toEqual([['docs']]);
+    expect(toggle.mock.calls).toEqual([
+      ['docs', false],
+      ['docs', true],
+    ]);
+    await session.reload('skills');
+    await session.reload('plugins');
+    expect([reloadSkills.mock.calls.length, reloadPlugins.mock.calls.length]).toEqual([1, 1]);
+    reconnect.mockRejectedValueOnce(new Error('MCP server "docs" is disabled'));
+    await expect(session.mcpAction('docs', 'reconnect')).rejects.toThrow('is disabled');
+
+    const { session: old } = withInfo(() => undefined);
+    await expect(old.mcpAction('docs', 'reconnect')).rejects.toThrow(/reconnectMcpServer/);
+    await expect(old.mcpAction('docs', 'enable')).rejects.toThrow(/toggleMcpServer/);
+    await expect(old.reload('skills')).rejects.toThrow(/reload skills/);
+    await expect(old.reload('plugins')).rejects.toThrow(/reload plugins/);
   });
 });
 

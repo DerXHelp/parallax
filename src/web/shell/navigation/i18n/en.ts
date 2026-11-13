@@ -1,4 +1,5 @@
-import type { ConversationEndReason } from '@shared/model';
+import type { ConversationEndReason, RemoteControlState } from '@shared/model';
+import type { LabeledLimitWindow } from '@web/lib/account-limits';
 
 /**
  * English texts of namespace `navigation` – WP-35 (sidebar, quick switcher, header, windows).
@@ -63,6 +64,25 @@ export const en = {
     branch: 'Branch',
     model: 'Model',
     context: 'Context',
+    /** WP-63 §1.1. */
+    effort: 'Effort',
+    /** WP-63 §1.4: screen-reader text of the context symbol. */
+    compactSoon: 'Autocompact soon',
+    /** WP-65 §1.1: screen-reader prefix of a highlighted line (open decision, error, needs_action). */
+    needsYou: 'Needs you:',
+  },
+  /** WP-65 §1.1: Parallax's live line while no CLI sentence comes (no Remote Control). */
+  activity: {
+    thinking: 'Thinking…',
+    run: 'Running: {target}',
+    write: 'Writing {target}',
+    edit: 'Editing {target}',
+    read: 'Reading {target}',
+    search: 'Searching: {target}',
+    fetch: 'Fetching {target}',
+    agent: 'Subagent: {target}',
+    tool: '{tool}: {target}',
+    toolOnly: 'Using {tool}',
   },
   actions: {
     menu: 'Session actions',
@@ -79,6 +99,77 @@ export const en = {
     restore: 'Restore',
     conversations: 'Earlier conversations…',
     sessionInfo: 'Session info…',
+    /** WP-63 §1.3. */
+    remove: 'Remove from Parallax…',
+    /** WP-64: Remote Control. */
+    remoteOn: 'Turn on Remote Control',
+    remoteOff: 'Turn off Remote Control',
+    openRemote: 'Open in the Claude app',
+    copyRemoteLink: 'Copy Remote Control link',
+    /** WP-65 §1.3. */
+    regenerateTitle: 'Generate title again',
+    /** WP-66: a side question from the sidebar. */
+    quickAsk: 'Quick question…',
+  },
+  /** WP-66: the popover of "Quick question…" (a side question, never part of the conversation). */
+  quickAsk: {
+    title: 'Quick question · {title}',
+    hint: 'Answered from the conversation – does not go into the context.',
+    placeholder: 'Ask about this session…',
+    followUp: 'Follow up…',
+    ask: 'Ask',
+    pending: 'asking…',
+    cancel: 'Cancel',
+    open: 'Open session',
+    noAnswer: 'No answer available',
+    busy: 'Too many side questions right now – try again in a moment',
+    unavailable: 'Side question not available',
+    answered: '{title}: {answer}',
+  },
+  /** WP-64: Remote Control (sidebar icon, header button and menu). */
+  remote: {
+    status: 'Remote Control: {state}',
+    states: {
+      off: 'off',
+      connecting: 'connecting…',
+      connected: 'connected – open in the Claude app',
+      reconnecting: 'connection lost, reconnecting…',
+      failed: 'not connected',
+    } satisfies Record<RemoteControlState, string>,
+    waiting: 'Remote Control: connects when the session starts',
+    button: 'Remote Control of “{title}”',
+    copied: 'Remote Control link copied.',
+    copyFailed: 'The link could not be copied to the clipboard.',
+  },
+  /** WP-63 §1.3: remove a session from Parallax only (files stay). */
+  remove: {
+    title: 'Remove session from Parallax?',
+    description:
+      '“{title}” disappears from the list and from Parallax. Its files stay on disk: the Claude Code transcript, attachments and plan versions – “claude --resume” keeps working.',
+    working:
+      'This session is working right now. Removing it ends the running turn and the Claude Code process; open decisions are dropped.',
+    running: 'The Claude Code process of this session is closed first.',
+    confirm: 'Remove',
+    removing: 'Removing…',
+    cancel: 'Cancel',
+  },
+  /** WP-63 §1.3: "Clean up archive…" in the archive view. */
+  cleanup: {
+    open: 'Clean up archive…',
+    title: 'Clean up archive',
+    description:
+      'Removes the selected sessions from Parallax. Their files stay on disk, “claude --resume” keeps working.',
+    list: 'Archived sessions',
+    selectAll: 'Select all',
+    olderThan: 'Older than {days} days',
+    lastActive: 'Last active {time}',
+    folder: 'Folder',
+    empty: 'No archived sessions.',
+    remove: { one: 'Remove ({count})', other: 'Remove ({count})' },
+    removing: 'Removing…',
+    cancel: 'Cancel',
+    failed: { one: '{count} session could not be removed:', other: '{count} sessions could not be removed:' },
+    failure: '{title}: {error}',
   },
   rename: {
     label: 'Session title',
@@ -127,7 +218,7 @@ export const en = {
   },
   info: {
     title: 'Session info',
-    description: 'Facts of this session as reported by Claude Code at its last start.',
+    description: 'Facts of this session: from its last start, and in the other tabs live from Claude Code.',
     model: 'Model',
     mode: 'Mode',
     cwd: 'Working directory',
@@ -178,10 +269,15 @@ export const en = {
     windows: {
       five_hour: '5-hour limit',
       seven_day: 'Weekly limit',
-    },
+      seven_day_opus: 'Weekly limit Opus',
+      seven_day_sonnet: 'Weekly limit Sonnet',
+      overage: 'Extra usage',
+    } satisfies Record<LabeledLimitWindow, string>,
     window: 'Limit ({name})',
     resetsAt: 'Resets at {time}',
     resetsOn: 'Resets on {date}',
+    /** WP-65 §1.4: tooltip of a limit bar, `when` relative ("in 2 hours"). */
+    resetsIn: '{percent} used · resets {when}',
   },
   /** Actions of window hints (NotificationCenter, `ClientNotice.action`). */
   notices: {

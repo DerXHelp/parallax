@@ -38,6 +38,9 @@ export function decisionOutcomeText(
       return { text: t('transcript.tool.decision.cancelled'), tone: 'muted' };
     case 'expired':
       return { text: t('transcript.tool.decision.expired'), tone: 'warning' };
+    // WP-64: the CLI took the answer from the Claude app (Remote Control) – which one is unknown.
+    case 'answered_elsewhere':
+      return { text: t('transcript.tool.decision.answeredElsewhere'), tone: 'muted' };
     case 'plan_approved':
       return {
         text: t(outcome.edited ? 'transcript.plan.approvedEdited' : 'transcript.plan.approved', {

@@ -9,6 +9,10 @@
 import { z } from 'zod';
 import { compareObservation, compareSmoke, deviations, type Finding } from './compare';
 import { observationSchema } from './observation';
+import { bridgeSummaryCounts, overviewProbeResultSchema } from './overview';
+import { remoteControlProbeResultSchema } from './remoteControl';
+import { sessionInfoProbeResultSchema } from './sessionInfo';
+import { sideQuestionProbeResultSchema } from './sideQuestion';
 import { smokeResultSchema } from './smoke';
 import type { CliProfile } from '../../src/server/claude/cliProfile';
 
@@ -49,6 +53,14 @@ export const runRecordSchema = z.object({
       messageTypes: z.record(z.string(), z.number()),
       contextDetail: z.enum(['full', 'summary']).nullable(),
       durationMs: z.number(),
+      /** WP-64 (absent in runs before WP-64). */
+      remoteControl: remoteControlProbeResultSchema.nullable().default(null),
+      /** WP-65 (absent in runs before WP-65). */
+      overview: overviewProbeResultSchema.nullable().default(null),
+      /** WP-66 (absent in runs before WP-66). */
+      sideQuestion: sideQuestionProbeResultSchema.nullable().default(null),
+      /** WP-67 (absent in runs before WP-67): availability, row counts, unknown field names – no values. */
+      sessionInfo: sessionInfoProbeResultSchema.nullable().default(null),
     })
     .nullable(),
   smoke: smokeResultSchema.nullable(),
@@ -162,6 +174,59 @@ export function formatReport(input: {
       lines.push(
         `- probe messages: ${types.join(', ') || '(none)'}; result ${record.probe.resultSubtype}; ${String(record.probe.durationMs)} ms`,
       );
+      const remote = record.probe.remoteControl;
+      if (remote !== null) {
+        lines.push(
+          remote.available
+            ? `- remote control: available (bridge connected after ${String(remote.connectedMs ?? '?')} ms)`
+            : `- remote control: NOT available – ${remote.detail ?? '?'}`,
+        );
+        if (!remote.disabled) {
+          lines.push('- remote control: switching off failed – remove "Parallax cli-check" in the Claude app');
+        }
+        if (remote.available) {
+          // WP-65: informational – the probe turn runs before Remote Control, so 0 is the usual count.
+          const summaries = bridgeSummaryCounts(record.probe.messageTypes);
+          lines.push(
+            `- bridge summaries: task_summary×${String(summaries.taskSummary)}, post_turn_summary×${String(summaries.postTurnSummary)} (informational)`,
+          );
+        }
+      }
+      const overview = record.probe.overview;
+      if (overview !== null) {
+        const { sessionTitle, usage } = overview;
+        lines.push(
+          sessionTitle.available
+            ? `- session title: ok ("${sessionTitle.title ?? ''}")`
+            : `- session title: NOT ok – ${sessionTitle.detail ?? '?'}`,
+          usage.available ? `- usage query: ok (${usage.windows.join(', ')})` : `- usage query: NOT ok – ${usage.detail ?? '?'}`,
+          `- backgroundTasks: ${overview.backgroundTasks ? 'present' : 'MISSING'}`,
+        );
+      }
+      const side = record.probe.sideQuestion;
+      if (side !== null) {
+        const ask = side.sideQuestion;
+        lines.push(
+          ask.available ? `- side question: ok ("${ask.response ?? ''}")` : `- side question: NOT ok – ${ask.detail ?? '?'}`,
+          `- cancelAsyncMessage: ${side.withdrawQueued ? 'present' : 'MISSING'}`,
+        );
+      }
+      const info = record.probe.sessionInfo;
+      if (info !== null) {
+        for (const check of info.sections) {
+          const rows = check.rows === null ? '' : `${String(check.rows)} row(s), `;
+          const unknown = check.unknown.length === 0 ? 'no unknown fields' : `unknown: ${check.unknown.join(', ')}`;
+          lines.push(
+            check.available
+              ? `- session info ${check.section}: ok (${rows}${unknown})`
+              : `- session info ${check.section}: NOT ok – ${check.detail ?? '?'}`,
+          );
+        }
+        lines.push(
+          `- MCP actions (reconnectMcpServer, toggleMcpServer): ${info.mcpActions ? 'present' : 'MISSING'}`,
+          `- reloads (reloadSkills, reloadPlugins): ${info.reload ? 'present' : 'MISSING'}`,
+        );
+      }
     }
     lines.push('');
   }

@@ -29,6 +29,7 @@ import { cancelContinue } from './continuePlan';
 import { assertEntryGate, commandError, type EngineCore, type EntryState } from './entryState';
 import { settledWithin } from './lib/timers';
 import { closeRuntime, deliverPrompt, startRuntime } from './runtime';
+import { bridgeOf } from './remoteControl';
 import { freshContextPrompt, newConversation } from './summary';
 
 export interface FreshContextRequest {
@@ -133,7 +134,8 @@ function startFreshConversation(core: EngineCore, s: EntryState): void {
         endReason: 'fresh_session' as const,
         title: e.title === '' ? null : e.title,
       },
-      newConversation(conversationId, at),
+      // WP-64: the entry's remote session continues (reattach at the next start).
+      newConversation(conversationId, at, null, bridgeOf(previous)),
     ],
     context: null,
     contextPct: null,

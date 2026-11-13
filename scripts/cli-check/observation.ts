@@ -2,7 +2,8 @@
  * What one probe of `pnpm cli-check` observed (WP-62) – the profile fields without the bookkeeping
  * (`schemaVersion`, `checkedAt`) – and the pure extraction from the raw SDK answers. The raw values
  * are parsed tolerantly (zod, unknown fields kept as keys only): `system/init`,
- * `initializationResult()`, `supportedModels()`, `getContextUsage()`. Never stores values of
+ * `initializationResult()`, `supportedModels()`, `getContextUsage()` (plus the booleans of the Remote
+ * Control, overview, side-question and session-info steps). Never stores values of
  * account fields (`initializationResult().account` holds e-mail/org: only its key is kept).
  */
 import { z } from 'zod';
@@ -58,6 +59,17 @@ export interface RawProbe {
   initializationResult: unknown;
   supportedModels: unknown;
   contextUsage: unknown;
+  /** WP-64: result of the Remote Control step (remoteControl.ts); absent/null = not checked. */
+  remoteControl?: boolean | null;
+  /** WP-65: results of the overview step (overview.ts); absent/null = not checked. */
+  sessionTitle?: boolean | null;
+  usageQuery?: boolean | null;
+  backgroundTasks?: boolean | null;
+  /** WP-66: results of the side-question step (sideQuestion.ts); absent/null = not checked. */
+  sideQuestion?: boolean | null;
+  withdrawQueued?: boolean | null;
+  /** WP-67: results of the session-info step (sessionInfo.ts `sessionInfoProfile`); absent/null = not checked. */
+  sessionInfo?: CliProfile['sessionInfo'];
 }
 
 /** MCP tools come from the user's/account's configuration, not from the CLI. */
@@ -102,6 +114,13 @@ export function observationFrom(raw: RawProbe, sdkVersion: string): Observation 
     slashCommands: sortedUnique(init.slash_commands),
     agents: sortedUnique(init.agents),
     skills: sortedUnique(init.skills),
+    remoteControl: raw.remoteControl ?? null,
+    sessionTitle: raw.sessionTitle ?? null,
+    usageQuery: raw.usageQuery ?? null,
+    backgroundTasks: raw.backgroundTasks ?? null,
+    sideQuestion: raw.sideQuestion ?? null,
+    withdrawQueued: raw.withdrawQueued ?? null,
+    sessionInfo: raw.sessionInfo ?? null,
   };
 }
 

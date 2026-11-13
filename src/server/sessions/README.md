@@ -69,8 +69,102 @@ Ergebnis, Abbildung der `todos` und Verdrahtung für WP-60: `docs/wp/WP-51.md` �
 | `freshContext.ts` | `approveFreshContext`, `FreshContextRequest` | „Mit frischem Kontext umsetzen“ (ADR-147, ADR-155): Prüfungen; Retry-Abbruch erst nach Annahme im Lock (CR3-08), deny + interrupt, höchstens `freshContextResultMs` auf das `result` des Planungs-Turns warten (WP61-03), Unterhaltung endet mit `fresh_session`, neue ohne Resume, erster Prompt `freshContextPrompt` (`summary.ts`, `@` neutralisiert, WP61-01) |
 | `planIndex.ts` | `withPlanIndex`, `PlanIndexedDecisionStore` | bekannte Planversionen je Serverlauf (gespeichert oder gelesen); `planStored` ohne erneutes Lesen, unbekannte einmal (CR3-09, ADR-155); der Manager umhüllt `stores.decisions` |
 
+## Nutzer-Feedback 1 (WP-63)
+
+- **`session.remove {entryId}`** (`commands.ts` `removeSession`): Retry abbrechen, im Lifecycle-Lock
+  geplantes Fortsetzen löschen, laufenden Prozess wie `session.close` beenden (`closeRuntime(…,
+  'remove')` – offene Entscheidungen verfallen als `cancelled`/`process_exit`), dann
+  `CommandEngine.removeEntry` → Manager: `EntryState.removed = true` (kein `emit`/`flush`, kein Start
+  mehr – `startRuntime` und `assertEntryGate` antworten `ENTRY_NOT_FOUND`), Timer weg, aus Speicher
+  und Registry (`sessions.json`), Benachrichtigungen und Engine-Warnung weg, `summary.remove` an alle
+  (der Hub schickt Abonnenten `session.unavailable`), Host-State (`entryCount`). Erlaubt auch für
+  archivierte und externe Einträge.
+- **Auf der Platte bleibt alles:** das claude-Transkript (`<configDir>\projects\…\<sessionId>.jsonl`
+  des Profils), `PARALLAX_HOME\entries\<entryId>\` (Transkript-Log `*.transcript.jsonl`,
+  `decisions.json`, `plans\v<n>.md`, `attachments\`, Datei-Index, `commands.json`) und die Blobs
+  (`PARALLAX_HOME\blobs\`). Kein Aufräumlauf beim Start löscht sie (geprüft: gelöscht werden nur der
+  Web-Schnappschuss, Lock-Datei und `.bak` der Auth; die Waisen-Bereinigung betrifft Prozesse).
+  „Wiederherstellen“ gibt es nicht; `claude --resume <sessionId>` funktioniert weiter.
+- **Context:** `ContextGauge.autoCompactThreshold`/`isAutoCompactEnabled` aus `getContextUsage`; die
+  Schätzung während eines Turns übernimmt den letzten bekannten Wert (`runtime.ts`).
+- **Rate-Limit:** nur `rejected` wird ein Transkript-Item; `allowed`/`allowed_warning` speisen nur die
+  Limit-Leiste (Signal → `setAccountLimit`).
+- Integrationstest: `wp63.integration.test.ts`.
+
+## Remote Control (WP-64)
+
+| Datei | Exporte | Inhalt |
+| --- | --- | --- |
+| `remoteControl.ts` | `RemoteState`, `REMOTE_OFF`, `nextRemoteState`, `onBridgeState`, `bridgeOf`, `enableRemote`, `remoteControlAfterReady`, `setRemoteControl`, `endRemoteBeforeClose`, `remoteProcessEnded` | Wunsch `Entry.remoteControlWanted` (persistiert) und Live-Zustand `EntryState.remote` (nur mit Prozess: `bridge_state` ready → `connecting`, connected → `connected`, failed nicht-terminal → `reconnecting`, terminal → `failed` `REMOTE_CONTROL_FAILED`, policy_disabled → `failed` `REMOTE_CONTROL_POLICY_DISABLED`); Einschalten sofort bei laufendem, bereitem Prozess, sonst nach der nächsten Bereitschaft mit `reattachSessionId` der aktuellen Unterhaltung (gleicher Link); ein gescheitertes Reattach einmal ohne; Generationen verwerfen veraltete Antworten; Fehler beim Einschalten → `failed` mit Fehler (der Befehl gelingt) |
+
+- **Neue Einträge:** `settings.remoteControl.newSessions` – `on`/`off` sofort, `follow_claude` startet mit
+  dem zuletzt gelesenen `remoteControlAtStartup` des Profils und übernimmt nach der ersten Bereitschaft
+  den frisch gelesenen Wert (`EntryState.followClaudeDefault`; eine eigene Wahl vorher gewinnt). Jede
+  Bereitschaft liest den Wert (`readRemoteControlDefault`) → Host-State `remoteControlDefault`
+  (Standardprofil, sofort veröffentlicht).
+- **Bridge je Unterhaltung:** `Conversation.bridgeSessionId`/`sessionUrl`; `/clear` und frischer Kontext
+  erben die Bridge (`bridgeOf`, gleicher Link); Ausschalten, Archivieren und Entfernen vergessen sie
+  (`endRemoteBeforeClose` schaltet vorher im laufenden Prozess ab). Schließen, Absturz und Serverneustart
+  behalten Wunsch und Link (`keepSessionOnExit`), die Summary zeigt den gespeicherten Link.
+- **Kein Leerlauf-Schlaf** bei `connecting`/`connected`/`reconnecting` (`sleepEligible`, ADR-105 erweitert;
+  `EntryState.setRemote` plant den Schlaf neu, wenn die Bridge kommt oder geht).
+- **Turns aus der Claude-App:** der Normalizer liefert das `user`-Item mit `source: 'remote'`; Status über
+  `session_state`/`command_lifecycle` wie sonst, die Queue ignoriert fremde uuids, Kosten über `result`.
+- **„In der Claude-App beantwortet“:** `BrokerDeps.answeredElsewhere` – bricht die CLI eine Anfrage ab,
+  während die Bridge `connected`/`reconnecting` ist, wird das Ergebnis `answered_elsewhere` statt
+  `cancelled` (Heuristik; ein Interrupt beendet Entscheidungen vorher selbst).
+- Befehl `session.setRemoteControl` (nicht für archivierte/externe Einträge). Harness-Option
+  `remoteControl` (`FakeBackendOptions.remoteControl`). Integrationstest:
+  `remoteControl.integration.test.ts`.
+
 Außerdem: `EngineStores.attachments?` (`entryState.ts`, fehlt → `null`), `attachmentsDir` bei jedem
 `startRuntime` (Fehler → Warnung, `null`), `session.stopTask`/`plan.list` (über `planStored` des Plan-Index, CR3-09)/`plan.read` in `commands.ts`,
 Broker `check`/`latestPlanVersion`/`latestPlanFilePath`/`planRecords`/`loadLastPlan` und Ergebnis
 `fresh-context`, `deliverPrompt` setzt ein abgelehntes `/rename X` zurück (CR2). Harness-Option
 `attachments: false` (Engine ohne Anhang-Store). Integrationstest: `phase3.integration.test.ts`.
+
+## Übersicht (WP-65)
+
+| Datei | Exporte | Inhalt |
+| --- | --- | --- |
+| `overview.ts` | `ActivityTracker`, `activityTarget`, `fallbackSummary`, `autoTitleDescription`, `regenerateTitleDescription`, `mergeUsage` | rein: Live-Aktivität (CLI-Satz aus `task_summary` > neuestes laufendes Haupt-Tool mit Ziel > „thinking“), Rückfall-Fazit (erste Zeile der Antwort ohne Markdown, ≤ 200 Zeichen), Beschreibungen für `generateSessionTitle`, Nutzungsabfrage in die Limits des Profils mischen (ADR-114: Fenster ersetzen, `cleared` entfernen, Status/Typ des letzten `rate_limit` bleiben) |
+| `titles.ts` | `autoTitle`, `regenerateTitle` | Auto-Titel nach dem ersten echten Turn je Unterhaltung (`persist: true`, nur bei Titelquelle `none`/`prompt`; ein eigener Titel gewinnt, auch während der Abfrage), sonst wie bisher die AI-Titel-Abfrage; „Titel neu erzeugen“ (`persist: false`, Quelle `ai`, `/rename` an die CLI – das Echo behält `ai`). Fehlt die Methode, einmal je Eintrag eine Warnung |
+| `usagePoll.ts` | `createUsagePoller`, `usageSources` | Nutzungsabfrage: solange ein Prozess läuft alle `usagePollMs` (5 min), die erste `usageFirstMs` (10 s) nach einem Spawn; je Profil eine laufende Abo-Session (`apiKeySource 'none'`), nie zwei Runden gleichzeitig, Fehler leise |
+
+- **Summary-Felder:** `activity` (nur mit laufendem Turn, gedrosselt auf `activityMinMs` 2 s – der erste
+  Wert und `null` sofort), `turnSummary` (CLI-`post_turn_summary` des letzten Turns, sonst Rückfall aus dem
+  Ergebnis; persistiert), `lastSeenAt` (Präsenz endet – `onPresenceChanged` –, Prompt bzw. Freigabe aus
+  der Claude-App; nie rückwärts, `markSeen`).
+- **Befehle** (`commands.ts`): `session.backgroundTasks {toolUseId|null}` (Ctrl+B des Terminals,
+  `SESSION_NOT_RUNNING` ohne Prozess, Ablehnung → `CLAUDE_CONTROL_FAILED`), `session.regenerateTitle`
+  (startet einen ruhenden Prozess; nicht für archivierte/externe Einträge).
+- Integrationstest: `overview.integration.test.ts` (Fake: `fake:summary`, `fake:long-bash`, Titel, Nutzung).
+
+## Seitenfragen und wartende Nachricht zurückholen (WP-66)
+
+| Datei | Exporte | Inhalt |
+| --- | --- | --- |
+| `sideQuestions.ts` | `askSideQuestion`, `cancelSideQuestion`, `deleteSideQuestionThread`, `endSideQuestions`, `threadHistory`, `finishedItem`, `SIDE_HISTORY_MAX` (10), `PendingSideQuestion` | Item `side_question` gehört der Engine (der Normalizer sieht es nie): sofort `pending` in der aktuellen Unterhaltung (`order` über `LiveNormalizer.claimOrder()`, id `px:<conversationId>:<order>`), Anfrage im Hintergrund, Ergebnis per `item.upsert` (`answered`/`failed`/`cancelled`, `retry` während `api_retry`). Thread = id der ersten Frage; Nachfragen schicken die beantworteten, nicht synthetischen Fragen des Threads als `history` (älteste zuerst, höchstens die letzten 10). Prozessende/Server-Stopp → `failed` (`SESSION_NOT_RUNNING {reason: exited|shutdown}`); ein nach Absturz `pending` gebliebenes Item repariert `EntryState.repairStaleSideQuestions` beim Laden des Spiegels. Löschen = `item.remove` für den ganzen Thread. Kein Einfluss auf unread, Benachrichtigungen, Status, `lastActivityAt`; eine offene Frage hält den Prozess wach (Leerlauf-Schlaf wartet, `considerSleep` danach) |
+
+- **Befehle** (`commands.ts`): `session.askSideQuestion {question, threadId|null}` → `{itemId}` (im
+  Lifecycle-Lock; ruhender Eintrag wird ohne Turn gestartet; nicht für archivierte/externe Einträge –
+  Fehler der Anfrage landen am Item: `side_question_busy` → `SESSION_BUSY`, fehlende Methode/sonstiges →
+  `CLAUDE_CONTROL_FAILED`), `session.cancelSideQuestion {itemId}` (offene Frage → `cancelled`, sonst
+  nichts), `session.deleteSideQuestion {threadId}`, `session.withdrawQueued {messageUuid}` →
+  `{withdrawn, text}` (`cancelAsyncMessage`; `true` oder ein noch `sending` Eintrag → aus der Queue,
+  Text zurück; `false` bei `queued` = schon übernommen, unbekannte uuid → nicht zurückgeholt, Fehler →
+  `CLAUDE_CONTROL_FAILED`).
+- Persistenz: im Transkript-Log der Unterhaltung, in der gefragt wurde (eine späte Antwort nach `/clear`
+  nur ins Log, ohne Op). Der Spiegel lädt nur die letzten 150 Items – ein `pending` weiter vorn bleibt bis
+  `loadEarlier` unrepariert (in der Praxis nicht erreichbar, siehe WP-66 „Abweichungen“).
+- Harness-Option `sideQuestions` (= `FakeBackendOptions.sideQuestions`). Integrationstest:
+  `sideQuestions.integration.test.ts`.
+
+## Session-Info mit Reitern (WP-67)
+
+| Datei | Exporte | Inhalt |
+| --- | --- | --- |
+| `sessionInfo.ts` | `readSessionInfo`, `mcpAction`, `reloadSession` | `session.info {section}` → `{available, data}`, `session.mcpAction {server, action}` → `{}`, `session.reload {what}` → `{}` – nur auf Anfrage, kein Polling, kein Cache. Ein Start im Lifecycle-Lock wird abgewartet (wie `session.interrupt`), ohne laufenden Prozess `SESSION_NOT_RUNNING` (kein Auto-Wake – der Dialog bietet „Session starten“). Backend `null` → `{available:false, data:null}` ohne Fehler; Fehler → `CLAUDE_CONTROL_FAILED` – Lesen `{method: 'readInfo', section}` (kein CLI-Text: er könnte Kontodaten tragen), Aktionen `{method: 'mcpAction'|'reload', detail}` (`detail` = CLI-Fehlertext, ≤ 300 Zeichen). Antworten werden nie geloggt (Status-Zeilen enthalten Kontodaten). Archiviert/extern → `SESSION_ARCHIVED`/`SESSION_EXTERNAL` (nicht in den Gate-Listen) |
+
+- Harness-Option `sessionInfo` (= `FakeBackendOptions.sessionInfo`). Integrationstest:
+  `sessionInfo.integration.test.ts`.

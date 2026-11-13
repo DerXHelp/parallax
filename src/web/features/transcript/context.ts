@@ -27,8 +27,11 @@ export function useTranscriptSettings(): TranscriptSettings | null {
 /** Message UUIDs still in `detail.queue` (B "Gequeuete Nachrichten" – shown grey until taken over). */
 export const QueuedIdsContext = createContext<ReadonlySet<string>>(new Set());
 
-/** Opens a blob image in the transcript's lightbox; `trigger` gets the focus back afterwards. */
-export type OpenImage = (image: BlobRef, trigger: HTMLElement) => void;
+/**
+ * Opens a blob image in the transcript's lightbox; `trigger` gets the focus back afterwards.
+ * WP-63: with `gallery` (containing `image`) the lightbox steps through all its images.
+ */
+export type OpenImage = (image: BlobRef, trigger: HTMLElement, gallery?: readonly BlobRef[]) => void;
 
 /**
  * The TranscriptView's single lightbox (`components/ImageViewer.tsx`): it lives outside the

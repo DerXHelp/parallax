@@ -87,7 +87,7 @@ const FLAT_ORDER = [
 ];
 
 describe('sidebar entries (WP-35 §1)', () => {
-  it('shows two lines: path, branch only when set, short model name, context level 70/85', async () => {
+  it('shows two lines: path, branch only when set, short model name, context level by window share 50/80 (WP-63)', async () => {
     await start();
     const landing = within(row(KEYS.landing));
     const path = row(KEYS.landing).querySelector('[data-slot="row-path"]');
@@ -109,8 +109,8 @@ describe('sidebar entries (WP-35 §1)', () => {
     expect(row(KEYS.redirect).querySelector('[data-slot="row-context"]')?.getAttribute('data-level')).toBe(
       'normal',
     );
-    // Screen readers get the percentage as text next to "Context".
-    expect(row(KEYS.auth).textContent).toContain('Context72%');
+    // WP-63 §1.4: the used tokens as the short value next to "Context" (72 % of 1M; details in the tooltip).
+    expect(row(KEYS.auth).textContent).toContain('Context720K');
     // No branch, model from modelSetting (`fable`), custom model kept.
     expect(row(KEYS.release).querySelector('[data-slot="row-branch"]')).toBeNull();
     expect(row(KEYS.release).querySelector('[data-slot="row-model"]')?.textContent).toBe('Modelfable');

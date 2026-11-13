@@ -4,6 +4,7 @@ import {
   CircleDotIcon,
   CornerDownRightIcon,
   FilePlusIcon,
+  MessageCircleQuestionIcon,
   PaperclipIcon,
   ReplyIcon,
   SendHorizontalIcon,
@@ -75,9 +76,7 @@ import {
   pickDisplayedDecision,
   useSelectedDecisionId,
 } from '../decisions/state/bar-store';
-import { AttachmentChips } from './AttachmentChips';
 import { ContextGauge } from './ContextGauge';
-import { HelpDialog } from './HelpDialog';
 import { answerFromText, interruptSession, isSingleQuestion, sendPrompt, textLimit } from './lib/commands';
 import {
   applyMention,
@@ -87,7 +86,7 @@ import {
   mentionMenuId,
   type ProjectFilesState,
 } from './lib/mentions';
-import { runNativeCommand, type InlineError, type NativeContext } from './lib/native';
+import type { InlineError, NativeContext } from './lib/native';
 import {
   activePastes,
   convertPaste,
@@ -121,8 +120,6 @@ import {
 import { lastTurnEnded, workOnlyInBackground } from './lib/turn';
 import { ModelPicker, type ModelPickerSection } from './ModelPicker';
 import { ModePicker } from './ModePicker';
-import { RateLimitBanner } from './RateLimitBanner';
-import { SlashMenu, slashMenuId } from './SlashMenu';
 import {
   addAttachmentFiles,
   attachmentsOverTotal,
@@ -156,6 +153,30 @@ const loadMentionMenu = () => import('./FileMentionMenu');
 const loadPasteChips = () => import('./PasteChips');
 const FileMentionMenu = lazy(() => loadMentionMenu().then((module) => ({ default: module.FileMentionMenu })));
 const PasteChips = lazy(() => loadPasteChips().then((module) => ({ default: module.PasteChips })));
+/*
+ * WP-65 (start-chunk budget): "Move all to background" (only while a Bash call or subagent runs;
+ * preloaded with the parts above) and the `/help` dialog (opened by the user; mounted from its first
+ * opening on so it closes with its animation and gives the focus back) are chunks of their own.
+ */
+const loadBackgroundAll = () => import('./BackgroundAll');
+const BackgroundAll = lazy(() => loadBackgroundAll().then((module) => ({ default: module.BackgroundAll })));
+const HelpDialog = lazy(() => import('./HelpDialog').then((module) => ({ default: module.HelpDialog })));
+/*
+ * WP-66 (start-chunk budget, makes room for side questions): the attachment chips (only with
+ * attachments), the slash menu (only while it is open; preloaded with the parts above), the
+ * rate-limit banner (only while a limit date is known) and the native slash commands (`lib/native`,
+ * loaded on the first one – also the side-question command) are chunks of their own.
+ */
+const loadAttachmentChips = () => import('./AttachmentChips');
+const loadSlashMenu = () => import('./SlashMenu');
+const AttachmentChips = lazy(() =>
+  loadAttachmentChips().then((module) => ({ default: module.AttachmentChips })),
+);
+const SlashMenu = lazy(() => loadSlashMenu().then((module) => ({ default: module.SlashMenu })));
+const RateLimitBanner = lazy(() =>
+  import('./RateLimitBanner').then((module) => ({ default: module.RateLimitBanner })),
+);
+const loadNative = () => import('./lib/native');
 /** The error card of the @ list stands where the list would (above the field). */
 const MENTION_ERROR_CLASS = 'bg-popover absolute inset-x-0 bottom-full z-20 mb-1 rounded-md border shadow-lg';
 
@@ -167,6 +188,15 @@ function preloadComposerParts(): void {
   partsPreloaded = true;
   loadMentionMenu().catch(() => undefined);
   loadPasteChips().catch(() => undefined);
+  loadBackgroundAll().catch(() => undefined);
+  loadAttachmentChips().catch(() => undefined);
+  loadSlashMenu().catch(() => undefined);
+  loadNative().catch(() => undefined);
+}
+
+/** DOM id of the slash menu of a composer (the field's `aria-controls`; SlashMenu renders it). */
+function slashMenuId(inputId: string): string {
+  return `${inputId}-slash`;
 }
 
 /** Monotonic time of the arm delay; only read in effects and event handlers, never while rendering. */
@@ -238,6 +268,13 @@ function hasFiles(event: DragEvent): boolean {
  *   match active, V4-03); not while a decision is the Enter target.
  * - Drafts per session (text and pastes) survive remounts and reloads (state/drafts.ts); typing
  *   reports presence.
+ * - Side question (WP-66, `/btw`): the toggle next to Send (or `/btw` alone) switches the field into
+ *   side mode for ONE question – dashed side-question border, its own placeholder; Enter asks
+ *   (`session.askSideQuestion`, also while Claude works), Esc or the toggle leave it. No slash menu,
+ *   no @ list, large pastes stay text; paste tokens of the draft are replaced and attachments stay
+ *   for the next message. `/btw <question>` asks right away. The card appears in the transcript.
+ * - „Zurückholen“ of a waiting message (WP-66, shell request `composerText`): its text comes back
+ *   into the field – appended to a draft as a new paragraph.
  * - Sending needs an open connection; failures restore the text (caret at its end, also in a field
  *   mounted later) and show a notice. While "Open in external console" is on its way (here or from
  *   a session menu, `shell/navigation/handoff.ts`) nothing is sent – the text stays (WP41-07).
@@ -316,6 +353,12 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     null,
   );
   const attachments = useAttachments(sessionKey);
+  // Only while a limit date is known the (lazy) banner can show anything (lib/rate-limit.ts).
+  const rateLimited = useSummarySelector<boolean>(
+    sessionKey,
+    (s) => s.status.rateLimitedUntil !== null,
+    false,
+  );
   const decisions = useDecisions(sessionKey);
   const selectedId = useSelectedDecisionId(sessionKey);
   const displayed = pickDisplayedDecision(decisions, selectedId);
@@ -341,6 +384,8 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const [activeIndex, setActiveIndex] = useState(0);
   const [picker, setPicker] = useState<PickerState>(PICKER_CLOSED);
   const [helpOpen, setHelpOpen] = useState(false);
+  /** The lazy help dialog stays mounted after its first opening (closing animation, focus return). */
+  const [helpMounted, setHelpMounted] = useState(false);
   const [terminalHint, setTerminalHint] = useState<string | null>(null);
   /** WP41-07: "Open in external console" is on its way (from here or a session menu) – send nothing. */
   const handoffPending = useHandoffPending(sessionKey);
@@ -352,6 +397,9 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const [mentionDismissed, setMentionDismissed] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
+  /** WP-66: the session whose field is in side mode (one question, then off again); null = none. */
+  const [sideFor, setSideFor] = useState<string | null>(null);
+  const sideMode = sideFor === sessionKey;
   /** A turn runs: queue mode, "Send now", Stop. Not while only background tasks work (B18, ADR-159). */
   const working = isWorking(runState) && !(backgroundWork && turnEnded);
 
@@ -386,10 +434,13 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
 
   // Enter answers the target only when the draft was begun for it. An empty field shows what the
   // first key stroke will fix (the main agent's decision), so placeholder and hint fit.
+  // Side mode (WP-66) never answers a decision: Enter asks the side question.
   const enterAnswers =
-    target !== null && (lockedId === target.id || (text === '' && target.requester.kind === 'main'));
+    !sideMode &&
+    target !== null &&
+    (lockedId === target.id || (text === '' && target.requester.kind === 'main'));
   const answerTarget = enterAnswers ? target : null;
-  const pendingTarget = target !== null && !enterAnswers ? target : null;
+  const pendingTarget = target !== null && !enterAnswers && !sideMode ? target : null;
 
   // ---- slash commands ----
   const describeNative = useCallback(
@@ -404,7 +455,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     return buildMenuEntries(catalog, describeNative);
   }, [commands, slashCommands, terminalSlashCommands, describeNative]);
   const terminal = useMemo(() => terminalCommands(terminalSlashCommands), [terminalSlashCommands]);
-  const query = answerTarget === null ? slashQuery(text, caret) : null;
+  const query = answerTarget === null && !sideMode ? slashQuery(text, caret) : null;
   if (query !== menuQuery) {
     // A new command word: the menu opens again with its first match active.
     setMenuQuery(query);
@@ -423,7 +474,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   // ---- @ file picker (ADR-151) ----
   // Only primitives leave this block (the React compiler keeps the memo below).
   const mentionFound =
-    answerTarget === null && query === null && entryId !== null ? mentionAt(text, caret) : null;
+    answerTarget === null && query === null && entryId !== null && !sideMode ? mentionAt(text, caret) : null;
   const mentionStart = mentionFound === null ? null : mentionFound.start;
   const mentionText = mentionFound === null ? null : mentionFound.query;
   if (mentionStart !== mentionOpening) {
@@ -474,13 +525,16 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const value = text.trim();
   // What would be sent: paste tokens replaced (limits and the counter count this text); a prompt
   // like `sendMessage` (R5W-03 guard), an answer like `submit`.
-  const answering = answerTarget !== null;
+  // A side question (WP-66) is plain text like an answer: the tokens are replaced.
+  const answering = answerTarget !== null || sideMode;
   const sendLength = useMemo(
     () => (answering ? expandPastes(value, pastes) : expandPrompt(value, pastes)).text.length,
     [answering, value, pastes],
   );
   const draftAction =
-    answerTarget === null && value.startsWith('/') ? classifySlash(value, entries, terminal) : null;
+    answerTarget === null && !sideMode && value.startsWith('/')
+      ? classifySlash(value, entries, terminal)
+      : null;
   const commandDraft = draftAction?.kind === 'native' || draftAction?.kind === 'terminal';
   // Argument hint after `/name ` (the menu took the command, nothing typed after it yet).
   const argumentMatch = menuOpen || answerTarget !== null ? null : /^\/(\S+) $/.exec(text);
@@ -495,11 +549,11 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const overTotal = useMemo(() => attachmentsOverTotal(attachments), [attachments]);
   const attachmentsBlocked = busyUploads || failedUploads || overTotal.size > 0;
 
-  const limit = textLimit(answerTarget);
+  const limit = sideMode ? LIMITS.sideQuestionChars : textLimit(answerTarget);
   const tooLong = sendLength > limit;
   let canSend: boolean;
   if (handoffPending) canSend = false;
-  else if (answerTarget !== null) canSend = online && value !== '' && !tooLong;
+  else if (answerTarget !== null || sideMode) canSend = online && value !== '' && !tooLong;
   // `/plan text` sends the text with the images (R4W-26): it waits for them like a message.
   else if (commandDraft) canSend = online && !(sendsPrompt(draftAction) && attachmentsBlocked);
   else canSend = online && !tooLong && !attachmentsBlocked && (value !== '' || readyUploads > 0);
@@ -510,7 +564,11 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     value !== '' &&
     sendLength <= textLimit(pendingTarget);
   const suggestion =
-    answerTarget === null && text === '' && promptSuggestion !== null && promptSuggestion.trim() !== ''
+    answerTarget === null &&
+    !sideMode &&
+    text === '' &&
+    promptSuggestion !== null &&
+    promptSuggestion.trim() !== ''
       ? promptSuggestion.trim()
       : null;
 
@@ -638,25 +696,72 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
       permissionMode,
       openPicker,
       openHelp: () => {
+        setHelpMounted(true);
         setHelpOpen(true);
       },
       sendText: (message) => sendMessage(message, 'next'),
+      startSideMode: () => {
+        setSideFor(sessionKey);
+        textareaRef.current?.focus();
+      },
+      expandPastes: (message) => expandPastes(message, getPastes(sessionKey)).text,
     };
     setSlashError(null);
     setTerminalHint(null);
     setSending((count) => count + 1);
-    void runNativeCommand(context, command, args).then((result) => {
-      setSending((count) => count - 1);
-      if (result.ok) {
-        if (getDraftInput(sessionKey) === before) {
-          clearDraft(sessionKey);
-          setLockedId(null);
+    const unavailable: InlineError = { key: 'composer.slash.error.unavailable', params: { command } };
+    void loadNative()
+      .then(
+        (native) => native.runNativeCommand(context, command, args),
+        () => ({ ok: false as const, error: unavailable }),
+      )
+      .then((result) => {
+        setSending((count) => count - 1);
+        if (result.ok) {
+          if (getDraftInput(sessionKey) === before) {
+            clearDraft(sessionKey);
+            setLockedId(null);
+          }
+          return;
         }
-        return;
-      }
-      if (result.error !== null) setSlashError(result.error);
-    });
+        if (result.error !== null) setSlashError(result.error);
+      });
   };
+
+  /**
+   * WP-66: the side-mode draft as a side question (paste tokens replaced, attachments stay). The
+   * field empties and side mode ends at once; a failure brings both back with a notice.
+   */
+  const askSide = (message: string) => {
+    if (entryId === null) return;
+    const previousPastes = getPastes(sessionKey);
+    const question = expandPastes(message, previousPastes).text.trim();
+    if (question === '' || question.length > LIMITS.sideQuestionChars) return;
+    clearDraft(sessionKey);
+    setLockedId(null);
+    setSideFor(null);
+    followTranscript(sessionKey);
+    setSending((count) => count + 1);
+    void loadNative()
+      .then((native) => native.sendSideQuestion(sessionKey, entryId, question))
+      .catch(() => false)
+      .then((ok) => {
+        setSending((count) => count - 1);
+        if (ok) return;
+        restoreDraft(message, null, previousPastes);
+        setSideFor(sessionKey);
+      });
+  };
+
+  // WP-66 „Zurückholen“: the text of a withdrawn waiting message (transcript) comes back here.
+  useShellRequestHandler('composerText', (request) => {
+    if (request.sessionKey !== sessionKey) return false;
+    const current = getDraftInput(sessionKey);
+    const next = current.trim() === '' ? request.text : `${current.trimEnd()}\n\n${request.text}`;
+    changeText(next, next.length);
+    textareaRef.current?.focus();
+    return true;
+  });
 
   const submit = (via: Via) => {
     // WP41-07: the store, not the last render – an Enter right after the click is held as well.
@@ -669,6 +774,10 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
       answer = target;
     }
     if (!online) return;
+    if (sideMode && via !== 'answer') {
+      askSide(message);
+      return;
+    }
     if (answer !== null) {
       // An answer has no `pastes` field: the tokens are replaced by their texts.
       const previousPastes = getPastes(sessionKey);
@@ -793,7 +902,8 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   /** A large pasted text becomes a token + chip (ADR-146); false = paste it as text. */
   const pasteAsChip = (field: HTMLTextAreaElement, plain: string): boolean => {
     const pasted = normalizePastedText(plain);
-    if (!isLargePaste(pasted)) return false;
+    // WP-66: a side question takes no paste chips – the text goes in as it is.
+    if (sideMode || !isLargePaste(pasted)) return false;
     const current = getDraftInput(sessionKey);
     const kept = getPastes(sessionKey);
     const refusal = pasteRefusal(current, kept, pasted);
@@ -895,6 +1005,12 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
         if (handled) return;
       }
     }
+    if (event.key === 'Escape' && sideMode) {
+      // WP-66: Esc leaves side mode (the Stop shortcut sees the handled event).
+      event.preventDefault();
+      setSideFor(null);
+      return;
+    }
     if (event.key === 'Tab' && !modified && suggestion !== null) {
       event.preventDefault();
       changeText(suggestion, suggestion.length);
@@ -910,19 +1026,22 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   };
 
   let placeholder: string;
-  if (answerTarget !== null) placeholder = t(`composer.placeholder.${targetKind(answerTarget)}`);
+  if (sideMode) placeholder = t('composer.side.placeholder');
+  else if (answerTarget !== null) placeholder = t(`composer.placeholder.${targetKind(answerTarget)}`);
   else if (suggestion !== null) placeholder = suggestion;
   else placeholder = working ? t('composer.placeholder.working') : t('composer.placeholder.idle');
 
   const answerLabel = (decision: Decision) =>
     decision.kind === 'plan' ? t('composer.answerPlan') : t('composer.answer');
   let sendLabel: string;
-  if (answerTarget !== null) sendLabel = answerLabel(answerTarget);
+  if (sideMode) sendLabel = t('composer.side.send');
+  else if (answerTarget !== null) sendLabel = answerLabel(answerTarget);
   else if (commandDraft) sendLabel = t('composer.run');
   else sendLabel = working ? t('composer.queue') : t('composer.send');
 
   let mode: string;
-  if (answerTarget !== null) mode = `answer-${answerTarget.kind}`;
+  if (sideMode) mode = 'side';
+  else if (answerTarget !== null) mode = `answer-${answerTarget.kind}`;
   else if (pendingTarget !== null) mode = `pending-${pendingTarget.kind}`;
   else mode = working ? 'queue' : 'idle';
 
@@ -935,8 +1054,8 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const argumentId = `${inputId}-argument`;
   const imagesHintId = `${inputId}-images-later`;
   const hintTarget = answerTarget ?? pendingTarget;
-  // An answer carries no images (contract): the chips stay for the next message (R4W-26).
-  const imagesWaitForMessage = answerTarget !== null && attachments.length > 0;
+  // An answer (and a side question, WP-66) carries no images: the chips stay for the next message (R4W-26).
+  const imagesWaitForMessage = (answerTarget !== null || sideMode) && attachments.length > 0;
   const describedBy = [
     hintTarget === null ? null : hintId,
     imagesWaitForMessage ? imagesHintId : null,
@@ -975,7 +1094,13 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
         attachFiles(transferFiles(event.dataTransfer), true);
       }}
     >
-      <RateLimitBanner sessionKey={sessionKey} />
+      {rateLimited ? (
+        <SlotBoundary resetKey={sessionKey} className="mb-1.5 p-0">
+          <Suspense fallback={null}>
+            <RateLimitBanner sessionKey={sessionKey} />
+          </Suspense>
+        </SlotBoundary>
+      ) : null}
       {hintTarget === null ? null : (
         <p
           id={hintId}
@@ -1031,12 +1156,18 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
           {t('composer.slash.terminal.description')}
         </Alert>
       )}
-      <AttachmentChips
-        sessionKey={sessionKey}
-        onFocusField={() => {
-          textareaRef.current?.focus();
-        }}
-      />
+      {attachments.length === 0 ? null : (
+        <SlotBoundary resetKey={sessionKey} className="mb-1.5 p-0">
+          <Suspense fallback={null}>
+            <AttachmentChips
+              sessionKey={sessionKey}
+              onFocusField={() => {
+                textareaRef.current?.focus();
+              }}
+            />
+          </Suspense>
+        </SlotBoundary>
+      )}
       {visiblePastes.length === 0 ? null : (
         <SlotBoundary resetKey={sessionKey} className="mb-1.5 p-0">
           <Suspense fallback={null}>
@@ -1046,13 +1177,17 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
       )}
       <div className="relative">
         {menuOpen ? (
-          <SlashMenu
-            id={menuId}
-            entries={matches}
-            activeIndex={menuIndex}
-            onActiveIndexChange={setActiveIndex}
-            onSelect={pickEntry}
-          />
+          <SlotBoundary resetKey={sessionKey} className={MENTION_ERROR_CLASS}>
+            <Suspense fallback={null}>
+              <SlashMenu
+                id={menuId}
+                entries={matches}
+                activeIndex={menuIndex}
+                onActiveIndexChange={setActiveIndex}
+                onSelect={pickEntry}
+              />
+            </Suspense>
+          </SlotBoundary>
         ) : null}
         {mentionOpen ? (
           <SlotBoundary resetKey={sessionKey} className={MENTION_ERROR_CLASS}>
@@ -1088,7 +1223,12 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
           }
           placeholder={placeholder}
           rows={1}
-          className={cn('max-h-60 min-h-9 resize-none', suggestion !== null && 'pr-12')}
+          data-side={sideMode ? 'true' : undefined}
+          className={cn(
+            'max-h-60 min-h-9 resize-none',
+            suggestion !== null && 'pr-12',
+            sideMode && 'border-side-question bg-side-question-surface border-dashed',
+          )}
           onChange={(event) => {
             changeText(event.target.value);
             updateCaret(event.target);
@@ -1169,7 +1309,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
           aria-label={t('composer.toolbar')}
           className="flex min-w-0 flex-wrap items-center gap-0.5"
         >
-          {canAttach ? (
+          {canAttach && !sideMode ? (
             <>
               <IconButton
                 label={t('composer.attachments.add')}
@@ -1254,6 +1394,14 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
               {answerLabel(pendingTarget)}
             </Button>
           )}
+          {/* WP-65 §1.5: only while a Bash call or subagent runs in the foreground (+ Ctrl+B). */}
+          {working ? (
+            <SlotBoundary resetKey={sessionKey} fallback={() => null}>
+              <Suspense fallback={null}>
+                <BackgroundAll sessionKey={sessionKey} composerRef={rootRef} online={online} />
+              </Suspense>
+            </SlotBoundary>
+          ) : null}
           {working ? (
             <Button
               variant="outline"
@@ -1267,7 +1415,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
               {t('composer.stop')}
             </Button>
           ) : null}
-          {working && answerTarget === null && !commandDraft ? (
+          {working && answerTarget === null && !commandDraft && !sideMode ? (
             <Button
               variant="outline"
               size="sm"
@@ -1282,6 +1430,21 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
               {t('composer.sendNow')}
             </Button>
           ) : null}
+          {/* WP-66: side question for one message (also while Claude works); Esc leaves it. */}
+          {entryId === null ? null : (
+            <IconButton
+              label={t('composer.side.toggle')}
+              data-action="side-question"
+              aria-pressed={sideMode}
+              className={cn(sideMode && 'bg-side-question-surface text-side-question')}
+              onClick={() => {
+                setSideFor(sideMode ? null : sessionKey);
+                textareaRef.current?.focus();
+              }}
+            >
+              <MessageCircleQuestionIcon aria-hidden />
+            </IconButton>
+          )}
           <span className="inline-flex items-center gap-px">
             <Button
               size="sm"
@@ -1331,16 +1494,22 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
           </span>
         </div>
       </div>
-      <HelpDialog
-        open={helpOpen}
-        onOpenChange={setHelpOpen}
-        entries={entries}
-        terminal={[...terminal].sort()}
-        hasCatalog={commands !== null}
-        returnFocus={() => {
-          textareaRef.current?.focus();
-        }}
-      />
+      {helpMounted ? (
+        <SlotBoundary resetKey={sessionKey} className="fixed inset-x-0 top-16 z-50">
+          <Suspense fallback={null}>
+            <HelpDialog
+              open={helpOpen}
+              onOpenChange={setHelpOpen}
+              entries={entries}
+              terminal={[...terminal].sort()}
+              hasCatalog={commands !== null}
+              returnFocus={() => {
+                textareaRef.current?.focus();
+              }}
+            />
+          </Suspense>
+        </SlotBoundary>
+      ) : null}
     </div>
   );
 });

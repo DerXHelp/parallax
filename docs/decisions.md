@@ -1970,3 +1970,190 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   dann verschwindet der Hinweis. `pnpm e2e` leert `test-results/` samt Check-Bericht (`--last --accept`
   vorher). Stufe 2 (SDK-Upgrade, Neuaufzeichnung) bleibt `docs/sdk-upgrade.md`. Umsetzung:
   `src/server/claude/cliProfile.ts`, `scripts/cli-check/**`, `.claude/skills/claude-update/SKILL.md`.
+
+## ADR-161 – `session.remove` vergisst nur
+- **Datum/WP:** 12.11.2026, WP-63; angenommen (12.11.2026, Koordinator beim Merge).
+- **Kontext:** Nutzer-Feedback 1: Sessions endgültig aus Parallax entfernen, das Archiv aufräumen.
+- **Entscheidung:** Entfernen löscht keine Datei (claude-Transkript, `entries/<id>/`, Blobs bleiben), beendet einen
+  laufenden Prozess wie `session.close` (offene Entscheidungen `cancelled/process_exit`) und ist auch für archivierte
+  und externe Einträge erlaubt; danach `ENTRY_NOT_FOUND` für jeden Befehl (auch im Lock wartende) und kein Start
+  mehr. Kein Rückgängig; Wiederaufnahme nur über `claude --resume`. Keine neuen Fehlercodes.
+- **Folgen:** Kein Start-Aufräumlauf löscht die Dateien (`src/server/sessions/README.md`, `docs/architecture.md` §8).
+  Remote Control (WP-64) schaltet die Bridge vor dem Entfernen ab.
+
+## ADR-162 – Context-Anzeige: Füllstand bis Autocompact, Farbe nach Modellfenster
+- **Datum/WP:** 12.11.2026, WP-63; angenommen (12.11.2026, Koordinator beim Merge).
+- **Kontext:** Die Anzeige maß bisher am Modellfenster; Autocompact greift aber vorher.
+- **Entscheidung:** Füllstand = verbrauchte Tokens / Autocompact-Schwelle (nur bei `isAutoCompactEnabled === true`
+  und Schwelle < Fenster, sonst / Fenster); Farbe nach Anteil am Modellfenster (≥ 50 % Warnung, ≥ 80 % Gefahr);
+  „Autocompact bald“ ab 90 % der Schwelle als eigenes Symbol, nie nur als Farbe. Regel nur in
+  `@web/lib/context-display`.
+- **Folgen:** Gilt für Kopfzeile und Seitenleiste; die Composer-Gauge (70/85) zieht in WP-65 nach.
+
+## ADR-163 – Kompaktes Transkript
+- **Datum/WP:** 12.11.2026, WP-63; angenommen (12.11.2026, Koordinator beim Merge).
+- **Kontext:** Lange Turns mit vielen Werkzeugaufrufen machten das Transkript unübersichtlich.
+- **Entscheidung:** Rollen sichtbar/Schritt/versteckt wie in `features/transcript/README.md`; Gruppe ab 2 Schritten,
+  Schlüssel = erste Item-ID, Auf-Zustand nur im Fenster (nicht persistiert); Bilder einer Gruppe immer als Galerie
+  sichtbar; Agent-Karten werden nicht gruppiert; `rate_limit` allowed/allowed_warning erscheint nicht im Transkript
+  (nur in der Limit-Leiste, die jedes gemeldete Fenster zeigt). Standard „Kompakt“, umschaltbar auf „Alle Schritte“.
+- **Folgen:** Gruppierung als reine Funktionen (`features/transcript/lib/grouping.ts`, O(n)).
+
+## ADR-164 – Transkript-Ansicht vorerst in `localStorage`
+- **Datum/WP:** 12.11.2026, WP-63; angenommen als Übergang (12.11.2026, Koordinator beim Merge).
+- **Kontext:** Für ein Server-Setting fehlte die Contract-Freigabe.
+- **Entscheidung:** Die Wahl liegt je Browserprofil in `parallax.transcript.view`; Features lesen/schreiben nur über
+  `@web/state/transcript-view`.
+- **Folgen:** `settings.transcriptView` ist freigegeben (12.11.2026); WP-65 zieht die Wahl dorthin um (einmalige
+  Übernahme aus `localStorage`) und löst diesen ADR damit ab.
+
+## ADR-166 – Remote Control: Wunsch je Session, Live-Zustand je Prozess, Bridge je Unterhaltung
+- **Datum/WP:** 12.11.2026, WP-64; angenommen (12.11.2026, Koordinator beim Merge).
+- **Kontext:** `remoteControlAtStartup` wertet nur die TUI aus; headless Hosts schalten per `enableRemoteControl`
+  (intern) ein (`docs/wp/MACHBARKEIT-REMOTE-CONTROL.md`, Spike).
+- **Entscheidung:** `Entry.remoteControlWanted` wird persistiert; der Live-Zustand kommt nur aus `system/bridge_state`;
+  `bridgeSessionId`/`sessionUrl` hängen an der Unterhaltung. Immer `keepSessionOnExit` + `reattachSessionId` (ein
+  gescheitertes Reattach einmal ohne); `/clear` und frischer Kontext erben die Bridge, Aus/Archiv/Entfernen vergessen
+  sie. Neue Sessions folgen `settings.remoteControl.newSessions` (Default „wie Claude-Einstellung“).
+- **Folgen:** Schließen, Schlaf, Absturz und Serverneustart behalten denselben Link. Ruhende archivierte/entfernte
+  Sessions können die Bridge nicht abschalten (kein Prozess) – der Eintrag bleibt in der App.
+
+## ADR-167 – Kein Leerlauf-Schlaf bei aktiver Bridge
+- **Datum/WP:** 12.11.2026, WP-64 (Nutzerentscheidung); angenommen (12.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Ergänzt ADR-105: Sessions mit Remote-Control-Zustand `connecting`/`connected`/`reconnecting`
+  schlafen nie (`isRemoteControlActive` in `@shared/model`); `failed`/`off` → normale Regel.
+- **Folgen:** Verbundene Sessions halten ihren Prozess; der Nutzer kann sie jederzeit vom Handy aus erreichen.
+
+## ADR-168 – `--replay-user-messages` immer an, Echo-Filter über die uuid
+- **Datum/WP:** 12.11.2026, WP-64; angenommen (12.11.2026, Koordinator beim Merge).
+- **Kontext:** Remote Control ist zur Laufzeit schaltbar; Prompts aus der App erkennt Parallax nur über Replays.
+- **Entscheidung:** Das Flag ist immer gesetzt. Eigene Prompts (auch mit `origin human`, das Parallax selbst sendet)
+  verwirft der Normalizer über die registrierte uuid; fremde Replays mit `origin human` werden `user_message` mit
+  `source: 'remote'` (Hinweis „Aus der Claude-App“).
+- **Folgen:** Queue, „grau bis verarbeitet“ und `command_lifecycle` bleiben unverändert; aus dem Verlauf importierte
+  Turns tragen keine Herkunft.
+
+## ADR-169 – `answered_elsewhere` als Heuristik
+- **Datum/WP:** 12.11.2026, WP-64; angenommen (12.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Endet `canUseTool` per Signal, während die Bridge `connected`/`reconnecting` ist und lokal keine
+  Antwort kam, ist der Ausgang `answered_elsewhere`; sonst wie bisher `cancelled`. Was entschieden wurde, zeigt erst
+  das folgende `tool_result`.
+- **Folgen:** In seltenen Fällen (Abbruch aus anderem Grund bei verbundener Bridge) steht „in der Claude-App
+  beantwortet“, obwohl es ein Abbruch war; Live-Abnahme prüft das.
+
+## ADR-170 – Remote-Control-Fehler sind Zustand, kein Befehlsfehler
+- **Datum/WP:** 12.11.2026, WP-64; angenommen (12.11.2026, Koordinator beim Merge).
+- **Entscheidung:** `session.setRemoteControl` gelingt; Fehler erscheinen als
+  `summary.remoteControl { state: 'failed', error }`. Die internen SDK-Methoden werden zur Laufzeit geprüft
+  (`REMOTE_CONTROL_UNAVAILABLE`); `pnpm cli-check` prüft Remote Control als Frühwarnung (Profilfeld `remoteControl`
+  nullable, `null` = nicht geprüft). Session-Links nur `https://claude.ai/…` (`isClaudeSessionUrl`).
+- **Folgen:** Muster für die weiteren internen Methoden (WP-65 bis WP-67): Laufzeitprüfung, tolerantes Parsen,
+  Probe im Kurz-Check.
+
+## ADR-171 – Live-Satz und Turn-Fazit
+- **Datum/WP:** 12.11.2026, WP-65; angenommen (13.11.2026, Koordinator beim Merge).
+- **Kontext:** Nutzerwunsch: auf einen Blick sehen, was jede Session tut bzw. getan hat (`SDK-MOEGLICHKEITEN.md` 2+3).
+- **Entscheidung:** Quelle ist das CLI (`task_summary`/`post_turn_summary`, nur mit Remote Control) vor dem
+  Parallax-Rückfall (laufendes Werkzeug mit Ziel bzw. erste Zeile der Antwort). Fazit nur für den letzten Turn,
+  persistiert; Live-Satz nur Laufzeit, höchstens alle 2 s; „braucht dich“ nie nur über Farbe.
+- **Folgen:** Zweite Zeile in der Seitenleiste und Kopfzeile (ab `lg`); CLI-Texte bleiben Englisch.
+
+## ADR-172 – `lastSeenAt`
+- **Datum/WP:** 12.11.2026, WP-65; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** `lastSeenAt` = Ende der Sichtbarkeit in einem sichtbaren Fenster bzw. Prompt/Freigabe aus der
+  Claude-App; nie rückwärts. Die Karte „Seit du zuletzt hier warst“ rechnet der Client, es gilt der Wert beim Öffnen.
+- **Folgen:** Reines Mitlesen in der Claude-App zählt (noch) nicht als gesehen – Ausbaustufe.
+
+## ADR-173 – Generierte Titel
+- **Datum/WP:** 12.11.2026, WP-65; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** `generateSessionTitle(persist: true)` nach dem ersten echten Turn je Unterhaltung; ein eigener Titel
+  gewinnt immer. „Titel neu erzeugen“ mit `persist: false` + `/rename` (Quelle `ai`, auch über einem eigenen Titel). Die
+  AI-Titel-Abfrage über `getSessionInfo` bleibt Rückfall.
+- **Folgen:** Mit Bridge und nach „Titel neu erzeugen“ erscheint eine `/rename`-Zeile im Transkript. Nach `/clear` kann
+  das CLI den alten Titel liefern (F.7, Live-Abnahme).
+
+## ADR-174 – Nutzungsabfrage als zweite Quelle der Abo-Limits
+- **Datum/WP:** 12.11.2026, WP-65; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Experimentelle Nutzungsabfrage alle 5 min (erste 10 s nach einem Spawn) über eine Abo-Session je
+  Profil; Anteil 0–1 wie `rate_limit_event`; `mergeUsage` behält Status/Typ des letzten Ereignisses (ADR-114). Keine
+  Zeilenzahlen (Nutzer). Fehler oder fehlende Methode → ausblenden wie bisher.
+- **Folgen:** Probe in `pnpm cli-check` (`usageQuery`), weil die Schnittstelle als instabil markiert ist.
+
+## ADR-175 – Externe Links im Standardbrowser
+- **Datum/WP:** 12.11.2026, WP-65 (Follow-up WP-64); angenommen (13.11.2026, Koordinator beim Merge).
+- **Kontext:** Links öffneten im Chrome-App-Profil von Parallax, in dem der Nutzer nirgends angemeldet ist.
+- **Entscheidung:** Host-Befehl `link.open` (nur http(s) ohne Leerraum): Registry (`UserChoice` → ProgId →
+  `shell\open\command`) → absolute `.exe` → `spawnGui` (ADR-144). Rückfall `window.open` ohne Opener/Referrer mit
+  Hinweis; nur schlichte Primärklicks. Mit dem FakeBackend zeichnet `link.open` nur auf.
+- **Folgen:** Gilt für Markdown-Links und „In der Claude-App öffnen“.
+
+## ADR-176 – Transkript-Ansicht in den Server-Einstellungen
+- **Datum/WP:** 12.11.2026, WP-65; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** `settings.transcriptView` (Default `compact`) mit einmaliger Übernahme des `localStorage`-Werts aus
+  WP-63. Löst ADR-164 ab.
+
+## ADR-177 – Seltene Composer-Teile als Lazy-Chunks
+- **Datum/WP:** 12.11.2026, WP-65; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** „Alles in den Hintergrund“ (leise `SlotBoundary`, vorgeladen) und der `/help`-Dialog (ab dem ersten
+  Öffnen montiert) sind Lazy-Chunks – Ausgleich für das Start-Chunk-Budget.
+- **Folgen:** Das Budget gegen `109c073` ist danach fast ausgeschöpft (`index` +9 031 B von 10 000); WP-66/67 müssen neue
+  UI von Anfang an lazy bauen oder an anderer Stelle ausgleichen.
+
+## ADR-178 – Seitenfragen sind Engine-Items
+- **Datum/WP:** 13.11.2026, WP-66; angenommen (13.11.2026, Koordinator beim Merge).
+- **Kontext:** `askSideQuestion` (intern) antwortet ohne Werkzeuge aus dem Gesprächsstand, schreibt nichts ins
+  claude-Transkript (Live-Probe 12.11.2026).
+- **Entscheidung:** `side_question` gehört der Engine, nie dem Normalizer: ID `px:<conversationId>:<order>` mit
+  `LiveNormalizer.claimOrder()`, persistiert im Parallax-Log (kein Import aus dem claude-Transkript). Faden = ID der
+  ersten Frage, `history` aus den beantworteten Fragen (höchstens 10). Prozessende/Server-Stopp → `failed`; eine offene
+  Frage hält den Prozess wach; kein Einfluss auf `unread`, Status oder Benachrichtigungen. Port-Ergebnis als Union
+  (`SideQuestionResult`), nie Ablehnung.
+- **Folgen:** Ein nach einem Absturz noch `pending` geloggtes Item weiter oben im Log bleibt als „fragt…“ stehen
+  (nur der geladene Spiegel wird repariert) – Follow-up.
+
+## ADR-179 – Seitenfragen-Modus für eine Frage, `/btw` als Parallax-Befehl
+- **Datum/WP:** 13.11.2026, WP-66; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Umschalter neben Senden und `/btw` (allein → Modus, mit Frage → sofort); der Modus gilt für genau
+  eine Frage, danach normaler Composer (ein dauerhafter Modus hätte leicht einen echten Prompt verschluckt). Anhänge
+  bleiben für die nächste Nachricht. Karte im kompakten Transkript sichtbar, nie in einer Schrittgruppe; weitere Fragen
+  des Fadens in derselben Karte; „Kurz fragen…“ als Popover aus der Seitenleiste.
+
+## ADR-180 – Wartende Nachricht zurückholen über die Shell-Anfrage `composerText`
+- **Datum/WP:** 13.11.2026, WP-66; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** „Zurückholen“ sitzt an den grauen Zeilen im Transkript (die Queue zeigt seit ADR-041 das
+  Transkript) und ruft `cancelAsyncMessage` (intern) über `session.withdrawQueued`. Der Text geht über die
+  Shell-Anfrage `composerText` ins Eingabefeld (leer: ersetzen, sonst als neuer Absatz), ohne geöffneten Composer in
+  die Zwischenablage; nur Text, keine Anhänge. Das Transkript importiert den Composer nicht.
+
+## ADR-181 – `zod-jitless` im Chunk `vendor`
+- **Datum/WP:** 13.11.2026, WP-66; angenommen (13.11.2026, Koordinator beim Merge).
+- **Kontext:** Rolldown legte die Shared-Verträge in eigene Start-Chunks, die vor dem Rumpf von `index` laufen; zods
+  `Function('')`-Probe lief dadurch vor der JIT-Abschaltung → CSP-Verletzung (V1-09).
+- **Entscheidung:** `src/web/lib/zod-jitless.ts` liegt in der Chunk-Gruppe `vendor` (`vite.config.ts`); jeder Chunk mit
+  Schemas importiert zod aus `vendor`, der Schalter läuft also immer zuerst – unabhängig vom Chunking. Selten gebrauchte
+  Composer-Teile (`AttachmentChips`, `SlashMenu`, `RateLimitBanner`, `lib/native`) sind Lazy-Chunks.
+- **Folgen:** Der Start besteht seit WP-66 aus 8 statt 4 Dateien; Ursache ungeklärt, Summe im Budget.
+
+## ADR-182 – Session-Info über interne Query-Methoden, nur auf Anfrage
+- **Datum/WP:** 13.11.2026, WP-67; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Die Reiter der Session-Info lesen die Dialog-Daten der laufenden CLI (`get_status`,
+  `get_memory_dialog`, `get_skills_dialog`, `get_hooks_listing`, `list_permission_rules`, `mcpServerStatus`,
+  `export_conversation`) nur beim Öffnen/Aktualisieren, ohne Cache und ohne automatisches Wecken. Laufzeitprüfung je
+  Methode; fehlt sie oder meldet die CLI „not available“ → `available: false` ohne Fehler. Antworten werden nie
+  geloggt, gespeichert oder ins CLI-Profil übernommen; Lesefehler tragen keinen CLI-Text (könnte Kontodaten
+  enthalten). Rohkonfiguration (MCP-`config` außer `type`, Hook-`editable`) verlässt das Backend nie.
+- **Folgen:** Antwortformen aus `claude` 2.1.323 abgeleitet (keine Live-Probe); Abgleich im ersten Live-`cli-check`.
+
+## ADR-183 – Lazy-Namensräume für Texte eines Lazy-Chunks
+- **Datum/WP:** 13.11.2026, WP-67; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Texte, die nur ein Lazy-Chunk braucht, dürfen ein eigenes Wörterbuchpaar haben, das nur dieser
+  Chunk importiert (`translateFrom`, eigener Hook); sie stehen weder in `dictionaries.ts` noch in `dictionary.de.ts`.
+  `bundle.test.ts` führt sie in `LAZY_NAMESPACES` und prüft: nicht im Start-Graphen, nicht in `dictionary.de`, vom
+  Chunk erreicht; Paritäts-/Nutzungs-Tests wie jeder Namensraum.
+- **Folgen:** Ergänzt ADR-153; Mittel gegen das enge Start-Budget.
+
+## ADR-184 – Export als Browser-Download
+- **Datum/WP:** 13.11.2026, WP-67; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Der Server liefert Text + vorgeschlagenen Dateinamen; gespeichert wird per Blob-Download im
+  Browser (`lib/download`), der Server schreibt nichts in Nutzerpfade. E2E prüfen „Kopieren“ nur gegen eine in der
+  Seite ersetzte Zwischenablage.

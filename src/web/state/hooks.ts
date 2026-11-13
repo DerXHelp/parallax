@@ -404,6 +404,25 @@ export function useItem(sessionKey: string | null, itemId: string): TranscriptIt
   });
 }
 
+const EMPTY_ITEMS: readonly (TranscriptItem | null)[] = Object.freeze([]);
+
+/**
+ * Several items by id (WP-63: the members of a step group) – re-renders only when one of THESE
+ * items changes (element-wise comparison), never for other items' deltas. Does not subscribe.
+ */
+export function useItems(
+  sessionKey: string | null,
+  ids: readonly string[],
+): readonly (TranscriptItem | null)[] {
+  return useStore(
+    clientStore,
+    useShallow((state: ClientState) => {
+      const view = selectSessionRecord(state, sessionKey).view;
+      return view === null ? EMPTY_ITEMS : ids.map((id) => itemById(view.items, id));
+    }),
+  );
+}
+
 /** Item ids in `order` (for virtualized lists); changes only when items are added/removed. Subscribes. */
 export function useItemIds(sessionKey: string | null): readonly string[] {
   useSessionSubscription(sessionKey);

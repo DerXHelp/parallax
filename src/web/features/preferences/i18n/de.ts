@@ -27,6 +27,10 @@ export const de: typeof en = {
   general: {
     languageHint: 'Sprache der App und der Windows-Benachrichtigungen.',
     themeHint: '„System“ folgt der Windows-Einstellung. Das Einstellungsmenü bietet dieselbe Schnellwahl.',
+    transcript: 'Transkript',
+    transcriptHint:
+      'Kompakt: Die Arbeitsschritte zwischen zwei Nachrichten bilden eine Zeile (Klick öffnet sie), Bilder bleiben als Galerie sichtbar. Alle Schritte: jeder Schritt in einer eigenen Zeile. Gilt für alle Fenster und Browser.',
+    transcriptViews: { compact: 'Kompakt', all: 'Alle Schritte' },
   },
   notifications: {
     events: 'Ereignisse',
@@ -76,6 +80,17 @@ export const de: typeof en = {
     promptSuggestions: 'Prompt-Vorschläge',
     promptSuggestionsHint:
       'Claude schlägt den nächsten Prompt als grauen Text im Eingabefeld vor (Tab übernimmt ihn). Kostet einen zusätzlichen Request je Turn. Wirkt ab dem nächsten Start einer Session.',
+    remoteControl: 'Remote Control für neue Sessions',
+    remoteControlHint:
+      'Öffnet eine neue Session zusätzlich in der Claude-App (Handy oder claude.ai), damit du sie dort verfolgen und beantworten kannst. Bestehende Sessions behalten ihre eigene Wahl (Menü der Kopfzeile).',
+    remoteFollow: 'Wie Claude-Einstellung ({detected})',
+    remoteDetectedOn: 'zurzeit an',
+    remoteDetectedOff: 'zurzeit aus',
+    remoteDetectedUnknown: 'noch nicht gelesen – bekannt nach dem ersten Session-Start',
+    remoteOptions: {
+      on: 'Immer an',
+      off: 'Aus',
+    },
   },
   server: {
     port: 'Port',

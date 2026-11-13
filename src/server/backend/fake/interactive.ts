@@ -6,7 +6,15 @@
  * with an image result), `fake:error`, `fake:crash`, `fake:held`, `/rename X`, `/clear`; Phase 3
  * (WP-52): `fake:background`, `fake:todo`, `fake:files`, `fake:writes-lost`, `fake:context-high`
  * (context stays at 75 % until /clear or a compaction, V4-05; phase3.ts) and the plan file of
- * `fake:plan` (plan.ts). A prompt with images, PDFs, attached files or inline pastes
+ * `fake:plan` (plan.ts); WP-63 (feedback.ts): `fake:steps` (long run of Bash steps with one
+ * failure and a sentence in between), `fake:images` (burst of Read results with a PNG each),
+ * `fake:limit-warning` (`allowed_warning`, the limit bar only); WP-64 (remote.ts, only with the fake
+ * bridge connected): `fake:remote-prompt [text]` (a prompt from the Claude app follows),
+ * `fake:remote-permission` (approval answered in the app), `fake:remote-fail`, `fake:remote-flaky`;
+ * WP-65 (overview.ts): `fake:long-bash` (a foreground Bash until it is moved to the background) and
+ * `fake:summary` (live sentence and turn summary of the CLI while the fake bridge is connected); WP-67
+ * (sessionInfo.ts): `fake:info-unavailable [section …]`, `fake:info-fail`, `fake:info-long`,
+ * `fake:info-reset` (levers of the session info of this session). A prompt with images, PDFs, attached files or inline pastes
  * gets "Fake: received …" (ADR-103, ADR-146); the first prompt of a start without resume that is
  * the engine's fresh-context prompt gets "Fake: implementing plan (N lines)"; anything else gets a
  * thought plus a streamed "Echo: …". Decisions really wait for the engine; interrupt() and
@@ -39,9 +47,13 @@ import {
   turnOpen,
   type DslContext,
 } from './dsl';
+import { images, limitWarning, steps } from './feedback';
 import { FAKE_SHOT_HEIGHT, FAKE_SHOT_NAME, FAKE_SHOT_PNG_BASE64, FAKE_SHOT_WIDTH } from './image';
 import { background, contextHigh, files, receivedCounts, receivedText, todo, writesLost } from './phase3';
+import { longBash, summaryTurn } from './overview';
 import { implementPlan, isImplementPlanPrompt, plan } from './plan';
+import { remoteFail, remoteFlaky, remotePermission, remotePrompt } from './remote';
+import { infoKeyword, isFakeInfoKeyword } from './sessionInfo';
 import { CANCEL_DENY, abortedByDecision, answerTurn, ask, contextFor, firstWords, type Turn } from './turn';
 import type { FakeScenario, FakeScriptContext } from './types';
 
@@ -426,6 +438,10 @@ async function handle(
     return sessionId;
   }
   const keyword = (text.split(/\s+/)[0] ?? '').toLowerCase();
+  if (isFakeInfoKeyword(keyword)) {
+    await infoKeyword(ctx, c, turn, keyword, text);
+    return sessionId;
+  }
   switch (keyword) {
     case 'fake:background':
       await background(ctx, c, turn, sessionId);
@@ -444,6 +460,33 @@ async function handle(
       break;
     case 'fake:image':
       await image(ctx, c, turn);
+      break;
+    case 'fake:steps':
+      await steps(ctx, c, turn);
+      break;
+    case 'fake:images':
+      await images(ctx, c, turn);
+      break;
+    case 'fake:limit-warning':
+      await limitWarning(ctx, c, turn);
+      break;
+    case 'fake:remote-prompt':
+      await remotePrompt(ctx, c, turn, text);
+      break;
+    case 'fake:remote-permission':
+      await remotePermission(ctx, c, turn);
+      break;
+    case 'fake:remote-fail':
+      await remoteFail(ctx, c, turn);
+      break;
+    case 'fake:remote-flaky':
+      await remoteFlaky(ctx, c, turn);
+      break;
+    case 'fake:long-bash':
+      await longBash(ctx, c, turn, sessionId);
+      break;
+    case 'fake:summary':
+      await summaryTurn(ctx, c, turn);
       break;
     case 'fake:bash':
     case 'fake:permission':

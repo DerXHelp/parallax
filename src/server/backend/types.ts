@@ -11,6 +11,8 @@ import type {
   PermissionResult,
   PermissionUpdate,
 } from '@anthropic-ai/claude-agent-sdk';
+import type { ErrorPayload } from '@shared/errors';
+import type { McpAction, ReloadTarget, SessionInfoSection, SessionInfoSectionName } from '@shared/model';
 import type { LaunchSpec } from '../claude/ports';
 
 /** canUseTool arguments, taken over tolerantly (F.3). */
@@ -84,6 +86,87 @@ export type BackendEvent =
   /** Always the last event. */
   | { type: 'exit'; code: number | null; signal: string | null; expected: boolean; at: Date };
 
+/**
+ * WP-64 (Remote Control): answer of `query.enableRemoteControl(true)` (SDK 0.3.322, internal), already
+ * checked. `sessionUrl` is null when the CLI sent no https://claude.ai link.
+ */
+export interface RemoteControlInfo {
+  bridgeSessionId: string;
+  sessionUrl: string | null;
+}
+
+export interface RemoteControlRequest {
+  /** Name of the remote session in the Claude app (Parallax title); null = the CLI decides. */
+  name: string | null;
+  /** Bridge session of the current conversation (`cse_…`) to reconnect to; null = new one. */
+  reattachSessionId: string | null;
+}
+
+/**
+ * Never rejects. Failures: REMOTE_CONTROL_UNAVAILABLE (method missing in SDK/CLI, unknown answer),
+ * REMOTE_CONTROL_AUTH, REMOTE_CONTROL_POLICY_DISABLED, REMOTE_CONTROL_FAILED {reason, detail?}.
+ * Disabling answers `info: null`.
+ */
+export type RemoteControlResult = { ok: true; info: RemoteControlInfo | null } | { ok: false; error: ErrorPayload };
+
+/**
+ * WP-65: answer of `query.generateSessionTitle(description, { persist })` (SDK 0.3.322, internal).
+ * Never rejects: `unavailable` = the method is missing in SDK/CLI, `failed` = the request failed or
+ * timed out; `title: null` = the CLI found no usable title. With `persist` the CLI writes an
+ * `ai-title` into its transcript – and answers a title the session already has without a new one.
+ */
+export type TitleResult = { ok: true; title: string | null } | { ok: false; reason: 'unavailable' | 'failed' };
+
+/** WP-65: one plan window of the usage query; `utilization` as a FRACTION 0–1 (like rate_limit_event). */
+export interface UsageWindow {
+  utilization: number;
+  resetsAt: string | null;
+}
+
+/**
+ * WP-65: the plan limits of `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()` (checked,
+ * normalized): only windows with a value (`five_hour`, `seven_day`, … ; codename windows without a
+ * value are dropped; extra usage as `overage`); `cleared` = known windows the answer reports empty
+ * (their stored value is history). No session cost, no line counts.
+ */
+export interface UsageLimits {
+  windows: Record<string, UsageWindow>;
+  cleared: string[];
+}
+
+/** WP-66: one answered question of a side-question thread (`history`, oldest first). */
+export interface SideQuestionTurn {
+  question: string;
+  response: string;
+}
+
+/** WP-66: the answer of `query.askSideQuestion` (checked); `fallbackModel` = `refusalFallback.fallbackModel`. */
+export interface SideQuestionAnswer {
+  response: string;
+  synthetic: boolean;
+  fallbackModel: string | null;
+}
+
+/**
+ * WP-66: result of a side question; never rejects. `answer: null` = the CLI could not answer (no
+ * conversation state yet). Failures: `unavailable` (method missing in SDK/CLI, unknown answer shape),
+ * `busy` (`side_question_busy`: the CLI already runs as many side questions/title requests as it
+ * may), `cancelled` (the signal aborted), `failed` (anything else, also a closed session).
+ */
+export type SideQuestionResult =
+  | { ok: true; answer: SideQuestionAnswer | null }
+  | { ok: false; reason: 'unavailable' | 'busy' | 'cancelled' | 'failed' };
+
+export interface SideQuestionOptions {
+  history: readonly SideQuestionTurn[];
+  signal: AbortSignal;
+  /**
+   * `system/control_request_progress api_retry` while this is the only open side question of the
+   * process (the CLI's request_id is unknown to the caller, so nothing is attributed otherwise).
+   */
+  onRetry?: (retry: { attempt: number; maxRetries: number }) => void;
+}
+
 export interface AgentSession {
   readonly entryId: string;
   readonly pid: number | null;
@@ -100,6 +183,53 @@ export interface AgentSession {
   supportedModels(): Promise<unknown[]>;
   supportedCommands(): Promise<unknown[]>;
   stopTask(taskId: string): Promise<void>;
+  /**
+   * WP-64: switches Remote Control (always with keepSessionOnExit, so a close or server restart keeps
+   * the bridge for a reattach). The live state arrives as system/bridge_state messages.
+   */
+  setRemoteControl(enabled: boolean, req: RemoteControlRequest): Promise<RemoteControlResult>;
+  /**
+   * WP-64: Claude's own setting `remoteControlAtStartup` (getSettings().effective); null when unknown
+   * (method missing, not set, unreadable). Never rejects.
+   */
+  readRemoteControlDefault(): Promise<boolean | null>;
+  /** WP-65: AI title for `description` (internal SDK method, checked at runtime). Never rejects. */
+  generateTitle(description: string, opts: { persist: boolean }): Promise<TitleResult>;
+  /**
+   * WP-65: `backgroundTasks(toolUseId?)` – null = every foreground task (Ctrl+B). Resolves false
+   * when a given tool use matched no foreground task; rejects when the request failed (also when
+   * the CLI disabled background tasks or the method is missing).
+   */
+  backgroundTasks(toolUseId: string | null): Promise<boolean>;
+  /**
+   * WP-65: plan limits of the experimental usage query (`skipBehaviors`: no transcript scan); null
+   * when unavailable (method missing, failed, unknown shape, no plan limits – API key). Never rejects.
+   */
+  readUsage(): Promise<UsageLimits | null>;
+  /**
+   * WP-66: side question (`query.askSideQuestion`, internal, checked at runtime) – forks the current
+   * conversation state (also mid-turn), no tools, nothing written to the conversation. Never rejects.
+   */
+  askSideQuestion(question: string, opts: SideQuestionOptions): Promise<SideQuestionResult>;
+  /**
+   * WP-66: `query.cancelAsyncMessage(uuid)` (internal, checked at runtime): true = removed from the
+   * CLI's queue (a `command_lifecycle cancelled` follows); false = not in the queue (already taken
+   * over, or held before it – the CLI then marks it cancelled). Rejects when the request failed or
+   * the method is missing.
+   */
+  withdrawQueued(messageUuid: string): Promise<boolean>;
+  /**
+   * WP-67: the data of one "Session info" tab, normalized and checked (backend/sessionInfo.ts):
+   * status/memory/skills/hooks/permissions/export through internal SDK methods (checked at
+   * runtime), mcp through `mcpServerStatus()`. Resolves null when this CLI cannot answer it (method
+   * missing in SDK/CLI, unknown answer shape, a CLI that does not know the request); rejects when
+   * the request failed (timeout, CLI error, session closed). Never logs the answer (account rows).
+   */
+  readInfo(section: SessionInfoSectionName): Promise<SessionInfoSection | null>;
+  /** WP-67: `reconnectMcpServer(name)` / `toggleMcpServer(name, enabled)`; rejects when it failed. */
+  mcpAction(server: string, action: McpAction): Promise<void>;
+  /** WP-67: `reloadSkills()` / `reloadPlugins()`; rejects when it failed. */
+  reload(what: ReloadTarget): Promise<void>;
   /** close(), wait ≤ 5 s for exit, then taskkill /T /F (C.8). Resolves after 'exit'. */
   close(): Promise<void>;
 }

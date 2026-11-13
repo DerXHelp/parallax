@@ -117,7 +117,38 @@ export type StatusSignal =
   | { type: 'prompt_lifecycle'; messageUuid: string; state: 'queued' | 'started' | 'completed' | 'cancelled' }
   | { type: 'rate_limit'; info: RateLimitInfo }
   /** C.5: rejected project MCP servers. */
-  | { type: 'mcp_servers'; notApproved: string[] };
+  | { type: 'mcp_servers'; notApproved: string[] }
+  /**
+   * WP-64: system/bridge_state (Remote Control, untyped). `state` as sent by the CLI; unknown states
+   * arrive as 'unknown' (counted by the normalizer). `failureKind` only for 'failed' (CLI default
+   * 'terminal'; anything else = the CLI retries), `recovered` = connected again after a reconnect.
+   */
+  | {
+      type: 'bridge_state';
+      state: BridgeState;
+      detail: string | null;
+      failureKind: string | null;
+      recovered: boolean;
+    }
+  /**
+   * WP-65: system/task_summary (untyped, only with a connected Remote Control bridge): the CLI's
+   * throttled live sentence of the running turn ("Writing handy.txt"); null = the turn ended.
+   */
+  | { type: 'task_summary'; detail: string | null }
+  /**
+   * WP-65: system/post_turn_summary (untyped, bridge only) of the CURRENT turn – the normalizer
+   * drops a summary whose `summarizes_uuid` is no assistant message of the latest turn.
+   * `needsAction` = the CLI's `needs_action` text (empty = nothing to do → null).
+   */
+  | {
+      type: 'turn_summary';
+      category: string | null;
+      detail: string;
+      needsAction: string | null;
+    };
+
+/** WP-64: states of system/bridge_state seen in CLI 2.1.x ('unknown' = a newer CLI). */
+export type BridgeState = 'ready' | 'connected' | 'failed' | 'policy_disabled' | 'unknown';
 
 export interface NormalizerOutput {
   ops: SessionOp[];
@@ -142,6 +173,11 @@ export interface LiveNormalizer {
    * old conversation finishing) – they are only logged (R0-05f); `order` restarts at nextOrder.
    */
   startConversation(conversationId: ConversationId, nextOrder: number): void;
+  /**
+   * WP-66: hands the next `order` of the current conversation to an item the ENGINE creates while
+   * this normalizer runs (a side question) – the normalizer never assigns it to one of its own items.
+   */
+  claimOrder(): number;
   readonly unknownCounts: Readonly<Record<string, number>>;
   readonly ignoredCounts: Readonly<Record<string, number>>;
 }

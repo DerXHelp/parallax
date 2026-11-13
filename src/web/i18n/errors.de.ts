@@ -86,6 +86,12 @@ export const errorsDe: Record<ErrorCode, string> = {
     'Claude Code konnte nicht alles speichern (Platte voll) – der Verlauf ist eventuell unvollständig.',
   CLAUDE_CONFIG_INVALID: 'Eine Einstellungsdatei von Claude Code ist ungültig. Prüfe sie und starte neu.',
   CLAUDE_PROXY_INVALID: 'Die Proxy-Einstellung ist ungültig. Prüfe HTTPS_PROXY und starte neu.',
+  REMOTE_CONTROL_UNAVAILABLE:
+    'Remote Control ist mit dieser Claude-Code-Version nicht verfügbar (zu alt oder zu neu für Parallax).',
+  REMOTE_CONTROL_AUTH:
+    'Remote Control braucht eine neue Anmeldung: `claude` im Terminal starten und /login eingeben.',
+  REMOTE_CONTROL_POLICY_DISABLED: 'Remote Control ist durch deine Organisation gesperrt.',
+  REMOTE_CONTROL_FAILED: 'Die Remote-Control-Verbindung ist fehlgeschlagen oder abgebrochen.',
   AUTOSTART_FAILED: 'Autostart konnte nicht eingerichtet werden.',
   PROTOCOL_HANDLER_FAILED:
     'Das Öffnen von Sessions aus Windows-Benachrichtigungen konnte nicht eingerichtet werden.',

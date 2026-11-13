@@ -200,6 +200,7 @@ export const en = {
       plan_approved: 'The plan was approved in another window.',
       plan_revised: 'The plan was sent back for revision in another window.',
       expired: 'An expired decision was closed.',
+      answered_elsewhere: 'A request was answered in the Claude app.',
     } satisfies Record<ResolvedOutcome, string>,
     elsewhereFresh: 'The plan was approved in another window and is implemented in a new conversation.',
     withdrawn: {

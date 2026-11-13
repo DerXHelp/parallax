@@ -10,6 +10,7 @@ import type { ModelOption } from '@shared/model';
 import type { Command } from '@shared/protocol';
 import type { TranslationKey, TranslationParams } from '@web/i18n';
 import { requestShell } from '@web/shell/requests';
+import { followTranscript } from '@web/shell/transcript-follow';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand } from '@web/state/hooks';
 import { showErrorNotice } from '@web/state/notices';
@@ -18,8 +19,10 @@ import type { NativeCommand } from './slash';
 
 /**
  * The slash commands Parallax handles itself (ADR-108, WP-37 §2): `/model`, `/effort`, `/fast`,
- * `/plan`, `/rename`, `/status`, `/resume`, `/help`. Invalid arguments give an inline error (the
- * draft stays); a failed server command shows a notice (architecture §2.3i) and also keeps it.
+ * `/plan`, `/rename`, `/status`, `/resume`, `/help`, WP-66 `/btw`. Invalid arguments give an inline
+ * error (the draft stays); a failed server command shows a notice (architecture §2.3i) and also
+ * keeps it. A chunk of its own (WP-66, start-chunk budget): the composer loads it on the first
+ * command or side question (preloaded with the composer's other parts on the first focus).
  */
 
 /** Translated inline error under the field. */
@@ -42,6 +45,10 @@ export interface NativeContext {
   openHelp(): void;
   /** Sends a prompt like the composer does (attachments included); false on failure. */
   sendText(text: string): Promise<boolean>;
+  /** WP-66: side mode for the next message (`/btw` without a question). */
+  startSideMode(): void;
+  /** WP-66: the paste tokens of the draft replaced by their texts (a side question is plain text). */
+  expandPastes(text: string): string;
 }
 
 const OK: NativeResult = { ok: true };
@@ -80,6 +87,28 @@ export function parseOnOff(value: string): boolean | undefined {
   if (lower === 'on' || lower === 'true' || lower === '1') return true;
   if (lower === 'off' || lower === 'false' || lower === '0') return false;
   return undefined;
+}
+
+/**
+ * WP-66: asks a side question (`session.askSideQuestion`, a new thread). The card appears in the
+ * transcript at once (status pending); true when the server took it, false after a notice.
+ */
+export function sendSideQuestion(sessionKey: string, entryId: EntryId, question: string): Promise<boolean> {
+  const text = question.trim();
+  if (text === '' || text.length > LIMITS.sideQuestionChars) return Promise.resolve(false);
+  followTranscript(sessionKey);
+  return sendCommand(sessionKey, {
+    name: 'session.askSideQuestion',
+    entryId,
+    question: text,
+    threadId: null,
+  }).then(
+    () => true,
+    (caught: unknown) => {
+      showErrorNotice(errorPayloadOf(caught), { sessionKey, id: `composer.side.${sessionKey}` });
+      return false;
+    },
+  );
 }
 
 export async function runNativeCommand(
@@ -146,5 +175,16 @@ export async function runNativeCommand(
     case 'help':
       context.openHelp();
       return OK;
+    case 'btw': {
+      if (args === '') {
+        context.startSideMode();
+        return OK;
+      }
+      const question = context.expandPastes(args).trim();
+      if (question.length > LIMITS.sideQuestionChars) {
+        return inline('composer.tooLong', { max: LIMITS.sideQuestionChars });
+      }
+      return (await sendSideQuestion(sessionKey, entryId, question)) ? OK : { ok: false, error: null };
+    }
   }
 }

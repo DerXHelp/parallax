@@ -15,7 +15,8 @@
       "attachments": [],
       "origin": "human",
       "slashCommand": null,
-      "priority": null
+      "priority": null,
+      "source": "local"
     },
     {
       "id": "msg_011CgwXbtRdZPHoHrUpXknYC:0",

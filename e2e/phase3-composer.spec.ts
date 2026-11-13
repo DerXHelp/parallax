@@ -18,6 +18,7 @@ import { runFile } from '../src/server/lib/process';
 import { resolveExecutable } from '../src/server/lib/windows';
 import { expect, test } from './support/fixtures';
 import type { SessionView } from './support/app';
+import { recordTexts, seenTexts } from './support/files';
 
 test.use({ ownServer: 'p3composer' });
 
@@ -138,6 +139,8 @@ test('a pasted text starting with "/" at the start of the field goes as a prompt
   await expect(session.composer).toHaveValue(/^\[#1/);
   await session.composer.press('End');
   await session.composer.pressSequentially(' what failed?');
+  // Every title the row shows from now on (the prompt title, then the generated one – WP-65).
+  await recordTexts(page, `[data-session-row="${session.key}"] [data-slot="row-title"]`);
   await session.composer.press('Enter');
 
   // An answer of the model (the paste receipt), no command.
@@ -168,11 +171,14 @@ test('a pasted text starting with "/" at the start of the field goes as a prompt
   }, SLASH_GUARD);
   expect(guardWidth, 'width of the guard character in the bubble').toBe(0);
 
-  // The session title comes from the prompt – without the guard (coordinator rework e38a344).
+  // The session title comes from the prompt – without the guard (coordinator rework e38a344); after
+  // the first turn the generated title replaces it (WP-65 §1.3), again without the guard.
   const title = app.row(session.key).locator('[data-slot="row-title"]');
-  await expect(title).toHaveText('/clear --all');
-  expect(await title.textContent()).not.toContain(SLASH_GUARD);
-  await expect(session.header.locator('h1')).toHaveText('/clear --all');
+  await expect(title).toHaveText('Fake: /clear --all log line 2');
+  await expect(session.header.locator('h1')).toHaveText('Fake: /clear --all log line 2');
+  const titles = await seenTexts(page);
+  expect(titles).toContain('/clear --all');
+  expect(titles.filter((text) => text.includes(SLASH_GUARD))).toEqual([]);
 });
 
 test('a big paste becomes a chip and goes out as inline_pastes', async ({ app, server }) => {

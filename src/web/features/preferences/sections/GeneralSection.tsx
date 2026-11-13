@@ -1,11 +1,15 @@
 import { languageSchema, themeSchema } from '@shared/common';
 import { useT } from '@web/i18n';
+import { TRANSCRIPT_VIEWS } from '@web/state/transcript-view';
 import { Label } from '@web/ui/label';
 import { RadioGroup, RadioGroupItem } from '@web/ui/radio-group';
 import { SettingField, SettingList } from '../components/SettingField';
 import type { SettingsEditor } from '../state/settings-editor';
 
-/** Language and theme – the same choice as the settings menu (which keeps its quick choice). */
+/**
+ * Language and theme – the same choice as the settings menu (which keeps its quick choice); WP-63:
+ * the transcript view (compact / all steps; WP-65: a server setting like the others).
+ */
 export function GeneralSection({ editor }: { editor: SettingsEditor }) {
   const t = useT();
   const { settings, save } = editor;
@@ -57,6 +61,32 @@ export function GeneralSection({ editor }: { editor: SettingsEditor }) {
                 <RadioGroupItem id={`${id}-${theme}`} value={theme} />
                 <Label htmlFor={`${id}-${theme}`} className="font-normal">
                   {t(`settings.themes.${theme}`)}
+                </Label>
+              </div>
+            ))}
+          </RadioGroup>
+        )}
+      />
+      <SettingField
+        name="transcriptView"
+        label={t('preferences.general.transcript')}
+        description={t('preferences.general.transcriptHint')}
+        below={({ id, labelId, describedBy }) => (
+          <RadioGroup
+            aria-labelledby={labelId}
+            aria-describedby={describedBy}
+            value={settings.transcriptView}
+            onValueChange={(value) => {
+              const view = TRANSCRIPT_VIEWS.find((candidate) => candidate === value);
+              if (view !== undefined) save({ transcriptView: view });
+            }}
+            className="flex flex-wrap gap-x-5 gap-y-2"
+          >
+            {TRANSCRIPT_VIEWS.map((view) => (
+              <div key={view} className="flex items-center gap-2">
+                <RadioGroupItem id={`${id}-${view}`} value={view} />
+                <Label htmlFor={`${id}-${view}`} className="font-normal">
+                  {t(`preferences.general.transcriptViews.${view}`)}
                 </Label>
               </div>
             ))}

@@ -8,6 +8,7 @@ import { shortPath } from '@web/lib/path-display';
 import { focusDecision } from '@web/shell/decision-focus';
 import { useDecision } from '@web/state/hooks';
 import { Button } from '@web/ui/button';
+import { BackgroundButton } from '../components/BackgroundButton';
 import { Disclosure } from '../components/Disclosure';
 import { ModelBadge } from '../components/ModelBadge';
 import { ToolFileLink } from '../components/ToolFileLink';
@@ -95,10 +96,12 @@ function ToolCallFrame({
   item,
   sessionKey,
   renderer,
+  hideImages,
 }: {
   item: ToolCallItem;
   sessionKey: string;
   renderer: ToolRenderer;
+  hideImages: boolean;
 }) {
   const { t, format } = useI18n();
   const Icon = renderer.icon;
@@ -110,6 +113,11 @@ function ToolCallFrame({
   const cwd = useSessionCwd(sessionKey);
   // While the input streams the path may still be incomplete.
   const file = item.status === 'streaming_input' ? null : (renderer.file?.(item) ?? null);
+  // WP-65 §1.5: a running Bash call can move to the background (Ctrl+B in the terminal).
+  const background =
+    item.toolName === 'Bash' && item.status === 'running' ? (
+      <BackgroundButton sessionKey={sessionKey} toolUseId={item.toolUseId} title={summary ?? label} />
+    ) : null;
   const metaParts: ReactNode = (
     <>
       {meta === null ? null : (
@@ -151,7 +159,7 @@ function ToolCallFrame({
           </span>
         }
         actions={
-          file === null ? undefined : (
+          file === null ? (background ?? undefined) : (
             <span data-slot="tool-file" className="flex min-w-0 flex-1 items-center gap-1.5 text-xs">
               <span className="min-w-0 truncate *:max-w-full *:truncate *:align-bottom">
                 <ToolFileLink sessionKey={sessionKey} path={file.path} line={file.line} cwd={cwd}>
@@ -172,8 +180,9 @@ function ToolCallFrame({
           )}
         </div>
       </Disclosure>
-      {/* Pictures of the result without expanding the line, exactly once (R4W-03, Plan). */}
-      <ToolResultImages item={item} className="mb-1 ml-5" />
+      {/* Pictures of the result without expanding the line, exactly once (R4W-03, Plan) – or in the
+          gallery of its group / image run (WP-63 §1.5). */}
+      {hideImages ? null : <ToolResultImages item={item} className="mb-1 ml-5" />}
       <DecisionLine item={item} sessionKey={sessionKey} />
     </div>
   );
@@ -182,12 +191,15 @@ function ToolCallFrame({
 export const ToolCallRow = memo(function ToolCallRow({
   item,
   sessionKey,
+  hideImages = false,
 }: {
   item: ToolCallItem;
   sessionKey: string;
+  /** WP-63 §1.5: the pictures stand in a gallery (group, image run) – not again below the line. */
+  hideImages?: boolean;
 }) {
   const renderer = getToolRenderer(item.toolName);
   const Row = renderer.Row;
   if (Row !== undefined) return <Row item={item} sessionKey={sessionKey} />;
-  return <ToolCallFrame item={item} sessionKey={sessionKey} renderer={renderer} />;
+  return <ToolCallFrame item={item} sessionKey={sessionKey} renderer={renderer} hideImages={hideImages} />;
 });

@@ -1,5 +1,6 @@
 /**
- * Synthetic stream: rate_limit_event `allowed_warning` (banner item), `rejected` (error signal
+ * Synthetic stream: rate_limit_event `allowed_warning` (signal for the limit bar only, no item since
+ * WP-63), `rejected` (error signal
  * RATE_LIMIT_REJECTED) and `rejected` with `credits_required` (CLAUDE_BILLING = setup error).
  */
 import type { FixtureEvent } from '../../../backend/fixture';
@@ -35,6 +36,10 @@ export const events: FixtureEvent[] = sequence([
     rate_limit_info: { status: 'rejected', rateLimitType: 'overage', errorCode: 'credits_required' },
     uuid: uuid(6),
   }),
-  msg({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', resetsAt: RESET + 3600 }, uuid: uuid(7) }),
+  msg({
+    type: 'rate_limit_event',
+    rate_limit_info: { status: 'allowed', resetsAt: RESET + 3600 },
+    uuid: uuid(7),
+  }),
   state(8, 'idle'),
 ]);

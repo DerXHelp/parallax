@@ -29,6 +29,7 @@ export const de: typeof en = {
   },
   shell: {
     windowTitle: '({count}) {product}',
+    linkFallback: 'Der Standardbrowser ließ sich nicht starten – der Link wurde hier geöffnet.',
     sidebar: {
       label: 'Sessions',
       count: { one: '{count} Session', other: '{count} Sessions' },
@@ -55,6 +56,10 @@ export const de: typeof en = {
       context: 'Kontext',
       contextTokens: '{used} von {max} Tokens · {source}',
       contextSource: { sdk: 'gemessen', estimate: 'geschätzt' },
+      contextUntilCompact: '{used} von {threshold} bis Autocompact · Modell {max} ({percent})',
+      contextOfWindow: '{used} von {max} ({percent})',
+      contextCompactSoon: 'Autocompact in ca. {left}',
+      effort: 'Aufwand',
       cliVersionLabel: 'Claude-Code-Version',
       cliVersionShort: 'CLI {version}',
       cliVersion: 'Claude Code {version}',
@@ -74,6 +79,8 @@ export const de: typeof en = {
       data: 'Daten: {path}',
       backendFake: 'FakeBackend – kein echtes Claude Code',
     },
+    effortLevels: { low: 'niedrig', medium: 'mittel', high: 'hoch', xhigh: 'sehr hoch', max: 'max' },
+    effortShort: { low: 'niedr.', medium: 'mittel', high: 'hoch', xhigh: 's. hoch', max: 'max' },
     badges: {
       background: 'Hintergrund-Tasks',
       compacting: 'Komprimiert',

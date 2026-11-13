@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "cliVersion": "2.1.323",
   "sdkVersion": "0.3.322",
-  "checkedAt": "2026-11-13T03:41:15.797Z",
+  "checkedAt": "2026-11-13T07:39:50.987Z",
   "model": "claude-haiku-5-5",
   "permissionMode": "default",
   "outputStyle": "default",
@@ -232,5 +232,22 @@
     "update-config",
     "verify",
     "workflow-authoring"
-  ]
+  ],
+  "remoteControl": true,
+  "sessionTitle": true,
+  "usageQuery": true,
+  "backgroundTasks": true,
+  "sideQuestion": true,
+  "withdrawQueued": true,
+  "sessionInfo": {
+    "status": true,
+    "memory": true,
+    "skills": true,
+    "hooks": true,
+    "permissions": true,
+    "mcp": true,
+    "export": true,
+    "mcpActions": true,
+    "reload": true
+  }
 }

@@ -5,9 +5,13 @@
  * script) drives it. `exit` is always the last event; afterwards the event queue ends.
  * Phase 3 (WP-52): background tasks of the script mode (`stopTask` like the CLI, idle held back
  * while one runs), messages on a graceful close and the session's real files.
+ * WP-64: Remote Control (setRemoteControl → bridge_state ready → connected, fake claude.ai link,
+ * same bridge on reattach; levers in remote.ts and FakeRemoteControlOptions).
  */
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { makeError } from '@shared/errors';
+import type { McpAction, ReloadTarget, SessionInfoSection, SessionInfoSectionName } from '@shared/model';
 import { nextMacrotask, realSetImmediate, toError } from '../../lib/async';
 import { logger } from '../../lib/logger';
 import type { FixtureEvent } from '../fixture';
@@ -18,8 +22,17 @@ import type {
   BackendEvent,
   OutgoingPrompt,
   PermissionRequest,
+  RemoteControlInfo,
+  RemoteControlRequest,
+  RemoteControlResult,
+  SideQuestionOptions,
+  SideQuestionResult,
   StartSessionRequest,
+  TitleResult,
+  UsageLimits,
 } from '../types';
+import { usageLimitsOf } from '../overview';
+import { sessionInfoOf } from '../sessionInfo';
 import {
   HANDLER_ERROR_RESULT,
   SessionStopped,
@@ -33,13 +46,38 @@ import { FAKE_COMMANDS, FAKE_MODELS, fakeContextUsage, resolveFakeModel } from '
 import { dslContext, textTurn } from './dsl';
 import { FakeFiles } from './files';
 import type { FakeHistoryStore } from './history';
+import { fakeTitle, type FakeUsage } from './overview';
+import {
+  FAKE_SIDE_ANSWER_MS,
+  FAKE_SIDE_RETRY_MS,
+  FAKE_SIDE_SLOW_MS,
+  FAKE_TAKEN_KEYWORD,
+  controlProgressMessage,
+  fakeSideAnswer,
+  fakeSideMode,
+} from './sideQuestion';
 import { EventPlayer } from './player';
+import { FakeSessionInfo } from './sessionInfo';
+import {
+  FAKE_REMOTE_CONNECT_MS,
+  bridgeStateMessage,
+  fakeBridgeInfo,
+  fakeEnableFailure,
+  newFakeBridgeId,
+  remotePromptTurn,
+} from './remote';
+import { contextFor } from './turn';
 import type {
   FakeBackgroundTask,
   FakeDiagnostic,
   FakeDiagnosticKind,
   FakeIds,
+  FakeOverviewOptions,
+  FakeRemoteControlOptions,
+  FakeRemotePromptOptions,
   FakeScenario,
+  FakeSideQuestionOptions,
+  FakeSessionInfoOptions,
   FakeScriptContext,
   FakeScriptState,
   FakeSessionHandle,
@@ -70,6 +108,16 @@ export interface FakeSessionDeps {
   ids: FakeIds;
   /** Phase 3: root of the real files (FakeBackendOptions.filesRoot). */
   filesRoot: string;
+  /** WP-64: FakeBackendOptions.remoteControl. */
+  remoteControl: FakeRemoteControlOptions;
+  /** WP-65: FakeBackendOptions.overview. */
+  overview: FakeOverviewOptions;
+  /** WP-65: the fake account's plan usage (one per backend). */
+  usage: FakeUsage;
+  /** WP-66: FakeBackendOptions.sideQuestions. */
+  sideQuestions: FakeSideQuestionOptions;
+  /** WP-67: FakeBackendOptions.sessionInfo. */
+  sessionInfo: FakeSessionInfoOptions;
   onStateChange(): void;
 }
 
@@ -136,11 +184,20 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
   private readonly closeMessages: (() => readonly unknown[])[] = [];
   /** Phase 3: background tasks executing right now (not sleeping, not waiting for a turn). */
   private busyTasks = 0;
+  /** WP-64: the fake bridge (set by setRemoteControl(true), cleared by disable or a terminal failure). */
+  private bridge: RemoteControlInfo | null = null;
+  /** WP-65: foreground tool uses of the running turn that backgroundTasks() can move. */
+  private readonly foreground = new Map<string, () => void>();
+  /** WP-66: request ids of the fake side questions (control_request_progress). */
+  private sideRequests = 0;
+  /** WP-67: session info, MCP servers and reload state of this session (levers: fake:info-*). */
+  readonly info: FakeSessionInfo;
 
   constructor(private readonly deps: FakeSessionDeps) {
     this.entryId = deps.req.entryId;
     this.pid = deps.pid;
     this.scenario = deps.scenario.name;
+    this.info = new FakeSessionInfo(deps.sessionInfo);
     this.currentSessionId =
       deps.scenario.kind === 'script' ? (deps.req.resumeSessionId ?? deps.ids.uuid()) : null;
     const scenario = deps.scenario;
@@ -279,6 +336,245 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
     this.releaseHeldIdle();
   }
 
+  /**
+   * WP-64: like the CLI – `ready` before the answer, `connected` FAKE_REMOTE_CONNECT_MS later; a
+   * reattach id (or the bridge already connected) keeps the bridge session and its link.
+   */
+  async setRemoteControl(enabled: boolean, req: RemoteControlRequest): Promise<RemoteControlResult> {
+    this.controls.push({ method: 'setRemoteControl', args: [enabled, { ...req }] });
+    if (this.exited || this.closeRequested) {
+      return { ok: false, error: makeError('REMOTE_CONTROL_FAILED', { reason: 'control', detail: 'session closed' }) };
+    }
+    if (!enabled) {
+      this.bridge = null;
+      return Promise.resolve({ ok: true, info: null });
+    }
+    const failure = fakeEnableFailure(this.deps.remoteControl.enable);
+    if (failure !== null) return failure;
+    const info = fakeBridgeInfo(
+      req.reattachSessionId ?? this.bridge?.bridgeSessionId ?? newFakeBridgeId(this.deps.ids.uuid()),
+    );
+    this.bridge = info;
+    this.bridgeState('ready');
+    void this.connectLater(info);
+    return { ok: true, info };
+  }
+
+  async readRemoteControlDefault(): Promise<boolean | null> {
+    this.calls.push({ fn: 'readRemoteControlDefault', args: [] });
+    if (this.exited) return null;
+    return Promise.resolve(this.deps.remoteControl.atStartup ?? false);
+  }
+
+  /** WP-65: the fake title generator (fakeTitle); events mode: unavailable (no recorded answer). */
+  async generateTitle(description: string, opts: { persist: boolean }): Promise<TitleResult> {
+    this.calls.push({ fn: 'generateTitle', args: [description, { ...opts }] });
+    const mode = this.deps.overview.titles ?? 'ok';
+    if (this.deps.scenario.kind === 'events' || mode === 'unavailable') return { ok: false, reason: 'unavailable' };
+    if (this.exited || mode === 'failed') return { ok: false, reason: 'failed' };
+    return Promise.resolve(fakeTitle(this.deps.history, this.currentSessionId, description, opts.persist));
+  }
+
+  /**
+   * WP-65: events mode – the recorded control answer (default true). Script mode: moves the given
+   * foreground tool use (false when none matches) or every one (null) to the background.
+   */
+  async backgroundTasks(toolUseId: string | null): Promise<boolean> {
+    if (this.deps.scenario.kind === 'events') {
+      const answer = await this.control('backgroundTasks', [toolUseId]);
+      return answer !== false;
+    }
+    this.controls.push({ method: 'backgroundTasks', args: [toolUseId] });
+    if (this.exited) throw new Error('session closed');
+    if (this.deps.overview.backgroundTasks === 'disabled') throw new Error('Background tasks are disabled');
+    if (toolUseId === null) {
+      for (const move of [...this.foreground.values()]) move();
+      return Promise.resolve(true);
+    }
+    const move = this.foreground.get(toolUseId);
+    if (move === undefined) return false;
+    move();
+    return true;
+  }
+
+  /** WP-65: the fake account's plan usage through the SdkBackend's parser; events mode: null. */
+  async readUsage(): Promise<UsageLimits | null> {
+    this.calls.push({ fn: 'readUsage', args: [] });
+    if (this.exited || this.deps.scenario.kind === 'events') return null;
+    try {
+      return await Promise.resolve(usageLimitsOf(this.deps.usage.answer()));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * WP-66: the fake side question (fake/sideQuestion.ts): one `control_request_progress started`,
+   * the answer after FAKE_SIDE_ANSWER_MS × speed (busy work – settle() waits for it); levers from the
+   * options or keywords in the question. Events mode: unavailable (no recorded answer). Never rejects.
+   */
+  async askSideQuestion(question: string, opts: SideQuestionOptions): Promise<SideQuestionResult> {
+    this.calls.push({
+      fn: 'askSideQuestion',
+      args: [question, { history: opts.history.map((turn) => ({ ...turn })) }],
+    });
+    const mode = fakeSideMode(question, this.deps.sideQuestions.mode);
+    if (this.deps.scenario.kind === 'events' || mode === 'unavailable') return { ok: false, reason: 'unavailable' };
+    if (this.exited || this.closeRequested || mode === 'failed') return { ok: false, reason: 'failed' };
+    if (mode === 'busy') return { ok: false, reason: 'busy' };
+    if (opts.signal.aborted) return { ok: false, reason: 'cancelled' };
+    const turnRunning = this.script?.busy() ?? false;
+    const requestId = `fakesq${String(++this.sideRequests)}`;
+    try {
+      this.emitProgress({ requestId, status: 'started' });
+      if (mode === 'retry') {
+        await this.sideWait(FAKE_SIDE_RETRY_MS, opts.signal, false);
+        const retry = { attempt: 1, maxRetries: 10 };
+        this.emitProgress({ requestId, status: 'api_retry', ...retry });
+        opts.onRetry?.(retry);
+      }
+      await this.sideWait(mode === 'slow' ? FAKE_SIDE_SLOW_MS : FAKE_SIDE_ANSWER_MS, opts.signal, mode === 'slow');
+    } catch {
+      // The wait rejected: our signal (cancelled) or the session ended (failed).
+      const { signal } = opts;
+      return signal.aborted ? { ok: false, reason: 'cancelled' } : { ok: false, reason: 'failed' };
+    }
+    if (mode === 'none') return { ok: true, answer: null };
+    return { ok: true, answer: fakeSideAnswer(question, opts.history, turnRunning, mode) };
+  }
+
+  /**
+   * WP-67: one section of the session info as the CLI answers it, through the SdkBackend's parser
+   * (fake/sessionInfo.ts). null = this (fake) CLI lacks the method (lever) or events mode (no
+   * recorded answer). Rejects when the session has ended.
+   */
+  async readInfo(section: SessionInfoSectionName): Promise<SessionInfoSection | null> {
+    this.calls.push({ fn: 'readInfo', args: [section] });
+    if (this.deps.scenario.kind === 'events' || !this.info.available(section)) return null;
+    if (this.exited) throw new Error('session closed');
+    const state = this.script?.state;
+    const raw = this.info.answer(section, {
+      sessionId: this.currentSessionId,
+      cwd: this.deps.req.cwd,
+      model: state?.model ?? resolveFakeModel(this.deps.req.model),
+      permissionMode: state?.permissionMode ?? this.deps.req.permissionMode ?? 'default',
+      now: this.deps.now(),
+      messages: this.currentSessionId === null ? [] : this.deps.history.messages(this.currentSessionId),
+    });
+    return Promise.resolve(sessionInfoOf(section, raw).data);
+  }
+
+  /** WP-67: reconnect / enable / disable an MCP server of this session (rejects like the CLI). */
+  async mcpAction(server: string, action: McpAction): Promise<void> {
+    this.controls.push({ method: 'mcpAction', args: [server, action] });
+    if (this.deps.scenario.kind === 'events') throw new Error('mcpAction is not recorded');
+    if (this.exited) throw new Error('session closed');
+    this.info.mcpAction(server, action);
+    return Promise.resolve();
+  }
+
+  /** WP-67: reloadSkills / reloadPlugins (rejects with the 'failed' lever). */
+  async reload(what: ReloadTarget): Promise<void> {
+    this.controls.push({ method: 'reload', args: [what] });
+    if (this.deps.scenario.kind === 'events') throw new Error('reload is not recorded');
+    if (this.exited) throw new Error('session closed');
+    this.info.reload(what);
+    return Promise.resolve();
+  }
+
+  /**
+   * WP-66: like `cancelAsyncMessage` – a prompt still waiting for its turn (the fake's input buffer)
+   * leaves it (`command_lifecycle cancelled`, true); anything else (or `fake:taken` in its text) false.
+   */
+  async withdrawQueued(messageUuid: string): Promise<boolean> {
+    if (this.deps.scenario.kind === 'events') {
+      const answer = await this.control('cancelAsyncMessage', [messageUuid]);
+      return answer === true;
+    }
+    this.controls.push({ method: 'cancelAsyncMessage', args: [messageUuid] });
+    const mode = this.deps.sideQuestions.withdraw ?? 'ok';
+    if (mode === 'unavailable') throw new Error('cancelAsyncMessage missing');
+    if (this.exited) throw new Error('session closed');
+    const index = this.inputs.findIndex((prompt) => prompt.uuid === messageUuid);
+    const prompt = this.inputs[index];
+    if (prompt === undefined || mode === 'taken' || promptText(prompt).includes(FAKE_TAKEN_KEYWORD)) {
+      return Promise.resolve(false);
+    }
+    this.inputs.splice(index, 1);
+    this.emitMessage({
+      type: 'command_lifecycle',
+      command_uuid: messageUuid,
+      state: 'cancelled',
+      uuid: this.deps.ids.uuid(),
+      session_id: this.currentSessionId ?? '',
+    });
+    return Promise.resolve(true);
+  }
+
+  private emitProgress(o: Parameters<typeof controlProgressMessage>[0]): void {
+    this.emitMessage(
+      controlProgressMessage(o, { uuid: this.deps.ids.uuid(), sessionId: this.currentSessionId ?? '' }),
+    );
+  }
+
+  /**
+   * Waits `ms × speed` (≤ maxDelayMs unless `slow`) as busy work; a `slow` wait rests (settle() does
+   * not wait for it) and never ends at speed 0. Rejects when `signal` aborts or the session stops.
+   */
+  private async sideWait(ms: number, signal: AbortSignal, slow: boolean): Promise<void> {
+    if (signal.aborted) throw new Error('Side question cancelled');
+    const scaled = Math.max(0, ms) * this.deps.speed;
+    const sleeping = slow
+      ? scaled > 0
+        ? this.deps.sleep(scaled)
+        : new Promise<void>(() => {
+            // Speed 0: only a cancel or the session end finishes it.
+          })
+      : this.delay(ms);
+    let onAbort = (): void => undefined;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      onAbort = () => {
+        reject(new Error('Side question cancelled'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+    const waiting = this.race(Promise.race([sleeping, aborted]));
+    try {
+      await (slow ? waiting : this.busyWhile(waiting));
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+    }
+  }
+
+  /** WP-65: see FakeScriptContext.foregroundTool. */
+  async foregroundTool(toolUseId: string, ms: number, turn: AbortSignal): Promise<'background' | 'done'> {
+    const moved = Promise.withResolvers<'background'>();
+    this.foreground.set(toolUseId, () => {
+      moved.resolve('background');
+    });
+    const scaled = Math.max(0, ms) * this.deps.speed;
+    const ended =
+      scaled > 0
+        ? this.deps.sleep(scaled).then(() => 'done' as const)
+        : new Promise<'done'>(() => {
+            // Speed 0: only a move or an interrupt ends the command.
+          });
+    try {
+      return await this.blockOn('waiting-control', this.race(Promise.race([moved.promise, ended]), turn));
+    } finally {
+      this.foreground.delete(toolUseId);
+    }
+  }
+
+  private async connectLater(info: RemoteControlInfo): Promise<void> {
+    try {
+      await this.pause(FAKE_REMOTE_CONNECT_MS);
+    } catch {
+      return;
+    }
+    if (this.bridge === info) this.bridgeState('connected', { bridge_epoch: 1 });
+  }
+
   close(): Promise<void> {
     if (this.exited) return this.exitDone.promise;
     this.closeRequested = true;
@@ -303,7 +599,7 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
     this.exit(code, null, false);
   }
 
-  abortDecision(toolUseId?: string): void {
+  abortDecision(toolUseId?: string): boolean {
     const open =
       toolUseId === undefined ? this.openDecisions.values().next().value : this.openDecisions.get(toolUseId);
     if (open === undefined) {
@@ -311,12 +607,50 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
         { entryId: this.entryId, toolUseId: toolUseId ?? null },
         'abortDecision: no open canUseTool request',
       );
-      return;
+      return false;
     }
     this.openDecisions.delete(open.toolUseId);
     this.lastResults.set(open.toolUseId, null);
     open.controller.abort();
     open.release(null);
+    return true;
+  }
+
+  get remoteControl(): RemoteControlInfo | null {
+    return this.bridge;
+  }
+
+  bridgeState(state: string, fields: Record<string, unknown> = {}): void {
+    const failureKind = fields.failure_kind ?? 'terminal';
+    if (state === 'policy_disabled' || (state === 'failed' && failureKind === 'terminal')) this.bridge = null;
+    this.emitMessage(bridgeStateMessage(this.currentSessionId, this.deps.ids.uuid(), state, fields));
+  }
+
+  async remotePrompt(text: string, o: FakeRemotePromptOptions = {}): Promise<string> {
+    if (this.bridge === null) throw new Error('remotePrompt: Remote Control is off');
+    if (this.script === null) throw new Error('remotePrompt: only in the script mode');
+    return this.busyWhile(
+      this.script.remoteTurn({
+        text,
+        answer: o.answer ?? `From the app: ${text}`,
+        ...(o.totalCostUsd === undefined ? {} : { totalCostUsd: o.totalCostUsd }),
+      }),
+    );
+  }
+
+  /** WP-64: waits `ms × speed` (≤ maxDelayMs) as busy work – settle() waits for it. */
+  pause(ms: number): Promise<void> {
+    return this.busyWhile(this.delay(ms));
+  }
+
+  /** The session counts as running until `promise` settles (settle() waits for it). */
+  async busyWhile<T>(promise: Promise<T>): Promise<T> {
+    this.taskBusy(1);
+    try {
+      return await promise;
+    } finally {
+      this.taskBusy(-1);
+    }
   }
 
   // ---- Primitives for player and script ----
@@ -407,6 +741,7 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
       this.flushHistoryPrompts();
     }
     if (resultSchema.safeParse(raw).success) this.resultCount += 1;
+    this.deps.usage.observe(raw);
     if (this.currentSessionId !== null) this.deps.history.record(this.currentSessionId, raw);
     this.push({ type: 'message', message: raw, at: this.deps.now() });
   }
@@ -806,6 +1141,38 @@ class ScriptContext implements FakeScriptContext {
 
   onClose(messages: () => readonly unknown[]): void {
     this.session.addCloseMessages(messages);
+  }
+
+  get remoteControl(): RemoteControlInfo | null {
+    return this.session.remoteControl;
+  }
+
+  bridgeState(state: string, fields?: Record<string, unknown>): void {
+    this.session.bridgeState(state, fields);
+  }
+
+  abortDecision(toolUseId: string): boolean {
+    return this.session.abortDecision(toolUseId);
+  }
+
+  pause(ms: number): Promise<void> {
+    return this.session.pause(ms);
+  }
+
+  foregroundTool(toolUseId: string, ms: number): Promise<'background' | 'done'> {
+    return this.session.foregroundTool(toolUseId, ms, this.turn.signal);
+  }
+
+  get info(): FakeSessionInfo {
+    return this.session.info;
+  }
+
+  /** WP-64: the turn of a prompt typed in the Claude app, once no other turn runs (not interruptible). */
+  async remoteTurn(o: { text: string; answer: string; totalCostUsd?: number }): Promise<string> {
+    const uuid = this.ids.uuid();
+    await this.betweenTurns(remotePromptTurn(contextFor(this, this.session.sessionId ?? this.sessionId), { uuid, ...o }));
+    this.state.turns += 1;
+    return uuid;
   }
 
   /** Plays `events` once neither a prompt turn nor another follow-up turn runs. */

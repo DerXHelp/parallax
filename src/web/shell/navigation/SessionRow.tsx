@@ -1,23 +1,29 @@
 import { ArchiveRestoreIcon, EllipsisIcon, GitBranchIcon, PinIcon } from 'lucide-react';
 import { memo, useMemo, useState, type FocusEvent } from 'react';
-import type { ProfileColor } from '@shared/model';
+import type { EffortLevel } from '@shared/common';
+import type { ContextGauge, ProfileColor, SessionSummary } from '@shared/model';
 import type { DisplayStatusKind } from '@shared/status';
 import { useFormat, useT } from '@web/i18n';
+import { sessionLine } from '@web/lib/activity';
 import { cn } from '@web/lib/cn';
+import type { ContextLevel } from '@web/lib/context-display';
+import { effectiveEffort } from '@web/lib/effort';
 import { shortModelName } from '@web/lib/model-name';
 import { sessionTitle } from '@web/lib/session-title';
 import { cliVersionStatus, knownVersion } from '@web/lib/version';
 import type { SummaryEntry } from '@web/state/hooks';
 import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '@web/ui/context-menu';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@web/ui/dropdown-menu';
-import { gaugeLevel, type GaugeLevel } from '@web/ui/gauge';
 import { IconButton } from '@web/ui/icon-button';
 import { StatusIcon } from '@web/ui/status-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
+import { ContextCompactIcon, useContextTexts } from '../context-display';
 import { PathTail } from './PathTail';
 import { PROFILE_BG } from './profile-colors';
+import { RemoteControlIcon, showsRemoteInRow, useRemoteControlTexts } from './remote-control';
 import { startRename, useRenaming } from './rename';
 import { RenameField } from './RenameField';
+import { SessionLineText, useSessionLineText } from './session-line';
 import {
   SIDEBAR_ACTIONS,
   SessionActionItems,
@@ -26,38 +32,85 @@ import {
   sessionMenuCloseAutoFocus,
 } from './session-actions';
 
-const BAR_FILL: Readonly<Record<GaugeLevel, string>> = {
+const BAR_FILL: Readonly<Record<ContextLevel, string>> = {
   normal: 'bg-foreground/45',
   warning: 'bg-warning',
   danger: 'bg-destructive',
 };
 
-const BAR_TEXT: Readonly<Record<GaugeLevel, string>> = {
+const BAR_TEXT: Readonly<Record<ContextLevel, string>> = {
   normal: 'text-muted-foreground',
   warning: 'text-warning',
   danger: 'text-destructive',
 };
 
 /**
- * Context fill of a row (Plan "Sidebar": from 70 % yellow, from 85 % red, `gaugeLevel`). Inside the
- * row button a `role="meter"` would be flattened into the button name – so a hidden bar plus the
- * visible percentage, labelled "Context" for screen readers.
+ * Context fill of a row (WP-63 §1.4, `@web/lib/context-display`): the bar runs up to the
+ * autocompact, the color says "really full" (share of the model window: from 50 % yellow, from
+ * 80 % red), a symbol says "autocompact soon"; the visible value is the used tokens ("260K").
+ * Inside the row button a `role="meter"` would be flattened into the button name – so a hidden bar
+ * plus the visible value, labelled "Context" for screen readers; the details are in the row's
+ * tooltip.
  */
-function RowContext({ percent }: { percent: number }) {
+function RowContext({ context }: { context: ContextGauge }) {
   const t = useT();
-  const format = useFormat();
-  const level = gaugeLevel(percent);
-  const width = Math.min(100, Math.max(0, percent));
+  const texts = useContextTexts(context);
+  const { level, fill } = texts.display;
   return (
-    <span data-slot="row-context" data-level={level} className="flex shrink-0 items-center gap-1">
+    <span
+      data-slot="row-context"
+      data-level={level}
+      data-compact-soon={texts.compactSoon === null ? undefined : 'true'}
+      className="flex shrink-0 items-center gap-1"
+    >
       <span className="sr-only">{t('navigation.row.context')}</span>
       <span aria-hidden className="bg-muted relative h-1 w-6 overflow-hidden rounded-full">
         <span
           className={cn('absolute inset-y-0 left-0 rounded-full', BAR_FILL[level])}
-          style={{ width: `${String(width)}%` }}
+          style={{ width: `${String(fill)}%` }}
         />
       </span>
-      <span className={cn('tabular-nums', BAR_TEXT[level])}>{format.percent(percent)}</span>
+      <span className={cn('tabular-nums', BAR_TEXT[level])}>{texts.short}</span>
+      {texts.compactSoon === null ? null : (
+        <>
+          <ContextCompactIcon />
+          <span className="sr-only">{t('navigation.row.compactSoon')}</span>
+        </>
+      )}
+    </span>
+  );
+}
+
+/** Context line of the row's tooltip (WP-63 §1.4). */
+function RowContextDetail({ context }: { context: ContextGauge }) {
+  const t = useT();
+  const texts = useContextTexts(context);
+  return (
+    <span data-slot="row-context-detail" className="text-muted-foreground tabular-nums">
+      {t('navigation.row.context')}: {texts.detail}
+      {texts.compactSoon === null ? null : <span className="block">{texts.compactSoon}</span>}
+    </span>
+  );
+}
+
+/** WP-64: Remote Control in line 1 (quiet when connected, muted while connecting, warning on failure). */
+function RowRemote({ remote }: { remote: SessionSummary['remoteControl'] }) {
+  const { status } = useRemoteControlTexts(remote);
+  return (
+    <span data-slot="row-remote" data-remote-state={remote.state} className="flex shrink-0 items-center">
+      <RemoteControlIcon remote={remote} />
+      <span className="sr-only">{status}</span>
+    </span>
+  );
+}
+
+/** WP-64: Remote Control line of the row's tooltip (status and the readable error). */
+function RowRemoteDetail({ remote }: { remote: SessionSummary['remoteControl'] }) {
+  const { status, error } = useRemoteControlTexts(remote);
+  return (
+    <span data-slot="row-remote-detail" className="text-muted-foreground">
+      {status}
+      {error === null ? null : <span className="text-warning block">{error}</span>}
     </span>
   );
 }
@@ -76,6 +129,8 @@ export interface SessionRowProps {
   tabStop: boolean;
   profileColor: ProfileColor | null;
   profileName: string | null;
+  /** WP-63 §1.1: effort default of the profile (shown when the session has no own value). */
+  profileEffort?: EffortLevel | null;
   /** Minimum CLI of the SDK (`host.state.sdkClaudeCodeVersion`) for the version rule C.7. */
   requiredCli: string | null;
   /** Line 2 starts with the path (false in the grouped view: the group header names the folder). */
@@ -84,8 +139,9 @@ export interface SessionRowProps {
 }
 
 /**
- * Two-line sidebar entry (Plan "Sidebar"): line 1 status icon (+ text for screen readers), title,
- * pin, relative time, unread dot; line 2 last two path segments (the last one never cut first,
+ * Sidebar entry (Plan "Sidebar"): line 1 status icon (+ text for screen readers), title,
+ * pin, relative time, unread dot; WP-65: then the quiet session line (live sentence / turn summary,
+ * `@web/lib/activity`) when there is one; last line: the last two path segments (the last one never cut first,
  * WP41-02), ⎇ branch, short model name,
  * context fill. Profile color stripe on the left, details in the tooltip. Right click (or
  * Shift+F10) opens the context menu; the "…" button (on hover/focus) the same actions. Double
@@ -100,6 +156,7 @@ export const SessionRow = memo(function SessionRow({
   tabStop,
   profileColor,
   profileName,
+  profileEffort = null,
   requiredCli,
   showPath,
   onSelect,
@@ -119,7 +176,11 @@ export const SessionRow = memo(function SessionRow({
   const title = sessionTitle(summary);
   const cliVersion = knownVersion(summary.cliVersion);
   const model = shortModelName(summary.model ?? summary.modelSetting);
+  const effort = effectiveEffort({ effort: summary.effort, profileEffort });
   const showActions = !editing && (hovered || focusWithin || menuOpen || contextOpen);
+  // WP-65 §1.1: live sentence while working, turn summary afterwards (null = nothing to say).
+  const line = useMemo(() => sessionLine(summary, statusKind), [summary, statusKind]);
+  const lineText = useSessionLineText(line);
   const actions =
     contextOpen || menuOpen ? sessionActions(SIDEBAR_ACTIONS, sessionKey, summary, 'sidebar') : [];
 
@@ -189,6 +250,7 @@ export const SessionRow = memo(function SessionRow({
                   >
                     {title}
                   </span>
+                  {showsRemoteInRow(summary.remoteControl) ? <RowRemote remote={summary.remoteControl} /> : null}
                   {summary.pinned ? (
                     <span data-slot="row-pinned" className="text-muted-foreground shrink-0">
                       <PinIcon aria-hidden className="size-3" />
@@ -213,6 +275,11 @@ export const SessionRow = memo(function SessionRow({
                     </span>
                   ) : null}
                 </span>
+                {line === null ? null : (
+                  <span className="flex h-4 min-w-0 items-center pl-5.5 text-2xs">
+                    <SessionLineText line={line} />
+                  </span>
+                )}
                 <span
                   data-slot="row-details"
                   className="text-muted-foreground flex h-4 min-w-0 items-center gap-1.5 pl-5.5 text-2xs"
@@ -235,8 +302,15 @@ export const SessionRow = memo(function SessionRow({
                       {model}
                     </span>
                   )}
+                  {/* WP-63 §1.1: quiet short form, never more prominent than the model. */}
+                  {effort === null ? null : (
+                    <span data-slot="row-effort" data-effort={effort} className="shrink-0 opacity-80">
+                      <span className="sr-only">{t('navigation.row.effort')}</span>
+                      {t(`shell.effortShort.${effort}`)}
+                    </span>
+                  )}
                   {summary.context === null || summary.archived ? null : (
-                    <RowContext percent={summary.context.percentage} />
+                    <RowContext context={summary.context} />
                   )}
                 </span>
               </button>
@@ -245,6 +319,7 @@ export const SessionRow = memo(function SessionRow({
               <div className="grid gap-0.5">
                 <span className="font-medium">{title}</span>
                 <span>{t(`status.${statusKind}`)}</span>
+                {lineText === null ? null : <span className="break-words">{lineText}</span>}
                 <span className="text-muted-foreground font-mono break-all">{summary.cwd}</span>
                 {summary.gitBranch === null ? null : (
                   <span className="text-muted-foreground">
@@ -256,6 +331,25 @@ export const SessionRow = memo(function SessionRow({
                     {t('shell.session.profile')}: {profileName}
                   </span>
                 )}
+                {model === null ? null : (
+                  <span className="text-muted-foreground">
+                    {t('navigation.row.model')}: {model}
+                    {effort === null ? null : (
+                      <>
+                        <span aria-hidden className="mx-1">
+                          ·
+                        </span>
+                        {t(`shell.effortLevels.${effort}`)}
+                      </>
+                    )}
+                  </span>
+                )}
+                {summary.context === null || summary.archived ? null : (
+                  <RowContextDetail context={summary.context} />
+                )}
+                {showsRemoteInRow(summary.remoteControl) ? (
+                  <RowRemoteDetail remote={summary.remoteControl} />
+                ) : null}
                 {cliVersion === null ? null : (
                   <span data-slot="row-cli-version" className="text-muted-foreground">
                     {t('shell.session.cliVersion', { version: cliVersion })}

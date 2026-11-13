@@ -13,7 +13,12 @@ import {
   type EffortLevel,
   type PermissionMode,
 } from '@shared/common';
-import { errorCodeForRateLimitError, errorCodeForStartupFailure, makeError, type ErrorPayload } from '@shared/errors';
+import {
+  errorCodeForRateLimitError,
+  errorCodeForStartupFailure,
+  makeError,
+  type ErrorPayload,
+} from '@shared/errors';
 import type {
   BackgroundTask,
   SessionDetailPatch,
@@ -64,6 +69,7 @@ import {
   type ItemBase,
   type TaskNotificationText,
 } from './builders';
+import { normalizeBridgeMessage, type BridgeResult } from './bridge';
 import { modelContextWindow } from './context';
 import { capText, fitToolCall, shareBudget } from './limits';
 import {
@@ -108,6 +114,7 @@ import {
   type SdkToolResultBlock,
   type SdkToolResultMeta,
   type SdkUsage,
+  type SdkUserMessage,
 } from './sdk-schemas';
 
 /** Known types/subtypes without an item or signal (WP-02 §5.6): only counted in ignoredCounts. */
@@ -124,6 +131,8 @@ const IGNORED_SYSTEM_SUBTYPES: ReadonlySet<string> = new Set([
 const NOT_APPROVED_MCP_STATUS: ReadonlySet<string> = new Set(['disabled', 'needs-approval', 'rejected']);
 const SYNTHETIC_MODEL = '<synthetic>';
 const LIFECYCLE_CAPABILITY = 'msg_lifecycle_v1';
+/** WP-64: own prompt uuids kept for the replay filter (far more than a session sends per process). */
+const OWN_PROMPTS_LIMIT = 5_000;
 
 interface ItemEntry {
   item: TranscriptItem;
@@ -182,6 +191,12 @@ class LiveNormalizerImpl implements LiveNormalizer {
   /** Ids of items that are still streaming (`streaming: true` / `streaming_input`). */
   private readonly streaming = new Set<string>();
   private readonly pendingPrompts = new Map<string, PendingPrompt>();
+  /**
+   * WP-64: uuids of every prompt Parallax sent through this normalizer (never cleared, bounded). With
+   * --replay-user-messages each of them comes back as an `isReplay` echo – also with origin human
+   * (toSdkUserMessage) – so the uuid, not the origin, tells an own echo from a Claude-app prompt.
+   */
+  private readonly ownPrompts = new Set<string>();
   private readonly pendingDecisions = new Map<string, ToolDecisionRef>();
   private readonly pendingResults = new Map<string, PendingResult>();
   /** task_id → task and its tool_use_id. */
@@ -210,6 +225,12 @@ class LiveNormalizerImpl implements LiveNormalizer {
   private notApprovedKey = '';
   private promptSuggestion: string | null = null;
   private pendingReset: { id: string | null; trigger: string | null; at: string } | null = null;
+  /**
+   * WP-65: uuids of the main-thread assistant messages of the running turn and of the last finished
+   * one – a `post_turn_summary` counts only for the latest turn (`summarizes_uuid`).
+   */
+  private turnUuids = new Set<string>();
+  private lastTurnUuids = new Set<string>();
   /** Ops emitted at the start of the next output (reset marker after startConversation). */
   private queued: SessionOp[] = [];
   private readonly unknown: Record<string, number> = {};
@@ -288,6 +309,11 @@ class LiveNormalizerImpl implements LiveNormalizer {
 
   registerPrompt(prompt: PendingPrompt): void {
     this.pendingPrompts.set(prompt.messageUuid, prompt);
+    this.ownPrompts.add(prompt.messageUuid);
+    if (this.ownPrompts.size > OWN_PROMPTS_LIMIT) {
+      const oldest = this.ownPrompts.values().next();
+      if (oldest.done !== true) this.ownPrompts.delete(oldest.value);
+    }
   }
 
   attachDecision(toolUseId: string, ref: ToolDecisionRef): NormalizerOutput {
@@ -325,6 +351,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
     this.conversationId = conversationId;
     this.nextOrder = nextOrder;
     this.lastCostTotal = null;
+    this.turnUuids = new Set();
+    this.lastTurnUuids = new Set();
     this.streaming.clear();
     const reset = this.pendingReset;
     this.pendingReset = null;
@@ -342,6 +370,10 @@ class LiveNormalizerImpl implements LiveNormalizer {
       this.items.set(item.id, { item, conversationId });
       this.queued.push({ op: 'item.upsert', item });
     }
+  }
+
+  claimOrder(): number {
+    return this.nextOrder++;
   }
 
   // ---- Output plumbing ----
@@ -381,7 +413,9 @@ class LiveNormalizerImpl implements LiveNormalizer {
 
   /** Base keyed by the SDK uuid, else a px id. */
   private uuidBase(uuid: string | undefined, at: string, parentToolUseId: string | null = null): ItemBase {
-    return uuid === undefined || uuid === '' ? this.pxBase(at, parentToolUseId) : this.base(uuid, at, parentToolUseId);
+    return uuid === undefined || uuid === ''
+      ? this.pxBase(at, parentToolUseId)
+      : this.base(uuid, at, parentToolUseId);
   }
 
   /** Store an item and emit `item.upsert` – unless it belongs to an older conversation (R0-05f). */
@@ -406,7 +440,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
    * frame of the old conversation must not switch the new conversation back.
    */
   private trackSessionId(sessionId: string | undefined, out: Out): void {
-    if (sessionId === undefined || sessionId === '' || sessionId.length > 100 || sessionId === this.sessionId) return;
+    if (sessionId === undefined || sessionId === '' || sessionId.length > 100 || sessionId === this.sessionId)
+      return;
     if (this.retiredSessionIds.has(sessionId)) return;
     this.sessionId = sessionId;
     out.signals.push({ type: 'session_id', sessionId });
@@ -476,13 +511,17 @@ class LiveNormalizerImpl implements LiveNormalizer {
           return;
         }
         const stream = this.streams.get(messageId);
-        const item = streamingBlockItem(this.base(id, receivedAt.toISOString(), parent ?? stream?.parent ?? null), block, {
-          messageId,
-          blockIndex: start.data.index,
-          model: stream?.model ?? null,
-          aborted: false,
-          localCommand: null,
-        });
+        const item = streamingBlockItem(
+          this.base(id, receivedAt.toISOString(), parent ?? stream?.parent ?? null),
+          block,
+          {
+            messageId,
+            blockIndex: start.data.index,
+            model: stream?.model ?? null,
+            aborted: false,
+            localCommand: null,
+          },
+        );
         if (item === null) return;
         if (item.kind === 'tool_call') {
           const decision = this.pendingDecisions.get(item.toolUseId);
@@ -526,11 +565,17 @@ class LiveNormalizerImpl implements LiveNormalizer {
 
   private onDelta(
     id: string,
-    delta: { type: string; text?: string | undefined; thinking?: string | undefined; partial_json?: string | undefined },
+    delta: {
+      type: string;
+      text?: string | undefined;
+      thinking?: string | undefined;
+      partial_json?: string | undefined;
+    },
     out: Out,
   ): void {
     const entry = this.items.get(id);
-    if (entry === undefined || !this.streaming.has(id) || entry.conversationId !== this.conversationId) return;
+    if (entry === undefined || !this.streaming.has(id) || entry.conversationId !== this.conversationId)
+      return;
     const item = entry.item;
     switch (delta.type) {
       case 'text_delta': {
@@ -544,7 +589,10 @@ class LiveNormalizerImpl implements LiveNormalizer {
         if (item.kind !== 'thinking') return;
         const append = this.clip(item.text.text.length, delta.thinking ?? '');
         if (append === '') return;
-        this.items.set(id, { ...entry, item: { ...item, text: { ...item.text, text: item.text.text + append } } });
+        this.items.set(id, {
+          ...entry,
+          item: { ...item, text: { ...item.text, text: item.text.text + append } },
+        });
         out.ops.push({ op: 'item.delta', itemId: id, field: 'thinking', append });
         return;
       }
@@ -578,7 +626,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
       if (entry?.conversationId !== this.conversationId) continue;
       const item = entry.item;
       if (item.kind === 'assistant_text') this.put({ ...item, streaming: false, aborted: true }, out);
-      else if (item.kind === 'thinking') this.put({ ...item, streaming: false, text: capText(item.text.text, this.ctx) }, out);
+      else if (item.kind === 'thinking')
+        this.put({ ...item, streaming: false, text: capText(item.text.text, this.ctx) }, out);
       else if (item.kind === 'tool_call' && item.status === 'streaming_input') {
         this.put(fitToolCall({ ...item, status: 'interrupted', ...this.partialInput(item) }, this.ctx), out);
       }
@@ -616,6 +665,7 @@ class LiveNormalizerImpl implements LiveNormalizer {
     if (parent === null) {
       this.endRetrySeries(out);
       this.emitModel(model, out);
+      if (a.uuid !== undefined && a.uuid !== '') this.turnUuids.add(a.uuid);
     }
     if (a.supersedes !== undefined) this.retract(a.supersedes, out);
 
@@ -689,8 +739,20 @@ class LiveNormalizerImpl implements LiveNormalizer {
 
   private withResult(call: ToolCallItem, pending: PendingResult): ToolCallItem {
     const result = buildToolResult(pending.block, pending.structured, call.toolName, pending.at, this.ctx);
-    const status = statusAfterResult(call, result, pending.meta, pending.structured, this.deniedByCli.has(call.toolUseId));
-    return { ...call, task: this.taskWithResultOutputFile(call, pending.structured), result, status, inputPartial: null };
+    const status = statusAfterResult(
+      call,
+      result,
+      pending.meta,
+      pending.structured,
+      this.deniedByCli.has(call.toolUseId),
+    );
+    return {
+      ...call,
+      task: this.taskWithResultOutputFile(call, pending.structured),
+      result,
+      status,
+      inputPartial: null,
+    };
   }
 
   /**
@@ -706,7 +768,10 @@ class LiveNormalizerImpl implements LiveNormalizer {
     }
     const task: TaskInfo = { ...call.task, outputFile };
     const known = this.tasks.get(task.taskId);
-    this.tasks.set(task.taskId, { toolUseId: known?.toolUseId ?? call.toolUseId, task: known === undefined ? task : { ...known.task, outputFile } });
+    this.tasks.set(task.taskId, {
+      toolUseId: known?.toolUseId ?? call.toolUseId,
+      task: known === undefined ? task : { ...known.task, outputFile },
+    });
     return task;
   }
 
@@ -736,7 +801,7 @@ class LiveNormalizerImpl implements LiveNormalizer {
     }
     const u = parsed.data;
     if (u.isReplay === true) {
-      bump(this.ignored, 'user/replay');
+      if (!this.remotePrompt(u, receivedAt, out)) bump(this.ignored, 'user/replay');
       return;
     }
     const at = isoTime(u.timestamp, receivedAt);
@@ -755,11 +820,19 @@ class LiveNormalizerImpl implements LiveNormalizer {
     if (content.text.trim() === '' && content.images.length === 0) return;
 
     // ADR-152: a task notification needs the CLI's origin and the main agent.
-    const kind = classifyUserText(content.text, { originKind: u.origin?.kind ?? null, parentToolUseId: parent });
+    const kind = classifyUserText(content.text, {
+      originKind: u.origin?.kind ?? null,
+      parentToolUseId: parent,
+    });
     switch (kind.kind) {
       case 'interrupted':
         this.put(
-          { ...this.uuidBase(u.uuid, at, parent), kind: 'system', event: 'interrupted', forToolUse: kind.forToolUse },
+          {
+            ...this.uuidBase(u.uuid, at, parent),
+            kind: 'system',
+            event: 'interrupted',
+            forToolUse: kind.forToolUse,
+          },
           out,
         );
         return;
@@ -768,7 +841,12 @@ class LiveNormalizerImpl implements LiveNormalizer {
         return;
       case 'local_output':
         this.put(
-          { ...this.uuidBase(u.uuid, at, parent), kind: 'system', event: 'local_command_output', text: capText(kind.text, this.ctx) },
+          {
+            ...this.uuidBase(u.uuid, at, parent),
+            kind: 'system',
+            event: 'local_command_output',
+            text: capText(kind.text, this.ctx),
+          },
           out,
         );
         return;
@@ -796,6 +874,32 @@ class LiveNormalizerImpl implements LiveNormalizer {
         );
       }
     }
+  }
+
+  /**
+   * WP-64: a replayed prompt with origin human whose uuid Parallax never sent was typed in the Claude
+   * app (Remote Control, spike 12.11.2026: replay after `command_lifecycle started`, foreign uuid). It
+   * becomes a user_message with source 'remote'; every other replay (own echoes, tool results,
+   * subagent prompts) stays ignored. Returns whether the replay was taken.
+   */
+  private remotePrompt(u: SdkUserMessage, receivedAt: Date, out: Out): boolean {
+    const uuid = u.uuid;
+    if (u.origin?.kind !== 'human' || uuid === undefined || (u.parent_tool_use_id ?? null) !== null) return false;
+    if (this.ownPrompts.has(uuid) || this.pendingPrompts.has(uuid) || this.items.has(uuid)) return false;
+    const content = userContent(u.message.content, this.ctx);
+    if (content.toolResults.length > 0 || (content.text.trim() === '' && content.images.length === 0)) return false;
+    const kind = classifyUserText(content.text, { originKind: 'human', parentToolUseId: null });
+    if (kind.kind !== 'prompt') return false;
+    this.put(
+      userMessageItem(this.uuidBase(uuid, isoTime(u.timestamp, receivedAt)), capText(kind.text, this.ctx), {
+        attachments: content.images,
+        origin: 'human',
+        priority: null,
+        source: 'remote',
+      }),
+      out,
+    );
+    return true;
   }
 
   private applyToolResult(pending: PendingResult, out: Out): void {
@@ -867,7 +971,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
     this.closeStreaming(out);
     this.endRetrySeries(out);
 
-    const listed = r.user_message_uuids ?? (r.user_message_uuid === undefined ? undefined : [r.user_message_uuid]);
+    const listed =
+      r.user_message_uuids ?? (r.user_message_uuid === undefined ? undefined : [r.user_message_uuid]);
     if (this.lifecycleSupported !== true) {
       // R0-29: at the latest with the turn_result (no list at all: every pending prompt).
       for (const uuid of listed ?? [...this.pendingPrompts.keys()]) this.createPrompt(uuid, out);
@@ -925,6 +1030,11 @@ class LiveNormalizerImpl implements LiveNormalizer {
     // A result error without an assistant error of this turn gets its own error item.
     if (error !== null && (startupFailure || this.turnAssistantError === null)) {
       this.put(errorItem(this.pxBase(at), error), out);
+    }
+    // WP-65: this turn is the latest finished one (its post_turn_summary may still follow).
+    if (this.turnUuids.size > 0) {
+      this.lastTurnUuids = this.turnUuids;
+      this.turnUuids = new Set();
     }
     const excerpt = (r.result ?? '').trim();
     out.signals.push({
@@ -1017,7 +1127,12 @@ class LiveNormalizerImpl implements LiveNormalizer {
         const base =
           existing === undefined
             ? this.uuidBase(msg.uuid, at)
-            : { id: existing.item.id, order: existing.item.order, at: existing.item.at, parentToolUseId: null };
+            : {
+                id: existing.item.id,
+                order: existing.item.order,
+                at: existing.item.at,
+                parentToolUseId: null,
+              };
         this.retryItemId = base.id;
         this.put(
           {
@@ -1047,12 +1162,16 @@ class LiveNormalizerImpl implements LiveNormalizer {
         const existing = known === undefined ? undefined : this.items.get(known)?.item;
         const prev = existing?.kind === 'system' && existing.event === 'hook' ? existing : null;
         const base =
-          prev === null ? this.uuidBase(msg.uuid, at) : { id: prev.id, order: prev.order, at: prev.at, parentToolUseId: null };
+          prev === null
+            ? this.uuidBase(msg.uuid, at)
+            : { id: prev.id, order: prev.order, at: prev.at, parentToolUseId: null };
         this.hooks.set(h.data.hook_id, base.id);
         const text =
           h.data.output !== undefined && h.data.output !== ''
             ? h.data.output
-            : [h.data.stdout, h.data.stderr].filter((s): s is string => s !== undefined && s !== '').join('\n');
+            : [h.data.stdout, h.data.stderr]
+                .filter((s): s is string => s !== undefined && s !== '')
+                .join('\n');
         this.put(
           {
             ...base,
@@ -1127,7 +1246,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
           out,
         );
         const call = this.toolCall(toolUseId);
-        if (call?.result?.isError === true && call.status === 'error') this.put({ ...call, status: 'denied' }, out);
+        if (call?.result?.isError === true && call.status === 'error')
+          this.put({ ...call, status: 'denied' }, out);
         return;
       }
       case 'memory_recall': {
@@ -1197,7 +1317,10 @@ class LiveNormalizerImpl implements LiveNormalizer {
           return;
         }
         this.put(
-          errorItem(this.uuidBase(msg.uuid, at), makeError('MODEL_REFUSAL', { model: (f.data.original_model ?? '').slice(0, 200) })),
+          errorItem(
+            this.uuidBase(msg.uuid, at),
+            makeError('MODEL_REFUSAL', { model: (f.data.original_model ?? '').slice(0, 200) }),
+          ),
           out,
         );
         return;
@@ -1209,15 +1332,20 @@ class LiveNormalizerImpl implements LiveNormalizer {
           return;
         }
         const d = t.data;
-        this.updateTask(d.task_id, d.tool_use_id, (task) => ({
-          ...task,
-          taskType: d.task_type ?? task.taskType,
-          description: d.description ?? task.description,
-          subagentType: d.subagent_type ?? task.subagentType,
-          isBackgrounded: d.is_backgrounded ?? task.isBackgrounded,
-          status: 'running',
-          startedAt: task.startedAt ?? at,
-        }), out);
+        this.updateTask(
+          d.task_id,
+          d.tool_use_id,
+          (task) => ({
+            ...task,
+            taskType: d.task_type ?? task.taskType,
+            description: d.description ?? task.description,
+            subagentType: d.subagent_type ?? task.subagentType,
+            isBackgrounded: d.is_backgrounded ?? task.isBackgrounded,
+            status: 'running',
+            startedAt: task.startedAt ?? at,
+          }),
+          out,
+        );
         return;
       }
       case 'task_updated': {
@@ -1227,13 +1355,18 @@ class LiveNormalizerImpl implements LiveNormalizer {
           return;
         }
         const patch = t.data.patch ?? {};
-        this.updateTask(t.data.task_id, undefined, (task) => ({
-          ...task,
-          status: patch.status ?? task.status,
-          description: patch.description ?? task.description,
-          isBackgrounded: patch.is_backgrounded ?? task.isBackgrounded,
-          endedAt: millisToIso(patch.end_time) ?? task.endedAt,
-        }), out);
+        this.updateTask(
+          t.data.task_id,
+          undefined,
+          (task) => ({
+            ...task,
+            status: patch.status ?? task.status,
+            description: patch.description ?? task.description,
+            isBackgrounded: patch.is_backgrounded ?? task.isBackgrounded,
+            endedAt: millisToIso(patch.end_time) ?? task.endedAt,
+          }),
+          out,
+        );
         return;
       }
       case 'task_progress': {
@@ -1245,12 +1378,17 @@ class LiveNormalizerImpl implements LiveNormalizer {
         const d = t.data;
         // WP61-07: `description` here is the CLI's current activity ("Running <tool description>",
         // CLI 2.1.322), not the task's name – TaskInfo has no activity field, so it is dropped.
-        this.updateTask(d.task_id, d.tool_use_id, (task) => ({
-          ...task,
-          subagentType: d.subagent_type ?? task.subagentType,
-          summary: d.summary ?? task.summary,
-          usage: taskUsage(d.usage) ?? task.usage,
-        }), out);
+        this.updateTask(
+          d.task_id,
+          d.tool_use_id,
+          (task) => ({
+            ...task,
+            subagentType: d.subagent_type ?? task.subagentType,
+            summary: d.summary ?? task.summary,
+            usage: taskUsage(d.usage) ?? task.usage,
+          }),
+          out,
+        );
         return;
       }
       case 'task_notification': {
@@ -1260,16 +1398,29 @@ class LiveNormalizerImpl implements LiveNormalizer {
           return;
         }
         const d = t.data;
-        const matched = this.updateTask(d.task_id, d.tool_use_id, (task) => ({
-          ...task,
-          status: d.status ?? 'completed',
-          summary: d.summary ?? task.summary,
-          usage: taskUsage(d.usage) ?? task.usage,
-          endedAt: task.endedAt ?? at,
-          outputFile: taskOutputFile(d.output_file) ?? task.outputFile,
-        }), out);
+        const matched = this.updateTask(
+          d.task_id,
+          d.tool_use_id,
+          (task) => ({
+            ...task,
+            status: d.status ?? 'completed',
+            summary: d.summary ?? task.summary,
+            usage: taskUsage(d.usage) ?? task.usage,
+            endedAt: task.endedAt ?? at,
+            outputFile: taskOutputFile(d.output_file) ?? task.outputFile,
+          }),
+          out,
+        );
         if (!matched.matched) {
-          this.put({ ...this.uuidBase(msg.uuid, at), kind: 'system', event: 'task_notification', task: matched.task }, out);
+          this.put(
+            {
+              ...this.uuidBase(msg.uuid, at),
+              kind: 'system',
+              event: 'task_notification',
+              task: matched.task,
+            },
+            out,
+          );
         }
         return;
       }
@@ -1331,18 +1482,54 @@ class LiveNormalizerImpl implements LiveNormalizer {
         this.put(errorItem(this.uuidBase(msg.uuid, at), error), out);
         return;
       }
-      default:
+      default: {
+        const bridge = normalizeBridgeMessage(subtype, raw);
+        if (bridge !== null) {
+          this.onBridge(subtype, bridge, out);
+          return;
+        }
         if (IGNORED_SYSTEM_SUBTYPES.has(subtype)) {
           bump(this.ignored, `system/${subtype}`);
           return;
         }
         this.unknownMessage(raw, msg, receivedAt, out);
+      }
     }
+  }
+
+  /** WP-64: Remote Control bridge messages (bridge.ts: one table, WP-65 adds summaries). */
+  private onBridge(subtype: string, result: BridgeResult, out: Out): void {
+    if (result.unknownKey !== null) this.countUnknown(result.unknownKey);
+    switch (result.outcome.kind) {
+      case 'signal':
+        out.signals.push(result.outcome.signal);
+        return;
+      case 'turnSummary':
+        if (this.isLatestTurn(result.outcome.summarizesUuid)) out.signals.push(result.outcome.signal);
+        else bump(this.ignored, `system/${subtype}:stale`);
+        return;
+      case 'ignored':
+        bump(this.ignored, `system/${subtype}`);
+        return;
+      case 'invalid':
+        this.countUnknown(`invalid:system/${subtype}`);
+    }
+  }
+
+  /**
+   * WP-65: the summarized assistant message belongs to the running turn, or to the last finished one
+   * while the next turn has no assistant message yet. Anything else (an older turn, unknown) is late.
+   */
+  private isLatestTurn(uuid: string | null): boolean {
+    if (uuid === null) return false;
+    if (this.turnUuids.has(uuid)) return true;
+    return this.turnUuids.size === 0 && this.lastTurnUuids.has(uuid);
   }
 
   private readPermissionMode(value: unknown): PermissionMode | null {
     const mode = parsePermissionMode(value);
-    if (mode === null && typeof value === 'string') this.countUnknown(unknownEnumCountKey('permissionMode', value));
+    if (mode === null && typeof value === 'string')
+      this.countUnknown(unknownEnumCountKey('permissionMode', value));
     return mode;
   }
 
@@ -1372,7 +1559,11 @@ class LiveNormalizerImpl implements LiveNormalizer {
       tools: i.tools ?? [],
       slashCommands: i.slash_commands ?? [],
       terminalSlashCommands: i.terminal_slash_commands ?? [],
-      mcpServers: (i.mcp_servers ?? []).map((s) => ({ name: s.name, status: s.status, source: s.source ?? null })),
+      mcpServers: (i.mcp_servers ?? []).map((s) => ({
+        name: s.name,
+        status: s.status,
+        source: s.source ?? null,
+      })),
       skills: i.skills ?? [],
       agents: i.agents ?? [],
       plugins: (i.plugins ?? []).map((p) => ({ name: p.name, version: p.version ?? null })),
@@ -1432,17 +1623,30 @@ class LiveNormalizerImpl implements LiveNormalizer {
     return { matched: true, task };
   }
 
-  private applyTaskNotificationText(n: TaskNotificationText, uuid: string | undefined, at: string, out: Out): void {
-    const matched = this.updateTask(n.taskId, n.toolUseId ?? undefined, (task) => ({
-      ...task,
-      status: n.status,
-      summary: n.summary ?? task.summary,
-      usage: n.usage ?? task.usage,
-      endedAt: task.endedAt ?? at,
-      outputFile: n.outputFile ?? task.outputFile,
-    }), out);
+  private applyTaskNotificationText(
+    n: TaskNotificationText,
+    uuid: string | undefined,
+    at: string,
+    out: Out,
+  ): void {
+    const matched = this.updateTask(
+      n.taskId,
+      n.toolUseId ?? undefined,
+      (task) => ({
+        ...task,
+        status: n.status,
+        summary: n.summary ?? task.summary,
+        usage: n.usage ?? task.usage,
+        endedAt: task.endedAt ?? at,
+        outputFile: n.outputFile ?? task.outputFile,
+      }),
+      out,
+    );
     if (!matched.matched) {
-      this.put({ ...this.uuidBase(uuid, at), kind: 'system', event: 'task_notification', task: matched.task }, out);
+      this.put(
+        { ...this.uuidBase(uuid, at), kind: 'system', event: 'task_notification', task: matched.task },
+        out,
+      );
     }
   }
 
@@ -1465,7 +1669,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
     if (id === null) return;
     this.retryItemId = null;
     const entry = this.items.get(id);
-    if (entry?.item.kind === 'system' && entry.item.event === 'api_retry') this.put({ ...entry.item, active: false }, out);
+    if (entry?.item.kind === 'system' && entry.item.event === 'api_retry')
+      this.put({ ...entry.item, active: false }, out);
     out.signals.push({ type: 'retry', active: false });
   }
 
@@ -1498,13 +1703,16 @@ class LiveNormalizerImpl implements LiveNormalizer {
     }
     out.detail.rateLimit = info;
     out.signals.push({ type: 'rate_limit', info });
-    if (info.status === 'allowed') return;
+    // WP-63: `allowed`/`allowed_warning` only feed the limit bar (signal above) – no transcript item
+    // for any window; only `rejected` ("limit reached", the session stops) stays a notice.
+    if (info.status !== 'rejected') return;
     this.put({ ...this.uuidBase(msg.uuid, info.at), kind: 'system', event: 'rate_limit', info }, out);
-    if (info.status === 'rejected') {
-      // C.5: only `rejected` is an error (credits_required → CLAUDE_BILLING, a setup error).
-      const code = errorCodeForRateLimitError(parsed.data.rate_limit_info.errorCode ?? '');
-      out.signals.push({ type: 'assistant_error', error: makeError(code, { rateLimitType: info.rateLimitType }) });
-    }
+    // C.5: only `rejected` is an error (credits_required → CLAUDE_BILLING, a setup error).
+    const code = errorCodeForRateLimitError(parsed.data.rate_limit_info.errorCode ?? '');
+    out.signals.push({
+      type: 'assistant_error',
+      error: makeError(code, { rateLimitType: info.rateLimitType }),
+    });
   }
 
   private unknownMessage(raw: unknown, msg: SdkMessageBase, receivedAt: Date, out: Out): void {

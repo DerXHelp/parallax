@@ -72,6 +72,11 @@ export interface BrokerDeps {
   /** → normalizer + emit; no-op without a live normalizer. */
   attachDecision(toolUseId: string, ref: ToolDecisionRef): void;
   onCountsChanged(counts: DecisionCounts, addedKind: DecisionKind | null): void;
+  /**
+   * WP-64: true while a Remote Control bridge is connected – a request the CLI cancels then was
+   * answered in the Claude app (outcome `answered_elsewhere` instead of `cancelled`). Absent = never.
+   */
+  answeredElsewhere?(): boolean;
   /** Resolved records kept (default 200). */
   recordsKeep?: number;
 }
@@ -356,10 +361,13 @@ export function createBroker(deps: BrokerDeps): Broker {
           resolve(cancelResult('signal_aborted', 'deny'));
           return;
         }
-        // The CLI cancelled the request: the card disappears (decision.resolved cancelled).
+        // The CLI cancelled the request: the card disappears (decision.resolved cancelled) – with a
+        // connected Remote Control it was answered in the Claude app (WP-64).
         finish(
           slot,
-          { type: 'cancelled', reason: 'signal_aborted' },
+          deps.answeredElsewhere?.() === true
+            ? { type: 'answered_elsewhere' }
+            : { type: 'cancelled', reason: 'signal_aborted' },
           null,
           cancelResult('signal_aborted', 'deny'),
         );

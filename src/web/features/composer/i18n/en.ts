@@ -23,6 +23,12 @@ export const en = {
     plan: 'Feedback on the plan…',
   },
   send: 'Send',
+  /** WP-66: side mode of the field (`/btw`, the toggle next to Send). */
+  side: {
+    toggle: 'Side question (not part of the conversation)',
+    placeholder: 'Side question – does not go into the context…',
+    send: 'Ask',
+  },
   /** Send button while the draft is a command Parallax runs itself (/model, /status …). */
   run: 'Run',
   queue: 'Queue',
@@ -34,6 +40,10 @@ export const en = {
   sendAsMessage: 'Send as new message instead',
   stop: 'Stop',
   stopHint: 'Stops Claude (Esc in an empty message field).',
+  /** WP-65 §1.5: `session.backgroundTasks` without a tool call (like Ctrl+B in the terminal). */
+  backgroundAll: 'Move all to background',
+  backgroundAllHint: 'Running commands and subagents continue as background tasks (Ctrl+B).',
+  backgroundAllShortcut: 'Move running commands and subagents to the background',
   notConnected: 'Not connected',
   tooLong: 'Too long – at most {max} characters.',
   counter: '{count} / {max} characters',
@@ -162,6 +172,7 @@ export const en = {
       status: 'Session info: model, folder, versions',
       help: 'All commands and keyboard shortcuts',
       resume: 'Earlier conversations of this session',
+      btw: 'Side question – answered from the conversation, not part of it',
     } satisfies Record<NativeCommand, string>,
     nativeArguments: {
       model: '[model]',
@@ -169,6 +180,7 @@ export const en = {
       fast: '[on|off]',
       plan: '[text]',
       rename: '[name]',
+      btw: '[question]',
     },
     error: {
       invalidModel: '“{name}” is not a valid model name.',

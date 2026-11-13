@@ -30,6 +30,8 @@ import path from 'node:path';
 import type { Logger } from 'pino';
 import { z } from 'zod';
 import { messageUuidSchema } from '@shared/common';
+import { makeError } from '@shared/errors';
+import type { McpAction, ReloadTarget, SessionInfoSection, SessionInfoSectionName } from '@shared/model';
 import { toError } from '../lib/async';
 import { logger } from '../lib/logger';
 import { killProcessTree as killTree, spawnHidden } from '../lib/process';
@@ -43,6 +45,10 @@ import {
   optionIssues,
   type StartFlagSettings,
 } from './sdkOptions';
+import { titleOf, usageLimitsOf } from './overview';
+import { remoteControlDefaultOf, remoteControlErrorOf, toRemoteControlInfo } from './remoteControl';
+import { SESSION_INFO_METHODS, sessionInfoFailure, sessionInfoOf } from './sessionInfo';
+import { controlRetryOf, sideAnswerOf, sideQuestionFailure, withdrawnOf } from './sideQuestion';
 import { createSpawner } from './spawn';
 import type {
   AgentBackend,
@@ -52,7 +58,13 @@ import type {
   HistoryRequest,
   OutgoingContent,
   OutgoingPrompt,
+  RemoteControlRequest,
+  RemoteControlResult,
+  SideQuestionOptions,
+  SideQuestionResult,
   StartSessionRequest,
+  TitleResult,
+  UsageLimits,
 } from './types';
 
 const log = logger.child({ module: 'backend/sdk' });
@@ -74,6 +86,23 @@ export interface SdkTimeouts {
   readyMs: number;
   /** After the process exit wait at most this long for the end of the iterator. */
   iteratorAfterExitMs: number;
+  /**
+   * WP-65: `generateSessionTitle` (one small model request, live ≈ 1 s) – may follow right after a
+   * start, so it gets the bound of the readiness rather than `controlMs`.
+   */
+  titleMs: number;
+  /**
+   * WP-66: `askSideQuestion` (one model request from the session's prompt cache, live 1–2 s; the CLI
+   * retries overloaded requests itself) – after this the request is cancelled (status failed).
+   */
+  sideQuestionMs: number;
+  /**
+   * WP-67: one "Session info" request (`getStatus`, `getMemoryDialog`, … , `exportConversation` –
+   * the export renders the whole conversation as text, so it gets more than `controlMs`).
+   */
+  infoMs: number;
+  /** WP-67: MCP reconnect/toggle and reloading skills/plugins (a server connect or plugin load). */
+  infoActionMs: number;
 }
 
 export const SDK_TIMEOUTS: Readonly<SdkTimeouts> = Object.freeze({
@@ -83,6 +112,10 @@ export const SDK_TIMEOUTS: Readonly<SdkTimeouts> = Object.freeze({
   contextFullMs: 60_000,
   readyMs: 60_000,
   iteratorAfterExitMs: 2_000,
+  titleMs: 60_000,
+  sideQuestionMs: 120_000,
+  infoMs: 30_000,
+  infoActionMs: 60_000,
 });
 
 /** Answer to the CLI when the permission handler throws (F.3). */
@@ -105,6 +138,42 @@ export interface SdkQueryHandle extends AsyncIterable<unknown> {
   supportedModels(): Promise<unknown[]>;
   supportedCommands(): Promise<unknown[]>;
   stopTask(taskId: string): Promise<void>;
+  /**
+   * WP-64: internal SDK methods (not in the public typings of 0.3.322); checked at runtime, a
+   * missing method means REMOTE_CONTROL_UNAVAILABLE.
+   */
+  enableRemoteControl?(
+    enabled: boolean,
+    name?: string,
+    opts?: { reattachSessionId?: string; keepSessionOnExit?: boolean },
+  ): Promise<unknown>;
+  getSettings?(): Promise<unknown>;
+  /** WP-65: internal (not typed in 0.3.322) – a missing method means "no AI titles". */
+  generateSessionTitle?(description: string, opts?: { persist?: boolean }): Promise<unknown>;
+  /** WP-65: public in 0.3.322; optional so a missing method is a clean failure. */
+  backgroundTasks?(toolUseId?: string): Promise<unknown>;
+  /** WP-65: experimental (typed, name will change) – checked at runtime like the internal ones. */
+  usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?(opts?: { skipBehaviors?: boolean }): Promise<unknown>;
+  /** WP-66: internal (not typed in 0.3.322) – a missing method means "no side questions". */
+  askSideQuestion?(
+    question: string,
+    opts?: { history?: { question: string; response: string }[]; signal?: AbortSignal },
+  ): Promise<unknown>;
+  /** WP-66: internal (not typed in 0.3.322) – a missing method means "cannot withdraw". */
+  cancelAsyncMessage?(messageUuid: string): Promise<unknown>;
+  /** WP-67: internal dialog requests (not typed in 0.3.322) – a missing method means "tab not available". */
+  getStatus?(): Promise<unknown>;
+  getMemoryDialog?(): Promise<unknown>;
+  getSkillsDialog?(): Promise<unknown>;
+  getHooksListing?(): Promise<unknown>;
+  listPermissionRules?(): Promise<unknown>;
+  exportConversation?(): Promise<unknown>;
+  /** WP-67: public in 0.3.322; optional so a missing method is a clean failure. */
+  mcpServerStatus?(): Promise<unknown>;
+  reconnectMcpServer?(serverName: string): Promise<void>;
+  toggleMcpServer?(serverName: string, enabled: boolean): Promise<void>;
+  reloadSkills?(): Promise<unknown>;
+  reloadPlugins?(): Promise<unknown>;
   close(): void;
 }
 
@@ -238,6 +307,10 @@ interface SessionContext {
   readonly log: Logger;
   disposed(): boolean;
   finished(session: SdkSession): void;
+  /** WP-65: at most one warning per server process for a failing/missing usage query. */
+  warnUsageOnce(fields: Record<string, unknown>, message: string): void;
+  /** WP-67: one line per server process and `key` (later ones at debug) – never with answer values. */
+  logInfoOnce(key: string, fields: Record<string, unknown>, message: string): void;
 }
 
 type ProcessState = 'none' | 'running' | 'exited';
@@ -262,6 +335,10 @@ class SdkSession implements AgentSession {
   private shutdownPromise: Promise<void> | null = null;
   /** WP61-04: the first `result` of this process was logged (credential expiry). */
   private firstResultSeen = false;
+  /** WP-66: open side questions (a retry progress is attributed only while exactly one is open). */
+  private readonly openSideQuestions = new Set<SideQuestionOptions>();
+  /** WP-66: open title requests (they share the CLI's progress messages with side questions). */
+  private openTitles = 0;
 
   constructor(
     private readonly req: StartSessionRequest,
@@ -329,6 +406,7 @@ class SdkSession implements AgentSession {
       for await (const message of q) {
         if (this.exitSent) break;
         if (!this.firstResultSeen) this.noteFirstResult(message);
+        this.noteControlProgress(message);
         this.emit({ type: 'message', message, at: this.ctx.now() });
       }
     } catch (error) {
@@ -367,6 +445,22 @@ class SdkSession implements AgentSession {
     } catch (error) {
       if (this.exitSent || this.shutdownPromise !== null) return;
       this.emitError('control', error);
+    }
+  }
+
+  /**
+   * WP-66: `system/control_request_progress api_retry` → the open side question, but only when it is
+   * the only open control request that reports progress (the CLI's request_id is unknown here).
+   */
+  private noteControlProgress(message: unknown): void {
+    if (this.openSideQuestions.size !== 1 || this.openTitles > 0) return;
+    const retry = controlRetryOf(message);
+    if (retry === null) return;
+    const [only] = this.openSideQuestions;
+    try {
+      only?.onRetry?.(retry);
+    } catch (error) {
+      this.log.warn({ err: error }, 'side question retry callback failed');
     }
   }
 
@@ -580,6 +674,204 @@ class SdkSession implements AgentSession {
     return this.control('stopTask', this.ctx.timeouts.controlMs, (q) => q.stopTask(taskId));
   }
 
+  /**
+   * WP-64: always keepSessionOnExit – a close or server restart keeps the bridge session, so the next
+   * process reattaches to the same link. Never rejects (RemoteControlResult).
+   */
+  async setRemoteControl(enabled: boolean, req: RemoteControlRequest): Promise<RemoteControlResult> {
+    if (this.q !== null && typeof this.q.enableRemoteControl !== 'function') {
+      return { ok: false, error: makeError('REMOTE_CONTROL_UNAVAILABLE', { reason: 'sdk' }) };
+    }
+    const opts = {
+      keepSessionOnExit: true,
+      ...(req.reattachSessionId === null ? {} : { reattachSessionId: req.reattachSessionId }),
+    };
+    try {
+      const raw = await this.control('enableRemoteControl', this.ctx.timeouts.controlMs, (q) => {
+        if (q.enableRemoteControl === undefined) throw new Error('enableRemoteControl missing');
+        return q.enableRemoteControl(enabled, req.name ?? undefined, opts);
+      });
+      return enabled ? toRemoteControlInfo(raw) : { ok: true, info: null };
+    } catch (error) {
+      const payload = remoteControlErrorOf(error);
+      this.log.warn({ enabled, code: payload.code, params: payload.params }, 'remote control request failed');
+      return { ok: false, error: payload };
+    }
+  }
+
+  /** WP-64: Claude's own `remoteControlAtStartup` (getSettings().effective); null when unknown. */
+  async readRemoteControlDefault(): Promise<boolean | null> {
+    try {
+      const raw = await this.control('getSettings', this.ctx.timeouts.controlMs, (q) =>
+        q.getSettings === undefined ? Promise.resolve(null) : q.getSettings(),
+      );
+      return remoteControlDefaultOf(raw);
+    } catch (error) {
+      this.log.warn({ err: error }, 'reading the remote control default failed');
+      return null;
+    }
+  }
+
+  /** WP-65: AI title (internal method, checked at runtime); never rejects. */
+  async generateTitle(description: string, opts: { persist: boolean }): Promise<TitleResult> {
+    if (this.q !== null && typeof this.q.generateSessionTitle !== 'function') {
+      return { ok: false, reason: 'unavailable' };
+    }
+    this.openTitles += 1;
+    try {
+      const raw = await this.control('generateSessionTitle', this.ctx.timeouts.titleMs, (q) => {
+        if (q.generateSessionTitle === undefined) throw new Error('generateSessionTitle missing');
+        return q.generateSessionTitle(description, { persist: opts.persist });
+      });
+      return { ok: true, title: titleOf(raw) };
+    } catch (error) {
+      this.log.warn({ err: error, persist: opts.persist }, 'generateSessionTitle failed');
+      return { ok: false, reason: 'failed' };
+    } finally {
+      this.openTitles -= 1;
+    }
+  }
+
+  /** WP-65: `backgroundTasks(toolUseId?)` (Ctrl+B); rejects when the request fails. */
+  async backgroundTasks(toolUseId: string | null): Promise<boolean> {
+    const raw = await this.control('backgroundTasks', this.ctx.timeouts.controlMs, (q) => {
+      if (q.backgroundTasks === undefined) throw new Error('backgroundTasks missing');
+      return toolUseId === null ? q.backgroundTasks() : q.backgroundTasks(toolUseId);
+    });
+    // `true` when at least one task went to the background; an old CLI may answer nothing.
+    return raw !== false;
+  }
+
+  /** WP-65: plan limits of the experimental usage query (no transcript scan); never rejects. */
+  async readUsage(): Promise<UsageLimits | null> {
+    if (this.q !== null && typeof this.q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET !== 'function') {
+      this.ctx.warnUsageOnce({ reason: 'missing' }, 'usage query not available in this SDK/CLI');
+      return null;
+    }
+    try {
+      const raw = await this.control('usage', this.ctx.timeouts.controlMs, (q) => {
+        if (q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET === undefined) {
+          throw new Error('usage query missing');
+        }
+        return q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true });
+      });
+      const limits = usageLimitsOf(raw);
+      if (limits === null) this.log.debug('usage query: no plan limits in the answer');
+      return limits;
+    } catch (error) {
+      this.ctx.warnUsageOnce({ err: error }, 'usage query failed');
+      return null;
+    }
+  }
+
+  /**
+   * WP-66: side question (internal method, checked at runtime); never rejects. The caller's signal
+   * cancels it (→ `cancelled`); after `sideQuestionMs` it is cancelled as `failed`.
+   */
+  async askSideQuestion(question: string, opts: SideQuestionOptions): Promise<SideQuestionResult> {
+    if (this.q !== null && typeof this.q.askSideQuestion !== 'function') return { ok: false, reason: 'unavailable' };
+    if (opts.signal.aborted) return { ok: false, reason: 'cancelled' };
+    const abort = new AbortController();
+    const onAbort = (): void => {
+      abort.abort(new Error('Side question cancelled'));
+    };
+    opts.signal.addEventListener('abort', onAbort, { once: true });
+    const history = opts.history.map((turn) => ({ question: turn.question, response: turn.response }));
+    this.openSideQuestions.add(opts);
+    try {
+      const raw = await this.control('askSideQuestion', this.ctx.timeouts.sideQuestionMs, (q) => {
+        if (q.askSideQuestion === undefined) throw new Error('askSideQuestion missing');
+        return q.askSideQuestion(question, { ...(history.length > 0 ? { history } : {}), signal: abort.signal });
+      });
+      const answer = sideAnswerOf(raw);
+      if (answer === 'invalid') {
+        this.log.warn('askSideQuestion: unknown answer shape');
+        return { ok: false, reason: 'unavailable' };
+      }
+      return { ok: true, answer };
+    } catch (error) {
+      const reason = sideQuestionFailure(error, opts.signal.aborted);
+      // A timeout leaves the CLI request open: cancel it (control_cancel_request).
+      if (!abort.signal.aborted) abort.abort(new Error('Side question timed out'));
+      if (reason !== 'cancelled') this.log.warn({ err: error, reason }, 'askSideQuestion failed');
+      return { ok: false, reason };
+    } finally {
+      this.openSideQuestions.delete(opts);
+      opts.signal.removeEventListener('abort', onAbort);
+    }
+  }
+
+  /**
+   * WP-67: one "Session info" tab (internal methods checked at runtime, `mcpServerStatus` typed);
+   * null when this CLI cannot answer it, rejects when the request failed. The answer is never logged
+   * (status rows hold account data) – only the unknown keys and why a tab is not available, once.
+   */
+  async readInfo(section: SessionInfoSectionName): Promise<SessionInfoSection | null> {
+    const method = INFO_METHODS[section];
+    if (this.q !== null && typeof this.q[method] !== 'function') {
+      this.ctx.logInfoOnce(`${section}:missing`, { section, method }, 'session info: method missing in this SDK/CLI');
+      return null;
+    }
+    let raw: unknown;
+    try {
+      raw = await this.control(method, this.ctx.timeouts.infoMs, (q) => {
+        const call = q[method]?.();
+        if (call === undefined) throw new Error(`${method} missing`);
+        return call;
+      });
+    } catch (error) {
+      if (sessionInfoFailure(error) === 'unavailable') {
+        this.ctx.logInfoOnce(`${section}:refused`, { section, err: error }, 'session info: this CLI does not answer the request');
+        return null;
+      }
+      this.log.warn({ err: error, section }, 'session info request failed');
+      throw error;
+    }
+    const parsed = sessionInfoOf(section, raw);
+    if (parsed.unknown.length > 0) {
+      this.ctx.logInfoOnce(
+        `${section}:unknown:${parsed.unknown.join(',')}`,
+        { section, unknown: parsed.unknown },
+        'session info: unknown fields ignored',
+      );
+    }
+    if (parsed.data === null) {
+      this.ctx.logInfoOnce(`${section}:shape`, { section }, 'session info: unknown answer shape – tab not available');
+      return null;
+    }
+    return parsed.data;
+  }
+
+  /** WP-67: `reconnectMcpServer` / `toggleMcpServer`; rejects when it fails or is missing. */
+  async mcpAction(server: string, action: McpAction): Promise<void> {
+    await this.control(`mcp ${action}`, this.ctx.timeouts.infoActionMs, (q) => {
+      if (action === 'reconnect') {
+        if (q.reconnectMcpServer === undefined) throw new Error('reconnectMcpServer missing');
+        return q.reconnectMcpServer(server);
+      }
+      if (q.toggleMcpServer === undefined) throw new Error('toggleMcpServer missing');
+      return q.toggleMcpServer(server, action === 'enable');
+    });
+  }
+
+  /** WP-67: `reloadSkills` / `reloadPlugins` (applied at once); rejects when it fails or is missing. */
+  async reload(what: ReloadTarget): Promise<void> {
+    await this.control(`reload ${what}`, this.ctx.timeouts.infoActionMs, (q) => {
+      const call = what === 'skills' ? q.reloadSkills?.() : q.reloadPlugins?.();
+      if (call === undefined) throw new Error(`reload ${what} missing`);
+      return call;
+    });
+  }
+
+  /** WP-66: `cancelAsyncMessage(uuid)` (internal method); rejects when it fails or is missing. */
+  async withdrawQueued(messageUuid: string): Promise<boolean> {
+    const raw = await this.control('cancelAsyncMessage', this.ctx.timeouts.controlMs, (q) => {
+      if (q.cancelAsyncMessage === undefined) throw new Error('cancelAsyncMessage missing');
+      return q.cancelAsyncMessage(messageUuid);
+    });
+    return withdrawnOf(raw);
+  }
+
   /** F.3: toPermissionRequest → req.canUseTool(request, signal); a throwing handler → deny. */
   private readonly canUseTool: CanUseTool = async (toolName, input, options) => {
     try {
@@ -594,6 +886,9 @@ class SdkSession implements AgentSession {
 }
 
 // ---- backend ----
+
+/** WP-67: the SDK method behind each "Session info" tab (checked against the handle type). */
+const INFO_METHODS = SESSION_INFO_METHODS satisfies Record<SessionInfoSectionName, keyof SdkQueryHandle>;
 
 let loadedSdkQuery: SdkQueryFn | null = null;
 
@@ -621,6 +916,8 @@ export function createSdkBackend(deps: SdkBackendDeps = {}): AgentBackend & { re
   const history = deps.history ?? createHistoryPool();
   const live = new Set<SdkSession>();
   let disposed = false;
+  let usageWarned = false;
+  const infoLogged = new Set<string>();
   const backendLog = deps.logger === undefined ? log : deps.logger.child({ module: 'backend/sdk' });
   const ctx: SessionContext = {
     query,
@@ -632,6 +929,22 @@ export function createSdkBackend(deps: SdkBackendDeps = {}): AgentBackend & { re
     disposed: () => disposed,
     finished: (session) => {
       live.delete(session);
+    },
+    warnUsageOnce: (fields, message) => {
+      if (usageWarned) {
+        backendLog.debug(fields, message);
+        return;
+      }
+      usageWarned = true;
+      backendLog.warn(fields, `${message} – the limit bar keeps the last rate-limit values`);
+    },
+    logInfoOnce: (key, fields, message) => {
+      if (infoLogged.has(key)) {
+        backendLog.debug(fields, message);
+        return;
+      }
+      infoLogged.add(key);
+      backendLog.info(fields, message);
     },
   };
 

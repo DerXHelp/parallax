@@ -7,9 +7,9 @@
     "#3 system/session_state_changed: !session_id | !session_state:running",
     "#4 command_lifecycle/started: upsert 00000000-0000-4000-9000-000000000258 user_message o1 | !prompt_lifecycle:started",
     "#5 system/init: detail.patch {init} | !init",
-    "#6 rate_limit_event: upsert 00000000-0000-4000-9000-000000000004 system/rate_limit o2 | detail.patch {rateLimit} | !rate_limit:allowed_warning",
-    "#7 rate_limit_event: upsert 00000000-0000-4000-9000-000000000005 system/rate_limit o3 | detail.patch {rateLimit} | !rate_limit:rejected | !assistant_error:RATE_LIMIT_REJECTED",
-    "#8 rate_limit_event: upsert 00000000-0000-4000-9000-000000000006 system/rate_limit o4 | detail.patch {rateLimit} | !rate_limit:rejected | !assistant_error:CLAUDE_BILLING",
+    "#6 rate_limit_event: detail.patch {rateLimit} | !rate_limit:allowed_warning",
+    "#7 rate_limit_event: upsert 00000000-0000-4000-9000-000000000005 system/rate_limit o2 | detail.patch {rateLimit} | !rate_limit:rejected | !assistant_error:RATE_LIMIT_REJECTED",
+    "#8 rate_limit_event: upsert 00000000-0000-4000-9000-000000000006 system/rate_limit o3 | detail.patch {rateLimit} | !rate_limit:rejected | !assistant_error:CLAUDE_BILLING",
     "#9 rate_limit_event: detail.patch {rateLimit} | !rate_limit:allowed",
     "#10 system/session_state_changed: !session_state:idle"
   ],
@@ -136,32 +136,12 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "next"
-      },
-      {
-        "id": "00000000-0000-4000-9000-000000000004",
-        "order": 2,
-        "at": "2026-10-15T08:00:00.050Z",
-        "parentToolUseId": null,
-        "kind": "system",
-        "event": "rate_limit",
-        "info": {
-          "status": "allowed_warning",
-          "rateLimitType": "five_hour",
-          "resetsAt": "2026-10-15T08:00:00.000Z",
-          "utilization": 0.85,
-          "windows": {
-            "five_hour": {
-              "utilization": 0.85,
-              "resetsAt": "2026-10-15T08:00:00.000Z"
-            }
-          },
-          "at": "2026-10-15T08:00:00.050Z"
-        }
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "00000000-0000-4000-9000-000000000005",
-        "order": 3,
+        "order": 2,
         "at": "2026-10-15T08:00:00.060Z",
         "parentToolUseId": null,
         "kind": "system",
@@ -177,7 +157,7 @@
       },
       {
         "id": "00000000-0000-4000-9000-000000000006",
-        "order": 4,
+        "order": 3,
         "at": "2026-10-15T08:00:00.070Z",
         "parentToolUseId": null,
         "kind": "system",

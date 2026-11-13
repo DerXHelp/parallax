@@ -181,7 +181,8 @@
         "attachments": [],
         "origin": "human",
         "slashCommand": null,
-        "priority": "next"
+        "priority": "next",
+        "source": "local"
       },
       {
         "id": "msg_011CgwXVjWwcaffc4qRsoSYx:0",

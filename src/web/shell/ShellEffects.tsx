@@ -1,11 +1,16 @@
 import { useEffect } from 'react';
+import { useStore } from 'zustand';
+import { LOCAL_HOST_ID } from '@shared/common';
 import { PRODUCT_NAME } from '@shared/product';
 import { useLanguageLoadFailure, useT } from '@web/i18n';
-import { useAttentionCount, useConnectionStatus } from '@web/state/hooks';
+import { configureExternalLinks } from '@web/lib/external-link';
+import { sendCommand, useAttentionCount, useConnectionStatus } from '@web/state/hooks';
 import { useLanguageController } from '@web/state/language';
 import { showTextNotice } from '@web/state/notices';
 import { useSettings } from '@web/state/settings';
+import { clientStore } from '@web/state/store';
 import { useThemeController } from '@web/state/theme';
+import { migrateLegacyTranscriptView } from '@web/state/transcript-view';
 import { installDropGuard } from './drop-guard';
 import { reloadWindow } from './SlotBoundary';
 
@@ -47,10 +52,38 @@ function useLanguageLoadNotice(): void {
 }
 
 /**
+ * WP-65 §1.6b: external links go to the host command `link.open` (default browser); when that
+ * fails they open here, with a hint.
+ */
+function useExternalLinks(): void {
+  useEffect(
+    () =>
+      configureExternalLinks({
+        open: async (url) => {
+          await sendCommand(null, { name: 'link.open', url });
+        },
+        fellBack: () => {
+          showTextNotice('shell.linkFallback', undefined, { tone: 'warning', id: 'shell-link-fallback' });
+        },
+      }),
+    [],
+  );
+}
+
+/** WP-65 §1.6: WP-63's localStorage transcript view becomes the server setting, once. */
+function useTranscriptViewMigration(): void {
+  const connected = useStore(clientStore, (state) => (state.hosts[LOCAL_HOST_ID]?.hostState ?? null) !== null);
+  useEffect(() => {
+    if (connected) migrateLegacyTranscriptView().catch(() => undefined);
+  }, [connected]);
+}
+
+/**
  * Applies the host settings to the window: theme (Dark/Light/System), language (start is always
  * English until `host.state` arrives; another language switches once its lazy dictionary is
  * loaded) and the window title; guards the window against file and link drops outside a drop zone
- * (R4W-02, drop-guard.ts). Mounted once (App, playground).
+ * (R4W-02, drop-guard.ts); WP-65: external links in the default browser, the transcript view
+ * migration. Mounted once (App, playground).
  */
 export function ShellEffects() {
   const settings = useSettings();
@@ -58,6 +91,8 @@ export function ShellEffects() {
   useLanguageController(settings.language);
   useLanguageLoadNotice();
   useWindowTitle();
+  useExternalLinks();
+  useTranscriptViewMigration();
   useEffect(() => installDropGuard(window), []);
   return null;
 }

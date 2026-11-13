@@ -1,44 +1,69 @@
 import { FolderIcon } from 'lucide-react';
 import { memo } from 'react';
 import { LOCAL_HOST_ID, parseSessionKey } from '@shared/common';
+import type { EffortLevel } from '@shared/common';
 import type { ContextGauge } from '@shared/model';
-import { useI18n, useT } from '@web/i18n';
+import type { SessionViewState } from '@shared/sync';
+import { useT } from '@web/i18n';
+import { sessionLine } from '@web/lib/activity';
 import { cn } from '@web/lib/cn';
+import { effectiveEffort } from '@web/lib/effort';
 import { sessionTitle } from '@web/lib/session-title';
 import { cliVersionStatus, knownVersion } from '@web/lib/version';
-import { useDisplayStatus, useHostState, useSummary } from '@web/state/hooks';
+import { useDisplayStatus, useHostState, useSessionSelector, useSummary } from '@web/state/hooks';
 import { Badge } from '@web/ui/badge';
 import { Gauge } from '@web/ui/gauge';
 import { StatusIcon } from '@web/ui/status-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
+import { ContextCompactIcon, useContextTexts } from './context-display';
 import { HeaderPanelButtons, HeaderPanelMenuItems, useCompactHeader } from './header-panels';
 import { RenameField } from './navigation/RenameField';
 import { PathTail } from './navigation/PathTail';
+import { showsRemoteInHeader } from './navigation/remote-control';
+import { RemoteControlMenu } from './navigation/RemoteControlMenu';
 import { startRename, useRenameHeader, useRenaming } from './navigation/rename';
+import { SessionLineText, useSessionLineText } from './navigation/session-line';
 import { SessionMenu } from './navigation/SessionMenu';
 
-/** Context fill as a compact, read-only meter; tokens and source in the tooltip. */
+/**
+ * Context fill as a compact, read-only meter (WP-63 §1.4): the bar runs up to the autocompact, the
+ * color says "really full" (share of the model window), a symbol says "autocompact soon"; the
+ * details and the source in the tooltip.
+ */
 function HeaderContext({ context }: { context: ContextGauge }) {
-  const { t, format } = useI18n();
+  const t = useT();
+  const texts = useContextTexts(context);
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span data-slot="header-context" className="inline-flex">
-          <Gauge value={context.percentage} label={t('shell.session.context')} barClassName="w-10" />
+        <span
+          data-slot="header-context"
+          data-compact-soon={texts.compactSoon === null ? undefined : 'true'}
+          className="inline-flex items-center gap-1"
+        >
+          <Gauge
+            value={texts.display.fill}
+            level={texts.display.level}
+            valueText={texts.short}
+            valueLabel={texts.compactSoon === null ? texts.detail : `${texts.detail} · ${texts.compactSoon}`}
+            label={t('shell.session.context')}
+            barClassName="w-10"
+          />
+          {texts.compactSoon === null ? null : <ContextCompactIcon />}
         </span>
       </TooltipTrigger>
       <TooltipContent>
-        <span className="tabular-nums">
-          {t('shell.session.contextTokens', {
-            used: format.compact(context.totalTokens),
-            max: format.compact(context.maxTokens),
-            source: t(`shell.session.contextSource.${context.source}`),
-          })}
+        <span className="grid gap-0.5 tabular-nums">
+          <span>{texts.detail}</span>
+          {texts.compactSoon === null ? null : <span>{texts.compactSoon}</span>}
+          <span className="text-muted-foreground">{texts.source}</span>
         </span>
       </TooltipContent>
     </Tooltip>
   );
 }
+
+const selectInitEffort = (view: SessionViewState): EffortLevel | null => view.detail.init?.effort ?? null;
 
 /**
  * Claude Code version of THIS session (Plan C.7: per session, the CLI updates itself; R3-01):
@@ -89,7 +114,9 @@ function HeaderCliVersion({ version, required }: { version: string; required: st
  * fill). Reads its own summary (memo: the pane above does not re-render on summary changes, R1W-04).
  * Phase 2 (WP-35): the title is edited inline (double click, F2, `/rename`); the "…" session menu
  * sits next to the status line. Phase 3 (WP-58): the side panel buttons "Plan", "Files", "Tasks"
- * sit before the "…" – in a narrow bar they move into that menu (`data-compact`).
+ * sit before the "…" – in a narrow bar they move into that menu (`data-compact`). WP-64: the
+ * Remote Control icon with its own menu while the bridge is live or wanted. WP-65: the session line
+ * (live sentence / turn summary) after the badges – not in a compact bar or a narrow window.
  */
 export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessionKey: string }) {
   const t = useT();
@@ -99,8 +126,18 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
   useRenameHeader(sessionKey);
   const editing = useRenaming(sessionKey, 'header');
   const [compact, barRef] = useCompactHeader();
+  // The header sits in a pane that holds the subscription; this only reads the reported effort.
+  const initEffort = useSessionSelector(sessionKey, selectInitEffort, null);
+  // WP-65 §1.1: the sidebar's session line, after the badges while the bar is wide enough.
+  const line = summary === null || status === null ? null : sessionLine(summary, status.kind);
+  const lineText = useSessionLineText(line);
   if (summary === null) return null;
   const model = summary.model ?? summary.modelSetting;
+  const effort = effectiveEffort({
+    effort: summary.effort,
+    initEffort,
+    profileEffort: hostState?.profiles.find((p) => p.id === summary.profileId)?.defaults.effort ?? null,
+  });
   const cliVersion = knownVersion(summary.cliVersion);
   return (
     <div
@@ -157,6 +194,12 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
             {t('shell.badges.expiredDecisions', { count: status.badges.expiredDecisions })}
           </Badge>
         ) : null}
+        {compact || line === null ? null : (
+          // Gives way before the title (shrink 12); the whole text in the native tooltip.
+          <span data-slot="header-line" title={lineText ?? undefined} className="hidden min-w-0 shrink-[12] text-xs lg:flex">
+            <SessionLineText line={line} />
+          </span>
+        )}
         <span className="flex-1" />
         {/* Only path and model shrink (with an ellipsis); every other fact keeps its width. */}
         <dl
@@ -186,6 +229,18 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
             <dd className="truncate" data-slot="header-model">
               {model ?? t('shell.session.modelDefault')}
             </dd>
+            {/* WP-63 §1.1: the effective effort next to the model ("opus · high"). */}
+            {effort === null ? null : (
+              <>
+                <dt className="sr-only">{t('shell.session.effort')}</dt>
+                <dd data-slot="header-effort" data-effort={effort} className="shrink-0">
+                  <span aria-hidden className="mr-1">
+                    ·
+                  </span>
+                  {t(`shell.effortLevels.${effort}`)}
+                </dd>
+              </>
+            )}
           </div>
           {summary.permissionMode === null ? null : (
             <div className="flex shrink-0 items-center gap-1">
@@ -214,6 +269,9 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
         </dl>
       </header>
       <div className="flex shrink-0 items-center gap-1 pr-2">
+        {showsRemoteInHeader(summary.remoteControl) ? (
+          <RemoteControlMenu sessionKey={sessionKey} summary={summary} />
+        ) : null}
         {compact ? null : <HeaderPanelButtons sessionKey={sessionKey} />}
         <SessionMenu
           sessionKey={sessionKey}

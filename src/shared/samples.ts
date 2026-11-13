@@ -11,6 +11,8 @@ import {
   DEFAULT_IDLE_SLEEP,
   DEFAULT_NOTIFICATION_EVENTS,
   DEFAULT_NOTIFICATION_SETTINGS,
+  DEFAULT_REMOTE_CONTROL_SETTINGS,
+  DEFAULT_REMOTE_CONTROL_SUMMARY,
   defaultEditorSettings,
 } from './model';
 import type {
@@ -211,6 +213,8 @@ export function sampleSettings(p: Partial<Settings> = {}): Settings {
     port: null,
     autostart: { ...DEFAULT_AUTOSTART },
     editor: sampleEditorSettings(),
+    remoteControl: { ...DEFAULT_REMOTE_CONTROL_SETTINGS },
+    transcriptView: 'compact',
     ...p,
   };
 }
@@ -250,6 +254,7 @@ export function sampleHostState(p: Partial<HostState> = {}): HostState {
     nativeNotifications: false,
     port: 4711,
     systemIntegration: false,
+    remoteControlDefault: null,
     ...p,
   };
 }
@@ -267,6 +272,8 @@ export function sampleConversation(p: Partial<Conversation> = {}): Conversation 
     resetCorrelationId: null,
     costUsd: null,
     lastOrder: 5,
+    bridgeSessionId: null,
+    sessionUrl: null,
     ...p,
   };
 }
@@ -299,6 +306,9 @@ export function sampleEntry(p: Partial<Entry> = {}): Entry {
     gitBranch: null,
     external: null,
     continueAt: null,
+    remoteControlWanted: false,
+    turnSummary: null,
+    lastSeenAt: null,
     ...p,
   };
 }
@@ -333,6 +343,8 @@ export function sampleContextGauge(p: Partial<ContextGauge> = {}): ContextGauge 
     source: 'sdk',
     model: 'claude-haiku-5-5',
     at: sampleTime(60),
+    autoCompactThreshold: null,
+    isAutoCompactEnabled: null,
     ...p,
   };
 }
@@ -346,7 +358,6 @@ export function sampleContextBreakdown(p: Partial<ContextBreakdown> = {}): Conte
       { name: 'Messages', tokens: 6_702, kind: 'used', id: 'messages' },
       { name: 'Free space', tokens: 973_298, kind: 'free', id: null },
     ],
-    autoCompactThreshold: null,
     isAutoCompactEnabled: true,
     ...p,
   };
@@ -377,6 +388,10 @@ export function sampleSummary(p: Partial<SessionSummary> = {}): SessionSummary {
     lastError: null,
     lastResultExcerpt: 'OK',
     external: null,
+    remoteControl: { ...DEFAULT_REMOTE_CONTROL_SUMMARY },
+    activity: null,
+    turnSummary: null,
+    lastSeenAt: null,
     ...p,
   };
 }
@@ -408,6 +423,7 @@ export const sampleItems = {
     origin: 'human',
     slashCommand: null,
     priority: 'next',
+    source: 'local',
     ...p,
   }),
   thinking: (p: Partial<ThinkingItem> = {}): ThinkingItem => ({
@@ -823,6 +839,7 @@ export const sampleOutcomes: { [T in DecisionOutcome['type']]: OutcomeOf<T> } = 
   plan_approved: { type: 'plan_approved', mode: 'acceptEdits', edited: true, freshContext: false },
   plan_revised: { type: 'plan_revised' },
   cancelled: { type: 'cancelled', reason: 'signal_aborted' },
+  answered_elsewhere: { type: 'answered_elsewhere' },
   expired: { type: 'expired' },
 };
 

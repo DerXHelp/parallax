@@ -61,10 +61,18 @@ export const contextGaugeSchema = z.object({
   source: z.enum(['sdk', 'estimate']),
   model: z.string().nullable(),
   at: isoDateTimeSchema,
+  /**
+   * WP-63: token count (not a percentage) at which the CLI compacts automatically (fixtures:
+   * 967 000) – from `getContextUsage('summary')` after each turn; an estimate during the turn keeps
+   * the last known value. null = unknown (older gauges, no measurement yet).
+   */
+  autoCompactThreshold: z.number().int().nonnegative().nullable().default(null),
+  /** WP-63: the CLI compacts automatically (null = unknown). */
+  isAutoCompactEnabled: z.boolean().nullable().default(null),
 });
 export type ContextGauge = z.infer<typeof contextGaugeSchema>;
 
-/** Click on the gauge (getContextUsage). */
+/** Click on the gauge (getContextUsage); the autocompact fields come from the gauge (WP-63). */
 export const contextBreakdownSchema = contextGaugeSchema.extend({
   detail: z.enum(['summary', 'full']),
   categories: z.array(
@@ -79,9 +87,6 @@ export const contextBreakdownSchema = contextGaugeSchema.extend({
       id: z.string().nullable().default(null),
     }),
   ),
-  /** Token count (not a percentage) at which the CLI compacts automatically (fixtures: 967 000). */
-  autoCompactThreshold: z.number().nullable(),
-  isAutoCompactEnabled: z.boolean().nullable(),
 });
 export type ContextBreakdown = z.infer<typeof contextBreakdownSchema>;
 
@@ -91,8 +96,15 @@ export const rateLimitInfoSchema = z.object({
   rateLimitType: z.string().nullable(),
   /** The SDK sends seconds → ISO. */
   resetsAt: isoDateTimeSchema.nullable(),
+  /**
+   * Share of the window used as a FRACTION 0–1 – here and in `windows` (WP-65: one unit; the usage
+   * query reports 0–100 and the server divides by 100 before it stores anything).
+   */
   utilization: z.number().nullable(),
-  /** Untyped `unifiedWindows` (F.13) for the subscription limit display (Phase 2). */
+  /**
+   * Untyped `unifiedWindows` (F.13) for the subscription limit display (Phase 2); since WP-65 also
+   * the windows of the usage query (`five_hour`, `seven_day`, …), merged into the last info.
+   */
   windows: z
     .record(
       z.string(),
@@ -459,6 +471,52 @@ export function defaultEditorSettings(): EditorSettings {
   return { preset: 'notepadpp', executable: null, args: [] };
 }
 
+// ---- Remote Control (WP-64) ----
+
+/**
+ * Remote Control for NEW sessions: `follow_claude` = like `remoteControlAtStartup` in the user's
+ * Claude settings (read after the first `init`, `HostState.remoteControlDefault`), `on`, `off`.
+ * Existing sessions keep their own wish (`Entry.remoteControlWanted`).
+ */
+export const REMOTE_CONTROL_NEW_SESSIONS = ['follow_claude', 'on', 'off'] as const;
+export const remoteControlNewSessionsSchema = z.enum(REMOTE_CONTROL_NEW_SESSIONS);
+export type RemoteControlNewSessions = z.infer<typeof remoteControlNewSessionsSchema>;
+
+export const remoteControlSettingsSchema = z.object({ newSessions: remoteControlNewSessionsSchema });
+export type RemoteControlSettings = z.infer<typeof remoteControlSettingsSchema>;
+export const DEFAULT_REMOTE_CONTROL_SETTINGS = { newSessions: 'follow_claude' } as const satisfies z.infer<
+  typeof remoteControlSettingsSchema
+>;
+
+/**
+ * A session link of the bridge (`session_url`): only `https://claude.ai/…` (or a subdomain) – the
+ * UI opens nothing else, the server drops anything else (WP-64).
+ */
+export function isClaudeSessionUrl(value: string): boolean {
+  return value.length <= 2000 && /^https:\/\/(?:[a-z0-9-]+\.)*claude\.ai(?:[/?#]\S*)?$/i.test(value);
+}
+
+export const claudeSessionUrlSchema = z.string().refine(isClaudeSessionUrl, { message: 'not a claude.ai link' });
+
+/**
+ * WP-65 (1.6b): an absolute `http:`/`https:` URL (with a host) – the only links Parallax opens in the
+ * default browser (`link.open`). Checked again by the server before anything starts.
+ */
+export function isHttpUrl(value: string): boolean {
+  return value.length <= HTTP_URL_CHARS && HTTP_URL.test(value);
+}
+
+const HTTP_URL_CHARS = 4000;
+/** Scheme, a host (no user info, no backslash), then path/query/fragment – no whitespace anywhere. */
+const HTTP_URL = /^https?:\/\/[^\s/\\?#@]+(?:[/?#]\S*)?$/i;
+
+export const httpUrlSchema = z.string().refine(isHttpUrl, { message: 'not an http(s) link' });
+
+/** WP-65 (1.6): transcript view – `compact` groups the work steps (WP-63), `all` shows every step. */
+export const TRANSCRIPT_VIEWS = ['compact', 'all'] as const;
+export const transcriptViewSchema = z.enum(TRANSCRIPT_VIEWS);
+export type TranscriptView = z.infer<typeof transcriptViewSchema>;
+
 /** Fields without defaults: the base of the patch schema (a patch must never inject defaults). */
 const settingsFields = {
   language: languageSchema,
@@ -471,6 +529,10 @@ const settingsFields = {
   autostart: autostartSchema,
   /** Phase 3 (ADR-144): takes effect at the next `file.open`. */
   editor: editorSettingsSchema,
+  /** WP-64: Remote Control for new sessions (existing ones keep their own wish). */
+  remoteControl: remoteControlSettingsSchema,
+  /** WP-65: transcript view of every window (was localStorage `parallax.transcript.view`, WP-63). */
+  transcriptView: transcriptViewSchema,
 };
 
 export const settingsSchema = z.object({
@@ -482,6 +544,8 @@ export const settingsSchema = z.object({
   port: portSettingSchema.default(null),
   autostart: autostartSchema.default(DEFAULT_AUTOSTART),
   editor: editorSettingsSchema.default(defaultEditorSettings),
+  remoteControl: remoteControlSettingsSchema.default(DEFAULT_REMOTE_CONTROL_SETTINGS),
+  transcriptView: transcriptViewSchema.default('compact'),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
@@ -545,6 +609,12 @@ export const hostStateSchema = z.object({
    * The UI disables both otherwise.
    */
   systemIntegration: z.boolean().default(false),
+  /**
+   * WP-64: `remoteControlAtStartup` of the default profile's Claude settings as the CLI reported it
+   * (`getSettings`, read after a session's `init`); null = not read yet / not available. Shown next
+   * to the setting `remoteControl.newSessions: follow_claude`.
+   */
+  remoteControlDefault: z.boolean().nullable().default(null),
 });
 export type HostState = z.infer<typeof hostStateSchema>;
 
@@ -582,6 +652,14 @@ export const conversationSchema = z.object({
   costUsd: z.number().nonnegative().nullable().default(null),
   /** Highest item `order` written so far (the normalizer continues from here, §5.6). */
   lastOrder: z.number().int().nonnegative().default(0),
+  /**
+   * WP-64: Remote Control bridge session of this conversation (`bridge_session_id`, e.g.
+   * `cse_…`) – passed as `reattachSessionId` on the next start, so the Claude app keeps ONE entry.
+   * null = never connected. A new conversation (/clear, fresh context) takes the live one over.
+   */
+  bridgeSessionId: z.string().min(1).max(200).nullable().default(null),
+  /** WP-64: its link in claude.ai / the Claude app (`https://claude.ai/code/session_…`). */
+  sessionUrl: claudeSessionUrlSchema.nullable().default(null),
 });
 export type Conversation = z.infer<typeof conversationSchema>;
 
@@ -596,6 +674,21 @@ export const externalHandoffSchema = z.object({
   conversationId: conversationIdSchema,
 });
 export type ExternalHandoff = z.infer<typeof externalHandoffSchema>;
+
+/**
+ * WP-65: the summary of the last turn – from the CLI (`system/post_turn_summary`, only while a Remote
+ * Control bridge is connected; English text as sent) or Parallax's fallback (first meaningful line of
+ * the last answer). `category` = the CLI's `status_category` (open set, e.g. `completed`);
+ * `needsAction` = the CLI says the user has to act. Persisted, kept until the next turn replaces it.
+ */
+export const turnSummarySchema = z.object({
+  source: z.enum(['claude', 'parallax']),
+  text: z.string().max(500),
+  category: z.string().max(100).nullable(),
+  needsAction: z.boolean(),
+  at: isoDateTimeSchema,
+});
+export type TurnSummary = z.infer<typeof turnSummarySchema>;
 
 /** Replaces `titleIsCustom` (= 'custom'); only 'custom' is never overwritten automatically. */
 export const titleSourceSchema = z.enum(['none', 'prompt', 'ai', 'custom']);
@@ -642,6 +735,19 @@ export const entrySchema = z.object({
   external: externalHandoffSchema.nullable().default(null),
   /** Phase 2 (ADR-112): scheduled "continue" after a rate limit (→ StatusFacts.wakeupAt). */
   continueAt: isoDateTimeSchema.nullable().default(null),
+  /**
+   * WP-64: the user wants Remote Control for this session. A running process is switched at once,
+   * otherwise at the next start/resume/wake-up (with the conversation's `bridgeSessionId`).
+   */
+  remoteControlWanted: z.boolean().default(false),
+  /** WP-65: summary of the last turn (CLI or fallback); null before the first turn. */
+  turnSummary: turnSummarySchema.nullable().default(null),
+  /**
+   * WP-65: when a visible window last stopped showing the entry (presence ended) – or the moment of
+   * a prompt/answer from the Claude app (Remote Control: who answers there has seen it). Unchanged
+   * while a window shows it; null = never left a window since this field exists.
+   */
+  lastSeenAt: isoDateTimeSchema.nullable().default(null),
 });
 export type Entry = z.infer<typeof entrySchema>;
 
@@ -732,6 +838,11 @@ export const decisionOutcomeSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('cancelled'), reason: z.enum(CANCEL_REASONS) }),
   /** After a restart (A.10). */
   z.object({ type: z.literal('expired') }),
+  /**
+   * WP-64: answered in the Claude app (Remote Control connected, the CLI aborted the request and no
+   * local answer came) – the following tool_result shows what was decided.
+   */
+  z.object({ type: z.literal('answered_elsewhere') }),
 ]);
 export type DecisionOutcome = z.infer<typeof decisionOutcomeSchema>;
 
@@ -761,6 +872,11 @@ export const userMessageItemSchema = z.object({
   slashCommand: z.string().nullable().default(null),
   /** As sent. */
   priority: promptPrioritySchema.nullable().default(null),
+  /**
+   * WP-64: where the prompt was typed – `remote` = in claude.ai / the Claude app (Remote Control:
+   * a replayed `user` with `origin.kind 'human'` and a uuid Parallax never sent).
+   */
+  source: z.enum(['local', 'remote']).default('local'),
 });
 export type UserMessageItem = z.infer<typeof userMessageItemSchema>;
 
@@ -899,7 +1015,10 @@ export const systemItemSchema = z.discriminatedUnion('event', [
     errorCode: errorCodeSchema,
     active: z.boolean(),
   }),
-  /** Only allowed_warning / rejected (C.5). */
+  /**
+   * WP-63: only `rejected` (C.5) – older logs may still hold `allowed_warning` items; the UI does
+   * not render them (the limit bar shows every value).
+   */
   systemBase.extend({ event: z.literal('rate_limit'), info: rateLimitInfoSchema }),
   /** system/notification. */
   systemBase.extend({
@@ -1002,6 +1121,39 @@ export const turnResultItemSchema = z.object({
 });
 export type TurnResultItem = z.infer<typeof turnResultItemSchema>;
 
+export const SIDE_QUESTION_STATUSES = ['pending', 'answered', 'failed', 'cancelled'] as const;
+export const sideQuestionStatusSchema = z.enum(SIDE_QUESTION_STATUSES);
+export type SideQuestionStatus = z.infer<typeof sideQuestionStatusSchema>;
+
+/**
+ * WP-66: a side question (`/btw`, the CLI's internal `askSideQuestion`): asked from the current
+ * conversation state, answered without tools and never part of the conversation (Parallax keeps it
+ * in its own transcript log only). Created by the ENGINE (not the normalizer); follow-ups of a thread
+ * share `threadId` = the item id of the thread's first question.
+ */
+export const sideQuestionItemSchema = z.object({
+  ...itemBase,
+  kind: z.literal('side_question'),
+  threadId: itemIdSchema,
+  question: z.string().min(1).max(LIMITS.sideQuestionChars),
+  status: sideQuestionStatusSchema,
+  /** The answer (Markdown, never capped like assistant text); null while pending, on failure or no answer. */
+  response: z.string().nullable().default(null),
+  /** The CLI had no real answer (e.g. no conversation yet, or a synthetic reply). */
+  synthetic: z.boolean().default(false),
+  /** `refusalFallback.fallbackModel`: another model answered after a refusal. */
+  fallbackModel: z.string().nullable().default(null),
+  /** Retry of the request while pending (`control_request_progress api_retry`); null otherwise. */
+  retry: z
+    .object({ attempt: z.number().int().nonnegative(), maxRetries: z.number().int().nonnegative() })
+    .nullable()
+    .default(null),
+  /** Why it failed (`failed`): SESSION_BUSY, CLAUDE_CONTROL_FAILED, the process ended … */
+  error: errorPayloadSchema.nullable().default(null),
+  answeredAt: isoDateTimeSchema.nullable().default(null),
+});
+export type SideQuestionItem = z.infer<typeof sideQuestionItemSchema>;
+
 /** Discriminator `kind`; system items additionally by `event`. */
 export const transcriptItemSchema = z.discriminatedUnion('kind', [
   userMessageItemSchema,
@@ -1010,6 +1162,7 @@ export const transcriptItemSchema = z.discriminatedUnion('kind', [
   toolCallItemSchema,
   systemItemSchema,
   turnResultItemSchema,
+  sideQuestionItemSchema,
 ]);
 export type TranscriptItem = z.infer<typeof transcriptItemSchema>;
 export type TranscriptItemKind = TranscriptItem['kind'];
@@ -1236,6 +1389,55 @@ export type DecisionRecordsFile = z.infer<typeof decisionRecordsFileSchema>;
 // 5.10 Session summary (channel 1, A.2)
 // =====================================================================================
 
+/**
+ * WP-64: Remote Control bridge state of the running process. `off` = not connected (no process, or
+ * not wanted); `connecting` = switched on, the bridge is not up yet; `reconnecting` = it was up and
+ * reconnects; `failed` = switching on failed or the connection is lost (`error`).
+ */
+export const REMOTE_CONTROL_STATES = ['off', 'connecting', 'connected', 'reconnecting', 'failed'] as const;
+export const remoteControlStateSchema = z.enum(REMOTE_CONTROL_STATES);
+export type RemoteControlState = z.infer<typeof remoteControlStateSchema>;
+
+export const remoteControlSummarySchema = z.object({
+  state: remoteControlStateSchema,
+  /** Link of the current conversation's bridge session; null while not wanted or never connected. */
+  sessionUrl: claudeSessionUrlSchema.nullable(),
+  /** REMOTE_CONTROL_* while `failed`, else null. */
+  error: errorPayloadSchema.nullable(),
+  /**
+   * `Entry.remoteControlWanted` (the menu toggles it; a dormant session connects at its next
+   * start). Additive to the approved shape (WP-64 report).
+   */
+  wanted: z.boolean().default(false),
+});
+export type RemoteControlSummary = z.infer<typeof remoteControlSummarySchema>;
+
+export const DEFAULT_REMOTE_CONTROL_SUMMARY = {
+  state: 'off',
+  sessionUrl: null,
+  error: null,
+  wanted: false,
+} as const satisfies RemoteControlSummary;
+
+/** States in which the bridge is (or is about to be) up – such a session never sleeps (ADR-105, WP-64). */
+export function isRemoteControlActive(state: RemoteControlState): boolean {
+  return state === 'connecting' || state === 'connected' || state === 'reconnecting';
+}
+
+/**
+ * WP-65: what a working session does right now (runtime only, never persisted; the engine changes
+ * it at most every ~2 s). `claude` = the CLI's live sentence (`system/task_summary`, only with a
+ * connected Remote Control bridge; English as sent); otherwise Parallax's fallback: the running tool
+ * call of the main thread (`target` = file name, command … – the UI words it like `ToolCallRow`) or
+ * thinking. null = not working.
+ */
+export const sessionActivitySchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('claude'), text: z.string().max(300) }),
+  z.object({ kind: z.literal('tool'), tool: z.string().max(200), target: z.string().max(300).nullable() }),
+  z.object({ kind: z.literal('thinking') }),
+]);
+export type SessionActivity = z.infer<typeof sessionActivitySchema>;
+
 /** Facts, not a finished display: server and UI call deriveDisplayStatus(facts, now) (A.4). */
 export const sessionSummarySchema = z.object({
   entryId: entryIdSchema,
@@ -1276,6 +1478,14 @@ export const sessionSummarySchema = z.object({
     })
     .nullable()
     .default(null),
+  /** WP-64: Remote Control (bridge to claude.ai / the Claude app). */
+  remoteControl: remoteControlSummarySchema.default(DEFAULT_REMOTE_CONTROL_SUMMARY),
+  /** WP-65: live sentence of a working session (runtime only). */
+  activity: sessionActivitySchema.nullable().default(null),
+  /** WP-65: `Entry.turnSummary`. */
+  turnSummary: turnSummarySchema.nullable().default(null),
+  /** WP-65: `Entry.lastSeenAt` – the transcript's "since you were last here" card starts there. */
+  lastSeenAt: isoDateTimeSchema.nullable().default(null),
 });
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 
@@ -1544,3 +1754,266 @@ export const planVersionInfoSchema = z.object({
   stored: z.boolean(),
 });
 export type PlanVersionInfo = z.infer<typeof planVersionInfoSchema>;
+
+// =====================================================================================
+// 5.15 Session info (WP-67): the data of the CLI's terminal dialogs, normalized for display
+// =====================================================================================
+
+/**
+ * The tabs of "Session info" that ask the running CLI (`session.info`): `/status`, `/memory`
+ * (CLAUDE.md files), `/skills`, `/hooks`, `/permissions`, the MCP servers and `/export`. Only on
+ * request (a tab opens, "Refresh") – never polled, never cached by the server.
+ */
+export const SESSION_INFO_SECTIONS = ['status', 'memory', 'skills', 'hooks', 'permissions', 'mcp', 'export'] as const;
+export const sessionInfoSectionNameSchema = z.enum(SESSION_INFO_SECTIONS);
+export type SessionInfoSectionName = z.infer<typeof sessionInfoSectionNameSchema>;
+
+/** `session.mcpAction`: reconnect a server, or switch it on/off (`toggleMcpServer`). */
+export const MCP_ACTIONS = ['reconnect', 'enable', 'disable'] as const;
+export const mcpActionSchema = z.enum(MCP_ACTIONS);
+export type McpAction = z.infer<typeof mcpActionSchema>;
+
+/** `session.reload`: `reloadSkills()` or `reloadPlugins()`. */
+export const RELOAD_TARGETS = ['skills', 'plugins'] as const;
+export const reloadTargetSchema = z.enum(RELOAD_TARGETS);
+export type ReloadTarget = z.infer<typeof reloadTargetSchema>;
+
+/** Caps of the normalized data: the producer (server) cuts, the schemas check the same bounds. */
+export const SESSION_INFO_LIMITS = {
+  /** Rows per list (skills, hooks, rules, files, servers …); beyond it `truncated: true`. */
+  listMax: 1000,
+  /** Characters of one text field (a hook command, a rule, a description …). */
+  textChars: 8000,
+  /** Characters of the export text (larger conversations: `truncated`, the rest via `/export`). */
+  exportChars: 2_000_000,
+  /** Characters of the suggested export file name. */
+  fileNameChars: 120,
+} as const;
+
+const infoText = z.string().max(SESSION_INFO_LIMITS.textChars);
+const infoList = <T extends z.ZodType>(item: T) => z.array(item).max(SESSION_INFO_LIMITS.listMax);
+
+/**
+ * One "label: value" row – the `/status` rows (values already rendered as text by the CLI) and the
+ * generic fallback: scalar top-level fields a newer CLI adds show as rows (`extra`) instead of being
+ * lost. `label: null` = a row that is a sentence on its own.
+ */
+export const infoRowSchema = z.object({ label: infoText.nullable(), value: infoText });
+export type InfoRow = z.infer<typeof infoRowSchema>;
+
+/** A settings file the CLI skipped (parse/validation error) – its rules/hooks are not in effect. */
+export const infoSettingsErrorSchema = z.object({ file: infoText.nullable(), path: infoText, message: infoText });
+export type InfoSettingsError = z.infer<typeof infoSettingsErrorSchema>;
+
+const infoCommon = {
+  /** Unknown scalar top-level fields of the answer as rows (newer CLI). */
+  extra: infoList(infoRowSchema),
+};
+
+/** `/status`: the screen's sections in its order (Session, Environment, …), every value as text. */
+export const statusInfoSchema = z.object({
+  section: z.literal('status'),
+  groups: infoList(z.object({ title: infoText, rows: infoList(infoRowSchema) })),
+  ...infoCommon,
+});
+
+/** `/memory` file kinds; anything newer is `other`. */
+export const MEMORY_FILE_KINDS = ['user', 'project', 'project-alt', 'local', 'other'] as const;
+export const memoryFileKindSchema = z.enum(MEMORY_FILE_KINDS);
+export type MemoryFileKind = z.infer<typeof memoryFileKindSchema>;
+
+/**
+ * `/memory`: the instruction files (CLAUDE.md of the user, the project, the local one, imported
+ * ones), the memory folders, the saved auto memories and the two switches (display only – the host
+ * opens files itself).
+ */
+export const memoryInfoSchema = z.object({
+  section: z.literal('memory'),
+  files: infoList(
+    z.object({
+      kind: memoryFileKindSchema,
+      /** Absolute path on the session's file system. */
+      path: infoText,
+      label: infoText,
+      description: infoText,
+      exists: z.boolean(),
+    }),
+  ),
+  folders: infoList(z.object({ kind: infoText, path: infoText, label: infoText, description: infoText })),
+  memories: infoList(
+    z.object({
+      name: infoText,
+      path: infoText,
+      description: infoText.nullable(),
+      type: infoText.nullable(),
+      modifiedAt: isoDateTimeSchema.nullable(),
+    }),
+  ),
+  /** `Auto-memory:` row (null = the CLI sent none). */
+  autoMemory: z.object({ enabled: z.boolean(), toggleable: z.boolean(), status: infoText }).nullable(),
+  /** `Auto-dream:` row (null = the CLI sent none). */
+  autoDream: z
+    .object({ shown: z.boolean(), enabled: z.boolean(), toggleable: z.boolean(), status: infoText, detail: infoText })
+    .nullable(),
+  truncated: z.boolean(),
+  ...infoCommon,
+});
+
+/** Skill states of `/skills` the UI translates; any other value is shown as the CLI sent it. */
+export const SKILL_STATES = ['on', 'name-only', 'user-invocable-only', 'off'] as const;
+
+/** `/skills`: each skill with source, token estimate, effective state and what locks it (read-only). */
+export const skillsInfoSchema = z.object({
+  section: z.literal('skills'),
+  skills: infoList(
+    z.object({
+      name: infoText,
+      displayName: infoText,
+      description: infoText,
+      /** 'user', 'project', 'plugin', 'built-in', … as the menu shows it. */
+      source: infoText,
+      /** Token estimate of the skill's listing in the system prompt; null = unknown. */
+      tokens: z.number().nonnegative().nullable(),
+      /** One of SKILL_STATES, or a newer value (shown raw). */
+      state: infoText,
+      /** 'author', 'plugin', 'policy', 'flag', 'reserved-name', … or null (not locked). */
+      lockedBy: infoText.nullable(),
+    }),
+  ),
+  truncated: z.boolean(),
+  ...infoCommon,
+});
+
+/** `/hooks`: hooks of settings files, session and plugins by event and matcher, display-ready. */
+export const hooksInfoSchema = z.object({
+  section: z.literal('hooks'),
+  /** Events with at least one hook, in the lifecycle order of the CLI. */
+  events: infoList(
+    z.object({ name: infoText, summary: infoText, matcherSupported: z.boolean(), count: z.number().int().nonnegative() }),
+  ),
+  hooks: infoList(
+    z.object({
+      event: infoText,
+      /** '' = no matcher; control characters revealed by the CLI. */
+      matcher: infoText,
+      source: infoText,
+      sourceLabel: infoText,
+      pluginName: infoText.nullable(),
+      /** command, prompt, agent, http, mcp_tool, … */
+      type: infoText,
+      displayText: infoText,
+      /** The literal command/prompt/URL that runs (control characters as the CLI reveals them). */
+      command: infoText,
+      /** Label of `command` (Command, Prompt, URL, …). */
+      contentLabel: infoText,
+      condition: infoText.nullable(),
+      timeoutSec: z.number().nonnegative().nullable(),
+      statusMessage: infoText.nullable(),
+      once: z.boolean(),
+      background: z.boolean(),
+      /** The session's mode or policy keeps this hook from running. */
+      disabled: z.boolean(),
+    }),
+  ),
+  policy: z
+    .object({
+      disabledByPolicy: z.boolean(),
+      managedOnly: z.boolean(),
+      pluginOnly: z.boolean(),
+      allDisabled: z.boolean(),
+      policyHookCount: z.number().int().nonnegative(),
+      policyUnreadable: z.boolean(),
+    })
+    .nullable(),
+  /** Present under `--safe-mode`. */
+  safeMode: z.object({ managedHooksStillApply: z.boolean(), exitHint: infoText }).nullable(),
+  /** Present under `--bare` (settings, flag, policy and plugin hooks never fire). */
+  bareMode: z.object({ exitHint: infoText }).nullable(),
+  errors: infoList(infoSettingsErrorSchema),
+  truncated: z.boolean(),
+  ...infoCommon,
+});
+
+export const PERMISSION_BEHAVIORS = ['allow', 'ask', 'deny'] as const;
+export const permissionBehaviorSchema = z.enum(PERMISSION_BEHAVIORS);
+export type PermissionBehavior = z.infer<typeof permissionBehaviorSchema>;
+
+/** `/permissions`: the live rules with their source, the working directories (read-only). */
+export const permissionsInfoSchema = z.object({
+  section: z.literal('permissions'),
+  rules: infoList(
+    z.object({
+      behavior: permissionBehaviorSchema,
+      /** userSettings, projectSettings, localSettings, session, cliArg, policySettings, … */
+      source: infoText,
+      /** Verbatim as the session holds it (may carry invisible characters – escape at display). */
+      rule: infoText,
+      /** The CLI's plain-language reading ("Any Bash command starting with" + **npm run**). */
+      description: z.object({ prefix: infoText, emphasis: infoText.nullable(), suffix: infoText.nullable() }).nullable(),
+      /** persistent, session, readonly, … */
+      editability: infoText,
+      /** Ignored by the session (managed settings allow policy rules only). */
+      notInEffect: z.boolean(),
+    }),
+  ),
+  /** Additional working directories (`--add-dir`, `/add-dir`, settings). */
+  directories: infoList(z.object({ path: infoText, source: infoText })),
+  /** The session's original working directory (null = not reported). */
+  cwd: infoText.nullable(),
+  /** Managed settings allow policy rules only. */
+  managedOnly: z.boolean(),
+  errors: infoList(infoSettingsErrorSchema),
+  truncated: z.boolean(),
+  ...infoCommon,
+});
+
+/** MCP servers (`mcpServerStatus()`): status, error, origin, tools – never the configuration. */
+export const mcpInfoSchema = z.object({
+  section: z.literal('mcp'),
+  servers: infoList(
+    z.object({
+      name: infoText,
+      /** connected, failed, needs-auth, pending, disabled – or a newer value (shown raw). */
+      status: infoText,
+      /** Error text of the CLI (status failed). */
+      error: infoText.nullable(),
+      /** Configuration scope (project, user, local, claudeai, managed …). */
+      scope: infoText.nullable(),
+      /** sdk, plugin or the config scope. */
+      source: infoText.nullable(),
+      /** stdio, http, sse, … (`config.type`). */
+      transport: infoText.nullable(),
+      /** `serverInfo` of a connected server ("name version"). */
+      serverVersion: infoText.nullable(),
+      /** Tool names of a connected server. */
+      tools: infoList(infoText),
+    }),
+  ),
+  truncated: z.boolean(),
+  ...infoCommon,
+});
+
+/** `/export`: the conversation as plain text with the file name the terminal would offer. */
+export const exportInfoSchema = z.object({
+  section: z.literal('export'),
+  text: z.string().max(SESSION_INFO_LIMITS.exportChars),
+  /** Windows-safe file name ending in `.txt`. */
+  filename: z.string().min(1).max(SESSION_INFO_LIMITS.fileNameChars),
+  /** Characters of the whole export (> text.length when truncated). */
+  totalChars: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+});
+
+/** The data of one tab (answer of `session.info`), discriminated by `section`. */
+export const sessionInfoSectionSchema = z.discriminatedUnion('section', [
+  statusInfoSchema,
+  memoryInfoSchema,
+  skillsInfoSchema,
+  hooksInfoSchema,
+  permissionsInfoSchema,
+  mcpInfoSchema,
+  exportInfoSchema,
+]);
+export type SessionInfoSection = z.infer<typeof sessionInfoSectionSchema>;
+/** The data of one named tab, e.g. `SessionInfoOf<'mcp'>`. */
+export type SessionInfoOf<S extends SessionInfoSectionName> = Extract<SessionInfoSection, { section: S }>;
