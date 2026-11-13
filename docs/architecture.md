@@ -682,8 +682,8 @@ Eine **Seitenfrage** (`/btw`) beantwortet das installierte `claude` aus der lauf
 zu verändern (interne SDK-Methode `query.askSideQuestion`, SDK 0.3.322; nichts davon steht im
 claude-Transkript, Resume und Kontext bleiben unberührt).
 - **SDK-Grenze** (`backend/sideQuestion.ts`, `AgentSession.askSideQuestion(question, {history, signal,
-  onRetry?})`): Laufzeit-Prüfung der Methode, Antwort per zod (`response` String, `synthetic` Boolean,
-  `refusalFallback.model` optional), Ergebnis als Union `SideQuestionResult` (wirft nie): `ok` (Antwort oder
+  onRetry?})`): Laufzeit-Prüfung der Methode, Antwort per zod (`response` String, `synthetic` Boolean optional,
+  `refusalFallback.fallbackModel` optional; andere Form = nicht verfügbar), Ergebnis als Union `SideQuestionResult` (wirft nie): `ok` (Antwort oder
   `null`), `unavailable`, `busy` (`side_question_busy`), `cancelled`, `failed`.
   `system/control_request_progress` `api_retry` geht an die einzige offene Seitenfrage (`onRetry`), sonst
   wird es nur gezählt (`ignoredCounts`).
