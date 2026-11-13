@@ -40,9 +40,9 @@ der letzten Änderung.
 
 ## Voraussetzungen
 - **Node.js 26** (Minimum 22). `.node-version` enthält `26` für fnm, nvm-windows oder Volta.
-- **pnpm 12.8.2**: einmalig `npm i -g pnpm@12.8.2`. `packageManager` und der Lockfile pinnen die
-  Version; ein pnpm ≥ 10 lädt sie bei Abweichung selbst nach (`managePackageManagerVersions`, nicht
-  separat getestet). Ein zu altes pnpm scheitert an `engines.pnpm: ">=12.8"`.
+- **pnpm 12.17.0**: einmalig `npm i -g pnpm@12.17.0`. `packageManager` und der Lockfile pinnen die
+  Version; ein pnpm ≥ 10 lädt sie bei Abweichung selbst nach (`managePackageManagerVersions`; geprüft
+  13.11.2026 mit pnpm 12.8.2 → 12.17.0). Ein zu altes pnpm scheitert an `engines.pnpm: ">=12.8"`.
 - Das installierte **`claude`**-CLI mit Login (Parallax liefert kein Claude-Binary mit).
 - **Google Chrome** (für das App-Fenster und die E2E-Tests; Playwright lädt keine Browser). Parallax
   nutzt nur Chrome – ohne Chrome öffnet der Launcher kein Fenster (Ausweg `--print-url`, ADR-136).
