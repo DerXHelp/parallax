@@ -64,12 +64,9 @@ export function selectSidePanelFacts(view: SessionViewState): SidePanelFacts {
   for (const item of detail.todos?.items ?? []) {
     if (item.status !== 'completed') openTodos += 1;
   }
-  const { agents, shells, other } = selectRunningTasks(view);
   return {
     plan: detail.latestPlanVersion !== null || detail.planFile !== null,
-    agents,
-    shells,
-    other,
+    ...selectRunningTasks(view),
     openTodos,
   };
 }
@@ -111,12 +108,7 @@ function usePanelButtons(sessionKey: string): PanelButton[] {
   buttons.push({ tab: 'files', icon: FolderTreeIcon, label: t('navigation.panels.files'), ...plain });
   let tasks: Pick<PanelButton, 'label' | 'count' | 'running'>;
   if (runningTaskTotal(facts) > 0) {
-    const { agents, shells, other } = facts;
-    tasks = {
-      label: t('navigation.panels.tasksRunning', { list: words }),
-      count: null,
-      running: { agents, shells, other },
-    };
+    tasks = { label: t('navigation.panels.tasksRunning', { list: words }), count: null, running: facts };
   } else if (facts.openTodos > 0) {
     const count = facts.openTodos;
     tasks = { label: t('navigation.panels.tasksOpen', { count }), count, running: null };
@@ -133,25 +125,28 @@ export const PANEL_COUNTER_MAX = 99;
 const COUNTER_CLASS = 'min-w-3.5 rounded-sm px-0.5 text-center text-2xs leading-4 font-semibold tabular-nums';
 
 /** Open to-dos (quiet) or – WP-71 – the running tasks by kind (highlighted). */
-function Counter({ button }: { button: PanelButton }) {
+function Counter({ button: { running, count } }: { button: PanelButton }) {
   const t = useT();
-  if (button.running !== null) {
-    return (
-      <span
-        aria-hidden
-        data-slot="header-panel-count"
-        data-running="true"
-        className={cn(COUNTER_CLASS, 'bg-status-working/15 text-status-working flex items-center')}
-      >
-        <RunningCounts counts={button.running} max={PANEL_COUNTER_MAX} className="gap-1" />
-      </span>
-    );
-  }
-  if (button.count === null) return null;
-  const count = button.count;
+  if (running === null && count === null) return null;
   return (
-    <span aria-hidden data-slot="header-panel-count" className={cn(COUNTER_CLASS, 'text-muted-foreground')}>
-      {count > PANEL_COUNTER_MAX ? t('navigation.panels.countOverflow', { max: PANEL_COUNTER_MAX }) : count}
+    <span
+      aria-hidden
+      data-slot="header-panel-count"
+      data-running={running === null ? undefined : 'true'}
+      className={cn(
+        COUNTER_CLASS,
+        running === null
+          ? 'text-muted-foreground'
+          : 'bg-status-working/15 text-status-working flex items-center',
+      )}
+    >
+      {running !== null ? (
+        <RunningCounts counts={running} max={PANEL_COUNTER_MAX} className="gap-1" />
+      ) : count !== null && count > PANEL_COUNTER_MAX ? (
+        t('navigation.panels.countOverflow', { max: PANEL_COUNTER_MAX })
+      ) : (
+        count
+      )}
     </span>
   );
 }

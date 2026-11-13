@@ -76,7 +76,7 @@ export const en = {
     shells: { one: '{count} shell', other: '{count} shells' },
     misc: { one: '{count} other task', other: '{count} other tasks' },
     title: 'Running now',
-    more: { one: 'and {count} more', other: 'and {count} more' },
+    more: 'and {count} more',
     kind: { agent: 'Agent', bash: 'Shell', workflow: 'Workflow', task: 'Task' },
   },
   /** WP-65 §1.1: Parallax's live line while no CLI sentence comes (no Remote Control). */

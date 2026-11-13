@@ -61,7 +61,7 @@ export const de: typeof en = {
     shells: { one: '{count} Shell', other: '{count} Shells' },
     misc: { one: '{count} weitere Aufgabe', other: '{count} weitere Aufgaben' },
     title: 'Läuft gerade',
-    more: { one: 'und {count} weitere', other: 'und {count} weitere' },
+    more: 'und {count} weitere',
     kind: { agent: 'Agent', bash: 'Shell', workflow: 'Workflow', task: 'Aufgabe' },
   },
   activity: {
