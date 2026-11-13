@@ -16,6 +16,8 @@ export const NATIVE_COMMANDS = [
   'status',
   'help',
   'resume',
+  /** WP-66: side question (`/btw <question>`; alone: side mode for the next message). */
+  'btw',
 ] as const;
 export type NativeCommand = (typeof NATIVE_COMMANDS)[number];
 

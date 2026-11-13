@@ -13,6 +13,11 @@ export const de: typeof en = {
     plan: 'Feedback zum Plan…',
   },
   send: 'Senden',
+  side: {
+    toggle: 'Seitenfrage (nicht Teil der Unterhaltung)',
+    placeholder: 'Seitenfrage – geht nicht in den Kontext…',
+    send: 'Fragen',
+  },
   run: 'Ausführen',
   queue: 'Einreihen',
   sendNow: 'Jetzt senden',
@@ -144,6 +149,7 @@ export const de: typeof en = {
       status: 'Session-Info: Modell, Ordner, Versionen',
       help: 'Alle Befehle und Tastenkürzel',
       resume: 'Frühere Unterhaltungen dieser Session',
+      btw: 'Seitenfrage – aus der Unterhaltung beantwortet, nicht Teil davon',
     },
     nativeArguments: {
       model: '[Modell]',
@@ -151,6 +157,7 @@ export const de: typeof en = {
       fast: '[on|off]',
       plan: '[Text]',
       rename: '[Name]',
+      btw: '[Frage]',
     },
     error: {
       invalidModel: '„{name}“ ist kein gültiger Modellname.',

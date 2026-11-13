@@ -51,7 +51,13 @@ export type ShellRequest =
    * Files dropped on the session pane or picked in the menu → the composer attaches them.
    * `folders`: folders the drop left out (`transferFiles`, CR3-01) – the composer shows its hint.
    */
-  | { kind: 'attachFiles'; sessionKey: string; files: readonly File[]; folders?: number };
+  | { kind: 'attachFiles'; sessionKey: string; files: readonly File[]; folders?: number }
+  // ---- WP-66 ----
+  /**
+   * Text back into the composer of a session (a withdrawn queued message, „Zurückholen“): the
+   * composer appends it to a draft (new paragraph) or fills the empty field, and takes the focus.
+   */
+  | { kind: 'composerText'; sessionKey: string; text: string };
 
 export type ShellRequestKind = ShellRequest['kind'];
 export type ShellRequestOf<K extends ShellRequestKind> = Extract<ShellRequest, { kind: K }>;

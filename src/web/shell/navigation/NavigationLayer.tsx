@@ -5,6 +5,7 @@ import { clientStore } from '@web/state/store';
 import { useShellRequestHandler } from '../requests';
 import { useShortcut } from '../shortcuts';
 import { SlotBoundary } from '../SlotBoundary';
+import { useQuickAsk } from './quick-ask';
 import { QuickSwitcher } from './QuickSwitcher';
 import { closeRemoveDialog, useRemoveDialog } from './remove-session';
 import { renamePlaceFor, startRename } from './rename';
@@ -25,6 +26,10 @@ const RemoveSessionDialog = lazy(() =>
 );
 const ArchiveCleanupDialog = lazy(() =>
   import('./ArchiveCleanupDialog').then((module) => ({ default: module.ArchiveCleanupDialog })),
+);
+/** WP-66: the popover of "Quick question…" (a side question from the sidebar). */
+const QuickAskPopover = lazy(() =>
+  import('./QuickAskPopover').then((module) => ({ default: module.QuickAskPopover })),
 );
 
 /**
@@ -50,13 +55,15 @@ function sessionExists(sessionKey: string): boolean {
  * the shell request channel `renameTitle`, `conversations`, `sessionInfo`, `quickSwitcher`
  * (WP-30 §4.14 C – e.g. `/rename`, `/resume`, `/status` of WP-37), the shortcuts Ctrl+K and F2
  * (ADR-118) and the dialogs they open. WP-63: "Remove from Parallax…" and "Clean up archive…"
- * (`remove-session.ts`); every dialog except the quick switcher is a lazy chunk.
+ * (`remove-session.ts`); WP-66: the popover of "Quick question…" (`quick-ask.ts`); every dialog
+ * except the quick switcher is a lazy chunk.
  */
 export function NavigationLayer() {
   const [switcher, setSwitcher] = useState(false);
   const [conversations, setConversations] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const removeDialog = useRemoveDialog();
+  const quickAsk = useQuickAsk();
 
   useShellRequestHandler('quickSwitcher', () => {
     setSwitcher(true);
@@ -136,6 +143,11 @@ export function NavigationLayer() {
           ) : (
             <ArchiveCleanupDialog onClose={closeRemoveDialog} />
           )}
+        </LazyDialog>
+      )}
+      {quickAsk === null || !sessionExists(quickAsk.sessionKey) ? null : (
+        <LazyDialog resetKey={quickAsk.request}>
+          <QuickAskPopover key={quickAsk.request} sessionKey={quickAsk.sessionKey} />
         </LazyDialog>
       )}
     </>

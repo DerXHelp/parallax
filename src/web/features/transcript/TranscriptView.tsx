@@ -27,7 +27,7 @@ import { QueuedIdsContext, TranscriptSettingsContext, type TranscriptSettings } 
 import { QueuedPromptRow } from './items/MessageRows';
 import { StepGroupRow } from './items/StepGroupRow';
 import { TranscriptRow } from './items/TranscriptRow';
-import { buildRows, classifyItem, type ItemCode, type TranscriptRowModel } from './lib/grouping';
+import { buildRows, itemCodesById, type ItemCode, type TranscriptRowModel } from './lib/grouping';
 import { preloadMarkdown } from './markdown/Markdown';
 import { useOpenGroups } from './state/groups';
 
@@ -70,8 +70,7 @@ const codesCache = new WeakMap<readonly TranscriptItem[], readonly ItemCode[]>()
 function selectItemCodes(view: SessionViewState): readonly ItemCode[] {
   const cached = codesCache.get(view.items);
   if (cached !== undefined) return cached;
-  const byId = new Map<string, ItemCode>();
-  for (const item of view.items) byId.set(item.id, classifyItem(item));
+  const byId = itemCodesById(view.items);
   const codes = selectTopLevelItemIds(view).map((id) => byId.get(id) ?? 'v');
   codesCache.set(view.items, codes);
   return codes;
@@ -394,7 +393,7 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
                     ) : row.kind === 'gallery' ? (
                       <ToolImagesGallery sessionKey={sessionKey} ids={row.ids} className="ml-5" />
                     ) : (
-                      <QueuedPromptRow prompt={row.prompt} />
+                      <QueuedPromptRow prompt={row.prompt} sessionKey={sessionKey} />
                     )}
                   </div>
                 )}
