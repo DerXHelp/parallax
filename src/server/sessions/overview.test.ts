@@ -100,6 +100,8 @@ describe('title descriptions', () => {
     expect(autoTitleDescription(items)).toBe('Fix the login bug\n\nThe token expired too early.');
     expect(autoTitleDescription([answer(1, 'only an answer')])).toBeNull();
     expect(autoTitleDescription([user(1, 'x'.repeat(5000))])?.length).toBeLessThanOrEqual(TITLE_DESCRIPTION_CHARS);
+    // The composer's slash guard (R5W-03) in front of a pasted "/…" is no part of the description.
+    expect(autoTitleDescription([user(1, '\u200b/clear --all\nlog line 2')])).toBe('/clear --all log line 2');
   });
 
   it('again: first prompt, last prompt, start of the last answer; the title without prompts', () => {
