@@ -7,7 +7,8 @@
  * (zlib level 9 – the same numbers as the measurements in docs/wp/WP-60.md, FIX-R5-F3/F5/F6).
  *
  * Checks (exit code 1 when one fails):
- * - `index-*.js` grows by at most 10 kB raw against the WP-60 base `109c073` (WP-60 §1 Nr. 11);
+ * - `index-*.js` grows by at most 10 kB raw against the base (WP-60 §1 Nr. 11; base `109c073` until
+ *   WP-70, since then `2fe8a9b`, ADR-193 – a new base only with an ADR);
  * - the sum of all start chunks grows by at most 10 kB raw against the same base (R5W-01 counts
  *   every start chunk, so a module moved from `index` into a new start chunk is no saving);
  * - no `dictionary.*` chunk (the non-English dictionaries, ADR-153) is a start chunk.
@@ -24,13 +25,16 @@ import { gzipSync } from 'node:zlib';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const webRoot = path.join(repoRoot, 'dist', 'web');
 
-/** WP-60 base `109c073` (docs/wp/WP-60.md §2.5): `index` and the sum of its 4 start chunks. */
+/**
+ * Base (ADR-193): the merge of WP-70 `2fe8a9b` – `index` and the sum of its 9 start chunks. Before:
+ * WP-60 `109c073` (docs/wp/WP-60.md §2.5; index 383,072 / start 879,955 raw, 4 start chunks).
+ */
 const BASE = {
-  commit: '109c073',
-  indexRaw: 383_072,
-  indexGzip: 110_409,
-  startRaw: 879_955,
-  startGzip: 261_337,
+  commit: '2fe8a9b',
+  indexRaw: 323_111,
+  indexGzip: 95_889,
+  startRaw: 889_270,
+  startGzip: 269_372,
 };
 /** Allowed growth against BASE, raw bytes. */
 const GROWTH_RAW = 10_000;
@@ -104,7 +108,7 @@ async function main(): Promise<number> {
     `index: ${delta(index.raw - BASE.indexRaw)} raw / ${delta(index.gzip - BASE.indexGzip)} gzip against ${BASE.commit}`,
   );
   out(
-    `start: ${delta(startRaw - BASE.startRaw)} raw / ${delta(startGzip - BASE.startGzip)} gzip against ${BASE.commit} (4 files)`,
+    `start: ${delta(startRaw - BASE.startRaw)} raw / ${delta(startGzip - BASE.startGzip)} gzip against ${BASE.commit} (${String(chunks.length)} files)`,
   );
 
   if (process.argv.includes('--lazy')) {
