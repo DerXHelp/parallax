@@ -490,7 +490,9 @@ läuft.
   Text und gehen nie an den Server (C.10, ADR-141).
 - **Anfragen** (`src/web/shell/requests.ts`): `openFile {sessionKey, path, line?, col?}` (Datei-Tab),
   `sidePanel {sessionKey, tab: SidePanelTab | null}` (`SIDE_PANEL_TABS` = `plan`, `file`, `files`,
-  `tasks`; `null` schließt), `attachFiles {sessionKey, files}` (Drop-Zone der Shell → Composer).
+  `tasks`; `null` schließt), `attachFiles {sessionKey, files}` (Drop-Zone der Shell → Composer),
+  `composerText {sessionKey, text}` (WP-66: „Zurückholen“ einer wartenden Nachricht → Text ins Feld bzw.
+  als neuer Absatz an den Entwurf; ohne Composer `false`, dann Zwischenablage).
   `SETTINGS_SECTIONS` enthält `files` (Editor-Einstellung, ADR-144).
 - **i18n/ESLint:** neue Namensräume `files` (`features/files/i18n`), `tasks` (`features/tasks/i18n`),
   `sidePanel` (`shell/side-panel/i18n`); `FEATURES` in `eslint.config.js` um `files` und `tasks`
@@ -673,6 +675,40 @@ Was eine Session gerade tut und getan hat, ohne sie zu öffnen; dazu Titel, Limi
   (`window.open`, Hinweis). Mit dem FakeBackend wird nur aufgezeichnet.
 - **Transkript-Ansicht:** `Settings.transcriptView` (`compact`/`all`) statt `localStorage`; der alte Wert
   wird einmal übernommen.
+
+### 3.6 Seitenfragen und Zurückholen (WP-66)
+
+Eine **Seitenfrage** (`/btw`) beantwortet das installierte `claude` aus der laufenden Unterhaltung, ohne sie
+zu verändern (interne SDK-Methode `query.askSideQuestion`, SDK 0.3.322; nichts davon steht im
+claude-Transkript, Resume und Kontext bleiben unberührt).
+- **SDK-Grenze** (`backend/sideQuestion.ts`, `AgentSession.askSideQuestion(question, {history, signal,
+  onRetry?})`): Laufzeit-Prüfung der Methode, Antwort per zod (`response` String, `synthetic` Boolean,
+  `refusalFallback.model` optional), Ergebnis als Union `SideQuestionResult` (wirft nie): `ok` (Antwort oder
+  `null`), `unavailable`, `busy` (`side_question_busy`), `cancelled`, `failed`.
+  `system/control_request_progress` `api_retry` geht an die einzige offene Seitenfrage (`onRetry`), sonst
+  wird es nur gezählt (`ignoredCounts`).
+- **Engine** (`sessions/sideQuestions.ts`): die Engine besitzt die Items `side_question` (der Normalizer sieht
+  sie nie) – `pending` sofort in der aktuellen Unterhaltung (`order` per `LiveNormalizer.claimOrder()`, ID
+  `px:<conversationId>:<order>`), dann ein `item.upsert` mit Antwort bzw. Fehler; persistiert im Item-Log wie
+  jedes andere Item. **Faden:** `threadId` = ID der ersten Frage, Nachfragen schicken die beantworteten
+  Fragen des Fadens als `history` (älteste zuerst, höchstens 10). Abbrechen über `AbortSignal` (sofort
+  `cancelled`, eine späte Antwort fällt weg); Prozessende oder Server-Stopp → offene Fragen `failed`
+  (`SESSION_NOT_RUNNING`), ein nach einem Absturz noch `pending` geloggtes Item wird beim Laden repariert.
+  Löschen entfernt den ganzen Faden (`item.remove`). Seitenfragen ändern weder `unread`, Benachrichtigungen,
+  Status noch `lastActivityAt`; eine offene hält den Prozess aber wach (Leerlauf-Schlaf wartet).
+- **Zurückholen** einer wartenden Nachricht: `session.withdrawQueued` → `query.cancelAsyncMessage(uuid)`
+  (`AgentSession.withdrawQueued`); `true` = aus der CLI-Warteschlange entfernt (Queue-Eintrag weg, das folgende
+  `command_lifecycle cancelled` ändert nichts mehr), `false` = schon übernommen (nichts ändert sich). Noch nicht
+  quittierte Einträge (`sending`) verlassen die Queue immer.
+- **UI:** Karte im Transkript an der Stelle der frühesten geladenen Frage des Fadens (eigener Chunk, Token
+  `--side-question`/`--side-question-surface`, Rolle „sichtbar“, nie in einer Schrittgruppe), Seitenfragen-
+  Modus im Composer (Umschalter, `/btw`), „Kurz fragen…“ im Sidebar-Kontextmenü (Popover an der Zeile; zu,
+  bevor die Antwort kam → Hinweis der Session), „Zurückholen“ an wartenden Nachrichten (Shell-Anfrage
+  `composerText`, §2.3). Keine Kosten je Karte (sie stecken in den Session-Kosten).
+- **FakeBackend:** Antwort nach 600 ms mit Frage, Nachfrage-Nummer und Turn-Zustand; Hebel per Option
+  (`sideQuestions`) oder Schlüsselwort in der Frage (`fake:busy`, `fake:unavailable`, `fake:fail`,
+  `fake:none`, `fake:synthetic`, `fake:fallback`, `fake:retry`, `fake:slow`); eine wartende Nachricht mit
+  `fake:taken` gilt als schon übernommen.
 
 ## 4. Source of Truth (A.3)
 
@@ -1182,6 +1218,16 @@ bzw. das Profil.
 | Präsenz endet (sichtbares Fenster zeigte den Eintrag) | `lastSeenAt = jetzt` (nie rückwärts) | – |
 | `link.open {url}` (Host-Befehl) | nur http(s) (`isHttpUrl`); Standardbrowser aus der Registry, nur absolute `.exe`, `spawnGui` | `OPEN_FAILED {reason}` |
 
+**Seitenfragen und Zurückholen (WP-66, §3.6):**
+
+| Befehl / Fall | Regel | Fehler |
+|---|---|---|
+| `session.askSideQuestion {question, threadId}` | Gates wie ein Prompt (nicht archiviert, nicht extern, `ENTRY_NOT_FOUND`), ein ruhender/geschlossener Eintrag startet ohne Turn; legt das Item `pending` an → `{itemId}`; `threadId` = erste Frage des Fadens (`history` aus dessen beantworteten Fragen; ein unbekannter Faden hat keine). Antwort und Fehler kommen als Item-Update: `busy` → `SESSION_BUSY {reason: 'side_question_busy'}`, Methode fehlt/sonst → `CLAUDE_CONTROL_FAILED`, Prozessende → `SESSION_NOT_RUNNING` | `SESSION_ARCHIVED`, `SESSION_EXTERNAL`, `SESSION_NOT_RUNNING` (Start misslungen) |
+| `session.cancelSideQuestion {itemId}` | offene Seitenfrage → sofort `cancelled` (Abbruch per Signal, späte Antwort fällt weg); fertig oder unbekannt → `{}` ohne Wirkung | – |
+| `session.deleteSideQuestion {threadId}` | alle Items des Fadens in der aktuellen Unterhaltung → `item.remove` (offene vorher abgebrochen), auch im Log; nichts gefunden → `{}` | – |
+| `session.withdrawQueued {messageUuid}` | nicht in der Queue → `{withdrawn: false, text: null}` ohne Steuerbefehl; sonst `cancelAsyncMessage`: `true` (oder Eintrag noch `sending`) → Eintrag weg, `{withdrawn: true, text}`; `false` → nichts ändert sich, `{withdrawn: false, text: null}` | `SESSION_NOT_RUNNING`, `CLAUDE_CONTROL_FAILED` (Methode fehlt/Fehler; Queue bleibt) |
+| Seitenfrage offen | Leerlauf-Schlaf wartet; `unread`, Benachrichtigungen, Status, `lastActivityAt` unverändert | – |
+
 ## 6. Item-Modell (`src/shared/model.ts`, §5.6)
 
 **Item-IDs** (live und Verlauf identisch; Annahmen in `src/server/backend/fixture.test.ts` gegen alle
@@ -1192,7 +1238,7 @@ Fixtures geprüft):
 | Assistant-Content-Block (text/thinking/tool_use) | `${message.id}:${blockIndex}` – `blockIndex` = `content_block_start.index` bzw. Ordinalzahl je `message.id` |
 | User-Prompt | gesendete `uuid` (`MessageUuid`) |
 | andere SDK-Message mit `uuid` (System, Result, Interrupt-Marker) | `uuid` |
-| von Parallax erzeugt (Fehler ohne SDK-Message, Reset-Marker) | `px:${conversationId}:${n}` |
+| von Parallax erzeugt (Fehler ohne SDK-Message, Reset-Marker; WP-66 Seitenfragen der Engine, `n` = `claimOrder()`) | `px:${conversationId}:${n}` |
 
 `tool_result` erzeugt kein Item, sondern füllt `tool_call.result` (gleiche `toolUseId`).
 **Reihenfolge:** `order` (≥ 1, pro Unterhaltung streng steigend, nie geändert); sortiert wird nur nach
@@ -1237,6 +1283,8 @@ Bilder immer als Blob. Assistant-Text wird nie gekappt.
 | `system/thinking_tokens`, `keep_alive` | – | – |
 | bekannte, bewusst ignorierte Typen (`files_persisted`, `auth_status`, `tool_use_summary` …) | – | Zähler `ignoredCounts` |
 | – (Engine, Phase 2: Übergabe an/Rückkehr aus der externen Konsole, ADR-104) | `system/handoff` (`phase` `external`/`returned`, `importedItems`) als px-Item | Status-Event `external` |
+| – (Engine, WP-66: `session.askSideQuestion`, Antwort von `query.askSideQuestion`) | `side_question` als px-Item (`pending` → `answered`/`failed`/`cancelled`, §3.6) | – (kein Status, kein `unread`) |
+| `system/control_request_progress` (untypisiert, WP-66) | – (`api_retry` → `side_question.retry` der einzigen offenen Seitenfrage, im Backend) | Zähler `ignoredCounts` |
 | unbekannte `type/subtype` | `system/unknown` | Zähler `unknownCounts` (Detail) |
 
 Subagent-Messages werden immer über `parent_tool_use_id` unter das Agent-`tool_call` sortiert;
