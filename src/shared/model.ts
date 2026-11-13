@@ -96,8 +96,15 @@ export const rateLimitInfoSchema = z.object({
   rateLimitType: z.string().nullable(),
   /** The SDK sends seconds → ISO. */
   resetsAt: isoDateTimeSchema.nullable(),
+  /**
+   * Share of the window used as a FRACTION 0–1 – here and in `windows` (WP-65: one unit; the usage
+   * query reports 0–100 and the server divides by 100 before it stores anything).
+   */
   utilization: z.number().nullable(),
-  /** Untyped `unifiedWindows` (F.13) for the subscription limit display (Phase 2). */
+  /**
+   * Untyped `unifiedWindows` (F.13) for the subscription limit display (Phase 2); since WP-65 also
+   * the windows of the usage query (`five_hour`, `seven_day`, …), merged into the last info.
+   */
   windows: z
     .record(
       z.string(),
@@ -491,6 +498,25 @@ export function isClaudeSessionUrl(value: string): boolean {
 
 export const claudeSessionUrlSchema = z.string().refine(isClaudeSessionUrl, { message: 'not a claude.ai link' });
 
+/**
+ * WP-65 (1.6b): an absolute `http:`/`https:` URL (with a host) – the only links Parallax opens in the
+ * default browser (`link.open`). Checked again by the server before anything starts.
+ */
+export function isHttpUrl(value: string): boolean {
+  return value.length <= HTTP_URL_CHARS && HTTP_URL.test(value);
+}
+
+const HTTP_URL_CHARS = 4000;
+/** Scheme, a host (no user info, no backslash), then path/query/fragment – no whitespace anywhere. */
+const HTTP_URL = /^https?:\/\/[^\s/\\?#@]+(?:[/?#]\S*)?$/i;
+
+export const httpUrlSchema = z.string().refine(isHttpUrl, { message: 'not an http(s) link' });
+
+/** WP-65 (1.6): transcript view – `compact` groups the work steps (WP-63), `all` shows every step. */
+export const TRANSCRIPT_VIEWS = ['compact', 'all'] as const;
+export const transcriptViewSchema = z.enum(TRANSCRIPT_VIEWS);
+export type TranscriptView = z.infer<typeof transcriptViewSchema>;
+
 /** Fields without defaults: the base of the patch schema (a patch must never inject defaults). */
 const settingsFields = {
   language: languageSchema,
@@ -505,6 +531,8 @@ const settingsFields = {
   editor: editorSettingsSchema,
   /** WP-64: Remote Control for new sessions (existing ones keep their own wish). */
   remoteControl: remoteControlSettingsSchema,
+  /** WP-65: transcript view of every window (was localStorage `parallax.transcript.view`, WP-63). */
+  transcriptView: transcriptViewSchema,
 };
 
 export const settingsSchema = z.object({
@@ -517,6 +545,7 @@ export const settingsSchema = z.object({
   autostart: autostartSchema.default(DEFAULT_AUTOSTART),
   editor: editorSettingsSchema.default(defaultEditorSettings),
   remoteControl: remoteControlSettingsSchema.default(DEFAULT_REMOTE_CONTROL_SETTINGS),
+  transcriptView: transcriptViewSchema.default('compact'),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
@@ -646,6 +675,21 @@ export const externalHandoffSchema = z.object({
 });
 export type ExternalHandoff = z.infer<typeof externalHandoffSchema>;
 
+/**
+ * WP-65: the summary of the last turn – from the CLI (`system/post_turn_summary`, only while a Remote
+ * Control bridge is connected; English text as sent) or Parallax's fallback (first meaningful line of
+ * the last answer). `category` = the CLI's `status_category` (open set, e.g. `completed`);
+ * `needsAction` = the CLI says the user has to act. Persisted, kept until the next turn replaces it.
+ */
+export const turnSummarySchema = z.object({
+  source: z.enum(['claude', 'parallax']),
+  text: z.string().max(500),
+  category: z.string().max(100).nullable(),
+  needsAction: z.boolean(),
+  at: isoDateTimeSchema,
+});
+export type TurnSummary = z.infer<typeof turnSummarySchema>;
+
 /** Replaces `titleIsCustom` (= 'custom'); only 'custom' is never overwritten automatically. */
 export const titleSourceSchema = z.enum(['none', 'prompt', 'ai', 'custom']);
 export type TitleSource = z.infer<typeof titleSourceSchema>;
@@ -696,6 +740,14 @@ export const entrySchema = z.object({
    * otherwise at the next start/resume/wake-up (with the conversation's `bridgeSessionId`).
    */
   remoteControlWanted: z.boolean().default(false),
+  /** WP-65: summary of the last turn (CLI or fallback); null before the first turn. */
+  turnSummary: turnSummarySchema.nullable().default(null),
+  /**
+   * WP-65: when a visible window last stopped showing the entry (presence ended) – or the moment of
+   * a prompt/answer from the Claude app (Remote Control: who answers there has seen it). Unchanged
+   * while a window shows it; null = never left a window since this field exists.
+   */
+  lastSeenAt: isoDateTimeSchema.nullable().default(null),
 });
 export type Entry = z.infer<typeof entrySchema>;
 
@@ -1338,6 +1390,20 @@ export function isRemoteControlActive(state: RemoteControlState): boolean {
   return state === 'connecting' || state === 'connected' || state === 'reconnecting';
 }
 
+/**
+ * WP-65: what a working session does right now (runtime only, never persisted; the engine changes
+ * it at most every ~2 s). `claude` = the CLI's live sentence (`system/task_summary`, only with a
+ * connected Remote Control bridge; English as sent); otherwise Parallax's fallback: the running tool
+ * call of the main thread (`target` = file name, command … – the UI words it like `ToolCallRow`) or
+ * thinking. null = not working.
+ */
+export const sessionActivitySchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('claude'), text: z.string().max(300) }),
+  z.object({ kind: z.literal('tool'), tool: z.string().max(200), target: z.string().max(300).nullable() }),
+  z.object({ kind: z.literal('thinking') }),
+]);
+export type SessionActivity = z.infer<typeof sessionActivitySchema>;
+
 /** Facts, not a finished display: server and UI call deriveDisplayStatus(facts, now) (A.4). */
 export const sessionSummarySchema = z.object({
   entryId: entryIdSchema,
@@ -1380,6 +1446,12 @@ export const sessionSummarySchema = z.object({
     .default(null),
   /** WP-64: Remote Control (bridge to claude.ai / the Claude app). */
   remoteControl: remoteControlSummarySchema.default(DEFAULT_REMOTE_CONTROL_SUMMARY),
+  /** WP-65: live sentence of a working session (runtime only). */
+  activity: sessionActivitySchema.nullable().default(null),
+  /** WP-65: `Entry.turnSummary`. */
+  turnSummary: turnSummarySchema.nullable().default(null),
+  /** WP-65: `Entry.lastSeenAt` – the transcript's "since you were last here" card starts there. */
+  lastSeenAt: isoDateTimeSchema.nullable().default(null),
 });
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 

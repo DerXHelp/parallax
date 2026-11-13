@@ -29,6 +29,7 @@ export const de: typeof en = {
   },
   shell: {
     windowTitle: '({count}) {product}',
+    linkFallback: 'Der Standardbrowser ließ sich nicht starten – der Link wurde hier geöffnet.',
     sidebar: {
       label: 'Sessions',
       count: { one: '{count} Session', other: '{count} Sessions' },

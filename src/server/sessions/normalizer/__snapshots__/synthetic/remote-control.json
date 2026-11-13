@@ -11,6 +11,7 @@
     "#7 system/init: detail.patch {init} | !init",
     "#8 system/bridge_state: !bridge_state",
     "#10 assistant: upsert msg_syn_rc_1:0 assistant_text o2 final 18ch | !assistant_model",
+    "#11 system/post_turn_summary: !turn_summary",
     "#12 result/success: upsert 00000000-0000-4000-9000-000000000009 turn_result o3 success | !turn_result:success",
     "#13 command_lifecycle/completed: !prompt_lifecycle:completed",
     "#14 system/session_state_changed: !session_state:idle",
@@ -19,9 +20,11 @@
     "#17 command_lifecycle/started: !prompt_lifecycle:started",
     "#18 system/init: !init",
     "#19 user: upsert 21526cdc-968c-4fb8-8b09-487aa2e4113f user_message o4",
+    "#20 system/task_summary: !task_summary",
     "#21 assistant: upsert msg_syn_rc_2:0 assistant_text o5 final 22ch",
     "#22 result/success: upsert 00000000-0000-4000-9000-000000000012 turn_result o6 success | !turn_result:success",
     "#23 command_lifecycle/completed: !prompt_lifecycle:completed",
+    "#24 system/task_summary: !task_summary",
     "#25 system/session_state_changed: !session_state:idle",
     "#26 system/bridge_state: !bridge_state",
     "#27 system/bridge_state: !bridge_state",
@@ -86,6 +89,13 @@
       "model": "claude-haiku-5-5"
     },
     {
+      "seq": 11,
+      "type": "turn_summary",
+      "category": "completed",
+      "detail": "replied 'OK (nach Neustart)' as requested",
+      "needsAction": null
+    },
+    {
       "seq": 12,
       "type": "turn_result",
       "outcome": "success",
@@ -140,6 +150,11 @@
       ]
     },
     {
+      "seq": 20,
+      "type": "task_summary",
+      "detail": "Replying to the phone test"
+    },
+    {
       "seq": 22,
       "type": "turn_result",
       "outcome": "success",
@@ -158,6 +173,11 @@
       "type": "prompt_lifecycle",
       "messageUuid": "21526cdc-968c-4fb8-8b09-487aa2e4113f",
       "state": "completed"
+    },
+    {
+      "seq": 24,
+      "type": "task_summary",
+      "detail": null
     },
     {
       "seq": 25,
@@ -360,8 +380,6 @@
     "invalid:system/bridge_state": 1
   },
   "ignoredCounts": {
-    "user/replay": 1,
-    "system/post_turn_summary": 1,
-    "system/task_summary": 2
+    "user/replay": 1
   }
 }

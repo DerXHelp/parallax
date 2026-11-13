@@ -31,7 +31,8 @@ Profil-/Neue-Session-Status einen dezenten Hinweis („neuer als die mit Paralla
   oder kleine Anpassungen betroffen sind.
 - **Was der Check macht** (Details `scripts/README.md`): Vorprüfung ohne Kosten (Version, Abo-Login, keine
   API-Key-Variablen, C.7) → Probe (eine isolierte Haiku-Runde: `system/init`, `initializationResult()`,
-  `supportedModels()`, `getContextUsage()`, danach Remote Control ein/aus ohne Modell-Turn, WP-64) → Live-Smoke `e2e/live` (Schritt 7 unten) → Vergleich mit dem
+  `supportedModels()`, `getContextUsage()`, danach Remote Control ein/aus ohne Modell-Turn, WP-64, und
+  ein Sitzungstitel, die Nutzungsabfrage und `backgroundTasks` vorhanden, WP-65) → Live-Smoke `e2e/live` (Schritt 7 unten) → Vergleich mit dem
   Profil → Bericht `test-results/cli-check/<zeit>.md` → Rückbau eigener Daten (Scratch, CLI-Transkripte,
   CLI-Task-Ordner; Plan-Dateien und `~/.claude.json` nur gemeldet). Exit 0 = grün, 1 = Abweichungen,
   2 = Abbruch (Auth-/Billing-Stopp nie wiederholen).
@@ -67,7 +68,8 @@ Profil-/Neue-Session-Status einen dezenten Hinweis („neuer als die mit Paralla
   lesen (`command_lifecycle`, `system/session_title_changed`, `decisionReasonType`,
   `initializationResult().pid`, `getContextUsage().autocompactSource`, WP-64: `Query.enableRemoteControl`/
   `getSettings().effective.remoteControlAtStartup`, `system/bridge_state`, `isReplay`-Prompts mit
-  `origin human` …) – sind sie jetzt typisiert
+  `origin human`, WP-65: `Query.generateSessionTitle`, `usage_EXPERIMENTAL_…`, `backgroundTasks`,
+  `system/task_summary`/`post_turn_summary` …) – sind sie jetzt typisiert
   oder umbenannt? Die SDK-Grenze ist `src/server/backend/sdkBackend.ts` (`SdkQueryHandle`),
   `sdkOptions.ts` und `src/server/sessions/normalizer/sdk-schemas.ts` (zod, tolerant).
 - `@shared` kennt keine SDK-Typen – ein SDK-Upgrade ändert **nie** die Contracts direkt; nötige

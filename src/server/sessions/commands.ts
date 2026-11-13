@@ -45,6 +45,7 @@ import { catalogOrFallback, toModelCatalog } from './models';
 import { endRemoteBeforeClose, setRemoteControl } from './remoteControl';
 import { closeRuntime, deliverPrompt, startRuntime } from './runtime';
 import { capTitle, implementPlanPrompt, newConversation, titleFromPrompt } from './summary';
+import { regenerateTitle } from './titles';
 
 export interface CommandEngine {
   readonly core: EngineCore;
@@ -188,6 +189,8 @@ async function createSession(
     external: null,
     continueAt: null,
     remoteControlWanted,
+    turnSummary: null,
+    lastSeenAt: null,
   };
   const s = engine.createEntry(entry, promptTitle);
   s.followClaudeDefault = newSessions === 'follow_claude';
@@ -343,6 +346,18 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
     // Phase 3 (WP-50 §4.12): stop one task (ADR-149) and the plan versions (ADR-148).
     case 'session.stopTask':
       return stopTask(core, s, cmd.taskId);
+    // WP-65: move foreground work to the background, generate the title again.
+    case 'session.backgroundTasks':
+      return backgroundTasks(core, s, cmd.toolUseId);
+    case 'session.regenerateTitle':
+      s.cancelRetry();
+      await s.lifecycle.run(async () => {
+        assertEntryGate(s, cmd.name);
+        // generateSessionTitle needs a process: a dormant session starts like session.resume.
+        if (s.runtime === null) await startRuntime(s, core, { byClientId: clientId });
+      });
+      await regenerateTitle(s, core);
+      return {} satisfies CommandResult<'session.regenerateTitle'>;
     case 'plan.list':
       return planList(core, s);
     case 'plan.read': {
@@ -397,6 +412,29 @@ async function stopTask(
   if (runtime === null) throw commandError('SESSION_NOT_RUNNING', { entryId: s.id });
   if (!hasStoppableTask(s, taskId)) throw commandError('TASK_NOT_FOUND', { taskId });
   await controlCall('stopTask', () => runtime.agent.stopTask(taskId), core, s.id);
+  return {};
+}
+
+/**
+ * WP-65: `backgroundTasks(toolUseId?)` like Ctrl+B in the terminal. The process runs (else
+ * SESSION_NOT_RUNNING); a given tool use is a running main-thread Bash/Agent call and the CLI found it
+ * (else TASK_NOT_FOUND); a failed request → CLAUDE_CONTROL_FAILED. The task panel shows the result.
+ */
+async function backgroundTasks(
+  core: EngineCore,
+  s: EntryState,
+  toolUseId: string | null,
+): Promise<CommandResult<'session.backgroundTasks'>> {
+  const runtime = running(s);
+  if (runtime === null) throw commandError('SESSION_NOT_RUNNING', { entryId: s.id });
+  if (toolUseId !== null) {
+    const call = s.findToolCall(toolUseId);
+    if (call === null || (call.status !== 'running' && call.status !== 'pending')) {
+      throw commandError('TASK_NOT_FOUND', { taskId: toolUseId });
+    }
+  }
+  const moved = await controlCall('backgroundTasks', () => runtime.agent.backgroundTasks(toolUseId), core, s.id);
+  if (!moved) throw commandError('TASK_NOT_FOUND', { taskId: toolUseId ?? '' });
   return {};
 }
 

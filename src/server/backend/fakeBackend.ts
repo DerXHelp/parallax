@@ -12,6 +12,7 @@ import { FAKE_CONSOLE_PROMPT, consoleTurnMessages } from './fake/console';
 import { randomIds } from './fake/dsl';
 import { defaultFakeFilesRoot } from './fake/files';
 import { createFakeHistoryStore } from './fake/history';
+import { FakeUsage } from './fake/overview';
 import { interactiveScenario } from './fake/interactive';
 import { FakeSession } from './fake/session';
 import type { FakeBackend, FakeBackendOptions, FakeEventsOptions, FakeScenario } from './fake/types';
@@ -24,6 +25,7 @@ export type {
   FakeDiagnosticKind,
   FakeEventsOptions,
   FakeIds,
+  FakeOverviewOptions,
   FakeRemoteControlOptions,
   FakeScenario,
   FakeScriptContext,
@@ -75,6 +77,7 @@ const defaultSleep = (ms: number): Promise<void> =>
 export function createFakeBackend(options: FakeBackendOptions = {}): FakeBackend {
   const now = options.now ?? (() => new Date());
   const history = options.history ?? createFakeHistoryStore({ now });
+  const usage = new FakeUsage(now, options.overview ?? {});
   const ids = options.ids ?? randomIds();
   const pidBase = options.pidBase ?? DEFAULT_FAKE_PID_BASE;
   const keep = Math.max(0, options.keepSessions ?? DEFAULT_FAKE_KEEP_SESSIONS);
@@ -129,6 +132,8 @@ export function createFakeBackend(options: FakeBackendOptions = {}): FakeBackend
         ids,
         filesRoot: options.filesRoot ?? defaultFakeFilesRoot(),
         remoteControl: options.remoteControl ?? {},
+        overview: options.overview ?? {},
+        usage,
         onStateChange,
       });
       sessions.push(session);

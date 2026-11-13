@@ -9,6 +9,7 @@
 import { z } from 'zod';
 import { compareObservation, compareSmoke, deviations, type Finding } from './compare';
 import { observationSchema } from './observation';
+import { bridgeSummaryCounts, overviewProbeResultSchema } from './overview';
 import { remoteControlProbeResultSchema } from './remoteControl';
 import { smokeResultSchema } from './smoke';
 import type { CliProfile } from '../../src/server/claude/cliProfile';
@@ -52,6 +53,8 @@ export const runRecordSchema = z.object({
       durationMs: z.number(),
       /** WP-64 (absent in runs before WP-64). */
       remoteControl: remoteControlProbeResultSchema.nullable().default(null),
+      /** WP-65 (absent in runs before WP-65). */
+      overview: overviewProbeResultSchema.nullable().default(null),
     })
     .nullable(),
   smoke: smokeResultSchema.nullable(),
@@ -175,6 +178,24 @@ export function formatReport(input: {
         if (!remote.disabled) {
           lines.push('- remote control: switching off failed – remove "Parallax cli-check" in the Claude app');
         }
+        if (remote.available) {
+          // WP-65: informational – the probe turn runs before Remote Control, so 0 is the usual count.
+          const summaries = bridgeSummaryCounts(record.probe.messageTypes);
+          lines.push(
+            `- bridge summaries: task_summary×${String(summaries.taskSummary)}, post_turn_summary×${String(summaries.postTurnSummary)} (informational)`,
+          );
+        }
+      }
+      const overview = record.probe.overview;
+      if (overview !== null) {
+        const { sessionTitle, usage } = overview;
+        lines.push(
+          sessionTitle.available
+            ? `- session title: ok ("${sessionTitle.title ?? ''}")`
+            : `- session title: NOT ok – ${sessionTitle.detail ?? '?'}`,
+          usage.available ? `- usage query: ok (${usage.windows.join(', ')})` : `- usage query: NOT ok – ${usage.detail ?? '?'}`,
+          `- backgroundTasks: ${overview.backgroundTasks ? 'present' : 'MISSING'}`,
+        );
       }
     }
     lines.push('');

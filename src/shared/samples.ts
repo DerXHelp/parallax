@@ -214,6 +214,7 @@ export function sampleSettings(p: Partial<Settings> = {}): Settings {
     autostart: { ...DEFAULT_AUTOSTART },
     editor: sampleEditorSettings(),
     remoteControl: { ...DEFAULT_REMOTE_CONTROL_SETTINGS },
+    transcriptView: 'compact',
     ...p,
   };
 }
@@ -306,6 +307,8 @@ export function sampleEntry(p: Partial<Entry> = {}): Entry {
     external: null,
     continueAt: null,
     remoteControlWanted: false,
+    turnSummary: null,
+    lastSeenAt: null,
     ...p,
   };
 }
@@ -386,6 +389,9 @@ export function sampleSummary(p: Partial<SessionSummary> = {}): SessionSummary {
     lastResultExcerpt: 'OK',
     external: null,
     remoteControl: { ...DEFAULT_REMOTE_CONTROL_SUMMARY },
+    activity: null,
+    turnSummary: null,
+    lastSeenAt: null,
     ...p,
   };
 }

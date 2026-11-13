@@ -29,7 +29,7 @@ export const de: typeof en = {
     themeHint: '„System“ folgt der Windows-Einstellung. Das Einstellungsmenü bietet dieselbe Schnellwahl.',
     transcript: 'Transkript',
     transcriptHint:
-      'Kompakt: Die Arbeitsschritte zwischen zwei Nachrichten bilden eine Zeile (Klick öffnet sie), Bilder bleiben als Galerie sichtbar. Alle Schritte: jeder Schritt in einer eigenen Zeile. Gilt in diesem Browser für alle Fenster.',
+      'Kompakt: Die Arbeitsschritte zwischen zwei Nachrichten bilden eine Zeile (Klick öffnet sie), Bilder bleiben als Galerie sichtbar. Alle Schritte: jeder Schritt in einer eigenen Zeile. Gilt für alle Fenster und Browser.',
     transcriptViews: { compact: 'Kompakt', all: 'Alle Schritte' },
   },
   notifications: {

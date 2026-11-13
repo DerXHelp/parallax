@@ -110,7 +110,9 @@ import {
 import { DEFAULT_AUTO_RETRY } from './retry';
 import { closeRuntime } from './runtime';
 import { reduceStatus as realReduceStatus } from './status/machine';
+import { mergeUsage } from './overview';
 import { cwdLabel } from './summary';
+import { createUsagePoller } from './usagePoll';
 
 export type { SessionManagerOptions, SleepPolicy } from './entryState';
 
@@ -123,6 +125,10 @@ export const DEFAULT_SESSION_MANAGER_OPTIONS: SessionManagerOptions = {
   lifecycleShutdownWaitMs: 10_000,
   gitRefreshMs: 60_000,
   aiTitleDelayMs: 2_000,
+  // WP-65: the live activity changes at most every 2 s; usage query every 5 min (first after 10 s).
+  activityMinMs: 2_000,
+  usagePollMs: 300_000,
+  usageFirstMs: 10_000,
   processSnapshotMs: 30_000,
   processSnapshotFirstMs: 10_000,
   // C.8 (CR-02, ADR-090): up to 5 s after close() for a clean end (SessionEnd hooks, transcript).
@@ -439,6 +445,18 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
   const presence = (): readonly ClientPresence[] => publisher?.presence() ?? [];
 
+  /** WP-65: plan limits of the usage query, merged into the profile's account limits (ADR-114). */
+  const usagePoller = createUsagePoller({
+    options,
+    timers,
+    states: () => states.values(),
+    merge: (profileId, usage) => {
+      core.setAccountLimit(profileId, mergeUsage(accountLimits.get(profileId), usage, now().toISOString()));
+    },
+    shuttingDown: () => shuttingDown,
+    log,
+  });
+
   /** Entries with a live claude.exe (PID known). */
   const runningProcesses = (): { s: EntryState; pid: number }[] =>
     [...states.values()].flatMap((s) => {
@@ -716,9 +734,13 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     },
     processSpawned: () => {
       scheduleProcessSnapshot(options.processSnapshotFirstMs);
+      usagePoller.spawned();
     },
     processEnded: () => {
-      if (runningProcesses().length === 0) cancelProcessSnapshot();
+      if (runningProcesses().length === 0) {
+        cancelProcessSnapshot();
+        usagePoller.stop();
+      }
     },
     setRemoteControlDefault: (profileId, value) => {
       if (remoteDefaults.get(profileId) === value) return;
@@ -921,6 +943,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         hostTimer = null;
         cancelGitRefresh();
         cancelProcessSnapshot();
+        usagePoller.stop();
         for (const s of states.values()) {
           s.cancelTimers();
           // Never cancel at shutdown: open records stay open → `expired` after the restart (A.10).
@@ -1072,6 +1095,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     onPresenceChanged(all: readonly ClientPresence[]) {
       for (const s of states.values()) {
         const visible = isViewedByVisibleClient(all, s.id);
+        // WP-65 (§1.2): the moment a session stops being visible is its `lastSeenAt`.
+        if (s.viewedByVisibleClient && !visible && !shuttingDown) s.markSeen(now().toISOString());
         s.viewedByVisibleClient = visible;
         if (visible && s.facts.unread) {
           s.reduce({ type: 'viewed' });

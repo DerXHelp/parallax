@@ -316,6 +316,7 @@ describe('SdkBackend – start, events, close', () => {
       contextFullMs: 60000,
       readyMs: 60000,
       iteratorAfterExitMs: 2000,
+      titleMs: 60000,
     });
   });
 
@@ -1072,6 +1073,83 @@ describe('SdkBackend – Remote Control (WP-64)', () => {
     const { settings, session } = withRemoteControl(() => Promise.resolve(ANSWER));
     settings.mockRejectedValueOnce(new Error('nope'));
     await expect(session.readRemoteControlDefault()).resolves.toBeNull();
+  });
+});
+
+describe('SdkBackend – overview methods (WP-65)', () => {
+  function withOverview(configure: (q: SdkQueryHandle) => void) {
+    const h = harness({ configure });
+    return { h, session: h.backend.start(request()) };
+  }
+
+  it('generateTitle: persist goes through, the answer is checked; missing → unavailable, errors → failed', async () => {
+    const title = vi.fn<NonNullable<SdkQueryHandle['generateSessionTitle']>>(() =>
+      Promise.resolve('  Login-Fehlschlag   nach Token-Ablauf '),
+    );
+    const { session } = withOverview((q) => {
+      q.generateSessionTitle = title;
+    });
+    await expect(session.generateTitle('Login fails after the token expired', { persist: true })).resolves.toEqual({
+      ok: true,
+      title: 'Login-Fehlschlag nach Token-Ablauf',
+    });
+    expect(title).toHaveBeenCalledWith('Login fails after the token expired', { persist: true });
+    title.mockResolvedValueOnce(42);
+    await expect(session.generateTitle('x', { persist: false })).resolves.toEqual({ ok: true, title: null });
+    title.mockRejectedValueOnce(new Error('model error'));
+    await expect(session.generateTitle('x', { persist: false })).resolves.toEqual({ ok: false, reason: 'failed' });
+
+    const { session: old } = withOverview(() => undefined);
+    await expect(old.generateTitle('x', { persist: true })).resolves.toEqual({ ok: false, reason: 'unavailable' });
+  });
+
+  it('backgroundTasks: with and without tool use id; false = nothing matched; missing method rejects', async () => {
+    const move = vi.fn<NonNullable<SdkQueryHandle['backgroundTasks']>>(() => Promise.resolve(true));
+    const { session } = withOverview((q) => {
+      q.backgroundTasks = move;
+    });
+    await expect(session.backgroundTasks('toolu_1')).resolves.toBe(true);
+    await expect(session.backgroundTasks(null)).resolves.toBe(true);
+    expect(move.mock.calls).toEqual([['toolu_1'], []]);
+    move.mockResolvedValueOnce(false);
+    await expect(session.backgroundTasks('toolu_x')).resolves.toBe(false);
+    move.mockRejectedValueOnce(new Error('Background tasks are disabled'));
+    await expect(session.backgroundTasks(null)).rejects.toThrow();
+
+    const { session: old } = withOverview(() => undefined);
+    await expect(old.backgroundTasks(null)).rejects.toThrow();
+  });
+
+  it('readUsage: skipBehaviors, 0–100 → fractions; missing, failing, no plan → null', async () => {
+    const usage = vi.fn<NonNullable<SdkQueryHandle['usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET']>>(() =>
+      Promise.resolve({
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: 42, resets_at: '2026-11-12T18:00:00Z' },
+          seven_day: { utilization: 81.5, resets_at: null },
+          seven_day_opus: null,
+          seven_day_cowork: null,
+        },
+      }),
+    );
+    const { session } = withOverview((q) => {
+      q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET = usage;
+    });
+    await expect(session.readUsage()).resolves.toEqual({
+      windows: {
+        five_hour: { utilization: 0.42, resetsAt: '2026-11-12T18:00:00.000Z' },
+        seven_day: { utilization: 0.815, resetsAt: null },
+      },
+      cleared: ['seven_day_opus'],
+    });
+    expect(usage).toHaveBeenCalledWith({ skipBehaviors: true });
+    usage.mockResolvedValueOnce({ rate_limits_available: false, rate_limits: null });
+    await expect(session.readUsage()).resolves.toBeNull();
+    usage.mockRejectedValueOnce(new Error('nope'));
+    await expect(session.readUsage()).resolves.toBeNull();
+
+    const { session: old } = withOverview(() => undefined);
+    await expect(old.readUsage()).resolves.toBeNull();
   });
 });
 

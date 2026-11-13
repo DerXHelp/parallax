@@ -1,6 +1,7 @@
 import type { EntryId } from '@shared/common';
 import { SESSION_HASH_PARAM } from '@shared/http';
 import { isClaudeSessionUrl } from '@shared/model';
+import { openExternalLink } from './external-link';
 
 /**
  * "Open in new window" (ADR-116, Plan "Layout"): another app window on the same server that shows
@@ -21,12 +22,12 @@ export function openSessionWindow(entryId: EntryId): void {
 }
 
 /**
- * WP-64 "Open in the Claude app": a Remote Control link in a new tab, without opener and referrer.
- * Only `https://claude.ai/…` (`isClaudeSessionUrl`) – anything else is never opened (false).
- * Only from a user action.
+ * WP-64 "Open in the Claude app": a Remote Control link – WP-65 §1.6b: in the default browser
+ * (`openExternalLink`, fallback a new tab here without opener and referrer). Only
+ * `https://claude.ai/…` (`isClaudeSessionUrl`) – anything else is never opened (false). Only from a
+ * user action.
  */
 export function openClaudeSessionUrl(url: string): boolean {
   if (!isClaudeSessionUrl(url)) return false;
-  window.open(url, '_blank', 'noopener,noreferrer');
-  return true;
+  return openExternalLink(url);
 }

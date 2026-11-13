@@ -68,6 +68,21 @@ export const en = {
     effort: 'Effort',
     /** WP-63 §1.4: screen-reader text of the context symbol. */
     compactSoon: 'Autocompact soon',
+    /** WP-65 §1.1: screen-reader prefix of a highlighted line (open decision, error, needs_action). */
+    needsYou: 'Needs you:',
+  },
+  /** WP-65 §1.1: Parallax's live line while no CLI sentence comes (no Remote Control). */
+  activity: {
+    thinking: 'Thinking…',
+    run: 'Running: {target}',
+    write: 'Writing {target}',
+    edit: 'Editing {target}',
+    read: 'Reading {target}',
+    search: 'Searching: {target}',
+    fetch: 'Fetching {target}',
+    agent: 'Subagent: {target}',
+    tool: '{tool}: {target}',
+    toolOnly: 'Using {tool}',
   },
   actions: {
     menu: 'Session actions',
@@ -91,6 +106,8 @@ export const en = {
     remoteOff: 'Turn off Remote Control',
     openRemote: 'Open in the Claude app',
     copyRemoteLink: 'Copy Remote Control link',
+    /** WP-65 §1.3. */
+    regenerateTitle: 'Generate title again',
   },
   /** WP-64: Remote Control (sidebar icon, header button and menu). */
   remote: {
@@ -242,6 +259,8 @@ export const en = {
     window: 'Limit ({name})',
     resetsAt: 'Resets at {time}',
     resetsOn: 'Resets on {date}',
+    /** WP-65 §1.4: tooltip of a limit bar, `when` relative ("in 2 hours"). */
+    resetsIn: '{percent} used · resets {when}',
   },
   /** Actions of window hints (NotificationCenter, `ClientNotice.action`). */
   notices: {

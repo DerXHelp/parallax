@@ -225,6 +225,12 @@ class LiveNormalizerImpl implements LiveNormalizer {
   private notApprovedKey = '';
   private promptSuggestion: string | null = null;
   private pendingReset: { id: string | null; trigger: string | null; at: string } | null = null;
+  /**
+   * WP-65: uuids of the main-thread assistant messages of the running turn and of the last finished
+   * one – a `post_turn_summary` counts only for the latest turn (`summarizes_uuid`).
+   */
+  private turnUuids = new Set<string>();
+  private lastTurnUuids = new Set<string>();
   /** Ops emitted at the start of the next output (reset marker after startConversation). */
   private queued: SessionOp[] = [];
   private readonly unknown: Record<string, number> = {};
@@ -345,6 +351,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
     this.conversationId = conversationId;
     this.nextOrder = nextOrder;
     this.lastCostTotal = null;
+    this.turnUuids = new Set();
+    this.lastTurnUuids = new Set();
     this.streaming.clear();
     const reset = this.pendingReset;
     this.pendingReset = null;
@@ -653,6 +661,7 @@ class LiveNormalizerImpl implements LiveNormalizer {
     if (parent === null) {
       this.endRetrySeries(out);
       this.emitModel(model, out);
+      if (a.uuid !== undefined && a.uuid !== '') this.turnUuids.add(a.uuid);
     }
     if (a.supersedes !== undefined) this.retract(a.supersedes, out);
 
@@ -1017,6 +1026,11 @@ class LiveNormalizerImpl implements LiveNormalizer {
     // A result error without an assistant error of this turn gets its own error item.
     if (error !== null && (startupFailure || this.turnAssistantError === null)) {
       this.put(errorItem(this.pxBase(at), error), out);
+    }
+    // WP-65: this turn is the latest finished one (its post_turn_summary may still follow).
+    if (this.turnUuids.size > 0) {
+      this.lastTurnUuids = this.turnUuids;
+      this.turnUuids = new Set();
     }
     const excerpt = (r.result ?? '').trim();
     out.signals.push({
@@ -1486,12 +1500,26 @@ class LiveNormalizerImpl implements LiveNormalizer {
       case 'signal':
         out.signals.push(result.outcome.signal);
         return;
+      case 'turnSummary':
+        if (this.isLatestTurn(result.outcome.summarizesUuid)) out.signals.push(result.outcome.signal);
+        else bump(this.ignored, `system/${subtype}:stale`);
+        return;
       case 'ignored':
         bump(this.ignored, `system/${subtype}`);
         return;
       case 'invalid':
         this.countUnknown(`invalid:system/${subtype}`);
     }
+  }
+
+  /**
+   * WP-65: the summarized assistant message belongs to the running turn, or to the last finished one
+   * while the next turn has no assistant message yet. Anything else (an older turn, unknown) is late.
+   */
+  private isLatestTurn(uuid: string | null): boolean {
+    if (uuid === null) return false;
+    if (this.turnUuids.has(uuid)) return true;
+    return this.turnUuids.size === 0 && this.lastTurnUuids.has(uuid);
   }
 
   private readPermissionMode(value: unknown): PermissionMode | null {

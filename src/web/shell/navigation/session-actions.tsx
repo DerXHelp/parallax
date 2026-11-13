@@ -15,6 +15,7 @@ import {
   PinIcon,
   PinOffIcon,
   SmartphoneIcon,
+  SparklesIcon,
   SquareTerminalIcon,
   type LucideIcon,
 } from 'lucide-react';
@@ -64,7 +65,9 @@ export type SessionActionId =
   /** WP-64: Remote Control on/off, open the claude.ai link, copy it. */
   | 'remoteControl'
   | 'openRemote'
-  | 'copyRemoteLink';
+  | 'copyRemoteLink'
+  /** WP-65 §1.3: a new AI title from the conversation (also over an own title – asked for). */
+  | 'regenerateTitle';
 
 export type SessionActionSlot = SessionActionId | 'separator';
 
@@ -80,10 +83,11 @@ export interface SessionAction {
 
 /**
  * Sidebar context menu and the "…" menu of a row (order of WP-35 §3; WP-58: + open folder; WP-63:
- * + remove; WP-64: + Remote Control).
+ * + remove; WP-64: + Remote Control; WP-65: + generate title again).
  */
 export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
   'rename',
+  'regenerateTitle',
   'pin',
   'openWindow',
   'openFolder',
@@ -101,11 +105,12 @@ export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
   'remove',
 ];
 
-/** Header menu (WP-35 §8; WP-58: + open folder; WP-63: + remove; WP-64: + Remote Control). */
+/** Header menu (WP-35 §8; WP-58: + open folder; WP-63: + remove; WP-64: + Remote Control; WP-65: + title). */
 export const HEADER_ACTIONS: readonly SessionActionSlot[] = [
   'conversations',
   'sessionInfo',
   'rename',
+  'regenerateTitle',
   'separator',
   'openWindow',
   'openFolder',
@@ -226,6 +231,17 @@ function build(
         // Menus only: the field opens once the menu has closed (rename.ts).
         run: () => {
           startRenameAfterMenu(sessionKey, place);
+        },
+      };
+    case 'regenerateTitle':
+      return {
+        id,
+        label: 'navigation.actions.regenerateTitle',
+        icon: SparklesIcon,
+        // Needs a conversation; the server refuses archived and external sessions as well.
+        disabled: !started || external || summary.archived,
+        run: () => {
+          runSessionCommand(sessionKey, { name: 'session.regenerateTitle', entryId });
         },
       };
     case 'pin':

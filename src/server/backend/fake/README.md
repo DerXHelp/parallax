@@ -17,6 +17,7 @@ Design: `docs/wp/WP-13.md` §3.3, Ergebnis und Stolpersteine: `docs/wp/WP-13a.md
 | `plan.ts` | `fake:plan` (Plan-Modus, Plan-Datei echt) und der Start mit frischem Kontext („Fake: implementing plan (N lines)“) |
 | `phase3.ts` | `fake:background` (sendet Tätigkeiten „Running …“), `fake:todo`, `fake:files`, `fake:writes-lost`, `fake:context-high` (V4-05), Antworten auf Anhänge/Pastes |
 | `feedback.ts` | WP-63: `fake:steps` (6 Bash-Schritte mit Thinking, einer schlägt fehl, ein Satz an den Nutzer, 3 weitere Schritte, Antwort – zwei Gruppen im kompakten Transkript), `fake:images` (4× `Read` mit je einem PNG – Galerie), `fake:limit-warning` (`allowed_warning` für das Wochenfenster mit `unifiedWindows` – nur die Limit-Leiste, kein Transkript-Hinweis) |
+| `overview.ts` | WP-65: `FakeUsage` (Planfenster des Fake-Kontos, Standard 5 h 8 %, Woche 23 %; jedes gespielte `rate_limit_event` aktualisiert sie; `readUsage` antwortet in der Rohform des SDK), `fakeTitle` (wie die CLI: mit `persist` gewinnt ein vorhandener Titel, sonst `Fake: <erste Wörter>`; ohne `persist` `Fake (new): …`), `fake:long-bash`, `fake:summary` (Hebel `FakeBackendOptions.overview`: `titles`/`usage`/`backgroundTasks`) |
 | `remote.ts` | WP-64 Remote Control: `fakeBridgeInfo` (`cse_fake<id>` ↔ `https://claude.ai/code/session_fake<id>`), `fakeEnableFailure`, `bridgeStateMessage`, `remotePromptTurn` (Turn eines Prompts aus der Claude-App: `command_lifecycle` mit fremder uuid, `init`, `user`-Replay mit `origin:{kind:'human'}`, Antwort); Hebel `fake:remote-prompt [text]`, `fake:remote-permission`, `fake:remote-fail`, `fake:remote-flaky` (siehe unten) |
 | `files.ts` | `FakeFiles` (echte Dateien nur unter `<filesRoot>\<sessionId>\`, Pfade über `@shared/paths` geprüft), `defaultFakeFilesRoot()` = `%TEMP%\parallax-fake-files`, `patchHunks` |
 | `defaults.ts` | Fake-Antworten: `getContextUsage` (Kategorien mit `id`; fester Füllstand bei `fake:context-high`), `supportedModels` (`FAKE_MODELS` = CLI 2.1.322, 14 Einträge), `supportedCommands` (inkl. Terminal-Befehle); `FAKE_CLAUDE_VERSION` = die CLI-Version, die das SDK erwartet (V4-05; Test gegen `claudeCodeVersion` des SDK), auch in `init.claude_code_version`; `FAKE_CONTEXT_HIGH_TOKENS` |
@@ -65,3 +66,10 @@ Regeln: synthetische Szenarien nur als `.ts` (R0-06, nie `.jsonl`); jedes Event 
 `fixtureEventSchema` und den echten Normalizer (`synthetic.test.ts`, `dsl.test.ts`). Nullverzögerungen
 nutzen das beim Import gesicherte echte `setImmediate` – Fake-Timer der Tests halten das Abspielen
 nicht an.
+
+## Übersicht (WP-65)
+
+| Eingabe | Ablauf |
+|---|---|
+| `fake:long-bash` | Vordergrund-`Bash` „Run the test suite“ (`pnpm test --watch`) mit `tool_progress`; läuft `FAKE_LONG_BASH_MS` (60 s × `speed`, bei `speed` 0 endlos), bis `backgroundTasks()` sie verschiebt: dann `task_started` (`local_bash`, `is_backgrounded`), Tool-Ergebnis mit `backgroundTaskId`, Antwort, Turn-Ende; nach `FAKE_LONG_BASH_BACKGROUND_MS` (20 s × `speed`) `task_notification` und ein eigener Turn mit dem Bericht. Kein `background_tasks_changed` (ob die CLI eine verschobene Shell dort zählt, ist eine Live-Frage) |
+| `fake:summary` | `Read` von `notes.md`, Pausen von `FAKE_SUMMARY_STEP_MS` (2,5 s × `speed`), Antwort; mit verbundener Fake-Bridge vor jedem Schritt `task_summary` (CLI-Satz) und vor dem `result` `post_turn_summary` des letzten Assistenten-Beitrags; ohne Bridge keins von beiden (Rückfall der Engine) |

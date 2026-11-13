@@ -17,7 +17,7 @@ import {
 } from '@shared/samples';
 import type { RunningScenario } from '@web/playground/PlaygroundScenario';
 import { resetClientStore } from '@web/state/store';
-import { resetTranscriptView, setTranscriptView } from '@web/state/transcript-view';
+import { setTranscriptView } from '@web/state/transcript-view';
 import { resetExpansion } from './state/expansion';
 import { resetGroups } from './state/groups';
 import { installResizeObserver, installScrollEvents, startTranscriptScenario } from './testing';
@@ -51,7 +51,6 @@ afterEach(() => {
   resetExpansion();
   act(() => {
     resetGroups();
-    resetTranscriptView();
   });
   restoreResizeObserver?.();
   restoreScrollEvents?.();
@@ -219,20 +218,21 @@ describe('compact transcript (WP-63 §1.5)', () => {
   });
 
   it('view "all steps": every item a row, adjacent pictures in one gallery row', async () => {
-    act(() => {
-      setTranscriptView('all');
-    });
     start();
     render(<TranscriptView sessionKey={KEY} />);
     expect(await screen.findByText('Fix the build.')).toBeTruthy();
+    // WP-65 §1.6: a server setting – switched once the host state is there.
+    await act(async () => {
+      await setTranscriptView('all');
+    });
     await waitFor(() => {
       expect(rowKinds()).toEqual(['item', 'item', 'item', 'item', 'item', 'item', 'gallery', 'item']);
     });
     expect(document.querySelector('[data-slot="step-group"]')).toBeNull();
     expect(screen.getAllByRole('button', { name: /^Enlarge image shot-2[12]\.png$/ })).toHaveLength(2);
     // Switching back regroups at once.
-    act(() => {
-      setTranscriptView('compact');
+    await act(async () => {
+      await setTranscriptView('compact');
     });
     await waitFor(() => {
       expect(rowKinds()).toEqual(['item', 'group', 'item']);

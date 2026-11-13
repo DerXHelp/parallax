@@ -55,6 +55,18 @@ export interface FakeBackendOptions {
   filesRoot?: string;
   /** WP-64: Remote Control of the fake sessions (default: available, Claude setting off). */
   remoteControl?: FakeRemoteControlOptions;
+  /** WP-65: title generator, usage query and background moves of the fake sessions (default: all work). */
+  overview?: FakeOverviewOptions;
+}
+
+/** WP-65: levers of the fake overview methods (tests; default 'ok' each). */
+export interface FakeOverviewOptions {
+  /** generateTitle: 'unavailable' = the method is missing, 'failed' = the request fails. */
+  titles?: 'ok' | 'unavailable' | 'failed';
+  /** readUsage: 'no-plan' = no plan limits (API key), 'unavailable' / 'failed' → null. */
+  usage?: 'ok' | 'no-plan' | 'unavailable' | 'failed';
+  /** backgroundTasks: 'disabled' = the CLI refuses (CLAUDE_CODE_DISABLE_BACKGROUND_TASKS). */
+  backgroundTasks?: 'ok' | 'disabled';
 }
 
 /** WP-64: levers of the fake Remote Control (tests; the interactive levers are prompts, remote.ts). */
@@ -198,6 +210,12 @@ export interface FakeScriptContext {
   abortDecision(toolUseId: string): boolean;
   /** WP-64: waits `ms × speed` (≤ maxDelayMs); settle() waits for it. */
   pause(ms: number): Promise<void>;
+  /**
+   * WP-65: a running foreground tool use that `backgroundTasks()` may move to the background:
+   * 'background' once moved, 'done' after `ms × speed` (never at speed 0); a resting point for
+   * settle(); throws TurnInterrupted like emit.
+   */
+  foregroundTool(toolUseId: string, ms: number): Promise<'background' | 'done'>;
 }
 
 /** What a background task may do (FakeBackgroundTask.run). */
