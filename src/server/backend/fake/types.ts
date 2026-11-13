@@ -9,6 +9,8 @@ import type { FixtureEvent } from '../fixture';
 import type { AgentBackend, OutgoingPrompt, RemoteControlInfo, StartSessionRequest } from '../types';
 import type { FakeFiles } from './files';
 import type { FakeHistoryStore } from './history';
+import type { FakeLoginHandle, FakeLoginOptions } from './login';
+import type { FakeOutputStyles } from './outputStyle';
 import type { FakeSessionInfo } from './sessionInfo';
 
 export type FakeScenario =
@@ -63,6 +65,10 @@ export interface FakeBackendOptions {
   sideQuestions?: FakeSideQuestionOptions;
   /** WP-67: session info, MCP actions and reloads (default: every section answers, actions work). */
   sessionInfo?: FakeSessionInfoOptions;
+  /** WP-70: login processes (default: manual way, a pasted code signs in as `max`); changeable later. */
+  login?: FakeLoginOptions;
+  /** WP-70: `updateSettings` fails (CLAUDE_CONTROL_FAILED) – default false. */
+  outputStyleError?: boolean;
 }
 
 /**
@@ -137,6 +143,12 @@ export interface FakeBackend extends AgentBackend {
    * fake console's `onRun`.
    */
   simulateConsoleTurn(sessionId: string, at: Date, text?: string): void;
+  /** WP-70: login processes started (newest last). */
+  readonly logins: readonly FakeLoginHandle[];
+  /** WP-70: options of the next login requests (tests switch them between steps). */
+  loginOptions: FakeLoginOptions;
+  /** WP-70: output style per project (shared by the fake sessions). */
+  readonly outputStyles: FakeOutputStyles;
 }
 
 export type FakeSessionState =
@@ -215,6 +227,8 @@ export interface FakeScriptState {
    * until `/clear` or a compaction; null = the default growth per turn.
    */
   contextTokens: number | null;
+  /** WP-70: the project's output style (read live: `system/init.output_style` of the next turn). */
+  readonly outputStyle: string;
 }
 
 export interface FakeScriptContext {

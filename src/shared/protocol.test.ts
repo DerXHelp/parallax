@@ -3,6 +3,7 @@ import { LIMITS } from './common';
 import { SUBAGENT_TRANSCRIPT_LIMITS } from './model';
 import {
   HOST_COMMAND_NAMES,
+  LOGIN_CODE_CHARS,
   PROTOCOL_VERSION,
   SERVER_MESSAGE_TYPES,
   clientMessageSchema,
@@ -140,6 +141,11 @@ const commands: Command[] = [
     offset: 40,
     limit: 200,
   },
+  // WP-70
+  { name: 'profile.login', profileId: 'standard' },
+  { name: 'profile.loginCode', profileId: sampleId('pf', 2), code: 'abc123#fake-state' },
+  { name: 'profile.loginCancel', profileId: 'standard' },
+  { name: 'session.setOutputStyle', entryId, style: 'Explanatory' },
 ];
 
 const clientMessages: ClientMessage[] = [
@@ -554,6 +560,22 @@ describe('command results', () => {
     expect(parseCommandResult('link.open', {})).toEqual({});
     expect(parseCommandResult('session.backgroundTasks', {})).toEqual({});
     expect(parseCommandResult('session.regenerateTitle', {})).toEqual({});
+  });
+
+  it('WP-70: login commands are host commands; code and style are trimmed and bounded; results are {}', () => {
+    expect(isHostCommand({ name: 'profile.login', profileId: 'standard' })).toBe(true);
+    expect(isHostCommand({ name: 'profile.loginCode', profileId: 'standard', code: 'x' })).toBe(true);
+    expect(isHostCommand({ name: 'profile.loginCancel', profileId: 'standard' })).toBe(true);
+    expect(isHostCommand({ name: 'session.setOutputStyle', entryId, style: 'Concise' })).toBe(false);
+    const send = (cmd: unknown) => parseClientMessage(JSON.stringify({ type: 'cmd', cmdId: SAMPLE_IDS.cmdId, cmd }));
+    expect(send({ name: 'profile.loginCode', profileId: 'standard', code: '  abc#def  ' }).ok).toBe(true);
+    expect(send({ name: 'profile.loginCode', profileId: 'standard', code: '   ' }).ok).toBe(false);
+    expect(send({ name: 'profile.loginCode', profileId: 'standard', code: 'x'.repeat(LOGIN_CODE_CHARS + 1) }).ok).toBe(false);
+    expect(send({ name: 'session.setOutputStyle', entryId, style: '' }).ok).toBe(false);
+    expect(send({ name: 'session.setOutputStyle', entryId, style: 'x'.repeat(101) }).ok).toBe(false);
+    for (const name of ['profile.login', 'profile.loginCode', 'profile.loginCancel', 'session.setOutputStyle'] as const) {
+      expect(parseCommandResult(name, {})).toEqual({});
+    }
   });
 
   it('WP-66: side question (trimmed, 1 … LIMITS.sideQuestionChars) and withdraw results', () => {

@@ -16,7 +16,8 @@
  * (sessionInfo.ts): `fake:info-unavailable [section …]`, `fake:info-fail`, `fake:info-long`,
  * `fake:info-reset` (levers of the session info of this session); WP-69 (wp69.ts): `fake:hooks` (hook
  * runs: four successful, one blocking PreToolUse with exit 2), and `fake:subagent`/`fake:background`
- * fill the agent's own transcript while it runs. A prompt with images, PDFs, attached files or inline pastes
+ * fill the agent's own transcript while it runs; WP-70: `fake:auth-failed` (like `fake:error`, the
+ * assistant error `authentication_failed`) and `fake:output-style` (names the project's style). A prompt with images, PDFs, attached files or inline pastes
  * gets "Fake: received …" (ADR-103, ADR-146); the first prompt of a start without resume that is
  * the engine's fresh-context prompt gets "Fake: implementing plan (N lines)"; anything else gets a
  * thought plus a streamed "Echo: …". Decisions really wait for the engine; interrupt() and
@@ -543,8 +544,14 @@ async function handle(
     case 'fake:ratelimit':
       await ratelimit(ctx, c, turn);
       break;
+    // WP-70: `fake:auth-failed` = `fake:error` (assistant error authentication_failed → „Anmelden“).
+    case 'fake:auth-failed':
     case 'fake:error':
       await ctx.play(assistantErrorTurn(c, { prompt: turn.prompt, error: 'authentication_failed' }));
+      break;
+    // WP-70: the answer names the project's output style of this turn (init.output_style).
+    case 'fake:output-style':
+      await answerTurn(ctx, c, turn, `Fake: output style ${ctx.state.outputStyle}`);
       break;
     case 'fake:crash':
       await ctx.play(

@@ -30,7 +30,7 @@ import path from 'node:path';
 import type { Logger } from 'pino';
 import { z } from 'zod';
 import { messageUuidSchema } from '@shared/common';
-import { makeError } from '@shared/errors';
+import { makeError, type ErrorPayload } from '@shared/errors';
 import type { McpAction, ReloadTarget, SessionInfoSection, SessionInfoSectionName } from '@shared/model';
 import { toError } from '../lib/async';
 import { logger } from '../lib/logger';
@@ -38,8 +38,11 @@ import { killProcessTree as killTree, spawnHidden } from '../lib/process';
 import { mergeHistory, toHistoryMessages, toSessionInfo, toSubagentSlice } from './history/parse';
 import { createHistoryPool, type HistoryPool } from './history/pool';
 import { AsyncQueue } from './lib/asyncQueue';
+import { createLoginSession, type LoginQueryMethods } from './login';
+import { outputStylesOf } from './outputStyle';
 import { toPermissionRequest } from './permissionRequest';
 import {
+  buildLoginOptions,
   buildQueryOptions,
   flagSettingsAfterStart,
   optionIssues,
@@ -56,8 +59,11 @@ import type {
   BackendEvent,
   HistoryMessage,
   HistoryRequest,
+  LoginRequest,
+  LoginSession,
   OutgoingContent,
   OutgoingPrompt,
+  OutputStyles,
   RemoteControlRequest,
   RemoteControlResult,
   SideQuestionOptions,
@@ -103,6 +109,12 @@ export interface SdkTimeouts {
   infoMs: number;
   /** WP-67: MCP reconnect/toggle and reloading skills/plugins (a server connect or plugin load). */
   infoActionMs: number;
+  /** WP-70: `claudeAuthenticate` (right after the start: waits for the CLI's initialize). */
+  loginStartMs: number;
+  /** WP-70: `claudeOAuthCallback` with a pasted code (token exchange, profile fetch). */
+  loginCodeMs: number;
+  /** WP-70: `claudeOAuthWaitForCompletion` – the user signs in in the browser (the CLI's 10 min). */
+  loginFlowMs: number;
 }
 
 export const SDK_TIMEOUTS: Readonly<SdkTimeouts> = Object.freeze({
@@ -116,6 +128,9 @@ export const SDK_TIMEOUTS: Readonly<SdkTimeouts> = Object.freeze({
   sideQuestionMs: 120_000,
   infoMs: 30_000,
   infoActionMs: 60_000,
+  loginStartMs: 60_000,
+  loginCodeMs: 60_000,
+  loginFlowMs: 600_000,
 });
 
 /** Answer to the CLI when the permission handler throws (F.3). */
@@ -129,7 +144,7 @@ type FlagSettings = Parameters<Query['applyFlagSettings']>[0];
  * The part of the SDK `Query` the backend uses. The real `query()` result satisfies it; tests
  * pass a small fake without casts (WP-13 §5.3).
  */
-export interface SdkQueryHandle extends AsyncIterable<unknown> {
+export interface SdkQueryHandle extends AsyncIterable<unknown>, LoginQueryMethods {
   interrupt(): Promise<unknown>;
   setModel(model?: string): Promise<void>;
   setPermissionMode(mode: PermissionMode): Promise<void>;
@@ -174,6 +189,10 @@ export interface SdkQueryHandle extends AsyncIterable<unknown> {
   toggleMcpServer?(serverName: string, enabled: boolean): Promise<void>;
   reloadSkills?(): Promise<unknown>;
   reloadPlugins?(): Promise<unknown>;
+  /** WP-70: public in 0.3.322; optional so a missing method is a clean failure (holds `account`: never logged). */
+  initializationResult?(): Promise<unknown>;
+  /** WP-70: public in 0.3.322 (`localSettings` only with `outputStyle`). */
+  updateSettings?(source: 'localSettings' | 'userSettings', settings: Record<string, unknown>): Promise<void>;
   close(): void;
 }
 
@@ -340,13 +359,18 @@ class SdkSession implements AgentSession {
   /** WP-66: open title requests (they share the CLI's progress messages with side questions). */
   private openTitles = 0;
 
+  /**
+   * `login`: WP-70 login process of a profile (its own options: no settings sources, no MCP, no
+   * transcript; stderr logged by length only – it may name the account).
+   */
   constructor(
     private readonly req: StartSessionRequest,
     private readonly ctx: SessionContext,
+    private readonly login: LoginRequest | null = null,
   ) {
     this.entryId = req.entryId;
     this.events = this.queue;
-    this.log = ctx.log.child({ entryId: req.entryId });
+    this.log = login === null ? ctx.log.child({ entryId: req.entryId }) : ctx.log.child({ login: true });
   }
 
   get pid(): number | null {
@@ -357,7 +381,10 @@ class SdkSession implements AgentSession {
 
   start(): void {
     const { req, ctx } = this;
-    for (const issue of optionIssues(req)) this.log.warn({ issue }, 'claude option not mapped as configured');
+    const login = this.login;
+    if (login === null) {
+      for (const issue of optionIssues(req)) this.log.warn({ issue }, 'claude option not mapped as configured');
+    }
     const spawner = createSpawner({
       spawn: ctx.spawn,
       killProcessTree: ctx.killProcessTree,
@@ -376,13 +403,14 @@ class SdkSession implements AgentSession {
         this.onSpawnError(error);
       },
     });
-    const options = buildQueryOptions(req, {
+    const hooks = {
       canUseTool: this.canUseTool,
       spawn: spawner,
-      stderr: (text) => {
+      stderr: (text: string) => {
         this.onStderr(text);
       },
-    });
+    };
+    const options = login === null ? buildQueryOptions(req, hooks) : buildLoginOptions(login, hooks);
 
     let q: SdkQueryHandle;
     try {
@@ -397,7 +425,7 @@ class SdkSession implements AgentSession {
     }
     this.q = q;
     void this.pump(q);
-    const flags = flagSettingsAfterStart(req);
+    const flags = login === null ? flagSettingsAfterStart(req) : null;
     if (flags !== null) void this.applyAfterReady(q, flags);
   }
 
@@ -474,8 +502,12 @@ class SdkSession implements AgentSession {
   }
 
   private onStderr(text: string): void {
-    // F.16: always read, always logged (the logger redacts tokens).
-    this.log.info({ pid: this.currentPid, stderr: text.slice(0, STDERR_LOG_CHARS) }, 'claude stderr');
+    // F.16: always read, always logged (the logger redacts tokens) – a login process by length only.
+    if (this.login === null) {
+      this.log.info({ pid: this.currentPid, stderr: text.slice(0, STDERR_LOG_CHARS) }, 'claude stderr');
+    } else {
+      this.log.info({ pid: this.currentPid, chars: text.length }, 'claude stderr (login, not logged)');
+    }
     this.emit({ type: 'stderr', data: text, at: this.ctx.now() });
   }
 
@@ -615,7 +647,8 @@ class SdkSession implements AgentSession {
     this.input.push(toSdkUserMessage(prompt));
   }
 
-  private control<T>(label: string, ms: number, call: (q: SdkQueryHandle) => Promise<T>): Promise<T> {
+  /** A control request with a bound (also used by the WP-70 login wrapper). */
+  control<T>(label: string, ms: number, call: (q: SdkQueryHandle) => Promise<T>): Promise<T> {
     const q = this.q;
     if (q === null || this.closed) return Promise.reject(new Error('session closed'));
     let promise: Promise<T>;
@@ -863,6 +896,41 @@ class SdkSession implements AgentSession {
     });
   }
 
+  /** WP-70: `output_style`/`available_output_styles` of `initializationResult()`; never rejects. */
+  async readOutputStyles(): Promise<OutputStyles | null> {
+    if (this.q !== null && typeof this.q.initializationResult !== 'function') {
+      this.ctx.logInfoOnce('outputStyles:missing', {}, 'initializationResult missing in this SDK – output styles unknown');
+      return null;
+    }
+    try {
+      const raw = await this.control('initializationResult', this.ctx.timeouts.readyMs, (q) => {
+        if (q.initializationResult === undefined) throw new Error('initializationResult missing');
+        return q.initializationResult();
+      });
+      const styles = outputStylesOf(raw);
+      if (styles === null) this.ctx.logInfoOnce('outputStyles:shape', {}, 'initializationResult: no output styles');
+      return styles;
+    } catch (error) {
+      this.log.debug({ err: error }, 'reading the output styles failed');
+      return null;
+    }
+  }
+
+  /** WP-70: `updateSettings('localSettings', { outputStyle })`; never rejects. */
+  async setOutputStyle(style: string): Promise<{ ok: true } | { ok: false; error: ErrorPayload }> {
+    try {
+      await this.control('updateSettings', this.ctx.timeouts.controlMs, (q) => {
+        if (q.updateSettings === undefined) throw new Error('updateSettings missing');
+        return q.updateSettings('localSettings', { outputStyle: style });
+      });
+      this.log.info({ style }, 'output style written (localSettings)');
+      return { ok: true };
+    } catch (error) {
+      this.log.warn({ err: error }, 'updateSettings failed');
+      return { ok: false, error: makeError('CLAUDE_CONTROL_FAILED', { method: 'updateSettings' }) };
+    }
+  }
+
   /** WP-66: `cancelAsyncMessage(uuid)` (internal method); rejects when it fails or is missing. */
   async withdrawQueued(messageUuid: string): Promise<boolean> {
     const raw = await this.control('cancelAsyncMessage', this.ctx.timeouts.controlMs, (q) => {
@@ -886,6 +954,21 @@ class SdkSession implements AgentSession {
 }
 
 // ---- backend ----
+
+/** WP-70: the StartSessionRequest a login process carries (only its launch and cwd are used). */
+function loginStartRequest(req: LoginRequest): StartSessionRequest {
+  return {
+    entryId: 'login',
+    cwd: req.cwd,
+    launch: req.launch,
+    resumeSessionId: null,
+    model: null,
+    permissionMode: null,
+    effort: null,
+    promptSuggestions: false,
+    canUseTool: () => Promise.resolve({ behavior: 'deny', message: PERMISSION_FAILURE_MESSAGE }),
+  };
+}
 
 /** WP-67: the SDK method behind each "Session info" tab (checked against the handle type). */
 const INFO_METHODS = SESSION_INFO_METHODS satisfies Record<SessionInfoSectionName, keyof SdkQueryHandle>;
@@ -966,6 +1049,14 @@ export function createSdkBackend(deps: SdkBackendDeps = {}): AgentBackend & { re
       live.add(session);
       session.start();
       return session;
+    },
+
+    /** WP-70: a login process (SdkSession in login mode; closed with the backend like any session). */
+    startLogin(req): LoginSession {
+      const session = new SdkSession(loginStartRequest(req), ctx, req);
+      live.add(session);
+      session.start();
+      return createLoginSession(session, ctx.timeouts, backendLog.child({ login: true }));
     },
 
     /** getSessionMessages + every subagent's messages, merged by time (A.3, R0-18). */

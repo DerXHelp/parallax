@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { STANDARD_PROFILE_ID } from '@shared/common';
-import { profileSchema, profileSummarySchema } from '@shared/model';
+import { IDLE_PROFILE_LOGIN, profileSchema, profileSummarySchema } from '@shared/model';
 import { sampleClaudeInstallStatus, sampleProfile } from '@shared/samples';
 import { STANDARD_PROFILE, createProfileStore, profileSummary, uncheckedClaudeStatus } from './profiles';
 
@@ -60,6 +60,8 @@ describe('createProfileStore (Phase 1)', () => {
       configDir: null,
       issues: [],
       entryCount: 0,
+      // WP-70: the engine merges the login state (host/login.ts); the store says idle.
+      login: IDLE_PROFILE_LOGIN,
     });
     expect(profileSummarySchema.parse(summary)).toEqual(summary);
   });
