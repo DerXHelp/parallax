@@ -1489,6 +1489,40 @@ export const sessionActivitySchema = z.discriminatedUnion('kind', [
 ]);
 export type SessionActivity = z.infer<typeof sessionActivitySchema>;
 
+/**
+ * WP-71: the kind of a task (`taskKind` in `tasks.ts`): agent (`local_agent`/`remote_agent`), shell
+ * (`local_bash`), workflow (`local_workflow`), anything else.
+ */
+export const TASK_KINDS = ['agent', 'bash', 'workflow', 'other'] as const;
+export const taskKindSchema = z.enum(TASK_KINDS);
+export type TaskKind = z.infer<typeof taskKindSchema>;
+
+/** WP-71: at most this many running tasks are named in `SessionSummary.runningTasks.items`. */
+export const RUNNING_TASK_ITEMS_MAX = 5;
+/** WP-71: `RunningTaskItem.label` limit (chars). */
+export const RUNNING_TASK_LABEL_MAX = 120;
+
+/** WP-71: one running task for the sidebar's tooltip: kind, subagent type, short description. */
+export const runningTaskItemSchema = z.object({
+  kind: taskKindSchema,
+  subagentType: z.string().max(100).nullable(),
+  /** Agents: the progress summary (`task.summary`) when there is one, else the description. */
+  label: z.string().max(RUNNING_TASK_LABEL_MAX),
+});
+export type RunningTaskItem = z.infer<typeof runningTaskItemSchema>;
+
+/**
+ * WP-71: what runs in a session (counted like the task panel, `tasks.ts`): agents, shells and the
+ * rest (workflows, unknown kinds), plus the first running tasks (oldest start first).
+ */
+export const runningTasksSchema = z.object({
+  agents: z.number().int().nonnegative(),
+  shells: z.number().int().nonnegative(),
+  other: z.number().int().nonnegative(),
+  items: z.array(runningTaskItemSchema).max(RUNNING_TASK_ITEMS_MAX),
+});
+export type RunningTasks = z.infer<typeof runningTasksSchema>;
+
 /** Facts, not a finished display: server and UI call deriveDisplayStatus(facts, now) (A.4). */
 export const sessionSummarySchema = z.object({
   entryId: entryIdSchema,
@@ -1542,6 +1576,11 @@ export const sessionSummarySchema = z.object({
    * `initializationResult`, or the style just set; runtime only, null = not known yet).
    */
   outputStyle: z.string().max(100).nullable().default(null),
+  /**
+   * WP-71: running agents, shells and other tasks of the current conversation (runtime only, never
+   * persisted; the engine recounts at most every ~2 s); null = nothing runs or no process.
+   */
+  runningTasks: runningTasksSchema.nullable().default(null),
 });
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 

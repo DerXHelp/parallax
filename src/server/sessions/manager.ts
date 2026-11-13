@@ -131,6 +131,8 @@ export const DEFAULT_SESSION_MANAGER_OPTIONS: SessionManagerOptions = {
   aiTitleDelayMs: 2_000,
   // WP-65: the live activity changes at most every 2 s; usage query every 5 min (first after 10 s).
   activityMinMs: 2_000,
+  // WP-71: the running tasks of the summary are recounted at most every 2 s, too.
+  runningTasksMinMs: 2_000,
   usagePollMs: 300_000,
   usageFirstMs: 10_000,
   processSnapshotMs: 30_000,

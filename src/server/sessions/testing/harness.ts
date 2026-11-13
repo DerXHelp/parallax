@@ -349,6 +349,8 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
       gitRefreshMs: 0,
       // WP-65: no throttle of the live activity, no usage query unless a test enables it.
       activityMinMs: 0,
+      // WP-71: no throttle of the running tasks unless a test enables it.
+      runningTasksMinMs: 0,
       usagePollMs: 0,
       ...options.options,
     },

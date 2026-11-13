@@ -2239,3 +2239,35 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   bewusst, alles nach einem Klick lädt lazy). WP-71 braucht sichtbare Teile in der Sidebar (Zähler, Puls), die im
   Start-Chunk liegen müssen. Für eine lokal ausgelieferte App ist die Ladezeit dieser Größe unkritisch; die Regel
   „nur das Nötigste in den Start-Chunk“ gilt weiter.
+
+## ADR-194 – Ein Task-Zählmodell für Server und Web (`@shared/tasks`)
+- **Datum/WP:** 13.11.2026, WP-71; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Das reine Task-Zeilen- und Zählmodell (`buildTaskRows`, `runningTaskCounts`,
+  `summarizeRunningTasks` …) liegt in `@shared/tasks` (vorher `web/lib/task-rows.ts`, ADR-158 erweitert).
+  Task-Panel, Kopfzeile und Übersicht (`SessionSummary.runningTasks`, nur Laufzeit) zählen damit gleich. Der Server
+  rechnet nur bei Task-Ops, gedrosselt auf 2 s, und sendet nur Änderungen; die Sidebar liest nur die Summary.
+- **Begründung:** Die Sidebar muss für jede Session wissen, was läuft, ohne deren Detail zu abonnieren; eine zweite
+  Zählregel würde auseinanderlaufen. Nutzerwunsch „was läuft wo“ (13.11.2026).
+
+## ADR-195 – Puls statt Drehen in dichten Listen
+- **Datum/WP:** 13.11.2026, WP-71; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** In Sidebar-Zeile und Rail zeigt eine arbeitende Session einen pulsierenden Punkt in
+  `status-working` (Blau, Nutzerentscheidung) statt des drehenden Symbols: arbeitend/startend kräftig (1,6 s),
+  nur Hintergrund-Tasks sanft (3 s). Nur `motion-safe`, eine CSS-Animation je Zeile, kein JS-Timer; Kopfzeile und
+  Karten drehen weiter. Grün bleibt „fertig“.
+- **Begründung:** Bei vielen Sessions fällt ein kleines drehendes Symbol kaum auf; der Puls ist auf einen Blick
+  sichtbar, ohne Rechenlast (ADR-154).
+
+## ADR-196 – Wartendes Werkzeug bleibt die Tätigkeit
+- **Datum/WP:** 13.11.2026, WP-71; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Ein Werkzeug in `awaiting_decision` zählt im `ActivityTracker` und hat Vorrang; die Live-Zeile
+  zeigt es (z. B. „Bash: pnpm test“) statt „Denkt nach…“. Keine eigene `SessionActivity`-Variante – „braucht dich“
+  kommt aus dem Status.
+- **Begründung:** Rest aus WP-68; der Nutzer soll sehen, worauf die Session wartet.
+
+## ADR-197 – Hintergrundliste endet mit dem Prozess
+- **Datum/WP:** 13.11.2026, WP-71; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Der Normalizer (einziger Schreiber von `detail.backgroundTasks`) leert eine gemeldete Liste beim
+  `process_exit`, ohne Status-Signal.
+- **Begründung:** Sonst zeigten Sidebar-Zähler und Status „Hintergrund“ nach dem Prozessende noch Tasks, die mit dem
+  Prozess beendet sind.

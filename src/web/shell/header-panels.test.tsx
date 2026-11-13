@@ -14,6 +14,7 @@ import {
   sampleTodoList,
 } from '@shared/samples';
 import { viewStateFromSnapshot } from '@shared/sync';
+import { setLanguage } from '@web/i18n';
 import { clientStore, emptyHostRecord, resetClientStore } from '@web/state/store';
 import { TooltipProvider } from '@web/ui/tooltip';
 import { COMPACT_HEADER_BELOW, selectSidePanelFacts } from './header-panels';
@@ -155,16 +156,19 @@ afterEach(() => {
   globalThis.ResizeObserver = originalResizeObserver;
   resetSidePanelState();
   resetClientStore();
+  act(() => {
+    setLanguage('en');
+  });
 });
 
 describe('selectSidePanelFacts', () => {
   it('plan from a stored version or a plan file; background tasks; open to-dos', () => {
     const facts = (detail: Partial<SessionDetail>) =>
       selectSidePanelFacts(viewStateFromSnapshot(sampleSessionSnapshot({ detail: sampleDetail(detail) })));
-    expect(facts({})).toEqual({ plan: false, running: 0, openTodos: 0 });
+    expect(facts({})).toEqual({ plan: false, agents: 0, shells: 0, other: 0, openTodos: 0 });
     expect(facts({ latestPlanVersion: 2 }).plan).toBe(true);
     expect(facts({ planFile: samplePlanFileRef() }).plan).toBe(true);
-    expect(facts({ backgroundTasks: [task(1), task(2)] }).running).toBe(2);
+    expect(facts({ backgroundTasks: [task(1), task(2)] })).toMatchObject({ agents: 0, shells: 2, other: 0 });
     // sampleTodoList: one completed, one in progress, one pending.
     expect(facts({ todos: sampleTodoList() }).openTodos).toBe(2);
   });
@@ -208,7 +212,7 @@ describe('header side panel buttons (WP-58)', () => {
   it('counts running background tasks (highlighted) before open to-dos', () => {
     show({ backgroundTasks: [task(1), task(2)], todos: sampleTodoList() });
     renderHeader();
-    const tasks = screen.getByRole('button', { name: 'Tasks – 2 background tasks running' });
+    const tasks = screen.getByRole('button', { name: 'Tasks – running: 2 shells' });
     const count = tasks.querySelector<HTMLElement>('[data-slot="header-panel-count"]');
     expect(count?.textContent).toBe('2');
     expect(count?.dataset.running).toBe('true');
@@ -227,7 +231,7 @@ describe('header side panel buttons (WP-58)', () => {
   it('more than 99 shows "99+" from the dictionary; the button name keeps the exact count (R5W-06)', () => {
     show({ backgroundTasks: Array.from({ length: 120 }, (_, index) => task(index)) });
     renderHeader();
-    const tasks = screen.getByRole('button', { name: 'Tasks – 120 background tasks running' });
+    const tasks = screen.getByRole('button', { name: 'Tasks – running: 120 shells' });
     expect(tasks.querySelector('[data-slot="header-panel-count"]')?.textContent).toBe('99+');
   });
 
@@ -261,7 +265,7 @@ describe('header side panel buttons (WP-58)', () => {
     });
     show({ backgroundTasks: [{ ...task(1), taskId: 'agent', taskType: 'local_agent' }] }, [agent, shell]);
     renderHeader();
-    expect(screen.getByRole('button', { name: 'Tasks – 1 background task running' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Tasks – running: 1 agent' })).toBeTruthy();
   });
 
   it('counts like the panel: a running task the server does not list yet counts too (CR3-02)', () => {
@@ -275,13 +279,48 @@ describe('header side panel buttons (WP-58)', () => {
     });
     show({}, [agent]);
     renderHeader();
-    expect(screen.getByRole('button', { name: 'Tasks – 1 background task running' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Tasks – running: 1 agent' })).toBeTruthy();
+  });
+
+  it('WP-71: running tasks by kind – agent symbol + number, terminal symbol + number (en/de, plurals)', () => {
+    const agents = [taskInfo('a1'), taskInfo('a2')].map((info, index) =>
+      sampleItems.toolCall({
+        id: `agent-${String(index)}`,
+        order: index + 1,
+        toolUseId: `toolu_a${String(index)}`,
+        toolName: 'Agent',
+        status: 'background',
+        result: null,
+        task: info,
+      }),
+    );
+    show({ backgroundTasks: [task(1), { ...task(2), taskType: 'local_workflow' }] }, agents);
+    renderHeader();
+    const tasks = screen.getByRole('button', {
+      name: 'Tasks – running: 2 agents, 1 shell, and 1 other task',
+    });
+    const counts = [...tasks.querySelectorAll<HTMLElement>('[data-slot="running-count"]')].map((count) => [
+      count.dataset.group,
+      count.textContent,
+      count.querySelector('svg') !== null,
+    ]);
+    expect(counts).toEqual([
+      ['agents', '2', true],
+      ['shells', '1', true],
+      ['misc', '1', true],
+    ]);
+    act(() => {
+      setLanguage('de');
+    });
+    expect(
+      screen.getByRole('button', { name: 'Aufgaben – es läuft: 2 Agenten, 1 Shell und 1 weitere Aufgabe' }),
+    ).toBeTruthy();
   });
 
   it('one background task: singular text', () => {
     show({ backgroundTasks: [task(1)] });
     renderHeader();
-    expect(screen.getByRole('button', { name: 'Tasks – 1 background task running' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Tasks – running: 1 shell' })).toBeTruthy();
   });
 
   it('a click asks for the tab; the open tab is pressed and a second click closes it', async () => {
@@ -331,7 +370,7 @@ describe('header side panel buttons (WP-58)', () => {
     expect(items.map((item) => item.textContent)).toEqual([
       'Plan',
       'Files of this session',
-      'Tasks – 1 background task running',
+      'Tasks – running: 1 shell',
     ]);
     await user.click(within(menu).getByRole('menuitemcheckbox', { name: 'Files of this session' }));
     await waitFor(() => {

@@ -121,9 +121,9 @@ describe('PlaygroundApp', () => {
       <TooltipProvider>{shellDemo('shell-header-panels').render()}</TooltipProvider>,
     );
     // Two headers (900 and 480 px; happy-dom does not measure, so both stay wide here).
-    expect(await screen.findAllByRole('button', { name: 'Tasks – 2 background tasks running' })).toHaveLength(
-      2,
-    );
+    expect(
+      await screen.findAllByRole('button', { name: 'Tasks – running: 1 agent and 1 shell' }),
+    ).toHaveLength(2);
     expect(screen.getAllByRole('button', { name: 'Plan' })).toHaveLength(2);
     unmount();
     act(() => {

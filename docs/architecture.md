@@ -824,6 +824,32 @@ alle Sessions des Projekts ab ihrem nächsten Turn.
   einer zweiten, isolierten Session mit `settingSources: ['local']` (die Probe-Session hat `[]`, `updateSettings`
   lehnt sie ab); Profilfelder `login`, `outputStyleSetting`.
 
+### 3.10 Was läuft wo (WP-71)
+
+Welche Sessions arbeiten und was in ihnen läuft – in der Seitenleiste, ohne sie zu öffnen.
+- **Ein Zählmodell:** `@shared/tasks` (aus `web/lib/task-rows.ts` verschoben) baut die Task-Zeilen
+  (`buildTaskRows`: Tool-Calls mit `task`, `task_notification`, Hintergrundliste; ohne `ambient` und ohne
+  Vordergrund-Shells von Subagenten, ADR-158) und zählt sie nach Art (`runningTaskCounts`: `agents`,
+  `shells`, `other` = Workflows/Unbekanntes). Task-Panel, Kopfzeilen-Knopf „Tasks“ und Server rechnen damit;
+  `web/lib/task-rows.ts` re-exportiert nur noch (plus `selectTaskSources` mit Cache).
+- **Server:** `SessionSummary.runningTasks {agents, shells, other, items ≤ 5 {kind, subagentType, label ≤ 120}}`
+  (null = nichts läuft; Default null). `EntryState.updateRunningTasks` rechnet aus dem Engine-Spiegel nur, wenn
+  ein Op Task-Quellen berührt (`touchesTasks`: Task-Item-Upsert, `item.remove`, `conversation.reset`,
+  `detail.patch.backgroundTasks`) – nie je Text-Delta –, vorn und hinten gedrosselt auf
+  `runningTasksMinMs` (2 s; virtuelle Timer), gleiche Werte senden kein `summary.upsert`. Ohne Runtime
+  (Prozessende, Crash, Entfernen) → null; der Normalizer leert beim `process_exit` eine gemeldete
+  Hintergrundliste (`detail.backgroundTasks: []`, kein Signal).
+- **Live-Zeile während einer Entscheidung:** ein Werkzeug in `awaiting_decision` bleibt die Tätigkeit
+  (`ActivityTracker`, Vorrang vor laufenden Werkzeugen; Ziel für `AskUserQuestion` = erste Frage, für
+  `ExitPlanMode` = erste Planzeile) – die Zeile zeigt „Braucht dich: …“ statt zu verschwinden.
+- **Web:** Sidebar-Zeile neben dem Titel Agent-/Terminal-Symbol + Zahl (`shell/running-tasks.tsx`
+  `RunningCounts`, „9+“, für Screenreader in Worten), Tooltip-Abschnitt „Läuft gerade“ (bis 5 Einträge, „und
+  n weitere“; eigener Chunk `navigation/RowTasksDetail.tsx`, geladen, sobald eine Zeile Tasks zeigt); Kopfzeilen-Knopf „Tasks“ mit hervorgehobenen Zählern nach Art (aus dem Detail der Session,
+  gleiche Zahlen wie das Panel) und Name „Aufgaben – es läuft: 2 Agenten und 1 Shell“. Arbeitende, startende
+  und Hintergrund-Sessions pulsieren in Zeile und Rail (§7).
+- **FakeBackend:** `fake:workers` (zwei Hintergrund-Agenten + eine Hintergrund-Shell, enden nacheinander);
+  Playground `nav-sidebar-running`.
+
 ## 4. Source of Truth (A.3)
 
 | Daten | maßgeblich | persistiert in | live über |
@@ -1509,6 +1535,12 @@ und i18n-Schlüssel `status.<kind>`):
 immer durchgereicht, `rateLimitedUntil` nur, wenn es in der Zukunft liegt. `needs-resume` hat ein
 eigenes Icon (nicht das der aktiven Entscheidungen) und zählt zu „Wartet auf dich (n)“; die Aktion
 ist „Fortsetzen & Plan freigeben“ bzw. „Fortsetzen“.
+
+**Puls (WP-71):** in dichten Listen (Sidebar-Zeile, Rail) pulsieren `working`/`starting` kräftig
+(1,6 s) und `background` sanft (3 s): eine Scheibe in `status-working` hinter dem Symbol mit Tailwinds
+`ping`, nur `motion-safe` (mit „Bewegung reduzieren“ bleibt ein ruhiger Punkt). Der Puls ersetzt dort
+das Drehen – höchstens eine Animation je Zeile; Kopfzeile und Karten drehen weiter
+(`StatusIcon pulse`, `STATUS_PULSE`).
 
 **`canSleep(facts, now)`** – nur bei `idle` ohne offene/abgelaufene Entscheidungen, ohne
 Hintergrund-Tasks, ohne gequeuete Prompts, ohne künftigen Wakeup, nicht `compacting`/`retrying`
