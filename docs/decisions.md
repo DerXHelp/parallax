@@ -2098,3 +2098,38 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   Öffnen montiert) sind Lazy-Chunks – Ausgleich für das Start-Chunk-Budget.
 - **Folgen:** Das Budget gegen `109c073` ist danach fast ausgeschöpft (`index` +9 031 B von 10 000); WP-66/67 müssen neue
   UI von Anfang an lazy bauen oder an anderer Stelle ausgleichen.
+
+## ADR-178 – Seitenfragen sind Engine-Items
+- **Datum/WP:** 13.11.2026, WP-66; angenommen (13.11.2026, Koordinator beim Merge).
+- **Kontext:** `askSideQuestion` (intern) antwortet ohne Werkzeuge aus dem Gesprächsstand, schreibt nichts ins
+  claude-Transkript (Live-Probe 12.11.2026).
+- **Entscheidung:** `side_question` gehört der Engine, nie dem Normalizer: ID `px:<conversationId>:<order>` mit
+  `LiveNormalizer.claimOrder()`, persistiert im Parallax-Log (kein Import aus dem claude-Transkript). Faden = ID der
+  ersten Frage, `history` aus den beantworteten Fragen (höchstens 10). Prozessende/Server-Stopp → `failed`; eine offene
+  Frage hält den Prozess wach; kein Einfluss auf `unread`, Status oder Benachrichtigungen. Port-Ergebnis als Union
+  (`SideQuestionResult`), nie Ablehnung.
+- **Folgen:** Ein nach einem Absturz noch `pending` geloggtes Item weiter oben im Log bleibt als „fragt…“ stehen
+  (nur der geladene Spiegel wird repariert) – Follow-up.
+
+## ADR-179 – Seitenfragen-Modus für eine Frage, `/btw` als Parallax-Befehl
+- **Datum/WP:** 13.11.2026, WP-66; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Umschalter neben Senden und `/btw` (allein → Modus, mit Frage → sofort); der Modus gilt für genau
+  eine Frage, danach normaler Composer (ein dauerhafter Modus hätte leicht einen echten Prompt verschluckt). Anhänge
+  bleiben für die nächste Nachricht. Karte im kompakten Transkript sichtbar, nie in einer Schrittgruppe; weitere Fragen
+  des Fadens in derselben Karte; „Kurz fragen…“ als Popover aus der Seitenleiste.
+
+## ADR-180 – Wartende Nachricht zurückholen über die Shell-Anfrage `composerText`
+- **Datum/WP:** 13.11.2026, WP-66; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** „Zurückholen“ sitzt an den grauen Zeilen im Transkript (die Queue zeigt seit ADR-041 das
+  Transkript) und ruft `cancelAsyncMessage` (intern) über `session.withdrawQueued`. Der Text geht über die
+  Shell-Anfrage `composerText` ins Eingabefeld (leer: ersetzen, sonst als neuer Absatz), ohne geöffneten Composer in
+  die Zwischenablage; nur Text, keine Anhänge. Das Transkript importiert den Composer nicht.
+
+## ADR-181 – `zod-jitless` im Chunk `vendor`
+- **Datum/WP:** 13.11.2026, WP-66; angenommen (13.11.2026, Koordinator beim Merge).
+- **Kontext:** Rolldown legte die Shared-Verträge in eigene Start-Chunks, die vor dem Rumpf von `index` laufen; zods
+  `Function('')`-Probe lief dadurch vor der JIT-Abschaltung → CSP-Verletzung (V1-09).
+- **Entscheidung:** `src/web/lib/zod-jitless.ts` liegt in der Chunk-Gruppe `vendor` (`vite.config.ts`); jeder Chunk mit
+  Schemas importiert zod aus `vendor`, der Schalter läuft also immer zuerst – unabhängig vom Chunking. Selten gebrauchte
+  Composer-Teile (`AttachmentChips`, `SlashMenu`, `RateLimitBanner`, `lib/native`) sind Lazy-Chunks.
+- **Folgen:** Der Start besteht seit WP-66 aus 8 statt 4 Dateien; Ursache ungeklärt, Summe im Budget.
