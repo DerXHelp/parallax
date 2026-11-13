@@ -5,6 +5,39 @@ auf `127.0.0.1` steuert je Session das installierte `claude` über das Claude Ag
 läuft als Chrome-App-Fenster. Status: Phase 3 „Dateien und Plan-Komfort“ abgeschlossen (auf `main`;
 siehe `docs/progress.md`).
 
+## So sieht Parallax aus
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/overview-dark.png">
+  <img src="docs/screenshots/overview-light.png" alt="Parallax mit acht Sessions in vier Projekten: links die Seitenleiste nach Projekt gruppiert mit dem Zustand jeder Session, rechts das Transkript einer arbeitenden Session mit Schrittgruppe, neuer Datei, Diff und laufendem Testlauf, darunter Aufgabenleiste und Eingabefeld">
+</picture>
+
+**Viele Sessions auf einen Blick.** Die Seitenleiste zeigt je Projekt, welche Session arbeitet, welche
+auf dich wartet (Freigabe, Plan), was fertig und neu ist, dazu Remote Control und die Abo-Limits.
+Rechts das Transkript der ausgewählten Session: kompakte Schrittgruppen, eine neue Datei, ein Diff und
+ein laufender Testlauf, der sich in den Hintergrund schicken lässt; über dem Eingabefeld die To-dos.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/plan-dark.png">
+  <img src="docs/screenshots/plan-light.png" alt="Plan-Freigabe in Parallax: Plan v2 wartet in der Leiste über dem Eingabefeld, im Transkript Plan v1 mit dem Feedback des Nutzers, im Seitenpanel der Plan mit Versionsauswahl und Code-Block">
+</picture>
+
+**Pläne prüfen, ohne den Faden zu verlieren.** Plan v2 wartet nicht modal in der Leiste über dem
+Eingabefeld (umsetzen, weiter planen, Feedback geben). Das Seitenpanel zeigt den Plan mit allen
+Versionen und den Änderungen zu v1; im Transkript steht v1 mit dem Feedback, das zu v2 geführt hat.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/files-dark.png">
+  <img src="docs/screenshots/files-light.png" alt="Datei-Viewer im Seitenpanel mit Syntax-Highlighting, im Transkript ein Explore-Agent im Hintergrund, eine Seitenfrage außerhalb des Kontexts, Dateiverweise und ein Diff">
+</picture>
+
+**Dateien, Seitenfragen, Hintergrund-Agenten.** Dateiverweise im Transkript öffnen die Datei im
+Seitenpanel (Syntax-Highlighting, Editor, Explorer). Dazu ein Explore-Agent, der im Hintergrund
+weiterläuft und seinen Fortschritt meldet, eine Seitenfrage, die nicht im Kontext landet, und der Diff
+der letzten Änderung.
+
+<sub>Projekte und Daten sind erfunden (Showcase im Playground).</sub>
+
 ## Voraussetzungen
 - **Node.js 26** (Minimum 22). `.node-version` enthält `26` für fnm, nvm-windows oder Volta.
 - **pnpm 12.8.2**: einmalig `npm i -g pnpm@12.8.2`. `packageManager` und der Lockfile pinnen die
@@ -243,3 +276,6 @@ Avast, AVG).
 - `CLAUDE.md` – Regeln, Befehle, Ordner-Ownership.
 - `docs/plan.md` – abgestimmter Gesamtplan.
 - `docs/progress.md`, `docs/decisions.md`, `docs/architecture.md`, `docs/wp/`.
+- Die Bilder oben erzeugt `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/screenshots.ts` neu
+  (Showcase-Demos des Playgrounds in headless Chrome, Ausgabe `docs/screenshots/`; Details in
+  `scripts/README.md`).
