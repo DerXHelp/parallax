@@ -45,6 +45,7 @@ import { TooltipProvider } from '@web/ui/tooltip';
 import { navigationDemos } from './navigation-demos';
 import { PlaygroundScenario } from './PlaygroundScenario';
 import { SCENARIOS, type ScenarioId } from './scenarios';
+import { showcaseDemos } from './showcase/demos';
 import type { PlaygroundDemo } from './types';
 
 /** Developer labels of the gallery (no product UI text; real strings come from t()). */
@@ -287,6 +288,8 @@ export const shellDemos: readonly PlaygroundDemo[] = [
   // WP-58 / FIX-R5: the shell's Phase 3 parts (header buttons, menu, drop overlay, narrow window,
   // slot errors) – formerly listed by the preferences playground.
   ...shellPhase3Demos,
+  // WP-68: the README screenshots (scripts/screenshots.ts).
+  ...showcaseDemos,
   {
     id: 'ui-status-icons',
     title: 'UI – Status icons (all display statuses)',
