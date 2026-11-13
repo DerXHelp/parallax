@@ -26,6 +26,13 @@ import { patchHunks } from './files';
 import { promptImageCount, receivedImagesText } from './image';
 import { answerTurn, contextFor, type Turn } from './turn';
 import type { FakeScriptContext } from './types';
+import {
+  FAKE_BACKGROUND_STEPS,
+  recordSubagent,
+  subagentPromptMessage,
+  subagentStepMessages,
+  subagentTextMessage,
+} from './wp69';
 
 /** `fake:background`: the agent runs this long (× speed; not capped by maxDelayMs). */
 export const FAKE_BACKGROUND_MS = 30_000;
@@ -54,6 +61,7 @@ export async function background(
   const toolUseId = ctx.ids.toolUseId();
   const taskId = `task_${toolUseId}`;
   const description = FAKE_BACKGROUND_DESCRIPTION;
+  const prompt = 'Look through the project and summarize it.';
   const output = `tasks\\${taskId}.output`;
   const outputFile = await ctx.files.write(output, `[fake] ${description} started\n`);
   await ctx.play(
@@ -63,7 +71,7 @@ export async function background(
         toolUseId,
         taskId,
         description,
-        prompt: 'Look through the project and summarize it.',
+        prompt,
         reply: FAKE_BACKGROUND_SUMMARY,
         runInBackground: true,
         outputFile,
@@ -72,11 +80,18 @@ export async function background(
       streamedText(c, FAKE_BACKGROUND_STARTED),
     ),
   );
+  // WP-69: the agent's own transcript – prompt and first step now, a step at halfway, the answer at the end.
+  const [firstStep, secondStep] = FAKE_BACKGROUND_STEPS;
+  recordSubagent(ctx, sessionId, taskId, [
+    subagentPromptMessage(c, toolUseId, prompt),
+    ...(firstStep === undefined ? [] : subagentStepMessages(c, toolUseId, firstStep)),
+  ]);
   ctx.startTask({
     taskId,
     run: async (control) => {
       await control.wait(FAKE_BACKGROUND_MS / 2);
       await ctx.files.append(output, '[fake] halfway: writing the summary\n');
+      if (secondStep !== undefined) recordSubagent(ctx, sessionId, taskId, subagentStepMessages(c, toolUseId, secondStep));
       control.emit(
         messagesOf(
           taskProgress(c, { taskId, toolUseId, activity: 'Running Write the summary', summary: 'Writing the summary', usage: usage(4_200, 3, 15_000) }),
@@ -84,6 +99,7 @@ export async function background(
       );
       await control.wait(FAKE_BACKGROUND_MS / 2);
       await ctx.files.append(output, `[fake] ${FAKE_BACKGROUND_SUMMARY}\n`);
+      recordSubagent(ctx, sessionId, taskId, [subagentTextMessage(c, toolUseId, FAKE_BACKGROUND_SUMMARY)]);
       control.emit(
         messagesOf(
           subagentEnd(c, {

@@ -199,10 +199,17 @@ class HistoryBuilder {
     this.put({ ...call, task, status: statusWithTask(call, task) });
   }
 
-  finish(): TranscriptItem[] {
-    const items = [...this.items.values()].map((item) =>
-      item.kind === 'tool_call' && OPEN_STATUSES.has(item.status) ? { ...item, status: 'interrupted' as const } : item,
-    );
+  /**
+   * The items in order; tool calls still open (no result) become `interrupted` – the history can
+   * not continue – or, for a transcript that still grows (WP-69: a running subagent), `running`.
+   * Does not change the builder: more messages may follow.
+   */
+  finish(openAs: HistoryOpenStatus = 'interrupted'): TranscriptItem[] {
+    const items = [...this.items.values()].map((item) => {
+      if (item.kind !== 'tool_call' || !OPEN_STATUSES.has(item.status)) return item;
+      if (openAs === 'running' && (item.status === 'running' || item.status === 'background')) return item;
+      return { ...item, status: openAs };
+    });
     return items.sort((a, b) => a.order - b.order);
   }
 }
@@ -213,3 +220,32 @@ export const normalizeHistory: NormalizeHistory = (messages, ctx) => {
   for (const message of messages) builder.add(message);
   return { items: builder.finish(), unknownCounts: { ...builder.unknownCounts } };
 };
+
+/** Status of tool calls without a result in a history snapshot (see `HistoryAccumulator.items`). */
+export type HistoryOpenStatus = 'interrupted' | 'running';
+
+/**
+ * WP-69: the history adapter for a transcript that grows (a subagent's `agent-<id>.jsonl` read while
+ * it runs): messages are added in pieces, each snapshot equals `normalizeHistory` over all messages
+ * so far – same ids, orders from `ctx.nextOrder` on, stable while messages are appended; a later
+ * tool result updates its earlier call.
+ */
+export interface HistoryAccumulator {
+  add(messages: readonly HistoryMessage[]): void;
+  /** Items in `order`; `openAs`: tool calls without a result (`running` while the source grows). */
+  items(openAs: HistoryOpenStatus): TranscriptItem[];
+  readonly unknownCounts: Readonly<Record<string, number>>;
+}
+
+export function createHistoryAccumulator(ctx: NormalizerContext): HistoryAccumulator {
+  const builder = new HistoryBuilder(ctx);
+  return {
+    add(messages) {
+      for (const message of messages) builder.add(message);
+    },
+    items: (openAs) => builder.finish(openAs),
+    get unknownCounts() {
+      return builder.unknownCounts;
+    },
+  };
+}

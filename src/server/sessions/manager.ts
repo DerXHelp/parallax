@@ -80,6 +80,7 @@ import { catalogOrFallback, type ModelCatalog } from './models';
 import {
   capInput as normalizerCapInput,
   capText as normalizerCapText,
+  createHistoryAccumulator,
   createLiveNormalizer,
   estimateContextGauge,
   normalizeContextUsage,
@@ -605,6 +606,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       normalizeHistory: deps.normalizer?.normalizeHistory ?? normalizeHistory,
       normalizeContextUsage: deps.normalizer?.normalizeContextUsage ?? normalizeContextUsage,
       estimateContextGauge: deps.normalizer?.estimateContextGauge ?? estimateContextGauge,
+      createHistoryAccumulator: deps.normalizer?.createHistoryAccumulator ?? createHistoryAccumulator,
     },
     reduceStatus: deps.reduceStatus ?? realReduceStatus,
     ids: deps.ids ?? { newId, newUuid },

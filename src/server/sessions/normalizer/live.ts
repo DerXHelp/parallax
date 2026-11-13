@@ -1181,6 +1181,7 @@ class LiveNormalizerImpl implements LiveNormalizer {
             hookEvent: h.data.hook_event ?? prev?.hookEvent ?? '',
             outcome: h.data.outcome ?? prev?.outcome ?? null,
             output: text === '' && prev !== null ? prev.output : capText(text, this.ctx),
+            exitCode: h.data.exit_code ?? prev?.exitCode ?? null,
           },
           out,
         );

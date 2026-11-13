@@ -49,6 +49,9 @@ import {
   sessionInfoSectionSchema,
   sessionSummarySchema,
   settingsPatchSchema,
+  subagentIdSchema,
+  subagentTranscriptPageSchema,
+  SUBAGENT_TRANSCRIPT_LIMITS,
   settingsSchema,
   transcriptItemSchema,
 } from './model';
@@ -466,6 +469,28 @@ export const commandSchema = z.discriminatedUnion('name', [
   }),
   /** Reload skills or plugins from disk (`reloadSkills`, `reloadPlugins`); rules as `session.mcpAction`. */
   z.object({ name: z.literal('session.reload'), entryId: entryIdSchema, what: reloadTargetSchema }),
+  // ---- WP-69 (subagent transcript) ----
+  /**
+   * Read a subagent's own transcript (`getSubagentMessages`, the CLI's `agent-<id>.jsonl`) as items of
+   * a list of its own – never part of the session's conversation, nothing is stored. Only on request
+   * (the side panel polls while `running`). `conversationId` null = the current conversation;
+   * `offset` null = the newest `limit` items. Works without a process (reads the file) and for
+   * archived/external entries. A missing file is an empty page; CONVERSATION_NOT_FOUND,
+   * SESSION_NOT_STARTED (no Claude session yet), FILE_NOT_READABLE (the read failed or timed out).
+   */
+  z.object({
+    name: z.literal('session.subagentTranscript'),
+    entryId: entryIdSchema,
+    agentId: subagentIdSchema,
+    conversationId: conversationIdSchema.nullable().default(null),
+    offset: z.number().int().nonnegative().nullable().default(null),
+    limit: z
+      .number()
+      .int()
+      .positive()
+      .max(SUBAGENT_TRANSCRIPT_LIMITS.maxPageItems)
+      .default(SUBAGENT_TRANSCRIPT_LIMITS.pageItems),
+  }),
   /**
    * Host: open an http(s) link in the Windows default browser (the Parallax window is a Chrome app
    * profile without any sign-in). OPEN_FAILED when no default browser could be started – the client
@@ -588,6 +613,7 @@ export const commandResultSchemas = {
   'session.info': z.object({ available: z.boolean(), data: sessionInfoSectionSchema.nullable() }),
   'session.mcpAction': z.object({}),
   'session.reload': z.object({}),
+  'session.subagentTranscript': subagentTranscriptPageSchema,
   'link.open': z.object({}),
 } as const satisfies Record<CommandName, z.ZodType>;
 export type CommandResult<N extends CommandName> = z.infer<(typeof commandResultSchemas)[N]>;

@@ -8,6 +8,7 @@ import {
   openSidePanel,
   registerSidePanelHost,
   setSidePanelFile,
+  setSidePanelSubagent,
   useSidePanelTab,
 } from './state';
 
@@ -24,10 +25,12 @@ const SidePanelFrame = lazy(loadFrame);
  * Side panel of a session pane (Phase 3, ADR-150; WP-50 lifted the frame out of the plan panel,
  * WP-54 added tabs, splitter, viewer history and the overlay): a plain complementary region next
  * to the transcript – non-modal, no focus trap. It holds the open tab per session (state.ts) and
- * serves the shell requests `sidePanel` (open a tab, `null` closes) and `openFile` (viewer tab).
+ * serves the shell requests `sidePanel` (open a tab, `null` closes), `openFile` (viewer tab) and
+ * `openSubagent` (WP-69: the transcript of one subagent).
  * Opening by request moves the focus into the panel (once the frame is there); Esc inside it or the
  * close button closes it and the focus returns to the element that opened it. The tabs render the
- * feature slots `PlanPanel`, `FilePanel`, `FilesPanel`, `TasksPanel`; only the active tab is mounted.
+ * feature slots `PlanPanel`, `FilePanel`, `FilesPanel`, `TasksPanel`, `SubagentPanel`; only the
+ * active tab is mounted.
  */
 export const SidePanelHost = memo(function SidePanelHost({ sessionKey }: { sessionKey: string }) {
   const tab = useSidePanelTab(sessionKey);
@@ -88,6 +91,18 @@ export const SidePanelHost = memo(function SidePanelHost({ sessionKey }: { sessi
       col: request.col ?? null,
     });
     openFromRequest('file');
+    return true;
+  });
+
+  // WP-69: the Agent card's "Open transcript" – the tab shows the latest subagent.
+  useShellRequestHandler('openSubagent', (request) => {
+    if (request.sessionKey !== sessionKey) return false;
+    setSidePanelSubagent(sessionKey, {
+      agentId: request.agentId,
+      title: request.title,
+      subagentType: request.subagentType ?? null,
+    });
+    openFromRequest('subagent');
     return true;
   });
 

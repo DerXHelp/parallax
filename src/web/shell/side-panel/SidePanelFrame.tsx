@@ -16,7 +16,13 @@ import { Splitter } from '@web/ui/splitter';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@web/ui/tabs';
 import { SIDE_PANEL_TABS, type SidePanelTab } from '../requests';
 import { useFeatureSlots } from '../slots';
-import { goBackSidePanelFile, openSidePanel, useSidePanelFile, useSidePanelHistory } from './state';
+import {
+  goBackSidePanelFile,
+  openSidePanel,
+  useSidePanelFile,
+  useSidePanelHistory,
+  useSidePanelSubagent,
+} from './state';
 import {
   SIDE_PANEL_MIN_WIDTH,
   clampSidePanelWidth,
@@ -33,8 +39,9 @@ function isSidePanelTab(value: string): value is SidePanelTab {
 
 /** The content of one tab: the feature slots (placeholders render nothing). */
 const TabContent = memo(function TabContent({ sessionKey, tab }: { sessionKey: string; tab: SidePanelTab }) {
-  const { PlanPanel, FilePanel, FilesPanel, TasksPanel } = useFeatureSlots();
+  const { PlanPanel, FilePanel, FilesPanel, TasksPanel, SubagentPanel } = useFeatureSlots();
   const file = useSidePanelFile(sessionKey);
+  const subagent = useSidePanelSubagent(sessionKey);
   switch (tab) {
     case 'plan':
       return <PlanPanel sessionKey={sessionKey} />;
@@ -53,6 +60,17 @@ const TabContent = memo(function TabContent({ sessionKey, tab }: { sessionKey: s
       return <FilesPanel sessionKey={sessionKey} />;
     case 'tasks':
       return <TasksPanel sessionKey={sessionKey} />;
+    case 'subagent':
+      // WP-69: another agent → a fresh panel (its own list, polling and scroll position).
+      return subagent === null ? null : (
+        <SubagentPanel
+          key={subagent.agentId}
+          sessionKey={sessionKey}
+          agentId={subagent.agentId}
+          title={subagent.title}
+          subagentType={subagent.subagentType}
+        />
+      );
   }
 });
 
@@ -131,8 +149,8 @@ export interface SidePanelFrameProps {
 
 /**
  * The open panel (lazy chunk of SidePanelHost.tsx): a frame of the remembered width with the
- * splitter on its left edge, the tab row (Plan · File – only with an open file · Files · Tasks),
- * "Back" for the viewer and "Close". Below 1100 px of session area it lies over the transcript
+ * splitter on its left edge, the tab row (Plan · File – only with an open file · Files · Tasks ·
+ * Agent – WP-69, only once a subagent was opened), "Back" for the viewer and "Close". Below 1100 px of session area it lies over the transcript
  * (anchored at the right edge, no focus trap).
  */
 export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanelFrameProps) {
@@ -144,7 +162,12 @@ export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanel
   const [dragging, setDragging] = useState(false);
   const width = clampSidePanelWidth(stored ?? defaultSidePanelWidth(area), area);
   const file = useSidePanelFile(sessionKey);
-  const tabs = SIDE_PANEL_TABS.filter((candidate) => candidate !== 'file' || file !== null || tab === 'file');
+  const subagent = useSidePanelSubagent(sessionKey);
+  const tabs = SIDE_PANEL_TABS.filter((candidate) => {
+    if (candidate === 'file') return file !== null || tab === 'file';
+    if (candidate === 'subagent') return subagent !== null || tab === 'subagent';
+    return true;
+  });
 
   return (
     <div
@@ -199,14 +222,22 @@ export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanel
                   aria-label={
                     value === 'file' && file !== null
                       ? t('sidePanel.fileTab', { name: windowsBaseName(file.path) })
-                      : undefined
+                      : value === 'subagent' && subagent !== null
+                        ? t('sidePanel.subagentTab', { title: subagent.title })
+                        : undefined
                   }
+                  title={value === 'subagent' && subagent !== null ? subagent.title : undefined}
                   className="h-9 min-w-0"
                 >
                   {t(`sidePanel.tab.${value}`)}
                   {value === 'file' && file !== null ? (
                     <span className="text-muted-foreground max-w-40 truncate font-mono text-2xs font-normal">
                       {windowsBaseName(file.path)}
+                    </span>
+                  ) : null}
+                  {value === 'subagent' && subagent !== null ? (
+                    <span className="text-muted-foreground max-w-40 truncate text-2xs font-normal">
+                      {subagent.title}
                     </span>
                   ) : null}
                 </TabsTrigger>

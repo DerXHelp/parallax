@@ -32,6 +32,22 @@ async function run(op) {
       return sdk.listSubagents(op.sessionId);
     case 'subagentMessages':
       return sdk.getSubagentMessages(op.sessionId, op.agentId);
+    case 'subagentSlice': {
+      // WP-69: the SDK reads the whole file anyway; only the new part crosses to the main thread.
+      const all = await sdk.getSubagentMessages(op.sessionId, op.agentId);
+      const list = Array.isArray(all) ? all : [];
+      const from = Math.max(0, Math.min(Number(op.from) || 0, list.length));
+      const uuidAt = (index) => {
+        const message = index >= 0 ? list[index] : null;
+        return message !== null && typeof message === 'object' && typeof message.uuid === 'string' ? message.uuid : null;
+      };
+      return {
+        total: list.length,
+        previousUuid: uuidAt(from - 1),
+        lastUuid: uuidAt(list.length - 1),
+        messages: list.slice(from),
+      };
+    }
     case 'info': {
       const info = await sdk.getSessionInfo(op.sessionId);
       return info === undefined ? null : info;

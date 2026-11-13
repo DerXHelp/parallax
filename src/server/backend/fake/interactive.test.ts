@@ -54,6 +54,7 @@ import {
 } from './phase3';
 import { FAKE_PLAN_INPUT_CHUNKS } from './plan';
 import { FAKE_REMOTE_OFF_TEXT } from './remote';
+import { FAKE_HOOK_BLOCK_OUTPUT, FAKE_HOOKS_ANSWER } from './wp69';
 
 const launch = await createFakeClaudeIntegration().launchSpecFor('standard', SAMPLE_IDS.entry);
 
@@ -959,6 +960,32 @@ describe('WP-63 feedback scenarios', () => {
     expect(Object.keys(limits[0]?.windows ?? {})).toEqual(['five_hour', 'seven_day']);
     expect(h.items().some((i) => i.kind === 'system' && i.event === 'rate_limit')).toBe(false);
     expect(texts(h.items())).toEqual([FAKE_LIMIT_WARNING_ANSWER]);
+    await h.close();
+  });
+});
+
+describe('WP-69 hook runs', () => {
+  it('fake:hooks → five hook items (upsert per hook_id), the blocking PreToolUse:Write with exit 2 and its error result', async () => {
+    const h = harness();
+    h.send('fake:hooks');
+    await h.turnDone(1);
+    const items = h.items();
+    const hooks = items.flatMap((i) => (i.kind === 'system' && i.event === 'hook' ? [i] : []));
+    expect(hooks.map((hook) => [hook.hookName, hook.hookEvent, hook.outcome, hook.exitCode])).toEqual([
+      ['UserPromptSubmit', 'UserPromptSubmit', 'success', 0],
+      ['PreToolUse:Read', 'PreToolUse', 'success', 0],
+      ['PostToolUse:Read', 'PostToolUse', 'success', 0],
+      ['PreToolUse:Write', 'PreToolUse', 'error', 2],
+      ['Stop', 'Stop', 'success', 0],
+    ]);
+    expect(hooks[3]?.output.text).toBe(FAKE_HOOK_BLOCK_OUTPUT);
+    const calls = items.flatMap((i) => (i.kind === 'tool_call' ? [i] : []));
+    expect(calls.map((call) => [call.toolName, call.status])).toEqual([
+      ['Read', 'done'],
+      ['Write', 'error'],
+    ]);
+    expect(texts(items).at(-1)).toBe(FAKE_HOOKS_ANSWER);
+    expect(h.handle.diagnostics).toEqual([]);
     await h.close();
   });
 });
