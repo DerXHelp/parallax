@@ -2133,3 +2133,27 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   Schemas importiert zod aus `vendor`, der Schalter läuft also immer zuerst – unabhängig vom Chunking. Selten gebrauchte
   Composer-Teile (`AttachmentChips`, `SlashMenu`, `RateLimitBanner`, `lib/native`) sind Lazy-Chunks.
 - **Folgen:** Der Start besteht seit WP-66 aus 8 statt 4 Dateien; Ursache ungeklärt, Summe im Budget.
+
+## ADR-182 – Session-Info über interne Query-Methoden, nur auf Anfrage
+- **Datum/WP:** 13.11.2026, WP-67; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Die Reiter der Session-Info lesen die Dialog-Daten der laufenden CLI (`get_status`,
+  `get_memory_dialog`, `get_skills_dialog`, `get_hooks_listing`, `list_permission_rules`, `mcpServerStatus`,
+  `export_conversation`) nur beim Öffnen/Aktualisieren, ohne Cache und ohne automatisches Wecken. Laufzeitprüfung je
+  Methode; fehlt sie oder meldet die CLI „not available“ → `available: false` ohne Fehler. Antworten werden nie
+  geloggt, gespeichert oder ins CLI-Profil übernommen; Lesefehler tragen keinen CLI-Text (könnte Kontodaten
+  enthalten). Rohkonfiguration (MCP-`config` außer `type`, Hook-`editable`) verlässt das Backend nie.
+- **Folgen:** Antwortformen aus `claude` 2.1.323 abgeleitet (keine Live-Probe); Abgleich im ersten Live-`cli-check`.
+
+## ADR-183 – Lazy-Namensräume für Texte eines Lazy-Chunks
+- **Datum/WP:** 13.11.2026, WP-67; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Texte, die nur ein Lazy-Chunk braucht, dürfen ein eigenes Wörterbuchpaar haben, das nur dieser
+  Chunk importiert (`translateFrom`, eigener Hook); sie stehen weder in `dictionaries.ts` noch in `dictionary.de.ts`.
+  `bundle.test.ts` führt sie in `LAZY_NAMESPACES` und prüft: nicht im Start-Graphen, nicht in `dictionary.de`, vom
+  Chunk erreicht; Paritäts-/Nutzungs-Tests wie jeder Namensraum.
+- **Folgen:** Ergänzt ADR-153; Mittel gegen das enge Start-Budget.
+
+## ADR-184 – Export als Browser-Download
+- **Datum/WP:** 13.11.2026, WP-67; angenommen (13.11.2026, Koordinator beim Merge).
+- **Entscheidung:** Der Server liefert Text + vorgeschlagenen Dateinamen; gespeichert wird per Blob-Download im
+  Browser (`lib/download`), der Server schreibt nichts in Nutzerpfade. E2E prüfen „Kopieren“ nur gegen eine in der
+  Seite ersetzte Zwischenablage.
