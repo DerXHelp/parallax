@@ -154,10 +154,11 @@ export const SubagentPanel = memo(function SubagentPanel({
     () => rootRef.current?.querySelector<HTMLElement>('[role="region"]') ?? null,
     [],
   );
+  // Not before virtua measured the viewport (since 0.53.6 after the first render): `onResize` follows.
   const scrollToEnd = useCallback(() => {
     const handle = listRef.current;
     const element = scrollElement();
-    if (handle === null || element === null) return;
+    if (handle === null || element === null || handle.viewportSize === 0) return;
     element.scrollTop = Math.max(0, handle.scrollSize - handle.viewportSize);
   }, [scrollElement]);
 
