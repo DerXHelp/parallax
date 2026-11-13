@@ -15,6 +15,7 @@ import {
   type SessionFile,
   type SessionFileOp,
   type SessionSummary,
+  type SideQuestionItem,
   type TaskInfo,
   type ToolCallItem,
   type ToolCallStatus,
@@ -1169,6 +1170,32 @@ export class FakeHost {
       case 'link.open':
         this.linkOpens.push(cmd.url);
         return this.linkOpenError === null ? this.ok() : { ok: false, error: this.linkOpenError };
+      // WP-66: side questions and withdrawing a waiting message.
+      case 'session.askSideQuestion':
+        return this.ok({ itemId: this.askSideQuestion(cmd.entryId, cmd.question, cmd.threadId) });
+      case 'session.cancelSideQuestion': {
+        const item = this.view(cmd.entryId)?.items.find((i) => i.id === cmd.itemId);
+        if (item?.kind === 'side_question' && item.status === 'pending') {
+          this.pushOps(cmd.entryId, [{ op: 'item.upsert', item: { ...item, status: 'cancelled' } }]);
+        }
+        return this.ok();
+      }
+      case 'session.deleteSideQuestion': {
+        const ids = (this.view(cmd.entryId)?.items ?? [])
+          .filter((i) => i.kind === 'side_question' && i.threadId === cmd.threadId)
+          .map((i) => i.id);
+        if (ids.length > 0) this.pushOps(cmd.entryId, ids.map((itemId) => ({ op: 'item.remove' as const, itemId })));
+        return this.ok();
+      }
+      case 'session.withdrawQueued': {
+        const queue = this.view(cmd.entryId)?.detail.queue ?? [];
+        const prompt = queue.find((q) => q.messageUuid === cmd.messageUuid);
+        if (prompt === undefined) return this.ok({ withdrawn: false, text: null });
+        this.pushOps(cmd.entryId, [
+          { op: 'detail.patch', patch: { queue: queue.filter((q) => q.messageUuid !== cmd.messageUuid) } },
+        ]);
+        return this.ok({ withdrawn: true, text: prompt.text.text });
+      }
       // Phase 2 commands (WP-30) included: the packages answer them in their tests via `onCommand`.
       case 'session.setFastMode':
       case 'session.switchConversation':
@@ -1185,6 +1212,42 @@ export class FakeHost {
       case 'fs.listDirectory':
         return { ok: false, error: makeError('NOT_IMPLEMENTED', { name: cmd.name satisfies CommandName }) };
     }
+  }
+
+  /**
+   * WP-66: a pending side question (id like the engine's `px:<conversation>:<order>`); with
+   * `replyToPrompts` (playground) answered a moment later. Returns its item id.
+   */
+  private askSideQuestion(entryId: EntryId, question: string, threadId: string | null): string {
+    const order = this.nextOrder(entryId);
+    const id = `px:fake:${String(order)}`;
+    const item: SideQuestionItem = {
+      kind: 'side_question',
+      id,
+      order,
+      at: this.now(),
+      parentToolUseId: null,
+      threadId: threadId ?? id,
+      question,
+      status: 'pending',
+      response: null,
+      synthetic: false,
+      fallbackModel: null,
+      retry: null,
+      error: null,
+      answeredAt: null,
+    };
+    this.pushOps(entryId, [{ op: 'item.upsert', item }]);
+    if (this.options.replyToPrompts === true) {
+      this.later(() => {
+        const current = this.view(entryId)?.items.find((i) => i.id === id);
+        if (current?.kind !== 'side_question' || current.status !== 'pending') return;
+        const response = `A playground side answer to “${question.slice(0, 80)}”. No model was called.`;
+        const answered: SideQuestionItem = { ...current, status: 'answered', response, answeredAt: this.now() };
+        this.pushOps(entryId, [{ op: 'item.upsert', item: answered }]);
+      }, 600);
+    }
+    return id;
   }
 
   /** Adds the user message (and optionally a streamed reply); returns its messageUuid. */

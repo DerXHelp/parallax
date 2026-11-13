@@ -135,8 +135,10 @@ describe('slash menu (WP-37 §1)', () => {
     await start();
     const user = userEvent.setup();
     await user.type(textbox(), '/');
+    // WP-66: the menu is a lazy chunk (loaded on the first opening).
+    await screen.findByRole('listbox', { name: 'Commands' });
     const names = menuNames();
-    expect(names.slice(0, 8)).toEqual([
+    expect(names.slice(0, 9)).toEqual([
       'model',
       'effort',
       'fast',
@@ -145,13 +147,14 @@ describe('slash menu (WP-37 §1)', () => {
       'status',
       'help',
       'resume',
+      'btw',
     ]);
     expect(names).toEqual(expect.arrayContaining(['clear', 'compact', 'review-pr']));
     expect(names).not.toContain('vim');
     // The catalog's `model` is the native one (once, marked Parallax).
     expect(names.filter((name) => name === 'model')).toHaveLength(1);
     const listbox = screen.getByRole('listbox', { name: 'Commands' });
-    expect(within(listbox).getAllByText('Parallax')).toHaveLength(8);
+    expect(within(listbox).getAllByText('Parallax')).toHaveLength(9);
     expect(within(listbox).getAllByText('Claude Code').length).toBeGreaterThan(0);
     expect(within(listbox).getByText('Skill/command')).toBeTruthy();
     expect(textbox().getAttribute('aria-controls')).toBe(listbox.id);

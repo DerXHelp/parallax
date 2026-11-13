@@ -44,6 +44,29 @@ export const en = {
     /** A long message starts collapsed (V4-07). */
     showAll: { one: 'Show all ({count} line)', other: 'Show all {count} lines' },
     showLess: 'Show less',
+    /** WP-66 §1.5: take a waiting message back into the composer. */
+    withdraw: 'Take back into the message field',
+    alreadyTaken: 'Already taken over – Claude has the message.',
+    withdrawnCopied: 'Message taken back – its text is on the clipboard.',
+  },
+  /** WP-66: the side-question card (`/btw`, never part of the conversation). */
+  side: {
+    label: 'Side question · not in the context',
+    pending: 'asking…',
+    retry: 'asking… (retry {attempt} of {max})',
+    cancel: 'Cancel',
+    cancelled: 'Cancelled',
+    synthetic: 'No answer available',
+    fallback: 'Answered by {model}',
+    busy: 'Too many side questions right now – try again in a moment',
+    unavailable: 'Side question not available',
+    ended: 'The session ended before the answer came',
+    followUp: 'Follow up',
+    followUpPlaceholder: 'Follow-up – does not go into the context',
+    ask: 'Ask',
+    closeFollowUp: 'Close',
+    copy: 'Copy the answer',
+    delete: 'Delete the side question',
   },
   /** Thumbnails and the lightbox (WP-37). */
   image: {

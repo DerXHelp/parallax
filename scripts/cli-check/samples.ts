@@ -29,6 +29,8 @@ export function sampleObservation(p: Partial<Observation> = {}): Observation {
     sessionTitle: true,
     usageQuery: true,
     backgroundTasks: true,
+    sideQuestion: true,
+    withdrawQueued: true,
     ...p,
   };
 }
@@ -79,6 +81,10 @@ export function sampleRecord(p: Partial<RunRecord> = {}): RunRecord {
         sessionTitle: { available: true, detail: null, title: 'CLI test prompt check' },
         usage: { available: true, detail: null, windows: ['five_hour', 'seven_day'] },
         backgroundTasks: true,
+      },
+      sideQuestion: {
+        sideQuestion: { available: true, detail: null, response: 'OK', synthetic: false, toolRequests: 0 },
+        withdrawQueued: true,
       },
     },
     smoke: sampleSmoke(),

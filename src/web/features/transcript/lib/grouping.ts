@@ -1,4 +1,4 @@
-import type { SystemItem, ToolCallItem, TranscriptItem } from '@shared/model';
+import type { SideQuestionItem, SystemItem, ToolCallItem, TranscriptItem } from '@shared/model';
 import type { TranscriptViewMode } from '@web/state/transcript-view';
 
 /**
@@ -15,13 +15,16 @@ import type { TranscriptViewMode } from '@web/state/transcript-view';
  * - visible – ends a group: user messages, assistant texts, the turn footer, decisions (tool calls
  *   with a permission decision, AskUserQuestion, ExitPlanMode), subagent cards (Agent/Task), error
  *   notices, `rate_limit` rejected, compact boundary, new conversation, API retry, model fallback,
- *   permission denied, interruptions, handoffs, task notifications, local command output and
- *   informational warnings/errors – all of them change what happens next or answer the user;
+ *   permission denied, interruptions, handoffs, task notifications, local command output,
+ *   informational warnings/errors and side questions (WP-66: never inside a group) – all of them
+ *   change what happens next or answer the user;
  * - step: thinking, every other tool call with its result, and the quiet system items (hooks,
  *   memory recall, system notifications, informational at level info, unknown SDK messages) –
  *   bookkeeping of the work, interesting only when looking into it;
  * - hidden: `rate_limit` allowed / allowed_warning (§1.2 – older logs still hold such items; the
- *   limit bar shows every value). Hidden items are skipped and do not split a group.
+ *   limit bar shows every value) and the later questions of a side-question thread (WP-66: the card
+ *   of its earliest loaded question shows the whole thread). Hidden items are skipped and do not
+ *   split a group.
  */
 
 /** v visible, s step, i step with pictures in its result, h hidden. */
@@ -73,7 +76,29 @@ export function classifyItem(item: TranscriptItem): ItemCode {
       return hasResultImages(item) ? 'i' : 's';
     case 'system':
       return systemCode(item);
+    case 'side_question':
+      return 'v';
   }
+}
+
+/**
+ * The role code of every item by id (the list maps the top-level ids through it). WP-66: only the
+ * earliest loaded question of a side-question thread is a row (normally its first question) – that
+ * card renders the whole thread, the other questions of the thread are hidden.
+ */
+export function itemCodesById(items: readonly TranscriptItem[]): Map<string, ItemCode> {
+  const codes = new Map<string, ItemCode>();
+  const leads = new Map<string, SideQuestionItem>();
+  for (const item of items) {
+    codes.set(item.id, classifyItem(item));
+    if (item.kind !== 'side_question') continue;
+    const lead = leads.get(item.threadId);
+    if (lead === undefined || item.order < lead.order) leads.set(item.threadId, item);
+  }
+  for (const item of items) {
+    if (item.kind === 'side_question' && leads.get(item.threadId) !== item) codes.set(item.id, 'h');
+  }
+  return codes;
 }
 
 export type TranscriptRowModel =

@@ -73,6 +73,7 @@ import { REMOTE_OFF, type RemoteState } from './remoteControl';
 import { ActivityTracker, fallbackSummary } from './overview';
 import { INITIAL_RETRY_STATE, type AutoRetryPolicy, type RetryState } from './retry';
 import type { SessionRuntime } from './runtime';
+import type { PendingSideQuestion } from './sideQuestions';
 import { acceptsAiTitle, aiTitleFrom, summaryOf, withCurrentConversation } from './summary';
 
 // =====================================================================================
@@ -348,6 +349,8 @@ export class EntryState {
   followClaudeDefault = false;
   /** WP-64: every enable/disable/process end gets a new generation; older answers are ignored. */
   remoteGeneration = 0;
+  /** WP-66: open side questions of the running process by item id (sideQuestions.ts). */
+  readonly sideQuestions = new Map<string, PendingSideQuestion>();
   /**
    * Phase 3: `todos` / `planFile` of the current conversation (ADR-148/149). Fed only while a
    * mirror exists; (re)seeded from the mirror's items whenever a mirror is built.
@@ -829,7 +832,37 @@ export class EntryState {
       }
     })();
     this.loading = { buffer, promise };
+    // WP-66: after the load (the ops then reach the mirror, not the discarded buffer).
+    promise.then(
+      (view) => {
+        this.repairStaleSideQuestions(view.items);
+      },
+      () => undefined,
+    );
     return promise;
+  }
+
+  /**
+   * WP-66: a side question still `pending` in the log although no request runs (the server stopped
+   * without ending it) ends `failed` – never a card that waits forever.
+   */
+  repairStaleSideQuestions(items: readonly TranscriptItem[]): void {
+    const ops: SessionOp[] = items.flatMap((item): SessionOp[] =>
+      item.kind === 'side_question' && item.status === 'pending' && !this.sideQuestions.has(item.id)
+        ? [
+            {
+              op: 'item.upsert',
+              item: {
+                ...item,
+                status: 'failed',
+                retry: null,
+                error: makeError('SESSION_NOT_RUNNING', { entryId: this.entry.id, reason: 'restart' }),
+              },
+            },
+          ]
+        : [],
+    );
+    if (ops.length > 0) this.emit(ops);
   }
 
   /** A mirror without log items (the log could not be read; the session still needs one). */

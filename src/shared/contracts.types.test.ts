@@ -87,6 +87,7 @@ function itemLabel(item: TranscriptItem): string {
     case 'thinking':
     case 'tool_call':
     case 'turn_result':
+    case 'side_question':
       return item.kind;
     case 'system':
       return systemLabel(item.event);
@@ -206,7 +207,7 @@ describe('contract types', () => {
       | 'detail.patch'
     >();
     expectTypeOf<TranscriptItemKind>().toEqualTypeOf<
-      'user_message' | 'assistant_text' | 'thinking' | 'tool_call' | 'system' | 'turn_result'
+      'user_message' | 'assistant_text' | 'thinking' | 'tool_call' | 'system' | 'turn_result' | 'side_question'
     >();
     expectTypeOf<Decision['kind']>().toEqualTypeOf<DecisionKind>();
     expectTypeOf<RuleDestination>().toEqualTypeOf<

@@ -97,6 +97,13 @@ describe('rate-limit banner (ADR-112)', () => {
     return element;
   }
 
+  /** WP-66: the banner is a lazy chunk – rendered once a limit date is known. */
+  async function bannerLoaded(): Promise<void> {
+    await waitFor(() => {
+      banner();
+    });
+  }
+
   it('limited → "Continue at HH:MM" plans; planned → "Cancel"; after the reset "Continue" right away', async () => {
     vi.useFakeTimers({ toFake: ['Date'], now: NOW });
     refreshClock();
@@ -108,6 +115,7 @@ describe('rate-limit banner (ADR-112)', () => {
     });
     expect(document.querySelector('[data-slot="rate-limit-banner"]')).toBeNull();
     limited(h);
+    await bannerLoaded();
     const time = formatTime(RESET, 'en');
     expect(banner().getAttribute('data-state')).toBe('limited');
     expect(banner().textContent).toContain(`Usage limit reached – resets at ${time}`);
@@ -132,13 +140,14 @@ describe('rate-limit banner (ADR-112)', () => {
     expect(h.commands('session.continueAfterLimit').map((cmd) => cmd.enabled)).toEqual([true, false, true]);
   });
 
-  it('a planned continue shows from the start; German texts', () => {
+  it('a planned continue shows from the start; German texts', async () => {
     vi.useFakeTimers({ toFake: ['Date'], now: NOW });
     refreshClock();
     setLanguage('de');
     try {
       const h = start();
       limited(h, RESET);
+      await bannerLoaded();
       expect(banner().getAttribute('data-state')).toBe('scheduled');
       expect(banner().textContent).toContain(`Fortsetzen geplant um ${formatTime(RESET, 'de')}`);
       expect(within(banner()).getByRole('button', { name: 'Abbrechen' })).toBeTruthy();

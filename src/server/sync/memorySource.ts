@@ -176,6 +176,10 @@ export function createMemorySessionSource(options: { host?: HostState } = {}): M
       case 'editor.detect':
       case 'session.backgroundTasks':
       case 'session.regenerateTitle':
+      case 'session.askSideQuestion':
+      case 'session.cancelSideQuestion':
+      case 'session.deleteSideQuestion':
+      case 'session.withdrawQueued':
       case 'link.open':
         throw new CommandError(makeError('NOT_IMPLEMENTED', { command: cmd.name }));
     }

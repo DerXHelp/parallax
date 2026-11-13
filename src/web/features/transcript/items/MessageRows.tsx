@@ -7,14 +7,16 @@ import {
   FileIcon,
   SmartphoneIcon,
   SquareSlashIcon,
+  Undo2Icon,
   ZapIcon,
 } from 'lucide-react';
-import { memo, useContext, useMemo, type ReactNode } from 'react';
+import { memo, useContext, useMemo, useState, type ReactNode } from 'react';
 import type { AssistantTextItem, BlobRef, QueuedPrompt, ThinkingItem, UserMessageItem } from '@shared/model';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { Badge } from '@web/ui/badge';
 import { Button } from '@web/ui/button';
+import { IconButton } from '@web/ui/icon-button';
 import { Spinner } from '@web/ui/spinner';
 import { CappedContent } from '../components/CappedContent';
 import { Disclosure } from '../components/Disclosure';
@@ -22,6 +24,7 @@ import { ImageThumb } from '../components/ImageThumb';
 import { ModelBadge } from '../components/ModelBadge';
 import { QueuedIdsContext } from '../context';
 import { collapsedPreview, countLines } from '../lib/text';
+import { withdrawQueuedMessage } from '../lib/withdraw';
 import { Markdown } from '../markdown/Markdown';
 import { expansionKey, useExpanded } from '../state/expansion';
 
@@ -57,15 +60,41 @@ function Attachments({ attachments }: { attachments: readonly BlobRef[] }) {
   );
 }
 
+/** WP-66 §1.5 „Zurückholen“ of a waiting message (its text goes back into the composer). */
+function WithdrawButton({ sessionKey, messageUuid }: { sessionKey: string; messageUuid: string }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  return (
+    <IconButton
+      label={t('transcript.user.withdraw')}
+      size="icon-xs"
+      data-action="withdraw"
+      disabled={busy}
+      className="ml-auto"
+      onClick={() => {
+        setBusy(true);
+        void withdrawQueuedMessage(sessionKey, messageUuid).finally(() => {
+          setBusy(false);
+        });
+      }}
+    >
+      {busy ? <Spinner className="size-3" /> : <Undo2Icon aria-hidden />}
+    </IconButton>
+  );
+}
+
 function UserBubble({
   text,
   queued,
   sending = false,
+  withdraw = null,
   children,
 }: {
   text: ReactNode;
   queued: boolean;
   sending?: boolean;
+  /** WP-66: the waiting message that „Zurückholen“ takes back. */
+  withdraw?: { sessionKey: string; messageUuid: string } | null;
   children?: ReactNode;
 }) {
   const t = useT();
@@ -80,9 +109,10 @@ function UserBubble({
     >
       <span className="sr-only">{t('transcript.user.label')}</span>
       {queued ? (
-        <span className="text-muted-foreground inline-flex items-center gap-1 text-2xs">
+        <span className="text-muted-foreground flex items-center gap-1 text-2xs">
           <ClockIcon aria-hidden className="size-3" />
           {sending ? t('transcript.user.sending') : t('transcript.user.queued')}
+          {withdraw === null ? null : <WithdrawButton {...withdraw} />}
         </span>
       ) : null}
       {text}
@@ -133,9 +163,11 @@ export const UserMessageRow = memo(function UserMessageRow({
 }) {
   const t = useT();
   const queuedIds = useContext(QueuedIdsContext);
+  const queued = queuedIds.has(item.id);
   return (
     <UserBubble
-      queued={queuedIds.has(item.id)}
+      queued={queued}
+      withdraw={queued ? { sessionKey, messageUuid: item.id } : null}
       text={
         <CappedContent text={item.text.text} truncated={item.text.truncated} sessionKey={sessionKey}>
           {(text) => <UserText text={text} stateKey={expansionKey(sessionKey, item.id, 'text')} />}
@@ -177,11 +209,18 @@ export const UserMessageRow = memo(function UserMessageRow({
 });
 
 /** A prompt in `detail.queue` that has no item yet (grey until the CLI takes it over, F.9). */
-export const QueuedPromptRow = memo(function QueuedPromptRow({ prompt }: { prompt: QueuedPrompt }) {
+export const QueuedPromptRow = memo(function QueuedPromptRow({
+  prompt,
+  sessionKey,
+}: {
+  prompt: QueuedPrompt;
+  sessionKey: string;
+}) {
   return (
     <UserBubble
       queued
       sending={prompt.state === 'sending'}
+      withdraw={{ sessionKey, messageUuid: prompt.messageUuid }}
       text={<p className="text-ui break-words whitespace-pre-wrap">{prompt.text.text}</p>}
     >
       <Attachments attachments={prompt.attachments} />

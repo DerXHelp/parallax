@@ -417,6 +417,30 @@ export const commandSchema = z.discriminatedUnion('name', [
    * external entries.
    */
   z.object({ name: z.literal('session.regenerateTitle'), entryId: entryIdSchema }),
+  // ---- WP-66 (side question, withdraw a queued prompt) ----
+  /**
+   * A side question (`/btw`): answered from the current conversation state without tools and never
+   * part of the conversation. The engine creates a `side_question` item (status `pending`) in the
+   * current conversation at once and answers with its id; the answer arrives as an item update. A
+   * dormant entry is started for it (no turn). `threadId`: a follow-up of that thread (its answered
+   * questions go along as history), null = a new thread. Not for archived or external entries.
+   */
+  z.object({
+    name: z.literal('session.askSideQuestion'),
+    entryId: entryIdSchema,
+    question: z.string().trim().min(1).max(LIMITS.sideQuestionChars),
+    threadId: itemIdSchema.nullable(),
+  }),
+  /** Cancel a pending side question (→ status `cancelled`); anything else is a no-op. */
+  z.object({ name: z.literal('session.cancelSideQuestion'), entryId: entryIdSchema, itemId: itemIdSchema }),
+  /** Remove a whole side-question thread from Parallax (`item.remove` of each of its items). */
+  z.object({ name: z.literal('session.deleteSideQuestion'), entryId: entryIdSchema, threadId: itemIdSchema }),
+  /**
+   * Take a queued prompt back (`cancelAsyncMessage`): `withdrawn` → it left the queue and `text` is
+   * the typed text (for the composer); false = already taken over by the CLI (nothing changes).
+   * Needs a running process (SESSION_NOT_RUNNING); CLAUDE_CONTROL_FAILED when the CLI cannot do it.
+   */
+  z.object({ name: z.literal('session.withdrawQueued'), entryId: entryIdSchema, messageUuid: messageUuidSchema }),
   /**
    * Host: open an http(s) link in the Windows default browser (the Parallax window is a Chrome app
    * profile without any sign-in). OPEN_FAILED when no default browser could be started – the client
@@ -531,6 +555,10 @@ export const commandResultSchemas = {
   'session.setRemoteControl': z.object({}),
   'session.backgroundTasks': z.object({}),
   'session.regenerateTitle': z.object({}),
+  'session.askSideQuestion': z.object({ itemId: itemIdSchema }),
+  'session.cancelSideQuestion': z.object({}),
+  'session.deleteSideQuestion': z.object({}),
+  'session.withdrawQueued': z.object({ withdrawn: z.boolean(), text: z.string().nullable() }),
   'link.open': z.object({}),
 } as const satisfies Record<CommandName, z.ZodType>;
 export type CommandResult<N extends CommandName> = z.infer<(typeof commandResultSchemas)[N]>;
