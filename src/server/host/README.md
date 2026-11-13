@@ -11,6 +11,7 @@ Host-Befehle, die keine Session betreffen (ADR-101), als `HostCommandHandler`
 | --- | --- | --- |
 | `fsCommands.ts` | `createFsCommands({ fs?, home?, platform?, driveTimeoutMs? })` → `HostCommandHandler` (`names: ['fs.listDirectory']`), `DirFs`, `DirEntry`, `nodeDirFs`, `DRIVE_TIMEOUT_MS`, `DRIVE_PROBE_LIMIT`, `isHiddenName`, `childPath`, `parentPath` | Ordner-Browser, nur lesend |
 | `linkCommands.ts` | `createLinkCommands(opener)` → `HostCommandHandler` (`names: ['link.open']`), `LinkOpener`, `createSystemLinkOpener(deps?)`, `createRecordingLinkOpener()`, `defaultBrowserCommand`, `browserLaunch`, `splitCommandLine` | WP-65 §1.6b: http(s)-Link im **Standardbrowser** – Registry HKCU `…\UrlAssociations\https\UserChoice` (`ProgId`, Rückfall `http`) → `<ProgId>\shell\open\command` (HKCU, dann HKLM), nur absolute `.exe`, Start über `spawnGui` (ADR-144) mit der URL statt `%1`; nie `cmd /c start`. Fehler → `OPEN_FAILED {reason}` (die Web-UI öffnet den Link dann selbst, mit Hinweis). Mit dem FakeBackend der aufzeichnende Öffner (startet nichts, loggt `link.open (fake): <url>`) |
+| `login.ts` | `createLoginService(deps)` → `LoginService` (`HostCommandHandler` mit `names: ['profile.login', 'profile.loginCode', 'profile.loginCancel']`, `state(profileId)`, `dispose()`), `parseLoginCode(input, manualUrl)`, `LOGIN_HOME_DIR`, `LOGIN_FLOW_MS` | WP-70: Anmelden je Profil ohne Terminal (siehe unten) |
 
 **`fs.listDirectory` (ADR-119, WP-30 §4.12):**
 - `path: null` → Wurzeln: Benutzerordner (`kind: 'home'`, entfällt bei unsicherem Pfad, z. B.
@@ -36,3 +37,21 @@ Host-Befehle, die keine Session betreffen (ADR-101), als `HostCommandHandler`
 Tests: `fsCommands.test.ts` mit Temp-Baum (echte Junctions, auch eine verwaiste), Fake-`DirFs` für
 den Symlink auf `\\server\share` (braucht sonst Admin-Rechte), `truncated`, Fehlercodes und Wurzeln
 mit Fake-Laufwerken und Timeout (CR2-06: Zahl gleichzeitiger `stat`s über Aufrufe hinweg).
+
+**Anmelden je Profil (WP-70, `login.ts`):**
+- Je Profil höchstens ein kurzlebiger Anmelde-Prozess (`AgentBackend.startLogin`): Launch-Spec des
+  Profils (`launchSpecFor(profileId, 'login')`, ohne `PARALLAX_ENTRY_ID`), neutrales `cwd`
+  `<PARALLAX_HOME>\login`, im Backend `settingSources: []`, `persistSession: false`, keine MCP-Server.
+- `profile.login` antwortet sofort `{}`; der Ablauf ist Zustand (`ProfileSummary.login`, über
+  `loginState` der Engine im Host-Zustand, ADR-170): `starting` → `claudeAuthenticate` → `waiting`
+  (Link über `link.open` geöffnet; ein zweiter Klick öffnet ihn erneut) → `verifying` (eingefügter Code)
+  → `done` (nur `subscriptionType`) bzw. `failed` (`LOGIN_FAILED {reason}`, `LOGIN_BLOCKED`,
+  `LOGIN_UNAVAILABLE`, Launch-Fehler wie `CLAUDE_NOT_FOUND`). Nach Erfolg prüft der Dienst das Profil
+  neu (`checkProfile`, Banner/Status verschwinden) und meldet `onLoggedIn` (Remote Control verbindet neu).
+- Code: `code#state`, ein Link mit `code`/`state` oder der nackte Code mit dem `state` des manuellen
+  Links (`parseLoginCode`); unbrauchbar → `VALIDATION_FAILED`, ohne wartende Anmeldung →
+  `LOGIN_FAILED {reason: 'expired'}`. Nach `LOGIN_FLOW_MS` (10 min, wie die CLI) endet der Ablauf.
+- `profile.loginCancel` schließt den Prozess (→ `idle`); `dispose()` (Shutdown-Schritt `login`) schließt
+  alle. E-Mail und Organisation verlassen das Backend nie (nicht im Log, nicht im Zustand).
+
+Tests: `login.test.ts` mit dem FakeBackend (`FakeLoginSession`) und der Fake-Integration.

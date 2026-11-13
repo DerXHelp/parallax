@@ -16,7 +16,7 @@ Kontodaten tragen: nichts davon wird gespeichert oder geloggt.
 | `SkillsTab.tsx` | Tabelle Name/Quelle/Tokens/Zustand (gesperrt durch), Summe, Sortierung nach Tokens, Skills/Plugins neu laden (`session.reload`) |
 | `MemoryTab.tsx` | CLAUDE.md-Dateien mit Ebene, Pfad als `FileLink` (`verify`) + „Pfad kopieren“, Ordner, Erinnerungen, Schalter nur angezeigt |
 | `HooksTab.tsx` | Hooks nach Event und Matcher, Befehl in Monospace, Policy-/Safe-/Bare-Mode-Hinweise |
-| `StatusTab.tsx` | Zeilen von `/status` in ihren Abschnitten |
+| `StatusTab.tsx` | Zeilen von `/status` in ihren Abschnitten; WP-70: darüber der Ausgabestil des Projekts (`../../output-style/OutputStylePicker.tsx` mit Überschrift und Hinweis, eigener Lazy-Namensraum) |
 | `ExportTab.tsx` | Vorschau (≤ 20 000 Zeichen), Kopieren, Speichern per Browser-Download (`@web/lib/download`) |
 | `tabs.ts`, `labels.ts` | Reiter-Reihenfolge, letzter Reiter (sessionStorage des Fensters, sonst localStorage), Quellen-Namen, Filter |
 | `i18n/{en,de,index}.ts` | Lazy-Namensraum (`useInfoT`, `translateFrom`) – kommt mit dem Dialog-Chunk, nie mit dem Start-Chunk |
