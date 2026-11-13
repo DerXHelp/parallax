@@ -51,6 +51,7 @@ import {
 } from '@shared/samples';
 import { applySessionOp, trimItems, viewStateFromSnapshot, type SessionViewState } from '@shared/sync';
 import { pathTail } from '@web/lib/path-display';
+import { SHOWCASE_FILES } from '@web/playground/showcase/files';
 import { FakeSessionInfoData } from './fake-session-info';
 import type { MemoryTransport } from './transport';
 
@@ -262,7 +263,11 @@ function textFile(
   return { info: fakeInfo(path, kind, { bytes: new TextEncoder().encode(text()).length, ...p }), text };
 }
 
-/** A fresh copy of the table (each FakeHost may change its own files). */
+/**
+ * A fresh copy of the table (each FakeHost may change its own files). WP-68: plus the files of the
+ * README showcase projects (`D:\dev\…`) – the playground's static FileSource reads this table once
+ * at module load, so they must be in it from the start.
+ */
 export function fakeFileTable(): FakeFile[] {
   return [
     textFile(FAKE_FILE_PATHS.readme, 'markdown', () => README_TEXT),
@@ -277,6 +282,9 @@ export function fakeFileTable(): FakeFile[] {
     { info: fakeInfo(FAKE_FILE_PATHS.folder, 'directory', { bytes: 0 }), text: null },
     textFile(FAKE_FILE_PATHS.plan, 'markdown', () => FAKE_PLAN_TEXTS[1], { access: 'session' }),
     textFile(FAKE_FILE_PATHS.taskOutput, 'text', () => TASK_OUTPUT_TEXT, { access: 'session' }),
+    ...SHOWCASE_FILES.map((file) =>
+      textFile(file.path, file.kind, () => file.text, { mtimeMs: file.mtimeMs }),
+    ),
   ];
 }
 
