@@ -284,7 +284,9 @@ Integrations-Branch `feature/phase-3`. Kritischer Pfad: 50 (Teil 2) → 54 → 5
   Testinstanz mit eigenem Home, Haiku, Koordinator bedient per headless Playwright; der Nutzer meldete sich im
   isolierten Profil (`CLAUDE_CONFIG_DIR` im Temp-Ordner) im eigenen Browser an. Zähler, Puls, Live-Zeile, Stopp,
   Subagent-Verlauf, Hook-Anzeige, Ausgabestil und Anmelden (`automaticUrl`, ohne Code) bestanden; Log ohne
-  Kontodaten; Protokoll `docs/wp/WP-69.md` §4. Merge nach `main` erst nach Freigabe.
+  Kontodaten; Protokoll `docs/wp/WP-69.md` §4. Merge nach `main` freigegeben (Nutzer: „Ja, mach“): Checks auf dem
+  Merge-Stand grün (5557 Tests, Build, Budget, E2E 83/83), `feature/ux-feedback` nach `main` gemergt und gepusht
+  (`979bfca`), Feature-Branch per Fast-Forward nachgezogen.
 
 ## Koordinator-Entscheidungen R3/V2 (15.10.2026)
 - V2-01: Parallax-Edge-Profil nie mit Microsoft-Konto anmelden/synchronisieren (Flags/Profil-Präferenzen, keine Policies).
@@ -351,6 +353,6 @@ Integrations-Branch `feature/phase-3`. Kritischer Pfad: 50 (Teil 2) → 54 → 5
    live abgenommen (13.11.2026, `docs/wp/WP-64.md` §4), erster Live-`cli-check` mit den neuen Proben grün und
    übernommen; Merge nach `main` freigegeben. SDK-Möglichkeiten 22–29 entschieden (13.11.2026): WP-69
    (Subagent-Verlauf, Hook-Läufe), WP-70 (Anmelde-Knopf, Ausgabestil) und WP-71 (Was läuft wo) gemergt und gemeinsam
-   live abgenommen (13.11.2026, `docs/wp/WP-69.md` §4). Offen: Merge von `feature/ux-feedback` nach `main` und Push
-   nur mit Nutzer-Freigabe. Live nicht geprüfte Punkte (Strg+B, „Zurückholen“, Seitenfrage während eines Werkzeugs,
+   live abgenommen (13.11.2026, `docs/wp/WP-69.md` §4) und nach `main` gemergt und gepusht (`979bfca`); die
+   produktive Instanz bekommt den Stand mit dem nächsten `git pull`. Live nicht geprüfte Punkte (Strg+B, „Zurückholen“, Seitenfrage während eines Werkzeugs,
    MCP-Aktionen; WP-69…71 siehe WP-69 §4) im Alltag beobachten.
