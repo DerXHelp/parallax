@@ -345,7 +345,7 @@ Integrations-Branch `feature/phase-3`. Kritischer Pfad: 50 (Teil 2) → 54 → 5
 9. **Nutzer-Feedback und SDK-Möglichkeiten (12./13.11.2026, `feature/ux-feedback`):** WP-63 bis WP-67 gemergt,
    live abgenommen (13.11.2026, `docs/wp/WP-64.md` §4), erster Live-`cli-check` mit den neuen Proben grün und
    übernommen; Merge nach `main` freigegeben. SDK-Möglichkeiten 22–29 entschieden (13.11.2026): WP-69
-   (Subagent-Verlauf, Hook-Läufe) und WP-70 (Anmelde-Knopf, Ausgabestil) gemergt, WP-71 (Was läuft wo) danach; dann gemeinsame
+   (Subagent-Verlauf, Hook-Läufe) , WP-70 (Anmelde-Knopf, Ausgabestil) und WP-71 (Was läuft wo) gemergt; offen: gemeinsame
    Live-Abnahme WP-69/70 (Login mit isoliertem `CLAUDE_CONFIG_DIR`) und erst dann Merge nach `main` mit
    Nutzer-Freigabe. Live nicht geprüfte Punkte (Strg+B, „Zurückholen“, Seitenfrage
    während eines Werkzeugs, MCP-Aktionen) im Alltag beobachten.
