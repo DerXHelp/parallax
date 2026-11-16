@@ -1,19 +1,38 @@
 import { CircleStopIcon, CircleXIcon } from 'lucide-react';
 import { memo } from 'react';
 import type { TurnResultItem } from '@shared/model';
+import type { SessionViewState } from '@shared/sync';
 import { useI18n } from '@web/i18n';
 import { cn } from '@web/lib/cn';
+import { useSessionSelector } from '@web/state/hooks';
 import { useTranscriptSettings } from '../context';
+import { turnModels } from '../lib/turn-models';
+
+const NO_MODELS: readonly string[] = Object.freeze([]);
 
 /**
  * Quiet turn footer (Plan "Chat-Ansicht": Dauer, Tokens, Kosten): duration, tokens, requests;
  * costs only for API-key profiles (B "Kosten nur bei API-Key-Profilen") and only when the item
- * carries them. Synthetic turns (`/rename`, `/clear`: num_turns 0) are hidden.
+ * carries them. Synthetic turns (`/rename`, `/clear`: num_turns 0) are hidden. WP-74 (ADR-202): the
+ * models that answered come first, as the ids the API reported (`claude-opus-… → claude-sonnet-…`) –
+ * instead of a badge on every message.
  */
-export const TurnFooter = memo(function TurnFooter({ item }: { item: TurnResultItem }) {
+export const TurnFooter = memo(function TurnFooter({
+  item,
+  sessionKey,
+}: {
+  item: TurnResultItem;
+  sessionKey: string;
+}) {
   const { t, format } = useI18n();
   const settings = useTranscriptSettings();
+  const models = useSessionSelector(
+    sessionKey,
+    (view: SessionViewState) => turnModels(view.items, item.id),
+    NO_MODELS,
+  );
   if (item.synthetic) return null;
+  const modelText = models.join(' → ');
   const cost = item.costUsdTurn ?? item.costUsdTotal;
   const showCost = settings?.showCost === true && cost !== null;
   const input = item.usage.input + item.usage.cacheCreation;
@@ -46,6 +65,12 @@ export const TurnFooter = memo(function TurnFooter({ item }: { item: TurnResultI
         >
           <OutcomeIcon aria-hidden className="size-3" />
           {t(`transcript.turn.outcome.${item.outcome}`)}
+        </span>
+      )}
+      {modelText === '' ? null : (
+        <span data-slot="turn-models" title={modelText} className="max-w-80 truncate font-mono">
+          <span className="sr-only">{t('transcript.turn.models', { models: modelText })}</span>
+          <span aria-hidden>{modelText}</span>
         </span>
       )}
       <span>{parts.join(' · ')}</span>

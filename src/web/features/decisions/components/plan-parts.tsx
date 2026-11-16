@@ -21,13 +21,11 @@ import { respondInCard, respondToDecision } from '../lib/respond';
 import {
   clearFreshContextError,
   readApproveFresh,
-  readApproveMode,
   setFreshContextError,
   setPanelPlan,
   useFreshContextError,
   usePlanPanel,
   writeApproveFresh,
-  writeApproveMode,
 } from '../state/bar-store';
 import { ChoiceMenu, type Choice } from './ChoiceMenu';
 import { DecisionAction } from './card-shell';
@@ -39,24 +37,24 @@ export interface ApproveChoice {
   fresh: boolean;
 }
 
-/** The split button's choice, starting from the remembered one (mode never bypass, fresh flag). */
+/** The split button's choice: the default mode (auto first, ADR-204) and the remembered fresh flag. */
 export function useApproveChoice(
   approveModes: readonly PermissionMode[],
 ): [ApproveChoice | null, (next: ApproveChoice) => void] {
   const [choice, setChoice] = useState<ApproveChoice | null>(() => {
-    const mode = defaultApproveMode(approveModes, readApproveMode());
+    const mode = defaultApproveMode(approveModes);
     return mode === null ? null : { mode, fresh: readApproveFresh() };
   });
   return [choice, setChoice];
 }
 
 /**
- * Remembers the choice for the next plan (Plan: "merkt sich die letzte Wahl"). A bypass choice is
- * never remembered – neither its mode nor its fresh flag (the next plan starts from the last safe one).
+ * Remembers the "fresh context" flag for the next plan; the mode is not remembered (WP-74, ADR-204:
+ * every plan starts with auto mode). A bypass choice leaves the flag alone (the next plan starts from
+ * the last safe one).
  */
 function rememberChoice(choice: ApproveChoice): void {
   if (choice.mode === 'bypassPermissions') return;
-  writeApproveMode(choice.mode);
   writeApproveFresh(choice.fresh);
 }
 

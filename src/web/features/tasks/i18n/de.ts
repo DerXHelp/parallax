@@ -43,6 +43,8 @@ export const de: typeof en = {
     toolUses: { one: '{count} Werkzeugaufruf', other: '{count} Werkzeugaufrufe' },
     output: 'Ausgabedatei:',
     ended: '{status} um {time}',
+    transcript: 'Verlauf',
+    transcriptLabel: 'Verlauf von „{description}“ öffnen',
   },
   strip: {
     label: 'Aufgabenliste',

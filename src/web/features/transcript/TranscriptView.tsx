@@ -60,8 +60,6 @@ const STICK_PX = 48;
 const EARLIER_PX = 240;
 
 const selectQueue = (view: SessionViewState): readonly QueuedPrompt[] => view.detail.queue;
-const selectInitModel = (view: SessionViewState): string | null => view.detail.init?.model ?? null;
-const selectSummaryModel = (summary: SessionSummary): string | null => summary.model;
 const selectApiKeySource = (summary: SessionSummary): string | null => summary.apiKeySource;
 const selectLastSeenAt = (summary: SessionSummary): string | null => summary.lastSeenAt;
 
@@ -124,8 +122,6 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
   const ids = useTopLevelItemIds(sessionKey);
   const meta = useSessionMeta(sessionKey);
   const queue = useSessionSelector(sessionKey, selectQueue, EMPTY_QUEUE);
-  const initModel = useSessionSelector(sessionKey, selectInitModel, null);
-  const summaryModel = useSummarySelector(sessionKey, selectSummaryModel, null);
   const apiKeySource = useSummarySelector(sessionKey, selectApiKeySource, null);
   // WP-65 §1.2: `lastSeenAt` as it was when the transcript opened (the list is keyed per session).
   const lastSeenAt = useSummarySelector(sessionKey, selectLastSeenAt, null);
@@ -142,11 +138,10 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
 
   const settings = useMemo<TranscriptSettings>(
     () => ({
-      sessionModel: initModel ?? summaryModel,
       showCost: apiKeySource !== null && apiKeySource !== 'none',
       Row: TranscriptRow,
     }),
-    [initModel, summaryModel, apiKeySource],
+    [apiKeySource],
   );
   const queuedIds = useMemo(() => new Set(queue.map((prompt) => prompt.messageUuid)), [queue]);
 

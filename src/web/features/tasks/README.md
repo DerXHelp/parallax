@@ -25,7 +25,7 @@ Task, „Alle stoppen“, `session.stopTask`) und die angeheftete Aufgabenleiste
 | `state/tasks.ts` | `useTaskRows` (rendert nur bei Änderungen an Task-Items/Hintergrundliste neu), `stopTask` (Fehler als Notice, `TASK_NOT_FOUND` still), `stopTasks` (nacheinander) – nur im Panel-Chunk |
 | `state/todos.ts` | `useTodos` (Leiste und Panel; zieht `rows.ts` nicht in den Leisten-Chunk) |
 | `state/strip.ts` | Auf/Zu der Leiste je Session in localStorage (`storageKey('tasks','strip',…)`, Fehler geschluckt) |
-| `components/` | `TaskRowView` (Art, Beschreibung, Laufzeit über `useNow`, Tokens/Tool-Aufrufe, Zusammenfassung, Ausgabedatei als `FileLink`, Stop), `TodoItems` (Liste mit Status-Icons) |
+| `components/` | `TaskRowView` (Art, Beschreibung, Laufzeit über `useNow`, Tokens/Tool-Aufrufe, Zusammenfassung, Ausgabedatei als `FileLink` – nicht bei Agenten –, WP-74: „Verlauf“ an Agent-Zeilen → Shell-Anfrage `openSubagent` mit der Task-ID als Agent-ID, `data-slot="task-transcript"`; Stop), `TodoItems` (Liste mit Status-Icons) |
 | `testing.ts` | Fixtures + FakeHost-Szenario (Tests, Playground) |
 | `i18n/en.ts`, `i18n/de.ts` | Namespace `tasks` (registriert in `src/web/i18n/dictionaries.ts` bzw. `dictionary.de.ts`, ADR-153) |
 

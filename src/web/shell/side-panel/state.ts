@@ -30,6 +30,9 @@ export interface SidePanelSubagent {
   subagentType: string | null;
 }
 
+/** WP-74: the closable tabs (an open file, the latest subagent). */
+export type SidePanelItem = 'file' | 'subagent';
+
 /** Files kept for "Back" per session (WP-54: the last 10). */
 export const SIDE_PANEL_HISTORY_MAX = 10;
 
@@ -43,11 +46,23 @@ interface SidePanelState {
   mounted: Readonly<Record<string, number>>;
   /** WP-69: the subagent of the subagent tab per session (kept while other tabs show). */
   subagents: Readonly<Record<string, SidePanelSubagent>>;
+  /**
+   * WP-74: per session the tab a file or subagent was opened from (null = the panel was closed) –
+   * closing that tab returns there, like a browser tab.
+   */
+  returns: Readonly<Record<string, Partial<Record<SidePanelItem, SidePanelTab | null>>>>;
 }
 
 const EMPTY_HISTORY: readonly SidePanelFile[] = Object.freeze([]);
 
-const store = createStore<SidePanelState>(() => ({ tabs: {}, files: {}, history: {}, mounted: {}, subagents: {} }));
+const store = createStore<SidePanelState>(() => ({
+  tabs: {},
+  files: {},
+  history: {},
+  mounted: {},
+  subagents: {},
+  returns: {},
+}));
 
 /** Elements that opened the panel (focus returns there on close). */
 const openers = new Map<string, HTMLElement>();
@@ -152,6 +167,47 @@ export function goBackSidePanelFile(sessionKey: string, index = 0): boolean {
   return true;
 }
 
+/**
+ * WP-74: remembers the current tab before a request opens `item` (call before switching): closing
+ * the item returns there. While the item's tab already shows, the earlier return tab stays.
+ */
+export function rememberSidePanelReturn(sessionKey: string, item: SidePanelItem): void {
+  const current = store.getState().tabs[sessionKey] ?? null;
+  if (current === item) return;
+  store.setState((state) => ({
+    returns: { ...state.returns, [sessionKey]: { ...state.returns[sessionKey], [item]: current } },
+  }));
+}
+
+/**
+ * WP-74 (ADR-203): closes the file tab (with its back stack) or the subagent tab. Returns the tab
+ * that shows afterwards: unchanged when another tab shows, else the tab the item was opened from
+ * (if it still exists); null = nothing to return to – the caller closes the panel.
+ */
+export function closeSidePanelItem(sessionKey: string, item: SidePanelItem): SidePanelTab | null {
+  const state = store.getState();
+  const current = state.tabs[sessionKey] ?? null;
+  const back = state.returns[sessionKey]?.[item] ?? null;
+  const backAvailable =
+    back !== null &&
+    back !== item &&
+    (back !== 'file' || state.files[sessionKey] !== undefined) &&
+    (back !== 'subagent' || state.subagents[sessionKey] !== undefined);
+  const next = current !== item ? current : backAvailable ? back : null;
+  store.setState((s) => {
+    const { [sessionKey]: _file, ...files } = s.files;
+    const { [sessionKey]: _history, ...history } = s.history;
+    const { [sessionKey]: _subagent, ...subagents } = s.subagents;
+    const { [item]: _return, ...returns } = s.returns[sessionKey] ?? {};
+    return {
+      ...(item === 'file' ? { files, history } : { subagents }),
+      returns: { ...s.returns, [sessionKey]: returns },
+      ...(current === item && next !== null ? { tabs: { ...s.tabs, [sessionKey]: next } } : {}),
+    };
+  });
+  return next;
+}
+
 /** Closes the panel; returns the element that opened it (if still in the document). */
 export function closeSidePanel(sessionKey: string): HTMLElement | null {
   const opener = openers.get(sessionKey) ?? null;
@@ -190,6 +246,6 @@ export function useSidePanelHostMounted(sessionKey: string): boolean {
 
 /** Tests: forget everything (the module state is global). */
 export function resetSidePanelState(): void {
-  store.setState({ tabs: {}, files: {}, history: {}, mounted: {}, subagents: {} });
+  store.setState({ tabs: {}, files: {}, history: {}, mounted: {}, subagents: {}, returns: {} });
   openers.clear();
 }

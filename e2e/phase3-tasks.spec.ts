@@ -3,7 +3,8 @@
  * in the side panel tab "Tasks" with its progress summary, "Stop" ends it (`stopped`); without a
  * turn the composer offers a plain "Send" and no Stop (B18); the
  * composer's Stop ends the turn while the background agent keeps running; `fake:todo` pins the
- * to-do list as a strip above the composer.
+ * to-do list as a strip above the composer. WP-74: the agent row's "Transcript" opens the agent's
+ * transcript in the tab "Agent", its × goes back to "Tasks".
  * Own server; 1600 px wide (the side panel next to the transcript).
  */
 import { expect, test } from './support/fixtures';
@@ -28,7 +29,16 @@ test('background agent: the panel shows its summary; "Stop" ends it as stopped',
   await expect(row).toHaveAttribute('data-state', 'running');
   await expect(row).toContainText('Fake background research');
   await expect(row.locator('[data-slot="task-summary"]')).toHaveText('Reading the project files');
-  await expect(row.locator('[data-slot="task-output"] [data-slot="file-link"]')).toContainText('.output');
+  // WP-74 (ADR-203): an agent row links its transcript, not the raw output file; × returns to "Tasks".
+  await expect(row.locator('[data-slot="task-output"]')).toHaveCount(0);
+  await row.locator('[data-slot="task-transcript"]').click();
+  await expect(session.sidePanel).toHaveAttribute('data-tab', 'subagent');
+  await expect(session.panelTab('subagent')).toContainText('Fake background research');
+  const transcript = session.sidePanel.locator('[data-slot="subagent-panel"]');
+  await expect(transcript.locator('[data-item-kind="user_message"]').first()).toBeVisible();
+  await session.sidePanel.locator('[data-tab-close="subagent"]').click();
+  await expect(session.sidePanel).toHaveAttribute('data-tab', 'tasks');
+  await expect(session.panelTab('subagent')).toHaveCount(0);
 
   await row.locator('[data-slot="task-stop"]').click();
   await expect(row).toHaveAttribute('data-state', 'finished');

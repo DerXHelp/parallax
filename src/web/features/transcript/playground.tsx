@@ -64,7 +64,7 @@ export const demos: PlaygroundDemo[] = [
     'overview',
     'overview',
     'All renderers in one turn',
-    'Read, Edit (patch + jsdiff fallback), Write, Bash (ANSI), PowerShell (CRLF), Grep, Glob, MCP, TodoWrite, AskUserQuestion, model badge, costs (API-key profile)',
+    'Read, Edit (patch + jsdiff fallback), Write, Bash (ANSI), PowerShell (CRLF), Grep, Glob, MCP, TodoWrite, AskUserQuestion, models in the turn footer, costs (API-key profile)',
   ),
   transcriptDemo(
     'streaming',

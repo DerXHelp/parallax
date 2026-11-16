@@ -1,6 +1,7 @@
 import {
   BotIcon,
   LayersIcon,
+  ScrollTextIcon,
   SquareIcon,
   SquareTerminalIcon,
   WorkflowIcon,
@@ -12,6 +13,7 @@ import { cn } from '@web/lib/cn';
 import { resolveFilePath } from '@web/lib/file-refs';
 import { pathTail } from '@web/lib/path-display';
 import type { TaskKind, TaskRow } from '@shared/tasks';
+import { requestShell } from '@web/shell/requests';
 import { useFeatureSlots } from '@web/shell/slots';
 import { useNow } from '@web/state/clock';
 import { Badge } from '@web/ui/badge';
@@ -77,7 +79,10 @@ export const TaskRowView = memo(function TaskRowView({
   const Icon = KIND_ICON[row.kind];
   const title = row.description === '' ? row.taskId : row.description;
   const duration = row.running ? null : finishedDuration(row);
-  const output = row.outputFile === null ? null : resolveFilePath(row.outputFile, null);
+  // WP-74 (ADR-203): an agent opens its transcript (the agent id is its task id, WP-69); its output
+  // file only holds the raw transcript JSON, so the link stays for shells and other tasks.
+  const isAgent = row.kind === 'agent' && row.taskId !== '';
+  const output = row.outputFile === null || isAgent ? null : resolveFilePath(row.outputFile, null);
   const status = isKnownStatus(row.status) ? t(`tasks.status.${row.status}`) : row.status;
   return (
     <li
@@ -96,6 +101,26 @@ export const TaskRowView = memo(function TaskRowView({
           {title}
         </span>
         <span className="flex-1" />
+        {isAgent ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            data-slot="task-transcript"
+            aria-label={t('tasks.row.transcriptLabel', { description: title })}
+            onClick={() => {
+              requestShell({
+                kind: 'openSubagent',
+                sessionKey,
+                agentId: row.taskId,
+                title,
+                subagentType: row.subagentType,
+              });
+            }}
+          >
+            <ScrollTextIcon aria-hidden className="size-3" />
+            {t('tasks.row.transcript')}
+          </Button>
+        ) : null}
         {row.running ? null : (
           <span data-slot="task-status" className="text-muted-foreground shrink-0 text-2xs">
             {row.endedAt === null ? status : t('tasks.row.ended', { status, time: format.time(row.endedAt) })}

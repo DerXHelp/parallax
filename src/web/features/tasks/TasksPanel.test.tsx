@@ -5,6 +5,7 @@ import { makeError } from '@shared/errors';
 import { sampleTodoList } from '@shared/samples';
 import type { TaskRow } from '@shared/tasks';
 import type { RunningScenario } from '@web/playground/PlaygroundScenario';
+import { registerShellRequestHandler, type ShellRequestOf } from '@web/shell/requests';
 import { FeatureSlotsProvider, type FeatureSlots, type FileLinkSlotProps } from '@web/shell/slots';
 import { refreshClock } from '@web/state/clock';
 import { clientStore, resetClientStore } from '@web/state/store';
@@ -102,8 +103,11 @@ describe('TasksPanel', () => {
     expect(agent.getByText('18.2K tokens')).toBeTruthy();
     expect(agent.getByText('9 tool uses')).toBeTruthy();
     expect(agent.getByText(/^Runtime 3 min/)).toBeTruthy();
-    expect(agent.getByTestId('file-link').dataset).toMatchObject({
-      path: 'C:\\Users\\user\\AppData\\Local\\Temp\\claude\\tasks\\task_agent.output',
+    // WP-74 (ADR-203): an agent row opens its transcript; the raw output file is not linked.
+    expect(agent.getByRole('button', { name: /^Open the transcript of “/ })).toBeTruthy();
+    expect(agent.queryByTestId('file-link')).toBeNull();
+    expect(within(row('task_bash')).getByTestId('file-link').dataset).toMatchObject({
+      path: 'C:\\Users\\user\\AppData\\Local\\Temp\\claude\\tasks\\task_bash.output',
       verify: 'false',
     });
     expect(within(row('task_bash')).getByText('Shell')).toBeTruthy();
@@ -111,10 +115,43 @@ describe('TasksPanel', () => {
     // Finished: greyed out, status instead of Stop.
     expect(row('task_failed').className).toContain('opacity-60');
     expect(within(row('task_failed')).getByText(/^Failed at /)).toBeTruthy();
-    expect(within(row('task_failed')).queryByRole('button')).toBeNull();
+    expect(within(row('task_failed')).queryByRole('button', { name: /^Stop “/ })).toBeNull();
     // Every running task can be stopped – Bash too (TASK_STOP_BASH).
     for (const id of ['task_agent', 'task_bash', 'task_deploy']) {
       expect(within(row(id)).getByRole('button', { name: /^Stop “/ })).toBeTruthy();
+    }
+  });
+
+  it('WP-74: "Transcript" of an agent row sends openSubagent with its task id (= agent id)', async () => {
+    const requests: ShellRequestOf<'openSubagent'>[] = [];
+    const unregister = registerShellRequestHandler('openSubagent', (request) => {
+      requests.push(request);
+      return true;
+    });
+    try {
+      running = startTasksScenario(mixedTaskSession(Date.now()));
+      renderPanel();
+      const user = userEvent.setup();
+      await user.click(
+        await within(await waitFor(() => row('task_agent'))).findByRole('button', {
+          name: /^Open the transcript of /,
+        }),
+      );
+      expect(requests).toEqual([
+        expect.objectContaining({
+          kind: 'openSubagent',
+          sessionKey: TASKS_SESSION_KEY,
+          agentId: 'task_agent',
+          subagentType: 'Explore',
+        }),
+      ]);
+      // Shells and workflows have no transcript.
+      expect(within(row('task_bash')).queryByRole('button', { name: /^Open the transcript of / })).toBeNull();
+      expect(
+        within(row('task_deploy')).queryByRole('button', { name: /^Open the transcript of / }),
+      ).toBeNull();
+    } finally {
+      unregister();
     }
   });
 

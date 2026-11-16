@@ -10,7 +10,6 @@ import { useDecision } from '@web/state/hooks';
 import { Button } from '@web/ui/button';
 import { BackgroundButton } from '../components/BackgroundButton';
 import { Disclosure } from '../components/Disclosure';
-import { ModelBadge } from '../components/ModelBadge';
 import { ToolFileLink } from '../components/ToolFileLink';
 import { ToolStatus } from '../components/ToolStatus';
 import { useTranscriptSettings } from '../context';
@@ -149,7 +148,6 @@ function ToolCallFrame({
             <ToolStatus status={item.status} />
             <Icon aria-hidden className="text-muted-foreground size-3.5 shrink-0" />
             <span className="shrink-0 font-medium">{label}</span>
-            <ModelBadge model={item.model} blockIndex={item.blockIndex} />
             {file !== null ? null : (
               <>
                 {summary === null ? null : (

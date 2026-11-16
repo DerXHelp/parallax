@@ -10,6 +10,7 @@ import { installShortcutListener } from '../shortcuts';
 import { FeatureSlotsProvider, type FeatureSlots } from '../slots';
 import { SidePanelHost } from './SidePanelHost';
 import {
+  closeSidePanel,
   getSidePanelFile,
   getSidePanelSubagent,
   getSidePanelTab,
@@ -230,6 +231,79 @@ describe('SidePanelHost (WP-54, ADR-150)', () => {
     expect(screen.getByTestId('subagent').textContent).toBe('b2|Fix the build|null');
     // A request for another session is not ours.
     expect(requestShell({ kind: 'openSubagent', sessionKey: OTHER, agentId: 'c3', title: 'x' })).toBe(false);
+  });
+
+  it('WP-74: × at the file tab returns to the tab it was opened from; the tab stays gone', async () => {
+    const user = userEvent.setup();
+    renderHost();
+    act(() => {
+      requestShell({ kind: 'sidePanel', sessionKey: KEY, tab: 'tasks' });
+    });
+    act(() => {
+      requestShell({
+        kind: 'openFile',
+        sessionKey: KEY,
+        path: 'D:\\work\\task_agent.output',
+        line: null,
+        col: null,
+      });
+    });
+    act(() => {
+      requestShell({ kind: 'openFile', sessionKey: KEY, path: 'D:\\work\\b.ts', line: null, col: null });
+    });
+    expect(panel().getAttribute('data-tab')).toBe('file');
+    // The tab row never scrolls vertically.
+    expect(screen.getByRole('tablist', { name: 'Side panel' }).className).toContain('overflow-y-hidden');
+    await user.click(screen.getByRole('button', { name: 'Close b.ts' }));
+    expect(panel().getAttribute('data-tab')).toBe('tasks');
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Tasks' }));
+    expect(getSidePanelFile(KEY)).toBeNull();
+    expect(screen.queryByRole('tab', { name: /^File: / })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Back to task_agent.output' })).toBeNull();
+    // Closed and reopened: no file tab comes back.
+    act(() => {
+      closeSidePanel(KEY);
+    });
+    act(() => {
+      requestShell({ kind: 'sidePanel', sessionKey: KEY, tab: 'files' });
+    });
+    const tabs = within(screen.getByRole('tablist', { name: 'Side panel' })).getAllByRole('tab');
+    expect(tabs.map((tab) => tab.getAttribute('data-tab'))).toEqual(['plan', 'files', 'tasks']);
+  });
+
+  it('WP-74: a file opened while the panel was closed closes the panel with it; × on an inactive tab keeps the view', async () => {
+    const user = userEvent.setup();
+    renderHost();
+    act(() => {
+      requestShell({ kind: 'openFile', sessionKey: KEY, path: 'D:\\work\\a.ts', line: null, col: null });
+    });
+    await user.click(screen.getByRole('button', { name: 'Close a.ts' }));
+    expect(screen.queryByRole('complementary')).toBeNull();
+    expect(getSidePanelTab(KEY)).toBeNull();
+    // Agent tab closed while "Files" shows: the view stays, only the tab goes.
+    act(() => {
+      requestShell({ kind: 'openSubagent', sessionKey: KEY, agentId: 'a1', title: 'Explore' });
+    });
+    await user.click(screen.getByRole('tab', { name: 'Files' }));
+    await user.click(screen.getByRole('button', { name: 'Close the agent transcript “Explore”' }));
+    expect(panel().getAttribute('data-tab')).toBe('files');
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Files' }));
+    expect(getSidePanelSubagent(KEY)).toBeNull();
+    expect(screen.queryByRole('tab', { name: /^Agent transcript/ })).toBeNull();
+  });
+
+  it('WP-74: a subagent opened from "Tasks" closes back to "Tasks"', async () => {
+    const user = userEvent.setup();
+    renderHost();
+    act(() => {
+      requestShell({ kind: 'sidePanel', sessionKey: KEY, tab: 'tasks' });
+    });
+    act(() => {
+      requestShell({ kind: 'openSubagent', sessionKey: KEY, agentId: 'a1', title: 'Explore' });
+    });
+    expect(panel().getAttribute('data-tab')).toBe('subagent');
+    await user.click(screen.getByRole('button', { name: 'Close the agent transcript “Explore”' }));
+    expect(panel().getAttribute('data-tab')).toBe('tasks');
   });
 
   it('opening by request focuses the panel; Esc inside and the close button return the focus', async () => {

@@ -95,7 +95,7 @@ describe('Agent card – open transcript (WP-69)', () => {
 
   it('read-only (the subagent panel): neither Stop nor "Background"', () => {
     render(
-      <TranscriptSettingsContext value={{ sessionModel: null, showCost: false, Row: TranscriptRow, readOnly: true }}>
+      <TranscriptSettingsContext value={{ showCost: false, Row: TranscriptRow, readOnly: true }}>
         <AgentCard item={runningAgent()} sessionKey={KEY} />
       </TranscriptSettingsContext>,
     );

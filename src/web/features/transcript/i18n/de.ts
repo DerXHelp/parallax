@@ -92,7 +92,6 @@ export const de: typeof en = {
     label: 'Claude',
     aborted: 'Abgebrochen, bevor die Antwort fertig war.',
     streaming: 'Schreibt…',
-    model: 'Beantwortet von {model}',
     localCommand: 'Lokaler Befehl /{command}',
   },
   thinking: {
@@ -250,6 +249,7 @@ export const de: typeof en = {
   },
   turn: {
     label: 'Zusammenfassung des Durchgangs',
+    models: 'Beantwortet von {models}',
     tokens: '{input} rein · {output} raus',
     cached: '{count} aus dem Cache',
     costTitle: 'Geschätzte Kosten dieses Durchgangs',

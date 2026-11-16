@@ -45,6 +45,9 @@ export const en = {
     toolUses: { one: '{count} tool use', other: '{count} tool uses' },
     output: 'Output file:',
     ended: '{status} at {time}',
+    /** WP-74: an agent row opens the agent's transcript in the side panel. */
+    transcript: 'Transcript',
+    transcriptLabel: 'Open the transcript of “{description}”',
   },
   strip: {
     label: 'Task list',

@@ -17,11 +17,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@web/ui/tabs';
 import { SIDE_PANEL_TABS, type SidePanelTab } from '../requests';
 import { useFeatureSlots } from '../slots';
 import {
+  closeSidePanelItem,
   goBackSidePanelFile,
   openSidePanel,
   useSidePanelFile,
   useSidePanelHistory,
   useSidePanelSubagent,
+  type SidePanelItem,
 } from './state';
 import {
   SIDE_PANEL_MIN_WIDTH,
@@ -153,6 +155,11 @@ export interface SidePanelFrameProps {
  * Agent – WP-69, only once a subagent was opened), "Back" for the viewer and "Close". Below 1100 px of session area it lies over the transcript
  * (anchored at the right edge, no focus trap).
  */
+/** The trigger of `tab` in the tab row. */
+function tabTrigger(list: HTMLElement | null, tab: SidePanelTab): HTMLElement | null {
+  return list?.querySelector<HTMLElement>(`[role="tab"][data-tab="${tab}"]`) ?? null;
+}
+
 export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanelFrameProps) {
   const t = useT();
   const anchorRef = useRef<HTMLDivElement>(null);
@@ -168,6 +175,26 @@ export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanel
     if (candidate === 'subagent') return subagent !== null || tab === 'subagent';
     return true;
   });
+  // WP-74 (ADR-203): the file and subagent tabs close like browser tabs – back to where they were
+  // opened from, else the whole panel.
+  // The focus moves to the tab that shows afterwards (the × itself disappears).
+  const tabListRef = useRef<HTMLDivElement>(null);
+  const focusActiveTabRef = useRef(false);
+  const closeItem = (item: SidePanelItem) => {
+    const next = closeSidePanelItem(sessionKey, item);
+    if (next === null) onClose();
+    else if (next === tab) tabTrigger(tabListRef.current, tab)?.focus();
+    else focusActiveTabRef.current = true;
+  };
+  // WP-74: the active tab scrolls into view in a crowded tab row.
+  useLayoutEffect(() => {
+    const active = tabTrigger(tabListRef.current, tab);
+    active?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    if (focusActiveTabRef.current) {
+      focusActiveTabRef.current = false;
+      active?.focus();
+    }
+  }, [tab]);
 
   return (
     <div
@@ -211,37 +238,72 @@ export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanel
         >
           <div className="flex h-9 shrink-0 items-center gap-1 border-b pr-1 pl-3">
             <TabsList
+              ref={tabListRef}
               aria-label={t('sidePanel.tabs')}
-              className="-mb-px h-9 w-auto min-w-0 flex-1 gap-3 overflow-x-auto border-b-0"
+              // WP-74: no vertical scrollbar (the tabs reach 1 px below the row), no visible horizontal one.
+              className="-mb-px h-9 w-auto min-w-0 flex-1 gap-3 overflow-x-auto overflow-y-hidden border-b-0 [scrollbar-width:none]"
             >
-              {tabs.map((value) => (
-                <TabsTrigger
-                  key={value}
-                  value={value}
-                  data-tab={value}
-                  aria-label={
-                    value === 'file' && file !== null
-                      ? t('sidePanel.fileTab', { name: windowsBaseName(file.path) })
-                      : value === 'subagent' && subagent !== null
-                        ? t('sidePanel.subagentTab', { title: subagent.title })
-                        : undefined
-                  }
-                  title={value === 'subagent' && subagent !== null ? subagent.title : undefined}
-                  className="h-9 min-w-0"
-                >
-                  {t(`sidePanel.tab.${value}`)}
-                  {value === 'file' && file !== null ? (
-                    <span className="text-muted-foreground max-w-40 truncate font-mono text-2xs font-normal">
-                      {windowsBaseName(file.path)}
-                    </span>
-                  ) : null}
-                  {value === 'subagent' && subagent !== null ? (
-                    <span className="text-muted-foreground max-w-40 truncate text-2xs font-normal">
-                      {subagent.title}
-                    </span>
-                  ) : null}
-                </TabsTrigger>
-              ))}
+              {tabs.map((value) => {
+                const trigger = (
+                  <TabsTrigger
+                    key={value}
+                    value={value}
+                    data-tab={value}
+                    aria-label={
+                      value === 'file' && file !== null
+                        ? t('sidePanel.fileTab', { name: windowsBaseName(file.path) })
+                        : value === 'subagent' && subagent !== null
+                          ? t('sidePanel.subagentTab', { title: subagent.title })
+                          : undefined
+                    }
+                    title={value === 'subagent' && subagent !== null ? subagent.title : undefined}
+                    className="h-9 min-w-0"
+                  >
+                    {t(`sidePanel.tab.${value}`)}
+                    {value === 'file' && file !== null ? (
+                      <span className="text-muted-foreground max-w-32 truncate font-mono text-2xs font-normal">
+                        {windowsBaseName(file.path)}
+                      </span>
+                    ) : null}
+                    {value === 'subagent' && subagent !== null ? (
+                      <span className="text-muted-foreground max-w-32 truncate text-2xs font-normal">
+                        {subagent.title}
+                      </span>
+                    ) : null}
+                  </TabsTrigger>
+                );
+                const closeLabel =
+                  value === 'file' && file !== null
+                    ? t('sidePanel.closeFile', { name: windowsBaseName(file.path) })
+                    : value === 'subagent' && subagent !== null
+                      ? t('sidePanel.closeSubagent', { title: subagent.title })
+                      : null;
+                if (closeLabel === null || (value !== 'file' && value !== 'subagent')) return trigger;
+                const item: SidePanelItem = value;
+                // The close button sits next to the trigger (never a button inside the tab button).
+                return (
+                  <span
+                    key={value}
+                    data-slot="side-panel-closable-tab"
+                    className="flex shrink-0 items-center"
+                  >
+                    {trigger}
+                    <IconButton
+                      label={closeLabel}
+                      size="icon-xs"
+                      showTooltip={false}
+                      data-slot="side-panel-close-tab"
+                      data-tab-close={value}
+                      className="text-muted-foreground -ml-1"
+                      onClick={() => {
+                        closeItem(item);
+                      }}
+                    >
+                      <XIcon aria-hidden />
+                    </IconButton>
+                  </span>
+                );
+              })}
             </TabsList>
             {tab === 'file' ? <FileHistory sessionKey={sessionKey} /> : null}
             <IconButton label={t('sidePanel.close')} onClick={onClose}>

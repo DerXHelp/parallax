@@ -587,9 +587,10 @@ describe('TranscriptView', () => {
     expect(within(document.body).getByText('Say OK.').closest('[data-queued]')).toBeNull();
   });
 
-  it('shows costs only for API-key profiles and the model of a message from another model', async () => {
+  it('shows costs only for API-key profiles; the turn footer names the models (no badge, ADR-202)', async () => {
     const items = (): TranscriptItem[] => [
       sampleItems.userMessage(),
+      sampleItems.thinking({ model: 'claude-opus-5-5' }),
       sampleItems.assistantText({ model: 'claude-sonnet-5-5', text: 'planned elsewhere' }),
       sampleItems.turnResult({ costUsdTurn: 0.0021 }),
     ];
@@ -598,8 +599,11 @@ describe('TranscriptView', () => {
     start(subscription, apiKey);
     const { unmount } = render(<TranscriptView sessionKey={subscription.key} />);
     expect(await screen.findByText('planned elsewhere')).toBeTruthy();
-    // init.model is Haiku (sampleDetail): the Sonnet message shows its model.
-    expect(document.querySelector('[data-slot="model-badge"]')?.textContent).toContain('claude-sonnet-5-5');
+    // init.model is Haiku (sampleDetail): no badge on the messages, the footer names both ids.
+    expect(document.querySelector('[data-slot="model-badge"]')).toBeNull();
+    const models = document.querySelector('[data-slot="turn-models"]');
+    expect(models?.getAttribute('title')).toBe('claude-opus-5-5 → claude-sonnet-5-5');
+    expect(screen.getByText('Answered by claude-opus-5-5 → claude-sonnet-5-5')).toBeTruthy();
     expect(screen.queryByText('$0.0021')).toBeNull();
     unmount();
     render(<TranscriptView sessionKey={apiKey.key} />);

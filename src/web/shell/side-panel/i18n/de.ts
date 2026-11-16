@@ -14,7 +14,9 @@ export const de: typeof en = {
   resize: 'Panelbreite ändern',
   width: '{width} px',
   fileTab: 'Datei: {name}',
+  closeFile: '{name} schließen',
   subagentTab: 'Agent-Verlauf: {title}',
+  closeSubagent: 'Agent-Verlauf „{title}“ schließen',
   back: 'Zurück zu {name}',
   history: 'Zuletzt geöffnete Dateien',
 };

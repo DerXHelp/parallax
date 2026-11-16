@@ -42,7 +42,7 @@ export const TranscriptItemView = memo(function TranscriptItemView({
     case 'system':
       return <SystemRow item={item} sessionKey={sessionKey} />;
     case 'turn_result':
-      return <TurnFooter item={item} />;
+      return <TurnFooter item={item} sessionKey={sessionKey} />;
     case 'side_question':
       return (
         <SlotBoundary resetKey={item.threadId} className="p-0">

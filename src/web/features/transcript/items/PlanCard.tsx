@@ -7,7 +7,6 @@ import { shortPath } from '@web/lib/path-display';
 import { useFeatureSlots } from '@web/shell/slots';
 import { useDecision } from '@web/state/hooks';
 import { Disclosure } from '../components/Disclosure';
-import { ModelBadge } from '../components/ModelBadge';
 import { ToolFileLink } from '../components/ToolFileLink';
 import { readPlanInput, readPlanResult } from '../lib/tool-input';
 import { resultText, stripToolUseError } from '../lib/text';
@@ -85,7 +84,6 @@ function PlanFinal({ item, sessionKey }: ToolBodyProps) {
         <span className="font-medium">
           {version === null ? t('transcript.plan.title') : t('transcript.plan.version', { version })}
         </span>
-        <ModelBadge model={item.model} blockIndex={item.blockIndex} />
         <span className={cn('rounded-sm border px-1.5 py-px text-2xs font-medium', TONE_CLASS[status.tone])}>
           {status.text}
         </span>
