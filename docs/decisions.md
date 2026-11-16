@@ -2271,3 +2271,17 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   `process_exit`, ohne Status-Signal.
 - **Begründung:** Sonst zeigten Sidebar-Zähler und Status „Hintergrund“ nach dem Prozessende noch Tasks, die mit dem
   Prozess beendet sind.
+
+## ADR-198 – Fremde Nachrichten als zugeklappte Zeile mit Herkunft
+- **Datum/WP:** 16.11.2026, WP-72; angenommen (16.11.2026, Nutzer und Koordinator).
+- **Entscheidung:** Eine Nutzer-Nachricht, die nicht der Nutzer getippt hat (`origin: 'other'`), trägt die
+  Herkunftsart des SDK als freien String `user_message.originKind` (`'peer'`, `'coordinator'`,
+  `'task-notification'`, `'channel'` …; `null` bei eigenen Nachrichten, ohne `origin` und bei alten Items; Server
+  kürzt auf 64 Zeichen). Das Transkript zeigt sie nicht als Sprechblase, sondern als leise, zugeklappte Einzeilen-Zeile
+  mit Symbol, Herkunft („Nachricht einer anderen Session“, „Nachricht des Koordinators“, „Automatische Meldung“,
+  „Nachricht aus einem Kanal“, sonst „Nicht von dir getippt“) und Vorschau (`foreignPreview`: überspringt
+  Einleitung, Tag-Zeilen und `[…]`-Banner). In der kompakten Ansicht bleibt sie eine eigene Zeile (Code `v`).
+- **Begründung:** Nachrichten anderer Sessions, des Koordinators und automatische Meldungen sahen wie eigene Eingaben
+  aus und störten (Nutzer-Feedback 16.11.2026). Ein freier String statt Enum bleibt tolerant gegenüber neuen
+  SDK-Arten; die UI benennt nur die bekannten. Als eigene Zeile bleibt sichtbar, was Claudes nächste Antwort ausgelöst
+  hat; in einer Schrittgruppe wäre die Antwort scheinbar grundlos.

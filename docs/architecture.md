@@ -1404,6 +1404,7 @@ Bilder immer als Blob. Assistant-Text wird nie gekappt.
 | `user` Prompt (nach `registerPrompt`, `command_lifecycle started`) | `user_message` | – |
 | `user` nur mit `tool_result` | – (→ `tool_call.result`) | – |
 | `user` mit `isReplay` (WP-64: `--replay-user-messages` immer an) | eigene uuid → –; fremde uuid mit `origin human` (in der Claude-App getippt) → `user_message` mit `source: 'remote'` | – |
+| `user` Text ohne `origin human` (andere Session, Koordinator, Meldung ohne `<task-notification>`, Kanal; live auch ohne `origin`) | `user_message` mit `origin: 'other'`, `originKind` = `origin.kind` (WP-72, ADR-198; Verlauf: fehlendes `origin` gilt als `human`) | – |
 | `user` „[Request interrupted by user…]“ | `system/interrupted` | – |
 | `result` | `turn_result` (synthetisch bei `num_turns 0`) | `turn_result` |
 | `system/init` | – (→ `detail.init`) | `init` |

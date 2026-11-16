@@ -84,6 +84,7 @@ export function transcriptBuilder(key: string, seed: number, now: number, model:
         text: { text, truncated: null },
         attachments: [],
         origin: 'human',
+        originKind: null,
         slashCommand: null,
         priority: 'next',
         source: 'local',

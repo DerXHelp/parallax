@@ -159,3 +159,25 @@ export function firstLine(text: string, max = 160): string {
   const line = text.trimStart().split('\n', 1)[0] ?? '';
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
+
+/** Only the start of a message is looked at for its preview. */
+const FOREIGN_PREVIEW_SCAN_CHARS = 4000;
+/** A line that only frames a message: a lone tag (`<agent-message from="…">`, `</…>`) or a `[…]` banner. */
+const FRAME_LINE = /^(?:<\/?[A-Za-z][\w-]*(?:\s[^>]*)?>|\[[^\]]*\])$/;
+
+/**
+ * One-line preview of a message not typed by the user (WP-72): skips blank lines, lines that only
+ * frame the message (lone tags, `[…]` banners) and an introducing line ending with ":" when more
+ * follows ("Another Claude session sent a message while you were working:"); falls back to the
+ * first line.
+ */
+export function foreignPreview(text: string, max = 160): string {
+  const lines = text
+    .slice(0, FOREIGN_PREVIEW_SCAN_CHARS)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !FRAME_LINE.test(line));
+  const [first, second] = lines;
+  const line = second !== undefined && first?.endsWith(':') === true ? second : first;
+  return line === undefined ? firstLine(text, max) : firstLine(line, max);
+}

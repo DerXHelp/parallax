@@ -1402,6 +1402,7 @@ export class FakeHost {
       text: { text, truncated: null },
       attachments: [],
       origin: 'human',
+      originKind: null,
       source: 'local',
       slashCommand: text.startsWith('/') ? (text.split(/\s/)[0] ?? null) : null,
       priority,

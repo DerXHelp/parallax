@@ -915,8 +915,14 @@ export const userMessageItemSchema = z.object({
   text: cappedTextSchema,
   /** Images/documents of the message. */
   attachments: z.array(blobRefSchema).default([]),
-  /** 'other' = channel/peer/synthetic. */
+  /** 'other' = not typed by the user (channel, another session, coordinator, automatic notification). */
   origin: z.enum(['human', 'other']).default('human'),
+  /**
+   * WP-72: the SDK's `origin.kind` of a message with `origin: 'other'` ('peer', 'coordinator',
+   * 'task-notification', 'channel' …; free text, the UI names the known kinds); null for the user's own
+   * messages, messages without an origin and older items.
+   */
+  originKind: z.string().nullable().default(null),
   /** '/clear', '/rename' … when the text starts with '/'. */
   slashCommand: z.string().nullable().default(null),
   /** As sent. */

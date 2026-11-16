@@ -426,6 +426,7 @@ export const sampleItems = {
     text: { text: 'Say OK.', truncated: null },
     attachments: [],
     origin: 'human',
+    originKind: null,
     slashCommand: null,
     priority: 'next',
     source: 'local',
