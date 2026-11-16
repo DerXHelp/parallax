@@ -29,6 +29,7 @@ import {
   isClaudeSessionUrl,
   isDefaultProgramAllowed,
   isRemoteControlActive,
+  modelOptionSchema,
   notificationSettingsSchema,
   planFileRefSchema,
   planVersionInfoSchema,
@@ -72,6 +73,7 @@ import {
   sampleHostState,
   sampleId,
   sampleItems,
+  sampleModelOption,
   sampleNotificationSettings,
   sampleOutcomes,
   samplePlanFileRef,
@@ -128,6 +130,7 @@ describe('defaults for old files (B "fehlende Felder ergänzen")', () => {
       ],
       modelSetting: null,
       lastModel: null,
+      claudeModel: null,
       permissionMode: null,
       effort: null,
       fastMode: null,
@@ -874,6 +877,22 @@ describe('WP-70 contracts (login per profile, output style per project)', () => 
     expect(sessionDetailSchema.parse(oldDetail).availableOutputStyles).toEqual([]);
     expectRoundTrip(sessionDetailSchema, sampleDetail({ availableOutputStyles: ['default', 'Explanatory'] }));
     expect(sessionDetailPatchSchema.parse({ queue: [] })).not.toHaveProperty('availableOutputStyles');
+  });
+
+  it('WP-73: claudeModel (entry, summary) and option.curated default for old data and round-trip', () => {
+    const { claudeModel: _entryModel, ...oldEntry } = sampleEntry();
+    expect(entrySchema.parse(oldEntry).claudeModel).toBeNull();
+    expectRoundTrip(entrySchema, sampleEntry({ modelSetting: null, claudeModel: 'opusplan' }));
+    expect(entrySchema.safeParse(sampleEntry({ claudeModel: 'no spaces allowed' })).success).toBe(false);
+    const { claudeModel: _summaryModel, ...oldSummary } = sampleSummary();
+    expect(sessionSummarySchema.parse(oldSummary).claudeModel).toBeNull();
+    expectRoundTrip(sessionSummarySchema, sampleSummary({ claudeModel: 'opusplan' }));
+    const { curated: _curated, ...oldOption } = sampleModelOption();
+    expect(modelOptionSchema.parse(oldOption).curated).toBe(false);
+    expectRoundTrip(modelOptionSchema, sampleModelOption({ curated: true }));
+    expect(sessionDetailPatchSchema.parse({ models: [oldOption] })).toEqual({
+      models: [{ ...oldOption, curated: false }],
+    });
   });
 
   it('WP-71: summary.runningTasks defaults to null; counts, at most 5 items, labels ≤ 120 chars', () => {

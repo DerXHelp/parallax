@@ -19,7 +19,7 @@ import {
   sampleProfile,
   sampleSettings,
 } from '@shared/samples';
-import { eventsScenario } from '../backend/fakeBackend';
+import { FAKE_MODEL_PICKER, eventsScenario } from '../backend/fakeBackend';
 import { closeGate, dslContext, input, events as join, textTurn, toEvents } from '../backend/fake/dsl';
 import { checkCwd } from '../lib/paths';
 import { CommandError } from '../sync/ports';
@@ -416,6 +416,45 @@ describe('commands of a running entry', () => {
       { method: 'applyFlagSettings', args: [{ effortLevel: 'low' }] },
     ]);
     expect(h.summary(entryId)).toMatchObject({ modelSetting: null, permissionMode: 'plan', effort: 'low' });
+  });
+
+  it('WP-73 (ADR-199): "Default" follows the model of Claude settings, read fresh; claudeModel in the summary', async () => {
+    const h = await setup();
+    h.backend.claudeSettings.model = 'opusplan';
+    const entryId = await running(h);
+    expect(h.summary(entryId)).toMatchObject({ modelSetting: null, claudeModel: 'opusplan' });
+    await h.cmd({ name: 'session.setModel', entryId, model: 'opus' });
+    await h.cmd({ name: 'session.setModel', entryId, model: null });
+    // The settings changed since: the fresh read decides (none named → the CLI's own default).
+    h.backend.claudeSettings.model = null;
+    await h.cmd({ name: 'session.setModel', entryId, model: null });
+    expect(h.session(entryId).controls).toEqual([
+      { method: 'setModel', args: ['opus'] },
+      { method: 'setModel', args: ['opusplan'] },
+      { method: 'setModel', args: [null] },
+    ]);
+    expect(h.summary(entryId)).toMatchObject({ modelSetting: null, claudeModel: null });
+  });
+
+  it('WP-73 (ADR-200): refreshModels marks the modelPicker rows; a pinned session keeps the opusplan row', async () => {
+    const h = await setup();
+    h.backend.claudeSettings.model = 'opusplan';
+    const first = await running(h);
+    const before = (await h.cmd({ name: 'session.refreshModels', entryId: first })).models;
+    expect(before.filter((m) => m.curated)).toEqual([]);
+    expect(before.at(-1)).toMatchObject({ value: 'opusplan', displayName: 'Opus Plan' });
+    // settings.json edited while running: the next refresh (picker opened) shows it.
+    h.backend.claudeSettings.modelPicker = FAKE_MODEL_PICKER;
+    const { models } = await h.cmd({ name: 'session.refreshModels', entryId: first });
+    expect(models.filter((m) => m.curated).map((m) => m.value)).toEqual(['claude-opus-4-8', 'sonnet[1m]']);
+    // A second session pinned to opus: its CLI lists no opusplan row – the profile catalog keeps it.
+    const pinned = await h.create('hello', { model: 'opus' });
+    await h.settle();
+    const theirs = (await h.cmd({ name: 'session.refreshModels', entryId: pinned })).models;
+    expect(theirs.map((m) => m.value)).toContain('opusplan');
+    expect(h.summary(pinned)).toMatchObject({ modelSetting: 'opus', claudeModel: 'opusplan' });
+    await h.cmd({ name: 'session.close', entryId: first });
+    expect((await h.cmd({ name: 'session.refreshModels', entryId: first })).models).toEqual(theirs);
   });
 
   it('a failing control request → CLAUDE_CONTROL_FAILED', async () => {

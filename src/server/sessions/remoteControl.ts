@@ -149,11 +149,16 @@ async function disableRemote(core: EngineCore, s: EntryState): Promise<void> {
 }
 
 /**
- * After readiness (every start): Claude's own default for the host state and the `follow_claude`
- * setting of a new entry, then the bridge when the entry wants it.
+ * After readiness (every start): Claude's own default (`value`, read with the other settings by the
+ * readiness, WP-73; null = unknown) for the host state and the `follow_claude` setting of a new
+ * entry, then the bridge when the entry wants it.
  */
-export async function remoteControlAfterReady(core: EngineCore, s: EntryState, rt: SessionRuntime): Promise<void> {
-  const value = await rt.agent.readRemoteControlDefault();
+export async function remoteControlAfterReady(
+  core: EngineCore,
+  s: EntryState,
+  rt: SessionRuntime,
+  value: boolean | null,
+): Promise<void> {
   if (s.runtime !== rt || !rt.alive) return;
   if (value !== null) core.setRemoteControlDefault(s.entry.profileId, value);
   if (s.followClaudeDefault) {

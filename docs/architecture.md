@@ -633,7 +633,8 @@ Das Edge-Profil `<home>\edge` älterer Versionen bleibt liegen (README „Chrome
 
 Remote Control verbindet das installierte `claude` einer Session mit claude.ai bzw. der Claude-App
 (interne SDK-Methode `query.enableRemoteControl`, SDK 0.3.322; Spike 12.11.2026).
-- **SDK-Grenze** (`backend/remoteControl.ts`, `AgentSession.setRemoteControl`/`readRemoteControlDefault`):
+- **SDK-Grenze** (`backend/remoteControl.ts`, `AgentSession.setRemoteControl`; Claudes Standard über
+  `readClaudeSettings`, WP-73/ADR-201):
   Laufzeit-Prüfung der internen Methoden (fehlen → `REMOTE_CONTROL_UNAVAILABLE`), Antwort per zod (Link
   nur `https://claude.ai`, `isClaudeSessionUrl`), Control-Fehler → `REMOTE_CONTROL_AUTH`/
   `POLICY_DISABLED`/`FAILED {reason}`; das Ergebnis ist eine Union, wirft nie. `--replay-user-messages`
@@ -850,6 +851,24 @@ Welche Sessions arbeiten und was in ihnen läuft – in der Seitenleiste, ohne s
 - **FakeBackend:** `fake:workers` (zwei Hintergrund-Agenten + eine Hintergrund-Shell, enden nacheinander);
   Playground `nav-sidebar-running`.
 
+### 3.11 Claudes Modell-Einstellungen (WP-73)
+
+Claudes eigene `model`- und `modelPicker`-Einstellungen gelten auch in Parallax (ADR-199…201).
+- **Lesen:** `AgentSession.readClaudeSettings()` – ein `getSettings`-Control je Bereitschaft und je
+  `session.refreshModels` (`backend/claudeSettings.ts`, tolerant):
+  - `model` = `ANTHROPIC_MODEL` (Settings-`env` vor Start-Env), sonst Settings-`model`;
+  - `modelPicker` nur aus policy > flag > user;
+  - dazu `remoteControlAtStartup` (WP-64).
+- **„Default“:** `Entry.claudeModel` (auch in der Summary) = Profil-`--model`, sonst das Settings-Modell.
+  `session.setModel(null)` sendet bei laufendem Prozess das frisch gelesene `claudeModel` (die CLI nähme sonst
+  ihr eingebautes Default-Modell). `modelSetting` bleibt `null`.
+- **Katalog:** `withClaudeSettings` markiert die `modelPicker`-Zeilen (`ModelOption.curated`) und behält die
+  Tail-Zeile des Eintrags (`opusplan` → „Opus Plan“, von der CLI nur für Sessions darauf gelistet) aus dem vorigen
+  Profilkatalog.
+- **UI:** `effectiveModelOption` (Auslöser, Aufwand, Fast, Auto, `/effort`, `/fast`). Die Default-Zeile sagt
+  „Folgt deinen Claude-Einstellungen: X“. Die Gruppe „Deine Modelle“ steht vor „Weitere Modelle“. Jedes Öffnen
+  lädt neu.
+
 ## 4. Source of Truth (A.3)
 
 | Daten | maßgeblich | persistiert in | live über |
@@ -861,7 +880,7 @@ Welche Sessions arbeiten und was in ihnen läuft – in der Seitenleiste, ohne s
 | Offene Entscheidungen | Broker (Speicher) | Metadaten `decisions.json`, Pläne `plans/v<N>.md` | `decision.*`-Ops |
 | Tatsächlicher Modus / Modell | `init`/`status` bzw. `assistant.message.model` | `permissionMode`, `lastModel` | Summary |
 | Profile, Settings | Server | `profiles.json` (Phase 2, ADR-102; ohne Datei nur „Standard“), `settings.json` | `host.state` (Profile ohne Env/Args; volles Profil nur per `profile.get`) |
-| Modell-Kataloge je Profil, Abo-Limits (Phase 2, ADR-114) | Engine | `model-catalogs.json`, `account-limits.json` | `detail.models`, `host.state.accountLimits` |
+| Modell-Kataloge je Profil, Abo-Limits (Phase 2, ADR-114; `curated` und Tail-Zeile ADR-200) | Engine | `model-catalogs.json`, `account-limits.json` | `detail.models`, `host.state.accountLimits` |
 | Slash-Befehle je Eintrag (Phase 2, ADR-108) | Engine/Normalizer | `entries/<id>/commands.json` (Cache) | `detail.commands` |
 | Externe Konsole (Phase 2, ADR-104) | Engine | `Entry.external` | Summary `external`, Item `handoff` |
 | Blobs (Bilder, Volltexte, Uploads) | Blob-Cache | `blobs/` | `/api/blob/<id>`; Upload `POST /api/attachments` (ADR-103) |

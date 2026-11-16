@@ -1029,7 +1029,7 @@ describe('SdkBackend – Remote Control (WP-64)', () => {
       ok: false,
       error: { code: 'REMOTE_CONTROL_UNAVAILABLE', params: { reason: 'sdk' } },
     });
-    await expect(session.readRemoteControlDefault()).resolves.toBeNull();
+    await expect(session.readClaudeSettings()).resolves.toBeNull();
   });
 
   it.each<[string, Error, string, Record<string, unknown>]>([
@@ -1079,18 +1079,32 @@ describe('SdkBackend – Remote Control (WP-64)', () => {
     ['true', { effective: { remoteControlAtStartup: true } }, true],
     ['false', { effective: { remoteControlAtStartup: false } }, false],
     ['not set', { effective: {} }, null],
-    ['garbage', 'x', null],
     ['not a boolean', { effective: { remoteControlAtStartup: 'yes' } }, null],
-  ])('readRemoteControlDefault: %s', async (_label, answer, expected) => {
+  ])('readClaudeSettings: remoteControlAtStartup %s', async (_label, answer, expected) => {
     const { settings, session } = withRemoteControl(() => Promise.resolve(ANSWER));
     settings.mockResolvedValueOnce(answer);
-    await expect(session.readRemoteControlDefault()).resolves.toBe(expected);
+    await expect(session.readClaudeSettings()).resolves.toMatchObject({ remoteControlAtStartup: expected });
   });
 
-  it('readRemoteControlDefault: a failing getSettings is null', async () => {
+  it('WP-73 readClaudeSettings: model and modelPicker of the answer; garbage is null', async () => {
+    const { settings, session } = withRemoteControl(() => Promise.resolve(ANSWER));
+    settings.mockResolvedValueOnce({
+      effective: { model: 'opusplan', modelPicker: { options: [{ model: 'opus' }] } },
+      sources: [{ source: 'userSettings', settings: { modelPicker: { options: [{ model: 'opus' }] } } }],
+    });
+    await expect(session.readClaudeSettings()).resolves.toEqual({
+      remoteControlAtStartup: null,
+      model: 'opusplan',
+      modelPicker: { models: ['opus'], replaceBuiltIn: false },
+    });
+    settings.mockResolvedValueOnce('x');
+    await expect(session.readClaudeSettings()).resolves.toBeNull();
+  });
+
+  it('readClaudeSettings: a failing getSettings is null', async () => {
     const { settings, session } = withRemoteControl(() => Promise.resolve(ANSWER));
     settings.mockRejectedValueOnce(new Error('nope'));
-    await expect(session.readRemoteControlDefault()).resolves.toBeNull();
+    await expect(session.readClaudeSettings()).resolves.toBeNull();
   });
 });
 

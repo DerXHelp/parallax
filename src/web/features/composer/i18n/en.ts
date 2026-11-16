@@ -106,6 +106,12 @@ export const en = {
     effortUnavailable: 'The current model has no effort setting.',
     /** WP-57: heading of the full model ids below the aliases. */
     more: 'More models',
+    /** WP-73: the Default row while Claude's settings name a model (e.g. 'opusplan'). */
+    follows: 'Follows your Claude settings: {model}',
+    /** WP-73: label of the CLI alias `opusplan` when no row of the list names it. */
+    opusPlan: 'Opus Plan',
+    /** WP-73: heading of the rows of Claude's `modelPicker` setting. */
+    yours: 'Your models',
   },
   context: {
     label: 'Context',

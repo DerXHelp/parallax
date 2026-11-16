@@ -7,6 +7,7 @@ import type { EffortLevel, PermissionMode } from '@shared/common';
 import type { SessionInfoSectionName } from '@shared/model';
 import type { FixtureEvent } from '../fixture';
 import type { AgentBackend, OutgoingPrompt, RemoteControlInfo, StartSessionRequest } from '../types';
+import type { FakeClaudeSettings, FakeClaudeSettingsOptions } from './claudeSettings';
 import type { FakeFiles } from './files';
 import type { FakeHistoryStore } from './history';
 import type { FakeLoginHandle, FakeLoginOptions } from './login';
@@ -69,6 +70,8 @@ export interface FakeBackendOptions {
   login?: FakeLoginOptions;
   /** WP-70: `updateSettings` fails (CLAUDE_CONTROL_FAILED) – default false. */
   outputStyleError?: boolean;
+  /** WP-73: Claude's own `model` / `modelPicker` (default: neither); changeable later (`claudeSettings`). */
+  claudeSettings?: FakeClaudeSettingsOptions;
 }
 
 /**
@@ -123,7 +126,7 @@ export interface FakeOverviewOptions {
 
 /** WP-64: levers of the fake Remote Control (tests; the interactive levers are prompts, remote.ts). */
 export interface FakeRemoteControlOptions {
-  /** Claude's `remoteControlAtStartup` as readRemoteControlDefault() answers it; default false. */
+  /** Claude's `remoteControlAtStartup` as readClaudeSettings() answers it; default false. */
   atStartup?: boolean | null;
   /** Answer of setRemoteControl(true): 'ok' (default) or one of the failures. */
   enable?: 'ok' | 'unavailable' | 'auth' | 'policy' | 'failed';
@@ -149,6 +152,8 @@ export interface FakeBackend extends AgentBackend {
   loginOptions: FakeLoginOptions;
   /** WP-70: output style per project (shared by the fake sessions). */
   readonly outputStyles: FakeOutputStyles;
+  /** WP-73: Claude's own `model` / `modelPicker` (shared by the fake sessions; tests change them). */
+  readonly claudeSettings: FakeClaudeSettings;
 }
 
 export type FakeSessionState =
@@ -278,6 +283,8 @@ export interface FakeScriptContext {
   foregroundTool(toolUseId: string, ms: number): Promise<'background' | 'done'>;
   /** WP-67: the session info state of this session (levers of the `fake:info-*` keywords). */
   readonly info: FakeSessionInfo;
+  /** WP-73: Claude's own settings of the backend (levers `fake:claude-model`, `fake:model-picker`). */
+  readonly claudeSettings: FakeClaudeSettings;
 }
 
 /** What a background task may do (FakeBackgroundTask.run). */

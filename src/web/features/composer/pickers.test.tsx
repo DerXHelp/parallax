@@ -1,7 +1,7 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { sampleContextBreakdown, sampleContextGauge } from '@shared/samples';
+import { sampleContextBreakdown, sampleContextGauge, sampleModelOption } from '@shared/samples';
 import { resetClientStore } from '@web/state/store';
 import { DEMO_ENTRIES, type DemoEntry } from '../decisions/lib/demo-data';
 import { renderWithHost, type Harness } from '../decisions/lib/testing';
@@ -210,6 +210,100 @@ describe('ModelPicker (F.12)', () => {
     expect(within(list).getByText('More models')).toBeTruthy();
     await user.click(screen.getByRole('menuitemradio', { name: /^Opus 4\.8/ }));
     expect(h.commands('session.setModel').at(-1)).toMatchObject({ model: 'claude-opus-4-8' });
+  });
+
+  it('WP-73: "Default" follows the Claude settings – label, sub-line, effort and fast of that row', async () => {
+    const h = start('idle', 'model');
+    act(() => {
+      h.host.patchSummary(DEMO_ENTRIES.idle, { modelSetting: null, claudeModel: 'opus', model: null });
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Model: Opus' }));
+    // The radio stays on Default (choosing Opus would pin the model).
+    expect(
+      screen.getByRole('menuitemradio', { name: /^Default.*Follows/ }).getAttribute('aria-checked'),
+    ).toBe('true');
+    expect(screen.getByText('Follows your Claude settings: Opus')).toBeTruthy();
+    expect(screen.queryByText('Recommended for most tasks')).toBeNull();
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Fast mode' })).toBeTruthy();
+    await user.keyboard('{Escape}');
+    // No row for the settings model: opusplan gets its label from i18n; effort/fast of the Default row.
+    act(() => {
+      h.host.patchSummary(DEMO_ENTRIES.idle, { claudeModel: 'opusplan' });
+    });
+    await user.click(await screen.findByRole('button', { name: 'Model: Opus Plan' }));
+    expect(screen.getByText('Follows your Claude settings: Opus Plan')).toBeTruthy();
+    expect(screen.queryByRole('menuitemcheckbox', { name: 'Fast mode' })).toBeNull();
+    await user.keyboard('{Escape}');
+    // A pinned model wins over the settings; the Default row still says what choosing it means.
+    act(() => {
+      h.host.patchSummary(DEMO_ENTRIES.idle, { modelSetting: 'sonnet' });
+    });
+    await user.click(await screen.findByRole('button', { name: 'Model: Sonnet' }));
+    expect(screen.getByText('Follows your Claude settings: Opus Plan')).toBeTruthy();
+    expect(screen.getByRole('menuitemradio', { name: /^Sonnet/ }).getAttribute('aria-checked')).toBe('true');
+    await user.keyboard('{Escape}');
+    // Without a settings model the CLI's own description stays.
+    act(() => {
+      h.host.patchSummary(DEMO_ENTRIES.idle, { claudeModel: null });
+    });
+    await user.click(await screen.findByRole('button', { name: 'Model: Sonnet' }));
+    expect(screen.getByText('Recommended for most tasks')).toBeTruthy();
+  });
+
+  it('WP-73: the modelPicker rows form "Your models" (CLI order) before "More models"', async () => {
+    const h = start('idle', 'model');
+    const models = [
+      ...DEMO_MODELS_14.map((model) =>
+        model.value === 'claude-opus-4-8' ? { ...model, curated: true } : model,
+      ),
+      sampleModelOption({ value: 'sonnet[1m]', displayName: 'Sonnet 1M', curated: true }),
+    ];
+    act(() => {
+      h.host.pushOps(DEMO_ENTRIES.idle, [{ op: 'detail.patch', patch: { models } }]);
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Model: Haiku 5.5' }));
+    const list = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>('[data-slot="model-list"]');
+      if (found === null) throw new Error('no model list');
+      return found;
+    });
+    const slot = (child: Element) => child.getAttribute('data-slot');
+    const rows = Array.from(list.children).map((child) =>
+      slot(child) === 'model-more'
+        ? '— more —'
+        : slot(child) === 'model-yours'
+          ? '— yours —'
+          : child.getAttribute('role') === 'separator'
+            ? '———'
+            : (child.querySelector('.grid')?.firstElementChild?.textContent ?? ''),
+    );
+    expect(rows.slice(5, 13)).toEqual([
+      '———',
+      '— yours —',
+      'Opus 4.8',
+      'Sonnet 1M',
+      '———',
+      '— more —',
+      'Fable 5.1',
+      'Haiku 4.5',
+    ]);
+    expect(rows.filter((row) => row === 'Opus 4.8')).toHaveLength(1);
+    expect(within(list).getByText('Your models')).toBeTruthy();
+  });
+
+  it('WP-73: every opening reloads the list; an existing list stays in view meanwhile', async () => {
+    const h = start('idle', 'model');
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Model: Haiku' }));
+    expect(await screen.findByRole('menuitemradio', { name: /^Opus/ })).toBeTruthy();
+    expect(screen.queryByText('Loading models…')).toBeNull();
+    await user.keyboard('{Escape}');
+    await user.click(await screen.findByRole('button', { name: 'Model: Haiku' }));
+    await waitFor(() => {
+      expect(h.commands('session.refreshModels')).toHaveLength(2);
+    });
   });
 
   it('loads the model list on first open when the detail has none', async () => {

@@ -189,10 +189,11 @@ export interface AgentSession {
    */
   setRemoteControl(enabled: boolean, req: RemoteControlRequest): Promise<RemoteControlResult>;
   /**
-   * WP-64: Claude's own setting `remoteControlAtStartup` (getSettings().effective); null when unknown
-   * (method missing, not set, unreadable). Never rejects.
+   * WP-73 (replaces WP-64 `readRemoteControlDefault`): what Claude's own settings say, from ONE
+   * `getSettings()` request (internal SDK method, checked at runtime). Resolves null when unknown
+   * (method missing, unreadable answer, failed request). Never rejects.
    */
-  readRemoteControlDefault(): Promise<boolean | null>;
+  readClaudeSettings(): Promise<ClaudeSettings | null>;
   /** WP-65: AI title for `description` (internal SDK method, checked at runtime). Never rejects. */
   generateTitle(description: string, opts: { persist: boolean }): Promise<TitleResult>;
   /**
@@ -244,6 +245,27 @@ export interface AgentSession {
   setOutputStyle(style: string): Promise<{ ok: true } | { ok: false; error: ErrorPayload }>;
   /** close(), wait ≤ 5 s for exit, then taskkill /T /F (C.8). Resolves after 'exit'. */
   close(): Promise<void>;
+}
+
+/** WP-73: the curated model list of Claude's `modelPicker` setting. */
+export interface ClaudeModelPicker {
+  /** `options[].model` in the CLI's order (trimmed, without duplicates). */
+  models: string[];
+  /** `replaceBuiltInOptions`: only the Default row and these rows are offered. */
+  replaceBuiltIn: boolean;
+}
+
+/** WP-73: the parts of Claude's own settings Parallax uses (`getSettings()`; backend/claudeSettings.ts). */
+export interface ClaudeSettings {
+  /** WP-64: `remoteControlAtStartup`; null = not set / not a boolean. */
+  remoteControlAtStartup: boolean | null;
+  /**
+   * The model the CLI uses without `--model`: `ANTHROPIC_MODEL` (settings `env` before the launch
+   * env), else settings `model` (e.g. 'opusplan'); null = none named or not a valid model name.
+   */
+  model: string | null;
+  /** `modelPicker` of the highest source the CLI honors (managed > flag > user); null = none. */
+  modelPicker: ClaudeModelPicker | null;
 }
 
 /** WP-70: output styles of a project (`initializationResult`). */

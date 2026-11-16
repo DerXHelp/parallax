@@ -14,7 +14,7 @@ import { followTranscript } from '@web/shell/transcript-follow';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand } from '@web/state/hooks';
 import { showErrorNotice } from '@web/state/notices';
-import { currentModelOption } from './models';
+import { effectiveModelOption } from './models';
 import type { NativeCommand } from './slash';
 
 /**
@@ -38,6 +38,8 @@ export interface NativeContext {
   entryId: EntryId;
   models: readonly ModelOption[] | null;
   modelSetting: string | null;
+  /** WP-73: what "Default" runs on (Claude's settings), see effectiveModelOption. */
+  claudeModel: string | null;
   fastMode: boolean | null;
   permissionMode: PermissionMode | null;
   /** Opens the model picker (`all`) or only its effort part. */
@@ -131,7 +133,7 @@ export async function runNativeCommand(
     }
     case 'effort': {
       if (args === '') {
-        const model = currentModelOption(context.models, context.modelSetting);
+        const model = effectiveModelOption(context.models, context.modelSetting, context.claudeModel);
         if (model !== null && !model.supportsEffort) return inline('composer.model.effortUnavailable');
         context.openPicker('effort');
         return OK;
@@ -146,7 +148,10 @@ export async function runNativeCommand(
       return run(context, { name: 'session.setEffort', entryId, effort: level });
     }
     case 'fast': {
-      if (currentModelOption(context.models, context.modelSetting)?.supportsFastMode !== true) {
+      if (
+        effectiveModelOption(context.models, context.modelSetting, context.claudeModel)?.supportsFastMode !==
+        true
+      ) {
         return inline('composer.slash.error.fastUnavailable');
       }
       const enabled = args === '' ? context.fastMode !== true : parseOnOff(args);

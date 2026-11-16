@@ -3,10 +3,12 @@
  * without a usable `value` are skipped, unknown effort levels of a newer CLI dropped
  * (`parseEffortLevels`), missing flags become false. `resolved` keeps the SDK's `resolvedModel`
  * per value, so the engine can match the actual model (`assistant.message.model`) to its row.
+ * WP-73: `withClaudeSettings` marks the rows of Claude's `modelPicker` and keeps tail rows (ADR-200).
  */
 import { z } from 'zod';
 import { parseEffortLevels } from '@shared/common';
 import type { ModelOption } from '@shared/model';
+import type { ClaudeModelPicker } from '../backend/types';
 
 export interface ModelCatalog {
   options: ModelOption[];
@@ -50,6 +52,7 @@ export function toModelCatalog(raw: unknown): ModelCatalog {
       supportedEffortLevels: parseEffortLevels(m.supportedEffortLevels ?? []),
       supportsFastMode: m.supportsFastMode ?? false,
       supportsAutoMode: m.supportsAutoMode ?? false,
+      curated: false,
     });
     if (m.resolvedModel !== undefined) catalog.resolved[m.value] = m.resolvedModel;
   }
@@ -65,6 +68,7 @@ function aliasOption(value: string, displayName: string): ModelOption {
     supportedEffortLevels: [],
     supportsFastMode: false,
     supportsAutoMode: false,
+    curated: false,
   };
 }
 
@@ -84,6 +88,37 @@ export const FALLBACK_MODEL_CATALOG: Readonly<ModelCatalog> = Object.freeze({
   resolved: {},
   skipped: 0,
 });
+
+/**
+ * WP-73 (ADR-200): a fresh `supportedModels()` catalog with Claude's settings applied.
+ * - `picker` (settings `modelPicker`; null = none, undefined = unknown): rows whose value it names
+ *   are `curated`; while unknown, the flags of the previous catalog stay.
+ * - Tail rows: the CLI lists a row for a session's current model (e.g. 'opusplan') only in THAT
+ *   session's answer. A value of `keep` (the reading entry's modelSetting/claudeModel) that the new
+ *   list lacks but the previous catalog of the profile had is appended from there, so one session
+ *   pinned to another model does not take the row away from the others.
+ */
+export function withClaudeSettings(
+  catalog: ModelCatalog,
+  picker: ClaudeModelPicker | null | undefined,
+  previous: Pick<ModelCatalog, 'options' | 'resolved'> | null,
+  keep: readonly (string | null)[],
+): ModelCatalog {
+  const wasCurated = new Set(previous?.options.filter((o) => o.curated).map((o) => o.value) ?? []);
+  const isCurated = (value: string): boolean =>
+    picker === undefined ? wasCurated.has(value) : (picker?.models.includes(value) ?? false);
+  const options = catalog.options.map((o) => ({ ...o, curated: isCurated(o.value) }));
+  const resolved = { ...catalog.resolved };
+  for (const value of keep) {
+    if (value === null || options.some((o) => o.value === value)) continue;
+    const row = previous?.options.find((o) => o.value === value);
+    if (row === undefined) continue;
+    options.push({ ...row, curated: isCurated(row.value) });
+    const target = previous?.resolved[value];
+    if (target !== undefined) resolved[value] = target;
+  }
+  return { options, resolved, skipped: catalog.skipped };
+}
 
 /** The profile's catalog, or the alias fallback while it has none (WP22-01). */
 export function catalogOrFallback(catalog: ModelCatalog | null): ModelCatalog {

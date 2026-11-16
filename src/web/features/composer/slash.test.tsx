@@ -336,6 +336,18 @@ describe('sending a "/" draft (WP-37 §2)', () => {
     expect(screen.getByRole('alert').textContent).toBe('Use /fast on or /fast off.');
   });
 
+  it('WP-73: /fast follows the model of the Claude settings while no model is chosen', async () => {
+    const h = await start('idle');
+    act(() => {
+      h.host.patchSummary(DEMO_ENTRIES.idle, { modelSetting: null, claudeModel: 'opus' });
+    });
+    const user = userEvent.setup();
+    await user.type(textbox(), '/fast on{Enter}');
+    await waitFor(() => {
+      expect(h.commands('session.setFastMode').map((cmd) => cmd.enabled)).toEqual([true]);
+    });
+  });
+
   it('/plan switches to plan mode; a text after it is sent', async () => {
     const h = await start();
     const user = userEvent.setup();

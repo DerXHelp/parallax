@@ -20,6 +20,7 @@ import { toPermissionRequest } from '../permissionRequest';
 import type {
   AgentSession,
   BackendEvent,
+  ClaudeSettings,
   OutgoingPrompt,
   OutputStyles,
   PermissionRequest,
@@ -43,7 +44,8 @@ import {
   promptText,
   type RecordedAnswer,
 } from './common';
-import { FAKE_COMMANDS, FAKE_MODELS, fakeContextUsage, resolveFakeModel } from './defaults';
+import { fakeModelList, type FakeClaudeSettings } from './claudeSettings';
+import { FAKE_COMMANDS, fakeContextUsage, resolveFakeModel } from './defaults';
 import { dslContext, textTurn } from './dsl';
 import { FakeFiles } from './files';
 import { FAKE_OUTPUT_STYLES, type FakeOutputStyles } from './outputStyle';
@@ -124,7 +126,14 @@ export interface FakeSessionDeps {
   outputStyles: FakeOutputStyles;
   /** WP-70: FakeBackendOptions.outputStyleError. */
   outputStyleError: boolean;
+  /** WP-73: Claude's own `model` / `modelPicker` (one per backend). */
+  claudeSettings: FakeClaudeSettings;
   onStateChange(): void;
+}
+
+/** WP-73: the model a fake session starts on – `--model`, else Claude's settings `model`. */
+function startModel(deps: FakeSessionDeps): string | null {
+  return deps.req.model ?? deps.claudeSettings.model;
 }
 
 const sessionIdSchema = z.looseObject({ session_id: z.string().min(1) });
@@ -198,12 +207,18 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
   private sideRequests = 0;
   /** WP-67: session info, MCP servers and reload state of this session (levers: fake:info-*). */
   readonly info: FakeSessionInfo;
+  /**
+   * WP-73: the model as set (`--model`, then `setModel`; null = none set, the settings model counts)
+   * – the CLI lists a tail row for it in supportedModels().
+   */
+  private modelValue: string | null;
 
   constructor(private readonly deps: FakeSessionDeps) {
     this.entryId = deps.req.entryId;
     this.pid = deps.pid;
     this.scenario = deps.scenario.name;
     this.info = new FakeSessionInfo(deps.sessionInfo);
+    this.modelValue = deps.req.model;
     this.currentSessionId =
       deps.scenario.kind === 'script' ? (deps.req.resumeSessionId ?? deps.ids.uuid()) : null;
     const scenario = deps.scenario;
@@ -281,6 +296,9 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
 
   async setModel(model: string | null): Promise<void> {
     await this.control('setModel', [model], () => {
+      // Like the CLI: the "default" clears the session's own model (the tail row then follows the
+      // settings model) but runs on the built-in default (resolveFakeModel(null)).
+      this.modelValue = model;
       if (this.script !== null) this.script.state.model = resolveFakeModel(model);
     });
   }
@@ -306,9 +324,10 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
   }
 
   async supportedModels(): Promise<unknown[]> {
-    const answer = await this.call('supportedModels', [], () => [...FAKE_MODELS]);
+    const own = (): Record<string, unknown>[] => fakeModelList(this.deps.claudeSettings, this.modelValue);
+    const answer = await this.call('supportedModels', [], own);
     const list = z.array(z.unknown()).safeParse(answer);
-    return list.success ? list.data : [...FAKE_MODELS];
+    return list.success ? list.data : own();
   }
 
   async supportedCommands(): Promise<unknown[]> {
@@ -366,10 +385,14 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
     return { ok: true, info };
   }
 
-  async readRemoteControlDefault(): Promise<boolean | null> {
-    this.calls.push({ fn: 'readRemoteControlDefault', args: [] });
+  /** WP-73: Claude's own settings of the backend (+ WP-64 remoteControlAtStartup); null once ended. */
+  async readClaudeSettings(): Promise<ClaudeSettings | null> {
+    this.calls.push({ fn: 'readClaudeSettings', args: [] });
     if (this.exited) return null;
-    return Promise.resolve(this.deps.remoteControl.atStartup ?? false);
+    return Promise.resolve({
+      remoteControlAtStartup: this.deps.remoteControl.atStartup ?? false,
+      ...this.deps.claudeSettings.snapshot(),
+    });
   }
 
   /** WP-65: the fake title generator (fakeTitle); events mode: unavailable (no recorded answer). */
@@ -462,7 +485,7 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
     const raw = this.info.answer(section, {
       sessionId: this.currentSessionId,
       cwd: this.deps.req.cwd,
-      model: state?.model ?? resolveFakeModel(this.deps.req.model),
+      model: state?.model ?? resolveFakeModel(startModel(this.deps)),
       permissionMode: state?.permissionMode ?? this.deps.req.permissionMode ?? 'default',
       now: this.deps.now(),
       messages: this.currentSessionId === null ? [] : this.deps.history.messages(this.currentSessionId),
@@ -1104,7 +1127,7 @@ class ScriptContext implements FakeScriptContext {
     this.ids = deps.ids;
     this.history = deps.history;
     this.state = {
-      model: resolveFakeModel(deps.req.model),
+      model: resolveFakeModel(startModel(deps)),
       // init.permissionMode = the start mode (also the fresh-context start, WP-52).
       permissionMode: deps.req.permissionMode ?? 'default',
       effort: deps.req.effort,
@@ -1194,6 +1217,10 @@ class ScriptContext implements FakeScriptContext {
 
   get info(): FakeSessionInfo {
     return this.session.info;
+  }
+
+  get claudeSettings(): FakeClaudeSettings {
+    return this.deps.claudeSettings;
   }
 
   /** WP-64: the turn of a prompt typed in the Claude app, once no other turn runs (not interruptible). */

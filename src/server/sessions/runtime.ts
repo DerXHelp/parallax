@@ -16,6 +16,7 @@ import type { AgentSession, BackendEvent } from '../backend/types';
 import type { LaunchSpec } from '../claude/ports';
 import { CommandError } from '../sync/ports';
 import { NO_ATTACHMENTS, promptContent, type PromptAttachments } from './attachments';
+import { applyModelSettings } from './claudeSettings';
 import { toSlashCommands } from './commandCatalog';
 import {
   commandError,
@@ -584,10 +585,10 @@ export class SessionRuntime {
         }
       }
     }
+    // WP-73: Claude's own settings (never rejects) – "Default", curated rows, tail row, remote default.
+    const settings = this.alive ? await this.agent.readClaudeSettings() : null;
     if (!this.alive) return;
-    const catalog = toModelCatalog(raw);
-    this.core.setModels(s.entry.profileId, catalog);
-    s.emit([{ op: 'detail.patch', patch: { models: catalog.options } }]);
+    applyModelSettings(this.core, s, this.launch, toModelCatalog(raw), settings);
     // Started without a prompt: nothing else would leave `starting` (synthetic, not "seen").
     if (!this.sessionStateSeen && !this.sentSinceStart) s.reduce({ type: 'session_state', state: 'idle' });
     // Phase 2: the slash-command catalog (ADR-108) and the git branch (ADR-113) after readiness.
@@ -597,9 +598,11 @@ export class SessionRuntime {
     void this.refreshOutputStyles();
     // WP-64: Claude's default (host state, follow_claude) and the wanted bridge.
     this.remoteReady = true;
-    remoteControlAfterReady(this.core, s, this).catch((error: unknown) => {
-      this.core.reportError(error, 'remote control after readiness');
-    });
+    remoteControlAfterReady(this.core, s, this, settings?.remoteControlAtStartup ?? null).catch(
+      (error: unknown) => {
+        this.core.reportError(error, 'remote control after readiness');
+      },
+    );
   }
 
   /** ADR-108: `supportedCommands()` → `detail.patch {commands}` (+ cache via emit); errors only logged. */

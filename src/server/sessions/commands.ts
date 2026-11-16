@@ -31,6 +31,7 @@ import {
 } from '@shared/protocol';
 import { CommandError, type CommandContext, type HostCommandHandler } from '../sync/ports';
 import { checkAttachments, checkPastes, materializeAttachments, type PromptAttachments } from './attachments';
+import { applyModelSettings, claudeModelOf, updateClaudeModel } from './claudeSettings';
 import { cancelContinue, planContinue } from './continuePlan';
 import {
   assertEntryGate,
@@ -182,6 +183,7 @@ async function createSession(
     conversations: [newConversation(core.ids.newId('cv'), now)],
     modelSetting: cmd.model ?? profile.defaults.model,
     lastModel: null,
+    claudeModel: null,
     permissionMode,
     effort: cmd.effort ?? profile.defaults.effort,
     fastMode: null,
@@ -253,8 +255,12 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
       return interrupt(core, s);
     case 'session.setModel': {
       const runtime = running(s);
-      if (runtime !== null)
-        await controlCall('setModel', () => runtime.agent.setModel(cmd.model), core, s.id);
+      if (runtime !== null) {
+        // WP-73 (ADR-199): "Default" follows Claude's settings – the CLI's own `set_model` default
+        // would switch to its built-in default model instead (e.g. Opus instead of 'opusplan').
+        const target = cmd.model ?? (await defaultModelOf(s, runtime));
+        await controlCall('setModel', () => runtime.agent.setModel(target), core, s.id);
+      }
       s.patch((e) => ({ ...e, modelSetting: cmd.model }));
       return {} satisfies CommandResult<'session.setModel'>;
     }
@@ -859,9 +865,25 @@ async function refreshModels(
   const runtime = running(s);
   // Dormant: the profile's last catalog, before any start the CLI aliases (WP22-01).
   if (runtime === null) return { models: catalogOrFallback(core.models(s.entry.profileId)).options };
-  const raw = await controlCall('supportedModels', () => runtime.agent.supportedModels(), core, s.id);
-  const catalog = toModelCatalog(raw);
-  core.setModels(s.entry.profileId, catalog);
-  s.emit([{ op: 'detail.patch', patch: { models: catalog.options } }]);
+  // WP-73: the list and Claude's settings together (an edited settings.json shows on the next open).
+  const [raw, settings] = await Promise.all([
+    controlCall('supportedModels', () => runtime.agent.supportedModels(), core, s.id),
+    runtime.agent.readClaudeSettings(),
+  ]);
+  const catalog = applyModelSettings(core, s, runtime.launch, toModelCatalog(raw), settings);
   return { models: catalog.options };
+}
+
+/**
+ * WP-73 (ADR-199): the model "Default" means for a running process – read fresh (settings may have
+ * changed since the start), the last known value when unreadable; null = the CLI's own default.
+ */
+async function defaultModelOf(
+  s: EntryState,
+  runtime: NonNullable<EntryState['runtime']>,
+): Promise<string | null> {
+  const settings = await runtime.agent.readClaudeSettings();
+  const claudeModel = claudeModelOf(runtime.launch, settings, s.entry.claudeModel);
+  updateClaudeModel(s, claudeModel);
+  return claudeModel;
 }

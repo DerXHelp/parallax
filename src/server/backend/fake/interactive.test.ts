@@ -29,7 +29,7 @@ import type {
   PermissionRequest,
   StartSessionRequest,
 } from '../types';
-import { createFakeBackend, sequentialIds, type FakeBackendOptions } from '../fakeBackend';
+import { FAKE_MODEL_PICKER, createFakeBackend, sequentialIds, type FakeBackendOptions } from '../fakeBackend';
 import { FAKE_CONSOLE_PROMPT, fakeConsoleAnswer } from './console';
 import { FAKE_CONTEXT_HIGH_TOKENS, FAKE_MODELS } from './defaults';
 import {
@@ -990,6 +990,52 @@ describe('WP-69 hook runs', () => {
   });
 });
 
+describe('WP-73 Claude settings (model, modelPicker)', () => {
+  const values = (list: unknown[]) => list.map((row) => z.looseObject({ value: z.string() }).parse(row).value);
+
+  it('a start without model runs on the settings model; the list carries its tail row and the picker rows', async () => {
+    const h = harness({}, { claudeSettings: { model: 'opusplan', modelPicker: FAKE_MODEL_PICKER } });
+    h.send('hello');
+    await h.turnDone(1);
+    const answer = h.items().flatMap((i) => (i.kind === 'assistant_text' ? [i.model] : []));
+    expect(answer.at(-1)).toBe('claude-sonnet-5-5');
+    const list = values(await h.agent.supportedModels());
+    expect(list.slice(0, FAKE_MODELS.length)).toEqual(values([...FAKE_MODELS]));
+    // claude-opus-4-8 is listed already (stays the built-in row); sonnet[1m] and the tail row follow.
+    expect(list.slice(FAKE_MODELS.length)).toEqual(['sonnet[1m]', 'opusplan']);
+    await expect(h.agent.readClaudeSettings()).resolves.toEqual({
+      remoteControlAtStartup: false,
+      model: 'opusplan',
+      modelPicker: { models: ['sonnet[1m]', 'claude-opus-4-8'], replaceBuiltIn: false },
+    });
+    // setModel(null) = the CLI's built-in default; the tail row of the settings model stays.
+    await h.agent.setModel(null);
+    expect(values(await h.agent.supportedModels())).toContain('opusplan');
+    await h.close();
+  });
+
+  it('fake:claude-model / fake:model-picker switch the shared settings (replace: Default + curated rows)', async () => {
+    const h = harness();
+    h.send('fake:claude-model opusplan');
+    await h.turnDone(1);
+    h.send('fake:model-picker replace');
+    await h.turnDone(2);
+    expect(texts(h.items()).slice(-2)).toEqual([
+      'Fake: Claude settings model opusplan.',
+      'Fake: Claude modelPicker on (replaces the built-in list).',
+    ]);
+    expect(h.backend.claudeSettings.model).toBe('opusplan');
+    expect(values(await h.agent.supportedModels())).toEqual(['default', 'sonnet[1m]', 'claude-opus-4-8', 'opusplan']);
+    h.send('fake:model-picker off');
+    await h.turnDone(3);
+    h.send('fake:claude-model none');
+    await h.turnDone(4);
+    expect(h.backend.claudeSettings.snapshot()).toEqual({ model: null, modelPicker: null });
+    expect(values(await h.agent.supportedModels())).toEqual(values([...FAKE_MODELS]));
+    await h.close();
+  });
+});
+
 describe('interactive scenario: Remote Control (WP-64)', () => {
   const bridgeStates = (signals: readonly StatusSignal[]) =>
     signals.flatMap((s) => (s.type === 'bridge_state' ? [s.state] : []));
@@ -1029,12 +1075,16 @@ describe('interactive scenario: Remote Control (WP-64)', () => {
     ] as const) {
       const h = harness({}, { remoteControl: { enable: mode, atStartup: true } });
       await expect(enable(h)).resolves.toMatchObject({ ok: false, error: { code } });
-      await expect(h.agent.readRemoteControlDefault()).resolves.toBe(true);
+      await expect(h.agent.readClaudeSettings()).resolves.toMatchObject({ remoteControlAtStartup: true });
       await h.close();
       await expect(enable(h)).resolves.toMatchObject({ ok: false, error: { code: 'REMOTE_CONTROL_FAILED' } });
     }
     const plain = harness();
-    await expect(plain.agent.readRemoteControlDefault()).resolves.toBe(false);
+    await expect(plain.agent.readClaudeSettings()).resolves.toEqual({
+      remoteControlAtStartup: false,
+      model: null,
+      modelPicker: null,
+    });
     await plain.close();
   });
 

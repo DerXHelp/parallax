@@ -144,9 +144,13 @@ export const FAKE_COMMANDS: readonly Record<string, unknown>[] = [
  */
 export const FAKE_TERMINAL_COMMANDS: readonly string[] = ['exit', 'statusline', 'vim'];
 
-/** Full model id for an alias/setting (init.model, assistant.model): 'haiku' → 'claude-haiku-5-5'. */
+/**
+ * Full model id for an alias/setting (init.model, assistant.model): 'haiku' → 'claude-haiku-5-5';
+ * null = the fake CLI's built-in default; WP-73: 'opusplan' answers with Sonnet (no plan mode here).
+ */
 export function resolveFakeModel(model: string | null): string {
   if (model === null) return 'claude-haiku-5-5';
+  if (model === 'opusplan') return 'claude-sonnet-5-5';
   const known = FAKE_MODELS.find((m) => m.value === model)?.resolvedModel;
   return typeof known === 'string' ? known : model;
 }
