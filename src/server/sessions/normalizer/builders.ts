@@ -214,12 +214,27 @@ export function slashCommandOf(text: string): string | null {
 
 // ---- Items ----
 
+/** Longest `originKind` kept (the SDK's kinds are short words; anything longer is cut). */
+const ORIGIN_KIND_CHARS = 64;
+
+/**
+ * WP-72: the `originKind` of a user message from the SDK's `origin.kind` – null for the user's own
+ * messages ('human') and a missing or empty kind, else the trimmed kind (at most 64 characters).
+ */
+export function foreignOriginKind(kind: string | null | undefined): string | null {
+  const trimmed = kind?.trim() ?? '';
+  if (trimmed === '' || trimmed === 'human') return null;
+  return trimmed.slice(0, ORIGIN_KIND_CHARS);
+}
+
 export function userMessageItem(
   base: ItemBase,
   text: CappedText,
   opts: {
     attachments: BlobRef[];
     origin: 'human' | 'other';
+    /** WP-72: `origin.kind` of a message not typed by the user (`foreignOriginKind`); default null. */
+    originKind?: string | null;
     priority: 'next' | 'now' | null;
     /** WP-64: 'remote' = sent from the Claude app (Remote Control); default 'local'. */
     source?: 'local' | 'remote';
@@ -231,6 +246,7 @@ export function userMessageItem(
     text,
     attachments: opts.attachments,
     origin: opts.origin,
+    originKind: opts.origin === 'other' ? (opts.originKind ?? null) : null,
     slashCommand: slashCommandOf(text.text),
     priority: opts.priority,
     source: opts.source ?? 'local',

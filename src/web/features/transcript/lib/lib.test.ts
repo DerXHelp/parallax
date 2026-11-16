@@ -8,6 +8,7 @@ import {
   collapsedPreview,
   countLines,
   firstLine,
+  foreignPreview,
   normalizeTerminalText,
   stripToolUseError,
 } from './text';
@@ -66,6 +67,35 @@ describe('terminal text', () => {
     expect(firstLine('  first\nsecond')).toBe('first');
     expect(firstLine('x'.repeat(20), 10)).toBe(`${'x'.repeat(9)}…`);
     expect(stripToolUseError('<tool_use_error>Blocked</tool_use_error>')).toBe('Blocked');
+  });
+});
+
+describe('foreignPreview (WP-72)', () => {
+  it('skips the introduction and the envelope of a message from another session', () => {
+    const text = [
+      'Another Claude session sent a message while you were working:',
+      '<agent-message from="aae15852b57fcc94e">',
+      'Second contract update (re-read docs/BRIDGE_API.md)',
+      '</agent-message>',
+    ].join('\n');
+    expect(foreignPreview(text)).toBe('Second contract update (re-read docs/BRIDGE_API.md)');
+  });
+
+  it('shows the coordinator message body and skips a [banner] line', () => {
+    expect(foreignPreview('The coordinator sent a message while you were working:\nKoordinator: Danke, geprüft.')).toBe(
+      'Koordinator: Danke, geprüft.',
+    );
+    expect(
+      foreignPreview('[SYSTEM NOTIFICATION - NOT USER INPUT]\nThis is an automated background-task event.\nDetails'),
+    ).toBe('This is an automated background-task event.');
+  });
+
+  it('keeps a plain text, a lone introduction and shortens long lines', () => {
+    expect(foreignPreview('  from a channel\nsecond line')).toBe('from a channel');
+    expect(foreignPreview('Only an introduction:')).toBe('Only an introduction:');
+    expect(foreignPreview('<tag>\n</tag>')).toBe('<tag>');
+    expect(foreignPreview('')).toBe('');
+    expect(foreignPreview('x'.repeat(20), 10)).toBe(`${'x'.repeat(9)}…`);
   });
 });
 

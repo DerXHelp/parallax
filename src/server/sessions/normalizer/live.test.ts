@@ -113,7 +113,19 @@ describe('live normalizer: prompts', () => {
     const [big] = upserts(n.push({ type: 'command_lifecycle', command_uuid: '33333333-3333-4333-8333-333333333333', state: 'started' }, AT));
     expect(big?.kind === 'user_message' ? big.text.truncated?.totalChars : null).toBe(LIMITS.itemTextChars + 10);
     const [foreign] = upserts(n.push({ type: 'user', message: { content: 'from a channel' }, uuid: 'foreign-1', origin: { kind: 'channel' }, session_id: SESSION }, AT));
-    expect(foreign).toMatchObject({ kind: 'user_message', origin: 'other', priority: null, text: { text: 'from a channel' } });
+    expect(foreign).toMatchObject({ kind: 'user_message', origin: 'other', originKind: 'channel', priority: null, text: { text: 'from a channel' } });
+  });
+
+  it('keeps the origin kind of a foreign user text (WP-72): peer/coordinator as sent, none → null, long → 64 chars', () => {
+    const n = fresh();
+    const kindOf = (uuid: string, origin?: { kind: string }) => {
+      const [item] = upserts(n.push({ type: 'user', message: { content: `text ${uuid}` }, uuid, ...(origin === undefined ? {} : { origin }), session_id: SESSION }, AT));
+      return item?.kind === 'user_message' ? [item.origin, item.originKind] : null;
+    };
+    expect(kindOf('f-peer', { kind: 'peer' })).toEqual(['other', 'peer']);
+    expect(kindOf('f-coordinator', { kind: 'coordinator' })).toEqual(['other', 'coordinator']);
+    expect(kindOf('f-none')).toEqual(['other', null]);
+    expect(kindOf('f-long', { kind: 'k'.repeat(100) })).toEqual(['other', 'k'.repeat(64)]);
   });
 
   it('resets the prompt suggestion when the next prompt starts', () => {
@@ -432,7 +444,7 @@ describe('live normalizer: task output files and lost writes (WP-52)', () => {
     expect(registered.map((i) => [i.id, i.kind])).toEqual([['p1-registered', 'user_message']]);
     // Another origin (channel) is no notification either.
     expect(upserts(n.push(userText('p1-channel', text, { origin: { kind: 'channel', server: 'x' } }), AT))).toEqual([
-      expect.objectContaining({ kind: 'user_message', origin: 'other' }),
+      expect.objectContaining({ kind: 'user_message', origin: 'other', originKind: 'channel' }),
     ]);
 
     // No origin at all (older CLIs): shown as a notification, but without the output file.

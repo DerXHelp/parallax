@@ -229,21 +229,23 @@ describe('normalizeHistory details', () => {
     ]);
   });
 
-  it('maps HistoryMessage.origin like the live adapter; absent/null/human → human (R1-07)', () => {
+  it('maps HistoryMessage.origin like the live adapter; absent/null/human → human (R1-07), the kind of other origins kept (WP-72)', () => {
     const { items } = normalizeHistory(
       [
         user('o1', 'typed'),
         { ...user('o2', 'from a channel'), origin: { kind: 'channel' } },
         { ...user('o3', 'explicit human'), origin: { kind: 'human' } },
         { ...user('o4', 'unknown'), origin: null },
+        { ...user('o5', 'from another session'), origin: { kind: 'peer' } },
       ],
       ctx,
     );
-    expect(items.map((i) => (i.kind === 'user_message' ? [i.id, i.origin] : null))).toEqual([
-      ['o1', 'human'],
-      ['o2', 'other'],
-      ['o3', 'human'],
-      ['o4', 'human'],
+    expect(items.map((i) => (i.kind === 'user_message' ? [i.id, i.origin, i.originKind] : null))).toEqual([
+      ['o1', 'human', null],
+      ['o2', 'other', 'channel'],
+      ['o3', 'human', null],
+      ['o4', 'human', null],
+      ['o5', 'other', 'peer'],
     ]);
   });
 

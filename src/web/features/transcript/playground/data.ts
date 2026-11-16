@@ -1084,6 +1084,33 @@ function compactSession(): DemoSession {
     );
   }
   say('All six steps look right. I will run the whole suite once more.');
+  // WP-72: messages not typed by the user – collapsed lines with their origin and a preview.
+  items.push(
+    user(
+      'px:compact:peer',
+      order(),
+      [
+        'Another Claude session sent a message while you were working:',
+        '<agent-message from="a3f1c2d4e5b6a7c8">',
+        'The login fixture now seeds a second user – run the suite against both.',
+        '</agent-message>',
+      ].join('\n'),
+      { origin: 'other', originKind: 'peer', priority: null },
+    ),
+  );
+  say('Noted – the suite runs against both users.');
+  items.push(
+    user(
+      'px:compact:notification',
+      order(),
+      [
+        '[SYSTEM NOTIFICATION - NOT USER INPUT]',
+        'This is an automated background-task event, NOT a message from the user.',
+        'The background type check finished without errors.',
+      ].join('\n'),
+      { origin: 'other', originKind: 'task-notification', priority: null },
+    ),
+  );
   think('Full run, then the build.');
   bash('pnpm exec playwright test');
   bash('pnpm build', 'running');

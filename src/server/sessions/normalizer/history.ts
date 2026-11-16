@@ -17,6 +17,7 @@ import {
   classifyUserText,
   emptyTask,
   finalBlockItem,
+  foreignOriginKind,
   isoTime,
   pxItemId,
   statusAfterResult,
@@ -175,6 +176,7 @@ class HistoryBuilder {
             attachments: content.images,
             // HistoryMessage.origin (R1-07): like live; unknown (absent/null) counts as human.
             origin: (message.origin?.kind ?? 'human') === 'human' ? 'human' : 'other',
+            originKind: foreignOriginKind(message.origin?.kind),
             priority: null,
           }),
         );

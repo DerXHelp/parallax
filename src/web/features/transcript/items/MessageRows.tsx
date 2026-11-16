@@ -1,14 +1,20 @@
 import {
+  BellIcon,
   BrainIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   CircleStopIcon,
   ClockIcon,
   FileIcon,
+  MessageSquareDashedIcon,
+  MessagesSquareIcon,
+  NetworkIcon,
+  RadioIcon,
   SmartphoneIcon,
   SquareSlashIcon,
   Undo2Icon,
   ZapIcon,
+  type LucideIcon,
 } from 'lucide-react';
 import { memo, useContext, useMemo, useState, type ReactNode } from 'react';
 import type { AssistantTextItem, BlobRef, QueuedPrompt, ThinkingItem, UserMessageItem } from '@shared/model';
@@ -23,7 +29,7 @@ import { Disclosure } from '../components/Disclosure';
 import { ImageThumb } from '../components/ImageThumb';
 import { ModelBadge } from '../components/ModelBadge';
 import { QueuedIdsContext } from '../context';
-import { collapsedPreview, countLines } from '../lib/text';
+import { collapsedPreview, countLines, foreignPreview } from '../lib/text';
 import { withdrawQueuedMessage } from '../lib/withdraw';
 import { Markdown } from '../markdown/Markdown';
 import { expansionKey, useExpanded } from '../state/expansion';
@@ -154,6 +160,73 @@ function UserText({ text, stateKey }: { text: string; stateKey: string }) {
   );
 }
 
+interface ForeignOrigin {
+  icon: LucideIcon;
+  /** Key under `transcript.user.origin`. */
+  label: 'peer' | 'coordinator' | 'notification' | 'channel' | 'unknown';
+}
+
+/** WP-72: the known origins of a message not typed by the user (`originKind`), others are `unknown`. */
+const FOREIGN_ORIGINS: ReadonlyMap<string, ForeignOrigin> = new Map<string, ForeignOrigin>([
+  ['peer', { icon: MessagesSquareIcon, label: 'peer' }],
+  ['coordinator', { icon: NetworkIcon, label: 'coordinator' }],
+  ['task-notification', { icon: BellIcon, label: 'notification' }],
+  ['channel', { icon: RadioIcon, label: 'channel' }],
+]);
+
+const UNKNOWN_ORIGIN: ForeignOrigin = { icon: MessageSquareDashedIcon, label: 'unknown' };
+
+function foreignOrigin(kind: string | null): ForeignOrigin {
+  return (kind === null ? undefined : FOREIGN_ORIGINS.get(kind)) ?? UNKNOWN_ORIGIN;
+}
+
+/**
+ * WP-72: a message not typed by the user (another session, the coordinator, an automatic
+ * notification, a channel) – one quiet collapsed line with its origin and a preview instead of a
+ * user bubble; opening it shows the whole text. Its own row in the compact view (it triggers
+ * Claude's next answer).
+ */
+const ForeignMessageRow = memo(function ForeignMessageRow({
+  item,
+  sessionKey,
+}: {
+  item: UserMessageItem;
+  sessionKey: string;
+}) {
+  const t = useT();
+  const origin = foreignOrigin(item.originKind);
+  const Icon = origin.icon;
+  const preview = useMemo(() => foreignPreview(item.text.text), [item.text.text]);
+  const label = t(`transcript.user.origin.${origin.label}`);
+  const title = preview === '' ? label : `${label} · ${preview}`;
+  return (
+    <div
+      data-item-kind="user_message"
+      data-origin="other"
+      data-origin-kind={item.originKind ?? undefined}
+      className="min-w-0"
+    >
+      <Disclosure
+        stateKey={expansionKey(sessionKey, item.id)}
+        header={
+          <span className="text-muted-foreground flex min-w-0 items-center gap-1.5 text-xs">
+            <Icon aria-hidden className="size-3.5 shrink-0" />
+            <span className="min-w-0 truncate">{title}</span>
+          </span>
+        }
+      >
+        <div className="text-muted-foreground mt-1 ml-5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5 border-l pl-3">
+          <CappedContent text={item.text.text} truncated={item.text.truncated} sessionKey={sessionKey}>
+            {(text) => <UserText text={text} stateKey={expansionKey(sessionKey, item.id, 'text')} />}
+          </CappedContent>
+          <Attachments attachments={item.attachments} />
+        </div>
+      </Disclosure>
+    </div>
+  );
+});
+
+/** A user message: the user's own as a bubble, one not typed by the user as a collapsed line (WP-72). */
 export const UserMessageRow = memo(function UserMessageRow({
   item,
   sessionKey,
@@ -161,6 +234,14 @@ export const UserMessageRow = memo(function UserMessageRow({
   item: UserMessageItem;
   sessionKey: string;
 }) {
+  return item.origin === 'other' ? (
+    <ForeignMessageRow item={item} sessionKey={sessionKey} />
+  ) : (
+    <OwnMessageRow item={item} sessionKey={sessionKey} />
+  );
+});
+
+function OwnMessageRow({ item, sessionKey }: { item: UserMessageItem; sessionKey: string }) {
   const t = useT();
   const queuedIds = useContext(QueuedIdsContext);
   const queued = queuedIds.has(item.id);
@@ -175,10 +256,7 @@ export const UserMessageRow = memo(function UserMessageRow({
       }
     >
       <Attachments attachments={item.attachments} />
-      {item.slashCommand === null &&
-      item.origin === 'human' &&
-      item.priority !== 'now' &&
-      item.source === 'local' ? null : (
+      {item.slashCommand === null && item.priority !== 'now' && item.source === 'local' ? null : (
         <div className="flex flex-wrap gap-1">
           {/* WP-64: typed in the Claude app (Remote Control). */}
           {item.source === 'remote' ? (
@@ -199,14 +277,11 @@ export const UserMessageRow = memo(function UserMessageRow({
               {t('transcript.user.sendNow')}
             </Badge>
           ) : null}
-          {item.origin === 'other' ? (
-            <Badge variant="outline">{t('transcript.user.otherOrigin')}</Badge>
-          ) : null}
         </div>
       )}
     </UserBubble>
   );
-});
+}
 
 /** A prompt in `detail.queue` that has no item yet (grey until the CLI takes it over, F.9). */
 export const QueuedPromptRow = memo(function QueuedPromptRow({

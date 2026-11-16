@@ -207,6 +207,7 @@ describe('defaults for old files (B "fehlende Felder ergänzen")', () => {
       text: { text: 'hi', truncated: null },
       attachments: [],
       origin: 'human',
+      originKind: null,
       slashCommand: null,
       priority: null,
       source: 'local',

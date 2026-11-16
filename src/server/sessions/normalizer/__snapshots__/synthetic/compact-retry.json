@@ -126,6 +126,7 @@
         },
         "attachments": [],
         "origin": "human",
+        "originKind": null,
         "slashCommand": "/compact",
         "priority": "next",
         "source": "local"

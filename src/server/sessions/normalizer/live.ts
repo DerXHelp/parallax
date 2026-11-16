@@ -49,6 +49,7 @@ import {
   emptyTask,
   errorItem,
   finalBlockItem,
+  foreignOriginKind,
   isoTime,
   millisToIso,
   pxItemId,
@@ -877,6 +878,7 @@ class LiveNormalizerImpl implements LiveNormalizer {
           userMessageItem(this.uuidBase(uuid, at), capText(kind.text, this.ctx), {
             attachments: content.images,
             origin: u.origin?.kind === 'human' ? 'human' : 'other',
+            originKind: foreignOriginKind(u.origin?.kind),
             priority: null,
           }),
           out,

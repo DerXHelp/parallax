@@ -34,7 +34,14 @@ export const en = {
     queued: 'Queued – sent after the current step',
     sending: 'Sending…',
     sendNow: 'Sent immediately',
-    otherOrigin: 'Not typed by you (channel, hook or another tool)',
+    /** WP-72: the collapsed line of a message not typed by you, by its origin (`originKind`). */
+    origin: {
+      peer: 'Message from another session',
+      coordinator: 'Message from the coordinator',
+      notification: 'Automatic notification',
+      channel: 'Message from a channel',
+      unknown: 'Not typed by you',
+    },
     /** WP-64: a prompt typed in the Claude app or on claude.ai (Remote Control). */
     fromClaudeApp: 'From the Claude app',
     slashCommand: 'Command',
