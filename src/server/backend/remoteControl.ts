@@ -1,8 +1,8 @@
 /**
- * WP-64 (Remote Control): the SDK boundary of `query.enableRemoteControl` and
- * `getSettings().effective.remoteControlAtStartup` (both internal in SDK 0.3.322, docs/wp/WP-64.md
- * §1.1). Pure helpers: tolerant parsing of the answers (zod) and mapping of control errors to the
- * four REMOTE_CONTROL_* codes. Used by SdkBackend and the cli-check probe.
+ * WP-64 (Remote Control): the SDK boundary of `query.enableRemoteControl` (internal in SDK 0.3.322,
+ * docs/wp/WP-64.md §1.1). Pure helpers: tolerant parsing of the answer (zod) and mapping of control
+ * errors to the four REMOTE_CONTROL_* codes. Used by SdkBackend and the cli-check probe. Claude's
+ * `remoteControlAtStartup` is read with the other settings in claudeSettings.ts (WP-73).
  */
 import { z } from 'zod';
 import { makeError, type ErrorPayload } from '@shared/errors';
@@ -21,10 +21,6 @@ export const remoteControlAnswerSchema = z.looseObject({
   bridge_epoch: z.number().optional(),
 });
 
-const settingsAnswerSchema = z.looseObject({
-  effective: z.looseObject({ remoteControlAtStartup: z.unknown().optional() }).optional(),
-});
-
 /** Turns the raw answer of `enableRemoteControl(true)` into the port result. */
 export function toRemoteControlInfo(raw: unknown): RemoteControlResult {
   const parsed = remoteControlAnswerSchema.safeParse(raw);
@@ -35,14 +31,6 @@ export function toRemoteControlInfo(raw: unknown): RemoteControlResult {
     sessionUrl: url !== undefined && isClaudeSessionUrl(url) ? url : null,
   };
   return { ok: true, info };
-}
-
-/** `getSettings()` answer → Claude's own `remoteControlAtStartup`; null when absent or not a boolean. */
-export function remoteControlDefaultOf(raw: unknown): boolean | null {
-  const parsed = settingsAnswerSchema.safeParse(raw);
-  if (!parsed.success) return null;
-  const value = parsed.data.effective?.remoteControlAtStartup;
-  return typeof value === 'boolean' ? value : null;
 }
 
 const errorShape = z.looseObject({

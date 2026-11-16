@@ -37,6 +37,7 @@ import { logger } from '../lib/logger';
 import { killProcessTree as killTree, spawnHidden } from '../lib/process';
 import { mergeHistory, toHistoryMessages, toSessionInfo, toSubagentSlice } from './history/parse';
 import { createHistoryPool, type HistoryPool } from './history/pool';
+import { claudeSettingsOf } from './claudeSettings';
 import { AsyncQueue } from './lib/asyncQueue';
 import { createLoginSession, type LoginQueryMethods } from './login';
 import { outputStylesOf } from './outputStyle';
@@ -49,7 +50,7 @@ import {
   type StartFlagSettings,
 } from './sdkOptions';
 import { titleOf, usageLimitsOf } from './overview';
-import { remoteControlDefaultOf, remoteControlErrorOf, toRemoteControlInfo } from './remoteControl';
+import { remoteControlErrorOf, toRemoteControlInfo } from './remoteControl';
 import { SESSION_INFO_METHODS, sessionInfoFailure, sessionInfoOf } from './sessionInfo';
 import { controlRetryOf, sideAnswerOf, sideQuestionFailure, withdrawnOf } from './sideQuestion';
 import { createSpawner } from './spawn';
@@ -57,6 +58,7 @@ import type {
   AgentBackend,
   AgentSession,
   BackendEvent,
+  ClaudeSettings,
   HistoryMessage,
   HistoryRequest,
   LoginRequest,
@@ -732,15 +734,15 @@ class SdkSession implements AgentSession {
     }
   }
 
-  /** WP-64: Claude's own `remoteControlAtStartup` (getSettings().effective); null when unknown. */
-  async readRemoteControlDefault(): Promise<boolean | null> {
+  /** WP-73: Claude's own settings (one getSettings request, claudeSettings.ts); null when unknown. */
+  async readClaudeSettings(): Promise<ClaudeSettings | null> {
     try {
       const raw = await this.control('getSettings', this.ctx.timeouts.controlMs, (q) =>
         q.getSettings === undefined ? Promise.resolve(null) : q.getSettings(),
       );
-      return remoteControlDefaultOf(raw);
+      return claudeSettingsOf(raw, this.req.launch.env);
     } catch (error) {
-      this.log.warn({ err: error }, 'reading the remote control default failed');
+      this.log.warn({ err: error }, 'reading the claude settings failed');
       return null;
     }
   }

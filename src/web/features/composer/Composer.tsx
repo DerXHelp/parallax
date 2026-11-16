@@ -329,6 +329,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     false,
   );
   const modelSetting = useSummarySelector<string | null>(sessionKey, (s) => s.modelSetting, null);
+  const claudeModel = useSummarySelector<string | null>(sessionKey, (s) => s.claudeModel, null);
   const fastMode = useSummarySelector<boolean | null>(sessionKey, (s) => s.fastMode, null);
   const permissionMode = useSummarySelector<PermissionMode | null>(sessionKey, (s) => s.permissionMode, null);
   const models = useSessionSelector<readonly ModelOption[] | null>(sessionKey, (v) => v.detail.models, null);
@@ -692,6 +693,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
       entryId,
       models,
       modelSetting,
+      claudeModel,
       fastMode,
       permissionMode,
       openPicker,

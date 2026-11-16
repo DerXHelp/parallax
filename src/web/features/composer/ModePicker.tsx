@@ -30,6 +30,7 @@ import {
   DropdownMenuTrigger,
 } from '@web/ui/dropdown-menu';
 import { Spinner } from '@web/ui/spinner';
+import { effectiveModelOption } from './lib/models';
 
 export const MODE_ICONS: Readonly<Record<PermissionMode, LucideIcon>> = {
   default: HandIcon,
@@ -62,11 +63,11 @@ export const ModePicker = memo(function ModePicker({ sessionKey }: { sessionKey:
   const reported = useSessionSelector<boolean>(sessionKey, (view) => view.detail.init !== null, false);
   const profileId = useSummarySelector<string | null>(sessionKey, (s) => s.profileId, null);
   const modelSetting = useSummarySelector<string | null>(sessionKey, (s) => s.modelSetting, null);
+  const claudeModel = useSummarySelector<string | null>(sessionKey, (s) => s.claudeModel, null);
+  // WP-73: the row the session runs on (without a model setting: the model of Claude's settings).
   const autoSupported = useSessionSelector<boolean>(
     sessionKey,
-    (view) =>
-      view.detail.models?.find((model) => model.value === (modelSetting ?? 'default'))?.supportsAutoMode ??
-      true,
+    (view) => effectiveModelOption(view.detail.models, modelSetting, claudeModel)?.supportsAutoMode ?? true,
     true,
   );
   const hostState = useHostState(parseSessionKey(sessionKey)?.hostId ?? LOCAL_HOST_ID);

@@ -60,6 +60,7 @@ export function summaryOf(
     status: facts,
     model: entry.lastModel,
     modelSetting: entry.modelSetting,
+    claudeModel: entry.claudeModel,
     permissionMode: entry.permissionMode,
     effort: entry.effort,
     fastMode: entry.fastMode,

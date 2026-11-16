@@ -1333,7 +1333,7 @@ describe('start and stop edges', () => {
         stopTask: closed,
         setRemoteControl: () =>
           Promise.resolve({ ok: false as const, error: { code: 'REMOTE_CONTROL_FAILED' as const, params: {} } }),
-        readRemoteControlDefault: () => Promise.resolve(null),
+        readClaudeSettings: () => Promise.resolve(null),
         generateTitle: () => Promise.resolve({ ok: false as const, reason: 'failed' as const }),
         backgroundTasks: closed,
         readUsage: () => Promise.resolve(null),

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { modelOptionSchema } from '@shared/model';
 import { FAKE_MODELS } from '../backend/fake/defaults';
-import { currentModelOption, toModelCatalog } from './models';
+import { FAKE_OPUSPLAN_ROW } from '../backend/fake/claudeSettings';
+import { currentModelOption, toModelCatalog, withClaudeSettings } from './models';
 
 describe('toModelCatalog (F.12, R0-05)', () => {
   it('maps the recorded supportedModels answer schema-true, resolvedModel kept aside', () => {
@@ -51,6 +52,7 @@ describe('toModelCatalog (F.12, R0-05)', () => {
         supportedEffortLevels: ['low', 'high'],
         supportsFastMode: false,
         supportsAutoMode: false,
+        curated: false,
       },
       {
         value: 'm2',
@@ -60,6 +62,7 @@ describe('toModelCatalog (F.12, R0-05)', () => {
         supportedEffortLevels: [],
         supportsFastMode: false,
         supportsAutoMode: false,
+        curated: false,
       },
     ]);
     expect(catalog.skipped).toBe(3);
@@ -73,5 +76,46 @@ describe('toModelCatalog (F.12, R0-05)', () => {
     expect(currentModelOption(catalog, 'unknown-alias', null)?.value).toBe('default');
     expect(currentModelOption(null, 'sonnet', null)).toBeNull();
     expect(currentModelOption({ options: [], resolved: {} }, null, null)).toBeNull();
+  });
+});
+
+describe('withClaudeSettings (WP-73, ADR-200)', () => {
+  const base = toModelCatalog([
+    ...FAKE_MODELS,
+    { value: 'sonnet[1m]', displayName: 'Sonnet 1M', description: '' },
+  ]);
+  const curated = (catalog: { options: { value: string; curated: boolean }[] }) =>
+    catalog.options.filter((o) => o.curated).map((o) => o.value);
+
+  it('marks the rows the modelPicker names; without one nothing is curated', () => {
+    const picker = { models: ['sonnet[1m]', 'claude-opus-4-8', 'not-listed'], replaceBuiltIn: false };
+    expect(curated(withClaudeSettings(base, picker, null, []))).toEqual(['claude-opus-4-8', 'sonnet[1m]']);
+    expect(curated(withClaudeSettings(base, null, null, []))).toEqual([]);
+  });
+
+  it('unknown settings keep the flags of the previous catalog', () => {
+    const previous = withClaudeSettings(base, { models: ['sonnet[1m]'], replaceBuiltIn: false }, null, []);
+    expect(curated(withClaudeSettings(base, undefined, previous, []))).toEqual(['sonnet[1m]']);
+    expect(curated(withClaudeSettings(base, undefined, null, []))).toEqual([]);
+  });
+
+  it("keeps the previous tail row of the reading entry's model (with its resolved model)", () => {
+    const withTail = toModelCatalog([...FAKE_MODELS, FAKE_OPUSPLAN_ROW]);
+    const fresh = toModelCatalog(FAKE_MODELS);
+    const kept = withClaudeSettings(fresh, null, withTail, ['opus', 'opusplan']);
+    expect(kept.options.at(-1)).toMatchObject({
+      value: 'opusplan',
+      displayName: 'Opus Plan',
+      curated: false,
+    });
+    expect(kept.resolved.opusplan).toBe('claude-sonnet-5-5');
+    expect(kept.options.filter((o) => o.value === 'opus')).toHaveLength(1);
+    // Not kept: no wanted value, or the previous catalog never had the row.
+    expect(
+      withClaudeSettings(fresh, null, withTail, [null]).options.some((o) => o.value === 'opusplan'),
+    ).toBe(false);
+    expect(
+      withClaudeSettings(fresh, null, fresh, ['opusplan']).options.some((o) => o.value === 'opusplan'),
+    ).toBe(false);
   });
 });

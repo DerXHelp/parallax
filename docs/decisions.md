@@ -2285,3 +2285,41 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   aus und störten (Nutzer-Feedback 16.11.2026). Ein freier String statt Enum bleibt tolerant gegenüber neuen
   SDK-Arten; die UI benennt nur die bekannten. Als eigene Zeile bleibt sichtbar, was Claudes nächste Antwort ausgelöst
   hat; in einer Schrittgruppe wäre die Antwort scheinbar grundlos.
+
+## ADR-199 – „Default“ folgt Claudes Einstellungen
+- **Datum/WP:** 16.11.2026, WP-73; angenommen (16.11.2026, Nutzer per Plan-Freigabe, Koordinator).
+- **Entscheidung:** `modelSetting: null` („Default“) heißt in Parallax „wie Claude ohne `--model`“: das
+  Profil-`--model`, sonst `ANTHROPIC_MODEL` (Settings-`env` vor Start-Env), sonst Settings-`model` (z. B.
+  `opusplan`). Der Server liest das nach jeder Bereitschaft und bei `session.refreshModels` und führt es als
+  `Entry.claudeModel` (auch in der Summary). `session.setModel(null)` bei laufendem Prozess liest frisch und
+  sendet `setModel(claudeModel)`; ohne Settings-Modell bleibt es `setModel(null)`. `modelSetting` bleibt `null`,
+  der nächste Start folgt also wieder den Settings. Die UI nennt bei Default das Settings-Modell („Folgt deinen
+  Claude-Einstellungen: Opus Plan“); Aufwand, Fast- und Auto-Modus folgen dessen Zeile.
+- **Begründung:** Die CLI wendet bei `set_model` ohne Modell ihr **eingebautes** Default-Modell an (`T=Ed()`), nicht
+  das Settings-Modell. Eine opusplan-Session sprang nach „Default“ auf Opus und kehrte erst beim nächsten Start
+  zurück. Der Start (ohne `--model`) war schon richtig, nur der Wechsel zurück nicht.
+
+## ADR-200 – Eigene Modelle als Gruppe, die Tail-Zeile bleibt
+- **Datum/WP:** 16.11.2026, WP-73; angenommen (16.11.2026, Koordinator).
+- **Entscheidung:**
+  - `ModelOption.curated` (Default `false`) markiert die Zeilen, deren `value` Claudes `modelPicker` nennt. Wie in
+    der CLI zählt nur policy > flag > user, die höchste Quelle ganz; ohne `sources` gilt der effektive Wert.
+  - Der Picker zeigt sie als „Deine Modelle“ zwischen den Aliasen und „Weitere Modelle“, in Listenreihenfolge.
+  - Der Katalog je Profil behält beim Ersetzen die Zeile von `modelSetting`/`claudeModel` des lesenden Eintrags
+    aus dem vorigen Katalog (samt `resolved`), wenn die neue Liste sie nicht hat.
+  - Unbekannte Settings (Lesefehler) übernehmen die Flags des vorigen Katalogs.
+  - `detail.models` wird nur bei einer Änderung gepatcht.
+  - Jedes Öffnen des Pickers lädt die Liste neu; eine vorhandene Liste bleibt dabei stehen.
+- **Begründung:** `ModelInfo` hat kein Flag für kuratierte Zeilen, also bleibt nur der Abgleich über die Werte. Die
+  CLI listet „Opus Plan“ nur für eine Session, die gerade darauf läuft. Ohne die Tail-Regel überschrieb eine Session
+  mit festem Modell die Zeile der anderen. Durch das Neuladen beim Öffnen erscheint ein geändertes `settings.json`
+  ohne Neustart.
+
+## ADR-201 – Ein Settings-Lesen je Bereitschaft
+- **Datum/WP:** 16.11.2026, WP-73; angenommen (16.11.2026, Koordinator).
+- **Entscheidung:** Der Port `AgentSession.readClaudeSettings(): Promise<ClaudeSettings | null>` (rejected nie)
+  ersetzt `readRemoteControlDefault`. Er liefert `remoteControlAtStartup`, `model` und `modelPicker` aus einem
+  `getSettings`-Aufruf: `backend/claudeSettings.ts`, tolerant per zod, Namen per `modelNameSchema`, höchstens
+  100 Picker-Zeilen. `remoteControlAfterReady` bekommt den Wert von der Bereitschaft.
+- **Begründung:** ein Control-Request statt zwei je Start und eine Stelle für die Form der internen SDK-Antwort
+  (`docs/sdk-upgrade.md` prüft sie).

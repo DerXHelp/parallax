@@ -295,6 +295,7 @@ export function sampleEntry(p: Partial<Entry> = {}): Entry {
     conversations: [sampleConversation()],
     modelSetting: 'haiku',
     lastModel: 'claude-haiku-5-5',
+    claudeModel: null,
     permissionMode: 'default',
     effort: null,
     fastMode: null,
@@ -380,6 +381,7 @@ export function sampleSummary(p: Partial<SessionSummary> = {}): SessionSummary {
     status: sampleStatusFacts(),
     model: 'claude-haiku-5-5',
     modelSetting: 'haiku',
+    claudeModel: null,
     permissionMode: 'default',
     effort: null,
     fastMode: null,
@@ -861,6 +863,7 @@ export function sampleModelOption(p: Partial<ModelOption> = {}): ModelOption {
     supportedEffortLevels: ['low', 'medium', 'high'],
     supportsFastMode: false,
     supportsAutoMode: true,
+    curated: false,
     ...p,
   };
 }

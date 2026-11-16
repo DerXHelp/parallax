@@ -87,6 +87,9 @@ export const de: typeof en = {
     fast: 'Schneller Modus',
     effortUnavailable: 'Das aktuelle Modell hat keine Aufwand-Einstellung.',
     more: 'Weitere Modelle',
+    follows: 'Folgt deinen Claude-Einstellungen: {model}',
+    opusPlan: 'Opus Plan',
+    yours: 'Deine Modelle',
   },
   context: {
     label: 'Kontext',

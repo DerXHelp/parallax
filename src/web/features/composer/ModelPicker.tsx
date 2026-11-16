@@ -25,7 +25,13 @@ import {
   DropdownMenuTrigger,
 } from '@web/ui/dropdown-menu';
 import { Spinner } from '@web/ui/spinner';
-import { currentModelOption, DEFAULT_MODEL_VALUE, groupModels } from './lib/models';
+import {
+  currentModelOption,
+  DEFAULT_MODEL_VALUE,
+  effectiveModelOption,
+  groupModels,
+  OPUSPLAN_VALUE,
+} from './lib/models';
 
 const DEFAULT_EFFORT = 'default';
 
@@ -60,6 +66,9 @@ export interface ModelPickerProps {
  * (`session.setFastMode`). The label shows the model setting, else the last model seen (F.6).
  * `/model` and `/effort` open it from the composer (controlled `open`, `section`). WP-57: aliases
  * (`default`, `opus` …) first, the full model ids under "More models"; the model list scrolls.
+ * WP-73: "Default" follows Claude's own settings (`summary.claudeModel`, e.g. 'opusplan') – the
+ * trigger names that model, the Default row says so; the rows of Claude's `modelPicker` form "Your
+ * models"; every opening reloads the list (an edited settings.json shows while the session runs).
  */
 export const ModelPicker = memo(function ModelPicker({
   sessionKey,
@@ -77,6 +86,7 @@ export const ModelPicker = memo(function ModelPicker({
     null,
   );
   const modelSetting = useSummarySelector<string | null>(sessionKey, (s) => s.modelSetting, null);
+  const claudeModel = useSummarySelector<string | null>(sessionKey, (s) => s.claudeModel, null);
   const actualModel = useSummarySelector<string | null>(sessionKey, (s) => s.model, null);
   const effort = useSummarySelector<EffortLevel | null>(sessionKey, (s) => s.effort, null);
   const fastMode = useSummarySelector<boolean | null>(sessionKey, (s) => s.fastMode, null);
@@ -84,17 +94,28 @@ export const ModelPicker = memo(function ModelPicker({
   const [load, setLoad] = useState<LoadState>('idle');
   const [pending, setPending] = useState(false);
   const current = currentModelOption(models, modelSetting);
+  // WP-73: what the session runs on – effort and fast mode follow that row.
+  const effective = effectiveModelOption(models, modelSetting, claudeModel);
+  // WP-73: "Default" = Claude's own settings; the model they name (label of its row, else the value).
+  // The Default row always says so (what choosing it means); the trigger only while it is chosen.
+  const settingsLabel =
+    claudeModel === null
+      ? null
+      : (models?.find((model) => model.value === claudeModel)?.displayName ??
+        (claudeModel === OPUSPLAN_VALUE ? t('composer.model.opusPlan') : claudeModel));
+  const follows = modelSetting === null ? settingsLabel : null;
   // WP22-12: "Default" follows the CLI/user settings (or ANTHROPIC_MODEL) – its description may
   // name another model than the one that answers; show the model actually seen next to it.
   const actualForDefault =
     modelSetting === null && current?.value === DEFAULT_MODEL_VALUE ? actualModel : null;
+  const defaultLabel = follows ?? current?.displayName ?? null;
   const label =
-    current !== null && actualForDefault !== null
-      ? t('composer.model.defaultActual', { label: current.displayName, model: actualForDefault })
-      : (current?.displayName ?? modelSetting ?? actualModel ?? t('composer.model.default'));
+    defaultLabel !== null && actualForDefault !== null
+      ? t('composer.model.defaultActual', { label: defaultLabel, model: actualForDefault })
+      : (follows ?? current?.displayName ?? modelSetting ?? actualModel ?? t('composer.model.default'));
   const efforts =
-    current?.supportsEffort === true
-      ? EFFORT_LEVELS.filter((level) => current.supportedEffortLevels.includes(level))
+    effective?.supportsEffort === true
+      ? EFFORT_LEVELS.filter((level) => effective.supportedEffortLevels.includes(level))
       : [];
 
   const run = async (build: (entryId: string) => Command) => {
@@ -123,21 +144,30 @@ export const ModelPicker = memo(function ModelPicker({
   };
 
   const groups = groupModels(models ?? []);
-  const renderModel = (model: ModelOption) => (
-    <DropdownMenuRadioItem key={model.value} value={model.value} className="items-start">
-      <span className="grid min-w-0 gap-0.5">
-        <span>{model.displayName}</span>
-        {model.description === '' ? null : (
-          <span className="text-muted-foreground text-2xs">{model.description}</span>
-        )}
-        {model.value === DEFAULT_MODEL_VALUE && actualForDefault !== null ? (
-          <span data-slot="model-actual" className="text-muted-foreground text-2xs">
-            {t('composer.model.actual', { model: actualForDefault })}
-          </span>
-        ) : null}
-      </span>
-    </DropdownMenuRadioItem>
-  );
+  const renderModel = (model: ModelOption) => {
+    // WP-73: the CLI's text describes ITS default model – Parallax's Default follows the settings.
+    const description =
+      model.value === DEFAULT_MODEL_VALUE && settingsLabel !== null
+        ? t('composer.model.follows', { model: settingsLabel })
+        : model.description;
+    return (
+      <DropdownMenuRadioItem key={model.value} value={model.value} className="items-start">
+        <span className="grid min-w-0 gap-0.5">
+          <span>{model.displayName}</span>
+          {description === '' ? null : (
+            <span data-slot="model-description" className="text-muted-foreground text-2xs">
+              {description}
+            </span>
+          )}
+          {model.value === DEFAULT_MODEL_VALUE && actualForDefault !== null ? (
+            <span data-slot="model-actual" className="text-muted-foreground text-2xs">
+              {t('composer.model.actual', { model: actualForDefault })}
+            </span>
+          ) : null}
+        </span>
+      </DropdownMenuRadioItem>
+    );
+  };
 
   const effortOnly = section === 'effort';
   const effortGroup =
@@ -197,8 +227,9 @@ export const ModelPicker = memo(function ModelPicker({
       >
         <OnOpen
           run={() => {
-            // Every way of opening (click, keyboard, `/model` from the composer) loads a missing list.
-            if (models === null && load !== 'loading') void refresh();
+            // Every way of opening (click, keyboard, `/model` from the composer) loads the list –
+            // WP-73: also an existing one (Claude's settings may have changed); it stays meanwhile.
+            if (load !== 'loading') void refresh();
           }}
         />
         {effortOnly ? (
@@ -232,7 +263,14 @@ export const ModelPicker = memo(function ModelPicker({
             }}
           >
             {groups.aliases.map(renderModel)}
-            {groups.aliases.length > 0 && groups.fullIds.length > 0 ? (
+            {groups.curated.length > 0 ? (
+              <>
+                {groups.aliases.length > 0 ? <DropdownMenuSeparator /> : null}
+                <DropdownMenuLabel data-slot="model-yours">{t('composer.model.yours')}</DropdownMenuLabel>
+                {groups.curated.map(renderModel)}
+              </>
+            ) : null}
+            {groups.aliases.length + groups.curated.length > 0 && groups.fullIds.length > 0 ? (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuLabel data-slot="model-more">{t('composer.model.more')}</DropdownMenuLabel>
@@ -242,7 +280,7 @@ export const ModelPicker = memo(function ModelPicker({
           </DropdownMenuRadioGroup>
         )}
         {effortOnly ? null : effortGroup}
-        {!effortOnly && current?.supportsFastMode === true ? (
+        {!effortOnly && effective?.supportsFastMode === true ? (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuCheckboxItem

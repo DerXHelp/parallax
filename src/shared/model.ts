@@ -760,6 +760,12 @@ export const entrySchema = z.object({
   modelSetting: z.string().min(1).nullable().default(null),
   /** Last model actually seen on an assistant message (F.6: per message, not init.model). */
   lastModel: z.string().nullable().default(null),
+  /**
+   * WP-73: the model the entry runs on while `modelSetting` is null – the profile's `--model`, else
+   * what Claude's own settings name (`ANTHROPIC_MODEL`, settings `model`, e.g. 'opusplan'); read
+   * after each readiness and model refresh. null = none named (the CLI default) or not read yet.
+   */
+  claudeModel: modelNameSchema.nullable().default(null),
   /** Last ACTUAL permission mode (init/status); passed on resume (C.3). */
   permissionMode: permissionModeSchema.nullable().default(null),
   effort: effortLevelSchema.nullable().default(null),
@@ -1544,6 +1550,8 @@ export const sessionSummarySchema = z.object({
   /** lastModel (F.6). */
   model: z.string().nullable(),
   modelSetting: z.string().nullable(),
+  /** WP-73: Entry.claudeModel – what "Default" (modelSetting null) means for this entry. */
+  claudeModel: z.string().nullable().default(null),
   /** Actual mode (C.3). */
   permissionMode: permissionModeSchema.nullable(),
   effort: effortLevelSchema.nullable(),
@@ -1652,6 +1660,8 @@ export const modelOptionSchema = z.object({
   supportedEffortLevels: z.array(effortLevelSchema),
   supportsFastMode: z.boolean(),
   supportsAutoMode: z.boolean(),
+  /** WP-73: a row of Claude's `modelPicker` setting (the user's curated list, in the CLI's order). */
+  curated: z.boolean().default(false),
 });
 export type ModelOption = z.infer<typeof modelOptionSchema>;
 

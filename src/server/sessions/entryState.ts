@@ -1018,7 +1018,9 @@ export class EntryState {
   private supportsAutoMode(): boolean {
     const catalog = this.core.models(this.entry.profileId);
     return (
-      currentModelOption(catalog, this.entry.modelSetting, this.entry.lastModel)?.supportsAutoMode ?? false
+      // WP-73: without a model setting the entry runs on what Claude's settings name.
+      currentModelOption(catalog, this.entry.modelSetting ?? this.entry.claudeModel, this.entry.lastModel)
+        ?.supportsAutoMode ?? false
     );
   }
 

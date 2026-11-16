@@ -18,7 +18,8 @@
  * runs: four successful, one blocking PreToolUse with exit 2), and `fake:subagent`/`fake:background`
  * fill the agent's own transcript while it runs; WP-70: `fake:auth-failed` (like `fake:error`, the
  * assistant error `authentication_failed`) and `fake:output-style` (names the project's style); WP-71 (workers.ts):
- * `fake:workers` (two background agents and a background shell at once). A prompt with images, PDFs, attached files or inline pastes
+ * `fake:workers` (two background agents and a background shell at once); WP-73 (claudeSettings.ts):
+ * `fake:claude-model <model|none>` and `fake:model-picker [replace|off]` (Claude's own settings). A prompt with images, PDFs, attached files or inline pastes
  * gets "Fake: received …" (ADR-103, ADR-146); the first prompt of a start without resume that is
  * the engine's fresh-context prompt gets "Fake: implementing plan (N lines)"; anything else gets a
  * thought plus a streamed "Echo: …". Decisions really wait for the engine; interrupt() and
@@ -59,6 +60,7 @@ import { workers } from './workers';
 import { implementPlan, isImplementPlanPrompt, plan } from './plan';
 import { remoteFail, remoteFlaky, remotePermission, remotePrompt } from './remote';
 import { infoKeyword, isFakeInfoKeyword } from './sessionInfo';
+import { claudeSettingsKeyword, isFakeClaudeSettingsKeyword } from './claudeSettings';
 import { CANCEL_DENY, abortedByDecision, answerTurn, ask, contextFor, firstWords, type Turn } from './turn';
 import type { FakeScenario, FakeScriptContext } from './types';
 import {
@@ -464,6 +466,10 @@ async function handle(
   const keyword = (text.split(/\s+/)[0] ?? '').toLowerCase();
   if (isFakeInfoKeyword(keyword)) {
     await infoKeyword(ctx, c, turn, keyword, text);
+    return sessionId;
+  }
+  if (isFakeClaudeSettingsKeyword(keyword)) {
+    await claudeSettingsKeyword(ctx, c, turn, keyword, text);
     return sessionId;
   }
   switch (keyword) {

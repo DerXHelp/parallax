@@ -38,6 +38,12 @@ Profil-/Neue-Session-Status einen dezenten Hinweis („neuer als die mit Paralla
   Profil → Bericht `test-results/cli-check/<zeit>.md` → Rückbau eigener Daten (Scratch, CLI-Transkripte,
   CLI-Task-Ordner; Plan-Dateien und `~/.claude.json` nur gemeldet). Exit 0 = grün, 1 = Abweichungen,
   2 = Abbruch (Auth-/Billing-Stopp nie wiederholen).
+- **Nicht automatisch geprüft (WP-73):** die Form von `getSettings()` (`effective`, `sources[].source` =
+  `userSettings`/`projectSettings`/`localSettings`/`flagSettings`/`policySettings`, `applied.model`) und das
+  Verhalten von `modelPicker` (nur policy/flag/user; `supportedModels()` hängt kuratierte und Tail-Zeilen an) und
+  `set_model` ohne Modell (eingebautes Default). Bei CLI-Upgrades im Binary oder mit dem Fixture-Recorder
+  nachsehen; Abweichungen treffen `backend/claudeSettings.ts`, `sessions/models.ts` `withClaudeSettings` und
+  `fake/claudeSettings.ts`.
 - **Kosten/Dauer:** ≈ 0,01 USD (Probe ≈ 0,002–0,005, Smoke ≈ 0,005), ≈ 1,5–3 min.
 - **Protokoll:** `docs/cli-updates.md` (eine Zeile je `--accept`).
 - **Was Stufe 1 nicht abdeckt:** Snapshot-Diff der Fixtures, neue Szenarien, Verhalten im Detail (z. B.

@@ -9,6 +9,7 @@ import { realSetImmediate } from '../lib/async';
 import type { FixtureEvent, ParsedFixture } from './fixture';
 import { mergeHistory, sliceSubagentMessages, toHistoryMessages, toSessionInfo } from './history/parse';
 import { FAKE_CONSOLE_PROMPT, consoleTurnMessages } from './fake/console';
+import { FakeClaudeSettings } from './fake/claudeSettings';
 import { randomIds } from './fake/dsl';
 import { defaultFakeFilesRoot } from './fake/files';
 import { createFakeHistoryStore } from './fake/history';
@@ -50,6 +51,8 @@ export { FAKE_FRESH_SKILL, FAKE_INFO_ACTION_ERROR } from './fake/sessionInfo';
 export type { FakeLoginHandle, FakeLoginOptions } from './fake/login';
 export { FAKE_LOGIN_EXPIRED_CODE, FAKE_LOGIN_HOST, FAKE_LOGIN_REFUSED_CODE } from './fake/login';
 export { FAKE_OUTPUT_STYLES, FakeOutputStyles } from './fake/outputStyle';
+export type { FakeClaudeSettingsOptions, FakeModelPicker, FakeModelPickerRow } from './fake/claudeSettings';
+export { FAKE_MODEL_PICKER, FAKE_OPUSPLAN_ROW, FakeClaudeSettings, fakeModelList } from './fake/claudeSettings';
 
 export const DEFAULT_FAKE_PID_BASE = 40_000;
 export const DEFAULT_FAKE_MAX_DELAY_MS = 3_000;
@@ -96,6 +99,7 @@ export function createFakeBackend(options: FakeBackendOptions = {}): FakeBackend
   /** Start counter n (scenario choice, PIDs) – independent of the trimmed lists. */
   let started = 0;
   const outputStyles = new FakeOutputStyles();
+  const claudeSettings = new FakeClaudeSettings(options.claudeSettings);
   const logins: FakeLoginSession[] = [];
 
   /** R2-12: drop the oldest exited sessions and start requests beyond `keep`. */
@@ -126,6 +130,7 @@ export function createFakeBackend(options: FakeBackendOptions = {}): FakeBackend
     logins,
     loginOptions: { ...options.login },
     outputStyles,
+    claudeSettings,
 
     start(req) {
       prune();
@@ -152,6 +157,7 @@ export function createFakeBackend(options: FakeBackendOptions = {}): FakeBackend
         sessionInfo: options.sessionInfo ?? {},
         outputStyles,
         outputStyleError: options.outputStyleError ?? false,
+        claudeSettings,
         onStateChange,
       });
       sessions.push(session);

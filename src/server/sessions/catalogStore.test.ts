@@ -23,6 +23,7 @@ const catalog: StoredModelCatalog = {
       supportedEffortLevels: ['low', 'high'],
       supportsFastMode: false,
       supportsAutoMode: true,
+      curated: false,
     },
   ],
   resolved: { haiku: 'claude-haiku-5-5' },
@@ -102,6 +103,17 @@ describe('openCatalogStore (ADR-114)', () => {
     );
     const store = await openCatalogStore({ home });
     expect(store.models().standard?.resolved).toEqual({});
+    await store.close();
+  });
+
+  it('WP-73: options of an older file without `curated` load as not curated', async () => {
+    const options = catalog.options.map(({ curated: _curated, ...option }) => option);
+    await writeFile(
+      path.join(home, MODEL_CATALOGS_FILE),
+      JSON.stringify({ schemaVersion: 1, profiles: { standard: { ...catalog, options } } }),
+    );
+    const store = await openCatalogStore({ home });
+    expect(store.models().standard?.options.map((o) => o.curated)).toEqual([false]);
     await store.close();
   });
 
