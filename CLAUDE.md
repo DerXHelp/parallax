@@ -153,6 +153,10 @@ Der Rechner des Nutzers darf **nie** einfrieren oder spürbar hängen – auch n
   **Dauerfreigabe (Nutzer 12.11.2026):** Nach einem grünen `claude`-Kurz-Check darf der Koordinator
   nach `main` mergen und pushen, wenn nur das CLI-Profil oder kleine Anpassungen betroffen sind (Ablauf:
   Skill `/claude-update`); größere Fixes vorher dem Nutzer zeigen.
+  **Dauerfreigabe (Nutzer 16.11.2026):** Ist ein Feature fertig umgesetzt und sind die Bedingungen oben
+  erfüllt (grünes `pnpm check` + `pnpm build`, `pnpm e2e`, vorgesehene Reviews; eine nötige Live-Prüfung
+  vorher mit dem Nutzer klären), merged der Koordinator den Feature-Branch ohne Rückfrage nach `main`
+  (`--no-ff --no-commit`, Checks, Commit) und pusht `main`.
 - Commit-Messages mit mehreren `-m`-Flags, **kein Heredoc**, keine Command-Substitution.
 - Worktrees liegen in `.worktrees/` (ignoriert, von tsconfig/Vitest/ESLint/Vite ausgeschlossen);
   pro Worktree `pnpm install --frozen-lockfile`. `core.longpaths` ist gesetzt.
