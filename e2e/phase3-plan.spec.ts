@@ -2,8 +2,9 @@
  * Phase-3 verification "plan" (WP-60 E2E 5; WP-51/52/56/58): the side panel tab "Plan" shows the
  * plan file live while Claude writes it, then the file; feedback in the composer gives v2, shown as
  * the changes to v1; "With fresh context" starts a new conversation whose first prompt is the
- * engine's `Implement the following approved plan.` (the fake answers it); the split button keeps
- * the choice over a reload; after the approval the header offers "Plan".
+ * engine's `Implement the following approved plan.` (the fake answers it); after a reload the split
+ * button starts with Auto again and keeps only "fresh context" (WP-74, ADR-204); after the approval
+ * the header offers "Plan".
  * FIX-R5-F6: at 75 % context (`fake:context-high`, V4-05) the ▾ menu of the plan card recommends
  * "With fresh context" (ADR-147: dot on the trigger, badge "Recommended" in the menu, not preselected).
  * Own server; 1600 px wide (the side panel next to the transcript).
@@ -14,7 +15,7 @@ import { expect, test } from './support/fixtures';
 
 test.use({ ownServer: 'p3plan', viewport: { width: 1600, height: 900 } });
 
-test('plan: live file, v1 → feedback → v2 with diff, fresh context, remembered choice, header "Plan"', async ({
+test('plan: live file, v1 → feedback → v2 with diff, fresh context, remembered "fresh context", header "Plan"', async ({
   app,
   server,
   page,
@@ -78,13 +79,14 @@ test('plan: live file, v1 → feedback → v2 with diff, fresh context, remember
   await expect(panel.locator('[data-slot="plan-version-menu"]')).toBeVisible();
   await expect(panel.locator('[data-slot="plan-content"]')).toContainText('Revision 1: Also add a README.');
 
-  // The split button remembers mode and "fresh context" over a reload.
+  // WP-74 (ADR-204): over a reload the split button keeps "fresh context"; the mode starts with Auto
+  // again (the earlier "Manual" held for that plan only).
   await page.reload();
   await app.waitConnected();
   await expect(session.pane).toBeVisible();
   await session.send('fake:plan once more');
   const again = await session.armedCard('plan');
-  await expect(again.locator('[data-action="approve"]')).toHaveAttribute('data-mode', 'default');
+  await expect(again.locator('[data-action="approve"]')).toHaveAttribute('data-mode', 'auto');
   await expect(again.locator('[data-action="approve"]')).toHaveAttribute('data-fresh', 'true');
   await again.locator('[data-action="approve"]').click();
   await expect(session.card).toHaveCount(0);

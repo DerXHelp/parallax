@@ -7,11 +7,6 @@ import type { BlobRef } from '@shared/model';
  * `useItem` (architecture §2.3g).
  */
 export interface TranscriptSettings {
-  /**
-   * Model of the session (`init.model`, else the summary's model). Assistant messages from another
-   * model show a badge (F.6: plan mode with Haiku plans on Sonnet).
-   */
-  sessionModel: string | null;
   /** Costs only for API-key profiles (B "Kosten nur bei API-Key-Profilen"): `apiKeySource ≠ 'none'`. */
   showCost: boolean;
   /** Row component for nested items (Agent card children) – avoids an import cycle. */

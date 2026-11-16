@@ -53,16 +53,6 @@ function rowKey(row: Row): string {
   }
 }
 
-/** The model of the agent's first answer: other models get a badge (ModelBadge). */
-function firstModel(items: readonly TranscriptItem[]): string | null {
-  for (const item of items) {
-    if ((item.kind === 'assistant_text' || item.kind === 'thinking' || item.kind === 'tool_call') && item.model !== null) {
-      return item.model;
-    }
-  }
-  return null;
-}
-
 /** Open step groups of this panel: a key of its own, apart from the session transcript's groups. */
 function groupStateKey(sessionKey: string, agentId: string): string {
   return `${sessionKey}\u0000agent:${agentId}`;
@@ -125,8 +115,8 @@ export const SubagentPanel = memo(function SubagentPanel({
     return pages !== null && pages.offset > 0 ? [EARLIER_ROW, ...built] : built;
   }, [items, mode, openGroups, hooks, pages]);
   const settings = useMemo<TranscriptSettings>(
-    () => ({ sessionModel: firstModel(items ?? []), showCost: false, Row: TranscriptRow, readOnly: true }),
-    [items],
+    () => ({ showCost: false, Row: TranscriptRow, readOnly: true }),
+    [],
   );
 
   // virtua `shift` for the update that prepended earlier entries (keeps the position).

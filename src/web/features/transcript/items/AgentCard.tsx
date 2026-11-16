@@ -13,7 +13,6 @@ import { Button } from '@web/ui/button';
 import { Spinner } from '@web/ui/spinner';
 import { BackgroundButton } from '../components/BackgroundButton';
 import { Disclosure } from '../components/Disclosure';
-import { ModelBadge } from '../components/ModelBadge';
 import { ToolFileLink } from '../components/ToolFileLink';
 import { ToolStatus } from '../components/ToolStatus';
 import { useTranscriptSettings } from '../context';
@@ -189,7 +188,6 @@ export const AgentCard = memo(function AgentCard({ item, sessionKey }: ToolBodyP
         <span className="sr-only">{t('transcript.agent.label')}</span>
         <span className="min-w-0 truncate font-medium">{title}</span>
         {type === null ? null : <Badge variant="outline">{type}</Badge>}
-        <ModelBadge model={item.model} blockIndex={item.blockIndex} />
         <span className="flex-1" />
         <span className="text-muted-foreground flex flex-wrap items-center gap-x-2 text-2xs">
           {running && startedAt !== null ? (

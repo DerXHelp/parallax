@@ -294,6 +294,8 @@ test('"Files of this session": read, written, edited, plan and task output; a ro
 
   await session.send('fake:plan make hello.txt');
   const card = await session.armedCard('plan');
+  // WP-74 (ADR-204): the plan is implemented in auto mode unless chosen otherwise.
+  await expect(card.locator('[data-action="approve"]')).toHaveText('Implement · Auto');
   await card.locator('[data-action="approve"]').click();
   await expect(session.assistantText('IMPLEMENTED')).toBeVisible();
   await session.expectStatus('idle');
@@ -319,6 +321,10 @@ test('"Files of this session": read, written, edited, plan and task output; a ro
   await expect(session.sidePanel).toHaveAttribute('data-tab', 'file');
   await expect(session.filePanel.locator('[data-slot="file-panel-title"]')).toContainText('app.ts');
   await expect(session.filePanel.locator('[data-slot="code-view"]')).toContainText('const answer = 42;');
+  // WP-74 (ADR-203): × at the file tab closes the file and returns to "Files"; the tab is gone.
+  await session.sidePanel.locator('[data-tab-close="file"]').click();
+  await expect(session.sidePanel).toHaveAttribute('data-tab', 'files');
+  await expect(session.panelTab('file')).toHaveCount(0);
 });
 
 test('editor and Explorer: a custom editor from the settings; "Open in editor" / "Open folder in Explorer" only log with the FakeBackend', async ({

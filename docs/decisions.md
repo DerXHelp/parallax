@@ -2323,3 +2323,46 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   100 Picker-Zeilen. `remoteControlAfterReady` bekommt den Wert von der Bereitschaft.
 - **Begründung:** ein Control-Request statt zwei je Start und eine Stelle für die Form der internen SDK-Antwort
   (`docs/sdk-upgrade.md` prüft sie).
+
+## ADR-202 – Modell-IDs in der Turn-Fußzeile statt Badge an jeder Antwort
+- **Datum/WP:** 16.11.2026, WP-74; angenommen (16.11.2026, Nutzer).
+- **Entscheidung:**
+  - Antworten, Gedanken, Tool-Aufrufe, Plan- und Agent-Karten zeigen kein Modell-Badge mehr (`ModelBadge` entfällt,
+    ebenso `TranscriptSettings.sessionModel`).
+  - Die leise Turn-Fußzeile nennt als ersten Teil die Modelle, die im Turn geantwortet haben: die verschiedenen
+    `model`-Werte der Haupt-Agent-Items (`assistant_text`, `thinking`, `tool_call`) seit dem vorigen `turn_result`,
+    in der Reihenfolge ihres ersten Auftretens, verbunden mit „→“, in Monospace, gekürzt mit vollem Text im `title`.
+  - Gezeigt werden die IDs, die die API meldet (`claude-opus-5-5`), keine Kurzformen wie „Opus“. Subagenten
+    (`parentToolUseId`), lokale Befehle (`<synthetic>`) und leere Werte zählen nicht. Die Agent-Karte behält ihre
+    Meta-Zeile mit dem Modell des Subagenten.
+- **Begründung:** Das Badge erschien bei jeder Abweichung vom Session-Modell, verglichen als reiner String. Mit
+  `opusplan` oder `[1m]`-Namen traf das fast jede Antwort; der Nutzer fand es zu präsent. Das Modell wechselt selten,
+  einmal je Turn reicht. Hinter Aliasen und Slots stecken je Rechner andere Modelle; deshalb die echte ID
+  (Nutzer 16.11.2026).
+
+## ADR-203 – Verlauf aus der Aufgabenzeile, Datei- und Agent-Tab schließbar
+- **Datum/WP:** 16.11.2026, WP-74; angenommen (16.11.2026, Nutzer).
+- **Entscheidung:**
+  - Agent-Zeilen im Aufgaben-Panel haben den Knopf „Verlauf“: Shell-Anfrage `openSubagent` mit der Task-ID als
+    Agent-ID (WP-69), wie „Verlauf“ an der Agent-Karte. Der Link auf die rohe Ausgabedatei (JSON des Verlaufs)
+    entfällt bei Agenten; Shells und andere Tasks behalten ihn.
+  - Datei- und Agent-Tab haben ein × neben dem Trigger (Geschwister, kein Knopf im Tab-Knopf). Es schließt die
+    Datei samt Zurück-Verlauf bzw. den Agent. Zeigt der Tab gerade, geht das Panel zu dem Tab zurück, von dem aus er
+    geöffnet wurde (`rememberSidePanelReturn` in den Handlern `openFile`/`openSubagent`). War das Panel zu, schließt
+    es wieder. Ein × an einem nicht gezeigten Tab lässt die Ansicht stehen.
+  - Die Tab-Leiste scrollt nie senkrecht (`overflow-y-hidden`), ihr waagrechter Scrollbalken ist unsichtbar, der
+    aktive Tab scrollt in den Blick; Dateinamen höchstens `max-w-32`.
+- **Begründung:** Der Verlauf eines Subagenten war nur über die Karte im Transkript erreichbar, nicht dort, wo man
+  laufende Agenten sieht. Eine geöffnete Datei ließ sich nicht schließen, und die Tabs (`-mb-px` in `h-9`) erzeugten
+  in einer breiten Leiste einen senkrechten Scrollbalken (Nutzer-Feedback 16.11.2026).
+
+## ADR-204 – Plan-Freigabe immer mit Auto vorausgewählt
+- **Datum/WP:** 16.11.2026, WP-74; angenommen (16.11.2026, Nutzer).
+- **Entscheidung:** `defaultApproveMode(approveModes)` wählt `auto`, sonst `acceptEdits`, sonst den ersten
+  angebotenen Modus außer Bypass. Die Umsetzen-Wahl wird nicht mehr gemerkt: eine andere Wahl im ▾-Menü gilt nur für
+  diesen Plan. Gemerkt bleibt nur der Umschalter „Mit frischem Kontext“ (`parallax.decisions.approveFresh`); der alte
+  Schlüssel `parallax.decisions.approveMode` wird beim ersten Lesen gelöscht. Gilt auch für die abgelaufene Karte
+  und die Entscheidungsleiste. Bietet der Server kein `auto` an (Modell ohne Auto-Modus), gilt `acceptEdits`.
+- **Begründung:** Gemerkt wurde bei jeder Freigabe, also blieb vorausgewählt, was man einmal genommen hatte, meist
+  `acceptEdits`. Der Nutzer will Auto als Standard (16.11.2026). Ersetzt `plan.md` „Split-Button, merkt sich die
+  letzte Wahl“.

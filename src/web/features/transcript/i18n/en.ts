@@ -108,7 +108,6 @@ export const en = {
     label: 'Claude',
     aborted: 'Stopped before the answer was complete.',
     streaming: 'Writing…',
-    model: 'Answered by {model}',
     localCommand: 'Local command /{command}',
   },
   thinking: {
@@ -268,6 +267,8 @@ export const en = {
   },
   turn: {
     label: 'Turn summary',
+    /** WP-74: the model ids that answered in this turn (screen readers; shown as the ids). */
+    models: 'Answered by {models}',
     tokens: '{input} in · {output} out',
     cached: '{count} cached',
     costTitle: 'Estimated cost of this turn',

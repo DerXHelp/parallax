@@ -1,6 +1,6 @@
 import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
-import { permissionModeSchema, type DecisionId, type PermissionMode } from '@shared/common';
+import type { DecisionId } from '@shared/common';
 import type { ErrorPayload } from '@shared/errors';
 import type { Decision, PlanDecision } from '@shared/model';
 import { readStorage, storageKey, writeStorage } from '@web/lib/storage';
@@ -156,24 +156,22 @@ export function isLocalResolution(decisionId: DecisionId): boolean {
   return local.has(decisionId);
 }
 
-// ---- remembered "Implement" choice (Plan "Split-Button merkt sich die letzte Wahl") ----
+// ---- remembered "Implement" choice ----
 
-const APPROVE_MODE_KEY = storageKey('decisions', 'approveMode');
-/** WP-56 (ADR-147): "with fresh context" is remembered next to the mode. */
+/**
+ * WP-74 (ADR-204): the mode is no longer remembered (every plan starts with auto mode); the stored
+ * value of older versions is dropped once per page load.
+ */
+const LEGACY_APPROVE_MODE_KEY = storageKey('decisions', 'approveMode');
+/** WP-56 (ADR-147): "with fresh context" is remembered. */
 const APPROVE_FRESH_KEY = storageKey('decisions', 'approveFresh');
-
-export function readApproveMode(): PermissionMode | null {
-  const parsed = permissionModeSchema.safeParse(readStorage('local', APPROVE_MODE_KEY));
-  return parsed.success ? parsed.data : null;
-}
-
-/** Remembers the mode – never bypass (it must be picked every time, C.3). */
-export function writeApproveMode(mode: PermissionMode): void {
-  if (mode === 'bypassPermissions') return;
-  writeStorage('local', APPROVE_MODE_KEY, mode);
-}
+let legacyDropped = false;
 
 export function readApproveFresh(): boolean {
+  if (!legacyDropped) {
+    legacyDropped = true;
+    writeStorage('local', LEGACY_APPROVE_MODE_KEY, null);
+  }
   return readStorage('local', APPROVE_FRESH_KEY) === 'true';
 }
 
@@ -185,4 +183,5 @@ export function writeApproveFresh(fresh: boolean): void {
 export function resetDecisionBarState(): void {
   store.setState({ selected: {}, panels: {}, views: {}, freshErrors: {} });
   local.clear();
+  legacyDropped = false;
 }

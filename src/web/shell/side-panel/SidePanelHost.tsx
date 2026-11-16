@@ -7,6 +7,7 @@ import {
   closeSidePanel,
   openSidePanel,
   registerSidePanelHost,
+  rememberSidePanelReturn,
   setSidePanelFile,
   setSidePanelSubagent,
   useSidePanelTab,
@@ -85,6 +86,7 @@ export const SidePanelHost = memo(function SidePanelHost({ sessionKey }: { sessi
 
   useShellRequestHandler('openFile', (request) => {
     if (request.sessionKey !== sessionKey) return false;
+    rememberSidePanelReturn(sessionKey, 'file');
     setSidePanelFile(sessionKey, {
       path: request.path,
       line: request.line ?? null,
@@ -97,6 +99,7 @@ export const SidePanelHost = memo(function SidePanelHost({ sessionKey }: { sessi
   // WP-69: the Agent card's "Open transcript" – the tab shows the latest subagent.
   useShellRequestHandler('openSubagent', (request) => {
     if (request.sessionKey !== sessionKey) return false;
+    rememberSidePanelReturn(sessionKey, 'subagent');
     setSidePanelSubagent(sessionKey, {
       agentId: request.agentId,
       title: request.title,

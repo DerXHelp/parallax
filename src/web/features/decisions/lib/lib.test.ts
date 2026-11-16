@@ -5,9 +5,8 @@ import { defaultDestination } from '../components/PermissionCard';
 import {
   pickDisplayedDecision,
   readApproveFresh,
-  readApproveMode,
+  resetDecisionBarState,
   writeApproveFresh,
-  writeApproveMode,
 } from '../state/bar-store';
 import { NO_OUTCOMES, resolvedElsewhereNotice, selectDecisionOutcomes } from './outcomes';
 import { DEMO_PLAN } from './demo-data';
@@ -45,11 +44,12 @@ describe('plan helpers', () => {
       'default',
       'bypassPermissions',
     ]);
-    expect(defaultApproveMode(['default', 'acceptEdits', 'auto'], null)).toBe('acceptEdits');
-    expect(defaultApproveMode(['default', 'acceptEdits', 'auto'], 'auto')).toBe('auto');
-    expect(defaultApproveMode(['default', 'acceptEdits'], 'auto')).toBe('acceptEdits');
-    expect(defaultApproveMode(['bypassPermissions', 'default'], 'bypassPermissions')).toBe('default');
-    expect(defaultApproveMode(['bypassPermissions'], null)).toBe('bypassPermissions');
+    // WP-74 (ADR-204): auto mode first, else accept edits, else the first offered (never bypass).
+    expect(defaultApproveMode(['default', 'acceptEdits', 'auto'])).toBe('auto');
+    expect(defaultApproveMode(['default', 'acceptEdits'])).toBe('acceptEdits');
+    expect(defaultApproveMode(['bypassPermissions', 'default'])).toBe('default');
+    expect(defaultApproveMode(['bypassPermissions'])).toBe('bypassPermissions');
+    expect(defaultApproveMode([])).toBeNull();
   });
 
   it('recommends a fresh context from 60 % (ADR-147)', () => {
@@ -67,15 +67,13 @@ describe('remembered approve choice', () => {
     localStorage.clear();
   });
 
-  it('stores mode and fresh flag; never a bypass mode; tolerates broken values', () => {
-    writeApproveMode('auto');
+  it('stores the fresh flag; tolerates broken values; drops the mode of older versions (ADR-204)', () => {
+    resetDecisionBarState();
+    localStorage.setItem('parallax.decisions.approveMode', 'acceptEdits');
     writeApproveFresh(true);
-    expect(localStorage.getItem('parallax.decisions.approveMode')).toBe('auto');
     expect(localStorage.getItem('parallax.decisions.approveFresh')).toBe('true');
-    expect(readApproveMode()).toBe('auto');
     expect(readApproveFresh()).toBe(true);
-    writeApproveMode('bypassPermissions');
-    expect(readApproveMode()).toBe('auto');
+    expect(localStorage.getItem('parallax.decisions.approveMode')).toBeNull();
     writeApproveFresh(false);
     expect(readApproveFresh()).toBe(false);
     localStorage.setItem('parallax.decisions.approveFresh', 'yes');
@@ -83,7 +81,6 @@ describe('remembered approve choice', () => {
   });
 
   it('a throwing storage (privacy settings, quota): defaults, writes never throw (R5W-11)', () => {
-    writeApproveMode('auto');
     writeApproveFresh(true);
     // On the instance: happy-dom binds Storage methods to it on first use (a prototype spy is bypassed).
     const getItem = vi.spyOn(localStorage, 'getItem').mockImplementation(() => {
@@ -93,19 +90,16 @@ describe('remembered approve choice', () => {
       throw new Error('QuotaExceededError');
     });
     try {
-      expect(readApproveMode()).toBeNull();
       expect(readApproveFresh()).toBe(false);
       expect(() => {
-        writeApproveMode('acceptEdits');
         writeApproveFresh(false);
       }).not.toThrow();
-      expect(setItem).toHaveBeenCalledTimes(2);
+      expect(setItem).toHaveBeenCalledTimes(1);
     } finally {
       getItem.mockRestore();
       setItem.mockRestore();
     }
-    // The earlier values are untouched.
-    expect(readApproveMode()).toBe('auto');
+    // The earlier value is untouched.
     expect(readApproveFresh()).toBe(true);
   });
 });

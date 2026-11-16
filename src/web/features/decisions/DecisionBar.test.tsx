@@ -185,9 +185,9 @@ describe('DecisionBar', () => {
     expect(await screen.findByText('Expired')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Keep planning' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Allow once' })).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Continue & implement · Accept edits' }));
+    await user.click(screen.getByRole('button', { name: 'Continue & implement · Auto' }));
     expect(h.commands('decision.respond').map((cmd) => cmd.response)).toEqual([
-      { kind: 'plan', response: { behavior: 'approve', mode: 'acceptEdits', editedPlan: null } },
+      { kind: 'plan', response: { behavior: 'approve', mode: 'auto', editedPlan: null } },
     ]);
   });
 

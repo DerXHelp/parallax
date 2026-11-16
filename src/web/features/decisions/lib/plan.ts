@@ -109,17 +109,13 @@ export function orderedApproveModes(approveModes: readonly PermissionMode[]): Pe
 }
 
 /**
- * Mode of the main "Implement" button: the remembered choice if offered, else "accept edits"
- * (the CLI's own first choice), else the first offered mode. Bypass is never the default.
+ * Mode of the main "Implement" button (WP-74, ADR-204): auto mode when offered (the model supports
+ * it), else "accept edits", else the first offered mode. Bypass is never the default; a choice in
+ * the menu holds for this plan only.
  */
-export function defaultApproveMode(
-  approveModes: readonly PermissionMode[],
-  remembered: PermissionMode | null,
-): PermissionMode | null {
+export function defaultApproveMode(approveModes: readonly PermissionMode[]): PermissionMode | null {
   const ordered = orderedApproveModes(approveModes);
-  if (remembered !== null && remembered !== 'bypassPermissions' && ordered.includes(remembered)) {
-    return remembered;
-  }
+  if (ordered.includes('auto')) return 'auto';
   if (ordered.includes('acceptEdits')) return 'acceptEdits';
   return ordered.find((mode) => mode !== 'bypassPermissions') ?? ordered[0] ?? null;
 }

@@ -27,7 +27,6 @@ import { Spinner } from '@web/ui/spinner';
 import { CappedContent } from '../components/CappedContent';
 import { Disclosure } from '../components/Disclosure';
 import { ImageThumb } from '../components/ImageThumb';
-import { ModelBadge } from '../components/ModelBadge';
 import { QueuedIdsContext } from '../context';
 import { collapsedPreview, countLines, foreignPreview } from '../lib/text';
 import { withdrawQueuedMessage } from '../lib/withdraw';
@@ -324,7 +323,6 @@ export const AssistantTextRow = memo(function AssistantTextRow({
           {t('transcript.assistant.localCommand', { command: item.localCommand.command })}
         </span>
       )}
-      <ModelBadge model={item.model} blockIndex={null} />
       <Markdown text={item.text} streaming={item.streaming} sessionKey={sessionKey} />
       {item.streaming ? (
         <span
@@ -364,7 +362,6 @@ export const ThinkingRow = memo(function ThinkingRow({
       <BrainIcon aria-hidden className="size-3.5 shrink-0" />
       {item.streaming ? t('transcript.thinking.streaming') : t('transcript.thinking.label')}
       {item.streaming ? <Spinner className="size-3" label={t('transcript.thinking.streaming')} /> : null}
-      <ModelBadge model={item.model} blockIndex={item.blockIndex} />
     </span>
   );
   return (

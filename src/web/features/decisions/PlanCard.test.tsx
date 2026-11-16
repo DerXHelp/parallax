@@ -14,7 +14,7 @@ import { getDraft, resetDraftStore, setDraft } from '../composer/state/drafts';
 import { DecisionBar } from './DecisionBar';
 import { DEMO_ENTRIES } from './lib/demo-data';
 import { renderWithHost, type Harness } from './lib/testing';
-import { readApproveMode, resetDecisionBarState } from './state/bar-store';
+import { resetDecisionBarState } from './state/bar-store';
 import { resetPlanData } from './state/plan-data';
 
 // UI tests with many key strokes: 2.5–6 s in a full `pnpm test`, up to 21 s when several runs load
@@ -70,20 +70,18 @@ describe('PlanCard (Plan "Plan-Modus & Plan-Freigabe")', () => {
     expect(meter.getAttribute('aria-valuenow')).toBe('78');
   });
 
-  it('"Implement" sends only the chosen mode – default accept edits', async () => {
+  it('"Implement" sends only the chosen mode – default auto mode (WP-74, ADR-204)', async () => {
     const h = start();
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: 'Implement · Accept edits' }));
+    await user.click(await screen.findByRole('button', { name: 'Implement · Auto' }));
     expect(approvals(h)).toEqual([
-      { kind: 'plan', response: { behavior: 'approve', mode: 'acceptEdits', editedPlan: null } },
+      { kind: 'plan', response: { behavior: 'approve', mode: 'auto', editedPlan: null } },
     ]);
-    await waitFor(() => {
-      expect(readApproveMode()).toBe('acceptEdits');
-    });
+    expect(localStorage.getItem('parallax.decisions.approveMode')).toBeNull();
   });
 
   it.each([
-    ['With auto mode', 'Auto', 'auto'],
+    ['Accept edits automatically', 'Accept edits', 'acceptEdits'],
     ['Manual – approve each change', 'Manual', 'default'],
   ] as const)('the ▾ menu picks "%s" and the main button implements with it', async (item, short, mode) => {
     const h = start();
@@ -95,18 +93,18 @@ describe('PlanCard (Plan "Plan-Modus & Plan-Freigabe")', () => {
     expect(approvals(h)).toEqual([
       { kind: 'plan', response: { behavior: 'approve', mode, editedPlan: null } },
     ]);
-    await waitFor(() => {
-      expect(readApproveMode()).toBe(mode);
-    });
+    // The choice holds for this plan only (ADR-204).
+    expect(localStorage.getItem('parallax.decisions.approveMode')).toBeNull();
   });
 
-  it('remembers the last choice for the next plan', async () => {
-    localStorage.setItem('parallax.decisions.approveMode', 'auto');
+  it('a mode remembered by an older version is ignored and dropped – the plan starts with auto', async () => {
+    localStorage.setItem('parallax.decisions.approveMode', 'acceptEdits');
     start();
     expect(await screen.findByRole('button', { name: 'Implement · Auto' })).toBeTruthy();
+    expect(localStorage.getItem('parallax.decisions.approveMode')).toBeNull();
   });
 
-  it('"With fresh context" in the ▾ menu: label, exact answer, remembered with the mode', async () => {
+  it('"With fresh context" in the ▾ menu: label, exact answer, the flag is remembered', async () => {
     const seen: Command[] = [];
     const h = start({
       onCommand: (cmd) => {
@@ -145,11 +143,10 @@ describe('PlanCard (Plan "Plan-Modus & Plan-Freigabe")', () => {
     await waitFor(() => {
       expect(localStorage.getItem('parallax.decisions.approveFresh')).toBe('true');
     });
-    expect(readApproveMode()).toBe('auto');
+    expect(localStorage.getItem('parallax.decisions.approveMode')).toBeNull();
   });
 
   it('starts from a remembered fresh choice; switching it off is remembered too', async () => {
-    localStorage.setItem('parallax.decisions.approveMode', 'auto');
     localStorage.setItem('parallax.decisions.approveFresh', 'true');
     const h = start();
     const user = userEvent.setup();
@@ -167,10 +164,9 @@ describe('PlanCard (Plan "Plan-Modus & Plan-Freigabe")', () => {
   });
 
   it('never remembers a bypass choice – neither the mode nor the fresh flag', async () => {
-    localStorage.setItem('parallax.decisions.approveMode', 'acceptEdits');
     const h = start();
     const user = userEvent.setup();
-    await screen.findByRole('button', { name: 'Implement · Accept edits' });
+    await screen.findByRole('button', { name: 'Implement · Auto' });
     const decision = h.host.view(DEMO_ENTRIES.plan)?.decisions[0];
     expect(decision?.kind).toBe('plan');
     if (decision?.kind !== 'plan') return;
@@ -201,7 +197,7 @@ describe('PlanCard (Plan "Plan-Modus & Plan-Freigabe")', () => {
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: /Implement/ })).toBeNull();
     });
-    expect(localStorage.getItem('parallax.decisions.approveMode')).toBe('acceptEdits');
+    expect(localStorage.getItem('parallax.decisions.approveMode')).toBeNull();
     expect(localStorage.getItem('parallax.decisions.approveFresh')).toBeNull();
   });
 
@@ -213,7 +209,7 @@ describe('PlanCard (Plan "Plan-Modus & Plan-Freigabe")', () => {
     async (percent, shown) => {
       const h = start();
       const user = userEvent.setup();
-      await screen.findByRole('button', { name: 'Implement · Accept edits' });
+      await screen.findByRole('button', { name: 'Implement · Auto' });
       act(() => {
         h.host.patchSummary(DEMO_ENTRIES.plan, {
           context: sampleContextGauge({
@@ -235,7 +231,7 @@ describe('PlanCard (Plan "Plan-Modus & Plan-Freigabe")', () => {
       const badge = within(fresh).queryByText('Recommended');
       expect(badge !== null).toBe(shown);
       if (shown) expect(fresh.textContent).toContain(`Context is ${String(percent)}% full.`);
-      expect(screen.getByRole('button', { name: 'Implement · Accept edits' }).dataset.fresh).toBe('false');
+      expect(screen.getByRole('button', { name: 'Implement · Auto' }).dataset.fresh).toBe('false');
     },
   );
 
@@ -249,12 +245,12 @@ describe('PlanCard (Plan "Plan-Modus & Plan-Freigabe")', () => {
         cmd.name === 'decision.respond' ? { ok: false, error: makeError(code) } : undefined,
     });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: 'Implement · Accept edits · fresh context' }));
+    await user.click(await screen.findByRole('button', { name: 'Implement · Auto · fresh context' }));
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('Could not implement with a fresh context');
     expect(alert.textContent).toContain(text);
     // The card stays answerable; nothing was remembered.
-    expect(screen.getByRole('button', { name: 'Implement · Accept edits · fresh context' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Implement · Auto · fresh context' })).toBeTruthy();
     expect(localStorage.getItem('parallax.decisions.approveMode')).toBeNull();
     expect(approvals(h)).toHaveLength(1);
     // Changing the choice clears the error.
@@ -285,7 +281,7 @@ describe('PlanCard (Plan "Plan-Modus & Plan-Freigabe")', () => {
       },
     });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole('button', { name: 'Implement · Accept edits · fresh context' }));
+    await user.click(await screen.findByRole('button', { name: 'Implement · Auto · fresh context' }));
     expect(await screen.findByText('Claude Code failed to start.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Implement/ })).toBeNull();
     expect(document.querySelector('[data-slot="fresh-context-error"]')).toBeNull();
@@ -331,7 +327,7 @@ describe('PlanCard (Plan "Plan-Modus & Plan-Freigabe")', () => {
     });
     await user.keyboard('{Control>}{Enter}{/Control}');
     expect(approvals(h)).toEqual([
-      { kind: 'plan', response: { behavior: 'approve', mode: 'acceptEdits', editedPlan: null } },
+      { kind: 'plan', response: { behavior: 'approve', mode: 'auto', editedPlan: null } },
     ]);
   });
 
