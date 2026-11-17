@@ -7,9 +7,27 @@
  * `--autostart` (the autostart shortcut, ADR-110). The handler is registered as
  * `"<node>" <launcher…> --open "%1"`, so the URI is always the LAST argument: anything after it is
  * refused – a crafted link that smuggles `" --home=… "` into `%1` cannot add options (R5).
+ *
+ * WP-87b: `--apply-update=<v>` (+ `--restore`, `--wait-pid=<pid>`) makes this process the
+ * orchestrator of a version switch (applyUpdate.ts), started by the server of the old version
+ * (update/handoff.ts `orchestratorCommand`). It needs `--install-root` and `--wait-pid` and cannot
+ * be combined with `--open`, `--autostart` or `--print-url`.
  */
+import { z } from 'zod';
 import { windowsPathIssue } from '@shared/paths';
 import type { ServerConfig } from '../config';
+import { APPLY_UPDATE_FLAG, RESTORE_FLAG, WAIT_PID_FLAG } from '../update/handoff';
+import { releaseVersionSchema } from './release';
+
+/** `--apply-update` and its companions (WP-87b, docs/wp/WP-87.md §2.2). */
+export interface ApplyUpdateArgs {
+  /** Target version (`versions\<v>` must be staged). */
+  version: string;
+  /** `--restore`: switch with the backup of that version (`needsRestore`). */
+  restore: boolean;
+  /** `--wait-pid`: PID of the server that hands over. */
+  waitPid: number;
+}
 
 export interface LauncherArgs {
   /** `--print-url`: print the address with the one-time code instead of opening Chrome. */
@@ -27,6 +45,8 @@ export interface LauncherArgs {
    * `start.mjs`; working directory of server and Chrome instead of the version folder. null = none.
    */
   installRoot: string | null;
+  /** WP-87b `--apply-update=<v>`: run as the orchestrator of a version switch; null = normal start. */
+  applyUpdate: ApplyUpdateArgs | null;
   /** A malformed launcher option (main.ts: exit 2, nothing started); null = fine. */
   problem: string | null;
   /** Everything else, for loadConfig({ argv }). */
@@ -54,6 +74,48 @@ const OWN_FLAGS: Readonly<Record<string, (args: LauncherArgs) => void>> = {
 const OPEN_FLAG = '--open';
 const INSTALL_ROOT_FLAG = '--install-root';
 
+const waitPidSchema = z
+  .string()
+  .regex(/^\d{1,10}$/u)
+  .transform(Number)
+  .pipe(z.number().int().positive().max(0xffffffff));
+
+/** `--flag=<value>` or `--flag <value>`: the value and how many arguments it took; null = not this flag. */
+function valueOf(
+  argv: readonly string[],
+  i: number,
+  flag: string,
+): { value: string | undefined; skip: number } | null {
+  const arg = argv[i] ?? '';
+  if (arg === flag) return { value: argv[i + 1], skip: 1 };
+  if (arg.startsWith(`${flag}=`)) return { value: arg.slice(flag.length + 1), skip: 0 };
+  return null;
+}
+
+/** The orchestrator flags (WP-87b) together; null = none given, a string = the problem. */
+function applyUpdateArgs(
+  raw: { version: string | null; restore: boolean; waitPid: string | null },
+  args: LauncherArgs,
+): ApplyUpdateArgs | string | null {
+  if (raw.version === null) {
+    if (raw.restore || raw.waitPid !== null) {
+      return `${RESTORE_FLAG} and ${WAIT_PID_FLAG} belong to ${APPLY_UPDATE_FLAG}`;
+    }
+    return null;
+  }
+  const version = releaseVersionSchema.safeParse(raw.version);
+  if (!version.success) return `${APPLY_UPDATE_FLAG} needs a release version (X.Y.Z or X.Y.Z-rc.N)`;
+  const waitPid = waitPidSchema.safeParse(raw.waitPid ?? '');
+  if (raw.waitPid === null || !waitPid.success) {
+    return `${APPLY_UPDATE_FLAG} needs ${WAIT_PID_FLAG}=<pid> of the server that hands over`;
+  }
+  if (args.installRoot === null) return `${APPLY_UPDATE_FLAG} needs ${INSTALL_ROOT_FLAG}=<dir>`;
+  if (args.open !== null || args.autostart || args.printUrl) {
+    return `${APPLY_UPDATE_FLAG} cannot be combined with ${OPEN_FLAG}, --autostart or --print-url`;
+  }
+  return { version: version.data, restore: raw.restore, waitPid: waitPid.data };
+}
+
 /**
  * `--` is skipped: pnpm 12 passes it on literally (`pnpm start -- --port=4800`), and loadConfig
  * (`parseArgs` without positionals) would reject it as an unexpected argument (WP-20a gap 2).
@@ -66,8 +128,14 @@ export function parseLauncherArgs(argv: readonly string[]): LauncherArgs {
     open: null,
     autostart: false,
     installRoot: null,
+    applyUpdate: null,
     problem: null,
     serverArgv: [],
+  };
+  const apply: { version: string | null; restore: boolean; waitPid: string | null } = {
+    version: null,
+    restore: false,
+    waitPid: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] ?? '';
@@ -98,12 +166,33 @@ export function parseLauncherArgs(argv: readonly string[]): LauncherArgs {
       args.installRoot = value ?? null;
       continue;
     }
+    const version = valueOf(argv, i, APPLY_UPDATE_FLAG);
+    if (version !== null) {
+      i += version.skip;
+      apply.version = version.value ?? '';
+      continue;
+    }
+    const waitPid = valueOf(argv, i, WAIT_PID_FLAG);
+    if (waitPid !== null) {
+      i += waitPid.skip;
+      apply.waitPid = waitPid.value ?? '';
+      continue;
+    }
+    if (arg === RESTORE_FLAG) {
+      apply.restore = true;
+      continue;
+    }
     const own = OWN_FLAGS[arg];
     if (own === undefined) args.serverArgv.push(arg);
     else own(args);
   }
   if (args.problem === null && args.open !== null && args.autostart) {
     args.problem = `${OPEN_FLAG} and --autostart cannot be combined`;
+  }
+  if (args.problem === null) {
+    const applied = applyUpdateArgs(apply, args);
+    if (typeof applied === 'string') args.problem = applied;
+    else args.applyUpdate = applied;
   }
   return args;
 }
@@ -169,4 +258,7 @@ export const LAUNCHER_USAGE = [
   '                 the server and the Chrome window',
   '  --open <link>  open the session of a parallax://session/<id> link (Windows notification',
   '                 click); must be the last option',
+  '  --apply-update=<version> --wait-pid=<pid> [--restore]',
+  '                 internal: started by the Parallax server to switch an installation to a',
+  '                 prepared version (needs --install-root)',
 ].join('\n');

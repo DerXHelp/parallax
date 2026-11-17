@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { settingsSchema } from '@shared/model';
 import { SAMPLE_IDS } from '@shared/samples';
 import type { SettingsPeek } from '../config';
+import { APPLY_FAILED_PREFIX, APPLY_TIMEOUTS, UPDATE_READY_TIMEOUT_ENV } from '../update/handoff';
+import type { ApplyUpdateRequest } from './applyUpdate';
 import { runLauncherCli, type LauncherCliDeps } from './cli';
 import { LauncherError, type LauncherOptions, type LauncherResult } from './launcher';
 
@@ -13,14 +15,21 @@ interface Harness {
   out: string[];
   err: string[];
   launches: LauncherOptions[];
+  applies: ApplyUpdateRequest[];
 }
 
 function harness(
-  p: { settings?: SettingsPeek; result?: Partial<LauncherResult>; error?: Error } = {},
+  p: {
+    settings?: SettingsPeek;
+    result?: Partial<LauncherResult>;
+    error?: Error;
+    env?: NodeJS.ProcessEnv;
+    applyExit?: number;
+  } = {},
 ): Harness {
-  const h: Omit<Harness, 'deps'> = { out: [], err: [], launches: [] };
+  const h: Omit<Harness, 'deps'> = { out: [], err: [], launches: [], applies: [] };
   const deps: LauncherCliDeps = {
-    env: { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' },
+    env: { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local', ...p.env },
     cwd: 'C:\\repo',
     out: (line) => h.out.push(line),
     fail: (line) => h.err.push(line),
@@ -36,6 +45,10 @@ function harness(
         window: options.openWindow !== false,
         ...p.result,
       });
+    },
+    applyUpdate: (request) => {
+      h.applies.push(request);
+      return Promise.resolve(p.applyExit ?? 0);
     },
     readSettings: () => p.settings ?? { settings: null, note: null },
   };
@@ -144,5 +157,55 @@ describe('launcher command line flow (cli.ts)', () => {
     await runLauncherCli(['--install-root=D:\\apps\\Parallax', `--home=${HOME}`], installed.deps);
     expect(installed.launches[0]?.installRoot).toBe('D:\\apps\\Parallax');
     expect(installed.launches[0]?.serverArgs).toContain('--install-root=D:\\apps\\Parallax');
+  });
+
+  describe('--apply-update (WP-87b)', () => {
+    const ROOT = 'D:\\apps\\Parallax';
+    const APPLY = [`--install-root=${ROOT}`, '--apply-update=1.0.1', '--wait-pid=4242'];
+
+    it('branches off before the launch: the resolved configuration goes to runApplyUpdate', async () => {
+      const h = harness({ applyExit: 1 });
+      expect(
+        await runLauncherCli(
+          [...APPLY, '--restore', `--home=${HOME}`, '--port=4800', '--toasts=off'],
+          h.deps,
+        ),
+      ).toBe(1);
+      expect(h.launches).toEqual([]);
+      expect(h.out).toEqual([]);
+      expect(h.applies).toHaveLength(1);
+      expect(h.applies[0]).toMatchObject({
+        version: '1.0.1',
+        restore: true,
+        waitPid: 4242,
+        installRoot: ROOT,
+        home: HOME,
+        port: 4800,
+        backend: 'sdk',
+        readyTimeoutMs: APPLY_TIMEOUTS.readyMs,
+        toasts: 'off',
+      });
+      expect(h.applies[0]?.serverArgs).toEqual(
+        expect.arrayContaining([`--home=${HOME}`, '--port=4800', `--install-root=${ROOT}`]),
+      );
+    });
+
+    it('takes the ready timeout from PARALLAX_UPDATE_READY_TIMEOUT_S', async () => {
+      const h = harness({ env: { [UPDATE_READY_TIMEOUT_ENV]: '180' } });
+      expect(await runLauncherCli([...APPLY, `--home=${HOME}`], h.deps)).toBe(0);
+      expect(h.applies[0]?.readyTimeoutMs).toBe(180_000);
+    });
+
+    it('a bad option answers the handshake at once (FAILED spawn) and exits with 2', async () => {
+      const missing = harness();
+      expect(await runLauncherCli(['--apply-update=1.0.1', '--wait-pid=4242'], missing.deps)).toBe(2);
+      expect(missing.out).toEqual([`${APPLY_FAILED_PREFIX} spawn`]);
+      expect(missing.err.join('\n')).toMatch(/needs --install-root/);
+      const config = harness();
+      expect(await runLauncherCli([...APPLY, '--port=nope'], config.deps)).toBe(2);
+      expect(config.out).toEqual([`${APPLY_FAILED_PREFIX} spawn`]);
+      expect(config.applies).toEqual([]);
+      expect(config.launches).toEqual([]);
+    });
   });
 });
