@@ -93,6 +93,8 @@ die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale En
 - Helfer nur in `*/lib`. **Vor dem Anlegen eines Helfers greppen**, ob es ihn schon gibt.
 - UI-Primitives nur aus `src/web/ui`, Farben nur über Design-Tokens (`index.css`).
 - Kein `rehype-raw`, kein `dangerouslySetInnerHTML`; Links nur http(s); nichts aus dem Internet laden.
+  Einzige Ausnahme (WP-83 §3.7, ADR-220): der **Server** lädt Release-Dateien von GitHub und das Agent SDK aus der
+  npm-Registry (`src/server/update/**`, `src/server/install/sdk.ts`) – signiert bzw. per Hash geprüft; die Web-UI nie.
 - Lokale Imports in Root-Configs (`*.config.ts`) mit `.ts`-Endung (Vite-Config-Loader).
 
 ## Tests

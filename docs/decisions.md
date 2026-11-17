@@ -2480,3 +2480,35 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
 - **Begründung:** Versionsordner erlauben ein Update ohne Neustart und einen Rückweg ohne Download; ein stabiler
   Einstieg hält die Einträge im System unverändert, und die Prüfung durch die installierte Version macht ein
   manipuliertes Paket wirkungslos.
+
+## ADR-220 – Update in der App
+- **Datum/WP:** 17.11.2026, WP-87…89; angenommen mit dem Plan WP-83 (§9), Entwurf `docs/wp/WP-87.md`.
+- **Entscheidung:** Der Server prüft neue Versionen über die Download-URLs von GitHub
+  (`releases/latest/download/latest.json` + `.sig`, kein API-Limit; nur Vollversionen, 404 = kein Update), 60 s nach dem
+  Start und dann alle 12 h, abschaltbar (`settings.updates.check`). Angeboten wird nur eine signierte, neuere Version
+  mit genau der erwarteten Asset-URL. „Vorbereiten“ lädt das Zip im Hintergrund (Größe, SHA-256 aus `latest.json`),
+  entpackt es mit `tar.exe` nach Prüfung der Liste und übergibt an `stageVersion` (Signatur von `release.json`, jede
+  Datei, `minNode`, SDK) – unter derselben Sperre wie der Installer. „Aus Datei“ nimmt ein hochgeladenes Zip an,
+  geprüft mit Code und Schlüsseln der laufenden Version. „Neu starten“ beendet den Server mit Close-Code
+  `SERVER_RESTARTING` (4504); das Fenster verbindet sich 5 min lang selbst wieder. „Zurück zu <vorige>“ nutzt den
+  vorhandenen Versionsordner; weichen die Store-Schemas ab, wird die Sicherung des Wechsels eingespielt (mit
+  Bestätigung, ohne Sicherung gesperrt). Die Netzzugriffe macht nur der Server; Test-Endpunkte gibt es nur im
+  Test-Bundle (`__PARALLAX_UPDATE_TEST__`).
+- **Begründung:** Ein Klick statt Zip/`install.cmd`, ohne dass ein laufender Server seine eigenen Dateien ersetzt; die
+  Prüfung bleibt dieselbe wie beim Installer, und ein Fehler beim Wechsel darf nie ohne lauffähige Version enden.
+
+## ADR-222 – Versionswechsel durch die alte Version, Marker, Kompatibilitätsregeln
+- **Datum/WP:** 17.11.2026, WP-87 (E1–E4, §1.7).
+- **Entscheidung:** Den Wechsel orchestriert der Launcher der **alten** Version (`launcher.js --apply-update=<v>
+  --wait-pid=<server>`): Sperren `launch`/`install`, Prüfung vor dem Handschlag (`PARALLAX-APPLY-READY` /
+  `PARALLAX-APPLY-FAILED <grund>` auf stdout), dann endet der alte Server; der Orchestrator wartet auf ihn (Kill nur,
+  wenn die Startzeit der PID vor dem Lockfile liegt), prüft `versions\<v>` vollständig, sichert die Daten (im
+  Restore-Modus danach Einspielen), schreibt den Marker `update-result.json` (`pending`), schaltet `current.json` um
+  und startet die neue Version über `launchLocked`. Wird sie nicht gesund, geht er zurück: Daten aus der Sicherung,
+  `current.json` wie vorher, Marker `failed`, alte Version starten; scheitert auch das, eine Benachrichtigung mit dem
+  Protokoll. Der Server liest den Marker beim Start (`justUpdated`/`failedUpdate`). Formate über Versionsgrenzen
+  (`current.json`, `release.json`, `update-result.json`, Flags, Handschlag) ändern sich nur additiv; ein Bruch
+  braucht eine neue MAJOR-Version.
+- **Begründung:** Die alte Version ist geprüft und läuft bereits – sie kann den Rückweg garantieren, auch wenn die
+  neue gar nicht startet. Der Handschlag hält den alten Server am Leben, bis feststeht, dass der Wechsel beginnen
+  kann; der Marker bringt das Ergebnis über den Neustart ins Fenster.

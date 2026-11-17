@@ -62,18 +62,31 @@ Für die Nutzung: ein Release von GitHub, ohne Klon, pnpm oder Build.
 - `install.cmd --help` zeigt alle Optionen.
 
 ### Aktualisieren
-- Das neue Zip laden, entpacken und `install.cmd` starten. Die **installierte** Version prüft das neue
-  Paket mit ihrem eigenen Code und Schlüssel und installiert es neben der alten. Nur die allererste
-  Installation vertraut dem geladenen Installer.
-- **Läuft Parallax,** wird trotzdem installiert. Die neue Version gilt nach Zahnrad → „Server
+- **In der App (ab 1.0.0):** Parallax sucht etwa eine Minute nach dem Start und dann alle 12 Stunden nach
+  einer neuen Vollversion auf GitHub (Einstellungen → „Updates“, abschaltbar). Pre-releases werden nie
+  angeboten. Ein Hinweis erscheint oben in der Sidebar. „Update vorbereiten“ lädt das Zip im Hintergrund,
+  prüft Signatur und Dateien und holt das Agent SDK; die Sessions laufen dabei weiter. „Neu starten“ beendet
+  die Sessions wie „Server beenden…“, wechselt die Version und startet sie; das Fenster verbindet sich von
+  selbst wieder und zeigt „Aktualisiert auf <version>“ mit „Was ist neu“. Startet die neue Version nicht,
+  kehrt Parallax mit den gesicherten Daten zur alten zurück und meldet das mit dem Pfad zum Protokoll
+  (`%LOCALAPPDATA%\Parallax\logs\update-<zeit>.log`).
+- **Aus Datei:** Einstellungen → „Updates“ → „Aus Datei installieren…“ nimmt ein geladenes
+  `parallax-<version>-win.zip` an (z. B. ohne Zugang zu GitHub). Geprüft wird es mit dem Code und den
+  Schlüsseln der laufenden Version.
+- **Ohne die App:** das neue Zip laden, entpacken und `install.cmd` starten. Die **installierte** Version
+  prüft das neue Paket mit ihrem eigenen Code und Schlüssel und installiert es neben der alten. Nur die
+  allererste Installation vertraut dem geladenen Installer.
+- **Läuft Parallax,** installiert `install.cmd` trotzdem. Die neue Version gilt nach Zahnrad → „Server
   beenden…“ und einem neuen Start. Die laufende Version bleibt so lange unberührt.
 - **Sicherung:** Beim ersten Start einer neuen Version sichert der Launcher die Daten nach
   `%LOCALAPPDATA%\Parallax\backups\<alt>-zu-<neu>-<zeit>\`. Gesichert werden Einstellungen, Sessions und
   Entscheidungen; von den Transkripten nur die Länge. Die drei jüngsten Sicherungen bleiben. Das gilt
   auch für einen Klon mit `parallax.cmd`.
-- **Zurück:** Die vorige Version bleibt installiert: `parallax.cmd --use <version>`. Hat die neue Version
-  die Daten schon migriert, startet die ältere nicht (Exit-Code 3). Das Einspielen der Sicherung kommt
-  mit dem Update-Knopf in der App.
+- **Zurück:** Die vorige Version bleibt installiert. In der App: Einstellungen → „Updates“ → „Zurück zu
+  <version>“. Speichert die ältere Version Daten anders, spielt Parallax die Sicherung vom Wechsel ein und
+  fragt vorher (Änderungen seit dem Wechsel liegen dann im neuen Sicherungsordner). Ohne die App:
+  `parallax.cmd --use <version>`; hat die neue Version die Daten schon migriert, startet die ältere so nicht
+  (Exit-Code 3).
 - **Umstieg vom Klon (einmal je Rechner):** installieren, im alten Fenster „Server beenden…“, dann
   Parallax über das Startmenü starten. Sind Autostart und „Klick öffnet die Session“ eingeschaltet, zeigen
   sie danach auf die Installation. Den Klon danach löschen oder nicht mehr starten. Ein aktueller Klon
