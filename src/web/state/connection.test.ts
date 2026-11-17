@@ -13,8 +13,15 @@ import {
   sampleUuid,
 } from '@shared/samples';
 import { applySeqOps, viewStateFromSnapshot } from '@shared/sync';
+import { backoffDelay } from '@web/lib/backoff';
 import type { AuthCheckResult } from './auth';
-import { ClientCommandError, createHostConnection, type HostConnectionOptions } from './connection';
+import {
+  ClientCommandError,
+  RESTART_BACKOFF,
+  RESTART_RECONNECT_WINDOW_MS,
+  createHostConnection,
+  type HostConnectionOptions,
+} from './connection';
 import { createClientStore } from './store';
 import { createMemoryTransport } from './transport';
 
@@ -737,5 +744,194 @@ describe('shutdownServer from an outdated window (V2-04)', () => {
     expect(host()?.phase).toBe('reconnecting');
     const refused = await connection.shutdownServer().catch((error: unknown) => error);
     expect((refused as ClientCommandError).code).toBe('CONNECTION_LOST');
+  });
+});
+
+describe('restart for an update (close 4504, WP-88b)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const NEXT_INSTANCE = sampleUuid(4504);
+
+  /** An open connection with an auth check; `auth.result` steers the next checks. */
+  async function openWindow(options: Partial<HostConnectionOptions> = {}) {
+    const auth: { result: AuthCheckResult } = {
+      result: { kind: 'authenticated', serverInstanceId: SAMPLE_IDS.serverInstanceId },
+    };
+    const checkAuth = vi.fn(() => Promise.resolve(auth.result));
+    const ctx = setup({ checkAuth, ...options });
+    ctx.connection.start();
+    await vi.advanceTimersByTimeAsync(0);
+    ctx.transport.serverSend(sampleHello());
+    expect(ctx.host()?.phase).toBe('open');
+    return { ...ctx, auth, checkAuth };
+  }
+
+  it('ends open commands and retries every 1–3 s with the auth check first; failures stay "restarting"', async () => {
+    const { transport, connection, host, auth, checkAuth } = await openWindow();
+    const pending = connection.send({ name: 'session.interrupt', entryId: ENTRY });
+    const assertion = expect(pending).rejects.toMatchObject({ code: 'CONNECTION_LOST' });
+    transport.serverClose(4504);
+    await assertion;
+    expect(host()).toMatchObject({
+      phase: 'restarting',
+      status: 'reconnecting',
+      restartDeadline: Date.now() + RESTART_RECONNECT_WINDOW_MS,
+      nextAttemptAt: Date.now() + 2000,
+    });
+    expect(connection.status()).toBe('reconnecting');
+    // New commands fail at once: the next server is another instance.
+    await expect(connection.send({ name: 'server.shutdown' })).rejects.toMatchObject({
+      code: 'CONNECTION_LOST',
+    });
+
+    // Server still gone: auth check only, no socket.
+    auth.result = { kind: 'unreachable' };
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(checkAuth).toHaveBeenCalledTimes(2);
+    expect(transport.connectCount).toBe(1);
+    expect(host()).toMatchObject({ phase: 'restarting', nextAttemptAt: Date.now() + 2000 });
+
+    // The new server answers HTTP but the socket drops before hello: still restarting.
+    auth.result = { kind: 'authenticated', serverInstanceId: NEXT_INSTANCE };
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(transport.connectCount).toBe(2);
+    expect(host()?.phase).toBe('restarting');
+    transport.serverClose(1006);
+    expect(host()?.phase).toBe('restarting');
+    // No growth while restarting (the normal backoff would be 1 s, 2 s, 4 s …).
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(transport.connectCount).toBe(3);
+
+    // Same build: continue as usual (new instance → full resync), the restart is over.
+    transport.serverSend(sampleHello({ serverInstanceId: NEXT_INSTANCE }));
+    expect(host()).toMatchObject({ phase: 'open', status: 'open', restartDeadline: null, error: null });
+    expect(checkAuth).toHaveBeenCalledTimes(4);
+  });
+
+  it('spreads the attempts over 1–3 s', () => {
+    expect(backoffDelay(0, RESTART_BACKOFF, () => 0)).toBe(1000);
+    expect(backoffDelay(0, RESTART_BACKOFF, () => 0.5)).toBe(2000);
+    expect(backoffDelay(5, RESTART_BACKOFF, () => 0.999_999)).toBe(3000);
+  });
+
+  it('a hello with a new build reloads the window; another protocol does too', async () => {
+    const first = await openWindow();
+    first.transport.serverClose(4504);
+    first.auth.result = { kind: 'authenticated', serverInstanceId: NEXT_INSTANCE };
+    await vi.advanceTimersByTimeAsync(2000);
+    first.transport.serverSend(sampleHello({ serverInstanceId: NEXT_INSTANCE, buildId: '1.0.1+next' }));
+    expect(first.reload).toHaveBeenCalledTimes(1);
+    expect(first.host()).toMatchObject({ phase: 'version-mismatch', restartDeadline: null });
+    expect(first.transport.connected).toBe(false);
+
+    const second = await openWindow();
+    second.transport.serverClose(4504);
+    await vi.advanceTimersByTimeAsync(2000);
+    second.transport.serverSend(sampleHello({ serverInstanceId: NEXT_INSTANCE, protocolVersion: 99 }));
+    expect(second.reload).toHaveBeenCalledTimes(1);
+    expect(second.host()?.error?.code).toBe('PROTOCOL_VERSION_MISMATCH');
+  });
+
+  it('after 5 min: "server stopped" with UPDATE_RESTART_FAILED (timeout), no more attempts', async () => {
+    const { transport, connection, host, auth, checkAuth } = await openWindow();
+    transport.serverClose(4504);
+    auth.result = { kind: 'unreachable' };
+    await vi.advanceTimersByTimeAsync(RESTART_RECONNECT_WINDOW_MS - 1);
+    expect(host()?.phase).toBe('restarting');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(host()).toMatchObject({
+      phase: 'server-stopped',
+      status: 'closed',
+      restartDeadline: null,
+      nextAttemptAt: null,
+      error: makeError('UPDATE_RESTART_FAILED', { reason: 'timeout' }),
+    });
+    const checks = checkAuth.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(checkAuth).toHaveBeenCalledTimes(checks);
+
+    // "Reconnect" starts a normal attempt (no restart window any more).
+    auth.result = { kind: 'authenticated', serverInstanceId: NEXT_INSTANCE };
+    connection.retryNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(transport.connected).toBe(true);
+    transport.serverSend(sampleHello({ serverInstanceId: NEXT_INSTANCE }));
+    expect(host()).toMatchObject({ phase: 'open', error: null });
+  });
+
+  it('the deadline drops an attempt in flight (open socket without hello, pending auth check)', async () => {
+    const hanging = await openWindow({ helloTimeoutMs: 10 * 60_000 });
+    hanging.transport.serverClose(4504);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(hanging.transport.connected).toBe(true);
+    await vi.advanceTimersByTimeAsync(RESTART_RECONNECT_WINDOW_MS);
+    expect(hanging.transport.connected).toBe(false);
+    expect(hanging.host()?.phase).toBe('server-stopped');
+
+    let resolveCheck: (result: AuthCheckResult) => void = () => undefined;
+    const slow = await openWindow();
+    slow.checkAuth.mockImplementation(
+      () =>
+        new Promise<AuthCheckResult>((resolve) => {
+          resolveCheck = resolve;
+        }),
+    );
+    slow.transport.serverClose(4504);
+    await vi.advanceTimersByTimeAsync(RESTART_RECONNECT_WINDOW_MS);
+    expect(slow.host()?.phase).toBe('server-stopped');
+    resolveCheck({ kind: 'authenticated', serverInstanceId: NEXT_INSTANCE });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(slow.transport.connectCount).toBe(1);
+    expect(slow.host()?.error?.code).toBe('UPDATE_RESTART_FAILED');
+  });
+
+  it('retryNow skips the wait but never doubles an attempt in flight', async () => {
+    const { transport, connection, host, checkAuth } = await openWindow();
+    transport.serverClose(4504);
+    connection.retryNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(checkAuth).toHaveBeenCalledTimes(2);
+    expect(transport.connectCount).toBe(2);
+    // The socket waits for hello (phase still "restarting"): no second attempt.
+    connection.retryNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(checkAuth).toHaveBeenCalledTimes(2);
+    expect(host()?.phase).toBe('restarting');
+  });
+
+  it('several windows restart independently (own timers, own reload guard)', async () => {
+    const early = await openWindow({ random: () => 0 });
+    const late = await openWindow({ random: () => 0.999_999 });
+    early.transport.serverClose(4504);
+    late.transport.serverClose(4504);
+    early.auth.result = { kind: 'authenticated', serverInstanceId: NEXT_INSTANCE };
+    late.auth.result = { kind: 'authenticated', serverInstanceId: NEXT_INSTANCE };
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(early.transport.connectCount).toBe(2);
+    expect(late.transport.connectCount).toBe(1);
+    early.transport.serverSend(sampleHello({ serverInstanceId: NEXT_INSTANCE, buildId: '1.0.1+next' }));
+    expect(early.reload).toHaveBeenCalledTimes(1);
+    expect(late.host()?.phase).toBe('restarting');
+
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(late.transport.connectCount).toBe(2);
+    late.transport.serverSend(sampleHello({ serverInstanceId: NEXT_INSTANCE, buildId: '1.0.1+next' }));
+    expect(late.reload).toHaveBeenCalledTimes(1);
+    expect(early.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('close 4503 still ends in "server stopped" without a restart window', async () => {
+    const { transport, host, checkAuth } = await openWindow();
+    transport.serverClose(4503);
+    expect(host()).toMatchObject({ phase: 'server-stopped', restartDeadline: null });
+    expect(host()?.error?.code).toBe('SERVER_SHUTTING_DOWN');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(checkAuth).toHaveBeenCalledTimes(1);
   });
 });

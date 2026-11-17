@@ -6,15 +6,35 @@ import { retryConnection } from '@web/state/connection';
 import { useHostRecord, useHostState } from '@web/state/hooks';
 import { Banner } from '@web/ui/alert';
 import { Button } from '@web/ui/button';
+import { Spinner } from '@web/ui/spinner';
 import { RetryCountdown } from './HostGate';
 import { LoginButton, needsSignIn } from './login/LoginButton';
 import { NotificationPermissionBanner } from './NotificationPermissionBanner';
+import { useFeatureSlots } from './slots';
 
-/** Connection lost / outdated window (after the first successful handshake). */
+/**
+ * Close 4504 (WP-88b): the server restarts for an update or a rollback and the window reconnects
+ * by itself – no "Retry now", no countdown. The spinner takes the place of the banner icon.
+ */
+function RestartBanner() {
+  const { t } = useI18n();
+  return (
+    <Banner tone="info" data-slot="restart-banner" className="[&>svg]:hidden">
+      <span className="inline-flex flex-wrap items-center gap-x-1.5">
+        <Spinner aria-hidden role="presentation" className="text-info" />
+        <span className="font-medium">{t('connection.restartingTitle')}</span>
+        <span className="text-muted-foreground">{t('connection.restartingDescription')}</span>
+      </span>
+    </Banner>
+  );
+}
+
+/** Connection lost / restarting / outdated window (after the first successful handshake). */
 function ConnectionBanner() {
   const { t } = useI18n();
   const host = useHostRecord();
   if (!host.everConnected || host.status === 'open' || host.phase === 'stopped') return null;
+  if (host.phase === 'restarting') return <RestartBanner />;
   if (host.phase === 'version-mismatch') {
     return (
       <Banner
@@ -162,11 +182,16 @@ function HostWarnings() {
   ));
 }
 
-/** All banners above the session area (most urgent first). */
+/**
+ * All banners above the session area (most urgent first). The slot `UpdateBanner` (WP-88a:
+ * "Updated to <v>", "Update to <v> failed") follows the connection; its placeholder renders nothing.
+ */
 export function ShellBanners() {
+  const { UpdateBanner } = useFeatureSlots();
   return (
     <>
       <ConnectionBanner />
+      <UpdateBanner />
       <SetupHint />
       <HostWarnings />
       <NotificationPermissionBanner />

@@ -13,7 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
 import { useSidebarMode } from './navigation/sidebar-view';
 import { focusSessionInput } from './NewSessionForm';
 import { useEscapeHandler } from './shortcuts';
-import { Sidebar } from './Sidebar';
+import { Sidebar, SidebarUpdateNotice } from './Sidebar';
 import { setSidebarCollapsed, useNarrowWindow, useSidebarCollapsed } from './sidebar-layout';
 
 /**
@@ -83,6 +83,8 @@ const SidebarRail = memo(function SidebarRail({
       >
         <PanelLeftOpenIcon aria-hidden />
       </IconButton>
+      {/* WP-87: the update hint as an icon (features/updates; the placeholder renders nothing). */}
+      <SidebarUpdateNotice compact />
       <ul
         role="list"
         className="flex min-h-0 w-full flex-1 flex-col items-center gap-0.5 overflow-y-auto pt-1"
