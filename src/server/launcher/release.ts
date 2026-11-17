@@ -21,8 +21,16 @@ export const RELEASE_SIGNATURE_FILE = 'release.json.sig';
 export const RELEASE_SCHEMA_VERSION = 1;
 export const AGENT_SDK_PACKAGE = '@anthropic-ai/claude-agent-sdk';
 
+/**
+ * Node flags of every process of an installation (WP-86, docs/wp/WP-83.md §8.2): certificates from
+ * the Windows store (company TLS inspection) and the proxy from the environment. Node >= 24.5.
+ */
+export const PACKAGE_NODE_FLAGS: readonly string[] = ['--use-system-ca', '--use-env-proxy'];
+
 const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/u);
-const semver = z.string().regex(/^\d+\.\d+\.\d+(?:-rc\.\d+)?$/u);
+/** A release version: `X.Y.Z` or a release candidate `X.Y.Z-rc.N` (tag `v<version>`). */
+export const releaseVersionSchema = z.string().regex(/^\d+\.\d+\.\d+(?:-rc\.\d+)?$/u);
+const semver = releaseVersionSchema;
 
 export const releaseInfoSchema = z.object({
   schemaVersion: z.literal(RELEASE_SCHEMA_VERSION),

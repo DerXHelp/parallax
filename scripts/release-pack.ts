@@ -1,6 +1,6 @@
 /**
- * Stages a release package (WP-85, docs/wp/WP-83.md §5): `<out>/parallax-<version>/` with `dist/`,
- * the flat server runtime in `node_modules` WITHOUT the Agent SDK, a shortened `package.json`,
+ * Stages a release package (WP-85, docs/wp/WP-83.md §5): `<out>/parallax-<version>/` with `dist/`
+ * (server, launcher, installer), `install.cmd` and `parallax.ico` (WP-86), the flat server runtime in `node_modules` WITHOUT the Agent SDK, a shortened `package.json`,
  * `CHANGELOG.md`, `LICENSE`, `THIRD_PARTY_NOTICES.md` and the unsigned `release.json`. Signing and
  * zipping happen in a separate CI job (`scripts/release/sign.ts`).
  *
@@ -24,6 +24,8 @@ import {
   type ReleaseInfo,
 } from '../src/server/launcher/release';
 import { hashFiles, walkPackage } from '../src/server/launcher/packageFiles';
+import { ICON_FILE, INSTALL_CMD, INSTALLER_BUNDLE, LAUNCHER_BUNDLE } from '../src/server/install/layout';
+import { installCmd } from '../src/server/install/templates';
 import { runFile } from '../src/server/lib/process';
 import { resolveExecutable } from '../src/server/lib/windows';
 import { storeSchemaHashes } from '../src/server/store/schemas';
@@ -48,7 +50,6 @@ import {
 } from './release/notices';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const LAUNCHER_BUNDLE = path.join('dist', 'launcher.js');
 const INSTALL_TIMEOUT_MS = 10 * 60_000;
 
 function log(line: string): void {
@@ -266,11 +267,12 @@ async function main(argv: readonly string[]): Promise<void> {
     JSON.parse(await readFile(path.join(repoRoot, 'package.json'), 'utf8')),
   );
   const buildId = await readBundleBuildId(repoRoot);
-  const launcherHead =
-    (await readFile(path.join(repoRoot, LAUNCHER_BUNDLE), 'utf8')).split(/\r?\n/u, 1)[0] ?? '';
+  const firstLine = async (file: string): Promise<string> =>
+    (await readFile(path.join(repoRoot, file), 'utf8')).split(/\r?\n/u, 1)[0] ?? '';
   if (buildId === null) throw new PackError('dist/server.js is missing - run pnpm build first');
   if (
-    !launcherHead.endsWith(` launcher, build ${buildId}`) ||
+    !(await firstLine(LAUNCHER_BUNDLE)).endsWith(` launcher, build ${buildId}`) ||
+    !(await firstLine(INSTALLER_BUNDLE)).endsWith(` installer, build ${buildId}`) ||
     (await readWebBundleBuildId(repoRoot)) !== buildId
   ) {
     throw new PackError('dist/ is from different builds - run pnpm build again');
@@ -334,6 +336,9 @@ async function main(argv: readonly string[]): Promise<void> {
     `${JSON.stringify({ name: pkg.name, version: pkg.version, private: true, type: 'module', engines: { node: pkg.engines.node } }, null, 2)}\n`,
   );
   for (const file of ['CHANGELOG.md', 'LICENSE']) await cp(path.join(repoRoot, file), path.join(stage, file));
+  // WP-86: the installer file (Explorer double click) and the icon of the Start menu shortcut.
+  await writeFile(path.join(stage, INSTALL_CMD), installCmd(minNode));
+  await cp(path.join(repoRoot, 'src', 'server', 'install', ICON_FILE), path.join(stage, ICON_FILE));
   await writeFile(
     path.join(stage, 'THIRD_PARTY_NOTICES.md'),
     await collectNotices(stage, pkg.version, sdk.version),

@@ -1,36 +1,38 @@
 /**
- * Smoke test of a release package (WP-85, docs/wp/WP-83.md §6, job "smoke"): verify, add the Agent SDK
- * from the registry (checked against `integrity`), start it with the FakeBackend and a temp home,
- * compare the health answer, stop it. CI runs it under the minimum Node and Node 26; locally only by
- * hand (network, a started server - not part of the tests).
+ * Smoke test of a release package (WP-85/WP-86, docs/wp/WP-83.md §6, job "smoke"): the real
+ * installer into a temp root, a second run (hand-over to the installed version), start through
+ * start.mjs with the FakeBackend and a temp home, health and build id, the backup bookkeeping, then
+ * `--uninstall`. CI runs it under the minimum Node and Node 26; locally only by hand (network, a
+ * started server - not part of the tests).
  *
  *   … scripts/release/smoke.ts --zip <parallax-X-win.zip> --latest <latest.json> --work <empty dir>
  *   … scripts/release/smoke.ts --dir <release-pack output folder> --work <empty dir>   (unsigned trial)
  *
- * WP-86 replaces the SDK step with the real installer (`install.js`).
+ * The installer gets its own APPDATA/LOCALAPPDATA below `--work`: the Start menu entry and the
+ * default data directory stay inside the work folder. An unsigned trial (`--dir`) is signed with a
+ * throwaway key and installed in-process with that key (the installer's command line never accepts
+ * another key).
  */
-import { createHash } from 'node:crypto';
-import { cp, mkdir, readdir, readFile } from 'node:fs/promises';
+import { generateKeyPairSync, sign } from 'node:crypto';
+import { access, cp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { healthResponseSchema } from '@shared/http';
-import { compareVersions } from '@shared/version';
+import { createNodeInstallerDeps } from '../../src/server/install/nodeDeps';
+import { runInstallerCli } from '../../src/server/install/cli';
+import { CURRENT_FILE, currentFileSchema, START_SCRIPT } from '../../src/server/install/layout';
 import {
-  comparePackageFiles,
-  hashFiles,
-  sha256File,
-  walkPackage,
-} from '../../src/server/launcher/packageFiles';
-import {
-  AGENT_SDK_PACKAGE,
+  PACKAGE_NODE_FLAGS,
   RELEASE_FILE,
   RELEASE_SIGNATURE_FILE,
   releaseInfoSchema,
   verifyReleaseSignature,
 } from '../../src/server/launcher/release';
+import { sha256File } from '../../src/server/launcher/packageFiles';
 import { killProcessTree, runFile, systemTool } from '../../src/server/lib/process';
+import { LAST_VERSION_FILE } from '../../src/server/store/backup';
 
-const RUN_TIMEOUT_MS = 5 * 60_000;
+const RUN_TIMEOUT_MS = 10 * 60_000;
 
 function log(line: string): void {
   process.stdout.write(`[smoke] ${line}\n`);
@@ -38,17 +40,29 @@ function log(line: string): void {
 
 class SmokeError extends Error {}
 
-function cleanEnv(): Record<string, string> {
-  return Object.fromEntries(
+/** The runner's environment without Parallax, npm-run and Claude variables, with own user folders. */
+function smokeEnv(work: string): Record<string, string> {
+  const env = Object.fromEntries(
     Object.entries(process.env).filter(
       (entry): entry is [string, string] =>
-        typeof entry[1] === 'string' && !/^(?:PARALLAX|npm_|CLAUDE)/iu.test(entry[0]),
+        typeof entry[1] === 'string' &&
+        !/^(?:PARALLAX|npm_|CLAUDE)/iu.test(entry[0]) &&
+        !/^(?:APPDATA|LOCALAPPDATA)$/iu.test(entry[0]),
     ),
   );
+  env.APPDATA = path.join(work, 'user', 'Roaming');
+  env.LOCALAPPDATA = path.join(work, 'user', 'Local');
+  env.PARALLAX_NO_PAUSE = '1';
+  return env;
 }
 
-async function run(file: string, args: readonly string[], cwd: string): Promise<string> {
-  const result = await runFile(file, args, { cwd, env: cleanEnv(), timeoutMs: RUN_TIMEOUT_MS });
+async function run(
+  file: string,
+  args: readonly string[],
+  cwd: string,
+  env: Record<string, string>,
+): Promise<string> {
+  const result = await runFile(file, args, { cwd, env, timeoutMs: RUN_TIMEOUT_MS });
   if (result.exitCode !== 0 || result.timedOut) {
     throw new SmokeError(
       `${path.basename(file)} ${args.join(' ')} failed (${result.timedOut ? 'timeout' : `exit ${String(result.exitCode)}`}):\n` +
@@ -61,6 +75,15 @@ async function run(file: string, args: readonly string[], cwd: string): Promise<
 function option(argv: readonly string[], name: string): string | undefined {
   const index = argv.indexOf(name);
   return index === -1 ? undefined : argv[index + 1];
+}
+
+async function exists(file: string): Promise<boolean> {
+  try {
+    await access(file);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const latestSchema = z.object({
@@ -82,37 +105,52 @@ async function checkLatest(latestFile: string, zip: string): Promise<void> {
   log(`latest.json ${latest.version}: signature and zip hash ok`);
 }
 
-async function unpack(zip: string, work: string): Promise<string> {
+async function unpack(zip: string, work: string, env: Record<string, string>): Promise<string> {
   const target = path.join(work, 'unpacked');
   await mkdir(target, { recursive: true });
-  await run(systemTool('tar.exe'), ['-x', '-f', zip, '-C', target], work);
+  await run(systemTool('tar.exe'), ['-x', '-f', zip, '-C', target], work, env);
   const folders = await readdir(target);
   if (folders.length !== 1 || folders[0] === undefined)
     throw new SmokeError(`the zip must contain one folder, got ${folders.join(', ')}`);
   return path.join(target, folders[0]);
 }
 
-/** npm next to node (WP-83 §8.2, way 1): `npm pack`, then the SHA-512 against the signed integrity. */
-async function addSdk(pkgDir: string, work: string, version: string, integrity: string): Promise<void> {
-  const npmCli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
-  const dest = path.join(work, 'sdk');
-  await mkdir(dest, { recursive: true });
-  const output = await run(
-    process.execPath,
-    [npmCli, 'pack', `${AGENT_SDK_PACKAGE}@${version}`, '--pack-destination', dest, '--json'],
-    work,
+/** `--dir`: sign the copied package with a throwaway key; returns its public `x`. */
+async function signTrial(pkgDir: string): Promise<string> {
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  const bytes = await readFile(path.join(pkgDir, RELEASE_FILE));
+  await writeFile(
+    path.join(pkgDir, RELEASE_SIGNATURE_FILE),
+    `${sign(null, bytes, privateKey).toString('base64')}\n`,
   );
-  const [packed] = z.array(z.object({ filename: z.string() })).parse(JSON.parse(output));
-  if (packed === undefined) throw new SmokeError('npm pack returned nothing');
-  const tarball = path.join(dest, path.basename(packed.filename));
-  const actual = `sha512-${createHash('sha512')
-    .update(await readFile(tarball))
-    .digest('base64')}`;
-  if (actual !== integrity) throw new SmokeError(`SDK tarball: integrity ${actual} != ${integrity}`);
-  const target = path.join(pkgDir, 'node_modules', ...AGENT_SDK_PACKAGE.split('/'));
-  await mkdir(target, { recursive: true });
-  await run(systemTool('tar.exe'), ['-x', '-z', '-f', tarball, '--strip-components=1', '-C', target], work);
-  log(`Agent SDK ${version}: integrity ok, unpacked`);
+  const x = publicKey.export({ format: 'jwk' }).x;
+  if (typeof x !== 'string') throw new SmokeError('no public key');
+  log('release.json signed with a throwaway key (unsigned local trial)');
+  return x;
+}
+
+/** The installer in-process with `keys` (only the unsigned trial). */
+async function installInProcess(
+  pkgDir: string,
+  argv: string[],
+  keys: string[],
+  env: Record<string, string>,
+): Promise<void> {
+  const lines: string[] = [];
+  const deps = createNodeInstallerDeps({
+    env,
+    ownDir: pkgDir,
+    installerScript: path.join(pkgDir, 'dist', 'install.js'),
+    execArgv: PACKAGE_NODE_FLAGS,
+    keys,
+    out: (line) => {
+      lines.push(line);
+      log(`  ${line}`);
+    },
+    fail: (line) => lines.push(line),
+  });
+  const code = await runInstallerCli(argv, deps);
+  if (code !== 0) throw new SmokeError(`installer exit ${String(code)}:\n${lines.join('\n')}`);
 }
 
 async function main(argv: readonly string[]): Promise<void> {
@@ -128,52 +166,52 @@ async function main(argv: readonly string[]): Promise<void> {
   const work = path.resolve(workArg);
   await mkdir(work, { recursive: true });
   if ((await readdir(work)).length > 0) throw new SmokeError(`${work} is not empty`);
+  const env = smokeEnv(work);
+  await mkdir(env.APPDATA ?? '', { recursive: true });
+  await mkdir(env.LOCALAPPDATA ?? '', { recursive: true });
 
   let pkgDir: string;
+  let trialKey: string | null = null;
   if (zip !== undefined) {
     if (latestFile !== undefined) await checkLatest(latestFile, zip);
-    pkgDir = await unpack(path.resolve(zip), work);
+    pkgDir = await unpack(path.resolve(zip), work, env);
   } else {
     pkgDir = path.join(work, 'package');
     await cp(path.resolve(dir ?? ''), pkgDir, { recursive: true });
+    trialKey = await signTrial(pkgDir);
   }
+  const release = releaseInfoSchema.parse(
+    JSON.parse(await readFile(path.join(pkgDir, RELEASE_FILE), 'utf8')),
+  );
+  const root = path.join(work, 'Programs', 'Parallax');
+  const installer = path.join(pkgDir, 'dist', 'install.js');
 
-  // release.json: signature (a zip from CI must carry one), Node version, every file.
-  const releaseBytes = await readFile(path.join(pkgDir, RELEASE_FILE));
-  const signature = await readFile(path.join(pkgDir, RELEASE_SIGNATURE_FILE), 'utf8').catch(() => null);
-  if (signature === null) {
-    if (zip !== undefined) throw new SmokeError('release.json.sig is missing');
-    log('release.json is unsigned (local trial)');
-  } else if (!verifyReleaseSignature(releaseBytes, signature)) {
-    throw new SmokeError('release.json: invalid signature');
-  } else {
-    log('release.json: signature ok');
+  // 1. Install (no Node flags: install.js adds them itself), 2. again = hand-over to the installation.
+  for (const round of ['install', 'hand-over']) {
+    if (trialKey === null) {
+      const output = await run(process.execPath, [installer, '--dir', root], work, env);
+      log(`${round}:\n${output.trim().replace(/^/gmu, '  ')}`);
+      if (round === 'hand-over' && !output.includes('checks and installs this package'))
+        throw new SmokeError('the second run did not hand over to the installation');
+    } else {
+      // In-process there is no hand-over (it would start the installed version without the trial key).
+      if (round === 'hand-over') continue;
+      await installInProcess(pkgDir, ['--dir', root], [trialKey], env);
+    }
   }
-  const release = releaseInfoSchema.parse(JSON.parse(releaseBytes.toString('utf8')));
-  if ((compareVersions(process.version, release.minNode) ?? -1) < 0) {
-    throw new SmokeError(`Node ${process.version} is below minNode ${release.minNode}`);
-  }
-  const walk = await walkPackage(pkgDir);
-  const problems = comparePackageFiles(walk, await hashFiles(pkgDir, walk.files), release.files, [
-    RELEASE_FILE,
-    RELEASE_SIGNATURE_FILE,
-  ]);
-  if (problems.length > 0)
-    throw new SmokeError(`package check failed:\n  ${problems.slice(0, 30).join('\n  ')}`);
-  log(`${String(walk.files.length)} files match release.json (${release.version}, build ${release.buildId})`);
+  const current = currentFileSchema.parse(JSON.parse(await readFile(path.join(root, CURRENT_FILE), 'utf8')));
+  if (current.version !== release.version) throw new SmokeError(`current.json names ${current.version}`);
+  const link = path.join(env.APPDATA ?? '', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Parallax.lnk');
+  if (!(await exists(link))) throw new SmokeError(`no Start menu entry at ${link}`);
+  log(`installed ${release.version} in ${root}, Start menu entry ok`);
 
-  await addSdk(pkgDir, work, release.sdk.version, release.sdk.integrity);
-
-  // Start like start.mjs will (WP-86): system CA, proxy from the environment, install root as cwd.
+  // 3. Start through start.mjs like parallax.cmd does.
   const home = path.join(work, 'home');
   const output = await run(
     process.execPath,
     [
-      '--use-system-ca',
-      '--use-env-proxy',
-      path.join(pkgDir, 'dist', 'launcher.js'),
-      '--install-root',
-      work,
+      ...PACKAGE_NODE_FLAGS,
+      path.join(root, START_SCRIPT),
       `--home=${home}`,
       '--backend=fake',
       '--port=0',
@@ -181,6 +219,7 @@ async function main(argv: readonly string[]): Promise<void> {
       '--print-url',
     ],
     work,
+    env,
   );
   const match = /runs on (http:\/\/127\.0\.0\.1:\d+) \(PID (\d+)/u.exec(output);
   if (match?.[1] === undefined || match[2] === undefined)
@@ -192,12 +231,34 @@ async function main(argv: readonly string[]): Promise<void> {
     if (health.buildId !== release.buildId) {
       throw new SmokeError(`health reports build ${health.buildId}, expected ${release.buildId}`);
     }
+    const last = JSON.parse(await readFile(path.join(home, LAST_VERSION_FILE), 'utf8')) as {
+      buildId?: unknown;
+    };
+    if (last.buildId !== release.buildId)
+      throw new SmokeError(`${LAST_VERSION_FILE} names ${String(last.buildId)}`);
     log(
       `server ${health.serverVersion} on ${match[1]} healthy (build ${health.buildId}, Node ${process.version})`,
     );
   } finally {
     await killProcessTree(pid);
   }
+
+  // 4. Uninstall: the root goes, the data stay.
+  if (trialKey === null) {
+    const removed = await run(
+      process.execPath,
+      [...PACKAGE_NODE_FLAGS, path.join(root, START_SCRIPT), '--uninstall'],
+      work,
+      env,
+    );
+    log(`uninstall:\n${removed.trim().replace(/^/gmu, '  ')}`);
+  } else {
+    // As the installed version (no hand-over to a second process).
+    await installInProcess(pkgDir, [`--install-root=${root}`, '--uninstall'], [trialKey], env);
+  }
+  if (await exists(root)) throw new SmokeError(`${root} still exists after --uninstall`);
+  if (await exists(link)) throw new SmokeError('the Start menu entry still exists after --uninstall');
+  if (!(await exists(home))) throw new SmokeError('--uninstall removed the data');
   log('ok');
 }
 

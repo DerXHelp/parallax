@@ -1,6 +1,7 @@
 /**
- * Bundles the server into dist/server.js and the launcher into dist/launcher.js (ESM, Node >= 24.5;
- * the launcher bundle is what a release package starts, WP-85 - a checkout runs it with tsx).
+ * Bundles the server into dist/server.js, the launcher into dist/launcher.js and the installer into
+ * dist/install.js (ESM, Node >= 24.5; launcher and installer are what a release package starts,
+ * WP-85/WP-86 - a checkout runs the launcher with tsx).
  * npm packages stay external and are loaded from node_modules at runtime (pino transports,
  * the Agent SDK and native modules must not be bundled). Only own code and `@shared/*` are bundled.
  * The build id (same value as the web bundle, see resolveBuildId) is injected via `define`
@@ -53,6 +54,7 @@ try {
   for (const [entry, outfile, kind] of [
     ['src/server/main.ts', 'dist/server.js', 'server'],
     ['src/server/launcher/main.ts', 'dist/launcher.js', 'launcher'],
+    ['src/server/install/main.ts', 'dist/install.js', 'installer'],
   ] as const) {
     const result = await build({
       absWorkingDir: repoRoot,

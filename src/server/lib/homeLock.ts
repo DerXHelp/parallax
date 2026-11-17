@@ -55,8 +55,8 @@ export async function homeLockKey(home: string): Promise<string> {
   return windowsPathKey(real);
 }
 
-/** Purpose of a directory lock = pipe prefix (`home`: one server per PARALLAX_HOME). */
-export type DirectoryLockKind = 'home' | 'launch' | 'build';
+/** Purpose of a directory lock = pipe prefix (`home`: one server per PARALLAX_HOME; `install`: one installer per installation root, WP-86). */
+export type DirectoryLockKind = 'home' | 'launch' | 'build' | 'install';
 
 /** `\\.\pipe\parallax-<kind>-<16 hex>` for a directory key. */
 export function directoryLockPipeName(kind: DirectoryLockKind, key: string): string {

@@ -117,6 +117,8 @@ describe('build id of dist/server.js (ADR-013)', () => {
     // WP-85: the same script writes dist/launcher.js; only the server bundle carries "server".
     expect(script).toContain("['src/server/main.ts', 'dist/server.js', 'server']");
     expect(script).toContain("['src/server/launcher/main.ts', 'dist/launcher.js', 'launcher']");
+    // WP-86: and dist/install.js (the installer of a package).
+    expect(script).toContain("['src/server/install/main.ts', 'dist/install.js', 'installer']");
     expect(parseBundleBuildId('// Parallax server, build 1.0.0+abc')).toBe('1.0.0+abc');
     expect(parseBundleBuildId('// Parallax launcher, build 1.0.0+abc')).toBeNull();
   });

@@ -44,6 +44,8 @@ export interface StartServerOptions {
   nodePath: string;
   /** Absolute path of `dist/server.js` (tests: a fake server script). */
   serverScript: string;
+  /** Node flags before the script (WP-86: `PACKAGE_NODE_FLAGS` in package mode). */
+  nodeArgs?: readonly string[];
   args: readonly string[];
   home: string;
   cwd: string;
@@ -67,12 +69,16 @@ export async function startServerProcess(options: StartServerOptions): Promise<S
   const fd = openSync(outLog, 'a');
   const outLogOffset = fstatSync(fd).size;
   try {
-    const child = spawnHidden(options.nodePath, [options.serverScript, ...options.args], {
-      cwd: options.cwd,
-      env: options.env,
-      detached: true,
-      stdio: ['ignore', fd, fd],
-    });
+    const child = spawnHidden(
+      options.nodePath,
+      [...(options.nodeArgs ?? []), options.serverScript, ...options.args],
+      {
+        cwd: options.cwd,
+        env: options.env,
+        detached: true,
+        stdio: ['ignore', fd, fd],
+      },
+    );
     const exited = new Promise<ServerExit>((resolve) => {
       child.once('exit', (code, signal) => {
         resolve({ code, signal });

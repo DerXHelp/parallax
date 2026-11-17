@@ -23,6 +23,7 @@ import { windowsCommandLine } from '../lib/cmdline';
 import { encodePowerShell, powerShellPath } from '../lib/powershell';
 import type { RunFileFn } from '../lib/process';
 import { getEnvVar } from '../lib/windows';
+import { PACKAGE_NODE_FLAGS } from '../launcher/release';
 import { LAUNCHER_ONLY_MARKERS, installStartScript, type EntryMarkers } from './markers';
 import type { SystemOpResult } from './run';
 
@@ -92,13 +93,7 @@ export async function installedLauncherCommand(
   const node = await (opts.realpath ?? realpath)(opts.execPath ?? process.execPath);
   return {
     node,
-    args: [
-      '--use-system-ca',
-      '--use-env-proxy',
-      installStartScript(installRoot),
-      ...homeArgs(opts.home ?? null),
-      ...extra,
-    ],
+    args: [...PACKAGE_NODE_FLAGS, installStartScript(installRoot), ...homeArgs(opts.home ?? null), ...extra],
     cwd: installRoot,
   };
 }

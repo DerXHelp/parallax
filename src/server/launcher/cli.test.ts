@@ -135,4 +135,14 @@ describe('launcher command line flow (cli.ts)', () => {
     expect(await runLauncherCli([`--home=${HOME}`, '--system-integration=on'], refused.deps)).toBe(2);
     expect(refused.err.join('\n')).toMatch(/not allowed in tests/);
   });
+
+  it('WP-86: passes the install root of a package start on to the server', async () => {
+    const plain = harness();
+    await runLauncherCli([`--home=${HOME}`], plain.deps);
+    expect(plain.launches[0]?.serverArgs.some((arg) => arg.startsWith('--install-root'))).toBe(false);
+    const installed = harness();
+    await runLauncherCli(['--install-root=D:\\apps\\Parallax', `--home=${HOME}`], installed.deps);
+    expect(installed.launches[0]?.installRoot).toBe('D:\\apps\\Parallax');
+    expect(installed.launches[0]?.serverArgs).toContain('--install-root=D:\\apps\\Parallax');
+  });
 });

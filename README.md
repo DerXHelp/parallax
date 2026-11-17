@@ -38,7 +38,50 @@ der letzten Änderung.
 
 <sub>Projekte und Daten sind erfunden (Showcase im Playground).</sub>
 
+## Installieren
+Für die Nutzung: ein Release von GitHub, ohne Klon, pnpm oder Build.
+
+- **Voraussetzungen:** Node.js 24.5 oder neuer, das installierte **`claude`**-CLI mit Login, Google
+  Chrome.
+- **Schritte:** `parallax-<version>-win.zip` von der Release-Seite laden
+  (`https://github.com/DerXHelp/parallax/releases`), entpacken und `install.cmd` doppelklicken. Sperren
+  SmartScreen oder AppLocker die `.cmd`, ist `node dist\install.js` im entpackten Ordner gleichwertig.
+- **Was passiert:** Der Installer prüft die Signatur von `release.json` und jede Datei des Pakets,
+  kopiert es nach `%LOCALAPPDATA%\Programs\Parallax\versions\<version>` (anderer Ordner: `--dir <ordner>`)
+  und holt das Claude Agent SDK aus der npm-Registry. Es ist nicht im Paket, weil es nicht weitergegeben
+  werden darf. Geprüft wird es gegen den Hash aus `release.json`. Eine Firmen-Registry aus `~/.npmrc`
+  gilt auch hier (npm neben Node, sonst eigener Download). Ohne erreichbare Registry: `--registry <url>`
+  oder den Tarball selbst laden und `--sdk-tarball <datei>` angeben. Dazu kommt der Startmenü-Eintrag
+  „Parallax“.
+- **Starten:** über das Startmenü oder `%LOCALAPPDATA%\Programs\Parallax\parallax.cmd`, mit denselben
+  Optionen wie unter „Starten“. Die Daten liegen getrennt vom Programm in `%LOCALAPPDATA%\Parallax`.
+- **Deinstallieren:** `%LOCALAPPDATA%\Programs\Parallax\parallax.cmd --uninstall` entfernt den
+  Programmordner, den Startmenü-Eintrag, den Autostart und den `parallax:`-Eintrag. Die Daten bleiben;
+  die Meldung nennt ihren Ordner. Bei laufendem Parallax verweigert der Installer das, also vorher
+  „Server beenden“.
+- `install.cmd --help` zeigt alle Optionen.
+
+### Aktualisieren
+- Das neue Zip laden, entpacken und `install.cmd` starten. Die **installierte** Version prüft das neue
+  Paket mit ihrem eigenen Code und Schlüssel und installiert es neben der alten. Nur die allererste
+  Installation vertraut dem geladenen Installer.
+- **Läuft Parallax,** wird trotzdem installiert. Die neue Version gilt nach Zahnrad → „Server
+  beenden…“ und einem neuen Start. Die laufende Version bleibt so lange unberührt.
+- **Sicherung:** Beim ersten Start einer neuen Version sichert der Launcher die Daten nach
+  `%LOCALAPPDATA%\Parallax\backups\<alt>-zu-<neu>-<zeit>\`. Gesichert werden Einstellungen, Sessions und
+  Entscheidungen; von den Transkripten nur die Länge. Die drei jüngsten Sicherungen bleiben. Das gilt
+  auch für einen Klon mit `parallax.cmd`.
+- **Zurück:** Die vorige Version bleibt installiert: `parallax.cmd --use <version>`. Hat die neue Version
+  die Daten schon migriert, startet die ältere nicht (Exit-Code 3). Das Einspielen der Sicherung kommt
+  mit dem Update-Knopf in der App.
+- **Umstieg vom Klon (einmal je Rechner):** installieren, im alten Fenster „Server beenden…“, dann
+  Parallax über das Startmenü starten. Sind Autostart und „Klick öffnet die Session“ eingeschaltet, zeigen
+  sie danach auf die Installation. Den Klon danach löschen oder nicht mehr starten. Ein aktueller Klon
+  lässt die Einträge einer Installation in Ruhe; ein alter Klon ohne `git pull` hält sie für fremd und
+  warnt nur.
+
 ## Voraussetzungen
+Für die Entwicklung (Klon, Build, Tests):
 - **Node.js 26** (Minimum 24.5). `.node-version` enthält `26` für fnm, nvm-windows oder Volta.
 - **pnpm 12.17.0**: einmalig `npm i -g pnpm@12.17.0`. `packageManager` und der Lockfile pinnen die
   Version; ein pnpm ≥ 10 lädt sie bei Abweichung selbst nach (`managePackageManagerVersions`; geprüft
@@ -108,7 +151,8 @@ pnpm start --print-url         # Optionen direkt anhängen (pnpm reicht ein `--`
   Warteschlange, wird ihr Prozess sofort beendet (sonst würde `claude` die Nachricht noch
   bearbeiten); die Nachricht erscheint im Verlauf als „nicht zugestellt“.
 - **Fehlermeldungen:** Port belegt → `--port=<n>` wählen; „written by a newer Parallax“ (Exit-Code
-  3) → Parallax aktualisieren (`git pull`, `pnpm install`), die Daten bleiben unverändert; Server
+  3) → Parallax aktualisieren (neues Release installieren, im Klon `git pull` und `pnpm install`), die
+  Daten bleiben unverändert; Server
   startet nicht → Pfad der Logdatei steht in der Meldung; „Google Chrome was not found“ → Chrome
   installieren (es gibt keinen Rückfall auf Edge) oder `--print-url` (Adresse mit Einmal-Code, 60 s
   gültig) in einem Chromium-Browser öffnen.
@@ -130,17 +174,17 @@ pnpm start --print-url         # Optionen direkt anhängen (pnpm reicht ein `--`
   endet auch der Server – im Zweifel `parallax.cmd` per Doppelklick starten.
 
 ### Produktiv nutzen und weiterentwickeln
-- **Zwei Checkouts:** Benutzt wird ein eigener Klon von `origin` auf `main`; entwickelt wird im
-  Entwicklungs-Repo auf Feature-Branches. `main` ist immer der stabile, geprüfte Stand
-  (Branch-Regeln: `CLAUDE.md` „Git“).
-- **Einrichten:** `git clone https://github.com/DerXHelp/parallax.git <ordner>`, darin
-  `pnpm install --frozen-lockfile`, dann `parallax.cmd` (der erste Start baut `dist/`). Autostart und
-  „Klick öffnet die Session“ nur in dieser Instanz einschalten: Verknüpfung und `parallax:`-Eintrag
-  zeigen auf den Klon, aus dem der Server läuft.
-- **Aktualisieren:** Zahnrad → „Server beenden…“, im Klon `git pull` und
-  `pnpm install --frozen-lockfile`, dann `parallax.cmd` (baut selbst neu). Daten werden nur vorwärts
-  migriert: vor größeren Updates `%LOCALAPPDATA%\Parallax` sichern – eine ältere Version startet auf
-  migrierten Daten nicht mehr (Exit-Code 3).
+- **Benutzt wird die Installation** aus einem Release (siehe „Installieren“ und „Aktualisieren“);
+  entwickelt wird im Entwicklungs-Repo auf Feature-Branches. Releases entstehen aus `main`, dem stabilen,
+  geprüften Stand (Branch-Regeln: `CLAUDE.md` „Git“). Autostart und „Klick öffnet die Session“ nur in der
+  Installation einschalten: Verknüpfung und `parallax:`-Eintrag zeigen auf das Programm, aus dem der
+  Server läuft.
+- **Ohne Installation** geht es weiter mit einem eigenen Klon:
+  `git clone https://github.com/DerXHelp/parallax.git <ordner>`, darin `pnpm install --frozen-lockfile`,
+  dann `parallax.cmd` (der erste Start baut `dist/`). Aktualisieren: Zahnrad → „Server beenden…“, im Klon
+  `git pull` und `pnpm install --frozen-lockfile`, dann `parallax.cmd` (baut selbst neu). Der Klon bleibt
+  der Rückweg, falls die Installation hakt. Daten werden nur vorwärts migriert; eine ältere Version
+  startet auf migrierten Daten nicht mehr (Exit-Code 3). Die Sicherung beim Versionswechsel gilt auch hier.
 - **Getrennt:** Die produktive Instanz nutzt `%LOCALAPPDATA%\Parallax` (Sessions, Einstellungen, Logs,
   Chrome-Profil) und den Port aus den Einstellungen (Standard 4711). Die Entwicklung nutzt `pnpm dev` /
   `pnpm dev:live` mit `.parallax-dev` und den Ports 4712/5173, die Tests nutzen Temp-Ordner und freie
@@ -163,7 +207,8 @@ pnpm start --print-url         # Optionen direkt anhängen (pnpm reicht ein `--`
   Er führt `pnpm cli-check` aus (live, Haiku, Abo-Login, höchstens 0,05 USD, ≈ 2 min), vergleicht mit
   dem Profil und übernimmt es bei grünem Ergebnis nach `main`. Abweichungen, die mehr als kleine
   Anpassungen brauchen, legt er zur Entscheidung vor. Danach in der produktiven Instanz wie unter
-  „Aktualisieren“ beschrieben `git pull` – der Hinweis verschwindet nach dem Neustart.
+  „Aktualisieren“ beschrieben das nächste Release installieren (ein Klon: `git pull`) – der Hinweis
+  verschwindet nach dem Neustart.
 - Protokoll der geprüften Versionen: `docs/cli-updates.md`; Ablauf und Stufe 2 (SDK-Upgrade):
   `docs/sdk-upgrade.md`.
 

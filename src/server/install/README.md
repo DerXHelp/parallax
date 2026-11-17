@@ -34,3 +34,27 @@ und gibt die Quelle zurück (`cache` | `tarball` | `npm` | `download`).
   anderer Host oder Port.
 - **Tests** (`sdk.test.ts`, `npmrc.test.ts`): Fakes für `run` und `fetch`, Temp-Ordner, kleine echte Tarballs aus
   `tar.exe -c -z`; ein Test mit echtem `fetch` gegen einen Loopback-Server. Kein Netz, nie das echte Profil.
+
+## Installer (86d)
+
+| Datei | Inhalt |
+| --- | --- |
+| `main.ts` | Einstieg, gebündelt nach `dist/install.js` (`scripts/build-server.ts`) |
+| `cli.ts` | Ablauf: Argumente, Node-Version, Neustart mit `PACKAGE_NODE_FLAGS`, Übergabe an eine vorhandene Installation, Sperre je Stammordner, Meldungen |
+| `nodeDeps.ts` | echte Abhängigkeiten (SDK, Startmenü und Einträge aus `system/installation.ts`, laufender Server, Sperre, `node.exe` mit dieser Konsole) |
+| `args.ts` | Kommandozeile: `--dir`, `--registry`, `--sdk-tarball`, `--use`, `--uninstall`, `--install` und `--install-root` (von `start.mjs`) |
+| `install.ts` | `installPackage` (Signatur, Dateien, Staging, SDK, Umbenennen, Stammdateien, `current.json`, Startmenü, Aufräumen), `useVersion` |
+| `uninstall.ts` | Einträge entfernen, dann genau die Namen aus `ROOT_ENTRIES`; fremde Dateien bleiben, Daten bleiben |
+| `versions.ts` | installierte Versionen, Version eines laufenden Servers (Build-ID), Aufräumen über `.trash-*` |
+| `layout.ts` | Ordner und Dateinamen, `current.json`, `defaultInstallRoot`, Testsperre `assertNotRealUserFolder` |
+| `templates.ts` | `start.mjs`, `parallax.cmd` und `install.cmd` (eine Quelle; `.cmd` mit CRLF) |
+| `parallax.ico` | Symbol des Startmenü-Eintrags (aus `favicon.svg` gerendert, 16–256 px) |
+| `testPackage.ts` | nur für Tests: kleines synthetisches Paket, signiert mit einem Test-Schlüssel |
+
+- **Vertrauen:** Geprüft wird mit dem Code und den Schlüsseln, die gerade laufen. Startet `install.cmd` eines neuen
+  Pakets und gibt es schon eine Installation, übergibt es an deren `start.mjs --install <paket>`; nur die erste
+  Installation vertraut dem geladenen Installer (WP-83 §7). Andere Schlüssel gibt es nur über die Test-Naht `keys`,
+  nie über die Kommandozeile.
+- **Tests** nehmen nie die echten Ordner: `assertNotRealUserFolder` bricht in einem Testlauf ab, wenn der Stammordner
+  oder das Startmenü in `%LOCALAPPDATA%\Programs\Parallax` bzw. im echten Startmenü läge. `templates.test.ts` startet
+  `start.mjs` wirklich mit `node.exe`.
