@@ -51,6 +51,14 @@ jobs:
       - run: pnpm check
       - run: pnpm build
       - run: pnpm e2e
+      - name: E2E results (only on failure; server log, WS frames, trace, screenshot per failed test)
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-results
+          path: test-results
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Package
         env:
           VERSION: ${{ steps.version.outputs.version }}
