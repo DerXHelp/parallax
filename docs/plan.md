@@ -873,7 +873,7 @@ Das Problem in der Konsole: Bei `ExitPlanMode` ploppt ein Dialog auf und blockie
 
 **Backlog (später; Reihenfolge nach Bedarf):**
 - **Multi-Host:** die Sessions der Arbeits-VM vom Arbeitsrechner aus steuern, mit Profilen und Default-Profil pro Server. Ab Phase 1 vorbereitet, umgesetzt erst nach Klärung von Netzwerk und Policy.
-- **Releases:** Versionen per Tag mit Changelog, Installation ohne git und Build, Update in der App. Plan vom 17.11.2026: `docs/wp/WP-83.md`.
+- **Releases:** öffentliches Repo bereinigen und lizenzieren, Versionen per Tag mit Changelog, Installation ohne git und Build, Update in der App. Plan vom 17.11.2026: `docs/wp/WP-83.md`.
 - Rewind/Checkpoints, Fork.
 - `/btw`-Seitenpanel, `!`-Bash-Modus.
 - MCP-Panel und Elicitation-Dialoge.
