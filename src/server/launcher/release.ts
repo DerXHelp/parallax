@@ -53,7 +53,11 @@ export type ReleaseInfo = z.infer<typeof releaseInfoSchema>;
  * with `scripts/release-key.ts`; the private key is a CI secret and never enters a Claude session
  * (WP-83 §7). A successor key is added here before the old one is retired.
  */
-export const RELEASE_PUBLIC_KEYS: readonly string[] = [];
+export const RELEASE_PUBLIC_KEYS: readonly string[] = [
+  // Key 1, created 17.11.2026. SHA-256 of the raw key:
+  // 51c9335f 62940cc6 354c975a 82549be6 3dafd87f 9c6ec763 1069ff8c 9312b39e
+  'NH6dcmQHBqP2H2pTBjzY3Kd4ZFeljx_mTB8LGuiyNpQ',
+];
 
 const SIGNATURE_BASE64 = /^[A-Za-z0-9+/]{86}==$/u;
 

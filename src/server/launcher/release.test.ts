@@ -1,8 +1,15 @@
+import { createHash, createPublicKey } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readReleaseInfo, RELEASE_FILE, ReleaseInfoError, type ReleaseInfo } from './release';
+import {
+  readReleaseInfo,
+  RELEASE_FILE,
+  RELEASE_PUBLIC_KEYS,
+  ReleaseInfoError,
+  type ReleaseInfo,
+} from './release';
 
 const SAMPLE: ReleaseInfo = {
   schemaVersion: 1,
@@ -23,6 +30,28 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
+});
+
+describe('RELEASE_PUBLIC_KEYS', () => {
+  it('holds valid, distinct Ed25519 keys (JWK x, raw 32 bytes)', () => {
+    expect(RELEASE_PUBLIC_KEYS.length).toBeGreaterThan(0);
+    expect(new Set(RELEASE_PUBLIC_KEYS).size).toBe(RELEASE_PUBLIC_KEYS.length);
+    for (const x of RELEASE_PUBLIC_KEYS) {
+      const raw = Buffer.from(x, 'base64url');
+      expect(raw).toHaveLength(32);
+      expect(raw.toString('base64url')).toBe(x);
+      expect(
+        createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x }, format: 'jwk' }).asymmetricKeyType,
+      ).toBe('ed25519');
+    }
+  });
+
+  it('key 1 matches the fingerprint the user saw when creating it (17.11.2026)', () => {
+    const raw = Buffer.from(RELEASE_PUBLIC_KEYS[0] ?? '', 'base64url');
+    expect(createHash('sha256').update(raw).digest('hex')).toBe(
+      '51c9335f62940cc6354c975a82549be63dafd87f9c6ec7631069ff8c9312b39e',
+    );
+  });
 });
 
 describe('readReleaseInfo', () => {
