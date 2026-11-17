@@ -12,6 +12,12 @@
  * server does not run on the default data directory (only with `--system-integration=on`), the
  * registered commands carry `--home=<home>`. A test run never reaches the real runner or
  * environment (system/run.ts, R6).
+ *
+ * WP-86: with `installRoot` (a server of an installation) the commands start `<root>\start.mjs`
+ * (`installedLauncherCommand`), old clone entries are bent over, and the first apply ensures the
+ * start menu shortcut (no setting; failures only logged – there is no error code for it). Without
+ * `installRoot` (clone/development) an installation's entries are left alone – no warning, only
+ * an info log (system/markers.ts).
  */
 import type { Logger } from 'pino';
 import type { EntryId } from '@shared/common';
@@ -28,10 +34,13 @@ import {
   autostartLinkExists,
   autostartLinkPath,
   createAutostartShortcut,
+  installedLauncherCommand,
   launcherCommand,
   removeAutostartShortcut,
   type StartCommand,
 } from './autostart';
+import { ensureStartMenuEntry } from './installation';
+import { entryMarkers } from './markers';
 import type { SystemIntegration } from './ports';
 import {
   protocolCommand,
@@ -50,6 +59,11 @@ export interface SystemIntegrationOptions {
   available: boolean;
   /** Repo root (launcher, tsx, tsconfig). */
   repoRoot: string;
+  /**
+   * Root folder of an installation (`--install-root`, WP-86): entries start `<root>\start.mjs`
+   * and the start menu shortcut is kept. Default null = clone/development (`launcherCommand`).
+   */
+  installRoot?: string | null;
   /** PARALLAX_HOME of this server (→ `--home=` unless it is the default data directory). */
   home: string;
   /** Default `runFile` – never in a test run (system/run.ts). */
@@ -59,7 +73,10 @@ export interface SystemIntegrationOptions {
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
   logger?: Logger;
-  /** Seam for the start command (default `launcherCommand` with `realpath(process.execPath)`). */
+  /**
+   * Seam for the start command (default `launcherCommand`, with `installRoot`
+   * `installedLauncherCommand` – both with `realpath(process.execPath)`).
+   */
   command?: (extra: readonly string[], home: string | null) => Promise<StartCommand>;
 }
 
@@ -74,14 +91,20 @@ export function createSystemIntegration(opts: SystemIntegrationOptions): SystemI
   const platform = opts.platform ?? process.platform;
   const now = opts.now ?? (() => new Date());
   const homeArg = windowsPathsEqual(opts.home, defaultHome(env)) ? null : opts.home;
+  const installRoot = opts.installRoot ?? null;
+  const markers = entryMarkers(installRoot);
   const command =
     opts.command ??
-    ((extra: readonly string[], home: string | null) => launcherCommand(opts.repoRoot, extra, { home }));
+    ((extra: readonly string[], home: string | null) =>
+      installRoot === null
+        ? launcherCommand(opts.repoRoot, extra, { home })
+        : installedLauncherCommand(installRoot, extra, { home }));
   const registry: ProtocolRegistryDeps = {
     read: regKeyReader(run),
     add: regAddValue(run),
     remove: regDeleteKey(run),
     env,
+    markers,
   };
 
   const warnings = new Map<WarningId, HostWarning>();
@@ -90,6 +113,8 @@ export function createSystemIntegration(opts: SystemIntegrationOptions): SystemI
   let protocolReached: Reached = null;
   let registered = false;
   let openOnClick = false;
+  /** The start menu shortcut is ensured once per server start (only with `installRoot`). */
+  let startMenuChecked = false;
   let queue: Promise<void> = Promise.resolve();
 
   const setWarning = (id: WarningId, code: ErrorCode, reason: string | null): void => {
@@ -103,11 +128,19 @@ export function createSystemIntegration(opts: SystemIntegrationOptions): SystemI
     log.warn({ id, reason }, 'system integration failed');
   };
 
-  const outcome = (result: SystemOpResult): string | null => (result.ok ? null : result.reason);
+  /** Failure reason, or null; a deferred entry (an installation's, seen from a clone) is logged. */
+  const outcome = (result: SystemOpResult, entry: string): string | null => {
+    if (!result.ok) return result.reason;
+    if (result.deferred === true) log.info({ entry }, 'entry belongs to an installation - left alone');
+    return null;
+  };
 
-  const startCommand = async (extra: readonly string[]): Promise<StartCommand | string> => {
+  const startCommand = async (
+    extra: readonly string[],
+    home: string | null = homeArg,
+  ): Promise<StartCommand | string> => {
     try {
-      return await command(extra, homeArg);
+      return await command(extra, home);
     } catch (error) {
       return `node.exe not resolvable: ${toError(error).message}`;
     }
@@ -123,7 +156,7 @@ export function createSystemIntegration(opts: SystemIntegrationOptions): SystemI
       reason =
         link === null || !(await autostartLinkExists(link))
           ? null
-          : outcome(await removeAutostartShortcut(link, { run, env }));
+          : outcome(await removeAutostartShortcut(link, { run, env, markers }), 'autostart');
     } else if (platform !== 'win32') {
       reason = 'not Windows';
     } else if (link === null) {
@@ -131,7 +164,9 @@ export function createSystemIntegration(opts: SystemIntegrationOptions): SystemI
     } else {
       const cmd = await startCommand(['--autostart']);
       reason =
-        typeof cmd === 'string' ? cmd : outcome(await createAutostartShortcut(link, cmd, { run, env }));
+        typeof cmd === 'string'
+          ? cmd
+          : outcome(await createAutostartShortcut(link, cmd, { run, env, markers }), 'autostart');
     }
     setWarning(AUTOSTART_WARNING_ID, 'AUTOSTART_FAILED', reason);
     if (reason === null) {
@@ -149,22 +184,41 @@ export function createSystemIntegration(opts: SystemIntegrationOptions): SystemI
     if (!enabled) {
       // Toasts stop using the handler at once, also if the removal fails.
       registered = false;
-      reason = platform === 'win32' ? outcome(await unregisterProtocolHandler(registry)) : null;
+      reason = platform === 'win32' ? outcome(await unregisterProtocolHandler(registry), 'protocol') : null;
     } else if (platform !== 'win32') {
       reason = 'not Windows';
     } else {
       const cmd = await startCommand([]);
-      reason =
+      const result: SystemOpResult =
         typeof cmd === 'string'
-          ? cmd
-          : outcome(await registerProtocolHandler(protocolCommand(cmd), registry));
-      registered = reason === null;
+          ? { ok: false, reason: cmd }
+          : await registerProtocolHandler(protocolCommand(cmd), registry);
+      reason = outcome(result, 'protocol');
+      // An installation's handler (deferred) is not this server's: toasts get no launch URI.
+      registered = result.ok && result.deferred !== true;
     }
     setWarning(PROTOCOL_WARNING_ID, 'PROTOCOL_HANDLER_FAILED', reason);
     if (reason === null) {
       protocolReached = desired;
       log.info({ protocolHandler: desired }, 'protocol handler reconciled');
     }
+  };
+
+  /**
+   * WP-86: the start menu shortcut of an installation, once per server start and independent of
+   * the settings (a node update repairs itself); always on the default data directory (no
+   * `--home`, like the installer's). Failures are only logged – no host warning, no error code.
+   */
+  const ensureStartMenu = async (): Promise<void> => {
+    if (installRoot === null || startMenuChecked || platform !== 'win32') return;
+    startMenuChecked = true;
+    const cmd = await startCommand([], null);
+    const result: SystemOpResult =
+      typeof cmd === 'string'
+        ? { ok: false, reason: cmd }
+        : await ensureStartMenuEntry({ installRoot, run, env, command: cmd, markers });
+    if (result.ok) log.info({ installRoot }, 'start menu shortcut ensured');
+    else log.warn({ installRoot, reason: result.reason }, 'start menu shortcut failed');
   };
 
   const snapshot = (): string => JSON.stringify({ registered, warnings: [...warnings.values()] });
@@ -184,6 +238,7 @@ export function createSystemIntegration(opts: SystemIntegrationOptions): SystemI
     try {
       await reconcileAutostart(settings.autostart.enabled);
       await reconcileProtocol(settings.notifications.openOnClick);
+      await ensureStartMenu();
     } catch (error) {
       log.error({ err: error }, 'system integration: unexpected failure');
     }
