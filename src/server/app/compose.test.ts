@@ -26,6 +26,7 @@ import {
   sampleProfile,
   sampleProfileInput,
   sampleTime,
+  sampleUpdateRelease,
 } from '@shared/samples';
 import { loadConfig } from '../config';
 import { SESSION_FILES_FILE } from '../files/sessionIndex';
@@ -40,6 +41,8 @@ import { attachmentsDir } from '../store/attachments';
 import { entryDir } from '../store/decisions';
 import type { CommandContext } from '../sync/ports';
 import type { SystemIntegration } from '../system/ports';
+import type { UpdateService } from '../update/ports';
+import { createFakeUpdateService } from '../update/testing';
 import {
   FAKE_FILES_HOME_DIR,
   fileEntryLookup,
@@ -79,6 +82,7 @@ async function start(
     homeAccess?: (home: string, signal: AbortSignal) => Promise<unknown>;
     signals?: SignalTarget;
     systemIntegration?: SystemIntegration;
+    updateService?: UpdateService;
   } = {},
 ): Promise<Started> {
   const exits: number[] = [];
@@ -96,6 +100,7 @@ async function start(
     // No PowerShell in the in-process tests unless a test asks for the check.
     homeAccess: options.homeAccess ?? null,
     ...(options.systemIntegration === undefined ? {} : { systemIntegration: options.systemIntegration }),
+    ...(options.updateService === undefined ? {} : { updateService: options.updateService }),
   });
   cleanups.push(() => server.shutdown.stop('command'));
   return { server, exits };
@@ -486,6 +491,7 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
       'profileChecks',
       'login',
       'files',
+      'update',
       'stores',
       'homeAccess',
       'lock',
@@ -540,6 +546,51 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
     for (const listener of listeners) listener();
     expect(publish).toHaveBeenCalled();
     expect(server.manager.hostState().warnings).toContainEqual(warnings[0]);
+  });
+
+  it('WP-87: a checkout has updates off (unsupported, not packaged)', async () => {
+    const { server } = await start(await tempHome());
+    const host = server.manager.hostState();
+    expect(host.app).toMatchObject({ buildId: server.instance.buildId, packaged: false });
+    expect(host.update.status).toBe('unsupported');
+    await expect(server.manager.handleCommand({ name: 'update.check' }, ctx())).rejects.toMatchObject({
+      error: { code: 'UPDATE_NOT_PACKAGED' },
+    });
+  });
+
+  it('WP-87: the update service gets its commands, settings, start and close; its changes reach the host state', async () => {
+    const home = await tempHome();
+    const update = createFakeUpdateService({
+      app: { version: '1.0.0', packaged: true },
+      state: { status: 'idle' },
+      uploadDir: home,
+    });
+    const { server } = await start(home, { updateService: update });
+    expect(update.started()).toBe(true);
+    expect(server.manager.hostState()).toMatchObject({
+      app: { version: '1.0.0', packaged: true },
+      update: { status: 'idle' },
+    });
+
+    await server.manager.handleCommand({ name: 'update.check' }, ctx());
+    expect(update.commands.map((command) => command.name)).toEqual(['update.check']);
+    await server.manager.handleCommand(
+      { name: 'settings.update', patch: { updates: { check: false } } },
+      ctx(),
+    );
+    expect(update.settingsSeen.at(-1)?.updates).toEqual({ check: false });
+
+    const publish = vi.spyOn(server.manager, 'publishHostState');
+    const release = sampleUpdateRelease();
+    update.setState({ status: 'available', available: release });
+    expect(publish).toHaveBeenCalled();
+    expect(server.manager.hostState().update).toMatchObject({
+      status: 'available',
+      available: release,
+    });
+
+    await server.shutdown.stop('command');
+    expect(update.closed()).toBe(true);
   });
 
   it('fake console: openExternal hands the session over; after it ended the console turn comes back', async () => {

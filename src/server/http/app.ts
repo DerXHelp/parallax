@@ -39,6 +39,8 @@ import { sniffImageType } from '../lib/images';
 import { logger as rootLogger } from '../lib/logger';
 import { isPdf } from '../lib/sniff';
 import { CommandError, type BlobStore } from '../sync/ports';
+import type { UpdateService } from '../update/ports';
+import { registerUpdateRoutes } from '../update/routes';
 import { registerAuthRoutes, type AuthService } from './auth';
 import { STATIC_ROUTE, checkRequest, requestPath } from './origin';
 import { replyError, sendError } from './reply';
@@ -81,6 +83,10 @@ export interface CreateAppOptions {
   hub?: AttachableHub;
   /** File service behind `GET /api/file` (Phase 3, ADR-142); missing → 501 NOT_IMPLEMENTED. */
   files?: FileContentProvider;
+  /** WP-87: update upload, "What's new" and notices (src/server/update/routes.ts); missing → no routes. */
+  update?: UpdateService;
+  /** WP-87: close code of the shutdown (4504 when it is a restart for an update); default 4503. */
+  closeCode?: () => number;
   /** Built web UI (`dist/web`); not served when null or missing (dev mode uses Vite). */
   webRoot?: string | null;
   logger?: Logger;
@@ -198,7 +204,10 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     options: { maxPayload: LIMITS.wsMaxPayloadBytes },
     preClose(done) {
       const clients = [...this.websocketServer.clients];
-      for (const client of clients) client.close(WS_CLOSE.SERVER_SHUTDOWN, 'server shutdown');
+      // WP-87: read only now – nothing closes earlier, so no window reconnects to a dying server.
+      const code = options.closeCode?.() ?? WS_CLOSE.SERVER_SHUTDOWN;
+      const reason = code === WS_CLOSE.SERVER_RESTARTING ? 'server restarting' : 'server shutdown';
+      for (const client of clients) client.close(code, reason);
       setTimeout(() => {
         for (const client of clients) client.terminate();
       }, WS_SHUTDOWN_GRACE_MS).unref();
@@ -402,6 +411,10 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     });
     done();
   });
+
+  // WP-87: POST /api/update/package (own scope, stream parser, guard class "mutation"), GET
+  // /api/changelog and /api/notices (guard class "file": same-origin only, cookie).
+  if (options.update !== undefined) await registerUpdateRoutes(app, options.update);
 
   if (options.hub !== undefined) {
     const hub = options.hub;

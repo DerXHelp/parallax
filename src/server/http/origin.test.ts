@@ -70,6 +70,12 @@ describe('classifyRequest (by matched route pattern, default-deny)', () => {
     ['GET', API_PATHS.file, 'file'],
     ['HEAD', API_PATHS.file, 'file'],
     ['POST', API_PATHS.file, 'mutation'],
+    // WP-87: release notes and license texts like file content; the package upload is a mutation
+    ['GET', API_PATHS.changelog, 'file'],
+    ['HEAD', API_PATHS.changelog, 'file'],
+    ['GET', API_PATHS.notices, 'file'],
+    ['POST', API_PATHS.updatePackage, 'mutation'],
+    ['GET', API_PATHS.updatePackage, 'mutation'],
     // a future route that is not in the table is protected automatically
     ['GET', '/api/files', 'mutation'],
     ['GET', '/api/blob/:blobId/raw', 'mutation'],
