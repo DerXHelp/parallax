@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isWindowsPathInside, windowsPathKey } from '@shared/paths';
@@ -14,10 +14,33 @@ import { isWindowsPathInside, windowsPathKey } from '@shared/paths';
  *   replaced by a fresh temp home. The globalSetups of Vitest and Playwright always start with a
  *   fresh one (`fresh: true`): in doubt, an own temp home.
  * - `PARALLAX_PORT` is always `0`.
+ * - `TEMP`/`TMP` with long names (`useLongTempDir`; the CI runner's TEMP names the user folder `RUNNER~1`).
  * - Inherited server control variables (`SERVER_CONTROL_VARS`: backend, dev mode, validation,
  *   toasts, log level, host, entry id of a calling Parallax session) are removed, so a test run
  *   behaves the same inside and outside a Parallax session.
  */
+
+/**
+ * Points TEMP/TMP of this process (and so `os.tmpdir()` and every child) to the long form of the
+ * temp directory and returns it. Windows may hand out 8.3 short names (the GitHub runner's
+ * TEMP names the user folder `RUNNER~1`), while the file service compares physical paths
+ * (`realpath`, always long) – tests would see two spellings of one folder. Without a difference,
+ * or if the folder cannot be resolved, nothing changes.
+ */
+export function useLongTempDir(): string {
+  const current = os.tmpdir();
+  if (process.platform !== 'win32') return current;
+  let long: string;
+  try {
+    long = realpathSync.native(current);
+  } catch {
+    return current;
+  }
+  if (long === current) return current;
+  process.env.TEMP = long;
+  process.env.TMP = long;
+  return long;
+}
 
 /** Prefix of the temp homes created here (globalSetup and per-worker fallback). */
 export const TEST_HOME_PREFIX = 'parallax-test-';
@@ -86,7 +109,7 @@ export function ensureTestEnv(
   options: EnsureTestEnvOptions = {},
 ): string | undefined {
   const note = options.note ?? ((message: string) => process.stderr.write(`[test-setup] ${message}\n`));
-  const tmpdir = options.tmpdir ?? os.tmpdir();
+  const tmpdir = options.tmpdir ?? (env === process.env ? useLongTempDir() : os.tmpdir());
   const exists = options.exists ?? existsSync;
   for (const name of SERVER_CONTROL_VARS) {
     for (const key of Object.keys(env)) {

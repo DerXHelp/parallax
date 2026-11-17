@@ -1,9 +1,16 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { ConfigError, loadConfig } from '../../src/server/config';
-import { SERVER_CONTROL_VARS, assertNotRealHome, ensureTestEnv, isOwnTestHome, isPathInside } from './home';
+import {
+  SERVER_CONTROL_VARS,
+  assertNotRealHome,
+  ensureTestEnv,
+  isOwnTestHome,
+  isPathInside,
+  useLongTempDir,
+} from './home';
 
 describe('test environment', () => {
   it('uses a temp PARALLAX_HOME and port 0', () => {
@@ -155,5 +162,30 @@ describe('ensureTestEnv – inherited homes (WP22-07)', () => {
     // Guard flags of the live tools are no server configuration (e2e/live checks them itself).
     expect(env.PARALLAX_LIVE).toBe('1');
     expect(env.OTHER).toBe('kept');
+  });
+});
+
+describe('useLongTempDir', () => {
+  it('points TEMP/TMP to the long form of an 8.3 short name (GitHub runner: RUNNER~1)', () => {
+    const short = path.win32.join(process.env.SystemDrive ?? 'C:', path.win32.sep, 'PROGRA~1');
+    // Only where Windows creates 8.3 names on the system drive (default; the CI runner has them).
+    if (process.platform !== 'win32' || !existsSync(short)) return;
+    vi.stubEnv('TEMP', short);
+    vi.stubEnv('TMP', short);
+    try {
+      const long = useLongTempDir();
+      expect(long).not.toContain('~');
+      expect(process.env.TEMP).toBe(long);
+      expect(process.env.TMP).toBe(long);
+      expect(os.tmpdir()).toBe(long);
+      expect(useLongTempDir()).toBe(long);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('the test run itself uses the long form', () => {
+    if (process.platform !== 'win32') return;
+    expect(os.tmpdir()).not.toContain('~');
   });
 });

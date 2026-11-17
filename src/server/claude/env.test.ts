@@ -349,8 +349,10 @@ describe('buildEnvReport (C.2)', () => {
       expect(shouldRemoveEnvVar(key), key).toBe(false);
     }
     expect(Object.keys(env).filter((key) => /^claudecode$/i.test(key))).toEqual([]);
-    const pathValue = getEnvVar(env, 'PATH') ?? '';
-    expect(pathValue.toLowerCase()).not.toMatch(/node_modules[\\/]\.bin/);
+    // Entries that ARE a node_modules\.bin folder (pnpm/npm run state, what buildEnv drops); a tool
+    // below one (CI: setup-pnpm\node_modules\.bin\global\…\node-gyp-bin) is an ordinary entry.
+    const entries = (getEnvVar(env, 'PATH') ?? '').split(';');
+    expect(entries.filter((entry) => /(?:^|[\\/])node_modules[\\/]\.bin[\\/]*$/i.test(entry))).toEqual([]);
   });
 
   it('keeps one spelling per name (first seen wins) and cleans the PATH under its own spelling', () => {

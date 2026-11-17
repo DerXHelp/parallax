@@ -17,7 +17,7 @@ import { windowsPathIssue } from '@shared/paths';
 import { findChrome, readExeVersion } from '../lib/chrome';
 import type { FsOps } from '../lib/fs';
 import { checkHomeAccess, type HomeAccess } from '../lib/homeAccess';
-import { errnoCode, powerShellPath, runFile, type RunFileFn } from '../lib/process';
+import { errnoCode, powerShellPath, runFile, windowsPowerShellEnv, type RunFileFn } from '../lib/process';
 import { parseRegValues, regKeyQuery, regQuery, type RegKeyQuery, type RegQuery } from '../lib/registry';
 import { getEnvVar, nodeFsProbe, resolveExecutable, type FsProbe } from '../lib/windows';
 import { isNewerThanTested } from './cliProfile';
@@ -451,7 +451,7 @@ export async function antivirusProducts(run: RunFileFn = runFile): Promise<strin
     const result = await run(
       powerShellPath(),
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
-      { timeoutMs: 20_000, maxOutputBytes: 64 * 1024 },
+      { timeoutMs: 20_000, maxOutputBytes: 64 * 1024, env: windowsPowerShellEnv() },
     );
     if (result.exitCode !== 0 || result.timedOut) return null;
     const parsed = antivirusOutputSchema.safeParse(JSON.parse(result.stdout.trim()) as unknown);

@@ -1,4 +1,4 @@
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { makeTempHome } from '../http/testServer';
@@ -172,7 +172,7 @@ describe('checkHomeAccess / logHomeAccess', () => {
       const home = path.join(base, 'home');
       await mkdir(home);
       const before: HomeAccess = await checkHomeAccess(home, { timeoutMs: 60_000 });
-      expect(['private', 'shared']).toContain(before.kind);
+      expect(['private', 'shared'], JSON.stringify(before)).toContain(before.kind);
       // Test folder only (deleted afterwards): Everyone gets read access.
       const grant = await runFile(systemTool('icacls.exe'), [home, '/grant', '*S-1-1-0:(OI)(CI)R'], {
         timeoutMs: 60_000,
@@ -181,6 +181,33 @@ describe('checkHomeAccess / logHomeAccess', () => {
       const after = await checkHomeAccess(home, { timeoutMs: 60_000 });
       expect(after.kind).toBe('shared');
       expect(after.kind === 'shared' ? after.principals : []).toContain('Everyone');
+    },
+    TOOL_TEST_TIMEOUT_MS,
+  );
+
+  windowsOnly(
+    'real tools: a PSModulePath of pwsh 7 (terminal, CI step) does not break Get-Acl',
+    async () => {
+      const base = await makeTempHome('r2-psmod-');
+      homes.push(base);
+      const home = path.join(base, 'home');
+      await mkdir(home);
+      // Like pwsh 7's own module folder listed first: a Microsoft.PowerShell.Security that
+      // Windows PowerShell 5.1 cannot load ("the module could not be loaded").
+      const modules = path.join(base, 'modules');
+      const manifest = path.join(modules, 'Microsoft.PowerShell.Security', '7.0.0.0');
+      await mkdir(manifest, { recursive: true });
+      await writeFile(
+        path.join(manifest, 'Microsoft.PowerShell.Security.psd1'),
+        "@{ ModuleVersion = '7.0.0.0'; PowerShellVersion = '7.0'; CompatiblePSEditions = @('Core'); CmdletsToExport = @('Get-Acl') }",
+      );
+      vi.stubEnv('PSModulePath', modules);
+      try {
+        const access = await checkHomeAccess(home, { timeoutMs: 60_000 });
+        expect(['private', 'shared'], JSON.stringify(access)).toContain(access.kind);
+      } finally {
+        vi.unstubAllEnvs();
+      }
     },
     TOOL_TEST_TIMEOUT_MS,
   );

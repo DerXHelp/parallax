@@ -14,6 +14,10 @@ Entscheidungen ohne Modaldialog, Dateien und Pläne, Aufgaben und Subagenten.
 - Releases erscheinen auf GitHub als signiertes Paket (`parallax-<version>-win.zip`, Ed25519) mit den Notizen aus
   diesem Changelog (WP-85).
 
+### Behoben
+- Aus PowerShell 7 gestartet, scheitern die Prüfung der Ordnerrechte von `PARALLAX_HOME`, die Prozessabfragen und die
+  Virenscanner-Anzeige in `pnpm preflight` nicht mehr (WP-85).
+
 ### Sicherheit
 - Bekannte Lücken (mittel/niedrig) in Abhängigkeiten des Agent SDK sind geschlossen: `hono` 4.13.16 und
   `@hono/node-server` 2.1.6 (DEPS-2026-11 §6).
