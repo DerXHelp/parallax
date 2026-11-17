@@ -28,10 +28,10 @@ Ergebnis der Recherche (14.10.2026):
 - React als Frontend.
 - Observer-Modus für Konsolen-Sessions erst nach dem MVP.
 - **Das installierte `claude` verwenden.** Es wird kein Claude-Binary mitgeliefert.
-- **Für den Durchstich wird nichts installiert und keine .exe ausgeliefert.** Das Tool soll auch auf dem Arbeitsrechner laufen.
+- **Für den Durchstich wird nichts installiert und keine .exe ausgeliefert.** Das Tool soll auch auf einem verwalteten Rechner laufen.
 
-Zielordner: `<repo>` (leer, kein Git-Repo).
-**Repo:** Es wird ein privates GitHub-Repo angelegt bzw. gepusht, aber nur nach Freigabe durch den Nutzer. Um den Transfer auf den Arbeitsrechner kümmert sich der Nutzer später selbst.
+Zielordner: ein leerer Ordner (kein Git-Repo).
+**Repo:** Es wird ein privates GitHub-Repo angelegt bzw. gepusht, aber nur nach Freigabe durch den Nutzer. Um die Übertragung auf weitere Rechner kümmert sich der Nutzer später selbst.
 **Phasen und Umfang** werden am Ende gemeinsam besprochen.
 
 ---
@@ -68,7 +68,7 @@ Node-Server „parallax“ (127.0.0.1)
   - Die UI zeigt die CLI-Version (`init.claude_code_version`) und die SDK-Version an.
   - Bei Abweichung jenseits des erwarteten Bereichs erscheint eine Warnung.
   - Das SDK wird regelmäßig nachgezogen.
-- **Login:** Die App nutzt den Login bzw. die Konfiguration des installierten `claude`, auf dem Arbeitsrechner also auch Firmen-Login und Managed Settings. Die App fasst keine Credentials an.
+- **Login:** Die App nutzt den Login bzw. die Konfiguration des installierten `claude`, auf einem verwalteten Rechner also auch Firmen-Login und Managed Settings. Die App fasst keine Credentials an.
   - Ist der Nutzer nicht eingeloggt, erscheint ein Hinweis mit Terminal-Tab bzw. Anleitung.
 - Das vom SDK als optionale Abhängigkeit mitgelieferte Binary wird per `ignoredOptionalDependencies` gar nicht erst installiert (siehe unten).
 
@@ -115,13 +115,13 @@ Mit einem Profil wird festgelegt, *wie* der Claude-Prozess gestartet wird. Es gi
   - Zu Hause ist pnpm 9.15 installiert, deshalb einmalig `npm i -g pnpm@12.8.2` (oder pnpm lädt die festgelegte Version selbst nach; das ist zu prüfen).
   - Corepack wird mit Node 26 nicht mehr mitgeliefert.
 - **Node:** Standard ist **Node 26** auf beiden Rechnern.
-  - Zu Hause ist 26.4 installiert. Auf dem Arbeitsrechner installiert der Nutzer 26.
+  - Auf dem Entwicklungsrechner ist 26.4 installiert. Auf weiteren Rechnern installiert der Nutzer 26.
   - Node 26 wird am 28.10.2026 Active LTS und wird bis April 2029 gepflegt.
   - Die technische Untergrenze ist `engines.node: ">=22"` (pnpm 11+, Vite).
   - Eine `.node-version`-Datei mit `26` dient Versionsmanagern (fnm, nvm-windows, Volta).
   - `pnpm preflight` warnt bei einer Version unter 22 bzw. bei einer anderen Hauptversion als 26.
 - **Keine fest eingetragene Registry.**
-  - pnpm 11+ liest aus `.npmrc` nur noch Registry- und Auth-Einstellungen. Der Nexus-Eintrag in `~/.npmrc` auf dem Arbeitsrechner greift also.
+  - pnpm 11+ liest aus `.npmrc` nur noch Registry- und Auth-Einstellungen. Der Nexus-Eintrag in `~/.npmrc` auf einem verwalteten Rechner greift also.
   - Ad hoc geht es über `pnpm install --registry <url>` bzw. `pnpm_config_registry`. `npm_config_*` wird nicht mehr gelesen.
   - `pnpm-lock.yaml` enthält keine Tarball-URLs, deshalb funktioniert derselbe Lockfile ohne Trick mit npmjs und mit dem Nexus.
 - **Projekteinstellungen in `pnpm-workspace.yaml`.** Der `pnpm`-Block in `package.json` wird ab pnpm 11 ignoriert.
@@ -408,7 +408,7 @@ Das Problem in der Konsole: Bei `ExitPlanMode` ploppt ein Dialog auf und blockie
 - **Remote Control:**
   - Offiziell nur für interaktive Sessions vorgesehen.
   - Für SDK-Hosts gibt es eine **undokumentierte** Runtime-Methode `query.enableRemoteControl()` bzw. den Control-Request `remote_control`. Sie fehlt in `sdk.d.ts` und kann sich ändern.
-  - Voraussetzung ist ein claude.ai-Abo-Login, mit API-Key bzw. Gateway funktioniert es nicht, bei internen Modellen also nie.
+  - Voraussetzung ist ein claude.ai-Abo-Login, mit API-Key bzw. Gateway funktioniert es nicht, bei eigenen Modellen über ein Gateway also nie.
   - **Vorschlag:** Später als experimenteller Toggle pro Session, sichtbar nur bei Abo-Profilen. Fallback ist der Terminal-Tab mit `/remote-control`.
 
 ## Web-UI
@@ -430,7 +430,7 @@ Das Problem in der Konsole: Bei `ExitPlanMode` ploppt ein Dialog auf und blockie
   - **Git-Branch:**
     - Ermittelt per `git rev-parse --abbrev-ref HEAD` im `cwd`, aktualisiert beim Session-Start, nach jedem Turn-Ende und per Watch auf `.git/HEAD`, auch in Worktrees mit `.git`-Datei.
     - Kein Git-Repo → wird ausgeblendet. Detached HEAD → kurzer Hash.
-  - **Modell:** Name aus `init.model` bzw. nach `setModel()` als Kurzname (opus/sonnet/haiku/fable oder ein Custom-Name bei internen Modellen).
+  - **Modell:** Name aus `init.model` bzw. nach `setModel()` als Kurzname (opus/sonnet/haiku/fable oder ein Custom-Name bei eigenen Modellen).
   - **Titel:** anfangs der gekürzte erste Prompt, umbenennbar.
 - **ChatView:**
   - Virtualisierte Liste.
@@ -464,14 +464,14 @@ Das Problem in der Konsole: Bei `ExitPlanMode` ploppt ein Dialog auf und blockie
 ---
 
 ## Multi-Host (Überlegung des Nutzers – Ausbau, Vorbereitung ab Phase 1)
-**Szenario Arbeit:**
-- Auf dem Arbeitsrechner läuft Claude gegen interne Modelle (über `env` in `settings.json`).
+**Szenario:**
+- Auf einem verwalteten Rechner läuft Claude über ein Gateway mit eigenen Modellen (über `env` in `settings.json`).
 - Auf einer Windows-VM läuft Claude gegen Anthropic-Modelle.
-- **Wunsch:** Die Sessions auf der VM sollen sich vom Parallax des Arbeitsrechners aus steuern lassen.
+- **Wunsch:** Die Sessions auf der VM sollen sich vom Parallax des lokalen Rechners aus steuern lassen.
 
 **Machbarkeit:** Die Server/UI-Trennung passt gut dazu.
 - Auf der VM läuft ein eigener Parallax-Server, mit eigenen Profilen, eigenem `claude` und eigener Registry.
-- Die UI des Arbeitsrechners verbindet sich mit **mehreren Hosts**, z. B. „Lokal“ und „VM“. Jeder Host hat eine eigene WebSocket-Verbindung.
+- Die lokale UI verbindet sich mit **mehreren Hosts**, z. B. „Lokal“ und „VM“. Jeder Host hat eine eigene WebSocket-Verbindung.
 - Die Sidebar zeigt alle Sessions mit einem Host-Badge. „Wartet auf dich“, Benachrichtigungen und Strg+K arbeiten über alle Hosts hinweg.
 - Neue Sessions lassen sich wahlweise auf dem lokalen Host oder auf der VM anlegen. Ordner-Browser und Profile stammen dann vom jeweiligen Host.
 - **Profile gehören zum Server, nicht zur UI** (vom Nutzer so festgelegt):
@@ -486,11 +486,11 @@ Das Problem in der Konsole: Bei `ExitPlanMode` ploppt ein Dialog auf und blockie
 - Anhänge werden zum Remote-Server hochgeladen.
 
 **Voraussetzungen und Sicherheit:**
-- Der VM-Server muss vom Arbeitsrechner erreichbar sein. Dafür gibt es zwei Varianten:
+- Der VM-Server muss vom lokalen Rechner erreichbar sein. Dafür gibt es zwei Varianten:
   - **SSH-Tunnel:** Der VM-Server bleibt auf 127.0.0.1 und wird per `ssh -L` getunnelt. Das ist die sicherste Variante, braucht aber einen OpenSSH-Server auf der VM.
   - **Netzwerk-Bindung:** Bind-Adresse konfigurierbar, **TLS** (selbstsigniertes Zertifikat mit Pinning), **dauerhafte Pairing-Tokens** pro Client statt Token pro Start, optional eine IP-Allowlist.
   - Beide Varianten brauchen vermutlich Admin-Rechte bzw. IT-Freigabe: eine eingehende Firewall-Regel oder den sshd.
-- **Compliance-Hinweis:** Prompts, Screenshots und Dateien vom Arbeitsrechner würden über die VM zu Anthropic gehen. Falls die VM-Trennung genau das verhindern soll, muss das mit der IT bzw. Compliance geklärt sein.
+- **Compliance-Hinweis:** Prompts, Screenshots und Dateien des lokalen Rechners würden über die VM zu Anthropic gehen. Soll eine Trennung der Rechner genau das verhindern, muss das vorher mit den Verantwortlichen geklärt sein.
 
 **Vorbereitung ab Phase 1 (billig, spart späteren Umbau):**
 - Das Protokoll und die UI-State-Struktur sind **host-fähig**: Session-Keys sind `hostId:entryId`, und es gibt einen ConnectionManager für n Server, anfangs nur „local“.
@@ -597,7 +597,7 @@ Das Problem in der Konsole: Bei `ExitPlanMode` ploppt ein Dialog auf und blockie
    - Die Clients melden Präsenz (Fokus, Sichtbarkeit, angezeigte Session). Pro Ereignis wählt der Server genau einen Kanal:
      - einen In-App-Hinweis im fokussierten Fenster, oder
      - eine Web Notification aus genau einem Client, oder
-     - **ohne offenes Fenster** einen nativen Windows-Toast über einen PowerShell-Helfer (`Windows.UI.Notifications`, ohne Installation). Auf dem Arbeitsrechner ist der Constrained Language Mode zu prüfen.
+     - **ohne offenes Fenster** einen nativen Windows-Toast über einen PowerShell-Helfer (`Windows.UI.Notifications`, ohne Installation). Auf einem verwalteten Rechner ist der Constrained Language Mode zu prüfen.
    - Ein Toast hat `tag = sessionKey` und den Text „‹Titel› – Plan prüfen“.
    - Ein Klick öffnet über einen optionalen HKCU-Protokoll-Handler `parallax:` (Opt-in wie Autostart) die richtige Session.
    - Beim Schließen des letzten Fensters erscheint einmalig der Hinweis „Parallax läuft weiter (n aktiv)“.
@@ -648,7 +648,7 @@ Das Problem in der Konsole: Bei `ExitPlanMode` ploppt ein Dialog auf und blockie
   3. Server-Integrationstests: echter WS-Client, FakeBackend, Temp-`PARALLAX_HOME`, Port 0.
   4. E2E mit **Playwright und `channel:'msedge'`**, ohne Browser-Download.
   5. Live-Smoke nur mit `PARALLAX_LIVE=1` und Haiku.
-  - **Aufzeichnungen vom Arbeitsrechner kommen nie ins Repo.**
+  - **Aufzeichnungen von verwalteten Rechnern kommen nie ins Repo.**
 - **SDK-Upgrade-Prozess** (`docs/sdk-upgrade.md`): Version anheben → typecheck → Fixture-Tests → neu aufzeichnen → Snapshot-Diff → Zähler für unbekannte Message-Typen prüfen → Live-Smoke.
 - **First-Run und Fehler:**
   - Ein Setup-Screen, falls `claude` fehlt bzw. kein Login besteht: Preflight in der UI, Pfadwahl, Retry.
@@ -777,7 +777,7 @@ Das Problem in der Konsole: Bei `ExitPlanMode` ploppt ein Dialog auf und blockie
 13. **pnpm und Firma:**
     - `engines.pnpm: ">=12.8"`, damit ein altes pnpm sofort scheitert.
     - pnpm 12 ist eine native exe. Falls AppLocker/WDAC sie blockiert, ist pnpm 11.28 der Fallback.
-    - **Nexus-Auth:** `_auth` in `~/.npmrc` wird von pnpm 11+ eventuell ignoriert. Es gilt nur aus dem globalen `config.yaml` bzw. `pnpm_config__auth`. **Erster Spike auf dem Arbeitsrechner: `pnpm install` gegen den Nexus.**
+    - **Nexus-Auth:** `_auth` in `~/.npmrc` wird von pnpm 11+ eventuell ignoriert. Es gilt nur aus dem globalen `config.yaml` bzw. `pnpm_config__auth`. **Erster Spike auf einem verwalteten Rechner: `pnpm install` gegen den Nexus.**
     - `minimumReleaseAge` greift beim Nexus eventuell nicht, falls das `time`-Feld fehlt.
     - `allowBuilds` braucht nur `esbuild`.
     - node-pty 1.1 fällt auf `node-gyp rebuild` zurück. Für Phase 4 ist `@lydell/node-pty` (Prebuilds ohne Skripte) eine Alternative, die zu prüfen ist.
@@ -872,7 +872,7 @@ Das Problem in der Konsole: Bei `ExitPlanMode` ploppt ein Dialog auf und blockie
 - Aktion „In Parallax übernehmen“.
 
 **Backlog (später; Reihenfolge nach Bedarf):**
-- **Multi-Host:** die Sessions der Arbeits-VM vom Arbeitsrechner aus steuern, mit Profilen und Default-Profil pro Server. Ab Phase 1 vorbereitet, umgesetzt erst nach Klärung von Netzwerk und Policy.
+- **Multi-Host:** die Sessions einer VM von einem anderen Rechner aus steuern, mit Profilen und Default-Profil pro Server. Ab Phase 1 vorbereitet, umgesetzt erst nach Klärung von Netzwerk und Policy.
 - **Releases:** öffentliches Repo bereinigen und lizenzieren, Versionen per Tag mit Changelog, Installation ohne git und Build, Update in der App. Plan vom 17.11.2026: `docs/wp/WP-83.md`.
 - Rewind/Checkpoints, Fork.
 - `/btw`-Seitenpanel, `!`-Bash-Modus.
@@ -1015,7 +1015,7 @@ Diese **Variante ohne Live-Aufrufe** greift, wenn der Abo-Login im SDK nicht fun
 - **Policy:** Nur das installierte, unveränderte `claude` unter dem eigenen Login. Keine Credentials anfassen, keine Weitergabe.
 - **Versionsdrift:** Das installierte CLI aktualisiert sich selbst, das SDK ist gepinnt. Dagegen helfen die Versionsanzeige mit Warnung und unbekannte Message-Typen tolerant ignorieren.
 - **Lokaler Server:** Token, nur localhost, Origin-Prüfung.
-- **Arbeitsrechner:**
+- **Verwaltete Rechner:**
   - Node muss vorhanden sein.
   - Der npm-Registry-Zugriff muss erlaubt sein.
   - Der Edge-App-Modus ist in der Regel unproblematisch.
@@ -1044,9 +1044,9 @@ Diese **Variante ohne Live-Aufrufe** greift, wenn der Abo-Login im SDK nicht fun
   - „Im Editor öffnen“ (Notepad++ an der Zeile) und „Im Explorer zeigen“ (Datei markiert) – Nutzer-Checkliste.
   - Ein UNC-Pfad im Assistant-Text löst keinen SMB-Verbindungsversuch aus.
 - **UI-Checks** über das chrome-devtools-MCP (Seite unter localhost), Screenshots.
-- **Arbeitsrechner:**
+- **Verwalteter Rechner mit Firmen-Registry:**
   - `git clone` + `pnpm install` + `pnpm start` laufen über den Nexus-Mirror, ohne Admin-Rechte und ohne weitere Installation.
-  - Zuhause ist mit demselben Lockfile ein `pnpm install --frozen-lockfile` gegen npmjs möglich.
+  - Ohne Mirror ist mit demselben Lockfile ein `pnpm install --frozen-lockfile` gegen npmjs möglich.
   - `pnpm preflight` zeigt die Nexus-Registry an.
   - Das Install-Log (`pnpm install --reporter=ndjson` bzw. ein Netzwerk-Mitschnitt) zeigt keine Downloads außerhalb der Registry.
   - Das `node_modules` enthält keine `claude-agent-sdk-win32-*`-Binaries.

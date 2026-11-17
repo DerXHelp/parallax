@@ -272,6 +272,16 @@ Web-Anti-Virus-Einstellungen, oder dort „Skript in Datenverkehr einbetten“ a
 Web-Traffic-Scan hin (Windows-Sicherheitscenter, ohne Admin-Rechte; Kaspersky, ESET, Bitdefender,
 Avast, AVG).
 
+## Rechtliches
+Parallax steht unter der [MIT-Lizenz](LICENSE).
+
+- Parallax ist ein unabhängiges Projekt und nicht mit Anthropic verbunden. „Claude“ und „Claude Code“
+  sind Marken von Anthropic.
+- Parallax steuert das vom Nutzer installierte, **unveränderte** Claude Code. Die Anmeldung erledigt
+  Claude Code selbst; Parallax sieht, speichert und vermittelt keine Zugangsdaten.
+- Für Claude Code und das Claude Agent SDK gelten die Bedingungen von Anthropic. Das SDK ist nicht Teil
+  dieses Repos; `pnpm install` lädt es aus der npm-Registry.
+
 ## Dokumentation
 - `CLAUDE.md` – Regeln, Befehle, Ordner-Ownership.
 - `docs/plan.md` – abgestimmter Gesamtplan.

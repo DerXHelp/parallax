@@ -16,4 +16,4 @@ aus WP-01 (CLI 2.1.300, SDK 0.3.296) und hat kein eigenes Szenario. Grundlage f√
 - Nur diese Dateien werden committet (`.gitignore` ignoriert `*.jsonl` √ºberall sonst).
 - Rohaufzeichnungen liegen in `.recordings/` (ignoriert, unbereinigt); `pnpm record --resanitize`
   erzeugt die Fixtures daraus neu.
-- **Aufzeichnungen vom Arbeitsrechner kommen nie ins Repo.**
+- **Aufzeichnungen von verwalteten Rechnern kommen nie ins Repo.**
