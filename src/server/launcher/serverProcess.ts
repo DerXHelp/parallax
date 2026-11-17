@@ -18,6 +18,21 @@ export const SERVER_OUT_LOG = 'server.out.log';
 /** Rotated to `server.out.1.log` at the next start once larger than this. */
 export const SERVER_OUT_LOG_MAX_BYTES = 1024 * 1024;
 
+/**
+ * Always set for the server (security review WP-89): `ws` would otherwise `require('bufferutil')` /
+ * `require('utf-8-validate')` when Node lacks the built-in variants – and Node's module resolution
+ * walks up from the version folder to `C:\node_modules`, which every local user may create.
+ */
+export const SERVER_ENV_HARDENING: Readonly<Record<string, string>> = {
+  WS_NO_BUFFER_UTIL: '1',
+  WS_NO_UTF_8_VALIDATE: '1',
+};
+
+/** The server's environment: `env` plus `SERVER_ENV_HARDENING`. */
+export function serverEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return { ...env, ...SERVER_ENV_HARDENING };
+}
+
 export function logsDir(home: string): string {
   return path.join(home, 'logs');
 }
@@ -74,7 +89,7 @@ export async function startServerProcess(options: StartServerOptions): Promise<S
       [...(options.nodeArgs ?? []), options.serverScript, ...options.args],
       {
         cwd: options.cwd,
-        env: options.env,
+        env: serverEnv(options.env),
         detached: true,
         stdio: ['ignore', fd, fd],
       },

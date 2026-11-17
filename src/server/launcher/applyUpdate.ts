@@ -786,6 +786,13 @@ export function createNodeApplyUpdateDeps(options: NodeApplyUpdateDepsOptions): 
           `The children of PID ${String(pid)} are unknown (${children.reason}) - only the server is ended.`,
         );
       }
+      // The child query can take a while (security review WP-89): if the server ended meanwhile,
+      // its PID may belong to another process now – check the start time again right before.
+      const again = await processStartTime(pid, { timeoutMs: PROCESS_QUERY_MS });
+      if (again?.getTime() !== startedAt.getTime()) {
+        log.write(`PID ${String(pid)} is no longer the old server - it is not ended.`);
+        return;
+      }
       try {
         // TerminateProcess on Windows – the process alone, see ApplyUpdateDeps.killOldServer.
         process.kill(pid, 'SIGKILL');

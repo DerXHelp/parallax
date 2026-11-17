@@ -74,6 +74,16 @@ describe('comparePackageFiles', () => {
     ]);
   });
 
+  it('names of Object.prototype are not listed files', async () => {
+    await put('toString', 'x');
+    await put('constructor', 'y');
+    const walk = await walkPackage(dir);
+    expect(comparePackageFiles(walk, await hashFiles(dir, walk.files), {}, []).sort()).toEqual([
+      'constructor: not in release.json',
+      'toString: not in release.json',
+    ]);
+  });
+
   it('is empty for an intact package', async () => {
     await put('dist/a.js', 'a');
     const walk = await walkPackage(dir);

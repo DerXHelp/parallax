@@ -103,6 +103,21 @@ describe('parseZipListing', () => {
     expect(problem('')).toBe('zip');
     expect(problem('tar.exe: Error opening archive\r\n')).toBe('zip');
   });
+
+  it('a name with " parallax-" inside cannot fake the root: the plain listing must agree', () => {
+    const tricky = 'x parallax-1.2.3/evil.js';
+    const verbose = listing(dir('parallax-1.2.3/'), file(tricky));
+    // The verbose line alone reads like a file below the root …
+    expect(parseZipListing(verbose, '1.2.3').entries).toBe(2);
+    // … the plain `tar -t` names show the real one.
+    const names = listing('parallax-1.2.3/', tricky);
+    expect(() => parseZipListing(verbose, '1.2.3', names)).toThrow(ZipError);
+    expect(() => parseZipListing(verbose, '1.2.3', listing('parallax-1.2.3/'))).toThrow(
+      /listings of the zip differ/u,
+    );
+    const good = listing(dir('parallax-1.2.3/'), file('parallax-1.2.3/a.js'));
+    expect(parseZipListing(good, '1.2.3', listing('parallax-1.2.3/', 'parallax-1.2.3/a.js')).entries).toBe(2);
+  });
 });
 
 describe('listZip / extractZip (tar.exe)', () => {

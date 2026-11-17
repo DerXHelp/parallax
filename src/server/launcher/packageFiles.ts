@@ -91,7 +91,8 @@ export function comparePackageFiles(
     else if (actual[rel] !== hash) problems.push(`${rel}: changed`);
   }
   for (const rel of present) {
-    if (!(rel in listed) && !ignore.includes(rel)) problems.push(`${rel}: not in release.json`);
+    // Own keys only: `toString`, `constructor` … are not listed files (security review WP-89).
+    if (!Object.hasOwn(listed, rel) && !ignore.includes(rel)) problems.push(`${rel}: not in release.json`);
   }
   return problems;
 }

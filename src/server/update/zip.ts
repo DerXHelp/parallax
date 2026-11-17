@@ -67,11 +67,17 @@ function nameOf(rest: string): string | undefined {
 
 /**
  * Checks the output of `tar -t -v -f <zip>`. `version` = the expected version (`parallax-<v>/`);
- * null = take it from the entries (Install from file) – it must be a release version. Throws
- * `ZipError`.
+ * null = take it from the entries (Install from file) – it must be a release version. `names` = the
+ * output of the plain `tar -t -f <zip>`: every name taken from a verbose line must be exactly the
+ * name on the same line there (a name containing ` parallax-` cannot fake another root; security
+ * review WP-89). Throws `ZipError`.
  */
-export function parseZipListing(stdout: string, version: string | null): ZipListing {
+export function parseZipListing(stdout: string, version: string | null, names?: string): ZipListing {
   const lines = stdout.split(/\r?\n/u).filter((line) => line !== '');
+  const plain = names?.split(/\r?\n/u).filter((line) => line !== '');
+  if (plain !== undefined && plain.length !== lines.length) {
+    throw new ZipError('zip', 'the two listings of the zip differ');
+  }
   if (lines.length === 0) throw new ZipError('zip', 'the zip is empty');
   if (lines.length > ZIP_MAX_ENTRIES) {
     throw new ZipError(
@@ -81,6 +87,7 @@ export function parseZipListing(stdout: string, version: string | null): ZipList
   }
   let rootDir = version === null ? null : `parallax-${version}`;
   let bytes = 0;
+  let index = 0;
   for (const line of lines) {
     const match = LINE.exec(line);
     const type = match?.[1];
@@ -90,6 +97,10 @@ export function parseZipListing(stdout: string, version: string | null): ZipList
     if (type === undefined || size === undefined || name === undefined) {
       throw new ZipError('zip', `unexpected listing line: ${line.slice(0, 200)}`);
     }
+    if (plain !== undefined && plain[index] !== name) {
+      throw new ZipError('layout', `${name.slice(0, 200)}: the two listings of the zip differ`);
+    }
+    index += 1;
     if (type !== '-' && type !== 'd') throw new ZipError('layout', `${name}: not a plain file or folder`);
     const isDir = type === 'd';
     const rel = isDir && name.endsWith('/') ? name.slice(0, -1) : name;
@@ -155,27 +166,33 @@ export async function listZip(
   options: ZipToolOptions,
 ): Promise<ZipListing> {
   const run = options.run ?? runFile;
-  let result: RunFileResult;
-  try {
-    result = await run(systemTool('tar.exe'), ['-t', '-v', '-f', zip], {
-      cwd: options.cwd,
-      timeoutMs: ZIP_LIST_TIMEOUT_MS,
-      maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
-  } catch (error) {
-    throw new ZipError(
-      'zip',
-      `tar.exe could not be started: ${error instanceof Error ? error.message : 'error'}`,
-    );
-  }
-  options.signal?.throwIfAborted();
-  const problem = failure(result);
-  if (problem !== null) throw new ZipError('zip', `tar.exe could not list the zip: ${problem}`);
-  if (Buffer.byteLength(result.stdout, 'utf8') >= LIST_MAX_OUTPUT_BYTES) {
-    throw new ZipError('too_large', 'the listing of the zip is too long');
-  }
-  return parseZipListing(result.stdout, version);
+  const list = async (args: readonly string[]): Promise<string> => {
+    let result: RunFileResult;
+    try {
+      result = await run(systemTool('tar.exe'), [...args, '-f', zip], {
+        cwd: options.cwd,
+        timeoutMs: ZIP_LIST_TIMEOUT_MS,
+        maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      });
+    } catch (error) {
+      throw new ZipError(
+        'zip',
+        `tar.exe could not be started: ${error instanceof Error ? error.message : 'error'}`,
+      );
+    }
+    options.signal?.throwIfAborted();
+    const problem = failure(result);
+    if (problem !== null) throw new ZipError('zip', `tar.exe could not list the zip: ${problem}`);
+    if (Buffer.byteLength(result.stdout, 'utf8') >= LIST_MAX_OUTPUT_BYTES) {
+      throw new ZipError('too_large', 'the listing of the zip is too long');
+    }
+    return result.stdout;
+  };
+  // Verbose for types and sizes, plain for the exact names (parseZipListing compares both).
+  const verbose = await list(['-t', '-v']);
+  const names = await list(['-t']);
+  return parseZipListing(verbose, version, names);
 }
 
 /** Unpacks `zip` into the existing, empty folder `target` (≤ 5 min). Throws `ZipError`. */
