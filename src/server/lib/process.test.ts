@@ -21,6 +21,7 @@ import {
   runFile,
   spawnHidden,
   systemTool,
+  windowsPowerShellEnv,
   type RunFileFn,
   type RunFileResult,
 } from './process';
@@ -146,6 +147,21 @@ describe('systemTool / errnoCode', () => {
     expect(errnoCode(Object.assign(new Error('x'), { code: 'ENOENT' }))).toBe('ENOENT');
     expect(errnoCode(new Error('x'))).toBeUndefined();
     expect(errnoCode('ENOENT')).toBeUndefined();
+  });
+});
+
+describe('windowsPowerShellEnv', () => {
+  it('drops PSModulePath in any spelling, keeps everything else', () => {
+    expect(
+      windowsPowerShellEnv({
+        PATH: 'C:\\Windows',
+        PSModulePath: 'C:\\Program Files\\PowerShell\\7\\Modules',
+        psmodulepath: 'x',
+        SystemRoot: 'C:\\Windows',
+        EMPTY: '',
+        UNSET: undefined,
+      }),
+    ).toEqual({ PATH: 'C:\\Windows', SystemRoot: 'C:\\Windows', EMPTY: '' });
   });
 });
 

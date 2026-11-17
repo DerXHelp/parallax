@@ -121,6 +121,21 @@ export function powerShellPath(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /**
+ * Environment for a hidden Windows PowerShell 5.1 child (`powerShellPath()`): the inherited one
+ * without `PSModulePath`. Started from pwsh 7 (a terminal, a CI step) the variable lists the pwsh 7
+ * modules first, and 5.1 then cannot load its own `Microsoft.PowerShell.Security` / `CimCmdlets`
+ * (`Get-Acl`, `Get-CimInstance`: "the module could not be loaded"). Without it 5.1 builds its
+ * default. Visible consoles keep the spec's value (system/console.ts, R4-04).
+ */
+export function windowsPowerShellEnv(base: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(base)) {
+    if (value !== undefined && key.toUpperCase() !== 'PSMODULEPATH') env[key] = value;
+  }
+  return env;
+}
+
+/**
  * .NET format of `DateTime.ToString(…)` for an ISO-8601 UTC time with milliseconds – no
  * culture-dependent specifier. Used by the process queries below and system/console.ts
  * (re-exported by lib/powershell.ts, R4-14).
@@ -472,7 +487,7 @@ async function runProcessQuery(
     result = await run(
       powerShellPath(),
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', processQueryScript(wqlFilter)],
-      { timeoutMs, maxOutputBytes: 1024 * 1024 },
+      { timeoutMs, maxOutputBytes: 1024 * 1024, env: windowsPowerShellEnv() },
     );
   } catch (error) {
     return unknownResult('failed', `powershell could not be started: ${toError(error).message}`);

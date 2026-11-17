@@ -17,7 +17,7 @@ import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { logger as rootLogger } from './logger';
 import { fsErrorCode } from './paths';
-import { powerShellPath, runFile, systemTool, type RunFileFn } from './process';
+import { powerShellPath, runFile, systemTool, windowsPowerShellEnv, type RunFileFn } from './process';
 
 export type HomeAccess =
   /** Only the current user (plus SYSTEM/Administrators) can read it. */
@@ -220,8 +220,7 @@ export async function checkHomeAccess(home: string, options: HomeAccessOptions =
     if (afterWhoami !== null) return afterWhoami;
     const userSid = whoami.exitCode === 0 ? parseWhoamiSid(whoami.stdout) : null;
     if (userSid === null) return { kind: 'unknown', reason: 'the user SID could not be read' };
-    const env: Record<string, string> = {};
-    for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
+    const env = windowsPowerShellEnv();
     env.PARALLAX_ACL_TARGET = path.resolve(home);
     const acl = await run(
       powerShellPath(),
