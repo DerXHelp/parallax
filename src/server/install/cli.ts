@@ -11,7 +11,7 @@
  *
  * Exit codes: 0 = done, 2 = bad option, else 1. Messages are English like the launcher's.
  */
-import { access } from 'node:fs/promises';
+import { access, rmdir } from 'node:fs/promises';
 import path from 'node:path';
 import { isWindowsPathInside } from '@shared/paths';
 import { toError } from '../lib/async';
@@ -198,6 +198,8 @@ export async function runInstallerCli(argv: readonly string[], deps: InstallerCl
       }
     }
 
+    // The lock creates the root; a failed first installation must not leave it behind empty.
+    const existed = await exists(root);
     const lock = await deps.lockRoot(root);
     if (lock === null) {
       deps.fail(`Another Parallax installation into ${root} is running - wait for it and try again.`);
@@ -207,6 +209,7 @@ export async function runInstallerCli(argv: readonly string[], deps: InstallerCl
       return await act(args, root, deps);
     } finally {
       await lock.release();
+      if (!existed) await rmdir(root).catch(() => undefined);
     }
   } catch (error) {
     if (error instanceof InstallError || error instanceof ReleaseInfoError || error instanceof SdkError) {

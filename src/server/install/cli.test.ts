@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -49,9 +49,11 @@ async function harness(version = '1.0.0', p: { flags?: boolean; lockBusy?: boole
       h.nodeRuns.push(args);
       return Promise.resolve(0);
     },
-    lockRoot: (root) => {
+    lockRoot: async (root) => {
       h.locked.push(root);
-      return Promise.resolve(p.lockBusy === true ? null : { release: () => Promise.resolve() });
+      // Like acquireDirectoryLock: the folder is created for its real path.
+      await mkdir(root, { recursive: true });
+      return p.lockBusy === true ? null : { release: () => Promise.resolve() };
     },
     steps: () => ({
       provideSdk: fakeProvideSdk([]),
@@ -139,6 +141,14 @@ describe('installer flow (WP-86, WP-83 §8.3)', () => {
     expect(await runInstallerCli([], old.deps)).toBe(1);
     expect(old.err.at(-1)).toMatch(/needs Node\.js 24\.5\.0 or newer, this is 22\.12\.0/);
     expect(old.nodeRuns).toEqual([]);
+  });
+
+  it('a failed first installation leaves no empty root behind', async () => {
+    const h = await harness();
+    h.deps.keys = [makeTestKey().x];
+    expect(await runInstallerCli([], h.deps)).toBe(1);
+    expect(h.err.at(-1)).toMatch(/invalid signature/);
+    await expect(access(h.root)).rejects.toThrow();
   });
 
   it('uninstalls and names the data directory', async () => {
