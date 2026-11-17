@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { LIMITS, entryIdSchema, isoDateTimeSchema, type BlobId, type EntryId } from './common';
 import { DEV_WEB_PORT } from './devPorts';
 import { errorPayloadSchema } from './errors';
-import { blobRefSchema } from './model';
+import { appVersionSchema, blobRefSchema } from './model';
 import { PRODUCT_ID } from './product';
 import { WS_PATH } from './protocol';
 
@@ -43,6 +43,16 @@ export const API_PATHS = {
    */
   file: '/api/file',
   /**
+   * WP-87: POST an update zip ("Install from file", `UPDATE_PACKAGE_MEDIA_TYPES`, at most
+   * `UPDATE_PACKAGE_MAX_BYTES`, streamed to disk) → 202 `updatePackageResponseSchema`; checking and
+   * staging run in the background (HostState.update). Guard class "mutation".
+   */
+  updatePackage: '/api/update/package',
+  /** WP-87: GET `changelogQuerySchema` → `changelogResponseSchema`. Guard class "file". */
+  changelog: '/api/changelog',
+  /** WP-87: GET `noticesQuerySchema` → `noticesResponseSchema` (running version). Guard class "file". */
+  notices: '/api/notices',
+  /**
    * WebSocket upgrade (src/shared/protocol.ts). Guard (§5.1, ADR-019): Origin ∈ allowedOrigins,
    * Host and device cookie required; Sec-Fetch-Site only checked when present (browsers send none
    * on the handshake) and then must be `same-origin`. Only this route accepts an upgrade.
@@ -66,6 +76,48 @@ export type FileQuery = z.infer<typeof fileQuerySchema>;
 export function fileUrl(entryId: EntryId, path: string): string {
   return `${API_PATHS.file}?entryId=${encodeURIComponent(entryId)}&path=${encodeURIComponent(path)}`;
 }
+
+// ---- WP-87: updates (docs/wp/WP-87.md §1.4) ----
+
+export const UPDATE_PACKAGE_MEDIA_TYPES = [
+  'application/zip',
+  'application/x-zip-compressed',
+  'application/octet-stream',
+] as const;
+export const UPDATE_PACKAGE_MAX_BYTES = 200 * 1024 * 1024;
+export const updatePackageResponseSchema = z.object({ accepted: z.literal(true) });
+export type UpdatePackageResponse = z.infer<typeof updatePackageResponseSchema>;
+
+export const changelogQuerySchema = z.object({
+  /** `installed` = the running version's CHANGELOG.md; `available` = that of HostState.update.available. */
+  for: z.enum(['installed', 'available']),
+  /** `installed` only: the sections after this version; without it the running version's own section. */
+  since: appVersionSchema.optional(),
+});
+export type ChangelogQuery = z.infer<typeof changelogQuerySchema>;
+export const changelogSectionSchema = z.object({
+  /** null = [Unveröffentlicht] (a pre-release has no section of its own). */
+  version: appVersionSchema.nullable(),
+  date: z.iso.date().nullable(),
+  /** Markdown, rendered without raw HTML. */
+  body: z.string().max(200_000),
+});
+export type ChangelogSection = z.infer<typeof changelogSectionSchema>;
+export const changelogResponseSchema = z.object({
+  /** The version whose CHANGELOG.md was read. */
+  version: z.string().min(1).max(64),
+  sections: z.array(changelogSectionSchema).max(100),
+});
+export type ChangelogResponse = z.infer<typeof changelogResponseSchema>;
+
+export const NOTICE_FILES = ['license', 'third-party'] as const;
+export type NoticeFile = (typeof NOTICE_FILES)[number];
+export const noticesQuerySchema = z.object({ file: z.enum(NOTICE_FILES) });
+export const noticesResponseSchema = z.object({
+  file: z.enum(NOTICE_FILES),
+  text: z.string().max(16_000_000),
+});
+export type NoticesResponse = z.infer<typeof noticesResponseSchema>;
 
 // =====================================================================================
 // Host and Origin (A.8: checked for every request; Origin/Sec-Fetch-Site see §5.1 table)

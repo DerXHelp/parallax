@@ -16,6 +16,9 @@ import {
   TasksPanelPlaceholder,
   ToolInputPreviewPlaceholder,
   TranscriptPlaceholder,
+  UpdateBannerPlaceholder,
+  UpdateNoticePlaceholder,
+  UpdatesSettingsPlaceholder,
 } from './placeholders';
 import type { SettingsSection } from './requests';
 
@@ -81,6 +84,20 @@ export interface FeatureSlots {
    * with its actions (viewer, editor, Explorer – ADR-144). The placeholder renders the text only.
    */
   FileLink: ComponentType<FileLinkSlotProps>;
+  // WP-87/88 (features/updates): updates in the app, always for the local host
+  /** Head of the sidebar: "Parallax <v> available" / "Ready – restart"; `compact` = collapsed rail. */
+  UpdateNotice: ComponentType<UpdateNoticeSlotProps>;
+  /** Inside ShellBanners: "Updated to <v>" / "Update to <v> failed, back on <v>". */
+  UpdateBanner: ComponentType<NoSlotProps>;
+  /** Settings section `updates`. */
+  UpdatesSettings: ComponentType<NoSlotProps>;
+}
+
+/** A slot without props. */
+export type NoSlotProps = Record<string, never>;
+
+export interface UpdateNoticeSlotProps {
+  compact: boolean;
 }
 
 export interface FilePanelSlotProps {
@@ -154,6 +171,9 @@ export const DEFAULT_FEATURE_SLOTS: FeatureSlots = {
   SettingsPage: SettingsPagePlaceholder,
   ProfilesSettings: ProfilesSettingsPlaceholder,
   FileLink: FileLinkPlaceholder,
+  UpdateNotice: UpdateNoticePlaceholder,
+  UpdateBanner: UpdateBannerPlaceholder,
+  UpdatesSettings: UpdatesSettingsPlaceholder,
 };
 
 const FeatureSlotsContext = createContext<FeatureSlots>(DEFAULT_FEATURE_SLOTS);
@@ -187,6 +207,9 @@ export function FeatureSlotsProvider({
       SettingsPage: slots.SettingsPage ?? parent.SettingsPage,
       ProfilesSettings: slots.ProfilesSettings ?? parent.ProfilesSettings,
       FileLink: slots.FileLink ?? parent.FileLink,
+      UpdateNotice: slots.UpdateNotice ?? parent.UpdateNotice,
+      UpdateBanner: slots.UpdateBanner ?? parent.UpdateBanner,
+      UpdatesSettings: slots.UpdatesSettings ?? parent.UpdatesSettings,
     }),
     [parent, slots],
   );

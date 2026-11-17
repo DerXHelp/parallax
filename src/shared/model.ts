@@ -533,7 +533,9 @@ export function isClaudeSessionUrl(value: string): boolean {
   return value.length <= 2000 && /^https:\/\/(?:[a-z0-9-]+\.)*claude\.ai(?:[/?#]\S*)?$/i.test(value);
 }
 
-export const claudeSessionUrlSchema = z.string().refine(isClaudeSessionUrl, { message: 'not a claude.ai link' });
+export const claudeSessionUrlSchema = z
+  .string()
+  .refine(isClaudeSessionUrl, { message: 'not a claude.ai link' });
 
 /**
  * WP-65 (1.6b): an absolute `http:`/`https:` URL (with a host) – the only links Parallax opens in the
@@ -563,6 +565,12 @@ export const HOOK_DISPLAYS = ['all', 'failed', 'off'] as const;
 export const hookDisplaySchema = z.enum(HOOK_DISPLAYS);
 export type HookDisplay = z.infer<typeof hookDisplaySchema>;
 
+/** WP-87: look for new releases (start + every 12 h, only in a package); "Check now" works anyway. */
+export const updateSettingsSchema = z.object({ check: z.boolean() });
+export const DEFAULT_UPDATE_SETTINGS = { check: true } as const satisfies z.infer<
+  typeof updateSettingsSchema
+>;
+
 /** Fields without defaults: the base of the patch schema (a patch must never inject defaults). */
 const settingsFields = {
   language: languageSchema,
@@ -581,6 +589,8 @@ const settingsFields = {
   transcriptView: transcriptViewSchema,
   /** WP-69: hook runs in the transcript of every window. */
   hookDisplay: hookDisplaySchema,
+  /** WP-87: automatic update check; a patch replaces the whole object. */
+  updates: updateSettingsSchema,
 };
 
 export const settingsSchema = z.object({
@@ -595,6 +605,7 @@ export const settingsSchema = z.object({
   remoteControl: remoteControlSettingsSchema.default(DEFAULT_REMOTE_CONTROL_SETTINGS),
   transcriptView: transcriptViewSchema.default('compact'),
   hookDisplay: hookDisplaySchema.default('failed'),
+  updates: updateSettingsSchema.default(DEFAULT_UPDATE_SETTINGS),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
@@ -621,6 +632,95 @@ export const hostWarningSchema = z.object({
   at: isoDateTimeSchema,
 });
 export type HostWarning = z.infer<typeof hostWarningSchema>;
+
+// ---- WP-87: updates in the app (docs/wp/WP-87.md §1.1, ADR-220) ----
+
+/** A release version `X.Y.Z` or `X.Y.Z-rc.N` (tag `v<version>`); launcher/release.ts uses it. */
+export const appVersionSchema = z.string().regex(/^\d+\.\d+\.\d+(?:-rc\.\d+)?$/u);
+export type AppVersion = z.infer<typeof appVersionSchema>;
+
+/** The running Parallax. */
+export const appInfoSchema = z.object({
+  /** package.json version (in a package the version of release.json). */
+  version: z.string().min(1).max(64),
+  buildId: z.string().min(1).max(LIMITS.buildIdChars),
+  /** release.json next to dist/ and `--install-root` (an installation); false = checkout, dev. */
+  packaged: z.boolean(),
+});
+export type AppInfo = z.infer<typeof appInfoSchema>;
+
+/**
+ * `unsupported` = no installation (checkout, dev: updates via git); `ready` = prepared in the
+ * version folder, a restart switches; `restarting` = the orchestrator took over (the server exits).
+ */
+export const UPDATE_STATUSES = [
+  'unsupported',
+  'idle',
+  'checking',
+  'available',
+  'downloading',
+  'preparing',
+  'ready',
+  'restarting',
+] as const;
+export const updateStatusSchema = z.enum(UPDATE_STATUSES);
+export type UpdateStatus = z.infer<typeof updateStatusSchema>;
+
+/** A version the user can switch to: offered by the releases or uploaded from a file. */
+export const updateReleaseSchema = z.object({
+  version: appVersionSchema,
+  /** `github` = latest.json of the releases; `file` = "Install from file" (WP-83 §9.6). */
+  source: z.enum(['github', 'file']),
+  /** Zip bytes (github); null for a file. */
+  size: z.number().int().nonnegative().nullable(),
+  createdAt: isoDateTimeSchema,
+  /** Older than the running version (only from a file). */
+  downgrade: z.boolean(),
+  /** Older AND other store schema hashes: only with the backup, data since then are lost (WP-83 §9.4). */
+  needsRestore: z.boolean(),
+  /** createdAt of that backup; null = none. */
+  backupAt: isoDateTimeSchema.nullable(),
+});
+export type UpdateRelease = z.infer<typeof updateReleaseSchema>;
+
+/** `current.json` `previous` with an intact version folder ("Back to <version>"). */
+export const updatePreviousSchema = updateReleaseSchema.pick({
+  version: true,
+  needsRestore: true,
+  backupAt: true,
+});
+export type UpdatePrevious = z.infer<typeof updatePreviousSchema>;
+
+export const updateStateSchema = z.object({
+  status: updateStatusSchema.default('unsupported'),
+  /** 0…1 while downloading/preparing; null = unknown or idle. */
+  progress: z.number().min(0).max(1).nullable().default(null),
+  checkedAt: isoDateTimeSchema.nullable().default(null),
+  available: updateReleaseSchema.nullable().default(null),
+  previous: updatePreviousSchema.nullable().default(null),
+  /** After a version change (update, rollback, install.cmd) until update.dismiss or the next start. */
+  justUpdated: z
+    .object({ from: appVersionSchema.nullable(), to: appVersionSchema, at: isoDateTimeSchema })
+    .nullable()
+    .default(null),
+  /** The last switch failed and the orchestrator went back; `log` = absolute path, local display only. */
+  failedUpdate: z
+    .object({
+      version: appVersionSchema,
+      restoredTo: appVersionSchema,
+      at: isoDateTimeSchema,
+      error: errorPayloadSchema,
+      log: z.string().max(LIMITS.pathChars).nullable(),
+    })
+    .nullable()
+    .default(null),
+  /** Last failure of check/prepare/upload/apply (an automatic check never shows a hint for it). */
+  error: errorPayloadSchema.nullable().default(null),
+  /** The header hint for this version was dismissed (update-state.json in the data directory). */
+  dismissedVersion: appVersionSchema.nullable().default(null),
+});
+export type UpdateState = z.infer<typeof updateStateSchema>;
+export const DEFAULT_UPDATE_STATE: UpdateState = updateStateSchema.parse({});
 
 export const hostStateSchema = z.object({
   /** package.json version. */
@@ -664,6 +764,10 @@ export const hostStateSchema = z.object({
    * to the setting `remoteControl.newSessions: follow_claude`.
    */
   remoteControlDefault: z.boolean().nullable().default(null),
+  /** WP-87: the running Parallax; null = an older host. */
+  app: appInfoSchema.nullable().default(null),
+  /** WP-87: update check, preparation and the outcome of the last switch. */
+  update: updateStateSchema.default(DEFAULT_UPDATE_STATE),
 });
 export type HostState = z.infer<typeof hostStateSchema>;
 
@@ -1881,7 +1985,15 @@ export type PlanVersionInfo = z.infer<typeof planVersionInfoSchema>;
  * (CLAUDE.md files), `/skills`, `/hooks`, `/permissions`, the MCP servers and `/export`. Only on
  * request (a tab opens, "Refresh") – never polled, never cached by the server.
  */
-export const SESSION_INFO_SECTIONS = ['status', 'memory', 'skills', 'hooks', 'permissions', 'mcp', 'export'] as const;
+export const SESSION_INFO_SECTIONS = [
+  'status',
+  'memory',
+  'skills',
+  'hooks',
+  'permissions',
+  'mcp',
+  'export',
+] as const;
 export const sessionInfoSectionNameSchema = z.enum(SESSION_INFO_SECTIONS);
 export type SessionInfoSectionName = z.infer<typeof sessionInfoSectionNameSchema>;
 
@@ -1919,7 +2031,11 @@ export const infoRowSchema = z.object({ label: infoText.nullable(), value: infoT
 export type InfoRow = z.infer<typeof infoRowSchema>;
 
 /** A settings file the CLI skipped (parse/validation error) – its rules/hooks are not in effect. */
-export const infoSettingsErrorSchema = z.object({ file: infoText.nullable(), path: infoText, message: infoText });
+export const infoSettingsErrorSchema = z.object({
+  file: infoText.nullable(),
+  path: infoText,
+  message: infoText,
+});
 export type InfoSettingsError = z.infer<typeof infoSettingsErrorSchema>;
 
 const infoCommon = {
@@ -1970,7 +2086,13 @@ export const memoryInfoSchema = z.object({
   autoMemory: z.object({ enabled: z.boolean(), toggleable: z.boolean(), status: infoText }).nullable(),
   /** `Auto-dream:` row (null = the CLI sent none). */
   autoDream: z
-    .object({ shown: z.boolean(), enabled: z.boolean(), toggleable: z.boolean(), status: infoText, detail: infoText })
+    .object({
+      shown: z.boolean(),
+      enabled: z.boolean(),
+      toggleable: z.boolean(),
+      status: infoText,
+      detail: infoText,
+    })
     .nullable(),
   truncated: z.boolean(),
   ...infoCommon,
@@ -2006,7 +2128,12 @@ export const hooksInfoSchema = z.object({
   section: z.literal('hooks'),
   /** Events with at least one hook, in the lifecycle order of the CLI. */
   events: infoList(
-    z.object({ name: infoText, summary: infoText, matcherSupported: z.boolean(), count: z.number().int().nonnegative() }),
+    z.object({
+      name: infoText,
+      summary: infoText,
+      matcherSupported: z.boolean(),
+      count: z.number().int().nonnegative(),
+    }),
   ),
   hooks: infoList(
     z.object({
@@ -2066,7 +2193,9 @@ export const permissionsInfoSchema = z.object({
       /** Verbatim as the session holds it (may carry invisible characters – escape at display). */
       rule: infoText,
       /** The CLI's plain-language reading ("Any Bash command starting with" + **npm run**). */
-      description: z.object({ prefix: infoText, emphasis: infoText.nullable(), suffix: infoText.nullable() }).nullable(),
+      description: z
+        .object({ prefix: infoText, emphasis: infoText.nullable(), suffix: infoText.nullable() })
+        .nullable(),
       /** persistent, session, readonly, … */
       editability: infoText,
       /** Ignored by the session (managed settings allow policy rules only). */

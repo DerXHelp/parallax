@@ -24,6 +24,7 @@ import {
 } from './common';
 import { errorPayloadSchema, makeError, type ErrorPayload } from './errors';
 import {
+  appVersionSchema,
   claudeInstallStatusSchema,
   contextBreakdownSchema,
   decisionOutcomeSchema,
@@ -62,8 +63,9 @@ import { notificationKindSchema } from './status';
  * 2 (Phase 2, ADR-100): new error codes, the system event `handoff` and new commands are members of
  * closed unions a v1 client cannot parse; with several hosts build ids differ legitimately.
  * 3 (Phase 3, ADR-140): new error codes and commands (file service, plan versions, stopTask).
+ * 4 (WP-87, ADR-220): update.* commands, UPDATE_* error codes, close code SERVER_RESTARTING.
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 /** WP-70: longest pasted sign-in code (`profile.loginCode`; a link with code and state fits). */
 export const LOGIN_CODE_CHARS = 4000;
 /**
@@ -79,6 +81,8 @@ export const WS_CLOSE = {
   AUTH_REVOKED: 4401,
   PROTOCOL_VERSION_MISMATCH: 4409,
   SERVER_SHUTDOWN: 4503,
+  /** WP-87: ordered restart for an update or a rollback – unlike 4503 the window reconnects. */
+  SERVER_RESTARTING: 4504,
 } as const;
 
 // =====================================================================================
@@ -449,7 +453,11 @@ export const commandSchema = z.discriminatedUnion('name', [
    * the typed text (for the composer); false = already taken over by the CLI (nothing changes).
    * Needs a running process (SESSION_NOT_RUNNING); CLAUDE_CONTROL_FAILED when the CLI cannot do it.
    */
-  z.object({ name: z.literal('session.withdrawQueued'), entryId: entryIdSchema, messageUuid: messageUuidSchema }),
+  z.object({
+    name: z.literal('session.withdrawQueued'),
+    entryId: entryIdSchema,
+    messageUuid: messageUuidSchema,
+  }),
   // ---- WP-67 (session info with tabs) ----
   /**
    * The data of one "Session info" tab from the running CLI (`/status`, `/memory`, `/skills`,
@@ -458,7 +466,11 @@ export const commandSchema = z.discriminatedUnion('name', [
    * unknown answer shape). Needs a running process (SESSION_NOT_RUNNING – no wake-up just to show
    * data); a failed request → CLAUDE_CONTROL_FAILED. Not for archived or external entries.
    */
-  z.object({ name: z.literal('session.info'), entryId: entryIdSchema, section: sessionInfoSectionNameSchema }),
+  z.object({
+    name: z.literal('session.info'),
+    entryId: entryIdSchema,
+    section: sessionInfoSectionNameSchema,
+  }),
   /**
    * Reconnect an MCP server or switch it on/off (`reconnectMcpServer`, `toggleMcpServer`); the tab
    * then asks again. Needs a running process (SESSION_NOT_RUNNING); failure → CLAUDE_CONTROL_FAILED.
@@ -531,6 +543,35 @@ export const commandSchema = z.discriminatedUnion('name', [
     entryId: entryIdSchema,
     style: z.string().trim().min(1).max(100),
   }),
+  // ---- WP-87 (updates in the app, docs/wp/WP-87.md §1.3) ----
+  /** Host: look for a newer release now (also with `updates.check` off). UPDATE_NOT_PACKAGED, UPDATE_BUSY. */
+  z.object({ name: z.literal('update.check') }),
+  /**
+   * Host: download, check and stage `version` (must be `HostState.update.available`, else
+   * VALIDATION_FAILED {reason:'version'}); the ack comes at once, progress and outcome in HostState.
+   */
+  z.object({ name: z.literal('update.prepare'), version: appVersionSchema }),
+  /**
+   * Host: switch to the prepared `version` (status `ready`): the old version's orchestrator takes
+   * over; ack after its handshake, then close 4504 and exit. `acceptDataLoss` is required when the
+   * target `needsRestore` (VALIDATION_FAILED {reason:'data_loss_not_accepted'}).
+   */
+  z.object({
+    name: z.literal('update.apply'),
+    version: appVersionSchema,
+    acceptDataLoss: z.boolean().default(false),
+  }),
+  /** Host: back to `HostState.update.previous` (same flow as update.apply). */
+  z.object({
+    name: z.literal('update.rollback'),
+    version: appVersionSchema,
+    acceptDataLoss: z.boolean().default(false),
+  }),
+  /** Host: hide a hint – `available` remembers the version (update-state.json), the others clear their field. */
+  z.object({
+    name: z.literal('update.dismiss'),
+    what: z.enum(['available', 'justUpdated', 'failedUpdate', 'error']),
+  }),
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export type CommandName = Command['name'];
@@ -562,6 +603,11 @@ export const HOST_COMMAND_NAMES = [
   'profile.login',
   'profile.loginCode',
   'profile.loginCancel',
+  'update.check',
+  'update.prepare',
+  'update.apply',
+  'update.rollback',
+  'update.dismiss',
 ] as const satisfies readonly CommandName[];
 export type HostCommandName = (typeof HOST_COMMAND_NAMES)[number];
 export type HostCommand = Extract<Command, { name: HostCommandName }>;
@@ -656,6 +702,14 @@ export const commandResultSchemas = {
   'profile.loginCode': z.object({}),
   'profile.loginCancel': z.object({}),
   'session.setOutputStyle': z.object({}),
+  /** The newer version found (null = none, also for a 404 of latest.json). */
+  'update.check': z.object({ available: appVersionSchema.nullable() }),
+  /** Started – progress and outcome in HostState.update. */
+  'update.prepare': z.object({}),
+  /** The orchestrator took over; the server closes with 4504 and exits right after this ack. */
+  'update.apply': z.object({}),
+  'update.rollback': z.object({}),
+  'update.dismiss': z.object({}),
 } as const satisfies Record<CommandName, z.ZodType>;
 export type CommandResult<N extends CommandName> = z.infer<(typeof commandResultSchemas)[N]>;
 

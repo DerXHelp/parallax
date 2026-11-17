@@ -110,7 +110,7 @@ async function openSection(user: ReturnType<typeof userEvent.setup>, name: strin
 }
 
 describe('settings page (WP-38): dialog, sections, Esc', () => {
-  it('lists the seven sections on the left and starts at the first one', async () => {
+  it('lists the eight sections on the left and starts at the first one', async () => {
     await connect();
     renderPage();
     const list = screen.getByRole('tablist', { name: 'Settings sections' });
@@ -118,7 +118,7 @@ describe('settings page (WP-38): dialog, sections, Esc', () => {
       within(list)
         .getAllByRole('tab')
         .map((tab) => tab.textContent),
-    ).toEqual(['General', 'Notifications', 'Sessions', 'Files', 'Profiles', 'Server', 'About']);
+    ).toEqual(['General', 'Notifications', 'Sessions', 'Files', 'Profiles', 'Server', 'Updates', 'About']);
     expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe('true');
     expect(list.getAttribute('aria-orientation')).toBe('vertical');
     expect(screen.getByRole('tabpanel', { name: 'General' })).toBeTruthy();
@@ -132,6 +132,10 @@ describe('settings page (WP-38): dialog, sections, Esc', () => {
     expect(tab.getAttribute('aria-selected')).toBe('true');
     expect(within(screen.getByRole('tabpanel', { name: 'Server' })).getByText('Port')).toBeTruthy();
     tab.focus();
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('tab', { name: 'Updates' }).getAttribute('aria-selected')).toBe('true');
+    // Without features/updates (WP-88a) the section says so.
+    expect(within(screen.getByRole('tabpanel', { name: 'Updates' })).getByText(/not available/)).toBeTruthy();
     await user.keyboard('{ArrowDown}');
     expect(screen.getByRole('tab', { name: 'About' }).getAttribute('aria-selected')).toBe('true');
   });
@@ -181,9 +185,9 @@ describe('General', () => {
     renderPage();
     const group = screen.getByRole('radiogroup', { name: 'Hook runs' });
     expect(within(group).getAllByRole('radio')).toHaveLength(3);
-    expect(within(group).getByRole('radio', { name: 'Failed and blocking only' }).getAttribute('aria-checked')).toBe(
-      'true',
-    );
+    expect(
+      within(group).getByRole('radio', { name: 'Failed and blocking only' }).getAttribute('aria-checked'),
+    ).toBe('true');
     await user.click(within(group).getByRole('radio', { name: 'All' }));
     await user.click(within(group).getByRole('radio', { name: 'Off' }));
     await waitFor(() => {

@@ -86,7 +86,8 @@ export const en = {
       claudeUnknown: 'Claude Code: version unknown',
       claudeTooOld: 'Older than the Agent SDK expects (at least {required}).',
       /** WP-62: quiet hint, no error – a newer CLI stays supported. */
-      claudeNewerThanTested: 'Claude Code {version} is newer than the version tested with Parallax ({tested}).',
+      claudeNewerThanTested:
+        'Claude Code {version} is newer than the version tested with Parallax ({tested}).',
       sdk: 'Agent SDK {version} · expects Claude Code {required} or newer',
       parallax: 'Parallax {version}',
       data: 'Data: {path}',
@@ -211,6 +212,9 @@ export const en = {
       'The server answers but refuses the live connection (WebSocket). Check security software or proxies that filter local traffic.',
     retryIn: { one: 'Retrying in {count} second…', other: 'Retrying in {count} seconds…' },
     reconnecting: 'Connection lost – reconnecting…',
+    /** WP-87: close 4504 – the server restarts for an update or a rollback. */
+    restartingTitle: 'Parallax is restarting…',
+    restartingDescription: 'Switching versions. This window reconnects by itself.',
     serverStoppedTitle: 'Parallax server stopped',
     serverStoppedDescription: 'The local server was shut down. Start Parallax again, then reconnect.',
     reconnect: 'Reconnect',

@@ -13,6 +13,7 @@ export const de: typeof en = {
     files: 'Dateien',
     profiles: 'Profile',
     server: 'Server',
+    updates: 'Updates',
     about: 'Über',
     unsaved: 'ungespeicherte Änderungen',
   },
@@ -111,6 +112,9 @@ export const de: typeof en = {
   },
   profiles: {
     unavailable: 'Der Profil-Editor ist in dieser Ansicht nicht verfügbar.',
+  },
+  updates: {
+    unavailable: 'Updates sind in dieser Ansicht nicht verfügbar.',
   },
   files: {
     editor: 'Editor für „Im Editor öffnen“',

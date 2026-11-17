@@ -360,7 +360,13 @@ const PENDING_REQUEST_KINDS: ReadonlySet<ShellRequestKind> = new Set();
 describe('wired feature slots (WP-20b, WP-40)', () => {
   it('APP_SLOTS wires every slot: the eager components of WP-16/57, every lazy slot behind a SlotBoundary (R4W-19, WP-58, WP-60)', () => {
     // Every slot of the shell has its real component – none is left on the placeholder.
-    expect(Object.keys(APP_SLOTS).sort()).toEqual(Object.keys(DEFAULT_FEATURE_SLOTS).sort());
+    // WP-87: the update slots (features/updates, WP-88a) are wired by WP-89 – then drop this filter.
+    const notYetWired = new Set(['UpdateNotice', 'UpdateBanner', 'UpdatesSettings']);
+    expect(Object.keys(APP_SLOTS).sort()).toEqual(
+      Object.keys(DEFAULT_FEATURE_SLOTS)
+        .filter((key) => !notYetWired.has(key))
+        .sort(),
+    );
     // Eager (no chunk of their own, so no boundary): the decision bar/card and the composer.
     expect(APP_SLOTS.DecisionBar).toBe(DecisionBar);
     expect(APP_SLOTS.DecisionCard).toBe(DecisionCard);

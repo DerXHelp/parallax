@@ -198,6 +198,26 @@ export const ERROR_CATALOG = {
    * (`params.file`, `version`, `supported`; R1-06, ADR-020).
    */
   STORE_VERSION_TOO_NEW: { category: 'store', http: 500, severity: 'error', retryable: false },
+  // updates in the app (WP-87, docs/wp/WP-87.md §1.5) – never category `setup` (no setup screen)
+  /** `params.reason`: network, timeout, http (+ `status`), too_large, schema, url. */
+  UPDATE_CHECK_FAILED: { category: 'internal', http: 502, severity: 'warning', retryable: true },
+  /** `params.reason`: network, timeout, http (+ `status`), size, hash, disk. */
+  UPDATE_DOWNLOAD_FAILED: { category: 'internal', http: 502, severity: 'error', retryable: true },
+  /** `params.file`: `latest.json` | `release.json`. */
+  UPDATE_INVALID_SIGNATURE: { category: 'validation', http: 400, severity: 'error', retryable: false },
+  /** `params.reason`: zip, layout, files, version, same_version, too_large. */
+  UPDATE_INVALID_PACKAGE: { category: 'validation', http: 400, severity: 'error', retryable: false },
+  UPDATE_SDK_FAILED: { category: 'internal', http: 502, severity: 'error', retryable: true },
+  /** No installation (checkout, `pnpm dev`): updates via git. */
+  UPDATE_NOT_PACKAGED: { category: 'conflict', http: 409, severity: 'warning', retryable: false },
+  /** Another update step runs (`params.status`). */
+  UPDATE_BUSY: { category: 'conflict', http: 409, severity: 'warning', retryable: true },
+  /** The new version needs a newer Node.js (`params.required`, `actual`). */
+  UPDATE_NODE_TOO_OLD: { category: 'conflict', http: 409, severity: 'error', retryable: false },
+  /** An older version with other store schemas and no matching backup (`params.version`). */
+  UPDATE_DOWNGRADE_BLOCKED: { category: 'conflict', http: 409, severity: 'error', retryable: false },
+  /** `params.version`, `reason` ∈ UPDATE_RESTART_FAILED_REASONS. */
+  UPDATE_RESTART_FAILED: { category: 'internal', http: 500, severity: 'error', retryable: true },
   // client-side only (never sent by a server)
   CONNECTION_LOST: { category: 'client', http: 0, severity: 'warning', retryable: true },
   COMMAND_TIMEOUT: { category: 'client', http: 0, severity: 'warning', retryable: true },
@@ -206,6 +226,20 @@ export const ERROR_CATALOG = {
 } as const satisfies Record<string, ErrorSpec>;
 
 export type ErrorCode = keyof typeof ERROR_CATALOG;
+
+/** `UPDATE_RESTART_FAILED.params.reason` (WP-87 §1.5): where the switch to a version stopped. */
+export const UPDATE_RESTART_FAILED_REASONS = [
+  'spawn',
+  'handshake',
+  'lock',
+  'package',
+  'backup',
+  'port',
+  'timeout',
+  'exited',
+  'store_too_new',
+] as const;
+export type UpdateRestartFailedReason = (typeof UPDATE_RESTART_FAILED_REASONS)[number];
 
 /** All codes in catalog order. The only allowed type assertion of the contracts (type-tested). */
 export const ERROR_CODES = Object.keys(ERROR_CATALOG) as ErrorCode[];

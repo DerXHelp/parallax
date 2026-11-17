@@ -7,7 +7,7 @@ import { startTasksScenario, TASKS_SESSION_KEY } from './features/tasks/testing'
 import type { RunningScenario } from './playground/PlaygroundScenario';
 import { NotificationCenter } from './shell/NotificationCenter';
 import { QUIET_SLOT_NOTICE_ID, resetQuietSlotFailures } from './shell/SlotBoundary';
-import { FeatureSlotsProvider, type FeatureSlots } from './shell/slots';
+import { DEFAULT_FEATURE_SLOTS, FeatureSlotsProvider, type FeatureSlots } from './shell/slots';
 import { clientStore, resetClientStore } from './state/store';
 import { TooltipProvider } from './ui/tooltip';
 
@@ -62,10 +62,11 @@ afterEach(() => {
   resetQuietSlotFailures();
 });
 
+const WIRED: FeatureSlots = { ...DEFAULT_FEATURE_SLOTS, ...APP_SLOTS };
+
 function slot<K extends keyof FeatureSlots>(key: K): FeatureSlots[K] {
-  const component = APP_SLOTS[key];
-  if (component === undefined) throw new Error(`slot ${key} is not wired`);
-  return component;
+  if (!(key in APP_SLOTS)) throw new Error(`slot ${key} is not wired`);
+  return WIRED[key];
 }
 
 const KEY = TASKS_SESSION_KEY;

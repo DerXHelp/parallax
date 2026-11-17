@@ -6,6 +6,7 @@ import {
   LOGIN_CODE_CHARS,
   PROTOCOL_VERSION,
   SERVER_MESSAGE_TYPES,
+  WS_CLOSE,
   clientMessageSchema,
   commandResultSchemas,
   commandSchema,
@@ -132,7 +133,14 @@ const commands: Command[] = [
   { name: 'session.reload', entryId, what: 'skills' },
   { name: 'session.reload', entryId, what: 'plugins' },
   // WP-69
-  { name: 'session.subagentTranscript', entryId, agentId: 'a655391549dc96788', conversationId: null, offset: null, limit: 100 },
+  {
+    name: 'session.subagentTranscript',
+    entryId,
+    agentId: 'a655391549dc96788',
+    conversationId: null,
+    offset: null,
+    limit: 100,
+  },
   {
     name: 'session.subagentTranscript',
     entryId,
@@ -146,6 +154,12 @@ const commands: Command[] = [
   { name: 'profile.loginCode', profileId: sampleId('pf', 2), code: 'abc123#fake-state' },
   { name: 'profile.loginCancel', profileId: 'standard' },
   { name: 'session.setOutputStyle', entryId, style: 'Explanatory' },
+  // WP-87
+  { name: 'update.check' },
+  { name: 'update.prepare', version: '1.0.1' },
+  { name: 'update.apply', version: '1.0.1', acceptDataLoss: false },
+  { name: 'update.rollback', version: '1.0.0-rc.4', acceptDataLoss: true },
+  { name: 'update.dismiss', what: 'justUpdated' },
 ];
 
 const clientMessages: ClientMessage[] = [
@@ -554,7 +568,14 @@ describe('command results', () => {
   it('WP-65: link.open only takes http(s) links; the new commands answer {}', () => {
     const cmd = (url: string) => ({ type: 'cmd', cmdId: SAMPLE_IDS.cmdId, cmd: { name: 'link.open', url } });
     expect(parseClientMessage(JSON.stringify(cmd('http://localhost:3000/a?b#c'))).ok).toBe(true);
-    for (const bad of ['javascript:alert(1)', 'file:///C:/x', 'https://', 'https://a b', 'https://user@host/x', 'ftp://x']) {
+    for (const bad of [
+      'javascript:alert(1)',
+      'file:///C:/x',
+      'https://',
+      'https://a b',
+      'https://user@host/x',
+      'ftp://x',
+    ]) {
       expect(parseClientMessage(JSON.stringify(cmd(bad))).ok).toBe(false);
     }
     expect(parseCommandResult('link.open', {})).toEqual({});
@@ -567,13 +588,21 @@ describe('command results', () => {
     expect(isHostCommand({ name: 'profile.loginCode', profileId: 'standard', code: 'x' })).toBe(true);
     expect(isHostCommand({ name: 'profile.loginCancel', profileId: 'standard' })).toBe(true);
     expect(isHostCommand({ name: 'session.setOutputStyle', entryId, style: 'Concise' })).toBe(false);
-    const send = (cmd: unknown) => parseClientMessage(JSON.stringify({ type: 'cmd', cmdId: SAMPLE_IDS.cmdId, cmd }));
+    const send = (cmd: unknown) =>
+      parseClientMessage(JSON.stringify({ type: 'cmd', cmdId: SAMPLE_IDS.cmdId, cmd }));
     expect(send({ name: 'profile.loginCode', profileId: 'standard', code: '  abc#def  ' }).ok).toBe(true);
     expect(send({ name: 'profile.loginCode', profileId: 'standard', code: '   ' }).ok).toBe(false);
-    expect(send({ name: 'profile.loginCode', profileId: 'standard', code: 'x'.repeat(LOGIN_CODE_CHARS + 1) }).ok).toBe(false);
+    expect(
+      send({ name: 'profile.loginCode', profileId: 'standard', code: 'x'.repeat(LOGIN_CODE_CHARS + 1) }).ok,
+    ).toBe(false);
     expect(send({ name: 'session.setOutputStyle', entryId, style: '' }).ok).toBe(false);
     expect(send({ name: 'session.setOutputStyle', entryId, style: 'x'.repeat(101) }).ok).toBe(false);
-    for (const name of ['profile.login', 'profile.loginCode', 'profile.loginCancel', 'session.setOutputStyle'] as const) {
+    for (const name of [
+      'profile.login',
+      'profile.loginCode',
+      'profile.loginCancel',
+      'session.setOutputStyle',
+    ] as const) {
       expect(parseCommandResult(name, {})).toEqual({});
     }
   });
@@ -590,11 +619,15 @@ describe('command results', () => {
     expect(ask('   ').ok).toBe(false);
     expect(ask('x'.repeat(LIMITS.sideQuestionChars + 1)).ok).toBe(false);
     const ok = ask('  why?  ');
-    expect(ok.ok && ok.message.type === 'cmd' && ok.message.cmd.name === 'session.askSideQuestion').toBe(true);
+    expect(ok.ok && ok.message.type === 'cmd' && ok.message.cmd.name === 'session.askSideQuestion').toBe(
+      true,
+    );
     if (ok.ok && ok.message.type === 'cmd' && ok.message.cmd.name === 'session.askSideQuestion') {
       expect(ok.message.cmd.question).toBe('why?');
     }
-    expect(parseCommandResult('session.askSideQuestion', { itemId: 'px:cv:1' })).toEqual({ itemId: 'px:cv:1' });
+    expect(parseCommandResult('session.askSideQuestion', { itemId: 'px:cv:1' })).toEqual({
+      itemId: 'px:cv:1',
+    });
     expect(parseCommandResult('session.cancelSideQuestion', {})).toEqual({});
     expect(parseCommandResult('session.deleteSideQuestion', {})).toEqual({});
     expect(parseCommandResult('session.withdrawQueued', { withdrawn: true, text: 'x' })).toEqual({
@@ -606,15 +639,26 @@ describe('command results', () => {
 
   it('WP-67: session info, MCP actions and reloads (sections, actions, results)', () => {
     const cmd = (body: Record<string, unknown>) =>
-      parseClientMessage(JSON.stringify({ type: 'cmd', cmdId: SAMPLE_IDS.cmdId, cmd: { entryId, ...body } })).ok;
+      parseClientMessage(JSON.stringify({ type: 'cmd', cmdId: SAMPLE_IDS.cmdId, cmd: { entryId, ...body } }))
+        .ok;
     expect(cmd({ name: 'session.info', section: 'status' })).toBe(true);
     expect(cmd({ name: 'session.info', section: 'account' })).toBe(false);
     expect(cmd({ name: 'session.mcpAction', server: '', action: 'reconnect' })).toBe(false);
     expect(cmd({ name: 'session.mcpAction', server: 'docs', action: 'restart' })).toBe(false);
     expect(cmd({ name: 'session.reload', what: 'agents' })).toBe(false);
-    expect(parseCommandResult('session.info', { available: false, data: null })).toEqual({ available: false, data: null });
-    const status = { section: 'status', groups: [{ title: 'Session', rows: [{ label: null, value: 'x' }] }], extra: [] };
-    expect(parseCommandResult('session.info', { available: true, data: status })).toEqual({ available: true, data: status });
+    expect(parseCommandResult('session.info', { available: false, data: null })).toEqual({
+      available: false,
+      data: null,
+    });
+    const status = {
+      section: 'status',
+      groups: [{ title: 'Session', rows: [{ label: null, value: 'x' }] }],
+      extra: [],
+    };
+    expect(parseCommandResult('session.info', { available: true, data: status })).toEqual({
+      available: true,
+      data: status,
+    });
     expect(parseCommandResult('session.info', { available: true, data: { section: 'status' } })).toBeNull();
     expect(
       parseCommandResult('session.info', {
@@ -634,7 +678,13 @@ describe('command results', () => {
       ok: true,
       message: { cmd: { conversationId: null, offset: null, limit: SUBAGENT_TRANSCRIPT_LIMITS.pageItems } },
     });
-    for (const agentId of ['', '..\\x', 'a/b', 'a b', 'x'.repeat(SUBAGENT_TRANSCRIPT_LIMITS.agentIdChars + 1)]) {
+    for (const agentId of [
+      '',
+      '..\\x',
+      'a/b',
+      'a b',
+      'x'.repeat(SUBAGENT_TRANSCRIPT_LIMITS.agentIdChars + 1),
+    ]) {
       expect(parse({ name: 'session.subagentTranscript', agentId }).ok).toBe(false);
     }
     const tooMany = SUBAGENT_TRANSCRIPT_LIMITS.maxPageItems + 1;
@@ -721,7 +771,27 @@ describe('command results', () => {
     expect(prompt(LIMITS.attachmentsMax + 1)).toBe(false);
   });
 
-  it('PROTOCOL_VERSION is 3 (Phase 3, ADR-140)', () => {
-    expect(PROTOCOL_VERSION).toBe(3);
+  it('PROTOCOL_VERSION is 4 (WP-87, ADR-220)', () => {
+    expect(PROTOCOL_VERSION).toBe(4);
+  });
+
+  it('WP-87: update commands are host commands with release versions; restart close code', () => {
+    const send = (cmd: unknown) =>
+      parseClientMessage(JSON.stringify({ type: 'cmd', cmdId: SAMPLE_IDS.cmdId, cmd }));
+    expect(isHostCommand({ name: 'update.check' })).toBe(true);
+    expect(isHostCommand({ name: 'update.apply', version: '1.0.1', acceptDataLoss: false })).toBe(true);
+    expect(send({ name: 'update.prepare', version: '1.0.0-rc.4' }).ok).toBe(true);
+    expect(send({ name: 'update.prepare', version: '1.0' }).ok).toBe(false);
+    expect(send({ name: 'update.prepare', version: '1.0.0-beta.1' }).ok).toBe(false);
+    const apply = send({ name: 'update.apply', version: '1.0.1' });
+    expect(apply.ok && apply.message.type === 'cmd' && apply.message.cmd).toEqual({
+      name: 'update.apply',
+      version: '1.0.1',
+      acceptDataLoss: false,
+    });
+    expect(send({ name: 'update.dismiss', what: 'other' }).ok).toBe(false);
+    expect(parseCommandResult('update.check', { available: null })).toEqual({ available: null });
+    expect(parseCommandResult('update.check', { available: '1.0.1' })).toEqual({ available: '1.0.1' });
+    expect(WS_CLOSE.SERVER_RESTARTING).toBe(4504);
   });
 });

@@ -48,6 +48,14 @@ die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale En
 | `src/web/shell/{requests,slots,placeholders}.ts(x)`, `src/web/shell/server-shutdown/**`, `src/web/shell/new-session/**`, `src/web/shell/{NewSessionDialog,NewSessionForm,EmptyState}.tsx`, `src/web/i18n/**`, übrige `src/web/ui/*`, `src/web/features/profiles/**`, `src/web/notifications/**`, `src/web/playground/**`, `src/web/index.{html,css}` | Gerüst / unverändert | Koordinator |
 | `src/server/{claude,host,system,sync,launcher,install}/**` (ohne `ports.ts`), `src/server/config.ts`, `scripts/**`, `test/**`, Root-Configs, `package.json`, Lockfile, `.github/**`, `CHANGELOG.md` | unverändert / Bootstrap | Koordinator |
 
+- **Update in der App (WP-87…89, `docs/wp/WP-87.md` §2.0):** Koordinator `src/shared/**`,
+  `src/server/update/{ports,endpoints,marker,handoff}.ts`, Web-Gerüst (Slots, Abschnitt `updates`, i18n); 87p
+  `src/server/install/{install,layout,testPackage}.ts`, `src/server/store/backup.ts`, `src/shared/changelog.ts`,
+  `scripts/release/changelog.ts`, `scripts/release-pack.ts`, `test/setup/home.ts`; 87a `src/server/update/**` (übrige);
+  87b `src/server/launcher/{args,cli,main,launcher,shutdown,backupStep}.ts`, neu `applyUpdate.ts`; 88a
+  `src/web/features/updates/**`; 88b `src/web/state/{store,connection}.ts`, `src/web/shell/{HostGate,ShellBanners,
+  Sidebar}.tsx`; 89 (Koordinator) `src/server/main.ts`, `src/server/{app,http}/**`, `src/server/sessions/manager.ts`,
+  `src/web/App.tsx`, `e2e/**`, `scripts/build-server.ts`, `scripts/release/smoke.ts`, `.github/**`.
 - Keine Datei wird von zwei Paketen bearbeitet; nichts in fremden Ordnern anlegen. `README.md` von
   Ordnern mit mehreren Ownern (`src/server`, `server/lib`, `server/sessions`, `server/backend`,
   `src/web`, `web/shell`, `web/features`, `web/ui`) pflegt der Koordinator.

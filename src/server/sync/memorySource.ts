@@ -189,6 +189,11 @@ export function createMemorySessionSource(options: { host?: HostState } = {}): M
       case 'profile.loginCode':
       case 'profile.loginCancel':
       case 'session.setOutputStyle':
+      case 'update.check':
+      case 'update.prepare':
+      case 'update.apply':
+      case 'update.rollback':
+      case 'update.dismiss':
         throw new CommandError(makeError('NOT_IMPLEMENTED', { command: cmd.name }));
     }
   }

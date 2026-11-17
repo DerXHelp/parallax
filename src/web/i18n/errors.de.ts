@@ -112,4 +112,16 @@ export const errorsDe: Record<ErrorCode, string> = {
   PROMPT_NOT_DELIVERED:
     'Die Nachricht wurde nicht zugestellt, weil die Session beendet wurde. Sende sie bei Bedarf erneut.',
   STORE_VERSION_TOO_NEW: 'Die Daten stammen von einer neueren Parallax-Version. Aktualisiere Parallax.',
+  UPDATE_CHECK_FAILED: 'Die Suche nach Updates ist fehlgeschlagen.',
+  UPDATE_DOWNLOAD_FAILED: 'Das Update konnte nicht geladen werden.',
+  UPDATE_INVALID_SIGNATURE: 'Das Update ist nicht richtig signiert und wurde nicht installiert.',
+  UPDATE_INVALID_PACKAGE: 'Das ist kein gültiges Parallax-Paket.',
+  UPDATE_SDK_FAILED: 'Das Agent SDK für das Update konnte nicht geholt werden.',
+  UPDATE_NOT_PACKAGED:
+    'Updates gibt es nur in einem installierten Parallax. Diese Kopie aktualisierst du mit git.',
+  UPDATE_BUSY: 'Ein anderer Update-Schritt läuft gerade. Versuch es gleich noch einmal.',
+  UPDATE_NODE_TOO_OLD: 'Diese Version braucht ein neueres Node.js.',
+  UPDATE_DOWNGRADE_BLOCKED:
+    'Diese ältere Version speichert Daten anders, und es gibt keine passende Sicherung.',
+  UPDATE_RESTART_FAILED: 'Der Wechsel auf die neue Version ist fehlgeschlagen.',
 };
