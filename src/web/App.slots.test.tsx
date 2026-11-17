@@ -52,6 +52,9 @@ vi.mock('./features/tasks/TasksPanel', () => {
 vi.mock('./features/tasks/TaskStrip', () => {
   throw new Error('Failed to fetch dynamically imported module (test)');
 });
+vi.mock('./features/updates/UpdatesSettings', () => {
+  throw new Error('Failed to fetch dynamically imported module (test)');
+});
 
 let running: RunningScenario | null = null;
 
@@ -91,6 +94,8 @@ const LAZY_SLOTS: [keyof FeatureSlots, () => ReactNode][] = [
   ['TasksPanel', () => createElement(slot('TasksPanel'), { sessionKey: KEY })],
   // Loads its chunk only with open todos (the scenario below has them).
   ['TaskStrip', () => createElement(slot('TaskStrip'), { sessionKey: KEY })],
+  // WP-87: notice and banner are quiet (nothing instead of a card), the settings section shows it.
+  ['UpdatesSettings', () => createElement(slot('UpdatesSettings'), {})],
 ];
 
 describe('APP_SLOTS: a lazy slot whose chunk fails shows the SlotBoundary card (WP-58, WP-60)', () => {

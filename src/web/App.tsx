@@ -8,6 +8,7 @@ import { defaultFileLinkLabel, PlainReference } from './features/files/component
 import { TASKS_SLOTS } from './features/tasks';
 import { Markdown } from './features/transcript/markdown/Markdown';
 import { SubagentPanelSlot, ToolInputPreviewSlot, TranscriptSlot } from './features/transcript/slots';
+import { UPDATES_SLOTS } from './features/updates';
 import { useT } from './i18n';
 import { AppShell } from './shell/AppShell';
 import { ShellEffects } from './shell/ShellEffects';
@@ -104,6 +105,13 @@ function bounded<P extends object>(
 const bySessionKey = (props: { sessionKey: string }): string => props.sessionKey;
 
 /**
+ * WP-87: the update hint (sidebar head and rail) and the update banner are extras – if their chunk
+ * cannot load or they fail to render, they show nothing; the shell announces it once per window
+ * (quiet SlotBoundary, like FileLink).
+ */
+const quietNothing = (): ReactNode => null;
+
+/**
  * R5W-02: file references sit in paragraphs, inline code, tool cards and task output – dozens per
  * transcript. When the FileLink chunk cannot be loaded (Parallax rebuilt while the window is open)
  * or a link fails to render, each one stays what it shows while its chunk loads: the text as plain
@@ -158,6 +166,9 @@ export const APP_SLOTS: Partial<FeatureSlots> = {
   TasksPanel: bounded(TASKS_SLOTS.TasksPanel, bySessionKey),
   TaskStrip: bounded(TASKS_SLOTS.TaskStrip, bySessionKey),
   SubagentPanel: bounded(SubagentPanelSlot, (props) => `${props.sessionKey}|${props.agentId}`),
+  UpdateNotice: bounded(UPDATES_SLOTS.UpdateNotice, (props) => props.compact, quietNothing),
+  UpdateBanner: bounded(UPDATES_SLOTS.UpdateBanner, undefined, quietNothing),
+  UpdatesSettings: bounded(UPDATES_SLOTS.UpdatesSettings),
 };
 
 /**

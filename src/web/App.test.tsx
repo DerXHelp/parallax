@@ -23,6 +23,7 @@ import { PREFERENCES_SLOTS, SettingsPage } from './features/preferences';
 import { ProfilesSettings } from './features/profiles';
 import { startProfilesDemo } from './features/profiles/lib/demo-host';
 import { TASKS_SLOTS } from './features/tasks';
+import { UPDATES_SLOTS } from './features/updates';
 import { TRANSCRIPT_SLOTS } from './features/transcript/slots';
 import { installResizeObserver } from './features/transcript/testing';
 import { setLanguage } from './i18n';
@@ -360,13 +361,7 @@ const PENDING_REQUEST_KINDS: ReadonlySet<ShellRequestKind> = new Set();
 describe('wired feature slots (WP-20b, WP-40)', () => {
   it('APP_SLOTS wires every slot: the eager components of WP-16/57, every lazy slot behind a SlotBoundary (R4W-19, WP-58, WP-60)', () => {
     // Every slot of the shell has its real component – none is left on the placeholder.
-    // WP-87: the update slots (features/updates, WP-88a) are wired by WP-89 – then drop this filter.
-    const notYetWired = new Set(['UpdateNotice', 'UpdateBanner', 'UpdatesSettings']);
-    expect(Object.keys(APP_SLOTS).sort()).toEqual(
-      Object.keys(DEFAULT_FEATURE_SLOTS)
-        .filter((key) => !notYetWired.has(key))
-        .sort(),
-    );
+    expect(Object.keys(APP_SLOTS).sort()).toEqual(Object.keys(DEFAULT_FEATURE_SLOTS).sort());
     // Eager (no chunk of their own, so no boundary): the decision bar/card and the composer.
     expect(APP_SLOTS.DecisionBar).toBe(DecisionBar);
     expect(APP_SLOTS.DecisionCard).toBe(DecisionCard);
@@ -376,6 +371,7 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
       ...Object.keys(TRANSCRIPT_SLOTS),
       ...Object.keys(FILES_SLOTS),
       ...Object.keys(TASKS_SLOTS),
+      ...Object.keys(UPDATES_SLOTS),
     ]) {
       expect(APP_SLOTS, key).toHaveProperty(key);
     }
@@ -395,6 +391,9 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
       ['TasksPanel', TASKS_SLOTS.TasksPanel],
       ['TaskStrip', TASKS_SLOTS.TaskStrip],
       ['SubagentPanel', TRANSCRIPT_SLOTS.SubagentPanel],
+      ['UpdateNotice', UPDATES_SLOTS.UpdateNotice],
+      ['UpdateBanner', UPDATES_SLOTS.UpdateBanner],
+      ['UpdatesSettings', UPDATES_SLOTS.UpdatesSettings],
     ];
     for (const [key, own] of lazy) {
       expect(APP_SLOTS[key], key).toBeDefined();
