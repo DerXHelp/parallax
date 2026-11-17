@@ -14,6 +14,7 @@ describe('launcher command line', () => {
       open: null,
       autostart: false,
       installRoot: null,
+      applyUpdate: null,
       problem: null,
       serverArgv: ['--port=5000', '--backend=fake'],
     });
@@ -24,6 +25,7 @@ describe('launcher command line', () => {
       open: null,
       autostart: false,
       installRoot: null,
+      applyUpdate: null,
       problem: null,
       serverArgv: [],
     });
@@ -127,6 +129,9 @@ describe('launcher command line', () => {
       '--autostart',
       '--install-root',
       '--open',
+      '--apply-update',
+      '--wait-pid',
+      '--restore',
     ]) {
       expect(LAUNCHER_USAGE).toContain(flag);
     }
@@ -199,5 +204,44 @@ describe('launcher --open / --autostart (ADR-109, ADR-110)', () => {
     expect(parseLauncherArgs(['--open']).problem).toMatch(/needs a parallax:\/\/session/);
     expect(parseLauncherArgs(['--open=']).problem).toMatch(/needs a parallax:\/\/session/);
     expect(parseLauncherArgs(['--autostart', '--open', URI]).problem).toMatch(/cannot be combined/);
+  });
+});
+
+describe('launcher --apply-update (WP-87b, the orchestrator of a version switch)', () => {
+  const ROOT = '--install-root=D:\\apps\\Parallax';
+
+  it('takes the version, --wait-pid and --restore (both value forms); the rest goes to the server', () => {
+    expect(
+      parseLauncherArgs([ROOT, '--apply-update=1.0.1', '--restore', '--wait-pid=4242', '--home=D:\\px']),
+    ).toMatchObject({
+      installRoot: 'D:\\apps\\Parallax',
+      applyUpdate: { version: '1.0.1', restore: true, waitPid: 4242 },
+      problem: null,
+      serverArgv: ['--home=D:\\px'],
+    });
+    expect(parseLauncherArgs([ROOT, '--apply-update', '1.0.0-rc.4', '--wait-pid', '7']).applyUpdate).toEqual({
+      version: '1.0.0-rc.4',
+      restore: false,
+      waitPid: 7,
+    });
+    expect(parseLauncherArgs([ROOT]).applyUpdate).toBeNull();
+  });
+
+  it.each([
+    [['--apply-update=1.0.1', '--wait-pid=1'], /needs --install-root/],
+    [[ROOT, '--apply-update=1.0.1'], /needs --wait-pid/],
+    [[ROOT, '--apply-update=1.0.1', '--wait-pid=0'], /needs --wait-pid/],
+    [[ROOT, '--apply-update=1.0.1', '--wait-pid=1e3'], /needs --wait-pid/],
+    [[ROOT, '--apply-update=1.0', '--wait-pid=1'], /needs a release version/],
+    [[ROOT, '--apply-update', '--wait-pid=1'], /needs a release version/],
+    [[ROOT, '--apply-update=1.0.1', '--wait-pid=1', '--print-url'], /cannot be combined/],
+    [[ROOT, '--apply-update=1.0.1', '--wait-pid=1', '--autostart'], /cannot be combined/],
+    [[ROOT, '--apply-update=1.0.1', '--wait-pid=1', '--open', 'parallax://session/x'], /cannot be combined/],
+    [[ROOT, '--restore'], /belong to --apply-update/],
+    [[ROOT, '--wait-pid=5'], /belong to --apply-update/],
+  ])('refuses %j', (argv, problem) => {
+    const args = parseLauncherArgs(argv);
+    expect(args.problem).toMatch(problem);
+    expect(args.applyUpdate).toBeNull();
   });
 });

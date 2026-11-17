@@ -59,6 +59,14 @@ Auftrag, Bedienung und Entscheidungen: `docs/wp/WP-21.md`; Chrome statt Edge: `d
 | `launcher.ts` (Ergänzung) | `CODE_RETRY_DELAYS_MS` | Einmal-Code bei `failed` bis zu 3× mit Backoff erneut (R2-14), nie bei `token_invalid` |
 | `release.ts` (WP-85) | `releaseInfoSchema`, `readReleaseInfo`, `ReleaseInfoError`, `verifyReleaseSignature`, `RELEASE_PUBLIC_KEYS`, `RELEASE_FILE`, `RELEASE_SIGNATURE_FILE`, `AGENT_SDK_PACKAGE` | `release.json` eines Release-Pakets (unsigniert von `scripts/release-pack.ts`, signiert in der CI); Ed25519 über die genauen Bytes, öffentlicher Schlüssel als JWK `x` |
 | `packageFiles.ts` (WP-85) | `walkPackage`, `hashFiles`, `sha256File`, `comparePackageFiles` | nur normale Dateien (keine Links, Junctions, Hardlinks, Datenströme, Namen nur in Groß-/Kleinschreibung verschieden), SHA-256 je Datei; Vergleich mit der Liste in `release.json` (auch für den Installer, WP-86) |
+| `applyUpdate.ts` (WP-87b) | `runApplyUpdate(request, deps)`, `ApplyUpdateDeps`, `ApplyUpdateRequest`, `createNodeApplyUpdateDeps`, `openUpdateLog`, `failureNotification`, `restartFailedReason`, `PRE_HANDSHAKE_BUDGET_MS`, `UPDATE_LOGS_KEPT` | Orchestrator eines Versionswechsels (`--apply-update`, läuft als Code der alten Version): Sperren `launch`/`install`, Prüfen vor dem Handschlag, `PARALLAX-APPLY-READY`/`-FAILED <reason>` als einzige stdout-Zeile, Warten auf das Ende des alten Servers (Kill nur bei passender Startzeit), volle Prüfung, Sicherung (Restore-Modus), Marker `pending`, Umschalten, Start per `launchLocked`, automatischer Rückweg, Benachrichtigung; Protokoll `<home>\logs\update-<zeit>.log` (fünf bleiben) |
+| `backupStep.ts` (WP-86/87b) | `backupBeforeStart(home, buildId, {now?, installedVersion?})`, `versionOfBuildId` | Sicherung bei neuer Build-ID; im Paket-Modus schreibt eine gespeicherte Sicherung den Marker `installed` (`update-result.json`) |
+
+**Update in der App (WP-87b, `docs/wp/WP-87b.md`):** `--apply-update=<v> --wait-pid=<pid> [--restore]` (nur mit
+`--install-root`, nicht mit `--open`/`--autostart`/`--print-url`) verzweigt in `cli.ts` vor dem Start in den
+Orchestrator. `launchLocked` ist der Start ohne eigene Start-Sperre (die hält der Orchestrator), `tryDirectoryLock`
+ein einzelner Sperrversuch. `createServerShutdown({sparePids})` und `killChildProcessTrees({except})` verschonen den
+Orchestrator beim Abräumen der Kindprozesse.
 
 **Paket-Modus (WP-85, ADR-217):** Im Release-Paket läuft der Launcher als `dist/launcher.js` (gebündelt von
 `scripts/build-server.ts`). Liegt `release.json` neben `dist/`, kommt die erwartete Build-ID aus ihr, gebaut wird nie;

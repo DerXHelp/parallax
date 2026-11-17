@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events';
 import pino from 'pino';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ProcessInfo } from '../lib/process';
+import type * as ProcessModule from '../lib/process';
+import { childProcesses, killProcessTree, type ProcessInfo } from '../lib/process';
 import {
   FORCED_EXIT_CODE,
   createServerShutdown,
@@ -9,6 +10,14 @@ import {
   type ServerShutdownOptions,
   type SignalTarget,
 } from './shutdown';
+
+// The default sweep of createServerShutdown (sparePids, WP-87b) lists and ends children through
+// lib/process – replaced here; every other test injects its own forceKill/list/kill.
+vi.mock('../lib/process', async (importOriginal) => ({
+  ...(await importOriginal<typeof ProcessModule>()),
+  childProcesses: vi.fn(),
+  killProcessTree: vi.fn(),
+}));
 
 const silent = pino({ level: 'silent' });
 
@@ -149,6 +158,39 @@ describe('server shutdown frame (C.8, R0-19)', () => {
     expect(exits).toEqual([1]);
   });
 
+  it('WP-87b: the default sweep spares the PIDs of sparePids (the update orchestrator)', async () => {
+    const started = new Date(Date.now() + 1_000);
+    const child = (pid: number, name: string): ProcessInfo => ({
+      pid,
+      name,
+      parentPid: process.pid,
+      startedAt: started,
+    });
+    vi.mocked(childProcesses).mockResolvedValue({
+      kind: 'ok',
+      processes: [child(301, 'claude.exe'), child(302, 'node.exe'), child(303, 'claude.exe')],
+    });
+    const killed: number[] = [];
+    vi.mocked(killProcessTree).mockImplementation((pid) => {
+      killed.push(pid);
+      return Promise.resolve();
+    });
+    const spare = vi.fn(() => [302]);
+    const shutdown = createServerShutdown({
+      logger: silent,
+      exit: () => undefined,
+      graceMs: 100,
+      sparePids: spare,
+      stopSessions: () => new Promise<void>((resolve) => setTimeout(resolve, 1_000)),
+    });
+    const done = shutdown.stop('command');
+    expect(spare).not.toHaveBeenCalled();
+    await vi.runAllTimersAsync();
+    await done;
+    expect(spare).toHaveBeenCalledTimes(1);
+    expect(killed).toEqual([301, 303]);
+  });
+
   it('works without an engine hook (no force kill)', async () => {
     const { shutdown, events } = setup();
     const done = shutdown.stop('signal');
@@ -212,6 +254,30 @@ describe('killChildProcessTrees (taskkill /T /F of the remaining children)', () 
       logger: silent,
     });
     expect(killed).toEqual([201, 204]);
+    expect(count).toBe(1);
+  });
+
+  it('WP-87b: never ends a child in except (the update orchestrator)', async () => {
+    const killed: number[] = [];
+    const count = await killChildProcessTrees({
+      parentPid: 100,
+      since: new Date('2026-10-15T08:00:00.000Z'),
+      except: [205],
+      list: () =>
+        Promise.resolve({
+          kind: 'ok',
+          processes: [
+            child(201, 'claude.exe', '2026-10-15T08:05:00.000Z'),
+            child(205, 'node.exe', '2026-10-15T09:00:00.000Z'),
+          ],
+        }),
+      kill: (pid) => {
+        killed.push(pid);
+        return Promise.resolve();
+      },
+      logger: silent,
+    });
+    expect(killed).toEqual([201]);
     expect(count).toBe(1);
   });
 

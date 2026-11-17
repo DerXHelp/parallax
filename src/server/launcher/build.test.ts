@@ -115,10 +115,12 @@ describe('build id of dist/server.js (ADR-013)', () => {
     const script = await readFile(path.join(repoRoot, 'scripts', 'build-server.ts'), 'utf8');
     expect(script).toContain('banner: { js: `// ${PRODUCT_NAME} ${kind}, build ${buildId}` }');
     // WP-85: the same script writes dist/launcher.js; only the server bundle carries "server".
-    expect(script).toContain("['src/server/main.ts', 'dist/server.js', 'server']");
-    expect(script).toContain("['src/server/launcher/main.ts', 'dist/launcher.js', 'launcher']");
+    expect(script).toContain("['src/server/main.ts', 'server.js', 'server']");
+    expect(script).toContain("['src/server/launcher/main.ts', 'launcher.js', 'launcher']");
     // WP-86: and dist/install.js (the installer of a package).
-    expect(script).toContain("['src/server/install/main.ts', 'dist/install.js', 'installer']");
+    expect(script).toContain("['src/server/install/main.ts', 'install.js', 'installer']");
+    // WP-87: into dist/ unless --out-dir names another folder (test build).
+    expect(script).toContain("path.resolve(repoRoot, outArg ?? 'dist')");
     expect(parseBundleBuildId('// Parallax server, build 1.0.0+abc')).toBe('1.0.0+abc');
     expect(parseBundleBuildId('// Parallax launcher, build 1.0.0+abc')).toBeNull();
   });

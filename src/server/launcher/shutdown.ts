@@ -8,7 +8,8 @@
  *
  * `stop()`: `stopSessions()` (engine: `close()` of every query, flush stores, `backend.dispose()`)
  * – if it is still running after `graceMs` (5 s, C.8), the remaining child process trees of the
- * server are ended with `taskkill /T /F` – then the close steps in order (compose.ts: `http` → WS
+ * server are ended with `taskkill /T /F` (except `sparePids`: the update orchestrator, WP-87b) –
+ * then the close steps in order (compose.ts: `http` → WS
  * close 4503, `system`, `profileChecks`, `stores`, `homeAccess`, `lock`, `homeLock`), each bounded
  * by a timeout, then
  * `exit(code)` (the log file is closed by the exit wrapper of compose.ts).
@@ -36,6 +37,12 @@ export interface ServerShutdownOptions {
   stopSessions?: () => Promise<void>;
   /** Called once if `stopSessions` is still running after `graceMs` (default killChildProcessTrees). */
   forceKill?: () => Promise<unknown>;
+  /**
+   * WP-87b: child PIDs the default sweep never ends – the orchestrator of a version switch
+   * (`UpdateService.orchestratorPid()`), which must outlive this server. Read when the sweep runs.
+   * Ignored with a custom `forceKill`.
+   */
+  sparePids?: () => readonly number[];
   /** Close steps after the sessions, in order. */
   steps?: readonly ShutdownStep[];
   /** C.8: wait this long for `close()` before `taskkill /T /F` (default 5 s). */
@@ -88,7 +95,8 @@ export function createServerShutdown(options: ServerShutdownOptions = {}): Serve
   const sessionsTimeoutMs = Math.max(graceMs, options.sessionsTimeoutMs ?? SHUTDOWN_SESSIONS_TIMEOUT_MS);
   const stepTimeoutMs = options.stepTimeoutMs ?? SHUTDOWN_STEP_TIMEOUT_MS;
   const forceKillTimeoutMs = options.forceKillTimeoutMs ?? SHUTDOWN_FORCE_KILL_TIMEOUT_MS;
-  const forceKill = options.forceKill ?? (() => killChildProcessTrees({ logger: log }));
+  const forceKill =
+    options.forceKill ?? (() => killChildProcessTrees({ logger: log, except: options.sparePids?.() ?? [] }));
   let running: Promise<void> | null = null;
 
   async function stopSessions(): Promise<void> {
@@ -165,14 +173,16 @@ const SWEEP_EXCLUDED = new Set(['powershell.exe']);
 /**
  * Ends every direct child process tree of the server (`taskkill /PID <pid> /T /F`, C.8) – the
  * `claude.exe` sessions that did not exit after `close()`, with their Bash/MCP children. Children
- * started before `since` are skipped (PID reuse: a child is never older than its parent). Returns
- * the number of trees ended; failures – also a query that gave no answer (R2-02) – are logged,
- * never thrown.
+ * started before `since` are skipped (PID reuse: a child is never older than its parent), and so
+ * are the PIDs in `except` (WP-87b: the orchestrator of a version switch). Returns the number of
+ * trees ended; failures – also a query that gave no answer (R2-02) – are logged, never thrown.
  */
 export async function killChildProcessTrees(
   options: {
     parentPid?: number;
     since?: Date;
+    /** Children never ended (the update orchestrator, `createServerShutdown({sparePids})`). */
+    except?: readonly number[];
     list?: (pid: number) => Promise<ProcessQueryResult>;
     kill?: (pid: number) => Promise<void>;
     logger?: Logger;
@@ -192,10 +202,15 @@ export async function killChildProcessTrees(
     );
     return 0;
   }
+  const spared = new Set(options.except ?? []);
   let killed = 0;
   for (const child of listed.processes) {
     if (SWEEP_EXCLUDED.has(child.name.toLowerCase())) continue;
     if (child.startedAt.getTime() < since.getTime()) continue;
+    if (spared.has(child.pid)) {
+      log.info({ pid: child.pid, name: child.name }, 'shutdown: spared child process (update orchestrator)');
+      continue;
+    }
     try {
       await kill(child.pid);
       killed += 1;

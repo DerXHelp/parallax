@@ -97,8 +97,8 @@ try {
     });
     outputs.push(...Object.keys(result.metafile.outputs));
   }
-  const kind = updateTest ? 'update test bundles' : 'server bundles';
-  process.stdout.write(`${kind} written: ${outputs.join(', ')} (build ${buildId})\n`);
+  const label = updateTest ? 'update test bundles' : 'server bundles';
+  process.stdout.write(`${label} written: ${outputs.join(', ')} (build ${buildId})\n`);
 } finally {
   await lock?.release();
 }
