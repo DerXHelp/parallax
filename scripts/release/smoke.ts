@@ -20,7 +20,13 @@ import { z } from 'zod';
 import { healthResponseSchema } from '@shared/http';
 import { createNodeInstallerDeps } from '../../src/server/install/nodeDeps';
 import { runInstallerCli } from '../../src/server/install/cli';
-import { CURRENT_FILE, currentFileSchema, START_SCRIPT } from '../../src/server/install/layout';
+import {
+  CURRENT_FILE,
+  currentFileSchema,
+  PACKAGE_ROOT_DIR,
+  START_CMD,
+  START_SCRIPT,
+} from '../../src/server/install/layout';
 import {
   PACKAGE_NODE_FLAGS,
   RELEASE_FILE,
@@ -204,6 +210,14 @@ async function main(argv: readonly string[]): Promise<void> {
   const link = path.join(env.APPDATA ?? '', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Parallax.lnk');
   if (!(await exists(link))) throw new SmokeError(`no Start menu entry at ${link}`);
   log(`installed ${release.version} in ${root}, Start menu entry ok`);
+  // WP-87: the root files come from the package (`root/`), so an update brings its own start script.
+  for (const file of [START_SCRIPT, START_CMD]) {
+    const packaged = await readFile(path.join(pkgDir, PACKAGE_ROOT_DIR, file));
+    if (!packaged.equals(await readFile(path.join(root, file)))) {
+      throw new SmokeError(`${file} in the root differs from ${PACKAGE_ROOT_DIR}/${file} of the package`);
+    }
+  }
+  log(`root files match ${PACKAGE_ROOT_DIR}/ of the package`);
 
   // 3. Start through start.mjs like parallax.cmd does.
   const home = path.join(work, 'home');
