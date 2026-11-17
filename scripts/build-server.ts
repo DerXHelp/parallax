@@ -1,5 +1,6 @@
 /**
- * Bundles the server into dist/server.js (ESM, Node >= 22).
+ * Bundles the server into dist/server.js and the launcher into dist/launcher.js (ESM, Node >= 24.5;
+ * the launcher bundle is what a release package starts, WP-85 - a checkout runs it with tsx).
  * npm packages stay external and are loaded from node_modules at runtime (pino transports,
  * the Agent SDK and native modules must not be bundled). Only own code and `@shared/*` are bundled.
  * The build id (same value as the web bundle, see resolveBuildId) is injected via `define`
@@ -48,27 +49,34 @@ if (process.env[BUILD_LOCK_HELD_ENV] !== '1' && lock === null) {
 
 try {
   const buildId = resolveBuildId(repoRoot);
-  const result = await build({
-    absWorkingDir: repoRoot,
-    entryPoints: ['src/server/main.ts'],
-    outfile: 'dist/server.js',
-    bundle: true,
-    platform: 'node',
-    format: 'esm',
-    target: 'node22',
-    packages: 'external',
-    // Only @shared is an alias for the server; @web must never be reachable from here.
-    alias: { '@shared': sharedDir },
-    tsconfig: 'src/server/tsconfig.json',
-    define: { [BUILD_ID_DEFINE]: JSON.stringify(buildId) },
-    banner: { js: `// ${PRODUCT_NAME} server, build ${buildId}` },
-    sourcemap: true,
-    legalComments: 'none',
-    logLevel: 'info',
-    metafile: true,
-  });
-  const outputs = Object.keys(result.metafile.outputs);
-  process.stdout.write(`server bundle written: ${outputs.join(', ')} (build ${buildId})\n`);
+  const outputs: string[] = [];
+  for (const [entry, outfile, kind] of [
+    ['src/server/main.ts', 'dist/server.js', 'server'],
+    ['src/server/launcher/main.ts', 'dist/launcher.js', 'launcher'],
+  ] as const) {
+    const result = await build({
+      absWorkingDir: repoRoot,
+      entryPoints: [entry],
+      outfile,
+      bundle: true,
+      platform: 'node',
+      format: 'esm',
+      target: 'node24',
+      packages: 'external',
+      // Only @shared is an alias for the server; @web must never be reachable from here.
+      alias: { '@shared': sharedDir },
+      tsconfig: 'src/server/tsconfig.json',
+      define: { [BUILD_ID_DEFINE]: JSON.stringify(buildId) },
+      // The server banner is parsed by the launcher's build check (launcher/build.ts).
+      banner: { js: `// ${PRODUCT_NAME} ${kind}, build ${buildId}` },
+      sourcemap: true,
+      legalComments: 'none',
+      logLevel: 'info',
+      metafile: true,
+    });
+    outputs.push(...Object.keys(result.metafile.outputs));
+  }
+  process.stdout.write(`server bundles written: ${outputs.join(', ')} (build ${buildId})\n`);
 } finally {
   await lock?.release();
 }

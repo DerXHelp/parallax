@@ -82,6 +82,7 @@ export async function runLauncherCli(argv: readonly string[], deps: LauncherCliD
       serverArgs: serverArgsFor(config),
       build: args.build,
       printUrl: args.printUrl,
+      installRoot: args.installRoot,
       backend: config.backend,
       // V2-13: a port from the settings is a request too (the hint says when it takes effect).
       portExplicit: portRequested(args.serverArgv, deps.env) || (peek.settings?.port ?? null) !== null,

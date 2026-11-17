@@ -46,7 +46,9 @@ describe('rating', () => {
     ['v26.4.0', 'ok'],
     ['26.0.0', 'ok'],
     ['v24.11.1', 'warn'],
-    ['v22.0.0', 'warn'],
+    ['v24.5.0', 'warn'],
+    ['v24.4.1', 'fail'],
+    ['v22.20.0', 'fail'],
     ['v21.9.0', 'fail'],
     ['v18.20.0', 'fail'],
     ['garbage', 'fail'],
@@ -101,7 +103,11 @@ describe('rating', () => {
   });
 
   it('WP-62: shows the tested version; a newer claude is a warning with the cli-check hint', () => {
-    const same = checkProfileStatus(STANDARD, sampleClaudeInstallStatus({ testedVersion: '2.1.300' }), '2.1.296');
+    const same = checkProfileStatus(
+      STANDARD,
+      sampleClaudeInstallStatus({ testedVersion: '2.1.300' }),
+      '2.1.296',
+    );
     expect(same[0]).toEqual({
       id: 'claude:standard',
       title: 'claude',
@@ -115,14 +121,18 @@ describe('rating', () => {
     );
     expect(newer[0]).toMatchObject({
       level: 'warn',
-      detail: 'C:\\Users\\user\\.local\\bin\\claude.exe, 2.1.330 (tested 2.1.322, profile "Standard") – newer than tested',
+      detail:
+        'C:\\Users\\user\\.local\\bin\\claude.exe, 2.1.330 (tested 2.1.322, profile "Standard") – newer than tested',
     });
     expect(newer[0]?.hint).toContain('pnpm cli-check');
     expect(newer[1]?.level).toBe('ok');
     // Older than tested (e.g. a second profile with its own claude) is fine; too old stays a failure.
     expect(
-      checkProfileStatus(STANDARD, sampleClaudeInstallStatus({ version: '2.1.300', testedVersion: '2.1.322' }), '2.1.296')[0]
-        ?.level,
+      checkProfileStatus(
+        STANDARD,
+        sampleClaudeInstallStatus({ version: '2.1.300', testedVersion: '2.1.322' }),
+        '2.1.296',
+      )[0]?.level,
     ).toBe('ok');
     expect(
       checkProfileStatus(
@@ -171,16 +181,16 @@ describe('rating', () => {
       level: 'ok',
       detail: 'C:\\c\\chrome.exe (version unknown)',
     });
-    expect(preflightExitCode([checkNode('v24.0.0'), checkRegistry(null)])).toBe(0);
+    expect(preflightExitCode([checkNode('v24.11.1'), checkRegistry(null)])).toBe(0);
     expect(preflightExitCode([checkNode('v26.0.0'), checkChrome(null)])).toBe(1);
   });
 
   it('formats an English report', () => {
-    const text = formatPreflight([checkNode('v24.0.0'), checkChrome(null), checkRegistry('https://r/')]);
+    const text = formatPreflight([checkNode('v24.11.1'), checkChrome(null), checkRegistry('https://r/')]);
     expect(text).toBe(
       [
         'Parallax preflight',
-        '  WARN  node      v24.0.0',
+        '  WARN  node      v24.11.1',
         '                  -> Node 26 is the standard version of this project.',
         '  FAIL  chrome    not found',
         '                  -> Parallax opens its window with Google Chrome (App Paths, Program Files or %LOCALAPPDATA%) - install Chrome.',

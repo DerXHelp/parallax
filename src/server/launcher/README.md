@@ -57,6 +57,14 @@ Auftrag, Bedienung und Entscheidungen: `docs/wp/WP-21.md`; Chrome statt Edge: `d
 | `exitCodes.ts` | `SERVER_EXIT_CODES` | 3 = `STORE_VERSION_TOO_NEW`, 4 = Port belegt, 5 = Home belegt (`acquireHomeLock` → `busy`, R2-05) |
 | `shutdown.ts` | `createServerShutdown` → `ServerShutdown` (`stop`, `stopping`, `installSignalHandlers`), `killChildProcessTrees` | Rahmen „Server beenden“: Engine-Hook → nach 5 s `taskkill /T /F` → Schritte mit Timeout → Exit (Dauer je Schritt in „shutdown: done“, WP22-05); Kinderliste dreiwertig (`unknown` → nichts beendet) |
 | `launcher.ts` (Ergänzung) | `CODE_RETRY_DELAYS_MS` | Einmal-Code bei `failed` bis zu 3× mit Backoff erneut (R2-14), nie bei `token_invalid` |
+| `release.ts` (WP-85) | `releaseInfoSchema`, `readReleaseInfo`, `ReleaseInfoError`, `verifyReleaseSignature`, `RELEASE_PUBLIC_KEYS`, `RELEASE_FILE`, `RELEASE_SIGNATURE_FILE`, `AGENT_SDK_PACKAGE` | `release.json` eines Release-Pakets (unsigniert von `scripts/release-pack.ts`, signiert in der CI); Ed25519 über die genauen Bytes, öffentlicher Schlüssel als JWK `x` |
+| `packageFiles.ts` (WP-85) | `walkPackage`, `hashFiles`, `sha256File`, `comparePackageFiles` | nur normale Dateien (keine Links, Junctions, Hardlinks, Datenströme, Namen nur in Groß-/Kleinschreibung verschieden), SHA-256 je Datei; Vergleich mit der Liste in `release.json` (auch für den Installer, WP-86) |
+
+**Paket-Modus (WP-85, ADR-217):** Im Release-Paket läuft der Launcher als `dist/launcher.js` (gebündelt von
+`scripts/build-server.ts`). Liegt `release.json` neben `dist/`, kommt die erwartete Build-ID aus ihr, gebaut wird nie;
+ein unpassendes `dist/` ist `package_damaged`, die Meldung zu Exit 3 nennt kein git. `--install-root <ordner>` ist das
+Arbeitsverzeichnis von Server und Chrome (nie ein Versionsordner); Autostart, Protokoll und Startmenü auf den
+Stammordner folgen mit WP-86.
 
 Tests: Unit-Tests je Modul mit Fakes (Uhr, Spawn, HTTP, fs), `client.test.ts` gegen den echten
 WP-10-Server (`startTestServer`), `launcher.integration.test.ts` mit einem Fake-Server-Skript im

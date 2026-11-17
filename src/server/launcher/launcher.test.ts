@@ -267,6 +267,21 @@ describe('launcher: fresh start (architecture §5.1 (h))', () => {
     expect(w.builds).toBe(0);
   });
 
+  it('WP-85: a package never builds - an outdated dist/ is a damaged installation', async () => {
+    const w = world({
+      overrides: {
+        packaged: true,
+        checkBuild: () =>
+          Promise.resolve({ upToDate: false, reason: 'stale', bundled: '1.0.0+old', expected: '1.0.0+abc' }),
+      },
+    });
+    const error = await failure(runLauncher(options(), w.deps));
+    expect(error.reason).toBe('package_damaged');
+    expect(error.message).toContain('Install Parallax again');
+    expect(w.builds).toBe(0);
+    expect(w.started).toEqual([]);
+  });
+
   it('a failed build stops before the server start', async () => {
     const w = world({
       overrides: {
@@ -453,7 +468,16 @@ describe('launcher: start failures', () => {
     expect(error.exitCode).toBe(3);
     expect(error.message).toContain('Update Parallax');
     expect(error.message).toContain('Server output: sessions.json was written by a newer Parallax');
+    expect(error.message).toContain('git pull');
     expect(w.chromeCalls).toEqual([]);
+  });
+
+  it('WP-85: exit code 3 in a package → "update or restore a backup", no git', async () => {
+    const w = world({ onStart: { exit: { code: 3, signal: null } }, overrides: { packaged: true } });
+    const error = await failure(runLauncher(options(), w.deps));
+    expect(error.reason).toBe('store_too_new');
+    expect(error.message).toContain('Update Parallax (or restore a backup)');
+    expect(error.message).not.toContain('git pull');
   });
 
   it('exit code 4 or EADDRINUSE in the output = port in use (race after the probe)', async () => {

@@ -36,7 +36,11 @@ export interface PreflightCheck {
   hint?: string;
 }
 
-export const NODE_MIN_MAJOR = 22;
+/**
+ * engines.node in package.json (WP-85): the first Node 24 with `--use-system-ca` and the proxy from the
+ * environment (`--use-env-proxy`, 24.5.0) - release packages start Node with them (WP-83 §8.2).
+ */
+export const NODE_MIN_VERSION = '24.5.0';
 export const NODE_STANDARD_MAJOR = 26;
 /** engines.pnpm in package.json. */
 export const PNPM_MIN_VERSION = '12.8.0';
@@ -46,11 +50,12 @@ export const PNPM_MIN_VERSION = '12.8.0';
 export function checkNode(version: string): PreflightCheck {
   const major = Number.parseInt(version.replace(/^v/, '').split('.')[0] ?? '', 10);
   const base = { id: 'node', title: 'node', detail: version.startsWith('v') ? version : `v${version}` };
-  if (!Number.isFinite(major) || major < NODE_MIN_MAJOR) {
+  const order = compareVersions(version, NODE_MIN_VERSION);
+  if (order === null || order < 0) {
     return {
       ...base,
       level: 'fail',
-      hint: `Node ${NODE_MIN_MAJOR} or newer is required (standard: ${NODE_STANDARD_MAJOR}).`,
+      hint: `Node ${NODE_MIN_VERSION} or newer is required (standard: ${NODE_STANDARD_MAJOR}).`,
     };
   }
   if (major !== NODE_STANDARD_MAJOR) {

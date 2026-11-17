@@ -13,7 +13,7 @@ if (-not (Test-Path -LiteralPath $tsx)) {
 # Only an application from the PATH (PowerShell never runs programs from the current directory).
 $node = Get-Command -Name node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($null -eq $node) {
-  Write-Host 'Parallax: Node.js was not found on the PATH - install Node.js 22 or newer.'
+  Write-Host 'Parallax: Node.js was not found on the PATH - install Node.js 24.5 or newer.'
   exit 1
 }
 & $node.Source $tsx --tsconfig (Join-Path $root 'src\server\tsconfig.json') (Join-Path $root 'src\server\launcher\main.ts') @args

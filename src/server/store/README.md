@@ -11,6 +11,7 @@ Store-Ports stehen in `src/server/sync/ports.ts`.
 | `decisions.ts` | `createDecisionStore({ home, warnings?, … })` → `DecisionStore` + `flush()`/`close()`, `entryDir`, `planPath`, `ENTRIES_DIR`, `DECISIONS_FILE` | `entries/<entryId>/decisions.json`, `entries/<entryId>/plans/v<N>.md` |
 | `transcripts.ts` | `createTranscriptStore({ home, validation?, warnings?, flushMs?, cacheSize?, logger? })` → `TranscriptStore` + `stats()`/`close()`, `transcriptPath`, `isStreamingItem`, `TranscriptValidation`, `TRANSCRIPT_FAILURES_BEFORE_WARNING` | `entries/<entryId>/<conversationId>.transcript.jsonl` |
 | `blobs.ts` | `createBlobStore({ home, logger? })` → `BlobStore` (`put(data, mediaType, name?, size?)`) + `flush()`/`close()`, `blobFilePath`, `blobMetaPath` | `blobs/<blobId>`, `blobs/<blobId>.meta.json` (`blobRefSchema`, Phase 2 mit `width`/`height`) |
+| `schemas.ts` | `STORE_SCHEMAS` (die eine Liste der Stores: Id, Bereich, Art, zod-Schema), `schemaHash`, `storeSchemaHashes` – Schema-Hashes für `release.json` (WP-85, WP-83 §9.4), Liste für die Sicherung (WP-86); ein Test verlangt jedes Schema eines `new JsonStore` darin | – |
 | `attachments.ts` | `createAttachmentFileStore(home, blobs, { fs?, sizeOf? })` → `AttachmentFileStore`, `attachmentsDir`, `sanitizeAttachmentName`, `ATTACHMENTS_DIR`, `ATTACHMENT_NAME_MAX` (120) | `entries/<entryId>/attachments/<blobId[0..16]>/<Name>` (Phase 3, ADR-146) |
 
 Weitere Dateien über `JsonStore`, aber außerhalb dieses Ordners: `auth-secret.json`

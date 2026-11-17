@@ -57,6 +57,7 @@ import {
 } from './chromeWindow';
 import { SERVER_EXIT_CODES } from './exitCodes';
 import { readServerLock, serverLockPath, type LockReadResult } from './lockFile';
+import type { ReleaseInfo } from './release';
 import {
   logsDir,
   probePort,
@@ -81,7 +82,8 @@ export type LauncherErrorReason =
   | 'chrome_failed'
   | 'backend_mismatch'
   | 'launch_busy'
-  | 'build_busy';
+  | 'build_busy'
+  | 'package_damaged';
 
 /** A failure with a ready-to-print English message; `exitCode` for the launcher process. */
 export class LauncherError extends Error {
@@ -108,7 +110,12 @@ export interface LauncherDeps {
   checkHealth(port: number): Promise<HealthCheck>;
   readLock(home: string): Promise<LockReadResult>;
   requestCode(port: number, token: LauncherToken): Promise<LauncherCodeResult>;
-  /** Build id the current checkout would get (null = unknown). */
+  /**
+   * WP-85: a release package (`release.json` next to `dist/`): never builds, an outdated `dist/` is
+   * a damaged installation. Default false (checkout).
+   */
+  packaged?: boolean;
+  /** Build id the current checkout (package: `release.json`) would get (null = unknown). */
   expectedBuildId(): Promise<string | null>;
   checkBuild(expected: string | null): Promise<BuildState>;
   runBuild(): Promise<BuildResult>;
@@ -153,6 +160,8 @@ export interface LauncherOptions {
   pollMs?: number;
   /** Phase 2 (`--open`, ADR-109): the window selects this session (`#session=<entryId>`). */
   entryId?: EntryId | null;
+  /** WP-85 `--install-root`: working directory of server and Chrome (null/absent = repo root / inherited). */
+  installRoot?: string | null;
   /**
    * Phase 2 (`--autostart`, ADR-110): false = only make sure the server runs – no code, no window
    * (`settings.autostart.openWindow` off). Default true.
@@ -317,7 +326,8 @@ async function hintsForRunningServer(
   const expected = await deps.expectedBuildId();
   if (expected !== null && expected !== runningBuildId) {
     deps.out(
-      `The running server is an older build (${runningBuildId}, checkout: ${expected}). To update, choose ` +
+      `The running server is an older build (${runningBuildId}, ${deps.packaged === true ? 'installed' : 'checkout'}: ` +
+        `${expected}). To update, choose ` +
         '"Stop server" in the Parallax menu and start Parallax again.',
     );
   }
@@ -326,6 +336,13 @@ async function hintsForRunningServer(
 async function ensureBuild(options: LauncherOptions, deps: LauncherDeps): Promise<void> {
   let state = await deps.checkBuild(await deps.expectedBuildId());
   if (state.upToDate) return;
+  if (deps.packaged === true) {
+    throw new LauncherError(
+      'package_damaged',
+      `This Parallax installation is incomplete (dist/ does not match release.json: ${state.reason}). ` +
+        'Install Parallax again.',
+    );
+  }
   // R3-04: a launcher of another data directory may be building the same checkout right now.
   const lock = await waitForLock(
     () => deps.acquireBuildLock(),
@@ -476,8 +493,11 @@ async function handleExit(
   if (exit.code === SERVER_EXIT_CODES.storeVersionTooNew) {
     throw new LauncherError(
       'store_too_new',
-      `The data in ${options.home} was written by a newer Parallax version. Update Parallax (git pull, ` +
-        `pnpm install) and start it again - the files were left unchanged.${detail}`,
+      `The data in ${options.home} was written by a newer Parallax version. ` +
+        (deps.packaged === true
+          ? 'Update Parallax (or restore a backup) and start it again'
+          : 'Update Parallax (git pull, pnpm install) and start it again') +
+        ` - the files were left unchanged.${detail}`,
     );
   }
   const portInUse = exit.code === SERVER_EXIT_CODES.portInUse || /\bEADDRINUSE\b/.test(output);
@@ -585,8 +605,12 @@ async function openWindow(
 }
 
 export interface NodeLauncherDepsOptions {
-  /** Repo root (dist/, node_modules/, repo.config.ts). */
+  /** Repo root (dist/, node_modules/, repo.config.ts); in a package its version folder. */
   repoRoot: string;
+  /** WP-85: `release.json` of a package (package mode), null in a checkout. */
+  release?: ReleaseInfo | null;
+  /** WP-85: working directory of server and Chrome (`--install-root`); default repo root / inherited. */
+  workDir?: string | null;
   home: string;
   /** Absolute path of the server entry (`<repo>/dist/server.js`). */
   serverScript: string;
@@ -610,7 +634,10 @@ async function tryDirectoryLock(kind: DirectoryLockKind, dir: string): Promise<L
 export function createNodeLauncherDeps(options: NodeLauncherDepsOptions): LauncherDeps {
   const nodePath = options.nodePath ?? process.execPath;
   const env = options.env ?? process.env;
+  const release = options.release ?? null;
+  const workDir = options.workDir ?? null;
   return {
+    packaged: release !== null,
     acquireLaunchLock: (home) => tryDirectoryLock('launch', home),
     // CR-04: keyed without the data-directory path rules (a checkout on a UNC share builds too).
     acquireBuildLock: () => acquireBuildLock(options.repoRoot),
@@ -618,7 +645,8 @@ export function createNodeLauncherDeps(options: NodeLauncherDepsOptions): Launch
     checkHealth: (port) => checkHealth(port),
     readLock: (home) => readServerLock(home),
     requestCode: (port, token) => requestLauncherCode(port, token),
-    expectedBuildId: () => resolveCheckoutBuildId(options.repoRoot),
+    expectedBuildId: () =>
+      release === null ? resolveCheckoutBuildId(options.repoRoot) : Promise.resolve(release.buildId),
     checkBuild: (expected) => checkBuild({ repoRoot: options.repoRoot, expected }),
     runBuild: () => runBuild({ repoRoot: options.repoRoot, nodePath, env }),
     probePort,
@@ -628,12 +656,13 @@ export function createNodeLauncherDeps(options: NodeLauncherDepsOptions): Launch
         serverScript: options.serverScript,
         args,
         home: options.home,
-        cwd: options.repoRoot,
+        cwd: workDir ?? options.repoRoot,
         env,
       }),
     readServerOutput: (offset) => readServerOutput(options.home, offset),
     locateChrome: () => locateChrome(env),
-    openChrome: (chromePath, args) => openChromeWindow(chromePath, args, options.spawnChrome),
+    openChrome: (chromePath, args) =>
+      openChromeWindow(chromePath, args, options.spawnChrome, workDir ?? undefined),
     allowNotifications: (home, origin) => grantChromeNotifications(home, origin),
     sleep,
     now: () => Date.now(),

@@ -13,6 +13,7 @@ describe('launcher command line', () => {
       help: false,
       open: null,
       autostart: false,
+      installRoot: null,
       problem: null,
       serverArgv: ['--port=5000', '--backend=fake'],
     });
@@ -22,6 +23,7 @@ describe('launcher command line', () => {
       help: false,
       open: null,
       autostart: false,
+      installRoot: null,
       problem: null,
       serverArgv: [],
     });
@@ -123,6 +125,7 @@ describe('launcher command line', () => {
       '--print-url',
       '--help',
       '--autostart',
+      '--install-root',
       '--open',
     ]) {
       expect(LAUNCHER_USAGE).toContain(flag);
@@ -147,6 +150,27 @@ describe('launcher command line', () => {
     expect(
       loadConfig({ argv: [`--home=${home}`], env: { ...env, PARALLAX_PORT: '5001' }, cwd: 'C:\\repo' }).port,
     ).toBe(5001);
+  });
+});
+
+describe('launcher --install-root (WP-85, package mode)', () => {
+  it('takes an absolute local folder as --install-root <dir> or --install-root=<dir>', () => {
+    expect(parseLauncherArgs(['--install-root', 'C:\\Apps\\Parallax', '--port=4800'])).toMatchObject({
+      installRoot: 'C:\\Apps\\Parallax',
+      problem: null,
+      serverArgv: ['--port=4800'],
+    });
+    expect(parseLauncherArgs(['--install-root=D:/px root']).installRoot).toBe('D:/px root');
+  });
+
+  it.each([
+    ['--install-root'],
+    ['--install-root='],
+    ['--install-root=relative\\dir'],
+    ['--install-root=\\\\host\\share'],
+    ['--install-root=C:\\px\\..\\x'],
+  ])('refuses %s', (arg) => {
+    expect(parseLauncherArgs([arg]).problem).toMatch(/--install-root needs an absolute local folder/);
   });
 });
 

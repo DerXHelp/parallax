@@ -8,6 +8,7 @@
  * `"<node>" <launcher…> --open "%1"`, so the URI is always the LAST argument: anything after it is
  * refused – a crafted link that smuggles `" --home=… "` into `%1` cannot add options (R5).
  */
+import { windowsPathIssue } from '@shared/paths';
 import type { ServerConfig } from '../config';
 
 export interface LauncherArgs {
@@ -21,6 +22,11 @@ export interface LauncherArgs {
   open: string | null;
   /** `--autostart`: started by the autostart shortcut (window only if the settings say so). */
   autostart: boolean;
+  /**
+   * `--install-root <dir>` (WP-85, package mode): root folder of an installation, passed by its
+   * `start.mjs`; working directory of server and Chrome instead of the version folder. null = none.
+   */
+  installRoot: string | null;
   /** A malformed launcher option (main.ts: exit 2, nothing started); null = fine. */
   problem: string | null;
   /** Everything else, for loadConfig({ argv }). */
@@ -46,6 +52,7 @@ const OWN_FLAGS: Readonly<Record<string, (args: LauncherArgs) => void>> = {
 };
 
 const OPEN_FLAG = '--open';
+const INSTALL_ROOT_FLAG = '--install-root';
 
 /**
  * `--` is skipped: pnpm 12 passes it on literally (`pnpm start -- --port=4800`), and loadConfig
@@ -58,6 +65,7 @@ export function parseLauncherArgs(argv: readonly string[]): LauncherArgs {
     help: false,
     open: null,
     autostart: false,
+    installRoot: null,
     problem: null,
     serverArgv: [],
   };
@@ -77,6 +85,17 @@ export function parseLauncherArgs(argv: readonly string[]): LauncherArgs {
         break;
       }
       args.open = value;
+      continue;
+    }
+    if (arg === INSTALL_ROOT_FLAG || arg.startsWith(`${INSTALL_ROOT_FLAG}=`)) {
+      const value = arg === INSTALL_ROOT_FLAG ? argv[i + 1] : arg.slice(INSTALL_ROOT_FLAG.length + 1);
+      if (arg === INSTALL_ROOT_FLAG) i += 1;
+      const issue = value === undefined ? 'empty' : windowsPathIssue(value);
+      if (issue !== null) {
+        args.problem = `${INSTALL_ROOT_FLAG} needs an absolute local folder (${issue})`;
+        break;
+      }
+      args.installRoot = value ?? null;
       continue;
     }
     const own = OWN_FLAGS[arg];
@@ -123,7 +142,8 @@ export const LAUNCHER_USAGE = [
   'Usage: parallax [--port=<n>] [--home=<dir>] [--backend=sdk|fake] [--log-level=<level>]',
   '                [--validate=off|log|throw] [--toasts=native|off]',
   '                [--system-integration=auto|on|off] [--no-build] [--print-url]',
-  '                [--autostart] [--help] [--open <parallax://session/<id>>]',
+  '                [--autostart] [--install-root=<dir>] [--help]',
+  '                [--open <parallax://session/<id>>]',
   '',
   'Starts the Parallax server in the background (building it first if needed) and opens a Chrome',
   'app window. If Parallax already runs, only another window is opened.',
@@ -144,6 +164,9 @@ export const LAUNCHER_USAGE = [
   '  --print-url    print the sign-in address (valid 60 s) instead of opening Chrome',
   '  --autostart    used by the autostart shortcut: starts the server, opens a window only if',
   '                 "open a window at logon" is on in the settings',
+  '  --install-root=<dir>',
+  '                 root folder of an installation (passed by its start.mjs): working folder of',
+  '                 the server and the Chrome window',
   '  --open <link>  open the session of a parallax://session/<id> link (Windows notification',
   '                 click); must be the last option',
 ].join('\n');
