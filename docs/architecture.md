@@ -869,6 +869,29 @@ Claudes eigene `model`- und `modelPicker`-Einstellungen gelten auch in Parallax 
   „Folgt deinen Claude-Einstellungen: X“. Die Gruppe „Deine Modelle“ steht vor „Weitere Modelle“. Jedes Öffnen
   lädt neu.
 
+### 3.12 Update in der App (WP-87…89, ADR-220/222)
+
+- **Dienst** (`src/server/update/service.ts`, Port `update/ports.ts`): in `compose.ts` nach den Stores erzeugt (liest
+  und löscht `update-result.json`), Host-Befehle `update.*`, `HostState.app`/`update`, `start()` nach dem Lockfile
+  (Prüfung 60 s später, dann alle 12 h, nur im Paket mit `updates.check`), Schritt `update` vor den Stores. Ohne
+  Installation (`--install-root` fehlt) Status `unsupported`.
+- **Prüfen/Vorbereiten:** `latest.ts` (GitHub-Download-URLs, Signatur, Downgrade-Schutz), `prepare.ts` (Sperre
+  `install`, Download mit Hash, `zip.ts` listet und entpackt per `tar.exe`, `stageVersion`, `cleanupVersions`). „Aus
+  Datei“: `POST /api/update/package` (Klasse `mutation`, Stream nach `<root>\downloads`), dieselbe Pipeline.
+- **Wechsel:** `update.apply`/`rollback` → `apply.ts` startet `versions\<alt>\dist\launcher.js --apply-update=<v>
+  --wait-pid=<server>` (detached, ohne Shell) und wartet auf den Handschlag (`handoff.ts`). Nach `READY` setzt
+  `requestRestart` das Neustart-Flag und stößt das Herunterfahren an: Close 4504, das Abräumen verschont den
+  Orchestrator (`sparePids`). Der Orchestrator (`launcher/applyUpdate.ts`) wartet auf das Ende des Servers, prüft,
+  sichert (Restore-Modus: Sicherung einspielen), schreibt den Marker `pending`, schaltet `current.json` um und startet
+  die neue Version per `launchLocked`; ohne gesunden Start der Rückweg (Daten, `current.json`, Marker `failed`, alte
+  Version). Protokoll `<home>\logs\update-<zeit>.log`.
+- **Fenster:** Phase `restarting` (§5 „Client-Ablauf“ Punkt 6), danach Neuladen bei neuer Build-ID; der Server meldet
+  `justUpdated`/`failedUpdate` aus dem Marker; die UI (`features/updates`) zeigt Hinweis, Banner und „Was ist neu“
+  (`GET /api/changelog`, Abschnitte aus dem signierten `CHANGELOG.md`), Lizenzen über `GET /api/notices` (beide
+  Klasse `file`).
+- **Test-Build:** nur `scripts/build-server.ts --update-test` setzt `__PARALLAX_UPDATE_TEST__` (lokale Endpunkte und
+  Schlüssel aus der Umgebung); normale Bundles enthalten den Zweig nicht (`app/bundle.test.ts`).
+
 ## 4. Source of Truth (A.3)
 
 | Daten | maßgeblich | persistiert in | live über |
@@ -1230,6 +1253,11 @@ Dev-Modus landet ein Code im Log. Das Secret liegt in `.parallax-dev`, das Cooki
 5. Close vor `hello` oder 1006 → wieder Schritt 3 (unterscheidet nicht angemeldet / nicht
    erreichbar / Reconnect). Close 4401 → „Nicht angemeldet“; 4503 → „Server beendet“.
    Eine neue `serverInstanceId` aus dem Status wirkt wie im `hello` (Full-Resync).
+6. WP-87/88b: Close 4504 (`SERVER_RESTARTING`, Update oder Rückweg) → Phase `restarting` mit Banner „Parallax
+   startet neu …“; offene Befehle enden mit `CONNECTION_LOST`, `send()` lehnt sofort ab. Versuche alle 2 s ± 50 %
+   (Anmeldeprüfung, dann WS), Fehlversuche bleiben `restarting`; mit `hello` geht es normal weiter (neue Build-ID →
+   Neuladen). Nach 5 min (`RESTART_RECONNECT_WINDOW_MS`) → `server-stopped` mit `UPDATE_RESTART_FAILED
+   {reason: timeout}`.
 
 **Launcher und Lockfile (WP-21, Koordinator-Entscheidung, ADR-015):** Der Server schreibt nach
 `listen` atomar `PARALLAX_HOME/server.lock.json` (`serverLockFileSchema`: `pid`, `port`,
@@ -1618,6 +1646,12 @@ entries/<entryId>/attachments/<blob16>/<name>   Phase 3 (ADR-146): Kopien von Da
                                       idempotent); der Ordner ist bei jedem Start additionalDirectory (C.11);
                                       Bild-/PDF-Uploads liegen nur als Blobs in blobs/ (ADR-103)
 logs/parallax.<datum>.<n>.log         pino-roll (lib/logger.ts)
+logs/update-<zeit>.log                WP-87: Protokoll eines Versionswechsels (Orchestrator; die fünf neuesten bleiben)
+update-result.json                    WP-87: Ergebnis des letzten Wechsels (pending/failed/installed; der Server liest
+                                      und löscht es beim Start → HostState.update.justUpdated/failedUpdate)
+update-state.json                     WP-87: {schemaVersion 1, dismissedVersion} – ausgeblendeter Update-Hinweis
+backups/<alt>-zu-<neu>-<zeit>/        WP-86: Sicherung beim Wechsel der Build-ID (backup.json, Kopien, newer/; die drei
+                                      jüngsten bleiben); last-version.json = zuletzt gestartete Build-ID
 logs/server.out.log                   stdout/stderr des vom Launcher gestarteten Servers (sonst leer: Abstürze vor
                                       dem Logger, Ursache eines gescheiterten Starts als letzte Zeile, §3.3;
                                       > 1 MiB → server.out.1.log beim nächsten Start)

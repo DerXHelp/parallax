@@ -29,7 +29,14 @@ export type HostPhase =
   | 'reconnecting'
   /** No valid cookie (status `authenticated:false` or close 4401): no WS until `retryNow()`. */
   | 'unauthenticated'
-  /** Close 4503 (server shut down). */
+  /**
+   * Close 4504 (WP-87/88b): the server restarts for an update or a rollback. Attempts every 1–3 s
+   * (auth check first) until `restartDeadline`; failed attempts stay here, a `hello` continues as
+   * usual (a new build reloads the window), the deadline ends in `server-stopped`
+   * (UPDATE_RESTART_FAILED `reason: 'timeout'`).
+   */
+  | 'restarting'
+  /** Close 4503 (server shut down), or the restart deadline passed (`error` UPDATE_RESTART_FAILED). */
   | 'server-stopped'
   /** Protocol/build mismatch and the reload guard kicked in (banner PROTOCOL_VERSION_MISMATCH). */
   | 'version-mismatch'
@@ -51,8 +58,10 @@ export interface HostRecord {
   phase: HostPhase;
   /** True once a `hello` was accepted (later outages show a banner instead of the full-page state). */
   everConnected: boolean;
-  /** Epoch ms of the next attempt while `reconnecting`. */
+  /** Epoch ms of the next attempt while `reconnecting` or `restarting`. */
   nextAttemptAt: number | null;
+  /** Epoch ms after which a `restarting` host gives up (close 4504 + 5 min); null otherwise. */
+  restartDeadline: number | null;
   /** Why the host is not open (CONNECTION_LOST, PROTOCOL_VERSION_MISMATCH …), null when open. */
   error: ErrorPayload | null;
   /** The one-time code from the URL was rejected (auth gate shows AUTH_CODE_INVALID). */
@@ -161,6 +170,7 @@ export function emptyHostRecord(hostId: HostId): HostRecord {
     phase: 'idle',
     everConnected: false,
     nextAttemptAt: null,
+    restartDeadline: null,
     error: null,
     authCodeRejected: false,
     upgradeRejected: false,

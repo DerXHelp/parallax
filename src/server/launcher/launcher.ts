@@ -229,13 +229,18 @@ export async function runLauncher(options: LauncherOptions, deps: LauncherDeps):
     deps,
   );
   try {
-    return await launch(options, deps);
+    return await launchLocked(options, deps);
   } finally {
     await lock.release();
   }
 }
 
-async function launch(options: LauncherOptions, deps: LauncherDeps): Promise<LauncherResult> {
+/**
+ * Steps 1–2 of the file comment WITHOUT the launch lock: the caller holds it – `runLauncher`, or
+ * the orchestrator of a version switch (WP-87 E2, applyUpdate.ts), which keeps the lock from the
+ * hand-over until a version runs. A new launcher would wait for that lock instead.
+ */
+export async function launchLocked(options: LauncherOptions, deps: LauncherDeps): Promise<LauncherResult> {
   const found = await deps.findRunningServer(options.home);
   if (found.kind === 'running') return openExisting(found, options, deps);
   if (found.staleLock !== null)
@@ -648,7 +653,7 @@ export interface NodeLauncherDepsOptions {
 }
 
 /** One non-blocking try of the named-pipe lock `kind` of `dir` (held until released or exit). */
-async function tryDirectoryLock(kind: DirectoryLockKind, dir: string): Promise<LockAttempt> {
+export async function tryDirectoryLock(kind: DirectoryLockKind, dir: string): Promise<LockAttempt> {
   const result = await acquireDirectoryLock(kind, dir);
   if (result.kind === 'busy') return { kind: 'busy' };
   const lock = result.lock;
@@ -675,7 +680,9 @@ export function createNodeLauncherDeps(options: NodeLauncherDepsOptions): Launch
     checkBuild: (expected) => checkBuild({ repoRoot: options.repoRoot, expected }),
     runBuild: () => runBuild({ repoRoot: options.repoRoot, nodePath, env }),
     probePort,
-    backupBeforeStart: (home, buildId) => backupBeforeStart(home, buildId),
+    // WP-87b: in a package a saved backup also writes the marker `installed` ("What's new").
+    backupBeforeStart: (home, buildId) =>
+      backupBeforeStart(home, buildId, { installedVersion: release?.version ?? null }),
     startServer: (args) =>
       startServerProcess({
         nodePath,

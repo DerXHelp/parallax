@@ -16,6 +16,7 @@ export const en = {
     files: 'Files',
     profiles: 'Profiles',
     server: 'Server',
+    updates: 'Updates',
     about: 'About',
     /** Screen reader text of the dot on "Profiles" while the profile editor holds unsaved changes. */
     unsaved: 'unsaved changes',
@@ -117,6 +118,9 @@ export const en = {
   },
   profiles: {
     unavailable: 'The profile editor is not available in this view.',
+  },
+  updates: {
+    unavailable: 'Updates are not available in this view.',
   },
   /** Section "Files" (WP-58, ADR-144): the editor for "Open in editor". */
   files: {

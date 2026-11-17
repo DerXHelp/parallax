@@ -47,7 +47,7 @@ import type { Logger } from 'pino';
 import type { EntryId, ProfileId } from '@shared/common';
 import { serverOrigin } from '@shared/http';
 import type { Settings } from '@shared/model';
-import type { SessionOp } from '@shared/protocol';
+import { WS_CLOSE, type SessionOp } from '@shared/protocol';
 import { createFakeBackend } from '../backend/fakeBackend';
 import { createFakeClaudeIntegration } from '../backend/fake/integration';
 import type { AgentBackend } from '../backend/types';
@@ -71,9 +71,11 @@ import { createLinkCommands, createRecordingLinkOpener, createSystemLinkOpener }
 import { createLoginService, LOGIN_HOME_DIR, type LoginService } from '../host/login';
 import { createApp } from '../http/app';
 import { createAuthService, type AuthService } from '../http/auth';
+import { serverArgsFor } from '../launcher/args';
 import { findRunningServer, type RunningServerCheck } from '../launcher/client';
 import { SERVER_EXIT_CODES } from '../launcher/exitCodes';
 import { writeServerLock, type ServerLockHandle } from '../launcher/lockFile';
+import { readReleaseInfo, type ReleaseInfo } from '../launcher/release';
 import {
   createServerShutdown,
   type ServerShutdown,
@@ -98,6 +100,8 @@ import { openRegistryStore } from '../store/registry';
 import { openSettingsStore } from '../store/settings';
 import { createTranscriptStore } from '../store/transcripts';
 import { createSyncHub } from '../sync/hub';
+import type { UpdateService } from '../update/ports';
+import { createUpdateService } from '../update/service';
 import type { AttachmentFileStore, SessionPublisher } from '../sync/ports';
 import { createConsoleLauncher } from '../system/console';
 import { createFakeConsoleLauncher, FAKE_CONSOLE_RUN_MS } from '../system/fakeConsole';
@@ -165,6 +169,8 @@ export interface StartServerOptions {
   repoRoot?: string;
   /** Test seam: replaces `createSystemIntegration(…)` (in-process tests never touch HKCU). */
   systemIntegration?: SystemIntegration;
+  /** Test seam: replaces `createUpdateService(…)` (WP-87; e.g. `createFakeUpdateService`). */
+  updateService?: UpdateService;
   logger?: Logger;
 }
 
@@ -456,6 +462,10 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   let files: FileService | null = null;
   /** WP-70: login processes per profile (closed before the stores). */
   let login: LoginService | null = null;
+  /** WP-87: updates in the app (closed before the stores; spares the orchestrator in the sweep). */
+  let update: UpdateService | null = null;
+  /** WP-87: the shutdown is a restart for an update or a rollback – windows get close 4504. */
+  let restarting = false;
   let manager: SessionManager | null = null;
   let app: FastifyInstance | null = null;
   let lock: ServerLockHandle | null = null;
@@ -508,6 +518,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     // The session file index (`entries/<id>/files.json`, debounced) – after the engine's last ops,
     // before the stores close (ADR-145).
     { name: 'files', run: () => files?.flush() },
+    // WP-87: ends a running check, download or preparation (≤ 10 s); a started switch goes on.
+    { name: 'update', run: () => update?.close(), timeoutMs: 12_000 },
     { name: 'stores', run: () => stores.close(), timeoutMs: 10_000 },
     {
       name: 'homeAccess',
@@ -600,6 +612,24 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       logger: options.logger,
     });
     login = loginService;
+    // WP-87: reads (and deletes) the marker of the last switch; in a checkout `unsupported`.
+    const updateService =
+      options.updateService ??
+      (await createUpdateService({
+        home: config.home,
+        installRoot: config.installRoot,
+        repoRoot: options.repoRoot ?? '',
+        release: config.installRoot === null ? null : await ownRelease(options.repoRoot, log),
+        instance,
+        serverArgs: serverArgsFor(config),
+        settings: () => stores.settings.get(),
+        requestRestart: () => {
+          restarting = true;
+          void shutdown?.stop('command');
+        },
+        logger: options.logger,
+      }));
+    update = updateService;
     const sessions = createSessionManager({
       toasts,
       // WP22-06: the FakeBackend has no real process tree (fake PIDs) – no heartbeat snapshots.
@@ -628,6 +658,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         dev: config.dev,
         port: () => listeningPort,
         systemIntegration: system.available,
+        app: () => updateService.app(),
+        update: () => updateService.state(),
       },
       // ADR-101: `profile.*` (WP-32), `fs.listDirectory` (WP-33) and the file commands `file.*`,
       // `files.*`, `editor.detect` (WP-53, ADR-140) – disjoint names.
@@ -644,11 +676,14 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         createLinkCommands(linkOpener),
         // WP-70: `profile.login`, `profile.loginCode`, `profile.loginCancel`.
         loginService,
+        // WP-87: `update.check|prepare|apply|rollback|dismiss`.
+        updateService,
       ],
       loginState: (profileId) => loginService.state(profileId),
       // Autostart and protocol handler follow every settings.update (ADR-110).
       onSettingsChanged: (_prev, next) => {
         applySystem(next);
+        updateService.settingsChanged(next);
       },
       extraWarnings: () => system.warnings(),
       consoleLauncher,
@@ -713,6 +748,9 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     system.onChange(() => {
       sessions.publishHostState();
     });
+    updateService.onChange(() => {
+      sessions.publishHostState();
+    });
     await sessions.start();
 
     let webRoot = options.webRoot;
@@ -730,6 +768,9 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       hub,
       // GET/HEAD /api/file (ADR-142; guard class `file`: Sec-Fetch-Site same-origin required).
       files: fileService,
+      // WP-87: upload, "What's new", notices; windows get 4504 when the shutdown is a restart.
+      update: updateService,
+      closeCode: () => (restarting ? WS_CLOSE.SERVER_RESTARTING : WS_CLOSE.SERVER_SHUTDOWN),
       webRoot,
     });
   } catch (error) {
@@ -747,6 +788,11 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     stopSessions: () => sessions.shutdown(),
     // CR-02 (ADR-090): the sweep of the server's child trees only after the engine's C.8 window.
     graceMs: SHUTDOWN_SWEEP_GRACE_MS,
+    // WP-87: the orchestrator of an update (a child of this server) survives the sweep.
+    sparePids: () => {
+      const pid = update.orchestratorPid();
+      return pid === null ? [] : [pid];
+    },
     steps,
     exit: (code) => {
       if (logging === null) {
@@ -828,6 +874,9 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   profileChecksOn = true;
   checkProfiles();
 
+  // WP-87: automatic update checks (first after 60 s; only in an installation with updates.check).
+  update.start();
+
   const origin = serverOrigin(port);
   log.info(
     {
@@ -858,4 +907,18 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     lock,
     shutdown,
   };
+}
+
+/**
+ * WP-87: release.json of the running version (the launcher verified it before the start). An
+ * unreadable one leaves updates off (`unsupported`) instead of failing the start.
+ */
+async function ownRelease(repoRoot: string | undefined, log: Logger): Promise<ReleaseInfo | null> {
+  if (repoRoot === undefined) return null;
+  try {
+    return await readReleaseInfo(repoRoot);
+  } catch (error) {
+    log.warn({ err: error }, 'release.json of this version could not be read - updates are off');
+    return null;
+  }
 }

@@ -73,7 +73,8 @@ export const de: typeof en = {
       claudeMissing: 'Claude Code: nicht gefunden',
       claudeUnknown: 'Claude Code: Version unbekannt',
       claudeTooOld: 'Älter als vom Agent SDK erwartet (mindestens {required}).',
-      claudeNewerThanTested: 'Claude Code {version} ist neuer als die mit Parallax geprüfte Version {tested}.',
+      claudeNewerThanTested:
+        'Claude Code {version} ist neuer als die mit Parallax geprüfte Version {tested}.',
       sdk: 'Agent SDK {version} · erwartet Claude Code {required} oder neuer',
       parallax: 'Parallax {version}',
       data: 'Daten: {path}',
@@ -197,6 +198,8 @@ export const de: typeof en = {
       'Der Server antwortet, lehnt aber die Live-Verbindung (WebSocket) ab. Prüfe Sicherheitssoftware oder Proxys, die lokalen Verkehr filtern.',
     retryIn: { one: 'Neuer Versuch in {count} Sekunde…', other: 'Neuer Versuch in {count} Sekunden…' },
     reconnecting: 'Verbindung unterbrochen – verbinde neu…',
+    restartingTitle: 'Parallax startet neu …',
+    restartingDescription: 'Die Version wird gewechselt. Dieses Fenster verbindet sich von selbst wieder.',
     serverStoppedTitle: 'Parallax-Server beendet',
     serverStoppedDescription:
       'Der lokale Server wurde beendet. Starte Parallax neu und verbinde dich dann wieder.',

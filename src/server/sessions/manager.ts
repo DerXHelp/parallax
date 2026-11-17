@@ -23,8 +23,10 @@ import type { Logger } from 'pino';
 import { jsonValueSchema, type ClientId, type EntryId, type ProfileId } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import {
+  DEFAULT_UPDATE_STATE,
   currentConversation,
   isRemoteControlActive,
+  type AppInfo,
   type Entry,
   type HostState,
   type HostWarning,
@@ -33,6 +35,7 @@ import {
   type QueuedPrompt,
   type RateLimitInfo,
   type Settings,
+  type UpdateState,
 } from '@shared/model';
 import type { Notification } from '@shared/protocol';
 import { canSleep, INITIAL_STATUS_FACTS, type StatusFacts } from '@shared/status';
@@ -194,6 +197,9 @@ export interface SessionManagerDeps {
     port?: () => number | null;
     /** Phase 2 (ADR-110): `HostState.systemIntegration` (SystemIntegration.available). Absent → false. */
     systemIntegration?: boolean;
+    /** WP-87: `HostState.app` and `HostState.update` (the update service). Absent → null / default. */
+    app?: () => AppInfo | null;
+    update?: () => UpdateState;
   };
   /** Phase 2 (ADR-101): handlers of the host commands (`profile.*`, `fs.listDirectory`); default []. */
   hostCommands?: readonly HostCommandHandler[];
@@ -444,6 +450,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       systemIntegration: deps.host.systemIntegration ?? false,
       // WP-64: the default profile's `remoteControlAtStartup`, once a process of it was ready.
       remoteControlDefault: remoteDefaults.get(defaultProfile.id) ?? null,
+      app: deps.host.app?.() ?? null,
+      update: deps.host.update?.() ?? DEFAULT_UPDATE_STATE,
     };
   };
 
@@ -580,7 +588,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       s.lifecycle
         .run(async () => {
           // Re-checked inside the lock (a prompt may have started a turn meanwhile).
-          if (sleepEligible(s, presence()) && s.sideQuestions.size === 0) await closeRuntime(s, core, 'sleep');
+          if (sleepEligible(s, presence()) && s.sideQuestions.size === 0)
+            await closeRuntime(s, core, 'sleep');
         })
         .catch((error: unknown) => {
           log.warn({ err: error, entryId: s.id }, 'idle sleep failed');

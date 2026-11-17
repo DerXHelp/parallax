@@ -7,12 +7,25 @@
  * else 1. Phase 2: `--open <uri>` is checked with `parseSessionProtocolUri` BEFORE anything starts
  * (ADR-109, R5); `--autostart` opens a window only if `settings.autostart.openWindow` (settings
  * read-only, ADR-110).
+ *
+ * WP-87b: `--apply-update` branches off before `launch` into the orchestrator
+ * (`runApplyUpdate`, applyUpdate.ts). Its stdout belongs to the handshake with the server
+ * (update/handoff.ts): a bad option there answers `PARALLAX-APPLY-FAILED spawn`, notes go to the
+ * update log.
  */
 import type { EntryId } from '@shared/common';
 import { serverOrigin, parseSessionProtocolUri } from '@shared/http';
 import { DEFAULT_AUTOSTART } from '@shared/model';
 import { ConfigError, loadConfig, readSettingsFile, type ServerConfig, type SettingsPeek } from '../config';
-import { LAUNCHER_USAGE, parseLauncherArgs, portRequested, serverArgsFor } from './args';
+import { APPLY_UPDATE_FLAG, handshakeLine, readyTimeoutMs } from '../update/handoff';
+import type { ApplyUpdateRequest } from './applyUpdate';
+import {
+  LAUNCHER_USAGE,
+  parseLauncherArgs,
+  portRequested,
+  serverArgsFor,
+  type ApplyUpdateArgs,
+} from './args';
 import { LauncherError, type LauncherOptions, type LauncherResult } from './launcher';
 
 export interface LauncherCliDeps {
@@ -24,6 +37,8 @@ export interface LauncherCliDeps {
   fail(line: string): void;
   /** `runLauncher` with the real dependencies of `options.home`. */
   launch(options: LauncherOptions): Promise<LauncherResult>;
+  /** WP-87b: `runApplyUpdate` with the real dependencies (main.ts); resolves with the exit code. */
+  applyUpdate(request: ApplyUpdateRequest): Promise<number>;
   /** Default `readSettingsFile` (read-only). */
   readSettings?(home: string): SettingsPeek;
 }
@@ -38,8 +53,15 @@ export async function runLauncherCli(argv: readonly string[], deps: LauncherCliD
     return 0;
   }
   if (args.problem !== null) {
+    // The server waits for a handshake line: answer at once instead of letting it wait.
+    if (argv.some((arg) => arg === APPLY_UPDATE_FLAG || arg.startsWith(`${APPLY_UPDATE_FLAG}=`))) {
+      deps.out(handshakeLine({ kind: 'failed', reason: 'spawn' }));
+    }
     deps.fail(`Invalid option: ${args.problem}\n\n${LAUNCHER_USAGE}`);
     return 2;
+  }
+  if (args.applyUpdate !== null && args.installRoot !== null) {
+    return applyUpdateCli(args.applyUpdate, args.installRoot, args.serverArgv, deps);
   }
   let entryId: EntryId | null = null;
   if (args.open !== null) {
@@ -102,6 +124,52 @@ export async function runLauncherCli(argv: readonly string[], deps: LauncherCliD
     }
     deps.fail(
       `Unexpected launcher error: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+    );
+    return 1;
+  }
+}
+
+/** `--apply-update`: the server configuration like a normal start, then the orchestrator. */
+async function applyUpdateCli(
+  apply: ApplyUpdateArgs,
+  installRoot: string,
+  serverArgv: readonly string[],
+  deps: LauncherCliDeps,
+): Promise<number> {
+  const refuse = (message: string): number => {
+    deps.out(handshakeLine({ kind: 'failed', reason: 'spawn' }));
+    deps.fail(message);
+    return 2;
+  };
+  let config: ServerConfig;
+  try {
+    config = loadConfig({
+      argv: [...serverArgv],
+      env: deps.env,
+      ...(deps.cwd === undefined ? {} : { cwd: deps.cwd }),
+    });
+  } catch (error) {
+    if (!(error instanceof ConfigError)) throw error;
+    return refuse(`Invalid option: ${error.message}`);
+  }
+  if (config.dev) return refuse('--dev cannot be combined with --apply-update.');
+  try {
+    return await deps.applyUpdate({
+      ...apply,
+      installRoot,
+      home: config.home,
+      port: config.port,
+      // Like a normal start of a package (WP-86): the new version gets the same flags.
+      serverArgs: [...serverArgsFor(config), `--install-root=${installRoot}`],
+      backend: config.backend,
+      readyTimeoutMs: readyTimeoutMs(deps.env),
+      toasts: config.toasts,
+      notes: config.notes,
+    });
+  } catch (error) {
+    // runApplyUpdate never throws; this is the last resort (stderr, not the handshake pipe).
+    deps.fail(
+      `Unexpected orchestrator error: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
     );
     return 1;
   }

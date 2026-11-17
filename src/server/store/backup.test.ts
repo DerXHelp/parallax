@@ -13,7 +13,9 @@ import {
   BackupError,
   backupManifestSchema,
   createBackup,
+  findBackup,
   LAST_VERSION_FILE,
+  listBackups,
   pruneBackups,
   readLastBuildId,
   restoreBackup,
@@ -358,6 +360,48 @@ describe('pruneBackups', () => {
   it('does nothing without a backups folder', async () => {
     const home = await makeTempHome('backup-');
     expect(await pruneBackups(home)).toEqual([]);
+  });
+});
+
+describe('listBackups and findBackup (WP-87)', () => {
+  const at = (minutes: number) => new Date(NOW.getTime() + minutes * 60_000);
+
+  it('lists finished backups newest first and skips partial and unreadable ones', async () => {
+    const home = await makeTempHome('backup-');
+    expect(await listBackups(home)).toEqual([]);
+    await put(home, 'settings.json', 'x');
+    const first = await createBackup(home, { from: FROM, to: TO, now: at(10) });
+    const third = await createBackup(home, { from: TO, to: FROM, now: at(30) });
+    const second = await createBackup(home, { from: null, to: FROM, now: at(20) });
+    const sameSecond = await createBackup(home, { from: TO, to: FROM, now: at(30) });
+    const root = path.join(home, BACKUPS_DIR);
+    await put(root, '.partial-x/settings.json', 'x');
+    await put(root, `zzz-broken/${BACKUP_MANIFEST}`, 'not json');
+    await put(root, 'zzz-empty/settings.json', 'x');
+
+    const list = await listBackups(home);
+    expect(list.map((backup) => backup.dir)).toEqual([sameSecond.dir, third.dir, second.dir, first.dir]);
+    expect(list[0]).toMatchObject({
+      name: path.basename(sameSecond.dir),
+      manifest: { from: TO, to: FROM, createdAt: at(30).toISOString(), files: ['settings.json'] },
+    });
+  });
+
+  it('finds the newest backup of exactly this build change', async () => {
+    const home = await makeTempHome('backup-');
+    await put(home, 'settings.json', 'x');
+    await createBackup(home, { from: FROM, to: TO, now: at(10) });
+    const newest = await createBackup(home, { from: FROM, to: TO, now: at(40) });
+    const back = await createBackup(home, { from: TO, to: FROM, now: at(50) });
+    const first = await createBackup(home, { from: null, to: FROM, now: at(5) });
+
+    expect((await findBackup(home, { from: FROM, to: TO }))?.dir).toBe(newest.dir);
+    expect((await findBackup(home, { from: TO, to: FROM }))?.dir).toBe(back.dir);
+    expect((await findBackup(home, { from: null, to: FROM }))?.manifest.createdAt).toBe(at(5).toISOString());
+    expect((await findBackup(home, { from: null, to: FROM }))?.dir).toBe(first.dir);
+    expect(await findBackup(home, { from: null, to: TO })).toBeNull();
+    expect(await findBackup(home, { from: FROM.toUpperCase(), to: TO })).toBeNull();
+    expect(await findBackup(home, { from: FROM, to: `${TO}x` })).toBeNull();
   });
 });
 

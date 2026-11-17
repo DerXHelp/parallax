@@ -13,6 +13,7 @@ import {
 import { useEffect, useId, useMemo, type KeyboardEvent, type ReactNode } from 'react';
 import { PRODUCT_NAME } from '@shared/product';
 import { useT } from '@web/i18n';
+import { cn } from '@web/lib/cn';
 import { focusElement, focusedElement } from '@web/lib/return-focus';
 import {
   archivedOrder,
@@ -49,8 +50,27 @@ import { setArchiveView, setSidebarMode, useArchiveView, useSidebarMode } from '
 import { openNewSession } from './NewSessionDialog';
 import { SettingsMenu } from './SettingsMenu';
 import { useShortcut } from './shortcuts';
+import { useFeatureSlots } from './slots';
 
 type Ordered = OrderedSession<SummaryEntry>;
+
+/**
+ * Slot `UpdateNotice` (WP-88a: "Parallax <v> available", "Ready – restart") in the head of the
+ * sidebar; `compact` for the collapsed rail (SidebarFrame). The frame disappears while the slot
+ * renders nothing (`empty:hidden`), so the placeholder leaves no gap.
+ */
+export function SidebarUpdateNotice({ compact }: { compact: boolean }) {
+  const { UpdateNotice } = useFeatureSlots();
+  return (
+    <div
+      data-slot="update-notice"
+      data-compact={compact || undefined}
+      className={cn('flex shrink-0 empty:hidden', compact ? 'justify-center' : 'mx-1.5 mb-1')}
+    >
+      <UpdateNotice compact={compact} />
+    </div>
+  );
+}
 
 /** Moves the focus within the list: `delta` rows, or to the first/last row (Home/End). */
 function focusRow(list: HTMLElement, delta: number | 'first' | 'last'): void {
@@ -361,6 +381,8 @@ export function Sidebar({
           </IconButton>
         )}
       </div>
+      {/* A row of its own: the title row of the w-72 sidebar has no room for a text button. */}
+      <SidebarUpdateNotice compact={false} />
       {waitingCount > 0 ? (
         <button
           type="button"

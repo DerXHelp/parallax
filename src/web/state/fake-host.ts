@@ -22,6 +22,7 @@ import {
   type ToolCallItem,
   type ToolCallStatus,
   type TranscriptItem,
+  type UpdateState,
 } from '@shared/model';
 import { isWindowsPathInside, windowsPathIssue, windowsPathKey } from '@shared/paths';
 import type {
@@ -345,8 +346,17 @@ export interface FakeFileToolCall {
 function fakeSubagentItems(agentId: string): TranscriptItem[] {
   const messageId = `msg_${agentId}`;
   return [
-    sampleItems.userMessage({ id: `${agentId}-prompt`, order: 1, text: { text: 'Look through the project.', truncated: null } }),
-    sampleItems.thinking({ id: `${messageId}:0`, messageId, order: 2, text: { text: 'First the notes.', truncated: null } }),
+    sampleItems.userMessage({
+      id: `${agentId}-prompt`,
+      order: 1,
+      text: { text: 'Look through the project.', truncated: null },
+    }),
+    sampleItems.thinking({
+      id: `${messageId}:0`,
+      messageId,
+      order: 2,
+      text: { text: 'First the notes.', truncated: null },
+    }),
     sampleItems.toolCall({
       id: `${messageId}:1`,
       messageId,
@@ -363,7 +373,13 @@ function fakeSubagentItems(agentId: string): TranscriptItem[] {
         at: sampleTime(4),
       },
     }),
-    sampleItems.assistantText({ id: `${messageId}:2`, messageId, blockIndex: 2, order: 4, text: 'The notes are short.' }),
+    sampleItems.assistantText({
+      id: `${messageId}:2`,
+      messageId,
+      blockIndex: 2,
+      order: 4,
+      text: 'The notes are short.',
+    }),
   ];
 }
 
@@ -439,6 +455,8 @@ export class FakeHost {
   fileOpenError: ErrorPayload | null = null;
   /** WP-65: every link.open (assertions); `linkOpenError` fails them (the web then opens the link itself). */
   readonly linkOpens: string[] = [];
+  /** WP-87: `update.apply` / `update.rollback` as sent (the fake never restarts). */
+  readonly updateSwitches: Extract<Command, { name: 'update.apply' | 'update.rollback' }>[] = [];
   linkOpenError: ErrorPayload | null = null;
   /**
    * WP-70: the sign-in of `profile.login` – `waiting` with a harmless fake link (recorded in
@@ -890,7 +908,8 @@ export class FakeHost {
   /** WP-67: the engine's gates of session.info/mcpAction/reload (no auto-wake). */
   private infoGate(entryId: EntryId): ErrorPayload | null {
     const summary = this.summaries.get(entryId);
-    if (summary === undefined) return makeError(this.knowsEntry(entryId) ? 'SESSION_NOT_RUNNING' : 'ENTRY_NOT_FOUND', { entryId });
+    if (summary === undefined)
+      return makeError(this.knowsEntry(entryId) ? 'SESSION_NOT_RUNNING' : 'ENTRY_NOT_FOUND', { entryId });
     if (summary.archived) return makeError('SESSION_ARCHIVED', { entryId });
     const runState = summary.status.runState;
     if (runState === 'external') return makeError('SESSION_EXTERNAL', { entryId });
@@ -1005,6 +1024,33 @@ export class FakeHost {
 
   private ok(result: unknown = {}): FakeAck {
     return { ok: true, result };
+  }
+
+  private updateCommand(cmd: Extract<Command, { name: `update.${string}` }>): FakeAck {
+    const update = this.hostState.update;
+    if (update.status === 'unsupported') return { ok: false, error: makeError('UPDATE_NOT_PACKAGED') };
+    const set = (patch: Partial<UpdateState>): void => {
+      this.setHostState({ ...this.hostState, update: { ...update, ...patch } });
+    };
+    switch (cmd.name) {
+      case 'update.check':
+        set({ checkedAt: new Date().toISOString() });
+        return this.ok({ available: update.available?.version ?? null });
+      case 'update.prepare':
+        if (update.available?.version !== cmd.version) {
+          return { ok: false, error: makeError('VALIDATION_FAILED', { reason: 'version' }) };
+        }
+        set({ status: 'ready', progress: null });
+        return this.ok();
+      case 'update.apply':
+      case 'update.rollback':
+        this.updateSwitches.push(cmd);
+        return this.ok();
+      case 'update.dismiss':
+        if (cmd.what === 'available') set({ dismissedVersion: update.available?.version ?? null });
+        else set({ [cmd.what]: null });
+        return this.ok();
+    }
   }
 
   private defaultCommand(cmd: Command): FakeAck {
@@ -1143,7 +1189,10 @@ export class FakeHost {
       case 'session.resume': {
         // WP-67: a sleeping session wakes (no prompt) – the info dialog's "start session".
         const summary = this.summaries.get(cmd.entryId);
-        if (summary !== undefined && (summary.status.runState === 'sleeping' || summary.status.runState === 'error')) {
+        if (
+          summary !== undefined &&
+          (summary.status.runState === 'sleeping' || summary.status.runState === 'error')
+        ) {
           this.patchSummary(cmd.entryId, {}, { runState: 'idle' });
         }
         return this.ok();
@@ -1153,29 +1202,45 @@ export class FakeHost {
         const gate = this.infoGate(cmd.entryId);
         if (gate !== null) return { ok: false, error: gate };
         const summary = this.summaries.get(cmd.entryId);
-        if (summary === undefined || !this.info.available(cmd.section)) return this.ok({ available: false, data: null });
+        if (summary === undefined || !this.info.available(cmd.section))
+          return this.ok({ available: false, data: null });
         return this.ok({ available: true, data: this.info.section(cmd.entryId, cmd.section, summary) });
       }
       case 'session.mcpAction': {
         const gate = this.infoGate(cmd.entryId);
         if (gate !== null) return { ok: false, error: gate };
         const failure = this.info.mcpAction(cmd.entryId, cmd.server, cmd.action);
-        if (failure !== null) return { ok: false, error: makeError('CLAUDE_CONTROL_FAILED', { method: 'mcpAction', detail: failure }) };
+        if (failure !== null)
+          return {
+            ok: false,
+            error: makeError('CLAUDE_CONTROL_FAILED', { method: 'mcpAction', detail: failure }),
+          };
         return this.ok();
       }
       case 'session.reload': {
         const gate = this.infoGate(cmd.entryId);
         if (gate !== null) return { ok: false, error: gate };
         const failure = this.info.reload(cmd.entryId, cmd.what);
-        if (failure !== null) return { ok: false, error: makeError('CLAUDE_CONTROL_FAILED', { method: 'reload', detail: failure }) };
+        if (failure !== null)
+          return {
+            ok: false,
+            error: makeError('CLAUDE_CONTROL_FAILED', { method: 'reload', detail: failure }),
+          };
         return this.ok();
       }
       // ---- WP-69: the transcript of one subagent (a fixed short list; tests answer via onCommand) ----
       case 'session.subagentTranscript': {
-        if (!this.knowsEntry(cmd.entryId)) return { ok: false, error: makeError('ENTRY_NOT_FOUND', { entryId: cmd.entryId }) };
+        if (!this.knowsEntry(cmd.entryId))
+          return { ok: false, error: makeError('ENTRY_NOT_FOUND', { entryId: cmd.entryId }) };
         const items = fakeSubagentItems(cmd.agentId);
-        const offset = cmd.offset === null ? Math.max(0, items.length - cmd.limit) : Math.min(cmd.offset, items.length);
-        return this.ok({ items: items.slice(offset, offset + cmd.limit), offset, total: items.length, running: false });
+        const offset =
+          cmd.offset === null ? Math.max(0, items.length - cmd.limit) : Math.min(cmd.offset, items.length);
+        return this.ok({
+          items: items.slice(offset, offset + cmd.limit),
+          offset,
+          total: items.length,
+          running: false,
+        });
       }
       case 'transcript.loadEarlier': {
         // The server view keeps every item; snapshots are trimmed to LIMITS.snapshotItems.
@@ -1261,9 +1326,19 @@ export class FakeHost {
       case 'session.regenerateTitle': {
         const summary = this.summaries.get(cmd.entryId);
         if (summary === undefined) return { ok: false, error: makeError('ENTRY_NOT_FOUND') };
-        this.patchSummary(cmd.entryId, { title: `Generated: ${summary.title}`.slice(0, 200), titleSource: 'ai' });
+        this.patchSummary(cmd.entryId, {
+          title: `Generated: ${summary.title}`.slice(0, 200),
+          titleSource: 'ai',
+        });
         return this.ok();
       }
+      // WP-87: a tiny update flow on HostState.update (unsupported → UPDATE_NOT_PACKAGED).
+      case 'update.check':
+      case 'update.prepare':
+      case 'update.apply':
+      case 'update.rollback':
+      case 'update.dismiss':
+        return this.updateCommand(cmd);
       case 'link.open':
         this.linkOpens.push(cmd.url);
         return this.linkOpenError === null ? this.ok() : { ok: false, error: this.linkOpenError };
@@ -1294,7 +1369,11 @@ export class FakeHost {
         const ids = (this.view(cmd.entryId)?.items ?? [])
           .filter((i) => i.kind === 'side_question' && i.threadId === cmd.threadId)
           .map((i) => i.id);
-        if (ids.length > 0) this.pushOps(cmd.entryId, ids.map((itemId) => ({ op: 'item.remove' as const, itemId })));
+        if (ids.length > 0)
+          this.pushOps(
+            cmd.entryId,
+            ids.map((itemId) => ({ op: 'item.remove' as const, itemId })),
+          );
         return this.ok();
       }
       case 'session.withdrawQueued': {
@@ -1334,7 +1413,13 @@ export class FakeHost {
 
   private login(profileId: string): FakeAck {
     const url = FAKE_LOGIN_URL;
-    const login: ProfileLogin = { ...IDLE_PROFILE_LOGIN, state: 'waiting', url, manualUrl: url, at: this.now() };
+    const login: ProfileLogin = {
+      ...IDLE_PROFILE_LOGIN,
+      state: 'waiting',
+      url,
+      manualUrl: url,
+      at: this.now(),
+    };
     if (!this.patchLogin(profileId, login)) return { ok: false, error: makeError('PROFILE_NOT_FOUND') };
     this.linkOpens.push(url);
     return this.ok();
@@ -1342,7 +1427,8 @@ export class FakeHost {
 
   private loginCode(profileId: string): FakeAck {
     const current = this.hostState.profiles.find((p) => p.id === profileId)?.login;
-    if (current?.state !== 'waiting') return { ok: false, error: makeError('LOGIN_FAILED', { reason: 'expired' }) };
+    if (current?.state !== 'waiting')
+      return { ok: false, error: makeError('LOGIN_FAILED', { reason: 'expired' }) };
     const at = this.now();
     const login: ProfileLogin =
       this.loginResult === null
@@ -1381,7 +1467,12 @@ export class FakeHost {
         const current = this.view(entryId)?.items.find((i) => i.id === id);
         if (current?.kind !== 'side_question' || current.status !== 'pending') return;
         const response = `A playground side answer to “${question.slice(0, 80)}”. No model was called.`;
-        const answered: SideQuestionItem = { ...current, status: 'answered', response, answeredAt: this.now() };
+        const answered: SideQuestionItem = {
+          ...current,
+          status: 'answered',
+          response,
+          answeredAt: this.now(),
+        };
         this.pushOps(entryId, [{ op: 'item.upsert', item: answered }]);
       }, 600);
     }

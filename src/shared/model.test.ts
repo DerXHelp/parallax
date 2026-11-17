@@ -56,6 +56,8 @@ import {
   todoListSchema,
   transcriptItemSchema,
   type Entry,
+  npmRegistryUrlSchema,
+  updateSettingsSchema,
 } from './model';
 import {
   SAMPLE_IDS,
@@ -772,7 +774,10 @@ describe('WP-64 contracts (Remote Control)', () => {
     const { remoteControlWanted: _wanted, ...oldEntry } = sampleEntry();
     expect(entrySchema.parse(oldEntry).remoteControlWanted).toBe(false);
     const { bridgeSessionId: _bridge, sessionUrl: _url, ...oldConversation } = sampleConversation();
-    expect(conversationSchema.parse(oldConversation)).toMatchObject({ bridgeSessionId: null, sessionUrl: null });
+    expect(conversationSchema.parse(oldConversation)).toMatchObject({
+      bridgeSessionId: null,
+      sessionUrl: null,
+    });
     const { remoteControl: _rc, ...oldSummary } = sampleSummary();
     expect(sessionSummarySchema.parse(oldSummary).remoteControl).toEqual({
       state: 'off',
@@ -794,7 +799,9 @@ describe('WP-64 contracts (Remote Control)', () => {
       entrySchema,
       sampleEntry({
         remoteControlWanted: true,
-        conversations: [sampleConversation({ bridgeSessionId: 'cse_01ExampleSessionId000000', sessionUrl: url })],
+        conversations: [
+          sampleConversation({ bridgeSessionId: 'cse_01ExampleSessionId000000', sessionUrl: url }),
+        ],
       }),
     );
     expectRoundTrip(
@@ -833,9 +840,9 @@ describe('WP-64 contracts (Remote Control)', () => {
     ]) {
       expect(isClaudeSessionUrl(bad), bad).toBe(false);
     }
-    expect(conversationSchema.safeParse(sampleConversation({ sessionUrl: 'https://example.com/' })).success).toBe(
-      false,
-    );
+    expect(
+      conversationSchema.safeParse(sampleConversation({ sessionUrl: 'https://example.com/' })).success,
+    ).toBe(false);
   });
 
   it('active bridge states (never sleep, ADR-105)', () => {
@@ -862,7 +869,12 @@ describe('WP-70 contracts (login per profile, output style per project)', () => 
       },
     });
     expectRoundTrip(profileSummarySchema, waiting);
-    const failed = { ...IDLE_PROFILE_LOGIN, state: 'failed' as const, error: { code: 'LOGIN_BLOCKED' as const, params: {} }, at: sampleTime(6) };
+    const failed = {
+      ...IDLE_PROFILE_LOGIN,
+      state: 'failed' as const,
+      error: { code: 'LOGIN_BLOCKED' as const, params: {} },
+      at: sampleTime(6),
+    };
     expect(profileLoginSchema.parse(failed)).toEqual(failed);
     // Only http(s) links; unknown keys (e-mail, organization) are dropped by the schema.
     expect(profileLoginSchema.safeParse({ ...failed, url: 'javascript:alert(1)' }).success).toBe(false);
@@ -909,9 +921,37 @@ describe('WP-70 contracts (login per profile, output style per project)', () => 
     };
     expectRoundTrip(sessionSummarySchema, sampleSummary({ runningTasks: running }));
     const item = { kind: 'other' as const, subagentType: null, label: 'x' };
-    expect(runningTasksSchema.safeParse({ ...running, items: Array.from({ length: 6 }, () => item) }).success).toBe(false);
-    expect(runningTasksSchema.safeParse({ ...running, items: [{ ...item, label: 'x'.repeat(121) }] }).success).toBe(false);
-    expect(runningTasksSchema.safeParse({ ...running, items: [{ ...item, kind: 'robot' }] }).success).toBe(false);
+    expect(
+      runningTasksSchema.safeParse({ ...running, items: Array.from({ length: 6 }, () => item) }).success,
+    ).toBe(false);
+    expect(
+      runningTasksSchema.safeParse({ ...running, items: [{ ...item, label: 'x'.repeat(121) }] }).success,
+    ).toBe(false);
+    expect(runningTasksSchema.safeParse({ ...running, items: [{ ...item, kind: 'robot' }] }).success).toBe(
+      false,
+    );
     expect(runningTasksSchema.safeParse({ ...running, agents: -1 }).success).toBe(false);
+  });
+});
+
+describe('WP-87: npm registry of updates', () => {
+  it('accepts https (and http only on loopback), trims, refuses credentials and other schemes', () => {
+    const ok = (value: string) => npmRegistryUrlSchema.safeParse(value).success;
+    expect(npmRegistryUrlSchema.parse(' https://nexus.example.com/repository/npm-all/ ')).toBe(
+      'https://nexus.example.com/repository/npm-all/',
+    );
+    expect(ok('https://registry.npmjs.org')).toBe(true);
+    expect(ok('http://127.0.0.1:4873/')).toBe(true);
+    expect(ok('http://localhost:4873')).toBe(true);
+    expect(ok('http://nexus.example.com/npm/')).toBe(false);
+    expect(ok('https://user:secret@nexus.example.com/npm/')).toBe(false);
+    expect(ok('https://token@nexus.example.com/npm/')).toBe(false);
+    expect(ok('file:///C:/npm')).toBe(false);
+    expect(ok('nexus.example.com')).toBe(false);
+    expect(ok('')).toBe(false);
+  });
+
+  it('settings without a registry read as null (npm configuration)', () => {
+    expect(updateSettingsSchema.parse({ check: false })).toEqual({ check: false, registry: null });
   });
 });

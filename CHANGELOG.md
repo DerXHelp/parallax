@@ -19,10 +19,21 @@ Entscheidungen ohne Modaldialog, Dateien und Pläne, Aufgaben und Subagenten.
 - Vor dem ersten Start einer neuen Version sichert Parallax seine Daten; die drei jüngsten Sicherungen bleiben (WP-86).
 - `parallax.cmd --use <version>` schaltet auf eine andere installierte Version um, `--uninstall` entfernt die
   Installation samt Startmenü, Autostart und Link-Handler; die Daten bleiben (WP-86).
+- Parallax sucht beim Start und alle 12 Stunden nach einer neuen Version, lädt sie auf Knopfdruck, prüft Signatur und
+  Dateien und wechselt mit einem Neustart; die Sessions lassen sich danach fortsetzen (WP-87…89).
+- „Aus Datei installieren…“ übernimmt ein heruntergeladenes Release-Paket ohne Zugriff auf GitHub (WP-87…89).
+- „Zurück zu <Version>“ wechselt auf die vorige Version, bei Bedarf mit der Sicherung der Daten; startet eine neue
+  Version nicht sauber, kehrt Parallax von selbst zur alten zurück (WP-87…89).
+- „Was ist neu“ zeigt die Änderungen einer Version aus dem signierten Changelog, dazu Lizenz und Hinweise zu
+  Drittkomponenten (WP-88).
+- Updates holen das Agent SDK aus der npm-Konfiguration oder aus einer unter Einstellungen → „Updates“ eingetragenen
+  Registry, z. B. einem Firmen-Mirror (WP-89).
 
 ### Geändert
 - Ein Klon lässt Autostart, Link-Handler und Startmenü einer Installation in Ruhe, statt sie auf sich umzubiegen
   (WP-86).
+- Startet der Server neu, wartet das Fenster bis zu fünf Minuten und verbindet sich wieder, statt „Server beendet“ zu
+  zeigen (WP-88).
 
 ### Behoben
 - Aus PowerShell 7 gestartet, scheitern die Prüfung der Ordnerrechte von `PARALLAX_HOME`, die Prozessabfragen und die

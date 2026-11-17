@@ -165,8 +165,10 @@ function OutdatedWindow({ hostId }: { hostId: HostId }) {
 
 /**
  * Full-page states of the local host before the shell can show anything (architecture §5.1):
- * not signed in (no WS), server stopped (close 4503), not reachable yet, outdated window,
- * connecting. Once a `hello` was accepted, later outages are banners (ShellBanners).
+ * not signed in (no WS), server stopped (close 4503, or a restart that did not come back in time –
+ * then with the error UPDATE_RESTART_FAILED), restarting (close 4504 before the first `hello`,
+ * rare), not reachable yet, outdated window, connecting. Once a `hello` was accepted, later
+ * outages are banners (ShellBanners) – except "server stopped", which always takes the page.
  */
 export function HostGate({ children }: { children: ReactNode }) {
   const { t, tError } = useI18n();
@@ -213,12 +215,27 @@ export function HostGate({ children }: { children: ReactNode }) {
         }
       >
         <p className="text-muted-foreground text-xs">{t('connection.serverStoppedDescription')}</p>
+        {/* WP-88b: the restart for an update did not come back within the window (5 min). */}
+        {host.error?.code === 'UPDATE_RESTART_FAILED' ? (
+          <Alert tone="error" data-slot="restart-failed">
+            {tError(host.error)}
+          </Alert>
+        ) : null}
       </FullPage>
     );
   }
 
   if (host.phase === 'version-mismatch' && !host.everConnected) {
     return <OutdatedWindow hostId={host.hostId} />;
+  }
+
+  if (host.phase === 'restarting' && !host.everConnected) {
+    return (
+      <FullPage icon={RefreshCwIcon} title={t('connection.restartingTitle')}>
+        <p className="text-muted-foreground text-xs">{t('connection.restartingDescription')}</p>
+        <Spinner className="text-muted-foreground" label={t('connection.restartingTitle')} />
+      </FullPage>
+    );
   }
 
   if (!host.everConnected) {

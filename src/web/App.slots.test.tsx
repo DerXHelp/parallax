@@ -7,7 +7,7 @@ import { startTasksScenario, TASKS_SESSION_KEY } from './features/tasks/testing'
 import type { RunningScenario } from './playground/PlaygroundScenario';
 import { NotificationCenter } from './shell/NotificationCenter';
 import { QUIET_SLOT_NOTICE_ID, resetQuietSlotFailures } from './shell/SlotBoundary';
-import { FeatureSlotsProvider, type FeatureSlots } from './shell/slots';
+import { DEFAULT_FEATURE_SLOTS, FeatureSlotsProvider, type FeatureSlots } from './shell/slots';
 import { clientStore, resetClientStore } from './state/store';
 import { TooltipProvider } from './ui/tooltip';
 
@@ -52,6 +52,9 @@ vi.mock('./features/tasks/TasksPanel', () => {
 vi.mock('./features/tasks/TaskStrip', () => {
   throw new Error('Failed to fetch dynamically imported module (test)');
 });
+vi.mock('./features/updates/UpdatesSettings', () => {
+  throw new Error('Failed to fetch dynamically imported module (test)');
+});
 
 let running: RunningScenario | null = null;
 
@@ -62,10 +65,11 @@ afterEach(() => {
   resetQuietSlotFailures();
 });
 
+const WIRED: FeatureSlots = { ...DEFAULT_FEATURE_SLOTS, ...APP_SLOTS };
+
 function slot<K extends keyof FeatureSlots>(key: K): FeatureSlots[K] {
-  const component = APP_SLOTS[key];
-  if (component === undefined) throw new Error(`slot ${key} is not wired`);
-  return component;
+  if (!(key in APP_SLOTS)) throw new Error(`slot ${key} is not wired`);
+  return WIRED[key];
 }
 
 const KEY = TASKS_SESSION_KEY;
@@ -90,6 +94,8 @@ const LAZY_SLOTS: [keyof FeatureSlots, () => ReactNode][] = [
   ['TasksPanel', () => createElement(slot('TasksPanel'), { sessionKey: KEY })],
   // Loads its chunk only with open todos (the scenario below has them).
   ['TaskStrip', () => createElement(slot('TaskStrip'), { sessionKey: KEY })],
+  // WP-87: notice and banner are quiet (nothing instead of a card), the settings section shows it.
+  ['UpdatesSettings', () => createElement(slot('UpdatesSettings'), {})],
 ];
 
 describe('APP_SLOTS: a lazy slot whose chunk fails shows the SlotBoundary card (WP-58, WP-60)', () => {

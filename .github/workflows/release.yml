@@ -173,7 +173,13 @@ jobs:
     permissions:
       contents: write
     steps:
+      # WP-87: the update button reads releases/latest/download/latest.json - a full release becomes
+      # "latest" explicitly; a pre-release never does (GitHub answers 404 = no update).
       - name: Publish the draft
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$env:GITHUB_REF_NAME" --repo "$env:GITHUB_REPOSITORY" --draft=false
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $flags = @('--draft=false')
+          if (-not $env:GITHUB_REF_NAME.Contains('-')) { $flags += '--latest' }
+          gh release edit "$env:GITHUB_REF_NAME" --repo "$env:GITHUB_REPOSITORY" @flags

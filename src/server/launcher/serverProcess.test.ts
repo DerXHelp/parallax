@@ -3,7 +3,7 @@ import { createServer } from 'node:net';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { makeTempHome } from '../http/testServer';
-import { probePort, readServerOutput, serverOutLogPath } from './serverProcess';
+import { probePort, readServerOutput, serverEnv, serverOutLogPath } from './serverProcess';
 
 const homes: string[] = [];
 
@@ -12,6 +12,14 @@ afterEach(async () => {
 });
 
 describe('server process helpers', () => {
+  it('serverEnv keeps the environment and turns off the optional ws add-ons', () => {
+    expect(serverEnv({ PATH: 'x', WS_NO_BUFFER_UTIL: '' })).toEqual({
+      PATH: 'x',
+      WS_NO_BUFFER_UTIL: '1',
+      WS_NO_UTF_8_VALIDATE: '1',
+    });
+  });
+
   it('probePort: free, then in use while another socket listens', async () => {
     const blocker = createServer((socket) => socket.destroy());
     await new Promise<void>((resolve) => blocker.listen(0, '127.0.0.1', resolve));

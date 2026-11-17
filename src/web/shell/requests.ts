@@ -12,7 +12,8 @@ import type { HostId, ProfileId } from '@shared/common';
 
 /**
  * Sections of the settings page (WP-38; `profiles` renders the `ProfilesSettings` slot of WP-36;
- * Phase 3: `files` = editor and file settings, WP-58).
+ * Phase 3: `files` = editor and file settings, WP-58; WP-87: `updates` renders the `UpdatesSettings`
+ * slot of features/updates).
  */
 export const SETTINGS_SECTIONS = [
   'general',
@@ -21,6 +22,7 @@ export const SETTINGS_SECTIONS = [
   'files',
   'profiles',
   'server',
+  'updates',
   'about',
 ] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];

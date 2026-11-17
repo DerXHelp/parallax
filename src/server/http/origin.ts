@@ -77,6 +77,9 @@ const ROUTE_CLASSES: ReadonlyMap<string, ReadonlyMap<string, RouteClass>> = new 
   [API_PATHS.authStatus, forMethods(READ_METHODS, 'public-get')],
   [API_PATHS.blob, forMethods(READ_METHODS, 'blob')],
   [API_PATHS.file, forMethods(READ_METHODS, 'file')],
+  // WP-87: release notes and license texts – like file content, only the app's own pages.
+  [API_PATHS.changelog, forMethods(READ_METHODS, 'file')],
+  [API_PATHS.notices, forMethods(READ_METHODS, 'file')],
   [API_PATHS.ws, forMethods(READ_METHODS, 'ws')],
   [API_PATHS.auth, forMethods(['POST'], 'auth-exchange')],
   [API_PATHS.launcherCode, forMethods(['POST'], 'launcher')],

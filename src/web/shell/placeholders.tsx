@@ -6,8 +6,10 @@ import { useDecision, useDecisions, useItem, useTopLevelItemIds } from '@web/sta
 import type {
   FileLinkSlotProps,
   FilePanelSlotProps,
+  NoSlotProps,
   ProfilesSettingsSlotProps,
   SubagentPanelSlotProps,
+  UpdateNoticeSlotProps,
 } from './slots';
 
 /**
@@ -162,6 +164,19 @@ export function SettingsPagePlaceholder(_props: { section: string | null; onClos
 
 /** Phase 2: until WP-36 fills the slot the settings page shows no profile editor. */
 export function ProfilesSettingsPlaceholder(_props: ProfilesSettingsSlotProps) {
+  return null;
+}
+
+/** WP-87: without features/updates there is no update hint, banner or settings content. */
+export function UpdateNoticePlaceholder(_props: UpdateNoticeSlotProps) {
+  return null;
+}
+
+export function UpdateBannerPlaceholder(_props: NoSlotProps) {
+  return null;
+}
+
+export function UpdatesSettingsPlaceholder(_props: NoSlotProps) {
   return null;
 }
 

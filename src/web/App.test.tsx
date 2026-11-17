@@ -23,6 +23,7 @@ import { PREFERENCES_SLOTS, SettingsPage } from './features/preferences';
 import { ProfilesSettings } from './features/profiles';
 import { startProfilesDemo } from './features/profiles/lib/demo-host';
 import { TASKS_SLOTS } from './features/tasks';
+import { UPDATES_SLOTS } from './features/updates';
 import { TRANSCRIPT_SLOTS } from './features/transcript/slots';
 import { installResizeObserver } from './features/transcript/testing';
 import { setLanguage } from './i18n';
@@ -370,6 +371,7 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
       ...Object.keys(TRANSCRIPT_SLOTS),
       ...Object.keys(FILES_SLOTS),
       ...Object.keys(TASKS_SLOTS),
+      ...Object.keys(UPDATES_SLOTS),
     ]) {
       expect(APP_SLOTS, key).toHaveProperty(key);
     }
@@ -389,6 +391,9 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
       ['TasksPanel', TASKS_SLOTS.TasksPanel],
       ['TaskStrip', TASKS_SLOTS.TaskStrip],
       ['SubagentPanel', TRANSCRIPT_SLOTS.SubagentPanel],
+      ['UpdateNotice', UPDATES_SLOTS.UpdateNotice],
+      ['UpdateBanner', UPDATES_SLOTS.UpdateBanner],
+      ['UpdatesSettings', UPDATES_SLOTS.UpdatesSettings],
     ];
     for (const [key, own] of lazy) {
       expect(APP_SLOTS[key], key).toBeDefined();

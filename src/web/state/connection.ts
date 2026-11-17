@@ -47,6 +47,8 @@ import type { Transport } from './transport';
  * backoff (auth status first, §5.1), ref-counted subscriptions with `sinceSeq`, ops through the
  * shared reducer once per animation frame, commands with `cmdId` and a promise per `ack`,
  * presence after every change (debounced). `hostId` exists only here; the wire knows `entryId`.
+ * Close 4503 ends in "server stopped"; close 4504 (restart for an update, WP-88b) in `restarting`:
+ * attempts every 1–3 s for up to 5 min, then "server stopped" with UPDATE_RESTART_FAILED.
  */
 
 /** A command failed: `error` is the server's (or a client-side) ErrorPayload – translate with `tError`. */
@@ -146,6 +148,16 @@ export const HELLO_TIMEOUT_MS = 10_000;
 export const UPGRADE_REJECTED_AFTER = 3;
 /** `shutdownServer()` from an outdated window gives up after this (V2-04). */
 export const SHUTDOWN_TIMEOUT_MS = 15_000;
+/**
+ * Close 4504 (WP-87 §0.3 no. 5): a restarting host keeps trying this long, then shows "server
+ * stopped" with UPDATE_RESTART_FAILED `reason: 'timeout'` (worst case of a switch ≈ 3.5 min).
+ */
+export const RESTART_RECONNECT_WINDOW_MS = 5 * 60_000;
+/**
+ * Attempts while restarting: 2 s ± 50 % = every 1–3 s, without growth. The spread keeps several
+ * windows from knocking on the starting server in step.
+ */
+export const RESTART_BACKOFF: BackoffOptions = { initialMs: 2000, maxMs: 2000, factor: 1, jitter: 0.5 };
 const MAX_NOTIFICATIONS = 20;
 
 /** rAF while visible; rAF does not run in hidden windows, so a timer backs it up. */
@@ -183,9 +195,16 @@ const CLOSED_PHASES: ReadonlySet<HostPhase> = new Set<HostPhase>([
   'stopped',
 ]);
 
+/** Steps of one attempt; while restarting (close 4504) the host stays `restarting` through them. */
+const ATTEMPT_PHASES: ReadonlySet<HostPhase> = new Set<HostPhase>([
+  'checking-auth',
+  'connecting',
+  'reconnecting',
+]);
+
 function statusOf(phase: HostPhase, everConnected: boolean): ConnectionStatus {
   if (phase === 'open') return 'open';
-  if (phase === 'reconnecting') return 'reconnecting';
+  if (phase === 'reconnecting' || phase === 'restarting') return 'reconnecting';
   if (CLOSED_PHASES.has(phase)) return 'closed';
   return everConnected ? 'reconnecting' : 'connecting';
 }
@@ -240,6 +259,9 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
   let authConfirmed = false;
   /** Attempts in a row: signed in, but the socket closed before `hello`. */
   let rejectedUpgrades = 0;
+  /** Close 4504: epoch ms when the restart gives up; null = no restart in progress. */
+  let restartDeadline: number | null = null;
+  let restartTimer: ReturnType<typeof setTimeout> | null = null;
 
   const subscriptions = new Map<EntryId, Subscription>();
   /** Unsubscribed entries whose view is still cached, oldest first. */
@@ -257,14 +279,19 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
     store.getState().sessions[keyOf(entryId)];
   const viewOf = (entryId: EntryId): SessionViewState | null => sessionRecord(entryId)?.view ?? null;
 
-  function setPhase(next: HostPhase, patch: Partial<HostRecord> = {}): void {
+  function setPhase(requested: HostPhase, patch: Partial<HostRecord> = {}): void {
+    // While restarting, an attempt's steps stay `restarting` (one banner, no flicker); anything
+    // else (open, unauthenticated, version-mismatch, server-stopped, stopped) ends the restart.
+    const next = restartDeadline !== null && ATTEMPT_PHASES.has(requested) ? 'restarting' : requested;
+    if (next !== 'restarting') clearRestart();
     phase = next;
     if (next === 'open') everConnected = true;
     updateHost(store, hostId, () => ({
       phase: next,
       status: statusOf(next, everConnected),
       everConnected,
-      ...(next === 'reconnecting' ? {} : { nextAttemptAt: null }),
+      restartDeadline,
+      ...(requested === 'reconnecting' || requested === 'restarting' ? {} : { nextAttemptAt: null }),
       ...patch,
     }));
   }
@@ -305,6 +332,12 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
     helloTimer = null;
   }
 
+  function clearRestart(): void {
+    if (restartTimer !== null) clearTimeout(restartTimer);
+    restartTimer = null;
+    restartDeadline = null;
+  }
+
   function closeTransport(): void {
     const current = transport;
     transport = null;
@@ -315,13 +348,44 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
 
   function scheduleReconnect(error: ErrorPayload): void {
     clearReconnectTimer();
-    const delay = backoffDelay(attempt, backoff, random);
-    attempt++;
+    let delay: number;
+    if (restartDeadline === null) {
+      delay = backoffDelay(attempt, backoff, random);
+      attempt++;
+    } else {
+      // Restarting: every 1–3 s, no growth (the server is expected back within minutes).
+      delay = backoffDelay(0, RESTART_BACKOFF, random);
+    }
     setPhase('reconnecting', { nextAttemptAt: now() + delay, error });
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       void beginAttempt();
     }, delay);
+  }
+
+  /**
+   * Close 4504 (WP-87 §1.3): the server restarts for an update or a rollback. Open commands end
+   * (the next server is another instance), then attempts every 1–3 s – each with the auth check –
+   * until a `hello` (handled as usual: a new build reloads the window) or the deadline.
+   */
+  function beginRestart(): void {
+    failAllPending('CONNECTION_LOST');
+    clearRestart();
+    restartDeadline = now() + RESTART_RECONNECT_WINDOW_MS;
+    restartTimer = setTimeout(restartExpired, RESTART_RECONNECT_WINDOW_MS);
+    scheduleReconnect(makeError('CONNECTION_LOST', { code: WS_CLOSE.SERVER_RESTARTING }));
+  }
+
+  /** No server came back in time: "server stopped" with UPDATE_RESTART_FAILED (timeout). */
+  function restartExpired(): void {
+    restartTimer = null;
+    if (restartDeadline === null) return;
+    // Drops an auth check in flight and the socket of the current attempt.
+    generation++;
+    clearReconnectTimer();
+    closeTransport();
+    failAllPending('CONNECTION_LOST');
+    setPhase('server-stopped', { error: makeError('UPDATE_RESTART_FAILED', { reason: 'timeout' }) });
   }
 
   async function beginAttempt(): Promise<void> {
@@ -395,6 +459,10 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
     if (code === WS_CLOSE.SERVER_SHUTDOWN) {
       failAllPending('CONNECTION_LOST');
       setPhase('server-stopped', { error: makeError('SERVER_SHUTTING_DOWN') });
+      return;
+    }
+    if (code === WS_CLOSE.SERVER_RESTARTING) {
+      beginRestart();
       return;
     }
     if (code === WS_CLOSE.PROTOCOL_VERSION_MISMATCH) {
@@ -711,7 +779,8 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
   // ---- commands ----
 
   function send<C extends Command>(cmd: C): Promise<CommandResult<C['name']>> {
-    if (CLOSED_PHASES.has(phase) || !started) {
+    // Restarting: the next server is another instance, which would drop the command anyway.
+    if (CLOSED_PHASES.has(phase) || phase === 'restarting' || !started) {
       return Promise.reject(new ClientCommandError(makeError('CONNECTION_LOST')));
     }
     const cmdId = newCmdId();
@@ -881,6 +950,8 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
     },
     retryNow() {
       if (!started || phase === 'open' || phase === 'connecting' || phase === 'checking-auth') return;
+      // Restarting without a pending timer: an attempt is on its way (the phase hides its steps).
+      if (phase === 'restarting' && reconnectTimer === null) return;
       void beginAttempt();
     },
     shutdownServer,

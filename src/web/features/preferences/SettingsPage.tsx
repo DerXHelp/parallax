@@ -1,5 +1,6 @@
 import {
   BellIcon,
+  DownloadIcon,
   FolderOpenIcon,
   InfoIcon,
   LayersIcon,
@@ -34,6 +35,7 @@ const SECTION_ICONS: Readonly<Record<SettingsSection, LucideIcon>> = {
   files: FolderOpenIcon,
   profiles: UsersIcon,
   server: ServerIcon,
+  updates: DownloadIcon,
   about: InfoIcon,
 };
 
@@ -55,6 +57,16 @@ function ProfilesSection({ onDirtyChange }: { onDirtyChange: (dirty: boolean) =>
     return <p className="text-muted-foreground text-xs">{t('preferences.profiles.unavailable')}</p>;
   }
   return <ProfilesSettings onDirtyChange={onDirtyChange} />;
+}
+
+/** Section "Updates" (WP-87): the `UpdatesSettings` slot of features/updates. */
+function UpdatesSection() {
+  const t = useT();
+  const { UpdatesSettings } = useFeatureSlots();
+  if (UpdatesSettings === DEFAULT_FEATURE_SLOTS.UpdatesSettings) {
+    return <p className="text-muted-foreground text-xs">{t('preferences.updates.unavailable')}</p>;
+  }
+  return <UpdatesSettings />;
 }
 
 function SectionContent({
@@ -82,6 +94,8 @@ function SectionContent({
       return <ProfilesSection onDirtyChange={onProfilesDirtyChange} />;
     case 'server':
       return <ServerSection editor={editor} hostState={hostState} />;
+    case 'updates':
+      return <UpdatesSection />;
     case 'about':
       return <AboutSection hostState={hostState} />;
   }

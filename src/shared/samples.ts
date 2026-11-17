@@ -13,6 +13,8 @@ import {
   DEFAULT_NOTIFICATION_SETTINGS,
   DEFAULT_REMOTE_CONTROL_SETTINGS,
   DEFAULT_REMOTE_CONTROL_SUMMARY,
+  DEFAULT_UPDATE_SETTINGS,
+  DEFAULT_UPDATE_STATE,
   IDLE_PROFILE_LOGIN,
   defaultEditorSettings,
 } from './model';
@@ -50,6 +52,8 @@ import type {
   SessionFile,
   SessionSummary,
   Settings,
+  UpdateRelease,
+  UpdateState,
   SystemEvent,
   SystemItem,
   ThinkingItem,
@@ -218,6 +222,7 @@ export function sampleSettings(p: Partial<Settings> = {}): Settings {
     remoteControl: { ...DEFAULT_REMOTE_CONTROL_SETTINGS },
     transcriptView: 'compact',
     hookDisplay: 'failed',
+    updates: { ...DEFAULT_UPDATE_SETTINGS },
     ...p,
   };
 }
@@ -258,9 +263,61 @@ export function sampleHostState(p: Partial<HostState> = {}): HostState {
     port: 4711,
     systemIntegration: false,
     remoteControlDefault: null,
+    app: { version: '0.0.0', buildId: '0.0.0+sample', packaged: false },
+    update: { ...DEFAULT_UPDATE_STATE },
     ...p,
   };
 }
+
+// ---- WP-87: updates ----
+
+export function sampleUpdateRelease(p: Partial<UpdateRelease> = {}): UpdateRelease {
+  return {
+    version: '1.0.1',
+    source: 'github',
+    size: 13_757_923,
+    createdAt: sampleTime(-3600),
+    downgrade: false,
+    needsRestore: false,
+    backupAt: null,
+    ...p,
+  };
+}
+
+export function sampleUpdateState(p: Partial<UpdateState> = {}): UpdateState {
+  return { ...DEFAULT_UPDATE_STATE, status: 'idle', checkedAt: sampleTime(), ...p };
+}
+
+/** One state per case of the update UI (WP-87 §1.8); the running version is 1.0.0. */
+export const SAMPLE_UPDATE_STATES = {
+  unsupported: { ...DEFAULT_UPDATE_STATE },
+  idle: sampleUpdateState(),
+  available: sampleUpdateState({ status: 'available', available: sampleUpdateRelease() }),
+  downloading: sampleUpdateState({ status: 'downloading', progress: 0.4, available: sampleUpdateRelease() }),
+  ready: sampleUpdateState({ status: 'ready', available: sampleUpdateRelease() }),
+  readyFromFile: sampleUpdateState({
+    status: 'ready',
+    available: sampleUpdateRelease({ version: '1.0.0-rc.4', source: 'file', size: null }),
+  }),
+  restarting: sampleUpdateState({ status: 'restarting', available: sampleUpdateRelease() }),
+  justUpdated: sampleUpdateState({ justUpdated: { from: '1.0.0-rc.4', to: '1.0.0', at: sampleTime() } }),
+  failedUpdate: sampleUpdateState({
+    failedUpdate: {
+      version: '1.0.1',
+      restoredTo: '1.0.0',
+      at: sampleTime(),
+      error: { code: 'UPDATE_RESTART_FAILED', params: { version: '1.0.1', reason: 'timeout' } },
+      log: 'C:\\Users\\<USER>\\AppData\\Local\\Parallax\\logs\\update-20261117-120000.log',
+    },
+  }),
+  checkFailed: sampleUpdateState({
+    error: { code: 'UPDATE_CHECK_FAILED', params: { reason: 'network' } },
+  }),
+  previous: sampleUpdateState({ previous: { version: '1.0.0-rc.4', needsRestore: false, backupAt: null } }),
+  previousNeedsRestore: sampleUpdateState({
+    previous: { version: '1.0.0-rc.4', needsRestore: true, backupAt: sampleTime(-86_400) },
+  }),
+} as const satisfies Record<string, UpdateState>;
 
 // ---- Registry ----
 
