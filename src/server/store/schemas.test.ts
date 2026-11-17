@@ -37,6 +37,12 @@ describe('store schema list', () => {
     expect(used.size).toBeGreaterThanOrEqual(9);
     for (const name of used) expect(listSource, name).toContain(name);
   });
+
+  it('leaves only processes.json and auth-secret.json out of the backup', () => {
+    const excluded = STORE_SCHEMAS.filter((store) => !store.backup).map((store) => store.id);
+    expect(excluded).toEqual(['processes.json', 'auth-secret.json']);
+    expect(STORE_SCHEMAS.find((store) => store.kind === 'jsonl')?.backup).toBe(true);
+  });
 });
 
 describe('schemaHash', () => {

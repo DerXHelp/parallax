@@ -1,8 +1,8 @@
 /**
  * The one list of persisted stores in PARALLAX_HOME (WP-85, docs/wp/WP-83.md §8.4/§9.4): id, scope
  * and zod schema. `scripts/release-pack.ts` hashes the schemas into `release.json`; the backup on a
- * version change (WP-86) saves exactly these files. A new store is added here (pinned by
- * schemas.test.ts, which scans for `new JsonStore`).
+ * version change (WP-86, store/backup.ts) saves exactly these files (`backup: true`). A new store is
+ * added here (pinned by schemas.test.ts, which scans for `new JsonStore`).
  *
  * The hash covers the JSON Schema of the INPUT side (what a version can read), without
  * `description`/`title` texts: it changes with a new field or value, not with a comment.
@@ -41,29 +41,38 @@ export interface StoreSchema {
   /** JSON store (`schemaVersion`, `.bak`) or append-only JSON lines (transcripts). */
   kind: 'json' | 'jsonl';
   schema: z.ZodType;
+  /**
+   * Part of the backup on a build change (store/backup.ts; default true). False: the file is
+   * neither saved nor touched by a restore – `processes.json` (the current file must survive a
+   * rollback, else entries of orphaned processes are lost) and `auth-secret.json` (never changes,
+   * holds a secret). Not part of the schema hash.
+   */
+  backup: boolean;
 }
 
-const home = (file: string, schema: z.ZodType): StoreSchema => ({
+const home = (file: string, schema: z.ZodType, options: { backup?: boolean } = {}): StoreSchema => ({
   id: file,
   scope: 'home',
   kind: 'json',
   schema,
+  backup: options.backup ?? true,
 });
 const entry = (file: string, schema: z.ZodType, kind: StoreSchema['kind'] = 'json'): StoreSchema => ({
   id: `entries/*/${file}`,
   scope: 'entry',
   kind,
   schema,
+  backup: true,
 });
 
 export const STORE_SCHEMAS: readonly StoreSchema[] = [
   home(REGISTRY_FILE, registryFileSchema),
   home(PROFILES_FILE, profilesFileSchema),
   home(SETTINGS_FILE, settingsFileSchema),
-  home(PROCESSES_FILE, processesFileSchema),
+  home(PROCESSES_FILE, processesFileSchema, { backup: false }),
   home(MODEL_CATALOGS_FILE, modelCatalogsFileSchema),
   home(ACCOUNT_LIMITS_FILE, accountLimitsFileSchema),
-  home(AUTH_SECRET_FILE, authSecretFileSchema),
+  home(AUTH_SECRET_FILE, authSecretFileSchema, { backup: false }),
   entry(DECISIONS_FILE, decisionRecordsFileSchema),
   entry(COMMANDS_FILE, commandsCacheFileSchema),
   entry(SESSION_FILES_FILE, sessionFilesFileSchema),
