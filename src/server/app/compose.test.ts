@@ -575,10 +575,10 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
     await server.manager.handleCommand({ name: 'update.check' }, ctx());
     expect(update.commands.map((command) => command.name)).toEqual(['update.check']);
     await server.manager.handleCommand(
-      { name: 'settings.update', patch: { updates: { check: false } } },
+      { name: 'settings.update', patch: { updates: { check: false, registry: null } } },
       ctx(),
     );
-    expect(update.settingsSeen.at(-1)?.updates).toEqual({ check: false });
+    expect(update.settingsSeen.at(-1)?.updates).toEqual({ check: false, registry: null });
 
     const publish = vi.spyOn(server.manager, 'publishHostState');
     const release = sampleUpdateRelease();

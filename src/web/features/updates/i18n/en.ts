@@ -51,6 +51,12 @@ export const en = {
     autoCheck: 'Check for updates automatically',
     autoCheckHint: 'At start and every 12 hours. Check now works either way.',
     autoCheckFailed: 'The setting could not be saved.',
+    registry: 'npm registry for the Agent SDK',
+    registryPlaceholder: 'From the npm configuration (~/.npmrc)',
+    registryHint:
+      'Updates fetch the Agent SDK from here, e.g. a company mirror. Empty: the npm configuration. Sign-in data stays in ~/.npmrc.',
+    registryInvalid: 'Enter an https address without user name or password.',
+    registrySave: 'Save',
     whatsNew: 'What’s new',
     whatsNewIn: 'What’s new in {version}',
     license: 'License',

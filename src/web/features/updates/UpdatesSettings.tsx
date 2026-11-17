@@ -2,7 +2,7 @@ import { LoaderCircleIcon, TriangleAlertIcon } from 'lucide-react';
 import { memo, useId, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { errorSpec, type ErrorPayload } from '@shared/errors';
 import type { ChangelogQuery, NoticeFile } from '@shared/http';
-import type { HostState, UpdateState } from '@shared/model';
+import { npmRegistryUrlSchema, type HostState, type UpdateState } from '@shared/model';
 import type { CommandOf } from '@shared/protocol';
 import { useI18n } from '@web/i18n';
 import { formatFileSize } from '@web/lib/bytes';
@@ -13,6 +13,7 @@ import { sendCommand, useConnectionStatus, useHostState } from '@web/state/hooks
 import { updateSettings, useSettings } from '@web/state/settings';
 import { Alert } from '@web/ui/alert';
 import { Button } from '@web/ui/button';
+import { Input } from '@web/ui/input';
 import { Label } from '@web/ui/label';
 import { Progress } from '@web/ui/progress';
 import { Switch } from '@web/ui/switch';
@@ -481,6 +482,84 @@ function AutoCheckBlock() {
   );
 }
 
+/**
+ * npm registry for the Agent SDK of updates (`settings.updates.registry`): empty = the npm
+ * configuration (`~/.npmrc`, NPM_CONFIG_REGISTRY). Saved with Enter or "Save"; checked like the server
+ * does (https, no credentials – those stay in ~/.npmrc).
+ */
+function RegistryBlock() {
+  const { t, tError } = useI18n();
+  const settings = useSettings();
+  const stored = settings.updates.registry ?? '';
+  const [draft, setDraft] = useState<string | null>(null);
+  const [invalid, setInvalid] = useState(false);
+  const [error, setError] = useState<ErrorPayload | null>(null);
+  const id = useId();
+  const hintId = useId();
+  const value = draft ?? stored;
+  const save = () => {
+    const text = value.trim();
+    const parsed = text === '' ? null : npmRegistryUrlSchema.safeParse(text);
+    if (parsed !== null && !parsed.success) {
+      setInvalid(true);
+      return;
+    }
+    const registry = parsed === null ? null : parsed.data;
+    setInvalid(false);
+    setError(null);
+    if ((registry ?? '') === stored) {
+      setDraft(null);
+      return;
+    }
+    updateSettings({ updates: { ...settings.updates, registry } })
+      .then(() => {
+        setDraft(null);
+      })
+      .catch((caught: unknown) => {
+        setError(errorPayloadOf(caught));
+      });
+  };
+  return (
+    <Block name="registry">
+      <div className="grid gap-1.5">
+        <Label htmlFor={id} className="leading-snug">
+          {t('updates.settings.registry')}
+        </Label>
+        <div className="flex gap-2">
+          <Input
+            id={id}
+            aria-describedby={hintId}
+            aria-invalid={invalid || undefined}
+            className="font-mono text-xs"
+            value={value}
+            placeholder={t('updates.settings.registryPlaceholder')}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(event) => {
+              setDraft(event.target.value);
+              setInvalid(false);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') save();
+            }}
+          />
+          <Button size="sm" variant="outline" disabled={draft === null} onClick={save}>
+            {t('updates.settings.registrySave')}
+          </Button>
+        </div>
+        <p id={hintId} className="text-muted-foreground text-2xs leading-relaxed">
+          {invalid ? t('updates.settings.registryInvalid') : t('updates.settings.registryHint')}
+        </p>
+      </div>
+      {error === null ? null : (
+        <Alert tone="error" title={t('updates.settings.autoCheckFailed')}>
+          {tError(error)}
+        </Alert>
+      )}
+    </Block>
+  );
+}
+
 /** "What's new" (installed version), license and third-party notices (only in an installation). */
 function LinksBlock({
   hostState,
@@ -556,6 +635,7 @@ export const UpdatesSettings = memo(function UpdatesSettings(_props: NoSlotProps
       <VersionBlock hostState={hostState} packaged={packaged} />
       {packaged ? <StatusBlock hostState={hostState} onOpen={setDialog} /> : null}
       {packaged ? <AutoCheckBlock /> : null}
+      {packaged ? <RegistryBlock /> : null}
       <LinksBlock hostState={hostState} packaged={packaged} onOpen={setDialog} />
       {dialog?.kind === 'whatsNew' ? (
         <WhatsNewDialog query={dialog.query} version={dialog.version} onClose={close} />

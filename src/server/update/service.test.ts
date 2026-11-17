@@ -586,6 +586,15 @@ describe('Install from file', () => {
     expect(w.spawned[0]?.args).toEqual(expect.arrayContaining(['--apply-update=0.9.0', '--restore']));
   });
 
+  it('fetches the SDK from the registry of the settings', async () => {
+    const registry = 'https://nexus.example.com/repository/npm-all/';
+    const w = await world({ settings: sampleSettings({ updates: { check: true, registry } }) });
+    const service = await w.create();
+    service.acceptPackage(await w.upload(await w.zip('1.1.0'), service));
+    await until(() => statusOf(service) === 'ready', 'ready');
+    expect(w.sdk[0]?.registry).toBe(registry);
+  });
+
   it('refuses a package while busy and deletes it', async () => {
     const w = await world();
     const service = await w.create();
@@ -646,7 +655,7 @@ describe('schedule', () => {
     await vi.advanceTimersByTimeAsync(CHECK_INTERVAL_MS);
     await until(() => checks() === 2 && statusOf(service) === 'idle', 'second check');
 
-    const off = sampleSettings({ updates: { check: false } });
+    const off = sampleSettings({ updates: { check: false, registry: null } });
     service.settingsChanged(off);
     await vi.advanceTimersByTimeAsync(CHECK_INTERVAL_MS * 2);
     expect(checks()).toBe(2);
@@ -676,7 +685,7 @@ describe('schedule', () => {
 
   it('without updates.check no automatic check', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    const w = await world({ settings: sampleSettings({ updates: { check: false } }) });
+    const w = await world({ settings: sampleSettings({ updates: { check: false, registry: null } }) });
     const service = await w.create();
     service.start();
     await vi.advanceTimersByTimeAsync(CHECK_INTERVAL_MS);

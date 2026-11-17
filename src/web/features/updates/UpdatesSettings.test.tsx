@@ -263,9 +263,41 @@ describe('UpdatesSettings: commands', () => {
     const toggle = await screen.findByRole('switch', { name: 'Check for updates automatically' });
     expect(toggle.getAttribute('aria-checked')).toBe('true');
     await user.click(toggle);
-    expect(host.commands).toContainEqual({ name: 'settings.update', patch: { updates: { check: false } } });
+    expect(host.commands).toContainEqual({
+      name: 'settings.update',
+      patch: { updates: { check: false, registry: null } },
+    });
     await waitFor(() => {
       expect(toggle.getAttribute('aria-checked')).toBe('false');
+    });
+  });
+
+  it('the npm registry for the SDK: checked, saved with Enter, empty = npm configuration', async () => {
+    const { host } = await start(SAMPLE_UPDATE_STATES.idle);
+    const user = userEvent.setup();
+    renderSettings();
+    const input = await screen.findByRole('textbox', { name: 'npm registry for the Agent SDK' });
+    expect((input as HTMLInputElement).value).toBe('');
+    await user.type(input, 'https://user:secret@nexus.example.com/npm/{Enter}');
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByText('Enter an https address without user name or password.')).toBeTruthy();
+    expect(host.commands.filter((command) => command.name === 'settings.update')).toEqual([]);
+
+    await user.clear(input);
+    await user.type(input, ' https://nexus.example.com/repository/npm-all/ {Enter}');
+    expect(host.commands).toContainEqual({
+      name: 'settings.update',
+      patch: { updates: { check: true, registry: 'https://nexus.example.com/repository/npm-all/' } },
+    });
+    await waitFor(() => {
+      expect((input as HTMLInputElement).value).toBe('https://nexus.example.com/repository/npm-all/');
+    });
+
+    await user.clear(input);
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(host.commands).toContainEqual({
+      name: 'settings.update',
+      patch: { updates: { check: true, registry: null } },
     });
   });
 });

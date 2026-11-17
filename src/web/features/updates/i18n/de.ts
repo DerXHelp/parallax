@@ -46,6 +46,12 @@ export const de: typeof en = {
     autoCheck: 'Automatisch nach Updates suchen',
     autoCheckHint: 'Beim Start und alle 12 Stunden. „Jetzt prüfen“ geht immer.',
     autoCheckFailed: 'Die Einstellung konnte nicht gespeichert werden.',
+    registry: 'npm-Registry für das Agent SDK',
+    registryPlaceholder: 'Aus der npm-Konfiguration (~/.npmrc)',
+    registryHint:
+      'Updates holen das Agent SDK von hier, z. B. von einem Firmen-Mirror. Leer: die npm-Konfiguration. Anmeldedaten bleiben in ~/.npmrc.',
+    registryInvalid: 'Bitte eine https-Adresse ohne Benutzername und Passwort angeben.',
+    registrySave: 'Speichern',
     whatsNew: 'Was ist neu',
     whatsNewIn: 'Was ist neu in {version}',
     license: 'Lizenz',

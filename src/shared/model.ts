@@ -565,9 +565,33 @@ export const HOOK_DISPLAYS = ['all', 'failed', 'off'] as const;
 export const hookDisplaySchema = z.enum(HOOK_DISPLAYS);
 export type HookDisplay = z.infer<typeof hookDisplaySchema>;
 
-/** WP-87: look for new releases (start + every 12 h, only in a package); "Check now" works anyway. */
-export const updateSettingsSchema = z.object({ check: z.boolean() });
-export const DEFAULT_UPDATE_SETTINGS = { check: true } as const satisfies z.infer<
+/**
+ * WP-87: npm registry for the Agent SDK of an update (e.g. a company mirror): https only (http only on
+ * 127.0.0.1/localhost, a local test registry), no credentials in the URL – they stay in `~/.npmrc`
+ * (auth for exactly that host, install/npmrc.ts), never in settings.json.
+ */
+const NPM_REGISTRY_URL =
+  /^(?:https:\/\/[^/?#@\s]+|http:\/\/(?:127\.0\.0\.1|localhost)(?::\d{1,5})?)(?:[/?#]\S*)?$/iu;
+export const npmRegistryUrlSchema = z
+  .string()
+  .trim()
+  .pipe(
+    z
+      .url()
+      .max(2048)
+      .refine((value) => NPM_REGISTRY_URL.test(value), 'https URL without credentials'),
+  );
+
+/**
+ * WP-87: `check` – look for new releases (start + every 12 h, only in a package; "Check now" works
+ * anyway); `registry` – where updates fetch the Agent SDK, null = the npm configuration (`~/.npmrc`,
+ * `NPM_CONFIG_REGISTRY`). Send both fields on every update (a missing `registry` means null).
+ */
+export const updateSettingsSchema = z.object({
+  check: z.boolean(),
+  registry: npmRegistryUrlSchema.nullable().default(null),
+});
+export const DEFAULT_UPDATE_SETTINGS = { check: true, registry: null } as const satisfies z.infer<
   typeof updateSettingsSchema
 >;
 

@@ -265,7 +265,8 @@ export async function createUpdateService(
       root: found.root,
       home: options.home,
       keys: endpoints.releaseKeys,
-      registry: endpoints.registry,
+      // The registry of the settings wins; else the build's (test registry) or the npm configuration.
+      registry: options.settings().updates.registry ?? endpoints.registry,
       fetch: fetchFn,
       allowLoopbackHttp: endpoints.allowLoopbackHttp,
       run: seams.run ?? runFile,
