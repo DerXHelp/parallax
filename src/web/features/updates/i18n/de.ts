@@ -139,6 +139,7 @@ export const de: typeof en = {
       downloading: 'Gerade läuft ein Download.',
       preparing: 'Gerade läuft eine Vorbereitung.',
       restarting: 'Parallax startet gerade neu.',
+      locked: 'Gerade nutzt ein Installer oder ein anderes Update den Installationsordner.',
     },
     nodeTooOld: 'Braucht Node.js {required}; installiert ist {actual}.',
     downgradeBlocked:

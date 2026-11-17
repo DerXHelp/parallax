@@ -148,6 +148,7 @@ export const en = {
       downloading: 'A download is running right now.',
       preparing: 'A preparation is running right now.',
       restarting: 'Parallax is restarting right now.',
+      locked: 'An installer or another update is using the installation folder right now.',
     },
     nodeTooOld: 'Needs Node.js {required}; installed is {actual}.',
     downgradeBlocked:

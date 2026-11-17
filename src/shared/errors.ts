@@ -210,7 +210,7 @@ export const ERROR_CATALOG = {
   UPDATE_SDK_FAILED: { category: 'internal', http: 502, severity: 'error', retryable: true },
   /** No installation (checkout, `pnpm dev`): updates via git. */
   UPDATE_NOT_PACKAGED: { category: 'conflict', http: 409, severity: 'warning', retryable: false },
-  /** Another update step runs (`params.status`). */
+  /** Another update step runs (`params.status`: the running step, or `locked` – the install lock is held elsewhere). */
   UPDATE_BUSY: { category: 'conflict', http: 409, severity: 'warning', retryable: true },
   /** The new version needs a newer Node.js (`params.required`, `actual`). */
   UPDATE_NODE_TOO_OLD: { category: 'conflict', http: 409, severity: 'error', retryable: false },

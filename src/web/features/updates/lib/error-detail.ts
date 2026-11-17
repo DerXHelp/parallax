@@ -12,7 +12,8 @@ type Translate = (key: TranslationKey, params?: TranslationParams) => string;
 const CHECK_REASONS = ['network', 'timeout', 'http', 'too_large', 'schema', 'url'] as const;
 const DOWNLOAD_REASONS = ['network', 'timeout', 'http', 'size', 'hash', 'disk'] as const;
 const PACKAGE_REASONS = ['zip', 'layout', 'files', 'version', 'same_version', 'too_large'] as const;
-const BUSY_STATUSES = ['checking', 'downloading', 'preparing', 'restarting'] as const;
+// WP-87a: `locked` = the install lock of the installation folder is held elsewhere (installer, other server).
+const BUSY_STATUSES = ['checking', 'downloading', 'preparing', 'restarting', 'locked'] as const;
 const RESTART_REASONS = [
   'spawn',
   'handshake',
