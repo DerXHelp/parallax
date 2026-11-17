@@ -39,7 +39,7 @@ der letzten Änderung.
 <sub>Projekte und Daten sind erfunden (Showcase im Playground).</sub>
 
 ## Voraussetzungen
-- **Node.js 26** (Minimum 22). `.node-version` enthält `26` für fnm, nvm-windows oder Volta.
+- **Node.js 26** (Minimum 24.5). `.node-version` enthält `26` für fnm, nvm-windows oder Volta.
 - **pnpm 12.17.0**: einmalig `npm i -g pnpm@12.17.0`. `packageManager` und der Lockfile pinnen die
   Version; ein pnpm ≥ 10 lädt sie bei Abweichung selbst nach (`managePackageManagerVersions`; geprüft
   13.11.2026 mit pnpm 12.8.2 → 12.17.0). Ein zu altes pnpm scheitert an `engines.pnpm: ">=12.8"`.

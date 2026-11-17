@@ -2399,3 +2399,68 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
 - **Begründung:** Ohne Lizenz dürften andere den Code nicht verwenden. Copyleft passt nicht zu einer proprietären
   Laufzeit-Abhängigkeit (Agent SDK), Apache-2.0 bringt hier nur Pflichten. MIT ist kurz, verbreitet und passt zu den
   Laufzeit-Abhängigkeiten (WP-83 §3.5).
+
+## ADR-214 – Agent SDK wird nicht weitergegeben
+- **Datum/WP:** 17.11.2026, WP-85; angenommen mit dem Plan WP-83 (Nutzer 17.11.2026).
+- **Entscheidung:** Das Release-Paket enthält `@anthropic-ai/claude-agent-sdk` nicht (proprietär, „All rights
+  reserved“). `release.json` nennt Version und `integrity` aus dem Lockfile; Installer und Updater holen den Tarball aus
+  der Registry (bevorzugt `npm pack` neben Node, sonst eigener Download) und prüfen ihn gegen die `integrity`.
+  `THIRD_PARTY_NOTICES.md` liegt jedem Paket bei: Lizenzen und NOTICE-Dateien aller enthaltenen Pakete (Server und
+  Web), nur Lizenzen aus einer Allowlist, dazu ein Abschnitt zum nicht enthaltenen SDK.
+- **Begründung:** Die Lizenz des SDK erlaubt keine Weitergabe. Die `integrity` macht jede Registry (auch eine
+  Firmen-Registry) gleich vertrauenswürdig. Die Allowlist verhindert, dass eine unpassende Lizenz unbemerkt ins Paket
+  kommt.
+
+## ADR-215 – Releases per Tag, bewusst ausgelöst
+- **Datum/WP:** 17.11.2026, WP-85; angenommen mit dem Plan WP-83.
+- **Entscheidung:** SemVer aus `package.json` `version`, erste Version 1.0.0, Vorabversionen `X.Y.Z-rc.N` als
+  GitHub-Pre-release. Ein Tag `vX.Y.Z` entsteht nur auf Wunsch des Nutzers („mach ein Release“, Dauerfreigabe in
+  `CLAUDE.md` für Release-Commit, Tag und Push); Release-Commit und Tag gehen direkt auf `main`. Der Tag löst
+  `.github/workflows/release.yml` aus; schlägt die CI fehl, bleibt höchstens ein Entwurf, und dieselbe Version wird
+  nach dem Fix neu getaggt.
+- **Begründung:** `main` ist schon der geprüfte Stand; ein Release ist eine bewusste Entscheidung des Nutzers, kein
+  Nebeneffekt eines Merges.
+
+## ADR-216 – `CHANGELOG.md` als einzige Quelle der Release-Notizen
+- **Datum/WP:** 17.11.2026, WP-85; angenommen mit dem Plan WP-83.
+- **Entscheidung:** `CHANGELOG.md` (deutsch, „Keep a Changelog“, Gruppen Neu/Geändert/Behoben/Entfernt/Sicherheit/
+  Hinweise zum Update) wird beim Merge nach `main` unter „Unveröffentlicht“ gepflegt; beim Release wird der Abschnitt
+  umbenannt. Release-Seite, `latest.json` und App lesen daraus (`scripts/release-notes.ts --extract`); aus Commits
+  wird nichts erzeugt. Das Format prüft ein Test in `pnpm check`. Eine Vorabversion ohne eigenen Abschnitt nimmt die
+  Notizen aus „Unveröffentlicht“.
+- **Begründung:** Commit-Messages sind WP-Protokolle, keine Texte für Nutzer. Eine Datei im Repo ist versioniert,
+  signiert (im Paket) und offline lesbar.
+
+## ADR-217 – Paket = vorgebautes Zip, Node vorausgesetzt
+- **Datum/WP:** 17.11.2026, WP-85; angenommen mit dem Plan WP-83.
+- **Entscheidung:** `parallax-X.Y.Z-win.zip` enthält `dist/` (Server, gebündelter Launcher, Web mit Source-Maps), die
+  Laufzeit-Pakete flach (`node-linker=hoisted`, kopiert, ohne Typen, Source-Maps, TS-Quellen und Markdown, Lizenzen
+  bleiben), ein gekürztes `package.json`, `CHANGELOG.md`, `LICENSE`, `THIRD_PARTY_NOTICES.md` und `release.json`.
+  Gebaut wird nur in der CI. `release.json` neben `dist/` schaltet den Paket-Modus ein: kein Build, keine Prüfung per
+  git, Build-ID aus `release.json`. `dependencies` ist die Laufzeit des Servers (mit `@modelcontextprotocol/sdk`),
+  Web-Pakete stehen in `devDependencies`. Ein Import-Wächter prüft beim Packen, dass jeder Import der Bundles und des
+  SDK auflöst. Node-Mindestversion 24.5.0 (`--use-system-ca`, `--use-env-proxy`).
+- **Begründung:** Zielrechner brauchen weder git noch pnpm noch einen Build. Ein fehlendes Paket bricht das Release ab
+  und nicht den Server beim Nutzer.
+
+## ADR-218 – Ed25519-Signatur für Releases
+- **Datum/WP:** 17.11.2026, WP-85; angenommen mit dem Plan WP-83.
+- **Entscheidung:** `release.json` (Hash jeder Datei, `integrity` des SDK, Schema-Hashes) und `latest.json` (Version,
+  URL, Größe, SHA-256 des Zips und des Changelogs, Notizen) werden mit Ed25519 signiert (`node:crypto`, Signatur
+  base64 in `.sig`). Der öffentliche Schlüssel steht im Code (`RELEASE_PUBLIC_KEYS`, JWK `x`). Der private Schlüssel
+  ist das Secret der CI-Umgebung `release` (nur Tags `v*`); er entsteht mit `scripts/release-key.ts` im Terminal des
+  Nutzers und kommt in keine Claude-Session. Signiert wird in einem eigenen Job, der nichts installiert und nur
+  `scripts/release/sign.ts` ausführt. Geprüft wird immer mit dem Code der installierten Version.
+- **Begründung:** Ohne Code-Signing-Zertifikat schützt die eigene Signatur Asset und Update-Weg; die Trennung von Bau
+  und Signatur hält fremde Install-Skripte vom Schlüssel fern.
+
+## ADR-221 – Abhängigkeiten prüfen und aktualisieren
+- **Datum/WP:** 17.11.2026, WP-85; angenommen (Nutzer 17.11.2026).
+- **Entscheidung:** Neue Versionen nur, wenn sie älter als 14 Tage sind (npm und GitHub Actions; Agent SDK und
+  `claude` über `/claude-update`). `pnpm audit` wöchentlich (`audit.yml`) und im Release-Job (`--prod --audit-level
+  high`), weil die Dependabot-Alerts den Lockfile von pnpm 12 nicht vollständig sehen. Dependabot version updates
+  monatlich, gebündelt, mit `cooldown` 14 Tage, ohne Agent SDK; die PRs werden nie auf GitHub gemergt, sondern in den
+  laufenden Feature-Branch übernommen. Sicherheits-Fixes mit Schwere hoch oder kritisch vor Ablauf der 14 Tage nur
+  nach Entscheidung des Nutzers im Einzelfall, sonst warten sie.
+- **Begründung:** Frische Versionen sind das häufigste Einfallstor für Angriffe auf die Lieferkette; die Wartezeit gibt
+  der Registry und der Community Zeit. Für ernste Lücken entscheidet der Nutzer bewusst.

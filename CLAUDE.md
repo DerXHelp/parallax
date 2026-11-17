@@ -6,7 +6,7 @@ Ein Node-Server (127.0.0.1) steuert je Session das **installierte** `claude` üb
 die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale Entscheidungen.
 
 ## Stack
-- Server: Node ≥ 22 (Standard 26), TypeScript, Fastify 5 + `@fastify/websocket`, zod 4, pino 10,
+- Server: Node ≥ 24.5 (Standard 26), TypeScript, Fastify 5 + `@fastify/websocket`, zod 4, pino 10,
   `@anthropic-ai/claude-agent-sdk` **exakt 0.3.322** (Plattform-Binaries per pnpm ausgeschlossen).
 - Web: Vite 8, React 19, Tailwind v4, shadcn/ui (`radix-ui`), lucide-react, Zustand,
   react-markdown/streamdown, shiki, diff, virtua. Fonts lokal (@fontsource-variable).
@@ -28,6 +28,8 @@ die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale En
 | `$env:PARALLAX_LIVE='1'; pnpm e2e e2e/live` | Live-Smoke gegen das echte `claude` – nur mit Nutzer-Freigabe; SDK-/CLI-Upgrade: `docs/sdk-upgrade.md` |
 | `pnpm preflight` / `pnpm record <szenario>` | Umgebungscheck (WP-11) / Fixture-Recorder (WP-01) |
 | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/public-check.ts [--refs <bereich>]` | Prüfung auf private Daten: Dateien bzw. was ein Push veröffentlicht (WP-84) |
+| `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/release-notes.ts --check \| --extract <version>` | `CHANGELOG.md` prüfen bzw. Notizen einer Version ausgeben (WP-85) |
+| `… scripts/release-pack.ts --out <ordner>`, dann `… scripts/release/smoke.ts --dir <paket> --work <ordner>` | Release-Paket lokal bauen und prüfen (schwer, Netz; sonst CI `release.yml`). `scripts/release-key.ts` führt nur der Nutzer aus |
 
 ## Ordner und Ownership Phase 3 (datei-genau; Details: `docs/wp/WP-50.md` §6, `docs/architecture.md` §2)
 | Pfad | Inhalt | Owner |
@@ -44,7 +46,7 @@ die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale En
 | `src/web/shell/**` (ohne die Zeilen oben/unten), `src/web/state/**` (ohne `fake-host`), `src/web/lib/**` (übrige), `src/web/features/preferences/**` | Shell: Kopfzeile, Session-Menü, Drop-Zone, schmales Fenster, Editor-Einstellung, Slot-Fehlergrenze | WP-58 |
 | `src/server/main.ts`, `src/server/app/**`, `src/web/{App,main}.tsx`, `e2e/**` | Komposition, Verdrahtung, E2E | WP-60 |
 | `src/web/shell/{requests,slots,placeholders}.ts(x)`, `src/web/shell/server-shutdown/**`, `src/web/shell/new-session/**`, `src/web/shell/{NewSessionDialog,NewSessionForm,EmptyState}.tsx`, `src/web/i18n/**`, übrige `src/web/ui/*`, `src/web/features/profiles/**`, `src/web/notifications/**`, `src/web/playground/**`, `src/web/index.{html,css}` | Gerüst / unverändert | Koordinator |
-| `src/server/{claude,host,system,sync,launcher}/**` (ohne `ports.ts`), `src/server/config.ts`, `scripts/**`, `test/**`, Root-Configs, `package.json`, Lockfile | unverändert / Bootstrap | Koordinator |
+| `src/server/{claude,host,system,sync,launcher}/**` (ohne `ports.ts`), `src/server/config.ts`, `scripts/**`, `test/**`, Root-Configs, `package.json`, Lockfile, `.github/**`, `CHANGELOG.md` | unverändert / Bootstrap | Koordinator |
 
 - Keine Datei wird von zwei Paketen bearbeitet; nichts in fremden Ordnern anlegen. `README.md` von
   Ordnern mit mehreren Ownern (`src/server`, `server/lib`, `server/sessions`, `server/backend`,
@@ -104,6 +106,17 @@ Abhängigkeit, Contract-Änderung) im Bericht unter
 „GEWÜNSCHTE ABHÄNGIGKEITEN“ bzw. „SCHNITTSTELLEN/CONTRACT-ABWEICHUNGEN“ anfragen; erst nach Freigabe
 durch den Koordinator ändern (mit Eintrag im Contract-Changelog). Nichts außerhalb der eigenen
 Besitz-Pfade ändern.
+
+## Abhängigkeiten (Nutzer 17.11.2026, ADR-221)
+- **Nur Versionen, die älter als 14 Tage sind** (npm und GitHub Actions): `pnpm update
+  --config.minimumReleaseAge=20160 --config.minimumReleaseAgeExclude=@anthropic-ai/claude-agent-sdk`, danach jeden
+  neuen Eintrag unter `packages:` im Lockfile gegen die Registry-Zeit prüfen (`docs/wp/DEPS-2026-11.md`). Agent SDK
+  und `claude` ausgenommen (`/claude-update`). Actions per Commit-SHA mit der Version als Kommentar.
+- **Sicherheits-Fixes:** Bei einer CVE mit Schwere **hoch oder kritisch** entscheidet der Nutzer im Einzelfall, ob der
+  Fix vor Ablauf der 14 Tage kommt; vorlegen: Paket, Schwere, Pfad (Laufzeit oder nur Entwicklung), Alter des Fixes.
+  Sonst wartet der Fix 14 Tage.
+- Dependabot-PRs nie auf GitHub mergen: in den laufenden Feature-Branch übernehmen und den üblichen Weg gehen.
+  `pnpm audit` läuft wöchentlich (`.github/workflows/audit.yml`) und vor jedem Release.
 
 ## Windows
 - Pfadregeln nur aus `@shared/paths` (Server: `lib/paths.ts`): case-insensitiv vergleichen,
@@ -173,6 +186,13 @@ Der Rechner des Nutzers darf **nie** einfrieren oder spürbar hängen – auch n
   erfüllt (grünes `pnpm check` + `pnpm build`, `pnpm e2e`, vorgesehene Reviews; eine nötige Live-Prüfung
   vorher mit dem Nutzer klären), merged der Koordinator den Feature-Branch ohne Rückfrage nach `main`
   (`--no-ff --no-commit`, Checks, Commit) und pusht `main`.
+- **Changelog (ADR-216):** Bei jedem Merge nach `main` ergänzt der Koordinator im selben Merge-Commit
+  `CHANGELOG.md` unter „Unveröffentlicht“: ein Satz je Wirkung für den Nutzer, das WP in Klammern; `fix/<name>` unter
+  „Behoben“; interne Arbeiten (Tests, Refactoring, Doku) ohne Eintrag. Das Format prüft `pnpm check`.
+- **Releases (ADR-215, Ablauf `docs/wp/WP-83.md` §4.4):** Nur auf Wunsch des Nutzers. **Dauerfreigabe:** „mach ein
+  Release“ erlaubt Release-Commit auf `main` (`version`, Abschnitt umbenennen), annotierten Tag `vX.Y.Z` und Push von
+  `main` und Tag – vorher `pnpm audit` und `public-check --refs`. Danach die CI beobachten (`gh run watch`) und den
+  Link melden; schlägt sie fehl, Entwurf und Tag löschen, beheben, dieselbe Version neu taggen.
 - Commit-Messages mit mehreren `-m`-Flags, **kein Heredoc**, keine Command-Substitution.
 - Worktrees liegen in `.worktrees/` (ignoriert, von tsconfig/Vitest/ESLint/Vite ausgeschlossen);
   pro Worktree `pnpm install --frozen-lockfile`. `core.longpaths` ist gesetzt.

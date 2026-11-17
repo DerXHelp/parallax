@@ -3,7 +3,7 @@
 | Skript            | Befehl              | Owner-WP | Stand                 |
 | ----------------- | ------------------- | -------- | --------------------- |
 | `build.ts`        | `pnpm build`        | CR-08    | fertig (beide Schritte unter dem Build-Lock, ADR-094) |
-| `build-server.ts` | `pnpm build:server` | 00       | fertig                |
+| `build-server.ts` | `pnpm build:server` | 00       | fertig (seit WP-85 auch `dist/launcher.js`) |
 | `preflight.ts`    | `pnpm preflight`    | 11       | fertig (WP-11)        |
 | `record.ts`       | `pnpm record <sz>`  | 01       | fertig (WP-01, Env/Auth seit WP-11 über `src/server/claude`) |
 | `cli-check.ts`    | `pnpm cli-check [--accept] [--last] [--profile=<f>]` | 62 | fertig (WP-62, Kurz-Check nach `claude`-Updates; Module in `cli-check/`) |
@@ -11,6 +11,27 @@
 | `screenshots.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/screenshots.ts [--only=…] [--theme=…]` | 68 | fertig (README-Bilder `docs/screenshots/`, Playground + headless Chrome) |
 
 | `public-check.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/public-check.ts [--refs <bereich>]` | 84 | fertig (private Daten im öffentlichen Repo; Test `public-check/repo.test.ts` in `pnpm test`) |
+| `release-notes.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/release-notes.ts --check \| --extract <v> \| --check-tag <tag>` | 85 | fertig (`CHANGELOG.md`; Test `release/changelog.test.ts` in `pnpm test`) |
+| `release-pack.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/release-pack.ts --out <ordner> [--allow-dirty]` | 85 | fertig (Release-Paket nach `pnpm build`; schwer, Netz) |
+| `release/smoke.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/release/smoke.ts (--zip <zip> --latest <json> \| --dir <paket>) --work <ordner>` | 85 | fertig (CI-Job `smoke`; lokal nur von Hand) |
+| `release/sign.ts` | `node scripts/release/sign.ts sign <datei>… \| latest …` | 85 | fertig (nur CI-Job `sign`, reines `node`) |
+| `release-key.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/release-key.ts --out <datei>` | 85 | fertig (**nur der Nutzer**, einmal; Schlüssel nie in einer Claude-Session) |
+
+## Releases (WP-85)
+
+Ablauf und Gründe: `docs/wp/WP-83.md` §4–§7, Umsetzung `docs/wp/WP-85.md`, ADR-214…218.
+
+- `release-notes.ts` liest `CHANGELOG.md` (Parser `release/changelog.ts`): `--check` (Format), `--extract <version>`
+  (Notizen; eine Vorabversion ohne eigenen Abschnitt nimmt „Unveröffentlicht“), `--check-tag <tag>` (CI).
+- `release-pack.ts` baut `<out>/parallax-<version>/` aus einem fertigen `pnpm build`: Laufzeit-Pakete flach per
+  `pnpm install --prod` im Staging, Import-Wächter (`release/imports.ts`), Agent SDK entfernt, Dateien ohne
+  Laufzeit-Nutzen entfernt (`release/files.ts`), `THIRD_PARTY_NOTICES.md` mit Lizenz-Allowlist (`release/notices.ts`),
+  `release.json` mit SHA-256 jeder Datei, Schema-Hashes und `integrity` des SDK (`release/lockfile.ts`).
+- `release/sign.ts` signiert in der CI (`RELEASE_SIGNING_KEY`), zippt nicht selbst; `latest` schreibt `latest.json`.
+- `release/smoke.ts` prüft ein Zip bzw. ein Staging wie der spätere Installer und startet es mit FakeBackend.
+- `release-key.ts` erzeugt den Signaturschlüssel im Terminal des Nutzers und setzt das Secret der Umgebung `release`.
+- Workflows: `.github/workflows/release.yml` (Tag `v*`: build → sign → smoke → publish), `audit.yml` (wöchentlich),
+  `.github/dependabot.yml`.
 
 ## `scripts/public-check.ts` (WP-84)
 
@@ -159,7 +180,8 @@ Der Launcher für `pnpm start` (unsichtbarer Server, Chrome-App-Fenster) liegt i
 
 ## `pnpm build:server` und die Build-ID
 
-`build-server.ts` bündelt `src/server/main.ts` nach `dist/server.js` (esbuild, ADR-004) und trägt die
+`build-server.ts` bündelt `src/server/main.ts` nach `dist/server.js` und seit WP-85 `src/server/launcher/main.ts` nach
+`dist/launcher.js` (esbuild, ADR-004; das Launcher-Bundle startet ein Release-Paket) und trägt die
 Build-ID (`resolveBuildId()` aus `repo.config.ts`) per `define` und in der ersten Zeile ein; Vite
 schreibt dieselbe ID nach `dist/web/build.json`. Die ID ist `<version>+<letzter Commit, der eine
 Build-Eingabe geändert hat>[.dirty-<Digest>]` (ADR-065): ein reiner Doku- oder Test-Commit ändert sie

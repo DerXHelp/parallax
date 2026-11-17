@@ -1,0 +1,99 @@
+/**
+ * The one list of persisted stores in PARALLAX_HOME (WP-85, docs/wp/WP-83.md §8.4/§9.4): id, scope
+ * and zod schema. `scripts/release-pack.ts` hashes the schemas into `release.json`; the backup on a
+ * version change (WP-86) saves exactly these files. A new store is added here (pinned by
+ * schemas.test.ts, which scans for `new JsonStore`).
+ *
+ * The hash covers the JSON Schema of the INPUT side (what a version can read), without
+ * `description`/`title` texts: it changes with a new field or value, not with a comment.
+ */
+import { createHash } from 'node:crypto';
+import { z } from 'zod';
+import {
+  decisionRecordsFileSchema,
+  profilesFileSchema,
+  registryFileSchema,
+  sessionFilesFileSchema,
+  settingsFileSchema,
+} from '@shared/model';
+import { PROFILES_FILE } from '../claude/profileStore';
+import { SESSION_FILES_FILE } from '../files/sessionIndex';
+import { AUTH_SECRET_FILE, authSecretFileSchema } from '../http/auth';
+import {
+  ACCOUNT_LIMITS_FILE,
+  accountLimitsFileSchema,
+  MODEL_CATALOGS_FILE,
+  modelCatalogsFileSchema,
+} from '../sessions/catalogStore';
+import { COMMANDS_FILE, commandsCacheFileSchema } from '../sessions/commandCatalog';
+import { PROCESSES_FILE, processesFileSchema } from '../sessions/processStore';
+import { transcriptLogLineSchema } from '../sync/ports';
+import { DECISIONS_FILE } from './decisions';
+import { REGISTRY_FILE } from './registry';
+import { SETTINGS_FILE } from './settings';
+import { TRANSCRIPT_SUFFIX } from './transcripts';
+
+export interface StoreSchema {
+  /** Path pattern below PARALLAX_HOME, `/`-separated (`entries/*\/decisions.json`). */
+  id: string;
+  /** `home`: one file in the data directory; `entry`: one per entry (`entries/<entryId>/`). */
+  scope: 'home' | 'entry';
+  /** JSON store (`schemaVersion`, `.bak`) or append-only JSON lines (transcripts). */
+  kind: 'json' | 'jsonl';
+  schema: z.ZodType;
+}
+
+const home = (file: string, schema: z.ZodType): StoreSchema => ({
+  id: file,
+  scope: 'home',
+  kind: 'json',
+  schema,
+});
+const entry = (file: string, schema: z.ZodType, kind: StoreSchema['kind'] = 'json'): StoreSchema => ({
+  id: `entries/*/${file}`,
+  scope: 'entry',
+  kind,
+  schema,
+});
+
+export const STORE_SCHEMAS: readonly StoreSchema[] = [
+  home(REGISTRY_FILE, registryFileSchema),
+  home(PROFILES_FILE, profilesFileSchema),
+  home(SETTINGS_FILE, settingsFileSchema),
+  home(PROCESSES_FILE, processesFileSchema),
+  home(MODEL_CATALOGS_FILE, modelCatalogsFileSchema),
+  home(ACCOUNT_LIMITS_FILE, accountLimitsFileSchema),
+  home(AUTH_SECRET_FILE, authSecretFileSchema),
+  entry(DECISIONS_FILE, decisionRecordsFileSchema),
+  entry(COMMANDS_FILE, commandsCacheFileSchema),
+  entry(SESSION_FILES_FILE, sessionFilesFileSchema),
+  entry(`*${TRANSCRIPT_SUFFIX}`, transcriptLogLineSchema, 'jsonl'),
+];
+
+const TEXT_KEYS = new Set(['description', 'title']);
+
+/** Sorted keys, without description/title texts (a property NAMED "description" is an object, kept). */
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value === null || typeof value !== 'object') return value;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value).sort()) {
+    const item: unknown = (value as Record<string, unknown>)[key];
+    if (TEXT_KEYS.has(key) && typeof item === 'string') continue;
+    out[key] = canonical(item);
+  }
+  return out;
+}
+
+/** SHA-256 (hex) of the canonical input JSON Schema of `schema`. */
+export function schemaHash(schema: z.ZodType): string {
+  const json = z.toJSONSchema(schema, { io: 'input', unrepresentable: 'any' });
+  return createHash('sha256')
+    .update(JSON.stringify(canonical(json)))
+    .digest('hex');
+}
+
+/** Store id → schema hash, for `release.json` (§9.4: a rollback without restore needs equal hashes). */
+export function storeSchemaHashes(stores: readonly StoreSchema[] = STORE_SCHEMAS): Record<string, string> {
+  return Object.fromEntries(stores.map((store) => [store.id, schemaHash(store.schema)]));
+}

@@ -113,7 +113,12 @@ describe('build id of dist/server.js (ADR-013)', () => {
 
   it('the banner template of scripts/build-server.ts matches the parser', async () => {
     const script = await readFile(path.join(repoRoot, 'scripts', 'build-server.ts'), 'utf8');
-    expect(script).toContain('banner: { js: `// ${PRODUCT_NAME} server, build ${buildId}` }');
+    expect(script).toContain('banner: { js: `// ${PRODUCT_NAME} ${kind}, build ${buildId}` }');
+    // WP-85: the same script writes dist/launcher.js; only the server bundle carries "server".
+    expect(script).toContain("['src/server/main.ts', 'dist/server.js', 'server']");
+    expect(script).toContain("['src/server/launcher/main.ts', 'dist/launcher.js', 'launcher']");
+    expect(parseBundleBuildId('// Parallax server, build 1.0.0+abc')).toBe('1.0.0+abc');
+    expect(parseBundleBuildId('// Parallax launcher, build 1.0.0+abc')).toBeNull();
   });
 
   it('computes the build id of the checkout with repo.config.ts', async () => {

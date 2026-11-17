@@ -165,8 +165,14 @@ export async function openChromeWindow(
   chromePath: string,
   args: readonly string[],
   spawn: SpawnFn = defaultSpawn,
+  cwd?: string,
 ): Promise<{ pid: number | null }> {
-  const child = spawn(chromePath, args, { detached: true, stdio: 'ignore' });
+  // WP-85: a long-lived Chrome must not hold a version folder of an installation (cwd = its root).
+  const child = spawn(chromePath, args, {
+    detached: true,
+    stdio: 'ignore',
+    ...(cwd === undefined ? {} : { cwd }),
+  });
   const pid = await new Promise<number | null>((resolve, reject) => {
     child.once('error', (error) => {
       reject(error);

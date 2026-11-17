@@ -21,7 +21,7 @@ echo Parallax: dependencies are missing - run "pnpm install" in the Parallax fol
 goto failed
 
 :nonode
-echo Parallax: Node.js was not found on the PATH - install Node.js 22 or newer.
+echo Parallax: Node.js was not found on the PATH - install Node.js 24.5 or newer.
 goto failed
 
 :failed
