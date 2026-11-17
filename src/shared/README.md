@@ -20,6 +20,7 @@ Isomorpher Code, den Server **und** Web importieren (Alias `@shared/*`). Design:
 | `product.ts` | Produktname an genau einer Stelle (WP-00) |
 | `devPorts.ts` | `DEV_WEB_PORT` ohne eigene Importe (Root-Configs laden es; `http.ts` re-exportiert) |
 | `version.ts` | Versionsregel C.7: `compareVersions`, `cliVersionStatus` – die einzige Implementierung (Server und Web re-exportieren, WP-30 §4.9) |
+| `changelog.ts` | WP-87: Parser für `CHANGELOG.md` (ADR-216, aus `scripts/release/changelog.ts`): `parseChangelog`, `findSection`, `releaseSection`, `changelogNotes`, `sectionsBetween` – Release-Skripte und „Was ist neu“ (Server) lesen gleich |
 
 **Contracts v2 (Phase 2, `docs/wp/WP-30.md` §4):** `PROTOCOL_VERSION` 2, `REGISTRY_SCHEMA_VERSION` 2;
 Settings (Benachrichtigungen, Leerlauf, `promptSuggestions`, Port, Autostart), Profil-Eingabe und

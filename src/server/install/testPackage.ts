@@ -13,7 +13,7 @@ import {
   RELEASE_SIGNATURE_FILE,
   type ReleaseInfo,
 } from '../launcher/release';
-import type { SdkRequest } from './install';
+import { packageRootFiles, type SdkRequest } from './install';
 
 export interface TestKey {
   privateKey: KeyObject;
@@ -38,6 +38,8 @@ export interface TestPackageOptions {
   version: string;
   key: TestKey;
   minNode?: string;
+  /** Also `root/start.mjs` and `root/parallax.cmd` like release-pack (WP-87); `files` may replace them. */
+  rootFiles?: boolean;
   /** Extra or replaced files (`/`-separated path → content). */
   files?: Record<string, string>;
 }
@@ -54,6 +56,7 @@ export async function makeTestPackage(dir: string, options: TestPackageOptions):
     'install.cmd': '@echo off\r\n',
     'parallax.ico': `icon ${options.version}`,
     'node_modules/zod/index.js': 'export {};\n',
+    ...(options.rootFiles === true ? packageRootFiles(options.minNode ?? '24.5.0') : {}),
     ...options.files,
   };
   for (const [rel, content] of Object.entries(files)) {

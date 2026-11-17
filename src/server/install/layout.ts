@@ -5,7 +5,8 @@
  *   <root>\start.mjs        stable: reads current.json, loads versions\<v>\dist\launcher.js
  *   <root>\parallax.ico     icon of the Start menu shortcut
  *   <root>\current.json     { schemaVersion, version, previous }
- *   <root>\versions\<v>\    an unpacked, checked package plus the Agent SDK
+ *   <root>\versions\<v>\    an unpacked, checked package plus the Agent SDK (its `root\` holds the
+ *                           root files of that version, WP-87)
  *   <root>\cache\           checked SDK tarballs (install/sdk.ts)
  *   <root>\downloads\       partial downloads
  *
@@ -40,6 +41,11 @@ export const DOWNLOADS_DIR = 'downloads';
 export const STAGING_PREFIX = '.staging-';
 /** `versions\.trash-<stamp>-<v>`: a version being deleted (rename first, then delete). */
 export const TRASH_PREFIX = '.trash-';
+/**
+ * `root\` inside a package (WP-87): `start.mjs` and `parallax.cmd` of that version, signed with it.
+ * Switching to a version writes the root files from `versions\<v>\root\` (else the own templates).
+ */
+export const PACKAGE_ROOT_DIR = 'root';
 /** Every name the installer writes into the root (the uninstaller deletes exactly these). */
 export const ROOT_ENTRIES: readonly string[] = [
   START_SCRIPT,
@@ -77,10 +83,27 @@ export const currentFileSchema = z.object({
 });
 export type CurrentFile = z.infer<typeof currentFileSchema>;
 
+/**
+ * Why an installation step failed (WP-87 maps it to an update error code, docs/wp/WP-87.md §2.1):
+ * `signature` (release.json signature missing or invalid), `node` (Node.js older than `minNode`),
+ * `files` (package or version folder does not match release.json), `sdk` (Agent SDK step or the
+ * installed SDK), `in_use` (a version folder is locked), `io` (anything else: disk, current.json …).
+ */
+export const INSTALL_ERROR_REASONS = ['signature', 'node', 'files', 'sdk', 'in_use', 'io'] as const;
+export type InstallErrorReason = (typeof INSTALL_ERROR_REASONS)[number];
+
+export interface InstallErrorOptions extends ErrorOptions {
+  /** Default `io`. */
+  reason?: InstallErrorReason;
+}
+
 export class InstallError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
+  readonly reason: InstallErrorReason;
+  constructor(message: string, options: InstallErrorOptions = {}) {
+    const { reason = 'io', ...rest } = options;
+    super(message, rest);
     this.name = 'InstallError';
+    this.reason = reason;
   }
 }
 

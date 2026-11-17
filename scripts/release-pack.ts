@@ -1,6 +1,8 @@
 /**
  * Stages a release package (WP-85, docs/wp/WP-83.md §5): `<out>/parallax-<version>/` with `dist/`
- * (server, launcher, installer), `install.cmd` and `parallax.ico` (WP-86), the flat server runtime in `node_modules` WITHOUT the Agent SDK, a shortened `package.json`,
+ * (server, launcher, installer), `install.cmd` and `parallax.ico` (WP-86), the root files of the
+ * installation `root/start.mjs` and `root/parallax.cmd` (WP-87: listed and signed, switching to the
+ * version writes them), the flat server runtime in `node_modules` WITHOUT the Agent SDK, a shortened `package.json`,
  * `CHANGELOG.md`, `LICENSE`, `THIRD_PARTY_NOTICES.md` and the unsigned `release.json`. Signing and
  * zipping happen in a separate CI job (`scripts/release/sign.ts`).
  *
@@ -25,6 +27,7 @@ import {
 } from '../src/server/launcher/release';
 import { hashFiles, walkPackage } from '../src/server/launcher/packageFiles';
 import { ICON_FILE, INSTALL_CMD, INSTALLER_BUNDLE, LAUNCHER_BUNDLE } from '../src/server/install/layout';
+import { packageRootFiles } from '../src/server/install/install';
 import { installCmd } from '../src/server/install/templates';
 import { runFile } from '../src/server/lib/process';
 import { resolveExecutable } from '../src/server/lib/windows';
@@ -339,6 +342,12 @@ async function main(argv: readonly string[]): Promise<void> {
   // WP-86: the installer file (Explorer double click) and the icon of the Start menu shortcut.
   await writeFile(path.join(stage, INSTALL_CMD), installCmd(minNode));
   await cp(path.join(repoRoot, 'src', 'server', 'install', ICON_FILE), path.join(stage, ICON_FILE));
+  // WP-87: start.mjs and parallax.cmd of this version (root/), written by the switch to it.
+  for (const [rel, content] of Object.entries(packageRootFiles(minNode))) {
+    const target = path.join(stage, ...rel.split('/'));
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, content);
+  }
   await writeFile(
     path.join(stage, 'THIRD_PARTY_NOTICES.md'),
     await collectNotices(stage, pkg.version, sdk.version),

@@ -16,8 +16,8 @@ import { isWindowsPathInside, windowsPathKey } from '@shared/paths';
  * - `PARALLAX_PORT` is always `0`.
  * - `TEMP`/`TMP` with long names (`useLongTempDir`; the CI runner's TEMP names the user folder `RUNNER~1`).
  * - Inherited server control variables (`SERVER_CONTROL_VARS`: backend, dev mode, validation,
- *   toasts, log level, host, entry id of a calling Parallax session) are removed, so a test run
- *   behaves the same inside and outside a Parallax session.
+ *   toasts, log level, host, entry id of a calling Parallax session, the update switches) are
+ *   removed, so a test run behaves the same inside and outside a Parallax session.
  */
 
 /**
@@ -55,6 +55,11 @@ export const SERVER_CONTROL_VARS: readonly string[] = [
   'PARALLAX_LOG_LEVEL',
   'PARALLAX_VALIDATE',
   'PARALLAX_TOASTS',
+  // Update (WP-87): the restart deadline and the switches of the update test build.
+  'PARALLAX_UPDATE_READY_TIMEOUT_S',
+  'PARALLAX_TEST_UPDATE_BASE',
+  'PARALLAX_TEST_RELEASE_KEYS',
+  'PARALLAX_TEST_REGISTRY',
 ];
 
 /**
