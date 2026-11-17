@@ -45,6 +45,17 @@ describe('walkPackage / hashFiles', () => {
     expect(walk.problems).toContainEqual('junction: link or junction');
     expect(walk.problems).toContainEqual('hard.txt: hardlink (2 names)');
   });
+
+  it('reports names outside printable ASCII (Windows tar 3.8.9 crashes on them)', async () => {
+    await put('node_modules/x/fixtures/snow ☃/a.txt', 'a');
+    await put('node_modules/x/café.js', 'b');
+    await put('node_modules/x/plain name (1).js', 'c');
+    const walk = await walkPackage(dir);
+    expect(walk.problems).toEqual([
+      'node_modules/x/café.js: name outside printable ASCII',
+      'node_modules/x/fixtures/snow ☃: name outside printable ASCII',
+    ]);
+  });
 });
 
 describe('comparePackageFiles', () => {

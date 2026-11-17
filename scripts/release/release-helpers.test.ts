@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { isPrunable } from './files';
+import { isPrunable, isPrunableFolder } from './files';
 import {
   collectBareImports,
   isBareSpecifier,
@@ -35,6 +35,27 @@ async function put(rel: string, text: string): Promise<string> {
   await writeFile(file, text);
   return file;
 }
+
+describe('isPrunableFolder', () => {
+  it('drops test suites, CI setup and benchmarks of a package root, nothing else', () => {
+    for (const name of ['test', 'tests', 'Test', '__tests__', '.github', 'benchmark', 'benchmarks']) {
+      expect(isPrunableFolder(name), name).toBe(true);
+    }
+    for (const name of [
+      'lib',
+      'dist',
+      'testing',
+      'test-utils',
+      'fixtures',
+      'examples',
+      'docs',
+      'src',
+      'bin',
+    ]) {
+      expect(isPrunableFolder(name), name).toBe(false);
+    }
+  });
+});
 
 describe('isPrunable', () => {
   it('drops types, TypeScript sources, source maps and docs, keeps code and license texts', () => {

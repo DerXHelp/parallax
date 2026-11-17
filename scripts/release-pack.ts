@@ -27,7 +27,7 @@ import { hashFiles, walkPackage } from '../src/server/launcher/packageFiles';
 import { runFile } from '../src/server/lib/process';
 import { resolveExecutable } from '../src/server/lib/windows';
 import { storeSchemaHashes } from '../src/server/store/schemas';
-import { isPrunable } from './release/files';
+import { isPrunable, isPrunableFolder } from './release/files';
 import {
   collectBareImports,
   DYNAMIC_IMPORTS,
@@ -188,6 +188,17 @@ async function cleanNodeModules(nodeModules: string): Promise<number> {
       await rm(path.join(nodeModules, entry.name), { recursive: true, force: true });
   }
   let pruned = 0;
+  // Test suites, CI setup, benchmarks in each package root (isPrunableFolder).
+  for (const dir of await findPackageDirs(nodeModules)) {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !isPrunableFolder(entry.name)) continue;
+      const folder = path.join(dir, entry.name);
+      pruned += (await readdir(folder, { recursive: true, withFileTypes: true })).filter((e) =>
+        e.isFile(),
+      ).length;
+      await rm(folder, { recursive: true, force: true });
+    }
+  }
   for (const entry of await readdir(nodeModules, { recursive: true, withFileTypes: true })) {
     const full = path.join(entry.parentPath, entry.name);
     if (entry.isDirectory() && entry.name === '.bin') {
@@ -312,7 +323,7 @@ async function main(argv: readonly string[]): Promise<void> {
     force: true,
   });
   const pruned = await cleanNodeModules(path.join(stage, 'node_modules'));
-  log(`node_modules: ${String(pruned)} files without runtime use removed (types, source maps, docs)`);
+  log(`node_modules: ${String(pruned)} files without runtime use removed (types, source maps, docs, tests)`);
   for (const file of ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'])
     await rm(path.join(stage, file));
 
