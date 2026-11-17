@@ -2,7 +2,7 @@
 
 > Koordinator, 11.11.2026. Nutzer-Entscheidung (ADR-136): **nur Chrome**, keine Umschaltung (keine
 > Startoption, keine Einstellung), E2E-Tests in Chrome. Feature-Branch `feature/chrome` (von `main` =
-> `d32d912`), Worktree `.worktrees/chrome`, Branch `wp/chrome`.
+> `bfc1d1b`), Worktree `.worktrees/chrome`, Branch `wp/chrome`.
 
 ## 1. Ausgangslage
 
@@ -179,7 +179,7 @@ Chrome-Prozesse), lokaler HTTP-Server auf `127.0.0.1:<port>`; nach 20 s `chrome:
 ### 4.4 Testläufe
 
 - `pnpm check`: grün – typecheck, lint, 216 Testdateien / 3814 Tests (nach den Prettier-Korrekturen erneut, s. u.).
-- `pnpm build`: grün (`0.0.0+72ffcefd1a2e.dirty-…`).
+- `pnpm build`: grün (`0.0.0+5bd8ca0421bf.dirty-…`).
 - `pnpm e2e` (Chrome 156 headless, `channel: 'chrome'`, FakeBackend): zweimal **45/45** (je 2,9 min, 3 Worker), keine sichtbaren Fenster. Danach nur Formatierung (Prettier, Klammern, Kommentare) in `preflight.ts`, `preflight.test.ts`, `chrome.test.ts`; Unit-Tests und `pnpm check` danach erneut grün.
 - `pnpm preflight --home=%TEMP%\px-chrome-preflight`: `OK chrome C:\Program Files\Google\Chrome\Application\chrome.exe, 156.0.8078.76`,
   `OK chrome policies none`, Ergebnis OK (die eine Warnung ist der Virenscanner); der Temp-Ordner

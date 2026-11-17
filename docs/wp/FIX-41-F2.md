@@ -1,7 +1,7 @@
 # FIX-41-F2 – Web (Fix-Runde nach der Live-Abnahme WP-41)
 
 > Paket F2 aus `docs/wp/FIX-41.md` §2, Worktree `.worktrees/fix-41-f2`, Branch `fix/41-f2`, Basis `main` =
-> `881a539`. Befunde: `docs/wp/WP-41.md` §2.3 (WP41-01, -02, -05, -06, -07). Kein Live-`claude`, keine
+> `89451af`. Befunde: `docs/wp/WP-41.md` §2.3 (WP41-01, -02, -05, -06, -07). Kein Live-`claude`, keine
 > Desktop-Bedienung, keine Contract-Änderung, keine neue Abhängigkeit.
 
 ## 1. Befunde

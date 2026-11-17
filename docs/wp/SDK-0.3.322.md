@@ -1,7 +1,7 @@
 # SDK-0.3.322 – Agent SDK 0.3.296 → 0.3.322 (passend zu `claude` 2.1.322)
 
 > Koordinator, 11.11.2026. Nutzerauftrag: „aktualisiere die verwendete SDK, sodass die zur aktuellen
-> Version passt“. Feature-Branch `feature/sdk-0.3.322` (von `main` = `53d23c6`), Worktree
+> Version passt“. Feature-Branch `feature/sdk-0.3.322` (von `main` = `3549e45`), Worktree
 > `.worktrees/sdk-0.3.322`, Branch `wp/sdk-0.3.322`. Ablauf: `docs/sdk-upgrade.md` (Schritte 1–7).
 
 ## 1. Ausgangslage

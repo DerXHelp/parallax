@@ -1,8 +1,8 @@
 # R4 – Review Web Phase 2 „Mission Control“ (WP-30 Gerüst, WP-35 … WP-38, WP-40 Web)
 
-**Stand:** 18.10.2026, `main` = `d098d9b` (WP-40 gemergt, `pnpm check` grün: 199 Dateien, 3520 Tests)
+**Stand:** 18.10.2026, `main` = `7fbdbcd` (WP-40 gemergt, `pnpm check` grün: 199 Dateien, 3520 Tests)
 · **Rolle:** read-only Review, nur diese Datei neu (uncommittet, Commit durch den Koordinator) ·
-**Umfang:** `git diff fdc44f7..HEAD -- src/web e2e` (195 Dateien, +20 693/−869) · **Parallel:**
+**Umfang:** `git diff df38a20..HEAD -- src/web e2e` (195 Dateien, +20 693/−869) · **Parallel:**
 R4-Server (`docs/wp/R4.md`, gleicher Checkout) und V3 (`.worktrees/v3`, Browser/Screenshots).
 
 Schweregrade: **[BLOCKER vor WP-41]** – vor der Live-Abnahme beheben/klären · **[SOLLTE]** – in der
@@ -50,7 +50,7 @@ Koordinators bzw. Nutzers nötig oder nur live/im Browser klärbar.
 ## Gesamturteil
 
 Phase 2 Web ist sorgfältig gebaut und hält die Phase-1-Zusagen: Die **Ziel-Sperre** (ADR-040) ist
-unverändert (Vergleich mit `fdc44f7`: `enterAnswers`, Lock beim ersten Zeichen, `submit('answer')`
+unverändert (Vergleich mit `df38a20`: `enterAnswers`, Lock beim ersten Zeichen, `submit('answer')`
 nur armiert), das Slash-Menü öffnet nie bei gesperrtem Ziel, Bild-Uploads ändern den Antwortpfad
 nicht; die Queue zeigt weiter nur das Transkript. **Sicherheit** ist ohne harten Befund: Renderer
 unverändert sicher, Bilder nur `/api/blob/<id>` (same origin), Upload mit Typ-, Anzahl- und

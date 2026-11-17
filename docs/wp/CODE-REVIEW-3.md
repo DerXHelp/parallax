@@ -1,7 +1,7 @@
 # Abschließendes `/code-review` Phase 3 und Fix-Runde mit den WP-61-Befunden
 
 - **Datum:** 12.11.2026
-- **Umfang:** `main...feature/phase-3` (Stand `c2a3e6c`, 457 Dateien, +44 893/−2 077 Zeilen) – ganz
+- **Umfang:** `main...feature/phase-3` (Stand `47daa40`, 457 Dateien, +44 893/−2 077 Zeilen) – ganz
   Phase 3 (WP-50 … WP-61, R5/R5-web/V4, FIX-R5 K/F1–F6).
 - **Stufe:** high. Gründlich gelesen: Zugriffsprüfung (`resolveAllowedPath`), Route `/api/file` samt
   Origin-Guard, `spawnGui`/`spawnExplorer`, Anhang-Store, frischer Kontext. Dort kein Bruch gefunden.
@@ -71,32 +71,32 @@ höchstens 74 %); Details je Fund in `docs/wp/CODE-REVIEW-3-S.md`, `-D.md`, `-W.
 
 | Nr. | Reproduziert | Fix (Kurzform) | Merge |
 |---|---|---|---|
-| CR3-01 | ja | Ordnerprüfung als `@web/lib/transfer-files`, genutzt von Composer und Pane-Drop; Anfrage `attachFiles` mit `folders?` | `9c5a75c` |
-| CR3-02 | ja | eine Zählung für Kopfzeile und Task-Panel (`@web/lib/task-rows`, ohne Ambient), ADR-158 | `9c5a75c` |
-| CR3-03 | ja | octet-stream bleibt Datei, auch mit Bild-Bytes; Bild nur bei deklariertem Bildtyp, ADR-157 | `f3290f6` |
-| CR3-04 | ja | `truncated` exakt (Lesen nur, wenn Größe/Kodierung es offen lassen; LRU je Dateiversion), ADR-157 | `f3290f6` |
-| CR3-05 | ja | Bilder/PDFs über ein Handle ganz gelesen, `Content-Length` = gesendete Bytes, ADR-157 | `f3290f6` |
-| CR3-06 | ja | Stat-Cache verwirft Antworten über einen während des Requests beendeten Write | `9c5a75c` |
-| CR3-07 | ja | `pending` nicht laufend/stoppbar – im Task-Panel und (Nachtrag) in der Agent-Karte | `9c5a75c` |
-| CR3-08 | nur White-Box (Retry-Verlust nicht erreichbar, Begründung in `-S.md`) | `cancelRetry` erst im Lock nach Annahme, ADR-155 | `8cd41c0` |
-| CR3-09 | ja | Plan-Index je Serverlauf (`withPlanIndex`), jede Version höchstens einmal gelesen, ADR-155 | `8cd41c0` |
-| CR3-10 | ja | Backfill seitenweise rückwärts, höchstens eine Seite im Speicher, ADR-157 | `f3290f6` |
-| WP61-01 | ja | U+200B vor den `@`, die die CLI expandieren würde (`neutralizeAtMentions`), ADR-155 | `8cd41c0` |
-| WP61-02 | ja | `todoFeatureEnabled` entfernt, ADR-156; Prüfpunkt in `docs/sdk-upgrade.md` | `8cd41c0` |
-| WP61-03 | ja | nach deny + interrupt höchstens 3 s auf das `result` warten (live zu bestätigen), ADR-155 | `8cd41c0` |
-| WP61-04 | ja | `debug`-Zeile `credentialExpiresAt` beim ersten `result` je Prozess, ADR-156 | `8cd41c0` |
-| WP61-05 | ja | Dialogtext „Frühere Unterhaltungen“ neutral (en/de) | `9c5a75c` |
-| WP61-06 | ja | Vordergrund-Shells von Subagenten ausgeblendet, Zählung angeglichen, ADR-158 | `9c5a75c` |
-| WP61-07 | ja | `task_progress.description` nie als Task-Name; Fake sendet „Running …“ wie die CLI, ADR-156 | `8cd41c0` |
-| B18 | – | ohne laufenden Turn normales „Senden“, kein Stop (aus `turn_result`-Reihenfolge abgeleitet), ADR-159 | `9c5a75c` |
+| CR3-01 | ja | Ordnerprüfung als `@web/lib/transfer-files`, genutzt von Composer und Pane-Drop; Anfrage `attachFiles` mit `folders?` | `8c8673e` |
+| CR3-02 | ja | eine Zählung für Kopfzeile und Task-Panel (`@web/lib/task-rows`, ohne Ambient), ADR-158 | `8c8673e` |
+| CR3-03 | ja | octet-stream bleibt Datei, auch mit Bild-Bytes; Bild nur bei deklariertem Bildtyp, ADR-157 | `ed64ed1` |
+| CR3-04 | ja | `truncated` exakt (Lesen nur, wenn Größe/Kodierung es offen lassen; LRU je Dateiversion), ADR-157 | `ed64ed1` |
+| CR3-05 | ja | Bilder/PDFs über ein Handle ganz gelesen, `Content-Length` = gesendete Bytes, ADR-157 | `ed64ed1` |
+| CR3-06 | ja | Stat-Cache verwirft Antworten über einen während des Requests beendeten Write | `8c8673e` |
+| CR3-07 | ja | `pending` nicht laufend/stoppbar – im Task-Panel und (Nachtrag) in der Agent-Karte | `8c8673e` |
+| CR3-08 | nur White-Box (Retry-Verlust nicht erreichbar, Begründung in `-S.md`) | `cancelRetry` erst im Lock nach Annahme, ADR-155 | `e642a86` |
+| CR3-09 | ja | Plan-Index je Serverlauf (`withPlanIndex`), jede Version höchstens einmal gelesen, ADR-155 | `e642a86` |
+| CR3-10 | ja | Backfill seitenweise rückwärts, höchstens eine Seite im Speicher, ADR-157 | `ed64ed1` |
+| WP61-01 | ja | U+200B vor den `@`, die die CLI expandieren würde (`neutralizeAtMentions`), ADR-155 | `e642a86` |
+| WP61-02 | ja | `todoFeatureEnabled` entfernt, ADR-156; Prüfpunkt in `docs/sdk-upgrade.md` | `e642a86` |
+| WP61-03 | ja | nach deny + interrupt höchstens 3 s auf das `result` warten (live zu bestätigen), ADR-155 | `e642a86` |
+| WP61-04 | ja | `debug`-Zeile `credentialExpiresAt` beim ersten `result` je Prozess, ADR-156 | `e642a86` |
+| WP61-05 | ja | Dialogtext „Frühere Unterhaltungen“ neutral (en/de) | `8c8673e` |
+| WP61-06 | ja | Vordergrund-Shells von Subagenten ausgeblendet, Zählung angeglichen, ADR-158 | `8c8673e` |
+| WP61-07 | ja | `task_progress.description` nie als Task-Name; Fake sendet „Running …“ wie die CLI, ADR-156 | `e642a86` |
+| B18 | – | ohne laufenden Turn normales „Senden“, kein Stop (aus `turn_result`-Reihenfolge abgeleitet), ADR-159 | `8c8673e` |
 
-**Checks nach dem letzten Merge (`8cd41c0`):** `pnpm check` grün (4934 Tests, 290 Dateien), `pnpm build`
-grün, Bundle-Budget ok (Start +3.464 B raw gegen `109c073`), `pnpm e2e` 65/65 grün (zwei Läufe: 5,3 und
+**Checks nach dem letzten Merge (`e642a86`):** `pnpm check` grün (4934 Tests, 290 Dateien), `pnpm build`
+grün, Bundle-Budget ok (Start +3.464 B raw gegen `7ae00c0`), `pnpm e2e` 65/65 grün (zwei Läufe: 5,3 und
 4,5 min).
 
 **Beobachtung E2E-Dauer:** Seit dem Nachmittag dauert `pnpm e2e` 4,5–6,2 statt 3,0 min (F6, 14:56);
 einzelne Tests mit mehreren Fenstern/Sessions brauchen +10 … +38 s (`windows.spec.ts:11` 10 → 41–48 s).
-Gegenproben: die Basis vor der Fix-Runde (`8b54b9c`) ist genauso langsam (5,4 min), ebenso ein frischer
+Gegenproben: die Basis vor der Fix-Runde (`56b7449`) ist genauso langsam (5,4 min), ebenso ein frischer
 Worktree (6,2 min); einzeln laufen die Specs normal schnell; CPU im Mittel 16–19 %, keine übrig
 gebliebenen Prozesse, `claude --version` 26–80 ms. **Keine Regression der Fix-Runde**; Ursache in der
 Umgebung, nicht gefunden (Kandidaten: Sicherheitssoftware/Web-Traffic-Scan, Plattenlast, parallele Arbeit

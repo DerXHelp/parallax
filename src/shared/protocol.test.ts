@@ -446,7 +446,7 @@ describe('client messages', () => {
 
   it('caps the build id of clientHello (R0-08)', () => {
     const hello = (buildId: string) => parseClientMessage(JSON.stringify(sampleClientHello({ buildId }))).ok;
-    expect(hello('0.0.0+6d02d1a4a1cf.dirty-1a2b3c4d')).toBe(true);
+    expect(hello('0.0.0+406a5d1e5f19.dirty-1a2b3c4d')).toBe(true);
     expect(hello('x'.repeat(LIMITS.buildIdChars + 1))).toBe(false);
   });
 

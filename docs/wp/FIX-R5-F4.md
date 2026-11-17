@@ -1,7 +1,7 @@
 # FIX-R5-F4 – Dateien/Plan (Ergebnis)
 
 > Fix-Runde nach R5/R5-web/V4 (Phase 3), Paket **F4** laut `docs/wp/FIX-R5.md` §2. Worktree
-> `.worktrees/fix-r5-f4`, Branch `fix/r5-f4`, Basis `feature/phase-3` = `87def00` (nach Paket K).
+> `.worktrees/fix-r5-f4`, Branch `fix/r5-f4`, Basis `feature/phase-3` = `2027008` (nach Paket K).
 > Besitz-Pfade: `src/web/features/{files,decisions}/**`, `src/web/ui/{code-block,diff-view,copy-button}.tsx`
 > (+ Test daneben), `src/web/index.css` (nur Syntax-/Link-Tokens). Kein Live-`claude`; Sichtprüfung nur
 > per Playwright headless gegen `pnpm dev:web` (Port 5193, danach beendet).
@@ -59,7 +59,7 @@ parallelen Pakete F1–F3/F5 auf demselben Rechner; Auswertung über `--reporter
 
 | Lauf | Stand | Ergebnis |
 |---|---|---|
-| vorher (6 Läufe) | Basis `87def00` | **6/6 rot**, 34 Fehlschläge: `DecisionBar` R2W-15 6×, `FilePanel` 15× (Markdown 6, image 6, text 2, reload 1), `index.test` 6×, `playground.test` 4×, `FilesPanel.test` 3× |
+| vorher (6 Läufe) | Basis `2027008` | **6/6 rot**, 34 Fehlschläge: `DecisionBar` R2W-15 6×, `FilePanel` 15× (Markdown 6, image 6, text 2, reload 1), `index.test` 6×, `playground.test` 4×, `FilesPanel.test` 3× |
 | nachher 1 (6 Läufe) | Fixes ohne Preload in `index.test`, ohne Fake-`setInterval` | 6/6 rot, 7 Fehlschläge: `index.test` 5× (15–16 s am 15-s-`find`), neuer Fall „gelöschte Datei“ 2× (Poll-Rennen) |
 | nachher 2 (6 Läufe) | Endstand | **6/6 grün, 1320/1320**; längste Fälle: Playground-Host 14,4 s (Limit 60 s, `find` 30 s), FilePanel image 13,2 s (Limit 30 s) |
 

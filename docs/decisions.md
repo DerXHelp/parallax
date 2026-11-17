@@ -2096,7 +2096,7 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
 - **Datum/WP:** 12.11.2026, WP-65; angenommen (13.11.2026, Koordinator beim Merge).
 - **Entscheidung:** „Alles in den Hintergrund“ (leise `SlotBoundary`, vorgeladen) und der `/help`-Dialog (ab dem ersten
   Öffnen montiert) sind Lazy-Chunks – Ausgleich für das Start-Chunk-Budget.
-- **Folgen:** Das Budget gegen `109c073` ist danach fast ausgeschöpft (`index` +9 031 B von 10 000); WP-66/67 müssen neue
+- **Folgen:** Das Budget gegen `7ae00c0` ist danach fast ausgeschöpft (`index` +9 031 B von 10 000); WP-66/67 müssen neue
   UI von Anfang an lazy bauen oder an anderer Stelle ausgleichen.
 
 ## ADR-178 – Seitenfragen sind Engine-Items
@@ -2231,10 +2231,10 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
 
 ## ADR-193 – Neue Basis für das Start-Budget (Stand nach WP-70)
 - **Datum/WP:** 13.11.2026, Koordinator (vor WP-71).
-- **Entscheidung:** `scripts/bundle-budget.ts` misst ab jetzt gegen den Merge von WP-70 (`2fe8a9b`: `index` 323 111 B,
-  Start-Chunks 889 270 B roh, 9 Dateien) statt gegen WP-60 (`109c073`); erlaubtes Wachstum bleibt +10 kB roh für
+- **Entscheidung:** `scripts/bundle-budget.ts` misst ab jetzt gegen den Merge von WP-70 (`5d85e44`: `index` 323 111 B,
+  Start-Chunks 889 270 B roh, 9 Dateien) statt gegen WP-60 (`7ae00c0`); erlaubtes Wachstum bleibt +10 kB roh für
   `index` und für die Summe der Start-Chunks. Eine neue Basis gibt es nur per ADR.
-- **Begründung:** Die +10 kB gegen `109c073` sind nach WP-63 bis WP-70 verbraucht (Start +9 315 B), obwohl `index`
+- **Begründung:** Die +10 kB gegen `7ae00c0` sind nach WP-63 bis WP-70 verbraucht (Start +9 315 B), obwohl `index`
   durch konsequentes Nachladen um rund 60 kB geschrumpft ist – das Budget hat seinen Zweck erfüllt (jede Zunahme war
   bewusst, alles nach einem Klick lädt lazy). WP-71 braucht sichtbare Teile in der Sidebar (Zähler, Puls), die im
   Start-Chunk liegen müssen. Für eine lokal ausgelieferte App ist die Ladezeit dieser Größe unkritisch; die Regel

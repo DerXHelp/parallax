@@ -1,7 +1,7 @@
 # FIX-R5-F5 – Shell/i18n/App (Ergebnis)
 
 > Fix-Runde nach R5/R5-web/V4 (Phase 3), Paket **F5** laut `docs/wp/FIX-R5.md` §2. Worktree
-> `.worktrees/fix-r5-f5`, Branch `fix/r5-f5`, Basis `feature/phase-3` = `87def00`. Besitz-Pfade:
+> `.worktrees/fix-r5-f5`, Branch `fix/r5-f5`, Basis `feature/phase-3` = `2027008`. Besitz-Pfade:
 > `src/web/shell/**`, `src/web/state/**`, `src/web/i18n/**`, `src/web/features/preferences/**`,
 > `src/web/lib/**` (ohne `file-refs.ts`, `bytes.ts`), `src/web/{App,main}.tsx`, `src/web/App*.test.tsx`,
 > `src/web/playground/**`, dieses Dokument. Verbindlich: ADR-153. Kein Live-`claude`; Sichtprüfung nur
@@ -50,13 +50,13 @@ Node-zlib (`measure.mjs`, Scratchpad).
 
 | Stand | `index` raw | `index` gzip | Start gesamt raw | Start gesamt gzip |
 |---|---|---|---|---|
-| vorher (`87def00`) | 442 830 | 128 779 | 943 552 (5 Dateien) | 280 953 |
+| vorher (`2027008`) | 442 830 | 128 779 | 943 552 (5 Dateien) | 280 953 |
 | nachher | 383 677 | 112 060 | 884 399 (5 Dateien) | 264 234 |
 | Differenz | **−59 153** | **−16 719** | −59 153 | −16 719 |
 
 Lazy `dictionary.de-*.js`: 62 544 raw / 21 253 gzip (alle 13 deutschen Namensräume). Zum Vergleich
-`109c073` (WP-60-Basis, gleiche Messmethode): `index` 383 072 / 110 409 – der Phase-3-Zuwachs bis
-`87def00` (+59,8 kB raw) ist damit fast vollständig ausgeglichen. Die Werte in `WP-60.md` §2.5 stammen
+`7ae00c0` (WP-60-Basis, gleiche Messmethode): `index` 383 072 / 110 409 – der Phase-3-Zuwachs bis
+`2027008` (+59,8 kB raw) ist damit fast vollständig ausgeglichen. Die Werte in `WP-60.md` §2.5 stammen
 vermutlich aus einem anderen gzip-Verfahren; Vergleiche nur innerhalb einer Methode.
 
 ## 4. Checks

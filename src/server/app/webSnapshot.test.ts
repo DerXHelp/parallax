@@ -81,7 +81,7 @@ describe('web UI snapshot (V2-03)', () => {
   });
 
   it('folder names keep build ids readable and safe', () => {
-    expect(snapshotDirName('0.0.0+5f15036f480c.dirty-1a2b3c4d')).toBe('0.0.0+5f15036f480c.dirty-1a2b3c4d');
+    expect(snapshotDirName('0.0.0+b49542d67c8c.dirty-1a2b3c4d')).toBe('0.0.0+b49542d67c8c.dirty-1a2b3c4d');
     expect(snapshotDirName('a/b\\c:d')).toBe('a_b_c_d');
     expect(snapshotDirName('x.')).toBe('x_');
   });

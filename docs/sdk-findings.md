@@ -22,7 +22,7 @@ und **untypisierte Zusatzfelder** (siehe unten).
 **Belege:** `szenario#seq` = Datei `test/fixtures/sdk/<szenario>.jsonl`, Event mit dieser `seq`.
 Belege in den Punkten 1–17 (und in Code-Kommentaren, die sie zitieren) meinen die Aufnahme mit CLI
 2.1.300; seit dem 11.11.2026 liegen in `test/fixtures/sdk/` die Aufnahmen mit 2.1.322 (andere `seq`/IDs).
-Frühere Fassungen der Fixtures finden sich in der Git-Historie (z. B. `git show a5bbfba:test/fixtures/sdk/<szenario>.jsonl`).
+Frühere Fassungen der Fixtures finden sich in der Git-Historie (z. B. `git show 61a7d37:test/fixtures/sdk/<szenario>.jsonl`).
 Befehlsausgaben sind mit `$` markiert (E-Mail/Org geschwärzt). Aufgezeichnet mit `pnpm record`
 (siehe „Recorder“). Rohaufzeichnungen liegen nur lokal in `.recordings/` (git-ignoriert).
 

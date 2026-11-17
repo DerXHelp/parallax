@@ -1,7 +1,7 @@
 # FIX-R4-F5 – App/E2E (Ergebnis)
 
 > Fix-Runde nach R4/V3, Paket **F5** laut `docs/wp/FIX-R4.md` §2 (Welle Fb, nach dem Merge von K und
-> F1 … F4). Worktree `.worktrees/fix-f5`, Branch `fix/r4-f5`, Basis `main` = `a617e0a`. Besitz-Pfade:
+> F1 … F4). Worktree `.worktrees/fix-f5`, Branch `fix/r4-f5`, Basis `main` = `a5bda2d`. Besitz-Pfade:
 > `e2e/**`, `playwright.config.ts`, `src/web/{App,main}.tsx`, `src/web/App.test.tsx`, dieses Dokument.
 > Kein Live-`claude` (FakeBackend), kein HKCU, nie `%LOCALAPPDATA%\Parallax`. Logs der Läufe in
 > `%TEMP%\claude\parallax-fix-f5\`.
@@ -17,7 +17,7 @@
 | **R4W-27** E2E-Kleinigkeiten | (1) „Nicht stören“: Positivkontrolle – der In-App-Hinweis spielt den Chime, „Fertig“ den Pop (`expect.poll`); der feste 1-s-Wait entfällt: das Fenster entscheidet Toast und Ton im selben Schritt, der den Hinweis zeigt (`notifications/delivery.ts` `deliver`), ist der Hinweis da, bleibt ein fehlender Toast/Ton aus. (2) Einstellungen gelten erst als gespeichert, wenn der Server sie hat: `serverSettings(server)` (`support/server.ts`, `host.state` eines frischen Node-Clients) nach jedem Schalter/Feld/Radio (Toast „Berechtigung“, „Nicht stören“, Leerlauf-Schlaf an/45 min, 4 abgelehnt → 45 bleibt, Design, Sprache). (3) Status-Rekorder mit `attributeOldValue` (Wert nach Record i = `oldValue` von Record i + 1). (4) Selektoren ohne englische Texte: Schalter über `[data-event] td` bzw. `[data-setting] [role=switch]`, Radios über `value`, Sidebar `nav[data-view]`, Zahnrad `[data-action="settings"]`, Ordnerliste über `data-path`, Archiv-Zähler `/\(1\)$/`; „zbr“ prüft die erste Option statt einer genauen Anzahl (Pfad-Treffer über das Zufallssuffix möglich, Titel rangiert zuerst, V3-03). (5) `declare global { interface Window }` in `support/dom.ts` statt 7× `as unknown as` (+1 in `fixtures.ts`). (6) R9: `tok-e2e-secret` steht in keiner Zeile des Server-Logs | die betroffenen Fälle grün (§3) |
 | **R4W-28** Handler-Test nicht vollständig erzwungen | `EVERY_REQUEST: { [K in ShellRequestKind]: ShellRequestOf<K> }`, der Test iteriert darüber; `renameTitle` prüft zusätzlich das fokussierte Titelfeld und Esc | Gegenprobe: Eintrag `renameTitle` entfernt → `tsc` TS2741 |
 | E2E-Anpassung **R4W-03** (F4 §4) | `phase2-composer.spec.ts`: kein Klick auf die Read-Zeile; genau ein `image-thumb`, Zeile zugeklappt (`aria-expanded="false"`), Name „Enlarge image fake-shot.png“, Lightbox „Image: fake-shot.png“, `lightbox-save` mit `download="fake-shot.png"` | grün |
-| E2E-Anpassung **V3-14** (F2) | Basislauf auf `a617e0a`: `phase2-navigation.spec.ts:138` rot – nach dem Wiederherstellen der letzten archivierten Session kehrt die Sidebar jetzt selbst zur Liste zurück, der Knopf „Back to the sessions“ ist weg. Der Fall prüft das neue Verhalten (`data-view="flat"`, Umschalter verschwindet, Zeile sichtbar) | grün |
+| E2E-Anpassung **V3-14** (F2) | Basislauf auf `a5bda2d`: `phase2-navigation.spec.ts:138` rot – nach dem Wiederherstellen der letzten archivierten Session kehrt die Sidebar jetzt selbst zur Liste zurück, der Knopf „Back to the sessions“ ist weg. Der Fall prüft das neue Verhalten (`data-view="flat"`, Umschalter verschwindet, Zeile sichtbar) | grün |
 
 ### Neue E2E-Fälle
 
@@ -69,15 +69,15 @@ Danach beide Abnahmeläufe grün (§3).
 
 | Schritt | Ergebnis |
 |---|---|
-| `pnpm e2e` Basislauf auf `a617e0a` (vor F5) | 40/41 – rot nur `phase2-navigation.spec.ts:138` (V3-14, §1), 7,6 min |
+| `pnpm e2e` Basislauf auf `a5bda2d` (vor F5) | 40/41 – rot nur `phase2-navigation.spec.ts:138` (V3-14, §1), 7,6 min |
 | `pnpm exec tsc -b`, `eslint e2e src/web/App*.tsx src/web/main.tsx playwright.config.ts --max-warnings=0`, Prettier | grün (je Etappe) |
 | `pnpm exec vitest run src/web/App.test.tsx` | 34 Tests grün |
 | Gegenproben `App.test.tsx` | R4W-28: Eintrag `renameTitle` entfernt → `tsc` TS2741; R4W-19: Lazy-Wrapper ohne Prop-Weitergabe → der R4W-01-Fall rot (`data-unsaved` null). Danach wiederhergestellt |
 | Gegenprobe E2E-Drop-Fall | **nicht ausgeführt:** die dafür nötige vorübergehende Abschaltung des Drop-Schutzes in `shell/ShellEffects.tsx` (fremder Pfad) hat das Berechtigungssystem abgelehnt; die Gegenprobe auf Unit-Ebene hat F2 (`drop-guard.test.tsx`) |
 | `pnpm check` (vor den Commits) | grün: typecheck, ESLint, Vitest **212 Dateien / 3700 Tests** (Vitest 244 s, gesamt 797 s) |
 | `pnpm build` | grün, keine Chunk-Warnung (Tabelle unten) |
-| `pnpm e2e` Lauf 1 ohne Last (`fe6ad3a`) | 45/45 in 7,0 min |
-| `pnpm e2e` parallel zu `pnpm test` (`fe6ad3a`) | **44/45** – F5-FLAKE-1 (§1), behoben in `57b4487`; `pnpm test` daneben 212/3700 grün (399 s) |
+| `pnpm e2e` Lauf 1 ohne Last (`e4174c7`) | 45/45 in 7,0 min |
+| `pnpm e2e` parallel zu `pnpm test` (`e4174c7`) | **44/45** – F5-FLAKE-1 (§1), behoben in `8b41bbe`; `pnpm test` daneben 212/3700 grün (399 s) |
 | **Abnahme** `pnpm e2e` parallel zu `pnpm test` (Endstand) | **45/45 in 10,1 min** (610 s); `pnpm test` daneben **212 Dateien / 3700 Tests** grün (423 s) |
 | **Abnahme** `pnpm e2e` ohne Last (Endstand) | **45/45 in 7,0 min** (423 s inkl. Build-Prüfung) |
 | Server-Logs der Läufe (`test-results/server-w*.log` + `server.log` der eigenen Server, je 17 Dateien, gesichert unter `%TEMP%\claude\parallax-fix-f5\run{1,3,4}-logs`) | je Lauf nur die erwarteten 4× `request rejected` (warn, `auth.spec.ts`), **keine Zeile ≥ error**; weder `tok-e2e-secret` noch `draft-secret` in einem Log |
@@ -85,7 +85,7 @@ Danach beide Abnahmeläufe grün (§3).
 
 **Chunks (`dist/web/assets`, Bytes, roh):**
 
-| Chunk | vorher (`a617e0a`) | nachher (Endstand) |
+| Chunk | vorher (`a5bda2d`) | nachher (Endstand) |
 |---|---|---|
 | `index-*.js` | 435 717 | 377 953 (−57 764) |
 | `vendor-*.js` (nur `$initial`-Module) | 312 067 | 274 827 (−37 240) |
@@ -99,7 +99,7 @@ Danach beide Abnahmeläufe grün (§3).
 Der Start-Chunk enthält `settings-page` und `profile-editor` nicht mehr (`folder-browser` bleibt,
 „Neue Session“ nutzt ihn).
 
-Commits: `491e521` (App: Lazy-Slots, Handler-Test), `fe6ad3a` (E2E), `57b4487` (F5-FLAKE-1), danach
+Commits: `91060e7` (App: Lazy-Slots, Handler-Test), `e4174c7` (E2E), `8b41bbe` (F5-FLAKE-1), danach
 dieses Dokument.
 
 ## 4. Nahtfehler
@@ -127,5 +127,5 @@ Basisfall (`phase2-navigation.spec.ts:138`) war gewolltes neues Verhalten (V3-14
 - Folge-Idee: eine Fehlergrenze für Lazy-Slots (Transkript, Einstellungen, Profile): schlägt das Laden
   eines Chunks fehl (Server weg, neuer Build), fällt heute der ganze React-Baum.
 - Wunsch aus `e2e/support/dom.ts` bleibt: eigenes `e2e/tsconfig.json` mit `lib: ["ES2024", "DOM"]`.
-- `docs/wp/FLAKES.md`: F5-FLAKE-1 (Anmeldecode der E2E-Hilfen mit 2-s-Ping-Budget, behoben in `57b4487`)
+- `docs/wp/FLAKES.md`: F5-FLAKE-1 (Anmeldecode der E2E-Hilfen mit 2-s-Ping-Budget, behoben in `8b41bbe`)
   eintragen.

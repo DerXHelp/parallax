@@ -1,7 +1,7 @@
 # FIX-R5-F3 – Composer (Ergebnis)
 
 > Fix-Paket F3 der Fix-Runde nach R5/R5-web/V4 (`docs/wp/FIX-R5.md` §2, Zeile „F3 Composer“).
-> Worktree `.worktrees/fix-r5-f3`, Branch `fix/r5-f3`, Basis `feature/phase-3` = `87def00` (nach
+> Worktree `.worktrees/fix-r5-f3`, Branch `fix/r5-f3`, Basis `feature/phase-3` = `2027008` (nach
 > Paket K). Grundlage: `docs/wp/R5-web.md` (R5W-01, R5W-03, R5W-09, R5W-11), `docs/wp/V4.md` (V4-03,
 > V4-07). Geänderte Pfade nur unter `src/web/features/composer/**` und dieses Dokument.
 
@@ -61,7 +61,7 @@ Playground `composer/mention` und `composer/pastes`, 1280×800 dark-en; danach V
 Methode: Start-Chunks = Entry + `modulepreload` aus `dist/web/index.html`; Zuordnung im `index`-Chunk
 über die dekodierte Sourcemap.
 
-| | vorher (`87def00`) | nachher | Δ |
+| | vorher (`2027008`) | nachher | Δ |
 |---|---|---|---|
 | `index-*.js` raw / gzip | 442 830 / 128 779 | 440 906 / 128 688 | −1 924 / −91 |
 | Summe Start-Chunks raw / gzip | 943 552 / 280 953 (5 Dateien) | 941 182 / 280 866 (6 Dateien, neu `cn-*.js` 137 / 142) | −2 370 / −87 |

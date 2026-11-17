@@ -1,7 +1,7 @@
 # FIX-R4-F4 – Composer/Transkript (Ergebnis)
 
 > Fix-Runde nach R4/V3, Paket **F4** laut `docs/wp/FIX-R4.md` §2. Worktree `.worktrees/fix-f4`,
-> Branch `fix/r4-f4`, Basis `main` = `29f3256`. Besitz-Pfade: `src/web/features/{composer,transcript}/**`,
+> Branch `fix/r4-f4`, Basis `main` = `fbb94a2`. Besitz-Pfade: `src/web/features/{composer,transcript}/**`,
 > `src/web/ui/lightbox.tsx`, neu `src/web/lib/media-types.ts` (+ Test daneben). Kein Live-`claude`,
 > kein Browser (chrome-devtools-MCP gehört F3).
 
@@ -34,7 +34,7 @@
 
 ## 3. Checks
 
-Stand Commit `7dd61d3` (Code), Logs in `%TEMP%\claude\parallax-fix-f4\`.
+Stand Commit `de2e04f` (Code), Logs in `%TEMP%\claude\parallax-fix-f4\`.
 
 | Schritt | Ergebnis |
 |---|---|
@@ -44,11 +44,11 @@ Stand Commit `7dd61d3` (Code), Logs in `%TEMP%\claude\parallax-fix-f4\`.
 | Gegenproben (Fix temporär zurückgenommen) | R4W-03: 4 Tests rot; V3-02 (Composer): 2 rot; V3-04: rot; ADR-125: rot – danach wiederhergestellt |
 | `pnpm check` | `tsc` ✓, ESLint ✓, Vitest 3590/3591 – rot nur `features/profiles/ProfilesSettings.test.tsx › creates a new profile` (F3-Pfad, 22,5 s unter Last der vier parallelen Pakete; isoliert 13/13 grün) |
 | `pnpm test` (voller Wiederholungslauf) | **202 Dateien, 3591 Tests grün** (268 s) |
-| `pnpm build` | grün, Build `0.0.0+7dd61d3c124b`; `index` 424,7 kB (vorher 422,3 kB), `vendor` 312,1 kB |
+| `pnpm build` | grün, Build `0.0.0+de2e04fa333b`; `index` 424,7 kB (vorher 422,3 kB), `vendor` 312,1 kB |
 | Sichtprüfung ohne Browser | Vite auf Port 5187 (`PARALLAX_DEV_WEB_PORT`), 21 geänderte Module per HTTP transformiert (200, neuer Code enthalten), keine Fehler im Vite-Log; Vite per PID beendet |
 
-Commits: `a1174e2` (Transkript-Bilder, `media-types`, CopyButton, Rate-Limit-Fenster, GIF),
-`7dd61d3` (Composer: Slash-Menü, Summengrenze, `/plan`-Uploads, Antwort-Hinweis, Hilfe-Fokus,
+Commits: `50abefc` (Transkript-Bilder, `media-types`, CopyButton, Rate-Limit-Fenster, GIF),
+`de2e04f` (Composer: Slash-Menü, Summengrenze, `/plan`-Uploads, Antwort-Hinweis, Hilfe-Fokus,
 `slashCatalogOf`), danach dieses Dokument.
 
 ## 4. Hinweise für F5 (E2E)

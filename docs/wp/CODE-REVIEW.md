@@ -1,9 +1,9 @@
 # Abschließendes `/code-review` Phase 1
 
 - **Datum:** 16.10.2026
-- **Umfang:** `323a52f..main` (Stand `5bb2d9b`, 179 Dateien) – alle Änderungen nach R3 (R3-/V2-Fixes, WP-22, WP-22-Fixes, Doku).
+- **Umfang:** `91b2dff..main` (Stand `abd5c18`, 179 Dateien) – alle Änderungen nach R3 (R3-/V2-Fixes, WP-22, WP-22-Fixes, Doku).
 - **Stufe:** high. Die Funde sind **unverifiziert** (das Review hat nichts ausgeführt); jede Umsetzung beginnt mit einer Reproduktion per Test.
-- **Zusätzlich** (Doku-Nachzug `1f9a78e`): `serverArgsFor` (`src/server/launcher/args.ts`) reicht `--toasts` nicht an den Server weiter; `lib/toast.ts` fehlt in den Ownership-Tabellen.
+- **Zusätzlich** (Doku-Nachzug `0914278`): `serverArgsFor` (`src/server/launcher/args.ts`) reicht `--toasts` nicht an den Server weiter; `lib/toast.ts` fehlt in den Ownership-Tabellen.
 
 ## Funde (nach Schwere)
 
@@ -23,23 +23,23 @@
 | CR-12 | `CLAUDE.md`, `src/server/lib/README.md` | `lib/toast.ts` fehlt in den Ownership-Tabellen. | Doku-Lücke. |
 
 ## Umsetzung
-Fix-Runde 16.10.2026, Branch `fix/final` (Stand main `5bb2d9b`), einziger aktiver Agent. Vorgehen je
+Fix-Runde 16.10.2026, Branch `fix/final` (Stand main `abd5c18`), einziger aktiver Agent. Vorgehen je
 Fund: erst ein Test gegen den alten Code (rot), dann der Fix (grün); die Tests bleiben als Regression.
 ADR-090 … ADR-093 (`docs/decisions.md`).
 
 | Nr. | Reproduziert | Fix | Test (Regression) | Commit |
 |---|---|---|---|---|
-| CR-01 | ja (7 Tests rot) | Nach erfolgreichem Wurzel-`taskkill /T` endet der Record; sonst jeder Kill erst nach frischer Prüfung genau dieser PID (tot → übersprungen, nach einem Kill neue gebündelte Abfrage); `unknown` beendet nichts mehr (ADR-093) | `recovery.test.ts` „CR-01: …“ (Wurzel lebt, PID nach Kill wiederverwendet, Kind schon tot, frische Prüfung `unknown`, spätere Wurzel wiederverwendet); Engine-Test WP22-06 angepasst | `233917c` |
-| CR-02 | ja (2 Tests rot) | `shutdownKillAfterMs` 5 s **je Session ab ihrem `close()`**, dann `taskkill`; Sweep des Rahmens erst nach 8 s (`SHUTDOWN_SWEEP_GRACE_MS`) (ADR-090) | Engine „CR-02: a close() that needs 4 s … is not cut off“, „killed after shutdownKillAfterMs“ (5 s statt 2,5 s) | `233917c` |
-| CR-03 | ja | `replace('{title}', () => title)` | `nativeToasts.test.ts` „CR-03“ | `ed350d5` |
-| CR-04 | ja (`TypeError: build lock: unsafe path (unc)`) | `acquireBuildLock`/`buildLockKey` in `launcher/build.ts` über `acquireKeyLock` (ohne Pfadprüfung/Dateizugriff für UNC; Laufwerkspfade wie bisher per realpath) (ADR-092) | `launcher.test.ts` „CR-04: … UNC share is no TypeError“ (echte Pipe), `build.test.ts` „CR-04“ | `ed350d5` |
-| CR-05 | ja (Kanal nach einem Timeout aus) | `failed.permanent` in `lib/toast.ts` (Sprachmodus-Prüfung, Exit 4 = Einrichtung, Exit 3 = Aktion); nur dauerhaft schaltet ab, sonst zählen, ab drei in Folge Pause 1 min … 15 min (ADR-091) | `nativeToasts.test.ts` „CR-05“ (Timeout, `History.Remove`, Backoff), `toast.test.ts` (Klassifikation, Skript) | `ed350d5` |
-| CR-06 | ja (Engine-Tests rot; **live** zusätzlich: auch `close()` allein lässt eine wartende CLI weiterarbeiten) | Wartend ohne Queue/Hintergrund-Task: `interrupt` (≤ 1 s) + `close()`; wartend **mit** Queue oder Hintergrund-Task: weder Interrupt noch `close()`, sofort `taskkill`, danach `PROMPT_NOT_DELIVERED` (ADR-090) | Engine „CR-06: … queued prompt …“, „CR-06: … background work …“ (kein Interrupt, kein `close()`, Kill, Prompt nie gestartet, nach Neustart `expired`) | `233917c` |
-| CR-07 | ja (500) | `app.ts`: Port unbekannt (0 vor `listen`) → Guard `HOST_HEADER_REJECTED`, CSP `BLOB_CSP`; kein Contract-Eingriff | `app.test.ts` „CR-07“ | `ed350d5` |
-| CR-08 | ja (Design; E2E-Setup und `pnpm build` ohne Lock) | **behoben.** Lock in `launcher/build.ts` (`acquireBuildLock`, `pollLock`); E2E-Setup prüft und baut darunter, `scripts/build-server.ts` nimmt ihn (außer `runBuild` hält ihn, `PARALLAX_BUILD_LOCK_HELD=1`) (ADR-092); nach Freigabe des Koordinators `package.json` `build` → `scripts/build.ts` → `buildUnderLock`: beide Schritte unter einem Lock (ADR-094) | `build.test.ts` (Marker, `pollLock`, `buildUnderLock`, zwei gleichzeitige Builds mit echtem Lock serialisiert, Pin-Test auf `package.json`); manuell: zwei gleichzeitige `pnpm build` – der zweite wartete, `dist` mit einer Build-ID | `ed350d5`, Commit „Code-Review-Fix CR-08: …“ |
-| CR-09 | Regelverstoß ja, Verhaltensabweichung nein (Tests alt und neu grün) | `test/setup/home.ts` nutzt `windowsPathKey`/`isWindowsPathInside` aus `@shared/paths` | `env.test.ts` „CR-09: the test guard judges … like config.ts“, Laufwerkswurzel/doppelte Trenner | `ed350d5` |
-| CR-10 | ja (2 Tests rot) | `startServer` meldet den Shutdown-Rahmen per `onShutdownFrame` (vor `listen`), `main.ts` gibt ihn dem Crash-Handler; ein Fehlerpfad während eines laufenden Shutdowns wartet auf ihn statt doppelt aufzuräumen | `compose.test.ts` „CR-10: …“ (Fehler nach `listen` → geordnet, Lockfile weg; kein zweites Aufräumen) | `233917c` |
-| CR-11 | ja | `serverArgsFor` reicht `--toasts=` weiter; Usage nennt `--toasts` | `args.test.ts` „CR-11“ | `ed350d5` |
+| CR-01 | ja (7 Tests rot) | Nach erfolgreichem Wurzel-`taskkill /T` endet der Record; sonst jeder Kill erst nach frischer Prüfung genau dieser PID (tot → übersprungen, nach einem Kill neue gebündelte Abfrage); `unknown` beendet nichts mehr (ADR-093) | `recovery.test.ts` „CR-01: …“ (Wurzel lebt, PID nach Kill wiederverwendet, Kind schon tot, frische Prüfung `unknown`, spätere Wurzel wiederverwendet); Engine-Test WP22-06 angepasst | `0e068ee` |
+| CR-02 | ja (2 Tests rot) | `shutdownKillAfterMs` 5 s **je Session ab ihrem `close()`**, dann `taskkill`; Sweep des Rahmens erst nach 8 s (`SHUTDOWN_SWEEP_GRACE_MS`) (ADR-090) | Engine „CR-02: a close() that needs 4 s … is not cut off“, „killed after shutdownKillAfterMs“ (5 s statt 2,5 s) | `0e068ee` |
+| CR-03 | ja | `replace('{title}', () => title)` | `nativeToasts.test.ts` „CR-03“ | `f10fa69` |
+| CR-04 | ja (`TypeError: build lock: unsafe path (unc)`) | `acquireBuildLock`/`buildLockKey` in `launcher/build.ts` über `acquireKeyLock` (ohne Pfadprüfung/Dateizugriff für UNC; Laufwerkspfade wie bisher per realpath) (ADR-092) | `launcher.test.ts` „CR-04: … UNC share is no TypeError“ (echte Pipe), `build.test.ts` „CR-04“ | `f10fa69` |
+| CR-05 | ja (Kanal nach einem Timeout aus) | `failed.permanent` in `lib/toast.ts` (Sprachmodus-Prüfung, Exit 4 = Einrichtung, Exit 3 = Aktion); nur dauerhaft schaltet ab, sonst zählen, ab drei in Folge Pause 1 min … 15 min (ADR-091) | `nativeToasts.test.ts` „CR-05“ (Timeout, `History.Remove`, Backoff), `toast.test.ts` (Klassifikation, Skript) | `f10fa69` |
+| CR-06 | ja (Engine-Tests rot; **live** zusätzlich: auch `close()` allein lässt eine wartende CLI weiterarbeiten) | Wartend ohne Queue/Hintergrund-Task: `interrupt` (≤ 1 s) + `close()`; wartend **mit** Queue oder Hintergrund-Task: weder Interrupt noch `close()`, sofort `taskkill`, danach `PROMPT_NOT_DELIVERED` (ADR-090) | Engine „CR-06: … queued prompt …“, „CR-06: … background work …“ (kein Interrupt, kein `close()`, Kill, Prompt nie gestartet, nach Neustart `expired`) | `0e068ee` |
+| CR-07 | ja (500) | `app.ts`: Port unbekannt (0 vor `listen`) → Guard `HOST_HEADER_REJECTED`, CSP `BLOB_CSP`; kein Contract-Eingriff | `app.test.ts` „CR-07“ | `f10fa69` |
+| CR-08 | ja (Design; E2E-Setup und `pnpm build` ohne Lock) | **behoben.** Lock in `launcher/build.ts` (`acquireBuildLock`, `pollLock`); E2E-Setup prüft und baut darunter, `scripts/build-server.ts` nimmt ihn (außer `runBuild` hält ihn, `PARALLAX_BUILD_LOCK_HELD=1`) (ADR-092); nach Freigabe des Koordinators `package.json` `build` → `scripts/build.ts` → `buildUnderLock`: beide Schritte unter einem Lock (ADR-094) | `build.test.ts` (Marker, `pollLock`, `buildUnderLock`, zwei gleichzeitige Builds mit echtem Lock serialisiert, Pin-Test auf `package.json`); manuell: zwei gleichzeitige `pnpm build` – der zweite wartete, `dist` mit einer Build-ID | `f10fa69`, Commit „Code-Review-Fix CR-08: …“ |
+| CR-09 | Regelverstoß ja, Verhaltensabweichung nein (Tests alt und neu grün) | `test/setup/home.ts` nutzt `windowsPathKey`/`isWindowsPathInside` aus `@shared/paths` | `env.test.ts` „CR-09: the test guard judges … like config.ts“, Laufwerkswurzel/doppelte Trenner | `f10fa69` |
+| CR-10 | ja (2 Tests rot) | `startServer` meldet den Shutdown-Rahmen per `onShutdownFrame` (vor `listen`), `main.ts` gibt ihn dem Crash-Handler; ein Fehlerpfad während eines laufenden Shutdowns wartet auf ihn statt doppelt aufzuräumen | `compose.test.ts` „CR-10: …“ (Fehler nach `listen` → geordnet, Lockfile weg; kein zweites Aufräumen) | `0e068ee` |
+| CR-11 | ja | `serverArgsFor` reicht `--toasts=` weiter; Usage nennt `--toasts` | `args.test.ts` „CR-11“ | `f10fa69` |
 | CR-12 | ja (`CLAUDE.md`; `lib/README.md` hatte die Zeile schon) | Zeile `src/server/lib/toast.ts` in `CLAUDE.md` (150 Zeilen) und `architecture.md` §2.1; `lib/README.md` aktualisiert (CR-05) | – | Doku-Commit „Code-Review-Fixes: …“ |
 
 **Live-Messung (CR-02/CR-06, einmal):** Abo-Login (`claude.ai`, `apiKeySource: none`), `claude`

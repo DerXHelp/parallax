@@ -1,8 +1,8 @@
 # FIX-R4-F3 – Profile, Neue Session, Einstellungen (Ergebnis)
 
 > Fix-Paket F3 der Fix-Runde nach R4/V3 (`docs/wp/FIX-R4.md` §2). Worktree `.worktrees/fix-f3`,
-> Branch `fix/r4-f3`, Basis `main` = `29f3256`. Grundlage: `docs/wp/R4-web.md`, `docs/wp/V3.md`,
-> ADR-123/124/126, Contract-Changelog „R4 (K)“. Commits: `be83921` (Fixes + Tests), `508c81b`
+> Branch `fix/r4-f3`, Basis `main` = `fbb94a2`. Grundlage: `docs/wp/R4-web.md`, `docs/wp/V3.md`,
+> ADR-123/124/126, Contract-Changelog „R4 (K)“. Commits: `85a3010` (Fixes + Tests), `a8c1d4f`
 > (Nachträge aus der Sichtprüfung, instabiler Test), danach dieses Ergebnis.
 
 ## 1. Befunde
@@ -84,14 +84,14 @@ Aufgeräumt: Vite per PID beendet (`taskkill /PID 31620 /T /F`, Port 5186 frei, 
 
 ## 4. Checks
 
-- **Gegenprobe:** die Produktionsdateien von `main` (`29f3256`) mit den neuen Tests: 25 neue bzw.
+- **Gegenprobe:** die Produktionsdateien von `main` (`fbb94a2`) mit den neuen Tests: 25 neue bzw.
   angepasste Tests rot (R4W-01 a/b/c, -09, -16, -17, -18, -24, V3-01, V3-04, V3-12, V3-14), grün blieben
   nur verhaltensneutrale (Env-Namensregel R4W-21, „without unsaved changes nothing asks“). Danach HEAD
   wiederhergestellt.
 - Eigene Pfade: `pnpm exec tsc -b` grün, `pnpm exec eslint <eigene Pfade> --max-warnings=0` grün,
   `pnpm exec vitest run <eigene Pfade>` 15 Dateien / 119 Tests grün (vor Stufe 2), nach Stufe 2 10 Dateien /
   73 Tests (Profile, Neue Session) grün.
-- Voll (Stand `508c81b`, parallel zu F1/F2/F4): `pnpm check` grün – typecheck, lint, **203 Dateien /
+- Voll (Stand `a8c1d4f`, parallel zu F1/F2/F4): `pnpm check` grün – typecheck, lint, **203 Dateien /
   3565 Tests**; `pnpm build` grün (`index-*.js` 427 604 B; `lazy()` ist F5, R4W-19).
 
 ## 5. Live-Prüfpunkte für WP-41

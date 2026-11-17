@@ -1,13 +1,13 @@
 # FIX-E2E-EDGE157 – zwei E2E-Fälle rot seit dem Edge-Update 155 → 157
 
 > Koordinator, 11.11.2026. Worktree `.worktrees/fix-e2e-edge157`, Branch `fix/e2e-edge157`, Basis `main`
-> = `53d23c6` (Merge `feature/question-tabs`). Fehler der produktiven Basis → `fix/<name>` von `main`
+> = `3549e45` (Merge `feature/question-tabs`). Fehler der produktiven Basis → `fix/<name>` von `main`
 > (CLAUDE.md „Git“), Merge nach `main` durch den Koordinator.
 
 ## 1. Befund (Koordinator)
 
-`pnpm e2e` auf `main` (`53d23c6`): 43/45 grün, 2 rot. Gezielte Wiederholung
-(`--repeat-each=3`): 4 von 6 rot. **Derselbe Stand vor dem Merge (`73381c6`) ist ebenso rot (5 von 6)** –
+`pnpm e2e` auf `main` (`3549e45`): 43/45 grün, 2 rot. Gezielte Wiederholung
+(`--repeat-each=3`): 4 von 6 rot. **Derselbe Stand vor dem Merge (`6503ea9`) ist ebenso rot (5 von 6)** –
 der Merge der Frage-Tabs ist nicht die Ursache. Letzter grüner Volllauf: 19.10.2026 (45/45). Seitdem hat
 sich Edge selbst aktualisiert: **155.0.4283.62 (WP-41) → 157.0.4341.46 (jetzt)**. Die Läufe liefen
 sequenziell und ohne Fremdlast.

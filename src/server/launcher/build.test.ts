@@ -48,7 +48,7 @@ const webInfo = (id: string) => `${JSON.stringify({ buildId: id })}\n`;
 
 describe('build id of dist/server.js (ADR-013)', () => {
   it('parses the banner line', () => {
-    expect(parseBundleBuildId('// Parallax server, build 0.0.0+1082db7fa68c')).toBe('0.0.0+1082db7fa68c');
+    expect(parseBundleBuildId('// Parallax server, build 0.0.0+71e3af4977ea')).toBe('0.0.0+71e3af4977ea');
     expect(parseBundleBuildId('// Parallax server, build 0.0.0+abc.dirty-1234abcd\r')).toBe(
       '0.0.0+abc.dirty-1234abcd',
     );

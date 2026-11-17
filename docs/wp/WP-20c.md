@@ -1,7 +1,7 @@
 # WP-20c – E2E in Edge und Integrations-Fixes
 
 > Welle 2, Teil von WP-20 (20a Server, 20b Web, 20c E2E). Worktree `.worktrees/wp-20c`, Branch
-> `wp/20c`, Basis `main` = `3c2191a`, nach Aufforderung `git merge main` (`2c3fb70`, R2-Server-Fixes).
+> `wp/20c`, Basis `main` = `379623c`, nach Aufforderung `git merge main` (`89e1b43`, R2-Server-Fixes).
 > Kein Live-`claude`, nur FakeBackend.
 
 ## Auftrag (sinngemäß)

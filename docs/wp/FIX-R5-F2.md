@@ -1,7 +1,7 @@
 # FIX-R5-F2 – Transkript/Tasks (Fix-Runde nach R5/R5-web/V4)
 
 > Paket F2 aus `docs/wp/FIX-R5.md` §2, Worktree `.worktrees/fix-r5-f2`, Branch `fix/r5-f2`, Basis
-> `feature/phase-3` = `87def00`. Befunde: `docs/wp/V4.md` (V4-01, V4-07), `docs/wp/R5-web.md`
+> `feature/phase-3` = `2027008`. Befunde: `docs/wp/V4.md` (V4-01, V4-07), `docs/wp/R5-web.md`
 > (R5W-01 Anteil, R5W-04 (3), R5W-05, R5W-06 Anteil, R5W-07, R5W-11 Anteil), WP-60 §2.7 Nr. 4
 > (Flake `renderers.test.tsx`). Pfade: `src/web/features/{transcript,tasks}/**`,
 > `src/web/lib/file-refs.ts` (+ Test). Kein Live-`claude`, keine Contract-Änderung.
@@ -20,7 +20,7 @@
 **R5W-01 – Messung** (`pnpm exec vite build`, Zuordnung je Quelle über die Sourcemap, Skript im
 Scratch-Ordner):
 
-| | vorher (`87def00`) | nachher |
+| | vorher (`2027008`) | nachher |
 |---|---|---|
 | `index-*.js` raw | 442 830 B | 440 565 B (−2 265) |
 | `index-*.js` gzip (Vite) | 129,84 kB | 129,18 kB |

@@ -1,7 +1,7 @@
 # WP-20a – Server-Verdrahtung
 
 > Welle 2, Teil von WP-20 (20a Server, 20b Web parallel, danach 20c E2E in Edge). Worktree
-> `.worktrees/wp-20a`, Branch `wp/20a`, Basis `main` = `2299eb0`. Kein Live-`claude`.
+> `.worktrees/wp-20a`, Branch `wp/20a`, Basis `main` = `c9efaff`. Kein Live-`claude`.
 
 ## Auftrag (sinngemäß)
 
@@ -37,7 +37,7 @@
 ## Ergebnis
 
 **Status:** fertig. Keine Contract-, Port- oder Script-Änderung; `package.json` zeigt `start`
-bereits auf den Launcher (`0f553bd`).
+bereits auf den Launcher (`ffbcb85`).
 
 ### Dateien
 

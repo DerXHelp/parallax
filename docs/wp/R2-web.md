@@ -1,6 +1,6 @@
 # R2 – Review Web-Pakete WP-15 (Transkript) und WP-16 (Entscheidungen + Composer)
 
-**Stand:** 15.10.2026, `main` nach `7380153` (WP-13a, WP-15, WP-16 gemergt) · **Rolle:** read-only
+**Stand:** 15.10.2026, `main` nach `39e2745` (WP-13a, WP-15, WP-16 gemergt) · **Rolle:** read-only
 Review (nur diese Datei geändert) · **Schwerpunkt:** Kernfeature nicht-modale Entscheidungen
 (Plan „Plan-Modus & Plan-Freigabe“), Sicherheit der Renderer, Render-/Speicherverhalten, Duplikate
 zwischen WP-15 und WP-16, Bereitschaft für WP-20. Der Server-Teil von R2 folgt nach WP-13b.

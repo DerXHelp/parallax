@@ -1,6 +1,6 @@
 # FIX-R4-F1 – Fix-Paket F1 Server (Ergebnis)
 
-> Auftrag: `docs/wp/FIX-R4.md` §2, Zeile **F1 Server**. Basis `main` = `29f3256`, Branch `fix/r4-f1`
+> Auftrag: `docs/wp/FIX-R4.md` §2, Zeile **F1 Server**. Basis `main` = `fbb94a2`, Branch `fix/r4-f1`
 > (Worktree `.worktrees/fix-f1`). Normativ: ADR-121 … ADR-125, Contract-Changelog „R4 (K)“.
 > Kein Live-`claude`, kein SdkBackend gegen echtes `claude`, keine echte Konsole, kein HKCU.
 
@@ -57,9 +57,9 @@ Verknüpfung ist kein Fehler (wie beim fremden Protokoll-Handler).
 | `pnpm exec tsc -b` | grün |
 | `pnpm exec eslint src/server scripts/preflight.ts --max-warnings=0` | grün |
 | `pnpm exec vitest run src/server` | grün, 109 Dateien / 2277 Tests (111 s) |
-| `pnpm check` (Stand `631736a`) | typecheck ✓, lint ✓, Vitest **3587/3588** – `system/guard.test.ts` „every server test … injects its runner“ lief in **20,2 s** in den 20-s-Timeout (isoliert 0,3 s; paralleler Lauf mit F2–F4 auf demselben Rechner, Virenscanner) → Befund **F1-FLAKE-1** unten |
+| `pnpm check` (Stand `beb5379`) | typecheck ✓, lint ✓, Vitest **3587/3588** – `system/guard.test.ts` „every server test … injects its runner“ lief in **20,2 s** in den 20-s-Timeout (isoliert 0,3 s; paralleler Lauf mit F2–F4 auf demselben Rechner, Virenscanner) → Befund **F1-FLAKE-1** unten |
 | `tsc -b` + `pnpm test` nach der Entschärfung | grün, Vitest 200 Dateien / **3588/3588** (226 s) |
-| `pnpm build` | grün (`0.0.0+631736a4335b`) |
+| `pnpm build` | grün (`0.0.0+beb5379b0ac5`) |
 
 **F1-FLAKE-1 (instabiler Test, gemeldet):** Der statische Check in `system/guard.test.ts` las rund
 110 Testdateien nacheinander; unter Volllast überschritt die Summe der Lesezeiten das Test-Timeout.

@@ -1,8 +1,8 @@
 # WP-13c – SdkBackend
 
 > Welle 1b, Teilpaket von WP-13 (Design: `docs/wp/WP-13.md` §2, §3.1, §3.2, §4, §5.3, §7).
-> Worktree `.worktrees/wp-13c`, Branch `wp/13c`, Basis `main` = `c7122c9` + 13a-Basismodule
-> (`1764e4d`, per `git merge`). Kein Live-`claude`: `query()` und Spawn sind in allen Tests gemockt.
+> Worktree `.worktrees/wp-13c`, Branch `wp/13c`, Basis `main` = `338ca45` + 13a-Basismodule
+> (`ae913cf`, per `git merge`). Kein Live-`claude`: `query()` und Spawn sind in allen Tests gemockt.
 
 ## Auftrag (sinngemäß)
 
@@ -182,7 +182,7 @@ Keine Contract-Änderung nötig.
 - Danach keine `node.exe`/`claude.exe` des Worktrees mehr (CIM-Abfrage), alle Worker-Pools und
   Backends werden in `afterEach` entsorgt.
 
-### Nachbesserung: pool-Test lastrobust (nach dem Merge `371d443`)
+### Nachbesserung: pool-Test lastrobust (nach dem Merge `7c956d9`)
 
 - Befund: „times out …“ in `history/pool.test.ts` scheiterte im vollen `pnpm check` unter paralleler
   Last – der 400-ms-Timeout lief auf der Wanduhr und galt schon für den ersten Auftrag, dessen

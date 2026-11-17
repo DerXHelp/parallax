@@ -1,6 +1,6 @@
 # R1 – Review Web-Paket (WP-14)
 
-**Stand:** 15.10.2026, `main` nach `e1fa211` (Welle 1a gemergt) · **Rolle:** read-only Review (nur
+**Stand:** 15.10.2026, `main` nach `8040bbd` (Welle 1a gemergt) · **Rolle:** read-only Review (nur
 diese Datei geändert) · **Schwerpunkt:** Sicherheit, Sync-Korrektheit und API-Tauglichkeit von
 `src/web/**` für Welle 1b (WP-15 Transkript, WP-16 Entscheidungen + Composer). Der Server-Teil steht
 in `docs/wp/R1.md`.

@@ -2,7 +2,7 @@
 
 > Welle 1b, Teilpaket von WP-13 (verbindliches Design: `docs/wp/WP-13.md` §2, §3.5, §3.6, §4, §5.2,
 > §7), kritischer Pfad 13 → 20 → 22. Worktree `.worktrees/wp-13b`, Branch `wp/13b`, Basis `main` =
-> `7380153` (13a, 13c, WP-10/11/12/14/15/16 gemergt). Kein Live-`claude`: alle Tests über das
+> `39e2745` (13a, 13c, WP-10/11/12/14/15/16 gemergt). Kein Live-`claude`: alle Tests über das
 > FakeBackend, Memory-Doubles und die echten WP-10/12-Module.
 
 ## Auftrag (sinngemäß)

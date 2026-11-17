@@ -1,7 +1,7 @@
 # FIX-R5-F1 – Fix-Paket F1 Server (Ergebnis)
 
 > Auftrag: `docs/wp/FIX-R5.md` §2, Zeile **F1 Server** (Pfade `src/server/**` ohne `**/ports.ts` und
-> `backend/{types,fixture}.ts`). Basis `feature/phase-3` = `87def00`, Branch `fix/r5-f1` (Worktree
+> `backend/{types,fixture}.ts`). Basis `feature/phase-3` = `2027008`, Branch `fix/r5-f1` (Worktree
 > `.worktrees/fix-r5-f1`). Normativ: ADR-152. Befunde: `docs/wp/R5.md` (R5-01, R5-02, R5-04, Probe P1),
 > `docs/wp/V4.md` (V4-02, V4-05). Kein Live-`claude`, kein SdkBackend-Test, kein Programmstart, keine
 > Registry-Schreibzugriffe.
@@ -40,7 +40,7 @@
 | `pnpm exec vitest run src/server` | grün, 129 Dateien / 2801 Tests (17 s) |
 | Lastlauf V4-02 | grün: 4× `interactive.test.ts` + `phase3.integration.test.ts` gleichzeitig mit einem vollen `vitest run src/server` (dazu die parallelen Pakete F2–F5 auf demselben Rechner) – 4 × 60/60, 2801/2801 |
 | `pnpm check` | grün: `tsc -b` ✓, ESLint ✓, Vitest 278 Dateien / **4776/4776** (43 s); keine Last-Flakes in fremden Dateien beobachtet |
-| `pnpm build` | grün (`0.0.0+87def0000bdc.dirty-…`, vor dem Commit) |
+| `pnpm build` | grün (`0.0.0+2027008188ba.dirty-…`, vor dem Commit) |
 
 Gegenproben (Fix-Dateien per `git stash` bzw. vorübergehender Änderung zurückgesetzt, Tests
 unverändert): R5-01 Normalizer 3 rot, R5-01 Index 6 rot, V4-02 2 rot, R5-02/R5-04 8 rot.

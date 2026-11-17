@@ -4,7 +4,7 @@
 > voraussichtlich früher oder später komplett auf OpenCode umgestellt. Nutzer-Entscheidung 11.11.2026:
 > **nicht jetzt umsetzen**, ganz ans Ende des Ausblicks (`docs/plan.md` „Backlog“), später gemeinsam
 > ansehen. Das Phase-3-Design (WP-50) bekommt **keine** Vorgabe zur Backend-Neutralität.
-> Stand der Fakten: Parallax `main` = `109c073` (SDK 0.3.322, CLI 2.1.322), OpenCode 2.2.7 (10.11.2026).
+> Stand der Fakten: Parallax `main` = `7ae00c0` (SDK 0.3.322, CLI 2.1.322), OpenCode 2.2.7 (10.11.2026).
 > Vor einer Umsetzung beide Teile neu prüfen (OpenCode ändert sich schnell).
 
 ## Kurzfazit

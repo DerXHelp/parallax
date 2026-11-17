@@ -1,7 +1,7 @@
 # FIX-R4-F2 – Shell/Navigation (Fix-Runde nach R4/V3)
 
 > Paket F2 aus `docs/wp/FIX-R4.md` §2, Worktree `.worktrees/fix-f2`, Branch `fix/r4-f2`, Basis `main` =
-> `29f3256`. Befunde: `docs/wp/R4-web.md`, `docs/wp/V3.md`; Regeln ADR-121 … ADR-126,
+> `fbb94a2`. Befunde: `docs/wp/R4-web.md`, `docs/wp/V3.md`; Regeln ADR-121 … ADR-126,
 > architecture §2.3 (h)/(i). Kein Live-`claude`, keine Contract-Änderung.
 
 ## 1. Befunde

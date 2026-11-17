@@ -1,7 +1,7 @@
 # FIX-R5-F6 – E2E/Bundle (Ergebnis)
 
 > Fix-Runde nach R5/R5-web/V4 (Phase 3), Paket **F6** (Welle Fb) laut `docs/wp/FIX-R5.md` §2.
-> Worktree `.worktrees/fix-r5-f6`, Branch `fix/r5-f6`, Basis `feature/phase-3` = `0634a1a` (K und
+> Worktree `.worktrees/fix-r5-f6`, Branch `fix/r5-f6`, Basis `feature/phase-3` = `64ce97d` (K und
 > F1–F5 gemergt). Besitz-Pfade: `e2e/**` (ohne Live-Lauf), `scripts/bundle-budget.ts`, dieses
 > Dokument. Der Agent wurde vor dem Abschluss angehalten (Rechner-Last, ADR-154); Lauf 3, Checks und
 > Commit hat der Koordinator übernommen. Kein Live-`claude`, keine Desktop-Bedienung, nie `%LOCALAPPDATA%\Parallax`. Keine Datei
@@ -10,7 +10,7 @@
 
 ## 1. Ausgangslage
 
-Erster voller `pnpm e2e` auf `0634a1a` vor jeder Änderung: **59/60 grün, 1 rot** (204 s) –
+Erster voller `pnpm e2e` auf `64ce97d` vor jeder Änderung: **59/60 grün, 1 rot** (204 s) –
 `phase2-new-session.spec.ts:109` erwartete die alte Fake-CLI-Version `2.1.300` (F1 hat sie auf
 `2.1.322` gehoben). Alle übrigen Fälle überstanden die Fa-Änderungen (Pfadkürzung vom Anfang in
 Panel/Viewer F4, `de` lazy F5, neue Verweis-Regel F2, @-Picker-Rangfolge F3) ohne Anpassung.
@@ -29,7 +29,7 @@ Panel/Viewer F4, `de` lazy F5, neue Verweis-Regel F2, @-Picker-Rangfolge F3) ohn
 | Datei › Fall | Befund | Prüft |
 |---|---|---|
 | `phase3-files` › paths with spaces and umlauts | **V4-01** (F2) | Projektordner `NN-Projekt mit Leerzeichen äöü` mit `README.md`, `Meine Notizen.txt` und `Unter Ordner\Plan für später.md`; Echo mit dem absoluten Pfad im Fließtext, dem Pfad mit Leerzeichen im Dateinamen in Backticks und einem Markdown-Link `[the plan](<C:/…/Plan für später.md>)` → genau **3** `file-link`-Elemente, alle `data-state="link"` (kein `refused`/`missing`/`checking`-Präfix wie „…\NN-Projekt“), Text = ganzer Pfad bzw. Linktext; jeder öffnet den Viewer (Markdown bzw. Text, Inhalt geprüft) |
-| `phase3-composer` › pasted "/" … (R5W-03) | **R5W-03** (F3, Koordinator `e38a344`) | 40-Zeilen-Paste, erste Zeile `/clear --all`, am Feldanfang → Feld beginnt mit dem Token; nach „ what failed?“ und Enter: Fake-Antwort „received 1 paste(s)“; der gesendete `session.sendPrompt` (WS-Mitschnitt, zod) ist **genau** `U+200B + Paste + "\nwhat failed?"` (auch V4-07), `trim()` beginnt nicht mit `/`, `prompt.pastes` = [Paste]; in der Nutzer-Blase steht U+200B vor `/clear` mit **Breite 0** (Range-Messung); Sessiontitel (Sidebar-Zeile und Kopfzeile) = `/clear --all` ohne U+200B |
+| `phase3-composer` › pasted "/" … (R5W-03) | **R5W-03** (F3, Koordinator `86f9aa0`) | 40-Zeilen-Paste, erste Zeile `/clear --all`, am Feldanfang → Feld beginnt mit dem Token; nach „ what failed?“ und Enter: Fake-Antwort „received 1 paste(s)“; der gesendete `session.sendPrompt` (WS-Mitschnitt, zod) ist **genau** `U+200B + Paste + "\nwhat failed?"` (auch V4-07), `trim()` beginnt nicht mit `/`, `prompt.pastes` = [Paste]; in der Nutzer-Blase steht U+200B vor `/clear` mit **Breite 0** (Range-Messung); Sessiontitel (Sidebar-Zeile und Kopfzeile) = `/clear --all` ohne U+200B |
 | `phase3-composer` › @ picker (V4-03) | **V4-03** (F3) | Projekt ohne Git mit den Dateien des V4-Repros (drei `docs/…`, tiefer Pfad `verschachtelt/…/mit-einem-sehr-langen-…-und-mehr.md`, `Grüße-Übersicht.txt`): `@` → 5, 2× ↓ → Option 2 aktiv, `grü` → **nur** `Grüße-Übersicht.txt` (kein Streutreffer), aktiv (`aria-selected`, `aria-activedescendant`), Tab fügt `@Grüße-Übersicht.txt ` ein; danach `@`, 3× ↓, `md` → 4 Treffer, **Option 0** aktiv |
 | `phase3-shell` › FileLink chunk cannot be loaded | **R5W-02** (F5) | Route `FileLink-*.js` abgebrochen; `fake:files` → alle Verweise der Antwort (`app.ts:12`, `notes.md` …) und die Datei-Chips der Tool-Karte sind der leise Fallback (`data-slot="file-link-fallback"`, `data-error-kind="chunk"`), kein Link, **keine** `slot-error`-Karte; genau **ein** `[role="alert"]` auf der Seite = Hinweis `shell-slot-quiet-failure` mit „Reload window“; ein zweites Echo mit zwei neuen Pfaden (neuer Reset-Key) → wieder Text, weiter genau ein Alert |
 | `phase3-plan` › plan at 75 % context | Hervorhebung „Empfohlen“ (F1 V4-05 b, ADR-147) | `fake:context-high` → Gauge der Kopfzeile `aria-valuenow=75`; `fake:plan` → Punkt am ▾ (`choice-menu-indicator`), Hauptknopf `data-fresh="false"` (nie vorausgewählt); im Menü Badge „Recommended“ mit „Context is 75% full.“, Schalter `aria-checked="false"`; Schalter an → Menü bleibt offen, nach Esc `data-fresh="true"` und kein Punkt mehr |
@@ -58,7 +58,7 @@ Alle Läufe: `pnpm e2e` (3 Worker, Chrome headless, `--reporter=list,json`), 65 
 |---|---|---|---|---|---|---|
 | 1 | keine | **65 passed** | 4,1 min | 244 s | 117,7 s | 1 956 ms |
 | 2 | parallel `pnpm check` (tsc, ESLint, Vitest 286 Dateien/4 879 Tests – grün, 289 s) | **65 passed** | 4,9 min | 296 s | 114,0 s | 1 889 ms |
-| 3 | keine – Endstand (Merge `062de38`, ADR-154: niedrige Priorität), Koordinator | **65 passed** | 3,0 min | 181 s | – | – |
+| 3 | keine – Endstand (Merge `712c5bb`, ADR-154: niedrige Priorität), Koordinator | **65 passed** | 3,0 min | 181 s | – | – |
 
 Lauf 2 lief noch nach der alten Vorgabe „1× unter Last“ (FIX-R5 §1). Danach fror der Rechner des
 Nutzers mehrfach ein; der Koordinator hat F6 abgebrochen und Lastläufe abgeschafft (**ADR-154**,
@@ -86,7 +86,7 @@ pnpm exec tsx --tsconfig tsconfig.tools.json scripts/bundle-budget.ts          #
 pnpm exec tsx --tsconfig tsconfig.tools.json scripts/bundle-budget.ts --lazy   # + größte Lazy-Chunks
 ```
 
-Prüfungen (Exit-Code 1 bei Verstoß, 2 ohne Build): `index` wächst gegenüber `109c073` um höchstens
+Prüfungen (Exit-Code 1 bei Verstoß, 2 ohne Build): `index` wächst gegenüber `7ae00c0` um höchstens
 10 kB raw (WP-60 §1 Nr. 11); die **Summe aller Start-Chunks** ebenso (R5W-01: ein Modul, das nur von
 `index` in einen neuen Start-Chunk wandert, spart nichts); kein `dictionary.*`-Chunk unter den
 Start-Chunks (ADR-153). Kein Eintrag in `package.json` (Wunsch §6).
@@ -95,11 +95,11 @@ Start-Chunks (ADR-153). Kein Eintrag in `package.json` (Wunsch §6).
 
 | Stand | `index` raw | `index` gzip | Start gesamt raw | Start gesamt gzip | Dateien |
 |---|---|---|---|---|---|
-| `109c073` (WP-60-Basis) | 383 072 | 110 409 | 879 955 | 261 337 | 4 |
-| `87def00` (vor Fa, aus F3/F5) | 442 830 | 128 779 | 943 552 | 280 953 | 5 |
-| **`fix/r5-f6`** (= `0634a1a` + E2E) | **379 369** | **111 247** | **879 645** | **263 425** | 6 |
-| Δ gegen `109c073` | **−3 703** | **+838** | **−310** | **+2 088** | +2 |
-| Δ gegen `87def00` | −63 461 | −17 532 | −63 907 | −17 528 | +1 |
+| `7ae00c0` (WP-60-Basis) | 383 072 | 110 409 | 879 955 | 261 337 | 4 |
+| `2027008` (vor Fa, aus F3/F5) | 442 830 | 128 779 | 943 552 | 280 953 | 5 |
+| **`fix/r5-f6`** (= `64ce97d` + E2E) | **379 369** | **111 247** | **879 645** | **263 425** | 6 |
+| Δ gegen `7ae00c0` | **−3 703** | **+838** | **−310** | **+2 088** | +2 |
+| Δ gegen `2027008` | −63 461 | −17 532 | −63 907 | −17 528 | +1 |
 
 Start-Chunks im Einzelnen: `index` 379 369 / 111 247, `react` 218 809 / 67 431, `vendor` 279 035 /
 83 416, `rolldown-runtime` 716 / 428, `button` 1 579 / 761, `cn` 137 / 142. `index` enthält die
@@ -145,7 +145,7 @@ werden – nicht geprobt.
 
 ## 5. Checks
 
-Endstand (Worktree nach Merge von `feature/phase-3` = `062de38`, Koordinator):
+Endstand (Worktree nach Merge von `feature/phase-3` = `712c5bb`, Koordinator):
 
 - `pnpm check` grün: typecheck, lint, Vitest 286 Dateien / **4 881 Tests** (87 s; CPU im Mittel 27 %,
   höchstens 68 %, freier Speicher ≥ 34,7 GB).
@@ -177,5 +177,5 @@ Endstand (Worktree nach Merge von `feature/phase-3` = `062de38`, Koordinator):
   Eintrag `"bundle"` in `package.json` – **zurückgestellt** (Aufruf über `pnpm exec tsx` genügt).
 - `vite.config.ts` (optional, §3.3): `cn` + `button` in einer `$initial`-Gruppe – **nicht umgesetzt**
   (Wirkung vernachlässigbar).
-- `docs/wp/WP-61.md`: Live-Prüfpunkte §6 – **schon enthalten** (B11, B21–B23, B28, B29; `23fa4ef`).
+- `docs/wp/WP-61.md`: Live-Prüfpunkte §6 – **schon enthalten** (B11, B21–B23, B28, B29; `175a332`).
 - Keine neuen Abhängigkeiten, keine Contract-Änderung.

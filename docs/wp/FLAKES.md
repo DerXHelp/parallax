@@ -7,7 +7,7 @@
 > der CPUs. Die Fix-Muster unten gelten weiter.
 
 > Querschnittsauftrag „Tests lastrobust“. Worktree `.worktrees/fix-flakes`, Branch `fix/flakes`,
-> Basis `main` = `7380153`. Anlass: `pnpm check` wurde sporadisch rot, wenn mehrere Agenten
+> Basis `main` = `39e2745`. Anlass: `pnpm check` wurde sporadisch rot, wenn mehrere Agenten
 > gleichzeitig testeten, und war beim zweiten Lauf grün.
 
 ## Auftrag (sinngemäß)
@@ -71,7 +71,7 @@ QuestionCard/PermissionCard 5–6 s (Limit 20 s), viele Web-Tests 2–3 s ohne e
 | **Phase 2 (R4/V3-Fix-Runde, 18.10.2026)** | | | | |
 | `web/features/profiles/ProfilesSettings.test.tsx` › „shows findings at their line …“ (V3-08) und „creates a new profile …“ | voller `pnpm check` unter Parallel-Last, je 1× | Assertion auf `profile.validate` mit Teilwert („D“ statt „D:\shared“) | **Debounce-Annahme:** Tippen langsamer als die 400-ms-Live-Prüfung, eine Prüfung lief mitten im Wort | auf die Prüfung des ganzen Werts warten (`waitFor`), Paket K bzw. F3 |
 | `server/system/guard.test.ts` (F1-FLAKE-1) | `pnpm check` unter Volllast 1× | Timeout 20 s (isoliert 0,3 s) | Testdateien nacheinander gelesen | gleichzeitig lesen, Zeitlimit unverändert (F1) |
-| `e2e/support` Anmeldecode (F5-FLAKE-1) | E2E unter Last | Login scheitert | E2E-Hilfe hatte nur das 2-s-Ping-Budget des Launchers | eigenes 30-s-Budget (`57b4487`, F5) |
+| `e2e/support` Anmeldecode (F5-FLAKE-1) | E2E unter Last | Login scheitert | E2E-Hilfe hatte nur das 2-s-Ping-Budget des Launchers | eigenes 30-s-Budget (`8b41bbe`, F5) |
 
 ## Vorbeugend gehärtet (unter Last knapp, aber noch nicht rot)
 

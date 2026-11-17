@@ -1,7 +1,7 @@
 # WP-13a – FakeBackend, PermissionBroker, Basismodule, Test-Doubles
 
 > Welle 1b, Teilpaket von WP-13 (verbindliches Design: `docs/wp/WP-13.md`), kritischer Pfad
-> 12 → **13** → 20 → 22. Worktree `.worktrees/wp-13a`, Branch `wp/13a`, Basis `main` = `c7122c9`.
+> 12 → **13** → 20 → 22. Worktree `.worktrees/wp-13a`, Branch `wp/13a`, Basis `main` = `338ca45`.
 > Kein Live-`claude`, nur Fixtures und synthetische Szenarien.
 
 ## Auftrag (sinngemäß)
@@ -38,8 +38,8 @@
 
 | Commit | Inhalt |
 |---|---|
-| `1764e4d` `WP-13a: Basismodule` | `AsyncQueue`, `toPermissionRequest`, `history/parse` + Tests (13c holt genau diesen Commit) |
-| `dc6266e` `WP-13a: PermissionBroker und Test-Doubles` | `brokerRules`, `broker`, `memoryStores`, `memoryPublisher` + Tests |
+| `ae913cf` `WP-13a: Basismodule` | `AsyncQueue`, `toPermissionRequest`, `history/parse` + Tests (13c holt genau diesen Commit) |
+| `008adc0` `WP-13a: PermissionBroker und Test-Doubles` | `brokerRules`, `broker`, `memoryStores`, `memoryPublisher` + Tests |
 | letzter Commit `WP-13a: FakeBackend und PermissionBroker` | FakeBackend, `backend/fake/**`, dieses Dokument |
 
 ### Module und Exporte

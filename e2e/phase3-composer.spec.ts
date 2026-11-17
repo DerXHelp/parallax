@@ -171,7 +171,7 @@ test('a pasted text starting with "/" at the start of the field goes as a prompt
   }, SLASH_GUARD);
   expect(guardWidth, 'width of the guard character in the bubble').toBe(0);
 
-  // The session title comes from the prompt – without the guard (coordinator rework e38a344); after
+  // The session title comes from the prompt – without the guard (coordinator rework 86f9aa0); after
   // the first turn the generated title replaces it (WP-65 §1.3), again without the guard.
   const title = app.row(session.key).locator('[data-slot="row-title"]');
   await expect(title).toHaveText('Fake: /clear --all log line 2');

@@ -34,7 +34,7 @@ Konventionen, Barrierefreiheit, Sicherheit und Speicher prüfen und Befunde mit 
    Fehlerfälle.
 
 ### Vorgehen
-`git diff 109c073..feature/phase-3` für `src/web/**`; Schwerpunkt-Dateien vollständig lesen; gezielte
+`git diff 7ae00c0..feature/phase-3` für `src/web/**`; Schwerpunkt-Dateien vollständig lesen; gezielte
 Vitest-Läufe; Playground nur über Playwright (eigener Vite-Port `$env:PARALLAX_DEV_WEB_PORT='5189'`,
 keine Desktop-Bedienung), danach Vite beenden. Kein `pnpm check`/`pnpm e2e` (V4 läuft parallel).
 
@@ -52,13 +52,13 @@ Textdateien nur mit Edit/Write-Werkzeugen ändern (Umlaute).
 
 ## 2. Ergebnis
 
-> Stand `feature/phase-3` @ `52af898` (WP-50 … 58 und WP-60 gemergt), Worktree `.worktrees/r5-web`,
-> 12.11.2026. Rolle: Reviewer Web, read-only (nichts behoben). Umfang: `git diff 109c073..52af898 --
+> Stand `feature/phase-3` @ `340f8e1` (WP-50 … 58 und WP-60 gemergt), Worktree `.worktrees/r5-web`,
+> 12.11.2026. Rolle: Reviewer Web, read-only (nichts behoben). Umfang: `git diff 7ae00c0..340f8e1 --
 > src/web` (141 geänderte oder neue Produktivdateien ohne Tests, Playground und Demos) plus
 > Bundle-Vergleich des Start-Chunks.
 
 ### Vorgehen und Checks
-- Diff `109c073..feature/phase-3` für `src/web/**`. Vollständig gelesen:
+- Diff `7ae00c0..feature/phase-3` für `src/web/**`. Vollständig gelesen:
   - `features/files/**` (`FileLink`, `stat-cache`, `actions`, `FilePanel`, `file-document`,
     `file-source`, `CodeView`, `ImageView`, `PdfView`, `FilesPanel`, `session-files`, `file-tools`,
     `format`, `index`);
@@ -85,7 +85,7 @@ Textdateien nur mit Edit/Write-Werkzeugen ändern (Umlaute).
   - Es fehlen keine Schlüssel und es gibt keine überzähligen; die Schlüsselgleichheit prüft zusätzlich
     `i18n.test.tsx`.
 - Bundle:
-  - Gebaut mit `vite build`: `109c073` (per `git archive` in den Scratchpad) und der aktuelle Stand.
+  - Gebaut mit `vite build`: `7ae00c0` (per `git archive` in den Scratchpad) und der aktuelle Stand.
   - Die Bytes des Start-Chunks `index-*.js` sind über die Sourcemap (VLQ-Dekodierung der Mappings)
     je Quellmodul zugeordnet.
   - gzip mit Stufe 9.
@@ -184,7 +184,7 @@ Vor dem Merge nach `main` zu beheben:
 ### Befunde
 
 #### R5W-01 [SOLLTE] Start-Chunk über Budget – Ursachen je Modul
-- **Fundstelle:** `dist/web/assets/index-*.js` (Start-Chunk), Vergleich `109c073` ↔ `52af898`.
+- **Fundstelle:** `dist/web/assets/index-*.js` (Start-Chunk), Vergleich `7ae00c0` ↔ `340f8e1`.
 - **Beleg:** `index` wächst von 383 072 auf 442 737 B raw (+59 665) und von 110 409 auf 128 750 B
   gzip (+18 341); das Budget ist ≤ 10 kB.
 
@@ -232,7 +232,7 @@ Vor dem Merge nach `main` zu beheben:
   21,5 kB gzip).
 - **Auswirkung:** Das normative Budget (WP-50/WP-60) ist verfehlt; jede weitere Phase legt drauf.
 - **Vorschlag:**
-  - Hebel 1 (`de` lazy) allein bringt `index` etwa auf den Stand von `109c073`: raw darunter
+  - Hebel 1 (`de` lazy) allein bringt `index` etwa auf den Stand von `7ae00c0`: raw darunter
     (≈ 380,9 kB), gzip ungefähr gleich.
   - Die Sprache kommt mit den Einstellungen. Bis der `de`-Chunk geladen ist, kurz halten
     (Suspense/Preload je gespeicherter Sprache), damit nicht kurz Englisch aufblitzt.

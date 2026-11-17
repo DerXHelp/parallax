@@ -1,6 +1,6 @@
 # WP-20b – Web-Verdrahtung
 
-Welle 2, Worktree `wp-20b` (Branch `wp/20b`, Basis main `2299eb0`), parallel zu WP-20a (Server-
+Welle 2, Worktree `wp-20b` (Branch `wp/20b`, Basis main `c9efaff`), parallel zu WP-20a (Server-
 Verdrahtung) und dem Engine-Review; danach WP-20c (E2E in Edge gegen den echten Server).
 Besitz-Pfade: `src/web/App.tsx`, `src/web/main.tsx`, `src/web/shell/**`, `src/web/state/**` (nur
 Verdrahtung/Präsenz/Benachrichtigungen), `src/web/i18n/**`, neu `src/web/notifications/**`,

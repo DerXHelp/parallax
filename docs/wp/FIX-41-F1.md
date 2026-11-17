@@ -1,7 +1,7 @@
 # FIX-41-F1 – Fix-Paket F1 Server (Ergebnis)
 
 > Auftrag: `docs/wp/FIX-41.md` §2, Zeile **F1 Server** (Befunde WP41-04, WP41-08 aus `docs/wp/WP-41.md`
-> §2.3). Basis `main` = `881a539`, Branch `fix/41-f1` (Worktree `.worktrees/fix-41-f1`). Normativ:
+> §2.3). Basis `main` = `89451af`, Branch `fix/41-f1` (Worktree `.worktrees/fix-41-f1`). Normativ:
 > ADR-021, ADR-109, ADR-128; Nachtrag nach Freigabe des Koordinators: **ADR-129** (Gleichstands-Regel
 > des Benachrichtigungsziels, Fokus-Gedächtnis im Hub; für diese Änderung auch `src/server/sync/hub.ts`
 > freigegeben). Kein Live-`claude`, keine Desktop-Bedienung – nur Unit-/Engine-Tests mit FakeBackend.
@@ -57,7 +57,7 @@ Clients weiter (d).
 
 | Schritt | Ergebnis |
 |---|---|
-| `pnpm check` (Commit 1, `f5863b6`) | grün: typecheck ✓, lint ✓, Vitest 212 Dateien / 3731 Tests |
+| `pnpm check` (Commit 1, `46d93fc`) | grün: typecheck ✓, lint ✓, Vitest 212 Dateien / 3731 Tests |
 | `pnpm check` (Commit 2, ADR-129) | grün: typecheck ✓, lint ✓, Vitest 212 Dateien / **3741** Tests (273 s) |
 | Gegenproben | WP41-08: alte Regel → 7 rot; Log aus → Engine-Test rot; ADR-129 Stufen b/c aus → 7 Notifier-Tests + Engine-Test rot; Hub-Hello `null` → 3 Hub-Tests rot; Verdrängung aus → Obergrenzen-Test rot |
 

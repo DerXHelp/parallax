@@ -7,8 +7,8 @@
  * (zlib level 9 – the same numbers as the measurements in docs/wp/WP-60.md, FIX-R5-F3/F5/F6).
  *
  * Checks (exit code 1 when one fails):
- * - `index-*.js` grows by at most 10 kB raw against the base (WP-60 §1 Nr. 11; base `109c073` until
- *   WP-70, since then `2fe8a9b`, ADR-193 – a new base only with an ADR);
+ * - `index-*.js` grows by at most 10 kB raw against the base (WP-60 §1 Nr. 11; base `7ae00c0` until
+ *   WP-70, since then `5d85e44`, ADR-193 – a new base only with an ADR);
  * - the sum of all start chunks grows by at most 10 kB raw against the same base (R5W-01 counts
  *   every start chunk, so a module moved from `index` into a new start chunk is no saving);
  * - no `dictionary.*` chunk (the non-English dictionaries, ADR-153) is a start chunk.
@@ -26,11 +26,11 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const webRoot = path.join(repoRoot, 'dist', 'web');
 
 /**
- * Base (ADR-193): the merge of WP-70 `2fe8a9b` – `index` and the sum of its 9 start chunks. Before:
- * WP-60 `109c073` (docs/wp/WP-60.md §2.5; index 383,072 / start 879,955 raw, 4 start chunks).
+ * Base (ADR-193): the merge of WP-70 `5d85e44` – `index` and the sum of its 9 start chunks. Before:
+ * WP-60 `7ae00c0` (docs/wp/WP-60.md §2.5; index 383,072 / start 879,955 raw, 4 start chunks).
  */
 const BASE = {
-  commit: '2fe8a9b',
+  commit: '5d85e44',
   indexRaw: 323_111,
   indexGzip: 95_889,
   startRaw: 889_270,
