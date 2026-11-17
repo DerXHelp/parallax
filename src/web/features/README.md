@@ -18,6 +18,8 @@ Koordinator):
   `TaskStrip`); `decisions/` liefert den Slot `PlanPanel` (Tab „Plan“ des Seitenpanel-Hosts
   `shell/side-panel`, ADR-150). Code-Block, Diff-Ansicht und Kopierknopf liegen seit WP-50 Teil 2 in
   `src/web/ui`, Shiki/Diff-Helfer in `src/web/lib` (für Transkript und Viewer).
+- WP-87/88a: neu `updates/` (Update in der App: Hinweis in der Sidebar, Banner, Einstellungen „Updates“, Dialoge „Was ist
+  neu“ und Lizenzen; Slots `UpdateNotice`, `UpdateBanner`, `UpdatesSettings`, Namensraum `updates`).
 - WP-69: `transcript/` liefert den lazy Slot `SubagentPanel` (Tab „Agent“, eigener Chunk mit dem
   Lazy-Namensraum `transcript/i18n-lazy`, ADR-183) und rendert Hook-Läufe nach der Einstellung
   `hookDisplay` (`preferences`, Zustand in `src/web/state/hook-display.ts`).

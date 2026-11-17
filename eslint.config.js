@@ -134,7 +134,16 @@ const webBase = [noServerInWeb, serverOnlyPackages, nodeBuiltinsInWeb];
 const restrictImports = (patterns) => ({ 'no-restricted-imports': ['error', { patterns }] });
 
 /** Feature folders (Phase 2: + profiles, preferences – WP-30 §4.14 C; Phase 3: + files, tasks – WP-50). */
-const FEATURES = ['transcript', 'decisions', 'composer', 'profiles', 'preferences', 'files', 'tasks'];
+const FEATURES = [
+  'transcript',
+  'decisions',
+  'composer',
+  'profiles',
+  'preferences',
+  'files',
+  'tasks',
+  'updates',
+];
 /** Every feature except the given ones (a feature group may import its own members). */
 const otherFeatures = (/** @type {string[]} */ own) => FEATURES.filter((f) => !own.includes(f));
 
