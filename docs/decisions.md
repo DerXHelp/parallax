@@ -2512,3 +2512,16 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
 - **Begründung:** Die alte Version ist geprüft und läuft bereits – sie kann den Rückweg garantieren, auch wenn die
   neue gar nicht startet. Der Handschlag hält den alten Server am Leben, bis feststeht, dass der Wechsel beginnen
   kann; der Marker bringt das Ergebnis über den Neustart ins Fenster.
+
+## ADR-223 – Neue Basis für das Start-Budget (Stand nach WP-87…89)
+- **Datum/WP:** 17.11.2026, Koordinator (WP-89).
+- **Entscheidung:** `scripts/bundle-budget.ts` misst ab jetzt gegen den Merge von WP-89e (`755f607`: `index` 259 488 B,
+  Start-Chunks 908 621 B roh, 11 Dateien) statt gegen WP-70 (`5d85e44`, ADR-193); erlaubtes Wachstum bleibt +10 kB roh
+  für `index` und für die Summe der Start-Chunks. Eine neue Basis gibt es weiter nur per ADR.
+- **Begründung:** Gegen `5d85e44` stand der Start nach WP-71…86 bei +4 515 B (gemessen am installierten Build von
+  `1.0.0-rc.2`); das Update in der App bringt weitere +14 836 B. Alle Update-Komponenten (Hinweis, Banner,
+  Einstellungen, Dialoge) laden lazy und erst bei einem Update. Im Start liegen nur das englische Wörterbuch
+  `updates` (wie bei jedem Feature, ADR-153), die Update-Contracts in `@shared/http`/`model` und die Neustart-Phase
+  der Verbindung (WP-88b). `index` selbst ist gegen die alte Basis um rund 64 kB geschrumpft (Wörterbücher im eigenen
+  Start-Chunk `i18n`). Für eine lokal ausgelieferte App ist die Ladezeit dieser Größe unkritisch; die Regel „nur das
+  Nötigste in den Start-Chunk“ gilt weiter.
