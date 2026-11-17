@@ -11,7 +11,8 @@
  * A backup is written to `backups\.partial-<name>` and renamed when complete: an aborted run never
  * leaves a half backup (a killed process leaves a `.partial-*`, removed by `pruneBackups` after an
  * hour). `restoreBackup` (rollback, WP-87) writes the files back, cuts transcripts to the saved
- * length and moves store files that are newer than the backup to `<backup>\newer\`.
+ * length and moves store files that are newer than the backup to `<backup>\newer\`. `listBackups`
+ * and `findBackup` find the backup of a build change (WP-87: "back to <version>" with a backup).
  */
 import { lstat, readdir, readFile, rm, stat, truncate } from 'node:fs/promises';
 import path from 'node:path';
@@ -460,6 +461,54 @@ export async function restoreBackup(
 }
 
 // =====================================================================================
+// listBackups / findBackup (update and rollback, WP-87)
+// =====================================================================================
+
+export interface BackupInfo {
+  /** Absolute folder of the backup. */
+  dir: string;
+  /** Folder name below `backups\`. */
+  name: string;
+  manifest: BackupManifest;
+}
+
+/** Newest first by `createdAt`; equal times by name (the `-2` suffix of a second backup). */
+function newestFirst(a: { name: string; createdAt: number }, b: { name: string; createdAt: number }): number {
+  return a.createdAt === b.createdAt ? compareText(b.name, a.name) : a.createdAt < b.createdAt ? 1 : -1;
+}
+
+/**
+ * The finished backups of `home` (with a valid `backup.json`), newest first. `.partial-*` folders
+ * and backups with a missing or broken manifest are skipped.
+ */
+export async function listBackups(home: string): Promise<BackupInfo[]> {
+  const root = path.join(home, BACKUPS_DIR);
+  const found: (BackupInfo & { createdAt: number })[] = [];
+  for (const name of await listNames(root, 'dir')) {
+    if (name.startsWith(PARTIAL_PREFIX)) continue;
+    const dir = path.join(root, name);
+    const manifest = await readBackupManifest(dir).catch(() => null);
+    if (manifest === null) continue;
+    found.push({ dir, name, manifest, createdAt: Date.parse(manifest.createdAt) });
+  }
+  return found.sort(newestFirst).map(({ dir, name, manifest }) => ({ dir, name, manifest }));
+}
+
+/**
+ * The newest finished backup made for exactly this build change (`from` null = the backup of a
+ * first start without `last-version.json`), or null. Build ids are compared exactly.
+ */
+export async function findBackup(
+  home: string,
+  change: { from: string | null; to: string },
+): Promise<BackupInfo | null> {
+  const backups = await listBackups(home);
+  return (
+    backups.find((backup) => backup.manifest.from === change.from && backup.manifest.to === change.to) ?? null
+  );
+}
+
+// =====================================================================================
 // pruneBackups
 // =====================================================================================
 
@@ -504,10 +553,7 @@ export async function pruneBackups(
     const createdAt = manifest === null ? Number.NEGATIVE_INFINITY : Date.parse(manifest.createdAt);
     finished.push({ dir, name, createdAt: Number.isNaN(createdAt) ? Number.NEGATIVE_INFINITY : createdAt });
   }
-  // Newest first; equal times by name (the `-2` suffix of a second backup in the same second).
-  finished.sort((a, b) =>
-    a.createdAt === b.createdAt ? compareText(b.name, a.name) : a.createdAt < b.createdAt ? 1 : -1,
-  );
+  finished.sort(newestFirst);
   for (const item of finished.slice(Math.max(0, Math.floor(keep)))) await remove(item.dir);
   if (deleted.length > 0) log.info({ deleted }, 'old store backups deleted');
   return deleted;

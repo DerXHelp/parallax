@@ -43,13 +43,13 @@ und gibt die Quelle zurück (`cache` | `tarball` | `npm` | `download`).
 | `cli.ts` | Ablauf: Argumente, Node-Version, Neustart mit `PACKAGE_NODE_FLAGS`, Übergabe an eine vorhandene Installation, Sperre je Stammordner, Meldungen |
 | `nodeDeps.ts` | echte Abhängigkeiten (SDK, Startmenü und Einträge aus `system/installation.ts`, laufender Server, Sperre, `node.exe` mit dieser Konsole) |
 | `args.ts` | Kommandozeile: `--dir`, `--registry`, `--sdk-tarball`, `--use`, `--uninstall`, `--install` und `--install-root` (von `start.mjs`) |
-| `install.ts` | `installPackage` (Signatur, Dateien, Staging, SDK, Umbenennen, Stammdateien, `current.json`, Startmenü, Aufräumen), `useVersion` |
+| `install.ts` | `installPackage` (Signatur, Dateien, Staging, SDK, Umbenennen, Stammdateien, `current.json`, Startmenü, Aufräumen), `useVersion`; seit WP-87 aus den Teilen unten zusammengesetzt |
 | `uninstall.ts` | Einträge entfernen, dann genau die Namen aus `ROOT_ENTRIES`; fremde Dateien bleiben, Daten bleiben |
 | `versions.ts` | installierte Versionen, Version eines laufenden Servers (Build-ID), Aufräumen über `.trash-*` |
 | `layout.ts` | Ordner und Dateinamen, `current.json`, `defaultInstallRoot`, Testsperre `assertNotRealUserFolder` |
 | `templates.ts` | `start.mjs`, `parallax.cmd` und `install.cmd` (eine Quelle; `.cmd` mit CRLF) |
 | `parallax.ico` | Symbol des Startmenü-Eintrags (aus `favicon.svg` gerendert, 16–256 px) |
-| `testPackage.ts` | nur für Tests: kleines synthetisches Paket, signiert mit einem Test-Schlüssel |
+| `testPackage.ts` | nur für Tests: kleines synthetisches Paket, signiert mit einem Test-Schlüssel (`rootFiles: true` liefert `root/` mit) |
 
 - **Vertrauen:** Geprüft wird mit dem Code und den Schlüsseln, die gerade laufen. Startet `install.cmd` eines neuen
   Pakets und gibt es schon eine Installation, übergibt es an deren `start.mjs --install <paket>`; nur die erste
@@ -58,3 +58,28 @@ und gibt die Quelle zurück (`cache` | `tarball` | `npm` | `download`).
 - **Tests** nehmen nie die echten Ordner: `assertNotRealUserFolder` bricht in einem Testlauf ab, wenn der Stammordner
   oder das Startmenü in `%LOCALAPPDATA%\Programs\Parallax` bzw. im echten Startmenü läge. `templates.test.ts` startet
   `start.mjs` wirklich mit `node.exe`.
+
+## Geteilt mit dem Update (WP-87, `docs/wp/WP-87.md` §1.9)
+
+`installPackage` und `useVersion` verhalten sich wie in 86d; Update-Dienst (87a) und Orchestrator (87b) nutzen die
+Teile einzeln.
+
+- **`stageVersion(options, deps)`** → `{ release, bytes, dir, reused }`: Schritte 1–3 ohne Umschalten (Signatur,
+  `minNode`, Dateien des Pakets, Kopie nach `versions\.staging-…`, Nachprüfung der Kopie, SDK, Umbenennen nach
+  `versions\<v>`); ein intakter Versionsordner bleibt (`reused`). `signal` bricht zwischen Dateien und Schritten ab
+  (der Staging-Ordner wird entfernt), `onProgress(step, done, total)` meldet je Datei: `check` (Dateien des Pakets),
+  `copy` (kopierte und danach in der Kopie erneut geprüfte Dateien, `total` = doppelte Anzahl), `sdk` (0 bzw. 1 von 1).
+  `deps` = `provideSdk`, `log`, `now`.
+- **`switchVersion(root, version, { previous?, log })`** → `{ previous, before }`: Stammdateien und `current.json`;
+  ohne `previous` wie der Installer (die bisherige Version, bzw. deren `previous`, wenn es schon `version` war).
+  `before` ist der alte Inhalt von `current.json` (null = fehlte oder kaputt).
+- **`restoreCurrent(root, before)`**: zuerst `current.json` (so geschrieben wie vom Installer, also byte-gleich zu
+  einer Datei des Installers; `null` löscht sie), dann die Stammdateien dieser Version.
+- **`verifyVersion(root, version, keys)`** → `ReleaseInfo`: Signatur der `release.json` des Versionsordners, ihre
+  Version, jede gelistete Datei samt Hash (keine zu viel), Name und Version des Agent SDK; wirft `InstallError`.
+- **`InstallError.reason`** (`INSTALL_ERROR_REASONS`): `signature`, `node`, `files`, `sdk`, `in_use`, `io` (Standard).
+  `installErrorReason(error)` liefert sie für jeden Fehler: `SdkError` → `sdk`, alles andere ohne Grund → `io`.
+- **Stammdateien aus dem Paket:** `scripts/release-pack.ts` legt `root/start.mjs` und `root/parallax.cmd`
+  (`packageRootFiles(minNode)`) ins Paket, gelistet in `release.json` und damit signiert. `writeRootFiles` nimmt
+  jede der beiden aus `versions\<v>\root\`, wenn sie dort liegt, sonst die Vorlage des laufenden Codes – nach einer
+  Übergabe schreibt so die neue Version ihre eigenen Stammdateien.

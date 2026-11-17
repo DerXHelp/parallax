@@ -147,6 +147,10 @@ describe('ensureTestEnv – inherited homes (WP22-07)', () => {
       PARALLAX_VALIDATE: 'off',
       PARALLAX_DEV: '1',
       PARALLAX_LIVE: '1',
+      PARALLAX_UPDATE_READY_TIMEOUT_S: '600',
+      PARALLAX_TEST_UPDATE_BASE: 'http://127.0.0.1:1/releases',
+      parallax_test_release_keys: 'key',
+      PARALLAX_TEST_REGISTRY: 'http://127.0.0.1:1/',
       OTHER: 'kept',
     });
     expect(env.PARALLAX_PORT).toBe('0');
@@ -156,6 +160,10 @@ describe('ensureTestEnv – inherited homes (WP22-07)', () => {
       'parallax_backend',
       'PARALLAX_VALIDATE',
       'PARALLAX_DEV',
+      'PARALLAX_UPDATE_READY_TIMEOUT_S',
+      'PARALLAX_TEST_UPDATE_BASE',
+      'parallax_test_release_keys',
+      'PARALLAX_TEST_REGISTRY',
     ]) {
       expect(env[name], name).toBeUndefined();
     }
