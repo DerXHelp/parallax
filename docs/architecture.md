@@ -1230,6 +1230,11 @@ Dev-Modus landet ein Code im Log. Das Secret liegt in `.parallax-dev`, das Cooki
 5. Close vor `hello` oder 1006 → wieder Schritt 3 (unterscheidet nicht angemeldet / nicht
    erreichbar / Reconnect). Close 4401 → „Nicht angemeldet“; 4503 → „Server beendet“.
    Eine neue `serverInstanceId` aus dem Status wirkt wie im `hello` (Full-Resync).
+6. WP-87/88b: Close 4504 (`SERVER_RESTARTING`, Update oder Rückweg) → Phase `restarting` mit Banner „Parallax
+   startet neu …“; offene Befehle enden mit `CONNECTION_LOST`, `send()` lehnt sofort ab. Versuche alle 2 s ± 50 %
+   (Anmeldeprüfung, dann WS), Fehlversuche bleiben `restarting`; mit `hello` geht es normal weiter (neue Build-ID →
+   Neuladen). Nach 5 min (`RESTART_RECONNECT_WINDOW_MS`) → `server-stopped` mit `UPDATE_RESTART_FAILED
+   {reason: timeout}`.
 
 **Launcher und Lockfile (WP-21, Koordinator-Entscheidung, ADR-015):** Der Server schreibt nach
 `listen` atomar `PARALLAX_HOME/server.lock.json` (`serverLockFileSchema`: `pid`, `port`,
