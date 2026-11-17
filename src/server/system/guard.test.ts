@@ -5,7 +5,8 @@
  * `child_process.spawn` that fails the test if it is ever reached – and every test that builds an
  * integration injects its runner (static check below).
  */
-import { readdir, readFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type * as ChildProcess from 'node:child_process';
@@ -15,6 +16,7 @@ import { SAMPLE_IDS } from '@shared/samples';
 import { spawnHidden } from '../lib/process';
 import { createConsoleLauncher } from './console';
 import { createSystemIntegration } from './index';
+import { APPDATA_MISSING, ensureStartMenuEntry, removeInstallationEntries } from './installation';
 import { TEST_RUN_REFUSAL, isTestProcess, systemEnv, systemRunner } from './run';
 
 const spawned = vi.hoisted(() => [] as string[]);
@@ -87,6 +89,37 @@ describe('R6: the Windows integration never runs for real in a test run', () => 
     expect(spawned).toEqual([]);
   });
 
+  it('WP-86: installation entries (start menu, uninstaller) without run/env: refused, nothing spawned', async () => {
+    const installRoot = 'C:\\Programs\\Parallax';
+    const integration = createSystemIntegration({
+      available: true,
+      repoRoot: 'D:\\dev\\parallax',
+      installRoot,
+      home: 'D:\\px',
+      platform: 'win32',
+    });
+    await integration.apply(
+      settingsSchema.parse({
+        autostart: { enabled: false, openWindow: true },
+        notifications: { openOnClick: false },
+      }),
+    );
+    expect(await ensureStartMenuEntry({ installRoot })).toEqual({ ok: false, reason: APPDATA_MISSING });
+    // With a temp APPDATA but no runner the PowerShell is refused before it starts.
+    // test/setup points PARALLAX_HOME at a temp folder of this run.
+    const appData = await mkdtemp(path.join(process.env.PARALLAX_HOME ?? os.tmpdir(), 'guard-appdata-'));
+    expect(await ensureStartMenuEntry({ installRoot, env: { APPDATA: appData } })).toEqual({
+      ok: false,
+      reason: `powershell could not be started: ${TEST_RUN_REFUSAL}`,
+    });
+    expect(await removeInstallationEntries({ installRoot })).toEqual({
+      autostart: { ok: false, reason: APPDATA_MISSING },
+      protocol: { ok: false, reason: `registry query: reg.exe could not be started: ${TEST_RUN_REFUSAL}` },
+      startMenu: { ok: false, reason: APPDATA_MISSING },
+    });
+    expect(spawned).toEqual([]);
+  });
+
   it('every server test that builds an integration injects its runner; none reads the real APPDATA', async () => {
     const serverDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
     const self = fileURLToPath(import.meta.url);
@@ -95,7 +128,7 @@ describe('R6: the Windows integration never runs for real in a test run', () => 
       .map((file) => path.join(serverDir, file))
       .filter((file) => file !== self);
     const factories =
-      /\b(createSystemIntegration|createConsoleLauncher|createAutostartShortcut|removeAutostartShortcut)\(/;
+      /\b(createSystemIntegration|createConsoleLauncher|createAutostartShortcut|removeAutostartShortcut|createStartMenuShortcut|removeStartMenuShortcut|ensureStartMenuEntry|removeInstallationEntries)\(/;
     const offenders: string[] = [];
     // Read at once, not one after another: under a full parallel `pnpm check` (virus scanner) each
     // read can take long – the sequential loop once hit the 20-s test timeout (FIX-R4-F1).

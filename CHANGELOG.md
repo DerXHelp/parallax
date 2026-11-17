@@ -13,6 +13,16 @@ Entscheidungen ohne Modaldialog, Dateien und Pläne, Aufgaben und Subagenten.
   Claude Code (WP-84).
 - Releases erscheinen auf GitHub als signiertes Paket (`parallax-<version>-win.zip`, Ed25519) mit den Notizen aus
   diesem Changelog (WP-85).
+- Parallax lässt sich ohne git, pnpm und Build installieren: Paket entpacken und `install.cmd` starten; es landet je
+  Nutzer in `%LOCALAPPDATA%\Programs\Parallax` mit Eintrag im Startmenü, ein neueres Paket aktualisiert auf demselben
+  Weg (WP-86).
+- Vor dem ersten Start einer neuen Version sichert Parallax seine Daten; die drei jüngsten Sicherungen bleiben (WP-86).
+- `parallax.cmd --use <version>` schaltet auf eine andere installierte Version um, `--uninstall` entfernt die
+  Installation samt Startmenü, Autostart und Link-Handler; die Daten bleiben (WP-86).
+
+### Geändert
+- Ein Klon lässt Autostart, Link-Handler und Startmenü einer Installation in Ruhe, statt sie auf sich umzubiegen
+  (WP-86).
 
 ### Behoben
 - Aus PowerShell 7 gestartet, scheitern die Prüfung der Ordnerrechte von `PARALLAX_HOME`, die Prozessabfragen und die

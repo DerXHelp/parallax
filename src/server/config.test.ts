@@ -34,8 +34,19 @@ describe('loadConfig', () => {
       logLevel: 'info',
       // Production default 'auto'; this process runs under Vitest → always 'off' (R6).
       systemIntegration: 'off',
+      installRoot: null,
       notes: [],
     });
+  });
+
+  it('takes the install root of a package start (WP-86) and refuses an unsafe one', () => {
+    const load = (argv: string[]) =>
+      loadConfig({ argv: ['--home=D:\\data\\px', ...argv], env: env(), cwd: CWD }).installRoot;
+    expect(load([])).toBeNull();
+    expect(load(['--install-root=D:\\apps\\Parallax'])).toBe(path.resolve('D:\\apps\\Parallax'));
+    if (process.platform === 'win32') {
+      expect(() => load(['--install-root=\\\\server\\share\\Parallax'])).toThrow(ConfigError);
+    }
   });
 
   it('native toasts: flag > env > off under tests (Vitest, NODE_ENV=test) (WP22-03)', () => {

@@ -480,6 +480,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     createSystemIntegration({
       available: options.repoRoot !== undefined && systemIntegrationAvailable(config),
       repoRoot: options.repoRoot ?? '',
+      // WP-86: a server of an installation registers <root>\start.mjs (and the Start menu entry).
+      installRoot: config.installRoot,
       home: config.home,
       logger: options.logger,
     });

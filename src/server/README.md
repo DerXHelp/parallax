@@ -19,10 +19,11 @@ Ownership: `docs/architecture.md` §2.1 (Phase 3: `CLAUDE.md` bzw. `docs/wp/WP-5
 | `sessions/normalizer/`, `sessions/status/` | Normalizer (zwei Adapter), Statusmaschine | 12 |
 | übrige Dateien in `sessions/`, `backend/` | SessionManager, Broker, `FakeBackend`, `SdkBackend` | 13 |
 | `main.ts`, `app/` | Einstieg, Komposition (`startServer`, `StartupError`), UI-Snapshot (`webSnapshot.ts`), Crash-Handler (`crash.ts`), Server-Integrationstest `main.integration.test.ts` | 20 |
-| `launcher/` | Launcher, Lockfile, Chrome-Start (ADR-136), „Server beenden“ | 21 |
+| `launcher/` | Launcher, Lockfile, Chrome-Start (ADR-136), „Server beenden“; Paket-Modus (`release.json`, WP-85), Sicherung vor dem Start einer neuen Build-ID (`backupStep.ts`, WP-86) | 21, 85, 86 |
+| `install/` | Installer `dist/install.js`: Prüfung, Versionsordner, Agent SDK, `start.mjs`/`parallax.cmd`, Aufräumen, `--use`, `--uninstall` (ADR-219) | 86 |
 | `host/` | Phase 2: Host-Befehle ohne Session – Ordner-Browser `fs.listDirectory` (ADR-119) | 33 |
 | `files/` | Phase 3: Datei-Dienst – Zugriffsrichtlinie (Wurzeln + Session-Index, ADR-141), `file.stat`/`statMany`, Inhalte für `GET /api/file` (ADR-142), Datei-Index `files.json` (ADR-145), Projektliste für den @-Picker (ADR-151), Editor-Erkennung und Programmstart (ADR-144); Port `files/ports.ts` eingefroren | 53 |
-| `system/` | Phase 2: Windows-Integration – externe Konsole (+ Fake-Konsole), Autostart-Verknüpfung, Protokoll-Handler `parallax:`, `createSystemIntegration` (Port `system/ports.ts` eingefroren) | 33 |
+| `system/` | Phase 2: Windows-Integration – externe Konsole (+ Fake-Konsole), Autostart-Verknüpfung, Protokoll-Handler `parallax:`, `createSystemIntegration` (Port `system/ports.ts` eingefroren); WP-86: Einträge einer Installation (`start.mjs`, Startmenü, Marker) | 33, 86 |
 
 Regeln: nie aus `src/web` importieren; Logging nur über `lib/logger.ts`; jeder Spawn über
 `lib/process.ts` (`windowsHide: true`, ohne Shell, nur absolute `.exe`-Pfade – R1-04; einzige Ausnahme

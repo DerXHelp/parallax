@@ -79,7 +79,11 @@ export async function runLauncherCli(argv: readonly string[], deps: LauncherCliD
     const result = await deps.launch({
       home: config.home,
       port: config.port,
-      serverArgs: serverArgsFor(config),
+      // WP-86: the server registers start.mjs of this installation (autostart, protocol, Start menu).
+      serverArgs: [
+        ...serverArgsFor(config),
+        ...(args.installRoot === null ? [] : [`--install-root=${args.installRoot}`]),
+      ],
       build: args.build,
       printUrl: args.printUrl,
       installRoot: args.installRoot,

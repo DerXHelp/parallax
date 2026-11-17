@@ -57,7 +57,8 @@ import {
 } from './chromeWindow';
 import { SERVER_EXIT_CODES } from './exitCodes';
 import { readServerLock, serverLockPath, type LockReadResult } from './lockFile';
-import type { ReleaseInfo } from './release';
+import { backupBeforeStart } from './backupStep';
+import { PACKAGE_NODE_FLAGS, type ReleaseInfo } from './release';
 import {
   logsDir,
   probePort,
@@ -120,6 +121,11 @@ export interface LauncherDeps {
   checkBuild(expected: string | null): Promise<BuildState>;
   runBuild(): Promise<BuildResult>;
   probePort(port: number): Promise<PortProbe>;
+  /**
+   * WP-86 (docs/wp/WP-83.md §8.4): before a new server starts on `home` – saves the stores when the
+   * build id differs from the last start (`last-version.json`). Never throws. Absent = no backup.
+   */
+  backupBeforeStart?(home: string, buildId: string | null): Promise<BackupStep>;
   startServer(args: readonly string[]): Promise<StartedServer>;
   /** server.out.log since `offset` (the started server's own output). */
   readServerOutput(offset: number): Promise<string>;
@@ -133,6 +139,12 @@ export interface LauncherDeps {
   /** One line of console output. */
   out(line: string): void;
 }
+
+/** Outcome of `LauncherDeps.backupBeforeStart`. */
+export type BackupStep =
+  | { kind: 'unchanged' }
+  | { kind: 'saved'; dir: string; from: string | null; to: string }
+  | { kind: 'failed'; reason: string };
 
 export interface LauncherOptions {
   /** Absolute PARALLAX_HOME (loadConfig). */
@@ -229,10 +241,20 @@ async function launch(options: LauncherOptions, deps: LauncherDeps): Promise<Lau
   if (found.staleLock !== null)
     deps.out('Found a stale lock file of an earlier server - starting a new one.');
 
-  if (options.build) await ensureBuild(options, deps);
+  const builtId = options.build ? await ensureBuild(options, deps) : undefined;
   if (options.port !== 0) {
     const winner = await assertPortAvailable(options.port, found, options.home, deps);
     if (winner !== null) return openExisting(winner, options, deps);
+  }
+
+  const backup: BackupStep =
+    deps.backupBeforeStart === undefined
+      ? { kind: 'unchanged' }
+      : await deps.backupBeforeStart(options.home, builtId ?? (await deps.expectedBuildId()));
+  if (backup.kind === 'saved') {
+    deps.out(`New Parallax version (build ${backup.to}) - saved a backup of the data in ${backup.dir}.`);
+  } else if (backup.kind === 'failed') {
+    deps.out(`Note: the backup before the version change failed (${backup.reason}); starting anyway.`);
   }
 
   deps.out('Starting the Parallax server in the background...');
@@ -333,9 +355,11 @@ async function hintsForRunningServer(
   }
 }
 
-async function ensureBuild(options: LauncherOptions, deps: LauncherDeps): Promise<void> {
-  let state = await deps.checkBuild(await deps.expectedBuildId());
-  if (state.upToDate) return;
+/** Builds if needed; resolves with the expected build id (git or release.json; null = unknown). */
+async function ensureBuild(options: LauncherOptions, deps: LauncherDeps): Promise<string | null> {
+  let expected = await deps.expectedBuildId();
+  let state = await deps.checkBuild(expected);
+  if (state.upToDate) return expected;
   if (deps.packaged === true) {
     throw new LauncherError(
       'package_damaged',
@@ -355,8 +379,9 @@ async function ensureBuild(options: LauncherOptions, deps: LauncherDeps): Promis
   );
   try {
     if (lock.waited) {
-      state = await deps.checkBuild(await deps.expectedBuildId());
-      if (state.upToDate) return;
+      expected = await deps.expectedBuildId();
+      state = await deps.checkBuild(expected);
+      if (state.upToDate) return expected;
     }
     deps.out(
       state.reason === 'missing'
@@ -364,7 +389,7 @@ async function ensureBuild(options: LauncherOptions, deps: LauncherDeps): Promis
         : 'Building Parallax (the checkout changed since the last build)...',
     );
     const result = await deps.runBuild();
-    if (result.ok) return;
+    if (result.ok) return expected;
     const output = result.output.split(/\r?\n/).slice(-30).join('\n');
     throw new LauncherError(
       'build_failed',
@@ -650,10 +675,12 @@ export function createNodeLauncherDeps(options: NodeLauncherDepsOptions): Launch
     checkBuild: (expected) => checkBuild({ repoRoot: options.repoRoot, expected }),
     runBuild: () => runBuild({ repoRoot: options.repoRoot, nodePath, env }),
     probePort,
+    backupBeforeStart: (home, buildId) => backupBeforeStart(home, buildId),
     startServer: (args) =>
       startServerProcess({
         nodePath,
         serverScript: options.serverScript,
+        nodeArgs: release === null ? [] : PACKAGE_NODE_FLAGS,
         args,
         home: options.home,
         cwd: workDir ?? options.repoRoot,

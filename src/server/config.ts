@@ -86,6 +86,12 @@ export interface ServerConfig {
   logLevel: LogLevel;
   /** Autostart + protocol handler (ADR-110); `auto` is decided by `systemIntegrationAvailable`. */
   systemIntegration: SystemIntegrationMode;
+  /**
+   * WP-86 `--install-root=<dir>`: root folder of the installation this server runs from (the
+   * launcher passes it on in package mode; start.mjs, autostart and protocol handler point there).
+   * Null in a checkout.
+   */
+  installRoot: string | null;
   /** Hints for the log (main.ts, launcher), e.g. an ignored settings.json (English, no secrets). */
   notes: string[];
 }
@@ -255,6 +261,7 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
         validate: { type: 'string' },
         toasts: { type: 'string' },
         'system-integration': { type: 'string' },
+        'install-root': { type: 'string' },
       },
       strict: true,
       allowPositionals: false,
@@ -336,6 +343,13 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
     isTestRun(env),
   );
 
+  const installRootRaw = flag('install-root');
+  const installRoot = installRootRaw === undefined ? null : path.resolve(cwd, installRootRaw);
+  if (installRoot !== null && process.platform === 'win32') {
+    const issue = windowsPathIssue(installRoot);
+    if (issue !== null) throw new ConfigError(`invalid install root (${issue}): ${installRoot}`);
+  }
+
   // Explicit > env > test runs (Vitest, NODE_ENV=test as set by the E2E servers) fail loudly > log.
   const validateRaw = flag('validate') ?? nonEmpty(env.PARALLAX_VALIDATE);
   const validation =
@@ -364,6 +378,7 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
     dataDirLabel: isRealHome ? `%LOCALAPPDATA%\\${PRODUCT_NAME}` : dev ? 'dev' : home,
     logLevel,
     systemIntegration,
+    installRoot,
     notes,
   };
 }

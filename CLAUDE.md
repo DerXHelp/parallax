@@ -46,7 +46,7 @@ die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale En
 | `src/web/shell/**` (ohne die Zeilen oben/unten), `src/web/state/**` (ohne `fake-host`), `src/web/lib/**` (übrige), `src/web/features/preferences/**` | Shell: Kopfzeile, Session-Menü, Drop-Zone, schmales Fenster, Editor-Einstellung, Slot-Fehlergrenze | WP-58 |
 | `src/server/main.ts`, `src/server/app/**`, `src/web/{App,main}.tsx`, `e2e/**` | Komposition, Verdrahtung, E2E | WP-60 |
 | `src/web/shell/{requests,slots,placeholders}.ts(x)`, `src/web/shell/server-shutdown/**`, `src/web/shell/new-session/**`, `src/web/shell/{NewSessionDialog,NewSessionForm,EmptyState}.tsx`, `src/web/i18n/**`, übrige `src/web/ui/*`, `src/web/features/profiles/**`, `src/web/notifications/**`, `src/web/playground/**`, `src/web/index.{html,css}` | Gerüst / unverändert | Koordinator |
-| `src/server/{claude,host,system,sync,launcher}/**` (ohne `ports.ts`), `src/server/config.ts`, `scripts/**`, `test/**`, Root-Configs, `package.json`, Lockfile, `.github/**`, `CHANGELOG.md` | unverändert / Bootstrap | Koordinator |
+| `src/server/{claude,host,system,sync,launcher,install}/**` (ohne `ports.ts`), `src/server/config.ts`, `scripts/**`, `test/**`, Root-Configs, `package.json`, Lockfile, `.github/**`, `CHANGELOG.md` | unverändert / Bootstrap | Koordinator |
 
 - Keine Datei wird von zwei Paketen bearbeitet; nichts in fremden Ordnern anlegen. `README.md` von
   Ordnern mit mehreren Ownern (`src/server`, `server/lib`, `server/sessions`, `server/backend`,
@@ -165,9 +165,9 @@ Der Rechner des Nutzers darf **nie** einfrieren oder spürbar hängen – auch n
 - Commits nur mit der `noreply`-Adresse von GitHub, ohne `Co-Authored-By`- und `Claude-Session`-Zeilen.
 
 ## Git
-- **`main` ist der stabile Stand.** Aus `origin/main` aktualisiert der Nutzer seine produktive Instanz
-  (eigener Klon, `git pull`; README „Produktiv nutzen und weiterentwickeln“). Auf `main` wird nicht
-  entwickelt.
+- **`main` ist der stabile Stand,** aus dem Releases entstehen. Die produktiven Instanzen laufen aus
+  Releases (Installation in `%LOCALAPPDATA%\Programs\Parallax`, README „Installieren“/„Aktualisieren“,
+  WP-86); ein eigener Klon mit `git pull` bleibt der Rückweg. Auf `main` wird nicht entwickelt.
 - Entwicklung auf Branches: je Vorhaben ein Feature-Branch `feature/<name>` von `main` (Phase/Welle: ein
   Integrations-Branch, z. B. `feature/phase-3`). WP- und Fix-Worktree-Branches (`wp/xx`, `fix/<name>`)
   zweigen vom Feature-Branch ab; der Koordinator merged sie dorthin (`--no-ff --no-commit`, Checks, dann
@@ -199,6 +199,9 @@ Der Rechner des Nutzers darf **nie** einfrieren oder spürbar hängen – auch n
 - In diesem Repo nie `parallax.cmd`/`pnpm start` auf `%LOCALAPPDATA%\Parallax` – immer mit eigenem
   `--home`/`PARALLAX_HOME`. Sonst baut der Launcher den Entwicklungsstand, migriert womöglich die echten
   Daten der produktiven Instanz und biegt Autostart und Protokoll-Handler auf dieses Repo um.
+- Den Installer nie gegen `%LOCALAPPDATA%\Programs\Parallax` oder das echte Startmenü probieren: Tests geben
+  ihre Ordner selbst vor (eine Sperre bricht sonst ab), `scripts/release/smoke.ts` lenkt `APPDATA` und
+  `LOCALAPPDATA` in seinen Arbeitsordner um.
 
 ## Subagenten: Auftrag und Bericht
 - Rückfragen nie selbst an den Nutzer: im Bericht `BLOCKED: <frage>` melden.

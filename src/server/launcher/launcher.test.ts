@@ -252,6 +252,52 @@ describe('launcher: fresh start (architecture §5.1 (h))', () => {
     }
   });
 
+  it('WP-86: backs up before a new server starts, with the build id of the build check', async () => {
+    const calls: { home: string; buildId: string | null }[] = [];
+    let order: string[] = [];
+    const w = world({
+      overrides: {
+        backupBeforeStart: (home, buildId) => {
+          calls.push({ home, buildId });
+          // Nothing started yet when the backup runs.
+          order.push(w.started.length === 0 ? 'backup' : 'backup after start');
+          return Promise.resolve({
+            kind: 'saved',
+            dir: 'D:\\px\\backups\\b',
+            from: '0.9.0+x',
+            to: '1.0.0+abc',
+          });
+        },
+      },
+    });
+    await runLauncher(options(), w.deps);
+    order.push(...w.started.map(() => 'start'));
+    expect(calls).toEqual([{ home: HOME, buildId: '1.0.0+abc' }]);
+    expect(order).toEqual(['backup', 'start']);
+    expect(w.out.join('\n')).toContain('saved a backup of the data in D:\\px\\backups\\b');
+
+    // A failed backup is a note, the server starts anyway; a running server is not backed up.
+    order = [];
+    const failed = world({
+      overrides: { backupBeforeStart: () => Promise.resolve({ kind: 'failed', reason: 'disk full' }) },
+    });
+    await runLauncher(options(), failed.deps);
+    expect(failed.started).toHaveLength(1);
+    expect(failed.out.join('\n')).toContain('backup before the version change failed (disk full)');
+    let backedUp = false;
+    const running = world({
+      running: sampleServerLockFile(),
+      overrides: {
+        backupBeforeStart: () => {
+          backedUp = true;
+          return Promise.resolve({ kind: 'unchanged' });
+        },
+      },
+    });
+    await runLauncher(options(), running.deps);
+    expect(backedUp).toBe(false);
+  });
+
   it('skips the build check with --no-build', async () => {
     let checked = false;
     const w = world({

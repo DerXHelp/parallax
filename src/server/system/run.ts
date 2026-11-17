@@ -8,8 +8,11 @@
 import { isTestRun } from '../config';
 import { runFile, type RunFileFn } from '../lib/process';
 
-/** Result of one integration step; never thrown (failures become host warnings). */
-export type SystemOpResult = { ok: true } | { ok: false; reason: string };
+/**
+ * Result of one integration step; never thrown (failures become host warnings). `deferred`: the
+ * entry belongs to an installation and a clone left it alone (system/markers.ts) – no failure.
+ */
+export type SystemOpResult = { ok: true; deferred?: true } | { ok: false; reason: string };
 
 /**
  * Vitest or an E2E server (`NODE_ENV=test`) – checked on every call; the one rule of config.ts

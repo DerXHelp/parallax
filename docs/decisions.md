@@ -2464,3 +2464,19 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   nach Entscheidung des Nutzers im Einzelfall, sonst warten sie.
 - **Begründung:** Frische Versionen sind das häufigste Einfallstor für Angriffe auf die Lieferkette; die Wartezeit gibt
   der Registry und der Community Zeit. Für ernste Lücken entscheidet der Nutzer bewusst.
+
+## ADR-219 – Installationsordner mit Versionsordnern
+- **Datum/WP:** 17.11.2026, WP-86; angenommen mit dem Plan WP-83.
+- **Entscheidung:** Parallax wird je Nutzer nach `%LOCALAPPDATA%\Programs\Parallax` installiert (anderer Ordner:
+  `--dir`), getrennt vom Datenordner `%LOCALAPPDATA%\Parallax`. Jede Version liegt entpackt samt Agent SDK in
+  `versions\<version>`; `current.json` nennt die aktuelle und die vorige Version. Das stabile `start.mjs` im
+  Stammordner liest `current.json` und lädt den Launcher der aktuellen Version mit `--install-root`; `parallax.cmd`,
+  Autostart, Protokoll-Handler und Startmenü-Eintrag (mit `parallax.ico`) zeigen darauf, Arbeitsordner ist immer der
+  Stammordner. Der Installer prüft Signatur, jede Datei und das SDK; gibt es schon eine Installation, prüft und
+  installiert deren Version (Übergabe an `start.mjs --install`). Aufgeräumt werden Versionen, die weder aktuell noch
+  vorig sind und nicht laufen. Beim ersten Start einer neuen Build-ID sichert der Launcher die Stores
+  (`<home>\backups`, die drei jüngsten bleiben), im Paket und im Klon. Ein Klon lässt Einträge einer Installation in
+  Ruhe. `--uninstall` entfernt Programm und Einträge, die Daten bleiben.
+- **Begründung:** Versionsordner erlauben ein Update ohne Neustart und einen Rückweg ohne Download; ein stabiler
+  Einstieg hält die Einträge im System unverändert, und die Prüfung durch die installierte Version macht ein
+  manipuliertes Paket wirkungslos.
