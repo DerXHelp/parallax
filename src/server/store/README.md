@@ -11,7 +11,8 @@ Store-Ports stehen in `src/server/sync/ports.ts`.
 | `decisions.ts` | `createDecisionStore({ home, warnings?, … })` → `DecisionStore` + `flush()`/`close()`, `entryDir`, `planPath`, `ENTRIES_DIR`, `DECISIONS_FILE` | `entries/<entryId>/decisions.json`, `entries/<entryId>/plans/v<N>.md` |
 | `transcripts.ts` | `createTranscriptStore({ home, validation?, warnings?, flushMs?, cacheSize?, logger? })` → `TranscriptStore` + `stats()`/`close()`, `transcriptPath`, `isStreamingItem`, `TranscriptValidation`, `TRANSCRIPT_FAILURES_BEFORE_WARNING` | `entries/<entryId>/<conversationId>.transcript.jsonl` |
 | `blobs.ts` | `createBlobStore({ home, logger? })` → `BlobStore` (`put(data, mediaType, name?, size?)`) + `flush()`/`close()`, `blobFilePath`, `blobMetaPath` | `blobs/<blobId>`, `blobs/<blobId>.meta.json` (`blobRefSchema`, Phase 2 mit `width`/`height`) |
-| `schemas.ts` | `STORE_SCHEMAS` (die eine Liste der Stores: Id, Bereich, Art, zod-Schema), `schemaHash`, `storeSchemaHashes` – Schema-Hashes für `release.json` (WP-85, WP-83 §9.4), Liste für die Sicherung (WP-86); ein Test verlangt jedes Schema eines `new JsonStore` darin | – |
+| `schemas.ts` | `STORE_SCHEMAS` (die eine Liste der Stores: Id, Bereich, Art, zod-Schema, `backup`), `schemaHash`, `storeSchemaHashes` – Schema-Hashes für `release.json` (WP-85, WP-83 §9.4), Liste für die Sicherung (WP-86; `backup: false` nur für `processes.json` und `auth-secret.json`, nicht im Hash); ein Test verlangt jedes Schema eines `new JsonStore` darin | – |
+| `backup.ts` | `createBackup(home, { from, to, now?, fs? })` → `BackupResult`, `restoreBackup(home, dir, { fs? })` → `RestoreResult` (`restored`, `movedToNewer`, `truncated`, `warnings`), `pruneBackups(home, keep?, { now? })`, `readLastBuildId`/`writeLastBuildId`, `readBackupManifest`, `backupManifestSchema`, `BackupError`, `BACKUPS_DIR`, `BACKUP_MANIFEST`, `BACKUPS_KEPT` (3), `LAST_VERSION_FILE`, `BACKUP_NEWER_DIR` – Sicherung beim Wechsel der Build-ID (WP-86, WP-83 §8.4) | `backups/<alt>-zu-<neu>-<zeit>/` (`backup.json`, Kopien, `newer/`), `last-version.json` |
 | `attachments.ts` | `createAttachmentFileStore(home, blobs, { fs?, sizeOf? })` → `AttachmentFileStore`, `attachmentsDir`, `sanitizeAttachmentName`, `ATTACHMENTS_DIR`, `ATTACHMENT_NAME_MAX` (120) | `entries/<entryId>/attachments/<blobId[0..16]>/<Name>` (Phase 3, ADR-146) |
 
 Weitere Dateien über `JsonStore`, aber außerhalb dieses Ordners: `auth-secret.json`
@@ -70,6 +71,21 @@ reservierte Gerätenamen mit `_`-Präfix, ≤ 120 Zeichen mit Endung; die Regeln
 `@shared/paths`), sonst `<blob16>.<ext>`; idempotent (gleiche Größe vorhanden → nichts tun), atomar
 (`writeFileAtomic`), `BLOB_NOT_FOUND` bei fehlendem Blob. Der Datei-Dienst behandelt den Ordner als
 Wurzel und listet seine Dateien als `attached`.
+
+**Sicherung beim Wechsel der Build-ID (WP-86, WP-83 §8.4):** Der Launcher (nicht `pnpm dev`) vergleicht
+die Build-ID mit `last-version.json` und ruft vor dem Serverstart `createBackup` auf. Gesichert wird nach
+der Liste `STORE_SCHEMAS` (`backup: true`): jede vorhandene Datei der JSON-Stores im Datenordner und je
+Eintrag (`entries/<id>/…`) samt `.bak`; von den Transkripten nur die Länge in Bytes (`backup.json`). Nicht
+gesichert: `processes.json`, `auth-secret.json`, `blobs/`, Anhänge, Pläne, `ui/`, `chrome/`, `logs/`,
+Quarantäne- und Temp-Dateien, frühere Sicherungen. Ordner `backups/<alt|unbekannt>-zu-<neu>-<YYYYMMDD-HHmmss>`
+(Zeit in UTC; Zeichen außer `A-Z a-z 0-9 . _ + -` werden `_`; gleiche Sekunde → `-2`), erst als
+`backups/.partial-…` geschrieben, dann umbenannt. `restoreBackup` (Rückweg, WP-87) prüft zuerst
+`backup.json` (zod, nur Pfade der Liste) und jede gesicherte Datei – sonst `BackupError`, nichts geändert –,
+schreibt dann die Dateien atomar zurück (ohne `.bak` der ersetzten Datei), verschiebt Store-Dateien und
+Transkripte, die nicht in der Sicherung sind, nach `<sicherung>/newer/` (vorhanden → Endung `.1`, `.2`, …)
+und kürzt Transkripte auf die gesicherte Länge; kürzere oder fehlende Transkripte bleiben und stehen in
+`warnings`. `pruneBackups` behält die drei jüngsten (nach `createdAt`, unlesbare zählen als älteste) und
+löscht `.partial-*` älter als eine Stunde.
 
 **`settings.json` nur lesend:** `config.ts` (`readSettingsFile`) liest die Datei für Port und
 Autostart-Fenster vor dem Start (Launcher, ADR-111) – ohne zu schreiben, zu verschieben oder zu
