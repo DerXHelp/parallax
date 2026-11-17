@@ -1,7 +1,8 @@
 /**
  * Files of a release package (WP-85, docs/wp/WP-83.md §5.2/§7): only plain files - no links,
- * junctions, hardlinks, alternate data streams or names that differ only in case - and SHA-256 per
- * file. `scripts/release-pack.ts` writes the hashes into release.json; the installer (WP-86) checks
+ * junctions, hardlinks, alternate data streams or names that differ only in case - with names in
+ * printable ASCII (Windows `tar.exe`, bsdtar 3.8.9, crashes on any other name when packing or
+ * unpacking) - and SHA-256 per file. `scripts/release-pack.ts` writes the hashes into release.json; the installer (WP-86) checks
  * an unpacked package against them with `comparePackageFiles`, before it runs any of its code.
  */
 import { createHash } from 'node:crypto';
@@ -34,6 +35,7 @@ export async function walkPackage(root: string): Promise<PackageWalk> {
       if (other !== undefined) problems.push(`${rel}: differs from ${other} only in case`);
       seen.set(key, rel);
       if (name.includes(':')) problems.push(`${rel}: alternate data stream or invalid name`);
+      else if (!/^[\x20-\x7e]+$/u.test(name)) problems.push(`${rel}: name outside printable ASCII`);
       const full = path.join(dir, name);
       const stat = await lstat(full);
       if (stat.isSymbolicLink()) problems.push(`${rel}: link or junction`);
