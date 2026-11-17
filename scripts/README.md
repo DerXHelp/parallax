@@ -10,6 +10,38 @@
 | `bundle-budget.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/bundle-budget.ts [--lazy]` | FIX-R5-F6 | fertig (Start-Chunks gegen die Basis `2fe8a9b`, ADR-193 – vorher `109c073`; nach `pnpm build`; liest nur `dist/web`) |
 | `screenshots.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/screenshots.ts [--only=…] [--theme=…]` | 68 | fertig (README-Bilder `docs/screenshots/`, Playground + headless Chrome) |
 
+| `public-check.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/public-check.ts [--refs <bereich>]` | 84 | fertig (private Daten im öffentlichen Repo; Test `public-check/repo.test.ts` in `pnpm test`) |
+
+## `scripts/public-check.ts` (WP-84)
+
+Findet private Daten, bevor sie ins öffentliche Repo gelangen. Die Ausgabe nennt nur Ort und Regel,
+nie den gefundenen Text (CI-Logs sind öffentlich). Exit 0 = sauber, 1 = Funde, 2 = Fehler.
+
+- **Ohne Argumente:** alle Dateien von `git ls-files` plus neue, nicht ignorierte Dateien, aus dem
+  Arbeitsbaum gelesen. Denselben Scan führt `public-check/repo.test.ts` in `pnpm test` aus; der zweite
+  Test dort schlägt fehl, wenn die lokale Liste versioniert ist.
+- **`--refs <bereich>`** (wie bei `git rev-list`, z. B. `origin/main..HEAD`, `--all`): was ein Push
+  veröffentlicht – Commit-Messages, Autor- und Committer-Adressen (nur die `noreply`-Formen von GitHub),
+  Namen der lokalen Branches und Tags, Pfade und der Inhalt jedes Blobs im Bereich.
+- `--repo=<ordner>` prüft ein anderes Repo, `--list=<datei>` nimmt eine andere lokale Liste.
+
+Regeln (`public-check/rules.ts`, Tests in `rules.test.ts` mit zur Laufzeit zusammengesetzten Beispielen):
+- `user-path`: `C:\Users\<name>` in allen Schreibweisen (auch `C:/…`, `/c/…`, escaped, `C--Users-<name>-`
+  aus `~/.claude/projects`); Platzhalter (`<USER>`, `%USERNAME%`, `…`) und erfundene Testnamen stehen in
+  einer Allowlist.
+- `os-user`, `repo-path`: der Benutzername dieses Rechners als ganzes Wort (nicht bei generischen Namen
+  wie `user`) und die absoluten Pfade des Checkouts.
+- `email`: Adressen außer `*.example`, `example.com`, `.invalid`/`.test`, `noreply`-Adressen,
+  Dateinamen und URL-Benutzerangaben.
+- `session-link`: claude.ai-Links mit echter Session-, Chat- oder Share-ID (IDs mit `fake`/`example`
+  sind erlaubt).
+- `secret`: Anthropic-Schlüssel, PEM-Blöcke mit privatem Schlüssel, GitHub- und npm-Tokens.
+- `private-term`: Begriffe der lokalen Liste `<git-common-dir>/public-check.local` (eine Zeile je
+  Begriff, `#` = Kommentar; ganze Wörter, Groß- und Kleinschreibung egal). Ohne Liste (CI, frischer
+  Klon) gelten nur die allgemeinen Regeln.
+- `attribution` (nur Commit-Messages): `Co-Authored-By: Claude …`, `Claude-Session: …`.
+- `identity` (nur `--refs`): Autor- oder Committer-Adresse, die keine `noreply`-Adresse von GitHub ist.
+
 ## `scripts/screenshots.ts` (WP-68)
 
 Erzeugt die README-Bilder `docs/screenshots/{overview,plan,files}-{light,dark}.png` aus den

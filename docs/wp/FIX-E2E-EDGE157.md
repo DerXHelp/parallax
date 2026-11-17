@@ -18,7 +18,7 @@ sequenziell und ohne Fremdlast.
 | `e2e/phase2-navigation.spec.ts:157` „focus comes back after Esc …“ | `Escape` schließt den Dialog „Neue Session“ (`[data-slot="new-session-dialog"]`) nicht (`toBeHidden`, Zeile 209). |
 
 Artefakte (Screenshots, Traces, Server-Logs, WS-Frames, Logs der drei Läufe):
-`C:\Users\<USER>\AppData\Local\Temp\claude\d9d013913ce447a5\c0a8ce4a-0208-43dc-a63d-f34e46e01510\scratchpad\e2e-edge157\`
+`<scratch>\e2e-edge157\`
 (`main-e2e.log`, `rerun.log`, `rerun-old.log`, Ordner je Fall mit `trace.zip`).
 
 Beobachtung: Andere Fälle mit Radix-Menüs/Dialogen (z. B. `phase2-navigation.spec.ts:91` Kontextmenü,

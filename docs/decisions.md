@@ -741,7 +741,7 @@ Format: `ADR-NNN – Titel` · Datum · WP · Kontext → Entscheidung → Folge
   noch eine (nicht ausgeführte) Anmeldung an. Richtlinien gehen Schaltern vor:
   `BrowserSignin=2`, `ForceSync`, `ImplicitSignInEnabled=1`, `ConfigureOnPremisesAccountAutoSignIn`,
   `UserDataDir` und `FeatureFlagOverridesControl=0` (ignoriert `--disable-features`) – auf einem
-  verwalteten Arbeitsrechner vor WP-22 prüfen (`pnpm preflight`, `edge://policy`). Ein neuer
+  verwalteten Rechner vor WP-22 prüfen (`pnpm preflight`, `edge://policy`). Ein neuer
   Edge-Feature-Name bei einem späteren Edge-Update wäre unwirksam, nicht schädlich (unbekannte
   Namen werden ignoriert) – Nachprüfung in WP-22 per `edge://signin-internals`.
 
@@ -2366,3 +2366,36 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
 - **Begründung:** Gemerkt wurde bei jeder Freigabe, also blieb vorausgewählt, was man einmal genommen hatte, meist
   `acceptEdits`. Der Nutzer will Auto als Standard (16.11.2026). Ersetzt `plan.md` „Split-Button, merkt sich die
   letzte Wahl“.
+
+<!-- ADR-205…211 sind vom Plan WP-75 (Multi-Host, Branch `feature/multi-host`) vorgemerkt. -->
+
+## ADR-212 – Öffentliches Repo ist neutral, `public-check` prüft
+- **Datum/WP:** 17.11.2026, WP-84; angenommen (17.11.2026, Nutzer: „los“ für WP-84 nach dem Plan WP-83 §3).
+- **Entscheidung:**
+  - Das Repo `DerXHelp/parallax` ist öffentlich. Code, Doku, Testdaten, Commit-Messages und Branch-Namen enthalten
+    keine privaten Pfade (Benutzerordner, Pfad des Entwicklungs-Repos, Scratch-Ordner), keine privaten
+    E-Mail-Adressen, keine Firmen-, Netz- oder Kontodetails und keine echten Session-Links. Der Klarname des Nutzers
+    darf stehen (`LICENSE`, Commit-Autor). Commits tragen die `noreply`-Adresse von GitHub und keine
+    `Co-Authored-By`/`Claude-Session`-Zeilen.
+  - `scripts/public-check.ts` prüft mit allgemeinen Regeln (Benutzerpfade ohne Platzhalter, E-Mail-Adressen,
+    Session-Links, Schlüssel), mit Benutzername und Checkout-Pfad des Rechners und mit einer lokalen Liste privater
+    Begriffe in `<git-common-dir>/public-check.local`. Die Liste ist nie versioniert; weder ihre Begriffe noch eine
+    Regel, die sie nennt, stehen im Repo. Ausgabe nur mit Ort und Regel.
+  - Der Dateiscan läuft als Test in `pnpm test`/`pnpm check`. `--refs <bereich>` prüft vor jedem Push, was der Push
+    veröffentlicht (Messages, Adressen, Branch- und Dateinamen, alle Blobs).
+  - Der Verlauf wurde einmal umgeschrieben (Inhalte, Commit-Messages, Autor-Adressen) und per Force-Push ersetzt,
+    vor dem ersten Release (WP-84, `docs/wp/WP-84.md`).
+- **Begründung:** Das Repo war schon öffentlich, enthielt aber Benutzerpfade, den Pfad des Entwicklungs-Repos,
+  Beschreibungen der Arbeitsumgebung und die private Adresse in den Commit-Metadaten. Ab dem ersten Release
+  verweisen Release-Seite und Paket auf das Repo. Eine Prüfung in `pnpm check` verhindert Rückfälle; die lokale
+  Liste deckt private Begriffe ab, ohne sie preiszugeben.
+
+## ADR-213 – Lizenz MIT
+- **Datum/WP:** 17.11.2026, WP-84; angenommen (17.11.2026, Nutzer).
+- **Entscheidung:** Parallax steht unter MIT (`LICENSE`, Rechteinhaber der Nutzer mit Klarnamen). README
+  „Rechtliches“: unabhängig von Anthropic, „Claude“ und „Claude Code“ sind Marken von Anthropic; Parallax steuert das
+  installierte, unveränderte Claude Code und fasst keine Zugangsdaten an; für Claude Code und das Agent SDK gelten
+  Anthropics Bedingungen, das SDK ist nicht Teil des Repos.
+- **Begründung:** Ohne Lizenz dürften andere den Code nicht verwenden. Copyleft passt nicht zu einer proprietären
+  Laufzeit-Abhängigkeit (Agent SDK), Apache-2.0 bringt hier nur Pflichten. MIT ist kurz, verbreitet und passt zu den
+  Laufzeit-Abhängigkeiten (WP-83 §3.5).

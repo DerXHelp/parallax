@@ -27,6 +27,7 @@ die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale En
 | `pnpm e2e` | Playwright in Chrome gegen den Server-Build mit FakeBackend (ohne `e2e/live`) |
 | `$env:PARALLAX_LIVE='1'; pnpm e2e e2e/live` | Live-Smoke gegen das echte `claude` – nur mit Nutzer-Freigabe; SDK-/CLI-Upgrade: `docs/sdk-upgrade.md` |
 | `pnpm preflight` / `pnpm record <szenario>` | Umgebungscheck (WP-11) / Fixture-Recorder (WP-01) |
+| `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/public-check.ts [--refs <bereich>]` | Prüfung auf private Daten: Dateien bzw. was ein Push veröffentlicht (WP-84) |
 
 ## Ordner und Ownership Phase 3 (datei-genau; Details: `docs/wp/WP-50.md` §6, `docs/architecture.md` §2)
 | Pfad | Inhalt | Owner |
@@ -136,6 +137,20 @@ Der Rechner des Nutzers darf **nie** einfrieren oder spürbar hängen – auch n
 - Code-Bezeichner und Code-Kommentare: **Englisch**. Logs und `pnpm preflight`: Englisch.
 - UI zweisprachig: Englisch (Default) und Deutsch.
 
+## Öffentliches Repo (WP-84, ADR-212)
+- Das Repo ist öffentlich. **Nichts Privates** in Code, Doku, Testdaten, Commit-Messages oder Branch-Namen:
+  keine Benutzerordner, kein Pfad des Entwicklungs-Repos, keine Scratch-Ordner, keine privaten
+  E-Mail-Adressen, keine Firmen-, Netz- oder Kontodetails, keine echten Session-Links oder Schlüssel.
+  Neutral schreiben: `%USERPROFILE%\…`, `%TEMP%\…`, `C:\Users\<USER>\…`, `<repo>\…`, „Scratch-Ordner
+  (nicht im Repo)“; Testnamen erfunden, E-Mail-Adressen nur `*.example`. Scratch-Pfade nie in Berichte.
+- `scripts/public-check` prüft die Dateien in `pnpm test` (allgemeine Regeln, Benutzername und Pfad dieses
+  Rechners, dazu die lokale Liste `public-check.local` im gemeinsamen git-Verzeichnis; sie wird nie
+  versioniert und nie gelöscht). Funde nennen nur Datei, Zeile und Regel.
+- **Vor jedem Push:** `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/public-check.ts --refs
+  origin/main..<branch>` (Messages, Autor- und Committer-Adressen, Branch- und Dateinamen, alle Blobs des
+  Bereichs) muss 0 Funde melden.
+- Commits nur mit der `noreply`-Adresse von GitHub, ohne `Co-Authored-By`- und `Claude-Session`-Zeilen.
+
 ## Git
 - **`main` ist der stabile Stand.** Aus `origin/main` aktualisiert der Nutzer seine produktive Instanz
   (eigener Klon, `git pull`; README „Produktiv nutzen und weiterentwickeln“). Auf `main` wird nicht
@@ -148,8 +163,9 @@ Der Rechner des Nutzers darf **nie** einfrieren oder spürbar hängen – auch n
   `pnpm check` + `pnpm build`, bei Code-Änderungen zusätzlich `pnpm e2e`, plus die im Plan vorgesehenen
   Reviews und Live-Prüfungen. Fehler der produktiven Instanz: `fix/<name>` von `main`, nach `main`
   mergen, danach `main` in den laufenden Feature-Branch.
-- Lokale Commits pro WP, Merge macht der Koordinator. **Subagenten pushen nie**; `origin` = privates
-  Repo `DerXHelp/parallax`, Push (jeder Branch) nur durch den Koordinator nach Freigabe des Nutzers.
+- Lokale Commits pro WP, Merge macht der Koordinator. **Subagenten pushen nie**; `origin` = öffentliches
+  Repo `DerXHelp/parallax`, Push (jeder Branch) nur durch den Koordinator nach Freigabe des Nutzers und
+  nach einem sauberen `public-check --refs` (Abschnitt „Öffentliches Repo“).
   **Dauerfreigabe (Nutzer 12.11.2026):** Nach einem grünen `claude`-Kurz-Check darf der Koordinator
   nach `main` mergen und pushen, wenn nur das CLI-Profil oder kleine Anpassungen betroffen sind (Ablauf:
   Skill `/claude-update`); größere Fixes vorher dem Nutzer zeigen.
