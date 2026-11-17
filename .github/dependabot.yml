@@ -17,6 +17,18 @@ updates:
     ignore:
       # Updated with /claude-update and docs/sdk-upgrade.md (pinned exactly, live check).
       - dependency-name: '@anthropic-ai/claude-agent-sdk'
+      # Major versions decided by hand (docs/wp/DEPS-2026-11.md §7):
+      # the Node types follow the minimum Node version (engines.node), not the newest Node;
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
+      # TypeScript 7: typescript-eslint does not support it yet;
+      - dependency-name: 'typescript'
+        update-types: ['version-update:semver-major']
+      # ESLint 10: eslint-plugin-react (react/jsx-no-literals) does not support it yet.
+      - dependency-name: 'eslint'
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@eslint/js'
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: github-actions
     directory: /
