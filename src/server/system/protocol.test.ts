@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { RunFileFn, RunFileResult } from '../lib/process';
 import type { RegAddValue, RegDeleteKey, RegWriteResult } from '../lib/registry';
 import type { StartCommand } from './autostart';
+import { entryMarkers, installationOnlyMarkers } from './markers';
 import {
   FOREIGN_HANDLER,
   PROTOCOL_COMMAND_KEY,
@@ -156,6 +157,88 @@ describe('protocol handler parallax: (ADR-109)', () => {
       reason: FOREIGN_HANDLER,
     });
     expect(delegate.adds).toEqual([]);
+  });
+});
+
+describe('protocol handler of an installation and a clone (WP-86)', () => {
+  const ROOT = 'C:\\Users\\u\\AppData\\Local\\Programs\\Parallax';
+  const INSTALLED = protocolCommand({
+    node: 'C:\\Program Files\\nodejs\\node.exe',
+    args: ['--use-system-ca', '--use-env-proxy', `${ROOT}\\start.mjs`],
+    cwd: ROOT,
+  });
+  const CLONE = protocolCommand(COMMAND);
+  const OTHER = '"C:\\Program Files\\nodejs\\node.exe" "D:\\Tools\\Parallax\\start.mjs" --open "%1"';
+
+  it('the command of an installation; own only for the server with that root', () => {
+    expect(INSTALLED).toBe(
+      `"C:\\Program Files\\nodejs\\node.exe" --use-system-ca --use-env-proxy ${ROOT}\\start.mjs --open "%1"`,
+    );
+    expect(isOwnCommand(INSTALLED, entryMarkers(ROOT))).toBe(true);
+    expect(isOwnCommand(INSTALLED, entryMarkers(null))).toBe(false);
+    // Default (no markers, before WP-86): only launcher\main.ts.
+    expect(isOwnCommand(INSTALLED)).toBe(false);
+    expect(isOwnCommand(CLONE, entryMarkers(ROOT))).toBe(true);
+  });
+
+  it('installation: bends the old clone handler over and refreshes its own; another installation is foreign', async () => {
+    const markers = entryMarkers(ROOT);
+    const old = registry(CLONE);
+    expect(await registerProtocolHandler(INSTALLED, { ...old.deps, markers })).toEqual({ ok: true });
+    expect(old.adds[0]).toEqual([PROTOCOL_COMMAND_KEY, null, INSTALLED]);
+    expect(old.adds).toHaveLength(3);
+    const own = registry(INSTALLED.toUpperCase());
+    expect(await registerProtocolHandler(INSTALLED, { ...own.deps, markers })).toEqual({ ok: true });
+    expect(own.adds).toHaveLength(3);
+    const other = registry(OTHER);
+    expect(await registerProtocolHandler(INSTALLED, { ...other.deps, markers })).toEqual({
+      ok: false,
+      reason: FOREIGN_HANDLER,
+    });
+    expect(other.adds).toEqual([]);
+    expect(await unregisterProtocolHandler({ ...other.deps, markers })).toEqual({ ok: true });
+    expect(other.removes).toEqual([]);
+  });
+
+  it('clone: the handler of an installation is left alone – registering and removing are deferred', async () => {
+    const markers = entryMarkers(null);
+    const r = registry(INSTALLED);
+    expect(await registerProtocolHandler(CLONE, { ...r.deps, markers })).toEqual({
+      ok: true,
+      deferred: true,
+    });
+    expect(r.adds).toEqual([]);
+    expect(r.reads).toEqual([PROTOCOL_COMMAND_KEY]);
+    expect(await unregisterProtocolHandler({ ...r.deps, markers })).toEqual({ ok: true, deferred: true });
+    expect(r.removes).toEqual([]);
+    // Its own handler is still refreshed and removed as before.
+    const own = registry(CLONE);
+    expect(await registerProtocolHandler(CLONE, { ...own.deps, markers })).toEqual({ ok: true });
+    expect(await unregisterProtocolHandler({ ...own.deps, markers })).toEqual({ ok: true });
+    expect(own.removes).toEqual([PROTOCOL_KEY]);
+  });
+
+  it('uninstaller markers: only the handler of exactly this installation is removed', async () => {
+    const markers = installationOnlyMarkers(ROOT);
+    const own = registry(INSTALLED);
+    expect(await unregisterProtocolHandler({ ...own.deps, markers })).toEqual({ ok: true });
+    expect(own.removes).toEqual([PROTOCOL_KEY]);
+    for (const command of [CLONE, OTHER]) {
+      const kept = registry(command);
+      expect(await unregisterProtocolHandler({ ...kept.deps, markers })).toEqual({ ok: true });
+      expect(kept.removes).toEqual([]);
+    }
+  });
+
+  it('a root with an umlaut is recognized although reg.exe prints it in the OEM code page', async () => {
+    const root = 'D:\\Bürotools\\Parallax';
+    const markers = entryMarkers(root);
+    const command = `"C:\\Program Files\\nodejs\\node.exe" --use-system-ca --use-env-proxy ${root}\\start.mjs --open "%1"`;
+    const garbled = registry(command.replace('ü', '\uFFFD'));
+    expect(await registerProtocolHandler(command, { ...garbled.deps, markers })).toEqual({ ok: true });
+    expect(garbled.adds).toHaveLength(3);
+    expect(await unregisterProtocolHandler({ ...garbled.deps, markers })).toEqual({ ok: true });
+    expect(garbled.removes).toEqual([PROTOCOL_KEY]);
   });
 });
 

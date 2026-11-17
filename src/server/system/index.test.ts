@@ -1,15 +1,20 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { Writable } from 'node:stream';
+import { pino } from 'pino';
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { settingsSchema, type Settings } from '@shared/model';
 import { SAMPLE_IDS } from '@shared/samples';
 import { makeTempHome } from '../http/testServer';
 import type { RunFileFn, RunFileOptions } from '../lib/process';
 import {
   AUTOSTART_ENV,
+  DEFERRED_SHORTCUT,
   FOREIGN_SHORTCUT,
   LAUNCHER_MARKER,
   autostartLinkPath,
+  startMenuLinkPath,
   type StartCommand,
 } from './autostart';
 import { AUTOSTART_WARNING_ID, PROTOCOL_WARNING_ID, createSystemIntegration } from './index';
@@ -35,7 +40,8 @@ interface Call {
  * HKCU (`<key>|<value name>`; a key exists while it or a subkey has a value, and like reg.exe a
  * `/ve` query of an existing key without a default value answers "(value not set)").
  * `failShortcut`/`failReg` make the tools fail, `failQuery` the reg.exe queries; `inFlight`
- * checks that nothing overlaps.
+ * checks that nothing overlaps. `links` (WP-86) simulates the shortcuts (path → arguments) with
+ * the script's marker rules: an existing one without an own marker is `deferred` or `foreign`.
  */
 function machine(
   p: {
@@ -49,6 +55,7 @@ function machine(
 ) {
   const calls: Call[] = [];
   const hkcu = new Map(Object.entries(p.hkcu ?? {}));
+  const links = new Map<string, string>();
   let inFlight = 0;
   let maxInFlight = 0;
   const run: RunFileFn = async (file, args, options: RunFileOptions) => {
@@ -64,7 +71,23 @@ function machine(
       if (p.failShortcut === true) return { ...ok('error: Zugriff verweigert'), exitCode: 3 };
       if (p.foreignLink === true && env[AUTOSTART_ENV.marker] === LAUNCHER_MARKER)
         return ok(FOREIGN_SHORTCUT);
-      return ok(env[AUTOSTART_ENV.action] === 'remove' ? 'removed' : 'created');
+      const linkPath = env[AUTOSTART_ENV.path] ?? '';
+      const existing = links.get(linkPath)?.toLowerCase();
+      if (existing !== undefined) {
+        const carries = (list: string | undefined) =>
+          (list ?? '')
+            .toLowerCase()
+            .split('|')
+            .some((marker) => marker !== '' && existing.includes(marker));
+        if (!carries(env[AUTOSTART_ENV.marker]))
+          return ok(carries(env[AUTOSTART_ENV.defer]) ? DEFERRED_SHORTCUT : FOREIGN_SHORTCUT);
+      }
+      if (env[AUTOSTART_ENV.action] === 'remove') {
+        links.delete(linkPath);
+        return ok('removed');
+      }
+      links.set(linkPath, env[AUTOSTART_ENV.args] ?? '');
+      return ok('created');
     }
     calls.push({ tool: 'reg', args, env });
     const [verb, key] = args;
@@ -100,6 +123,7 @@ function machine(
     run,
     calls,
     hkcu,
+    links,
     maxInFlight: () => maxInFlight,
   };
 }
@@ -442,5 +466,230 @@ describe('createSystemIntegration (ADR-109, ADR-110)', () => {
     off();
     await expect(integration.apply(settings(false, true))).resolves.toBeUndefined();
     expect(calls).toBe(0);
+  });
+});
+
+const ROOT = 'C:\\Users\\u\\AppData\\Local\\Programs\\Parallax';
+const logLine = z.object({
+  level: z.number(),
+  msg: z.string(),
+  entry: z.string().optional(),
+  reason: z.string().optional(),
+});
+
+function captureLog() {
+  const lines: string[] = [];
+  const sink = new Writable({
+    write(chunk: Buffer, _encoding, done) {
+      lines.push(chunk.toString('utf8'));
+      done();
+    },
+  });
+  return {
+    logger: pino({ level: 'info' }, sink),
+    entries: () => lines.map((line) => logLine.parse(JSON.parse(line))),
+  };
+}
+
+describe('createSystemIntegration: installation and clone (WP-86)', () => {
+  const INSTALLED_AUTOSTART = `--use-system-ca --use-env-proxy ${ROOT}\\start.mjs --autostart`;
+  const INSTALLED_PROTOCOL = `"${NODE}" --use-system-ca --use-env-proxy ${ROOT}\\start.mjs --open "%1"`;
+  const LEFT_ALONE = 'entry belongs to an installation - left alone';
+
+  it('clone: the entries of an installation stay – no warning, an info log, no launch URI', async () => {
+    const w = await world({ hkcu: { [`${PROTOCOL_COMMAND_KEY}|`]: INSTALLED_PROTOCOL } });
+    w.m.links.set(w.link, INSTALLED_AUTOSTART);
+    await mkdir(path.dirname(w.link), { recursive: true });
+    await writeFile(w.link, 'lnk of the installation');
+    const log = captureLog();
+    const integration = createSystemIntegration({
+      available: true,
+      repoRoot: REPO,
+      home: w.home,
+      run: w.m.run,
+      env: w.env,
+      platform: 'win32',
+      command: w.command,
+      logger: log.logger,
+    });
+    let changes = 0;
+    integration.onChange(() => (changes += 1));
+    await integration.apply(settings(true, true));
+    expect(integration.warnings()).toEqual([]);
+    expect(changes).toBe(0);
+    expect(integration.toastLaunchUri(SAMPLE_IDS.entry)).toBeNull();
+    expect(w.m.links.get(w.link)).toBe(INSTALLED_AUTOSTART);
+    expect(w.m.hkcu.get(`${PROTOCOL_COMMAND_KEY}|`)).toBe(INSTALLED_PROTOCOL);
+    expect(w.m.calls.find((c) => c.tool === 'powershell')?.env).toMatchObject({
+      [AUTOSTART_ENV.action]: 'create',
+      [AUTOSTART_ENV.marker]: LAUNCHER_MARKER,
+      [AUTOSTART_ENV.defer]: '\\start.mjs',
+    });
+    // Off leaves them alone as well.
+    await integration.apply(settings(false, false));
+    expect(integration.warnings()).toEqual([]);
+    expect(w.m.links.get(w.link)).toBe(INSTALLED_AUTOSTART);
+    expect(w.m.hkcu.get(`${PROTOCOL_COMMAND_KEY}|`)).toBe(INSTALLED_PROTOCOL);
+    expect(w.m.calls.filter((c) => c.tool === 'reg').map((c) => c.args[0])).toEqual(['query', 'query']);
+    expect(
+      log
+        .entries()
+        .filter((e) => e.msg === LEFT_ALONE)
+        .map((e) => [e.level, e.entry]),
+    ).toEqual([
+      [30, 'autostart'],
+      [30, 'protocol'],
+      [30, 'autostart'],
+      [30, 'protocol'],
+    ]);
+    expect(log.entries().filter((e) => e.level >= 40)).toEqual([]);
+    // A clone keeps no start menu shortcut.
+    const startMenu = startMenuLinkPath(w.env);
+    expect(w.m.calls.some((c) => c.env[AUTOSTART_ENV.path] === startMenu)).toBe(false);
+  });
+
+  it('installation: <root>\\start.mjs, old clone entries bent over, the start menu ensured once per start', async () => {
+    const clone = `"${NODE}" ${REPO}\\src\\server\\launcher\\main.ts --open "%1"`;
+    const w = await world({ hkcu: { [`${PROTOCOL_COMMAND_KEY}|`]: clone } });
+    w.m.links.set(w.link, `${REPO}\\src\\server\\launcher\\main.ts --autostart`);
+    const node = await realpath(process.execPath);
+    const integration = createSystemIntegration({
+      available: true,
+      repoRoot: REPO,
+      installRoot: ROOT,
+      home: w.home,
+      run: w.m.run,
+      env: w.env,
+      platform: 'win32',
+    });
+    await integration.apply(settings(true, true));
+    expect(integration.warnings()).toEqual([]);
+    expect(w.m.links.get(w.link)).toBe(INSTALLED_AUTOSTART);
+    const autostart = w.m.calls.find((c) => c.env[AUTOSTART_ENV.path] === w.link);
+    expect(autostart?.env).toMatchObject({
+      [AUTOSTART_ENV.target]: node,
+      [AUTOSTART_ENV.cwd]: ROOT,
+      [AUTOSTART_ENV.marker]: `${LAUNCHER_MARKER}|${ROOT}\\start.mjs`,
+    });
+    expect(autostart?.env).not.toHaveProperty(AUTOSTART_ENV.defer);
+    expect(autostart?.env).not.toHaveProperty(AUTOSTART_ENV.icon);
+    expect(w.m.hkcu.get(`${PROTOCOL_COMMAND_KEY}|`)).toBe(
+      `"${node}" --use-system-ca --use-env-proxy ${ROOT}\\start.mjs --open "%1"`,
+    );
+    expect(integration.toastLaunchUri(SAMPLE_IDS.entry)).toBe(`parallax://session/${SAMPLE_IDS.entry}`);
+    const startMenu = startMenuLinkPath(w.env);
+    const menuCalls = () => w.m.calls.filter((c) => c.env[AUTOSTART_ENV.path] === startMenu);
+    expect(menuCalls().map((c) => c.env)).toEqual([
+      expect.objectContaining({
+        [AUTOSTART_ENV.action]: 'create',
+        [AUTOSTART_ENV.target]: node,
+        [AUTOSTART_ENV.args]: `--use-system-ca --use-env-proxy ${ROOT}\\start.mjs`,
+        [AUTOSTART_ENV.cwd]: ROOT,
+        [AUTOSTART_ENV.icon]: `${ROOT}\\parallax.ico`,
+        [AUTOSTART_ENV.marker]: `${LAUNCHER_MARKER}|${ROOT}\\start.mjs`,
+      }),
+    ]);
+    // Once per server start, independent of the settings; off removes the own entries.
+    await mkdir(path.dirname(w.link), { recursive: true });
+    await writeFile(w.link, 'lnk');
+    await integration.apply(settings(false, false));
+    expect(menuCalls()).toHaveLength(1);
+    expect(w.m.links.has(w.link)).toBe(false);
+    expect(w.m.hkcu.size).toBe(0);
+    expect(integration.warnings()).toEqual([]);
+  });
+
+  it('installation on another data directory: autostart and protocol carry --home, the start menu never', async () => {
+    const w = await world({ home: 'other' });
+    const integration = createSystemIntegration({
+      available: true,
+      repoRoot: REPO,
+      installRoot: ROOT,
+      home: w.home,
+      run: w.m.run,
+      env: w.env,
+      platform: 'win32',
+    });
+    await integration.apply(settings(true, true));
+    expect(w.m.links.get(w.link)).toBe(
+      `--use-system-ca --use-env-proxy ${ROOT}\\start.mjs --home=D:\\px-live --system-integration=on --autostart`,
+    );
+    expect(w.m.hkcu.get(`${PROTOCOL_COMMAND_KEY}|`)).toContain(
+      `${ROOT}\\start.mjs --home=D:\\px-live --system-integration=on --open "%1"`,
+    );
+    expect(w.m.links.get(startMenuLinkPath(w.env) ?? '')).toBe(
+      `--use-system-ca --use-env-proxy ${ROOT}\\start.mjs`,
+    );
+  });
+
+  it("installation: another installation's shortcut is foreign (AUTOSTART_FAILED foreign, never replaced)", async () => {
+    const other = '--use-system-ca --use-env-proxy D:\\Tools\\Parallax\\start.mjs --autostart';
+    const w = await world();
+    w.m.links.set(w.link, other);
+    const integration = createSystemIntegration({
+      available: true,
+      repoRoot: REPO,
+      installRoot: ROOT,
+      home: w.home,
+      run: w.m.run,
+      env: w.env,
+      platform: 'win32',
+      command: w.command,
+    });
+    await integration.apply(settings(true, false));
+    expect(integration.warnings().map((x) => x.error)).toEqual([
+      { code: 'AUTOSTART_FAILED', params: { reason: 'foreign' } },
+    ]);
+    expect(w.m.links.get(w.link)).toBe(other);
+  });
+
+  it('installation: a failing start menu shortcut is only logged – no host warning, no onChange, no retry', async () => {
+    const w = await world({ failShortcut: true });
+    const log = captureLog();
+    const integration = createSystemIntegration({
+      available: true,
+      repoRoot: REPO,
+      installRoot: ROOT,
+      home: w.home,
+      run: w.m.run,
+      env: w.env,
+      platform: 'win32',
+      command: w.command,
+      logger: log.logger,
+    });
+    let changes = 0;
+    integration.onChange(() => (changes += 1));
+    await integration.apply(settings(false, false));
+    expect(integration.warnings()).toEqual([]);
+    expect(changes).toBe(0);
+    expect(
+      log
+        .entries()
+        .filter((e) => e.msg === 'start menu shortcut failed')
+        .map((e) => [e.level, e.reason]),
+    ).toEqual([[40, 'exit 3: error: Zugriff verweigert']]);
+    await integration.apply(settings(false, true));
+    expect(w.m.calls.filter((c) => c.tool === 'powershell')).toHaveLength(1);
+  });
+
+  it('available: false or another platform → no start menu shortcut either', async () => {
+    const w = await world();
+    for (const [available, platform] of [
+      [false, 'win32'],
+      [true, 'linux'],
+    ] as const) {
+      const integration = createSystemIntegration({
+        available,
+        repoRoot: REPO,
+        installRoot: ROOT,
+        home: w.home,
+        run: w.m.run,
+        env: w.env,
+        platform,
+        command: w.command,
+      });
+      await integration.apply(settings(false, false));
+    }
+    expect(w.m.calls.filter((c) => c.tool === 'powershell')).toEqual([]);
   });
 });

@@ -7,7 +7,12 @@
  * tsx CLI, `--tsconfig`, the launcher's `main.ts` and `--autostart` (one command line,
  * `windowsCommandLine`), working directory = the repo, window minimized (7). Live: L10 (WP-41).
  *
- * `launcherCommand` is also the base of the protocol handler (system/protocol.ts).
+ * WP-86: an installation starts through `<root>\start.mjs` (`installedLauncherCommand`), and the
+ * same script also keeps the start menu shortcut `Parallax.lnk` (with `parallax.ico`). Which
+ * existing shortcut is own, deferred or foreign decides system/markers.ts.
+ *
+ * `launcherCommand`/`installedLauncherCommand` are also the base of the protocol handler
+ * (system/protocol.ts).
  */
 import { access, mkdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
@@ -18,14 +23,17 @@ import { windowsCommandLine } from '../lib/cmdline';
 import { encodePowerShell, powerShellPath } from '../lib/powershell';
 import type { RunFileFn } from '../lib/process';
 import { getEnvVar } from '../lib/windows';
+import { LAUNCHER_ONLY_MARKERS, installStartScript, type EntryMarkers } from './markers';
 import type { SystemOpResult } from './run';
+
+export { LAUNCHER_MARKER } from './markers';
 
 /** How to start the launcher (shortcut target, protocol handler command). */
 export interface StartCommand {
   /** Absolute node.exe (realpath of process.execPath). */
   node: string;
   args: string[];
-  /** Working directory: the repo root. */
+  /** Working directory: the repo root, or the root folder of an installation. */
   cwd: string;
 }
 
@@ -36,6 +44,11 @@ export interface LauncherCommandOptions {
   execPath?: string;
   /** Default `fs.promises.realpath`. */
   realpath?: (file: string) => Promise<string>;
+}
+
+/** R4-12: another data directory is only integrated with `--system-integration=on`. */
+function homeArgs(home: string | null): string[] {
+  return home === null ? [] : [`--home=${home}`, '--system-integration=on'];
 }
 
 /**
@@ -51,7 +64,6 @@ export async function launcherCommand(
   opts: LauncherCommandOptions = {},
 ): Promise<StartCommand> {
   const node = await (opts.realpath ?? realpath)(opts.execPath ?? process.execPath);
-  const home = opts.home ?? null;
   return {
     node,
     args: [
@@ -59,38 +71,66 @@ export async function launcherCommand(
       '--tsconfig',
       path.win32.join(repoRoot, 'src', 'server', 'tsconfig.json'),
       path.win32.join(repoRoot, 'src', 'server', 'launcher', 'main.ts'),
-      ...(home === null ? [] : [`--home=${home}`, '--system-integration=on']),
+      ...homeArgs(opts.home ?? null),
       ...extra,
     ],
     cwd: repoRoot,
   };
 }
 
+/**
+ * The start command of an installation (WP-86 §3, plan §8.1): `realpath(process.execPath)` +
+ * `['--use-system-ca', '--use-env-proxy', <root>\start.mjs, (--home=<home>,
+ * --system-integration=on,) …extra]`, working directory = the root folder (never a version
+ * folder: a long-lived process would lock it against the cleanup).
+ */
+export async function installedLauncherCommand(
+  installRoot: string,
+  extra: readonly string[],
+  opts: LauncherCommandOptions = {},
+): Promise<StartCommand> {
+  const node = await (opts.realpath ?? realpath)(opts.execPath ?? process.execPath);
+  return {
+    node,
+    args: [
+      '--use-system-ca',
+      '--use-env-proxy',
+      installStartScript(installRoot),
+      ...homeArgs(opts.home ?? null),
+      ...extra,
+    ],
+    cwd: installRoot,
+  };
+}
+
 export const AUTOSTART_LINK_NAME = `${PRODUCT_NAME}.lnk`;
-/** `WshShortcut.WindowStyle`: 7 = minimized (the launcher's console only flashes in the taskbar). */
+/** The start menu shortcut has the same name (`<Programs>\Parallax.lnk`). */
+export const START_MENU_LINK_NAME = AUTOSTART_LINK_NAME;
+/**
+ * `WshShortcut.WindowStyle`: 7 = minimized (the launcher's console only flashes in the taskbar) –
+ * autostart and start menu.
+ */
 export const AUTOSTART_WINDOW_STYLE = 7;
 export const AUTOSTART_TIMEOUT_MS = 30_000;
 
-/** `<APPDATA>\Microsoft\Windows\Start Menu\Programs\Startup\Parallax.lnk`, or null without a safe APPDATA. */
-export function autostartLinkPath(env: NodeJS.ProcessEnv): string | null {
+/** `<APPDATA>\Microsoft\Windows\Start Menu\Programs`, or null without a safe APPDATA. */
+function programsFolder(env: NodeJS.ProcessEnv): string | null {
   const appData = getEnvVar(env, 'APPDATA');
   if (appData === undefined || windowsPathIssue(appData) !== null) return null;
-  return path.win32.join(
-    appData,
-    'Microsoft',
-    'Windows',
-    'Start Menu',
-    'Programs',
-    'Startup',
-    AUTOSTART_LINK_NAME,
-  );
+  return path.win32.join(appData, 'Microsoft', 'Windows', 'Start Menu', 'Programs');
 }
 
-/**
- * Marks a start command as Parallax's own (case-insensitive): the launcher's `main.ts` in the
- * arguments – shortcut (R4-11) and protocol handler (system/protocol.ts).
- */
-export const LAUNCHER_MARKER = 'launcher\\main.ts';
+/** `<APPDATA>\Microsoft\Windows\Start Menu\Programs\Startup\Parallax.lnk`, or null without a safe APPDATA. */
+export function autostartLinkPath(env: NodeJS.ProcessEnv): string | null {
+  const programs = programsFolder(env);
+  return programs === null ? null : path.win32.join(programs, 'Startup', AUTOSTART_LINK_NAME);
+}
+
+/** `<APPDATA>\Microsoft\Windows\Start Menu\Programs\Parallax.lnk`, or null without a safe APPDATA. */
+export function startMenuLinkPath(env: NodeJS.ProcessEnv): string | null {
+  const programs = programsFolder(env);
+  return programs === null ? null : path.win32.join(programs, START_MENU_LINK_NAME);
+}
 
 /** The variables the script reads. */
 export const AUTOSTART_ENV = {
@@ -100,8 +140,15 @@ export const AUTOSTART_ENV = {
   args: 'PARALLAX_LNK_ARGS',
   cwd: 'PARALLAX_LNK_CWD',
   description: 'PARALLAX_LNK_DESCRIPTION',
-  /** R4-11/CR2-03: `LAUNCHER_MARKER` – a shortcut without it in its arguments is neither removed nor replaced. */
+  /**
+   * R4-11/CR2-03: the own markers, `|`-separated (WP-86) – a shortcut without one of them in its
+   * arguments is neither removed nor replaced.
+   */
   marker: 'PARALLAX_LNK_MARKER',
+  /** WP-86: the deferred markers, `|`-separated (only set when there are any) → output `deferred`. */
+  defer: 'PARALLAX_LNK_DEFER',
+  /** WP-86: icon file of the shortcut (`IconLocation = <icon>,0`; only the start menu sets it). */
+  icon: 'PARALLAX_LNK_ICON',
 } as const;
 
 /**
@@ -109,12 +156,19 @@ export const AUTOSTART_ENV = {
  * removal leaves it alone (`ok`), the creation refuses to replace it (CR2-03, `reason: 'foreign'`).
  */
 export const FOREIGN_SHORTCUT = 'foreign';
+/**
+ * Output of the script for a shortcut of an installation seen from a clone (WP-86): left alone by
+ * both actions, a success (`{ ok: true, deferred: true }`).
+ */
+export const DEFERRED_SHORTCUT = 'deferred';
 
 /**
  * The constant script: create (WScript.Shell) or remove the shortcut; exit 3 with the reason. An
- * existing shortcut is read first and left alone (`foreign`) unless its arguments contain the
- * marker – for both actions (R4-11: e.g. a `Parallax.lnk` the user made on `parallax.cmd` in
- * Phase 1; CR2-03/ADR-133: creating must not replace it, or turning autostart off would delete it later).
+ * existing shortcut is read first and left alone (`foreign`) unless its arguments contain one of
+ * the own markers – for both actions (R4-11: e.g. a `Parallax.lnk` the user made on `parallax.cmd`
+ * in Phase 1; CR2-03/ADR-133: creating must not replace it, or turning autostart off would delete
+ * it later). WP-86: one with a deferred marker (an installation, seen from a clone) is left alone
+ * as `deferred`.
  */
 export const AUTOSTART_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
@@ -123,8 +177,18 @@ export const AUTOSTART_SCRIPT = [
   '  $shell = New-Object -ComObject WScript.Shell',
   '  if (Test-Path -LiteralPath $path) {',
   '    $existing = $shell.CreateShortcut($path)',
-  `    $marker = ([string]$env:${AUTOSTART_ENV.marker}).ToLowerInvariant()`,
-  '    if (-not $marker -or -not ([string]$existing.Arguments).ToLowerInvariant().Contains($marker)) {',
+  '    $own = $false',
+  `    foreach ($marker in ([string]$env:${AUTOSTART_ENV.marker}).ToLowerInvariant().Split('|')) {`,
+  '      if (-not $marker -or -not ([string]$existing.Arguments).ToLowerInvariant().Contains($marker)) { continue }',
+  '      $own = $true',
+  '    }',
+  '    if (-not $own) {',
+  `      foreach ($defer in ([string]$env:${AUTOSTART_ENV.defer}).ToLowerInvariant().Split('|')) {`,
+  '        if ($defer -and ([string]$existing.Arguments).ToLowerInvariant().Contains($defer)) {',
+  `          Write-Output '${DEFERRED_SHORTCUT}'`,
+  '          exit 0',
+  '        }',
+  '      }',
   `      Write-Output '${FOREIGN_SHORTCUT}'`,
   '      exit 0',
   '    }',
@@ -142,6 +206,9 @@ export const AUTOSTART_SCRIPT = [
   `  $link.WorkingDirectory = $env:${AUTOSTART_ENV.cwd}`,
   `  $link.WindowStyle = ${String(AUTOSTART_WINDOW_STYLE)}`,
   `  $link.Description = $env:${AUTOSTART_ENV.description}`,
+  `  if ($env:${AUTOSTART_ENV.icon}) {`,
+  `    $link.IconLocation = $env:${AUTOSTART_ENV.icon} + ',0'`,
+  '  }',
   '  $link.Save()',
   "  Write-Output 'created'",
   '  exit 0',
@@ -156,11 +223,21 @@ export interface ShortcutOptions {
   /** Base environment of the PowerShell process (SystemRoot, …). */
   env: NodeJS.ProcessEnv;
   timeoutMs?: number;
+  /** Which existing shortcut is own/deferred (system/markers.ts); default `LAUNCHER_ONLY_MARKERS`. */
+  markers?: EntryMarkers;
+}
+
+/** The marker variables of the script (`defer` only when there are deferred markers). */
+function markerVars(markers: EntryMarkers): Record<string, string> {
+  const vars: Record<string, string> = { [AUTOSTART_ENV.marker]: markers.own.join('|') };
+  if (markers.defer.length > 0) vars[AUTOSTART_ENV.defer] = markers.defer.join('|');
+  return vars;
 }
 
 /**
- * Runs the script with `vars`: an output ending in an `expected` word is success, one ending in a
- * `refused` word a failure with that word as the reason (exit 0 both).
+ * Runs the script with `vars` and the markers of `opts`: an output ending in an `expected` word is
+ * success, `deferred` a success with `deferred: true`, one ending in a `refused` word a failure
+ * with that word as the reason (exit 0 all).
  */
 async function runShortcutScript(
   vars: Record<string, string>,
@@ -172,7 +249,7 @@ async function runShortcutScript(
   for (const [key, value] of Object.entries(opts.env)) {
     if (value !== undefined && !key.toUpperCase().startsWith('PARALLAX_LNK_')) env[key] = value;
   }
-  Object.assign(env, vars);
+  Object.assign(env, vars, markerVars(opts.markers ?? LAUNCHER_ONLY_MARKERS));
   try {
     // R4-04: no `-ExecutionPolicy` – an `-EncodedCommand` is not subject to it.
     const result = await opts.run(
@@ -183,6 +260,7 @@ async function runShortcutScript(
     if (result.timedOut) return { ok: false, reason: 'timeout' };
     const output = result.stdout.trim();
     if (result.exitCode === 0 && expected.some((word) => output.endsWith(word))) return { ok: true };
+    if (result.exitCode === 0 && output.endsWith(DEFERRED_SHORTCUT)) return { ok: true, deferred: true };
     const refusal = refused.find((word) => output.endsWith(word));
     if (result.exitCode === 0 && refusal !== undefined) return { ok: false, reason: refusal };
     return {
@@ -194,21 +272,19 @@ async function runShortcutScript(
   }
 }
 
-/**
- * Creates the shortcut `link` for `command` or replaces the own one (Startup folder created if
- * missing); a shortcut without `LAUNCHER_MARKER` in its arguments belongs to someone else and is
- * never replaced (CR2-03: `{ ok: false, reason: FOREIGN_SHORTCUT }`, consistent with R4-11).
- */
-export async function createAutostartShortcut(
+/** Creates or refreshes a shortcut (folder created if missing); see `createAutostartShortcut`. */
+async function createShortcut(
   link: string,
   command: StartCommand,
+  shortcut: { folder: string; icon: string | null },
   opts: ShortcutOptions,
 ): Promise<SystemOpResult> {
   try {
     await mkdir(path.win32.dirname(link), { recursive: true });
   } catch (error) {
-    return { ok: false, reason: `startup folder: ${toError(error).message}` };
+    return { ok: false, reason: `${shortcut.folder} folder: ${toError(error).message}` };
   }
+  const icon = shortcut.icon;
   return runShortcutScript(
     {
       [AUTOSTART_ENV.action]: 'create',
@@ -217,7 +293,7 @@ export async function createAutostartShortcut(
       [AUTOSTART_ENV.args]: windowsCommandLine(command.args),
       [AUTOSTART_ENV.cwd]: command.cwd,
       [AUTOSTART_ENV.description]: PRODUCT_NAME,
-      [AUTOSTART_ENV.marker]: LAUNCHER_MARKER,
+      ...(icon === null ? {} : { [AUTOSTART_ENV.icon]: icon }),
     },
     ['created'],
     opts,
@@ -225,16 +301,54 @@ export async function createAutostartShortcut(
   );
 }
 
-/**
- * Removes the own shortcut `link` (a missing one is fine); one whose arguments do not start the
- * launcher (`LAUNCHER_MARKER`) belongs to someone else and stays (R4-11, also `ok`).
- */
-export function removeAutostartShortcut(link: string, opts: ShortcutOptions): Promise<SystemOpResult> {
+/** Removes an own shortcut (a missing one is fine); foreign and deferred ones stay (`ok`). */
+function removeShortcut(link: string, opts: ShortcutOptions): Promise<SystemOpResult> {
   return runShortcutScript(
-    { [AUTOSTART_ENV.action]: 'remove', [AUTOSTART_ENV.path]: link, [AUTOSTART_ENV.marker]: LAUNCHER_MARKER },
+    { [AUTOSTART_ENV.action]: 'remove', [AUTOSTART_ENV.path]: link },
     ['removed', FOREIGN_SHORTCUT],
     opts,
   );
+}
+
+/**
+ * Creates the shortcut `link` for `command` or replaces the own one (Startup folder created if
+ * missing); a shortcut without an own marker in its arguments belongs to someone else and is
+ * never replaced (CR2-03: `{ ok: false, reason: FOREIGN_SHORTCUT }`, consistent with R4-11) – or,
+ * with a deferred marker, to an installation (`{ ok: true, deferred: true }`, left alone).
+ */
+export function createAutostartShortcut(
+  link: string,
+  command: StartCommand,
+  opts: ShortcutOptions,
+): Promise<SystemOpResult> {
+  return createShortcut(link, command, { folder: 'startup', icon: null }, opts);
+}
+
+/**
+ * Removes the own shortcut `link` (a missing one is fine); one whose arguments carry no own marker
+ * belongs to someone else and stays (R4-11, also `ok`; with a deferred marker `deferred: true`).
+ */
+export function removeAutostartShortcut(link: string, opts: ShortcutOptions): Promise<SystemOpResult> {
+  return removeShortcut(link, opts);
+}
+
+/**
+ * WP-86: the start menu shortcut `link` (`startMenuLinkPath`) for `command`, with `icon`
+ * (`<installRoot>\parallax.ico`, `IconLocation = <icon>,0`) and the minimized window (7), else a
+ * console with the node icon opens; the same marker rules as the autostart shortcut.
+ */
+export function createStartMenuShortcut(
+  link: string,
+  command: StartCommand,
+  icon: string,
+  opts: ShortcutOptions,
+): Promise<SystemOpResult> {
+  return createShortcut(link, command, { folder: 'start menu', icon }, opts);
+}
+
+/** WP-86: removes the own start menu shortcut (the same rules as `removeAutostartShortcut`). */
+export function removeStartMenuShortcut(link: string, opts: ShortcutOptions): Promise<SystemOpResult> {
+  return removeShortcut(link, opts);
 }
 
 /** Does the shortcut exist (a plain `access`, no PowerShell)? */
