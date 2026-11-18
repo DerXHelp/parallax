@@ -759,18 +759,20 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       const planned = route?.planned ?? null;
       if (planned !== null) {
         const title = s.entry.title !== '' ? s.entry.title : cwdLabel(s.entry.cwd);
-        const notification: Notification = {
-          id: core.ids.newUuid(),
-          kind: planned.kind,
-          entryId: s.id,
-          title,
-          delivery: planned.delivery,
-          at: now().toISOString(),
-        };
-        if (planned.clientId !== null) pub.notify(planned.clientId, notification);
-        // WP-81 (ADR-211): the controlling computer shows the toast (its own filters and texts).
-        if (planned.relayClientId !== undefined) {
-          pub.notify(planned.relayClientId, { ...notification, delivery: 'system' });
+        if (planned.clientId !== null || planned.relayClientId !== undefined) {
+          const notification: Notification = {
+            id: core.ids.newUuid(),
+            kind: planned.kind,
+            entryId: s.id,
+            title,
+            delivery: planned.delivery,
+            at: now().toISOString(),
+          };
+          if (planned.clientId !== null) pub.notify(planned.clientId, notification);
+          // WP-81 (ADR-211): the controlling computer shows the toast (its own filters and texts).
+          if (planned.relayClientId !== undefined) {
+            pub.notify(planned.relayClientId, { ...notification, delivery: 'system' });
+          }
         }
         // ADR-109: click → the session (opt-in protocol handler), silent when the event's sound is
         // off – ADR-122: or when a window got the notify above (it plays the sound itself).

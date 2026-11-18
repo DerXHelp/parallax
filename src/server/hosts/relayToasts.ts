@@ -15,6 +15,12 @@
  *   computer); `clear` takes the toast out of the Action Center; a computer that leaves the list
  *   (removed, role left → `list()` empty) takes all its toasts with it.
  *
+ * A sharing computer is not trusted to be gentle (security review WP-81): one toast per computer
+ * and session at a time (same tag → Windows replaces it, never a stack), at most
+ * `RELAY_TOAST_RATE.max` toasts per computer within `RELAY_TOAST_RATE.windowMs` (more are dropped,
+ * logged throttled), the title cut to `LIMITS.titleChars`; texts only as text nodes of the toast
+ * helper (lib/toast.ts: environment variables, DOM, no script or XML from data).
+ *
  * Calls run one after the other in an own short queue (a second PowerShell at most next to the
  * engine's toasts). A permanent failure (CR-05) switches it off for this server run, so does a
  * permanent failure of the engine's channel (`available`); transient failures pause it like the
@@ -22,11 +28,11 @@
  */
 import { createHash } from 'node:crypto';
 import type { Logger } from 'pino';
-import type { EntryId, HostId, Language } from '@shared/common';
+import { LIMITS, type EntryId, type HostId, type Language } from '@shared/common';
 import { hostSessionProtocolUri } from '@shared/http';
 import type { Settings } from '@shared/model';
 import type { Notification } from '@shared/protocol';
-import { logger as rootLogger } from '../lib/logger';
+import { logger as rootLogger, shouldLogRepeated } from '../lib/logger';
 import { removeToast, showToast, type ToastRequest, type ToastResult } from '../lib/toast';
 import {
   TOAST_BACKOFF_MAX_MS,
@@ -52,6 +58,12 @@ export function relayToastTag(hostId: HostId, entryId: EntryId): string {
   return `rl_${createHash('sha256').update(`${hostId}:${entryId}`).digest('hex').slice(0, 32)}`;
 }
 
+/** Toasts per computer within the window at most (security review WP-81); more are dropped. */
+export const RELAY_TOAST_RATE: Readonly<{ max: number; windowMs: number }> = Object.freeze({
+  max: 10,
+  windowMs: 60_000,
+});
+
 /** Why a watcher notification shows no toast (debug log). */
 export type RelayToastFilter = 'delivery' | 'do_not_disturb' | 'toast_off' | 'unavailable' | 'unknown_host';
 
@@ -72,6 +84,8 @@ export interface RelayToastsOptions {
   now?: () => number;
   /** Pending calls at most; more are dropped (default 16 – all toasts of a removed computer fit). */
   maxQueue?: number;
+  /** Rate limit per computer (default `RELAY_TOAST_RATE`). */
+  rate?: { max: number; windowMs: number };
 }
 
 export interface RelayToasts {
@@ -95,6 +109,32 @@ export function createRelayToasts(options: RelayToastsOptions): RelayToasts {
   let chain: Promise<void> = Promise.resolve();
   /** Tags of toasts in the Action Center → their computer (only those are removed again). */
   const shown = new Map<string, HostId>();
+  const rate = options.rate ?? RELAY_TOAST_RATE;
+  /** Times of the recent toasts per computer (within `rate.windowMs`). */
+  const recent = new Map<HostId, number[]>();
+  /** Toasts dropped by the rate limit per computer (throttled log). */
+  const dropped = new Map<HostId, number>();
+
+  /** Counts one toast for `hostId`; false = over the limit (dropped). */
+  const admit = (hostId: HostId): boolean => {
+    const t = now();
+    const times = (recent.get(hostId) ?? []).filter((at) => t - at < rate.windowMs);
+    if (times.length >= rate.max) {
+      recent.set(hostId, times);
+      const count = (dropped.get(hostId) ?? 0) + 1;
+      dropped.set(hostId, count);
+      if (shouldLogRepeated(count)) {
+        log.warn(
+          { hostId, dropped: count, max: rate.max, windowMs: rate.windowMs },
+          'relay toasts throttled',
+        );
+      }
+      return false;
+    }
+    times.push(t);
+    recent.set(hostId, times);
+    return true;
+  };
 
   const usable = (): boolean => options.enabled && !failed && (options.available?.() ?? true);
 
@@ -168,13 +208,17 @@ export function createRelayToasts(options: RelayToastsOptions): RelayToasts {
       log.debug({ hostId, entryId, kind, filter }, 'relay toast filtered');
       return;
     }
+    if (!admit(hostId)) return;
     const language = settings.language;
     const launchUri =
       (options.system?.toastLaunchUri(entryId) ?? null) === null
         ? null
         : hostSessionProtocolUri(hostId, entryId);
     const silent = !settings.notifications.events[kind].sound;
-    const title = notification.title.trim() === '' ? host.name : notification.title;
+    const title = (notification.title.trim() === '' ? host.name : notification.title).slice(
+      0,
+      LIMITS.titleChars,
+    );
     const tag = relayToastTag(hostId, entryId);
     log.info({ hostId, entryId, kind, click: launchUri !== null, silent }, 'relay toast');
     shown.set(tag, hostId);
@@ -190,10 +234,15 @@ export function createRelayToasts(options: RelayToastsOptions): RelayToasts {
 
   /** Computers that left the list (removed, role left): their toasts go too. */
   const prune = (): void => {
-    if (closed || shown.size === 0) return;
+    if (closed) return;
     const present = new Set(options.hosts.list().map((host) => host.hostId));
     for (const [tag, hostId] of [...shown]) {
       if (!present.has(hostId)) removeTag(tag);
+    }
+    for (const hostId of [...recent.keys()]) {
+      if (present.has(hostId)) continue;
+      recent.delete(hostId);
+      dropped.delete(hostId);
     }
   };
 

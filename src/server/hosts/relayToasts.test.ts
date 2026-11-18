@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { EntryId, HostId } from '@shared/common';
+import { LIMITS, type EntryId, type HostId } from '@shared/common';
 import type { RemoteHost, Settings } from '@shared/model';
 import type { Notification } from '@shared/protocol';
 import {
@@ -13,7 +13,13 @@ import {
 import type { NotificationKind } from '@shared/status';
 import type { ToastRequest, ToastResult } from '../lib/toast';
 import type { RelayEvents } from './ports';
-import { RELAY_TOAST_BODY, createRelayToasts, relayToastTag, type RelayToastsOptions } from './relayToasts';
+import {
+  RELAY_TOAST_BODY,
+  RELAY_TOAST_RATE,
+  createRelayToasts,
+  relayToastTag,
+  type RelayToastsOptions,
+} from './relayToasts';
 
 const HOST: HostId = SAMPLE_REMOTE_HOST_ID;
 const OTHER_HOST: HostId = 'computer-c';
@@ -256,6 +262,35 @@ describe('createRelayToasts (WP-81, ADR-211)', () => {
     t.relay.notify(HOST, notification());
     await t.idle();
     expect(t.shown).toHaveLength(4);
+  });
+
+  it('security review: at most RELAY_TOAST_RATE.max toasts per computer and minute, the rest dropped', async () => {
+    let clock = 0;
+    const r = rig({ now: () => clock });
+    for (let i = 0; i < RELAY_TOAST_RATE.max + 5; i++) {
+      r.relay.notify(HOST, notification({ id: `n${String(i)}`, entryId: i % 2 === 0 ? ENTRY : ENTRY_2 }));
+    }
+    // Another computer has its own budget.
+    r.relay.notify(OTHER_HOST, notification());
+    await r.idle();
+    expect(r.shown.filter((t) => t.body.includes('Computer B'))).toHaveLength(RELAY_TOAST_RATE.max);
+    expect(r.shown.filter((t) => t.body.includes('Computer C'))).toHaveLength(1);
+    // One toast per session at a time: the same tag replaces, never stacks (two sessions, two tags).
+    expect(new Set(r.shown.map((t) => t.tag))).toEqual(
+      new Set([relayToastTag(HOST, ENTRY), relayToastTag(HOST, ENTRY_2), relayToastTag(OTHER_HOST, ENTRY)]),
+    );
+    // A minute later the budget is back.
+    clock = RELAY_TOAST_RATE.windowMs;
+    r.relay.notify(HOST, notification());
+    await r.idle();
+    expect(r.shown.filter((t) => t.body.includes('Computer B'))).toHaveLength(RELAY_TOAST_RATE.max + 1);
+  });
+
+  it('security review: the title is cut to LIMITS.titleChars before the text is built', async () => {
+    const r = rig();
+    r.relay.notify(HOST, notification({ title: 'x'.repeat(LIMITS.titleChars + 50) }));
+    await r.idle();
+    expect(r.shown[0]?.title).toBe(`${'x'.repeat(LIMITS.titleChars)} – needs permission`);
   });
 
   it('close stops listening', async () => {

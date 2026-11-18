@@ -1,3 +1,4 @@
+import { LOCAL_HOST_ID } from '@shared/common';
 import type { SoundId } from '@shared/model';
 import type { NotificationKind } from '@shared/status';
 import { t, type TranslationKey } from '@web/i18n';
@@ -139,7 +140,7 @@ export function startNotificationDelivery(options: NotificationDeliveryOptions =
     const state = store.getState();
     const { presence } = state;
     // WP-81: always this computer's settings, never those of the session's computer.
-    const settings = selectSettings(state).notifications;
+    const settings = selectSettings(state, LOCAL_HOST_ID).notifications;
     const event = settings.events[notification.kind];
     const withSound = event.sound && !settings.doNotDisturb;
     // A session without a title yet (created without a prompt) is named by its folder (V2-05).

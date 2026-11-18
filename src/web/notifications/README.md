@@ -28,7 +28,7 @@ Regeln:
   **dieses Rechners**. Eigene Web Notifications sind dann `silent` (ebenso ohne Ton für das Ereignis); nur wenn
   der Ton gewünscht, aber gesperrt oder Web Audio nicht verfügbar ist, darf der Browser klingen.
 - **Sessions anderer Rechner (WP-81, ADR-211):** Es gelten immer die Einstellungen dieses Rechners
-  (`selectSettings(state)`, nicht die des Rechners der Session): Ton, Lautstärke, „Nicht stören“, Toast je
+  (`selectSettings(state, LOCAL_HOST_ID)`, nicht die des Rechners der Session): Ton, Lautstärke, „Nicht stören“, Toast je
   Ereignis, `focusedElsewhere`. „Nicht stören“ hier macht aus einer `system`-Meldung eines anderen Rechners
   den In-App-Hinweis ohne Ton. Klick und Auswahl laufen über den `sessionKey` (`<hostId>:<entryId>`). Den
   nativen Toast für freigegebene Sessions zeigt der steuernde Server (`src/server/hosts/relayToasts.ts`).
