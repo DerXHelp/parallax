@@ -2,8 +2,9 @@
 
 Lokale Mission-Control-App für viele parallele Claude-Code-Sessions unter Windows: ein Node-Server
 auf `127.0.0.1` steuert je Session das installierte `claude` über das Claude Agent SDK, die Web-UI
-läuft als Chrome-App-Fenster. Status: Phase 3 „Dateien und Plan-Komfort“ abgeschlossen (auf `main`;
-siehe `docs/progress.md`).
+läuft als Chrome-App-Fenster. Auf Wunsch steuert ein Parallax auch die Sessions eines anderen Rechners im
+selben Netz ([Mehrere Rechner](#mehrere-rechner)). Status: Phase 3 „Dateien und Plan-Komfort“ abgeschlossen
+(auf `main`; siehe `docs/progress.md`).
 
 ## So sieht Parallax aus
 
@@ -290,6 +291,41 @@ Tab desselben Profils.
   Serverlauf ab und bleibt bei Hinweisen im Fenster. Ein einzelner Fehler (z. B. Zeitüberschreitung
   unter Last) schaltet ihn nicht ab; erst nach drei Fehlern in Folge pausiert er (1 min, dann
   länger, höchstens 15 min) und versucht es danach erneut.
+
+## Mehrere Rechner
+Ein Parallax kann die Sessions anderer Rechner im selben Netz anzeigen und steuern, als liefen sie lokal:
+Transkript, Entscheidungen, Pläne, Dateien, Anhänge und Entwürfe. Die Sessions laufen weiter auf ihrem
+Rechner, mit dessen `claude`, Profilen und Ordnern. **Ab Werk ist das aus.**
+
+- **Rollen** (Einstellungen → „Mehrere Rechner“): **Aus**, **Freigeben** oder **Andere steuern** – immer nur
+  eine. Ein freigebender Rechner ist mit genau einem steuernden gekoppelt; ein steuernder bindet bis zu 16
+  freigebende ein.
+- **Freigeben:** Beim Einschalten prüft Parallax Port (Standard 4713), Schlüssel, den Windows-Schlüsselspeicher,
+  die Verschlüsselung, die Netzadressen und die Firewall und zeigt das Ergebnis im Abschnitt. Beim ersten Start
+  fragt Windows eventuell, ob Node.js in Netzwerken kommunizieren darf – nur für private Netzwerke erlauben.
+- **Koppeln:** Auf dem freigebenden Rechner „Rechner koppeln“ wählen. Er zeigt Rechnername, Adressen, Port und
+  einen einmaligen Kopplungscode, der 10 Minuten gilt und nach drei falschen Eingaben verfällt. Auf dem
+  steuernden Rechner unter „Andere steuern“ → „Rechner hinzufügen…“ Adresse, Port, Code und einen Anzeigenamen
+  eintragen. Eine neue Kopplung ersetzt die alte erst nach Rückfrage und erst, wenn sie geglückt ist.
+- **Arbeiten:** Die Sessions des anderen Rechners stehen in der Seitenleiste mit einem farbigen Rechner-Badge;
+  „Gruppieren nach“ ordnet nach Rechner und/oder Verzeichnis, beide Ebenen lassen sich einklappen. „Neue
+  Session“ fragt zuerst nach dem Rechner und bietet dessen Profile und zuletzt verwendete Verzeichnisse an.
+  Benachrichtigungen erscheinen auf dem steuernden Rechner. Editor und Explorer öffnen nur Dateien eigener
+  Sessions.
+- **Trennen:** „Kopplung aufheben“ auf dem freigebenden Rechner trennt sofort; „Aus“ schließt den Port, die
+  Kopplung bleibt. „Entfernen“ auf dem steuernden Rechner hebt die Kopplung auch drüben auf, wenn er ihn
+  erreicht – sonst dort von Hand.
+- **Verbindungsprotokoll:** Der freigebende Rechner führt jeden Verbindungsversuch mit IP-Adresse, auch
+  abgelehnte; neue abgelehnte Versuche zeigt ein Hinweis in der Kopfzeile, bis das Protokoll angesehen ist.
+- **Versionen:** Es arbeiten nur Rechner mit derselben Parallax-Version zusammen. Weicht sie ab, zeigt der
+  steuernde Rechner einen Hinweis; aktualisiert wird jeder Rechner selbst, nie aus der Ferne.
+
+**Sicherheit in Kürze:** nur TLS 1.3 mit hybridem, post-quanten-sicherem Schlüsseltausch (ML-KEM) und
+ML-DSA-Schlüsseln; beide Seiten prüfen den öffentlichen Schlüssel der anderen (gepinnt bei der Kopplung), es gehen
+weder Passwörter noch Tokens über die Leitung. Der Kopplungscode (128 Bit) ist an die konkrete Verbindung
+gebunden. Private Schlüssel liegen nur vom Windows-Schlüsselspeicher (DPAPI, eigenes Benutzerkonto) verschlüsselt im
+Datenordner. Der Fernzugang liefert keine Weboberfläche und nimmt keine Anfragen aus Browsern an; das Fenster auf
+dem steuernden Rechner spricht weiter nur mit `127.0.0.1`. Details: `docs/wp/WP-76.md`.
 
 ## Andere Registry / Firmen-Nexus
 Im Projekt ist **keine Registry** eingetragen; der Lockfile enthält keine Tarball-URLs und
