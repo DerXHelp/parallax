@@ -16,6 +16,7 @@ Umsetzung, Abweichungen und Verdrahtung `docs/wp/WP-78a.md`. Der Listener ist di
 | `peerStore.ts` | `remote/peer.json`: die eine Kopplung, aufgehobene Pins (strikt, ohne `.bak`) | WP-78a |
 | `eventLog.ts` | `remote/events.json`: Verbindungsprotokoll (zusammengefasst je Adresse+Art und Minute, Ringpuffer) | WP-78a |
 | `checks.ts`, `firewall.ts` | Prüfungen `port`, `keys`, `keystore`, `tls`, `addresses`, `firewall` (Firewall nur lesen) | WP-78a |
+| `preflight.ts` | Teil „Several computers“ von `pnpm preflight`: Rolle nur lesen, TLS, DPAPI, bei „Freigeben“ Port/Adressen/Firewall | Koordinator (WP-82) |
 | `hubSocket.ts` | `GuardedHubSocket`: WebSocket für den Hub, verwirft alles nach einem Generationswechsel | WP-78a |
 | `headers.ts`, `addresses.ts`, `limits.ts` | Browser-/Versions-Header, Adressen und Namen, Grenzen (§B.10) und Zähler | WP-78a |
 | `testKit.ts` | Test-Helfer (Dienst auf `127.0.0.1:0`, Fake-Hub, Kopplung und Agent) – nur für Tests | WP-78a |
