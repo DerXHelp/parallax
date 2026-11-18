@@ -1,6 +1,6 @@
 {
   "name": "parallax",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Mission control for parallel Claude Code sessions (local server + web UI).",
   "type": "module",
