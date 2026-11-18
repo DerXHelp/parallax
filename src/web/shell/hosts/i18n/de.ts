@@ -36,6 +36,8 @@ export const de: typeof en = {
       'Parallax auf {name} hat eine andere Version ({version}). Parallax auf {name} auf {own} aktualisieren.',
     incompatibleUnknown:
       'Parallax auf {name} hat eine andere Version. Parallax auf {name} auf {own} aktualisieren.',
+    incompatiblePlain:
+      'Parallax auf {name} hat eine andere Version. Auf beiden Rechnern dieselbe Version verwenden.',
     revoked: 'Die Kopplung mit {name} wurde aufgehoben. Unter Einstellungen → Mehrere Rechner neu koppeln.',
     reconnect: 'Neu verbinden',
     settings: 'Mehrere Rechner…',
@@ -47,6 +49,7 @@ export const de: typeof en = {
     unavailable: '{name} ist gerade nicht nutzbar ({status}).',
   },
   session: {
+    label: 'Rechner',
     host: 'Läuft auf {name}',
   },
   indicator: {

@@ -3,8 +3,9 @@ import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { LOCAL_HOST_ID, parseSessionKey, type HostId } from '@shared/common';
 import type { HostColor, MultiHostRole, RemoteAccessState, RemoteHost } from '@shared/model';
-import type { Command, CommandResult } from '@shared/protocol';
-import { getConnection } from './connection';
+import { makeError } from '@shared/errors';
+import { isRemoteAllowedCommand, type Command, type CommandName, type CommandResult } from '@shared/protocol';
+import { ClientCommandError, getConnection } from './connection';
 import { selectRemoteHosts } from './remote-hosts';
 import { clientStore, type ClientState } from './store';
 
@@ -131,10 +132,50 @@ export function sendHostCommand<C extends Command>(
   hostId: HostId,
   cmd: C,
 ): Promise<CommandResult<C['name']>> {
-  return getConnection(commandHost(hostId, cmd)).send(cmd);
+  const target = commandHost(hostId, cmd);
+  // ADR-208: what the other computer would refuse never leaves this window (fail closed).
+  if (!canSendTo(target, cmd.name)) {
+    return Promise.reject(new ClientCommandError(makeError('REMOTE_NOT_ALLOWED', { command: cmd.name })));
+  }
+  return getConnection(target).send(cmd);
 }
 
 /** ADR-208: `link.open` always goes to this computer – a link never opens on the other one. */
-export function commandHost(hostId: HostId, cmd: Command): HostId {
+export function commandHost(hostId: HostId, cmd: { readonly name: CommandName }): HostId {
   return cmd.name === 'link.open' ? LOCAL_HOST_ID : hostId;
+}
+
+/**
+ * Whether a command can go to a computer: this computer takes every command, another one only
+ * `REMOTE_ALLOWED_COMMANDS` (no editor, Explorer, console, sign-in, settings – WP-75 §4.4).
+ */
+export function canSendTo(hostId: HostId, name: CommandName): boolean {
+  return hostId === LOCAL_HOST_ID || isRemoteAllowedCommand(name);
+}
+
+/** `canSendTo` for the computer of a session (menus hide what the session's computer refuses). */
+export function sessionAllows(sessionKey: string, name: CommandName): boolean {
+  const hostId = hostIdOf(sessionKey);
+  return hostId !== null && canSendTo(commandHost(hostId, { name }), name);
+}
+
+/** Parallax version of this computer (hint "update Parallax on <name> to <version>"). */
+export function selectOwnVersion(state: ClientState): string | null {
+  const local = state.hosts[LOCAL_HOST_ID];
+  return local?.hostState?.app?.version ?? local?.serverVersion ?? null;
+}
+
+/** Version of another computer: from its refused `hello`, else what this computer's server saw. */
+export function selectHostVersion(state: ClientState, hostId: HostId): string | null {
+  const version = state.hosts[hostId]?.error?.params.version;
+  if (typeof version === 'string' && version !== '') return version;
+  return selectRemoteHost(state, hostId)?.appVersion ?? null;
+}
+
+export function useOwnVersion(): string | null {
+  return useStore(clientStore, selectOwnVersion);
+}
+
+export function useHostVersion(hostId: HostId): string | null {
+  return useStore(clientStore, (state) => selectHostVersion(state, hostId));
 }

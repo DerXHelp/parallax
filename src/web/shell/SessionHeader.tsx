@@ -11,12 +11,14 @@ import { effectiveEffort } from '@web/lib/effort';
 import { sessionTitle } from '@web/lib/session-title';
 import { cliVersionStatus, knownVersion } from '@web/lib/version';
 import { useDisplayStatus, useHostState, useSessionSelector, useSummary } from '@web/state/hooks';
+import { useHostLabels } from '@web/state/hosts';
 import { Badge } from '@web/ui/badge';
 import { Gauge } from '@web/ui/gauge';
 import { StatusIcon } from '@web/ui/status-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
 import { ContextCompactIcon, useContextTexts } from './context-display';
 import { HeaderPanelButtons, HeaderPanelMenuItems, useCompactHeader } from './header-panels';
+import { HostBadge } from './hosts/HostBadge';
 import { RenameField } from './navigation/RenameField';
 import { PathTail } from './navigation/PathTail';
 import { showsRemoteInHeader } from './navigation/remote-control';
@@ -122,7 +124,10 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
   const t = useT();
   const summary = useSummary(sessionKey);
   const status = useDisplayStatus(sessionKey);
-  const hostState = useHostState(parseSessionKey(sessionKey)?.hostId ?? LOCAL_HOST_ID);
+  const hostId = parseSessionKey(sessionKey)?.hostId ?? LOCAL_HOST_ID;
+  const hostState = useHostState(hostId);
+  // WP-80: a session of another computer names it (badge with its color and short name).
+  const host = useHostLabels().get(hostId);
   useRenameHeader(sessionKey);
   const editing = useRenaming(sessionKey, 'header');
   const [compact, barRef] = useCompactHeader();
@@ -206,6 +211,28 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
           data-slot="header-facts"
           className="text-muted-foreground flex min-w-0 items-center gap-3 text-xs whitespace-nowrap"
         >
+          {host === undefined ? null : (
+            <div className="flex shrink-0 items-center" data-slot="header-host">
+              <dt className="sr-only">{t('hosts.session.label')}</dt>
+              <dd className="flex">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="flex">
+                      <HostBadge name={host.name} color={host.color} availability={host.availability} />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {host.availability === 'available'
+                      ? t('hosts.session.host', { name: host.name })
+                      : t('hosts.unavailable.row', {
+                          name: host.name,
+                          status: t(`hosts.status.${host.availability}`),
+                        })}
+                  </TooltipContent>
+                </Tooltip>
+              </dd>
+            </div>
+          )}
           <div className="flex min-w-0 items-center gap-1">
             <dt className="sr-only">{t('shell.session.cwd')}</dt>
             <dd className="flex min-w-0">

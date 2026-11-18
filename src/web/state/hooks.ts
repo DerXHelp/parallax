@@ -28,7 +28,7 @@ import {
   getConnectionRegistryVersion,
   subscribeConnectionRegistry,
 } from './connection';
-import { commandHost } from './hosts';
+import { sendHostCommand } from './hosts';
 import { setSelectedSession } from './selection';
 import {
   EMPTY_SESSION_RECORD,
@@ -489,7 +489,7 @@ export function sendCommand<C extends Command>(
   if (hostId === undefined) {
     return Promise.reject(new ClientCommandError(makeError('VALIDATION_FAILED', { path: 'sessionKey' })));
   }
-  return getConnection(commandHost(hostId, cmd)).send(cmd);
+  return sendHostCommand(hostId, cmd);
 }
 
 export type SendCommand = typeof sendCommand;

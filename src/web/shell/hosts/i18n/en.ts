@@ -42,6 +42,7 @@ export const en = {
     connecting: 'Connecting to {name}…',
     incompatible: 'Parallax on {name} has another version ({version}). Update Parallax on {name} to {own}.',
     incompatibleUnknown: 'Parallax on {name} has another version. Update Parallax on {name} to {own}.',
+    incompatiblePlain: 'Parallax on {name} has another version. Use the same version on both computers.',
     revoked: 'The pairing with {name} was removed. Pair again under Settings → Several computers.',
     reconnect: 'Reconnect',
     settings: 'Several computers…',
@@ -55,6 +56,7 @@ export const en = {
   },
   /** Session header: the computer the session runs on. */
   session: {
+    label: 'Computer',
     host: 'Runs on {name}',
   },
   /** Icon in the sidebar header (role "share" or "control"). */
