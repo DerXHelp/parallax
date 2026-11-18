@@ -17,11 +17,18 @@ export { TRANSCRIPT_VIEWS };
 export type TranscriptViewMode = TranscriptView;
 export const DEFAULT_TRANSCRIPT_VIEW: TranscriptViewMode = 'compact';
 
-export function useTranscriptView(hostId: HostId = LOCAL_HOST_ID): TranscriptViewMode {
-  return useSettings(hostId).transcriptView;
+/**
+ * WP-80 (WP-75 §4.4): a display setting – always this computer's, also for the sessions of another
+ * computer (the window follows the computer the user sits at).
+ */
+export function useTranscriptView(): TranscriptViewMode {
+  return useSettings(LOCAL_HOST_ID).transcriptView;
 }
 
-export function getTranscriptView(hostId: HostId = LOCAL_HOST_ID, store: ClientStore = clientStore): TranscriptViewMode {
+export function getTranscriptView(
+  hostId: HostId = LOCAL_HOST_ID,
+  store: ClientStore = clientStore,
+): TranscriptViewMode {
   return selectSettings(store.getState(), hostId).transcriptView;
 }
 

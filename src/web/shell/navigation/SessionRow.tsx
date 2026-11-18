@@ -1,4 +1,4 @@
-import { ArchiveRestoreIcon, EllipsisIcon, GitBranchIcon, PinIcon } from 'lucide-react';
+import { ArchiveRestoreIcon, EllipsisIcon, GitBranchIcon, PencilLineIcon, PinIcon } from 'lucide-react';
 import {
   lazy,
   memo,
@@ -10,7 +10,7 @@ import {
   type FocusEvent,
 } from 'react';
 import type { EffortLevel } from '@shared/common';
-import type { ContextGauge, ProfileColor, RunningTasks, SessionSummary } from '@shared/model';
+import type { ContextGauge, HostColor, ProfileColor, RunningTasks, SessionSummary } from '@shared/model';
 import type { DisplayStatusKind } from '@shared/status';
 import { runningTaskTotal } from '@shared/tasks';
 import { useFormat, useT } from '@web/i18n';
@@ -22,12 +22,14 @@ import { shortModelName } from '@web/lib/model-name';
 import { sessionTitle } from '@web/lib/session-title';
 import { cliVersionStatus, knownVersion } from '@web/lib/version';
 import type { SummaryEntry } from '@web/state/hooks';
+import type { HostAvailability } from '@web/state/hosts';
 import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '@web/ui/context-menu';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@web/ui/dropdown-menu';
 import { IconButton } from '@web/ui/icon-button';
 import { StatusIcon } from '@web/ui/status-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
 import { ContextCompactIcon, useContextTexts } from '../context-display';
+import { HostBadge } from '../hosts/HostBadge';
 import { RunningCounts, useRunningWords } from '../running-tasks';
 import { PathTail } from './PathTail';
 import { PROFILE_BG } from './profile-colors';
@@ -182,6 +184,16 @@ export interface SessionRowProps {
   /** Line 2 starts with the path (false in the grouped view: the group header names the folder). */
   showPath: boolean;
   onSelect: (sessionKey: string) => void;
+  /**
+   * WP-80: name and color of the session's computer – set for another computer's session while
+   * other computers are part of the window (badge in line 1); null otherwise.
+   */
+  hostName?: string | null;
+  hostColor?: HostColor | null;
+  /** WP-80: whether the session's computer can be used now; otherwise the row is grey. */
+  hostAvailability?: HostAvailability;
+  /** WP-80: the badge in line 1 (false while the sidebar groups by computer: the group names it). */
+  showHostBadge?: boolean;
 }
 
 /**
@@ -209,6 +221,10 @@ export const SessionRow = memo(function SessionRow({
   requiredCli,
   showPath,
   onSelect,
+  hostName = null,
+  hostColor = null,
+  hostAvailability = 'available',
+  showHostBadge = true,
 }: SessionRowProps) {
   const t = useT();
   const format = useFormat();
@@ -232,6 +248,11 @@ export const SessionRow = memo(function SessionRow({
   const lineText = useSessionLineText(line);
   const actions =
     contextOpen || menuOpen ? sessionActions(SIDEBAR_ACTIONS, sessionKey, summary, 'sidebar') : [];
+  const unavailable = hostAvailability !== 'available';
+  const hostStatus =
+    unavailable && hostName !== null
+      ? t('hosts.unavailable.row', { name: hostName, status: t(`hosts.status.${hostAvailability}`) })
+      : null;
 
   const onBlur = (event: FocusEvent<HTMLLIElement>) => {
     const next = event.relatedTarget;
@@ -271,6 +292,7 @@ export const SessionRow = memo(function SessionRow({
                 type="button"
                 hidden={editing}
                 data-session-row={sessionKey}
+                data-host-unavailable={unavailable ? hostAvailability : undefined}
                 aria-current={selected ? 'true' : undefined}
                 tabIndex={tabStop ? 0 : -1}
                 onClick={() => {
@@ -279,6 +301,8 @@ export const SessionRow = memo(function SessionRow({
                 className={cn(
                   'hover:bg-sidebar-accent/70 focus-visible:ring-ring relative grid w-full gap-0.5 rounded-sm py-1 pr-2 pl-2.5 text-left outline-none focus-visible:ring-2',
                   selected && 'bg-sidebar-accent text-sidebar-accent-foreground',
+                  // WP-80: a session whose computer cannot be used now is grey (it takes no commands).
+                  unavailable && 'text-muted-foreground',
                 )}
               >
                 {profileColor === null ? null : (
@@ -300,7 +324,20 @@ export const SessionRow = memo(function SessionRow({
                     {title}
                   </span>
                   {summary.runningTasks === null ? null : <RowTasks tasks={summary.runningTasks} />}
-                  {showsRemoteInRow(summary.remoteControl) ? <RowRemote remote={summary.remoteControl} /> : null}
+                  {/* WP-77/80: an unsent draft waits in the input field of this session. */}
+                  {summary.hasDraft ? (
+                    <span data-slot="row-draft" className="text-muted-foreground shrink-0">
+                      <PencilLineIcon aria-hidden className="size-3" />
+                      <span className="sr-only">{t('navigation.row.draft')}</span>
+                    </span>
+                  ) : null}
+                  {!showHostBadge || hostName === null || hostColor === null ? null : (
+                    <HostBadge name={hostName} color={hostColor} availability={hostAvailability} />
+                  )}
+                  {hostStatus === null ? null : <span className="sr-only">{hostStatus}</span>}
+                  {showsRemoteInRow(summary.remoteControl) ? (
+                    <RowRemote remote={summary.remoteControl} />
+                  ) : null}
                   {summary.pinned ? (
                     <span data-slot="row-pinned" className="text-muted-foreground shrink-0">
                       <PinIcon aria-hidden className="size-3" />
@@ -369,6 +406,11 @@ export const SessionRow = memo(function SessionRow({
               <div className="grid gap-0.5">
                 <span className="font-medium">{title}</span>
                 <span>{t(`status.${statusKind}`)}</span>
+                {hostStatus === null ? null : (
+                  <span data-slot="row-host-status" className="text-warning">
+                    {hostStatus}
+                  </span>
+                )}
                 {lineText === null ? null : <span className="break-words">{lineText}</span>}
                 {summary.runningTasks === null ? null : (
                   <Suspense fallback={null}>

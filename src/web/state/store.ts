@@ -40,6 +40,13 @@ export type HostPhase =
   | 'server-stopped'
   /** Protocol/build mismatch and the reload guard kicked in (banner PROTOCOL_VERSION_MISMATCH). */
   | 'version-mismatch'
+  /**
+   * WP-80 (another computer, close 4410 or another protocol in its `hello`): other Parallax or
+   * protocol version – no reload, no retry until `retryNow()` (the host list changed, "Reconnect").
+   */
+  | 'incompatible'
+  /** WP-80 (another computer, close 4403): the coupling was revoked or the computer removed – no retry. */
+  | 'revoked'
   /** `stop()` was called (tests, playground). */
   | 'stopped';
 

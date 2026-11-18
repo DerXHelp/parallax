@@ -6,6 +6,7 @@ import { de as profilesDe } from '@web/features/profiles/i18n/de';
 import { de as tasksDe } from '@web/features/tasks/i18n/de';
 import { de as transcriptDe } from '@web/features/transcript/i18n/de';
 import { de as updatesDe } from '@web/features/updates/i18n/de';
+import { de as hostsDe } from '@web/shell/hosts/i18n/de';
 import { de as navigationDe } from '@web/shell/navigation/i18n/de';
 import { de as newSessionDe } from '@web/shell/new-session/i18n/de';
 import { de as serverShutdownDe } from '@web/shell/server-shutdown/i18n/de';
@@ -34,4 +35,5 @@ export const deDictionary: Dictionary = {
   tasks: tasksDe,
   sidePanel: sidePanelDe,
   updates: updatesDe,
+  hosts: hostsDe,
 };

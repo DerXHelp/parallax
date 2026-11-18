@@ -28,6 +28,7 @@ import {
   getConnectionRegistryVersion,
   subscribeConnectionRegistry,
 } from './connection';
+import { sendHostCommand } from './hosts';
 import { setSelectedSession } from './selection';
 import {
   EMPTY_SESSION_RECORD,
@@ -477,6 +478,8 @@ export function useSelectedSession(): [string | null, (sessionKey: string | null
 /**
  * Sends a command to the host of `sessionKey` (null = local host, e.g. `session.create`,
  * `settings.update`). Rejects with `ClientCommandError` (translate `error.error` with `tError`).
+ * WP-80: session commands go to the connection of their computer; `link.open` always to this
+ * computer (ADR-208, `commandHost`). Host commands for another computer: `sendHostCommand`.
  */
 export function sendCommand<C extends Command>(
   sessionKey: string | null,
@@ -486,7 +489,7 @@ export function sendCommand<C extends Command>(
   if (hostId === undefined) {
     return Promise.reject(new ClientCommandError(makeError('VALIDATION_FAILED', { path: 'sessionKey' })));
   }
-  return getConnection(hostId).send(cmd);
+  return sendHostCommand(hostId, cmd);
 }
 
 export type SendCommand = typeof sendCommand;

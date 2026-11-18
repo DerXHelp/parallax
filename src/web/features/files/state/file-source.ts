@@ -1,11 +1,13 @@
 import type { EntryId } from '@shared/common';
 import { errorPayloadSchema, makeError, type ErrorPayload } from '@shared/errors';
-import { fileUrl } from '@shared/http';
+import { sessionFileUrl } from '@web/lib/host-urls';
 
 /**
  * Where the viewer gets file CONTENT from (WP-54, ADR-142): by default `GET /api/file` of the own
  * origin (`fetch` same-origin, `no-store`; `<img>`/`<iframe>` use the same URL). Playground and tests
  * replace it with `setFileSource` – no server needed (the "loader seam" for wave 2).
+ * WP-80: a file of another computer's session comes through this server's forwarding route
+ * (`sessionFileUrl`, same origin).
  * Metadata never comes from here: `file.stat` goes over the WebSocket like every command.
  */
 
@@ -50,7 +52,7 @@ export const httpFileSource: FileSource = {
   async text(file, signal) {
     let response: Response;
     try {
-      response = await fetch(fileUrl(file.entryId, file.path), {
+      response = await fetch(sessionFileUrl(file.sessionKey, file.entryId, file.path), {
         credentials: 'same-origin',
         cache: 'no-store',
         signal,
@@ -62,7 +64,7 @@ export const httpFileSource: FileSource = {
     if (!response.ok) throw new FileLoadError(await errorOf(response));
     return response.text();
   },
-  url: (file) => fileUrl(file.entryId, file.path),
+  url: (file) => sessionFileUrl(file.sessionKey, file.entryId, file.path),
 };
 
 let current: FileSource = httpFileSource;

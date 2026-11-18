@@ -56,6 +56,7 @@ import {
 import { applySessionOp, trimItems, viewStateFromSnapshot, type SessionViewState } from '@shared/sync';
 import { pathTail } from '@web/lib/path-display';
 import { SHOWCASE_FILES } from '@web/playground/showcase/files';
+import { fakeMultiHostCommand, type FakeMultiHostOptions } from './fake-multi-host';
 import { FakeSessionInfoData } from './fake-session-info';
 import type { MemoryTransport } from './transport';
 
@@ -85,6 +86,11 @@ export interface FakeHostOptions {
   onCommand?: (cmd: Command, host: FakeHost) => FakeAck | undefined;
   /** Answer `session.sendPrompt` with a short streamed assistant reply (playground). */
   replyToPrompts?: boolean;
+  /**
+   * WP-80: answer `multiHost.configure`, `remoteAccess.*` and `hosts.*` (fake-multi-host.ts);
+   * without it they stay NOT_IMPLEMENTED (the WP-78b default path). `true` = no levers.
+   */
+  multiHost?: FakeMultiHostOptions | boolean;
 }
 
 interface ServerSession {
@@ -438,6 +444,13 @@ export class FakeHost {
   readonly commands: Command[] = [];
   /** When false, connections are dropped right away (offline simulation). */
   online = true;
+  /** WP-80: close code of a connection while `online` is false (4502 = forwarder: computer unreachable). */
+  offlineCloseCode = 1006;
+  /**
+   * WP-80: "Several computers" answered (levers of fake-multi-host.ts); false = NOT_IMPLEMENTED
+   * (default, the WP-78b path). From `FakeHostOptions.multiHost`, changeable later (tests, demos).
+   */
+  multiHost: FakeMultiHostOptions | false;
 
   private readonly options: FakeHostOptions;
   private readonly cleanups: (() => void)[] = [];
@@ -496,6 +509,7 @@ export class FakeHost {
     this.serverInstanceId = options.serverInstanceId ?? SAMPLE_IDS.serverInstanceId;
     this.buildId = options.buildId ?? 'dev';
     this.hostState = options.hostState ?? sampleHostState();
+    this.multiHost = options.multiHost === true ? {} : (options.multiHost ?? false);
     for (const summary of options.summaries ?? []) this.summaries.set(summary.entryId, summary);
     for (const snapshot of options.sessions ?? []) this.addSession(snapshot);
     for (const file of fakeFileTable()) this.setFile(file);
@@ -975,7 +989,7 @@ export class FakeHost {
     this.handshaken = false;
     this.subscribed.clear();
     if (!this.online) {
-      this.transport.serverClose(1006);
+      this.transport.serverClose(this.offlineCloseCode);
       return;
     }
     this.send(
@@ -1379,7 +1393,7 @@ export class FakeHost {
       // WP-77: the synchronized draft like the engine.
       case 'session.setDraft':
         return this.setDraft(cmd);
-      // WP-76: contract only – several computers follow in WP-80.
+      // WP-80: several computers, opt-in (`multiHost`); else NOT_IMPLEMENTED as in WP-76/78b.
       case 'multiHost.configure':
       case 'remoteAccess.pair':
       case 'remoteAccess.cancelPairing':
@@ -1393,7 +1407,9 @@ export class FakeHost {
       case 'hosts.move':
       case 'hosts.remove':
       case 'hosts.reconnect':
-        return { ok: false, error: makeError('NOT_IMPLEMENTED', { command: cmd.name }) };
+        if (this.multiHost === false)
+          return { ok: false, error: makeError('NOT_IMPLEMENTED', { command: cmd.name }) };
+        return fakeMultiHostCommand(this, cmd, this.multiHost);
       case 'link.open':
         this.linkOpens.push(cmd.url);
         return this.linkOpenError === null ? this.ok() : { ok: false, error: this.linkOpenError };

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useSyncExternalStore, type SyntheticEvent } from 'react';
-import type { ProfileId } from '@shared/common';
+import type { HostId, ProfileId } from '@shared/common';
 import { useT } from '@web/i18n';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@web/ui/dialog';
 import { NewSessionForm } from './NewSessionForm';
@@ -16,6 +16,12 @@ import { requestShell, useShellRequestHandler } from './requests';
 export interface NewSessionPrefill {
   cwd?: string;
   profileId?: ProfileId;
+  /**
+   * WP-80: the computer to start on ("New session here" of another computer's folder or session).
+   * Missing = the last used computer. The shell request `newSession` has no field for it (requests.ts
+   * is the coordinator's), so `openNewSession` hands it over beside the request (`pendingHostId`).
+   */
+  hostId?: HostId;
 }
 
 interface DialogState {
@@ -32,6 +38,8 @@ interface DialogState {
 }
 
 let state: DialogState = { open: false, prefill: {}, opening: 0, returnFocus: null };
+/** WP-80: computer of the `newSession` request just sent by `openNewSession` (taken by its handler). */
+let pendingHostId: HostId | null = null;
 const listeners = new Set<() => void>();
 
 function emit(next: DialogState): void {
@@ -64,6 +72,7 @@ function cleanPrefill(value: NewSessionPrefill | SyntheticEvent | Event | undefi
   const prefill: NewSessionPrefill = {};
   if (typeof value.cwd === 'string' && value.cwd !== '') prefill.cwd = value.cwd;
   if (value.profileId !== undefined) prefill.profileId = value.profileId;
+  if (typeof value.hostId === 'string' && value.hostId !== '') prefill.hostId = value.hostId;
   return prefill;
 }
 
@@ -73,8 +82,11 @@ function cleanPrefill(value: NewSessionPrefill | SyntheticEvent | Event | undefi
  * prefill". Without a mounted dialog the module state opens it once it mounts.
  */
 export function openNewSession(prefill?: NewSessionPrefill | SyntheticEvent | Event): void {
-  const clean = cleanPrefill(prefill);
-  if (!requestShell({ kind: 'newSession', ...clean })) show(clean);
+  const { hostId, ...request } = cleanPrefill(prefill);
+  pendingHostId = hostId ?? null;
+  const handled = requestShell({ kind: 'newSession', ...request });
+  pendingHostId = null;
+  if (!handled) show(hostId === undefined ? request : { ...request, hostId });
 }
 
 export function closeNewSession(): void {
@@ -98,7 +110,9 @@ export function NewSessionDialog() {
   const { open, prefill, opening, returnFocus } = useSyncExternalStore(subscribe, getState, getState);
   const created = useRef(false);
   useShellRequestHandler('newSession', (request) => {
-    show(cleanPrefill({ cwd: request.cwd, profileId: request.profileId }));
+    show(
+      cleanPrefill({ cwd: request.cwd, profileId: request.profileId, hostId: pendingHostId ?? undefined }),
+    );
     return true;
   });
   // The shell unmounts when the host goes away: never reopen on remount.
@@ -138,6 +152,7 @@ export function NewSessionDialog() {
             key={opening}
             initialCwd={prefill.cwd ?? ''}
             initialProfileId={prefill.profileId}
+            initialHostId={prefill.hostId}
             onCreated={() => {
               created.current = true;
               closeNewSession();

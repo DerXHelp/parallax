@@ -1,25 +1,22 @@
 import { FolderOpenIcon, FolderSearchIcon, PlusIcon } from 'lucide-react';
 import { useId, useMemo, useState } from 'react';
-import { LOCAL_HOST_ID, makeSessionKey, type ProfileId } from '@shared/common';
+import { LOCAL_HOST_ID, makeSessionKey, type HostId, type ProfileId } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import type { ProfileSummary } from '@shared/model';
 import { windowsPathIssue, windowsPathKey } from '@shared/paths';
 import { useI18n } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { shortPath } from '@web/lib/path-display';
+import { STORAGE_KEYS, readStorage, writeStorage } from '@web/lib/storage';
 import { errorPayloadOf } from '@web/state/connection';
-import {
-  sendCommand,
-  useConnectionStatus,
-  useHostState,
-  useSelectedSession,
-  useSummaries,
-} from '@web/state/hooks';
+import { useConnectionStatus, useHostState, useSelectedSession, useSummaries } from '@web/state/hooks';
+import { sendHostCommand, useHostLabels, type HostLabels } from '@web/state/hosts';
 import { Alert } from '@web/ui/alert';
 import { Button } from '@web/ui/button';
 import { Input } from '@web/ui/input';
 import { Label } from '@web/ui/label';
 import { Spinner } from '@web/ui/spinner';
+import { HostSelect } from './hosts/HostSelect';
 import { FolderBrowser } from './new-session/FolderBrowser';
 import { LoginButton, needsSignIn } from './login/LoginButton';
 import { ProfileIssueText, profileErrors } from './new-session/profile-status';
@@ -92,19 +89,37 @@ export function chosenProfile(
 }
 
 /**
+ * WP-80: the computer "New session" starts on – the pre-filled one, else the last used one, as long
+ * as it is still part of the window; else this computer.
+ */
+export function initialHost(hosts: HostLabels, prefill: HostId | undefined): HostId {
+  const known = (hostId: string | null | undefined): hostId is HostId =>
+    hostId === LOCAL_HOST_ID || (typeof hostId === 'string' && hosts.get(hostId) !== undefined);
+  if (known(prefill)) return prefill;
+  const last = readStorage('local', STORAGE_KEYS.newSessionHost);
+  return known(last) ? last : LOCAL_HOST_ID;
+}
+
+/**
  * "New session" (Plan "Neue Session", WP-36): project folder (typed, from the recent projects or
  * the folder browser) and profile (default pre-selected; profiles with error findings cannot be
  * picked) → `session.create {cwd, profileId}` with an explicit profile. Without a first prompt the
  * server creates a sleeping entry; the first message in the composer starts it. The new session
  * is selected and its message field focused. Unsafe paths (UNC, device, ADS …) are rejected
  * before sending (`@shared/paths`); server errors (CWD_NOT_FOUND …) are shown translated.
+ * WP-80 (WP-75 §4.4): with other computers the computer comes first (last used pre-selected);
+ * folder browser, profiles, default profile and recent folders come from it; switching the computer
+ * clears a folder that came from the other one; the session key carries the chosen computer.
  */
 export function NewSessionForm({
   initialCwd = '',
   initialProfileId,
+  initialHostId,
   onCreated,
 }: {
   initialCwd?: string;
+  /** WP-80: pre-chosen computer ("New session here" of another computer); default: the last used one. */
+  initialHostId?: HostId;
   /** Pre-selected profile ("New session in this project…"); default: the host's default profile. */
   initialProfileId?: ProfileId;
   /** After the session was created and selected (e.g. close the dialog). */
@@ -116,15 +131,39 @@ export function NewSessionForm({
   const profileId = useId();
   const profileLabelId = useId();
   const profileHintId = useId();
-  const [cwd, setCwd] = useState(initialCwd);
+  const hostLabelId = useId();
+  const hostHintId = useId();
+  const hosts = useHostLabels();
+  const [hostId, setHostId] = useState<HostId>(() => initialHost(hosts, initialHostId));
+  const [cwd, setCwdValue] = useState(initialCwd);
+  /** Computer the folder in the field belongs to (a switch clears a folder of the other one). */
+  const [cwdHost, setCwdHost] = useState<HostId>(hostId);
   const [choice, setChoice] = useState<ProfileId | null>(initialProfileId ?? null);
   const [error, setError] = useState<ErrorPayload | null>(null);
   const [pending, setPending] = useState(false);
   const [, select] = useSelectedSession();
   const entries = useSummaries();
-  const hostState = useHostState();
-  const online = useConnectionStatus() === 'open';
-  const recent = useMemo(() => recentProjects(entries), [entries]);
+  const hostState = useHostState(hostId);
+  const host = hosts.get(hostId);
+  const hostUsable = host === undefined || host.availability === 'available';
+  const online = useConnectionStatus(hostId) === 'open' && hostUsable;
+  const setCwd = (value: string) => {
+    setCwdValue(value);
+    setCwdHost(hostId);
+  };
+  const chooseHost = (next: HostId) => {
+    if (next === hostId) return;
+    setHostId(next);
+    // Profiles belong to a computer: its default applies again.
+    setChoice(null);
+    setError(null);
+    if (cwd.trim() !== '' && cwdHost !== next) setCwdValue('');
+    setCwdHost(next);
+  };
+  const recent = useMemo(
+    () => recentProjects(entries.filter((entry) => entry.hostId === hostId)),
+    [entries, hostId],
+  );
   const shownRecent = useMemo(() => filterRecentProjects(recent, cwd), [recent, cwd]);
   const profiles = hostState?.profiles ?? [];
   const profile = chosenProfile(profiles, choice, hostState?.defaultProfileId ?? null);
@@ -142,8 +181,13 @@ export function NewSessionForm({
     setPending(true);
     setError(null);
     try {
-      const result = await sendCommand(null, { name: 'session.create', cwd: value, profileId: profile.id });
-      const sessionKey = makeSessionKey(LOCAL_HOST_ID, result.entryId);
+      const result = await sendHostCommand(hostId, {
+        name: 'session.create',
+        cwd: value,
+        profileId: profile.id,
+      });
+      const sessionKey = makeSessionKey(hostId, result.entryId);
+      writeStorage('local', STORAGE_KEYS.newSessionHost, hostId === LOCAL_HOST_ID ? null : hostId);
       select(sessionKey);
       setCwd('');
       onCreated?.(sessionKey);
@@ -181,6 +225,26 @@ export function NewSessionForm({
       className="grid w-full max-w-md grid-cols-[minmax(0,1fr)] gap-4"
       aria-label={t('newSession.title')}
     >
+      {hosts.list.length === 0 ? null : (
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-1.5" data-slot="new-session-host">
+          <Label id={hostLabelId}>{t('hosts.newSession.host')}</Label>
+          <HostSelect
+            hosts={hosts.list}
+            value={hostId}
+            labelId={hostLabelId}
+            describedBy={hostHintId}
+            onValueChange={chooseHost}
+          />
+          <p id={hostHintId} className="text-muted-foreground text-2xs">
+            {host === undefined || hostUsable
+              ? t('hosts.newSession.hostHint')
+              : t('hosts.newSession.unavailable', {
+                  name: host.name,
+                  status: t(`hosts.status.${host.availability}`),
+                })}
+          </p>
+        </div>
+      )}
       <div className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
         <Label htmlFor={inputId}>{t('newSession.cwd.label')}</Label>
         <div className="flex gap-2">
@@ -200,6 +264,8 @@ export function NewSessionForm({
             }}
           />
           <FolderBrowser
+            key={hostId}
+            hostId={hostId}
             initialPath={cwd}
             onSelect={(path) => {
               setCwd(path);
@@ -270,7 +336,14 @@ export function NewSessionForm({
             </p>
           )}
           {profile !== null && needsSignIn(profile.claude) ? (
-            <LoginButton profileId={profile.id} className="justify-self-start" />
+            host === undefined ? (
+              <LoginButton profileId={profile.id} className="justify-self-start" />
+            ) : (
+              // WP-80: signing in runs on the other computer's desktop – never from here (ADR-208).
+              <p data-slot="sign-in-there" className="text-warning text-2xs">
+                {t('hosts.newSession.signInThere', { name: host.name })}
+              </p>
+            )
           ) : null}
           {blocking.length === 0 ? null : (
             <Alert tone="error" title={t('newSession.profile.unusable')} data-slot="profile-unusable">

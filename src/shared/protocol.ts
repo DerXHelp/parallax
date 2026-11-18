@@ -52,6 +52,7 @@ import {
   reloadTargetSchema,
   remoteAccessCheckSchema,
   remoteEventSchema,
+  remoteHostIdSchema,
   remotePortSchema,
   REMOTE_ACCESS_DEFAULT_PORT,
   sessionDetailPatchSchema,
@@ -646,6 +647,9 @@ export const commandSchema = z.discriminatedUnion('name', [
    * locally first: VALIDATION_FAILED {reason:'code'}); PAIRING_INVALID, PAIRING_EXPIRED,
    * PAIRING_RATE_LIMITED, HOST_UNREACHABLE, HOST_INCOMPATIBLE; VALIDATION_FAILED {reason:'limit'} at
    * LIMITS.hostsMax. The ack comes after the pairing finished.
+   * `replaceHostId` (WP-80 wish, 18.11.2026): pair an existing entry again (e.g. after `revoked` or a
+   * renewed key) – only after a successful pairing the new coupling replaces that entry's key, pin and
+   * address; `hostId`, color, place and thus the sessionKeys of its sessions stay (HOST_NOT_FOUND).
    */
   z.object({
     name: z.literal('hosts.add'),
@@ -653,6 +657,7 @@ export const commandSchema = z.discriminatedUnion('name', [
     port: remotePortSchema.default(REMOTE_ACCESS_DEFAULT_PORT),
     code: z.string().trim().min(1).max(64),
     displayName: hostNameSchema,
+    replaceHostId: remoteHostIdSchema.optional(),
   }),
   /** Host (role control): change name, color, address or port (only the given fields). HOST_NOT_FOUND. */
   z.object({
@@ -671,7 +676,8 @@ export const commandSchema = z.discriminatedUnion('name', [
   }),
   /**
    * Host (role control): remove a computer – asks it to drop the coupling when reachable, then deletes
-   * key, certificate and pin here. Open windows of it close with HOST_REVOKED.
+   * key, certificate and pin here. Open windows of it close with HOST_REVOKED. Result `peerNotified`:
+   * false = the other computer was not reached, its pairing must be removed there by hand (§B.8).
    */
   z.object({ name: z.literal('hosts.remove'), hostId: hostIdSchema }),
   /** Host (role control): try to connect now (also after `incompatible` or `unreachable`). */
@@ -946,7 +952,7 @@ export const commandResultSchemas = {
   'hosts.add': z.object({ hostId: hostIdSchema }),
   'hosts.update': z.object({}),
   'hosts.move': z.object({}),
-  'hosts.remove': z.object({}),
+  'hosts.remove': z.object({ peerNotified: z.boolean() }),
   'hosts.reconnect': z.object({}),
 } as const satisfies Record<CommandName, z.ZodType>;
 export type CommandResult<N extends CommandName> = z.infer<(typeof commandResultSchemas)[N]>;

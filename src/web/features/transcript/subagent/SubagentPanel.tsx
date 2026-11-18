@@ -1,9 +1,9 @@
 import { ArrowDownIcon, BotIcon, HistoryIcon, RefreshCwIcon } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { VList, type VListHandle } from 'virtua';
-import { parseSessionKey } from '@shared/common';
 import type { TranscriptItem } from '@shared/model';
 import { useI18n } from '@web/i18n';
+import { hostOfSession } from '@web/lib/host-urls';
 import type { SubagentPanelSlotProps } from '@web/shell/slots';
 import { useHookDisplay } from '@web/state/hook-display';
 import { useTranscriptView } from '@web/state/transcript-view';
@@ -15,7 +15,7 @@ import { Skeleton } from '@web/ui/skeleton';
 import { Spinner } from '@web/ui/spinner';
 import { ImageGallery, galleryImages } from '../components/ImageGallery';
 import { ImageViewer } from '../components/ImageViewer';
-import { TranscriptSettingsContext, type TranscriptSettings } from '../context';
+import { BlobHostContext, TranscriptSettingsContext, type TranscriptSettings } from '../context';
 import { useLazyTranscriptT } from '../i18n-lazy';
 import { StepGroupLine } from '../items/StepGroupRow';
 import { TranscriptItemView, TranscriptRow } from '../items/TranscriptRow';
@@ -95,9 +95,9 @@ export const SubagentPanel = memo(function SubagentPanel({
   const { t, tError } = useI18n();
   const lt = useLazyTranscriptT();
   const { pages, error, loadingEarlier, loadEarlier, refresh } = useSubagentTranscript(sessionKey, agentId);
-  const hostId = parseSessionKey(sessionKey)?.hostId;
-  const mode = useTranscriptView(hostId);
-  const hooks = useHookDisplay(hostId);
+  // WP-80: display settings always from this computer (also for another computer's session).
+  const mode = useTranscriptView();
+  const hooks = useHookDisplay();
   const stateKey = groupStateKey(sessionKey, agentId);
   const openGroups = useOpenGroups(stateKey);
 
@@ -125,7 +125,9 @@ export const SubagentPanel = memo(function SubagentPanel({
   let shift = shape.shift;
   if (shape.first !== firstId || shape.rows !== rows.length) {
     const prepended =
-      shape.first !== undefined && firstId !== shape.first && (items ?? []).some((item) => item.id === shape.first);
+      shape.first !== undefined &&
+      firstId !== shape.first &&
+      (items ?? []).some((item) => item.id === shape.first);
     shift = prepended;
     setShape({ first: firstId, rows: rows.length, shift });
   }
@@ -182,131 +184,150 @@ export const SubagentPanel = memo(function SubagentPanel({
 
   return (
     <TranscriptSettingsContext value={settings}>
-      <ImageViewer fallbackFocus={scrollElement}>
-        <div
-          ref={rootRef}
-          data-slot="subagent-panel"
-          data-agent-id={agentId}
-          data-running={running ? 'true' : 'false'}
-          className="flex h-full min-h-0 flex-col"
-        >
-          <div className="flex min-h-9 shrink-0 items-center gap-1.5 border-b px-3 py-1.5 text-xs">
-            <BotIcon aria-hidden className="text-muted-foreground size-3.5 shrink-0" />
-            <span className="min-w-0 truncate font-medium">{title}</span>
-            {subagentType === null || subagentType === title ? null : <Badge variant="outline">{subagentType}</Badge>}
-            <span className="flex-1" />
-            {pages === null ? null : (
-              <span data-slot="subagent-status" className="text-muted-foreground inline-flex shrink-0 items-center gap-1.5">
-                {running ? <Spinner className="size-3" label={lt('subagent.running')} /> : null}
-                <span className={running ? 'sr-only' : undefined}>
-                  {running ? lt('subagent.running') : lt('subagent.finished')}
+      <BlobHostContext value={hostOfSession(sessionKey)}>
+        <ImageViewer fallbackFocus={scrollElement}>
+          <div
+            ref={rootRef}
+            data-slot="subagent-panel"
+            data-agent-id={agentId}
+            data-running={running ? 'true' : 'false'}
+            className="flex h-full min-h-0 flex-col"
+          >
+            <div className="flex min-h-9 shrink-0 items-center gap-1.5 border-b px-3 py-1.5 text-xs">
+              <BotIcon aria-hidden className="text-muted-foreground size-3.5 shrink-0" />
+              <span className="min-w-0 truncate font-medium">{title}</span>
+              {subagentType === null || subagentType === title ? null : (
+                <Badge variant="outline">{subagentType}</Badge>
+              )}
+              <span className="flex-1" />
+              {pages === null ? null : (
+                <span
+                  data-slot="subagent-status"
+                  className="text-muted-foreground inline-flex shrink-0 items-center gap-1.5"
+                >
+                  {running ? <Spinner className="size-3" label={lt('subagent.running')} /> : null}
+                  <span className={running ? 'sr-only' : undefined}>
+                    {running ? lt('subagent.running') : lt('subagent.finished')}
+                  </span>
+                  <span aria-hidden>·</span>
+                  <span data-slot="subagent-count" className="tabular-nums">
+                    {lt('subagent.count', { count: total })}
+                  </span>
                 </span>
-                <span aria-hidden>·</span>
-                <span data-slot="subagent-count" className="tabular-nums">
-                  {lt('subagent.count', { count: total })}
-                </span>
-              </span>
-            )}
-            {running || pages === null ? null : (
-              <IconButton label={lt('subagent.refresh')} onClick={refresh}>
-                <RefreshCwIcon aria-hidden />
-              </IconButton>
-            )}
-          </div>
-          {error === null ? null : (
-            <div className="shrink-0 border-b p-3">
-              <Alert
-                tone="error"
-                data-slot="subagent-error"
-                title={lt('subagent.failed')}
-                actions={
-                  <Button size="sm" variant="outline" onClick={refresh}>
-                    {lt('subagent.retry')}
-                  </Button>
-                }
-              >
-                {tError(error)}
-              </Alert>
+              )}
+              {running || pages === null ? null : (
+                <IconButton label={lt('subagent.refresh')} onClick={refresh}>
+                  <RefreshCwIcon aria-hidden />
+                </IconButton>
+              )}
             </div>
-          )}
-          <div className="relative min-h-0 flex-1">
-            {pages === null ? (
-              error === null ? (
-                <div aria-busy="true" aria-label={lt('subagent.label', { title })} className="flex flex-col gap-3 p-4">
-                  <Skeleton className="h-4 w-1/3" />
-                  <Skeleton className="h-16 w-2/3" />
-                  <Skeleton className="h-4 w-1/2" />
-                </div>
-              ) : null
-            ) : rows.length === 0 ? (
-              <p className="text-muted-foreground flex h-full items-center justify-center p-6 text-xs">
-                {lt('subagent.empty')}
-              </p>
-            ) : (
-              <VList
-                ref={listRef}
-                data={rows}
-                shift={shift}
-                onScroll={onScroll}
-                onResize={onResize}
-                data-slot="subagent-list"
-                role="region"
-                tabIndex={0}
-                aria-label={lt('subagent.label', { title })}
-                className="focus-visible:ring-ring/60 h-full outline-none focus-visible:ring-2 focus-visible:ring-inset"
-              >
-                {(row: Row) => {
-                  const item = row.kind === 'item' ? byId.get(row.id) : undefined;
-                  return (
-                    <div
-                      key={rowKey(row)}
-                      data-row={row.kind}
-                      className={row.kind === 'item' && row.nested ? 'px-3 py-0.5' : 'px-3 py-1.5'}
-                    >
-                      {row.kind === 'earlier' ? (
-                        <div className="flex justify-center py-1">
-                          <Button size="sm" variant="ghost" disabled={loadingEarlier} onClick={loadEarlier}>
-                            {loadingEarlier ? (
-                              <Spinner className="size-3" label={lt('subagent.loadEarlier')} />
-                            ) : (
-                              <HistoryIcon aria-hidden />
-                            )}
-                            {lt('subagent.loadEarlier')}
-                          </Button>
-                        </div>
-                      ) : row.kind === 'group' ? (
-                        <GroupRow stateKey={stateKey} row={row} byId={byId} />
-                      ) : row.kind === 'gallery' ? (
-                        <ImageGallery
-                          images={galleryImages(row.ids.map((id) => byId.get(id) ?? null))}
-                          className="ml-5"
-                        />
-                      ) : item === undefined ? null : row.nested ? (
-                        <div className="border-border ml-2.5 border-l pl-3">
-                          <TranscriptItemView item={item} sessionKey={sessionKey} hideImages={row.hideImages} />
-                        </div>
-                      ) : (
-                        <TranscriptItemView item={item} sessionKey={sessionKey} hideImages={row.hideImages} />
-                      )}
-                    </div>
-                  );
-                }}
-              </VList>
+            {error === null ? null : (
+              <div className="shrink-0 border-b p-3">
+                <Alert
+                  tone="error"
+                  data-slot="subagent-error"
+                  title={lt('subagent.failed')}
+                  actions={
+                    <Button size="sm" variant="outline" onClick={refresh}>
+                      {lt('subagent.retry')}
+                    </Button>
+                  }
+                >
+                  {tError(error)}
+                </Alert>
+              </div>
             )}
-            {showJump && rows.length > 0 ? (
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={jumpToLatest}
-                className="absolute bottom-3 left-1/2 -translate-x-1/2 border shadow-md"
-              >
-                <ArrowDownIcon aria-hidden />
-                {t('transcript.list.jumpToLatest')}
-              </Button>
-            ) : null}
+            <div className="relative min-h-0 flex-1">
+              {pages === null ? (
+                error === null ? (
+                  <div
+                    aria-busy="true"
+                    aria-label={lt('subagent.label', { title })}
+                    className="flex flex-col gap-3 p-4"
+                  >
+                    <Skeleton className="h-4 w-1/3" />
+                    <Skeleton className="h-16 w-2/3" />
+                    <Skeleton className="h-4 w-1/2" />
+                  </div>
+                ) : null
+              ) : rows.length === 0 ? (
+                <p className="text-muted-foreground flex h-full items-center justify-center p-6 text-xs">
+                  {lt('subagent.empty')}
+                </p>
+              ) : (
+                <VList
+                  ref={listRef}
+                  data={rows}
+                  shift={shift}
+                  onScroll={onScroll}
+                  onResize={onResize}
+                  data-slot="subagent-list"
+                  role="region"
+                  tabIndex={0}
+                  aria-label={lt('subagent.label', { title })}
+                  className="focus-visible:ring-ring/60 h-full outline-none focus-visible:ring-2 focus-visible:ring-inset"
+                >
+                  {(row: Row) => {
+                    const item = row.kind === 'item' ? byId.get(row.id) : undefined;
+                    return (
+                      <div
+                        key={rowKey(row)}
+                        data-row={row.kind}
+                        className={row.kind === 'item' && row.nested ? 'px-3 py-0.5' : 'px-3 py-1.5'}
+                      >
+                        {row.kind === 'earlier' ? (
+                          <div className="flex justify-center py-1">
+                            <Button size="sm" variant="ghost" disabled={loadingEarlier} onClick={loadEarlier}>
+                              {loadingEarlier ? (
+                                <Spinner className="size-3" label={lt('subagent.loadEarlier')} />
+                              ) : (
+                                <HistoryIcon aria-hidden />
+                              )}
+                              {lt('subagent.loadEarlier')}
+                            </Button>
+                          </div>
+                        ) : row.kind === 'group' ? (
+                          <GroupRow stateKey={stateKey} row={row} byId={byId} />
+                        ) : row.kind === 'gallery' ? (
+                          <ImageGallery
+                            images={galleryImages(row.ids.map((id) => byId.get(id) ?? null))}
+                            className="ml-5"
+                          />
+                        ) : item === undefined ? null : row.nested ? (
+                          <div className="border-border ml-2.5 border-l pl-3">
+                            <TranscriptItemView
+                              item={item}
+                              sessionKey={sessionKey}
+                              hideImages={row.hideImages}
+                            />
+                          </div>
+                        ) : (
+                          <TranscriptItemView
+                            item={item}
+                            sessionKey={sessionKey}
+                            hideImages={row.hideImages}
+                          />
+                        )}
+                      </div>
+                    );
+                  }}
+                </VList>
+              )}
+              {showJump && rows.length > 0 ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={jumpToLatest}
+                  className="absolute bottom-3 left-1/2 -translate-x-1/2 border shadow-md"
+                >
+                  <ArrowDownIcon aria-hidden />
+                  {t('transcript.list.jumpToLatest')}
+                </Button>
+              ) : null}
+            </div>
           </div>
-        </div>
-      </ImageViewer>
+        </ImageViewer>
+      </BlobHostContext>
     </TranscriptSettingsContext>
   );
 });

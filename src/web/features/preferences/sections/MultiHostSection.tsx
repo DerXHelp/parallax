@@ -27,8 +27,8 @@ function conflictRole(error: ErrorPayload): MultiHostRole | null {
 
 /**
  * Section "Several computers" (WP-78b, WP-75 §4.1): the role of this computer – Off / Share /
- * Control others – via `multiHost.configure`, below it the part of the role. "Share" is complete
- * here; "Control others" is the place WP-80 fills (`multi-host/ControlPart.tsx`). Every command
+ * Control others – via `multiHost.configure`, below it the part of the role: "Share" (WP-78b,
+ * `multi-host/SharePart.tsx`) or "Control others" (WP-80, `multi-host/ControlPart.tsx`). Every command
  * goes to this computer; errors (e.g. `REMOTE_ROLE_CONFLICT`) show next to the control.
  */
 export function MultiHostSection({ hostState }: { hostState: HostState | null }) {

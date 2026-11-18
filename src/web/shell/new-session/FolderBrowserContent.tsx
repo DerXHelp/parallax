@@ -17,24 +17,18 @@ import {
   useState,
   type KeyboardEvent,
 } from 'react';
-import { LIMITS } from '@shared/common';
+import { LIMITS, LOCAL_HOST_ID, type HostId } from '@shared/common';
 import type { ErrorPayload } from '@shared/errors';
 import type { FsEntry, FsListing } from '@shared/model';
 import { windowsPathIssue, windowsPathKey } from '@shared/paths';
 import { useI18n } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { errorPayloadOf } from '@web/state/connection';
-import { sendCommand } from '@web/state/hooks';
+import { sendHostCommand } from '@web/state/hosts';
 import { Alert } from '@web/ui/alert';
 import { Badge } from '@web/ui/badge';
 import { Button } from '@web/ui/button';
-import {
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@web/ui/dialog';
+import { DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@web/ui/dialog';
 import { IconButton } from '@web/ui/icon-button';
 import { Label } from '@web/ui/label';
 import { Spinner } from '@web/ui/spinner';
@@ -97,10 +91,13 @@ interface LoadOptions {
  */
 export default function FolderBrowserContent({
   initialPath,
+  hostId = LOCAL_HOST_ID,
   onChoose,
   onCancel,
 }: {
   initialPath: string | null;
+  /** WP-80: the computer whose folders are listed (host command over its connection). */
+  hostId?: HostId;
   onChoose: (path: string) => void;
   onCancel: () => void;
 }) {
@@ -121,7 +118,7 @@ export default function FolderBrowserContent({
     const request = ++requestRef.current;
     setLoading(true);
     try {
-      const result = await sendCommand(null, {
+      const result = await sendHostCommand(hostId, {
         name: 'fs.listDirectory',
         path,
         showHidden: options.showHidden ?? showHidden,
@@ -172,7 +169,10 @@ export default function FolderBrowserContent({
   };
 
   const goRoots = () => {
-    void load(null, { highlight: current === null ? null : (breadcrumbs(current)[0]?.path ?? null), focusList: true });
+    void load(null, {
+      highlight: current === null ? null : (breadcrumbs(current)[0]?.path ?? null),
+      focusList: true,
+    });
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -213,13 +213,21 @@ export default function FolderBrowserContent({
         goUp();
         return;
       default:
-        if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey && event.key !== ' ') {
+        if (
+          event.key.length === 1 &&
+          !event.ctrlKey &&
+          !event.metaKey &&
+          !event.altKey &&
+          event.key !== ' '
+        ) {
           const now = Date.now();
           const previous = typeahead.current;
           const text = now - previous.at < TYPEAHEAD_MS ? previous.text + event.key : event.key;
           typeahead.current = { text, at: now };
           const query = text.toLowerCase();
-          const order = [...entries.keys()].map((offset) => (active + (text.length === 1 ? 1 : 0) + offset) % entries.length);
+          const order = [...entries.keys()].map(
+            (offset) => (active + (text.length === 1 ? 1 : 0) + offset) % entries.length,
+          );
           const found = order.find((index) => entries[index]?.name.toLowerCase().startsWith(query) === true);
           if (found !== undefined) {
             event.preventDefault();
@@ -247,7 +255,8 @@ export default function FolderBrowserContent({
   }, [current, t]);
 
   const crumbs = current === null ? [] : breadcrumbs(current);
-  const listLabel = current === null ? t('newSession.browser.listRoots') : t('newSession.browser.list', { path: current });
+  const listLabel =
+    current === null ? t('newSession.browser.listRoots') : t('newSession.browser.list', { path: current });
   const optionId = (index: number) => `${listId}-option-${String(index)}`;
 
   return (
@@ -407,7 +416,10 @@ export default function FolderBrowserContent({
       ) : null}
 
       <DialogFooter className="items-center sm:justify-between">
-        <p className="text-muted-foreground min-w-0 truncate font-mono text-2xs" data-slot="folder-browser-current">
+        <p
+          className="text-muted-foreground min-w-0 truncate font-mono text-2xs"
+          data-slot="folder-browser-current"
+        >
           {current ?? t('newSession.browser.nothingChosen')}
         </p>
         <div className="flex shrink-0 gap-2">

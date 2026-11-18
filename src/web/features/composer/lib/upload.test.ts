@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
 import { makeError } from '@shared/errors';
-import { API_PATHS } from '@shared/http';
-import { sampleBlobRef } from '@shared/samples';
+import { API_PATHS, hostAttachmentsPath } from '@shared/http';
+import { SAMPLE_IDS, SAMPLE_REMOTE_HOST_ID, sampleBlobRef } from '@shared/samples';
 import type { PreparedImage } from './images';
 import { httpUploader, UPLOAD_NAME_MAX, UploadError, uploadName, uploadQuery } from './upload';
 
@@ -39,6 +40,18 @@ describe('httpUploader (ADR-103, WP-33 route)', () => {
       credentials: 'same-origin',
     });
     expect(uploadQuery({ ...IMAGE, name: 'x'.repeat(300) })).toContain(`name=${'x'.repeat(260)}&`);
+  });
+
+  it('sends the upload to the computer of the session (WP-80)', () => {
+    const local = uploadQuery({ ...IMAGE, sessionKey: makeSessionKey(LOCAL_HOST_ID, SAMPLE_IDS.entry) });
+    expect(local.startsWith(`${API_PATHS.attachments}?`)).toBe(true);
+    expect(uploadQuery({ ...IMAGE, sessionKey: null }).startsWith(`${API_PATHS.attachments}?`)).toBe(true);
+    const remote = uploadQuery({
+      ...IMAGE,
+      sessionKey: makeSessionKey(SAMPLE_REMOTE_HOST_ID, SAMPLE_IDS.entry),
+    });
+    expect(remote.startsWith(`${hostAttachmentsPath(SAMPLE_REMOTE_HOST_ID)}?`)).toBe(true);
+    expect(remote).toContain('name=');
   });
 
   it.each([

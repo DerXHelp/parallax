@@ -1,16 +1,15 @@
 import { PanelLeftOpenIcon } from 'lucide-react';
-import { memo, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { focusElement, focusedElement } from '@web/lib/return-focus';
-import { flatSidebarOrder, groupedOrder, groupSessions } from '@web/lib/session-order';
 import { sessionTitle } from '@web/lib/session-title';
 import { useNow } from '@web/state/clock';
 import { useSelectedSession, useSummaries } from '@web/state/hooks';
 import { IconButton } from '@web/ui/icon-button';
 import { StatusIcon } from '@web/ui/status-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
-import { useSidebarMode } from './navigation/sidebar-view';
+import { useSidebarLayout } from './navigation/use-sidebar-layout';
 import { focusSessionInput } from './NewSessionForm';
 import { useEscapeHandler } from './shortcuts';
 import { Sidebar, SidebarUpdateNotice } from './Sidebar';
@@ -56,14 +55,10 @@ const SidebarRail = memo(function SidebarRail({
   const t = useT();
   const entries = useSummaries();
   const now = useNow(30_000);
-  const mode = useSidebarMode();
   const [selected, select] = useSelectedSession();
-  // Same order as the sidebar (its Alt+1…9 order): flat with pinned first, or by project.
-  const order = useMemo(() => {
-    const date = new Date(now);
-    if (mode === 'grouped') return groupedOrder(groupSessions(entries, date));
-    return flatSidebarOrder(entries, date);
-  }, [entries, now, mode]);
+  // Same order as the sidebar: flat with pinned first, by project, or (WP-80) by computer – every
+  // session, also those of collapsed groups.
+  const order = useSidebarLayout(entries, now).layout.order;
 
   return (
     <nav
