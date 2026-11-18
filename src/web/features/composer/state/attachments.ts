@@ -159,7 +159,8 @@ async function processFile(sessionKey: string, attachment: ComposerAttachment, f
   try {
     const request = await uploadRequest(sessionKey, id, kind, file, attachment.name, removed);
     if (request === null) return;
-    const ref = await uploadAttachment(request, controller.signal);
+    // WP-80: the session decides the computer the attachment lives on (`uploadQuery`).
+    const ref = await uploadAttachment({ ...request, sessionKey }, controller.signal);
     if (removed()) return;
     update(sessionKey, id, { status: 'done', ref, bytes: ref.bytes, kind: kindOfRef(ref, kind) });
   } catch (caught) {

@@ -1,4 +1,5 @@
 import { createContext, useContext, type ComponentType } from 'react';
+import { LOCAL_HOST_ID, type HostId } from '@shared/common';
 import type { BlobRef } from '@shared/model';
 
 /**
@@ -39,3 +40,10 @@ export type OpenImage = (image: BlobRef, trigger: HTMLElement, gallery?: readonl
  * (following new output). Null outside a TranscriptView – a thumbnail then has its own lightbox.
  */
 export const ImageViewerContext = createContext<OpenImage | null>(null);
+
+/**
+ * WP-80: the computer of the shown session – blob images load from it (`blobSource(id, hostId)`,
+ * forwarding route for another computer). TranscriptView and SubagentPanel set it; this computer
+ * outside them.
+ */
+export const BlobHostContext = createContext<HostId>(LOCAL_HOST_ID);

@@ -6,6 +6,7 @@ import { startScenario } from '@web/playground/PlaygroundScenario';
 import type { PlaygroundDemo } from '@web/playground/types';
 import { useSummary } from '@web/state/hooks';
 import { AppShell } from './AppShell';
+import { hostsDemos } from './hosts/hosts-demos';
 import { SessionMenu } from './navigation/SessionMenu';
 import { PaneLayout } from './PaneLayout';
 import { SessionDropOverlay } from './session-drop';
@@ -19,7 +20,8 @@ import { SlotBoundary } from './SlotBoundary';
  * header buttons with counters (wide and narrow), the session menu with "Open folder in Explorer",
  * the drop overlay, the sidebar in a 900 px and a 700 px frame, the SlotBoundary error cards and
  * its quiet variant (R5W-02). Data: the navigation scenario plus a detail patch of the selected
- * session (plan, background tasks, to-dos).
+ * session (plan, background tasks, to-dos). WP-80 adds the demos of several computers
+ * (`hosts/hosts-demos.tsx`).
  */
 
 const AUTH = NAVIGATION_SESSION_KEYS.auth;
@@ -260,4 +262,6 @@ export const shellPhase3Demos: readonly PlaygroundDemo[] = [
       </div>
     ),
   },
+  // WP-80: several computers in the window.
+  ...hostsDemos,
 ];

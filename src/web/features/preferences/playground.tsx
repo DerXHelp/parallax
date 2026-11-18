@@ -228,7 +228,7 @@ export const demos: PlaygroundDemo[] = [
   },
   {
     id: 'multi-host-control',
-    title: 'Settings – Several computers (control others: place of WP-80)',
+    title: 'Settings – Several computers (control others)',
     render: () => <MultiHostDemo variant="control" />,
   },
   pageDemo('about', 'Settings – About', 'about', 'integration'),

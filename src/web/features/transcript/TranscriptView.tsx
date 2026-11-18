@@ -5,6 +5,7 @@ import type { QueuedPrompt, SessionSummary, TranscriptItem } from '@shared/model
 import type { SessionViewState } from '@shared/sync';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
+import { hostOfSession } from '@web/lib/host-urls';
 import { useTranscriptFollowHandler } from '@web/shell/transcript-follow';
 import { loadEarlier } from '@web/state/actions';
 import { errorPayloadOf } from '@web/state/connection';
@@ -24,7 +25,12 @@ import { Spinner } from '@web/ui/spinner';
 import { ToolImagesGallery } from './components/ImageGallery';
 import { ImageViewer } from './components/ImageViewer';
 import { SinceLastVisit } from './components/SinceLastVisit';
-import { QueuedIdsContext, TranscriptSettingsContext, type TranscriptSettings } from './context';
+import {
+  BlobHostContext,
+  QueuedIdsContext,
+  TranscriptSettingsContext,
+  type TranscriptSettings,
+} from './context';
 import { QueuedPromptRow } from './items/MessageRows';
 import { StepGroupRow } from './items/StepGroupRow';
 import { TranscriptRow } from './items/TranscriptRow';
@@ -302,7 +308,11 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
   // WP-65 §1.2: "To the first new message" – the row of that item (or the group/gallery holding it).
   const jumpToItem = (itemId: string) => {
     const index = rows.findIndex((row) =>
-      row.kind === 'item' ? row.id === itemId : row.kind === 'group' || row.kind === 'gallery' ? row.ids.includes(itemId) : false,
+      row.kind === 'item'
+        ? row.id === itemId
+        : row.kind === 'group' || row.kind === 'gallery'
+          ? row.ids.includes(itemId)
+          : false,
     );
     const handle = listRef.current;
     if (index < 0 || handle === null) return;
@@ -324,106 +334,112 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
   const empty = rows.length === 0;
   return (
     <TranscriptSettingsContext value={settings}>
-      <QueuedIdsContext value={queuedIds}>
-        <ImageViewer fallbackFocus={scrollElement}>
-          <div
-            ref={rootRef}
-            data-slot="transcript"
-            data-session-key={sessionKey}
-            className="relative h-full min-h-0"
-          >
-            {!meta.hasView ? (
-              <div
-                aria-busy="true"
-                aria-label={t('transcript.list.label')}
-                className="flex flex-col gap-3 p-4"
-              >
-                <Skeleton className="h-4 w-1/3" />
-                <Skeleton className="h-16 w-2/3" />
-                <Skeleton className="h-4 w-1/2" />
-              </div>
-            ) : empty ? (
-              <p className="text-muted-foreground flex h-full items-center justify-center p-6 text-xs">
-                {t('transcript.list.empty')}
-              </p>
-            ) : (
-              <VList
-                ref={listRef}
-                data={rows}
-                shift={shift}
-                onScroll={onScroll}
-                onResize={onResize}
-                role="region"
-                aria-label={t('transcript.list.label')}
-                tabIndex={0}
-                className="focus-visible:ring-ring/60 h-full outline-none focus-visible:ring-2 focus-visible:ring-inset"
-              >
-                {(row: Row) => (
-                  <div
-                    key={rowKey(row)}
-                    data-row={row.kind}
-                    data-nested={row.kind === 'item' && row.nested ? 'true' : undefined}
-                    className={cn(
-                      'mx-auto w-full max-w-4xl px-4',
-                      row.kind === 'item' && row.nested ? 'py-0.5' : 'py-1.5',
-                    )}
-                  >
-                    {row.kind === 'earlier' ? (
-                      <EarlierRow loading={loadingEarlier} onLoad={requestEarlier} />
-                    ) : row.kind === 'item' ? (
-                      row.nested ? (
-                        // A step of an open group: indented under its group line.
-                        <div className="border-border ml-2.5 border-l pl-3">
+      <BlobHostContext value={hostOfSession(sessionKey)}>
+        <QueuedIdsContext value={queuedIds}>
+          <ImageViewer fallbackFocus={scrollElement}>
+            <div
+              ref={rootRef}
+              data-slot="transcript"
+              data-session-key={sessionKey}
+              className="relative h-full min-h-0"
+            >
+              {!meta.hasView ? (
+                <div
+                  aria-busy="true"
+                  aria-label={t('transcript.list.label')}
+                  className="flex flex-col gap-3 p-4"
+                >
+                  <Skeleton className="h-4 w-1/3" />
+                  <Skeleton className="h-16 w-2/3" />
+                  <Skeleton className="h-4 w-1/2" />
+                </div>
+              ) : empty ? (
+                <p className="text-muted-foreground flex h-full items-center justify-center p-6 text-xs">
+                  {t('transcript.list.empty')}
+                </p>
+              ) : (
+                <VList
+                  ref={listRef}
+                  data={rows}
+                  shift={shift}
+                  onScroll={onScroll}
+                  onResize={onResize}
+                  role="region"
+                  aria-label={t('transcript.list.label')}
+                  tabIndex={0}
+                  className="focus-visible:ring-ring/60 h-full outline-none focus-visible:ring-2 focus-visible:ring-inset"
+                >
+                  {(row: Row) => (
+                    <div
+                      key={rowKey(row)}
+                      data-row={row.kind}
+                      data-nested={row.kind === 'item' && row.nested ? 'true' : undefined}
+                      className={cn(
+                        'mx-auto w-full max-w-4xl px-4',
+                        row.kind === 'item' && row.nested ? 'py-0.5' : 'py-1.5',
+                      )}
+                    >
+                      {row.kind === 'earlier' ? (
+                        <EarlierRow loading={loadingEarlier} onLoad={requestEarlier} />
+                      ) : row.kind === 'item' ? (
+                        row.nested ? (
+                          // A step of an open group: indented under its group line.
+                          <div className="border-border ml-2.5 border-l pl-3">
+                            <TranscriptRow
+                              sessionKey={sessionKey}
+                              itemId={row.id}
+                              hideImages={row.hideImages}
+                            />
+                          </div>
+                        ) : (
                           <TranscriptRow
                             sessionKey={sessionKey}
                             itemId={row.id}
                             hideImages={row.hideImages}
                           />
-                        </div>
+                        )
+                      ) : row.kind === 'group' ? (
+                        <StepGroupRow
+                          sessionKey={sessionKey}
+                          groupKey={row.key}
+                          ids={row.ids}
+                          imageIds={row.imageIds}
+                          open={row.open}
+                        />
+                      ) : row.kind === 'gallery' ? (
+                        <ToolImagesGallery sessionKey={sessionKey} ids={row.ids} className="ml-5" />
                       ) : (
-                        <TranscriptRow sessionKey={sessionKey} itemId={row.id} hideImages={row.hideImages} />
-                      )
-                    ) : row.kind === 'group' ? (
-                      <StepGroupRow
-                        sessionKey={sessionKey}
-                        groupKey={row.key}
-                        ids={row.ids}
-                        imageIds={row.imageIds}
-                        open={row.open}
-                      />
-                    ) : row.kind === 'gallery' ? (
-                      <ToolImagesGallery sessionKey={sessionKey} ids={row.ids} className="ml-5" />
-                    ) : (
-                      <QueuedPromptRow prompt={row.prompt} sessionKey={sessionKey} />
-                    )}
-                  </div>
-                )}
-              </VList>
-            )}
-            {since === null || sinceClosed || !meta.hasView ? null : (
-              <SinceLastVisit
-                sessionKey={sessionKey}
-                since={since}
-                onJump={jumpToItem}
-                onClose={() => {
-                  setSinceClosed(true);
-                }}
-              />
-            )}
-            {showJump && !empty ? (
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={jumpToLatest}
-                className="absolute bottom-3 left-1/2 -translate-x-1/2 border shadow-md"
-              >
-                <ArrowDownIcon aria-hidden />
-                {t('transcript.list.jumpToLatest')}
-              </Button>
-            ) : null}
-          </div>
-        </ImageViewer>
-      </QueuedIdsContext>
+                        <QueuedPromptRow prompt={row.prompt} sessionKey={sessionKey} />
+                      )}
+                    </div>
+                  )}
+                </VList>
+              )}
+              {since === null || sinceClosed || !meta.hasView ? null : (
+                <SinceLastVisit
+                  sessionKey={sessionKey}
+                  since={since}
+                  onJump={jumpToItem}
+                  onClose={() => {
+                    setSinceClosed(true);
+                  }}
+                />
+              )}
+              {showJump && !empty ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={jumpToLatest}
+                  className="absolute bottom-3 left-1/2 -translate-x-1/2 border shadow-md"
+                >
+                  <ArrowDownIcon aria-hidden />
+                  {t('transcript.list.jumpToLatest')}
+                </Button>
+              ) : null}
+            </div>
+          </ImageViewer>
+        </QueuedIdsContext>
+      </BlobHostContext>
     </TranscriptSettingsContext>
   );
 }

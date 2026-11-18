@@ -23,17 +23,18 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { Fragment } from 'react';
-import { LOCAL_HOST_ID, parseSessionKey } from '@shared/common';
+import { LOCAL_HOST_ID, parseSessionKey, type HostId } from '@shared/common';
 import { makeError } from '@shared/errors';
 import type { SessionSummary } from '@shared/model';
 import { windowsPathIssue } from '@shared/paths';
-import type { Command } from '@shared/protocol';
+import type { Command, CommandName } from '@shared/protocol';
 import { useT, type TranslationKey } from '@web/i18n';
 import { copyText } from '@web/lib/clipboard';
 import { focusElement, focusedElement } from '@web/lib/return-focus';
 import { openClaudeSessionUrl, openSessionWindow } from '@web/lib/windows';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand } from '@web/state/hooks';
+import { sessionAllows } from '@web/state/hosts';
 import { showErrorNotice, showTextNotice } from '@web/state/notices';
 import { ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut } from '@web/ui/context-menu';
 import { DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut } from '@web/ui/dropdown-menu';
@@ -177,10 +178,11 @@ export function copyConsoleCommand(sessionKey: string, summary: SessionSummary):
 /**
  * "New session in this project…": the dialog of WP-36 pre-filled. `openNewSession` asks the
  * request channel itself and, without a mounted dialog, keeps the folder for its next opening
- * (WP-40: the former fallback `openNewSession()` lost the folder).
+ * (WP-40: the former fallback `openNewSession()` lost the folder). WP-80: on the folder's computer
+ * (`hostId`, default this computer).
  */
-export function newSessionIn(cwd: string): void {
-  openNewSession({ cwd });
+export function newSessionIn(cwd: string, hostId: HostId = LOCAL_HOST_ID): void {
+  openNewSession(hostId === LOCAL_HOST_ID ? { cwd } : { cwd, hostId });
 }
 
 /**
@@ -229,12 +231,27 @@ export function hasProcess(summary: SessionSummary): boolean {
   return runState === 'idle' || runState === 'working' || runState === 'starting';
 }
 
+/**
+ * WP-80 (WP-75 §4.4, ADR-208): the command behind an action that only the session's own computer
+ * runs – visible programs on its desktop (Explorer, console), the console command (it holds the
+ * profile's environment) and signing in. For a session of another computer these actions are left
+ * out (`sessionAllows`), never just disabled.
+ */
+const ACTION_COMMANDS: Partial<Record<SessionActionId, CommandName>> = {
+  openFolder: 'file.open',
+  openExternal: 'session.openExternal',
+  copyConsoleCommand: 'session.consoleCommand',
+  signIn: 'profile.login',
+};
+
 function build(
   id: SessionActionId,
   sessionKey: string,
   summary: SessionSummary,
   place: RenamePlace,
 ): SessionAction | null {
+  const command = ACTION_COMMANDS[id];
+  if (command !== undefined && !sessionAllows(sessionKey, command)) return null;
   const entryId = summary.entryId;
   const external = summary.external !== null;
   const started = summary.sessionId !== null;
@@ -298,8 +315,7 @@ function build(
         },
       };
     case 'openFolder':
-      // Explorer would open on the host's machine: only for the local host (ADR-144).
-      if (!isLocalSession(sessionKey)) return null;
+      // Explorer opens on the session's computer: only this computer's sessions (ADR-144, ACTION_COMMANDS).
       return {
         id,
         label: 'navigation.actions.openFolder',
@@ -316,7 +332,7 @@ function build(
         icon: FolderPlusIcon,
         disabled: false,
         run: () => {
-          newSessionIn(summary.cwd);
+          newSessionIn(summary.cwd, parseSessionKey(sessionKey)?.hostId ?? LOCAL_HOST_ID);
         },
       };
     case 'sleep':
