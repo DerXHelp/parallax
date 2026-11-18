@@ -38,9 +38,16 @@ describe('store schema list', () => {
     for (const name of used) expect(listSource, name).toContain(name);
   });
 
-  it('leaves only processes.json and auth-secret.json out of the backup', () => {
+  it('leaves processes.json, auth-secret.json and the files of several computers out of the backup', () => {
     const excluded = STORE_SCHEMAS.filter((store) => !store.backup).map((store) => store.id);
-    expect(excluded).toEqual(['processes.json', 'auth-secret.json']);
+    expect(excluded).toEqual([
+      'processes.json',
+      'auth-secret.json',
+      'multi-host.json',
+      'remote/peer.json',
+      'remote/events.json',
+      'keys/*.json',
+    ]);
     expect(STORE_SCHEMAS.find((store) => store.kind === 'jsonl')?.backup).toBe(true);
   });
 });
