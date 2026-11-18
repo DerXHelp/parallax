@@ -2656,6 +2656,10 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   - Scheitert beim Aufheben das Schreiben von `peer.json`, wird die Datei gelöscht; ohne schreibbare `peer.json`
     lauscht der freigebende Rechner nicht.
   - Der Vermittler reicht nur Medientypen einer festen Menge durch, alles andere als Download.
+  - Je Kopplung getrennte Agents für HTTP und WebSockets (gemeinsame Handshake-Schranke); der Wächter gilt erst mit
+    `host.state` als verbunden, der Backoff beginnt erst nach stabiler Verbindung neu, „widerrufen“ erst nach einer
+    zweiten Probe nach 70 s; stille Fenster-Verbindungen enden nach 75 s.
+  - Fernverbindungen sehen die Links einer laufenden Profil-Anmeldung nicht (`profiles[].login.url`/`manualUrl`).
 - **Begründung:** Beide Reviews fanden nichts Kritisches oder Hohes. Diese Punkte schließen Wege, die ein fremdes Gerät
   im Netz oder ein langsamer Rechner für Störungen nutzen könnte. Dazu kommt Tiefenverteidigung für den Fall, dass der
   TLS-Schlüsseltausch je gebrochen wird. Der Code wird nie übertragen; ein `macA` als Orakel reicht bei 128 Bit nicht.

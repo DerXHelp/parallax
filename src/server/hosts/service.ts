@@ -31,7 +31,7 @@ import {
   type PairWithHostOptions,
   type PairWithHostResult,
 } from '../secure/pairingClient';
-import { PinnedAgent, type PinnedAgentOptions } from '../secure/pinnedAgent';
+import { HandshakeGate, PinnedAgent, type PinnedAgentOptions } from '../secure/pinnedAgent';
 import { KeyStoreError, type Identity, type KeyStore } from '../secure/ports';
 import { SECRET_BYTES } from '../secure/tlsProfile';
 import type { StoreWarningSink } from '../store/jsonStore';
@@ -40,10 +40,12 @@ import {
   HOSTS_TIMING,
   HOST_LIMITS,
   HostLink,
+  destroyAgents,
   hostTarget,
   upstreamRequest,
   type HostLimits,
   type HostsTiming,
+  type LinkAgents,
 } from './link';
 import { pickColor, uniqueHostId } from './naming';
 import { HostForwarderError, type HostForwarder, type HostsService, type RelayEvents } from './ports';
@@ -228,28 +230,37 @@ export function createHostsService(options: HostsServiceOptions): Hosts {
       relay,
     });
 
-  const buildAgent = (
+  /** HTTP and WebSocket agents of one coupling, one shared handshake gate (each copies kAuth). */
+  const buildAgents = (
     identity: Identity,
     record: Pick<HostRecord, 'peerCertificate' | 'peerPin'>,
     authKey: Buffer,
-  ) =>
-    new PinnedAgent({
+  ): LinkAgents => {
+    const shared = {
       identity,
       peerCertificateDer: Buffer.from(record.peerCertificate, 'base64'),
       peerPin: record.peerPin,
       authKey,
-      maxSockets: limits.httpSockets,
+      gate: new HandshakeGate(),
       ...options.agentOptions,
-    });
+    };
+    const http = new PinnedAgent({ ...shared, maxSockets: limits.httpSockets });
+    try {
+      return { http, ws: new PinnedAgent({ ...shared, keepAlive: false }) };
+    } catch (error) {
+      http.destroy();
+      throw error;
+    }
+  };
 
   /** Key file + DPAPI(kAuth) → agent (plaintext zeroed). Throws KeyStoreError or a plain Error (key missing/broken). */
-  const loadAgent = async (record: HostRecord): Promise<PinnedAgent> => {
+  const loadAgents = async (record: HostRecord): Promise<LinkAgents> => {
     const identity = await identityStore.load(`coupling:${record.hostId}`);
     if (identity === null) throw new Error('coupling key missing');
     const plain = await keyStore.unprotect(`auth:${record.hostId}`, Buffer.from(record.authKey, 'base64'));
     try {
       if (plain.length !== SECRET_BYTES) throw new KeyStoreError('failed');
-      return buildAgent(identity, record, plain);
+      return buildAgents(identity, record, plain);
     } finally {
       plain.fill(0);
     }
@@ -258,12 +269,12 @@ export function createHostsService(options: HostsServiceOptions): Hosts {
   const startLink = async (link: HostLink, startEpoch: number): Promise<void> => {
     const hostId = link.record.hostId;
     try {
-      const agent = await loadAgent(link.record);
+      const agents = await loadAgents(link.record);
       if (epoch !== startEpoch || links.get(hostId) !== link) {
-        agent.destroy();
+        destroyAgents(agents);
         return;
       }
-      link.attach(agent);
+      link.attach(agents);
     } catch (error) {
       if (epoch !== startEpoch || links.get(hostId) !== link) return;
       if (error instanceof KeyStoreError) {
@@ -401,7 +412,7 @@ export function createHostsService(options: HostsServiceOptions): Hosts {
         if (active) {
           const link = newLink(record);
           links.set(hostId, link);
-          link.attach(buildAgent(identity, record, result.authKey));
+          link.attach(buildAgents(identity, record, result.authKey));
         }
         emit();
         log.info(

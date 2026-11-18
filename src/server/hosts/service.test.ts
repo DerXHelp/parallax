@@ -319,6 +319,51 @@ describe('hosts service: status', () => {
     await newer.waitFor(hostId, 'incompatible');
   });
 
+  it('a relay the hub drops right after its clientHello never counts as connected and does not loop', async () => {
+    const state = { refuse: false, relays: 0 };
+    const b = await sharing({
+      wrapHub: (hub) => ({
+        handleRemoteConnection(socket, info) {
+          if (state.refuse) {
+            // Like `relay_exists`: `hello` goes out on connect, the clientHello is refused (this
+            // listener runs before the hub's, which then sends nothing on the closing socket).
+            let first = true;
+            socket.on('message', () => {
+              if (!first) return;
+              first = false;
+              state.relays += 1;
+              socket.close(WS_CLOSE.PROTOCOL_ERROR);
+            });
+          }
+          hub.handleRemoteConnection(socket, info);
+        },
+        remoteConnections: () => hub.remoteConnections(),
+        closeRemote: (code) => {
+          hub.closeRemote(code);
+        },
+      }),
+    });
+    const a = await control();
+    const hostId = await a.add(b);
+    await a.waitFor(hostId, 'connected');
+    state.refuse = true;
+    const seen = new Set<string>();
+    const off = a.service.onChange(() => {
+      seen.add(a.service.list()[0]?.status ?? '');
+    });
+    cleanups.push(off);
+    b.hub.closeRemote(WS_CLOSE.SERVER_SHUTDOWN);
+    await sleep(1_600);
+    // backoff 100, 200, 400, 800 ms – without the fix every refused relay counted as connected
+    // (attempt 0) and the watcher reconnected every 100 ms.
+    expect(state.relays).toBeGreaterThanOrEqual(2);
+    expect(state.relays).toBeLessThanOrEqual(5);
+    expect(seen.has('connected')).toBe(false);
+    state.refuse = false;
+    await hostCommand(a, { name: 'hosts.reconnect', hostId });
+    await a.waitFor(hostId, 'connected');
+  });
+
   it('unreachable → retries with growing delays, no loop', async () => {
     const b = await sharing();
     const a = await control();

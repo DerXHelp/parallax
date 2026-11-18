@@ -14,7 +14,8 @@
  * - At most HANDSHAKES_IN_FLIGHT connections are being set up at a time (the rest wait in order):
  *   the sharing computer counts unproven sockets per address (remote/limits.ts), many windows
  *   opening at once must not run into that limit. A connection waits at most `queueTimeoutMs` for
- *   its turn (then 'timeout'); `destroy()` ends every waiting one at once ('destroyed').
+ *   its turn (then 'timeout'); `destroy()` ends every waiting one at once ('destroyed'). Agents of
+ *   one coupling share one `HandshakeGate` (HTTP and WebSockets use separate agents).
  *
  * Use: `https.request({agent, host, port, path, headers: remoteVersionHeaders(v)})` and
  * `new WebSocket(url, {agent, ...REMOTE_WS_CLIENT_OPTIONS, headers: remoteVersionHeaders(v)})`.
@@ -83,6 +84,8 @@ export interface PinnedAgentOptions {
   maxSockets?: number;
   /** Longest wait for a free handshake slot (default QUEUE_TIMEOUT_MS). */
   queueTimeoutMs?: number;
+  /** Shared with the other agents of the same coupling (default: an own gate). */
+  gate?: HandshakeGate;
 }
 
 /** Version headers every request to a sharing computer carries (REMOTE_HEADERS, ADR-209). */
@@ -112,9 +115,66 @@ export const HANDSHAKES_IN_FLIGHT = 2;
 export const QUEUE_TIMEOUT_MS = 2 * (HANDSHAKE_TIMEOUT_MS + PROOF_TIMEOUT_MS);
 
 interface Waiter {
+  owner: object;
   grant: () => void;
   fail: (error: PinnedConnectionError) => void;
   timer: NodeJS.Timeout;
+}
+
+/**
+ * At most `limit` connection set-ups at a time for one coupling (first come, first served). A
+ * waiter gives up after `timeoutMs` ('timeout'); `failAll(owner)` ends the waiters of one agent.
+ */
+export class HandshakeGate {
+  private running = 0;
+  private readonly waiting: Waiter[] = [];
+
+  constructor(private readonly limit = HANDSHAKES_IN_FLIGHT) {}
+
+  acquire(owner: object, timeoutMs: number): Promise<void> {
+    if (this.running < this.limit) {
+      this.running += 1;
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      const waiter: Waiter = {
+        owner,
+        grant: () => {
+          clearTimeout(waiter.timer);
+          resolve();
+        },
+        fail: (error) => {
+          clearTimeout(waiter.timer);
+          reject(error);
+        },
+        timer: setTimeout(() => {
+          this.remove(waiter);
+          reject(new PinnedConnectionError('timeout'));
+        }, timeoutMs),
+      };
+      waiter.timer.unref();
+      this.waiting.push(waiter);
+    });
+  }
+
+  /** Hands the slot to the next waiter, or frees it. */
+  release(): void {
+    const next = this.waiting.shift();
+    if (next === undefined) this.running -= 1;
+    else next.grant();
+  }
+
+  failAll(owner: object, error: PinnedConnectionError): void {
+    for (const waiter of this.waiting.filter((candidate) => candidate.owner === owner)) {
+      this.remove(waiter);
+      waiter.fail(error);
+    }
+  }
+
+  private remove(waiter: Waiter): void {
+    const index = this.waiting.indexOf(waiter);
+    if (index >= 0) this.waiting.splice(index, 1);
+  }
 }
 
 export class PinnedAgent extends HttpsAgent {
@@ -125,8 +185,7 @@ export class PinnedAgent extends HttpsAgent {
   private readonly proofTimeoutMs: number;
   private readonly queueTimeoutMs: number;
   private closed = false;
-  private handshakes = 0;
-  private readonly waiting: Waiter[] = [];
+  private readonly gate: HandshakeGate;
 
   constructor(options: PinnedAgentOptions) {
     super({
@@ -153,6 +212,7 @@ export class PinnedAgent extends HttpsAgent {
     this.connectTimeoutMs = options.connectTimeoutMs ?? HANDSHAKE_TIMEOUT_MS;
     this.proofTimeoutMs = options.proofTimeoutMs ?? PROOF_TIMEOUT_MS;
     this.queueTimeoutMs = options.queueTimeoutMs ?? QUEUE_TIMEOUT_MS;
+    this.gate = options.gate ?? new HandshakeGate();
   }
 
   /** Pin check of the TLS handshake: from `cert.raw`, constant time, never throws (returns the error). */
@@ -190,7 +250,7 @@ export class PinnedAgent extends HttpsAgent {
       });
       return undefined;
     }
-    this.acquireHandshake().then(
+    this.gate.acquire(this, this.queueTimeoutMs).then(
       () => {
         if (this.closed) {
           this.releaseHandshake();
@@ -235,41 +295,8 @@ export class PinnedAgent extends HttpsAgent {
     return undefined;
   }
 
-  /**
-   * Waits for one of the HANDSHAKES_IN_FLIGHT slots (first come, first served); rejects with
-   * 'timeout' after `queueTimeoutMs` and with 'destroyed' when the agent goes away meanwhile.
-   */
-  private acquireHandshake(): Promise<void> {
-    if (this.handshakes < HANDSHAKES_IN_FLIGHT) {
-      this.handshakes += 1;
-      return Promise.resolve();
-    }
-    return new Promise((resolve, reject) => {
-      const waiter: Waiter = {
-        grant: () => {
-          clearTimeout(waiter.timer);
-          resolve();
-        },
-        fail: (error) => {
-          clearTimeout(waiter.timer);
-          reject(error);
-        },
-        timer: setTimeout(() => {
-          const index = this.waiting.indexOf(waiter);
-          if (index >= 0) this.waiting.splice(index, 1);
-          reject(new PinnedConnectionError('timeout'));
-        }, this.queueTimeoutMs),
-      };
-      waiter.timer.unref();
-      this.waiting.push(waiter);
-    });
-  }
-
-  /** Hands the slot to the next waiting connection, or frees it. */
   private releaseHandshake(): void {
-    const next = this.waiting.shift();
-    if (next === undefined) this.handshakes -= 1;
-    else next.grant();
+    this.gate.release();
   }
 
   /** Handshake, re-checks and connection proof; rejects with PinnedConnectionError. */
@@ -350,7 +377,7 @@ export class PinnedAgent extends HttpsAgent {
   override destroy(): void {
     this.closed = true;
     this.authKey.fill(0);
-    for (const waiter of this.waiting.splice(0)) waiter.fail(new PinnedConnectionError('destroyed'));
+    this.gate.failAll(this, new PinnedConnectionError('destroyed'));
     super.destroy();
   }
 }

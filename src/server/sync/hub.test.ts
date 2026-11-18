@@ -841,6 +841,29 @@ describe('remote connections: redaction and presence', () => {
     expect(remoteRest).toEqual(localRest);
   });
 
+  it('the links of a running profile login stay on this computer', () => {
+    const [first, ...rest] = source.host.profiles;
+    if (first === undefined) throw new Error('no profile');
+    const login = {
+      state: 'waiting' as const,
+      url: 'https://login.example/authorize?state=x',
+      manualUrl: 'https://login.example/code',
+      subscriptionType: null,
+      error: null,
+      at: sampleTime(5),
+    };
+    source.host = { ...source.host, profiles: [{ ...first, login }, ...rest] };
+    const local = connect(1);
+    const remote = connectRemote(11);
+    expect(local.ofType('host.state')[0]?.host.profiles[0]?.login).toEqual(login);
+    expect(remote.ofType('host.state')[0]?.host.profiles[0]?.login).toEqual({
+      ...login,
+      url: null,
+      manualUrl: null,
+    });
+    expect(remote.sent.some((text) => text.includes('login.example'))).toBe(false);
+  });
+
   it('presence: remote entries carry origin and kind, local entries keep their old shape', () => {
     connect(1);
     connectRemote(11);

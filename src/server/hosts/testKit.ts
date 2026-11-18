@@ -8,6 +8,7 @@ import type { RemoteHost, RemoteHostStatus } from '@shared/model';
 import type { Notification } from '@shared/protocol';
 import { makeTempHome } from '../http/testServer';
 import type { RegisterRemoteContent } from '../remote/peerHttp';
+import type { RemoteHubAttach } from '../remote/ports';
 import { startHarness, testInstance, type Harness } from '../remote/testKit';
 import { createMemoryKeyStore, type MemoryKeyStore } from '../secure/memoryKeyStore';
 import { TEST_HOST } from '../secure/testKit';
@@ -22,6 +23,7 @@ export { TEST_HOST };
 export const TEST_TIMING: NonNullable<HostsServiceOptions['timing']> = {
   backoffMs: [100, 200, 400, 800],
   revokeConfirmMs: 100,
+  stableMs: 1_000,
   healthTimeoutMs: 3_000,
   unpairTimeoutMs: 2_000,
   requestIdleMs: 5_000,
@@ -42,7 +44,13 @@ export interface SharingSide {
 
 /** A sharing computer with a real hub (frames and the relay are the real protocol). */
 export async function startSharing(
-  options: { version?: string; home?: string; registerContent?: RegisterRemoteContent } = {},
+  options: {
+    version?: string;
+    home?: string;
+    registerContent?: RegisterRemoteContent;
+    /** Puts something between the listener and the real hub (tests of odd sharing sides). */
+    wrapHub?: (hub: SyncHub) => RemoteHubAttach;
+  } = {},
 ): Promise<SharingSide> {
   const instance = {
     ...testInstance(),
@@ -52,7 +60,7 @@ export async function startSharing(
   const hub = createSyncHub({ source, instance, timing: { heartbeatMs: 0 } });
   const harness = await startHarness({
     instance,
-    hub,
+    hub: options.wrapHub === undefined ? hub : options.wrapHub(hub),
     ...(options.home === undefined ? {} : { home: options.home }),
     ...(options.registerContent === undefined ? {} : { registerContent: options.registerContent }),
   });

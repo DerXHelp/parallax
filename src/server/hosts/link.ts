@@ -4,8 +4,11 @@
  * the watcher (relay), the window connections and the HTTP requests of the forwarder.
  *
  * Watcher: `GET /remote/v1/health` (versions), then one lasting WebSocket with `clientHello.kind:
- * 'relay'` – no subscriptions, no commands. Its `hello` makes the computer `connected`;
- * `notify`/`notify.clear` go to the relay listeners. Failures:
+ * 'relay'` – no subscriptions, no commands. The first `host.state` (sent once the hub accepted the
+ * relay's `clientHello`; `hello` comes before that) makes the computer `connected`;
+ * `notify`/`notify.clear` go to the relay listeners. The backoff starts over only after a
+ * connection held `stableMs` (a relay accepted and dropped at once must not loop every second).
+ * Failures:
  * - unreachable → retry with backoff (no loop: one timer, growing delays);
  * - other version (409, `hello`) → `incompatible`, no retry until `hosts.reconnect`;
  * - our key refused after the handshake twice in a row, or close HOST_REVOKED over the proven
@@ -36,8 +39,14 @@ import { markWindowClosed } from './windows';
 export interface HostsTiming {
   /** Delays between attempts while a computer is unreachable (the last one repeats). */
   backoffMs: readonly number[];
-  /** Second attempt after the other side dropped our key (before the computer counts as revoked). */
+  /**
+   * Second attempt after the other side dropped our key (before the computer counts as revoked).
+   * Longer than the sharing side needs to notice dead sockets (heartbeat 30 s, two misses): a full
+   * peer table refuses like a revoked key and must not end the coupling (security review).
+   */
   revokeConfirmMs: number;
+  /** A relay connection must hold this long before the backoff starts over. */
+  stableMs: number;
   /** Health check, whole request. */
   healthTimeoutMs: number;
   /** `DELETE /remote/v1/peer/self` when a computer is removed. */
@@ -50,7 +59,8 @@ export interface HostsTiming {
 
 export const HOSTS_TIMING: HostsTiming = {
   backoffMs: [1_000, 2_000, 5_000, 10_000, 30_000, 60_000],
-  revokeConfirmMs: 2_000,
+  revokeConfirmMs: 70_000,
+  stableMs: 30_000,
   healthTimeoutMs: 10_000,
   unpairTimeoutMs: 5_000,
   requestIdleMs: 30_000,
@@ -64,11 +74,26 @@ export interface HostLimits {
    * computer (WP-76 §B.10: windows + relay + HTTP): 12 windows + 1 relay + `httpSockets`.
    */
   windows: number;
-  /** Concurrent HTTP sockets of the agent (blob, file, upload; WebSockets do not count). */
+  /** Concurrent HTTP sockets of the HTTP agent (blob, file, upload; WebSockets have their own agent). */
   httpSockets: number;
 }
 
 export const HOST_LIMITS: HostLimits = { windows: 12, httpSockets: 2 };
+
+/**
+ * The agents of one coupling (security review WP-82): HTTP at most `httpSockets` at a time, the
+ * WebSockets (windows, watcher) on their own agent – never queued behind a slow download. Both
+ * share one HandshakeGate, so the set-ups stay below the sharing side's per-address limit.
+ */
+export interface LinkAgents {
+  http: PinnedAgent;
+  ws: PinnedAgent;
+}
+
+export function destroyAgents(agents: LinkAgents | null): void {
+  agents?.http.destroy();
+  agents?.ws.destroy();
+}
 
 /** Largest body read from a health or error answer. */
 const SMALL_BODY_BYTES = 16 * 1024;
@@ -237,7 +262,7 @@ export class HostLink {
   record: HostRecord;
   private readonly deps: HostLinkDeps;
   private readonly log: Logger;
-  private agent: PinnedAgent | null = null;
+  private agents: LinkAgents | null = null;
   private state: LinkState = {
     status: 'connecting',
     appVersion: null,
@@ -286,7 +311,7 @@ export class HostLink {
 
   /** The coupling's agent is loaded (false after a failed load: `hosts.reconnect` loads again). */
   get hasAgent(): boolean {
-    return this.agent !== null;
+    return this.agents !== null;
   }
 
   /** Window connections that are open (diagnostics and tests). */
@@ -294,14 +319,14 @@ export class HostLink {
     return this.windows.size;
   }
 
-  /** The coupling's agent is ready: start the watcher. */
-  attach(agent: PinnedAgent): void {
+  /** The coupling's agents are ready: start the watcher. */
+  attach(agents: LinkAgents): void {
     if (this.stopped) {
-      agent.destroy();
+      destroyAgents(agents);
       return;
     }
-    this.agent?.destroy();
-    this.agent = agent;
+    destroyAgents(this.agents);
+    this.agents = agents;
     this.connect('connecting');
   }
 
@@ -326,7 +351,7 @@ export class HostLink {
       return;
     }
     this.closeWindows(WS_CLOSE.HOST_UNREACHABLE);
-    if (this.agent !== null) this.reconnect();
+    if (this.agents !== null) this.reconnect();
     else this.deps.changed();
   }
 
@@ -337,8 +362,8 @@ export class HostLink {
     this.clearTimer();
     this.closeRelay();
     this.closeWindows(code);
-    this.agent?.destroy();
-    this.agent = null;
+    destroyAgents(this.agents);
+    this.agents = null;
   }
 
   closeWindows(code: number): void {
@@ -451,7 +476,7 @@ export class HostLink {
    * already dropped this coupling; false when it could not be asked (then the user unpairs there).
    */
   async unpairRemote(): Promise<boolean> {
-    if (this.agent === null) return false;
+    if (this.agents === null) return false;
     if (this.state.status === 'revoked') return true;
     try {
       const response = await this.send(
@@ -475,7 +500,7 @@ export class HostLink {
     const cycle = ++this.cycle;
     this.clearTimer();
     this.closeRelay();
-    if (this.stopped || this.agent === null) return;
+    if (this.stopped || this.agents === null) return;
     if (status === 'connecting') this.setState({ ...this.state, status, lastError: null });
     void this.runCycle(cycle);
   }
@@ -539,6 +564,8 @@ export class HostLink {
     }
     this.relaySocket = ws;
     let opened = false;
+    let accepted = false;
+    let acceptedAt = 0;
     let handled = false;
     let socketError: unknown = null;
     let idle: NodeJS.Timeout | null = null;
@@ -585,7 +612,12 @@ export class HostLink {
     ws.on('message', (data: RawData, isBinary: boolean) => {
       alive();
       if (!this.current(cycle) || isBinary) return;
-      this.onRelayMessage(ws, data);
+      this.onRelayMessage(ws, data, () => {
+        if (accepted) return;
+        accepted = true;
+        acceptedAt = Date.now();
+        this.onConnected();
+      });
     });
     ws.on('error', (error: Error) => {
       socketError = error;
@@ -603,13 +635,13 @@ export class HostLink {
       } else if (code === WS_CLOSE.PROTOCOL_VERSION_MISMATCH) {
         this.setIncompatible(null, null);
       } else {
-        if (wasConnected) this.attempt = 0;
+        if (wasConnected && Date.now() - acceptedAt >= this.deps.timing.stableMs) this.attempt = 0;
         this.onFailure({ kind: 'unreachable', error: unreachable('closed'), suspect: false });
       }
     });
   }
 
-  private onRelayMessage(ws: WebSocket, data: RawData): void {
+  private onRelayMessage(ws: WebSocket, data: RawData, accepted: () => void): void {
     const text = Buffer.isBuffer(data)
       ? data.toString('utf8')
       : Array.isArray(data)
@@ -631,7 +663,9 @@ export class HostLink {
           ws.close();
           return;
         }
-        this.onConnected();
+        return;
+      case 'host.state':
+        accepted();
         return;
       case 'notify':
         this.emitRelay((listener) => {
@@ -658,7 +692,6 @@ export class HostLink {
 
   private onConnected(): void {
     const at = this.deps.now();
-    this.attempt = 0;
     this.refusals = 0;
     this.lastConnectedAt = at.toISOString();
     this.setState({
@@ -705,7 +738,7 @@ export class HostLink {
 
   /** A window or request was refused after the handshake: let the watcher check soon. */
   private kick(): void {
-    if (this.stopped || this.agent === null || this.timer === null) return;
+    if (this.stopped || this.agents === null || this.timer === null) return;
     if (this.state.status === 'unreachable' || this.state.status === 'connecting') {
       this.schedule(0);
     }
@@ -744,7 +777,7 @@ export class HostLink {
     if (this.state.status === 'incompatible') {
       return this.incompatibleError(this.state.appVersion, this.state.protocolVersion);
     }
-    if (this.agent === null) return this.state.lastError ?? unreachable('closed');
+    if (this.agents === null) return this.state.lastError ?? unreachable('closed');
     return null;
   }
 
@@ -782,7 +815,7 @@ export class HostLink {
   }
 
   private openSocket(): WebSocket {
-    const agent = this.agent;
+    const agent = this.agents?.ws ?? null;
     if (agent === null) throw new PinnedConnectionError('destroyed');
     const { host, port } = this.target();
     const urlHost = host.includes(':') ? `[${host}]` : host;
@@ -793,12 +826,12 @@ export class HostLink {
     });
   }
 
-  /** One HTTPS request over the coupling's agent (version headers added). */
+  /** One HTTPS request over the coupling's HTTP agent (version headers added). */
   private send(
     request: LinkRequest,
     options: { timeoutMs?: number; idleMs?: number },
   ): Promise<UpstreamResponse> {
-    const agent = this.agent;
+    const agent = this.agents?.http ?? null;
     if (agent === null) return Promise.reject(new PinnedConnectionError('destroyed'));
     return upstreamRequest(agent, this.target(), this.deps.appVersion, request, options);
   }

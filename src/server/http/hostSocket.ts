@@ -8,7 +8,8 @@
  * Close codes: the other side's end becomes WS_CLOSE.HOST_* for the browser (`browserCloseCode`),
  * a connection that could not be made the code of its error (`forwarderErrorCloseCode`); the
  * browser's end closes the connection to the other computer. A browser that stops answering pings
- * is dropped, a side that cannot keep up (buffered bytes) closes both like the hub does (1013).
+ * is dropped, so is another computer that sends nothing (no message, no ping of its hub) for
+ * `upstreamIdleMs`; a side that cannot keep up (buffered bytes) closes both like the hub does (1013).
  */
 import type { Logger } from 'pino';
 import { WebSocket, type RawData } from 'ws';
@@ -24,12 +25,15 @@ export interface BridgeLimits {
   maxBufferedBytes: number;
   /** Ping interval towards the browser; a missing pong by the next tick drops it. */
   heartbeatMs: number;
+  /** The other computer's hub pings every 30 s: silence this long ends the window (two misses + margin). */
+  upstreamIdleMs: number;
 }
 
 export const BRIDGE_LIMITS: BridgeLimits = {
   earlyMessages: 16,
   maxBufferedBytes: 16 * 1024 * 1024,
   heartbeatMs: 30_000,
+  upstreamIdleMs: 75_000,
 };
 
 /** Same code as the hub's slow consumer: the window reconnects and gets a snapshot. */
@@ -70,6 +74,7 @@ export function bridgeWindow(browser: WebSocket, options: BridgeOptions): void {
   let upstream: WebSocket | null = null;
   let ended = false;
   let alive = true;
+  let upstreamIdle: NodeJS.Timeout | null = null;
 
   const heartbeat = setInterval(() => {
     if (!alive) {
@@ -86,6 +91,7 @@ export function bridgeWindow(browser: WebSocket, options: BridgeOptions): void {
     if (ended) return;
     ended = true;
     clearInterval(heartbeat);
+    if (upstreamIdle !== null) clearTimeout(upstreamIdle);
     controller.abort();
     if (upstream !== null && upstream.readyState !== WebSocket.CLOSED) upstream.close(NORMAL);
     if (browser.readyState === WebSocket.OPEN || browser.readyState === WebSocket.CONNECTING) {
@@ -133,7 +139,19 @@ export function bridgeWindow(browser: WebSocket, options: BridgeOptions): void {
         return;
       }
       upstream = ws;
+      const heard = (): void => {
+        if (upstreamIdle !== null) clearTimeout(upstreamIdle);
+        if (ended) return;
+        upstreamIdle = setTimeout(() => {
+          log.info('forwarded window silent – closing');
+          ws.terminate();
+        }, limits.upstreamIdleMs);
+        upstreamIdle.unref();
+      };
+      heard();
+      ws.on('ping', heard);
       ws.on('message', (data: RawData, binary: boolean) => {
+        heard();
         if (!ended) relay(browser, data, binary);
       });
       ws.on('close', (code: number) => {

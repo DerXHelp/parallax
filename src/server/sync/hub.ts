@@ -303,9 +303,25 @@ function rawCommandName(text: string): string | null {
   return null;
 }
 
-/** Remote connections never see the remote-access state (pairing window, peer, log counter – §B.6). */
+/** Remote connections never see the remote-access state (pairing window, peer, log counter – §B.6) nor login links. */
 function redactForRemote(host: HostState): HostState {
-  return host.remoteAccess === null ? host : { ...host, remoteAccess: null };
+  // Also the links of a running profile login (security review WP-82): whoever opens one and signs
+  // in hands that account to the CLI on this computer – they stay on this computer.
+  const loginLinks = host.profiles.some(
+    (profile) => profile.login.url !== null || profile.login.manualUrl !== null,
+  );
+  if (host.remoteAccess === null && !loginLinks) return host;
+  return {
+    ...host,
+    remoteAccess: null,
+    profiles: loginLinks
+      ? host.profiles.map((profile) =>
+          profile.login.url === null && profile.login.manualUrl === null
+            ? profile
+            : { ...profile, login: { ...profile.login, url: null, manualUrl: null } },
+        )
+      : host.profiles,
+  };
 }
 
 /** Only these summary fields are throttled (A.2); every other change is sent immediately. */

@@ -3,11 +3,14 @@ import { PassThrough } from 'node:stream';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
+import { WebSocket, WebSocketServer } from 'ws';
 import { makeError } from '@shared/errors';
+import { WS_CLOSE } from '@shared/protocol';
 import type { RemoteHost } from '@shared/model';
 import { SAMPLE_IDS, sampleRemoteHost } from '@shared/samples';
 import type { HostForwarder, UpstreamRequest, UpstreamResponse } from '../hosts/ports';
 import { registerHostRoutes, type ForwardLimits } from './hostRoutes';
+import type { BridgeLimits } from './hostSocket';
 
 const BLOB = 'a'.repeat(64);
 const apps: FastifyInstance[] = [];
@@ -25,12 +28,17 @@ interface Fake {
 /** The routes on a bare Fastify with a fake forwarder (the app's guards are tested elsewhere). */
 async function routes(
   answer: (request: UpstreamRequest) => Promise<UpstreamResponse>,
-  options: { host?: Partial<RemoteHost>; forward?: Partial<ForwardLimits> } = {},
+  options: {
+    host?: Partial<RemoteHost>;
+    forward?: Partial<ForwardLimits>;
+    bridge?: Partial<BridgeLimits>;
+    connectWindow?: HostForwarder['connectWindow'];
+  } = {},
 ): Promise<Fake> {
   const host = sampleRemoteHost({ status: 'connected', ...options.host });
   const requests: UpstreamRequest[] = [];
   const forwarder: HostForwarder = {
-    connectWindow: () => Promise.reject(new Error('no windows here')),
+    connectWindow: options.connectWindow ?? (() => Promise.reject(new Error('no windows here'))),
     request: (_hostId, request) => {
       requests.push(request);
       return answer(request);
@@ -44,6 +52,7 @@ async function routes(
     hosts: { list: () => [host], forwarder },
     authorizeUpgrade: () => null,
     forward: options.forward ?? {},
+    bridge: options.bridge ?? {},
   });
   await app.ready();
   return { app, host, requests };
@@ -124,5 +133,42 @@ describe('forwarder routes: limits against a slow or hostile computer (WP-82 rev
     expect(outcome).toEqual({ status: 200, complete: false });
     expect(Date.now() - started).toBeLessThan(5_000);
     expect(body.destroyed).toBe(true);
+  });
+
+  it('a forwarded window whose other computer stays silent ends with HOST_UNREACHABLE', async () => {
+    // The "other computer": accepts the WebSocket and never sends anything (no message, no ping).
+    const silent = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await new Promise<void>((resolve) => silent.once('listening', resolve));
+    const upstreamPort = (silent.address() as { port: number }).port;
+    const fake = await routes(() => Promise.reject(new Error('no http')), {
+      bridge: { upstreamIdleMs: 200 },
+      connectWindow: () =>
+        new Promise((resolve, reject) => {
+          const ws = new WebSocket(`ws://127.0.0.1:${String(upstreamPort)}`);
+          ws.once('open', () => {
+            resolve(ws);
+          });
+          ws.once('error', reject);
+        }),
+    });
+    try {
+      await fake.app.listen({ host: '127.0.0.1', port: 0 });
+      const address = fake.app.server.address();
+      if (address === null || typeof address === 'string') throw new Error('no port');
+      const browser = new WebSocket(
+        `ws://127.0.0.1:${String(address.port)}/api/hosts/${fake.host.hostId}/ws`,
+      );
+      const code = await new Promise<number>((resolve) => {
+        browser.once('close', resolve);
+      });
+      expect(code).toBe(WS_CLOSE.HOST_UNREACHABLE);
+    } finally {
+      for (const client of silent.clients) client.terminate();
+      await new Promise<void>((resolve) => {
+        silent.close(() => {
+          resolve();
+        });
+      });
+    }
   });
 });
