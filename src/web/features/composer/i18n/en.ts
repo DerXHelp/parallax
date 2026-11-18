@@ -83,6 +83,10 @@ export const en = {
     } satisfies Record<PermissionMode, string>,
     autoUnavailable: 'Not supported by the current model.',
     switching: 'Switching mode…',
+    /** `?` help (WP-91, GitHub #2). */
+    cycleShortcut: 'Next permission mode (in the message field)',
+    /** Screen reader text after Shift+Tab. */
+    announce: 'Permission mode: {mode}',
   },
   model: {
     label: 'Model',

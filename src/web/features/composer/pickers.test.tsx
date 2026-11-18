@@ -1,5 +1,6 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sampleContextBreakdown, sampleContextGauge, sampleModelOption } from '@shared/samples';
 import { resetClientStore } from '@web/state/store';
@@ -8,7 +9,7 @@ import { renderWithHost, type Harness } from '../decisions/lib/testing';
 import { ContextGauge } from './ContextGauge';
 import { DEMO_MODELS_14 } from './demo/data';
 import { ModelPicker } from './ModelPicker';
-import { ModePicker } from './ModePicker';
+import { MODE_CYCLE_SEND_DELAY_MS, ModePicker } from './ModePicker';
 
 // UI tests with many key strokes: 2.5–6 s in a full `pnpm test`, up to 21 s when several runs load
 // the machine (docs/wp/FLAKES.md). A timed-out test keeps typing into the next one, so keep a margin.
@@ -110,6 +111,96 @@ describe('ModePicker (C.3)', () => {
       h.host.patchSummary(DEMO_ENTRIES.idle, { permissionMode: 'dontAsk' });
     });
     expect(await screen.findByRole('button', { name: "Permission mode: Don't ask" })).toBeTruthy();
+  });
+});
+
+/** ModePicker beside a text field like in the composer (WP-91: Shift+Tab only inside it). */
+function CycleHarness({ sessionKey, blocked = false }: { sessionKey: string; blocked?: boolean }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  return (
+    <>
+      <textarea ref={ref} aria-label="message" />
+      <ModePicker sessionKey={sessionKey} inputRef={ref} cycleBlocked={blocked} />
+    </>
+  );
+}
+
+function startCycle(entry: DemoEntry, blocked = false): Harness {
+  harness = renderWithHost((key) => <CycleHarness sessionKey={key(entry)} blocked={blocked} />, {
+    entries: [entry],
+  });
+  harness.running.connection.subscribe(DEMO_ENTRIES[entry]);
+  return harness;
+}
+
+describe('ModePicker: Shift+Tab (WP-91, GitHub #2)', () => {
+  it('names the target at once and sends only the last one after a pause', async () => {
+    const h = startCycle('idle');
+    const user = userEvent.setup();
+    const trigger = await screen.findByRole('button', { name: 'Permission mode: Manual' });
+    await user.click(screen.getByRole('textbox', { name: 'message' }));
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    expect(screen.getByRole('button', { name: 'Permission mode: Accept edits' })).toBe(trigger);
+    expect(trigger.dataset.mode).toBe('default');
+    expect(trigger.dataset.targetMode).toBe('acceptEdits');
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    // Screen readers hear the target (live region beside the button).
+    expect(screen.getByText('Permission mode: Plan')).toBeTruthy();
+    await waitFor(() => {
+      expect(h.commands('session.setPermissionMode')).toHaveLength(1);
+    });
+    expect(h.commands('session.setPermissionMode')[0]).toMatchObject({ mode: 'plan' });
+    await waitFor(() => {
+      expect(trigger.dataset.mode).toBe('plan');
+    });
+    expect(trigger.dataset.targetMode).toBeUndefined();
+    // The focus stayed in the text field.
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'message' }));
+  });
+
+  it('cycling back to the actual mode sends nothing', async () => {
+    const h = startCycle('idle');
+    const user = userEvent.setup();
+    await screen.findByRole('button', { name: 'Permission mode: Manual' });
+    await user.click(screen.getByRole('textbox', { name: 'message' }));
+    // Manual → Accept edits → Plan → Auto → Manual (no bypass for this profile).
+    await user.keyboard('{Shift>}{Tab}{Tab}{Tab}{Tab}{/Shift}');
+    await new Promise((resolve) => setTimeout(resolve, MODE_CYCLE_SEND_DELAY_MS + 200));
+    expect(h.commands('session.setPermissionMode')).toEqual([]);
+    expect(
+      screen.getByRole('button', { name: 'Permission mode: Manual' }).dataset.targetMode,
+    ).toBeUndefined();
+  });
+
+  it('bypass is part of the cycle when the profile allows it', async () => {
+    const h = startCycle('bypass');
+    const user = userEvent.setup();
+    await screen.findByRole('button', { name: 'Permission mode: Bypass permissions' });
+    await user.click(screen.getByRole('textbox', { name: 'message' }));
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    await waitFor(() => {
+      expect(h.commands('session.setPermissionMode')).toEqual([
+        { name: 'session.setPermissionMode', entryId: DEMO_ENTRIES.bypass, mode: 'default' },
+      ]);
+    });
+  });
+
+  it('outside the text field and with an open menu Shift+Tab keeps moving the focus', async () => {
+    startCycle('idle', true);
+    const user = userEvent.setup();
+    const trigger = await screen.findByRole('button', { name: 'Permission mode: Manual' });
+    const field = screen.getByRole('textbox', { name: 'message' });
+    await user.click(field);
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    expect(document.activeElement).not.toBe(field);
+    expect(trigger.dataset.targetMode).toBeUndefined();
+    harness?.stop();
+    resetClientStore();
+    startCycle('idle');
+    const second = await screen.findByRole('button', { name: 'Permission mode: Manual' });
+    second.focus();
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    expect(second.dataset.targetMode).toBeUndefined();
   });
 });
 
