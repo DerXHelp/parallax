@@ -29,7 +29,8 @@ export function slugify(name: string, max = HOST_ID_CHARS): string {
 /** A host id for `name` that is not in `taken` (`name-2`, `name-3` … when needed). */
 export function uniqueHostId(name: string, taken: ReadonlySet<string>): HostId {
   const base = slugify(name) || FALLBACK;
-  const free = (id: string): boolean => id !== LOCAL_HOST_ID && !taken.has(id) && hostIdSchema.safeParse(id).success;
+  const free = (id: string): boolean =>
+    id !== LOCAL_HOST_ID && !taken.has(id) && hostIdSchema.safeParse(id).success;
   if (free(base)) return base;
   for (let n = 2; ; n += 1) {
     const suffix = `-${String(n)}`;
