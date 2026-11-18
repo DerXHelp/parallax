@@ -69,6 +69,7 @@ import { createFileService } from '../files/service';
 import { createFsCommands } from '../host/fsCommands';
 import { createLinkCommands, createRecordingLinkOpener, createSystemLinkOpener } from '../host/linkCommands';
 import { createLoginService, LOGIN_HOME_DIR, type LoginService } from '../host/login';
+import { createRelayToasts, type RelayToasts } from '../hosts/relayToasts';
 import { createHostsService, type Hosts } from '../hosts/service';
 import { createApp } from '../http/app';
 import { createAuthService, type AuthService } from '../http/auth';
@@ -487,6 +488,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   let multiHost: MultiHostService | null = null;
   /** WP-79: the computers this one controls (list, watchers, forwarder). */
   let controlHosts: Hosts | null = null;
+  /** WP-81: native toasts for the watchers' notifications (role control). */
+  let relayToasts: RelayToasts | null = null;
   /** WP-78a: the stored role is activated after listen, in the background (never fatal). */
   let multiHostStart: Promise<void> = Promise.resolve();
   let manager: SessionManager | null = null;
@@ -537,6 +540,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       name: 'multiHost',
       run: async () => {
         await multiHostStart;
+        // WP-81: stop listening first – leaving the role at shutdown must not remove the toasts.
+        relayToasts?.close();
         await multiHost?.stop();
         // WP-79: forwarder windows and watchers go before the http step (idempotent).
         await controlHosts?.close();
@@ -711,6 +716,16 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       ...loggerOption,
     });
     controlHosts = hosts;
+    // WP-81: notifications of the other computers' watchers as native toasts here – with this
+    // computer's filters (do not disturb, events), rate-limited, click → parallax://session/<host>/<id>.
+    relayToasts = createRelayToasts({
+      hosts,
+      settings: () => stores.settings.get(),
+      enabled: config.toasts === 'native',
+      available: () => toasts.available(),
+      system,
+      ...loggerOption,
+    });
     // `roles.start()` prepares both sides and activates the stored one; `roles.onChange` also fires
     // for changes of either side (host list, remote access).
     const roles = createMultiHostService({

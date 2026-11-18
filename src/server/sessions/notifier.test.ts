@@ -5,16 +5,20 @@ import { SAMPLE_TIME, sampleId, sampleNotificationSettings, sampleStatusFacts } 
 import { DONE_NOTIFY_MIN_TURN_MS, type StatusFacts } from '@shared/status';
 import type { ClientPresence } from '../sync/ports';
 import {
+  EMPTY_FOCUS_HISTORY,
   chooseChannel,
   chooseChannelWithReason,
   decisionsCleared,
   isViewedByVisibleClient,
   isWatchedByFocusedClient,
+  observeFocus,
   planNotification,
   presenceSummary,
+  relayTarget,
   routeChannel,
   routeNotification,
   type ChannelReason,
+  type FocusHistory,
   type PlannedNotification,
   type TieBreak,
 } from './notifier';
@@ -736,6 +740,7 @@ describe('presenceSummary (WP41-04)', () => {
           viewing: true,
           everFocused: true,
           connectedRank: 3,
+          remote: false,
         },
         {
           clientId: sampleId('cl', 3),
@@ -745,6 +750,7 @@ describe('presenceSummary (WP41-04)', () => {
           viewing: false,
           everFocused: false,
           connectedRank: 1,
+          remote: false,
         },
         {
           clientId: sampleId('cl', 2),
@@ -754,9 +760,260 @@ describe('presenceSummary (WP41-04)', () => {
           viewing: false,
           everFocused: true,
           connectedRank: 2,
+          remote: false,
         },
       ],
+      relay: false,
     });
-    expect(presenceSummary([], ENTRY)).toEqual({ count: 0, clients: [] });
+    expect(presenceSummary([], ENTRY)).toEqual({ count: 0, clients: [], relay: false });
+  });
+});
+
+// =====================================================================================
+// WP-81 (ADR-211): the watcher of the controlling computer
+// =====================================================================================
+
+const at = (sec: number): Date => new Date(Date.parse(SAMPLE_TIME) + sec * 1000);
+
+/** A window of the controlling computer (through remote access). */
+function remote(
+  n: number,
+  p: { focused: boolean; visible: boolean; viewing: EntryId | null; web?: boolean },
+  lastFocusSec: number | null = n,
+): ClientPresence {
+  return { ...client(n, p, lastFocusSec), origin: 'remote', kind: 'window' };
+}
+
+/** The watcher: never focused, never visible (link.ts hello), connected at `connectedSec`. */
+function relay(n = 50, connectedSec = 0): ClientPresence {
+  return {
+    clientId: sampleId('cl', n),
+    presence: { focused: false, visible: false, viewingEntryId: null, typing: false },
+    lastFocusAt: null,
+    connectedAt: at(connectedSec),
+    origin: 'remote',
+    kind: 'relay',
+  };
+}
+
+const RELAY = sampleId('cl', 50);
+
+function history(clients: readonly ClientPresence[]): FocusHistory {
+  return observeFocus(EMPTY_FOCUS_HISTORY, clients);
+}
+
+type RelayTargetRow = 'remote_focus' | 'no_local_focus' | null;
+
+describe('the watcher is never part of the window logic (WP-81)', () => {
+  it('ignored by the channel, the tie-break, "viewing" and the presence summary', () => {
+    // Even a watcher that claims focus and the entry changes nothing.
+    const claiming: ClientPresence = {
+      ...relay(),
+      presence: { focused: true, visible: true, viewingEntryId: ENTRY, typing: false },
+      lastFocusAt: at(99),
+    };
+    expect(chooseChannelWithReason([claiming], ENTRY)).toMatchObject({ channel: null, reason: 'no_client' });
+    expect(chooseChannelWithReason([claiming], ENTRY, true)).toMatchObject({
+      channel: { clientId: null, native: true },
+      reason: 'no_client_native',
+    });
+    const window = client(1, { focused: false, visible: false, viewing: null }, null);
+    expect(chooseChannelWithReason([window, claiming], ENTRY)).toMatchObject({
+      channel: { clientId: sampleId('cl', 1), delivery: 'system' },
+      reason: 'never_focused',
+      tieBreak: null,
+    });
+    expect(isViewedByVisibleClient([claiming], ENTRY)).toBe(false);
+    expect(isWatchedByFocusedClient([claiming], ENTRY)).toBe(false);
+    const summary = presenceSummary(
+      [window, claiming, remote(2, { focused: true, visible: true, viewing: null })],
+      ENTRY,
+    );
+    expect(summary.count).toBe(2);
+    expect(summary.relay).toBe(true);
+    expect(summary.clients.map((c) => [c.clientId, c.remote])).toEqual([
+      [sampleId('cl', 1), false],
+      [sampleId('cl', 2), true],
+    ]);
+  });
+});
+
+describe('observeFocus (WP-81)', () => {
+  it('keeps the latest focus per origin, also of windows that are gone', () => {
+    let h = history([
+      client(1, { focused: false, visible: true, viewing: null }, 5),
+      remote(2, { focused: false, visible: true, viewing: null }, 3),
+    ]);
+    expect(h).toEqual({ local: at(5), remote: at(3), relay: null });
+    // The windows closed: presence is empty, the history stays.
+    expect(observeFocus(h, [])).toBe(h);
+    h = observeFocus(h, [remote(3, { focused: true, visible: true, viewing: null }, 8)]);
+    expect(h).toMatchObject({ local: at(5), remote: at(8) });
+    // An older focus (a window that came back with its remembered focus) changes nothing.
+    expect(observeFocus(h, [client(4, { focused: false, visible: true, viewing: null }, 2)])).toBe(h);
+  });
+
+  it('the watcher counts from its first connection in this server run (same client id)', () => {
+    let h = history([relay(50, 10)]);
+    expect(h.relay).toEqual({ clientId: RELAY, since: at(10) });
+    // Reconnect of the same watcher: the first time stays.
+    h = observeFocus(h, [relay(50, 40)]);
+    expect(h.relay).toEqual({ clientId: RELAY, since: at(10) });
+    // A new watcher (the controlling server restarted): its own time.
+    h = observeFocus(h, [relay(51, 60)]);
+    expect(h.relay).toEqual({ clientId: sampleId('cl', 51), since: at(60) });
+  });
+});
+
+describe('relayTarget (WP-81, ADR-211)', () => {
+  const idle = { focused: false, visible: true, viewing: null };
+  it.each<[string, ClientPresence[], FocusHistory | null, RelayTargetRow]>([
+    ['no watcher → null', [client(1, idle, 1)], null, null],
+    ['watcher, no window ever focused → the watcher', [relay(50, 0)], null, 'no_local_focus'],
+    [
+      'the last focused window came through remote access → the watcher',
+      [client(1, idle, 5), remote(2, idle, 9), relay(50, 0)],
+      null,
+      'remote_focus',
+    ],
+    [
+      'the last focused window is local and was focused after the watcher connected → null',
+      [client(1, idle, 9), remote(2, idle, 5), relay(50, 0)],
+      null,
+      null,
+    ],
+    [
+      'same focus time: this computer wins',
+      [client(1, idle, 5), remote(2, idle, 5), relay(50, 0)],
+      null,
+      null,
+    ],
+    [
+      'no local window focused since the watcher connected → the watcher',
+      [client(1, idle, 5), relay(50, 20)],
+      null,
+      'no_local_focus',
+    ],
+    [
+      'the remote window is closed, it was still the last one focused → the watcher',
+      [client(1, idle, 5), relay(50, 0)],
+      { local: at(5), remote: at(9), relay: { clientId: RELAY, since: at(0) } },
+      'remote_focus',
+    ],
+    [
+      'a reconnect of the watcher does not count as "connected since"',
+      [client(1, idle, 5), relay(50, 30)],
+      { local: at(5), remote: null, relay: { clientId: RELAY, since: at(0) } },
+      null,
+    ],
+  ])('%s', (_name, clients, given, expected) => {
+    const h = given ?? history(clients);
+    expect(relayTarget(clients, h)).toEqual(expected === null ? null : { clientId: RELAY, reason: expected });
+  });
+});
+
+describe('routeNotification with the watcher (WP-81, ADR-211)', () => {
+  const working = sampleStatusFacts({ runState: 'working' });
+  const permission = sampleStatusFacts({
+    runState: 'working',
+    decisions: { permission: 1, question: 0, plan: 0, oldestKind: 'permission', expired: 0 },
+  });
+  const cl1 = sampleId('cl', 1);
+  const blockedRemote = remote(1, { focused: false, visible: false, viewing: null, web: false }, 5);
+  const route = (clients: ClientPresence[], nativeAvailable: boolean, settings?: NotificationSettings) =>
+    routeNotification(working, permission, NOW, clients, ENTRY, nativeAvailable, settings, history(clients));
+
+  it('no window at all: the watcher gets it – also when this computer cannot toast', () => {
+    for (const nativeAvailable of [true, false]) {
+      expect(route([relay()], nativeAvailable)).toEqual({
+        kind: 'permission',
+        planned: {
+          clientId: null,
+          kind: 'permission',
+          delivery: 'system',
+          native: false,
+          relayClientId: RELAY,
+        },
+        reason: 'no_client_native',
+        tieBreak: null,
+        filter: null,
+        relay: 'no_local_focus',
+      });
+    }
+  });
+
+  it('a remote window without Web Notifications keeps its in-app hint; the watcher gets the toast', () => {
+    const r = route([blockedRemote, relay()], true);
+    expect(r?.planned).toEqual({
+      clientId: cl1,
+      kind: 'permission',
+      delivery: 'in_app',
+      native: false,
+      relayClientId: RELAY,
+    });
+    expect(r?.relay).toBe('remote_focus');
+    expect(routeChannel(r?.planned ?? null)).toBe('relay_in_app');
+  });
+
+  it('a window that can show Web Notifications gets them; no toast anywhere', () => {
+    const able = remote(1, { focused: false, visible: false, viewing: null, web: true }, 5);
+    const r = route([able, relay()], true);
+    expect(r?.planned).toEqual({ clientId: cl1, kind: 'permission', delivery: 'system', native: false });
+    expect(r?.relay).toBeUndefined();
+  });
+
+  it('the user was last at this computer: the local toast as before', () => {
+    const local = client(1, { focused: false, visible: false, viewing: null, web: false }, 5);
+    const r = route([local, relay(50, 0)], true);
+    expect(r?.planned).toEqual({ clientId: cl1, kind: 'permission', delivery: 'in_app', native: true });
+    expect(r?.relay).toBeUndefined();
+    // Without native toasts here: the old rule (system to the window), never the watcher.
+    expect(route([local, relay(50, 0)], false)?.planned).toEqual({
+      clientId: cl1,
+      kind: 'permission',
+      delivery: 'system',
+      native: false,
+    });
+  });
+
+  it('the settings filter of this computer still applies first: nothing for the watcher', () => {
+    const dnd = sampleNotificationSettings({ doNotDisturb: true });
+    expect(route([relay()], true, dnd)).toMatchObject({ planned: null, filter: 'do_not_disturb' });
+    expect(route([blockedRemote, relay()], true, dnd)?.planned).toEqual({
+      clientId: cl1,
+      kind: 'permission',
+      delivery: 'in_app',
+      native: false,
+    });
+  });
+
+  it('without a focus history (older callers) the watcher is never chosen', () => {
+    expect(routeNotification(working, permission, NOW, [relay()], ENTRY, true)?.planned).toEqual({
+      clientId: null,
+      kind: 'permission',
+      delivery: 'system',
+      native: true,
+    });
+    expect(
+      planNotification(working, permission, NOW, [relay()], ENTRY, true, undefined, history([relay()])),
+    ).toEqual({
+      clientId: null,
+      kind: 'permission',
+      delivery: 'system',
+      native: false,
+      relayClientId: RELAY,
+    });
+  });
+
+  it('routeChannel: the watcher alone, or with the in-app hint', () => {
+    const plan: PlannedNotification = {
+      clientId: null,
+      kind: 'done',
+      delivery: 'system',
+      native: false,
+      relayClientId: RELAY,
+    };
+    expect(routeChannel(plan)).toBe('relay');
+    expect(routeChannel({ ...plan, clientId: cl1, delivery: 'in_app' })).toBe('relay_in_app');
   });
 });

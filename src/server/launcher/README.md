@@ -27,9 +27,10 @@ Auftrag, Bedienung und Entscheidungen: `docs/wp/WP-21.md`; Chrome statt Edge: `d
   `process.execPath` + absoluter Pfad zu `dist/server.js`, Chrome = `findChrome` (`lib/chrome.ts`).
 - **Phase 2 (WP-33):** Port aus `settings.json` (nur lesend, `loadConfig`: Flag > `PARALLAX_PORT` >
   `settings.port` > 4711, ADR-111; Hinweise aus `config.notes` als „Note: …“). `--open <uri>` /
-  `--open=<uri>` (Protokoll-Handler `parallax:`, ADR-109): `parseSessionProtocolUri`, ungültig →
+  `--open=<uri>` (Protokoll-Handler `parallax:`, ADR-109): `parseHostSessionProtocolUri` (seit WP-81 auch
+  `parallax://session/<hostId>/<entryId>` aus dem Toast eines steuernden Rechners), ungültig →
   Exit 2, nichts gestartet; der Link muss das **letzte** Argument sein (R5: ein präparierter `%1`
-  kann keine Optionen anhängen); Fenster-URL `appUrlWithCode(origin, code, {entryId})`.
+  kann keine Optionen anhängen); Fenster-URL `appUrlWithCode(origin, code, {entryId, hostId})`.
   `--autostart` (Verknüpfung, ADR-110): Server wie immer (Build-Prüfung), Fenster nur bei
   `settings.autostart.openWindow`. `--system-integration=auto|on|off` geht an den Server.
 - **`--print-url` in Skripten (V3-15 a, Lücke WP-20a):** Der detached Server erbt – wie bei libuv

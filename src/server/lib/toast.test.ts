@@ -159,11 +159,23 @@ describe('native Windows toast helper (WP22-03/-15, A.9)', () => {
     expect(TOAST_SCRIPT).toContain('$xml.LoadXml($env:PARALLAX_TOAST_XML)');
   });
 
+  it('WP-81: the form with a computer goes into the toast, canonical', async () => {
+    const entryId = 'en_0123456789abcdef0123456789abcdef';
+    const { run, calls } = fakeRun();
+    await showToast(
+      { title: 't', body: 'b', tag: 'x', launchUri: `Parallax:session/computer-b/${entryId}/` },
+      { run, platform: 'win32', env: ENV },
+    );
+    expect(calls[0]?.options.env?.PARALLAX_TOAST_LAUNCH).toBe(`parallax://session/computer-b/${entryId}`);
+  });
+
   it.each([
     ['no launchUri', undefined],
     ['null', null],
     ['another scheme', 'https://evil.example/session/x'],
     ['a malformed id', 'parallax://session/en_1"/><x'],
+    ['a malformed computer', 'parallax://session/Computer B/en_0123456789abcdef0123456789abcdef'],
+    ['"local" as a computer', 'parallax://session/local/en_0123456789abcdef0123456789abcdef'],
   ])(
     'without a valid launchUri (%s): plain toast as in Phase 1, no launch variable',
     async (_name, launchUri) => {

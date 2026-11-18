@@ -19,6 +19,15 @@
  *
  * WP41-04: `routeNotification` also says WHY (ChannelReason, TieBreak, settings filter) and `presenceSummary`
  * condenses the presence for the engine's one debug line per notification (no titles, no texts).
+ *
+ * WP-81 (ADR-211, WP-75 §4.6): the watcher of the controlling computer (`kind: 'relay'`) is never
+ * part of the window logic (no `in_app`, not in the tie-break, never "viewing"). Where the channel
+ * would show a native toast, `relayTarget` decides whether the user was last at the controlling
+ * computer – the most recently focused window (also a closed one, `FocusHistory`) came through
+ * remote access, or no window of this computer was focused since the watcher connected. Then the
+ * watcher gets `notify{delivery:'system'}` instead of the local toast (the window keeps its in-app
+ * hint); its server shows the toast with its own filters. While the watcher is the target, the
+ * native channel counts as available even if this computer cannot toast (the toast is shown there).
  */
 import type { ClientId, EntryId } from '@shared/common';
 import { DEFAULT_NOTIFICATION_SETTINGS, type NotificationSettings } from '@shared/model';
@@ -94,6 +103,82 @@ function time(date: Date | null): number {
   return date === null ? Number.NEGATIVE_INFINITY : date.getTime();
 }
 
+/** WP-81: the watcher of the controlling computer (only over remote access, ADR-207). */
+export function isRelay(client: ClientPresence): boolean {
+  return client.kind === 'relay';
+}
+
+/** WP-81: the windows only – the watcher is never part of the window logic. */
+export function windowClients(clients: readonly ClientPresence[]): readonly ClientPresence[] {
+  return clients.some(isRelay) ? clients.filter((c) => !isRelay(c)) : clients;
+}
+
+/**
+ * WP-81 (ADR-211): who had the focus last in this server run – also windows that are closed by now
+ * (`presence()` only lists open connections). `relay` = the current watcher and when it first
+ * connected in this server run (a reconnect with the same client id keeps the time).
+ */
+export interface FocusHistory {
+  /** Latest focus of a window of this computer; null = none so far. */
+  readonly local: Date | null;
+  /** Latest focus of a window over remote access; null = none so far. */
+  readonly remote: Date | null;
+  readonly relay: { readonly clientId: ClientId; readonly since: Date } | null;
+}
+
+export const EMPTY_FOCUS_HISTORY: FocusHistory = Object.freeze({ local: null, remote: null, relay: null });
+
+function later(a: Date | null, b: Date | null): Date | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return b.getTime() > a.getTime() ? b : a;
+}
+
+/** The history after seeing `clients` (pure; unchanged history → the same object). */
+export function observeFocus(history: FocusHistory, clients: readonly ClientPresence[]): FocusHistory {
+  let { local, remote, relay } = history;
+  for (const client of clients) {
+    if (isRelay(client)) {
+      if (relay?.clientId !== client.clientId)
+        relay = { clientId: client.clientId, since: client.connectedAt };
+    } else if (client.origin === 'remote') {
+      remote = later(remote, client.lastFocusAt);
+    } else {
+      local = later(local, client.lastFocusAt);
+    }
+  }
+  return local === history.local && remote === history.remote && relay === history.relay
+    ? history
+    : { local, remote, relay };
+}
+
+/**
+ * Why the watcher gets the native toast (WP-81): `remote_focus` – the most recently focused window
+ * came through remote access; `no_local_focus` – no window of this computer was focused since the
+ * watcher connected (also: none ever).
+ */
+export type RelayReason = 'remote_focus' | 'no_local_focus';
+
+export interface RelayTarget {
+  clientId: ClientId;
+  reason: RelayReason;
+}
+
+/** The watcher that gets the native toast instead of this computer, or null (no watcher, user here). */
+export function relayTarget(clients: readonly ClientPresence[], history: FocusHistory): RelayTarget | null {
+  const relay = clients.find(isRelay);
+  if (relay === undefined) return null;
+  const { local, remote } = history;
+  if (remote !== null && (local === null || remote.getTime() > local.getTime())) {
+    return { clientId: relay.clientId, reason: 'remote_focus' };
+  }
+  const since = history.relay?.clientId === relay.clientId ? history.relay.since : relay.connectedAt;
+  if (local === null || local.getTime() < since.getTime()) {
+    return { clientId: relay.clientId, reason: 'no_local_focus' };
+  }
+  return null;
+}
+
 /** The most recently connected of `clients` (the first one on equal times). */
 function lastConnected(clients: readonly ClientPresence[]): ClientPresence | null {
   let best: ClientPresence | null = null;
@@ -164,13 +249,14 @@ function systemChannel(
   return { clientId: target.clientId, delivery: 'system', native: false, minDoneTurnMs };
 }
 
-/** The channel and why (see ChannelReason). */
+/** The channel and why (see ChannelReason); a watcher in `clients` is ignored (WP-81). */
 export function chooseChannelWithReason(
-  clients: readonly ClientPresence[],
+  all: readonly ClientPresence[],
   entryId: EntryId,
   nativeAvailable = false,
   rules: ChannelRules = DEFAULT_CHANNEL_RULES,
 ): ChannelChoice {
+  const clients = windowClients(all);
   const active = clients.filter((c) => c.presence.focused && c.presence.visible);
   if (active.some((c) => c.presence.viewingEntryId === entryId)) {
     return {
@@ -219,24 +305,29 @@ export function chooseChannel(
   return chooseChannelWithReason(clients, entryId, nativeAvailable, rules).channel;
 }
 
-/** A client shows this entry visibly (presence) → no unread (ReduceStatusContext). */
+/** A window shows this entry visibly (presence) → no unread (ReduceStatusContext); never the watcher. */
 export function isViewedByVisibleClient(clients: readonly ClientPresence[], entryId: EntryId): boolean {
-  return clients.some((c) => c.presence.visible && c.presence.viewingEntryId === entryId);
+  return clients.some((c) => !isRelay(c) && c.presence.visible && c.presence.viewingEntryId === entryId);
 }
 
 /** A focused + visible window shows this entry (ADR-105: such a session never falls asleep). */
 export function isWatchedByFocusedClient(clients: readonly ClientPresence[], entryId: EntryId): boolean {
   return clients.some(
-    (c) => c.presence.focused && c.presence.visible && c.presence.viewingEntryId === entryId,
+    (c) => !isRelay(c) && c.presence.focused && c.presence.visible && c.presence.viewingEntryId === entryId,
   );
 }
 
 export interface PlannedNotification {
-  /** null = no window (native toast only). */
+  /** null = no window (native toast or watcher only). */
   clientId: ClientId | null;
   kind: NotificationKind;
   delivery: Notification['delivery'];
   native: boolean;
+  /**
+   * WP-81: the watcher of the controlling computer gets `notify{delivery:'system'}` instead of the
+   * native toast (`native` is false then). Absent = no watcher involved.
+   */
+  relayClientId?: ClientId;
 }
 
 /** The settings filter that turned an OS notification into the in-app hint (or into nothing). */
@@ -249,13 +340,16 @@ export interface NotificationRoute {
   reason: ChannelReason;
   tieBreak: TieBreak | null;
   filter: NotificationFilter | null;
+  /** WP-81: why the watcher got the native toast; absent = it did not. */
+  relay?: RelayReason;
 }
 
 /**
  * The route of the notification a status transition triggers, or null when it triggers none.
  * `notifications` = `settings.notifications` (ADR-109; default: the defaults of the settings schema).
  * `planned` is null when nothing is delivered (the focused window shows the entry, no client, or
- * the settings filter left nothing).
+ * the settings filter left nothing). `history` (WP-81): the focus history for the watcher; null =
+ * the watcher is never chosen (older callers, tests).
  */
 export function routeNotification(
   prev: StatusFacts,
@@ -265,11 +359,13 @@ export function routeNotification(
   entryId: EntryId,
   nativeAvailable = false,
   notifications: NotificationSettings = DEFAULT_NOTIFICATION_SETTINGS,
+  history: FocusHistory | null = null,
 ): NotificationRoute | null {
+  const relay = history === null ? null : relayTarget(clients, history);
   const { channel, reason, tieBreak, minDoneTurnMs } = chooseChannelWithReason(
     clients,
     entryId,
-    nativeAvailable,
+    nativeAvailable || relay !== null,
     {
       focusedElsewhere: notifications.focusedElsewhere,
       focusedDoneMinMs: notifications.doneMinSeconds * 1000,
@@ -291,6 +387,23 @@ export function routeNotification(
         : { clientId: channel.clientId, kind, delivery: 'in_app', native: false };
     return { kind, planned, reason, tieBreak, filter };
   }
+  if (channel.native && relay !== null) {
+    // WP-81: the toast appears where the user is – on the controlling computer.
+    return {
+      kind,
+      planned: {
+        clientId: channel.clientId,
+        kind,
+        delivery: channel.delivery,
+        native: false,
+        relayClientId: relay.clientId,
+      },
+      reason,
+      tieBreak,
+      filter: null,
+      relay: relay.reason,
+    };
+  }
   return {
     kind,
     planned: { clientId: channel.clientId, kind, delivery: channel.delivery, native: channel.native },
@@ -309,17 +422,24 @@ export function planNotification(
   entryId: EntryId,
   nativeAvailable = false,
   notifications: NotificationSettings = DEFAULT_NOTIFICATION_SETTINGS,
+  history: FocusHistory | null = null,
 ): PlannedNotification | null {
   return (
-    routeNotification(prev, next, now, clients, entryId, nativeAvailable, notifications)?.planned ?? null
+    routeNotification(prev, next, now, clients, entryId, nativeAvailable, notifications, history)?.planned ??
+    null
   );
 }
 
-/** The delivered channel in one word: in-app hint, Web Notification, native toast (+ hint), nothing. */
-export type RouteChannel = 'in_app' | 'system' | 'native' | 'native_in_app' | 'none';
+/**
+ * The delivered channel in one word: in-app hint, Web Notification, native toast (+ hint), the
+ * watcher's toast on the controlling computer (+ hint, WP-81), nothing.
+ */
+export type RouteChannel =
+  'in_app' | 'system' | 'native' | 'native_in_app' | 'relay' | 'relay_in_app' | 'none';
 
 export function routeChannel(planned: PlannedNotification | null): RouteChannel {
   if (planned === null) return 'none';
+  if (planned.relayClientId !== undefined) return planned.clientId === null ? 'relay' : 'relay_in_app';
   if (planned.native) return planned.clientId === null ? 'native' : 'native_in_app';
   return planned.delivery;
 }
@@ -337,13 +457,19 @@ export interface ClientPresenceSummary {
   everFocused: boolean;
   /** Rank by connectedAt, 1 = most recently connected (the tie-break of the channel choice). */
   connectedRank: number;
+  /** WP-81: a window of the controlling computer (through remote access). */
+  remote: boolean;
 }
 
-/** The presence condensed for the debug log line of a notification (WP41-04). */
+/**
+ * The presence condensed for the debug log line of a notification (WP41-04): the windows, and
+ * whether a watcher is connected (WP-81; it is never one of the windows).
+ */
 export function presenceSummary(
-  clients: readonly ClientPresence[],
+  all: readonly ClientPresence[],
   entryId: EntryId,
-): { count: number; clients: ClientPresenceSummary[] } {
+): { count: number; clients: ClientPresenceSummary[]; relay: boolean } {
+  const clients = windowClients(all);
   const byConnect = [...clients].sort((a, b) => b.connectedAt.getTime() - a.connectedAt.getTime());
   return {
     count: clients.length,
@@ -355,7 +481,9 @@ export function presenceSummary(
       viewing: c.presence.viewingEntryId === entryId,
       everFocused: c.lastFocusAt !== null,
       connectedRank: byConnect.indexOf(c) + 1,
+      remote: c.origin === 'remote',
     })),
+    relay: clients.length !== all.length,
   };
 }
 

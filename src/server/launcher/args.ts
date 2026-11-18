@@ -6,7 +6,9 @@
  * Phase 2: `--open <uri>`/`--open=<uri>` (the protocol handler `parallax:`, ADR-109) and
  * `--autostart` (the autostart shortcut, ADR-110). The handler is registered as
  * `"<node>" <launcher…> --open "%1"`, so the URI is always the LAST argument: anything after it is
- * refused – a crafted link that smuggles `" --home=… "` into `%1` cannot add options (R5).
+ * refused – a crafted link that smuggles `" --home=… "` into `%1` cannot add options (R5). WP-81
+ * (ADR-211): the link names the session (`parallax://session/<id>`) or a session of another
+ * computer (`parallax://session/<hostId>/<id>`, the toast of a controlling computer) – `OPEN_LINK_FORMS`.
  *
  * WP-87b: `--apply-update=<v>` (+ `--restore`, `--wait-pid=<pid>`) makes this process the
  * orchestrator of a version switch (applyUpdate.ts), started by the server of the old version
@@ -36,7 +38,7 @@ export interface LauncherArgs {
   build: boolean;
   /** `--help` / `-h`. */
   help: boolean;
-  /** `--open <uri>`: raw URI (checked with parseSessionProtocolUri by main.ts); null = none. */
+  /** `--open <uri>`: raw URI (checked with parseHostSessionProtocolUri by cli.ts); null = none. */
   open: string | null;
   /** `--autostart`: started by the autostart shortcut (window only if the settings say so). */
   autostart: boolean;
@@ -73,6 +75,9 @@ const OWN_FLAGS: Readonly<Record<string, (args: LauncherArgs) => void>> = {
 
 const OPEN_FLAG = '--open';
 const INSTALL_ROOT_FLAG = '--install-root';
+
+/** Both accepted forms of an `--open` link (messages and usage). */
+export const OPEN_LINK_FORMS = 'parallax://session/<id> or parallax://session/<computer>/<id>';
 
 const waitPidSchema = z
   .string()
@@ -149,7 +154,7 @@ export function parseLauncherArgs(argv: readonly string[]): LauncherArgs {
       const value = arg === OPEN_FLAG ? argv[i + 1] : arg.slice(OPEN_FLAG.length + 1);
       if (arg === OPEN_FLAG) i += 1;
       if (value === undefined || value === '') {
-        args.problem = `${OPEN_FLAG} needs a parallax://session/<id> link`;
+        args.problem = `${OPEN_FLAG} needs a ${OPEN_LINK_FORMS} link`;
         break;
       }
       args.open = value;
@@ -256,7 +261,8 @@ export const LAUNCHER_USAGE = [
   '  --install-root=<dir>',
   '                 root folder of an installation (passed by its start.mjs): working folder of',
   '                 the server and the Chrome window',
-  '  --open <link>  open the session of a parallax://session/<id> link (Windows notification',
+  '  --open <link>  open the session of a parallax://session/<id> link, or of a session of',
+  '                 another computer: parallax://session/<computer>/<id> (Windows notification',
   '                 click); must be the last option',
   '  --apply-update=<version> --wait-pid=<pid> [--restore]',
   '                 internal: started by the Parallax server to switch an installation to a',

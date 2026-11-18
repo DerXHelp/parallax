@@ -18,6 +18,9 @@
  * plan text after a restart (`broker.loadLastPlan`, ADR-148).
  * WP-77 (ADR-210): the optional draft store (`stores.drafts`) – drafts load at the start, flush at the
  * shutdown and are deleted with their entry.
+ * WP-81 (ADR-211): the focus history of this server run (`observeFocus`); where a native toast is
+ * due and the user was last at the controlling computer, its watcher gets `notify{delivery:'system'}`
+ * instead (notifier.ts `relayTarget`). `notify.clear` reaches the watcher through the hub's broadcast.
  */
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -95,12 +98,15 @@ import {
 } from './normalizer';
 import { DISABLED_NATIVE_TOASTS, toastShowOptions, type NativeToasts } from './nativeToasts';
 import {
+  EMPTY_FOCUS_HISTORY,
   decisionsCleared,
   isViewedByVisibleClient,
   isWatchedByFocusedClient,
+  observeFocus,
   presenceSummary,
   routeChannel,
   routeNotification,
+  type FocusHistory,
 } from './notifier';
 import type { ReduceStatus } from './ports';
 import { withPlanIndex } from './planIndex';
@@ -480,6 +486,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
   const presence = (): readonly ClientPresence[] => publisher?.presence() ?? [];
 
+  /** WP-81: who had the focus last (also closed windows) – decides the watcher's toast. */
+  let focusHistory: FocusHistory = EMPTY_FOCUS_HISTORY;
+
   /** WP-65: plan limits of the usage query, merged into the profile's account limits (ADR-114). */
   const usagePoller = createUsagePoller({
     options,
@@ -719,6 +728,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       const pub = publisherOrThrow();
       const settings = stores.settings.get();
       const clients = pub.presence();
+      focusHistory = observeFocus(focusHistory, clients);
       const route = routeNotification(
         prev,
         next,
@@ -727,6 +737,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         s.id,
         toasts.available(),
         settings.notifications,
+        focusHistory,
       );
       // WP41-04: one line per notification – target, channel and why (never the title: prompt text).
       if (route !== null) {
@@ -739,6 +750,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
             reason: route.reason,
             tieBreak: route.tieBreak,
             filter: route.filter,
+            relay: route.relay ?? null,
             presence: presenceSummary(clients, s.id),
           },
           'notification route',
@@ -747,7 +759,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       const planned = route?.planned ?? null;
       if (planned !== null) {
         const title = s.entry.title !== '' ? s.entry.title : cwdLabel(s.entry.cwd);
-        if (planned.clientId !== null) {
+        if (planned.clientId !== null || planned.relayClientId !== undefined) {
           const notification: Notification = {
             id: core.ids.newUuid(),
             kind: planned.kind,
@@ -756,7 +768,11 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
             delivery: planned.delivery,
             at: now().toISOString(),
           };
-          pub.notify(planned.clientId, notification);
+          if (planned.clientId !== null) pub.notify(planned.clientId, notification);
+          // WP-81 (ADR-211): the controlling computer shows the toast (its own filters and texts).
+          if (planned.relayClientId !== undefined) {
+            pub.notify(planned.relayClientId, { ...notification, delivery: 'system' });
+          }
         }
         // ADR-109: click → the session (opt-in protocol handler), silent when the event's sound is
         // off – ADR-122: or when a window got the notify above (it plays the sound itself).
@@ -1148,6 +1164,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     handleCommand: (cmd, ctx: CommandContext) => handleCommand(engine, cmd, ctx),
 
     onPresenceChanged(all: readonly ClientPresence[]) {
+      focusHistory = observeFocus(focusHistory, all);
       for (const s of states.values()) {
         const visible = isViewedByVisibleClient(all, s.id);
         // WP-65 (§1.2): the moment a session stops being visible is its `lastSeenAt`.

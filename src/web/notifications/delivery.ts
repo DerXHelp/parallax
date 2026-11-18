@@ -1,3 +1,4 @@
+import { LOCAL_HOST_ID } from '@shared/common';
 import type { SoundId } from '@shared/model';
 import type { NotificationKind } from '@shared/status';
 import { t, type TranslationKey } from '@web/i18n';
@@ -26,6 +27,11 @@ import { getSystemNotifier, type SystemNotifier, type SystemToast } from './syst
  * (WP41-01, sounds.ts), so the hint is the fallback for other windows. A `notify.clear` (decision
  * answered elsewhere) retracts hint and toast; showing a session clears its notifications (they
  * are seen). Runs outside React (started by bootApp and for the playground in main.tsx).
+ *
+ * WP-81 (ADR-211, WP-75 §4.4/§4.6): the settings of THIS computer apply to every notification, also
+ * to one of a session of another computer – sound, volume, "Do not disturb", the toast switches and
+ * `focusedElsewhere`. "Do not disturb" here thus also silences shared sessions. The other computer
+ * applied its own filters already (it decided to send at all).
  */
 
 /** In-app hints stay this long unless the user acts. */
@@ -133,7 +139,8 @@ export function startNotificationDelivery(options: NotificationDeliveryOptions =
   function deliver(notification: ClientNotification): void {
     const state = store.getState();
     const { presence } = state;
-    const settings = selectSettings(state, notification.hostId).notifications;
+    // WP-81: always this computer's settings, never those of the session's computer.
+    const settings = selectSettings(state, LOCAL_HOST_ID).notifications;
     const event = settings.events[notification.kind];
     const withSound = event.sound && !settings.doNotDisturb;
     // A session without a title yet (created without a prompt) is named by its folder (V2-05).

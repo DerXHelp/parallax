@@ -53,7 +53,8 @@ Turns ADR-121, Archiv/Pin, Fast-Modus, Unterhaltungswechsel, Git, Kataloge, Sett
 `phase2b.integration.test.ts` (WP-34: Anhänge inkl. Summengrenze, Fortsetzen nach Rate-Limit, Toast-Felder,
 Profil-Caches inkl. Profil-Schlüssel nach Neustart, CR2-05), `external.integration.test.ts` (WP-34: externe
 Konsole, Rückkehr, Neustart, Secrets; Fix-Runde R4: Gate im Lock, Shutdown während `open()`, `checkCwd`; Fix-Runde
-CR2: Plan/Retry bei gescheitertem Öffnen, abgewiesener Prompt im Lock).
+CR2: Plan/Retry bei gescheitertem Öffnen, abgewiesener Prompt im Lock), `relay.integration.test.ts` (WP-81:
+Benachrichtigung an den Wächter des steuernden Rechners statt eines lokalen Toasts).
 
 Phase 2: Lebenszyklus, Archiv und Unterhaltungen `docs/wp/WP-31.md`; Konsole, Fortsetzen, Anhänge
 und Toast-Klick `docs/wp/WP-34.md` (jeweils §2 inkl. Verdrahtung für WP-40).

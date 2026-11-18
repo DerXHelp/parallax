@@ -11,6 +11,10 @@ import type { NotificationSettings } from '@shared/model';
  *   notifications there too (`focusedElsewhere: 'system'`);
  * - `in_app` while the window is in the background → Web Notification, if OS notifications are
  *   allowed for the event (never against "Do not disturb").
+ * WP-81 (ADR-211): `osAllowed` comes from the settings of THIS computer, also for a session of
+ * another computer (whose server filtered with its own settings) – so `system` without it becomes
+ * the in-app hint: "Do not disturb" here also holds for shared sessions. For this computer's own
+ * sessions the server applied the same settings already (only a race with a settings change differs).
  * Without permission everything stays in-app (the window title still counts waiting sessions).
  */
 
@@ -33,10 +37,10 @@ export interface DeliveryContext {
 }
 
 export function chooseDeliveryChannel(context: DeliveryContext): DeliveryChannel {
-  if (context.permission !== 'granted') return 'in_app';
+  if (context.permission !== 'granted' || !context.osAllowed) return 'in_app';
   const looking = context.focused && context.visible;
   if (context.delivery === 'system') {
     return looking && context.focusedElsewhere === 'in_app' ? 'in_app' : 'system';
   }
-  return !looking && context.osAllowed ? 'system' : 'in_app';
+  return looking ? 'in_app' : 'system';
 }

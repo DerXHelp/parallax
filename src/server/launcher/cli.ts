@@ -4,8 +4,10 @@
  * flow is unit-tested (main.ts only wires `process`).
  *
  * Exit codes: 0 = done, 2 = bad option or link (nothing started), 3 = data of a newer Parallax,
- * else 1. Phase 2: `--open <uri>` is checked with `parseSessionProtocolUri` BEFORE anything starts
- * (ADR-109, R5); `--autostart` opens a window only if `settings.autostart.openWindow` (settings
+ * else 1. Phase 2: `--open <uri>` is checked with `parseHostSessionProtocolUri` BEFORE anything
+ * starts (ADR-109, R5) – `parallax://session/<id>` (this computer) or, WP-81 (ADR-211), the toast of
+ * a controlling computer `parallax://session/<hostId>/<id>`; the window then selects
+ * `<hostId>:<id>`. `--autostart` opens a window only if `settings.autostart.openWindow` (settings
  * read-only, ADR-110).
  *
  * WP-87b: `--apply-update` branches off before `launch` into the orchestrator
@@ -13,14 +15,15 @@
  * (update/handoff.ts): a bad option there answers `PARALLAX-APPLY-FAILED spawn`, notes go to the
  * update log.
  */
-import type { EntryId } from '@shared/common';
-import { serverOrigin, parseSessionProtocolUri } from '@shared/http';
+import type { EntryId, HostId } from '@shared/common';
+import { serverOrigin, parseHostSessionProtocolUri } from '@shared/http';
 import { DEFAULT_AUTOSTART } from '@shared/model';
 import { ConfigError, loadConfig, readSettingsFile, type ServerConfig, type SettingsPeek } from '../config';
 import { APPLY_UPDATE_FLAG, handshakeLine, readyTimeoutMs } from '../update/handoff';
 import type { ApplyUpdateRequest } from './applyUpdate';
 import {
   LAUNCHER_USAGE,
+  OPEN_LINK_FORMS,
   parseLauncherArgs,
   portRequested,
   serverArgsFor,
@@ -64,15 +67,17 @@ export async function runLauncherCli(argv: readonly string[], deps: LauncherCliD
     return applyUpdateCli(args.applyUpdate, args.installRoot, args.serverArgv, deps);
   }
   let entryId: EntryId | null = null;
+  let hostId: HostId | null = null;
   if (args.open !== null) {
-    entryId = parseSessionProtocolUri(args.open);
-    if (entryId === null) {
+    const target = parseHostSessionProtocolUri(args.open);
+    if (target === null) {
       deps.fail(
-        `Invalid Parallax link "${args.open.slice(0, LINK_ECHO_CHARS)}" - expected parallax://session/<id>. ` +
+        `Invalid Parallax link "${args.open.slice(0, LINK_ECHO_CHARS)}" - expected ${OPEN_LINK_FORMS}. ` +
           'Nothing was started.',
       );
       return 2;
     }
+    ({ entryId, hostId } = target);
   }
   let config: ServerConfig;
   try {
@@ -113,6 +118,7 @@ export async function runLauncherCli(argv: readonly string[], deps: LauncherCliD
       // V2-13: a port from the settings is a request too (the hint says when it takes effect).
       portExplicit: portRequested(args.serverArgv, deps.env) || (peek.settings?.port ?? null) !== null,
       entryId,
+      hostId,
       openWindow,
     });
     deps.out(resultMessage(result, config, args.printUrl));

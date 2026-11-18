@@ -1,9 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_HOST_ID, makeSessionKey, type EntryId } from '@shared/common';
 import type { NotificationSettings, SoundId } from '@shared/model';
-import { sampleId, sampleNotificationSettings, sampleSettings, sampleTime } from '@shared/samples';
+import {
+  SAMPLE_REMOTE_HOST_ID,
+  sampleHostState,
+  sampleId,
+  sampleNotificationSettings,
+  sampleSettings,
+  sampleTime,
+} from '@shared/samples';
 import type { NotificationKind } from '@shared/status';
-import { createClientStore, type ClientNotification, type ClientStore } from '@web/state/store';
+import { createClientStore, updateHost, type ClientNotification, type ClientStore } from '@web/state/store';
 import type { NotificationPermissionState } from './channel';
 import {
   IN_APP_NOTIFICATION_MS,
@@ -382,5 +389,79 @@ describe('notification settings in the window (ADR-109: the server filters, the 
     push(store, notification('n2', 'done', ENTRY, 'in_app'));
     await settle();
     expect(sounds.played).toEqual([{ id: 'pop', volume: 0.6 }]);
+  });
+});
+
+describe('sessions of another computer: the settings of this computer apply (WP-81, ADR-211)', () => {
+  const HOST = SAMPLE_REMOTE_HOST_ID;
+  const REMOTE_KEY = makeSessionKey(HOST, ENTRY);
+
+  function remoteNotification(id: string, kind: NotificationKind, delivery: 'in_app' | 'system') {
+    return { ...notification(id, kind, ENTRY, delivery), hostId: HOST, sessionKey: REMOTE_KEY };
+  }
+
+  /** The other computer's own settings: loud, Do not disturb – none of it may apply here. */
+  function otherComputerSettings(): void {
+    updateHost(store, HOST, () => ({
+      hostState: sampleHostState({
+        settings: sampleSettings({
+          notifications: sampleNotificationSettings({
+            doNotDisturb: true,
+            volume: 1,
+            focusedElsewhere: 'system',
+          }),
+        }),
+      }),
+    }));
+  }
+
+  it('sound, volume and the Web Notification follow this computer, not the session’s computer', async () => {
+    const notifier = fakeNotifier('granted');
+    const sounds = fakeSounds();
+    otherComputerSettings();
+    setNotificationSettings(store, { volume: 0.25 });
+    stop = startNotificationDelivery({ store, notifier, sounds: sounds.player });
+    setFocus(store, false);
+    push(store, remoteNotification('n1', 'permission', 'system'));
+    await settle();
+    expect(sounds.played).toEqual([{ id: 'chime', volume: 0.25 }]);
+    expect(notifier.shown).toMatchObject([{ tag: REMOTE_KEY, silent: true }]);
+    // focusedElsewhere of this computer ('in_app' by default): a focused window shows the hint.
+    setFocus(store, true);
+    push(store, {
+      ...remoteNotification('n2', 'question', 'system'),
+      entryId: OTHER,
+      sessionKey: makeSessionKey(HOST, OTHER),
+    });
+    expect(notifier.shown).toHaveLength(1);
+    expect(store.getState().notices.map((n) => n.id)).toEqual([noticeIdOf('n2')]);
+  });
+
+  it('"Do not disturb" on this computer also silences shared sessions (in-app hint, no sound)', async () => {
+    const notifier = fakeNotifier('granted');
+    const sounds = fakeSounds();
+    setNotificationSettings(store, { doNotDisturb: true });
+    stop = startNotificationDelivery({ store, notifier, sounds: sounds.player });
+    setFocus(store, false);
+    push(store, remoteNotification('n1', 'permission', 'system'));
+    await settle();
+    expect(sounds.played).toEqual([]);
+    expect(notifier.shown).toEqual([]);
+    expect(store.getState().notices.map((n) => [n.id, n.sessionKey])).toEqual([
+      [noticeIdOf('n1'), REMOTE_KEY],
+    ]);
+  });
+
+  it('a toast click shows the session of that computer (sessionKey)', () => {
+    const notifier = fakeNotifier('granted');
+    const focusWindow = vi.fn();
+    stop = startNotificationDelivery({ store, notifier, focusWindow, sounds: fakeSounds().player });
+    setFocus(store, false);
+    push(store, remoteNotification('n1', 'plan', 'system'));
+    notifier.shown[0]?.onClick();
+    expect(focusWindow).toHaveBeenCalledOnce();
+    expect(store.getState().selectedSession).toBe(REMOTE_KEY);
+    expect(window.location.hash).toBe(`#session=${REMOTE_KEY}`);
+    expect(store.getState().notifications).toHaveLength(0);
   });
 });
