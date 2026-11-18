@@ -5,6 +5,8 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 
 ## [Unveröffentlicht]
 
+## [1.0.0] – 2026-11-18
+
 Erstes Release. Parallax steuert viele parallele Claude-Code-Sessions in einem Fenster: Status, Kontext, Chat,
 Entscheidungen ohne Modaldialog, Dateien und Pläne, Aufgaben und Subagenten.
 
