@@ -2,22 +2,21 @@
  * Checks of `pnpm preflight` (Plan "Paketmanager: pnpm 12", "Claude-Profile"): Node version,
  * pnpm version, registry, every profile's `claude` (path, version, C.7 rule) and login, Google
  * Chrome (path, version) and Chrome policies that override the app profile's switches or block its
- * notifications, sounds or page (ADR-136), a hint for antivirus products that scan local web
- * traffic (V1-08) and whether other users can read PARALLAX_HOME (R2-13). Phase 2 (WP-32): the profiles come from the data folder's
+ * notifications, sounds or page (ADR-136) and where PARALLAX_HOME lies (R2-13, a hint only).
+ * Nothing here asks Windows about security software or folder rights (ADR-229: such queries look
+ * like reconnaissance to security software). Phase 2 (WP-32): the profiles come from the data folder's
  * `profiles.json`, read without writing (`loadPreflightProfiles`), and every profile's findings
  * (profileIssues) are listed before its claude check. Pure
  * formatting/rating functions plus `runPreflight` with injectable seams. Output is English (Plan:
  * preflight and logs stay English). Never prints e-mail/org (parseAuthStatus) or env values.
  */
 import path from 'node:path';
-import { z } from 'zod';
 import type { ErrorPayload } from '@shared/errors';
 import type { ClaudeInstallStatus, Profile, ProfileIssue } from '@shared/model';
 import { windowsPathIssue } from '@shared/paths';
 import { findChrome, readExeVersion } from '../lib/chrome';
 import type { FsOps } from '../lib/fs';
-import { checkHomeAccess, type HomeAccess } from '../lib/homeAccess';
-import { errnoCode, powerShellPath, runFile, windowsPowerShellEnv, type RunFileFn } from '../lib/process';
+import { errnoCode, runFile, type RunFileFn } from '../lib/process';
 import { parseRegValues, regKeyQuery, regQuery, type RegKeyQuery, type RegQuery } from '../lib/registry';
 import { getEnvVar, nodeFsProbe, resolveExecutable, type FsProbe } from '../lib/windows';
 import { isNewerThanTested } from './cliProfile';
@@ -402,91 +401,25 @@ export function checkChrome(chrome: { path: string; version: string | null } | n
 }
 
 /**
- * Antivirus products known to filter local web traffic. Kaspersky's Web Anti-Virus was observed
- * injecting a script into http://127.0.0.1 pages, rewriting the CSP and reading the `#code=`
- * one-time code (V1-08); the others offer comparable HTTP(S) filtering.
+ * R2-13 (a hint only, ADR-229): the data folder holds the launcher token and the cookie secret –
+ * other users must not be able to read it. Under %LOCALAPPDATA% new folders are private; elsewhere
+ * (`--home` on another drive) the user checks the rights – Parallax does not query them.
  */
-const WEB_SCANNERS: readonly { pattern: RegExp; name: string }[] = [
-  { pattern: /kaspersky/i, name: 'Kaspersky' },
-  { pattern: /\beset\b/i, name: 'ESET' },
-  { pattern: /bitdefender/i, name: 'Bitdefender' },
-  { pattern: /\bavast\b/i, name: 'Avast' },
-  { pattern: /\bavg\b/i, name: 'AVG' },
-];
-
-/** Antivirus check: warn for a known web-traffic scanner, info otherwise; null if unknown. */
-export function checkAntivirus(products: readonly string[] | null): PreflightCheck | null {
-  if (products === null) return null;
-  const base = { id: 'antivirus', title: 'antivirus' };
-  const scanners = WEB_SCANNERS.filter((scanner) => products.some((p) => scanner.pattern.test(p))).map(
-    (scanner) => scanner.name,
-  );
-  if (scanners.length > 0) {
-    return {
-      ...base,
-      level: 'warn',
-      detail: `${scanners.join(', ')} (scans web traffic)`,
-      hint:
-        'Exclude 127.0.0.1 / the Parallax port from web traffic scanning: injected scripts weaken the ' +
-        'page CSP and can read the one-time login code (README: "Virenscanner mit Web-Traffic-Scan").',
-    };
-  }
-  // Security Center often lists one product several times (one entry per component).
-  const names = [...new Set(products)];
-  return { ...base, level: 'info', detail: names.length === 0 ? 'none registered' : names.join(', ') };
-}
-
-const antivirusOutputSchema = z.union([z.array(z.string()), z.string()]);
-
-/**
- * Display names of the registered antivirus products (Windows Security Center, `root/SecurityCenter2`
- * – readable without admin rights on client Windows). Null if unavailable (Windows Server, CIM error).
- */
-export async function antivirusProducts(run: RunFileFn = runFile): Promise<string[] | null> {
-  if (process.platform !== 'win32') return null;
-  const script =
-    "$p = @(Get-CimInstance -Namespace 'root/SecurityCenter2' -ClassName AntiVirusProduct -ErrorAction Stop | " +
-    'ForEach-Object { [string]$_.displayName }); ConvertTo-Json -InputObject $p -Compress';
-  try {
-    const result = await run(
-      powerShellPath(),
-      ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
-      { timeoutMs: 20_000, maxOutputBytes: 64 * 1024, env: windowsPowerShellEnv() },
-    );
-    if (result.exitCode !== 0 || result.timedOut) return null;
-    const parsed = antivirusOutputSchema.safeParse(JSON.parse(result.stdout.trim()) as unknown);
-    if (!parsed.success) return null;
-    return typeof parsed.data === 'string' ? [parsed.data] : parsed.data;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * R2-13 (warn only, no ACL change): the data folder holds the launcher token and the cookie
- * secret – other users must not be able to read it (multi-user/RDP machines, `--home` on another
- * drive). An unknown result is only `info`.
- */
-export function checkHomeAccessResult(home: string, access: HomeAccess): PreflightCheck {
+export function checkHomeLocation(home: string, localAppData: string | undefined): PreflightCheck {
   const base = { id: 'home', title: 'data dir' };
-  switch (access.kind) {
-    case 'private':
-      return { ...base, level: 'ok', detail: `${home} (only you)` };
-    case 'missing':
-      return { ...base, level: 'info', detail: `${home} (not created yet)` };
-    case 'unknown':
-      return { ...base, level: 'info', detail: `${home} (access not checked: ${access.reason})` };
-    case 'shared':
-      return {
-        ...base,
-        level: 'warn',
-        detail: `${home} is readable by ${access.principals.join(', ')}`,
-        hint:
-          'It holds the launcher token and the cookie secret. Use a folder only you can read (the default ' +
-          `under %LOCALAPPDATA% is) or restrict it, e.g. icacls "${home}" /inheritance:r /grant:r ` +
-          '"%USERNAME%:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F".',
-      };
-  }
+  const root = localAppData === undefined ? null : path.win32.resolve(localAppData).toLowerCase();
+  const inside =
+    root !== null && path.win32.resolve(home).toLowerCase().startsWith(`${root}${path.win32.sep}`);
+  if (inside) return { ...base, level: 'ok', detail: `${home} (under %LOCALAPPDATA%, private by default)` };
+  return {
+    ...base,
+    level: 'info',
+    detail: `${home} (outside %LOCALAPPDATA%: rights not checked)`,
+    hint:
+      'It holds the launcher token and the cookie secret – make sure only you can read it, e.g. ' +
+      `icacls "${home}" /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" ` +
+      '"*S-1-5-32-544:(OI)(CI)F".',
+  };
 }
 
 /** 0 = no failure (warnings allowed), 1 = at least one failure. */
@@ -574,12 +507,8 @@ export interface PreflightDeps {
   regKeyQuery?: RegKeyQuery;
   /** Product version of an executable (default lib/chrome.ts `readExeVersion`); null = unknown. */
   exeVersion?: (file: string) => Promise<string | null>;
-  /** Registered antivirus products (default: Windows Security Center via CIM); null = unknown. */
-  antivirus?: () => Promise<string[] | null>;
-  /** PARALLAX_HOME to check for other readers (R2-13); omitted/null = no check. */
+  /** PARALLAX_HOME for the location hint (R2-13); omitted/null = no line. */
   home?: string | null;
-  /** Default lib/homeAccess.ts `checkHomeAccess`. */
-  homeAccess?: (home: string) => Promise<HomeAccess>;
   /** Line about the profile source (checkProfilesSource); omitted = no line. */
   profilesSource?: PreflightCheck;
   /** Findings per profile (profileIssues); omitted = not checked. */
@@ -630,12 +559,7 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightReport
   const chromeVersion = chrome === null ? null : await (deps.exeVersion ?? readExeVersion)(chrome);
   checks.push(checkChrome(chrome === null ? null : { path: chrome, version: chromeVersion }));
   checks.push(checkChromePolicies(await chromePolicyValues(deps.regKeyQuery ?? regKeyQuery(run))));
-  const antivirus = checkAntivirus(await (deps.antivirus ?? (() => antivirusProducts(run)))());
-  if (antivirus !== null) checks.push(antivirus);
   const home = deps.home ?? null;
-  if (home !== null) {
-    const access = await (deps.homeAccess ?? ((h: string) => checkHomeAccess(h, { run })))(home);
-    checks.push(checkHomeAccessResult(home, access));
-  }
+  if (home !== null) checks.push(checkHomeLocation(home, getEnvVar(deps.env, 'LOCALAPPDATA')));
   return { checks, exitCode: preflightExitCode(checks) };
 }

@@ -18,6 +18,7 @@ import {
   type StartCommand,
 } from './autostart';
 import { AUTOSTART_WARNING_ID, PROTOCOL_WARNING_ID, createSystemIntegration } from './index';
+import { memoryMemo } from './memo';
 import { PROTOCOL_COMMAND_KEY, PROTOCOL_KEY } from './protocol';
 
 const REPO = 'D:\\dev\\parallax';
@@ -597,6 +598,79 @@ describe('createSystemIntegration: installation and clone (WP-86)', () => {
     expect(w.m.links.has(w.link)).toBe(false);
     expect(w.m.hkcu.size).toBe(0);
     expect(integration.warnings()).toEqual([]);
+  });
+
+  it('ADR-229: a new start with the same memo runs no PowerShell and no reg.exe; a new node.exe does', async () => {
+    const w = await world();
+    const memo = memoryMemo();
+    const start = (command = w.command) =>
+      createSystemIntegration({
+        available: true,
+        repoRoot: REPO,
+        home: w.home,
+        run: w.m.run,
+        env: w.env,
+        platform: 'win32',
+        command,
+        memo,
+      });
+    await start().apply(settings(true, true));
+    const first = w.m.calls.length;
+    expect(first).toBeGreaterThan(0);
+    expect(memo.data().registered).toBe(true);
+
+    const again = start();
+    await again.apply(settings(true, true));
+    expect(w.m.calls).toHaveLength(first);
+    expect(again.toastLaunchUri(SAMPLE_IDS.entry)).toBe(`parallax://session/${SAMPLE_IDS.entry}`);
+    expect(again.warnings()).toEqual([]);
+
+    // Another node.exe (e.g. after a Node update): both entries are written again – once.
+    const moved = (extra: readonly string[], homeArg: string | null): Promise<StartCommand> =>
+      w.command(extra, homeArg).then((cmd) => ({ ...cmd, node: 'C:\\nodejs-26\\node.exe' }));
+    await start(moved).apply(settings(true, true));
+    const second = w.m.calls.length;
+    expect(second).toBeGreaterThan(first);
+    expect(w.m.hkcu.get(`${PROTOCOL_COMMAND_KEY}|`)).toContain('C:\\nodejs-26\\node.exe');
+    await start(moved).apply(settings(true, true));
+    expect(w.m.calls).toHaveLength(second);
+
+    // Switched off: removed once, the next start with the same settings does nothing.
+    await start(moved).apply(settings(false, false));
+    const off = w.m.calls.length;
+    expect(w.m.hkcu.size).toBe(0);
+    const later = start(moved);
+    await later.apply(settings(false, false));
+    expect(w.m.calls).toHaveLength(off);
+    expect(later.toastLaunchUri(SAMPLE_IDS.entry)).toBeNull();
+  });
+
+  it('ADR-229: the start menu shortcut of an installation is not rewritten while command and file stay', async () => {
+    const w = await world();
+    const memo = memoryMemo();
+    const startMenu = startMenuLinkPath(w.env);
+    const menuCalls = () => w.m.calls.filter((c) => c.env[AUTOSTART_ENV.path] === startMenu);
+    const start = () =>
+      createSystemIntegration({
+        available: true,
+        repoRoot: REPO,
+        installRoot: ROOT,
+        home: w.home,
+        run: w.m.run,
+        env: w.env,
+        platform: 'win32',
+        memo,
+      });
+    await start().apply(settings(false, false));
+    expect(menuCalls()).toHaveLength(1);
+    await start().apply(settings(false, false));
+    expect(menuCalls()).toHaveLength(1);
+    // The shortcut changed on disk (another program, by hand) → ensured again.
+    if (startMenu === null) throw new Error('no start menu path');
+    await mkdir(path.dirname(startMenu), { recursive: true });
+    await writeFile(startMenu, 'changed');
+    await start().apply(settings(false, false));
+    expect(menuCalls()).toHaveLength(2);
   });
 
   it('installation on another data directory: autostart and protocol carry --home, the start menu never', async () => {

@@ -2525,3 +2525,29 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   der Verbindung (WP-88b). `index` selbst ist gegen die alte Basis um rund 64 kB geschrumpft (Wörterbücher im eigenen
   Start-Chunk `i18n`). Für eine lokal ausgelieferte App ist die Ladezeit dieser Größe unkritisch; die Regel „nur das
   Nötigste in den Start-Chunk“ gilt weiter.
+
+## ADR-229 – Keine Systemabfragen, die Sicherheitssoftware auslösen
+- **Datum/WP:** 18.11.2026, `fix/quiet-system-calls` (Nutzer: „Auf gar keinen Fall Sicherheitssoftware anschlagen“).
+  Die Nummern 224–228 belegt der Branch `feature/multi-host`.
+- **Entscheidung:**
+  - `pnpm preflight` fragt nicht mehr ab, welche Virenscanner installiert sind (`root/SecurityCenter2`). Der
+    README-Abschnitt zum Web-Traffic-Scan bleibt.
+  - Die Prüfung der Ordnerrechte (`whoami` + `Get-Acl`, bei jedem Serverstart und im Preflight) entfällt samt
+    `lib/homeAccess.ts`. Der Preflight nennt nur noch einen Datenordner außerhalb von `%LOCALAPPDATA%` als Hinweis.
+    Ersetzt ADR-056 in diesem Punkt.
+  - Autostart-Verknüpfung, Protokoll-Handler und Startmenü-Verknüpfung werden nur noch geschrieben, wenn sich etwas
+    ändert. Der erreichte Stand steht als Fingerabdruck in `<home>/system-integration.json` (`system/memo.ts`): der
+    gewünschte Zustand, der Startbefehl samt `node.exe` und Größe und Zeit der Verknüpfung. Ein unveränderter Start
+    ruft weder PowerShell noch `reg.exe`. Die Registry wird dabei nicht nachgelesen; ein von Hand geänderter Eintrag
+    wird beim nächsten Wechsel der Einstellung repariert.
+  - Prozessabfragen (Waisen-Bereinigung, Herzschlag-Schnappschuss alle 30 s, Shutdown-Sweep) laufen über `node:ffi`
+    im Serverprozess: `CreateToolhelp32Snapshot` und `GetProcessTimes` (`lib/processNative.ts`, `lib/ffi.ts`), in
+    etwa 10–30 ms statt 1–3 s. Prozesse, deren Startzeit sich nicht lesen lässt (andere Benutzer, geschützte
+    Prozesse), fehlen in der Liste wie Zeilen ohne `CreationDate` bei CIM. Nur ein Node ohne `node:ffi` (< 26.1)
+    fragt weiter PowerShell + CIM.
+  - Bleiben: Windows-Toasts (PowerShell, nur auf Wunsch je Meldung), Konsole, Editor und Explorer nach einem Klick,
+    `taskkill`, `reg query` für Chrome und Editoren, `git`.
+- **Begründung:** Verhaltensbasierte Sicherheitssoftware hielt einen Parallax-Server an, der PowerShell startete
+  (ADR-228 auf `feature/multi-host`). Erkunden der installierten Sicherheitssoftware, `whoami`, regelmäßige
+  Prozessabfragen per Skript und das Schreiben von Autostart- und Registry-Einträgen bei jedem Start sind typische
+  Muster von Schadsoftware. Die Prüfungen brachten wenig, die Wiederholungen nichts.

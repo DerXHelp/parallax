@@ -9,6 +9,11 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 - Der Knopf für eine gefundene Version heißt „Jetzt aktualisieren“ statt „Update vorbereiten“; er lädt und
   installiert sie, „Neu starten“ wechselt danach (WP-89).
 
+### Behoben
+- Parallax startet für Systemabfragen kaum noch PowerShell, was Sicherheitssoftware als verdächtig melden konnte:
+  Prozesse liest der Server selbst (ab Node.js 26.1), Autostart, Protokoll-Handler und Startmenü schreibt er nur
+  noch bei einer Änderung, und Virenscanner sowie Ordnerrechte fragt er nicht mehr ab (fix/quiet-system-calls).
+
 ## [1.0.1] – 2026-11-18
 
 ### Sicherheit

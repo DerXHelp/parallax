@@ -329,9 +329,8 @@ außerdem Netzwerk-Prüfungen der Tests.
 **Empfehlung:** `127.0.0.1` bzw. den Parallax-Port (Standard `4711`, Dev `4712`/`5173`) vom
 Web-Traffic-Scan ausnehmen – bei Kaspersky als vertrauenswürdige Adresse in den Netzwerk- bzw.
 Web-Anti-Virus-Einstellungen, oder dort „Skript in Datenverkehr einbetten“ abschalten
-(Bezeichnungen je nach Version). `pnpm preflight` weist auf erkannte Produkte mit
-Web-Traffic-Scan hin (Windows-Sicherheitscenter, ohne Admin-Rechte; Kaspersky, ESET, Bitdefender,
-Avast, AVG).
+(Bezeichnungen je nach Version). Parallax fragt nicht ab, welche Sicherheitssoftware installiert ist –
+das prüft jeder selbst.
 
 ## Rechtliches
 Parallax steht unter der [MIT-Lizenz](LICENSE).
