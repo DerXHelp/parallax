@@ -218,6 +218,30 @@ export const ERROR_CATALOG = {
   UPDATE_DOWNGRADE_BLOCKED: { category: 'conflict', http: 409, severity: 'error', retryable: false },
   /** `params.version`, `reason` ∈ UPDATE_RESTART_FAILED_REASONS. */
   UPDATE_RESTART_FAILED: { category: 'internal', http: 500, severity: 'error', retryable: true },
+  // several computers (WP-76, docs/wp/WP-76.md §C.4) – never category `setup` (no setup screen)
+  /** The other computer cannot be reached (`params.reason`: network, timeout, refused, tls, closed). */
+  HOST_UNREACHABLE: { category: 'internal', http: 502, severity: 'warning', retryable: true },
+  /** Other Parallax or protocol version (`params.version`, `protocol` of the other side). */
+  HOST_INCOMPATIBLE: { category: 'conflict', http: 409, severity: 'warning', retryable: false },
+  /** The other computer no longer accepts this coupling (unpaired, key renewed, coupled elsewhere). */
+  HOST_REVOKED: { category: 'auth', http: 403, severity: 'warning', retryable: false },
+  /** Unknown `hostId` of the controlling computer's list. */
+  HOST_NOT_FOUND: { category: 'not_found', http: 404, severity: 'error', retryable: false },
+  /** Wrong pairing code, or the check of the pairing failed (indistinguishable on purpose). */
+  PAIRING_INVALID: { category: 'auth', http: 401, severity: 'error', retryable: false },
+  /** No open pairing window (expired, used up, closed after too many failures). */
+  PAIRING_EXPIRED: { category: 'auth', http: 401, severity: 'error', retryable: false },
+  PAIRING_RATE_LIMITED: { category: 'auth', http: 429, severity: 'warning', retryable: true },
+  /** Remote access could not start (`params.reason`: port_in_use, bind, tls_unsupported, listen). */
+  REMOTE_ACCESS_FAILED: { category: 'internal', http: 500, severity: 'error', retryable: true },
+  /** Wrong role for the command, or a role switch while the old role still has couplings (`params.role`). */
+  REMOTE_ROLE_CONFLICT: { category: 'conflict', http: 409, severity: 'warning', retryable: false },
+  /** DPAPI (Windows key store) is not usable – no sharing and no coupling without it. */
+  REMOTE_KEYSTORE_UNAVAILABLE: { category: 'internal', http: 500, severity: 'error', retryable: false },
+  /** The command is not available from another computer (`params.command`). */
+  REMOTE_NOT_ALLOWED: { category: 'auth', http: 403, severity: 'warning', retryable: false },
+  /** The draft exceeds LIMITS.draftChars / draftTotalChars. */
+  DRAFT_TOO_LARGE: { category: 'validation', http: 413, severity: 'warning', retryable: false },
   // client-side only (never sent by a server)
   CONNECTION_LOST: { category: 'client', http: 0, severity: 'warning', retryable: true },
   COMMAND_TIMEOUT: { category: 'client', http: 0, severity: 'warning', retryable: true },

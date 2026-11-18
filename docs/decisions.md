@@ -2367,7 +2367,89 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   `acceptEdits`. Der Nutzer will Auto als Standard (16.11.2026). Ersetzt `plan.md` „Split-Button, merkt sich die
   letzte Wahl“.
 
-<!-- ADR-205…211 sind vom Plan WP-75 (Multi-Host, Branch `feature/multi-host`) vorgemerkt. -->
+## ADR-205 – Vermittler im lokalen Server, Fernzugang als einzige Ausnahme vom Loopback
+- **Datum/WP:** 18.11.2026, WP-76 (Plan WP-75 §2, Spezifikation WP-76 §B.6); angenommen mit dem Auftrag des Nutzers
+  „setze das feature um“ (18.11.2026).
+- **Entscheidung:**
+  - Der Browser verbindet sich nie mit einem anderen Rechner. Der lokale Server des steuernden Rechners reicht je
+    Fenster eine WebSocket-Verbindung 1 : 1 durch (`/api/hosts/:hostId/ws`) und Inhalte streamend
+    (`blob`, `file`, `attachments`). Dabei gelten dieselben Cookie-, Host- und Origin-Prüfungen wie für lokale Routen.
+    Antwort-Header setzt er selbst.
+  - Der freigebende Rechner lauscht dafür auf einem zweiten Port im Netz (Default 4713). Das ist die einzige Ausnahme
+    von „der Server lauscht nur auf `127.0.0.1`“ (R1-05). Der Port ist ab Werk zu und nur mit der Rolle „Freigeben“
+    offen.
+- **Begründung:** Das Sicherheitsmodell des Browsers (ADR-023) bleibt unverändert; Protokoll und Server bleiben
+  host-agnostisch, Synchronität und Präsenz ergeben sich aus dem vorhandenen Mehrfenster-Modell.
+
+## ADR-206 – Fernzugang: TLS 1.3 auf CNSA-2.0-Niveau, gegenseitige Pins, Verbindungsbeweis
+- **Datum/WP:** 18.11.2026, WP-76 §B.3–B.6, B.9 (nach unabhängigem Review).
+- **Entscheidung:**
+  - Nur TLS 1.3 mit `TLS_AES_256_GCM_SHA384`, Schlüsseltausch `SecP384r1MLKEM1024`, Signaturen `mldsa87`. Jeder
+    Parameter hat genau einen Wert; es gibt keine Resumption.
+  - Selbstsignierte ML-DSA-87-Zertifikate; mTLS mit gegenseitig gepinnten Schlüsseln (SHA-384 über SPKI). Der
+    steuernde Rechner pinnt das ganze Zertifikat als `ca`. Kein Bearer-Token.
+  - Zusätzlich beweist jede Verbindung vor dem ersten HTTP-Byte das bei der Kopplung vereinbarte Geheimnis `kAuth`
+    (HMAC über einen TLS-Exporter und beide SPKI). Damit ist die Anmeldung hybrid.
+  - Der Listener ist `tls.createServer`. Sockets werden vor jedem HTTP-Parser klassifiziert und an getrennte
+    `http.Server` übergeben (Kopplung bzw. gekoppelter Rechner); alles andere wird zerstört.
+  - Private Schlüssel und `kAuth` liegen DPAPI-geschützt auf der Platte; ohne DPAPI gibt es keinen Fernzugang.
+  - Über den Fernzugang ist nur eine Allowlist von Befehlen erreichbar (`REMOTE_ALLOWED_COMMANDS`).
+- **Begründung:** Wer eine freigegebene Session steuert, führt Code auf dem freigebenden Rechner aus. Der Nutzer
+  verlangt das höchste kryptografische Niveau. Der Verbindungsbeweis macht einen Fehler in ML-DSA allein unschädlich
+  (BSI/ANSSI: PQ-Signaturen nur hybrid). Die Klassifizierung vor dem Parser schließt die im Review gezeigte Lücke von
+  `https.createServer`.
+
+## ADR-207 – Kopplung per Code mit Kanalbindung
+- **Datum/WP:** 18.11.2026, WP-76 §B.7.
+- **Entscheidung:**
+  - Der Code hat 128 Bit, Crockford-Base32 mit zwei Prüfzeichen (mod 1021), 28 Zeichen. Er gilt 10 min, einmalig, mit
+    höchstens 3 Fehlversuchen.
+  - Er wird nur auf dem freigebenden Rechner lokal erzeugt und angezeigt und nie über den Fernzugang gesendet.
+  - Der steuernde Rechner beweist zuerst (`macA`), der freigebende antwortet (`macB`). Beide sind HMAC-SHA-384 über
+    einen TLS-Exporter und beide SPKI, mit Rollen-Labels.
+  - Danach pinnen beide Seiten und leiten `kAuth` ab.
+- **Begründung:** Ein Code zum Abtippen ist bequemer als ein langer Kopplungstext und braucht keine gemeinsame
+  Zwischenablage. Kanalbindung und Exporter verhindern Mann in der Mitte und Wiederholung. Die Kopplung hängt nicht an
+  ML-DSA; ein Tippfehler kostet keinen Fehlversuch.
+
+## ADR-208 – Inhalte anderer Rechner lösen keine lokalen Aktionen aus
+- **Datum/WP:** 18.11.2026, WP-76 (§C.3).
+- **Entscheidung:**
+  - Links öffnet der lokale Server. Pfade des anderen Rechners werden nie lokal verwendet.
+  - Editor, Explorer und „Öffnen mit“ sind für freigegebene Sessions aus. Die Header-Politik ist lokal.
+  - Umgekehrt nimmt der freigebende Rechner über den Fernzugang nur die Befehle der Sessions an, nicht seine
+    Einstellungen, Profile, Updates, seine Rolle oder sichtbare Programme (fail closed, `REMOTE_NOT_ALLOWED`).
+- **Begründung:** Kein Rechner soll durch Inhalte oder Befehle des anderen mehr tun, als der Nutzer dort selbst sehen
+  und bestätigen kann.
+
+## ADR-209 – Nur gleiche Versionen arbeiten zusammen, kein Update aus der Ferne
+- **Datum/WP:** 18.11.2026, WP-76 §B (Plan WP-75 §4.7).
+- **Entscheidung:**
+  - Gleiche Parallax- und Protokollversion (Header bei jeder Anfrage, Health). Sonst gilt der Rechner als
+    `incompatible`, ohne Reload und ohne Schleife.
+  - Jeder Rechner aktualisiert sich selbst über „Jetzt aktualisieren“.
+  - Ersetzt den Entwurf „nur die Protokollversion zählt“ (16.11.2026).
+- **Begründung:** Gemischte Versionen über zwei Rechner wären nicht testbar. Ein Update aus der Ferne würde den
+  freigebenden Rechner ohne Aufsicht umbauen.
+
+## ADR-210 – Entwürfe im Server, letzter Schreiber gewinnt
+- **Datum/WP:** 18.11.2026, WP-76/77.
+- **Entscheidung:**
+  - Der Composer-Entwurf liegt je Eintrag im Server (`entries/<id>/draft.json`) und geht als `detail.patch` an alle
+    Fenster, auch an die eines anderen Rechners.
+  - Der letzte Schreiber gewinnt, in der Reihenfolge der Annahme. Senden löscht den Entwurf überall.
+  - `localStorage` bleibt Zwischenspeicher; ungesendete Anhänge wandern nicht mit.
+- **Begründung:** Wer den Rechner wechselt, soll weiterschreiben können; das nützt auch mit nur einem Rechner und
+  mehreren Fenstern.
+
+## ADR-211 – Benachrichtigungen folgen dem Nutzer über Rechner
+- **Datum/WP:** 18.11.2026, WP-76 (Umsetzung WP-81).
+- **Entscheidung:**
+  - Der steuernde Server hält je freigebendem Rechner eine Wächter-Verbindung (`clientHello.kind: 'relay'`).
+  - Wo der freigebende Rechner nativ toasten würde und der Nutzer zuletzt am steuernden Rechner war, geht die Meldung
+    an den Wächter. Der steuernde Rechner toastet dann mit seinen eigenen Filtern („Nicht stören“).
+  - Der Protokoll-Link trägt den Rechner: `parallax://session/<hostId>/<entryId>`.
+- **Begründung:** Meldungen sollen dort erscheinen, wo der Nutzer arbeitet, nicht unbemerkt auf dem anderen Rechner.
 
 ## ADR-212 – Öffentliches Repo ist neutral, `public-check` prüft
 - **Datum/WP:** 17.11.2026, WP-84; angenommen (17.11.2026, Nutzer: „los“ für WP-84 nach dem Plan WP-83 §3).
@@ -2525,3 +2607,39 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   der Verbindung (WP-88b). `index` selbst ist gegen die alte Basis um rund 64 kB geschrumpft (Wörterbücher im eigenen
   Start-Chunk `i18n`). Für eine lokal ausgelieferte App ist die Ladezeit dieser Größe unkritisch; die Regel „nur das
   Nötigste in den Start-Chunk“ gilt weiter.
+
+## ADR-224 – Rollen exklusiv, 1 : n
+- **Datum/WP:** 18.11.2026, WP-76 (Plan WP-75 §4.1; Nutzer 18.11.2026).
+- **Entscheidung:**
+  - Ein Rechner ist aus (Default), freigebend oder steuernd, nie beides zugleich.
+  - Ein freigebender Rechner hat genau eine Kopplung; „Kopplung aufheben“ genügt. Ein steuernder Rechner hat beliebig
+    viele (höchstens 16).
+  - Die Rolle steht in `multi-host.json` und wird nur über `multiHost.configure` gewechselt. Ein Wechsel zwischen
+    „Freigeben“ und „Andere steuern“ geht erst, wenn die alte Rolle keine Kopplung mehr hat
+    (`REMOTE_ROLE_CONFLICT`).
+- **Begründung:** Kein Weiterreichen über mehrere Stufen; einfaches Vertrauens- und Benachrichtigungsmodell. Der
+  generische `settings.update` kann diese Prüfungen und Wirkungen nicht tragen.
+
+## ADR-225 – Verbindungsprotokoll mit abgelehnten Versuchen
+- **Datum/WP:** 18.11.2026, WP-76 (Plan WP-75 §3.7; Nutzer 18.11.2026).
+- **Entscheidung:**
+  - Der freigebende Rechner protokolliert jeden Verbindungsversuch mit Adresse und Art (`remote/events.json`):
+    Kopplung ok, fehlgeschlagen oder gebremst, unbekannter oder aufgehobener Schlüssel, falsches Zertifikat,
+    falscher Verbindungsbeweis, TLS-Abbruch, Rate-Limit, Browser, Version, verbunden und getrennt.
+  - Gleiche Ereignisse einer Adresse innerhalb einer Minute werden zusammengefasst. Es gibt höchstens 500 Einträge,
+    30 Tage lang, ohne Reverse-DNS.
+  - Neue abgelehnte Versuche zeigt die Kopfzeile, bis der Nutzer das Protokoll angesehen hat.
+- **Begründung:** Der Nutzer will sehen, wer es versucht hat. Zusammenfassen verhindert, dass ein Angreifer das
+  Protokoll flutet.
+
+## ADR-226 – Seitenleiste: Gruppierung wählbar, Gruppen einklappbar
+- **Datum/WP:** 18.11.2026, WP-76 (Plan WP-75 §4.4; Umsetzung WP-80).
+- **Entscheidung:**
+  - Das Menü „Gruppieren nach“ hat die Häkchen Rechner und Verzeichnis. Mit beiden liegen die Verzeichnisse in der
+    Rechner-Gruppe.
+  - „Rechner“ erscheint nur, wenn Rechner eingebunden sind. Die Rechner stehen in fester Reihenfolge, dieser Rechner
+    zuerst.
+  - Beide Ebenen sind einklappbar; der Zustand gilt je Fenster.
+  - Ersetzt den Umschalter `flat | grouped` (WP-35).
+- **Begründung:** Mit mehreren Rechnern will der Nutzer wählen, wonach er ordnet. Einklappen hält lange Listen
+  übersichtlich.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { errorSpec } from './errors';
+import * as http from './http';
 import {
   API_PATHS,
   API_PREFIX,
@@ -58,6 +59,7 @@ import {
   sampleBlobId,
   sampleHealthResponse,
   sampleLauncherCode,
+  sampleRemotePairRequest,
   sampleServerLockFile,
   sampleToken,
 } from './samples';
@@ -340,5 +342,56 @@ describe('lock file (single instance, C.8)', () => {
     expect(serverLockFileSchema.safeParse({ ...sampleServerLockFile(), schemaVersion: 2 }).success).toBe(
       false,
     );
+  });
+});
+
+describe('WP-76: several computers', () => {
+  const entry = SAMPLE_IDS.entry;
+
+  it('builds forwarding paths for other computers and the local paths for this one', () => {
+    expect(http.hostWsPath('computer-b')).toBe('/api/hosts/computer-b/ws');
+    expect(http.hostBlobPath('local', SAMPLE_IDS.blob)).toBe(http.blobPath(SAMPLE_IDS.blob));
+    expect(http.hostBlobPath('computer-b', SAMPLE_IDS.blob)).toBe(
+      `/api/hosts/computer-b/blob/${SAMPLE_IDS.blob}`,
+    );
+    expect(http.hostFileUrl('local', entry, 'C:\\a b.txt')).toBe(http.fileUrl(entry, 'C:\\a b.txt'));
+    expect(http.hostFileUrl('computer-b', entry, 'C:\\a b.txt')).toBe(
+      `/api/hosts/computer-b/file?entryId=${entry}&path=C%3A%5Ca%20b.txt`,
+    );
+    expect(http.hostAttachmentsPath('local')).toBe(API_PATHS.attachments);
+    expect(http.hostAttachmentsPath('computer-b')).toBe('/api/hosts/computer-b/attachments');
+    for (const path of Object.values(http.REMOTE_PATHS))
+      expect(path.startsWith(http.REMOTE_PREFIX)).toBe(true);
+    for (const path of Object.values(http.HOST_API_PATHS))
+      expect(path.startsWith(`${API_PREFIX}/hosts/`)).toBe(true);
+  });
+
+  it('protocol links carry the computer and parse strictly', () => {
+    expect(http.hostSessionProtocolUri('local', entry)).toBe(sessionProtocolUri(entry));
+    const remote = http.hostSessionProtocolUri('computer-b', entry);
+    expect(remote).toBe(`${PROTOCOL_SCHEME}://session/computer-b/${entry}`);
+    expect(http.parseHostSessionProtocolUri(remote)).toEqual({ hostId: 'computer-b', entryId: entry });
+    expect(http.parseHostSessionProtocolUri(sessionProtocolUri(entry))).toEqual({
+      hostId: 'local',
+      entryId: entry,
+    });
+    expect(http.parseHostSessionProtocolUri(`${PROTOCOL_SCHEME}://session/local/${entry}`)).toBeNull();
+    expect(http.parseHostSessionProtocolUri(`${PROTOCOL_SCHEME}://session/Computer_B/${entry}`)).toBeNull();
+    expect(http.parseHostSessionProtocolUri(`${PROTOCOL_SCHEME}://session/computer-b/${entry}/x`)).toBeNull();
+    expect(parseSessionProtocolUri(remote)).toBeNull();
+  });
+
+  it('pairing bodies: MACs are exactly 48 bytes base64url', () => {
+    expect(http.remotePairRequestSchema.safeParse(sampleRemotePairRequest()).success).toBe(true);
+    expect(
+      http.remotePairRequestSchema.safeParse(sampleRemotePairRequest({ macA: 'a'.repeat(63) })).success,
+    ).toBe(false);
+    expect(
+      http.remotePairRequestSchema.safeParse(sampleRemotePairRequest({ macA: `${'a'.repeat(63)}=` })).success,
+    ).toBe(false);
+    expect(http.remotePairRequestSchema.safeParse(sampleRemotePairRequest({ deviceName: ' ' })).success).toBe(
+      false,
+    );
+    expect(http.REMOTE_HEADERS.version).toBe(http.REMOTE_HEADERS.version.toLowerCase());
   });
 });

@@ -23,6 +23,7 @@ import type { Logger } from 'pino';
 import { jsonValueSchema, type ClientId, type EntryId, type ProfileId } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import {
+  DEFAULT_MULTI_HOST_CONFIG,
   DEFAULT_UPDATE_STATE,
   currentConversation,
   isRemoteControlActive,
@@ -200,6 +201,8 @@ export interface SessionManagerDeps {
     /** WP-87: `HostState.app` and `HostState.update` (the update service). Absent → null / default. */
     app?: () => AppInfo | null;
     update?: () => UpdateState;
+    /** WP-76: role, controlled computers and remote access (the multi-host service). Absent → defaults. */
+    multiHost?: () => Pick<HostState, 'multiHost' | 'remoteHosts' | 'remoteAccess'>;
   };
   /** Phase 2 (ADR-101): handlers of the host commands (`profile.*`, `fs.listDirectory`); default []. */
   hostCommands?: readonly HostCommandHandler[];
@@ -452,6 +455,11 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       remoteControlDefault: remoteDefaults.get(defaultProfile.id) ?? null,
       app: deps.host.app?.() ?? null,
       update: deps.host.update?.() ?? DEFAULT_UPDATE_STATE,
+      ...(deps.host.multiHost?.() ?? {
+        multiHost: DEFAULT_MULTI_HOST_CONFIG,
+        remoteHosts: [],
+        remoteAccess: null,
+      }),
     };
   };
 

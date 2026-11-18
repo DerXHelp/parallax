@@ -194,6 +194,20 @@ export function createMemorySessionSource(options: { host?: HostState } = {}): M
       case 'update.apply':
       case 'update.rollback':
       case 'update.dismiss':
+      case 'session.setDraft':
+      case 'multiHost.configure':
+      case 'remoteAccess.pair':
+      case 'remoteAccess.cancelPairing':
+      case 'remoteAccess.unpair':
+      case 'remoteAccess.renewKey':
+      case 'remoteAccess.check':
+      case 'remoteAccess.events':
+      case 'remoteAccess.eventsSeen':
+      case 'hosts.add':
+      case 'hosts.update':
+      case 'hosts.move':
+      case 'hosts.remove':
+      case 'hosts.reconnect':
         throw new CommandError(makeError('NOT_IMPLEMENTED', { command: cmd.name }));
     }
   }

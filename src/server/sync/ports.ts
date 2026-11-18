@@ -27,6 +27,7 @@ import {
   transcriptItemSchema,
   type BlobRef,
   type DecisionRecord,
+  type Draft,
   type Entry,
   type HostState,
   type HostWarning,
@@ -36,6 +37,7 @@ import {
   type TranscriptItem,
 } from '@shared/model';
 import type {
+  ClientKind,
   Command,
   HostCommand,
   HostCommandName,
@@ -50,6 +52,13 @@ export interface ClientPresence {
   presence: PresenceState;
   lastFocusAt: Date | null;
   connectedAt: Date;
+  /**
+   * WP-76: `remote` = a window or the relay of the controlling computer (through remote access);
+   * absent = `local` (older producers, tests).
+   */
+  origin?: 'local' | 'remote';
+  /** WP-76: `relay` = the watcher of the controlling computer (ADR-207); absent = `window`. */
+  kind?: ClientKind;
 }
 
 export interface CommandContext {
@@ -202,6 +211,20 @@ export interface AttachmentFileStore {
    * absolute path. Throws CommandError(BLOB_NOT_FOUND).
    */
   materialize(entryId: EntryId, blobId: BlobId, name: string | null): Promise<string>;
+}
+
+/**
+ * WP-76/77 (ADR-210): the synchronized composer draft per entry,
+ * `<home>/entries/<entryId>/draft.json` (`draftFileSchema`). Implemented in `store/drafts.ts` (WP-77).
+ */
+export interface DraftStore {
+  /** null = no draft (also for a missing or quarantined file). */
+  load(entryId: EntryId): Promise<Draft | null>;
+  /** Debounced atomic write; null deletes the file. */
+  save(entryId: EntryId, draft: Draft | null): void;
+  /** Entry removed: delete the file now. */
+  remove(entryId: EntryId): Promise<void>;
+  flush(): Promise<void>;
 }
 
 /** Quarantine messages (B). */

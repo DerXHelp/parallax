@@ -20,12 +20,17 @@ Isomorpher Code, den Server **und** Web importieren (Alias `@shared/*`). Design:
 | `product.ts` | Produktname an genau einer Stelle (WP-00) |
 | `devPorts.ts` | `DEV_WEB_PORT` ohne eigene Importe (Root-Configs laden es; `http.ts` re-exportiert) |
 | `version.ts` | Versionsregel C.7: `compareVersions`, `cliVersionStatus` – die einzige Implementierung (Server und Web re-exportieren, WP-30 §4.9) |
+| `pairing.ts` | WP-76: Kopplungscode der Rechner (128 Bit, Crockford-Base32, zwei Prüfzeichen mod 1021): `formatPairingCode`, `parsePairingCode`, Fenster-Limits |
 | `changelog.ts` | WP-87: Parser für `CHANGELOG.md` (ADR-216, aus `scripts/release/changelog.ts`): `parseChangelog`, `findSection`, `releaseSection`, `changelogNotes`, `sectionsBetween` – Release-Skripte und „Was ist neu“ (Server) lesen gleich |
 
 **Contracts v2 (Phase 2, `docs/wp/WP-30.md` §4):** `PROTOCOL_VERSION` 2, `REGISTRY_SCHEMA_VERSION` 2;
 Settings (Benachrichtigungen, Leerlauf, `promptSuggestions`, Port, Autostart), Profil-Eingabe und
 -Befunde, Entry/Summary (`gitBranch`, `external`, `continueAt`), System-Event `handoff`, Ordner-Browser
 (`fsListingSchema`), Host-Befehle (`HOST_COMMAND_NAMES`), Upload-Schemas und Protokoll-URI (`http.ts`).
+
+**Contracts v5 (Mehrere Rechner, `docs/wp/WP-76.md` §C):** `PROTOCOL_VERSION` 5; Entwürfe im Server; Rolle,
+Rechnerliste, Fernzugang und Verbindungsprotokoll (`model.ts`); Befehle `multiHost.*`, `remoteAccess.*`, `hosts.*`,
+`session.setDraft`, Allowlist über den Fernzugang (`protocol.ts`); Vermittler- und Fernzugangs-Pfade (`http.ts`).
 
 Tests liegen daneben (`*.test.ts`, Typ-Tests in `contracts.types.test.ts`).
 

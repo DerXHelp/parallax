@@ -7,10 +7,19 @@
  * Import order: after protocol (common → errors → status → model → protocol → sync | http | paths).
  */
 import { z } from 'zod';
-import { LIMITS, entryIdSchema, isoDateTimeSchema, type BlobId, type EntryId } from './common';
+import {
+  LIMITS,
+  LOCAL_HOST_ID,
+  entryIdSchema,
+  hostIdSchema,
+  isoDateTimeSchema,
+  type BlobId,
+  type EntryId,
+  type HostId,
+} from './common';
 import { DEV_WEB_PORT } from './devPorts';
 import { errorPayloadSchema } from './errors';
-import { appVersionSchema, blobRefSchema } from './model';
+import { appVersionSchema, blobRefSchema, hostNameSchema } from './model';
 import { PRODUCT_ID } from './product';
 import { WS_PATH } from './protocol';
 
@@ -408,6 +417,32 @@ export function parseSessionProtocolUri(uri: string): EntryId | null {
 }
 
 /**
+ * WP-76 (ADR-207): `parallax://session/<hostId>/<entryId>` for a session of another computer (the
+ * toast of a controlling computer); for this computer the old form `sessionProtocolUri(entryId)`.
+ */
+export function hostSessionProtocolUri(hostId: HostId, entryId: EntryId): string {
+  return hostId === LOCAL_HOST_ID
+    ? sessionProtocolUri(entryId)
+    : `${PROTOCOL_SCHEME}://session/${hostId}/${entryId}`;
+}
+
+const HOST_SESSION_URI = new RegExp(`^${PROTOCOL_SCHEME}:(?://)?session/([^/]+)/([^/]+)/?$`, 'i');
+
+/**
+ * Strict parser for both forms: `session/<entryId>` → this computer, `session/<hostId>/<entryId>` →
+ * that computer (`local` is not accepted as an explicit host); anything else → null.
+ */
+export function parseHostSessionProtocolUri(uri: string): { hostId: HostId; entryId: EntryId } | null {
+  const local = parseSessionProtocolUri(uri);
+  if (local !== null) return { hostId: LOCAL_HOST_ID, entryId: local };
+  const match = HOST_SESSION_URI.exec(uri.trim());
+  const hostId = hostIdSchema.safeParse(match?.[1]);
+  const entryId = entryIdSchema.safeParse(match?.[2]);
+  if (!hostId.success || !entryId.success || hostId.data === LOCAL_HOST_ID) return null;
+  return { hostId: hostId.data, entryId: entryId.data };
+}
+
+/**
  * Client side: splits `location.hash` into the auth code (null if absent or malformed) and the
  * remaining hash (e.g. `#session=…`, '' if nothing remains). Every `code=` part is removed, also
  * a malformed one – the client always calls `history.replaceState` with the remaining hash.
@@ -449,3 +484,109 @@ export const serverLockFileSchema = z.object({
   buildId: z.string().min(1).max(LIMITS.buildIdChars),
 });
 export type ServerLockFile = z.infer<typeof serverLockFileSchema>;
+
+// =====================================================================================
+// Several computers (WP-76, docs/wp/WP-76.md §C.3)
+// =====================================================================================
+
+/**
+ * Forwarding routes of a controlling computer, under its own origin and with the same guards as the
+ * local routes (`ws` → class ws, `blob` → blob, `file` → file, `attachments` → mutation). `:hostId`
+ * is a `HostState.remoteHosts[].hostId`; the server proxies to the REMOTE_PATHS of that computer and
+ * sets the response headers itself (never the other computer's).
+ */
+export const HOST_API_PATHS = {
+  ws: '/api/hosts/:hostId/ws',
+  blob: '/api/hosts/:hostId/blob/:blobId',
+  file: '/api/hosts/:hostId/file',
+  attachments: '/api/hosts/:hostId/attachments',
+} as const;
+
+/** `/api/hosts/<hostId>/ws`. */
+export function hostWsPath(hostId: HostId): string {
+  return HOST_API_PATHS.ws.replace(':hostId', hostId);
+}
+
+/** `/api/blob/<blobId>` for this computer, `/api/hosts/<hostId>/blob/<blobId>` for another. */
+export function hostBlobPath(hostId: HostId, blobId: BlobId): string {
+  if (hostId === LOCAL_HOST_ID) return blobPath(blobId);
+  return HOST_API_PATHS.blob.replace(':hostId', hostId).replace(':blobId', blobId);
+}
+
+/** `fileUrl()` for this computer, the forwarding path for another. */
+export function hostFileUrl(hostId: HostId, entryId: EntryId, path: string): string {
+  if (hostId === LOCAL_HOST_ID) return fileUrl(entryId, path);
+  const base = HOST_API_PATHS.file.replace(':hostId', hostId);
+  return `${base}?entryId=${encodeURIComponent(entryId)}&path=${encodeURIComponent(path)}`;
+}
+
+/** `/api/attachments` for this computer, the forwarding path for another. */
+export function hostAttachmentsPath(hostId: HostId): string {
+  return hostId === LOCAL_HOST_ID
+    ? API_PATHS.attachments
+    : HOST_API_PATHS.attachments.replace(':hostId', hostId);
+}
+
+/**
+ * Routes of the remote-access listener of a sharing computer (HTTPS, TLS profile and pins of
+ * docs/wp/WP-76.md §B; nothing else is served). `pair` only on a socket of an open pairing window;
+ * all others only on a socket whose client key is the pinned one.
+ */
+export const REMOTE_PREFIX = '/remote/v1';
+export const REMOTE_PATHS = {
+  /** POST `remotePairRequestSchema` → `remotePairResponseSchema` (§B.7). */
+  pair: '/remote/v1/pair',
+  /** GET → `remoteHealthResponseSchema`. */
+  health: '/remote/v1/health',
+  /** WebSocket upgrade → the sync hub like a window (or the relay, `clientHello.kind`). */
+  ws: '/remote/v1/ws',
+  /** GET like `/api/blob/:blobId`. */
+  blob: '/remote/v1/blob/:blobId',
+  /** GET/HEAD like `/api/file` (query `fileQuerySchema`). */
+  file: '/remote/v1/file',
+  /** POST like `/api/attachments` (query `attachmentUploadQuerySchema`). */
+  attachments: '/remote/v1/attachments',
+  /** DELETE: the controlling computer drops its own coupling (`hosts.remove`). */
+  peerSelf: '/remote/v1/peer/self',
+} as const;
+
+/**
+ * Sent by the controlling computer with every request to a sharing computer (lower-case, as Node
+ * delivers them); a different version or protocol → 409 HOST_INCOMPATIBLE (§B.9).
+ */
+export const REMOTE_HEADERS = {
+  version: 'parallax-version',
+  protocol: 'parallax-protocol',
+} as const;
+
+/** Largest body of `POST /remote/v1/pair` (§B.10). */
+export const REMOTE_PAIR_BODY_MAX_BYTES = 4096;
+
+/** 48 bytes (HMAC-SHA-384), base64url without padding. */
+const base64Url48 = z.string().regex(/^[A-Za-z0-9_-]{64}$/);
+
+export const remotePairRequestSchema = z.object({
+  /** Name the controlling computer gives itself (shown as unverified until the pairing succeeded). */
+  deviceName: hostNameSchema,
+  /** HMAC-SHA-384(k, lp('initiator') ‖ T), §B.7 step 5. */
+  macA: base64Url48,
+});
+export type RemotePairRequest = z.infer<typeof remotePairRequestSchema>;
+
+export const remotePairResponseSchema = z.object({
+  /** HMAC-SHA-384(k, lp('responder') ‖ T), §B.7 step 7. */
+  macB: base64Url48,
+  hostName: z.string().min(1).max(LIMITS.hostAddressChars),
+  appVersion: appVersionSchema,
+  protocolVersion: z.number().int().positive(),
+});
+export type RemotePairResponse = z.infer<typeof remotePairResponseSchema>;
+
+export const remoteHealthResponseSchema = z.object({
+  appVersion: appVersionSchema,
+  protocolVersion: z.number().int().positive(),
+  buildId: z.string().min(1).max(LIMITS.buildIdChars),
+  hostName: z.string().min(1).max(LIMITS.hostAddressChars),
+  serverInstanceId: z.uuid(),
+});
+export type RemoteHealthResponse = z.infer<typeof remoteHealthResponseSchema>;

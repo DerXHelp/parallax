@@ -55,6 +55,7 @@ export function emptyDetail(o: {
     planFile: null,
     latestPlanVersion: o.latestPlanVersion ?? null,
     availableOutputStyles: o.availableOutputStyles ?? [],
+    draft: null,
   };
 }
 

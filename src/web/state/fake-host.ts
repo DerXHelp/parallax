@@ -1339,6 +1339,22 @@ export class FakeHost {
       case 'update.rollback':
       case 'update.dismiss':
         return this.updateCommand(cmd);
+      // WP-76: contract only – drafts follow in WP-77, several computers in WP-80.
+      case 'session.setDraft':
+      case 'multiHost.configure':
+      case 'remoteAccess.pair':
+      case 'remoteAccess.cancelPairing':
+      case 'remoteAccess.unpair':
+      case 'remoteAccess.renewKey':
+      case 'remoteAccess.check':
+      case 'remoteAccess.events':
+      case 'remoteAccess.eventsSeen':
+      case 'hosts.add':
+      case 'hosts.update':
+      case 'hosts.move':
+      case 'hosts.remove':
+      case 'hosts.reconnect':
+        return { ok: false, error: makeError('NOT_IMPLEMENTED', { command: cmd.name }) };
       case 'link.open':
         this.linkOpens.push(cmd.url);
         return this.linkOpenError === null ? this.ok() : { ok: false, error: this.linkOpenError };

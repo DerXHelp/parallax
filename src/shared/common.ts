@@ -258,6 +258,21 @@ export const LIMITS = {
   // ---- WP-66 ----
   /** One side question (`session.askSideQuestion`, `/btw`). */
   sideQuestionChars: 10_000,
+  // ---- WP-76 (several computers, docs/wp/WP-75.md, WP-76.md §C) ----
+  /** Text of a synchronized draft (`session.setDraft`) – like a prompt. */
+  draftChars: 200_000,
+  /** One whole draft: text plus pastes (chars); more → DRAFT_TOO_LARGE. */
+  draftTotalChars: 1_000_000,
+  /** Computers a controlling computer can add (`hosts.add`). */
+  hostsMax: 16,
+  /** Display name of a computer (host list, pairing, connection log). */
+  hostNameChars: 64,
+  /** Address of a computer as typed (host name, IPv4 or IPv6). */
+  hostAddressChars: 253,
+  /** Entries of the connection log of a sharing computer (ring buffer). */
+  remoteEventsMax: 500,
+  /** Days a connection-log entry is kept. */
+  remoteEventsDays: 30,
 } as const;
 
 /**

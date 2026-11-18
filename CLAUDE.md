@@ -56,6 +56,15 @@ die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale En
   `src/web/features/updates/**`; 88b `src/web/state/{store,connection}.ts`, `src/web/shell/{HostGate,ShellBanners,
   Sidebar}.tsx`; 89 (Koordinator) `src/server/main.ts`, `src/server/{app,http}/**`, `src/server/sessions/manager.ts`,
   `src/web/App.tsx`, `e2e/**`, `scripts/build-server.ts`, `scripts/release/smoke.ts`, `.github/**`.
+- **Mehrere Rechner (WP-76…82, `docs/wp/WP-76.md` §D):**
+  - Koordinator: `src/shared/**`, die Ports `src/server/{secure,remote,hosts,multihost}/ports.ts`, Komposition.
+  - 77: `src/server/sessions/**` (Entwürfe), neu `src/server/store/drafts.ts`, `src/web/features/composer/**`.
+  - 78: `src/server/{secure,remote,multihost}/**`, `src/server/sync/hub.ts`, neu `src/server/http/content.ts`,
+    Abschnitt „Freigeben“ in `features/preferences`.
+  - 79: `src/server/hosts/**`, Vermittler in `src/server/http/{app,origin}.ts`.
+  - 80: `src/web/{state,shell,lib}/**`, betroffene Stellen in `features/**` außer `composer`, Abschnitt „Andere steuern“.
+  - 81: `sessions/notifier.ts`, Wächter-Toast, Protokoll-Link.
+  - 82 (Koordinator): `src/server/{app,main}`, `e2e/**`, README, CHANGELOG.
 - Keine Datei wird von zwei Paketen bearbeitet; nichts in fremden Ordnern anlegen. `README.md` von
   Ordnern mit mehreren Ownern (`src/server`, `server/lib`, `server/sessions`, `server/backend`,
   `src/web`, `web/shell`, `web/features`, `web/ui`) pflegt der Koordinator.

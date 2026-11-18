@@ -87,6 +87,7 @@ export function summaryOf(
     lastSeenAt: entry.lastSeenAt,
     outputStyle: o.outputStyle ?? null,
     runningTasks: o.runningTasks ?? null,
+    hasDraft: false,
   };
 }
 

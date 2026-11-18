@@ -13,9 +13,11 @@ import {
   DEFAULT_NOTIFICATION_SETTINGS,
   DEFAULT_REMOTE_CONTROL_SETTINGS,
   DEFAULT_REMOTE_CONTROL_SUMMARY,
+  DEFAULT_MULTI_HOST_CONFIG,
   DEFAULT_UPDATE_SETTINGS,
   DEFAULT_UPDATE_STATE,
   IDLE_PROFILE_LOGIN,
+  KEY_FILE_SCHEMA_VERSION,
   defaultEditorSettings,
 } from './model';
 import type {
@@ -28,14 +30,18 @@ import type {
   DecisionOutcome,
   DecisionRecord,
   DecisionResponse,
+  Draft,
   EditorSettings,
   Entry,
   ExternalHandoff,
   FileInfo,
   FileStatResult,
   FsListing,
+  HostRecord,
   HostState,
+  KeyFile,
   ModelOption,
+  MultiHostConfig,
   NotificationSettings,
   PermissionDecision,
   PlanDecision,
@@ -48,6 +54,12 @@ import type {
   QueuedPrompt,
   QuestionDecision,
   RateLimitInfo,
+  RemoteAccessCheck,
+  RemoteAccessState,
+  RemoteEvent,
+  RemoteHost,
+  RemotePeer,
+  RemotePeerRecord,
   SessionDetail,
   SessionFile,
   SessionSummary,
@@ -62,7 +74,15 @@ import type {
   TurnResultItem,
   UserMessageItem,
 } from './model';
-import type { AuthStatusResponse, HealthResponse, LauncherCodeResponse, ServerLockFile } from './http';
+import type {
+  AuthStatusResponse,
+  HealthResponse,
+  LauncherCodeResponse,
+  RemoteHealthResponse,
+  RemotePairRequest,
+  RemotePairResponse,
+  ServerLockFile,
+} from './http';
 import {
   PROTOCOL_VERSION,
   type ClientHelloMessage,
@@ -265,6 +285,143 @@ export function sampleHostState(p: Partial<HostState> = {}): HostState {
     remoteControlDefault: null,
     app: { version: '0.0.0', buildId: '0.0.0+sample', packaged: false },
     update: { ...DEFAULT_UPDATE_STATE },
+    multiHost: { ...DEFAULT_MULTI_HOST_CONFIG },
+    remoteHosts: [],
+    remoteAccess: null,
+    ...p,
+  };
+}
+
+// ---- WP-76: several computers (neutral names: "computer-b", "Computer B") ----
+
+/** Host id of the sample sharing computer. */
+export const SAMPLE_REMOTE_HOST_ID = 'computer-b';
+/** A SHA-384 pin (96 hex chars), deterministic per `n`. */
+export function samplePin(n = 1): string {
+  return n.toString(16).padStart(2, '0').repeat(48);
+}
+/** Base64 stand-in for a DER certificate (not a real certificate – tests that parse one build their own). */
+export function sampleCertificate(n = 1): string {
+  return `MIIC${'A'.repeat(60)}${n.toString(16).padStart(4, '0')}`;
+}
+
+export function sampleMultiHostConfig(p: Partial<MultiHostConfig> = {}): MultiHostConfig {
+  return { ...DEFAULT_MULTI_HOST_CONFIG, ...p };
+}
+
+export function sampleRemoteHost(p: Partial<RemoteHost> = {}): RemoteHost {
+  return {
+    hostId: SAMPLE_REMOTE_HOST_ID,
+    name: 'Computer B',
+    color: 'teal',
+    address: '192.0.2.20',
+    port: 4713,
+    status: 'connected',
+    appVersion: '0.0.0',
+    protocolVersion: PROTOCOL_VERSION,
+    lastError: null,
+    lastConnectedAt: sampleTime(30),
+    addedAt: sampleTime(),
+    ...p,
+  };
+}
+
+export function sampleHostRecord(p: Partial<HostRecord> = {}): HostRecord {
+  return {
+    hostId: SAMPLE_REMOTE_HOST_ID,
+    name: 'Computer B',
+    color: 'teal',
+    address: '192.0.2.20',
+    port: 4713,
+    peerPin: samplePin(2),
+    peerCertificate: sampleCertificate(2),
+    authKey: 'AQAAANCMnd8BFdERjHoAwE/Cl+s=',
+    addedAt: sampleTime(),
+    lastConnectedAt: null,
+    ...p,
+  };
+}
+
+export function sampleRemoteAccessCheck(p: Partial<RemoteAccessCheck> = {}): RemoteAccessCheck {
+  return { id: 'port', status: 'ok', params: { port: 4713 }, ...p };
+}
+
+export function sampleRemotePeer(p: Partial<RemotePeer> = {}): RemotePeer {
+  return {
+    name: 'Computer A',
+    pairedAt: sampleTime(),
+    connected: true,
+    connections: 2,
+    lastSeenAt: sampleTime(60),
+    lastAddress: '192.0.2.10',
+    appVersion: '0.0.0',
+    compatible: true,
+    ...p,
+  };
+}
+
+export function sampleRemotePeerRecord(p: Partial<RemotePeerRecord> = {}): RemotePeerRecord {
+  return {
+    name: 'Computer A',
+    pin: samplePin(1),
+    certificate: sampleCertificate(1),
+    authKey: 'AQAAANCMnd8BFdERjHoAwE/Cl+s=',
+    pairedAt: sampleTime(),
+    lastSeenAt: null,
+    lastAddress: null,
+    ...p,
+  };
+}
+
+export function sampleRemoteAccessState(p: Partial<RemoteAccessState> = {}): RemoteAccessState {
+  return {
+    listening: true,
+    port: 4713,
+    addresses: ['192.0.2.20'],
+    hostName: 'COMPUTER-B',
+    checks: [sampleRemoteAccessCheck()],
+    peer: null,
+    pairingExpiresAt: null,
+    unseenRejected: 0,
+    error: null,
+    ...p,
+  };
+}
+
+export function sampleRemoteEvent(p: Partial<RemoteEvent> = {}): RemoteEvent {
+  return {
+    id: 'ev_0001',
+    kind: 'unknown_key',
+    at: sampleTime(),
+    lastAt: sampleTime(),
+    count: 1,
+    address: '192.0.2.99',
+    port: 51234,
+    claimedName: null,
+    rejected: true,
+    ...p,
+  };
+}
+
+export function sampleKeyFile(p: Partial<KeyFile> = {}): KeyFile {
+  return {
+    schemaVersion: KEY_FILE_SCHEMA_VERSION,
+    purpose: 'identity',
+    algorithm: 'ml-dsa-87',
+    protected: 'AQAAANCMnd8BFdERjHoAwE/Cl+s=',
+    certificate: sampleCertificate(1),
+    createdAt: sampleTime(),
+    ...p,
+  };
+}
+
+export function sampleDraft(p: Partial<Draft> = {}): Draft {
+  return {
+    text: 'Half-written prompt',
+    pastes: [],
+    rev: 1,
+    updatedAt: sampleTime(10),
+    clientId: SAMPLE_IDS.client,
     ...p,
   };
 }
@@ -456,6 +613,7 @@ export function sampleSummary(p: Partial<SessionSummary> = {}): SessionSummary {
     lastSeenAt: null,
     outputStyle: null,
     runningTasks: null,
+    hasDraft: false,
     ...p,
   };
 }
@@ -972,6 +1130,7 @@ export function sampleDetail(p: Partial<SessionDetail> = {}): SessionDetail {
     planFile: null,
     latestPlanVersion: null,
     availableOutputStyles: [],
+    draft: null,
     ...p,
   };
 }
@@ -1018,6 +1177,7 @@ export function sampleClientHello(p: Partial<ClientHelloMessage> = {}): ClientHe
     buildId: 'dev',
     clientId: SAMPLE_IDS.client,
     presence: samplePresence(),
+    kind: 'window',
     ...p,
   };
 }
@@ -1063,6 +1223,38 @@ export function sampleServerLockFile(p: Partial<ServerLockFile> = {}): ServerLoc
     launcherToken: sampleToken(2),
     startedAt: sampleTime(),
     buildId: 'dev',
+    ...p,
+  };
+}
+
+// ---- WP-76: remote-access HTTP bodies ----
+
+export function sampleRemoteHealth(p: Partial<RemoteHealthResponse> = {}): RemoteHealthResponse {
+  return {
+    appVersion: '0.0.0',
+    protocolVersion: PROTOCOL_VERSION,
+    buildId: '0.0.0+sample',
+    hostName: 'COMPUTER-B',
+    serverInstanceId: SAMPLE_IDS.serverInstanceId,
+    ...p,
+  };
+}
+
+/** A deterministic 64-char base64url MAC stand-in. */
+export function sampleMac(n = 1): string {
+  return `mac${n.toString(16).padStart(61, '0')}`;
+}
+
+export function sampleRemotePairRequest(p: Partial<RemotePairRequest> = {}): RemotePairRequest {
+  return { deviceName: 'Computer A', macA: sampleMac(1), ...p };
+}
+
+export function sampleRemotePairResponse(p: Partial<RemotePairResponse> = {}): RemotePairResponse {
+  return {
+    macB: sampleMac(2),
+    hostName: 'COMPUTER-B',
+    appVersion: '0.0.0',
+    protocolVersion: PROTOCOL_VERSION,
     ...p,
   };
 }

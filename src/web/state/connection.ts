@@ -548,7 +548,14 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
 
     const presence = presenceOf(store.getState(), hostId);
     lastSentPresence = JSON.stringify(presence);
-    transmit({ type: 'clientHello', protocolVersion: PROTOCOL_VERSION, buildId, clientId, presence });
+    transmit({
+      type: 'clientHello',
+      protocolVersion: PROTOCOL_VERSION,
+      buildId,
+      clientId,
+      presence,
+      kind: 'window',
+    });
     setPhase('open', {
       error: null,
       serverInstanceId: hello.serverInstanceId,
@@ -875,6 +882,7 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
             buildId,
             clientId,
             presence: presenceOf(store.getState(), hostId),
+            kind: 'window',
           };
           const cmd: ClientMessage = { type: 'cmd', cmdId, cmd: { name: 'server.shutdown' } };
           try {

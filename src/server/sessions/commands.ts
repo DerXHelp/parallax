@@ -167,7 +167,8 @@ async function createSession(
   // profile and takes Claude's own setting after the first readiness.
   const newSessions = core.stores.settings.get().remoteControl.newSessions;
   const remoteControlWanted =
-    newSessions === 'on' || (newSessions === 'follow_claude' && core.remoteControlDefault(profileId) === true);
+    newSessions === 'on' ||
+    (newSessions === 'follow_claude' && core.remoteControlDefault(profileId) === true);
   const given = cmd.title?.trim() ?? '';
   const promptTitle = cmd.prompt === undefined ? null : titleFromPrompt(cmd.prompt.text);
   const entry: Entry = {
@@ -422,6 +423,9 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
       });
       await setOutputStyle(core, s, cmd.style);
       return {} satisfies CommandResult<'session.setOutputStyle'>;
+    // WP-76: contract only – the draft store follows in WP-77.
+    case 'session.setDraft':
+      throw notImplemented(cmd.name);
   }
 }
 
@@ -441,7 +445,12 @@ async function withdrawQueued(
   if (entry === undefined) return { withdrawn: false, text: null };
   const runtime = running(s);
   if (runtime === null) throw commandError('SESSION_NOT_RUNNING', { entryId: s.id });
-  const cancelled = await controlCall('cancelAsyncMessage', () => runtime.agent.withdrawQueued(messageUuid), core, s.id);
+  const cancelled = await controlCall(
+    'cancelAsyncMessage',
+    () => runtime.agent.withdrawQueued(messageUuid),
+    core,
+    s.id,
+  );
   const current = s.queue.list().find((p) => p.messageUuid === messageUuid);
   // Taken over meanwhile (started/completed removed it) or reported as taken over.
   if (!cancelled && current?.state !== 'sending') return { withdrawn: false, text: null };
@@ -509,7 +518,12 @@ async function backgroundTasks(
       throw commandError('TASK_NOT_FOUND', { taskId: toolUseId });
     }
   }
-  const moved = await controlCall('backgroundTasks', () => runtime.agent.backgroundTasks(toolUseId), core, s.id);
+  const moved = await controlCall(
+    'backgroundTasks',
+    () => runtime.agent.backgroundTasks(toolUseId),
+    core,
+    s.id,
+  );
   if (!moved) throw commandError('TASK_NOT_FOUND', { taskId: toolUseId ?? '' });
   return {};
 }
