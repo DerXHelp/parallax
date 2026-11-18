@@ -137,6 +137,20 @@ describe('showcase demos', () => {
       expect(screen.getAllByText(title).length, title).toBeGreaterThanOrEqual(1);
     }
     expect(document.querySelector('[data-slot="side-panel"]')).toBeNull();
+    // README screenshots never show "Several computers" (WP-82): no badge, no host marks, the plain
+    // folder toggle instead of the "Group by" menu with its "Computer" option.
+    for (const slot of [
+      'host-badge',
+      'header-host',
+      'pane-host',
+      'multi-host-indicator',
+      'row-host-status',
+    ]) {
+      expect(document.querySelector(`[data-slot="${slot}"]`), slot).toBeNull();
+    }
+    const groupControl = document.querySelector('[data-slot="sidebar-mode"]');
+    expect(groupControl?.getAttribute('aria-pressed')).toBe('true');
+    expect(groupControl?.getAttribute('aria-haspopup')).toBeNull();
     view.unmount();
     act(() => {
       unregisterConnection();
