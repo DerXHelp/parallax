@@ -474,7 +474,8 @@ läuft.
   `data-slot="session-bar"` mit der Statuszeile `[data-slot="session-header"]` (ADR-042: nur Status;
   bedienbar ist dort nur der Titel – Inline-Umbenennen per Doppelklick, F2 oder `/rename`) und rechts
   **daneben, nicht darin,** dem „…“-Menü (`data-slot="session-menu"`: Frühere Unterhaltungen,
-  Session-Info, externe Konsole …). Die Sidebar ist `w-72` breit (zweizeilige Einträge); der
+  Session-Info, externe Konsole …). Die Sidebar ist standardmäßig 288 px (`w-72`) breit (zweizeilige
+  Einträge), per Griff 224–480 px (WP-90, je Fenster gemerkt); der
   „…“-Knopf je Zeile erscheint nur bei Hover oder Fokus, die Liste bleibt ein Tab-Stopp
   (Roving-Tabindex).
 

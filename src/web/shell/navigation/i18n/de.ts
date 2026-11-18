@@ -12,12 +12,20 @@ export const de: typeof en = {
     archiveEmpty: 'Keine archivierten Sessions.',
     group: 'Projekt {name}',
     collapse: 'Seitenleiste einklappen',
+    resize: 'Breite der Seitenleiste',
+    width: '{width} px',
+    resizeHint: 'Ziehen ändert die Breite (ganz nach links klappt sie ein), Doppelklick setzt sie zurück',
   },
   rail: {
     label: 'Sessions (eingeklappte Seitenleiste)',
     show: 'Sessions anzeigen',
     session: '{title} – {status}',
     sessionUnread: '{title} – {status}, ungelesen',
+    sessionOnHost: '{label} · {host}',
+    waiting: {
+      one: 'Nächste wartende Session ({count} wartet)',
+      other: 'Nächste wartende Session ({count} warten)',
+    },
   },
   panels: {
     label: 'Seitenpanel',
@@ -183,6 +191,7 @@ export const de: typeof en = {
     quickSwitcher: 'Quick-Switcher: Session suchen und öffnen',
     nextWaiting: 'Nächste Session, die auf dich wartet',
     rename: 'Gewählte Session umbenennen',
+    toggleSidebar: 'Seitenleiste ein- oder ausklappen',
   },
   conversations: {
     title: 'Frühere Unterhaltungen',

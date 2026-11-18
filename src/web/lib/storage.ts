@@ -36,6 +36,11 @@ export const STORAGE_KEYS = {
    * into the rail in a wide window – `true` | `false` (V3-14, WP-58).
    */
   sidebarCollapsed: `${PRODUCT_ID}.sidebar.collapsed`,
+  /**
+   * sessionStorage (this window) + localStorage (default of new windows): width of the expanded
+   * sidebar in px (WP-90, GitHub #4; missing/invalid = the default 288 px).
+   */
+  sidebarWidth: `${PRODUCT_ID}.sidebar.width`,
   /** localStorage: transcript view `all` (missing = `compact`, the default; WP-63 §1.5). */
   transcriptView: `${PRODUCT_ID}.transcript.view`,
   /**

@@ -21,13 +21,45 @@ const DOT: Readonly<Record<ConnectionStatus, string>> = {
 export function ConnectionIndicator({
   hostId = LOCAL_HOST_ID,
   className,
+  compact = false,
 }: {
   hostId?: HostId;
   className?: string;
+  /** WP-90: only the dot with a tooltip (rail of the collapsed sidebar). */
+  compact?: boolean;
 }) {
   const t = useT();
   const status = useConnectionStatus(hostId);
   const invalid = useHostCounter('invalidMessages', hostId);
+  if (compact) {
+    // Status and invalid messages as two lines (no separator outside t()).
+    const text = (
+      <>
+        <span className="block">{t(`connection.status.${status}`)}</span>
+        {invalid > 0 ? (
+          <span className="block">{t('connection.invalidMessages', { count: invalid })}</span>
+        ) : null}
+      </>
+    );
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            data-slot="rail-connection"
+            data-status={status}
+            className={cn('inline-flex size-7 items-center justify-center', className)}
+          >
+            <span
+              aria-hidden
+              className={cn('size-2 rounded-full', invalid > 0 ? 'bg-warning' : DOT[status])}
+            />
+            <span className="sr-only">{text}</span>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="right">{text}</TooltipContent>
+      </Tooltip>
+    );
+  }
   return (
     <span
       data-slot="connection-indicator"

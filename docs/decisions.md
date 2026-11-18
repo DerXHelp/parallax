@@ -2709,3 +2709,20 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   (ADR-228 auf `feature/multi-host`). Erkunden der installierten Sicherheitssoftware, `whoami`, regelmäßige
   Prozessabfragen per Skript und das Schreiben von Autostart- und Registry-Einträgen bei jedem Start sind typische
   Muster von Schadsoftware. Die Prüfungen brachten wenig, die Wiederholungen nichts.
+
+## ADR-230 – Tastenkürzel für Modus und Seitenleiste, Breite der Seitenleiste
+- **Datum/WP:** 19.11.2026, WP-90/91 (GitHub #4, #2), abgestimmt mit dem Nutzer.
+- **Entscheidung:**
+  - **Shift+Tab** schaltet den Berechtigungsmodus weiter, aber nur mit dem Fokus im Nachrichtenfeld und ohne offenes
+    Slash- oder @-Menü (`composer.cycleMode`). Reihenfolge wie die Auswahl (Manuell → Edits annehmen → Plan → Auto →
+    Bypass), nicht verfügbare Modi fehlen; Bypass nur mit Freigabe des Profils. Das Ziel ist sofort sichtbar und wird
+    nach 300 ms Ruhe einmal gesendet. Überall sonst bleibt Shift+Tab die Fokus-Navigation rückwärts.
+  - **Alt+B** klappt die Seitenleiste ein und aus (schmales Fenster: Überlagerung). Ctrl+B gehört seit WP-65
+    „alle in den Hintergrund“; Ctrl+\\ braucht auf deutschen Tastaturen AltGr; Ctrl+Shift+B ist Chromes Lesezeichenleiste.
+  - **Breite der Seitenleiste:** 224–480 px und höchstens 40 % des Fensters, Standard 288 px (bisher fest `w-72`, die
+    README-Bilder bleiben gleich); je Fenster und als Vorgabe neuer Fenster im Browser-Speicher wie das Einklappen,
+    nicht in den Server-Einstellungen. Unter dem Minimum losgelassen klappt sie ein; die Breite bleibt erhalten.
+- **Begründung:** Shift+Tab wie im Claude-Code-CLI, ohne die Fokus-Navigation außerhalb des Nachrichtenfelds zu
+  verlieren; der bewusste Preis ist, dass Anhang-Chips und Entscheidungsleiste aus dem Feld heraus nur noch mit Tab
+  vorwärts oder der Maus erreichbar sind. Fensterbezogene Layout-Werte gehören wie Seitenpanel-Breite und Einklappen
+  zum Fenster.
