@@ -11,6 +11,7 @@ import type { WebSocket } from 'ws';
 import { HOSTS_SCHEMA_VERSION, remoteHostSchema, type HostRecord } from '@shared/model';
 import { formatPairingCode } from '@shared/pairing';
 import { PROTOCOL_VERSION, WS_CLOSE, parseServerMessage } from '@shared/protocol';
+import type { ManagedRoleSide } from '../multihost/service';
 import { generateIdentity } from '../secure/identity';
 import { keyFilePath } from '../secure/identityStore';
 import { encodeMac } from '../secure/pairingCrypto';
@@ -206,6 +207,14 @@ describe('hosts service: pairing', () => {
     expect(a.keyStore.size()).toBe(0);
     expect(a.service.list()).toEqual([]);
     expect(a.service.couplings()).toBe(0);
+  });
+
+  it('is the controlling side of the role service (ManagedRoleSide)', async () => {
+    const a = await control({ activate: false });
+    const side: ManagedRoleSide & { readonly role: 'control' } = a.service;
+    expect(side.role).toBe('control');
+    expect(side.couplings()).toBe(0);
+    expect(a.service.list()).toEqual([]);
   });
 
   it('refuses hosts.* while the role is not control, and at the limit', async () => {
