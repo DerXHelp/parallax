@@ -16,6 +16,7 @@ import {
   BLOB_CSP,
   DEV_AUTH_CODE_TTL_MS,
   DEV_WEB_PORT,
+  HOST_API_PATHS,
   appUrlWithCode,
   pageCsp,
   serverOrigin,
@@ -26,12 +27,14 @@ import { PRODUCT_ID } from '@shared/product';
 import { WS_CLOSE } from '@shared/protocol';
 import type { ServerConfig, ServerInstance } from '../config';
 import type { FileContentProvider } from '../files/ports';
+import type { HostsService } from '../hosts/ports';
 import { logger as rootLogger } from '../lib/logger';
 import type { BlobStore } from '../sync/ports';
 import type { UpdateService } from '../update/ports';
 import { registerUpdateRoutes } from '../update/routes';
 import { registerAuthRoutes, type AuthService } from './auth';
 import { contentErrorHandler, registerContentRoutes } from './content';
+import { registerHostRoutes } from './hostRoutes';
 import { STATIC_ROUTE, checkRequest, requestPath } from './origin';
 import { replyError, sendError } from './reply';
 
@@ -85,6 +88,11 @@ export interface CreateAppOptions {
   files?: FileContentProvider;
   /** WP-87: update upload, "What's new" and notices (src/server/update/routes.ts); missing → no routes. */
   update?: UpdateService;
+  /**
+   * WP-79: the controlling side – forwarder routes `HOST_API_PATHS` (http/hostRoutes.ts) to the
+   * coupled computers; missing → no routes (404).
+   */
+  hosts?: Pick<HostsService, 'list' | 'forwarder'>;
   /** WP-87: close code of the shutdown (4504 when it is a restart for an update); default 4503. */
   closeCode?: () => number;
   /** Built web UI (`dist/web`); not served when null or missing (dev mode uses Vite). */
@@ -259,6 +267,23 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     hub.attach(app, { authorizeUpgrade: (request) => authorize(request, API_PATHS.ws, true) });
     const off = auth.onRevoked(() => {
       hub.closeAll(WS_CLOSE.AUTH_REVOKED);
+    });
+    app.addHook('onClose', (_instance, done) => {
+      off();
+      done();
+    });
+  }
+
+  // WP-79: forwarder of the controlling computer (blob/file/ws like the local routes, upload a
+  // mutation); the WS route repeats the guard itself like the hub's.
+  if (options.hosts !== undefined) {
+    const hostRoutes = await registerHostRoutes(app, {
+      hosts: options.hosts,
+      authorizeUpgrade: (request) => authorize(request, HOST_API_PATHS.ws, true),
+      logger: log,
+    });
+    const off = auth.onRevoked(() => {
+      hostRoutes.closeAll(WS_CLOSE.AUTH_REVOKED);
     });
     app.addHook('onClose', (_instance, done) => {
       off();

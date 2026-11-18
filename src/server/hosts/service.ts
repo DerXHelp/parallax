@@ -15,7 +15,7 @@
  */
 import type { Logger } from 'pino';
 import { LIMITS, type HostId } from '@shared/common';
-import { makeError, type ErrorPayload } from '@shared/errors';
+import { makeError } from '@shared/errors';
 import { REMOTE_PATHS } from '@shared/http';
 import { hostRecordSchema, type HostRecord, type MultiHostRole, type RemoteHost } from '@shared/model';
 import { parsePairingCode } from '@shared/pairing';
@@ -588,11 +588,4 @@ export function createHostsService(options: HostsServiceOptions): Hosts {
     windowCount: (hostId) => links.get(hostId)?.windowCount() ?? 0,
   };
   return service;
-}
-
-/** The error a forwarder call failed with (for the HTTP layer and tests). */
-export function forwarderError(error: unknown): ErrorPayload {
-  return error instanceof HostForwarderError
-    ? error.error
-    : makeError('HOST_UNREACHABLE', { reason: 'closed' });
 }
