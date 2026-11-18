@@ -264,6 +264,13 @@ describe('#code= hand-over', () => {
       code,
       hash: `#${SESSION_HASH_PARAM}=${SAMPLE_IDS.entry}`,
     });
+    // WP-81: a session of another computer – its sessionKey (`local` keeps the short form).
+    expect(
+      appUrlWithCode(serverOrigin(4711), code, { entryId: SAMPLE_IDS.entry, hostId: 'computer-b' }),
+    ).toBe(`http://127.0.0.1:4711/#code=${code}&${SESSION_HASH_PARAM}=computer-b:${SAMPLE_IDS.entry}`);
+    expect(appUrlWithCode(serverOrigin(4711), code, { entryId: SAMPLE_IDS.entry, hostId: 'local' })).toBe(
+      url,
+    );
   });
 });
 

@@ -13,6 +13,7 @@ import {
   entryIdSchema,
   hostIdSchema,
   isoDateTimeSchema,
+  makeSessionKey,
   type BlobId,
   type EntryId,
   type HostId,
@@ -385,10 +386,21 @@ export const SESSION_HASH_PARAM = 'session';
 
 /**
  * URL the launcher opens: `<origin>/#code=<code>` (the code never goes into a query string), with
- * `options.entryId` also `&session=<entryId>` (Phase 2: protocol handler, ADR-109).
+ * `options.entryId` also `&session=<entryId>` (Phase 2: protocol handler, ADR-109); with a
+ * `hostId` of another computer (WP-81, toast of a controlling computer) `&session=<hostId>:<entryId>`.
  */
-export function appUrlWithCode(origin: string, code: AuthCode, options: { entryId?: EntryId } = {}): string {
-  const session = options.entryId === undefined ? '' : `&${SESSION_HASH_PARAM}=${options.entryId}`;
+export function appUrlWithCode(
+  origin: string,
+  code: AuthCode,
+  options: { entryId?: EntryId; hostId?: HostId } = {},
+): string {
+  const { entryId, hostId } = options;
+  let session = '';
+  if (entryId !== undefined) {
+    const value =
+      hostId === undefined || hostId === LOCAL_HOST_ID ? entryId : makeSessionKey(hostId, entryId);
+    session = `&${SESSION_HASH_PARAM}=${value}`;
+  }
   return `${origin}/#${AUTH_HASH_PARAM}=${code}${session}`;
 }
 
