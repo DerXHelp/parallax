@@ -10,14 +10,16 @@
  *    the port, start the server hidden and detached, wait until its lock file (same PID) and health
  *    answer, then code + window. Exit 5/port taken by a server of this home → wait for it.
  *
- * Phase 2: `entryId` (`--open`, ADR-109) adds `&session=<entryId>` to the window URL;
+ * Phase 2: `entryId` (`--open`, ADR-109) adds `&session=<entryId>` to the window URL (WP-81: with
+ * the `hostId` of another computer `&session=<hostId>:<entryId>`, `appUrlWithCode`) – for a new and
+ * for an already running server alike;
  * `openWindow: false` (`--autostart` with `settings.autostart.openWindow` off, ADR-110) stops after
  * step 2 – the server runs, no code is requested and no window opens.
  *
  * Every side effect is a dependency (`LauncherDeps`), so all paths are unit-tested; the real ones
  * come from `createNodeLauncherDeps`. Messages are English (console output like `pnpm preflight`).
  */
-import type { EntryId } from '@shared/common';
+import type { EntryId, HostId } from '@shared/common';
 import {
   appUrlWithCode,
   serverOrigin,
@@ -172,6 +174,11 @@ export interface LauncherOptions {
   pollMs?: number;
   /** Phase 2 (`--open`, ADR-109): the window selects this session (`#session=<entryId>`). */
   entryId?: EntryId | null;
+  /**
+   * WP-81 (ADR-211): the computer of `entryId` (`--open parallax://session/<hostId>/<id>`); the window
+   * selects `#session=<hostId>:<entryId>`. null/absent/`local` = this computer.
+   */
+  hostId?: HostId | null;
   /** WP-85 `--install-root`: working directory of server and Chrome (null/absent = repo root / inherited). */
   installRoot?: string | null;
   /**
@@ -594,10 +601,11 @@ async function openWindow(
     );
   }
   const entryId = options.entryId ?? undefined;
+  const hostId = options.hostId ?? undefined;
   const url = appUrlWithCode(
     serverOrigin(lock.port),
     code.response.code,
-    entryId === undefined ? {} : { entryId },
+    entryId === undefined ? {} : { entryId, ...(hostId === undefined ? {} : { hostId }) },
   );
   if (options.printUrl) {
     deps.out(`Open this address within 60 seconds (one-time sign-in code): ${url}`);

@@ -202,7 +202,10 @@ describe('launcher --open / --autostart (ADR-109, ADR-110)', () => {
     expect(smuggled.problem).toMatch(/--open must be the last option/);
     expect(smuggled.serverArgv).toEqual([]);
     expect(parseLauncherArgs(['--open']).problem).toMatch(/needs a parallax:\/\/session/);
-    expect(parseLauncherArgs(['--open=']).problem).toMatch(/needs a parallax:\/\/session/);
+    // WP-81: the message names both forms.
+    expect(parseLauncherArgs(['--open=']).problem).toBe(
+      '--open needs a parallax://session/<id> or parallax://session/<computer>/<id> link',
+    );
     expect(parseLauncherArgs(['--autostart', '--open', URI]).problem).toMatch(/cannot be combined/);
   });
 });
