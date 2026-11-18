@@ -1,12 +1,26 @@
 # src/server/secure – Schlüssel, Zertifikate, TLS-Profil (Mehrere Rechner)
 
-Normativ: `docs/wp/WP-76.md` §B.3–B.5, B.9. Gemeinsame Krypto-Bausteine für den Fernzugang (`remote/`, freigebender
-Rechner) und die Rechnerliste (`hosts/`, steuernder Rechner). Nur Node `crypto`/`tls`, keine eigene Kryptografie.
+Normativ: `docs/wp/WP-76.md` §B.3–B.5, B.7, B.9; Umsetzung und Abweichungen `docs/wp/WP-78a.md`. Gemeinsame
+Krypto-Bausteine für den Fernzugang (`remote/`, freigebender Rechner) und die Rechnerliste (`hosts/`, steuernder
+Rechner). Nur Node `crypto`/`tls`, keine eigene Kryptografie.
 
 | Datei | Inhalt | Owner |
 | --- | --- | --- |
 | `ports.ts` | `KeyStore` (DPAPI), `IdentityStore` (Schlüsseldateien), `Identity`, `KeyStoreError` | Koordinator (eingefroren) |
-| übrige | TLS-Profil (`tlsProfile.ts`), Zertifikat (DER-Baustein), Pins, DPAPI über PowerShell (stdin/stdout), Schlüsseldateien, Kopplungs-MACs, Verbindungsbeweis, `PinnedAgent` | WP-78 |
+| `tlsProfile.ts` | Die eine Stelle der Parameter (§B.3), Exporter-Labels, `profileViolation` | WP-78a |
+| `der.ts` | DER-Baustein: selbstsigniertes ML-DSA-87-Zertifikat (X.509 v3, `CN=parallax`, ohne Erweiterungen) | WP-78a |
+| `pins.ts` | SHA-384-Pins aus `X509Certificate(raw)`, `pinsEqual`/`bytesEqual` (konstante Zeit), PEM, SPKI eines Sockets | WP-78a |
+| `identity.ts` | `generateIdentity` (nur im Speicher), `makeIdentity` (Prüfung nach dem Laden) | WP-78a |
+| `keyStore.ts` | DPAPI über PowerShell (konstantes Skript, Daten nur über stdin/stdout, 15 s) | WP-78a |
+| `memoryKeyStore.ts` | `KeyStore` im Speicher für Tests | WP-78a |
+| `identityStore.ts` | `keys/<purpose>.json`: Prüfung beim Laden, Quarantäne, `save` für Schlüssel aus dem Speicher | WP-78a |
+| `strictJsonFile.ts` | Lesen/Schreiben von Dateien, deren Schreiben sicher feststehen muss (ohne `.bak`) | WP-78a |
+| `pairingCrypto.ts` | `lp`, Transkript, `k`, `macA`/`macB`, `kAuth`, Base64url | WP-78a |
+| `connectionProof.ts` | Verbindungsbeweis (§B.9) für beide Seiten, `readExactly` | WP-78a |
+| `pinnedAgent.ts` | `PinnedAgent` (ein Agent je Kopplung), `remoteVersionHeaders`, `REMOTE_WS_CLIENT_OPTIONS` | WP-78a |
+| `pairingClient.ts` | `pairWithHost` – Kopplung von der steuernden Seite (§B.7 Schritte 1–2, 5, 8) | WP-78a |
+| `selfTest.ts` | Selbsttest der Prüfung `tls` (§B.11) | WP-78a |
+| `testKit.ts` | Test-Helfer (fremde Zertifikate, TLS-Server auf `127.0.0.1:0`) – nur für Tests | WP-78a |
 
 Regeln: private Schlüssel und `kAuth` nie im Log, in Fehlern, in `HostState` oder im Browser; Vergleiche nur mit
-`timingSafeEqual`; Prüfungen werfen nie (fail closed).
+`timingSafeEqual`; Prüfungen werfen nie (fail closed); Tests binden nur `127.0.0.1` mit Port 0.
