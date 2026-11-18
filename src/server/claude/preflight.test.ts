@@ -5,17 +5,14 @@ import { describe, expect, it } from 'vitest';
 import { STANDARD_PROFILE_ID } from '@shared/common';
 import type { Profile } from '@shared/model';
 import { sampleClaudeInstallStatus, sampleId, sampleProfile } from '@shared/samples';
-import type { HomeAccess } from '../lib/homeAccess';
 import type { RunFileOptions, RunFileResult } from '../lib/process';
 import { createClaudeIntegration } from './integration';
 import { createMemoryFs } from '../lib/windows';
 import {
   CHROME_POLICY_KEYS,
-  antivirusProducts,
-  checkAntivirus,
   checkChrome,
   checkChromePolicies,
-  checkHomeAccessResult,
+  checkHomeLocation,
   checkNode,
   checkPnpm,
   checkProfileIssues,
@@ -199,59 +196,6 @@ describe('rating', () => {
         '',
       ].join('\n'),
     );
-  });
-});
-
-describe('antivirus hint (V1-08)', () => {
-  it.each<[string[] | null, PreflightCheck['level'] | null, string]>([
-    [['Kaspersky Premium'], 'warn', 'Kaspersky'],
-    [['Windows Defender', 'ESET Security'], 'warn', 'ESET'],
-    [['Bitdefender Antivirus Free'], 'warn', 'Bitdefender'],
-    [['Windows Defender'], 'info', 'Windows Defender'],
-    [['Kaspersky', 'Kaspersky', 'Windows Defender'], 'warn', 'Kaspersky (scans web traffic)'],
-    [[], 'info', 'none registered'],
-    [null, null, ''],
-  ])('%j → %s', (products, level, detail) => {
-    const check = checkAntivirus(products);
-    if (level === null) {
-      expect(check).toBeNull();
-      return;
-    }
-    expect(check?.level).toBe(level);
-    expect(check?.detail).toContain(detail);
-    expect(checkAntivirus(['A', 'A'])?.detail).toBe('A');
-    if (level === 'warn') expect(check?.hint).toMatch(/127\.0\.0\.1.*one-time login code/);
-  });
-
-  it('reads Windows Security Center without a shell and fails soft', async () => {
-    const run = (file: string, args: readonly string[]) => {
-      expect(file.toLowerCase()).toMatch(/system32\\windowspowershell\\v1\.0\\powershell\.exe$/);
-      expect(args.join(' ')).toContain('root/SecurityCenter2');
-      return Promise.resolve({
-        exitCode: 0,
-        signal: null,
-        stdout: '["Kaspersky","Windows Defender"]',
-        stderr: '',
-        timedOut: false,
-      });
-    };
-    if (process.platform === 'win32') {
-      expect(await antivirusProducts(run)).toEqual(['Kaspersky', 'Windows Defender']);
-      expect(
-        await antivirusProducts(() =>
-          Promise.resolve({
-            exitCode: 1,
-            signal: null,
-            stdout: '',
-            stderr: 'Invalid namespace',
-            timedOut: false,
-          }),
-        ),
-      ).toBeNull();
-      expect(await antivirusProducts(() => Promise.reject(new Error('blocked')))).toBeNull();
-    } else {
-      expect(await antivirusProducts(run)).toBeNull();
-    }
   });
 });
 
@@ -451,7 +395,6 @@ describe('runPreflight', () => {
       regQuery: () => Promise.resolve(null),
       regKeyQuery: () => Promise.resolve(null),
       exeVersion,
-      antivirus: () => Promise.resolve(['Windows Defender']),
     });
     expect(report.checks.map((check) => [check.id, check.level])).toEqual([
       ['node', 'ok'],
@@ -462,7 +405,6 @@ describe('runPreflight', () => {
       [`login:${STANDARD_PROFILE_ID}`, 'ok'],
       ['chrome', 'ok'],
       ['chrome-policies', 'ok'],
-      ['antivirus', 'info'],
     ]);
     expect(report.exitCode).toBe(0);
     expect(report.checks.find((check) => check.id === 'chrome')?.detail).toBe(`${CHROME}, 156.0.8078.76`);
@@ -520,7 +462,6 @@ describe('runPreflight', () => {
       regQuery: () => Promise.resolve(null),
       regKeyQuery: () => Promise.resolve(null),
       exeVersion,
-      antivirus: () => Promise.resolve(['Windows Defender']),
       profilesSource: source,
       profileIssues: (profile) =>
         profileIssues(profile, { env: {}, persistentEnv: new Map(), exists: () => true }),
@@ -539,7 +480,6 @@ describe('runPreflight', () => {
       [`claude:${broken}`, 'fail'],
       ['chrome', 'ok'],
       ['chrome-policies', 'ok'],
-      ['antivirus', 'info'],
     ]);
     expect(report.checks.find((check) => check.id === 'profiles')?.detail).toBe('3 from profiles.json');
     expect(report.checks.find((check) => check.id === `config:${broken}`)?.detail).toBe(
@@ -569,7 +509,6 @@ describe('runPreflight', () => {
       regQuery: () => Promise.resolve(null),
       regKeyQuery: () => Promise.resolve(null),
       exeVersion,
-      antivirus: () => Promise.resolve(['Windows Defender']),
     });
     expect(report.checks.filter((check) => check.level === 'fail').map((check) => check.id)).toEqual([
       'sdk',
@@ -579,9 +518,8 @@ describe('runPreflight', () => {
     expect(report.exitCode).toBe(1);
   });
 
-  it('checks the data folder when a home is given (R2-13: a warning, never a failure)', async () => {
+  it('names the data folder when a home is given (R2-13: a hint, never a failure, no query)', async () => {
     const { fs, runFile, integration } = stubs({ [LOCAL]: '', [PNPM_EXE]: '', [CHROME]: '' });
-    const homes: string[] = [];
     const report = await runPreflight({
       integration,
       nodeVersion: 'v26.4.0',
@@ -594,15 +532,9 @@ describe('runPreflight', () => {
       regQuery: () => Promise.resolve(null),
       regKeyQuery: () => Promise.resolve(null),
       exeVersion,
-      antivirus: () => Promise.resolve(null),
       home: 'D:\\px-data',
-      homeAccess: (home) => {
-        homes.push(home);
-        return Promise.resolve({ kind: 'shared', principals: ['Authenticated Users'] });
-      },
     });
-    expect(homes).toEqual(['D:\\px-data']);
-    expect(report.checks.at(-1)).toMatchObject({ id: 'home', level: 'warn' });
+    expect(report.checks.at(-1)).toMatchObject({ id: 'home', level: 'info' });
     expect(report.exitCode).toBe(0);
   });
 });
@@ -676,20 +608,15 @@ describe('profiles (WP-32)', () => {
   });
 });
 
-describe('checkHomeAccessResult (R2-13)', () => {
-  it.each<[HomeAccess, PreflightCheck['level'], string]>([
-    [{ kind: 'private' }, 'ok', 'only you'],
-    [{ kind: 'missing' }, 'info', 'not created yet'],
-    [{ kind: 'unknown', reason: 'Get-Acl failed (exit 1)' }, 'info', 'Get-Acl failed'],
-    [
-      { kind: 'shared', principals: ['Authenticated Users', 'Users'] },
-      'warn',
-      'readable by Authenticated Users, Users',
-    ],
-  ])('%j → %s', (access, level, detail) => {
-    const check = checkHomeAccessResult('D:\\px-data', access);
-    expect(check.level).toBe(level);
-    expect(check.detail).toContain(detail);
-    if (level === 'warn') expect(check.hint).toContain('icacls "D:\\px-data" /inheritance:r');
+describe('checkHomeLocation (R2-13, ADR-229)', () => {
+  it('trusts %LOCALAPPDATA% and only hints elsewhere – without querying any rights', () => {
+    const local = 'C:\\Users\\<USER>\\AppData\\Local';
+    expect(checkHomeLocation(`${local}\\Parallax`, local).level).toBe('ok');
+    expect(checkHomeLocation('c:\\users\\<user>\\appdata\\local\\parallax', local).level).toBe('ok');
+    expect(checkHomeLocation(`${local}X\\Parallax`, local).level).toBe('info');
+    const outside = checkHomeLocation('D:\\px-data', local);
+    expect(outside.level).toBe('info');
+    expect(outside.hint).toContain('icacls "D:\\px-data" /inheritance:r');
+    expect(checkHomeLocation('D:\\px-data', undefined).level).toBe('info');
   });
 });

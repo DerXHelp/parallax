@@ -26,8 +26,8 @@
  *  5. Shutdown frame + signal handlers, then `listen` on 127.0.0.1 (EADDRINUSE → exit 4); the host
  *     state then carries the actual port (`HostState.port`).
  *  6. `server.lock.json` with the actual port and `auth.launcherToken` – only now the launcher
- *     regards the server as ready; then in the background the access check of the home
- *     (`logHomeAccess`, R2-13), "Profil testen" of every unchecked profile (default first; again
+ *     regards the server as ready; then in the background "Profil testen" of every unchecked
+ *     profile (default first; again
  *     for a new profile after every profile change) and the first
  *     `SystemIntegration.apply(settings)` (again after every settings.update).
  *
@@ -83,7 +83,6 @@ import {
   type SignalTarget,
 } from '../launcher/shutdown';
 import { settleWithin, toError } from '../lib/async';
-import { logHomeAccess } from '../lib/homeAccess';
 import type { HomeLock } from '../lib/homeLock';
 import { logger as rootLogger, type LoggingHandle } from '../lib/logger';
 import { errnoCode } from '../lib/process';
@@ -149,12 +148,6 @@ export interface StartServerOptions {
    * released as the shutdown step after the lock file. null/absent = none (in-process tests).
    */
   homeLock?: HomeLock | null;
-  /**
-   * Check of the home's access rights after `listen`, in the background (default
-   * `logHomeAccess`, R2-13: only a warning); null = skipped (in-process tests). `signal` aborts at
-   * the shutdown (V3-15 b: a check still running is ended, not awaited).
-   */
-  homeAccess?: ((home: string, signal: AbortSignal) => Promise<unknown>) | null;
   /**
    * CR-10: called once the shutdown frame exists (step 5, before `listen`). main.ts hands it to
    * the crash handler, so an unexpected error from here on ends the server in order (stores
@@ -471,10 +464,6 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   let lock: ServerLockHandle | null = null;
   let shutdown: ServerShutdown | null = null;
   let uninstallSignals: (() => void) | null = null;
-  /** The background access check of the home (its PowerShell must not outlive the server). */
-  let accessCheck: Promise<unknown> | null = null;
-  /** V3-15 (b): the shutdown ends a still running access check instead of waiting for it. */
-  const accessAbort = new AbortController();
   /** R4-13: the "Profil testen" queue (its claude.exe must not outlive the server either). */
   let profileChecks: Promise<void> = Promise.resolve();
   const homeLock = options.homeLock ?? null;
@@ -521,14 +510,6 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     // WP-87: ends a running check, download or preparation (≤ 10 s); a started switch goes on.
     { name: 'update', run: () => update?.close(), timeoutMs: 12_000 },
     { name: 'stores', run: () => stores.close(), timeoutMs: 10_000 },
-    {
-      name: 'homeAccess',
-      run: () => {
-        // V3-15 (b): a check still running shortly after the start is ended (its PowerShell tree).
-        accessAbort.abort();
-        return accessCheck;
-      },
-    },
     { name: 'lock', run: () => lock?.release() },
     // After the lock file: from here on another server may open this home (R2-05).
     { name: 'homeLock', run: () => homeLock?.release() },
@@ -853,17 +834,6 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   }
   // A shutdown that started while the lock file was being written skipped its lock step.
   if (shutdown.stopping) await lock.release();
-
-  // Access rights of the home in the background (≈ 2 s PowerShell, never throws; R2-13: warn only).
-  const homeAccess =
-    options.homeAccess === undefined
-      ? (home: string, signal: AbortSignal) => logHomeAccess(home, { signal })
-      : options.homeAccess;
-  if (homeAccess !== null) {
-    accessCheck = homeAccess(config.home, accessAbort.signal).catch((error: unknown) => {
-      log.warn({ err: error }, 'home access check failed');
-    });
-  }
 
   // Autostart and protocol handler reconciled with the stored settings in the background (ADR-110;
   // `available: false` – tests, dev, fake, another data directory – does nothing).

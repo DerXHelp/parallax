@@ -73,13 +73,25 @@ interface Started {
   exits: number[];
 }
 
+/** A system integration whose `apply` runs `hook` – the server calls it after listen and the lock file. */
+function systemHook(hook: () => Promise<void> | void): SystemIntegration {
+  return {
+    available: true,
+    apply: async () => {
+      await hook();
+    },
+    toastLaunchUri: () => null,
+    warnings: () => [],
+    onChange: () => () => undefined,
+  };
+}
+
 async function start(
   home: string,
   options: {
     port?: number;
     webRoot?: string | null;
     homeLock?: HomeLock;
-    homeAccess?: (home: string, signal: AbortSignal) => Promise<unknown>;
     signals?: SignalTarget;
     systemIntegration?: SystemIntegration;
     updateService?: UpdateService;
@@ -97,8 +109,6 @@ async function start(
     fakeSpeed: 0,
     exit: (code) => exits.push(code),
     homeLock: options.homeLock ?? null,
-    // No PowerShell in the in-process tests unless a test asks for the check.
-    homeAccess: options.homeAccess ?? null,
     ...(options.systemIntegration === undefined ? {} : { systemIntegration: options.systemIntegration }),
     ...(options.updateService === undefined ? {} : { updateService: options.updateService }),
   });
@@ -155,7 +165,7 @@ describe('startServer (composition)', () => {
     });
   });
 
-  it('releases the home lock of main.ts after the lock file; the access check runs after listen (R2-05/R2-13)', async () => {
+  it('releases the home lock of main.ts after the lock file; background work starts after listen (R2-05)', async () => {
     const home = await tempHome();
     const acquired = await acquireHomeLock(home);
     if (acquired.kind !== 'acquired') throw new Error('home lock busy');
@@ -171,11 +181,11 @@ describe('startServer (composition)', () => {
     const checked: string[] = [];
     const { server } = await start(home, {
       homeLock,
-      homeAccess: async (checkedHome) => {
+      systemIntegration: systemHook(async () => {
         // Only after listen: the lock file exists already.
-        checked.push(`${checkedHome} (lock file ${(await readServerLock(checkedHome)).kind})`);
-        order.push('homeAccess');
-      },
+        checked.push(`${home} (lock file ${(await readServerLock(home)).kind})`);
+        order.push('system');
+      }),
     });
     await vi.waitFor(() => {
       expect(checked).toEqual([`${home} (lock file ok)`]);
@@ -183,7 +193,7 @@ describe('startServer (composition)', () => {
     if (process.platform === 'win32') expect((await acquireHomeLock(home)).kind).toBe('busy');
 
     await server.shutdown.stop('command');
-    expect(order).toEqual(['homeAccess', 'homeLock (lock file missing)']);
+    expect(order).toEqual(['system', 'homeLock (lock file missing)']);
     const again = await acquireHomeLock(home);
     expect(again.kind).toBe('acquired');
     if (again.kind === 'acquired') await again.lock.release();
@@ -237,11 +247,10 @@ describe('startServer (composition)', () => {
         frame = shutdown;
       },
       // Called after listen and the lock file, while startServer has not returned yet.
-      homeAccess: (checkedHome) => {
-        lockAtCrash = existsSync(serverLockPath(checkedHome));
+      systemIntegration: systemHook(() => {
+        lockAtCrash = existsSync(serverLockPath(home));
         target.emit('unhandledRejection', new Error('boom during the start'));
-        return Promise.resolve();
-      },
+      }),
     });
     const started = running;
     cleanups.push(() => started.shutdown.stop('command'));
@@ -290,7 +299,6 @@ describe('startServer (composition)', () => {
         fakeSpeed: 0,
         exit: (code) => exits.push(code),
         homeLock,
-        homeAccess: null,
         // E.g. an unexpected error (crash handler) or a signal right before listen.
         onShutdownFrame: (shutdown) => {
           void shutdown.stop('error', SERVER_EXIT_CODES.failure);
@@ -445,7 +453,7 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
     });
   });
 
-  it('R4-13 / V3-15 b: the shutdown waits for the profile checks and ends a running access check', async () => {
+  it('R4-13: the shutdown waits for the profile checks; every step completes', async () => {
     const home = await tempHome();
     const lines: string[] = [];
     const logger = createLogger({
@@ -456,7 +464,6 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
       argv: ['--backend=fake', '--port=0', `--home=${home}`, '--validate=throw', '--toasts=off'],
       env: {},
     });
-    let signal: AbortSignal | null = null;
     const server = await startServer({
       config,
       webRoot: null,
@@ -465,22 +472,9 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
       exit: () => undefined,
       homeLock: null,
       logger,
-      // An access check that only ends when the shutdown aborts it.
-      homeAccess: (_home, abort) => {
-        signal = abort;
-        return new Promise<void>((resolve) => {
-          abort.addEventListener('abort', () => {
-            resolve();
-          });
-        });
-      },
     });
     cleanups.push(() => server.shutdown.stop('command'));
-    await vi.waitFor(() => {
-      expect(signal).not.toBeNull();
-    });
     await server.shutdown.stop('command');
-    expect((signal as AbortSignal | null)?.aborted).toBe(true);
     const done = lines
       .map((line) => JSON.parse(line) as { msg?: string; stepsMs?: Record<string, number> })
       .find((entry) => entry.msg === 'shutdown: done');
@@ -493,7 +487,6 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
       'files',
       'update',
       'stores',
-      'homeAccess',
       'lock',
       'homeLock',
     ]);
@@ -731,7 +724,6 @@ describe('startServer: Phase-3 wiring (WP-60)', () => {
       fakeSpeed: 0,
       exit: () => undefined,
       homeLock: null,
-      homeAccess: null,
       logger,
     });
     cleanups.push(() => server.shutdown.stop('command'));

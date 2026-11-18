@@ -25,6 +25,7 @@ import {
   type RunFileFn,
   type RunFileResult,
 } from './process';
+import { loadNativeProcessApi, type NativeProcessApi, type NativeProcessEntry } from './processNative';
 
 const NODE = process.execPath;
 const windowsOnly = process.platform === 'win32' ? it : it.skip;
@@ -538,6 +539,76 @@ describe('processInfo / queryProcesses (orphan cleanup, C.8, R2-02)', () => {
     },
     POWERSHELL_TEST_TIMEOUT_MS,
   );
+});
+
+describe('native process list (ADR-229: no PowerShell)', () => {
+  const at = (s: number) => new Date(Date.parse('2026-11-18T12:00:00.000Z') + s * 1000);
+  const fake = (rows: NativeProcessEntry[] | null, times: Record<number, Date>): NativeProcessApi => ({
+    entries: () => rows,
+    startedAt: (pid) => times[pid] ?? null,
+  });
+  const noPowerShell: RunFileFn = () => Promise.reject(new Error('PowerShell must not run'));
+  const rows: NativeProcessEntry[] = [
+    { pid: 10, parentPid: 1, name: 'claude.exe' },
+    { pid: 11, parentPid: 10, name: 'node.exe' },
+    { pid: 12, parentPid: 10, name: 'service.exe' },
+    { pid: 13, parentPid: 2, name: 'other.exe' },
+  ];
+  const native = fake(rows, { 10: at(0), 11: at(1), 13: at(2) });
+
+  it('filters by pid and parent and leaves out a process without readable start time', async () => {
+    const options = { native, run: noPowerShell, platform: 'win32' as const };
+    expect(await queryProcesses({ pids: [10], parentPids: [10] }, options)).toEqual({
+      kind: 'ok',
+      processes: [
+        { pid: 10, name: 'claude.exe', parentPid: 1, startedAt: at(0) },
+        { pid: 11, name: 'node.exe', parentPid: 10, startedAt: at(1) },
+      ],
+    });
+    expect(await processInfo(12, options)).toEqual({ kind: 'missing' });
+    expect(await processInfo(13, options)).toMatchObject({ kind: 'found', info: { name: 'other.exe' } });
+    const all = await listProcesses(options);
+    expect(all.kind === 'ok' ? all.processes.map((info) => info.pid) : null).toEqual([10, 11, 13]);
+    expect(await childProcesses(10, options)).toMatchObject({ kind: 'ok', processes: [{ pid: 11 }] });
+  });
+
+  it('a failed snapshot is unknown – never an empty list', async () => {
+    const broken = fake(null, {});
+    expect(await listProcesses({ native: broken, platform: 'win32' })).toMatchObject({
+      kind: 'unknown',
+      reason: 'failed',
+    });
+    expect(await processInfo(10, { native: broken, platform: 'win32' })).toMatchObject({ kind: 'unknown' });
+  });
+
+  it('without node:ffi (native null) the PowerShell query answers', async () => {
+    const run: RunFileFn = () =>
+      Promise.resolve({
+        exitCode: 0,
+        signal: null,
+        stdout: JSON.stringify([
+          { pid: 10, name: 'claude.exe', parentPid: 1, startedAt: at(0).toISOString() },
+        ]),
+        stderr: '',
+        timedOut: false,
+      });
+    expect(await processInfo(10, { native: null, run, platform: 'win32' })).toMatchObject({
+      kind: 'found',
+      info: { name: 'claude.exe' },
+    });
+  });
+
+  windowsOnly('the real snapshot finds this process with its parent and start time', () => {
+    const api = loadNativeProcessApi();
+    if (process.arch !== 'x64') return;
+    expect(api).not.toBeNull();
+    const me = api?.entries()?.find((entry) => entry.pid === process.pid);
+    expect(me?.parentPid).toBe(process.ppid);
+    expect(me?.name.toLowerCase()).toBe('node.exe');
+    const started = api?.startedAt(process.pid)?.getTime() ?? 0;
+    expect(Math.abs(started - (Date.now() - process.uptime() * 1000))).toBeLessThan(5_000);
+    expect(api?.startedAt(0)).toBeNull();
+  });
 });
 
 describe('listProcesses / descendantsOf (heartbeat snapshot, WP22-06)', () => {
