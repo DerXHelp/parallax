@@ -11,6 +11,7 @@ import {
   currentSessionId,
   type Conversation,
   type Decision,
+  type Draft,
   type Entry,
   type ModelOption,
   type QueuedPrompt,
@@ -38,6 +39,8 @@ export function emptyDetail(o: {
   latestPlanVersion?: number | null;
   /** WP-70: output styles the CLI offers in the project (runtime only; [] = unknown). */
   availableOutputStyles?: string[];
+  /** WP-77 (ADR-210): the stored composer draft (null = none). */
+  draft?: Draft | null;
 }): SessionDetail {
   return {
     entryId: o.entryId,
@@ -55,7 +58,7 @@ export function emptyDetail(o: {
     planFile: null,
     latestPlanVersion: o.latestPlanVersion ?? null,
     availableOutputStyles: o.availableOutputStyles ?? [],
-    draft: null,
+    draft: o.draft ?? null,
   };
 }
 
@@ -138,6 +141,7 @@ export function baseView(o: {
   queue: QueuedPrompt[];
   latestPlanVersion?: number | null;
   availableOutputStyles?: string[];
+  draft?: Draft | null;
 }): SessionViewState {
   const current = currentConversation(o.entry);
   return {
@@ -156,6 +160,7 @@ export function baseView(o: {
       queue: o.queue,
       latestPlanVersion: o.latestPlanVersion ?? null,
       availableOutputStyles: o.availableOutputStyles ?? [],
+      draft: o.draft ?? null,
     }),
   };
 }

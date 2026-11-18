@@ -20,6 +20,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@web/ui/popover';
 import { Spinner } from '@web/ui/spinner';
 import { sendPrompt } from './lib/commands';
 import { categoryKey, knownCategoryId } from './lib/context';
+import { keepDraftThroughSend } from './state/draft-sync';
 
 type Breakdown =
   | { state: 'idle' }
@@ -227,6 +228,8 @@ export const ContextGauge = memo(function ContextGauge({ sessionKey }: { session
                 className="justify-self-start"
                 onClick={() => {
                   void sendPrompt(sessionKey, COMPACT_COMMAND, 'next');
+                  // WP-77: `/compact` is not the draft – the draft must not be cleared with it.
+                  keepDraftThroughSend(sessionKey);
                 }}
               >
                 <MinimizeIcon aria-hidden />

@@ -18,6 +18,7 @@ import {
   type ContextBreakdown,
   type ContextGauge,
   type Conversation,
+  type Draft,
   type Entry,
   type Profile,
   type RateLimitInfo,
@@ -45,6 +46,7 @@ import {
   type AttachmentFileStore,
   type BlobStore,
   type DecisionStore,
+  type DraftStore,
   type RegistryStore,
   type SessionPublisher,
   type SettingsStore,
@@ -180,15 +182,21 @@ export interface EngineStores {
    * Absent: file attachments → UNSUPPORTED_MEDIA_TYPE, every start without an attachment folder.
    */
   attachments?: AttachmentFileStore;
+  /**
+   * WP-77 (ADR-210): the synchronized composer draft per entry (`store/drafts.ts`, compose.ts wires
+   * it). Absent: drafts live in memory only (lost with the server run).
+   */
+  drafts?: DraftStore;
 }
 
 /**
  * The stores as the engine uses them: the in-memory fallbacks filled in, no file store = null; the
  * decision store knows which plan versions exist (CR3-09, planIndex.ts).
  */
-export type EngineCoreStores = Required<Omit<EngineStores, 'attachments' | 'decisions'>> & {
+export type EngineCoreStores = Required<Omit<EngineStores, 'attachments' | 'decisions' | 'drafts'>> & {
   readonly attachments: AttachmentFileStore | null;
   readonly decisions: PlanIndexedDecisionStore;
+  readonly drafts: DraftStore | null;
 };
 
 export interface NormalizerFns {
@@ -384,6 +392,16 @@ export class EntryState {
   remoteGeneration = 0;
   /** WP-66: open side questions of the running process by item id (sideQuestions.ts). */
   readonly sideQuestions = new Map<string, PendingSideQuestion>();
+  /**
+   * WP-77 (ADR-210): the synchronized composer draft (`detail.draft`, `summary.hasDraft`); loaded at
+   * the server start (`restoreDraft`), changed only through `setDraft`.
+   */
+  draft: Draft | null = null;
+  /**
+   * WP-77: highest draft `rev` of this server run – it keeps counting across a cleared draft, so a
+   * window can tell an older state from a newer one (`nextDraftRev`).
+   */
+  private draftRev = 0;
   /**
    * Phase 3: `todos` / `planFile` of the current conversation (ADR-148/149). Fed only while a
    * mirror exists; (re)seeded from the mirror's items whenever a mirror is built.
@@ -765,6 +783,36 @@ export class EntryState {
     }
   }
 
+  // ---- WP-77: the synchronized draft (ADR-210) ----
+
+  /** Server start: the stored draft (no op, no write – the first summary and view carry it). */
+  restoreDraft(draft: Draft | null): void {
+    this.draft = draft;
+    if (draft !== null) this.draftRev = Math.max(this.draftRev, draft.rev);
+  }
+
+  /** The `rev` of the next accepted draft (old rev + 1, also after a cleared draft; else 1). */
+  nextDraftRev(): number {
+    this.draftRev += 1;
+    return this.draftRev;
+  }
+
+  /**
+   * Replaces the draft (null clears it): store (debounced), `detail.patch {draft}` to every window,
+   * `summary.hasDraft`. Clearing an empty draft changes nothing.
+   */
+  setDraft(draft: Draft | null): void {
+    if (this.removed || (draft === null && this.draft === null)) return;
+    this.restoreDraft(draft);
+    try {
+      this.core.stores.drafts?.save(this.entry.id, draft);
+    } catch (error) {
+      this.core.reportError(error, 'drafts.save');
+    }
+    this.emit([{ op: 'detail.patch', patch: { draft } }]);
+    this.publishSummary(false);
+  }
+
   /** `detail.patch {queue}` + `queue_changed` after every queue change (§3.5.7). */
   publishQueue(): void {
     this.emit([{ op: 'detail.patch', patch: { queue: this.queue.list() } }]);
@@ -848,6 +896,7 @@ export class EntryState {
       activity: this.activity,
       outputStyle: this.outputStyle,
       runningTasks: this.runningTasks,
+      hasDraft: this.draft !== null,
     });
   }
 
@@ -917,6 +966,7 @@ export class EntryState {
           queue: this.queue.list(),
           latestPlanVersion: this.broker.latestPlanVersion(),
           availableOutputStyles: this.availableOutputStyles,
+          draft: this.draft,
         });
         // Phase 3: todos/planFile derived from the items (the base view carries them; no op).
         const { todos, planFile } = this.seedDetail(seedItems, buffer);
@@ -976,6 +1026,7 @@ export class EntryState {
       queue: this.queue.list(),
       latestPlanVersion: this.broker.latestPlanVersion(),
       availableOutputStyles: this.availableOutputStyles,
+      draft: this.draft,
     });
     this.detail.reset();
     this.mirror = view;
@@ -1237,6 +1288,8 @@ export const ARCHIVED_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryComm
   'session.remove',
   // WP-69: reading a subagent's transcript file changes nothing.
   'session.subagentTranscript',
+  // WP-77 (ADR-210): the draft belongs to Parallax, not to the Claude session.
+  'session.setDraft',
 ]);
 
 /** WP-30 §4.12: open in an external console – never a second writer on the Claude session. */
@@ -1252,6 +1305,8 @@ export const EXTERNAL_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryComm
   'session.remove',
   // WP-69: only reads the CLI's subagent transcript (no second writer).
   'session.subagentTranscript',
+  // WP-77: the draft is Parallax's own (the console never sees it).
+  'session.setDraft',
 ]);
 
 /** The entry is handed off to an external console (recorded, or its status says so). */

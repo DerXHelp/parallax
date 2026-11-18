@@ -16,6 +16,8 @@
  * (R4-03).
  * Phase 3 (WP-51): the optional attachment store (ADR-146; absent until WP-60 wires it), the newest
  * plan text after a restart (`broker.loadLastPlan`, ADR-148).
+ * WP-77 (ADR-210): the optional draft store (`stores.drafts`) – drafts load at the start, flush at the
+ * shutdown and are deleted with their entry.
  */
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -337,6 +339,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     attachments: deps.stores.attachments ?? null,
     // CR3-09: plan.list answers known plan versions without reading their text again.
     decisions: withPlanIndex(deps.stores.decisions),
+    // WP-77 (ADR-210): without the draft store drafts live in memory only.
+    drafts: deps.stores.drafts ?? null,
   };
   const toasts = deps.toasts ?? DISABLED_NATIVE_TOASTS;
   const hostCommands = deps.hostCommands ?? [];
@@ -814,6 +818,10 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       core.setEngineWarning(`mcp:${s.id}`, null);
       clearNotifications(s.id);
       publisherOrThrow().removeSummary(s.id);
+      // WP-77: the draft goes with the entry (the only file that is deleted).
+      stores.drafts?.remove(s.id).catch((error: unknown) => {
+        log.warn({ err: error, entryId: s.id }, 'draft of a removed entry could not be deleted');
+      });
       // HostState.profiles[].entryCount changed.
       publishHostState();
       log.info({ entryId: s.id }, 'entry removed from Parallax (files kept)');
@@ -923,6 +931,14 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       records = await stores.decisions.load(entry.id);
     } catch (error) {
       log.error({ err: error, entryId: entry.id }, 'decisions could not be loaded');
+    }
+    // WP-77: the stored draft (summary.hasDraft, detail.draft); unreadable = none.
+    if (stores.drafts !== null) {
+      try {
+        s.restoreDraft(await stores.drafts.load(entry.id));
+      } catch (error) {
+        log.warn({ err: error, entryId: entry.id }, 'draft could not be loaded');
+      }
     }
     const { hadOpen } = s.broker.restore(records);
     // §4.12: previousVersionPlan of the next plan decision comes from plans/v<N>.md after a restart.
@@ -1104,6 +1120,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           stores.processes.flush(),
           stores.catalogs.flush(),
           stores.commandCatalogs.flush(),
+          stores.drafts?.flush(),
         ]);
         for (const result of flushes) {
           if (result.status === 'rejected')
