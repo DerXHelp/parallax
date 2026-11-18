@@ -287,6 +287,7 @@ export function createRemoteAccessService(options: RemoteAccessServiceOptions): 
     peerHttp ??= await createPeerHttp({
       instance,
       hostName,
+      firstRequestMs: limits.peerFirstRequestMs,
       ...(options.registerContent === undefined ? {} : { registerContent: options.registerContent }),
       ...(options.logger === undefined ? {} : { logger: options.logger }),
       hooks: {

@@ -64,14 +64,19 @@ describe('pairing cryptography (§B.7)', () => {
     expect(pairingMac(pairingKey(randomBytes(16)), 'initiator', transcript).equals(macA)).toBe(false);
   });
 
-  it('kAuth = HKDF-SHA-384(ekm_auth, salt parallax-auth-v1, info SHA-384(T), 48) – T is longer than 1024 bytes', () => {
+  it('kAuth = HKDF-SHA-384(ekm_auth ‖ kMix, salt parallax-auth-v1, info SHA-384(T), 48) – T is longer than 1024 bytes', () => {
     const ekmAuth = randomBytes(48);
+    const code = randomBytes(16);
     const transcript = pairingTranscript(ekm, spkiB, spkiA);
     expect(transcript.length).toBeGreaterThan(1024);
     const info = createHash('sha384').update(transcript).digest();
-    expect(deriveAuthKey(ekmAuth, transcript).equals(hkdfReference(ekmAuth, 'parallax-auth-v1', info))).toBe(
-      true,
-    );
+    const mix = hkdfReference(code, 'parallax-pair-v1', 'auth-mix');
+    const expected = hkdfReference(Buffer.concat([ekmAuth, mix]), 'parallax-auth-v1', info);
+    expect(deriveAuthKey(ekmAuth, transcript, code).equals(expected)).toBe(true);
+    // The code is mixed in: another code, another kAuth; kMix is not the MAC key k.
+    expect(deriveAuthKey(ekmAuth, transcript, randomBytes(16)).equals(expected)).toBe(false);
+    expect(mix.equals(pairingKey(code))).toBe(false);
+    expect(() => deriveAuthKey(ekmAuth, transcript, randomBytes(15))).toThrow(RangeError);
   });
 
   it('encodes MACs as 64 base64url chars and decodes only exactly 48 bytes', () => {

@@ -35,6 +35,7 @@ import { logger as rootLogger } from '../lib/logger';
 import { CommandError } from '../sync/ports';
 import { hasBrowserHeaders, pathOf, remoteVersionOf } from './headers';
 import { GuardedHubSocket } from './hubSocket';
+import { REMOTE_LIMITS } from './limits';
 import type { RemoteConnectionInfo, RemoteHubAttach } from './ports';
 
 /** Methods allowed per route pattern (HEAD comes with GET). */
@@ -78,6 +79,8 @@ export interface PeerHttpOptions {
   hooks: PeerHttpHooks;
   registerContent?: RegisterRemoteContent;
   logger?: Logger;
+  /** Default REMOTE_LIMITS.peerFirstRequestMs. */
+  firstRequestMs?: number;
 }
 
 export interface PeerHttp {
@@ -145,6 +148,9 @@ export async function createPeerHttp(options: PeerHttpOptions): Promise<PeerHttp
   };
 
   const holder: { server: Server | null } = { server: null };
+  /** Sockets that started a request or an upgrade (the first-request deadline is over for them). */
+  const started = new WeakSet<object>();
+  const firstRequestMs = options.firstRequestMs ?? REMOTE_LIMITS.peerFirstRequestMs;
   // Typed as the base logger so the app is a plain FastifyInstance (like http/app.ts).
   const fastifyLogger: FastifyBaseLogger = log;
   const app = fastify({
@@ -152,6 +158,7 @@ export async function createPeerHttp(options: PeerHttpOptions): Promise<PeerHttp
     logController: new LogController({ disableRequestLogging: true }),
     serverFactory: (handler) => {
       const created = createServer((req, res) => {
+        started.add(req.socket);
         if (
           admit(req, req.socket, (error) => {
             rejectRequest(res, req.socket, error);
@@ -229,6 +236,7 @@ export async function createPeerHttp(options: PeerHttpOptions): Promise<PeerHttp
     clientTracking: false,
   });
   http.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    started.add(socket);
     socket.on('error', () => undefined);
     if (
       !admit(req, socket, (error) => {
@@ -265,6 +273,14 @@ export async function createPeerHttp(options: PeerHttpOptions): Promise<PeerHttp
   return {
     app,
     emit(socket) {
+      // A proven socket that never sends a request would hold one of the peer slots for good.
+      const idle = setTimeout(() => {
+        if (!started.has(socket)) socket.destroy();
+      }, firstRequestMs);
+      idle.unref();
+      socket.once('close', () => {
+        clearTimeout(idle);
+      });
       http.emit('connection', socket);
     },
     async close() {

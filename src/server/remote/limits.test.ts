@@ -15,6 +15,8 @@ describe('limits of the listener (§B.10)', () => {
       pairingPerAddressPerMinute: 5,
       pairingTotalPerMinute: 20,
       pairingIdleMs: 15_000,
+      pairingSocketMs: 30_000,
+      peerFirstRequestMs: 30_000,
       pairingBodyBytes: 4096,
       revokedPins: 8,
     });

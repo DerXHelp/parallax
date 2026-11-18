@@ -7,7 +7,12 @@
  *   T     = lp('parallax-pair-v1') ‖ lp(ekm) ‖ lp(spkiB) ‖ lp(spkiA),   lp(x) = uint32be(len(x)) ‖ x
  *   macA  = HMAC-SHA-384(k, lp('initiator') ‖ T)      (controlling computer, proves first)
  *   macB  = HMAC-SHA-384(k, lp('responder') ‖ T)      (sharing computer)
- *   kAuth = HKDF-SHA-384(ikm = ekm_auth, salt = 'parallax-auth-v1', info = SHA-384(T), L = 48)
+ *   kMix  = HKDF-SHA-384(ikm = code (16 bytes), salt = 'parallax-pair-v1', info = 'auth-mix', L = 48)
+ *   kAuth = HKDF-SHA-384(ikm = ekm_auth ‖ kMix, salt = 'parallax-auth-v1', info = SHA-384(T), L = 48)
+ *
+ * kMix (security review WP-82, §B.7 step 7.2): kAuth depends on the code as well, not only on the
+ * TLS key exchange – whoever could read ekm_auth (a broken key exchange, recorded traffic) still
+ * needs the code, which never travels. Own `info`, so k (the MAC key) is never used twice.
  *
  * Deviation (docs/wp/WP-78a.md): `info = SHA-384(T)` instead of `T` – OpenSSL limits the HKDF info to
  * 1024 bytes, T is ~5.3 KB (two ML-DSA-87 SPKIs). The hash binds kAuth to the same transcript.
@@ -21,18 +26,26 @@ import { HASH, SECRET_BYTES, exportKeyingMaterial } from './tlsProfile';
 export const PAIR_LABEL = 'parallax-pair-v1';
 export const AUTH_SALT = 'parallax-auth-v1';
 const PAIR_MAC_INFO = 'pair-mac';
+const AUTH_MIX_INFO = 'auth-mix';
 export type PairingRole = 'initiator' | 'responder';
 
-/** `uint32be(len(x)) ‖ x`. */
+/** `uint32be(len(x)) ‖ x` – one buffer, no intermediate copy of `value`. */
 export function lp(value: Uint8Array | string): Buffer {
-  const bytes = typeof value === 'string' ? Buffer.from(value, 'utf8') : Buffer.from(value);
-  const length = Buffer.alloc(4);
-  length.writeUInt32BE(bytes.length);
-  return Buffer.concat([length, bytes]);
+  const bytes = typeof value === 'string' ? Buffer.from(value, 'utf8') : value;
+  const out = Buffer.alloc(4 + bytes.length);
+  out.writeUInt32BE(bytes.length, 0);
+  out.set(bytes, 4);
+  return out;
 }
 
+/** T of §B.7; the length-prefixed parts (they hold the exporter value) are zeroed after joining. */
 export function pairingTranscript(ekm: Uint8Array, spkiB: Uint8Array, spkiA: Uint8Array): Buffer {
-  return Buffer.concat([lp(PAIR_LABEL), lp(ekm), lp(spkiB), lp(spkiA)]);
+  const parts = [lp(PAIR_LABEL), lp(ekm), lp(spkiB), lp(spkiA)];
+  try {
+    return Buffer.concat(parts);
+  } finally {
+    for (const part of parts) part.fill(0);
+  }
 }
 
 /** k from the 16 code bytes. */
@@ -45,9 +58,18 @@ export function pairingMac(k: Uint8Array, role: PairingRole, transcript: Uint8Ar
   return createHmac(HASH, k).update(lp(role)).update(transcript).digest();
 }
 
-export function deriveAuthKey(ekmAuth: Uint8Array, transcript: Uint8Array): Buffer {
+/** kAuth from the auth exporter, the transcript and the 16 code bytes; intermediate keys are zeroed. */
+export function deriveAuthKey(ekmAuth: Uint8Array, transcript: Uint8Array, code: Uint8Array): Buffer {
+  if (code.length !== PAIRING_CODE_BYTES) throw new RangeError('pairing code must be 16 bytes');
   const info = createHash(HASH).update(transcript).digest();
-  return Buffer.from(hkdfSync(HASH, ekmAuth, AUTH_SALT, info, SECRET_BYTES));
+  const mix = Buffer.from(hkdfSync(HASH, code, PAIR_LABEL, AUTH_MIX_INFO, SECRET_BYTES));
+  const ikm = Buffer.concat([ekmAuth, mix]);
+  try {
+    return Buffer.from(hkdfSync(HASH, ikm, AUTH_SALT, info, SECRET_BYTES));
+  } finally {
+    mix.fill(0);
+    ikm.fill(0);
+  }
 }
 
 /** Constant-time MAC comparison (false for another length; never throws). */

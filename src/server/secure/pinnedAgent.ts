@@ -13,7 +13,8 @@
  *   unchecked peer.
  * - At most HANDSHAKES_IN_FLIGHT connections are being set up at a time (the rest wait in order):
  *   the sharing computer counts unproven sockets per address (remote/limits.ts), many windows
- *   opening at once must not run into that limit.
+ *   opening at once must not run into that limit. A connection waits at most `queueTimeoutMs` for
+ *   its turn (then 'timeout'); `destroy()` ends every waiting one at once ('destroyed').
  *
  * Use: `https.request({agent, host, port, path, headers: remoteVersionHeaders(v)})` and
  * `new WebSocket(url, {agent, ...REMOTE_WS_CLIENT_OPTIONS, headers: remoteVersionHeaders(v)})`.
@@ -80,6 +81,8 @@ export interface PinnedAgentOptions {
   /** Idle sockets kept for reuse (default true). */
   keepAlive?: boolean;
   maxSockets?: number;
+  /** Longest wait for a free handshake slot (default QUEUE_TIMEOUT_MS). */
+  queueTimeoutMs?: number;
 }
 
 /** Version headers every request to a sharing computer carries (REMOTE_HEADERS, ADR-209). */
@@ -105,15 +108,25 @@ const TLS_ERROR = /^(?:ERR_SSL_|ERR_TLS_|ERR_OSSL_|DEPTH_ZERO|SELF_SIGNED|UNABLE
 /** Connections being set up at once (below `perAddressConcurrent` of the sharing side, remote/limits.ts). */
 export const HANDSHAKES_IN_FLIGHT = 2;
 
+/** Longest wait in the handshake queue: two full set-ups ahead (handshake + proof each). */
+export const QUEUE_TIMEOUT_MS = 2 * (HANDSHAKE_TIMEOUT_MS + PROOF_TIMEOUT_MS);
+
+interface Waiter {
+  grant: () => void;
+  fail: (error: PinnedConnectionError) => void;
+  timer: NodeJS.Timeout;
+}
+
 export class PinnedAgent extends HttpsAgent {
   private readonly context: SecureContext;
   private readonly peerPin: string;
   private readonly authKey: Buffer;
   private readonly connectTimeoutMs: number;
   private readonly proofTimeoutMs: number;
+  private readonly queueTimeoutMs: number;
   private closed = false;
   private handshakes = 0;
-  private readonly waiting: (() => void)[] = [];
+  private readonly waiting: Waiter[] = [];
 
   constructor(options: PinnedAgentOptions) {
     super({
@@ -139,6 +152,7 @@ export class PinnedAgent extends HttpsAgent {
     this.authKey = Buffer.from(options.authKey);
     this.connectTimeoutMs = options.connectTimeoutMs ?? HANDSHAKE_TIMEOUT_MS;
     this.proofTimeoutMs = options.proofTimeoutMs ?? PROOF_TIMEOUT_MS;
+    this.queueTimeoutMs = options.queueTimeoutMs ?? QUEUE_TIMEOUT_MS;
   }
 
   /** Pin check of the TLS handshake: from `cert.raw`, constant time, never throws (returns the error). */
@@ -176,54 +190,78 @@ export class PinnedAgent extends HttpsAgent {
       });
       return undefined;
     }
-    void this.acquireHandshake().then(() => {
-      if (this.closed) {
-        this.releaseHandshake();
-        done(new PinnedConnectionError('destroyed'));
-        return;
-      }
-      let socket: TLSSocket;
-      try {
-        socket = connect({
-          host,
-          port,
-          secureContext: this.context,
-          servername: '',
-          rejectUnauthorized: true,
-          checkServerIdentity: this.checkServerIdentity,
-        });
-      } catch (error) {
-        this.releaseHandshake();
-        done(new PinnedConnectionError('network', errorCode(error)));
-        return;
-      }
-      void this.establish(socket).then(
-        () => {
+    this.acquireHandshake().then(
+      () => {
+        if (this.closed) {
           this.releaseHandshake();
-          done(null, socket);
-        },
-        (error: unknown) => {
+          done(new PinnedConnectionError('destroyed'));
+          return;
+        }
+        let socket: TLSSocket;
+        try {
+          socket = connect({
+            host,
+            port,
+            secureContext: this.context,
+            servername: '',
+            rejectUnauthorized: true,
+            checkServerIdentity: this.checkServerIdentity,
+          });
+        } catch (error) {
           this.releaseHandshake();
-          socket.destroy();
-          done(
-            error instanceof PinnedConnectionError
-              ? error
-              : new PinnedConnectionError('network', errorCode(error)),
-          );
-        },
-      );
-    });
+          done(new PinnedConnectionError('network', errorCode(error)));
+          return;
+        }
+        void this.establish(socket).then(
+          () => {
+            this.releaseHandshake();
+            done(null, socket);
+          },
+          (error: unknown) => {
+            this.releaseHandshake();
+            socket.destroy();
+            done(
+              error instanceof PinnedConnectionError
+                ? error
+                : new PinnedConnectionError('network', errorCode(error)),
+            );
+          },
+        );
+      },
+      (error: unknown) => {
+        done(error instanceof PinnedConnectionError ? error : new PinnedConnectionError('network'));
+      },
+    );
     return undefined;
   }
 
-  /** Waits for one of the HANDSHAKES_IN_FLIGHT slots (first come, first served). */
+  /**
+   * Waits for one of the HANDSHAKES_IN_FLIGHT slots (first come, first served); rejects with
+   * 'timeout' after `queueTimeoutMs` and with 'destroyed' when the agent goes away meanwhile.
+   */
   private acquireHandshake(): Promise<void> {
     if (this.handshakes < HANDSHAKES_IN_FLIGHT) {
       this.handshakes += 1;
       return Promise.resolve();
     }
-    return new Promise((resolve) => {
-      this.waiting.push(resolve);
+    return new Promise((resolve, reject) => {
+      const waiter: Waiter = {
+        grant: () => {
+          clearTimeout(waiter.timer);
+          resolve();
+        },
+        fail: (error) => {
+          clearTimeout(waiter.timer);
+          reject(error);
+        },
+        timer: setTimeout(() => {
+          const index = this.waiting.indexOf(waiter);
+          if (index >= 0) this.waiting.splice(index, 1);
+          reject(new PinnedConnectionError('timeout'));
+        }, this.queueTimeoutMs),
+      };
+      waiter.timer.unref();
+      this.waiting.push(waiter);
     });
   }
 
@@ -231,7 +269,7 @@ export class PinnedAgent extends HttpsAgent {
   private releaseHandshake(): void {
     const next = this.waiting.shift();
     if (next === undefined) this.handshakes -= 1;
-    else next();
+    else next.grant();
   }
 
   /** Handshake, re-checks and connection proof; rejects with PinnedConnectionError. */
@@ -312,6 +350,7 @@ export class PinnedAgent extends HttpsAgent {
   override destroy(): void {
     this.closed = true;
     this.authKey.fill(0);
+    for (const waiter of this.waiting.splice(0)) waiter.fail(new PinnedConnectionError('destroyed'));
     super.destroy();
   }
 }

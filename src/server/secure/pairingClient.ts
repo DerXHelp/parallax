@@ -286,7 +286,7 @@ export async function pairWithHost(options: PairWithHostOptions): Promise<PairWi
         }),
       );
     }
-    const authKey = deriveAuthKey(material.ekmAuth, material.transcript);
+    const authKey = deriveAuthKey(material.ekmAuth, material.transcript, code);
     return {
       peerCertificateDer,
       peerPin,

@@ -27,6 +27,13 @@ export interface RemoteLimits {
   pairingPerAddressPerMinute: number;
   pairingTotalPerMinute: number;
   pairingIdleMs: number;
+  /**
+   * Hard end of a pairing socket from its hand-over on (security review: `headersTimeout` and
+   * `requestTimeout` need `listen()`, the transports never listen).
+   */
+  pairingSocketMs: number;
+  /** A proven socket must start its first request (or upgrade) within this time. */
+  peerFirstRequestMs: number;
   pairingBodyBytes: number;
   pairingHeaderBytes: number;
   /** Pins of the last revoked couplings kept for `revoked_key` (peer.json). */
@@ -45,6 +52,8 @@ export const REMOTE_LIMITS: RemoteLimits = {
   pairingPerAddressPerMinute: 5,
   pairingTotalPerMinute: 20,
   pairingIdleMs: 15_000,
+  pairingSocketMs: 30_000,
+  peerFirstRequestMs: 30_000,
   pairingBodyBytes: REMOTE_PAIR_BODY_MAX_BYTES,
   pairingHeaderBytes: 4096,
   revokedPins: 8,

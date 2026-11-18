@@ -3,7 +3,8 @@
  *
  * 6.1 the socket is a `pairing` socket of the OPEN window; 6.2 the window has not expired;
  * 6.3 rate limit (5 per address and minute, 20 in total); 6.4 `macA` in constant time.
- * A failure counts (after 3 the window closes), is logged, stores nothing and closes the socket.
+ * A failure counts (after 3 from one address or 20 in all the window closes), is logged, stores
+ * nothing and closes the socket.
  *
  * Then (only with the right code): the version headers must match (409 HOST_INCOMPATIBLE, the code
  * is used up – an addition to §B.7 so that no coupling is stored that the other side refuses);
@@ -152,7 +153,7 @@ export class PairingResponder {
       const valid = macA !== null && macEquals(expected, macA);
       expected.fill(0);
       if (!valid || !parsed.success) {
-        if (window.fail(windowId)) this.deps.destroyPairingSockets(socket);
+        if (window.fail(windowId, address)) this.deps.destroyPairingSockets(socket);
         return refuse('pair_failed', makeError('PAIRING_INVALID'));
       }
 
@@ -172,10 +173,12 @@ export class PairingResponder {
       if (!window.consume(windowId)) return refuse('pair_expired', makeError('PAIRING_EXPIRED'));
       this.deps.destroyPairingSockets(socket);
       // 7.2 kAuth
-      const kAuth = deriveAuthKey(material.ekmAuth, material.transcript);
+      const kAuth = deriveAuthKey(material.ekmAuth, material.transcript, code);
       const name = sanitizeClaimedName(parsed.data.deviceName) ?? UNNAMED;
-      // 7.3 write the peer
+      // 7.3 write the peer – only while the answer can still reach the other side: a coupling
+      // nobody receives would replace the current one for nothing (security review).
       try {
+        if (socket.destroyed) return null;
         const raw = socket.getPeerX509Certificate()?.raw;
         if (raw === undefined) return null;
         const certificateDer = Buffer.from(raw);

@@ -43,9 +43,14 @@ export const HASH = 'sha384';
 /** TLS 1.3 treats an absent and an empty exporter context alike (RFC 8446 §7.5); Node's types want one. */
 const NO_CONTEXT = Buffer.alloc(0);
 
-/** `exportKeyingMaterial(48, label)` of this connection (same value on both ends). */
+/** `exportKeyingMaterial(48, label)` of this connection (same value on both ends); Node's buffer is zeroed. */
 export function exportKeyingMaterial(socket: TLSSocket, label: keyof typeof EXPORTER_LABELS): Buffer {
-  return Buffer.from(socket.exportKeyingMaterial(EXPORTER_BYTES, EXPORTER_LABELS[label], NO_CONTEXT));
+  const raw = socket.exportKeyingMaterial(EXPORTER_BYTES, EXPORTER_LABELS[label], NO_CONTEXT);
+  try {
+    return Buffer.from(raw);
+  } finally {
+    raw.fill(0);
+  }
 }
 
 /**

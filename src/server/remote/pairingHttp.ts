@@ -1,8 +1,10 @@
 /**
  * HTTP of the pairing window (`pairingHttp`, docs/wp/WP-76.md §B.6, §B.10): a plain `http.Server`
  * that never listens. Only `POST /remote/v1/pair`, headers ≤ 4 KiB, body ≤ 4 KiB, 15 s idle
- * timeout, no upgrade, no CONNECT, exactly one request per socket – after the answer the socket is
- * closed; it never becomes a `peer` socket.
+ * timeout until the body is complete (then off: the check and the commit must not be cut by it),
+ * a hard end of `pairingSocketMs` per socket (the server's own header/request timeouts need
+ * `listen()`), no upgrade, no CONNECT, exactly one request per socket – after the answer the
+ * socket is closed; it never becomes a `peer` socket.
  */
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -93,6 +95,7 @@ export function createPairingHttp(options: { hooks: PairingHttpHooks; limits?: R
       });
       req.on('end', () => {
         if (socket.destroyed) return;
+        socket.setTimeout(0);
         let parsed: unknown;
         try {
           parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -125,6 +128,13 @@ export function createPairingHttp(options: { hooks: PairingHttpHooks; limits?: R
 
   return {
     emit(socket) {
+      const hardEnd = setTimeout(() => {
+        socket.destroy();
+      }, limits.pairingSocketMs);
+      hardEnd.unref();
+      socket.once('close', () => {
+        clearTimeout(hardEnd);
+      });
       server.emit('connection', socket);
     },
   };

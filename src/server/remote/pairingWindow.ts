@@ -1,7 +1,8 @@
 /**
  * The pairing window of the sharing computer (docs/wp/WP-76.md §B.7): opened only by a local
- * window (`remoteAccess.pair`), `code = randomBytes(16)`, 10 minutes, at most 3 failed attempts,
- * single use. A new window replaces an open one. The code never leaves this module except as the
+ * window (`remoteAccess.pair`), `code = randomBytes(16)`, 10 minutes, at most 3 failed attempts
+ * per address and PAIRING_MAX_FAILURES_TOTAL in all (security review: garbage from another device
+ * must not close the window for the right one; the 128-bit code needs no tighter limit), single use. A new window replaces an open one. The code never leaves this module except as the
  * formatted string in the ack of `remoteAccess.pair`; the buffer is zeroed when the window closes.
  */
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -20,16 +21,22 @@ import { registerSecret, unregisterSecret } from '../lib/logger';
 export type PairingWindowCloseReason =
   'replaced' | 'expired' | 'lapsed' | 'failures' | 'used' | 'cancelled' | 'stopped';
 
+/** Failed attempts of one window from all addresses together before it closes. */
+export const PAIRING_MAX_FAILURES_TOTAL = 20;
+
 export interface OpenPairingWindow {
   readonly id: string;
   readonly expiresAt: Date;
+  /** Failed attempts from all addresses. */
   readonly failures: number;
 }
 
 export interface PairingWindowOptions {
   now?: () => Date;
   windowMs?: number;
+  /** Per address. */
   maxFailures?: number;
+  maxFailuresTotal?: number;
   /** Called after a window closed (any reason); not called for `open()` without a previous window. */
   onClose?: (id: string, reason: PairingWindowCloseReason) => void;
 }
@@ -40,6 +47,7 @@ interface WindowState {
   formatted: string;
   expiresAt: Date;
   failures: number;
+  byAddress: Map<string, number>;
   timer: NodeJS.Timeout;
 }
 
@@ -48,12 +56,14 @@ export class PairingWindow {
   private readonly now: () => Date;
   private readonly windowMs: number;
   private readonly maxFailures: number;
+  private readonly maxFailuresTotal: number;
   private readonly onClose: (id: string, reason: PairingWindowCloseReason) => void;
 
   constructor(options: PairingWindowOptions = {}) {
     this.now = options.now ?? (() => new Date());
     this.windowMs = options.windowMs ?? PAIRING_WINDOW_MS;
     this.maxFailures = options.maxFailures ?? PAIRING_MAX_FAILURES;
+    this.maxFailuresTotal = options.maxFailuresTotal ?? PAIRING_MAX_FAILURES_TOTAL;
     this.onClose = options.onClose ?? (() => undefined);
   }
 
@@ -69,7 +79,7 @@ export class PairingWindow {
       if (this.state?.id === id) this.close('expired');
     }, this.windowMs);
     timer.unref();
-    this.state = { id, code, formatted, expiresAt, failures: 0, timer };
+    this.state = { id, code, formatted, expiresAt, failures: 0, byAddress: new Map(), timer };
     return { id, code: formatted, expiresAt };
   }
 
@@ -103,12 +113,17 @@ export class PairingWindow {
     return state?.id === id ? Buffer.from(state.code) : null;
   }
 
-  /** Counts a failed attempt of window `id`; closes it at the limit. Returns true when it closed. */
-  fail(id: string): boolean {
+  /**
+   * Counts a failed attempt of window `id` from `address`; closes it at the limit of that address or
+   * the total one. Returns true when it closed.
+   */
+  fail(id: string, address: string): boolean {
     const state = this.state;
     if (state?.id !== id) return false;
     state.failures += 1;
-    if (state.failures < this.maxFailures) return false;
+    const fromAddress = (state.byAddress.get(address) ?? 0) + 1;
+    state.byAddress.set(address, fromAddress);
+    if (fromAddress < this.maxFailures && state.failures < this.maxFailuresTotal) return false;
     this.close('failures');
     return true;
   }

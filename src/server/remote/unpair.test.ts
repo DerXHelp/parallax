@@ -1,3 +1,4 @@
+import type { Duplex } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { REMOTE_PATHS } from '@shared/http';
@@ -7,7 +8,7 @@ import { PinnedConnectionError, REMOTE_WS_CLIENT_OPTIONS, remoteVersionHeaders }
 import { TEST_HOST } from '../secure/testKit';
 import { CommandError } from '../sync/ports';
 import { createPeerStore } from './peerStore';
-import { TEST_VERSION, agentRequest, startHarness, type Harness } from './testKit';
+import { OPEN_LIMITS, TEST_VERSION, agentRequest, startHarness, type Harness } from './testKit';
 
 const harnesses: Harness[] = [];
 afterEach(async () => {
@@ -157,6 +158,27 @@ describe('unpair, replace, renew (§B.8)', () => {
     control.fail = false;
     await h.command({ name: 'remoteAccess.check' });
     expect(h.service.state()).toMatchObject({ listening: true, error: null });
+  });
+
+  it('a proven socket without a first request ends after peerFirstRequestMs', async () => {
+    const h = await harness({ limits: { ...OPEN_LIMITS, peerFirstRequestMs: 300 } });
+    const agent = h.agent(await h.pair());
+    const socket = await new Promise<Duplex>((resolve, reject) => {
+      agent.createConnection({ host: TEST_HOST, port: h.port() }, (error, stream) => {
+        if (error === null) resolve(stream);
+        else reject(error);
+      });
+    });
+    const started = Date.now();
+    await new Promise<void>((resolve) => {
+      socket.once('close', () => {
+        resolve();
+      });
+    });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    // A socket that does send requests is not affected by the deadline.
+    const answer = await agentRequest(agent, h.port(), REMOTE_PATHS.health);
+    expect(answer.status).toBe(200);
   });
 
   it('DELETE peer/self: the controlling computer drops the coupling itself', async () => {

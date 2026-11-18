@@ -2643,3 +2643,19 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   - Ersetzt den Umschalter `flat | grouped` (WP-35).
 - **Begründung:** Mit mehreren Rechnern will der Nutzer wählen, wonach er ordnet. Einklappen hält lange Listen
   übersichtlich.
+
+## ADR-227 – Härtung nach den Security-Reviews von „Mehrere Rechner“
+- **Datum/WP:** 18.11.2026, WP-82 (Spezifikation `docs/wp/WP-76.md` §B.7, §B.10).
+- **Entscheidung:**
+  - `kAuth` mischt den Kopplungscode ein: `ikm = ekm_auth ‖ kMix` mit
+    `kMix = HKDF-SHA-384(code, 'parallax-pair-v1', 'auth-mix')`. Ergänzt ADR-207.
+  - Fehlversuche beim Koppeln zählen je Adresse (3) und insgesamt (20).
+  - Harte Fristen auf beiden Seiten: Kopplungs-Sockets 30 s, erste Anfrage eines bewiesenen Sockets 30 s,
+    Warteschlange des Clients 40 s, Weiterleitungen des Vermittlers (Header 30 s bzw. 120 s, danach Mindestdurchsatz,
+    16 offen je Rechner).
+  - Scheitert beim Aufheben das Schreiben von `peer.json`, wird die Datei gelöscht; ohne schreibbare `peer.json`
+    lauscht der freigebende Rechner nicht.
+  - Der Vermittler reicht nur Medientypen einer festen Menge durch, alles andere als Download.
+- **Begründung:** Beide Reviews fanden nichts Kritisches oder Hohes. Diese Punkte schließen Wege, die ein fremdes Gerät
+  im Netz oder ein langsamer Rechner für Störungen nutzen könnte. Dazu kommt Tiefenverteidigung für den Fall, dass der
+  TLS-Schlüsseltausch je gebrochen wird. Der Code wird nie übertragen; ein `macA` als Orakel reicht bei 128 Bit nicht.

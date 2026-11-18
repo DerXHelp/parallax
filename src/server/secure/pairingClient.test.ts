@@ -57,7 +57,7 @@ async function pairingServer(code: Buffer, behaviour: Behaviour = 'right') {
         send(401, { code: 'PAIRING_INVALID', params: {} });
         return;
       }
-      seen.kAuth = deriveAuthKey(material.ekmAuth, material.transcript);
+      seen.kAuth = deriveAuthKey(material.ekmAuth, material.transcript, code);
       const macB =
         behaviour === 'wrong-macB' ? randomBytes(48) : pairingMac(k, 'responder', material.transcript);
       send(200, {

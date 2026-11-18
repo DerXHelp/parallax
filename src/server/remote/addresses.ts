@@ -55,10 +55,13 @@ export function computerName(read: () => string = hostname): string {
   return (name.length > 0 ? name : 'parallax').slice(0, LIMITS.hostAddressChars);
 }
 
-/** An unverified name from the network: control characters removed, trimmed, at most hostNameChars. */
+/**
+ * An unverified name from the network: control and format characters removed (bidi overrides,
+ * zero-width characters – a name in the connection log must not disguise itself), line and
+ * paragraph separators too, trimmed, at most hostNameChars.
+ */
 export function sanitizeClaimedName(name: string | null | undefined): string | null {
   if (typeof name !== 'string') return null;
-  // eslint-disable-next-line no-control-regex -- removing control characters is the point
-  const clean = name.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/gu, '').trim();
+  const clean = name.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '').trim();
   return clean.length > 0 ? clean.slice(0, LIMITS.hostNameChars).trim() : null;
 }

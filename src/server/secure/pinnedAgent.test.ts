@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { createServer as createHttpServer, type IncomingMessage } from 'node:http';
+import { createServer as createNetServer, type Socket } from 'node:net';
 import { request } from 'node:https';
 import type { TLSSocket } from 'node:tls';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -7,6 +8,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { PROOF_BYTES, proveAsServer, readExactly, type ProofFailure } from './connectionProof';
 import { generateIdentity } from './identity';
 import {
+  HANDSHAKES_IN_FLIGHT,
   PinnedAgent,
   PinnedConnectionError,
   REMOTE_WS_CLIENT_OPTIONS,
@@ -218,6 +220,37 @@ describe('PinnedAgent (§B.6 client, §B.9 proof)', () => {
     expect(agent.isDestroyed).toBe(true);
     expect((await refused(get(agent, server.port))).reason).toBe('destroyed');
     expect(server.proofs).toEqual([]);
+  });
+
+  it('the handshake queue: waits at most queueTimeoutMs; destroy() ends the waiting ones at once', async () => {
+    // A peer that accepts TCP and never answers: every slot stays busy until connectTimeoutMs.
+    const held: Socket[] = [];
+    const silent = createNetServer((socket) => {
+      held.push(socket);
+    });
+    await new Promise<void>((resolve) => silent.listen(0, TEST_HOST, resolve));
+    cleanups.push(
+      () =>
+        new Promise<void>((resolve) => {
+          for (const socket of held) socket.destroy();
+          silent.close(() => {
+            resolve();
+          });
+        }),
+    );
+    const address = silent.address();
+    if (address === null || typeof address === 'string') throw new Error('no port');
+    const agent = makeAgent({ keepAlive: false, connectTimeoutMs: 5_000, queueTimeoutMs: 200 });
+    const busy = Array.from({ length: HANDSHAKES_IN_FLIGHT }, () => refused(get(agent, address.port)));
+    const started = Date.now();
+    expect((await refused(get(agent, address.port))).reason).toBe('timeout');
+    expect(Date.now() - started).toBeLessThan(2_000);
+    const waiting = refused(get(agent, address.port));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    agent.destroy();
+    expect((await waiting).reason).toBe('destroyed');
+    for (const socket of held) socket.destroy();
+    await Promise.all(busy);
   });
 
   it('ignores TLS options of a single request (they live in the agent)', async () => {

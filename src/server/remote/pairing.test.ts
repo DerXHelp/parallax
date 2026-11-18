@@ -170,6 +170,22 @@ describe('pairing on the sharing side (§B.7)', () => {
     expect(h.service.state()?.peer).toBeNull();
   });
 
+  it('a pairing socket that sends nothing ends after pairingSocketMs (no listen() timeouts needed)', async () => {
+    const h = await harness({ limits: { ...OPEN_LIMITS, pairingIdleMs: 60_000, pairingSocketMs: 300 } });
+    await openWindow(h);
+    const socket = await pairingSocket(h.port(), generateIdentity('coupling:pc-a'));
+    await classified(h, 1);
+    const started = Date.now();
+    await new Promise<void>((resolve) => {
+      socket.once('close', () => {
+        resolve();
+      });
+    });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    await classified(h, 0);
+    expect(h.service.state()?.pairingExpiresAt).not.toBeNull();
+  });
+
   it('rate limit per address → PAIRING_RATE_LIMITED (no failed attempt counted)', async () => {
     const h = await harness({ limits: { ...OPEN_LIMITS, pairingPerAddressPerMinute: 1 } });
     const code = await openWindow(h);
