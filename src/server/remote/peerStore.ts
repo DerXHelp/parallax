@@ -22,7 +22,9 @@ import {
   type RemotePeerRecord,
 } from '@shared/model';
 import { toError } from '../lib/async';
+import { nodeFsOps, withFsRetry } from '../lib/fs';
 import { logger as rootLogger } from '../lib/logger';
+import { fsErrorCode } from '../lib/paths';
 import { pinOfCertificate, pinsEqual } from '../secure/pins';
 import {
   quarantineStrictFile,
@@ -53,6 +55,11 @@ export interface FilePeerStore extends PeerStore {
   isRevoked(pin: string): boolean;
   /** A write after `clear()` failed: the file may still hold the revoked coupling. */
   readonly writeFailed: boolean;
+  /**
+   * Writes the current state now, whatever changed (before the listener starts): a data folder
+   * that cannot be written keeps remote access off – a revocation could not be stored either.
+   */
+  persist(): Promise<void>;
 }
 
 interface State {
@@ -107,6 +114,19 @@ export function createPeerStore(options: PeerStoreOptions): FilePeerStore {
   const clearTimer = (): void => {
     if (timer !== null) clearTimeout(timer);
     timer = null;
+  };
+
+  /** Deletes peer.json; true when it is gone (also: was never there). */
+  const removeFile = async (): Promise<boolean> => {
+    try {
+      await queue;
+      await withFsRetry(() => (options.fs ?? nodeFsOps).unlink(file), options.retryDelaysMs);
+      return true;
+    } catch (error) {
+      if (fsErrorCode(error) === 'ENOENT') return true;
+      log.error({ err: error }, 'peer.json could not be removed either');
+      return false;
+    }
   };
 
   const writeCurrent = async (): Promise<void> => {
@@ -185,9 +205,20 @@ export function createPeerStore(options: PeerStoreOptions): FilePeerStore {
       try {
         await writeCurrent();
       } catch (error) {
+        // §B.8 step 3: the revoked coupling must not come back after a restart. Removing the file
+        // often works where writing does not (a lock, a full disk); only the revoked list is lost.
+        if (await removeFile()) {
+          log.warn({ err: error }, 'peer.json could not be written – removed instead');
+          dirty = false;
+          writeFailed = false;
+          return;
+        }
         writeFailed = true;
         throw error;
       }
+    },
+    async persist() {
+      await writeCurrent();
     },
     touch(address, at) {
       const peer = state.peer;

@@ -107,12 +107,34 @@ describe('unpair, replace, renew (§B.8)', () => {
     expect(await rejectedKinds(h)).toEqual(expect.arrayContaining(['revoked_key', 'unpaired']));
   });
 
-  it('a failed write on unpair stops the listener (REMOTE_ACCESS_FAILED store) until a write succeeds', async () => {
+  it('a failed write on unpair removes peer.json instead; the listener keeps running', async () => {
     const control = { fail: false };
     const fs: FsOps = {
       ...nodeFsOps,
       writeFile: (file, data) =>
         control.fail ? Promise.reject(new Error('disk')) : nodeFsOps.writeFile(file, data),
+    };
+    const base = await harness({ activate: false });
+    const h = await harness({
+      home: base.home,
+      peerStore: createPeerStore({ home: base.home, fs, retryDelaysMs: [] }),
+    });
+    await h.pair();
+    control.fail = true;
+    await h.command({ name: 'remoteAccess.unpair' });
+    expect(h.service.state()).toMatchObject({ listening: true, peer: null });
+    const restarted = createPeerStore({ home: base.home, retryDelaysMs: [] });
+    await restarted.load();
+    expect(restarted.get()).toBeNull();
+  });
+
+  it('write and removal fail on unpair → the listener stops (REMOTE_ACCESS_FAILED store) until a write succeeds', async () => {
+    const control = { fail: false };
+    const fs: FsOps = {
+      ...nodeFsOps,
+      writeFile: (file, data) =>
+        control.fail ? Promise.reject(new Error('disk')) : nodeFsOps.writeFile(file, data),
+      unlink: (file) => (control.fail ? Promise.reject(new Error('locked')) : nodeFsOps.unlink(file)),
     };
     const base = await harness({ activate: false });
     const h = await harness({

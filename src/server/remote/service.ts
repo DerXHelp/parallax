@@ -359,12 +359,12 @@ export function createRemoteAccessService(options: RemoteAccessServiceOptions): 
     } catch {
       throw failWith(makeError('REMOTE_KEYSTORE_UNAVAILABLE'));
     }
-    if (peerStore.writeFailed) {
-      try {
-        await peerStore.flush();
-      } catch {
-        throw failWith(makeError('REMOTE_ACCESS_FAILED', { reason: 'store' }));
-      }
+    // Fail closed (security review): only a data folder that takes writes may listen – after a
+    // failed revocation and a restart the old coupling would otherwise be back without a word.
+    try {
+      await peerStore.persist();
+    } catch {
+      throw failWith(makeError('REMOTE_ACCESS_FAILED', { reason: 'store' }));
     }
     await ensurePeerHttp();
     try {

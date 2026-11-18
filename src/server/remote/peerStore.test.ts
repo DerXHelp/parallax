@@ -79,19 +79,44 @@ describe('peer store (§B.7 step 7.3, §B.8)', () => {
     expect(store.isRevoked(pins[0] ?? '')).toBe(false);
   });
 
-  it('clear() changes the memory first; a failed write is remembered and retried by flush()', async () => {
-    const { control, store, read } = await setup();
-    const peer = record();
-    await store.set(peer);
+  it('clear() changes the memory first; a failed write removes the file instead (no return after a restart)', async () => {
+    const { control, make, store, file } = await setup();
+    await store.set(record());
     control.failWrites = true;
     const pending = store.clear();
     expect(store.get()).toBeNull();
-    await expect(pending).rejects.toThrow();
-    expect(store.writeFailed).toBe(true);
+    await pending;
+    expect(store.writeFailed).toBe(false);
+    await expect(readFile(file, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    const restarted = make();
+    await restarted.load();
+    expect(restarted.get()).toBeNull();
+    // persist() fails closed while the folder takes no writes.
+    await expect(restarted.persist()).rejects.toThrow();
+    control.failWrites = false;
+    await restarted.persist();
+  });
+
+  it('write and removal both fail → remembered and retried by flush()', async () => {
+    const { control, home, read } = await setup();
+    const fs: FsOps = {
+      ...nodeFsOps,
+      writeFile: (target, data) =>
+        control.failWrites ? Promise.reject(new Error('disk full')) : nodeFsOps.writeFile(target, data),
+      unlink: (target) =>
+        control.failWrites ? Promise.reject(new Error('locked')) : nodeFsOps.unlink(target),
+    };
+    const locked = createPeerStore({ home, fs, retryDelaysMs: [], debounceMs: 20 });
+    await locked.load();
+    const peer = record();
+    await locked.set(peer);
+    control.failWrites = true;
+    await expect(locked.clear()).rejects.toThrow();
+    expect(locked.writeFailed).toBe(true);
     expect((await read()).peer?.pin).toBe(peer.pin);
     control.failWrites = false;
-    await store.flush();
-    expect(store.writeFailed).toBe(false);
+    await locked.flush();
+    expect(locked.writeFailed).toBe(false);
     expect((await read()).peer).toBeNull();
   });
 
