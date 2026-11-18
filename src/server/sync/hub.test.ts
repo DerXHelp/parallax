@@ -788,6 +788,29 @@ describe('remote connections: relay (watcher of the controlling computer)', () =
     });
     expect(relay.ofType('notify')).toHaveLength(1);
   });
+
+  it('WP-81: the relay is in presence (kind relay, never focused) and receives notify.clear', () => {
+    const window = connectRemote(22, 'window');
+    // The hello of the watcher (hosts/link.ts): never focused, never visible.
+    const relay = new FakeSocket();
+    hub.handleRemoteConnection(relay, REMOTE_INFO);
+    relay.receive(
+      sampleClientHello({
+        clientId: sampleId('cl', 21),
+        kind: 'relay',
+        presence: samplePresence({ focused: false, visible: false, viewingEntryId: null }),
+      }),
+    );
+    expect(hub.presence().find((p) => p.kind === 'relay')).toMatchObject({
+      clientId: sampleId('cl', 21),
+      origin: 'remote',
+      lastFocusAt: null,
+    });
+    hub.clearNotification(ENTRY);
+    for (const socket of [window, relay]) {
+      expect(socket.ofType('notify.clear')).toEqual([{ type: 'notify.clear', entryId: ENTRY }]);
+    }
+  });
 });
 
 describe('remote connections: redaction and presence', () => {
