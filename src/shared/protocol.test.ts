@@ -835,6 +835,22 @@ describe('command results', () => {
     expect(parseClientMessage(JSON.stringify(sampleClientHello({ kind: 'relay' }))).ok).toBe(true);
     expect(parseCommandResult('session.setDraft', { rev: null })).toEqual({ rev: null });
     expect(parseCommandResult('hosts.add', { hostId: 'computer-b' })).toEqual({ hostId: 'computer-b' });
+    expect(parseCommandResult('hosts.remove', { peerNotified: false })).toEqual({ peerNotified: false });
+    expect(parseCommandResult('hosts.remove', {})).toBeNull();
+    const again = send({
+      name: 'hosts.add',
+      address: '192.0.2.20',
+      code: 'x',
+      displayName: 'B',
+      replaceHostId: 'computer-b',
+    });
+    expect(again.ok && again.message.type === 'cmd' && again.message.cmd).toMatchObject({
+      replaceHostId: 'computer-b',
+    });
+    expect(
+      send({ name: 'hosts.add', address: '192.0.2.20', code: 'x', displayName: 'B', replaceHostId: 'local' })
+        .ok,
+    ).toBe(false);
     expect(WS_CLOSE.HOST_UNREACHABLE).toBe(4502);
     expect(WS_CLOSE.HOST_INCOMPATIBLE).toBe(4410);
     expect(WS_CLOSE.HOST_REVOKED).toBe(4403);

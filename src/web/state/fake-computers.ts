@@ -78,6 +78,15 @@ export function startFakeComputers(
     host.restart({ code });
   };
 
+  // A successful pairing (also "pair again" with `replaceHostId`) makes that computer reachable again.
+  if (local.multiHost !== false) {
+    local.multiHost = {
+      ...local.multiHost,
+      onPaired: (hostId) => {
+        get(hostId).online = true;
+      },
+    };
+  }
   local.setHostState({
     ...local.hostState,
     multiHost: { ...local.hostState.multiHost, role: 'control' },

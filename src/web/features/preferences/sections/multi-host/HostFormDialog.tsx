@@ -114,14 +114,9 @@ export function HostFormDialog({
       port: hostPort,
       code: fields.code.trim(),
       displayName,
+      // Pair again in one step: hostId, color and place stay (so do the sessionKeys of its sessions).
+      ...(mode.kind === 'pairAgain' ? { replaceHostId: mode.host.hostId } : {}),
     });
-    if (mode.kind === 'pairAgain') {
-      // The new pairing takes over color and place; the old entry (refused by the other side) goes.
-      const old = mode.host;
-      await sendCommand(null, { name: 'hosts.remove', hostId: old.hostId });
-      await sendCommand(null, { name: 'hosts.update', hostId, color: old.color });
-      await sendCommand(null, { name: 'hosts.move', hostId, index: mode.index });
-    }
     return hostId;
   };
 

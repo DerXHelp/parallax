@@ -11,7 +11,7 @@ import { useState } from 'react';
 import { LIMITS, type HostId } from '@shared/common';
 import type { ErrorPayload } from '@shared/errors';
 import type { RemoteHost } from '@shared/model';
-import type { Command } from '@shared/protocol';
+import type { Command, CommandResult } from '@shared/protocol';
 import { useI18n } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { HOST_BG } from '@web/lib/host-colors';
@@ -202,13 +202,17 @@ export function ControlPart() {
   const [done, setDone] = useState<Done>(null);
   const full = hosts.length >= LIMITS.hostsMax;
 
-  const run = (cmd: Command, title = t('preferences.multiHost.control.failed'), after?: () => void) => {
+  const run = <C extends Command>(
+    cmd: C,
+    title = t('preferences.multiHost.control.failed'),
+    after?: (result: CommandResult<C['name']>) => void,
+  ) => {
     setBusy(true);
     setError(null);
     setDone(null);
     sendCommand(null, cmd)
-      .then(() => {
-        after?.();
+      .then((result) => {
+        after?.(result);
       })
       .catch((caught: unknown) => {
         setError({ title, error: errorPayloadOf(caught) });
@@ -222,9 +226,10 @@ export function ControlPart() {
     run(
       { name: 'hosts.remove', hostId: target.host.hostId },
       t('preferences.multiHost.control.remove.failed'),
-      () => {
+      ({ peerNotified }) => {
         setRemoving(null);
-        setDone({ key: target.unreachable ? 'doneUnreachable' : 'done', name: target.host.name });
+        // §B.8: only a computer that was not reached keeps its pairing – remove it there by hand.
+        setDone({ key: peerNotified ? 'done' : 'doneUnreachable', name: target.host.name });
       },
     );
   };

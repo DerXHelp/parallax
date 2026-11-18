@@ -92,7 +92,10 @@ describe('fake multi-host', () => {
     expect(host.hostState.remoteHosts.map((item) => item.hostId)).toEqual(['computer-c', b.hostId]);
     fakeMultiHostCommand(host, { name: 'hosts.reconnect', hostId: 'computer-c' });
     expect(host.hostState.remoteHosts[0]?.status).toBe('connected');
-    fakeMultiHostCommand(host, { name: 'hosts.remove', hostId: b.hostId });
+    expect(fakeMultiHostCommand(host, { name: 'hosts.remove', hostId: b.hostId })).toMatchObject({
+      ok: true,
+      result: { peerNotified: true },
+    });
     expect(host.hostState.remoteHosts.map((item) => item.hostId)).toEqual(['computer-c']);
     expect(fakeMultiHostCommand(host, { name: 'hosts.remove', hostId: b.hostId })).toMatchObject({
       ok: false,

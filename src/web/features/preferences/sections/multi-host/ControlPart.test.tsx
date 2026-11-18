@@ -281,14 +281,20 @@ describe('ControlPart (WP-80)', () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
+    // One step: the entry keeps its id, color and place (replaceHostId).
     expect(commands(running)).toEqual([
-      { name: 'hosts.add', address: '192.0.2.20', port: 4713, code: CODE, displayName: 'Computer B' },
-      { name: 'hosts.remove', hostId: DEMO_HOSTS.b },
-      { name: 'hosts.update', hostId: 'computer-b-2', color: 'teal' },
-      { name: 'hosts.move', hostId: 'computer-b-2', index: 0 },
+      {
+        name: 'hosts.add',
+        address: '192.0.2.20',
+        port: 4713,
+        code: CODE,
+        displayName: 'Computer B',
+        replaceHostId: DEMO_HOSTS.b,
+      },
     ]);
     await waitFor(() => {
-      expect(rows().map((element) => element.dataset.hostRow)).toEqual(['computer-b-2', DEMO_HOSTS.c]);
+      expect(row(DEMO_HOSTS.b).dataset.status).toBe('connected');
     });
+    expect(rows().map((element) => element.dataset.hostRow)).toEqual([DEMO_HOSTS.b, DEMO_HOSTS.c]);
   });
 });

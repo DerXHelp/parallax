@@ -31,6 +31,8 @@ export interface FakeMultiHostOptions {
   incompatibleAddresses?: readonly string[];
   /** Well-formed codes the other side refuses (PAIRING_INVALID). */
   rejectedCodes?: readonly string[];
+  /** A pairing succeeded (also "pair again", `replaceHostId`) – fake-computers makes it reachable. */
+  onPaired?: (hostId: HostId) => void;
 }
 
 /** What the module needs of the FakeHost (structural). */
@@ -172,8 +174,31 @@ function hosts(
       if (options.incompatibleAddresses?.includes(cmd.address) === true) {
         return fail(makeError('HOST_INCOMPATIBLE', { version: '9.9.9', protocol: 999 }));
       }
-      const hostId = fakeHostId(cmd.displayName, list);
       const now = new Date().toISOString();
+      if (cmd.replaceHostId !== undefined) {
+        const old = find(cmd.replaceHostId);
+        if (old === undefined) return fail(makeError('HOST_NOT_FOUND', { hostId: cmd.replaceHostId }));
+        // Pair again: id, color and place stay; name, address and port come from the new pairing.
+        options.onPaired?.(old.hostId);
+        write(
+          list.map((item) =>
+            item.hostId === old.hostId
+              ? {
+                  ...item,
+                  name: cmd.displayName.trim(),
+                  address: cmd.address,
+                  port: cmd.port,
+                  status: 'connected',
+                  lastError: null,
+                  lastConnectedAt: now,
+                }
+              : item,
+          ),
+        );
+        return ok({ hostId: old.hostId });
+      }
+      const hostId = fakeHostId(cmd.displayName, list);
+      options.onPaired?.(hostId);
       write([
         ...list,
         {
@@ -214,9 +239,13 @@ function hosts(
       return ok();
     }
     case 'hosts.remove': {
-      if (find(cmd.hostId) === undefined) return fail(makeError('HOST_NOT_FOUND', { hostId: cmd.hostId }));
+      const removed = find(cmd.hostId);
+      if (removed === undefined) return fail(makeError('HOST_NOT_FOUND', { hostId: cmd.hostId }));
       write(list.filter((item) => item.hostId !== cmd.hostId));
-      return ok();
+      // Like the server (§B.8): a computer that cannot be reached keeps its pairing.
+      const reached =
+        removed.status !== 'unreachable' && options.unreachableAddresses?.includes(removed.address) !== true;
+      return ok({ peerNotified: reached });
     }
     case 'hosts.reconnect': {
       const host = find(cmd.hostId);
