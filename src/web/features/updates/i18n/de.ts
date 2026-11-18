@@ -32,7 +32,7 @@ export const de: typeof en = {
     progress: 'Fortschritt',
     checkNow: 'Jetzt prüfen',
     checking: 'Prüfe…',
-    prepare: 'Update vorbereiten',
+    prepare: 'Jetzt aktualisieren',
     restart: 'Neu starten',
     rollback: 'Zurück zu {version}',
     rollbackLoss:
