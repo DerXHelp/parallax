@@ -486,6 +486,8 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
       .find((entry) => entry.msg === 'shutdown: done');
     expect(Object.keys(done?.stepsMs ?? {})).toEqual([
       'sessions',
+      // WP-78a: the listener for other computers ends before the HTTP server.
+      'multiHost',
       'http',
       'system',
       'profileChecks',
