@@ -23,7 +23,7 @@ import { WS_CLOSE, type HostCommand, type HostCommandName } from '@shared/protoc
 import type { ServerInstance } from '../config';
 import { logger as rootLogger } from '../lib/logger';
 import { computerName } from '../remote/addresses';
-import { generateIdentity } from '../secure/identity';
+import { generateIdentity, makeIdentity } from '../secure/identity';
 import { createIdentityStore, type FileIdentityStore } from '../secure/identityStore';
 import {
   PairingClientError,
@@ -56,6 +56,8 @@ export const HOSTS_COMMANDS = [
   'hosts.remove',
   'hosts.reconnect',
 ] as const satisfies readonly HostCommandName[];
+
+type AddCommand = Extract<HostCommand, { name: 'hosts.add' }>;
 
 /** `lastConnectedAt` is written at most this often per computer. */
 const LAST_CONNECTED_WRITE_MS = 60_000;
@@ -284,24 +286,31 @@ export function createHostsService(options: HostsServiceOptions): Hosts {
 
   // ---- commands ----
 
-  const add = async (cmd: Extract<HostCommand, { name: 'hosts.add' }>): Promise<{ hostId: HostId }> => {
+  const add = async (cmd: AddCommand): Promise<{ hostId: HostId }> => {
     requireActive();
     requireWritable();
     const code = parsePairingCode(cmd.code);
     if (code === null) throw commandError('VALIDATION_FAILED', { reason: 'code' });
-    let hostId: HostId | null = null;
+    let reserved: HostId | null = null;
     let result: PairWithHostResult | null = null;
     try {
-      if (records.length + pending.size >= LIMITS.hostsMax) {
-        throw commandError('VALIDATION_FAILED', { reason: 'limit' });
+      let keyId: HostId;
+      if (cmd.replaceHostId === undefined) {
+        if (records.length + pending.size >= LIMITS.hostsMax) {
+          throw commandError('VALIDATION_FAILED', { reason: 'limit' });
+        }
+        reserved = uniqueHostId(
+          cmd.displayName,
+          new Set([...records.map((record) => record.hostId), ...pending]),
+        );
+        pending.add(reserved);
+        keyId = reserved;
+      } else {
+        // Pairing an existing entry again does not count twice towards LIMITS.hostsMax.
+        keyId = findRecord(cmd.replaceHostId).record.hostId;
       }
-      hostId = uniqueHostId(
-        cmd.displayName,
-        new Set([...records.map((record) => record.hostId), ...pending]),
-      );
-      pending.add(hostId);
       if (!(await keyStore.available())) throw commandError('REMOTE_KEYSTORE_UNAVAILABLE');
-      const identity = generateIdentity(`coupling:${hostId}`);
+      const identity = generateIdentity(`coupling:${keyId}`);
       const controller = new AbortController();
       pairings.add(controller);
       try {
@@ -323,61 +332,93 @@ export function createHostsService(options: HostsServiceOptions): Hosts {
       } finally {
         pairings.delete(controller);
       }
-      await commitPairing(hostId, cmd, identity, result);
-      log.info({ hostId, peerPin: result.peerPin }, 'computer added');
-      return { hostId };
+      return { hostId: await commitPairing(cmd, identity, result, reserved) };
     } finally {
       code.fill(0);
       result?.authKey.fill(0);
-      if (hostId !== null) pending.delete(hostId);
+      if (reserved !== null) pending.delete(reserved);
     }
   };
 
-  /** §B.7 step 8 after a verified macB: store key, kAuth and pins – or undo everything. */
+  /**
+   * §B.7 step 8 after a verified macB: store key, kAuth and pins – or undo everything. Target:
+   * `replaceHostId`; else an entry with the same pin (the same sharing computer paired again
+   * replaces that entry instead of becoming a duplicate); else the new entry `reserved`. A replaced
+   * entry keeps hostId, color, place and addedAt; its old agent, key and windows (HOST_REVOKED) go.
+   */
   const commitPairing = async (
-    hostId: HostId,
-    cmd: Extract<HostCommand, { name: 'hosts.add' }>,
-    identity: Identity,
+    cmd: AddCommand,
+    generated: Identity,
     result: PairWithHostResult,
-  ): Promise<void> => {
-    let keySaved = false;
+    reserved: HostId | null,
+  ): Promise<HostId> => {
+    /** Puts the key file back as it was (set while only the key file is new). */
+    const undo: { key: (() => Promise<void>) | null } = { key: null };
     try {
-      const sealed = await keyStore.protect(`auth:${hostId}`, result.authKey);
-      await identityStore.save(identity);
-      keySaved = true;
-      await serial(async () => {
+      return await serial(async () => {
         requireWritable();
+        const replaceId =
+          cmd.replaceHostId ?? records.find((record) => record.peerPin === result.peerPin)?.hostId;
+        const index =
+          replaceId === undefined ? -1 : records.findIndex((record) => record.hostId === replaceId);
+        const old = records[index];
+        if (replaceId !== undefined && old === undefined) {
+          throw commandError('HOST_NOT_FOUND', { hostId: replaceId });
+        }
+        const hostId = old?.hostId ?? reserved;
+        if (hostId === null) throw new Error('pairing without a target entry');
+        const purpose = `coupling:${hostId}` as const;
+        const identity =
+          generated.purpose === purpose
+            ? generated
+            : makeIdentity(purpose, generated.privateKey, generated.certificateDer);
+        const sealed = await keyStore.protect(`auth:${hostId}`, result.authKey);
+        const previous =
+          old === undefined ? null : await identityStore.load(purpose).catch((): Identity | null => null);
+        await identityStore.save(identity);
+        undo.key =
+          previous === null ? () => identityStore.remove(purpose) : () => identityStore.save(previous);
         const record = hostRecordSchema.parse({
-          hostId,
+          ...(old ?? {
+            hostId,
+            color: pickColor(records.map((host) => host.color)),
+            addedAt: now().toISOString(),
+            lastConnectedAt: null,
+          }),
           name: cmd.displayName,
-          color: pickColor(records.map((host) => host.color)),
           address: cmd.address,
           port: cmd.port,
           peerPin: result.peerPin,
           peerCertificate: result.peerCertificateDer.toString('base64'),
           authKey: sealed.toString('base64'),
-          addedAt: now().toISOString(),
-          lastConnectedAt: null,
         });
-        await saveRecords([...records, record]);
+        await saveRecords(old === undefined ? [...records, record] : records.with(index, record));
+        undo.key = null;
+        if (old !== undefined) {
+          links.get(hostId)?.stop(WS_CLOSE.HOST_REVOKED);
+          links.delete(hostId);
+        }
         if (active) {
           const link = newLink(record);
           links.set(hostId, link);
           link.attach(buildAgent(identity, record, result.authKey));
         }
         emit();
+        log.info(
+          { hostId, peerPin: result.peerPin },
+          old === undefined ? 'computer added' : 'computer paired again',
+        );
+        return hostId;
       });
     } catch (error) {
       // The other computer already holds the coupling: ask it to drop it again (best effort).
-      await undoRemote(identity, cmd, result);
-      if (keySaved) {
-        await identityStore.remove(`coupling:${hostId}`).catch((failure: unknown) => {
-          log.warn({ err: failure, hostId }, 'coupling key of a failed pairing not removed');
-        });
-      }
+      await undoRemote(generated, cmd, result);
+      await undo.key?.().catch((failure: unknown) => {
+        log.warn({ err: failure }, 'coupling key of a failed pairing not restored');
+      });
       if (error instanceof CommandError) throw error;
       if (error instanceof KeyStoreError) throw commandError('REMOTE_KEYSTORE_UNAVAILABLE');
-      log.error({ err: error, hostId }, 'coupling not stored');
+      log.error({ err: error }, 'coupling not stored');
       throw commandError('STORE_WRITE_FAILED', { file: HOSTS_FILE });
     }
   };
@@ -452,15 +493,15 @@ export function createHostsService(options: HostsServiceOptions): Hosts {
       return {};
     });
 
-  const remove = async (hostId: HostId): Promise<{ remoteUnpaired: boolean }> => {
+  const remove = async (hostId: HostId): Promise<{ peerNotified: boolean }> => {
     requireActive();
     findRecord(hostId);
     requireWritable();
-    // §B.8: 1. ask the other computer to drop the coupling (when reachable) …
-    const remoteUnpaired = (await links.get(hostId)?.unpairRemote()) ?? false;
+    // §B.8: 1. ask the other computer to drop the coupling (when reachable; false = by hand there) …
+    const peerNotified = (await links.get(hostId)?.unpairRemote()) ?? false;
     return serial(async () => {
       const index = records.findIndex((record) => record.hostId === hostId);
-      if (index < 0) return { remoteUnpaired };
+      if (index < 0) return { peerNotified };
       // … 2. then agent, key, certificate, pin and kAuth go here.
       await saveRecords(records.filter((record) => record.hostId !== hostId));
       links.get(hostId)?.stop(WS_CLOSE.HOST_REVOKED);
@@ -470,9 +511,9 @@ export function createHostsService(options: HostsServiceOptions): Hosts {
       } catch (error) {
         log.warn({ err: error, hostId }, 'coupling key file not removed');
       }
-      log.info({ hostId, remoteUnpaired }, 'computer removed');
+      log.info({ hostId, peerNotified }, 'computer removed');
       emit();
-      return { remoteUnpaired };
+      return { peerNotified };
     });
   };
 

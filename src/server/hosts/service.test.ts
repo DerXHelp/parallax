@@ -9,6 +9,7 @@ import pino from 'pino';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { WebSocket } from 'ws';
 import { HOSTS_SCHEMA_VERSION, remoteHostSchema, type HostRecord } from '@shared/model';
+import { formatPairingCode } from '@shared/pairing';
 import { PROTOCOL_VERSION, WS_CLOSE, parseServerMessage } from '@shared/protocol';
 import { generateIdentity } from '../secure/identity';
 import { keyFilePath } from '../secure/identityStore';
@@ -246,6 +247,18 @@ describe('hosts service: pairing', () => {
     );
     expect(limit.error).toEqual({ code: 'VALIDATION_FAILED', params: { reason: 'limit' } });
     expect(b.harness.service.state()?.peer).toBeNull();
+    // pairing an existing entry again does not count twice
+    const replaced = await hostCommand(again, {
+      name: 'hosts.add',
+      address: TEST_HOST,
+      port: b.port(),
+      code: await b.code(),
+      displayName: 'PC 0',
+      replaceHostId: 'pc-0',
+    });
+    expect(replaced).toEqual({ hostId: 'pc-0' });
+    await again.waitFor('pc-0', 'connected');
+    expect(again.service.couplings()).toBe(16);
   });
 });
 
@@ -434,14 +447,13 @@ describe('hosts service: forwarder', () => {
 
 describe('hosts service: list changes', () => {
   it('update and move change the list; remove asks the other side first (§B.8)', async () => {
-    const b = await sharing();
+    const b1 = await sharing();
+    const b2 = await sharing();
     const a = await control();
-    const first = await a.add(b, 'PC B');
+    const first = await a.add(b1, 'PC B');
+    const second = await a.add(b2, 'PC B');
+    expect([first, second]).toEqual(['pc-b', 'pc-b-2']);
     await a.waitFor(first, 'connected');
-    // pairing again replaces the coupling over there: the first one becomes revoked
-    const second = await a.add(b, 'PC B');
-    expect(second).toBe('pc-b-2');
-    await a.waitFor(first, 'revoked');
     await a.waitFor(second, 'connected');
     expect(a.service.list().map((host) => [host.hostId, host.color])).toEqual([
       ['pc-b', 'blue'],
@@ -458,29 +470,124 @@ describe('hosts service: list changes', () => {
     const missing = await rejection(hostCommand(a, { name: 'hosts.update', hostId: 'pc-z', color: 'teal' }));
     expect(missing.error.code).toBe('HOST_NOT_FOUND');
 
-    // remove the revoked one: the other side dropped it already – nothing to do there
-    expect(await hostCommand(a, { name: 'hosts.remove', hostId: first })).toEqual({ remoteUnpaired: true });
+    // remove a revoked one: the other side has no coupling any more – nothing to do there
+    await b1.harness.command({ name: 'remoteAccess.unpair' });
+    await a.waitFor(first, 'revoked');
+    expect(await hostCommand(a, { name: 'hosts.remove', hostId: first })).toEqual({ peerNotified: true });
     // remove the connected one: the other computer drops the coupling
     const window = await a.service.forwarder.connectWindow(second);
     const windowClosed = closedCode(window);
-    expect(await hostCommand(a, { name: 'hosts.remove', hostId: second })).toEqual({ remoteUnpaired: true });
-    await windowClosed;
-    expect(b.harness.service.state()?.peer).toBeNull();
+    expect(await hostCommand(a, { name: 'hosts.remove', hostId: second })).toEqual({ peerNotified: true });
+    expect(browserCloseCode(window, await windowClosed)).toBe(WS_CLOSE.HOST_REVOKED);
+    expect(b2.harness.service.state()?.peer).toBeNull();
     expect(await hostsFile(a.home)).toEqual([]);
     expect(existsSync(keyFilePath(a.home, 'coupling:pc-b-2'))).toBe(false);
     expect(a.service.list()).toEqual([]);
     expect(a.service.couplings()).toBe(0);
   });
 
-  it('remove while the other computer is unreachable → removed here, hint in the result', async () => {
+  it('remove while the other computer is unreachable → removed here, peerNotified false', async () => {
     const b = await sharing();
     const a = await control();
     const hostId = await a.add(b);
     await a.waitFor(hostId, 'connected');
     await b.close();
     await a.waitFor(hostId, 'unreachable');
-    expect(await hostCommand(a, { name: 'hosts.remove', hostId })).toEqual({ remoteUnpaired: false });
+    expect(await hostCommand(a, { name: 'hosts.remove', hostId })).toEqual({ peerNotified: false });
     expect(await hostsFile(a.home)).toEqual([]);
     expect(a.service.couplings()).toBe(0);
+  });
+});
+
+describe('hosts service: pairing again', () => {
+  it('replaceHostId keeps hostId, color and place; key, kAuth and coupling are new; windows end', async () => {
+    const b = await sharing();
+    const other = await sharing();
+    const a = await control();
+    const hostId = await a.add(b, 'PC B');
+    await a.add(other, 'PC C');
+    await a.waitFor(hostId, 'connected');
+    const [before] = await hostsFile(a.home);
+    const keyBefore = await readFile(keyFilePath(a.home, 'coupling:pc-b'), 'utf8');
+    const window = await a.service.forwarder.connectWindow(hostId);
+    const windowClosed = closedCode(window);
+
+    const result = await hostCommand(a, {
+      name: 'hosts.add',
+      address: TEST_HOST,
+      port: b.port(),
+      code: await b.code(),
+      displayName: 'Desk',
+      replaceHostId: hostId,
+    });
+    expect(result).toEqual({ hostId });
+    expect(browserCloseCode(window, await windowClosed)).toBe(WS_CLOSE.HOST_REVOKED);
+    await a.waitFor(hostId, 'connected');
+    expect(a.service.list().map((host) => [host.hostId, host.name, host.color])).toEqual([
+      ['pc-b', 'Desk', 'blue'],
+      ['pc-c', 'PC C', 'green'],
+    ]);
+    const [after] = await hostsFile(a.home);
+    expect(after).toMatchObject({
+      hostId,
+      color: 'blue',
+      addedAt: before?.addedAt,
+      peerPin: before?.peerPin,
+    });
+    expect(after?.authKey).not.toBe(before?.authKey);
+    expect(await readFile(keyFilePath(a.home, 'coupling:pc-b'), 'utf8')).not.toBe(keyBefore);
+    expect(a.service.couplings()).toBe(2);
+    expect(b.harness.service.state()?.peer).toMatchObject({ connected: true });
+    // the new coupling works for windows
+    const fresh = await a.service.forwarder.connectWindow(hostId);
+    expect(await nextMessage(fresh, 'hello')).toMatchObject({ type: 'hello' });
+  });
+
+  it('the same computer paired again without replaceHostId replaces its entry (no duplicate)', async () => {
+    const b = await sharing();
+    const a = await control();
+    const hostId = await a.add(b, 'PC B');
+    await a.waitFor(hostId, 'connected');
+    expect(await a.add(b, 'Other name')).toBe(hostId);
+    await a.waitFor(hostId, 'connected');
+    expect(a.service.list().map((host) => [host.hostId, host.name])).toEqual([['pc-b', 'Other name']]);
+    expect(existsSync(keyFilePath(a.home, 'coupling:other-name'))).toBe(false);
+    expect(a.service.couplings()).toBe(1);
+  });
+
+  it('a failed pairing leaves the entry unchanged; an unknown replaceHostId → HOST_NOT_FOUND', async () => {
+    const b = await sharing();
+    const a = await control();
+    const hostId = await a.add(b);
+    await a.waitFor(hostId, 'connected');
+    const before = await readFile(path.join(a.home, HOSTS_FILE), 'utf8');
+    const keyBefore = await readFile(keyFilePath(a.home, 'coupling:pc-b'), 'utf8');
+    await b.code();
+    const wrong = await rejection(
+      hostCommand(a, {
+        name: 'hosts.add',
+        address: TEST_HOST,
+        port: b.port(),
+        code: formatPairingCode(randomBytes(16)),
+        displayName: 'Desk',
+        replaceHostId: hostId,
+      }),
+    );
+    expect(wrong.error.code).toBe('PAIRING_INVALID');
+    expect(await readFile(path.join(a.home, HOSTS_FILE), 'utf8')).toBe(before);
+    expect(await readFile(keyFilePath(a.home, 'coupling:pc-b'), 'utf8')).toBe(keyBefore);
+    expect(a.service.list()[0]).toMatchObject({ hostId, name: 'PC B', status: 'connected' });
+
+    const unknown = await rejection(
+      hostCommand(a, {
+        name: 'hosts.add',
+        address: TEST_HOST,
+        port: b.port(),
+        code: await b.code(),
+        displayName: 'Desk',
+        replaceHostId: 'pc-z',
+      }),
+    );
+    expect(unknown.error).toEqual({ code: 'HOST_NOT_FOUND', params: { hostId: 'pc-z' } });
   });
 });
