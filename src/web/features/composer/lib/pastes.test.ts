@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { LIMITS } from '@shared/common';
 import {
   activePastes,
+  collapsePastes,
   convertPaste,
   DRAFT_PASTES_MAX_CHARS,
   expandPastes,
@@ -137,5 +138,54 @@ describe('limits', () => {
     const big = paste(1, 'z'.repeat(DRAFT_PASTES_MAX_CHARS - 10));
     expect(pasteRefusal(big.token, [big], 'x'.repeat(2000))).toBe('size');
     expect(pasteRefusal('', [], 'x'.repeat(DRAFT_PASTES_MAX_CHARS))).toBeNull();
+  });
+});
+
+describe('collapsePastes (WP-77: a draft from the server gets its chips back)', () => {
+  const token = (id: number, text: string) => paste(id, text).token;
+
+  it('turns every paste back into a token; expanding gives the server text again', () => {
+    const big = lines(40);
+    const other = lines(31);
+    const input = `look ${paste(1, big).token} and ${paste(2, other).token} please`;
+    const sent = expandPastes(input, [paste(1, big), paste(2, other)]);
+    const back = collapsePastes(sent.text, sent.pastes, token);
+    expect(back.pastes).toEqual([paste(1, big), paste(2, other)]);
+    expect(back.text).toBe(`look ${paste(1, big).token}
+and ${paste(2, other).token}
+please`);
+    expect(expandPastes(back.text, back.pastes)).toEqual(sent);
+  });
+
+  it('ids follow the first occurrence; a paste used twice gets one chip', () => {
+    const a = lines(30);
+    const b = lines(35);
+    const back = collapsePastes(
+      `${b}
+${a}
+${b}`,
+      [a, b],
+      token,
+    );
+    expect(back.pastes.map((p) => [p.id, p.text])).toEqual([
+      [1, b],
+      [2, a],
+    ]);
+    expect(back.text).toBe(`${paste(1, b).token}
+${paste(2, a).token}
+${paste(1, b).token}`);
+  });
+
+  it('a longer paste wins over one inside it; pastes not in the text are dropped', () => {
+    const inner = lines(30);
+    const outer = `${inner}
+more`;
+    const back = collapsePastes(`x ${outer}`, [inner, outer, 'missing'], token);
+    expect(back.pastes.map((p) => p.text)).toEqual([outer]);
+    expect(back.text).toBe(`x ${paste(1, outer).token}`);
+  });
+
+  it('no pastes: the text stays', () => {
+    expect(collapsePastes('plain', [], token)).toEqual({ text: 'plain', pastes: [] });
   });
 });

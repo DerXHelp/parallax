@@ -3,7 +3,7 @@
 E2E-Tests (`*.spec.ts`) mit `@playwright/test` im installierten Google Chrome (`channel: 'chrome'`,
 headless, siehe `playwright.config.ts`). **Kein Browser-Download, kein Live-`claude`.** Die App läuft
 als echter Server-Build (`dist/server.js`) mit dem FakeBackend (interaktives Szenario,
-Schlüsselwörter `fake:permission`, `fake:question`, `fake:plan`, `fake:slow`, `fake:crash` … –
+Schlüsselwörter `fake:permission` (`fake:permission-later`: erst nach etwa 3 s), `fake:question`, `fake:plan`, `fake:slow`, `fake:crash` … –
 `docs/wp/WP-13a.md`; Phase 3 `fake:files`, `fake:background`, `fake:todo`, `fake:writes-lost`,
 `fake:context-high` (Context dauerhaft 75 % – Hervorhebung „Empfohlen“ der Plan-Karte) –
 `src/server/backend/fake/README.md`). Echte Fake-Dateien liegen unter `<home>\fake-files` des

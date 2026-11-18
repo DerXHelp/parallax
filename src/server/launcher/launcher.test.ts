@@ -800,6 +800,26 @@ describe('launcher: Phase 2 --open and --autostart (ADR-109, ADR-110)', () => {
     expect(existing.started).toEqual([]);
   });
 
+  it('WP-81: a session of another computer – #session=<hostId>:<entryId> (fresh start and running server)', async () => {
+    const fresh = world();
+    await runLauncher(options({ entryId: ENTRY, hostId: 'computer-b' }), fresh.deps);
+    const app = fresh.chromeCalls[0]?.args.at(-1) ?? '';
+    const { hash } = takeAuthCodeFromHash(new URL(app.slice('--app='.length)).hash);
+    expect(hash).toBe(`#session=computer-b:${ENTRY}`);
+
+    const running = sampleServerLockFile({ port: 4711, pid: 4242 });
+    const existing = world({ running });
+    await runLauncher(options({ entryId: ENTRY, hostId: 'computer-b' }), existing.deps);
+    expect(existing.started).toEqual([]);
+    const again = existing.chromeCalls[0]?.args.at(-1) ?? '';
+    expect(again).toMatch(new RegExp(`&session=computer-b:${ENTRY}$`));
+
+    // This computer keeps the bare id (`local` is never written into the hash).
+    const local = world();
+    await runLauncher(options({ entryId: ENTRY, hostId: 'local' }), local.deps);
+    expect(local.chromeCalls[0]?.args.at(-1)).toMatch(new RegExp(`&session=${ENTRY}$`));
+  });
+
   it('--autostart without a window: the server starts, no code, no Chrome', async () => {
     let codes = 0;
     const w = world();

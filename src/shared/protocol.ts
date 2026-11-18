@@ -14,6 +14,7 @@ import {
   decisionIdSchema,
   effortLevelSchema,
   entryIdSchema,
+  hostIdSchema,
   isoDateTimeSchema,
   itemIdSchema,
   messageUuidSchema,
@@ -30,19 +31,30 @@ import {
   decisionOutcomeSchema,
   decisionResponseSchema,
   decisionSchema,
+  draftInputSchema,
   fileInfoSchema,
   fileOpenTargetSchema,
   fileStatResultSchema,
   fsListingSchema,
+  hostAddressSchema,
+  hostColorSchema,
+  hostNameSchema,
   hostStateSchema,
   httpUrlSchema,
   mcpActionSchema,
   modelOptionSchema,
+  multiHostConfigSchema,
+  multiHostRoleSchema,
   planVersionInfoSchema,
   profileInputSchema,
   profileIssueSchema,
   profileSchema,
   reloadTargetSchema,
+  remoteAccessCheckSchema,
+  remoteEventSchema,
+  remoteHostIdSchema,
+  remotePortSchema,
+  REMOTE_ACCESS_DEFAULT_PORT,
   sessionDetailPatchSchema,
   sessionDetailSchema,
   sessionFileSchema,
@@ -64,8 +76,11 @@ import { notificationKindSchema } from './status';
  * closed unions a v1 client cannot parse; with several hosts build ids differ legitimately.
  * 3 (Phase 3, ADR-140): new error codes and commands (file service, plan versions, stopTask).
  * 4 (WP-87, ADR-220): update.* commands, UPDATE_* error codes, close code SERVER_RESTARTING.
+ * 5 (WP-76, docs/wp/WP-76.md §C): several computers – hosts.*, remoteAccess.*, multiHost.configure,
+ *   session.setDraft, HOST_* / PAIRING_* / REMOTE_* / DRAFT_TOO_LARGE, `clientHello.kind`, close codes
+ *   of the forwarder.
  */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 /** WP-70: longest pasted sign-in code (`profile.loginCode`; a link with code and state fits). */
 export const LOGIN_CODE_CHARS = 4000;
 /**
@@ -83,6 +98,13 @@ export const WS_CLOSE = {
   SERVER_SHUTDOWN: 4503,
   /** WP-87: ordered restart for an update or a rollback – unlike 4503 the window reconnects. */
   SERVER_RESTARTING: 4504,
+  // ---- WP-76: forwarder of a controlling computer (`/api/hosts/:hostId/ws`) ----
+  /** The other computer is not reachable (or the connection to it broke) – the window retries with backoff. */
+  HOST_UNREACHABLE: 4502,
+  /** The other computer runs another Parallax or protocol version – no retry until HostState changes. */
+  HOST_INCOMPATIBLE: 4410,
+  /** The coupling was revoked (by either side) or the computer was removed – no retry. */
+  HOST_REVOKED: 4403,
 } as const;
 
 // =====================================================================================
@@ -126,6 +148,15 @@ export const helloSchema = z.object({
 });
 export type HelloMessage = z.infer<typeof helloSchema>;
 
+/**
+ * WP-76: `window` = a browser window (directly or through the forwarder of a controlling computer);
+ * `relay` = the watcher connection of a controlling computer's server (only over remote access, at
+ * most one; no subscriptions, no commands; receives the notifications for that computer, ADR-207).
+ */
+export const CLIENT_KINDS = ['window', 'relay'] as const;
+export const clientKindSchema = z.enum(CLIENT_KINDS);
+export type ClientKind = z.infer<typeof clientKindSchema>;
+
 export const clientHelloSchema = z.object({
   type: z.literal('clientHello'),
   protocolVersion: z.number().int().positive(),
@@ -133,6 +164,7 @@ export const clientHelloSchema = z.object({
   /** Stable per window (sessionStorage). */
   clientId: clientIdSchema,
   presence: presenceStateSchema,
+  kind: clientKindSchema.default('window'),
 });
 export type ClientHelloMessage = z.infer<typeof clientHelloSchema>;
 
@@ -572,6 +604,84 @@ export const commandSchema = z.discriminatedUnion('name', [
     name: z.literal('update.dismiss'),
     what: z.enum(['available', 'justUpdated', 'failedUpdate', 'error']),
   }),
+  // ---- WP-76 (several computers and synchronized drafts, docs/wp/WP-76.md §C) ----
+  /**
+   * The composer draft of the entry (WP-77, ADR-210); null clears it. Last writer wins in the order
+   * the server accepts the commands; the result is the new `rev` (null after clearing). Allowed for
+   * every entry state (also archived, external, sleeping). DRAFT_TOO_LARGE above LIMITS.draftTotalChars.
+   */
+  z.object({
+    name: z.literal('session.setDraft'),
+    entryId: entryIdSchema,
+    draft: draftInputSchema.nullable(),
+    /** `rev` the window based its change on (null = none) – for logs and tests; never rejected. */
+    baseRev: z.number().int().positive().nullable().default(null),
+  }),
+  /**
+   * Host: role and listener settings of "Several computers" (only the given fields change).
+   * REMOTE_ROLE_CONFLICT for share <-> control while the old role still has couplings; the switch to
+   * `share` runs the checks first (REMOTE_KEYSTORE_UNAVAILABLE, REMOTE_ACCESS_FAILED).
+   */
+  z.object({
+    name: z.literal('multiHost.configure'),
+    role: multiHostRoleSchema.optional(),
+    port: z.number().int().min(1024).max(65535).optional(),
+    bindAddress: z.ipv4().optional(),
+  }),
+  /** Host (role share): open a pairing window – a new code replaces an open one; the code only in the ack. */
+  z.object({ name: z.literal('remoteAccess.pair') }),
+  /** Host (role share): close an open pairing window; none open → no-op. */
+  z.object({ name: z.literal('remoteAccess.cancelPairing') }),
+  /** Host (role share): revoke the one coupling – its connections close at once. */
+  z.object({ name: z.literal('remoteAccess.unpair') }),
+  /** Host (role share): new identity key – revokes the coupling (pair again). */
+  z.object({ name: z.literal('remoteAccess.renewKey') }),
+  /** Host (role share): run the checks again (port, keys, key store, TLS, addresses). */
+  z.object({ name: z.literal('remoteAccess.check') }),
+  /** Host (role share): the connection log, newest first. */
+  z.object({ name: z.literal('remoteAccess.events'), onlyRejected: z.boolean().default(false) }),
+  /** Host (role share): mark the rejected attempts as seen (`HostState.remoteAccess.unseenRejected` → 0). */
+  z.object({ name: z.literal('remoteAccess.eventsSeen') }),
+  /**
+   * Host (role control): pair with a sharing computer and add it. `code` as typed (tolerant, checked
+   * locally first: VALIDATION_FAILED {reason:'code'}); PAIRING_INVALID, PAIRING_EXPIRED,
+   * PAIRING_RATE_LIMITED, HOST_UNREACHABLE, HOST_INCOMPATIBLE; VALIDATION_FAILED {reason:'limit'} at
+   * LIMITS.hostsMax. The ack comes after the pairing finished.
+   * `replaceHostId` (WP-80 wish, 18.11.2026): pair an existing entry again (e.g. after `revoked` or a
+   * renewed key) – only after a successful pairing the new coupling replaces that entry's key, pin and
+   * address; `hostId`, color, place and thus the sessionKeys of its sessions stay (HOST_NOT_FOUND).
+   */
+  z.object({
+    name: z.literal('hosts.add'),
+    address: hostAddressSchema,
+    port: remotePortSchema.default(REMOTE_ACCESS_DEFAULT_PORT),
+    code: z.string().trim().min(1).max(64),
+    displayName: hostNameSchema,
+    replaceHostId: remoteHostIdSchema.optional(),
+  }),
+  /** Host (role control): change name, color, address or port (only the given fields). HOST_NOT_FOUND. */
+  z.object({
+    name: z.literal('hosts.update'),
+    hostId: hostIdSchema,
+    displayName: hostNameSchema.optional(),
+    color: hostColorSchema.optional(),
+    address: hostAddressSchema.optional(),
+    port: remotePortSchema.optional(),
+  }),
+  /** Host (role control): move a computer in the list (sidebar order after this computer). */
+  z.object({
+    name: z.literal('hosts.move'),
+    hostId: hostIdSchema,
+    index: z.number().int().nonnegative(),
+  }),
+  /**
+   * Host (role control): remove a computer – asks it to drop the coupling when reachable, then deletes
+   * key, certificate and pin here. Open windows of it close with HOST_REVOKED. Result `peerNotified`:
+   * false = the other computer was not reached, its pairing must be removed there by hand (§B.8).
+   */
+  z.object({ name: z.literal('hosts.remove'), hostId: hostIdSchema }),
+  /** Host (role control): try to connect now (also after `incompatible` or `unreachable`). */
+  z.object({ name: z.literal('hosts.reconnect'), hostId: hostIdSchema }),
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export type CommandName = Command['name'];
@@ -608,6 +718,19 @@ export const HOST_COMMAND_NAMES = [
   'update.apply',
   'update.rollback',
   'update.dismiss',
+  'multiHost.configure',
+  'remoteAccess.pair',
+  'remoteAccess.cancelPairing',
+  'remoteAccess.unpair',
+  'remoteAccess.renewKey',
+  'remoteAccess.check',
+  'remoteAccess.events',
+  'remoteAccess.eventsSeen',
+  'hosts.add',
+  'hosts.update',
+  'hosts.move',
+  'hosts.remove',
+  'hosts.reconnect',
 ] as const satisfies readonly CommandName[];
 export type HostCommandName = (typeof HOST_COMMAND_NAMES)[number];
 export type HostCommand = Extract<Command, { name: HostCommandName }>;
@@ -617,6 +740,105 @@ const HOST_COMMANDS: ReadonlySet<string> = new Set(HOST_COMMAND_NAMES);
 /** Is this a host command (routed to a HostCommandHandler, never through the lifecycle gate)? */
 export function isHostCommand(cmd: Command): cmd is HostCommand {
   return HOST_COMMANDS.has(cmd.name);
+}
+
+/**
+ * WP-76 (ADR-208): what a window of a controlling computer may do over remote access. Fail-closed:
+ * the hub of the sharing computer accepts only these names on a remote connection and answers every
+ * other command with REMOTE_NOT_ALLOWED {command}. Every command name is in exactly one of the two
+ * lists (protocol.test.ts) – a new command must be classified.
+ */
+export const REMOTE_ALLOWED_COMMANDS = [
+  'session.create',
+  'session.sendPrompt',
+  'session.interrupt',
+  'session.setModel',
+  'session.setPermissionMode',
+  'session.setEffort',
+  'session.setFastMode',
+  'session.rename',
+  'session.close',
+  'session.resume',
+  'session.setPinned',
+  'session.setArchived',
+  'decision.respond',
+  'transcript.loadEarlier',
+  'session.getContext',
+  'session.refreshModels',
+  'session.switchConversation',
+  'session.reclaim',
+  'session.continueAfterLimit',
+  'fs.listDirectory',
+  'session.stopTask',
+  'plan.list',
+  'plan.read',
+  'file.stat',
+  'file.statMany',
+  'files.session',
+  'files.project',
+  'session.remove',
+  'session.setRemoteControl',
+  'session.backgroundTasks',
+  'session.regenerateTitle',
+  'session.askSideQuestion',
+  'session.cancelSideQuestion',
+  'session.deleteSideQuestion',
+  'session.withdrawQueued',
+  'session.info',
+  'session.mcpAction',
+  'session.reload',
+  'session.subagentTranscript',
+  'session.setOutputStyle',
+  'session.setDraft',
+] as const satisfies readonly CommandName[];
+
+/**
+ * Only on the computer itself: its settings, profiles (env values, sign-in), server, updates and
+ * role; visible programs on its desktop (editor, Explorer, console, browser); the console command
+ * (contains the profile's environment).
+ */
+export const REMOTE_DENIED_COMMANDS = [
+  'settings.update',
+  'server.shutdown',
+  'session.openExternal',
+  'session.consoleCommand',
+  'profile.get',
+  'profile.save',
+  'profile.delete',
+  'profile.setDefault',
+  'profile.test',
+  'profile.validate',
+  'profile.login',
+  'profile.loginCode',
+  'profile.loginCancel',
+  'file.open',
+  'editor.detect',
+  'link.open',
+  'update.check',
+  'update.prepare',
+  'update.apply',
+  'update.rollback',
+  'update.dismiss',
+  'multiHost.configure',
+  'remoteAccess.pair',
+  'remoteAccess.cancelPairing',
+  'remoteAccess.unpair',
+  'remoteAccess.renewKey',
+  'remoteAccess.check',
+  'remoteAccess.events',
+  'remoteAccess.eventsSeen',
+  'hosts.add',
+  'hosts.update',
+  'hosts.move',
+  'hosts.remove',
+  'hosts.reconnect',
+] as const satisfies readonly CommandName[];
+
+const REMOTE_ALLOWED: ReadonlySet<string> = new Set(REMOTE_ALLOWED_COMMANDS);
+
+/** May a window of a controlling computer send this command (fail-closed)? */
+export function isRemoteAllowedCommand(name: CommandName): boolean {
+  return REMOTE_ALLOWED.has(name);
 }
 
 /** Every command is its own message; the server answers exactly once with `ack`. */
@@ -710,6 +932,28 @@ export const commandResultSchemas = {
   'update.apply': z.object({}),
   'update.rollback': z.object({}),
   'update.dismiss': z.object({}),
+  /** The new `rev`; null after clearing. */
+  'session.setDraft': z.object({ rev: z.number().int().positive().nullable() }),
+  'multiHost.configure': z.object({ config: multiHostConfigSchema }),
+  /** Only to the asking window: never in HostState, never logged. */
+  'remoteAccess.pair': z.object({
+    code: z.string().min(1).max(64),
+    expiresAt: isoDateTimeSchema,
+    hostName: z.string().max(LIMITS.hostAddressChars),
+    addresses: z.array(z.string().max(64)).max(32),
+    port: remotePortSchema,
+  }),
+  'remoteAccess.cancelPairing': z.object({}),
+  'remoteAccess.unpair': z.object({}),
+  'remoteAccess.renewKey': z.object({}),
+  'remoteAccess.check': z.object({ checks: z.array(remoteAccessCheckSchema) }),
+  'remoteAccess.events': z.object({ events: z.array(remoteEventSchema) }),
+  'remoteAccess.eventsSeen': z.object({}),
+  'hosts.add': z.object({ hostId: hostIdSchema }),
+  'hosts.update': z.object({}),
+  'hosts.move': z.object({}),
+  'hosts.remove': z.object({ peerNotified: z.boolean() }),
+  'hosts.reconnect': z.object({}),
 } as const satisfies Record<CommandName, z.ZodType>;
 export type CommandResult<N extends CommandName> = z.infer<(typeof commandResultSchemas)[N]>;
 

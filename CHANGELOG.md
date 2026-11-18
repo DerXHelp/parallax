@@ -5,6 +5,17 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 
 ## [Unveröffentlicht]
 
+### Neu
+- Mehrere Rechner: Ein Parallax zeigt und steuert die Sessions anderer Rechner im selben Netz, als liefen sie lokal;
+  ab Werk aus, eingeschaltet unter Einstellungen → „Mehrere Rechner“ mit den Rollen „Freigeben“ und „Andere steuern“
+  (braucht Node.js 26.9 oder neuer, WP-75…82).
+- Rechner werden per einmaligem Kopplungscode gekoppelt und sprechen nur über TLS 1.3 mit gegenseitig geprüften
+  Schlüsseln; der freigebende Rechner führt ein Verbindungsprotokoll mit IP-Adressen, auch für abgelehnte Versuche
+  (WP-76, WP-78).
+- Entwürfe liegen im Server und erscheinen in jedem Fenster derselben Session, auch auf dem steuernden Rechner (WP-77).
+- Die Seitenleiste lässt sich nach Rechner und Verzeichnis gruppieren, beide Ebenen sind einklappbar; „Neue Session“
+  fragt zuerst nach dem Rechner (WP-80).
+
 ### Geändert
 - Der Knopf für eine gefundene Version heißt „Jetzt aktualisieren“ statt „Update vorbereiten“; er lädt und
   installiert sie, „Neu starten“ wechselt danach (WP-89).

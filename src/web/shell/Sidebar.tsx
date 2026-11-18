@@ -2,15 +2,13 @@ import {
   ArchiveIcon,
   ArrowLeftIcon,
   BellDotIcon,
-  FolderIcon,
-  FolderTreeIcon,
   LayersIcon,
   ListXIcon,
   PanelLeftCloseIcon,
-  PlusIcon,
   SquarePenIcon,
 } from 'lucide-react';
-import { useEffect, useId, useMemo, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, type KeyboardEvent, type ReactNode } from 'react';
+import { useStore } from 'zustand';
 import { PRODUCT_NAME } from '@shared/product';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
@@ -18,11 +16,14 @@ import { focusElement, focusedElement } from '@web/lib/return-focus';
 import {
   archivedOrder,
   flatSidebarOrder,
+  folderGroupKey,
+  groupKeysOfEntry,
   groupSessions,
-  groupedOrder,
+  hostGroupKey,
+  layoutGroupKeys,
   nextWaiting,
+  visibleSidebarOrder,
   type OrderedSession,
-  type SessionGroup,
 } from '@web/lib/session-order';
 import { knownVersion } from '@web/lib/version';
 import { useNow } from '@web/state/clock';
@@ -31,22 +32,34 @@ import {
   useProfilesByHost,
   useSelectedSession,
   useSummaries,
-  type ProfilesByHost,
   type SummaryEntry,
 } from '@web/state/hooks';
+import { useHostLabels } from '@web/state/hosts';
+import { clientStore } from '@web/state/store';
 import { Badge } from '@web/ui/badge';
 import { Button } from '@web/ui/button';
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@web/ui/context-menu';
 import { IconButton } from '@web/ui/icon-button';
-import { Toggle } from '@web/ui/toggle';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
 import { ConnectionIndicator } from './ConnectionIndicator';
-import { PathTail } from './navigation/PathTail';
+import { MultiHostIndicator } from './hosts/MultiHostIndicator';
 import { AccountLimits } from './navigation/AccountLimits';
 import { openArchiveCleanup } from './navigation/remove-session';
-import { newSessionIn } from './navigation/session-actions';
-import { SessionRow } from './navigation/SessionRow';
-import { setArchiveView, setSidebarMode, useArchiveView, useSidebarMode } from './navigation/sidebar-view';
+import {
+  FolderGroupSection,
+  GroupByControl,
+  HostGroupSection,
+  Rows,
+  type RowContext,
+} from './navigation/sidebar-groups';
+import {
+  expandGroups,
+  pruneCollapsedGroups,
+  setArchiveView,
+  setGroupCollapsed,
+  useArchiveView,
+  useCollapsedGroups,
+} from './navigation/sidebar-view';
+import { useSidebarLayout } from './navigation/use-sidebar-layout';
 import { openNewSession } from './NewSessionDialog';
 import { SettingsMenu } from './SettingsMenu';
 import { useShortcut } from './shortcuts';
@@ -72,13 +85,20 @@ export function SidebarUpdateNotice({ compact }: { compact: boolean }) {
   );
 }
 
-/** Moves the focus within the list: `delta` rows, or to the first/last row (Home/End). */
+/** Rows and group headers of the list, in order (WP-80: headers are reachable with the arrows). */
+const LIST_ITEMS = '[data-session-row]:not([hidden]), [data-group-toggle]';
+
+/** Moves the focus within the list: `delta` items, or to the first/last item (Home/End). */
 function focusRow(list: HTMLElement, delta: number | 'first' | 'last'): void {
-  const rows = [...list.querySelectorAll<HTMLButtonElement>('[data-session-row]:not([hidden])')];
+  const rows = [...list.querySelectorAll<HTMLButtonElement>(LIST_ITEMS)];
   if (rows.length === 0) return;
   // The focus may sit on a row's "…" button: count it as that row.
   const active = document.activeElement;
-  const current = rows.findIndex((row) => row === active || (row.closest('li')?.contains(active) ?? false));
+  const current = rows.findIndex(
+    (row) =>
+      row === active ||
+      (row.hasAttribute('data-session-row') && (row.closest('li')?.contains(active) ?? false)),
+  );
   let next: number;
   if (delta === 'first') next = 0;
   else if (delta === 'last') next = rows.length - 1;
@@ -93,130 +113,69 @@ const LIST_MOVES: Readonly<Record<string, number | 'first' | 'last'>> = {
   End: 'last',
 };
 
-function onListKeyDown(event: KeyboardEvent<HTMLElement>): void {
-  const move = LIST_MOVES[event.key];
-  if (move === undefined || event.altKey || event.ctrlKey || event.metaKey) return;
-  // R4W-12: keys of the row menus (portals – their React events bubble through the list) and of
-  // anything that handled the key already are not list moves.
-  if (event.defaultPrevented) return;
-  if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
-  // Not inside an inline title field.
-  if (event.target instanceof HTMLInputElement) return;
-  event.preventDefault();
-  focusRow(event.currentTarget, move);
-}
-
-interface RowContext {
-  now: number;
-  selected: string | null;
-  tabStopKey: string | null;
-  profiles: ProfilesByHost;
-  requiredCli: string | null;
-  onSelect: (sessionKey: string) => void;
-}
-
-function Rows({
-  items,
-  context,
-  showPath = true,
-}: {
-  items: readonly Ordered[];
-  context: RowContext;
-  showPath?: boolean;
-}) {
-  return (
-    // One column that may shrink below the titles' width: long titles get an ellipsis,
-    // time and unread dot stay visible, no horizontal scrollbar (V1-03).
-    <ul role="list" className="grid grid-cols-[minmax(0,1fr)] gap-px">
-      {items.map(({ entry, status }) => {
-        const profile = context.profiles.get(entry.hostId, entry.summary.profileId);
-        return (
-          <SessionRow
-            key={entry.sessionKey}
-            entry={entry}
-            statusKind={status.kind}
-            unread={status.unread}
-            now={context.now}
-            selected={entry.sessionKey === context.selected}
-            tabStop={entry.sessionKey === context.tabStopKey}
-            profileColor={profile?.color ?? null}
-            profileName={profile?.name ?? null}
-            profileEffort={profile?.defaults.effort ?? null}
-            requiredCli={context.requiredCli}
-            showPath={showPath}
-            onSelect={context.onSelect}
-          />
-        );
-      })}
-    </ul>
-  );
+/** The header of the group around `element` (its parent group's header for a header). */
+function parentToggle(element: HTMLElement): HTMLButtonElement | null {
+  const own = element.closest<HTMLElement>('[role="group"]');
+  if (own === null) return null;
+  const header = own.querySelector<HTMLButtonElement>('[data-group-toggle]');
+  if (header !== element) return header;
+  const outer = own.parentElement?.closest<HTMLElement>('[role="group"]') ?? null;
+  return outer?.querySelector<HTMLButtonElement>('[data-group-toggle]') ?? null;
 }
 
 /**
- * A project group of the grouped view: folder label (full path in the tooltip), "+" and context
- * menu. The "+" is no tab stop (R4W-13: the list stays one tab stop) – the keyboard reaches
- * "New session in this project…" through each row's menu.
+ * WP-80 tree keys (WP-75 §4.4): Left collapses an expanded header, else goes to the parent header;
+ * Right expands a collapsed header, else goes to its first entry. True when the key was used.
  */
-function GroupSection({ group, context }: { group: SessionGroup<SummaryEntry>; context: RowContext }) {
-  const t = useT();
-  const labelId = useId();
-  const groupName = t('navigation.sidebar.group', { name: group.cwd });
-  return (
-    <div role="group" aria-labelledby={labelId} data-group={group.key} className="grid gap-px pb-1.5">
-      <ContextMenu>
-        <ContextMenuTrigger asChild>
-          <div className="text-muted-foreground flex h-6 min-w-0 items-center gap-1.5 pr-1 pl-2 text-2xs font-medium">
-            <FolderIcon aria-hidden className="size-3 shrink-0" />
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="flex min-w-0 flex-1">
-                  <span id={labelId} className="flex min-w-0">
-                    <span className="sr-only">{groupName}</span>
-                    {/* WP41-02: the project folder (last segment) stays visible, the parent shrinks. */}
-                    <PathTail aria-hidden path={group.cwd} />
-                  </span>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent side="right" align="start">
-                <span className="font-mono break-all">{group.cwd}</span>
-              </TooltipContent>
-            </Tooltip>
-            <span className="shrink-0 tabular-nums" aria-hidden>
-              {group.sessions.length}
-            </span>
-            <IconButton
-              label={t('navigation.actions.newSessionHere')}
-              size="icon-xs"
-              tabIndex={-1}
-              data-action="new-session-here"
-              onClick={() => {
-                newSessionIn(group.cwd);
-              }}
-            >
-              <PlusIcon aria-hidden />
-            </IconButton>
-          </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent aria-label={groupName}>
-          <ContextMenuItem
-            onSelect={() => {
-              newSessionIn(group.cwd);
-            }}
-          >
-            <PlusIcon aria-hidden />
-            {t('navigation.actions.newSessionHere')}
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-      <Rows items={group.sessions} context={context} showPath={false} />
-    </div>
-  );
+function treeKey(list: HTMLElement, target: HTMLElement, key: string): boolean {
+  const toggle = target.closest<HTMLButtonElement>('[data-group-toggle]');
+  const groupKey = toggle?.dataset.groupToggle;
+  const expanded = toggle?.getAttribute('aria-expanded') === 'true';
+  if (key === 'ArrowLeft') {
+    if (toggle !== null && groupKey !== undefined && expanded) {
+      setGroupCollapsed(groupKey, true);
+      return true;
+    }
+    const header = parentToggle(toggle ?? target);
+    if (header === null) return false;
+    header.focus();
+    return true;
+  }
+  if (toggle === null || groupKey === undefined) return false;
+  if (!expanded) {
+    setGroupCollapsed(groupKey, false);
+    return true;
+  }
+  const items = [...list.querySelectorAll<HTMLButtonElement>(LIST_ITEMS)];
+  items[items.indexOf(toggle) + 1]?.focus();
+  return true;
+}
+
+function onListKeyDown(event: KeyboardEvent<HTMLElement>): void {
+  const move = LIST_MOVES[event.key];
+  const tree = event.key === 'ArrowLeft' || event.key === 'ArrowRight';
+  if ((move === undefined && !tree) || event.altKey || event.ctrlKey || event.metaKey) return;
+  // R4W-12: keys of the row menus (portals – their React events bubble through the list) and of
+  // anything that handled the key already are not list moves.
+  if (event.defaultPrevented) return;
+  if (!(event.target instanceof HTMLElement) || !event.currentTarget.contains(event.target)) return;
+  // Not inside an inline title field.
+  if (event.target instanceof HTMLInputElement) return;
+  if (move === undefined) {
+    if (treeKey(event.currentTarget, event.target, event.key)) event.preventDefault();
+    return;
+  }
+  event.preventDefault();
+  focusRow(event.currentTarget, move);
 }
 
 /**
  * Sidebar (Plan "Sidebar", WP-35): flat (pinned first, then waiting → activity) or grouped by
  * project folder, two-line entries, "Waiting for you (n)" and Alt+N (next waiting, cyclic), Alt+1…9
  * (n-th visible entry), archive view, subscription limits at the bottom.
+ * WP-80 (WP-75 §4.4, ADR-226): with other computers "Group by" computer and/or folder, badges of
+ * other computers' sessions, grey rows of unavailable computers; groups collapse (Alt+1…9 counts
+ * visible rows only, Alt+N and "Waiting for you" count all and expand the target's groups).
  * WP-58 (V3-14): SidebarFrame keeps it mounted while collapsed (the shortcuts stay registered);
  * `onCollapse` adds the collapse button, `onChoose` follows a chosen row (the overlay closes).
  */
@@ -235,18 +194,28 @@ export function Sidebar({
   const [selected, select] = useSelectedSession();
   const hostState = useHostState();
   const profiles = useProfilesByHost();
-  const mode = useSidebarMode();
   const archive = useArchiveView();
+  const hosts = useHostLabels();
+  const collapsed = useCollapsedGroups();
+  const { layout, grouping, hostOrder, hasRemoteHosts } = useSidebarLayout(entries, now);
 
   const flat: Ordered[] = useMemo(() => flatSidebarOrder(entries, new Date(now)), [entries, now]);
-  const groups = useMemo(
-    () => (mode === 'grouped' ? groupSessions(entries, new Date(now)) : null),
-    [entries, now, mode],
-  );
   const archived: Ordered[] = useMemo(() => archivedOrder(entries, new Date(now)), [entries, now]);
-  const mainOrder = useMemo(() => (groups === null ? flat : groupedOrder(groups)), [groups, flat]);
-  const visible = archive ? archived : mainOrder;
+  const mainOrder = layout.order;
+  const shownOrder = useMemo(() => visibleSidebarOrder(layout, collapsed), [layout, collapsed]);
+  const visible = archive ? archived : shownOrder;
   const waitingCount = flat.filter((item) => item.status.needsAttention).length;
+
+  // WP-75 §4.4: collapsed groups that no longer exist are dropped – once every computer's list is
+  // there (else a group of a computer still loading would lose its state).
+  const allLoaded = useStore(clientStore, (state) =>
+    hostOrder.every((hostId) => state.hosts[hostId]?.summariesLoaded === true),
+  );
+  useEffect(() => {
+    if (!allLoaded) return;
+    const folders = groupSessions(entries, new Date(now)).map(folderGroupKey);
+    pruneCollapsedGroups([...hostOrder.map(hostGroupKey), ...folders]);
+  }, [allLoaded, entries, hostOrder, now]);
 
   // V3-14: the last archived session was restored (or deleted) – back to the sessions instead of
   // an empty "Archive (0)"; a focus that went down with the row moves to the list.
@@ -268,6 +237,8 @@ export function Sidebar({
     const target = nextWaiting(mainOrder, selected, (entry) => entry.sessionKey);
     if (target === null) return false;
     setArchiveView(false);
+    // WP-80: the target's groups open (Alt+N counts every session, collapsed ones too).
+    expandGroups(groupKeysOfEntry(layout, target));
     select(target.sessionKey);
     return true;
   };
@@ -294,15 +265,28 @@ export function Sidebar({
     run: goToNextWaiting,
   });
 
-  // The selected row is the tab stop; without a visible selection the first row.
+  // The selected row is the tab stop; without a visible selection the first row; without a visible
+  // row the first group header (WP-80: every group collapsed).
   const tabStopKey = visible.some((item) => item.entry.sessionKey === selected)
     ? selected
     : (visible[0]?.entry.sessionKey ?? null);
+  const groupKeys = useMemo(() => layoutGroupKeys(layout), [layout]);
+  const selectedEntry = mainOrder.find((item) => item.entry.sessionKey === selected)?.entry ?? null;
+  const selectedGroups = useMemo(
+    () => new Set(selectedEntry === null ? [] : groupKeysOfEntry(layout, selectedEntry)),
+    [layout, selectedEntry],
+  );
   const context: RowContext = {
     now,
     selected,
     tabStopKey,
+    tabStopGroup: tabStopKey === null && !archive ? (groupKeys[0] ?? null) : null,
     profiles,
+    hosts,
+    rowBadges: hasRemoteHosts && !grouping.byHost,
+    folderBadges: hasRemoteHosts && !grouping.byHost,
+    collapsed,
+    selectedGroups,
     requiredCli: knownVersion(hostState?.sdkClaudeCodeVersion ?? null),
     onSelect:
       onChoose === undefined
@@ -323,11 +307,26 @@ export function Sidebar({
       );
   } else if (mainOrder.length === 0) {
     list = <p className="text-muted-foreground px-2 py-3 text-xs">{t('shell.sidebar.empty')}</p>;
-  } else if (groups !== null) {
-    list = groups.map((group) => <GroupSection key={group.key} group={group} context={context} />);
+  } else if (layout.hosts !== null) {
+    list = layout.hosts.map((section) => (
+      <HostGroupSection key={section.key} section={section} context={context} />
+    ));
+  } else if (layout.folders !== null) {
+    list = layout.folders.map((group) => (
+      <FolderGroupSection
+        key={group.key}
+        group={group}
+        hostId={group.sessions[0]?.entry.hostId ?? ''}
+        context={context}
+      />
+    ));
   } else {
-    list = <Rows items={flat} context={context} />;
+    list = <Rows items={layout.order} context={context} />;
   }
+  let view = 'flat';
+  if (archive) view = 'archive';
+  else if (grouping.byHost) view = grouping.byFolder ? 'host-folder' : 'host';
+  else if (grouping.byFolder) view = 'grouped';
 
   return (
     // w-72: the two-line entries (path, branch, model, context) need the room (Plan "Sidebar").
@@ -349,24 +348,9 @@ export function Sidebar({
           </Tooltip>
         ) : null}
         <span className="flex-1" />
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Toggle
-              size="sm"
-              data-slot="sidebar-mode"
-              aria-label={t('navigation.sidebar.grouped')}
-              pressed={mode === 'grouped'}
-              onPressedChange={(pressed) => {
-                setSidebarMode(pressed ? 'grouped' : 'flat');
-              }}
-            >
-              <FolderTreeIcon aria-hidden />
-            </Toggle>
-          </TooltipTrigger>
-          <TooltipContent>
-            {t(mode === 'grouped' ? 'navigation.sidebar.flat' : 'navigation.sidebar.grouped')}
-          </TooltipContent>
-        </Tooltip>
+        {/* WP-80: "Several computers" – invisible without a role. */}
+        <MultiHostIndicator />
+        <GroupByControl grouping={grouping} hasRemoteHosts={hasRemoteHosts} />
         <IconButton label={t('shell.sidebar.newSession')} data-action="new-session" onClick={openNewSession}>
           <SquarePenIcon aria-hidden />
         </IconButton>
@@ -397,7 +381,7 @@ export function Sidebar({
       ) : null}
       <nav
         aria-label={t('shell.sidebar.label')}
-        data-view={archive ? 'archive' : mode}
+        data-view={view}
         className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-1.5 pb-2"
       >
         {archive ? (

@@ -7,14 +7,18 @@
 import { z } from 'zod';
 import {
   LIMITS,
+  LOCAL_HOST_ID,
   blobIdSchema,
   claudeSessionIdSchema,
+  clientIdSchema,
   conversationIdSchema,
   decisionIdSchema,
   decisionKindSchema,
   effortLevelSchema,
   entryIdSchema,
+  hostIdSchema,
   isoDateTimeSchema,
+  paramsSchema,
   itemIdSchema,
   jsonValueSchema,
   languageSchema,
@@ -647,6 +651,277 @@ export const settingsFileSchema = z.object({
 export type SettingsFile = z.infer<typeof settingsFileSchema>;
 
 // =====================================================================================
+// 5.8b Several computers (WP-75/76, docs/wp/WP-76.md §C; ADR-205 … 211, 224 … 226)
+// =====================================================================================
+
+/**
+ * `off` (default) – `share`: this computer can be controlled by exactly one other computer –
+ * `control`: this computer controls others. Exclusive (ADR-224): the server refuses a switch between
+ * `share` and `control` while the old role still has a coupling (REMOTE_ROLE_CONFLICT).
+ */
+export const MULTI_HOST_ROLES = ['off', 'share', 'control'] as const;
+export const multiHostRoleSchema = z.enum(MULTI_HOST_ROLES);
+export type MultiHostRole = z.infer<typeof multiHostRoleSchema>;
+
+/** Default TCP port of the remote-access listener of a sharing computer. */
+export const REMOTE_ACCESS_DEFAULT_PORT = 4713;
+
+/**
+ * `PARALLAX_HOME/multi-host.json` (not part of settings.json: only `multiHost.configure` changes it,
+ * never `settings.update`). `port`/`bindAddress` only matter for `share`; `0.0.0.0` = every IPv4
+ * address of this computer.
+ */
+export const multiHostConfigSchema = z.object({
+  role: multiHostRoleSchema.default('off'),
+  port: z.number().int().min(1024).max(65535).default(REMOTE_ACCESS_DEFAULT_PORT),
+  bindAddress: z.ipv4().default('0.0.0.0'),
+});
+export type MultiHostConfig = z.infer<typeof multiHostConfigSchema>;
+export const DEFAULT_MULTI_HOST_CONFIG: MultiHostConfig = multiHostConfigSchema.parse({});
+
+export const MULTI_HOST_SCHEMA_VERSION = 1;
+export const multiHostFileSchema = z.object({
+  schemaVersion: z.literal(MULTI_HOST_SCHEMA_VERSION),
+  config: multiHostConfigSchema,
+});
+export type MultiHostFile = z.infer<typeof multiHostFileSchema>;
+
+/** Colors of computers (badge, group header); the web maps them to design tokens. */
+export const HOST_COLORS = ['blue', 'green', 'amber', 'violet', 'rose', 'teal', 'orange', 'slate'] as const;
+export const hostColorSchema = z.enum(HOST_COLORS);
+export type HostColor = z.infer<typeof hostColorSchema>;
+
+/** Host id of another computer (the client-side `hostId` of its sessions); never `local`. */
+export const remoteHostIdSchema = hostIdSchema.refine((id) => id !== LOCAL_HOST_ID, { message: 'reserved' });
+
+/** Display name of a computer (user input; also the unverified name in a pairing request). */
+export const hostNameSchema = z.string().trim().min(1).max(LIMITS.hostNameChars);
+/** Computer name, IPv4 or IPv6 as typed – no scheme, no port, no path, no whitespace. */
+export const hostAddressSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(LIMITS.hostAddressChars)
+  .regex(/^[A-Za-z0-9.:%[\]-]+$/u);
+export const remotePortSchema = z.number().int().min(1).max(65535);
+
+/** SHA-384 over the SPKI DER of a public key (WP-76 §B.4), lower-case hex. */
+export const keyPinSchema = z.string().regex(/^[0-9a-f]{96}$/u);
+/** A DER certificate, base64 (ML-DSA-87 certificates are ~7.4 KB). */
+export const certificateDerSchema = z
+  .string()
+  .max(20_000)
+  .regex(/^[A-Za-z0-9+/]+={0,2}$/u);
+/** A DPAPI ciphertext (WP-76 §B.5), base64 – never the plaintext. */
+export const protectedSecretSchema = z
+  .string()
+  .max(100_000)
+  .regex(/^[A-Za-z0-9+/]+={0,2}$/u);
+
+// ---- controlling computer ----
+
+export const REMOTE_HOST_STATUSES = [
+  'connecting',
+  'connected',
+  'unreachable',
+  'incompatible',
+  'revoked',
+] as const;
+export const remoteHostStatusSchema = z.enum(REMOTE_HOST_STATUSES);
+export type RemoteHostStatus = z.infer<typeof remoteHostStatusSchema>;
+
+/** `HostState.remoteHosts[]` of a controlling computer (never keys, pins or certificates). */
+export const remoteHostSchema = z.object({
+  /** Client-side host id of its sessions (`hostId:entryId`); never `local`. */
+  hostId: remoteHostIdSchema,
+  name: hostNameSchema,
+  color: hostColorSchema,
+  address: hostAddressSchema,
+  port: remotePortSchema,
+  status: remoteHostStatusSchema,
+  /** Parallax version of the other computer (last health answer); null = not known yet. */
+  appVersion: z.string().max(64).nullable(),
+  protocolVersion: z.number().int().positive().nullable(),
+  lastError: errorPayloadSchema.nullable(),
+  lastConnectedAt: isoDateTimeSchema.nullable(),
+  addedAt: isoDateTimeSchema,
+});
+export type RemoteHost = z.infer<typeof remoteHostSchema>;
+
+/** One computer of `PARALLAX_HOME/hosts.json`; its coupling key is a key file (`keyFileSchema`). */
+export const hostRecordSchema = z.object({
+  hostId: remoteHostIdSchema,
+  name: hostNameSchema,
+  color: hostColorSchema,
+  address: hostAddressSchema,
+  port: remotePortSchema,
+  peerPin: keyPinSchema,
+  peerCertificate: certificateDerSchema,
+  /** DPAPI(kAuth) – the coupling secret of the connection proof (WP-76 §B.9), purpose `auth:<hostId>`. */
+  authKey: protectedSecretSchema,
+  addedAt: isoDateTimeSchema,
+  lastConnectedAt: isoDateTimeSchema.nullable().default(null),
+});
+export type HostRecord = z.infer<typeof hostRecordSchema>;
+
+export const HOSTS_SCHEMA_VERSION = 1;
+export const hostsFileSchema = z.object({
+  schemaVersion: z.literal(HOSTS_SCHEMA_VERSION),
+  /** In display order (sidebar groups after this computer). */
+  hosts: z.array(hostRecordSchema).max(LIMITS.hostsMax),
+});
+export type HostsFile = z.infer<typeof hostsFileSchema>;
+
+// ---- sharing computer ----
+
+/**
+ * Checks shown when "Share" is switched on (WP-75 §4.2); the UI translates `id` + `status`. No
+ * firewall check (ADR-228): the Windows Firewall is the user's to set up, the UI only hints at it.
+ */
+export const REMOTE_ACCESS_CHECK_IDS = ['port', 'keys', 'keystore', 'tls', 'addresses'] as const;
+export const remoteAccessCheckSchema = z.object({
+  id: z.enum(REMOTE_ACCESS_CHECK_IDS),
+  status: z.enum(['ok', 'warning', 'error']),
+  params: paramsSchema.default({}),
+});
+export type RemoteAccessCheck = z.infer<typeof remoteAccessCheckSchema>;
+
+/** The coupled controlling computer as the sharing computer shows it. */
+export const remotePeerSchema = z.object({
+  name: hostNameSchema,
+  pairedAt: isoDateTimeSchema,
+  /** At least one connection of it is open. */
+  connected: z.boolean(),
+  connections: z.number().int().nonnegative(),
+  lastSeenAt: isoDateTimeSchema.nullable(),
+  lastAddress: z.string().max(64).nullable(),
+  /** Parallax version it sent with its last request; null = not seen yet. */
+  appVersion: z.string().max(64).nullable(),
+  /** False when its version or protocol differs (it is refused until both match). */
+  compatible: z.boolean(),
+});
+export type RemotePeer = z.infer<typeof remotePeerSchema>;
+
+/** `HostState.remoteAccess` of a sharing computer (null for the other roles). */
+export const remoteAccessStateSchema = z.object({
+  listening: z.boolean(),
+  port: remotePortSchema.nullable(),
+  /** Detected IPv4 addresses of this computer (display for the pairing). */
+  addresses: z.array(z.string().max(64)).max(32),
+  /** Windows computer name (display for the pairing). */
+  hostName: z.string().max(LIMITS.hostAddressChars),
+  checks: z.array(remoteAccessCheckSchema),
+  peer: remotePeerSchema.nullable(),
+  /** End of an open pairing window; the code itself only goes to the asking window (ack). */
+  pairingExpiresAt: isoDateTimeSchema.nullable(),
+  /** Rejected connection attempts since the log was last marked seen. */
+  unseenRejected: z.number().int().nonnegative(),
+  /** Why the listener is not running (REMOTE_ACCESS_FAILED, REMOTE_KEYSTORE_UNAVAILABLE …). */
+  error: errorPayloadSchema.nullable(),
+});
+export type RemoteAccessState = z.infer<typeof remoteAccessStateSchema>;
+
+/** `PARALLAX_HOME/remote/peer.json`: the one coupled computer (WP-76 §B.7 step 7). */
+export const REMOTE_PEER_SCHEMA_VERSION = 1;
+export const remotePeerRecordSchema = z.object({
+  name: hostNameSchema,
+  pin: keyPinSchema,
+  certificate: certificateDerSchema,
+  /** DPAPI(kAuth) – the coupling secret of the connection proof (WP-76 §B.9), purpose `auth:peer`. */
+  authKey: protectedSecretSchema,
+  pairedAt: isoDateTimeSchema,
+  lastSeenAt: isoDateTimeSchema.nullable().default(null),
+  lastAddress: z.string().max(64).nullable().default(null),
+});
+export type RemotePeerRecord = z.infer<typeof remotePeerRecordSchema>;
+export const remotePeerFileSchema = z.object({
+  schemaVersion: z.literal(REMOTE_PEER_SCHEMA_VERSION),
+  peer: remotePeerRecordSchema.nullable(),
+  /** Pins of the last revoked couplings (connection log `revoked_key` instead of `unknown_key`). */
+  revoked: z.array(keyPinSchema).max(8).default([]),
+});
+export type RemotePeerFile = z.infer<typeof remotePeerFileSchema>;
+
+/** Connection log of a sharing computer (WP-75 §3.7, ADR-225). */
+export const REMOTE_EVENT_KINDS = [
+  'pair_ok',
+  'pair_failed',
+  'pair_expired',
+  'pair_rate_limited',
+  'unknown_key',
+  'revoked_key',
+  'bad_certificate',
+  'proof_failed',
+  'tls_failed',
+  'rate_limited',
+  'browser_rejected',
+  'version_mismatch',
+  'connected',
+  'disconnected',
+  'unpaired',
+] as const;
+export const remoteEventKindSchema = z.enum(REMOTE_EVENT_KINDS);
+export type RemoteEventKind = z.infer<typeof remoteEventKindSchema>;
+
+/** The kinds that count as a rejected attempt ("only rejected", header hint). */
+export const REJECTED_REMOTE_EVENT_KINDS = [
+  'pair_failed',
+  'pair_expired',
+  'pair_rate_limited',
+  'unknown_key',
+  'revoked_key',
+  'bad_certificate',
+  'proof_failed',
+  'tls_failed',
+  'rate_limited',
+  'browser_rejected',
+  'version_mismatch',
+] as const satisfies readonly RemoteEventKind[];
+
+export const remoteEventSchema = z.object({
+  id: z.string().min(1).max(64),
+  kind: remoteEventKindSchema,
+  /** First occurrence; equal kinds from one address within a minute raise `count` and `lastAt`. */
+  at: isoDateTimeSchema,
+  lastAt: isoDateTimeSchema,
+  count: z.number().int().positive(),
+  /** Remote IP address. */
+  address: z.string().max(64),
+  port: z.number().int().min(0).max(65535).nullable(),
+  /** Name the other side gave (pairing request); unverified unless the kind is `pair_ok`. */
+  claimedName: hostNameSchema.nullable(),
+  rejected: z.boolean(),
+});
+export type RemoteEvent = z.infer<typeof remoteEventSchema>;
+
+export const REMOTE_EVENTS_SCHEMA_VERSION = 1;
+export const remoteEventsFileSchema = z.object({
+  schemaVersion: z.literal(REMOTE_EVENTS_SCHEMA_VERSION),
+  /** Newest last; at most LIMITS.remoteEventsMax, none older than LIMITS.remoteEventsDays. */
+  events: z.array(remoteEventSchema).max(LIMITS.remoteEventsMax),
+  /** `remoteAccess.eventsSeen`: rejected events after this count as unseen. */
+  seenAt: isoDateTimeSchema.nullable().default(null),
+});
+export type RemoteEventsFile = z.infer<typeof remoteEventsFileSchema>;
+
+/**
+ * A private key protected by the key store (WP-76 §B.5, DPAPI CurrentUser): `purpose` `identity`
+ * (sharing computer) or `coupling:<hostId>` (controlling computer); `protected` = DPAPI ciphertext of
+ * the PKCS#8 DER (base64); `certificate` = the own self-signed certificate (public).
+ */
+export const KEY_FILE_SCHEMA_VERSION = 1;
+export const keyPurposeSchema = z.string().regex(/^(?:identity|coupling:[a-z0-9][a-z0-9-]{0,31})$/u);
+export const keyFileSchema = z.object({
+  schemaVersion: z.literal(KEY_FILE_SCHEMA_VERSION),
+  purpose: keyPurposeSchema,
+  algorithm: z.literal('ml-dsa-87'),
+  protected: protectedSecretSchema,
+  certificate: certificateDerSchema,
+  createdAt: isoDateTimeSchema,
+});
+export type KeyFile = z.infer<typeof keyFileSchema>;
+
+// =====================================================================================
 // 5.9 Host state
 // =====================================================================================
 
@@ -792,6 +1067,12 @@ export const hostStateSchema = z.object({
   app: appInfoSchema.nullable().default(null),
   /** WP-87: update check, preparation and the outcome of the last switch. */
   update: updateStateSchema.default(DEFAULT_UPDATE_STATE),
+  /** WP-76: role and listener settings of "Several computers" (multi-host.json). */
+  multiHost: multiHostConfigSchema.default(DEFAULT_MULTI_HOST_CONFIG),
+  /** WP-76: the computers this one controls (role `control`), in display order; [] otherwise. */
+  remoteHosts: z.array(remoteHostSchema).max(LIMITS.hostsMax).default([]),
+  /** WP-76: remote access of a sharing computer (role `share`); null otherwise. */
+  remoteAccess: remoteAccessStateSchema.nullable().default(null),
 });
 export type HostState = z.infer<typeof hostStateSchema>;
 
@@ -1723,6 +2004,8 @@ export const sessionSummarySchema = z.object({
    * persisted; the engine recounts at most every ~2 s); null = nothing runs or no process.
    */
   runningTasks: runningTasksSchema.nullable().default(null),
+  /** WP-76/77: the entry has a synchronized draft (`SessionDetail.draft` not null) – sidebar hint. */
+  hasDraft: z.boolean().default(false),
 });
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 
@@ -1836,6 +2119,45 @@ export const planFileRefSchema = z.object({
 });
 export type PlanFileRef = z.infer<typeof planFileRefSchema>;
 
+/**
+ * WP-76/77 (ADR-210): the composer draft of an entry, kept by the server so every window – also one
+ * of another computer – sees the same draft. Last writer wins in the order the server accepts
+ * `session.setDraft`; `rev` counts every accepted change; `clientId` = the window that wrote it (echo
+ * detection), null after a migration from localStorage. Sending a prompt clears it (→ null).
+ */
+/**
+ * `session.setDraft` input. The total (text + pastes ≤ LIMITS.draftTotalChars) is checked by the
+ * engine (DRAFT_TOO_LARGE), not here – see `draftTotalChars()`.
+ */
+export const draftInputSchema = z.object({
+  text: z.string().max(LIMITS.draftChars),
+  /** Pasted texts that occur verbatim in `text` (like PromptInput.pastes). */
+  pastes: z.array(z.string().min(1).max(LIMITS.promptChars)).max(LIMITS.pastesMax).default([]),
+});
+export type DraftInput = z.infer<typeof draftInputSchema>;
+
+/** Size of a draft as LIMITS.draftTotalChars counts it. */
+export function draftTotalChars(draft: { text: string; pastes: readonly string[] }): number {
+  return draft.pastes.reduce((sum, paste) => sum + paste.length, draft.text.length);
+}
+
+export const draftSchema = z.object({
+  text: z.string().max(LIMITS.draftChars),
+  pastes: z.array(z.string().min(1).max(LIMITS.promptChars)).max(LIMITS.pastesMax),
+  rev: z.number().int().positive(),
+  updatedAt: isoDateTimeSchema,
+  clientId: clientIdSchema.nullable(),
+});
+export type Draft = z.infer<typeof draftSchema>;
+
+/** `PARALLAX_HOME/entries/<entryId>/draft.json` (WP-77). */
+export const DRAFT_SCHEMA_VERSION = 1;
+export const draftFileSchema = z.object({
+  schemaVersion: z.literal(DRAFT_SCHEMA_VERSION),
+  draft: draftSchema.nullable(),
+});
+export type DraftFile = z.infer<typeof draftFileSchema>;
+
 /** Fields without top-level defaults: the base of the patch schema (a patch must never inject defaults). */
 const sessionDetailFields = {
   conversationId: conversationIdSchema,
@@ -1861,6 +2183,8 @@ const sessionDetailFields = {
    * (`initializationResult().available_output_styles`; empty = not known yet).
    */
   availableOutputStyles: z.array(z.string().max(100)).max(200),
+  /** WP-76/77 (ADR-210; writer: engine): the synchronized composer draft; null = none. */
+  draft: draftSchema.nullable(),
 };
 
 export const sessionDetailSchema = z.object({
@@ -1871,6 +2195,7 @@ export const sessionDetailSchema = z.object({
   planFile: sessionDetailFields.planFile.default(null),
   latestPlanVersion: sessionDetailFields.latestPlanVersion.default(null),
   availableOutputStyles: sessionDetailFields.availableOutputStyles.default([]),
+  draft: sessionDetailFields.draft.default(null),
 });
 export type SessionDetail = z.infer<typeof sessionDetailSchema>;
 

@@ -31,7 +31,7 @@ export const PROMPT_TITLE_CHARS = 80;
  * wish; a wanted entry without a live link shows the stored link of its current conversation.
  * WP-65: `activity` = the live activity of the running turn (runtime only, default null);
  * `turnSummary` and `lastSeenAt` come from the entry. WP-71: `runningTasks` = what runs in the
- * process (runtime only, default null).
+ * process (runtime only, default null). WP-77: `hasDraft` = the engine holds a draft (default false).
  */
 export function summaryOf(
   entry: Entry,
@@ -44,6 +44,8 @@ export function summaryOf(
     outputStyle?: string | null;
     /** WP-71: running agents/shells/other tasks (runtime only). */
     runningTasks?: RunningTasks | null;
+    /** WP-77: the entry has a synchronized draft (sidebar hint). */
+    hasDraft?: boolean;
   } = {},
 ): SessionSummary {
   const remote = o.remote ?? { state: 'off', sessionUrl: null, error: null };
@@ -87,6 +89,7 @@ export function summaryOf(
     lastSeenAt: entry.lastSeenAt,
     outputStyle: o.outputStyle ?? null,
     runningTasks: o.runningTasks ?? null,
+    hasDraft: o.hasDraft ?? false,
   };
 }
 

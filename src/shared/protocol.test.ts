@@ -5,12 +5,15 @@ import {
   HOST_COMMAND_NAMES,
   LOGIN_CODE_CHARS,
   PROTOCOL_VERSION,
+  REMOTE_ALLOWED_COMMANDS,
+  REMOTE_DENIED_COMMANDS,
   SERVER_MESSAGE_TYPES,
   WS_CLOSE,
   clientMessageSchema,
   commandResultSchemas,
   commandSchema,
   isHostCommand,
+  isRemoteAllowedCommand,
   parseClientMessage,
   parseCommandResult,
   parseServerMessage,
@@ -160,6 +163,23 @@ const commands: Command[] = [
   { name: 'update.apply', version: '1.0.1', acceptDataLoss: false },
   { name: 'update.rollback', version: '1.0.0-rc.4', acceptDataLoss: true },
   { name: 'update.dismiss', what: 'justUpdated' },
+  // WP-76
+  { name: 'session.setDraft', entryId, draft: { text: 'half', pastes: [] }, baseRev: 3 },
+  { name: 'session.setDraft', entryId, draft: null, baseRev: null },
+  { name: 'multiHost.configure', role: 'share', port: 4713, bindAddress: '0.0.0.0' },
+  { name: 'multiHost.configure', role: 'off' },
+  { name: 'remoteAccess.pair' },
+  { name: 'remoteAccess.cancelPairing' },
+  { name: 'remoteAccess.unpair' },
+  { name: 'remoteAccess.renewKey' },
+  { name: 'remoteAccess.check' },
+  { name: 'remoteAccess.events', onlyRejected: true },
+  { name: 'remoteAccess.eventsSeen' },
+  { name: 'hosts.add', address: '192.0.2.20', port: 4713, code: 'ABCD-EFGH', displayName: 'Computer B' },
+  { name: 'hosts.update', hostId: 'computer-b', displayName: 'Computer B2', color: 'rose' },
+  { name: 'hosts.move', hostId: 'computer-b', index: 0 },
+  { name: 'hosts.remove', hostId: 'computer-b' },
+  { name: 'hosts.reconnect', hostId: 'computer-b' },
 ];
 
 const clientMessages: ClientMessage[] = [
@@ -771,8 +791,70 @@ describe('command results', () => {
     expect(prompt(LIMITS.attachmentsMax + 1)).toBe(false);
   });
 
-  it('PROTOCOL_VERSION is 4 (WP-87, ADR-220)', () => {
-    expect(PROTOCOL_VERSION).toBe(4);
+  it('WP-76: every command is classified for remote access exactly once', () => {
+    const all = commandSchema.options.map((option) => option.shape.name.value).sort();
+    const allowed: readonly string[] = REMOTE_ALLOWED_COMMANDS;
+    const denied: readonly string[] = REMOTE_DENIED_COMMANDS;
+    expect([...allowed, ...denied].sort()).toEqual(all);
+    expect(allowed.filter((name) => denied.includes(name))).toEqual([]);
+    expect(isRemoteAllowedCommand('session.sendPrompt')).toBe(true);
+    expect(isRemoteAllowedCommand('profile.get')).toBe(false);
+    expect(isRemoteAllowedCommand('hosts.add')).toBe(false);
+  });
+
+  it('PROTOCOL_VERSION is 5 (WP-76)', () => {
+    expect(PROTOCOL_VERSION).toBe(5);
+  });
+
+  it('WP-76: multi-host commands are host commands; drafts are session commands; client kinds', () => {
+    const send = (cmd: unknown) =>
+      parseClientMessage(JSON.stringify({ type: 'cmd', cmdId: SAMPLE_IDS.cmdId, cmd }));
+    expect(isHostCommand({ name: 'remoteAccess.pair' })).toBe(true);
+    expect(isHostCommand({ name: 'hosts.reconnect', hostId: 'computer-b' })).toBe(true);
+    expect(isHostCommand({ name: 'multiHost.configure' })).toBe(true);
+    expect(isHostCommand({ name: 'session.setDraft', entryId, draft: null, baseRev: null })).toBe(false);
+    const add = send({ name: 'hosts.add', address: 'computer-b', code: 'x', displayName: 'B' });
+    expect(add.ok && add.message.type === 'cmd' && add.message.cmd).toMatchObject({ port: 4713 });
+    expect(send({ name: 'hosts.add', address: 'http://x', code: 'x', displayName: 'B' }).ok).toBe(false);
+    expect(send({ name: 'hosts.add', address: 'a b', code: 'x', displayName: 'B' }).ok).toBe(false);
+    expect(send({ name: 'multiHost.configure', role: 'both' }).ok).toBe(false);
+    expect(send({ name: 'multiHost.configure', port: 80 }).ok).toBe(false);
+    expect(send({ name: 'multiHost.configure', bindAddress: '::1' }).ok).toBe(false);
+    const draft = send({ name: 'session.setDraft', entryId, draft: { text: 'x' } });
+    expect(draft.ok && draft.message.type === 'cmd' && draft.message.cmd).toEqual({
+      name: 'session.setDraft',
+      entryId,
+      draft: { text: 'x', pastes: [] },
+      baseRev: null,
+    });
+    expect(
+      send({ name: 'session.setDraft', entryId, draft: { text: 'x'.repeat(LIMITS.draftChars + 1) } }).ok,
+    ).toBe(false);
+    const hello = parseClientMessage(JSON.stringify({ ...sampleClientHello(), kind: undefined }));
+    expect(hello.ok && hello.message.type === 'clientHello' && hello.message.kind).toBe('window');
+    expect(parseClientMessage(JSON.stringify(sampleClientHello({ kind: 'relay' }))).ok).toBe(true);
+    expect(parseCommandResult('session.setDraft', { rev: null })).toEqual({ rev: null });
+    expect(parseCommandResult('hosts.add', { hostId: 'computer-b' })).toEqual({ hostId: 'computer-b' });
+    expect(parseCommandResult('hosts.remove', { peerNotified: false })).toEqual({ peerNotified: false });
+    expect(parseCommandResult('hosts.remove', {})).toBeNull();
+    const again = send({
+      name: 'hosts.add',
+      address: '192.0.2.20',
+      code: 'x',
+      displayName: 'B',
+      replaceHostId: 'computer-b',
+    });
+    expect(again.ok && again.message.type === 'cmd' && again.message.cmd).toMatchObject({
+      replaceHostId: 'computer-b',
+    });
+    expect(
+      send({ name: 'hosts.add', address: '192.0.2.20', code: 'x', displayName: 'B', replaceHostId: 'local' })
+        .ok,
+    ).toBe(false);
+    expect(WS_CLOSE.HOST_UNREACHABLE).toBe(4502);
+    expect(WS_CLOSE.HOST_INCOMPATIBLE).toBe(4410);
+    expect(WS_CLOSE.HOST_REVOKED).toBe(4403);
+    expect(new Set(Object.values(WS_CLOSE)).size).toBe(Object.values(WS_CLOSE).length);
   });
 
   it('WP-87: update commands are host commands with release versions; restart close code', () => {

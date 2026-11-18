@@ -30,7 +30,6 @@ import {
 } from 'react';
 import {
   LIMITS,
-  LOCAL_HOST_ID,
   parseSessionKey,
   type DecisionId,
   type PermissionMode,
@@ -129,6 +128,7 @@ import {
   takeAttachments,
   useAttachments,
 } from './state/attachments';
+import { useDraftSync } from './state/draft-sync';
 import { clearDraft, getDraftInput, getPastes, setDraft, useDraftInput, usePastes } from './state/drafts';
 import { useComposerFocusTarget } from './state/focus';
 
@@ -312,10 +312,13 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const t = useT();
   const text = useDraftInput(sessionKey);
   const pastes = usePastes(sessionKey);
+  // WP-77 (ADR-210): the draft in step with the server and the other windows.
+  useDraftSync(sessionKey);
   const parsedKey = parseSessionKey(sessionKey);
   const entryId = parsedKey?.entryId ?? null;
-  // Uploads go to the window's own server; a remote host could not resolve the blob (multi-host later).
-  const canAttach = parsedKey?.hostId === LOCAL_HOST_ID;
+  // WP-80: uploads go to the computer of the session (another computer's through this server's
+  // forwarding route, `lib/upload.ts`), so every session can take attachments.
+  const canAttach = parsedKey !== null;
   const runState = useSummarySelector<RunState | null>(sessionKey, (s) => s.status.runState, null);
   // B18: the CLI works, but only background tasks – the transcript says whether a turn runs too.
   const backgroundWork = useSummarySelector<boolean>(

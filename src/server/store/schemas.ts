@@ -11,8 +11,14 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
   decisionRecordsFileSchema,
+  draftFileSchema,
+  hostsFileSchema,
+  keyFileSchema,
+  multiHostFileSchema,
   profilesFileSchema,
   registryFileSchema,
+  remoteEventsFileSchema,
+  remotePeerFileSchema,
   sessionFilesFileSchema,
   settingsFileSchema,
 } from '@shared/model';
@@ -29,6 +35,7 @@ import { COMMANDS_FILE, commandsCacheFileSchema } from '../sessions/commandCatal
 import { PROCESSES_FILE, processesFileSchema } from '../sessions/processStore';
 import { transcriptLogLineSchema } from '../sync/ports';
 import { DECISIONS_FILE } from './decisions';
+import { DRAFT_FILE } from './drafts';
 import { REGISTRY_FILE } from './registry';
 import { SETTINGS_FILE } from './settings';
 import { TRANSCRIPT_SUFFIX } from './transcripts';
@@ -44,8 +51,9 @@ export interface StoreSchema {
   /**
    * Part of the backup on a build change (store/backup.ts; default true). False: the file is
    * neither saved nor touched by a restore – `processes.json` (the current file must survive a
-   * rollback, else entries of orphaned processes are lost) and `auth-secret.json` (never changes,
-   * holds a secret). Not part of the schema hash.
+   * rollback, else entries of orphaned processes are lost), `auth-secret.json` (never changes,
+   * holds a secret) and the files of "Several computers" (WP-78a: a rollback must never bring back
+   * a revoked coupling or a role the user left). Not part of the schema hash.
    */
   backup: boolean;
 }
@@ -73,9 +81,18 @@ export const STORE_SCHEMAS: readonly StoreSchema[] = [
   home(MODEL_CATALOGS_FILE, modelCatalogsFileSchema),
   home(ACCOUNT_LIMITS_FILE, accountLimitsFileSchema),
   home(AUTH_SECRET_FILE, authSecretFileSchema, { backup: false }),
+  // WP-78a/79 "Several computers": never rolled back – a restore could bring back a revoked coupling,
+  // a removed key or the sharing role the user switched off (WP-76 §B.8). Literal ids: the folders
+  // are `remote/` (remote/eventLog.ts REMOTE_DIR) and `keys/` (secure/identityStore.ts KEYS_DIR).
+  home('multi-host.json', multiHostFileSchema, { backup: false }),
+  home('hosts.json', hostsFileSchema, { backup: false }),
+  home('remote/peer.json', remotePeerFileSchema, { backup: false }),
+  home('remote/events.json', remoteEventsFileSchema, { backup: false }),
+  home('keys/*.json', keyFileSchema, { backup: false }),
   entry(DECISIONS_FILE, decisionRecordsFileSchema),
   entry(COMMANDS_FILE, commandsCacheFileSchema),
   entry(SESSION_FILES_FILE, sessionFilesFileSchema),
+  entry(DRAFT_FILE, draftFileSchema),
   entry(`*${TRANSCRIPT_SUFFIX}`, transcriptLogLineSchema, 'jsonl'),
 ];
 

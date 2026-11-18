@@ -3,6 +3,7 @@ import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   DEFAULT_REMOTE_CONTROL_SUMMARY,
   IDLE_PROFILE_LOGIN,
+  draftTotalChars,
   isDefaultProgramAllowed,
   type AssistantTextItem,
   type Decision,
@@ -55,6 +56,7 @@ import {
 import { applySessionOp, trimItems, viewStateFromSnapshot, type SessionViewState } from '@shared/sync';
 import { pathTail } from '@web/lib/path-display';
 import { SHOWCASE_FILES } from '@web/playground/showcase/files';
+import { fakeMultiHostCommand, type FakeMultiHostOptions } from './fake-multi-host';
 import { FakeSessionInfoData } from './fake-session-info';
 import type { MemoryTransport } from './transport';
 
@@ -84,6 +86,11 @@ export interface FakeHostOptions {
   onCommand?: (cmd: Command, host: FakeHost) => FakeAck | undefined;
   /** Answer `session.sendPrompt` with a short streamed assistant reply (playground). */
   replyToPrompts?: boolean;
+  /**
+   * WP-80: answer `multiHost.configure`, `remoteAccess.*` and `hosts.*` (fake-multi-host.ts);
+   * without it they stay NOT_IMPLEMENTED (the WP-78b default path). `true` = no levers.
+   */
+  multiHost?: FakeMultiHostOptions | boolean;
 }
 
 interface ServerSession {
@@ -437,6 +444,13 @@ export class FakeHost {
   readonly commands: Command[] = [];
   /** When false, connections are dropped right away (offline simulation). */
   online = true;
+  /** WP-80: close code of a connection while `online` is false (4502 = forwarder: computer unreachable). */
+  offlineCloseCode = 1006;
+  /**
+   * WP-80: "Several computers" answered (levers of fake-multi-host.ts); false = NOT_IMPLEMENTED
+   * (default, the WP-78b path). From `FakeHostOptions.multiHost`, changeable later (tests, demos).
+   */
+  multiHost: FakeMultiHostOptions | false;
 
   private readonly options: FakeHostOptions;
   private readonly cleanups: (() => void)[] = [];
@@ -469,6 +483,8 @@ export class FakeHost {
   sessionFilesTruncated = false;
   /** One-shot failures per command name (failNext). */
   private readonly failures = new Map<CommandName, ErrorPayload[]>();
+  /** WP-77: highest draft rev per entry (session.setDraft). */
+  private readonly draftRevs = new Map<EntryId, number>();
   /** WP-67: session info answers and actions; levers `unavailable`, `actionError`, `long`. */
   readonly info = new FakeSessionInfoData();
   /** Stored plan versions, ascending (plan.list, plan.read; `stored: false` → PLAN_NOT_FOUND). */
@@ -493,6 +509,7 @@ export class FakeHost {
     this.serverInstanceId = options.serverInstanceId ?? SAMPLE_IDS.serverInstanceId;
     this.buildId = options.buildId ?? 'dev';
     this.hostState = options.hostState ?? sampleHostState();
+    this.multiHost = options.multiHost === true ? {} : (options.multiHost ?? false);
     for (const summary of options.summaries ?? []) this.summaries.set(summary.entryId, summary);
     for (const snapshot of options.sessions ?? []) this.addSession(snapshot);
     for (const file of fakeFileTable()) this.setFile(file);
@@ -901,6 +918,40 @@ export class FakeHost {
     return this.ok();
   }
 
+  /**
+   * WP-77 `session.setDraft` like the engine (ADR-210): the last writer wins, `rev` counts on (also
+   * after a cleared draft), `clientId` = the window; `detail.patch {draft}` + `summary.hasDraft`.
+   */
+  private setDraft(cmd: CommandOf<'session.setDraft'>): FakeAck {
+    if (!this.knowsEntry(cmd.entryId)) {
+      return { ok: false, error: makeError('ENTRY_NOT_FOUND', { entryId: cmd.entryId }) };
+    }
+    const current = this.sessions.get(cmd.entryId)?.view.detail.draft ?? null;
+    if (cmd.draft === null) {
+      if (current !== null) {
+        this.pushOps(cmd.entryId, [{ op: 'detail.patch', patch: { draft: null } }]);
+        this.patchSummary(cmd.entryId, { hasDraft: false });
+      }
+      return this.ok({ rev: null });
+    }
+    const chars = draftTotalChars(cmd.draft);
+    if (chars > LIMITS.draftTotalChars) {
+      return { ok: false, error: makeError('DRAFT_TOO_LARGE', { chars, max: LIMITS.draftTotalChars }) };
+    }
+    const rev = Math.max(this.draftRevs.get(cmd.entryId) ?? 0, current?.rev ?? 0) + 1;
+    this.draftRevs.set(cmd.entryId, rev);
+    const draft = {
+      text: cmd.draft.text,
+      pastes: [...cmd.draft.pastes],
+      rev,
+      updatedAt: this.now(),
+      clientId: this.clientHello?.clientId ?? null,
+    };
+    this.pushOps(cmd.entryId, [{ op: 'detail.patch', patch: { draft } }]);
+    this.patchSummary(cmd.entryId, { hasDraft: true });
+    return this.ok({ rev });
+  }
+
   private knowsEntry(entryId: EntryId): boolean {
     return this.sessions.has(entryId) || this.summaries.has(entryId);
   }
@@ -938,7 +989,7 @@ export class FakeHost {
     this.handshaken = false;
     this.subscribed.clear();
     if (!this.online) {
-      this.transport.serverClose(1006);
+      this.transport.serverClose(this.offlineCloseCode);
       return;
     }
     this.send(
@@ -1339,6 +1390,26 @@ export class FakeHost {
       case 'update.rollback':
       case 'update.dismiss':
         return this.updateCommand(cmd);
+      // WP-77: the synchronized draft like the engine.
+      case 'session.setDraft':
+        return this.setDraft(cmd);
+      // WP-80: several computers, opt-in (`multiHost`); else NOT_IMPLEMENTED as in WP-76/78b.
+      case 'multiHost.configure':
+      case 'remoteAccess.pair':
+      case 'remoteAccess.cancelPairing':
+      case 'remoteAccess.unpair':
+      case 'remoteAccess.renewKey':
+      case 'remoteAccess.check':
+      case 'remoteAccess.events':
+      case 'remoteAccess.eventsSeen':
+      case 'hosts.add':
+      case 'hosts.update':
+      case 'hosts.move':
+      case 'hosts.remove':
+      case 'hosts.reconnect':
+        if (this.multiHost === false)
+          return { ok: false, error: makeError('NOT_IMPLEMENTED', { command: cmd.name }) };
+        return fakeMultiHostCommand(this, cmd, this.multiHost);
       case 'link.open':
         this.linkOpens.push(cmd.url);
         return this.linkOpenError === null ? this.ok() : { ok: false, error: this.linkOpenError };

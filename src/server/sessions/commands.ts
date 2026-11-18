@@ -16,11 +16,18 @@
  * `session.info`, `session.mcpAction`, `session.reload` (sessionInfo.ts; only with a running
  * process, no auto-wake). WP-69: `session.subagentTranscript` (subagentTranscript.ts; reads the CLI's
  * agent transcript, no process needed). WP-70: `session.setOutputStyle` (outputStyle.ts; a dormant
- * entry starts without a turn).
+ * entry starts without a turn). WP-77: `session.setDraft` (ADR-210; every entry state) – a sent
+ * prompt clears the draft it was sent from.
  */
 import { LIMITS, type ClientId, type ProfileId } from '@shared/common';
 import { makeError } from '@shared/errors';
-import { currentSessionId, type Entry, type PlanDecision, type Settings } from '@shared/model';
+import {
+  currentSessionId,
+  draftTotalChars,
+  type Entry,
+  type PlanDecision,
+  type Settings,
+} from '@shared/model';
 import {
   isHostCommand,
   type Command,
@@ -167,7 +174,8 @@ async function createSession(
   // profile and takes Claude's own setting after the first readiness.
   const newSessions = core.stores.settings.get().remoteControl.newSessions;
   const remoteControlWanted =
-    newSessions === 'on' || (newSessions === 'follow_claude' && core.remoteControlDefault(profileId) === true);
+    newSessions === 'on' ||
+    (newSessions === 'follow_claude' && core.remoteControlDefault(profileId) === true);
   const given = cmd.title?.trim() ?? '';
   const promptTitle = cmd.prompt === undefined ? null : titleFromPrompt(cmd.prompt.text);
   const entry: Entry = {
@@ -422,7 +430,48 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
       });
       await setOutputStyle(core, s, cmd.style);
       return {} satisfies CommandResult<'session.setOutputStyle'>;
+    // WP-77 (ADR-210): the synchronized composer draft – every entry state.
+    case 'session.setDraft':
+      return setDraft(core, s, cmd, clientId);
   }
+}
+
+/**
+ * WP-77 `session.setDraft` (ADR-210): the last writer wins in the order the commands arrive –
+ * `baseRev` is never refused, an overwritten newer draft is only logged. A draft above
+ * `LIMITS.draftTotalChars` (text + pastes) → DRAFT_TOO_LARGE; every paste stands verbatim in the
+ * text (like `PromptInput.pastes`, VALIDATION_FAILED `paste_not_in_text`). `rev` = old rev + 1
+ * (`EntryState.nextDraftRev`), `clientId` = the writing window; null clears (result `rev: null`).
+ */
+function setDraft(
+  core: EngineCore,
+  s: EntryState,
+  cmd: CommandOf<'session.setDraft'>,
+  clientId: ClientId,
+): CommandResult<'session.setDraft'> {
+  const current = s.draft?.rev ?? null;
+  if (cmd.baseRev !== current) {
+    core.log.debug({ entryId: s.id, baseRev: cmd.baseRev, rev: current }, 'draft written over another state');
+  }
+  const input = cmd.draft;
+  if (input === null) {
+    s.setDraft(null);
+    return { rev: null };
+  }
+  const chars = draftTotalChars(input);
+  if (chars > LIMITS.draftTotalChars) {
+    throw commandError('DRAFT_TOO_LARGE', { chars, max: LIMITS.draftTotalChars });
+  }
+  checkPastes(input.text, input.pastes);
+  const rev = s.nextDraftRev();
+  s.setDraft({
+    text: input.text,
+    pastes: [...input.pastes],
+    rev,
+    updatedAt: core.now().toISOString(),
+    clientId,
+  });
+  return { rev };
 }
 
 /**
@@ -441,7 +490,12 @@ async function withdrawQueued(
   if (entry === undefined) return { withdrawn: false, text: null };
   const runtime = running(s);
   if (runtime === null) throw commandError('SESSION_NOT_RUNNING', { entryId: s.id });
-  const cancelled = await controlCall('cancelAsyncMessage', () => runtime.agent.withdrawQueued(messageUuid), core, s.id);
+  const cancelled = await controlCall(
+    'cancelAsyncMessage',
+    () => runtime.agent.withdrawQueued(messageUuid),
+    core,
+    s.id,
+  );
   const current = s.queue.list().find((p) => p.messageUuid === messageUuid);
   // Taken over meanwhile (started/completed removed it) or reported as taken over.
   if (!cancelled && current?.state !== 'sending') return { withdrawn: false, text: null };
@@ -509,7 +563,12 @@ async function backgroundTasks(
       throw commandError('TASK_NOT_FOUND', { taskId: toolUseId });
     }
   }
-  const moved = await controlCall('backgroundTasks', () => runtime.agent.backgroundTasks(toolUseId), core, s.id);
+  const moved = await controlCall(
+    'backgroundTasks',
+    () => runtime.agent.backgroundTasks(toolUseId),
+    core,
+    s.id,
+  );
   if (!moved) throw commandError('TASK_NOT_FOUND', { taskId: toolUseId ?? '' });
   return {};
 }
@@ -583,6 +642,9 @@ async function sendPrompt(
   };
   // ADR-146: every paste occurs in the text (nothing changes otherwise).
   const pastes = checkPastes(text, cmd.prompt.pastes);
+  // WP-77 (ADR-210): the draft the prompt was sent from – cleared once the prompt went out, unless a
+  // window wrote a new one meanwhile (typing on while a dormant session starts).
+  const draftAtSend = s.draft;
   const messageUuid = await s.lifecycle.run(async () => {
     // R4-01: handed off or archived while this prompt waited for the lock.
     assertEntryGate(s, cmd.name);
@@ -598,6 +660,7 @@ async function sendPrompt(
     if (s.runtime === null) await startRuntime(s, core, { byClientId: clientId });
     return deliverPrompt(s, core, text, cmd.priority, { attachments, pastes });
   });
+  if (draftAtSend !== null && s.draft === draftAtSend) s.setDraft(null);
   return { messageUuid };
 }
 

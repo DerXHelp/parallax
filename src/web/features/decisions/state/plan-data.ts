@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { parseSessionKey, type EntryId } from '@shared/common';
 import { errorPayloadSchema, makeError, type ErrorPayload } from '@shared/errors';
-import { fileUrl } from '@shared/http';
 import type { PlanVersionInfo } from '@shared/model';
 import type { SessionViewState } from '@shared/sync';
+import { sessionFileUrl } from '@web/lib/host-urls';
 import { SizedLru } from '@web/lib/sized-cache';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand, useSessionSelector } from '@web/state/hooks';
@@ -175,11 +175,14 @@ async function errorOf(response: Response): Promise<ErrorPayload> {
   });
 }
 
-/** The real reader: `GET /api/file?entryId&path` of this origin (cookie, Sec-Fetch-Site same-origin). */
+/**
+ * The real reader: `GET /api/file?entryId&path` of this origin (cookie, Sec-Fetch-Site same-origin);
+ * WP-80: for another computer's session its forwarding route (`sessionFileUrl`).
+ */
 export const httpPlanFileReader: PlanFileReader = async (file, signal) => {
   let response: Response;
   try {
-    response = await fetch(fileUrl(file.entryId, file.path), {
+    response = await fetch(sessionFileUrl(file.sessionKey, file.entryId, file.path), {
       credentials: 'same-origin',
       cache: 'no-store',
       signal,

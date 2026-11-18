@@ -9,7 +9,9 @@
  *   COM activator: a click dismisses the toast – unless `launchUri` is given (Phase 2, ADR-109):
  *   then the toast carries `activationType="protocol"` + `launch="parallax://session/<id>"` and a
  *   click starts the opt-in protocol handler (system/protocol.ts). Only URIs accepted by
- *   `parseSessionProtocolUri` are used (re-generated from the parsed id), anything else is ignored.
+ *   `parseHostSessionProtocolUri` are used (re-generated from the parsed ids), anything else is
+ *   ignored – WP-81: also `parallax://session/<hostId>/<entryId>` (the toast of a controlling
+ *   computer for a session of another computer).
  *   `silent` adds `<audio silent="true"/>` (sound off for the event, ADR-109).
  * - Data never goes into the script text: title, body, tag and launch URI travel in environment
  *   variables of the PowerShell process, the XML skeleton (`toastTemplateXml`, built only from
@@ -25,7 +27,7 @@
  *   `History.Remove` failed – exit 3, anything unexpected). Only a permanent one may switch the
  *   channel off (sessions/nativeToasts.ts).
  */
-import { parseSessionProtocolUri, sessionProtocolUri } from '@shared/http';
+import { hostSessionProtocolUri, parseHostSessionProtocolUri } from '@shared/http';
 import { PRODUCT_NAME } from '@shared/product';
 import { toError } from './async';
 import { encodePowerShell, powerShellPath } from './powershell';
@@ -49,7 +51,8 @@ export interface ToastRequest {
   tag: string;
   /**
    * Phase 2 (ADR-109): `parallax://session/<entryId>` – a click opens the session through the
-   * protocol handler. Ignored unless `parseSessionProtocolUri` accepts it; null/absent = no launch.
+   * protocol handler; WP-81 also `parallax://session/<hostId>/<entryId>`. Ignored unless
+   * `parseHostSessionProtocolUri` accepts it; null/absent = no launch.
    */
   launchUri?: string | null;
   /** Phase 2 (ADR-109): no sound (`<audio silent="true"/>`). */
@@ -139,11 +142,11 @@ export function toastTemplateXml(options: { launch: boolean; silent: boolean }):
   );
 }
 
-/** The canonical launch URI, or null if `uri` is absent or not a session URI (ADR-109). */
+/** The canonical launch URI, or null if `uri` is absent or not a session URI (ADR-109, WP-81). */
 function toastLaunchUri(uri: string | null | undefined): string | null {
   if (uri === undefined || uri === null) return null;
-  const entryId = parseSessionProtocolUri(uri);
-  return entryId === null ? null : sessionProtocolUri(entryId);
+  const target = parseHostSessionProtocolUri(uri);
+  return target === null ? null : hostSessionProtocolUri(target.hostId, target.entryId);
 }
 
 /** Control characters (except tab/newline) out, length capped; XML escaping is done by the DOM. */

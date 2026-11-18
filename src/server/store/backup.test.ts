@@ -95,11 +95,15 @@ async function seedHome(): Promise<string> {
 }
 
 describe('store list of the backup', () => {
-  it('only knows stores in the home or directly in entries/<id>/', () => {
+  it('only backs up stores in the home or directly in entries/<id>/', () => {
     for (const store of STORE_SCHEMAS) {
       const segments = store.id.split('/');
-      if (store.scope === 'home') expect(segments, store.id).toHaveLength(1);
-      else expect([segments.length, segments[0], segments[1]], store.id).toEqual([3, ENTRIES_DIR, '*']);
+      if (store.scope === 'entry') {
+        expect([segments.length, segments[0], segments[1]], store.id).toEqual([3, ENTRIES_DIR, '*']);
+      } else if (segments.length > 1) {
+        // Subfolders (remote/, keys/ of several computers) are listed for the schema hash only.
+        expect(store.backup, store.id).toBe(false);
+      }
     }
   });
 });

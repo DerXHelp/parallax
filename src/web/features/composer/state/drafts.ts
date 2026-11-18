@@ -17,6 +17,11 @@ import { activePastes, expandPastes, type DraftPaste } from '../lib/pastes';
  * the token back with its text) but no longer counts. `getDraft`/`useDraft` give the draft as it
  * would be sent (tokens replaced) – the decision bar reads it for "Keep planning with feedback";
  * the composer works on the input (`getDraftInput`/`useDraftInput`).
+ *
+ * WP-77 (ADR-210): `state/draft-sync.ts` keeps the draft in step with the server. Every change made
+ * here through `setDraft`/`clearDraft` is an edit of this window (`connectDraftSync`); a draft taken
+ * over from the server goes in through `replaceDraft` (no edit). localStorage stays the cache for a
+ * reload and a lost connection.
  */
 
 interface DraftState {
@@ -101,24 +106,51 @@ export function getDraft(sessionKey: string): string {
   return expandPastes(getDraftInput(sessionKey), getPastes(sessionKey)).text;
 }
 
-/**
- * Sets the field text; with `pastes` also the kept pastes (an empty text drops them all).
- * Writes localStorage (the pastes only when they change).
- */
-export function setDraft(sessionKey: string, text: string, pastes?: readonly DraftPaste[]): void {
+/** Writes text and pastes (store + localStorage); false = nothing changed. */
+function writeDraft(sessionKey: string, text: string, pastes?: readonly DraftPaste[]): boolean {
   ensureLoaded(sessionKey);
   const state = store.getState();
   const currentPastes = state.pastes[sessionKey] ?? NO_PASTES;
   const nextPastes = text === '' ? NO_PASTES : (pastes ?? currentPastes);
   const textChanged = state.drafts[sessionKey] !== text;
   const pastesChanged = nextPastes !== currentPastes;
-  if (!textChanged && !pastesChanged) return;
+  if (!textChanged && !pastesChanged) return false;
   store.setState((current) => ({
     drafts: { ...current.drafts, [sessionKey]: text },
     pastes: { ...current.pastes, [sessionKey]: nextPastes },
   }));
   if (textChanged) writeStorage('local', draftStorageKey(sessionKey), text === '' ? null : text);
   if (pastesChanged) writePastes(sessionKey, nextPastes);
+  return true;
+}
+
+/** WP-77: what the server sync (`draft-sync.ts`) learns from here. */
+export interface DraftSyncHooks {
+  /** After every edit of this window (`setDraft`/`clearDraft`). */
+  edited(sessionKey: string): void;
+  /** `resetDraftStore` (tests): forget the sync state too. */
+  reset(): void;
+}
+
+let syncHooks: DraftSyncHooks | null = null;
+
+/** WP-77: `draft-sync.ts` registers itself once (drafts.ts never imports it – no cycle). */
+export function connectDraftSync(hooks: DraftSyncHooks): void {
+  syncHooks = hooks;
+}
+
+/**
+ * Sets the field text; with `pastes` also the kept pastes (an empty text drops them all).
+ * Writes localStorage (the pastes only when they change) – an edit of this window (WP-77 sync).
+ */
+export function setDraft(sessionKey: string, text: string, pastes?: readonly DraftPaste[]): void {
+  if (!writeDraft(sessionKey, text, pastes)) return;
+  syncHooks?.edited(sessionKey);
+}
+
+/** WP-77: a draft taken over from the server (not an edit of this window – nothing is sent back). */
+export function replaceDraft(sessionKey: string, text: string, pastes: readonly DraftPaste[]): void {
+  writeDraft(sessionKey, text, pastes.length === 0 ? NO_PASTES : pastes);
 }
 
 export function clearDraft(sessionKey: string): void {
@@ -165,8 +197,12 @@ export function useDraft(sessionKey: string): string {
   );
 }
 
-/** Tests: forget the in-memory drafts (localStorage stays – that is what a remount reads). */
+/**
+ * Tests: forget the in-memory drafts and the sync state (localStorage stays – that is what a
+ * remount reads).
+ */
 export function resetDraftStore(): void {
   store.setState({ drafts: {}, pastes: {} });
   peeked.clear();
+  syncHooks?.reset();
 }

@@ -139,6 +139,10 @@ export interface EngineHarnessOptions {
    */
   attachments?: boolean;
   /**
+   * WP-77: pass the memory draft store to the engine (default true); false = drafts in memory only.
+   */
+  drafts?: boolean;
+  /**
    * Phase 3 (WP-52): `FakeBackendOptions.filesRoot` – the real files of `fake:plan`,
    * `fake:background`, `fake:files`. Default: a fresh folder below the test home
    * (`PARALLAX_HOME`, else the OS temp), created on the first write and removed by `close()`; never
@@ -303,11 +307,15 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
   });
   const proc = createHarnessProc(options.proc);
   const errors: { error: unknown; context: string }[] = [];
-  const { attachments, ...withoutAttachments } = stores;
+  const { attachments, drafts, ...base } = stores;
   const manager = createSessionManager({
     backend,
     claude,
-    stores: options.attachments === false ? withoutAttachments : { ...withoutAttachments, attachments },
+    stores: {
+      ...base,
+      ...(options.attachments === false ? {} : { attachments }),
+      ...(options.drafts === false ? {} : { drafts }),
+    },
     host: {
       ...HARNESS_HOST,
       ...(options.port === undefined ? {} : { port: options.port }),

@@ -72,18 +72,34 @@ describe('launcher command line flow (cli.ts)', () => {
       await runLauncherCli([`--home=${HOME}`, `--open=PARALLAX:session/${SAMPLE_IDS.entry}/`], lax.deps),
     ).toBe(0);
     expect(lax.launches[0]?.entryId).toBe(SAMPLE_IDS.entry);
+    expect(lax.launches[0]?.hostId).toBe('local');
+  });
+
+  it('WP-81: --open with a session of another computer: the window selects <hostId>:<id>', async () => {
+    const h = harness();
+    const link = `parallax://session/computer-b/${SAMPLE_IDS.entry}`;
+    expect(await runLauncherCli([`--home=${HOME}`, '--open', link], h.deps)).toBe(0);
+    expect(h.launches[0]).toMatchObject({
+      entryId: SAMPLE_IDS.entry,
+      hostId: 'computer-b',
+      openWindow: true,
+    });
   });
 
   it.each([
     ['another scheme', 'https://example.com/session/x'],
     ['a malformed id', 'parallax://session/en_xyz'],
     ['a path traversal', 'parallax://session/../../x'],
-    ['an extra segment', `parallax://session/${SAMPLE_IDS.entry}/more`],
+    ['an extra segment', `parallax://session/computer-b/${SAMPLE_IDS.entry}/more`],
+    ['a malformed computer', `parallax://session/Computer_B/${SAMPLE_IDS.entry}`],
+    ['"local" as a computer', `parallax://session/local/${SAMPLE_IDS.entry}`],
   ])('--open with %s: exit 2, nothing started', async (_name, uri) => {
     const h = harness();
     expect(await runLauncherCli([`--home=${HOME}`, '--open', uri], h.deps)).toBe(2);
     expect(h.launches).toEqual([]);
     expect(h.err.join('\n')).toMatch(/Invalid Parallax link/);
+    // The message names both forms.
+    expect(h.err.join('\n')).toContain('parallax://session/<id> or parallax://session/<computer>/<id>');
   });
 
   it('R5: options smuggled after the link: exit 2, nothing started', async () => {

@@ -2367,7 +2367,89 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   `acceptEdits`. Der Nutzer will Auto als Standard (16.11.2026). Ersetzt `plan.md` „Split-Button, merkt sich die
   letzte Wahl“.
 
-<!-- ADR-205…211 sind vom Plan WP-75 (Multi-Host, Branch `feature/multi-host`) vorgemerkt. -->
+## ADR-205 – Vermittler im lokalen Server, Fernzugang als einzige Ausnahme vom Loopback
+- **Datum/WP:** 18.11.2026, WP-76 (Plan WP-75 §2, Spezifikation WP-76 §B.6); angenommen mit dem Auftrag des Nutzers
+  „setze das feature um“ (18.11.2026).
+- **Entscheidung:**
+  - Der Browser verbindet sich nie mit einem anderen Rechner. Der lokale Server des steuernden Rechners reicht je
+    Fenster eine WebSocket-Verbindung 1 : 1 durch (`/api/hosts/:hostId/ws`) und Inhalte streamend
+    (`blob`, `file`, `attachments`). Dabei gelten dieselben Cookie-, Host- und Origin-Prüfungen wie für lokale Routen.
+    Antwort-Header setzt er selbst.
+  - Der freigebende Rechner lauscht dafür auf einem zweiten Port im Netz (Default 4713). Das ist die einzige Ausnahme
+    von „der Server lauscht nur auf `127.0.0.1`“ (R1-05). Der Port ist ab Werk zu und nur mit der Rolle „Freigeben“
+    offen.
+- **Begründung:** Das Sicherheitsmodell des Browsers (ADR-023) bleibt unverändert; Protokoll und Server bleiben
+  host-agnostisch, Synchronität und Präsenz ergeben sich aus dem vorhandenen Mehrfenster-Modell.
+
+## ADR-206 – Fernzugang: TLS 1.3 auf CNSA-2.0-Niveau, gegenseitige Pins, Verbindungsbeweis
+- **Datum/WP:** 18.11.2026, WP-76 §B.3–B.6, B.9 (nach unabhängigem Review).
+- **Entscheidung:**
+  - Nur TLS 1.3 mit `TLS_AES_256_GCM_SHA384`, Schlüsseltausch `SecP384r1MLKEM1024`, Signaturen `mldsa87`. Jeder
+    Parameter hat genau einen Wert; es gibt keine Resumption.
+  - Selbstsignierte ML-DSA-87-Zertifikate; mTLS mit gegenseitig gepinnten Schlüsseln (SHA-384 über SPKI). Der
+    steuernde Rechner pinnt das ganze Zertifikat als `ca`. Kein Bearer-Token.
+  - Zusätzlich beweist jede Verbindung vor dem ersten HTTP-Byte das bei der Kopplung vereinbarte Geheimnis `kAuth`
+    (HMAC über einen TLS-Exporter und beide SPKI). Damit ist die Anmeldung hybrid.
+  - Der Listener ist `tls.createServer`. Sockets werden vor jedem HTTP-Parser klassifiziert und an getrennte
+    `http.Server` übergeben (Kopplung bzw. gekoppelter Rechner); alles andere wird zerstört.
+  - Private Schlüssel und `kAuth` liegen DPAPI-geschützt auf der Platte; ohne DPAPI gibt es keinen Fernzugang.
+  - Über den Fernzugang ist nur eine Allowlist von Befehlen erreichbar (`REMOTE_ALLOWED_COMMANDS`).
+- **Begründung:** Wer eine freigegebene Session steuert, führt Code auf dem freigebenden Rechner aus. Der Nutzer
+  verlangt das höchste kryptografische Niveau. Der Verbindungsbeweis macht einen Fehler in ML-DSA allein unschädlich
+  (BSI/ANSSI: PQ-Signaturen nur hybrid). Die Klassifizierung vor dem Parser schließt die im Review gezeigte Lücke von
+  `https.createServer`.
+
+## ADR-207 – Kopplung per Code mit Kanalbindung
+- **Datum/WP:** 18.11.2026, WP-76 §B.7.
+- **Entscheidung:**
+  - Der Code hat 128 Bit, Crockford-Base32 mit zwei Prüfzeichen (mod 1021), 28 Zeichen. Er gilt 10 min, einmalig, mit
+    höchstens 3 Fehlversuchen.
+  - Er wird nur auf dem freigebenden Rechner lokal erzeugt und angezeigt und nie über den Fernzugang gesendet.
+  - Der steuernde Rechner beweist zuerst (`macA`), der freigebende antwortet (`macB`). Beide sind HMAC-SHA-384 über
+    einen TLS-Exporter und beide SPKI, mit Rollen-Labels.
+  - Danach pinnen beide Seiten und leiten `kAuth` ab.
+- **Begründung:** Ein Code zum Abtippen ist bequemer als ein langer Kopplungstext und braucht keine gemeinsame
+  Zwischenablage. Kanalbindung und Exporter verhindern Mann in der Mitte und Wiederholung. Die Kopplung hängt nicht an
+  ML-DSA; ein Tippfehler kostet keinen Fehlversuch.
+
+## ADR-208 – Inhalte anderer Rechner lösen keine lokalen Aktionen aus
+- **Datum/WP:** 18.11.2026, WP-76 (§C.3).
+- **Entscheidung:**
+  - Links öffnet der lokale Server. Pfade des anderen Rechners werden nie lokal verwendet.
+  - Editor, Explorer und „Öffnen mit“ sind für freigegebene Sessions aus. Die Header-Politik ist lokal.
+  - Umgekehrt nimmt der freigebende Rechner über den Fernzugang nur die Befehle der Sessions an, nicht seine
+    Einstellungen, Profile, Updates, seine Rolle oder sichtbare Programme (fail closed, `REMOTE_NOT_ALLOWED`).
+- **Begründung:** Kein Rechner soll durch Inhalte oder Befehle des anderen mehr tun, als der Nutzer dort selbst sehen
+  und bestätigen kann.
+
+## ADR-209 – Nur gleiche Versionen arbeiten zusammen, kein Update aus der Ferne
+- **Datum/WP:** 18.11.2026, WP-76 §B (Plan WP-75 §4.7).
+- **Entscheidung:**
+  - Gleiche Parallax- und Protokollversion (Header bei jeder Anfrage, Health). Sonst gilt der Rechner als
+    `incompatible`, ohne Reload und ohne Schleife.
+  - Jeder Rechner aktualisiert sich selbst über „Jetzt aktualisieren“.
+  - Ersetzt den Entwurf „nur die Protokollversion zählt“ (16.11.2026).
+- **Begründung:** Gemischte Versionen über zwei Rechner wären nicht testbar. Ein Update aus der Ferne würde den
+  freigebenden Rechner ohne Aufsicht umbauen.
+
+## ADR-210 – Entwürfe im Server, letzter Schreiber gewinnt
+- **Datum/WP:** 18.11.2026, WP-76/77.
+- **Entscheidung:**
+  - Der Composer-Entwurf liegt je Eintrag im Server (`entries/<id>/draft.json`) und geht als `detail.patch` an alle
+    Fenster, auch an die eines anderen Rechners.
+  - Der letzte Schreiber gewinnt, in der Reihenfolge der Annahme. Senden löscht den Entwurf überall.
+  - `localStorage` bleibt Zwischenspeicher; ungesendete Anhänge wandern nicht mit.
+- **Begründung:** Wer den Rechner wechselt, soll weiterschreiben können; das nützt auch mit nur einem Rechner und
+  mehreren Fenstern.
+
+## ADR-211 – Benachrichtigungen folgen dem Nutzer über Rechner
+- **Datum/WP:** 18.11.2026, WP-76 (Umsetzung WP-81).
+- **Entscheidung:**
+  - Der steuernde Server hält je freigebendem Rechner eine Wächter-Verbindung (`clientHello.kind: 'relay'`).
+  - Wo der freigebende Rechner nativ toasten würde und der Nutzer zuletzt am steuernden Rechner war, geht die Meldung
+    an den Wächter. Der steuernde Rechner toastet dann mit seinen eigenen Filtern („Nicht stören“).
+  - Der Protokoll-Link trägt den Rechner: `parallax://session/<hostId>/<entryId>`.
+- **Begründung:** Meldungen sollen dort erscheinen, wo der Nutzer arbeitet, nicht unbemerkt auf dem anderen Rechner.
 
 ## ADR-212 – Öffentliches Repo ist neutral, `public-check` prüft
 - **Datum/WP:** 17.11.2026, WP-84; angenommen (17.11.2026, Nutzer: „los“ für WP-84 nach dem Plan WP-83 §3).
@@ -2526,6 +2608,82 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   Start-Chunk `i18n`). Für eine lokal ausgelieferte App ist die Ladezeit dieser Größe unkritisch; die Regel „nur das
   Nötigste in den Start-Chunk“ gilt weiter.
 
+## ADR-224 – Rollen exklusiv, 1 : n
+- **Datum/WP:** 18.11.2026, WP-76 (Plan WP-75 §4.1; Nutzer 18.11.2026).
+- **Entscheidung:**
+  - Ein Rechner ist aus (Default), freigebend oder steuernd, nie beides zugleich.
+  - Ein freigebender Rechner hat genau eine Kopplung; „Kopplung aufheben“ genügt. Ein steuernder Rechner hat beliebig
+    viele (höchstens 16).
+  - Die Rolle steht in `multi-host.json` und wird nur über `multiHost.configure` gewechselt. Ein Wechsel zwischen
+    „Freigeben“ und „Andere steuern“ geht erst, wenn die alte Rolle keine Kopplung mehr hat
+    (`REMOTE_ROLE_CONFLICT`).
+- **Begründung:** Kein Weiterreichen über mehrere Stufen; einfaches Vertrauens- und Benachrichtigungsmodell. Der
+  generische `settings.update` kann diese Prüfungen und Wirkungen nicht tragen.
+
+## ADR-225 – Verbindungsprotokoll mit abgelehnten Versuchen
+- **Datum/WP:** 18.11.2026, WP-76 (Plan WP-75 §3.7; Nutzer 18.11.2026).
+- **Entscheidung:**
+  - Der freigebende Rechner protokolliert jeden Verbindungsversuch mit Adresse und Art (`remote/events.json`):
+    Kopplung ok, fehlgeschlagen oder gebremst, unbekannter oder aufgehobener Schlüssel, falsches Zertifikat,
+    falscher Verbindungsbeweis, TLS-Abbruch, Rate-Limit, Browser, Version, verbunden und getrennt.
+  - Gleiche Ereignisse einer Adresse innerhalb einer Minute werden zusammengefasst. Es gibt höchstens 500 Einträge,
+    30 Tage lang, ohne Reverse-DNS.
+  - Neue abgelehnte Versuche zeigt die Kopfzeile, bis der Nutzer das Protokoll angesehen hat.
+- **Begründung:** Der Nutzer will sehen, wer es versucht hat. Zusammenfassen verhindert, dass ein Angreifer das
+  Protokoll flutet.
+
+## ADR-226 – Seitenleiste: Gruppierung wählbar, Gruppen einklappbar
+- **Datum/WP:** 18.11.2026, WP-76 (Plan WP-75 §4.4; Umsetzung WP-80).
+- **Entscheidung:**
+  - Das Menü „Gruppieren nach“ hat die Häkchen Rechner und Verzeichnis. Mit beiden liegen die Verzeichnisse in der
+    Rechner-Gruppe.
+  - „Rechner“ erscheint nur, wenn Rechner eingebunden sind. Die Rechner stehen in fester Reihenfolge, dieser Rechner
+    zuerst.
+  - Beide Ebenen sind einklappbar; der Zustand gilt je Fenster.
+  - Ersetzt den Umschalter `flat | grouped` (WP-35).
+- **Begründung:** Mit mehreren Rechnern will der Nutzer wählen, wonach er ordnet. Einklappen hält lange Listen
+  übersichtlich.
+
+## ADR-227 – Härtung nach den Security-Reviews von „Mehrere Rechner“
+- **Datum/WP:** 18.11.2026, WP-82 (Spezifikation `docs/wp/WP-76.md` §B.7, §B.10).
+- **Entscheidung:**
+  - `kAuth` mischt den Kopplungscode ein: `ikm = ekm_auth ‖ kMix` mit
+    `kMix = HKDF-SHA-384(code, 'parallax-pair-v1', 'auth-mix')`. Ergänzt ADR-207.
+  - Fehlversuche beim Koppeln zählen je Adresse (3) und insgesamt (20).
+  - Harte Fristen auf beiden Seiten: Kopplungs-Sockets 30 s, erste Anfrage eines bewiesenen Sockets 30 s,
+    Warteschlange des Clients 40 s, Weiterleitungen des Vermittlers (Header 30 s bzw. 120 s, danach Mindestdurchsatz,
+    16 offen je Rechner).
+  - Scheitert beim Aufheben das Schreiben von `peer.json`, wird die Datei gelöscht; ohne schreibbare `peer.json`
+    lauscht der freigebende Rechner nicht.
+  - Der Vermittler reicht nur Medientypen einer festen Menge durch, alles andere als Download.
+  - Je Kopplung getrennte Agents für HTTP und WebSockets (gemeinsame Handshake-Schranke); der Wächter gilt erst mit
+    `host.state` als verbunden, der Backoff beginnt erst nach stabiler Verbindung neu, „widerrufen“ erst nach einer
+    zweiten Probe nach 70 s; stille Fenster-Verbindungen enden nach 75 s.
+  - Fernverbindungen sehen die Links einer laufenden Profil-Anmeldung nicht (`profiles[].login.url`/`manualUrl`).
+- **Begründung:** Beide Reviews fanden nichts Kritisches oder Hohes. Diese Punkte schließen Wege, die ein fremdes Gerät
+  im Netz oder ein langsamer Rechner für Störungen nutzen könnte. Dazu kommt Tiefenverteidigung für den Fall, dass der
+  TLS-Schlüsseltausch je gebrochen wird. Der Code wird nie übertragen; ein `macA` als Orakel reicht bei 128 Bit nicht.
+
+## ADR-228 – Schlüsselspeicher über `node:ffi`, keine Firewall-Prüfung
+- **Datum/WP:** 18.11.2026, WP-82 (Spezifikation `docs/wp/WP-76.md` §B.5, §B.11).
+- **Entscheidung:**
+  - DPAPI (`CryptProtectData`/`CryptUnprotectData`, CurrentUser, Entropie je Zweck) wird direkt im Serverprozess
+    über das eingebaute `node:ffi` aufgerufen. Es gibt keinen Kindprozess und kein Skript; der Weg über
+    PowerShell entfällt.
+  - Ohne `node:ffi` (Node < 26.9 – 26.1 bis 26.8 nur mit `--experimental-ffi` –, `--no-experimental-ffi`) ist der Schlüsselspeicher nicht verfügbar. Dann gibt es
+    weder Freigeben noch Koppeln, und eine unverschlüsselte Ablage gibt es nie. `engines` bleibt bei 24.5, denn
+    nur „Mehrere Rechner“ braucht 26.9.
+  - Parallax prüft die Windows-Firewall nicht mehr (`REMOTE_ACCESS_CHECK_IDS` ohne `firewall`). Der Abschnitt
+    „Freigeben“ zeigt einen Hinweis, solange kein Rechner gekoppelt ist. `pnpm preflight` erinnert nur daran.
+- **Begründung:**
+  - Verhaltensbasierte Sicherheitssoftware hielt den gebauten Server an, sobald er PowerShell für DPAPI startete.
+    Ein Prozess, der PowerShell für DPAPI startet, ähnelt einem Passwort-Dieb. Parallax darf nie eine
+    Sicherheitswarnung auslösen (Nutzer).
+  - Der Aufruf über FFI ist der Weg, den auch andere Desktop-Programme gehen, und ist mit etwa 1 ms statt 260 ms
+    viel schneller.
+  - Die Firewall richtet der Nutzer selbst ein. Die Prüfung startete PowerShell und gehört nicht zu Parallax.
+- **Alternative:** Schutz nur über die Dateirechte des Profils, ohne DPAPI. Verworfen, solange FFI keine Warnung
+  auslöst, weil der Schutz geringer ist (Sicherung oder Kopie des Datenordners).
 ## ADR-229 – Keine Systemabfragen, die Sicherheitssoftware auslösen
 - **Datum/WP:** 18.11.2026, `fix/quiet-system-calls` (Nutzer: „Auf gar keinen Fall Sicherheitssoftware anschlagen“).
   Die Nummern 224–228 belegt der Branch `feature/multi-host`.
@@ -2543,7 +2701,7 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   - Prozessabfragen (Waisen-Bereinigung, Herzschlag-Schnappschuss alle 30 s, Shutdown-Sweep) laufen über `node:ffi`
     im Serverprozess: `CreateToolhelp32Snapshot` und `GetProcessTimes` (`lib/processNative.ts`, `lib/ffi.ts`), in
     etwa 10–30 ms statt 1–3 s. Prozesse, deren Startzeit sich nicht lesen lässt (andere Benutzer, geschützte
-    Prozesse), fehlen in der Liste wie Zeilen ohne `CreationDate` bei CIM. Nur ein Node ohne `node:ffi` (< 26.1)
+    Prozesse), fehlen in der Liste wie Zeilen ohne `CreationDate` bei CIM. Nur ein Node ohne `node:ffi` (< 26.9)
     fragt weiter PowerShell + CIM.
   - Bleiben: Windows-Toasts (PowerShell, nur auf Wunsch je Meldung), Konsole, Editor und Explorer nach einem Klick,
     `taskkill`, `reg query` für Chrome und Editoren, `git`.

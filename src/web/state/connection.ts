@@ -111,6 +111,14 @@ export interface HostConnectionOptions {
   checkAuth?: () => Promise<AuthCheckResult>;
   /** Home host compares `buildId` and reloads on a mismatch (WP-02 §7.1); default true. */
   homeHost?: boolean;
+  /**
+   * WP-80: a window connection to another computer through this server's forwarder
+   * (`hostWsPath`). Never a home host (no `buildId` reload). Close 4502 → reconnect with backoff,
+   * commands fail at once with HOST_UNREACHABLE until the next `hello`; close 4410 or another
+   * protocol in `hello` → phase `incompatible`; close 4403 → phase `revoked` (both without retry
+   * until `retryNow()`). Default false.
+   */
+  remote?: boolean;
   /** Default: BUILD_ID of this bundle. */
   buildId?: string;
   /** Default: getWindowClientId(). */
@@ -192,6 +200,8 @@ const CLOSED_PHASES: ReadonlySet<HostPhase> = new Set<HostPhase>([
   'unauthenticated',
   'server-stopped',
   'version-mismatch',
+  'incompatible',
+  'revoked',
   'stopped',
 ]);
 
@@ -225,7 +235,8 @@ function presenceOf(state: ClientState, hostId: HostId): PresenceState {
 export function createHostConnection(options: HostConnectionOptions): ManagedHostConnection {
   const hostId = options.hostId;
   const store = options.store ?? clientStore;
-  const homeHost = options.homeHost ?? true;
+  const remote = options.remote ?? false;
+  const homeHost = !remote && (options.homeHost ?? true);
   const buildId = options.buildId ?? BUILD_ID;
   const clientId = options.clientId ?? getWindowClientId();
   const reload =
@@ -262,6 +273,8 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
   /** Close 4504: epoch ms when the restart gives up; null = no restart in progress. */
   let restartDeadline: number | null = null;
   let restartTimer: ReturnType<typeof setTimeout> | null = null;
+  /** WP-80 (remote, close 4502): commands fail with this until the next `hello`. */
+  let unreachable: ErrorPayload | null = null;
 
   const subscriptions = new Map<EntryId, Subscription>();
   /** Unsubscribed entries whose view is still cached, oldest first. */
@@ -469,10 +482,45 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
       versionMismatch(null);
       return;
     }
+    if (remote && handleRemoteClose(code)) return;
     // 1006 (also a rejected upgrade), 1000, 1001, 4400 …: back to the auth check, then reconnect.
     scheduleReconnect(makeError('CONNECTION_LOST', { code }));
     if (rejectedUpgrades >= UPGRADE_REJECTED_AFTER)
       updateHost(store, hostId, () => ({ upgradeRejected: true }));
+  }
+
+  /**
+   * WP-80: the close codes of the forwarder (`WS_CLOSE`, WP-76 §C). 4502 → reconnect with the
+   * normal backoff, commands fail at once meanwhile; 4410/4403 → closed until `retryNow()` (no
+   * reload, no loop). True when the code was one of them.
+   */
+  function handleRemoteClose(code: number): boolean {
+    if (code === WS_CLOSE.HOST_UNREACHABLE) {
+      unreachable = makeError('HOST_UNREACHABLE');
+      failAllPending('HOST_UNREACHABLE');
+      scheduleReconnect(unreachable);
+      return true;
+    }
+    if (code === WS_CLOSE.HOST_INCOMPATIBLE) {
+      failAllPending('HOST_INCOMPATIBLE');
+      setPhase('incompatible', { error: makeError('HOST_INCOMPATIBLE') });
+      return true;
+    }
+    if (code === WS_CLOSE.HOST_REVOKED) {
+      failAllPending('HOST_REVOKED');
+      setPhase('revoked', { error: makeError('HOST_REVOKED') });
+      return true;
+    }
+    return false;
+  }
+
+  /** Why a command cannot go out now (closed phase, restart, unreachable computer); null = it can. */
+  function blockedBy(): ErrorPayload | null {
+    if (phase === 'incompatible') return makeError('HOST_INCOMPATIBLE');
+    if (phase === 'revoked') return makeError('HOST_REVOKED');
+    // Restarting: the next server is another instance, which would drop the command anyway.
+    if (CLOSED_PHASES.has(phase) || phase === 'restarting' || !started) return makeError('CONNECTION_LOST');
+    return unreachable;
   }
 
   /** Full resync (new serverInstanceId): drop summaries, views, seqs and open commands of this host. */
@@ -534,10 +582,23 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
   function handleHello(hello: HelloMessage): void {
     const protocolOk = hello.protocolVersion === PROTOCOL_VERSION;
     const buildOk = !homeHost || hello.buildId === buildId;
+    if (remote && !protocolOk) {
+      // ADR-209: another computer on another protocol is incompatible – never a reload.
+      closeTransport();
+      failAllPending('HOST_INCOMPATIBLE');
+      setPhase('incompatible', {
+        error: makeError('HOST_INCOMPATIBLE', {
+          protocol: hello.protocolVersion,
+          version: hello.serverVersion,
+        }),
+      });
+      return;
+    }
     if (!protocolOk || !buildOk) {
       versionMismatch(hello);
       return;
     }
+    unreachable = null;
     if (lastInstanceId !== null && lastInstanceId !== hello.serverInstanceId) fullResync();
     const sameInstance = lastInstanceId === hello.serverInstanceId;
     lastInstanceId = hello.serverInstanceId;
@@ -548,7 +609,14 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
 
     const presence = presenceOf(store.getState(), hostId);
     lastSentPresence = JSON.stringify(presence);
-    transmit({ type: 'clientHello', protocolVersion: PROTOCOL_VERSION, buildId, clientId, presence });
+    transmit({
+      type: 'clientHello',
+      protocolVersion: PROTOCOL_VERSION,
+      buildId,
+      clientId,
+      presence,
+      kind: 'window',
+    });
     setPhase('open', {
       error: null,
       serverInstanceId: hello.serverInstanceId,
@@ -779,10 +847,8 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
   // ---- commands ----
 
   function send<C extends Command>(cmd: C): Promise<CommandResult<C['name']>> {
-    // Restarting: the next server is another instance, which would drop the command anyway.
-    if (CLOSED_PHASES.has(phase) || phase === 'restarting' || !started) {
-      return Promise.reject(new ClientCommandError(makeError('CONNECTION_LOST')));
-    }
+    const blocked = blockedBy();
+    if (blocked !== null) return Promise.reject(new ClientCommandError(blocked));
     const cmdId = newCmdId();
     const parsed = cmdMessageSchema.safeParse({ type: 'cmd', cmdId, cmd });
     if (!parsed.success) {
@@ -875,6 +941,7 @@ export function createHostConnection(options: HostConnectionOptions): ManagedHos
             buildId,
             clientId,
             presence: presenceOf(store.getState(), hostId),
+            kind: 'window',
           };
           const cmd: ClientMessage = { type: 'cmd', cmdId, cmd: { name: 'server.shutdown' } };
           try {

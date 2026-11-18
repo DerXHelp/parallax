@@ -12,7 +12,7 @@ Web Notifications zeigen darf – `systemNotifications`) meldet `state/presence.
 
 | Datei | Inhalt |
 |---|---|
-| `channel.ts` | `chooseDeliveryChannel({ delivery, focused, visible, permission, focusedElsewhere, osAllowed })` (rein): folgt dem Server und korrigiert nur veraltete Präsenz – `system` an ein Fenster im Blick → `in_app` (außer `focusedElsewhere: 'system'`), `in_app` an ein Fenster im Hintergrund → `system`, wenn OS-Benachrichtigungen erlaubt sind (nie gegen „Nicht stören“); ohne Berechtigung `in_app` |
+| `channel.ts` | `chooseDeliveryChannel({ delivery, focused, visible, permission, focusedElsewhere, osAllowed })` (rein): folgt dem Server und korrigiert nur veraltete Präsenz – `system` an ein Fenster im Blick → `in_app` (außer `focusedElsewhere: 'system'`), `in_app` an ein Fenster im Hintergrund → `system`, wenn OS-Benachrichtigungen erlaubt sind (nie gegen „Nicht stören“); ohne Berechtigung oder ohne `osAllowed` (Filter dieses Rechners, WP-81) `in_app` |
 | `system.ts` | `SystemNotifier` (`permission`, `requestPermission`, `show({ title, body, tag, silent?, onClick })`), `browserNotifier`, `getSystemNotifier`/`setSystemNotifier` (Tests) |
 | `sounds.ts` | Töne (ADR-109): `SOUNDS` (fünf synthetisierte Klänge, Oszillator + Hüllkurve, ≤ 600 ms), `playSound(id, volume)` → `'played' \| 'locked' \| 'unsupported'`, `unlockAudio()`, `installAudioUnlock(window)` (erstes `pointerdown`/`keydown`), `audioState()`, `subscribeAudioUnlock`, `SoundPlayer` (`state`, `play`, `onUnlock`, optional `unlock`)/`webAudioPlayer`, `resetAudio()` (Tests) |
 | `delivery.ts` | `startNotificationDelivery({ store?, notifier?, focusWindow?, sounds? })` → Stop-Funktion; `IN_APP_NOTIFICATION_MS` (10 s), `noticeIdOf(id)`, `SOUNDS_LOCKED_NOTICE_ID` |
@@ -24,9 +24,14 @@ Regeln:
   `sessionKey`); `notify.clear` zieht Hinweis und Toast zurück; das Anzeigen einer Session
   (Auswahl, „Session anzeigen“, Klick auf den Toast) erledigt ihre Benachrichtigungen.
 - Ton bei jeder Benachrichtigung an dieses Fenster (`in_app` und `system`), wenn
-  `events[kind].sound` und nicht „Nicht stören“, mit `soundId` und `volume` der Einstellungen des
-  Hosts. Eigene Web Notifications sind dann `silent` (ebenso ohne Ton für das Ereignis); nur wenn
+  `events[kind].sound` und nicht „Nicht stören“, mit `soundId` und `volume` der Einstellungen
+  **dieses Rechners**. Eigene Web Notifications sind dann `silent` (ebenso ohne Ton für das Ereignis); nur wenn
   der Ton gewünscht, aber gesperrt oder Web Audio nicht verfügbar ist, darf der Browser klingen.
+- **Sessions anderer Rechner (WP-81, ADR-211):** Es gelten immer die Einstellungen dieses Rechners
+  (`selectSettings(state, LOCAL_HOST_ID)`, nicht die des Rechners der Session): Ton, Lautstärke, „Nicht stören“, Toast je
+  Ereignis, `focusedElsewhere`. „Nicht stören“ hier macht aus einer `system`-Meldung eines anderen Rechners
+  den In-App-Hinweis ohne Ton. Klick und Auswahl laufen über den `sessionKey` (`<hostId>:<entryId>`). Den
+  nativen Toast für freigegebene Sessions zeigt der steuernde Server (`src/server/hosts/relayToasts.ts`).
 - Autoplay: Töne sind bis zur ersten Interaktion im Fenster gesperrt – außer der Browser erlaubt
   Audio ohne Geste (WP41-01): Der erste Ton davor fragt den Browser **einmal** je Fensterlauf –
   `navigator.getAutoplayPolicy('audiocontext')`, wo vorhanden (ohne Kontext, auch schon in

@@ -93,7 +93,11 @@ Google Chrome (App Paths bzw. Program Files/%LOCALAPPDATA%, mit Version aus der 
 von `chrome.exe` – Chrome wird dafür nicht gestartet; ADR-136) und – seit den R1-Fixes – registrierte Virenscanner
 (Windows-Sicherheitscenter per CIM, ohne Admin-Rechte): Warnung bei Produkten mit Web-Traffic-Scan
 (Kaspersky, ESET, Bitdefender, Avast, AVG; README „Virenscanner mit Web-Traffic-Scan“), sonst Info;
-ist das Sicherheitscenter nicht lesbar (z. B. Windows Server), entfällt die Zeile.
+ist das Sicherheitscenter nicht lesbar (z. B. Windows Server), entfällt die Zeile. Seit WP-82 folgt
+„Several computers“ (`src/server/remote/preflight.ts`, dieselben Bausteine wie die Prüfungen in der App):
+Rolle aus `multi-host.json` (nur gelesen, nie in Quarantäne), TLS-Selbsttest (ML-KEM, ML-DSA) und
+Windows-Schlüsselspeicher (DPAPI) – Fehler nur mit Rolle, sonst Warnung –, bei „Freigeben“ zusätzlich Port,
+Adressen und Firewall (nur lesen). Es entstehen keine Schlüssel und keine Dateien.
 
 Der Recorder (`scripts/record/processes.ts`) startet PowerShell und `taskkill` nur noch über
 `runFile` mit absolutem System32-Pfad (R1-04/R1-16).

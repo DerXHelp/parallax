@@ -7,6 +7,7 @@ import { getSelectedSession } from '@web/state/selection';
 import { Alert } from '@web/ui/alert';
 import { Button } from '@web/ui/button';
 import { Skeleton } from '@web/ui/skeleton';
+import { HostBanner } from './hosts/HostBanner';
 import { PaneBanners } from './navigation/PaneBanners';
 import { SessionDropOverlay, useSessionDropZone } from './session-drop';
 import { SessionHeader } from './SessionHeader';
@@ -142,6 +143,7 @@ export function SessionPane({ sessionKey }: { sessionKey: string }) {
     >
       {drop.dragging ? <SessionDropOverlay /> : null}
       <SessionHeader sessionKey={sessionKey} />
+      <HostBanner sessionKey={sessionKey} />
       <PaneBanners sessionKey={sessionKey} />
       {meta.unavailable === null ? null : (
         <div className="p-3">

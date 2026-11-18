@@ -1,6 +1,6 @@
 import type { IncomingHttpHeaders } from 'node:http';
 import { makeError, type ErrorPayload } from '@shared/errors';
-import { API_PATHS, API_PREFIX, allowedHosts, allowedOrigins } from '@shared/http';
+import { API_PATHS, API_PREFIX, HOST_API_PATHS, allowedHosts, allowedOrigins } from '@shared/http';
 
 /**
  * Request guard (A.8, normative table: docs/architecture.md §5.1; R1-01, V1-01, ADR-018, ADR-019).
@@ -23,6 +23,10 @@ import { API_PATHS, API_PREFIX, allowedHosts, allowedOrigins } from '@shared/htt
  * | ws            | GET/HEAD /api/ws (WebSocket upgrade)        | required ∈ allowed   | if present: same-origin (V1-01)| cookie |
  * | mutation      | every other route/method (default-deny)     | required ∈ allowed   | required same-origin           | cookie |
  * | launcher      | POST /api/launcher/code                     | must be absent       | absent or none                 | bearer |
+ *
+ * The forwarder routes of another computer (WP-79, `HOST_API_PATHS`) have the class of their local
+ * counterpart: `/api/hosts/:hostId/blob/:blobId` blob, `/api/hosts/:hostId/file` file,
+ * `/api/hosts/:hostId/ws` ws, `/api/hosts/:hostId/attachments` (POST) mutation.
  *
  * Checked before the table, for every request:
  * - `Host` ∈ `allowedHosts(port, dev)`, else 403 HOST_HEADER_REJECTED.
@@ -81,6 +85,11 @@ const ROUTE_CLASSES: ReadonlyMap<string, ReadonlyMap<string, RouteClass>> = new 
   [API_PATHS.changelog, forMethods(READ_METHODS, 'file')],
   [API_PATHS.notices, forMethods(READ_METHODS, 'file')],
   [API_PATHS.ws, forMethods(READ_METHODS, 'ws')],
+  // WP-79: the forwarder of another computer – the same class as the local route; the upload
+  // (`HOST_API_PATHS.attachments`, POST) stays a `mutation` like `/api/attachments`.
+  [HOST_API_PATHS.blob, forMethods(READ_METHODS, 'blob')],
+  [HOST_API_PATHS.file, forMethods(READ_METHODS, 'file')],
+  [HOST_API_PATHS.ws, forMethods(READ_METHODS, 'ws')],
   [API_PATHS.auth, forMethods(['POST'], 'auth-exchange')],
   [API_PATHS.launcherCode, forMethods(['POST'], 'launcher')],
 ]);

@@ -13,6 +13,7 @@ import { Card } from '@web/ui/card';
 import { Slider } from '@web/ui/slider';
 import type { EditorDraft } from './lib/editor';
 import { FilesSection } from './sections/FilesSection';
+import { MultiHostDemo } from './sections/multi-host/MultiHostDemo';
 import { SettingsPage } from './SettingsPage';
 import { useSettingsEditor } from './state/settings-editor';
 
@@ -203,6 +204,33 @@ export const demos: PlaygroundDemo[] = [
   pageDemo('server', 'Settings – Server (no system integration)', 'server', 'plain'),
   pageDemo('server-integration', 'Settings – Server (system integration)', 'server', 'integration'),
   pageDemo('server-warnings', 'Settings – Server (AUTOSTART_FAILED)', 'server', 'warnings'),
+  {
+    id: 'multi-host-off',
+    title: 'Settings – Several computers (role off)',
+    render: () => <MultiHostDemo variant="off" />,
+  },
+  {
+    id: 'multi-host-share',
+    title: 'Settings – Several computers (share, not paired yet, firewall hint)',
+    description:
+      'Pair a computer: the code shows with a countdown; after 20 s the other computer “types” it.',
+    render: () => <MultiHostDemo variant="share" />,
+  },
+  {
+    id: 'multi-host-paired',
+    title: 'Settings – Several computers (share, paired and connected, log with rejected attempts)',
+    render: () => <MultiHostDemo variant="paired" />,
+  },
+  {
+    id: 'multi-host-errors',
+    title: 'Settings – Several computers (port in use, failed checks, other version)',
+    render: () => <MultiHostDemo variant="errors" />,
+  },
+  {
+    id: 'multi-host-control',
+    title: 'Settings – Several computers (control others)',
+    render: () => <MultiHostDemo variant="control" />,
+  },
   pageDemo('about', 'Settings – About', 'about', 'integration'),
   {
     id: 'sounds',

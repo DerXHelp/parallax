@@ -19,8 +19,18 @@ export const STORAGE_KEYS = {
    * fetched at start (ADR-153, i18n/language.ts). Missing = English.
    */
   language: `${PRODUCT_ID}.language`,
-  /** localStorage: sidebar view `flat` | `grouped` (WP-35, Plan "Sidebar"). */
+  /**
+   * localStorage: sidebar grouping `flat` | `grouped` (WP-35, Plan "Sidebar"; by folder) – WP-80
+   * also `host` | `host+folder` ("Group by" computer).
+   */
   sidebarMode: `${PRODUCT_ID}.sidebar.mode`,
+  /**
+   * WP-80: sessionStorage (this window) + localStorage (default of new windows): collapsed sidebar
+   * groups as a JSON array of group keys (`host:<id>`, `folder:<id>|<path>`).
+   */
+  sidebarCollapsedGroups: `${PRODUCT_ID}.sidebar.collapsedGroups`,
+  /** WP-80: localStorage: computer of the last "New session" (host id; missing/unknown = this computer). */
+  newSessionHost: `${PRODUCT_ID}.newSession.host`,
   /**
    * sessionStorage (this window) + localStorage (default of new windows): the sidebar is collapsed
    * into the rail in a wide window – `true` | `false` (V3-14, WP-58).

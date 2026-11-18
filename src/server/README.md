@@ -23,9 +23,13 @@ Ownership: `docs/architecture.md` §2.1 (Phase 3: `CLAUDE.md` bzw. `docs/wp/WP-5
 | `install/` | Installer `dist/install.js`: Prüfung, Versionsordner, Agent SDK, `start.mjs`/`parallax.cmd`, Aufräumen, `--use`, `--uninstall` (ADR-219) | 86 |
 | `host/` | Phase 2: Host-Befehle ohne Session – Ordner-Browser `fs.listDirectory` (ADR-119) | 33 |
 | `files/` | Phase 3: Datei-Dienst – Zugriffsrichtlinie (Wurzeln + Session-Index, ADR-141), `file.stat`/`statMany`, Inhalte für `GET /api/file` (ADR-142), Datei-Index `files.json` (ADR-145), Projektliste für den @-Picker (ADR-151), Editor-Erkennung und Programmstart (ADR-144); Port `files/ports.ts` eingefroren | 53 |
+| `secure/` | Mehrere Rechner: TLS-Profil, Zertifikate, Pins, DPAPI-Schlüsselspeicher, Verbindungsbeweis (`docs/wp/WP-76.md` §B); Port `secure/ports.ts` eingefroren | 78 |
+| `remote/` | Mehrere Rechner: Fernzugang des freigebenden Rechners – Listener, Kopplung, Peer, Verbindungsprotokoll (einzige Ausnahme vom Loopback, ADR-205); Port eingefroren | 78 |
+| `multihost/` | Mehrere Rechner: Rolle aus/freigeben/steuern (`multi-host.json`, ADR-224); Port eingefroren | 78 |
+| `hosts/` | Mehrere Rechner: Rechnerliste, Kopplung als Client, Vermittler, Wächter des steuernden Rechners; Port eingefroren | 79 |
 | `system/` | Phase 2: Windows-Integration – externe Konsole (+ Fake-Konsole), Autostart-Verknüpfung, Protokoll-Handler `parallax:`, `createSystemIntegration` (Port `system/ports.ts` eingefroren); WP-86: Einträge einer Installation (`start.mjs`, Startmenü, Marker) | 33, 86 |
 
 Regeln: nie aus `src/web` importieren; Logging nur über `lib/logger.ts`; jeder Spawn über
 `lib/process.ts` (`windowsHide: true`, ohne Shell, nur absolute `.exe`-Pfade – R1-04; einzige Ausnahme
 `spawnGui`/`spawnExplorer` für sichtbare GUI-Programme nach Nutzerklick, ADR-144); Pfadregeln
-nur aus `@shared/paths`; der Server lauscht nur auf `127.0.0.1` (R1-05).
+nur aus `@shared/paths`; der Server lauscht nur auf `127.0.0.1` (R1-05) – einzige Ausnahme ist der Fernzugang (`remote/`, ab Werk aus, ADR-205).

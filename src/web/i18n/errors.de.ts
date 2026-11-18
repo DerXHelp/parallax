@@ -124,4 +124,18 @@ export const errorsDe: Record<ErrorCode, string> = {
   UPDATE_DOWNGRADE_BLOCKED:
     'Diese ältere Version speichert Daten anders, und es gibt keine passende Sicherung.',
   UPDATE_RESTART_FAILED: 'Der Wechsel auf die neue Version ist fehlgeschlagen.',
+  HOST_UNREACHABLE: 'Der andere Rechner ist nicht erreichbar.',
+  HOST_INCOMPATIBLE:
+    'Auf dem anderen Rechner läuft eine andere Parallax-Version. Aktualisiere Parallax auf beiden Rechnern.',
+  HOST_REVOKED: 'Der andere Rechner nimmt diese Kopplung nicht mehr an. Kopple neu.',
+  HOST_NOT_FOUND: 'Dieser Rechner ist nicht mehr in der Liste.',
+  PAIRING_INVALID: 'Der Kopplungscode ist falsch, oder die Kopplung ist fehlgeschlagen.',
+  PAIRING_EXPIRED: 'Auf dem anderen Rechner ist keine Kopplung offen. Starte sie dort neu.',
+  PAIRING_RATE_LIMITED: 'Zu viele Kopplungsversuche. Warte einen Moment.',
+  REMOTE_ACCESS_FAILED: 'Der Fernzugang konnte nicht starten.',
+  REMOTE_ROLE_CONFLICT: 'In der aktuellen Rolle dieses Rechners nicht möglich.',
+  REMOTE_KEYSTORE_UNAVAILABLE:
+    'Der Windows-Schlüsselspeicher ist nicht verfügbar, daher lassen sich Schlüssel nicht sicher ablegen (braucht Node.js 26.9 oder neuer).',
+  REMOTE_NOT_ALLOWED: 'Das geht nur am Rechner selbst.',
+  DRAFT_TOO_LARGE: 'Der Entwurf ist zu groß zum Speichern.',
 };

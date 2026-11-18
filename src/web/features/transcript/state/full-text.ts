@@ -1,15 +1,16 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import { errorPayloadSchema, type ErrorPayload } from '@shared/errors';
-import { blobPath } from '@shared/http';
-import { showErrorNotice, showTextNotice } from '@web/state/notices';
+import { sessionBlobUrl } from '@web/lib/host-urls';
 import { SizedLru } from '@web/lib/sized-cache';
+import { showErrorNotice, showTextNotice } from '@web/state/notices';
 
 /**
  * "Vollständig laden" for capped texts (B "Speicher", model.ts §5.5): the full text of a capped
  * value lives as a blob (`GET /api/blob/<id>`, cookie auth). Loaded texts are kept in a small
  * LRU bounded by count and size (virtualized rows re-mount), failures show a notice
  * (architecture §2.3i) and can be retried.
- * Phase 1 has only the local host: `sessionKey` is accepted for multi-host blob links (R1W-20).
+ * WP-80: the blob of another computer's session comes through this server's forwarding route
+ * (`sessionBlobUrl(sessionKey, …)`, same origin).
  */
 
 export type FullTextStatus = 'idle' | 'loading' | 'done' | 'error';
@@ -29,10 +30,10 @@ export class BlobLoadError extends Error {
   }
 }
 
-async function fetchBlobText(blobId: string): Promise<string> {
+async function fetchBlobText(blobId: string, sessionKey: string | null): Promise<string> {
   let response: Response;
   try {
-    response = await fetch(blobPath(blobId), { credentials: 'same-origin' });
+    response = await fetch(sessionBlobUrl(sessionKey, blobId), { credentials: 'same-origin' });
   } catch {
     throw new BlobLoadError(null);
   }

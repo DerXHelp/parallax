@@ -40,6 +40,11 @@ describe('preferences playground', () => {
       'server',
       'server-integration',
       'server-warnings',
+      'multi-host-off',
+      'multi-host-share',
+      'multi-host-paired',
+      'multi-host-errors',
+      'multi-host-control',
       'about',
       'sounds',
     ]);

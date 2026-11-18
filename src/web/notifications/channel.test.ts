@@ -41,6 +41,14 @@ describe('chooseDeliveryChannel (A.9, ADR-109: the window follows the server, co
     expect(choose({ delivery: 'in_app', focused: false, osAllowed: false })).toBe('in_app');
   });
 
+  it('WP-81: a Windows notification becomes the in-app hint against the filters of this computer', () => {
+    // E.g. a session of another computer: its server filtered with its own settings.
+    expect(choose({ delivery: 'system', focused: false, visible: false, osAllowed: false })).toBe('in_app');
+    expect(choose({ delivery: 'system', focused: true, focusedElsewhere: 'system', osAllowed: false })).toBe(
+      'in_app',
+    );
+  });
+
   it('falls back to the in-app hint without permission', () => {
     for (const permission of ['unsupported', 'default', 'denied'] as const) {
       expect(choose({ delivery: 'system', focused: false, visible: false, permission })).toBe('in_app');

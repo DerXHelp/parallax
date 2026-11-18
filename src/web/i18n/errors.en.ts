@@ -120,4 +120,18 @@ export const errorsEn: Record<ErrorCode, string> = {
   UPDATE_NODE_TOO_OLD: 'This version needs a newer Node.js.',
   UPDATE_DOWNGRADE_BLOCKED: 'This older version stores data differently and there is no matching backup.',
   UPDATE_RESTART_FAILED: 'Switching to the new version failed.',
+  HOST_UNREACHABLE: 'The other computer cannot be reached.',
+  HOST_INCOMPATIBLE:
+    'The other computer runs a different Parallax version. Update Parallax on both computers.',
+  HOST_REVOKED: 'The other computer no longer accepts this coupling. Pair again.',
+  HOST_NOT_FOUND: 'This computer is no longer in the list.',
+  PAIRING_INVALID: 'The pairing code is wrong, or pairing failed.',
+  PAIRING_EXPIRED: 'No pairing is open on the other computer. Start pairing there again.',
+  PAIRING_RATE_LIMITED: 'Too many pairing attempts. Wait a moment.',
+  REMOTE_ACCESS_FAILED: 'Remote access could not start.',
+  REMOTE_ROLE_CONFLICT: 'Not possible in the current role of this computer.',
+  REMOTE_KEYSTORE_UNAVAILABLE:
+    'The Windows key store is not available, so keys cannot be stored safely (needs Node.js 26.9 or newer).',
+  REMOTE_NOT_ALLOWED: 'This is only possible on the computer itself.',
+  DRAFT_TOO_LARGE: 'The draft is too large to be saved.',
 };

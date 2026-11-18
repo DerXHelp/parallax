@@ -999,7 +999,10 @@ ADR-091). Das Banner „Benachrichtigungen
 aktivieren“ erscheint nur ohne native Toasts. Ein Klick auf den nativen Toast schließt ihn nur –
 außer mit der Phase-2-Option `settings.notifications.openOnClick` (ADR-109): dann trägt der Toast
 `parallax://session/<entryId>`, der HKCU-Protokoll-Handler startet den Launcher mit `--open`, und der
-öffnet ein App-Fenster mit `#code=…&session=<entryId>`. Phase 2 außerdem: „Nicht stören“,
+öffnet ein App-Fenster mit `#code=…&session=<entryId>`. Mehrere Rechner (WP-81, ADR-207): Toasts des Wächters
+für Sessions eines freigebenden Rechners tragen `parallax://session/<hostId>/<entryId>`, das Fenster öffnet mit
+`#session=<hostId>:<entryId>`; der freigebende Server schickt dorthin, wo er sonst selbst toasten würde
+(zuletzt fokussiert war ein Fenster über den Fernzugang), `notify{delivery:'system'}` an den Wächter. Phase 2 außerdem: „Nicht stören“,
 Toast/Ton je Ereignis, `focusedElsewhere` und `doneMinSeconds` aus den Einstellungen (Server
 filtert), Töne spielt der Client per Web Audio.
 

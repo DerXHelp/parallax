@@ -11,19 +11,32 @@
  * ADR-229; `--home=<dir>` / PARALLAX_HOME like the server, default %LOCALAPPDATA%\Parallax). The profiles are those of the data folder's `profiles.json`, read
  * without writing anything (WP-32; missing or newer file → only "Standard"), each with its
  * findings (profileIssues). Only `claude --version` and `claude auth status` are run – no model
- * call, no tokens.
+ * call, no tokens. Then "Several computers" (WP-82, remote/preflight.ts): TLS self-test, Windows key
+ * store and – for the role "Share" – port and addresses (the firewall only as a reminder), read-only
+ * like the rest.
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { createClaudeIntegration } from '../src/server/claude/integration';
-import { formatPreflight, loadPreflightProfiles, runPreflight } from '../src/server/claude/preflight';
+import {
+  formatPreflight,
+  loadPreflightProfiles,
+  preflightExitCode,
+  runPreflight,
+} from '../src/server/claude/preflight';
 import { profileIssues } from '../src/server/claude/profileIssues';
 import { defaultProfileIssueContext } from '../src/server/claude/profileStore';
 import { createProfileStore } from '../src/server/claude/profiles';
 import { readSdkManifest } from '../src/server/claude/resolveClaude';
 import { loadConfig } from '../src/server/config';
+import { createLogger } from '../src/server/lib/logger';
+import { listenerAddresses } from '../src/server/remote/addresses';
+import { probePort } from '../src/server/remote/checks';
+import { multiHostPreflight } from '../src/server/remote/preflight';
+import { createDpapiKeyStore } from '../src/server/secure/keyStore';
+import { tlsSelfTest } from '../src/server/secure/selfTest';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -65,8 +78,17 @@ async function main(): Promise<number> {
     profilesSource: source,
     profileIssues: (profile) => profileIssues(profile, issueContext),
   });
-  process.stdout.write(formatPreflight(report.checks));
-  return report.exitCode;
+  const keyStore = createDpapiKeyStore({ logger: createLogger({ level: 'silent' }) });
+  const multiHost = await multiHostPreflight({
+    home,
+    selfTest: () => tlsSelfTest(),
+    keyStoreAvailable: () => keyStore.available(),
+    addresses: (bindAddress) => listenerAddresses(bindAddress),
+    probe: probePort,
+  });
+  const checks = [...report.checks, ...multiHost];
+  process.stdout.write(formatPreflight(checks));
+  return Math.max(report.exitCode, preflightExitCode(checks));
 }
 
 main().then(

@@ -16,11 +16,18 @@ export { HOOK_DISPLAYS };
 export type { HookDisplay };
 export const DEFAULT_HOOK_DISPLAY: HookDisplay = 'failed';
 
-export function useHookDisplay(hostId: HostId = LOCAL_HOST_ID): HookDisplay {
-  return useSettings(hostId).hookDisplay;
+/**
+ * WP-80 (WP-75 §4.4): a display setting – always this computer's, also for the sessions of another
+ * computer (the window follows the computer the user sits at).
+ */
+export function useHookDisplay(): HookDisplay {
+  return useSettings(LOCAL_HOST_ID).hookDisplay;
 }
 
-export function getHookDisplay(hostId: HostId = LOCAL_HOST_ID, store: ClientStore = clientStore): HookDisplay {
+export function getHookDisplay(
+  hostId: HostId = LOCAL_HOST_ID,
+  store: ClientStore = clientStore,
+): HookDisplay {
   return selectSettings(store.getState(), hostId).hookDisplay;
 }
 

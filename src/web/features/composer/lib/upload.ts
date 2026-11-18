@@ -1,6 +1,7 @@
 import { makeError, errorPayloadSchema, type ErrorPayload } from '@shared/errors';
-import { API_PATHS, attachmentUploadResponseSchema, type UploadMediaType } from '@shared/http';
+import { attachmentUploadResponseSchema, type UploadMediaType } from '@shared/http';
 import type { BlobRef } from '@shared/model';
+import { sessionAttachmentsPath } from '@web/lib/host-urls';
 
 /**
  * Attachment upload (ADR-103, ADR-146; WP-33/53 route): `POST /api/attachments?name=…[&width=…&height=…]`
@@ -10,6 +11,9 @@ import type { BlobRef } from '@shared/model';
  * errors with `errorPayloadSchema` (413 PAYLOAD_TOO_LARGE, 415 UNSUPPORTED_MEDIA_TYPE, 400
  * VALIDATION_FAILED); a failed request is CONNECTION_LOST. The uploader is replaceable
  * (playground: no server behind Vite; tests).
+ * WP-80: with `sessionKey` of another computer's session the upload goes to this server's
+ * forwarding route `/api/hosts/<id>/attachments` (`sessionAttachmentsPath`, same origin) – the
+ * attachment must live on the computer that runs the session. Without one: this computer.
  */
 
 export class UploadError extends Error {
@@ -26,6 +30,8 @@ export interface UploadRequest {
   name: string;
   width?: number | null;
   height?: number | null;
+  /** WP-80: session the attachment is for – decides the computer (missing/null = this computer). */
+  sessionKey?: string | null;
 }
 
 export type AttachmentUploader = (upload: UploadRequest, signal: AbortSignal) => Promise<BlobRef>;
@@ -50,13 +56,13 @@ export function uploadName(name: string): string {
 }
 
 /** Query string of the upload (name cut to the schema limit, size only for images). */
-export function uploadQuery(upload: Pick<UploadRequest, 'name' | 'width' | 'height'>): string {
+export function uploadQuery(upload: Pick<UploadRequest, 'name' | 'width' | 'height' | 'sessionKey'>): string {
   const query = new URLSearchParams({ name: uploadName(upload.name) });
   if (typeof upload.width === 'number' && typeof upload.height === 'number') {
     query.set('width', String(upload.width));
     query.set('height', String(upload.height));
   }
-  return `${API_PATHS.attachments}?${query.toString()}`;
+  return `${sessionAttachmentsPath(upload.sessionKey)}?${query.toString()}`;
 }
 
 export const httpUploader: AttachmentUploader = async (upload, signal) => {

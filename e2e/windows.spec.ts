@@ -60,15 +60,18 @@ test('target lock: a decision that appears while typing is not answered by Enter
   newWindow,
 }) => {
   const session = await app.newSession(await server.makeProject('target-lock'));
-  // Another window (own profile: own drafts) starts the turn while this window has a draft.
+  // Another window starts a turn whose approval follows after about 3 s of text. Drafts are shared
+  // (WP-77, ADR-210): a prompt sent while this window has a draft would clear that draft.
   const other = await newWindow({ context: 'new', hash: `session=${session.key}` });
   const there = other.session(session.key);
   await expect(there.pane).toBeVisible();
+  await there.send('fake:permission-later from the other window');
 
+  // Claude works; this window types its next instruction before the decision shows.
+  await expect(session.composerRoot).toHaveAttribute('data-mode', 'queue');
   await session.composer.click();
   await session.composer.fill('my next instruction');
-  await expect(session.composerRoot).toHaveAttribute('data-mode', 'idle');
-  await there.send('fake:permission from the other window');
+  await expect(session.composerRoot).toHaveAttribute('data-mode', 'queue');
 
   const card = await session.armedCard('permission');
   // The decision is open, but not the Enter target of this draft: hint + explicit button.

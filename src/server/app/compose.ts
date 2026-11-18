@@ -45,7 +45,7 @@ import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { Logger } from 'pino';
 import type { EntryId, ProfileId } from '@shared/common';
-import { serverOrigin } from '@shared/http';
+import { REMOTE_PATHS, serverOrigin } from '@shared/http';
 import type { Settings } from '@shared/model';
 import { WS_CLOSE, type SessionOp } from '@shared/protocol';
 import { createFakeBackend } from '../backend/fakeBackend';
@@ -69,6 +69,8 @@ import { createFileService } from '../files/service';
 import { createFsCommands } from '../host/fsCommands';
 import { createLinkCommands, createRecordingLinkOpener, createSystemLinkOpener } from '../host/linkCommands';
 import { createLoginService, LOGIN_HOME_DIR, type LoginService } from '../host/login';
+import { createRelayToasts, type RelayToasts } from '../hosts/relayToasts';
+import { createHostsService, type Hosts } from '../hosts/service';
 import { createApp } from '../http/app';
 import { createAuthService, type AuthService } from '../http/auth';
 import { serverArgsFor } from '../launcher/args';
@@ -93,12 +95,20 @@ import { createNativeToasts } from '../sessions/nativeToasts';
 import { openProcessStore } from '../sessions/processStore';
 import { createAttachmentFileStore } from '../store/attachments';
 import { createBlobStore } from '../store/blobs';
+import { createDraftStore, type FileDraftStore } from '../store/drafts';
+import { registerContentRoutes } from '../http/content';
+import type { MultiHostService } from '../multihost/ports';
+import { createMultiHostService } from '../multihost/service';
+import type { RemoteHubAttach } from '../remote/ports';
+import { createRemoteAccessService, type RemoteAccess } from '../remote/service';
+import type { KeyStore } from '../secure/ports';
+import { createDpapiKeyStore } from '../secure/keyStore';
 import { createDecisionStore } from '../store/decisions';
 import { StoreVersionTooNewError, createStoreWarnings, type StoreWarningRegistry } from '../store/jsonStore';
 import { openRegistryStore } from '../store/registry';
 import { openSettingsStore } from '../store/settings';
 import { createTranscriptStore } from '../store/transcripts';
-import { createSyncHub } from '../sync/hub';
+import { createSyncHub, type SyncHub } from '../sync/hub';
 import type { UpdateService } from '../update/ports';
 import { createUpdateService } from '../update/service';
 import type { AttachmentFileStore, SessionPublisher } from '../sync/ports';
@@ -164,6 +174,8 @@ export interface StartServerOptions {
   systemIntegration?: SystemIntegration;
   /** Test seam: replaces `createUpdateService(…)` (WP-87; e.g. `createFakeUpdateService`). */
   updateService?: UpdateService;
+  /** Test seam: replaces the DPAPI key store of "Several computers" (WP-78a; e.g. `createMemoryKeyStore`). */
+  keyStore?: KeyStore;
   logger?: Logger;
 }
 
@@ -202,6 +214,8 @@ interface Stores {
    * `materialize()` and the attachment folder of every start; nothing to close (no cache).
    */
   attachments: AttachmentFileStore;
+  /** WP-77 (ADR-210): `entries/<id>/draft.json` – the synchronized composer draft. */
+  drafts: FileDraftStore;
   /** Closes every store (errors are logged, never thrown). */
   close(): Promise<void>;
 }
@@ -252,6 +266,8 @@ async function openStores(config: ServerConfig, instance: ServerInstance, log: L
     const transcripts = createTranscriptStore({ home, warnings, validation: config.validation });
     opened.push({ name: 'transcripts', close: () => transcripts.close() });
     const attachments = createAttachmentFileStore(home, blobs);
+    const drafts = createDraftStore({ home, warnings });
+    opened.push({ name: 'drafts', close: () => drafts.close() });
     return {
       warnings,
       registry,
@@ -265,6 +281,7 @@ async function openStores(config: ServerConfig, instance: ServerInstance, log: L
       decisions,
       transcripts,
       attachments,
+      drafts,
       close: closeOpened,
     };
   } catch (error) {
@@ -459,6 +476,15 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   let update: UpdateService | null = null;
   /** WP-87: the shutdown is a restart for an update or a rollback – windows get close 4504. */
   let restarting = false;
+  /** WP-78a: remote access of a sharing computer and the role of "Several computers". */
+  let remoteAccess: RemoteAccess | null = null;
+  let multiHost: MultiHostService | null = null;
+  /** WP-79: the computers this one controls (list, watchers, forwarder). */
+  let controlHosts: Hosts | null = null;
+  /** WP-81: native toasts for the watchers' notifications (role control). */
+  let relayToasts: RelayToasts | null = null;
+  /** WP-78a: the stored role is activated after listen, in the background (never fatal). */
+  let multiHostStart: Promise<void> = Promise.resolve();
   let manager: SessionManager | null = null;
   let app: FastifyInstance | null = null;
   let lock: ServerLockHandle | null = null;
@@ -497,6 +523,20 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
    * step: `manager.shutdown()` disposes the backend (one owner, R2-06).
    */
   const steps: ShutdownStep[] = [
+    // WP-78a: the listener for other computers first (remote windows get SERVER_SHUTDOWN), then the
+    // peer app and the remote stores (peer, connection log) are flushed – before the stores close.
+    {
+      name: 'multiHost',
+      run: async () => {
+        await multiHostStart;
+        // WP-81: stop listening first – leaving the role at shutdown must not remove the toasts.
+        relayToasts?.close();
+        await multiHost?.stop();
+        // WP-79: forwarder windows and watchers go before the http step (idempotent).
+        await controlHosts?.close();
+        await remoteAccess?.close();
+      },
+    },
     { name: 'http', run: () => app?.close() },
     { name: 'system', run: () => systemApply },
     // R4-13: no new check starts during the shutdown; a running one (claude --version + auth
@@ -611,6 +651,72 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         logger: options.logger,
       }));
     update = updateService;
+    // WP-78a/78b (ADR-205 … 208, 224): remote access of a sharing computer and the role. The hub
+    // exists only after the engine; the listener starts after `listen`, so the late binding holds.
+    let hubRef: SyncHub | null = null;
+    const hubAttach: RemoteHubAttach = {
+      handleRemoteConnection: (socket, info) => {
+        if (hubRef === null) socket.terminate();
+        else hubRef.handleRemoteConnection(socket, info);
+      },
+      remoteConnections: () => hubRef?.remoteConnections() ?? 0,
+      closeRemote: (code) => {
+        hubRef?.closeRemote(code);
+      },
+    };
+    const loggerOption = options.logger === undefined ? {} : { logger: options.logger };
+    // One key store for both sides (DPAPI helper queue, one probe).
+    const keyStore = options.keyStore ?? createDpapiKeyStore(loggerOption);
+    const share = createRemoteAccessService({
+      home: config.home,
+      instance,
+      hub: hubAttach,
+      keyStore,
+      // blob/file/attachments for the coupled computer: same routes and header policy as the local
+      // app, no cookie (the socket class decides), the coupling generation before every effect.
+      registerContent: (peerApp, context) =>
+        registerContentRoutes(peerApp, {
+          paths: REMOTE_PATHS,
+          blobs: stores.blobs,
+          files: fileService,
+          beforeEffect: (request) => context.isCurrent(request),
+          ...loggerOption,
+        }),
+      currentRole: () => roles.config().role,
+      warnings: stores.warnings,
+      ...loggerOption,
+    });
+    remoteAccess = share;
+    // WP-79: the controlling side – host list, pairing, watchers, forwarder `/api/hosts/:hostId/*`.
+    const hosts = createHostsService({
+      home: config.home,
+      instance,
+      keyStore,
+      currentRole: () => roles.config().role,
+      warnings: stores.warnings,
+      ...loggerOption,
+    });
+    controlHosts = hosts;
+    // WP-81: notifications of the other computers' watchers as native toasts here – with this
+    // computer's filters (do not disturb, events), rate-limited, click → parallax://session/<host>/<id>.
+    relayToasts = createRelayToasts({
+      hosts,
+      settings: () => stores.settings.get(),
+      enabled: config.toasts === 'native',
+      available: () => toasts.available(),
+      system,
+      ...loggerOption,
+    });
+    // `roles.start()` prepares both sides and activates the stored one; `roles.onChange` also fires
+    // for changes of either side (host list, remote access).
+    const roles = createMultiHostService({
+      home: config.home,
+      share,
+      control: hosts,
+      warnings: stores.warnings,
+      ...loggerOption,
+    });
+    multiHost = roles;
     const sessions = createSessionManager({
       toasts,
       // WP22-06: the FakeBackend has no real process tree (fake PIDs) – no heartbeat snapshots.
@@ -629,6 +735,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         commandCatalogs: stores.commandCatalogs,
         // Phase 3 (ADR-146): without it file attachments are refused (UNSUPPORTED_MEDIA_TYPE).
         attachments: stores.attachments,
+        // WP-77 (ADR-210): synchronized drafts; `manager.shutdown()` flushes before `stores.close()`.
+        drafts: stores.drafts,
       },
       host: {
         serverVersion: instance.serverVersion,
@@ -641,6 +749,13 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         systemIntegration: system.available,
         app: () => updateService.app(),
         update: () => updateService.state(),
+        // WP-76/78a: role, host list (WP-79) and remote access – `remoteAccess` never leaves for a
+        // remote connection (the hub redacts it).
+        multiHost: () => ({
+          multiHost: roles.config(),
+          remoteHosts: hosts.list(),
+          remoteAccess: share.state(),
+        }),
       },
       // ADR-101: `profile.*` (WP-32), `fs.listDirectory` (WP-33) and the file commands `file.*`,
       // `files.*`, `editor.detect` (WP-53, ADR-140) – disjoint names.
@@ -659,6 +774,12 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         loginService,
         // WP-87: `update.check|prepare|apply|rollback|dismiss`.
         updateService,
+        // WP-78a: `multiHost.configure` and `remoteAccess.*` (the pairing code goes only to the
+        // asking window – never logged, never in ops).
+        roles.commands,
+        // WP-79: `hosts.add|update|move|remove|reconnect`.
+        hosts.commands,
+        share.commands,
       ],
       loginState: (profileId) => loginService.state(profileId),
       // Autostart and protocol handler follow every settings.update (ADR-110).
@@ -678,6 +799,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     // Invalid outgoing values are logged, counted and dropped – also in production, where real SDK
     // data reaches the contract for the first time (R3-05); tests and E2E: throw.
     const hub = createSyncHub({ source: sessions, instance, validation: config.validation });
+    hubRef = hub;
     // Before start() (WP-13 §3.5, R1-18). ADR-145: the file index sees every op batch before the hub.
     sessions.attachPublisher(
       observedPublisher(
@@ -732,6 +854,10 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     updateService.onChange(() => {
       sessions.publishHostState();
     });
+    // WP-78a: role or side state changed (listener, peer connected, rejected attempt, window).
+    roles.onChange(() => {
+      sessions.publishHostState();
+    });
     await sessions.start();
 
     let webRoot = options.webRoot;
@@ -751,6 +877,9 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       files: fileService,
       // WP-87: upload, "What's new", notices; windows get 4504 when the shutdown is a restart.
       update: updateService,
+      // WP-79: forwarder routes `/api/hosts/:hostId/{ws,blob,file,attachments}` (same cookie/origin
+      // guards as every route; windows of it close with AUTH_REVOKED on a new launcher code).
+      hosts,
       closeCode: () => (restarting ? WS_CLOSE.SERVER_RESTARTING : WS_CLOSE.SERVER_SHUTDOWN),
       webRoot,
     });
@@ -846,6 +975,12 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
 
   // WP-87: automatic update checks (first after 60 s; only in an installation with updates.check).
   update.start();
+
+  // WP-78a: the stored role (sharing: checks, then the listener) in the background – never fatal;
+  // the side shows its error itself (`remoteAccess.error`, retried with `remoteAccess.check`).
+  multiHostStart = multiHost.start().catch((error: unknown) => {
+    log.warn({ err: error }, 'the role of several computers could not be activated');
+  });
 
   const origin = serverOrigin(port);
   log.info(

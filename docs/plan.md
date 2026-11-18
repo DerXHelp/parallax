@@ -463,45 +463,33 @@ Das Problem in der Konsole: Bei `ExitPlanMode` ploppt ein Dialog auf und blockie
 
 ---
 
-## Multi-Host (Überlegung des Nutzers – Ausbau, Vorbereitung ab Phase 1)
-**Szenario:**
-- Auf einem verwalteten Rechner läuft Claude über ein Gateway mit eigenen Modellen (über `env` in `settings.json`).
-- Auf einer Windows-VM läuft Claude gegen Anthropic-Modelle.
-- **Wunsch:** Die Sessions auf der VM sollen sich vom Parallax des lokalen Rechners aus steuern lassen.
+## Multi-Host: mehrere Rechner (Ausbau, Vorbereitung ab Phase 1)
+> Ausgearbeitet in `docs/wp/WP-75.md` (16.11.2026, überarbeitet 18.11.2026). Dort gelten die Entscheidungen; dieser
+> Abschnitt fasst nur die Idee zusammen.
+
+**Wunsch:** Zwei oder mehr Rechner im selben Netz, jeder mit eigenem Parallax und eigenem `claude`. Von einem Rechner
+aus sollen die Sessions der anderen gesteuert werden, in einer Oberfläche.
 
 **Machbarkeit:** Die Server/UI-Trennung passt gut dazu.
-- Auf der VM läuft ein eigener Parallax-Server, mit eigenen Profilen, eigenem `claude` und eigener Registry.
-- Die lokale UI verbindet sich mit **mehreren Hosts**, z. B. „Lokal“ und „VM“. Jeder Host hat eine eigene WebSocket-Verbindung.
-- Die Sidebar zeigt alle Sessions mit einem Host-Badge. „Wartet auf dich“, Benachrichtigungen und Strg+K arbeiten über alle Hosts hinweg.
-- Neue Sessions lassen sich wahlweise auf dem lokalen Host oder auf der VM anlegen. Ordner-Browser und Profile stammen dann vom jeweiligen Host.
-- **Profile gehören zum Server, nicht zur UI** (vom Nutzer so festgelegt):
-  - Jeder Server hat sein eigenes `profiles.json` und damit eigene Profile, die sich nicht überschneiden.
-  - Jeder Server hat **sein eigenes Default-Profil**.
-  - Im Dialog „Neue Session“ wählt man zuerst den Host. Vorausgewählt ist dann das Default-Profil *dieses* Hosts, die Profilliste zeigt nur dessen Profile.
-  - Profile werden über die Settings-Seite pro Host bearbeitet.
-  - Das passt bereits zur aktuellen Ablage in `%LOCALAPPDATA%\Parallax\profiles.json` auf dem jeweiligen Rechner. Es ist keine Synchronisation nötig.
-
-**Was sich für Remote-Hosts ändert:**
-- „Im Editor öffnen“ und „Im Explorer zeigen“ würden auf der VM ausgeführt. Bei Remote-Hosts werden diese Aktionen deshalb ausgeblendet. Es bleiben Vorschau und „Herunterladen“.
-- Anhänge werden zum Remote-Server hochgeladen.
-
-**Voraussetzungen und Sicherheit:**
-- Der VM-Server muss vom lokalen Rechner erreichbar sein. Dafür gibt es zwei Varianten:
-  - **SSH-Tunnel:** Der VM-Server bleibt auf 127.0.0.1 und wird per `ssh -L` getunnelt. Das ist die sicherste Variante, braucht aber einen OpenSSH-Server auf der VM.
-  - **Netzwerk-Bindung:** Bind-Adresse konfigurierbar, **TLS** (selbstsigniertes Zertifikat mit Pinning), **dauerhafte Pairing-Tokens** pro Client statt Token pro Start, optional eine IP-Allowlist.
-  - Beide Varianten brauchen vermutlich Admin-Rechte bzw. IT-Freigabe: eine eingehende Firewall-Regel oder den sshd.
-- **Compliance-Hinweis:** Prompts, Screenshots und Dateien des lokalen Rechners würden über die VM zu Anthropic gehen. Soll eine Trennung der Rechner genau das verhindern, muss das vorher mit den Verantwortlichen geklärt sein.
+- Auf jedem Rechner läuft ein eigener Parallax-Server mit eigenen Profilen, eigenem `claude` und eigener Registry.
+- Die UI des steuernden Rechners zeigt die Sessions **mehrerer Hosts**; „Wartet auf dich“, Benachrichtigungen und
+  Strg+K arbeiten über alle Hosts hinweg.
+- Neue Sessions lassen sich auf jedem Host anlegen; Ordner-Browser und Profile stammen dann von diesem Host.
+- **Profile gehören zum Server, nicht zur UI** (vom Nutzer so festgelegt): Jeder Server hat sein eigenes
+  `profiles.json` und sein eigenes Default-Profil. Im Dialog „Neue Session“ wählt man zuerst den Host; vorausgewählt
+  ist dessen Default-Profil. Es ist keine Synchronisation nötig.
+- Bei Sessions anderer Rechner sind „Im Editor öffnen“ und „Im Explorer zeigen“ ausgeblendet; Anhänge gehen an den
+  Server der Session.
 
 **Vorbereitung ab Phase 1 (billig, spart späteren Umbau):**
-- Das Protokoll und die UI-State-Struktur sind **host-fähig**: Session-Keys sind `hostId:entryId`, und es gibt einen ConnectionManager für n Server, anfangs nur „local“.
+- Das Protokoll und die UI-State-Struktur sind **host-fähig**: Session-Keys sind `hostId:entryId`, und es gibt einen
+  ConnectionManager für n Server, anfangs nur „local“.
 - Die Bind-Adresse ist im Server konfigurierbar, Default `127.0.0.1`.
-- Die Token-Logik wird so gekapselt, dass später Pairing-Tokens möglich sind.
+- Die Token-Logik ist gekapselt.
 
-**Umsetzung:** **im Hintergrund behalten, nicht priorisieren** (Nutzerentscheidung).
-- Das System wird ab Phase 1 nur vorbereitet.
-- Die eigentliche Umsetzung steht im Backlog und kommt erst nach Klärung der Netzwerk- und Policy-Lage.
+**Umsetzung:** Plan WP-75 mit den Arbeitspaketen WP-76…82; beginnt erst nach Freigabe durch den Nutzer.
 
-**Zero-Effort-Alternative bis dahin:** Parallax läuft zusätzlich in der VM und wird per RDP genutzt. Das funktioniert sofort, ergibt aber zwei getrennte Fenster.
+**Alternative bis dahin:** Parallax läuft auf jedem Rechner für sich und wird dort bedient. Das funktioniert sofort, ergibt aber getrennte Fenster.
 
 ## Weitere Entscheidungen (zuvor offene Punkte)
 1. **Server-Betrieb** (entschieden):
@@ -872,7 +860,7 @@ Das Problem in der Konsole: Bei `ExitPlanMode` ploppt ein Dialog auf und blockie
 - Aktion „In Parallax übernehmen“.
 
 **Backlog (später; Reihenfolge nach Bedarf):**
-- **Multi-Host:** die Sessions einer VM von einem anderen Rechner aus steuern, mit Profilen und Default-Profil pro Server. Ab Phase 1 vorbereitet, umgesetzt erst nach Klärung von Netzwerk und Policy.
+- **Multi-Host:** die Sessions anderer Rechner im selben Netz von einem Rechner aus steuern, mit Profilen und Default-Profil pro Server. Ab Phase 1 vorbereitet; Plan vom 16.11.2026, überarbeitet 18.11.2026: `docs/wp/WP-75.md`.
 - **Releases:** öffentliches Repo bereinigen und lizenzieren, Versionen per Tag mit Changelog, Installation ohne git und Build, Update in der App. Plan vom 17.11.2026: `docs/wp/WP-83.md`.
 - Rewind/Checkpoints, Fork.
 - `/btw`-Seitenpanel, `!`-Bash-Modus.
