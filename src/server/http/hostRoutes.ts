@@ -27,7 +27,6 @@ import {
   contentPolicyHeaders,
   inlineDisposition,
   mediaTypeEssence,
-  safeMediaType,
 } from './content';
 import { replyError, sendError } from './reply';
 import { BRIDGE_LIMITS, bridgeWindow, forwardFailure, type BridgeLimits } from './hostSocket';
@@ -43,13 +42,36 @@ import { BRIDGE_LIMITS, bridgeWindow, forwardFailure, type BridgeLimits } from '
  *   blobId, file → REMOTE_PATHS.file with a query rebuilt from `fileQuerySchema`, attachments →
  *   REMOTE_PATHS.attachments with a query rebuilt from `attachmentUploadQuerySchema` and the body
  *   limit of the local upload. Never a path, header or query text from the request.
- * - Response headers come from this server by the rules of content.ts (media type via
- *   `safeMediaType`, CSP/X-Frame-Options per policy, `nosniff`, Content-Disposition, CORP,
- *   caching); nothing of the other side's headers is taken unchecked. A blob's bytes must hash to
+ * - Response headers come from this server by the rules of content.ts (CSP/X-Frame-Options per
+ *   policy, `nosniff`, Content-Disposition, CORP, caching); nothing of the other side's headers is
+ *   taken unchecked. The media type comes from a closed set (`forwardedMediaType`: the types the file
+ *   service and attachments produce); any other is served as `application/octet-stream` download. A blob's bytes must hash to
  *   its id; bodies are capped. Errors of the other side pass only from a per-route allowlist with
  *   short params, everything else is HOST_UNREACHABLE.
  * - WebSocket: one connection to the other computer per browser connection (hostSocket.ts).
  */
+
+/** Served for a type outside FORWARDED_MEDIA_TYPES (with `Content-Disposition: attachment`). */
+const DOWNLOAD_MEDIA_TYPE = 'application/octet-stream';
+
+/**
+ * The media types a forwarded answer may carry (essence → the header sent here): what GET /api/file
+ * serves (text, the sniffed images, SVG, PDF – files/stat.ts) and blobs hold (attachments).
+ */
+const FORWARDED_MEDIA_TYPES: ReadonlyMap<string, string> = new Map([
+  ['text/plain', 'text/plain; charset=utf-8'],
+  ['image/png', 'image/png'],
+  ['image/jpeg', 'image/jpeg'],
+  ['image/gif', 'image/gif'],
+  ['image/webp', 'image/webp'],
+  ['image/svg+xml', 'image/svg+xml'],
+  ['application/pdf', 'application/pdf'],
+]);
+
+/** The header for the other side's Content-Type, or null when it is outside the closed set. */
+export function forwardedMediaType(header: string | undefined): string | null {
+  return FORWARDED_MEDIA_TYPES.get(mediaTypeEssence(header)) ?? null;
+}
 
 export interface HostRoutesOptions {
   hosts: Pick<HostsService, 'list' | 'forwarder'>;
@@ -58,7 +80,31 @@ export interface HostRoutesOptions {
   logger?: Logger;
   /** Window bridge limits (tests). */
   bridge?: Partial<BridgeLimits>;
+  /** Limits of forwarded content requests (tests). */
+  forward?: Partial<ForwardLimits>;
 }
+
+/**
+ * Limits of a forwarded content request (security review WP-82): a slow, stalled or hostile other
+ * computer must never hold the browser's few connections to this server – local routes would stall
+ * too. Headers within `headersMs` (uploads: `uploadHeadersMs`, the body goes first), then at least
+ * `minBytesPerWindow` per `windowMs` until the body is complete; at most `perHost` at a time.
+ */
+export interface ForwardLimits {
+  headersMs: number;
+  uploadHeadersMs: number;
+  minBytesPerWindow: number;
+  windowMs: number;
+  perHost: number;
+}
+
+export const FORWARD_LIMITS: ForwardLimits = {
+  headersMs: 30_000,
+  uploadHeadersMs: 120_000,
+  minBytesPerWindow: 16 * 1024,
+  windowMs: 10_000,
+  perHost: 16,
+};
 
 export interface HostRoutes {
   /** Closes every forwarded window of the browser side (device signed out: AUTH_REVOKED). */
@@ -163,7 +209,7 @@ function declaredLength(response: UpstreamResponse, max: number): number | null 
 
 /** Ends the reply stream with an error: the transfer is cut (never a whole wrong body). */
 class ForwardedBodyError extends Error {
-  constructor(readonly reason: 'size' | 'hash' | 'length') {
+  constructor(readonly reason: 'size' | 'hash' | 'length' | 'slow') {
     super(`forwarded body rejected (${reason})`);
     this.name = 'ForwardedBodyError';
   }
@@ -248,7 +294,10 @@ export async function registerHostRoutes(
   const log = options.logger ?? rootLogger;
   const { hosts } = options;
   const bridgeLimits: BridgeLimits = { ...BRIDGE_LIMITS, ...options.bridge };
+  const forwardLimits: ForwardLimits = { ...FORWARD_LIMITS, ...options.forward };
   const sockets = new Set<WebSocket>();
+  /** Forwarded content requests per computer that have not finished their answer yet. */
+  const inflight = new Map<HostId, number>();
 
   /** The hostId of the path if it names a computer of the list, else null. */
   const knownHost = (raw: string): HostId | null => {
@@ -266,18 +315,53 @@ export async function registerHostRoutes(
     return controller.signal;
   };
 
-  /** Asks the other computer; HostForwarderError → its error answer. */
+  /**
+   * Asks the other computer; HostForwarderError → its error answer. Refused at once while the
+   * watcher reports the computer unreachable or `perHost` requests are open; the headers must come
+   * within the deadline (the wait for a free connection counts).
+   */
   const forward = async (
     hostId: HostId,
     request: UpstreamRequest,
     reply: FastifyReply,
   ): Promise<UpstreamResponse | ErrorPayload> => {
+    const host = hosts.list().find((item) => item.hostId === hostId);
+    if (host?.status === 'unreachable') {
+      return sendError(
+        reply,
+        host.lastError?.code === 'HOST_UNREACHABLE'
+          ? host.lastError
+          : makeError('HOST_UNREACHABLE', { reason: 'unreachable' }),
+      );
+    }
+    const open = inflight.get(hostId) ?? 0;
+    if (open >= forwardLimits.perHost)
+      return sendError(reply, makeError('HOST_UNREACHABLE', { reason: 'busy' }));
+    inflight.set(hostId, open + 1);
+    reply.raw.once('close', () => {
+      const left = (inflight.get(hostId) ?? 1) - 1;
+      if (left <= 0) inflight.delete(hostId);
+      else inflight.set(hostId, left);
+    });
+    const deadline = new AbortController();
+    const timer = setTimeout(
+      () => {
+        deadline.abort();
+      },
+      request.method === 'POST' ? forwardLimits.uploadHeadersMs : forwardLimits.headersMs,
+    );
+    const signal =
+      request.signal === undefined ? deadline.signal : AbortSignal.any([request.signal, deadline.signal]);
     try {
-      return await hosts.forwarder.request(hostId, request);
+      return await hosts.forwarder.request(hostId, { ...request, signal });
     } catch (error) {
-      const failure = forwardFailure(error);
+      const failure = deadline.signal.aborted
+        ? makeError('HOST_UNREACHABLE', { reason: 'timeout' })
+        : forwardFailure(error);
       if (reply.raw.destroyed) return failure;
       return sendError(reply, failure);
+    } finally {
+      clearTimeout(timer);
     }
   };
 
@@ -293,7 +377,8 @@ export async function registerHostRoutes(
     response: UpstreamResponse,
     extra: { headers: Record<string, string>; sha256?: string },
   ): Promise<FastifyReply | ErrorPayload> => {
-    const mediaType = safeMediaType(response.headers['content-type'] ?? 'application/octet-stream');
+    const forwarded = forwardedMediaType(response.headers['content-type']);
+    const mediaType = forwarded ?? DOWNLOAD_MEDIA_TYPE;
     const length = declaredLength(response, FORWARDED_BODY_MAX_BYTES);
     if (response.headers['content-length'] !== undefined && length === null) {
       response.body.destroy();
@@ -324,6 +409,11 @@ export async function registerHostRoutes(
       'cross-origin-resource-policy': 'same-origin',
       ...extra.headers,
     };
+    // Outside the closed set: never rendered under this origin, only saved (WP-75 §3.2).
+    if (forwarded === null) {
+      headers['content-disposition'] =
+        extra.headers['content-disposition']?.replace(/^inline/, 'attachment') ?? 'attachment';
+    }
     reply.hijack();
     const res = reply.raw;
     res.writeHead(200, headers);
@@ -336,6 +426,24 @@ export async function registerHostRoutes(
       maxBytes: FORWARDED_BODY_MAX_BYTES,
       length,
       ...(extra.sha256 === undefined ? {} : { sha256: extra.sha256 }),
+    });
+    // Minimum rate: a body that trickles is cut (the browser sees a broken transfer).
+    let moved = 0;
+    body.on('data', (chunk: Buffer) => {
+      moved += chunk.length;
+    });
+    const watch = setInterval(() => {
+      if (moved < forwardLimits.minBytesPerWindow) {
+        log.warn({ moved }, 'forwarded body too slow – cut');
+        // The generator behind `body` waits on the source: end the source, then the browser side.
+        response.body.destroy(new ForwardedBodyError('slow'));
+        res.destroy();
+      }
+      moved = 0;
+    }, forwardLimits.windowMs);
+    watch.unref();
+    res.once('close', () => {
+      clearInterval(watch);
     });
     pipeline(body, res, (error) => {
       if (error === null) return;

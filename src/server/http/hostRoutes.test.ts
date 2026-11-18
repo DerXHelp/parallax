@@ -24,6 +24,7 @@ import { CommandError } from '../sync/ports';
 import { createApp } from './app';
 import { createAuthService, type AuthService } from './auth';
 import { registerContentRoutes } from './content';
+import { forwardedMediaType } from './hostRoutes';
 import { connectWs, cookieFromSetCookie, makeTempHome, rawRequest, type TestWsClient } from './testServer';
 
 const ENTRY = 'en_00000000000000000000000000000001';
@@ -208,6 +209,23 @@ async function window(s: Setup, hostId = s.hostId): Promise<TestWsClient> {
 function json(response: Response): unknown {
   return JSON.parse(response.body.toString('utf8'));
 }
+
+describe('forwardedMediaType', () => {
+  it('maps the closed set to fixed headers and refuses everything else', () => {
+    expect(forwardedMediaType('Text/Plain; charset=iso-8859-1')).toBe('text/plain; charset=utf-8');
+    expect(forwardedMediaType('image/svg+xml')).toBe('image/svg+xml');
+    expect(forwardedMediaType('application/pdf')).toBe('application/pdf');
+    for (const type of [
+      'text/html',
+      'application/xhtml+xml',
+      'multipart/x-mixed-replace',
+      'application/x-msdownload',
+    ]) {
+      expect(forwardedMediaType(type), type).toBeNull();
+    }
+    expect(forwardedMediaType(undefined)).toBeNull();
+  });
+});
 
 describe('forwarder routes: guard (§B.12)', () => {
   it('foreign Origin, wrong Host and a missing cookie are refused before anything is forwarded', async () => {
@@ -459,7 +477,9 @@ describe('forwarder routes: content', () => {
       headers: s.page(),
     });
     expect(html.headers['content-security-policy']).toBe(BLOB_CSP);
-    expect(html.headers['content-type']).toBe('text/html');
+    // Outside the closed set of media types: a download, never rendered here (WP-75 §3.2).
+    expect(html.headers['content-type']).toBe('application/octet-stream');
+    expect(html.headers['content-disposition']).toBe("attachment; filename*=UTF-8''page.html");
 
     const notFound = await send(s.port, {
       method: 'GET',
