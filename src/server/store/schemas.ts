@@ -12,6 +12,7 @@ import { z } from 'zod';
 import {
   decisionRecordsFileSchema,
   draftFileSchema,
+  hostsFileSchema,
   keyFileSchema,
   multiHostFileSchema,
   profilesFileSchema,
@@ -80,10 +81,11 @@ export const STORE_SCHEMAS: readonly StoreSchema[] = [
   home(MODEL_CATALOGS_FILE, modelCatalogsFileSchema),
   home(ACCOUNT_LIMITS_FILE, accountLimitsFileSchema),
   home(AUTH_SECRET_FILE, authSecretFileSchema, { backup: false }),
-  // WP-78a "Several computers": never rolled back – a restore could bring back a revoked coupling,
+  // WP-78a/79 "Several computers": never rolled back – a restore could bring back a revoked coupling,
   // a removed key or the sharing role the user switched off (WP-76 §B.8). Literal ids: the folders
   // are `remote/` (remote/eventLog.ts REMOTE_DIR) and `keys/` (secure/identityStore.ts KEYS_DIR).
   home('multi-host.json', multiHostFileSchema, { backup: false }),
+  home('hosts.json', hostsFileSchema, { backup: false }),
   home('remote/peer.json', remotePeerFileSchema, { backup: false }),
   home('remote/events.json', remoteEventsFileSchema, { backup: false }),
   home('keys/*.json', keyFileSchema, { backup: false }),

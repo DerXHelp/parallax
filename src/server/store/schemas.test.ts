@@ -44,6 +44,7 @@ describe('store schema list', () => {
       'processes.json',
       'auth-secret.json',
       'multi-host.json',
+      'hosts.json',
       'remote/peer.json',
       'remote/events.json',
       'keys/*.json',

@@ -69,6 +69,7 @@ import { createFileService } from '../files/service';
 import { createFsCommands } from '../host/fsCommands';
 import { createLinkCommands, createRecordingLinkOpener, createSystemLinkOpener } from '../host/linkCommands';
 import { createLoginService, LOGIN_HOME_DIR, type LoginService } from '../host/login';
+import { createHostsService, type Hosts } from '../hosts/service';
 import { createApp } from '../http/app';
 import { createAuthService, type AuthService } from '../http/auth';
 import { serverArgsFor } from '../launcher/args';
@@ -484,6 +485,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   /** WP-78a: remote access of a sharing computer and the role of "Several computers". */
   let remoteAccess: RemoteAccess | null = null;
   let multiHost: MultiHostService | null = null;
+  /** WP-79: the computers this one controls (list, watchers, forwarder). */
+  let controlHosts: Hosts | null = null;
   /** WP-78a: the stored role is activated after listen, in the background (never fatal). */
   let multiHostStart: Promise<void> = Promise.resolve();
   let manager: SessionManager | null = null;
@@ -535,6 +538,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       run: async () => {
         await multiHostStart;
         await multiHost?.stop();
+        // WP-79: forwarder windows and watchers go before the http step (idempotent).
+        await controlHosts?.close();
         await remoteAccess?.close();
       },
     },
@@ -674,11 +679,13 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       },
     };
     const loggerOption = options.logger === undefined ? {} : { logger: options.logger };
+    // One key store for both sides (DPAPI helper queue, one probe).
+    const keyStore = options.keyStore ?? createDpapiKeyStore(loggerOption);
     const share = createRemoteAccessService({
       home: config.home,
       instance,
       hub: hubAttach,
-      keyStore: options.keyStore ?? createDpapiKeyStore(loggerOption),
+      keyStore,
       // blob/file/attachments for the coupled computer: same routes and header policy as the local
       // app, no cookie (the socket class decides), the coupling generation before every effect.
       registerContent: (peerApp, context) =>
@@ -694,10 +701,22 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       ...loggerOption,
     });
     remoteAccess = share;
-    // WP-79 adds the controlling side (`control`); until then the role `control` is refused.
+    // WP-79: the controlling side – host list, pairing, watchers, forwarder `/api/hosts/:hostId/*`.
+    const hosts = createHostsService({
+      home: config.home,
+      instance,
+      keyStore,
+      currentRole: () => roles.config().role,
+      warnings: stores.warnings,
+      ...loggerOption,
+    });
+    controlHosts = hosts;
+    // `roles.start()` prepares both sides and activates the stored one; `roles.onChange` also fires
+    // for changes of either side (host list, remote access).
     const roles = createMultiHostService({
       home: config.home,
       share,
+      control: hosts,
       warnings: stores.warnings,
       ...loggerOption,
     });
@@ -736,7 +755,11 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         update: () => updateService.state(),
         // WP-76/78a: role, host list (WP-79) and remote access – `remoteAccess` never leaves for a
         // remote connection (the hub redacts it).
-        multiHost: () => ({ multiHost: roles.config(), remoteHosts: [], remoteAccess: share.state() }),
+        multiHost: () => ({
+          multiHost: roles.config(),
+          remoteHosts: hosts.list(),
+          remoteAccess: share.state(),
+        }),
       },
       // ADR-101: `profile.*` (WP-32), `fs.listDirectory` (WP-33) and the file commands `file.*`,
       // `files.*`, `editor.detect` (WP-53, ADR-140) – disjoint names.
@@ -758,6 +781,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         // WP-78a: `multiHost.configure` and `remoteAccess.*` (the pairing code goes only to the
         // asking window – never logged, never in ops).
         roles.commands,
+        // WP-79: `hosts.add|update|move|remove|reconnect`.
+        hosts.commands,
         share.commands,
       ],
       loginState: (profileId) => loginService.state(profileId),
@@ -856,6 +881,9 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       files: fileService,
       // WP-87: upload, "What's new", notices; windows get 4504 when the shutdown is a restart.
       update: updateService,
+      // WP-79: forwarder routes `/api/hosts/:hostId/{ws,blob,file,attachments}` (same cookie/origin
+      // guards as every route; windows of it close with AUTH_REVOKED on a new launcher code).
+      hosts,
       closeCode: () => (restarting ? WS_CLOSE.SERVER_RESTARTING : WS_CLOSE.SERVER_SHUTDOWN),
       webRoot,
     });

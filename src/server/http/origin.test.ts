@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { API_PATHS } from '@shared/http';
+import { API_PATHS, HOST_API_PATHS } from '@shared/http';
 import {
   STATIC_ROUTE,
   checkRequest,
@@ -76,6 +76,16 @@ describe('classifyRequest (by matched route pattern, default-deny)', () => {
     ['GET', API_PATHS.notices, 'file'],
     ['POST', API_PATHS.updatePackage, 'mutation'],
     ['GET', API_PATHS.updatePackage, 'mutation'],
+    // WP-79: forwarder routes of another computer take the class of their local counterpart
+    ['GET', HOST_API_PATHS.blob, 'blob'],
+    ['HEAD', HOST_API_PATHS.blob, 'blob'],
+    ['GET', HOST_API_PATHS.file, 'file'],
+    ['HEAD', HOST_API_PATHS.file, 'file'],
+    ['POST', HOST_API_PATHS.file, 'mutation'],
+    ['GET', HOST_API_PATHS.ws, 'ws'],
+    ['HEAD', HOST_API_PATHS.ws, 'ws'],
+    ['POST', HOST_API_PATHS.attachments, 'mutation'],
+    ['GET', HOST_API_PATHS.attachments, 'mutation'],
     // a future route that is not in the table is protected automatically
     ['GET', '/api/files', 'mutation'],
     ['GET', '/api/blob/:blobId/raw', 'mutation'],

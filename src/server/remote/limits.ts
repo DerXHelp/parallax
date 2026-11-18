@@ -9,7 +9,10 @@ import { HANDSHAKE_TIMEOUT_MS } from '../secure/tlsProfile';
 export interface RemoteLimits {
   /** Raw TCP connections in total (`net.Server.maxConnections`). */
   maxConnections: number;
-  /** Concurrent raw connections per address (before TLS). */
+  /**
+   * Concurrent raw connections per address until they are proven as the coupled computer (then
+   * only `peerSockets` counts).
+   */
   perAddressConcurrent: number;
   /** New connections per address and minute (token bucket refill) … */
   perAddressPerMinute: number;
@@ -60,6 +63,13 @@ export class TokenBuckets {
     private readonly perMinute: number,
     private readonly now: () => number = Date.now,
   ) {}
+
+  /** Gives one token back (a socket proven as the coupled computer must not drain the bucket). */
+  refund(key: string): void {
+    const bucket = this.buckets.get(key);
+    if (bucket === undefined) return;
+    bucket.tokens = Math.min(this.burst, bucket.tokens + 1);
+  }
 
   /** Takes one token; false = over the limit. */
   take(key: string): boolean {

@@ -88,6 +88,11 @@ export interface RemoteListenerOptions {
 
 const noop = (): void => undefined;
 
+/** Key of one live TCP connection (address and source port); null without a port. */
+function slotKey(address: string, port: number | null): string | null {
+  return port === null ? null : `${address}|${port}`;
+}
+
 export class RemoteListener {
   private readonly hooks: RemoteListenerHooks;
   private readonly limits: RemoteLimits;
@@ -101,6 +106,8 @@ export class RemoteListener {
   private readonly pairing = new Set<TLSSocket>();
   private readonly infos = new WeakMap<object, RemoteSocketInfo>();
   private readonly concurrency = new Concurrency();
+  /** Release of the address slot per live raw connection (`slotKey`). */
+  private readonly slots = new Map<string, () => void>();
   private readonly buckets: TokenBuckets;
 
   constructor(options: RemoteListenerOptions) {
@@ -275,9 +282,20 @@ export class RemoteListener {
       return;
     }
     this.raw.add(socket);
+    // The address slot is freed on close – or earlier, once the socket is proven as the coupled
+    // computer (then only `peerSockets` limits it; WP-79 follow-up).
+    const slot = slotKey(address, port);
+    let held = true;
+    const release = (): void => {
+      if (!held) return;
+      held = false;
+      this.concurrency.release(address);
+      if (slot !== null && this.slots.get(slot) === release) this.slots.delete(slot);
+    };
+    if (slot !== null) this.slots.set(slot, release);
     socket.once('close', () => {
       this.raw.delete(socket);
-      this.concurrency.release(address);
+      release();
     });
     if (!this.buckets.take(address)) {
       socket.destroy();
@@ -385,6 +403,10 @@ export class RemoteListener {
       }
       info.proven = true;
       this.proven.add(socket);
+      // A proven peer neither holds an address slot nor costs a token (§B.10: up to peerSockets).
+      const slot = slotKey(address, port);
+      if (slot !== null) this.slots.get(slot)?.();
+      this.buckets.refund(address);
       this.hooks.onPeerCount(this.proven.size, info);
       this.hooks.onPeer(socket, info);
     });

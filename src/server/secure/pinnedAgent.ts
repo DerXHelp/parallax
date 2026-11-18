@@ -11,6 +11,9 @@
  *   profile, pin again from `getPeerX509Certificate().raw`) → connection proof (§B.9) → only then
  *   the socket goes to HTTP / `ws`. Any failure destroys the socket: no HTTP byte reaches an
  *   unchecked peer.
+ * - At most HANDSHAKES_IN_FLIGHT connections are being set up at a time (the rest wait in order):
+ *   the sharing computer counts unproven sockets per address (remote/limits.ts), many windows
+ *   opening at once must not run into that limit.
  *
  * Use: `https.request({agent, host, port, path, headers: remoteVersionHeaders(v)})` and
  * `new WebSocket(url, {agent, ...REMOTE_WS_CLIENT_OPTIONS, headers: remoteVersionHeaders(v)})`.
@@ -99,6 +102,9 @@ function errorCode(error: unknown): string | null {
 
 const TLS_ERROR = /^(?:ERR_SSL_|ERR_TLS_|ERR_OSSL_|DEPTH_ZERO|SELF_SIGNED|UNABLE_TO|CERT_)/u;
 
+/** Connections being set up at once (below `perAddressConcurrent` of the sharing side, remote/limits.ts). */
+export const HANDSHAKES_IN_FLIGHT = 2;
+
 export class PinnedAgent extends HttpsAgent {
   private readonly context: SecureContext;
   private readonly peerPin: string;
@@ -106,6 +112,8 @@ export class PinnedAgent extends HttpsAgent {
   private readonly connectTimeoutMs: number;
   private readonly proofTimeoutMs: number;
   private closed = false;
+  private handshakes = 0;
+  private readonly waiting: (() => void)[] = [];
 
   constructor(options: PinnedAgentOptions) {
     super({
@@ -168,36 +176,62 @@ export class PinnedAgent extends HttpsAgent {
       });
       return undefined;
     }
-    let socket: TLSSocket;
-    try {
-      socket = connect({
-        host,
-        port,
-        secureContext: this.context,
-        servername: '',
-        rejectUnauthorized: true,
-        checkServerIdentity: this.checkServerIdentity,
-      });
-    } catch (error) {
-      process.nextTick(() => {
+    void this.acquireHandshake().then(() => {
+      if (this.closed) {
+        this.releaseHandshake();
+        done(new PinnedConnectionError('destroyed'));
+        return;
+      }
+      let socket: TLSSocket;
+      try {
+        socket = connect({
+          host,
+          port,
+          secureContext: this.context,
+          servername: '',
+          rejectUnauthorized: true,
+          checkServerIdentity: this.checkServerIdentity,
+        });
+      } catch (error) {
+        this.releaseHandshake();
         done(new PinnedConnectionError('network', errorCode(error)));
-      });
-      return undefined;
-    }
-    void this.establish(socket).then(
-      () => {
-        done(null, socket);
-      },
-      (error: unknown) => {
-        socket.destroy();
-        done(
-          error instanceof PinnedConnectionError
-            ? error
-            : new PinnedConnectionError('network', errorCode(error)),
-        );
-      },
-    );
+        return;
+      }
+      void this.establish(socket).then(
+        () => {
+          this.releaseHandshake();
+          done(null, socket);
+        },
+        (error: unknown) => {
+          this.releaseHandshake();
+          socket.destroy();
+          done(
+            error instanceof PinnedConnectionError
+              ? error
+              : new PinnedConnectionError('network', errorCode(error)),
+          );
+        },
+      );
+    });
     return undefined;
+  }
+
+  /** Waits for one of the HANDSHAKES_IN_FLIGHT slots (first come, first served). */
+  private acquireHandshake(): Promise<void> {
+    if (this.handshakes < HANDSHAKES_IN_FLIGHT) {
+      this.handshakes += 1;
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      this.waiting.push(resolve);
+    });
+  }
+
+  /** Hands the slot to the next waiting connection, or frees it. */
+  private releaseHandshake(): void {
+    const next = this.waiting.shift();
+    if (next === undefined) this.handshakes -= 1;
+    else next();
   }
 
   /** Handshake, re-checks and connection proof; rejects with PinnedConnectionError. */

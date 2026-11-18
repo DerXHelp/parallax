@@ -13,8 +13,8 @@ Vite-Dev-Proxy greift), Auth per Einmal-Code und HttpOnly-Cookie, Origin-/Host-/
 - **Guard (R1-01, ADR-018):** klassifiziert nach der **gematchten Route**
   (`request.routeOptions.url`), nie nach dem URL-Text; Default-deny (nicht gelistete Routen =
   `mutation`); Request-Target muss Origin-Form haben, API-Pfade kanonisch (kein `%`, `.`, `;`,
-  `//`, `/` am Ende); WS-Upgrades nur auf `/api/ws`; die WS-Route prüft das Upgrade zusätzlich
-  selbst (`preValidation` + WS-Handler, `HubAttachOptions.authorizeUpgrade`). WS-Upgrade:
+  `//`, `/` am Ende); WS-Upgrades nur auf `/api/ws` (WP-79 auch `/api/hosts/:hostId/ws`); jede
+  WS-Route prüft das Upgrade zusätzlich selbst (`preValidation` + WS-Handler, `HubAttachOptions.authorizeUpgrade`). WS-Upgrade:
   `Sec-Fetch-Site` nur, falls vorhanden (V1-01, ADR-019).
 
 | Datei | Exporte | Inhalt |
@@ -25,7 +25,10 @@ Vite-Dev-Proxy greift), Auth per Einmal-Code und HttpOnly-Cookie, Origin-/Host-/
 | `upload.test.ts` | – | Upload per `app.inject`: Bilder (Name, Pixelgröße in der Meta-Datei), PDFs, andere Dateien (mit/ohne `name`), Bild-Bytes als octet-stream bleiben Datei (CR3-03), Größen je Typ, 415 Typ/Magic-Bytes, abweichender Bildtyp → erkannter Typ (CR2-08), 400 Query, 401 ohne Cookie, 403 fremder Origin |
 | `file.test.ts` | – | `GET`/`HEAD /api/file`: Guard-Matrix `Sec-Fetch-Site` × `Origin` × Cookie, Header-Sätze Text/Bild/SVG/PDF, `filename*`, Fehlerstatus, kein Dateiinhalt im Log, Blob-PDF-Header, Ende-zu-Ende mit dem echten Datei-Dienst (auch Bild zwischen `stat` und Lesen ersetzt: `Content-Length` = Körper, CR3-05) |
 | `auth.ts` | `createAuthService(options) → AuthService`, `registerAuthRoutes`, `authCookieHeader`, `readCookie`, `AUTH_SECRET_FILE` | Einmal-Codes (`issueAuthCode(ttlMs?)`, `exchangeCode`), Geräte-Cookie (HMAC, Secret `PARALLAX_HOME/auth-secret.json` ohne `.bak`, `rotateSecret`, `onRevoked`), Launcher-Token (`launcherToken`, `verifyLauncherToken`); Routen `POST /api/auth`, `GET /api/auth/status`, `POST /api/launcher/code` |
-| `origin.ts` | `checkRequest`, `classifyRequest`, `isApiRoute`, `requestPath`, `STATIC_ROUTE` | reine Request-Prüfung nach der Tabelle §5.1 (Routen-Muster statt Pfad; `needsCookie` prüft der Aufrufer); Phase 3: Klasse `file` (`Sec-Fetch-Site` Pflicht `same-origin`, `Origin` falls vorhanden erlaubt, Cookie) |
+| `origin.ts` | `checkRequest`, `classifyRequest`, `isApiRoute`, `requestPath`, `STATIC_ROUTE` | reine Request-Prüfung nach der Tabelle §5.1 (Routen-Muster statt Pfad; `needsCookie` prüft der Aufrufer); Phase 3: Klasse `file` (`Sec-Fetch-Site` Pflicht `same-origin`, `Origin` falls vorhanden erlaubt, Cookie); WP-79: `HOST_API_PATHS` mit der Klasse des lokalen Gegenstücks (`blob`, `file`, `ws`; Upload `mutation`) |
+| `hostRoutes.ts` | `registerHostRoutes(app, options) → HostRoutes`, `FORWARDED_BODY_MAX_BYTES` | WP-79: Vermittler `HOST_API_PATHS` des steuernden Rechners (Option `hosts` von `createApp`): `hostId` aus der Rechnerliste (sonst `HOST_NOT_FOUND`), feste Abbildung auf `REMOTE_PATHS`, Antwort-Header vom eigenen Server nach den Regeln aus `content.ts`, Blob-Bytes gegen die Id geprüft, Fehler der Gegenseite nur aus einer Allowlist; Details `docs/wp/WP-79.md` |
+| `hostSocket.ts` | `bridgeWindow`, `BRIDGE_LIMITS`, `forwardFailure` | WP-79: je Browser-Verbindung auf `/api/hosts/:hostId/ws` eine Verbindung zur Gegenseite, Frames 1:1, Schließcodes `HOST_*` |
+| `hostRoutes.test.ts` | – | Vermittler gegen einen echten freigebenden Rechner: Guard-Matrix §B.12, `HOST_NOT_FOUND`, Frames, Schließcodes, eigene Header, Blob-Hash, Fehler-Allowlist, Upload |
 | `reply.ts` | `sendError`, `replyError` | HTTP-Fehlerantwort mit Katalog-Status |
 | `testServer.ts` | `startTestServer`, `connectWs`, `connectAndHello`, `rawRequest`, `rawUpgrade`, `TestWsClient`, `makeTempHome` | **nur Tests**: echter Server auf Port 0, Temp-Home, Memory-Source, optional `webRoot`, `ws`-Client (ohne `Sec-Fetch-Site` wie Edge/Chrome), roher Upgrade über `net` |
 

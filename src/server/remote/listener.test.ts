@@ -1,8 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { connect as connectTcp, type Socket } from 'node:net';
+import type { Duplex } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { PinnedAgent } from '../secure/pinnedAgent';
 import { generateIdentity } from '../secure/identity';
 import { foreignCredentials, identityCredentials, TEST_HOST } from '../secure/testKit';
+import { REMOTE_LIMITS } from './limits';
 import { OPEN_LIMITS, rawExchange, startHarness, type Harness } from './testKit';
 
 const harnesses: Harness[] = [];
@@ -35,6 +38,22 @@ function tcp(port: number): Promise<Socket> {
     });
     socket.on('error', reject);
     sockets.push(socket);
+  });
+}
+
+/** The address limits of `limits` (the rest stays open for the tests). */
+function pick(limits: typeof REMOTE_LIMITS) {
+  const { perAddressConcurrent, perAddressBurst, perAddressPerMinute } = limits;
+  return { perAddressConcurrent, perAddressBurst, perAddressPerMinute };
+}
+
+/** One proven connection of the agent (handshake + connection proof), kept open. */
+function proven(agent: PinnedAgent, port: number): Promise<Duplex> {
+  return new Promise((resolve, reject) => {
+    agent.createConnection({ host: TEST_HOST, port }, (error, stream) => {
+      if (error === null) resolve(stream);
+      else reject(error);
+    });
   });
 }
 
@@ -123,6 +142,22 @@ describe('listener: limits before TLS (§B.10)', () => {
     expect(await closedWithin(fifth, 2_000)).toBe(true);
     for (const socket of open) expect(socket.destroyed).toBe(false);
     expect(await kinds(h)).toContain('rate_limited');
+  });
+
+  it('proven sockets of the coupled computer leave the address limits; peerSockets still counts', async () => {
+    // Real address limits (4 concurrent, burst 5): seven lasting proven sockets must fit (§B.10).
+    const h = await harness({ limits: { ...OPEN_LIMITS, ...pick(REMOTE_LIMITS), peerSockets: 7 } });
+    const paired = await h.pair();
+    const agent = h.agent(paired);
+    const opened = await Promise.all(Array.from({ length: 7 }, () => proven(agent, h.port())));
+    for (const socket of opened) sockets.push(socket as Socket);
+    expect(opened.every((socket) => !socket.destroyed)).toBe(true);
+    expect(await kinds(h)).not.toContain('rate_limited');
+    // An eighth exceeds peerSockets; unauthenticated sockets still get the address slots.
+    await expect(proven(agent, h.port())).rejects.toThrow();
+    await expect.poll(() => kinds(h)).toContain('rate_limited');
+    const stranger = await tcp(h.port());
+    expect(await closedWithin(stranger, 300)).toBe(false);
   });
 
   it('the token bucket per address stops bursts', async () => {
