@@ -35,7 +35,7 @@ die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale En
 | Pfad | Inhalt | Owner |
 |---|---|---|
 | `src/shared/**`, `src/server/**/ports.ts` (inkl. `system/ports.ts`, neu `files/ports.ts`), `src/server/backend/{types,fixture}.ts` | Contracts v3 | Koordinator (eingefroren) |
-| `src/server/lib/{async,fs,homeLock,homeAccess}.ts` | Basis-Helfer (`toError`, `writeFileAtomic`, Home-Lock, Home-Rechte) | Koordinator |
+| `src/server/lib/{async,fs,homeLock,ffi}.ts` | Basis-Helfer (`toError`, `writeFileAtomic`, Home-Lock, `node:ffi`) | Koordinator |
 | `src/server/sessions/**` (ohne `ports.ts`, ohne `normalizer/**`) | Engine: frischer Kontext, Plan-Versionen, Stop je Task, Detail-Felder, Anhänge/Pastes | WP-51 |
 | `src/server/sessions/normalizer/**`, `src/server/backend/**` (ohne `types/fixture`) | Normalizer, SDK-Optionen, Fake-Szenarien | WP-52 |
 | `src/server/files/**` (ohne `ports.ts`), `src/server/{http,store}/**`, `src/server/lib/**` (übrige) | Datei-Dienst, `/api/file`, Uploads, Anhang-Store, Programmstart | WP-53 |

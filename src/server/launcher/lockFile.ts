@@ -95,7 +95,7 @@ export interface ServerLockHandle {
  * Writes `server.lock.json` atomically (temp file + rename, retried on EPERM/EBUSY/EACCES with
  * `LOCK_RETRY_DELAYS_MS`) – call it right after `listen` and before telling anybody the server is
  * ready. The file carries the launcher token (a secret; it lives in the user's profile like
- * `auth-secret.json` – see lib/homeAccess.ts for a home other users can read, R2-13).
+ * `auth-secret.json`; `pnpm preflight` hints at a home outside %LOCALAPPDATA%, R2-13).
  */
 export async function writeServerLock(options: WriteServerLockOptions): Promise<ServerLockHandle> {
   const lock = serverLockFileSchema.parse({

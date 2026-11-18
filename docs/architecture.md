@@ -67,7 +67,7 @@ flowchart LR
 | WP-16 | `web/features/{decisions,composer}/*` (`DecisionBar`, `DecisionCard`, `Composer`, `ContextGauge`, `ModelPicker`, `ModePicker`) | WP-14-State, Slots `Markdown`, `ToolInputPreview` | Playground + Komponenten-Tests |
 | WP-20 | `main.ts` (Config, Logging, Exit-Codes) + `app/compose.ts` (`startServer`: Stores, `createApp` + `createSyncHub` + `createSessionManager` + Backend nach `--backend`, Shutdown-Rahmen, Lockfile; §3.3); `App.tsx`: Slots mit den echten Komponenten füllen | alles | E2E |
 | WP-21 | `src/server/launcher/**`: Lockfile schreiben/lesen, Health-Ping, Launcher-Code, Browser-Start (Edge; seit ADR-136 Chrome), „Server beenden“ | `@shared/http`, `lib/process.ts` | Temp-Home, Port 0 |
-| Koordinator (R2-Fixes) | `lib/async.ts`, `lib/fs.ts` (ADR-055), `lib/homeLock.ts` (ADR-054), `lib/homeAccess.ts` (ADR-056); Exporte §2.2 | Shared (`@shared/paths`), `lib/{logger,paths,process}.ts` | Nähte (`FsOps`, `run`, `platform`), Temp-Ordner, zwei Prozesse (Home-Lock) |
+| Koordinator (R2-Fixes) | `lib/async.ts`, `lib/fs.ts` (ADR-055), `lib/homeLock.ts` (ADR-054); `lib/homeAccess.ts` (ADR-056) entfernt mit ADR-229; Exporte §2.2 | Shared (`@shared/paths`), `lib/{logger,paths,process}.ts` | Nähte (`FsOps`, `run`, `platform`), Temp-Ordner, zwei Prozesse (Home-Lock) |
 
 **Phase 2 (Mission Control, Design `docs/wp/WP-30.md`, ADR-100 … ADR-119):** Contracts v2 und Gerüst
 (WP-30), dann je Paket: WP-31/34 Engine (`sessions/**`, `backend/**`: Leerlauf-Schlaf, Archiv,
@@ -143,7 +143,7 @@ im Bericht).
 | `src/server/lib/logger.ts`, `lib/ids.ts`, `lib/paths.ts` | WP-10 | Exporte §2.2 |
 | `src/server/lib/process.ts` | WP-11 | Exporte §2.2; WP-13/21 nutzen nur |
 | `src/server/lib/windows.ts`, `lib/registry.ts`, `lib/chrome.ts` | WP-11 (`chrome.ts`: CHROME, ersetzt `edge.ts`, ADR-136) | Exporte §2.2 (aus `claude/` verschoben, R1-08, ADR-024); WP-13/21 nutzen nur |
-| `src/server/lib/async.ts`, `lib/fs.ts`, `lib/homeLock.ts`, `lib/homeAccess.ts` | Koordinator (R2-Fixes) | Exporte §2.2 (ADR-054 … ADR-056); alle Pakete nutzen nur, Erweiterungen im Bericht anfragen |
+| `src/server/lib/async.ts`, `lib/fs.ts`, `lib/homeLock.ts`, `lib/ffi.ts` | Koordinator (R2-Fixes, ADR-229) | Exporte §2.2 (ADR-054, ADR-055, ADR-229); alle Pakete nutzen nur, Erweiterungen im Bericht anfragen |
 | `src/server/lib/toast.ts` | WP-22-Fixes | nativer Windows-Toast (ADR-082, ADR-091); Exporte §2.2; Nutzer `sessions/nativeToasts.ts` |
 | `src/server/config.ts`, `src/server/{http,sync,store}/**` | WP-10 | |
 | `src/server/claude/**` | WP-11 | kein eigener Pfad-Helfer, Pfadregeln nur `@shared/paths` |
@@ -208,16 +208,17 @@ assertSpawnableFile(file): void             // TypeError für nackte Namen, rela
 systemTool(name): string                    // %SystemRoot%\System32\<name>
 isProcessAlive(pid): boolean                // process.kill(pid, 0), EPERM = lebt; Sofort-Vorfilter der Waisen-Bereinigung
 errnoCode(error): string | undefined
-// Prozessabfragen DREIWERTIG (R2-02, ADR-051): PowerShell + CIM (Win32_Process), 1–3 s, unter Last bis ≈ 23 s
+// Prozessabfragen DREIWERTIG (R2-02, ADR-051): nativ über node:ffi (lib/processNative.ts, Toolhelp + GetProcessTimes,
+// ≈ 10–30 ms, ADR-229); nur ohne node:ffi PowerShell + CIM (Win32_Process), 1–3 s, unter Last bis ≈ 23 s
 interface ProcessInfo { pid: number; name: string; parentPid: number | null; startedAt: Date }
 type ProcessQueryResult = { kind: 'ok'; processes: ProcessInfo[] }
   | { kind: 'unknown'; reason: 'timeout' | 'failed' | 'output' | 'unsupported'; detail: string }  // nie „weg“
-queryProcesses({ pids?, parentPids? }, { timeoutMs?, run?, platform? }?): Promise<ProcessQueryResult>
+queryProcesses({ pids?, parentPids? }, { timeoutMs?, run?, platform?, native? }?): Promise<ProcessQueryResult>
   // EINE Abfrage für viele PIDs (≤ PROCESS_QUERY_MAX_CLAUSES = 100 Klauseln je Aufruf), Timeout
   // PROCESS_QUERY_TIMEOUT_MS = 60 s, -ErrorAction Stop + exit 3 statt leerer Liste; leerer Filter → ok []
 processInfo(pid, options?): Promise<{ kind: 'found'; info } | { kind: 'missing' } | { kind: 'unknown'; reason; detail }>
 childProcesses(pid, options?): Promise<ProcessQueryResult>  // direkte Kinder; Nutzer: Shutdown-Sweep (launcher/shutdown.ts)
-listProcesses(options?): Promise<ProcessQueryResult>        // ALLE Prozesse, eine CIM-Abfrage (Herzschlag-Schnappschuss, ADR-081)
+listProcesses(options?): Promise<ProcessQueryResult>        // ALLE Prozesse, ein Toolhelp-Schnappschuss (Herzschlag-Schnappschuss, ADR-081)
 descendantsOf(processes, root): ProcessInfo[]               // rein; Nachkommen über alle Ebenen, Kind älter als Elter = PID-Wiederverwendung
 processStartTime(pid, options?): Promise<Date | null>       // null = missing ODER unknown (unterscheiden: processInfo)
 processQueryFilters(filter), parseProcessQueryOutput(stdout) // reine Teile (WQL-Filter, JSON-Ausgabe)
@@ -290,11 +291,10 @@ homeLockKey(home): Promise<string>                   // windowsPathKey(realpath(
 homeLockPipeName(key): string                        // \\.\pipe\parallax-home-<16 Hex von sha256(key)>
 directoryLockPipeName(kind, key): string             // \\.\pipe\parallax-<kind>-<16 Hex>
 
-// src/server/lib/homeAccess.ts (Koordinator, R2-13, ADR-056) – nur Warnung, keine ACL-Änderung
-checkHomeAccess(home, { run?, platform?, timeoutMs?, signal? }?): Promise<HomeAccess>  // wirft nie; signal → unknown 'aborted' (Shutdown, V3-15 b)
-  // HomeAccess = private | shared {principals} | missing | unknown {reason}; DACL per Get-Acl (SDDL), SID per whoami
-logHomeAccess(home, options?): Promise<HomeAccess>   // warn bei shared – Server-Start (Verdrahtung WP-20c); Preflight nutzt checkHomeAccess
-parseSddlDacl(sddl), otherReaders(aces, userSid), parseWhoamiSid(output)  // reine Parser
+// src/server/lib/ffi.ts (Koordinator, ADR-229) – die eine Stelle, die node:ffi lädt
+loadFfi(): FfiModule | null                          // null ohne node:ffi oder außerhalb Windows x64; ExperimentalWarning still
+openLibrary(path, definitions): Record<K, FfiFunction> | null   // alle Symbole oder null
+pointerValue(value): bigint
 ```
 
 Neue kleine, generische Helfer (Fehler, Warten, Datei-Retry) gehören nach `lib/async.ts` bzw.
@@ -594,8 +594,7 @@ jeder Schritt mit Timeout (5 s, Stores 10 s): `app.close()` (WS-Close 4503, Hub 
 laufendes `system.apply` warten (keine PowerShell überlebt den Server, Phase 2) → auf eine laufende
 Profilprüfung warten (R4-13) → Session-Dateiindex flushen (`files.flush()`, `entries/<id>/files.json`,
 Phase 3, ADR-145) → alle Stores
-schließen (inkl. Profile und Kataloge, umgekehrte Reihenfolge) → auf die Zugriffsprüfung des Homes warten (`homeAccess`, keine PowerShell
-überlebt den Server) → Lockfile freigeben (nur das eigene) → Home-Lock freigeben → Logzeile
+schließen (inkl. Profile und Kataloge, umgekehrte Reihenfolge) → Lockfile freigeben (nur das eigene) → Home-Lock freigeben → Logzeile
 „shutdown: done“ mit `totalMs` und Dauer je Schritt (`stepsMs`) → Log-Datei schließen (im
 `exit`-Wrapper) → `exit(code)`. Live (Code-Review-Fixes): wartende + arbeitende Session → 6,6 s
 bis zum Prozessende (5 s Fenster + `taskkill` des Baums mit laufendem `ping`).
@@ -1726,10 +1725,10 @@ unter einem Lock, ADR-094) und `pnpm build:server` – „ein Build je Checkout�
 (`launcher/build.ts` `acquireBuildLock`/`pollLock` über `acquireKeyLock`, auch für einen Checkout
 auf einem UNC-Pfad; `runBuild` setzt `PARALLAX_BUILD_LOCK_HELD=1` für seine Schritte; ADR-092).
 
-**Rechte des Homes (R2-13, ADR-056):** `server.lock.json` (Launcher-Token) und `auth-secret.json`
-liegen im Home; Parallax ändert keine ACLs. `checkHomeAccess` (`lib/homeAccess.ts`) erkennt andere
-Leser, `pnpm preflight` warnt (Prüfung „data dir“ mit `icacls`-Vorschlag); der Server loggt die
-Warnung beim Start (`logHomeAccess` im Hintergrund nach `listen`, `app/compose.ts`).
+**Rechte des Homes (R2-13, ADR-056, ADR-229):** `server.lock.json` (Launcher-Token) und `auth-secret.json`
+liegen im Home; Parallax ändert und liest keine ACLs. Unter `%LOCALAPPDATA%` ist der Ordner privat; liegt er
+woanders, nennt `pnpm preflight` das als Hinweis mit `icacls`-Vorschlag (Prüfung „data dir“). Die frühere
+Prüfung (`whoami` + `Get-Acl` bei jedem Start) ist mit ADR-229 entfallen.
 
 **Transkript-Log** (`src/server/sync/ports.ts`): eine Zeile je persistierter Op,
 `{v:1, at, op:'upsert', item}` (nur nicht-streamende Items) oder `{v:1, at, op:'remove', itemId}`.

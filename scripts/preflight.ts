@@ -7,9 +7,8 @@
  * the resolved `claude` path + version (C.7) and the login (`claude auth status --json`, only
  * method/provider/subscription – never e-mail or organization), Google Chrome (path and version
  * from its version resource – chrome.exe is never started) with the Chrome policies that override
- * the app window (ADR-136), and whether other
- * users can read the data folder (R2-13; `--home=<dir>` / PARALLAX_HOME like the server, default
- * %LOCALAPPDATA%\Parallax). The profiles are those of the data folder's `profiles.json`, read
+ * the app window (ADR-136), and where the data folder lies (R2-13, a hint only – no rights query,
+ * ADR-229; `--home=<dir>` / PARALLAX_HOME like the server, default %LOCALAPPDATA%\Parallax). The profiles are those of the data folder's `profiles.json`, read
  * without writing anything (WP-32; missing or newer file → only "Standard"), each with its
  * findings (profileIssues). Only `claude --version` and `claude auth status` are run – no model
  * call, no tokens. Then "Several computers" (WP-82, remote/preflight.ts): TLS self-test, Windows key

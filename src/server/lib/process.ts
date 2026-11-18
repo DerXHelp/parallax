@@ -24,6 +24,7 @@ import { readFileHead } from './fileRead';
 import { logger } from './logger';
 import { fsErrorCode } from './paths';
 import { PE_HEADER_BYTES, PE_SUBSYSTEM_WINDOWS_GUI, peSubsystem } from './pe';
+import { loadNativeProcessApi, type NativeProcessApi } from './processNative';
 
 export interface RunFileOptions {
   cwd?: string;
@@ -347,6 +348,8 @@ function runTaskkill(pid: number): Promise<RunFileResult> {
 
 // =====================================================================================
 // Process queries (orphan cleanup at server start, shutdown sweep) – R2-02
+// ADR-229: in this process through `node:ffi` (lib/processNative.ts) – no PowerShell. Only a Node
+// without `node:ffi` (< 26.1) still asks PowerShell + CIM.
 // =====================================================================================
 
 /** Identity of a running process, for the orphan cleanup on the next start (B, C.8). */
@@ -360,9 +363,10 @@ export interface ProcessInfo {
 }
 
 /**
- * Why a query gave no answer: PowerShell timed out (`timeout`), could not run or failed – policy
- * (AppLocker, Constrained Language Mode), CIM error, exit ≠ 0 (`failed`) – or printed something
- * unreadable (`output`); `unsupported` off Windows. NEVER the same as "the process is gone".
+ * Why a query gave no answer: the native snapshot failed (`failed`); without `node:ffi`: PowerShell
+ * timed out (`timeout`), could not run or failed – policy (AppLocker, Constrained Language Mode),
+ * CIM error, exit ≠ 0 (`failed`) – or printed something unreadable (`output`); `unsupported` off
+ * Windows. NEVER the same as "the process is gone".
  */
 export type ProcessQueryFailure = 'timeout' | 'failed' | 'output' | 'unsupported';
 
@@ -383,17 +387,51 @@ export interface ProcessFilter {
 }
 
 export interface ProcessQueryOptions {
-  /** Per PowerShell call; default `PROCESS_QUERY_TIMEOUT_MS`. */
+  /** Per PowerShell call (only without `node:ffi`); default `PROCESS_QUERY_TIMEOUT_MS`. */
   timeoutMs?: number;
-  /** Test seam (default `runFile`). */
+  /** Test seam of the PowerShell path (default `runFile`); given without `native` → PowerShell. */
   run?: RunFileFn;
   /** Test seam (default `process.platform`). */
   platform?: NodeJS.Platform;
+  /** Test seam: the native process list (default `loadNativeProcessApi()`); null = PowerShell. */
+  native?: NativeProcessApi | null;
+}
+
+let defaultNative: NativeProcessApi | null | undefined;
+
+/** The native process list unless a test drives the PowerShell path (`run` without `native`). */
+function nativeApi(options: ProcessQueryOptions): NativeProcessApi | null {
+  if (options.native !== undefined) return options.native;
+  if (options.run !== undefined) return null;
+  if (defaultNative === undefined) defaultNative = loadNativeProcessApi();
+  return defaultNative;
 }
 
 /**
- * PowerShell + CIM: 1–3 s idle, up to ≈ 23 s under load (docs/wp/FLAKES.md). The orphan cleanup
- * runs in the background, so the limit is generous (R2-02); a timeout is `unknown`, never "gone".
+ * Processes of the native snapshot that `wanted` accepts (null = all), with their start times.
+ * A process whose start time cannot be read (another user's, a protected one) is left out like
+ * a Win32_Process row without CreationDate – it is never one of this user's session processes.
+ */
+function nativeQuery(
+  api: NativeProcessApi,
+  wanted: ((entry: { pid: number; parentPid: number }) => boolean) | null,
+): ProcessQueryResult {
+  const entries = api.entries();
+  if (entries === null) return unknownResult('failed', 'process snapshot failed');
+  const processes: ProcessInfo[] = [];
+  for (const entry of entries) {
+    if (entry.pid <= 0 || (wanted !== null && !wanted(entry))) continue;
+    const startedAt = api.startedAt(entry.pid);
+    if (startedAt === null) continue;
+    processes.push({ pid: entry.pid, name: entry.name, parentPid: entry.parentPid, startedAt });
+  }
+  return { kind: 'ok', processes };
+}
+
+/**
+ * PowerShell + CIM (only without `node:ffi`): 1–3 s idle, up to ≈ 23 s under load
+ * (docs/wp/FLAKES.md). The orphan cleanup runs in the background, so the limit is generous
+ * (R2-02); a timeout is `unknown`, never "gone".
  */
 export const PROCESS_QUERY_TIMEOUT_MS = 60_000;
 /** WQL clauses per CIM query (the filter has a length limit); more PIDs → several sequential calls. */
@@ -502,11 +540,10 @@ async function runProcessQuery(
 }
 
 /**
- * Name, parent and start time of every process matching `filter` (Win32_Process via
- * PowerShell/CIM, also processes of other sessions) – ONE PowerShell call for many PIDs and their
- * children (R2-02: ≈ 2.8 s instead of 2 × 2.4 s per PID). Three-valued: a failure or timeout is
- * `unknown`, never an empty list. Meant for the orphan cleanup and the shutdown sweep, not for hot
- * paths. An empty filter answers `ok []` without a call.
+ * Name, parent and start time of every process matching `filter` – natively (ADR-229), without
+ * `node:ffi` in ONE PowerShell call for many PIDs and their children (R2-02). Three-valued: a
+ * failure or timeout is `unknown`, never an empty list. Meant for the orphan cleanup and the
+ * shutdown sweep, not for hot paths. An empty filter answers `ok []` without a call.
  */
 export async function queryProcesses(
   filter: ProcessFilter,
@@ -515,6 +552,12 @@ export async function queryProcesses(
   const filters = processQueryFilters(filter);
   if (filters.length === 0) return { kind: 'ok', processes: [] };
   if ((options.platform ?? process.platform) !== 'win32') return unknownResult('unsupported', 'not Windows');
+  const native = nativeApi(options);
+  if (native !== null) {
+    const pids = new Set(filter.pids ?? []);
+    const parents = new Set(filter.parentPids ?? []);
+    return nativeQuery(native, (entry) => pids.has(entry.pid) || parents.has(entry.parentPid));
+  }
   const run = options.run ?? runFile;
   const timeoutMs = options.timeoutMs ?? PROCESS_QUERY_TIMEOUT_MS;
   const found = new Map<number, ProcessInfo>();
@@ -527,12 +570,14 @@ export async function queryProcesses(
 }
 
 /**
- * EVERY process of the machine in one CIM query (name, parent, start time; ≈ 1–3 s, three-valued
- * like queryProcesses). For the periodic snapshot of the session process trees (WP22-06, R2-03):
- * Win32_Process has no recursive filter, the descendants are computed with `descendantsOf`.
+ * EVERY process of the machine (name, parent, start time; natively ≈ 10–30 ms, without `node:ffi`
+ * one CIM query of ≈ 1–3 s; three-valued like queryProcesses). For the periodic snapshot of the
+ * session process trees (WP22-06, R2-03); the descendants are computed with `descendantsOf`.
  */
 export async function listProcesses(options: ProcessQueryOptions = {}): Promise<ProcessQueryResult> {
   if ((options.platform ?? process.platform) !== 'win32') return unknownResult('unsupported', 'not Windows');
+  const native = nativeApi(options);
+  if (native !== null) return nativeQuery(native, null);
   return runProcessQuery(null, options.run ?? runFile, options.timeoutMs ?? PROCESS_QUERY_TIMEOUT_MS);
 }
 

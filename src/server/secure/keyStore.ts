@@ -11,11 +11,12 @@
  *   Windows the store is unavailable – never a clear-text fallback.
  * - Plaintext and entropy are passed as buffers; the native result is copied, the native memory
  *   zeroed and freed (`LocalFree`). Errors become `KeyStoreError` without any data.
- * - `node:ffi` is experimental: its one ExperimentalWarning at load is expected and swallowed.
+ * - `node:ffi` is loaded by lib/ffi.ts (one place, ADR-229; its ExperimentalWarning is swallowed).
  * - The calls are synchronous and take about a millisecond (rare: start, pairing).
  */
 import { randomBytes } from 'node:crypto';
 import type { Logger } from 'pino';
+import { loadFfi, openLibrary, type FfiFunction } from '../lib/ffi';
 import { logger as rootLogger } from '../lib/logger';
 import { KeyStoreError, type KeyPurpose, type KeyStore } from './ports';
 
@@ -36,63 +37,6 @@ export interface DpapiNative {
   unprotect(data: Buffer, entropy: Buffer): Buffer | null;
 }
 
-// ---- node:ffi (experimental; typed here for the few calls used) ----
-
-type FfiFunction = (...args: unknown[]) => unknown;
-
-interface FfiModule {
-  dlopen(
-    path: string,
-    definitions: Record<string, { return: string; arguments: string[] }>,
-  ): { lib: { close(): void }; functions: Record<string, FfiFunction | undefined> };
-  getRawPointer(buffer: Buffer): bigint;
-  toBuffer(pointer: bigint, length: number): Buffer;
-  exportBuffer(source: Buffer, pointer: bigint, length: number): void;
-}
-
-function isFfiModule(value: unknown): value is FfiModule {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'dlopen' in value &&
-    typeof value.dlopen === 'function' &&
-    'getRawPointer' in value &&
-    typeof value.getRawPointer === 'function' &&
-    'toBuffer' in value &&
-    typeof value.toBuffer === 'function' &&
-    'exportBuffer' in value &&
-    typeof value.exportBuffer === 'function'
-  );
-}
-
-/** `node:ffi` or null; its ExperimentalWarning (and only that) is not printed. */
-function loadFfi(): FfiModule | null {
-  // eslint-disable-next-line @typescript-eslint/unbound-method -- put back unchanged below, called with `process`
-  const original = process.emitWarning;
-  const filtered = (warning: string | Error, ...rest: unknown[]): void => {
-    const first = rest[0];
-    const type =
-      typeof first === 'string'
-        ? first
-        : typeof first === 'object' && first !== null && 'type' in first
-          ? first.type
-          : undefined;
-    const text = typeof warning === 'string' ? warning : warning.message;
-    if (type === 'ExperimentalWarning' && /\bFFI\b/u.test(text)) return;
-    Reflect.apply(original, process, [warning, ...rest]);
-  };
-  process.emitWarning = filtered;
-  try {
-    const loaded: unknown = process.getBuiltinModule('node:ffi');
-    return isFfiModule(loaded) ? loaded : null;
-  } catch {
-    // --no-experimental-ffi, the permission model without --allow-ffi, …
-    return null;
-  } finally {
-    process.emitWarning = original;
-  }
-}
-
 const UI_FORBIDDEN = 0x1;
 /** `DATA_BLOB` on x64: DWORD cbData, 4 bytes padding, BYTE* pbData. */
 const BLOB_BYTES = 16;
@@ -109,23 +53,15 @@ export function loadDpapiNative(platform: NodeJS.Platform = process.platform): D
   if (platform !== 'win32' || process.arch !== 'x64') return null;
   const ffi = loadFfi();
   if (ffi === null) return null;
-  let protectData: FfiFunction | undefined;
-  let unprotectData: FfiFunction | undefined;
-  let localFree: FfiFunction | undefined;
-  try {
-    const crypt = ffi.dlopen('crypt32.dll', {
-      CryptProtectData: DPAPI_SIGNATURE,
-      CryptUnprotectData: DPAPI_SIGNATURE,
-    });
-    const kernel = ffi.dlopen('kernel32.dll', { LocalFree: { return: 'pointer', arguments: ['pointer'] } });
-    protectData = crypt.functions.CryptProtectData;
-    unprotectData = crypt.functions.CryptUnprotectData;
-    localFree = kernel.functions.LocalFree;
-  } catch {
-    return null;
-  }
-  if (protectData === undefined || unprotectData === undefined || localFree === undefined) return null;
-  const free = localFree;
+  const crypt = openLibrary('crypt32.dll', {
+    CryptProtectData: DPAPI_SIGNATURE,
+    CryptUnprotectData: DPAPI_SIGNATURE,
+  });
+  const kernel = openLibrary('kernel32.dll', { LocalFree: { return: 'pointer', arguments: ['pointer'] } });
+  if (crypt === null || kernel === null) return null;
+  const protectData = crypt.CryptProtectData;
+  const unprotectData = crypt.CryptUnprotectData;
+  const free = kernel.LocalFree;
 
   const blob = (data: Buffer): Buffer => {
     const out = Buffer.alloc(BLOB_BYTES);

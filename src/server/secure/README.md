@@ -11,7 +11,7 @@ Rechner). Nur Node `crypto`/`tls`, keine eigene Kryptografie.
 | `der.ts` | DER-Baustein: selbstsigniertes ML-DSA-87-Zertifikat (X.509 v3, `CN=parallax`, ohne Erweiterungen) | WP-78a |
 | `pins.ts` | SHA-384-Pins aus `X509Certificate(raw)`, `pinsEqual`/`bytesEqual` (konstante Zeit), PEM, SPKI eines Sockets | WP-78a |
 | `identity.ts` | `generateIdentity` (nur im Speicher), `makeIdentity` (Prüfung nach dem Laden) | WP-78a |
-| `keyStore.ts` | DPAPI (`CryptProtectData`, CurrentUser) über `node:ffi` im Serverprozess, ohne Kindprozess (ADR-228) | WP-78a |
+| `keyStore.ts` | DPAPI (`CryptProtectData`, CurrentUser) über `node:ffi` im Serverprozess, ohne Kindprozess (ADR-228; Lader `lib/ffi.ts`, ADR-229) | WP-78a |
 | `memoryKeyStore.ts` | `KeyStore` im Speicher für Tests | WP-78a |
 | `identityStore.ts` | `keys/<purpose>.json`: Prüfung beim Laden, Quarantäne, `save` für Schlüssel aus dem Speicher | WP-78a |
 | `strictJsonFile.ts` | Lesen/Schreiben von Dateien, deren Schreiben sicher feststehen muss (ohne `.bak`) | WP-78a |
