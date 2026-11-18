@@ -110,7 +110,7 @@ async function openSection(user: ReturnType<typeof userEvent.setup>, name: strin
 }
 
 describe('settings page (WP-38): dialog, sections, Esc', () => {
-  it('lists the eight sections on the left and starts at the first one', async () => {
+  it('lists the nine sections on the left and starts at the first one', async () => {
     await connect();
     renderPage();
     const list = screen.getByRole('tablist', { name: 'Settings sections' });
@@ -118,7 +118,18 @@ describe('settings page (WP-38): dialog, sections, Esc', () => {
       within(list)
         .getAllByRole('tab')
         .map((tab) => tab.textContent),
-    ).toEqual(['General', 'Notifications', 'Sessions', 'Files', 'Profiles', 'Server', 'Updates', 'About']);
+    ).toEqual([
+      'General',
+      'Notifications',
+      'Sessions',
+      'Files',
+      'Profiles',
+      'Server',
+      // WP-78b: "Several computers" after "Server".
+      'Several computers',
+      'Updates',
+      'About',
+    ]);
     expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe('true');
     expect(list.getAttribute('aria-orientation')).toBe('vertical');
     expect(screen.getByRole('tabpanel', { name: 'General' })).toBeTruthy();
@@ -132,6 +143,8 @@ describe('settings page (WP-38): dialog, sections, Esc', () => {
     expect(tab.getAttribute('aria-selected')).toBe('true');
     expect(within(screen.getByRole('tabpanel', { name: 'Server' })).getByText('Port')).toBeTruthy();
     tab.focus();
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('tab', { name: 'Several computers' }).getAttribute('aria-selected')).toBe('true');
     await user.keyboard('{ArrowDown}');
     expect(screen.getByRole('tab', { name: 'Updates' }).getAttribute('aria-selected')).toBe('true');
     // Without features/updates (WP-88a) the section says so.

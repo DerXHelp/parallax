@@ -10,8 +10,10 @@ import {
   sampleId,
   sampleItems,
   samplePresence,
+  sampleRemoteAccessState,
   sampleStatusFacts,
   sampleSummary,
+  sampleTime,
   sampleUuid,
 } from '@shared/samples';
 import type { SessionViewState } from '@shared/sync';
@@ -617,5 +619,305 @@ describe('closeAll', () => {
     socket.bufferedAmount = 64 * 1024 * 1024;
     hub.publishOps(ENTRY, [upsert(3)]);
     expect(socket.closedWith?.code).toBe(1013);
+  });
+});
+
+// =====================================================================================
+// Remote connections (WP-78b, RemoteHubAttach; docs/wp/WP-76.md §B.6, §B.8, §B.12 "Hub")
+// =====================================================================================
+
+const REMOTE_INFO = { address: '192.0.2.10', port: 50123 };
+
+function connectRemote(clientN = 11, kind: 'window' | 'relay' = 'window'): FakeSocket {
+  const socket = new FakeSocket();
+  hub.handleRemoteConnection(socket, REMOTE_INFO);
+  socket.receive(sampleClientHello({ clientId: sampleId('cl', clientN), kind }));
+  return socket;
+}
+
+function cmdMessage(n: number, cmd: Record<string, unknown>) {
+  return { type: 'cmd', cmdId: sampleUuid(n), cmd };
+}
+
+function ackOf(socket: FakeSocket, n: number) {
+  return socket.ofType('ack').find((ack) => ack.cmdId === sampleUuid(n));
+}
+
+describe('remote connections: allowlist (fail closed)', () => {
+  it('runs allowed commands like a local window', async () => {
+    const remote = connectRemote();
+    remote.receive(cmdMessage(1, { name: 'session.setPinned', entryId: ENTRY, pinned: true }));
+    await tick();
+    expect(ackOf(remote, 1)).toMatchObject({ ok: true });
+    expect(source.commands.map((c) => [c.cmd.name, c.ctx.clientId])).toEqual([
+      ['session.setPinned', sampleId('cl', 11)],
+    ]);
+  });
+
+  it('refuses every command outside REMOTE_ALLOWED_COMMANDS with REMOTE_NOT_ALLOWED – the source never sees it', async () => {
+    const remote = connectRemote();
+    const denied = [
+      { name: 'settings.update', patch: {} },
+      { name: 'server.shutdown' },
+      { name: 'session.consoleCommand', entryId: ENTRY },
+      { name: 'multiHost.configure', role: 'off' },
+      { name: 'remoteAccess.pair' },
+      { name: 'update.check' },
+    ];
+    denied.forEach((cmd, i) => {
+      remote.receive(cmdMessage(i + 1, cmd));
+    });
+    await tick();
+    denied.forEach((cmd, i) => {
+      expect(ackOf(remote, i + 1)).toMatchObject({
+        ok: false,
+        error: { code: 'REMOTE_NOT_ALLOWED', params: { command: cmd.name } },
+      });
+    });
+    expect(source.commands).toEqual([]);
+    // A refused command is no protocol error: the connection stays.
+    expect(remote.closedWith).toBeNull();
+  });
+
+  it('refuses unknown names and denied names with invalid arguments without validation details', async () => {
+    const remote = connectRemote();
+    remote.receive(cmdMessage(1, { name: 'evil.run', path: 'C:\\x' }));
+    remote.receive(cmdMessage(2, { name: 'settings.update' }));
+    remote.receive(cmdMessage(3, { nope: true }));
+    // An allowed name with wrong arguments keeps its validation answer.
+    remote.receive(cmdMessage(4, { name: 'session.setPinned', entryId: ENTRY }));
+    await tick();
+    expect(ackOf(remote, 1)).toMatchObject({
+      ok: false,
+      error: { code: 'REMOTE_NOT_ALLOWED', params: { command: 'evil.run' } },
+    });
+    expect(ackOf(remote, 2)).toMatchObject({
+      ok: false,
+      error: { code: 'REMOTE_NOT_ALLOWED', params: { command: 'settings.update' } },
+    });
+    expect(ackOf(remote, 3)).toMatchObject({
+      ok: false,
+      error: { code: 'REMOTE_NOT_ALLOWED', params: { command: 'unknown' } },
+    });
+    expect(ackOf(remote, 4)).toMatchObject({ ok: false, error: { code: 'VALIDATION_FAILED' } });
+    expect(source.commands).toEqual([]);
+  });
+
+  it('keeps remote cmdIds apart from local ones (no cached local ack reaches a remote window)', async () => {
+    source.setHandler('remoteAccess.pair', () => ({
+      code: '7ZZZ-AAAA-BBBB-CCCC-DDDD-EEEE-FFFF',
+      expiresAt: '2026-10-15T08:10:00.000Z',
+      hostName: 'COMPUTER-B',
+      addresses: ['192.0.2.20'],
+      port: 4713,
+    }));
+    const local = connect(1);
+    local.receive(cmdMessage(7, { name: 'remoteAccess.pair' }));
+    await tick();
+    expect(ackOf(local, 7)).toMatchObject({ ok: true });
+
+    const remote = connectRemote();
+    remote.receive(cmdMessage(7, { name: 'session.setPinned', entryId: ENTRY, pinned: false }));
+    await tick();
+    const ack = ackOf(remote, 7);
+    expect(ack).toMatchObject({ ok: true, result: {} });
+    expect(JSON.stringify(remote.sent)).not.toContain('7ZZZ-AAAA');
+    expect(source.commands.map((c) => c.cmd.name)).toEqual(['remoteAccess.pair', 'session.setPinned']);
+  });
+});
+
+describe('remote connections: relay (watcher of the controlling computer)', () => {
+  it('a local connection may not be a relay', () => {
+    const socket = new FakeSocket();
+    hub.handleConnection(socket);
+    socket.receive(sampleClientHello({ kind: 'relay' }));
+    expect(socket.ofType('error')[0]).toMatchObject({
+      error: { code: 'INVALID_MESSAGE', params: { reason: 'relay_local' } },
+    });
+    expect(socket.ofType('host.state')).toEqual([]);
+    expect(socket.closedWith?.code).toBe(WS_CLOSE.PROTOCOL_ERROR);
+    expect(hub.presence()).toEqual([]);
+  });
+
+  it('accepts at most one relay over remote access; a new one after the old closed', () => {
+    const relay = connectRemote(21, 'relay');
+    expect(relay.ofType('host.state')).toHaveLength(1);
+    const second = connectRemote(22, 'relay');
+    expect(second.ofType('error')[0]).toMatchObject({
+      error: { code: 'INVALID_MESSAGE', params: { reason: 'relay_exists' } },
+    });
+    expect(second.closedWith?.code).toBe(WS_CLOSE.PROTOCOL_ERROR);
+    // Windows of the same computer are not limited.
+    connectRemote(23, 'window');
+    expect(hub.presence().map((p) => [p.clientId, p.origin, p.kind])).toEqual([
+      [sampleId('cl', 21), 'remote', 'relay'],
+      [sampleId('cl', 23), 'remote', 'window'],
+    ]);
+
+    relay.close(1000);
+    const third = connectRemote(24, 'relay');
+    expect(third.closedWith).toBeNull();
+    expect(third.ofType('summaries.snapshot')).toHaveLength(1);
+  });
+
+  it('a relay has no subscriptions and no commands, but receives channel 1 and its notifications', async () => {
+    const relay = connectRemote(21, 'relay');
+    relay.receive({ type: 'subscribe', entryId: ENTRY });
+    relay.receive(cmdMessage(1, { name: 'session.setPinned', entryId: ENTRY, pinned: true }));
+    await tick();
+    expect(relay.ofType('error')[0]).toMatchObject({
+      error: { code: 'REMOTE_NOT_ALLOWED', params: { command: 'subscribe' } },
+    });
+    expect(relay.ofType('session.snapshot')).toEqual([]);
+    expect(source.loadViewCalls).toEqual([]);
+    expect(ackOf(relay, 1)).toMatchObject({
+      ok: false,
+      error: { code: 'REMOTE_NOT_ALLOWED', params: { command: 'session.setPinned' } },
+    });
+    expect(source.commands).toEqual([]);
+
+    hub.publishSummary(sampleSummary(), true);
+    expect(relay.ofType('summary.upsert')).toHaveLength(1);
+    hub.notify(sampleId('cl', 21), {
+      id: 'n1',
+      kind: 'done',
+      entryId: ENTRY,
+      title: 'Sample session',
+      delivery: 'system',
+      at: new Date().toISOString(),
+    });
+    expect(relay.ofType('notify')).toHaveLength(1);
+  });
+});
+
+describe('remote connections: redaction and presence', () => {
+  it('host.state goes to remote connections with remoteAccess: null, locally unchanged', () => {
+    source.host = {
+      ...source.host,
+      remoteAccess: sampleRemoteAccessState({ pairingExpiresAt: sampleTime(600) }),
+    };
+    const local = connect(1);
+    const remote = connectRemote(11);
+    const relay = connectRemote(21, 'relay');
+    expect(local.ofType('host.state')[0]?.host.remoteAccess).toEqual(source.host.remoteAccess);
+    expect(remote.ofType('host.state')[0]?.host.remoteAccess).toBeNull();
+    expect(relay.ofType('host.state')[0]?.host.remoteAccess).toBeNull();
+
+    hub.publishHostState({ ...source.host, remoteAccess: sampleRemoteAccessState({ unseenRejected: 3 }) });
+    expect(local.ofType('host.state').at(-1)?.host.remoteAccess?.unseenRejected).toBe(3);
+    expect(remote.ofType('host.state').at(-1)?.host.remoteAccess).toBeNull();
+    expect(relay.ofType('host.state').at(-1)?.host.remoteAccess).toBeNull();
+    for (const socket of [remote, relay]) {
+      expect(
+        socket.sent.some((text) => text.includes('pairingExpiresAt') || text.includes('unseenRejected')),
+      ).toBe(false);
+    }
+    // Everything else of the host state is the same.
+    const { remoteAccess: _a, ...localRest } = local.ofType('host.state').at(-1)?.host ?? source.host;
+    const { remoteAccess: _b, ...remoteRest } = remote.ofType('host.state').at(-1)?.host ?? source.host;
+    expect(remoteRest).toEqual(localRest);
+  });
+
+  it('presence: remote entries carry origin and kind, local entries keep their old shape', () => {
+    connect(1);
+    connectRemote(11);
+    const [local, remote] = hub.presence();
+    expect(local).toEqual({
+      clientId: sampleId('cl', 1),
+      presence: samplePresence(),
+      lastFocusAt: new Date(),
+      connectedAt: new Date(),
+    });
+    expect(remote).toMatchObject({ clientId: sampleId('cl', 11), origin: 'remote', kind: 'window' });
+    expect(source.presenceUpdates.at(-1)).toHaveLength(2);
+  });
+
+  it('counts open remote connections (windows and relay, also before their hello)', () => {
+    connect(1);
+    expect(hub.remoteConnections()).toBe(0);
+    connectRemote(11);
+    connectRemote(21, 'relay');
+    hub.handleRemoteConnection(new FakeSocket(), REMOTE_INFO);
+    expect(hub.remoteConnections()).toBe(3);
+  });
+});
+
+describe('remote connections: closeRemote (unpair, key renewed, role left)', () => {
+  it('closes every remote connection at once; a running command has no effect afterwards', async () => {
+    const gate = { release: (): void => undefined };
+    source.setHandler('session.setPinned', async () => {
+      await new Promise<void>((resolve) => {
+        gate.release = resolve;
+      });
+      return {};
+    });
+    const local = connect(1);
+    const remote = connectRemote(11);
+    const relay = connectRemote(21, 'relay');
+    remote.receive({ type: 'subscribe', entryId: ENTRY });
+    await tick();
+    expect(hub.inspect(ENTRY)?.subscribers).toBe(1);
+    remote.receive(cmdMessage(1, { name: 'session.setPinned', entryId: ENTRY, pinned: true }));
+    await tick();
+    expect(source.commands).toHaveLength(1);
+    const sentBefore = remote.sent.length;
+
+    hub.closeRemote(WS_CLOSE.HOST_REVOKED);
+    expect(remote.closedWith?.code).toBe(WS_CLOSE.HOST_REVOKED);
+    expect(relay.closedWith?.code).toBe(WS_CLOSE.HOST_REVOKED);
+    expect(hub.remoteConnections()).toBe(0);
+    expect(hub.inspect(ENTRY)?.subscribers).toBe(0);
+    expect(hub.presence().map((p) => p.clientId)).toEqual([sampleId('cl', 1)]);
+    expect(source.presenceUpdates.at(-1)?.map((p) => p.clientId)).toEqual([sampleId('cl', 1)]);
+
+    // The command that was already running finishes – its ack and later ops never reach the socket.
+    gate.release();
+    await tick();
+    hub.publishOps(ENTRY, [upsert(3)]);
+    hub.publishHostState(source.host);
+    expect(remote.sent.length).toBe(sentBefore);
+
+    // Messages that still arrive (frames in flight) run nothing.
+    remote.receive(cmdMessage(2, { name: 'session.setPinned', entryId: ENTRY, pinned: false }));
+    remote.receive({ type: 'subscribe', entryId: ENTRY });
+    await tick();
+    expect(source.commands).toHaveLength(1);
+    expect(remote.sent.length).toBe(sentBefore);
+
+    // Local windows are untouched.
+    expect(local.closedWith).toBeNull();
+    local.receive(cmdMessage(3, { name: 'session.setPinned', entryId: ENTRY, pinned: true }));
+    await tick();
+    gate.release();
+    await tick();
+    expect(ackOf(local, 3)).toMatchObject({ ok: true });
+  });
+
+  it('a remote socket that ignores the close frame is terminated after the grace period', () => {
+    class LingeringSocket extends FakeSocket {
+      override close(code = 1005, reason = ''): void {
+        this.closedWith = { code, reason };
+      }
+      override terminate(): void {
+        super.close(1006);
+      }
+    }
+    const lingering = new LingeringSocket();
+    hub.handleRemoteConnection(lingering, REMOTE_INFO);
+    lingering.receive(sampleClientHello({ clientId: sampleId('cl', 11) }));
+    hub.closeRemote(WS_CLOSE.HOST_REVOKED);
+    expect(hub.remoteConnections()).toBe(0);
+    expect(lingering.readyState).toBe(1);
+    lingering.receive(cmdMessage(1, { name: 'session.setPinned', entryId: ENTRY, pinned: true }));
+    expect(source.commands).toEqual([]);
+    vi.advanceTimersByTime(5_000);
+    expect(lingering.readyState).toBe(3);
+  });
+
+  it('without remote connections it changes nothing', () => {
+    const local = connect(1);
+    hub.closeRemote(WS_CLOSE.HOST_REVOKED);
+    expect(local.closedWith).toBeNull();
+    expect(hub.presence()).toHaveLength(1);
   });
 });
