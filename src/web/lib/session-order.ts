@@ -8,6 +8,7 @@ import { sessionTitle } from './session-title';
  * Sidebar order (Plan "Sidebar"): by the contract's `sortBucket` (0 attention … 4 rest), then
  * newest activity, then title. Archived entries are left out unless `includeArchived`.
  * Phase 2 (WP-35): flat = pinned first, grouped = by project folder (`windowsPathKey(cwd)`).
+ * WP-80: `sidebarLayout` groups by computer and/or folder; collapsed groups leave the visible order.
  */
 export interface OrderedSession<T> {
   entry: T;
@@ -162,4 +163,126 @@ export function nextWaiting<T>(
     if (item?.status.needsAttention === true) return item.entry;
   }
   return null;
+}
+
+// ---- WP-80: "Group by" computer and/or folder, collapsible groups (WP-75 §4.4, ADR-226) ----
+
+/** What the sidebar groups by; neither = flat. `byHost` only takes effect with other computers. */
+export interface SidebarGrouping {
+  byHost: boolean;
+  byFolder: boolean;
+}
+
+/** Collapse key of a computer group. */
+export function hostGroupKey(hostId: string): string {
+  return `host:${hostId}`;
+}
+
+/** Collapse key of a folder group (its `SessionGroup.key` already carries the computer). */
+export function folderGroupKey(group: Pick<SessionGroup<unknown>, 'key'>): string {
+  return `folder:${group.key}`;
+}
+
+/** Entries that need the user (header counter "waiting"). */
+export function waitingCount<T>(sessions: readonly OrderedSession<T>[]): number {
+  let count = 0;
+  for (const item of sessions) if (item.status.needsAttention) count++;
+  return count;
+}
+
+/** One computer of the sidebar grouped by computer. */
+export interface HostSection<T> {
+  /** `hostGroupKey(hostId)`. */
+  key: string;
+  hostId: string;
+  /** Grouped by folder as well: the folder groups of this computer; else null. */
+  folders: SessionGroup<T>[] | null;
+  /** The computer's entries in display order (flat: pinned first; with folders: folder by folder). */
+  sessions: OrderedSession<T>[];
+  waiting: number;
+}
+
+/** The sidebar for one grouping: the blocks to render and the full order. */
+export interface SidebarLayout<T> {
+  /** Grouped by computer: one section per computer in fixed order (this computer first); else null. */
+  hosts: HostSection<T>[] | null;
+  /** Grouped by folder only: the folder groups (same path on two computers = two groups); else null. */
+  folders: SessionGroup<T>[] | null;
+  /** Every entry in display order, collapsed groups included ("next waiting", the rail). */
+  order: OrderedSession<T>[];
+}
+
+type WithHost = WithSummary & { hostId: string };
+
+/**
+ * The sidebar layout (WP-75 §4.4): neither = flat (pinned first); folder = the folder groups of
+ * `groupSessions`; computer = one block per computer in `hostOrder` (this computer first, then the
+ * list of computers; a computer without entries keeps its block, an unknown one comes last), inside
+ * flat or by folder.
+ */
+export function sidebarLayout<T extends WithHost>(
+  entries: readonly T[],
+  now: Date,
+  grouping: SidebarGrouping,
+  hostOrder: readonly string[],
+): SidebarLayout<T> {
+  if (!grouping.byHost) {
+    if (!grouping.byFolder) return { hosts: null, folders: null, order: flatSidebarOrder(entries, now) };
+    const folders = groupSessions(entries, now);
+    return { hosts: null, folders, order: groupedOrder(folders) };
+  }
+  const byHost = new Map<string, T[]>();
+  for (const hostId of hostOrder) byHost.set(hostId, []);
+  for (const entry of entries) {
+    const list = byHost.get(entry.hostId);
+    if (list === undefined) byHost.set(entry.hostId, [entry]);
+    else list.push(entry);
+  }
+  const hosts = [...byHost].map(([hostId, own]): HostSection<T> => {
+    const folders = grouping.byFolder ? groupSessions(own, now) : null;
+    const sessions = folders === null ? flatSidebarOrder(own, now) : groupedOrder(folders);
+    return { key: hostGroupKey(hostId), hostId, folders, sessions, waiting: waitingCount(sessions) };
+  });
+  return { hosts, folders: null, order: hosts.flatMap((host) => host.sessions) };
+}
+
+/** Every collapse key of a layout (computer and folder groups). */
+export function layoutGroupKeys<T>(layout: SidebarLayout<T>): string[] {
+  const keys: string[] = [];
+  for (const host of layout.hosts ?? []) {
+    keys.push(host.key);
+    for (const folder of host.folders ?? []) keys.push(folderGroupKey(folder));
+  }
+  for (const folder of layout.folders ?? []) keys.push(folderGroupKey(folder));
+  return keys;
+}
+
+/** The visible order (Alt+1…9): entries of collapsed groups are left out. */
+export function visibleSidebarOrder<T>(
+  layout: SidebarLayout<T>,
+  collapsed: ReadonlySet<string>,
+): OrderedSession<T>[] {
+  const ofFolders = (folders: readonly SessionGroup<T>[]) =>
+    folders.flatMap((folder) => (collapsed.has(folderGroupKey(folder)) ? [] : folder.sessions));
+  if (layout.hosts !== null) {
+    return layout.hosts.flatMap((host) => {
+      if (collapsed.has(host.key)) return [];
+      return host.folders === null ? host.sessions : ofFolders(host.folders);
+    });
+  }
+  if (layout.folders !== null) return ofFolders(layout.folders);
+  return layout.order;
+}
+
+/** Collapse keys of the groups that hold `entry` (to expand them for Alt+N and "Waiting for you"). */
+export function groupKeysOfEntry<T>(layout: SidebarLayout<T>, entry: T): string[] {
+  const keys: string[] = [];
+  const holds = (sessions: readonly OrderedSession<T>[]) => sessions.some((item) => item.entry === entry);
+  for (const host of layout.hosts ?? []) {
+    if (!holds(host.sessions)) continue;
+    keys.push(host.key);
+    for (const folder of host.folders ?? []) if (holds(folder.sessions)) keys.push(folderGroupKey(folder));
+  }
+  for (const folder of layout.folders ?? []) if (holds(folder.sessions)) keys.push(folderGroupKey(folder));
+  return keys;
 }

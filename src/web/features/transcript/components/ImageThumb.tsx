@@ -3,7 +3,7 @@ import type { BlobRef } from '@shared/model';
 import { useI18n } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { Lightbox, type LightboxImage, type LightboxLabels } from '@web/ui/lightbox';
-import { ImageViewerContext } from '../context';
+import { BlobHostContext, ImageViewerContext } from '../context';
 import { blobSource, downloadNameOf } from '../state/blob-source';
 
 /** Texts of the lightbox (transcript namespace; the primitive itself has no texts). */
@@ -27,11 +27,12 @@ export function useLightboxLabels(title: string): LightboxLabels {
 /** Name, alt text, source and download name of a blob image (thumbnail and lightbox alike). */
 export function useBlobImage(image: BlobRef): { name: string; lightbox: LightboxImage } {
   const { t } = useI18n();
+  const hostId = useContext(BlobHostContext);
   const name = image.name ?? t('transcript.user.unnamed');
   return {
     name,
     lightbox: {
-      src: blobSource(image.blobId),
+      src: blobSource(image.blobId, hostId),
       alt: t('transcript.user.image', { name }),
       downloadName: downloadNameOf(image),
       width: image.width,
