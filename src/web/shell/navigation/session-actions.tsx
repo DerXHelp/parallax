@@ -23,7 +23,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { Fragment } from 'react';
-import { LOCAL_HOST_ID, parseSessionKey } from '@shared/common';
+import { LOCAL_HOST_ID, parseSessionKey, type HostId } from '@shared/common';
 import { makeError } from '@shared/errors';
 import type { SessionSummary } from '@shared/model';
 import { windowsPathIssue } from '@shared/paths';
@@ -177,10 +177,11 @@ export function copyConsoleCommand(sessionKey: string, summary: SessionSummary):
 /**
  * "New session in this project…": the dialog of WP-36 pre-filled. `openNewSession` asks the
  * request channel itself and, without a mounted dialog, keeps the folder for its next opening
- * (WP-40: the former fallback `openNewSession()` lost the folder).
+ * (WP-40: the former fallback `openNewSession()` lost the folder). WP-80: on the folder's computer
+ * (`hostId`, default this computer).
  */
-export function newSessionIn(cwd: string): void {
-  openNewSession({ cwd });
+export function newSessionIn(cwd: string, hostId: HostId = LOCAL_HOST_ID): void {
+  openNewSession(hostId === LOCAL_HOST_ID ? { cwd } : { cwd, hostId });
 }
 
 /**
@@ -316,7 +317,7 @@ function build(
         icon: FolderPlusIcon,
         disabled: false,
         run: () => {
-          newSessionIn(summary.cwd);
+          newSessionIn(summary.cwd, parseSessionKey(sessionKey)?.hostId ?? LOCAL_HOST_ID);
         },
       };
     case 'sleep':

@@ -1,6 +1,8 @@
+import { useMemo } from 'react';
 import { useStore } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 import { LOCAL_HOST_ID, parseSessionKey, type HostId } from '@shared/common';
-import type { MultiHostRole, RemoteAccessState, RemoteHost } from '@shared/model';
+import type { HostColor, MultiHostRole, RemoteAccessState, RemoteHost } from '@shared/model';
 import type { Command, CommandResult } from '@shared/protocol';
 import { getConnection } from './connection';
 import { selectRemoteHosts } from './remote-hosts';
@@ -70,6 +72,48 @@ export function useHostAvailability(hostId: HostId | null | undefined): HostAvai
   return useStore(clientStore, (state) =>
     hostId === null || hostId === undefined ? 'available' : selectHostAvailability(state, hostId),
   );
+}
+
+/** Availability of every other computer of the list (sidebar: grey rows, group headers). */
+function selectAvailabilities(state: ClientState): Record<HostId, HostAvailability> {
+  const result: Record<HostId, HostAvailability> = {};
+  for (const host of selectRemoteHosts(state))
+    result[host.hostId] = selectHostAvailability(state, host.hostId);
+  return result;
+}
+
+/** What the window shows of another computer: name, color, whether it can be used now. */
+export interface HostLabel {
+  hostId: HostId;
+  name: string;
+  color: HostColor;
+  availability: HostAvailability;
+  /** Parallax version the server last saw on it (hint "update Parallax on <name>"). */
+  appVersion: string | null;
+}
+
+export interface HostLabels {
+  /** Other computers in display order. */
+  list: readonly HostLabel[];
+  /** Label of another computer; undefined for this computer and unknown ids. */
+  get(hostId: HostId): HostLabel | undefined;
+}
+
+/** Labels of the other computers (one stable object while names, colors and states stay). */
+export function useHostLabels(): HostLabels {
+  const hosts = useRemoteHosts();
+  const availabilities = useStore(clientStore, useShallow(selectAvailabilities));
+  return useMemo(() => {
+    const list = hosts.map((host): HostLabel => ({
+      hostId: host.hostId,
+      name: host.name,
+      color: host.color,
+      availability: availabilities[host.hostId] ?? 'connecting',
+      appVersion: host.appVersion,
+    }));
+    const byId = new Map(list.map((label) => [label.hostId, label]));
+    return { list, get: (hostId) => byId.get(hostId) };
+  }, [hosts, availabilities]);
 }
 
 /** Host id of a session key (null for an invalid key). */

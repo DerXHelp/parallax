@@ -54,6 +54,7 @@ export const de: typeof en = {
     effort: 'Aufwand',
     compactSoon: 'Autocompact steht bald an',
     needsYou: 'Braucht dich:',
+    draft: 'Ungesendeter Entwurf',
   },
   running: {
     label: 'Es läuft: {list}',

@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState, type ReactElement } from 'react';
+import type { HostId } from '@shared/common';
 import { Dialog, DialogTrigger } from '@web/ui/dialog';
 import { SlotBoundary } from '../SlotBoundary';
 
@@ -28,9 +29,17 @@ export interface FolderBrowserProps {
   children: ReactElement;
   /** Start opened (playground). */
   defaultOpen?: boolean;
+  /** WP-80: list the folders of this computer (default this one – the profile editor). */
+  hostId?: HostId;
 }
 
-export function FolderBrowser({ initialPath, onSelect, children, defaultOpen = false }: FolderBrowserProps) {
+export function FolderBrowser({
+  initialPath,
+  onSelect,
+  children,
+  defaultOpen = false,
+  hostId,
+}: FolderBrowserProps) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -40,6 +49,7 @@ export function FolderBrowser({ initialPath, onSelect, children, defaultOpen = f
           <Suspense fallback={null}>
             <FolderBrowserContent
               initialPath={initialPath}
+              {...(hostId === undefined ? {} : { hostId })}
               onChoose={(path) => {
                 setOpen(false);
                 onSelect(path);

@@ -68,6 +68,8 @@ export const en = {
     compactSoon: 'Autocompact soon',
     /** WP-65 §1.1: screen-reader prefix of a highlighted line (open decision, error, needs_action). */
     needsYou: 'Needs you:',
+    /** WP-80: screen-reader text of the draft symbol (`summary.hasDraft`). */
+    draft: 'Unsent draft',
   },
   /** WP-71: what runs in a session – row counters (screen reader), its tooltip, the header button. */
   running: {
