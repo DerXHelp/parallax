@@ -15,13 +15,11 @@ import { cn } from '@web/lib/cn';
 import { focusElement, focusedElement } from '@web/lib/return-focus';
 import {
   archivedOrder,
-  flatSidebarOrder,
   folderGroupKey,
   groupKeysOfEntry,
   groupSessions,
   hostGroupKey,
   layoutGroupKeys,
-  nextWaiting,
   visibleSidebarOrder,
   type OrderedSession,
 } from '@web/lib/session-order';
@@ -39,6 +37,7 @@ import { clientStore } from '@web/state/store';
 import { Badge } from '@web/ui/badge';
 import { Button } from '@web/ui/button';
 import { IconButton } from '@web/ui/icon-button';
+import { Kbd } from '@web/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
 import { ConnectionIndicator } from './ConnectionIndicator';
 import { MultiHostIndicator } from './hosts/MultiHostIndicator';
@@ -52,17 +51,18 @@ import {
   type RowContext,
 } from './navigation/sidebar-groups';
 import {
-  expandGroups,
   pruneCollapsedGroups,
   setArchiveView,
   setGroupCollapsed,
   useArchiveView,
   useCollapsedGroups,
 } from './navigation/sidebar-view';
+import { NEXT_WAITING_KEYS, useNextWaiting } from './navigation/use-next-waiting';
 import { useSidebarLayout } from './navigation/use-sidebar-layout';
 import { openNewSession } from './NewSessionDialog';
 import { SettingsMenu } from './SettingsMenu';
 import { useShortcut } from './shortcuts';
+import { SIDEBAR_TOGGLE_KEYS } from './sidebar-layout';
 import { useFeatureSlots } from './slots';
 
 type Ordered = OrderedSession<SummaryEntry>;
@@ -182,11 +182,20 @@ function onListKeyDown(event: KeyboardEvent<HTMLElement>): void {
 export function Sidebar({
   onCollapse,
   onChoose,
+  width,
+  maxWidth,
+  willCollapse = false,
 }: {
   /** Collapse button in the header (wide window: into the rail; narrow window: closes the overlay). */
   onCollapse?: () => void;
   /** Called after a row was chosen (click, Enter) – not for the shortcuts. */
   onChoose?: (sessionKey: string) => void;
+  /** WP-90: width in px (SidebarFrame; without it the former fixed w-72). */
+  width?: number;
+  /** CSS max-width, e.g. a share of the window. */
+  maxWidth?: string;
+  /** Dragged below the minimum: shown faded, collapses when let go. */
+  willCollapse?: boolean;
 } = {}) {
   const t = useT();
   const entries = useSummaries();
@@ -199,12 +208,11 @@ export function Sidebar({
   const collapsed = useCollapsedGroups();
   const { layout, grouping, hostOrder, hasRemoteHosts } = useSidebarLayout(entries, now);
 
-  const flat: Ordered[] = useMemo(() => flatSidebarOrder(entries, new Date(now)), [entries, now]);
   const archived: Ordered[] = useMemo(() => archivedOrder(entries, new Date(now)), [entries, now]);
   const mainOrder = layout.order;
   const shownOrder = useMemo(() => visibleSidebarOrder(layout, collapsed), [layout, collapsed]);
   const visible = archive ? archived : shownOrder;
-  const waitingCount = flat.filter((item) => item.status.needsAttention).length;
+  const { count: waitingCount, goToNext: goToNextWaiting } = useNextWaiting(layout);
 
   // WP-75 §4.4: collapsed groups that no longer exist are dropped – once every computer's list is
   // there (else a group of a computer still loading would lose its state).
@@ -233,16 +241,6 @@ export function Sidebar({
     }
   }, [archiveEmpty]);
 
-  const goToNextWaiting = (): boolean => {
-    const target = nextWaiting(mainOrder, selected, (entry) => entry.sessionKey);
-    if (target === null) return false;
-    setArchiveView(false);
-    // WP-80: the target's groups open (Alt+N counts every session, collapsed ones too).
-    expandGroups(groupKeysOfEntry(layout, target));
-    select(target.sessionKey);
-    return true;
-  };
-
   useShortcut({
     id: 'shell.selectSession',
     keys: ['Alt+1', 'Alt+2', 'Alt+3', 'Alt+4', 'Alt+5', 'Alt+6', 'Alt+7', 'Alt+8', 'Alt+9'],
@@ -259,7 +257,7 @@ export function Sidebar({
 
   useShortcut({
     id: 'navigation.nextWaiting',
-    keys: 'Alt+N',
+    keys: NEXT_WAITING_KEYS,
     description: 'navigation.shortcuts.nextWaiting',
     allowInInputs: true,
     run: goToNextWaiting,
@@ -329,8 +327,17 @@ export function Sidebar({
   else if (grouping.byFolder) view = 'grouped';
 
   return (
-    // w-72: the two-line entries (path, branch, model, context) need the room (Plan "Sidebar").
-    <aside className="bg-sidebar text-sidebar-foreground border-sidebar-border flex w-72 shrink-0 flex-col border-r">
+    // w-72 by default: the two-line entries (path, branch, model, context) need the room (Plan
+    // "Sidebar"); WP-90: SidebarFrame passes the width the user dragged.
+    <aside
+      data-will-collapse={willCollapse || undefined}
+      style={width === undefined ? undefined : { width, maxWidth }}
+      className={cn(
+        'bg-sidebar text-sidebar-foreground border-sidebar-border flex shrink-0 flex-col border-r transition-opacity',
+        width === undefined && 'w-72',
+        willCollapse && 'opacity-60',
+      )}
+    >
       <div className="flex h-9 shrink-0 items-center gap-1.5 px-3">
         <LayersIcon aria-hidden className="text-brand size-4" />
         <span className="font-semibold tracking-tight">{PRODUCT_NAME}</span>
@@ -358,6 +365,7 @@ export function Sidebar({
         {onCollapse === undefined ? null : (
           <IconButton
             label={t('navigation.sidebar.collapse')}
+            shortcut={<Kbd>{SIDEBAR_TOGGLE_KEYS}</Kbd>}
             data-action="collapse-sidebar"
             onClick={onCollapse}
           >

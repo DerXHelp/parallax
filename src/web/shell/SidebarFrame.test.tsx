@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NAVIGATION_SESSION_KEYS } from '@web/playground/navigation-scenario';
 import { startScenario, type RunningScenario } from '@web/playground/PlaygroundScenario';
 import { STORAGE_KEYS } from '@web/lib/storage';
-import { getSelectedSession } from '@web/state/selection';
+import { getSelectedSession, setSelectedSession } from '@web/state/selection';
 import { resetClientStore } from '@web/state/store';
 import { AppShell } from './AppShell';
 import { resetRename } from './navigation/rename';
@@ -14,7 +14,10 @@ import {
   isNarrowWindow,
   NARROW_WINDOW_BELOW,
   readSidebarCollapsed,
+  readSidebarWidth,
   resetSidebarLayout,
+  SIDEBAR_DEFAULT_WIDTH,
+  sidebarMaxWidth,
 } from './sidebar-layout';
 
 vi.setConfig({ testTimeout: 60_000 });
@@ -171,9 +174,16 @@ describe('SidebarFrame (V3-14, WP-58)', () => {
     const auth = within(nav).getByRole('button', { name: /^Refactoring Auth-Service – / });
     expect(auth.getAttribute('aria-current')).toBe('page');
     const buttons = within(nav).getAllByRole('button');
-    // "Show sessions" + one per (non-archived) session.
+    // WP-90: "Show sessions", "New session", "Waiting for you", settings + one per (non-archived) session.
     const sessions = document.querySelectorAll('[data-rail-session]');
-    expect(buttons).toHaveLength(sessions.length + 1);
+    const actions = buttons.filter((button) => !button.hasAttribute('data-rail-session'));
+    expect(actions.map((button) => button.dataset.action)).toEqual([
+      'show-sessions',
+      'rail-new-session',
+      'rail-next-waiting',
+      'rail-settings',
+    ]);
+    expect(buttons).toHaveLength(sessions.length + actions.length);
     const other = [...sessions].find((button) => button !== auth);
     if (!(other instanceof HTMLElement)) throw new Error('second session missing');
     const user = userEvent.setup();
@@ -285,5 +295,143 @@ describe('SidebarFrame (V3-14, WP-58)', () => {
     await waitFor(() => {
       expect(frame().dataset.state).toBe('expanded');
     });
+  });
+});
+
+describe('sidebar width (WP-90, GitHub #4)', () => {
+  it('reads this window first, then any window; clamps to 224–480 px; junk = default', () => {
+    expect(readSidebarWidth()).toBe(SIDEBAR_DEFAULT_WIDTH);
+    localStorage.setItem(STORAGE_KEYS.sidebarWidth, '400');
+    expect(readSidebarWidth()).toBe(400);
+    sessionStorage.setItem(STORAGE_KEYS.sidebarWidth, '9999');
+    expect(readSidebarWidth()).toBe(480);
+    sessionStorage.setItem(STORAGE_KEYS.sidebarWidth, '100');
+    expect(readSidebarWidth()).toBe(224);
+    sessionStorage.setItem(STORAGE_KEYS.sidebarWidth, '12px');
+    expect(readSidebarWidth()).toBe(400);
+    expect(sidebarMaxWidth(1000)).toBe(400);
+    expect(sidebarMaxWidth(2000)).toBe(480);
+    expect(sidebarMaxWidth(500)).toBe(224);
+  });
+
+  function aside(): HTMLElement {
+    const element = frame().querySelector<HTMLElement>('aside');
+    if (element === null) throw new Error('sidebar missing');
+    return element;
+  }
+
+  it('the handle changes the width by keys, remembers it and resets on double click', async () => {
+    localStorage.setItem(STORAGE_KEYS.sidebarWidth, '320');
+    resetSidebarLayout();
+    await start();
+    const user = userEvent.setup();
+    expect(aside().style.width).toBe('320px');
+    const handle = screen.getByRole('separator', { name: 'Sidebar width' });
+    expect(handle.getAttribute('aria-valuetext')).toBe('320 px');
+    handle.focus();
+    await user.keyboard('{ArrowRight}');
+    expect(aside().style.width).toBe('336px');
+    expect(sessionStorage.getItem(STORAGE_KEYS.sidebarWidth)).toBe('336');
+    expect(localStorage.getItem(STORAGE_KEYS.sidebarWidth)).toBe('336');
+    await user.dblClick(handle);
+    expect(aside().style.width).toBe(`${String(SIDEBAR_DEFAULT_WIDTH)}px`);
+    expect(localStorage.getItem(STORAGE_KEYS.sidebarWidth)).toBe(String(SIDEBAR_DEFAULT_WIDTH));
+  });
+
+  it('moved below the minimum the sidebar collapses and keeps its width', async () => {
+    await start();
+    const user = userEvent.setup();
+    const handle = screen.getByRole('separator', { name: 'Sidebar width' });
+    handle.focus();
+    await user.keyboard('{Home}');
+    expect(frame().dataset.state).toBe('collapsed');
+    expect(document.activeElement).toBe(showButton());
+    expect(readSidebarWidth()).toBe(SIDEBAR_DEFAULT_WIDTH);
+    expect(screen.queryByRole('separator', { name: 'Sidebar width' })).toBeNull();
+    await user.click(showButton());
+    expect(aside().style.width).toBe(`${String(SIDEBAR_DEFAULT_WIDTH)}px`);
+  });
+
+  it('Alt+B collapses and expands without moving the focus; in a narrow window it opens the overlay', async () => {
+    await start();
+    const user = userEvent.setup();
+    const outside = document.createElement('button');
+    document.body.append(outside);
+    cleanups.push(() => {
+      outside.remove();
+    });
+    outside.focus();
+    await user.keyboard('{Alt>}b{/Alt}');
+    expect(frame().dataset.state).toBe('collapsed');
+    expect(document.activeElement).toBe(outside);
+    await user.keyboard('{Alt>}b{/Alt}');
+    expect(frame().dataset.state).toBe('expanded');
+    expect(document.activeElement).toBe(outside);
+    // The focus inside the sidebar goes to the rail (the sidebar is hidden).
+    screen.getByRole('button', { name: 'Collapse the sidebar' }).focus();
+    await user.keyboard('{Alt>}b{/Alt}');
+    expect(document.activeElement).toBe(showButton());
+    setWindowWidth(700);
+    await user.keyboard('{Alt>}b{/Alt}');
+    expect(frame().dataset.state).toBe('overlay');
+  });
+
+  it('the rail: "New session", "Waiting for you" like Alt+N, settings', async () => {
+    await start();
+    setWindowWidth(700);
+    const user = userEvent.setup();
+    const nav = rail();
+    if (nav === null) throw new Error('rail missing');
+    const before = getSelectedSession();
+    await user.keyboard('{Alt>}n{/Alt}');
+    const viaShortcut = getSelectedSession();
+    act(() => {
+      setSelectedSession(before);
+    });
+    await user.click(
+      within(nav).getByRole('button', { name: /^Next session waiting for you \(\d+ waiting\)$/ }),
+    );
+    expect(getSelectedSession()).toBe(viaShortcut);
+    await user.click(within(nav).getByRole('button', { name: 'Settings' }));
+    expect(await screen.findByRole('menu')).toBeTruthy();
+    await user.keyboard('{Escape}');
+    await user.click(within(nav).getByRole('button', { name: 'New session' }));
+    expect(await screen.findByRole('dialog', { name: /New session/ })).toBeTruthy();
+  });
+
+  it('the width follows the window: capped at 40 %, back when the window grows', async () => {
+    localStorage.setItem(STORAGE_KEYS.sidebarWidth, '480');
+    resetSidebarLayout();
+    setWindowWidth(1000);
+    await start();
+    expect(aside().style.width).toBe('400px');
+    const handle = screen.getByRole('separator', { name: 'Sidebar width' });
+    expect(handle.getAttribute('aria-valuenow')).toBe('400');
+    expect(handle.getAttribute('aria-valuemax')).toBe('400');
+    setWindowWidth(1600);
+    expect(aside().style.width).toBe('480px');
+    expect(handle.getAttribute('aria-valuemax')).toBe('480');
+  });
+
+  it('Alt+B on a rail button moves the focus into the expanded sidebar', async () => {
+    await start();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Collapse the sidebar' }));
+    expect(document.activeElement).toBe(showButton());
+    await user.keyboard('{Alt>}b{/Alt}');
+    expect(frame().dataset.state).toBe('expanded');
+    expect(frame().contains(document.activeElement)).toBe(true);
+  });
+
+  it('"Stop server" from the rail opens one dialog (the hidden sidebar hosts it)', async () => {
+    await start();
+    setWindowWidth(700);
+    const user = userEvent.setup();
+    const nav = rail();
+    if (nav === null) throw new Error('rail missing');
+    await user.click(within(nav).getByRole('button', { name: 'Settings' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Stop server…' }));
+    await screen.findByRole('dialog', { name: 'Stop the Parallax server?' });
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
   });
 });

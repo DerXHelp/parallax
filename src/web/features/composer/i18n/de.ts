@@ -66,6 +66,8 @@ export const de: typeof en = {
     },
     autoUnavailable: 'Vom aktuellen Modell nicht unterstützt.',
     switching: 'Modus wird gewechselt…',
+    cycleShortcut: 'Nächster Berechtigungsmodus (im Nachrichtenfeld)',
+    announce: 'Berechtigungsmodus: {mode}',
   },
   model: {
     label: 'Modell',

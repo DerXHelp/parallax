@@ -87,9 +87,19 @@ function SettingsPageHost() {
  * full page, WP-38) + "Enable notifications" (while the browser has not been asked yet; a click
  * is the user gesture) + shortcut help + "Stop server" + the server facts (versions, data folder,
  * backend).
+ *
+ * WP-90: the rail of the collapsed sidebar has a second menu (`placement="rail"`). The sidebar
+ * stays mounted (hidden) beside the rail, so the "Stop server" dialog and the settings page live
+ * only in the sidebar's menu – one dialog, and an open page survives expanding the sidebar.
  */
-export function SettingsMenu() {
+export function SettingsMenu({
+  placement = 'header',
+}: {
+  /** WP-90: in the rail of the collapsed sidebar the menu opens to the right. */
+  placement?: 'header' | 'rail';
+} = {}) {
   const t = useT();
+  const rail = placement === 'rail';
   const settings = useSettings();
   const permission = useNotificationPermission();
   const { SettingsPage } = useFeatureSlots();
@@ -101,12 +111,18 @@ export function SettingsMenu() {
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <IconButton label={t('settings.label')} showTooltip={false} data-action="settings">
+          <IconButton
+            label={t('settings.label')}
+            showTooltip={false}
+            size={rail ? 'icon' : undefined}
+            data-action={rail ? 'rail-settings' : 'settings'}
+          >
             <SettingsIcon aria-hidden />
           </IconButton>
         </DropdownMenuTrigger>
         <DropdownMenuContent
           align="end"
+          side={rail ? 'right' : undefined}
           className="w-72"
           onCloseAutoFocus={() => {
             if (!openPageAfterMenu.current) return;
@@ -177,9 +193,9 @@ export function SettingsMenu() {
           <HostInfo />
         </DropdownMenuContent>
         {/* WP-21: confirmation of "Stop server" (Radix root renders no DOM; the dialog portals out). */}
-        <ServerShutdownDialog />
+        {rail ? null : <ServerShutdownDialog />}
       </DropdownMenu>
-      <SettingsPageHost />
+      {rail ? null : <SettingsPageHost />}
     </>
   );
 }

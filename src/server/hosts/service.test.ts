@@ -6,7 +6,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { Writable } from 'node:stream';
 import pino from 'pino';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WebSocket } from 'ws';
 import { HOSTS_SCHEMA_VERSION, remoteHostSchema, type HostRecord } from '@shared/model';
 import { formatPairingCode } from '@shared/pairing';
@@ -614,6 +614,11 @@ describe('hosts service: pairing again', () => {
     const a = await control();
     const hostId = await a.add(b);
     await a.waitFor(hostId, 'connected');
+    // "connected" writes `lastConnectedAt` right after (noteConnected, queued) – under load that
+    // write could land after `before` was read.
+    await vi.waitFor(async () => {
+      expect(await readFile(path.join(a.home, HOSTS_FILE), 'utf8')).toMatch(/"lastConnectedAt": "/u);
+    });
     const before = await readFile(path.join(a.home, HOSTS_FILE), 'utf8');
     const keyBefore = await readFile(keyFilePath(a.home, 'coupling:pc-b'), 'utf8');
     await b.code();

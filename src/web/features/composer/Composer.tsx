@@ -1342,7 +1342,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
               />
             </>
           ) : null}
-          <ModePicker sessionKey={sessionKey} />
+          <ModePicker sessionKey={sessionKey} inputRef={textareaRef} cycleBlocked={menuOpen || mentionOpen} />
           <ModelPicker
             sessionKey={sessionKey}
             open={picker.open}

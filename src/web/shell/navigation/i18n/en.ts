@@ -18,6 +18,10 @@ export const en = {
     group: 'Project {name}',
     /** WP-58 (V3-14): collapses the sidebar into the rail (narrow window: closes the overlay). */
     collapse: 'Collapse the sidebar',
+    /** WP-90 (GitHub #4): the handle on the right edge. */
+    resize: 'Sidebar width',
+    width: '{width} px',
+    resizeHint: 'Drag to change the width (far left collapses it), double-click for the default',
   },
   /** The collapsed sidebar (V3-14, WP-58): status icons of the sessions, "Show sessions". */
   rail: {
@@ -25,6 +29,13 @@ export const en = {
     show: 'Show sessions',
     session: '{title} – {status}',
     sessionUnread: '{title} – {status}, unread',
+    /** WP-90: a session of another computer (the computer's name after the label). */
+    sessionOnHost: '{label} · {host}',
+    /** WP-90: "Waiting for you" as an icon with a counter. */
+    waiting: {
+      one: 'Next session waiting for you ({count} waiting)',
+      other: 'Next session waiting for you ({count} waiting)',
+    },
   },
   /** Side panel buttons of the session header (WP-58); "…" menu items in a narrow header. */
   panels: {
@@ -206,6 +217,7 @@ export const en = {
     quickSwitcher: 'Quick switcher: search and open a session',
     nextWaiting: 'Next session waiting for you',
     rename: 'Rename the selected session',
+    toggleSidebar: 'Collapse or expand the sidebar',
   },
   conversations: {
     title: 'Earlier conversations',

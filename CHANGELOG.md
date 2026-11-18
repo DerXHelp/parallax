@@ -15,6 +15,10 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 - Entwürfe liegen im Server und erscheinen in jedem Fenster derselben Session, auch auf dem steuernden Rechner (WP-77).
 - Die Seitenleiste lässt sich nach Rechner und Verzeichnis gruppieren, beide Ebenen sind einklappbar; „Neue Session“
   fragt zuerst nach dem Rechner (WP-80).
+- Die Seitenleiste lässt sich am rechten Rand breiter oder schmaler ziehen (Doppelklick setzt zurück, ganz nach links
+  klappt sie ein); eingeklappt zeigt die schmale Leiste „Neue Session“, „Wartet auf dich“ mit Zähler, alle Sessions,
+  Einstellungen und Verbindung, und Alt+B klappt sie ein und aus (WP-90).
+- Shift+Tab im Nachrichtenfeld schaltet den Berechtigungsmodus weiter wie im Claude-Code-CLI (WP-91).
 
 ### Geändert
 - Der Knopf für eine gefundene Version heißt „Jetzt aktualisieren“ statt „Update vorbereiten“; er lädt und
@@ -22,7 +26,7 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 
 ### Behoben
 - Parallax startet für Systemabfragen kaum noch PowerShell, was Sicherheitssoftware als verdächtig melden konnte:
-  Prozesse liest der Server selbst (ab Node.js 26.1), Autostart, Protokoll-Handler und Startmenü schreibt er nur
+  Prozesse liest der Server selbst (ab Node.js 26.9), Autostart, Protokoll-Handler und Startmenü schreibt er nur
   noch bei einer Änderung, und Virenscanner sowie Ordnerrechte fragt er nicht mehr ab (fix/quiet-system-calls).
 
 ## [1.0.1] – 2026-11-18

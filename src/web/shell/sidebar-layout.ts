@@ -89,10 +89,89 @@ export function useSidebarCollapsed(): boolean {
   return useSyncExternalStore(subscribeCollapsed, isSidebarCollapsed, isSidebarCollapsed);
 }
 
-/** Tests: read the stored choice again. */
+// ---- Width of the expanded sidebar (WP-90, GitHub #4) ----
+
+/** Default width (the former fixed `w-72`; the two-line rows need the room, Plan "Sidebar"). */
+export const SIDEBAR_DEFAULT_WIDTH = 288;
+export const SIDEBAR_MIN_WIDTH = 224;
+export const SIDEBAR_MAX_WIDTH = 480;
+/** Largest share of the window, so the session area keeps its room. */
+export const SIDEBAR_MAX_SHARE = 0.4;
+/**
+ * Lowest value of the resize handle: dragged (or moved by a key) below SIDEBAR_MIN_WIDTH the
+ * sidebar collapses into the rail when let go – the width shown never goes below the minimum.
+ */
+export const SIDEBAR_SNAP_WIDTH = 120;
+/** Collapses or expands the sidebar (WP-90; Ctrl+B is `composer.backgroundAll`). */
+export const SIDEBAR_TOGGLE_KEYS = 'Alt+B';
+
+/** Largest width for a window of `width` px (never below the minimum). */
+export function sidebarMaxWidth(width: number = windowWidth()): number {
+  const share = width > 0 ? Math.floor(width * SIDEBAR_MAX_SHARE) : SIDEBAR_MAX_WIDTH;
+  return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, share));
+}
+
+function maxWidthNow(): number {
+  // Narrow windows show the rail or the overlay (no handle): no re-render per resize event there.
+  return isNarrowWindow() ? SIDEBAR_MAX_WIDTH : sidebarMaxWidth();
+}
+
+function fullMaxWidth(): number {
+  return SIDEBAR_MAX_WIDTH;
+}
+
+/** The largest width this window allows for the expanded sidebar; re-renders when it changes. */
+export function useSidebarMaxWidth(): number {
+  return useSyncExternalStore(subscribeResize, maxWidthNow, fullMaxWidth);
+}
+
+/** `width` within the minimum and SIDEBAR_MAX_WIDTH (the window share: `useSidebarMaxWidth`). */
+export function clampSidebarWidth(width: number): number {
+  return Math.min(Math.max(Math.round(width), SIDEBAR_MIN_WIDTH), SIDEBAR_MAX_WIDTH);
+}
+
+function parseWidth(value: string | null): number | null {
+  if (value === null || !/^\d{1,4}$/u.test(value)) return null;
+  return clampSidebarWidth(Number.parseInt(value, 10));
+}
+
+/** The stored width: this window's own value, else the last one of any window; default 288 px. */
+export function readSidebarWidth(): number {
+  return (
+    parseWidth(readStorage('session', STORAGE_KEYS.sidebarWidth)) ??
+    parseWidth(readStorage('local', STORAGE_KEYS.sidebarWidth)) ??
+    SIDEBAR_DEFAULT_WIDTH
+  );
+}
+
+let width = readSidebarWidth();
+
+export function sidebarWidth(): number {
+  return width;
+}
+
+/** Sets and remembers the width (clamped; errors of the storage are swallowed). */
+export function setSidebarWidth(next: number): void {
+  const clamped = clampSidebarWidth(next);
+  const value = String(clamped);
+  writeStorage('session', STORAGE_KEYS.sidebarWidth, value);
+  writeStorage('local', STORAGE_KEYS.sidebarWidth, value);
+  if (width === clamped) return;
+  width = clamped;
+  notify();
+}
+
+/** The remembered width of the expanded sidebar. */
+export function useSidebarWidth(): number {
+  return useSyncExternalStore(subscribeCollapsed, sidebarWidth, sidebarWidth);
+}
+
+/** Tests: read the stored choice and width again. */
 export function resetSidebarLayout(): void {
   const next = readSidebarCollapsed();
-  if (collapsed === next) return;
+  const nextWidth = readSidebarWidth();
+  if (collapsed === next && width === nextWidth) return;
   collapsed = next;
+  width = nextWidth;
   notify();
 }

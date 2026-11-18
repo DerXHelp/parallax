@@ -7,7 +7,7 @@ import {
   SparklesIcon,
   type LucideIcon,
 } from 'lucide-react';
-import { memo, useState } from 'react';
+import { memo, useEffect, useEffectEvent, useRef, useState, type RefObject } from 'react';
 import { LOCAL_HOST_ID, parseSessionKey, type PermissionMode } from '@shared/common';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
@@ -20,6 +20,7 @@ import {
   useSummarySelector,
 } from '@web/state/hooks';
 import { showErrorNotice } from '@web/state/notices';
+import { useShortcut } from '@web/shell/shortcuts';
 import { Button } from '@web/ui/button';
 import {
   DropdownMenu,
@@ -30,6 +31,7 @@ import {
   DropdownMenuTrigger,
 } from '@web/ui/dropdown-menu';
 import { Spinner } from '@web/ui/spinner';
+import { cycleModes, nextPermissionMode, offeredModes } from './lib/modes';
 import { effectiveModelOption } from './lib/models';
 
 export const MODE_ICONS: Readonly<Record<PermissionMode, LucideIcon>> = {
@@ -41,17 +43,51 @@ export const MODE_ICONS: Readonly<Record<PermissionMode, LucideIcon>> = {
   bypassPermissions: ShieldOffIcon,
 };
 
-/** Offered modes (Plan "Kopfleiste": Manual / accept edits / plan / auto; `dontAsk` never). */
-const OFFERED: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan', 'auto'];
+/** Shift+Tab: the target is sent once the keys rest this long (quick cycling sends one command). */
+export const MODE_CYCLE_SEND_DELAY_MS = 300;
+
+/** A Shift+Tab target, bound to the session it was chosen for (the composer is not keyed by session). */
+interface CycleTarget {
+  sessionKey: string;
+  mode: PermissionMode;
+}
+
+/** A `session.setPermissionMode` on its way; `cycled`: sent for Shift+Tab (the label keeps naming it). */
+interface PendingMode extends CycleTarget {
+  cycled: boolean;
+}
+
+async function sendMode(sessionKey: string, mode: PermissionMode): Promise<void> {
+  const parsed = parseSessionKey(sessionKey);
+  if (parsed === null) return;
+  try {
+    await sendCommand(sessionKey, { name: 'session.setPermissionMode', entryId: parsed.entryId, mode });
+  } catch (caught) {
+    showErrorNotice(errorPayloadOf(caught), { sessionKey, id: `composer.mode.${sessionKey}` });
+  }
+}
 
 /**
  * The ACTUAL permission mode of the session (C.3: from `init`/`status`, the summary field
- * `permissionMode`; fallback `detail.init.permissionMode`), never an optimistic value; picking a
- * mode sends `session.setPermissionMode` and the label follows the server. Bypass only when the
+ * `permissionMode`; fallback `detail.init.permissionMode`), never an optimistic value for a pick:
+ * picking a mode sends `session.setPermissionMode` and the label follows the server. Bypass only when the
  * session's profile allows it (`allowsBypass`), always red. Labels are the shell's
  * `shell.permissionMode.*` ("Manual" for `default`, C.3) – the same everywhere (R2W-03).
+ *
+ * WP-91 (GitHub #2): Shift+Tab in the composer's text field (`inputRef`) steps to the next mode
+ * like the Claude Code CLI – the picker's order without unavailable modes. The target is named at
+ * once (with a spinner; `data-mode` stays the actual mode, `data-target-mode` the target) and sent
+ * after `MODE_CYCLE_SEND_DELAY_MS`. Not while a slash/@ menu is open (`cycleBlocked`) or offline.
  */
-export const ModePicker = memo(function ModePicker({ sessionKey }: { sessionKey: string }) {
+export const ModePicker = memo(function ModePicker({
+  sessionKey,
+  inputRef,
+  cycleBlocked = false,
+}: {
+  sessionKey: string;
+  inputRef?: RefObject<HTMLTextAreaElement | null>;
+  cycleBlocked?: boolean;
+}) {
   const t = useT();
   const summaryMode = useSummarySelector<PermissionMode | null>(sessionKey, (s) => s.permissionMode, null);
   const initMode = useSessionSelector<PermissionMode | null>(
@@ -73,99 +109,188 @@ export const ModePicker = memo(function ModePicker({ sessionKey }: { sessionKey:
   const hostState = useHostState(parseSessionKey(sessionKey)?.hostId ?? LOCAL_HOST_ID);
   const allowsBypass = hostState?.profiles.find((profile) => profile.id === profileId)?.allowsBypass === true;
   const online = useSessionConnectionStatus(sessionKey) === 'open';
-  const [pending, setPending] = useState<PermissionMode | null>(null);
+  const [pending, setPending] = useState<PendingMode | null>(null);
+  const [target, setTarget] = useState<CycleTarget | null>(null);
+  const [announcement, setAnnouncement] = useState('');
+  const pendingRef = useRef<PendingMode | null>(null);
+  const targetRef = useRef<CycleTarget | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Only the latest send clears the spinner. */
+  const sendSeq = useRef(0);
   const mode = summaryMode ?? initMode;
 
-  const options: PermissionMode[] = [...OFFERED];
-  if (allowsBypass) options.push('bypassPermissions');
-  const Icon = mode === null ? HandIcon : MODE_ICONS[mode];
+  const options = offeredModes({ allowsBypass });
+  const cycleTarget = target?.sessionKey === sessionKey ? target.mode : null;
+  const ownPending = pending?.sessionKey === sessionKey ? pending : null;
+  const pendingMode = ownPending?.mode ?? null;
+  /** What the label names: a Shift+Tab target until it is sent and answered, else the actual mode. */
+  const shown = cycleTarget ?? (ownPending?.cycled === true ? ownPending.mode : null) ?? mode;
+  const Icon = shown === null ? HandIcon : MODE_ICONS[shown];
   // V2-05: before the first start nothing is reported – Claude Code then starts with the default
   // mode of its own settings (the profile omits it, C.3), never a guess like "Manual".
   const notStarted = mode === null && !reported;
   let label: string;
-  if (mode !== null) label = t(`shell.permissionMode.${mode}`);
+  if (shown !== null) label = t(`shell.permissionMode.${shown}`);
   else label = notStarted ? t('composer.mode.notStarted') : t('composer.mode.unknown');
 
-  const choose = async (next: PermissionMode) => {
-    const parsed = parseSessionKey(sessionKey);
-    if (parsed === null || next === mode) return;
-    setPending(next);
+  const choose = async (next: PermissionMode, cycled = false) => {
+    // A send still on its way decides the outcome – compare with it, not the reported mode.
+    const inFlight = pendingRef.current?.sessionKey === sessionKey ? pendingRef.current.mode : null;
+    if (next === (inFlight ?? mode)) return;
+    const seq = ++sendSeq.current;
+    const sending = { sessionKey, mode: next, cycled };
+    pendingRef.current = sending;
+    setPending(sending);
     try {
-      await sendCommand(sessionKey, {
-        name: 'session.setPermissionMode',
-        entryId: parsed.entryId,
-        mode: next,
-      });
-    } catch (caught) {
-      showErrorNotice(errorPayloadOf(caught), { sessionKey, id: `composer.mode.${sessionKey}` });
+      await sendMode(sessionKey, next);
     } finally {
-      setPending(null);
+      if (seq === sendSeq.current) {
+        pendingRef.current = null;
+        setPending(null);
+      }
     }
   };
 
+  const stopTimer = () => {
+    if (timerRef.current !== null) clearTimeout(timerRef.current);
+    timerRef.current = null;
+  };
+
+  const cancelCycle = () => {
+    stopTimer();
+    targetRef.current = null;
+    setTarget(null);
+  };
+
+  /**
+   * Sends a waiting Shift+Tab target (also for the previous session after a switch). The label
+   * keeps naming it until the answer – then the server's mode (or, after an error, the old one).
+   */
+  const flushCycle = useEffectEvent(() => {
+    const waiting = targetRef.current;
+    stopTimer();
+    targetRef.current = null;
+    if (waiting === null) return;
+    if (waiting.sessionKey !== sessionKey) {
+      setTarget(null);
+      void sendMode(waiting.sessionKey, waiting.mode);
+      return;
+    }
+    void choose(waiting.mode, true).finally(() => {
+      // Cycled on while this was sent: the newer target stays.
+      setTarget((current) => (current === waiting ? null : current));
+    });
+  });
+  useEffect(
+    () => () => {
+      flushCycle();
+    },
+    [sessionKey],
+  );
+
+  const cycle = (): boolean => {
+    if (!online) return false;
+    const waiting = targetRef.current?.sessionKey === sessionKey ? targetRef.current.mode : null;
+    const base = waiting ?? cycleTarget ?? pendingMode ?? mode;
+    const next = nextPermissionMode(base, cycleModes({ allowsBypass, autoSupported }));
+    if (next === null) return false;
+    const chosen = { sessionKey, mode: next };
+    targetRef.current = chosen;
+    setTarget(chosen);
+    setAnnouncement(t('composer.mode.announce', { mode: t(`shell.permissionMode.${next}`) }));
+    if (timerRef.current !== null) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      flushCycle();
+    }, MODE_CYCLE_SEND_DELAY_MS);
+    return true;
+  };
+
+  useShortcut(
+    {
+      id: 'composer.cycleMode',
+      keys: 'Shift+Tab',
+      description: 'composer.mode.cycleShortcut',
+      allowInInputs: true,
+      scopeRef: inputRef,
+      run: () => (cycleBlocked ? false : cycle()),
+    },
+    inputRef !== undefined,
+  );
+
   return (
-    <DropdownMenu modal={false}>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          data-slot="mode-picker"
-          data-mode={mode ?? (notStarted ? 'not-started' : 'unknown')}
-          disabled={!online}
-          aria-label={t('composer.mode.trigger', { mode: label })}
-          className={cn(mode === 'bypassPermissions' && 'text-destructive hover:text-destructive')}
-        >
-          <Icon aria-hidden />
-          <span>{label}</span>
-          {pending === null ? null : <Spinner label={t('composer.mode.switching')} className="size-3" />}
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-72">
-        <DropdownMenuLabel>{t('composer.mode.label')}</DropdownMenuLabel>
-        {notStarted ? (
-          <p className="text-muted-foreground px-2 pb-1 text-2xs">{t('composer.mode.notStartedHint')}</p>
-        ) : null}
-        <DropdownMenuRadioGroup
-          value={mode ?? ''}
-          onValueChange={(value) => {
-            const next = options.find((option) => option === value);
-            if (next !== undefined) void choose(next);
-          }}
-        >
-          {options.map((option) => {
-            const OptionIcon = MODE_ICONS[option];
-            const disabled = option === 'auto' && !autoSupported && mode !== 'auto';
-            return (
-              <DropdownMenuRadioItem
-                key={option}
-                value={option}
-                disabled={disabled}
-                className={cn('items-start', option === 'bypassPermissions' && 'text-destructive')}
-              >
-                <OptionIcon
-                  aria-hidden
-                  className={cn('mt-0.5', option === 'bypassPermissions' && 'text-destructive')}
-                />
-                <span className="grid min-w-0 gap-0.5">
-                  <span>{t(`shell.permissionMode.${option}`)}</span>
-                  <span className="text-muted-foreground text-2xs">
-                    {disabled ? t('composer.mode.autoUnavailable') : t(`composer.mode.hints.${option}`)}
+    <>
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            data-slot="mode-picker"
+            data-mode={mode ?? (notStarted ? 'not-started' : 'unknown')}
+            data-target-mode={cycleTarget ?? pendingMode ?? undefined}
+            disabled={!online}
+            aria-label={t('composer.mode.trigger', { mode: label })}
+            className={cn(mode === 'bypassPermissions' && 'text-destructive hover:text-destructive')}
+          >
+            <Icon aria-hidden />
+            <span>{label}</span>
+            {pendingMode === null && cycleTarget === null ? null : (
+              <Spinner label={t('composer.mode.switching')} className="size-3" />
+            )}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-72">
+          <DropdownMenuLabel>{t('composer.mode.label')}</DropdownMenuLabel>
+          {notStarted ? (
+            <p className="text-muted-foreground px-2 pb-1 text-2xs">{t('composer.mode.notStartedHint')}</p>
+          ) : null}
+          <DropdownMenuRadioGroup
+            value={mode ?? ''}
+            onValueChange={(value) => {
+              const next = options.find((option) => option === value);
+              if (next === undefined) return;
+              cancelCycle();
+              void choose(next);
+            }}
+          >
+            {options.map((option) => {
+              const OptionIcon = MODE_ICONS[option];
+              const disabled = option === 'auto' && !autoSupported && mode !== 'auto';
+              return (
+                <DropdownMenuRadioItem
+                  key={option}
+                  value={option}
+                  disabled={disabled}
+                  className={cn('items-start', option === 'bypassPermissions' && 'text-destructive')}
+                >
+                  <OptionIcon
+                    aria-hidden
+                    className={cn('mt-0.5', option === 'bypassPermissions' && 'text-destructive')}
+                  />
+                  <span className="grid min-w-0 gap-0.5">
+                    <span>{t(`shell.permissionMode.${option}`)}</span>
+                    <span className="text-muted-foreground text-2xs">
+                      {disabled ? t('composer.mode.autoUnavailable') : t(`composer.mode.hints.${option}`)}
+                    </span>
                   </span>
+                </DropdownMenuRadioItem>
+              );
+            })}
+            {mode === 'dontAsk' ? (
+              <DropdownMenuRadioItem value="dontAsk" disabled className="items-start">
+                <ShieldMinusIcon aria-hidden className="mt-0.5" />
+                <span className="grid min-w-0 gap-0.5">
+                  <span>{t('shell.permissionMode.dontAsk')}</span>
+                  <span className="text-muted-foreground text-2xs">{t('composer.mode.hints.dontAsk')}</span>
                 </span>
               </DropdownMenuRadioItem>
-            );
-          })}
-          {mode === 'dontAsk' ? (
-            <DropdownMenuRadioItem value="dontAsk" disabled className="items-start">
-              <ShieldMinusIcon aria-hidden className="mt-0.5" />
-              <span className="grid min-w-0 gap-0.5">
-                <span>{t('shell.permissionMode.dontAsk')}</span>
-                <span className="text-muted-foreground text-2xs">{t('composer.mode.hints.dontAsk')}</span>
-              </span>
-            </DropdownMenuRadioItem>
-          ) : null}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+            ) : null}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {/* WP-91: Shift+Tab changes the label only – screen readers hear the target here. */}
+      <span className="sr-only" aria-live="polite">
+        {announcement}
+      </span>
+    </>
   );
 });

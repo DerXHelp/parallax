@@ -46,8 +46,14 @@ export function controlStatus(t: TFunction, hosts: readonly HostLabel[]): { text
  * (`HostState.remoteAccess`); role "control" – how many computers are connected. A click opens the
  * settings section `multiHost`. Invisible without a role (and so in every README screenshot).
  */
-export function MultiHostIndicator() {
+export function MultiHostIndicator({
+  placement = 'header',
+}: {
+  /** WP-90: in the rail of the collapsed sidebar (tooltip to the right). */
+  placement?: 'header' | 'rail';
+} = {}) {
   const t = useT();
+  const rail = placement === 'rail';
   const role = useMultiHostRole();
   const access = useRemoteAccess();
   const hosts = useHostLabels();
@@ -61,7 +67,9 @@ export function MultiHostIndicator() {
   return (
     <IconButton
       label={parts.join(' · ')}
-      data-slot="multi-host-indicator"
+      tooltipSide={rail ? 'right' : undefined}
+      size={rail ? 'icon' : undefined}
+      data-slot={rail ? 'rail-multi-host' : 'multi-host-indicator'}
       data-role={role}
       data-tone={status.tone}
       className="relative"
