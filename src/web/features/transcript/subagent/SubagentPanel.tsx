@@ -1,7 +1,6 @@
 import { ArrowDownIcon, BotIcon, HistoryIcon, RefreshCwIcon } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { VList, type VListHandle } from 'virtua';
-import { parseSessionKey } from '@shared/common';
 import type { TranscriptItem } from '@shared/model';
 import { useI18n } from '@web/i18n';
 import type { SubagentPanelSlotProps } from '@web/shell/slots';
@@ -95,9 +94,9 @@ export const SubagentPanel = memo(function SubagentPanel({
   const { t, tError } = useI18n();
   const lt = useLazyTranscriptT();
   const { pages, error, loadingEarlier, loadEarlier, refresh } = useSubagentTranscript(sessionKey, agentId);
-  const hostId = parseSessionKey(sessionKey)?.hostId;
-  const mode = useTranscriptView(hostId);
-  const hooks = useHookDisplay(hostId);
+  // WP-80: display settings always from this computer (also for another computer's session).
+  const mode = useTranscriptView();
+  const hooks = useHookDisplay();
   const stateKey = groupStateKey(sessionKey, agentId);
   const openGroups = useOpenGroups(stateKey);
 

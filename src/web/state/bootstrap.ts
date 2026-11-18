@@ -1,10 +1,12 @@
 import { LOCAL_HOST_ID } from '@shared/common';
+import { hostWsPath } from '@shared/http';
 import { WS_PATH } from '@shared/protocol';
 import { startNotificationDelivery } from '@web/notifications/delivery';
 import { getSystemNotifier, type SystemNotifier } from '@web/notifications/system';
 import { consumeAuthCode, createAuthBootstrap, type FetchLike } from './auth';
 import { createHostConnection, registerConnection, type ManagedHostConnection } from './connection';
 import { startPresenceTracking } from './presence';
+import { startRemoteHosts } from './remote-hosts';
 import { clientStore } from './store';
 import { startSelectionSync } from './selection';
 import { createWebSocketTransport, webSocketUrl, type SocketFactory } from './transport';
@@ -28,8 +30,10 @@ export interface BootedApp {
  * App start (main.tsx), in this order: take the auth code out of the URL (before anything reads
  * the hash), selection from `#session=`, presence tracking, notification delivery, then the local
  * host connection (auth status → WS `ws://<location.host>/api/ws` of the same origin – in dev
- * through the Vite proxy – → handshake). Phase 1 has exactly the host `local`; features reach it
- * via `getConnection('local')` (registry in connection.ts).
+ * through the Vite proxy – → handshake). Features reach it via `getConnection('local')` (registry
+ * in connection.ts). WP-80: then one window connection per computer of the local
+ * `HostState.remoteHosts` over this server's forwarder `hostWsPath(hostId)` (remote-hosts.ts) –
+ * same origin, no `buildId` reload; computers come and go at runtime.
  */
 export function bootApp(options: BootOptions = {}): BootedApp {
   const code = consumeAuthCode(window.location, window.history);
@@ -53,9 +57,14 @@ export function bootApp(options: BootOptions = {}): BootedApp {
   });
   registerConnection(connection);
   connection.start();
+  const stopRemoteHosts = startRemoteHosts({
+    createTransport: (hostId) =>
+      createWebSocketTransport(webSocketUrl(window.location, hostWsPath(hostId)), options.createSocket),
+  });
   return {
     connection,
     dispose() {
+      stopRemoteHosts();
       connection.stop();
       stopNotifications();
       stopPresence();

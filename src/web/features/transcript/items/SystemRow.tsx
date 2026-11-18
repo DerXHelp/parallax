@@ -115,7 +115,7 @@ function hookTool(item: HookItem): string | null {
 const HookRow = memo(function HookRow({ item, sessionKey }: { item: HookItem; sessionKey: string }) {
   const { t } = useI18n();
   const lt = useLazyTranscriptT();
-  const hooks = useHookDisplay(parseSessionKey(sessionKey)?.hostId);
+  const hooks = useHookDisplay();
   if (!isHookShown(item, hooks)) return null;
   const output =
     item.output.text.trim() === '' ? null : (
