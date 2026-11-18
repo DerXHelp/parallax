@@ -18,7 +18,8 @@ import { sampleRemoteAccessState } from '@shared/samples';
  * (`setHostState` broadcasts it, `startRemoteHosts` follows). The other computers themselves are
  * simulated by `fake-computers.ts`. Levers: `unreachableAddresses` (hosts.add/reconnect fail with
  * HOST_UNREACHABLE), `incompatibleAddresses` (HOST_INCOMPATIBLE). A wrong role answers
- * REMOTE_ROLE_CONFLICT, a code that is not a pairing code PAIRING_INVALID.
+ * REMOTE_ROLE_CONFLICT, a code that is not a pairing code VALIDATION_FAILED {reason: 'code'}; the
+ * lever `rejectedCodes` answers PAIRING_INVALID (a well-formed code the other side refuses).
  */
 
 export type FakeMultiHostAck = { ok: true; result: unknown } | { ok: false; error: ErrorPayload };
@@ -28,6 +29,8 @@ export interface FakeMultiHostOptions {
   unreachableAddresses?: readonly string[];
   /** Addresses whose pairing fails with HOST_INCOMPATIBLE (`version` 9.9.9). */
   incompatibleAddresses?: readonly string[];
+  /** Well-formed codes the other side refuses (PAIRING_INVALID). */
+  rejectedCodes?: readonly string[];
 }
 
 /** What the module needs of the FakeHost (structural). */
@@ -160,7 +163,8 @@ function hosts(
   const find = (hostId: HostId) => list.find((host) => host.hostId === hostId);
   switch (cmd.name) {
     case 'hosts.add': {
-      if (!isValidPairingCode(cmd.code)) return fail(makeError('PAIRING_INVALID'));
+      if (!isValidPairingCode(cmd.code)) return fail(makeError('VALIDATION_FAILED', { reason: 'code' }));
+      if (options.rejectedCodes?.includes(cmd.code) === true) return fail(makeError('PAIRING_INVALID'));
       if (list.length >= LIMITS.hostsMax) return fail(makeError('VALIDATION_FAILED', { reason: 'limit' }));
       if (options.unreachableAddresses?.includes(cmd.address) === true) {
         return fail(makeError('HOST_UNREACHABLE', { reason: 'refused' }));

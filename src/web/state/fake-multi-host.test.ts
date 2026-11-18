@@ -58,6 +58,10 @@ describe('fake multi-host', () => {
     } as const;
     expect(fakeMultiHostCommand(target(controlling()), { ...add, code: 'nope' })).toMatchObject({
       ok: false,
+      error: { code: 'VALIDATION_FAILED' },
+    });
+    expect(fakeMultiHostCommand(target(controlling()), add, { rejectedCodes: [CODE] })).toMatchObject({
+      ok: false,
       error: { code: 'PAIRING_INVALID' },
     });
     expect(fakeMultiHostCommand(target(sampleHostState()), add)).toMatchObject({
