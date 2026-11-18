@@ -10,7 +10,7 @@ Auftrag des Koordinators (18.11.2026), Branch `wp/78a` von `feature/multi-host` 
 | --- | --- |
 | 1 `secure/**` | fertig (81 Tests) |
 | 2 `remote/**` | fertig (70 Tests) |
-| 3 `multihost/**` | offen |
+| 3 `multihost/**` | fertig (10 Tests) |
 
 ## Abweichungen von §B (begründet)
 
@@ -52,6 +52,22 @@ Auftrag des Koordinators (18.11.2026), Branch `wp/78a` von `feature/multi-host` 
 - **Schreibfehler beim Aufheben:** Listener aus, `error = REMOTE_ACCESS_FAILED {reason:'store'}`; `remoteAccess.check`
   (oder ein erneutes Aufheben) schreibt erneut und startet den Listener, sobald es gelingt.
 
+## Entscheidungen zur Rolle (`multihost/`)
+
+- **Exklusiv, streng:** Zielrolle `share` oder `control` wird mit `REMOTE_ROLE_CONFLICT {role: <andere Seite>}`
+  abgelehnt, solange die andere Seite Kopplungen hat – auch auf dem Umweg über „aus“. „Aus“ selbst ist immer erlaubt
+  (Kopplungen bleiben, alles wird geschlossen).
+- **Reihenfolge:** alte Seite deaktivieren → neue Seite aktivieren (beim Wechsel zu `share` laufen die Prüfungen) →
+  `multi-host.json` schreiben. Scheitert ein Schritt, wird die alte Seite mit der alten Konfiguration wieder aktiviert
+  und der Fehler zurückgegeben (Prüffehler unverändert, Schreibfehler `STORE_WRITE_FAILED {file}`).
+- **Start:** `start()` ruft `prepare()` beider Seiten (Kopplungen lesen), liest die Datei und aktiviert die gespeicherte
+  Rolle; ein Fehler dabei wird nur protokolliert, die Seite zeigt ihn selbst (`remoteAccess.error`, Nachholen per
+  `remoteAccess.check`).
+- **Neuere Schema-Version oder unlesbare Datei:** Rolle aus, Host-Warnung (`STORE_VERSION_TOO_NEW` bzw.
+  `STORE_WRITE_FAILED {reason:'unreadable'}`), jedes `multiHost.configure` wird mit diesem Fehler abgelehnt; die Datei
+  bleibt unverändert. Der Serverstart wird – anders als bei `JsonStore` – nicht abgebrochen.
+- **Ohne steuernde Seite** (vor WP-79) lehnt `configure` die Rolle `control` mit `NOT_IMPLEMENTED` ab.
+
 ## Beobachtungen (Node 26.12, OpenSSL 3.5.9)
 
 - TLS-Schlüssel nimmt OpenSSL nur als PEM (kein `KeyObject`); der PEM-Puffer wird nach dem Aufbau des Kontexts
@@ -74,3 +90,53 @@ Auftrag des Koordinators (18.11.2026), Branch `wp/78a` von `feature/multi-host` 
 | Kopplung | `pairWithHost({address, port, code, deviceName, identity, appVersion, timeoutMs?, signal?})` → `{peerCertificateDer, peerPin, authKey, hostName, appVersion, protocolVersion}`; Fehler `PairingClientError.error`: `VALIDATION_FAILED {reason:'code'}` (lokal, kein Fehlversuch), `PAIRING_INVALID`/`PAIRING_EXPIRED`/`PAIRING_RATE_LIMITED`, `HOST_UNREACHABLE {reason: refused/timeout/tls/network/closed/status_<n>}`, `HOST_INCOMPATIBLE {version, protocol}`, `REMOTE_ACCESS_FAILED`. Danach `keyStore.protect('auth:<hostId>', authKey)` in `hosts.json`, `authKey.fill(0)` nach dem Bau des Agents. |
 | Verbindungen | `new PinnedAgent({identity, peerCertificateDer, peerPin, authKey})` je Kopplung; `https.request({agent, host, port, path, headers: remoteVersionHeaders(appVersion)})`; `new WebSocket(url, {agent, ...REMOTE_WS_CLIENT_OPTIONS, headers: remoteVersionHeaders(appVersion)})`. Fehler beim Aufbau: `PinnedConnectionError.reason` – `network`/`timeout`/`tls` → unreachable; `proof_closed` (Gegenseite trennt nach dem Handshake: unbekannter/aufgehobener Schlüssel) und `proof_mismatch` → revoked bzw. Warnung; `pin`/`unauthorized` → falscher Rechner unter der Adresse. `agent.destroy()` beim Entfernen/Neu-Koppeln (überschreibt `kAuth`). |
 | Tests | `createMemoryKeyStore()`, `secure/testKit.ts` (`startTlsServer`, `tryConnect`, `foreignCredentials`), `remote/testKit.ts` (freigebender Rechner auf `127.0.0.1:0`). |
+
+## Verdrahtung (Koordinator, WP-82)
+
+1. **Schlüsselspeicher:** `const keyStore = createDpapiKeyStore({ logger })` (`secure/keyStore.ts`), einmal je Server.
+2. **Freigebende Seite:**
+   ```ts
+   const share = createRemoteAccessService({
+     home, instance,                       // ServerInstance aus config.ts (Version für Header/Health)
+     hub,                                  // RemoteHubAttach des Sync-Hubs (WP-78b, sync/hub.ts)
+     keyStore,
+     registerContent,                      // aus src/server/http/content.ts (WP-78b)
+     currentRole: () => multiHost.config().role,
+     warnings,                             // StoreWarningRegistry des Hosts
+     logger,
+   });
+   ```
+   `registerContent(app, context)` bekommt die Fastify-Instanz des gekoppelten Rechners; jede Route prüft vor ihrer
+   Wirkung `context.isCurrent(request)` (die Allowlist in `peerHttp.ts` lässt nur Health, Blob, Datei, Anhänge und
+   `DELETE peer/self` zu – weitere Routen dort ergänzen).
+3. **Rolle:** `const multiHost = createMultiHostService({ home, share, control: hostsService /* ab WP-79 */, warnings, logger })`.
+4. **Befehle:** `multiHost.commands` (`multiHost.configure`) und `share.commands` (`remoteAccess.*`, Liste
+   `REMOTE_ACCESS_COMMANDS`) in das Host-Befehls-Routing. Die Antwort auf `remoteAccess.pair` enthält den Code: nur an den
+   anfragenden Client, nie loggen, nie in Ops/Broadcasts.
+5. **HostState:** `remoteAccess = share.state()`, `multiHost = multiHost.config()`; `multiHost.onChange(() => republish())`
+   (leitet auch die Änderungen der Seiten weiter).
+6. **Start/Stopp:** nach dem Hub `await multiHost.start()` (nie fatal); beim Herunterfahren `await multiHost.stop()`, danach
+   `await share.close()` (Stores flushen, Peer-App schließen).
+7. **Hub (WP-78b):** Sockets aus `handleRemoteConnection` sind `GuardedHubSocket`s; vor jeder Wirkung eines Befehls
+   `share.isCurrentConnection(socket)` prüfen (Generation, §B.8). `closeRemote(code)` schließt alle Fern-Sockets –
+   `HOST_REVOKED` (Aufheben, Erneuern, Ersetzen) bzw. `SERVER_SHUTDOWN` (Fernzugang aus).
+8. **Firewall-Prüfung:** liest Regeln für `process.execPath`; der Installer bzw. die Anleitung legt die Regel an
+   (nur lesen, nie ändern).
+
+## Prüfungen und Tests
+
+- Tests (nur `127.0.0.1`, Port 0, Temp-Home, `MemoryKeyStore`; DPAPI-Tests mit Dateien im Temp-Home):
+  `secure/` 81, `remote/` 70, `multihost/` 10 – zusammen 161.
+- Pflichttests §B.12: Listener (unbekannter/aufgehobener Schlüssel, Anfrage im selben Flug, falsche Zertifikate auch bei
+  offenem Fenster, falscher Beweis), Kopplung (MITM-Relay, Replay, Fehlversuche, Ablauf, Einmaligkeit, Ratenbegrenzung),
+  Aufheben (WebSocket und laufende Anfrage sofort weg, Schreibfehler stoppt den Listener), Browserschutz, Schlüsselspeicher,
+  DoS (Grenzen vor TLS, Handshake-Zeitlimit), Rolle, Protokoll.
+
+## Schnittstellen über die Ports hinaus
+
+- `FileIdentityStore` = Port `IdentityStore` + `save(identity)` (WP-79 speichert erst nach erfolgreicher Kopplung).
+- `RemoteAccess` = Port `RemoteAccessService` + `prepare()`, `isCurrentConnection(socket)`, `close()`,
+  `connectionCounts()`; `createMultiHostService` nimmt Seiten mit optionalem `prepare()`/`onChange()` (`ManagedRoleSide`).
+- Der Hub muss die Generation prüfen (`isCurrentConnection`) – im Port `RemoteHubAttach` nicht beschrieben.
+- Vorschlag Contract/Spezifikation: WP-76 §B.7 auf `kAuth`-`info = SHA-384(T)` und die Versionsprüfung beim Koppeln
+  nachziehen; optional `isCurrentConnection` in `RemoteAccessService` aufnehmen.
