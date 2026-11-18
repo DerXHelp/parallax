@@ -12,7 +12,7 @@ Design: `docs/wp/WP-13.md` §3.3, Ergebnis und Stolpersteine: `docs/wp/WP-13a.md
 | `player.ts` | `EventPlayer` für Fixture-Format v1 (Abspielregeln §3.3), `compareDecision` |
 | `common.ts` | `SessionStopped`, `TurnInterrupted`, `TaskStopped`, `mapUuids`, Prompt-Helfer (echtes `setImmediate`/`nextMacrotask` jetzt aus `lib/async.ts`, R2-10) |
 | `dsl.ts` | Bausteine über WP-12 `synthetic/build.ts` (Turns, Blöcke, Entscheidungen, Subagents, Interrupt, `/clear`, `/rename`, Fehler, Crash); Phase 3: `inputChunks`, `subagentLaunch({runInBackground, outputFile})`, `taskProgress` (mit `activity` → `description` wie die CLI, WP61-07), `backgroundTasksChanged`, `subagentEnd({outputFile, status, usage})` |
-| `interactive.ts` | Dev-Szenario mit Schlüsselwörtern (`fake:bash` … `/clear`; Phase 2: `fake:image` = Read mit Bild-Ergebnis, `fake:ratelimit` mit Reset in 60 s; Prompt mit Bildern → „Fake: received N image(s)“; Phase 3 siehe unten) |
+| `interactive.ts` | Dev-Szenario mit Schlüsselwörtern (`fake:bash` … `/clear`; `fake:permission-later` = dieselbe Bash-Freigabe nach etwa 3 s Text; Phase 2: `fake:image` = Read mit Bild-Ergebnis, `fake:ratelimit` mit Reset in 60 s; Prompt mit Bildern → „Fake: received N image(s)“; Phase 3 siehe unten) |
 | `turn.ts` | Bausteine der interaktiven Turns: `Turn`, `contextFor`, `ask` (canUseTool wie das CLI), `answerTurn`, `abortedByDecision` |
 | `plan.ts` | `fake:plan` (Plan-Modus, Plan-Datei echt) und der Start mit frischem Kontext („Fake: implementing plan (N lines)“) |
 | `phase3.ts` | `fake:background` (sendet Tätigkeiten „Running …“), `fake:todo`, `fake:files`, `fake:writes-lost`, `fake:context-high` (V4-05), Antworten auf Anhänge/Pastes |

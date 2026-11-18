@@ -1,6 +1,8 @@
 /**
  * Interactive dev scenario (WP-13 §3.3; default of `createFakeBackend`, `pnpm dev`, E2E): answers
- * every prompt by keyword (first word, case-insensitive) – `fake:bash`, `fake:edit`,
+ * every prompt by keyword (first word, case-insensitive) – `fake:bash`, `fake:permission-later`
+ * (the same Bash approval after about 3 s of streamed text: a decision that appears while the user
+ * types – ADR-040 in E2E), `fake:edit`,
  * `fake:question`, `fake:plan`, `fake:subagent`, `fake:parallel`, `fake:slow`, `fake:compact`,
  * `fake:ratelimit` (rejected, resets in 60 s – "continue at" in E2E), `fake:image` (Read of a PNG
  * with an image result), `fake:error`, `fake:crash`, `fake:held`, `/rename X`, `/clear`; Phase 3
@@ -89,7 +91,15 @@ async function echo(ctx: FakeScriptContext, c: DslContext, turn: Turn, text: str
   );
 }
 
-async function bash(ctx: FakeScriptContext, c: DslContext, turn: Turn): Promise<void> {
+/** Text streamed before the approval of `fake:permission-later` (15 chunks over `leadMs`). */
+const LEAD_TEXT = 'Let me look at the folder first, then create the directory.';
+
+async function bash(
+  ctx: FakeScriptContext,
+  c: DslContext,
+  turn: Turn,
+  options: { leadMs?: number } = {},
+): Promise<void> {
   const toolUseId = ctx.ids.toolUseId();
   const input = { command: 'mkdir -p fake-dir && ls -1', description: 'Create fake-dir and list the folder' };
   const suggestions: PermissionUpdate[] = [
@@ -105,6 +115,14 @@ async function bash(ctx: FakeScriptContext, c: DslContext, turn: Turn): Promise<
   await ctx.play(
     events(
       turnOpen(c, turn.prompt),
+      ...(options.leadMs === undefined
+        ? []
+        : [
+            assistantMessage(c, [textBlock(LEAD_TEXT)], {
+              chunks: 15,
+              stepMs: Math.round(options.leadMs / 15),
+            }),
+          ]),
       toolUseBlock(c, 'Bash', input, { toolUseId, thinking: 'I will run the command.' }),
     ),
   );
@@ -527,6 +545,9 @@ async function handle(
     case 'fake:bash':
     case 'fake:permission':
       await bash(ctx, c, turn);
+      break;
+    case 'fake:permission-later':
+      await bash(ctx, c, turn, { leadMs: 3_000 });
       break;
     case 'fake:edit':
       await edit(ctx, c, turn);
