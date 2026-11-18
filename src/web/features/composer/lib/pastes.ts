@@ -130,6 +130,41 @@ export function expandPastes(
 }
 
 /**
+ * WP-77: the reverse of `expandPastes` for a draft from the server (`Draft.text` + `pastes`): every
+ * occurrence of a paste text becomes a token again (longer pastes first, so a paste inside another
+ * stays part of it), the ids go 1, 2, … in the order of the first token. A paste that is not in the
+ * text is dropped. Expanding the result gives the server text again.
+ */
+export function collapsePastes(
+  text: string,
+  pastes: readonly string[],
+  makeToken: (id: number, paste: string) => string,
+): { text: string; pastes: DraftPaste[] } {
+  const distinct = [...new Set(pastes)].filter((paste) => paste !== '' && text.includes(paste));
+  if (distinct.length === 0) return { text, pastes: [] };
+  // Placeholders that cannot be in the text (private use area + index) keep the passes apart.
+  const marks = distinct.map((_, index) => `${String(index)}`);
+  let collapsed = text;
+  const order = distinct
+    .map((paste, index) => ({ paste, index }))
+    .sort((a, b) => b.paste.length - a.paste.length);
+  for (const { paste, index } of order) collapsed = collapsed.split(paste).join(marks[index] ?? '');
+  const firstAt = (index: number) => collapsed.indexOf(marks[index] ?? '');
+  const used = distinct
+    .map((paste, index) => ({ paste, index, at: firstAt(index) }))
+    .filter((entry) => entry.at >= 0)
+    .sort((a, b) => a.at - b.at);
+  const result: DraftPaste[] = [];
+  for (const [position, entry] of used.entries()) {
+    const id = position + 1;
+    const token = makeToken(id, entry.paste);
+    collapsed = collapsed.split(marks[entry.index] ?? '').join(token);
+    result.push({ id, token, text: entry.paste });
+  }
+  return { text: collapsed, pastes: result };
+}
+
+/**
  * Put in front of a prompt that would start with `/` only because of a paste (R5W-03): U+200B ZERO
  * WIDTH SPACE – invisible in the transcript, and unlike a space or a line break it survives every
  * `trim()` (CLI, server title and `/rename` detection), so the text never arrives as a command.

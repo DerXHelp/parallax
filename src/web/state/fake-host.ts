@@ -3,6 +3,7 @@ import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   DEFAULT_REMOTE_CONTROL_SUMMARY,
   IDLE_PROFILE_LOGIN,
+  draftTotalChars,
   isDefaultProgramAllowed,
   type AssistantTextItem,
   type Decision,
@@ -469,6 +470,8 @@ export class FakeHost {
   sessionFilesTruncated = false;
   /** One-shot failures per command name (failNext). */
   private readonly failures = new Map<CommandName, ErrorPayload[]>();
+  /** WP-77: highest draft rev per entry (session.setDraft). */
+  private readonly draftRevs = new Map<EntryId, number>();
   /** WP-67: session info answers and actions; levers `unavailable`, `actionError`, `long`. */
   readonly info = new FakeSessionInfoData();
   /** Stored plan versions, ascending (plan.list, plan.read; `stored: false` → PLAN_NOT_FOUND). */
@@ -899,6 +902,40 @@ export class FakeHost {
     }
     this.pushOps(entryId, ops);
     return this.ok();
+  }
+
+  /**
+   * WP-77 `session.setDraft` like the engine (ADR-210): the last writer wins, `rev` counts on (also
+   * after a cleared draft), `clientId` = the window; `detail.patch {draft}` + `summary.hasDraft`.
+   */
+  private setDraft(cmd: CommandOf<'session.setDraft'>): FakeAck {
+    if (!this.knowsEntry(cmd.entryId)) {
+      return { ok: false, error: makeError('ENTRY_NOT_FOUND', { entryId: cmd.entryId }) };
+    }
+    const current = this.sessions.get(cmd.entryId)?.view.detail.draft ?? null;
+    if (cmd.draft === null) {
+      if (current !== null) {
+        this.pushOps(cmd.entryId, [{ op: 'detail.patch', patch: { draft: null } }]);
+        this.patchSummary(cmd.entryId, { hasDraft: false });
+      }
+      return this.ok({ rev: null });
+    }
+    const chars = draftTotalChars(cmd.draft);
+    if (chars > LIMITS.draftTotalChars) {
+      return { ok: false, error: makeError('DRAFT_TOO_LARGE', { chars, max: LIMITS.draftTotalChars }) };
+    }
+    const rev = Math.max(this.draftRevs.get(cmd.entryId) ?? 0, current?.rev ?? 0) + 1;
+    this.draftRevs.set(cmd.entryId, rev);
+    const draft = {
+      text: cmd.draft.text,
+      pastes: [...cmd.draft.pastes],
+      rev,
+      updatedAt: this.now(),
+      clientId: this.clientHello?.clientId ?? null,
+    };
+    this.pushOps(cmd.entryId, [{ op: 'detail.patch', patch: { draft } }]);
+    this.patchSummary(cmd.entryId, { hasDraft: true });
+    return this.ok({ rev });
   }
 
   private knowsEntry(entryId: EntryId): boolean {
@@ -1339,8 +1376,10 @@ export class FakeHost {
       case 'update.rollback':
       case 'update.dismiss':
         return this.updateCommand(cmd);
-      // WP-76: contract only – drafts follow in WP-77, several computers in WP-80.
+      // WP-77: the synchronized draft like the engine.
       case 'session.setDraft':
+        return this.setDraft(cmd);
+      // WP-76: contract only – several computers follow in WP-80.
       case 'multiHost.configure':
       case 'remoteAccess.pair':
       case 'remoteAccess.cancelPairing':

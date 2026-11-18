@@ -13,11 +13,13 @@ import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   blobRefSchema,
   decisionRecordSchema,
+  draftSchema,
   entrySchema,
   settingsPatchSchema,
   settingsSchema,
   type BlobRef,
   type DecisionRecord,
+  type Draft,
   type Entry,
   type HostWarning,
   type Settings,
@@ -31,6 +33,7 @@ import {
   type AttachmentFileStore,
   type BlobStore,
   type DecisionStore,
+  type DraftStore,
   type RegistryStore,
   type SettingsStore,
   type StoreWarnings,
@@ -47,6 +50,8 @@ export interface MemoryStoresSeed {
   }[];
   decisions?: readonly { entryId: EntryId; records: readonly DecisionRecord[] }[];
   plans?: readonly { entryId: EntryId; version: number; text: string }[];
+  /** WP-77: stored drafts (like `entries/<id>/draft.json`). */
+  drafts?: readonly { entryId: EntryId; draft: Draft }[];
   settings?: Settings;
   warnings?: readonly HostWarning[];
 }
@@ -101,6 +106,17 @@ export interface MemoryAttachmentFileStore extends AttachmentFileStore {
   readonly materialized: readonly { entryId: EntryId; blobId: BlobId; name: string | null; path: string }[];
 }
 
+/** WP-77: drafts per entry, validated like the file store; saves and removals are recorded. */
+export interface MemoryDraftStore extends DraftStore {
+  /** The stored draft of an entry (copy), null = none. */
+  draft(entryId: EntryId): Draft | null;
+  /** Every save in order (null = cleared). */
+  readonly saves: readonly { entryId: EntryId; draft: Draft | null }[];
+  /** Entries whose draft was removed (`remove`). */
+  readonly removed: readonly EntryId[];
+  readonly flushes: number;
+}
+
 /** Fixed home of the attachment double (never touched on disk). */
 export const MEMORY_ATTACHMENTS_HOME = 'C:\\work\\sample\\.home';
 
@@ -112,6 +128,7 @@ export interface MemoryStores {
   settings: MemorySettingsStore;
   warnings: MemoryStoreWarnings;
   attachments: MemoryAttachmentFileStore;
+  drafts: MemoryDraftStore;
 }
 
 function lowerBound(items: readonly TranscriptItem[], order: number): number {
@@ -366,6 +383,39 @@ function createAttachments(blobs: MemoryBlobStore): MemoryAttachmentFileStore {
   };
 }
 
+export function createMemoryDraftStore(
+  seed: readonly { entryId: EntryId; draft: Draft }[] = [],
+): MemoryDraftStore {
+  const drafts = new Map<EntryId, Draft>(seed.map((s) => [s.entryId, draftSchema.parse(s.draft)]));
+  const saves: { entryId: EntryId; draft: Draft | null }[] = [];
+  const removed: EntryId[] = [];
+  let flushes = 0;
+  return {
+    saves,
+    removed,
+    load: (entryId) => Promise.resolve(structuredClone(drafts.get(entryId) ?? null)),
+    save: (entryId, draft) => {
+      const value = draft === null ? null : draftSchema.parse(draft);
+      if (value === null) drafts.delete(entryId);
+      else drafts.set(entryId, value);
+      saves.push({ entryId, draft: structuredClone(value) });
+    },
+    remove: (entryId) => {
+      drafts.delete(entryId);
+      removed.push(entryId);
+      return Promise.resolve();
+    },
+    flush: () => {
+      flushes += 1;
+      return Promise.resolve();
+    },
+    draft: (entryId) => structuredClone(drafts.get(entryId) ?? null),
+    get flushes() {
+      return flushes;
+    },
+  };
+}
+
 export function createMemoryStores(
   seed: MemoryStoresSeed = {},
   options: MemoryStoresOptions = {},
@@ -379,5 +429,6 @@ export function createMemoryStores(
     settings: createSettings(seed.settings),
     warnings: createWarnings(seed.warnings ?? [], options),
     attachments: createAttachments(blobs),
+    drafts: createMemoryDraftStore(seed.drafts),
   };
 }

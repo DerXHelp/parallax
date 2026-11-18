@@ -94,6 +94,7 @@ import { createNativeToasts } from '../sessions/nativeToasts';
 import { openProcessStore } from '../sessions/processStore';
 import { createAttachmentFileStore } from '../store/attachments';
 import { createBlobStore } from '../store/blobs';
+import { createDraftStore, type FileDraftStore } from '../store/drafts';
 import { createDecisionStore } from '../store/decisions';
 import { StoreVersionTooNewError, createStoreWarnings, type StoreWarningRegistry } from '../store/jsonStore';
 import { openRegistryStore } from '../store/registry';
@@ -209,6 +210,8 @@ interface Stores {
    * `materialize()` and the attachment folder of every start; nothing to close (no cache).
    */
   attachments: AttachmentFileStore;
+  /** WP-77 (ADR-210): `entries/<id>/draft.json` – the synchronized composer draft. */
+  drafts: FileDraftStore;
   /** Closes every store (errors are logged, never thrown). */
   close(): Promise<void>;
 }
@@ -259,6 +262,8 @@ async function openStores(config: ServerConfig, instance: ServerInstance, log: L
     const transcripts = createTranscriptStore({ home, warnings, validation: config.validation });
     opened.push({ name: 'transcripts', close: () => transcripts.close() });
     const attachments = createAttachmentFileStore(home, blobs);
+    const drafts = createDraftStore({ home, warnings });
+    opened.push({ name: 'drafts', close: () => drafts.close() });
     return {
       warnings,
       registry,
@@ -272,6 +277,7 @@ async function openStores(config: ServerConfig, instance: ServerInstance, log: L
       decisions,
       transcripts,
       attachments,
+      drafts,
       close: closeOpened,
     };
   } catch (error) {
@@ -648,6 +654,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         commandCatalogs: stores.commandCatalogs,
         // Phase 3 (ADR-146): without it file attachments are refused (UNSUPPORTED_MEDIA_TYPE).
         attachments: stores.attachments,
+        // WP-77 (ADR-210): synchronized drafts; `manager.shutdown()` flushes before `stores.close()`.
+        drafts: stores.drafts,
       },
       host: {
         serverVersion: instance.serverVersion,

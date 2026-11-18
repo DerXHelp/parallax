@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
   decisionRecordsFileSchema,
+  draftFileSchema,
   profilesFileSchema,
   registryFileSchema,
   sessionFilesFileSchema,
@@ -29,6 +30,7 @@ import { COMMANDS_FILE, commandsCacheFileSchema } from '../sessions/commandCatal
 import { PROCESSES_FILE, processesFileSchema } from '../sessions/processStore';
 import { transcriptLogLineSchema } from '../sync/ports';
 import { DECISIONS_FILE } from './decisions';
+import { DRAFT_FILE } from './drafts';
 import { REGISTRY_FILE } from './registry';
 import { SETTINGS_FILE } from './settings';
 import { TRANSCRIPT_SUFFIX } from './transcripts';
@@ -76,6 +78,7 @@ export const STORE_SCHEMAS: readonly StoreSchema[] = [
   entry(DECISIONS_FILE, decisionRecordsFileSchema),
   entry(COMMANDS_FILE, commandsCacheFileSchema),
   entry(SESSION_FILES_FILE, sessionFilesFileSchema),
+  entry(DRAFT_FILE, draftFileSchema),
   entry(`*${TRANSCRIPT_SUFFIX}`, transcriptLogLineSchema, 'jsonl'),
 ];
 
