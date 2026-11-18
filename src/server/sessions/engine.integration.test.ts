@@ -790,6 +790,7 @@ describe('presence and notifications', () => {
               viewing: false,
               everFocused: false,
               connectedRank: 2,
+              remote: false,
             },
             {
               clientId: helper.clientId,
@@ -799,9 +800,12 @@ describe('presence and notifications', () => {
               viewing: false,
               everFocused: false,
               connectedRank: 1,
+              remote: false,
             },
           ],
+          relay: false,
         },
+        relay: null,
       }),
     ]);
 
