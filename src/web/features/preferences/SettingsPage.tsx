@@ -4,6 +4,7 @@ import {
   FolderOpenIcon,
   InfoIcon,
   LayersIcon,
+  NetworkIcon,
   ServerIcon,
   SlidersHorizontalIcon,
   UsersIcon,
@@ -23,24 +24,40 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@web/ui/tabs';
 import { AboutSection } from './sections/AboutSection';
 import { FilesSection } from './sections/FilesSection';
 import { GeneralSection } from './sections/GeneralSection';
+import { MultiHostSection } from './sections/MultiHostSection';
 import { NotificationsSection } from './sections/NotificationsSection';
 import { ServerSection } from './sections/ServerSection';
 import { SessionsSection } from './sections/SessionsSection';
 import { useSettingsEditor, type SettingsEditor } from './state/settings-editor';
 
-const SECTION_ICONS: Readonly<Record<SettingsSection, LucideIcon>> = {
+/**
+ * The sections of the page: the shell's sections (`SETTINGS_SECTIONS`, requests can open them) plus
+ * "Several computers" (WP-78b) after "Server" – until the shell lists it itself (the Set drops the
+ * duplicate then).
+ */
+type PageSection = SettingsSection | 'multiHost';
+const PAGE_SECTIONS: readonly PageSection[] = [
+  ...new Set(
+    SETTINGS_SECTIONS.flatMap((value): PageSection[] =>
+      value === 'server' ? [value, 'multiHost'] : [value],
+    ),
+  ),
+];
+
+const SECTION_ICONS: Readonly<Record<PageSection, LucideIcon>> = {
   general: SlidersHorizontalIcon,
   notifications: BellIcon,
   sessions: LayersIcon,
   files: FolderOpenIcon,
   profiles: UsersIcon,
   server: ServerIcon,
+  multiHost: NetworkIcon,
   updates: DownloadIcon,
   about: InfoIcon,
 };
 
-function isSection(value: string): value is SettingsSection {
-  return (SETTINGS_SECTIONS as readonly string[]).includes(value);
+function isSection(value: string): value is PageSection {
+  return PAGE_SECTIONS.some((section) => section === value);
 }
 
 function focusedElement(): HTMLElement | null {
@@ -75,7 +92,7 @@ function SectionContent({
   hostState,
   onProfilesDirtyChange,
 }: {
-  section: SettingsSection;
+  section: PageSection;
   editor: SettingsEditor;
   hostState: HostState | null;
   onProfilesDirtyChange: (dirty: boolean) => void;
@@ -94,6 +111,8 @@ function SectionContent({
       return <ProfilesSection onDirtyChange={onProfilesDirtyChange} />;
     case 'server':
       return <ServerSection editor={editor} hostState={hostState} />;
+    case 'multiHost':
+      return <MultiHostSection hostState={hostState} />;
     case 'updates':
       return <UpdatesSection />;
     case 'about':
@@ -115,7 +134,7 @@ function SectionContent({
  */
 export function SettingsPage({ section, onClose }: SettingsPageSlotProps) {
   const { t, tError } = useI18n();
-  const [current, setCurrent] = useState<SettingsSection>(section ?? 'general');
+  const [current, setCurrent] = useState<PageSection>(section ?? 'general');
   // The profile editor is mounted on its first visit and then kept (forceMount + hidden).
   const [profilesKept, setProfilesKept] = useState(current === 'profiles');
   const [profilesDirty, setProfilesDirty] = useState(false);
@@ -130,7 +149,7 @@ export function SettingsPage({ section, onClose }: SettingsPageSlotProps) {
   // `/settings` …), so it returns the focus to where it was when the page opened.
   const [returnFocus] = useState(focusedElement);
 
-  const showSection = (next: SettingsSection) => {
+  const showSection = (next: PageSection) => {
     setCurrent(next);
     if (next === 'profiles') setProfilesKept(true);
   };
@@ -262,7 +281,7 @@ export function SettingsPage({ section, onClose }: SettingsPageSlotProps) {
             aria-label={t('preferences.sections.label')}
             className="bg-muted/30 h-auto w-48 shrink-0 flex-col items-stretch justify-start gap-0.5 overflow-y-auto border-r border-b-0 p-2"
           >
-            {SETTINGS_SECTIONS.map((value) => {
+            {PAGE_SECTIONS.map((value) => {
               const Icon = SECTION_ICONS[value];
               const unsaved = value === 'profiles' && profilesDirty;
               return (
@@ -285,7 +304,7 @@ export function SettingsPage({ section, onClose }: SettingsPageSlotProps) {
               );
             })}
           </TabsList>
-          {SETTINGS_SECTIONS.map((value) => {
+          {PAGE_SECTIONS.map((value) => {
             const kept = value === 'profiles' && profilesKept;
             return (
               <TabsContent

@@ -10,13 +10,16 @@ import {
   PROTOCOL_VERSION,
   WS_CLOSE,
   WS_PATH,
+  REMOTE_ALLOWED_COMMANDS,
   commandResultSchemas,
+  isRemoteAllowedCommand,
   notifySchema,
   parseClientMessage,
   sessionOpSchema,
   sessionSnapshotSchema,
   type AckMessage,
   type ClientHelloMessage,
+  type ClientKind,
   type Command,
   type Notification,
   type PresenceState,
@@ -29,6 +32,7 @@ import { isTestRun, type ServerInstance } from '../config';
 import type { HubAttachOptions } from '../http/app';
 import { replyError as replyHttpError, sendError as sendHttpError } from '../http/reply';
 import { logger as rootLogger, shouldLogRepeated } from '../lib/logger';
+import type { ConnectionOrigin, RemoteConnectionInfo, RemoteHubAttach } from '../remote/ports';
 import { CommandError, type ClientPresence, type SessionPublisher, type SessionSource } from './ports';
 
 /**
@@ -40,6 +44,16 @@ import { CommandError, type ClientPresence, type SessionPublisher, type SessionS
  *
  * Contract for `SessionSource.loadView`: the returned view must contain every op published before
  * its promise settles (the hub assigns the current seq to it, R0-20).
+ *
+ * Remote connections (WP-78b, `RemoteHubAttach`, docs/wp/WP-76.md §B.6/§B.8): a socket of the
+ * remote-access listener is a normal client with these differences – only REMOTE_ALLOWED_COMMANDS
+ * (everything else, also an unknown name, → REMOTE_NOT_ALLOWED, fail closed); `clientHello.kind:
+ * 'relay'` only here and at most one (no subscriptions, no commands); `host.state` goes out with
+ * `remoteAccess: null`; presence carries `origin: 'remote'` and `kind`; their `cmdId`s live in an
+ * own namespace of the idempotency cache. `closeRemote` detaches every remote connection at once:
+ * from then on nothing is sent to it and nothing it sent runs (checked right before a command
+ * executes – this replaces the coupling generation of §B.8 in the hub). Local connections are
+ * unchanged.
  */
 
 // =====================================================================================
@@ -129,7 +143,7 @@ export interface HubEntryInfo {
   pendingDeltas: number;
 }
 
-export interface SyncHub extends SessionPublisher {
+export interface SyncHub extends SessionPublisher, RemoteHubAttach {
   /**
    * Registers `GET /api/ws` (WebSocket) on the app and disposes the hub when the app closes. The
    * route checks every upgrade with `authorizeUpgrade` in `preValidation` and again in the WS
@@ -155,6 +169,12 @@ type ConnState = 'awaiting-hello' | 'open' | 'closed';
 interface Conn {
   socket: HubSocket;
   state: ConnState;
+  /** `remote` = handed over by the remote-access listener (handleRemoteConnection). */
+  origin: ConnectionOrigin;
+  /** From `clientHello` (`window` until then); `relay` only on a remote connection. */
+  kind: ClientKind;
+  /** Remote end of a remote connection (log context); null for local ones. */
+  remote: RemoteConnectionInfo | null;
   clientId: ClientId | null;
   presence: PresenceState | null;
   lastFocusAt: Date | null;
@@ -263,6 +283,29 @@ function rawType(text: string): string | null {
     // not JSON
   }
   return null;
+}
+
+/** Command names a remote window may send (raw strings, for messages that failed to parse). */
+const REMOTE_ALLOWED_NAMES: ReadonlySet<string> = new Set(REMOTE_ALLOWED_COMMANDS);
+
+/** Raw `cmd.name` of a command message that failed to parse (for REMOTE_NOT_ALLOWED); null if absent. */
+function rawCommandName(text: string): string | null {
+  try {
+    const value: unknown = JSON.parse(text);
+    if (typeof value !== 'object' || value === null || !('cmd' in value)) return null;
+    const cmd: unknown = value.cmd;
+    if (typeof cmd === 'object' && cmd !== null && 'name' in cmd && typeof cmd.name === 'string') {
+      return cmd.name.slice(0, 100);
+    }
+  } catch {
+    // not JSON
+  }
+  return null;
+}
+
+/** Remote connections never see the remote-access state (pairing window, peer, log counter – §B.6). */
+function redactForRemote(host: HostState): HostState {
+  return host.remoteAccess === null ? host : { ...host, remoteAccess: null };
 }
 
 /** Only these summary fields are throttled (A.2); every other change is sent immediately. */
@@ -383,12 +426,18 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
     const list: ClientPresence[] = [];
     for (const conn of conns) {
       if (conn.state !== 'open' || conn.clientId === null || conn.presence === null) continue;
-      list.push({
+      const entry: ClientPresence = {
         clientId: conn.clientId,
         presence: conn.presence,
         lastFocusAt: conn.lastFocusAt,
         connectedAt: conn.connectedAt,
-      });
+      };
+      // Local connections keep their old shape (origin/kind absent = a local window).
+      if (conn.origin === 'remote') {
+        entry.origin = 'remote';
+        entry.kind = conn.kind;
+      }
+      list.push(entry);
     }
     return list;
   }
@@ -661,7 +710,12 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
 
   // ---- commands ----
 
-  async function execute(cmd: Command, cmdId: string, clientId: ClientId): Promise<AckMessage> {
+  async function execute(cmd: Command, cmdId: string, clientId: ClientId, conn: Conn): Promise<AckMessage> {
+    // A remote connection detached by closeRemote (or closed) runs nothing – checked right before
+    // the command reaches the source (WP-76 §B.8).
+    if (conn.origin === 'remote' && conn.state !== 'open') {
+      return { type: 'ack', cmdId, ok: false, error: makeError('HOST_REVOKED') };
+    }
     try {
       const result = await source.handleCommand(cmd, { clientId, cmdId });
       const schema: z.ZodType = commandResultSchemas[cmd.name];
@@ -702,18 +756,39 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
     });
   }
 
+  /** Remote `cmdId`s never meet local ones in the idempotency cache (no cached local ack leaks). */
+  function cacheKey(conn: Conn, cmdId: string): string {
+    return conn.origin === 'remote' ? `remote\u0000${cmdId}` : cmdId;
+  }
+
+  /** May this remote connection send a command of this (raw) name at all? The relay sends none. */
+  function remoteMayTry(conn: Conn, name: string | null): boolean {
+    return conn.kind !== 'relay' && name !== null && REMOTE_ALLOWED_NAMES.has(name);
+  }
+
+  /** REMOTE_NOT_ALLOWED for a command a remote connection may not send. */
+  function refuseRemote(conn: Conn, cmdId: string, command: string): void {
+    log.warn({ command, kind: conn.kind, address: conn.remote?.address ?? null }, 'remote command refused');
+    send(conn, { type: 'ack', cmdId, ok: false, error: makeError('REMOTE_NOT_ALLOWED', { command }) });
+  }
+
   function handleCmd(conn: Conn, cmdId: string, cmd: Command): void {
     const clientId = conn.clientId;
     if (clientId === null) return;
-    const cached = cmdCache.get(cmdId, now().getTime());
+    if (conn.origin === 'remote' && (conn.kind === 'relay' || !isRemoteAllowedCommand(cmd.name))) {
+      refuseRemote(conn, cmdId, cmd.name);
+      return;
+    }
+    const key = cacheKey(conn, cmdId);
+    const cached = cmdCache.get(key, now().getTime());
     if (cached !== undefined) {
       sendCached(conn, cached);
       return;
     }
-    const promise = execute(cmd, cmdId, clientId);
-    cmdCache.pending(cmdId, promise);
+    const promise = execute(cmd, cmdId, clientId, conn);
+    cmdCache.pending(key, promise);
     void promise.then((ack) => {
-      cmdCache.complete(cmdId, ack, now().getTime());
+      cmdCache.complete(key, ack, now().getTime());
       send(conn, ack);
     });
   }
@@ -729,6 +804,18 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
     }
   }
 
+  /** Why this hello's `kind` cannot be accepted (null = fine): a relay only remote, at most one. */
+  function relayRefusal(conn: Conn, kind: ClientKind): string | null {
+    if (kind !== 'relay') return null;
+    if (conn.origin !== 'remote') return 'relay_local';
+    for (const other of conns) {
+      if (other !== conn && other.origin === 'remote' && other.kind === 'relay' && other.state === 'open') {
+        return 'relay_exists';
+      }
+    }
+    return null;
+  }
+
   function handleHello(conn: Conn, message: ClientHelloMessage): void {
     if (message.protocolVersion !== PROTOCOL_VERSION) {
       sendError(
@@ -737,6 +824,13 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
         'clientHello',
       );
       closeConn(conn, WS_CLOSE.PROTOCOL_VERSION_MISMATCH, 'protocol version mismatch');
+      return;
+    }
+    const refusal = relayRefusal(conn, message.kind);
+    if (refusal !== null) {
+      log.warn({ reason: refusal, origin: conn.origin }, 'relay hello refused');
+      sendError(conn, makeError('INVALID_MESSAGE', { reason: refusal }), 'clientHello');
+      closeConn(conn, WS_CLOSE.PROTOCOL_ERROR, 'relay not accepted');
       return;
     }
     let host: HostState;
@@ -750,6 +844,7 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
       return;
     }
     conn.state = 'open';
+    conn.kind = message.kind;
     conn.clientId = message.clientId;
     conn.presence = message.presence;
     if (message.presence.focused) {
@@ -758,7 +853,9 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
     } else {
       conn.lastFocusAt = focusMemory.get(message.clientId) ?? null;
     }
-    if (checkOutgoing(hostStateSchema, host, 'host state')) send(conn, { type: 'host.state', host });
+    if (checkOutgoing(hostStateSchema, host, 'host state')) {
+      send(conn, { type: 'host.state', host: conn.origin === 'remote' ? redactForRemote(host) : host });
+    }
     const valid = list.filter((summary) =>
       checkOutgoing(sessionSummarySchema, summary, `summary ${summary.entryId}`),
     );
@@ -789,14 +886,19 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
     }
 
     if (!parsed.ok) {
+      const remoteName = conn.origin === 'remote' && parsed.cmdId !== null ? rawCommandName(text) : null;
       if (parsed.cmdId === null) sendError(conn, parsed.error, rawType(text));
-      else {
+      else if (conn.origin === 'remote' && !remoteMayTry(conn, remoteName)) {
+        // Fail closed: an unknown or not allowed name gets no validation detail.
+        refuseRemote(conn, parsed.cmdId, remoteName ?? 'unknown');
+      } else {
         // Validation failures are cached like results (a resend gets the same ack).
-        const cached = cmdCache.get(parsed.cmdId, now().getTime());
+        const key = cacheKey(conn, parsed.cmdId);
+        const cached = cmdCache.get(key, now().getTime());
         if (cached !== undefined) sendCached(conn, cached);
         else {
           const ack: AckMessage = { type: 'ack', cmdId: parsed.cmdId, ok: false, error: parsed.error };
-          cmdCache.complete(parsed.cmdId, ack, now().getTime());
+          cmdCache.complete(key, ack, now().getTime());
           send(conn, ack);
         }
       }
@@ -819,6 +921,11 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
         notifyPresence();
         return;
       case 'subscribe':
+        if (conn.kind === 'relay') {
+          // The relay watches channel 1 and receives notifications only (ADR-207).
+          sendError(conn, makeError('REMOTE_NOT_ALLOWED', { command: 'subscribe' }), 'subscribe');
+          return;
+        }
         void handleSubscribe(conn, message.entryId, message.sinceSeq);
         return;
       case 'unsubscribe':
@@ -830,6 +937,7 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
     }
   }
 
+  /** Detaches a connection (idempotent): no more sends, subscriptions gone, presence updated. */
   function onClose(conn: Conn): void {
     if (conn.state === 'closed') return;
     const wasOpen = conn.state === 'open';
@@ -870,10 +978,13 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
     heartbeat = null;
   }
 
-  function handleConnection(socket: HubSocket): void {
+  function connect(socket: HubSocket, origin: ConnectionOrigin, remote: RemoteConnectionInfo | null): void {
     const conn: Conn = {
       socket,
       state: 'awaiting-hello',
+      origin,
+      kind: 'window',
+      remote,
       clientId: null,
       presence: null,
       lastFocusAt: null,
@@ -910,6 +1021,37 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
       serverStartedAt: instance.startedAt,
     });
     ensureHeartbeat();
+  }
+
+  function handleConnection(socket: HubSocket): void {
+    connect(socket, 'local', null);
+  }
+
+  // ---- remote connections (RemoteHubAttach, WP-78b) ----
+
+  function handleRemoteConnection(socket: HubSocket, info: RemoteConnectionInfo): void {
+    log.debug({ address: info.address, port: info.port }, 'remote connection');
+    connect(socket, 'remote', { address: info.address, port: info.port });
+  }
+
+  function remoteConnections(): number {
+    let count = 0;
+    for (const conn of conns) if (conn.origin === 'remote') count += 1;
+    return count;
+  }
+
+  /**
+   * Unpair, key renewed, role left (§B.8 step 1): every remote connection is detached now (nothing
+   * is sent to it any more, nothing it sends runs, presence drops it) and gets the close frame.
+   */
+  function closeRemote(code: number): void {
+    const remote = [...conns].filter((conn) => conn.origin === 'remote');
+    if (remote.length === 0) return;
+    log.info({ code, connections: remote.length }, 'closing remote connections');
+    for (const conn of remote) {
+      onClose(conn);
+      closeConn(conn, code, code === WS_CLOSE.HOST_REVOKED ? 'coupling revoked' : 'closing');
+    }
   }
 
   // ---- channel 1: summaries (status immediately, context/activity ≤ 1/s per entry) ----
@@ -973,7 +1115,17 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
 
   function publishHostState(host: HostState): void {
     if (!checkOutgoing(hostStateSchema, host, 'host state')) return;
-    broadcast({ type: 'host.state', host });
+    const text = JSON.stringify({ type: 'host.state', host });
+    let redacted: string | null = null;
+    for (const conn of conns) {
+      if (conn.state !== 'open') continue;
+      if (conn.origin === 'remote') {
+        redacted ??= JSON.stringify({ type: 'host.state', host: redactForRemote(host) });
+        sendText(conn, redacted);
+      } else {
+        sendText(conn, text);
+      }
+    }
   }
 
   function notify(clientId: ClientId, notification: Notification): void {
@@ -1015,6 +1167,9 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
     presence: presenceList,
     closeAll,
     handleConnection,
+    handleRemoteConnection,
+    remoteConnections,
+    closeRemote,
     dispose,
     inspect: (entryId) => {
       const entry = entries.get(entryId);
