@@ -610,7 +610,7 @@ function LinksBlock({
 
 /**
  * Slot `UpdatesSettings` (settings section "Updates", WP-87 §2.3), always for the local host:
- * installed version and build ID, the update status with progress, "Check now", "Prepare update",
+ * installed version and build ID, the update status with progress, "Check now", "Update now",
  * "Restart now" (confirmation with the sessions it stops), "Back to <previous>" (with the data loss
  * warning and tick when the store schemas differ, blocked without a backup), "Install from file…"
  * (zip upload), the automatic check, "What's new", license and third-party notices. A checkout

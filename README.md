@@ -64,7 +64,7 @@ Für die Nutzung: ein Release von GitHub, ohne Klon, pnpm oder Build.
 ### Aktualisieren
 - **In der App (ab 1.0.0):** Parallax sucht etwa eine Minute nach dem Start und dann alle 12 Stunden nach
   einer neuen Vollversion auf GitHub (Einstellungen → „Updates“, abschaltbar). Pre-releases werden nie
-  angeboten. Ein Hinweis erscheint oben in der Sidebar. „Update vorbereiten“ lädt das Zip im Hintergrund,
+  angeboten. Ein Hinweis erscheint oben in der Sidebar. „Jetzt aktualisieren“ lädt das Zip im Hintergrund,
   prüft Signatur und Dateien und holt das Agent SDK; die Sessions laufen dabei weiter. Das SDK kommt aus der
   npm-Konfiguration (`~/.npmrc`, `NPM_CONFIG_REGISTRY`) oder aus der Registry, die unter Einstellungen →
   „Updates“ → „npm-Registry für das Agent SDK“ steht (z. B. ein Firmen-Mirror; Anmeldedaten bleiben in

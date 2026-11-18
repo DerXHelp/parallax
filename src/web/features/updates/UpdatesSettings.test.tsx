@@ -209,11 +209,11 @@ describe('UpdatesSettings: commands', () => {
     expect(host.commands).toContainEqual({ name: 'update.check' });
   });
 
-  it('"Prepare update" sends update.prepare with the offered version; then "Restart now" shows', async () => {
+  it('"Update now" sends update.prepare with the offered version; then "Restart now" shows', async () => {
     const { host } = await start(SAMPLE_UPDATE_STATES.available);
     const user = userEvent.setup();
     renderSettings();
-    await user.click(await screen.findByRole('button', { name: 'Prepare update' }));
+    await user.click(await screen.findByRole('button', { name: 'Update now' }));
     expect(host.commands).toContainEqual({ name: 'update.prepare', version: '1.0.1' });
     expect(await screen.findByRole('button', { name: 'Restart now' })).toBeTruthy();
   });

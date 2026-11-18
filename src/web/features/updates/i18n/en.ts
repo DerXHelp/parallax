@@ -38,7 +38,7 @@ export const en = {
     progress: 'Progress',
     checkNow: 'Check now',
     checking: 'Checking…',
-    prepare: 'Prepare update',
+    prepare: 'Update now',
     restart: 'Restart now',
     rollback: 'Back to {version}',
     rollbackLoss: 'Going back restores the backup of {date}: changes since then will be lost.',

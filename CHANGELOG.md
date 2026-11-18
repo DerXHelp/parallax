@@ -5,6 +5,10 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 
 ## [Unveröffentlicht]
 
+### Geändert
+- Der Knopf für eine gefundene Version heißt „Jetzt aktualisieren“ statt „Update vorbereiten“; er lädt und
+  installiert sie, „Neu starten“ wechselt danach (WP-89).
+
 ## [1.0.1] – 2026-11-18
 
 ### Sicherheit
