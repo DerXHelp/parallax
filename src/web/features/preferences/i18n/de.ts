@@ -171,7 +171,6 @@ export const de: typeof en = {
           keystore: 'Windows-Schlüsselspeicher',
           tls: 'Verschlüsselung (TLS 1.3, ML-KEM, ML-DSA)',
           addresses: 'Netzadressen',
-          firewall: 'Windows-Firewall',
         },
         details: {
           port: {
@@ -185,7 +184,7 @@ export const de: typeof en = {
           keystore: {
             warning: 'Der Windows-Schlüsselspeicher hat langsam geantwortet.',
             error:
-              'Der Windows-Schlüsselspeicher ist nicht verfügbar; Schlüssel können nicht sicher gespeichert werden.',
+              'Der Windows-Schlüsselspeicher ist nicht verfügbar; Schlüssel können nicht sicher gespeichert werden (braucht Node.js 26.1 oder neuer).',
           },
           tls: {
             warning: 'Der Selbsttest der Verschlüsselung hat ein Problem gemeldet.',
@@ -195,16 +194,11 @@ export const de: typeof en = {
             warning: 'Es wurde keine Adresse in einem lokalen Netz gefunden.',
             error: 'Es wurde keine Netzadresse dieses Rechners gefunden.',
           },
-          firewall: {
-            warning:
-              'Noch keine Firewall-Regel für Node.js gefunden – Windows fragt beim Start des Fernzugangs nach.',
-            error: 'Die Firewall blockiert Verbindungen zum Port.',
-          },
         },
       },
       firewall: {
         title: 'Windows-Firewall',
-        body: 'Beim ersten Start des Fernzugangs fragt Windows eventuell, ob Node.js in Netzwerken kommunizieren darf. Erlaube es nur für private Netzwerke. Ohne diese Erlaubnis kann sich der andere Rechner nicht verbinden; je nach Rechner braucht das Erlauben Administratorrechte.',
+        body: 'Parallax prüft und ändert die Windows-Firewall nicht – richte sie selbst ein: eingehende Verbindungen für Node.js auf dem Port oben erlauben, nur in privaten Netzwerken. Windows fragt eventuell beim ersten Start des Fernzugangs nach; je nach Rechner braucht das Administratorrechte. Ohne diese Erlaubnis kann sich der andere Rechner nicht verbinden.',
       },
       pairing: {
         heading: 'Rechner koppeln',

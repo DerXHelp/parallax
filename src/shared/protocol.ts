@@ -636,7 +636,7 @@ export const commandSchema = z.discriminatedUnion('name', [
   z.object({ name: z.literal('remoteAccess.unpair') }),
   /** Host (role share): new identity key – revokes the coupling (pair again). */
   z.object({ name: z.literal('remoteAccess.renewKey') }),
-  /** Host (role share): run the checks again (port, keys, key store, TLS, addresses, firewall). */
+  /** Host (role share): run the checks again (port, keys, key store, TLS, addresses). */
   z.object({ name: z.literal('remoteAccess.check') }),
   /** Host (role share): the connection log, newest first. */
   z.object({ name: z.literal('remoteAccess.events'), onlyRejected: z.boolean().default(false) }),

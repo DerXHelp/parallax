@@ -13,7 +13,8 @@
  * without writing anything (WP-32; missing or newer file → only "Standard"), each with its
  * findings (profileIssues). Only `claude --version` and `claude auth status` are run – no model
  * call, no tokens. Then "Several computers" (WP-82, remote/preflight.ts): TLS self-test, Windows key
- * store and – for the role "Share" – port, addresses and firewall, read-only like the rest.
+ * store and – for the role "Share" – port and addresses (the firewall only as a reminder), read-only
+ * like the rest.
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -34,7 +35,6 @@ import { loadConfig } from '../src/server/config';
 import { createLogger } from '../src/server/lib/logger';
 import { listenerAddresses } from '../src/server/remote/addresses';
 import { probePort } from '../src/server/remote/checks';
-import { checkFirewall } from '../src/server/remote/firewall';
 import { multiHostPreflight } from '../src/server/remote/preflight';
 import { createDpapiKeyStore } from '../src/server/secure/keyStore';
 import { tlsSelfTest } from '../src/server/secure/selfTest';
@@ -85,7 +85,6 @@ async function main(): Promise<number> {
     selfTest: () => tlsSelfTest(),
     keyStoreAvailable: () => keyStore.available(),
     addresses: (bindAddress) => listenerAddresses(bindAddress),
-    firewall: () => checkFirewall(),
     probe: probePort,
   });
   const checks = [...report.checks, ...multiHost];

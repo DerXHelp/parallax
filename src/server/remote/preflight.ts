@@ -1,7 +1,7 @@
 /**
  * The "Several computers" part of `pnpm preflight` (WP-82, docs/wp/WP-75.md §4.2): the same building
  * blocks as the checks in the app (remote/checks.ts) – TLS self-test (ML-KEM, ML-DSA), the Windows key
- * store (DPAPI) and, for the role "Share", port, addresses and firewall. Strictly read-only: the role
+ * store (DPAPI) and, for the role "Share", port and addresses. Strictly read-only: the role
  * comes from `multi-host.json` without quarantine or migration, no key is created, nothing listens
  * longer than the port probe. English output like the rest of the preflight.
  */
@@ -17,7 +17,6 @@ import type { PreflightCheck, PreflightLevel } from '../claude/preflight';
 import { fsErrorCode } from '../lib/paths';
 import type { SelfTestFailure } from '../secure/selfTest';
 import type { PortProbe } from './checks';
-import type { FirewallState } from './firewall';
 
 /** File name of the role settings (multihost/store.ts MULTI_HOST_FILE, kept literal: no store import). */
 const MULTI_HOST_FILE = 'multi-host.json';
@@ -35,7 +34,6 @@ export interface MultiHostPreflightDeps {
   keyStoreAvailable: () => Promise<boolean>;
   /** Addresses a listener on `bindAddress` is reachable at (remote/addresses.ts listenerAddresses). */
   addresses: (bindAddress: string) => string[];
-  firewall: () => Promise<FirewallState>;
   probe: (address: string, port: number) => Promise<PortProbe>;
 }
 
@@ -120,15 +118,12 @@ export async function multiHostPreflight(deps: MultiHostPreflightDeps): Promise<
           title: 'Key store',
           level: missing,
           detail: 'Windows DPAPI not available - keys cannot be stored safely',
-          hint: 'a restricted PowerShell (Constrained Language Mode, AppLocker) can block the helper',
+          hint: 'needs Node.js 26.1 or newer (node:ffi) on Windows x64',
         },
   );
   if (config.role !== 'share') return checks;
 
-  const [probe, firewall] = await Promise.all([
-    deps.probe(config.bindAddress, config.port),
-    deps.firewall().catch((): FirewallState => ({ kind: 'unknown' })),
-  ]);
+  const probe = await deps.probe(config.bindAddress, config.port);
   if (probe === 'ok') {
     checks.push({ id: 'multihost-port', title: 'Remote port', level: 'ok', detail: `${config.port} free` });
   } else if (probe === 'port_in_use') {
@@ -160,29 +155,13 @@ export async function multiHostPreflight(deps: MultiHostPreflightDeps): Promise<
           hint: 'the other computer cannot reach this one',
         },
   );
-  const firewallCheck: Record<FirewallState['kind'], PreflightCheck> = {
-    allowed: {
-      id: 'multihost-firewall',
-      title: 'Firewall',
-      level: 'ok',
-      detail: 'inbound rule for Node.js allows',
-    },
-    no_rule: {
-      id: 'multihost-firewall',
-      title: 'Firewall',
-      level: 'warn',
-      detail: 'no inbound rule for Node.js yet',
-      hint: 'Windows asks when sharing starts; allow private networks only',
-    },
-    blocked: {
-      id: 'multihost-firewall',
-      title: 'Firewall',
-      level: 'warn',
-      detail: 'an inbound rule blocks Node.js',
-      hint: 'the other computer cannot connect until the rule allows private networks',
-    },
-    unknown: { id: 'multihost-firewall', title: 'Firewall', level: 'info', detail: 'not checked' },
-  };
-  checks.push(firewallCheck[firewall.kind]);
+  // No firewall query (ADR-228): the user sets up the Windows Firewall; a reminder only.
+  checks.push({
+    id: 'multihost-firewall',
+    title: 'Firewall',
+    level: 'info',
+    detail: 'not checked by Parallax',
+    hint: `allow inbound TCP ${String(config.port)} for Node.js in private networks (Windows Firewall)`,
+  });
   return checks;
 }

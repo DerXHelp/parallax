@@ -53,7 +53,7 @@ export interface FakeMultiHost {
   readonly eventLoads: number;
 }
 
-/** The checks of a freshly shared computer: all fine, the firewall rule not yet there. */
+/** The checks of a freshly shared computer: all fine (the firewall is the user's, ADR-228). */
 export function fakeChecks(): RemoteAccessCheck[] {
   return [
     sampleRemoteAccessCheck({ id: 'port', status: 'ok' }),
@@ -61,7 +61,6 @@ export function fakeChecks(): RemoteAccessCheck[] {
     sampleRemoteAccessCheck({ id: 'keystore', status: 'ok', params: {} }),
     sampleRemoteAccessCheck({ id: 'tls', status: 'ok', params: {} }),
     sampleRemoteAccessCheck({ id: 'addresses', status: 'ok', params: {} }),
-    sampleRemoteAccessCheck({ id: 'firewall', status: 'warning', params: {} }),
   ];
 }
 
@@ -271,9 +270,7 @@ export function createFakeMultiHost(
     check: () =>
       run('check', '', () => {
         requireShare();
-        const checks = fakeChecks().map((check) =>
-          check.id === 'firewall' ? { ...check, status: 'ok' as const } : check,
-        );
+        const checks = fakeChecks();
         patchAccess({ checks });
         return checks;
       }),

@@ -2663,3 +2663,24 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
 - **Begründung:** Beide Reviews fanden nichts Kritisches oder Hohes. Diese Punkte schließen Wege, die ein fremdes Gerät
   im Netz oder ein langsamer Rechner für Störungen nutzen könnte. Dazu kommt Tiefenverteidigung für den Fall, dass der
   TLS-Schlüsseltausch je gebrochen wird. Der Code wird nie übertragen; ein `macA` als Orakel reicht bei 128 Bit nicht.
+
+## ADR-228 – Schlüsselspeicher über `node:ffi`, keine Firewall-Prüfung
+- **Datum/WP:** 18.11.2026, WP-82 (Spezifikation `docs/wp/WP-76.md` §B.5, §B.11).
+- **Entscheidung:**
+  - DPAPI (`CryptProtectData`/`CryptUnprotectData`, CurrentUser, Entropie je Zweck) wird direkt im Serverprozess
+    über das eingebaute `node:ffi` aufgerufen. Es gibt keinen Kindprozess und kein Skript; der Weg über
+    PowerShell entfällt.
+  - Ohne `node:ffi` (Node < 26.1, `--no-experimental-ffi`) ist der Schlüsselspeicher nicht verfügbar. Dann gibt es
+    weder Freigeben noch Koppeln, und eine unverschlüsselte Ablage gibt es nie. `engines` bleibt bei 24.5, denn
+    nur „Mehrere Rechner“ braucht 26.1.
+  - Parallax prüft die Windows-Firewall nicht mehr (`REMOTE_ACCESS_CHECK_IDS` ohne `firewall`). Der Abschnitt
+    „Freigeben“ zeigt einen Hinweis, solange kein Rechner gekoppelt ist. `pnpm preflight` erinnert nur daran.
+- **Begründung:**
+  - Verhaltensbasierte Sicherheitssoftware hielt den gebauten Server an, sobald er PowerShell für DPAPI startete.
+    Ein Prozess, der PowerShell für DPAPI startet, ähnelt einem Passwort-Dieb. Parallax darf nie eine
+    Sicherheitswarnung auslösen (Nutzer).
+  - Der Aufruf über FFI ist der Weg, den auch andere Desktop-Programme gehen, und ist mit etwa 1 ms statt 260 ms
+    viel schneller.
+  - Die Firewall richtet der Nutzer selbst ein. Die Prüfung startete PowerShell und gehört nicht zu Parallax.
+- **Alternative:** Schutz nur über die Dateirechte des Profils, ohne DPAPI. Verworfen, solange FFI keine Warnung
+  auslöst, weil der Schutz geringer ist (Sicherung oder Kopie des Datenordners).

@@ -22,9 +22,7 @@ export function multiHostVariant(base: HostState, variant: MultiHostVariant): Ho
     case 'paired':
       return sharingHostState(base, {
         addresses: ['192.0.2.20', '198.51.100.20'],
-        checks: fakeChecks().map((check) =>
-          check.id === 'firewall' ? { ...check, status: 'ok' as const } : check,
-        ),
+        checks: fakeChecks(),
         peer: sampleRemotePeer({ lastSeenAt: sampleTime(400) }),
         unseenRejected: 2,
       });
@@ -38,7 +36,6 @@ export function multiHostVariant(base: HostState, variant: MultiHostVariant): Ho
           sampleRemoteAccessCheck({ id: 'keystore', status: 'warning', params: {} }),
           sampleRemoteAccessCheck({ id: 'tls', status: 'ok', params: {} }),
           sampleRemoteAccessCheck({ id: 'addresses', status: 'warning', params: {} }),
-          sampleRemoteAccessCheck({ id: 'firewall', status: 'error', params: {} }),
         ],
         peer: sampleRemotePeer({ connected: false, connections: 0, compatible: false, appVersion: '9.9.9' }),
       });

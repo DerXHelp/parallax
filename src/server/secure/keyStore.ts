@@ -1,258 +1,262 @@
 /**
- * The Windows key store (docs/wp/WP-76.md §B.5): DPAPI (`ProtectedData`, CurrentUser) with the
- * purpose-bound entropy `parallax-keystore-v1:<purpose>`, run by Windows PowerShell 5.1 with a
- * CONSTANT script (`-EncodedCommand`).
+ * The Windows key store (docs/wp/WP-76.md §B.5, ADR-228): DPAPI (`CryptProtectData`, CurrentUser,
+ * `CRYPTPROTECT_UI_FORBIDDEN`) with the purpose-bound entropy `parallax-keystore-v1:<purpose>`,
+ * called directly in this process through Node's built-in `node:ffi` (crypt32.dll, kernel32.dll).
  *
- * - Data travels only over stdin/stdout (base64) – never in arguments, environment or the script.
- * - The script touches secrets only through .NET calls (`[Console]::In`, `[Convert]`,
- *   `ProtectedData`, `[Console]::Out`), never as a cmdlet parameter: module logging (event 4103)
- *   records cmdlet parameters and transcription records host output; script block logging only
- *   sees the constant script.
- * - `powershell.exe` is the absolute System32 path (`powerShellPath`, never resolved via PATH),
- *   started hidden without a shell (`spawnHidden`), killed as a tree after 15 s.
- * - Errors become `KeyStoreError` without any data; stderr is read and dropped (never logged).
- * - Buffers with secrets are zeroed after use where Node allows it (V8 strings cannot be).
+ * Why not PowerShell (the first version): a Node process that starts PowerShell to call DPAPI looks
+ * exactly like a password stealer to behaviour-based security software – the server was stopped and
+ * its script removed. Here nothing is started: no script, no child process, no command line.
+ *
+ * - Without `node:ffi` (older Node, `--no-experimental-ffi`, the permission model) or outside
+ *   Windows the store is unavailable – never a clear-text fallback.
+ * - Plaintext and entropy are passed as buffers; the native result is copied, the native memory
+ *   zeroed and freed (`LocalFree`). Errors become `KeyStoreError` without any data.
+ * - `node:ffi` is experimental: its one ExperimentalWarning at load is expected and swallowed.
+ * - The calls are synchronous and take about a millisecond (rare: start, pairing).
  */
 import { randomBytes } from 'node:crypto';
-import type { ChildProcess } from 'node:child_process';
 import type { Logger } from 'pino';
 import { logger as rootLogger } from '../lib/logger';
-import { encodePowerShell } from '../lib/powershell';
-import { killProcessTree, powerShellPath, spawnHidden, windowsPowerShellEnv } from '../lib/process';
 import { KeyStoreError, type KeyPurpose, type KeyStore } from './ports';
 
 /** Purposes the store accepts (`KeyPurpose`, host ids as `hostIdSchema`). */
 export const KEY_PURPOSE_PATTERN =
   /^(?:identity|coupling:[a-z0-9][a-z0-9-]{0,31}|auth:[a-z0-9][a-z0-9-]{0,31})$/u;
-export const DPAPI_TIMEOUT_MS = 15_000;
 /** Largest plaintext (a PKCS#8 ML-DSA-87 key is ~54 bytes in seed form, ~4.9 KB expanded). */
 export const KEY_STORE_MAX_PLAINTEXT = 64 * 1024;
-/** Largest output read from the helper (base64 of a ciphertext of at most the plaintext above). */
-const MAX_OUTPUT_BYTES = 256 * 1024;
+/** Largest ciphertext accepted or returned (DPAPI adds a few hundred bytes). */
+const MAX_CIPHERTEXT = 256 * 1024;
 /** A failed probe is repeated at most this often (a working store is cached for the process). */
 const PROBE_RETRY_MS = 60_000;
-const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/u;
+export const KEY_STORE_ENTROPY_PREFIX = 'parallax-keystore-v1:';
+
+/** The two DPAPI calls (seam for tests): null = the call failed. Never throws. */
+export interface DpapiNative {
+  protect(data: Buffer, entropy: Buffer): Buffer | null;
+  unprotect(data: Buffer, entropy: Buffer): Buffer | null;
+}
+
+// ---- node:ffi (experimental; typed here for the few calls used) ----
+
+type FfiFunction = (...args: unknown[]) => unknown;
+
+interface FfiModule {
+  dlopen(
+    path: string,
+    definitions: Record<string, { return: string; arguments: string[] }>,
+  ): { lib: { close(): void }; functions: Record<string, FfiFunction | undefined> };
+  getRawPointer(buffer: Buffer): bigint;
+  toBuffer(pointer: bigint, length: number): Buffer;
+  exportBuffer(source: Buffer, pointer: bigint, length: number): void;
+}
+
+function isFfiModule(value: unknown): value is FfiModule {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'dlopen' in value &&
+    typeof value.dlopen === 'function' &&
+    'getRawPointer' in value &&
+    typeof value.getRawPointer === 'function' &&
+    'toBuffer' in value &&
+    typeof value.toBuffer === 'function' &&
+    'exportBuffer' in value &&
+    typeof value.exportBuffer === 'function'
+  );
+}
+
+/** `node:ffi` or null; its ExperimentalWarning (and only that) is not printed. */
+function loadFfi(): FfiModule | null {
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- put back unchanged below, called with `process`
+  const original = process.emitWarning;
+  const filtered = (warning: string | Error, ...rest: unknown[]): void => {
+    const first = rest[0];
+    const type =
+      typeof first === 'string'
+        ? first
+        : typeof first === 'object' && first !== null && 'type' in first
+          ? first.type
+          : undefined;
+    const text = typeof warning === 'string' ? warning : warning.message;
+    if (type === 'ExperimentalWarning' && /\bFFI\b/u.test(text)) return;
+    Reflect.apply(original, process, [warning, ...rest]);
+  };
+  process.emitWarning = filtered;
+  try {
+    const loaded: unknown = process.getBuiltinModule('node:ffi');
+    return isFfiModule(loaded) ? loaded : null;
+  } catch {
+    // --no-experimental-ffi, the permission model without --allow-ffi, …
+    return null;
+  } finally {
+    process.emitWarning = original;
+  }
+}
+
+const UI_FORBIDDEN = 0x1;
+/** `DATA_BLOB` on x64: DWORD cbData, 4 bytes padding, BYTE* pbData. */
+const BLOB_BYTES = 16;
+const DPAPI_SIGNATURE = {
+  return: 'int32',
+  arguments: ['buffer', 'pointer', 'buffer', 'pointer', 'pointer', 'uint32', 'buffer'],
+};
 
 /**
- * The constant script. Input on stdin: three lines `<op>`, `<base64 purpose>`, `<base64 data>` with
- * op `P` (protect), `U` (unprotect) or `T` (probe: protect + unprotect of the data, prints `OK`).
- * Output on stdout: base64 of the result, nothing else. Exit code 0 = success.
+ * Binds crypt32/kernel32 through `node:ffi`; null when that is not possible here (no Windows x64,
+ * no `node:ffi`, a library or symbol missing). The libraries stay open for the process.
  */
-export const DPAPI_SCRIPT = String.raw`
-$ErrorActionPreference = 'Stop'
-$ProgressPreference = 'SilentlyContinue'
-try {
-  Add-Type -AssemblyName System.Security
-  $text = [Console]::In.ReadToEnd()
-  $parts = $text.Split([char]10)
-  if ($parts.Length -lt 3) { exit 3 }
-  $op = $parts[0].Trim()
-  $purpose = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($parts[1].Trim()))
-  $data = [Convert]::FromBase64String($parts[2].Trim())
-  $text = $null
-  $parts = $null
-  $entropy = [Text.Encoding]::UTF8.GetBytes('parallax-keystore-v1:' + $purpose)
-  $scope = [Security.Cryptography.DataProtectionScope]::CurrentUser
-  if ($op -ceq 'P') {
-    $out = [Security.Cryptography.ProtectedData]::Protect($data, $entropy, $scope)
-  } elseif ($op -ceq 'U') {
-    $out = [Security.Cryptography.ProtectedData]::Unprotect($data, $entropy, $scope)
-  } elseif ($op -ceq 'T') {
-    $sealed = [Security.Cryptography.ProtectedData]::Protect($data, $entropy, $scope)
-    $back = [Security.Cryptography.ProtectedData]::Unprotect($sealed, $entropy, $scope)
-    if ([Convert]::ToBase64String($back) -cne [Convert]::ToBase64String($data)) { exit 5 }
-    $out = [Text.Encoding]::ASCII.GetBytes('OK')
-  } else {
-    exit 4
+export function loadDpapiNative(platform: NodeJS.Platform = process.platform): DpapiNative | null {
+  if (platform !== 'win32' || process.arch !== 'x64') return null;
+  const ffi = loadFfi();
+  if (ffi === null) return null;
+  let protectData: FfiFunction | undefined;
+  let unprotectData: FfiFunction | undefined;
+  let localFree: FfiFunction | undefined;
+  try {
+    const crypt = ffi.dlopen('crypt32.dll', {
+      CryptProtectData: DPAPI_SIGNATURE,
+      CryptUnprotectData: DPAPI_SIGNATURE,
+    });
+    const kernel = ffi.dlopen('kernel32.dll', { LocalFree: { return: 'pointer', arguments: ['pointer'] } });
+    protectData = crypt.functions.CryptProtectData;
+    unprotectData = crypt.functions.CryptUnprotectData;
+    localFree = kernel.functions.LocalFree;
+  } catch {
+    return null;
   }
-  [Array]::Clear($data, 0, $data.Length)
-  [Console]::Out.Write([Convert]::ToBase64String($out))
-  [Array]::Clear($out, 0, $out.Length)
-  exit 0
-} catch {
-  exit 1
+  if (protectData === undefined || unprotectData === undefined || localFree === undefined) return null;
+  const free = localFree;
+
+  const blob = (data: Buffer): Buffer => {
+    const out = Buffer.alloc(BLOB_BYTES);
+    out.writeUInt32LE(data.length, 0);
+    out.writeBigUInt64LE(data.length === 0 ? 0n : ffi.getRawPointer(data), 8);
+    return out;
+  };
+
+  const call = (fn: FfiFunction, data: Buffer, entropy: Buffer): Buffer | null => {
+    const result = Buffer.alloc(BLOB_BYTES);
+    let ok: unknown;
+    try {
+      ok = fn(blob(data), 0n, blob(entropy), 0n, 0n, UI_FORBIDDEN, result);
+    } catch {
+      return null;
+    }
+    const length = result.readUInt32LE(0);
+    const pointer = result.readBigUInt64LE(8);
+    if (pointer === 0n) return null;
+    try {
+      if (ok === 0 || typeof ok !== 'number' || length === 0 || length > MAX_CIPHERTEXT) return null;
+      return ffi.toBuffer(pointer, length);
+    } catch {
+      return null;
+    } finally {
+      // The native copy (plaintext on unprotect) is zeroed before it goes back to the heap.
+      try {
+        if (length > 0 && length <= MAX_CIPHERTEXT) ffi.exportBuffer(Buffer.alloc(length), pointer, length);
+      } finally {
+        free(pointer);
+      }
+    }
+  };
+
+  return {
+    protect: (data, entropy) => call(protectData, data, entropy),
+    unprotect: (data, entropy) => call(unprotectData, data, entropy),
+  };
 }
-`;
-
-const ENCODED_SCRIPT = encodePowerShell(DPAPI_SCRIPT);
-export const DPAPI_ARGS: readonly string[] = [
-  '-NoLogo',
-  '-NoProfile',
-  '-NonInteractive',
-  '-EncodedCommand',
-  ENCODED_SCRIPT,
-];
-
-type Operation = 'P' | 'U' | 'T';
-
-/** Starts the helper (seam for tests; the default is `spawnHidden(powerShellPath(), DPAPI_ARGS)`). */
-export type DpapiSpawn = () => ChildProcess;
 
 export interface DpapiKeyStoreOptions {
   platform?: NodeJS.Platform;
-  env?: NodeJS.ProcessEnv;
-  timeoutMs?: number;
-  spawn?: DpapiSpawn;
+  /** The native calls (tests); default `loadDpapiNative(platform)` on first use. */
+  native?: DpapiNative | null;
   logger?: Logger;
-}
-
-function defaultSpawn(env: NodeJS.ProcessEnv): DpapiSpawn {
-  return () =>
-    spawnHidden(powerShellPath(env), DPAPI_ARGS, {
-      env: windowsPowerShellEnv(env),
-      stdio: ['pipe', 'pipe', 'pipe'],
-      // Read and dropped: PowerShell's own errors never contain our data, but nothing is logged anyway.
-      onStderr: () => undefined,
-    });
-}
-
-/** Runs one operation; resolves with the decoded output, rejects with KeyStoreError. */
-function runHelper(
-  spawn: DpapiSpawn,
-  timeoutMs: number,
-  op: Operation,
-  purpose: string,
-  data: Buffer,
-): Promise<Buffer> {
-  return new Promise<Buffer>((resolve, reject) => {
-    let child: ChildProcess;
-    try {
-      child = spawn();
-    } catch {
-      reject(new KeyStoreError('unavailable', 'key store helper could not be started'));
-      return;
-    }
-    const chunks: Buffer[] = [];
-    let size = 0;
-    let settled = false;
-    let timedOut = false;
-    const input = Buffer.from(
-      `${op}\n${Buffer.from(purpose, 'utf8').toString('base64')}\n${data.toString('base64')}\n`,
-      'ascii',
-    );
-
-    const wipe = (): void => {
-      input.fill(0);
-      for (const chunk of chunks) chunk.fill(0);
-      chunks.length = 0;
-    };
-    const fail = (error: KeyStoreError): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      wipe();
-      reject(error);
-    };
-    const timer = setTimeout(() => {
-      timedOut = true;
-      const pid = child.pid;
-      if (pid !== undefined) void killProcessTree(pid).catch(() => child.kill('SIGKILL'));
-      fail(new KeyStoreError('timeout'));
-    }, timeoutMs);
-
-    child.stdout?.on('data', (chunk: Buffer) => {
-      size += chunk.length;
-      if (size > MAX_OUTPUT_BYTES) {
-        chunk.fill(0);
-        return;
-      }
-      chunks.push(chunk);
-    });
-    child.once('error', () => {
-      fail(new KeyStoreError('unavailable', 'key store helper could not be started'));
-    });
-    child.once('close', (code) => {
-      if (settled || timedOut) return;
-      if (code !== 0 || size > MAX_OUTPUT_BYTES) {
-        fail(new KeyStoreError('failed'));
-        return;
-      }
-      const raw = Buffer.concat(chunks);
-      const text = raw.toString('ascii');
-      raw.fill(0);
-      if (text.length === 0 || !BASE64.test(text)) {
-        fail(new KeyStoreError('failed'));
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      wipe();
-      resolve(Buffer.from(text, 'base64'));
-    });
-    child.stdin?.on('error', () => undefined);
-    child.stdin?.end(input);
-  });
 }
 
 function checkPurpose(purpose: string): void {
   if (!KEY_PURPOSE_PATTERN.test(purpose)) throw new KeyStoreError('failed', 'invalid key purpose');
 }
 
-/** DPAPI key store (Windows only; elsewhere `available()` is false and every call fails). */
+function entropyFor(purpose: string): Buffer {
+  return Buffer.from(KEY_STORE_ENTROPY_PREFIX + purpose, 'utf8');
+}
+
+/** DPAPI key store (Windows with `node:ffi`; elsewhere `available()` is false and every call fails). */
 export function createDpapiKeyStore(options: DpapiKeyStoreOptions = {}): KeyStore {
   const platform = options.platform ?? process.platform;
-  const env = options.env ?? process.env;
-  const timeoutMs = options.timeoutMs ?? DPAPI_TIMEOUT_MS;
-  const spawn = options.spawn ?? defaultSpawn(env);
   const log = (options.logger ?? rootLogger).child({ module: 'keyStore' });
+  // `native: null` (tests) means "no DPAPI here"; only an absent option loads node:ffi.
+  let native: DpapiNative | null = options.native ?? null;
+  let loaded = options.native !== undefined;
   let probed: boolean | null = null;
   let probedAt = 0;
-  let probing: Promise<boolean> | null = null;
-  // One helper at a time: the calls are rare (start, pairing) and this keeps the machine quiet.
-  let queue: Promise<unknown> = Promise.resolve();
 
-  const run = (op: Operation, purpose: string, data: Buffer): Promise<Buffer> => {
-    const next = queue.then(() => runHelper(spawn, timeoutMs, op, purpose, data));
-    queue = next.catch(() => undefined);
-    return next;
+  const getNative = (): DpapiNative | null => {
+    if (platform !== 'win32') return null;
+    if (!loaded) {
+      native = loadDpapiNative(platform);
+      loaded = true;
+    }
+    return native;
   };
 
-  const ensureWindows = (): void => {
-    if (platform !== 'win32') throw new KeyStoreError('unavailable', 'DPAPI needs Windows');
+  const run = (op: 'protect' | 'unprotect', purpose: string, data: Buffer): Buffer => {
+    const api = getNative();
+    if (api === null) throw new KeyStoreError('unavailable', 'DPAPI is not available here');
+    const entropy = entropyFor(purpose);
+    try {
+      const out = api[op](data, entropy);
+      if (out === null) throw new KeyStoreError('failed');
+      return out;
+    } finally {
+      entropy.fill(0);
+    }
   };
 
   return {
     available() {
-      if (platform !== 'win32') return Promise.resolve(false);
       if (probed === true) return Promise.resolve(true);
-      if (probing !== null) return probing;
       if (probed === false && Date.now() - probedAt < PROBE_RETRY_MS) return Promise.resolve(false);
       const sample = randomBytes(16);
-      probing = run('T', 'identity', sample)
-        .then((out) => out.toString('ascii') === 'OK')
-        .catch((error: unknown) => {
-          log.warn(
-            { reason: error instanceof KeyStoreError ? error.reason : 'failed' },
-            'DPAPI key store not available',
-          );
-          return false;
-        })
-        .then((ok) => {
-          sample.fill(0);
-          probed = ok;
-          probedAt = Date.now();
-          probing = null;
-          return ok;
-        });
-      return probing;
-    },
-    async protect(purpose: KeyPurpose, plaintext: Buffer) {
-      ensureWindows();
-      checkPurpose(purpose);
-      if (plaintext.length === 0 || plaintext.length > KEY_STORE_MAX_PLAINTEXT) {
-        throw new KeyStoreError('failed', 'invalid plaintext size');
+      let ok = false;
+      try {
+        const sealed = run('protect', 'identity', sample);
+        const back = run('unprotect', 'identity', sealed);
+        ok = back.equals(sample);
+        back.fill(0);
+      } catch (error) {
+        log.warn(
+          { reason: error instanceof KeyStoreError ? error.reason : 'failed' },
+          'DPAPI key store not available',
+        );
+      } finally {
+        sample.fill(0);
       }
-      const sealed = await run('P', purpose, plaintext);
-      if (sealed.length === 0) throw new KeyStoreError('failed');
-      return sealed;
+      probed = ok;
+      probedAt = Date.now();
+      return Promise.resolve(ok);
     },
-    async unprotect(purpose: KeyPurpose, ciphertext: Buffer) {
-      ensureWindows();
-      checkPurpose(purpose);
-      if (ciphertext.length === 0 || ciphertext.length > MAX_OUTPUT_BYTES) {
-        throw new KeyStoreError('failed', 'invalid ciphertext size');
+    protect(purpose: KeyPurpose, plaintext: Buffer) {
+      try {
+        checkPurpose(purpose);
+        if (plaintext.length === 0 || plaintext.length > KEY_STORE_MAX_PLAINTEXT) {
+          throw new KeyStoreError('failed', 'invalid plaintext size');
+        }
+        return Promise.resolve(run('protect', purpose, plaintext));
+      } catch (error) {
+        return Promise.reject(error instanceof KeyStoreError ? error : new KeyStoreError('failed'));
       }
-      return run('U', purpose, ciphertext);
+    },
+    unprotect(purpose: KeyPurpose, ciphertext: Buffer) {
+      try {
+        checkPurpose(purpose);
+        if (ciphertext.length === 0 || ciphertext.length > MAX_CIPHERTEXT) {
+          throw new KeyStoreError('failed', 'invalid ciphertext size');
+        }
+        return Promise.resolve(run('unprotect', purpose, ciphertext));
+      } catch (error) {
+        return Promise.reject(error instanceof KeyStoreError ? error : new KeyStoreError('failed'));
+      }
     },
   };
 }

@@ -1,7 +1,8 @@
 /**
  * The checks of `remoteAccess.check` and of switching "Share" on (docs/wp/WP-75.md §4.2,
- * WP-76 §B.11): port, keys, key store, TLS (self-test), addresses, firewall – always in the order
- * of REMOTE_ACCESS_CHECK_IDS. `error` blocks the listener; `warning` is a hint only.
+ * WP-76 §B.11): port, keys, key store, TLS (self-test), addresses – always in the order of
+ * REMOTE_ACCESS_CHECK_IDS. `error` blocks the listener; `warning` is a hint only. Nothing here
+ * starts a process (ADR-228: no firewall query – the user sets up the Windows Firewall).
  */
 import { createServer } from 'node:net';
 import { makeError, type ErrorPayload } from '@shared/errors';
@@ -9,7 +10,6 @@ import { REMOTE_ACCESS_CHECK_IDS, type RemoteAccessCheck } from '@shared/model';
 import { fsErrorCode } from '../lib/paths';
 import { KeyStoreError, type Identity, type KeyStore } from '../secure/ports';
 import type { SelfTestFailure } from '../secure/selfTest';
-import type { FirewallState } from './firewall';
 
 export type PortProbe = 'ok' | 'port_in_use' | 'bind';
 
@@ -38,7 +38,6 @@ export interface RemoteCheckDeps {
   identity: () => Promise<Identity>;
   selfTest: () => Promise<SelfTestFailure | null>;
   addresses: () => string[];
-  firewall: () => Promise<FirewallState>;
   probe?: (address: string, port: number) => Promise<PortProbe>;
 }
 
@@ -59,7 +58,6 @@ function check(
 
 export async function runRemoteChecks(deps: RemoteCheckDeps): Promise<RemoteCheckResult> {
   const probe = deps.probe ?? probePort;
-  const firewall = deps.firewall().catch((): FirewallState => ({ kind: 'unknown' }));
   const port = deps.ownListener ? Promise.resolve<PortProbe>('ok') : probe(deps.bindAddress, deps.port);
   const selfTest = deps.selfTest().catch((): SelfTestFailure => 'handshake');
   const available = await deps.keyStore.available().catch(() => false);
@@ -79,7 +77,6 @@ export async function runRemoteChecks(deps: RemoteCheckDeps): Promise<RemoteChec
   const portResult = await port;
   const selfTestResult = await selfTest;
   const addresses = deps.addresses();
-  const firewallState = await firewall;
 
   const results: Record<RemoteAccessCheck['id'], RemoteAccessCheck> = {
     port:
@@ -96,10 +93,6 @@ export async function runRemoteChecks(deps: RemoteCheckDeps): Promise<RemoteChec
       addresses.length > 0
         ? check('addresses', 'ok', { count: addresses.length })
         : check('addresses', 'warning', { count: 0 }),
-    firewall:
-      firewallState.kind === 'allowed'
-        ? check('firewall', 'ok')
-        : check('firewall', 'warning', { reason: firewallState.kind }),
   };
   const checks = REMOTE_ACCESS_CHECK_IDS.map((id) => results[id]);
 

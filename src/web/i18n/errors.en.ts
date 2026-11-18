@@ -130,7 +130,8 @@ export const errorsEn: Record<ErrorCode, string> = {
   PAIRING_RATE_LIMITED: 'Too many pairing attempts. Wait a moment.',
   REMOTE_ACCESS_FAILED: 'Remote access could not start.',
   REMOTE_ROLE_CONFLICT: 'Not possible in the current role of this computer.',
-  REMOTE_KEYSTORE_UNAVAILABLE: 'The Windows key store is not available, so keys cannot be stored safely.',
+  REMOTE_KEYSTORE_UNAVAILABLE:
+    'The Windows key store is not available, so keys cannot be stored safely (needs Node.js 26.1 or newer).',
   REMOTE_NOT_ALLOWED: 'This is only possible on the computer itself.',
   DRAFT_TOO_LARGE: 'The draft is too large to be saved.',
 };

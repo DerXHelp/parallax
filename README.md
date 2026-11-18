@@ -300,9 +300,12 @@ Rechner, mit dessen `claude`, Profilen und Ordnern. **Ab Werk ist das aus.**
 - **Rollen** (Einstellungen → „Mehrere Rechner“): **Aus**, **Freigeben** oder **Andere steuern** – immer nur
   eine. Ein freigebender Rechner ist mit genau einem steuernden gekoppelt; ein steuernder bindet bis zu 16
   freigebende ein.
+- **Voraussetzung:** Node.js 26.1 oder neuer auf allen beteiligten Rechnern (für den Windows-Schlüsselspeicher).
 - **Freigeben:** Beim Einschalten prüft Parallax Port (Standard 4713), Schlüssel, den Windows-Schlüsselspeicher,
-  die Verschlüsselung, die Netzadressen und die Firewall und zeigt das Ergebnis im Abschnitt. Beim ersten Start
-  fragt Windows eventuell, ob Node.js in Netzwerken kommunizieren darf – nur für private Netzwerke erlauben.
+  die Verschlüsselung und die Netzadressen und zeigt das Ergebnis im Abschnitt.
+- **Windows-Firewall:** Parallax prüft und ändert sie nicht; sie wird von Hand eingerichtet: eingehende
+  Verbindungen für Node.js auf dem gewählten Port erlauben, nur in privaten Netzwerken. Windows fragt eventuell
+  beim ersten Start des Fernzugangs nach.
 - **Koppeln:** Auf dem freigebenden Rechner „Rechner koppeln“ wählen. Er zeigt Rechnername, Adressen, Port und
   einen einmaligen Kopplungscode, der 10 Minuten gilt und nach drei falschen Eingaben verfällt. Auf dem
   steuernden Rechner unter „Andere steuern“ → „Rechner hinzufügen…“ Adresse, Port, Code und einen Anzeigenamen
@@ -310,8 +313,9 @@ Rechner, mit dessen `claude`, Profilen und Ordnern. **Ab Werk ist das aus.**
 - **Arbeiten:** Die Sessions des anderen Rechners stehen in der Seitenleiste mit einem farbigen Rechner-Badge;
   „Gruppieren nach“ ordnet nach Rechner und/oder Verzeichnis, beide Ebenen lassen sich einklappen. „Neue
   Session“ fragt zuerst nach dem Rechner und bietet dessen Profile und zuletzt verwendete Verzeichnisse an.
-  Benachrichtigungen erscheinen auf dem steuernden Rechner. Editor und Explorer öffnen nur Dateien eigener
-  Sessions.
+  Benachrichtigungen erscheinen dort, wo zuletzt gearbeitet wurde: im offenen Fenster oder als Windows-Hinweis
+  auf dem steuernden Rechner – mit dessen „Nicht stören“ und Ereignis-Einstellungen; ein Klick öffnet die
+  Session. Editor und Explorer öffnen nur Dateien eigener Sessions.
 - **Trennen:** „Kopplung aufheben“ auf dem freigebenden Rechner trennt sofort; „Aus“ schließt den Port, die
   Kopplung bleibt. „Entfernen“ auf dem steuernden Rechner hebt die Kopplung auch drüben auf, wenn er ihn
   erreicht – sonst dort von Hand.

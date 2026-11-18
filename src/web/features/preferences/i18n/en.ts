@@ -178,7 +178,6 @@ export const en = {
           keystore: 'Windows key store',
           tls: 'Encryption (TLS 1.3, ML-KEM, ML-DSA)',
           addresses: 'Network addresses',
-          firewall: 'Windows Firewall',
         },
         details: {
           port: { warning: 'The port could not be checked.', error: 'Another program uses the port.' },
@@ -188,7 +187,8 @@ export const en = {
           },
           keystore: {
             warning: 'The Windows key store answered slowly.',
-            error: 'The Windows key store is not available, so keys cannot be stored safely.',
+            error:
+              'The Windows key store is not available, so keys cannot be stored safely (needs Node.js 26.1 or newer).',
           },
           tls: {
             warning: 'The encryption self-test reported a problem.',
@@ -198,15 +198,11 @@ export const en = {
             warning: 'No address in a local network was found.',
             error: 'No network address of this computer was found.',
           },
-          firewall: {
-            warning: 'No firewall rule for Node.js was found yet – Windows asks when remote access starts.',
-            error: 'The firewall blocks connections to the port.',
-          },
         },
       },
       firewall: {
         title: 'Windows Firewall',
-        body: 'When remote access starts for the first time, Windows may ask whether Node.js may communicate in networks. Allow it for private networks only. Without this permission the other computer cannot connect; depending on the computer, allowing it needs administrator rights.',
+        body: 'Parallax neither checks nor changes the Windows Firewall – set it up yourself: allow incoming connections for Node.js on the port above, in private networks only. Windows may ask when remote access starts for the first time; depending on the computer this needs administrator rights. Without it the other computer cannot connect.',
       },
       pairing: {
         heading: 'Pair a computer',

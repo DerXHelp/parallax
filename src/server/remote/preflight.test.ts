@@ -28,7 +28,6 @@ function deps(overrides: Partial<MultiHostPreflightDeps> = {}): MultiHostPreflig
     selfTest: () => Promise.resolve(null),
     keyStoreAvailable: () => Promise.resolve(true),
     addresses: () => ['192.0.2.20'],
-    firewall: () => Promise.resolve({ kind: 'allowed' }),
     probe: () => Promise.resolve('ok'),
     ...overrides,
   };
@@ -57,12 +56,12 @@ describe('readMultiHostRole', () => {
 
 describe('multiHostPreflight', () => {
   it('role off: TLS and key store only, problems are warnings', async () => {
-    const firewall = vi.fn(() => Promise.resolve({ kind: 'allowed' as const }));
+    const probe = vi.fn(() => Promise.resolve('ok' as const));
     const checks = await multiHostPreflight(
       deps({
         selfTest: () => Promise.resolve('handshake'),
         keyStoreAvailable: () => Promise.resolve(false),
-        firewall,
+        probe,
       }),
     );
     expect(checks.map((check) => [check.id, check.level])).toEqual([
@@ -70,10 +69,10 @@ describe('multiHostPreflight', () => {
       ['multihost-tls', 'warn'],
       ['multihost-keystore', 'warn'],
     ]);
-    expect(firewall).not.toHaveBeenCalled();
+    expect(probe).not.toHaveBeenCalled();
   });
 
-  it('role share: every check; a missing key store or TLS fails', async () => {
+  it('role share: every check, the firewall only as a reminder; a missing key store or TLS fails', async () => {
     const ok = await multiHostPreflight(deps({ home: await home(share) }));
     expect(ok.map((check) => [check.id, check.level])).toEqual([
       ['multihost-role', 'ok'],
@@ -81,7 +80,7 @@ describe('multiHostPreflight', () => {
       ['multihost-keystore', 'ok'],
       ['multihost-port', 'ok'],
       ['multihost-addresses', 'ok'],
-      ['multihost-firewall', 'ok'],
+      ['multihost-firewall', 'info'],
     ]);
     const bad = await multiHostPreflight(
       deps({
@@ -89,14 +88,13 @@ describe('multiHostPreflight', () => {
         keyStoreAvailable: () => Promise.reject(new Error('x')),
         probe: () => Promise.resolve('bind'),
         addresses: () => [],
-        firewall: () => Promise.resolve({ kind: 'no_rule' }),
       }),
     );
     expect(Object.fromEntries(bad.map((check) => [check.id, check.level]))).toMatchObject({
       'multihost-keystore': 'fail',
       'multihost-port': 'fail',
       'multihost-addresses': 'warn',
-      'multihost-firewall': 'warn',
+      'multihost-firewall': 'info',
     });
   });
 

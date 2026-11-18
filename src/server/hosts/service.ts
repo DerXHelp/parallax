@@ -288,7 +288,7 @@ export function createHostsService(options: HostsServiceOptions): Hosts {
   };
 
   const loadLinks = async (startEpoch: number): Promise<void> => {
-    // One after the other: every load is a DPAPI call (a hidden PowerShell, ~260 ms).
+    // One after the other: every load decrypts a key and kAuth (DPAPI, keeps the start order stable).
     for (const link of [...links.values()]) {
       if (epoch !== startEpoch) return;
       await startLink(link, startEpoch);

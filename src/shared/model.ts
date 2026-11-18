@@ -774,8 +774,11 @@ export type HostsFile = z.infer<typeof hostsFileSchema>;
 
 // ---- sharing computer ----
 
-/** Checks shown when "Share" is switched on (WP-75 §4.2); the UI translates `id` + `status`. */
-export const REMOTE_ACCESS_CHECK_IDS = ['port', 'keys', 'keystore', 'tls', 'addresses', 'firewall'] as const;
+/**
+ * Checks shown when "Share" is switched on (WP-75 §4.2); the UI translates `id` + `status`. No
+ * firewall check (ADR-228): the Windows Firewall is the user's to set up, the UI only hints at it.
+ */
+export const REMOTE_ACCESS_CHECK_IDS = ['port', 'keys', 'keystore', 'tls', 'addresses'] as const;
 export const remoteAccessCheckSchema = z.object({
   id: z.enum(REMOTE_ACCESS_CHECK_IDS),
   status: z.enum(['ok', 'warning', 'error']),

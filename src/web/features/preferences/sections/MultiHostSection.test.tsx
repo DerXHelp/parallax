@@ -80,9 +80,9 @@ describe('settings section "Several computers" (WP-78b)', () => {
     expect(await screen.findByText('Reachable')).toBeTruthy();
     expect(screen.getByText('Listening on port 4713.')).toBeTruthy();
     expect(screen.getByText('Computer name: COMPUTER-B')).toBeTruthy();
-    // First start: the firewall rule is missing – the hint says what Windows will ask.
+    // Nothing coupled yet: the hint says the Windows Firewall is the user's to set up.
     expect(document.querySelector('[data-slot="firewall-hint"]')).not.toBeNull();
-    expect(within(screen.getByRole('list', { name: 'Checks' })).getAllByRole('listitem')).toHaveLength(6);
+    expect(within(screen.getByRole('list', { name: 'Checks' })).getAllByRole('listitem')).toHaveLength(5);
 
     await user.click(screen.getByRole('radio', { name: 'Control others' }));
     expect(fake.calls).toContain('configure:{"role":"control"}');
@@ -243,15 +243,15 @@ describe('settings section "Several computers" (WP-78b)', () => {
 
   it('"Check again" runs remoteAccess.check and updates the checks', async () => {
     const user = userEvent.setup();
-    const { fake } = await start('share');
+    const { fake } = await start('errors');
     const status = part('status');
-    expect(status.querySelector('[data-check="firewall"]')?.getAttribute('data-status')).toBe('warning');
+    expect(status.querySelector('[data-check="port"]')?.getAttribute('data-status')).toBe('error');
     await user.click(within(status).getByRole('button', { name: 'Check again' }));
     await waitFor(() => {
-      expect(status.querySelector('[data-check="firewall"]')?.getAttribute('data-status')).toBe('ok');
+      expect(status.querySelector('[data-check="port"]')?.getAttribute('data-status')).toBe('ok');
     });
     expect(fake.calls).toContain('check');
-    expect(document.querySelector('[data-slot="firewall-hint"]')).toBeNull();
+    expect(status.querySelector('[data-check="firewall"]')).toBeNull();
   });
 
   it('shows a listener that could not start, failed checks and a computer with another version', async () => {
@@ -262,8 +262,8 @@ describe('settings section "Several computers" (WP-78b)', () => {
     expect(alert?.textContent).toContain('Remote access could not start.');
     expect(alert?.textContent).toContain('Another program uses port 4713.');
     expect(within(status).getByText('Another program uses the port.')).toBeTruthy();
-    expect(within(status).getByText('The firewall blocks connections to the port.')).toBeTruthy();
-    expect(document.querySelector('[data-slot="firewall-hint"]')).not.toBeNull();
+    // A coupled computer connected before – no firewall hint any more.
+    expect(document.querySelector('[data-slot="firewall-hint"]')).toBeNull();
     const peer = part('peer');
     expect(within(peer).getByText('Not connected')).toBeTruthy();
     expect(within(peer).getByText('Other Parallax version')).toBeTruthy();

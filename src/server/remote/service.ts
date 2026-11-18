@@ -27,7 +27,6 @@ import { CommandError, type HostCommandHandler } from '../sync/ports';
 import { computerName, detectIpv4Addresses, listenerAddresses } from './addresses';
 import { runRemoteChecks, type PortProbe } from './checks';
 import { createRemoteEventLog, type FileRemoteEventLog } from './eventLog';
-import { checkFirewall, type FirewallState } from './firewall';
 import { GuardedHubSocket } from './hubSocket';
 import { REMOTE_LIMITS, type RemoteLimits } from './limits';
 import { RemoteListenError, RemoteListener, type RemoteSocketInfo } from './listener';
@@ -69,7 +68,6 @@ export interface RemoteAccessServiceOptions {
   logger?: Logger;
   hostName?: () => string;
   detectAddresses?: () => string[];
-  firewall?: () => Promise<FirewallState>;
   selfTest?: () => Promise<SelfTestFailure | null>;
   probePort?: (address: string, port: number) => Promise<PortProbe>;
   pairingWindowMs?: number;
@@ -392,7 +390,6 @@ export function createRemoteAccessService(options: RemoteAccessServiceOptions): 
         (await identityStore.load('identity')) ?? (await identityStore.create('identity')),
       selfTest: options.selfTest ?? (() => tlsSelfTest()),
       addresses: () => listenerAddresses(config.bindAddress, detect),
-      firewall: options.firewall ?? (() => checkFirewall()),
       ...(options.probePort === undefined ? {} : { probe: options.probePort }),
     });
     checks = result.checks;

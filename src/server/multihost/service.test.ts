@@ -243,7 +243,11 @@ async function freePort(): Promise<number> {
   const server = createServer();
   await new Promise<void>((resolve) => server.listen({ host: TEST_HOST, port: 0 }, resolve));
   const { port } = server.address() as AddressInfo;
-  await new Promise<void>((resolve) => server.close(() => { resolve(); }));
+  await new Promise<void>((resolve) =>
+    server.close(() => {
+      resolve();
+    }),
+  );
   return port;
 }
 
@@ -257,7 +261,6 @@ describe('role with the real sharing side', () => {
       hub: createFakeHub(),
       keyStore,
       limits: OPEN_LIMITS,
-      firewall: () => Promise.resolve({ kind: 'no_rule' }),
       selfTest: () => Promise.resolve(null),
       detectAddresses: () => [],
       currentRole: () => service.config().role,
@@ -284,7 +287,13 @@ describe('role with the real sharing side', () => {
       ctx,
     );
     expect(share.state()).toMatchObject({ listening: true, port });
-    expect(share.state()?.checks.find((check) => check.id === 'firewall')?.status).toBe('warning');
+    expect(share.state()?.checks.map((check) => check.id)).toEqual([
+      'port',
+      'keys',
+      'keystore',
+      'tls',
+      'addresses',
+    ]);
     await service.stop();
     expect(share.state()).toBeNull();
   });

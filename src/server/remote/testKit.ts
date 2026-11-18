@@ -117,7 +117,6 @@ export async function startHarness(
     instance,
     hub,
     limits: OPEN_LIMITS,
-    firewall: () => Promise.resolve({ kind: 'allowed' }),
     selfTest: () => Promise.resolve(null),
     detectAddresses: () => ['10.0.0.5'],
     hostName: () => 'PC-B',

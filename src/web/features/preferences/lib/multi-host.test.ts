@@ -52,18 +52,11 @@ describe('multi-host helpers (WP-78b)', () => {
     expect(formatEndpoint('192.0.2.10', null)).toBe('192.0.2.10');
   });
 
-  it('orders checks like the contract and decides about the firewall hint', () => {
-    const checks = [
-      sampleRemoteAccessCheck({ id: 'firewall', status: 'warning' }),
-      sampleRemoteAccessCheck({ id: 'port' }),
-    ];
-    expect(orderedChecks(checks).map((check) => check.id)).toEqual(['port', 'firewall']);
-    expect(needsFirewallHint({ checks, peer: sampleRemotePeer() })).toBe(true);
-    expect(needsFirewallHint({ checks: [sampleRemoteAccessCheck({ id: 'firewall' })], peer: null })).toBe(
-      false,
-    );
-    expect(needsFirewallHint({ checks: [], peer: null })).toBe(true);
-    expect(needsFirewallHint({ checks: [], peer: sampleRemotePeer() })).toBe(false);
+  it('orders checks like the contract; the firewall hint shows while no computer is coupled', () => {
+    const checks = [sampleRemoteAccessCheck({ id: 'tls' }), sampleRemoteAccessCheck({ id: 'port' })];
+    expect(orderedChecks(checks).map((check) => check.id)).toEqual(['port', 'tls']);
+    expect(needsFirewallHint({ peer: null })).toBe(true);
+    expect(needsFirewallHint({ peer: sampleRemotePeer() })).toBe(false);
   });
 
   it('offers all addresses, the detected IPv4 ones and a stored other one', () => {

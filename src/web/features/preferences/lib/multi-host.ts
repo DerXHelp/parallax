@@ -66,12 +66,11 @@ export function orderedChecks(checks: readonly RemoteAccessCheck[]): RemoteAcces
 }
 
 /**
- * The firewall hint for the first start: while the firewall check is not `ok`, or – without a
- * firewall result – as long as no computer was ever paired.
+ * The firewall hint while no computer is coupled. Parallax neither checks nor changes the Windows
+ * Firewall (ADR-228) – setting it up is the user's part.
  */
-export function needsFirewallHint(state: Pick<RemoteAccessState, 'checks' | 'peer'>): boolean {
-  const firewall = state.checks.find((check) => check.id === 'firewall');
-  return firewall === undefined ? state.peer === null : firewall.status !== 'ok';
+export function needsFirewallHint(state: Pick<RemoteAccessState, 'peer'>): boolean {
+  return state.peer === null;
 }
 
 const bindAddressSchema = multiHostConfigSchema.shape.bindAddress.unwrap();
