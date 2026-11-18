@@ -135,7 +135,7 @@ export const errorsDe: Record<ErrorCode, string> = {
   REMOTE_ACCESS_FAILED: 'Der Fernzugang konnte nicht starten.',
   REMOTE_ROLE_CONFLICT: 'In der aktuellen Rolle dieses Rechners nicht möglich.',
   REMOTE_KEYSTORE_UNAVAILABLE:
-    'Der Windows-Schlüsselspeicher ist nicht verfügbar, daher lassen sich Schlüssel nicht sicher ablegen (braucht Node.js 26.1 oder neuer).',
+    'Der Windows-Schlüsselspeicher ist nicht verfügbar, daher lassen sich Schlüssel nicht sicher ablegen (braucht Node.js 26.9 oder neuer).',
   REMOTE_NOT_ALLOWED: 'Das geht nur am Rechner selbst.',
   DRAFT_TOO_LARGE: 'Der Entwurf ist zu groß zum Speichern.',
 };

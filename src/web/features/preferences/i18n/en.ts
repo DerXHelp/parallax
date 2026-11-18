@@ -188,7 +188,7 @@ export const en = {
           keystore: {
             warning: 'The Windows key store answered slowly.',
             error:
-              'The Windows key store is not available, so keys cannot be stored safely (needs Node.js 26.1 or newer).',
+              'The Windows key store is not available, so keys cannot be stored safely (needs Node.js 26.9 or newer).',
           },
           tls: {
             warning: 'The encryption self-test reported a problem.',

@@ -349,7 +349,7 @@ function runTaskkill(pid: number): Promise<RunFileResult> {
 // =====================================================================================
 // Process queries (orphan cleanup at server start, shutdown sweep) – R2-02
 // ADR-229: in this process through `node:ffi` (lib/processNative.ts) – no PowerShell. Only a Node
-// without `node:ffi` (< 26.1) still asks PowerShell + CIM.
+// without `node:ffi` (< 26.9) still asks PowerShell + CIM.
 // =====================================================================================
 
 /** Identity of a running process, for the orphan cleanup on the next start (B, C.8). */

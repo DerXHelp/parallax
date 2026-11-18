@@ -1,5 +1,5 @@
 /**
- * Node's built-in `node:ffi` (experimental, on by default since Node 26.1) – the one place that
+ * Node's built-in `node:ffi` (experimental; since Node 26.1 behind --experimental-ffi, on by default since 26.9) – the one place that
  * loads it (ADR-229). Windows APIs are called in this process instead of through a started
  * PowerShell: a Node server that starts PowerShell for system queries looks like malware to
  * behaviour-based security software.

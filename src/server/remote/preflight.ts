@@ -118,7 +118,7 @@ export async function multiHostPreflight(deps: MultiHostPreflightDeps): Promise<
           title: 'Key store',
           level: missing,
           detail: 'Windows DPAPI not available - keys cannot be stored safely',
-          hint: 'needs Node.js 26.1 or newer (node:ffi) on Windows x64',
+          hint: 'needs Node.js 26.9 or newer (node:ffi) on Windows x64',
         },
   );
   if (config.role !== 'share') return checks;

@@ -300,7 +300,7 @@ Rechner, mit dessen `claude`, Profilen und Ordnern. **Ab Werk ist das aus.**
 - **Rollen** (Einstellungen → „Mehrere Rechner“): **Aus**, **Freigeben** oder **Andere steuern** – immer nur
   eine. Ein freigebender Rechner ist mit genau einem steuernden gekoppelt; ein steuernder bindet bis zu 16
   freigebende ein.
-- **Voraussetzung:** Node.js 26.1 oder neuer auf allen beteiligten Rechnern (für den Windows-Schlüsselspeicher).
+- **Voraussetzung:** Node.js 26.9 oder neuer auf allen beteiligten Rechnern (für den Windows-Schlüsselspeicher).
 - **Freigeben:** Beim Einschalten prüft Parallax Port (Standard 4713), Schlüssel, den Windows-Schlüsselspeicher,
   die Verschlüsselung und die Netzadressen und zeigt das Ergebnis im Abschnitt.
 - **Windows-Firewall:** Parallax prüft und ändert sie nicht; sie wird von Hand eingerichtet: eingehende

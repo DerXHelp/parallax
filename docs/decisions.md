@@ -2670,9 +2670,9 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   - DPAPI (`CryptProtectData`/`CryptUnprotectData`, CurrentUser, Entropie je Zweck) wird direkt im Serverprozess
     über das eingebaute `node:ffi` aufgerufen. Es gibt keinen Kindprozess und kein Skript; der Weg über
     PowerShell entfällt.
-  - Ohne `node:ffi` (Node < 26.1, `--no-experimental-ffi`) ist der Schlüsselspeicher nicht verfügbar. Dann gibt es
+  - Ohne `node:ffi` (Node < 26.9 – 26.1 bis 26.8 nur mit `--experimental-ffi` –, `--no-experimental-ffi`) ist der Schlüsselspeicher nicht verfügbar. Dann gibt es
     weder Freigeben noch Koppeln, und eine unverschlüsselte Ablage gibt es nie. `engines` bleibt bei 24.5, denn
-    nur „Mehrere Rechner“ braucht 26.1.
+    nur „Mehrere Rechner“ braucht 26.9.
   - Parallax prüft die Windows-Firewall nicht mehr (`REMOTE_ACCESS_CHECK_IDS` ohne `firewall`). Der Abschnitt
     „Freigeben“ zeigt einen Hinweis, solange kein Rechner gekoppelt ist. `pnpm preflight` erinnert nur daran.
 - **Begründung:**
@@ -2701,7 +2701,7 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   - Prozessabfragen (Waisen-Bereinigung, Herzschlag-Schnappschuss alle 30 s, Shutdown-Sweep) laufen über `node:ffi`
     im Serverprozess: `CreateToolhelp32Snapshot` und `GetProcessTimes` (`lib/processNative.ts`, `lib/ffi.ts`), in
     etwa 10–30 ms statt 1–3 s. Prozesse, deren Startzeit sich nicht lesen lässt (andere Benutzer, geschützte
-    Prozesse), fehlen in der Liste wie Zeilen ohne `CreationDate` bei CIM. Nur ein Node ohne `node:ffi` (< 26.1)
+    Prozesse), fehlen in der Liste wie Zeilen ohne `CreationDate` bei CIM. Nur ein Node ohne `node:ffi` (< 26.9)
     fragt weiter PowerShell + CIM.
   - Bleiben: Windows-Toasts (PowerShell, nur auf Wunsch je Meldung), Konsole, Editor und Explorer nach einem Klick,
     `taskkill`, `reg query` für Chrome und Editoren, `git`.

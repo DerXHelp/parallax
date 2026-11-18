@@ -131,7 +131,7 @@ export const errorsEn: Record<ErrorCode, string> = {
   REMOTE_ACCESS_FAILED: 'Remote access could not start.',
   REMOTE_ROLE_CONFLICT: 'Not possible in the current role of this computer.',
   REMOTE_KEYSTORE_UNAVAILABLE:
-    'The Windows key store is not available, so keys cannot be stored safely (needs Node.js 26.1 or newer).',
+    'The Windows key store is not available, so keys cannot be stored safely (needs Node.js 26.9 or newer).',
   REMOTE_NOT_ALLOWED: 'This is only possible on the computer itself.',
   DRAFT_TOO_LARGE: 'The draft is too large to be saved.',
 };

@@ -184,7 +184,7 @@ export const de: typeof en = {
           keystore: {
             warning: 'Der Windows-Schlüsselspeicher hat langsam geantwortet.',
             error:
-              'Der Windows-Schlüsselspeicher ist nicht verfügbar; Schlüssel können nicht sicher gespeichert werden (braucht Node.js 26.1 oder neuer).',
+              'Der Windows-Schlüsselspeicher ist nicht verfügbar; Schlüssel können nicht sicher gespeichert werden (braucht Node.js 26.9 oder neuer).',
           },
           tls: {
             warning: 'Der Selbsttest der Verschlüsselung hat ein Problem gemeldet.',
