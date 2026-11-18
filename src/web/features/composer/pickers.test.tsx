@@ -172,6 +172,45 @@ describe('ModePicker: Shift+Tab (WP-91, GitHub #2)', () => {
     ).toBeUndefined();
   });
 
+  it('cycling back while a switch is on its way still sends the way back', async () => {
+    const h = startCycle('idle');
+    const user = userEvent.setup();
+    const trigger = await screen.findByRole('button', { name: 'Permission mode: Manual' });
+    // A slow session: the server's answers (ops and acks) wait until released.
+    const transport = h.host.transport;
+    const deliver = transport.serverSendRaw.bind(transport);
+    const held: string[] = [];
+    let holding = true;
+    transport.serverSendRaw = (text) => {
+      if (holding) held.push(text);
+      else deliver(text);
+    };
+    await user.click(screen.getByRole('textbox', { name: 'message' }));
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    await waitFor(() => {
+      expect(h.commands('session.setPermissionMode')).toHaveLength(1);
+    });
+    // Accept edits is on its way; Plan → Auto → Manual: the reported mode, but not the outcome.
+    await user.keyboard('{Shift>}{Tab}{Tab}{Tab}{/Shift}');
+    await waitFor(() => {
+      expect(h.commands('session.setPermissionMode')).toHaveLength(2);
+    });
+    expect(h.commands('session.setPermissionMode').map((cmd) => cmd.mode)).toEqual([
+      'acceptEdits',
+      'default',
+    ]);
+    expect(trigger.dataset.targetMode).toBe('default');
+    holding = false;
+    act(() => {
+      for (const text of held.splice(0)) deliver(text);
+    });
+    await waitFor(() => {
+      expect(trigger.dataset.targetMode).toBeUndefined();
+    });
+    expect(trigger.dataset.mode).toBe('default');
+    expect(screen.getByRole('button', { name: 'Permission mode: Manual' })).toBe(trigger);
+  });
+
   it('bypass is part of the cycle when the profile allows it', async () => {
     const h = startCycle('bypass');
     const user = userEvent.setup();

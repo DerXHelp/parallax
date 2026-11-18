@@ -52,6 +52,11 @@ interface CycleTarget {
   mode: PermissionMode;
 }
 
+/** A `session.setPermissionMode` on its way; `cycled`: sent for Shift+Tab (the label keeps naming it). */
+interface PendingMode extends CycleTarget {
+  cycled: boolean;
+}
+
 async function sendMode(sessionKey: string, mode: PermissionMode): Promise<void> {
   const parsed = parseSessionKey(sessionKey);
   if (parsed === null) return;
@@ -104,9 +109,10 @@ export const ModePicker = memo(function ModePicker({
   const hostState = useHostState(parseSessionKey(sessionKey)?.hostId ?? LOCAL_HOST_ID);
   const allowsBypass = hostState?.profiles.find((profile) => profile.id === profileId)?.allowsBypass === true;
   const online = useSessionConnectionStatus(sessionKey) === 'open';
-  const [pending, setPending] = useState<PermissionMode | null>(null);
+  const [pending, setPending] = useState<PendingMode | null>(null);
   const [target, setTarget] = useState<CycleTarget | null>(null);
   const [announcement, setAnnouncement] = useState('');
+  const pendingRef = useRef<PendingMode | null>(null);
   const targetRef = useRef<CycleTarget | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Only the latest send clears the spinner. */
@@ -115,8 +121,10 @@ export const ModePicker = memo(function ModePicker({
 
   const options = offeredModes({ allowsBypass });
   const cycleTarget = target?.sessionKey === sessionKey ? target.mode : null;
+  const ownPending = pending?.sessionKey === sessionKey ? pending : null;
+  const pendingMode = ownPending?.mode ?? null;
   /** What the label names: a Shift+Tab target until it is sent and answered, else the actual mode. */
-  const shown = cycleTarget ?? mode;
+  const shown = cycleTarget ?? (ownPending?.cycled === true ? ownPending.mode : null) ?? mode;
   const Icon = shown === null ? HandIcon : MODE_ICONS[shown];
   // V2-05: before the first start nothing is reported – Claude Code then starts with the default
   // mode of its own settings (the profile omits it, C.3), never a guess like "Manual".
@@ -125,14 +133,21 @@ export const ModePicker = memo(function ModePicker({
   if (shown !== null) label = t(`shell.permissionMode.${shown}`);
   else label = notStarted ? t('composer.mode.notStarted') : t('composer.mode.unknown');
 
-  const choose = async (next: PermissionMode) => {
-    if (next === mode) return;
+  const choose = async (next: PermissionMode, cycled = false) => {
+    // A send still on its way decides the outcome – compare with it, not the reported mode.
+    const inFlight = pendingRef.current?.sessionKey === sessionKey ? pendingRef.current.mode : null;
+    if (next === (inFlight ?? mode)) return;
     const seq = ++sendSeq.current;
-    setPending(next);
+    const sending = { sessionKey, mode: next, cycled };
+    pendingRef.current = sending;
+    setPending(sending);
     try {
       await sendMode(sessionKey, next);
     } finally {
-      if (seq === sendSeq.current) setPending(null);
+      if (seq === sendSeq.current) {
+        pendingRef.current = null;
+        setPending(null);
+      }
     }
   };
 
@@ -161,9 +176,9 @@ export const ModePicker = memo(function ModePicker({
       void sendMode(waiting.sessionKey, waiting.mode);
       return;
     }
-    void choose(waiting.mode).finally(() => {
+    void choose(waiting.mode, true).finally(() => {
       // Cycled on while this was sent: the newer target stays.
-      if (targetRef.current === null) setTarget(null);
+      setTarget((current) => (current === waiting ? null : current));
     });
   });
   useEffect(
@@ -176,7 +191,7 @@ export const ModePicker = memo(function ModePicker({
   const cycle = (): boolean => {
     if (!online) return false;
     const waiting = targetRef.current?.sessionKey === sessionKey ? targetRef.current.mode : null;
-    const base = waiting ?? cycleTarget ?? pending ?? mode;
+    const base = waiting ?? cycleTarget ?? pendingMode ?? mode;
     const next = nextPermissionMode(base, cycleModes({ allowsBypass, autoSupported }));
     if (next === null) return false;
     const chosen = { sessionKey, mode: next };
@@ -211,14 +226,14 @@ export const ModePicker = memo(function ModePicker({
             size="sm"
             data-slot="mode-picker"
             data-mode={mode ?? (notStarted ? 'not-started' : 'unknown')}
-            data-target-mode={cycleTarget ?? pending ?? undefined}
+            data-target-mode={cycleTarget ?? pendingMode ?? undefined}
             disabled={!online}
             aria-label={t('composer.mode.trigger', { mode: label })}
             className={cn(mode === 'bypassPermissions' && 'text-destructive hover:text-destructive')}
           >
             <Icon aria-hidden />
             <span>{label}</span>
-            {pending === null && cycleTarget === null ? null : (
+            {pendingMode === null && cycleTarget === null ? null : (
               <Spinner label={t('composer.mode.switching')} className="size-3" />
             )}
           </Button>
