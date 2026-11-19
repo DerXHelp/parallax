@@ -48,6 +48,30 @@ export interface ExitResult {
 /** pino levels in the JSON log file: 50 = error, 60 = fatal. */
 const ERROR_LEVEL = 50;
 
+/**
+ * The server's own console host (`conhost.exe`, a child of the hidden console process): Windows
+ * ends it right after the server, but not always before the native process query looks (a few ms
+ * after the exit). A lone console host gets this long to end; any other child fails at once.
+ */
+const CONSOLE_HOST_GRACE_MS = 3_000;
+
+/** Children of `pid` started at or after `since` that are still there (three-valued: unknown throws). */
+async function leftChildren(pid: number, since: Date): Promise<{ pid: number; name: string }[]> {
+  const deadline = Date.now() + CONSOLE_HOST_GRACE_MS;
+  for (;;) {
+    const children = await childProcesses(pid);
+    if (children.kind === 'unknown') {
+      throw new Error(`child processes unknown: ${children.reason} ${children.detail}`);
+    }
+    const orphans = children.processes.filter((p) => p.startedAt >= since);
+    const onlyConsoleHost = orphans.every((p) => p.name.toLowerCase() === 'conhost.exe');
+    if (orphans.length === 0 || !onlyConsoleHost || Date.now() > deadline) return orphans;
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 100);
+    });
+  }
+}
+
 export interface E2eServer {
   /** Temp folder with `home/` (PARALLAX_HOME) and the project folders of the tests. */
   readonly root: string;
@@ -299,11 +323,7 @@ function serverHandle(parts: HandleParts): E2eServer {
       if (lockAfter.kind !== 'missing') throw new Error(`lock file left behind: ${lockAfter.kind}`);
       if (isProcessAlive(ready.pid)) throw new Error(`server PID ${String(ready.pid)} still alive`);
       // A child keeps its ParentProcessId after the parent's exit; younger than the start = ours.
-      const children = await childProcesses(ready.pid);
-      if (children.kind === 'unknown') {
-        throw new Error(`child processes unknown: ${children.reason} ${children.detail}`);
-      }
-      const orphans = children.processes.filter((p) => p.startedAt >= startedAt);
+      const orphans = await leftChildren(ready.pid, startedAt);
       if (orphans.length > 0) {
         for (const orphan of orphans) await killProcessTree(orphan.pid);
         throw new Error(
