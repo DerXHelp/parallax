@@ -44,7 +44,7 @@ async function harness(version = '1.0.0', p: { flags?: boolean; lockBusy?: boole
     ownDir,
     installerScript: path.join(ownDir, 'dist', 'install.js'),
     execArgv: p.flags === false ? [] : PACKAGE_NODE_FLAGS,
-    nodeVersion: '26.1.0',
+    nodeVersion: '26.12.0',
     runNode: (args) => {
       h.nodeRuns.push(args);
       return Promise.resolve(0);
@@ -137,9 +137,9 @@ describe('installer flow (WP-86, WP-83 §8.3)', () => {
     expect(await runInstallerCli([], busy.deps)).toBe(1);
     expect(busy.err.at(-1)).toMatch(/Another Parallax installation/);
     const old = await harness();
-    old.deps.nodeVersion = '22.12.0';
+    old.deps.nodeVersion = '26.4.0';
     expect(await runInstallerCli([], old.deps)).toBe(1);
-    expect(old.err.at(-1)).toMatch(/needs Node\.js 24\.5\.0 or newer, this is 22\.12\.0/);
+    expect(old.err.at(-1)).toMatch(/needs Node\.js 26\.9\.0 or newer, this is 26\.4\.0/);
     expect(old.nodeRuns).toEqual([]);
   });
 

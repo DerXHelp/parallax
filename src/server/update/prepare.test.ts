@@ -96,7 +96,7 @@ async function world() {
     run: runFile,
     provideSdk: fakeProvideSdk(sdk),
     lockRoot: () => Promise.resolve({ release: () => Promise.resolve() }),
-    nodeVersion: '26.0.0',
+    nodeVersion: '26.12.0',
     now: () => new Date(),
     log: logger.child({ test: 'prepare' }),
     own,
@@ -127,7 +127,7 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
 }
 
 async function payload(promise: Promise<unknown>) {
-  return prepareErrorPayload(await rejection(promise), '26.0.0');
+  return prepareErrorPayload(await rejection(promise), '26.12.0');
 }
 
 describe('prepareRelease', () => {
@@ -226,7 +226,7 @@ describe('prepareRelease', () => {
       zip: await w.zip('1.0.1', { minNode: '99.0.0' }),
     });
     expect(await payload(prepareRelease(w.env(), node.latest, w.run()))).toEqual(
-      makeError('UPDATE_NODE_TOO_OLD', { required: '99.0.0', actual: '26.0.0' }),
+      makeError('UPDATE_NODE_TOO_OLD', { required: '99.0.0', actual: '26.12.0' }),
     );
     expect(w.sdk).toHaveLength(0);
     expect(await readdir(path.join(w.root, DOWNLOADS_DIR))).toEqual([]);

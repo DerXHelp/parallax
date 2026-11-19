@@ -56,7 +56,7 @@ export async function makeTestPackage(dir: string, options: TestPackageOptions):
     'install.cmd': '@echo off\r\n',
     'parallax.ico': `icon ${options.version}`,
     'node_modules/zod/index.js': 'export {};\n',
-    ...(options.rootFiles === true ? packageRootFiles(options.minNode ?? '24.5.0') : {}),
+    ...(options.rootFiles === true ? packageRootFiles(options.minNode ?? '26.9.0') : {}),
     ...options.files,
   };
   for (const [rel, content] of Object.entries(files)) {
@@ -71,7 +71,7 @@ export async function makeTestPackage(dir: string, options: TestPackageOptions):
     version: options.version,
     commit: 'a'.repeat(40),
     buildId: testBuildId(options.version),
-    minNode: options.minNode ?? '24.5.0',
+    minNode: options.minNode ?? '26.9.0',
     createdAt: '2026-11-17T09:00:00.000Z',
     schemas: { 'settings.json': 'b'.repeat(64) },
     sdk: TEST_SDK,

@@ -45,9 +45,9 @@ der letzten Änderung.
 ## Installieren
 Für die Nutzung: ein Release von GitHub, ohne Klon, pnpm oder Build.
 
-- **Voraussetzungen:** Node.js 24.5 oder neuer, empfohlen **26.9 oder neuer** (erst damit gibt es
-  „Mehrere Rechner“, und der Server liest Prozesse selbst statt über PowerShell), das installierte
-  **`claude`**-CLI mit Login, Google Chrome.
+- **Voraussetzungen:** **Node.js 26.9 oder neuer** (der Server liest damit Prozesse selbst, ohne PowerShell,
+  und „Mehrere Rechner“ nutzt den Windows-Schlüsselspeicher), das installierte **`claude`**-CLI mit Login,
+  Google Chrome.
 - **Schritte:** `parallax-<version>-win.zip` von der Release-Seite laden
   (`https://github.com/DerXHelp/parallax/releases`), entpacken und `install.cmd` doppelklicken. Sperren
   SmartScreen oder AppLocker die `.cmd`, ist `node dist\install.js` im entpackten Ordner gleichwertig.
@@ -78,6 +78,9 @@ Für die Nutzung: ein Release von GitHub, ohne Klon, pnpm oder Build.
   selbst wieder und zeigt „Aktualisiert auf <version>“ mit „Was ist neu“. Startet die neue Version nicht,
   kehrt Parallax mit den gesicherten Daten zur alten zurück und meldet das mit dem Pfad zum Protokoll
   (`%LOCALAPPDATA%\Parallax\logs\update-<zeit>.log`).
+- **Node.js:** Braucht eine neue Version ein neueres Node.js (die Version nach 1.0.1 braucht 26.9), lehnt
+  Parallax das Update ab und nennt die nötige und die installierte Version; die laufende Version bleibt
+  unberührt. Node.js aktualisieren, dann erneut „Jetzt aktualisieren“.
 - **Aus Datei:** Einstellungen → „Updates“ → „Aus Datei installieren…“ nimmt ein geladenes
   `parallax-<version>-win.zip` an (z. B. ohne Zugang zu GitHub). Geprüft wird es mit dem Code und den
   Schlüsseln der laufenden Version.
@@ -103,8 +106,9 @@ Für die Nutzung: ein Release von GitHub, ohne Klon, pnpm oder Build.
 
 ## Voraussetzungen
 Für die Entwicklung (Klon, Build, Tests):
-- **Node.js 26.9 oder neuer** (Minimum 24.5; die Release-Prüfung läuft mit 24.5.0 und 26). `.node-version`
-  enthält `26` für fnm, nvm-windows oder Volta – ein schon installiertes älteres 26.x vorher aktualisieren.
+- **Node.js 26.9 oder neuer** (`engines.node`; die Release-Prüfung läuft mit 26.9.0 und dem neuesten 26).
+  `.node-version` enthält `26` für fnm, nvm-windows oder Volta – ein schon installiertes älteres 26.x vorher
+  aktualisieren.
 - **pnpm 12.17.0**: einmalig `npm i -g pnpm@12.17.0`. `packageManager` und der Lockfile pinnen die
   Version; ein pnpm ≥ 10 lädt sie bei Abweichung selbst nach (`managePackageManagerVersions`; geprüft
   13.11.2026 mit pnpm 12.8.2 → 12.17.0). Ein zu altes pnpm scheitert an `engines.pnpm: ">=12.8"`.

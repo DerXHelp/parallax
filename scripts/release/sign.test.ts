@@ -28,7 +28,7 @@ function sign(args: readonly string[], key: string | null) {
 
 describe('scripts/release/sign.ts (plain node)', () => {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
-  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
   const x = publicKey.export({ format: 'jwk' }).x ?? '';
 
   it('signs files so that verifyReleaseSignature accepts them, without printing the key', async () => {

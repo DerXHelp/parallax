@@ -40,11 +40,13 @@ const LOGGED_OUT = { state: 'logged_out', method: null, apiProvider: null, subsc
 
 describe('rating', () => {
   it.each<[string, PreflightCheck['level']]>([
-    ['v26.4.0', 'ok'],
-    ['26.0.0', 'ok'],
-    ['v24.11.1', 'warn'],
-    ['v24.5.0', 'warn'],
-    ['v24.4.1', 'fail'],
+    ['v26.12.0', 'ok'],
+    ['26.9.0', 'ok'],
+    ['v27.1.0', 'warn'],
+    ['v26.8.2', 'fail'],
+    ['v26.4.0', 'fail'],
+    ['v24.11.1', 'fail'],
+    ['v24.5.0', 'fail'],
     ['v22.20.0', 'fail'],
     ['v21.9.0', 'fail'],
     ['v18.20.0', 'fail'],
@@ -178,16 +180,16 @@ describe('rating', () => {
       level: 'ok',
       detail: 'C:\\c\\chrome.exe (version unknown)',
     });
-    expect(preflightExitCode([checkNode('v24.11.1'), checkRegistry(null)])).toBe(0);
-    expect(preflightExitCode([checkNode('v26.0.0'), checkChrome(null)])).toBe(1);
+    expect(preflightExitCode([checkNode('v27.1.0'), checkRegistry(null)])).toBe(0);
+    expect(preflightExitCode([checkNode('v26.12.0'), checkChrome(null)])).toBe(1);
   });
 
   it('formats an English report', () => {
-    const text = formatPreflight([checkNode('v24.11.1'), checkChrome(null), checkRegistry('https://r/')]);
+    const text = formatPreflight([checkNode('v27.1.0'), checkChrome(null), checkRegistry('https://r/')]);
     expect(text).toBe(
       [
         'Parallax preflight',
-        '  WARN  node      v24.11.1',
+        '  WARN  node      v27.1.0',
         '                  -> Node 26 is the standard version of this project.',
         '  FAIL  chrome    not found',
         '                  -> Parallax opens its window with Google Chrome (App Paths, Program Files or %LOCALAPPDATA%) - install Chrome.',
@@ -385,7 +387,7 @@ describe('runPreflight', () => {
     const { fs, runFile, integration, calls } = stubs({ [LOCAL]: '', [PNPM_EXE]: '', [CHROME]: '' });
     const report = await runPreflight({
       integration,
-      nodeVersion: 'v26.4.0',
+      nodeVersion: 'v26.12.0',
       env,
       cwd: 'D:\\repo',
       nodeExecutable: 'C:\\node\\node.exe',
@@ -452,7 +454,7 @@ describe('runPreflight', () => {
     );
     const report = await runPreflight({
       integration,
-      nodeVersion: 'v26.4.0',
+      nodeVersion: 'v26.12.0',
       env,
       cwd: 'D:\\repo',
       nodeExecutable: 'node.exe',
@@ -499,7 +501,7 @@ describe('runPreflight', () => {
     const { fs, runFile, integration } = stubs({ [PNPM_EXE]: '' });
     const report = await runPreflight({
       integration,
-      nodeVersion: 'v26.4.0',
+      nodeVersion: 'v26.12.0',
       env,
       cwd: 'D:\\repo',
       nodeExecutable: 'node.exe',
@@ -522,7 +524,7 @@ describe('runPreflight', () => {
     const { fs, runFile, integration } = stubs({ [LOCAL]: '', [PNPM_EXE]: '', [CHROME]: '' });
     const report = await runPreflight({
       integration,
-      nodeVersion: 'v26.4.0',
+      nodeVersion: 'v26.12.0',
       env,
       cwd: 'D:\\repo',
       nodeExecutable: 'node.exe',

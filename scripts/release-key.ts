@@ -76,7 +76,7 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
-  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
   // `wx`: never overwrite an existing key file.
   await writeFile(file, pem, { flag: 'wx', mode: 0o600 });
   out(`private key written to ${file}`);

@@ -4,8 +4,9 @@
  * PowerShell: a Node server that starts PowerShell for system queries looks like malware to
  * behaviour-based security software.
  *
- * - Null without `node:ffi` (older Node, `--no-experimental-ffi`, the permission model without
- *   `--allow-ffi`) or off Windows x64 – callers fall back or report "not available".
+ * - Null without `node:ffi` (an older Node than the minimum 26.9, `--no-experimental-ffi`, the
+ *   permission model without `--allow-ffi`) or off Windows x64 – callers report "unknown" or "not
+ *   available" (ADR-231: no PowerShell fallback).
  * - Its one ExperimentalWarning at load is swallowed (only that warning).
  * - Only the few calls used are typed here; every function is checked at runtime.
  */

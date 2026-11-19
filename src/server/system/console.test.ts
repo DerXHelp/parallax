@@ -259,13 +259,12 @@ describe('createConsoleLauncher().state (ADR-104, ADR-051)', () => {
     expect(queries).toHaveLength(4);
   });
 
-  it('by default asks the process start time through the injected runner (CIM query)', async () => {
-    const json = JSON.stringify([
-      { pid: 4242, name: 'claude.exe', parentPid: 1, startedAt: '2026-10-16T08:00:01.000Z' },
-    ]);
-    const { run, calls } = fakeRun({ stdout: json });
+  it('by default reads the process start time natively – never through the runner (ADR-229)', async () => {
+    const { run, calls } = fakeRun({ stdout: 'never asked' });
     const launcher = createConsoleLauncher({ run, platform: 'win32', isAlive: () => true });
-    expect(await launcher.state({ pid: 4242, startedAt: started })).toBe('running');
-    expect(calls[0]?.args.join(' ')).toContain('ProcessId = 4242');
+    const self = new Date(Date.now() - process.uptime() * 1000);
+    const native = process.platform === 'win32' && process.arch === 'x64';
+    expect(await launcher.state({ pid: process.pid, startedAt: self })).toBe(native ? 'running' : 'unknown');
+    expect(calls).toEqual([]);
   });
 });

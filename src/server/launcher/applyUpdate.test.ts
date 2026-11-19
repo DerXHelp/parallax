@@ -61,7 +61,7 @@ function release(version: string): ReleaseInfo {
     version,
     commit: 'a'.repeat(40),
     buildId: testBuildId(version),
-    minNode: '24.5.0',
+    minNode: '26.9.0',
     createdAt: '2026-11-17T09:00:00.000Z',
     schemas: { 'settings.json': 'b'.repeat(64) },
     sdk: TEST_SDK,

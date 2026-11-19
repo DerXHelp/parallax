@@ -13,7 +13,6 @@
  */
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import path from 'node:path';
-import { z } from 'zod';
 import { makeError } from '@shared/errors';
 import { EDITOR_BLOCKED_EXECUTABLES } from '@shared/model';
 import { windowsPathIssue } from '@shared/paths';
@@ -112,36 +111,6 @@ export function explorerPath(env: NodeJS.ProcessEnv = process.env): string {
   const root = env.SystemRoot ?? env.SYSTEMROOT ?? env.windir ?? 'C:\\Windows';
   return path.win32.join(root, 'explorer.exe');
 }
-
-/**
- * `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` – the one place of this path
- * (R4-14; re-exported by lib/powershell.ts for the constant scripts).
- */
-export function powerShellPath(env: NodeJS.ProcessEnv = process.env): string {
-  return systemTool(path.win32.join('WindowsPowerShell', 'v1.0', 'powershell.exe'), env);
-}
-
-/**
- * Environment for a hidden Windows PowerShell 5.1 child (`powerShellPath()`): the inherited one
- * without `PSModulePath`. Started from pwsh 7 (a terminal, a CI step) the variable lists the pwsh 7
- * modules first, and 5.1 then cannot load its own `Microsoft.PowerShell.Security` / `CimCmdlets`
- * (`Get-Acl`, `Get-CimInstance`: "the module could not be loaded"). Without it 5.1 builds its
- * default. Visible consoles keep the spec's value (system/console.ts, R4-04).
- */
-export function windowsPowerShellEnv(base: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(base)) {
-    if (value !== undefined && key.toUpperCase() !== 'PSMODULEPATH') env[key] = value;
-  }
-  return env;
-}
-
-/**
- * .NET format of `DateTime.ToString(…)` for an ISO-8601 UTC time with milliseconds – no
- * culture-dependent specifier. Used by the process queries below and system/console.ts
- * (re-exported by lib/powershell.ts, R4-14).
- */
-export const POWERSHELL_UTC_ISO_FORMAT = "yyyy-MM-dd'T'HH':'mm':'ss'.'fff'Z'";
 
 /**
  * spawn() with `shell: false` and `windowsHide: true` (cannot be overridden). A piped stderr is
@@ -348,8 +317,8 @@ function runTaskkill(pid: number): Promise<RunFileResult> {
 
 // =====================================================================================
 // Process queries (orphan cleanup at server start, shutdown sweep) – R2-02
-// ADR-229: in this process through `node:ffi` (lib/processNative.ts) – no PowerShell. Only a Node
-// without `node:ffi` (< 26.9) still asks PowerShell + CIM.
+// ADR-229, ADR-231: in this process through `node:ffi` (lib/processNative.ts) – never PowerShell.
+// Without `node:ffi` (switched off, the permission model, not Windows x64) every query is unknown.
 // =====================================================================================
 
 /** Identity of a running process, for the orphan cleanup on the next start (B, C.8). */
@@ -363,12 +332,10 @@ export interface ProcessInfo {
 }
 
 /**
- * Why a query gave no answer: the native snapshot failed (`failed`); without `node:ffi`: PowerShell
- * timed out (`timeout`), could not run or failed – policy (AppLocker, Constrained Language Mode),
- * CIM error, exit ≠ 0 (`failed`) – or printed something unreadable (`output`); `unsupported` off
- * Windows. NEVER the same as "the process is gone".
+ * Why a query gave no answer: the native snapshot failed (`failed`), or there is no native process
+ * list – not Windows, or no `node:ffi` (`unsupported`). NEVER the same as "the process is gone".
  */
-export type ProcessQueryFailure = 'timeout' | 'failed' | 'output' | 'unsupported';
+export type ProcessQueryFailure = 'failed' | 'unsupported';
 
 /** Result of `queryProcesses` (R2-02: an unknown answer is not an empty one). */
 export type ProcessQueryResult =
@@ -387,35 +354,33 @@ export interface ProcessFilter {
 }
 
 export interface ProcessQueryOptions {
-  /** Per PowerShell call (only without `node:ffi`); default `PROCESS_QUERY_TIMEOUT_MS`. */
-  timeoutMs?: number;
-  /** Test seam of the PowerShell path (default `runFile`); given without `native` → PowerShell. */
-  run?: RunFileFn;
   /** Test seam (default `process.platform`). */
   platform?: NodeJS.Platform;
-  /** Test seam: the native process list (default `loadNativeProcessApi()`); null = PowerShell. */
+  /** Test seam: the native process list (default `loadNativeProcessApi()`); null = none. */
   native?: NativeProcessApi | null;
 }
 
 let defaultNative: NativeProcessApi | null | undefined;
 
-/** The native process list unless a test drives the PowerShell path (`run` without `native`). */
-function nativeApi(options: ProcessQueryOptions): NativeProcessApi | null {
-  if (options.native !== undefined) return options.native;
-  if (options.run !== undefined) return null;
-  if (defaultNative === undefined) defaultNative = loadNativeProcessApi();
-  return defaultNative;
+function unknownResult(reason: ProcessQueryFailure, detail: string): ProcessQueryResult {
+  return { kind: 'unknown', reason, detail: detail.trim().slice(0, 500) };
 }
 
 /**
  * Processes of the native snapshot that `wanted` accepts (null = all), with their start times.
- * A process whose start time cannot be read (another user's, a protected one) is left out like
- * a Win32_Process row without CreationDate – it is never one of this user's session processes.
+ * A process whose start time cannot be read (another user's, a protected one) is left out – it is
+ * never one of this user's session processes. Unknown off Windows and without `node:ffi`.
  */
 function nativeQuery(
-  api: NativeProcessApi,
+  options: ProcessQueryOptions,
   wanted: ((entry: { pid: number; parentPid: number }) => boolean) | null,
 ): ProcessQueryResult {
+  if ((options.platform ?? process.platform) !== 'win32') return unknownResult('unsupported', 'not Windows');
+  if (options.native === undefined && defaultNative === undefined) defaultNative = loadNativeProcessApi();
+  const api = options.native === undefined ? defaultNative : options.native;
+  if (api === null || api === undefined) {
+    return unknownResult('unsupported', 'no native process list (node:ffi is not available)');
+  }
   const entries = api.entries();
   if (entries === null) return unknownResult('failed', 'process snapshot failed');
   const processes: ProcessInfo[] = [];
@@ -428,14 +393,12 @@ function nativeQuery(
   return { kind: 'ok', processes };
 }
 
-/**
- * PowerShell + CIM (only without `node:ffi`): 1–3 s idle, up to ≈ 23 s under load
- * (docs/wp/FLAKES.md). The orphan cleanup runs in the background, so the limit is generous
- * (R2-02); a timeout is `unknown`, never "gone".
- */
-export const PROCESS_QUERY_TIMEOUT_MS = 60_000;
-/** WQL clauses per CIM query (the filter has a length limit); more PIDs → several sequential calls. */
-export const PROCESS_QUERY_MAX_CLAUSES = 100;
+/** A synchronous query as a promise (a thrown RangeError of an invalid PID rejects it). */
+function settled(query: () => ProcessQueryResult): Promise<ProcessQueryResult> {
+  return new Promise((resolve) => {
+    resolve(query());
+  });
+}
 
 function assertPids(pids: readonly number[]): void {
   for (const pid of pids) {
@@ -444,141 +407,31 @@ function assertPids(pids: readonly number[]): void {
 }
 
 /**
- * WQL filters for `Win32_Process` (`ProcessId = a OR … OR ParentProcessId = b …`), at most
- * `PROCESS_QUERY_MAX_CLAUSES` clauses each. Only validated integers go into the text (no injection).
+ * Name, parent and start time of every process matching `filter` (natively, ADR-229; one snapshot
+ * for many PIDs and their children). Three-valued: a failure is `unknown`, never an empty list.
+ * Meant for the orphan cleanup and the shutdown sweep, not for hot paths. An empty filter answers
+ * `ok []` without a snapshot; an invalid PID rejects with a RangeError.
  */
-export function processQueryFilters(filter: ProcessFilter, maxClauses = PROCESS_QUERY_MAX_CLAUSES): string[] {
-  const pids = [...new Set(filter.pids ?? [])];
-  const parents = [...new Set(filter.parentPids ?? [])];
-  assertPids(pids);
-  assertPids(parents);
-  const clauses = [
-    ...pids.map((pid) => `ProcessId = ${String(pid)}`),
-    ...parents.map((pid) => `ParentProcessId = ${String(pid)}`),
-  ];
-  const filters: string[] = [];
-  for (let i = 0; i < clauses.length; i += maxClauses) {
-    filters.push(clauses.slice(i, i + maxClauses).join(' OR '));
-  }
-  return filters;
-}
-
-/**
- * The PowerShell script of one query. `-ErrorAction Stop` + `try/catch → exit 3`: a CIM failure
- * must not print an empty list (that would read as "no such process"). The date format has no
- * culture-dependent specifier and everything works in Constrained Language Mode;
- * `-InputObject @(...)` keeps 0/1 results arrays (PS 5.1).
- */
-function processQueryScript(wqlFilter: string | null): string {
-  const selection =
-    wqlFilter === null ? '-Property ProcessId,ParentProcessId,Name,CreationDate' : `-Filter '${wqlFilter}'`;
-  return (
-    `try { $c = @(Get-CimInstance -ClassName Win32_Process ${selection} -ErrorAction Stop | ` +
-    // ProcessId 0 (System Idle Process) has a CreationDate too, but no positive PID.
-    `Where-Object { $_.CreationDate -and $_.ProcessId -gt 0 } | ForEach-Object { @{ pid = [int]$_.ProcessId; name = [string]$_.Name; ` +
-    `parentPid = [int]$_.ParentProcessId; ` +
-    `startedAt = $_.CreationDate.ToUniversalTime().ToString("${POWERSHELL_UTC_ISO_FORMAT}") } }); ` +
-    `ConvertTo-Json -InputObject $c -Compress } catch { Write-Output ('error: ' + $_.Exception.Message); exit 3 }`
-  );
-}
-
-const processQueryOutputSchema = z.array(
-  z.object({
-    pid: z.number().int().positive(),
-    name: z.string(),
-    parentPid: z.number().int().nullable(),
-    startedAt: z.iso.datetime({ offset: true }),
-  }),
-);
-
-/** stdout of one query → processes, or null if it is not the expected JSON. */
-export function parseProcessQueryOutput(stdout: string): ProcessInfo[] | null {
-  const text = stdout.trim();
-  if (text === '') return null;
-  let json: unknown;
-  try {
-    json = JSON.parse(text) as unknown;
-  } catch {
-    return null;
-  }
-  const parsed = processQueryOutputSchema.safeParse(json);
-  if (!parsed.success) return null;
-  return parsed.data.map((row) => ({
-    pid: row.pid,
-    name: row.name,
-    parentPid: row.parentPid,
-    startedAt: new Date(row.startedAt),
-  }));
-}
-
-function unknownResult(reason: ProcessQueryFailure, detail: string): ProcessQueryResult {
-  return { kind: 'unknown', reason, detail: detail.trim().slice(0, 500) };
-}
-
-async function runProcessQuery(
-  wqlFilter: string | null,
-  run: RunFileFn,
-  timeoutMs: number,
-): Promise<ProcessQueryResult> {
-  let result: RunFileResult;
-  try {
-    result = await run(
-      powerShellPath(),
-      ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', processQueryScript(wqlFilter)],
-      { timeoutMs, maxOutputBytes: 1024 * 1024, env: windowsPowerShellEnv() },
-    );
-  } catch (error) {
-    return unknownResult('failed', `powershell could not be started: ${toError(error).message}`);
-  }
-  if (result.timedOut) return unknownResult('timeout', `no answer within ${String(timeoutMs)} ms`);
-  if (result.exitCode !== 0) {
-    return unknownResult('failed', `exit ${String(result.exitCode)}: ${result.stdout} ${result.stderr}`);
-  }
-  const processes = parseProcessQueryOutput(result.stdout);
-  if (processes === null) return unknownResult('output', `unreadable output: ${result.stdout.slice(0, 200)}`);
-  return { kind: 'ok', processes };
-}
-
-/**
- * Name, parent and start time of every process matching `filter` – natively (ADR-229), without
- * `node:ffi` in ONE PowerShell call for many PIDs and their children (R2-02). Three-valued: a
- * failure or timeout is `unknown`, never an empty list. Meant for the orphan cleanup and the
- * shutdown sweep, not for hot paths. An empty filter answers `ok []` without a call.
- */
-export async function queryProcesses(
+export function queryProcesses(
   filter: ProcessFilter,
   options: ProcessQueryOptions = {},
 ): Promise<ProcessQueryResult> {
-  const filters = processQueryFilters(filter);
-  if (filters.length === 0) return { kind: 'ok', processes: [] };
-  if ((options.platform ?? process.platform) !== 'win32') return unknownResult('unsupported', 'not Windows');
-  const native = nativeApi(options);
-  if (native !== null) {
+  return settled(() => {
     const pids = new Set(filter.pids ?? []);
     const parents = new Set(filter.parentPids ?? []);
-    return nativeQuery(native, (entry) => pids.has(entry.pid) || parents.has(entry.parentPid));
-  }
-  const run = options.run ?? runFile;
-  const timeoutMs = options.timeoutMs ?? PROCESS_QUERY_TIMEOUT_MS;
-  const found = new Map<number, ProcessInfo>();
-  for (const wqlFilter of filters) {
-    const result = await runProcessQuery(wqlFilter, run, timeoutMs);
-    if (result.kind === 'unknown') return result;
-    for (const info of result.processes) found.set(info.pid, info);
-  }
-  return { kind: 'ok', processes: [...found.values()] };
+    assertPids([...pids, ...parents]);
+    if (pids.size === 0 && parents.size === 0) return { kind: 'ok', processes: [] };
+    return nativeQuery(options, (entry) => pids.has(entry.pid) || parents.has(entry.parentPid));
+  });
 }
 
 /**
- * EVERY process of the machine (name, parent, start time; natively ≈ 10–30 ms, without `node:ffi`
- * one CIM query of ≈ 1–3 s; three-valued like queryProcesses). For the periodic snapshot of the
- * session process trees (WP22-06, R2-03); the descendants are computed with `descendantsOf`.
+ * EVERY process of the machine (name, parent, start time; natively ≈ 10–30 ms; three-valued like
+ * queryProcesses). For the periodic snapshot of the session process trees (WP22-06, R2-03); the
+ * descendants are computed with `descendantsOf`.
  */
-export async function listProcesses(options: ProcessQueryOptions = {}): Promise<ProcessQueryResult> {
-  if ((options.platform ?? process.platform) !== 'win32') return unknownResult('unsupported', 'not Windows');
-  const native = nativeApi(options);
-  if (native !== null) return nativeQuery(native, null);
-  return runProcessQuery(null, options.run ?? runFile, options.timeoutMs ?? PROCESS_QUERY_TIMEOUT_MS);
+export function listProcesses(options: ProcessQueryOptions = {}): Promise<ProcessQueryResult> {
+  return settled(() => nativeQuery(options, null));
 }
 
 /**
@@ -623,7 +476,7 @@ export async function processStartTime(pid: number, options: ProcessQueryOptions
 }
 
 /**
- * Direct children of `pid` (Win32_Process with ParentProcessId = pid), e.g. for the shutdown sweep
+ * Direct children of `pid` (by their parent PID), e.g. for the shutdown sweep
  * (launcher/shutdown.ts). PIDs are reused – a caller must also compare the start time (a child is
  * never older than its parent). Three-valued like queryProcesses.
  */

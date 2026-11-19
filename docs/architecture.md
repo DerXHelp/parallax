@@ -208,20 +208,18 @@ assertSpawnableFile(file): void             // TypeError für nackte Namen, rela
 systemTool(name): string                    // %SystemRoot%\System32\<name>
 isProcessAlive(pid): boolean                // process.kill(pid, 0), EPERM = lebt; Sofort-Vorfilter der Waisen-Bereinigung
 errnoCode(error): string | undefined
-// Prozessabfragen DREIWERTIG (R2-02, ADR-051): nativ über node:ffi (lib/processNative.ts, Toolhelp + GetProcessTimes,
-// ≈ 10–30 ms, ADR-229); nur ohne node:ffi PowerShell + CIM (Win32_Process), 1–3 s, unter Last bis ≈ 23 s
+// Prozessabfragen DREIWERTIG (R2-02, ADR-051): nur nativ über node:ffi (lib/processNative.ts, Toolhelp +
+// GetProcessTimes, ≈ 10–30 ms, ADR-229), nie PowerShell (ADR-231); ohne node:ffi → unknown 'unsupported'
 interface ProcessInfo { pid: number; name: string; parentPid: number | null; startedAt: Date }
 type ProcessQueryResult = { kind: 'ok'; processes: ProcessInfo[] }
-  | { kind: 'unknown'; reason: 'timeout' | 'failed' | 'output' | 'unsupported'; detail: string }  // nie „weg“
-queryProcesses({ pids?, parentPids? }, { timeoutMs?, run?, platform?, native? }?): Promise<ProcessQueryResult>
-  // EINE Abfrage für viele PIDs (≤ PROCESS_QUERY_MAX_CLAUSES = 100 Klauseln je Aufruf), Timeout
-  // PROCESS_QUERY_TIMEOUT_MS = 60 s, -ErrorAction Stop + exit 3 statt leerer Liste; leerer Filter → ok []
+  | { kind: 'unknown'; reason: 'failed' | 'unsupported'; detail: string }  // nie „weg“
+queryProcesses({ pids?, parentPids? }, { platform?, native? }?): Promise<ProcessQueryResult>
+  // EIN Schnappschuss für viele PIDs und ihre Kinder; leerer Filter → ok [] ohne Schnappschuss
 processInfo(pid, options?): Promise<{ kind: 'found'; info } | { kind: 'missing' } | { kind: 'unknown'; reason; detail }>
 childProcesses(pid, options?): Promise<ProcessQueryResult>  // direkte Kinder; Nutzer: Shutdown-Sweep (launcher/shutdown.ts)
 listProcesses(options?): Promise<ProcessQueryResult>        // ALLE Prozesse, ein Toolhelp-Schnappschuss (Herzschlag-Schnappschuss, ADR-081)
 descendantsOf(processes, root): ProcessInfo[]               // rein; Nachkommen über alle Ebenen, Kind älter als Elter = PID-Wiederverwendung
 processStartTime(pid, options?): Promise<Date | null>       // null = missing ODER unknown (unterscheiden: processInfo)
-processQueryFilters(filter), parseProcessQueryOutput(stdout) // reine Teile (WQL-Filter, JSON-Ausgabe)
 
 // src/server/lib/windows.ts (WP-11, R1-08) – Dateizugriffe nur über FsProbe (geprüft mit @shared/paths)
 interface FsProbe { isFile(path): Promise<boolean>; readText(path): Promise<string | null> }
@@ -1700,16 +1698,16 @@ Default `null`/`[]`). Ein Record entsteht beim Spawn (`add` mit `flush`, überle
 Abbruch) und verschwindet beim Prozessende (`remove`, entprellt). **Herzschlag (WP22-06, nur mit
 dem SdkBackend):** 10 s nach einem Spawn, danach alle 30 s, solange Prozesse laufen, **eine** Prozessliste
 (`listProcesses`) für alle Sessions; je Record die Nachkommen der `claude.exe` mit exakter
-CIM-Startzeit (`children`, ≤ 200) und `aliveAt` (`heartbeat`, entprellt); eine unklare Liste behält
+Startzeit (`children`, ≤ 200) und `aliveAt` (`heartbeat`, entprellt); eine unklare Liste behält
 den letzten Schnappschuss. Beim Serverstart: Records, deren Wurzel **und** Schnappschuss tot sind
 (`isProcessAlive`) → sofort entfernt, ohne PowerShell; die übrigen in **einer** gebündelten
-Abfrage im Hintergrund (`queryProcesses`, Timeout 60 s). Beendet (`taskkill /T /F`) wird die
+Abfrage im Hintergrund (`queryProcesses`, nativ). Beendet (`taskkill /T /F`) wird die
 Wurzel bei gleicher PID + Image (case-insensitiv) + Startzeit ± 5 s – ihr Baum geht mit, der Rest
 des Records wird dann nicht mehr angefasst –, sonst jeder Prozess des Schnappschusses mit **genau**
 derselben PID, demselben Image und derselben Startzeit. Jeder Kill folgt einer frischen Prüfung
 genau dieser PID (nach einem Kill: tot → übersprungen, sonst eine neue gebündelte Abfrage; ADR-093);
-andere Identität (PID wiederverwendet) → unberührt; Record weg. Ergebnis `unknown` (Timeout, Policy-Sperre,
-unlesbare Ausgabe) oder ein gescheitertes `taskkill` → Record **bleibt** (`warn`), nichts beendet,
+andere Identität (PID wiederverwendet) → unberührt; Record weg. Ergebnis `unknown` (Schnappschuss gescheitert,
+kein `node:ffi`) oder ein gescheitertes `taskkill` → Record **bleibt** (`warn`), nichts beendet,
 der nächste Start prüft erneut. Prozesse, die nach dem letzten Schnappschuss starteten, sind
 unbekannt und bleiben. Nur Einträge mit lebendem Record warten darauf – ihr Start (vorher sichtbar
 `starting`) und ein ruhendes `session.rename`.

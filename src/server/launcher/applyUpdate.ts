@@ -735,9 +735,6 @@ export interface NodeApplyUpdateDepsOptions {
   log?: UpdateLog;
 }
 
-/** Upper bound of the CIM query for the start time / the children of the old server. */
-const PROCESS_QUERY_MS = 30_000;
-
 /** The real dependencies (file system, named pipes, processes, toasts, `launchLocked`). */
 export function createNodeApplyUpdateDeps(options: NodeApplyUpdateDepsOptions): ApplyUpdateDeps {
   const env = options.env ?? process.env;
@@ -768,9 +765,9 @@ export function createNodeApplyUpdateDeps(options: NodeApplyUpdateDepsOptions): 
     },
     findBackup: (home, change) => findBackup(home, change),
     isAlive: (pid) => isProcessAlive(pid),
-    processStartTime: (pid) => processStartTime(pid, { timeoutMs: PROCESS_QUERY_MS }),
+    processStartTime: (pid) => processStartTime(pid),
     killOldServer: async (pid, startedAt) => {
-      const children = await childProcesses(pid, { timeoutMs: PROCESS_QUERY_MS });
+      const children = await childProcesses(pid);
       if (children.kind === 'ok') {
         for (const child of children.processes) {
           if (child.pid === process.pid || child.startedAt.getTime() < startedAt.getTime()) continue;
@@ -788,7 +785,7 @@ export function createNodeApplyUpdateDeps(options: NodeApplyUpdateDepsOptions): 
       }
       // The child query can take a while (security review WP-89): if the server ended meanwhile,
       // its PID may belong to another process now – check the start time again right before.
-      const again = await processStartTime(pid, { timeoutMs: PROCESS_QUERY_MS });
+      const again = await processStartTime(pid);
       if (again?.getTime() !== startedAt.getTime()) {
         log.write(`PID ${String(pid)} is no longer the old server - it is not ended.`);
         return;

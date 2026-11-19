@@ -51,7 +51,7 @@ export interface ServerShutdownOptions {
   sessionsTimeoutMs?: number;
   /** Default timeout per close step (default 5 s). */
   stepTimeoutMs?: number;
-  /** Upper bound for `forceKill` (default 15 s: one CIM query of 1-3 s plus a taskkill per tree). */
+  /** Upper bound for `forceKill` (default 15 s: the native process snapshot plus a taskkill per tree). */
   forceKillTimeoutMs?: number;
   /** Default `process.exit`. */
   exit?: (code: number) => void;
@@ -167,7 +167,10 @@ export function createServerShutdown(options: ServerShutdownOptions = {}): Serve
   return shutdown;
 }
 
-/** Image names never killed by the sweep: the CIM query of `childProcesses` runs as our own child. */
+/**
+ * Image names never killed by the sweep: the server's own short PowerShell helpers (toast, console
+ * start, shortcuts) end by themselves (until ADR-229 the process query was one of them, too).
+ */
 const SWEEP_EXCLUDED = new Set(['powershell.exe']);
 
 /**
@@ -191,8 +194,7 @@ export async function killChildProcessTrees(
   const log = options.logger ?? rootLogger;
   const parentPid = options.parentPid ?? process.pid;
   const since = options.since ?? new Date(Date.now() - process.uptime() * 1000 - 1000);
-  const list =
-    options.list ?? ((pid: number) => childProcesses(pid, { timeoutMs: SHUTDOWN_FORCE_KILL_TIMEOUT_MS }));
+  const list = options.list ?? ((pid: number) => childProcesses(pid));
   const kill = options.kill ?? killProcessTree;
   const listed = await list(parentPid);
   if (listed.kind === 'unknown') {

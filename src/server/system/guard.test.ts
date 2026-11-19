@@ -62,8 +62,8 @@ describe('R6: the Windows integration never runs for real in a test run', () => 
       kind: 'failed',
       reason: `powershell could not be started: ${TEST_RUN_REFUSAL}`,
     });
-    // The state query (CIM through PowerShell) is refused too: unknown, never ended.
-    expect(await launcher.state({ pid: process.pid, startedAt: new Date() })).toBe('unknown');
+    // The state query reads the process list in this process (ADR-229): it starts nothing either.
+    await launcher.state({ pid: process.pid, startedAt: new Date() });
     expect(spawned).toEqual([]);
   });
 

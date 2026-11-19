@@ -101,7 +101,7 @@ async function world(): Promise<World> {
 
 const install = (w: World, packageDir: string, extra: { keys?: string[]; nodeVersion?: string } = {}) =>
   installPackage(
-    { packageDir, root: w.root, keys: extra.keys ?? [w.key.x], nodeVersion: extra.nodeVersion ?? '26.1.0' },
+    { packageDir, root: w.root, keys: extra.keys ?? [w.key.x], nodeVersion: extra.nodeVersion ?? '26.12.0' },
     w.deps,
   );
 
@@ -179,8 +179,8 @@ describe('installPackage (WP-86, WP-83 §8.3)', () => {
     await writeFile(path.join(extra, 'dist', 'extra.js'), '');
     await expect(install(w, extra)).rejects.toThrow(/dist\/extra\.js: not in release\.json/);
 
-    await expect(install(w, await w.pkg('1.0.0'), { nodeVersion: '24.4.1' })).rejects.toThrow(
-      /needs Node\.js 24\.5\.0 or newer, this is 24\.4\.1/,
+    await expect(install(w, await w.pkg('1.0.0'), { nodeVersion: '26.8.0' })).rejects.toThrow(
+      /needs Node\.js 26\.9\.0 or newer, this is 26\.8\.0/,
     );
     await expect(readdir(w.root)).rejects.toThrow();
   });
@@ -265,7 +265,7 @@ describe('stageVersion (WP-87 §1.9)', () => {
         packageDir,
         root: w.root,
         keys: extra.keys ?? [w.key.x],
-        nodeVersion: '26.1.0',
+        nodeVersion: '26.12.0',
         ...(extra.signal ? { signal: extra.signal } : {}),
         onProgress: (step, done, total) => extra.events?.push([step, done, total]),
       },
@@ -347,7 +347,7 @@ describe('stageVersion (WP-87 §1.9)', () => {
     expect(
       await reason(
         stageVersion(
-          { packageDir: await w.pkg('1.0.0'), root: w.root, keys: [w.key.x], nodeVersion: '24.4.1' },
+          { packageDir: await w.pkg('1.0.0'), root: w.root, keys: [w.key.x], nodeVersion: '26.8.0' },
           w.deps,
         ),
       ),
@@ -400,7 +400,7 @@ describe('switchVersion and restoreCurrent (WP-87 §1.9)', () => {
     });
     expect(await readCurrent(w.root)).toEqual({ schemaVersion: 1, version: '1.1.0', previous: '1.0.0' });
     expect(await readFile(path.join(w.root, START_SCRIPT), 'utf8')).toBe('// start 1.1.0\n');
-    expect(await readFile(path.join(w.root, START_CMD), 'utf8')).toBe(startCmd('24.5.0'));
+    expect(await readFile(path.join(w.root, START_CMD), 'utf8')).toBe(startCmd('26.9.0'));
     expect(await readFile(path.join(w.root, ICON_FILE), 'utf8')).toBe('icon 1.1.0');
 
     await restoreCurrent(w.root, result.before);
@@ -493,9 +493,9 @@ describe('verifyVersion (WP-87 §1.9)', () => {
 
 describe('root files from the package (WP-87 §1.9)', () => {
   it('packageRootFiles are the templates below root/', () => {
-    expect(packageRootFiles('24.5.0')).toEqual({
+    expect(packageRootFiles('26.9.0')).toEqual({
       [`${PACKAGE_ROOT_DIR}/${START_SCRIPT}`]: startScript(),
-      [`${PACKAGE_ROOT_DIR}/${START_CMD}`]: startCmd('24.5.0'),
+      [`${PACKAGE_ROOT_DIR}/${START_CMD}`]: startCmd('26.9.0'),
     });
   });
 
