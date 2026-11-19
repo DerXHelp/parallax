@@ -49,23 +49,23 @@ export interface ExitResult {
 const ERROR_LEVEL = 50;
 
 /**
- * The server's own console host (`conhost.exe`, a child of the hidden console process): Windows
- * ends it right after the server, but not always before the native process query looks (a few ms
- * after the exit). A lone console host gets this long to end; any other child fails at once.
+ * Children may still end on their own right after the server: its console host (`conhost.exe`,
+ * Windows ends it after the hidden console process) and a lookup running at the shutdown (`git` for
+ * the branch, ≤ 5 s `GIT_BRANCH_TIMEOUT_MS`). The native process query (ADR-231) looks within a few
+ * ms of the exit and saw both; only a child still there after this grace is left behind.
  */
-const CONSOLE_HOST_GRACE_MS = 3_000;
+const CHILD_GRACE_MS = 5_000;
 
 /** Children of `pid` started at or after `since` that are still there (three-valued: unknown throws). */
 async function leftChildren(pid: number, since: Date): Promise<{ pid: number; name: string }[]> {
-  const deadline = Date.now() + CONSOLE_HOST_GRACE_MS;
+  const deadline = Date.now() + CHILD_GRACE_MS;
   for (;;) {
     const children = await childProcesses(pid);
     if (children.kind === 'unknown') {
       throw new Error(`child processes unknown: ${children.reason} ${children.detail}`);
     }
     const orphans = children.processes.filter((p) => p.startedAt >= since);
-    const onlyConsoleHost = orphans.every((p) => p.name.toLowerCase() === 'conhost.exe');
-    if (orphans.length === 0 || !onlyConsoleHost || Date.now() > deadline) return orphans;
+    if (orphans.length === 0 || Date.now() > deadline) return orphans;
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 100);
     });
