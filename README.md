@@ -3,8 +3,9 @@
 Lokale Mission-Control-App für viele parallele Claude-Code-Sessions unter Windows: ein Node-Server
 auf `127.0.0.1` steuert je Session das installierte `claude` über das Claude Agent SDK, die Web-UI
 läuft als Chrome-App-Fenster. Auf Wunsch steuert ein Parallax auch die Sessions eines anderen Rechners im
-selben Netz ([Mehrere Rechner](#mehrere-rechner)). Status: Phase 3 „Dateien und Plan-Komfort“ abgeschlossen
-(auf `main`; siehe `docs/progress.md`).
+selben Netz ([Mehrere Rechner](#mehrere-rechner)). Status: stabile Releases auf GitHub (siehe
+[Installieren](#installieren)); Änderungen stehen in `CHANGELOG.md`, der Stand der Arbeitspakete in
+`docs/progress.md`.
 
 ## So sieht Parallax aus
 
@@ -15,6 +16,8 @@ selben Netz ([Mehrere Rechner](#mehrere-rechner)). Status: Phase 3 „Dateien un
 
 **Viele Sessions auf einen Blick.** Die Seitenleiste zeigt je Projekt, welche Session arbeitet, welche
 auf dich wartet (Freigabe, Plan), was fertig und neu ist, dazu Remote Control und die Abo-Limits.
+Sie lässt sich in der Breite ziehen und mit Alt+B zu einer schmalen Leiste einklappen, die weiter alle
+Sessions zeigt.
 Rechts das Transkript der ausgewählten Session: kompakte Schrittgruppen, eine neue Datei, ein Diff und
 ein laufender Testlauf, der sich in den Hintergrund schicken lässt; über dem Eingabefeld die To-dos.
 
@@ -42,8 +45,9 @@ der letzten Änderung.
 ## Installieren
 Für die Nutzung: ein Release von GitHub, ohne Klon, pnpm oder Build.
 
-- **Voraussetzungen:** Node.js 24.5 oder neuer, das installierte **`claude`**-CLI mit Login, Google
-  Chrome.
+- **Voraussetzungen:** Node.js 24.5 oder neuer, empfohlen **26.9 oder neuer** (erst damit gibt es
+  „Mehrere Rechner“, und der Server liest Prozesse selbst statt über PowerShell), das installierte
+  **`claude`**-CLI mit Login, Google Chrome.
 - **Schritte:** `parallax-<version>-win.zip` von der Release-Seite laden
   (`https://github.com/DerXHelp/parallax/releases`), entpacken und `install.cmd` doppelklicken. Sperren
   SmartScreen oder AppLocker die `.cmd`, ist `node dist\install.js` im entpackten Ordner gleichwertig.
@@ -99,7 +103,8 @@ Für die Nutzung: ein Release von GitHub, ohne Klon, pnpm oder Build.
 
 ## Voraussetzungen
 Für die Entwicklung (Klon, Build, Tests):
-- **Node.js 26** (Minimum 24.5). `.node-version` enthält `26` für fnm, nvm-windows oder Volta.
+- **Node.js 26.9 oder neuer** (Minimum 24.5; die Release-Prüfung läuft mit 24.5.0 und 26). `.node-version`
+  enthält `26` für fnm, nvm-windows oder Volta – ein schon installiertes älteres 26.x vorher aktualisieren.
 - **pnpm 12.17.0**: einmalig `npm i -g pnpm@12.17.0`. `packageManager` und der Lockfile pinnen die
   Version; ein pnpm ≥ 10 lädt sie bei Abweichung selbst nach (`managePackageManagerVersions`; geprüft
   13.11.2026 mit pnpm 12.8.2 → 12.17.0). Ein zu altes pnpm scheitert an `engines.pnpm: ">=12.8"`.
