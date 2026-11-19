@@ -190,7 +190,7 @@ export function Sidebar({
   onCollapse?: () => void;
   /** Called after a row was chosen (click, Enter) – not for the shortcuts. */
   onChoose?: (sessionKey: string) => void;
-  /** WP-90: width in px (SidebarFrame; without it the former fixed w-72). */
+  /** WP-90: width in screen px (SidebarFrame, WP-92 at the zoom; without it the former fixed w-72). */
   width?: number;
   /** CSS max-width, e.g. a share of the window. */
   maxWidth?: string;

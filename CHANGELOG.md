@@ -5,6 +5,10 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 
 ## [Unveröffentlicht]
 
+### Neu
+- Der Zoom lässt sich unter Einstellungen → Allgemein wählen (50–200 %, gilt für alle Fenster); Strg+Mausrad und
+  Strg+Plus/Minus ändern diese Einstellung statt Chromes eigenen Zoom, Strg+0 setzt auf 100 % zurück (WP-92).
+
 ### Behoben
 - Die Context-Anzeige springt bei Modellen anderer Anbieter während eines Turns nicht mehr kurz auf 0 %
   (fix/context-estimate).

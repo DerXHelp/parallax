@@ -373,6 +373,10 @@ const KEY_LABELS: Readonly<Record<string, TranslationKey>> = {
   arrowleft: 'common.keys.arrowLeft',
   right: 'common.keys.arrowRight',
   arrowright: 'common.keys.arrowRight',
+  // WP-92: help entries of the zoom (`+` would split the combination).
+  plus: 'common.keys.plus',
+  minus: 'common.keys.minus',
+  wheel: 'common.keys.wheel',
 };
 
 /** Translated key caps of a combination: `Mod+K` → ['Strg', 'K'] in German. */

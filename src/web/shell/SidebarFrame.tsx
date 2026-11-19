@@ -6,9 +6,11 @@ import { cn } from '@web/lib/cn';
 import { HOST_BG } from '@web/lib/host-colors';
 import { focusElement, focusedElement } from '@web/lib/return-focus';
 import { sessionTitle } from '@web/lib/session-title';
+import { toScreenPx, zoomFactor } from '@web/lib/zoom';
 import { useNow } from '@web/state/clock';
 import { useSelectedSession, useSummaries } from '@web/state/hooks';
 import { useHostLabels } from '@web/state/hosts';
+import { useZoom } from '@web/state/zoom';
 import { IconButton } from '@web/ui/icon-button';
 import { Kbd } from '@web/ui/kbd';
 import { Splitter } from '@web/ui/splitter';
@@ -224,6 +226,8 @@ export function SidebarFrame({
   const pendingFocus = useRef<PendingFocus>(null);
   const storedWidth = useSidebarWidth();
   const maxAllowed = useSidebarMaxWidth();
+  // WP-92: widths are layout px (CSS px at 100 %); the sidebar is drawn at the zoom.
+  const zoom = useZoom();
   /** WP-90: the width while the edge is dragged (may go below the minimum: then it collapses). */
   const [dragWidth, setDragWidth] = useState<number | null>(null);
 
@@ -331,7 +335,7 @@ export function SidebarFrame({
   // The share of the window keeps the session area usable; the overlay may cover most of it.
   const maxWidth = collapsed
     ? '85vw'
-    : `max(${String(SIDEBAR_MIN_WIDTH)}px, ${String(SIDEBAR_MAX_SHARE * 100)}vw)`;
+    : `max(${String(toScreenPx(SIDEBAR_MIN_WIDTH, zoom))}px, ${String(SIDEBAR_MAX_SHARE * 100)}vw)`;
 
   return (
     <>
@@ -357,7 +361,7 @@ export function SidebarFrame({
         <Sidebar
           onCollapse={onCollapse}
           onChoose={overlay ? onChoose : undefined}
-          width={width}
+          width={toScreenPx(width, zoom)}
           maxWidth={maxWidth}
           willCollapse={willCollapse}
         />
@@ -368,6 +372,7 @@ export function SidebarFrame({
             max={maxAllowed}
             onChange={setDragWidth}
             onCommit={commitWidth}
+            scale={zoomFactor(zoom)}
             label={t('navigation.sidebar.resize')}
             valueText={t('navigation.sidebar.width', { width: Math.round(width) })}
             title={t('navigation.sidebar.resizeHint')}

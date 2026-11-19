@@ -3,8 +3,10 @@ import { VList } from 'virtua';
 import type { SessionFile, SessionFileOp } from '@shared/model';
 import { useI18n } from '@web/i18n';
 import { fuzzyFilter } from '@web/lib/fuzzy';
+import { toScreenPx } from '@web/lib/zoom';
 import { useNow } from '@web/state/clock';
 import { useSummarySelector } from '@web/state/hooks';
+import { useZoom } from '@web/state/zoom';
 import { Alert } from '@web/ui/alert';
 import { Badge, type BadgeProps } from '@web/ui/badge';
 import { Button } from '@web/ui/button';
@@ -33,6 +35,7 @@ const OP_VARIANT: Readonly<Record<SessionFileOp, NonNullable<BadgeProps['variant
   attached: 'secondary',
 };
 
+/** Height of a row at 100 % zoom; virtua gets it at the zoom (WP-92). */
 export const FILES_ROW_HEIGHT = 48;
 
 interface Row {
@@ -116,6 +119,7 @@ export function FilesPanel({ sessionKey }: { sessionKey: string }) {
   const { files, truncated, error, loading, refresh } = useSessionFiles(sessionKey);
   const [query, setQuery] = useState('');
   const now = useNow(30_000);
+  const zoom = useZoom();
 
   const rows = useMemo<Row[]>(
     () =>
@@ -191,7 +195,7 @@ export function FilesPanel({ sessionKey }: { sessionKey: string }) {
           role="list"
           aria-label={t('files.panel.list')}
           data={visible}
-          itemSize={FILES_ROW_HEIGHT}
+          itemSize={toScreenPx(FILES_ROW_HEIGHT, zoom)}
           className="min-h-0 flex-1"
         >
           {(row) => <FileRow key={row.file.path} sessionKey={sessionKey} row={row} now={now} />}

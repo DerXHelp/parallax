@@ -1,12 +1,14 @@
 import { FolderTreeIcon, ListTodoIcon, ScrollTextIcon, type LucideIcon } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BackgroundTask, TranscriptItem } from '@shared/model';
 import type { SessionViewState } from '@shared/sync';
 import { buildTaskRows, runningTaskCounts, runningTaskTotal, type RunningTaskCounts } from '@shared/tasks';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { selectTaskSources } from '@web/lib/task-rows';
+import { toLayoutPx } from '@web/lib/zoom';
 import { useSessionSelector } from '@web/state/hooks';
+import { getZoom, useZoom } from '@web/state/zoom';
 import { DropdownMenuCheckboxItem, DropdownMenuSeparator } from '@web/ui/dropdown-menu';
 import { IconButton } from '@web/ui/icon-button';
 import { runAfterMenu } from './navigation/session-actions';
@@ -224,7 +226,7 @@ export function HeaderPanelMenuItems({ sessionKey }: { sessionKey: string }) {
   );
 }
 
-/** Width of the session bar (px) below which the panel buttons move into the "…" menu. */
+/** Width of the session bar (layout px) below which the panel buttons move into the "…" menu. */
 export const COMPACT_HEADER_BELOW = 560;
 
 /**
@@ -233,11 +235,19 @@ export const COMPACT_HEADER_BELOW = 560;
  */
 export function useCompactHeader(): [boolean, (element: HTMLElement | null) => (() => void) | undefined] {
   const [compact, setCompact] = useState(false);
+  /** Last measured width of the bar (screen px). */
+  const widthRef = useRef(0);
+  // WP-92: the measured screen px are compared in layout px; a zoom change re-evaluates the bar
+  // (its width stays, its content grows – no ResizeObserver entry).
+  const zoom = useZoom();
+  useEffect(() => {
+    setCompact(isCompactWidth(widthRef.current, zoom));
+  }, [zoom]);
   const ref = useCallback((element: HTMLElement | null) => {
     if (element === null || typeof ResizeObserver === 'undefined') return undefined;
     const observer = new ResizeObserver((entries) => {
-      const width = entries.at(-1)?.contentRect.width ?? 0;
-      setCompact(width > 0 && width < COMPACT_HEADER_BELOW);
+      widthRef.current = entries.at(-1)?.contentRect.width ?? 0;
+      setCompact(isCompactWidth(widthRef.current, getZoom()));
     });
     observer.observe(element);
     return () => {
@@ -245,4 +255,8 @@ export function useCompactHeader(): [boolean, (element: HTMLElement | null) => (
     };
   }, []);
   return [compact, ref];
+}
+
+function isCompactWidth(width: number, zoom: number): boolean {
+  return width > 0 && toLayoutPx(width, zoom) < COMPACT_HEADER_BELOW;
 }

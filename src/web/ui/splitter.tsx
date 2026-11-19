@@ -27,6 +27,11 @@ export interface SplitterProps extends Omit<
   invert?: boolean;
   /** Arrow key step in px (default 16). */
   step?: number;
+  /**
+   * WP-92: screen px per value px (the zoom factor, 1.25 at 125 %) – `value`, `min`, `max` and `step`
+   * stay in layout px, the pointer travel is divided by it, so the bar follows the pointer.
+   */
+  scale?: number;
   /** Accessible name (from `t()`). */
   label: string;
   /** `aria-valuetext` (from `t()`), e.g. "480 px". */
@@ -53,6 +58,7 @@ export function Splitter({
   orientation = 'vertical',
   invert = false,
   step = SPLITTER_STEP,
+  scale = 1,
   label,
   valueText,
   className,
@@ -108,7 +114,7 @@ export function Splitter({
     const current = drag.current;
     if (current?.pointerId !== event.pointerId) return;
     const position = vertical ? event.clientX : event.clientY;
-    current.last = setValue(current.value + sign * (position - current.start), false);
+    current.last = setValue(current.value + (sign * (position - current.start)) / scale, false);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {

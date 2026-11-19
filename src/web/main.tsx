@@ -14,6 +14,7 @@ import { installShortcutListener } from './shell/shortcuts';
 import { bootApp } from './state/bootstrap';
 import { preloadInitialLanguage } from './state/language';
 import { applyInitialTheme } from './state/theme';
+import { applyInitialZoom } from './state/zoom';
 
 const rootElement = document.getElementById('root');
 if (rootElement === null) {
@@ -27,6 +28,7 @@ function render(node: ReactNode): void {
 
 document.title = PRODUCT_NAME;
 applyInitialTheme();
+applyInitialZoom();
 // The window starts in English; the German chunk (ADR-153) loads meanwhile when it was used last.
 preloadInitialLanguage();
 installShortcutListener();

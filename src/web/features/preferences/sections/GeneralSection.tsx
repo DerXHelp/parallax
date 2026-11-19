@@ -1,20 +1,27 @@
 import { languageSchema, themeSchema } from '@shared/common';
+import { zoomSchema } from '@shared/model';
 import { useT } from '@web/i18n';
+import { ZOOM_LEVELS } from '@web/lib/zoom';
 import { HOOK_DISPLAYS } from '@web/state/hook-display';
 import { TRANSCRIPT_VIEWS } from '@web/state/transcript-view';
 import { Label } from '@web/ui/label';
 import { RadioGroup, RadioGroupItem } from '@web/ui/radio-group';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@web/ui/select';
 import { SettingField, SettingList } from '../components/SettingField';
 import type { SettingsEditor } from '../state/settings-editor';
 
 /**
  * Language and theme – the same choice as the settings menu (which keeps its quick choice); WP-63:
  * the transcript view (compact / all steps; WP-65: a server setting like the others); WP-69: hook
- * runs in the transcript (all / failed and blocking only – default / off).
+ * runs in the transcript (all / failed and blocking only – default / off); WP-92: the zoom of every
+ * window (the steps of Chrome; a value between two steps, e.g. edited by hand, is listed as well).
  */
 export function GeneralSection({ editor }: { editor: SettingsEditor }) {
   const t = useT();
   const { settings, save } = editor;
+  const zoomLevels: readonly number[] = ZOOM_LEVELS.some((level) => level === settings.zoom)
+    ? ZOOM_LEVELS
+    : [...ZOOM_LEVELS, settings.zoom].sort((a, b) => a - b);
   return (
     <SettingList>
       <SettingField
@@ -67,6 +74,31 @@ export function GeneralSection({ editor }: { editor: SettingsEditor }) {
               </div>
             ))}
           </RadioGroup>
+        )}
+      />
+      <SettingField
+        name="zoom"
+        label={t('preferences.general.zoom')}
+        description={t('preferences.general.zoomHint')}
+        control={({ id, describedBy }) => (
+          <Select
+            value={String(settings.zoom)}
+            onValueChange={(value) => {
+              const zoom = zoomSchema.safeParse(Number(value));
+              if (zoom.success) save({ zoom: zoom.data });
+            }}
+          >
+            <SelectTrigger id={id} aria-describedby={describedBy} className="w-24 justify-between">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {zoomLevels.map((level) => (
+                <SelectItem key={level} value={String(level)}>
+                  {t('preferences.general.zoomValue', { percent: level })}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         )}
       />
       <SettingField

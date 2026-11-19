@@ -2764,3 +2764,24 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
 - **Folgen:** Wirkt erst ab der Version nach 1.0.1: 1.0.0/1.0.1 kennen das Feld nicht (unbekannte Felder werden
   verworfen), laden das Paket und lehnen es nach dem Entpacken ab wie bisher. Kein Eingriff in `src/shared`, keine
   Änderung der UI.
+
+## ADR-233 – Zoom als Einstellung: Root-Schriftgröße, Strg+Mausrad steuert die Einstellung
+- **Datum/WP:** 19.11.2026, WP-92 (`feature/zoom`), abgestimmt mit dem Nutzer (Tasten koppeln, gilt für alle Fenster).
+- **Entscheidung:**
+  - `settings.zoom` (ganze Prozent 50–200, Default 100, Stufen wie Chrome) gilt für jedes Fenster dieses Rechners, auch
+    für die Sessions anderer Rechner (Anzeige-Einstellung wie die Transkript-Ansicht).
+  - Umsetzung über die **Schriftgröße von `<html>`** (`font-size: <zoom>%`): Die UI ist in rem gebaut, Text, Abstände,
+    Icons und Dialoge wachsen mit. Kein CSS-`zoom` (Popover-Position, Zeigerwege und `innerWidth` lägen in anderen
+    Koordinaten), kein Chrome-Zoom (eine Seite kann ihn nicht setzen).
+  - JS-Layout rechnet in **Layout-px** (CSS-px bei 100 %): gemessene Breiten (`innerWidth`, ResizeObserver) werden durch
+    den Zoom geteilt, gezeichnete Breiten (Seitenleiste, Seitenpanel) mit ihm multipliziert, der Splitter teilt den
+    Zeigerweg (`scale`). Gespeicherte Breiten bleiben Layout-px und wachsen mit dem Zoom wie bei Chrome.
+  - **Strg+Mausrad, Strg+Plus/Minus** ändern die Einstellung statt Chromes Zoom (überall, auch in Dialogen und
+    Textfeldern; eigener Listener, nicht die Registry). Mausrad: eine Stufe je 100 px gesammelter Bewegung (Touchpad-
+    Pinch). **Strg+0** setzt auf 100 % und lässt das Ereignis durch, damit Chrome einen alten eigenen Zoom ebenfalls
+    zurücksetzt. Sofort angewendet, gespeichert einmal nach 300 ms Ruhe; bis dahin überschreibt die gespeicherte
+    Einstellung das Fenster nicht.
+- **Begründung:** Eine Einstellung, die zeigt, was Strg+Mausrad tut, statt zweier übereinander wirkender Zooms. Die
+  Root-Schriftgröße trifft fast alles ohne Koordinatenumrechnung in Radix/Floating UI und virtua.
+- **Folgen:** Tailwind-Breakpoints (`sm:`/`md:`, wenige Stellen) und einzelne px-Werte (Radien, Rahmen) wachsen nicht
+  mit. Ein vor WP-92 gesetzter Chrome-Zoom bleibt im Profil, bis Strg+0 ihn zurücksetzt.
