@@ -6,7 +6,7 @@ Ein Node-Server (127.0.0.1) steuert je Session das **installierte** `claude` üb
 die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale Entscheidungen.
 
 ## Stack
-- Server: Node ≥ 24.5 (Standard 26), TypeScript, Fastify 5 + `@fastify/websocket`, zod 4, pino 10,
+- Server: Node ≥ 26.9 (Standard 26, ADR-231), TypeScript, Fastify 5 + `@fastify/websocket`, zod 4, pino 10,
   `@anthropic-ai/claude-agent-sdk` **exakt 0.3.322** (Plattform-Binaries per pnpm ausgeschlossen).
 - Web: Vite 8, React 19, Tailwind v4, shadcn/ui (`radix-ui`), lucide-react, Zustand,
   react-markdown/streamdown, shiki, diff, virtua. Fonts lokal (@fontsource-variable).

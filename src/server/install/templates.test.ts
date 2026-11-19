@@ -91,15 +91,15 @@ describe('start.mjs (WP-86, WP-83 §8.1)', () => {
 
 describe('cmd files', () => {
   it('use CRLF, never the current directory, and the right entry', () => {
-    for (const text of [startCmd('24.5.0'), installCmd('24.5.0')]) {
+    for (const text of [startCmd('26.9.0'), installCmd('26.9.0')]) {
       expect(text.split('\r\n').length).toBeGreaterThan(10);
       expect(text.replace(/\r\n/g, '')).not.toContain('\n');
       expect(text).toContain('set "NoDefaultCurrentDirectoryInExePath=1"');
-      expect(text).toContain('Node.js 24.5.0');
+      expect(text).toContain('Node.js 26.9.0');
     }
-    expect(startCmd('24.5.0')).toContain('node --use-system-ca --use-env-proxy "%~dp0start.mjs" %*');
+    expect(startCmd('26.9.0')).toContain('node --use-system-ca --use-env-proxy "%~dp0start.mjs" %*');
     // install.cmd passes no Node flags: install.js adds them after its version check.
-    expect(installCmd('24.5.0')).toContain('node "%~dp0dist\\install.js" %*');
+    expect(installCmd('26.9.0')).toContain('node "%~dp0dist\\install.js" %*');
   });
 });
 

@@ -19,7 +19,7 @@ async function installed(): Promise<string> {
   await makeTestPackage(pkg, { version: '1.0.0', key });
   const root = path.join(base, 'Parallax');
   await installPackage(
-    { packageDir: pkg, root, keys: [key.x], nodeVersion: '26.1.0' },
+    { packageDir: pkg, root, keys: [key.x], nodeVersion: '26.12.0' },
     {
       provideSdk: fakeProvideSdk([]),
       startMenu: () => Promise.resolve(null),

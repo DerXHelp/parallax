@@ -62,7 +62,7 @@ export function foreignCredentials(type: ForeignKeyType): { key: string; cert: s
       : generateKeyPairSync(type === 'ml-dsa-65' ? 'ml-dsa-65' : 'ml-dsa-87');
   const der = buildTestCertificate(privateKey, publicKey, type);
   return {
-    key: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+    key: privateKey.export({ type: 'pkcs8', format: 'pem' }),
     cert: certificatePem(der),
     der,
   };

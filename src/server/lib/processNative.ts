@@ -2,8 +2,8 @@
  * The process list without starting a process (ADR-229): `CreateToolhelp32Snapshot` +
  * `Process32FirstW/NextW` (PID, parent, image name) and `OpenProcess(QUERY_LIMITED_INFORMATION)` +
  * `GetProcessTimes` (creation time), kernel32 through `node:ffi` (lib/ffi.ts). About 10–30 ms for
- * the whole machine instead of 1–3 s for PowerShell + CIM – and nothing a security product reads
- * as process discovery by a script.
+ * the whole machine (PowerShell + CIM took 1–3 s) – and nothing a security product reads as process
+ * discovery by a script. The only process list of the server (ADR-231).
  *
  * Processes of other users or protected ones cannot be opened: their start time is null (the caller
  * decides; lib/process.ts leaves them out or answers `unknown` for a PID it asked for).

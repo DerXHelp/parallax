@@ -1,6 +1,6 @@
 /**
  * Bundles the server into dist/server.js, the launcher into dist/launcher.js and the installer into
- * dist/install.js (ESM, Node >= 24.5; launcher and installer are what a release package starts,
+ * dist/install.js (ESM, Node >= 26.9; launcher and installer are what a release package starts,
  * WP-85/WP-86 - a checkout runs the launcher with tsx).
  * npm packages stay external and are loaded from node_modules at runtime (pino transports,
  * the Agent SDK and native modules must not be bundled). Only own code and `@shared/*` are bundled.

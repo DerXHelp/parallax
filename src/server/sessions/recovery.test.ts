@@ -146,9 +146,15 @@ describe('cleanupOrphans (C.8, R2-02, R2-03)', () => {
   });
 
   it.each<[string, () => Promise<ProcessQueryResult>]>([
-    ['a timeout', () => Promise.resolve({ kind: 'unknown', reason: 'timeout', detail: 'no answer' })],
-    ['a policy/CIM failure', () => Promise.resolve({ kind: 'unknown', reason: 'failed', detail: 'exit 1' })],
-    ['a rejected query', () => Promise.reject(new Error('powershell missing'))],
+    [
+      'no node:ffi',
+      () => Promise.resolve({ kind: 'unknown', reason: 'unsupported', detail: 'no native list' }),
+    ],
+    [
+      'a failed snapshot',
+      () => Promise.resolve({ kind: 'unknown', reason: 'failed', detail: 'snapshot failed' }),
+    ],
+    ['a rejected query', () => Promise.reject(new Error('query failed'))],
   ])('%s is unknown: nothing killed, warned, the record is kept (R2-02)', async (_name, query) => {
     const { d, killProcessTree, log } = deps({ queryProcesses: query });
     const [result] = await Promise.all(cleanupOrphans([record()], d));
@@ -228,7 +234,7 @@ describe('cleanupOrphans (C.8, R2-02, R2-03)', () => {
       const queryProcesses = vi
         .fn((_filter: ProcessFilter): Promise<ProcessQueryResult> => Promise.resolve(ok()))
         .mockResolvedValueOnce(ok(live(shell), live(ping)))
-        .mockResolvedValueOnce({ kind: 'unknown', reason: 'timeout', detail: 'slow' });
+        .mockResolvedValueOnce({ kind: 'unknown', reason: 'failed', detail: 'snapshot failed' });
       const { d, killProcessTree, log } = deps({ isProcessAlive: (pid) => pid !== 4242, queryProcesses });
       const [result] = await Promise.all(cleanupOrphans([withChildren()], d));
       expect(result).toBe('unknown');
@@ -264,7 +270,8 @@ describe('cleanupOrphans (C.8, R2-02, R2-03)', () => {
     it('an unknown answer ends nothing and keeps the record', async () => {
       const { d, killProcessTree } = deps({
         isProcessAlive: (pid) => pid !== 4242,
-        queryProcesses: () => Promise.resolve({ kind: 'unknown', reason: 'timeout', detail: 'slow' }),
+        queryProcesses: () =>
+          Promise.resolve({ kind: 'unknown', reason: 'failed', detail: 'snapshot failed' }),
       });
       expect(await Promise.all(cleanupOrphans([withChildren()], d))).toEqual(['unknown']);
       expect(killProcessTree).not.toHaveBeenCalled();

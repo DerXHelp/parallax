@@ -1060,14 +1060,14 @@ describe('orphans', () => {
     expect(h.backend.starts).toHaveLength(1);
   });
 
-  it('an inconclusive query (timeout) kills nothing and keeps the record for the next start', async () => {
+  it('an inconclusive query kills nothing and keeps the record for the next start', async () => {
     const h = await setup({
       seed: { entries: [entry41] },
       processes: [record(1)],
       proc: {
         isProcessAlive: alive(50_001),
         queryProcesses: () =>
-          Promise.resolve({ kind: 'unknown', reason: 'timeout', detail: 'no answer within 60000 ms' }),
+          Promise.resolve({ kind: 'unknown', reason: 'failed', detail: 'process snapshot failed' }),
       },
     });
     await h.manager.orphansDone();

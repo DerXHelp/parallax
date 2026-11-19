@@ -285,8 +285,7 @@ describe('killChildProcessTrees (taskkill /T /F of the remaining children)', () 
     const kill = vi.fn(() => Promise.resolve());
     const count = await killChildProcessTrees({
       parentPid: 100,
-      list: () =>
-        Promise.resolve({ kind: 'unknown', reason: 'timeout', detail: 'no answer within 15000 ms' }),
+      list: () => Promise.resolve({ kind: 'unknown', reason: 'failed', detail: 'process snapshot failed' }),
       kill,
       logger: silent,
     });

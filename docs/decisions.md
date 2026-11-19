@@ -2726,3 +2726,25 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   verlieren; der bewusste Preis ist, dass Anhang-Chips und Entscheidungsleiste aus dem Feld heraus nur noch mit Tab
   vorwärts oder der Maus erreichbar sind. Fensterbezogene Layout-Werte gehören wie Seitenpanel-Breite und Einklappen
   zum Fenster.
+
+## ADR-231 – Node.js 26.9 als Mindestversion, Prozessabfragen nur noch nativ
+- **Datum/WP:** 19.11.2026, `feature/node-26-9` (Nutzer: Mindestversion anheben). Ersetzt die Node-Mindestversion
+  24.5.0 aus WP-85 §1.2, in ADR-228 den Satz „`engines` bleibt bei 24.5“ und in ADR-229 den PowerShell-Weg der
+  Prozessabfragen.
+- **Entscheidung:**
+  - `engines.node` ist `>=26.9`, `NODE_MIN_VERSION` in `pnpm preflight` `26.9.0`; damit trägt jedes Release-Paket
+    `minNode` 26.9.0 (Installer, `start.mjs`, Update). Die Release-CI prüft das Paket unter 26.9.0 und dem neuesten 26.
+    `.node-version` bleibt `26`.
+  - `@types/node` folgt der Mindestversion: 26.6.6 statt ^24.19.2 (DEPS-2026-11 §9).
+  - Prozessabfragen (`lib/process.ts`) laufen nur noch über `node:ffi`. Der Weg über PowerShell + CIM entfällt samt
+    WQL-Filtern, Timeout und den Optionen `run`/`timeoutMs`. Ohne `node:ffi` (abgeschaltet, Berechtigungsmodell, nicht
+    Windows x64) antworten sie `unknown` mit `unsupported`: Waisen-Records bleiben, nichts wird beendet (R2-02).
+  - Die Startzeit einer offenen Konsole (`system/console.ts`) kommt ebenfalls nativ. Sie lief bisher immer über CIM,
+    auch mit `node:ffi`, weil der Konsolen-Starter seinen Runner an die Abfrage weitergab.
+  - Ein installiertes Parallax auf älterem Node lehnt das Update ab (`UPDATE_NODE_TOO_OLD`, nach dem Download, vor dem
+    Wechsel); `install.cmd` bricht vor jeder Änderung ab.
+- **Begründung:** Erst ab 26.9 ist `node:ffi` ohne Schalter an. Darunter fehlte „Mehrere Rechner“, und die
+  Prozessabfragen starteten regelmäßig PowerShell – genau das, was Sicherheitssoftware meldet (ADR-229). Eine
+  Mindestversion statt zweier Wege spart Code und Tests; 26 ist ohnehin die Standardversion.
+- **Folgen:** Wer Node 24 oder 26.0–26.8 hat, muss Node vor dem nächsten Update aktualisieren. `minNode` in
+  `latest.json` (WP-87 §12) würde das schon vor dem Download melden – offen.

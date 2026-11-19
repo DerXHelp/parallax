@@ -83,7 +83,7 @@ const packageJsonSchema = z.looseObject({
   engines: z.object({ node: z.string().regex(/^>=\d+(?:\.\d+){0,2}$/u) }),
 });
 
-/** `>=24.5` → `24.5.0`. */
+/** `>=26.9` → `26.9.0`. */
 function minNodeOf(range: string): string {
   const parts = range.slice(2).split('.');
   while (parts.length < 3) parts.push('0');

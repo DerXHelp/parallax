@@ -38,8 +38,8 @@ describe('updateErrorDetail (one line from the params of an update error)', () =
     expect(detail(makeError('UPDATE_BUSY', { status: 'downloading' }))).toBe(
       'A download is running right now.',
     );
-    expect(detail(makeError('UPDATE_NODE_TOO_OLD', { required: '24.5.0', actual: '22.11.0' }))).toBe(
-      'Needs Node.js 24.5.0; installed is 22.11.0.',
+    expect(detail(makeError('UPDATE_NODE_TOO_OLD', { required: '26.9.0', actual: '24.11.1' }))).toBe(
+      'Needs Node.js 26.9.0; installed is 24.11.1.',
     );
     expect(detail(makeError('UPDATE_DOWNGRADE_BLOCKED', { version: '1.0.0-rc.4' }))).toContain('1.0.0-rc.4');
   });
@@ -64,7 +64,7 @@ describe('updateErrorDetail (one line from the params of an update error)', () =
     expect(detail(makeError('UPDATE_CHECK_FAILED', { reason: 'cosmic_rays' }))).toBeNull();
     expect(detail(makeError('UPDATE_CHECK_FAILED'))).toBeNull();
     expect(detail(makeError('UPDATE_BUSY', { status: 'idle' }))).toBeNull();
-    expect(detail(makeError('UPDATE_NODE_TOO_OLD', { required: '24.5.0' }))).toBeNull();
+    expect(detail(makeError('UPDATE_NODE_TOO_OLD', { required: '26.9.0' }))).toBeNull();
     expect(detail(makeError('UPDATE_SDK_FAILED'))).toBeNull();
     expect(detail(makeError('CONNECTION_LOST'))).toBeNull();
   });

@@ -12,18 +12,12 @@ import {
   isProcessAlive,
   killProcessTree,
   listProcesses,
-  parseProcessQueryOutput,
-  PROCESS_QUERY_MAX_CLAUSES,
   processInfo,
-  processQueryFilters,
   processStartTime,
   queryProcesses,
   runFile,
   spawnHidden,
   systemTool,
-  windowsPowerShellEnv,
-  type RunFileFn,
-  type RunFileResult,
 } from './process';
 import { loadNativeProcessApi, type NativeProcessApi, type NativeProcessEntry } from './processNative';
 
@@ -38,9 +32,8 @@ const windowsOnly = process.platform === 'win32' ? it : it.skip;
 const SPAWN_TEST_TIMEOUT_MS = 30_000;
 /** taskkill + node start + liveness polling. */
 const TREE_TEST_TIMEOUT_MS = 60_000;
-/** PowerShell + CIM: 6 s idle, 15–25 s per call under load. */
-const POWERSHELL_TEST_TIMEOUT_MS = 120_000;
-const POWERSHELL_CALL_TIMEOUT_MS = 60_000;
+/** Node children + the native snapshot (ms) – the deadline is for the node starts under load. */
+const QUERY_TEST_TIMEOUT_MS = 60_000;
 /** Deadline for a child to report or to disappear. */
 const PROCESS_DEADLINE_MS = 20_000;
 
@@ -148,21 +141,6 @@ describe('systemTool / errnoCode', () => {
     expect(errnoCode(Object.assign(new Error('x'), { code: 'ENOENT' }))).toBe('ENOENT');
     expect(errnoCode(new Error('x'))).toBeUndefined();
     expect(errnoCode('ENOENT')).toBeUndefined();
-  });
-});
-
-describe('windowsPowerShellEnv', () => {
-  it('drops PSModulePath in any spelling, keeps everything else', () => {
-    expect(
-      windowsPowerShellEnv({
-        PATH: 'C:\\Windows',
-        PSModulePath: 'C:\\Program Files\\PowerShell\\7\\Modules',
-        psmodulepath: 'x',
-        SystemRoot: 'C:\\Windows',
-        EMPTY: '',
-        UNSET: undefined,
-      }),
-    ).toEqual({ PATH: 'C:\\Windows', SystemRoot: 'C:\\Windows', EMPTY: '' });
   });
 });
 
@@ -350,7 +328,7 @@ describe('processInfo / queryProcesses (orphan cleanup, C.8, R2-02)', () => {
   windowsOnly(
     'reports name, parent and start time of a running process',
     async () => {
-      const info = await processInfo(process.pid, { timeoutMs: POWERSHELL_CALL_TIMEOUT_MS });
+      const info = await processInfo(process.pid);
       expect(info.kind).toBe('found');
       if (info.kind !== 'found') return;
       expect(info.info.pid).toBe(process.pid);
@@ -360,7 +338,7 @@ describe('processInfo / queryProcesses (orphan cleanup, C.8, R2-02)', () => {
       expect(startedAt).toBeLessThanOrEqual(Date.now());
       expect(startedAt).toBeGreaterThan(Date.now() - 24 * 3600 * 1000);
     },
-    POWERSHELL_TEST_TIMEOUT_MS,
+    QUERY_TEST_TIMEOUT_MS,
   );
 
   windowsOnly(
@@ -370,14 +348,14 @@ describe('processInfo / queryProcesses (orphan cleanup, C.8, R2-02)', () => {
       const pid = child.pid;
       if (pid === undefined) throw new Error('no pid');
       await once(child, 'close');
-      expect(await processInfo(pid, { timeoutMs: POWERSHELL_CALL_TIMEOUT_MS })).toEqual({ kind: 'missing' });
-      expect(await processStartTime(pid, { timeoutMs: POWERSHELL_CALL_TIMEOUT_MS })).toBeNull();
+      expect(await processInfo(pid)).toEqual({ kind: 'missing' });
+      expect(await processStartTime(pid)).toBeNull();
     },
-    POWERSHELL_TEST_TIMEOUT_MS,
+    QUERY_TEST_TIMEOUT_MS,
   );
 
   windowsOnly(
-    'one call for several pids and the children of a parent',
+    'one query for several pids and the children of a parent',
     async () => {
       const child = spawnHidden(NODE, ['-e', PARENT_WITH_GRANDCHILD], { stdio: ['ignore', 'pipe', 'pipe'] });
       const pid = child.pid;
@@ -390,122 +368,20 @@ describe('processInfo / queryProcesses (orphan cleanup, C.8, R2-02)', () => {
       });
       expect(await waitUntil(() => stdout.includes('\n'), PROCESS_DEADLINE_MS)).toBe(true);
       const grandchild = grandchildPid(stdout);
-      let calls = 0;
-      const result = await queryProcesses(
-        { pids: [process.pid, pid], parentPids: [pid] },
-        {
-          timeoutMs: POWERSHELL_CALL_TIMEOUT_MS,
-          run: (file, args, options) => {
-            calls += 1;
-            return runFile(file, args, options);
-          },
-        },
-      );
-      expect(calls).toBe(1);
+      const result = await queryProcesses({ pids: [process.pid, pid], parentPids: [pid] });
       expect(result.kind).toBe('ok');
       if (result.kind !== 'ok') return;
       const pids = result.processes.map((p) => p.pid);
       expect(pids).toEqual(expect.arrayContaining([process.pid, pid, grandchild]));
       expect(result.processes.find((p) => p.pid === grandchild)?.parentPid).toBe(pid);
     },
-    POWERSHELL_TEST_TIMEOUT_MS,
+    QUERY_TEST_TIMEOUT_MS,
   );
 
   it('validates the pids', async () => {
     await expect(processInfo(0)).rejects.toBeInstanceOf(RangeError);
     await expect(childProcesses(-1)).rejects.toBeInstanceOf(RangeError);
     await expect(queryProcesses({ pids: [1.5] })).rejects.toBeInstanceOf(RangeError);
-  });
-
-  it('builds bounded WQL filters from validated pids only', () => {
-    expect(processQueryFilters({ pids: [4, 4, 7], parentPids: [9] })).toEqual([
-      'ProcessId = 4 OR ProcessId = 7 OR ParentProcessId = 9',
-    ]);
-    expect(processQueryFilters({ pids: [1, 2, 3] }, 2)).toEqual([
-      'ProcessId = 1 OR ProcessId = 2',
-      'ProcessId = 3',
-    ]);
-    expect(processQueryFilters({})).toEqual([]);
-    expect(() => processQueryFilters({ pids: [Number.NaN] })).toThrow(RangeError);
-  });
-
-  it('parses the JSON array and refuses anything else', () => {
-    expect(
-      parseProcessQueryOutput(
-        '[{"pid":5,"name":"claude.exe","parentPid":1,"startedAt":"2026-10-15T08:00:00.000Z"}]\r\n',
-      ),
-    ).toEqual([
-      { pid: 5, name: 'claude.exe', parentPid: 1, startedAt: new Date('2026-10-15T08:00:00.000Z') },
-    ]);
-    expect(parseProcessQueryOutput('[]')).toEqual([]);
-    expect(parseProcessQueryOutput('')).toBeNull();
-    expect(parseProcessQueryOutput('error: access denied')).toBeNull();
-    expect(parseProcessQueryOutput('[{"pid":5}]')).toBeNull();
-  });
-
-  const fakeRun =
-    (result: Partial<RunFileResult> | Error): RunFileFn =>
-    () =>
-      result instanceof Error
-        ? Promise.reject(result)
-        : Promise.resolve({
-            exitCode: 0,
-            signal: null,
-            stdout: '[]',
-            stderr: '',
-            timedOut: false,
-            ...result,
-          });
-
-  it.each<[string, Partial<RunFileResult> | Error, string]>([
-    ['a timeout', { timedOut: true, exitCode: null, stdout: '' }, 'timeout'],
-    ['exit ≠ 0 (CIM error, policy)', { exitCode: 3, stdout: 'error: Access denied' }, 'failed'],
-    ['powershell missing / blocked', Object.assign(new Error('spawn EACCES'), { code: 'EACCES' }), 'failed'],
-    ['unreadable output', { stdout: 'Get-CimInstance : not allowed' }, 'output'],
-    ['empty output', { stdout: '' }, 'output'],
-  ])('%s is unknown – never "gone" (R2-02)', async (_name, result, reason) => {
-    const query = await queryProcesses({ pids: [42] }, { run: fakeRun(result), platform: 'win32' });
-    expect(query).toMatchObject({ kind: 'unknown', reason });
-    expect(await processInfo(42, { run: fakeRun(result), platform: 'win32' })).toMatchObject({
-      kind: 'unknown',
-      reason,
-    });
-  });
-
-  it('missing vs found from one answer; other platforms are unknown', async () => {
-    const row = '[{"pid":42,"name":"claude.exe","parentPid":1,"startedAt":"2026-10-15T08:00:00.000Z"}]';
-    expect(await processInfo(42, { run: fakeRun({ stdout: row }), platform: 'win32' })).toMatchObject({
-      kind: 'found',
-      info: { pid: 42, name: 'claude.exe' },
-    });
-    expect(await processInfo(43, { run: fakeRun({ stdout: row }), platform: 'win32' })).toEqual({
-      kind: 'missing',
-    });
-    expect(
-      await queryProcesses({ pids: [42] }, { run: fakeRun({ stdout: row }), platform: 'linux' }),
-    ).toMatchObject({
-      kind: 'unknown',
-      reason: 'unsupported',
-    });
-    expect(await queryProcesses({}, { run: fakeRun(new Error('never called')) })).toEqual({
-      kind: 'ok',
-      processes: [],
-    });
-  });
-
-  it('several chunks: one unknown chunk makes the whole answer unknown', async () => {
-    const answers = [
-      { stdout: '[{"pid":1,"name":"a.exe","parentPid":0,"startedAt":"2026-10-15T08:00:00.000Z"}]' },
-      { timedOut: true, exitCode: null, stdout: '' },
-    ];
-    let n = 0;
-    const run: RunFileFn = () => fakeRun(answers[n++] ?? {})('', [], { timeoutMs: 1 });
-    const pids = Array.from({ length: PROCESS_QUERY_MAX_CLAUSES + 1 }, (_, i) => i + 1);
-    expect(await queryProcesses({ pids }, { run, platform: 'win32' })).toMatchObject({
-      kind: 'unknown',
-      reason: 'timeout',
-    });
-    expect(n).toBe(2);
   });
 
   windowsOnly(
@@ -522,8 +398,7 @@ describe('processInfo / queryProcesses (orphan cleanup, C.8, R2-02)', () => {
       });
       expect(await waitUntil(() => stdout.includes('\n'), PROCESS_DEADLINE_MS)).toBe(true);
       const grandchild = grandchildPid(stdout);
-      // Two PowerShell calls: up to ~47 s together under load (the 60 s limit was nearly hit).
-      const children = await childProcesses(pid, { timeoutMs: POWERSHELL_CALL_TIMEOUT_MS });
+      const children = await childProcesses(pid);
       expect(children.kind).toBe('ok');
       if (children.kind !== 'ok') return;
       const found = children.processes.find((c) => c.pid === grandchild);
@@ -531,23 +406,22 @@ describe('processInfo / queryProcesses (orphan cleanup, C.8, R2-02)', () => {
       expect(found?.name.toLowerCase()).toBe('node.exe');
       expect(found?.startedAt.getTime()).toBeLessThanOrEqual(Date.now());
       // The grandchild starts no node.exe of its own (Windows may attach a conhost.exe).
-      const grandchildren = await childProcesses(grandchild, { timeoutMs: POWERSHELL_CALL_TIMEOUT_MS });
+      const grandchildren = await childProcesses(grandchild);
       expect(grandchildren.kind).toBe('ok');
       if (grandchildren.kind !== 'ok') return;
       expect(grandchildren.processes.filter((c) => c.name.toLowerCase() === 'node.exe')).toEqual([]);
       expect(grandchildren.processes.every((c) => c.parentPid === grandchild)).toBe(true);
     },
-    POWERSHELL_TEST_TIMEOUT_MS,
+    QUERY_TEST_TIMEOUT_MS,
   );
 });
 
-describe('native process list (ADR-229: no PowerShell)', () => {
+describe('native process list (ADR-229, ADR-231: never PowerShell)', () => {
   const at = (s: number) => new Date(Date.parse('2026-11-18T12:00:00.000Z') + s * 1000);
   const fake = (rows: NativeProcessEntry[] | null, times: Record<number, Date>): NativeProcessApi => ({
     entries: () => rows,
     startedAt: (pid) => times[pid] ?? null,
   });
-  const noPowerShell: RunFileFn = () => Promise.reject(new Error('PowerShell must not run'));
   const rows: NativeProcessEntry[] = [
     { pid: 10, parentPid: 1, name: 'claude.exe' },
     { pid: 11, parentPid: 10, name: 'node.exe' },
@@ -557,7 +431,7 @@ describe('native process list (ADR-229: no PowerShell)', () => {
   const native = fake(rows, { 10: at(0), 11: at(1), 13: at(2) });
 
   it('filters by pid and parent and leaves out a process without readable start time', async () => {
-    const options = { native, run: noPowerShell, platform: 'win32' as const };
+    const options = { native, platform: 'win32' as const };
     expect(await queryProcesses({ pids: [10], parentPids: [10] }, options)).toEqual({
       kind: 'ok',
       processes: [
@@ -581,21 +455,32 @@ describe('native process list (ADR-229: no PowerShell)', () => {
     expect(await processInfo(10, { native: broken, platform: 'win32' })).toMatchObject({ kind: 'unknown' });
   });
 
-  it('without node:ffi (native null) the PowerShell query answers', async () => {
-    const run: RunFileFn = () =>
-      Promise.resolve({
-        exitCode: 0,
-        signal: null,
-        stdout: JSON.stringify([
-          { pid: 10, name: 'claude.exe', parentPid: 1, startedAt: at(0).toISOString() },
-        ]),
-        stderr: '',
-        timedOut: false,
-      });
-    expect(await processInfo(10, { native: null, run, platform: 'win32' })).toMatchObject({
-      kind: 'found',
-      info: { name: 'claude.exe' },
+  it('without node:ffi (native null) and off Windows every query is unknown – never "gone"', async () => {
+    const none = { native: null, platform: 'win32' as const };
+    expect(await processInfo(10, none)).toMatchObject({ kind: 'unknown', reason: 'unsupported' });
+    expect(await listProcesses(none)).toMatchObject({ kind: 'unknown', reason: 'unsupported' });
+    expect(await childProcesses(10, none)).toMatchObject({ kind: 'unknown', reason: 'unsupported' });
+    expect(await queryProcesses({ pids: [10] }, { native, platform: 'linux' })).toMatchObject({
+      kind: 'unknown',
+      reason: 'unsupported',
     });
+    expect(await processStartTime(10, none)).toBeNull();
+  });
+
+  it('an empty filter answers ok [] without a snapshot; invalid pids reject', async () => {
+    const untouchable: NativeProcessApi = {
+      entries: () => {
+        throw new Error('no snapshot expected');
+      },
+      startedAt: () => null,
+    };
+    expect(await queryProcesses({}, { native: untouchable, platform: 'win32' })).toEqual({
+      kind: 'ok',
+      processes: [],
+    });
+    await expect(queryProcesses({ parentPids: [0] }, { native, platform: 'win32' })).rejects.toBeInstanceOf(
+      RangeError,
+    );
   });
 
   windowsOnly('the real snapshot finds this process with its parent and start time', () => {
@@ -644,37 +529,6 @@ describe('listProcesses / descendantsOf (heartbeat snapshot, WP22-06)', () => {
     expect(descendantsOf([p(1, 2, 0), p(2, 1, 0)], p(1, 2, 0)).map((x) => x.pid)).toEqual([2]);
   });
 
-  it('one query without a filter; three-valued like queryProcesses', async () => {
-    const calls: string[][] = [];
-    const run: RunFileFn = (_file, args) => {
-      calls.push([...args]);
-      return Promise.resolve({
-        exitCode: 0,
-        signal: null,
-        stdout: '[{"pid":5,"name":"claude.exe","parentPid":1,"startedAt":"2026-10-15T08:00:00.000Z"}]',
-        stderr: '',
-        timedOut: false,
-      });
-    };
-    expect(await listProcesses({ run, platform: 'win32' })).toMatchObject({
-      kind: 'ok',
-      processes: [{ pid: 5, name: 'claude.exe' }],
-    });
-    const script = calls[0]?.at(-1) ?? '';
-    expect(script).toContain('-Property ProcessId,ParentProcessId,Name,CreationDate');
-    expect(script).not.toContain('-Filter');
-    expect(await listProcesses({ run, platform: 'linux' })).toMatchObject({
-      kind: 'unknown',
-      reason: 'unsupported',
-    });
-    const failing: RunFileFn = () =>
-      Promise.resolve({ exitCode: 3, signal: null, stdout: 'error: denied', stderr: '', timedOut: false });
-    expect(await listProcesses({ run: failing, platform: 'win32' })).toMatchObject({
-      kind: 'unknown',
-      reason: 'failed',
-    });
-  });
-
   windowsOnly(
     'the real listing finds this test process and the grandchild below a child',
     async () => {
@@ -689,7 +543,7 @@ describe('listProcesses / descendantsOf (heartbeat snapshot, WP22-06)', () => {
       });
       expect(await waitUntil(() => stdout.includes('\n'), PROCESS_DEADLINE_MS)).toBe(true);
       const grandchild = grandchildPid(stdout);
-      const result = await listProcesses({ timeoutMs: POWERSHELL_CALL_TIMEOUT_MS });
+      const result = await listProcesses();
       expect(result.kind).toBe('ok');
       if (result.kind !== 'ok') return;
       const self = result.processes.find((x) => x.pid === process.pid);
@@ -698,6 +552,6 @@ describe('listProcesses / descendantsOf (heartbeat snapshot, WP22-06)', () => {
         expect.arrayContaining([pid, grandchild]),
       );
     },
-    POWERSHELL_TEST_TIMEOUT_MS,
+    QUERY_TEST_TIMEOUT_MS,
   );
 });

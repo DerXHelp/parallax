@@ -23,7 +23,7 @@ export const AGENT_SDK_PACKAGE = '@anthropic-ai/claude-agent-sdk';
 
 /**
  * Node flags of every process of an installation (WP-86, docs/wp/WP-83.md §8.2): certificates from
- * the Windows store (company TLS inspection) and the proxy from the environment. Node >= 24.5.
+ * the Windows store (company TLS inspection) and the proxy from the environment (both since Node 24.5).
  */
 export const PACKAGE_NODE_FLAGS: readonly string[] = ['--use-system-ca', '--use-env-proxy'];
 

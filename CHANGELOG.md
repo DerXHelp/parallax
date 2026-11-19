@@ -8,7 +8,7 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 ### Neu
 - Mehrere Rechner: Ein Parallax zeigt und steuert die Sessions anderer Rechner im selben Netz, als liefen sie lokal;
   ab Werk aus, eingeschaltet unter Einstellungen → „Mehrere Rechner“ mit den Rollen „Freigeben“ und „Andere steuern“
-  (braucht Node.js 26.9 oder neuer, WP-75…82).
+  (WP-75…82).
 - Rechner werden per einmaligem Kopplungscode gekoppelt und sprechen nur über TLS 1.3 mit gegenseitig geprüften
   Schlüsseln; der freigebende Rechner führt ein Verbindungsprotokoll mit IP-Adressen, auch für abgelehnte Versuche
   (WP-76, WP-78).
@@ -21,12 +21,14 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 - Shift+Tab im Nachrichtenfeld schaltet den Berechtigungsmodus weiter wie im Claude-Code-CLI (WP-91).
 
 ### Geändert
+- Parallax braucht jetzt Node.js 26.9 oder neuer (vorher 24.5): Prozesse fragt der Server nur noch selbst ab, nie mehr
+  über PowerShell, und „Mehrere Rechner“ ist auf jedem Rechner verfügbar (ADR-231).
 - Der Knopf für eine gefundene Version heißt „Jetzt aktualisieren“ statt „Update vorbereiten“; er lädt und
   installiert sie, „Neu starten“ wechselt danach (WP-89).
 
 ### Behoben
 - Parallax startet für Systemabfragen kaum noch PowerShell, was Sicherheitssoftware als verdächtig melden konnte:
-  Prozesse liest der Server selbst (ab Node.js 26.9), Autostart, Protokoll-Handler und Startmenü schreibt er nur
+  Prozesse liest der Server selbst, Autostart, Protokoll-Handler und Startmenü schreibt er nur
   noch bei einer Änderung, und Virenscanner sowie Ordnerrechte fragt er nicht mehr ab (fix/quiet-system-calls).
 
 ## [1.0.1] – 2026-11-18

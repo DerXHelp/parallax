@@ -17,7 +17,7 @@ const SAMPLE: ReleaseInfo = {
   version: '1.0.0-rc.1',
   commit: 'a'.repeat(40),
   buildId: '1.0.0-rc.1+aaaaaaa',
-  minNode: '24.5.0',
+  minNode: '26.9.0',
   createdAt: '2026-11-17T10:00:00.000Z',
   schemas: { 'settings.json': 'b'.repeat(64) },
   sdk: { name: '@anthropic-ai/claude-agent-sdk', version: '0.3.322', integrity: 'sha512-AbC+/x==' },

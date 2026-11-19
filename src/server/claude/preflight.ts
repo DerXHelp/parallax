@@ -36,10 +36,11 @@ export interface PreflightCheck {
 }
 
 /**
- * engines.node in package.json (WP-85): the first Node 24 with `--use-system-ca` and the proxy from the
- * environment (`--use-env-proxy`, 24.5.0) - release packages start Node with them (WP-83 §8.2).
+ * engines.node in package.json (ADR-231): the first Node with `node:ffi` on by default (26.9.0) – the
+ * process queries and the key store of "Mehrere Rechner" run through it (ADR-229). Release packages
+ * also start Node with `--use-system-ca` and `--use-env-proxy` (since 24.5, WP-83 §8.2).
  */
-export const NODE_MIN_VERSION = '24.5.0';
+export const NODE_MIN_VERSION = '26.9.0';
 export const NODE_STANDARD_MAJOR = 26;
 /** engines.pnpm in package.json. */
 export const PNPM_MIN_VERSION = '12.8.0';

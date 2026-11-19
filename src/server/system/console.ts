@@ -16,10 +16,10 @@
  * Never throws.
  *
  * `state()`: `isProcessAlive(pid)` (gone → `ended`); with a known start time also the exact
- * creation time (± 5 s, PID reuse → `ended`) – R4-05: one CIM query when a process is first seen,
- * then only the instant liveness check, the creation time again every `CONSOLE_RECHECK_MS`; a failed
- * query → `unknown` (never counts as ended, ADR-051). Live (L6): Windows Terminal as the default
- * terminal, AppLocker/CLM → WP-41.
+ * creation time (± 5 s, PID reuse → `ended`) – R4-05: one native query (ADR-229, no PowerShell) when
+ * a process is first seen, then only the instant liveness check, the creation time again every
+ * `CONSOLE_RECHECK_MS`; a failed query → `unknown` (never counts as ended, ADR-051). Live (L6):
+ * Windows Terminal as the default terminal, AppLocker/CLM → WP-41.
  */
 import { windowsPathIssue } from '@shared/paths';
 import type { ConsoleLaunchSpec } from '../claude/ports';
@@ -97,7 +97,7 @@ export interface ConsoleLauncherOptions {
   timeoutMs?: number;
   /** Default `isProcessAlive`. */
   isAlive?: (pid: number) => boolean;
-  /** Exact creation time of `pid`; null = unknown (default `processStartTime` through `run`). */
+  /** Exact creation time of `pid`; null = unknown (default `processStartTime`, natively). */
   startTime?: (pid: number) => Promise<Date | null>;
   /** Clock of the re-check interval (default `Date.now`). */
   now?: () => number;
@@ -122,7 +122,7 @@ export function createConsoleLauncher(opts: ConsoleLauncherOptions = {}): Consol
   const run = systemRunner(opts.run);
   const platform = opts.platform ?? process.platform;
   const isAlive = opts.isAlive ?? isProcessAlive;
-  const startTime = opts.startTime ?? ((pid: number) => processStartTime(pid, { run, platform }));
+  const startTime = opts.startTime ?? ((pid: number) => processStartTime(pid, { platform }));
   const now = opts.now ?? Date.now;
   /** R4-05: `pid:startedAt` → when its creation time was last confirmed (or the running query). */
   const verified = new Map<string, number>();

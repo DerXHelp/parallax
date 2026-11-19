@@ -144,7 +144,7 @@ jobs:
       fail-fast: false
       matrix:
         # The minimum (engines.node, release.json minNode) and the standard version.
-        node: ['24.5.0', '26']
+        node: ['26.9.0', '26']
     env:
       VERSION: ${{ needs.build.outputs.version }}
     steps:

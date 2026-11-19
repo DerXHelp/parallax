@@ -53,7 +53,7 @@ import { REPO_ROOT } from './paths';
 const CACHE_ROOT = path.join(REPO_ROOT, 'node_modules', '.cache', 'parallax-update-e2e');
 /** One Vite or esbuild step (a cold Vite build with a virus scanner can take a while). */
 const BUILD_STEP_TIMEOUT_MS = 8 * 60_000;
-export const MIN_NODE = '24.5.0';
+export const MIN_NODE = '26.9.0';
 /** The Agent SDK version of this checkout (package.json pins it exactly). */
 export const SDK_VERSION = '0.3.322';
 

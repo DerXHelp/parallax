@@ -146,7 +146,7 @@ async function world(options: WorldOptions = {}) {
       killed.push(pid);
       return Promise.resolve();
     },
-    nodeVersion: '26.0.0',
+    nodeVersion: '26.12.0',
     nodeExe: NODE_EXE,
     pid: 100,
     handshakeMs: 200,
