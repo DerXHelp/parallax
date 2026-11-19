@@ -29,6 +29,18 @@ export const de: typeof en = {
       minus: '−',
       wheel: 'Mausrad',
     },
+    planFeedback: {
+      intro: {
+        one: 'Bitte überarbeite den Plan. Meine Anmerkung:',
+        other: 'Bitte überarbeite den Plan. Meine {count} Anmerkungen:',
+      },
+      section: 'Abschnitt „{path}“',
+      line: 'Zeile {line}',
+      lines: 'Zeilen {from}–{to}',
+      strike: 'Diese Stelle streichen.',
+      strikeReason: 'Diese Stelle streichen: {reason}',
+      general: 'Allgemein:',
+    },
   },
   shell: {
     windowTitle: '({count}) {product}',

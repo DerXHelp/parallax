@@ -39,6 +39,7 @@ import type { Decision, ModelOption, SlashCommandInfo } from '@shared/model';
 import type { RunState } from '@shared/status';
 import { useT, type t as translateFn } from '@web/i18n';
 import { cn } from '@web/lib/cn';
+import { feedbackOverhead } from '@web/lib/plan-feedback';
 import { transferFiles, type IncomingFiles } from '@web/lib/transfer-files';
 import { isHandoffPending, openExternalConsole, useHandoffPending } from '@web/shell/navigation/handoff';
 import { useShellRequestHandler } from '@web/shell/requests';
@@ -70,6 +71,8 @@ import { Textarea } from '@web/ui/textarea';
 import { DecisionArmDelayContext } from '../decisions/components/card-shell';
 import { requesterText } from '../decisions/components/RequesterLabel';
 import { respondToDecision } from '../decisions/lib/respond';
+import { usePlanFeedbackSection } from '../decisions/lib/revise';
+import { getPlanAnnotations } from '../decisions/state/annotations';
 import {
   markLocalResolution,
   pickDisplayedDecision,
@@ -368,6 +371,8 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const displayed = pickDisplayedDecision(decisions, selectedId);
   const target = displayed?.state === 'open' ? displayed : null;
   const targetId = target?.id ?? null;
+  // WP-93: the plan's annotations go along with the text and take their part of the feedback limit.
+  const planOverhead = feedbackOverhead(usePlanFeedbackSection(target?.kind === 'plan' ? target : null), t);
   const online = useSessionConnectionStatus(sessionKey) === 'open';
   const armDelayMs = useContext(DecisionArmDelayContext);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -553,7 +558,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const overTotal = useMemo(() => attachmentsOverTotal(attachments), [attachments]);
   const attachmentsBlocked = busyUploads || failedUploads || overTotal.size > 0;
 
-  const limit = sideMode ? LIMITS.sideQuestionChars : textLimit(answerTarget);
+  const limit = sideMode ? LIMITS.sideQuestionChars : textLimit(answerTarget, planOverhead);
   const tooLong = sendLength > limit;
   let canSend: boolean;
   if (handoffPending) canSend = false;
@@ -566,7 +571,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     online &&
     !handoffPending &&
     value !== '' &&
-    sendLength <= textLimit(pendingTarget);
+    sendLength <= textLimit(pendingTarget, planOverhead);
   const suggestion =
     answerTarget === null &&
     !sideMode &&
@@ -787,13 +792,24 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
       // An answer has no `pastes` field: the tokens are replaced by their texts.
       const previousPastes = getPastes(sessionKey);
       const answerText = expandPastes(message, previousPastes).text;
-      if (answerText === '' || answerText.length > textLimit(answer)) return;
+      if (answerText === '') return;
       const decision = answer;
+      const response = answerFromText(
+        decision,
+        answerText,
+        t,
+        decision.kind === 'plan' ? getPlanAnnotations(decision) : undefined,
+      );
+      const tooLongNow =
+        response.kind === 'plan' && response.response.behavior === 'revise'
+          ? response.response.feedback.length > LIMITS.planFeedbackChars
+          : answerText.length > textLimit(decision);
+      if (tooLongNow) return;
       clearDraft(sessionKey);
       setLockedId(null);
       followTranscript(sessionKey);
       setSending((count) => count + 1);
-      void respondToDecision(sessionKey, decision, answerFromText(decision, answerText)).then((ok) => {
+      void respondToDecision(sessionKey, decision, response).then((ok) => {
         setSending((count) => count - 1);
         if (!ok) restoreDraft(message, decision.id, previousPastes);
       });

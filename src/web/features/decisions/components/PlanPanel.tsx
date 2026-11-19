@@ -1,4 +1,9 @@
-import { ArrowDownToLineIcon, ChevronDownIcon, ClipboardListIcon, FileTextIcon } from 'lucide-react';
+import {
+  ArrowDownToLineIcon,
+  ChevronDownIcon,
+  ClipboardListIcon,
+  FileTextIcon,
+} from 'lucide-react';
 import { lazy, memo, Suspense, useId, useMemo, useState, type ReactNode } from 'react';
 import type { PlanDecision } from '@shared/model';
 import { useI18n, useT } from '@web/i18n';
@@ -46,6 +51,7 @@ import {
   usePlanVersions,
   type TextState,
 } from '../state/plan-data';
+import { OpenPlanAnnotations, PreviousAnnotations, VersionAnnotations } from './plan-annotations';
 
 /** The line diff is a chunk of its own (loaded when the user switches to "Changes"). */
 const PlanDiff = lazy(() => import('./PlanDiff'));
@@ -119,12 +125,15 @@ function PlanBody({
   text,
   mode,
   previous,
+  renderPlan,
 }: {
   sessionKey: string;
   text: TextState;
   mode: PanelMode;
   /** The compared version and its text (diff mode only). */
   previous: { version: number; text: TextState } | null;
+  /** WP-93: the plan view of a version (annotations); default the plain Markdown. */
+  renderPlan?: (text: string) => ReactNode;
 }) {
   const { t, tError } = useI18n();
   const { Markdown } = useFeatureSlots();
@@ -151,11 +160,16 @@ function PlanBody({
       return <LoadingRows label={t('decisions.panel.diffLoading')} />;
     }
     return (
-      <Suspense fallback={<LoadingRows label={t('decisions.panel.diffLoading')} />}>
-        <PlanDiff oldText={previous.text.text} newText={text.text} previousVersion={previous.version} />
-      </Suspense>
+      <>
+        {/* WP-93: what the user annotated on the version before, next to what changed since. */}
+        <PreviousAnnotations sessionKey={sessionKey} version={previous.version} text={previous.text.text} />
+        <Suspense fallback={<LoadingRows label={t('decisions.panel.diffLoading')} />}>
+          <PlanDiff oldText={previous.text.text} newText={text.text} previousVersion={previous.version} />
+        </Suspense>
+      </>
     );
   }
+  if (renderPlan !== undefined) return renderPlan(text.text);
   return <Markdown text={text.text} sessionKey={sessionKey} />;
 }
 
@@ -166,12 +180,15 @@ function VersionContent({
   entry,
   previous,
   mode,
+  decision,
 }: {
   sessionKey: string;
   version: number;
   entry: PlanVersionEntry | null;
   previous: PlanVersionEntry | null;
   mode: PanelMode;
+  /** The open or expired decision of this version (WP-93: its annotations), else null. */
+  decision: PlanDecision | null;
 }) {
   const text = usePlanText(sessionKey, version, entry?.knownText ?? null);
   const previousKnown =
@@ -183,12 +200,25 @@ function VersionContent({
     mode === 'changes' && previous !== null ? previous.version : null,
     previousKnown,
   );
+  // WP-93: the open version takes annotations; an answered or expired one shows what it carries.
+  const renderPlan = (plan: string) =>
+    decision?.state === 'open' ? (
+      <OpenPlanAnnotations sessionKey={sessionKey} decision={decision} />
+    ) : (
+      <VersionAnnotations
+        sessionKey={sessionKey}
+        version={version}
+        text={plan}
+        known={decision === null ? null : decision.annotations}
+      />
+    );
   return (
     <PlanBody
       sessionKey={sessionKey}
       text={text}
       mode={mode}
       previous={previous === null ? null : { version: previous.version, text: previousText }}
+      renderPlan={renderPlan}
     />
   );
 }
@@ -409,6 +439,8 @@ const PlanPanel = memo(function PlanPanel({ sessionKey }: { sessionKey: string }
   const pending = entries.find((candidate) => isPendingStatus(candidate.status)) ?? null;
   const headingId = useId();
   const fallback = newestDecision?.plan ?? copy?.plan ?? entries[0]?.knownText ?? null;
+  const viewDecision =
+    typeof view === 'number' ? (planDecisions.find((decision) => decision.version === view) ?? null) : null;
   const stamp = `${detail?.planFile?.updatedAt ?? ''}|${String(activity.writtenAt ?? '')}`;
 
   const choose = (next: PlanPanelView) => {
@@ -548,6 +580,7 @@ const PlanPanel = memo(function PlanPanel({ sessionKey }: { sessionKey: string }
               entry={entry}
               previous={previous}
               mode={effectiveMode}
+              decision={viewDecision}
             />
           )}
         </div>

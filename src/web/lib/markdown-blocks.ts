@@ -10,12 +10,15 @@
  * - fenced code (``` or ~~~, CommonMark lengths) is never split; an unclosed fence at the end marks
  *   the block `openFence` (still streaming – no syntax highlighting yet).
  * Known limits: reference-style links/footnotes defined in another block stay unresolved.
+ * Shared by the transcript's renderer and the plan tab's annotations (WP-93: `startLine`).
  */
 
 export interface MarkdownBlock {
   text: string;
   /** The block ends inside an unclosed code fence. */
   openFence: boolean;
+  /** Index (0-based) of the block's first line in the (CRLF-normalized) text. */
+  startLine: number;
 }
 
 export interface Fence {
@@ -50,11 +53,12 @@ export function splitMarkdownBlocks(markdown: string): MarkdownBlock[] {
   const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
   const blocks: MarkdownBlock[] = [];
   let current: string[] = [];
+  let start = 0;
   let fence: Fence | null = null;
   let blankPending = 0;
 
   const push = () => {
-    if (current.length > 0) blocks.push({ text: current.join('\n'), openFence: false });
+    if (current.length > 0) blocks.push({ text: current.join('\n'), openFence: false, startLine: start });
     current = [];
   };
 
@@ -79,9 +83,12 @@ export function splitMarkdownBlocks(markdown: string): MarkdownBlock[] {
       else push();
       blankPending = 0;
     }
+    if (current.length === 0) start = index;
     current.push(line);
     fence = openingFence(line);
   }
-  if (current.length > 0) blocks.push({ text: current.join('\n'), openFence: fence !== null });
+  if (current.length > 0) {
+    blocks.push({ text: current.join('\n'), openFence: fence !== null, startLine: start });
+  }
   return blocks;
 }

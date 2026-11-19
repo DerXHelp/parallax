@@ -147,6 +147,7 @@ export function createMemorySessionSource(options: { host?: HostState } = {}): M
       case 'session.setArchived':
       case 'session.remove':
       case 'session.setRemoteControl':
+      case 'decision.annotatePlan':
         return {};
       // Phase 2 commands (WP-30) and Phase 3 commands (WP-50) included: tests answer them via their
       // own handler.

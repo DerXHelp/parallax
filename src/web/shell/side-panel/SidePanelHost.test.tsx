@@ -401,6 +401,28 @@ describe('SidePanelHost (WP-54, ADR-150)', () => {
     expect(screen.getByRole('separator').getAttribute('aria-valuenow')).toBe('980');
   });
 
+  it('WP-93: "Wide" takes the largest width (70 %) until the splitter moves; it toggles back', async () => {
+    const user = userEvent.setup();
+    renderHost();
+    act(() => {
+      requestShell({ kind: 'sidePanel', sessionKey: KEY, tab: 'plan' });
+    });
+    expect(anchorWidth()).toBe('630px');
+    const wide = screen.getByRole('button', { name: 'Make panel wide' });
+    expect(wide.getAttribute('aria-pressed')).toBe('false');
+    await user.click(wide);
+    expect(anchorWidth()).toBe('980px');
+    await user.click(screen.getByRole('button', { name: 'Normal panel width' }));
+    expect(anchorWidth()).toBe('630px');
+    await user.click(screen.getByRole('button', { name: 'Make panel wide' }));
+    const splitter = screen.getByRole('separator', { name: 'Resize panel' });
+    splitter.focus();
+    await user.keyboard('{ArrowRight}');
+    // Resizing ends "Wide": the splitter moves from the wide width.
+    expect(anchorWidth()).toBe('964px');
+    expect(screen.getByRole('button', { name: 'Make panel wide' }).getAttribute('aria-pressed')).toBe('false');
+  });
+
   it('a remembered width is clamped to 70 % of a smaller area', () => {
     localStorage.setItem(SIDE_PANEL_WIDTH_KEY, '5000');
     areaWidth = 1200;

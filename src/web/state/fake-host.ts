@@ -13,6 +13,7 @@ import {
   type FileKind,
   type FileStatResult,
   type HostState,
+  type PlanAnnotation,
   type PlanVersionInfo,
   type ProfileLogin,
   type SessionFile,
@@ -487,8 +488,11 @@ export class FakeHost {
   private readonly draftRevs = new Map<EntryId, number>();
   /** WP-67: session info answers and actions; levers `unavailable`, `actionError`, `long`. */
   readonly info = new FakeSessionInfoData();
-  /** Stored plan versions, ascending (plan.list, plan.read; `stored: false` → PLAN_NOT_FOUND). */
-  planVersions: { info: PlanVersionInfo; text: string }[] = [
+  /**
+   * Stored plan versions, ascending (plan.list, plan.read; `stored: false` → PLAN_NOT_FOUND); WP-93:
+   * `annotations` = what plan.read returns besides the text.
+   */
+  planVersions: { info: PlanVersionInfo; text: string; annotations?: PlanAnnotation[] }[] = [
     {
       info: samplePlanVersionInfo({
         version: 1,
@@ -1156,6 +1160,17 @@ export class FakeHost {
         this.syncDecisionCounts(cmd.entryId);
         return this.ok({ outcome });
       }
+      // WP-93: like the engine – only an open plan decision, the new list as decision.upsert.
+      case 'decision.annotatePlan': {
+        const decision = this.view(cmd.entryId)?.decisions.find((d) => d.id === cmd.decisionId);
+        if (decision === undefined) return { ok: false, error: makeError('DECISION_ALREADY_RESOLVED') };
+        if (decision.kind !== 'plan') return { ok: false, error: makeError('DECISION_OPTION_UNAVAILABLE') };
+        if (decision.state === 'expired') return { ok: false, error: makeError('DECISION_EXPIRED') };
+        this.pushOps(cmd.entryId, [
+          { op: 'decision.upsert', decision: { ...decision, annotations: [...cmd.annotations] } },
+        ]);
+        return this.ok({});
+      }
       case 'session.sendPrompt':
         return this.ok({ messageUuid: this.acceptPrompt(cmd.entryId, cmd.prompt.text, cmd.priority) });
       case 'session.create': {
@@ -1367,7 +1382,7 @@ export class FakeHost {
         if (version?.info.stored !== true) {
           return { ok: false, error: makeError('PLAN_NOT_FOUND', { version: cmd.version }) };
         }
-        return this.ok({ version: cmd.version, text: version.text });
+        return this.ok({ version: cmd.version, text: version.text, annotations: version.annotations ?? [] });
       }
       case 'session.stopTask':
         return this.stopTask(cmd.entryId, cmd.taskId);

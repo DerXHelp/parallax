@@ -8,6 +8,10 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 ### Neu
 - Der Zoom lässt sich unter Einstellungen → Allgemein wählen (50–200 %, gilt für alle Fenster); Strg+Mausrad und
   Strg+Plus/Minus ändern diese Einstellung statt Chromes eigenen Zoom, Strg+0 setzt auf 100 % zurück (WP-92).
+- Pläne lassen sich im Tab „Plan“ kommentieren: Text markieren und kommentieren (Taste C) oder streichen, „+“ am Rand
+  für eine ganze Stelle; „Weiter planen“ schickt alle Anmerkungen mit Abschnitt, Zeile und Zitat samt Nachrichtentext
+  an Claude, und der Vergleich zur nächsten Version zeigt, was angemerkt war (WP-93).
+- Das Seitenpanel lässt sich mit „Breit“ neben „Schließen“ auf die größte Breite schalten (WP-93).
 
 ### Behoben
 - Die Context-Anzeige springt bei Modellen anderer Anbieter während eines Turns nicht mehr kurz auf 0 %

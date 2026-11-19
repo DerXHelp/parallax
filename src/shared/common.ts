@@ -195,6 +195,14 @@ export const LIMITS = {
   decisionMessageChars: 10_000,
   /** Plan feedback `revise.feedback` (R2W-12). */
   planFeedbackChars: 50_000,
+  /** WP-93: annotations of one plan decision (`decision.annotatePlan`). */
+  planAnnotations: 100,
+  /** WP-93: one annotation's comment (a strike's reason). */
+  planAnnotationChars: 4_000,
+  /** WP-93: the marked text of one annotation. */
+  planAnnotationQuoteChars: 2_000,
+  /** WP-93: `prefix`/`suffix` of an annotation (the text around the quote). */
+  planAnnotationContextChars: 64,
   /** `answers[].question` (key = question text, F.5). */
   questionChars: 2_000,
   /** Answers per question response. */

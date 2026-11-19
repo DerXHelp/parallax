@@ -6,7 +6,7 @@ gibt (auch in `src/shared`, z. B. `@shared/paths` für Pfadregeln).
 | Datei | Inhalt |
 |---|---|
 | `cn.ts` | Klassen zusammenführen (clsx + tailwind-merge), shadcn-Konvention |
-| `ids.ts` | `newClientId()` (`cl_` + 32 Hex), `newCmdId()` (UUID) |
+| `ids.ts` | `newClientId()` (`cl_` + 32 Hex), `newCmdId()` (UUID), WP-93 `newAnnotationId()` (`pa_` + 32 Hex) |
 | `backoff.ts` | `backoffDelay(attempt, options, random)`, `DEFAULT_BACKOFF` (0,5 s → 15 s, ±20 %) |
 | `hash.ts` | `#a=1&flag`-Parameter: `parseHash`, `formatHash`, `getHashParam`, `setHashParam` |
 | `storage.ts` | sicheres `localStorage`/`sessionStorage` (`readStorage`, `writeStorage`, `storageAvailable`, `STORAGE_KEYS` inkl. `sidebarMode` und `sidebarCollapsed` – WP-58, `language` (`parallax.language`, zuletzt genutzte Sprache zum Vorladen des `de`-Chunks) – FIX-R5, `transcriptView` (`parallax.transcript.view`) – WP-63, `sessionInfoTab` (`parallax.sessionInfo.tab`, letzter Reiter der Session-Info: sessionStorage des Fensters + localStorage als Vorgabe) – WP-67, `zoom` (`parallax.zoom`, zuletzt angewendeter Zoom) – WP-92), Feature-Schlüssel `storageKey(namespace, …parts)` → `parallax.<namespace>.<…>` |
@@ -41,4 +41,9 @@ gibt (auch in `src/shared`, z. B. `@shared/paths` für Pfadregeln).
 
 In Welle 1b read-only; feature-spezifische Helfer liegen in `features/<f>/lib/`.
 | `transfer-files.ts` | CR3-01 (aus `features/composer/lib/transfer.ts`): `transferFiles(data)` – Dateien eines Drops/Einfügens, Ordner per `webkitGetAsEntry().isDirectory` gezählt und weggelassen (Chrome listet einen Ordner auch in `files`); synchron im Ereignis aufrufen. Genutzt vom Composer und von der Drop-Zone der Pane (`shell/session-drop.tsx`) |
+| `markdown-blocks.ts` | WP-93 (aus `features/transcript/lib`): `splitMarkdownBlocks(text)` – Markdown-Blöcke an Leerzeilen außerhalb von Code-Zäunen, stabil beim Streamen, je Block `startLine` (0-basiert) und `openFence`; `openingFence`/`closesFence` – genutzt vom Transkript und von `plan-blocks` |
+| `plan-blocks.ts` | WP-93 (ADR-234): `splitPlanBlocks(plan)` – Blöcke des Plan-Tabs: Markdown-Blöcke, zusätzlich an Überschriften und an Listen, die einen Absatz unterbrechen, getrennt, Listen in Einträge der obersten Ebene (Code-Zäune nie geteilt); je Block `kind`, `startLine`/`endLine` (1-basiert) und `path` (Überschriften darüber); `headingOf(line)` |
+| `plan-feedback.ts` | WP-93: Feedback von „Weiter planen“ – `planFeedbackSection` (Einleitung, nummerierte Einträge in Plan-Reihenfolge mit Abschnitt, Zeile, Zitat ≤ `FEEDBACK_QUOTE_CHARS`, Kommentar bzw. „streichen“), `joinPlanFeedback` (+ „Allgemein:“ mit dem Nachrichtentext), `buildPlanFeedback`, `feedbackOverhead` (was die Anmerkungen zur Grenze beitragen), `sortAnnotations`, `annotationLines`; Texte aus `common.planFeedback` |
+| `text-anchor.ts` | WP-93: Textzitat-Anker – `quoteAt(text, span)` (Zitat + je `QUOTE_CONTEXT` = 32 Zeichen Umfeld), `findQuote(text, anchor)` (bestes Vorkommen nach Umfeld), `spanOfRange(root, range)`/`rangeOfSpan(root, span)` (DOM-Range ↔ Textversatz über die Textknoten) |
+| `plain-text.ts` | WP-93: `plainInline(text)` – Inline-Markdown zu Klartext (Links, Bilder, Code, Hervorhebung nur an Wortgrenzen: `snake_case` und `2 * 3` bleiben), `clipText(text, max)` (mit „…“) – genutzt von `plan-blocks`, `plan-feedback` und `features/decisions/lib/plan.ts` |
 | `task-rows.ts` | Re-Export des Task-Modells aus `@shared/tasks` (WP-71, ADR-194; vorher hier, CR3-02/ADR-158) plus `selectTaskSources` (je Items-Array gecacht); liegt im Start-Chunk |

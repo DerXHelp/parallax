@@ -45,6 +45,7 @@ import {
   modelOptionSchema,
   multiHostConfigSchema,
   multiHostRoleSchema,
+  planAnnotationsSchema,
   planVersionInfoSchema,
   profileInputSchema,
   profileIssueSchema,
@@ -403,6 +404,19 @@ export const commandSchema = z.discriminatedUnion('name', [
   /** Stored plan versions of the entry, ascending (ADR-148). */
   z.object({ name: z.literal('plan.list'), entryId: entryIdSchema }),
   z.object({ name: z.literal('plan.read'), entryId: entryIdSchema, version: z.number().int().positive() }),
+  /**
+   * WP-93 (ADR-234): replaces the annotations of an OPEN plan decision (the whole list – the last
+   * writer wins); every window gets them as `decision.upsert`. DECISION_NOT_FOUND,
+   * DECISION_ALREADY_RESOLVED, DECISION_EXPIRED (expired card), DECISION_OPTION_UNAVAILABLE
+   * {path: 'annotations'} for another kind of decision, VALIDATION_FAILED
+   * {reason: 'duplicate_annotation_id'}.
+   */
+  z.object({
+    name: z.literal('decision.annotatePlan'),
+    entryId: entryIdSchema,
+    decisionId: decisionIdSchema,
+    annotations: planAnnotationsSchema,
+  }),
   /** File service (ADR-140/141): routed like host commands, the handler checks the entry itself. */
   z.object({
     name: z.literal('file.stat'),
@@ -772,6 +786,7 @@ export const REMOTE_ALLOWED_COMMANDS = [
   'session.stopTask',
   'plan.list',
   'plan.read',
+  'decision.annotatePlan',
   'file.stat',
   'file.statMany',
   'files.session',
@@ -886,7 +901,13 @@ export const commandResultSchemas = {
   'fs.listDirectory': fsListingSchema,
   'session.stopTask': z.object({}),
   'plan.list': z.object({ versions: z.array(planVersionInfoSchema) }),
-  'plan.read': z.object({ version: z.number().int().positive(), text: z.string() }),
+  /** WP-93: `annotations` = those kept in the version's record (sent with "Keep planning" or still open). */
+  'plan.read': z.object({
+    version: z.number().int().positive(),
+    text: z.string(),
+    annotations: planAnnotationsSchema.default([]),
+  }),
+  'decision.annotatePlan': z.object({}),
   'file.stat': z.object({ file: fileInfoSchema }),
   /** One result per requested path, in request order. */
   'file.statMany': z.object({ results: z.array(fileStatResultSchema) }),

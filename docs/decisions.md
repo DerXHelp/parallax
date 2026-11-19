@@ -2785,3 +2785,25 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   Root-Schriftgröße trifft fast alles ohne Koordinatenumrechnung in Radix/Floating UI und virtua.
 - **Folgen:** Tailwind-Breakpoints (`sm:`/`md:`, wenige Stellen) und einzelne px-Werte (Radien, Rahmen) wachsen nicht
   mit. Ein vor WP-92 gesetzter Chrome-Zoom bleibt im Profil, bis Strg+0 ihn zurücksetzt.
+
+## ADR-234 – Pläne kommentieren: Anmerkungen an der Plan-Entscheidung, Feedback mit Ort und Zitat
+- **Datum/WP:** 20.11.2026, WP-93 (`feature/plan-kommentare`), abgestimmt mit dem Nutzer am 19.11.2026 (Kommentare
+  und Streichen, Tab „Plan“, nur Pläne, nur „Weiter planen“).
+- **Entscheidung:**
+  - Die Anmerkungen gehören der **offenen Plan-Entscheidung** (`PlanDecision.annotations`), nicht dem Fenster:
+    `decision.annotatePlan` ersetzt die ganze Liste, der Server speichert sie und verteilt sie mit `decision.upsert` an
+    jedes Fenster und jeden steuernden Rechner. Der letzte Schreiber gewinnt. Nach der Antwort bleiben sie im Record nur
+    bei `plan_revised`, damit `plan.read` zur nächsten Version zeigen kann, was mitgeschickt wurde.
+  - **Anker als Textzitat** (Block, Zitat, je 32 Zeichen Umfeld) über den gerenderten Text eines Blocks. Plan-Versionen
+    sind unveränderlich, eine Neuverankerung ist nicht nötig.
+  - Markierungen über die **CSS Custom Highlight API** statt eingefügter Elemente: Das Markdown bleibt unberührt,
+    Ranges werden nach jedem Rendern neu berechnet.
+  - **Feedback = Deny-Nachricht von `ExitPlanMode`** wie bisher. Claude liest die Plan-Datei nicht neu, darum nennt jeder
+    Eintrag Abschnitt (Überschriften) und Zeile und zitiert die Stelle. Danach folgt der Text des Nachrichtenfelds als
+    „Allgemein“. Die Sprache folgt der UI.
+- **Begründung:**
+  - Am Server bleiben die Anmerkungen über Reloads, Fenster und Rechner erhalten. Die nächste Version kann zeigen, was
+    zur vorigen gesagt wurde.
+  - Der Weg über die Deny-Nachricht braucht keine neue Antwortart und funktioniert mit jedem `claude`.
+- **Folgen:** Keine `PROTOCOL_VERSION`-Erhöhung: Es kommen nur ein Befehl und Felder mit Default hinzu. Zwei Fenster, die
+  gleichzeitig ändern, überschreiben einander; beide sehen danach dieselbe Liste.

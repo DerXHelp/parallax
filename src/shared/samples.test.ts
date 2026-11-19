@@ -34,6 +34,7 @@ import {
   multiHostConfigSchema,
   notificationSettingsSchema,
   planFileRefSchema,
+  planAnnotationSchema,
   planVersionInfoSchema,
   profileInputSchema,
   profileIssueSchema,
@@ -114,6 +115,7 @@ describe('sample factories satisfy their schemas', () => {
     ['fileStatResult error', fileStatResultSchema, () => samples.sampleFileStatResult(false)],
     ['sessionFile', sessionFileSchema, () => samples.sampleSessionFile()],
     ['planVersionInfo', planVersionInfoSchema, () => samples.samplePlanVersionInfo()],
+    ['planAnnotation', planAnnotationSchema, () => samples.samplePlanAnnotation()],
     ['planFileRef', planFileRefSchema, () => samples.samplePlanFileRef()],
     ['todoList', todoListSchema, () => samples.sampleTodoList()],
     [

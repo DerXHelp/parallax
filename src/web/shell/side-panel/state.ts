@@ -51,6 +51,8 @@ interface SidePanelState {
    * closing that tab returns there, like a browser tab.
    */
   returns: Readonly<Record<string, Partial<Record<SidePanelItem, SidePanelTab | null>>>>;
+  /** WP-93: sessions whose panel is as wide as allowed ("Wide" in the plan tab) – until resized. */
+  wide: Readonly<Record<string, true>>;
 }
 
 const EMPTY_HISTORY: readonly SidePanelFile[] = Object.freeze([]);
@@ -62,6 +64,7 @@ const store = createStore<SidePanelState>(() => ({
   mounted: {},
   subagents: {},
   returns: {},
+  wide: {},
 }));
 
 /** Elements that opened the panel (focus returns there on close). */
@@ -244,8 +247,22 @@ export function useSidePanelHostMounted(sessionKey: string): boolean {
   return useStore(store, (state) => (state.mounted[sessionKey] ?? 0) > 0);
 }
 
+/** WP-93: the panel of the session is as wide as allowed (70 % of the session area). */
+export function useSidePanelWide(sessionKey: string): boolean {
+  return useStore(store, (state) => state.wide[sessionKey] === true);
+}
+
+/** WP-93: "Wide" on/off; resizing by hand turns it off (the frame calls this). */
+export function setSidePanelWide(sessionKey: string, wide: boolean): void {
+  store.setState((state) => {
+    if ((state.wide[sessionKey] === true) === wide) return state;
+    const { [sessionKey]: _previous, ...rest } = state.wide;
+    return { wide: wide ? { ...rest, [sessionKey]: true } : rest };
+  });
+}
+
 /** Tests: forget everything (the module state is global). */
 export function resetSidePanelState(): void {
-  store.setState({ tabs: {}, files: {}, history: {}, mounted: {}, subagents: {}, returns: {} });
+  store.setState({ tabs: {}, files: {}, history: {}, mounted: {}, subagents: {}, returns: {}, wide: {} });
   openers.clear();
 }

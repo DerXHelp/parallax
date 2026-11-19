@@ -60,6 +60,14 @@ async function findPanel(): Promise<HTMLElement> {
   return tab;
 }
 
+/** WP-93: the plan text of all rendered Markdown blocks (an open version renders block by block). */
+function planText(tab: HTMLElement): string {
+  return within(tab)
+    .getAllByTestId('markdown')
+    .map((block) => block.textContent)
+    .join('\n');
+}
+
 function planPanel(tab: HTMLElement): HTMLElement {
   const panel = tab.querySelector<HTMLElement>('[data-slot="plan-panel"]');
   if (panel === null) throw new Error('plan panel missing');
@@ -108,7 +116,7 @@ describe('PlanPanel (side panel tab "Plan", WP-56)', () => {
     expect(panel.querySelector('[data-slot="plan-status"]')?.textContent).toBe('Open');
     expect(panel.querySelector('[data-slot="plan-file"]')).not.toBeNull();
     expect(within(tab).getByRole('button', { name: 'Go to decision' })).toBeTruthy();
-    expect(within(tab).getByTestId('markdown').textContent).toContain('## Tests');
+    expect(planText(tab)).toContain('## Tests');
     // The open decision brings its own text: no plan.read for v2.
     await waitFor(() => {
       expect(h.commands('plan.list').length).toBeGreaterThan(0);
@@ -153,7 +161,7 @@ describe('PlanPanel (side panel tab "Plan", WP-56)', () => {
     const removed = [...tab.querySelectorAll('tr[data-kind="remove"]')].map((row) => row.textContent);
     expect(removed.some((text) => text.includes('Replace the SQLite registry with JSON files.'))).toBe(true);
     await user.click(within(tab).getByRole('radio', { name: 'Plan' }));
-    expect(within(tab).getByTestId('markdown')).toBeTruthy();
+    expect(within(tab).getAllByTestId('markdown').length).toBeGreaterThan(0);
   });
 
   it('names approvals with their mode – "Implemented in a new conversation (Auto)" for a fresh context', async () => {
@@ -329,6 +337,6 @@ describe('PlanPanel (side panel tab "Plan", WP-56)', () => {
     const tab = await findPanel();
     expect(await within(tab).findByText('The plan versions could not be loaded.')).toBeTruthy();
     expect(within(tab).getByRole('heading', { name: 'Plan v2' })).toBeTruthy();
-    expect(within(tab).getByTestId('markdown').textContent).toContain('## Tests');
+    expect(planText(tab)).toContain('## Tests');
   });
 });

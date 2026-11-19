@@ -557,6 +557,7 @@ describe('restart', () => {
                 planVersion: null,
                 planFilePath: null,
                 decision,
+                annotations: [],
               },
             ],
           },

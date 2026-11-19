@@ -65,7 +65,10 @@ function planCommand(
   if (found?.info.stored !== true) {
     return { ok: false, error: makeError('PLAN_NOT_FOUND', { version: cmd.version }) };
   }
-  return { ok: true, result: { version: cmd.version, text: found.text } };
+  return {
+    ok: true,
+    result: { version: cmd.version, text: found.text, annotations: found.annotations ?? [] },
+  };
 }
 
 export function startDemoHost(options: DemoHostOptions): DemoHost {

@@ -1738,6 +1738,37 @@ export const questionDecisionSchema = z.object({
 });
 export type QuestionDecision = z.infer<typeof questionDecisionSchema>;
 
+/** WP-93 (ADR-234): a comment on a passage, or "strike" (the passage should go; the comment is the reason). */
+export const PLAN_ANNOTATION_KINDS = ['comment', 'strike'] as const;
+export const planAnnotationKindSchema = z.enum(PLAN_ANNOTATION_KINDS);
+export type PlanAnnotationKind = z.infer<typeof planAnnotationKindSchema>;
+
+/**
+ * WP-93 (ADR-234): one annotation of a plan version, made in the plan tab. Anchored to a block of the
+ * plan text (the web splits it like the plan tab renders it) and – for a marked passage – to the
+ * rendered text of that block (`quote` plus the text around it, which finds the right occurrence).
+ * `quote` '' = the whole block. The server only stores and returns annotations; the window builds
+ * the feedback of "Keep planning" from them.
+ */
+export const planAnnotationSchema = z.object({
+  /** Made by the window (`pa_…`), unique within the decision. */
+  id: z.string().min(1).max(64),
+  kind: planAnnotationKindSchema,
+  /** Index of the block in the plan text (0-based). */
+  block: z.number().int().nonnegative().max(1_000_000),
+  /** The marked text as rendered; '' = the whole block. */
+  quote: z.string().max(LIMITS.planAnnotationQuoteChars),
+  /** Up to 32 characters of the block's text right before / after the quote. */
+  prefix: z.string().max(LIMITS.planAnnotationContextChars).default(''),
+  suffix: z.string().max(LIMITS.planAnnotationContextChars).default(''),
+  /** The comment; for `strike` the optional reason (''). */
+  comment: z.string().max(LIMITS.planAnnotationChars),
+  createdAt: isoDateTimeSchema,
+});
+export type PlanAnnotation = z.infer<typeof planAnnotationSchema>;
+
+export const planAnnotationsSchema = z.array(planAnnotationSchema).max(LIMITS.planAnnotations);
+
 /** ExitPlanMode (F.6, C.4). */
 export const planDecisionSchema = z.object({
   ...decisionBase,
@@ -1756,6 +1787,12 @@ export const planDecisionSchema = z.object({
   previousVersionPlan: z.string().nullable(),
   /** Modes offered for "approve"; always explicit (C.4). The server decides (bypass only if the profile allows). */
   approveModes: z.array(permissionModeSchema).min(1),
+  /**
+   * WP-93 (ADR-234): the annotations of this version so far (`decision.annotatePlan` replaces them,
+   * every window gets the new state as `decision.upsert`). They stay in the record after the answer
+   * (`plan.read`).
+   */
+  annotations: planAnnotationsSchema.default([]),
 });
 export type PlanDecision = z.infer<typeof planDecisionSchema>;
 
@@ -1860,6 +1897,12 @@ export const decisionRecordSchema = z.object({
    * without a card and only counted.
    */
   decision: decisionSchema.nullable().default(null),
+  /**
+   * WP-93 (ADR-234): annotations of a plan decision while it is open; after the answer kept only
+   * when it was "Keep planning" (`plan_revised`, the snapshot above is dropped then), so `plan.read`
+   * still knows what was sent with it; any other answer empties the list.
+   */
+  annotations: planAnnotationsSchema.default([]),
 });
 export type DecisionRecord = z.infer<typeof decisionRecordSchema>;
 

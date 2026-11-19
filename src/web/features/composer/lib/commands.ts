@@ -1,5 +1,7 @@
 import { LIMITS, parseSessionKey, type BlobId, type PromptPriority } from '@shared/common';
-import type { Decision, DecisionResponse } from '@shared/model';
+import type { Decision, DecisionResponse, PlanAnnotation } from '@shared/model';
+import type { TranslationKey, TranslationParams } from '@web/i18n';
+import { buildPlanFeedback } from '@web/lib/plan-feedback';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand } from '@web/state/hooks';
 import { showErrorNotice } from '@web/state/notices';
@@ -14,10 +16,13 @@ export function isSingleQuestion(decision: Decision): boolean {
   return decision.kind === 'question' && decision.questions.length === 1;
 }
 
-/** Max text length per send target (contract limits of the prompt and of the answers, R2W-12). */
-export function textLimit(target: Decision | null): number {
+/**
+ * Max text length per send target (contract limits of the prompt and of the answers, R2W-12).
+ * `overhead`: characters the plan's annotations add to the feedback (WP-93, `feedbackOverhead`).
+ */
+export function textLimit(target: Decision | null, overhead = 0): number {
   if (target === null) return LIMITS.promptChars;
-  if (target.kind === 'plan') return LIMITS.planFeedbackChars;
+  if (target.kind === 'plan') return Math.max(0, LIMITS.planFeedbackChars - overhead);
   if (isSingleQuestion(target)) return LIMITS.answerChars;
   return LIMITS.decisionMessageChars;
 }
@@ -25,9 +30,16 @@ export function textLimit(target: Decision | null): number {
 /**
  * Composer text as the answer to an open decision (Plan "Plan-Modus", WP-13 §3.4): "No, instead:
  * …" = permission deny + message; one question = answer with the text as "Other" (R2W-13),
- * several questions = decline + message; plan revise (feedback). Typing can never approve.
+ * several questions = decline + message; plan revise (feedback – WP-93: with the plan's
+ * annotations, the text as the general part; `annotations` = this window's view of them). Typing
+ * can never approve.
  */
-export function answerFromText(decision: Decision, text: string): DecisionResponse {
+export function answerFromText(
+  decision: Decision,
+  text: string,
+  t: (key: TranslationKey, params?: TranslationParams) => string,
+  annotations?: readonly PlanAnnotation[],
+): DecisionResponse {
   switch (decision.kind) {
     case 'permission':
       return { kind: 'permission', response: { behavior: 'deny', message: text, interrupt: false } };
@@ -45,7 +57,13 @@ export function answerFromText(decision: Decision, text: string): DecisionRespon
       return { kind: 'question', response: { behavior: 'decline', message: text } };
     }
     case 'plan':
-      return { kind: 'plan', response: { behavior: 'revise', feedback: text } };
+      return {
+        kind: 'plan',
+        response: {
+          behavior: 'revise',
+          feedback: buildPlanFeedback(decision.plan, annotations ?? decision.annotations, text, t),
+        },
+      };
   }
 }
 

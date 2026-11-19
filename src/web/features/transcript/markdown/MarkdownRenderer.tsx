@@ -19,7 +19,7 @@ import { resolveLanguage } from '@web/lib/languages';
 import { useFeatureSlots } from '@web/shell/slots';
 import { useSummarySelector } from '@web/state/hooks';
 import { CodeBlock } from '../components/CodeBlock';
-import { splitMarkdownBlocks } from '../lib/markdown-blocks';
+import { splitMarkdownBlocks } from '@web/lib/markdown-blocks';
 import { markdownUrlTransform, safeHttpUrl } from '../lib/safe-url';
 import { preserveWindowsPaths } from '../lib/windows-paths';
 import { FileRefContext, FileReference, linkedPath, LinkedText, type FileRefBase } from './FileReference';

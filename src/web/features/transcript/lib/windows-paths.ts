@@ -1,4 +1,4 @@
-import { closesFence, openingFence, type Fence } from './markdown-blocks';
+import { closesFence, openingFence, type Fence } from '@web/lib/markdown-blocks';
 
 /**
  * V2-12: CommonMark turns `\.` `\_` `\*` … into the bare punctuation, so `C:\Users\user\.claude`

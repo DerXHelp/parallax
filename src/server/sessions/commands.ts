@@ -331,6 +331,10 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
       return {} satisfies CommandResult<'session.resume'>;
     case 'decision.respond':
       return respond(core, s, cmd, clientId);
+    // WP-93 (ADR-234): annotations of an open plan decision (no answer, no lifecycle lock).
+    case 'decision.annotatePlan':
+      s.broker.annotatePlan(cmd.decisionId, cmd.annotations);
+      return {} satisfies CommandResult<'decision.annotatePlan'>;
     case 'transcript.loadEarlier': {
       if (!s.entry.conversations.some((c) => c.id === cmd.conversationId)) {
         throw commandError('CONVERSATION_NOT_FOUND', { conversationId: cmd.conversationId });
@@ -385,7 +389,13 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
     case 'plan.read': {
       const text = await core.stores.decisions.readPlan(s.id, cmd.version);
       if (text === null) throw commandError('PLAN_NOT_FOUND', { version: cmd.version });
-      return { version: cmd.version, text } satisfies CommandResult<'plan.read'>;
+      // WP-93: the annotations kept in the version's record (none when it was trimmed).
+      const record = s.broker.planRecords().find((candidate) => candidate.planVersion === cmd.version);
+      return {
+        version: cmd.version,
+        text,
+        annotations: record?.annotations ?? [],
+      } satisfies CommandResult<'plan.read'>;
     }
     // WP-63: remove from Parallax only (files stay on disk).
     case 'session.remove':

@@ -4,6 +4,8 @@ import type { en } from './en';
 export const de: typeof en = {
   tabs: 'Seitenpanel',
   close: 'Panel schließen',
+  wide: 'Panel breit machen',
+  narrow: 'Normale Panelbreite',
   tab: {
     plan: 'Plan',
     file: 'Datei',

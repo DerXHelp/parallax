@@ -5,6 +5,9 @@
 export const en = {
   tabs: 'Side panel',
   close: 'Close panel',
+  /** WP-93: as wide as the panel may be (70 % of the session area) – and back. */
+  wide: 'Make panel wide',
+  narrow: 'Normal panel width',
   tab: {
     plan: 'Plan',
     file: 'File',
