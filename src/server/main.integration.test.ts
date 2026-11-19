@@ -99,6 +99,25 @@ const sleep = (ms: number) =>
     setTimeout(resolve, ms);
   });
 
+/**
+ * Children of `pid` started at or after `since` that are still there. The server's own console host
+ * (`conhost.exe`) ends right after the server, but not always before the native query looks: a lone
+ * console host gets 3 s; any other child counts at once. Three-valued (R2-02): unknown throws.
+ */
+async function leftChildren(pid: number, since: Date): Promise<{ pid: number; name: string }[]> {
+  const deadline = Date.now() + 3_000;
+  for (;;) {
+    const children = await childProcesses(pid);
+    if (children.kind === 'unknown') {
+      throw new Error(`child process query gave no answer (${children.reason}): ${children.detail}`);
+    }
+    const orphans = children.processes.filter((p) => p.startedAt >= since);
+    const onlyConsoleHost = orphans.every((p) => p.name.toLowerCase() === 'conhost.exe');
+    if (orphans.length === 0 || !onlyConsoleHost || Date.now() > deadline) return orphans;
+    await sleep(100);
+  }
+}
+
 /** Waits like the launcher: a lock file whose port answers the health check with the same instance. */
 async function waitUntilReady(server: ServerProcess, home: string): Promise<ServerLockFile> {
   const state: { exit: { code: number | null } | null } = { exit: null };
@@ -240,12 +259,7 @@ describe('server entry (main.ts) as a process with the FakeBackend', () => {
     expect(isProcessAlive(lock.pid)).toBe(false);
     // No child of the server survived (a child keeps its ParentProcessId after the parent's exit).
     // Three-valued (R2-02): "unknown" must fail the test, never read as "no children".
-    const children = await childProcesses(lock.pid);
-    if (children.kind === 'unknown') {
-      throw new Error(`child process query gave no answer (${children.reason}): ${children.detail}`);
-    }
-    const orphans = children.processes.filter((p) => p.startedAt >= startedAt);
-    expect(orphans).toEqual([]);
+    expect(await leftChildren(lock.pid, startedAt)).toEqual([]);
     // The rotating log file got the whole run, including the last line before the exit.
     const logs = await readdir(path.join(home, 'logs'));
     const logFile = logs.find((name) => /^parallax\..+\.log$/.test(name));
