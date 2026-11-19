@@ -336,11 +336,11 @@ export function PlanAnnotator({
       if (event.shiftKey || event.key.startsWith('Arrow')) update();
     };
     // A selection that collapsed or moved elsewhere (the transcript, the composer) hides the toolbar.
+    // Its start counts, like `readSelection` (a triple click on the last block ends past the plan).
     const onSelectionChange = () => {
       const selection = window.getSelection();
       const range = selection === null || selection.rangeCount === 0 ? null : selection.getRangeAt(0);
-      if (range === null || range.collapsed || !container.contains(range.commonAncestorContainer))
-        setSelected(null);
+      if (range === null || range.collapsed || !container.contains(range.startContainer)) setSelected(null);
     };
     container.addEventListener('pointerup', onPointerUp);
     container.addEventListener('keyup', onKeyUp);

@@ -141,6 +141,23 @@ describe('plan annotations (WP-93)', () => {
     });
     expect(within(block(tab, 4)).getByText('Strike')).toBeTruthy();
     expect(tab.querySelector('[data-slot="plan-annotation-count"]')?.textContent).toBe('2 annotations');
+
+    // A selection that moves out of the plan hides the toolbar.
+    await select(tab, 1, 'atomic JSON files');
+    const outside = document.createElement('p');
+    outside.textContent = 'elsewhere';
+    document.body.append(outside);
+    const range = document.createRange();
+    range.selectNodeContents(outside);
+    act(() => {
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+    });
+    await waitFor(() => {
+      expect(tab.querySelector('[data-slot="plan-selection-toolbar"]')).toBeNull();
+    });
+    outside.remove();
   });
 
   it('edits and deletes an annotation; Escape cancels the editor', async () => {
