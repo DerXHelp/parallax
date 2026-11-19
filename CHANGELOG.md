@@ -23,6 +23,7 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 ### Geändert
 - Parallax braucht jetzt Node.js 26.9 oder neuer (vorher 24.5): Prozesse fragt der Server nur noch selbst ab, nie mehr
   über PowerShell, und „Mehrere Rechner“ ist auf jedem Rechner verfügbar (ADR-231).
+- Braucht eine neue Version ein neueres Node.js, lehnt Parallax das Update ab, bevor es das Paket lädt (ADR-232).
 - Der Knopf für eine gefundene Version heißt „Jetzt aktualisieren“ statt „Update vorbereiten“; er lädt und
   installiert sie, „Neu starten“ wechselt danach (WP-89).
 

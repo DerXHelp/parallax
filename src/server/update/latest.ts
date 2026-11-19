@@ -35,6 +35,15 @@ export const latestInfoSchema = z.object({
   schemaVersion: z.literal(1),
   version: appVersionSchema,
   prerelease: z.boolean(),
+  /**
+   * `minNode` of the release's release.json (ADR-232): a running Node below it refuses the release
+   * before the download. Null = written before 1.0.2 (the check after unpacking still applies).
+   */
+  minNode: z
+    .string()
+    .regex(/^\d+\.\d+\.\d+$/u)
+    .nullable()
+    .default(null),
   /** Must be exactly `assetUrl(version)` of the endpoints. */
   url: z.string().min(1).max(2048),
   /** Zip bytes. */

@@ -27,7 +27,8 @@ Ablauf und Gründe: `docs/wp/WP-83.md` §4–§7, Umsetzung `docs/wp/WP-85.md`, 
   `pnpm install --prod` im Staging, Import-Wächter (`release/imports.ts`), Agent SDK entfernt, Dateien ohne
   Laufzeit-Nutzen entfernt (`release/files.ts`), `THIRD_PARTY_NOTICES.md` mit Lizenz-Allowlist (`release/notices.ts`),
   `release.json` mit SHA-256 jeder Datei, Schema-Hashes und `integrity` des SDK (`release/lockfile.ts`).
-- `release/sign.ts` signiert in der CI (`RELEASE_SIGNING_KEY`), zippt nicht selbst; `latest` schreibt `latest.json`.
+- `release/sign.ts` signiert in der CI (`RELEASE_SIGNING_KEY`), zippt nicht selbst; `latest` schreibt `latest.json`
+  (mit `minNode` aus der `release.json` des Pakets, ADR-232).
 - `release/smoke.ts` prüft ein Zip bzw. ein Staging wie der spätere Installer und startet es mit FakeBackend.
 - `release-key.ts` erzeugt den Signaturschlüssel im Terminal des Nutzers und setzt das Secret der Umgebung `release`.
 - Workflows: `.github/workflows/release.yml` (Tag `v*`: build → sign → smoke → publish), `audit.yml` (wöchentlich),

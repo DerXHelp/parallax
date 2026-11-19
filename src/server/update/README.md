@@ -11,7 +11,7 @@ ein Update im Hintergrund vor und übergibt den Wechsel an den Orchestrator der 
 | `handoff.ts` | Übergabe Server → Orchestrator: Flags, Handschlag-Zeilen, Fristen, `orchestratorCommand` | Koordinator |
 | `service.ts` | `createUpdateService` (async): Zustand, Zeitplan, Befehle, Upload-Annahme, „Was ist neu“, Hinweise | WP-87a |
 | `fetch.ts` / `latest.ts` | Abrufe mit Weiterleitungs- und Größenregeln; `latest.json` + Signatur + Changelog | WP-87a |
-| `zip.ts` / `prepare.ts` | Zip prüfen und entpacken (`tar.exe`); Vorbereiten unter der Sperre `install` | WP-87a |
+| `zip.ts` / `prepare.ts` | Zip prüfen und entpacken (`tar.exe`); Vorbereiten unter der Sperre `install`; ein zu altes Node nach `minNode` von `latest.json` scheitert vor Sperre und Download (ADR-232) | WP-87a |
 | `previous.ts` / `changelog.ts` / `notices.ts` / `stateFile.ts` | vorige Version; Changelog-Abschnitte; feste Textdateien; `update-state.json` | WP-87a |
 | `apply.ts` | Orchestrator starten, Handschlag (Frist; bei Stille oder unlesbarer Zeile beendet) | WP-87a |
 | `routes.ts` | `POST /api/update/package`, `GET /api/changelog`, `GET /api/notices` | WP-87a |

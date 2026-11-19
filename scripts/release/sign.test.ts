@@ -54,6 +54,10 @@ describe('scripts/release/sign.ts (plain node)', () => {
     await writeFile(zip, 'zip');
     await writeFile(path.join(dir, 'notes.md'), '### Neu\n- Something.\n');
     await writeFile(path.join(dir, 'CHANGELOG.md'), '# Changelog\n');
+    await writeFile(
+      path.join(dir, 'release.json'),
+      JSON.stringify({ version: '1.0.0-rc.1', minNode: '26.9.0' }),
+    );
     const out = path.join(dir, 'latest.json');
     const result = await sign(
       [
@@ -62,6 +66,8 @@ describe('scripts/release/sign.ts (plain node)', () => {
         zip,
         '--version',
         '1.0.0-rc.1',
+        '--release',
+        'release.json',
         '--notes',
         'notes.md',
         '--changelog',
@@ -76,11 +82,40 @@ describe('scripts/release/sign.ts (plain node)', () => {
       schemaVersion: 1,
       version: '1.0.0-rc.1',
       prerelease: true,
+      minNode: '26.9.0',
       url: 'https://github.com/DerXHelp/parallax/releases/download/v1.0.0-rc.1/parallax-1.0.0-rc.1-win.zip',
       size: 3,
       sha256: createHash('sha256').update('zip').digest('hex'),
       changelogSha256: createHash('sha256').update('# Changelog\n').digest('hex'),
       notes: '### Neu\n- Something.',
     });
+
+    // ADR-232: without a valid minNode in release.json no latest.json is written.
+    await writeFile(
+      path.join(dir, 'release.json'),
+      JSON.stringify({ version: '1.0.0-rc.1', minNode: '26.9' }),
+    );
+    await rm(out);
+    const refused = await sign(
+      [
+        'latest',
+        '--zip',
+        zip,
+        '--version',
+        '1.0.0-rc.1',
+        '--release',
+        'release.json',
+        '--notes',
+        'notes.md',
+        '--changelog',
+        'CHANGELOG.md',
+        '--out',
+        out,
+      ],
+      null,
+    );
+    expect(refused.exitCode).toBe(1);
+    expect(refused.stderr).toContain('no valid minNode');
+    await expect(readFile(out, 'utf8')).rejects.toThrow();
   });
 });

@@ -232,6 +232,33 @@ describe('prepareRelease', () => {
     expect(await readdir(path.join(w.root, DOWNLOADS_DIR))).toEqual([]);
   });
 
+  it('refuses a release for a newer Node from latest.json before the lock and the download (ADR-232)', async () => {
+    const w = await world();
+    const { latest } = serveRelease(w.server, w.endpoints, w.key, {
+      version: '1.0.1',
+      zip: await w.zip('1.0.1'),
+      latest: { minNode: '27.0.0' },
+    });
+    let locked = false;
+    const lockRoot = () => {
+      locked = true;
+      return Promise.resolve({ release: () => Promise.resolve() });
+    };
+    expect(await payload(prepareRelease(w.env({ lockRoot }), latest, w.run()))).toEqual(
+      makeError('UPDATE_NODE_TOO_OLD', { required: '27.0.0', actual: '26.12.0' }),
+    );
+    expect(locked).toBe(false);
+    expect(w.server.count(latest.url)).toBe(0);
+    expect(w.progress).toEqual([]);
+    // Without minNode (a latest.json written before 1.0.2) the release.json check still applies.
+    const older = serveRelease(w.server, w.endpoints, w.key, {
+      version: '1.0.1',
+      zip: await w.zip('1.0.1'),
+      latest: { minNode: null },
+    });
+    expect((await prepareRelease(w.env(), older.latest, w.run())).release.version).toBe('1.0.1');
+  });
+
   it('maps a failed SDK step (wrong hash) to UPDATE_SDK_FAILED', async () => {
     const w = await world();
     const { latest } = serveRelease(w.server, w.endpoints, w.key, {

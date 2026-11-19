@@ -2748,3 +2748,19 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   Mindestversion statt zweier Wege spart Code und Tests; 26 ist ohnehin die Standardversion.
 - **Folgen:** Wer Node 24 oder 26.0–26.8 hat, muss Node vor dem nächsten Update aktualisieren. `minNode` in
   `latest.json` (WP-87 §12) würde das schon vor dem Download melden – offen.
+
+## ADR-232 – `minNode` in `latest.json`: zu altes Node vor dem Download ablehnen
+- **Datum/WP:** 19.11.2026, `feature/latest-min-node` (Nutzer: „Ja, mach“; Folgearbeit aus WP-87 §12 und ADR-231).
+- **Entscheidung:**
+  - `latest.json` bekommt das Feld `minNode` (`x.y.z`). `scripts/release/sign.ts latest` liest es mit `--release` aus
+    der `release.json` des Pakets; ohne gültiges `minNode` schreibt es kein `latest.json`. `schemaVersion` bleibt 1.
+  - Das Update (`prepareRelease`) vergleicht es vor der Sperre und vor jedem Download mit dem laufenden Node und lehnt
+    mit `UPDATE_NODE_TOO_OLD {required, actual}` ab. Die Prüfung der signierten `release.json` nach dem Entpacken
+    bleibt; sie entscheidet weiterhin, denn `latest.json` sagt nur früher dasselbe.
+  - Lesen: `minNode` ist nullable mit Default `null` (ein `latest.json` von 1.0.0/1.0.1 hat es nicht). Der Release-Smoke
+    verlangt das Feld und prüft, dass es mit `release.json` übereinstimmt.
+- **Begründung:** Wer ein zu altes Node hat, soll nicht erst das ganze Paket laden, um dann abgelehnt zu werden. Die
+  Meldung mit der nötigen und der installierten Version gibt es schon (`UPDATE_NODE_TOO_OLD`); sie kommt jetzt sofort.
+- **Folgen:** Wirkt erst ab der Version nach 1.0.1: 1.0.0/1.0.1 kennen das Feld nicht (unbekannte Felder werden
+  verworfen), laden das Paket und lehnen es nach dem Entpacken ab wie bisher. Kein Eingriff in `src/shared`, keine
+  Änderung der UI.

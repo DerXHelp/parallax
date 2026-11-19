@@ -12,7 +12,7 @@ import type { TestKey } from '../../src/server/install/testPackage';
 import { CHANGELOG_ASSET, LATEST_FILE, releaseZipName } from '../../src/server/update/endpoints';
 import type { LatestInfo } from '../../src/server/update/latest';
 import { sha256, signBytes } from '../../src/server/update/testRelease';
-import type { MiniSdk } from './update-packages';
+import { MIN_NODE, type MiniSdk } from './update-packages';
 
 export interface OfferedRelease {
   version: string;
@@ -104,6 +104,7 @@ export async function startReleaseServer(key: TestKey, sdk: MiniSdk): Promise<Re
         schemaVersion: 1,
         version: release.version,
         prerelease: release.version.includes('-'),
+        minNode: MIN_NODE,
         url: `${base}/download/v${release.version}/${releaseZipName(release.version)}`,
         size: release.zip.length,
         sha256: sha256(release.zip),

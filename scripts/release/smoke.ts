@@ -96,10 +96,11 @@ const latestSchema = z.object({
   version: z.string(),
   size: z.number().int().positive(),
   sha256: z.string().regex(/^[0-9a-f]{64}$/u),
+  minNode: z.string().regex(/^\d+\.\d+\.\d+$/u),
 });
 
-/** latest.json: signature, then size and SHA-256 of the zip. */
-async function checkLatest(latestFile: string, zip: string): Promise<void> {
+/** latest.json: signature, then size and SHA-256 of the zip; returns its `minNode` (ADR-232). */
+async function checkLatest(latestFile: string, zip: string): Promise<string> {
   const bytes = await readFile(latestFile);
   const signature = await readFile(`${latestFile}.sig`, 'utf8');
   if (!verifyReleaseSignature(bytes, signature)) throw new SmokeError('latest.json: invalid signature');
@@ -109,6 +110,7 @@ async function checkLatest(latestFile: string, zip: string): Promise<void> {
     throw new SmokeError('the zip does not match latest.json (size or SHA-256)');
   }
   log(`latest.json ${latest.version}: signature and zip hash ok`);
+  return latest.minNode;
 }
 
 async function unpack(zip: string, work: string, env: Record<string, string>): Promise<string> {
@@ -178,8 +180,9 @@ async function main(argv: readonly string[]): Promise<void> {
 
   let pkgDir: string;
   let trialKey: string | null = null;
+  let latestMinNode: string | null = null;
   if (zip !== undefined) {
-    if (latestFile !== undefined) await checkLatest(latestFile, zip);
+    if (latestFile !== undefined) latestMinNode = await checkLatest(latestFile, zip);
     pkgDir = await unpack(path.resolve(zip), work, env);
   } else {
     pkgDir = path.join(work, 'package');
@@ -189,6 +192,9 @@ async function main(argv: readonly string[]): Promise<void> {
   const release = releaseInfoSchema.parse(
     JSON.parse(await readFile(path.join(pkgDir, RELEASE_FILE), 'utf8')),
   );
+  if (latestMinNode !== null && latestMinNode !== release.minNode) {
+    throw new SmokeError(`latest.json names minNode ${latestMinNode}, release.json ${release.minNode}`);
+  }
   const root = path.join(work, 'Programs', 'Parallax');
   const installer = path.join(pkgDir, 'dist', 'install.js');
 
