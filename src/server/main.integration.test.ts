@@ -100,20 +100,19 @@ const sleep = (ms: number) =>
   });
 
 /**
- * Children of `pid` started at or after `since` that are still there. The server's own console host
- * (`conhost.exe`) ends right after the server, but not always before the native query looks: a lone
- * console host gets 3 s; any other child counts at once. Three-valued (R2-02): unknown throws.
+ * Children of `pid` started at or after `since` that are still there after 5 s. Right after the
+ * server its console host (`conhost.exe`) and a running `git` lookup (≤ 5 s) may still end on their
+ * own; the native query (ADR-231) looks within a few ms of the exit. Three-valued (R2-02): unknown throws.
  */
 async function leftChildren(pid: number, since: Date): Promise<{ pid: number; name: string }[]> {
-  const deadline = Date.now() + 3_000;
+  const deadline = Date.now() + 5_000;
   for (;;) {
     const children = await childProcesses(pid);
     if (children.kind === 'unknown') {
       throw new Error(`child process query gave no answer (${children.reason}): ${children.detail}`);
     }
     const orphans = children.processes.filter((p) => p.startedAt >= since);
-    const onlyConsoleHost = orphans.every((p) => p.name.toLowerCase() === 'conhost.exe');
-    if (orphans.length === 0 || !onlyConsoleHost || Date.now() > deadline) return orphans;
+    if (orphans.length === 0 || Date.now() > deadline) return orphans;
     await sleep(100);
   }
 }
