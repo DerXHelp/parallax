@@ -4,7 +4,7 @@ import { makeError } from '@shared/errors';
 import { STORAGE_KEYS, readStorage, writeStorage } from '@web/lib/storage';
 import { createHostConnection, registerConnection, unregisterConnection } from './connection';
 import { FakeHost } from './fake-host';
-import { selectSettings } from './settings';
+import { selectSettings, useSettings } from './settings';
 import { clientStore, resetClientStore } from './store';
 import { createMemoryTransport } from './transport';
 import {
@@ -75,6 +75,19 @@ describe('zoom of the window (WP-92)', () => {
       writeStorage('local', STORAGE_KEYS.zoom, broken);
       expect(applyInitialZoom()).toBe(100);
     }
+  });
+
+  it('before host.state the window keeps the cached zoom (ShellEffects mounts first)', () => {
+    writeStorage('local', STORAGE_KEYS.zoom, '150');
+    applyInitialZoom();
+    expect(storedZoom()).toBe(150);
+    function Effects() {
+      useZoomController(useSettings().zoom);
+      return null;
+    }
+    render(<Effects />);
+    expect(root().style.fontSize).toBe('150%');
+    expect(readStorage('local', STORAGE_KEYS.zoom)).toBe('150');
   });
 
   it('applies the setting and follows its changes', () => {

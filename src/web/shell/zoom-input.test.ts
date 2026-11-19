@@ -48,6 +48,13 @@ describe('zoom keys and wheel (WP-92)', () => {
     expect(action({ key: '-', ctrlKey: true })).toBe('out');
     expect(action({ key: '-', code: 'NumpadSubtract', ctrlKey: true })).toBe('out');
     expect(action({ key: '0', ctrlKey: true })).toBe('reset');
+    // Shifted plus/minus keys (Chrome zooms on them too): German `*` from the plus key, `_`.
+    expect(action({ key: '*', code: 'BracketRight', ctrlKey: true, shiftKey: true })).toBe('in');
+    expect(action({ key: '_', code: 'Slash', ctrlKey: true, shiftKey: true })).toBe('out');
+    expect(action({ key: '_', code: 'Minus', ctrlKey: true, shiftKey: true })).toBe('out');
+    // Numpad `*` and German Ctrl+Shift+0 (`=`) are no zoom keys.
+    expect(action({ key: '*', code: 'NumpadMultiply', ctrlKey: true })).toBeNull();
+    expect(action({ key: '=', code: 'Digit0', ctrlKey: true, shiftKey: true })).toBeNull();
     expect(action({ key: '+' })).toBeNull();
     expect(action({ key: '+', ctrlKey: true, altKey: true })).toBeNull();
     expect(action({ key: 'k', ctrlKey: true })).toBeNull();

@@ -17,7 +17,11 @@ import { clientStore, type ClientStore } from './store';
  * once, saved once the keys rest (one `settings.update` per burst, not per wheel tick). Until that
  * save settled, the stored setting does not override the window (no jump back and forth between
  * the optimistic value and an older ack). The last applied value is cached in localStorage, so a
- * reload starts at that size (`applyInitialZoom`, main.tsx).
+ * reload starts at that size (`applyInitialZoom`, main.tsx) – also as the window-local setting until
+ * `host.state` arrives (ShellEffects mounts before it, it must not fall back to 100 % meanwhile).
+ *
+ * Known limit: a key step before the first `host.state` only changes the window-local setting and
+ * gives way to the stored one when it arrives – like any setting changed before the connection.
  */
 
 /** Delay after the last key or wheel step before the setting is saved. */
@@ -34,9 +38,9 @@ function notify(): void {
 export function applyZoom(percent: number, root: HTMLElement = document.documentElement): void {
   const value = clampZoom(percent);
   root.style.fontSize = value === DEFAULT_ZOOM ? '' : `${String(value)}%`;
-  writeStorage('local', STORAGE_KEYS.zoom, String(value));
   if (applied === value) return;
   applied = value;
+  writeStorage('local', STORAGE_KEYS.zoom, String(value));
   notify();
 }
 
@@ -47,9 +51,15 @@ export function readCachedZoom(): number | null {
   return parsed.success ? parsed.data : null;
 }
 
-/** Before the first render (main.tsx): the cached zoom or 100 %. */
-export function applyInitialZoom(win: Window = window): number {
-  applyZoom(readCachedZoom() ?? DEFAULT_ZOOM, win.document.documentElement);
+/**
+ * Before the first render (main.tsx): the cached zoom or 100 % – applied and taken as the
+ * window-local setting, which `useSettings` returns until `host.state` arrives.
+ */
+export function applyInitialZoom(win: Window = window, store: ClientStore = clientStore): number {
+  const zoom = readCachedZoom() ?? DEFAULT_ZOOM;
+  applyZoom(zoom, win.document.documentElement);
+  const { localSettings } = store.getState();
+  if (localSettings.zoom !== zoom) store.setState({ localSettings: { ...localSettings, zoom } });
   return applied;
 }
 

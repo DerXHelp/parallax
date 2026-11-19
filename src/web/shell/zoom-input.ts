@@ -24,12 +24,24 @@ const PAGE_PX = 800;
 
 export type ZoomKeyAction = 'in' | 'out' | 'reset';
 
-/** What a keydown means for the zoom (null = nothing; AltGr = Ctrl+Alt is never a zoom key). */
+/**
+ * What a keydown means for the zoom (null = nothing; AltGr = Ctrl+Alt is never a zoom key). Chrome
+ * also zooms on the shifted plus and minus keys, which yield other characters: `*` from the plus key
+ * of a German layout, `_` from the minus key. German Ctrl+Shift+0 yields `=` and is no zoom key.
+ */
 export function zoomKeyAction(event: KeyboardEvent): ZoomKeyAction | null {
   if (!event.ctrlKey || event.altKey || event.metaKey || event.isComposing) return null;
-  if (event.key === '+' || event.key === '=' || event.code === 'NumpadAdd') return 'in';
-  if (event.key === '-' || event.code === 'NumpadSubtract') return 'out';
-  if (event.key === '0' || event.code === 'Numpad0') return 'reset';
+  const { key, code } = event;
+  if (
+    code === 'NumpadAdd' ||
+    key === '+' ||
+    (key === '=' && code !== 'Digit0') ||
+    (key === '*' && code === 'BracketRight')
+  ) {
+    return 'in';
+  }
+  if (code === 'NumpadSubtract' || key === '-' || key === '_') return 'out';
+  if (key === '0' || code === 'Numpad0') return 'reset';
   return null;
 }
 

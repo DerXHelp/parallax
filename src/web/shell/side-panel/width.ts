@@ -1,11 +1,10 @@
 import { readStorage, storageKey, writeStorage } from '@web/lib/storage';
-import { toLayoutPx } from '@web/lib/zoom';
-import { getZoom } from '@web/state/zoom';
 
 /**
  * Width rules of the side panel (WP-54, ADR-150): 320 px … 70 % of the session area, remembered per
  * window. Pure helpers (no React) – the host measures the area and calls them. WP-92: all values are
- * layout px (CSS px at 100 % zoom); the host converts the measured area and the drawn width.
+ * layout px (CSS px at 100 % zoom); the host converts the measured area and the drawn width (only
+ * the fallback before the first measurement is the plain window width).
  */
 
 export const SIDE_PANEL_MIN_WIDTH = 320;
@@ -48,9 +47,7 @@ export function writeSidePanelWidth(width: number): void {
 
 function areaOrFallback(area: number | null): number {
   if (area !== null && area > 0) return area;
-  return typeof window === 'undefined'
-    ? FALLBACK_AREA
-    : toLayoutPx(window.innerWidth, getZoom()) || FALLBACK_AREA;
+  return typeof window === 'undefined' ? FALLBACK_AREA : window.innerWidth || FALLBACK_AREA;
 }
 
 /** `area × share` rounded down to whole px (1400 × 0.7 = 979.999… in floating point → 980). */

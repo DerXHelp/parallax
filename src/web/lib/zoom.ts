@@ -22,21 +22,6 @@ export function stepZoom(current: number, direction: 1 | -1): number {
   return ZOOM_LEVELS.findLast((level) => level < value) ?? MIN_ZOOM;
 }
 
-/** The step closest to `percent` (ties go to the smaller one), e.g. for a select of the steps. */
-export function nearestZoomLevel(percent: number): number {
-  const value = clampZoom(percent);
-  let best: number = DEFAULT_ZOOM;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (const level of ZOOM_LEVELS) {
-    const distance = Math.abs(level - value);
-    if (distance < bestDistance) {
-      best = level;
-      bestDistance = distance;
-    }
-  }
-  return best;
-}
-
 /** 125 → 1.25. */
 export function zoomFactor(percent: number): number {
   return clampZoom(percent) / 100;

@@ -3,6 +3,8 @@ import { Virtualizer, type VirtualizerHandle } from 'virtua';
 import { cn } from '@web/lib/cn';
 import type { HighlightedLine } from '@web/lib/highlight';
 import type { LanguageId } from '@web/lib/languages';
+import { toScreenPx } from '@web/lib/zoom';
+import { useZoom } from '@web/state/zoom';
 import { SHIKI_TOKENS } from '@web/ui/code-block';
 import { useHighlight } from '@web/ui/use-highlight';
 import { columnOffset } from '../lib/columns';
@@ -16,6 +18,7 @@ import { columnOffset } from '../lib/columns';
  * new text (live reload): the rows change, the list stays.
  */
 
+/** Height of a line (`leading-5`) at 100 % zoom; virtua gets it at the zoom (WP-92). */
 export const CODE_LINE_HEIGHT = 20;
 
 /** Frames to wait for virtua's viewport measurement before the line jump (and for the row after it). */
@@ -92,6 +95,7 @@ export const CodeView = memo(function CodeView({
   const normalized = useMemo(() => text.replace(/\r\n?/g, '\n'), [text]);
   const lines = useMemo(() => normalized.split('\n'), [normalized]);
   const highlighted = useHighlight(normalized, language, true);
+  const zoom = useZoom();
   const gutter = String(lines.length).length;
   const width = useMemo(() => longestLine(lines), [lines]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -151,7 +155,12 @@ export const CodeView = memo(function CodeView({
       )}
     >
       <div style={{ minWidth: `calc(${String(width + gutter)}ch + 2.5rem)` }} className="py-1">
-        <Virtualizer ref={handle} scrollRef={scrollRef} data={lines} itemSize={CODE_LINE_HEIGHT}>
+        <Virtualizer
+          ref={handle}
+          scrollRef={scrollRef}
+          data={lines}
+          itemSize={toScreenPx(CODE_LINE_HEIGHT, zoom)}
+        >
           {(plain, index) => {
             const number = index + 1;
             const current = number === target;

@@ -1,13 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  clampZoom,
-  nearestZoomLevel,
-  stepZoom,
-  toLayoutPx,
-  toScreenPx,
-  zoomFactor,
-  ZOOM_LEVELS,
-} from './zoom';
+import { clampZoom, stepZoom, toLayoutPx, toScreenPx, zoomFactor, ZOOM_LEVELS } from './zoom';
 
 describe('zoom steps (WP-92)', () => {
   it('clamps to whole percent within 50 … 200', () => {
@@ -29,13 +21,6 @@ describe('zoom steps (WP-92)', () => {
     const up: number[] = [];
     for (let value = 50; value < 200; value = stepZoom(value, 1)) up.push(value);
     expect([...up, 200]).toEqual([...ZOOM_LEVELS]);
-  });
-
-  it('finds the nearest step', () => {
-    expect(nearestZoomLevel(100)).toBe(100);
-    expect(nearestZoomLevel(118)).toBe(125);
-    expect(nearestZoomLevel(117)).toBe(110);
-    expect(nearestZoomLevel(999)).toBe(200);
   });
 
   it('converts between screen px and layout px', () => {
