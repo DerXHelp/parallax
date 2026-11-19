@@ -35,6 +35,11 @@ export const en = {
   general: {
     languageHint: 'Language of the app and of the Windows notifications.',
     themeHint: 'System follows the Windows setting. The settings menu offers the same quick choice.',
+    /** WP-92. */
+    zoom: 'Zoom',
+    zoomHint:
+      'Size of the whole interface in every window. Ctrl+wheel and Ctrl+Plus/Minus change it as well, Ctrl+0 goes back to 100 %.',
+    zoomValue: '{percent} %',
     /** WP-63 §1.5. */
     transcript: 'Transcript',
     transcriptHint:

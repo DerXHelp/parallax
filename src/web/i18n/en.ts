@@ -32,6 +32,9 @@ export const en = {
       arrowDown: '↓',
       arrowLeft: '←',
       arrowRight: '→',
+      plus: '+',
+      minus: '−',
+      wheel: 'Wheel',
     },
   },
   shell: {
@@ -147,6 +150,10 @@ export const en = {
       help: 'Show keyboard shortcuts',
       selectSession: 'Select session 1–9 in the sidebar',
       empty: 'No shortcuts registered.',
+      zoomWheel: 'Zoom in or out',
+      zoomIn: 'Zoom in',
+      zoomOut: 'Zoom out',
+      zoomReset: 'Reset zoom to 100 %',
     },
     notifications: {
       region: 'Notifications',

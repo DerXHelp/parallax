@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { STORAGE_KEYS, readStorage, writeStorage } from '@web/lib/storage';
+import { toLayoutPx } from '@web/lib/zoom';
+import { getZoom, subscribeZoom } from '@web/state/zoom';
 
 /**
  * Sidebar in narrow windows (V3-14, WP-58): below NARROW_WINDOW_BELOW px of window width the
@@ -7,13 +9,16 @@ import { STORAGE_KEYS, readStorage, writeStorage } from '@web/lib/storage';
  * wider window the user may collapse it as well; that choice is kept per window (sessionStorage)
  * and as the default of new windows (localStorage) – both through lib/storage, which swallows
  * missing or broken storage (then: expanded).
+ *
+ * WP-92: every width here is in layout px (CSS px at 100 % zoom) – the window width is divided by
+ * the zoom, so the sidebar collapses at the same amount of content as without zoom.
  */
 
 /** Window width (px) below which the sidebar is always collapsed. */
 export const NARROW_WINDOW_BELOW = 900;
 
 function windowWidth(): number {
-  return typeof window === 'undefined' ? 0 : window.innerWidth;
+  return typeof window === 'undefined' ? 0 : toLayoutPx(window.innerWidth, getZoom());
 }
 
 /** True for a known window width below NARROW_WINDOW_BELOW. */
@@ -23,8 +28,10 @@ export function isNarrowWindow(width: number = windowWidth()): boolean {
 
 function subscribeResize(listener: () => void): () => void {
   window.addEventListener('resize', listener);
+  const unsubscribeZoom = subscribeZoom(listener);
   return () => {
     window.removeEventListener('resize', listener);
+    unsubscribeZoom();
   };
 }
 
@@ -36,7 +43,7 @@ function never(): boolean {
   return false;
 }
 
-/** Re-renders when the window crosses NARROW_WINDOW_BELOW. */
+/** Re-renders when the window (in layout px) crosses NARROW_WINDOW_BELOW. */
 export function useNarrowWindow(): boolean {
   return useSyncExternalStore(subscribeResize, narrowNow, never);
 }

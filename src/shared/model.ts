@@ -570,6 +570,17 @@ export const hookDisplaySchema = z.enum(HOOK_DISPLAYS);
 export type HookDisplay = z.infer<typeof hookDisplaySchema>;
 
 /**
+ * WP-92 (ADR-233): zoom of every window in percent – the root font size of the web UI (rem), the
+ * steps Chrome offers between 50 and 200 %. Ctrl+wheel and Ctrl+Plus/Minus move one step, Ctrl+0
+ * goes back to 100. Values between two steps are allowed (they snap to a step on the next move).
+ */
+export const ZOOM_LEVELS = [50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200] as const;
+export const DEFAULT_ZOOM = 100;
+export const MIN_ZOOM = 50;
+export const MAX_ZOOM = 200;
+export const zoomSchema = z.number().int().min(MIN_ZOOM).max(MAX_ZOOM);
+
+/**
  * WP-87: npm registry for the Agent SDK of an update (e.g. a company mirror): https only (http only on
  * 127.0.0.1/localhost, a local test registry), no credentials in the URL – they stay in `~/.npmrc`
  * (auth for exactly that host, install/npmrc.ts), never in settings.json.
@@ -619,6 +630,8 @@ const settingsFields = {
   hookDisplay: hookDisplaySchema,
   /** WP-87: automatic update check; a patch replaces the whole object. */
   updates: updateSettingsSchema,
+  /** WP-92: zoom of every window in percent (ZOOM_LEVELS). */
+  zoom: zoomSchema,
 };
 
 export const settingsSchema = z.object({
@@ -634,6 +647,7 @@ export const settingsSchema = z.object({
   transcriptView: transcriptViewSchema.default('compact'),
   hookDisplay: hookDisplaySchema.default('failed'),
   updates: updateSettingsSchema.default(DEFAULT_UPDATE_SETTINGS),
+  zoom: settingsFields.zoom.default(DEFAULT_ZOOM),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 

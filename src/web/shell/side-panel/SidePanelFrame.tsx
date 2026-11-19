@@ -4,6 +4,8 @@ import { windowsBaseName } from '@shared/paths';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { pathTail } from '@web/lib/path-display';
+import { toLayoutPx, toScreenPx, zoomFactor } from '@web/lib/zoom';
+import { useZoom } from '@web/state/zoom';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -121,8 +123,8 @@ function FileHistory({ sessionKey }: { sessionKey: string }) {
 }
 
 /**
- * Width of the session area (the parent of the host: transcript + panel), measured with a
- * ResizeObserver; null until the first measurement (or without ResizeObserver).
+ * Width of the session area (the parent of the host: transcript + panel) in screen px, measured with
+ * a ResizeObserver; null until the first measurement (or without ResizeObserver).
  */
 function useAreaWidth(anchorRef: RefObject<HTMLElement | null>): number | null {
   const [width, setWidth] = useState<number | null>(null);
@@ -163,7 +165,10 @@ function tabTrigger(list: HTMLElement | null, tab: SidePanelTab): HTMLElement | 
 export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanelFrameProps) {
   const t = useT();
   const anchorRef = useRef<HTMLDivElement>(null);
-  const area = useAreaWidth(anchorRef);
+  // WP-92: the width rules work in layout px (CSS px at 100 %); the panel is drawn at the zoom.
+  const zoom = useZoom();
+  const measured = useAreaWidth(anchorRef);
+  const area = measured === null ? null : Math.round(toLayoutPx(measured, zoom));
   const overlay = isSidePanelOverlay(area);
   const [stored, setStored] = useState<number | null>(readSidePanelWidth);
   const [dragging, setDragging] = useState(false);
@@ -201,7 +206,7 @@ export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanel
       ref={anchorRef}
       data-slot="side-panel-anchor"
       className={overlay ? 'relative w-0 shrink-0' : 'flex min-h-0 shrink-0'}
-      style={overlay ? undefined : { width }}
+      style={overlay ? undefined : { width: toScreenPx(width, zoom) }}
     >
       <aside
         ref={asideRef}
@@ -211,7 +216,7 @@ export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanel
         data-mode={overlay ? 'overlay' : 'inline'}
         aria-label={t(`sidePanel.tab.${tab}`)}
         tabIndex={-1}
-        style={overlay ? { width } : undefined}
+        style={overlay ? { width: toScreenPx(width, zoom) } : undefined}
         className={cn(
           'bg-background focus-visible:ring-ring relative flex min-h-0 flex-col border-l outline-none focus-visible:ring-2 focus-visible:ring-inset',
           overlay ? 'absolute inset-y-0 right-0 z-30 shadow-xl' : 'w-full',
@@ -223,6 +228,7 @@ export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanel
           min={SIDE_PANEL_MIN_WIDTH}
           max={sidePanelMaxWidth(area)}
           invert
+          scale={zoomFactor(zoom)}
           label={t('sidePanel.resize')}
           valueText={t('sidePanel.width', { width })}
           onChange={setStored}

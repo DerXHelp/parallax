@@ -29,6 +29,10 @@ export const de: typeof en = {
   general: {
     languageHint: 'Sprache der App und der Windows-Benachrichtigungen.',
     themeHint: '„System“ folgt der Windows-Einstellung. Das Einstellungsmenü bietet dieselbe Schnellwahl.',
+    zoom: 'Zoom',
+    zoomHint:
+      'Größe der ganzen Oberfläche in jedem Fenster. Strg+Mausrad und Strg+Plus/Minus ändern sie ebenfalls, Strg+0 setzt auf 100 % zurück.',
+    zoomValue: '{percent} %',
     transcript: 'Transkript',
     transcriptHint:
       'Kompakt: Die Arbeitsschritte zwischen zwei Nachrichten bilden eine Zeile (Klick öffnet sie), Bilder bleiben als Galerie sichtbar. Alle Schritte: jeder Schritt in einer eigenen Zeile. Gilt für alle Fenster und Browser.',

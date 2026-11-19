@@ -25,6 +25,9 @@ export const de: typeof en = {
       arrowDown: '↓',
       arrowLeft: '←',
       arrowRight: '→',
+      plus: '+',
+      minus: '−',
+      wheel: 'Mausrad',
     },
   },
   shell: {
@@ -134,6 +137,10 @@ export const de: typeof en = {
       help: 'Tastenkürzel anzeigen',
       selectSession: 'Session 1–9 in der Seitenleiste wählen',
       empty: 'Keine Kürzel registriert.',
+      zoomWheel: 'Vergrößern oder verkleinern',
+      zoomIn: 'Vergrößern',
+      zoomOut: 'Verkleinern',
+      zoomReset: 'Zoom auf 100 % zurücksetzen',
     },
     notifications: {
       region: 'Benachrichtigungen',

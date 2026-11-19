@@ -208,6 +208,36 @@ describe('General', () => {
     });
     expect(getHookDisplay()).toBe('off');
   });
+
+  it('zoom (WP-92): 100 % by default, the steps of Chrome, a choice is a server setting', async () => {
+    const host = await connect();
+    const user = userEvent.setup();
+    renderPage();
+    const trigger = screen.getByRole('combobox', { name: 'Zoom' });
+    expect(trigger.textContent).toContain('100 %');
+    expect(trigger.getAttribute('aria-describedby')).toBeTruthy();
+    trigger.focus();
+    await user.keyboard('{Enter}');
+    const options = await screen.findAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual([
+      '50 %',
+      '67 %',
+      '75 %',
+      '80 %',
+      '90 %',
+      '100 %',
+      '110 %',
+      '125 %',
+      '150 %',
+      '175 %',
+      '200 %',
+    ]);
+    await user.click(screen.getByRole('option', { name: '125 %' }));
+    await waitFor(() => {
+      expect(patches(host)).toEqual([{ zoom: 125 }]);
+    });
+    expect(screen.getByRole('combobox', { name: 'Zoom' }).textContent).toContain('125 %');
+  });
 });
 
 describe('Notifications', () => {

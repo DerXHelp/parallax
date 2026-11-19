@@ -58,6 +58,10 @@ import {
   type Entry,
   npmRegistryUrlSchema,
   updateSettingsSchema,
+  DEFAULT_ZOOM,
+  MAX_ZOOM,
+  MIN_ZOOM,
+  ZOOM_LEVELS,
 } from './model';
 import {
   SAMPLE_IDS,
@@ -187,6 +191,18 @@ describe('defaults for old files (B "fehlende Felder ergänzen")', () => {
     );
     expect(settingsPatchSchema.parse({ theme: 'light' })).toEqual({ theme: 'light' });
     expect(Object.keys(settingsPatchSchema.shape).sort()).toEqual(Object.keys(settingsSchema.shape).sort());
+  });
+
+  it('WP-92: zoom is a whole percentage from 50 to 200 (default 100)', () => {
+    expect(settingsSchema.parse({}).zoom).toBe(100);
+    expect(settingsPatchSchema.parse({ zoom: 125 })).toEqual({ zoom: 125 });
+    expect(settingsPatchSchema.parse({ zoom: 85 })).toEqual({ zoom: 85 });
+    for (const zoom of [49, 201, 110.5, '110']) {
+      expect(settingsPatchSchema.safeParse({ zoom }).success).toBe(false);
+    }
+    expect(ZOOM_LEVELS[0]).toBe(MIN_ZOOM);
+    expect(ZOOM_LEVELS.at(-1)).toBe(MAX_ZOOM);
+    expect(ZOOM_LEVELS).toContain(DEFAULT_ZOOM);
   });
 
   it('the detail patch schema does not inject defaults and covers every detail field except entryId', () => {

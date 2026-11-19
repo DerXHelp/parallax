@@ -243,6 +243,7 @@ export function sampleSettings(p: Partial<Settings> = {}): Settings {
     transcriptView: 'compact',
     hookDisplay: 'failed',
     updates: { ...DEFAULT_UPDATE_SETTINGS },
+    zoom: 100,
     ...p,
   };
 }

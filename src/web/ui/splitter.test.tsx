@@ -9,11 +9,13 @@ function Controlled({
   invert = false,
   orientation,
   start = 400,
+  scale,
 }: {
   onCommit?: (value: number) => void;
   invert?: boolean;
   orientation?: 'vertical' | 'horizontal';
   start?: number;
+  scale?: number;
 }) {
   const [value, setValue] = useState(start);
   return (
@@ -25,6 +27,7 @@ function Controlled({
       max={700}
       invert={invert}
       orientation={orientation}
+      scale={scale}
       onChange={setValue}
       onCommit={onCommit}
     />
@@ -101,6 +104,17 @@ describe('Splitter (ui, WP-54)', () => {
     expect(bar.dataset.dragging).toBeUndefined();
     expect(onCommit).toHaveBeenCalledTimes(1);
     expect(onCommit).toHaveBeenCalledWith(700);
+  });
+
+  it('WP-92: at a zoom the pointer travel is divided by the scale (the bar follows the pointer)', () => {
+    const onCommit = vi.fn();
+    render(<Controlled scale={1.25} onCommit={onCommit} />);
+    const bar = screen.getByRole('separator');
+    fireEvent.pointerDown(bar, { button: 0, pointerId: 1, clientX: 500 });
+    fireEvent.pointerMove(bar, { pointerId: 1, clientX: 625 });
+    expect(bar.getAttribute('aria-valuenow')).toBe('500');
+    fireEvent.pointerUp(bar, { pointerId: 1, clientX: 625 });
+    expect(onCommit).toHaveBeenCalledWith(500);
   });
 
   it('ignores the secondary button', () => {

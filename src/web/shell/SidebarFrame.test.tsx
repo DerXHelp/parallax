@@ -6,6 +6,7 @@ import { startScenario, type RunningScenario } from '@web/playground/PlaygroundS
 import { STORAGE_KEYS } from '@web/lib/storage';
 import { getSelectedSession, setSelectedSession } from '@web/state/selection';
 import { resetClientStore } from '@web/state/store';
+import { applyZoom, resetZoomState } from '@web/state/zoom';
 import { AppShell } from './AppShell';
 import { resetRename } from './navigation/rename';
 import { resetSidebarView } from './navigation/sidebar-view';
@@ -411,6 +412,36 @@ describe('sidebar width (WP-90, GitHub #4)', () => {
     setWindowWidth(1600);
     expect(aside().style.width).toBe('480px');
     expect(handle.getAttribute('aria-valuemax')).toBe('480');
+  });
+
+  it('WP-92: at a zoom the widths are layout px – drawn larger, the window counts smaller', async () => {
+    localStorage.setItem(STORAGE_KEYS.sidebarWidth, '320');
+    resetSidebarLayout();
+    setWindowWidth(1600);
+    try {
+      act(() => {
+        applyZoom(125);
+      });
+      await start();
+      // 1600 px at 125 % = 1280 layout px: wide, 40 % = 512 → the maximum of 480.
+      expect(aside().style.width).toBe('400px');
+      const handle = screen.getByRole('separator', { name: 'Sidebar width' });
+      expect(handle.getAttribute('aria-valuenow')).toBe('320');
+      expect(handle.getAttribute('aria-valuemax')).toBe('480');
+      // 1100 px at 125 % = 880 layout px: below 900 → narrow (rail).
+      setWindowWidth(1100);
+      expect(rail()).not.toBeNull();
+      // The same window at 100 % is wide again.
+      act(() => {
+        applyZoom(100);
+      });
+      expect(rail()).toBeNull();
+      expect(aside().style.width).toBe('320px');
+    } finally {
+      act(() => {
+        resetZoomState();
+      });
+    }
   });
 
   it('Alt+B on a rail button moves the focus into the expanded sidebar', async () => {

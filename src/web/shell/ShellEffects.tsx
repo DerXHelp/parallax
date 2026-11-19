@@ -11,8 +11,10 @@ import { useSettings } from '@web/state/settings';
 import { clientStore } from '@web/state/store';
 import { useThemeController } from '@web/state/theme';
 import { migrateLegacyTranscriptView } from '@web/state/transcript-view';
+import { useZoomController } from '@web/state/zoom';
 import { installDropGuard } from './drop-guard';
 import { reloadWindow } from './SlotBoundary';
+import { installZoomInput } from './zoom-input';
 
 /**
  * Window title "(n) Parallax" with n = sessions waiting for the user (Plan "Benachrichtigungen").
@@ -72,7 +74,10 @@ function useExternalLinks(): void {
 
 /** WP-65 §1.6: WP-63's localStorage transcript view becomes the server setting, once. */
 function useTranscriptViewMigration(): void {
-  const connected = useStore(clientStore, (state) => (state.hosts[LOCAL_HOST_ID]?.hostState ?? null) !== null);
+  const connected = useStore(
+    clientStore,
+    (state) => (state.hosts[LOCAL_HOST_ID]?.hostState ?? null) !== null,
+  );
   useEffect(() => {
     if (connected) migrateLegacyTranscriptView().catch(() => undefined);
   }, [connected]);
@@ -83,16 +88,19 @@ function useTranscriptViewMigration(): void {
  * English until `host.state` arrives; another language switches once its lazy dictionary is
  * loaded) and the window title; guards the window against file and link drops outside a drop zone
  * (R4W-02, drop-guard.ts); WP-65: external links in the default browser, the transcript view
- * migration. Mounted once (App, playground).
+ * migration; WP-92: the zoom (root font size) and its keys/wheel (zoom-input.ts). Mounted once
+ * (App, playground).
  */
 export function ShellEffects() {
   const settings = useSettings();
   useThemeController(settings.theme);
+  useZoomController(settings.zoom);
   useLanguageController(settings.language);
   useLanguageLoadNotice();
   useWindowTitle();
   useExternalLinks();
   useTranscriptViewMigration();
   useEffect(() => installDropGuard(window), []);
+  useEffect(() => installZoomInput(window), []);
   return null;
 }

@@ -14,6 +14,8 @@ export const STORAGE_KEYS = {
   reloadAt: `${PRODUCT_ID}.reloadAt`,
   /** localStorage: last applied theme setting, so a reload starts without a flash. */
   theme: `${PRODUCT_ID}.theme`,
+  /** WP-92: localStorage: last applied zoom in percent, so a reload starts at that size. */
+  zoom: `${PRODUCT_ID}.zoom`,
   /**
    * localStorage: last requested UI language other than English (`de`); its lazy dictionary is
    * fetched at start (ADR-153, i18n/language.ts). Missing = English.
