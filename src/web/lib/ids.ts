@@ -11,6 +11,11 @@ export function newClientId(): ClientId {
   return `cl_${randomHex32()}`;
 }
 
+/** WP-93: new id of a plan annotation (`pa_<32 hex>`, `planAnnotationSchema.id`). */
+export function newAnnotationId(): string {
+  return `pa_${randomHex32()}`;
+}
+
 /** New idempotency key of a command (`cmdIdSchema`, UUID v4). */
 export function newCmdId(): CmdId {
   return crypto.randomUUID();

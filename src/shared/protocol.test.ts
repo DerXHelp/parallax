@@ -37,6 +37,7 @@ import {
   sampleItems,
   sampleModelOption,
   sampleOutcomes,
+  samplePlanAnnotation,
   samplePlanVersionInfo,
   samplePresence,
   sampleProfile,
@@ -105,6 +106,13 @@ const commands: Command[] = [
   { name: 'session.stopTask', entryId, taskId: 'task_01' },
   { name: 'plan.list', entryId },
   { name: 'plan.read', entryId, version: 2 },
+  // WP-93
+  {
+    name: 'decision.annotatePlan',
+    entryId,
+    decisionId: sampleId('dc', 3),
+    annotations: [samplePlanAnnotation(), samplePlanAnnotation({ id: 'pa_2', kind: 'strike', comment: '' })],
+  },
   { name: 'file.stat', entryId, path: 'D:\\work\\sample\\src\\main.ts' },
   { name: 'file.statMany', entryId, paths: ['D:\\work\\sample\\a.md', 'D:\\work\\sample\\b.md'] },
   { name: 'file.open', entryId, path: 'D:\\work\\sample\\a.md', target: 'editor', line: 12, col: 3 },
@@ -727,8 +735,17 @@ describe('command results', () => {
         ],
       }),
     ).not.toBeNull();
-    expect(parseCommandResult('plan.read', { version: 1, text: '# Plan' })).not.toBeNull();
+    // WP-93: annotations are additive (an older server sends none).
+    expect(parseCommandResult('plan.read', { version: 1, text: '# Plan' })).toEqual({
+      version: 1,
+      text: '# Plan',
+      annotations: [],
+    });
+    expect(
+      parseCommandResult('plan.read', { version: 1, text: '# Plan', annotations: [samplePlanAnnotation()] }),
+    ).toEqual({ version: 1, text: '# Plan', annotations: [samplePlanAnnotation()] });
     expect(parseCommandResult('plan.read', { version: 0, text: '' })).toBeNull();
+    expect(parseCommandResult('decision.annotatePlan', {})).toEqual({});
     expect(parseCommandResult('file.stat', { file: sampleFileInfo() })).toEqual({ file: sampleFileInfo() });
     expect(parseCommandResult('file.stat', { file: { ...sampleFileInfo(), kind: 'archive' } })).toBeNull();
     const results = [sampleFileStatResult(), sampleFileStatResult(false)];

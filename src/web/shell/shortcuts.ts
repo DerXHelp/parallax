@@ -135,7 +135,8 @@ export function matchesShortcut(event: KeyboardEventLike, keys: ShortcutKeys): b
   return isSymbol(key) || event.shiftKey === keys.shift;
 }
 
-function isEditable(target: Element | null): boolean {
+/** The target takes typed text (text field, text area, select, contenteditable) – WP-93 also uses it. */
+export function isEditable(target: Element | null): boolean {
   if (target === null) return false;
   if (target instanceof HTMLElement && target.isContentEditable) return true;
   if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return true;

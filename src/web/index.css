@@ -226,6 +226,18 @@
     background-color: color-mix(in oklch, var(--brand) 30%, transparent);
   }
 
+  /* WP-93: annotated passages of a plan (CSS Custom Highlight API, features/decisions). */
+  ::highlight(plan-annotation) {
+    background-color: color-mix(in oklch, var(--warning) 28%, transparent);
+  }
+  ::highlight(plan-strike) {
+    color: var(--muted-foreground);
+    text-decoration: line-through 2px var(--destructive);
+  }
+  ::highlight(plan-annotation-active) {
+    background-color: color-mix(in oklch, var(--warning) 55%, transparent);
+  }
+
   /* Thin, quiet scrollbars (VS Code look). */
   * {
     scrollbar-width: thin;

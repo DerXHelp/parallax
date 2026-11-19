@@ -299,7 +299,7 @@ Das Problem in der Konsole: Bei `ExitPlanMode` ploppt ein Dialog auf und blockie
 - **Weiter planen bzw. diskutieren:**
   - Wer einfach in den Composer tippt, gibt Feedback. Technisch: deny mit `message` = Text. Claude bleibt im Plan-Modus und überarbeitet.
   - Tippen kann **nie** versehentlich freigeben.
-  - Optional (Ausbau): **Inline-Kommentare** im Plan-Panel. Man markiert eine Stelle, schreibt einen Kommentar, und alle Kommentare gehen gesammelt als strukturiertes Feedback raus (Zitat + Kommentar).
+  - Optional (Ausbau): **Inline-Kommentare** im Plan-Panel. Man markiert eine Stelle, schreibt einen Kommentar, und alle Kommentare gehen gesammelt als strukturiertes Feedback raus (Zitat + Kommentar). **Umgesetzt in WP-93 (ADR-234).**
 - **Umsetzen (Split-Button, merkt sich die letzte Wahl):**
   - *Mit Auto-Modus* → allow + `updatedPermissions:[{type:'setMode', mode:'auto'}]`.
   - *Edits automatisch* → `acceptEdits`.
@@ -865,7 +865,7 @@ aus sollen die Sessions der anderen gesteuert werden, in einer Oberfläche.
 - Rewind/Checkpoints, Fork.
 - `/btw`-Seitenpanel, `!`-Bash-Modus.
 - MCP-Panel und Elicitation-Dialoge.
-- Plan: Inline-Kommentare und Plan editieren.
+- Plan editieren (Inline-Kommentare: WP-93).
 - Split-View, Prompt-Cache-Uhr, Per-Hunk-Diff-Freigabe.
 - Remote Control (experimentell).
 - **Bestehende Konsolen-Sessions importieren**, **Worktrees** (erst bewerten).

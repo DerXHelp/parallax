@@ -1,4 +1,4 @@
-import { ArrowLeftIcon, HistoryIcon, XIcon } from 'lucide-react';
+import { ArrowLeftIcon, HistoryIcon, Maximize2Icon, Minimize2Icon, XIcon } from 'lucide-react';
 import { memo, useLayoutEffect, useRef, useState, type Ref, type RefObject } from 'react';
 import { windowsBaseName } from '@shared/paths';
 import { useT } from '@web/i18n';
@@ -22,9 +22,11 @@ import {
   closeSidePanelItem,
   goBackSidePanelFile,
   openSidePanel,
+  setSidePanelWide,
   useSidePanelFile,
   useSidePanelHistory,
   useSidePanelSubagent,
+  useSidePanelWide,
   type SidePanelItem,
 } from './state';
 import {
@@ -154,7 +156,8 @@ export interface SidePanelFrameProps {
 /**
  * The open panel (lazy chunk of SidePanelHost.tsx): a frame of the remembered width with the
  * splitter on its left edge, the tab row (Plan · File – only with an open file · Files · Tasks ·
- * Agent – WP-69, only once a subagent was opened), "Back" for the viewer and "Close". Below 1100 px of session area it lies over the transcript
+ * Agent – WP-69, only once a subagent was opened), "Back" for the viewer, "Wide" (WP-93: as wide
+ * as allowed until the splitter moves) and "Close". Below 1100 px of session area it lies over the transcript
  * (anchored at the right edge, no focus trap).
  */
 /** The trigger of `tab` in the tab row. */
@@ -172,7 +175,11 @@ export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanel
   const overlay = isSidePanelOverlay(area);
   const [stored, setStored] = useState<number | null>(readSidePanelWidth);
   const [dragging, setDragging] = useState(false);
-  const width = clampSidePanelWidth(stored ?? defaultSidePanelWidth(area), area);
+  // WP-93: "Wide" (next to "Close") uses the largest width until the user resizes the panel.
+  const wide = useSidePanelWide(sessionKey);
+  const width = wide
+    ? sidePanelMaxWidth(area)
+    : clampSidePanelWidth(stored ?? defaultSidePanelWidth(area), area);
   const file = useSidePanelFile(sessionKey);
   const subagent = useSidePanelSubagent(sessionKey);
   const tabs = SIDE_PANEL_TABS.filter((candidate) => {
@@ -231,7 +238,10 @@ export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanel
           scale={zoomFactor(zoom)}
           label={t('sidePanel.resize')}
           valueText={t('sidePanel.width', { width })}
-          onChange={setStored}
+          onChange={(next) => {
+            setSidePanelWide(sessionKey, false);
+            setStored(next);
+          }}
           onCommit={writeSidePanelWidth}
           onDraggingChange={setDragging}
         />
@@ -312,6 +322,16 @@ export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanel
               })}
             </TabsList>
             {tab === 'file' ? <FileHistory sessionKey={sessionKey} /> : null}
+            <IconButton
+              label={wide ? t('sidePanel.narrow') : t('sidePanel.wide')}
+              data-action="side-panel-wide"
+              aria-pressed={wide}
+              onClick={() => {
+                setSidePanelWide(sessionKey, !wide);
+              }}
+            >
+              {wide ? <Minimize2Icon aria-hidden /> : <Maximize2Icon aria-hidden />}
+            </IconButton>
             <IconButton label={t('sidePanel.close')} onClick={onClose}>
               <XIcon aria-hidden />
             </IconButton>

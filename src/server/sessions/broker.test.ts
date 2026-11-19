@@ -15,6 +15,7 @@ import {
   sampleDecisions,
   sampleId,
   sampleItems,
+  samplePlanAnnotation,
 } from '@shared/samples';
 import type { DecisionCounts } from '@shared/status';
 import type { PermissionRequest } from '../backend/types';
@@ -542,6 +543,108 @@ describe('broker – plans', () => {
     });
     expect(t.stores.decisions.plan(ENTRY, 1)).toBe('v1 text');
     expect(t.stores.decisions.records(ENTRY).map((r) => r.planVersion)).toEqual([1, 2, 3]);
+  });
+});
+
+describe('broker – plan annotations (WP-93)', () => {
+  const comment = samplePlanAnnotation();
+  const strike = samplePlanAnnotation({ id: 'pa_2', kind: 'strike', comment: '' });
+
+  it('replaces the list of an open plan decision: decision.upsert, snapshot and record, no counts', () => {
+    const t = setup();
+    void t.broker.handler(planRequest('p1', 'v1 text'), new AbortController().signal);
+    const id = sampleId('dc', 1);
+    const before = t.countsLog.length;
+    t.broker.annotatePlan(id, [comment, strike]);
+    expect(t.publisher.opsOf(ENTRY).at(-1)).toMatchObject({
+      op: 'decision.upsert',
+      decision: { id, kind: 'plan', state: 'open', annotations: [comment, strike] },
+    });
+    expect(t.broker.open()[0]).toMatchObject({ annotations: [comment, strike] });
+    const [record] = t.stores.decisions.records(ENTRY);
+    expect(record?.annotations).toEqual([comment, strike]);
+    expect(record?.decision).toMatchObject({ annotations: [comment, strike] });
+    expect(t.countsLog).toHaveLength(before);
+    t.broker.annotatePlan(id, [strike]);
+    expect(t.broker.open()[0]).toMatchObject({ annotations: [strike] });
+  });
+
+  it('the record keeps the annotations after "Keep planning" (plan.read), the snapshot goes', () => {
+    const t = setup();
+    void t.broker.handler(planRequest('p1', 'v1 text'), new AbortController().signal);
+    const id = sampleId('dc', 1);
+    t.broker.annotatePlan(id, [comment]);
+    t.broker.respond(id, { kind: 'plan', response: { behavior: 'revise', feedback: 'see notes' } }, null);
+    const [record] = t.stores.decisions.records(ENTRY);
+    expect(record).toMatchObject({
+      outcome: { type: 'plan_revised' },
+      decision: null,
+      annotations: [comment],
+    });
+    expect(t.broker.planRecords()[0]?.annotations).toEqual([comment]);
+    void t.broker.handler(planRequest('p2', 'v2 text'), new AbortController().signal);
+    expect(t.broker.open()[0]).toMatchObject({ version: 2, annotations: [] });
+  });
+
+  it('any other answer drops the annotations (they were never sent)', () => {
+    const t = setup();
+    void t.broker.handler(planRequest('p1', 'v1 text'), new AbortController().signal);
+    const id = sampleId('dc', 1);
+    t.broker.annotatePlan(id, [comment]);
+    t.broker.respond(
+      id,
+      { kind: 'plan', response: { behavior: 'approve', mode: 'default', editedPlan: null } },
+      null,
+    );
+    const [record] = t.stores.decisions.records(ENTRY);
+    expect(record?.outcome?.type).not.toBe('plan_revised');
+    expect(record).toMatchObject({ decision: null, annotations: [] });
+    expect(t.broker.planRecords()[0]?.annotations).toEqual([]);
+  });
+
+  it('errors: unknown, resolved, expired, not a plan, duplicate ids', () => {
+    const t = setup();
+    expect(
+      errorCode(() => {
+        t.broker.annotatePlan(sampleId('dc', 99), []);
+      }),
+    ).toBe('DECISION_NOT_FOUND');
+    void t.broker.handler(request(), new AbortController().signal);
+    expect(
+      errorCode(() => {
+        t.broker.annotatePlan(sampleId('dc', 1), [comment]);
+      }),
+    ).toBe('DECISION_OPTION_UNAVAILABLE');
+    void t.broker.handler(planRequest('p1', 'v1 text'), new AbortController().signal);
+    const plan = sampleId('dc', 2);
+    expect(
+      errorCode(() => {
+        t.broker.annotatePlan(plan, [comment, { ...strike, id: comment.id }]);
+      }),
+    ).toBe('VALIDATION_FAILED');
+    expect(t.broker.open()[1]).toMatchObject({ annotations: [] });
+    t.broker.respond(plan, { kind: 'plan', response: { behavior: 'revise', feedback: 'x' } }, null);
+    expect(
+      errorCode(() => {
+        t.broker.annotatePlan(plan, [comment]);
+      }),
+    ).toBe('DECISION_ALREADY_RESOLVED');
+
+    const restored = setup();
+    const expired = sampleDecisions.plan({ id: sampleId('dc', 10) });
+    restored.broker.restore([sampleDecisionRecord({ id: expired.id, decision: expired })]);
+    expect(
+      errorCode(() => {
+        restored.broker.annotatePlan(expired.id, [comment]);
+      }),
+    ).toBe('DECISION_EXPIRED');
+  });
+
+  it('a restored open record brings its annotations back on the expired card', () => {
+    const t = setup();
+    const plan = sampleDecisions.plan({ id: sampleId('dc', 10), annotations: [comment] });
+    t.broker.restore([sampleDecisionRecord({ id: plan.id, decision: plan, annotations: [comment] })]);
+    expect(t.broker.expired()[0]).toMatchObject({ state: 'expired', annotations: [comment] });
   });
 });
 

@@ -36,6 +36,19 @@ export const en = {
       minus: '−',
       wheel: 'Wheel',
     },
+    /** WP-93: the feedback "Keep planning" sends to Claude from plan annotations (lib/plan-feedback.ts). */
+    planFeedback: {
+      intro: {
+        one: 'Please revise the plan. My annotation:',
+        other: 'Please revise the plan. My {count} annotations:',
+      },
+      section: 'Section "{path}"',
+      line: 'line {line}',
+      lines: 'lines {from}–{to}',
+      strike: 'Remove this passage.',
+      strikeReason: 'Remove this passage: {reason}',
+      general: 'General:',
+    },
   },
   shell: {
     /** Window title with sessions waiting for the user (Plan "Fenstertitel"). */

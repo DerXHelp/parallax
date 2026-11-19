@@ -1,4 +1,5 @@
 import type { PermissionMode } from '@shared/common';
+import { clipText as clip, plainInline } from '@web/lib/plain-text';
 
 /**
  * Plan helpers (Plan "Plan-Modus & Plan-Freigabe"): title and short summary of a plan card from
@@ -8,20 +9,6 @@ import type { PermissionMode } from '@shared/common';
 
 const TITLE_MAX = 120;
 const SUMMARY_MAX = 240;
-
-/** Removes inline Markdown markers for a one-line plain-text label. */
-function plainInline(line: string): string {
-  return line
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/[*_`~]+/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function clip(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
-}
 
 function lines(plan: string): string[] {
   return plan.replace(/\r\n?/g, '\n').split('\n');

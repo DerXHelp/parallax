@@ -31,6 +31,7 @@ import {
   isRemoteControlActive,
   modelOptionSchema,
   notificationSettingsSchema,
+  planDecisionSchema,
   planFileRefSchema,
   planVersionInfoSchema,
   profileInputSchema,
@@ -82,6 +83,7 @@ import {
   sampleModelOption,
   sampleNotificationSettings,
   sampleOutcomes,
+  samplePlanAnnotation,
   samplePlanFileRef,
   samplePlanVersionInfo,
   sampleProfile,
@@ -161,6 +163,36 @@ describe('defaults for old files (B "fehlende Felder ergänzen")', () => {
     const { decision: _decision, ...old } = sampleDecisionRecord();
     expect(decisionRecordSchema.parse(old)).toEqual({ ...old, decision: null });
     expect(decisionRecordSchema.parse(sampleDecisionRecord())).toEqual(sampleDecisionRecord());
+  });
+
+  it('WP-93: records and plan decisions without annotations load with none', () => {
+    const { annotations: _annotations, ...old } = sampleDecisionRecord();
+    const { annotations: _none, ...plan } = sampleDecisions.plan();
+    expect(decisionRecordSchema.parse({ ...old, decision: plan })).toEqual({
+      ...old,
+      decision: sampleDecisions.plan(),
+      annotations: [],
+    });
+  });
+
+  it('WP-93: annotations are capped (count, comment, quote, context)', () => {
+    const plan = (annotations: unknown[]) =>
+      planDecisionSchema.safeParse({ ...sampleDecisions.plan(), annotations });
+    expect(plan([samplePlanAnnotation()]).success).toBe(true);
+    const many = Array.from({ length: LIMITS.planAnnotations + 1 }, (_, i) =>
+      samplePlanAnnotation({ id: `pa_${String(i)}` }),
+    );
+    expect(plan(many).success).toBe(false);
+    expect(
+      plan([samplePlanAnnotation({ comment: 'x'.repeat(LIMITS.planAnnotationChars + 1) })]).success,
+    ).toBe(false);
+    expect(
+      plan([samplePlanAnnotation({ quote: 'x'.repeat(LIMITS.planAnnotationQuoteChars + 1) })]).success,
+    ).toBe(false);
+    expect(
+      plan([samplePlanAnnotation({ prefix: 'x'.repeat(LIMITS.planAnnotationContextChars + 1) })]).success,
+    ).toBe(false);
+    expect(plan([{ ...samplePlanAnnotation(), kind: 'highlight' }]).success).toBe(false);
   });
 
   it('a minimal profile gets every default', () => {
@@ -257,6 +289,7 @@ describe('round trips', () => {
           planVersion: 1,
           planFilePath: 'C:\\plans\\a.md',
           decision: null,
+          annotations: [samplePlanAnnotation()],
         },
         sampleDecisionRecord(),
         sampleDecisionRecord({

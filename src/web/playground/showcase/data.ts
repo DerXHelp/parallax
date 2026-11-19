@@ -387,6 +387,7 @@ function decisionsOf(key: ShowcaseKey, items: readonly TranscriptItem[], now: nu
         version: 2,
         previousVersionPlan: PLAN_V1,
         approveModes: ['default', 'acceptEdits', 'auto'],
+        annotations: [],
       },
     ];
   }

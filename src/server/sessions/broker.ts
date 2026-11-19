@@ -21,6 +21,7 @@ import type {
   DecisionOutcome,
   DecisionRecord,
   DecisionResponse,
+  PlanAnnotation,
   PlanDecision,
   Requester,
   ToolCallItem,
@@ -113,6 +114,12 @@ export interface Broker {
   resolveExpired(decisionId: DecisionId, outcome: DecisionOutcome, byClientId: ClientId | null): void;
   /** Resume failed → clickable again. */
   releaseExpired(decisionId: DecisionId): void;
+  /**
+   * WP-93 (ADR-234): replaces the annotations of an open plan decision – record (persisted) and
+   * `decision.upsert` to every window. Throws CommandError (not found, resolved, expired, no plan,
+   * duplicate ids).
+   */
+  annotatePlan(decisionId: DecisionId, annotations: readonly PlanAnnotation[]): void;
   /** Cancel open decisions; 'deny-interrupt' answers the SDK with {deny, interrupt:true}. */
   cancel(scope: 'all' | 'main', reason: CancelReason, answer: 'deny' | 'deny-interrupt'): void;
   /** Server start: open records → expired cards (with snapshot) or counted-only (without). */
@@ -176,6 +183,7 @@ function recordOf(decision: Decision): DecisionRecord {
     planVersion: decision.kind === 'plan' ? decision.version : null,
     planFilePath: decision.kind === 'plan' ? decision.planFilePath : null,
     decision,
+    annotations: decision.kind === 'plan' ? decision.annotations : [],
   };
 }
 
@@ -268,7 +276,14 @@ export function createBroker(deps: BrokerDeps): Broker {
     // order could reach the client in two animation frames – it showed "no longer open" instead.
     deps.attachDecision(slot.record.toolUseId, refOf(slot.record, outcome));
     deps.emit([{ op: 'decision.resolved', decisionId: slot.record.id, outcome, byClientId, at }]);
-    slot.record = { ...slot.record, outcome, resolvedAt: at, decision: null };
+    slot.record = {
+      ...slot.record,
+      outcome,
+      resolvedAt: at,
+      decision: null,
+      // WP-93: only "Keep planning" sent the annotations (plan.read shows them with the next version).
+      annotations: outcome.type === 'plan_revised' ? slot.record.annotations : [],
+    };
     markResolved(slot.record.id);
   };
 
@@ -324,6 +339,7 @@ export function createBroker(deps: BrokerDeps): Broker {
             supportsAutoMode: deps.supportsAutoMode(),
             allowsBypass: deps.allowsBypass(),
           }),
+          annotations: [],
         };
       }
       log.warn({ toolUseId: req.toolUseId }, 'ExitPlanMode without plan text – permission card instead');
@@ -442,6 +458,30 @@ export function createBroker(deps: BrokerDeps): Broker {
 
     check(decisionId, response) {
       checked(decisionId, response);
+    },
+
+    annotatePlan(decisionId, annotations) {
+      const slot = slots.get(decisionId);
+      if (slot === undefined) throw new CommandError(makeError('DECISION_NOT_FOUND', { decisionId }));
+      if (slot.status === 'resolved' || slot.status === 'claimed') {
+        throw new CommandError(makeError('DECISION_ALREADY_RESOLVED', { decisionId }));
+      }
+      if (slot.status === 'expired') throw new CommandError(makeError('DECISION_EXPIRED', { decisionId }));
+      const decision = slot.decision;
+      if (decision?.kind !== 'plan') {
+        throw new CommandError(
+          makeError('DECISION_OPTION_UNAVAILABLE', { path: 'annotations' }, 'not a plan decision'),
+        );
+      }
+      const ids = new Set(annotations.map((annotation) => annotation.id));
+      if (ids.size !== annotations.length) {
+        throw new CommandError(makeError('VALIDATION_FAILED', { reason: 'duplicate_annotation_id' }));
+      }
+      const next: PlanDecision = { ...decision, annotations: [...annotations] };
+      slot.decision = next;
+      slot.record = { ...slot.record, decision: next, annotations: next.annotations };
+      persist();
+      deps.emit([{ op: 'decision.upsert', decision: next }]);
     },
 
     respond(decisionId, response, byClientId) {

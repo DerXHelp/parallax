@@ -363,7 +363,10 @@ describe('PlanCard (Plan "Plan-Modus & Plan-Freigabe")', () => {
     act(() => {
       setDraft(h.key('plan'), 'more detail');
     });
-    await user.click(screen.getByRole('button', { name: 'Keep planning' }));
+    // WP-93: the plan tab has its own "Keep planning" – this test answers in the card.
+    const revise = document.querySelector<HTMLElement>('[data-action="revise"]');
+    if (revise === null) throw new Error('card button missing');
+    await user.click(revise);
     const panel = screen.getByRole('complementary');
     await waitFor(() => {
       expect(panel.querySelector('[data-slot="plan-status"]')?.textContent).toBe('Rejected with feedback');

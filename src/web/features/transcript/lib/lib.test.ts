@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PLAIN_STYLE, applySgr, parseAnsi, stripAnsi } from './ansi';
-import { splitMarkdownBlocks } from './markdown-blocks';
+import { splitMarkdownBlocks } from '@web/lib/markdown-blocks';
 import { markdownUrlTransform, safeHttpUrl } from './safe-url';
 import {
   COLLAPSE_AFTER,
@@ -113,7 +113,7 @@ describe('splitMarkdownBlocks', () => {
 
   it('marks an unclosed fence at the end', () => {
     const blocks = splitMarkdownBlocks('text\n\n~~~~py\nprint(1)\n~~~\n');
-    expect(blocks.at(-1)).toEqual({ text: '~~~~py\nprint(1)\n~~~\n', openFence: true });
+    expect(blocks.at(-1)).toEqual({ text: '~~~~py\nprint(1)\n~~~\n', openFence: true, startLine: 2 });
     expect(splitMarkdownBlocks('```\ncode\n```').at(-1)?.openFence).toBe(false);
   });
 
@@ -143,6 +143,15 @@ describe('splitMarkdownBlocks', () => {
       // All but the last block of every prefix are final blocks already.
       for (let i = 0; i < partial.length - 1; i++) expect(partial[i]?.text).toBe(final[i]?.text);
     }
+  });
+
+  it('WP-93: startLine is the first line of each block', () => {
+    const blocks = splitMarkdownBlocks('# Title\n\n\npara\nmore\n\n- a\n\n- b\n');
+    expect(blocks.map((b) => [b.startLine, b.text])).toEqual([
+      [0, '# Title'],
+      [3, 'para\nmore'],
+      [6, '- a\n\n- b'],
+    ]);
   });
 
   it('normalizes CRLF', () => {

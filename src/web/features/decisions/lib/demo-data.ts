@@ -3,6 +3,7 @@ import type {
   Decision,
   DecisionOutcome,
   ModelOption,
+  PlanAnnotation,
   PlanDecision,
   PlanVersionInfo,
   QueuedPrompt,
@@ -126,6 +127,8 @@ export const DEMO_PLAN_FILES: Readonly<Record<string, string>> = {
 export interface DemoPlanVersion {
   info: PlanVersionInfo;
   text: string;
+  /** WP-93: annotations kept with the version (plan.read). */
+  annotations?: PlanAnnotation[];
 }
 
 export const DEMO_MODELS: ModelOption[] = [

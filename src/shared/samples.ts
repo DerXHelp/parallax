@@ -45,6 +45,7 @@ import type {
   NotificationSettings,
   PermissionDecision,
   PlanDecision,
+  PlanAnnotation,
   PlanFileRef,
   PlanVersionInfo,
   Profile,
@@ -913,6 +914,21 @@ export function samplePlanVersionInfo(p: Partial<PlanVersionInfo> = {}): PlanVer
   };
 }
 
+/** WP-93: an annotation of a marked passage (block 1 of `sampleDecisions.plan()`'s text). */
+export function samplePlanAnnotation(p: Partial<PlanAnnotation> = {}): PlanAnnotation {
+  return {
+    id: 'pa_sample_1',
+    kind: 'comment',
+    block: 1,
+    quote: 'hello.txt',
+    prefix: 'Create ',
+    suffix: '',
+    comment: 'Name it greeting.txt instead.',
+    createdAt: sampleTime(4),
+    ...p,
+  };
+}
+
 export function samplePlanFileRef(p: Partial<PlanFileRef> = {}): PlanFileRef {
   return {
     path: 'C:\\Users\\user\\.claude\\plans\\sample.md',
@@ -997,6 +1013,7 @@ export const sampleDecisions = {
     version: 1,
     previousVersionPlan: null,
     approveModes: ['default', 'acceptEdits', 'auto'],
+    annotations: [],
     ...p,
   }),
 };
@@ -1017,6 +1034,7 @@ export function sampleDecisionRecord(p: Partial<DecisionRecord> = {}): DecisionR
     planVersion: decision.version,
     planFilePath: decision.planFilePath,
     decision,
+    annotations: [],
     ...p,
   };
 }

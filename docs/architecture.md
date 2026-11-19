@@ -950,7 +950,9 @@ der `ack` an das anfragende Fenster. Neue Eintragsbefehle: `session.switchConver
 {target: editor|explorer|default, line?, col?}`, `files.session`, `files.project` (alle mit `entryId`,
 die der Datei-Dienst selbst prüft) und `editor.detect` (ohne) – sie stehen in `HOST_COMMAND_NAMES`,
 laufen an der Lebenszyklus-Sperre vorbei und gehen an `FileService.commands`. Neue Eintragsbefehle der
-Engine: `session.stopTask {taskId}`, `plan.list`, `plan.read {version}`; `decision.respond`
+Engine: `session.stopTask {taskId}`, `plan.list`, `plan.read {version}` (WP-93: mit `annotations`),
+`decision.annotatePlan {decisionId, annotations}` (WP-93, ADR-234: ersetzt die Anmerkungen der offenen
+Plan-Entscheidung, verteilt per `decision.upsert`); `decision.respond`
 `approve_fresh_context {mode, editedPlan}` ist umgesetzt (ADR-147). `promptInput` hat zusätzlich
 `pastes` (eingefügte Texte, die wörtlich in `text` stehen → SDK `inline_pastes`, ADR-146);
 `attachments` dürfen Bilder, PDFs und beliebige Dateien referenzieren. `conversation.reset.trigger`
@@ -1373,7 +1375,8 @@ bzw. das Profil.
 | `editor.detect` | sucht beide Presets und prüft eine eigene `.exe` (existiert) | – |
 | `session.stopTask` | Prozess läuft; `taskId` ∈ `backgroundTasks` oder `tool_call.task.taskId` mit Status `running`/`background`; `agent.stopTask(taskId)`; Wirkung kommt als `task_notification stopped` | `SESSION_NOT_RUNNING`, `SESSION_EXTERNAL`, `TASK_NOT_FOUND`, `CLAUDE_CONTROL_FAILED` |
 | `plan.list` | Records mit `planVersion` aus `decisions.json`, aufsteigend; `stored` = `readPlan ≠ null` | – |
-| `plan.read` | `readPlan(entryId, version)` | `PLAN_NOT_FOUND` |
+| `plan.read` | `readPlan(entryId, version)`; WP-93: `annotations` aus dem Record (nur nach `plan_revised`, sonst `[]`) | `PLAN_NOT_FOUND` |
+| `decision.annotatePlan` | WP-93: offene Plan-Entscheidung, Ids eindeutig; ersetzt die Liste in Entscheidung und Record, speichert, `decision.upsert` | `DECISION_NOT_FOUND`, `DECISION_ALREADY_RESOLVED`, `DECISION_EXPIRED`, `DECISION_OPTION_UNAVAILABLE {path:'annotations'}`, `VALIDATION_FAILED {reason:'duplicate_annotation_id'}` |
 | `decision.respond` `approve_fresh_context` | offene oder abgelaufene Plan-Entscheidung; `mode ∈ approveModes`, Bypass nur mit Profilfreigabe; sonst „ohne Arbeit“ (keine weitere offene Entscheidung, Queue leer, keine nicht-ambienten Hintergrund-Tasks); Ablauf ADR-147; Outcome `plan_approved{mode, edited, freshContext:true}` | `DECISION_*`, `MODE_NOT_ALLOWED`, `SESSION_BUSY`, Startfehler |
 | `previousVersionPlan` | v(n-1) derselben Unterhaltung, nach Neustart per `readPlan` | – |
 | `prompt.attachments` (create/sendPrompt) | Blob existiert; Bild wie bisher (≤ `imageBytes`); `application/pdf` → `document`-Block (≤ `pdfBytes`); `application/octet-stream` mit `name` → `AttachmentFileStore.materialize` + Pfadliste am Textende (ADR-146); Summe Bild+PDF ≤ `attachmentsTotalBytes` | `BLOB_NOT_FOUND`, `UNSUPPORTED_MEDIA_TYPE`, `PAYLOAD_TOO_LARGE` |

@@ -175,6 +175,32 @@ export const en = {
     newLine: 'Line {line}',
     moreLines: { one: 'Show {count} more line', other: 'Show {count} more lines' },
   },
+  /** WP-93: annotations of a plan in the plan tab (and in the card without a side panel). */
+  annotations: {
+    count: { one: '{count} annotation', other: '{count} annotations' },
+    hint: 'Select text to comment (C) or strike it, or use + at the left of a passage.',
+    previous: 'Previous annotation',
+    next: 'Next annotation',
+    comment: 'Comment',
+    commentKey: 'C',
+    strike: 'Strike',
+    addBlock: 'Comment on this passage',
+    full: 'At most {max} annotations per plan.',
+    placeholder: 'Your comment…',
+    reasonPlaceholder: 'Reason (optional)…',
+    editorLabel: 'Comment',
+    save: 'Save',
+    cancel: 'Cancel',
+    edit: 'Edit',
+    remove: 'Delete',
+    struck: 'Strike',
+    wholeBlock: 'Whole passage',
+    sendHint:
+      'Sends the annotations and the text of the message field as feedback – Claude revises the plan.',
+    tooLong: 'The feedback is too long ({length} of {max} characters).',
+    previousTitle: { one: 'Your annotation on v{version}', other: 'Your {count} annotations on v{version}' },
+    oldLine: 'line {line} in v{version}',
+  },
   /** Status of a plan version (plan tab, WP-56). */
   versions: {
     status: {

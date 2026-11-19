@@ -23,6 +23,7 @@ import {
   sampleEntry,
   sampleExternalHandoff,
   sampleId,
+  samplePlanAnnotation,
   sampleTime,
 } from '@shared/samples';
 import { eventsScenario, type FakeScenario, type FakeScriptContext } from '../backend/fakeBackend';
@@ -694,6 +695,14 @@ describe('plan versions (ADR-148)', () => {
     expect((await view(h, entryId)).detail.latestPlanVersion).toBe(1);
     // The fake writes the plan file for real, below the harness's filesRoot (WP-52).
     expect(v1.planFilePath?.startsWith(`${h.filesRoot}\\`)).toBe(true);
+    // WP-93: annotations of the open version travel as decision.upsert and stay with the record.
+    const note = samplePlanAnnotation();
+    expect(
+      await h.cmd({ name: 'decision.annotatePlan', entryId, decisionId: v1.id, annotations: [note] }),
+    ).toEqual({});
+    expect((await view(h, entryId)).decisions.find((d) => d.id === v1.id)).toMatchObject({
+      annotations: [note],
+    });
     await respondPlan(h, entryId, v1.id, { behavior: 'revise', feedback: 'Add a test step' });
     const v2 = await openPlan(h, entryId, 2);
     expect(v2.previousVersionPlan).toBe(v1.plan);
@@ -725,11 +734,19 @@ describe('plan versions (ADR-148)', () => {
         stored: true,
       },
     ]);
-    expect(await h.cmd({ name: 'plan.read', entryId, version: 2 })).toEqual({ version: 2, text: v2.plan });
+    expect(await h.cmd({ name: 'plan.read', entryId, version: 2 })).toEqual({
+      version: 2,
+      text: v2.plan,
+      annotations: [],
+    });
 
     await h.cmd({ name: 'session.setArchived', entryId, archived: true });
     expect((await h.cmd({ name: 'plan.list', entryId })).versions.map((v) => v.version)).toEqual([1, 2]);
-    expect(await h.cmd({ name: 'plan.read', entryId, version: 1 })).toEqual({ version: 1, text: v1.plan });
+    expect(await h.cmd({ name: 'plan.read', entryId, version: 1 })).toEqual({
+      version: 1,
+      text: v1.plan,
+      annotations: [note],
+    });
     expect(await h.cmdError({ name: 'plan.read', entryId, version: 3 })).toEqual({
       code: 'PLAN_NOT_FOUND',
       params: { version: 3 },
@@ -836,6 +853,7 @@ describe('plan versions (ADR-148)', () => {
     expect(await h.cmd({ name: 'plan.read', entryId: entry.id, version: 1 })).toEqual({
       version: 1,
       text: '# Plan v1',
+      annotations: [],
     });
     expect(await h.cmdError({ name: 'plan.read', entryId: entry.id, version: 2 })).toEqual({
       code: 'PLAN_NOT_FOUND',
