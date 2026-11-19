@@ -5,6 +5,8 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 
 ## [Unveröffentlicht]
 
+## [2.0.0] – 2026-11-19
+
 ### Neu
 - Mehrere Rechner: Ein Parallax zeigt und steuert die Sessions anderer Rechner im selben Netz, als liefen sie lokal;
   ab Werk aus, eingeschaltet unter Einstellungen → „Mehrere Rechner“ mit den Rollen „Freigeben“ und „Andere steuern“
@@ -31,6 +33,10 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 - Parallax startet für Systemabfragen kaum noch PowerShell, was Sicherheitssoftware als verdächtig melden konnte:
   Prozesse liest der Server selbst, Autostart, Protokoll-Handler und Startmenü schreibt er nur
   noch bei einer Änderung, und Virenscanner sowie Ordnerrechte fragt er nicht mehr ab (fix/quiet-system-calls).
+
+### Hinweise zum Update
+- Vor dem Update Node.js auf 26.9 oder neuer aktualisieren; 1.0.x lädt das Paket sonst und lehnt es danach mit der
+  nötigen und der installierten Version ab (ADR-231).
 
 ## [1.0.1] – 2026-11-18
 
