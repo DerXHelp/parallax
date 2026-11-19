@@ -373,6 +373,14 @@ Befehlsausgaben sind mit `$` markiert (E-Mail/Org geschwärzt). Aufgezeichnet mi
   `message.id`** wie `message_start` (alle 72 gestreamten Messages hatten ein `message_start` mit gleicher ID;
   mehrere Assistant-Messages je ID z. B. `permissions#24`/`#35`), `stop_reason` dort `null`.
   Ohne Stream kommen nur Subagent-Messages und synthetische Local-Command-Antworten.
+
+> **Nachtrag 19.11.2026 (fix/context-estimate):** Anthropic-kompatible Gateways für andere Modelle liefern die Usage
+> im Stream oft unvollständig: `message_start` mit `input_tokens: 0` (Input erst am Ende bekannt) oder
+> `message_delta` nur mit `output_tokens` (ältere Stream-Spezifikation). Die Schätzung während des Turns (C.1) zählte
+> fehlende Felder als 0, die Anzeige fiel kurz auf ~0 % und sprang beim nächsten Event zurück. Seitdem gilt eine
+> Usage ohne Input (Input + Cache-Felder fehlen oder ergeben 0) als unbekannt: `message_start` schätzt dann nicht,
+> ein `message_delta` ohne Input nimmt den Input seines `message_start`. `<synthetic>`-Messages schätzen nie.
+> Die Anthropic-Fixtures liefern in beiden Events volle Usage, die Snapshots bleiben gleich.
   `system/thinking_tokens` (geschätzte Thinking-Tokens) kommt sehr häufig (262 Frames).
 - **Konsequenz:** Normalizer: Item-ID `messageId:blockIndex`, die Block-Message ersetzt den gestreamten
   Block (B bestätigt). `thinking_tokens` drosseln/ignorieren. Abo-Limit-Anzeige aus `unifiedWindows`.

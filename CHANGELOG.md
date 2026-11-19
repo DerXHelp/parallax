@@ -5,6 +5,10 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 
 ## [Unveröffentlicht]
 
+### Behoben
+- Die Context-Anzeige springt bei Modellen anderer Anbieter während eines Turns nicht mehr kurz auf 0 %
+  (fix/context-estimate).
+
 ## [2.0.0] – 2026-11-19
 
 ### Neu
