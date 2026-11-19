@@ -6,8 +6,10 @@
  *
  *   node scripts/release/sign.ts sign <file>...
  *       writes <file>.sig: Ed25519 signature of the exact bytes, base64
- *   node scripts/release/sign.ts latest --zip <zip> --version <v> --notes <md> --changelog <md> --out <json>
- *       writes latest.json (unsigned; sign it afterwards)
+ *   node scripts/release/sign.ts latest --zip <zip> --version <v> --release <release.json> --notes <md>
+ *       --changelog <md> --out <json>
+ *       writes latest.json (unsigned; sign it afterwards); `minNode` comes from the package's release.json
+ *       (ADR-232: an installed version refuses a release for a newer Node before downloading it)
  */
 import { createHash, createPrivateKey, sign } from 'node:crypto';
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -45,6 +47,20 @@ function option(args: readonly string[], name: string): string {
   return value;
 }
 
+/** `minNode` of the package's release.json (`x.y.z`). */
+function minNodeOf(file: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    fail(`${file} is not readable JSON`);
+  }
+  const minNode =
+    typeof parsed === 'object' && parsed !== null && 'minNode' in parsed ? parsed.minNode : undefined;
+  if (typeof minNode !== 'string' || !/^\d+\.\d+\.\d+$/u.test(minNode)) fail(`no valid minNode in ${file}`);
+  return minNode;
+}
+
 function writeLatest(args: readonly string[]): void {
   const zip = option(args, '--zip');
   const version = option(args, '--version');
@@ -55,6 +71,7 @@ function writeLatest(args: readonly string[]): void {
     schemaVersion: 1,
     version,
     prerelease: version.includes('-'),
+    minNode: minNodeOf(option(args, '--release')),
     url: `${REPO_DOWNLOADS}/v${version}/${asset}`,
     size: statSync(zip).size,
     sha256: sha256(zip),
@@ -70,4 +87,6 @@ const [command, ...rest] = process.argv.slice(2);
 if (command === 'sign') signFiles(rest);
 else if (command === 'latest') writeLatest(rest);
 else
-  fail('usage: sign.ts sign <file>... | sign.ts latest --zip … --version … --notes … --changelog … --out …');
+  fail(
+    'usage: sign.ts sign <file>... | sign.ts latest --zip … --version … --release … --notes … --changelog … --out …',
+  );

@@ -114,7 +114,7 @@ jobs:
           $zip = Join-Path $out "$folder-win.zip"
           & (Join-Path $env:SystemRoot 'System32\tar.exe') -a -c -f $zip -C $pkg $folder
           Copy-Item (Join-Path $pkg "$folder/CHANGELOG.md") $out
-          node scripts/release/sign.ts latest --zip $zip --version $env:VERSION --notes (Join-Path $pkg 'notes.md') --changelog (Join-Path $out 'CHANGELOG.md') --out (Join-Path $out 'latest.json')
+          node scripts/release/sign.ts latest --zip $zip --version $env:VERSION --release (Join-Path $pkg "$folder/release.json") --notes (Join-Path $pkg 'notes.md') --changelog (Join-Path $out 'CHANGELOG.md') --out (Join-Path $out 'latest.json')
           node scripts/release/sign.ts sign (Join-Path $out 'latest.json')
           Copy-Item (Join-Path $pkg 'notes.md') $out
       - name: Draft release

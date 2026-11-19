@@ -84,6 +84,7 @@ export function serveRelease(
     schemaVersion: 1,
     version: release.version,
     prerelease: release.version.includes('-'),
+    minNode: '26.9.0',
     url: endpoints.assetUrl(release.version),
     size: release.zip.length,
     sha256: sha256(release.zip),

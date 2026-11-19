@@ -36,6 +36,15 @@ describe('checkLatest', () => {
     expect(await checkLatest(options(server))).toEqual({ kind: 'available', latest, changelog });
   });
 
+  it('reads minNode (ADR-232); a latest.json written before has none (null)', () => {
+    const server = new FakeReleaseServer();
+    const { latest } = serveRelease(server, endpoints, key, { version: '1.0.1', zip: ZIP });
+    expect(latest.minNode).toBe('26.9.0');
+    const { minNode: _minNode, ...older } = latest;
+    expect(latestInfoSchema.parse(older).minNode).toBeNull();
+    expect(latestInfoSchema.safeParse({ ...latest, minNode: '26.9' }).success).toBe(false);
+  });
+
   it('orders 1.0.0 above 1.0.0-rc.4 (the first full release)', async () => {
     const server = new FakeReleaseServer();
     serveRelease(server, endpoints, key, { version: '1.0.0', zip: ZIP });

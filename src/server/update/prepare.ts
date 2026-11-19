@@ -5,6 +5,8 @@
  * version; nothing of the new package runs before it is checked.
  *
  * Release (`prepareRelease`, source `github`):
+ * 0. latest.json `minNode` against this Node (UPDATE_NODE_TOO_OLD before the lock and any download,
+ *    ADR-232);
  * 1. lock (busy → UPDATE_BUSY {status: 'locked'}); an intact `versions\<v>` of an earlier run is
  *    kept at once (`reused`, no download);
  * 2. download to `downloads\parallax-<v>-win.zip.partial`, size and SHA-256 against latest.json,
@@ -29,7 +31,6 @@ import type { Logger } from 'pino';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import { compareVersions } from '@shared/version';
 import {
-  checkNodeVersion,
   installErrorReason,
   readSignedRelease,
   stageVersion,
@@ -159,12 +160,10 @@ async function cleanDownloads(env: PrepareEnv, downloads: string, keep: string |
   }
 }
 
-/** Throws UPDATE_NODE_TOO_OLD unless this Node is at least `release.minNode`. */
-function assertNode(env: PrepareEnv, release: ReleaseInfo): void {
-  try {
-    checkNodeVersion(release, env.nodeVersion);
-  } catch {
-    fail(makeError('UPDATE_NODE_TOO_OLD', { required: release.minNode, actual: env.nodeVersion }));
+/** Throws UPDATE_NODE_TOO_OLD unless this Node is at least `minNode` (release.json or latest.json). */
+function assertNode(env: PrepareEnv, minNode: string): void {
+  if ((compareVersions(env.nodeVersion, minNode) ?? -1) < 0) {
+    fail(makeError('UPDATE_NODE_TOO_OLD', { required: minNode, actual: env.nodeVersion }));
   }
 }
 
@@ -174,7 +173,7 @@ async function checkPackage(env: PrepareEnv, packageDir: string, version: string
   if (release.version !== version || path.basename(packageDir) !== `parallax-${release.version}`) {
     fail(makeError('UPDATE_INVALID_PACKAGE', { reason: 'version' }));
   }
-  assertNode(env, release);
+  assertNode(env, release.minNode);
   return release;
 }
 
@@ -266,7 +265,7 @@ async function intactVersion(
     return null;
   }
   run.signal.throwIfAborted();
-  assertNode(env, release);
+  assertNode(env, release.minNode);
   return { release, reused: true };
 }
 
@@ -276,6 +275,7 @@ export async function prepareRelease(
   latest: LatestInfo,
   run: PrepareRun,
 ): Promise<PreparedVersion> {
+  if (latest.minNode !== null) assertNode(env, latest.minNode);
   return withRootLock(env, async () => {
     const downloads = path.join(env.root, DOWNLOADS_DIR);
     await mkdir(downloads, { recursive: true });

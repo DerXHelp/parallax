@@ -80,7 +80,8 @@ Für die Nutzung: ein Release von GitHub, ohne Klon, pnpm oder Build.
   (`%LOCALAPPDATA%\Parallax\logs\update-<zeit>.log`).
 - **Node.js:** Braucht eine neue Version ein neueres Node.js (die Version nach 1.0.1 braucht 26.9), lehnt
   Parallax das Update ab und nennt die nötige und die installierte Version; die laufende Version bleibt
-  unberührt. Node.js aktualisieren, dann erneut „Jetzt aktualisieren“.
+  unberührt. Ab der Version nach 1.0.1 geschieht das, bevor das Paket geladen wird; 1.0.1 lädt es noch und
+  lehnt es nach der Prüfung ab. Node.js aktualisieren, dann erneut „Jetzt aktualisieren“.
 - **Aus Datei:** Einstellungen → „Updates“ → „Aus Datei installieren…“ nimmt ein geladenes
   `parallax-<version>-win.zip` an (z. B. ohne Zugang zu GitHub). Geprüft wird es mit dem Code und den
   Schlüsseln der laufenden Version.
