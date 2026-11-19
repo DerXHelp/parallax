@@ -330,6 +330,43 @@ describe('live normalizer: sizes and tolerance', () => {
       contextWindow: 200_000,
     });
   });
+
+  it('never estimates from usage without input tokens (gateways: zero message_start, output-only message_delta)', () => {
+    const n = fresh();
+    const MODEL = 'gateway-model';
+    const estimates = (event: Record<string, unknown>, parent: string | null) =>
+      n.push({ type: 'stream_event', event, parent_tool_use_id: parent }, AT).signals.filter((s) => s.type === 'context_estimate');
+    const start = (id: string, usage: Record<string, unknown>, parent: string | null = null) =>
+      estimates({ type: 'message_start', message: { id, model: MODEL, usage } }, parent);
+    const delta = (usage: Record<string, unknown>, parent: string | null = null) =>
+      estimates({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage }, parent);
+    const estimate = (totalTokens: number) => [{ type: 'context_estimate', totalTokens, model: MODEL, contextWindow: null }];
+
+    // Input known only at the end: message_start says nothing, the delta brings the real value.
+    expect(start('m1', { input_tokens: 0, output_tokens: 0 })).toEqual([]);
+    expect(delta({ input_tokens: 40_000, cache_read_input_tokens: 10_000, output_tokens: 300 })).toEqual(estimate(50_300));
+    // Output-only delta (older stream spec): the input of its message_start stays.
+    expect(start('m2', { input_tokens: 51_000, output_tokens: 1 })).toEqual(estimate(51_001));
+    expect(delta({ output_tokens: 250 })).toEqual(estimate(51_250));
+    // An explicit zero input in the delta is unknown as well.
+    expect(start('m3', { input_tokens: 52_000, output_tokens: 1 })).toEqual(estimate(52_001));
+    expect(delta({ input_tokens: 0, cache_read_input_tokens: null, output_tokens: 90 })).toEqual(estimate(52_090));
+    // Neither message_start nor message_delta knows the input: the gauge keeps its value.
+    expect(start('m4', {})).toEqual([]);
+    expect(delta({ output_tokens: 5 })).toEqual([]);
+    // Subagent streams stay out (even with full usage).
+    expect(start('m5', { input_tokens: 9_000, output_tokens: 1 }, 'toolu_agent')).toEqual([]);
+    expect(delta({ input_tokens: 9_000, output_tokens: 7 }, 'toolu_agent')).toEqual([]);
+  });
+
+  it('never estimates from <synthetic> messages', () => {
+    const n = fresh();
+    const signals = n.push(
+      { type: 'stream_event', event: { type: 'message_start', message: { id: 'm1', model: '<synthetic>', usage: { input_tokens: 7, output_tokens: 3 } } }, parent_tool_use_id: null },
+      AT,
+    ).signals;
+    expect(signals).toEqual([]);
+  });
 });
 
 describe('live normalizer: task output files and lost writes (WP-52)', () => {

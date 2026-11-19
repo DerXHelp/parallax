@@ -144,6 +144,8 @@ interface StreamInfo {
   messageId: string;
   model: string | null;
   parent: string | null;
+  /** Input side of message_start's usage (`usageInput`); a later message_delta without one keeps it. */
+  inputTokens: number | null;
 }
 
 interface PendingResult {
@@ -159,14 +161,19 @@ interface Out {
   detail: SessionDetailPatch;
 }
 
-function usageTotal(usage: SdkUsage | undefined): number | null {
+/**
+ * Input side of a usage block (input + cache creation + cache read); null when none of them is there
+ * or they add up to 0. Anthropic-compatible gateways send `input_tokens: 0` in message_start (known
+ * only at the end) or only `output_tokens` in message_delta – a real prompt never has 0 input tokens,
+ * so such a block says nothing about the context and must not pull the gauge to 0.
+ */
+function usageInput(usage: SdkUsage | undefined): number | null {
   if (usage === undefined) return null;
-  return (
+  const input =
     (usage.input_tokens ?? 0) +
     (usage.cache_creation_input_tokens ?? 0) +
-    (usage.cache_read_input_tokens ?? 0) +
-    (usage.output_tokens ?? 0)
-  );
+    (usage.cache_read_input_tokens ?? 0);
+  return input > 0 ? input : null;
 }
 
 function nonNegativeInt(value: number | undefined, fallback = 0): number {
@@ -463,9 +470,19 @@ class LiveNormalizerImpl implements LiveNormalizer {
     out.signals.push({ type: 'assistant_model', model });
   }
 
-  private emitEstimate(usage: SdkUsage | undefined, model: string | null, out: Out): void {
-    const total = usageTotal(usage);
-    if (total === null || total === this.lastEstimate) return;
+  /**
+   * In-turn context estimate (C.1): `input` (usageInput, null = unknown → no estimate) plus the
+   * output tokens of the same usage block. `<synthetic>` messages are no API calls.
+   */
+  private emitEstimate(
+    input: number | null,
+    usage: SdkUsage | undefined,
+    model: string | null,
+    out: Out,
+  ): void {
+    if (input === null || model === SYNTHETIC_MODEL) return;
+    const total = input + (usage?.output_tokens ?? 0);
+    if (total === this.lastEstimate) return;
     this.lastEstimate = total;
     out.signals.push({
       type: 'context_estimate',
@@ -494,13 +511,18 @@ class LiveNormalizerImpl implements LiveNormalizer {
           return;
         }
         const message = start.data.message;
-        const info: StreamInfo = { messageId: message.id, model: message.model ?? null, parent };
+        const info: StreamInfo = {
+          messageId: message.id,
+          model: message.model ?? null,
+          parent,
+          inputTokens: usageInput(message.usage),
+        };
         this.streams.set(se.api_message_id ?? message.id, info);
         this.lastStreamMessageId = message.id;
         this.endRetrySeries(out);
         if (parent === null) {
           this.emitModel(info.model, out);
-          this.emitEstimate(message.usage, info.model, out);
+          this.emitEstimate(info.inputTokens, message.usage, info.model, out);
         }
         this.fallbackPrompts(se.user_message_uuids, out);
         return;
@@ -558,7 +580,10 @@ class LiveNormalizerImpl implements LiveNormalizer {
         const md = messageDeltaEventSchema.safeParse(event);
         if (md.success && parent === null) {
           const stream = this.streams.get(se.api_message_id ?? this.lastStreamMessageId ?? '');
-          this.emitEstimate(md.data.usage, stream?.model ?? null, out);
+          // Full usage (Anthropic) carries the cumulative input; a delta with output tokens only
+          // (gateways) keeps the input of its message_start.
+          const input = usageInput(md.data.usage) ?? stream?.inputTokens ?? null;
+          this.emitEstimate(input, md.data.usage, stream?.model ?? null, out);
         }
         return;
       }
