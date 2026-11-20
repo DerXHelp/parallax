@@ -168,7 +168,7 @@ function tabTrigger(list: HTMLElement | null, tab: SidePanelTab): HTMLElement | 
 export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanelFrameProps) {
   const t = useT();
   const anchorRef = useRef<HTMLDivElement>(null);
-  // WP-92: the width rules work in layout px (CSS px at 100 %); the panel is drawn at the zoom.
+  // WP-92: the width rules work in layout px (CSS px at a 16 px root); the panel is drawn at the zoom.
   const zoom = useZoom();
   const measured = useAreaWidth(anchorRef);
   const area = measured === null ? null : Math.round(toLayoutPx(measured, zoom));

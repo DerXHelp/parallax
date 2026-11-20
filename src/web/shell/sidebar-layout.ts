@@ -10,7 +10,7 @@ import { getZoom, subscribeZoom } from '@web/state/zoom';
  * and as the default of new windows (localStorage) – both through lib/storage, which swallows
  * missing or broken storage (then: expanded).
  *
- * WP-92: every width here is in layout px (CSS px at 100 % zoom) – the window width is divided by
+ * WP-92: every width here is in layout px (CSS px at a 16 px root) – the window width is divided by
  * the zoom, so the sidebar collapses at the same amount of content as without zoom.
  */
 
