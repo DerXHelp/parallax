@@ -2,8 +2,9 @@ import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { LOCAL_HOST_ID } from '@shared/common';
 import { getSelectedSession } from '@web/state/selection';
 import { selectSummary } from '@web/state/hooks';
-import { sessionAllows } from '@web/state/hosts';
+import { selectTerminalAvailable, sessionAllows } from '@web/state/hosts';
 import { clientStore } from '@web/state/store';
+import { focusSessionInput } from '../NewSessionForm';
 import { useShellRequestHandler, type ShellRequestOf } from '../requests';
 import { useShortcut } from '../shortcuts';
 import { SlotBoundary } from '../SlotBoundary';
@@ -11,7 +12,7 @@ import { useQuickAsk } from './quick-ask';
 import { QuickSwitcher } from './QuickSwitcher';
 import { closeRemoveDialog, useRemoveDialog } from './remove-session';
 import { renamePlaceFor, startRename } from './rename';
-import { OPEN_SHELL_KEYS, openShellIn } from './session-actions';
+import { OPEN_SHELL_KEYS, OPEN_TERMINAL_KEYS, openShellIn, openTerminalPanel } from './session-actions';
 
 /*
  * The dialogs behind a menu entry open rarely: lazy chunks, not part of the start chunk (WP-63,
@@ -144,6 +145,26 @@ export function NavigationLayer() {
       const summary = selectSummary(clientStore.getState(), key);
       if (key === null || summary === null || !sessionAllows(key, 'session.openShell')) return false;
       openShellIn(key, summary);
+      return true;
+    },
+  });
+  useShortcut({
+    id: 'navigation.openTerminal',
+    keys: OPEN_TERMINAL_KEYS,
+    description: 'navigation.shortcuts.openTerminal',
+    allowInInputs: true,
+    run: (event) => {
+      // WP-99: in the terminal → back to the message field; otherwise the terminal tab of the focused
+      // row's or the selected session (only this computer's, only with a pseudo console).
+      const target = event.target instanceof Element ? event.target : null;
+      const row = target?.closest('[data-session-row]') ?? null;
+      const key = row?.getAttribute('data-session-row') ?? getSelectedSession();
+      if (key === null || !selectTerminalAvailable(clientStore.getState(), key)) return false;
+      if (target !== null && target.closest('[data-slot="terminal-panel"]') !== null) {
+        focusSessionInput(key);
+        return true;
+      }
+      openTerminalPanel(key);
       return true;
     },
   });

@@ -29,12 +29,15 @@ const FOCUS_FRAMES = 20;
 /**
  * Moves the focus into the message field of a session pane once it is rendered (after "Create
  * session" – a user action, so no focus stealing). The pane is `[data-session-key]`
- * (SessionPane); its first text area is the composer slot.
+ * (SessionPane); the composer slot's text area wins (WP-99: the terminal tab of the side panel has
+ * text areas of its own – xterm's helper), else the first text area that is not a terminal's.
  */
 export function focusSessionInput(sessionKey: string, frames = FOCUS_FRAMES): void {
   const attempt = (left: number) => {
     const pane = document.querySelector(`[data-session-key="${sessionKey}"]`);
-    const input = pane?.querySelector<HTMLTextAreaElement>('textarea:not([disabled])');
+    const input =
+      pane?.querySelector<HTMLTextAreaElement>('[data-slot="composer"] textarea:not([disabled])') ??
+      pane?.querySelector<HTMLTextAreaElement>('textarea:not([disabled]):not(.xterm-helper-textarea)');
     if (input !== null && input !== undefined) {
       input.focus();
       return;

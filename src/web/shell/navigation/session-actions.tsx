@@ -14,6 +14,7 @@ import {
   ListXIcon,
   LogInIcon,
   MoonIcon,
+  PanelRightOpenIcon,
   PencilIcon,
   PinIcon,
   PinOffIcon,
@@ -35,7 +36,7 @@ import { focusElement, focusedElement } from '@web/lib/return-focus';
 import { openClaudeSessionUrl, openSessionWindow } from '@web/lib/windows';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand } from '@web/state/hooks';
-import { sessionAllows } from '@web/state/hosts';
+import { selectTerminalAvailable, sessionAllows } from '@web/state/hosts';
 import { showErrorNotice, showTextNotice } from '@web/state/notices';
 import { selectSettings } from '@web/state/settings';
 import { clientStore } from '@web/state/store';
@@ -57,6 +58,7 @@ import {
 } from '@web/ui/dropdown-menu';
 import { openNewSession } from '../NewSessionDialog';
 import { requestShell } from '../requests';
+import { openSidePanel } from '../side-panel/state';
 import { shortcutKeyLabels } from '../shortcuts';
 import { sessionFocusTarget } from './focus';
 import { isHandoffPending, openExternalConsole } from './handoff';
@@ -97,7 +99,8 @@ export type SessionActionId =
   /** WP-70: the output style of the project (small dialog). */
   | 'outputStyle'
   /** WP-97: cmd, PowerShell or Git Bash as a window in the session's folder (submenu). */
-  | 'openShell';
+  | 'openShell'
+  | 'openTerminal';
 
 export type SessionActionSlot = SessionActionId | 'separator';
 
@@ -137,6 +140,7 @@ export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
   'openWindow',
   'openFolder',
   'openShell',
+  'openTerminal',
   'newSessionHere',
   'separator',
   'sleep',
@@ -166,6 +170,7 @@ export const HEADER_ACTIONS: readonly SessionActionSlot[] = [
   'openWindow',
   'openFolder',
   'openShell',
+  'openTerminal',
   'openExternal',
   'copyConsoleCommand',
   'separator',
@@ -272,6 +277,49 @@ export function openShellIn(
     return;
   }
   runSessionCommand(sessionKey, { name: 'session.openShell', entryId: summary.entryId, shell });
+}
+
+/** WP-99: "Terminal in panel" – opens the terminal tab of the side panel (help `?`, menu hint). */
+export const OPEN_TERMINAL_KEYS = 'Alt+T';
+
+/** Frames to wait for the terminal view (its lazy chunk loads on the first open). */
+const TERMINAL_FOCUS_FRAMES = 300;
+
+/**
+ * Moves the focus into the active terminal of the session's terminal tab once it is rendered
+ * (WP-99: `[data-slot="terminal-view"][data-active="true"]`, xterm's helper text area).
+ */
+export function focusSessionTerminal(sessionKey: string, frames = TERMINAL_FOCUS_FRAMES): void {
+  const attempt = (left: number) => {
+    const pane = document.querySelector(`[data-session-key="${sessionKey}"]`);
+    const input = pane?.querySelector<HTMLTextAreaElement>(
+      '[data-slot="terminal-view"][data-active="true"] .xterm-helper-textarea',
+    );
+    if (input !== null && input !== undefined) {
+      input.focus();
+      return;
+    }
+    if (left > 0) {
+      requestAnimationFrame(() => {
+        attempt(left - 1);
+      });
+    }
+  };
+  requestAnimationFrame(() => {
+    attempt(frames);
+  });
+}
+
+/**
+ * "Terminal in panel" (WP-99, ADR-239): the side panel at the tab `terminal`, focus in the active
+ * terminal. Only for sessions of this computer whose server has a pseudo console
+ * (`selectTerminalAvailable`); a no-op otherwise.
+ */
+export function openTerminalPanel(sessionKey: string): void {
+  if (!selectTerminalAvailable(clientStore.getState(), sessionKey)) return;
+  if (!requestShell({ kind: 'sidePanel', sessionKey, tab: 'terminal' }))
+    openSidePanel(sessionKey, 'terminal');
+  focusSessionTerminal(sessionKey);
 }
 
 /** True for a session of the local host (Explorer, new window: only there). */
@@ -419,6 +467,22 @@ function build(
         }),
       };
     }
+    case 'openTerminal':
+      // WP-99: a pseudo console on this computer – left out for other computers and without ConPTY.
+      if (!selectTerminalAvailable(clientStore.getState(), sessionKey)) return null;
+      return {
+        id,
+        label: 'navigation.actions.openTerminal',
+        icon: PanelRightOpenIcon,
+        shortcut: OPEN_TERMINAL_KEYS,
+        disabled: false,
+        // After the menu closed: the terminal takes the focus.
+        run: () => {
+          runAfterMenu(sessionKey, () => {
+            openTerminalPanel(sessionKey);
+          });
+        },
+      };
     case 'newSessionHere':
       return {
         id,

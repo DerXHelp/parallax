@@ -110,6 +110,7 @@ export const de: typeof en = {
     signIn: 'Anmelden',
     outputStyle: 'Ausgabestil…',
     openShell: 'Shell im Ordner öffnen',
+    openTerminal: 'Terminal im Panel',
   },
   shells: {
     cmd: 'Eingabeaufforderung (cmd)',
@@ -204,6 +205,7 @@ export const de: typeof en = {
     rename: 'Gewählte Session umbenennen',
     toggleSidebar: 'Seitenleiste ein- oder ausklappen',
     openShell: 'Standard-Shell im Ordner der gewählten Session öffnen',
+    openTerminal: 'Terminal im Seitenpanel; im Terminal: zurück zum Eingabefeld',
   },
   conversations: {
     title: 'Frühere Unterhaltungen',

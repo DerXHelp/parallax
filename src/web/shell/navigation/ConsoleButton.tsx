@@ -1,6 +1,8 @@
-import { ChevronDownIcon, SettingsIcon, TerminalIcon } from 'lucide-react';
+import { ChevronDownIcon, PanelRightOpenIcon, SettingsIcon, TerminalIcon } from 'lucide-react';
+import { useRef } from 'react';
 import { SHELL_KINDS, type SessionSummary } from '@shared/model';
 import { useT } from '@web/i18n';
+import { useTerminalAvailable } from '@web/state/hosts';
 import { useSettings } from '@web/state/settings';
 import {
   DropdownMenu,
@@ -14,12 +16,19 @@ import { IconButton } from '@web/ui/icon-button';
 import { Kbd } from '@web/ui/kbd';
 import { requestShell } from '../requests';
 import { shortcutKeyLabels } from '../shortcuts';
-import { OPEN_SHELL_KEYS, openShellIn, SHELL_LABELS } from './session-actions';
+import {
+  OPEN_SHELL_KEYS,
+  OPEN_TERMINAL_KEYS,
+  openShellIn,
+  openTerminalPanel,
+  SHELL_LABELS,
+} from './session-actions';
 
 /**
  * "Open shell in folder" in the session header (WP-97, ADR-238): a split button – the icon opens
  * the default shell of the settings (Alt+K), the chevron offers cmd, PowerShell and Git Bash plus
- * the console settings. Shown by the header only for a session of this computer
+ * the console settings; WP-99: "Terminal in panel" (Alt+T) when this computer has a pseudo console.
+ * Shown by the header only for a session of this computer
  * (`sessionAllows(sessionKey, 'session.openShell')`) and only in a wide header – in a narrow one
  * the "…" menu has the same submenu. Outside the `<header>` status line (ADR-042).
  */
@@ -27,6 +36,10 @@ export function ConsoleButton({ sessionKey, summary }: { sessionKey: string; sum
   const t = useT();
   const preferred = useSettings().console.defaultShell;
   const keys = shortcutKeyLabels(OPEN_SHELL_KEYS, t).join('+');
+  const terminalKeys = shortcutKeyLabels(OPEN_TERMINAL_KEYS, t).join('+');
+  const terminal = useTerminalAvailable(sessionKey);
+  // The terminal takes the focus – the menu must not hand it back to the chevron.
+  const keepFocus = useRef(false);
   return (
     <div
       role="group"
@@ -57,7 +70,15 @@ export function ConsoleButton({ sessionKey, summary }: { sessionKey: string; sum
             <ChevronDownIcon aria-hidden />
           </IconButton>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-56">
+        <DropdownMenuContent
+          align="end"
+          className="min-w-56"
+          onCloseAutoFocus={(event) => {
+            if (!keepFocus.current) return;
+            keepFocus.current = false;
+            event.preventDefault();
+          }}
+        >
           {SHELL_KINDS.map((shell) => (
             <DropdownMenuItem
               key={shell}
@@ -75,6 +96,22 @@ export function ConsoleButton({ sessionKey, summary }: { sessionKey: string; sum
               ) : null}
             </DropdownMenuItem>
           ))}
+          {terminal ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                data-choice="terminal"
+                onSelect={() => {
+                  keepFocus.current = true;
+                  openTerminalPanel(sessionKey);
+                }}
+              >
+                <PanelRightOpenIcon aria-hidden />
+                {t('navigation.actions.openTerminal')}
+                <DropdownMenuShortcut>{terminalKeys}</DropdownMenuShortcut>
+              </DropdownMenuItem>
+            </>
+          ) : null}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             data-choice="settings"

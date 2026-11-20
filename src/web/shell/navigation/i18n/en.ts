@@ -136,6 +136,7 @@ export const en = {
     outputStyle: 'Output style…',
     /** WP-97: cmd, PowerShell or Git Bash as a window in the session's folder. */
     openShell: 'Open shell in folder',
+    openTerminal: 'Terminal in panel',
   },
   /** WP-97: the shells of "Open shell in folder" and the header button. */
   shells: {
@@ -232,6 +233,7 @@ export const en = {
     rename: 'Rename the selected session',
     toggleSidebar: 'Collapse or expand the sidebar',
     openShell: 'Open the default shell in the folder of the selected session',
+    openTerminal: 'Terminal in the side panel; in the terminal: back to the message field',
   },
   conversations: {
     title: 'Earlier conversations',
