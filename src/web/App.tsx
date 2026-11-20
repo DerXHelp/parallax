@@ -6,6 +6,7 @@ import { PlanSidePanel } from './features/decisions/PlanSidePanel';
 import { FILES_SLOTS } from './features/files';
 import { defaultFileLinkLabel, PlainReference } from './features/files/components/PlainReference';
 import { TASKS_SLOTS } from './features/tasks';
+import { TERMINAL_SLOTS } from './features/terminal';
 import { Markdown } from './features/transcript/markdown/Markdown';
 import { SubagentPanelSlot, ToolInputPreviewSlot, TranscriptSlot } from './features/transcript/slots';
 import { UPDATES_SLOTS } from './features/updates';
@@ -165,6 +166,8 @@ export const APP_SLOTS: Partial<FeatureSlots> = {
   FilesPanel: bounded(FILES_SLOTS.FilesPanel, bySessionKey),
   TasksPanel: bounded(TASKS_SLOTS.TasksPanel, bySessionKey),
   TaskStrip: bounded(TASKS_SLOTS.TaskStrip, bySessionKey),
+  // WP-99: tab "Terminal" (lazy; xterm.js only in its chunk).
+  TerminalPanel: bounded(TERMINAL_SLOTS.TerminalPanel, bySessionKey),
   SubagentPanel: bounded(SubagentPanelSlot, (props) => `${props.sessionKey}|${props.agentId}`),
   UpdateNotice: bounded(UPDATES_SLOTS.UpdateNotice, (props) => props.compact, quietNothing),
   UpdateBanner: bounded(UPDATES_SLOTS.UpdateBanner, undefined, quietNothing),

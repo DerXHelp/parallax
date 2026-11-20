@@ -25,6 +25,7 @@ import {
   sampleId,
   sampleProfile,
   sampleProfileInput,
+  sampleSummary,
   sampleTime,
   sampleUpdateRelease,
 } from '@shared/samples';
@@ -48,6 +49,7 @@ import {
   fileEntryLookup,
   observedPublisher,
   resumedSessionId,
+  terminalClosingPublisher,
   StartupError,
   startServer,
   type RunningServer,
@@ -651,6 +653,42 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
     // A deleted profile: no extra roots.
     entry = { ...entry, profileId: sampleId('pf', 999) };
     expect(lookup.entry(entry.id)?.additionalDirectories).toEqual([]);
+  });
+
+  it('terminalClosingPublisher (WP-99): archiving or removing an entry ends its terminals, everything passes through', () => {
+    const calls: string[] = [];
+    const hub = {
+      publishOps: (entryId: EntryId) => calls.push(`ops:${entryId}`),
+      publishSummary: (summary: { entryId: string; archived: boolean }) =>
+        calls.push(`summary:${summary.entryId}:${String(summary.archived)}`),
+      removeSummary: (entryId: EntryId) => calls.push(`remove:${entryId}`),
+      publishHostState: () => calls.push('host'),
+      notify: () => calls.push('notify'),
+      clearNotification: () => calls.push('clear'),
+      presence: () => [],
+      closeAll: () => calls.push('closeAll'),
+    };
+    const publisher = terminalClosingPublisher(hub, {
+      closeEntry: (entryId, reason) => calls.push(`terminals:${entryId}:${reason}`),
+    });
+    const summary = sampleSummary();
+    publisher.publishSummary(summary, false);
+    publisher.publishSummary({ ...summary, archived: true }, false);
+    publisher.removeSummary(summary.entryId);
+    publisher.publishOps(summary.entryId, []);
+    publisher.publishHostState(sampleHostState());
+    publisher.closeAll(4503);
+    const id = summary.entryId;
+    expect(calls).toEqual([
+      `summary:${id}:false`,
+      `terminals:${id}:archived`,
+      `summary:${id}:true`,
+      `terminals:${id}:removed`,
+      `remove:${id}`,
+      `ops:${id}`,
+      'host',
+      'closeAll',
+    ]);
   });
 
   it('observedPublisher: the observer sees each op batch first; a throwing observer is logged (throttled), the hub still gets it', () => {

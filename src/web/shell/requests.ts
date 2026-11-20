@@ -34,7 +34,7 @@ export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
  * Tabs of the side panel of a session pane (Phase 3, ADR-150; host: shell/side-panel). WP-69:
  * `subagent` = the read-only transcript of one subagent (shown once one was opened).
  */
-export const SIDE_PANEL_TABS = ['plan', 'file', 'files', 'tasks', 'subagent'] as const;
+export const SIDE_PANEL_TABS = ['plan', 'file', 'files', 'tasks', 'subagent', 'terminal'] as const;
 export type SidePanelTab = (typeof SIDE_PANEL_TABS)[number];
 
 export type ShellRequest =

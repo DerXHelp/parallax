@@ -92,6 +92,11 @@ const LAZY_NAMESPACES = [
     dir: '/src/web/shell/output-style/i18n/',
     chunk: '/src/web/shell/output-style/OutputStyleDialog.tsx',
   },
+  // WP-99: the embedded terminal (with xterm.js only in its lazy chunk).
+  {
+    dir: '/src/web/features/terminal/i18n/',
+    chunk: '/src/web/features/terminal/TerminalPanel.tsx',
+  },
 ];
 
 function inLazyNamespace(file: string): boolean {

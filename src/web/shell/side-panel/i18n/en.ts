@@ -14,6 +14,7 @@ export const en = {
     files: 'Files',
     tasks: 'Tasks',
     subagent: 'Agent',
+    terminal: 'Terminal',
   },
   /** Splitter between transcript and panel. */
   resize: 'Resize panel',

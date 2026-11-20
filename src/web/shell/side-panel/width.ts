@@ -2,7 +2,10 @@ import { readStorage, storageKey, writeStorage } from '@web/lib/storage';
 
 /**
  * Width rules of the side panel (WP-54, ADR-150): 320 px … 70 % of the session area, remembered per
- * window. Pure helpers (no React) – the host measures the area and calls them. WP-92: all values are
+ * window. Next to the transcript the panel always leaves it `TRANSCRIPT_MIN_WIDTH`; it lies over the
+ * transcript only when not even the narrowest panel fits next to that (WP-99 test by the user: the
+ * former overlay below 1100 px kept the transcript at full width behind the panel in any window
+ * that was not maximized, so its content never followed the visible part). Pure helpers (no React) – the host measures the area and calls them. WP-92: all values are
  * layout px (CSS px at a 16 px root); the host converts the measured area and the drawn width (only
  * the fallback before the first measurement is the plain window width).
  */
@@ -10,8 +13,10 @@ import { readStorage, storageKey, writeStorage } from '@web/lib/storage';
 export const SIDE_PANEL_MIN_WIDTH = 320;
 /** Largest share of the session area (transcript + panel). */
 export const SIDE_PANEL_MAX_SHARE = 0.7;
-/** Below this session area width the panel lies over the transcript (V3-14, WP-58 narrows the window). */
-export const SIDE_PANEL_OVERLAY_BELOW = 1100;
+/** The transcript keeps at least this width next to an inline panel. */
+export const TRANSCRIPT_MIN_WIDTH = 360;
+/** Below this session area width the panel lies over the transcript (V3-14): no room for both minimums. */
+export const SIDE_PANEL_OVERLAY_BELOW = SIDE_PANEL_MIN_WIDTH + TRANSCRIPT_MIN_WIDTH;
 /** Default without a remembered width: the former fixed width `min(42rem, 45 %)`. */
 const DEFAULT_MAX_WIDTH = 672;
 const DEFAULT_SHARE = 0.45;
@@ -55,9 +60,15 @@ function share(area: number | null, fraction: number): number {
   return Math.floor(areaOrFallback(area) * fraction + 1e-6);
 }
 
-/** Largest width for a session area of `area` px (never below the minimum). */
+/**
+ * Largest width for a session area of `area` px (never below the minimum): 70 % of the area, and
+ * inline never so wide that the transcript gets less than `TRANSCRIPT_MIN_WIDTH`.
+ */
 export function sidePanelMaxWidth(area: number | null): number {
-  return Math.max(SIDE_PANEL_MIN_WIDTH, share(area, SIDE_PANEL_MAX_SHARE));
+  const byShare = share(area, SIDE_PANEL_MAX_SHARE);
+  const inline = area !== null && area > 0 && !isSidePanelOverlay(area);
+  const byTranscript = inline ? area - TRANSCRIPT_MIN_WIDTH : byShare;
+  return Math.max(SIDE_PANEL_MIN_WIDTH, Math.min(byShare, byTranscript));
 }
 
 /** Width without a remembered value: min(672 px, 45 % of the area), at least the minimum. */
@@ -71,7 +82,7 @@ export function clampSidePanelWidth(width: number, area: number | null): number 
   return area !== null && area > 0 ? Math.min(clamped, area) : clamped;
 }
 
-/** True when the panel should lie over the transcript (session area narrower than 1100 px). */
+/** True when the panel should lie over the transcript (session area narrower than 680 px). */
 export function isSidePanelOverlay(area: number | null): boolean {
   return area !== null && area > 0 && area < SIDE_PANEL_OVERLAY_BELOW;
 }

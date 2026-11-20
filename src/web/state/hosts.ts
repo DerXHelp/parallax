@@ -159,6 +159,21 @@ export function sessionAllows(sessionKey: string, name: CommandName): boolean {
   return hostId !== null && canSendTo(commandHost(hostId, { name }), name);
 }
 
+/**
+ * WP-99 (ADR-239): the embedded terminal works for this session – a session of this computer whose
+ * server reports `terminalAvailable`. Never for a session of another computer.
+ */
+export function selectTerminalAvailable(state: ClientState, sessionKey: string): boolean {
+  return (
+    parseSessionKey(sessionKey)?.hostId === LOCAL_HOST_ID &&
+    state.hosts[LOCAL_HOST_ID]?.hostState?.terminalAvailable === true
+  );
+}
+
+export function useTerminalAvailable(sessionKey: string): boolean {
+  return useStore(clientStore, (state) => selectTerminalAvailable(state, sessionKey));
+}
+
 /** Parallax version of this computer (hint "update Parallax on <name> to <version>"). */
 export function selectOwnVersion(state: ClientState): string | null {
   const local = state.hosts[LOCAL_HOST_ID];

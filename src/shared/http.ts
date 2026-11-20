@@ -65,9 +65,14 @@ export const API_PATHS = {
   /**
    * WebSocket upgrade (src/shared/protocol.ts). Guard (§5.1, ADR-019): Origin ∈ allowedOrigins,
    * Host and device cookie required; Sec-Fetch-Site only checked when present (browsers send none
-   * on the handshake) and then must be `same-origin`. Only this route accepts an upgrade.
+   * on the handshake) and then must be `same-origin`. Only this route and `terminalWs` (WP-99) accept an upgrade.
    */
   ws: WS_PATH,
+  /**
+   * WP-99 (ADR-239): WebSocket of the embedded terminal (`src/shared/terminal.ts`). Guard class "ws"
+   * like `ws`; never in `HOST_API_PATHS` – the forwarder of another computer never passes it on.
+   */
+  terminalWs: '/api/terminal/ws',
 } as const;
 
 /** `/api/blob/<blobId>` (full content of capped texts, images). */

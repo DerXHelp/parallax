@@ -5,6 +5,7 @@ import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { pathTail } from '@web/lib/path-display';
 import { toLayoutPx, toScreenPx, zoomFactor } from '@web/lib/zoom';
+import { useTerminalAvailable } from '@web/state/hosts';
 import { useZoom } from '@web/state/zoom';
 import {
   DropdownMenu,
@@ -45,7 +46,7 @@ function isSidePanelTab(value: string): value is SidePanelTab {
 
 /** The content of one tab: the feature slots (placeholders render nothing). */
 const TabContent = memo(function TabContent({ sessionKey, tab }: { sessionKey: string; tab: SidePanelTab }) {
-  const { PlanPanel, FilePanel, FilesPanel, TasksPanel, SubagentPanel } = useFeatureSlots();
+  const { PlanPanel, FilePanel, FilesPanel, TasksPanel, SubagentPanel, TerminalPanel } = useFeatureSlots();
   const file = useSidePanelFile(sessionKey);
   const subagent = useSidePanelSubagent(sessionKey);
   switch (tab) {
@@ -77,6 +78,8 @@ const TabContent = memo(function TabContent({ sessionKey, tab }: { sessionKey: s
           subagentType={subagent.subagentType}
         />
       );
+    case 'terminal':
+      return <TerminalPanel sessionKey={sessionKey} />;
   }
 });
 
@@ -157,7 +160,7 @@ export interface SidePanelFrameProps {
  * The open panel (lazy chunk of SidePanelHost.tsx): a frame of the remembered width with the
  * splitter on its left edge, the tab row (Plan · File – only with an open file · Files · Tasks ·
  * Agent – WP-69, only once a subagent was opened), "Back" for the viewer, "Wide" (WP-93: as wide
- * as allowed until the splitter moves) and "Close". Below 1100 px of session area it lies over the transcript
+ * as allowed until the splitter moves) and "Close". Below 680 px of session area (no room for the panel and 360 px of transcript) it lies over the transcript
  * (anchored at the right edge, no focus trap).
  */
 /** The trigger of `tab` in the tab row. */
@@ -182,9 +185,12 @@ export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanel
     : clampSidePanelWidth(stored ?? defaultSidePanelWidth(area), area);
   const file = useSidePanelFile(sessionKey);
   const subagent = useSidePanelSubagent(sessionKey);
+  const terminalAvailable = useTerminalAvailable(sessionKey);
   const tabs = SIDE_PANEL_TABS.filter((candidate) => {
     if (candidate === 'file') return file !== null || tab === 'file';
     if (candidate === 'subagent') return subagent !== null || tab === 'subagent';
+    // WP-99: only for sessions of this computer whose server has a pseudo console.
+    if (candidate === 'terminal') return terminalAvailable;
     return true;
   });
   // WP-74 (ADR-203): the file and subagent tabs close like browser tabs – back to where they were

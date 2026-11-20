@@ -23,6 +23,9 @@ Koordinator):
 - WP-69: `transcript/` liefert den lazy Slot `SubagentPanel` (Tab „Agent“, eigener Chunk mit dem
   Lazy-Namensraum `transcript/i18n-lazy`, ADR-183) und rendert Hook-Läufe nach der Einstellung
   `hookDisplay` (`preferences`, Zustand in `src/web/state/hook-display.ts`).
+- WP-99: neu `terminal/` (eingebettetes Terminal, ADR-239): lazy Slot `TerminalPanel` (Tab „Terminal“ des
+  Seitenpanels, nur bei lokalen Sessions mit `terminalAvailable`), xterm.js und der lazy Namensraum
+  `terminal/i18n` nur im Chunk `TerminalPanel.tsx`, eigener Socket `API_PATHS.terminalWs`.
 
 Aufbau eines Feature-Ordners (R0-03): `i18n/{en,de}.ts` (Namespace = Ordnername, Stubs von WP-14),
 `playground.tsx` (`export const demos: PlaygroundDemo[]`, per `import.meta.glob` gefunden),

@@ -7,8 +7,9 @@ Der Rahmen des Seitenpanels einer Session-Pane: `aside` neben dem Transkript, Ta
 Datei (nur mit offener Datei) · Dateien · Aufgaben · Agent (WP-69, nur nach „Verlauf“ an einer Agent-Karte) mit Schließen, Esc im Panel, Fokus-Rückgabe an
 den Auslöser; nicht modal, keine Fokusfalle. Die Tabs rendern die Feature-Slots `PlanPanel`,
 `FilePanel`, `FilesPanel`, `TasksPanel`, WP-69 `SubagentPanel` (`shell/slots.tsx`). Breite per Splitter (`@web/ui/splitter`,
-Pfeile ± 16 px, Home/End) zwischen 320 px und 70 % der Session-Fläche; unter 1100 px Fläche
-(ResizeObserver) liegt das Panel als Overlay über dem Transkript. WP-93: „Breit“ neben „Schließen“ nimmt die größte
+Pfeile ± 16 px, Home/End) zwischen 320 px und 70 % der Session-Fläche, neben dem Transkript höchstens so breit, dass
+diesem 360 px bleiben. Erst unter 680 px Fläche (ResizeObserver) liegt das Panel als Overlay über dem Transkript
+(ADR-240; bis dahin schon unter 1100 px). WP-93: „Breit“ neben „Schließen“ nimmt die größte
 erlaubte Breite, bis der Splitter bewegt wird.
 
 | Datei | Inhalt |

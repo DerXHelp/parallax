@@ -20,7 +20,7 @@ import { API_PATHS, API_PREFIX, HOST_API_PATHS, allowedHosts, allowedOrigins } f
  * | blob          | GET/HEAD /api/blob/:blobId                  | if present ∈ allowed | if present ∈ same-origin/none  | cookie |
  * | file          | GET/HEAD /api/file (Phase 3, ADR-142)       | if present ∈ allowed | required same-origin           | cookie |
  * | auth-exchange | POST /api/auth                              | required ∈ allowed   | required same-origin           | code   |
- * | ws            | GET/HEAD /api/ws (WebSocket upgrade)        | required ∈ allowed   | if present: same-origin (V1-01)| cookie |
+ * | ws            | GET/HEAD /api/ws, /api/terminal/ws (WP-99)  | required ∈ allowed   | if present: same-origin (V1-01)| cookie |
  * | mutation      | every other route/method (default-deny)     | required ∈ allowed   | required same-origin           | cookie |
  * | launcher      | POST /api/launcher/code                     | must be absent       | absent or none                 | bearer |
  *
@@ -34,7 +34,7 @@ import { API_PATHS, API_PREFIX, HOST_API_PATHS, allowedHosts, allowedOrigins } f
  *   an API route (pattern under `/api`) the raw path is canonical (`/api/<seg>/<seg>` with
  *   segments of `[A-Za-z0-9_-]`, so no percent-encoding, `.`, `;`, `//` or trailing `/`), else
  *   400 VALIDATION_FAILED {reason: 'request_target'} – defense in depth.
- * - A WebSocket upgrade is accepted only on the WS route, else 400 INVALID_MESSAGE
+ * - A WebSocket upgrade is accepted only on a WS route, else 400 INVALID_MESSAGE
  *   {reason: 'upgrade_not_allowed'} (@fastify/websocket would otherwise complete the handshake on
  *   any GET route and close it right away).
  * `Origin: null` is rejected wherever Origin is checked. Violations of the table: 403
@@ -85,6 +85,8 @@ const ROUTE_CLASSES: ReadonlyMap<string, ReadonlyMap<string, RouteClass>> = new 
   [API_PATHS.changelog, forMethods(READ_METHODS, 'file')],
   [API_PATHS.notices, forMethods(READ_METHODS, 'file')],
   [API_PATHS.ws, forMethods(READ_METHODS, 'ws')],
+  // WP-99: the embedded terminal – this computer only, never in HOST_API_PATHS.
+  [API_PATHS.terminalWs, forMethods(READ_METHODS, 'ws')],
   // WP-79: the forwarder of another computer – the same class as the local route; the upload
   // (`HOST_API_PATHS.attachments`, POST) stays a `mutation` like `/api/attachments`.
   [HOST_API_PATHS.blob, forMethods(READ_METHODS, 'blob')],

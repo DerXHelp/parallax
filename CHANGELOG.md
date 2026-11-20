@@ -24,6 +24,11 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
   der Session: über das Session-Menü, einen Knopf in der Kopfzeile oder Alt+K, nur für Sessions dieses Rechners. Die
   Standard-Shell, das Fenster für Git Bash und der Ordner von Git for Windows stehen unter Einstellungen → Konsole
   (WP-97).
+- Das Seitenpanel hat einen Tab „Terminal“: cmd, PowerShell oder Git Bash laufen direkt in Parallax im Ordner der
+  Session, bis zu vier je Session, nur für Sessions dieses Rechners. Alt+T öffnet den Tab und führt zurück ins
+  Nachrichtenfeld; die Shells laufen weiter, wenn das Panel schließt, und zeigen beim Wiederöffnen ihren Verlauf (WP-99).
+- Terminal-Tabs lassen sich per Doppelklick, F2 oder Kontextmenü umbenennen und per Ziehen verschieben; Name und
+  Reihenfolge gelten in allen Fenstern (WP-99).
 
 ### Geändert
 - Die Oberfläche ist standardmäßig 10 % größer: Zoom 100 % sieht aus wie bisher 110 %. Wer bisher mit 110 % gearbeitet
@@ -33,6 +38,10 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
   übergeben“ statt einer Nachricht, die aussieht, als hättest du sie geschrieben (WP-95).
 - Rechner, die sich mit „Mehrere Rechner“ gegenseitig steuern, brauchen dafür beide diese Version (Protokollversion 6,
   WP-95).
+- In einem nicht maximierten Fenster schiebt das Seitenpanel das Transkript zur Seite, statt darüber zu liegen; nur in
+  sehr schmalen Fenstern liegt es noch darüber (WP-99).
+- „Neue Session“ steht in der Seitenleiste vor dem Knopf für die Gruppierung (WP-99).
+- Der Pfeil von „Zur ersten neuen Nachricht“ zeigt nach oben (WP-99).
 
 ### Behoben
 - Die Context-Anzeige springt bei Modellen anderer Anbieter während eines Turns nicht mehr kurz auf 0 %

@@ -12,6 +12,7 @@ export const de: typeof en = {
     files: 'Dateien',
     tasks: 'Aufgaben',
     subagent: 'Agent',
+    terminal: 'Terminal',
   },
   resize: 'Panelbreite ändern',
   width: '{width} px',

@@ -1124,6 +1124,11 @@ export const hostStateSchema = z.object({
   remoteHosts: z.array(remoteHostSchema).max(LIMITS.hostsMax).default([]),
   /** WP-76: remote access of a sharing computer (role `share`); null otherwise. */
   remoteAccess: remoteAccessStateSchema.nullable().default(null),
+  /**
+   * WP-99 (ADR-239): the embedded terminal works on this computer (ConPTY through `node:ffi`). The
+   * panel tab "Terminal" appears only for sessions of this computer and only when true.
+   */
+  terminalAvailable: z.boolean().default(false),
 });
 export type HostState = z.infer<typeof hostStateSchema>;
 

@@ -1,4 +1,4 @@
-import { ArrowDownIcon, XIcon } from 'lucide-react';
+import { ArrowUpIcon, XIcon } from 'lucide-react';
 import { useMemo } from 'react';
 import type { SessionSummary, TranscriptItem, TurnSummary } from '@shared/model';
 import type { SessionViewState } from '@shared/sync';
@@ -44,7 +44,8 @@ export function SinceLastVisit({
   const settings = useTranscriptSettings();
   const facts = useMemo(() => sinceFacts(items, since), [items, since]);
   if (facts === null) return null;
-  const summary = turnSummary !== null && Date.parse(turnSummary.at) > Date.parse(since) ? turnSummary.text : null;
+  const summary =
+    turnSummary !== null && Date.parse(turnSummary.at) > Date.parse(since) ? turnSummary.text : null;
   const more = facts.files.length - FILES_SHOWN;
   const firstItemId = facts.firstItemId;
   return (
@@ -81,19 +82,30 @@ export function SinceLastVisit({
                 ·
               </span>
               {t('transcript.since.cost', {
-                cost: format.number(facts.costUsd, { style: 'currency', currency: 'USD', maximumFractionDigits: 4 }),
+                cost: format.number(facts.costUsd, {
+                  style: 'currency',
+                  currency: 'USD',
+                  maximumFractionDigits: 4,
+                }),
               })}
             </>
           ) : null}
         </span>
         <span className="flex-1" />
-        <IconButton label={t('transcript.since.close')} size="icon-xs" data-action="since-close" onClick={onClose}>
+        <IconButton
+          label={t('transcript.since.close')}
+          size="icon-xs"
+          data-action="since-close"
+          onClick={onClose}
+        >
           <XIcon aria-hidden />
         </IconButton>
       </div>
       {facts.files.length === 0 ? null : (
         <p data-slot="since-files" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
-          <span className="text-muted-foreground">{t('transcript.since.files', { count: facts.files.length })}</span>
+          <span className="text-muted-foreground">
+            {t('transcript.since.files', { count: facts.files.length })}
+          </span>
           {facts.files.slice(0, FILES_SHOWN).map((path) => (
             <span key={path} className="min-w-0 truncate">
               <ToolFileLink sessionKey={sessionKey} path={path} cwd={cwd}>
@@ -101,7 +113,9 @@ export function SinceLastVisit({
               </ToolFileLink>
             </span>
           ))}
-          {more > 0 ? <span className="text-muted-foreground">{t('transcript.since.more', { count: more })}</span> : null}
+          {more > 0 ? (
+            <span className="text-muted-foreground">{t('transcript.since.more', { count: more })}</span>
+          ) : null}
         </p>
       )}
       {summary === null ? null : (
@@ -120,7 +134,8 @@ export function SinceLastVisit({
             onJump(firstItemId);
           }}
         >
-          <ArrowDownIcon aria-hidden />
+          {/* The first new message lies above the end the transcript shows: the arrow points up. */}
+          <ArrowUpIcon aria-hidden />
           {t('transcript.since.jump')}
         </Button>
       )}

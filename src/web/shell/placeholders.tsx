@@ -142,6 +142,11 @@ export function TasksPanelPlaceholder(_props: { sessionKey: string }) {
   return null;
 }
 
+/** WP-99: until the terminal feature fills the slot the terminal tab stays empty. */
+export function TerminalPanelPlaceholder(_props: { sessionKey: string }) {
+  return null;
+}
+
 /** WP-69: until the transcript feature fills the slot the subagent tab stays empty. */
 export function SubagentPanelPlaceholder(_props: SubagentPanelSlotProps) {
   return null;
