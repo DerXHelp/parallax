@@ -121,9 +121,10 @@ describe('shell.detect', () => {
 });
 
 describe('remote access', () => {
-  it('neither command is allowed from another computer', () => {
+  it('no shell window from another computer; its shell list is allowed (WP-102)', () => {
     expect(isRemoteAllowedCommand('session.openShell')).toBe(false);
-    expect(isRemoteAllowedCommand('shell.detect')).toBe(false);
+    // WP-102 (E3): the shell list serves the embedded terminal of a controlling computer.
+    expect(isRemoteAllowedCommand('shell.detect')).toBe(true);
   });
 });
 

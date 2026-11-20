@@ -59,6 +59,7 @@ import {
   sampleBlobId,
   sampleHealthResponse,
   sampleLauncherCode,
+  sampleRemoteAccessState,
   sampleRemotePairRequest,
   sampleServerLockFile,
   sampleToken,
@@ -371,6 +372,28 @@ describe('WP-76: several computers', () => {
       expect(path.startsWith(http.REMOTE_PREFIX)).toBe(true);
     for (const path of Object.values(http.HOST_API_PATHS))
       expect(path.startsWith(`${API_PREFIX}/hosts/`)).toBe(true);
+  });
+
+  it('WP-102: the terminal of another computer goes through the forwarder', () => {
+    expect(http.hostTerminalWsPath('local')).toBe(API_PATHS.terminalWs);
+    expect(http.hostTerminalWsPath('computer-b')).toBe('/api/hosts/computer-b/terminal/ws');
+    expect(http.REMOTE_PATHS.terminalWs).toBe('/remote/v1/terminal/ws');
+  });
+
+  it('WP-102: launcher remote requests and responses (WP-76 §B.13)', () => {
+    const request = (body: unknown) => http.launcherRemoteRequestSchema.safeParse(body);
+    expect(request({ action: 'pair' }).data).toEqual({ action: 'pair', level: 'control' });
+    expect(request({ action: 'pair', level: 'manage' }).data).toEqual({ action: 'pair', level: 'manage' });
+    expect(request({ action: 'level', level: 'control' }).success).toBe(true);
+    expect(request({ action: 'level' }).success).toBe(false);
+    expect(request({ action: 'shutdown' }).success).toBe(false);
+    for (const action of ['status', 'enable', 'disable', 'cancel', 'unpair'])
+      expect(request({ action }).success).toBe(true);
+    const answer = { remoteAccess: sampleRemoteAccessState(), code: null, expiresAt: null };
+    expect(http.launcherRemoteResponseSchema.parse(answer)).toEqual(answer);
+    expect(
+      http.launcherRemoteResponseSchema.parse({ ...answer, remoteAccess: null }).remoteAccess,
+    ).toBeNull();
   });
 
   it('protocol links carry the computer and parse strictly', () => {

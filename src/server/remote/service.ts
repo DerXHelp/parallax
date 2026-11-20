@@ -235,6 +235,8 @@ export function createRemoteAccessService(options: RemoteAccessServiceOptions): 
           pin: input.pin,
           certificate: input.certificateDer.toString('base64'),
           authKey: authKey.toString('base64'),
+          // WP-102: the level of the pairing window comes with WP-107; until then every coupling controls.
+          level: 'control',
           pairedAt: now().toISOString(),
           lastSeenAt: null,
           lastAddress: input.address,
@@ -565,6 +567,7 @@ export function createRemoteAccessService(options: RemoteAccessServiceOptions): 
             ? null
             : {
                 name: peer.name,
+                level: peer.level,
                 pairedAt: peer.pairedAt,
                 connected: listener.peerCount() > 0,
                 connections: websockets,

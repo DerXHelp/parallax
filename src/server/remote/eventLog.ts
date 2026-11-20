@@ -130,6 +130,8 @@ export function createRemoteEventLog(options: RemoteEventLogOptions): FileRemote
       address,
       port: input.port,
       claimedName,
+      // WP-102: the detail of `manage_command`/`level_changed` comes with WP-107.
+      detail: null,
       rejected: isRejectedEventKind(input.kind),
     };
     const fields = { kind: row.kind, address: row.address, port: row.port, claimedName: row.claimedName };

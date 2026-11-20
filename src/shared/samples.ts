@@ -356,6 +356,7 @@ export function sampleRemoteAccessCheck(p: Partial<RemoteAccessCheck> = {}): Rem
 export function sampleRemotePeer(p: Partial<RemotePeer> = {}): RemotePeer {
   return {
     name: 'Computer A',
+    level: 'control',
     pairedAt: sampleTime(),
     connected: true,
     connections: 2,
@@ -373,6 +374,7 @@ export function sampleRemotePeerRecord(p: Partial<RemotePeerRecord> = {}): Remot
     pin: samplePin(1),
     certificate: sampleCertificate(1),
     authKey: 'AQAAANCMnd8BFdERjHoAwE/Cl+s=',
+    level: 'control',
     pairedAt: sampleTime(),
     lastSeenAt: null,
     lastAddress: null,
@@ -405,6 +407,7 @@ export function sampleRemoteEvent(p: Partial<RemoteEvent> = {}): RemoteEvent {
     address: '192.0.2.99',
     port: 51234,
     claimedName: null,
+    detail: null,
     rejected: true,
     ...p,
   };
@@ -1208,6 +1211,7 @@ export function sampleHello(p: Partial<HelloMessage> = {}): HelloMessage {
     serverInstanceId: SAMPLE_IDS.serverInstanceId,
     serverVersion: '0.0.0',
     serverStartedAt: sampleTime(),
+    access: 'local',
     ...p,
   };
 }

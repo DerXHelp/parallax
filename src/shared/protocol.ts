@@ -54,7 +54,10 @@ import {
   remoteAccessCheckSchema,
   remoteEventSchema,
   remoteHostIdSchema,
+  remotePeerLevelSchema,
   remotePortSchema,
+  REMOTE_PEER_LEVELS,
+  type RemotePeerLevel,
   REMOTE_ACCESS_DEFAULT_PORT,
   sessionDetailPatchSchema,
   sessionDetailSchema,
@@ -142,6 +145,14 @@ export const presenceMessageSchema = z.object({ type: z.literal('presence'), pre
 // 7.1 Handshake
 // =====================================================================================
 
+/**
+ * What a connection may do (WP-102, WP-76 §B.13): `local` = a window of this computer (everything);
+ * `control`/`manage` = a window of a controlling computer with that coupling level.
+ */
+export const CONNECTION_ACCESS = ['local', ...REMOTE_PEER_LEVELS] as const;
+export const connectionAccessSchema = z.enum(CONNECTION_ACCESS);
+export type ConnectionAccess = z.infer<typeof connectionAccessSchema>;
+
 export const helloSchema = z.object({
   type: z.literal('hello'),
   protocolVersion: z.number().int().positive(),
@@ -151,6 +162,11 @@ export const helloSchema = z.object({
   serverInstanceId: z.uuid(),
   serverVersion: z.string(),
   serverStartedAt: isoDateTimeSchema,
+  /**
+   * WP-102: what this connection may do – display only (settings, profiles and updates of another
+   * computer only with `manage`); the hub of that computer checks every command itself.
+   */
+  access: connectionAccessSchema.default('local'),
 });
 export type HelloMessage = z.infer<typeof helloSchema>;
 
@@ -647,8 +663,12 @@ export const commandSchema = z.discriminatedUnion('name', [
     port: z.number().int().min(1024).max(65535).optional(),
     bindAddress: z.ipv4().optional(),
   }),
-  /** Host (role share): open a pairing window – a new code replaces an open one; the code only in the ack. */
-  z.object({ name: z.literal('remoteAccess.pair') }),
+  /**
+   * Host (role share): open a pairing window – a new code replaces an open one; the code only in the ack.
+   * WP-102: `level` (absent = `control`) binds the coupling level to this window (WP-76 §B.13); never
+   * over remote access.
+   */
+  z.object({ name: z.literal('remoteAccess.pair'), level: remotePeerLevelSchema.optional() }),
   /** Host (role share): close an open pairing window; none open → no-op. */
   z.object({ name: z.literal('remoteAccess.cancelPairing') }),
   /** Host (role share): revoke the one coupling – its connections close at once. */
@@ -661,6 +681,13 @@ export const commandSchema = z.discriminatedUnion('name', [
   z.object({ name: z.literal('remoteAccess.events'), onlyRejected: z.boolean().default(false) }),
   /** Host (role share): mark the rejected attempts as seen (`HostState.remoteAccess.unseenRejected` → 0). */
   z.object({ name: z.literal('remoteAccess.eventsSeen') }),
+  /**
+   * Host (role share, WP-102): change the level of the one coupling – locally either way, over remote
+   * access only with `manage` and only down to `control` (else REMOTE_NOT_ALLOWED). Raises the
+   * coupling generation: every connection of it closes (WP-76 §B.13). No coupling → VALIDATION_FAILED
+   * {reason:'not_paired'}; the same level → no-op.
+   */
+  z.object({ name: z.literal('remoteAccess.setPeerLevel'), level: remotePeerLevelSchema }),
   /**
    * Host (role control): pair with a sharing computer and add it. `code` as typed (tolerant, checked
    * locally first: VALIDATION_FAILED {reason:'code'}); PAIRING_INVALID, PAIRING_EXPIRED,
@@ -764,6 +791,7 @@ export const HOST_COMMAND_NAMES = [
   'remoteAccess.check',
   'remoteAccess.events',
   'remoteAccess.eventsSeen',
+  'remoteAccess.setPeerLevel',
   'hosts.add',
   'hosts.update',
   'hosts.move',
@@ -786,8 +814,8 @@ export function isHostCommand(cmd: Command): cmd is HostCommand {
 /**
  * WP-76 (ADR-208): what a window of a controlling computer may do over remote access. Fail-closed:
  * the hub of the sharing computer accepts only these names on a remote connection and answers every
- * other command with REMOTE_NOT_ALLOWED {command}. Every command name is in exactly one of the two
- * lists (protocol.test.ts) – a new command must be classified.
+ * other command with REMOTE_NOT_ALLOWED {command}. Every command name is in exactly one of the three
+ * lists (allowed, `REMOTE_MANAGE_COMMANDS`, denied; protocol.test.ts) – a new command must be classified.
  */
 export const REMOTE_ALLOWED_COMMANDS = [
   'session.create',
@@ -834,18 +862,18 @@ export const REMOTE_ALLOWED_COMMANDS = [
   'session.setDraft',
   // WP-94: a folder for a new session – less than a session started there may do anyway.
   'fs.createDirectory',
+  // WP-102 (E3): the shells of this computer, for the embedded terminal of a controlling computer.
+  'shell.detect',
 ] as const satisfies readonly CommandName[];
 
 /**
- * Only on the computer itself: its settings, profiles (env values, sign-in), server, updates and
- * role; visible programs on its desktop (editor, Explorer, console, browser); the console command
- * (contains the profile's environment).
+ * WP-102 (E2, WP-76 §B.13): only with the coupling level `manage` – settings, profiles (env values,
+ * sign-in), server, updates, role and the coupling itself (not a new pairing window: its code goes
+ * only to a local window or the local command line).
  */
-export const REMOTE_DENIED_COMMANDS = [
+export const REMOTE_MANAGE_COMMANDS = [
   'settings.update',
   'server.shutdown',
-  'session.openExternal',
-  'session.consoleCommand',
   'profile.get',
   'profile.save',
   'profile.delete',
@@ -855,22 +883,33 @@ export const REMOTE_DENIED_COMMANDS = [
   'profile.login',
   'profile.loginCode',
   'profile.loginCancel',
-  'file.open',
-  'editor.detect',
-  'link.open',
   'update.check',
   'update.prepare',
   'update.apply',
   'update.rollback',
   'update.dismiss',
   'multiHost.configure',
-  'remoteAccess.pair',
-  'remoteAccess.cancelPairing',
   'remoteAccess.unpair',
   'remoteAccess.renewKey',
   'remoteAccess.check',
   'remoteAccess.events',
   'remoteAccess.eventsSeen',
+  'remoteAccess.setPeerLevel',
+] as const satisfies readonly CommandName[];
+
+/**
+ * Never over remote access, whatever the level: a pairing window (its code), visible programs on this
+ * computer's desktop (editor, Explorer, console, browser, shell window), the console command (contains
+ * the profile's environment) and this computer's own list of other computers.
+ */
+export const REMOTE_DENIED_COMMANDS = [
+  'session.openExternal',
+  'session.consoleCommand',
+  'file.open',
+  'editor.detect',
+  'link.open',
+  'remoteAccess.pair',
+  'remoteAccess.cancelPairing',
   'hosts.add',
   'hosts.update',
   'hosts.move',
@@ -878,14 +917,18 @@ export const REMOTE_DENIED_COMMANDS = [
   'hosts.reconnect',
   // WP-97: a visible shell on this computer's desktop.
   'session.openShell',
-  'shell.detect',
 ] as const satisfies readonly CommandName[];
 
 const REMOTE_ALLOWED: ReadonlySet<string> = new Set(REMOTE_ALLOWED_COMMANDS);
+const REMOTE_MANAGE: ReadonlySet<string> = new Set(REMOTE_MANAGE_COMMANDS);
 
-/** May a window of a controlling computer send this command (fail-closed)? */
-export function isRemoteAllowedCommand(name: CommandName): boolean {
-  return REMOTE_ALLOWED.has(name);
+/**
+ * May a window of a controlling computer with this coupling level send this command (fail-closed;
+ * WP-102: `level` defaults to `control`, anything unknown counts as `control`)?
+ */
+export function isRemoteAllowedCommand(name: CommandName, level: RemotePeerLevel = 'control'): boolean {
+  if (REMOTE_ALLOWED.has(name)) return true;
+  return level === 'manage' && REMOTE_MANAGE.has(name);
 }
 
 /** Every command is its own message; the server answers exactly once with `ack`. */
@@ -1002,6 +1045,7 @@ export const commandResultSchemas = {
   'remoteAccess.check': z.object({ checks: z.array(remoteAccessCheckSchema) }),
   'remoteAccess.events': z.object({ events: z.array(remoteEventSchema) }),
   'remoteAccess.eventsSeen': z.object({}),
+  'remoteAccess.setPeerLevel': z.object({}),
   'hosts.add': z.object({ hostId: hostIdSchema }),
   'hosts.update': z.object({}),
   'hosts.move': z.object({}),

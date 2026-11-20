@@ -958,9 +958,20 @@ export const remoteAccessCheckSchema = z.object({
 });
 export type RemoteAccessCheck = z.infer<typeof remoteAccessCheckSchema>;
 
+/**
+ * Level of the one coupling (WP-102, WP-76 §B.13): `control` = sessions, files, terminal (as before);
+ * `manage` = also settings, profiles, updates, server, role and the coupling itself
+ * (`REMOTE_MANAGE_COMMANDS`). Chosen on site when the pairing window opens; never raised remotely.
+ */
+export const REMOTE_PEER_LEVELS = ['control', 'manage'] as const;
+export const remotePeerLevelSchema = z.enum(REMOTE_PEER_LEVELS);
+export type RemotePeerLevel = z.infer<typeof remotePeerLevelSchema>;
+
 /** The coupled controlling computer as the sharing computer shows it. */
 export const remotePeerSchema = z.object({
   name: hostNameSchema,
+  /** WP-102: what it may do here (default for older servers: `control`). */
+  level: remotePeerLevelSchema.default('control'),
   pairedAt: isoDateTimeSchema,
   /** At least one connection of it is open. */
   connected: z.boolean(),
@@ -1001,6 +1012,8 @@ export const remotePeerRecordSchema = z.object({
   certificate: certificateDerSchema,
   /** DPAPI(kAuth) – the coupling secret of the connection proof (WP-76 §B.9), purpose `auth:peer`. */
   authKey: protectedSecretSchema,
+  /** WP-102: level bound to the pairing window; couplings from before WP-102 are `control`. */
+  level: remotePeerLevelSchema.default('control'),
   pairedAt: isoDateTimeSchema,
   lastSeenAt: isoDateTimeSchema.nullable().default(null),
   lastAddress: z.string().max(64).nullable().default(null),
@@ -1031,6 +1044,10 @@ export const REMOTE_EVENT_KINDS = [
   'connected',
   'disconnected',
   'unpaired',
+  // WP-102 (WP-76 §B.13): level change, a command of the level `manage`, a terminal started remotely.
+  'level_changed',
+  'manage_command',
+  'terminal_opened',
 ] as const;
 export const remoteEventKindSchema = z.enum(REMOTE_EVENT_KINDS);
 export type RemoteEventKind = z.infer<typeof remoteEventKindSchema>;
@@ -1062,6 +1079,11 @@ export const remoteEventSchema = z.object({
   port: z.number().int().min(0).max(65535).nullable(),
   /** Name the other side gave (pairing request); unverified unless the kind is `pair_ok`. */
   claimedName: hostNameSchema.nullable(),
+  /**
+   * WP-102: what happened, without content – `manage_command`: the command name; `level_changed`:
+   * `control>manage` / `manage>control`. Rows merge only with an equal detail.
+   */
+  detail: z.string().max(64).nullable().default(null),
   rejected: z.boolean(),
 });
 export type RemoteEvent = z.infer<typeof remoteEventSchema>;

@@ -24,6 +24,9 @@ import {
   shellKindsFor,
   EDITOR_PRESET_ARGS,
   editorExecutableIssue,
+  remoteEventSchema,
+  remotePeerRecordSchema,
+  remotePeerSchema,
   conversationSchema,
   editorSettingsSchema,
   entrySchema,
@@ -86,6 +89,9 @@ import {
   sampleFileStatResult,
   sampleFsListing,
   sampleHostState,
+  sampleRemoteEvent,
+  sampleRemotePeer,
+  sampleRemotePeerRecord,
   sampleId,
   sampleItems,
   sampleModelOption,
@@ -799,6 +805,19 @@ describe('Phase 3 contracts (WP-50 §4.5)', () => {
     expect(shellKindsFor('posix')).toEqual(['login', 'bash', 'zsh', 'fish', 'pwsh']);
     expect(defaultShellFor('win32')).toBe('cmd');
     expect(defaultShellFor('posix')).toBe('login');
+  });
+
+  it('coupling level and event detail have defaults for older files and servers (WP-102)', () => {
+    const { level: _record, ...olderRecord } = sampleRemotePeerRecord({ level: 'manage' });
+    expect(remotePeerRecordSchema.parse(olderRecord).level).toBe('control');
+    expect(remotePeerRecordSchema.parse(sampleRemotePeerRecord({ level: 'manage' })).level).toBe('manage');
+    expect(remotePeerRecordSchema.safeParse({ ...olderRecord, level: 'root' }).success).toBe(false);
+    const { level: _peer, ...olderPeer } = sampleRemotePeer();
+    expect(remotePeerSchema.parse(olderPeer).level).toBe('control');
+    const { detail: _detail, ...olderEvent } = sampleRemoteEvent();
+    expect(remoteEventSchema.parse(olderEvent).detail).toBeNull();
+    const command = sampleRemoteEvent({ kind: 'manage_command', detail: 'settings.update', rejected: false });
+    expect(remoteEventSchema.parse(command)).toEqual(command);
   });
 
   it('host capabilities default to the Windows set for older servers (WP-102)', () => {

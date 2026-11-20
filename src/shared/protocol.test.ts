@@ -7,6 +7,7 @@ import {
   PROTOCOL_VERSION,
   REMOTE_ALLOWED_COMMANDS,
   REMOTE_DENIED_COMMANDS,
+  REMOTE_MANAGE_COMMANDS,
   SERVER_MESSAGE_TYPES,
   WS_CLOSE,
   clientMessageSchema,
@@ -181,6 +182,8 @@ const commands: Command[] = [
   { name: 'multiHost.configure', role: 'share', port: 4713, bindAddress: '0.0.0.0' },
   { name: 'multiHost.configure', role: 'off' },
   { name: 'remoteAccess.pair' },
+  { name: 'remoteAccess.pair', level: 'manage' },
+  { name: 'remoteAccess.setPeerLevel', level: 'control' },
   { name: 'remoteAccess.cancelPairing' },
   { name: 'remoteAccess.unpair' },
   { name: 'remoteAccess.renewKey' },
@@ -830,15 +833,51 @@ describe('command results', () => {
     expect(prompt(LIMITS.attachmentsMax + 1)).toBe(false);
   });
 
-  it('WP-76: every command is classified for remote access exactly once', () => {
+  it('WP-76/WP-102: every command is classified for remote access exactly once', () => {
     const all = commandSchema.options.map((option) => option.shape.name.value).sort();
     const allowed: readonly string[] = REMOTE_ALLOWED_COMMANDS;
+    const manage: readonly string[] = REMOTE_MANAGE_COMMANDS;
     const denied: readonly string[] = REMOTE_DENIED_COMMANDS;
-    expect([...allowed, ...denied].sort()).toEqual(all);
-    expect(allowed.filter((name) => denied.includes(name))).toEqual([]);
+    expect([...allowed, ...manage, ...denied].sort()).toEqual(all);
+    expect(new Set([...allowed, ...manage, ...denied]).size).toBe(all.length);
     expect(isRemoteAllowedCommand('session.sendPrompt')).toBe(true);
     expect(isRemoteAllowedCommand('profile.get')).toBe(false);
     expect(isRemoteAllowedCommand('hosts.add')).toBe(false);
+  });
+
+  it('WP-102: the level manage adds REMOTE_MANAGE_COMMANDS, never the denied ones (WP-76 §B.13)', () => {
+    for (const name of REMOTE_ALLOWED_COMMANDS) {
+      expect(isRemoteAllowedCommand(name, 'control')).toBe(true);
+      expect(isRemoteAllowedCommand(name, 'manage')).toBe(true);
+    }
+    for (const name of REMOTE_MANAGE_COMMANDS) {
+      expect(isRemoteAllowedCommand(name)).toBe(false);
+      expect(isRemoteAllowedCommand(name, 'control')).toBe(false);
+      expect(isRemoteAllowedCommand(name, 'manage')).toBe(true);
+    }
+    for (const name of REMOTE_DENIED_COMMANDS) {
+      expect(isRemoteAllowedCommand(name, 'manage')).toBe(false);
+    }
+    // The pairing code never goes to a remote window; the terminal's shell list does (E3).
+    expect(isRemoteAllowedCommand('remoteAccess.pair', 'manage')).toBe(false);
+    expect(isRemoteAllowedCommand('session.openShell', 'manage')).toBe(false);
+    expect(isRemoteAllowedCommand('shell.detect')).toBe(true);
+  });
+
+  it('WP-102: setPeerLevel, pair level and the access of hello', () => {
+    const send = (cmd: unknown) =>
+      parseClientMessage(JSON.stringify({ type: 'cmd', cmdId: SAMPLE_IDS.cmdId, cmd }));
+    expect(send({ name: 'remoteAccess.setPeerLevel', level: 'manage' }).ok).toBe(true);
+    expect(send({ name: 'remoteAccess.setPeerLevel', level: 'admin' }).ok).toBe(false);
+    expect(send({ name: 'remoteAccess.setPeerLevel' }).ok).toBe(false);
+    expect(send({ name: 'remoteAccess.pair', level: 'root' }).ok).toBe(false);
+    expect(isHostCommand({ name: 'remoteAccess.setPeerLevel', level: 'control' })).toBe(true);
+    const { access: _omitted, ...older } = sampleHello();
+    expect(parseServerMessage(JSON.stringify(older))).toEqual({
+      ok: true,
+      message: { ...older, access: 'local' },
+    });
+    expect(parseServerMessage(JSON.stringify(sampleHello({ access: 'manage' }))).ok).toBe(true);
   });
 
   it('PROTOCOL_VERSION is 6 (WP-95)', () => {

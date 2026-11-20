@@ -207,6 +207,7 @@ export function createMemorySessionSource(options: { host?: HostState } = {}): M
       case 'remoteAccess.check':
       case 'remoteAccess.events':
       case 'remoteAccess.eventsSeen':
+      case 'remoteAccess.setPeerLevel':
       case 'hosts.add':
       case 'hosts.update':
       case 'hosts.move':

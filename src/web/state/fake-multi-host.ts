@@ -145,6 +145,10 @@ function remoteAccess(target: FakeMultiHostTarget, cmd: MultiHostCommand): FakeM
     case 'remoteAccess.eventsSeen':
       set({ unseenRejected: 0 });
       return ok();
+    case 'remoteAccess.setPeerLevel':
+      if (access.peer === null) return fail(makeError('VALIDATION_FAILED', { reason: 'not_paired' }));
+      set({ peer: { ...access.peer, level: cmd.level } });
+      return ok();
     default:
       return fail(makeError('NOT_IMPLEMENTED', { command: cmd.name }));
   }

@@ -313,6 +313,10 @@ export const en = {
           connected: 'Connected',
           disconnected: 'Disconnected',
           unpaired: 'Pairing removed',
+          // WP-102 (WP-76 §B.13)
+          level_changed: 'Access level changed',
+          manage_command: 'Administration',
+          terminal_opened: 'Terminal opened',
         },
       },
     },

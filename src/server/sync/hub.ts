@@ -1035,6 +1035,8 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
       serverInstanceId: instance.serverInstanceId,
       serverVersion: instance.serverVersion,
       serverStartedAt: instance.startedAt,
+      // WP-102: remote connections are `control` until the level arrives with WP-107.
+      access: conn.origin === 'remote' ? 'control' : 'local',
     });
     ensureHeartbeat();
   }

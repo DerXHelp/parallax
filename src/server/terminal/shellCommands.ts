@@ -12,7 +12,8 @@
  *   failure → SHELL_OPEN_FAILED {reason} (scrubbed like the external console's).
  * - `shell.detect`: the Git for Windows folder for the settings (fresh lookup).
  *
- * Both are in REMOTE_DENIED_COMMANDS: a window of another computer never opens a shell here.
+ * `session.openShell` is in REMOTE_DENIED_COMMANDS: a window of another computer never opens a shell
+ * window here; `shell.detect` is allowed over remote access since WP-102 (E3, embedded terminal).
  * `createRecordingShellLauncher` opens NOTHING and logs `session.openShell (fake): <exe> <args>` –
  * compose wires it with the FakeBackend (dev, E2E), like the recording file opener.
  */
