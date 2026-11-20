@@ -111,6 +111,7 @@ Integrations-Branch `feature/phase-3`. Kritischer Pfad: 50 (Teil 2) → 54 → 5
 | WP-98 | Spike ConPTY über `node:ffi`: Prototyp `terminal/conpty.ts` + `envBlock.ts`, Spike-Skript im Scratch-Ordner; Kriterien 1–7 erfüllt (Schließen < 1 ms ohne `taskkill`, alle drei Shells, versteckter Server, 0,3 % CPU bei 16 Konsolen, Neuzeichnen per Resize-Schubs); Fund Ctrl+C: `SetConsoleCtrlHandler(NULL, FALSE)` vor dem ersten Start (`docs/wp/WP-98.md`) | fertig: Go (Virenschutz 60/60 ohne Meldung) | `feature/konsole` | – | WP-99 (eingebettetes Terminal) |
 | WP-99 | Eingebettetes Terminal als Tab „Terminal“ im Seitenpanel: cmd, PowerShell, Git Bash per ConPTY (`node:ffi`), bis 4 je Session, Shells laufen weiter, Replay beim Wiederöffnen, eigene WS-Route `/api/terminal/ws` (nie remote), Alt+T, Menüpunkt „Terminal im Panel“, Schließen bei Archivieren/Entfernen/Server-Ende; 99a Server, 99b Web (`docs/wp/WP-99.md`, WP-99a, WP-99b) | fertig, Live-Prüfung des Nutzers ok, nach `main` gemergt und gepusht (`4e2ccd8`, 20.11.2026) | `feature/konsole` | ADR-239 | `sampleTerminalInfo` in `@shared/samples` |
 | WP-100 | Parallax unter Ubuntu (Desktop und Server-Modus ohne Desktop, alle Features, zwei Artefakte): Bestandsaufnahme (startet heute nicht: Home-Lock, Windows-Pfadregeln in 85 Dateien, `claude`-Suche), Zielbild, Feature-Matrix, Entwurf je Bereich, Paketfolge WP-101…109 (`docs/wp/WP-100.md`) | Plan; Entscheidungen getroffen (20.11.2026): E1 `systemd-creds`/Secret Service, E2 Verwaltung über „Mehrere Rechner“ (Stufe „Verwalten“), E3 Terminal für gekoppelte Rechner immer, E4 Ubuntu 24.04/26.04 x64, E8 Docker-Container + CI | `feature/linux` | – | WP-101 (Spikes im Container, Dockerfile) |
+| WP-101 | Spikes auf Ubuntu im Container (`scripts/linux/Dockerfile`, Ubuntu 24.04/26.04, Node 26.12.0): `node:ffi`, Pseudoterminal über `/dev/ptmx` + `setsid -c` (Strg+C, Job-Control, Resize, SIGHUP), `/proc`, Prozessgruppen, Lock über abstrakten Unix-Socket, libsecret über `node:ffi`, `systemd-creds`, Linger, `notify-send`, Chrome headless (`docs/wp/WP-101.md`) | fertig: Go für PTY, Prozesse, Lock, libsecret (nur im Worker), Chrome; No-Go `systemd-creds --user` auf 24.04 (E1 neu vorlegen), Linger braucht einmal `sudo`; Node braucht `libatomic1` | `feature/linux` | – | E1 für 24.04 ohne Desktop; `systemd-creds --user` auf 26.04 prüfen (CI oder echtes System); Live-Punkte WP-101 §2 |
 
 ### Sammelliste Welle 2 (Stand 18.10.2026, nach Merge `d86bf19`: 199 Dateien, 3509 Tests)
 - **WP-40 (Naht, beauftragt):** Slots `SettingsPage`/`PREFERENCES_SLOTS` (WP-38) und `ProfilesSettings` (WP-36)
@@ -186,7 +187,8 @@ Integrations-Branch `feature/phase-3`. Kritischer Pfad: 50 (Teil 2) → 54 → 5
 | 15.10.2026 | R2 | Additiv, Werte unverändert: `LIMITS.decisionMessageChars` (10 000), `LIMITS.planFeedbackChars` (50 000) in `common.ts`; Antwort-Schemas in `model.ts` nutzen sie; Kommentar `autoCompactThreshold` = Token-Zahl (ADR-045). |
 
 ## Offene Fragen an den Nutzer
-- Keine offenen Fragen. (Ubuntu E1–E4, E8 entschieden am 20.11.2026, `docs/wp/WP-100.md` §4.1.)
+- **Ubuntu (`docs/wp/WP-101.md` §3, 20.11.2026):** E1 für Ubuntu 24.04 ohne Desktop (`systemd-creds --user` fehlt dort:
+  Datei 0600 per Opt-in, Systemdienst mit `sudo` oder nur 26.04) und wo `systemd-creds --user` auf 26.04 geprüft wird.
 - Erledigt (15.10.2026): Live-Freigabe für WP-01 erteilt (Haiku, Mini-Prompts, Scratch-Ordner,
   Abo-Login, kein API-Key). Bei Auth-Fehler/`credits_required` sofort stoppen und melden.
 
@@ -407,5 +409,6 @@ Integrations-Branch `feature/phase-3`. Kritischer Pfad: 50 (Teil 2) → 54 → 5
 11. **Ubuntu (20.11.2026, `feature/linux`, `docs/wp/WP-100.md`):** Auftrag des Nutzers: Ubuntu mit Desktop und ohne
    Desktop (Server-Modus, gesteuert von einem anderen Rechner), alle Features, zwei Release-Artefakte zulässig, WSL kein
    eigenes Ziel. Plan WP-100 steht, Entscheidungen E1–E4 und E8 getroffen (Testumgebung: Docker-Container, Live-Abnahme
-   des Desktops auf echtem Ubuntu). Nächster Schritt: WP-101 (Dockerfile, Spikes im Container), danach WP-102
-   (Contracts inkl. Ergänzung WP-76 §B für „Verwalten“ und Terminal über den Vermittler).
+   des Desktops auf echtem Ubuntu). WP-101 (Dockerfile, Spikes im Container) fertig. Nächster Schritt nach der
+   Nachentscheidung E1 (24.04 ohne Desktop): WP-102 (Contracts inkl. Ergänzung WP-76 §B für „Verwalten“ und Terminal
+   über den Vermittler).

@@ -9,6 +9,7 @@
 | `cli-check.ts`    | `pnpm cli-check [--accept] [--last] [--profile=<f>]` | 62 | fertig (WP-62, Kurz-Check nach `claude`-Updates; Module in `cli-check/`) |
 | `bundle-budget.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/bundle-budget.ts [--lazy]` | FIX-R5-F6 | fertig (Start-Chunks gegen die Basis `5d85e44`, ADR-193 – vorher `7ae00c0`; nach `pnpm build`; liest nur `dist/web`) |
 | `screenshots.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/screenshots.ts [--only=…] [--theme=…]` | 68 | fertig (README-Bilder `docs/screenshots/`, Playground + headless Chrome) |
+| `linux/Dockerfile` | `docker build -t parallax-linux:24.04 scripts/linux` (Aufruf: `linux/README.md`) | 101 | fertig (Linux-Testumgebung für den Ubuntu-Plan WP-100, nie im Release) |
 
 | `public-check.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/public-check.ts [--refs <bereich>]` | 84 | fertig (private Daten im öffentlichen Repo; Test `public-check/repo.test.ts` in `pnpm test`) |
 | `release-notes.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/release-notes.ts --check \| --extract <v> \| --check-tag <tag>` | 85 | fertig (`CHANGELOG.md`; Test `release/changelog.test.ts` in `pnpm test`) |
