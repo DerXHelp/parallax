@@ -95,6 +95,9 @@ Scroll-Ereignisse für virtua, `startTranscriptScenario`) – nur in Tests.
   unbekannte); **versteckt** – `rate_limit` allowed/allowed_warning (alte Logs), trennt keine Gruppe.
   WP-69 Hook-Läufe nach `hookDisplay`: erfolgreich bei `all` Schritt, sonst versteckt; fehlgeschlagen
   sichtbar, bei `off` versteckt; ein fehlgeschlagener SessionStart/Setup-Hook immer sichtbar.
+  WP-95: `attachments_missing` und `peer_message_hold` (jeder Zustand) sichtbar; die Rollen der
+  System-Events stehen erschöpfend in `SYSTEM_EVENT_ROLES` (ein neues Event braucht dort eine Entscheidung);
+  die Antwort des CLI auf ein `/rename <Titel>` ist versteckt (`itemCodesById` über das vorige Top-Level-Item).
 - Ab 2 Schritten eine Gruppe; ein einzelner Schritt bleibt eine normale Zeile. Eine offene Gruppe
   folgt mit ihren Schritten als eingerückte Zeilen (`data-nested`); deren Bilder stehen nur in der
   Galerie (`hideImages`). In „Alle Schritte“ bilden ≥2 benachbarte Bild-Ergebnisse eine Galerie-Zeile.
@@ -117,3 +120,16 @@ Scroll-Ereignisse für virtua, `startTranscriptScenario`) – nur in Tests.
 - Hook-Einstellung nur über `@web/state/hook-display` (`useHookDisplay`); gesetzt auf der Einstellungsseite.
 - Texte der WP-69-Teile liegen im Lazy-Namensraum `i18n-lazy/` (`lt('subagent.finished')`), nicht im statischen
   Wörterbuch `transcript` – sie kämen sonst in den Start-Chunk.
+
+## Neuere CLI-Meldungen (WP-95)
+
+- `SystemRow`: `attachments_missing` als Warn-Notice („2 von 3 angehängten Dateien kamen nicht an“ / „Claude macht
+  ohne sie weiter.“), `peer_message_hold` als ruhige Zeile je Zustand (zurückgehalten mit Grund, durchgelassen,
+  nicht zugestellt mit Ergebnis; unbekannte Gründe, Ergebnisse und Zustände roh), Absender `fromName ?? from`.
+- `ToolCallRow`: „Berechtigung wird geprüft…“ in der Zeile, solange `permissionCheck` gesetzt ist und der Aufruf
+  noch arbeitet (`isCheckingPermission`); die Gruppenzeile sagt dann „prüft Berechtigung: …“.
+- `/rename <Titel>` (`lib/rename.ts`): die Nachricht als ruhige Zeile „Titel an Claude Code übergeben: …“ bzw.
+  „In der Claude-App umbenannt: …“ (`source: 'remote'`); die Antwort ist versteckt – live der Text des lokalen
+  Befehls `rename`, im Verlauf `local_command_output` direkt nach der Nachricht. Ohne Titel bleibt alles wie bisher.
+- Texte im Lazy-Namensraum `i18n-lazy/` (`system.attachmentsMissing.*`, `system.peerHold.*`, `tool.*`, `user.*`,
+  `group.checkingPermission`).

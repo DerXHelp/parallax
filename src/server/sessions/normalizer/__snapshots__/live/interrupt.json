@@ -409,7 +409,8 @@
             "remember": null,
             "acceptEdits": false
           }
-        }
+        },
+        "permissionCheck": false
       },
       {
         "id": "5e3b2c9b-09f5-4903-835e-8e6e7a2cd19b",

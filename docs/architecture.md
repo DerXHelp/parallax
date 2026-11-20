@@ -911,9 +911,10 @@ Claudes eigene `model`- und `modelPicker`-Einstellungen gelten auch in Parallax 
 ## 5. Sync-Protokoll (`src/shared/protocol.ts`)
 
 **Endpunkt** `GET /api/ws`; Auth per Geräte-Cookie und Origin/Host **im Upgrade**, `Sec-Fetch-Site`
-nur falls vorhanden (A.8, §5.1, V1-01). Ein JSON-Objekt pro Frame, Diskriminator `type`. `PROTOCOL_VERSION = 3`
+nur falls vorhanden (A.8, §5.1, V1-01). Ein JSON-Objekt pro Frame, Diskriminator `type`. `PROTOCOL_VERSION = 6`
 (Phase 2, ADR-100: neue Fehlercodes, System-Event `handoff`, neue Befehle → 2; Phase 3, ADR-140:
-zehn neue Fehlercodes und neun Befehle → 3). Vor dem
+zehn neue Fehlercodes und neun Befehle → 3; WP-87: Updates in der App → 4; WP-76: mehrere Rechner → 5;
+WP-95, ADR-236: System-Events `attachments_missing` und `peer_message_hold` → 6). Vor dem
 Verbinden fragt der Client `GET /api/auth/status` (ein abgelehnter Upgrade ist im Browser nur Close
 1006).
 
@@ -1467,6 +1468,11 @@ Bilder immer als Blob. Assistant-Text wird nie gekappt.
 | `system/hook_*` | `system/hook` (`upsert` je `hook_id`; WP-69: `exitCode` aus `hook_response.exit_code`, seit `includeHookEvents` alle Hook-Ereignisse) | – |
 | `rate_limit_event` | `system/rate_limit` nur bei `rejected` (WP-63; `allowed_warning` speist nur die Limit-Leiste, alte Logs mit Warnungen blendet das Web aus) | `rate_limit`; bei `rejected` zusätzlich `assistant_error` (`RATE_LIMIT_REJECTED`, `credits_required` → `CLAUDE_BILLING`) |
 | Modell-Fallback (`model_refusal_fallback`) | `system/model_fallback`; zurückgezogene Items → `item.remove` | – |
+| `system/model_fallback`, `model_consent_fallback` (intern, WP-95: Ausweichmodell nach Fehler bzw. Zustimmungs-Dialog) | `system/model_fallback` | – |
+| `system/permission_check_status` (intern, WP-95: Auto-Mode-Prüfung dauert > ~4 s) | – (→ `tool_call.permissionCheck`: `checking` → `true`, `done` oder Ergebnis → `false`) | – |
+| `system/file_attachments_missing` (intern, WP-95: per Referenz geschickte Dateien kamen nicht an) | `system/attachments_missing` (`sentCount`, `missingCount`) | – |
+| `system/peer_message_hold` (intern, WP-95: Nachricht einer anderen Session zurückgehalten) | `system/peer_message_hold` (ein Item je `message_uuid`, `upsert` bei `released`/`dropped`) | – |
+| `system/vcs_state_changed` (intern, WP-95: Commit, Push, Merge, Rebase) | – | `vcs_changed` → Engine liest den Git-Branch neu |
 | `system/model_refusal_no_fallback` | `system/error` (`MODEL_REFUSAL`) | – |
 | `system/session_writes_lost` (Phase 3, WP-52) | `system/error` (`SESSION_WRITES_LOST{lost, errorCode}`, z. B. Platte voll) | – |
 | `system/task_started`/`task_updated`/`task_progress`, `tool_progress` | – (→ `tool_call.task`, `elapsedSeconds`) | – |
@@ -1480,7 +1486,7 @@ Bilder immer als Blob. Assistant-Text wird nie gekappt.
 | `prompt_suggestion`, `system/commands_changed` | – (→ Detail) | – |
 | `conversation_reset` | Marker `system/conversation_reset` als erstes Item der neuen Unterhaltung – der Normalizer liefert ihn mit der ersten Ausgabe nach `startConversation` (WP-12 Entscheidung 1) | `conversation_reset` + Op `conversation.reset` (veröffentlicht die Engine) |
 | `system/thinking_tokens`, `keep_alive` | – | – |
-| bekannte, bewusst ignorierte Typen (`files_persisted`, `auth_status`, `tool_use_summary` …) | – | Zähler `ignoredCounts` |
+| bekannte, bewusst ignorierte Typen (`files_persisted`, `auth_status`, `tool_use_summary` …; WP-95: `dev_intent`, `instruction_size_warning`, `feedback_draft_queued`, `code_change_published`, `per_turn_effort_changed` und Cloud-Worker-Interna) | – | Zähler `ignoredCounts` |
 | – (Engine, Phase 2: Übergabe an/Rückkehr aus der externen Konsole, ADR-104) | `system/handoff` (`phase` `external`/`returned`, `importedItems`) als px-Item | Status-Event `external` |
 | – (Engine, WP-66: `session.askSideQuestion`, Antwort von `query.askSideQuestion`) | `side_question` als px-Item (`pending` → `answered`/`failed`/`cancelled`, §3.6) | – (kein Status, kein `unread`) |
 | `system/control_request_progress` (untypisiert, WP-66) | – (`api_retry` → `side_question.retry` der einzigen offenen Seitenfrage, im Backend) | Zähler `ignoredCounts` |

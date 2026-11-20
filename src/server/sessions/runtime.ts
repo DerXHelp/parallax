@@ -329,6 +329,10 @@ export class SessionRuntime {
       case 'bridge_state':
         onBridgeState(s, signal);
         return;
+      case 'vcs_changed':
+        // WP-95: commit/push/merge/rebase in the session – the branch may have moved (one lookup at a time).
+        void s.refreshGitBranch();
+        return;
       case 'mcp_servers':
         this.core.setEngineWarning(
           `mcp:${s.id}`,

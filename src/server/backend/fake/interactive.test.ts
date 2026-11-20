@@ -30,6 +30,7 @@ import type {
   StartSessionRequest,
 } from '../types';
 import { FAKE_MODEL_PICKER, createFakeBackend, sequentialIds, type FakeBackendOptions } from '../fakeBackend';
+import { FAKE_CLI_NOTICES_ANSWER, FAKE_FALLBACK, FAKE_PEER } from './cliNotices';
 import { FAKE_CONSOLE_PROMPT, fakeConsoleAnswer } from './console';
 import { FAKE_CONTEXT_HIGH_TOKENS, FAKE_MODELS } from './defaults';
 import {
@@ -985,6 +986,28 @@ describe('WP-69 hook runs', () => {
       ['Write', 'error'],
     ]);
     expect(texts(items).at(-1)).toBe(FAKE_HOOKS_ANSWER);
+    expect(h.handle.diagnostics).toEqual([]);
+    await h.close();
+  });
+});
+
+describe('WP-95 internal CLI messages', () => {
+  it('fake:cli-notices → permission check on the Bash call, repository change, fallback, missing files, peer hold', async () => {
+    const h = harness();
+    h.send('fake:cli-notices');
+    await h.turnDone(1);
+    const items = h.items();
+    const calls = items.flatMap((i) => (i.kind === 'tool_call' ? [i] : []));
+    expect(calls.map((call) => [call.toolName, call.status, call.permissionCheck])).toEqual([['Bash', 'done', false]]);
+    // While the check ran the call was marked (an upsert with permissionCheck true came first).
+    expect(h.events.some((e) => e.type === 'message' && JSON.stringify(e.message).includes('"status":"checking"'))).toBe(true);
+    expect(h.signals.filter((s) => s.type === 'vcs_changed')).toHaveLength(1);
+    const systems = items.flatMap((i) => (i.kind === 'system' ? [i] : []));
+    expect(systems.map((i) => i.event)).toEqual(['model_fallback', 'attachments_missing', 'peer_message_hold']);
+    expect(systems[0]).toMatchObject({ originalModel: FAKE_FALLBACK.from, fallbackModel: FAKE_FALLBACK.to });
+    expect(systems[1]).toMatchObject({ sentCount: 2, missingCount: 1 });
+    expect(systems[2]).toMatchObject({ state: 'dropped', fromName: FAKE_PEER.name, cause: 'explicit-setting', outcome: 'expired' });
+    expect(texts(items).at(-1)).toBe(FAKE_CLI_NOTICES_ANSWER);
     expect(h.handle.diagnostics).toEqual([]);
     await h.close();
   });

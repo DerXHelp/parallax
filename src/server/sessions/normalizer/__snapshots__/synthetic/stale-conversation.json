@@ -208,7 +208,8 @@
           "endedAt": null,
           "outputFile": null
         },
-        "decision": null
+        "decision": null,
+        "permissionCheck": false
       },
       {
         "id": "00000000-0000-4000-9000-000000000007",

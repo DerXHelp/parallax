@@ -167,7 +167,8 @@
           "endedAt": "2026-10-15T08:00:00.000Z",
           "outputFile": null
         },
-        "decision": null
+        "decision": null,
+        "permissionCheck": false
       },
       {
         "id": "msg_syn_tasks_2:0",
@@ -206,7 +207,8 @@
         },
         "elapsedSeconds": 2,
         "task": null,
-        "decision": null
+        "decision": null,
+        "permissionCheck": false
       },
       {
         "id": "00000000-0000-4000-9000-000000000011",

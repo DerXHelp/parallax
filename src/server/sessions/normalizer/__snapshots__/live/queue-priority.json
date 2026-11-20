@@ -517,7 +517,8 @@
           "endedAt": "2026-11-11T17:22:40.433Z",
           "outputFile": null
         },
-        "decision": null
+        "decision": null,
+        "permissionCheck": false
       },
       {
         "id": "90aa858f-a7d7-491b-9bbd-98c75422f91f",
@@ -665,7 +666,8 @@
           "endedAt": "2026-11-11T17:22:53.442Z",
           "outputFile": "<HOME>\\AppData\\Local\\Temp\\claude\\78152bdee67430e6\\ff3679d0-5744-4068-b6fd-a0f8e7f3e690\\tasks\\b575z58qd.output"
         },
-        "decision": null
+        "decision": null,
+        "permissionCheck": false
       },
       {
         "id": "7eed27e0-e17a-41e5-88d6-c113ff45e76b",

@@ -9,6 +9,7 @@ import {
   MessageSquareDashedIcon,
   MessagesSquareIcon,
   NetworkIcon,
+  PencilLineIcon,
   RadioIcon,
   SmartphoneIcon,
   SquareSlashIcon,
@@ -28,6 +29,8 @@ import { CappedContent } from '../components/CappedContent';
 import { Disclosure } from '../components/Disclosure';
 import { ImageThumb } from '../components/ImageThumb';
 import { QueuedIdsContext } from '../context';
+import { useLazyTranscriptT } from '../i18n-lazy';
+import { renameEchoTitle, renameTitle } from '../lib/rename';
 import { collapsedPreview, countLines, foreignPreview } from '../lib/text';
 import { withdrawQueuedMessage } from '../lib/withdraw';
 import { Markdown } from '../markdown/Markdown';
@@ -225,7 +228,42 @@ const ForeignMessageRow = memo(function ForeignMessageRow({
   );
 });
 
-/** A user message: the user's own as a bubble, one not typed by the user as a collapsed line (WP-72). */
+/**
+ * WP-95: `/rename <title>` – Parallax sends it itself (automatic title with Remote Control,
+ * "Regenerate title", renaming in the UI), or it was typed in the Claude app: one quiet line instead
+ * of a user bubble (the CLI's answer is hidden, `lib/rename.ts`).
+ */
+function RenameRow({
+  title,
+  source,
+  queued = false,
+}: {
+  title: string;
+  source: UserMessageItem['source'];
+  /** Still in `detail.queue` (no item yet): no item kind, so it never counts as a message. */
+  queued?: boolean;
+}) {
+  const lt = useLazyTranscriptT();
+  return (
+    <div
+      data-item-kind={queued ? undefined : 'user_message'}
+      data-slot="rename"
+      data-source={source}
+      data-queued={queued ? 'true' : undefined}
+      className={cn('text-muted-foreground flex min-w-0 items-start gap-1.5 text-xs', queued && 'opacity-60')}
+    >
+      <PencilLineIcon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+      <span className="min-w-0 break-words">
+        {source === 'remote' ? lt('user.renamedRemote', { title }) : lt('user.renamed', { title })}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * A user message: the user's own as a bubble, one not typed by the user as a collapsed line (WP-72),
+ * a `/rename <title>` as a quiet line (WP-95).
+ */
 export const UserMessageRow = memo(function UserMessageRow({
   item,
   sessionKey,
@@ -233,11 +271,10 @@ export const UserMessageRow = memo(function UserMessageRow({
   item: UserMessageItem;
   sessionKey: string;
 }) {
-  return item.origin === 'other' ? (
-    <ForeignMessageRow item={item} sessionKey={sessionKey} />
-  ) : (
-    <OwnMessageRow item={item} sessionKey={sessionKey} />
-  );
+  if (item.origin === 'other') return <ForeignMessageRow item={item} sessionKey={sessionKey} />;
+  const title = renameEchoTitle(item);
+  if (title !== null) return <RenameRow title={title} source={item.source} />;
+  return <OwnMessageRow item={item} sessionKey={sessionKey} />;
 });
 
 function OwnMessageRow({ item, sessionKey }: { item: UserMessageItem; sessionKey: string }) {
@@ -290,6 +327,9 @@ export const QueuedPromptRow = memo(function QueuedPromptRow({
   prompt: QueuedPrompt;
   sessionKey: string;
 }) {
+  // WP-95: Parallax's own `/rename <title>` waits like a prompt – the same quiet line, greyed.
+  const title = renameTitle(prompt.text.text);
+  if (title !== null) return <RenameRow title={title} source="local" queued />;
   return (
     <UserBubble
       queued

@@ -14,7 +14,9 @@ import {
   classifyItem,
   groupKey,
   isBlockingHook,
+  isCheckingPermission,
   isHookShown,
+  itemCodesById,
   resolveHookCode,
   summarizeGroup,
   type ItemCode,
@@ -299,5 +301,90 @@ describe('summarizeGroup', () => {
     const streaming = thinking('k', true);
     expect(summarizeGroup([bash('b1'), streaming]).running).toBe(streaming);
     expect(summarizeGroup([bash('b1', { status: 'background' })]).running).toBeNull();
+  });
+});
+
+describe('WP-95: newer CLI messages', () => {
+  it('missing attachments and held messages of other sessions (every state) are visible', () => {
+    expect(classifyItem(sampleSystemItems.attachments_missing())).toBe('v');
+    for (const state of ['held', 'released', 'dropped', 'parked']) {
+      expect(classifyItem(sampleSystemItems.peer_message_hold({ state }))).toBe('v');
+    }
+    const items = [bash('b1'), sampleSystemItems.peer_message_hold({ id: 'p' }), bash('b2'), bash('b3')];
+    expect(shape(rowsOf(items, 'compact'))).toEqual(['item:b1', 'item:p', 'group:b2,b3']);
+  });
+
+  it('a call under the permission check stays a step; the check counts only while the call works', () => {
+    const checking = bash('c', { status: 'running', permissionCheck: true, result: null });
+    expect(classifyItem(checking)).toBe('s');
+    expect(summarizeGroup([bash('b1'), checking]).running).toBe(checking);
+    for (const status of ['streaming_input', 'pending', 'running'] as const) {
+      expect(isCheckingPermission(bash('c', { status, permissionCheck: true }))).toBe(true);
+      expect(isCheckingPermission(bash('c', { status, permissionCheck: false }))).toBe(false);
+    }
+    const finished = ['done', 'error', 'denied', 'awaiting_decision', 'background', 'interrupted'] as const;
+    for (const status of finished) {
+      expect(isCheckingPermission(bash('c', { status, permissionCheck: true }))).toBe(false);
+    }
+    expect(isCheckingPermission(thinking('k', true))).toBe(false);
+  });
+});
+
+describe('itemCodesById – the /rename echo (WP-95)', () => {
+  const echo = (id: string, title = 'New title') =>
+    sampleItems.userMessage({
+      id,
+      text: { text: title === '' ? '/rename' : `/rename ${title}`, truncated: null },
+      slashCommand: '/rename',
+    });
+  const liveReply = (id: string, args = 'New title') =>
+    sampleItems.assistantText({
+      id,
+      model: '<synthetic>',
+      text: 'Session renamed to: New title',
+      localCommand: { command: 'rename', args },
+    });
+  const historyReply = (id: string) =>
+    sampleSystemItems.local_command_output({
+      id,
+      text: { text: 'Session renamed to: New title', truncated: null },
+    });
+  const codesOf = (items: readonly TranscriptItem[]) => {
+    const byId = itemCodesById(items);
+    return items.map((item) => byId.get(item.id));
+  };
+
+  it('live: the local command answer is hidden – also without the echo before it (its args hold the title)', () => {
+    const footer = sampleItems.turnResult({ id: 'r', synthetic: true });
+    const items = [echo('u'), liveReply('a'), footer];
+    const codes = codesOf(items);
+    expect(codes).toEqual(['v', 'h', 'v']);
+    const rows = buildRows(
+      items.map((i) => i.id),
+      codes.map((code) => code ?? 'v'),
+      'compact',
+      () => false,
+    );
+    expect(shape(rows)).toEqual(['item:u', 'item:r']);
+    expect(codesOf([user('x'), liveReply('a')])).toEqual(['v', 'h']);
+  });
+
+  it('live: a /rename without a title keeps its answer (the generated title is news)', () => {
+    expect(codesOf([echo('u', ''), liveReply('a', '')])).toEqual(['v', 'v']);
+    // Another local command stays as well.
+    const other = sampleItems.assistantText({ id: 'c', localCommand: { command: 'cost', args: '' } });
+    expect(codesOf([echo('u'), other])).toEqual(['v', 'v']);
+  });
+
+  it('history: the command output right after the echo is hidden, anywhere else it stays', () => {
+    expect(codesOf([echo('u'), historyReply('o')])).toEqual(['v', 'h']);
+    expect(codesOf([user('x'), historyReply('o')])).toEqual(['v', 'v']);
+    expect(codesOf([echo('u'), text('t'), historyReply('o')])).toEqual(['v', 'v', 'v']);
+    expect(codesOf([echo('u', ''), historyReply('o')])).toEqual(['v', 'v']);
+  });
+
+  it('subagent items in between do not count as the item before', () => {
+    const nested = bash('n', { parentToolUseId: 'tu-agent' });
+    expect(codesOf([echo('u'), nested, historyReply('o')])).toEqual(['v', 's', 'h']);
   });
 });

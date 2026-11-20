@@ -824,8 +824,8 @@ describe('command results', () => {
     expect(isRemoteAllowedCommand('hosts.add')).toBe(false);
   });
 
-  it('PROTOCOL_VERSION is 5 (WP-76)', () => {
-    expect(PROTOCOL_VERSION).toBe(5);
+  it('PROTOCOL_VERSION is 6 (WP-95)', () => {
+    expect(PROTOCOL_VERSION).toBe(6);
   });
 
   it('WP-76: multi-host commands are host commands; drafts are session commands; client kinds', () => {

@@ -177,8 +177,10 @@ export const reduceStatus: ReduceStatus = (facts, event, now, ctx) => {
     case 'bridge_state':
     case 'task_summary':
     case 'turn_summary':
+    case 'vcs_changed':
       // WP-64: Remote Control (bridge_state) is no run state – EntryState.remote, summary.remoteControl.
       // WP-65: live sentence and turn summary neither (EntryState.activity, Entry.turnSummary).
+      // WP-95: a repository change only makes the engine re-read the git branch.
       return facts;
   }
 };

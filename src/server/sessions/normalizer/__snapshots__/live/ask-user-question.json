@@ -273,7 +273,8 @@
           "outcome": {
             "type": "answered"
           }
-        }
+        },
+        "permissionCheck": false
       },
       {
         "id": "msg_011CgwXVtvV7CBLMfyUEokc4:0",

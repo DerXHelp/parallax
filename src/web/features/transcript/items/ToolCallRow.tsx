@@ -1,4 +1,4 @@
-import { CirclePauseIcon, HourglassIcon } from 'lucide-react';
+import { CirclePauseIcon, HourglassIcon, ShieldEllipsisIcon } from 'lucide-react';
 import { memo, type ReactNode } from 'react';
 import type { DecisionId } from '@shared/common';
 import type { ToolCallItem } from '@shared/model';
@@ -13,6 +13,8 @@ import { Disclosure } from '../components/Disclosure';
 import { ToolFileLink } from '../components/ToolFileLink';
 import { ToolStatus } from '../components/ToolStatus';
 import { useTranscriptSettings } from '../context';
+import { useLazyTranscriptT } from '../i18n-lazy';
+import { isCheckingPermission } from '../lib/grouping';
 import { getToolRenderer } from '../renderers';
 import { GenericToolBody } from '../renderers/generic';
 import { ToolResultImages, toolLabel } from '../renderers/parts';
@@ -87,6 +89,23 @@ function DecisionLine({ item, sessionKey }: { item: ToolCallItem; sessionKey: st
 }
 
 /**
+ * WP-95: the CLI's automatic permission check holds the call longer than usual – a quiet hint in
+ * the line (no extra row: the line keeps its height when the check ends).
+ */
+function PermissionCheckHint() {
+  const lt = useLazyTranscriptT();
+  return (
+    <span
+      data-slot="permission-check"
+      className="text-muted-foreground inline-flex shrink-0 items-center gap-1 text-2xs"
+    >
+      <ShieldEllipsisIcon aria-hidden className="size-3 motion-safe:animate-pulse" />
+      {lt('tool.checkingPermission')}
+    </span>
+  );
+}
+
+/**
  * One tool call as one expandable line (Plan "Chat-Ansicht"); details from the renderer registry,
  * pictures of the result as thumbnails below the line – also while it is collapsed (R4W-03).
  * A call on a file (renderer `file`, WP-55) shows the path as a `FileLink` next to the toggle –
@@ -122,6 +141,7 @@ function ToolCallFrame({
     ) : null;
   const metaParts: ReactNode = (
     <>
+      {isCheckingPermission(item) ? <PermissionCheckHint /> : null}
       {meta === null ? null : (
         <span className="text-muted-foreground max-w-[40%] shrink-0 truncate font-mono text-2xs">{meta}</span>
       )}

@@ -309,7 +309,8 @@
           "endedAt": "2026-11-11T17:23:18.422Z",
           "outputFile": "<HOME>\\AppData\\Local\\Temp\\claude\\01b562800deacd10\\f406f5df-fee1-4f18-8d56-528330faa035\\tasks\\a09720160328a4872.output"
         },
-        "decision": null
+        "decision": null,
+        "permissionCheck": false
       },
       {
         "id": "msg_011CgwXbzuZnheErkKfSN1mh:0",

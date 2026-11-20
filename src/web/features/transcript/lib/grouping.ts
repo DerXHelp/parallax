@@ -1,6 +1,7 @@
 import type { SideQuestionItem, SystemItem, ToolCallItem, TranscriptItem } from '@shared/model';
 import type { HookDisplay } from '@web/state/hook-display';
 import type { TranscriptViewMode } from '@web/state/transcript-view';
+import { isRenameReply } from './rename';
 
 /**
  * Compact transcript (WP-63 §1.5) as pure functions – the list only maps their rows to components:
@@ -17,15 +18,17 @@ import type { TranscriptViewMode } from '@web/state/transcript-view';
  *   with a permission decision, AskUserQuestion, ExitPlanMode), subagent cards (Agent/Task), error
  *   notices, `rate_limit` rejected, compact boundary, new conversation, API retry, model fallback,
  *   permission denied, interruptions, handoffs, task notifications, local command output,
- *   informational warnings/errors and side questions (WP-66: never inside a group) – all of them
- *   change what happens next or answer the user;
+ *   informational warnings/errors, side questions (WP-66: never inside a group), missing
+ *   attachments and held messages of other sessions (WP-95) – all of them change what happens next
+ *   or answer the user;
  * - step: thinking, every other tool call with its result, and the quiet system items (memory
  *   recall, system notifications, informational at level info, unknown SDK messages) – bookkeeping
  *   of the work, interesting only when looking into it;
  * - hidden: `rate_limit` allowed / allowed_warning (§1.2 – older logs still hold such items; the
- *   limit bar shows every value) and the later questions of a side-question thread (WP-66: the card
- *   of its earliest loaded question shows the whole thread). Hidden items are skipped and do not
- *   split a group.
+ *   limit bar shows every value), the later questions of a side-question thread (WP-66: the card
+ *   of its earliest loaded question shows the whole thread) and the CLI's answer to a `/rename`
+ *   with a title (WP-95: its message is the line "Title passed to Claude Code"). Hidden items are
+ *   skipped and do not split a group.
  * - hook runs (WP-69) have codes of their own, resolved by `buildRows` with the setting
  *   `hookDisplay` (`resolveHookCode`): a successful (or still running) run is a step with `all`,
  *   hidden otherwise; a failed one (blocking included) is visible unless `off`; a failed
@@ -45,8 +48,32 @@ export const MIN_GROUP_SIZE = 2;
 /** Tool calls that are decisions or cards of their own (always visible). */
 const VISIBLE_TOOLS: ReadonlySet<string> = new Set(['Agent', 'Task', 'ExitPlanMode', 'AskUserQuestion']);
 
-/** System events that are work steps; every other event stays visible (hooks: `hookCode`). */
-const QUIET_SYSTEM_EVENTS: ReadonlySet<SystemItem['event']> = new Set(['memory_recall', 'notification', 'unknown']);
+/**
+ * The role of every system event without a rule of its own (hooks: `hookCode`, `rate_limit` and
+ * `informational` by their fields) – exhaustive, so a new event needs a decision here.
+ */
+const SYSTEM_EVENT_ROLES: Readonly<
+  Record<Exclude<SystemItem['event'], 'hook' | 'rate_limit' | 'informational'>, 'v' | 's'>
+> = {
+  compact_boundary: 'v',
+  api_retry: 'v',
+  notification: 's',
+  permission_denied: 'v',
+  memory_recall: 's',
+  local_command_output: 'v',
+  model_fallback: 'v',
+  interrupted: 'v',
+  conversation_reset: 'v',
+  task_notification: 'v',
+  error: 'v',
+  handoff: 'v',
+  // WP-95: files of the user's message did not arrive – the turn runs on without them.
+  attachments_missing: 'v',
+  // WP-95: a message of another session held back, let through or not delivered (one item per
+  // message, updated in place) – about what reaches Claude, like the foreign message itself.
+  peer_message_hold: 'v',
+  unknown: 's',
+};
 
 /** Hook events of the session start: a failure there stays visible even with `hookDisplay: 'off'`. */
 const SESSION_START_HOOK_EVENTS: ReadonlySet<string> = new Set(['SessionStart', 'Setup']);
@@ -104,7 +131,7 @@ function systemCode(item: SystemItem): ItemCode {
   if (item.event === 'hook') return hookCode(item);
   if (item.event === 'rate_limit') return item.info.status === 'rejected' ? 'v' : 'h';
   if (item.event === 'informational') return item.level === 'warning' || item.level === 'error' ? 'v' : 's';
-  return QUIET_SYSTEM_EVENTS.has(item.event) ? 's' : 'v';
+  return SYSTEM_EVENT_ROLES[item.event];
 }
 
 export function classifyItem(item: TranscriptItem): ItemCode {
@@ -126,15 +153,19 @@ export function classifyItem(item: TranscriptItem): ItemCode {
 }
 
 /**
- * The role code of every item by id (the list maps the top-level ids through it). WP-66: only the
- * earliest loaded question of a side-question thread is a row (normally its first question) – that
- * card renders the whole thread, the other questions of the thread are hidden.
+ * The role code of every item by id (the list maps the top-level ids through it; `items` sorted by
+ * `order`, the codes are computed again for every new items array). WP-66: only the earliest loaded
+ * question of a side-question thread is a row (normally its first question) – that card renders the
+ * whole thread, the other questions of the thread are hidden. WP-95: the CLI's answer to a
+ * `/rename <title>` is hidden (`isRenameReply`, judged by the top-level item before it).
  */
 export function itemCodesById(items: readonly TranscriptItem[]): Map<string, ItemCode> {
   const codes = new Map<string, ItemCode>();
   const leads = new Map<string, SideQuestionItem>();
+  let previous: TranscriptItem | null = null;
   for (const item of items) {
-    codes.set(item.id, classifyItem(item));
+    codes.set(item.id, isRenameReply(item, previous) ? 'h' : classifyItem(item));
+    if (item.parentToolUseId === null) previous = item;
     if (item.kind !== 'side_question') continue;
     const lead = leads.get(item.threadId);
     if (lead === undefined || item.order < lead.order) leads.set(item.threadId, item);
@@ -273,13 +304,24 @@ export interface GroupSummary {
   endAt: number | null;
 }
 
+/** A tool call still before or in its run (background tasks run on their own and do not count). */
+function isWorking(item: ToolCallItem): boolean {
+  return item.status === 'streaming_input' || item.status === 'pending' || item.status === 'running';
+}
+
 /** A tool call that is still at work (background tasks run on their own and do not count). */
 function isActive(item: TranscriptItem): boolean {
   if (item.kind === 'thinking') return item.streaming;
-  if (item.kind === 'tool_call') {
-    return item.status === 'streaming_input' || item.status === 'pending' || item.status === 'running';
-  }
+  if (item.kind === 'tool_call') return isWorking(item);
   return false;
+}
+
+/**
+ * WP-95: the CLI's automatic permission check holds this call longer than usual (`permissionCheck`,
+ * only while the call has not finished – the flag says nothing about the outcome).
+ */
+export function isCheckingPermission(item: TranscriptItem): boolean {
+  return item.kind === 'tool_call' && item.permissionCheck && isWorking(item);
 }
 
 function isFailed(item: ToolCallItem): boolean {

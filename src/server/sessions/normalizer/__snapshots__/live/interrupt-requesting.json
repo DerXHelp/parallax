@@ -350,7 +350,8 @@
         },
         "elapsedSeconds": null,
         "task": null,
-        "decision": null
+        "decision": null,
+        "permissionCheck": false
       },
       {
         "id": "3be8fe91-7c4e-4ac2-b532-c149ccc9cc2c",

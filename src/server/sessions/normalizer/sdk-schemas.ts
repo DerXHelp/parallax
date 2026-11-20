@@ -326,6 +326,66 @@ export const sessionWritesLostMessageSchema = z.looseObject({
   transcript_session_ids: opt(strArray),
 });
 
+/**
+ * WP-95 (CLI 2.1.323, `@internal`): a tool call has waited on its automatic permission check (the
+ * auto-mode classifier) for about four seconds ('checking'); every 'checking' is followed by a
+ * 'done' for the same tool_use_id. `agent_id` = the call runs inside a subagent.
+ */
+export const permissionCheckStatusMessageSchema = z.looseObject({
+  subtype: z.literal('permission_check_status'),
+  tool_use_id: str,
+  status: str,
+  agent_id: opt(str),
+});
+
+/**
+ * WP-95 (`@internal`, not in the public SDKMessage union): the turn switched to the configured
+ * fallback model because the primary failed (`trigger`: model_not_found, overloaded …).
+ */
+export const modelFallbackMessageSchema = z.looseObject({
+  subtype: z.literal('model_fallback'),
+  trigger: opt(str),
+  original_model: opt(str),
+  fallback_model: opt(str),
+  content: opt(str),
+});
+
+/** WP-95 (`@internal`): a consent gate swapped the session off the requested model. */
+export const modelConsentFallbackMessageSchema = z.looseObject({
+  subtype: z.literal('model_consent_fallback'),
+  choice: opt(str),
+  original_model: opt(str),
+  original_model_name: opt(str),
+  fallback_model: opt(str),
+  content: opt(str),
+});
+
+/**
+ * WP-95 (`@internal`): files a message sent by reference (`file_attachments`, Remote Control or
+ * Claude Code Remote) did not arrive; `missing` lists one entry per file (file_uuid, reason).
+ */
+export const fileAttachmentsMissingMessageSchema = z.looseObject({
+  subtype: z.literal('file_attachments_missing'),
+  message_uuid: opt(str),
+  sent_count: opt(num),
+  missing: opt(z.array(z.looseObject({ file_uuid: opt(str), reason: opt(str) }))),
+});
+
+/**
+ * WP-95 (`@internal`): a peer message the receive-side policy held ('held'), then at most one of
+ * 'released' / 'dropped' (with `outcome`). `message_uuid` = the uuid its user echo will carry.
+ */
+export const peerMessageHoldMessageSchema = z.looseObject({
+  subtype: z.literal('peer_message_hold'),
+  state: str,
+  message_uuid: opt(str),
+  from: opt(str),
+  from_name: opt(str),
+  cause: opt(str),
+  outcome: opt(str),
+});
+export type SdkPeerMessageHold = z.infer<typeof peerMessageHoldMessageSchema>;
+
 /** `outputFile` of an Agent/Task `tool_use_result` (AgentOutput async_launched/remote_launched). */
 export const agentOutputFileSchema = z.looseObject({ outputFile: opt(str) });
 
