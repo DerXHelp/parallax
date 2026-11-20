@@ -1,9 +1,11 @@
 # src/server/terminal – Shell im Projektordner (WP-97), ConPTY-Spike (WP-98) und eingebettetes Terminal (WP-99)
 
-Owner: **Koordinator** (WP-97…99, `feature/konsole`). Auftrag und Ergebnis: `docs/wp/WP-97.md`; Entscheidung ADR-238.
+Owner: **Koordinator** (WP-97…99, `feature/konsole`). Auftrag und Ergebnis: `docs/wp/WP-97.md` (Fenster), `docs/wp/WP-98.md` (Spike), `docs/wp/WP-99.md` (Terminal,
+Teilberichte WP-99a/99b); Entscheidungen ADR-238, ADR-239.
 
-Nur auf diesem Rechner: Beide Befehle stehen in `REMOTE_DENIED_COMMANDS` (`@shared/protocol`). Ein Fenster eines
-anderen Rechners öffnet hier nie eine Shell.
+Nur auf diesem Rechner: Beide Befehle stehen in `REMOTE_DENIED_COMMANDS` (`@shared/protocol`), die Route
+`API_PATHS.terminalWs` steht nicht in `HOST_API_PATHS` und wird nie weitergeleitet. Ein Fenster eines anderen Rechners
+öffnet hier nie eine Shell.
 
 | Datei | Exporte | Inhalt |
 | --- | --- | --- |

@@ -854,6 +854,9 @@ aus sollen die Sessions der anderen gesteuert werden, in einer Oberfläche.
   - Task-Panel mit Stop.
 
 **Phase 4: Eingebetteter Terminal-Tab.** xterm.js und node-pty mit sauberem Handoff. Ersetzt die externe Konsole aus Phase 2 für `/permissions`, `/hooks`, `/login`, `/plugin`, MCP-OAuth und Remote Control.
+  - *Nachtrag 20.11.2026 (WP-99, ADR-239):* Das eingebettete Terminal gibt es schon, mit eigener ConPTY-Anbindung über
+    `node:ffi` statt node-pty (`src/server/terminal/**`). Der Handoff (`claude --resume`) baut später auf
+    `TerminalService` auf.
 
 **Phase 5: Observer-Modus.** Live-Sessions aus normalen Konsolen erscheinen read-only in der Sidebar.
 - Datenquellen: HTTP-Hooks, Statusline-POST und `claude agents --json`.
