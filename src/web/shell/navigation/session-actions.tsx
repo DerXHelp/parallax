@@ -20,12 +20,13 @@ import {
   SmartphoneIcon,
   SparklesIcon,
   SquareTerminalIcon,
+  TerminalIcon,
   type LucideIcon,
 } from 'lucide-react';
 import { Fragment } from 'react';
 import { LOCAL_HOST_ID, parseSessionKey, type HostId } from '@shared/common';
 import { makeError } from '@shared/errors';
-import type { SessionSummary } from '@shared/model';
+import { SHELL_KINDS, type SessionSummary, type ShellKind } from '@shared/model';
 import { windowsPathIssue } from '@shared/paths';
 import type { Command, CommandName } from '@shared/protocol';
 import { useT, type TranslationKey } from '@web/i18n';
@@ -36,8 +37,24 @@ import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand } from '@web/state/hooks';
 import { sessionAllows } from '@web/state/hosts';
 import { showErrorNotice, showTextNotice } from '@web/state/notices';
-import { ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut } from '@web/ui/context-menu';
-import { DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut } from '@web/ui/dropdown-menu';
+import { selectSettings } from '@web/state/settings';
+import { clientStore } from '@web/state/store';
+import {
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+} from '@web/ui/context-menu';
+import {
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+} from '@web/ui/dropdown-menu';
 import { openNewSession } from '../NewSessionDialog';
 import { requestShell } from '../requests';
 import { shortcutKeyLabels } from '../shortcuts';
@@ -78,7 +95,9 @@ export type SessionActionId =
   /** WP-70: sign in the profile (only while Remote Control failed for the sign-in). */
   | 'signIn'
   /** WP-70: the output style of the project (small dialog). */
-  | 'outputStyle';
+  | 'outputStyle'
+  /** WP-97: cmd, PowerShell or Git Bash as a window in the session's folder (submenu). */
+  | 'openShell';
 
 export type SessionActionSlot = SessionActionId | 'separator';
 
@@ -87,6 +106,19 @@ export interface SessionAction {
   label: TranslationKey;
   icon: LucideIcon;
   /** Shortcut hint shown in the menu (registry syntax, e.g. `F2`). */
+  shortcut?: string;
+  disabled: boolean;
+  run: () => void;
+  /** WP-97: a submenu instead of one item (the action's own `run` opens the default choice). */
+  children?: readonly SessionSubAction[];
+}
+
+/** One item of a submenu (WP-97: the shells of "Open shell in folder"). */
+export interface SessionSubAction {
+  id: string;
+  label: TranslationKey;
+  /** A quiet note after the label (e.g. "Default"). */
+  badge?: TranslationKey;
   shortcut?: string;
   disabled: boolean;
   run: () => void;
@@ -104,6 +136,7 @@ export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
   'pin',
   'openWindow',
   'openFolder',
+  'openShell',
   'newSessionHere',
   'separator',
   'sleep',
@@ -132,6 +165,7 @@ export const HEADER_ACTIONS: readonly SessionActionSlot[] = [
   'separator',
   'openWindow',
   'openFolder',
+  'openShell',
   'openExternal',
   'copyConsoleCommand',
   'separator',
@@ -207,6 +241,39 @@ export function openFolderInExplorer(sessionKey: string, summary: SessionSummary
   });
 }
 
+/** WP-97: "Open shell in folder" with the default shell (help `?`, menu hint). */
+export const OPEN_SHELL_KEYS = 'Alt+K';
+
+/** Menu text of each shell (WP-97). */
+export const SHELL_LABELS: Readonly<Record<ShellKind, TranslationKey>> = {
+  cmd: 'navigation.shells.cmd',
+  powershell: 'navigation.shells.powershell',
+  gitbash: 'navigation.shells.gitbash',
+};
+
+/** The default shell of this computer's settings (shells open only on this computer). */
+export function defaultShell(): ShellKind {
+  return selectSettings(clientStore.getState()).console.defaultShell;
+}
+
+/**
+ * "Open shell in folder" (WP-97, ADR-238): `session.openShell {shell}` – the server opens cmd,
+ * PowerShell or Git Bash as a window in the session's stored cwd (only on the local host). A
+ * refusal (SHELL_NOT_FOUND, CWD_NOT_FOUND …) becomes a notice. Defence in depth like
+ * `openFolderInExplorer`: a `cwd` that `windowsPathIssue` rejects is never sent.
+ */
+export function openShellIn(
+  sessionKey: string,
+  summary: SessionSummary,
+  shell: ShellKind = defaultShell(),
+): void {
+  if (windowsPathIssue(summary.cwd) !== null) {
+    showErrorNotice(makeError('PATH_REJECTED'), { sessionKey });
+    return;
+  }
+  runSessionCommand(sessionKey, { name: 'session.openShell', entryId: summary.entryId, shell });
+}
+
 /** True for a session of the local host (Explorer, new window: only there). */
 export function isLocalSession(sessionKey: string): boolean {
   return parseSessionKey(sessionKey)?.hostId === LOCAL_HOST_ID;
@@ -239,6 +306,7 @@ export function hasProcess(summary: SessionSummary): boolean {
  */
 const ACTION_COMMANDS: Partial<Record<SessionActionId, CommandName>> = {
   openFolder: 'file.open',
+  openShell: 'session.openShell',
   openExternal: 'session.openExternal',
   copyConsoleCommand: 'session.consoleCommand',
   signIn: 'profile.login',
@@ -325,6 +393,32 @@ function build(
           openFolderInExplorer(sessionKey, summary);
         },
       };
+    case 'openShell': {
+      // A window on the session's computer: only this computer's sessions (ACTION_COMMANDS).
+      const preferred = defaultShell();
+      return {
+        id,
+        label: 'navigation.actions.openShell',
+        icon: TerminalIcon,
+        disabled: false,
+        run: () => {
+          openShellIn(sessionKey, summary, preferred);
+        },
+        children: SHELL_KINDS.map((shell): SessionSubAction => {
+          const item: SessionSubAction = {
+            id: shell,
+            label: SHELL_LABELS[shell],
+            disabled: false,
+            run: () => {
+              openShellIn(sessionKey, summary, shell);
+            },
+          };
+          return shell === preferred
+            ? { ...item, badge: 'navigation.shells.default', shortcut: OPEN_SHELL_KEYS }
+            : item;
+        }),
+      };
+    }
     case 'newSessionHere':
       return {
         id,
@@ -553,19 +647,71 @@ export function SessionActionItems({
           );
         }
         const Icon = action.icon;
-        const shortcut =
-          action.shortcut === undefined ? null : shortcutKeyLabels(action.shortcut, t).join('+');
+        const hint = (keys: string | undefined) => {
+          if (keys === undefined) return null;
+          const text = shortcutKeyLabels(keys, t).join('+');
+          return kind === 'context' ? (
+            <ContextMenuShortcut>{text}</ContextMenuShortcut>
+          ) : (
+            <DropdownMenuShortcut>{text}</DropdownMenuShortcut>
+          );
+        };
         const content = (
           <>
             <Icon aria-hidden />
             {t(action.label)}
-            {shortcut === null ? null : kind === 'context' ? (
-              <ContextMenuShortcut>{shortcut}</ContextMenuShortcut>
-            ) : (
-              <DropdownMenuShortcut>{shortcut}</DropdownMenuShortcut>
-            )}
+            {hint(action.shortcut)}
           </>
         );
+        if (action.children !== undefined) {
+          const items = action.children.map((child) => {
+            const childContent = (
+              <>
+                {t(child.label)}
+                {child.badge === undefined ? null : (
+                  <span className="text-muted-foreground text-xs">{t(child.badge)}</span>
+                )}
+                {hint(child.shortcut)}
+              </>
+            );
+            return kind === 'context' ? (
+              <ContextMenuItem
+                key={child.id}
+                data-action={action.id}
+                data-choice={child.id}
+                disabled={child.disabled}
+                onSelect={child.run}
+              >
+                {childContent}
+              </ContextMenuItem>
+            ) : (
+              <DropdownMenuItem
+                key={child.id}
+                data-action={action.id}
+                data-choice={child.id}
+                disabled={child.disabled}
+                onSelect={child.run}
+              >
+                {childContent}
+              </DropdownMenuItem>
+            );
+          });
+          return kind === 'context' ? (
+            <ContextMenuSub key={action.id}>
+              <ContextMenuSubTrigger data-action={action.id} disabled={action.disabled}>
+                {content}
+              </ContextMenuSubTrigger>
+              <ContextMenuSubContent className="min-w-52">{items}</ContextMenuSubContent>
+            </ContextMenuSub>
+          ) : (
+            <DropdownMenuSub key={action.id}>
+              <DropdownMenuSubTrigger data-action={action.id} disabled={action.disabled}>
+                {content}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="min-w-52">{items}</DropdownMenuSubContent>
+            </DropdownMenuSub>
+          );
+        }
         return (
           <Fragment key={action.id}>
             {kind === 'context' ? (

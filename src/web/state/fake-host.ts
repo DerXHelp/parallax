@@ -1373,6 +1373,12 @@ export class FakeHost {
               : null,
         });
       }
+      // WP-97: no window opens in the playground; the folder of Git for Windows is invented.
+      case 'session.openShell':
+        if (!this.knowsEntry(cmd.entryId)) return { ok: false, error: makeError('ENTRY_NOT_FOUND') };
+        return this.ok({ pid: null });
+      case 'shell.detect':
+        return this.ok({ gitDir: this.hostState.settings.console.gitDir ?? 'C:\\Program Files\\Git' });
       case 'plan.list':
         if (!this.knowsEntry(cmd.entryId)) return { ok: false, error: makeError('ENTRY_NOT_FOUND') };
         return this.ok({ versions: this.planVersions.map((version) => version.info) });

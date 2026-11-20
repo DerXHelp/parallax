@@ -110,7 +110,7 @@ async function openSection(user: ReturnType<typeof userEvent.setup>, name: strin
 }
 
 describe('settings page (WP-38): dialog, sections, Esc', () => {
-  it('lists the nine sections on the left and starts at the first one', async () => {
+  it('lists the ten sections on the left and starts at the first one', async () => {
     await connect();
     renderPage();
     const list = screen.getByRole('tablist', { name: 'Settings sections' });
@@ -123,6 +123,8 @@ describe('settings page (WP-38): dialog, sections, Esc', () => {
       'Notifications',
       'Sessions',
       'Files',
+      // WP-97: "Console" after "Files".
+      'Console',
       'Profiles',
       'Server',
       // WP-78b: "Several computers" after "Server".

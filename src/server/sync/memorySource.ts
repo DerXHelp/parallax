@@ -167,6 +167,8 @@ export function createMemorySessionSource(options: { host?: HostState } = {}): M
       case 'profile.validate':
       case 'fs.listDirectory':
       case 'fs.createDirectory':
+      case 'session.openShell':
+      case 'shell.detect':
       case 'session.stopTask':
       case 'plan.list':
       case 'plan.read':

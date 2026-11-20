@@ -2883,3 +2883,34 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
 - **Folgen:** Bei gleicher Fenstergröße zeigt die UI rund 10 % weniger Inhalt; das schmale Layout greift bei
   990 statt 900 px Fensterbreite, das Overlay-Panel bei 1210 statt 1100 px Sitzungsfläche. Tests rechnen mit dem
   Faktor 1,1.
+
+## ADR-238 – Shell im Projektordner: über die externe Konsole, neutrale Umgebung, nur auf diesem Rechner
+- **Datum/WP:** 20.11.2026, WP-97 (`feature/konsole`), Auftrag und Entscheidungen des Nutzers.
+- **Entscheidung:**
+  - Neuer Host-Befehl `session.openShell {entryId, shell: 'cmd' | 'powershell' | 'gitbash'}` → `{pid}`. Er öffnet
+    die Shell als **sichtbares Fenster** im gespeicherten `cwd` der Session. Ohne Lebenszyklus-Gate (auch ruhende,
+    archivierte und externe Sessions haben einen Ordner); danach wird nichts verfolgt.
+  - Das Fenster öffnet über den `ConsoleLauncher` der externen Konsole (ADR-104: versteckte PowerShell, konstantes
+    Skript, `Start-Process -WorkingDirectory`, Daten nur in Umgebungsvariablen). `spawnGui` bleibt GUI-Programmen
+    vorbehalten (Blockliste mit Shells, ADR-144).
+  - **Umgebung neutral** (Wahl des Nutzers): die des Servers ohne Claude-Session-Variablen, `PARALLAX*` und den
+    `pnpm run`-Zustand (`guiEnvironment`), PATH ohne `node_modules\.bin`. Keine Profil-Env, kein
+    `CLAUDE_CONFIG_DIR`.
+  - **Git Bash:** Standard ist mintty (`git-bash.exe "--cd=<cwd>"`, wie „Open Git Bash here“). Wahlweise
+    `bin\bash.exe --login -i` mit `CHERE_INVOKING=1` im Standard-Terminal von Windows. Git for Windows wird gesucht:
+    Einstellung, Standardordner, `git.exe` auf PATH, zuletzt Uninstall-Key `Git_is1`. `shell.detect` meldet den
+    Ordner für die Einstellungen.
+  - Einstellungen `console {defaultShell: 'cmd', gitBashWindow: 'mintty', gitDir: null}` (Abschnitt „Konsole“).
+    Neue Fehlercodes `SHELL_NOT_FOUND {shell}` und `SHELL_OPEN_FAILED {reason}`.
+  - **Nur auf diesem Rechner:** Beide Befehle stehen in `REMOTE_DENIED_COMMANDS`. Die UI lässt Menüpunkt und
+    Kopfzeilen-Knopf bei Sessions eines anderen Rechners weg (`sessionAllows`).
+  - **UI:** Untermenü „Shell im Ordner öffnen“ in Seitenleisten- und Kopfzeilenmenü, Split-Knopf in der Kopfzeile
+    (Klick = Standard-Shell, Pfeil = Auswahl und Einstellungen), Alt+K für die gewählte Session.
+- **Begründung:** Die externe Konsole ist der erprobte Weg zu einem sichtbaren Konsolenfenster (Windows Terminal als
+  Standard-Terminal, Verhaltensüberwachung, ADR-228/229). Libuv gibt einem direkt gestarteten Konsolenprogramm keine
+  Konsole, und `cmd /c start` ist verboten. Die neutrale Umgebung entspricht einem frischen Terminal: Ein dort
+  getipptes `claude` erbt weder die Marker der Session noch deren Profil. Eine Shell auf dem Desktop eines anderen
+  Rechners zu öffnen, wäre Fernsteuerung, kein Session-Befehl.
+- **Folgen:** Keine `PROTOCOL_VERSION`-Erhöhung (zwei Befehle, zwei Fehlercodes, ein Settings-Feld mit Default).
+  Mit dem FakeBackend öffnet sich nichts, der Befehl wird nur geloggt (E2E). Das eingebettete Terminal (WP-99) nutzt
+  dieselbe Auflösung im Modus `embedded`.

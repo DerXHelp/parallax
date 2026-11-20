@@ -67,6 +67,7 @@ import {
   subagentTranscriptPageSchema,
   SUBAGENT_TRANSCRIPT_LIMITS,
   settingsSchema,
+  shellKindSchema,
   transcriptItemSchema,
 } from './model';
 import { NAME_MAX_CHARS } from './paths';
@@ -708,6 +709,15 @@ export const commandSchema = z.discriminatedUnion('name', [
     parent: z.string().min(1).max(LIMITS.pathChars),
     folderName: z.string().min(1).max(NAME_MAX_CHARS),
   }),
+  // ---- WP-97 (ADR-238): shell in the project folder ----
+  /**
+   * Open cmd, PowerShell or Git Bash as a visible window in the entry's cwd (only on this computer,
+   * neutral environment). ENTRY_NOT_FOUND, PATH_REJECTED, CWD_NOT_FOUND, CWD_NOT_DIRECTORY,
+   * SHELL_NOT_FOUND {shell}, SHELL_OPEN_FAILED {reason}.
+   */
+  z.object({ name: z.literal('session.openShell'), entryId: entryIdSchema, shell: shellKindSchema }),
+  /** Where Git for Windows is installed (settings "Console"); never cached. */
+  z.object({ name: z.literal('shell.detect') }),
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export type CommandName = Command['name'];
@@ -758,6 +768,8 @@ export const HOST_COMMAND_NAMES = [
   'hosts.remove',
   'hosts.reconnect',
   'fs.createDirectory',
+  'session.openShell',
+  'shell.detect',
 ] as const satisfies readonly CommandName[];
 export type HostCommandName = (typeof HOST_COMMAND_NAMES)[number];
 export type HostCommand = Extract<Command, { name: HostCommandName }>;
@@ -862,6 +874,9 @@ export const REMOTE_DENIED_COMMANDS = [
   'hosts.move',
   'hosts.remove',
   'hosts.reconnect',
+  // WP-97: a visible shell on this computer's desktop.
+  'session.openShell',
+  'shell.detect',
 ] as const satisfies readonly CommandName[];
 
 const REMOTE_ALLOWED: ReadonlySet<string> = new Set(REMOTE_ALLOWED_COMMANDS);
@@ -992,6 +1007,10 @@ export const commandResultSchemas = {
   'hosts.reconnect': z.object({}),
   /** The created folder: `parent` + separator + `folderName`, in the spelling of `parent`. */
   'fs.createDirectory': z.object({ path: z.string() }),
+  /** PID of the started window process (null = unknown). */
+  'session.openShell': z.object({ pid: z.number().int().positive().nullable() }),
+  /** The Git for Windows folder (holds `git-bash.exe`), null = not found. */
+  'shell.detect': z.object({ gitDir: z.string().nullable() }),
 } as const satisfies Record<CommandName, z.ZodType>;
 export type CommandResult<N extends CommandName> = z.infer<(typeof commandResultSchemas)[N]>;
 

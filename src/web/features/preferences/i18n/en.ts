@@ -14,6 +14,8 @@ export const en = {
     notifications: 'Notifications',
     sessions: 'Sessions',
     files: 'Files',
+    /** WP-97. */
+    console: 'Console',
     profiles: 'Profiles',
     server: 'Server',
     /** WP-78b. */
@@ -440,6 +442,36 @@ export const en = {
       too_many: 'At most {max} arguments.',
       invalid: 'This entry is not valid.',
     },
+  },
+  /** Section "Console" (WP-97, ADR-238): "Open shell in folder". */
+  console: {
+    defaultShell: 'Default shell',
+    defaultShellHint:
+      'Opens with the terminal button in the session header and with Alt+K. The session menu offers every shell.',
+    shells: {
+      cmd: 'Command Prompt (cmd)',
+      powershell: 'Windows PowerShell',
+      gitbash: 'Git Bash',
+    },
+    defaultBadge: 'Default',
+    gitBashWindow: 'Git Bash window',
+    gitBashWindowHint:
+      'mintty is the window of the Start menu entry “Git Bash”. The default terminal is the one Windows uses for consoles, for example Windows Terminal.',
+    windows: {
+      mintty: 'mintty (like “Git Bash”)',
+      terminal: 'Default terminal of Windows',
+    },
+    gitDir: 'Folder of Git for Windows (optional)',
+    gitDirHint:
+      'Empty = the installation Parallax found. Enter the folder that contains git-bash.exe to use another one.',
+    gitDirPlaceholder: 'C:\\Program Files\\Git',
+    gitDirInvalid: 'Enter a full local path (like C:\\…) – no network path, no relative path.',
+    detecting: 'Looking for Git for Windows…',
+    found: 'Git Bash found: {path}',
+    notFound: 'Git for Windows was not found on this computer.',
+    detectFailed: 'Could not check whether Git for Windows is installed.',
+    environment:
+      'Shells start in the session’s folder with your normal environment – without the profile of the session, so claude typed there uses your default account.',
   },
   /** Autostart and the protocol handler (ADR-110): only the productive server. */
   systemIntegrationOff:

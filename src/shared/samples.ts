@@ -8,6 +8,7 @@ import { STANDARD_PROFILE_ID } from './common';
 import { PRODUCT_ID } from './product';
 import {
   DEFAULT_AUTOSTART,
+  DEFAULT_CONSOLE_SETTINGS,
   DEFAULT_IDLE_SLEEP,
   DEFAULT_NOTIFICATION_EVENTS,
   DEFAULT_NOTIFICATION_SETTINGS,
@@ -245,6 +246,7 @@ export function sampleSettings(p: Partial<Settings> = {}): Settings {
     hookDisplay: 'failed',
     updates: { ...DEFAULT_UPDATE_SETTINGS },
     zoom: 100,
+    console: { ...DEFAULT_CONSOLE_SETTINGS },
     ...p,
   };
 }

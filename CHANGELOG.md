@@ -20,6 +20,10 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 - Das Transkript meldet, wenn Claude auf ein Ausweichmodell wechselt, wenn Dateien einer Nachricht aus der Claude-App
   nicht ankommen und wenn eine Nachricht einer anderen Session zurückgehalten wird (WP-95).
 - Nach Commit, Push, Merge oder Rebase in einer Session zeigt Parallax sofort den aktuellen Git-Branch (WP-95).
+- „Shell im Ordner öffnen“ startet die Eingabeaufforderung (cmd), PowerShell oder Git Bash als eigenes Fenster im Ordner
+  der Session: über das Session-Menü, einen Knopf in der Kopfzeile oder Alt+K, nur für Sessions dieses Rechners. Die
+  Standard-Shell, das Fenster für Git Bash und der Ordner von Git for Windows stehen unter Einstellungen → Konsole
+  (WP-97).
 
 ### Geändert
 - Die Oberfläche ist standardmäßig 10 % größer: Zoom 100 % sieht aus wie bisher 110 %. Wer bisher mit 110 % gearbeitet

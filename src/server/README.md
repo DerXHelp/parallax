@@ -28,6 +28,7 @@ Ownership: `docs/architecture.md` §2.1 (Phase 3: `CLAUDE.md` bzw. `docs/wp/WP-5
 | `multihost/` | Mehrere Rechner: Rolle aus/freigeben/steuern (`multi-host.json`, ADR-224); Port eingefroren | 78 |
 | `hosts/` | Mehrere Rechner: Rechnerliste, Kopplung als Client, Vermittler, Wächter des steuernden Rechners; Port eingefroren | 79 |
 | `system/` | Phase 2: Windows-Integration – externe Konsole (+ Fake-Konsole), Autostart-Verknüpfung, Protokoll-Handler `parallax:`, `createSystemIntegration` (Port `system/ports.ts` eingefroren); WP-86: Einträge einer Installation (`start.mjs`, Startmenü, Marker) | 33, 86 |
+| `terminal/` | WP-97: „Shell im Ordner öffnen“ – cmd, PowerShell, Git Bash als Fenster im `cwd` (über die externe Konsole, neutrale Umgebung, Git-Suche; ADR-238); WP-99: eingebettetes Terminal | 97 |
 
 Regeln: nie aus `src/web` importieren; Logging nur über `lib/logger.ts`; jeder Spawn über
 `lib/process.ts` (`windowsHide: true`, ohne Shell, nur absolute `.exe`-Pfade – R1-04; einzige Ausnahme

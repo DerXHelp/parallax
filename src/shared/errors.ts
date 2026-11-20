@@ -154,6 +154,11 @@ export const ERROR_CATALOG = {
   EDITOR_NOT_FOUND: { category: 'setup', http: 503, severity: 'warning', retryable: false },
   /** Starting the external program failed (AppLocker, not a GUI program …; `params.reason`). */
   OPEN_FAILED: { category: 'internal', http: 500, severity: 'error', retryable: true },
+  // shell in the project folder (WP-97, ADR-238)
+  /** The shell is not installed – Git for Windows for `gitbash` (`params.shell`). */
+  SHELL_NOT_FOUND: { category: 'setup', http: 503, severity: 'warning', retryable: false },
+  /** The shell window could not be opened (`params.reason`, scrubbed). */
+  SHELL_OPEN_FAILED: { category: 'internal', http: 500, severity: 'error', retryable: true },
   /** session.stopTask for an unknown or finished task (ADR-149). */
   TASK_NOT_FOUND: { category: 'not_found', http: 404, severity: 'info', retryable: false },
   /** plan.read for an unknown version or a missing plan file (ADR-148). */

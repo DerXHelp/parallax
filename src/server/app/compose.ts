@@ -116,6 +116,7 @@ import { createConsoleLauncher } from '../system/console';
 import { createFakeConsoleLauncher, FAKE_CONSOLE_RUN_MS } from '../system/fakeConsole';
 import { createSystemIntegration } from '../system/index';
 import type { ConsoleLauncher, SystemIntegration } from '../system/ports';
+import { createRecordingShellLauncher, createShellCommands } from '../terminal/shellCommands';
 import { prepareWebRoot } from './webSnapshot';
 
 /** The server start failed before it was ready; `exitCode` from SERVER_EXIT_CODES. */
@@ -780,6 +781,15 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         // WP-79: `hosts.add|update|move|remove|reconnect`.
         hosts.commands,
         share.commands,
+        // WP-97: `session.openShell`, `shell.detect` – the FakeBackend records (no window opens).
+        createShellCommands({
+          entryCwd: (entryId) => stores.registry.get(entryId)?.cwd ?? null,
+          settings: () => stores.settings.get(),
+          launcher:
+            config.backend === 'fake'
+              ? createRecordingShellLauncher({ logger: options.logger })
+              : consoleLauncher,
+        }),
       ],
       loginState: (profileId) => loginService.state(profileId),
       // Autostart and protocol handler follow every settings.update (ADR-110).

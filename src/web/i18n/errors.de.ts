@@ -82,6 +82,9 @@ export const errorsDe: Record<ErrorCode, string> = {
     'Die Datei kann gerade nicht gelesen werden (keine Berechtigung, in Benutzung oder zu langsam).',
   FILE_TYPE_BLOCKED: 'Dieser Dateityp wird aus Sicherheitsgründen nicht mit dem Standardprogramm geöffnet.',
   EDITOR_NOT_FOUND: 'Der Editor wurde nicht gefunden. Wähle unter Einstellungen → Dateien einen anderen.',
+  SHELL_NOT_FOUND:
+    'Git Bash wurde nicht gefunden. Installiere Git for Windows oder gib den Ordner unter Einstellungen → Konsole an.',
+  SHELL_OPEN_FAILED: 'Die Shell konnte nicht geöffnet werden.',
   OPEN_FAILED: 'Das Programm konnte nicht gestartet werden.',
   TASK_NOT_FOUND: 'Diese Aufgabe läuft nicht mehr.',
   PLAN_NOT_FOUND: 'Diese Plan-Version ist nicht verfügbar.',

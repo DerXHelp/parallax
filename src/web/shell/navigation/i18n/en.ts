@@ -134,6 +134,19 @@ export const en = {
     /** WP-70: sign in from Parallax (at sign-in errors); the output style of the project. */
     signIn: 'Sign in',
     outputStyle: 'Output style…',
+    /** WP-97: cmd, PowerShell or Git Bash as a window in the session's folder. */
+    openShell: 'Open shell in folder',
+  },
+  /** WP-97: the shells of "Open shell in folder" and the header button. */
+  shells: {
+    cmd: 'Command Prompt (cmd)',
+    powershell: 'PowerShell',
+    gitbash: 'Git Bash',
+    default: 'Default',
+    open: 'Open {shell} in the project folder',
+    choose: 'Choose shell',
+    group: 'Shell in the project folder',
+    settings: 'Console settings…',
   },
   /** WP-66: the popover of "Quick question…" (a side question, never part of the conversation). */
   quickAsk: {
@@ -218,6 +231,7 @@ export const en = {
     nextWaiting: 'Next session waiting for you',
     rename: 'Rename the selected session',
     toggleSidebar: 'Collapse or expand the sidebar',
+    openShell: 'Open the default shell in the folder of the selected session',
   },
   conversations: {
     title: 'Earlier conversations',
