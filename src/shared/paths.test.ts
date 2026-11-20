@@ -3,9 +3,23 @@ import {
   NAME_MAX_CHARS,
   PATH_ISSUES,
   PATH_MAX_CHARS,
+  POSIX_PATHS,
+  POSIX_PATH_MAX_BYTES,
+  WIN32_PATHS,
   fromGitBashPath,
+  isPosixPathInside,
+  isSafePosixPath,
   isSafeWindowsPath,
   isWindowsPathInside,
+  pathFlavorOf,
+  pathRules,
+  posixBaseName,
+  posixNameIssue,
+  posixPathExtension,
+  posixPathIssue,
+  posixPathKey,
+  posixPathsEqual,
+  resolvePosixPath,
   resolveWindowsPath,
   windowsBaseName,
   windowsNameIssue,
@@ -77,8 +91,10 @@ describe('windowsPathIssue (C.10)', () => {
     expect(isSafeWindowsPath(path)).toBe(false);
   });
 
-  it('every issue is covered by a case', () => {
-    expect([...new Set(rejected.map(([, issue]) => issue))].sort()).toEqual([...PATH_ISSUES].sort());
+  it('every issue is covered by a case (except the POSIX-only pseudo_fs)', () => {
+    expect([...new Set(rejected.map(([, issue]) => issue))].sort()).toEqual(
+      [...PATH_ISSUES].filter((issue) => issue !== 'pseudo_fs').sort(),
+    );
   });
 });
 
@@ -176,5 +192,172 @@ describe('file reference helpers (Phase 3, WP-50 §4.7)', () => {
     expect(windowsPathExtension('C:\\a\\x.tar.gz')).toBe('gz');
     expect(windowsPathExtension('C:\\a\\.gitignore')).toBe('');
     expect(windowsPathExtension('C:\\a.d\\Makefile')).toBe('');
+  });
+});
+
+describe('posixPathIssue (WP-102, WP-100 E6)', () => {
+  it.each([
+    '/',
+    '/home/u/proj',
+    '/home/u/proj/',
+    '/home//u/proj',
+    '/home/u/Projekt mit Leerzeichen/äöü',
+    '/home/u/a:b?c*d"e<f>g|h',
+    '/home/u/CON',
+    '/home/u/trailing.',
+    '/home/u/trailing ',
+    '/home/u/.hidden',
+    '/home/u/...',
+    '/mnt/c/Users',
+    '/c/Users',
+    '/run/user/1000/x',
+    '/devices',
+    '/process',
+    '//server/share',
+    `/${'a'.repeat(255)}`,
+  ])('accepts %j', (path) => {
+    expect(posixPathIssue(path)).toBeNull();
+    expect(isSafePosixPath(path)).toBe(true);
+  });
+
+  const rejected: [string, PathIssue][] = [
+    ['', 'empty'],
+    ['home/u', 'not_absolute'],
+    ['./x', 'not_absolute'],
+    ['~/x', 'not_absolute'],
+    ['C:\\work', 'not_absolute'],
+    ['/home/u\0x', 'control_char'],
+    ['/home/u\nx', 'control_char'],
+    ['/home/u/./x', 'dot_segment'],
+    ['/home/u/../etc', 'dot_segment'],
+    ['/home/u/..', 'dot_segment'],
+    [`/${'a'.repeat(256)}`, 'too_long'],
+    [`/${'ä'.repeat(128)}`, 'too_long'],
+    [`/${'a/'.repeat(2048)}`, 'too_long'],
+    ['/proc', 'pseudo_fs'],
+    ['/proc/self/environ', 'pseudo_fs'],
+    ['/sys/kernel', 'pseudo_fs'],
+    ['/dev/zero', 'pseudo_fs'],
+    ['/dev/', 'pseudo_fs'],
+    ['//proc/1', 'pseudo_fs'],
+  ];
+  it.each(rejected)('rejects %j as %s', (path, issue) => {
+    expect(posixPathIssue(path)).toBe(issue);
+  });
+
+  it('returns only the POSIX subset of PATH_ISSUES', () => {
+    expect([...new Set(rejected.map(([, issue]) => issue))].sort()).toEqual(
+      ['control_char', 'dot_segment', 'empty', 'not_absolute', 'pseudo_fs', 'too_long'].sort(),
+    );
+  });
+
+  it('counts UTF-8 bytes, not characters', () => {
+    expect(posixPathIssue(`/${'ä'.repeat(127)}`)).toBeNull();
+    expect(posixPathIssue(`/${'🚀'.repeat(63)}`)).toBeNull();
+    expect(posixPathIssue(`/${'🚀'.repeat(64)}`)).toBe('too_long');
+    const longest = `/${`${'a'.repeat(199)}/`.repeat(20)}${'a'.repeat(94)}`;
+    expect(longest.length).toBe(POSIX_PATH_MAX_BYTES);
+    expect(posixPathIssue(longest)).toBeNull();
+    expect(posixPathIssue(`${longest}a`)).toBe('too_long');
+  });
+
+  it('new folder names', () => {
+    expect(posixNameIssue('neu')).toBeNull();
+    expect(posixNameIssue('CON')).toBeNull();
+    expect(posixNameIssue('a:b')).toBeNull();
+    expect(posixNameIssue('.config')).toBeNull();
+    expect(posixNameIssue('')).toBe('empty');
+    expect(posixNameIssue('a/b')).toBe('invalid_char');
+    expect(posixNameIssue('.')).toBe('dot_segment');
+    expect(posixNameIssue('..')).toBe('dot_segment');
+    expect(posixNameIssue('a\tb')).toBe('control_char');
+    expect(posixNameIssue('a'.repeat(256))).toBe('too_long');
+  });
+});
+
+describe('POSIX keys, resolution and names', () => {
+  it('keys are case-sensitive and normalize separators', () => {
+    expect(posixPathKey('/home//u/proj/')).toBe('/home/u/proj');
+    expect(posixPathKey('/')).toBe('/');
+    expect(posixPathKey('///')).toBe('/');
+    expect(posixPathsEqual('/a/Proj', '/a/proj')).toBe(false);
+    expect(posixPathsEqual('/a/proj/', '/a//proj')).toBe(true);
+  });
+
+  it('inside', () => {
+    expect(isPosixPathInside('/a/b/c', '/a/b')).toBe(true);
+    expect(isPosixPathInside('/a/b', '/a/b/')).toBe(true);
+    expect(isPosixPathInside('/a/bc', '/a/b')).toBe(false);
+    expect(isPosixPathInside('/a/B/c', '/a/b')).toBe(false);
+    expect(isPosixPathInside('/anything', '/')).toBe(true);
+  });
+
+  const resolved: [string, string, string | null][] = [
+    ['/home/u/p', 'src/a.ts', '/home/u/p/src/a.ts'],
+    ['/home/u/p', './src//a.ts', '/home/u/p/src/a.ts'],
+    ['/home/u/p', '../q/x', '/home/u/q/x'],
+    ['/home/u/p', '/etc/hosts', '/etc/hosts'],
+    ['/home/u/p', '/a/../b', '/b'],
+    ['/', 'x', '/x'],
+    ['/home', '../..', null],
+    ['/home/u/p', '../../../../x', null],
+    ['/home/u/p', '/proc/self/environ', null],
+    ['/home/u/p', 'a\0b', null],
+    ['relative', 'x', null],
+    ['C:\\work', 'x', null],
+  ];
+  it.each(resolved)('resolvePosixPath(%j, %j) = %j', (base, relative, expected) => {
+    expect(resolvePosixPath(base, relative)).toBe(expected);
+  });
+
+  it('base name and extension', () => {
+    expect(posixBaseName('/a/b.txt')).toBe('b.txt');
+    expect(posixBaseName('/a/b/')).toBe('b');
+    expect(posixBaseName('/')).toBe('');
+    expect(posixBaseName('/a/back\\slash')).toBe('back\\slash');
+    expect(posixPathExtension('/a/B.TXT')).toBe('txt');
+    expect(posixPathExtension('/a/x.tar.gz')).toBe('gz');
+    expect(posixPathExtension('/a/.gitignore')).toBe('');
+    expect(posixPathExtension('/a.d/Makefile')).toBe('');
+  });
+});
+
+describe('pathRules (WP-102)', () => {
+  it('flavor from the platform', () => {
+    expect(pathFlavorOf('win32')).toBe('win32');
+    expect(pathFlavorOf('linux')).toBe('posix');
+    expect(pathFlavorOf('darwin')).toBe('posix');
+    expect(pathRules('win32')).toBe(WIN32_PATHS);
+    expect(pathRules('posix')).toBe(POSIX_PATHS);
+  });
+
+  it('win32 delegates to the unchanged windows* functions', () => {
+    expect(WIN32_PATHS.issue('C:\\x')).toBeNull();
+    expect(WIN32_PATHS.issue('/home/u')).toBe('not_absolute');
+    expect(WIN32_PATHS.equal('C:\\A', 'c:/a/')).toBe(true);
+    expect(WIN32_PATHS.isInside('C:\\a\\b', 'c:\\A')).toBe(true);
+    expect(WIN32_PATHS.isAbsolute('C:/x')).toBe(true);
+    expect(WIN32_PATHS.isAbsolute('/x')).toBe(false);
+    expect(WIN32_PATHS.maxLength).toBe(PATH_MAX_CHARS);
+  });
+
+  it('posix', () => {
+    expect(POSIX_PATHS.issue('/home/u')).toBeNull();
+    expect(POSIX_PATHS.issue('C:\\x')).toBe('not_absolute');
+    expect(POSIX_PATHS.equal('/A', '/a')).toBe(false);
+    expect(POSIX_PATHS.isAbsolute('/x')).toBe(true);
+    expect(POSIX_PATHS.isAbsolute('C:\\x')).toBe(false);
+    expect(POSIX_PATHS.maxLength).toBe(POSIX_PATH_MAX_BYTES);
+  });
+
+  it.each([
+    [WIN32_PATHS, 'C:\\', 'a', 'C:\\a'],
+    [WIN32_PATHS, 'C:\\work\\', '\\a.txt', 'C:\\work\\a.txt'],
+    [WIN32_PATHS, 'C:/work', 'a', 'C:/work\\a'],
+    [POSIX_PATHS, '/', 'a', '/a'],
+    [POSIX_PATHS, '/home/u/', '/a.txt', '/home/u/a.txt'],
+    [POSIX_PATHS, '/home/u', 'back\\slash', '/home/u/back\\slash'],
+  ])('join %#', (rules, dir, name, expected) => {
+    expect(rules.join(dir, name)).toBe(expected);
   });
 });
