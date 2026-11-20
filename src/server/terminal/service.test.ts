@@ -626,9 +626,15 @@ describe('createTerminalService – exit and close (WP-99)', () => {
       return Promise.resolve();
     });
     let nextPid = 4242;
-    // The fake's methods are closures, so a copy with a pid behaves the same.
-    const pty: PtyFactory = { spawn: (options) => ({ ...fake.spawn(options), pid: nextPid++ }) };
-    const { service, connect, open, timers } = setup({ pty, killTree, isRunning: (pid) => alive.has(pid) });
+    // The fake's methods are closures, so a copy with a pid behaves the same. Liveness comes from
+    // `exitCode()` (as with ConPTY after `close()`), never from the bare pid.
+    const pty: PtyFactory = {
+      spawn: (options) => {
+        const pid = nextPid++;
+        return { ...fake.spawn(options), pid, exitCode: () => (alive.has(pid) ? null : 0) };
+      },
+    };
+    const { service, connect, open, timers } = setup({ pty, killTree });
     const client = connect();
     await open(client, 'a');
     await open(client, 'b');

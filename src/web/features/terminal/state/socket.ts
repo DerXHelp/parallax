@@ -134,6 +134,12 @@ export class TerminalConnection {
   private disposed = false;
   /** `welcome` with `available` arrived on the current socket. */
   private ready = false;
+  /**
+   * The first `terminals` after `welcome` arrived. Views attach only then, and only to terminals in
+   * that list: after a server restart the old ones are gone, and attaching them blindly would answer
+   * TERMINAL_NOT_FOUND (an error banner) for every view.
+   */
+  private listed = false;
   private statusValue: TerminalConnectionStatus = 'connecting';
   private closeCodeValue: number | null = null;
   private readonly views = new Map<TerminalId, TerminalViewSink>();
@@ -175,6 +181,7 @@ export class TerminalConnection {
     const socket = this.socket;
     this.socket = null;
     this.ready = false;
+    this.listed = false;
     this.channels.clear();
     this.views.clear();
     this.messageListeners.clear();
@@ -221,12 +228,13 @@ export class TerminalConnection {
   }
 
   /**
-   * Receives the output of a terminal: `attach` now (when ready) and after every reconnect. Returns
-   * the detach function (`detach` goes out when the socket is open).
+   * Receives the output of a terminal: `attach` now (when ready and listed) and after every
+   * reconnect, if the terminal is still in the server's list. Returns the detach function (`detach`
+   * goes out when the socket is open).
    */
   attachView(terminalId: TerminalId, sink: TerminalViewSink): () => void {
     this.views.set(terminalId, sink);
-    if (this.ready) this.sendAttach(terminalId, sink);
+    if (this.ready && this.listed) this.sendAttach(terminalId, sink);
     return () => {
       if (this.views.get(terminalId) !== sink) return;
       this.views.delete(terminalId);
@@ -282,8 +290,17 @@ export class TerminalConnection {
       case 'welcome':
         this.attempt = 0;
         this.ready = message.available;
+        this.listed = false;
         this.setStatus('open');
-        if (this.ready) for (const [terminalId, sink] of this.views) this.sendAttach(terminalId, sink);
+        break;
+      case 'terminals':
+        if (this.ready && !this.listed) {
+          this.listed = true;
+          const known = new Set(message.items.map((item) => item.terminalId));
+          for (const [terminalId, sink] of this.views) {
+            if (known.has(terminalId)) this.sendAttach(terminalId, sink);
+          }
+        }
         break;
       case 'attached': {
         this.dropChannel(message.terminalId);
@@ -308,6 +325,7 @@ export class TerminalConnection {
   private handleClose(code: number): void {
     this.socket = null;
     this.ready = false;
+    this.listed = false;
     this.channels.clear();
     this.closeCodeValue = code;
     if (this.disposed) return;

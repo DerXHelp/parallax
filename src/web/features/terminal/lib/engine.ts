@@ -59,6 +59,16 @@ export type EngineFactory = (options: EngineOptions) => TerminalEngine;
 /** Lines kept above the screen in the browser (the server keeps its own replay buffer). */
 export const SCROLLBACK_LINES = 5000;
 
+/** True for an absolute http(s) URL – the only links the terminal opens. */
+export function isWebLink(uri: string): boolean {
+  try {
+    const { protocol } = new URL(uri);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 /** The real engine: xterm.js with the fit addon. */
 export const createXtermEngine: EngineFactory = (options) => {
   const terminal = new Terminal({
@@ -70,6 +80,14 @@ export const createXtermEngine: EngineFactory = (options) => {
     scrollback: SCROLLBACK_LINES,
     // ConPTY reflows lines itself; xterm adapts its own reflow and wrapping heuristics to it.
     windowsPty: { backend: 'conpty' },
+    // OSC 8 links: http(s) only, opened like the transcript's links. Without a handler xterm asks
+    // with its blocking `confirm()` (the app's dialogs are never modal).
+    linkHandler: {
+      allowNonHttpProtocols: false,
+      activate: (_event, uri) => {
+        if (isWebLink(uri)) window.open(uri, '_blank', 'noopener,noreferrer');
+      },
+    },
   });
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);

@@ -10,12 +10,18 @@
  *   empty handles (a server with redirected stdio must not hand its own handles to the shell), no
  *   handle inheritance, the environment as a block (`envBlock.ts`).
  * - Reading never blocks: `PeekNamedPipe` first, then `ReadFile` of at most the bytes that are there.
+ * - Writing never blocks either: the input pipe is `PIPE_NOWAIT`, input waits in a bounded queue and
+ *   goes out in small chunks; what does not fit is retried on an unref'd timer. A blocking
+ *   `WriteFile` would freeze the event loop for good once conhost stops reading input – it does
+ *   when its output pipe is full, and only this event loop drains that pipe (review WP-99).
  * - Ctrl+C: before the first start this process stops ignoring Ctrl+C (`SetConsoleCtrlHandler(NULL,
  *   FALSE)`), because a started shell inherits that flag – a detached server (new process group) has
  *   it set, and then `\x03` reaches no program in cmd or PowerShell (WP-98).
  * - Closing: the output pipe first, then `ClosePseudoConsole` (it can wait for a reader of the
  *   output on older builds), then the remaining handles. Ending the console ends the processes
- *   attached to it (`CTRL_CLOSE_EVENT`).
+ *   attached to it (`CTRL_CLOSE_EVENT`). The process handle stays open until `exitCode()` has seen
+ *   the shell end: while it is open, Windows cannot give the pid to another process, so the
+ *   service's tree-kill fallback by pid never hits a stranger.
  *
  * Layouts (x64): STARTUPINFOEXW 112 bytes (`cb` 0, `dwFlags` 60, std handles 80/88/96,
  * `lpAttributeList` 104); PROCESS_INFORMATION 24 bytes (`hProcess` 0, `hThread` 8, `dwProcessId` 16).
@@ -34,12 +40,18 @@ export interface ConPty extends PtyProcess {
   readonly pid: number;
   /** What the console wrote, at most `max` bytes; null = nothing waiting (or closed). */
   read(max: number): Buffer | null;
-  /** Input as UTF-8 (keys as VT sequences, `\x03` = Ctrl+C); false = the console is gone. */
+  /**
+   * Input as UTF-8 (keys as VT sequences, `\x03` = Ctrl+C), queued and sent without blocking;
+   * false = the console is gone, or the queue is full (`CONPTY_INPUT_QUEUE_BYTES`) and the input dropped.
+   */
   write(data: string | Buffer): boolean;
   resize(cols: number, rows: number): boolean;
-  /** Exit code once the shell ended, null while it runs. */
+  /** Exit code once the shell ended, null while it runs – also after `close()`. */
   exitCode(): number | null;
-  /** Ends the console (and with it the attached processes) and frees every handle. Idempotent. */
+  /**
+   * Ends the console (and with it the attached processes) and frees the pipes; the process handle
+   * follows once `exitCode()` sees the shell gone. Idempotent.
+   */
   close(): void;
 }
 
@@ -70,10 +82,18 @@ const PI_PROCESS_OFFSET = 0;
 const PI_THREAD_OFFSET = 8;
 const PI_PID_OFFSET = 16;
 const WAIT_OBJECT_0 = 0;
+/** `SetNamedPipeHandleState` mode: byte read mode (0) | `PIPE_NOWAIT` (1). */
+const PIPE_NOWAIT_MODE = 0x0000_0001;
 /** Pipe buffer size asked for (a hint for the system). */
 const PIPE_BYTES = 64 * 1024;
 /** Largest single read. */
 export const CONPTY_READ_MAX = 64 * 1024;
+/** Largest single write: far below the pipe buffer, so a non-blocking write that is all-or-nothing still progresses. */
+export const CONPTY_WRITE_CHUNK = 1024;
+/** Input waiting for the console at most; more is dropped (the shell then reads nothing at all). */
+export const CONPTY_INPUT_QUEUE_BYTES = 1024 * 1024;
+/** Retry interval while input waits. */
+export const CONPTY_WRITE_RETRY_MS = 20;
 
 const COLS_MAX = 0x7fff;
 
@@ -135,6 +155,7 @@ export function loadConPty(): ConPtyApi | null {
     },
     ReadFile: { return: 'int32', arguments: ['pointer', 'buffer', 'uint32', 'buffer', 'pointer'] },
     WriteFile: { return: 'int32', arguments: ['pointer', 'buffer', 'uint32', 'buffer', 'pointer'] },
+    SetNamedPipeHandleState: { return: 'int32', arguments: ['pointer', 'buffer', 'pointer', 'pointer'] },
     WaitForSingleObject: { return: 'uint32', arguments: ['pointer', 'uint32'] },
     GetExitCodeProcess: { return: 'int32', arguments: ['pointer', 'buffer'] },
     CloseHandle: { return: 'int32', arguments: ['pointer'] },
@@ -175,10 +196,17 @@ export function loadConPty(): ConPtyApi | null {
       }
       const pipes = { inRead: 0n, inWrite: 0n, outRead: 0n, outWrite: 0n };
       let pseudoConsole = 0n;
-      let listPointer = 0n;
+      /** Memory of the attribute list; declared outside the `try` so the error path can still delete the list. */
+      let attributes: Buffer | null = null;
       try {
         [pipes.inRead, pipes.inWrite] = createPipe();
         [pipes.outRead, pipes.outWrite] = createPipe();
+        // Writing must never block the event loop (see the module comment).
+        const mode = Buffer.alloc(4);
+        mode.writeUInt32LE(PIPE_NOWAIT_MODE, 0);
+        if (call(k.SetNamedPipeHandleState, pipes.inWrite, mode, null, null) === 0) {
+          throw new ConPtyError('SetNamedPipeHandleState', lastError());
+        }
 
         const hpc = Buffer.alloc(8);
         const hr = call(
@@ -201,12 +229,12 @@ export function loadConPty(): ConPtyApi | null {
         call(k.InitializeProcThreadAttributeList, null, 1, 0, size);
         const listBytes = Number(size.readBigUInt64LE(0));
         if (listBytes <= 0) throw new ConPtyError('InitializeProcThreadAttributeList(size)', lastError());
-        // Kept alive by this scope until DeleteProcThreadAttributeList below.
-        const attributes = Buffer.alloc(listBytes);
-        if (call(k.InitializeProcThreadAttributeList, attributes, 1, 0, size) === 0) {
+        const list = Buffer.alloc(listBytes);
+        if (call(k.InitializeProcThreadAttributeList, list, 1, 0, size) === 0) {
           throw new ConPtyError('InitializeProcThreadAttributeList', lastError());
         }
-        listPointer = ffi.getRawPointer(attributes);
+        attributes = list;
+        const listPointer = ffi.getRawPointer(list);
         const updated = call(
           k.UpdateProcThreadAttribute,
           listPointer,
@@ -239,8 +267,8 @@ export function loadConPty(): ConPtyApi | null {
         );
         if (created === 0) throw new ConPtyError('CreateProcessW', lastError());
         // The buffer itself (not the address): keeps it reachable until the list is gone.
-        call(k.DeleteProcThreadAttributeList, attributes);
-        listPointer = 0n;
+        call(k.DeleteProcThreadAttributeList, list);
+        attributes = null;
         closeHandle(info.readBigUInt64LE(PI_THREAD_OFFSET));
         return createConPty(k, call, closeHandle, {
           pseudoConsole,
@@ -250,7 +278,7 @@ export function loadConPty(): ConPtyApi | null {
           pid: info.readUInt32LE(PI_PID_OFFSET),
         });
       } catch (error) {
-        if (listPointer !== 0n) call(k.DeleteProcThreadAttributeList, listPointer);
+        if (attributes !== null) call(k.DeleteProcThreadAttributeList, attributes);
         closeHandle(pipes.outRead);
         if (pseudoConsole !== 0n) call(k.ClosePseudoConsole, pseudoConsole);
         closeHandle(pipes.inRead);
@@ -295,6 +323,72 @@ function createConPty(
   let closed = false;
   let outputOpen = true;
   let exit: number | null = null;
+  let processHandle = h.processHandle;
+  /** Input not yet taken by the pipe, oldest first. */
+  let pending: Buffer[] = [];
+  let pendingBytes = 0;
+  let retry: ReturnType<typeof setTimeout> | null = null;
+
+  /** Reads the exit code once the process is gone (no handle → whatever was seen). */
+  const probeExit = (): number | null => {
+    if (exit !== null || processHandle === 0n) return exit;
+    try {
+      if (call(wait, processHandle, 0) !== WAIT_OBJECT_0) return null;
+      const code = Buffer.alloc(4);
+      if (call(getExitCode, processHandle, code) === 0) return null;
+      exit = code.readUInt32LE(0);
+      return exit;
+    } catch {
+      return null;
+    }
+  };
+  const releaseProcess = (): void => {
+    closeHandle(processHandle);
+    processHandle = 0n;
+  };
+
+  const dropInput = (): void => {
+    pending = [];
+    pendingBytes = 0;
+    if (retry !== null) clearTimeout(retry);
+    retry = null;
+  };
+
+  /** Sends queued input until the pipe is full; false = the console is gone. Never blocks (`PIPE_NOWAIT`). */
+  const flush = (): boolean => {
+    while (pending.length > 0) {
+      const head = pending[0];
+      if (head === undefined) break;
+      // Chunks end on a UTF-8 character boundary.
+      let end = Math.min(head.length, CONPTY_WRITE_CHUNK);
+      while (end > 1 && end < head.length && ((head[end] ?? 0) & 0xc0) === 0x80) end -= 1;
+      const chunk = head.subarray(0, end);
+      if (call(writeFile, h.inWrite, chunk, chunk.length, transferred, null) === 0) return false;
+      const written = transferred.readUInt32LE(0);
+      if (written === 0) break; // the pipe is full – later
+      pendingBytes -= written;
+      if (written >= head.length) pending.shift();
+      else pending[0] = head.subarray(written);
+    }
+    return true;
+  };
+
+  const scheduleFlush = (): void => {
+    if (retry !== null || pending.length === 0 || closed) return;
+    retry = setTimeout(() => {
+      retry = null;
+      if (closed) return;
+      let alive: boolean;
+      try {
+        alive = flush();
+      } catch {
+        alive = false;
+      }
+      if (alive) scheduleFlush();
+      else dropInput();
+    }, CONPTY_WRITE_RETRY_MS);
+    retry.unref();
+  };
 
   return {
     pid: h.pid,
@@ -321,20 +415,22 @@ function createConPty(
     },
     write(data) {
       if (closed) return false;
-      const bytes = typeof data === 'string' ? Buffer.from(data, 'utf8') : data;
-      let offset = 0;
+      const bytes = typeof data === 'string' ? Buffer.from(data, 'utf8') : Buffer.from(data);
+      if (bytes.length === 0) return true;
+      if (pendingBytes + bytes.length > CONPTY_INPUT_QUEUE_BYTES) return false;
+      pending.push(bytes);
+      pendingBytes += bytes.length;
       try {
-        while (offset < bytes.length) {
-          const chunk = bytes.subarray(offset);
-          if (call(writeFile, h.inWrite, chunk, chunk.length, transferred, null) === 0) return false;
-          const written = transferred.readUInt32LE(0);
-          if (written === 0) return false;
-          offset += written;
+        if (!flush()) {
+          dropInput();
+          return false;
         }
-        return true;
       } catch {
+        dropInput();
         return false;
       }
+      scheduleFlush();
+      return true;
     },
     resize(cols, rows) {
       if (closed) return false;
@@ -345,21 +441,14 @@ function createConPty(
       }
     },
     exitCode() {
-      if (exit !== null) return exit;
-      if (closed) return null;
-      try {
-        if (call(wait, h.processHandle, 0) !== WAIT_OBJECT_0) return null;
-        const code = Buffer.alloc(4);
-        if (call(getExitCode, h.processHandle, code) === 0) return null;
-        exit = code.readUInt32LE(0);
-        return exit;
-      } catch {
-        return null;
-      }
+      const code = probeExit();
+      if (code !== null && closed) releaseProcess();
+      return code;
     },
     close() {
       if (closed) return;
       closed = true;
+      dropInput();
       closeHandle(h.outRead);
       try {
         call(closeConsole, h.pseudoConsole);
@@ -367,7 +456,8 @@ function createConPty(
         // the handles below are freed anyway
       }
       closeHandle(h.inWrite);
-      closeHandle(h.processHandle);
+      // Still running: the handle stays until `exitCode()` sees the end (pid stays reserved).
+      if (probeExit() !== null) releaseProcess();
     },
   };
 }

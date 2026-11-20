@@ -29,7 +29,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  if (folder !== '') await rm(folder, { recursive: true, force: true });
+  // conhost can hold the folder a moment after the shell ended.
+  if (folder !== '') await rm(folder, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 });
 
 /** Polls `check` every 20 ms until it is true or `ms` passed. */
@@ -148,6 +149,35 @@ describe.runIf(LIVE)('ConPTY live (WP-99, opt-in)', () => {
     const started = Date.now();
     pty.close();
     expect(Date.now() - started).toBeLessThan(500);
+    // exitCode() keeps answering after close (the process handle stays until the end is seen).
+    await until(() => pty.exitCode() !== null, 3000);
     await until(() => !isProcessAlive(pid), 3000);
+  }, 20_000);
+
+  it('never blocks on input while the output pipe is full (review WP-99)', async () => {
+    const factory = createConPtyFactory();
+    if (factory === null) throw new Error('no ConPTY binding');
+    const launch = await resolveShellLaunch('cmd', folder, DEFAULT_CONSOLE_SETTINGS, 'embedded', {
+      gitDir: () => Promise.resolve(null),
+    });
+    const pty = factory.spawn({ ...launch, cwd: folder, cols: 80, rows: 24 });
+    try {
+      await sleep(300);
+      pty.write('for /L %i in (1,1,500000) do @echo flood-line-%i\r');
+      // Nothing reads: the output pipe fills up and conhost stops taking input.
+      await sleep(2000);
+      const started = Date.now();
+      expect(pty.write('x'.repeat(200_000))).toBe(true);
+      expect(Date.now() - started).toBeLessThan(200);
+      // Retries run on a timer and must not block either.
+      const before = Date.now();
+      await sleep(200);
+      expect(Date.now() - before).toBeLessThan(1000);
+    } finally {
+      const started = Date.now();
+      pty.close();
+      expect(Date.now() - started).toBeLessThan(500);
+      await until(() => pty.exitCode() !== null, 3000);
+    }
   }, 20_000);
 });

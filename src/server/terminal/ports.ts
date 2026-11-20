@@ -20,10 +20,10 @@ export interface PtyProcess {
   readonly pid: number | null;
   /** Output waiting, at most `max` bytes; null = nothing waiting (never blocks). */
   read(max: number): Uint8Array | null;
-  /** Input as UTF-8 text (keys as VT sequences); false = the console is gone. */
+  /** Input as UTF-8 text (keys as VT sequences), never blocking; false = the console is gone or the input was dropped. */
   write(data: string): boolean;
   resize(cols: number, rows: number): boolean;
-  /** Exit code once the shell ended, null while it runs. */
+  /** Exit code once the shell ended, null while it runs – also after `close()` (the service's liveness check). */
   exitCode(): number | null;
   /** Ends the console (and the processes attached to it), frees everything. Idempotent. */
   close(): void;

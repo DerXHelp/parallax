@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TERMINAL_LIMITS } from '@shared/terminal';
-import { RING_LINE_SEARCH_BYTES, createByteRing } from './ring';
+import { RING_BLOCK_BYTES, RING_LINE_SEARCH_BYTES, createByteRing } from './ring';
 
 const bytes = (text: string): Uint8Array => Buffer.from(text, 'utf8');
 const text = (data: Uint8Array): string => Buffer.from(data).toString('utf8');
@@ -74,5 +74,29 @@ describe('createByteRing (WP-99)', () => {
     const ring = createByteRing(4);
     ring.push(bytes('0123456789'));
     expect(text(ring.snapshot())).toBe('6789');
+  });
+
+  it('copies what it keeps, so a pushed buffer may be reused (pool slabs are never pinned)', () => {
+    const ring = createByteRing(64);
+    const source = Buffer.from('abc');
+    ring.push(source);
+    source.write('xyz');
+    expect(text(ring.snapshot())).toBe('abc');
+  });
+
+  it('keeps order and the capacity across many small pushes and block borders', () => {
+    const capacity = RING_BLOCK_BYTES * 2 + 100;
+    const ring = createByteRing(capacity);
+    let all = '';
+    for (let i = 0; i < 20_000; i += 1) {
+      const piece = String(i % 10).repeat(1 + (i % 7));
+      all += piece;
+      ring.push(Buffer.from(piece));
+    }
+    expect(ring.size).toBeLessThanOrEqual(capacity);
+    expect(text(ring.snapshot())).toBe(all.slice(all.length - ring.size));
+    ring.clear();
+    ring.push(bytes('fresh'));
+    expect(text(ring.snapshot())).toBe('fresh');
   });
 });

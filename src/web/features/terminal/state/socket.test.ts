@@ -48,6 +48,14 @@ function welcome(socket: FakeTerminalSocket, available = true) {
   });
 }
 
+/** The server's list right after `welcome` (views attach only to terminals in it). */
+function listed(socket: FakeTerminalSocket, ...numbers: number[]) {
+  socket.serverSend({
+    type: 'terminals',
+    items: numbers.map((n) => sampleTerminalInfo({ terminalId: sampleTerminalId(n) })),
+  });
+}
+
 function sink(cols = 100, rows = 30) {
   const output: string[] = [];
   const decoder = new TextDecoder();
@@ -107,20 +115,25 @@ describe('terminal socket (WP-99b)', () => {
     expect(connection.ignored).toBe(4);
   });
 
-  it('attaches views after welcome and routes binary frames by channel', () => {
+  it('attaches views after welcome and the list, and routes binary frames by channel', () => {
     const { connection, socket } = setup();
     const first = sink(100, 30);
     const second = sink(90, 20);
     connection.attachView(sampleTerminalId(1), first.view);
     connection.start();
     socket(0).open();
-    // Nothing before welcome.
+    // Nothing before welcome and the list.
     expect(socket(0).sentOfType('attach')).toEqual([]);
     welcome(socket(0));
+    expect(socket(0).sentOfType('attach')).toEqual([]);
+    listed(socket(0), 1);
     expect(socket(0).sentOfType('attach')).toEqual([
       { type: 'attach', terminalId: sampleTerminalId(1), cols: 100, rows: 30 },
     ]);
-    // A view registered after welcome is attached at once.
+    // Later lists attach nothing again.
+    listed(socket(0), 1, 2);
+    expect(socket(0).sentOfType('attach')).toHaveLength(1);
+    // A view registered after the list is attached at once.
     connection.attachView(sampleTerminalId(2), second.view);
     expect(socket(0).sentOfType('attach').at(-1)).toEqual({
       type: 'attach',
@@ -155,6 +168,7 @@ describe('terminal socket (WP-99b)', () => {
     connection.start();
     socket(0).open();
     welcome(socket(0));
+    listed(socket(0), 1);
     socket(0).serverSend({ type: 'attached', terminalId: sampleTerminalId(1), channel: 0 });
     detach();
     expect(socket(0).sentOfType('detach')).toEqual([{ type: 'detach', terminalId: sampleTerminalId(1) }]);
@@ -162,16 +176,19 @@ describe('terminal socket (WP-99b)', () => {
     expect(view.output).toEqual([]);
   });
 
-  it('reconnects with backoff, says hello again and re-attaches the mounted views', () => {
+  it('reconnects with backoff, says hello again and re-attaches the mounted views still listed', () => {
     vi.useFakeTimers();
     const { connection, sockets, socket } = setup();
     const view = sink(100, 30);
+    const gone = sink(80, 24);
     const statuses: string[] = [];
     connection.onStatus((status) => statuses.push(status));
     connection.attachView(sampleTerminalId(1), view.view);
+    connection.attachView(sampleTerminalId(2), gone.view);
     connection.start();
     socket(0).open();
     welcome(socket(0));
+    listed(socket(0), 1, 2);
     socket(0).serverSend({ type: 'attached', terminalId: sampleTerminalId(1), channel: 0 });
     socket(0).serverBinary(0, 'before');
 
@@ -190,6 +207,9 @@ describe('terminal socket (WP-99b)', () => {
       { type: 'hello', protocol: TERMINAL_PROTOCOL_VERSION, entryId: SAMPLE_IDS.entry },
     ]);
     welcome(socket(1));
+    expect(socket(1).sentOfType('attach')).toEqual([]);
+    // Terminal 2 is gone on the server (e.g. after a restart): no attach, so no TERMINAL_NOT_FOUND.
+    listed(socket(1), 1);
     expect(socket(1).sentOfType('attach')).toEqual([
       { type: 'attach', terminalId: sampleTerminalId(1), cols: 100, rows: 30 },
     ]);
@@ -254,6 +274,7 @@ describe('terminal socket (WP-99b)', () => {
     connection.start();
     socket(0).open();
     welcome(socket(0), false);
+    listed(socket(0), 1);
     expect(connection.isReady).toBe(false);
     expect(socket(0).sentOfType('attach')).toEqual([]);
   });

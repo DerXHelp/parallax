@@ -24,8 +24,9 @@
  *   later attach replays the end.
  * - `closeEntry`/`closeAll`: every console of the entry/computer ends with `exit {reason}`
  *   (`archived`, `removed`, `shutdown`); `closeEntry` pushes the empty list. Opens in flight for
- *   that entry fail. If a shell still runs `KILL_FALLBACK_MS` after `close()` and `killTree` is
- *   given, it gets the pid (ClosePseudoConsole normally ends everything, WP-98 #3).
+ *   that entry fail. If a shell still runs `KILL_FALLBACK_MS` after `close()` (seen through the
+ *   pty's `exitCode()`, never the bare pid) and `killTree` is given, it gets the pid
+ *   (ClosePseudoConsole normally ends everything, WP-98 #3).
  * - Backpressure per socket (checked every tick): over `pauseBytes` queued → the terminals it has
  *   attached are not read any more (the pipe fills, conhost slows the shell down) until it is
  *   below `resumeBytes`; over `closeBytes`, or paused longer than `pauseMaxMs` → close 1013.
@@ -49,7 +50,6 @@ import {
 import { newId } from '../lib/ids';
 import { logger as rootLogger } from '../lib/logger';
 import { checkCwd as defaultCheckCwd } from '../lib/paths';
-import { isProcessAlive } from '../lib/process';
 import { regKeyQuery as defaultRegKeyQuery, type RegKeyQuery } from '../lib/registry';
 import { nodeFsProbe, type FsProbe } from '../lib/windows';
 import { realTimers, type Timers } from '../sessions/lib/timers';
@@ -110,8 +110,6 @@ export interface TerminalServiceOptions extends TerminalServiceDeps {
   timers?: Timers;
   /** Fallback for a shell still running `KILL_FALLBACK_MS` after `close()` (e.g. `killProcessTree`); none if missing. */
   killTree?: (pid: number) => Promise<void>;
-  /** Liveness check for the fallback (default `isProcessAlive`). */
-  isRunning?: (pid: number) => boolean;
   /** Overrides the launch resolution (tests). */
   launch?: TerminalLaunch;
   /** Default `checkCwd` of `lib/paths.ts`. */
@@ -159,7 +157,6 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
   const log = (options.logger ?? rootLogger).child({ module: 'terminal' });
   const now = options.now ?? Date.now;
   const timers = options.timers ?? realTimers;
-  const isRunning = options.isRunning ?? isProcessAlive;
   const checkCwd = options.checkCwd ?? ((cwd: string) => defaultCheckCwd(cwd));
   const { pty: factory, killTree } = options;
 
@@ -258,24 +255,43 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
       }, ms);
     });
 
-  /** Waits until `pid` is gone; after KILL_FALLBACK_MS the tree gets `killTree`. */
-  const watchExit = async (pid: number, kill: (pid: number) => Promise<void>): Promise<void> => {
-    const deadline = now() + KILL_FALLBACK_MS;
-    while (isRunning(pid)) {
-      if (now() >= deadline) {
-        log.warn({ pid }, 'shell still running after the console closed – killing the tree');
-        try {
-          await kill(pid);
-        } catch (error) {
-          log.warn({ err: error, pid }, 'killing the shell tree failed');
-        }
-        return;
-      }
-      await sleep(KILL_WATCH_STEP_MS);
+  const ended = (pty: PtyProcess): boolean => {
+    try {
+      return pty.exitCode() !== null;
+    } catch {
+      return true;
     }
   };
 
-  /** `close()` of a pty, plus the kill fallback when a pid is known. */
+  /** Polls `exitCode()` until the shell is gone or `ms` passed; true = gone. */
+  const waitEnded = async (pty: PtyProcess, ms: number): Promise<boolean> => {
+    const deadline = now() + ms;
+    while (!ended(pty)) {
+      if (now() >= deadline) return false;
+      await sleep(KILL_WATCH_STEP_MS);
+    }
+    return true;
+  };
+
+  /**
+   * Waits until the shell is gone; after KILL_FALLBACK_MS the tree gets `killTree`. Liveness comes
+   * from the pty (`exitCode()` keeps answering after `close()`), never from the bare pid: ConPTY keeps
+   * the process handle until it has seen the end, so the pid cannot belong to another process yet.
+   */
+  const watchExit = async (pty: PtyProcess, pid: number): Promise<void> => {
+    if (await waitEnded(pty, KILL_FALLBACK_MS)) return;
+    if (killTree === undefined) return;
+    log.warn({ pid }, 'shell still running after the console closed – killing the tree');
+    try {
+      await killTree(pid);
+    } catch (error) {
+      log.warn({ err: error, pid }, 'killing the shell tree failed');
+    }
+    // Lets the pty see the end (and free its process handle).
+    if (!(await waitEnded(pty, KILL_FALLBACK_MS))) log.warn({ pid }, 'shell survived the tree kill');
+  };
+
+  /** `close()` of a pty, then a watch until it is gone (kill fallback) when a pid is known. */
   const stopPty = (pty: PtyProcess): void => {
     const pid = pty.pid;
     try {
@@ -283,8 +299,8 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     } catch (error) {
       log.warn({ err: error }, 'closing a pseudo console failed');
     }
-    if (pid === null || killTree === undefined) return;
-    const watch = watchExit(pid, killTree).finally(() => {
+    if (pid === null) return;
+    const watch = watchExit(pty, pid).finally(() => {
       watches.delete(watch);
     });
     watches.add(watch);
