@@ -31,7 +31,14 @@ import {
   themeSchema,
 } from './common';
 import { errorCodeSchema, errorInfoSchema, errorPayloadSchema } from './errors';
-import { isSafeWindowsPath, windowsBaseName, windowsPathExtension } from './paths';
+import {
+  WIN32_PATHS,
+  isSafeWindowsPath,
+  pathFlavorOfShape,
+  pathRules,
+  type PathFlavor,
+  type PathRules,
+} from './paths';
 import { runStateSchema, statusFactsSchema, turnOutcomeSchema, type NotificationKind } from './status';
 
 export { turnInfoSchema, type TurnInfo } from './status';
@@ -470,17 +477,108 @@ export const DEFAULT_PROGRAM_EXTENSIONS = [
   'pdf',
 ] as const;
 
-/** The server checks the requested AND the resolved path (ADR-144). */
-export function isDefaultProgramAllowed(path: string): boolean {
-  return (DEFAULT_PROGRAM_EXTENSIONS as readonly string[]).includes(windowsPathExtension(path));
+/**
+ * Linux counterpart of `EDITOR_BLOCKED_EXECUTABLES` (WP-102, base name, case-insensitive, a trailing
+ * version like `python3.12` ignored): shells, interpreters, wrappers that run another program, terminal
+ * emulators and openers that hand the file to whatever program the desktop picks.
+ */
+export const EDITOR_BLOCKED_POSIX_EXECUTABLES = [
+  // shells
+  'sh',
+  'bash',
+  'dash',
+  'zsh',
+  'fish',
+  'ksh',
+  'mksh',
+  'csh',
+  'tcsh',
+  'pwsh',
+  'busybox',
+  // interpreters
+  'python',
+  'perl',
+  'ruby',
+  'node',
+  'nodejs',
+  'deno',
+  'bun',
+  'php',
+  'lua',
+  'tclsh',
+  'wish',
+  'awk',
+  'gawk',
+  'mawk',
+  'nawk',
+  // wrappers that run another program
+  'env',
+  'sudo',
+  'su',
+  'doas',
+  'pkexec',
+  'runuser',
+  'setsid',
+  'nohup',
+  'nice',
+  'timeout',
+  'xargs',
+  'script',
+  'ssh',
+  'systemd-run',
+  'flatpak',
+  'snap',
+  // terminal emulators
+  'x-terminal-emulator',
+  'gnome-terminal',
+  'kgx',
+  'ptyxis',
+  'konsole',
+  'xterm',
+  'xfce4-terminal',
+  'mate-terminal',
+  'lxterminal',
+  'tilix',
+  'terminator',
+  'kitty',
+  'alacritty',
+  'wezterm',
+  'foot',
+  'urxvt',
+  'rxvt',
+  // openers
+  'xdg-open',
+  'gio',
+  'gnome-open',
+  'kde-open',
+  'kde-open5',
+  'exo-open',
+] as const;
+
+/** The server checks the requested AND the resolved path (ADR-144); `rules` = those of the host. */
+export function isDefaultProgramAllowed(path: string, rules: PathRules = WIN32_PATHS): boolean {
+  return (DEFAULT_PROGRAM_EXTENSIONS as readonly string[]).includes(rules.extension(path));
 }
 
-/** Why an editor executable is not acceptable, or null (absolute `.exe`, not on the block list). */
-export function editorExecutableIssue(executable: string): 'path' | 'not_exe' | 'blocked' | null {
-  if (!isSafeWindowsPath(executable)) return 'path';
-  if (!/\.exe$/i.test(executable)) return 'not_exe';
-  const base = windowsBaseName(executable).toLowerCase();
-  return (EDITOR_BLOCKED_EXECUTABLES as readonly string[]).includes(base) ? 'blocked' : null;
+export type EditorExecutableIssue = 'path' | 'not_exe' | 'blocked';
+
+/**
+ * Why an editor executable is not acceptable, or null. Windows: absolute `.exe`, not on the block list.
+ * POSIX (WP-102): absolute and safe, not on the POSIX block list. `rules` = those of the host.
+ */
+export function editorExecutableIssue(
+  executable: string,
+  rules: PathRules = WIN32_PATHS,
+): EditorExecutableIssue | null {
+  if (!rules.isSafe(executable)) return 'path';
+  const base = rules.baseName(executable).toLowerCase();
+  if (rules.flavor === 'win32') {
+    if (!/\.exe$/i.test(executable)) return 'not_exe';
+    return (EDITOR_BLOCKED_EXECUTABLES as readonly string[]).includes(base) ? 'blocked' : null;
+  }
+  const unversioned = base.replace(/[\d.]+$/, '');
+  const blocked = EDITOR_BLOCKED_POSIX_EXECUTABLES as readonly string[];
+  return blocked.includes(base) || blocked.includes(unversioned) ? 'blocked' : null;
 }
 
 export const editorSettingsSchema = z
@@ -493,7 +591,10 @@ export const editorSettingsSchema = z
   })
   .superRefine((editor, ctx) => {
     if (editor.executable !== null) {
-      const issue = editorExecutableIssue(editor.executable);
+      // Shared by both kinds of host: the rules of the path's own shape; the host checks again with its
+      // rules when saving (`settings.update`) and the UI with the rules of the host it edits (WP-102).
+      const rules = pathRules(pathFlavorOfShape(editor.executable));
+      const issue = editorExecutableIssue(editor.executable, rules);
       if (issue !== null) ctx.addIssue({ code: 'custom', path: ['executable'], message: issue });
     }
     if (editor.preset === 'custom') {
@@ -514,10 +615,27 @@ export function defaultEditorSettings(): EditorSettings {
 
 // ---- Shell in the project folder (WP-97, ADR-238) ----
 
-/** Shells of "Open shell in folder" (WP-97) – a visible window in the session's cwd. */
-export const SHELL_KINDS = ['cmd', 'powershell', 'gitbash'] as const;
+/** Shells on Windows (WP-97): cmd, Windows PowerShell 5.1, Git Bash. */
+export const WINDOWS_SHELL_KINDS = ['cmd', 'powershell', 'gitbash'] as const;
+/**
+ * Shells on Linux (WP-102, WP-100 §5.4): `login` = the user's login shell (`$SHELL`, else the
+ * passwd entry), plus bash, zsh, fish and PowerShell 7 (`pwsh`) where installed (`shell.detect`).
+ */
+export const POSIX_SHELL_KINDS = ['login', 'bash', 'zsh', 'fish', 'pwsh'] as const;
+/** Every shell kind on the wire ("Open shell in folder", WP-97; embedded terminal, WP-99). */
+export const SHELL_KINDS = [...WINDOWS_SHELL_KINDS, ...POSIX_SHELL_KINDS] as const;
 export const shellKindSchema = z.enum(SHELL_KINDS);
 export type ShellKind = z.infer<typeof shellKindSchema>;
+
+/** The shell kinds a host of this flavor can offer (the installed ones come from `shell.detect`). */
+export function shellKindsFor(flavor: PathFlavor): readonly ShellKind[] {
+  return flavor === 'win32' ? WINDOWS_SHELL_KINDS : POSIX_SHELL_KINDS;
+}
+
+/** Default shell of a fresh host of this flavor (the settings default `cmd` is replaced on Linux). */
+export function defaultShellFor(flavor: PathFlavor): ShellKind {
+  return flavor === 'win32' ? 'cmd' : 'login';
+}
 
 /**
  * Window of Git Bash: `mintty` = `git-bash.exe` (like the Start menu shortcut "Git Bash"),
@@ -531,7 +649,10 @@ export type GitBashWindow = z.infer<typeof gitBashWindowSchema>;
 export const consoleSettingsSchema = z.object({
   defaultShell: shellKindSchema,
   gitBashWindow: gitBashWindowSchema,
-  /** Folder of Git for Windows (holds `git-bash.exe`); null = detected (shell.detect). */
+  /**
+   * Folder of Git for Windows (holds `git-bash.exe`); null = detected (shell.detect). Windows only:
+   * stays Windows-strict, a Linux host keeps it null (WP-102).
+   */
   gitDir: z
     .string()
     .min(1)
@@ -1072,6 +1193,39 @@ export const updateStateSchema = z.object({
 export type UpdateState = z.infer<typeof updateStateSchema>;
 export const DEFAULT_UPDATE_STATE: UpdateState = updateStateSchema.parse({});
 
+/**
+ * What the host's desktop can do (WP-102, WP-100 §3.3): the UI shows desktop actions only where
+ * the host has them – a Linux server without a desktop has none of these. Session features
+ * (transcript, files, terminal) are not listed here (`terminalAvailable`, `fileOpenAvailable`, …).
+ */
+export const hostCapabilitiesSchema = z.object({
+  /** A local desktop session (Chrome window, notifications, programs). False in server mode. */
+  desktop: z.boolean(),
+  /** "Open in external console" (`session.openExternal`). */
+  externalConsole: z.boolean(),
+  /** "Open shell in folder" as a window (`session.openShell`, WP-97). */
+  shellWindow: z.boolean(),
+  /** Open files in an editor / the default program (`file.open`). */
+  editor: z.boolean(),
+  /** "Show in folder" (Explorer, file manager). */
+  fileManager: z.boolean(),
+  /** Start with the user's login (Windows shortcut, XDG autostart or the systemd user service). */
+  autostart: z.boolean(),
+  /** `parallax:` links. */
+  protocolHandler: z.boolean(),
+});
+export type HostCapabilities = z.infer<typeof hostCapabilitiesSchema>;
+/** Default for servers that do not send capabilities: every one of them runs on Windows with a desktop. */
+export const WINDOWS_HOST_CAPABILITIES = {
+  desktop: true,
+  externalConsole: true,
+  shellWindow: true,
+  editor: true,
+  fileManager: true,
+  autostart: true,
+  protocolHandler: true,
+} as const satisfies HostCapabilities;
+
 export const hostStateSchema = z.object({
   /** package.json version. */
   serverVersion: z.string(),
@@ -1079,8 +1233,10 @@ export const hostStateSchema = z.object({
   sdkVersion: z.string(),
   /** Minimum CLI according to the SDK manifest. */
   sdkClaudeCodeVersion: z.string(),
-  /** 'win32' */
+  /** `process.platform` of the host ('win32', 'linux'); picks the path rules (`pathFlavorOf`, WP-102). */
   platform: z.string(),
+  /** WP-102: desktop actions of this host; absent (older servers, all Windows) → everything available. */
+  capabilities: hostCapabilitiesSchema.default(WINDOWS_HOST_CAPABILITIES),
   /** Display only, e.g. '%LOCALAPPDATA%\\Parallax' or 'dev'. */
   dataDirLabel: z.string(),
   dev: z.boolean(),

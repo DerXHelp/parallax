@@ -1,6 +1,6 @@
 import { ChevronDownIcon, PanelRightOpenIcon, SettingsIcon, TerminalIcon } from 'lucide-react';
 import { useRef } from 'react';
-import { SHELL_KINDS, type SessionSummary } from '@shared/model';
+import { WINDOWS_SHELL_KINDS, type SessionSummary } from '@shared/model';
 import { useT } from '@web/i18n';
 import { useTerminalAvailable } from '@web/state/hosts';
 import { useSettings } from '@web/state/settings';
@@ -79,7 +79,7 @@ export function ConsoleButton({ sessionKey, summary }: { sessionKey: string; sum
             event.preventDefault();
           }}
         >
-          {SHELL_KINDS.map((shell) => (
+          {WINDOWS_SHELL_KINDS.map((shell) => (
             <DropdownMenuItem
               key={shell}
               data-choice={shell}

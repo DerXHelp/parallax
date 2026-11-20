@@ -38,6 +38,11 @@ const EXE: Record<ShellKind, string> = {
   cmd: 'C:\\Windows\\System32\\cmd.exe',
   powershell: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
   gitbash: 'C:\\Program Files\\Git\\bin\\bash.exe',
+  login: '/bin/bash',
+  bash: '/bin/bash',
+  zsh: '/usr/bin/zsh',
+  fish: '/usr/bin/fish',
+  pwsh: '/usr/bin/pwsh',
 };
 const PROMPT = `${CWD}>`;
 

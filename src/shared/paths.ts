@@ -300,6 +300,14 @@ export function pathFlavorOf(platform: string): PathFlavor {
   return platform === 'win32' ? 'win32' : 'posix';
 }
 
+/**
+ * The flavor a path is written in: `/…` is POSIX, everything else Windows. Only for schemas both
+ * kinds of host share (settings on the wire and on disk); the host checks again with its own rules.
+ */
+export function pathFlavorOfShape(path: string): PathFlavor {
+  return path.startsWith('/') ? 'posix' : 'win32';
+}
+
 /** The path rules of one flavor – callers hold one of these instead of calling `windows*`/`posix*` directly. */
 export interface PathRules {
   readonly flavor: PathFlavor;

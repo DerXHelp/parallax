@@ -597,7 +597,15 @@ describe('command results', () => {
     expect(parseCommandResult('fs.listDirectory', sampleFsListing())).toEqual(sampleFsListing());
     expect(parseCommandResult('session.openShell', { pid: 4242 })).toEqual({ pid: 4242 });
     expect(parseCommandResult('session.openShell', { pid: 0 })).toBeNull();
-    expect(parseCommandResult('shell.detect', { gitDir: null })).toEqual({ gitDir: null });
+    // WP-102: an older server sends no `shells` – the Windows three.
+    expect(parseCommandResult('shell.detect', { gitDir: null })).toEqual({
+      gitDir: null,
+      shells: ['cmd', 'powershell', 'gitbash'],
+    });
+    expect(parseCommandResult('shell.detect', { gitDir: null, shells: ['login', 'zsh'] })).toEqual({
+      gitDir: null,
+      shells: ['login', 'zsh'],
+    });
     expect(parseCommandResult('fs.createDirectory', { path: 'D:\\work\\foobar' })).toEqual({
       path: 'D:\\work\\foobar',
     });
@@ -834,7 +842,7 @@ describe('command results', () => {
   });
 
   it('PROTOCOL_VERSION is 6 (WP-95)', () => {
-    expect(PROTOCOL_VERSION).toBe(6);
+    expect(PROTOCOL_VERSION).toBe(7);
   });
 
   it('WP-76: multi-host commands are host commands; drafts are session commands; client kinds', () => {

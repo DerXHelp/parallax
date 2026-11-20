@@ -207,5 +207,12 @@ export async function resolveShellLaunch(
         env,
       };
     }
+    // WP-102: the Linux shells come with WP-105; until then they are "not installed" here.
+    case 'login':
+    case 'bash':
+    case 'zsh':
+    case 'fish':
+    case 'pwsh':
+      throw new CommandError(makeError('SHELL_NOT_FOUND', { shell: kind }));
   }
 }

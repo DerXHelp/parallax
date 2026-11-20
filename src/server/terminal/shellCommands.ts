@@ -19,7 +19,7 @@
 import type { Logger } from 'pino';
 import type { EntryId } from '@shared/common';
 import { makeError } from '@shared/errors';
-import type { Settings } from '@shared/model';
+import { WINDOWS_SHELL_KINDS, type Settings } from '@shared/model';
 import type { ConsoleLaunchSpec } from '../claude/ports';
 import { logger as rootLogger } from '../lib/logger';
 import { checkCwd as defaultCheckCwd } from '../lib/paths';
@@ -57,7 +57,11 @@ export function createShellCommands(deps: ShellCommandsDeps): HostCommandHandler
     names: ['session.openShell', 'shell.detect'],
     async handle(cmd) {
       if (cmd.name === 'shell.detect') {
-        return { gitDir: await finder.refresh(deps.settings().console.gitDir, locator()) };
+        // WP-102: `shells` – the Windows three as before; the Linux lookup comes with WP-105.
+        return {
+          gitDir: await finder.refresh(deps.settings().console.gitDir, locator()),
+          shells: [...WINDOWS_SHELL_KINDS],
+        };
       }
       if (cmd.name !== 'session.openShell') {
         throw new CommandError(makeError('NOT_IMPLEMENTED', { command: cmd.name }));

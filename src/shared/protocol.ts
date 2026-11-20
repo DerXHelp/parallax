@@ -68,6 +68,7 @@ import {
   SUBAGENT_TRANSCRIPT_LIMITS,
   settingsSchema,
   shellKindSchema,
+  WINDOWS_SHELL_KINDS,
   transcriptItemSchema,
 } from './model';
 import { NAME_MAX_CHARS } from './paths';
@@ -83,8 +84,9 @@ import { notificationKindSchema } from './status';
  *   session.setDraft, HOST_* / PAIRING_* / REMOTE_* / DRAFT_TOO_LARGE, `clientHello.kind`, close codes
  *   of the forwarder.
  * 6 (WP-95, ADR-236): the system events `attachments_missing` and `peer_message_hold`.
+ * 7 (WP-102, Linux): shell kinds login/bash/zsh/fish/pwsh, `shell.detect` → `shells`, `HostState.capabilities`.
  */
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 /** WP-70: longest pasted sign-in code (`profile.loginCode`; a link with code and state fits). */
 export const LOGIN_CODE_CHARS = 4000;
 /**
@@ -1010,7 +1012,11 @@ export const commandResultSchemas = {
   /** PID of the started window process (null = unknown). */
   'session.openShell': z.object({ pid: z.number().int().positive().nullable() }),
   /** The Git for Windows folder (holds `git-bash.exe`), null = not found. */
-  'shell.detect': z.object({ gitDir: z.string().nullable() }),
+  /** WP-102: `shells` = the kinds installed on this host, in display order (older servers: the Windows three). */
+  'shell.detect': z.object({
+    gitDir: z.string().nullable(),
+    shells: z.array(shellKindSchema).default([...WINDOWS_SHELL_KINDS]),
+  }),
 } as const satisfies Record<CommandName, z.ZodType>;
 export type CommandResult<N extends CommandName> = z.infer<(typeof commandResultSchemas)[N]>;
 

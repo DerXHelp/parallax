@@ -19,6 +19,7 @@ import {
   DEFAULT_UPDATE_STATE,
   IDLE_PROFILE_LOGIN,
   KEY_FILE_SCHEMA_VERSION,
+  WINDOWS_HOST_CAPABILITIES,
   defaultEditorSettings,
 } from './model';
 import type {
@@ -274,6 +275,7 @@ export function sampleHostState(p: Partial<HostState> = {}): HostState {
     sdkVersion: '0.3.296',
     sdkClaudeCodeVersion: '2.1.296',
     platform: 'win32',
+    capabilities: { ...WINDOWS_HOST_CAPABILITIES },
     dataDirLabel: 'dev',
     dev: true,
     backend: 'fake',

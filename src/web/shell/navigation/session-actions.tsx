@@ -27,7 +27,7 @@ import {
 import { Fragment } from 'react';
 import { LOCAL_HOST_ID, parseSessionKey, type HostId } from '@shared/common';
 import { makeError } from '@shared/errors';
-import { SHELL_KINDS, type SessionSummary, type ShellKind } from '@shared/model';
+import { WINDOWS_SHELL_KINDS, type SessionSummary, type ShellKind } from '@shared/model';
 import { windowsPathIssue } from '@shared/paths';
 import type { Command, CommandName } from '@shared/protocol';
 import { useT, type TranslationKey } from '@web/i18n';
@@ -254,6 +254,11 @@ export const SHELL_LABELS: Readonly<Record<ShellKind, TranslationKey>> = {
   cmd: 'navigation.shells.cmd',
   powershell: 'navigation.shells.powershell',
   gitbash: 'navigation.shells.gitbash',
+  login: 'navigation.shells.login',
+  bash: 'navigation.shells.bash',
+  zsh: 'navigation.shells.zsh',
+  fish: 'navigation.shells.fish',
+  pwsh: 'navigation.shells.pwsh',
 };
 
 /** The default shell of this computer's settings (shells open only on this computer). */
@@ -452,7 +457,8 @@ function build(
         run: () => {
           openShellIn(sessionKey, summary, preferred);
         },
-        children: SHELL_KINDS.map((shell): SessionSubAction => {
+        // WP-102: the Windows three until WP-104/105 pass the host's shells.
+        children: WINDOWS_SHELL_KINDS.map((shell): SessionSubAction => {
           const item: SessionSubAction = {
             id: shell,
             label: SHELL_LABELS[shell],

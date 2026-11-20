@@ -24,10 +24,14 @@ import { makeError } from '@shared/errors';
 import {
   currentSessionId,
   draftTotalChars,
+  editorExecutableIssue,
   type Entry,
   type PlanDecision,
   type Settings,
+  type SettingsPatch,
 } from '@shared/model';
+import type { PathRules } from '@shared/paths';
+import { HOST_PATH_RULES } from '../lib/paths';
 import {
   isHostCommand,
   type Command,
@@ -94,6 +98,7 @@ export async function handleCommand(
       case 'session.create':
         return await createSession(engine, cmd, ctx.clientId);
       case 'settings.update': {
+        assertHostSettings(cmd.patch);
         const prev = engine.core.stores.settings.get();
         const settings = engine.core.stores.settings.update(cmd.patch);
         engine.settingsChanged(prev, settings);
@@ -117,6 +122,17 @@ export async function handleCommand(
 
 function notImplemented(name: string): CommandError {
   return commandError('NOT_IMPLEMENTED', { command: name });
+}
+
+/**
+ * WP-102: the shared schema accepts an editor path of either shape (Windows or POSIX); a host stores
+ * only one its own rules accept → VALIDATION_FAILED {field: 'editor.executable', reason}.
+ */
+export function assertHostSettings(patch: SettingsPatch, rules: PathRules = HOST_PATH_RULES): void {
+  const executable = patch.editor?.executable;
+  if (executable === undefined || executable === null) return;
+  const issue = editorExecutableIssue(executable, rules);
+  if (issue !== null) throw commandError('VALIDATION_FAILED', { field: 'editor.executable', reason: issue });
 }
 
 /** ADR-101: the handler that lists the name; its CommandErrors pass through unchanged. */

@@ -23,12 +23,23 @@ export const en = {
     cmd: 'Command Prompt (cmd)',
     powershell: 'PowerShell',
     gitbash: 'Git Bash',
+    /** WP-102: Linux – the user's login shell, then the common ones. */
+    login: 'Login shell',
+    bash: 'Bash',
+    zsh: 'Zsh',
+    fish: 'fish',
+    pwsh: 'PowerShell 7',
   },
   /** Short shell names in the tabs. */
   short: {
     cmd: 'cmd',
     powershell: 'PowerShell',
     gitbash: 'Git Bash',
+    login: 'Shell',
+    bash: 'bash',
+    zsh: 'zsh',
+    fish: 'fish',
+    pwsh: 'pwsh',
   },
   tabs: {
     label: 'Terminals of this session',

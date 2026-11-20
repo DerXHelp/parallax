@@ -1,7 +1,14 @@
 import { lstat, readlink, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { makeError } from '@shared/errors';
-import { isWindowsPathInside, windowsPathIssue, windowsPathKey } from '@shared/paths';
+import {
+  isWindowsPathInside,
+  pathFlavorOf,
+  pathRules,
+  windowsPathIssue,
+  windowsPathKey,
+  type PathRules,
+} from '@shared/paths';
 import { CommandError } from '../sync/ports';
 import { FsTimeoutError } from './fsTimeout';
 
@@ -13,6 +20,13 @@ import { FsTimeoutError } from './fsTimeout';
  * junction or symlink whose target is unsafe (`assertNoUnsafeLink`). Phase 3 (WP-53, ADR-141):
  * `resolveAllowedPath` is THE access check of the file service (commands, GET /api/file, "open in").
  */
+
+/**
+ * Path rules of this host (WP-102): Windows or POSIX by `process.platform`. Shared schemas accept
+ * paths of either shape; the server checks them again with these rules (WP-103 moves the file system
+ * checks below onto them).
+ */
+export const HOST_PATH_RULES: PathRules = pathRules(pathFlavorOf(process.platform));
 
 /** Throws `CommandError(PATH_REJECTED, {reason})` if `path` must not be touched. */
 export function assertSafePath(path: string): void {

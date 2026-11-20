@@ -12,6 +12,7 @@ import {
   isSafeWindowsPath,
   isWindowsPathInside,
   pathFlavorOf,
+  pathFlavorOfShape,
   pathRules,
   posixBaseName,
   posixNameIssue,
@@ -327,6 +328,10 @@ describe('pathRules (WP-102)', () => {
     expect(pathFlavorOf('win32')).toBe('win32');
     expect(pathFlavorOf('linux')).toBe('posix');
     expect(pathFlavorOf('darwin')).toBe('posix');
+    expect(pathFlavorOfShape('/usr/bin/code')).toBe('posix');
+    expect(pathFlavorOfShape('C:\\x')).toBe('win32');
+    expect(pathFlavorOfShape('\\\\server\\share')).toBe('win32');
+    expect(pathFlavorOfShape('code')).toBe('win32');
     expect(pathRules('win32')).toBe(WIN32_PATHS);
     expect(pathRules('posix')).toBe(POSIX_PATHS);
   });

@@ -143,6 +143,12 @@ export const en = {
     cmd: 'Command Prompt (cmd)',
     powershell: 'PowerShell',
     gitbash: 'Git Bash',
+    /** WP-102: Linux shells. */
+    login: 'Login shell',
+    bash: 'Bash',
+    zsh: 'Zsh',
+    fish: 'fish',
+    pwsh: 'PowerShell 7',
     default: 'Default',
     open: 'Open {shell} in the project folder',
     choose: 'Choose shell',

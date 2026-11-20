@@ -1,6 +1,11 @@
 import { CircleCheckIcon, CircleXIcon, LoaderCircleIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { gitBashWindowSchema, shellKindSchema, type ConsoleSettings } from '@shared/model';
+import {
+  WINDOWS_SHELL_KINDS,
+  gitBashWindowSchema,
+  shellKindSchema,
+  type ConsoleSettings,
+} from '@shared/model';
 import { windowsPathIssue } from '@shared/paths';
 import { useT } from '@web/i18n';
 import { sendCommand } from '@web/state/hooks';
@@ -157,7 +162,7 @@ export function ConsoleSection({ editor }: { editor: SettingsEditor }) {
             }}
             className="grid gap-2"
           >
-            {shellKindSchema.options.map((option) => (
+            {WINDOWS_SHELL_KINDS.map((option) => (
               <div key={option} className="flex items-center gap-2">
                 <RadioGroupItem id={`${id}-${option}`} value={option} />
                 <Label htmlFor={`${id}-${option}`} className="font-normal">

@@ -1,5 +1,5 @@
 import { TerminalIcon } from 'lucide-react';
-import { SHELL_KINDS, type ShellKind } from '@shared/model';
+import { WINDOWS_SHELL_KINDS, type ShellKind } from '@shared/model';
 import { Button } from '@web/ui/button';
 import { useTerminalT } from '../i18n';
 import { SHELL_KEYS } from '../lib/shells';
@@ -23,7 +23,7 @@ export function TerminalEmpty({ defaultShell, onOpen }: TerminalEmptyProps) {
         <p className="text-muted-foreground text-xs">{tt('empty.hint')}</p>
       </div>
       <div className="flex flex-wrap justify-center gap-2">
-        {SHELL_KINDS.map((shell) => (
+        {WINDOWS_SHELL_KINDS.map((shell) => (
           <Button
             key={shell}
             size="sm"

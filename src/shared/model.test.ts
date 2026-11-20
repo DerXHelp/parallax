@@ -15,6 +15,13 @@ import {
   DEFAULT_PROGRAM_EXTENSIONS,
   defaultEditorSettings,
   EDITOR_BLOCKED_EXECUTABLES,
+  EDITOR_BLOCKED_POSIX_EXECUTABLES,
+  POSIX_SHELL_KINDS,
+  SHELL_KINDS,
+  WINDOWS_HOST_CAPABILITIES,
+  WINDOWS_SHELL_KINDS,
+  defaultShellFor,
+  shellKindsFor,
   EDITOR_PRESET_ARGS,
   editorExecutableIssue,
   conversationSchema,
@@ -64,6 +71,7 @@ import {
   MIN_ZOOM,
   ZOOM_LEVELS,
 } from './model';
+import { POSIX_PATHS, WIN32_PATHS } from './paths';
 import {
   SAMPLE_IDS,
   sampleContextBreakdown,
@@ -746,6 +754,61 @@ describe('Phase 3 contracts (WP-50 §4.5)', () => {
     expect(isDefaultProgramAllowed('D:\\work\\page.html')).toBe(false);
     expect(isDefaultProgramAllowed('D:\\work\\Makefile')).toBe(false);
     expect(isDefaultProgramAllowed('D:\\work\\.md')).toBe(false);
+  });
+
+  it('default program on POSIX (WP-102): same extensions, POSIX base names', () => {
+    expect(isDefaultProgramAllowed('/home/user/notes.MD', POSIX_PATHS)).toBe(true);
+    expect(isDefaultProgramAllowed('/home/user/run.sh', POSIX_PATHS)).toBe(false);
+    expect(isDefaultProgramAllowed('/home/user/a.d/Makefile', POSIX_PATHS)).toBe(false);
+    expect(isDefaultProgramAllowed('/home/user/.md', POSIX_PATHS)).toBe(false);
+  });
+
+  it('editor on POSIX (WP-102): absolute and safe, no .exe needed, POSIX block list', () => {
+    const posix = (executable: string) => editorExecutableIssue(executable, POSIX_PATHS);
+    expect(posix('/usr/bin/code')).toBeNull();
+    expect(posix('/opt/sublime_text/sublime_text')).toBeNull();
+    expect(posix('/snap/bin/notepad-plus-plus')).toBeNull();
+    expect(posix('code')).toBe('path');
+    expect(posix('/usr/bin/../bin/code')).toBe('path');
+    expect(posix('C:\\Tools\\Code.exe')).toBe('path');
+    expect(posix('/proc/self/exe')).toBe('path');
+    expect(posix('/usr/bin/bash')).toBe('blocked');
+    expect(posix('/usr/bin/python3.12')).toBe('blocked');
+    expect(posix('/usr/bin/x-terminal-emulator')).toBe('blocked');
+    expect(posix('/usr/bin/xdg-open')).toBe('blocked');
+    for (const name of EDITOR_BLOCKED_POSIX_EXECUTABLES) {
+      expect(posix(`/usr/local/bin/${name.toUpperCase()}`)).toBe('blocked');
+    }
+    // The default rules stay Windows (existing callers).
+    expect(editorExecutableIssue('/usr/bin/code')).toBe('path');
+    expect(editorExecutableIssue('C:\\x\\Code.exe', WIN32_PATHS)).toBeNull();
+  });
+
+  it('editor schema accepts a path of either shape; each by its own rules (WP-102)', () => {
+    const exe = (executable: string) => issuesOf({ preset: 'custom', executable, args: ['{file}'] });
+    expect(exe('/usr/bin/code')).toEqual([]);
+    expect(exe('/usr/bin/zsh')).toEqual(['executable:blocked']);
+    expect(exe('/usr/bin/../zsh')).toEqual(['executable:path']);
+    expect(exe('C:\\Tools\\edit.bat')).toEqual(['executable:not_exe']);
+    expect(exe('usr/bin/code')).toEqual(['executable:path']);
+  });
+
+  it('shell kinds per platform (WP-102)', () => {
+    expect(SHELL_KINDS).toEqual([...WINDOWS_SHELL_KINDS, ...POSIX_SHELL_KINDS]);
+    expect(shellKindsFor('win32')).toEqual(['cmd', 'powershell', 'gitbash']);
+    expect(shellKindsFor('posix')).toEqual(['login', 'bash', 'zsh', 'fish', 'pwsh']);
+    expect(defaultShellFor('win32')).toBe('cmd');
+    expect(defaultShellFor('posix')).toBe('login');
+  });
+
+  it('host capabilities default to the Windows set for older servers (WP-102)', () => {
+    const { capabilities, ...older } = sampleHostState();
+    expect(capabilities).toEqual(WINDOWS_HOST_CAPABILITIES);
+    expect(hostStateSchema.parse(older).capabilities).toEqual(WINDOWS_HOST_CAPABILITIES);
+    const server = { ...WINDOWS_HOST_CAPABILITIES, desktop: false, editor: false, autostart: false };
+    expect(hostStateSchema.parse({ ...older, platform: 'linux', capabilities: server }).capabilities).toEqual(
+      server,
+    );
   });
 
   it('additive defaults: task outputFile, plan_approved.freshContext, category id, detail fields', () => {

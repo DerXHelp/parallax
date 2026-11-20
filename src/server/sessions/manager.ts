@@ -30,10 +30,12 @@ import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   DEFAULT_MULTI_HOST_CONFIG,
   DEFAULT_UPDATE_STATE,
+  WINDOWS_HOST_CAPABILITIES,
   currentConversation,
   isRemoteControlActive,
   type AppInfo,
   type Entry,
+  type HostCapabilities,
   type HostState,
   type HostWarning,
   type Profile,
@@ -208,6 +210,8 @@ export interface SessionManagerDeps {
     systemIntegration?: boolean;
     /** WP-99 (ADR-239): `HostState.terminalAvailable` (TerminalService.available). Absent → false. */
     terminalAvailable?: boolean;
+    /** WP-102: `HostState.capabilities` (desktop actions of this host). Absent → the Windows set. */
+    capabilities?: HostCapabilities;
     /** WP-87: `HostState.app` and `HostState.update` (the update service). Absent → null / default. */
     app?: () => AppInfo | null;
     update?: () => UpdateState;
@@ -451,6 +455,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       sdkVersion: deps.host.sdkVersion,
       sdkClaudeCodeVersion: deps.host.sdkClaudeCodeVersion,
       platform: deps.host.platform,
+      capabilities: deps.host.capabilities ?? { ...WINDOWS_HOST_CAPABILITIES },
       dataDirLabel: deps.host.dataDirLabel,
       dev: deps.host.dev,
       backend: deps.backend.kind,

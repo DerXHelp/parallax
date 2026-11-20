@@ -111,9 +111,12 @@ describe('session.openShell (WP-97, ADR-238)', () => {
 describe('shell.detect', () => {
   it('the Git folder (override first), fresh every time', async () => {
     const { fake } = launcher();
-    expect(await commands({ launcher: fake }).handle({ name: 'shell.detect' }, CTX)).toEqual({ gitDir: GIT });
+    expect(await commands({ launcher: fake }).handle({ name: 'shell.detect' }, CTX)).toEqual({
+      gitDir: GIT,
+      shells: ['cmd', 'powershell', 'gitbash'],
+    });
     const none = commands({ launcher: fake, fs: createMemoryFs({}), env: { ...ENV, ProgramFiles: 'C:\\x' } });
-    expect(await none.handle({ name: 'shell.detect' }, CTX)).toEqual({ gitDir: null });
+    expect(await none.handle({ name: 'shell.detect' }, CTX)).toMatchObject({ gitDir: null });
   });
 });
 
