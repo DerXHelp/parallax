@@ -1,7 +1,8 @@
 /**
  * Phase-3 verification "shell" (WP-60 E2E 9 and 10; WP-52/58):
- * 9. narrow window – at 1000 px the side panel lies over the transcript (session area < 1100 px),
- *    at 800 px the sidebar is collapsed to its rail as well; the session stays usable;
+ * 9. narrow window – at 1200 px the side panel stands next to the transcript, which shrinks with it
+ *    (ADR-240), at 700 px the sidebar is collapsed to its rail and the panel lies over the transcript
+ *    (session area < 680 px); the session stays usable;
  * 10. errors – `fake:writes-lost` shows the lost writes of the session's end as an error row; a lazy
  *    slot whose chunk cannot be loaded (route blocked) shows the SlotBoundary card while the rest
  *    of the app keeps working.
@@ -13,7 +14,7 @@ import { expect, test } from './support/fixtures';
 
 test.use({ ownServer: 'p3shell' });
 
-test('narrow window: 1000 px – panel over the transcript; 800 px – sidebar collapsed too; still usable', async ({
+test('narrow window: 1200 px – panel next to the transcript; 700 px – sidebar collapsed, panel over it; still usable', async ({
   app,
   server,
   page,
@@ -26,18 +27,21 @@ test('narrow window: 1000 px – panel over the transcript; 800 px – sidebar c
   const panel = await session.openPanel('files');
   await expect(panel).toHaveAttribute('data-mode', 'inline');
   await expect(sidebar).toHaveAttribute('data-state', 'expanded');
-
-  await page.setViewportSize({ width: 1000, height: 800 });
-  await expect(panel).toHaveAttribute('data-mode', 'overlay');
-  await expect(sidebar).toHaveAttribute('data-state', 'expanded');
   const over = async () => {
     const panelBox = await panel.boundingBox();
     const transcriptBox = await session.transcript.boundingBox();
-    return panelBox !== null && transcriptBox !== null && panelBox.x < transcriptBox.x + transcriptBox.width;
+    return (
+      panelBox !== null && transcriptBox !== null && panelBox.x < transcriptBox.x + transcriptBox.width - 1
+    );
   };
-  expect(await over()).toBe(true);
 
-  await page.setViewportSize({ width: 800, height: 800 });
+  // A window that is not maximized: the transcript shrinks to the part the panel leaves (ADR-240).
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await expect(panel).toHaveAttribute('data-mode', 'inline');
+  await expect(sidebar).toHaveAttribute('data-state', 'expanded');
+  await expect.poll(over).toBe(false);
+
+  await page.setViewportSize({ width: 700, height: 800 });
   await expect(sidebar).toHaveAttribute('data-state', 'collapsed');
   await expect(page.locator('[data-slot="sidebar-rail"]')).toBeVisible();
   await expect(panel).toHaveAttribute('data-mode', 'overlay');
