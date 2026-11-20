@@ -1807,6 +1807,13 @@ defekte Zeilen überspringen und zählen.
   absolute `.exe`, Blockliste `EDITOR_BLOCKED_EXECUTABLES`, PE-Subsystem GUI geprüft, ohne Shell,
   `detached`, Env ohne `PARALLAX*`/Claude-Session-Variablen; Standardprogramm nur für
   `DEFAULT_PROGRAM_EXTENSIONS`; nur lokaler Host; das FakeBackend startet nie Programme.
+- **Shell und Terminal (WP-97…99, ADR-238/239):** Nur auf diesem Rechner, nie für Sessions eines anderen
+  Rechners (`REMOTE_DENIED_COMMANDS`; die Route `API_PATHS.terminalWs` steht nicht in `HOST_API_PATHS`).
+  - Umgebung neutral (`guiEnvironment`, PATH ohne `node_modules\.bin`), ohne Profil-Env.
+  - „Shell im Ordner öffnen“ startet ein sichtbares Fenster über den `ConsoleLauncher` (ADR-104).
+  - Das eingebettete Terminal (`src/server/terminal/`) startet die Shell in einer Pseudokonsole über `node:ffi`
+    (ConPTY). Es liest nie blockierend und beendet die Shells beim Archivieren, Entfernen und Server-Ende. Ein- und
+    Ausgabe werden nie protokolliert.
 - **XSS = Codeausführung:** kein `rehype-raw`, kein `dangerouslySetInnerHTML`; der Client sendet nur
   Absichten, nie rohe `updatedPermissions` (ADR-012).
 

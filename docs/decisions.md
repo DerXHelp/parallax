@@ -2914,3 +2914,51 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
 - **Folgen:** Keine `PROTOCOL_VERSION`-Erhöhung (zwei Befehle, zwei Fehlercodes, ein Settings-Feld mit Default).
   Mit dem FakeBackend öffnet sich nichts, der Befehl wird nur geloggt (E2E). Das eingebettete Terminal (WP-99) nutzt
   dieselbe Auflösung im Modus `embedded`.
+
+## ADR-239 – Eingebettetes Terminal: ConPTY über `node:ffi`, eigene WS-Route, nie für andere Rechner
+- **Datum/WP:** 20.11.2026, WP-98 (Spike) und WP-99 (`feature/konsole`), Entscheidungen des Nutzers: eigene
+  ConPTY-Anbindung statt node-pty, Tab im Seitenpanel.
+- **Entscheidung:**
+  - **Pseudokonsole:** `CreatePseudoConsole` und `CreateProcessW` aus kernel32 über `node:ffi`
+    (`src/server/terminal/conpty.ts`), ohne native Abhängigkeit und ohne Hilfsprozess.
+    - Lesen nur nach `PeekNamedPipe`, also nie blockierend, über einen gemeinsamen Timer: 16 ms bei Ausgabe, sonst
+      100 ms, höchstens 64 KiB je Terminal und 256 KiB je Tick.
+    - Schließen: zuerst die Ausgabe-Pipe, dann `ClosePseudoConsole`. Das beendet die angehängten Prozesse.
+      `killProcessTree` bleibt nur der Rückfall.
+    - Vor dem ersten Start `SetConsoleCtrlHandler(NULL, FALSE)`. Sonst erbt die Shell vom detached Server „Ctrl+C
+      ignorieren“ (WP-98).
+  - **Umgebung und Start** wie in Stufe 1 (ADR-238): neutral, `resolveShellLaunch(…, 'embedded')`. Git Bash läuft
+    als `bin\bash.exe --login -i`.
+  - **Eigene WS-Route** `API_PATHS.terminalWs` mit Protokoll v1 (`src/shared/terminal.ts`):
+    - JSON für Steuerung und Eingabe, Binär-Frames `[channel u8][UTF-8]` für die Ausgabe.
+    - Ein Socket je eingehängtem Panel, gebunden an einen Eintrag.
+    - Wächter-Klasse `ws` (Origin, Cookie, zweite Prüfung beim Upgrade).
+    - Nicht in `HOST_API_PATHS`; der Peer-Server lehnt jede fremde Route ab. Der Sync-Hub bleibt unberührt.
+  - **Grenzen:** 4 Terminals je Eintrag, 16 auf dem Rechner. Pro Terminal bleiben 256 KiB Verlauf für das Replay.
+    Beim Anhängen kommen der Verlauf und ein Resize-Schubs, nach dem conhost den Bildschirm neu zeichnet.
+  - **Gegendruck:** Ab 1 MiB `bufferedAmount` ruht das Lesen, unter 256 KiB geht es weiter. Ab 8 MiB oder nach
+    30 s Stau wird der Socket mit 1013 geschlossen. Ein- und Ausgabe werden nie protokolliert.
+  - **Lebenszyklus:** Die Shells laufen weiter, wenn das Panel schließt. Archivieren und Entfernen eines Eintrags
+    beenden seine Terminals, das Server-Ende (auch der Neustart für ein Update) beendet alle.
+  - **Oberfläche:** xterm.js 6 (DOM-Renderer, ohne WebGL) nur im lazy Chunk `features/terminal`.
+    - Tab „Terminal“ nur bei Sessions dieses Rechners mit `HostState.terminalAvailable`.
+    - Alt+T öffnet ihn bzw. führt aus dem Terminal zurück ins Eingabefeld.
+    - Esc bleibt im Terminal.
+    - Farben aus den Tokens `--terminal-*`.
+- **Begründung:**
+  - node-pty bräuchte native Builds je Node-Version und eine Ausnahme von `strictDepBuilds`. `node:ffi` ist schon
+    der Weg für Windows-APIs (ADR-229/231).
+  - Der Spike bestätigt die Annahmen:
+    - Schließen unter 1 ms, auch bei einer Flut.
+    - 0,3 % CPU bei 16 Konsolen.
+    - Neuzeichnen nach einem Resize-Schubs.
+    - Keine Meldung der Sicherheitssoftware (WP-98).
+  - Eine eigene Route hält Terminal-Daten aus dem Sync-Protokoll heraus (kein Op-Log, kein Replay an alle Fenster)
+    und macht die Remote-Sperre strukturell.
+- **Folgen:**
+  - `PROTOCOL_VERSION` bleibt unverändert, Protokoll und Route sind neu. Neue Fehlercodes `TERMINAL_*`.
+  - Ohne `node:ffi` (oder außerhalb von Windows x64) gilt `terminalAvailable = false`: Der Tab bleibt verborgen.
+  - Das FakeBackend nutzt eine Echo-Shell (`fakePty.ts`) für Dev und E2E.
+  - Vollbild-Programme können nach einem Replay kurz verstümmelt wirken, bis conhost neu zeichnet; Ausweg später
+    `@xterm/headless` auf dem Server.
+  - Der spätere Handoff von `claude`-Befehlen ins Terminal (Phase 4) kann auf dem `TerminalService` aufbauen.
