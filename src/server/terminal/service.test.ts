@@ -27,6 +27,7 @@ import {
   TERMINAL_BACKPRESSURE,
   TERMINAL_FRAME_BYTES,
   createTerminalService,
+  terminalTitle,
   type TerminalServiceOptions,
 } from './service';
 
@@ -200,6 +201,7 @@ describe('createTerminalService – connect and open (WP-99)', () => {
       rows: 30,
       state: 'running',
       exitCode: null,
+      title: null,
     });
     expect(lastPty().options).toEqual({
       executablePath: EXE.powershell,
@@ -655,5 +657,60 @@ describe('createTerminalService – exit and close (WP-99)', () => {
     expect(settled).toBe(true);
     expect(killTree).toHaveBeenCalledTimes(1);
     expect(killTree).toHaveBeenCalledWith(4242);
+  });
+});
+
+describe('createTerminalService – rename and move (WP-99, test by the user)', () => {
+  it('normalizes titles: control characters become spaces, trimmed, empty = default name', () => {
+    expect(terminalTitle(null)).toBeNull();
+    expect(terminalTitle('   ')).toBeNull();
+    expect(terminalTitle('  build  ')).toBe('build');
+    expect(terminalTitle('a\u001b[31mb\nc')).toBe('a [31mb c');
+    expect(terminalTitle('x'.repeat(80))).toHaveLength(TERMINAL_LIMITS.titleMaxChars);
+  });
+
+  it('renames a terminal of the entry and pushes the list to every socket of it', async () => {
+    const { connect, open } = setup();
+    const a = connect();
+    const b = connect();
+    const other = connect(OTHER);
+    const info = await open(a);
+    a.conn.handle({ type: 'rename', terminalId: info.terminalId, title: ' build ' });
+    expect(b.sink.of('terminals').at(-1)?.items).toEqual([{ ...info, title: 'build' }]);
+    const pushes = b.sink.of('terminals').length;
+    // Same title again: nothing to push.
+    a.conn.handle({ type: 'rename', terminalId: info.terminalId, title: 'build' });
+    expect(b.sink.of('terminals')).toHaveLength(pushes);
+    // Another entry's socket cannot rename it.
+    other.conn.handle({ type: 'rename', terminalId: info.terminalId, title: 'evil' });
+    expect(a.sink.of('terminals').at(-1)?.items[0]?.title).toBe('build');
+    // Empty = back to the default name.
+    a.conn.handle({ type: 'rename', terminalId: info.terminalId, title: '' });
+    expect(a.sink.of('terminals').at(-1)?.items[0]?.title).toBeNull();
+  });
+
+  it('moves a terminal within its entry; the list order is the new order for every socket', async () => {
+    const { connect, open } = setup();
+    const a = connect();
+    const b = connect();
+    const other = connect(OTHER);
+    const first = await open(a, 'r1');
+    const second = await open(a, 'r2', 'powershell');
+    const third = await open(a, 'r3', 'gitbash');
+    const theirs = await open(other, 'o1');
+    const ids = (client: Client) =>
+      client.sink
+        .of('terminals')
+        .at(-1)
+        ?.items.map((item) => item.terminalId);
+    a.conn.handle({ type: 'move', terminalId: third.terminalId, index: 0 });
+    expect(ids(b)).toEqual([third.terminalId, first.terminalId, second.terminalId]);
+    // An index past the end means the last place.
+    a.conn.handle({ type: 'move', terminalId: third.terminalId, index: 3 });
+    expect(ids(a)).toEqual([first.terminalId, second.terminalId, third.terminalId]);
+    // Another entry's terminal is not touched (and not moved by this socket).
+    a.conn.handle({ type: 'move', terminalId: theirs.terminalId, index: 0 });
+    expect(ids(other)).toEqual([theirs.terminalId]);
+    expect(ids(a)).toEqual([first.terminalId, second.terminalId, third.terminalId]);
   });
 });

@@ -357,10 +357,11 @@ export function Sidebar({
         <span className="flex-1" />
         {/* WP-80: "Several computers" – invisible without a role. */}
         <MultiHostIndicator />
-        <GroupByControl grouping={grouping} hasRemoteHosts={hasRemoteHosts} />
+        {/* "New session" first: it is used far more often than the grouping. */}
         <IconButton label={t('shell.sidebar.newSession')} data-action="new-session" onClick={openNewSession}>
           <SquarePenIcon aria-hidden />
         </IconButton>
+        <GroupByControl grouping={grouping} hasRemoteHosts={hasRemoteHosts} />
         <SettingsMenu />
         {onCollapse === undefined ? null : (
           <IconButton

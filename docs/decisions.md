@@ -2962,3 +2962,18 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   - Vollbild-Programme können nach einem Replay kurz verstümmelt wirken, bis conhost neu zeichnet; Ausweg später
     `@xterm/headless` auf dem Server.
   - Der spätere Handoff von `claude`-Befehlen ins Terminal (Phase 4) kann auf dem `TerminalService` aufbauen.
+
+## ADR-240 – Seitenpanel liegt erst bei sehr schmaler Session-Fläche über dem Transkript
+- **Datum/WP:** 20.11.2026, Nutzertest zu WP-99 (`feature/konsole`).
+- **Kontext:** Seit V3-14 bzw. WP-54 lag das Seitenpanel unter 1100 px Session-Fläche als Überlagerung über dem
+  Transkript. In jedem nicht maximierten Fenster blieb das Transkript deshalb hinter dem Panel voll breit. Inhalte wie
+  „Noch keine Nachrichten.“ blieben beim Verschieben des Splitters stehen, statt in der Mitte des sichtbaren Teils zu
+  bleiben. Der Nutzer hielt das für einen Fehler beim Ändern der Größe.
+- **Entscheidung:**
+  - Neben dem Transkript ist das Panel höchstens so breit, dass dem Transkript `TRANSCRIPT_MIN_WIDTH` (360 px) bleiben.
+    Dazu gilt weiter die Obergrenze von 70 %.
+  - Als Überlagerung liegt es erst, wenn neben der Mindestbreite des Panels (320 px) keine 360 px Transkript mehr
+    passen, also unter 680 px Session-Fläche (`SIDE_PANEL_OVERLAY_BELOW`).
+- **Folgen:** Im üblichen Fenster schrumpft das Transkript mit dem Panel und zentriert seinen Inhalt im sichtbaren Teil.
+  Nur sehr schmale Fenster nutzen die Überlagerung. Die übrigen Regeln aus ADR-150 bleiben: Breite je Fenster,
+  320 px Minimum, „Breit“ aus WP-93.

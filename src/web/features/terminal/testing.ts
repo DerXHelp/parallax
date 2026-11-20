@@ -41,6 +41,7 @@ export function sampleTerminalInfo(p: Partial<TerminalInfo> = {}): TerminalInfo 
     rows: 24,
     state: 'running',
     exitCode: null,
+    title: null,
     ...p,
   };
 }
@@ -123,7 +124,8 @@ export function createFakeSocketFactory(): { factory: TerminalSocketFactory; soc
 /**
  * A fake terminal server: opens every socket (microtask), answers `hello` with `welcome` + `terminals`,
  * `open` with `opened` + `terminals` (or `error` while `failOpen` is set), `attach` with `attached`
- * and the replay of `output`, `close` with `terminals`. All answers arrive as microtasks.
+ * and the replay of `output`, `close`, `rename` and `move` with `terminals`. All answers arrive as
+ * microtasks.
  */
 export class FakeTerminalServer {
   available = true;
@@ -225,6 +227,23 @@ export class FakeTerminalServer {
       case 'detach':
         this.channels.delete(message.terminalId);
         break;
+      case 'rename': {
+        const title = message.title?.trim() ?? '';
+        this.items = this.items.map((item): TerminalInfo =>
+          item.terminalId === message.terminalId ? { ...item, title: title === '' ? null : title } : item,
+        );
+        this.pushList(socket);
+        break;
+      }
+      case 'move': {
+        const moving = this.items.find((item) => item.terminalId === message.terminalId);
+        if (moving === undefined) break;
+        const rest = this.items.filter((item) => item !== moving);
+        rest.splice(Math.min(message.index, rest.length), 0, moving);
+        this.items = rest;
+        this.pushList(socket);
+        break;
+      }
       case 'input':
       case 'resize':
         break;

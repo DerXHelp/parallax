@@ -25,6 +25,11 @@ export const de: typeof en = {
     name: '{shell} {number}',
     exited: '{name} (beendet)',
     close: '{name} schließen',
+    hint: 'Doppelklick oder F2 zum Umbenennen, ziehen zum Verschieben',
+    rename: 'Umbenennen',
+    nameLabel: 'Name von {name}',
+    moveLeft: 'Nach links verschieben',
+    moveRight: 'Nach rechts verschieben',
   },
   add: {
     label: 'Neues Terminal',

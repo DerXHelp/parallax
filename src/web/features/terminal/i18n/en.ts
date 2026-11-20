@@ -37,6 +37,13 @@ export const en = {
     /** Accessible name of the tab of an exited terminal. */
     exited: '{name} (exited)',
     close: 'Close {name}',
+    /** Tooltip of a tab. */
+    hint: 'Double-click or F2 to rename, drag to move',
+    rename: 'Rename',
+    /** Accessible name of the name field (`{name}` = the current name). */
+    nameLabel: 'Name of {name}',
+    moveLeft: 'Move left',
+    moveRight: 'Move right',
   },
   add: {
     label: 'New terminal',

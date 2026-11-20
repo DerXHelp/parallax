@@ -482,7 +482,8 @@ läuft.
   (`aside`, Breite, Titelzeile mit Tabs Plan · Datei · Dateien · Aufgaben, Schließen, Esc im Panel,
   Fokus-Rückgabe an den Auslöser); Inhalte nur über die Slots `PlanPanel`, `FilePanel`, `FilesPanel`,
   `TasksPanel`. `SessionPane` rendert den Host neben dem Transkript und den Slot `TaskStrip` direkt
-  über dem Composer. Splitter und Überlagerung unter 1100 px liefert WP-54.
+  über dem Composer. Splitter und Überlagerung liefert WP-54; seit ADR-240 liegt das Panel erst unter 680 px
+  Session-Fläche über dem Transkript (vorher 1100 px), daneben bleiben dem Transkript mindestens 360 px.
 - **`FileLink`** (`FileLinkSlotProps`: `sessionKey`, absoluter Windows-`path`, `line?`, `col?`,
   `verify?` – Link erst nach erfolgreichem `file.statMany`, für Textverweise –, `variant?`
   `'inline' | 'chip' | 'menu'`, `children?`). Aufrufer lösen relative Pfade mit

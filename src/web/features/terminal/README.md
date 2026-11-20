@@ -19,7 +19,7 @@ Shells laufen weiter, wenn das Panel schließt, beim Wiederöffnen spielt der Se
 | Pfad | Inhalt |
 | --- | --- |
 | `TerminalPanel.tsx` | Ein Socket je montiertem Panel (`state/controller.ts`), Zustände: verbinden, nicht verfügbar (`TERMINAL_UNAVAILABLE`), endgültig gescheitert (4404/4426), Leiste, „wird gestartet“, Leerzustand; Serverfehler inline (`Alert role="alert"`, `tError`) |
-| `components/TerminalTabs.tsx` | Leiste der Terminals („cmd 1“, × schließt) mit „+“, darunter alle Ansichten (nur die aktive sichtbar). Klick auf einen Tab fokussiert das Terminal, Pfeiltasten wechseln nur |
+| `components/TerminalTabs.tsx` | Leiste der Terminals („cmd 1“, × schließt) mit „+“, darunter alle Ansichten (nur die aktive sichtbar). Klick auf einen Tab fokussiert das Terminal, Pfeiltasten wechseln nur. Doppelklick, F2 oder Kontextmenü benennen um (`rename`), Ziehen oder „Nach links/rechts“ verschieben (`move`); Name und Reihenfolge hält der Server |
 | `components/AddTerminalMenu.tsx` | „+“: Shells, Standard der Einstellungen zuerst; an der Grenze sind die Shells deaktiviert, ein Hinweis nennt die Grenze |
 | `components/TerminalView.tsx` | Ein Terminal: Engine im Host, Kontextmenü (Kopieren, Einfügen, Alles auswählen, Leeren, Screenreader-Modus, Neu starten, Schließen), Exit-Leiste; Esc-Handler (Esc bleibt im Terminal) |
 | `components/ExitBar.tsx` | „Beendet mit Code n“ (bzw. „konnte nicht gestartet werden“), Neu starten, Schließen |

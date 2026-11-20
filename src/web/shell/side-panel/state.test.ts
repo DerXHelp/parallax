@@ -60,9 +60,14 @@ describe('side panel state (WP-54)', () => {
 });
 
 describe('side panel width (WP-54)', () => {
-  it('320 px … 70 % of the area, default min(672, 45 %), overlay below 1100 px', () => {
+  it('320 px … 70 % of the area, default min(672, 45 %), overlay below 680 px', () => {
     expect(sidePanelMaxWidth(1400)).toBe(980);
     expect(sidePanelMaxWidth(300)).toBe(320);
+    // Inline the transcript keeps 360 px.
+    expect(sidePanelMaxWidth(1000)).toBe(640);
+    expect(sidePanelMaxWidth(700)).toBe(340);
+    expect(sidePanelMaxWidth(680)).toBe(320);
+    expect(clampSidePanelWidth(900, 1000)).toBe(640);
     expect(defaultSidePanelWidth(2000)).toBe(672);
     expect(defaultSidePanelWidth(1000)).toBe(450);
     expect(defaultSidePanelWidth(500)).toBe(320);
@@ -71,8 +76,9 @@ describe('side panel width (WP-54)', () => {
     expect(clampSidePanelWidth(700.4, 1400)).toBe(700);
     // Never wider than a tiny area.
     expect(clampSidePanelWidth(400, 300)).toBe(300);
-    expect(isSidePanelOverlay(1099)).toBe(true);
-    expect(isSidePanelOverlay(1100)).toBe(false);
+    expect(isSidePanelOverlay(679)).toBe(true);
+    expect(isSidePanelOverlay(680)).toBe(false);
+    expect(isSidePanelOverlay(1000)).toBe(false);
     expect(isSidePanelOverlay(null)).toBe(false);
   });
 });

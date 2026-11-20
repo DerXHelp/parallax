@@ -1,7 +1,12 @@
 import type { EntryId } from '@shared/common';
 import { makeError } from '@shared/errors';
 import { DEFAULT_CONSOLE_SETTINGS, type ShellKind } from '@shared/model';
-import type { TerminalId, TerminalInfo, TerminalServerMessage } from '@shared/terminal';
+import {
+  TERMINAL_LIMITS,
+  type TerminalId,
+  type TerminalInfo,
+  type TerminalServerMessage,
+} from '@shared/terminal';
 import { DEFAULT_TERMINAL_SIZE, type TerminalSize } from '../lib/size';
 import {
   TerminalConnection,
@@ -113,6 +118,38 @@ export class TerminalController {
     if (item === undefined || this.connection?.isReady !== true) return;
     this.close(terminalId);
     this.open(item.shell, 1);
+  }
+
+  /**
+   * Names a terminal (empty = the default name again). Shown at once; the server trims the name and
+   * pushes the list to every window.
+   */
+  rename(terminalId: TerminalId, title: string): void {
+    const trimmed = title.trim().slice(0, TERMINAL_LIMITS.titleMaxChars);
+    const next = trimmed === '' ? null : trimmed;
+    const state = this.store.getState();
+    const item = state.items.find((candidate) => candidate.terminalId === terminalId);
+    if (item === undefined || item.title === next || this.connection?.isReady !== true) return;
+    if (!this.connection.send({ type: 'rename', terminalId, title: next })) return;
+    this.store.setState({
+      items: state.items.map((candidate): TerminalInfo =>
+        candidate.terminalId === terminalId ? { ...candidate, title: next } : candidate,
+      ),
+    });
+  }
+
+  /** Moves a terminal to position `index` of the tabs (shown at once; the server's list follows). */
+  move(terminalId: TerminalId, index: number): void {
+    const state = this.store.getState();
+    const from = state.items.findIndex((candidate) => candidate.terminalId === terminalId);
+    const moving = state.items[from];
+    if (moving === undefined || this.connection?.isReady !== true) return;
+    const to = Math.max(0, Math.min(Math.trunc(index), state.items.length - 1));
+    if (from === to) return;
+    if (!this.connection.send({ type: 'move', terminalId, index: to })) return;
+    const items = state.items.filter((candidate) => candidate.terminalId !== terminalId);
+    items.splice(to, 0, moving);
+    this.store.setState({ items });
   }
 
   /** Shows another terminal (the focus stays where it is – arrow keys in the tab strip). */

@@ -10,7 +10,8 @@
  *   of one frame may end inside a UTF-8 sequence (the terminal decodes as a stream).
  * - Order: `hello` → `welcome` + `terminals`; `open` → `opened` (or `error` with `requestId`);
  *   `attach` → `attached`, then the replay (scrollback) and live output as binary frames.
- * - `terminals` is pushed on every change of the entry's list (open, exit, close).
+ * - `terminals` is pushed on every change of the entry's list (open, exit, close, rename, move); its
+ *   order is the order of the tabs (`move` changes it for every window).
  * - Exited terminals stay listed (`state: 'exited'`) until `close`, so the panel can show the exit
  *   code and offer "Restart".
  */
@@ -38,6 +39,8 @@ export const TERMINAL_LIMITS = {
   requestIdMaxChars: 64,
   /** Highest output channel number (one byte). */
   channelMax: 255,
+  /** Characters of a terminal name chosen by the user (`rename`). */
+  titleMaxChars: 64,
 } as const;
 
 /** WebSocket close codes of the terminal socket. */
@@ -90,6 +93,8 @@ export const terminalInfoSchema = z.object({
   state: terminalStateSchema,
   /** Set once `state` is `exited` (null if unknown). */
   exitCode: z.number().int().nullable(),
+  /** Name chosen by the user (`rename`); null = the default name of the tab ("cmd 1"). */
+  title: z.string().min(1).max(TERMINAL_LIMITS.titleMaxChars).nullable().default(null),
 });
 export type TerminalInfo = z.infer<typeof terminalInfoSchema>;
 
@@ -118,6 +123,22 @@ export const terminalClientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('resize'), terminalId: terminalIdSchema, cols: colsSchema, rows: rowsSchema }),
   /** End the shell (if running) and remove the terminal from the list. */
   z.object({ type: z.literal('close'), terminalId: terminalIdSchema }),
+  /** Name the terminal (trimmed by the server; empty or null = back to the default name). */
+  z.object({
+    type: z.literal('rename'),
+    terminalId: terminalIdSchema,
+    title: z.string().max(TERMINAL_LIMITS.titleMaxChars).nullable(),
+  }),
+  /** Move the terminal to position `index` of the entry's list (clamped to the list). */
+  z.object({
+    type: z.literal('move'),
+    terminalId: terminalIdSchema,
+    index: z
+      .number()
+      .int()
+      .min(0)
+      .max(TERMINAL_LIMITS.perEntry - 1),
+  }),
 ]);
 export type TerminalClientMessage = z.infer<typeof terminalClientMessageSchema>;
 

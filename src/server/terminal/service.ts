@@ -17,7 +17,8 @@
  *   to the attach size plus a nudge (cols+1 and back) so conhost repaints the screen (WP-98 #7).
  * - `input` writes to a running shell (content never logged), `resize` updates pty and info,
  *   `detach` frees the channel, `close` ends the shell and removes the terminal (`exit
- *   {reason: 'closed'}` + `terminals`).
+ *   {reason: 'closed'}` + `terminals`). `rename` sets the title (`terminalTitle`), `move` the
+ *   position in the entry's list; both push `terminals` to every socket of the entry.
  * - Exit (seen by the poller): the remaining output drains for at least `EXIT_GRACE_MS` (conhost
  *   renders a moment after the process ends) and at most `EXIT_DRAIN_MAX_MS`, then `pty.close()`,
  *   state `exited` with the code, `exit {reason: 'exited'}` + `terminals`. The ring stays, so a
@@ -146,6 +147,14 @@ interface Conn {
 
 type ClientMessage = Exclude<TerminalClientMessage, { type: 'hello' }>;
 type OpenMessage = Extract<ClientMessage, { type: 'open' }>;
+
+/** A name from `rename`: control characters become spaces, trimmed; empty → null (the default name). */
+export function terminalTitle(raw: string | null): string | null {
+  if (raw === null) return null;
+  // eslint-disable-next-line no-control-regex -- control characters are exactly what is replaced
+  const title = raw.replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
+  return title === '' ? null : title.slice(0, TERMINAL_LIMITS.titleMaxChars);
+}
 
 /** The failed step of a ConPTY start, or a generic word – never a path. */
 export function startFailureReason(error: unknown): string {
@@ -545,6 +554,7 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
         rows: message.rows,
         state: 'running',
         exitCode: null,
+        title: null,
       };
       terminals.set(info.terminalId, {
         info,
@@ -649,6 +659,30 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
         const t = own(conn, message.terminalId);
         if (t === null) return;
         endTerminal(t, 'closed');
+        pushList(conn.entryId);
+        return;
+      }
+      case 'rename': {
+        const t = own(conn, message.terminalId);
+        if (t === null) return;
+        const title = terminalTitle(message.title);
+        if (title === t.info.title) return;
+        t.info = { ...t.info, title };
+        pushList(conn.entryId);
+        return;
+      }
+      case 'move': {
+        const t = own(conn, message.terminalId);
+        if (t === null) return;
+        const order = entryTerminals(conn.entryId);
+        const from = order.indexOf(t);
+        const to = Math.min(message.index, order.length - 1);
+        if (from === to) return;
+        order.splice(from, 1);
+        order.splice(to, 0, t);
+        // The map's insertion order is the list order: re-insert the entry's terminals in the new order.
+        for (const item of order) terminals.delete(item.info.terminalId);
+        for (const item of order) terminals.set(item.info.terminalId, item);
         pushList(conn.entryId);
         return;
       }

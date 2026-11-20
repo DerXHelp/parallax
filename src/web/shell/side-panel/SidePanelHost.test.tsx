@@ -482,15 +482,15 @@ describe('SidePanelHost (WP-54, ADR-150)', () => {
     }
   });
 
-  it('below 1100 px of session area the panel lies over the transcript (overlay), Esc still closes', async () => {
+  it('below 680 px of session area the panel lies over the transcript (overlay), Esc still closes', async () => {
     const user = userEvent.setup();
-    areaWidth = 1000;
+    areaWidth = 600;
     renderHost();
     act(() => {
       requestShell({ kind: 'sidePanel', sessionKey: KEY, tab: 'plan' });
     });
     expect(panel().getAttribute('data-mode')).toBe('overlay');
-    expect(panel().style.width).toBe(drawn(450));
+    expect(panel().style.width).toBe(drawn(320));
     // The anchor takes no room in the row: the transcript keeps the full width.
     expect(anchorWidth()).toBe('');
     // No focus trap (R5W-11: really pressed): from the last control of the panel, Tab leaves it.
@@ -574,12 +574,14 @@ describe('SidePanelHost (WP-54, ADR-150)', () => {
     }
   });
 
-  it('1100 px and more: inline next to the transcript', () => {
-    areaWidth = 1100;
+  it('680 px and more: inline next to the transcript (WP-99 test: a window that is not maximized)', () => {
+    areaWidth = 1000;
     renderHost();
     act(() => {
       requestShell({ kind: 'sidePanel', sessionKey: KEY, tab: 'plan' });
     });
     expect(panel().getAttribute('data-mode')).toBe('inline');
+    // The anchor takes its width in the row: the transcript shrinks to the visible part.
+    expect(anchorWidth()).toBe(drawn(450));
   });
 });

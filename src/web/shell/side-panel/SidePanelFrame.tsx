@@ -160,7 +160,7 @@ export interface SidePanelFrameProps {
  * The open panel (lazy chunk of SidePanelHost.tsx): a frame of the remembered width with the
  * splitter on its left edge, the tab row (Plan · File – only with an open file · Files · Tasks ·
  * Agent – WP-69, only once a subagent was opened), "Back" for the viewer, "Wide" (WP-93: as wide
- * as allowed until the splitter moves) and "Close". Below 1100 px of session area it lies over the transcript
+ * as allowed until the splitter moves) and "Close". Below 680 px of session area (no room for the panel and 360 px of transcript) it lies over the transcript
  * (anchored at the right edge, no focus trap).
  */
 /** The trigger of `tab` in the tab row. */

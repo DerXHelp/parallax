@@ -412,4 +412,116 @@ describe('TerminalPanel (WP-99b)', () => {
     expect(engineAt(engines, 0).disposed).toBe(true);
     expect(server.socket.closedWith).toBe(1000);
   });
+
+  it('renames a tab: double click, F2 or the context menu; Esc cancels, empty = default name', async () => {
+    const { server } = setup((fake) => {
+      fake.items = [
+        sampleTerminalInfo({ terminalId: sampleTerminalId(1), shell: 'cmd' }),
+        sampleTerminalInfo({ terminalId: sampleTerminalId(2), shell: 'powershell', title: 'server' }),
+      ];
+    });
+    const user = userEvent.setup();
+    const outerEscape = vi.fn(() => true);
+    function OuterEscape() {
+      useEscapeHandler(outerEscape);
+      return null;
+    }
+    const stop = installShortcutListener();
+    try {
+      render(<OuterEscape />);
+      // A given name replaces the default name.
+      expect(await screen.findByRole('tab', { name: 'server' })).toBeTruthy();
+
+      await user.dblClick(screen.getByRole('tab', { name: 'cmd 1' }));
+      const field = screen.getByRole('textbox', { name: 'Name of cmd 1' });
+      expect(document.activeElement).toBe(field);
+      await user.keyboard('build{Enter}');
+      expect(server.sentOfType('rename')).toEqual([
+        { type: 'rename', terminalId: sampleTerminalId(1), title: 'build' },
+      ]);
+      expect(await screen.findByRole('tab', { name: 'build' })).toBeTruthy();
+
+      // F2 on the tab; Esc cancels the edit only (the outer Esc handler – the side panel – stays out).
+      screen.getByRole('tab', { name: 'build' }).focus();
+      await user.keyboard('{F2}');
+      await user.keyboard('other{Escape}');
+      expect(document.querySelector('[data-slot="terminal-tab-name"]')).toBeNull();
+      expect(outerEscape).not.toHaveBeenCalled();
+      expect(server.sentOfType('rename')).toHaveLength(1);
+
+      // Context menu → Rename; an empty name goes back to the default name.
+      fireEvent.contextMenu(screen.getByRole('tab', { name: 'server' }));
+      await user.click(await screen.findByRole('menuitem', { name: 'Rename' }));
+      await user.clear(screen.getByRole('textbox', { name: 'Name of server' }));
+      await user.keyboard('{Enter}');
+      expect(server.sentOfType('rename').at(-1)).toEqual({
+        type: 'rename',
+        terminalId: sampleTerminalId(2),
+        title: null,
+      });
+      expect(await screen.findByRole('tab', { name: 'PowerShell 1' })).toBeTruthy();
+    } finally {
+      stop();
+    }
+  });
+
+  it('moves a tab with the context menu and by dragging; the server keeps the order', async () => {
+    const { server } = setup((fake) => {
+      fake.items = [
+        sampleTerminalInfo({ terminalId: sampleTerminalId(1), shell: 'cmd' }),
+        sampleTerminalInfo({ terminalId: sampleTerminalId(2), shell: 'powershell' }),
+        sampleTerminalInfo({ terminalId: sampleTerminalId(3), shell: 'gitbash' }),
+      ];
+    });
+    const user = userEvent.setup();
+    const order = () => screen.getAllByRole('tab').map((tab) => tab.textContent);
+    expect(await screen.findByRole('tab', { name: 'cmd 1' })).toBeTruthy();
+    expect(order()).toEqual(['cmd 1', 'PowerShell 1', 'Git Bash 1']);
+
+    // The first tab cannot move further left.
+    fireEvent.contextMenu(screen.getByRole('tab', { name: 'cmd 1' }));
+    const left = await screen.findByRole('menuitem', { name: 'Move left' });
+    expect(left.getAttribute('aria-disabled')).toBe('true');
+    await user.click(screen.getByRole('menuitem', { name: 'Move right' }));
+    expect(server.sentOfType('move')).toEqual([{ type: 'move', terminalId: sampleTerminalId(1), index: 1 }]);
+    await waitFor(() => {
+      expect(order()).toEqual(['PowerShell 1', 'cmd 1', 'Git Bash 1']);
+    });
+    expect(server.items.map((item) => item.terminalId)).toEqual([
+      sampleTerminalId(2),
+      sampleTerminalId(1),
+      sampleTerminalId(3),
+    ]);
+
+    // Drag "Git Bash 1" onto the left half of the first tab.
+    // Testing Library copies these onto a real DataTransfer: `types` is mutated in place.
+    const data = new Map<string, string>();
+    const types: string[] = [];
+    const dataTransfer = {
+      types,
+      setData: (type: string, value: string) => {
+        data.set(type, value);
+        if (!types.includes(type)) types.push(type);
+      },
+      getData: (type: string) => data.get(type) ?? '',
+    };
+    const source = screen.getByRole('tab', { name: 'Git Bash 1' });
+    const target = screen
+      .getByRole('tab', { name: 'PowerShell 1' })
+      .closest<HTMLElement>('[data-slot="terminal-tab"]');
+    if (target === null) throw new Error('no tab wrapper');
+    fireEvent.dragStart(source, { dataTransfer });
+    fireEvent.dragOver(target, { dataTransfer, clientX: 0 });
+    expect(target.getAttribute('data-drop')).toBe('before');
+    fireEvent.drop(target, { dataTransfer, clientX: 0 });
+    fireEvent.dragEnd(source, { dataTransfer });
+    expect(server.sentOfType('move').at(-1)).toEqual({
+      type: 'move',
+      terminalId: sampleTerminalId(3),
+      index: 0,
+    });
+    await waitFor(() => {
+      expect(order()).toEqual(['Git Bash 1', 'PowerShell 1', 'cmd 1']);
+    });
+  });
 });
