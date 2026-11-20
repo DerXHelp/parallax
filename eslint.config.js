@@ -143,6 +143,8 @@ const FEATURES = [
   'files',
   'tasks',
   'updates',
+  // WP-99: the embedded terminal.
+  'terminal',
 ];
 /** Every feature except the given ones (a feature group may import its own members). */
 const otherFeatures = (/** @type {string[]} */ own) => FEATURES.filter((f) => !own.includes(f));
@@ -276,6 +278,15 @@ export default defineConfig([
     ]),
   },
   {
+    files: ['src/web/features/terminal/**/*.{ts,tsx}'],
+    rules: restrictImports([
+      ...webBase,
+      radixOnlyInUi,
+      noStoreWriters,
+      featureBoundary(otherFeatures(['terminal'])),
+    ]),
+  },
+  {
     // Feature tests may reset/inspect the store (resetClientStore in afterEach).
     files: ['src/web/features/transcript/**/*.test.{ts,tsx}'],
     rules: restrictImports([...webBase, radixOnlyInUi, featureBoundary(otherFeatures(['transcript']))]),
@@ -303,6 +314,10 @@ export default defineConfig([
   {
     files: ['src/web/features/tasks/**/*.test.{ts,tsx}'],
     rules: restrictImports([...webBase, radixOnlyInUi, featureBoundary(otherFeatures(['tasks']))]),
+  },
+  {
+    files: ['src/web/features/terminal/**/*.test.{ts,tsx}'],
+    rules: restrictImports([...webBase, radixOnlyInUi, featureBoundary(otherFeatures(['terminal']))]),
   },
   {
     files: ['src/server/**/*.ts'],
