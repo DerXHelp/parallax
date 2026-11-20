@@ -7,7 +7,7 @@ export const de: typeof en = {
   cwd: {
     label: 'Projektordner',
     placeholder: 'D:\\arbeit\\mein-projekt',
-    hint: 'Vollständiger Pfad eines vorhandenen Ordners – eintippen, einfügen oder durchsuchen.',
+    hint: 'Vollständiger Pfad eines vorhandenen Ordners – eintippen, einfügen oder durchsuchen. Dort lässt sich auch ein neuer Ordner anlegen.',
     browse: 'Durchsuchen…',
   },
   recent: {
@@ -81,8 +81,19 @@ export const de: typeof en = {
   browser: {
     title: 'Ordner wählen',
     description:
-      'Enter oder Doppelklick öffnet einen Ordner, Rücktaste geht nach oben. „Diesen Ordner wählen“ übernimmt den geöffneten Ordner.',
+      'Ein Klick wählt einen Ordner aus, Enter oder Doppelklick öffnet ihn, Rücktaste geht nach oben. „Diesen Ordner wählen“ übernimmt den ausgewählten Ordner – oder den geöffneten, wenn keiner ausgewählt ist.',
     up: 'Eine Ebene nach oben',
+    newFolder: 'Neuer Ordner',
+    newFolderName: 'Name des neuen Ordners in {path}',
+    newFolderPlaceholder: 'Ordnername',
+    create: 'Anlegen',
+    nameIssues: {
+      tooLong: 'Der Name ist zu lang (höchstens {count} Zeichen).',
+      invalidChar: 'Ein Ordnername darf \\ / : * ? " < > | und Steuerzeichen nicht enthalten.',
+      dots: 'Der Name darf nicht „.“ oder „..“ sein.',
+      trailingDot: 'Der Name darf nicht auf einen Punkt enden.',
+      reserved: 'Windows reserviert diesen Namen (CON, NUL, COM1 …).',
+    },
     location: 'Speicherort',
     roots: 'Dieser PC',
     showHidden: 'Versteckte Ordner anzeigen',
@@ -99,7 +110,7 @@ export const de: typeof en = {
     emptyRoots: 'Keine Laufwerke gefunden.',
     loading: 'Ordner werden geladen…',
     truncated: 'Nur die ersten {count} Ordner werden angezeigt.',
-    nothingChosen: 'Öffne ein Laufwerk oder einen Ordner, um ihn zu wählen.',
+    nothingChosen: 'Wähle ein Laufwerk oder einen Ordner aus oder öffne ihn, um ihn zu übernehmen.',
     choose: 'Diesen Ordner wählen',
   },
 };

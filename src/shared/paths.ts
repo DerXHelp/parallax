@@ -71,6 +71,21 @@ export function isSafeWindowsPath(path: string): boolean {
   return windowsPathIssue(path) === null;
 }
 
+/** Longest name of one folder or file (NTFS: 255 UTF-16 units per segment). */
+export const NAME_MAX_CHARS = 255;
+
+/**
+ * WP-94: the first reason why `name` cannot be the name of a new folder (one segment, no
+ * separators), or null. The rules of `windowsPathIssue` for one segment; a separator or `:` is
+ * `invalid_char` (a name never contains a path or a stream). No trimming: callers trim the input.
+ */
+export function windowsNameIssue(name: string): PathIssue | null {
+  if (name === '') return 'empty';
+  if (name.length > NAME_MAX_CHARS) return 'too_long';
+  if (/[\\/:]/.test(name)) return 'invalid_char';
+  return windowsPathIssue(`C:\\${name}`);
+}
+
 /**
  * Comparison key (B: "Vergleiche und Gruppierung case-insensitiv"): lower case, `/` → `\`,
  * repeated separators collapsed, trailing separator removed except for a drive root (`c:\`).

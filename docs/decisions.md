@@ -2807,3 +2807,24 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   - Der Weg über die Deny-Nachricht braucht keine neue Antwortart und funktioniert mit jedem `claude`.
 - **Folgen:** Keine `PROTOCOL_VERSION`-Erhöhung: Es kommen nur ein Befehl und Felder mit Default hinzu. Zwei Fenster, die
   gleichzeitig ändern, überschreiben einander; beide sehen danach dieselbe Liste.
+
+## ADR-235 – Ordner-Browser: Auswahl getrennt vom geöffneten Ordner, neuer Ordner per Host-Befehl
+- **Datum/WP:** 20.11.2026, WP-94 (`feature/neuer-ordner`), Auftrag des Nutzers.
+- **Entscheidung:**
+  - Der Ordner-Browser unterscheidet den **geöffneten** Ordner (Auflistung) und eine **ausgewählte** Zeile. „Diesen
+    Ordner wählen“ übernimmt die Auswahl, ohne sie gibt es den geöffneten Ordner. Klick und Tastaturbewegung wählen
+    aus, Leertaste und ein Klick auf die freie Fläche heben auf, Doppelklick/Enter öffnen wie bisher. Jede neue
+    Auflistung beginnt ohne Auswahl; die Fußzeile zeigt immer das Ziel. Gilt auch für den Profil-Editor
+    (`configDir`).
+  - Neuer Host-Befehl `fs.createDirectory {parent, folderName}` → `{path}`: genau **ein** Ordner, nie rekursiv. Der
+    Elternordner durchläuft dieselben Prüfungen wie `fs.listDirectory` (C.10, R1-17). Der Name ist ein Segment ohne
+    Trennzeichen (`windowsNameIssue` in `@shared/paths`, gleiche Regeln in Server und Web). Neue Fehlercodes
+    `FOLDER_EXISTS`, `FOLDER_NOT_WRITABLE`.
+  - Erlaubt auch über den Fernzugriff (`REMOTE_ALLOWED_COMMANDS`). Ein steuernder Rechner darf in jedem Ordner eine
+    Session starten, deren `claude` dort ohnehin Ordner anlegen kann.
+- **Begründung:** Wie im Explorer-Ordnerdialog lässt sich so ein Unterordner übernehmen, ohne ihn zu öffnen, und wie
+  bisher der geöffnete Ordner. Das Anlegen bleibt eine sichtbare Handlung im Browser: Ein Tippfehler im Feld
+  „Projektordner“ legt keinen Ordner an.
+- **Folgen:** Keine `PROTOCOL_VERSION`-Erhöhung (nur ein Befehl und zwei Fehlercodes). Ein Rechner mit älterer Version
+  lehnt `fs.createDirectory` als unbekannten Befehl ab (`VALIDATION_FAILED`); der Browser zeigt den Fehler im
+  Namensfeld.

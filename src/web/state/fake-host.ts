@@ -1485,6 +1485,7 @@ export class FakeHost {
       case 'profile.test':
       case 'profile.validate':
       case 'fs.listDirectory':
+      case 'fs.createDirectory':
         return { ok: false, error: makeError('NOT_IMPLEMENTED', { name: cmd.name satisfies CommandName }) };
     }
   }

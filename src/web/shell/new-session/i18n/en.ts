@@ -12,7 +12,7 @@ export const en = {
   cwd: {
     label: 'Project folder',
     placeholder: 'D:\\work\\my-project',
-    hint: 'Full path of an existing folder – type or paste it, or browse.',
+    hint: 'Full path of an existing folder – type or paste it, or browse. There you can also create a new one.',
     browse: 'Browse…',
   },
   recent: {
@@ -89,8 +89,19 @@ export const en = {
   browser: {
     title: 'Choose a folder',
     description:
-      'Enter or double-click opens a folder, Backspace goes up. “Choose this folder” takes the folder that is open.',
+      'A click selects a folder, Enter or double-click opens it, Backspace goes up. “Choose this folder” takes the selected folder – or the open one when none is selected.',
     up: 'Up one level',
+    newFolder: 'New folder',
+    newFolderName: 'Name of the new folder in {path}',
+    newFolderPlaceholder: 'Folder name',
+    create: 'Create',
+    nameIssues: {
+      tooLong: 'The name is too long (at most {count} characters).',
+      invalidChar: 'A folder name cannot contain \\ / : * ? " < > | or control characters.',
+      dots: 'The name cannot be “.” or “..”.',
+      trailingDot: 'The name cannot end with a dot.',
+      reserved: 'Windows reserves this name (CON, NUL, COM1 …).',
+    },
     location: 'Location',
     roots: 'This PC',
     showHidden: 'Show hidden folders',
@@ -107,7 +118,7 @@ export const en = {
     emptyRoots: 'No drives found.',
     loading: 'Loading folders…',
     truncated: 'Only the first {count} folders are shown.',
-    nothingChosen: 'Open a drive or folder to choose it.',
+    nothingChosen: 'Select or open a drive or folder to choose it.',
     choose: 'Choose this folder',
   },
 };

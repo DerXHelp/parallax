@@ -75,6 +75,8 @@ export const errorsDe: Record<ErrorCode, string> = {
   TURN_FAILED: 'Der Durchlauf ist fehlgeschlagen.',
   EXTERNAL_CONSOLE_FAILED: 'Die externe Konsole konnte nicht geöffnet werden.',
   FOLDER_NOT_READABLE: 'Dieser Ordner kann nicht gelesen werden (keine Berechtigung).',
+  FOLDER_EXISTS: 'Ein Ordner oder eine Datei mit diesem Namen existiert bereits.',
+  FOLDER_NOT_WRITABLE: 'Hier kann kein Ordner angelegt werden (keine Berechtigung).',
   FILE_NOT_FOUND: 'Die Datei existiert nicht (mehr).',
   FILE_NOT_READABLE:
     'Die Datei kann gerade nicht gelesen werden (keine Berechtigung, in Benutzung oder zu langsam).',

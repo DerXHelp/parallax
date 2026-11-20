@@ -14,7 +14,7 @@ Isomorpher Code, den Server **und** Web importieren (Alias `@shared/*`). Design:
 | `protocol.ts` | WS-Nachrichten beider Richtungen, Befehle + Ergebnis-Schemas, `parseClientMessage`/`parseServerMessage`/`parseCommandResult` |
 | `sync.ts` | reine Reducer für Server-Hub und Web-Store: `applySessionOp(s)`, `applySeqOps`, `mergeItems`, `trimItems` |
 | `http.ts` | HTTP-/Auth-Contract (ADR-015): `API_PATHS`, Request/Response-Schemas, `authCookieName(port)`, Einmal-Code und Launcher-Token, `takeAuthCodeFromHash`, `allowedHosts`/`allowedOrigins`, Lockfile-Schema |
-| `paths.ts` | reine Windows-Pfadregeln (C.10, ADR-017): `windowsPathIssue`, `isSafeWindowsPath`, `windowsPathKey`, `windowsPathsEqual`, `isWindowsPathInside` – die einzige Implementierung |
+| `paths.ts` | reine Windows-Pfadregeln (C.10, ADR-017): `windowsPathIssue`, `isSafeWindowsPath`, `windowsPathKey`, `windowsPathsEqual`, `isWindowsPathInside`, `windowsNameIssue` + `NAME_MAX_CHARS` (Name eines neuen Ordners, WP-94) – die einzige Implementierung |
 | `build.ts` | `BUILD_ID` (`pnpm build` bettet sie per `define` ein, sonst `'dev'`) |
 | `samples.ts` | gültige Beispielobjekte (feste IDs/Zeiten) für Tests und Playground |
 | `product.ts` | Produktname an genau einer Stelle (WP-00) |

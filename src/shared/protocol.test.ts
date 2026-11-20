@@ -102,6 +102,7 @@ const commands: Command[] = [
   { name: 'profile.validate', profile: sampleProfileInput({ id: sampleId('pf', 2) }) },
   { name: 'fs.listDirectory', path: null, showHidden: false },
   { name: 'fs.listDirectory', path: 'D:\\work', showHidden: true },
+  { name: 'fs.createDirectory', parent: 'D:\\work', folderName: 'foobar' },
   // Phase 3 (WP-50 §4.6)
   { name: 'session.stopTask', entryId, taskId: 'task_01' },
   { name: 'plan.list', entryId },
@@ -591,6 +592,9 @@ describe('command results', () => {
     expect(parseCommandResult('profile.test', { claude: sampleClaudeInstallStatus() })).not.toBeNull();
     expect(parseCommandResult('profile.validate', { issues: [] })).toEqual({ issues: [] });
     expect(parseCommandResult('fs.listDirectory', sampleFsListing())).toEqual(sampleFsListing());
+    expect(parseCommandResult('fs.createDirectory', { path: 'D:\\work\\foobar' })).toEqual({
+      path: 'D:\\work\\foobar',
+    });
   });
 
   it('WP-65: link.open only takes http(s) links; the new commands answer {}', () => {
@@ -782,6 +786,7 @@ describe('command results', () => {
     const fileCommands = ['file.stat', 'file.statMany', 'file.open', 'files.session', 'files.project'];
     expect([...withoutEntry, ...fileCommands].sort()).toEqual([...HOST_COMMAND_NAMES].sort());
     expect(isHostCommand({ name: 'fs.listDirectory', path: null, showHidden: false })).toBe(true);
+    expect(isHostCommand({ name: 'fs.createDirectory', parent: 'D:\\work', folderName: 'x' })).toBe(true);
     expect(isHostCommand({ name: 'files.session', entryId })).toBe(true);
     expect(isHostCommand({ name: 'editor.detect' })).toBe(true);
     expect(isHostCommand({ name: 'session.reclaim', entryId })).toBe(false);

@@ -1,7 +1,9 @@
 import {
   ArrowUpIcon,
+  CheckIcon,
   ChevronRightIcon,
   FolderIcon,
+  FolderPlusIcon,
   FolderSymlinkIcon,
   HardDriveIcon,
   HouseIcon,
@@ -20,9 +22,16 @@ import {
 import { LIMITS, LOCAL_HOST_ID, type HostId } from '@shared/common';
 import type { ErrorPayload } from '@shared/errors';
 import type { FsEntry, FsListing } from '@shared/model';
-import { windowsPathIssue, windowsPathKey } from '@shared/paths';
+import {
+  NAME_MAX_CHARS,
+  windowsNameIssue,
+  windowsPathIssue,
+  windowsPathKey,
+  type PathIssue,
+} from '@shared/paths';
 import { useI18n } from '@web/i18n';
 import { cn } from '@web/lib/cn';
+import { splitPathTail } from '@web/lib/path-display';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendHostCommand } from '@web/state/hosts';
 import { Alert } from '@web/ui/alert';
@@ -30,6 +39,7 @@ import { Badge } from '@web/ui/badge';
 import { Button } from '@web/ui/button';
 import { DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@web/ui/dialog';
 import { IconButton } from '@web/ui/icon-button';
+import { Input } from '@web/ui/input';
 import { Label } from '@web/ui/label';
 import { Spinner } from '@web/ui/spinner';
 import { Switch } from '@web/ui/switch';
@@ -68,6 +78,27 @@ const KIND_ICON: Readonly<Record<FsEntry['kind'], LucideIcon>> = {
   link: FolderSymlinkIcon,
 };
 
+/** Comparison key of an open folder (null = the roots). */
+function openKey(path: string | null): string {
+  return path === null ? '' : windowsPathKey(path);
+}
+
+/** Text of a name the server would reject (`windowsNameIssue`; an empty name is never shown). */
+function nameIssueKey(issue: PathIssue): 'tooLong' | 'invalidChar' | 'dots' | 'trailingDot' | 'reserved' {
+  switch (issue) {
+    case 'too_long':
+      return 'tooLong';
+    case 'dot_segment':
+      return 'dots';
+    case 'trailing_dot_or_space':
+      return 'trailingDot';
+    case 'reserved_name':
+      return 'reserved';
+    default:
+      return 'invalidChar';
+  }
+}
+
 /** Rows moved by PageUp/PageDown. */
 const PAGE = 10;
 /** Typed letters within this time form one search ("pro" → "projects"). */
@@ -76,6 +107,8 @@ const TYPEAHEAD_MS = 700;
 interface LoadOptions {
   /** Entry to highlight in the new listing (the folder we came from when going up). */
   highlight?: string | null;
+  /** WP-94: the highlighted entry is also selected ("Choose" takes it) – a new folder. */
+  select?: boolean;
   /** On failure, list the roots instead (the start folder is gone). The error stays visible. */
   fallbackToRoots?: boolean;
   /** Keep the current error (fallback after a failed start). */
@@ -113,8 +146,21 @@ export default function FolderBrowserContent({
   const [loading, setLoading] = useState(true);
   const [showHidden, setShowHidden] = useState(false);
   const [active, setActive] = useState(0);
+  // WP-94: the active row is also SELECTED – "Choose" takes it instead of the open folder. A
+  // listing starts without a selection (the open folder is the choice).
+  const [selected, setSelected] = useState(false);
+  // WP-94: "New folder" – the name field below the toolbar (null = closed).
+  const [newName, setNewName] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<ErrorPayload | null>(null);
+  const [creating, setCreating] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const newFolderId = useId();
+  const nameHintId = useId();
+  /** The open folder of the last listing (also read after an await, WP-94). */
+  const openRef = useRef<string | null>(null);
 
-  const load = async (path: string | null, options: LoadOptions = {}): Promise<void> => {
+  /** Lists `path`; true when the listing came and holds `options.highlight` (if given). */
+  const load = async (path: string | null, options: LoadOptions = {}): Promise<boolean> => {
     const request = ++requestRef.current;
     setLoading(true);
     try {
@@ -123,7 +169,13 @@ export default function FolderBrowserContent({
         path,
         showHidden: options.showHidden ?? showHidden,
       });
-      if (request !== requestRef.current) return;
+      if (request !== requestRef.current) return false;
+      // The name field belongs to the folder it was opened in.
+      if (openKey(result.path) !== openKey(openRef.current)) {
+        setNewName(null);
+        setCreateError(null);
+      }
+      openRef.current = result.path;
       setListing(result);
       if (options.keepError !== true) setError(null);
       const highlight = options.highlight ?? null;
@@ -132,15 +184,18 @@ export default function FolderBrowserContent({
           ? -1
           : result.entries.findIndex((entry) => windowsPathKey(entry.path) === windowsPathKey(highlight));
       setActive(Math.max(0, index));
+      setSelected(options.select === true && index >= 0);
       setLoading(false);
       if (options.focusList === true) listRef.current?.focus();
+      return highlight === null || index >= 0;
     } catch (caught) {
-      if (request !== requestRef.current) return;
+      if (request !== requestRef.current) return false;
       setError(errorPayloadOf(caught));
       setLoading(false);
       if (options.fallbackToRoots === true && path !== null) {
         await load(null, { keepError: true, showHidden: options.showHidden });
       }
+      return false;
     }
   };
 
@@ -158,9 +213,60 @@ export default function FolderBrowserContent({
   const current = listing?.path ?? null;
   const activeEntry = entries[active] ?? null;
   const atRoots = listing !== null && current === null;
+  /** What "Choose this folder" takes: the selected entry, else the open folder (null at the roots). */
+  const target = selected && activeEntry !== null ? activeEntry.path : current;
 
   const openEntry = (entry: FsEntry) => {
     void load(entry.path);
+  };
+
+  /** A click or a keyboard move selects what it lands on (selection follows the cursor, like Explorer). */
+  const moveTo = (index: number) => {
+    setActive(index);
+    setSelected(true);
+  };
+
+  const trimmedName = newName?.trim() ?? '';
+  const nameIssue = trimmedName === '' ? null : windowsNameIssue(trimmedName);
+
+  const closeNewFolder = () => {
+    setNewName(null);
+    setCreateError(null);
+  };
+
+  /** Creates the named folder in the open one, then lists it there selected (WP-94). */
+  const createFolder = async () => {
+    if (current === null || trimmedName === '' || nameIssue !== null || creating) return;
+    const parent = current;
+    setCreating(true);
+    setCreateError(null);
+    let created: string;
+    try {
+      created = (
+        await sendHostCommand(hostId, { name: 'fs.createDirectory', parent, folderName: trimmedName })
+      ).path;
+    } catch (caught) {
+      setCreateError(errorPayloadOf(caught));
+      setCreating(false);
+      nameRef.current?.focus();
+      return;
+    }
+    setCreating(false);
+    setNewName(null);
+    // The user went elsewhere while it was created: leave them there.
+    if (openKey(openRef.current) !== openKey(parent)) return;
+    // A dot name is hidden: show hidden folders so the new one can be selected.
+    const reveal = trimmedName.startsWith('.') && !showHidden;
+    if (reveal) setShowHidden(true);
+    const shown = await load(parent, {
+      highlight: created,
+      select: true,
+      focusList: true,
+      showHidden: showHidden || reveal,
+    });
+    // Not in the listing (a system name the server hides, beyond the truncation): open the new
+    // folder instead – "Choose this folder" takes it either way.
+    if (!shown) await load(created, { focusList: true });
   };
 
   const goUp = () => {
@@ -175,13 +281,31 @@ export default function FolderBrowserContent({
     });
   };
 
+  /** Type-ahead: typed letters within TYPEAHEAD_MS jump to the next name starting with them. */
+  const typeAhead = (key: string): boolean => {
+    const now = Date.now();
+    const previous = typeahead.current;
+    const text = now - previous.at < TYPEAHEAD_MS ? previous.text + key : key;
+    typeahead.current = { text, at: now };
+    const query = text.toLowerCase();
+    const order = [...entries.keys()].map(
+      (offset) => (active + (text.length === 1 ? 1 : 0) + offset) % entries.length,
+    );
+    const found = order.find((index) => entries[index]?.name.toLowerCase().startsWith(query) === true);
+    if (found === undefined) return false;
+    moveTo(found);
+    return true;
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.nativeEvent.isComposing) return;
     const last = entries.length - 1;
     let next: number | null = null;
     switch (event.key) {
+      // Without a selection the first ↓/↑ selects the cursor row: after a mouse click the cursor
+      // is not drawn, and moving would skip the row the user sees first.
       case 'ArrowDown':
-        next = Math.min(last, active + 1);
+        next = selected ? Math.min(last, active + 1) : active;
         break;
       case 'ArrowUp':
         if (event.altKey) {
@@ -189,7 +313,7 @@ export default function FolderBrowserContent({
           goUp();
           return;
         }
-        next = Math.max(0, active - 1);
+        next = selected ? Math.max(0, active - 1) : active;
         break;
       case 'Home':
         next = 0;
@@ -208,6 +332,17 @@ export default function FolderBrowserContent({
         event.preventDefault();
         openEntry(activeEntry);
         return;
+      case ' ':
+        if (activeEntry === null) return;
+        event.preventDefault();
+        // Within a type-ahead search ("my p…") Space is part of the name.
+        if (typeahead.current.text !== '' && Date.now() - typeahead.current.at < TYPEAHEAD_MS) {
+          typeAhead(' ');
+          return;
+        }
+        // Otherwise it selects the cursor row or drops the selection (then the open folder is chosen).
+        setSelected((value) => !value);
+        return;
       case 'Backspace':
         event.preventDefault();
         goUp();
@@ -218,27 +353,15 @@ export default function FolderBrowserContent({
           !event.ctrlKey &&
           !event.metaKey &&
           !event.altKey &&
-          event.key !== ' '
+          typeAhead(event.key)
         ) {
-          const now = Date.now();
-          const previous = typeahead.current;
-          const text = now - previous.at < TYPEAHEAD_MS ? previous.text + event.key : event.key;
-          typeahead.current = { text, at: now };
-          const query = text.toLowerCase();
-          const order = [...entries.keys()].map(
-            (offset) => (active + (text.length === 1 ? 1 : 0) + offset) % entries.length,
-          );
-          const found = order.find((index) => entries[index]?.name.toLowerCase().startsWith(query) === true);
-          if (found !== undefined) {
-            event.preventDefault();
-            setActive(found);
-          }
+          event.preventDefault();
         }
         return;
     }
     if (entries.length === 0) return;
     event.preventDefault();
-    setActive(next);
+    moveTo(next);
   };
 
   useEffect(() => {
@@ -258,6 +381,8 @@ export default function FolderBrowserContent({
   const listLabel =
     current === null ? t('newSession.browser.listRoots') : t('newSession.browser.list', { path: current });
   const optionId = (index: number) => `${listId}-option-${String(index)}`;
+  // The whole path split before its last name (`splitPathTail` with every segment).
+  const footerPath = target === null ? null : splitPathTail(target, Number.MAX_SAFE_INTEGER);
 
   return (
     <DialogContent
@@ -265,6 +390,14 @@ export default function FolderBrowserContent({
       className="sm:max-w-xl"
       onOpenAutoFocus={(event) => {
         event.preventDefault();
+        listRef.current?.focus();
+      }}
+      onEscapeKeyDown={(event) => {
+        // Esc while the name field is open closes only the field; Esc of an IME ends the composition.
+        if (newName === null || current === null) return;
+        event.preventDefault();
+        if (event.isComposing) return;
+        closeNewFolder();
         listRef.current?.focus();
       }}
     >
@@ -323,7 +456,91 @@ export default function FolderBrowserContent({
             })}
           </ol>
         </nav>
+        <IconButton
+          label={t('newSession.browser.newFolder')}
+          data-action="folder-new"
+          disabled={current === null}
+          aria-expanded={newName !== null}
+          aria-controls={newName === null ? undefined : newFolderId}
+          onClick={() => {
+            // Already open: back into the field (autoFocus works only when it appears).
+            if (newName !== null) {
+              nameRef.current?.focus();
+              return;
+            }
+            setCreateError(null);
+            setNewName('');
+          }}
+        >
+          <FolderPlusIcon aria-hidden />
+        </IconButton>
       </div>
+
+      {newName === null || current === null ? null : (
+        <div id={newFolderId} data-slot="folder-new" className="grid">
+          <div className="flex items-center gap-2">
+            <FolderPlusIcon aria-hidden className="text-muted-foreground size-3.5 shrink-0" />
+            <Input
+              ref={nameRef}
+              // The field opens on a click of "New folder" – the user wants to type now.
+              autoFocus
+              name="folder-name"
+              value={newName}
+              spellCheck={false}
+              autoComplete="off"
+              aria-label={t('newSession.browser.newFolderName', { path: current })}
+              aria-invalid={nameIssue !== null}
+              aria-describedby={nameHintId}
+              placeholder={t('newSession.browser.newFolderPlaceholder')}
+              onChange={(event) => {
+                setNewName(event.target.value);
+                setCreateError(null);
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+                event.preventDefault();
+                void createFolder();
+              }}
+            />
+            <Button
+              size="sm"
+              data-action="folder-create"
+              disabled={trimmedName === '' || nameIssue !== null || creating}
+              onClick={() => {
+                void createFolder();
+              }}
+            >
+              {t('newSession.browser.create')}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                closeNewFolder();
+                listRef.current?.focus();
+              }}
+            >
+              {t('common.cancel')}
+            </Button>
+          </div>
+          {/* Always there while the field is open, so a hint appearing while typing is announced. */}
+          <p
+            id={nameHintId}
+            aria-live="polite"
+            className="text-destructive text-2xs not-empty:pt-1.5"
+            data-name-issue={nameIssue ?? undefined}
+          >
+            {nameIssue === null
+              ? null
+              : t(`newSession.browser.nameIssues.${nameIssueKey(nameIssue)}`, { count: NAME_MAX_CHARS })}
+          </p>
+          {createError === null ? null : (
+            <Alert tone="error" className="mt-1.5" data-folder-create-error={createError.code}>
+              {tError(createError)}
+            </Alert>
+          )}
+        </div>
+      )}
 
       <div className="flex items-center gap-2">
         <Switch
@@ -332,7 +549,11 @@ export default function FolderBrowserContent({
           data-action="folder-show-hidden"
           onCheckedChange={(checked) => {
             setShowHidden(checked);
-            void load(current, { showHidden: checked, highlight: activeEntry?.path ?? null });
+            void load(current, {
+              showHidden: checked,
+              highlight: activeEntry?.path ?? null,
+              select: selected,
+            });
           }}
         />
         <Label htmlFor={hiddenId} className="font-normal">
@@ -358,25 +579,30 @@ export default function FolderBrowserContent({
           data-slot="folder-list"
           data-path={current ?? ''}
           onKeyDown={onKeyDown}
+          onClick={(event) => {
+            // A click on the empty area drops the selection: the open folder is the choice again.
+            if (event.target === event.currentTarget) setSelected(false);
+          }}
           className={cn(
-            'focus-visible:ring-ring grid h-72 grid-cols-[minmax(0,1fr)] content-start gap-px overflow-y-auto rounded-md border p-1 outline-none focus-visible:ring-2',
+            'group focus-visible:ring-ring grid h-72 grid-cols-[minmax(0,1fr)] content-start gap-px overflow-y-auto rounded-md border p-1 outline-none focus-visible:ring-2',
             loading && 'opacity-60',
           )}
         >
           {entries.map((entry, index) => {
             const Icon = KIND_ICON[entry.kind];
             const isActive = index === active;
+            const isSelected = isActive && selected;
             return (
               <div
                 key={entry.path}
                 id={optionId(index)}
                 role="option"
-                aria-selected={isActive}
+                aria-selected={isSelected}
                 data-index={index}
                 data-path={entry.path}
                 data-kind={entry.kind}
                 onClick={() => {
-                  setActive(index);
+                  moveTo(index);
                   listRef.current?.focus();
                 }}
                 onDoubleClick={() => {
@@ -384,7 +610,11 @@ export default function FolderBrowserContent({
                 }}
                 className={cn(
                   'flex min-w-0 cursor-default items-center gap-2 rounded-sm px-2 py-1 text-ui select-none',
-                  isActive ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+                  isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+                  // The keyboard cursor on an unselected row (only while the list has keyboard focus).
+                  isActive &&
+                    !selected &&
+                    'group-focus-visible:ring-ring group-focus-visible:ring-1 ring-inset',
                   entry.hidden && 'text-muted-foreground',
                 )}
               >
@@ -394,6 +624,7 @@ export default function FolderBrowserContent({
                   <Badge variant="outline">{t(`newSession.browser.kinds.${entry.kind}`)}</Badge>
                 )}
                 {entry.hidden ? <Badge variant="outline">{t('newSession.browser.hidden')}</Badge> : null}
+                {isSelected ? <CheckIcon aria-hidden className="text-brand size-3.5 shrink-0" /> : null}
               </div>
             );
           })}
@@ -417,10 +648,24 @@ export default function FolderBrowserContent({
 
       <DialogFooter className="items-center sm:justify-between">
         <p
-          className="text-muted-foreground min-w-0 truncate font-mono text-2xs"
+          className="text-muted-foreground flex min-w-0 font-mono text-2xs"
           data-slot="folder-browser-current"
+          data-target={target ?? ''}
+          title={target ?? undefined}
         >
-          {current ?? t('newSession.browser.nothingChosen')}
+          {footerPath === null ? (
+            <span className="truncate">{t('newSession.browser.nothingChosen')}</span>
+          ) : (
+            // The parent gives way first: the chosen folder's name stays readable. Two flex parts
+            // would read as two words – assistive tech gets the plain path.
+            <>
+              <span aria-hidden className="flex min-w-0">
+                <span className="min-w-0 truncate">{footerPath.head + footerPath.separator}</span>
+                <span className="text-foreground max-w-[75%] shrink-0 truncate">{footerPath.last}</span>
+              </span>
+              <span className="sr-only">{target}</span>
+            </>
+          )}
         </p>
         <div className="flex shrink-0 gap-2">
           <Button variant="outline" onClick={onCancel}>
@@ -428,9 +673,9 @@ export default function FolderBrowserContent({
           </Button>
           <Button
             data-action="choose-folder"
-            disabled={current === null || loading}
+            disabled={target === null || loading}
             onClick={() => {
-              if (current !== null) onChoose(current);
+              if (target !== null) onChoose(target);
             }}
           >
             {t('newSession.browser.choose')}

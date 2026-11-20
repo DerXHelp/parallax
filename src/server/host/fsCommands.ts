@@ -1,7 +1,7 @@
 /**
- * Folder browser `fs.listDirectory` (ADR-119, WP-30 §4.12) as a host command handler (ADR-101;
- * the engine routes by name, WP-40 wires it). Read-only; never a file system call on an unsafe
- * string (C.10) or through an unsafe link (R1-17).
+ * Folder browser `fs.listDirectory` (ADR-119, WP-30 §4.12) and `fs.createDirectory` (WP-94,
+ * ADR-235) as a host command handler (ADR-101; the engine routes by name, WP-40 wires it). Never a
+ * file system call on an unsafe string (C.10) or through an unsafe link (R1-17).
  *
  * - `path: null` → the roots: the user folder (`kind: 'home'`, skipped if it is no safe drive
  *   path, e.g. a roaming profile on a share) and every drive `A:`…`Z:` whose `stat('X:\')`
@@ -21,14 +21,19 @@
  *   folder above, null at a drive root.
  * - Errors: ENOENT → CWD_NOT_FOUND, no folder → CWD_NOT_DIRECTORY, EACCES/EPERM →
  *   FOLDER_NOT_READABLE {path}.
+ *
+ * `fs.createDirectory {parent, folderName}`: the parent is checked like a listed folder (string,
+ * links, exists, is a folder); `windowsNameIssue(folderName)` → PATH_REJECTED {reason}; then ONE
+ * `mkdir` of `childPath(parent, folderName)` – never recursive, so only a folder the user named is
+ * created. EEXIST → FOLDER_EXISTS {path}, EACCES/EPERM/EROFS → FOLDER_NOT_WRITABLE {path: parent}.
  */
-import { lstat, readdir, readlink, stat } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readlink, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { LIMITS } from '@shared/common';
 import { makeError } from '@shared/errors';
 import type { FsEntry, FsListing } from '@shared/model';
-import { windowsPathIssue, windowsPathsEqual } from '@shared/paths';
+import { windowsNameIssue, windowsPathIssue, windowsPathsEqual } from '@shared/paths';
 import type { HostCommand, HostCommandName } from '@shared/protocol';
 import { assertNoUnsafeLink, assertSafePath, fsErrorCode, type LinkFs } from '../lib/paths';
 import { CommandError, type HostCommandHandler } from '../sync/ports';
@@ -62,7 +67,13 @@ export interface FsCommandsDeps {
   platform?: NodeJS.Platform;
   /** Per drive `stat` (default `DRIVE_TIMEOUT_MS`). */
   driveTimeoutMs?: number;
+  /** `fs.createDirectory`: creates one folder, never recursive (default `fs.promises.mkdir`). */
+  mkdir?: (dir: string) => Promise<void>;
 }
+
+const nodeMkdir = async (dir: string): Promise<void> => {
+  await mkdir(dir);
+};
 
 export const DRIVE_TIMEOUT_MS = 1_500;
 /** Drive stats at once, counting those still hanging after their timeout (CR2-06, see the file comment). */
@@ -123,6 +134,16 @@ function folderError(error: unknown, dir: string): unknown {
   return error;
 }
 
+/** A failed `mkdir` of `target` in `parent` (`fs.createDirectory`). */
+function createError(error: unknown, parent: string, target: string): unknown {
+  const code = fsErrorCode(error);
+  if (code === 'EEXIST') return new CommandError(makeError('FOLDER_EXISTS', { path: target }));
+  if (code === 'EACCES' || code === 'EPERM' || code === 'EROFS') {
+    return new CommandError(makeError('FOLDER_NOT_WRITABLE', { path: parent }));
+  }
+  return folderError(error, parent);
+}
+
 /**
  * A link entry of a listing: the whole path checked (R4-10: a relative target resolves against the
  * folder the link physically lies in, also when the listed folder is reached through a link); true
@@ -137,9 +158,10 @@ async function isSafeFolderLink(fs: DirFs, link: string): Promise<boolean> {
   }
 }
 
-/** Creates the handler of `fs.listDirectory` (see the file comment). */
+/** Creates the handler of `fs.listDirectory` and `fs.createDirectory` (see the file comment). */
 export function createFsCommands(deps: FsCommandsDeps = {}): HostCommandHandler {
   const fs = deps.fs ?? nodeDirFs;
+  const makeDir = deps.mkdir ?? nodeMkdir;
   const platform = deps.platform ?? process.platform;
   const driveTimeoutMs = deps.driveTimeoutMs ?? DRIVE_TIMEOUT_MS;
   /** Drive stats waiting or running (one per drive at most, see the file comment). */
@@ -252,14 +274,39 @@ export function createFsCommands(deps: FsCommandsDeps = {}): HostCommandHandler 
     };
   };
 
-  const names: readonly HostCommandName[] = ['fs.listDirectory'];
+  const create = async (parent: string, folderName: string): Promise<{ path: string }> => {
+    assertSafePath(parent);
+    const issue = windowsNameIssue(folderName);
+    if (issue !== null) throw new CommandError(makeError('PATH_REJECTED', { reason: issue }));
+    const target = childPath(parent, folderName);
+    assertSafePath(target);
+    // Every later command takes at most LIMITS.pathChars (listing it, session.create).
+    if (target.length > LIMITS.pathChars) {
+      throw new CommandError(makeError('PATH_REJECTED', { reason: 'too_long' }));
+    }
+    try {
+      await assertNoUnsafeLink(parent, fs);
+      if (!(await fs.stat(parent)).isDirectory()) throw new CommandError(makeError('CWD_NOT_DIRECTORY'));
+    } catch (error) {
+      throw folderError(error, parent);
+    }
+    try {
+      await makeDir(target);
+    } catch (error) {
+      throw createError(error, parent, target);
+    }
+    return { path: target };
+  };
+
+  const names: readonly HostCommandName[] = ['fs.listDirectory', 'fs.createDirectory'];
   return {
     names,
     handle: (cmd: HostCommand) => {
-      if (cmd.name !== 'fs.listDirectory') {
-        return Promise.reject(new CommandError(makeError('NOT_IMPLEMENTED', { command: cmd.name })));
+      if (cmd.name === 'fs.listDirectory') {
+        return cmd.path === null ? roots() : list(cmd.path, cmd.showHidden);
       }
-      return cmd.path === null ? roots() : list(cmd.path, cmd.showHidden);
+      if (cmd.name === 'fs.createDirectory') return create(cmd.parent, cmd.folderName);
+      return Promise.reject(new CommandError(makeError('NOT_IMPLEMENTED', { command: cmd.name })));
     },
   };
 }
