@@ -16,8 +16,9 @@ anderen Rechners öffnet hier nie eine Shell.
   neuen Fenster.
 - `gitbash`, Fenster `mintty`: `<Git>\git-bash.exe "--cd=<cwd>"`, wie der Explorer-Eintrag „Open Git Bash here“.
   Eine Laufwerkswurzel `D:\` bekommt einen `.`, damit das Argument nicht auf `\` endet.
-- `gitbash`, Fenster `terminal` und eingebettet: `<Git>\bin\bash.exe --login -i` mit `CHERE_INVOKING=1`. Ohne die
-  Variable wechselt das Login-Profil von Git for Windows nach `$HOME`.
+- `gitbash`, Fenster `terminal` und eingebettet: `<Git>\bin\bash.exe --login -i` mit `CHERE_INVOKING=1`. Git for Windows
+  bleibt auch ohne die Variable im `cwd` (geprüft am 20.11.2026, auch mit Leerzeichen und Umlauten). Sie sichert
+  Profile nach MSYS2-Art ab, die sonst nach `$HOME` wechseln.
 - Das Fenster öffnet immer über `ConsoleLauncher.open`: versteckte PowerShell, konstantes Skript,
   `Start-Process -WorkingDirectory <cwd>`, Daten nur in Umgebungsvariablen. `spawnGui` startet nur
   GUI-Programme und blockt Shells. Ein von Node direkt gestartetes Konsolenprogramm bekäme keine Konsole

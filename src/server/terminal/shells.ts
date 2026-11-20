@@ -8,8 +8,8 @@
  * - Git Bash: the Git for Windows folder (holds `git-bash.exe`). Window `mintty`: `git-bash.exe
  *   "--cd=<cwd>"` like the Explorer entry "Open Git Bash here" (a drive root `D:\` gets a `.` so the
  *   quoted argument never ends in a backslash). Window `terminal` and the embedded terminal:
- *   `bin\bash.exe --login -i` with `CHERE_INVOKING=1` – the login profile of Git for Windows would
- *   otherwise change to `$HOME`.
+ *   `bin\bash.exe --login -i` with `CHERE_INVOKING=1`. Git for Windows keeps the `cwd` without it
+ *   too (checked 20.11.2026); MSYS2-style profiles change to `$HOME` unless it is set.
  * - Environment (decision of the user, 20.11.2026): NEUTRAL – the server's environment without the
  *   variables of a calling Claude session, every `PARALLAX*` and the `pnpm run` state
  *   (`guiEnvironment`) and without `node_modules\.bin` in PATH. No profile env, no
