@@ -122,6 +122,12 @@ MCP: „Neu verbinden“ verbindet einen fehlgeschlagenen Server (`connected`), 
 | `fake:background` | siehe Phase 3; Verlauf mit zwei Schritten (Bash, Write) |
 | `fake:hooks` | Hook-Läufe wie mit `includeHookEvents`: UserPromptSubmit, PreToolUse/PostToolUse eines `Read` (alle `success`), ein blockierender PreToolUse eines `Write` (`outcome: 'error'`, `exit_code: 2`, Ausgabe `FAKE_HOOK_BLOCK_OUTPUT`; das `Write` endet `is_error`), Antwort, Stop |
 
+## Interne CLI-Nachrichten (WP-95, `cliNotices.ts`)
+
+| Eingabe | Ablauf |
+|---|---|
+| `fake:cli-notices` | `Bash` (`git commit …`) mit `permission_check_status` `checking`, `FAKE_PERMISSION_CHECK_MS` (3 s × `speed`) Pause, `done` + Ergebnis; danach `vcs_state_changed` (commit), `model_fallback` (`FAKE_FALLBACK`), `file_attachments_missing` (1 von 2 Dateien), `peer_message_hold` `held` → `dropped` (`expired`) von `FAKE_PEER`, Antwort `FAKE_CLI_NOTICES_ANSWER` |
+
 ## Anmelden und Ausgabestil (WP-70)
 
 | Eingabe | Ablauf |

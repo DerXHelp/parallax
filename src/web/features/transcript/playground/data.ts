@@ -525,6 +525,37 @@ function systemSession(): DemoSession {
       subtype: 'error_max_turns',
       errors: ['Reached the maximum number of turns'],
     }),
+    // WP-95: newer CLI messages – missing attachments, held messages of other sessions, the
+    // `/rename` echo (its answer is hidden) and a tool call held by the automatic permission check.
+    sampleSystemItems.attachments_missing({ order: 25 }),
+    sampleSystemItems.peer_message_hold({ order: 26 }),
+    sampleSystemItems.peer_message_hold({
+      id: sampleUuid(1106),
+      order: 27,
+      state: 'dropped',
+      fromName: null,
+      cause: null,
+      outcome: 'expired',
+    }),
+    user('px:sys:rename', 28, '/rename Migration notes', { slashCommand: '/rename' }),
+    sampleItems.assistantText({
+      id: 'px:sys:rename-reply',
+      order: 29,
+      at: sampleTime(29),
+      model: '<synthetic>',
+      text: 'Session renamed to: Migration notes',
+      localCommand: { command: 'rename', args: 'Migration notes' },
+    }),
+    sampleItems.toolCall({
+      id: 'px:sys:check',
+      order: 30,
+      at: sampleTime(30),
+      toolUseId: 'toolu_sys_check',
+      input: { command: 'pnpm build', description: 'Build the app' },
+      status: 'running',
+      permissionCheck: true,
+      result: null,
+    }),
   ];
   return { summary: summaryOf(entryId, 'System items'), snapshot: snapshotOf(entryId, items) };
 }

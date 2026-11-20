@@ -696,6 +696,7 @@ export const sampleItems = {
     elapsedSeconds: null,
     task: null,
     decision: null,
+    permissionCheck: false,
     ...p,
   }),
   turnResult: (p: Partial<TurnResultItem> = {}): TurnResultItem => ({
@@ -839,6 +840,23 @@ export const sampleSystemItems: SystemItemFactories = {
     ...p,
   }),
   handoff: (p = {}) => ({ ...sysBase(15), event: 'handoff', phase: 'returned', importedItems: 3, ...p }),
+  attachments_missing: (p = {}) => ({
+    ...sysBase(16),
+    event: 'attachments_missing',
+    sentCount: 3,
+    missingCount: 2,
+    ...p,
+  }),
+  peer_message_hold: (p = {}) => ({
+    ...sysBase(17),
+    event: 'peer_message_hold',
+    state: 'held',
+    from: 'session_sample',
+    fromName: 'Docs session',
+    cause: 'explicit-setting',
+    outcome: null,
+    ...p,
+  }),
 };
 
 // ---- Folder browser (Phase 2) ----

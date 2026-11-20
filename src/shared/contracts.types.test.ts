@@ -114,6 +114,8 @@ function systemLabel(event: SystemEvent): string {
     case 'error':
     case 'unknown':
     case 'handoff':
+    case 'attachments_missing':
+    case 'peer_message_hold':
       return event;
     default:
       return assertNever(event);

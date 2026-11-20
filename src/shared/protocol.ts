@@ -81,8 +81,9 @@ import { notificationKindSchema } from './status';
  * 5 (WP-76, docs/wp/WP-76.md §C): several computers – hosts.*, remoteAccess.*, multiHost.configure,
  *   session.setDraft, HOST_* / PAIRING_* / REMOTE_* / DRAFT_TOO_LARGE, `clientHello.kind`, close codes
  *   of the forwarder.
+ * 6 (WP-95, ADR-236): the system events `attachments_missing` and `peer_message_hold`.
  */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 /** WP-70: longest pasted sign-in code (`profile.loginCode`; a link with code and state fits). */
 export const LOGIN_CODE_CHARS = 4000;
 /**

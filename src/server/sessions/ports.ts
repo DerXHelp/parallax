@@ -145,7 +145,12 @@ export type StatusSignal =
       category: string | null;
       detail: string;
       needsAction: string | null;
-    };
+    }
+  /**
+   * WP-95: system/vcs_state_changed (untyped) – a shell command changed the repository (commit,
+   * push, merge, rebase …). Only a hint to look again: the engine re-reads the git branch.
+   */
+  | { type: 'vcs_changed' };
 
 /** WP-64: states of system/bridge_state seen in CLI 2.1.x ('unknown' = a newer CLI). */
 export type BridgeState = 'ready' | 'connected' | 'failed' | 'policy_disabled' | 'unknown';

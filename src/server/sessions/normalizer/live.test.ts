@@ -612,3 +612,103 @@ describe('live normalizer: live sentence and turn summary (WP-65)', () => {
     expect(n.ignoredCounts['system/post_turn_summary:stale']).toBe(2);
   });
 });
+
+describe('live normalizer: CLI 2.1.323 internal system messages (WP-95)', () => {
+  const sys = (subtype: string, fields: Record<string, unknown>, uuid = `sys-${subtype}`): unknown => ({
+    type: 'system',
+    subtype,
+    ...fields,
+    uuid,
+    session_id: SESSION,
+  });
+  const check = (toolUseId: string, status: string, uuid: string) =>
+    sys('permission_check_status', { tool_use_id: toolUseId, status }, uuid);
+
+  it('permission_check_status marks the tool call while checking and clears it on done', () => {
+    const n = fresh();
+    n.push(toolUse('toolu_pc', 'Bash', { command: 'git push' }), AT);
+    const checking = n.push(check('toolu_pc', 'checking', 'pc-1'), AT);
+    expect(upserts(checking)).toMatchObject([{ kind: 'tool_call', toolUseId: 'toolu_pc', status: 'pending', permissionCheck: true }]);
+    expect(checking.signals).toEqual([]);
+    // A repeated frame changes nothing.
+    expect(upserts(n.push(check('toolu_pc', 'checking', 'pc-2'), AT))).toEqual([]);
+    expect(upserts(n.push(check('toolu_pc', 'done', 'pc-3'), AT))).toMatchObject([{ toolUseId: 'toolu_pc', permissionCheck: false }]);
+    expect(n.unknownCounts).toEqual({});
+  });
+
+  it('a tool result ends the check; a late checking after the result and unknown calls change nothing', () => {
+    const n = fresh();
+    n.push(toolUse('toolu_pr', 'Bash', { command: 'ls' }), AT);
+    n.push(check('toolu_pr', 'checking', 'pr-1'), AT);
+    const [done] = upserts(n.push(toolResult('toolu_pr', 'ok'), AT));
+    expect(done).toMatchObject({ status: 'done', permissionCheck: false });
+    expect(upserts(n.push(check('toolu_pr', 'checking', 'pr-2'), AT))).toEqual([]);
+    expect(upserts(n.push(check('toolu_nowhere', 'checking', 'pr-3'), AT))).toEqual([]);
+    expect(n.ignoredCounts['system/permission_check_status:unmatched']).toBe(1);
+    n.push(check('toolu_pr', 'pondering', 'pr-4'), AT);
+    expect(n.unknownCounts).toEqual({ 'permission_check_status:pondering': 1 });
+  });
+
+  it('model_fallback and model_consent_fallback become the model_fallback notice', () => {
+    const n = fresh();
+    const [fallback] = upserts(
+      n.push(sys('model_fallback', { trigger: 'overloaded', original_model: 'claude-opus-5-5', fallback_model: 'claude-sonnet-5-5', content: 'Opus is overloaded' }, 'mf-1'), AT),
+    );
+    expect(fallback).toMatchObject({ id: 'mf-1', kind: 'system', event: 'model_fallback', originalModel: 'claude-opus-5-5', fallbackModel: 'claude-sonnet-5-5', text: 'Opus is overloaded' });
+    const [consent] = upserts(
+      n.push(sys('model_consent_fallback', { choice: 'cancelled', original_model: 'claude-fable-5-2', original_model_name: 'Fable 5.2', fallback_model: 'claude-opus-5-5', persisted_as_default: false, content: 'Using Opus' }, 'mf-2'), AT),
+    );
+    expect(consent).toMatchObject({ event: 'model_fallback', originalModel: 'claude-fable-5-2', fallbackModel: 'claude-opus-5-5', text: 'Using Opus' });
+  });
+
+  it('file_attachments_missing becomes attachments_missing; an empty list is ignored', () => {
+    const n = fresh();
+    const missing = [
+      { file_uuid: 'f1', reason: 'download_failed' },
+      { file_uuid: 'f2', reason: 'not_found' },
+    ];
+    const [item] = upserts(n.push(sys('file_attachments_missing', { message_uuid: 'm-1', sent_count: 3, missing }, 'fa-1'), AT));
+    expect(item).toMatchObject({ id: 'fa-1', kind: 'system', event: 'attachments_missing', sentCount: 3, missingCount: 2 });
+    // sent_count missing or below the missing files → at least the missing count.
+    expect(upserts(n.push(sys('file_attachments_missing', { message_uuid: 'm-2', missing }, 'fa-2'), AT))).toMatchObject([{ sentCount: 2, missingCount: 2 }]);
+    expect(upserts(n.push(sys('file_attachments_missing', { message_uuid: 'm-3', sent_count: 1, missing: [] }, 'fa-3'), AT))).toEqual([]);
+    expect(n.ignoredCounts['system/file_attachments_missing:empty']).toBe(1);
+  });
+
+  it('peer_message_hold keeps one item per message: held, then released or dropped', () => {
+    const n = fresh();
+    const [held] = upserts(
+      n.push(sys('peer_message_hold', { state: 'held', message_uuid: 'peer-1', lane: 'socket', from: 'session_a', from_name: 'Docs', cause: 'mode-mismatch' }, 'ph-1'), AT),
+    );
+    expect(held).toMatchObject({ id: 'ph-1', event: 'peer_message_hold', state: 'held', from: 'session_a', fromName: 'Docs', cause: 'mode-mismatch', outcome: null });
+    const [dropped] = upserts(
+      n.push(sys('peer_message_hold', { state: 'dropped', message_uuid: 'peer-1', lane: 'socket', from: 'session_a', outcome: 'expired' }, 'ph-2'), AT),
+    );
+    expect(dropped).toMatchObject({ id: 'ph-1', order: held?.order, state: 'dropped', fromName: 'Docs', cause: 'mode-mismatch', outcome: 'expired' });
+    const [other] = upserts(n.push(sys('peer_message_hold', { state: 'held', message_uuid: 'peer-2', lane: 'stdin', from: 'session_b' }, 'ph-3'), AT));
+    expect(other).toMatchObject({ id: 'ph-3', fromName: null, cause: null });
+  });
+
+  it('vcs_state_changed is a signal only; the ignored internals leave no item and no unknown count', () => {
+    const n = fresh();
+    n.push(sys('status', { status: null }), AT); // the first frame brings the session_id signal
+    const vcs = n.push(sys('vcs_state_changed', { kind: 'commit', cwd: 'D:\\w', branch: 'main' }), AT);
+    expect(vcs).toEqual({ ops: [], signals: [{ type: 'vcs_changed' }] });
+    for (const subtype of [
+      'dev_intent',
+      'instruction_size_warning',
+      'feedback_draft_queued',
+      'code_change_published',
+      'session_metadata',
+      'cloud_session_delta',
+      'inherited_asks_settled',
+      'turn_handoff_available',
+      'upgrade_relay_marker',
+      'per_turn_effort_changed',
+    ]) {
+      expect(n.push(sys(subtype, {}), AT)).toEqual({ ops: [], signals: [] });
+      expect(n.ignoredCounts[`system/${subtype}`]).toBe(1);
+    }
+    expect(n.unknownCounts).toEqual({});
+  });
+});

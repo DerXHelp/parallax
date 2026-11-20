@@ -28,6 +28,8 @@ export interface ToolOptions {
   task?: TaskInfo;
   decision?: ToolDecisionRef;
   parentToolUseId?: string;
+  /** WP-95: the automatic permission check takes longer than usual. */
+  permissionCheck?: boolean;
 }
 
 export interface TranscriptBuilder {
@@ -157,6 +159,7 @@ export function transcriptBuilder(key: string, seed: number, now: number, model:
         elapsedSeconds: options.elapsedSeconds ?? null,
         task: options.task ?? null,
         decision: options.decision ?? null,
+        permissionCheck: options.permissionCheck ?? false,
       };
       items.push(item);
       return toolUseId;

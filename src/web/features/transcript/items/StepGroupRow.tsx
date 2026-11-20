@@ -5,8 +5,8 @@ import { useI18n } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { useItems } from '@web/state/hooks';
 import { ImageGallery, galleryImages } from '../components/ImageGallery';
-import { useLazyTranscriptT } from '../i18n-lazy';
-import { summarizeGroup, type GroupSummary } from '../lib/grouping';
+import { useLazyTranscriptT, type LazyTranscriptT } from '../i18n-lazy';
+import { isCheckingPermission, summarizeGroup, type GroupSummary } from '../lib/grouping';
 import { getToolRenderer } from '../renderers';
 import { toolLabel } from '../renderers/parts';
 import type { Translate } from '../renderers/types';
@@ -15,12 +15,18 @@ import { setGroupOpen } from '../state/groups';
 /** Tool names shown in the line; more kinds become "+n". */
 const SHOWN_TOOLS = 3;
 
-/** "Bash `pnpm build`" – the running step in the short form of its ToolCallRow. */
-function runningText(item: TranscriptItem, t: Translate): string {
+/**
+ * "Bash `pnpm build`" – the running step in the short form of its ToolCallRow; WP-95: "checking
+ * permission: …" while the CLI's automatic permission check holds it.
+ */
+function runningText(item: TranscriptItem, t: Translate, lt: LazyTranscriptT): string {
   if (item.kind !== 'tool_call') return t('transcript.group.runningThinking');
   const summary = getToolRenderer(item.toolName).summary?.(item, t) ?? null;
   const label = toolLabel(item.toolName, t);
-  return t('transcript.group.running', { step: summary === null ? label : `${label} ${summary}` });
+  const step = summary === null ? label : `${label} ${summary}`;
+  return isCheckingPermission(item)
+    ? lt('group.checkingPermission', { step })
+    : t('transcript.group.running', { step });
 }
 
 function headline(summary: GroupSummary, t: Translate): string {
@@ -125,7 +131,7 @@ export const StepGroupLine = memo(function StepGroupLine({
                 data-slot="group-running"
                 className="text-status-working min-w-0 truncate font-mono text-2xs"
               >
-                {runningText(summary.running, t)}
+                {runningText(summary.running, t, lt)}
               </span>
             </>
           ) : duration === null ? null : (

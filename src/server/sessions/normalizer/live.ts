@@ -90,9 +90,14 @@ import {
   memoryRecallMessageSchema,
   messageDeltaEventSchema,
   messageStartEventSchema,
+  fileAttachmentsMissingMessageSchema,
+  modelConsentFallbackMessageSchema,
+  modelFallbackMessageSchema,
   modelRefusalFallbackMessageSchema,
   modelRefusalNoFallbackMessageSchema,
   notificationMessageSchema,
+  peerMessageHoldMessageSchema,
+  permissionCheckStatusMessageSchema,
   permissionDeniedMessageSchema,
   promptSuggestionMessageSchema,
   rateLimitEventSchema,
@@ -111,6 +116,7 @@ import {
   toolResultBlockSchema,
   userMessageSchema,
   type SdkMessageBase,
+  type SdkPeerMessageHold,
   type SdkResultMessage,
   type SdkToolResultBlock,
   type SdkToolResultMeta,
@@ -127,10 +133,25 @@ const IGNORED_SYSTEM_SUBTYPES: ReadonlySet<string> = new Set([
   'mirror_error',
   'worker_shutting_down',
   'control_request_progress',
+  // WP-95 (CLI 2.1.323, all `@internal`): hints for other hosts (Desktop tooling, the iOS simulator,
+  // the feedback card), cloud-worker bookkeeping, a published PR (its URL is in the tool output
+  // already) and per-turn effort (a change to true comes only with init, which Parallax reads).
+  'dev_intent',
+  'instruction_size_warning',
+  'feedback_draft_queued',
+  'code_change_published',
+  'session_metadata',
+  'cloud_session_delta',
+  'inherited_asks_settled',
+  'turn_handoff_available',
+  'upgrade_relay_marker',
+  'per_turn_effort_changed',
 ]);
 /** MCP server status values that mean "not approved / not loaded" (C.5; heuristic, see WP-12.md). */
 const NOT_APPROVED_MCP_STATUS: ReadonlySet<string> = new Set(['disabled', 'needs-approval', 'rejected']);
 const SYNTHETIC_MODEL = '<synthetic>';
+/** WP-95: longest sender address / name kept from a peer_message_hold. */
+const PEER_TEXT_CHARS = 200;
 const LIFECYCLE_CAPABILITY = 'msg_lifecycle_v1';
 /** WP-64: own prompt uuids kept for the replay filter (far more than a session sends per process). */
 const OWN_PROMPTS_LIMIT = 5_000;
@@ -217,6 +238,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
   private readonly frames = new Map<string, string[]>();
   /** tool_use_ids auto-denied by the CLI (system/permission_denied). */
   private readonly deniedByCli = new Set<string>();
+  /** WP-95: peer `message_uuid` → item id (one peer_message_hold item per message, upserted). */
+  private readonly peerHolds = new Map<string, string>();
   private retryItemId: string | null = null;
   private compacting = false;
   /** WP-71: the last `background_tasks_changed` listed tasks (cleared when the process ends). */
@@ -787,6 +810,8 @@ class LiveNormalizerImpl implements LiveNormalizer {
       result,
       status,
       inputPartial: null,
+      // WP-95: a result ends any permission check (its 'done' may come later or never).
+      permissionCheck: false,
     };
   }
 
@@ -1520,6 +1545,65 @@ class LiveNormalizerImpl implements LiveNormalizer {
         this.put(errorItem(this.uuidBase(msg.uuid, at), error), out);
         return;
       }
+      case 'permission_check_status': {
+        const p = permissionCheckStatusMessageSchema.safeParse(raw);
+        if (!p.success) {
+          invalid();
+          return;
+        }
+        this.onPermissionCheck(p.data.tool_use_id, p.data.status, out);
+        return;
+      }
+      case 'model_fallback': {
+        const f = modelFallbackMessageSchema.safeParse(raw);
+        if (!f.success) {
+          invalid();
+          return;
+        }
+        this.putModelFallback(msg.uuid, at, f.data, out);
+        return;
+      }
+      case 'model_consent_fallback': {
+        const f = modelConsentFallbackMessageSchema.safeParse(raw);
+        if (!f.success) {
+          invalid();
+          return;
+        }
+        this.putModelFallback(msg.uuid, at, f.data, out);
+        return;
+      }
+      case 'file_attachments_missing': {
+        const f = fileAttachmentsMissingMessageSchema.safeParse(raw);
+        if (!f.success) {
+          invalid();
+          return;
+        }
+        // The CLI lists each missing file once (keyed by file_uuid).
+        const missingCount = (f.data.missing ?? []).length;
+        if (missingCount === 0) {
+          bump(this.ignored, 'system/file_attachments_missing:empty');
+          return;
+        }
+        const sent = f.data.sent_count;
+        const sentCount = sent === undefined || !Number.isFinite(sent) ? missingCount : Math.max(missingCount, Math.trunc(sent));
+        this.put(
+          { ...this.uuidBase(msg.uuid, at), kind: 'system', event: 'attachments_missing', sentCount, missingCount },
+          out,
+        );
+        return;
+      }
+      case 'peer_message_hold': {
+        const h = peerMessageHoldMessageSchema.safeParse(raw);
+        if (!h.success) {
+          invalid();
+          return;
+        }
+        this.onPeerHold(h.data, msg.uuid, at, out);
+        return;
+      }
+      case 'vcs_state_changed':
+        out.signals.push({ type: 'vcs_changed' });
+        return;
       default: {
         const bridge = normalizeBridgeMessage(subtype, raw);
         if (bridge !== null) {
@@ -1533,6 +1617,67 @@ class LiveNormalizerImpl implements LiveNormalizer {
         this.unknownMessage(raw, msg, receivedAt, out);
       }
     }
+  }
+
+  /**
+   * WP-95: 'checking' marks the call while the auto-mode classifier keeps it waiting, 'done' clears
+   * it. A call that already has its result stays as it is; an unknown call is only counted.
+   */
+  private onPermissionCheck(toolUseId: string, status: string, out: Out): void {
+    if (status !== 'checking' && status !== 'done') {
+      this.countUnknown(`permission_check_status:${status.slice(0, 50)}`);
+      return;
+    }
+    const call = this.toolCall(toolUseId);
+    if (call === null) {
+      bump(this.ignored, 'system/permission_check_status:unmatched');
+      return;
+    }
+    const checking = status === 'checking' && call.result === null;
+    if (call.permissionCheck !== checking) this.put({ ...call, permissionCheck: checking }, out);
+  }
+
+  /** WP-95: system/model_fallback and model_consent_fallback → the `model_fallback` notice. */
+  private putModelFallback(
+    uuid: string | undefined,
+    at: string,
+    data: { original_model?: string | undefined; fallback_model?: string | undefined; content?: string | undefined },
+    out: Out,
+  ): void {
+    this.put(
+      {
+        ...this.uuidBase(uuid, at),
+        kind: 'system',
+        event: 'model_fallback',
+        originalModel: data.original_model ?? '',
+        fallbackModel: data.fallback_model ?? '',
+        text: (data.content ?? '').slice(0, LIMITS.itemTextChars),
+      },
+      out,
+    );
+  }
+
+  /** WP-95: one item per held peer message; 'released'/'dropped' update it (fields not repeated stay). */
+  private onPeerHold(data: SdkPeerMessageHold, uuid: string | undefined, at: string, out: Out): void {
+    const key = data.message_uuid ?? '';
+    const knownId = key === '' ? undefined : this.peerHolds.get(key);
+    const known = knownId === undefined ? undefined : this.items.get(knownId)?.item;
+    const prev = known?.kind === 'system' && known.event === 'peer_message_hold' ? known : null;
+    const base = prev === null ? this.uuidBase(uuid, at) : this.base(prev.id, at, null);
+    if (key !== '') this.peerHolds.set(key, base.id);
+    this.put(
+      {
+        ...base,
+        kind: 'system',
+        event: 'peer_message_hold',
+        state: data.state.slice(0, 50),
+        from: (data.from ?? prev?.from ?? '').slice(0, PEER_TEXT_CHARS),
+        fromName: data.from_name?.slice(0, PEER_TEXT_CHARS) ?? prev?.fromName ?? null,
+        cause: data.cause?.slice(0, 50) ?? prev?.cause ?? null,
+        outcome: data.outcome?.slice(0, 50) ?? null,
+      },
+      out,
+    );
   }
 
   /** WP-64: Remote Control bridge messages (bridge.ts: one table, WP-65 adds summaries). */

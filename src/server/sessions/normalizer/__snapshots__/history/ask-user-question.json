@@ -71,7 +71,8 @@
       },
       "elapsedSeconds": null,
       "task": null,
-      "decision": null
+      "decision": null,
+      "permissionCheck": false
     },
     {
       "id": "msg_011CgwXVtvV7CBLMfyUEokc4:0",

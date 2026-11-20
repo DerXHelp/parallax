@@ -4,7 +4,11 @@ import {
   CircleStopIcon,
   CornerDownLeftIcon,
   LayersIcon,
+  MessageSquareCheckIcon,
   MessageSquareDashedIcon,
+  MessageSquareIcon,
+  MessageSquareLockIcon,
+  MessageSquareXIcon,
   RotateCwIcon,
   ScissorsIcon,
   ShieldXIcon,
@@ -26,7 +30,7 @@ import { TONE_ICON, type AlertTone } from '@web/ui/alert';
 import { CappedContent } from '../components/CappedContent';
 import { Disclosure } from '../components/Disclosure';
 import { ToolFileLink } from '../components/ToolFileLink';
-import { useLazyTranscriptT } from '../i18n-lazy';
+import { useLazyTranscriptT, type LazyTranscriptKey, type LazyTranscriptT } from '../i18n-lazy';
 import { isBlockingHook, isFailedHook, isHookShown } from '../lib/grouping';
 import { isKnownRateLimitWindow } from '../lib/rate-limit';
 import { TerminalOutput } from '../renderers/parts';
@@ -178,7 +182,106 @@ const HookRow = memo(function HookRow({ item, sessionKey }: { item: HookItem; se
   );
 });
 
-/** Parts joined with " · " (computed outside JSX). */
+type AttachmentsMissingItem = Extract<SystemItem, { event: 'attachments_missing' }>;
+
+/**
+ * WP-95: files a message sent by reference (Remote Control, the Claude app) did not arrive – a
+ * warning: "2 of 3 attached files did not arrive", "Claude continues without them."
+ */
+function AttachmentsMissingRow({ item }: { item: AttachmentsMissingItem }) {
+  const lt = useLazyTranscriptT();
+  const missing = item.missingCount;
+  let title: string;
+  if (missing <= 0) title = lt('system.attachmentsMissing.unknown');
+  else if (missing < item.sentCount)
+    title = lt('system.attachmentsMissing.some', { count: missing, sent: item.sentCount });
+  else title = lt('system.attachmentsMissing.all', { count: missing });
+  return (
+    <div data-slot="attachments-missing">
+      <Notice tone="warning" title={title}>
+        {lt('system.attachmentsMissing.detail', { count: missing })}
+      </Notice>
+    </div>
+  );
+}
+
+type PeerHoldItem = Extract<SystemItem, { event: 'peer_message_hold' }>;
+
+/** The known causes of a hold (`cause`); others are shown as the CLI sent them. */
+const HOLD_CAUSES: ReadonlyMap<string, LazyTranscriptKey> = new Map<string, LazyTranscriptKey>([
+  ['explicit-setting', 'system.peerHold.cause.explicitSetting'],
+  ['managed-setting', 'system.peerHold.cause.managedSetting'],
+  ['repo-setting', 'system.peerHold.cause.repoSetting'],
+  ['invalid-setting', 'system.peerHold.cause.invalidSetting'],
+  ['bypass-default', 'system.peerHold.cause.bypassDefault'],
+  ['mode-unknown', 'system.peerHold.cause.modeUnknown'],
+  ['mode-mismatch', 'system.peerHold.cause.modeMismatch'],
+  ['no-mode-asserted', 'system.peerHold.cause.noModeAsserted'],
+]);
+
+/** The known outcomes of a message that was not delivered (`outcome`); others as sent. */
+const HOLD_OUTCOMES: ReadonlyMap<string, LazyTranscriptKey> = new Map<string, LazyTranscriptKey>([
+  ['expired', 'system.peerHold.outcome.expired'],
+  ['refused', 'system.peerHold.outcome.refused'],
+  ['dropped', 'system.peerHold.outcome.dropped'],
+  ['discarded', 'system.peerHold.outcome.discarded'],
+]);
+
+/** A cause/outcome: translated when known, else as sent; null when not reported. */
+function holdReason(
+  value: string | null,
+  known: ReadonlyMap<string, LazyTranscriptKey>,
+  lt: LazyTranscriptT,
+): string | null {
+  const raw = value?.trim() ?? '';
+  if (raw === '') return null;
+  const key = known.get(raw);
+  return key === undefined ? raw : lt(key);
+}
+
+/** The sender of a held message: its display name, else its address; null when neither is reported. */
+function senderOf(item: PeerHoldItem): string | null {
+  for (const value of [item.fromName, item.from]) {
+    const name = value?.trim() ?? '';
+    if (name !== '') return name;
+  }
+  return null;
+}
+
+/**
+ * WP-95: a message of another session that the receive rule held back – one quiet line, updated in
+ * place: held (with its cause), let through, not delivered (with its outcome); an unknown state as
+ * the CLI sent it. The sender is `fromName`, else `from`.
+ */
+function PeerHoldRow({ item }: { item: PeerHoldItem }) {
+  const lt = useLazyTranscriptT();
+  const from = senderOf(item) ?? lt('system.peerHold.anotherSession');
+  let icon: LucideIcon;
+  let label: string;
+  switch (item.state) {
+    case 'held':
+      icon = MessageSquareLockIcon;
+      label = joined([lt('system.peerHold.held', { from }), holdReason(item.cause, HOLD_CAUSES, lt)]);
+      break;
+    case 'released':
+      icon = MessageSquareCheckIcon;
+      label = lt('system.peerHold.released', { from });
+      break;
+    case 'dropped':
+      icon = MessageSquareXIcon;
+      label = joined([lt('system.peerHold.dropped', { from }), holdReason(item.outcome, HOLD_OUTCOMES, lt)]);
+      break;
+    default:
+      icon = MessageSquareIcon;
+      label = lt('system.peerHold.unknownState', { from, state: item.state });
+  }
+  return (
+    <div data-slot="peer-hold" data-state={item.state}>
+      <Line icon={icon}>{label}</Line>
+    </div>
+  );
+}
+
 /** WP-70: error codes that "Sign in" (the profile's sign-in from Parallax) can fix. */
 const SIGN_IN_CODES: ReadonlySet<string> = new Set(['CLAUDE_AUTH_FAILED', 'CLAUDE_NOT_LOGGED_IN']);
 
@@ -193,6 +296,7 @@ function SignInAction({ sessionKey, at }: { sessionKey: string; at: string }) {
   );
 }
 
+/** Parts joined with " · " (computed outside JSX). */
 function joined(parts: readonly (string | null | undefined)[]): string {
   return parts
     .filter((part): part is string => part !== null && part !== undefined && part !== '')
@@ -395,6 +499,10 @@ export const SystemRow = memo(function SystemRow({
           {SIGN_IN_CODES.has(item.error.code) ? <SignInAction sessionKey={sessionKey} at={item.at} /> : null}
         </Notice>
       );
+    case 'attachments_missing':
+      return <AttachmentsMissingRow item={item} />;
+    case 'peer_message_hold':
+      return <PeerHoldRow item={item} />;
     case 'handoff': {
       // ADR-104: handed off to an external console / taken back (with the turns made there).
       let label: string;

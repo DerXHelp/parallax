@@ -2828,3 +2828,35 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
 - **Folgen:** Keine `PROTOCOL_VERSION`-Erhöhung (nur ein Befehl und zwei Fehlercodes). Ein Rechner mit älterer Version
   lehnt `fs.createDirectory` als unbekannten Befehl ab (`VALIDATION_FAILED`); der Browser zeigt den Fehler im
   Namensfeld.
+
+## ADR-236 – Interne CLI-Nachrichten: zeigen, was den Nutzer betrifft, den Rest bewusst ignorieren
+- **Datum/WP:** 20.11.2026, WP-95 (`feature/cli-nachrichten`), Auftrag des Nutzers.
+- **Entscheidung:**
+  - `claude` 2.1.323 schickt im SDK-Modus Systemnachrichten, die als `@internal` außerhalb der öffentlichen
+    `SDKMessage`-Union stehen. Parallax zeigte sie als „Unknown event …“. Jetzt gilt je Nachricht genau eine Regel:
+    anzeigen, als Signal nutzen oder bewusst ignorieren (`ignoredCounts`). Grundlage sind die Schema-Beschreibungen im
+    `claude`-Binary und die Zähler der produktiven Instanz.
+  - **Anzeigen:** `permission_check_status` als Feld `ToolCallItem.permissionCheck` (die Tool-Zeile sagt
+    „Berechtigung wird geprüft …“, solange der Auto-Mode-Classifier die Ausführung länger als ~4 s aufhält);
+    `model_fallback`/`model_consent_fallback` als vorhandenes Item `system/model_fallback`; neu
+    `system/attachments_missing` (Dateien einer Nachricht aus der Claude-App kamen nicht an) und
+    `system/peer_message_hold` (Nachricht einer anderen Session zurückgehalten; ein Item je Nachricht, `upsert`
+    bis `released`/`dropped`).
+  - **Signal:** `vcs_state_changed` → Status-Signal `vcs_changed`; die Engine liest den Git-Branch neu.
+  - **Ignorieren:** `dev_intent`, `instruction_size_warning` (nur für Claude Desktop), `feedback_draft_queued`,
+    `code_change_published` (die URL steht schon in der Tool-Ausgabe), `per_turn_effort_changed` und die
+    Cloud-Worker-Interna (`session_metadata`, `cloud_session_delta`, `inherited_asks_settled`,
+    `turn_handoff_available`, `upgrade_relay_marker`).
+  - **Weiter „unbekannt“:** Nachrichten, die Parallax ohne Opt-in nie bekommt (`turn_preempted` braucht eine
+    Initialize-Angabe) oder die nur im REPL entstehen (`turn_duration`, `stop_hook_summary`, `agents_killed` …).
+    Kommen sie doch, bleibt die ruhige Zeile der Hinweis, dass sich etwas geändert hat.
+  - Das Echo eines `/rename`, das Parallax selbst schickt (Titel an die CLI und an Remote Control), zeigt das
+    Transkript als ruhige Zeile „Titel an Claude Code übergeben“ statt als Sprechblase des Nutzers; die lokale
+    Antwort „Session renamed to …“ ist versteckt (live und im Verlauf).
+- **Begründung:** Eine Pause, die wie ein hängendes Tool aussieht, verlorene Dateien oder eine zurückgehaltene
+  Nachricht betreffen den Nutzer direkt. Alles andere ist für andere Hosts gedacht; eine Zeile „Unknown event“
+  dafür ist nur Rauschen.
+- **Folgen:** `PROTOCOL_VERSION` 5 → 6 (zwei neue Mitglieder der geschlossenen Union `systemItemSchema`, die ein
+  älterer Client nicht parsen kann). Rechner mit unterschiedlicher Version verbinden sich erst nach dem Update
+  (`PROTOCOL_VERSION_MISMATCH`). Das neue Feld `permissionCheck` hat einen Default. Fake-Szenario
+  `fake:cli-notices`.

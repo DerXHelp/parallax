@@ -1476,6 +1476,12 @@ export const toolCallItemSchema = z.object({
   /** Agent / background Bash. */
   task: taskInfoSchema.nullable().default(null),
   decision: toolDecisionRefSchema.nullable().default(null),
+  /**
+   * WP-95: the CLI's automatic permission check (auto-mode classifier) has kept the call waiting
+   * longer than usual (`system/permission_check_status` 'checking' until its 'done'). Most checks
+   * answer within about four seconds and never set it. Says nothing about the outcome.
+   */
+  permissionCheck: z.boolean().default(false),
 });
 export type ToolCallItem = z.infer<typeof toolCallItemSchema>;
 
@@ -1564,6 +1570,34 @@ export const systemItemSchema = z.discriminatedUnion('event', [
     phase: z.enum(['external', 'returned']),
     /** 'returned': items imported from the CLI transcript (turns made in the console). */
     importedItems: z.number().int().nonnegative().default(0),
+  }),
+  /**
+   * WP-95: `system/file_attachments_missing` – files a message sent by reference (Remote Control,
+   * Claude Code Remote) did not arrive where Claude can read them; the turn runs on without them.
+   */
+  systemBase.extend({
+    event: z.literal('attachments_missing'),
+    /** Well-formed file references of that message. */
+    sentCount: z.number().int().nonnegative(),
+    /** Distinct files that did not arrive. */
+    missingCount: z.number().int().nonnegative(),
+  }),
+  /**
+   * WP-95: `system/peer_message_hold` – a message from another session that the receive-side policy
+   * held instead of queueing; one item per message, upserted when the hold resolves.
+   */
+  systemBase.extend({
+    event: z.literal('peer_message_hold'),
+    /** held | released | dropped (open set). */
+    state: z.string(),
+    /** Sender address as the CLI reports it (session or agent id, free text). */
+    from: z.string(),
+    /** Display name of the sender; null = not reported. */
+    fromName: z.string().nullable(),
+    /** Why it is held (`explicit-setting`, `managed-setting`, `mode-mismatch` …, open set); null = not reported. */
+    cause: z.string().nullable(),
+    /** Only for `dropped`: `expired`, `refused`, `dropped`, `discarded` (open set); null otherwise. */
+    outcome: z.string().nullable(),
   }),
   /** Tolerant parsing. */
   systemBase.extend({

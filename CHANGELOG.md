@@ -15,6 +15,18 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 - Im Ordner-Browser von „Neue Session“ wählt ein Klick einen Unterordner aus, und „Diesen Ordner wählen“ übernimmt ihn,
   ohne ihn zu öffnen; die Fußzeile zeigt, welcher Ordner übernommen wird (WP-94).
 - „Neuer Ordner“ im Ordner-Browser legt einen Ordner im geöffneten Ordner an und wählt ihn gleich aus (WP-94).
+- Wartet ein Tool-Aufruf auf die automatische Berechtigungsprüfung des Auto-Modus, zeigt seine Zeile „Berechtigung wird
+  geprüft…“ statt einer Meldung „Unknown event“ (WP-95).
+- Das Transkript meldet, wenn Claude auf ein Ausweichmodell wechselt, wenn Dateien einer Nachricht aus der Claude-App
+  nicht ankommen und wenn eine Nachricht einer anderen Session zurückgehalten wird (WP-95).
+- Nach Commit, Push, Merge oder Rebase in einer Session zeigt Parallax sofort den aktuellen Git-Branch (WP-95).
+
+### Geändert
+- Interne Hinweise von `claude`, die nur andere Programme betreffen, erscheinen nicht mehr als „Unknown event“ (WP-95).
+- Gibt Parallax einen Titel an Claude Code weiter, zeigt das Transkript eine ruhige Zeile „Titel an Claude Code
+  übergeben“ statt einer Nachricht, die aussieht, als hättest du sie geschrieben (WP-95).
+- Rechner, die sich mit „Mehrere Rechner“ gegenseitig steuern, brauchen dafür beide diese Version (Protokollversion 6,
+  WP-95).
 
 ### Behoben
 - Die Context-Anzeige springt bei Modellen anderer Anbieter während eines Turns nicht mehr kurz auf 0 %

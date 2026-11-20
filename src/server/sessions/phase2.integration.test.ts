@@ -728,6 +728,24 @@ describe('git branch (ADR-113)', () => {
     expect(calls).toHaveLength(2);
     expect(h.stores.registry.get(entry.id)?.gitBranch).toBe('b2');
   });
+
+  it('WP-95: a repository change in the turn (vcs_state_changed) reads the branch again before the turn ends', async () => {
+    const calls: string[] = [];
+    const h = await setup({
+      gitBranch: () => {
+        calls.push('lookup');
+        return Promise.resolve(`b${String(calls.length)}`);
+      },
+    });
+    const entryId = await idleEntry(h);
+    const before = calls.length;
+    await h.cmd({ name: 'session.sendPrompt', entryId, prompt: { text: 'fake:cli-notices' } });
+    await h.waitFor(() => h.facts(entryId).runState === 'idle' && calls.length >= before + 2);
+    await h.settle();
+    // One lookup for the commit, one at the end of the turn (ADR-113).
+    expect(calls.length - before).toBe(2);
+    expect(h.summary(entryId).gitBranch).toBe(`b${String(calls.length)}`);
+  });
 });
 
 // =====================================================================================

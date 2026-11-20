@@ -21,7 +21,9 @@
  * fill the agent's own transcript while it runs; WP-70: `fake:auth-failed` (like `fake:error`, the
  * assistant error `authentication_failed`) and `fake:output-style` (names the project's style); WP-71 (workers.ts):
  * `fake:workers` (two background agents and a background shell at once); WP-73 (claudeSettings.ts):
- * `fake:claude-model <model|none>` and `fake:model-picker [replace|off]` (Claude's own settings). A prompt with images, PDFs, attached files or inline pastes
+ * `fake:claude-model <model|none>` and `fake:model-picker [replace|off]` (Claude's own settings); WP-95 (cliNotices.ts):
+ * `fake:cli-notices` (permission check, repository change, model fallback, missing files, held peer
+ * message). A prompt with images, PDFs, attached files or inline pastes
  * gets "Fake: received …" (ADR-103, ADR-146); the first prompt of a start without resume that is
  * the engine's fresh-context prompt gets "Fake: implementing plan (N lines)"; anything else gets a
  * thought plus a streamed "Echo: …". Decisions really wait for the engine; interrupt() and
@@ -31,6 +33,7 @@ import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { system as systemFrame, msg } from '../../sessions/normalizer/synthetic/build';
 import type { OutgoingPrompt } from '../types';
+import { cliNotices } from './cliNotices';
 import { TurnInterrupted, promptText } from './common';
 import {
   assistantErrorTurn,
@@ -541,6 +544,9 @@ async function handle(
       break;
     case 'fake:hooks':
       await hooks(ctx, c, turn);
+      break;
+    case 'fake:cli-notices':
+      await cliNotices(ctx, c, turn);
       break;
     case 'fake:bash':
     case 'fake:permission':

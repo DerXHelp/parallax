@@ -312,6 +312,7 @@ export function streamingBlockItem(base: ItemBase, block: unknown, ctx: BlockCon
         elapsedSeconds: null,
         task: null,
         decision: null,
+        permissionCheck: false,
       };
     }
   }
@@ -414,6 +415,7 @@ export function finalBlockItem(
         elapsedSeconds: prev?.elapsedSeconds ?? null,
         task: prev?.task ?? null,
         decision: prev?.decision ?? null,
+        permissionCheck: prev?.permissionCheck ?? false,
       };
       return { kind: 'item', item: fitToolCall(item, sink) };
     }
