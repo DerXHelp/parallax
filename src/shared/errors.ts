@@ -159,6 +159,15 @@ export const ERROR_CATALOG = {
   SHELL_NOT_FOUND: { category: 'setup', http: 503, severity: 'warning', retryable: false },
   /** The shell window could not be opened (`params.reason`, scrubbed). */
   SHELL_OPEN_FAILED: { category: 'internal', http: 500, severity: 'error', retryable: true },
+  // embedded terminal (WP-99, ADR-239)
+  /** No pseudo console on this computer (`params.reason`: `ffi`, `platform`, `disabled`). */
+  TERMINAL_UNAVAILABLE: { category: 'setup', http: 503, severity: 'warning', retryable: false },
+  /** Too many terminals (`params.scope`: `entry` | `total`, `params.max`). */
+  TERMINAL_LIMIT_REACHED: { category: 'conflict', http: 409, severity: 'warning', retryable: false },
+  /** The terminal is gone or belongs to another entry (`params.terminalId`). */
+  TERMINAL_NOT_FOUND: { category: 'not_found', http: 404, severity: 'error', retryable: false },
+  /** The shell could not be started in the pseudo console (`params.reason`, scrubbed). */
+  TERMINAL_START_FAILED: { category: 'internal', http: 500, severity: 'error', retryable: true },
   /** session.stopTask for an unknown or finished task (ADR-149). */
   TASK_NOT_FOUND: { category: 'not_found', http: 404, severity: 'info', retryable: false },
   /** plan.read for an unknown version or a missing plan file (ADR-148). */

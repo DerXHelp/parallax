@@ -56,7 +56,7 @@ describe('shell request channel (WP-30 §4.14 C)', () => {
   });
 
   it('Phase 3 side panel requests pass between hosts by session key (WP-69: tab subagent)', () => {
-    expect([...SIDE_PANEL_TABS]).toEqual(['plan', 'file', 'files', 'tasks', 'subagent']);
+    expect([...SIDE_PANEL_TABS]).toEqual(['plan', 'file', 'files', 'tasks', 'subagent', 'terminal']);
     const remove = registerShellRequestHandler('sidePanel', (request) => request.sessionKey === 'local:en_1');
     expect(requestShell({ kind: 'sidePanel', sessionKey: 'local:en_1', tab: 'plan' })).toBe(true);
     expect(requestShell({ kind: 'sidePanel', sessionKey: 'local:en_2', tab: null })).toBe(false);

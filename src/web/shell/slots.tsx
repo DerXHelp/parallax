@@ -14,6 +14,7 @@ import {
   SubagentPanelPlaceholder,
   TaskStripPlaceholder,
   TasksPanelPlaceholder,
+  TerminalPanelPlaceholder,
   ToolInputPreviewPlaceholder,
   TranscriptPlaceholder,
   UpdateBannerPlaceholder,
@@ -55,6 +56,11 @@ export interface FeatureSlots {
    * while it runs (request `openSubagent`).
    */
   SubagentPanel: ComponentType<SubagentPanelSlotProps>;
+  /**
+   * WP-99 (features/terminal, ADR-239): tab "Terminal" – shells of this session's folder in a pseudo
+   * console of this computer. The frame shows the tab only when `useTerminalAvailable(sessionKey)`.
+   */
+  TerminalPanel: ComponentType<{ sessionKey: string }>;
   // Feature slots
   /**
    * WP-16 → WP-15 (plan card via tool_call.decision). Rule (architecture §2.3e, ADR-031):
@@ -165,6 +171,7 @@ export const DEFAULT_FEATURE_SLOTS: FeatureSlots = {
   TasksPanel: TasksPanelPlaceholder,
   TaskStrip: TaskStripPlaceholder,
   SubagentPanel: SubagentPanelPlaceholder,
+  TerminalPanel: TerminalPanelPlaceholder,
   DecisionCard: DecisionCardPlaceholder,
   Markdown: MarkdownPlaceholder,
   ToolInputPreview: ToolInputPreviewPlaceholder,
@@ -201,6 +208,7 @@ export function FeatureSlotsProvider({
       TasksPanel: slots.TasksPanel ?? parent.TasksPanel,
       TaskStrip: slots.TaskStrip ?? parent.TaskStrip,
       SubagentPanel: slots.SubagentPanel ?? parent.SubagentPanel,
+      TerminalPanel: slots.TerminalPanel ?? parent.TerminalPanel,
       DecisionCard: slots.DecisionCard ?? parent.DecisionCard,
       Markdown: slots.Markdown ?? parent.Markdown,
       ToolInputPreview: slots.ToolInputPreview ?? parent.ToolInputPreview,

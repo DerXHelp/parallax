@@ -292,6 +292,7 @@ export function sampleHostState(p: Partial<HostState> = {}): HostState {
     multiHost: { ...DEFAULT_MULTI_HOST_CONFIG },
     remoteHosts: [],
     remoteAccess: null,
+    terminalAvailable: false,
     ...p,
   };
 }

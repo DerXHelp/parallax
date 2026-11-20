@@ -92,6 +92,32 @@
   --profile-violet: oklch(0.58 0.18 295);
   --profile-pink: oklch(0.65 0.18 350);
   --profile-teal: oklch(0.62 0.11 190);
+
+  /*
+   * WP-99 (ADR-239): palette of the embedded terminal (xterm.js reads these at run time). Hex on
+   * purpose: xterm.js parses hex without a canvas. Contrast to --terminal-background at least 4.5:1,
+   * except bright-white (light) and black (dark), which stand for "barely visible" by convention.
+   */
+  --terminal-background: #fcfcfd;
+  --terminal-foreground: #2a2b30;
+  --terminal-cursor: #2a2b30;
+  --terminal-selection: rgba(47, 111, 208, 0.25);
+  --terminal-black: #2a2b30;
+  --terminal-red: #c4302b;
+  --terminal-green: #2e7a31;
+  --terminal-yellow: #855d00;
+  --terminal-blue: #1f5fbf;
+  --terminal-magenta: #8f3fb0;
+  --terminal-cyan: #0e7480;
+  --terminal-white: #666a73;
+  --terminal-bright-black: #71747d;
+  --terminal-bright-red: #d23a35;
+  --terminal-bright-green: #33853a;
+  --terminal-bright-yellow: #946a00;
+  --terminal-bright-blue: #2f6fd0;
+  --terminal-bright-magenta: #9c4cc0;
+  --terminal-bright-cyan: #0f808c;
+  --terminal-bright-white: #8a8d96;
 }
 
 .dark {
@@ -135,6 +161,28 @@
 
   --side-question: oklch(0.76 0.12 295);
   --side-question-surface: oklch(0.235 0.018 295);
+
+  /* WP-99: terminal palette (see :root). */
+  --terminal-background: #1c1d21;
+  --terminal-foreground: #e3e4e8;
+  --terminal-cursor: #e3e4e8;
+  --terminal-selection: rgba(108, 182, 255, 0.3);
+  --terminal-black: #45474f;
+  --terminal-red: #f2777a;
+  --terminal-green: #8fc97a;
+  --terminal-yellow: #e6c07b;
+  --terminal-blue: #6cb6ff;
+  --terminal-magenta: #d197f0;
+  --terminal-cyan: #5fc9d1;
+  --terminal-white: #c8cad1;
+  --terminal-bright-black: #858892;
+  --terminal-bright-red: #ff9494;
+  --terminal-bright-green: #a6dd91;
+  --terminal-bright-yellow: #f5d58c;
+  --terminal-bright-blue: #8ac7ff;
+  --terminal-bright-magenta: #e0aef7;
+  --terminal-bright-cyan: #7fdbe2;
+  --terminal-bright-white: #f5f6f8;
 }
 
 @theme inline {

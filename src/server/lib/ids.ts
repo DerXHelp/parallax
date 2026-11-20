@@ -5,9 +5,9 @@ import { AUTH_TOKEN_BYTES } from '@shared/http';
  * Server-side id generation (docs/wp/WP-02.md §2.2). Formats are defined by the zod schemas in
  * src/shared/common.ts (`<prefix>_` + 32 lower-case hex); the web has its own helper.
  */
-export type ServerIdPrefix = 'en' | 'cv' | 'dc' | 'pf';
+export type ServerIdPrefix = 'en' | 'cv' | 'dc' | 'pf' | 'tm';
 
-/** `en_…` entry, `cv_…` conversation, `dc_…` decision, `pf_…` profile (16 random bytes as hex). */
+/** `en_…` entry, `cv_…` conversation, `dc_…` decision, `pf_…` profile, `tm_…` terminal (WP-99) – 16 random bytes as hex. */
 export function newId<P extends ServerIdPrefix>(prefix: P): `${P}_${string}` {
   return `${prefix}_${randomBytes(16).toString('hex')}`;
 }

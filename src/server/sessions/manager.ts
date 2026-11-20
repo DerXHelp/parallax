@@ -206,6 +206,8 @@ export interface SessionManagerDeps {
     port?: () => number | null;
     /** Phase 2 (ADR-110): `HostState.systemIntegration` (SystemIntegration.available). Absent → false. */
     systemIntegration?: boolean;
+    /** WP-99 (ADR-239): `HostState.terminalAvailable` (TerminalService.available). Absent → false. */
+    terminalAvailable?: boolean;
     /** WP-87: `HostState.app` and `HostState.update` (the update service). Absent → null / default. */
     app?: () => AppInfo | null;
     update?: () => UpdateState;
@@ -461,6 +463,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       nativeNotifications: toasts.available(),
       port: deps.host.port?.() ?? null,
       systemIntegration: deps.host.systemIntegration ?? false,
+      terminalAvailable: deps.host.terminalAvailable ?? false,
       // WP-64: the default profile's `remoteControlAtStartup`, once a process of it was ready.
       remoteControlDefault: remoteDefaults.get(defaultProfile.id) ?? null,
       app: deps.host.app?.() ?? null,

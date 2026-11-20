@@ -85,6 +85,10 @@ export const errorsDe: Record<ErrorCode, string> = {
   SHELL_NOT_FOUND:
     'Git Bash wurde nicht gefunden. Installiere Git for Windows oder gib den Ordner unter Einstellungen → Konsole an.',
   SHELL_OPEN_FAILED: 'Die Shell konnte nicht geöffnet werden.',
+  TERMINAL_UNAVAILABLE: 'Das Terminal ist auf diesem Rechner nicht verfügbar.',
+  TERMINAL_LIMIT_REACHED: 'Es sind zu viele Terminals offen. Schließe zuerst eines.',
+  TERMINAL_NOT_FOUND: 'Dieses Terminal gibt es nicht mehr.',
+  TERMINAL_START_FAILED: 'Das Terminal konnte nicht gestartet werden.',
   OPEN_FAILED: 'Das Programm konnte nicht gestartet werden.',
   TASK_NOT_FOUND: 'Diese Aufgabe läuft nicht mehr.',
   PLAN_NOT_FOUND: 'Diese Plan-Version ist nicht verfügbar.',
