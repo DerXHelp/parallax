@@ -24,19 +24,13 @@
 import { quoteWindowsArg, windowsCommandLine } from '../lib/cmdline';
 import { loadFfi, openLibrary, pointerValue, type FfiFunction } from '../lib/ffi';
 import { environmentBlock } from './envBlock';
+import type { PtyFactory, PtyProcess, PtySpawnOptions } from './ports';
 
-export interface ConPtyOptions {
-  /** Absolute path of the program (`.exe`). */
-  executablePath: string;
-  args: readonly string[];
-  cwd: string;
-  env: Readonly<Record<string, string | undefined>>;
-  cols: number;
-  rows: number;
-}
+/** Absolute path of the program (`.exe`), arguments, folder, environment and size. */
+export type ConPtyOptions = PtySpawnOptions;
 
-/** One shell in a pseudo console. Every method returns quickly; none throws after `spawn`. */
-export interface ConPty {
+/** One shell in a pseudo console (a `PtyProcess` with a real pid). Every method returns quickly; none throws after `spawn`. */
+export interface ConPty extends PtyProcess {
   readonly pid: number;
   /** What the console wrote, at most `max` bytes; null = nothing waiting (or closed). */
   read(max: number): Buffer | null;
@@ -376,6 +370,18 @@ function createConPty(
       closeHandle(h.processHandle);
     },
   };
+}
+
+/** The pseudo console as the terminal service's `PtyFactory`; null where `loadConPty` is null. */
+export function createConPtyFactory(): PtyFactory | null {
+  const api = loadConPty();
+  if (api === null) return null;
+  return { spawn: (options) => api.spawn(options) };
+}
+
+/** `TERMINAL_UNAVAILABLE.params.reason` when `createConPtyFactory` is null: `platform` off Windows x64, else `ffi`. */
+export function conPtyUnavailableReason(): 'platform' | 'ffi' {
+  return process.platform === 'win32' && process.arch === 'x64' ? 'ffi' : 'platform';
 }
 
 /** For tests: forget the cached binding. */
