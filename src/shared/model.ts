@@ -512,6 +512,40 @@ export function defaultEditorSettings(): EditorSettings {
   return { preset: 'notepadpp', executable: null, args: [] };
 }
 
+// ---- Shell in the project folder (WP-97, ADR-238) ----
+
+/** Shells of "Open shell in folder" (WP-97) – a visible window in the session's cwd. */
+export const SHELL_KINDS = ['cmd', 'powershell', 'gitbash'] as const;
+export const shellKindSchema = z.enum(SHELL_KINDS);
+export type ShellKind = z.infer<typeof shellKindSchema>;
+
+/**
+ * Window of Git Bash: `mintty` = `git-bash.exe` (like the Start menu shortcut "Git Bash"),
+ * `terminal` = `bin\bash.exe` in the default terminal of Windows (Windows Terminal or the console host).
+ */
+export const GIT_BASH_WINDOWS = ['mintty', 'terminal'] as const;
+export const gitBashWindowSchema = z.enum(GIT_BASH_WINDOWS);
+export type GitBashWindow = z.infer<typeof gitBashWindowSchema>;
+
+/** Settings "Console" (WP-97): a patch replaces the whole object – send every field. */
+export const consoleSettingsSchema = z.object({
+  defaultShell: shellKindSchema,
+  gitBashWindow: gitBashWindowSchema,
+  /** Folder of Git for Windows (holds `git-bash.exe`); null = detected (shell.detect). */
+  gitDir: z
+    .string()
+    .min(1)
+    .max(LIMITS.pathChars)
+    .refine((value) => isSafeWindowsPath(value), 'path')
+    .nullable(),
+});
+export type ConsoleSettings = z.infer<typeof consoleSettingsSchema>;
+export const DEFAULT_CONSOLE_SETTINGS = {
+  defaultShell: 'cmd',
+  gitBashWindow: 'mintty',
+  gitDir: null,
+} as const satisfies ConsoleSettings;
+
 // ---- Remote Control (WP-64) ----
 
 /**
@@ -632,6 +666,8 @@ const settingsFields = {
   updates: updateSettingsSchema,
   /** WP-92: zoom of every window in percent (ZOOM_LEVELS). */
   zoom: zoomSchema,
+  /** WP-97: "Open shell in folder" – default shell, window of Git Bash, Git folder. */
+  console: consoleSettingsSchema,
 };
 
 export const settingsSchema = z.object({
@@ -648,6 +684,7 @@ export const settingsSchema = z.object({
   hookDisplay: hookDisplaySchema.default('failed'),
   updates: updateSettingsSchema.default(DEFAULT_UPDATE_SETTINGS),
   zoom: settingsFields.zoom.default(DEFAULT_ZOOM),
+  console: consoleSettingsSchema.default(DEFAULT_CONSOLE_SETTINGS),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 

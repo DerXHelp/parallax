@@ -109,6 +109,17 @@ export const de: typeof en = {
     quickAsk: 'Kurz fragen…',
     signIn: 'Anmelden',
     outputStyle: 'Ausgabestil…',
+    openShell: 'Shell im Ordner öffnen',
+  },
+  shells: {
+    cmd: 'Eingabeaufforderung (cmd)',
+    powershell: 'PowerShell',
+    gitbash: 'Git Bash',
+    default: 'Standard',
+    open: '{shell} im Projektordner öffnen',
+    choose: 'Shell wählen',
+    group: 'Shell im Projektordner',
+    settings: 'Konsolen-Einstellungen…',
   },
   quickAsk: {
     title: 'Kurz fragen · {title}',
@@ -192,6 +203,7 @@ export const de: typeof en = {
     nextWaiting: 'Nächste Session, die auf dich wartet',
     rename: 'Gewählte Session umbenennen',
     toggleSidebar: 'Seitenleiste ein- oder ausklappen',
+    openShell: 'Standard-Shell im Ordner der gewählten Session öffnen',
   },
   conversations: {
     title: 'Frühere Unterhaltungen',

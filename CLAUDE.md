@@ -65,6 +65,8 @@ die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale En
   - 80: `src/web/{state,shell,lib}/**`, betroffene Stellen in `features/**` außer `composer`, Abschnitt „Andere steuern“.
   - 81: `sessions/notifier.ts`, Wächter-Toast, Protokoll-Link.
   - 82 (Koordinator): `src/server/{app,main}`, `e2e/**`, README, CHANGELOG.
+- **Konsole und Terminal (WP-97…99, `docs/wp/WP-97.md`):** Koordinator `src/shared/**`, `src/server/terminal/**`,
+  Komposition; WP-99a `src/server/terminal/**` (Terminal), WP-99b `src/web/features/terminal/**`.
 - Keine Datei wird von zwei Paketen bearbeitet; nichts in fremden Ordnern anlegen. `README.md` von
   Ordnern mit mehreren Ownern (`src/server`, `server/lib`, `server/sessions`, `server/backend`,
   `src/web`, `web/shell`, `web/features`, `web/ui`) pflegt der Koordinator.

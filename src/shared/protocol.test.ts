@@ -103,6 +103,9 @@ const commands: Command[] = [
   { name: 'fs.listDirectory', path: null, showHidden: false },
   { name: 'fs.listDirectory', path: 'D:\\work', showHidden: true },
   { name: 'fs.createDirectory', parent: 'D:\\work', folderName: 'foobar' },
+  // WP-97
+  { name: 'session.openShell', entryId, shell: 'gitbash' },
+  { name: 'shell.detect' },
   // Phase 3 (WP-50 §4.6)
   { name: 'session.stopTask', entryId, taskId: 'task_01' },
   { name: 'plan.list', entryId },
@@ -592,6 +595,9 @@ describe('command results', () => {
     expect(parseCommandResult('profile.test', { claude: sampleClaudeInstallStatus() })).not.toBeNull();
     expect(parseCommandResult('profile.validate', { issues: [] })).toEqual({ issues: [] });
     expect(parseCommandResult('fs.listDirectory', sampleFsListing())).toEqual(sampleFsListing());
+    expect(parseCommandResult('session.openShell', { pid: 4242 })).toEqual({ pid: 4242 });
+    expect(parseCommandResult('session.openShell', { pid: 0 })).toBeNull();
+    expect(parseCommandResult('shell.detect', { gitDir: null })).toEqual({ gitDir: null });
     expect(parseCommandResult('fs.createDirectory', { path: 'D:\\work\\foobar' })).toEqual({
       path: 'D:\\work\\foobar',
     });
@@ -784,11 +790,14 @@ describe('command results', () => {
       .map((option) => option.shape.name.value)
       .filter((name) => !['session.create', 'settings.update', 'server.shutdown'].includes(name));
     const fileCommands = ['file.stat', 'file.statMany', 'file.open', 'files.session', 'files.project'];
+    // WP-97: carries an entryId but needs no lifecycle (a shell in the folder).
+    fileCommands.push('session.openShell');
     expect([...withoutEntry, ...fileCommands].sort()).toEqual([...HOST_COMMAND_NAMES].sort());
     expect(isHostCommand({ name: 'fs.listDirectory', path: null, showHidden: false })).toBe(true);
     expect(isHostCommand({ name: 'fs.createDirectory', parent: 'D:\\work', folderName: 'x' })).toBe(true);
     expect(isHostCommand({ name: 'files.session', entryId })).toBe(true);
     expect(isHostCommand({ name: 'editor.detect' })).toBe(true);
+    expect(isHostCommand({ name: 'session.openShell', entryId, shell: 'cmd' })).toBe(true);
     expect(isHostCommand({ name: 'session.reclaim', entryId })).toBe(false);
     expect(isHostCommand({ name: 'plan.list', entryId })).toBe(false);
   });

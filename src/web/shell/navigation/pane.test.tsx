@@ -65,6 +65,8 @@ describe('header (WP-35 §8)', () => {
       'Generate title again',
       'Open in new window',
       'Open folder in Explorer',
+      // WP-97: a submenu with the shells.
+      'Open shell in folder',
       'Open in external console',
       'Copy console command',
       // WP-64 (no link yet: neither open nor copy).

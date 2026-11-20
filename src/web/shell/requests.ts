@@ -20,6 +20,8 @@ export const SETTINGS_SECTIONS = [
   'notifications',
   'sessions',
   'files',
+  // WP-97: "Open shell in folder" – default shell, Git Bash window, Git folder.
+  'console',
   'profiles',
   'server',
   'multiHost',

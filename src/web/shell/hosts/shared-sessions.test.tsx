@@ -74,17 +74,17 @@ function header(): HTMLElement {
 }
 
 describe('actions of a shared session', () => {
-  it('leaves out Explorer, external console, console command and sign-in; keeps the rest', () => {
+  it('leaves out Explorer, shell (WP-97), external console, console command and sign-in; keeps the rest', () => {
     const local = ids(NAVIGATION_SESSION_KEYS.auth);
     const shared = ids(DEMO_HOST_KEYS.pipeline);
-    for (const id of ['openFolder', 'openExternal', 'copyConsoleCommand', 'signIn']) {
+    const onlyLocal = ['openFolder', 'openShell', 'openExternal', 'copyConsoleCommand', 'signIn'];
+    for (const id of onlyLocal) {
       expect(local, id).toContain(id);
       expect(shared, id).not.toContain(id);
     }
-    expect(shared).toEqual(
-      local.filter((id) => !['openFolder', 'openExternal', 'copyConsoleCommand', 'signIn'].includes(id)),
-    );
+    expect(shared).toEqual(local.filter((id) => !onlyLocal.includes(id)));
     expect(ids(DEMO_HOST_KEYS.pipeline, HEADER_ACTIONS)).not.toContain('openFolder');
+    expect(ids(DEMO_HOST_KEYS.pipeline, HEADER_ACTIONS)).not.toContain('openShell');
   });
 
   it('refuses commands the other computer would refuse before sending them', async () => {
@@ -118,14 +118,17 @@ describe('header and banner', () => {
     expect(host?.textContent).toContain('Computer B');
     expect(host?.querySelector('[data-slot="host-badge"]')?.getAttribute('data-host-color')).toBe('teal');
     expect(document.querySelector('[data-slot="pane-host"]')).toBeNull();
+    // WP-97: no shell button – a shell would open on the other computer's desktop.
+    expect(document.querySelector('[data-slot="console-button"]')).toBeNull();
   });
 
-  it('a local session has no computer in the header', async () => {
+  it('a local session has no computer in the header, but the shell button (WP-97)', async () => {
     await startWith(NAVIGATION_SESSION_KEYS.auth);
     await waitFor(() => {
       expect(document.querySelector('[data-slot="session-header"]')).not.toBeNull();
     });
     expect(document.querySelector('[data-slot="header-host"]')).toBeNull();
+    expect(document.querySelector('[data-slot="console-button"]')).not.toBeNull();
   });
 
   it('unreachable: banner with "Reconnect" (hosts.reconnect on this computer)', async () => {

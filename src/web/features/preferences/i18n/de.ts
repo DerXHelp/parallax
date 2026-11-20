@@ -11,6 +11,7 @@ export const de: typeof en = {
     notifications: 'Benachrichtigungen',
     sessions: 'Sessions',
     files: 'Dateien',
+    console: 'Konsole',
     profiles: 'Profile',
     server: 'Server',
     multiHost: 'Mehrere Rechner',
@@ -437,6 +438,36 @@ export const de: typeof en = {
       too_many: 'Höchstens {max} Argumente.',
       invalid: 'Dieser Eintrag ist ungültig.',
     },
+  },
+  console: {
+    defaultShell: 'Standard-Shell',
+    defaultShellHint:
+      'Öffnet sich mit dem Terminal-Knopf in der Kopfzeile der Session und mit Alt+K. Das Session-Menü bietet jede Shell an.',
+    shells: {
+      cmd: 'Eingabeaufforderung (cmd)',
+      powershell: 'Windows PowerShell',
+      gitbash: 'Git Bash',
+    },
+    defaultBadge: 'Standard',
+    gitBashWindow: 'Fenster für Git Bash',
+    gitBashWindowHint:
+      'mintty ist das Fenster des Startmenü-Eintrags „Git Bash“. Das Standard-Terminal ist das, welches Windows für Konsolen verwendet, zum Beispiel Windows Terminal.',
+    windows: {
+      mintty: 'mintty (wie „Git Bash“)',
+      terminal: 'Standard-Terminal von Windows',
+    },
+    gitDir: 'Ordner von Git for Windows (optional)',
+    gitDirHint:
+      'Leer = die Installation, die Parallax gefunden hat. Gib den Ordner mit git-bash.exe an, um eine andere zu verwenden.',
+    gitDirPlaceholder: 'C:\\Program Files\\Git',
+    gitDirInvalid:
+      'Gib einen vollständigen lokalen Pfad an (wie C:\\…) – keinen Netzwerkpfad, keinen relativen Pfad.',
+    detecting: 'Suche Git for Windows…',
+    found: 'Git Bash gefunden: {path}',
+    notFound: 'Git for Windows wurde auf diesem Rechner nicht gefunden.',
+    detectFailed: 'Konnte nicht prüfen, ob Git for Windows installiert ist.',
+    environment:
+      'Shells starten im Ordner der Session mit deiner normalen Umgebung – ohne das Profil der Session, ein dort getipptes claude nutzt also dein Standardkonto.',
   },
   systemIntegrationOff:
     'Nur beim installierten Parallax-Server verfügbar (Standard-Datenordner, echtes Claude Code, kein Entwicklungsmodus).',

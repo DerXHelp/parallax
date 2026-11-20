@@ -83,6 +83,8 @@ export const errorsEn: Record<ErrorCode, string> = {
   FILE_NOT_READABLE: 'The file cannot be read right now (no permission, in use or too slow).',
   FILE_TYPE_BLOCKED: 'This file type is not opened with the default program, for safety.',
   EDITOR_NOT_FOUND: 'The editor was not found. Choose another one in Settings → Files.',
+  SHELL_NOT_FOUND: 'Git Bash was not found. Install Git for Windows or set its folder in Settings → Console.',
+  SHELL_OPEN_FAILED: 'The shell could not be opened.',
   OPEN_FAILED: 'The program could not be started.',
   TASK_NOT_FOUND: 'This task is no longer running.',
   PLAN_NOT_FOUND: 'This plan version is not available.',

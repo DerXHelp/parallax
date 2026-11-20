@@ -2,6 +2,7 @@ import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { LOCAL_HOST_ID } from '@shared/common';
 import { getSelectedSession } from '@web/state/selection';
 import { selectSummary } from '@web/state/hooks';
+import { sessionAllows } from '@web/state/hosts';
 import { clientStore } from '@web/state/store';
 import { useShellRequestHandler, type ShellRequestOf } from '../requests';
 import { useShortcut } from '../shortcuts';
@@ -10,6 +11,7 @@ import { useQuickAsk } from './quick-ask';
 import { QuickSwitcher } from './QuickSwitcher';
 import { closeRemoveDialog, useRemoveDialog } from './remove-session';
 import { renamePlaceFor, startRename } from './rename';
+import { OPEN_SHELL_KEYS, openShellIn } from './session-actions';
 
 /*
  * The dialogs behind a menu entry open rarely: lazy chunks, not part of the start chunk (WP-63,
@@ -66,7 +68,8 @@ function sessionExists(sessionKey: string): boolean {
  * (ADR-118) and the dialogs they open. WP-63: "Remove from Parallax…" and "Clean up archive…"
  * (`remove-session.ts`); WP-66: the popover of "Quick question…" (`quick-ask.ts`); WP-70: `login`
  * (sign in a profile, one dialog at a time – a new request mounts it anew and starts again) and
- * `outputStyle`; every dialog except the quick switcher is a lazy chunk.
+ * `outputStyle`; every dialog except the quick switcher is a lazy chunk. WP-97: Alt+K opens the
+ * default shell in the folder of the selected session (only this computer's sessions).
  */
 export function NavigationLayer() {
   const [switcher, setSwitcher] = useState(false);
@@ -126,6 +129,21 @@ export function NavigationLayer() {
       const key = row?.getAttribute('data-session-row') ?? getSelectedSession();
       if (key === null || !sessionExists(key)) return false;
       startRename(key, row === null ? renamePlaceFor(key) : 'sidebar');
+      return true;
+    },
+  });
+  useShortcut({
+    id: 'navigation.openShell',
+    keys: OPEN_SHELL_KEYS,
+    description: 'navigation.shortcuts.openShell',
+    allowInInputs: true,
+    run: (event) => {
+      // WP-97: like F2 – a focused sidebar row, otherwise the selected session; only this computer's.
+      const row = event.target instanceof Element ? event.target.closest('[data-session-row]') : null;
+      const key = row?.getAttribute('data-session-row') ?? getSelectedSession();
+      const summary = selectSummary(clientStore.getState(), key);
+      if (key === null || summary === null || !sessionAllows(key, 'session.openShell')) return false;
+      openShellIn(key, summary);
       return true;
     },
   });

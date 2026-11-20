@@ -11,7 +11,7 @@ import { effectiveEffort } from '@web/lib/effort';
 import { sessionTitle } from '@web/lib/session-title';
 import { cliVersionStatus, knownVersion } from '@web/lib/version';
 import { useDisplayStatus, useHostState, useSessionSelector, useSummary } from '@web/state/hooks';
-import { useHostLabels } from '@web/state/hosts';
+import { sessionAllows, useHostLabels } from '@web/state/hosts';
 import { Badge } from '@web/ui/badge';
 import { Gauge } from '@web/ui/gauge';
 import { StatusIcon } from '@web/ui/status-icon';
@@ -19,6 +19,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
 import { ContextCompactIcon, useContextTexts } from './context-display';
 import { HeaderPanelButtons, HeaderPanelMenuItems, useCompactHeader } from './header-panels';
 import { HostBadge } from './hosts/HostBadge';
+import { ConsoleButton } from './navigation/ConsoleButton';
 import { RenameField } from './navigation/RenameField';
 import { PathTail } from './navigation/PathTail';
 import { showsRemoteInHeader } from './navigation/remote-control';
@@ -201,7 +202,11 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
         ) : null}
         {compact || line === null ? null : (
           // Gives way before the title (shrink 12); the whole text in the native tooltip.
-          <span data-slot="header-line" title={lineText ?? undefined} className="hidden min-w-0 shrink-[12] text-xs lg:flex">
+          <span
+            data-slot="header-line"
+            title={lineText ?? undefined}
+            className="hidden min-w-0 shrink-[12] text-xs lg:flex"
+          >
             <SessionLineText line={line} />
           </span>
         )}
@@ -299,6 +304,9 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
         {showsRemoteInHeader(summary.remoteControl) ? (
           <RemoteControlMenu sessionKey={sessionKey} summary={summary} />
         ) : null}
+        {compact || !sessionAllows(sessionKey, 'session.openShell') ? null : (
+          <ConsoleButton sessionKey={sessionKey} summary={summary} />
+        )}
         {compact ? null : <HeaderPanelButtons sessionKey={sessionKey} />}
         <SessionMenu
           sessionKey={sessionKey}

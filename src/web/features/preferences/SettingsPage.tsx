@@ -7,6 +7,7 @@ import {
   NetworkIcon,
   ServerIcon,
   SlidersHorizontalIcon,
+  TerminalIcon,
   UsersIcon,
   type LucideIcon,
 } from 'lucide-react';
@@ -22,6 +23,7 @@ import { Button } from '@web/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@web/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@web/ui/tabs';
 import { AboutSection } from './sections/AboutSection';
+import { ConsoleSection } from './sections/ConsoleSection';
 import { FilesSection } from './sections/FilesSection';
 import { GeneralSection } from './sections/GeneralSection';
 import { MultiHostSection } from './sections/MultiHostSection';
@@ -39,6 +41,7 @@ const SECTION_ICONS: Readonly<Record<PageSection, LucideIcon>> = {
   notifications: BellIcon,
   sessions: LayersIcon,
   files: FolderOpenIcon,
+  console: TerminalIcon,
   profiles: UsersIcon,
   server: ServerIcon,
   multiHost: NetworkIcon,
@@ -97,6 +100,9 @@ function SectionContent({
     case 'files':
       // Phase 3 (WP-58): the editor for "Open in editor" (settings.editor, ADR-144).
       return <FilesSection editor={editor} />;
+    case 'console':
+      // WP-97: "Open shell in folder" (settings.console, ADR-238).
+      return <ConsoleSection editor={editor} />;
     case 'profiles':
       return <ProfilesSection onDirtyChange={onProfilesDirtyChange} />;
     case 'server':
