@@ -1,4 +1,4 @@
-# src/server/terminal – Shell im Projektordner (WP-97) und eingebettetes Terminal (WP-99)
+# src/server/terminal – Shell im Projektordner (WP-97), ConPTY-Spike (WP-98) und eingebettetes Terminal (WP-99)
 
 Owner: **Koordinator** (WP-97…99, `feature/konsole`). Auftrag und Ergebnis: `docs/wp/WP-97.md`; Entscheidung ADR-238.
 
@@ -9,6 +9,8 @@ anderen Rechners öffnet hier nie eine Shell.
 | --- | --- | --- |
 | `shells.ts` | `shellEnvironment(base?)`, `isGitDir`, `findGitDir`, `createGitFinder({ttlMs?, now?})` → `GitFinder`, `resolveShellLaunch(kind, cwd, settings, mode, deps)` → `ShellLaunch`, `gitBashCdArgument`, `GIT_BASH_EXE`, `GIT_BASH_CONSOLE`, `GIT_CACHE_MS` | Was für `cmd`, `powershell` und `gitbash` startet, mit welchen Argumenten und welcher Umgebung (Modus `window` für WP-97, `embedded` für WP-99) |
 | `shellCommands.ts` | `createShellCommands(deps)` → `HostCommandHandler` (`names: ['session.openShell', 'shell.detect']`), `createRecordingShellLauncher({logger?})` | Host-Befehle; das Fenster öffnet der `ConsoleLauncher` der externen Konsole (`system/console.ts`, ADR-104) |
+| `conpty.ts` | `loadConPty()` → `ConPtyApi {spawn(options)}` → `ConPty {pid, read(max), write, resize, exitCode(), close()}`, `ConPtyError {step, code}`, `conPtyCommandLine`, `CONPTY_READ_MAX` | WP-98 (Spike), wird in WP-99 Produktion: Pseudokonsole über `node:ffi` (kernel32). `read` blockiert nie (`PeekNamedPipe`). `close` schließt zuerst die Ausgabe-Pipe, dann die Konsole, die angehängte Prozesse beendet. Vor dem ersten Start `SetConsoleCtrlHandler(NULL, FALSE)`, sonst erbt die Shell „Ctrl+C ignorieren“ (`docs/wp/WP-98.md`) |
+| `envBlock.ts` | `environmentBlock(env)` | Umgebungsblock für `CreateProcessW` (UTF-16, ohne Groß-/Kleinschreibung sortiert, Doppelte und Ungültiges entfernt) |
 
 **Start:**
 - `cmd`: `%SystemRoot%\System32\cmd.exe`.
