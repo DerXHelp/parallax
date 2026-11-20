@@ -69,6 +69,7 @@ import {
   settingsSchema,
   transcriptItemSchema,
 } from './model';
+import { NAME_MAX_CHARS } from './paths';
 import { notificationKindSchema } from './status';
 
 /**
@@ -696,6 +697,16 @@ export const commandSchema = z.discriminatedUnion('name', [
   z.object({ name: z.literal('hosts.remove'), hostId: hostIdSchema }),
   /** Host (role control): try to connect now (also after `incompatible` or `unreachable`). */
   z.object({ name: z.literal('hosts.reconnect'), hostId: hostIdSchema }),
+  /**
+   * WP-94 (ADR-235): create the folder `folderName` in `parent` (folder browser, "New folder"). One
+   * level, never recursive. PATH_REJECTED {reason} (path or name, `windowsNameIssue`), CWD_NOT_FOUND,
+   * CWD_NOT_DIRECTORY, FOLDER_EXISTS {path}, FOLDER_NOT_WRITABLE {path}.
+   */
+  z.object({
+    name: z.literal('fs.createDirectory'),
+    parent: z.string().min(1).max(LIMITS.pathChars),
+    folderName: z.string().min(1).max(NAME_MAX_CHARS),
+  }),
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export type CommandName = Command['name'];
@@ -745,6 +756,7 @@ export const HOST_COMMAND_NAMES = [
   'hosts.move',
   'hosts.remove',
   'hosts.reconnect',
+  'fs.createDirectory',
 ] as const satisfies readonly CommandName[];
 export type HostCommandName = (typeof HOST_COMMAND_NAMES)[number];
 export type HostCommand = Extract<Command, { name: HostCommandName }>;
@@ -805,6 +817,8 @@ export const REMOTE_ALLOWED_COMMANDS = [
   'session.subagentTranscript',
   'session.setOutputStyle',
   'session.setDraft',
+  // WP-94: a folder for a new session – less than a session started there may do anyway.
+  'fs.createDirectory',
 ] as const satisfies readonly CommandName[];
 
 /**
@@ -975,6 +989,8 @@ export const commandResultSchemas = {
   'hosts.move': z.object({}),
   'hosts.remove': z.object({ peerNotified: z.boolean() }),
   'hosts.reconnect': z.object({}),
+  /** The created folder: `parent` + separator + `folderName`, in the spelling of `parent`. */
+  'fs.createDirectory': z.object({ path: z.string() }),
 } as const satisfies Record<CommandName, z.ZodType>;
 export type CommandResult<N extends CommandName> = z.infer<(typeof commandResultSchemas)[N]>;
 

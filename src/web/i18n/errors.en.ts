@@ -77,6 +77,8 @@ export const errorsEn: Record<ErrorCode, string> = {
   TURN_FAILED: 'The turn failed.',
   EXTERNAL_CONSOLE_FAILED: 'The external console could not be opened.',
   FOLDER_NOT_READABLE: 'This folder cannot be read (no permission).',
+  FOLDER_EXISTS: 'A folder or file with this name already exists.',
+  FOLDER_NOT_WRITABLE: 'No folder can be created here (no permission).',
   FILE_NOT_FOUND: 'The file does not exist (any more).',
   FILE_NOT_READABLE: 'The file cannot be read right now (no permission, in use or too slow).',
   FILE_TYPE_BLOCKED: 'This file type is not opened with the default program, for safety.',

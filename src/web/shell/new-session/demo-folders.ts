@@ -1,10 +1,11 @@
 import { makeError, type ErrorPayload } from '@shared/errors';
 import type { FsEntry, FsListing } from '@shared/model';
-import { windowsPathIssue, windowsPathKey } from '@shared/paths';
+import { windowsNameIssue, windowsPathIssue, windowsPathKey } from '@shared/paths';
 
 /**
- * A fake folder tree answering `fs.listDirectory` like the server (ADR-119) – for tests and
- * playground demos of the folder browser only (dev/test; nothing in the app imports it).
+ * A fake folder tree answering `fs.listDirectory` (and `fs.createDirectory` on a copy, WP-94) like
+ * the server (ADR-119) – for tests and playground demos of the folder browser only (dev/test;
+ * nothing in the app imports it).
  * Roots: user folder + drives C: and D:. `D:\work\locked` is not readable, `D:\archive` is
  * truncated, `D:\work\sample` is a link, names with a dot and `$Recycle.Bin` are hidden.
  */
@@ -65,6 +66,14 @@ export const DEMO_FOLDERS: Readonly<Record<string, readonly DemoFolder[]>> = {
 
 /** Folders the demo user may not read (FOLDER_NOT_READABLE). */
 const LOCKED: ReadonlySet<string> = new Set(['d:\\work\\locked']);
+/** Names the server hides besides dot names (its `isHiddenName`). */
+const SYSTEM_NAMES: ReadonlySet<string> = new Set([
+  '$recycle.bin',
+  'system volume information',
+  '$winreagent',
+  'recovery',
+  'config.msi',
+]);
 /** Folders with more entries than the server sends (`truncated`). */
 const TRUNCATED: ReadonlySet<string> = new Set(['d:\\archive']);
 
@@ -74,6 +83,45 @@ function parentOf(path: string): string | null {
   const trimmed = path.replace(/[\\/]+$/, '');
   const cut = Math.max(trimmed.lastIndexOf('\\'), trimmed.lastIndexOf('/'));
   return cut <= 2 ? trimmed.slice(0, 3) : trimmed.slice(0, cut);
+}
+
+/** `path` + `name` with one separator in the style of `path` (like the server's `childPath`). */
+function childOf(path: string, name: string): string {
+  if (/[\\/]$/.test(path)) return `${path}${name}`;
+  return `${path}${path.includes('\\') ? '\\' : '/'}${name}`;
+}
+
+/** A copy of a folder tree that `createDemoFolder` may change (one per demo host). */
+export function cloneDemoFolders(
+  folders: Readonly<Record<string, readonly DemoFolder[]>> = DEMO_FOLDERS,
+): Record<string, DemoFolder[]> {
+  return Object.fromEntries(Object.entries(folders).map(([key, children]) => [key, [...children]]));
+}
+
+/**
+ * Answer of `fs.createDirectory` (WP-94) on a changeable tree, like the server: name rules,
+ * missing parent, an existing name (case-insensitive), `D:\work\locked` is not writable.
+ */
+export function createDemoFolder(
+  parent: string,
+  folderName: string,
+  folders: Record<string, DemoFolder[]>,
+): { ok: true; path: string } | { ok: false; error: ErrorPayload } {
+  const issue = windowsPathIssue(parent) ?? windowsNameIssue(folderName);
+  if (issue !== null) return { ok: false, error: makeError('PATH_REJECTED', { reason: issue }) };
+  const key = windowsPathKey(parent);
+  if (LOCKED.has(key)) return { ok: false, error: makeError('FOLDER_NOT_WRITABLE', { path: parent }) };
+  const children = folders[key];
+  if (children === undefined) return { ok: false, error: makeError('CWD_NOT_FOUND', { cwd: parent }) };
+  const path = childOf(parent, folderName);
+  if (children.some((child) => child.name.toLowerCase() === folderName.toLowerCase())) {
+    return { ok: false, error: makeError('FOLDER_EXISTS', { path }) };
+  }
+  const hidden = folderName.startsWith('.') || SYSTEM_NAMES.has(folderName.toLowerCase());
+  children.push(hidden ? { name: folderName, hidden: true } : { name: folderName });
+  children.sort((a, b) => (a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1));
+  folders[windowsPathKey(path)] = [];
+  return { ok: true, path };
 }
 
 /** Answer of `fs.listDirectory`: entry path = listed path + name, in the listed path's style. */
@@ -103,8 +151,6 @@ export function listDemoFolder(
   if (LOCKED.has(key)) return { ok: false, error: makeError('FOLDER_NOT_READABLE', { path }) };
   const children = folders[key];
   if (children === undefined) return { ok: false, error: makeError('CWD_NOT_FOUND', { cwd: path }) };
-  const separator = path.includes('\\') ? '\\' : '/';
-  const base = /[\\/]$/.test(path) ? path : `${path}${separator}`;
   return {
     ok: true,
     listing: {
@@ -114,7 +160,7 @@ export function listDemoFolder(
         .filter((child) => showHidden || child.hidden !== true)
         .map((child) => ({
           name: child.name,
-          path: `${base}${child.name}`,
+          path: childOf(path, child.name),
           kind: child.kind ?? 'directory',
           hidden: child.hidden === true,
         })),

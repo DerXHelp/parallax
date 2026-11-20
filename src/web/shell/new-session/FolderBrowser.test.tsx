@@ -1,11 +1,12 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { makeError } from '@shared/errors';
 import { setLanguage } from '@web/i18n';
 import { resetClientStore } from '@web/state/store';
 import { Button } from '@web/ui/button';
 import { TooltipProvider } from '@web/ui/tooltip';
-import { startNewSessionDemo, type NewSessionDemo } from './demo-host';
+import { startNewSessionDemo, type NewSessionDemo, type NewSessionDemoOptions } from './demo-host';
 import { FolderBrowser } from './FolderBrowser';
 
 // Dialog + many key strokes: a few seconds in a full `pnpm test`, more when several runs load the
@@ -23,8 +24,8 @@ afterEach(() => {
   });
 });
 
-async function open(initialPath: string | null) {
-  demo = startNewSessionDemo({ immediate: true });
+async function open(initialPath: string | null, onCommand?: NewSessionDemoOptions['onCommand']) {
+  demo = startNewSessionDemo({ immediate: true, ...(onCommand === undefined ? {} : { onCommand }) });
   const onSelect = vi.fn();
   const user = userEvent.setup();
   render(
@@ -51,6 +52,11 @@ async function waitForPath(path: string) {
   await waitFor(() => {
     expect(list().getAttribute('data-path')).toBe(path);
   });
+}
+
+/** What "Choose this folder" takes (the footer's `data-target`; '' = nothing). */
+function target(): string | null {
+  return document.querySelector('[data-slot="folder-browser-current"]')?.getAttribute('data-target') ?? null;
 }
 
 function activeName(): string | null {
@@ -114,6 +120,10 @@ describe('FolderBrowser (ADR-119)', () => {
     const { user } = await open('D:\\work');
     await waitForPath('D:\\work');
     expect(activeName()).toContain('api');
+    // WP-94: without a selection the first ↓ selects the cursor row (api), then it moves.
+    await user.keyboard('{ArrowDown}');
+    expect(activeName()).toContain('api');
+    expect(target()).toMatch(/api$/);
     await user.keyboard('{ArrowDown}{ArrowDown}');
     expect(activeName()).toContain('parallax');
     await user.keyboard('{Enter}');
@@ -195,6 +205,187 @@ describe('FolderBrowser (ADR-119)', () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
+  });
+
+  it('WP-94: a click selects a subfolder – "Choose this folder" takes it without opening it', async () => {
+    const { onSelect, running, user } = await open('D:\\work');
+    await waitForPath('D:\\work');
+    // A fresh listing has no selection: the open folder is the choice.
+    expect(within(list()).queryAllByRole('option', { selected: true })).toEqual([]);
+    expect(target()).toBe('D:\\work');
+    await user.click(within(list()).getByRole('option', { name: /parallax/ }));
+    expect(within(list()).getByRole('option', { selected: true }).getAttribute('data-path')).toBe(
+      'D:\\work\\parallax',
+    );
+    expect(target()).toBe('D:\\work\\parallax');
+    expect(listings(running)).toEqual(['D:\\work']);
+    await user.click(screen.getByRole('button', { name: 'Choose this folder' }));
+    expect(onSelect).toHaveBeenCalledWith('D:\\work\\parallax');
+  });
+
+  it('WP-94: a click on the empty area or Space drops the selection, arrows select', async () => {
+    const { onSelect, user } = await open('D:\\work');
+    await waitForPath('D:\\work');
+    await user.click(within(list()).getByRole('option', { name: /web/ }));
+    expect(target()).toBe('D:\\work\\web');
+    await user.click(list());
+    expect(within(list()).queryAllByRole('option', { selected: true })).toEqual([]);
+    expect(target()).toBe('D:\\work');
+    await user.keyboard('{Home}');
+    expect(target()).toBe('D:\\work\\api');
+    await user.keyboard(' ');
+    expect(target()).toBe('D:\\work');
+    expect(activeName()).toContain('api');
+    await user.keyboard(' ');
+    expect(target()).toBe('D:\\work\\api');
+    // A double click opens the folder; the new listing starts without a selection again.
+    await user.dblClick(within(list()).getByRole('option', { name: /api/ }));
+    await waitForPath('D:\\work\\api');
+    expect(target()).toBe('D:\\work\\api');
+    await user.click(screen.getByRole('button', { name: 'Choose this folder' }));
+    expect(onSelect).toHaveBeenCalledWith('D:\\work\\api');
+  });
+
+  it('WP-94: at the roots a selected drive can be chosen', async () => {
+    const { onSelect, user } = await open(null);
+    await waitFor(() => {
+      expect(within(list()).getAllByRole('option')).toHaveLength(3);
+    });
+    const choose = screen.getByRole('button', { name: 'Choose this folder' });
+    expect(choose).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'New folder' })).toHaveProperty('disabled', true);
+    await user.click(within(list()).getByRole('option', { name: /D:/ }));
+    expect(choose).toHaveProperty('disabled', false);
+    await user.click(choose);
+    expect(onSelect).toHaveBeenCalledWith('D:\\');
+  });
+
+  it('WP-94: "New folder" creates it in the open folder and selects it', async () => {
+    const { onSelect, running, user } = await open('D:\\work');
+    await waitForPath('D:\\work');
+    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    const name = screen.getByRole('textbox', { name: 'Name of the new folder in D:\\work' });
+    expect(document.activeElement).toBe(name);
+    await user.type(name, '  foobar {Enter}');
+    expect(running.commands('fs.createDirectory')).toEqual([
+      { name: 'fs.createDirectory', parent: 'D:\\work', folderName: 'foobar' },
+    ]);
+    await waitFor(() => {
+      expect(within(list()).getByRole('option', { selected: true }).getAttribute('data-path')).toBe(
+        'D:\\work\\foobar',
+      );
+    });
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(document.activeElement).toBe(list());
+    expect(target()).toBe('D:\\work\\foobar');
+    await user.click(screen.getByRole('button', { name: 'Choose this folder' }));
+    expect(onSelect).toHaveBeenCalledWith('D:\\work\\foobar');
+  });
+
+  it('WP-94: a dot name switches hidden folders on so the new one is selected', async () => {
+    const { user } = await open('D:\\work');
+    await waitForPath('D:\\work');
+    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await user.type(screen.getByRole('textbox'), '.cache');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+    await waitFor(() => {
+      expect(within(list()).getByRole('option', { selected: true }).getAttribute('data-path')).toBe(
+        'D:\\work\\.cache',
+      );
+    });
+    expect(screen.getByRole('switch', { name: 'Show hidden folders' }).getAttribute('aria-checked')).toBe(
+      'true',
+    );
+  });
+
+  it('WP-94: names are checked before sending, server errors show inline, Esc closes only the field', async () => {
+    const { onSelect, running, user } = await open('D:\\work');
+    await waitForPath('D:\\work');
+    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    const name = screen.getByRole('textbox');
+    const create = screen.getByRole('button', { name: 'Create' });
+    expect(create).toHaveProperty('disabled', true);
+    await user.type(name, 'a:b');
+    expect(
+      screen.getByText('A folder name cannot contain \\ / : * ? " < > | or control characters.'),
+    ).toBeTruthy();
+    expect(name.getAttribute('aria-invalid')).toBe('true');
+    expect(create).toHaveProperty('disabled', true);
+    await user.clear(name);
+    await user.type(name, 'CON');
+    expect(screen.getByText('Windows reserves this name (CON, NUL, COM1 …).')).toBeTruthy();
+    await user.keyboard('{Enter}');
+    expect(running.commands('fs.createDirectory')).toEqual([]);
+    // The server decides what exists.
+    await user.clear(name);
+    await user.type(name, 'API{Enter}');
+    expect(await screen.findByText('A folder or file with this name already exists.')).toBeTruthy();
+    expect(screen.getByRole('textbox')).toBe(name);
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Choose a folder' })).toBeTruthy();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('WP-94: the name field belongs to its folder – navigating closes it, one Esc then closes the dialog', async () => {
+    const { user } = await open('D:\\work');
+    await waitForPath('D:\\work');
+    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await user.type(screen.getByRole('textbox'), 'draft');
+    await user.dblClick(within(list()).getByRole('option', { name: /api/ }));
+    await waitForPath('D:\\work\\api');
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.getByRole('button', { name: 'New folder' }).getAttribute('aria-expanded')).toBe('false');
+    await user.click(list());
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+  });
+
+  it('WP-94: a new folder the listing hides (system name) is opened instead – it is still the choice', async () => {
+    const { onSelect, user } = await open('D:\\work');
+    await waitForPath('D:\\work');
+    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await user.type(screen.getByRole('textbox'), 'Recovery{Enter}');
+    await waitForPath('D:\\work\\Recovery');
+    expect(target()).toBe('D:\\work\\Recovery');
+    await user.click(screen.getByRole('button', { name: 'Choose this folder' }));
+    expect(onSelect).toHaveBeenCalledWith('D:\\work\\Recovery');
+  });
+
+  it('WP-94: FOLDER_NOT_WRITABLE shows in the field, focus returns to it; "New folder" again focuses it', async () => {
+    const { user } = await open('D:\\work', (cmd) =>
+      cmd.name === 'fs.createDirectory'
+        ? { ok: false, error: makeError('FOLDER_NOT_WRITABLE', { path: cmd.parent }) }
+        : undefined,
+    );
+    await waitForPath('D:\\work');
+    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    const name = screen.getByRole('textbox');
+    await user.type(name, 'x');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+    expect(await screen.findByText('No folder can be created here (no permission).')).toBeTruthy();
+    expect(document.activeElement).toBe(name);
+    await user.click(list());
+    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    expect(document.activeElement).toBe(name);
+    expect((name as HTMLInputElement).value).toBe('x');
+  });
+
+  it('WP-94: Space within a type-ahead search is part of the name', async () => {
+    const { user } = await open('D:\\work');
+    await waitForPath('D:\\work');
+    await user.click(screen.getByRole('button', { name: 'New folder' }));
+    await user.type(screen.getByRole('textbox'), 'web app{Enter}');
+    await waitFor(() => {
+      expect(target()).toBe('D:\\work\\web app');
+    });
+    await user.keyboard('{Home}');
+    expect(activeName()).toContain('api');
+    await user.keyboard('web ');
+    expect(activeName()).toContain('web app');
+    expect(target()).toBe('D:\\work\\web app');
   });
 
   it('Esc closes without choosing', async () => {

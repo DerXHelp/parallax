@@ -1,4 +1,4 @@
-import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { LIMITS } from '@shared/common';
@@ -310,8 +310,115 @@ describe('fs.listDirectory: roots (path null)', () => {
     expect((await listing(roaming, null)).entries.map((e) => e.kind)).toEqual(['drive']);
   });
 
-  it('answers only fs.listDirectory', () => {
-    expect(createFsCommands().names).toEqual(['fs.listDirectory']);
+  it('answers only fs.listDirectory and fs.createDirectory', () => {
+    expect(createFsCommands().names).toEqual(['fs.listDirectory', 'fs.createDirectory']);
+  });
+});
+
+describe('fs.createDirectory (WP-94)', () => {
+  const create = (handler: ReturnType<typeof createFsCommands>, parent: string, folderName: string) =>
+    handler.handle({ name: 'fs.createDirectory', parent, folderName }, CTX);
+
+  it('creates one folder in the parent and answers its path in the spelling of the parent', async () => {
+    const root = await tree();
+    const handler = createFsCommands();
+    expect(await create(handler, root, 'foobar')).toEqual({ path: `${root}\\foobar` });
+    expect((await stat(path.join(root, 'foobar'))).isDirectory()).toBe(true);
+    const slashed = root.replaceAll('\\', '/');
+    expect(await create(handler, `${slashed}/`, 'Neuer Ordner')).toEqual({ path: `${slashed}/Neuer Ordner` });
+    // The new folder is listed like any other.
+    expect((await listing(handler, root)).entries.map((e) => e.name)).toContain('foobar');
+  });
+
+  it('never creates more than the named folder: missing parent, file, existing name', async () => {
+    const root = await tree();
+    const handler = createFsCommands();
+    expect(await rejection(create(handler, `${root}\\missing`, 'x'))).toEqual({
+      code: 'CWD_NOT_FOUND',
+      params: {},
+    });
+    expect(await readdir(root)).not.toContain('missing');
+    expect(await rejection(create(handler, `${root}\\file.txt`, 'x'))).toEqual({
+      code: 'CWD_NOT_DIRECTORY',
+      params: {},
+    });
+    expect(await rejection(create(handler, root, 'alpha'))).toEqual({
+      code: 'FOLDER_EXISTS',
+      params: { path: `${root}\\alpha` },
+    });
+    // Case-insensitive like Windows; a file of the name counts too.
+    expect((await rejection(create(handler, root, 'ALPHA')))?.code).toBe('FOLDER_EXISTS');
+    expect((await rejection(create(handler, root, 'file.txt')))?.code).toBe('FOLDER_EXISTS');
+  });
+
+  it.each([
+    ['a\\b', 'invalid_char'],
+    ['a/b', 'invalid_char'],
+    ['..', 'dot_segment'],
+    ['x.', 'trailing_dot_or_space'],
+    ['CON', 'reserved_name'],
+    ['a:b', 'invalid_char'],
+  ])('rejects the name %j (%s) before any file system call', async (folderName, reason) => {
+    const made: string[] = [];
+    const handler = createFsCommands({
+      fs: { ...nodeDirFs, stat: () => Promise.reject(new Error('no fs call expected')) },
+      mkdir: (dir) => {
+        made.push(dir);
+        return Promise.resolve();
+      },
+    });
+    expect(await rejection(create(handler, 'D:\\work', folderName))).toEqual({
+      code: 'PATH_REJECTED',
+      params: { reason },
+    });
+    expect(made).toEqual([]);
+  });
+
+  it('rejects an unsafe parent and a parent behind a link to a share (R1-17)', async () => {
+    const made: string[] = [];
+    const mkdirSpy = (dir: string) => {
+      made.push(dir);
+      return Promise.resolve();
+    };
+    expect(await rejection(create(createFsCommands({ mkdir: mkdirSpy }), '\\\\server\\share', 'x'))).toEqual({
+      code: 'PATH_REJECTED',
+      params: { reason: 'unc' },
+    });
+    const root = await tree();
+    const share = `${root}\\share`;
+    const fs = layered(root, [], { [share]: '\\\\server\\share' });
+    expect(await rejection(create(createFsCommands({ fs, mkdir: mkdirSpy }), `${share}\\sub`, 'x'))).toEqual({
+      code: 'PATH_REJECTED',
+      params: { reason: 'link_target' },
+    });
+    expect(made).toEqual([]);
+  });
+
+  it(`a new path longer than LIMITS.pathChars (${String(LIMITS.pathChars)}) is rejected before mkdir`, async () => {
+    const made: string[] = [];
+    const handler = createFsCommands({
+      mkdir: (dir) => {
+        made.push(dir);
+        return Promise.resolve();
+      },
+    });
+    const parent = `D:\\${'p'.repeat(LIMITS.pathChars - 10)}`;
+    expect(await rejection(create(handler, parent, 'x'.repeat(20)))).toEqual({
+      code: 'PATH_REJECTED',
+      params: { reason: 'too_long' },
+    });
+    expect(made).toEqual([]);
+  });
+
+  it('no permission → FOLDER_NOT_WRITABLE with the parent', async () => {
+    const root = await tree();
+    for (const code of ['EPERM', 'EACCES', 'EROFS']) {
+      const handler = createFsCommands({ mkdir: () => Promise.reject(errno(code)) });
+      expect(await rejection(create(handler, root, 'x'))).toEqual({
+        code: 'FOLDER_NOT_WRITABLE',
+        params: { path: root },
+      });
+    }
   });
 });
 

@@ -10,7 +10,7 @@ import {
 } from '@web/state/connection';
 import { FakeHost, type FakeAck } from '@web/state/fake-host';
 import { createMemoryTransport } from '@web/state/transport';
-import { listDemoFolder } from './demo-folders';
+import { cloneDemoFolders, createDemoFolder, listDemoFolder } from './demo-folders';
 
 /**
  * A FakeHost behind a real HostConnection on host `local` for the tests and playground demos of
@@ -39,6 +39,8 @@ export interface NewSessionDemo {
 export function startNewSessionDemo(options: NewSessionDemoOptions = {}): NewSessionDemo {
   unregisterConnection(LOCAL_HOST_ID);
   const transport = createMemoryTransport();
+  // WP-94: "New folder" changes this run's own copy of the tree.
+  const folders = cloneDemoFolders();
   const host = new FakeHost({
     transport,
     // A new instance id per run: the client treats it like a fresh server (no stale seqs).
@@ -48,8 +50,14 @@ export function startNewSessionDemo(options: NewSessionDemoOptions = {}): NewSes
     onCommand: (cmd, fake) => {
       const own = options.onCommand?.(cmd, fake);
       if (own !== undefined) return own;
+      if (cmd.name === 'fs.createDirectory') {
+        const created = createDemoFolder(cmd.parent, cmd.folderName, folders);
+        return created.ok
+          ? { ok: true, result: { path: created.path } }
+          : { ok: false, error: created.error };
+      }
       if (cmd.name !== 'fs.listDirectory') return undefined;
-      const result = listDemoFolder(cmd.path, cmd.showHidden);
+      const result = listDemoFolder(cmd.path, cmd.showHidden, folders);
       return result.ok ? { ok: true, result: result.listing } : { ok: false, error: result.error };
     },
   });

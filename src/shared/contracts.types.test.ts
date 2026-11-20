@@ -177,6 +177,7 @@ describe('contract types', () => {
     expectTypeOf<Extract<keyof HostCommand, 'entryId'>>().toEqualTypeOf<never>();
     expectTypeOf<CommandOf<'file.stat'>['entryId']>().toEqualTypeOf<EntryId>();
     expectTypeOf<CommandResult<'fs.listDirectory'>>().toEqualTypeOf<FsListing>();
+    expectTypeOf<CommandResult<'fs.createDirectory'>>().toEqualTypeOf<{ path: string }>();
     expectTypeOf<CommandResult<'file.stat'>>().toEqualTypeOf<{ file: FileInfo }>();
     expectTypeOf<CommandResult<'file.statMany'>['results'][number]>().toEqualTypeOf<FileStatResult>();
     expectTypeOf<SessionDetail['todos']>().toEqualTypeOf<TodoList | null>();

@@ -139,6 +139,10 @@ export const ERROR_CATALOG = {
   // files (Phase 2, ADR-119)
   /** fs.listDirectory: no permission to read the folder (`params.path`). */
   FOLDER_NOT_READABLE: { category: 'validation', http: 403, severity: 'error', retryable: false },
+  /** fs.createDirectory (WP-94): a file or folder of this name exists already (`params.path`). */
+  FOLDER_EXISTS: { category: 'validation', http: 409, severity: 'error', retryable: false },
+  /** fs.createDirectory (WP-94): no permission to create a folder here (`params.path` = the parent). */
+  FOLDER_NOT_WRITABLE: { category: 'validation', http: 403, severity: 'error', retryable: false },
   // files (Phase 3, WP-50 §4.3; ADR-141 … 146)
   /** The file or folder does not exist (any more). */
   FILE_NOT_FOUND: { category: 'not_found', http: 404, severity: 'error', retryable: false },

@@ -16,7 +16,10 @@ const FolderBrowserContent = lazy(() => import('./FolderBrowserContent'));
  * the given folder when it is a safe absolute path, else at the roots (drives + user folder).
  * Breadcrumbs, "Up" (`parent`), "This PC" (roots), "Show hidden folders"; Enter/double click opens
  * a folder, Backspace (or Alt+↑) goes up, arrows/Home/End/PageUp/PageDown move, typing jumps to a
- * name, Esc closes. "Choose this folder" hands over `listing.path` exactly as the server sent it.
+ * name, Esc closes. WP-94 (ADR-235): a click or a keyboard move selects a row, Space or a click on
+ * the empty area drops it; "Choose this folder" hands over the selected entry's path, else
+ * `listing.path` – exactly as the server sent it. "New folder" creates one in the open folder
+ * (`fs.createDirectory`) and selects it.
  * The server decides what may be listed (unsafe paths, links, permissions) – its error codes are
  * shown inline. Used by "New session" and by the profile editor (`configDir`).
  */

@@ -3,13 +3,14 @@
 Owner: **WP-33**. Auftrag: `docs/wp/WP-33.md`.
 
 Host-Befehle, die keine Session betreffen (ADR-101), als `HostCommandHandler`
-(`src/server/sync/ports.ts`): der Ordner-Browser `fs.listDirectory` (ADR-119). Die Profil-Befehle
+(`src/server/sync/ports.ts`): der Ordner-Browser `fs.listDirectory` (ADR-119) und `fs.createDirectory`
+(WP-94, ADR-235). Die Profil-Befehle
 `profile.*` liefert WP-32 in `src/server/claude/`. Die Engine routet nach Namen
 (`HOST_COMMAND_NAMES` in `@shared/protocol`), WP-40 verdrahtet die Handler in `app/compose.ts`.
 
 | Datei | Exporte | Inhalt |
 | --- | --- | --- |
-| `fsCommands.ts` | `createFsCommands({ fs?, home?, platform?, driveTimeoutMs? })` → `HostCommandHandler` (`names: ['fs.listDirectory']`), `DirFs`, `DirEntry`, `nodeDirFs`, `DRIVE_TIMEOUT_MS`, `DRIVE_PROBE_LIMIT`, `isHiddenName`, `childPath`, `parentPath` | Ordner-Browser, nur lesend |
+| `fsCommands.ts` | `createFsCommands({ fs?, home?, platform?, driveTimeoutMs?, mkdir? })` → `HostCommandHandler` (`names: ['fs.listDirectory', 'fs.createDirectory']`), `DirFs`, `DirEntry`, `nodeDirFs`, `DRIVE_TIMEOUT_MS`, `DRIVE_PROBE_LIMIT`, `isHiddenName`, `childPath`, `parentPath` | Ordner-Browser; schreibt nur `fs.createDirectory` (WP-94) |
 | `linkCommands.ts` | `createLinkCommands(opener)` → `HostCommandHandler` (`names: ['link.open']`), `LinkOpener`, `createSystemLinkOpener(deps?)`, `createRecordingLinkOpener()`, `defaultBrowserCommand`, `browserLaunch`, `splitCommandLine` | WP-65 §1.6b: http(s)-Link im **Standardbrowser** – Registry HKCU `…\UrlAssociations\https\UserChoice` (`ProgId`, Rückfall `http`) → `<ProgId>\shell\open\command` (HKCU, dann HKLM), nur absolute `.exe`, Start über `spawnGui` (ADR-144) mit der URL statt `%1`; nie `cmd /c start`. Fehler → `OPEN_FAILED {reason}` (die Web-UI öffnet den Link dann selbst, mit Hinweis). Mit dem FakeBackend der aufzeichnende Öffner (startet nichts, loggt `link.open (fake): <url>`) |
 | `login.ts` | `createLoginService(deps)` → `LoginService` (`HostCommandHandler` mit `names: ['profile.login', 'profile.loginCode', 'profile.loginCancel']`, `state(profileId)`, `dispose()`), `parseLoginCode(input, manualUrl)`, `LOGIN_HOME_DIR`, `LOGIN_FLOW_MS` | WP-70: Anmelden je Profil ohne Terminal (siehe unten) |
 
@@ -33,6 +34,12 @@ Host-Befehle, die keine Session betreffen (ADR-101), als `HostCommandHandler`
   übergeordneter Ordner, `null` an der Laufwerkswurzel.
 - Fehler: ENOENT → `CWD_NOT_FOUND`, kein Ordner → `CWD_NOT_DIRECTORY`, EACCES/EPERM →
   `FOLDER_NOT_READABLE {path}`.
+
+**`fs.createDirectory` (WP-94, ADR-235):** `parent` wie oben geprüft (String, Links, existiert, Ordner),
+`folderName` per `windowsNameIssue` (`@shared/paths`) → `PATH_REJECTED {reason}` vor jedem fs-Zugriff; dann
+genau ein `mkdir` ohne `recursive` von `childPath(parent, folderName)` → `{path}` (neuer Pfad höchstens
+`LIMITS.pathChars`, sonst `PATH_REJECTED too_long`). EEXIST → `FOLDER_EXISTS
+{path}`, EACCES/EPERM/EROFS → `FOLDER_NOT_WRITABLE {path: parent}`.
 
 Tests: `fsCommands.test.ts` mit Temp-Baum (echte Junctions, auch eine verwaiste), Fake-`DirFs` für
 den Symlink auf `\\server\share` (braucht sonst Admin-Rechte), `truncated`, Fehlercodes und Wurzeln

@@ -12,6 +12,9 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
   für eine ganze Stelle; „Weiter planen“ schickt alle Anmerkungen mit Abschnitt, Zeile und Zitat samt Nachrichtentext
   an Claude, und der Vergleich zur nächsten Version zeigt, was angemerkt war (WP-93).
 - Das Seitenpanel lässt sich mit „Breit“ neben „Schließen“ auf die größte Breite schalten (WP-93).
+- Im Ordner-Browser von „Neue Session“ wählt ein Klick einen Unterordner aus, und „Diesen Ordner wählen“ übernimmt ihn,
+  ohne ihn zu öffnen; die Fußzeile zeigt, welcher Ordner übernommen wird (WP-94).
+- „Neuer Ordner“ im Ordner-Browser legt einen Ordner im geöffneten Ordner an und wählt ihn gleich aus (WP-94).
 
 ### Behoben
 - Die Context-Anzeige springt bei Modellen anderer Anbieter während eines Turns nicht mehr kurz auf 0 %

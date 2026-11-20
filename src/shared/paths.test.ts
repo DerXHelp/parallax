@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  NAME_MAX_CHARS,
   PATH_ISSUES,
   PATH_MAX_CHARS,
   fromGitBashPath,
@@ -7,6 +8,7 @@ import {
   isWindowsPathInside,
   resolveWindowsPath,
   windowsBaseName,
+  windowsNameIssue,
   windowsPathExtension,
   windowsPathIssue,
   windowsPathKey,
@@ -77,6 +79,36 @@ describe('windowsPathIssue (C.10)', () => {
 
   it('every issue is covered by a case', () => {
     expect([...new Set(rejected.map(([, issue]) => issue))].sort()).toEqual([...PATH_ISSUES].sort());
+  });
+});
+
+describe('windowsNameIssue (WP-94: name of a new folder)', () => {
+  it.each(['foobar', 'my project', '.claude', 'a.b.c', 'Ä-ö_ß (1)', 'x'.repeat(NAME_MAX_CHARS), 'console'])(
+    'accepts %j',
+    (name) => {
+      expect(windowsNameIssue(name)).toBeNull();
+    },
+  );
+
+  const rejected: readonly (readonly [string, PathIssue])[] = [
+    ['', 'empty'],
+    ['x'.repeat(NAME_MAX_CHARS + 1), 'too_long'],
+    ['a\\b', 'invalid_char'],
+    ['a/b', 'invalid_char'],
+    ['a:b', 'invalid_char'],
+    ['C:', 'invalid_char'],
+    ['a?b', 'invalid_char'],
+    ['a\tb', 'control_char'],
+    ['.', 'dot_segment'],
+    ['..', 'dot_segment'],
+    ['name.', 'trailing_dot_or_space'],
+    ['name ', 'trailing_dot_or_space'],
+    ['CON', 'reserved_name'],
+    ['nul.txt', 'reserved_name'],
+  ];
+
+  it.each(rejected)('rejects %j as %s', (name, issue) => {
+    expect(windowsNameIssue(name)).toBe(issue);
   });
 });
 
