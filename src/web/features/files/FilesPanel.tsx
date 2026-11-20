@@ -35,7 +35,7 @@ const OP_VARIANT: Readonly<Record<SessionFileOp, NonNullable<BadgeProps['variant
   attached: 'secondary',
 };
 
-/** Height of a row at 100 % zoom; virtua gets it at the zoom (WP-92). */
+/** Height of a row in layout px (16 px root); virtua gets it at the zoom (WP-92). */
 export const FILES_ROW_HEIGHT = 48;
 
 interface Row {

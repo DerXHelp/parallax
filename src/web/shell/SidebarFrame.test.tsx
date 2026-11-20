@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NAVIGATION_SESSION_KEYS } from '@web/playground/navigation-scenario';
 import { startScenario, type RunningScenario } from '@web/playground/PlaygroundScenario';
 import { STORAGE_KEYS } from '@web/lib/storage';
+import { toScreenPx } from '@web/lib/zoom';
 import { getSelectedSession, setSelectedSession } from '@web/state/selection';
 import { resetClientStore } from '@web/state/store';
 import { applyZoom, resetZoomState } from '@web/state/zoom';
@@ -315,6 +316,11 @@ describe('sidebar width (WP-90, GitHub #4)', () => {
     expect(sidebarMaxWidth(500)).toBe(224);
   });
 
+  /** Inline width of `layout` px at 100 % (the base size, WP-96). */
+  function drawn(layout: number): string {
+    return `${String(toScreenPx(layout, 100))}px`;
+  }
+
   function aside(): HTMLElement {
     const element = frame().querySelector<HTMLElement>('aside');
     if (element === null) throw new Error('sidebar missing');
@@ -326,16 +332,17 @@ describe('sidebar width (WP-90, GitHub #4)', () => {
     resetSidebarLayout();
     await start();
     const user = userEvent.setup();
-    expect(aside().style.width).toBe('320px');
+    // WP-96: 320 layout px are drawn at the base size (× 1.1).
+    expect(aside().style.width).toBe('352px');
     const handle = screen.getByRole('separator', { name: 'Sidebar width' });
     expect(handle.getAttribute('aria-valuetext')).toBe('320 px');
     handle.focus();
     await user.keyboard('{ArrowRight}');
-    expect(aside().style.width).toBe('336px');
+    expect(aside().style.width).toBe('369.6px');
     expect(sessionStorage.getItem(STORAGE_KEYS.sidebarWidth)).toBe('336');
     expect(localStorage.getItem(STORAGE_KEYS.sidebarWidth)).toBe('336');
     await user.dblClick(handle);
-    expect(aside().style.width).toBe(`${String(SIDEBAR_DEFAULT_WIDTH)}px`);
+    expect(aside().style.width).toBe(drawn(SIDEBAR_DEFAULT_WIDTH));
     expect(localStorage.getItem(STORAGE_KEYS.sidebarWidth)).toBe(String(SIDEBAR_DEFAULT_WIDTH));
   });
 
@@ -350,7 +357,7 @@ describe('sidebar width (WP-90, GitHub #4)', () => {
     expect(readSidebarWidth()).toBe(SIDEBAR_DEFAULT_WIDTH);
     expect(screen.queryByRole('separator', { name: 'Sidebar width' })).toBeNull();
     await user.click(showButton());
-    expect(aside().style.width).toBe(`${String(SIDEBAR_DEFAULT_WIDTH)}px`);
+    expect(aside().style.width).toBe(drawn(SIDEBAR_DEFAULT_WIDTH));
   });
 
   it('Alt+B collapses and expands without moving the focus; in a narrow window it opens the overlay', async () => {
@@ -403,40 +410,42 @@ describe('sidebar width (WP-90, GitHub #4)', () => {
   it('the width follows the window: capped at 40 %, back when the window grows', async () => {
     localStorage.setItem(STORAGE_KEYS.sidebarWidth, '480');
     resetSidebarLayout();
-    setWindowWidth(1000);
+    // 1100 px at the base size = 1000 layout px; 40 % = 400.
+    setWindowWidth(1100);
     await start();
-    expect(aside().style.width).toBe('400px');
+    expect(aside().style.width).toBe('440px');
     const handle = screen.getByRole('separator', { name: 'Sidebar width' });
     expect(handle.getAttribute('aria-valuenow')).toBe('400');
     expect(handle.getAttribute('aria-valuemax')).toBe('400');
     setWindowWidth(1600);
-    expect(aside().style.width).toBe('480px');
+    expect(aside().style.width).toBe('528px');
     expect(handle.getAttribute('aria-valuemax')).toBe('480');
   });
 
   it('WP-92: at a zoom the widths are layout px – drawn larger, the window counts smaller', async () => {
     localStorage.setItem(STORAGE_KEYS.sidebarWidth, '320');
     resetSidebarLayout();
-    setWindowWidth(1600);
+    setWindowWidth(1760);
     try {
       act(() => {
         applyZoom(125);
       });
       await start();
-      // 1600 px at 125 % = 1280 layout px: wide, 40 % = 512 → the maximum of 480.
-      expect(aside().style.width).toBe('400px');
+      // 125 % of the base size = factor 1.375 (WP-96): 1760 px = 1280 layout px: wide,
+      // 40 % = 512 → the maximum of 480.
+      expect(aside().style.width).toBe('440px');
       const handle = screen.getByRole('separator', { name: 'Sidebar width' });
       expect(handle.getAttribute('aria-valuenow')).toBe('320');
       expect(handle.getAttribute('aria-valuemax')).toBe('480');
-      // 1100 px at 125 % = 880 layout px: below 900 → narrow (rail).
-      setWindowWidth(1100);
+      // 1210 px at 125 % = 880 layout px: below 900 → narrow (rail).
+      setWindowWidth(1210);
       expect(rail()).not.toBeNull();
-      // The same window at 100 % is wide again.
+      // The same window at 100 % (1100 layout px) is wide again.
       act(() => {
         applyZoom(100);
       });
       expect(rail()).toBeNull();
-      expect(aside().style.width).toBe('320px');
+      expect(aside().style.width).toBe('352px');
     } finally {
       act(() => {
         resetZoomState();

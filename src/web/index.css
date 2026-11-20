@@ -5,7 +5,8 @@
  * text-status-waiting, ...), never raw colors. Fonts are bundled locally (@fontsource-variable,
  * imported in main.tsx) – nothing is loaded from the internet.
  * Look: compact and calm like the Claude Code extension in VS Code (13 px UI text, quiet greys,
- * one warm accent).
+ * one warm accent). Sizes in px here mean a 16 px root; the app draws at the zoom setting times the
+ * base size (WP-96: 110 %, lib/zoom.ts BASE_ZOOM), so 13 px UI text is 14.3 px at the default.
  */
 @import 'tailwindcss' source('.');
 @import 'tw-animate-css';

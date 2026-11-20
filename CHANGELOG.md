@@ -22,6 +22,8 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 - Nach Commit, Push, Merge oder Rebase in einer Session zeigt Parallax sofort den aktuellen Git-Branch (WP-95).
 
 ### Geändert
+- Die Oberfläche ist standardmäßig 10 % größer: Zoom 100 % sieht aus wie bisher 110 %. Wer bisher mit 110 % gearbeitet
+  hat, setzt den Zoom einmal mit Strg+0 zurück (WP-96).
 - Interne Hinweise von `claude`, die nur andere Programme betreffen, erscheinen nicht mehr als „Unknown event“ (WP-95).
 - Gibt Parallax einen Titel an Claude Code weiter, zeigt das Transkript eine ruhige Zeile „Titel an Claude Code
   übergeben“ statt einer Nachricht, die aussieht, als hättest du sie geschrieben (WP-95).

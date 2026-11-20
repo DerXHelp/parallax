@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
 import { SAMPLE_IDS, sampleId } from '@shared/samples';
+import { toScreenPx } from '@web/lib/zoom';
 import { TooltipProvider } from '@web/ui/tooltip';
 import { requestShell } from '../requests';
 import { installShortcutListener } from '../shortcuts';
@@ -67,7 +68,10 @@ let areaWidth = 1400;
 let originalResizeObserver: typeof ResizeObserver;
 let removeShortcuts: () => void;
 
-/** happy-dom does not lay out: every observed element reports `areaWidth`. */
+/**
+ * happy-dom does not lay out: every observed element reports `areaWidth` – given in layout px, reported
+ * as the screen px of the base size (WP-96: × 1.1 at the setting 100 %).
+ */
 class AreaResizeObserver implements ResizeObserver {
   constructor(private readonly callback: ResizeObserverCallback) {}
   observe(target: Element): void {
@@ -76,13 +80,13 @@ class AreaResizeObserver implements ResizeObserver {
         {
           target,
           contentRect: {
-            width: areaWidth,
+            width: toScreenPx(areaWidth, 100),
             height: 800,
             x: 0,
             y: 0,
             top: 0,
             left: 0,
-            right: areaWidth,
+            right: toScreenPx(areaWidth, 100),
             bottom: 800,
             toJSON: () => ({}),
           },
@@ -120,6 +124,11 @@ function panel(): HTMLElement {
   const aside = document.querySelector<HTMLElement>('[data-slot="side-panel"]');
   if (aside === null) throw new Error('panel closed');
   return aside;
+}
+
+/** Inline width of `layout` px at the setting 100 % (the base size, WP-96). */
+function drawn(layout: number): string {
+  return `${String(toScreenPx(layout, 100))}px`;
 }
 
 function anchorWidth(): string {
@@ -206,7 +215,13 @@ describe('SidePanelHost (WP-54, ADR-150)', () => {
     renderHost();
     act(() => {
       expect(
-        requestShell({ kind: 'openSubagent', sessionKey: KEY, agentId: 'a1', title: 'Explore', subagentType: 'Explore' }),
+        requestShell({
+          kind: 'openSubagent',
+          sessionKey: KEY,
+          agentId: 'a1',
+          title: 'Explore',
+          subagentType: 'Explore',
+        }),
       ).toBe(true);
     });
     expect(panel().getAttribute('data-tab')).toBe('subagent');
@@ -215,7 +230,12 @@ describe('SidePanelHost (WP-54, ADR-150)', () => {
     expect(tab.getAttribute('aria-selected')).toBe('true');
     expect(screen.getByTestId('subagent').textContent).toBe('a1|Explore|Explore');
     const tabs = within(screen.getByRole('tablist', { name: 'Side panel' })).getAllByRole('tab');
-    expect(tabs.map((candidate) => candidate.getAttribute('data-tab'))).toEqual(['plan', 'files', 'tasks', 'subagent']);
+    expect(tabs.map((candidate) => candidate.getAttribute('data-tab'))).toEqual([
+      'plan',
+      'files',
+      'tasks',
+      'subagent',
+    ]);
     // Another agent replaces the tab's agent (a fresh panel).
     const first = screen.getByTestId('subagent');
     act(() => {
@@ -378,7 +398,7 @@ describe('SidePanelHost (WP-54, ADR-150)', () => {
     // Default: min(672, 45 % of 1400) = 630; max 70 % = 980.
     expect(splitter.getAttribute('aria-valuenow')).toBe('630');
     expect(splitter.getAttribute('aria-valuemax')).toBe('980');
-    expect(anchorWidth()).toBe('630px');
+    expect(anchorWidth()).toBe(drawn(630));
     splitter.focus();
     await user.keyboard('{ArrowLeft}');
     expect(splitter.getAttribute('aria-valuenow')).toBe('646');
@@ -391,7 +411,7 @@ describe('SidePanelHost (WP-54, ADR-150)', () => {
     expect(splitter.getAttribute('aria-valuenow')).toBe(String(SIDE_PANEL_MIN_WIDTH));
     await user.keyboard('{End}');
     expect(splitter.getAttribute('aria-valuenow')).toBe('980');
-    expect(anchorWidth()).toBe('980px');
+    expect(anchorWidth()).toBe(drawn(980));
 
     cleanup();
     renderHost();
@@ -407,20 +427,22 @@ describe('SidePanelHost (WP-54, ADR-150)', () => {
     act(() => {
       requestShell({ kind: 'sidePanel', sessionKey: KEY, tab: 'plan' });
     });
-    expect(anchorWidth()).toBe('630px');
+    expect(anchorWidth()).toBe(drawn(630));
     const wide = screen.getByRole('button', { name: 'Make panel wide' });
     expect(wide.getAttribute('aria-pressed')).toBe('false');
     await user.click(wide);
-    expect(anchorWidth()).toBe('980px');
+    expect(anchorWidth()).toBe(drawn(980));
     await user.click(screen.getByRole('button', { name: 'Normal panel width' }));
-    expect(anchorWidth()).toBe('630px');
+    expect(anchorWidth()).toBe(drawn(630));
     await user.click(screen.getByRole('button', { name: 'Make panel wide' }));
     const splitter = screen.getByRole('separator', { name: 'Resize panel' });
     splitter.focus();
     await user.keyboard('{ArrowRight}');
     // Resizing ends "Wide": the splitter moves from the wide width.
-    expect(anchorWidth()).toBe('964px');
-    expect(screen.getByRole('button', { name: 'Make panel wide' }).getAttribute('aria-pressed')).toBe('false');
+    expect(anchorWidth()).toBe(drawn(964));
+    expect(screen.getByRole('button', { name: 'Make panel wide' }).getAttribute('aria-pressed')).toBe(
+      'false',
+    );
   });
 
   it('a remembered width is clamped to 70 % of a smaller area', () => {
@@ -468,7 +490,7 @@ describe('SidePanelHost (WP-54, ADR-150)', () => {
       requestShell({ kind: 'sidePanel', sessionKey: KEY, tab: 'plan' });
     });
     expect(panel().getAttribute('data-mode')).toBe('overlay');
-    expect(panel().style.width).toBe('450px');
+    expect(panel().style.width).toBe(drawn(450));
     // The anchor takes no room in the row: the transcript keeps the full width.
     expect(anchorWidth()).toBe('');
     // No focus trap (R5W-11: really pressed): from the last control of the panel, Tab leaves it.

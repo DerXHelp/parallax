@@ -226,7 +226,7 @@ export function SidebarFrame({
   const pendingFocus = useRef<PendingFocus>(null);
   const storedWidth = useSidebarWidth();
   const maxAllowed = useSidebarMaxWidth();
-  // WP-92: widths are layout px (CSS px at 100 %); the sidebar is drawn at the zoom.
+  // WP-92: widths are layout px (CSS px at a 16 px root); the sidebar is drawn at the zoom.
   const zoom = useZoom();
   /** WP-90: the width while the edge is dragged (may go below the minimum: then it collapses). */
   const [dragWidth, setDragWidth] = useState<number | null>(null);

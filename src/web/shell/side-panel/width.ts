@@ -3,7 +3,7 @@ import { readStorage, storageKey, writeStorage } from '@web/lib/storage';
 /**
  * Width rules of the side panel (WP-54, ADR-150): 320 px … 70 % of the session area, remembered per
  * window. Pure helpers (no React) – the host measures the area and calls them. WP-92: all values are
- * layout px (CSS px at 100 % zoom); the host converts the measured area and the drawn width (only
+ * layout px (CSS px at a 16 px root); the host converts the measured area and the drawn width (only
  * the fallback before the first measurement is the plain window width).
  */
 

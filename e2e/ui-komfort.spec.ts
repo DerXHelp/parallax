@@ -10,6 +10,11 @@ import { expect, test } from './support/fixtures';
 
 test.use({ ownServer: 'uikomfort' });
 
+/** WP-96: screen px per layout px at the setting 100 % (lib/zoom.ts BASE_ZOOM). */
+const BASE = 1.1;
+/** The default sidebar (288 layout px) as drawn. */
+const DEFAULT_DRAWN = Math.round(288 * BASE);
+
 test('Shift+Tab in the message field switches the permission mode', async ({ app, server }) => {
   const session = await app.newSession(await server.makeProject('modes'));
   await session.send('hello modes');
@@ -39,7 +44,8 @@ test('sidebar: drag the edge, reset, collapse by dragging and with Alt+B; the ra
   const handle = page.locator('[data-slot="sidebar-splitter"]');
   const width = async () => (await aside.boundingBox())?.width ?? 0;
   await expect(frame).toHaveAttribute('data-state', 'expanded');
-  expect(Math.round(await width())).toBe(288);
+  // 288 layout px, drawn at the base size (WP-96).
+  expect(Math.round(await width())).toBe(DEFAULT_DRAWN);
 
   const drag = async (dx: number) => {
     const box = await handle.boundingBox();
@@ -53,12 +59,13 @@ test('sidebar: drag the edge, reset, collapse by dragging and with Alt+B; the ra
   };
 
   await drag(100);
-  await expect.poll(width).toBeGreaterThan(380);
-  expect(await width()).toBeLessThan(396);
-  await expect(handle).toHaveAttribute('aria-valuenow', String(Math.round(await width())));
+  await expect.poll(width).toBeGreaterThan(288 * BASE + 92);
+  expect(await width()).toBeLessThan(288 * BASE + 108);
+  // The handle reports layout px: the drawn width divided by the base size.
+  await expect(handle).toHaveAttribute('aria-valuenow', String(Math.round((await width()) / BASE)));
 
   await handle.dblclick();
-  await expect.poll(async () => Math.round(await width())).toBe(288);
+  await expect.poll(async () => Math.round(await width())).toBe(DEFAULT_DRAWN);
 
   // Far to the left: collapses into the rail, the width stays for the next expand.
   await drag(-250);
@@ -72,7 +79,7 @@ test('sidebar: drag the edge, reset, collapse by dragging and with Alt+B; the ra
   await session.composer.click();
   await page.keyboard.press('Alt+B');
   await expect(frame).toHaveAttribute('data-state', 'expanded');
-  expect(Math.round(await width())).toBe(288);
+  expect(Math.round(await width())).toBe(DEFAULT_DRAWN);
   await expect(session.composer).toBeFocused();
   await page.keyboard.press('Alt+B');
   await expect(frame).toHaveAttribute('data-state', 'collapsed');

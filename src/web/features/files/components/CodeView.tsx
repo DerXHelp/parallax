@@ -18,7 +18,7 @@ import { columnOffset } from '../lib/columns';
  * new text (live reload): the rows change, the list stays.
  */
 
-/** Height of a line (`leading-5`) at 100 % zoom; virtua gets it at the zoom (WP-92). */
+/** Height of a line (`leading-5`) in layout px (16 px root); virtua gets it at the zoom (WP-92). */
 export const CODE_LINE_HEIGHT = 20;
 
 /** Frames to wait for virtua's viewport measurement before the line jump (and for the row after it). */

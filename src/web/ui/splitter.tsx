@@ -28,8 +28,9 @@ export interface SplitterProps extends Omit<
   /** Arrow key step in px (default 16). */
   step?: number;
   /**
-   * WP-92: screen px per value px (the zoom factor, 1.25 at 125 %) – `value`, `min`, `max` and `step`
-   * stay in layout px, the pointer travel is divided by it, so the bar follows the pointer.
+   * WP-92: screen px per value px (the zoom factor, 1.375 at 125 % with the base size) – `value`,
+   * `min`, `max` and `step` stay in layout px, the pointer travel is divided by it, so the bar
+   * follows the pointer.
    */
   scale?: number;
   /** Accessible name (from `t()`). */

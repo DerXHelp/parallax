@@ -2,7 +2,7 @@ import { useEffect, useSyncExternalStore } from 'react';
 import { LOCAL_HOST_ID } from '@shared/common';
 import { zoomSchema } from '@shared/model';
 import { STORAGE_KEYS, readStorage, writeStorage } from '@web/lib/storage';
-import { DEFAULT_ZOOM, clampZoom } from '@web/lib/zoom';
+import { DEFAULT_ZOOM, clampZoom, rootFontSize } from '@web/lib/zoom';
 import { showTextNotice } from './notices';
 import { selectSettings, updateSettings } from './settings';
 import { clientStore, type ClientStore } from './store';
@@ -10,8 +10,9 @@ import { clientStore, type ClientStore } from './store';
 /**
  * Zoom of the window (WP-92, ADR-233): `settings.zoom` (every window of this computer – a display
  * setting, also for the sessions of another computer, like the transcript view) becomes the root
- * font size of `<html>`; the UI is in rem, so text, spacing and icons grow with it. Layout code
- * that works in px reads the applied zoom (`useZoom`/`getZoom`, helpers in `lib/zoom.ts`).
+ * font size of `<html>`; the UI is in rem, so text, spacing and icons grow with it. WP-96: the
+ * setting is relative to the design's default size (`BASE_ZOOM`, 100 % → `font-size: 110%`). Layout
+ * code that works in px reads the applied zoom (`useZoom`/`getZoom`, helpers in `lib/zoom.ts`).
  *
  * Ctrl+wheel and Ctrl+Plus/Minus/0 (`shell/zoom-input.ts`) go through `requestZoom`: applied at
  * once, saved once the keys rest (one `settings.update` per burst, not per wheel tick). Until that
@@ -34,10 +35,10 @@ function notify(): void {
   for (const listener of [...listeners]) listener();
 }
 
-/** Sets the root font size (100 % = the browser default, no inline style) and caches the value. */
+/** Sets the root font size (always inline, also at 100 %: the base size, WP-96) and caches the value. */
 export function applyZoom(percent: number, root: HTMLElement = document.documentElement): void {
   const value = clampZoom(percent);
-  root.style.fontSize = value === DEFAULT_ZOOM ? '' : `${String(value)}%`;
+  root.style.fontSize = rootFontSize(value);
   if (applied === value) return;
   applied = value;
   writeStorage('local', STORAGE_KEYS.zoom, String(value));

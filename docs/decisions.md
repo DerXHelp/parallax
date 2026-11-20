@@ -2860,3 +2860,26 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   älterer Client nicht parsen kann). Rechner mit unterschiedlicher Version verbinden sich erst nach dem Update
   (`PROTOCOL_VERSION_MISMATCH`). Das neue Feld `permissionCheck` hat einen Default. Fake-Szenario
   `fake:cli-notices`.
+
+## ADR-237 – Grundgröße der Oberfläche 110 %: die Zoom-Einstellung bleibt relativ
+- **Datum/WP:** 20.11.2026, WP-96 (`feature/groessere-oberflaeche`), Wunsch des Nutzers („standardmäßig so, als hätte
+  ich 110 % eingestellt“).
+- **Entscheidung:**
+  - Die Grundgröße des Designs ist 110 % der Browser-Schrift (`BASE_ZOOM` in `src/web/lib/zoom.ts`). Die Einstellung
+    `settings.zoom` bleibt relativ dazu: 100 % = neue Grundgröße (`font-size: 110%`), 125 % = `137.5%` usw. Contract
+    (`DEFAULT_ZOOM`, `ZOOM_LEVELS`, Schema), Server und Einstellungs-UI bleiben unverändert.
+  - Der Faktor steckt an genau zwei Stellen: `zoomFactor`/`toLayoutPx`/`toScreenPx` (Layout-px = CSS-px bei 16-px-Root,
+    ganzzahlig gerechnet, damit 320 → 352 statt 352,00000000000006 ergibt) und `rootFontSize`, das `applyZoom` jetzt
+    immer inline setzt (auch bei 100 %). Alle Verbraucher (Seitenleiste, Seitenpanel, Splitter, Schwellen 900/1100/560,
+    virtua-Zeilenhöhen) rechnen schon über diese Helfer.
+  - Keine Migration: ein gespeichertes 100 und ein gespeichertes 110 lassen sich nicht nach Absicht unterscheiden. Wer
+    bisher mit 110 % gearbeitet hat – als Einstellung (WP-92) oder als Chrome-Zoom im Profil (vor WP-92) – drückt
+    einmal Strg+0; das setzt beide zurück (ADR-233).
+- **Begründung:** Das Ergebnis ist pixelgleich mit dem bisherigen Bild bei 110 % – auch dort, wo ADR-233 nicht
+  mitskaliert (Tailwind-Breakpoints, px-Rahmen und -Radien, Scroll-Schwellen). Verworfen: `DEFAULT_ZOOM = 110`
+  (Contract-Änderung, „110 %“ als Standard, Installationen mit gespeichertem 100 merkten nichts); CSS-`zoom` und
+  Chrome-Zoom (ADR-233; `--force-device-scale-factor` ersetzt zudem die Windows-Skalierung und wirkt nur im
+  Launcher-Fenster); Tokens einzeln vergrößern (verschiebt Proportionen, Tailwind-Standardgrößen blieben klein).
+- **Folgen:** Bei gleicher Fenstergröße zeigt die UI rund 10 % weniger Inhalt; das schmale Layout greift bei
+  990 statt 900 px Fensterbreite, das Overlay-Panel bei 1210 statt 1100 px Sitzungsfläche. Tests rechnen mit dem
+  Faktor 1,1.
