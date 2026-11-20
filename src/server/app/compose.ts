@@ -87,7 +87,7 @@ import {
 import { settleWithin, toError } from '../lib/async';
 import type { HomeLock } from '../lib/homeLock';
 import { logger as rootLogger, type LoggingHandle } from '../lib/logger';
-import { errnoCode } from '../lib/process';
+import { errnoCode, killProcessTree } from '../lib/process';
 import { openCatalogStore } from '../sessions/catalogStore';
 import { createCommandCatalogStore, type CommandCatalogStore } from '../sessions/commandCatalog';
 import { createSessionManager, SHUTDOWN_SWEEP_GRACE_MS, type SessionManager } from '../sessions/manager';
@@ -116,7 +116,12 @@ import { createConsoleLauncher } from '../system/console';
 import { createFakeConsoleLauncher, FAKE_CONSOLE_RUN_MS } from '../system/fakeConsole';
 import { createSystemIntegration } from '../system/index';
 import type { ConsoleLauncher, SystemIntegration } from '../system/ports';
+import { conPtyUnavailableReason, createConPtyFactory } from '../terminal/conpty';
+import { createFakePtyFactory } from '../terminal/fakePty';
+import type { TerminalService } from '../terminal/ports';
+import { createTerminalService } from '../terminal/service';
 import { createRecordingShellLauncher, createShellCommands } from '../terminal/shellCommands';
+import { createGitFinder } from '../terminal/shells';
 import { prepareWebRoot } from './webSnapshot';
 
 /** The server start failed before it was ready; `exitCode` from SERVER_EXIT_CODES. */
@@ -393,6 +398,43 @@ export function observedPublisher(
 }
 
 /**
+ * WP-99 (ADR-239): ends an entry's terminals when the engine archives it (a summary with `archived`)
+ * or removes it (`removeSummary`); everything else passes through unchanged. `closeEntry` of an entry
+ * without terminals does nothing.
+ */
+export function terminalClosingPublisher(
+  publisher: SessionPublisher,
+  terminals: Pick<TerminalService, 'closeEntry'>,
+): SessionPublisher {
+  return {
+    publishOps: (entryId, ops) => {
+      publisher.publishOps(entryId, ops);
+    },
+    publishSummary: (summary, urgent) => {
+      if (summary.archived) terminals.closeEntry(summary.entryId, 'archived');
+      publisher.publishSummary(summary, urgent);
+    },
+    removeSummary: (entryId) => {
+      terminals.closeEntry(entryId, 'removed');
+      publisher.removeSummary(entryId);
+    },
+    publishHostState: (host) => {
+      publisher.publishHostState(host);
+    },
+    notify: (clientId, notification) => {
+      publisher.notify(clientId, notification);
+    },
+    clearNotification: (entryId) => {
+      publisher.clearNotification(entryId);
+    },
+    presence: () => publisher.presence(),
+    closeAll: (code) => {
+      publisher.closeAll(code);
+    },
+  };
+}
+
+/**
  * `fake`: no `claude` process at all (dev, E2E, smoke tests of the launcher path); the fake console
  * "runs" 1.5 s and leaves one console turn in the FakeBackend's history, which the engine imports
  * on the automatic return (WP-34 §2.4). `sdk`: the SDK module is loaded only here (dynamic import),
@@ -487,6 +529,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   /** WP-78a: the stored role is activated after listen, in the background (never fatal). */
   let multiHostStart: Promise<void> = Promise.resolve();
   let manager: SessionManager | null = null;
+  /** WP-99: the embedded terminal (closed with the sessions at the shutdown). */
+  let terminals: TerminalService | null = null;
   let app: FastifyInstance | null = null;
   let lock: ServerLockHandle | null = null;
   let shutdown: ServerShutdown | null = null;
@@ -718,6 +762,23 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       ...loggerOption,
     });
     multiHost = roles;
+    // WP-99 (ADR-239): the embedded terminal – ConPTY through node:ffi (SDK backend) or an echo shell
+    // (FakeBackend: dev, E2E). One Git lookup for it and "Open shell in folder".
+    const gitFinder = createGitFinder();
+    const pty = config.backend === 'fake' ? createFakePtyFactory() : createConPtyFactory();
+    const terminalService = createTerminalService({
+      pty,
+      ...(pty === null ? { unavailableReason: conPtyUnavailableReason() } : {}),
+      entry: (entryId) => {
+        const entry = stores.registry.get(entryId);
+        return entry === undefined ? null : { cwd: entry.cwd, archived: entry.archived };
+      },
+      settings: () => stores.settings.get().console,
+      killTree: killProcessTree,
+      gitFinder,
+      ...loggerOption,
+    });
+    terminals = terminalService;
     const sessions = createSessionManager({
       toasts,
       // WP22-06: the FakeBackend has no real process tree (fake PIDs) – no heartbeat snapshots.
@@ -748,6 +809,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         dev: config.dev,
         port: () => listeningPort,
         systemIntegration: system.available,
+        terminalAvailable: terminalService.available,
         app: () => updateService.app(),
         update: () => updateService.state(),
         // WP-76/78a: role, host list (WP-79) and remote access – `remoteAccess` never leaves for a
@@ -785,6 +847,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         createShellCommands({
           entryCwd: (entryId) => stores.registry.get(entryId)?.cwd ?? null,
           settings: () => stores.settings.get(),
+          gitFinder,
           launcher:
             config.backend === 'fake'
               ? createRecordingShellLauncher({ logger: options.logger })
@@ -811,13 +874,17 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     const hub = createSyncHub({ source: sessions, instance, validation: config.validation });
     hubRef = hub;
     // Before start() (WP-13 §3.5, R1-18). ADR-145: the file index sees every op batch before the hub.
+    // WP-99: archiving or removing an entry ends its terminals.
     sessions.attachPublisher(
-      observedPublisher(
-        hub,
-        (entryId, ops) => {
-          fileService.observeOps(entryId, ops);
-        },
-        log,
+      terminalClosingPublisher(
+        observedPublisher(
+          hub,
+          (entryId, ops) => {
+            fileService.observeOps(entryId, ops);
+          },
+          log,
+        ),
+        terminalService,
       ),
     );
     stores.warnings.onChange(() => {
@@ -890,6 +957,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       // WP-79: forwarder routes `/api/hosts/:hostId/{ws,blob,file,attachments}` (same cookie/origin
       // guards as every route; windows of it close with AUTH_REVOKED on a new launcher code).
       hosts,
+      // WP-99: GET /api/terminal/ws (guard class `ws`; never forwarded to or from another computer).
+      terminal: terminalService,
       closeCode: () => (restarting ? WS_CLOSE.SERVER_RESTARTING : WS_CLOSE.SERVER_SHUTDOWN),
       webRoot,
     });
@@ -904,8 +973,12 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   // 5. Shutdown frame before listen: a signal or `server.shutdown` always finds it.
   const logging = options.logging ?? null;
   const sessions = manager;
+  const terminalService = terminals;
   shutdown = createServerShutdown({
-    stopSessions: () => sessions.shutdown(),
+    // WP-99: the terminals end with the sessions (also on the restart for an update).
+    stopSessions: async () => {
+      await Promise.all([sessions.shutdown(), terminalService.closeAll()]);
+    },
     // CR-02 (ADR-090): the sweep of the server's child trees only after the engine's C.8 window.
     graceMs: SHUTDOWN_SWEEP_GRACE_MS,
     // WP-87: the orchestrator of an update (a child of this server) survives the sweep.

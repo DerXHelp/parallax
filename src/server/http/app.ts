@@ -30,6 +30,8 @@ import type { FileContentProvider } from '../files/ports';
 import type { HostsService } from '../hosts/ports';
 import { logger as rootLogger } from '../lib/logger';
 import type { BlobStore } from '../sync/ports';
+import type { TerminalService } from '../terminal/ports';
+import { registerTerminalRoute } from '../terminal/socket';
 import type { UpdateService } from '../update/ports';
 import { registerUpdateRoutes } from '../update/routes';
 import { registerAuthRoutes, type AuthService } from './auth';
@@ -93,6 +95,11 @@ export interface CreateAppOptions {
    * coupled computers; missing → no routes (404).
    */
   hosts?: Pick<HostsService, 'list' | 'forwarder'>;
+  /**
+   * WP-99 (ADR-239): the embedded terminal – WS route `API_PATHS.terminalWs` (terminal/socket.ts,
+   * guard class `ws`, second check at the upgrade); missing → no route (404).
+   */
+  terminal?: TerminalService;
   /** WP-87: close code of the shutdown (4504 when it is a restart for an update); default 4503. */
   closeCode?: () => number;
   /** Built web UI (`dist/web`); not served when null or missing (dev mode uses Vite). */
@@ -271,6 +278,17 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     app.addHook('onClose', (_instance, done) => {
       off();
       done();
+    });
+  }
+
+  // WP-99: the terminal socket – this computer only (never forwarded); sockets close with 4401 when
+  // the device loses its sign-in (the route unsubscribes when the app closes).
+  if (options.terminal !== undefined) {
+    registerTerminalRoute(app, {
+      service: options.terminal,
+      authorize: (request) => authorize(request, API_PATHS.terminalWs, true),
+      onRevoked: (listener) => auth.onRevoked(listener),
+      logger: log,
     });
   }
 
