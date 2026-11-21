@@ -89,6 +89,7 @@ import { settleWithin, toError } from '../lib/async';
 import type { HomeLock } from '../lib/homeLock';
 import { logger as rootLogger, type LoggingHandle } from '../lib/logger';
 import { HOST_PATH_RULES } from '../lib/paths';
+import { hostCapabilities } from '../lib/platform';
 import { errnoCode, killProcessTree } from '../lib/process';
 import { openCatalogStore } from '../sessions/catalogStore';
 import { createCommandCatalogStore, type CommandCatalogStore } from '../sessions/commandCatalog';
@@ -817,6 +818,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         sdkVersion: manifest?.sdkVersion ?? 'unknown',
         sdkClaudeCodeVersion: manifest?.claudeCodeVersion ?? 'unknown',
         platform: process.platform,
+        // WP-103: desktop actions of this host (Windows: all; Linux: per graphical session, WP-106).
+        capabilities: hostCapabilities(),
         dataDirLabel: config.dataDirLabel,
         dev: config.dev,
         port: () => listeningPort,

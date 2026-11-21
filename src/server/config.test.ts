@@ -34,9 +34,33 @@ describe('loadConfig', () => {
       logLevel: 'info',
       // Production default 'auto'; this process runs under Vitest → always 'off' (R6).
       systemIntegration: 'off',
+      keyStore: 'auto',
       installRoot: null,
       notes: [],
     });
+  });
+
+  it('key store opt-in (WP-76 §B.14): flag over env, file only on Linux', () => {
+    const linux = (argv: string[], vars: NodeJS.ProcessEnv = {}) =>
+      loadConfig({
+        platform: 'linux',
+        argv: ['--home=/tmp/px', ...argv],
+        env: { HOME: '/home/u', ...vars },
+        cwd: '/home/u',
+      }).keyStore;
+    expect(linux([])).toBe('auto');
+    expect(linux(['--key-store=file'])).toBe('file');
+    expect(linux([], { PARALLAX_KEY_STORE: 'file' })).toBe('file');
+    expect(linux(['--key-store=auto'], { PARALLAX_KEY_STORE: 'file' })).toBe('auto');
+    expect(() => linux(['--key-store=plain'])).toThrow(ConfigError);
+    expect(() =>
+      loadConfig({
+        platform: 'win32',
+        argv: ['--home=D:\\data\\px', '--key-store=file'],
+        env: env(),
+        cwd: CWD,
+      }),
+    ).toThrow(/only on Linux/);
   });
 
   it('takes the install root of a package start (WP-86) and refuses an unsafe one', () => {

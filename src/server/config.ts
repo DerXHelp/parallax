@@ -23,9 +23,9 @@ import { SETTINGS_FILE } from './store/settings';
  *
  * Flags: `--dev`, `--backend=fake|sdk`, `--port=<0..65535>`, `--host=127.0.0.1`, `--home=<dir>`,
  * `--log-level=<level>`, `--validate=off|log|throw`, `--toasts=native|off`,
- * `--system-integration=auto|on|off`. Env: `PARALLAX_HOME`, `PARALLAX_PORT` (0 = any free port),
- * `PARALLAX_HOST`, `PARALLAX_BACKEND`, `PARALLAX_DEV` (`1`/`true`), `PARALLAX_LOG_LEVEL`,
- * `PARALLAX_VALIDATE`, `PARALLAX_TOASTS`, `PARALLAX_SYSTEM_INTEGRATION`.
+ * `--system-integration=auto|on|off`, `--key-store=auto|file`. Env: `PARALLAX_HOME`, `PARALLAX_PORT` (0 = any
+ * free port), `PARALLAX_HOST`, `PARALLAX_BACKEND`, `PARALLAX_DEV` (`1`/`true`), `PARALLAX_LOG_LEVEL`,
+ * `PARALLAX_VALIDATE`, `PARALLAX_TOASTS`, `PARALLAX_SYSTEM_INTEGRATION`, `PARALLAX_KEY_STORE`.
  *
  * The bind address is always 127.0.0.1 (Plan "Sicherheit", A.8; R1-05, ADR-023): `--host` /
  * `PARALLAX_HOST` stay accepted for ADR-006 compatibility, every other value is a ConfigError –
@@ -81,6 +81,15 @@ export type ToastMode = z.infer<typeof toastModeSchema>;
 export const systemIntegrationModeSchema = z.enum(['auto', 'on', 'off']);
 export type SystemIntegrationMode = z.infer<typeof systemIntegrationModeSchema>;
 
+/**
+ * Key store of "Several computers" (WP-76 §B.14): `auto` = the platform's protected store (DPAPI;
+ * Linux: Secret Service, then `systemd-creds --user`); `file` = Linux without a desktop may keep the
+ * keys in a 0600 file (explicit opt-in, with warnings – WP-107). `file` is a ConfigError on Windows.
+ * Flag `--key-store`, env `PARALLAX_KEY_STORE`.
+ */
+export const keyStoreModeSchema = z.enum(['auto', 'file']);
+export type KeyStoreMode = z.infer<typeof keyStoreModeSchema>;
+
 export interface ServerConfig {
   dev: boolean;
   backend: BackendKind;
@@ -99,6 +108,8 @@ export interface ServerConfig {
   logLevel: LogLevel;
   /** Autostart + protocol handler (ADR-110); `auto` is decided by `systemIntegrationAvailable`. */
   systemIntegration: SystemIntegrationMode;
+  /** WP-76 §B.14: `file` = the opt-in for the 0600 key file on Linux (WP-107). */
+  keyStore: KeyStoreMode;
   /**
    * WP-86 `--install-root=<dir>`: root folder of the installation this server runs from (the
    * launcher passes it on in package mode; start.mjs, autostart and protocol handler point there).
@@ -288,6 +299,7 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
         toasts: { type: 'string' },
         'system-integration': { type: 'string' },
         'install-root': { type: 'string' },
+        'key-store': { type: 'string' },
       },
       strict: true,
       allowPositionals: false,
@@ -368,6 +380,13 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
     isTestRun(env),
   );
 
+  const keyStoreRaw = flag('key-store') ?? nonEmpty(env.PARALLAX_KEY_STORE);
+  const keyStore =
+    keyStoreRaw === undefined ? 'auto' : parseOrThrow(keyStoreModeSchema, keyStoreRaw, 'key store');
+  if (keyStore === 'file' && platform === 'win32') {
+    throw new ConfigError('the file key store exists only on Linux - Windows uses DPAPI');
+  }
+
   const installRootRaw = flag('install-root');
   const installRoot = installRootRaw === undefined ? null : paths.resolve(cwd, installRootRaw);
   if (installRoot !== null) {
@@ -408,6 +427,7 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
     dataDirLabel: isRealHome ? defaultDataDirLabel(env, platform) : dev ? 'dev' : home,
     logLevel,
     systemIntegration,
+    keyStore,
     installRoot,
     notes,
   };

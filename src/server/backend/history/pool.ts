@@ -15,7 +15,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { z } from 'zod';
-import { windowsPathKey } from '@shared/paths';
+import { HOST_PATH_RULES } from '../../lib/paths';
 import type { LaunchSpec } from '../../claude/ports';
 import { toError } from '../../lib/async';
 import { logger } from '../../lib/logger';
@@ -63,7 +63,7 @@ export function defaultSdkModuleUrl(): string {
  */
 export function historyWorkerKey(launch: LaunchSpec): string {
   const dir = getEnvVar(launch.env, 'CLAUDE_CONFIG_DIR') ?? launch.configDir;
-  return dir === null || dir.trim() === '' ? DEFAULT_CONFIG_DIR_KEY : windowsPathKey(dir);
+  return dir === null || dir.trim() === '' ? DEFAULT_CONFIG_DIR_KEY : HOST_PATH_RULES.key(dir);
 }
 
 const replySchema = z.discriminatedUnion('ok', [
