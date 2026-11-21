@@ -168,15 +168,35 @@ Besitz-Pfade ändern.
 - Dependabot-PRs nie auf GitHub mergen: in den laufenden Feature-Branch übernehmen und den üblichen Weg gehen.
   `pnpm audit` läuft wöchentlich (`.github/workflows/audit.yml`) und vor jedem Release.
 
-## Windows
-- Pfadregeln nur aus `@shared/paths` (Server: `lib/paths.ts`): case-insensitiv vergleichen,
-  `cwd`-String exakt behalten, UNC/Device/ADS vor jedem Dateizugriff ablehnen. Nie duplizieren.
-- Prozessbäume mit `taskkill /PID <pid> /T /F` beenden; **jeder** Spawn mit `windowsHide: true`
-  und ohne Shell (Argument-Array). **Ausnahme:** sichtbare GUI-Programme nach einem Nutzerklick
-  (Editor, Explorer, Standardprogramm) nur über `spawnGui` aus `lib/process.ts` (absolute `.exe`,
-  PE-Subsystem GUI geprüft, Blockliste, `detached`, ADR-144). Nie `cmd /c start`. Nur **absolute `.exe`-Pfade** starten
-  (`resolveExecutable` aus `lib/windows.ts`), nie nackte Namen wie `git` – sonst gewinnt das `cwd`.
-- Gestartete Hintergrundprozesse (Dev-Server, Vite, Tests) am Ende immer beenden.
+## Plattformen (Windows und Linux, WP-100…109)
+Parallax läuft unter Windows und Ubuntu (24.04/26.04 x64, mit Desktop oder im Server-Modus). Plattform-Code
+fragt nie `process.platform` verstreut ab, sondern nimmt die Regelsätze und Nähte unten (Parameter `platform`/`rules`
+mit Default des Rechners, damit Tests beide Zweige auf jeder Plattform prüfen).
+- **Pfadregeln** nur aus `@shared/paths` (`WIN32_PATHS`, `POSIX_PATHS`, `pathRules`, `pathFlavorOf`; Server
+  `HOST_PATH_RULES` und `lib/paths.ts`, Web je Host der Session). `cwd`-String immer exakt behalten. Nie duplizieren.
+  - Windows: case-insensitiv vergleichen, UNC/Device/ADS vor jedem Dateizugriff ablehnen.
+  - Linux: exakt vergleichen (nur doppelte und abschließende `/` zählen nicht), nie `/proc`, `/sys`, `/dev`;
+    Links nach den POSIX-Regeln auflösen; Dateien nur regulär öffnen (`openRegularFile`, kein FIFO).
+- **Spawns:** **jeder** ohne Shell (Argument-Array) über `spawnHidden`/`runFile` aus `lib/process.ts`
+  (`windowsHide: true`; unter Linux eigene Prozessgruppe). Nur **absolute Programmpfade** (`resolveExecutable` aus
+  `lib/windows.ts`, `systemTool`: System32 bzw. `/usr/bin`, `/bin`), nie nackte Namen wie `git` – sonst gewinnt das
+  `cwd` bzw. ein fremder `PATH`-Eintrag. Windows: nur `.exe`; Linux: ausführbare Datei, `claude` nur als native
+  ELF-Datei.
+- **Ausnahme:** sichtbare GUI-Programme nach einem Nutzerklick (Editor, Explorer/Dateimanager, Standardprogramm) nur
+  über `spawnGui` aus `lib/process.ts` (absolut, Blockliste, `detached`; Windows zusätzlich PE-Subsystem GUI,
+  ADR-144). Nie `cmd /c start`, nie `sh -c`.
+- **Prozessbäume** nur mit `killProcessTree` beenden: Windows `taskkill /PID <pid> /T /F`; Linux Baum aus `/proc`
+  mit Gruppen und Sitzungen, `SIGTERM`, nach 2 s `SIGKILL`. Prozess-Identität unter Linux ist PID + Startzeit
+  (`lib/procfs.ts`), nie der Name (node benennt seinen Haupt-Thread um).
+- **Umgebung:** Variablennamen unter Windows case-insensitiv, unter Linux exakt (`http_proxy` ≠ `HTTP_PROXY`);
+  `PATH`-Trenner aus `envPathDelimiter`.
+- **Fähigkeiten:** Was ein Rechner kann (externe Konsole, Shell-Fenster, Editor, native Benachrichtigungen …), meldet
+  `HostState.capabilities`; die Web-UI blendet danach aus, nie nach dem Browser-Betriebssystem.
+- **Linux prüfen:** `bash scripts/linux/run.sh [--cpus N --memory M] -- <befehl>` startet den Befehl im Container
+  `parallax-linux:24.04` (Arbeitsbaum ohne `node_modules`, ein Lauf zur Zeit auf der Maschine) und zählt als schwerer
+  Lauf. Ohne Desktop: kein echtes Chrome-Fenster, keine Benachrichtigung, kein Schlüsselbund der Anmeldung – das prüft
+  die Live-Abnahme auf einem echten Ubuntu.
+- Gestartete Hintergrundprozesse (Dev-Server, Vite, Tests, Container) am Ende immer beenden.
 - **Session-Variablen der aufrufenden Claude-Session** (`CLAUDECODE`, `CLAUDE_CODE_*`,
   `CLAUDE_PID`, `CLAUDE_EFFORT`, `CLAUDE_AGENT_SDK_*`, `AI_AGENT`, Hook-Marker …) dürfen nie in gestartete
   `claude`-Prozesse lecken: Env immer über `buildEnv()` bauen (Review C.2). `buildEnv` entfernt auch

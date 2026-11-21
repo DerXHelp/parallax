@@ -419,6 +419,7 @@ Integrations-Branch `feature/phase-3`. Kritischer Pfad: 50 (Teil 2) → 54 → 5
    des Desktops auf echtem Ubuntu). WP-101 (Dockerfile, Spikes im Container) fertig; E1 für 24.04 ohne Desktop
    nachentschieden (Datei 0600 per Opt-in), `systemd-creds --user` auf 26.04 prüft später ein CI-Job. WP-102 fertig
    (Contracts, `PROTOCOL_VERSION` 7, Sicherheitsspezifikation WP-76 §B.13/§B.14, Ownership in CLAUDE.md). Welle L1
-   (WP-103, WP-104) gemergt; 102e (Contracts für L2, „In Terminal fortsetzen“ im Server) fertig. Nächster Schritt:
-   Welle L2 – WP-105 (Terminal), WP-106 (Desktop), WP-107 (Server-Modus, Mehrere Rechner), WP-108 (Paket, Update, CI)
-   parallel, danach WP-109 (Integration).
+   (WP-103, WP-104) gemergt; 102e (Contracts für L2, „In Terminal fortsetzen“ im Server) fertig. Welle L2 läuft seit
+   21.11.2026 parallel in Worktrees: WP-105 (Terminal), WP-106 (Desktop), WP-107 (Server-Modus, Mehrere Rechner; dazu
+   die Terminal-Verfügbarkeit gekoppelter Rechner in `state/hosts.ts`), WP-108 (Paket, Update, CI). Danach WP-109
+   (Integration; CLAUDE.md-Abschnitt „Plattformen“ vorab geschrieben).
