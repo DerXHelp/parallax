@@ -10,6 +10,7 @@ import { resumeSession } from '../lib/respond';
 import { summarizeToolInput } from '../lib/tool-input';
 import { DecisionAction, DecisionCardShell } from './card-shell';
 import { ApproveSplit, FreshContextAlert, OpenPlanButton, approvePlan, useApproveChoice } from './plan-parts';
+import { ElicitationServerLabel } from './RequesterLabel';
 
 const NO_MODES: readonly PermissionMode[] = [];
 
@@ -74,6 +75,7 @@ export function ExpiredCard({
       decision={decision}
       title={title}
       headerExtra={headerExtra}
+      requester={decision.kind === 'elicitation' ? <ElicitationServerLabel decision={decision} /> : undefined}
       primary={plan !== null && choice !== null ? approvePlan(sessionKey, plan, choice) : resume}
       actions={
         <>

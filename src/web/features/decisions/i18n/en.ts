@@ -1,5 +1,6 @@
 import type { PermissionMode, RuleDestination } from '@shared/common';
 import type { CANCEL_REASONS, DecisionOutcome } from '@shared/model';
+import type { ElicitationIssueCode } from '../lib/elicitation';
 
 type CancelReason = (typeof CANCEL_REASONS)[number];
 type ResolvedOutcome = Exclude<DecisionOutcome['type'], 'cancelled'>;
@@ -238,10 +239,59 @@ export const en = {
       user: 'A request was cancelled.',
     } satisfies Record<CancelReason, string>,
     gone: 'A decision is no longer open.',
+    /** WP-116: an elicitation has no tool call, so its outcome is unknown here. */
+    elicitationClosed: 'The request for input from {server} was closed.',
   },
-  /** WP-110 (ADR-256): MCP elicitation – the card follows in WP-116. */
+  /** WP-110 (ADR-256), card WP-116: an MCP server asks for input (form or url). */
   elicitation: {
     title: 'Input for {server}',
     announce: '{server} asks for input',
+    server: 'MCP server {name}',
+    serverNamed: 'MCP server {name} ({server})',
+    formLabel: 'Requested input',
+    requiredMark: '*',
+    requiredHint: '* Required',
+    none: 'Not specified',
+    choose: 'Choose…',
+    placeholders: {
+      email: 'name@example.com',
+      uri: 'https://…',
+    },
+    hints: {
+      integer: 'Whole number',
+      range: 'From {min} to {max}',
+      atLeast: 'At least {min}',
+      atMost: 'At most {max}',
+      length: '{min} to {max} characters',
+      minLength: 'At least {min} characters',
+    },
+    errors: {
+      required: 'Please fill in this field.',
+      email: 'Enter an email address.',
+      uri: 'Enter a complete link (e.g. https://…).',
+      date: 'Enter a date.',
+      dateTime: 'Enter a date and a time.',
+      number: 'Enter a number (e.g. 1.5).',
+      integer: 'Enter a whole number.',
+      minimum: 'At least {min}.',
+      maximum: 'At most {max}.',
+      minLength: 'At least {min} characters.',
+      maxLength: 'At most {max} characters.',
+      enum: 'Choose one of the options.',
+      rejected: 'This value was not accepted – please check it.',
+    } satisfies Record<ElicitationIssueCode, string>,
+    send: 'Send',
+    decline: 'Decline',
+    declineHint: 'Tells {server} that you do not want to give this input.',
+    cancel: 'Cancel',
+    cancelHint: 'Closes the request without an answer.',
+    sendFailed: 'The input could not be sent',
+    openUrl: 'Open in browser',
+    copyUrl: 'Copy link',
+    done: 'Done',
+    urlHint: 'Open the page, finish there, then click “Done”.',
+    urlOpened: 'Opened in your browser – click “Done” once you have finished there.',
+    unsupportedTitle: 'Parallax cannot show this form',
+    invalidUrl: 'The request has no valid http(s) link.',
   },
 };

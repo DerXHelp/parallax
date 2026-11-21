@@ -4,6 +4,7 @@ import type { Decision } from '@shared/model';
 import { useSessionMeta, useSessionSelector } from '@web/state/hooks';
 import { showTextNotice } from '@web/state/notices';
 import { isLocalResolution } from '../state/bar-store';
+import { elicitationServerName } from './elicitation';
 import { NO_OUTCOMES, resolvedElsewhereNotice, selectDecisionOutcomes } from './outcomes';
 
 interface Seen {
@@ -40,10 +41,19 @@ export function useResolvedElsewhereNotices(sessionKey: string, decisions: reado
     const current = new Set(decisions.map((decision) => decision.id));
     for (const decision of previous.decisions) {
       if (current.has(decision.id) || isLocalResolution(decision.id)) continue;
-      showTextNotice(resolvedElsewhereNotice(outcomes.get(decision.id) ?? null), undefined, {
-        sessionKey,
-        id: `decisions.resolved.${decision.id}`,
-      });
+      const options = { sessionKey, id: `decisions.resolved.${decision.id}` };
+      const outcome = outcomes.get(decision.id) ?? null;
+      // WP-116: an elicitation has no tool call, so its outcome is unknown here (answered in another
+      // window, finished by the server via `elicitation_complete`, withdrawn): name its server.
+      if (decision.kind === 'elicitation' && outcome === null) {
+        showTextNotice(
+          'decisions.notices.elicitationClosed',
+          { server: elicitationServerName(decision) },
+          options,
+        );
+        continue;
+      }
+      showTextNotice(resolvedElsewhereNotice(outcome), undefined, options);
     }
   }, [decisions, meta.conversationId, meta.hasView, outcomes, sessionKey]);
 }
