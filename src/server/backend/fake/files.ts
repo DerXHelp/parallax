@@ -5,12 +5,17 @@
  * under `<filesRoot>\<sessionId>\` – default `%TEMP%\parallax-fake-files\` – never in a project.
  * Every target is resolved with `@shared/paths` and checked to stay inside that folder before any
  * file system access.
+ *
+ * WP-103: with the rules of this host (`HOST_PATH_RULES`; a constructor parameter for tests). The
+ * scenarios name files Windows-style (`plans\fake-plan.md`); on POSIX a `\` in such a relative path
+ * is a separator, too.
  */
 import { appendFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { structuredPatch } from 'diff';
-import { isWindowsPathInside, resolveWindowsPath, windowsPathIssue } from '@shared/paths';
+import type { PathRules } from '@shared/paths';
+import { HOST_PATH_RULES } from '../../lib/paths';
 
 export const FAKE_FILES_DIR_NAME = 'parallax-fake-files';
 
@@ -42,23 +47,26 @@ export class FakeFiles {
   constructor(
     private readonly root: string,
     sessionId: string,
+    private readonly rules: PathRules = HOST_PATH_RULES,
   ) {
-    const rootIssue = windowsPathIssue(root);
+    const rootIssue = rules.issue(root);
     if (rootIssue !== null) throw new Error(`fake files root rejected (${rootIssue})`);
     if (!SESSION_SEGMENT.test(sessionId)) throw new Error('fake files: session id is no folder name');
-    const dir = resolveWindowsPath(root, sessionId);
+    const dir = rules.resolve(root, sessionId);
     if (dir === null) throw new Error('fake files: session folder rejected');
     this.dir = dir;
   }
 
   /** Absolute path of `relative` (`plans\fake-plan.md`); throws if it would leave the session folder. */
   path(relative: string): string {
-    const target = resolveWindowsPath(this.dir, relative);
-    if (target === null || target === this.dir || !isWindowsPathInside(target, this.dir)) {
+    const rules = this.rules;
+    const spelled = rules.flavor === 'win32' ? relative : relative.replaceAll('\\', '/');
+    const target = rules.resolve(this.dir, spelled);
+    if (target === null || rules.equal(target, this.dir) || !rules.isInside(target, this.dir)) {
       throw new Error(`fake files: ${JSON.stringify(relative)} leaves the session folder`);
     }
     // Defense in depth: the session folder itself must stay inside the root.
-    if (!isWindowsPathInside(target, this.root)) throw new Error('fake files: outside the root');
+    if (!rules.isInside(target, this.root)) throw new Error('fake files: outside the root');
     return target;
   }
 

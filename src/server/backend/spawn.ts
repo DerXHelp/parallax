@@ -7,12 +7,17 @@
  * with `TerminateProcess`, which leaves the children (Bash, MCP servers, …) running. An abort kills
  * the whole tree with `killProcessTree` instead. The start time is `now()` at spawn (orphan check
  * with tolerance, §3.5.13) – `processInfo` is too slow for this hot path.
+ *
+ * POSIX (WP-103): `spawnHidden` starts the CLI `detached` – its own process group – and
+ * `killProcessTree` ends that group (a plain signal would reach the CLI only). The command check
+ * compares with the rules of this host (`SpawnerOptions.rules`, case-sensitive off Windows).
  */
 import type { SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
 import type { ChildProcess, ChildProcessWithoutNullStreams } from 'node:child_process';
-import { windowsPathKey } from '@shared/paths';
+import type { PathRules } from '@shared/paths';
 import { toError } from '../lib/async';
 import { logger } from '../lib/logger';
+import { HOST_PATH_RULES } from '../lib/paths';
 import type { spawnHidden } from '../lib/process';
 
 const log = logger.child({ module: 'backend/spawn' });
@@ -26,6 +31,8 @@ export interface SpawnerOptions {
    * onError), so only the resolved claude.exe is ever started (C.7, R1-04). Optional for tests.
    */
   expectedCommand?: string;
+  /** Rules of the `expectedCommand` compare (default `HOST_PATH_RULES`, WP-103). */
+  rules?: PathRules;
   /** → BackendEvent `spawned`. */
   onSpawned(pid: number, startedAt: Date): void;
   /** → BackendEvent `stderr` (the pipe is always read, F.16). */
@@ -52,13 +59,11 @@ function hasPipes(child: ChildProcess): child is ChildProcessWithoutNullStreams 
 
 /** Builds the `spawnClaudeCodeProcess` function for one session. */
 export function createSpawner(opts: SpawnerOptions): (o: SpawnOptions) => SpawnedProcess {
+  const rules = opts.rules ?? HOST_PATH_RULES;
   return (o) => {
     let child: ChildProcess;
     try {
-      if (
-        opts.expectedCommand !== undefined &&
-        windowsPathKey(o.command) !== windowsPathKey(opts.expectedCommand)
-      ) {
+      if (opts.expectedCommand !== undefined && !rules.equal(o.command, opts.expectedCommand)) {
         throw new TypeError('spawn: the SDK asked for a different executable than the resolved claude.exe');
       }
       child = opts.spawn(o.command, o.args, {

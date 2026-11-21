@@ -68,6 +68,7 @@ function setup(
   const fs = createMemoryFs(options.files ?? { [LOCAL]: '' });
   const integration = createClaudeIntegration({
     appVersion: '1.2.3',
+    platform: 'win32',
     baseEnv: () => options.baseEnv ?? BASE_ENV,
     persistentEnv: options.persistentEnv ?? (() => Promise.resolve(null)),
     fs,
@@ -170,6 +171,7 @@ describe('launchSpecFor', () => {
     expect(spec.executablePath).toBe(LOCAL);
     const integration = createClaudeIntegration({
       appVersion: '1.2.3',
+      platform: 'win32',
       baseEnv: () => ({ ...BASE_ENV, NPM_CONFIG_REGISTRY: nexus }),
       persistentEnv: () => Promise.resolve(new Map([['NPM_CONFIG_REGISTRY', nexus]])),
       fs: createMemoryFs({ [LOCAL]: '' }),
@@ -297,6 +299,7 @@ describe('checkProfile ("Profil testen")', () => {
     expect(tested).toEqual(sampleClaudeInstallStatus({ path: LOCAL, testedVersion: '2.1.290' }));
     const bundled = createClaudeIntegration({
       appVersion: '1.2.3',
+      platform: 'win32',
       baseEnv: () => BASE_ENV,
       persistentEnv: () => Promise.resolve(null),
       fs: createMemoryFs({ [LOCAL]: '' }),
@@ -582,7 +585,7 @@ describe('with a persistent profile store (ADR-102)', () => {
       home: await mkdtemp(path.join(process.env.PARALLAX_HOME ?? os.tmpdir(), 'wp32-integration-')),
       warnings: createStoreWarnings(),
       debounceMs: 5,
-      issueContext: () => ({ env: {}, persistentEnv: new Map(), exists: () => true }),
+      issueContext: () => ({ env: {}, persistentEnv: new Map(), exists: () => true, platform: 'win32' }),
     });
   }
 

@@ -11,6 +11,7 @@ function ctx(p: Partial<ProfileIssueContext> = {}): ProfileIssueContext {
     env: { USERPROFILE: 'C:\\Users\\u', Path: 'C:\\Windows' },
     persistentEnv: new Map(),
     exists: (file) => file.toLowerCase() === EXE.toLowerCase(),
+    platform: 'win32',
     ...p,
   };
 }
@@ -143,15 +144,65 @@ describe('executableIssue', () => {
     ['C:\\Tools\\..\\claude.exe', 'unsafe'],
     ['C:\\Tools\\NUL.exe', 'unsafe'],
   ])('%s → %s', (file, reason) => {
-    expect(executableIssue({ kind: 'path', path: file }, exists)).toBe(reason);
+    expect(executableIssue({ kind: 'path', path: file }, exists, 'win32')).toBe(reason);
   });
 
   it('never touches unsafe or relative paths, and auto needs no check', () => {
     touched.length = 0;
-    executableIssue({ kind: 'path', path: '\\\\server\\share\\claude.exe' }, exists);
-    executableIssue({ kind: 'path', path: 'claude.exe' }, exists);
-    executableIssue({ kind: 'path', path: 'C:\\x\\claude.cmd' }, exists);
-    expect(executableIssue({ kind: 'auto' }, exists)).toBeNull();
+    executableIssue({ kind: 'path', path: '\\\\server\\share\\claude.exe' }, exists, 'win32');
+    executableIssue({ kind: 'path', path: 'claude.exe' }, exists, 'win32');
+    executableIssue({ kind: 'path', path: 'C:\\x\\claude.cmd' }, exists, 'win32');
+    expect(executableIssue({ kind: 'auto' }, exists, 'win32')).toBeNull();
     expect(touched).toEqual([]);
+  });
+
+  it.each<[string, string | null]>([
+    ['/home/u/.local/bin/claude', null],
+    ['/opt/claude/claude', 'not_found'],
+    ['claude', 'not_absolute'],
+    ['./claude', 'not_absolute'],
+    ['C:\\Tools\\claude\\claude.exe', 'not_absolute'],
+    ['/home/u/../claude', 'unsafe'],
+    ['/proc/self/exe', 'unsafe'],
+  ])('POSIX (WP-103, B4): %s → %s – no extension required', (file, reason) => {
+    const posixExists = (path: string): boolean => path === '/home/u/.local/bin/claude';
+    expect(executableIssue({ kind: 'path', path: file }, posixExists, 'linux')).toBe(reason);
+  });
+});
+
+describe('profileIssues on POSIX (WP-103, B4)', () => {
+  const posixCtx = (): ProfileIssueContext => ({
+    env: { HOME: '/home/u', home: 'other' },
+    persistentEnv: new Map(),
+    exists: (file) => file === '/home/u/.local/bin/claude',
+    platform: 'linux',
+  });
+
+  it('accepts POSIX paths for the executable, configDir and --add-dir; refuses Windows paths', () => {
+    expect(
+      profileIssues(
+        sampleProfileInput({
+          executable: { kind: 'path', path: '/home/u/.local/bin/claude' },
+          configDir: '/home/u/.claude-work',
+          args: ['--add-dir', '/srv/shared'],
+          env: { A: '${env:HOME}' },
+        }),
+        posixCtx(),
+      ),
+    ).toEqual([]);
+    expect(
+      profileIssues(
+        sampleProfileInput({
+          configDir: 'D:\\claude',
+          args: ['--add-dir', 'D:\\a'],
+          env: { A: '${env:Home}' },
+        }),
+        posixCtx(),
+      ),
+    ).toEqual([
+      error('PROFILE_ARG_INVALID', { index: 0, flag: '--add-dir', reason: 'invalid_value' }),
+      error('PROFILE_INVALID', { field: 'configDir', reason: 'unsafe' }),
+      warning('PROFILE_ENV_REF_UNRESOLVED', { name: 'Home', key: 'A' }),
+    ]);
   });
 });

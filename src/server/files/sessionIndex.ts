@@ -18,6 +18,9 @@
  * - One tool call counts once: the same op of the same tool call is ignored (in-process set), and
  *   only a record outside the known time span of the file counts (items re-published after a
  *   restart, e.g. the tail of an earlier conversation, never count twice).
+ * - WP-103: paths are checked and keyed with the rules of this host (`SessionIndexDeps.rules`,
+ *   default `HOST_PATH_RULES`; POSIX: case-sensitive keys). `keys()` are keys of these rules – the
+ *   access check (`resolveAllowedPath`) compares with the same rules.
  */
 import path from 'node:path';
 import type { Logger } from 'pino';
@@ -31,9 +34,10 @@ import {
   type SessionFilesFile,
   type TranscriptItem,
 } from '@shared/model';
-import { windowsPathIssue, windowsPathKey } from '@shared/paths';
+import type { PathRules } from '@shared/paths';
 import type { SessionOp } from '@shared/protocol';
 import { logger as rootLogger } from '../lib/logger';
+import { HOST_PATH_RULES } from '../lib/paths';
 import { entryDir } from '../store/decisions';
 import { JsonStore, type StoreFs, type StoreWarningSink } from '../store/jsonStore';
 import type { TranscriptStore } from '../sync/ports';
@@ -96,8 +100,8 @@ const TOOL_RULES: Readonly<Record<string, ToolInputRule>> = {
 };
 
 /** Absolute, safe and not absurdly long (commands accept at most LIMITS.pathChars). */
-function usablePath(value: string | null | undefined): value is string {
-  return typeof value === 'string' && value.length <= LIMITS.pathChars && windowsPathIssue(value) === null;
+function usablePath(value: string | null | undefined, rules: PathRules): value is string {
+  return typeof value === 'string' && value.length <= LIMITS.pathChars && rules.issue(value) === null;
 }
 
 /**
@@ -105,21 +109,30 @@ function usablePath(value: string | null | undefined): value is string {
  * CLI's task data – the CLI writes a task's output to `…\tasks\<taskId>.output`
  * (`%TEMP%\claude\<hash>\<sessionId>\tasks\`, CLI 2.1.322, Agent and Bash tasks alike; the fake
  * `<home>\fake-files\<sessionId>\tasks\`). Any other `outputFile` did not come from the CLI and
- * never enters the access list – also from transcripts written before ADR-152.
+ * never enters the access list – also from transcripts written before ADR-152. POSIX (WP-103): the
+ * same shape with `/` (`/tmp/claude-<uid>/…/tasks/<taskId>.output`), compared case-sensitively.
  */
-export function isTaskOutputFile(file: string, taskId: string): boolean {
-  const segments = windowsPathKey(file).split('\\');
-  return segments.at(-2) === 'tasks' && segments.at(-1) === `${taskId}.output`.toLowerCase();
+export function isTaskOutputFile(file: string, taskId: string, rules: PathRules = HOST_PATH_RULES): boolean {
+  const segments = rules.key(file).split(rules.separator);
+  const name = rules.key(`${taskId}.output`);
+  return segments.at(-2) === 'tasks' && segments.at(-1) === name;
 }
 
-function usableOutputFile(value: string | null | undefined, taskId: string): value is string {
-  return usablePath(value) && isTaskOutputFile(value, taskId);
+function usableOutputFile(
+  value: string | null | undefined,
+  taskId: string,
+  rules: PathRules,
+): value is string {
+  return usablePath(value, rules) && isTaskOutputFile(value, taskId, rules);
 }
 
 /** File references of one transcript item (pure; see the file comment). */
-export function recordsOfItem(item: TranscriptItem): IndexRecord[] {
+export function recordsOfItem(item: TranscriptItem, rules: PathRules = HOST_PATH_RULES): IndexRecord[] {
   if (item.kind === 'system') {
-    if (item.event !== 'task_notification' || !usableOutputFile(item.task.outputFile, item.task.taskId))
+    if (
+      item.event !== 'task_notification' ||
+      !usableOutputFile(item.task.outputFile, item.task.taskId, rules)
+    )
       return [];
     return [
       {
@@ -134,7 +147,7 @@ export function recordsOfItem(item: TranscriptItem): IndexRecord[] {
   if (item.kind !== 'tool_call') return [];
   const records: IndexRecord[] = [];
   const outputFile = item.task?.outputFile;
-  if (item.task !== null && usableOutputFile(outputFile, item.task.taskId)) {
+  if (item.task !== null && usableOutputFile(outputFile, item.task.taskId, rules)) {
     records.push({
       path: outputFile,
       op: 'output',
@@ -146,7 +159,7 @@ export function recordsOfItem(item: TranscriptItem): IndexRecord[] {
   const rule = TOOL_RULES[item.toolName];
   if (item.status === 'done' && rule !== undefined) {
     const file = rule.read(item.input);
-    if (usablePath(file)) {
+    if (usablePath(file, rules)) {
       records.push({
         path: file,
         op: rule.op,
@@ -164,12 +177,12 @@ function time(iso: string): number {
   return Number.isNaN(ms) ? 0 : ms;
 }
 
-/** Newest `lastAt` first (ties: path key, stable output). */
+/** Newest `lastAt` first (ties: path key of this host, stable output). */
 export function byLastAtDesc(a: SessionFile, b: SessionFile): number {
   const diff = time(b.lastAt) - time(a.lastAt);
   if (diff !== 0) return diff;
-  const ka = windowsPathKey(a.path);
-  const kb = windowsPathKey(b.path);
+  const ka = HOST_PATH_RULES.key(a.path);
+  const kb = HOST_PATH_RULES.key(b.path);
   return ka < kb ? -1 : ka > kb ? 1 : 0;
 }
 
@@ -183,6 +196,8 @@ export interface SessionIndexDeps {
   storeFs?: StoreFs;
   warnings?: StoreWarningSink;
   logger?: Logger;
+  /** Path rules of the checks and keys (default `HOST_PATH_RULES`, WP-103). */
+  rules?: PathRules;
 }
 
 export interface ObserveResult {
@@ -213,6 +228,7 @@ interface EntryIndex {
 
 export function createSessionIndex(deps: SessionIndexDeps): SessionIndex {
   const log = (deps.logger ?? rootLogger).child({ module: 'files.index' });
+  const rules = deps.rules ?? HOST_PATH_RULES;
   const states = new Map<EntryId, EntryIndex>();
 
   const remember = (state: EntryIndex, key: string): void => {
@@ -232,7 +248,7 @@ export function createSessionIndex(deps: SessionIndexDeps): SessionIndex {
   const apply = (state: EntryIndex, record: IndexRecord, conversationId: ConversationId | null): boolean => {
     if (state.seen.has(record.dedupeKey)) return false;
     remember(state, record.dedupeKey);
-    const key = windowsPathKey(record.path);
+    const key = rules.key(record.path);
     const existing = state.files.get(key);
     if (existing === undefined) {
       state.files.set(key, {
@@ -322,7 +338,7 @@ export function createSessionIndex(deps: SessionIndexDeps): SessionIndex {
     for (const conversationId of [...info.conversationIds].reverse()) {
       try {
         await visitNewestFirst(entryId, conversationId, (item) => {
-          for (const record of recordsOfItem(item)) {
+          for (const record of recordsOfItem(item, rules)) {
             if (apply(state, record, conversationId)) records += 1;
           }
         });
@@ -344,7 +360,7 @@ export function createSessionIndex(deps: SessionIndexDeps): SessionIndex {
       const file = await state.store.load();
       for (const entry of file.files) {
         // Live records wait for `ready`, so the map is empty here; a duplicate key keeps the first.
-        const key = windowsPathKey(entry.path);
+        const key = rules.key(entry.path);
         if (!state.files.has(key)) state.files.set(key, entry);
       }
       state.backfilled = file.backfilled;
@@ -401,7 +417,7 @@ export function createSessionIndex(deps: SessionIndexDeps): SessionIndex {
           if (item.kind === 'tool_call' && item.status === 'done' && FILE_WRITE_TOOLS.has(item.toolName)) {
             wroteFiles = true;
           }
-          const records = recordsOfItem(item);
+          const records = recordsOfItem(item, rules);
           if (records.length === 0) continue;
           state ??= stateFor(entryId);
           for (const record of records) pending.push({ record, conversationId: state.conversationId });

@@ -14,14 +14,25 @@
  *
  * Version rule C.7: `too_old` (red) if the CLI is older than `claudeCodeVersion` in the SDK's
  * package.json, otherwise ok (a newer CLI is the supported case).
+ *
+ * POSIX hosts (WP-103, WP-100 §5.2; `FindClaudeDeps.platform`): 1. the profile's fixed path;
+ * 2. `~/.local/bin/claude` (native installer: a link to `~/.local/share/claude/versions/<v>`);
+ * 3. the `PATH` hits (lib/executables.ts). A candidate is an absolute path by the POSIX rules, an
+ * executable file, its real path (links resolved) passes the POSIX rules too and starts with the ELF
+ * magic – the native build. The JS variant (`cli.js` with a `node` shebang, e.g. an old
+ * `npm i -g`) is refused as `not_native` (logged with a hint) like the JS shim on Windows. No
+ * extension rules (`no_extension`/`unsafe_path` of a Windows name never apply there, B3). The link
+ * is returned, not its target, so a self-update of the native installer is picked up.
  */
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import type { Profile } from '@shared/model';
-import { windowsPathIssue, windowsPathKey } from '@shared/paths';
+import { POSIX_PATHS, pathFlavorOf, pathRules, windowsPathIssue } from '@shared/paths';
+import { logger } from '../lib/logger';
 import { errnoCode, type RunFileFn, type RunFileResult } from '../lib/process';
 import { nodeFsProbe, resolveCmdShim, searchPath, type FsProbe } from '../lib/windows';
 
@@ -49,7 +60,8 @@ export async function resolveClaudeShim(shimPath: string, fs: FsProbe): Promise<
 
 // ---- candidates ----
 
-export type ClaudeSource = 'profile' | 'path' | 'npm-shim';
+/** `native-installer`: `~/.local/bin/claude` on POSIX hosts (WP-103). */
+export type ClaudeSource = 'profile' | 'path' | 'npm-shim' | 'native-installer';
 
 export type CandidateRejection =
   | 'unsafe_path'
@@ -58,7 +70,9 @@ export type CandidateRejection =
   | 'unsupported_extension'
   | 'missing'
   | 'shim_unresolved'
-  | 'duplicate';
+  | 'duplicate'
+  /** POSIX (WP-103): no ELF file – the JS variant (`cli.js`) or a script. */
+  | 'not_native';
 
 export interface ClaudeCandidate {
   /** As found (where hit or profile path). */
@@ -99,6 +113,45 @@ async function classify(file: string, fromProfile: boolean, fs: FsProbe): Promis
   return reject('unsupported_extension');
 }
 
+// ---- POSIX (WP-103) ----
+
+/** Where the native installer puts `claude` on Linux (a link into `~/.local/share/claude/versions`). */
+export function nativeInstallerClaude(home: string): string {
+  return path.posix.join(home, '.local', 'bin', 'claude');
+}
+
+/** `\x7fELF` – the native build of Claude Code on Linux. */
+const ELF_MAGIC: readonly number[] = [0x7f, 0x45, 0x4c, 0x46];
+
+export function isElfHeader(head: Uint8Array): boolean {
+  return ELF_MAGIC.every((byte, i) => head[i] === byte);
+}
+
+async function classifyPosix(file: string, source: ClaudeSource, fs: FsProbe): Promise<ClaudeCandidate> {
+  const reject = (rejected: CandidateRejection): ClaudeCandidate => ({
+    path: file,
+    executable: null,
+    source,
+    rejected,
+  });
+  if (POSIX_PATHS.issue(file) !== null) return reject('unsafe_path');
+  const executable = fs.isExecutable === undefined ? await fs.isFile(file) : await fs.isExecutable(file);
+  if (!executable) return reject('missing');
+  const real = fs.realpath === undefined ? file : await fs.realpath(file);
+  if (real === null) return reject('missing');
+  if (POSIX_PATHS.issue(real) !== null) return reject('unsafe_path');
+  const head = fs.readHead === undefined ? null : await fs.readHead(real, ELF_MAGIC.length);
+  if (head === null) return reject('missing');
+  if (!isElfHeader(head)) {
+    logger.info(
+      { candidate: file },
+      'claude candidate is no native build (JS variant or script) – install Claude Code with the native installer',
+    );
+    return reject('not_native');
+  }
+  return { path: file, executable: file, source, rejected: null };
+}
+
 export type FindClaudeResult =
   | { ok: true; path: string; source: ClaudeSource; candidates: ClaudeCandidate[] }
   | { ok: false; error: ErrorPayload; candidates: ClaudeCandidate[] };
@@ -106,6 +159,10 @@ export type FindClaudeResult =
 export interface FindClaudeDeps extends FsProbe {
   /** All hits of `where claude`, in PATH order (default: searchPath over the built env). */
   where(name: string): Promise<string[]>;
+  /** Lookup rules of this platform (default `process.platform`, WP-103). */
+  platform?: NodeJS.Platform;
+  /** POSIX: the user folder of `~/.local/bin/claude` (default `os.homedir()`). */
+  home?: string;
 }
 
 /** Finds the executable without starting it. Errors: CLAUDE_NOT_FOUND {source, reason?, candidates?}. */
@@ -113,6 +170,7 @@ export async function findClaude(
   profile: Pick<Profile, 'executable'>,
   deps: FindClaudeDeps,
 ): Promise<FindClaudeResult> {
+  if ((deps.platform ?? process.platform) !== 'win32') return findClaudePosix(profile, deps);
   if (profile.executable.kind === 'path') {
     const candidate = await classify(profile.executable.path, true, deps);
     if (candidate.executable !== null) {
@@ -130,7 +188,7 @@ export async function findClaude(
   for (const hit of await deps.where('claude')) {
     const candidate = await classify(hit, false, deps);
     if (candidate.executable !== null) {
-      const key = windowsPathKey(candidate.executable);
+      const key = pathRules('win32').key(candidate.executable);
       if (executables.has(key)) {
         candidates.push({ ...candidate, executable: null, rejected: 'duplicate' });
         continue;
@@ -148,6 +206,60 @@ export async function findClaude(
   return {
     ok: false,
     error: makeError('CLAUDE_NOT_FOUND', { source: 'path', candidates: candidates.length }),
+    candidates,
+  };
+}
+
+/** findClaude on POSIX hosts (see the file comment): profile path, `~/.local/bin/claude`, PATH. */
+async function findClaudePosix(
+  profile: Pick<Profile, 'executable'>,
+  deps: FindClaudeDeps,
+): Promise<FindClaudeResult> {
+  if (profile.executable.kind === 'path') {
+    const candidate = await classifyPosix(profile.executable.path, 'profile', deps);
+    if (candidate.executable !== null) {
+      return { ok: true, path: candidate.executable, source: 'profile', candidates: [candidate] };
+    }
+    return {
+      ok: false,
+      error: makeError('CLAUDE_NOT_FOUND', { source: 'profile', reason: candidate.rejected ?? 'missing' }),
+      candidates: [candidate],
+    };
+  }
+
+  const rules = pathRules(pathFlavorOf(deps.platform ?? process.platform));
+  const candidates: ClaudeCandidate[] = [];
+  const executables = new Set<string>();
+  const add = (candidate: ClaudeCandidate): void => {
+    if (candidate.executable !== null) {
+      const key = rules.key(candidate.executable);
+      if (executables.has(key)) {
+        candidates.push({ ...candidate, executable: null, rejected: 'duplicate' });
+        return;
+      }
+      executables.add(key);
+    }
+    candidates.push(candidate);
+  };
+  const home = deps.home ?? os.homedir();
+  if (POSIX_PATHS.issue(home) === null) {
+    const local = await classifyPosix(nativeInstallerClaude(home), 'native-installer', deps);
+    // A convention, not a hit: listed only when something is there.
+    if (local.rejected !== 'missing') add(local);
+  }
+  for (const hit of await deps.where('claude')) add(await classifyPosix(hit, 'path', deps));
+  const chosen = candidates.find((c) => c.rejected === null);
+  if (chosen !== undefined && chosen.executable !== null) {
+    return { ok: true, path: chosen.executable, source: chosen.source, candidates };
+  }
+  const notNative = candidates.some((c) => c.rejected === 'not_native');
+  return {
+    ok: false,
+    error: makeError('CLAUDE_NOT_FOUND', {
+      source: 'path',
+      candidates: candidates.length,
+      ...(notNative ? { reason: 'not_native' } : {}),
+    }),
     candidates,
   };
 }
@@ -258,6 +370,7 @@ export async function resolveClaude(
 export function whereOnPath(
   env: Readonly<Record<string, string | undefined>>,
   fs: FsProbe = nodeFsProbe,
+  platform: NodeJS.Platform = process.platform,
 ): (name: string) => Promise<string[]> {
-  return (name) => searchPath(name, env, fs);
+  return (name) => searchPath(name, env, fs, platform);
 }

@@ -25,11 +25,10 @@ import {
   type ProfileIssue,
   type ProfilesFile,
 } from '@shared/model';
-import { windowsPathIssue } from '@shared/paths';
 import { nodeFsOps, type FsOps } from '../lib/fs';
 import { newId } from '../lib/ids';
 import { logger as rootLogger } from '../lib/logger';
-import { fsErrorCode } from '../lib/paths';
+import { fsErrorCode, HOST_PATH_RULES } from '../lib/paths';
 import { JsonStore, type Migrations, type StoreWarningSink } from '../store/jsonStore';
 import { CommandError } from '../sync/ports';
 import { errorCount, profileIssues, type ProfileIssueContext } from './profileIssues';
@@ -79,9 +78,9 @@ export interface OpenProfileStoreOptions {
   logger?: Logger;
 }
 
-/** True for an existing regular file; unsafe paths (UNC, device, ADS …) are never touched (C.10). */
+/** True for an existing regular file; unsafe paths of this host (UNC, device, `/proc` …) are never touched (C.10). */
 function isExistingFile(file: string): boolean {
-  if (windowsPathIssue(file) !== null) return false;
+  if (HOST_PATH_RULES.issue(file) !== null) return false;
   try {
     return statSync(file).isFile();
   } catch {

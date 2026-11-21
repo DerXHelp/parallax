@@ -6,6 +6,10 @@
  * fake executable and an env of only the lookup variables of `launchEnv` (V3-11: the fake server's
  * git branch; tests: empty), `consoleLaunchFor` (Phase 2, WP-34) the console spec of
  * `claude --resume <id>` for the fake console. Tests can make the next launches fail.
+ *
+ * WP-103: the lookup variables follow the host (`platform`, default `process.platform`); Windows
+ * keeps its list. The fake executable stays a Windows-shaped placeholder on every host (nothing
+ * starts it; the process records and the heartbeat compare its image name `claude.exe`).
  */
 import type { EntryId, ProfileId } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
@@ -46,6 +50,8 @@ export interface FakeClaudeIntegrationOptions {
    * lookup finds `git` (resolveExecutable over the session PATH). Default none (tests: empty env).
    */
   launchEnv?: Readonly<Record<string, string | undefined>>;
+  /** Whose variable names and list count for `launchEnv` (default `process.platform`, WP-103). */
+  platform?: NodeJS.Platform;
   now?: () => Date;
 }
 
@@ -62,11 +68,20 @@ export const FAKE_LAUNCH_ENV_KEYS: readonly string[] = [
   'TMP',
 ];
 
-/** The `FAKE_LAUNCH_ENV_KEYS` of `base` (case-insensitive, under the canonical names). */
-export function fakeLaunchEnv(base: Readonly<Record<string, string | undefined>>): Record<string, string> {
+/** The same off Windows (WP-103): PATH for the lookup, HOME and TMPDIR for git itself. */
+export const FAKE_POSIX_LAUNCH_ENV_KEYS: readonly string[] = ['PATH', 'HOME', 'TMPDIR'];
+
+/**
+ * The lookup variables of `base`: Windows `FAKE_LAUNCH_ENV_KEYS` (case-insensitive, under the
+ * canonical names), POSIX `FAKE_POSIX_LAUNCH_ENV_KEYS` (exact names).
+ */
+export function fakeLaunchEnv(
+  base: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform = process.platform,
+): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const name of FAKE_LAUNCH_ENV_KEYS) {
-    const value = getEnvVar(base, name);
+  for (const name of platform === 'win32' ? FAKE_LAUNCH_ENV_KEYS : FAKE_POSIX_LAUNCH_ENV_KEYS) {
+    const value = getEnvVar(base, name, platform);
     if (value !== undefined) env[name] = value;
   }
   return env;
@@ -148,7 +163,7 @@ export function createFakeClaudeIntegration(
         profileId: profile.id,
         executablePath: FAKE_CLAUDE_PATH,
         executableVersion: FAKE_CLAUDE_VERSION,
-        env: launchEnv === undefined ? {} : fakeLaunchEnv(launchEnv),
+        env: launchEnv === undefined ? {} : fakeLaunchEnv(launchEnv, options.platform),
         configDir: profile.configDir,
         sdkOptions: args.sdkOptions,
         extraArgs: args.extraArgs,

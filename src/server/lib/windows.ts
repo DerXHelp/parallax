@@ -13,6 +13,7 @@ import { access, constants, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { WIN32_PATHS, windowsPathIssue, windowsPathKey, type PathRules } from '@shared/paths';
 import { searchPosixPath } from './executables';
+import { readFileHead } from './fileRead';
 import { HOST_PATH_RULES } from './paths';
 
 // ---- file system seam (tests use createMemoryFs) ----
@@ -26,6 +27,11 @@ export interface FsProbe {
   isExecutable?(path: string): Promise<boolean>;
   /** POSIX lookup (WP-103): the path with every link resolved, null if missing. Absent → the path itself. */
   realpath?(path: string): Promise<string | null>;
+  /**
+   * WP-103: up to `length` bytes from the start of a regular file (the ELF check of `claude`), null if
+   * it cannot be read. Absent → the check is skipped by callers that allow it.
+   */
+  readHead?(path: string, length: number): Promise<Uint8Array | null>;
 }
 
 const MAX_SHIM_BYTES = 64 * 1024;
@@ -71,6 +77,14 @@ export const nodeFsProbe: FsProbe = {
       return null;
     }
   },
+  async readHead(file, length) {
+    if (HOST_PATH_RULES.issue(file) !== null) return null;
+    try {
+      return await readFileHead(file, length);
+    } catch {
+      return null;
+    }
+  },
 };
 
 export interface MemoryFsOptions {
@@ -86,7 +100,8 @@ export interface MemoryFsOptions {
  * In-memory file system for tests (also of other packages): `files` maps paths to contents;
  * lookups are case-insensitive and `/`-tolerant like Windows (windowsPathKey) unless `rules` says
  * otherwise. `touched` records every path asked for, so tests can assert that unsafe paths are
- * never accessed.
+ * never accessed. `readHead` answers the first bytes of the content (one byte per UTF-16 unit,
+ * `latin1`: `'\x7fELF'` is the ELF magic).
  */
 export function createMemoryFs(
   files: Readonly<Record<string, string>>,
@@ -118,6 +133,11 @@ export function createMemoryFs(
       touched.push(file);
       const key = rules.key(file);
       return Promise.resolve(links.get(key) ?? (byKey.has(key) ? file : null));
+    },
+    readHead(file, length) {
+      touched.push(file);
+      const text = byKey.get(rules.key(file));
+      return Promise.resolve(text === undefined ? null : Buffer.from(text, 'latin1').subarray(0, length));
     },
   };
 }

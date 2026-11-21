@@ -495,7 +495,12 @@ describe('restart', () => {
       decisionId: open.id,
       response: { kind: 'plan', response: { behavior: 'approve', mode: 'acceptEdits' } },
     });
-    expect(approved.outcome).toEqual({ type: 'plan_approved', mode: 'acceptEdits', edited: false, freshContext: false });
+    expect(approved.outcome).toEqual({
+      type: 'plan_approved',
+      mode: 'acceptEdits',
+      edited: false,
+      freshContext: false,
+    });
     expect(h2.backend.starts[0]).toMatchObject({
       permissionMode: 'acceptEdits',
       resumeSessionId: '3d894db4-9619-4875-93eb-adb9abcea05b',
@@ -1037,7 +1042,8 @@ describe('orphans', () => {
     await h.manager.orphansDone();
     await h.settle();
     expect(h.backend.starts).toHaveLength(1);
-    expect(h.proc.killed).toEqual([50_001]);
+    // Linux (WP-103): names are no identity there – PID + start time alone, so notepad.exe goes too.
+    expect(h.proc.killed).toEqual(process.platform === 'win32' ? [50_001] : [50_001, 50_002]);
     expect(h.stores.processes.records().map((r) => r.pid)).toEqual([h.session(entry41.id).pid]);
   });
 
@@ -1337,7 +1343,10 @@ describe('start and stop edges', () => {
         supportedCommands: closed,
         stopTask: closed,
         setRemoteControl: () =>
-          Promise.resolve({ ok: false as const, error: { code: 'REMOTE_CONTROL_FAILED' as const, params: {} } }),
+          Promise.resolve({
+            ok: false as const,
+            error: { code: 'REMOTE_CONTROL_FAILED' as const, params: {} },
+          }),
         readClaudeSettings: () => Promise.resolve(null),
         generateTitle: () => Promise.resolve({ ok: false as const, reason: 'failed' as const }),
         backgroundTasks: closed,
@@ -1345,7 +1354,10 @@ describe('start and stop edges', () => {
         askSideQuestion: () => Promise.resolve({ ok: false as const, reason: 'failed' as const }),
         readOutputStyles: () => Promise.resolve(null),
         setOutputStyle: () =>
-          Promise.resolve({ ok: false as const, error: { code: 'CLAUDE_CONTROL_FAILED' as const, params: {} } }),
+          Promise.resolve({
+            ok: false as const,
+            error: { code: 'CLAUDE_CONTROL_FAILED' as const, params: {} },
+          }),
         withdrawQueued: closed,
         readInfo: closed,
         mcpAction: closed,

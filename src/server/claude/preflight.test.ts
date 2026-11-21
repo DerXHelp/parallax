@@ -7,6 +7,7 @@ import type { Profile } from '@shared/model';
 import { sampleClaudeInstallStatus, sampleId, sampleProfile } from '@shared/samples';
 import type { RunFileOptions, RunFileResult } from '../lib/process';
 import { createClaudeIntegration } from './integration';
+import { POSIX_PATHS } from '@shared/paths';
 import { createMemoryFs } from '../lib/windows';
 import {
   CHROME_POLICY_KEYS,
@@ -207,14 +208,30 @@ describe('pnpm', () => {
 
   it('uses npm_execpath (native exe or JS through node)', async () => {
     const fs = createMemoryFs({ [PNPM_EXE]: '', 'C:\\pnpm\\pnpm.cjs': '' });
-    expect(await findPnpm({ npm_execpath: PNPM_EXE }, fs, 'C:\\node\\node.exe')).toEqual({
+    expect(await findPnpm({ npm_execpath: PNPM_EXE }, fs, 'C:\\node\\node.exe', 'win32')).toEqual({
       file: PNPM_EXE,
       prefix: [],
     });
-    expect(await findPnpm({ npm_execpath: 'C:\\pnpm\\pnpm.cjs' }, fs, 'C:\\node\\node.exe')).toEqual({
-      file: 'C:\\node\\node.exe',
-      prefix: ['C:\\pnpm\\pnpm.cjs'],
-    });
+    expect(await findPnpm({ npm_execpath: 'C:\\pnpm\\pnpm.cjs' }, fs, 'C:\\node\\node.exe', 'win32')).toEqual(
+      {
+        file: 'C:\\node\\node.exe',
+        prefix: ['C:\\pnpm\\pnpm.cjs'],
+      },
+    );
+  });
+
+  it('POSIX (WP-103): npm_execpath as a JS file through node, else pnpm on PATH (no shims)', async () => {
+    const fs = createMemoryFs(
+      { '/home/u/.local/share/pnpm/pnpm': '', '/opt/pnpm/bin/pnpm.cjs': '' },
+      { rules: POSIX_PATHS },
+    );
+    expect(
+      await findPnpm({ npm_execpath: '/opt/pnpm/bin/pnpm.cjs' }, fs, '/usr/local/bin/node', 'linux'),
+    ).toEqual({ file: '/usr/local/bin/node', prefix: ['/opt/pnpm/bin/pnpm.cjs'] });
+    expect(
+      await findPnpm({ PATH: '/home/u/.local/share/pnpm:/usr/bin' }, fs, '/usr/local/bin/node', 'linux'),
+    ).toEqual({ file: '/home/u/.local/share/pnpm/pnpm', prefix: [] });
+    expect(await findPnpm({ Path: '/home/u/.local/share/pnpm' }, fs, 'node', 'linux')).toBeNull();
   });
 
   it('falls back to where pnpm and resolves the npm shim', async () => {
@@ -223,8 +240,8 @@ describe('pnpm', () => {
       [`${NPM}\\pnpm.cmd`]: '@ECHO off\r\n"%dp0%\\node_modules\\pnpm\\pnpm.exe"   %*\r\n',
       [PNPM_EXE]: '',
     });
-    expect(await findPnpm({ PATH: NPM }, fs, 'node.exe')).toEqual({ file: PNPM_EXE, prefix: [] });
-    expect(await findPnpm({ PATH: 'C:\\empty' }, fs, 'node.exe')).toBeNull();
+    expect(await findPnpm({ PATH: NPM }, fs, 'node.exe', 'win32')).toEqual({ file: PNPM_EXE, prefix: [] });
+    expect(await findPnpm({ PATH: 'C:\\empty' }, fs, 'node.exe', 'win32')).toBeNull();
   });
 
   it('reads the version from the user agent', () => {
@@ -370,6 +387,7 @@ describe('runPreflight', () => {
     };
     const integration = createClaudeIntegration({
       appVersion: '0.0.0',
+      platform: 'win32',
       baseEnv: () => ({ PATH: 'C:\\Users\\u\\.local\\bin' }),
       persistentEnv: () => Promise.resolve(null),
       fs,
@@ -386,6 +404,7 @@ describe('runPreflight', () => {
   it('checks everything and exits 0', async () => {
     const { fs, runFile, integration, calls } = stubs({ [LOCAL]: '', [PNPM_EXE]: '', [CHROME]: '' });
     const report = await runPreflight({
+      platform: 'win32',
       integration,
       nodeVersion: 'v26.12.0',
       env,
@@ -453,6 +472,7 @@ describe('runPreflight', () => {
       profiles,
     );
     const report = await runPreflight({
+      platform: 'win32',
       integration,
       nodeVersion: 'v26.12.0',
       env,
@@ -466,7 +486,7 @@ describe('runPreflight', () => {
       exeVersion,
       profilesSource: source,
       profileIssues: (profile) =>
-        profileIssues(profile, { env: {}, persistentEnv: new Map(), exists: () => true }),
+        profileIssues(profile, { env: {}, persistentEnv: new Map(), exists: () => true, platform: 'win32' }),
     });
     expect(report.checks.map((check) => [check.id, check.level])).toEqual([
       ['node', 'ok'],
@@ -500,6 +520,7 @@ describe('runPreflight', () => {
   it('fails without claude and Chrome', async () => {
     const { fs, runFile, integration } = stubs({ [PNPM_EXE]: '' });
     const report = await runPreflight({
+      platform: 'win32',
       integration,
       nodeVersion: 'v26.12.0',
       env,
@@ -523,6 +544,7 @@ describe('runPreflight', () => {
   it('names the data folder when a home is given (R2-13: a hint, never a failure, no query)', async () => {
     const { fs, runFile, integration } = stubs({ [LOCAL]: '', [PNPM_EXE]: '', [CHROME]: '' });
     const report = await runPreflight({
+      platform: 'win32',
       integration,
       nodeVersion: 'v26.12.0',
       env,
@@ -613,12 +635,18 @@ describe('profiles (WP-32)', () => {
 describe('checkHomeLocation (R2-13, ADR-229)', () => {
   it('trusts %LOCALAPPDATA% and only hints elsewhere – without querying any rights', () => {
     const local = 'C:\\Users\\<USER>\\AppData\\Local';
-    expect(checkHomeLocation(`${local}\\Parallax`, local).level).toBe('ok');
-    expect(checkHomeLocation('c:\\users\\<user>\\appdata\\local\\parallax', local).level).toBe('ok');
-    expect(checkHomeLocation(`${local}X\\Parallax`, local).level).toBe('info');
-    const outside = checkHomeLocation('D:\\px-data', local);
+    expect(checkHomeLocation(`${local}\\Parallax`, local, 'win32').level).toBe('ok');
+    expect(checkHomeLocation('c:\\users\\<user>\\appdata\\local\\parallax', local, 'win32').level).toBe('ok');
+    expect(checkHomeLocation(`${local}X\\Parallax`, local, 'win32').level).toBe('info');
+    const outside = checkHomeLocation('D:\\px-data', local, 'win32');
     expect(outside.level).toBe('info');
     expect(outside.hint).toContain('icacls "D:\\px-data" /inheritance:r');
-    expect(checkHomeLocation('D:\\px-data', undefined).level).toBe('info');
+    expect(checkHomeLocation('D:\\px-data', undefined, 'win32').level).toBe('info');
+  });
+
+  it('POSIX (WP-103): a hint with chmod 700, never a query', () => {
+    const check = checkHomeLocation('/home/u/.local/share/parallax', undefined, 'linux');
+    expect(check).toMatchObject({ id: 'home', level: 'info' });
+    expect(check.hint).toContain("chmod 700 '/home/u/.local/share/parallax'");
   });
 });

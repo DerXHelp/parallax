@@ -2,6 +2,7 @@ import { mkdir, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from '@shared/common';
+import { POSIX_PATHS, WIN32_PATHS } from '@shared/paths';
 import { SAMPLE_IDS } from '@shared/samples';
 import { makeTempHome } from '../http/testServer';
 import type { RunFileFn, RunFileOptions, RunFileResult } from '../lib/process';
@@ -37,9 +38,17 @@ function fakeRun(result: Partial<RunFileResult> | Error): RunFileFn & { calls: R
 
 describe('parseLsFiles', () => {
   it('splits NUL-separated output, drops duplicates, uses / separators', () => {
-    expect(parseLsFiles('a.ts\0src/b.ts\0src\\c.ts\0a.ts\0')).toEqual(['a.ts', 'src/b.ts', 'src/c.ts']);
-    expect(parseLsFiles('')).toEqual([]);
-    expect(parseLsFiles('Grüße.md\0')).toEqual(['Grüße.md']);
+    expect(parseLsFiles('a.ts\0src/b.ts\0src\\c.ts\0a.ts\0', WIN32_PATHS)).toEqual([
+      'a.ts',
+      'src/b.ts',
+      'src/c.ts',
+    ]);
+    expect(parseLsFiles('', WIN32_PATHS)).toEqual([]);
+    expect(parseLsFiles('Grüße.md\0', WIN32_PATHS)).toEqual(['Grüße.md']);
+  });
+
+  it('POSIX (WP-103): a backslash is part of the file name', () => {
+    expect(parseLsFiles('src/b.ts\0odd\\name.ts\0', POSIX_PATHS)).toEqual(['src/b.ts', 'odd\\name.ts']);
   });
 
   it('a cut output loses its incomplete last path', () => {

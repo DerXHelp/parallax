@@ -5,10 +5,13 @@
  * `windowsHide: true`, 5 s, at most 8 MB output. No repository, no git or a failure → a bounded
  * walk (no links/junctions, ignore list, depth ≤ 12, 3 s). At most LIMITS.projectFilesMax paths
  * (`truncated`). Cached per entry for 30 s; a finished Write/Edit drops the cache (files.service).
+ * WP-103: the walk joins with the separator of the host's path rules (`ProjectFilesDeps.rules`); on
+ * POSIX a `\` is part of a file name and stays.
  */
-import path from 'node:path';
 import { LIMITS, type EntryId } from '@shared/common';
+import type { PathRules } from '@shared/paths';
 import type { CommandResult } from '@shared/protocol';
+import { HOST_PATH_RULES, pathModuleOf } from '../lib/paths';
 import { runFile, type RunFileFn } from '../lib/process';
 import type { FileFs } from './fileFs';
 
@@ -63,6 +66,8 @@ export interface ProjectFilesDeps {
   /** Environment of git (default: process.env). */
   env?: Record<string, string>;
   now?: () => number;
+  /** Path rules of the walk (default `HOST_PATH_RULES`, WP-103). */
+  rules?: PathRules;
 }
 
 export interface ProjectFiles {
@@ -74,9 +79,9 @@ export interface ProjectFiles {
 /**
  * NUL-separated git output → unique relative paths ('/' separators). Every path ends with NUL, so
  * the last part is '' after a complete output, or a cut path when the output hit the size limit
- * (`cut`) – dropped either way.
+ * (`cut`) – dropped either way. POSIX (WP-103): a `\` belongs to the name and is kept.
  */
-export function parseLsFiles(stdout: string): string[] {
+export function parseLsFiles(stdout: string, rules: PathRules = HOST_PATH_RULES): string[] {
   const parts = stdout.split('\0');
   parts.pop();
   const seen = new Set<string>();
@@ -84,7 +89,7 @@ export function parseLsFiles(stdout: string): string[] {
   for (const part of parts) {
     if (part === '' || seen.has(part)) continue;
     seen.add(part);
-    files.push(part.replace(/\\/g, '/'));
+    files.push(rules.flavor === 'win32' ? part.replace(/\\/g, '/') : part);
   }
   return files;
 }
@@ -99,7 +104,9 @@ async function walk(
   fs: FileFs,
   root: string,
   now: () => number,
+  rules: PathRules,
 ): Promise<{ files: string[]; truncated: boolean }> {
+  const join = pathModuleOf(rules).join;
   const deadline = now() + PROJECT_WALK_BUDGET_MS;
   const files: string[] = [];
   const queue: { dir: string; rel: string; depth: number }[] = [{ dir: root, rel: '', depth: 0 }];
@@ -119,7 +126,7 @@ async function walk(
       if (entry.isDirectory()) {
         if (PROJECT_WALK_IGNORED.has(entry.name.toLowerCase())) continue;
         if (next.depth + 1 <= PROJECT_WALK_MAX_DEPTH) {
-          queue.push({ dir: path.win32.join(next.dir, entry.name), rel, depth: next.depth + 1 });
+          queue.push({ dir: join(next.dir, entry.name), rel, depth: next.depth + 1 });
         }
       } else if (entry.isFile()) {
         files.push(rel);
@@ -132,6 +139,7 @@ async function walk(
 export function createProjectFiles(deps: ProjectFilesDeps): ProjectFiles {
   const now = deps.now ?? (() => Date.now());
   const run = deps.run ?? runFile;
+  const rules = deps.rules ?? HOST_PATH_RULES;
   const cache = new Map<EntryId, { cwd: string; at: number; list: ProjectFileList }>();
 
   const fromGit = async (cwd: string): Promise<{ files: string[]; truncated: boolean } | null> => {
@@ -151,7 +159,7 @@ export function createProjectFiles(deps: ProjectFilesDeps): ProjectFiles {
       });
       if (result.timedOut || result.exitCode !== 0) return null;
       const cut = Buffer.byteLength(result.stdout, 'utf8') >= GIT_LS_FILES_MAX_OUTPUT_BYTES - 4;
-      return { files: parseLsFiles(result.stdout), truncated: cut };
+      return { files: parseLsFiles(result.stdout, rules), truncated: cut };
     } catch {
       return null; // git could not be started (AppLocker, gone)
     }
@@ -164,7 +172,7 @@ export function createProjectFiles(deps: ProjectFilesDeps): ProjectFiles {
         return cached.list;
       }
       const git = await fromGit(cwd);
-      const found = git ?? (await walk(deps.fs, cwd, now));
+      const found = git ?? (await walk(deps.fs, cwd, now, rules));
       const { files, truncated } = limited(found.files, found.truncated);
       const list: ProjectFileList = { root: cwd, files, truncated, source: git === null ? 'walk' : 'git' };
       cache.set(entryId, { cwd, at: now(), list });

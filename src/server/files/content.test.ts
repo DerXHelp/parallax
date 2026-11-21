@@ -2,10 +2,14 @@ import type { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from '@shared/common';
 import type { FileInfo } from '@shared/model';
+import { WIN32_PATHS } from '@shared/paths';
 import { sampleFileInfo } from '@shared/samples';
 import { CommandError } from '../sync/ports';
-import { openContent, readTextContent } from './content';
+import { openContent as openHostContent, readTextContent } from './content';
 import { nodeFileFs, type FileFs } from './fileFs';
+
+/** The samples name Windows paths: their base names by the Windows rules on every host (WP-103). */
+const openContent = (fs: FileFs, file: FileInfo) => openHostContent(fs, file, WIN32_PATHS);
 
 /** A FileFs serving `data` for any path; `heads`/`wholes` record the reads (length / max). */
 function dataFs(data: Buffer): FileFs & { heads: number[]; wholes: number[] } {

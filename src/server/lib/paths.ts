@@ -28,7 +28,7 @@ import { FsTimeoutError } from './fsTimeout';
 export const HOST_PATH_RULES: PathRules = pathRules(pathFlavorOf(process.platform));
 
 /** `path.win32` or `path.posix` for a rule set (joining segments the way the flavor does). */
-function pathModuleOf(rules: PathRules): typeof path.posix {
+export function pathModuleOf(rules: PathRules): typeof path.posix {
   return rules.flavor === 'win32' ? path.win32 : path.posix;
 }
 
