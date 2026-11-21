@@ -18,12 +18,14 @@ import { setAttachmentUploader } from './features/composer/lib/upload';
 import { DecisionBar } from './features/decisions/DecisionBar';
 import { DecisionCard } from './features/decisions/DecisionCard';
 import { PlanSidePanel } from './features/decisions/PlanSidePanel';
+import { CHANGES_SLOTS } from './features/changes';
 import { FILES_SLOTS } from './features/files';
 import { PREFERENCES_SLOTS, SettingsPage } from './features/preferences';
 import { ProfilesSettings } from './features/profiles';
 import { startProfilesDemo } from './features/profiles/lib/demo-host';
 import { TASKS_SLOTS } from './features/tasks';
 import { UPDATES_SLOTS } from './features/updates';
+import { WORKTREE_SLOTS } from './features/worktrees';
 import { TRANSCRIPT_SLOTS } from './features/transcript/slots';
 import { installResizeObserver } from './features/transcript/testing';
 import { setLanguage } from './i18n';
@@ -365,8 +367,9 @@ const EVERY_REQUEST: { [K in ShellRequestKind]: ShellRequestOf<K> } = {
 };
 
 /**
- * Kinds whose handler arrives with a later package: WP-110 scaffolding – `worktree.cleanup` (WP-114)
- * and `search.open` (WP-115).
+ * Kinds nobody takes here: `worktree.cleanup` (WP-114) is taken only for a session with a worktree –
+ * the playground has none, so the menus go on without; `search.open` and `revealItem` arrive with
+ * WP-115.
  */
 const PENDING_REQUEST_KINDS: ReadonlySet<ShellRequestKind> = new Set([
   'worktree.cleanup',
@@ -375,12 +378,7 @@ const PENDING_REQUEST_KINDS: ReadonlySet<ShellRequestKind> = new Set([
 ]);
 
 /** Slots whose feature arrives with a later package (WP-110 scaffolding: WP-113, WP-114, WP-115). */
-const PENDING_SLOTS: ReadonlySet<string> = new Set([
-  'ChangesPanel',
-  'WorktreeCleanup',
-  'WorktreeNotice',
-  'SearchDialog',
-]);
+const PENDING_SLOTS: ReadonlySet<string> = new Set(['SearchDialog']);
 
 describe('wired feature slots (WP-20b, WP-40)', () => {
   it('APP_SLOTS wires every slot: the eager components of WP-16/57, every lazy slot behind a SlotBoundary (R4W-19, WP-58, WP-60)', () => {
@@ -400,6 +398,8 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
       ...Object.keys(FILES_SLOTS),
       ...Object.keys(TASKS_SLOTS),
       ...Object.keys(UPDATES_SLOTS),
+      ...Object.keys(CHANGES_SLOTS),
+      ...Object.keys(WORKTREE_SLOTS),
     ]) {
       expect(APP_SLOTS, key).toHaveProperty(key);
     }
@@ -422,6 +422,9 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
       ['UpdateNotice', UPDATES_SLOTS.UpdateNotice],
       ['UpdateBanner', UPDATES_SLOTS.UpdateBanner],
       ['UpdatesSettings', UPDATES_SLOTS.UpdatesSettings],
+      ['ChangesPanel', CHANGES_SLOTS.ChangesPanel],
+      ['WorktreeNotice', WORKTREE_SLOTS.WorktreeNotice],
+      ['WorktreeCleanup', WORKTREE_SLOTS.WorktreeCleanup],
     ];
     for (const [key, own] of lazy) {
       expect(APP_SLOTS[key], key).toBeDefined();
