@@ -164,6 +164,16 @@ describe('UpdatesSettings: version, status and buttons per status', () => {
     expect(actions()).toEqual(expected);
   });
 
+  it.each([
+    ['win32', '.zip'],
+    ['linux', '.tar.gz,.gz'],
+  ])('"Install from file" picks the archive of the platform (%s, WP-108)', async (platform, accept) => {
+    await start(SAMPLE_UPDATE_STATES.idle, { hostState: { platform } });
+    renderSettings();
+    await screen.findByText('Parallax 1.0.0');
+    expect(section().querySelector('[data-slot="update-file-input"]')?.getAttribute('accept')).toBe(accept);
+  });
+
   it('downloading shows the progress', async () => {
     await start(SAMPLE_UPDATE_STATES.downloading);
     renderSettings();

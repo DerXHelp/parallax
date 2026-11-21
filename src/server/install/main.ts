@@ -1,8 +1,8 @@
 /**
  * Installer entry point (WP-86, docs/wp/WP-83.md §8.3): bundled to `dist/install.js`
- * (scripts/build-server.ts). A package starts it with `install.cmd` or `node dist\install.js`, an
- * installation through `start.mjs --install | --uninstall | --use`. The flow lives in cli.ts
- * (exit codes: 0 = done, 2 = bad option, else 1).
+ * (scripts/build-server.ts). A package starts it with `install.cmd` (Linux `sh install.sh`) or
+ * `node dist/install.js`, an installation through `start.mjs --install | --uninstall | --use`. The
+ * flow lives in cli.ts (exit codes: 0 = done, 2 = bad option, else 1).
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

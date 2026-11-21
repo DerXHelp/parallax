@@ -5,16 +5,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AGENT_SDK_PACKAGE } from '../launcher/release';
-import { runFile, systemTool, type RunFileFn, type RunFileOptions, type RunFileResult } from '../lib/process';
+import { runFile, type RunFileFn, type RunFileOptions, type RunFileResult } from '../lib/process';
 import {
   NPM_TIMEOUT_MS,
   SDK_MAX_BYTES,
   SdkError,
   isAllowedDownloadUrl,
+  npmCliPath,
   packedFileName,
   provideSdk,
   readBodyLimited,
   sdkCacheFileName,
+  tarTool,
+  unpackArgs,
   type ProvideSdkOptions,
   type SdkSpec,
 } from './sdk';
@@ -37,14 +40,14 @@ interface Tarball {
   integrity: string;
 }
 
-/** A small npm-style tarball (`package/…`), packed with the real System32 tar.exe. */
+/** A small npm-style tarball (`package/…`), packed with the real tar of the system (`tarTool`). */
 async function makeTarball(label: string, name = AGENT_SDK_PACKAGE, version = VERSION): Promise<Tarball> {
   const src = path.join(dir, `src-${label}`);
   await mkdir(path.join(src, 'package'), { recursive: true });
   await writeFile(path.join(src, 'package', 'package.json'), JSON.stringify({ name, version }));
   await writeFile(path.join(src, 'package', 'sdk.mjs'), `export const label = '${label}';\n`);
   const file = path.join(dir, `${label}.tgz`);
-  const result = await runFile(systemTool('tar.exe'), ['-c', '-z', '-f', file, '-C', src, 'package'], {
+  const result = await runFile(tarTool(), ['-c', '-z', '-f', file, '-C', src, 'package'], {
     timeoutMs: 60_000,
   });
   expect(result.exitCode).toBe(0);
@@ -69,21 +72,24 @@ function testEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   return {
     SystemRoot: process.env.SystemRoot ?? 'C:\\Windows',
     USERPROFILE: path.join(dir, 'profile'),
+    HOME: path.join(dir, 'profile'),
     ...extra,
   };
 }
 
-/** A node.exe path whose folder has (or lacks) `node_modules\npm\bin\npm-cli.js` – never started. */
+/** A node path whose installation has (or lacks) npm where `npmCliPath` looks – never started. */
 async function fakeNode(withNpm: boolean): Promise<{ nodeExe: string; npmCli: string }> {
   const nodeDir = path.join(dir, withNpm ? 'node-npm' : 'node-bare');
-  const npmCli = path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  const nodeExe =
+    process.platform === 'win32' ? path.join(nodeDir, 'node.exe') : path.join(nodeDir, 'bin', 'node');
+  const npmCli = npmCliPath(nodeExe);
   if (withNpm) {
     await mkdir(path.dirname(npmCli), { recursive: true });
     await writeFile(npmCli, '// fake');
   } else {
-    await mkdir(nodeDir, { recursive: true });
+    await mkdir(path.dirname(nodeExe), { recursive: true });
   }
-  return { nodeExe: path.join(nodeDir, 'node.exe'), npmCli };
+  return { nodeExe, npmCli };
 }
 
 type NpmFake = (args: readonly string[], options: RunFileOptions) => Promise<RunFileResult>;
@@ -94,12 +100,12 @@ interface RunCall {
   options: RunFileOptions;
 }
 
-/** `run` seam: tar.exe runs for real, node.exe (npm) is faked or refused. */
+/** `run` seam: tar runs for real, node (npm) is faked or refused. */
 function makeRun(npm?: NpmFake): { run: RunFileFn; calls: RunCall[] } {
   const calls: RunCall[] = [];
   const run: RunFileFn = (file, args, options) => {
     calls.push({ file, args, options });
-    if (path.basename(file).toLowerCase() === 'tar.exe') return runFile(file, args, options);
+    if (file === tarTool()) return runFile(file, args, options);
     if (npm === undefined) return Promise.reject(new Error(`unexpected spawn of ${file}`));
     return npm(args, options);
   };
@@ -207,16 +213,8 @@ describe('provideSdk – cache and --sdk-tarball', () => {
     });
     expect(out).toEqual({ source: 'cache' });
     await expectUnpacked(paths.target, 'good');
-    expect(calls.map((call) => path.basename(call.file))).toEqual(['tar.exe']);
-    expect(calls[0]?.args).toEqual([
-      '-x',
-      '-z',
-      '-f',
-      path.join(paths.cacheDir, CACHE_NAME),
-      '--strip-components=1',
-      '-C',
-      paths.target,
-    ]);
+    expect(calls.map((call) => call.file)).toEqual([tarTool()]);
+    expect(calls[0]?.args).toEqual(unpackArgs(path.join(paths.cacheDir, CACHE_NAME), paths.target));
     expect(lines.join('\n')).toContain('cache');
   });
 
@@ -285,8 +283,10 @@ describe('provideSdk – cache and --sdk-tarball', () => {
     expect((await rejection(provideSdk(base))).message).toContain('not empty');
     const invalid = { ...base, spec: { ...spec(good.integrity), version: '../1.2.3' } };
     expect((await rejection(provideSdk(invalid))).message).toContain('invalid SDK spec');
-    const unc = { ...base, cacheDir: '\\\\server\\share\\cache' };
-    expect((await rejection(provideSdk(unc))).message).toContain('unc');
+    // Windows: a UNC share; Linux: a kernel file system (installPathRules of the host).
+    const [refused, reason] =
+      process.platform === 'win32' ? ['\\\\server\\share\\cache', 'unc'] : ['/proc/self/cache', 'pseudo_fs'];
+    expect((await rejection(provideSdk({ ...base, cacheDir: refused }))).message).toContain(reason);
   });
 
   it('checks name and version of the unpacked package.json', async () => {
@@ -693,6 +693,27 @@ describe('helpers', () => {
       'anthropic-ai-claude-agent-sdk-0.3.322.tgz',
     );
     expect(sdkCacheFileName({ name: 'plain', version: '1.0.0' })).toBe('plain-1.0.0.tgz');
+  });
+
+  it('finds npm and tar per platform and unpacks without owner and mode of the archive on Linux', () => {
+    expect(npmCliPath('C:\\Program Files\\nodejs\\node.exe', 'win32')).toBe(
+      'C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js',
+    );
+    expect(npmCliPath('/opt/node-v26/bin/node', 'linux')).toBe(
+      '/opt/node-v26/lib/node_modules/npm/bin/npm-cli.js',
+    );
+    expect(path.win32.basename(tarTool('win32'))).toBe('tar.exe');
+    expect(['/usr/bin/tar', '/bin/tar']).toContain(tarTool('linux'));
+    expect(unpackArgs('a.tgz', 't', 'win32')).toEqual([
+      '-x',
+      '-z',
+      '-f',
+      'a.tgz',
+      '--strip-components=1',
+      '-C',
+      't',
+    ]);
+    expect(unpackArgs('a.tgz', 't', 'linux').slice(-2)).toEqual(['--no-same-owner', '--no-same-permissions']);
   });
 
   it('reads the file name from npm pack --json', () => {

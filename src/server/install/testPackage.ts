@@ -38,7 +38,10 @@ export interface TestPackageOptions {
   version: string;
   key: TestKey;
   minNode?: string;
-  /** Also `root/start.mjs` and `root/parallax.cmd` like release-pack (WP-87); `files` may replace them. */
+  /**
+   * Also `root/start.mjs`, `root/parallax.cmd` and `root/parallax` like release-pack (WP-87,
+   * WP-108); `files` may replace them.
+   */
   rootFiles?: boolean;
   /** Extra or replaced files (`/`-separated path → content). */
   files?: Record<string, string>;
@@ -54,7 +57,9 @@ export async function makeTestPackage(dir: string, options: TestPackageOptions):
     'dist/launcher.js': `// Parallax launcher, build ${testBuildId(options.version)}\n`,
     'dist/install.js': '// installer\n',
     'install.cmd': '@echo off\r\n',
+    'install.sh': '#!/bin/sh\n',
     'parallax.ico': `icon ${options.version}`,
+    'parallax.svg': `icon ${options.version}`,
     'node_modules/zod/index.js': 'export {};\n',
     ...(options.rootFiles === true ? packageRootFiles(options.minNode ?? '26.9.0') : {}),
     ...options.files,

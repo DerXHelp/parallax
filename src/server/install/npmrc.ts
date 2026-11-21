@@ -1,19 +1,24 @@
 /**
  * The small part of the npm configuration the installer needs for its own download of the Agent SDK
  * (WP-86 §2, docs/wp/WP-83.md §8.2 way 2): the user `.npmrc` (`NPM_CONFIG_USERCONFIG`, else
- * `%USERPROFILE%\.npmrc`), the registry for a scope and the `Authorization` header for one URL.
+ * `%USERPROFILE%\.npmrc`, Linux `$HOME/.npmrc`), the registry for a scope and the `Authorization`
+ * header for one URL.
  *
  * Parsing follows npm (`ini` + `@npmcli/config`): `key=value` lines, `;`/`#` comments (also after an
  * unquoted value), quoted values, `${VAR}` / `${VAR?}` from the environment in keys and values.
  * Sections (`[name]`) and array keys (`key[]`) carry nothing the download needs and are skipped.
  * Auth keys are nerf-darted (`//host[:port][/path]/:_authToken` …); the longest matching prefix of
  * the requested URL wins, so a token only ever goes to the host it was written for.
+ *
+ * Environment names (WP-108) like npm: `npm_config_*` in any case on every platform; `${VAR}` and
+ * the home folder exactly on POSIX (`platform`, default `process.platform`), case-insensitive on
+ * Windows.
  */
 import { readFile as nodeReadFile } from 'node:fs/promises';
 import path from 'node:path';
-import { windowsPathIssue } from '@shared/paths';
 import { fsErrorCode } from '../lib/paths';
 import { getEnvVar } from '../lib/windows';
+import { installPathRules } from './layout';
 
 export const DEFAULT_REGISTRY = 'https://registry.npmjs.org/';
 
@@ -29,10 +34,19 @@ const defaultReadText: ReadTextFn = (file) => nodeReadFile(file, 'utf8');
 /** `${NAME}` (kept literally when unset) and `${NAME?}` (empty when unset); `\${` escapes. */
 const ENV_EXPR = /(?<!\\)(\\*)\$\{([^${}?]+)(\?)?\}/gu;
 
-export function replaceEnv(text: string, env: Env): string {
+/** `npm_config_<name>` in any spelling (npm reads these case-insensitively on every platform). */
+function npmConfigVar(env: Env, name: string): string | undefined {
+  const wanted = `npm_config_${name}`;
+  for (const [key, value] of Object.entries(env)) {
+    if (key.toLowerCase() === wanted && value !== undefined) return value;
+  }
+  return undefined;
+}
+
+export function replaceEnv(text: string, env: Env, platform: NodeJS.Platform = process.platform): string {
   return text.replace(ENV_EXPR, (orig: string, esc: string, name: string, modifier?: string) => {
     if (esc.length % 2 === 1) return orig.slice((esc.length + 1) / 2);
-    const value = getEnvVar(env, name) ?? (modifier === '?' ? '' : `\${${name}}`);
+    const value = getEnvVar(env, name, platform) ?? (modifier === '?' ? '' : `\${${name}}`);
     return esc.slice(esc.length / 2) + value;
   });
 }
@@ -84,7 +98,7 @@ function normalizeKey(key: string): string {
   return key.slice(0, end).toLowerCase() + key.slice(end);
 }
 
-export function parseNpmrc(text: string, env: Env): Npmrc {
+export function parseNpmrc(text: string, env: Env, platform: NodeJS.Platform = process.platform): Npmrc {
   const values = new Map<string, string>();
   let inSection = false;
   for (const rawLine of text.split(/\r?\n/u)) {
@@ -97,28 +111,37 @@ export function parseNpmrc(text: string, env: Env): Npmrc {
     if (inSection) continue;
     const eq = line.indexOf('=');
     if (eq <= 0) continue;
-    const key = replaceEnv(unquote(line.slice(0, eq)), env);
+    const key = replaceEnv(unquote(line.slice(0, eq)), env, platform);
     if (key === '' || key.endsWith('[]')) continue;
-    values.set(normalizeKey(key), replaceEnv(unquote(line.slice(eq + 1)), env));
+    values.set(normalizeKey(key), replaceEnv(unquote(line.slice(eq + 1)), env, platform));
   }
   return values;
 }
 
-/** Path of the user config, or null when neither variable names a usable absolute path. */
-export function userNpmrcPath(env: Env): string | null {
-  const explicit = getEnvVar(env, 'NPM_CONFIG_USERCONFIG');
+/**
+ * Path of the user config (`NPM_CONFIG_USERCONFIG`, else `.npmrc` in `%USERPROFILE%` resp. `$HOME`),
+ * or null when no variable names one. Not checked here (`readNpmrc` checks it).
+ */
+export function userNpmrcPath(env: Env, platform: NodeJS.Platform = process.platform): string | null {
+  const explicit = npmConfigVar(env, 'userconfig');
   if (explicit !== undefined && explicit !== '') return explicit;
-  const profile = getEnvVar(env, 'USERPROFILE');
-  return profile === undefined || profile === '' ? null : path.join(profile, '.npmrc');
+  const windows = platform === 'win32';
+  const profile = getEnvVar(env, windows ? 'USERPROFILE' : 'HOME', platform);
+  if (profile === undefined || profile === '') return null;
+  return (windows ? path.win32 : path.posix).join(profile, '.npmrc');
 }
 
 /**
  * Reads the user `.npmrc`. Missing file (or no usable path) = empty. A UNC/device/relative path is
  * never touched (an fs call on a UNC path would leak the NTLM hash) and counts as empty.
  */
-export async function readNpmrc(env: Env, readFile: ReadTextFn = defaultReadText): Promise<Npmrc> {
-  const file = userNpmrcPath(env);
-  if (file === null || windowsPathIssue(file) !== null) return new Map();
+export async function readNpmrc(
+  env: Env,
+  readFile: ReadTextFn = defaultReadText,
+  platform: NodeJS.Platform = process.platform,
+): Promise<Npmrc> {
+  const file = userNpmrcPath(env, platform);
+  if (file === null || installPathRules(platform).issue(file) !== null) return new Map();
   let text: string;
   try {
     text = await readFile(file);
@@ -126,7 +149,7 @@ export async function readNpmrc(env: Env, readFile: ReadTextFn = defaultReadText
     if (fsErrorCode(error) === 'ENOENT' || fsErrorCode(error) === 'ENOTDIR') return new Map();
     throw error;
   }
-  return parseNpmrc(text, env);
+  return parseNpmrc(text, env, platform);
 }
 
 function withSlash(url: string): string {
@@ -140,7 +163,7 @@ function withSlash(url: string): string {
  */
 export function registryFor(scope: string | null, npmrc: Npmrc, env: Env): string {
   const candidates = [
-    getEnvVar(env, 'npm_config_registry'),
+    npmConfigVar(env, 'registry'),
     scope === null ? undefined : npmrc.get(`${scope}:registry`),
     npmrc.get('registry'),
   ];

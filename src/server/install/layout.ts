@@ -14,6 +14,12 @@
  * directory `%LOCALAPPDATA%\Parallax`. Launcher, server and Chrome run with the root as working
  * directory, never with a version folder (a long-lived Chrome would lock it against deletion).
  *
+ * Linux (WP-108, WP-100 E7): the same layout in `~/.local/lib/parallax`, with the POSIX start
+ * script `parallax` instead of `parallax.cmd` and `parallax.svg` instead of the `.ico` (for the
+ * application menu entry of the system integration). The command `~/.local/bin/parallax`
+ * (install/command.ts) only runs `<root>/parallax`; the data directory is `$XDG_DATA_HOME/parallax`
+ * (lib/dataDir.ts).
+ *
  * A test run never touches the real root or the real Start menu (`assertNotRealUserFolder`, like R6
  * of the system integration): tests pass their folders explicitly.
  */
@@ -21,8 +27,8 @@ import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
-import { isWindowsPathInside, windowsPathIssue } from '@shared/paths';
-import { PRODUCT_NAME } from '@shared/product';
+import { pathFlavorOf, pathRules, windowsPathIssue, type PathRules } from '@shared/paths';
+import { PRODUCT_ID, PRODUCT_NAME } from '@shared/product';
 import { isTestRun } from '../config';
 import { toError } from '../lib/async';
 import { writeFileAtomic } from '../lib/fs';
@@ -32,7 +38,11 @@ import { releaseVersionSchema } from '../launcher/release';
 
 export const START_SCRIPT = 'start.mjs';
 export const START_CMD = 'parallax.cmd';
+/** Linux (WP-108): `<root>/parallax`, the POSIX start script – the counterpart of parallax.cmd. */
+export const START_SH = 'parallax';
 export const ICON_FILE = 'parallax.ico';
+/** Linux (WP-108): the icon of the application menu entry (`.desktop`) – SVG instead of `.ico`. */
+export const ICON_SVG = 'parallax.svg';
 export const CURRENT_FILE = 'current.json';
 export const VERSIONS_DIR = 'versions';
 export const CACHE_DIR = 'cache';
@@ -46,28 +56,77 @@ export const TRASH_PREFIX = '.trash-';
  * Switching to a version writes the root files from `versions\<v>\root\` (else the own templates).
  */
 export const PACKAGE_ROOT_DIR = 'root';
-/** Every name the installer writes into the root (the uninstaller deletes exactly these). */
-export const ROOT_ENTRIES: readonly string[] = [
-  START_SCRIPT,
-  START_CMD,
-  ICON_FILE,
-  CURRENT_FILE,
-  VERSIONS_DIR,
-  CACHE_DIR,
-  DOWNLOADS_DIR,
-];
+/** Every name the installer writes into the root on `platform` (the uninstaller deletes exactly these). */
+export function rootEntries(platform: NodeJS.Platform = process.platform): readonly string[] {
+  return [
+    START_SCRIPT,
+    startCommandFile(platform),
+    iconFile(platform),
+    CURRENT_FILE,
+    VERSIONS_DIR,
+    CACHE_DIR,
+    DOWNLOADS_DIR,
+  ];
+}
+/** The start script in the root on `platform`: `parallax.cmd` (Windows) or `parallax` (POSIX sh). */
+export function startCommandFile(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' ? START_CMD : START_SH;
+}
+/** The icon the installer copies into the root on `platform`. */
+export function iconFile(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' ? ICON_FILE : ICON_SVG;
+}
 /** The installer file at the package root (Explorer double click) – `node dist\install.js` is the same. */
 export const INSTALL_CMD = 'install.cmd';
+/** Linux (WP-108): `sh install.sh` at the package root – checks Node, then runs `dist/install.js`. */
+export const INSTALL_SH = 'install.sh';
+/** Linux (WP-108): name of the command the installer puts into the bin folder (`~/.local/bin`). */
+export const COMMAND_NAME = PRODUCT_ID;
 /** The installer bundle inside a package. */
 export const INSTALLER_BUNDLE = path.join('dist', 'install.js');
 /** The launcher bundle inside a package. */
 export const LAUNCHER_BUNDLE = path.join('dist', 'launcher.js');
 
-/** `%LOCALAPPDATA%\Programs\Parallax`, or null without a safe LOCALAPPDATA. */
-export function defaultInstallRoot(env: NodeJS.ProcessEnv = process.env): string | null {
-  const local = getEnvVar(env, 'LOCALAPPDATA');
+/** The path rules of `platform` (Windows or POSIX, `@shared/paths`). */
+export function installPathRules(platform: NodeJS.Platform = process.platform): PathRules {
+  return pathRules(pathFlavorOf(platform));
+}
+
+/** POSIX: `HOME` (else the account's home folder), only when the POSIX rules accept it. */
+function posixHome(env: NodeJS.ProcessEnv): string | null {
+  const home = env.HOME !== undefined && env.HOME !== '' ? env.HOME : os.homedir();
+  return installPathRules('linux').issue(home) === null ? home : null;
+}
+
+/**
+ * The default root: Windows `%LOCALAPPDATA%\Programs\Parallax`, Linux (E7) `~/.local/lib/parallax`.
+ * Null without a safe LOCALAPPDATA resp. home folder.
+ */
+export function defaultInstallRoot(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  if (platform !== 'win32') {
+    const home = posixHome(env);
+    return home === null ? null : path.posix.join(home, '.local', 'lib', PRODUCT_ID);
+  }
+  const local = getEnvVar(env, 'LOCALAPPDATA', platform);
   if (local === undefined || windowsPathIssue(local) !== null) return null;
   return path.win32.join(local, 'Programs', PRODUCT_NAME);
+}
+
+/**
+ * Linux (E7): the folder of the `parallax` command, `~/.local/bin` (XDG user executables, on the
+ * PATH of Ubuntu's default profile). Null on Windows (the Start menu is the entry there) and without
+ * a safe home folder.
+ */
+export function defaultBinDir(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  if (platform === 'win32') return null;
+  const home = posixHome(env);
+  return home === null ? null : path.posix.join(home, '.local', 'bin');
 }
 
 export function versionDir(root: string, version: string): string {
@@ -129,18 +188,30 @@ export async function writeCurrent(root: string, current: CurrentFile): Promise<
 }
 
 /**
- * The real per-user folders a test must never write to: the default root and the Start menu,
- * from the environment AND from the profile folder (a test may have replaced the variables).
+ * The real per-user folders a test must never write to: the default root and the Start menu (Linux:
+ * the root and the bin folder), from the environment AND from the profile folder (a test may have
+ * replaced the variables).
  */
-function realUserFolders(): string[] {
+function realUserFolders(platform: NodeJS.Platform): string[] {
   const home = os.homedir();
+  if (platform !== 'win32') {
+    const folders = [
+      path.posix.join(home, '.local', 'lib', PRODUCT_ID),
+      path.posix.join(home, '.local', 'bin'),
+    ];
+    const root = defaultInstallRoot(process.env, platform);
+    const bin = defaultBinDir(process.env, platform);
+    if (root !== null) folders.push(root);
+    if (bin !== null) folders.push(bin);
+    return folders;
+  }
   const folders = [
     path.win32.join(home, 'AppData', 'Local', 'Programs', PRODUCT_NAME),
     path.win32.join(home, 'AppData', 'Roaming', 'Microsoft', 'Windows', 'Start Menu'),
   ];
-  const root = defaultInstallRoot(process.env);
+  const root = defaultInstallRoot(process.env, platform);
   if (root !== null) folders.push(root);
-  const appData = getEnvVar(process.env, 'APPDATA');
+  const appData = getEnvVar(process.env, 'APPDATA', platform);
   if (appData !== undefined && windowsPathIssue(appData) === null) {
     folders.push(path.win32.join(appData, 'Microsoft', 'Windows', 'Start Menu'));
   }
@@ -149,12 +220,14 @@ function realUserFolders(): string[] {
 
 /**
  * In a test run (Vitest, `NODE_ENV=test`): throws for the real installation folder or the real
- * Start menu (and anything inside). Outside tests it does nothing.
+ * Start menu (Linux: the real root and `~/.local/bin`) and anything inside. Outside tests it does
+ * nothing.
  */
 export function assertNotRealUserFolder(target: string, env: NodeJS.ProcessEnv = process.env): void {
   if (!isTestRun(env)) return;
-  for (const folder of realUserFolders()) {
-    if (isWindowsPathInside(target, folder)) {
+  const rules = installPathRules(process.platform);
+  for (const folder of realUserFolders(process.platform)) {
+    if (rules.isInside(target, folder)) {
       throw new InstallError(`tests must not use the real folder ${folder} (got ${target})`);
     }
   }

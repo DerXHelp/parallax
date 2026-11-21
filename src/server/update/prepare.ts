@@ -23,6 +23,9 @@
  *
  * Failures map to the update codes in `prepareErrorPayload`; an abort (shutdown) throws the
  * signal's reason – the partial files are removed either way.
+ *
+ * Linux (WP-108): the same steps with the asset of this host (`parallax-<v>-linux-x64.tar.gz`,
+ * listed and unpacked by zip.ts with GNU tar); "zip" below means the release archive.
  */
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
@@ -44,7 +47,7 @@ import { withFsRetry } from '../lib/fs';
 import type { RunFileFn } from '../lib/process';
 import { RELEASE_FILE, type ReleaseInfo } from '../launcher/release';
 import { CommandError } from '../sync/ports';
-import { releaseZipName } from './endpoints';
+import { releaseAssetName, releaseTarget } from './endpoints';
 import { FetchError, downloadFile } from './fetch';
 import type { LatestInfo } from './latest';
 import { downgradeOf } from './previous';
@@ -52,11 +55,11 @@ import { ZipError, extractZip, listZip } from './zip';
 
 /** `downloads\unpack-<v>-<stamp>-<id>`: an unpacked zip. */
 export const UNPACK_PREFIX = 'unpack-';
-/** `downloads\upload-<stamp>-<id>.zip`: an uploaded zip ("Install from file"). */
+/** `downloads\upload-<stamp>-<id>.zip` (Linux `.tar.gz`): an uploaded archive ("Install from file"). */
 export const UPLOAD_PREFIX = 'upload-';
 /** Leftover uploads older than this belong to no running request any more. */
 const STALE_UPLOAD_MS = 60 * 60_000;
-const RELEASE_ZIP = /^parallax-.+-win\.zip(?:\.partial)?$/u;
+const RELEASE_ZIP = /^parallax-.+-(?:win\.zip|linux-x64\.tar\.gz)(?:\.partial)?$/u;
 
 /** Progress of the preparing phase: unpacking, then the steps of `stageVersion`. */
 const PHASES: Readonly<Record<'unpack' | StageStep, readonly [number, number]>> = {
@@ -79,7 +82,7 @@ export interface PrepareEnv {
   registry: string | undefined;
   fetch: typeof fetch;
   allowLoopbackHttp: boolean;
-  /** tar.exe */
+  /** tar (zip.ts `archiveTool`) */
   run: RunFileFn;
   provideSdk: (request: SdkRequest) => Promise<string>;
   /** The `install` lock of the root; null = held by another process. */
@@ -285,7 +288,7 @@ export async function prepareRelease(
       await cleanup(env, latest.version);
       return kept;
     }
-    const zip = path.join(downloads, releaseZipName(latest.version));
+    const zip = path.join(downloads, releaseAssetName(latest.version, releaseTarget() ?? 'win'));
     const partial = `${zip}.partial`;
     let unpacked: Unpacked | null = null;
     try {

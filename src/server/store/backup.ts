@@ -13,16 +13,18 @@
  * hour). `restoreBackup` (rollback, WP-87) writes the files back, cuts transcripts to the saved
  * length and moves store files that are newer than the backup to `<backup>\newer\`. `listBackups`
  * and `findBackup` find the backup of a build change (WP-87: "back to <version>" with a backup).
+ *
+ * Paths follow the rules of the host (WP-108, `HOST_PATH_RULES`): case-insensitive on Windows,
+ * exact on Linux.
  */
 import { lstat, readdir, readFile, rm, stat, truncate } from 'node:fs/promises';
 import path from 'node:path';
 import type { Logger } from 'pino';
 import { z } from 'zod';
 import { isoDateTimeSchema } from '@shared/common';
-import { windowsPathIssue, windowsPathKey } from '@shared/paths';
 import { nodeFsOps, withFsRetry, writeFileAtomic, type FsOps } from '../lib/fs';
 import { logger as rootLogger } from '../lib/logger';
-import { fsErrorCode } from '../lib/paths';
+import { HOST_PATH_RULES, fsErrorCode } from '../lib/paths';
 import { ENTRIES_DIR } from './decisions';
 import { STORE_SCHEMAS, type StoreSchema } from './schemas';
 
@@ -78,9 +80,9 @@ function toAbsolute(base: string, rel: string): string {
   return path.join(base, ...rel.split('/'));
 }
 
-/** Case-insensitive key of a relative path (Windows rules from `@shared/paths`). */
+/** Key of a relative path by the host's rules (case-insensitive on Windows, exact on Linux). */
 function relKey(rel: string): string {
-  return windowsPathKey(rel);
+  return HOST_PATH_RULES.key(rel);
 }
 
 function compareText(a: string, b: string): number {
@@ -386,7 +388,7 @@ export async function restoreBackup(
   const log = (options.logger ?? rootLogger).child({ module: 'backup' });
   const manifest = await readBackupManifest(dir);
   for (const rel of [...manifest.files, ...Object.keys(manifest.transcripts)]) {
-    const issue = windowsPathIssue(toAbsolute(home, rel));
+    const issue = HOST_PATH_RULES.issue(toAbsolute(home, rel));
     if (issue !== null) throw new BackupError(`${BACKUP_MANIFEST} lists an unsafe path (${issue}): ${rel}`);
   }
   for (const rel of manifest.files) {

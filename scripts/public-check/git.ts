@@ -1,6 +1,7 @@
 /**
  * Git access of the public-repo check (WP-84): file list, local list, commits, objects, refs.
- * git runs as an absolute .exe without a shell (CLAUDE.md "Windows").
+ * git runs as an absolute program without a shell (CLAUDE.md "Windows": `resolveExecutable`, the
+ * `.exe` on Windows, e.g. `/usr/bin/git` on Linux).
  */
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -17,7 +18,7 @@ let gitExePromise: Promise<string> | undefined;
 
 async function gitExe(): Promise<string> {
   gitExePromise ??= resolveExecutable('git', process.env).then((exe) => {
-    if (exe === null) throw new Error('public-check: git.exe not found on PATH');
+    if (exe === null) throw new Error('public-check: git not found on PATH');
     return exe;
   });
   return gitExePromise;
