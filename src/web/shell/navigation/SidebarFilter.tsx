@@ -122,7 +122,12 @@ export function SidebarFilterBar({ className }: { className?: string }) {
         }}
       >
         {SIDEBAR_STATUS_FILTERS.map((status) => (
-          <ToggleGroupItem key={status} value={status} data-filter={status} className="gap-1 px-1 text-2xs">
+          <ToggleGroupItem
+            key={status}
+            value={status}
+            data-filter={status}
+            className="flex-auto gap-1 px-1 text-2xs"
+          >
             <span className="truncate">{t(`navigation.filter.status.${status}`)}</span>
             {status === 'all' || counts[status] === 0 ? null : (
               <span data-slot="filter-count" className="shrink-0 tabular-nums opacity-70">

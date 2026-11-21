@@ -134,7 +134,7 @@ export function ScopeBar({
               value={value}
               data-scope={value}
               title={t(`changes.scope.${value}Title`)}
-              className="px-2 text-xs"
+              className="flex-auto px-2 text-xs"
             >
               {t(`changes.scope.${value}`)}
             </ToggleGroupItem>

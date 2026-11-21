@@ -28,11 +28,11 @@ export const de: typeof en = {
   scope: {
     label: 'Vergleich',
     session: 'Session',
-    uncommitted: 'Uncommitted',
-    staged: 'Staged',
+    uncommitted: 'Nicht committet',
+    staged: 'Vorgemerkt',
     sessionTitle: 'Alles seit dem Start dieser Session, auch neue Dateien',
     uncommittedTitle: 'Änderungen, die noch nicht committet sind',
-    stagedTitle: 'Änderungen im Index (staged)',
+    stagedTitle: 'Zum Commit vorgemerkte Änderungen (Index)',
   },
   filter: {
     onlySession: 'Nur Dateien dieser Session',
@@ -45,8 +45,8 @@ export const de: typeof en = {
     count: { one: '{count} Datei', other: '{count} Dateien' },
     empty: {
       session: 'Keine Änderungen seit dem Start dieser Session.',
-      uncommitted: 'Keine uncommitteten Änderungen.',
-      staged: 'Nichts im Index.',
+      uncommitted: 'Alles ist committet.',
+      staged: 'Nichts zum Commit vorgemerkt.',
     },
     truncated: 'Nur die ersten {count} Dateien werden gezeigt.',
     additions: { one: '{count} Zeile hinzugefügt', other: '{count} Zeilen hinzugefügt' },
