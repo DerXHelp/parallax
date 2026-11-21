@@ -1387,6 +1387,7 @@ export function sampleGitStatus(p: Partial<GitStatus> = {}): GitStatus {
     detached: false,
     head: sampleSha(2),
     upstream: 'origin/feature/login',
+    pushRemote: null,
     ahead: 1,
     behind: 0,
     files: [

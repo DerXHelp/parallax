@@ -35,13 +35,16 @@ export function GitActions({
   const repo = status?.isRepo === true;
   const onBranch = repo && status.branch !== null;
   const ahead = status?.ahead ?? 0;
-  // Without an upstream, Push sets it (`-u <remote> <branch>`); with one, only when there is something.
-  const canPush = onBranch && !pushing && (status.upstream === null || ahead > 0);
+  // Without an upstream, Push sets it on `pushRemote` (`-u <remote> <branch>`) – impossible without a
+  // remote; with an upstream, only when there is something to push.
+  const canPush = onBranch && !pushing && (status.upstream === null ? status.pushRemote !== null : ahead > 0);
   const title = !onBranch
     ? t('changes.push.detached')
-    : status.upstream === null
-      ? t('changes.push.titleNew')
-      : t('changes.push.title', { upstream: status.upstream });
+    : status.upstream !== null
+      ? t('changes.push.title', { upstream: status.upstream })
+      : status.pushRemote === null
+        ? t('changes.push.noRemote')
+        : t('changes.push.titleNew', { remote: status.pushRemote });
   return (
     <div className="flex flex-wrap items-center gap-1.5 px-3 pb-2" data-slot="changes-git-actions">
       <BranchMenu sessionKey={sessionKey} disabled={!repo} onDone={onDone} />

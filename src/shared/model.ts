@@ -3430,6 +3430,12 @@ export const gitStatusSchema = z.object({
   head: gitShaSchema.nullable(),
   /** Upstream (e.g. `origin/main`); null = none. */
   upstream: z.string().min(1).max(LIMITS.gitRefChars).nullable(),
+  /**
+   * WP-117: the remote a push without an upstream goes to (`origin`, else the only remote); null = none
+   * (no remote, several without `origin`, or a name git ref rules refuse) – Push cannot work then. Only
+   * filled on a branch without an upstream (with one, `git push` knows its target).
+   */
+  pushRemote: z.string().min(1).max(LIMITS.gitRefChars).nullable().default(null),
   ahead: z.number().int().nonnegative(),
   behind: z.number().int().nonnegative(),
   files: z.array(gitFileChangeSchema).max(LIMITS.gitFilesMax),

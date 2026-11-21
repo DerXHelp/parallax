@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { LOCAL_HOST_ID } from '@shared/common';
 import { makeError } from '@shared/errors';
 import { DEFAULT_PROJECT_SETTINGS, type HostFeatures, type ProjectSettingsMap } from '@shared/model';
 import { WIN32_PATHS } from '@shared/paths';
@@ -40,7 +41,7 @@ afterEach(() => {
 function Section() {
   const editor = useSettingsEditor();
   const hostState = useHostState();
-  return <ProjectsSection editor={editor} hostState={hostState} />;
+  return <ProjectsSection editor={editor} hostState={hostState} hostId={LOCAL_HOST_ID} />;
 }
 
 async function start(features: HostFeatures = GIT): Promise<NewSessionDemo> {
