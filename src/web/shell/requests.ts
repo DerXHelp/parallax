@@ -74,8 +74,9 @@ export type ShellRequest =
   /**
    * Text back into the composer of a session (a withdrawn queued message, „Zurückholen“): the
    * composer appends it to a draft (new paragraph) or fills the empty field, and takes the focus.
+   * WP-110 (Ausbau 1): `asPaste` = as a paste chip (the review package of the tab "Changes", ADR-254).
    */
-  | { kind: 'composerText'; sessionKey: string; text: string }
+  | { kind: 'composerText'; sessionKey: string; text: string; asPaste?: boolean }
   // ---- WP-70 ----
   /**
    * Sign in a profile from Parallax: the small sign-in dialog (NavigationLayer, lazy chunk). `hostId`:

@@ -52,6 +52,7 @@ import { WS_CLOSE, type SessionOp } from '@shared/protocol';
 import { createFakeBackend } from '../backend/fakeBackend';
 import { createFakeClaudeIntegration } from '../backend/fake/integration';
 import type { AgentBackend } from '../backend/types';
+import { worktreePortEnv } from '../claude/env';
 import { createClaudeIntegration } from '../claude/integration';
 import type { ClaudeIntegration } from '../claude/ports';
 import { createProfileCommands } from '../claude/profileCommands';
@@ -67,7 +68,6 @@ import {
 import { createRecordingOpener, createSystemLauncher } from '../files/open';
 import type { FileEntryLookup, FileService } from '../files/ports';
 import { createFileService } from '../files/service';
-import { createGitCommands } from '../git/commands';
 import { createFsCommands } from '../host/fsCommands';
 import { createLinkCommands, createRecordingLinkOpener, createSystemLinkOpener } from '../host/linkCommands';
 import { createLoginService, LOGIN_HOME_DIR, type LoginService } from '../host/login';
@@ -97,8 +97,9 @@ import { createCommandCatalogStore, type CommandCatalogStore } from '../sessions
 import { createSessionManager, SHUTDOWN_SWEEP_GRACE_MS, type SessionManager } from '../sessions/manager';
 import { createNativeToasts } from '../sessions/nativeToasts';
 import { openProcessStore } from '../sessions/processStore';
-import { createReviewCommands } from '../sessions/review';
-import { createSearchCommands } from '../search/commands';
+import { createSearchCommands, type SearchCommandHandler } from '../search/commands';
+import { withWorktreePort } from '../sessions/worktrees';
+import { createReviewStore, type FileReviewStore } from '../store/review';
 import { createAttachmentFileStore } from '../store/attachments';
 import { createBlobStore } from '../store/blobs';
 import { createDraftStore, type FileDraftStore } from '../store/drafts';
@@ -230,6 +231,8 @@ interface Stores {
   attachments: AttachmentFileStore;
   /** WP-77 (ADR-210): `entries/<id>/draft.json` – the synchronized composer draft. */
   drafts: FileDraftStore;
+  /** WP-111 (ADR-254): `entries/<id>/review.json` – the review comments of a session. */
+  review: FileReviewStore;
   /** Closes every store (errors are logged, never thrown). */
   close(): Promise<void>;
 }
@@ -282,6 +285,8 @@ async function openStores(config: ServerConfig, instance: ServerInstance, log: L
     const attachments = createAttachmentFileStore(home, blobs);
     const drafts = createDraftStore({ home, warnings });
     opened.push({ name: 'drafts', close: () => drafts.close() });
+    const review = createReviewStore({ home, warnings });
+    opened.push({ name: 'review', close: () => review.close() });
     return {
       warnings,
       registry,
@@ -296,6 +301,7 @@ async function openStores(config: ServerConfig, instance: ServerInstance, log: L
       transcripts,
       attachments,
       drafts,
+      review,
       close: closeOpened,
     };
   } catch (error) {
@@ -595,6 +601,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   let manager: SessionManager | null = null;
   /** WP-99: the embedded terminal (closed with the sessions at the shutdown). */
   let terminals: TerminalService | null = null;
+  /** WP-112 (ADR-255): `search.query`, `transcript.loadAround` – running searches end before the stores. */
+  let search: SearchCommandHandler | null = null;
   let app: FastifyInstance | null = null;
   let lock: ServerLockHandle | null = null;
   let shutdown: ServerShutdown | null = null;
@@ -658,6 +666,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     // The session file index (`entries/<id>/files.json`, debounced) – after the engine's last ops,
     // before the stores close (ADR-145).
     { name: 'files', run: () => files?.flush() },
+    // WP-112: ends running search workers (their files are read-only).
+    { name: 'search', run: () => search?.close() },
     // WP-87: ends a running check, download or preparation (≤ 10 s); a started switch goes on.
     { name: 'update', run: () => update?.close(), timeoutMs: 12_000 },
     { name: 'stores', run: () => stores.close(), timeoutMs: 10_000 },
@@ -700,7 +710,14 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       stores.profiles,
       () => stores.settings.get().console.terminalEmulator,
     );
-    const { backend, claude, consoleLauncher } = engine;
+    const { backend, consoleLauncher } = engine;
+    // WP-111 (ADR-251): every launch of an entry with a worktree port block gets PARALLAX_WORKTREE_PORT.
+    const claude = withWorktreePort(
+      engine.claude,
+      (entryId) => stores.registry.get(entryId)?.worktree?.portBase,
+    );
+    const entryPortEnv = (entryId: EntryId): Record<string, string> =>
+      worktreePortEnv(stores.registry.get(entryId)?.worktree?.portBase);
     const manifest = await readSdkManifest();
     // Delete protection and `profile.get`: entries of the profile, archived ones included (ADR-102).
     const entryCount = (profileId: ProfileId): number =>
@@ -841,6 +858,13 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     // node:ffi (ConPTY on Windows, /dev/ptmx on Linux; SDK backend) or an echo shell (FakeBackend: dev,
     // E2E). One Git lookup for it and "Open shell in folder".
     const gitFinder = createGitFinder();
+    const searchCommands = createSearchCommands({
+      home: config.home,
+      registry: stores.registry,
+      transcripts: stores.transcripts,
+      ...loggerOption,
+    });
+    search = searchCommands;
     const platformPty = config.backend === 'fake' ? { pty: createFakePtyFactory() } : createPlatformPty();
     const terminalService = createTerminalService({
       ...platformPty,
@@ -851,6 +875,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       settings: () => stores.settings.get().console,
       killTree: killProcessTree,
       gitFinder,
+      // WP-111: the worktree port block reaches setup/teardown and every shell of the entry.
+      entryEnv: entryPortEnv,
       ...loggerOption,
     });
     terminals = terminalService;
@@ -883,6 +909,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         attachments: stores.attachments,
         // WP-77 (ADR-210): synchronized drafts; `manager.shutdown()` flushes before `stores.close()`.
         drafts: stores.drafts,
+        // WP-111 (ADR-254): review comments (`review.*` through the engine's ops).
+        review: stores.review,
       },
       host: {
         serverVersion: instance.serverVersion,
@@ -943,11 +971,9 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
               ? createRecordingShellLauncher({ logger: options.logger })
               : (consoleLauncher ?? NO_CONSOLE_WINDOW),
         }),
-        // WP-110 (Ausbau 1): `git.*`, `worktree.*` (WP-111), `review.*` (WP-111), `search.query`,
-        // `transcript.loadAround` (WP-112) – stubs answer NOT_IMPLEMENTED until filled.
-        createGitCommands(),
-        createReviewCommands(),
-        createSearchCommands(),
+        // WP-112 (ADR-255): `search.query`, `transcript.loadAround`. `git.*`, `worktree.*` and
+        // `review.*` (WP-111) are handled by the engine itself (sessions/commands.ts).
+        searchCommands,
       ],
       loginState: (profileId) => loginService.state(profileId),
       // Autostart and protocol handler follow every settings.update (ADR-110).

@@ -108,7 +108,8 @@ die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale En
     `src/server/sessions/normalizer/**`.
   - **WP-113 (Web Änderungen):** `src/web/features/changes/**` (neu), `src/web/ui/diff-view.tsx`.
   - **WP-114 (Web Worktrees):** `src/web/shell/new-session/**`, `src/web/shell/{NewSessionDialog,NewSessionForm}.tsx`,
-    `src/web/features/worktrees/**` (neu), neu `src/web/features/preferences/sections/ProjectsSection.tsx`.
+    `src/web/features/worktrees/**` (neu), neu `src/web/features/preferences/sections/ProjectsSection.tsx`,
+    `src/web/features/composer/**` (Sperre während des Setups, `composerText {asPaste}` als Paste-Chip).
   - **WP-115 (Web Suche, Übersicht):** `src/web/features/search/**` (neu), `src/web/shell/navigation/**`,
     `src/web/lib/session-order.ts`, `src/web/features/preferences/sections/SessionsSection.tsx`.
   - **WP-116 (Web Elicitation):** `src/web/features/decisions/**`.
