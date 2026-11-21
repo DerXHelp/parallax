@@ -73,7 +73,7 @@ Regeln (`public-check/rules.ts`, Tests in `rules.test.ts` mit zur Laufzeit zusam
 
 ## `scripts/screenshots.ts` (WP-68)
 
-Erzeugt die README-Bilder `docs/screenshots/{overview,plan,files}-{light,dark}.png` aus den
+Erzeugt die README-Bilder `docs/screenshots/{overview,plan,review,files,search}-{light,dark}.png` aus den
 Showcase-Demos des Playgrounds (`src/web/playground/showcase/`, erfundene Daten). Kein
 Parallax-Server, kein `claude`: Das Skript startet Vite programmatisch mit der Repo-Konfiguration
 auf einem freien Port (ohne Watcher und HMR) und öffnet `#playground=<demo>&bare` in **headless**

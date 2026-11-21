@@ -3,11 +3,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   hostStateSchema,
   planVersionInfoSchema,
+  reviewCommentsSchema,
   sessionDetailSchema,
   sessionFileSchema,
   sessionSummarySchema,
 } from '@shared/model';
-import { sessionOpSchema } from '@shared/protocol';
+import {
+  type Command,
+  type CommandName,
+  type CommandResult,
+  commandSchema,
+  parseCommandResult,
+  sessionOpSchema,
+} from '@shared/protocol';
 import { sampleSettings } from '@shared/samples';
 import { getSidebarMode, setSidebarMode } from '@web/shell/navigation/sidebar-view';
 import { resetQuietSlotFailures } from '@web/shell/SlotBoundary';
@@ -18,11 +26,18 @@ import { createMemoryTransport } from '@web/state/transport';
 import { PlaygroundApp } from '../PlaygroundApp';
 import { isBareHash } from '../route';
 import { SHOWCASE_NOW } from './clock';
-import { prepareShowcaseHost, SHOWCASE_ALL_ENTRIES, showcaseData, showcasePlanVersions } from './data';
+import {
+  prepareShowcaseHost,
+  SHOWCASE_ALL_ENTRIES,
+  SHOWCASE_ENTRIES,
+  showcaseData,
+  showcasePlanVersions,
+} from './data';
 import { showcaseDemos } from './demos';
 import { SHOWCASE_FILES } from './files';
+import { FILTER_FILES, filterReview } from './review';
 
-// Renders the whole app three times (docs/wp/FLAKES.md: slow when the machine is busy).
+// Renders the whole app five times (docs/wp/FLAKES.md: slow when the machine is busy).
 vi.setConfig({ testTimeout: 60_000 });
 
 const NOW = Date.parse(SHOWCASE_NOW);
@@ -86,6 +101,78 @@ describe('showcase data (WP-68)', () => {
   });
 });
 
+describe('showcase commands (WP-118)', () => {
+  function setup() {
+    const data = showcaseData(NOW, sampleSettings());
+    const host = new FakeHost({ transport: createMemoryTransport(), ...data });
+    const run = <N extends CommandName>(name: N, fields: Record<string, unknown>): CommandResult<N> => {
+      const cmd: Command = commandSchema.parse({ name, ...fields });
+      const ack = data.onCommand(cmd, host);
+      if (ack?.ok !== true) throw new Error(`${name} failed`);
+      const result = parseCommandResult(name, ack.result);
+      if (result === null) throw new Error(`${name}: result does not match its schema`);
+      return result;
+    };
+    return { host, run };
+  }
+
+  it('git: the filter worktree has three changed files and two commits to push, the others a clean tree', () => {
+    const { host, run } = setup();
+    const filter = SHOWCASE_ENTRIES.filter;
+    expect(run('git.status', { entryId: filter }).status).toMatchObject({ ahead: 2, behind: 0 });
+    const diff = run('git.diff', { entryId: filter, scope: 'session' });
+    expect(diff.files.map((file) => file.path)).toEqual(Object.values(FILTER_FILES));
+    expect(diff.base).not.toBeNull();
+    const file = run('git.fileDiff', { entryId: filter, scope: 'session', path: FILTER_FILES.bar });
+    expect(file.file.patch).toContain('parseFilter(useSearchParams())');
+    const other = run('git.status', { entryId: SHOWCASE_ENTRIES.paypal }).status;
+    expect(other).toMatchObject({ ahead: 0, files: [] });
+    expect(run('git.diff', { entryId: SHOWCASE_ENTRIES.paypal, scope: 'session' }).files).toEqual([]);
+    host.dispose();
+  });
+
+  it('review: one sent and one open comment on FilterBar.tsx; add/markSent come back as ops', () => {
+    const comments = filterReview(NOW);
+    expect(reviewCommentsSchema.safeParse(comments).success).toBe(true);
+    expect(comments.map((comment) => [comment.path, comment.state])).toEqual([
+      [FILTER_FILES.bar, 'sent'],
+      [FILTER_FILES.bar, 'open'],
+    ]);
+    const { host, run } = setup();
+    const filter = SHOWCASE_ENTRIES.filter;
+    const added = run('review.add', {
+      entryId: filter,
+      path: FILTER_FILES.lib,
+      side: 'new',
+      line: 3,
+      endLine: 3,
+      quote: '  colors: string[];',
+      text: 'Ok.',
+    });
+    expect(host.view(filter)?.detail.review.map((comment) => comment.id)).toContain(added.comment.id);
+    run('review.markSent', { entryId: filter, commentIds: [added.comment.id] });
+    const sent = host.view(filter)?.detail.review.find((comment) => comment.id === added.comment.id);
+    expect(sent?.state).toBe('sent');
+    host.dispose();
+  });
+
+  it('search: "Zeitzone" finds prompts, answers and summaries of four sessions, archived ones too', () => {
+    const { host, run } = setup();
+    const all = run('search.query', { text: 'zeitzone' });
+    expect(new Set(all.hits.map((hit) => hit.entryId)).size).toBe(4);
+    expect(new Set(all.hits.map((hit) => hit.kind))).toEqual(new Set(['prompt', 'answer', 'summary']));
+    for (const hit of all.hits) {
+      expect(hit.ranges.length, hit.snippet).toBeGreaterThan(0);
+      for (const [from, to] of hit.ranges) expect(hit.snippet.slice(from, to).toLowerCase()).toBe('zeitzone');
+    }
+    const dates = all.hits.map((hit) => Date.parse(hit.at));
+    expect(dates).toEqual([...dates].sort((a, b) => b - a));
+    const active = run('search.query', { text: 'Zeitzone', includeArchived: false });
+    expect(new Set(active.hits.map((hit) => hit.entryId)).size).toBe(2);
+    host.dispose();
+  });
+});
+
 describe('route', () => {
   it('&bare and &bare=1 drop the playground frame, everything else keeps it', () => {
     expect(isBareHash('#playground=showcase-plan&bare')).toBe(true);
@@ -119,7 +206,9 @@ describe('showcase demos', () => {
     expect(showcaseDemos.map((demo) => demo.id)).toEqual([
       'showcase-overview',
       'showcase-plan',
+      'showcase-review',
       'showcase-files',
+      'showcase-search',
     ]);
   });
 
@@ -162,6 +251,37 @@ describe('showcase demos', () => {
     await open('showcase-plan');
     const panel = await sidePanel();
     expect(await within(panel).findByText('Nicht Teil des Plans', {}, { timeout: 15_000 })).toBeTruthy();
+    act(() => {
+      unregisterConnection();
+    });
+  });
+
+  it('review: the changes of the filter worktree with the open comment and the git bar', async () => {
+    await open('showcase-review');
+    const panel = await sidePanel();
+    await waitFor(
+      () => {
+        expect(panel.textContent).toContain('FilterBar.tsx');
+        expect(panel.textContent).toContain('Reihenfolge der Facetten');
+        expect(panel.textContent).toContain('multi-filter');
+      },
+      { timeout: 15_000 },
+    );
+    act(() => {
+      unregisterConnection();
+    });
+  });
+
+  it('search: the dialog with the hits for "Zeitzone"', async () => {
+    await open('showcase-search');
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(
+      () => {
+        expect(dialog.textContent).toContain('GTFS-Import beschleunigen');
+        expect(dialog.textContent).toContain('Erinnerungen für Termine');
+      },
+      { timeout: 15_000 },
+    );
     act(() => {
       unregisterConnection();
     });

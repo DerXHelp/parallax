@@ -12,7 +12,7 @@ import type {
   ToolCallItem,
   TranscriptItem,
 } from '@shared/model';
-import type { SessionSnapshot } from '@shared/protocol';
+import type { Command, SessionSnapshot } from '@shared/protocol';
 import {
   sampleClaudeInstallStatus,
   sampleConversation,
@@ -27,9 +27,17 @@ import {
   sampleSummary,
 } from '@shared/samples';
 import type { StatusFacts } from '@shared/status';
-import type { FakeHost } from '@web/state/fake-host';
-import { SHOWCASE_FILE_PATHS, SHOWCASE_ROOTS } from './files';
+import type { FakeAck, FakeHost } from '@web/state/fake-host';
+import { SHOWCASE_FILE_PATHS, SHOWCASE_FILTER_WORKTREE, SHOWCASE_ROOTS } from './files';
 import { PLAN_FILE, PLAN_V1, PLAN_V2 } from './plans';
+import {
+  FILTER_BRANCH,
+  filterReview,
+  filterWorktree,
+  showcaseGitCommand,
+  showcaseReviewCommand,
+} from './review';
+import { showcaseSearch } from './search';
 import { HAIKU, OPUS, SHOWCASE_DECISION_IDS, SHOWCASE_TRANSCRIPTS, SONNET } from './transcripts';
 
 /**
@@ -59,6 +67,7 @@ type ShowcaseKey = keyof typeof SHOWCASE_ENTRIES;
 
 export const SHOWCASE_SESSION_KEYS = {
   paypal: makeSessionKey(LOCAL_HOST_ID, SHOWCASE_ENTRIES.paypal),
+  filter: makeSessionKey(LOCAL_HOST_ID, SHOWCASE_ENTRIES.filter),
   rateLimit: makeSessionKey(LOCAL_HOST_ID, SHOWCASE_ENTRIES.rateLimit),
   push: makeSessionKey(LOCAL_HOST_ID, SHOWCASE_ENTRIES.push),
 } as const;
@@ -145,24 +154,25 @@ function rows(now: number): Row[] {
     {
       key: 'filter',
       title: 'Produktfilter mit Mehrfachauswahl',
-      cwd: SHOWCASE_ROOTS.shop,
-      minutesAgo: 31,
-      startedHoursAgo: 2.5,
+      // WP-118: a worktree session – grouped under its repository, the row marks the branch.
+      cwd: SHOWCASE_FILTER_WORKTREE,
+      minutesAgo: 12,
+      startedHoursAgo: 2.9,
       model: SONNET,
       modelSetting: 'sonnet',
-      tokens: 48_300,
+      tokens: 57_900,
       maxTokens: 200_000,
-      status: { runState: 'idle', unread: true },
+      status: { runState: 'idle' },
       extra: {
-        gitBranch: 'feature/multi-filter',
+        gitBranch: FILTER_BRANCH,
         permissionMode: 'acceptEdits',
-        lastSeenAt: ago(70),
+        worktree: filterWorktree(now),
         turnSummary: {
           source: 'parallax',
-          text: 'Farbe und Größe sind jetzt Mehrfachauswahl. Die Auswahl steht als ?farbe=blau,grau&groesse=m,l in der URL, Zurück im Browser stellt den Filter wieder her. Alle 14 Filter-Tests sind grün.',
+          text: 'Zwei Tests ergänzt, alles grün.',
           category: null,
           needsAction: false,
-          at: ago(31),
+          at: ago(12),
         },
       },
     },
@@ -203,12 +213,13 @@ function rows(now: number): Row[] {
       modelSetting: 'sonnet',
       tokens: 27_500,
       maxTokens: 200_000,
-      status: { runState: 'idle' },
+      status: { runState: 'idle', unread: true },
       extra: {
         gitBranch: 'fix/flaky-timezone',
+        lastSeenAt: ago(140),
         turnSummary: {
           source: 'parallax',
-          text: 'Ursache: Die Fixture frozen_departure baut ein naives datetime.now(). Läuft die CI kurz vor Mitternacht UTC, liegt die Abfahrt in Berlin schon am nächsten Tag. Die Fixture nutzt jetzt Europe/Berlin – 50 von 50 Läufen grün.',
+          text: 'Ursache: Die Fixture frozen_departure baut ein naives datetime.now() ohne Zeitzone. Läuft die CI kurz vor Mitternacht UTC, liegt die Abfahrt in Berlin schon am nächsten Tag. Die Fixture nutzt jetzt Europe/Berlin – 50 von 50 Läufen grün.',
           category: null,
           needsAction: false,
           at: ago(81),
@@ -281,10 +292,29 @@ function rows(now: number): Row[] {
   ];
 }
 
+/** `summary`: the turn summary the full-text search finds in the archive (WP-118). */
 const ARCHIVED_ROWS = [
-  { title: 'Newsletter-Anmeldung mit Double-Opt-in', cwd: SHOWCASE_ROOTS.shop, days: 6 },
-  { title: 'GTFS-Import beschleunigen', cwd: SHOWCASE_ROOTS.api, days: 9 },
-  { title: 'Spielplan als PDF exportieren', cwd: SHOWCASE_ROOTS.app, days: 14 },
+  {
+    title: 'Newsletter-Anmeldung mit Double-Opt-in',
+    cwd: SHOWCASE_ROOTS.shop,
+    days: 6,
+    summary:
+      'Die Anmeldung schickt jetzt eine Bestätigungsmail; erst der Link darin trägt die Adresse in die Liste ein. Nicht bestätigte Anmeldungen löscht ein nächtlicher Job nach 48 Stunden.',
+  },
+  {
+    title: 'GTFS-Import beschleunigen',
+    cwd: SHOWCASE_ROOTS.api,
+    days: 9,
+    summary:
+      'Der Import löst die Zeitzone der Agentur jetzt einmal je Feed auf statt für jede Fahrt und schreibt per COPY statt mit einzelnen INSERTs – 41 statt 190 Sekunden.',
+  },
+  {
+    title: 'Spielplan als PDF exportieren',
+    cwd: SHOWCASE_ROOTS.app,
+    days: 14,
+    summary:
+      'Der Spielplan lässt sich als PDF teilen. Anstoßzeiten stehen in der Zeitzone des Vereins, Auswärtsspiele zusätzlich mit Treffpunkt und Abfahrt.',
+  },
 ] as const;
 
 function summaries(now: number): SessionSummary[] {
@@ -326,6 +356,13 @@ function summaries(now: number): SessionSummary[] {
       context: null,
       cliVersion: CLI_VERSION,
       lastResultExcerpt: null,
+      turnSummary: {
+        source: 'parallax',
+        text: row.summary,
+        category: null,
+        needsAction: false,
+        at: iso(now - row.days * 24 * HOUR),
+      },
     }),
   );
   return [...live, ...archived];
@@ -451,6 +488,8 @@ function detailPatch(key: ShowcaseKey, now: number): Partial<SessionDetail> {
           toolUseId: 'toolu_01paypal003',
         },
       };
+    case 'filter':
+      return { review: filterReview(now) };
     case 'rateLimit':
       return { latestPlanVersion: 2 };
     case 'push':
@@ -561,8 +600,20 @@ function hostState(now: number, settings: Settings): HostState {
     port: 4711,
     nativeNotifications: true,
     systemIntegration: true,
-    // German, light/dark from the system (the screenshot script emulates the color scheme).
-    settings: { ...settings, language: 'de', theme: 'system', transcriptView: 'compact' },
+    // Git, search and overview (WP-110…116) like every current server.
+    features: { git: true, search: true, overview: true },
+    // German, light/dark from the system (the screenshot script emulates the color scheme); the
+    // infra project is muted (bell in its group header, WP-115). Zoom 85 % (WP-96 made 100 % look
+    // like the former 110 %): every session and the German filter labels fit the sidebar, and the
+    // header keeps its titles at 1440 px even with the side panel open (WP-118).
+    settings: {
+      ...settings,
+      language: 'de',
+      theme: 'system',
+      transcriptView: 'compact',
+      zoom: 85,
+      notifications: { ...settings.notifications, mutedProjects: [SHOWCASE_ROOTS.infra] },
+    },
     profiles: [
       sampleProfileSummary({
         claude: sampleClaudeInstallStatus({ version: CLI_VERSION, checkedAt: iso(now - 3 * HOUR) }),
@@ -589,12 +640,27 @@ export interface ShowcaseData {
   hostState: HostState;
   summaries: SessionSummary[];
   sessions: SessionSnapshot[];
+  /** WP-118: `git.*`, `review.*`, `search.query`, `session.setUnread` (the FakeHost has no fake for them). */
+  onCommand: (cmd: Command, host: FakeHost) => FakeAck | undefined;
 }
 
 /** The scenario data (FakeHost options); schema-valid (playground.test.tsx, showcase.test.tsx). */
 export function showcaseData(now: number, settings: Settings): ShowcaseData {
   const list = summaries(now);
-  return { hostState: hostState(now, settings), summaries: list, sessions: snapshots(now, list) };
+  const sessions = snapshots(now, list);
+  return {
+    hostState: hostState(now, settings),
+    summaries: list,
+    sessions,
+    onCommand: (cmd, host) => {
+      if (cmd.name === 'search.query') return showcaseSearch(cmd, list, sessions);
+      if (cmd.name === 'session.setUnread') {
+        host.patchSummary(cmd.entryId, {}, { unread: cmd.unread });
+        return { ok: true, result: {} };
+      }
+      return showcaseGitCommand(cmd, list, SHOWCASE_ENTRIES.filter) ?? showcaseReviewCommand(cmd, host);
+    },
+  };
 }
 
 // ---- per-host data the FakeHost keeps outside the snapshots ----

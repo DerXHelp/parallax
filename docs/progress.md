@@ -128,7 +128,7 @@ Integrations-Branch `feature/phase-3`. Kritischer Pfad: 50 (Teil 2) → 54 → 5
 | WP-115 | Web: Suche, Filter der Seitenleiste, ungelesen, stumm, Gruppierung nach Repo (Welle 2, `docs/wp/WP-115.md`) | fertig, gemergt `e91a77f` mit Verdrahtung der Slots (`69295e1`) | `feature/ausbau-1` | – | – |
 | WP-116 | Web: Elicitation-Karte (Welle 2, `docs/wp/WP-116.md`) | fertig, gemergt `06e9118` (7859 Tests) | `feature/ausbau-1` | – | – |
 | WP-117 | Integration, E2E, `/code-review` (high), Security-Review, README, CHANGELOG (Koordinator, `docs/wp/WP-117.md`): Verdrahtung der Slots, fünf E2E-Specs `ausbau1-*` (109/109), Fix-Runde CR1–CR10 und SR1–SR5 (`a939a59`) | Fix-Runde und E2E fertig; Integration läuft | `feature/ausbau-1` | `WorktreeRef.removedAt`, `liveWorktree` (CR5, additiv) | WP-118, Merge nach `main` |
-| WP-118 | README aus Nutzersicht und neue Screenshots (Showcase um Worktree, ungelesen, Filter, Demos „Änderungen“ und „Suche“; `docs/wp/WP-118.md`) | in Arbeit | `feature/ausbau-1` | – | – |
+| WP-118 | README aus Nutzersicht und neue Screenshots (Showcase um Worktree, ungelesen, Filter, Demos „Änderungen“ und „Suche“; Entwickler-Infos in `docs/entwickeln.md`; `docs/wp/WP-118.md`) | fertig, gemergt; Bilder nach dem Fix der Umschalter-Breiten neu erzeugt | `feature/ausbau-1` | – | – |
 
 ### Sammelliste Welle 2 (Stand 18.10.2026, nach Merge `d86bf19`: 199 Dateien, 3509 Tests)
 - **WP-40 (Naht, beauftragt):** Slots `SettingsPage`/`PREFERENCES_SLOTS` (WP-38) und `ProfilesSettings` (WP-36)
