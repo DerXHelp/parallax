@@ -811,7 +811,9 @@ describe('startServer: Phase-3 wiring (WP-60)', () => {
       manager.handleCommand({ name: 'file.stat', entryId, path: '\\\\fake-host\\share\\x.txt' }, ctx()),
     ).rejects.toMatchObject({ error: { code: 'PATH_REJECTED' } });
 
-    // FakeBackend → recording opener: logs, starts nothing.
+    // FakeBackend → recording opener: logs, starts nothing. VS Code is a preset on both platforms (the
+    // default Notepad++ opens like the default program on Linux, which refuses `.ts`).
+    await run({ name: 'settings.update', patch: { editor: { preset: 'vscode', executable: null, args: [] } } });
     await run({ name: 'file.open', entryId, path: appPath, target: 'editor', line: 12, col: null });
     await run({ name: 'file.open', entryId, path: project, target: 'explorer', line: null, col: null });
     const opened = lines

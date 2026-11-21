@@ -286,6 +286,8 @@ describe('createFileService – GET /api/file (open)', () => {
 describe('createFileService – file.open (ADR-144; recording opener, nothing starts)', () => {
   it('editor: the checked physical path with line/col and the current editor settings', async () => {
     const s = await setup();
+    // VS Code is a preset on both platforms (Notepad++, the default, opens like `system` on Linux).
+    s.settings.current = settingsSchema.parse({ editor: { preset: 'vscode', executable: null, args: [] } });
     const file = path.join(s.cwd, 'src', 'main.ts');
     expect(await s.run(open(file, 'editor', 7))).toEqual({});
     expect(s.opener.calls).toEqual([

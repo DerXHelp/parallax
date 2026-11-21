@@ -1,6 +1,7 @@
 # Parallax
 
-Lokale Mission-Control-App für viele parallele Claude-Code-Sessions unter Windows: ein Node-Server
+Lokale Mission-Control-App für viele parallele Claude-Code-Sessions unter Windows und Ubuntu
+([Ubuntu](#ubuntu): mit Desktop oder als Server ohne Desktop): ein Node-Server
 auf `127.0.0.1` steuert je Session das installierte `claude` über das Claude Agent SDK, die Web-UI
 läuft als Chrome-App-Fenster. Auf Wunsch steuert ein Parallax auch die Sessions eines anderen Rechners im
 selben Netz ([Mehrere Rechner](#mehrere-rechner)). Status: stabile Releases auf GitHub (siehe
@@ -104,6 +105,56 @@ Für die Nutzung: ein Release von GitHub, ohne Klon, pnpm oder Build.
   sie danach auf die Installation. Den Klon danach löschen oder nicht mehr starten. Ein aktueller Klon
   lässt die Einträge einer Installation in Ruhe; ein alter Klon ohne `git pull` hält sie für fremd und
   warnt nur.
+
+## Ubuntu
+Ubuntu 24.04 LTS und 26.04 LTS (x64) werden unterstützt, mit Desktop oder als Server ohne Desktop, den ein anderer
+Rechner über [Mehrere Rechner](#mehrere-rechner) steuert. Andere Distributionen sollten gehen, ohne Zusage. WSL ist
+kein eigenes Ziel.
+
+- **Voraussetzungen:**
+  - **Node.js 26.9 oder neuer als offizieller Build** von nodejs.org oder über fnm/nvm. Das Node aus den
+    Ubuntu-Paketquellen ist zu alt. Ein minimales Ubuntu braucht dazu `libatomic1` (`sudo apt install libatomic1`).
+  - **`claude`** über den nativen Installer mit Login. Parallax nimmt `~/.local/bin/claude` oder ein `claude` auf
+    dem `PATH`; die npm-Variante (`cli.js`) wird abgelehnt.
+  - Mit Desktop zusätzlich **Google Chrome oder Chromium**. Snap-Chromium geht auch und bekommt ein eigenes Profil.
+- **Installieren:** `parallax-<version>-linux-x64.tar.gz` von der Release-Seite laden, entpacken
+  (`tar -xzf parallax-<version>-linux-x64.tar.gz`) und im entpackten Ordner `sh install.sh` ausführen. Kein
+  `sudo`: das Programm liegt in `~/.local/lib/parallax/versions/<version>`, der Befehl `parallax` in
+  `~/.local/bin`, die Daten getrennt davon in `~/.local/share/parallax` (bzw. `$XDG_DATA_HOME/parallax`). Signatur,
+  Dateiprüfung, Agent SDK und Registry wie unter [Installieren](#installieren); `sh install.sh --help` zeigt alle
+  Optionen. Liegt `~/.local/bin` nicht im `PATH`, sagt der Installer das.
+- **Mit Desktop:** `parallax` öffnet das App-Fenster wie unter Windows. Programmmenü-Eintrag, Autostart (`.desktop`
+  in `~/.config/autostart`) und „Klick öffnet die Session“ (`parallax:`-Links über `xdg-mime`) richten die
+  Einstellungen ein. Benachrichtigungen kommen vom Desktop (`notify-send`). „In externer Konsole öffnen“ und „Shell
+  im Ordner öffnen“ nutzen einen Terminal-Emulator: den aus Einstellungen → „Konsole“, sonst
+  `xdg-terminal-exec`, `x-terminal-emulator` oder einen bekannten (GNOME Terminal, Ptyxis, Konsole, kitty …). Editor
+  und „Im Dateimanager zeigen“ gehen über `xdg-open` und den Dateimanager des Desktops; Notepad++ gibt es unter
+  Linux nicht, die Vorgabe öffnet dann das Standardprogramm.
+- **Terminal:** Das eingebettete Terminal startet die Login-Shell oder bash, zsh, fish, pwsh, soweit installiert.
+  „Im Terminal fortsetzen“ übergibt eine Session an `claude --resume` in diesem Terminal; Parallax holt sie zurück,
+  sobald `claude` dort endet.
+- **Server-Modus ohne Desktop:** `parallax --server` startet den Server im Vordergrund ohne Fenster und ohne
+  Desktop-Aktionen (Konsolenfenster, Editor, Benachrichtigungen). Als Dienst beim Systemstart:
+  `parallax service install` (systemd-Benutzerdienst, Status mit `parallax service status`, entfernen mit
+  `parallax service uninstall`). Damit er ohne Anmeldung läuft, einmal `sudo loginctl enable-linger <benutzer>`.
+- **Vom anderen Rechner steuern:** auf dem Server `parallax remote enable` (Freigeben), dann
+  `parallax remote pair --level manage`. Der Kopplungscode erscheint nur in diesem Terminal. Auf dem steuernden
+  Rechner unter „Andere steuern“ → „Rechner hinzufügen…“ Adresse, Port (Standard 4713) und Code eintragen. Die
+  Stufe **„Verwalten“** erlaubt dem steuernden Rechner zusätzlich Einstellungen und Server dieses Rechners; die
+  Stufe **„Steuern“** nur die Sessions. Hinauf geht die Stufe nur vor Ort (`parallax remote level manage`).
+  Das Terminal eines gekoppelten Rechners läuft über die Kopplung. Weitere Befehle: `parallax remote status`,
+  `disable`, `cancel`, `unpair`. Eine Firewall (`ufw`) muss den Port im lokalen Netz zulassen; Parallax ändert sie
+  nicht.
+- **Schlüssel für „Mehrere Rechner“:** mit Desktop im Schlüsselbund (GNOME Keyring über Secret Service), ohne
+  Desktop ab Ubuntu 26.04 über `systemd-creds --user`. Unter 24.04 ohne Desktop gibt es keinen geschützten Speicher;
+  dort legt Parallax die Schlüssel nur mit `parallax --server --key-store=file` in einer Datei ab, die nur der eigene
+  Benutzer lesen kann. Wer den Datenordner kopiert, hat dann auch die Schlüssel, deshalb warnt Parallax dabei.
+- **Ohne Kopplung, per SSH-Tunnel:** `ssh -L 4711:127.0.0.1:4711 <server>` und auf dem Server
+  `parallax --server --print-url`; die ausgegebene Adresse innerhalb von 60 Sekunden lokal in Chrome öffnen. Der
+  lokale Port muss dem des Servers gleichen, weil Parallax den `Host`-Header prüft.
+- **Aktualisieren und Deinstallieren** wie unter Windows: in der App unter „Updates“ oder mit einer neuen
+  `install.sh`; `parallax --uninstall` entfernt Programm, Befehl, `.desktop`-Einträge, `parallax:`-Eintrag und den
+  Benutzerdienst dieser Installation. Die Daten bleiben.
 
 ## Voraussetzungen
 Für die Entwicklung (Klon, Build, Tests):
@@ -310,12 +361,14 @@ Rechner, mit dessen `claude`, Profilen und Ordnern. **Ab Werk ist das aus.**
 - **Rollen** (Einstellungen → „Mehrere Rechner“): **Aus**, **Freigeben** oder **Andere steuern** – immer nur
   eine. Ein freigebender Rechner ist mit genau einem steuernden gekoppelt; ein steuernder bindet bis zu 16
   freigebende ein.
-- **Voraussetzung:** Node.js 26.9 oder neuer auf allen beteiligten Rechnern (für den Windows-Schlüsselspeicher).
-- **Freigeben:** Beim Einschalten prüft Parallax Port (Standard 4713), Schlüssel, den Windows-Schlüsselspeicher,
-  die Verschlüsselung und die Netzadressen und zeigt das Ergebnis im Abschnitt.
-- **Windows-Firewall:** Parallax prüft und ändert sie nicht; sie wird von Hand eingerichtet: eingehende
-  Verbindungen für Node.js auf dem gewählten Port erlauben, nur in privaten Netzwerken. Windows fragt eventuell
-  beim ersten Start des Fernzugangs nach.
+- **Voraussetzung:** Node.js 26.9 oder neuer auf allen beteiligten Rechnern (für den Schlüsselspeicher). Windows
+  und Ubuntu lassen sich in beide Richtungen koppeln.
+- **Freigeben:** Beim Einschalten prüft Parallax Port (Standard 4713), Schlüssel, den Schlüsselspeicher des
+  Rechners, die Verschlüsselung und die Netzadressen und zeigt das Ergebnis im Abschnitt. Ubuntu ohne Desktop:
+  `parallax remote …` ([Ubuntu](#ubuntu)).
+- **Firewall:** Parallax prüft und ändert sie nicht; sie wird von Hand eingerichtet. Windows: eingehende
+  Verbindungen für Node.js auf dem gewählten Port erlauben, nur in privaten Netzwerken; Windows fragt eventuell
+  beim ersten Start des Fernzugangs nach. Ubuntu mit `ufw`: den Port nur für das lokale Netz freigeben.
 - **Koppeln:** Auf dem freigebenden Rechner „Rechner koppeln“ wählen. Er zeigt Rechnername, Adressen, Port und
   einen einmaligen Kopplungscode, der 10 Minuten gilt und nach drei falschen Eingaben verfällt. Auf dem
   steuernden Rechner unter „Andere steuern“ → „Rechner hinzufügen…“ Adresse, Port, Code und einen Anzeigenamen
@@ -337,8 +390,9 @@ Rechner, mit dessen `claude`, Profilen und Ordnern. **Ab Werk ist das aus.**
 **Sicherheit in Kürze:** nur TLS 1.3 mit hybridem, post-quanten-sicherem Schlüsseltausch (ML-KEM) und
 ML-DSA-Schlüsseln; beide Seiten prüfen den öffentlichen Schlüssel der anderen (gepinnt bei der Kopplung), es gehen
 weder Passwörter noch Tokens über die Leitung. Der Kopplungscode (128 Bit) ist an die konkrete Verbindung
-gebunden. Private Schlüssel liegen nur vom Windows-Schlüsselspeicher (DPAPI, eigenes Benutzerkonto) verschlüsselt im
-Datenordner. Der Fernzugang liefert keine Weboberfläche und nimmt keine Anfragen aus Browsern an; das Fenster auf
+gebunden. Private Schlüssel liegen nur vom Schlüsselspeicher des Rechners verschlüsselt im Datenordner: Windows DPAPI
+(eigenes Benutzerkonto), Ubuntu Secret Service oder `systemd-creds`; nur mit `--key-store=file` (Ubuntu 24.04 ohne
+Desktop) in einer Datei, die nur der eigene Benutzer lesen kann. Der Fernzugang liefert keine Weboberfläche und nimmt keine Anfragen aus Browsern an; das Fenster auf
 dem steuernden Rechner spricht weiter nur mit `127.0.0.1`. Details: `docs/wp/WP-76.md`.
 
 ## Andere Registry / Firmen-Nexus

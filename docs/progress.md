@@ -115,6 +115,10 @@ Integrations-Branch `feature/phase-3`. Kritischer Pfad: 50 (Teil 2) → 54 → 5
 | WP-102 | Contracts für Linux in vier Teilen (`docs/wp/WP-102.md`): 102a Pfad-Regelsätze (`WIN32_PATHS`, `POSIX_PATHS`, `pseudo_fs`), 102b Schemas ohne Windows-Pflicht, Shells, Host-Fähigkeiten, `PROTOCOL_VERSION` 7, 102c Stufe „Verwalten“, Terminal über den Vermittler, Launcher-Endpunkte, Ergänzung WP-76 §B.13, 102d Ownership, 102e Contracts für Welle L2 („In Terminal fortsetzen“, Editor-Vorgaben Linux, Terminal-Emulator, `homeDir`) | fertig (102a–e, `pnpm check` grün) | `feature/linux` | – | WP-103/104 (Welle L1) |
 | WP-103 | Plattformschicht Server für Linux (`docs/wp/WP-103.md`): 103a `lib` (Pfade nach Regelsatz, POSIX-Programmsuche, Prozessbaum über `/proc`, Home-Lock als abstrakter Socket, `platform.ts`, `dataDir.ts`) und `config.ts`; 103b `claude` (Suche `~/.local/bin/claude` mit ELF-Prüfung), Dateien, Host-Befehle, HTTP, Stores, Waisensuche, Fake | fertig, gemergt `57b04fc` (`pnpm check` grün, 7283 Tests) | `feature/linux` | – | Welle L2 |
 | WP-104 | Web je Host-Plattform (`docs/wp/WP-104.md`): Pfadregeln und Fähigkeiten je Host (`state/host-platform.ts`), Windows-Optionen nach `HostState.capabilities`, Shells aus `shell.detect` | fertig, gemergt `b4e6ad7` | `feature/linux` | – | Welle L2 |
+| WP-105 | Terminal unter Linux (`docs/wp/WP-105.md`): Pseudoterminal über `node:ffi` (`terminal/unixPty.ts`, `createPlatformPty`), Shells je Plattform (`shell.detect`), „Im Terminal fortsetzen“ im Web, Terminal für Sessions gekoppelter Rechner über `hostTerminalWsPath` | fertig, gemergt `1018824` (Koordinator: Komposition, Banner „Läuft im Terminal“) | `feature/linux` | – | WP-109 |
+| WP-106 | Desktop-Integration unter Linux (`docs/wp/WP-106.md`): Chrome/Chromium (Snap-Profil), Benachrichtigungen über `notify-send`/D-Bus, `.desktop`-Einträge (Autostart, `parallax:`, Programmmenü), Konsole und Shell-Fenster im Terminal-Emulator, Editor-Vorgaben, Dateimanager, `linuxDesktopCapabilities` | fertig, gemergt `b0afb7f` (Koordinator: Konsolen-Launcher und Fähigkeiten in der Komposition, native Benachrichtigungen unter Linux) | `feature/linux` | – | WP-109 |
+| WP-107 | Server-Modus und Mehrere Rechner unter Linux (`docs/wp/WP-107.md`): `parallax --server`, Benutzerdienst, Schlüsselspeicher Secret Service/`systemd-creds`/Datei 0600 per Opt-in, Stufe „Verwalten“ mit Verwalten-Ansicht, `parallax remote …`, Terminal über den Vermittler | fertig, gemergt `c232069` (Koordinator: Schlüsselspeicher, Terminal, Route, `--desktop=off`, Datenordner 0700, Chrome im Launcher) | `feature/linux` | – | WP-109; Profile/Updates eines anderen Rechners (Slots mit `hostId`) offen |
+| WP-108 | Paket, Installer, Update und CI für Linux (`docs/wp/WP-108.md`): `parallax-<v>-linux-x64.tar.gz` aus dem signierten Ordner, Installer mit `~/.local/bin/parallax`, Update je Plattform (`assets` in `latest.json`), `applyUpdate` mit `/proc`, `ci.yml` (24.04/26.04), Smoke je Plattform | fertig, gemergt `f3ebe63` (Koordinator: Upload `.tar.gz`) | `feature/linux` | – | WP-109 (Update-E2E unter Linux) |
 
 ### Sammelliste Welle 2 (Stand 18.10.2026, nach Merge `d86bf19`: 199 Dateien, 3509 Tests)
 - **WP-40 (Naht, beauftragt):** Slots `SettingsPage`/`PREFERENCES_SLOTS` (WP-38) und `ProfilesSettings` (WP-36)
@@ -419,7 +423,8 @@ Integrations-Branch `feature/phase-3`. Kritischer Pfad: 50 (Teil 2) → 54 → 5
    des Desktops auf echtem Ubuntu). WP-101 (Dockerfile, Spikes im Container) fertig; E1 für 24.04 ohne Desktop
    nachentschieden (Datei 0600 per Opt-in), `systemd-creds --user` auf 26.04 prüft später ein CI-Job. WP-102 fertig
    (Contracts, `PROTOCOL_VERSION` 7, Sicherheitsspezifikation WP-76 §B.13/§B.14, Ownership in CLAUDE.md). Welle L1
-   (WP-103, WP-104) gemergt; 102e (Contracts für L2, „In Terminal fortsetzen“ im Server) fertig. Welle L2 läuft seit
-   21.11.2026 parallel in Worktrees: WP-105 (Terminal), WP-106 (Desktop), WP-107 (Server-Modus, Mehrere Rechner; dazu
-   die Terminal-Verfügbarkeit gekoppelter Rechner in `state/hosts.ts`), WP-108 (Paket, Update, CI). Danach WP-109
-   (Integration; CLAUDE.md-Abschnitt „Plattformen“ vorab geschrieben).
+   (WP-103, WP-104) gemergt; 102e (Contracts für L2, „In Terminal fortsetzen“ im Server) fertig. Welle L2 (WP-105 bis
+   WP-108) am 21.11.2026 gemergt, `pnpm check` grün (7531 Tests). Läuft: WP-109 (Integration) – Linux-Suite im
+   Container, E2E je Plattform, Sicherheits-Review der POSIX-Regeln, `/code-review`, README „Ubuntu“, ADR-246 bis
+   ADR-248 (geschrieben), CLAUDE.md „Plattformen“ (geschrieben). Danach gesammelt beim Nutzer: Push von
+   `feature/linux` (CI), Live-Abnahme auf echtem Ubuntu mit und ohne Desktop, CLI-Profil live unter Linux.

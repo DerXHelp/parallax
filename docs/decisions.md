@@ -3045,3 +3045,48 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   eigene `node_modules`, Store im Volume, Grenzen für CPU und Speicher). systemd-Tests (26.04) in der CI, weil Docker
   Desktop lokal cgroup v1 nutzt; der Desktop wird live auf echtem Ubuntu mit dem Nutzer abgenommen.
 - **Folgen:** Auch Container-Läufe zählen zur Ressourcenregel (ADR-154): ein schwerer Lauf zur Zeit.
+
+## ADR-246 – Linux-Desktop: Pseudoterminal über `node:ffi`, Terminal-Emulator und XDG-Einträge
+- **Datum/WP:** 21.11.2026, WP-100 E5, WP-101 §1.3, WP-105, WP-106.
+- **Entscheidung:**
+  - **Pseudoterminal** (`terminal/unixPty.ts`): `/dev/ptmx`, `unlockpt`, `ptsname_r` und `ioctl(TIOCSWINSZ)` über
+    `node:ffi` (libc), Start mit `setsid -c <programm>` ohne Shell; lesen und schreiben nie blockierend, Schließen
+    beendet die ganze Sitzung (`killProcessTree`). `TERM=xterm-256color`/`COLORTERM=truecolor` immer, Variablen des
+    äußeren Terminals entfernt. Keine Abhängigkeit (`node-pty` bleibt der Rückweg).
+  - **Konsolenfenster** (externe Konsole, Shell-Fenster): ein Terminal-Emulator – Einstellung
+    `console.terminalEmulator`, sonst `xdg-terminal-exec`, `x-terminal-emulator`, bekannte Emulatoren auf `PATH` – mit
+    der Syntax des Emulators, Befehl als Argumente. Die Konsole wird über `/proc` gefunden (`PARALLAX_ENTRY_ID`,
+    `argv[0]`, Startzeit), weil viele Emulatoren das Fenster an einen laufenden Serverprozess abgeben.
+  - **Systemintegration:** `.desktop`-Einträge für Autostart (`$XDG_CONFIG_HOME/autostart`), `parallax:`
+    (`xdg-mime default`, ein fremder Standard bleibt) und das Programmmenü (nur für eine Installation);
+    Benachrichtigungen über `notify-send`, Rückfall D-Bus über `gdbus`; Editor/Standardprogramm über `xdg-open`,
+    „Im Dateimanager zeigen“ über `org.freedesktop.FileManager1`.
+  - **Fähigkeiten** (`linuxDesktopCapabilities`): einmal beim Start ermittelt, nur Werkzeuge aus `/usr/bin`/`/bin`
+    und Emulatoren aus absoluten `PATH`-Einträgen.
+- **Folgen:** Ein geänderter Terminal-Emulator wirkt beim nächsten Klick; die Fähigkeiten („externe Konsole“) erst
+  nach dem nächsten Serverstart. Echter Desktop (Fenster, Benachrichtigung mit Klick, Autostart beim Login) wird live
+  abgenommen (ADR-245).
+
+## ADR-247 – Server-Modus ohne Desktop: `parallax --server`, `--desktop=off`, Benutzerdienst
+- **Datum/WP:** 21.11.2026, WP-100 §5.8, WP-107, WP-109.
+- **Entscheidung:** `parallax --server` startet den Server im Vordergrund ohne Chrome (Ausgabe auf der Konsole,
+  Signale weitergereicht) und gibt ihm `--desktop=off` mit (auch nach einem Update über `serverArgsFor`). Ein Server
+  mit `--desktop=off` meldet keine Desktop-Fähigkeit, hat kein Konsolenfenster (`EXTERNAL_CONSOLE_FAILED
+  {reason: 'unavailable'}`, `SHELL_OPEN_FAILED`) und keine nativen Benachrichtigungen; gesteuert wird er über
+  „Mehrere Rechner“ (ADR-243, ADR-244). `parallax service install|uninstall|status` richtet einen systemd-Benutzerdienst
+  ein (`ExecStart=… --server`, Hinweis auf `loginctl enable-linger`). Der Datenordner ist unter POSIX 0700,
+  Schlüssel-, Kopplungs- und Lock-Dateien 0600.
+- **Begründung:** Ohne Desktop würde jede Desktop-Aktion scheitern oder hängen; ein ausdrücklicher Modus statt einer
+  Vermutung aus `DISPLAY` hält auch eine SSH-Sitzung mit X-Weiterleitung sauber.
+- **Folgen:** `--desktop=auto` (Standard) entscheidet weiter nach der grafischen Sitzung. Der Preflight warnt unter
+  Linux nur, wenn kein Chrome/Chromium da ist.
+
+## ADR-248 – Release je Plattform: ein signierter Ordner, zwei Archive
+- **Datum/WP:** 21.11.2026, WP-100 §5.10, WP-108 (Ergänzung zu ADR-215/220).
+- **Entscheidung:** Der signierte Paketordner ist für beide Plattformen derselbe; daraus entstehen
+  `parallax-<v>-win.zip` (`tar.exe`) und `parallax-<v>-linux-x64.tar.gz` (von `scripts/release/sign.ts` selbst
+  geschrieben: ustar/pax, sortiert, uid/gid 0, feste Zeit, Ausführbit nur für die Shell-Skripte). `latest.json` behält
+  den Windows-Kopf und bekommt optional `assets` je Plattform; ein Linux-Host ohne passendes Asset meldet „kein Update“.
+  Unter Linux entpackt `/usr/bin/tar` nach Prüfung der Liste (nur Dateien und Ordner unter `parallax-<v>/`); danach gilt
+  wie unter Windows die signierte Dateiliste. Smoke je Plattform in `release.yml`, Linux-Gate `ci.yml` (24.04, 26.04).
+- **Folgen:** Ältere Windows-Installationen lesen `latest.json` unverändert. arm64 käme als weiteres Asset dazu.
