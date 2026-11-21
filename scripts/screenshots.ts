@@ -1,5 +1,5 @@
 /**
- * README screenshots (WP-68): the three showcase demos of the playground
+ * README screenshots (WP-68, WP-118): the five showcase demos of the playground
  * (`src/web/playground/showcase/`) in German, light and dark, as
  * `docs/screenshots/<name>-<light|dark>.png`. No Parallax server, no `claude`: the playground runs
  * on the Vite dev server only (FakeHost over the in-memory transport, `#playground=<id>&bare`).
@@ -35,7 +35,9 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const SHOTS = {
   overview: 'showcase-overview',
   plan: 'showcase-plan',
+  review: 'showcase-review',
   files: 'showcase-files',
+  search: 'showcase-search',
 } as const;
 type ShotName = keyof typeof SHOTS;
 const THEMES = ['light', 'dark'] as const;

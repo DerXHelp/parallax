@@ -27,6 +27,12 @@ export const SHOWCASE_ROOTS = {
   infra: 'D:\\dev\\infra',
 } as const;
 
+/**
+ * WP-118: the product-filter session works in a worktree of its own, where Parallax (like
+ * `claude --worktree`) puts them: `<repo>\.claude\worktrees\<branch, / becomes ->`.
+ */
+export const SHOWCASE_FILTER_WORKTREE = `${SHOWCASE_ROOTS.shop}\\.claude\\worktrees\\multi-filter`;
+
 const lines = (...rows: string[]): string => `${rows.join('\n')}\n`;
 
 // ---- nordlicht-shop (Next.js, TypeScript) ----
