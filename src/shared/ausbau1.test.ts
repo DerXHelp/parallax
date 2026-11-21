@@ -9,6 +9,7 @@ import {
   entrySchema,
   hostStateSchema,
   isValidGitRefName,
+  liveWorktree,
   notificationSettingsSchema,
   projectSettingsSchema,
   reviewCommentSchema,
@@ -16,6 +17,7 @@ import {
   sessionSummarySchema,
   settingsPatchSchema,
   settingsSchema,
+  worktreeRefSchema,
 } from './model';
 import { commandSchema, isRemoteAllowedCommand, sessionOpSchema } from './protocol';
 import {
@@ -29,6 +31,7 @@ import {
   sampleSessionSnapshot,
   sampleStatusFacts,
   sampleSummary,
+  sampleWorktreeRef,
 } from './samples';
 import { deriveDisplayStatus, statusFactsSchema } from './status';
 import { applySessionOp, viewStateFromSnapshot } from './sync';
@@ -92,6 +95,15 @@ describe('older files and hosts load with defaults', () => {
   it('an entry without worktree and baseSha', () => {
     const { worktree: _w, baseSha: _b, ...old } = sampleEntry();
     expect(entrySchema.parse(old)).toEqual(sampleEntry());
+  });
+
+  it('CR5 (WP-117): a worktree record without removedAt is a live one; liveWorktree hides a removed one', () => {
+    const { removedAt: _r, ...old } = sampleWorktreeRef();
+    expect(worktreeRefSchema.parse(old)).toEqual(sampleWorktreeRef());
+    expect(liveWorktree(sampleWorktreeRef())).toEqual(sampleWorktreeRef());
+    expect(liveWorktree(sampleWorktreeRef({ removedAt: '2026-10-15T09:00:00.000Z' }))).toBeNull();
+    expect(liveWorktree(null)).toBeNull();
+    expect(liveWorktree(undefined)).toBeNull();
   });
 
   it('a summary and a detail of an older host', () => {

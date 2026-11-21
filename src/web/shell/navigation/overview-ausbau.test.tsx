@@ -333,6 +333,45 @@ describe('unread, mute, worktrees (WP-115)', () => {
       ]);
     });
   });
+
+  it('CR5: a removed worktree keeps the session in its repository group, without branch label or cleanup', async () => {
+    const scenario = await start();
+    const user = userEvent.setup();
+    const worktree = sampleWorktreeRef({
+      repoRoot: 'D:\\work\\db\\migrations',
+      path: 'D:\\work\\db\\migrations\\.claude\\worktrees\\feature-login',
+      removedAt: '2026-10-15T09:00:00.000Z',
+    });
+    act(() => {
+      scenario.host.patchSummary(NAVIGATION_ENTRIES.redirect, {
+        cwd: worktree.path,
+        worktree,
+        gitBranch: null,
+      });
+      setSidebarMode('grouped');
+    });
+    const group = await within(nav()).findByRole('group', { name: 'Project D:\\work\\db\\migrations' });
+    await waitFor(() => {
+      expect(within(group).queryByText('Fix the login redirect')).not.toBeNull();
+    });
+    expect(row(KEYS.redirect).querySelector('[data-slot="row-branch"]')).toBeNull();
+
+    const cleanup: ShellRequestOf<'worktree.cleanup'>[] = [];
+    cleanups.push(
+      registerShellRequestHandler('worktree.cleanup', (request) => {
+        cleanup.push(request);
+        return true;
+      }),
+    );
+    const menu = await openContextMenu(KEYS.redirect);
+    await user.click(within(menu).getByRole('menuitem', { name: 'Archive' }));
+    await waitFor(() => {
+      expect(commandsOf(scenario, 'session.setArchived')).toEqual([
+        { name: 'session.setArchived', entryId: NAVIGATION_ENTRIES.redirect, archived: true },
+      ]);
+    });
+    expect(cleanup).toEqual([]);
+  });
 });
 
 describe('quick switcher: "Search in contents" (WP-115)', () => {

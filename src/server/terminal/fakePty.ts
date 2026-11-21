@@ -19,6 +19,15 @@
  */
 import path from 'node:path';
 import type { PtyFactory, PtyProcess, PtySpawnOptions } from './ports';
+import { POSIX_STOP_ON_ERROR, POWERSHELL_LINE_CHECK, POWERSHELL_STOP_ON_ERROR } from './shells';
+
+/** The lines `scriptLaunch` adds around a project command (CR6) – the fake stops at a failure anyway. */
+const SCRIPT_WRAPPER_LINES: ReadonlySet<string> = new Set([
+  POSIX_STOP_ON_ERROR,
+  POWERSHELL_STOP_ON_ERROR,
+  POWERSHELL_LINE_CHECK,
+  'or exit $status',
+]);
 
 /** Most lines of one `flood`. */
 export const FAKE_FLOOD_MAX_LINES = 100_000;
@@ -179,7 +188,10 @@ function createFakePty(options: PtySpawnOptions): FakePtyProcess {
   if (script === null) {
     out(prompt);
   } else {
-    for (const part of script.split('&&')) {
+    // Lines (or `&&` parts) one after the other; the stop-on-error lines of `scriptLaunch` (CR6) are
+    // what the fake does anyway.
+    for (const part of script.split(/&&|\n/u)) {
+      if (SCRIPT_WRAPPER_LINES.has(part.trim())) continue;
       if (!run(part)) code = 1;
       if (exited()) break;
     }

@@ -13,6 +13,16 @@
  *   `-c core.fsmonitor=false` and `GIT_OPTIONAL_LOCKS=0`: the configuration of a foreign repository must
  *   not start a program on a mere read, and a read never takes the index lock. Writing calls (commit,
  *   push, worktree add/remove, branch switch) run the repository's hooks like a terminal would.
+ * - Security review WP-117 (SR1): reading calls that read files of the working tree (`status`, `diff`
+ *   against it – `GitCall.readsWorktree`) would start the `clean`/`smudge`/`process` filters of the
+ *   repository's own configuration. Before such a call `git config --show-scope -z --get-regexp
+ *   ^filter\.` lists the filters; every driver set in the scopes `local`/`worktree` (unless the same
+ *   value comes from `system`/`global`, e.g. git-lfs installed locally and globally) is switched off with
+ *   `-c filter.<name>.clean= -c filter.<name>.smudge= -c filter.<name>.process= -c
+ *   filter.<name>.required=false`. Filters of `system`/`global` (git-lfs) stay. A driver name `-c`
+ *   cannot express, or a failing lookup, fails the call (GIT_FAILED). The lookup is shared for
+ *   FILTER_CACHE_MS per folder. Diffs never run textconv or external diff tools (`--no-textconv
+ *   --no-ext-diff`, repo.ts).
  * - Limits: reading 10 s, `worktree add`/`push`/commit 120 s; output per stream capped (`maxOutputBytes`,
  *   `truncated` tells when the cap was hit).
  * - Errors: no `git` → GIT_NOT_FOUND; timeout → GIT_FAILED {op, detail: 'timeout'}; "not a git
@@ -37,6 +47,13 @@ export const GIT_DEFAULT_OUTPUT_BYTES = 8 * 1024 * 1024;
 export const GIT_DETAIL_CHARS = 300;
 /** How long a resolved `git` is reused for the same PATH value. */
 const RESOLVE_CACHE_MS = 60_000;
+/** SR1: how long the filter lookup of one folder is reused (a status and a diff of one refresh). */
+export const FILTER_CACHE_MS = 2_000;
+
+/** SR1: config scopes a repository brings along (its own `.git/config`, `config.worktree`, includes). */
+const REPO_SCOPES: ReadonlySet<string> = new Set(['local', 'worktree']);
+/** SR1: the filter keys that start a program. */
+const FILTER_COMMANDS = ['clean', 'smudge', 'process'] as const;
 
 /** Variables that would point git at another repository than the one of `cwd`. */
 const REPO_REDIRECT_VARS = [
@@ -65,6 +82,11 @@ export interface GitCall {
   timeoutMs?: number;
   /** Per stream; default GIT_DEFAULT_OUTPUT_BYTES. */
   maxOutputBytes?: number;
+  /**
+   * SR1: a reading call that reads files of the working tree (`status`, `diff` against it): the
+   * repository's own filters are switched off (see the file comment). Ignored for writes.
+   */
+  readsWorktree?: boolean;
 }
 
 export interface GitResult {
@@ -129,9 +151,64 @@ export function gitEnvironment(
   return env;
 }
 
-/** The full argument list: `--no-pager`, for reads `-c core.fsmonitor=false`, then the call's. */
-export function gitArguments(args: readonly string[], mode: GitMode): string[] {
-  return mode === 'read' ? ['--no-pager', '-c', 'core.fsmonitor=false', ...args] : ['--no-pager', ...args];
+/**
+ * The full argument list: `--no-pager`, for reads `-c core.fsmonitor=false` and the filter overrides
+ * (SR1, `filterOverrides`), then the call's.
+ */
+export function gitArguments(
+  args: readonly string[],
+  mode: GitMode,
+  overrides: readonly string[] = [],
+): string[] {
+  return mode === 'read'
+    ? ['--no-pager', '-c', 'core.fsmonitor=false', ...overrides, ...args]
+    : ['--no-pager', ...args];
+}
+
+/** SR1: the arguments of the filter lookup (`<scope>\0<key>\n<value>\0` per entry). */
+export const FILTER_LOOKUP_ARGS = ['config', '--show-scope', '-z', '--get-regexp', '^filter\\.'] as const;
+
+/**
+ * SR1: the `-c` arguments that switch off every filter driver the repository's own configuration
+ * (scopes `local`/`worktree`) sets – unless `system`/`global` give the same command for the same key.
+ * null = a driver name `-c` cannot carry (`=`, control characters): the caller fails closed.
+ */
+export function filterOverrides(lookup: string): string[] | null {
+  const records = lookup.split('\0');
+  const trusted = new Map<string, Set<string>>();
+  const repoEntries: { key: string; name: string; value: string }[] = [];
+  for (let i = 0; i + 1 < records.length; i += 2) {
+    const scope = records[i] ?? '';
+    const record = records[i + 1] ?? '';
+    const newline = record.indexOf('\n');
+    const key = newline < 0 ? record : record.slice(0, newline);
+    // A key without `=` is boolean true; it names no command.
+    const value = newline < 0 ? '' : record.slice(newline + 1);
+    const last = key.lastIndexOf('.');
+    if (!key.startsWith('filter.') || last <= 'filter.'.length) continue;
+    const variable = key.slice(last + 1);
+    if (!(FILTER_COMMANDS as readonly string[]).includes(variable)) continue;
+    if (REPO_SCOPES.has(scope)) {
+      repoEntries.push({ key, name: key.slice('filter.'.length, last), value });
+    } else {
+      const values = trusted.get(key) ?? new Set<string>();
+      values.add(value);
+      trusted.set(key, values);
+    }
+  }
+  const names = new Set<string>();
+  for (const entry of repoEntries) {
+    if (trusted.get(entry.key)?.has(entry.value) === true) continue;
+    names.add(entry.name);
+  }
+  const args: string[] = [];
+  for (const name of names) {
+    // eslint-disable-next-line no-control-regex -- control characters are exactly what is refused
+    if (name === '' || /[=\u0000-\u001f\u007f]/.test(name)) return null;
+    for (const variable of FILTER_COMMANDS) args.push('-c', `filter.${name}.${variable}=`);
+    args.push('-c', `filter.${name}.required=false`);
+  }
+  return args;
 }
 
 /** GIT_FAILED for a call that ended with an exit code ≠ 0 (or NOT_A_GIT_REPO). */
@@ -166,13 +243,56 @@ export function createGitRunner(deps: GitRunnerDeps = {}): GitRunner {
     return git;
   };
 
+  const filterCache = new Map<string, { at: number; overrides: Promise<string[]> }>();
+
+  /** SR1: the filter overrides of `call.cwd` (shared for FILTER_CACHE_MS); throws GIT_FAILED. */
+  const filtersOf = (call: GitCall): Promise<string[]> => {
+    const key = `${call.cwd}\0${getEnvVar(call.env, 'PATH', platform) ?? ''}`;
+    const hit = filterCache.get(key);
+    if (hit !== undefined && now() - hit.at < FILTER_CACHE_MS) return hit.overrides;
+    const overrides = (async () => {
+      const lookup = await runGit({
+        cwd: call.cwd,
+        env: call.env,
+        args: FILTER_LOOKUP_ARGS,
+        op: call.op,
+        mode: 'read',
+        maxOutputBytes: 256 * 1024,
+      });
+      // 1 = no filter configured at all.
+      if (lookup.exitCode === 1) return [];
+      if (lookup.exitCode !== 0) {
+        if (isNotARepoMessage(lookup.stderr)) return [];
+        throw new CommandError(
+          makeError('GIT_FAILED', { op: call.op, detail: 'filter configuration unreadable' }),
+        );
+      }
+      const parsed = lookup.truncated ? null : filterOverrides(lookup.stdout);
+      if (parsed === null) {
+        logger.warn({ op: call.op }, 'git call refused: a filter of the repository cannot be switched off');
+        throw new CommandError(
+          makeError('GIT_FAILED', { op: call.op, detail: 'unsafe filter configuration' }),
+        );
+      }
+      return parsed;
+    })();
+    filterCache.set(key, { at: now(), overrides });
+    if (filterCache.size > 64) filterCache.delete(filterCache.keys().next().value ?? key);
+    // A failed lookup is never reused.
+    overrides.catch(() => {
+      if (filterCache.get(key)?.overrides === overrides) filterCache.delete(key);
+    });
+    return overrides;
+  };
+
   const runGit = async (call: GitCall): Promise<GitResult> => {
     const git = await executable(call.env);
     if (git === null) throw new CommandError(makeError('GIT_NOT_FOUND'));
     const max = call.maxOutputBytes ?? GIT_DEFAULT_OUTPUT_BYTES;
+    const overrides = call.mode === 'read' && call.readsWorktree === true ? await filtersOf(call) : [];
     let result;
     try {
-      result = await run(git, gitArguments(call.args, call.mode), {
+      result = await run(git, gitArguments(call.args, call.mode, overrides), {
         cwd: call.cwd,
         env: gitEnvironment(call.env, call.mode, platform),
         timeoutMs: call.timeoutMs ?? (call.mode === 'read' ? GIT_READ_TIMEOUT_MS : GIT_LONG_TIMEOUT_MS),

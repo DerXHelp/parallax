@@ -20,6 +20,7 @@ import { CommandError } from '../sync/ports';
 import { ConPtyError } from './conpty';
 import { createFakePtyFactory, type FakePtyProcess } from './fakePty';
 import { POLL_ACTIVE_MS, POLL_IDLE_MS } from './poller';
+import { NO_CWD_EXE_SEARCH, POSIX_STOP_ON_ERROR } from './shells';
 import type {
   PtyFactory,
   TerminalConnection,
@@ -1022,6 +1023,8 @@ describe('createTerminalService – runScript (WP-111, ADR-251)', () => {
       PATH: 'C:\\Windows',
       EXTRA: '1',
       PARALLAX_WORKTREE_PORT: '41000',
+      // SR3 (security review WP-117): no program from the working folder by its bare name.
+      [NO_CWD_EXE_SEARCH]: '1',
     });
     const info = client.sink.of('terminals').at(-1)?.items[0];
     expect(info).toMatchObject({
@@ -1057,7 +1060,8 @@ describe('createTerminalService – runScript (WP-111, ADR-251)', () => {
     entries.set(ENTRY, { cwd: CWD, archived: true });
     const result = await service.runScript(ENTRY, { ...SPEC, shell: 'bash' });
     expect(result.kind).toBe('started');
-    expect(fake.spawned.at(-1)?.options.args).toEqual(['-l', '-c', 'echo ready']);
+    // CR6 (code review WP-117): the first failing line ends the script.
+    expect(fake.spawned.at(-1)?.options.args).toEqual(['-l', '-c', `${POSIX_STOP_ON_ERROR}\necho ready`]);
     expect(await service.runScript(sampleId('en', 9), SPEC)).toEqual({
       kind: 'failed',
       error: makeError('ENTRY_NOT_FOUND'),

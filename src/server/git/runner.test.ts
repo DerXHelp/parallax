@@ -5,7 +5,10 @@ import {
   GIT_DETAIL_CHARS,
   GIT_LONG_TIMEOUT_MS,
   GIT_READ_TIMEOUT_MS,
+  FILTER_CACHE_MS,
+  FILTER_LOOKUP_ARGS,
   createGitRunner,
+  filterOverrides,
   gitArguments,
   gitEnvironment,
   gitFailure,
@@ -180,5 +183,110 @@ describe('pure parts of the runner', () => {
       code: 'GIT_FAILED',
       params: { op: 'status' },
     });
+  });
+});
+
+describe('SR1 (security review WP-117): filters of the repository on reading calls', () => {
+  const lookup = (...entries: [scope: string, key: string, value: string][]): string =>
+    entries.map(([scope, key, value]) => `${scope}\0${key}\n${value}\0`).join('');
+  const off = (name: string): string[] => [
+    '-c',
+    `filter.${name}.clean=`,
+    '-c',
+    `filter.${name}.smudge=`,
+    '-c',
+    `filter.${name}.process=`,
+    '-c',
+    `filter.${name}.required=false`,
+  ];
+
+  it('filterOverrides: the repository scopes are switched off, system/global stay', () => {
+    expect(filterOverrides('')).toEqual([]);
+    expect(
+      filterOverrides(
+        lookup(
+          ['global', 'filter.lfs.clean', 'git-lfs clean -- %f'],
+          ['global', 'filter.lfs.process', 'git-lfs filter-process'],
+          ['local', 'filter.evil.clean', 'sh -c "touch marker"'],
+          ['worktree', 'filter.a.b.smudge', 'other'],
+          ['local', 'filter.evil.required', 'true'],
+        ),
+      ),
+    ).toEqual([...off('evil'), ...off('a.b')]);
+    // git-lfs installed locally too (`git lfs install --local`): the same command as global stays.
+    expect(
+      filterOverrides(
+        lookup(
+          ['global', 'filter.lfs.clean', 'git-lfs clean -- %f'],
+          ['local', 'filter.lfs.clean', 'git-lfs clean -- %f'],
+        ),
+      ),
+    ).toEqual([]);
+    // ... another command under the trusted name does not.
+    expect(
+      filterOverrides(
+        lookup(['system', 'filter.lfs.clean', 'git-lfs clean -- %f'], ['local', 'filter.lfs.clean', 'evil']),
+      ),
+    ).toEqual(off('lfs'));
+    // A name `-c` cannot carry fails closed.
+    expect(filterOverrides(lookup(['local', 'filter.a=b.clean', 'x']))).toBeNull();
+    expect(filterOverrides(lookup(['local', 'filter.a\u0001.clean', 'x']))).toBeNull();
+  });
+
+  it('the runner looks the filters up for calls that read the working tree only, and reuses the lookup', async () => {
+    let clock = 1_000;
+    const runFile = vi.fn<RunFileFn>((_file, args) =>
+      Promise.resolve(
+        args.includes('--show-scope')
+          ? result({ stdout: lookup(['local', 'filter.evil.clean', 'touch marker']) })
+          : result({ stdout: 'ok' }),
+      ),
+    );
+    const runner = createGitRunner({ resolve: () => Promise.resolve(GIT), runFile, now: () => clock });
+    await runner.run(call({ args: ['rev-parse', 'HEAD'] }));
+    await runner.run(call({ mode: 'write', args: ['add', '-A'], readsWorktree: true }));
+    expect(runFile.mock.calls.map((c) => c[1])).toEqual([
+      ['--no-pager', '-c', 'core.fsmonitor=false', 'rev-parse', 'HEAD'],
+      ['--no-pager', 'add', '-A'],
+    ]);
+    runFile.mockClear();
+    await runner.run(call({ args: ['status'], readsWorktree: true }));
+    await runner.run(call({ args: ['diff'], readsWorktree: true }));
+    expect(runFile.mock.calls.map((c) => c[1])).toEqual([
+      ['--no-pager', '-c', 'core.fsmonitor=false', ...FILTER_LOOKUP_ARGS],
+      ['--no-pager', '-c', 'core.fsmonitor=false', ...off('evil'), 'status'],
+      ['--no-pager', '-c', 'core.fsmonitor=false', ...off('evil'), 'diff'],
+    ]);
+    clock += FILTER_CACHE_MS;
+    await runner.run(call({ args: ['status'], readsWorktree: true }));
+    expect(runFile.mock.calls.filter((c) => c[1].includes('--show-scope'))).toHaveLength(2);
+  });
+
+  it('no filter at all (exit 1) or no repository → no override; a failing lookup or an odd name refuses the call', async () => {
+    const answers: RunFileResult[] = [];
+    const runFile = vi.fn<RunFileFn>((_file, args) =>
+      Promise.resolve(
+        args.includes('--show-scope') ? (answers.shift() ?? result()) : result({ stdout: 'ok' }),
+      ),
+    );
+    const runner = createGitRunner({ resolve: () => Promise.resolve(GIT), runFile });
+    answers.push(result({ exitCode: 1 }));
+    expect((await runner.run(call({ cwd: 'D:\\a', readsWorktree: true }))).stdout).toBe('ok');
+    answers.push(result({ exitCode: 128, stderr: 'fatal: not a git repository' }));
+    expect((await runner.run(call({ cwd: 'D:\\b', readsWorktree: true }))).stdout).toBe('ok');
+    answers.push(result({ exitCode: 129, stderr: 'error: unknown option' }));
+    expect((await errorOf(runner.run(call({ cwd: 'D:\\c', readsWorktree: true })))).error).toEqual({
+      code: 'GIT_FAILED',
+      params: { op: 'status', detail: 'filter configuration unreadable' },
+    });
+    answers.push(result({ stdout: lookup(['local', 'filter.a=b.clean', 'x']) }));
+    expect((await errorOf(runner.run(call({ cwd: 'D:\\d', readsWorktree: true })))).error).toEqual({
+      code: 'GIT_FAILED',
+      params: { op: 'status', detail: 'unsafe filter configuration' },
+    });
+    // A failed lookup is not reused: the next call asks again.
+    answers.push(result({ exitCode: 1 }));
+    expect((await runner.run(call({ cwd: 'D:\\d', readsWorktree: true }))).stdout).toBe('ok');
+    expect(runFile.mock.calls.filter((c) => !c[1].includes('--show-scope'))).toHaveLength(3);
   });
 });

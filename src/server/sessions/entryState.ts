@@ -363,7 +363,7 @@ export class EntryState {
   readonly lifecycle: Serial = createSerial();
   mirror: SessionViewState | null = null;
   loading: { buffer: SessionOp[]; promise: Promise<SessionViewState> } | null = null;
-  runtime: SessionRuntime | null = null;
+  private currentRuntime: SessionRuntime | null = null;
   phase: EntryPhase = 'dormant';
   /** Title of the own pending `/rename X` (its echo becomes `custom`, or `ai` - pendingRenameSource). */
   pendingRename: string | null = null;
@@ -395,9 +395,8 @@ export class EntryState {
    * running (R2-02): a start then shows `starting` while it waits.
    */
   orphanPending = false;
-  viewedByVisibleClient = false;
-  /** Hub subscribers (onSubscribersChanged). */
-  subscribers = 0;
+  private viewed = false;
+  private subscriberCount = 0;
   lastSdkMaxTokens: number | null = null;
   /** Env of the last launch (git lookups of a dormant entry need its PATH, R1-04). */
   lastEnv: Record<string, string> | null = null;
@@ -412,12 +411,7 @@ export class EntryState {
   continueTimer: TimerHandle | null = null;
   /** ADR-147: "implement with a fresh context" runs (every further decision.respond → SESSION_BUSY). */
   freshContextRunning = false;
-  /**
-   * WP-63: removed from Parallax (`session.remove`) – nothing is published or persisted any more
-   * (a late summary would put the entry back into the registry), every command answers
-   * ENTRY_NOT_FOUND.
-   */
-  removed = false;
+  private removedFlag = false;
   /** WP-64: live Remote Control state of the running process (off without one); see remoteControl.ts. */
   remote: RemoteState = REMOTE_OFF;
   /** WP-64: a new entry follows Claude's own `remoteControlAtStartup` (read after its first readiness). */
@@ -506,6 +500,52 @@ export class EntryState {
 
   get id(): EntryId {
     return this.entry.id;
+  }
+
+  // CR2 (code review WP-117): the four facts `wantsHeadWatch` reads are accessors – the moment one of
+  // them makes the watch pointless (no process, not shown, archived, removed), it is released, so the
+  // limit GIT_HEAD_WATCH_MAX never fills up with entries nobody looks at.
+
+  get runtime(): SessionRuntime | null {
+    return this.currentRuntime;
+  }
+
+  set runtime(value: SessionRuntime | null) {
+    this.currentRuntime = value;
+    if (value === null) this.releaseUnwantedHeadWatch();
+  }
+
+  get viewedByVisibleClient(): boolean {
+    return this.viewed;
+  }
+
+  set viewedByVisibleClient(value: boolean) {
+    this.viewed = value;
+    if (!value) this.releaseUnwantedHeadWatch();
+  }
+
+  /** Hub subscribers (onSubscribersChanged). */
+  get subscribers(): number {
+    return this.subscriberCount;
+  }
+
+  set subscribers(value: number) {
+    this.subscriberCount = value;
+    if (value === 0) this.releaseUnwantedHeadWatch();
+  }
+
+  /**
+   * WP-63: removed from Parallax (`session.remove`) – nothing is published or persisted any more
+   * (a late summary would put the entry back into the registry), every command answers
+   * ENTRY_NOT_FOUND.
+   */
+  get removed(): boolean {
+    return this.removedFlag;
+  }
+
+  set removed(value: boolean) {
+    this.removedFlag = value;
+    if (value) this.releaseUnwantedHeadWatch();
   }
 
   conversation(): Conversation {
@@ -891,8 +931,11 @@ export class EntryState {
   patch(change: (entry: Entry) => Entry): void {
     const next = change(this.entry);
     if (next === this.entry) return;
+    const archived = next.archived && !this.entry.archived;
     this.entry = next;
     this.touch();
+    // CR2: an archived entry needs no HEAD watch.
+    if (archived) this.releaseUnwantedHeadWatch();
   }
 
   setLastError(error: ErrorPayload | null): void {
@@ -1320,7 +1363,9 @@ export class EntryState {
     if (this.headWatch !== null || this.headWatchStarting) return;
     this.headWatchStarting = true;
     const cwd = this.entry.cwd;
-    void watchGitHead(cwd, env, () => {
+    // Like `gitEnv`: without a PATH (a launch spec without one) the server's neutral environment.
+    const watchEnv = getEnvVar(env, 'PATH') !== undefined ? env : { ...guiEnvironment(), ...env };
+    void watchGitHead(cwd, watchEnv, () => {
       if (!this.wantsHeadWatch() || this.entry.cwd !== cwd) {
         this.stopHeadWatch();
         return;
@@ -1342,6 +1387,16 @@ export class EntryState {
   stopHeadWatch(): void {
     this.headWatch?.close();
     this.headWatch = null;
+  }
+
+  /** CR2: stops the HEAD watch once it is no longer wanted (a starting one checks on its own). */
+  private releaseUnwantedHeadWatch(): void {
+    if (this.headWatch !== null && !this.wantsHeadWatch()) this.stopHeadWatch();
+  }
+
+  /** WP-111/CR2: a HEAD watch runs for this entry (tests). */
+  get watchingHead(): boolean {
+    return this.headWatch !== null;
   }
 
   /**

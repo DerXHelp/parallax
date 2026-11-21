@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { ErrorPayload } from '@shared/errors';
-import type { ReviewComment } from '@shared/model';
+import { liveWorktree, type ReviewComment } from '@shared/model';
 import { useI18n } from '@web/i18n';
 import { useSummarySelector } from '@web/state/hooks';
 import { useSessionFeature } from '@web/state/hosts';
@@ -77,7 +77,11 @@ function OtherComments({ sessionKey, comments }: { sessionKey: string; comments:
 function ChangesContent({ sessionKey }: { sessionKey: string }) {
   const { t, tError } = useI18n();
   const view = useChangesView(sessionKey);
-  const worktree = useSummarySelector(sessionKey, (summary) => summary.worktree !== null, false);
+  const worktree = useSummarySelector(
+    sessionKey,
+    (summary) => liveWorktree(summary.worktree) !== null,
+    false,
+  );
   const onlySessionFiles = !worktree && view.onlySessionFiles;
   const data = useChangesData(sessionKey, view.scope, onlySessionFiles);
   const comments = useReviewComments(sessionKey);

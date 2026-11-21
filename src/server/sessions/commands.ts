@@ -21,10 +21,13 @@
  * WP-112) and `session.create` with `worktree` (worktrees.ts, WP-111). WP-111: the git service's
  * commands `git.*`/`worktree.*` (worktrees.ts → git/commands.ts) and `review.*` (review.ts) are host
  * commands the engine answers itself (they need its entries); `session.create` records the diff base
- * (`Entry.baseSha` = HEAD, ADR-253) and creates a worktree asynchronously (state `worktreeSetup`, the
- * start prompt waits for the setup); start commands answer SESSION_BUSY while it runs, "Start anyway"
- * (`session.resume`/`sendPrompt` after a failed setup) releases the held prompt.
+ * (`Entry.baseSha` = HEAD, ADR-253) and creates a worktree (CR10: `git worktree add` and the files of
+ * the start prompt before the entry – a failure is the command's error; then asynchronously
+ * `.worktreeinclude` and the setup, state `worktreeSetup`, the start prompt waits for the setup); start
+ * commands answer SESSION_BUSY while it runs, "Start anyway" (`session.resume`/`sendPrompt` after a
+ * failed setup) releases the held prompt.
  */
+import { rm, rmdir } from 'node:fs/promises';
 import { LIMITS, type ClientId, type ProfileId } from '@shared/common';
 import { makeError } from '@shared/errors';
 import {
@@ -37,7 +40,7 @@ import {
   type SettingsPatch,
 } from '@shared/model';
 import type { PathRules } from '@shared/paths';
-import { HOST_PATH_RULES } from '../lib/paths';
+import { HOST_PATH_RULES, pathModuleOf } from '../lib/paths';
 import {
   isHostCommand,
   type Command,
@@ -76,6 +79,7 @@ import { handleReviewCommand, isReviewCommand } from './review';
 import { regenerateTitle } from './titles';
 import { setUnread } from './unread';
 import {
+  addSessionWorktree,
   createSessionWorktree,
   finishSessionWorktree,
   handleGitCommand,
@@ -254,6 +258,25 @@ async function createSession(
     throw error;
   }
   const worktree = plan?.ref ?? null;
+  const prompt = cmd.prompt;
+  // CR10 (code review WP-117): a new worktree exists before its entry. The files of the start prompt
+  // first (cheap to drop again), then `git worktree add`; either failure is the error of this command
+  // and leaves no entry (and no entry whose folder is missing).
+  let held: PromptAttachments | null = null;
+  if (plan?.create === true) {
+    try {
+      if (prompt !== undefined)
+        held = await materializeAttachments(core.stores.attachments, entryId, checked);
+      await addSessionWorktree(core, plan);
+    } catch (error) {
+      plan.release();
+      if (held !== null && held.paths.length > 0) await discardAttachments(core, entryId);
+      core.log.warn({ err: error, entryId }, 'session.create: the worktree could not be prepared');
+      throw error instanceof CommandError
+        ? error
+        : new CommandError(makeError('INTERNAL_ERROR', {}, errorMessage(error)));
+    }
+  }
 
   const now = core.now().toISOString();
   // WP-64: `on`/`off` decide now; `follow_claude` starts from the last known default of this
@@ -299,25 +322,14 @@ async function createSession(
     baseSha,
   };
   const s = engine.createEntry(entry, promptTitle);
+  // CR1: the entry carries the port block now (and git has branch and folder) – reservations end.
+  plan?.release();
   s.followClaudeDefault = newSessions === 'follow_claude';
-  const prompt = cmd.prompt;
   if (plan?.create === true) {
-    // WP-111 (ADR-251): the worktree is created (and set up) now; the first prompt waits for it.
+    // WP-111 (ADR-251): the worktree is finished (and set up) now; the first prompt waits for it.
     s.setWorktreeSetup({ state: 'creating', exitCode: null, terminalId: null });
-    if (prompt !== undefined) {
-      try {
-        const attachments = await s.lifecycle.run(() => materializeForNewEntry(core, s, checked));
-        s.heldStart = { text: prompt.text, attachments, pastes, clientId };
-      } catch (error) {
-        if (error instanceof CommandError && error.error.code === 'SERVER_SHUTTING_DOWN') {
-          plan.release();
-          throw error;
-        }
-        core.log.warn(
-          { err: error, entryId: entry.id },
-          'session.create: the start prompt cannot wait for the setup',
-        );
-      }
+    if (prompt !== undefined && held !== null) {
+      s.heldStart = { text: prompt.text, attachments: held, pastes, clientId };
     }
     void finishSessionWorktree(core, s, plan, scriptOrigin(ctx));
     return { entryId: entry.id, messageUuid: null };
@@ -335,6 +347,20 @@ async function createSession(
     // The entry exists; the start failure shows as status `error` in its summary.
     core.log.warn({ err: error, entryId: entry.id }, 'session.create: start failed');
     return { entryId: entry.id, messageUuid: null };
+  }
+}
+
+/** CR10: the copied files of a start prompt whose entry was never created (best effort). */
+async function discardAttachments(core: EngineCore, entryId: string): Promise<void> {
+  const store = core.stores.attachments;
+  if (store === null) return;
+  try {
+    const dir = await store.dir(entryId);
+    await rm(dir, { recursive: true, force: true });
+    // The entry's folder, if nothing else is in it.
+    await rmdir(pathModuleOf(HOST_PATH_RULES).dirname(dir)).catch(() => undefined);
+  } catch (error) {
+    core.log.debug({ err: error, entryId }, 'attachments of a failed session.create not removed');
   }
 }
 

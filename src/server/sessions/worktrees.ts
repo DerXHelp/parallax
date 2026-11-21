@@ -5,22 +5,29 @@
  *   creates nothing): `new` checks git, the repository (NOT_A_GIT_REPO), the base (`baseRef`, default
  *   the current branch of the main worktree; VALIDATION_FAILED {field: 'worktree.baseRef'}), the branch
  *   (BRANCH_EXISTS) and the folder `<repoRoot>/.claude/worktrees/<branch with / → ->` (WORKTREE_EXISTS),
- *   and reserves the port block. The entry then exists at once (cwd = the worktree folder) with
- *   `worktreeSetup: creating`; `finishSessionWorktree` runs `git worktree add -b <branch> <path>
- *   <baseSha>`, keeps `.claude/worktrees/` out of the main worktree's status (`info/exclude`), copies the
- *   `.worktreeinclude` files, then the project's setup command in a terminal tab "Setup" (state `setup`;
- *   exit ≠ 0 → `failed` with the exit code). A start prompt of `session.create` waits (`heldStart`)
- *   and goes out after exit 0 – or with "Start anyway" (`session.resume`/`sendPrompt`,
- *   `releaseHeldStart`). `existing` picks a worktree of `worktree.list` (no creation, no setup).
+ *   and reserves the port block. CR10 (code review WP-117): `addSessionWorktree` runs `git worktree add
+ *   -b <branch> <path> <baseSha>` before the entry exists – a failure is the error of `session.create`,
+ *   no entry points at a missing folder (the files of a start prompt are copied before it, a failure
+ *   there is the error of the command, too). The entry then exists (cwd = the worktree folder) with
+ *   `worktreeSetup: creating`; `finishSessionWorktree` keeps `.claude/worktrees/` out of the main
+ *   worktree's status (`info/exclude`), copies the `.worktreeinclude` files, then runs the project's
+ *   setup command in a terminal tab "Setup" (state `setup`; exit ≠ 0 → `failed` with the exit code). A
+ *   start prompt of `session.create` waits (`heldStart`) and goes out after exit 0 – or with "Start
+ *   anyway" (`session.resume`/`sendPrompt`, `releaseHeldStart`). `existing` picks a worktree of
+ *   `worktree.list` (no creation, no setup). SR2: `.claude`/`.claude/worktrees` must be real folders
+ *   (no link or junction).
  * - Port block (ADR-251): with `settings.projects[repoRoot].ports` the first free block of 10 from
  *   41000 up to 49990 (no other entry's `portBase`, every port free on 127.0.0.1), kept in
- *   `WorktreeRef.portBase`; an existing worktree reuses the block of an entry in the same folder.
+ *   `WorktreeRef.portBase`; an existing worktree reuses the block of an entry in the same folder. CR1:
+ *   a block handed out stays reserved (`pendingPorts`) until the entry carries it.
  *   `PARALLAX_WORKTREE_PORT` reaches claude (`withWorktreePort`, compose.ts), setup/teardown and the
  *   entry's terminals (`TerminalServiceOptions.entryEnv`, compose.ts: `worktreePortEnv(portBase)`).
  * - `worktree.remove` (`removeSessionWorktree`): not while the session runs (SESSION_BUSY); open work
  *   without `force` → WORKTREE_DIRTY; the project's teardown in a tab "Teardown" (exit ≠ 0 → GIT_FAILED
  *   {op: 'teardown', exitCode}; `skipTeardown`); the entry's terminals end (they hold the folder), then
- *   `git worktree remove [--force]`, the entry keeps `worktree: null`, then `git branch -d|-D`.
+ *   `git worktree remove [--force]`, the entry keeps its worktree record with `removedAt` (CR5: the
+ *   session stays in the group of its repository; `liveWorktree` is null from then on), then `git
+ *   branch -d|-D`. CR4: unpushed commits git could not count are open work (`-d` only with `force`).
  * - `engineGitCommands`: the git service's commands with the engine's entries, environments and
  *   session files (sessions/commands.ts routes the names here).
  *
@@ -31,7 +38,13 @@ import { lstat } from 'node:fs/promises';
 import net from 'node:net';
 import type { EntryId, ProfileId } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
-import type { ProjectSettings, ProjectSettingsMap, WorktreeRef } from '@shared/model';
+import {
+  liveWorktree,
+  type Entry,
+  type ProjectSettings,
+  type ProjectSettingsMap,
+  type WorktreeRef,
+} from '@shared/model';
 import type { PathRules } from '@shared/paths';
 import { commandResultSchemas, type CommandOf, type SessionWorktreeRequest } from '@shared/protocol';
 import { WORKTREE_PORT_ENV, setEnvVar, worktreePortEnv } from '../claude/env';
@@ -42,9 +55,9 @@ import { createGitRunner, type GitRunner } from '../git/runner';
 import { HOST_PATH_RULES, fsErrorCode } from '../lib/paths';
 import { guiEnvironment } from '../lib/process';
 import { getEnvVar } from '../lib/windows';
-import type { CommandError, CommandContext, HostCommandHandler } from '../sync/ports';
+import { CommandError, type CommandContext, type HostCommandHandler } from '../sync/ports';
 import type { TerminalOrigin } from '../terminal/ports';
-import { commandError, errorPayloadOf, isExternal, type EngineCore, type EntryState } from './entryState';
+import { commandError, isExternal, type EngineCore, type EntryState } from './entryState';
 import { deliverPrompt, startRuntime } from './runtime';
 
 /** ADR-251: blocks of 10 ports, the first at 41000, the last at 49990. */
@@ -136,13 +149,41 @@ export async function allocatePortBlock(
   return null;
 }
 
+/** Port blocks of entries (their worktree folder exists – CR5: a removed one gives its block back). */
 function usedPortBases(core: EngineCore): Set<number> {
   const used = new Set<number>();
   for (const entry of core.stores.registry.list()) {
-    const base = entry.worktree?.portBase;
+    const base = liveWorktree(entry.worktree)?.portBase;
     if (base !== undefined && base !== null) used.add(base);
   }
   return used;
+}
+
+/**
+ * CR1 (code review WP-117): port blocks handed to a `session.create` whose entry does not exist yet.
+ * Two creates at once would otherwise both see the same block free (neither entry is in the registry
+ * while the ports are probed). Released with the plan (`WorktreePlan.release`, after `createEntry`).
+ */
+const pendingPorts = new Set<number>();
+
+/** A free port block, reserved in `pendingPorts` until the plan is released; null = none left. */
+async function reservePortBlock(core: EngineCore): Promise<number | null> {
+  for (;;) {
+    const used = usedPortBases(core);
+    for (const base of pendingPorts) used.add(base);
+    const base = await allocatePortBlock(used);
+    if (base === null) return null;
+    // Checked again after the probes (no await from here on): another create may have taken it.
+    if (!pendingPorts.has(base) && !usedPortBases(core).has(base)) {
+      pendingPorts.add(base);
+      return base;
+    }
+  }
+}
+
+/** The port block of an entry for `PARALLAX_WORKTREE_PORT` (compose.ts): only while its worktree exists. */
+export function worktreePortOf(entry: Pick<Entry, 'worktree'> | undefined): number | null {
+  return liveWorktree(entry?.worktree)?.portBase ?? null;
 }
 
 /** The folder name of a new worktree: the branch with `/` → `-`, characters a file name cannot hold → `-`. */
@@ -189,13 +230,19 @@ export function withWorktreePort(
 
 // ---- session.create ----
 
-/** What `session.create` built (the entry takes `ref`); `create` = `finishSessionWorktree` still runs. */
+/**
+ * What `session.create` built (the entry takes `ref`); `create` = `addSessionWorktree` and
+ * `finishSessionWorktree` still run.
+ */
 export interface WorktreePlan {
   ref: WorktreeRef;
   create: boolean;
   project: ProjectSettings | null;
   env: Record<string, string>;
-  /** Releases the reservation of path and branch (after the creation or a failure). */
+  /**
+   * Releases the reservations of path, branch and port block – once the entry exists (it carries the
+   * block, git has the branch and the folder) or the create failed. Idempotent.
+   */
   release(): void;
 }
 
@@ -280,12 +327,16 @@ export async function createSessionWorktree(
     const baseSha = (await repo.resolveCommit(ctx, repoRoot, baseRef)) ?? target.head;
     if (baseSha === null)
       throw commandError('VALIDATION_FAILED', { field: 'worktree.baseRef', reason: 'not_found' });
-    const shared = core.stores.registry
+    const sharedBase = core.stores.registry
       .list()
-      .find((e) => typeof e.worktree?.portBase === 'number' && rules.equal(e.worktree.path, request.path));
-    const portBase =
-      shared?.worktree?.portBase ??
-      (project?.ports === true ? await allocatePortBlock(usedPortBases(core)) : null);
+      .map((e) => liveWorktree(e.worktree))
+      .find((w) => typeof w?.portBase === 'number' && rules.equal(w.path, request.path))?.portBase;
+    const reserved =
+      sharedBase === undefined || sharedBase === null
+        ? project?.ports === true
+          ? await reservePortBlock(core)
+          : null
+        : null;
     return {
       ref: {
         repoRoot,
@@ -293,13 +344,16 @@ export async function createSessionWorktree(
         branch: target.branch,
         baseRef,
         baseSha,
-        portBase,
+        portBase: sharedBase ?? reserved,
         createdAt: now,
+        removedAt: null,
       },
       create: false,
       project,
       env,
-      release: () => undefined,
+      release: () => {
+        if (reserved !== null) pendingPorts.delete(reserved);
+      },
     };
   }
 
@@ -317,6 +371,10 @@ export async function createSessionWorktree(
   );
   if (rules.issue(path) !== null)
     throw commandError('VALIDATION_FAILED', { field: 'worktree.branch', reason: 'path' });
+  // SR2: `.claude` or `.claude/worktrees` as a link (junction) would put the worktree – and later its
+  // deletion – somewhere else entirely.
+  if (!(await repo.plainFolderChain(repoRoot, repo.WORKTREES_DIR, rules)))
+    throw commandError('VALIDATION_FAILED', { field: 'worktree.path', reason: 'link' });
   const pathKey = rules.key(path);
   if (
     pending.has(pathKey) ||
@@ -325,23 +383,61 @@ export async function createSessionWorktree(
   ) {
     throw commandError('WORKTREE_EXISTS', { path });
   }
-  const portBase = project?.ports === true ? await allocatePortBlock(usedPortBases(core)) : null;
-  if (project?.ports === true && portBase === null) core.log.warn('no free port block for the new worktree');
   // Checked again after the awaits: another create may have taken them meanwhile.
   if (pending.has(branchKey)) throw commandError('BRANCH_EXISTS', { branch: request.branch });
   if (pending.has(pathKey)) throw commandError('WORKTREE_EXISTS', { path });
   pending.add(branchKey);
   pending.add(pathKey);
+  let portBase: number | null = null;
+  try {
+    portBase = project?.ports === true ? await reservePortBlock(core) : null;
+  } catch (error) {
+    pending.delete(branchKey);
+    pending.delete(pathKey);
+    throw error;
+  }
+  if (project?.ports === true && portBase === null) core.log.warn('no free port block for the new worktree');
+  const reserved = portBase;
   return {
-    ref: { repoRoot, path, branch: request.branch, baseRef, baseSha, portBase, createdAt: now },
+    ref: {
+      repoRoot,
+      path,
+      branch: request.branch,
+      baseRef,
+      baseSha,
+      portBase,
+      createdAt: now,
+      removedAt: null,
+    },
     create: true,
     project,
     env,
     release: () => {
       pending.delete(branchKey);
       pending.delete(pathKey);
+      if (reserved !== null) pendingPorts.delete(reserved);
     },
   };
+}
+
+/**
+ * CR10 (code review WP-117): `git worktree add -b <branch> <path> <baseSha>` of a new worktree, BEFORE
+ * the entry exists – a failure reaches the caller of `session.create` and leaves no entry whose `cwd`
+ * does not exist. Throws CommandError (GIT_FAILED {op: 'worktree_add', …}, VALIDATION_FAILED).
+ */
+export async function addSessionWorktree(core: EngineCore, plan: WorktreePlan): Promise<void> {
+  const { ref } = plan;
+  const rules = HOST_PATH_RULES;
+  // SR2: checked once more right before git creates the folders.
+  if (!(await repo.plainFolderChain(ref.repoRoot, repo.WORKTREES_DIR, rules)))
+    throw commandError('VALIDATION_FAILED', { field: 'worktree.path', reason: 'link' });
+  const ctx: repo.GitContext = { runner: engineGitRunner(), env: plan.env, rules };
+  try {
+    await repo.addWorktree(ctx, ref.repoRoot, ref.path, ref.branch, ref.baseSha);
+  } catch (error) {
+    core.log.warn({ err: error }, 'git worktree add failed');
+    throw error instanceof CommandError ? error : commandError('GIT_FAILED', { op: 'worktree_add' });
+  }
 }
 
 /** The setup ended unsuccessfully: state `failed`, the reason as a system row of the session. */
@@ -356,8 +452,8 @@ function failSetup(
 }
 
 /**
- * The asynchronous part of a new worktree (see the file comment). Never throws; the outcome shows in
- * `worktreeSetup` (and a system row on a failure).
+ * The asynchronous part of a new worktree after `git worktree add` (see the file comment). Never
+ * throws; the outcome shows in `worktreeSetup` (and a system row on a failure).
  */
 export async function finishSessionWorktree(
   core: EngineCore,
@@ -369,15 +465,6 @@ export async function finishSessionWorktree(
   const ctx: repo.GitContext = { runner: engineGitRunner(), env: plan.env, rules: HOST_PATH_RULES };
   try {
     s.setWorktreeSetup({ state: 'creating', exitCode: null, terminalId: null });
-    try {
-      await repo.addWorktree(ctx, ref.repoRoot, ref.path, ref.branch, ref.baseSha);
-    } catch (error) {
-      core.log.warn({ err: error, entryId: s.id }, 'git worktree add failed');
-      failSetup(s, null, null, errorPayloadOf(error, makeError('GIT_FAILED', { op: 'worktree_add' })));
-      return;
-    } finally {
-      plan.release();
-    }
     try {
       await repo.ensureExcluded(ctx, ref.repoRoot, repo.WORKTREES_DIR.join('/'));
     } catch (error) {
@@ -507,41 +594,48 @@ export async function removeSessionWorktree(
   const core = engine.core;
   const s = engine.state(cmd.entryId);
   if (s === undefined || s.removed) throw commandError('ENTRY_NOT_FOUND', { entryId: cmd.entryId });
-  if (s.entry.worktree === null)
+  if (liveWorktree(s.entry.worktree) === null)
     throw commandError('VALIDATION_FAILED', { field: 'worktree', reason: 'none' });
   if (setupRunning(s)) throw commandError('SESSION_BUSY', { entryId: s.id });
   s.cancelRetry();
   await s.lifecycle.run(async () => {
-    const ref = s.entry.worktree;
+    const ref = liveWorktree(s.entry.worktree);
     if (s.removed) throw commandError('ENTRY_NOT_FOUND', { entryId: s.id });
     if (ref === null) return;
     if (s.runtime !== null || s.phase !== 'dormant' || isExternal(s) || setupRunning(s)) {
       throw commandError('SESSION_BUSY', { entryId: s.id });
     }
     const ctx: repo.GitContext = { runner: engineGitRunner(), env: await s.gitEnv(), rules: HOST_PATH_RULES };
-    const inspection = await repo.inspectWorktree(ctx, ref.path, ref.repoRoot, ref.branch, {
+    const loss = await repo.inspectWorktreeLoss(ctx, ref.path, ref.repoRoot, ref.branch, {
       ref: ref.baseRef,
       sha: ref.baseSha,
     });
-    const losing = inspection.dirtyFiles > 0 || (cmd.deleteBranch && inspection.unpushedCommits > 0);
+    // CR4: commits git could not count are open work – never deleted without `force`, and even then
+    // only with `branch -d` (git refuses an unmerged branch).
+    const unpushed = loss.unpushedCommits;
+    if (cmd.deleteBranch && unpushed === null && !cmd.force) {
+      throw commandError('GIT_FAILED', { op: 'status', detail: 'unpushed commits unknown' });
+    }
+    const losing = loss.dirtyFiles > 0 || (cmd.deleteBranch && unpushed !== null && unpushed > 0);
     if (losing && !cmd.force) {
-      throw commandError('WORKTREE_DIRTY', {
-        dirtyFiles: inspection.dirtyFiles,
-        unpushedCommits: inspection.unpushedCommits,
-      });
+      throw commandError('WORKTREE_DIRTY', { dirtyFiles: loss.dirtyFiles, unpushedCommits: unpushed ?? 0 });
     }
     if (!cmd.skipTeardown) await runTeardown(core, s, ref, scriptOrigin(context));
     // The entry's shells hold the folder (Windows refuses to delete it); the HEAD watch too.
     core.terminal?.closeEntry?.(s.id, 'removed');
     s.stopHeadWatch();
     await repo.removeWorktree(ctx, ref.repoRoot, ref.path, cmd.force);
-    s.patch((e) => ({ ...e, worktree: null }));
+    // CR5: the record stays (`removedAt`) – the session keeps its project (sidebar group, muting).
+    const removedAt = core.now().toISOString();
+    s.patch((e) => (e.worktree === null ? e : { ...e, worktree: { ...e.worktree, removedAt } }));
     s.setWorktreeSetup(null);
     s.heldStart = null;
     core.log.info({ entryId: s.id, deleteBranch: cmd.deleteBranch, force: cmd.force }, 'worktree removed');
     if (cmd.deleteBranch) {
-      // Nothing unpushed: `-D` (the branch may live on a remote only, `-d` would refuse it).
-      await repo.deleteBranch(ctx, ref.repoRoot, ref.branch, cmd.force || inspection.unpushedCommits === 0);
+      // Nothing unpushed: `-D` (the branch may live on a remote only, `-d` would refuse it); open work
+      // with `force` (the user confirmed it): `-D`; an unknown count: `-d` only.
+      const forceDelete = unpushed !== null && (cmd.force || unpushed === 0);
+      await repo.deleteBranch(ctx, ref.repoRoot, ref.branch, forceDelete);
     }
   });
   void s.refreshGitBranch();
@@ -581,7 +675,10 @@ export function engineGitCommands(engine: WorktreeEngine): HostCommandHandler {
     runner: engineGitRunner(),
     entry: (entryId) => {
       const s = live(entryId);
-      return s === null ? null : { cwd: s.entry.cwd, worktree: s.entry.worktree, baseSha: s.entry.baseSha };
+      // CR5: a removed worktree is no worktree for the git commands (diff base, inspect).
+      return s === null
+        ? null
+        : { cwd: s.entry.cwd, worktree: liveWorktree(s.entry.worktree), baseSha: s.entry.baseSha };
     },
     env: async (entryId) => (await live(entryId)?.gitEnv()) ?? hostGitEnv(),
     hostEnv: hostGitEnv,

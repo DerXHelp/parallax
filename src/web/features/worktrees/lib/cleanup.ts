@@ -1,5 +1,5 @@
 import { gitFailedParamsSchema, worktreeDirtyParamsSchema, type ErrorPayload } from '@shared/errors';
-import type { SessionSummary, WorktreeInspection } from '@shared/model';
+import { liveWorktree, type SessionSummary, type WorktreeInspection } from '@shared/model';
 import type { RunState } from '@shared/status';
 import { selectSummary } from '@web/state/hooks';
 import { selectSessionFeature } from '@web/state/hosts';
@@ -19,10 +19,13 @@ export function isCleanupOption(value: string): value is CleanupOption {
   return CLEANUP_OPTIONS.some((option) => option === value);
 }
 
-/** The request `worktree.cleanup` is taken for a session with a worktree on a host with the git service. */
+/**
+ * The request `worktree.cleanup` is taken for a session with a worktree on a host with the git service
+ * (WP-117 CR5: not once the worktree was removed – the record stays for the project only).
+ */
 export function wantsCleanup(state: ClientState, sessionKey: string): boolean {
   const summary = selectSummary(state, sessionKey);
-  if (summary?.worktree === null || summary?.worktree === undefined) return false;
+  if (liveWorktree(summary?.worktree) === null) return false;
   return selectSessionFeature(state, sessionKey, 'git');
 }
 

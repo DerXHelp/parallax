@@ -31,8 +31,8 @@ import {
   absoluteIn,
   commit,
   createBranch,
-  diffList,
-  fileDiff,
+  diffListAt,
+  fileDiffAt,
   headCommit,
   inspectWorktree,
   listWorktrees,
@@ -188,10 +188,11 @@ export function createGitCommands(deps?: GitCommandDeps): HostCommandHandler {
       }
       case 'git.diff': {
         const { entry, ctx } = await contextOf(cmd.entryId);
+        // CR9: the root once – the list runs in it directly.
         const root = await requireRoot(ctx, entry.cwd);
         const spec = await specOf(cmd.entryId, entry, ctx, cmd.scope);
         const keep = cmd.onlySessionFiles ? await sessionFilter(cmd.entryId, root, context) : null;
-        const list = await diffList(ctx, root, spec, keep);
+        const list = await diffListAt(ctx, root, spec, keep);
         return {
           root: list.root,
           base: spec.base,
@@ -201,9 +202,10 @@ export function createGitCommands(deps?: GitCommandDeps): HostCommandHandler {
       }
       case 'git.fileDiff': {
         const { entry, ctx } = await contextOf(cmd.entryId);
+        const root = await requireRoot(ctx, entry.cwd);
         const spec = await specOf(cmd.entryId, entry, ctx, cmd.scope);
         return {
-          file: await fileDiff(ctx, entry.cwd, spec, cmd.path),
+          file: await fileDiffAt(ctx, root, spec, cmd.path),
         } satisfies CommandResult<'git.fileDiff'>;
       }
       case 'git.commit': {

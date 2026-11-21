@@ -32,7 +32,7 @@ import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
 import { LOCAL_HOST_ID, parseSessionKey, type EntryId, type HostId, type TerminalId } from '@shared/common';
 import { makeError } from '@shared/errors';
-import { shellKindSchema, type SessionSummary, type ShellKind } from '@shared/model';
+import { liveWorktree, shellKindSchema, type SessionSummary, type ShellKind } from '@shared/model';
 import type { Command, CommandName } from '@shared/protocol';
 import { t as translateNow, useT, type TranslationKey } from '@web/i18n';
 import { copyText } from '@web/lib/clipboard';
@@ -548,7 +548,7 @@ export function continueInTerminal(sessionKey: string, entryId: EntryId): Promis
 export function archiveSession(sessionKey: string, summary: SessionSummary): void {
   if (
     !summary.archived &&
-    summary.worktree !== null &&
+    liveWorktree(summary.worktree) !== null &&
     requestShell({ kind: 'worktree.cleanup', sessionKey, then: 'archive' })
   ) {
     return;
@@ -563,10 +563,14 @@ export function archiveSession(sessionKey: string, summary: SessionSummary): voi
 /**
  * "Remove from Parallax…" of the menus. WP-115: a worktree session goes through the cleanup dialog
  * (`worktree.cleanup {then: 'remove'}`, WP-114), which removes the entry afterwards; nobody takes the
- * request → the confirmation dialog of WP-63 as before.
+ * request → the confirmation dialog of WP-63 as before. WP-117 (CR5): a removed worktree
+ * (`removedAt`) never asks again.
  */
 export function requestRemove(sessionKey: string, summary: SessionSummary): void {
-  if (summary.worktree !== null && requestShell({ kind: 'worktree.cleanup', sessionKey, then: 'remove' })) {
+  if (
+    liveWorktree(summary.worktree) !== null &&
+    requestShell({ kind: 'worktree.cleanup', sessionKey, then: 'remove' })
+  ) {
     return;
   }
   requestRemoveSession(sessionKey);

@@ -21,6 +21,19 @@ const result = (p: Partial<RunFileResult>): RunFileResult => ({
   ...p,
 });
 
+/** What the git runner puts before every reading call (CR8). */
+const READ_PREFIX = ['--no-pager', '-c', 'core.fsmonitor=false'];
+
+/** A watch that is never triggered (CR8 test). */
+function fakeWatchOnce(): { watch: NonNullable<GitHeadWatchDeps['watch']> } {
+  return {
+    watch: () => ({
+      close: () => undefined,
+      on: () => undefined as never,
+    }),
+  };
+}
+
 describe('readGitBranch (R1-04: never a bare `git`)', () => {
   it('resolves git on the session PATH and runs rev-parse in the cwd with the session env', async () => {
     const runFile = vi.fn<RunFileFn>(() => Promise.resolve(result({ stdout: 'feature/x\r\n' })));
@@ -30,33 +43,45 @@ describe('readGitBranch (R1-04: never a bare `git`)', () => {
     expect(resolve).toHaveBeenCalledWith('git', env);
     expect(runFile).toHaveBeenCalledWith(
       'C:\\Program Files\\Git\\cmd\\git.exe',
-      ['rev-parse', '--abbrev-ref', 'HEAD'],
-      {
-        cwd: 'D:\\repo',
-        env,
-        timeoutMs: GIT_BRANCH_TIMEOUT_MS,
-        maxOutputBytes: 4096,
-      },
+      [...READ_PREFIX, 'rev-parse', '--abbrev-ref', 'HEAD'],
+      expect.objectContaining({ cwd: 'D:\\repo', timeoutMs: GIT_BRANCH_TIMEOUT_MS }),
     );
+  });
+
+  it('CR8: through the git runner – no GIT_DIR/GIT_WORK_TREE of the session, no prompt, no locks', async () => {
+    const runFile = vi.fn<RunFileFn>(() => Promise.resolve(result({ stdout: 'main\n' })));
+    const resolve = () => Promise.resolve('C:\\git\\git.exe');
+    const env = { PATH: 'C:\\git', GIT_DIR: 'D:\\other\\.git', GIT_WORK_TREE: 'D:\\other' };
+    expect(await readGitBranch('D:\\repo', env, { resolve, runFile })).toBe('main');
+    const options = runFile.mock.calls[0]?.[2];
+    expect(options?.env).not.toHaveProperty('GIT_DIR');
+    expect(options?.env).not.toHaveProperty('GIT_WORK_TREE');
+    expect(options?.env).toMatchObject({ GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' });
+    const { watch } = fakeWatchOnce();
+    const watchRun = vi.fn<RunFileFn>(() => Promise.resolve(result({ stdout: 'D:/repo/.git\n' })));
+    const handle = await watchGitHead('D:\\repo', env, vi.fn(), { resolve, runFile: watchRun, watch });
+    expect(handle).not.toBeNull();
+    expect(watchRun.mock.calls[0]?.[2].env).not.toHaveProperty('GIT_DIR');
+    handle?.close();
   });
 
   it('V3-11: a fresh repository without a commit – the branch from `git branch --show-current`', async () => {
     const runFile = vi.fn<RunFileFn>((_file, args) =>
       Promise.resolve(
-        args[0] === 'rev-parse'
+        args.includes('rev-parse')
           ? result({ exitCode: 128, stdout: 'HEAD\n', stderr: "fatal: ambiguous argument 'HEAD'" })
           : result({ stdout: 'main\n' }),
       ),
     );
     const resolve = () => Promise.resolve('C:\\git\\git.exe');
     expect(await readGitBranch('D:\\fresh', {}, { resolve, runFile })).toBe('main');
-    expect(runFile.mock.calls.map((call) => call[1])).toEqual([
+    expect(runFile.mock.calls.map((call) => call[1].slice(READ_PREFIX.length))).toEqual([
       ['rev-parse', '--abbrev-ref', 'HEAD'],
       ['branch', '--show-current'],
     ]);
     // Detached HEAD in the fallback (empty output) and a second failure → null.
     runFile.mockImplementation((_file, args) =>
-      Promise.resolve(args[0] === 'rev-parse' ? result({ exitCode: 128 }) : result({ stdout: '\n' })),
+      Promise.resolve(args.includes('rev-parse') ? result({ exitCode: 128 }) : result({ stdout: '\n' })),
     );
     expect(await readGitBranch('D:\\fresh', {}, { resolve, runFile })).toBeNull();
     // A repository with commits needs only one call.
@@ -129,7 +154,7 @@ describe('watchGitHead (WP-111)', () => {
         debounceMs: 50,
       });
       expect(handle?.gitDir).toBe('D:/repo/.git/worktrees/x');
-      expect(deps.runFile.mock.calls[0]?.[1]).toEqual(['rev-parse', '--absolute-git-dir']);
+      expect(deps.runFile.mock.calls[0]?.[1]).toEqual([...READ_PREFIX, 'rev-parse', '--absolute-git-dir']);
       expect(watchers[0]?.folder).toBe('D:/repo/.git/worktrees/x');
       const before = gitHeadWatchCount();
       watchers[0]?.listener('rename', 'index');

@@ -146,8 +146,15 @@ function stringDefault(value: unknown): string | null {
   return typeof value === 'string' && value.length <= LIMITS.elicitationValueChars ? value : null;
 }
 
+/**
+ * SR5 (security review WP-117): names that are not plain keys of a JavaScript object (`__proto__`
+ * would set the prototype of the zod shape instead of naming a field).
+ */
+const RESERVED_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
+
 function fieldOf(key: string, raw: unknown, required: boolean): ElicitationField {
   if (key.length === 0 || key.length > CAP.key) unsupported('a field name is empty or too long');
+  if (RESERVED_KEYS.has(key)) unsupported(`field "${key}": reserved name`);
   if (!isRecord(raw)) unsupported(`field "${key}": not a schema object`);
   const base = {
     key,
@@ -311,17 +318,23 @@ export function checkElicitationContent(
   fields: readonly ElicitationField[],
   content: Readonly<Record<string, ElicitationValue>> | null,
 ): ContentCheck {
-  const shape: Record<string, z.ZodType<ElicitationValue | undefined>> = {};
-  for (const field of fields) {
-    const schema = fieldSchema(field);
-    shape[field.key] = field.required ? schema : schema.optional();
+  // SR5: own data properties only (`Object.fromEntries`), never an assignment that could reach the
+  // prototype; reserved names never become fields (`fieldOf`), a decision restored from disk is
+  // checked here once more.
+  if (fields.some((field) => RESERVED_KEYS.has(field.key))) {
+    return { ok: false, error: makeError('ELICITATION_UNSUPPORTED', { reason: 'reserved field name' }) };
   }
+  const shape: Record<string, z.ZodType<ElicitationValue | undefined>> = Object.fromEntries(
+    fields.map((field) => {
+      const schema = fieldSchema(field);
+      return [field.key, field.required ? schema : schema.optional()];
+    }),
+  );
   const parsed = z.strictObject(shape).safeParse(content ?? {});
   if (parsed.success) {
-    const out: Record<string, ElicitationValue> = {};
-    for (const [key, value] of Object.entries(parsed.data)) {
-      if (value !== undefined) out[key] = value;
-    }
+    const out: Record<string, ElicitationValue> = Object.fromEntries(
+      Object.entries(parsed.data).filter((pair): pair is [string, ElicitationValue] => pair[1] !== undefined),
+    );
     return { ok: true, content: out };
   }
   const issue = parsed.error.issues[0];

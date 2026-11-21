@@ -13,10 +13,17 @@
  * - Limits: LIMITS.gitFilesMax files per list (`truncated`), LIMITS.gitPatchBytes per patch.
  */
 import { constants } from 'node:fs';
-import { appendFile, copyFile, lstat, mkdir, readFile } from 'node:fs/promises';
+import { appendFile, copyFile, lstat, mkdir, readFile, realpath } from 'node:fs/promises';
 import { LIMITS } from '@shared/common';
 import { makeError } from '@shared/errors';
-import type { GitDiffFile, GitDiffScope, GitStatus, GitWorktree, WorktreeInspection } from '@shared/model';
+import {
+  isValidGitRefName,
+  type GitDiffFile,
+  type GitDiffScope,
+  type GitStatus,
+  type GitWorktree,
+  type WorktreeInspection,
+} from '@shared/model';
 import type { PathRules } from '@shared/paths';
 import { readFileHead } from '../lib/fileRead';
 import { logger } from '../lib/logger';
@@ -71,7 +78,7 @@ function call(
   op: GitCall['op'],
   mode: GitCall['mode'],
   args: readonly string[],
-  extra: Partial<Pick<GitCall, 'timeoutMs' | 'maxOutputBytes'>> = {},
+  extra: Partial<Pick<GitCall, 'timeoutMs' | 'maxOutputBytes' | 'readsWorktree'>> = {},
 ): GitCall {
   return { cwd, env: ctx.env, op, mode, args, ...extra };
 }
@@ -177,13 +184,14 @@ export async function readStatus(ctx: GitContext, cwd: string): Promise<GitStatu
   const root = await worktreeRoot(ctx, cwd);
   if (root === null) return { ...NO_REPO_STATUS, files: [] };
   const result = await ctx.runner.ok(
-    call(ctx, root, 'status', 'read', [
+    call(
+      ctx,
+      root,
       'status',
-      '--porcelain=v2',
-      '--branch',
-      '-z',
-      '--untracked-files=all',
-    ]),
+      'read',
+      ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'],
+      { readsWorktree: true },
+    ),
   );
   const parsed = parseStatusV2(result.stdout);
   const truncated = result.truncated || parsed.files.length > LIMITS.gitFilesMax;
@@ -303,23 +311,22 @@ interface CollectedDiff {
 
 type KeepFn = (path: string, origPath: string | null) => boolean;
 
+/** `root` is the root of the worktree (callers resolved it with `requireRoot`). */
 async function collectDiff(
   ctx: GitContext,
-  cwd: string,
+  root: string,
   spec: DiffSpec,
   keep: KeepFn | null,
 ): Promise<CollectedDiff> {
-  const root = await requireRoot(ctx, cwd);
   const result = await ctx.runner.ok(
-    call(ctx, root, 'diff', 'read', [
+    call(
+      ctx,
+      root,
       'diff',
-      '--raw',
-      '--numstat',
-      '-z',
-      ...DIFF_OPTIONS,
-      ...(await sides(ctx, root, spec)),
-      '--',
-    ]),
+      'read',
+      ['diff', '--raw', '--numstat', '-z', ...DIFF_OPTIONS, ...(await sides(ctx, root, spec)), '--'],
+      { readsWorktree: spec.scope !== 'staged' },
+    ),
   );
   let truncated = result.truncated;
   const items: CollectedDiff['items'] = parseRawNumstat(result.stdout)
@@ -372,7 +379,17 @@ export async function diffList(
   spec: DiffSpec,
   keep: KeepFn | null = null,
 ): Promise<DiffListResult> {
-  const collected = await collectDiff(ctx, cwd, spec, keep);
+  return diffListAt(ctx, await requireRoot(ctx, cwd), spec, keep);
+}
+
+/** `diffList` for a root the caller resolved already (CR9: one `rev-parse` per command). */
+export async function diffListAt(
+  ctx: GitContext,
+  root: string,
+  spec: DiffSpec,
+  keep: KeepFn | null = null,
+): Promise<DiffListResult> {
+  const collected = await collectDiff(ctx, root, spec, keep);
   return { root: collected.root, files: collected.items.map((i) => i.file), truncated: collected.truncated };
 }
 
@@ -399,52 +416,105 @@ export async function fileDiff(
   spec: DiffSpec,
   path: string,
 ): Promise<GitDiffFile> {
-  const collected = await collectDiff(ctx, cwd, spec, (p, orig) => p === path || orig === path);
-  const item =
-    collected.items.find((i) => i.file.path === path) ??
-    collected.items.find((i) => i.file.origPath === path);
-  if (item === undefined) {
-    throw new CommandError(makeError('VALIDATION_FAILED', { field: 'path', reason: 'not_in_diff' }));
-  }
-  const { root } = collected;
-  const entry = item.file;
-  if (item.untracked) {
-    // The diff of a new file, built from its content.
-    const full = absoluteIn(root, entry.path, ctx.rules);
-    const content = full === null ? null : await readUntracked(full, LIMITS.gitPatchBytes);
-    const text = content?.text ?? null;
-    if (content === null || text === null) {
-      return { ...entry, binary: content?.binary ?? entry.binary, patch: null, truncated: false };
-    }
-    const built = addedFilePatch(text);
-    return {
-      ...entry,
-      binary: false,
-      additions: lineCount(text),
-      patch: built.patch,
-      truncated: built.truncated || content.truncated,
-    };
-  }
-  if (entry.binary) return { ...entry, patch: null };
-  const paths = entry.origPath === null ? [entry.path] : [entry.path, entry.origPath];
+  return fileDiffAt(ctx, await requireRoot(ctx, cwd), spec, path);
+}
+
+/** `path` is an untracked, not ignored file of the worktree (literal pathspec). */
+async function isUntracked(ctx: GitContext, root: string, path: string): Promise<boolean> {
   const result = await ctx.runner.ok(
-    call(
-      ctx,
-      root,
-      'diff',
-      'read',
-      ['diff', ...DIFF_OPTIONS, ...(await sides(ctx, root, spec)), '--', ...paths],
-      {
-        maxOutputBytes: LIMITS.gitPatchBytes,
-      },
-    ),
+    call(ctx, root, 'diff', 'read', [
+      '--literal-pathspecs',
+      'ls-files',
+      '--others',
+      '--exclude-standard',
+      '-z',
+      '--',
+      path,
+    ]),
+  );
+  return splitNul(result.stdout).includes(path);
+}
+
+/** The diff of a new (untracked) file, built from its content. */
+async function untrackedFileDiff(ctx: GitContext, root: string, path: string): Promise<GitDiffFile> {
+  const entry: GitDiffFile = {
+    path,
+    origPath: null,
+    kind: 'added',
+    binary: false,
+    additions: 0,
+    deletions: 0,
+    patch: null,
+    truncated: false,
+  };
+  const full = absoluteIn(root, path, ctx.rules);
+  const content = full === null ? null : await readUntracked(full, LIMITS.gitPatchBytes);
+  const text = content?.text ?? null;
+  if (content === null || text === null) return { ...entry, binary: content?.binary ?? false };
+  const built = addedFilePatch(text);
+  return {
+    ...entry,
+    additions: lineCount(text),
+    patch: built.patch,
+    truncated: built.truncated || content.truncated,
+  };
+}
+
+/**
+ * `fileDiff` for a root the caller resolved already. CR9: kind and rename partner come from the
+ * name status of the diff (`--raw`, no line counts of the other files, no untracked listing); the
+ * patch and – when it was cut – the line counts from calls limited to the file (literal pathspecs).
+ */
+export async function fileDiffAt(
+  ctx: GitContext,
+  root: string,
+  spec: DiffSpec,
+  path: string,
+): Promise<GitDiffFile> {
+  const notInDiff = (): CommandError =>
+    new CommandError(makeError('VALIDATION_FAILED', { field: 'path', reason: 'not_in_diff' }));
+  if (absoluteIn(root, path, ctx.rules) === null) throw notInDiff();
+  const worktree = spec.scope !== 'staged';
+  const from = await sides(ctx, root, spec);
+  const raw = await ctx.runner.ok(
+    call(ctx, root, 'diff', 'read', ['diff', '--raw', '-z', ...DIFF_OPTIONS, ...from, '--'], {
+      readsWorktree: worktree,
+    }),
+  );
+  const entries = parseRawNumstat(raw.stdout);
+  const entry = entries.find((e) => e.path === path) ?? entries.find((e) => e.origPath === path);
+  if (entry === undefined) {
+    if (worktree && (await isUntracked(ctx, root, path))) return untrackedFileDiff(ctx, root, path);
+    throw notInDiff();
+  }
+  const base = toDiffFile(entry);
+  const paths = entry.origPath === null ? [entry.path] : [entry.path, entry.origPath];
+  const limited = (args: readonly string[]): string[] => [
+    '--literal-pathspecs',
+    'diff',
+    ...args,
+    ...DIFF_OPTIONS,
+    ...from,
+    '--',
+    ...paths,
+  ];
+  const result = await ctx.runner.ok(
+    call(ctx, root, 'diff', 'read', limited([]), {
+      maxOutputBytes: LIMITS.gitPatchBytes,
+      readsWorktree: worktree,
+    }),
   );
   const body = patchBody(result.stdout);
-  if (body.binary) return { ...entry, binary: true, patch: null };
-  const counts = result.truncated
-    ? { additions: entry.additions, deletions: entry.deletions }
-    : countPatchLines(body.patch);
-  return { ...entry, ...counts, patch: body.patch, truncated: result.truncated };
+  if (body.binary) return { ...base, binary: true, patch: null };
+  let counts = countPatchLines(body.patch);
+  if (result.truncated) {
+    const stat = await ctx.runner.ok(
+      call(ctx, root, 'diff', 'read', limited(['--raw', '--numstat', '-z']), { readsWorktree: worktree }),
+    );
+    const whole = parseRawNumstat(stat.stdout).find((e) => e.path === entry.path);
+    if (whole !== undefined) counts = { additions: whole.additions, deletions: whole.deletions };
+  }
+  return { ...base, ...counts, patch: body.patch, truncated: result.truncated };
 }
 
 // ---- writing ----
@@ -464,14 +534,24 @@ export async function commit(
       }
     }
   }
+  // CR3: file names are literal (`[id].ts`, `*.md` are names, never globs).
   const scope = paths === null ? [] : ['--', ...paths];
   await ctx.runner.ok(
-    call(ctx, root, 'commit', 'write', ['add', '-A', ...scope], { timeoutMs: GIT_LONG_TIMEOUT_MS }),
-  );
-  await ctx.runner.ok(
-    call(ctx, root, 'commit', 'write', ['commit', '--no-edit', '-m', message, ...scope], {
+    call(ctx, root, 'commit', 'write', ['--literal-pathspecs', 'add', '-A', ...scope], {
       timeoutMs: GIT_LONG_TIMEOUT_MS,
     }),
+  );
+  await ctx.runner.ok(
+    call(
+      ctx,
+      root,
+      'commit',
+      'write',
+      ['--literal-pathspecs', 'commit', '--no-edit', '-m', message, ...scope],
+      {
+        timeoutMs: GIT_LONG_TIMEOUT_MS,
+      },
+    ),
   );
   const sha = await headCommit(ctx, root);
   if (sha === null)
@@ -538,7 +618,10 @@ export async function push(ctx: GitContext, cwd: string): Promise<void> {
   if (status.upstream === null) {
     const remote = await pushRemote(ctx, root);
     if (remote === null) throw pushFailed('other', 'no remote');
-    args = ['push', '--porcelain', '-u', remote, status.branch];
+    // SR4: names from the repository's configuration never become options (`--`, ref name rules).
+    if (!isValidGitRefName(remote) || !isValidGitRefName(status.branch))
+      throw pushFailed('other', 'invalid name');
+    args = ['push', '--porcelain', '-u', '--', remote, status.branch];
   } else {
     args = ['push', '--porcelain'];
   }
@@ -632,10 +715,16 @@ export async function deleteBranch(
   );
 }
 
+/** `WorktreeInspection` with `unpushedCommits: null` = they could not be counted (CR4). */
+export interface WorktreeLoss extends Omit<WorktreeInspection, 'unpushedCommits'> {
+  unpushedCommits: number | null;
+}
+
 /**
  * What deleting a worktree would lose (ADR-250): uncommitted files (incl. untracked), commits on
  * `branch` that are in no remote branch and not in `base` (ref, else the commit), and whether
- * `branch` is contained in `base`.
+ * `branch` is contained in `base`. CR4: a count that fails is unknown, never 0 – `worktree.inspect`
+ * answers GIT_FAILED, `worktree.remove` treats it as open work (`inspectWorktreeLoss`).
  */
 export async function inspectWorktree(
   ctx: GitContext,
@@ -644,10 +733,27 @@ export async function inspectWorktree(
   branch: string,
   base: { ref: string; sha: string },
 ): Promise<WorktreeInspection> {
+  const loss = await inspectWorktreeLoss(ctx, worktreePath, repoRoot, branch, base);
+  if (loss.unpushedCommits === null) {
+    throw new CommandError(makeError('GIT_FAILED', { op: 'status', detail: 'unpushed commits unknown' }));
+  }
+  return { ...loss, unpushedCommits: loss.unpushedCommits };
+}
+
+/** Like `inspectWorktree`, with `unpushedCommits: null` when git could not count them. */
+export async function inspectWorktreeLoss(
+  ctx: GitContext,
+  worktreePath: string,
+  repoRoot: string,
+  branch: string,
+  base: { ref: string; sha: string },
+): Promise<WorktreeLoss> {
   let dirtyFiles = 0;
   if (await isFolder(worktreePath)) {
     const result = await ctx.runner.run(
-      call(ctx, worktreePath, 'status', 'read', ['status', '--porcelain=v2', '-z', '--untracked-files=all']),
+      call(ctx, worktreePath, 'status', 'read', ['status', '--porcelain=v2', '-z', '--untracked-files=all'], {
+        readsWorktree: true,
+      }),
     );
     if (result.exitCode === 0) dirtyFiles = parseStatusV2(result.stdout).files.length;
     else if (!isNotARepoMessage(result.stderr))
@@ -669,7 +775,8 @@ export async function inspectWorktree(
       ...(baseCommit === null ? [] : [baseCommit]),
     ]),
   );
-  const unpushedCommits = count.exitCode === 0 ? Number(firstLine(count.stdout)) || 0 : 0;
+  const counted = count.exitCode === 0 ? firstLine(count.stdout) : '';
+  const unpushedCommits = /^\d+$/.test(counted) ? Number(counted) : null;
   let branchMerged = false;
   if (baseCommit !== null) {
     const merged = await ctx.runner.run(
@@ -737,9 +844,73 @@ function batches(paths: readonly string[], maxChars = 8_000): string[][] {
 }
 
 /**
+ * SR2: `<root>/<segments…>` leads through no link – every segment that exists is a real folder
+ * (`lstat`: a symbolic link or a Windows junction counts as a link). Missing segments are fine (git
+ * creates them). False = a link or a file is in the way (a folder of the repository could point the
+ * new worktree – and later its deletion – anywhere).
+ */
+export async function plainFolderChain(
+  root: string,
+  segments: readonly string[],
+  rules: PathRules,
+): Promise<boolean> {
+  const p = pathModuleOf(rules);
+  let current = root;
+  for (const segment of segments) {
+    current = p.join(current, segment);
+    try {
+      const info = await lstat(current);
+      if (info.isSymbolicLink() || !info.isDirectory()) return false;
+    } catch (error) {
+      return fsErrorCode(error) === 'ENOENT';
+    }
+  }
+  return true;
+}
+
+/** Where `folder` physically lies (it or its deepest existing ancestor, links resolved); null on errors. */
+async function physicalAncestor(folder: string, rules: PathRules): Promise<string | null> {
+  const p = pathModuleOf(rules);
+  let current = folder;
+  for (;;) {
+    try {
+      return await realpath(current);
+    } catch (error) {
+      if (fsErrorCode(error) !== 'ENOENT') return null;
+      const parent = p.dirname(current);
+      if (parent === current) return null;
+      current = parent;
+    }
+  }
+}
+
+/** The repository-relative paths of `batch` git ignores in `worktree` (`check-ignore`, literal). */
+async function ignoredIn(ctx: GitContext, worktree: string, batch: readonly string[]): Promise<string[]> {
+  const result = await ctx.runner.run(
+    call(ctx, worktree, 'status', 'read', [
+      '-c',
+      'core.quotePath=false',
+      // No `--literal-pathspecs`: check-ignore refuses it; it takes its arguments as plain names anyway.
+      'check-ignore',
+      '--',
+      ...batch,
+    ]),
+  );
+  // 0 = some are ignored, 1 = none; a name git had to quote (control characters, `"`) is never copied.
+  if (result.exitCode !== 0) return [];
+  const asked = new Set(batch);
+  return result.stdout
+    .split('\n')
+    .map((line) => line.replace(/\r$/, ''))
+    .filter((rel) => asked.has(rel));
+}
+
+/**
  * `.worktreeinclude` (convention of Claude Code, `.gitignore` syntax) in the main worktree: every
- * untracked file matching it that git also IGNORES is copied into the new worktree (e.g. `.env`).
- * Regular files only, never over an existing file, never out of either root, never from
+ * untracked file matching it that git IGNORES in the new worktree (SR2: its checkout decides – a file
+ * it would show as new is never copied in) is copied there (e.g. `.env`). Regular files only, never
+ * over an existing file, never out of either root (SR2: the real folders of source and target are
+ * checked right before each copy, a link in between skips the file), never from
  * `.claude/worktrees/`; at most WORKTREE_INCLUDE_LIMITS. No file → nothing.
  */
 export async function copyWorktreeInclude(
@@ -771,28 +942,36 @@ export async function copyWorktreeInclude(
   const candidates = splitNul(listed.stdout).filter(
     (rel) => rel !== '' && !rel.endsWith('/') && !rel.startsWith(own),
   );
-  // Of those, the ones git ignores by the repository's own rules (`check-ignore -z` needs stdin, so
-  // the same listing again with the standard rules, limited to the candidates as literal pathspecs).
+  // SR2: a file whose folder in the new worktree is reached through a link is never asked about (git
+  // would refuse the whole batch) and never copied.
+  const plainFolders = new Map<string, Promise<boolean>>();
+  const reachable: string[] = [];
+  for (const rel of candidates.slice(0, WORKTREE_INCLUDE_LIMITS.files * 4)) {
+    const folder = rel.split('/').slice(0, -1);
+    const key = folder.join('/');
+    let plain = plainFolders.get(key);
+    if (plain === undefined) {
+      plain = plainFolderChain(worktreePath, folder, ctx.rules);
+      plainFolders.set(key, plain);
+    }
+    if (await plain) reachable.push(rel);
+  }
   const ignored: string[] = [];
-  for (const batch of batches(candidates.slice(0, WORKTREE_INCLUDE_LIMITS.files * 4))) {
-    const result = await ctx.runner.run(
-      call(ctx, repoRoot, 'status', 'read', [
-        '--literal-pathspecs',
-        'ls-files',
-        '--others',
-        '--ignored',
-        '--exclude-standard',
-        '-z',
-        '--',
-        ...batch,
-      ]),
-    );
-    if (result.exitCode === 0) ignored.push(...splitNul(result.stdout).filter((rel) => !rel.endsWith('/')));
+  for (const batch of batches(reachable)) {
+    ignored.push(...(await ignoredIn(ctx, worktreePath, batch)));
   }
   const out: IncludeResult = {
     copied: 0,
-    skipped: 0,
+    skipped: candidates.length - ignored.length,
     limited: candidates.length > WORKTREE_INCLUDE_LIMITS.files * 4,
+  };
+  const realRepo = await physicalAncestor(repoRoot, ctx.rules);
+  const realWorktree = await physicalAncestor(worktreePath, ctx.rules);
+  if (realRepo === null || realWorktree === null) return { ...out, skipped: candidates.length };
+  /** `folder` (or, while it does not exist yet, its deepest existing ancestor) really lies in `root`. */
+  const inside = async (folder: string, root: string): Promise<boolean> => {
+    const real = await physicalAncestor(folder, ctx.rules);
+    return real !== null && ctx.rules.isInside(real, root);
   };
   let bytes = 0;
   for (const rel of ignored) {
@@ -808,7 +987,7 @@ export async function copyWorktreeInclude(
     }
     try {
       const info = await lstat(source);
-      if (!info.isFile()) {
+      if (!info.isFile() || !(await inside(p.dirname(source), realRepo))) {
         out.skipped += 1;
         continue;
       }
@@ -816,7 +995,17 @@ export async function copyWorktreeInclude(
         out.limited = true;
         break;
       }
-      await mkdir(p.dirname(target), { recursive: true });
+      const folder = p.dirname(target);
+      // Checked before the folders are made (a link must not get folders made through it) and after.
+      if (!(await inside(folder, realWorktree))) {
+        out.skipped += 1;
+        continue;
+      }
+      await mkdir(folder, { recursive: true });
+      if (!(await inside(folder, realWorktree))) {
+        out.skipped += 1;
+        continue;
+      }
       await copyFile(source, target, constants.COPYFILE_EXCL);
       bytes += info.size;
       out.copied += 1;

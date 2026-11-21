@@ -1609,8 +1609,19 @@ export const worktreeRefSchema = z.object({
   /** First port of its block of 10 (`PARALLAX_WORKTREE_PORT`, ADR-251); null = no port block. */
   portBase: z.number().int().min(1024).max(65535).nullable(),
   createdAt: isoDateTimeSchema,
+  /**
+   * WP-117 (code review CR5): when `worktree.remove` deleted the folder; null = it exists. The record
+   * stays so the session keeps its project (`repoRoot`: sidebar group, muted projects) – everything
+   * that needs the worktree itself (cleanup dialog, git commands, port block) takes `liveWorktree`.
+   */
+  removedAt: isoDateTimeSchema.nullable().default(null),
 });
 export type WorktreeRef = z.infer<typeof worktreeRefSchema>;
+
+/** WP-117 (CR5): the worktree of a session while its folder exists (not `removedAt`), else null. */
+export function liveWorktree(ref: WorktreeRef | null | undefined): WorktreeRef | null {
+  return ref?.removedAt === null ? ref : null;
+}
 
 export const entrySchema = z.object({
   id: entryIdSchema,

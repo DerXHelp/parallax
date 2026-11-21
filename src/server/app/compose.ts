@@ -98,7 +98,7 @@ import { createSessionManager, SHUTDOWN_SWEEP_GRACE_MS, type SessionManager } fr
 import { createNativeToasts } from '../sessions/nativeToasts';
 import { openProcessStore } from '../sessions/processStore';
 import { createSearchCommands, type SearchCommandHandler } from '../search/commands';
-import { withWorktreePort } from '../sessions/worktrees';
+import { withWorktreePort, worktreePortOf } from '../sessions/worktrees';
 import { createReviewStore, type FileReviewStore } from '../store/review';
 import { createAttachmentFileStore } from '../store/attachments';
 import { createBlobStore } from '../store/blobs';
@@ -711,13 +711,11 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       () => stores.settings.get().console.terminalEmulator,
     );
     const { backend, consoleLauncher } = engine;
-    // WP-111 (ADR-251): every launch of an entry with a worktree port block gets PARALLAX_WORKTREE_PORT.
-    const claude = withWorktreePort(
-      engine.claude,
-      (entryId) => stores.registry.get(entryId)?.worktree?.portBase,
-    );
+    // WP-111 (ADR-251): every launch of an entry with a worktree port block gets PARALLAX_WORKTREE_PORT
+    // (WP-117 CR5: only while the worktree exists).
+    const claude = withWorktreePort(engine.claude, (entryId) => worktreePortOf(stores.registry.get(entryId)));
     const entryPortEnv = (entryId: EntryId): Record<string, string> =>
-      worktreePortEnv(stores.registry.get(entryId)?.worktree?.portBase);
+      worktreePortEnv(worktreePortOf(stores.registry.get(entryId)));
     const manifest = await readSdkManifest();
     // Delete protection and `profile.get`: entries of the profile, archived ones included (ADR-102).
     const entryCount = (profileId: ProfileId): number =>

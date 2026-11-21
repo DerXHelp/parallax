@@ -118,6 +118,19 @@ describe('normalizeElicitation – form subset (ADR-256)', () => {
     expect(form({ e: { type: 'string', enum: values } }).unsupported).toMatch(/more than/);
   });
 
+  it.each(['__proto__', 'constructor', 'prototype'])(
+    'SR5: a field named %s is unsupported (never a key of the zod shape)',
+    (key) => {
+      // JSON.parse makes `__proto__` an own key, like the SDK's parsed request.
+      const properties: unknown = JSON.parse(`{"${key}": {"type": "string"}, "name": {"type": "string"}}`);
+      const n = normalizeElicitation(
+        request({ requestedSchema: { type: 'object', properties, required: [key] } }),
+      );
+      expect(n.fields).toEqual([]);
+      expect(n.unsupported).toBe(`field "${key}": reserved name`);
+    },
+  );
+
   it('a schema that is not an object → unsupported', () => {
     expect(normalizeElicitation(request({ requestedSchema: { type: 'string' } })).unsupported).toMatch(
       /object/,
@@ -234,5 +247,16 @@ describe('checkElicitationContent', () => {
   it('a form without fields accepts {} and null', () => {
     expect(checkElicitationContent([], null)).toEqual({ ok: true, content: {} });
     expect(checkElicitationContent([], {})).toEqual({ ok: true, content: {} });
+  });
+
+  it('SR5: a restored field named __proto__ is refused; the answer object never gets a prototype key', () => {
+    const proto = elicitationFieldSchema.parse({ ...fields[0], key: '__proto__', required: true });
+    const content: Record<string, string> = JSON.parse('{"__proto__": "x"}') as Record<string, string>;
+    expect(checkElicitationContent([proto], content)).toEqual({
+      ok: false,
+      error: { code: 'ELICITATION_UNSUPPORTED', params: { reason: 'reserved field name' } },
+    });
+    const ok = checkElicitationContent(fields, { name: 'Ada' });
+    expect(ok.ok && Object.getPrototypeOf(ok.content)).toBe(Object.prototype);
   });
 });

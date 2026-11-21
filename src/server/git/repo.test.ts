@@ -1,9 +1,12 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, readdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from '@shared/common';
 import { makeTempHome } from '../http/testServer';
+import { HOST_PATH_RULES } from '../lib/paths';
 import { CommandError } from '../sync/ports';
+import type { GitCall, GitResult, GitRunner } from './runner';
 import {
   addedFilePatch,
   addWorktree,
@@ -18,13 +21,16 @@ import {
   fileDiff,
   headCommit,
   inspectWorktree,
+  inspectWorktreeLoss,
   listWorktrees,
   mergeBase,
+  plainFolderChain,
   push,
   readStatus,
   removeWorktree,
   resolveCommit,
   switchBranch,
+  WORKTREES_DIR,
   worktreeRoot,
 } from './repo';
 import { createTestRepo } from './testRepo';
@@ -269,6 +275,169 @@ describe('git repo operations (WP-111, real repositories)', () => {
     await deleteBranch(repo.ctx, repo.root, 'feature/x', true);
     expect(await resolveCommit(repo.ctx, repo.root, 'refs/heads/feature/x')).toBeNull();
     expect((await listWorktrees(repo.ctx, repo.root)).worktrees).toHaveLength(1);
+  });
+});
+
+/** A runner that records the arguments of every call and lets `answer` replace a call's result. */
+function recording(runner: GitRunner, answer: (args: readonly string[]) => GitResult | null = () => null) {
+  const calls: (readonly string[])[] = [];
+  const wrapped: GitRunner = {
+    executable: (env) => runner.executable(env),
+    run: (c: GitCall) => {
+      calls.push(c.args);
+      return Promise.resolve(answer(c.args) ?? runner.run(c));
+    },
+    ok: (c: GitCall) => {
+      calls.push(c.args);
+      return Promise.resolve(answer(c.args) ?? runner.ok(c));
+    },
+  };
+  return { runner: wrapped, calls };
+}
+
+describe('code and security review WP-117 (real repositories)', () => {
+  it('CR3: commit and fileDiff take file names literally (`[id].ts`, `[n]otes.md` are no globs)', async () => {
+    const repo = await createTestRepo();
+    await repo.write('[id].ts', 'one\n');
+    await repo.write('i.ts', 'i\n');
+    await repo.write('[n]otes.md', 'bracket\n');
+    await repo.write('notes.md', 'notes\n');
+    await commit(repo.ctx, repo.root, 'only the literal names', ['[id].ts', '[n]otes.md']);
+    expect((await readStatus(repo.ctx, repo.root)).files.map((f) => f.path).sort()).toEqual([
+      'i.ts',
+      'notes.md',
+    ]);
+    const base = await commit(repo.ctx, repo.root, 'the rest', null);
+
+    await repo.write('[id].ts', 'one\ntwo\n');
+    await repo.write('i.ts', 'i\nother\n');
+    const file = await fileDiff(repo.ctx, repo.root, { scope: 'session', base }, '[id].ts');
+    expect(file).toMatchObject({ path: '[id].ts', kind: 'modified', additions: 1, deletions: 0 });
+    expect(file.patch).toContain('+two');
+    expect(file.patch).not.toContain('other');
+  });
+
+  it('CR9: fileDiff of a tracked file asks git for that file only (no untracked listing, no line counts)', async () => {
+    const repo = await createTestRepo();
+    const base = (await headCommit(repo.ctx, repo.root)) ?? '';
+    await repo.write('README.md', 'hello\nmore\n');
+    await repo.write('fresh.txt', 'x\n');
+    const { runner, calls } = recording(repo.runner);
+    const ctx = { ...repo.ctx, runner };
+    const tracked = await fileDiff(ctx, repo.root, { scope: 'session', base }, 'README.md');
+    expect(tracked).toMatchObject({ kind: 'modified', additions: 1 });
+    expect(calls.some((args) => args.includes('ls-files'))).toBe(false);
+    expect(calls.some((args) => args.includes('--numstat'))).toBe(false);
+    const fresh = await fileDiff(ctx, repo.root, { scope: 'session', base }, 'fresh.txt');
+    expect(fresh).toMatchObject({ kind: 'added', additions: 1 });
+  });
+
+  it('CR4: an unknown count of unpushed commits is never 0', async () => {
+    const repo = await createTestRepo();
+    const base = (await headCommit(repo.ctx, repo.root)) ?? '';
+    await repo.git(['branch', 'side']);
+    const failing = recording(repo.runner, (args) =>
+      args.includes('rev-list')
+        ? { exitCode: 128, stdout: '', stderr: 'fatal: bad object', truncated: false }
+        : null,
+    );
+    const ctx = { ...repo.ctx, runner: failing.runner };
+    expect(await inspectWorktreeLoss(ctx, repo.root, repo.root, 'side', { ref: 'main', sha: base })).toEqual({
+      dirtyFiles: 0,
+      unpushedCommits: null,
+      branchMerged: true,
+    });
+    expect(
+      (await errorOf(inspectWorktree(ctx, repo.root, repo.root, 'side', { ref: 'main', sha: base }))).error,
+    ).toEqual({ code: 'GIT_FAILED', params: { op: 'status', detail: 'unpushed commits unknown' } });
+  });
+
+  it('SR1: reading calls never start a filter of the repository (status, diffs, inspection)', async () => {
+    const repo = await createTestRepo();
+    await repo.write('.gitattributes', '*.txt filter=evil\n');
+    await repo.write('a.txt', 'one\n');
+    const base = await repo.commitAll('attributes');
+    const marker = path.join(await makeTempHome('marker-'), 'ran');
+    const shellPath = marker.split(path.sep).join('/');
+    await repo.git(['config', 'filter.evil.clean', `echo ran > '${shellPath}' && cat`]);
+    await repo.git(['config', 'filter.evil.smudge', `echo ran > '${shellPath}' && cat`]);
+    // Same size, new content: git has to read the file again.
+    await repo.write('a.txt', 'two\n');
+
+    const status = await readStatus(repo.ctx, repo.root);
+    expect(status.files.map((f) => [f.path, f.kind])).toEqual([['a.txt', 'modified']]);
+    expect(
+      (await diffList(repo.ctx, repo.root, { scope: 'uncommitted', base: null })).files.map((f) => f.path),
+    ).toEqual(['a.txt']);
+    expect(
+      (await diffList(repo.ctx, repo.root, { scope: 'session', base })).files.map((f) => f.path),
+    ).toEqual(['a.txt']);
+    expect((await fileDiff(repo.ctx, repo.root, { scope: 'session', base }, 'a.txt')).patch).toContain(
+      '+two',
+    );
+    expect(
+      (await inspectWorktree(repo.ctx, repo.root, repo.root, 'main', { ref: 'main', sha: base })).dirtyFiles,
+    ).toBe(1);
+    expect(existsSync(marker)).toBe(false);
+    // The repository really runs the filter (a plain `git status`): the test would see it.
+    await repo.git(['status', '--porcelain']);
+    expect(existsSync(marker)).toBe(true);
+  });
+
+  it('SR2: .worktreeinclude copies only what the NEW worktree ignores, never through a link', async () => {
+    const repo = await createTestRepo();
+    const before = (await headCommit(repo.ctx, repo.root)) ?? '';
+    await repo.write('.gitignore', '*.env\n');
+    await repo.write('.worktreeinclude', '*.env\nsub/\n');
+    await repo.commitAll('ignore');
+    await repo.write('.env', 'SECRET=1\n');
+    await repo.write('sub/x.env', 'SUB=1\n');
+
+    // A worktree at a commit without the .gitignore: `.env` would be a new file there – not copied.
+    const old = path.join(repo.root, '.claude', 'worktrees', 'old');
+    await addWorktree(repo.ctx, repo.root, old, 'old', before);
+    expect(await copyWorktreeInclude(repo.ctx, repo.root, old)).toEqual({
+      copied: 0,
+      skipped: 2,
+      limited: false,
+    });
+    expect(existsSync(path.join(old, '.env'))).toBe(false);
+
+    // A link in the new worktree (a junction on Windows) never takes a file out of it.
+    const wt = path.join(repo.root, '.claude', 'worktrees', 'linked');
+    await addWorktree(repo.ctx, repo.root, wt, 'linked', (await headCommit(repo.ctx, repo.root)) ?? '');
+    const outside = await makeTempHome('outside-');
+    await symlink(outside, path.join(wt, 'sub'), 'junction');
+    expect(await copyWorktreeInclude(repo.ctx, repo.root, wt)).toEqual({
+      copied: 1,
+      skipped: 1,
+      limited: false,
+    });
+    expect(await readFile(path.join(wt, '.env'), 'utf8')).toBe('SECRET=1\n');
+    expect(await readdir(outside)).toEqual([]);
+  });
+
+  it('SR2: plainFolderChain refuses a link or a file on the way to the worktree folder', async () => {
+    const repo = await createTestRepo();
+    expect(await plainFolderChain(repo.root, WORKTREES_DIR, HOST_PATH_RULES)).toBe(true);
+    const outside = await makeTempHome('outside-');
+    await symlink(outside, path.join(repo.root, '.claude'), 'junction');
+    expect(await plainFolderChain(repo.root, WORKTREES_DIR, HOST_PATH_RULES)).toBe(false);
+    const other = await createTestRepo();
+    await other.write('.claude', 'a file');
+    expect(await plainFolderChain(other.root, WORKTREES_DIR, HOST_PATH_RULES)).toBe(false);
+  });
+
+  it('SR4: push refuses a remote whose name would be an option', async () => {
+    const repo = await createTestRepo();
+    const remote = await createTestRepo({ bare: true });
+    await repo.git(['config', 'remote.--upload-pack=evil.url', remote.root]);
+    const { runner, calls } = recording(repo.runner);
+    expect((await errorOf(push({ ...repo.ctx, runner }, repo.root))).error).toEqual({
+      code: 'GIT_PUSH_FAILED',
+      params: { reason: 'other', detail: 'invalid name' },
+    });
+    expect(calls.some((args) => args[0] === 'push')).toBe(false);
   });
 });
 

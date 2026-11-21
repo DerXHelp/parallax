@@ -17,7 +17,14 @@ import {
   type FocusEvent,
 } from 'react';
 import type { EffortLevel } from '@shared/common';
-import type { ContextGauge, HostColor, ProfileColor, RunningTasks, SessionSummary } from '@shared/model';
+import {
+  liveWorktree,
+  type ContextGauge,
+  type HostColor,
+  type ProfileColor,
+  type RunningTasks,
+  type SessionSummary,
+} from '@shared/model';
 import type { DisplayStatusKind } from '@shared/status';
 import { runningTaskTotal } from '@shared/tasks';
 import { useFormat, useT } from '@web/i18n';
@@ -156,13 +163,14 @@ const ROW_COUNTER_MAX = 9;
 /**
  * Branch of the row's last line. WP-115 (ADR-250): a worktree session marks its branch with the
  * worktree symbol (the group header names the main repository) – the live branch when known, else
- * the worktree's own.
+ * the worktree's own. WP-117 (CR5): a removed worktree is a plain row of its repository's group.
  */
 function RowBranch({ summary }: { summary: SessionSummary }) {
   const t = useT();
-  const branch = summary.gitBranch ?? summary.worktree?.branch ?? null;
+  const live = liveWorktree(summary.worktree);
+  const branch = summary.gitBranch ?? live?.branch ?? null;
   if (branch === null) return null;
-  const worktree = summary.worktree !== null;
+  const worktree = live !== null;
   const Icon = worktree ? GitForkIcon : GitBranchIcon;
   return (
     <span
@@ -453,9 +461,9 @@ export const SessionRow = memo(function SessionRow({
                   </Suspense>
                 )}
                 <span className="text-muted-foreground font-mono break-all">{summary.cwd}</span>
-                {summary.worktree === null ? null : (
+                {liveWorktree(summary.worktree) === null ? null : (
                   <span data-slot="row-worktree-detail" className="text-muted-foreground break-all">
-                    {t('navigation.row.worktreeOf', { repo: summary.worktree.repoRoot })}
+                    {t('navigation.row.worktreeOf', { repo: summary.worktree?.repoRoot ?? '' })}
                   </span>
                 )}
                 {summary.gitBranch === null ? null : (

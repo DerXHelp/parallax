@@ -591,6 +591,7 @@ export function sampleWorktreeRef(p: Partial<WorktreeRef> = {}): WorktreeRef {
     baseSha: sampleSha(1),
     portBase: 41000,
     createdAt: sampleTime(),
+    removedAt: null,
     ...p,
   };
 }

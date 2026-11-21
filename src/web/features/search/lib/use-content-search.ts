@@ -75,7 +75,9 @@ const NO_HITS: readonly HostHit[] = Object.freeze([]);
 
 /**
  * Runs the query `delayMs` after its last change (0: at once – opening with a text, a switch) on
- * every computer of `hosts`; a change of text, switches or computers starts a new one.
+ * every computer of `hosts`; a change of text, switches or computers starts a new one. CR7 (code
+ * review WP-117): only a change of the computers' ids counts – `hosts` is a new array with every
+ * HostState change, which must not restart (and supersede) the running query.
  */
 export function useContentSearch(
   query: SearchQuery,
@@ -84,8 +86,14 @@ export function useContentSearch(
 ): ContentSearch {
   const text = query.text.trim().slice(0, LIMITS.searchTextMax);
   const { includeArchived, includeToolOutput } = query;
-  const active = text.length >= LIMITS.searchTextMin && hosts.length > 0;
-  const key = active ? JSON.stringify([text, includeArchived, includeToolOutput, hosts]) : '';
+  // Host ids never contain a line break (`hostIdSchema`).
+  const hostsKey = hosts.join('\n');
+  const stableHosts = useMemo(
+    (): readonly HostId[] => (hostsKey === '' ? [] : hostsKey.split('\n')),
+    [hostsKey],
+  );
+  const active = text.length >= LIMITS.searchTextMin && stableHosts.length > 0;
+  const key = active ? JSON.stringify([text, includeArchived, includeToolOutput, stableHosts]) : '';
   const [answers, setAnswers] = useState<Answers | null>(null);
 
   useEffect(() => {
@@ -100,7 +108,7 @@ export function useContentSearch(
       });
     };
     const timer = setTimeout(() => {
-      for (const hostId of hosts) {
+      for (const hostId of stableHosts) {
         sendHostCommand(hostId, { name: 'search.query', text, includeArchived, includeToolOutput }).then(
           (result) => {
             record(hostId, { state: 'done', hits: result.hits, truncated: result.truncated });
@@ -116,7 +124,7 @@ export function useContentSearch(
       current = false;
       clearTimeout(timer);
     };
-  }, [key, text, includeArchived, includeToolOutput, hosts, delayMs]);
+  }, [key, text, includeArchived, includeToolOutput, stableHosts, delayMs]);
 
   return useMemo((): ContentSearch => {
     if (key === '' || answers === null) {
@@ -132,7 +140,7 @@ export function useContentSearch(
     const done = new Map<HostId, readonly SearchHit[]>();
     const failures: { hostId: HostId; error: ErrorPayload }[] = [];
     let truncated = false;
-    for (const hostId of hosts) {
+    for (const hostId of stableHosts) {
       const answer = answers.byHost.get(hostId);
       if (answer?.state === 'done') {
         done.set(hostId, answer.hits);
@@ -141,13 +149,13 @@ export function useContentSearch(
         failures.push({ hostId, error: answer.error });
       }
     }
-    const complete = fresh && hosts.every((hostId) => answers.byHost.has(hostId));
+    const complete = fresh && stableHosts.every((hostId) => answers.byHost.has(hostId));
     return {
       phase: complete ? 'done' : 'loading',
-      hits: mergeHostHits(done, hosts),
+      hits: mergeHostHits(done, stableHosts),
       stale: !fresh,
       truncated,
       failures,
     };
-  }, [answers, hosts, key]);
+  }, [answers, stableHosts, key]);
 }

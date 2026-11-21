@@ -5,18 +5,26 @@
  * port block, setup in a fake terminal, the held start prompt, "Start anyway"), and `worktree.remove`
  * (busy, dirty, teardown, branch).
  */
-import { access, writeFile } from 'node:fs/promises';
+import { access, readdir, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EntryId } from '@shared/common';
 import { makeError } from '@shared/errors';
-import { sampleEntry, sampleProjectSettings, sampleSessionFile } from '@shared/samples';
+import {
+  SAMPLE_TIME,
+  sampleEntry,
+  sampleId,
+  sampleProjectSettings,
+  sampleSessionFile,
+} from '@shared/samples';
 import type { SessionOp } from '@shared/protocol';
 import type { TerminalScriptSpec } from '../terminal/ports';
 import { headCommit } from '../git/repo';
 import { createTestRepo, type TestRepo } from '../git/testRepo';
-import type { HostCommandHandler } from '../sync/ports';
+import { makeTempHome } from '../http/testServer';
+import type { ClientPresence, HostCommandHandler } from '../sync/ports';
 import type { EngineTerminal } from './entryState';
+import { gitHeadWatchCount } from './lib/gitBranch';
 import { createEngineHarness, type EngineHarness, type EngineHarnessOptions } from './testing/harness';
 import { WORKTREE_PORTS } from './worktrees';
 
@@ -370,9 +378,129 @@ describe('session.create with a worktree (WP-111, ADR-250/251)', () => {
     expect(runs).toHaveLength(1);
     expect(closed).toContain(entryId);
     expect(await exists(wt)).toBe(false);
-    expect(h.stores.registry.get(entryId)?.worktree).toBeNull();
+    // CR5 (code review WP-117): the entry stays in its repository's group – the record is kept with
+    // `removedAt`, the folder is gone; neither inspection nor removal applies any more.
+    expect(h.stores.registry.get(entryId)?.worktree).toMatchObject({
+      repoRoot: repo.root,
+      path: wt,
+      removedAt: h.now().toISOString(),
+    });
+    expect(h.summary(entryId).worktree?.removedAt).toBe(h.now().toISOString());
     expect((await h.cmd({ name: 'worktree.list', cwd: repo.root })).worktrees).toHaveLength(1);
     await expect(repo.git(['rev-parse', '--verify', '--quiet', 'refs/heads/side'])).rejects.toThrow();
     expect((await h.cmdError({ name: 'worktree.inspect', entryId })).code).toBe('VALIDATION_FAILED');
+    expect((await h.cmdError(remove)).code).toBe('VALIDATION_FAILED');
+    expect(runs).toHaveLength(1);
   });
 });
+
+describe('code review WP-117: worktree creation and the HEAD watch', () => {
+  it('CR1: two concurrent session.create never share a port block', async () => {
+    const repo = await createTestRepo();
+    const h = await setup();
+    await useProject(h, repo, { setup: '', ports: true });
+    const create = (branch: string) =>
+      h.cmd({ name: 'session.create', cwd: repo.root, worktree: { mode: 'new', branch } });
+    const [a, b] = await Promise.all([create('one'), create('two')]);
+    const ports = [a.entryId, b.entryId].map((id) => h.stores.registry.get(id)?.worktree?.portBase);
+    expect(ports.every((port) => typeof port === 'number')).toBe(true);
+    expect(new Set(ports).size).toBe(2);
+    await h.waitFor(
+      () => h.summary(a.entryId).worktreeSetup === null && h.summary(b.entryId).worktreeSetup === null,
+      20_000,
+    );
+  });
+
+  it('CR10: a failing `git worktree add` is the error of session.create – no entry, no folder, no branch', async () => {
+    const repo = await createTestRepo();
+    // `refs/heads/feature` is a file: git cannot create `feature/login` (the checks before cannot know).
+    await repo.git(['branch', 'feature']);
+    const h = await setup();
+    const before = h.stores.registry.list().length;
+    const error = await h.cmdError({
+      name: 'session.create',
+      cwd: repo.root,
+      prompt: { text: 'Never lost silently' },
+      worktree: { mode: 'new', branch: 'feature/login' },
+    });
+    expect(error).toMatchObject({ code: 'GIT_FAILED', params: { op: 'worktree_add' } });
+    expect(h.stores.registry.list()).toHaveLength(before);
+    expect(await exists(path.join(repo.root, '.claude', 'worktrees', 'feature-login'))).toBe(false);
+    // The reservations are free again: the same branch name works once the conflict is gone.
+    await repo.git(['branch', '-D', 'feature']);
+    const { entryId } = await h.cmd({
+      name: 'session.create',
+      cwd: repo.root,
+      worktree: { mode: 'new', branch: 'feature/login' },
+    });
+    expect(h.stores.registry.get(entryId)?.cwd).toBe(
+      path.join(repo.root, '.claude', 'worktrees', 'feature-login'),
+    );
+    await h.waitFor(() => h.summary(entryId).worktreeSetup === null, 20_000);
+  });
+
+  it('CR10: a start prompt whose files cannot be copied fails session.create before the worktree', async () => {
+    const repo = await createTestRepo();
+    const h = await setup();
+    const file = h.stores.blobs.put('trace', 'application/octet-stream', 'build.log');
+    const materialize = vi
+      .spyOn(h.stores.attachments, 'materialize')
+      .mockRejectedValueOnce(new Error('disk full'));
+    const before = h.stores.registry.list().length;
+    const error = await h.cmdError({
+      name: 'session.create',
+      cwd: repo.root,
+      prompt: { text: 'With a file', attachments: [{ blobId: file.blobId }] },
+      worktree: { mode: 'new', branch: 'with-file' },
+    });
+    expect(materialize).toHaveBeenCalledTimes(1);
+    expect(error.code).toBe('INTERNAL_ERROR');
+    expect(h.stores.registry.list()).toHaveLength(before);
+    expect(await exists(path.join(repo.root, '.claude', 'worktrees', 'with-file'))).toBe(false);
+    await expect(repo.git(['rev-parse', '--verify', '--quiet', 'refs/heads/with-file'])).rejects.toThrow();
+  });
+
+  it('SR2: a link at `.claude` refuses a new worktree (nothing is created through it)', async () => {
+    const repo = await createTestRepo();
+    const outside = await makeTempHome('outside-');
+    await symlink(outside, path.join(repo.root, '.claude'), 'junction');
+    const h = await setup();
+    expect(
+      await h.cmdError({
+        name: 'session.create',
+        cwd: repo.root,
+        worktree: { mode: 'new', branch: 'linked' },
+      }),
+    ).toEqual(makeError('VALIDATION_FAILED', { field: 'worktree.path', reason: 'link' }));
+    expect(await readdir(outside)).toEqual([]);
+  });
+
+  it('CR2: the HEAD watch ends when no window shows the entry any more, and when it is archived', async () => {
+    const repo = await createTestRepo();
+    const entry = sampleEntry({ cwd: repo.root, worktree: null, baseSha: null });
+    const h = await setup({ seed: { entries: [entry] }, gitBranch: () => Promise.resolve('main') });
+    const before = gitHeadWatchCount();
+    const show = (presence: readonly ClientPresence[]) => {
+      h.publisher.setPresence(presence);
+      h.manager.onPresenceChanged(presence);
+    };
+    show([viewer(entry.id)]);
+    await h.waitFor(() => gitHeadWatchCount() === before + 1, 20_000);
+    show([]);
+    expect(gitHeadWatchCount()).toBe(before);
+
+    show([viewer(entry.id)]);
+    await h.waitFor(() => gitHeadWatchCount() === before + 1, 20_000);
+    await h.cmd({ name: 'session.setArchived', entryId: entry.id, archived: true });
+    expect(gitHeadWatchCount()).toBe(before);
+  });
+});
+
+function viewer(entryId: EntryId): ClientPresence {
+  return {
+    clientId: sampleId('cl', 1),
+    presence: { focused: true, visible: true, viewingEntryId: entryId, typing: false },
+    lastFocusAt: new Date(SAMPLE_TIME),
+    connectedAt: new Date(SAMPLE_TIME),
+  };
+}
