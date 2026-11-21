@@ -245,7 +245,7 @@ export function settingsSleepPolicy(settings: () => Settings): SleepPolicy {
 }
 
 /** 102e: what the engine needs of the terminal service ("Continue in terminal"). */
-export type EngineTerminal = Pick<TerminalService, 'openClaude' | 'claudeState'>;
+export type EngineTerminal = Pick<TerminalService, 'openClaude' | 'claudeState' | 'remoteEpoch'>;
 
 export interface EngineCore {
   readonly backend: AgentBackend;

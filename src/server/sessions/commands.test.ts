@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { SettingsPatch } from '@shared/model';
+import { DEFAULT_CONSOLE_SETTINGS, type SettingsPatch } from '@shared/model';
 import { POSIX_PATHS, WIN32_PATHS, type PathRules } from '@shared/paths';
-import { sampleEditorSettings } from '@shared/samples';
+import { SAMPLE_IDS, sampleEditorSettings } from '@shared/samples';
 import { CommandError } from '../sync/ports';
-import { assertHostSettings } from './commands';
+import { assertHostSettings, assertSettingsAccess } from './commands';
 
 /** The error payload `assertHostSettings` throws, or null when the patch passes. */
 function rejection(patch: SettingsPatch, rules: PathRules): unknown {
@@ -44,5 +44,33 @@ describe('assertHostSettings (WP-102)', () => {
     expect(rejection({}, WIN32_PATHS)).toBeNull();
     expect(rejection(editor(null), POSIX_PATHS)).toBeNull();
     expect(rejection({ theme: 'dark' }, POSIX_PATHS)).toBeNull();
+  });
+});
+
+describe('assertSettingsAccess (security review WP-109)', () => {
+  const ctx = { clientId: SAMPLE_IDS.client, cmdId: SAMPLE_IDS.cmdId };
+  const refused = (patch: SettingsPatch, access: 'local' | 'control' | 'manage' | undefined): unknown => {
+    try {
+      assertSettingsAccess(patch, access === undefined ? ctx : { ...ctx, access });
+    } catch (error) {
+      return error instanceof CommandError ? error.error : error;
+    }
+    return null;
+  };
+
+  it('editor and console change only from a window of this computer; the rest also from "Manage"', () => {
+    const editor: SettingsPatch = { editor: sampleEditorSettings() };
+    const terminal: SettingsPatch = {
+      console: { ...DEFAULT_CONSOLE_SETTINGS, terminalEmulator: '/usr/bin/kitty' },
+    };
+    expect(refused(editor, undefined)).toBeNull();
+    expect(refused(terminal, 'local')).toBeNull();
+    for (const patch of [editor, terminal, { ...editor, port: 4800 }]) {
+      expect(refused(patch, 'manage')).toEqual({
+        code: 'REMOTE_NOT_ALLOWED',
+        params: { command: 'settings.update' },
+      });
+    }
+    expect(refused({ port: 4800, theme: 'light' }, 'manage')).toBeNull();
   });
 });

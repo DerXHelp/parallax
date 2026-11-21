@@ -861,6 +861,43 @@ describe('createTerminalService – closeRemote (WP-76 §B.13)', () => {
     service.closeRemote();
     expect(local.sink.messages).toHaveLength(before);
   });
+
+  it('a remote start from before the last closeRemote never starts (security review WP-109)', async () => {
+    const waiting: (() => void)[] = [];
+    const releaseCwd = (): void => {
+      for (const release of waiting.splice(0)) release();
+    };
+    let slow = false;
+    const { service, fake } = setup({
+      checkCwd: () =>
+        slow
+          ? new Promise<void>((resolve) => {
+              waiting.push(resolve);
+            })
+          : Promise.resolve(),
+    });
+    const launch = { executablePath: EXE.bash, args: [], env: {} };
+    // The epoch read when the command arrived; unpaired while the handoff waited.
+    const since = service.remoteEpoch();
+    service.closeRemote();
+    expect(service.remoteEpoch()).toBe(since + 1);
+    expect(await service.openClaude(ENTRY, launch, 'remote', since)).toEqual({
+      kind: 'failed',
+      error: { code: 'HOST_REVOKED', params: {} },
+    });
+    // Unpaired during its own awaits (checkCwd) likewise; a local start goes on.
+    slow = true;
+    const inFlight = service.openClaude(ENTRY, launch, 'remote');
+    const localStart = service.openClaude(ENTRY, launch);
+    service.closeRemote();
+    releaseCwd();
+    expect(await inFlight).toEqual({ kind: 'failed', error: { code: 'HOST_REVOKED', params: {} } });
+    expect((await localStart).kind).toBe('opened');
+    expect(fake.spawned).toHaveLength(1);
+    // With the current epoch a remote start opens.
+    slow = false;
+    expect((await service.openClaude(ENTRY, launch, 'remote', service.remoteEpoch())).kind).toBe('opened');
+  });
 });
 
 /** A well-formed terminal id nobody opened. */

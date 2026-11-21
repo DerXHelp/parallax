@@ -132,6 +132,20 @@ describe('createLoginService (WP-70)', () => {
     await until(() => s.opened.length === 2);
   });
 
+  it('a paired computer (manage) signs in in its own browser: nothing opens on this desktop (review WP-109)', async () => {
+    const s = setup();
+    const remote = { ...ctx, access: 'manage' as const };
+    await s.service.handle({ name: 'profile.login', profileId: STANDARD_PROFILE_ID }, remote);
+    await until(() => s.service.state(STANDARD_PROFILE_ID).state === 'waiting');
+    expect(s.service.state(STANDARD_PROFILE_ID).url?.startsWith(FAKE_LOGIN_HOST)).toBe(true);
+    // The second click from there neither.
+    await s.service.handle({ name: 'profile.login', profileId: STANDARD_PROFILE_ID }, remote);
+    expect(s.opened).toEqual([]);
+    // A local window still opens the link.
+    await login(s);
+    await until(() => s.opened.length === 1);
+  });
+
   it('a pasted code#state signs in: done with the plan only, auth status read again, engine told', async () => {
     const s = setup();
     await login(s);

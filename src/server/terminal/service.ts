@@ -206,6 +206,8 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
   /** Opens in flight (reserved against the limits). */
   const pendingOpens = new Map<EntryId, number>();
   let pendingTotal = 0;
+  /** Security review WP-109: +1 per `closeRemote` (remote starts in flight compare it). */
+  let remoteEpoch = 0;
   /** Bumped by `closeEntry`: an open in flight for an older epoch fails. */
   const epochs = new Map<EntryId, { epoch: number; reason: TerminalEndReason }>();
   /** Liveness watches after `close()` (awaited by `closeAll`). */
@@ -521,6 +523,8 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     readonly rows: number;
     /** False once nobody waits for the result any more (the socket closed): nothing starts, no error. */
     readonly wanted: () => boolean;
+    /** Origin `remote`: `remoteEpoch` when the request arrived (default: at the start of this call). */
+    readonly remoteSince?: number;
   }
 
   type StartOutcome =
@@ -534,6 +538,10 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
    */
   const startTerminal = async (plan: StartPlan): Promise<StartOutcome> => {
     const { entryId } = plan;
+    // Security review WP-109: a remote start from before the last `closeRemote` never starts.
+    const remoteSince = plan.remoteSince ?? remoteEpoch;
+    const revoked = (): boolean => plan.origin === 'remote' && remoteEpoch !== remoteSince;
+    if (revoked()) return { kind: 'failed', error: makeError('HOST_REVOKED') };
     const refused = admission(entryId);
     if (refused !== null) return { kind: 'failed', error: refused };
     // admission() saw the entry; a null here would be a race with removal (checked again below).
@@ -554,6 +562,7 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
       }
       const late = stillAllowed(entryId, epoch);
       if (late !== null) return { kind: 'failed', error: late };
+      if (revoked()) return { kind: 'failed', error: makeError('HOST_REVOKED') };
       if (!plan.wanted() || factory === null) return { kind: 'dropped' };
       let pty: PtyProcess;
       try {
@@ -776,7 +785,7 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
       };
     },
     list,
-    async openClaude(entryId, launch, origin = 'local'): Promise<TerminalClaudeOpenResult> {
+    async openClaude(entryId, launch, origin = 'local', since?: number): Promise<TerminalClaudeOpenResult> {
       try {
         const outcome = await startTerminal({
           entryId,
@@ -792,6 +801,7 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
           origin,
           ...CLAUDE_TERMINAL_SIZE,
           wanted: () => true,
+          ...(since === undefined ? {} : { remoteSince: since }),
         });
         if (outcome.kind === 'failed') return outcome;
         if (outcome.kind === 'dropped') return { kind: 'failed', error: unavailable() };
@@ -808,7 +818,9 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
       const t = terminals.get(terminalId);
       return t?.info.state === 'running' && t.ending === null ? 'running' : 'ended';
     },
+    remoteEpoch: () => remoteEpoch,
     closeRemote() {
+      remoteEpoch += 1;
       const remote = [...terminals.values()].filter((t) => t.origin === 'remote');
       const entries = new Set(remote.map((t) => t.info.entryId));
       for (const t of remote) endTerminal(t, 'closed');

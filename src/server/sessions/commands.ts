@@ -98,6 +98,7 @@ export async function handleCommand(
       case 'session.create':
         return await createSession(engine, cmd, ctx.clientId);
       case 'settings.update': {
+        assertSettingsAccess(cmd.patch, ctx);
         assertHostSettings(cmd.patch);
         const prev = engine.core.stores.settings.get();
         const settings = engine.core.stores.settings.update(cmd.patch);
@@ -133,6 +134,20 @@ export function assertHostSettings(patch: SettingsPatch, rules: PathRules = HOST
   if (executable === undefined || executable === null) return;
   const issue = editorExecutableIssue(executable, rules);
   if (issue !== null) throw commandError('VALIDATION_FAILED', { field: 'editor.executable', reason: issue });
+}
+
+/**
+ * Security review WP-109 (WP-76 §B.13): settings that start programs on this computer's desktop – the
+ * editor and the console (terminal emulator, Git Bash) – change only from a window of this computer.
+ * The view "Manage" hides those sections; the server enforces it.
+ */
+export const LOCAL_ONLY_SETTINGS = ['editor', 'console'] as const satisfies readonly (keyof SettingsPatch)[];
+
+export function assertSettingsAccess(patch: SettingsPatch, ctx: CommandContext): void {
+  if ((ctx.access ?? 'local') === 'local') return;
+  if (LOCAL_ONLY_SETTINGS.some((key) => patch[key] !== undefined)) {
+    throw commandError('REMOTE_NOT_ALLOWED', { command: 'settings.update' });
+  }
 }
 
 /** ADR-101: the handler that lists the name; its CommandErrors pass through unchanged. */

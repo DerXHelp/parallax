@@ -284,6 +284,9 @@ export async function openInTerminal(
   origin: TerminalOrigin = 'local',
 ): Promise<CommandResult<'session.openInTerminal'>> {
   const unavailable = () => commandError('TERMINAL_UNAVAILABLE', { reason: 'platform' });
+  // Security review WP-109: a paired computer's request that waited in the handoff (closing the query
+  // takes seconds) does not start once that computer was unpaired meanwhile (HOST_REVOKED).
+  const remoteSince = origin === 'remote' ? core.terminal?.remoteEpoch() : undefined;
   const opened = await handOff(core, s, clientId, {
     name: 'session.openInTerminal',
     assertAvailable: () => {
@@ -296,6 +299,7 @@ export async function openInTerminal(
         s.id,
         { executablePath: spec.executablePath, args: spec.args, env: spec.env },
         origin,
+        remoteSince,
       );
       if (result.kind === 'failed') {
         core.log.warn({ entryId: s.id, code: result.error.code }, 'claude terminal could not be opened');

@@ -430,7 +430,8 @@ export const de: typeof en = {
     },
     levels: {
       control: 'Steuern',
-      controlHint: 'Sessions, Dateien und das Terminal.',
+      controlHint:
+        'Sessions, Dateien und das Terminal. Über das Terminal kann der andere Rechner alles, was dein Benutzerkonto hier darf – kopple nur eigene Rechner.',
       manage: 'Verwalten',
       manageHint:
         'Dazu Einstellungen, Profile (mit ihren Umgebungswerten), Updates, der Server und diese Kopplung. Nur nötig, wenn dieser Rechner ohne eigenen Desktop läuft.',

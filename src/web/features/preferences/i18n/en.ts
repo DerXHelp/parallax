@@ -439,7 +439,8 @@ export const en = {
     /** WP-107 (WP-76 §B.13): what a paired computer may do on this one. */
     levels: {
       control: 'Control',
-      controlHint: 'Sessions, files and the terminal.',
+      controlHint:
+        'Sessions, files and the terminal. Through the terminal the other computer can do anything your account can do here – pair only your own computers.',
       manage: 'Manage',
       manageHint:
         'Also settings, profiles (with their environment values), updates, the server and this pairing. Only needed when this computer runs without a desktop of its own.',

@@ -33,8 +33,17 @@ afterEach(async () => {
   }
 });
 
+interface OpenCall {
+  entryId: EntryId;
+  launch: TerminalClaudeLaunch;
+  origin: TerminalOrigin;
+  since: number | undefined;
+}
+
 interface TestTerminal extends EngineTerminal {
-  readonly opened: { entryId: EntryId; launch: TerminalClaudeLaunch; origin: TerminalOrigin }[];
+  readonly opened: OpenCall[];
+  /** The `remoteEpoch()` value the next calls read. */
+  epoch: number;
   setState(terminalId: TerminalId, state: TerminalClaudeState): void;
   failNext(error: ErrorPayload): void;
 }
@@ -45,20 +54,24 @@ function terminalIdOf(n: number): TerminalId {
 
 /** Hands out `tm_…1`, `tm_…2` …; unknown ids are `ended` (like the service after a restart). */
 function createTestTerminal(onOpen: (launch: TerminalClaudeLaunch) => void): TestTerminal {
-  const opened: { entryId: EntryId; launch: TerminalClaudeLaunch; origin: TerminalOrigin }[] = [];
+  const opened: OpenCall[] = [];
   const states = new Map<TerminalId, TerminalClaudeState>();
   let next = 1;
   let failure: ErrorPayload | null = null;
   return {
     opened,
+    epoch: 0,
+    remoteEpoch() {
+      return this.epoch;
+    },
     setState(terminalId, state) {
       states.set(terminalId, state);
     },
     failNext(error) {
       failure = error;
     },
-    openClaude(entryId, launch, origin = 'local'): Promise<TerminalClaudeOpenResult> {
-      opened.push({ entryId, launch, origin });
+    openClaude(entryId, launch, origin = 'local', since): Promise<TerminalClaudeOpenResult> {
+      opened.push({ entryId, launch, origin, since });
       if (failure !== null) {
         const error = failure;
         failure = null;
@@ -217,5 +230,8 @@ describe('session.openInTerminal (102e)', () => {
     );
     expect(result).toEqual({ terminalId: terminalIdOf(1) });
     expect(terminal.opened.map((o) => o.origin)).toEqual(['remote']);
+    // Security review WP-109: the epoch read when the command arrived travels along (the terminal
+    // service refuses the start once remote access was closed meanwhile); a local start has none.
+    expect(terminal.opened[0]?.since).toBe(0);
   });
 });

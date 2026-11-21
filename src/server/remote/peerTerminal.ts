@@ -116,7 +116,8 @@ export function remoteTerminalView(service: TerminalService, onOpen: () => void)
       return wrapped;
     },
     list: (entryId) => service.list(entryId),
-    openClaude: (entryId, launch) => service.openClaude(entryId, launch, 'remote'),
+    openClaude: (entryId, launch, _origin, since) => service.openClaude(entryId, launch, 'remote', since),
+    remoteEpoch: () => service.remoteEpoch(),
     claudeState: (terminalId) => service.claudeState(terminalId),
     closeEntry: (entryId, reason) => {
       service.closeEntry(entryId, reason);

@@ -127,13 +127,20 @@ export interface TerminalService {
    * 102e: starts `launch` as a new terminal of the entry in its `cwd` (`command: 'claude'`, `shell` = the
    * host's default shell for "Restart") with the limits and checks of `open`, and pushes `terminals` to
    * the entry's sockets. Never throws; errors: TERMINAL_UNAVAILABLE, TERMINAL_LIMIT_REACHED,
-   * TERMINAL_START_FAILED {reason}, ENTRY_NOT_FOUND, SESSION_ARCHIVED, CWD_*.
+   * TERMINAL_START_FAILED {reason}, ENTRY_NOT_FOUND, SESSION_ARCHIVED, CWD_*. `remoteEpoch` (origin
+   * `remote`): the value of `remoteEpoch()` when the command arrived – changed since → HOST_REVOKED.
    */
   openClaude(
     entryId: EntryId,
     launch: TerminalClaudeLaunch,
     origin?: TerminalOrigin,
+    remoteEpoch?: number,
   ): Promise<TerminalClaudeOpenResult>;
+  /**
+   * Security review WP-109: counts `closeRemote`. A remote start that began before the last one (unpaired,
+   * level changed, sharing off while it waited) does not start any more (HOST_REVOKED).
+   */
+  remoteEpoch(): number;
   /** 102e: state of a terminal started by `openClaude` (the watch of the handoff). */
   claudeState(terminalId: TerminalId): TerminalClaudeState;
   /** Ends every terminal of the entry (`exit` with the reason) and forgets them. */
