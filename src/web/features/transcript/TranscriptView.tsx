@@ -24,6 +24,7 @@ import { Skeleton } from '@web/ui/skeleton';
 import { Spinner } from '@web/ui/spinner';
 import { ToolImagesGallery } from './components/ImageGallery';
 import { ImageViewer } from './components/ImageViewer';
+import { RevealExcerpt } from './components/RevealExcerpt';
 import { SinceLastVisit } from './components/SinceLastVisit';
 import {
   BlobHostContext,
@@ -37,6 +38,7 @@ import { TranscriptRow } from './items/TranscriptRow';
 import { buildRows, itemCodesById, type ItemCode, type TranscriptRowModel } from './lib/grouping';
 import { preloadMarkdown } from './markdown/Markdown';
 import { useOpenGroups } from './state/groups';
+import { useReveal } from './state/reveal';
 
 /**
  * The transcript of one session (slot `Transcript`, architecture §2.3d/g):
@@ -52,7 +54,9 @@ import { useOpenGroups } from './state/groups';
  *   the items are compared shallowly, so deltas that change no role keep the rows;
  * - WP-65 §1.2: the card "Since you were last here" at the top (`SinceLastVisit`, from the session's
  *   `lastSeenAt` held at opening), closable, with a jump to the first new item;
- * - WP-69: hook runs per the setting `hookDisplay` (resolved by `buildRows`).
+ * - WP-69: hook runs per the setting `hookDisplay` (resolved by `buildRows`);
+ * - WP-115: the jump to a search hit (request `revealItem`, state/reveal.ts) scrolls to its row and
+ *   marks it briefly (`data-revealed`); a hit outside the list shows as an excerpt card on top.
  */
 
 type Row = { kind: 'earlier' } | TranscriptRowModel | { kind: 'queued'; prompt: QueuedPrompt };
@@ -94,6 +98,13 @@ function rowKey(row: Row): string {
     case 'queued':
       return `queued:${row.prompt.messageUuid}`;
   }
+}
+
+/** The row shows this item (an item row, or the step group / gallery holding it). */
+function rowHolds(row: Row, itemId: string): boolean {
+  if (row.kind === 'item') return row.id === itemId;
+  if (row.kind === 'group' || row.kind === 'gallery') return row.ids.includes(itemId);
+  return false;
 }
 
 /** Was the list changed at its start (items prepended by `loadEarlier`)? virtua then needs `shift`. */
@@ -306,20 +317,24 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
   }, [scrollToEnd]);
 
   // WP-65 §1.2: "To the first new message" – the row of that item (or the group/gallery holding it).
-  const jumpToItem = (itemId: string) => {
-    const index = rows.findIndex((row) =>
-      row.kind === 'item'
-        ? row.id === itemId
-        : row.kind === 'group' || row.kind === 'gallery'
-          ? row.ids.includes(itemId)
-          : false,
-    );
+  // WP-115: the jump to a search hit centers it.
+  const jumpToItem = (itemId: string, align: 'start' | 'center' = 'start') => {
+    const index = rows.findIndex((row) => rowHolds(row, itemId));
     const handle = listRef.current;
     if (index < 0 || handle === null) return;
     stickRef.current = false;
     setShowJump(true);
-    handle.scrollToIndex(index, { align: 'start' });
+    handle.scrollToIndex(index, { align });
   };
+
+  const reveal = useReveal({
+    sessionKey,
+    hasView: meta.hasView,
+    conversationId: meta.conversationId,
+    scrollTo: (itemId) => {
+      jumpToItem(itemId, 'center');
+    },
+  });
 
   const jumpToLatest = () => {
     stickRef.current = true;
@@ -374,9 +389,11 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
                       key={rowKey(row)}
                       data-row={row.kind}
                       data-nested={row.kind === 'item' && row.nested ? 'true' : undefined}
+                      data-revealed={reveal.marked !== null && rowHolds(row, reveal.marked) ? '' : undefined}
                       className={cn(
-                        'mx-auto w-full max-w-4xl px-4',
+                        'mx-auto w-full max-w-4xl px-4 transition-colors duration-500',
                         row.kind === 'item' && row.nested ? 'py-0.5' : 'py-1.5',
+                        reveal.marked !== null && rowHolds(row, reveal.marked) && 'bg-warning/15 rounded-md',
                       )}
                     >
                       {row.kind === 'earlier' ? (
@@ -423,6 +440,14 @@ function TranscriptList({ sessionKey }: { sessionKey: string }) {
                   onClose={() => {
                     setSinceClosed(true);
                   }}
+                />
+              )}
+              {reveal.excerpt === null ? null : (
+                <RevealExcerpt
+                  key={reveal.excerpt.n}
+                  sessionKey={sessionKey}
+                  excerpt={reveal.excerpt}
+                  onClose={reveal.closeExcerpt}
                 />
               )}
               {showJump && !empty ? (

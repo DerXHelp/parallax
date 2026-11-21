@@ -114,6 +114,8 @@ export const en = {
     idleSleep: 'Put idle sessions to sleep',
     idleSleepHint:
       'Ends the Claude process of a session that waited for nothing this long; the next prompt resumes it. A session shown in a window in front never sleeps.',
+    /** WP-115: shown after the hint when the computer has the overview additions (pinned = awake). */
+    idleSleepPinned: 'Pinned sessions do not fall asleep.',
     idleMinutes: 'Idle time before sleeping',
     minutes: 'minutes',
     promptSuggestions: 'Prompt suggestions',

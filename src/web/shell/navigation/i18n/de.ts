@@ -64,6 +64,8 @@ export const de: typeof en = {
     compactSoon: 'Autocompact steht bald an',
     needsYou: 'Braucht dich:',
     draft: 'Ungesendeter Entwurf',
+    worktreeBranch: 'Worktree-Branch',
+    worktreeOf: 'Worktree von {repo}',
   },
   running: {
     label: 'Es läuft: {list}',
@@ -113,6 +115,8 @@ export const de: typeof en = {
     openShell: 'Shell im Ordner öffnen',
     openTerminal: 'Terminal im Panel',
     openFolderFileManager: 'Ordner im Dateimanager öffnen',
+    markUnread: 'Als ungelesen markieren',
+    markRead: 'Als gelesen markieren',
   },
   shells: {
     cmd: 'Eingabeaufforderung (cmd)',
@@ -211,6 +215,7 @@ export const de: typeof en = {
     empty: 'Keine passende Session.',
     hint: 'Enter öffnet · Umschalt+Enter öffnet in neuem Fenster · Esc schließt',
     waiting: 'Wartet auf dich',
+    searchContents: 'In Inhalten suchen: „{text}“',
   },
   shortcuts: {
     quickSwitcher: 'Quick-Switcher: Session suchen und öffnen',
@@ -307,5 +312,28 @@ export const de: typeof en = {
   },
   notices: {
     enableSounds: 'Töne aktivieren',
+  },
+  filter: {
+    label: 'Sessions filtern',
+    text: 'Nach Titel, Ordner oder Branch filtern',
+    placeholder: 'Filtern…',
+    clearText: 'Filtertext löschen',
+    statusLabel: 'Anzeigen',
+    status: {
+      all: 'Alle',
+      waiting: 'Wartet',
+      working: 'Arbeitet',
+      unread: 'Ungelesen',
+    },
+    quoted: '„{text}“',
+    separator: ' · ',
+    empty: 'Keine Session passt zum Filter ({filter}).',
+    reset: 'Alle Sessions zeigen',
+    railActive: 'Filter: {filter} – alle Sessions zeigen',
+  },
+  mute: {
+    mute: 'Benachrichtigungen stummschalten',
+    unmute: 'Benachrichtigungen wieder einschalten',
+    muted: 'Benachrichtigungen stumm',
   },
 };

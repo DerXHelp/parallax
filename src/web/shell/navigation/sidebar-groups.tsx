@@ -1,5 +1,7 @@
 import {
   BellDotIcon,
+  BellIcon,
+  BellOffIcon,
   ChevronRightIcon,
   FolderIcon,
   FolderTreeIcon,
@@ -21,7 +23,13 @@ import {
 } from '@web/lib/session-order';
 import type { ProfilesByHost, SummaryEntry } from '@web/state/hooks';
 import type { HostLabels } from '@web/state/hosts';
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@web/ui/context-menu';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@web/ui/context-menu';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -35,6 +43,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
 import { HostBadge } from '../hosts/HostBadge';
 import { openNewSession } from '../NewSessionDialog';
 import { PathTail } from './PathTail';
+import { setProjectMuted, useProjectMute } from './project-mute';
 import { newSessionIn } from './session-actions';
 import { SessionRow } from './SessionRow';
 import { setGroupCollapsed, setSidebarGrouping } from './sidebar-view';
@@ -153,10 +162,26 @@ const TOGGLE_CLASSES =
   'focus-visible:ring-ring hover:bg-sidebar-accent/70 flex min-w-0 flex-1 items-center gap-1.5 rounded-sm text-left outline-none focus-visible:ring-2';
 
 /**
+ * WP-115: the muted symbol of a project header (the color never stands alone: sr-only text).
+ */
+function MutedMarker() {
+  const t = useT();
+  return (
+    <span data-slot="group-muted" className="flex shrink-0 items-center">
+      <BellOffIcon aria-hidden className="size-3" />
+      <span className="sr-only">{t('navigation.mute.muted')}</span>
+    </span>
+  );
+}
+
+/**
  * A folder group: collapsible header with the folder (full path in the tooltip), count, waiting
  * (collapsed), the computer's badge (grouped by folder only, with other computers), "+" and the
  * context menu "New session in this project…" – on the group's computer. The "+" is no tab stop
- * (R4W-13: the list stays one tab stop).
+ * (R4W-13: the list stays one tab stop). WP-115: worktree sessions sit in the group of their main
+ * repository; the context menu mutes or unmutes the project's notifications on its computer
+ * (`project-mute.ts`, only with `features.overview` and the right to change its settings), a bell
+ * symbol marks a muted project.
  */
 export function FolderGroupSection({
   group,
@@ -174,6 +199,7 @@ export function FolderGroupSection({
   const collapsed = context.collapsed.has(key);
   const groupName = t('navigation.sidebar.group', { name: group.cwd });
   const host = hostId === LOCAL_HOST_ID ? undefined : context.hosts.get(hostId);
+  const mute = useProjectMute(hostId, group.cwd);
   const newHere = () => {
     newSessionIn(group.cwd, hostId);
   };
@@ -218,6 +244,7 @@ export function FolderGroupSection({
               {context.folderBadges && host !== undefined ? (
                 <HostBadge name={host.name} color={host.color} availability={host.availability} />
               ) : null}
+              {mute.muted ? <MutedMarker /> : null}
               <span className="shrink-0 tabular-nums" aria-hidden>
                 {group.sessions.length}
               </span>
@@ -241,6 +268,21 @@ export function FolderGroupSection({
             <PlusIcon aria-hidden />
             {t('navigation.actions.newSessionHere')}
           </ContextMenuItem>
+          {mute.available ? (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                data-action="mute-project"
+                data-muted={mute.muted || undefined}
+                onSelect={() => {
+                  setProjectMuted(hostId, group.cwd, !mute.muted);
+                }}
+              >
+                {mute.muted ? <BellIcon aria-hidden /> : <BellOffIcon aria-hidden />}
+                {t(mute.muted ? 'navigation.mute.unmute' : 'navigation.mute.mute')}
+              </ContextMenuItem>
+            </>
+          ) : null}
         </ContextMenuContent>
       </ContextMenu>
       {collapsed ? null : (

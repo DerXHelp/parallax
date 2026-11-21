@@ -10,6 +10,9 @@ import { sessionTitle } from './session-title';
  * Phase 2 (WP-35): flat = pinned first, grouped = by project folder (`pathKey(hostId, cwd)`: the
  * path rules of the entry's host, WP-104; default case-insensitive as on Windows).
  * WP-80: `sidebarLayout` groups by computer and/or folder; collapsed groups leave the visible order.
+ * WP-115 (Ausbau 1): a worktree session belongs to the project of its main repository
+ * (`sessionProjectPath`, ADR-250); the sidebar filter (status and text, `SidebarFilter`) narrows the
+ * layout, which keeps the unfiltered one for "next waiting".
  */
 export interface OrderedSession<T> {
   entry: T;
@@ -68,11 +71,26 @@ export function archivedOrder<T extends WithSummary>(entries: readonly T[], now:
     );
 }
 
+/**
+ * WP-115 (ADR-250): the project of an entry – the main repository of a worktree session
+ * (`worktree.repoRoot`, exact string), else its folder. The sidebar groups by it and muted projects
+ * (`notifications.mutedProjects`) name it.
+ */
+export function sessionProjectPath(summary: Pick<SessionSummary, 'cwd' | 'worktree'>): string {
+  return summary.worktree?.repoRoot ?? summary.cwd;
+}
+
 /** One project group of the grouped sidebar. */
 export interface SessionGroup<T> {
-  /** `pathKey(hostId, cwd)`, prefixed with the host id when the entries carry one (multi-host). */
+  /**
+   * `pathKey(hostId, project)` (`sessionProjectPath`), prefixed with the host id when the entries
+   * carry one (multi-host).
+   */
   key: string;
-  /** Full folder of the group (spelling of its most recently active entry) – tooltip, "new session here". */
+  /**
+   * Full project folder of the group (spelling of its most recently active entry; the main
+   * repository for worktree sessions) – tooltip, "new session here", muting.
+   */
   cwd: string;
   /** Display label: `pathTail(cwd)`. */
   label: string;
@@ -95,14 +113,15 @@ export type FolderKey = (hostId: string | undefined, path: string) => string;
 const WINDOWS_FOLDER_KEY: FolderKey = (_hostId, path) => WIN32_PATHS.key(path);
 
 function groupKeyOf(entry: WithSummary & { hostId?: string }, pathKey: FolderKey): string {
-  const path = pathKey(entry.hostId, entry.summary.cwd);
+  const path = pathKey(entry.hostId, sessionProjectPath(entry.summary));
   return entry.hostId === undefined ? path : `${entry.hostId}|${path}`;
 }
 
 /**
  * Grouped sidebar (Plan "gruppiert nach Projekt"): non-archived entries per project folder
  * (by the rules of the entry's host, `pathKey`); groups with a pinned entry first (V3-14, as in the flat
- * list), then groups with attention, then newest activity, then label.
+ * list), then groups with attention, then newest activity, then label. WP-115: worktree sessions
+ * join the group of their main repository (`sessionProjectPath`), not one group per worktree.
  */
 export function groupSessions<T extends WithSummary & { hostId?: string }>(
   entries: readonly T[],
@@ -113,12 +132,13 @@ export function groupSessions<T extends WithSummary & { hostId?: string }>(
   for (const item of orderSessions(entries, now)) {
     const key = groupKeyOf(item.entry, pathKey);
     const activity = Date.parse(item.entry.summary.lastActivityAt);
+    const project = sessionProjectPath(item.entry.summary);
     const group = groups.get(key);
     if (group === undefined) {
       groups.set(key, {
         key,
-        cwd: item.entry.summary.cwd,
-        label: pathTail(item.entry.summary.cwd),
+        cwd: project,
+        label: pathTail(project),
         attention: item.status.needsAttention,
         pinned: item.entry.summary.pinned,
         lastActivity: activity,
@@ -131,8 +151,8 @@ export function groupSessions<T extends WithSummary & { hostId?: string }>(
     group.pinned ||= item.entry.summary.pinned;
     if (activity > group.lastActivity) {
       group.lastActivity = activity;
-      group.cwd = item.entry.summary.cwd;
-      group.label = pathTail(item.entry.summary.cwd);
+      group.cwd = project;
+      group.label = pathTail(project);
     }
   }
   const result = [...groups.values()];
@@ -220,15 +240,102 @@ export interface SidebarLayout<T> {
   folders: SessionGroup<T>[] | null;
   /** Every entry in display order, collapsed groups included ("next waiting", the rail). */
   order: OrderedSession<T>[];
+  /**
+   * WP-115: the same layout without the sidebar filter – set only while a filter is active (the
+   * entries above are the matching ones). "Next waiting" counts and jumps over it.
+   */
+  unfiltered?: SidebarLayout<T>;
 }
 
 type WithHost = WithSummary & { hostId: string };
+
+// ---- WP-115 (F6): the sidebar filter (status and text, window-local) ----
+
+/** "All", "Waiting for me", "Working", "Unread" (WP-110 §3.7). */
+export const SIDEBAR_STATUS_FILTERS = ['all', 'waiting', 'working', 'unread'] as const;
+export type SidebarStatusFilter = (typeof SIDEBAR_STATUS_FILTERS)[number];
+
+export interface SidebarFilter {
+  status: SidebarStatusFilter;
+  /** Words that must all occur in title, folder or branch (case-insensitive); '' = none. */
+  text: string;
+}
+
+export const NO_SIDEBAR_FILTER: SidebarFilter = Object.freeze({ status: 'all', text: '' });
+
+/** A filter narrows the list (a status other than "all", or a text). */
+export function sidebarFilterActive(filter: SidebarFilter): boolean {
+  return filter.status !== 'all' || filter.text.trim() !== '';
+}
+
+/** Waiting = needs the user; working = starting, working or in the background; unread = the dot. */
+export function matchesStatusFilter(status: DisplayStatus, filter: SidebarStatusFilter): boolean {
+  switch (filter) {
+    case 'all':
+      return true;
+    case 'waiting':
+      return status.needsAttention;
+    case 'working':
+      return status.sortBucket === 2;
+    case 'unread':
+      return status.unread;
+  }
+}
+
+/** The words of a text filter, lower case. */
+function filterWords(text: string): string[] {
+  return text
+    .toLocaleLowerCase()
+    .split(/\s+/)
+    .filter((word) => word !== '');
+}
+
+/** What the text filter looks at: title, folder, the worktree's repository, branch. */
+function filterHaystack(summary: SessionSummary): string {
+  return [
+    sessionTitle(summary),
+    summary.cwd,
+    summary.worktree?.repoRoot ?? '',
+    summary.gitBranch ?? '',
+    summary.worktree?.branch ?? '',
+  ]
+    .join('\n')
+    .toLocaleLowerCase();
+}
+
+/** True when the entry passes the filter (status and every word of the text). */
+export function matchesSidebarFilter(
+  summary: SessionSummary,
+  status: DisplayStatus,
+  filter: SidebarFilter,
+): boolean {
+  if (!matchesStatusFilter(status, filter.status)) return false;
+  const words = filterWords(filter.text);
+  if (words.length === 0) return true;
+  const haystack = filterHaystack(summary);
+  return words.every((word) => haystack.includes(word));
+}
+
+/** Entries per status filter (non-archived; the counters of the filter buttons). */
+export function sidebarFilterCounts(
+  entries: readonly WithSummary[],
+  now: Date,
+): Readonly<Record<SidebarStatusFilter, number>> {
+  const counts: Record<SidebarStatusFilter, number> = { all: 0, waiting: 0, working: 0, unread: 0 };
+  for (const entry of entries) {
+    if (entry.summary.archived) continue;
+    const status = deriveDisplayStatus(entry.summary.status, now);
+    for (const filter of SIDEBAR_STATUS_FILTERS) if (matchesStatusFilter(status, filter)) counts[filter]++;
+  }
+  return counts;
+}
 
 /**
  * The sidebar layout (WP-75 §4.4): neither = flat (pinned first); folder = the folder groups of
  * `groupSessions`; computer = one block per computer in `hostOrder` (this computer first, then the
  * list of computers; a computer without entries keeps its block, an unknown one comes last), inside
- * flat or by folder.
+ * flat or by folder. WP-115: an active `filter` keeps only the matching entries and adds the
+ * layout without it (`unfiltered`).
  */
 export function sidebarLayout<T extends WithHost>(
   entries: readonly T[],
@@ -236,6 +343,22 @@ export function sidebarLayout<T extends WithHost>(
   grouping: SidebarGrouping,
   hostOrder: readonly string[],
   pathKey: FolderKey = WINDOWS_FOLDER_KEY,
+  filter: SidebarFilter = NO_SIDEBAR_FILTER,
+): SidebarLayout<T> {
+  const unfiltered = groupedLayout(entries, now, grouping, hostOrder, pathKey);
+  if (!sidebarFilterActive(filter)) return unfiltered;
+  const kept = entries.filter((entry) =>
+    matchesSidebarFilter(entry.summary, deriveDisplayStatus(entry.summary.status, now), filter),
+  );
+  return { ...groupedLayout(kept, now, grouping, hostOrder, pathKey), unfiltered };
+}
+
+function groupedLayout<T extends WithHost>(
+  entries: readonly T[],
+  now: Date,
+  grouping: SidebarGrouping,
+  hostOrder: readonly string[],
+  pathKey: FolderKey,
 ): SidebarLayout<T> {
   if (!grouping.byHost) {
     if (!grouping.byFolder) return { hosts: null, folders: null, order: flatSidebarOrder(entries, now) };

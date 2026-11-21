@@ -23,6 +23,7 @@ import { FILES_SLOTS } from './features/files';
 import { PREFERENCES_SLOTS, SettingsPage } from './features/preferences';
 import { ProfilesSettings } from './features/profiles';
 import { startProfilesDemo } from './features/profiles/lib/demo-host';
+import { SEARCH_SLOTS } from './features/search';
 import { TASKS_SLOTS } from './features/tasks';
 import { UPDATES_SLOTS } from './features/updates';
 import { WORKTREE_SLOTS } from './features/worktrees';
@@ -368,17 +369,13 @@ const EVERY_REQUEST: { [K in ShellRequestKind]: ShellRequestOf<K> } = {
 
 /**
  * Kinds nobody takes here: `worktree.cleanup` (WP-114) is taken only for a session with a worktree –
- * the playground has none, so the menus go on without; `search.open` and `revealItem` arrive with
- * WP-115.
+ * the playground has none, so the menus go on without; `search.open` (WP-115) only when a host offers
+ * the search (`HostState.features.search`) – the playground's fake host does not.
  */
-const PENDING_REQUEST_KINDS: ReadonlySet<ShellRequestKind> = new Set([
-  'worktree.cleanup',
-  'search.open',
-  'revealItem',
-]);
+const PENDING_REQUEST_KINDS: ReadonlySet<ShellRequestKind> = new Set(['worktree.cleanup', 'search.open']);
 
 /** Slots whose feature arrives with a later package (WP-110 scaffolding: WP-113, WP-114, WP-115). */
-const PENDING_SLOTS: ReadonlySet<string> = new Set(['SearchDialog']);
+const PENDING_SLOTS: ReadonlySet<string> = new Set<string>();
 
 describe('wired feature slots (WP-20b, WP-40)', () => {
   it('APP_SLOTS wires every slot: the eager components of WP-16/57, every lazy slot behind a SlotBoundary (R4W-19, WP-58, WP-60)', () => {
@@ -400,6 +397,7 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
       ...Object.keys(UPDATES_SLOTS),
       ...Object.keys(CHANGES_SLOTS),
       ...Object.keys(WORKTREE_SLOTS),
+      ...Object.keys(SEARCH_SLOTS),
     ]) {
       expect(APP_SLOTS, key).toHaveProperty(key);
     }
@@ -425,6 +423,7 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
       ['ChangesPanel', CHANGES_SLOTS.ChangesPanel],
       ['WorktreeNotice', WORKTREE_SLOTS.WorktreeNotice],
       ['WorktreeCleanup', WORKTREE_SLOTS.WorktreeCleanup],
+      ['SearchDialog', SEARCH_SLOTS.SearchDialog],
     ];
     for (const [key, own] of lazy) {
       expect(APP_SLOTS[key], key).toBeDefined();
@@ -588,6 +587,10 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
           expect(document.activeElement).toBe(composer);
         });
         await user.clear(composer);
+        continue;
+      }
+      if (request.kind === 'revealItem') {
+        // WP-115: the transcript of the selected session takes the jump to a search hit (no dialog).
         continue;
       }
       if (request.kind === 'renameTitle') {

@@ -1,7 +1,13 @@
 import { useSyncExternalStore } from 'react';
 import { z } from 'zod';
-import type { SidebarGrouping } from '@web/lib/session-order';
-import { STORAGE_KEYS, readStorage, writeStorage } from '@web/lib/storage';
+import {
+  NO_SIDEBAR_FILTER,
+  SIDEBAR_STATUS_FILTERS,
+  type SidebarFilter,
+  type SidebarGrouping,
+  type SidebarStatusFilter,
+} from '@web/lib/session-order';
+import { STORAGE_KEYS, readStorage, storageKey, writeStorage } from '@web/lib/storage';
 
 /**
  * View state of the sidebar (window-local, Plan "Sidebar"), module-level so the shortcuts, the
@@ -14,13 +20,37 @@ import { STORAGE_KEYS, readStorage, writeStorage } from '@web/lib/storage';
  *   and as the default of new windows (localStorage); groups that no longer exist are dropped on
  *   read (`pruneCollapsedGroups`).
  * - whether the archive is shown (not kept).
+ * - WP-115 (WP-110 §3.7): the filter above the list – status ("Waiting for me", "Working",
+ *   "Unread", "All") per window (sessionStorage) and as the default of new windows (localStorage),
+ *   like the collapsed groups; the text only per window (a stale text in a new window would hide
+ *   sessions without a reason the user remembers).
  * The WP-35 API (`SidebarMode` `flat` | `grouped`, `getSidebarMode`, `setSidebarMode`,
  * `useSidebarMode`) stays: it reads and sets "by folder" and keeps "by computer".
  */
 export const SIDEBAR_MODES = ['flat', 'grouped'] as const;
 export type SidebarMode = (typeof SIDEBAR_MODES)[number];
 
-export type { SidebarGrouping };
+export type { SidebarFilter, SidebarGrouping, SidebarStatusFilter };
+
+/** WP-115: storage keys of the filter (`parallax.sidebar.filter.status` / `.text`). */
+export const SIDEBAR_FILTER_KEYS = {
+  status: storageKey('sidebar', 'filter', 'status'),
+  text: storageKey('sidebar', 'filter', 'text'),
+} as const;
+
+/** Longest text filter kept (a few words; a pasted wall of text is cut). */
+export const SIDEBAR_FILTER_TEXT_MAX = 200;
+
+const statusFilterSchema = z.enum(SIDEBAR_STATUS_FILTERS);
+
+function storedFilter(): SidebarFilter {
+  const status =
+    statusFilterSchema.safeParse(readStorage('session', SIDEBAR_FILTER_KEYS.status)).data ??
+    statusFilterSchema.safeParse(readStorage('local', SIDEBAR_FILTER_KEYS.status)).data ??
+    NO_SIDEBAR_FILTER.status;
+  const text = (readStorage('session', SIDEBAR_FILTER_KEYS.text) ?? '').slice(0, SIDEBAR_FILTER_TEXT_MAX);
+  return status === NO_SIDEBAR_FILTER.status && text === '' ? NO_SIDEBAR_FILTER : { status, text };
+}
 
 /** Stored value of a grouping (`grouped` = by folder, as WP-35 wrote it). */
 const GROUPING_VALUES: Readonly<Record<string, SidebarGrouping>> = {
@@ -74,9 +104,15 @@ interface SidebarView {
   grouping: SidebarGrouping;
   collapsed: ReadonlySet<string>;
   archive: boolean;
+  filter: SidebarFilter;
 }
 
-let view: SidebarView = { grouping: storedGrouping(), collapsed: storedCollapsed(), archive: false };
+let view: SidebarView = {
+  grouping: storedGrouping(),
+  collapsed: storedCollapsed(),
+  archive: false,
+  filter: storedFilter(),
+};
 const listeners = new Set<() => void>();
 
 function update(next: Partial<SidebarView>): void {
@@ -84,7 +120,8 @@ function update(next: Partial<SidebarView>): void {
   if (
     merged.grouping === view.grouping &&
     merged.collapsed === view.collapsed &&
-    merged.archive === view.archive
+    merged.archive === view.archive &&
+    merged.filter === view.filter
   )
     return;
   view = merged;
@@ -192,7 +229,40 @@ export function useArchiveView(): boolean {
   return useSyncExternalStore(subscribe, isArchiveView, isArchiveView);
 }
 
-/** Tests: back to the stored grouping and collapsed groups, archive hidden. */
+// ---- filter (WP-115) ----
+
+export function getSidebarFilter(): SidebarFilter {
+  return view.filter;
+}
+
+export function useSidebarFilter(): SidebarFilter {
+  return useSyncExternalStore(subscribe, getSidebarFilter, getSidebarFilter);
+}
+
+/** Changes the given parts of the filter (the status buttons, the text field). */
+export function setSidebarFilter(patch: Partial<SidebarFilter>): void {
+  const status = patch.status ?? view.filter.status;
+  const text = (patch.text ?? view.filter.text).slice(0, SIDEBAR_FILTER_TEXT_MAX);
+  if (status === view.filter.status && text === view.filter.text) return;
+  writeStorage('session', SIDEBAR_FILTER_KEYS.status, status);
+  writeStorage('local', SIDEBAR_FILTER_KEYS.status, status);
+  writeStorage('session', SIDEBAR_FILTER_KEYS.text, text === '' ? null : text);
+  update({
+    filter: status === NO_SIDEBAR_FILTER.status && text === '' ? NO_SIDEBAR_FILTER : { status, text },
+  });
+}
+
+/** "All" and no text ("Reset filter", a jump to a session the filter hides). */
+export function clearSidebarFilter(): void {
+  setSidebarFilter(NO_SIDEBAR_FILTER);
+}
+
+/** Tests: back to the stored grouping, collapsed groups and filter, archive hidden. */
 export function resetSidebarView(): void {
-  update({ grouping: storedGrouping(), collapsed: storedCollapsed(), archive: false });
+  update({
+    grouping: storedGrouping(),
+    collapsed: storedCollapsed(),
+    archive: false,
+    filter: storedFilter(),
+  });
 }

@@ -62,6 +62,7 @@ import { NEXT_WAITING_KEYS, useNextWaiting } from './navigation/use-next-waiting
 import { useSidebarLayout } from './navigation/use-sidebar-layout';
 import { openNewSession } from './NewSessionDialog';
 import { SettingsMenu } from './SettingsMenu';
+import { SidebarFilterBar, SidebarFilterEmpty } from './navigation/SidebarFilter';
 import { useShortcut } from './shortcuts';
 import { SIDEBAR_TOGGLE_KEYS } from './sidebar-layout';
 import { useFeatureSlots } from './slots';
@@ -207,7 +208,7 @@ export function Sidebar({
   const archive = useArchiveView();
   const hosts = useHostLabels();
   const collapsed = useCollapsedGroups();
-  const { layout, grouping, hostOrder, hasRemoteHosts } = useSidebarLayout(entries, now);
+  const { layout, grouping, hostOrder, hasRemoteHosts, filterActive } = useSidebarLayout(entries, now);
   const pathKey = useHostPathKey();
 
   const archived: Ordered[] = useMemo(() => archivedOrder(entries, new Date(now)), [entries, now]);
@@ -305,6 +306,9 @@ export function Sidebar({
       ) : (
         <Rows items={archived} context={context} />
       );
+  } else if (mainOrder.length === 0 && filterActive) {
+    // WP-115: the filter hides every session – the empty state offers to clear it.
+    list = <SidebarFilterEmpty />;
   } else if (mainOrder.length === 0) {
     list = <p className="text-muted-foreground px-2 py-3 text-xs">{t('shell.sidebar.empty')}</p>;
   } else if (layout.hosts !== null) {
@@ -390,6 +394,8 @@ export function Sidebar({
           {t('shell.sidebar.waiting', { count: waitingCount })}
         </button>
       ) : null}
+      {/* WP-115: status and text filter of the list. */}
+      <SidebarFilterBar />
       <nav
         aria-label={t('shell.sidebar.label')}
         data-view={view}

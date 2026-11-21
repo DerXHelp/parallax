@@ -6,6 +6,7 @@ import { PlanSidePanel } from './features/decisions/PlanSidePanel';
 import { CHANGES_SLOTS } from './features/changes';
 import { FILES_SLOTS } from './features/files';
 import { defaultFileLinkLabel, PlainReference } from './features/files/components/PlainReference';
+import { SEARCH_SLOTS } from './features/search';
 import { TASKS_SLOTS } from './features/tasks';
 import { TERMINAL_SLOTS } from './features/terminal';
 import { Markdown } from './features/transcript/markdown/Markdown';
@@ -179,6 +180,8 @@ export const APP_SLOTS: Partial<FeatureSlots> = {
   // WP-114 (ADR-250/251): setup notice below the pane banners, the cleanup dialog (request `worktree.cleanup`).
   WorktreeNotice: bounded(WORKTREE_SLOTS.WorktreeNotice, bySessionKey, quietNothing),
   WorktreeCleanup: bounded(WORKTREE_SLOTS.WorktreeCleanup, undefined, quietNothing),
+  // WP-115 (ADR-255): the full-text search (Ctrl+Shift+F, request `search.open`).
+  SearchDialog: bounded(SEARCH_SLOTS.SearchDialog, undefined, quietNothing),
 };
 
 /**
