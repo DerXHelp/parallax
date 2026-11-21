@@ -207,7 +207,8 @@ function unexpected(error: unknown, deps: LauncherCliDeps): number {
 
 /**
  * WP-107 `--server`: the server in the foreground without Chrome; with `--print-url` the sign-in
- * address. A server of this home that runs already is an error (a service must not end "fine").
+ * address. A server of this home that runs already is adopted on POSIX (WP-109, supervise.ts); on
+ * Windows it is an error (a service must not end "fine").
  */
 async function serverModeCli(
   options: LauncherOptions,

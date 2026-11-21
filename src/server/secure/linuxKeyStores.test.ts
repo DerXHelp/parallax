@@ -90,19 +90,40 @@ describe('systemd-creds --user (§B.14)', () => {
 });
 
 describe('Secret Service (libsecret in a worker, §B.14)', () => {
-  function fakeKeyring(p: { probe?: boolean } = {}): SecretServiceNative & { items: Map<string, string> } {
+  function fakeKeyring(
+    p: { probe?: boolean } = {},
+  ): SecretServiceNative & { items: Map<string, string>; locked: boolean } {
     const items = new Map<string, string>();
-    return {
+    const keyring = {
       items,
-      lookup: (purpose) => Promise.resolve(items.get(purpose) ?? null),
-      store: (purpose, secret) => {
+      /** A locked keyring: lookups find nothing, a store opens it (the prompt was confirmed). */
+      locked: false,
+      lookup: (purpose: string) => Promise.resolve(keyring.locked ? null : (items.get(purpose) ?? null)),
+      exists: (purpose: string) => Promise.resolve(items.has(purpose)),
+      store: (purpose: string, secret: string) => {
         items.set(purpose, secret);
+        keyring.locked = false;
         return Promise.resolve();
       },
       probe: () => (p.probe === false ? Promise.reject(new KeyStoreError('unavailable')) : Promise.resolve()),
       close: () => undefined,
     };
+    return keyring;
   }
+
+  it('a locked keyring never gets a new key in place of the stored one (review WP-109)', async () => {
+    const keyring = fakeKeyring();
+    const store = createSecretServiceKeyStore({ platform: 'linux', native: keyring });
+    const sealed = await store.protect('auth:peer', SECRET);
+    const key = keyring.items.get('auth:peer');
+    keyring.locked = true;
+    expect(await reason(store.protect('auth:peer', SECRET))).toBe('unavailable');
+    expect(keyring.items.get('auth:peer')).toBe(key);
+    expect(await reason(store.unprotect('auth:peer', sealed))).toBe('failed');
+    // Open again: the old values still open.
+    keyring.locked = false;
+    expect(await store.unprotect('auth:peer', sealed)).toEqual(SECRET);
+  });
 
   it('one random AES key per purpose in the keyring; the file holds only the sealed value', async () => {
     const keyring = fakeKeyring();

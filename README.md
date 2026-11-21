@@ -137,6 +137,8 @@ kein eigenes Ziel.
   Desktop-Aktionen (Konsolenfenster, Editor, Benachrichtigungen). Als Dienst beim Systemstart:
   `parallax service install` (systemd-Benutzerdienst, Status mit `parallax service status`, entfernen mit
   `parallax service uninstall`). Damit er ohne Anmeldung läuft, einmal `sudo loginctl enable-linger <benutzer>`.
+  Läuft für den Datenordner schon ein Server, übernimmt `parallax --server` ihn, statt einen zweiten zu starten; ein
+  Update in der App wechselt die Version, ohne dass der Dienst endet.
 - **Vom anderen Rechner steuern:** auf dem Server `parallax remote enable` (Freigeben), dann
   `parallax remote pair --level manage`. Der Kopplungscode erscheint nur in diesem Terminal. Auf dem steuernden
   Rechner unter „Andere steuern“ → „Rechner hinzufügen…“ Adresse, Port (Standard 4713) und Code eintragen. Die

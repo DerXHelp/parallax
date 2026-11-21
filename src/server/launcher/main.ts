@@ -19,7 +19,10 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { START_SCRIPT } from '../install/layout';
+import { acquireDirectoryLock } from '../lib/homeLock';
 import { logger } from '../lib/logger';
+import { isProcessAlive } from '../lib/process';
+import { createProcfsReader, isEndedState } from '../lib/procfs';
 import { createNodeApplyUpdateDeps, runApplyUpdate } from './applyUpdate';
 import { SERVER_BUNDLE } from './build';
 import { runLauncherCli, type ServeOutcome, type ServeRequest } from './cli';
@@ -27,6 +30,13 @@ import { findRunningServer, requestLauncherRemote } from './client';
 import { createNodeLauncherDeps, runLauncher } from './launcher';
 import { PACKAGE_NODE_FLAGS, readReleaseInfo, ReleaseInfoError, type ReleaseInfo } from './release';
 import { startServerForeground, type ForegroundServer } from './serverProcess';
+import {
+  adoptRunning,
+  createSignalRelay,
+  listenProcessSignals,
+  superviseServer,
+  type SuperviseDeps,
+} from './supervise';
 import { installService, serviceStatus, uninstallService, type ServiceDeps } from './systemdService';
 
 // Like the server (main.ts): dist/launcher.js → `..`, src/server/launcher/main.ts → `../../..`.
@@ -79,55 +89,91 @@ function launcherCommand(release: ReleaseInfo | null, installRoot: string | null
   ];
 }
 
-const FORWARDED_SIGNALS: readonly NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+/** WP-109: the seams of `superviseServer` for this process. */
+function superviseDeps(home: string): SuperviseDeps {
+  const procfs = createProcfsReader();
+  return {
+    platform: process.platform,
+    home,
+    findRunning: () => findRunningServer({ home }),
+    launchLockFree: async () => {
+      const attempt = await acquireDirectoryLock('launch', home);
+      if (attempt.kind === 'busy') return false;
+      await attempt.lock.release();
+      return true;
+    },
+    identity: (pid) => {
+      if (process.platform !== 'linux') return isProcessAlive(pid) ? 0 : null;
+      const row = procfs.stat(pid);
+      return row === null || isEndedState(row.state) ? null : row.startTicks;
+    },
+    kill: (pid, signal) => {
+      process.kill(pid, signal);
+    },
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    now: () => Date.now(),
+    out,
+  };
+}
 
-/** WP-107 `--server`: like a window start, but the server stays attached to this process. */
+/**
+ * WP-107 `--server`: like a window start, but the server stays attached to this process. WP-109:
+ * signals are taken from the start, a running server and the successor of an update are adopted on
+ * POSIX (supervise.ts).
+ */
 async function serve(release: ReleaseInfo | null, request: ServeRequest): Promise<ServeOutcome> {
   const { options } = request;
-  const running = await findRunningServer({ home: options.home });
-  if (running.kind === 'running') return { kind: 'existing', port: running.lock.port, pid: running.lock.pid };
-  // Set inside `startServer` (a holder: a closure assignment is invisible to the flow analysis).
-  const holder: { server: ForegroundServer | null } = { server: null };
-  const base = createNodeLauncherDeps({
-    repoRoot,
-    release,
-    workDir: options.installRoot ?? null,
-    home: options.home,
-    serverScript: path.join(repoRoot, SERVER_BUNDLE),
-    out,
-  });
-  const result = await runLauncher(options, {
-    ...base,
-    startServer: async (args) => {
-      const server = await startServerForeground({
-        nodePath: process.execPath,
-        serverScript: path.join(repoRoot, SERVER_BUNDLE),
-        nodeArgs: release === null ? [] : PACKAGE_NODE_FLAGS,
-        args,
-        home: options.home,
-        cwd: options.installRoot ?? repoRoot,
-        env: process.env,
-      });
-      holder.server = server;
-      return server;
-    },
-    // Its output is on this console already.
-    readServerOutput: () => Promise.resolve(''),
-  });
-  const started = holder.server;
-  if (result.mode === 'existing' || started === null) {
-    return { kind: 'existing', port: result.port, pid: result.pid };
+  const relay = createSignalRelay(listenProcessSignals);
+  const deps = superviseDeps(options.home);
+  try {
+    const running = await findRunningServer({ home: options.home });
+    if (running.kind === 'running') {
+      const adopted = adoptRunning(running.lock.port, running.lock.pid, deps);
+      if (adopted === null) return { kind: 'existing', port: running.lock.port, pid: running.lock.pid };
+      return { kind: 'ended', code: await superviseServer(adopted, relay, deps) };
+    }
+    if (relay.stopRequested) return { kind: 'ended', code: 0 };
+    // Set inside `startServer` (a holder: a closure assignment is invisible to the flow analysis).
+    const holder: { server: ForegroundServer | null } = { server: null };
+    const base = createNodeLauncherDeps({
+      repoRoot,
+      release,
+      workDir: options.installRoot ?? null,
+      home: options.home,
+      serverScript: path.join(repoRoot, SERVER_BUNDLE),
+      out,
+    });
+    const result = await runLauncher(options, {
+      ...base,
+      startServer: async (args) => {
+        const server = await startServerForeground({
+          nodePath: process.execPath,
+          serverScript: path.join(repoRoot, SERVER_BUNDLE),
+          nodeArgs: release === null ? [] : PACKAGE_NODE_FLAGS,
+          args,
+          home: options.home,
+          cwd: options.installRoot ?? repoRoot,
+          env: process.env,
+        });
+        holder.server = server;
+        // A stop during the start reaches the server at once.
+        relay.attach(server);
+        return server;
+      },
+      // Its output is on this console already.
+      readServerOutput: () => Promise.resolve(''),
+    });
+    const started = holder.server;
+    if (result.mode === 'existing' || started === null) {
+      const adopted = adoptRunning(result.port, result.pid, deps);
+      if (adopted === null) return { kind: 'existing', port: result.port, pid: result.pid };
+      return { kind: 'ended', code: await superviseServer(adopted, relay, deps) };
+    }
+    request.onStarted(result);
+    return { kind: 'ended', code: await superviseServer(started, relay, deps) };
+  } finally {
+    relay.dispose();
   }
-  const own: ForegroundServer = started;
-  request.onStarted(result);
-  const pass = (signal: NodeJS.Signals): void => {
-    own.signal(signal);
-  };
-  for (const signal of FORWARDED_SIGNALS) process.on(signal, pass);
-  const exit = await own.exited;
-  for (const signal of FORWARDED_SIGNALS) process.off(signal, pass);
-  // Ended by a signal we passed on: a regular stop.
-  return { kind: 'ended', code: exit.code ?? (exit.signal === null ? 1 : 0) };
 }
 
 // lib/* modules log through the pino singleton; the console belongs to the launcher's messages.

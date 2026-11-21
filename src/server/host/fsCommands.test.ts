@@ -209,6 +209,20 @@ describe('fs.listDirectory: a folder (ADR-119)', () => {
   });
 });
 
+describe('fs.listDirectory on a Linux host (review WP-109)', () => {
+  it('"/" never offers proc, sys or dev (the rules refuse them)', async () => {
+    const fs: DirFs = {
+      lstat: () => Promise.resolve({ isSymbolicLink: () => false }),
+      readlink: () => Promise.reject(new Error('no link')),
+      stat: () => Promise.resolve({ isDirectory: () => true }),
+      readdir: () =>
+        Promise.resolve(['dev', 'etc', 'home', 'proc', 'sys', 'usr'].map((name) => dirent(name, 'dir'))),
+    };
+    const result = await listing(createFsCommands({ fs, platform: 'linux' }), '/');
+    expect(result.entries.map((entry) => entry.name)).toEqual(['etc', 'home', 'usr']);
+  });
+});
+
 describe('fs.listDirectory: roots (path null)', () => {
   /** Fake drives: `answers` per root (`dir`, `missing`, `hang`); counts the stats per root. */
   function drives(

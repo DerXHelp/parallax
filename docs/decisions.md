@@ -3090,3 +3090,16 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   Unter Linux entpackt `/usr/bin/tar` nach Prüfung der Liste (nur Dateien und Ordner unter `parallax-<v>/`); danach gilt
   wie unter Windows die signierte Dateiliste. Smoke je Plattform in `release.yml`, Linux-Gate `ci.yml` (24.04, 26.04).
 - **Folgen:** Ältere Windows-Installationen lesen `latest.json` unverändert. arm64 käme als weiteres Asset dazu.
+
+## ADR-249 – Server-Modus: der Launcher bleibt Hauptprozess des Dienstes
+- **Datum/WP:** 21.11.2026, WP-109 (Code-Review; Ergänzung zu ADR-247).
+- **Entscheidung:** Die Unit hat `KillMode=mixed`: SIGTERM erreicht nur den Launcher, der es an den Server weitergibt;
+  systemd tötet den Rest erst nach dessen Ende. Der Launcher nimmt Signale vom Start an an. Unter POSIX übernimmt
+  `--server` einen schon laufenden Server des Datenordners (PID beobachten, Identität PID + Startzeit, Stopp-Signale
+  weitergeben), statt mit 1 zu enden. Endet der Server von selbst mit 0, während die Startsperre des Datenordners belegt
+  ist, war es die Übergabe an den Update-Orchestrator: der Launcher wartet höchstens 30 Minuten und übernimmt den neuen
+  Server; läuft danach keiner, endet er mit 1 (`Restart=on-failure`).
+- **Begründung:** Mit dem Ende des Launchers beendet systemd die Unit und tötet alle Prozesse der Gruppe – beim Update
+  den Orchestrator mitten im Wechsel. Ein fremder laufender Server hätte eine Neustart-Schleife ausgelöst.
+- **Folgen:** Die Ausgabe eines übernommenen Servers steht nicht im Journal, sondern im Ordner `logs` des Datenordners.
+  Unter Windows ohne Dienstverwaltung bleibt es beim eigenen Server.

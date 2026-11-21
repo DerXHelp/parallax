@@ -293,6 +293,8 @@ export function createFsCommands(deps: FsCommandsDeps = {}): HostCommandHandler 
     const found = await Promise.all(
       candidates.map(async (entry): Promise<FsEntry | null> => {
         const entryPath = childPath(dir, entry.name, rules);
+        // Review WP-109: never offer what the rules refuse (`/proc`, `/sys`, `/dev` below `/`).
+        if (rules.issue(entryPath) !== null) return null;
         const hidden = isHiddenName(entry.name, rules);
         if (entry.isSymbolicLink()) {
           return (await isSafeFolderLink(fs, entryPath, rules))

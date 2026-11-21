@@ -9,6 +9,7 @@
  * The unit's values are quoted by systemd's rules (`"…"` with `\\`/`\"`, `%` → `%%`, `$` → `$$`).
  * Exported for WP-108 (the autostart setting in server mode steers this service).
  */
+import { accessSync, constants } from 'node:fs';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -43,7 +44,18 @@ export interface ServiceDeps {
   writeFile?: (file: string, text: string) => Promise<void>;
   readFile?: (file: string) => Promise<string>;
   removeFile?: (file: string) => Promise<void>;
+  /** Is `file` an executable program (default: `access(X_OK)`)? */
+  isExecutable?: (file: string) => boolean;
   out(line: string): void;
+}
+
+function defaultIsExecutable(file: string): boolean {
+  try {
+    accessSync(file, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export interface ServiceUnitOptions {
@@ -110,8 +122,6 @@ export function systemdUnit(options: ServiceUnitOptions): string {
     '# Written by "parallax service install" - "parallax service uninstall" removes it.',
     '[Unit]',
     'Description=Parallax (server mode)',
-    'After=network-online.target',
-    'Wants=network-online.target',
     '',
     '[Service]',
     'Type=simple',
@@ -122,7 +132,11 @@ export function systemdUnit(options: ServiceUnitOptions): string {
       : [`Environment=${quoteEnvironmentValue(`PATH=${options.path}`)}`]),
     'Restart=on-failure',
     'RestartSec=10',
-    // The server ends its sessions itself (SIGTERM); give it time before systemd kills.
+    // Review WP-109: SIGTERM to the launcher only, it passes it on (supervise.ts) and the server ends
+    // its sessions itself; whatever is left gets SIGKILL afterwards. With the default (control-group)
+    // every process got SIGTERM at once – claude processes in the middle of the server's shutdown.
+    'KillMode=mixed',
+    // Give the server time before systemd kills.
     'TimeoutStopSec=60',
     '',
     '[Install]',
@@ -175,12 +189,15 @@ interface Resolved {
 function resolve(deps: ServiceDeps): Resolved | string {
   if (deps.platform !== 'linux')
     return 'The service is for Linux with systemd; on Windows Parallax uses the autostart.';
+  const missing = 'systemctl was not found - this Linux has no systemd user services.';
   let systemctl: string;
   try {
     systemctl = systemTool('systemctl', deps.env, deps.platform);
   } catch {
-    return 'systemctl was not found - this Linux has no systemd user services.';
+    return missing;
   }
+  // Review WP-109: `systemTool` falls back to /usr/bin for a bare name – check before anything is written.
+  if (!(deps.isExecutable ?? defaultIsExecutable)(systemctl)) return missing;
   return {
     run: deps.run ?? runTool,
     systemctl,

@@ -182,13 +182,17 @@ export async function assertNoUnsafeLink(
  */
 export async function checkCwd(
   cwd: string,
-  fs: LinkFs = nodeLinkFs,
+  fs: LinkFs & { realpath?: (path: string) => Promise<string> } = nodeLinkFs,
   rules: PathRules = HOST_PATH_RULES,
 ): Promise<void> {
   assertSafePath(cwd, rules);
   let isDirectory: boolean;
   try {
     await assertNoUnsafeLink(cwd, fs, rules);
+    // Review WP-109 (POSIX): `resolveLinkTarget` resolves a relative target lexically, the kernel
+    // resolves a `..` after a link physically (`l -> sub/../sys` with `sub -> /proc/self`) – the real
+    // path must pass the rules too (never /proc, /sys, /dev).
+    if (rules.flavor !== 'win32') assertSafePath(await (fs.realpath ?? realpath)(cwd), rules);
     isDirectory = (await stat(cwd)).isDirectory();
   } catch (error) {
     const code = fsErrorCode(error);

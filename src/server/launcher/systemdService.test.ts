@@ -28,6 +28,8 @@ function world(
     platform?: NodeJS.Platform;
     answers?: Record<string, Partial<ToolResult>>;
     files?: Record<string, string>;
+    /** False: no systemctl on this computer. */
+    systemctl?: boolean;
   } = {},
 ): World {
   const w: Omit<World, 'deps'> = {
@@ -41,6 +43,7 @@ function world(
     env: {},
     homeDir: '/home/demo',
     userName: 'demo',
+    isExecutable: () => p.systemctl !== false,
     out: (line) => w.out.push(line),
     run: (file, args) => {
       w.calls.push([file.split('/').pop() ?? file, ...args]);
@@ -105,6 +108,9 @@ describe('systemd user service (WP-107)', () => {
     expect(text).toContain('Environment="PATH=/home/demo/.local/bin:/usr/bin"');
     expect(text).toContain('WantedBy=default.target');
     expect(systemdUnit({ ...OPTIONS, path: '' })).not.toContain('Environment=');
+    // Review WP-109: SIGTERM only to the launcher (it passes it on); a user manager has no network-online.target.
+    expect(text.split('\n')).toContain('KillMode=mixed');
+    expect(text).not.toContain('network-online');
   });
 
   it('install: writes the unit, reloads, enable --now, and hints at lingering', async () => {
@@ -134,6 +140,12 @@ describe('systemd user service (WP-107)', () => {
     expect(await installService(OPTIONS, win.deps)).toBe(2);
     expect(win.calls).toEqual([]);
     expect(win.files.size).toBe(0);
+    // Review WP-109: without systemctl nothing is written, the message says why.
+    const bare = world({ systemctl: false });
+    expect(await installService(OPTIONS, bare.deps)).toBe(2);
+    expect(bare.out.join('\n')).toMatch(/systemctl was not found/);
+    expect(bare.calls).toEqual([]);
+    expect(bare.files.size).toBe(0);
   });
 
   it('uninstall: disable --now, the unit removed, reloaded; the data folder untouched', async () => {

@@ -33,8 +33,10 @@ const PROBE_RETRY_MS = 60_000;
 
 /** The keyring as the store needs it (seam for tests). Every method rejects with KeyStoreError. */
 export interface SecretServiceNative {
-  /** The stored Base64 key of `purpose`, or null. */
+  /** The stored Base64 key of `purpose`, or null (also when its keyring stays locked). */
   lookup(purpose: KeyPurpose): Promise<string | null>;
+  /** Review WP-109: is an item of `purpose` stored at all – locked or not (nothing is unlocked)? */
+  exists(purpose: KeyPurpose): Promise<boolean>;
   store(purpose: KeyPurpose, secret: string): Promise<void>;
   /** Resolves when the keyring answers (a lookup of `identity`); rejects otherwise. */
   probe(): Promise<void>;
@@ -44,8 +46,10 @@ export interface SecretServiceNative {
 
 /**
  * The worker (plain JavaScript, run with `eval`). Messages `{id, op, purpose, secret?}`; answers
- * `{id, ok, value?, reason?}`. Libraries: libsecret-1.so.0 and libglib-2.0.so.0 (`ffi.toString`
- * reads the returned C string). Layout of `SecretSchema` on
+ * `{id, ok, value?, reason?}`. Libraries: libsecret-1.so.0 (≥ 0.19 for the search), libglib-2.0.so.0
+ * and libgobject-2.0.so.0 (`ffi.toString` reads the returned C string). `exists` searches without
+ * SECRET_SEARCH_UNLOCK (flags 0: locked items are listed, not unlocked) and answers `'1'`/`null`; the
+ * list is freed with `g_list_free_full(list, g_object_unref)`. Layout of `SecretSchema` on
  * x86_64: name @0, flags @8, attributes[32] from @16 (16 bytes each: name pointer, type int), 592 bytes.
  */
 export const SECRET_SERVICE_WORKER_SOURCE = String.raw`
@@ -78,6 +82,10 @@ function load() {
     g_hash_table_insert: { return: 'int32', arguments: ['pointer', 'buffer', 'buffer'] },
     g_hash_table_unref: { return: 'void', arguments: ['pointer'] },
     g_error_free: { return: 'void', arguments: ['pointer'] },
+    g_list_free_full: { return: 'void', arguments: ['pointer', 'pointer'] },
+  });
+  const gobject = open(['libgobject-2.0.so.0'], {
+    g_object_unref: { return: 'void', arguments: ['pointer'] },
   });
   const secret = open(['libsecret-1.so.0'], {
     secret_password_storev_sync: {
@@ -85,12 +93,17 @@ function load() {
       arguments: ['buffer', 'pointer', 'buffer', 'buffer', 'buffer', 'pointer', 'buffer'],
     },
     secret_password_lookupv_sync: { return: 'pointer', arguments: ['buffer', 'pointer', 'pointer', 'buffer'] },
+    secret_password_searchv_sync: {
+      return: 'pointer',
+      arguments: ['buffer', 'pointer', 'int32', 'pointer', 'buffer'],
+    },
     secret_password_free: { return: 'void', arguments: ['pointer'] },
   });
-  if (glib === null || secret === null) throw new Error('unavailable');
+  if (glib === null || gobject === null || secret === null) throw new Error('unavailable');
   const strHash = ffi.dlsym(glib.lib, 'g_str_hash');
   const strEqual = ffi.dlsym(glib.lib, 'g_str_equal');
-  if (!strHash || !strEqual) throw new Error('unavailable');
+  const objectUnref = ffi.dlsym(gobject.lib, 'g_object_unref');
+  if (!strHash || !strEqual || !objectUnref) throw new Error('unavailable');
   const schema = Buffer.alloc(592);
   const schemaName = Buffer.from(workerData.schemaName + '\0', 'utf8');
   const attributeName = Buffer.from('purpose\0', 'utf8');
@@ -99,7 +112,10 @@ function load() {
   schema.writeBigUInt64LE(ffi.getRawPointer(attributeName), 16);
   schema.writeInt32LE(0, 24);
   // Kept for the life of the worker (the schema points into them).
-  api = { glib: glib.functions, secret: secret.functions, strHash, strEqual, schema, names: [schemaName, attributeName] };
+  api = {
+    glib: glib.functions, secret: secret.functions, strHash, strEqual, objectUnref, schema,
+    names: [schemaName, attributeName],
+  };
   return api;
 }
 function attributes(a, purpose) {
@@ -132,6 +148,13 @@ function handle(message) {
       } finally {
         value.fill(0);
       }
+    }
+    if (message.op === 'exists') {
+      const list = a.secret.secret_password_searchv_sync(a.schema, table, 0, 0n, slot);
+      if (takeError(a, slot)) throw new Error('unavailable');
+      if (!list) return null;
+      a.glib.g_list_free_full(list, a.objectUnref);
+      return '1';
     }
     const pointer = a.secret.secret_password_lookupv_sync(a.schema, table, 0n, slot);
     if (takeError(a, slot)) throw new Error('unavailable');
@@ -230,7 +253,11 @@ export function createSecretServiceWorker(options: SecretServiceWorkerOptions = 
     return created;
   };
 
-  const request = (message: { op: 'lookup' | 'store' | 'probe'; purpose?: string; secret?: string }) =>
+  const request = (message: {
+    op: 'lookup' | 'exists' | 'store' | 'probe';
+    purpose?: string;
+    secret?: string;
+  }) =>
     new Promise<string | null>((resolve, reject) => {
       let target: Worker;
       try {
@@ -252,6 +279,7 @@ export function createSecretServiceWorker(options: SecretServiceWorkerOptions = 
 
   return {
     lookup: (purpose) => request({ op: 'lookup', purpose }),
+    exists: async (purpose) => (await request({ op: 'exists', purpose })) !== null,
     store: async (purpose, secret) => {
       await request({ op: 'store', purpose, secret });
     },
@@ -337,9 +365,16 @@ export function createSecretServiceKeyStore(options: SecretServiceKeyStoreOption
   /** The key of `purpose`; `create` makes and stores a new one when none exists. */
   const keyOf = async (purpose: KeyPurpose, create: boolean): Promise<Buffer> => {
     const api = getNative();
-    const existing = decodeKey(await api.lookup(purpose));
+    const found = await api.lookup(purpose);
+    const existing = decodeKey(found);
     if (existing !== null) return existing;
     if (!create) throw new KeyStoreError('failed');
+    // Review WP-109: a keyring that stays locked (prompt dismissed, nobody logged in) answers the
+    // lookup with nothing. A new key would replace the stored one (same attributes) as soon as the
+    // keyring opens for the store – and every value sealed with it (all paired computers) is lost.
+    if (found === null && (await api.exists(purpose))) {
+      throw new KeyStoreError('unavailable', 'keyring locked');
+    }
     const key = randomBytes(KEY_BYTES);
     await api.store(purpose, key.toString('base64'));
     // Read back: the keyring decides (another process may have stored one at the same time).

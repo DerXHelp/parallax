@@ -661,4 +661,17 @@ describe('POSIX rules: links, comparisons and the check chain (WP-103)', () => {
     expect(await physicalRoot('/proc/1', fs, POSIX_PATHS)).toBeNull();
     expect(fs.calls).toEqual([]);
   });
+
+  it('checkCwd: a real path in /proc is refused even when the links look safe (review WP-109)', async () => {
+    // `l -> sub/../sys` with `sub -> /proc/self`: lexically `<repo>/sys`, physically `/proc/sys`.
+    const fs = {
+      lstat: () => Promise.resolve({ isSymbolicLink: () => false }),
+      readlink: () => Promise.reject(new Error('no link')),
+      realpath: () => Promise.resolve('/proc/sys'),
+    };
+    expect(payload(await errorOf(checkCwd('/home/u/repo/l', fs, POSIX_PATHS)))).toEqual({
+      code: 'PATH_REJECTED',
+      params: { reason: 'pseudo_fs' },
+    });
+  });
 });
