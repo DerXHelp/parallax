@@ -1,4 +1,5 @@
 import { WINDOWS_SHELL_KINDS, type ShellKind } from '@shared/model';
+import { preferredFirst } from '@web/lib/shells';
 import type { TerminalKey } from '../i18n';
 
 /** Menu text of each shell. */
@@ -26,9 +27,12 @@ export const SHORT_SHELL_KEYS: Readonly<Record<ShellKind, TerminalKey>> = {
 };
 
 /**
- * The shells with `preferred` (the default of the settings) first. WP-102: still the Windows three;
- * WP-105 passes the host's `shell.detect` list.
+ * The shells with `preferred` (the default of the settings) first. WP-104: `shells` = the kinds of the
+ * session's computer (`shellChoices`, default the Windows three); WP-105 passes its `shell.detect` list.
  */
-export function shellOrder(preferred: ShellKind): ShellKind[] {
-  return [preferred, ...WINDOWS_SHELL_KINDS.filter((shell) => shell !== preferred)];
+export function shellOrder(
+  preferred: ShellKind,
+  shells: readonly ShellKind[] = WINDOWS_SHELL_KINDS,
+): ShellKind[] {
+  return preferredFirst(preferred, shells);
 }

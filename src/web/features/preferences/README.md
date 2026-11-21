@@ -37,6 +37,7 @@ ganzen Top-Level-Feld an den Server; Töne und ihre Zustellung liegen in `src/we
 | `components/HostWarnings.tsx` | Host-Warnungen bestimmter Codes neben ihrer Einstellung; `foreignHint` erklärt `params.reason: 'foreign'` (fremde `Parallax.lnk` bzw. fremder `parallax:`-Handler, CR2-03) |
 | `state/settings-editor.ts` | `useSettingsEditor()`: gespeicherte Settings + noch unbestätigte Änderungen (Schalter bewegen sich sofort, zweite Änderung baut auf der ersten auf), Rücknahme + `error` bei Ablehnung; der Fehler bleibt, bis das Feld gespeichert oder ausgeblendet ist; nach dem Schließen geht er in die Hinweis-Region (R4W-16) |
 | `lib/limits.ts` | Grenzen aus den zod-Schemas über `numberRange` (`src/web/lib/zod-range.ts`): `IDLE_MINUTES`, `DONE_SECONDS`, `PORT_RANGE`; `parseWholeNumber` |
+| `lib/host-platform.ts` | WP-104: `settingsHostOf(hostState)` – Pfad-Flavor, Regelsatz und `capabilities` des Rechners der Einstellungen (Editor-Prüfung, Shells, Autostart, Benachrichtigungstexte); ohne Zustand wie Windows |
 | `playground.tsx` | Demos je Bereich (mit/ohne Systemintegration, mit Warnungen; „Dateien“: gefunden/nicht gefunden, eigenes Programm, eigenes Programm mit Fehlern; „Mehrere Rechner“: `multi-host-*`), Ton-Vorhören; `slots` für die Shell-Demos. Die Shell-Demos von WP-58 (`src/web/shell/phase3-demos.tsx`) registriert seit FIX-R5 F5 der Playground selbst (`src/web/playground/demos.tsx`) |
 | `i18n/{en,de}.ts` | Namensraum `preferences` (auch der Menüeintrag, Ton-Namen und der Hinweis „Töne aktivieren“) |
 

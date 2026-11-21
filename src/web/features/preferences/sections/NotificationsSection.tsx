@@ -20,6 +20,7 @@ import { Switch } from '@web/ui/switch';
 import { HostWarnings } from '../components/HostWarnings';
 import { NumberField } from '../components/NumberField';
 import { SettingField, SettingList } from '../components/SettingField';
+import { settingsHostOf } from '../lib/host-platform';
 import { DONE_SECONDS } from '../lib/limits';
 import type { SettingsEditor } from '../state/settings-editor';
 
@@ -38,11 +39,14 @@ function EventRow({
   kind,
   event,
   volume,
+  toast,
   onChange,
 }: {
   kind: NotificationKind;
   event: NotificationEventSettings;
   volume: number;
+  /** WP-104: the label of the toast column ("Windows"/"desktop notification"); null = no column. */
+  toast: 'windows' | 'desktop' | null;
   onChange: (event: NotificationEventSettings) => void;
 }) {
   const t = useT();
@@ -52,15 +56,21 @@ function EventRow({
       <th scope="row" className="py-1.5 pr-3 text-left font-normal">
         {name}
       </th>
-      <td className="px-3 py-1.5">
-        <Switch
-          aria-label={t('preferences.notifications.toastFor', { event: name })}
-          checked={event.toast}
-          onCheckedChange={(toast) => {
-            onChange({ ...event, toast });
-          }}
-        />
-      </td>
+      {toast === null ? null : (
+        <td className="px-3 py-1.5">
+          <Switch
+            aria-label={
+              toast === 'windows'
+                ? t('preferences.notifications.toastFor', { event: name })
+                : t('preferences.notifications.linux.toastFor', { event: name })
+            }
+            checked={event.toast}
+            onCheckedChange={(next) => {
+              onChange({ ...event, toast: next });
+            }}
+          />
+        </td>
+      )}
       <td className="py-1.5 pl-3">
         <div className="flex items-center gap-2">
           <Switch
@@ -186,7 +196,9 @@ function VolumeSlider({ volume, onCommit }: { volume: number; onCommit: (volume:
 /**
  * Notifications (ADR-109, Plan "Benachrichtigungen"): per event toast/sound/sound choice with a
  * preview, volume, "Do not disturb", focus rule, "done" threshold, click opens the session
- * (needs the system integration, ADR-110). The server applies all but the sounds.
+ * (needs the system integration, ADR-110). The server applies all but the sounds. WP-104: on Linux
+ * "desktop notification" instead of "Windows notification"; without a desktop no toast column and no
+ * system choice, without a link handler (`capabilities.protocolHandler`) no "click opens".
  */
 export function NotificationsSection({
   editor,
@@ -199,6 +211,9 @@ export function NotificationsSection({
   const { settings, save } = editor;
   const notifications = settings.notifications;
   const integration = hostState?.systemIntegration ?? false;
+  const { flavor, capabilities } = settingsHostOf(hostState);
+  const linux = flavor === 'posix';
+  const toast = !capabilities.desktop ? null : linux ? 'desktop' : 'windows';
   const update = (patch: Partial<NotificationSettings>) => {
     save({ notifications: { ...notifications, ...patch } });
   };
@@ -211,7 +226,13 @@ export function NotificationsSection({
       <SettingField
         name="events"
         label={t('preferences.notifications.events')}
-        description={t('preferences.notifications.eventsHint')}
+        description={
+          toast === null
+            ? t('preferences.notifications.linux.eventsHintNoDesktop')
+            : linux
+              ? t('preferences.notifications.linux.eventsHint')
+              : t('preferences.notifications.eventsHint')
+        }
         below={({ labelId }) => (
           <div className="overflow-x-auto">
             <table aria-labelledby={labelId} className="w-full text-xs">
@@ -220,9 +241,13 @@ export function NotificationsSection({
                   <th scope="col" className="pr-3 pb-1.5 text-left font-medium">
                     {t('preferences.notifications.columns.event')}
                   </th>
-                  <th scope="col" className="px-3 pb-1.5 text-left font-medium">
-                    {t('preferences.notifications.columns.toast')}
-                  </th>
+                  {toast === null ? null : (
+                    <th scope="col" className="px-3 pb-1.5 text-left font-medium">
+                      {toast === 'windows'
+                        ? t('preferences.notifications.columns.toast')
+                        : t('preferences.notifications.linux.toast')}
+                    </th>
+                  )}
                   <th scope="col" className="pb-1.5 pl-3 text-left font-medium">
                     {t('preferences.notifications.columns.sound')}
                   </th>
@@ -235,6 +260,7 @@ export function NotificationsSection({
                     kind={kind}
                     event={notifications.events[kind]}
                     volume={notifications.volume}
+                    toast={toast}
                     onChange={(event) => {
                       updateEvent(kind, event);
                     }}
@@ -262,7 +288,11 @@ export function NotificationsSection({
       <SettingField
         name="doNotDisturb"
         label={t('preferences.notifications.doNotDisturb')}
-        description={t('preferences.notifications.doNotDisturbHint')}
+        description={
+          linux
+            ? t('preferences.notifications.linux.doNotDisturbHint')
+            : t('preferences.notifications.doNotDisturbHint')
+        }
         control={({ id, describedBy }) => (
           <Switch
             id={id}
@@ -274,30 +304,34 @@ export function NotificationsSection({
           />
         )}
       />
-      <SettingField
-        name="focusedElsewhere"
-        label={t('preferences.notifications.focusedElsewhere')}
-        below={({ id, labelId }) => (
-          <RadioGroup
-            aria-labelledby={labelId}
-            value={notifications.focusedElsewhere}
-            onValueChange={(value) => {
-              if (value === 'in_app' || value === 'system') update({ focusedElsewhere: value });
-            }}
-          >
-            {(['in_app', 'system'] as const).map((value) => (
-              <div key={value} className="flex items-center gap-2">
-                <RadioGroupItem id={`${id}-${value}`} value={value} />
-                <Label htmlFor={`${id}-${value}`} className="font-normal">
-                  {value === 'in_app'
-                    ? t('preferences.notifications.focusedElsewhereInApp')
-                    : t('preferences.notifications.focusedElsewhereSystem')}
-                </Label>
-              </div>
-            ))}
-          </RadioGroup>
-        )}
-      />
+      {toast === null ? null : (
+        <SettingField
+          name="focusedElsewhere"
+          label={t('preferences.notifications.focusedElsewhere')}
+          below={({ id, labelId }) => (
+            <RadioGroup
+              aria-labelledby={labelId}
+              value={notifications.focusedElsewhere}
+              onValueChange={(value) => {
+                if (value === 'in_app' || value === 'system') update({ focusedElsewhere: value });
+              }}
+            >
+              {(['in_app', 'system'] as const).map((value) => (
+                <div key={value} className="flex items-center gap-2">
+                  <RadioGroupItem id={`${id}-${value}`} value={value} />
+                  <Label htmlFor={`${id}-${value}`} className="font-normal">
+                    {value === 'in_app'
+                      ? t('preferences.notifications.focusedElsewhereInApp')
+                      : linux
+                        ? t('preferences.notifications.linux.focusedElsewhereSystem')
+                        : t('preferences.notifications.focusedElsewhereSystem')}
+                  </Label>
+                </div>
+              ))}
+            </RadioGroup>
+          )}
+        />
+      )}
       <SettingField
         name="doneMinSeconds"
         label={t('preferences.notifications.doneMinSeconds')}
@@ -315,31 +349,45 @@ export function NotificationsSection({
           />
         )}
       />
-      <SettingField
-        name="openOnClick"
-        label={t('preferences.notifications.openOnClick')}
-        description={t('preferences.notifications.openOnClickHint')}
-        disabled={!integration}
-        disabledReason={integration ? null : t('preferences.systemIntegrationOff')}
-        control={({ id, describedBy }) => (
-          <Switch
-            id={id}
-            aria-describedby={describedBy}
-            disabled={!integration}
-            checked={notifications.openOnClick}
-            onCheckedChange={(openOnClick) => {
-              update({ openOnClick });
-            }}
-          />
-        )}
-        below={() => (
-          <HostWarnings
-            hostState={hostState}
-            codes={['PROTOCOL_HANDLER_FAILED']}
-            foreignHint={t('preferences.notifications.openOnClickForeign')}
-          />
-        )}
-      />
+      {capabilities.protocolHandler ? (
+        <SettingField
+          name="openOnClick"
+          label={
+            linux
+              ? t('preferences.notifications.linux.openOnClick')
+              : t('preferences.notifications.openOnClick')
+          }
+          description={
+            linux
+              ? t('preferences.notifications.linux.openOnClickHint')
+              : t('preferences.notifications.openOnClickHint')
+          }
+          disabled={!integration}
+          disabledReason={integration ? null : t('preferences.systemIntegrationOff')}
+          control={({ id, describedBy }) => (
+            <Switch
+              id={id}
+              aria-describedby={describedBy}
+              disabled={!integration}
+              checked={notifications.openOnClick}
+              onCheckedChange={(openOnClick) => {
+                update({ openOnClick });
+              }}
+            />
+          )}
+          below={() => (
+            <HostWarnings
+              hostState={hostState}
+              codes={['PROTOCOL_HANDLER_FAILED']}
+              foreignHint={
+                linux
+                  ? t('preferences.notifications.linux.openOnClickForeign')
+                  : t('preferences.notifications.openOnClickForeign')
+              }
+            />
+          )}
+        />
+      ) : null}
     </SettingList>
   );
 }

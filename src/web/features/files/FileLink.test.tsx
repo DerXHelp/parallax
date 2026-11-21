@@ -1,15 +1,16 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { makeSessionKey } from '@shared/common';
+import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
 import { makeError } from '@shared/errors';
+import { WINDOWS_HOST_CAPABILITIES, type HostCapabilities } from '@shared/model';
 import type { Command } from '@shared/protocol';
-import { SAMPLE_IDS, sampleItems } from '@shared/samples';
+import { SAMPLE_IDS, sampleHostState, sampleItems } from '@shared/samples';
 import type { RunningScenario } from '@web/playground/PlaygroundScenario';
 import { registerShellRequestHandler, type ShellRequestOf } from '@web/shell/requests';
 import { FAKE_FILE_PATHS } from '@web/state/fake-host';
 import { useNotices } from '@web/state/notices';
-import { resetClientStore } from '@web/state/store';
+import { clientStore, resetClientStore, updateHost } from '@web/state/store';
 import { TooltipProvider } from '@web/ui/tooltip';
 import { FileLink } from './FileLink';
 import { statCache } from './state/stat-cache';
@@ -257,6 +258,53 @@ describe('FileLink (WP-54, L15)', () => {
       { kind: 'openFile', sessionKey: remote, path: FAKE_FILE_PATHS.readme, line: null, col: null },
     ]);
     expect(running.host.fileOpens).toEqual([]);
+  });
+
+  it('a Linux host (WP-104): POSIX paths link, Windows paths stay text, actions follow its capabilities', async () => {
+    const user = userEvent.setup();
+    const linux = (capabilities: Partial<HostCapabilities>) => {
+      updateHost(clientStore, LOCAL_HOST_ID, () => ({
+        hostState: sampleHostState({
+          platform: 'linux',
+          capabilities: { ...WINDOWS_HOST_CAPABILITIES, ...capabilities },
+        }),
+      }));
+    };
+    linux({ editor: false, fileManager: false });
+    const path = '/home/alice/work/sample/notes.md';
+    const { unmount } = renderLink(
+      <>
+        <FileLink sessionKey={FILES_SESSION_KEY} path={path} />
+        <FileLink sessionKey={FILES_SESSION_KEY} path={FAKE_FILE_PATHS.readme} />
+      </>,
+    );
+    expect(document.querySelector('[data-state="unsafe"]')?.textContent).toBe('sample\\README.md');
+    const link = screen.getByRole('button', { name: 'sample/notes.md' });
+    fireEvent.contextMenu(link);
+    const items = await screen.findAllByRole('menuitem');
+    expect(items.map((item) => item.textContent)).toEqual(['Open in viewer', 'Copy path']);
+    await user.keyboard('{Escape}');
+    // No editor on that desktop: Ctrl+click opens the viewer.
+    await user.keyboard('{Control>}');
+    await user.click(link);
+    await user.keyboard('{/Control}');
+    expect(opened).toEqual([
+      { kind: 'openFile', sessionKey: FILES_SESSION_KEY, path, line: null, col: null },
+    ]);
+    expect(running.host.fileOpens).toEqual([]);
+    unmount();
+    // A Linux desktop: the file manager instead of Explorer.
+    linux({});
+    renderLink(<FileLink sessionKey={FILES_SESSION_KEY} path={path} />);
+    fireEvent.contextMenu(screen.getByRole('button'));
+    const desktop = await screen.findAllByRole('menuitem');
+    expect(desktop.map((item) => item.textContent)).toEqual([
+      'Open in viewer',
+      'Open in editor',
+      'Show in file manager',
+      'Open with default program',
+      'Copy path',
+    ]);
   });
 
   it('a finished write on the same file drops the cached answer and checks again', async () => {

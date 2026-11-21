@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from '@shared/common';
+import { POSIX_PATHS } from '@shared/paths';
 import { makeError } from '@shared/errors';
 import { profileInputSchema, type ProfileIssue } from '@shared/model';
 import { sampleId, sampleProfile } from '@shared/samples';
@@ -141,6 +142,9 @@ describe('draft ↔ ProfileInput', () => {
     expect(configDirChanged('C:\\Users\\me\\.claude', 'C:\\Users\\me\\.claude-work')).toBe(true);
     expect(configDirChanged(null, '')).toBe(false);
     expect(configDirChanged(null, 'C:\\x')).toBe(true);
+    // WP-104: on a Linux host the case matters.
+    expect(configDirChanged('/home/me/.claude', '/home/me/.claude/', POSIX_PATHS)).toBe(false);
+    expect(configDirChanged('/home/me/.claude', '/home/me/.Claude', POSIX_PATHS)).toBe(true);
   });
 
   it('marks bypass flags', () => {
@@ -184,5 +188,14 @@ describe('demo profile check (playground/tests stand-in)', () => {
       ['warning', 'PROFILE_ENV_REF_UNRESOLVED', null],
       ['info', 'PROFILE_ARG_PASSED_RAW', 1],
     ]);
+  });
+});
+
+describe('demo findings on a Linux host (WP-104)', () => {
+  it('take a POSIX claude path without .exe, refuse it on Windows', () => {
+    const executable = { kind: 'path' as const, path: '/home/me/.local/bin/claude' };
+    const profile = { ...sampleProfile(), executable };
+    expect(demoProfileIssues(profile, POSIX_PATHS).filter((issue) => issue.level === 'error')).toEqual([]);
+    expect(demoProfileIssues(profile).some((issue) => issue.level === 'error')).toBe(true);
   });
 });

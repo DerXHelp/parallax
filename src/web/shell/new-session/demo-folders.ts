@@ -1,6 +1,6 @@
 import { makeError, type ErrorPayload } from '@shared/errors';
 import type { FsEntry, FsListing } from '@shared/model';
-import { windowsNameIssue, windowsPathIssue, windowsPathKey } from '@shared/paths';
+import { WIN32_PATHS, type PathRules } from '@shared/paths';
 
 /**
  * A fake folder tree answering `fs.listDirectory` (and `fs.createDirectory` on a copy, WP-94) like
@@ -8,6 +8,8 @@ import { windowsNameIssue, windowsPathIssue, windowsPathKey } from '@shared/path
  * nothing in the app imports it).
  * Roots: user folder + drives C: and D:. `D:\work\locked` is not readable, `D:\archive` is
  * truncated, `D:\work\sample` is a link, names with a dot and `$Recycle.Bin` are hidden.
+ * WP-104: `LINUX_DEMO_FOLDERS` with `POSIX_PATHS` – roots home, `/` and mounted media; names are
+ * case-sensitive (`Projects` and `projects` are two folders).
  */
 
 export interface DemoFolder {
@@ -16,7 +18,7 @@ export interface DemoFolder {
   hidden?: boolean;
 }
 
-/** Folder tree; keys are `windowsPathKey`s. */
+/** Folder tree; keys are `rules.key`s (here: Windows, case-insensitive). */
 export const DEMO_FOLDERS: Readonly<Record<string, readonly DemoFolder[]>> = {
   'c:\\': [{ name: 'Program Files' }, { name: 'Users' }, { name: 'Windows' }],
   'c:\\program files': [],
@@ -64,6 +66,38 @@ export const DEMO_FOLDERS: Readonly<Record<string, readonly DemoFolder[]>> = {
   'd:\\work\\web\\landing': [],
 };
 
+/** The tree of a Linux computer (WP-104); keys are POSIX paths (case-sensitive). */
+export const LINUX_DEMO_FOLDERS: Readonly<Record<string, readonly DemoFolder[]>> = {
+  '/': [{ name: 'home' }, { name: 'media' }, { name: 'mnt' }, { name: 'opt' }, { name: 'tmp' }],
+  '/home': [{ name: 'alice' }],
+  '/home/alice': [
+    { name: '.claude', hidden: true },
+    { name: '.config', hidden: true },
+    { name: 'Projects' },
+    { name: 'projects' },
+  ],
+  '/home/alice/Projects': [{ name: 'parallax' }, { name: 'sample', kind: 'link' }],
+  '/home/alice/Projects/parallax': [{ name: 'src' }],
+  '/home/alice/Projects/parallax/src': [],
+  '/home/alice/Projects/sample': [],
+  '/home/alice/projects': [],
+  '/media': [{ name: 'alice' }],
+  '/media/alice': [{ name: 'USB-STICK' }],
+  '/media/alice/USB-STICK': [],
+  '/mnt': [{ name: 'data' }],
+  '/mnt/data': [],
+  '/opt': [],
+  '/tmp': [],
+};
+
+/** Roots of the Linux tree (like the server's: home, `/`, mounted media). */
+const LINUX_ROOTS: FsEntry[] = [
+  { name: 'alice', path: '/home/alice', kind: 'home', hidden: false },
+  { name: '/', path: '/', kind: 'drive', hidden: false },
+  { name: 'USB-STICK', path: '/media/alice/USB-STICK', kind: 'drive', hidden: false },
+  { name: 'data', path: '/mnt/data', kind: 'drive', hidden: false },
+];
+
 /** Folders the demo user may not read (FOLDER_NOT_READABLE). */
 const LOCKED: ReadonlySet<string> = new Set(['d:\\work\\locked']);
 /** Names the server hides besides dot names (its `isHiddenName`). */
@@ -78,7 +112,14 @@ const SYSTEM_NAMES: ReadonlySet<string> = new Set([
 const TRUNCATED: ReadonlySet<string> = new Set(['d:\\archive']);
 
 /** `D:\work\x` → `D:\work`, `D:\work` → `D:\`, a drive root → null. */
-function parentOf(path: string): string | null {
+/** Linux (WP-104): `/a/b` → `/a`, `/a` → `/`, `/` → null. */
+function parentOf(path: string, rules: PathRules): string | null {
+  if (rules.flavor === 'posix') {
+    const trimmed = path.replace(/\/+$/, '');
+    if (trimmed === '') return null;
+    const cut = trimmed.lastIndexOf('/');
+    return cut <= 0 ? '/' : trimmed.slice(0, cut);
+  }
   if (/^[A-Za-z]:[\\/]*$/.test(path)) return null;
   const trimmed = path.replace(/[\\/]+$/, '');
   const cut = Math.max(trimmed.lastIndexOf('\\'), trimmed.lastIndexOf('/'));
@@ -86,7 +127,8 @@ function parentOf(path: string): string | null {
 }
 
 /** `path` + `name` with one separator in the style of `path` (like the server's `childPath`). */
-function childOf(path: string, name: string): string {
+function childOf(path: string, name: string, rules: PathRules): string {
+  if (rules.flavor === 'posix') return path.endsWith('/') ? `${path}${name}` : `${path}/${name}`;
   if (/[\\/]$/.test(path)) return `${path}${name}`;
   return `${path}${path.includes('\\') ? '\\' : '/'}${name}`;
 }
@@ -100,27 +142,30 @@ export function cloneDemoFolders(
 
 /**
  * Answer of `fs.createDirectory` (WP-94) on a changeable tree, like the server: name rules,
- * missing parent, an existing name (case-insensitive), `D:\work\locked` is not writable.
+ * missing parent, an existing name (case-insensitive; Linux: exact), `D:\work\locked` is not writable.
  */
 export function createDemoFolder(
   parent: string,
   folderName: string,
   folders: Record<string, DemoFolder[]>,
+  rules: PathRules = WIN32_PATHS,
 ): { ok: true; path: string } | { ok: false; error: ErrorPayload } {
-  const issue = windowsPathIssue(parent) ?? windowsNameIssue(folderName);
+  const issue = rules.issue(parent) ?? rules.nameIssue(folderName);
   if (issue !== null) return { ok: false, error: makeError('PATH_REJECTED', { reason: issue }) };
-  const key = windowsPathKey(parent);
+  const key = rules.key(parent);
   if (LOCKED.has(key)) return { ok: false, error: makeError('FOLDER_NOT_WRITABLE', { path: parent }) };
   const children = folders[key];
   if (children === undefined) return { ok: false, error: makeError('CWD_NOT_FOUND', { cwd: parent }) };
-  const path = childOf(parent, folderName);
-  if (children.some((child) => child.name.toLowerCase() === folderName.toLowerCase())) {
+  const path = childOf(parent, folderName, rules);
+  const same = (a: string, b: string) =>
+    rules.flavor === 'posix' ? a === b : a.toLowerCase() === b.toLowerCase();
+  if (children.some((child) => same(child.name, folderName))) {
     return { ok: false, error: makeError('FOLDER_EXISTS', { path }) };
   }
   const hidden = folderName.startsWith('.') || SYSTEM_NAMES.has(folderName.toLowerCase());
   children.push(hidden ? { name: folderName, hidden: true } : { name: folderName });
   children.sort((a, b) => (a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1));
-  folders[windowsPathKey(path)] = [];
+  folders[rules.key(path)] = [];
   return { ok: true, path };
 }
 
@@ -129,7 +174,11 @@ export function listDemoFolder(
   path: string | null,
   showHidden: boolean,
   folders: Readonly<Record<string, readonly DemoFolder[]>> = DEMO_FOLDERS,
+  rules: PathRules = WIN32_PATHS,
 ): { ok: true; listing: FsListing } | { ok: false; error: ErrorPayload } {
+  if (path === null && rules.flavor === 'posix') {
+    return { ok: true, listing: { path: null, parent: null, entries: LINUX_ROOTS, truncated: false } };
+  }
   if (path === null) {
     return {
       ok: true,
@@ -145,9 +194,9 @@ export function listDemoFolder(
       },
     };
   }
-  const issue = windowsPathIssue(path);
+  const issue = rules.issue(path);
   if (issue !== null) return { ok: false, error: makeError('PATH_REJECTED', { reason: issue }) };
-  const key = windowsPathKey(path);
+  const key = rules.key(path);
   if (LOCKED.has(key)) return { ok: false, error: makeError('FOLDER_NOT_READABLE', { path }) };
   const children = folders[key];
   if (children === undefined) return { ok: false, error: makeError('CWD_NOT_FOUND', { cwd: path }) };
@@ -155,12 +204,12 @@ export function listDemoFolder(
     ok: true,
     listing: {
       path,
-      parent: parentOf(path),
+      parent: parentOf(path, rules),
       entries: children
         .filter((child) => showHidden || child.hidden !== true)
         .map((child) => ({
           name: child.name,
-          path: childOf(path, child.name),
+          path: childOf(path, child.name, rules),
           kind: child.kind ?? 'directory',
           hidden: child.hidden === true,
         })),

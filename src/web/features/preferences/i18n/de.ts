@@ -81,6 +81,22 @@ export const de: typeof en = {
       'Registriert den Linktyp „parallax:“ für deinen Windows-Benutzer; ein Klick öffnet die Session in einem neuen App-Fenster.',
     openOnClickForeign:
       'Für „parallax:“-Links ist bei deinem Windows-Benutzer schon ein anderes Programm registriert. Parallax ersetzt es nicht.',
+    linux: {
+      eventsHint:
+        'Je Ereignis: eine Desktop-Benachrichtigung und ein Ton. Parallax zeigt jede Benachrichtigung nur einmal.',
+      eventsHintNoDesktop:
+        'Je Ereignis: ein Ton. Dieser Rechner hat keinen Desktop, daher gibt es keine Desktop-Benachrichtigungen.',
+      toast: 'Desktop-Benachrichtigung',
+      toastFor: 'Desktop-Benachrichtigung: {event}',
+      doNotDisturbHint:
+        'Keine Desktop-Benachrichtigungen und keine Töne. Hinweise im Fenster und die Anzahl im Fenstertitel bleiben.',
+      focusedElsewhereSystem: 'Desktop-Benachrichtigung zeigen',
+      openOnClick: 'Klick auf eine Desktop-Benachrichtigung öffnet die Session',
+      openOnClickHint:
+        'Registriert den Linktyp „parallax:“ für deinen Benutzer; ein Klick öffnet die Session in einem neuen App-Fenster.',
+      openOnClickForeign:
+        'Für „parallax:“-Links ist bei deinem Benutzer schon ein anderes Programm registriert. Parallax ersetzt es nicht.',
+    },
   },
   sessions: {
     idleSleep: 'Untätige Sessions schlafen legen',
@@ -441,6 +457,18 @@ export const de: typeof en = {
       too_many: 'Höchstens {max} Argumente.',
       invalid: 'Dieser Eintrag ist ungültig.',
     },
+    posix: {
+      system: 'Standardprogramm des Desktops',
+      systemHint:
+        'Öffnet eine Datei mit dem Programm, das der Desktop ihrem Typ zuordnet – nur für harmlose Typen ({extensions}). Andere Dateien lassen sich so nicht öffnen.',
+      path: 'Programm',
+      pathOptionalHint:
+        'Leer = die Installation, die Parallax gefunden hat. Gib den vollständigen Pfad eines Programms an, um ein anderes zu nutzen.',
+      customHint: 'Der vollständige Pfad des Programms auf diesem Rechner.',
+      pathPlaceholder: '/usr/bin/editor',
+      pathIssue: 'Gib einen vollständigen Pfad an (etwa /usr/bin/…) – keinen relativen Pfad.',
+      noEditor: 'Dieser Rechner hat keinen Desktop: Dateien öffnen sich im Viewer von Parallax.',
+    },
   },
   console: {
     defaultShell: 'Standard-Shell',
@@ -450,6 +478,11 @@ export const de: typeof en = {
       cmd: 'Eingabeaufforderung (cmd)',
       powershell: 'Windows PowerShell',
       gitbash: 'Git Bash',
+      login: 'Login-Shell',
+      bash: 'Bash',
+      zsh: 'Zsh',
+      fish: 'fish',
+      pwsh: 'PowerShell 7',
     },
     defaultBadge: 'Standard',
     gitBashWindow: 'Fenster für Git Bash',

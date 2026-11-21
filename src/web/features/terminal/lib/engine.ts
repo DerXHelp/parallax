@@ -21,6 +21,11 @@ export interface EngineOptions {
   theme: ITheme;
   font: TerminalFont;
   screenReaderMode: boolean;
+  /**
+   * The session's computer runs Windows: its pseudo console is ConPTY (`windowsPty`). WP-104: false
+   * for a Linux computer, whose pty reflows nothing itself.
+   */
+  conpty: boolean;
 }
 
 /** xterm's custom key handler: return false and xterm ignores the event (it bubbles on). */
@@ -78,8 +83,9 @@ export const createXtermEngine: EngineFactory = (options) => {
     screenReaderMode: options.screenReaderMode,
     cursorBlink: true,
     scrollback: SCROLLBACK_LINES,
-    // ConPTY reflows lines itself; xterm adapts its own reflow and wrapping heuristics to it.
-    windowsPty: { backend: 'conpty' },
+    // ConPTY reflows lines itself; xterm adapts its own reflow and wrapping heuristics to it – only
+    // on a Windows computer (WP-104).
+    ...(options.conpty ? { windowsPty: { backend: 'conpty' as const } } : {}),
     // OSC 8 links: http(s) only, opened like the transcript's links. Without a handler xterm asks
     // with its blocking `confirm()` (the app's dialogs are never modal).
     linkHandler: {

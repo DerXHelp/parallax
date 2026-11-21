@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
-import { windowsPathKey } from '@shared/paths';
 import type { SessionViewState } from '@shared/sync';
+import { useSessionPaths } from '@web/state/host-platform';
 import { useSessionSelector } from '@web/state/hooks';
 import { fileToolIndex } from '../lib/file-tools';
 
@@ -14,19 +14,19 @@ import { fileToolIndex } from '../lib/file-tools';
  * `sessionKey` null: nothing is read (and the session is not subscribed).
  */
 export function useFileWriteStamp(sessionKey: string | null, path: string | null): number | null {
-  const key = path === null ? null : windowsPathKey(path);
+  const rules = useSessionPaths(sessionKey);
+  const key = path === null ? null : rules.key(path);
   const select = useCallback(
-    (view: SessionViewState) => (key === null ? null : (fileToolIndex(view.items).writes.get(key) ?? null)),
-    [key],
+    (view: SessionViewState) =>
+      key === null ? null : (fileToolIndex(view.items, rules).writes.get(key) ?? null),
+    [key, rules],
   );
   return useSessionSelector(key === null ? null : sessionKey, select, null);
 }
 
 /** Changes whenever a file tool call of the session finishes ("Files of this session" refresh). */
 export function useFileToolSignature(sessionKey: string): string {
-  return useSessionSelector(sessionKey, selectSignature, '');
-}
-
-function selectSignature(view: SessionViewState): string {
-  return fileToolIndex(view.items).signature;
+  const rules = useSessionPaths(sessionKey);
+  const select = useCallback((view: SessionViewState) => fileToolIndex(view.items, rules).signature, [rules]);
+  return useSessionSelector(sessionKey, select, '');
 }

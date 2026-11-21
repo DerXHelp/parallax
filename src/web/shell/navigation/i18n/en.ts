@@ -137,6 +137,8 @@ export const en = {
     /** WP-97: cmd, PowerShell or Git Bash as a window in the session's folder. */
     openShell: 'Open shell in folder',
     openTerminal: 'Terminal in panel',
+    /** WP-104: "Open folder" on a Linux computer (its file manager, not Explorer). */
+    openFolderFileManager: 'Open folder in file manager',
   },
   /** WP-97: the shells of "Open shell in folder" and the header button. */
   shells: {

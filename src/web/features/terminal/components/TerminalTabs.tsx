@@ -24,6 +24,8 @@ export interface TerminalTabsProps {
   state: TerminalSessionState;
   controller: TerminalController;
   defaultShell: ShellKind;
+  /** The shells of the session's computer (WP-104). */
+  shells?: readonly ShellKind[];
   onOpen: (shell: ShellKind) => void;
 }
 
@@ -97,7 +99,7 @@ function TabNameInput({
  * dragging a tab, or "Move left/right" in its context menu, changes the order – both are kept by the
  * server for every window.
  */
-export function TerminalTabs({ state, controller, defaultShell, onOpen }: TerminalTabsProps) {
+export function TerminalTabs({ state, controller, defaultShell, shells, onOpen }: TerminalTabsProps) {
   const tt = useTerminalT();
   const { items, activeId, numbers } = state;
   const [editing, setEditing] = useState<TerminalId | null>(null);
@@ -295,6 +297,7 @@ export function TerminalTabs({ state, controller, defaultShell, onOpen }: Termin
         </TabsList>
         <AddTerminalMenu
           defaultShell={defaultShell}
+          {...(shells === undefined ? {} : { shells })}
           atLimit={atLimit}
           max={state.limits.perEntry}
           onOpen={onOpen}

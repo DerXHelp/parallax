@@ -1,4 +1,4 @@
-import { windowsPathKey } from '@shared/paths';
+import { WIN32_PATHS } from '@shared/paths';
 import type { SessionSummary } from '@shared/model';
 import { deriveDisplayStatus, type DisplayStatus } from '@shared/status';
 import { pathTail } from './path-display';
@@ -7,7 +7,8 @@ import { sessionTitle } from './session-title';
 /**
  * Sidebar order (Plan "Sidebar"): by the contract's `sortBucket` (0 attention … 4 rest), then
  * newest activity, then title. Archived entries are left out unless `includeArchived`.
- * Phase 2 (WP-35): flat = pinned first, grouped = by project folder (`windowsPathKey(cwd)`).
+ * Phase 2 (WP-35): flat = pinned first, grouped = by project folder (`pathKey(hostId, cwd)`: the
+ * path rules of the entry's host, WP-104; default case-insensitive as on Windows).
  * WP-80: `sidebarLayout` groups by computer and/or folder; collapsed groups leave the visible order.
  */
 export interface OrderedSession<T> {
@@ -69,7 +70,7 @@ export function archivedOrder<T extends WithSummary>(entries: readonly T[], now:
 
 /** One project group of the grouped sidebar. */
 export interface SessionGroup<T> {
-  /** `windowsPathKey(cwd)`, prefixed with the host id when the entries carry one (multi-host). */
+  /** `pathKey(hostId, cwd)`, prefixed with the host id when the entries carry one (multi-host). */
   key: string;
   /** Full folder of the group (spelling of its most recently active entry) – tooltip, "new session here". */
   cwd: string;
@@ -85,23 +86,32 @@ export interface SessionGroup<T> {
   sessions: OrderedSession<T>[];
 }
 
-function groupKeyOf(entry: WithSummary & { hostId?: string }): string {
-  const path = windowsPathKey(entry.summary.cwd);
+/**
+ * Comparison key of a folder on the entry's host (WP-104: case-sensitive on Linux). The caller
+ * passes the rules of its hosts (`useHostPathKey`); default: every folder as on Windows.
+ */
+export type FolderKey = (hostId: string | undefined, path: string) => string;
+
+const WINDOWS_FOLDER_KEY: FolderKey = (_hostId, path) => WIN32_PATHS.key(path);
+
+function groupKeyOf(entry: WithSummary & { hostId?: string }, pathKey: FolderKey): string {
+  const path = pathKey(entry.hostId, entry.summary.cwd);
   return entry.hostId === undefined ? path : `${entry.hostId}|${path}`;
 }
 
 /**
  * Grouped sidebar (Plan "gruppiert nach Projekt"): non-archived entries per project folder
- * (case-insensitive, `windowsPathKey`); groups with a pinned entry first (V3-14, as in the flat
+ * (by the rules of the entry's host, `pathKey`); groups with a pinned entry first (V3-14, as in the flat
  * list), then groups with attention, then newest activity, then label.
  */
 export function groupSessions<T extends WithSummary & { hostId?: string }>(
   entries: readonly T[],
   now: Date,
+  pathKey: FolderKey = WINDOWS_FOLDER_KEY,
 ): SessionGroup<T>[] {
   const groups = new Map<string, SessionGroup<T>>();
   for (const item of orderSessions(entries, now)) {
-    const key = groupKeyOf(item.entry);
+    const key = groupKeyOf(item.entry, pathKey);
     const activity = Date.parse(item.entry.summary.lastActivityAt);
     const group = groups.get(key);
     if (group === undefined) {
@@ -225,10 +235,11 @@ export function sidebarLayout<T extends WithHost>(
   now: Date,
   grouping: SidebarGrouping,
   hostOrder: readonly string[],
+  pathKey: FolderKey = WINDOWS_FOLDER_KEY,
 ): SidebarLayout<T> {
   if (!grouping.byHost) {
     if (!grouping.byFolder) return { hosts: null, folders: null, order: flatSidebarOrder(entries, now) };
-    const folders = groupSessions(entries, now);
+    const folders = groupSessions(entries, now, pathKey);
     return { hosts: null, folders, order: groupedOrder(folders) };
   }
   const byHost = new Map<string, T[]>();
@@ -239,7 +250,7 @@ export function sidebarLayout<T extends WithHost>(
     else list.push(entry);
   }
   const hosts = [...byHost].map(([hostId, own]): HostSection<T> => {
-    const folders = grouping.byFolder ? groupSessions(own, now) : null;
+    const folders = grouping.byFolder ? groupSessions(own, now, pathKey) : null;
     const sessions = folders === null ? flatSidebarOrder(own, now) : groupedOrder(folders);
     return { key: hostGroupKey(hostId), hostId, folders, sessions, waiting: waitingCount(sessions) };
   });

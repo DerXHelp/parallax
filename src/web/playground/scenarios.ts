@@ -1,6 +1,14 @@
 import { LOCAL_HOST_ID, makeSessionKey, type EntryId } from '@shared/common';
 import { makeError } from '@shared/errors';
-import type { Decision, HostState, SessionSummary, Settings, TranscriptItem } from '@shared/model';
+import type {
+  Decision,
+  HostCapabilities,
+  HostState,
+  SessionSummary,
+  Settings,
+  TranscriptItem,
+} from '@shared/model';
+import { POSIX_PATHS } from '@shared/paths';
 import type { SessionSnapshot } from '@shared/protocol';
 import {
   sampleClaudeInstallStatus,
@@ -18,6 +26,12 @@ import {
 import type { StatusFacts } from '@shared/status';
 import type { AuthCheckResult } from '@web/state/auth';
 import type { FakeHost, FakeHostOptions } from '@web/state/fake-host';
+import {
+  cloneDemoFolders,
+  createDemoFolder,
+  LINUX_DEMO_FOLDERS,
+  listDemoFolder,
+} from '@web/shell/new-session/demo-folders';
 import { NAVIGATION_SESSION_KEYS, navigationData } from './navigation-scenario';
 import { RUNNING_DEMO_SESSION_KEYS, runningData } from './running-scenario';
 import { prepareShowcaseHost, SHOWCASE_SESSION_KEYS, showcaseData } from './showcase/data';
@@ -59,6 +73,7 @@ export const SCENARIO_IDS = [
   'navigation-archived',
   'navigation-running',
   'showcase',
+  'linux',
 ] as const;
 export type ScenarioId = (typeof SCENARIO_IDS)[number];
 
@@ -374,6 +389,63 @@ function startStreaming(host: FakeHost, now: () => number): () => void {
   };
 }
 
+/** WP-104: a Linux server without desktop – no Explorer, editor, console or shell windows. */
+const LINUX_SERVER_CAPABILITIES: HostCapabilities = {
+  desktop: false,
+  externalConsole: false,
+  shellWindow: false,
+  editor: false,
+  fileManager: false,
+  autostart: false,
+  protocolHandler: false,
+};
+
+/** `D:\work\x` of the overview → `/home/alice/work/x` (invented home). */
+function linuxCwd(cwd: string): string {
+  return `/home/alice/${cwd.replace(/^[A-Za-z]:\\/, '').replaceAll('\\', '/')}`;
+}
+
+/**
+ * WP-104: the overview on a Linux computer – POSIX folders (sidebar, header, new session with the Linux
+ * folder tree), a transcript with POSIX references, menus without the Windows-only actions.
+ */
+function linuxData(now: number, settings: Settings): ScenarioData {
+  const data = overviewData(now, settings);
+  const main = emptySnapshot(PLAYGROUND_ENTRIES.main, [
+    sampleItems.userMessage({
+      id: 'px:linux:prompt',
+      order: 1,
+      text: { text: 'Where is the config loaded?', truncated: null },
+    }),
+    sampleItems.assistantText({
+      id: 'px:linux:answer',
+      order: 2,
+      text: [
+        'The config comes from `src/config.ts:12` (read by /home/alice/work/sample/src/main.ts).',
+        'Your own overrides live in `~/work/sample/.env.local`; logs go to /tmp/sample/server.log.',
+        'Not a path: 1/2 of the tests, 2026/11/21, https://example.com/docs/setup.',
+      ].join('\n\n'),
+    }),
+  ]);
+  const folders = cloneDemoFolders(LINUX_DEMO_FOLDERS);
+  return {
+    hostState: sampleHostState({ settings, platform: 'linux', capabilities: LINUX_SERVER_CAPABILITIES }),
+    summaries: data.summaries.map((summary) => ({ ...summary, cwd: linuxCwd(summary.cwd) })),
+    sessions: data.sessions.map((session) => (session.entryId === PLAYGROUND_ENTRIES.main ? main : session)),
+    onCommand: (cmd) => {
+      if (cmd.name === 'fs.createDirectory') {
+        const created = createDemoFolder(cmd.parent, cmd.folderName, folders, POSIX_PATHS);
+        return created.ok
+          ? { ok: true, result: { path: created.path } }
+          : { ok: false, error: created.error };
+      }
+      if (cmd.name !== 'fs.listDirectory') return undefined;
+      const listed = listDemoFolder(cmd.path, cmd.showHidden, folders, POSIX_PATHS);
+      return listed.ok ? { ok: true, result: listed.listing } : { ok: false, error: listed.error };
+    },
+  };
+}
+
 export const SCENARIOS: Readonly<Record<ScenarioId, Scenario>> = {
   overview: {
     id: 'overview',
@@ -504,5 +576,11 @@ export const SCENARIOS: Readonly<Record<ScenarioId, Scenario>> = {
       prepareShowcaseHost(host, now());
       return () => undefined;
     },
+  },
+  linux: {
+    id: 'linux',
+    title: 'Linux computer without desktop: POSIX paths, no Windows-only actions (WP-104)',
+    select: PLAYGROUND_SESSION_KEYS.main,
+    build: linuxData,
   },
 };

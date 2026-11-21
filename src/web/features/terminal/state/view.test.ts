@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SAMPLE_IDS } from '@shared/samples';
+import { LOCAL_HOST_ID } from '@shared/common';
+import { SAMPLE_IDS, sampleHostState } from '@shared/samples';
+import { clientStore, resetClientStore, updateHost } from '@web/state/store';
 import { createFakeEngineFactory } from '../lib/fake-engine';
 import {
   FakeTerminalServer,
@@ -22,6 +24,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   resetTerminalStores();
+  resetClientStore();
 });
 
 async function connected() {
@@ -61,6 +64,15 @@ function mount(controller: TerminalController, env: TerminalEnvironment) {
 }
 
 describe('TerminalViewRuntime (WP-99b)', () => {
+  it('opens the engine with ConPTY only when the session host runs Windows (WP-104)', async () => {
+    const { server, controller } = await connected();
+    const { factory, engines } = createFakeEngineFactory();
+    mount(controller, fakeTerminalEnvironment(factory, server.factory));
+    updateHost(clientStore, LOCAL_HOST_ID, () => ({ hostState: sampleHostState({ platform: 'linux' }) }));
+    mount(controller, fakeTerminalEnvironment(factory, server.factory));
+    expect(engines.map((engine) => engine.conpty)).toEqual([true, false]);
+  });
+
   it('fits again after the host resized – one `resize` per burst, none for the same size', async () => {
     const observers: (() => void)[] = [];
     vi.stubGlobal(

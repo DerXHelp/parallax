@@ -1,10 +1,10 @@
 import { ArrowLeftIcon, HistoryIcon, Maximize2Icon, Minimize2Icon, XIcon } from 'lucide-react';
 import { memo, useLayoutEffect, useRef, useState, type Ref, type RefObject } from 'react';
-import { windowsBaseName } from '@shared/paths';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { pathTail } from '@web/lib/path-display';
 import { toLayoutPx, toScreenPx, zoomFactor } from '@web/lib/zoom';
+import { useSessionPaths } from '@web/state/host-platform';
 import { useTerminalAvailable } from '@web/state/hosts';
 import { useZoom } from '@web/state/zoom';
 import {
@@ -87,12 +87,13 @@ const TabContent = memo(function TabContent({ sessionKey, tab }: { sessionKey: s
 function FileHistory({ sessionKey }: { sessionKey: string }) {
   const t = useT();
   const history = useSidePanelHistory(sessionKey);
+  const rules = useSessionPaths(sessionKey);
   const previous = history[0];
   if (previous === undefined) return null;
   return (
     <>
       <IconButton
-        label={t('sidePanel.back', { name: windowsBaseName(previous.path) })}
+        label={t('sidePanel.back', { name: rules.baseName(previous.path) })}
         data-slot="side-panel-back"
         onClick={() => {
           goBackSidePanelFile(sessionKey);
@@ -115,7 +116,7 @@ function FileHistory({ sessionKey }: { sessionKey: string }) {
                 goBackSidePanelFile(sessionKey, index);
               }}
             >
-              <span className="shrink-0 font-medium">{windowsBaseName(entry.path)}</span>
+              <span className="shrink-0 font-medium">{rules.baseName(entry.path)}</span>
               <span className="text-muted-foreground min-w-0 truncate font-mono text-2xs">
                 {pathTail(entry.path, 3)}
               </span>
@@ -185,6 +186,7 @@ export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanel
     : clampSidePanelWidth(stored ?? defaultSidePanelWidth(area), area);
   const file = useSidePanelFile(sessionKey);
   const subagent = useSidePanelSubagent(sessionKey);
+  const rules = useSessionPaths(sessionKey);
   const terminalAvailable = useTerminalAvailable(sessionKey);
   const tabs = SIDE_PANEL_TABS.filter((candidate) => {
     if (candidate === 'file') return file !== null || tab === 'file';
@@ -273,7 +275,7 @@ export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanel
                     data-tab={value}
                     aria-label={
                       value === 'file' && file !== null
-                        ? t('sidePanel.fileTab', { name: windowsBaseName(file.path) })
+                        ? t('sidePanel.fileTab', { name: rules.baseName(file.path) })
                         : value === 'subagent' && subagent !== null
                           ? t('sidePanel.subagentTab', { title: subagent.title })
                           : undefined
@@ -284,7 +286,7 @@ export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanel
                     {t(`sidePanel.tab.${value}`)}
                     {value === 'file' && file !== null ? (
                       <span className="text-muted-foreground max-w-32 truncate font-mono text-2xs font-normal">
-                        {windowsBaseName(file.path)}
+                        {rules.baseName(file.path)}
                       </span>
                     ) : null}
                     {value === 'subagent' && subagent !== null ? (
@@ -296,7 +298,7 @@ export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanel
                 );
                 const closeLabel =
                   value === 'file' && file !== null
-                    ? t('sidePanel.closeFile', { name: windowsBaseName(file.path) })
+                    ? t('sidePanel.closeFile', { name: rules.baseName(file.path) })
                     : value === 'subagent' && subagent !== null
                       ? t('sidePanel.closeSubagent', { title: subagent.title })
                       : null;

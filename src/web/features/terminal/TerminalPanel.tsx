@@ -4,6 +4,8 @@ import { makeError } from '@shared/errors';
 import type { ShellKind } from '@shared/model';
 import { TERMINAL_CLOSE_CODES } from '@shared/terminal';
 import { useI18n } from '@web/i18n';
+import { effectiveShell, shellChoices } from '@web/lib/shells';
+import { useSessionPaths } from '@web/state/host-platform';
 import { useSettings } from '@web/state/settings';
 import { Alert } from '@web/ui/alert';
 import { Button } from '@web/ui/button';
@@ -28,7 +30,10 @@ export function TerminalPanel({ sessionKey }: { sessionKey: string }) {
   const { tError } = useI18n();
   const env = useTerminalEnvironment();
   const entryId = parseSessionKey(sessionKey)?.entryId ?? null;
-  const defaultShell = useSettings().console.defaultShell;
+  // WP-104: the shells of the session's computer; a setting it does not offer falls back to its default.
+  const flavor = useSessionPaths(sessionKey).flavor;
+  const shells = useMemo(() => shellChoices(flavor), [flavor]);
+  const defaultShell = effectiveShell(useSettings().console.defaultShell, flavor, shells);
   const controller = useMemo(
     () =>
       entryId === null
@@ -96,7 +101,15 @@ export function TerminalPanel({ sessionKey }: { sessionKey: string }) {
       </div>
     );
   } else if (state.items.length > 0) {
-    body = <TerminalTabs state={state} controller={controller} defaultShell={defaultShell} onOpen={open} />;
+    body = (
+      <TerminalTabs
+        state={state}
+        controller={controller}
+        defaultShell={defaultShell}
+        shells={shells}
+        onOpen={open}
+      />
+    );
   } else if (firstPending !== undefined) {
     const shell = tt(SHELL_KEYS[firstPending.shell]);
     body = (
@@ -109,7 +122,7 @@ export function TerminalPanel({ sessionKey }: { sessionKey: string }) {
       </div>
     );
   } else if (state.loaded) {
-    body = <TerminalEmpty defaultShell={defaultShell} onOpen={open} />;
+    body = <TerminalEmpty defaultShell={defaultShell} shells={shells} onOpen={open} />;
   }
 
   return (

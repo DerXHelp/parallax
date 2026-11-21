@@ -2,6 +2,7 @@ import { ChevronDownIcon } from 'lucide-react';
 import { useId } from 'react';
 import { profileIdSchema, type ProfileId } from '@shared/common';
 import type { ProfileSummary } from '@shared/model';
+import type { PathFlavor } from '@shared/paths';
 import { useI18n } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { Badge } from '@web/ui/badge';
@@ -27,6 +28,8 @@ export interface ProfileSelectProps {
   describedBy?: string;
   disabled?: boolean;
   className?: string;
+  /** Paths of the profiles' host (examples in the findings, WP-104); default: this computer. */
+  flavor?: PathFlavor;
 }
 
 /**
@@ -44,6 +47,7 @@ export function ProfileSelect({
   describedBy,
   disabled = false,
   className,
+  flavor,
 }: ProfileSelectProps) {
   const { t } = useI18n();
   const valueId = useId();
@@ -91,7 +95,7 @@ export function ProfileSelect({
           }}
         >
           {profiles.map((profile) => (
-            <ProfileOption key={profile.id} profile={profile} />
+            <ProfileOption key={profile.id} profile={profile} flavor={flavor} />
           ))}
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
@@ -99,7 +103,7 @@ export function ProfileSelect({
   );
 }
 
-function ProfileOption({ profile }: { profile: ProfileSummary }) {
+function ProfileOption({ profile, flavor }: { profile: ProfileSummary; flavor: PathFlavor | undefined }) {
   const { t } = useI18n();
   const errors = profileErrors(profile);
   const unusable = errors.length > 0;
@@ -136,7 +140,11 @@ function ProfileOption({ profile }: { profile: ProfileSummary }) {
       <TooltipContent side="right" className="grid max-w-96 gap-1">
         <span className="font-medium">{t('newSession.profile.unusable')}</span>
         {errors.map((finding, index) => (
-          <ProfileIssueText key={`${finding.issue.code}-${String(index)}`} finding={finding} />
+          <ProfileIssueText
+            key={`${finding.issue.code}-${String(index)}`}
+            finding={finding}
+            {...(flavor === undefined ? {} : { flavor })}
+          />
         ))}
       </TooltipContent>
     </Tooltip>

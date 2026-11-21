@@ -13,6 +13,8 @@ import { SHELL_KEYS, shellOrder } from '../lib/shells';
 
 export interface AddTerminalMenuProps {
   defaultShell: ShellKind;
+  /** The shells of the session's computer (WP-104); default the Windows three. */
+  shells?: readonly ShellKind[];
   /** The entry has `max` terminals already (the shells are disabled, a label says why). */
   atLimit: boolean;
   max: number;
@@ -20,7 +22,7 @@ export interface AddTerminalMenuProps {
 }
 
 /** "+" next to the terminal tabs: the shells, the default of the settings first. */
-export function AddTerminalMenu({ defaultShell, atLimit, max, onOpen }: AddTerminalMenuProps) {
+export function AddTerminalMenu({ defaultShell, shells, atLimit, max, onOpen }: AddTerminalMenuProps) {
   const tt = useTerminalT();
   return (
     <DropdownMenu>
@@ -35,7 +37,7 @@ export function AddTerminalMenu({ defaultShell, atLimit, max, onOpen }: AddTermi
             {tt('add.limit', { max })}
           </DropdownMenuLabel>
         ) : null}
-        {shellOrder(defaultShell).map((shell) => (
+        {shellOrder(defaultShell, shells).map((shell) => (
           <DropdownMenuItem
             key={shell}
             data-choice={shell}

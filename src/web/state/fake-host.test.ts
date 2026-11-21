@@ -7,6 +7,7 @@ import {
   sampleDecisions,
   sampleDetail,
   sampleFileInfo,
+  sampleHostState,
   sampleId,
   sampleClientHello,
   sampleItems,
@@ -476,5 +477,37 @@ describe('FakeHost session.remove (WP-63 §1.3)', () => {
     command(transport, { name: 'session.remove', entryId: ENTRY }, again);
     expect(ackOf(received, again)).toMatchObject({ ok: false, error: { code: 'ENTRY_NOT_FOUND' } });
     host.dispose();
+  });
+});
+
+describe('FakeHost on a Linux computer (WP-104)', () => {
+  it('checks and compares files with POSIX rules and reports Linux shells', () => {
+    const transport = createMemoryTransport();
+    const host = new FakeHost({
+      transport,
+      hostState: sampleHostState({ platform: 'linux' }),
+      summaries: [sampleSummary({ cwd: '/home/alice/work' })],
+    });
+    host.setFile({ info: sampleFileInfo({ path: '/home/alice/work/A.md' }), text: () => 'a' });
+    expect(host.statFile(ENTRY, '/home/alice/work/A.md').ok).toBe(true);
+    expect(host.statFile(ENTRY, '/home/alice/work/a.md')).toMatchObject({
+      ok: false,
+      error: { code: 'FILE_NOT_FOUND' },
+    });
+    expect(host.statFile(ENTRY, '/etc/passwd')).toMatchObject({
+      ok: false,
+      error: { code: 'PATH_NOT_ALLOWED' },
+    });
+    expect(host.statFile(ENTRY, 'D:\\work\\a.md')).toMatchObject({
+      ok: false,
+      error: { code: 'PATH_REJECTED' },
+    });
+    const received = connect(transport);
+    transport.send(JSON.stringify(sampleClientHello()));
+    command(transport, { name: 'shell.detect' }, SAMPLE_IDS.cmdId);
+    expect(ackOf(received, SAMPLE_IDS.cmdId)).toMatchObject({
+      ok: true,
+      result: { gitDir: null, shells: ['login', 'bash', 'zsh'] },
+    });
   });
 });

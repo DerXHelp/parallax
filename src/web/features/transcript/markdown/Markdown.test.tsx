@@ -4,7 +4,8 @@ import type { ComponentProps, ReactElement } from 'react';
 import type * as ReactMarkdownModule from 'react-markdown';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
-import { SAMPLE_IDS, sampleSummary } from '@shared/samples';
+import type { HostCapabilities } from '@shared/model';
+import { SAMPLE_IDS, sampleHostState, sampleSummary } from '@shared/samples';
 import { FeatureSlotsProvider, type FeatureSlots, type FileLinkSlotProps } from '@web/shell/slots';
 import { clientStore, resetClientStore, updateHost } from '@web/state/store';
 import { SECURITY_MARKDOWN } from '../playground/data';
@@ -34,6 +35,17 @@ vi.setConfig({ testTimeout: 60_000 });
 
 /** The first render still suspends once on the lazy renderer (React retries it asynchronously). */
 const LAZY = { timeout: 15_000 };
+
+/** A Linux server without a desktop (WP-102 capabilities). */
+const LINUX_SERVER_CAPABILITIES: HostCapabilities = {
+  desktop: false,
+  externalConsole: false,
+  shellWindow: false,
+  editor: false,
+  fileManager: false,
+  autostart: false,
+  protocolHandler: false,
+};
 
 afterEach(() => {
   parsed.clear();
@@ -261,6 +273,42 @@ describe('Markdown', () => {
       expect(screen.getByText('unc link').closest('[data-blocked-link]')).not.toBeNull();
       expect(screen.getByText('device').closest('[data-blocked-link]')).not.toBeNull();
       expect(container.querySelector('a')).toBeNull();
+    });
+
+    it('a session of a Linux host links POSIX paths, ~/… under the cwd and /… link targets (WP-104)', async () => {
+      const cwd = '/home/alice/work/sample';
+      updateHost(clientStore, LOCAL_HOST_ID, () => ({
+        hostState: sampleHostState({ platform: 'linux', capabilities: LINUX_SERVER_CAPABILITIES }),
+        summaries: { [entryId]: sampleSummary({ entryId, cwd }) },
+      }));
+      const { container } = renderWithSlots(
+        <Markdown
+          sessionKey={sessionKey}
+          text={[
+            'Changed src/main.ts:26 and /tmp/build/out.log, see ~/work/sample/README.md and ~/.bashrc.',
+            '',
+            'Run `cat /etc/hosts` or `/home/alice/My Project/a b.md`; C:\\Users\\x\\a.md and /clear stay text.',
+            '',
+            '[guide](/srv/docs/guide.md#L3), [rel](docs/a.md) and [win](C:/x/a.ts) and https://example.com/home/a.ts',
+          ].join('\n')}
+        />,
+      );
+      await screen.findByText(/Changed/, {}, LAZY);
+      expect(links()).toEqual([
+        { text: 'src/main.ts:26', path: `${cwd}/src/main.ts`, line: '26' },
+        { text: '/tmp/build/out.log', path: '/tmp/build/out.log', line: '' },
+        { text: '~/work/sample/README.md', path: `${cwd}/README.md`, line: '' },
+        { text: '/etc/hosts', path: '/etc/hosts', line: '' },
+        { text: '/home/alice/My Project/a b.md', path: '/home/alice/My Project/a b.md', line: '' },
+        { text: 'guide', path: '/srv/docs/guide.md', line: '3' },
+        { text: 'rel', path: `${cwd}/docs/a.md`, line: '' },
+      ]);
+      // ~/.bashrc lies outside the cwd: the home is only a guess, so it stays text.
+      expect(container.querySelector('[data-file-ref="text"]')?.textContent).toBe('~/.bashrc');
+      expect(screen.getByText('win').closest('[data-blocked-link]')).not.toBeNull();
+      expect([...container.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual([
+        'https://example.com/home/a.ts',
+      ]);
     });
 
     it('turns local link targets into FileLinks; http(s) stays a web link', async () => {

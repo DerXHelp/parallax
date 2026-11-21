@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ToolCallItem } from '@shared/model';
+import { POSIX_PATHS } from '@shared/paths';
 import { sampleItems, sampleTime } from '@shared/samples';
 import { isPlanFilePath, liveWriteContent, planFileActivity, planToolPath } from './plan-file';
 
@@ -117,5 +118,29 @@ describe('liveWriteContent', () => {
     ).toBe('# P\nx');
     expect(liveWriteContent({ input: { content: '# Final' }, inputPartial: null })).toBe('# Final');
     expect(liveWriteContent({ input: null, inputPartial: null })).toBe('');
+  });
+});
+
+describe('plan file on a Linux host (WP-104)', () => {
+  const LINUX_PLAN = '/home/alice/.claude/plans/json-registry.md';
+
+  it('takes POSIX paths as they are, compares case-sensitively and refuses Windows paths', () => {
+    const write = (path: string) => ({ toolName: 'Write', input: { file_path: path }, inputPartial: null });
+    expect(planToolPath(write(LINUX_PLAN), POSIX_PATHS)).toBe(LINUX_PLAN);
+    expect(planToolPath(write('/c/plans/a.md'), POSIX_PATHS)).toBe('/c/plans/a.md');
+    expect(planToolPath(write(PLAN), POSIX_PATHS)).toBeNull();
+    const rule = { planPath: LINUX_PLAN, planMode: false, rules: POSIX_PATHS };
+    expect(isPlanFilePath(LINUX_PLAN, rule)).toBe(true);
+    expect(isPlanFilePath(LINUX_PLAN.toUpperCase(), rule)).toBe(false);
+    expect(isPlanFilePath('/home/alice/x.MD', { ...rule, planPath: null, planMode: true })).toBe(true);
+  });
+
+  it('finds the plan file activity with the host rules (cached per flavor)', () => {
+    const items = [
+      call(1, { input: { file_path: LINUX_PLAN, content: '# Plan' }, result: done(sampleTime(3)) }),
+    ];
+    const rule = { planPath: LINUX_PLAN, planMode: false };
+    expect(planFileActivity(items, { ...rule, rules: POSIX_PATHS }).path).toBe(LINUX_PLAN);
+    expect(planFileActivity(items, rule).path).toBeNull();
   });
 });

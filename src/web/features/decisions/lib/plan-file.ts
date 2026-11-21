@@ -1,13 +1,14 @@
 import type { JsonValue } from '@shared/common';
 import type { ToolCallItem, TranscriptItem } from '@shared/model';
-import { fromGitBashPath, windowsPathExtension, windowsPathIssue, windowsPathsEqual } from '@shared/paths';
+import { WIN32_PATHS, fromGitBashPath, type PathRules } from '@shared/paths';
 import { partialJsonString } from './partial-json';
 
 /**
  * The plan file in the transcript (ADR-148, same rule as the engine's `planFile`): a `Write`/`Edit`
  * of the main agent on (a) the known plan file path or (b) – while the session is in plan mode – a
  * `.md` file. The plan panel previews a running `Write` from its streamed input and reloads the file
- * after every finished write on it. Pure; cached per `view.items` array.
+ * after every finished write on it. Pure; cached per `view.items` array. WP-104: paths follow the
+ * rules of the session's host (`PlanFileRule.rules`, default Windows).
  */
 
 /** Tools that change the plan file (a finished one makes the panel load the file again). */
@@ -21,6 +22,8 @@ export interface PlanFileRule {
   planPath: string | null;
   /** The session is in plan mode (rule b: any `.md` file). */
   planMode: boolean;
+  /** Path rules of the session's host (default Windows). */
+  rules?: PathRules;
 }
 
 function inputString(input: JsonValue, key: string): string | null {
@@ -29,28 +32,33 @@ function inputString(input: JsonValue, key: string): string | null {
   return typeof value === 'string' && value !== '' ? value : null;
 }
 
-function safePath(raw: string): string | null {
-  const path = raw.startsWith('/') ? (fromGitBashPath(raw) ?? raw) : raw;
-  return windowsPathIssue(path) === null ? path : null;
+function safePath(raw: string, rules: PathRules): string | null {
+  const path = rules.flavor === 'win32' && raw.startsWith('/') ? (fromGitBashPath(raw) ?? raw) : raw;
+  return rules.issue(path) === null ? path : null;
 }
 
 /**
  * Absolute path a Write/Edit/MultiEdit works on – while the input still streams, from the partial
- * JSON once `file_path` is complete. Null for other tools and for paths that fail the C.10 filter.
+ * JSON once `file_path` is complete. Null for other tools and for paths that fail the C.10 filter
+ * of the host (`rules`).
  */
-export function planToolPath(item: Pick<ToolCallItem, 'toolName' | 'input' | 'inputPartial'>): string | null {
+export function planToolPath(
+  item: Pick<ToolCallItem, 'toolName' | 'input' | 'inputPartial'>,
+  rules: PathRules = WIN32_PATHS,
+): string | null {
   if (!PLAN_WRITE_TOOLS.has(item.toolName)) return null;
   const fromInput = inputString(item.input, 'file_path');
-  if (fromInput !== null) return safePath(fromInput);
+  if (fromInput !== null) return safePath(fromInput, rules);
   if (item.inputPartial === null) return null;
   const partial = partialJsonString(item.inputPartial, 'file_path');
-  return partial?.complete === true && partial.value !== '' ? safePath(partial.value) : null;
+  return partial?.complete === true && partial.value !== '' ? safePath(partial.value, rules) : null;
 }
 
-/** Whether `path` is the plan file under `rule` (paths compared case-insensitively, @shared/paths). */
+/** Whether `path` is the plan file under `rule` (compared by the host's rules: case-insensitive on Windows). */
 export function isPlanFilePath(path: string, rule: PlanFileRule): boolean {
-  if (rule.planPath !== null && windowsPathsEqual(path, rule.planPath)) return true;
-  return rule.planMode && windowsPathExtension(path) === 'md';
+  const rules = rule.rules ?? WIN32_PATHS;
+  if (rule.planPath !== null && rules.equal(path, rule.planPath)) return true;
+  return rule.planMode && rules.extension(path) === 'md';
 }
 
 export interface PlanFileActivity {
@@ -73,7 +81,8 @@ const cache = new WeakMap<readonly TranscriptItem[], Map<string, PlanFileActivit
 
 /** Plan file calls of a transcript under `rule` (cached per items array and rule). */
 export function planFileActivity(items: readonly TranscriptItem[], rule: PlanFileRule): PlanFileActivity {
-  const ruleKey = `${rule.planMode ? '1' : '0'}|${rule.planPath ?? ''}`;
+  const rules = rule.rules ?? WIN32_PATHS;
+  const ruleKey = `${rules.flavor}|${rule.planMode ? '1' : '0'}|${rule.planPath ?? ''}`;
   let perRule = cache.get(items);
   const cached = perRule?.get(ruleKey);
   if (cached !== undefined) return cached;
@@ -82,7 +91,7 @@ export function planFileActivity(items: readonly TranscriptItem[], rule: PlanFil
   let writtenAt: number | null = null;
   for (const item of items) {
     if (item.kind !== 'tool_call' || item.parentToolUseId !== null) continue;
-    const path = planToolPath(item);
+    const path = planToolPath(item, rules);
     if (path === null || !isPlanFilePath(path, rule)) continue;
     newest = item;
     newestPath = path;

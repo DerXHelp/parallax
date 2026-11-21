@@ -16,6 +16,7 @@ import type { TaskKind, TaskRow } from '@shared/tasks';
 import { requestShell } from '@web/shell/requests';
 import { useFeatureSlots } from '@web/shell/slots';
 import { useNow } from '@web/state/clock';
+import { useSessionPaths } from '@web/state/host-platform';
 import { Badge } from '@web/ui/badge';
 import { Button } from '@web/ui/button';
 import { Spinner } from '@web/ui/spinner';
@@ -76,13 +77,14 @@ export const TaskRowView = memo(function TaskRowView({
 }) {
   const { t, format } = useI18n();
   const { FileLink } = useFeatureSlots();
+  const rules = useSessionPaths(sessionKey);
   const Icon = KIND_ICON[row.kind];
   const title = row.description === '' ? row.taskId : row.description;
   const duration = row.running ? null : finishedDuration(row);
   // WP-74 (ADR-203): an agent opens its transcript (the agent id is its task id, WP-69); its output
   // file only holds the raw transcript JSON, so the link stays for shells and other tasks.
   const isAgent = row.kind === 'agent' && row.taskId !== '';
-  const output = row.outputFile === null || isAgent ? null : resolveFilePath(row.outputFile, null);
+  const output = row.outputFile === null || isAgent ? null : resolveFilePath(row.outputFile, null, rules);
   const status = isKnownStatus(row.status) ? t(`tasks.status.${row.status}`) : row.status;
   return (
     <li

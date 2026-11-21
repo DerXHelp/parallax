@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { HostState, RateLimitInfo } from '@shared/model';
-import { windowsPathKey } from '@shared/paths';
+import { pathFlavorOf, pathRules, type PathRules } from '@shared/paths';
 import { useFormat, useT } from '@web/i18n';
 import { isKnownLimitWindow, limitBars, limitDeadlines, type LimitBar } from '@web/lib/account-limits';
 import { cn } from '@web/lib/cn';
@@ -64,7 +64,7 @@ function LimitRow({ bar, now }: { bar: LimitBar; now: number }) {
 type ProfileSummary = HostState['profiles'][number];
 
 interface AccountLimitsBlock {
-  /** `windowsPathKey` of the config folder; null = the default folder of Claude Code. */
+  /** Comparison key of the config folder (`rules.key` of the host); null = the default folder of Claude Code. */
   key: string | null;
   /** Every profile of this account (also those that have not reported yet), in profile order. */
   profiles: ProfileSummary[];
@@ -72,9 +72,9 @@ interface AccountLimitsBlock {
 }
 
 /** The account of a profile: its config folder (sign-in and subscription live there, WP41-05). */
-function accountKey(profile: ProfileSummary): string | null {
+function accountKey(profile: ProfileSummary, rules: PathRules): string | null {
   const dir = profile.configDir?.trim() ?? '';
-  return dir === '' ? null : windowsPathKey(dir);
+  return dir === '' ? null : rules.key(dir);
 }
 
 /**
@@ -84,9 +84,11 @@ function accountKey(profile: ProfileSummary): string | null {
  */
 function accountLimits(hostState: HostState | null, now: number): AccountLimitsBlock[] {
   if (hostState === null) return [];
+  // WP-104: config folders follow the paths of the host (case-sensitive on Linux).
+  const rules = pathRules(pathFlavorOf(hostState.platform));
   const accounts = new Map<string | null, { profiles: ProfileSummary[]; newest: RateLimitInfo | null }>();
   for (const profile of hostState.profiles) {
-    const key = accountKey(profile);
+    const key = accountKey(profile, rules);
     let account = accounts.get(key);
     if (account === undefined) {
       account = { profiles: [], newest: null };

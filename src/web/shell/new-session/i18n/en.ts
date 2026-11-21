@@ -12,6 +12,8 @@ export const en = {
   cwd: {
     label: 'Project folder',
     placeholder: 'D:\\work\\my-project',
+    /** WP-104: the placeholder for a folder on a Linux computer. */
+    placeholderPosix: '/home/me/my-project',
     hint: 'Full path of an existing folder – type or paste it, or browse. There you can also create a new one.',
     browse: 'Browse…',
   },
@@ -79,6 +81,8 @@ export const en = {
     configDir: 'Network, device and reserved paths cannot be used as config folder.',
     executable: {
       not_absolute: 'Enter a full path such as C:\\Users\\me\\.local\\bin\\claude.exe.',
+      /** WP-104: the same on a Linux computer. */
+      not_absolute_posix: 'Enter a full path such as /home/me/.local/bin/claude.',
       not_exe: 'The path must end in .exe.',
       unsafe: 'Network, device and reserved paths cannot be used.',
       not_found: 'There is no file at this path.',
@@ -120,5 +124,14 @@ export const en = {
     truncated: 'Only the first {count} folders are shown.',
     nothingChosen: 'Select or open a drive or folder to choose it.',
     choose: 'Choose this folder',
+    /** WP-104: the texts that differ on a Linux computer (roots: `/`, home, mounted media). */
+    posix: {
+      roots: 'Computer',
+      listRoots: 'Places',
+      emptyRoots: 'No places found.',
+      nothingChosen: 'Select or open a place or folder to choose it.',
+      tooLong: 'The name is too long (at most {count} bytes).',
+      invalidChar: 'A folder name cannot contain / or control characters.',
+    },
   },
 };

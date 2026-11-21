@@ -23,3 +23,5 @@ Dialog merkt sich beim Öffnen das fokussierte Element und gibt ihm den Fokus be
 Tests: `FolderBrowser.test.tsx`, `new-session-lib.test.ts`, `i18n/i18n.test.ts` (gleiche Schlüssel,
 keine Literale in `aria-label`/`title`/`placeholder`/`alt`), dazu `../NewSessionDialog.test.tsx` und
 `../NewSessionForm.test.tsx`.
+
+WP-104 (Linux): Ordner-Browser, zuletzt genutzte Projekte, Platzhalter und Profil-Hinweise folgen dem gewählten Rechner (`useHostPaths(hostId)`): unter Linux Wurzeln Home, `/` und eingehängte Medien, Namen mit Groß-/Kleinschreibung, höchstens 255 Bytes. `demo-folders.ts` hat dafür `LINUX_DEMO_FOLDERS` (Playground „linux“).

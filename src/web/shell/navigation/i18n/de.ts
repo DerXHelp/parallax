@@ -111,6 +111,7 @@ export const de: typeof en = {
     outputStyle: 'Ausgabestil…',
     openShell: 'Shell im Ordner öffnen',
     openTerminal: 'Terminal im Panel',
+    openFolderFileManager: 'Ordner im Dateimanager öffnen',
   },
   shells: {
     cmd: 'Eingabeaufforderung (cmd)',
