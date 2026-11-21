@@ -1,5 +1,6 @@
 import { mkdir, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { POSIX_PATHS, WIN32_PATHS, type PathRules } from '@shared/paths';
 import { describe, expect, it } from 'vitest';
 import { makeTempHome } from '../http/testServer';
 import { CommandError } from '../sync/ports';
@@ -11,6 +12,7 @@ import {
   fileAccessError,
   fsErrorCode,
   physicalPath,
+  HOST_PATH_RULES,
   physicalRoot,
   resolveAllowedPath,
   resolveLinkTarget,
@@ -32,13 +34,16 @@ function payload(error: unknown) {
   return error instanceof CommandError ? error.error : null;
 }
 
+/** A link target the rules of this host refuse (a share on Windows, a pseudo file system on POSIX). */
+const EVIL_LINK_TARGET = process.platform === 'win32' ? '\\\\server\\share' : '/proc/1/root';
+
 describe('assertSafePath', () => {
   it('accepts plain drive paths', () => {
     expect(() => {
-      assertSafePath('C:\\work\\project');
+      assertSafePath('C:\\work\\project', WIN32_PATHS);
     }).not.toThrow();
     expect(() => {
-      assertSafePath('D:/work/project');
+      assertSafePath('D:/work/project', WIN32_PATHS);
     }).not.toThrow();
   });
 
@@ -53,7 +58,7 @@ describe('assertSafePath', () => {
   ])('rejects %s (%s) with PATH_REJECTED', (input, reason) => {
     let thrown: unknown = null;
     try {
-      assertSafePath(input);
+      assertSafePath(input, WIN32_PATHS);
     } catch (error) {
       thrown = error;
     }
@@ -79,7 +84,7 @@ describe('checkCwd', () => {
   });
 
   it('rejects UNC paths before touching the file system', async () => {
-    expect(payload(await errorOf(checkCwd('\\\\attacker.example\\share')))).toEqual({
+    expect(payload(await errorOf(checkCwd('\\\\attacker.example\\share', undefined, WIN32_PATHS)))).toEqual({
       code: 'PATH_REJECTED',
       params: { reason: 'unc' },
     });
@@ -91,8 +96,12 @@ describe('checkCwd', () => {
  * to its readlink target; `missing` paths answer ENOENT; everything else is a plain folder.
  * `touched` records every call – an unsafe target must never be passed to lstat/readlink.
  */
-function fakeLinks(links: Record<string, string>, missing: string[] = []): LinkFs & { touched: string[] } {
-  const key = (p: string) => p.toLowerCase().replace(/\//g, '\\');
+function fakeLinks(
+  links: Record<string, string>,
+  missing: string[] = [],
+  rules: PathRules = WIN32_PATHS,
+): LinkFs & { touched: string[] } {
+  const key = (p: string) => rules.key(p);
   const byKey = new Map(Object.entries(links).map(([p, t]) => [key(p), t]));
   const gone = new Set(missing.map(key));
   const touched: string[] = [];
@@ -120,7 +129,7 @@ describe('assertNoUnsafeLink (R1-17: lstat/readlink per segment)', () => {
       'D:\\real\\b': '..\\other',
       'D:\\other': 'E:\\final',
     });
-    await expect(assertNoUnsafeLink('C:\\work\\a\\b\\c', fs)).resolves.toBeUndefined();
+    await expect(assertNoUnsafeLink('C:\\work\\a\\b\\c', fs, WIN32_PATHS)).resolves.toBeUndefined();
     // The drive root itself is never asked; each target is checked before going through it, and
     // the rest of the path continues where the links really lead (R4-10).
     expect(fs.touched).not.toContain('C:\\');
@@ -145,8 +154,10 @@ describe('assertNoUnsafeLink (R1-17: lstat/readlink per segment)', () => {
       'D:\\x\\y\\b': '..\\..\\z',
       'D:\\z': '\\\\server\\share',
     });
-    expect(payload(await errorOf(assertNoUnsafeLink('C:\\a\\link\\b', fs)))).toEqual(rejected);
-    expect(payload(await errorOf(assertNoUnsafeLink('C:\\a\\link\\b\\deeper', fs)))).toEqual(rejected);
+    expect(payload(await errorOf(assertNoUnsafeLink('C:\\a\\link\\b', fs, WIN32_PATHS)))).toEqual(rejected);
+    expect(payload(await errorOf(assertNoUnsafeLink('C:\\a\\link\\b\\deeper', fs, WIN32_PATHS)))).toEqual(
+      rejected,
+    );
     expect(fs.touched.some((p) => p.startsWith('\\\\'))).toBe(false);
   });
 
@@ -159,18 +170,18 @@ describe('assertNoUnsafeLink (R1-17: lstat/readlink per segment)', () => {
     ['a loop', { 'C:\\a': 'C:\\b', 'C:\\b': 'C:\\a' }, 'C:\\a'],
   ])('rejects %s with PATH_REJECTED link_target, never touching it', async (_name, links, input) => {
     const fs = fakeLinks(links);
-    expect(payload(await errorOf(assertNoUnsafeLink(input, fs)))).toEqual(rejected);
+    expect(payload(await errorOf(assertNoUnsafeLink(input, fs, WIN32_PATHS)))).toEqual(rejected);
     expect(fs.touched.some((p) => p.startsWith('\\\\') || p.startsWith('//'))).toBe(false);
   });
 
   it('rejects unsafe strings first and stops at a missing segment', async () => {
     const fs = fakeLinks({}, ['C:\\work\\missing']);
-    expect(payload(await errorOf(assertNoUnsafeLink('\\\\server\\share', fs)))).toEqual({
+    expect(payload(await errorOf(assertNoUnsafeLink('\\\\server\\share', fs, WIN32_PATHS)))).toEqual({
       code: 'PATH_REJECTED',
       params: { reason: 'unc' },
     });
     expect(fs.touched).toEqual([]);
-    await expect(assertNoUnsafeLink('C:\\work\\missing\\deeper', fs)).resolves.toBeUndefined();
+    await expect(assertNoUnsafeLink('C:\\work\\missing\\deeper', fs, WIN32_PATHS)).resolves.toBeUndefined();
     expect(fs.touched).toEqual(['C:\\work', 'C:\\work\\missing']);
   });
 
@@ -179,19 +190,19 @@ describe('assertNoUnsafeLink (R1-17: lstat/readlink per segment)', () => {
       lstat: () => Promise.resolve({ isSymbolicLink: () => true }),
       readlink: () => Promise.reject(Object.assign(new Error('EINVAL'), { code: 'EINVAL' })),
     };
-    expect(payload(await errorOf(assertNoUnsafeLink('C:\\cloud', fs)))).toEqual(rejected);
+    expect(payload(await errorOf(assertNoUnsafeLink('C:\\cloud', fs, WIN32_PATHS)))).toEqual(rejected);
   });
 
   it('resolveLinkTarget resolves plain relative targets against the link folder only', () => {
-    expect(resolveLinkTarget('C:\\a\\link', '..\\b')).toBe('C:\\b');
-    expect(resolveLinkTarget('C:\\a\\link', 'sub')).toBe('C:\\a\\sub');
-    expect(resolveLinkTarget('C:\\a\\link', 'D:\\x')).toBe('D:\\x');
-    expect(resolveLinkTarget('C:\\a\\link', '\\\\srv\\s')).toBeNull();
-    expect(resolveLinkTarget('C:\\a\\link', '//srv/s')).toBeNull();
-    expect(resolveLinkTarget('C:\\a\\link', '')).toBeNull();
+    expect(resolveLinkTarget('C:\\a\\link', '..\\b', WIN32_PATHS)).toBe('C:\\b');
+    expect(resolveLinkTarget('C:\\a\\link', 'sub', WIN32_PATHS)).toBe('C:\\a\\sub');
+    expect(resolveLinkTarget('C:\\a\\link', 'D:\\x', WIN32_PATHS)).toBe('D:\\x');
+    expect(resolveLinkTarget('C:\\a\\link', '\\\\srv\\s', WIN32_PATHS)).toBeNull();
+    expect(resolveLinkTarget('C:\\a\\link', '//srv/s', WIN32_PATHS)).toBeNull();
+    expect(resolveLinkTarget('C:\\a\\link', '', WIN32_PATHS)).toBeNull();
   });
 
-  it('real junctions: checkCwd and resolveAllowedPath go through safe ones, reject unsafe targets', async () => {
+  it('real junctions/symlinks: checkCwd and resolveAllowedPath go through safe ones, reject unsafe targets', async () => {
     const root = await makeTempHome('paths-link-');
     const target = path.join(root, 'target');
     await mkdir(target);
@@ -203,7 +214,7 @@ describe('assertNoUnsafeLink (R1-17: lstat/readlink per segment)', () => {
     expect(allowed.realPath.toLowerCase()).toContain(path.join('target', 'a.txt').toLowerCase());
     expect(allowed.access).toBe('cwd');
     // The same paths with a fake fs that reports the junction as a link to a share.
-    const evil = fakeLinks({ [junction]: '\\\\server\\share' });
+    const evil = fakeLinks({ [junction]: EVIL_LINK_TARGET }, [], HOST_PATH_RULES);
     expect(payload(await errorOf(checkCwd(junction, evil)))).toEqual(rejected);
     const evilAccess: AccessFs = { ...evil, realpath: () => Promise.reject(new Error('never called')) };
     expect(
@@ -226,8 +237,9 @@ const enoent = (): Error => Object.assign(new Error('ENOENT'), { code: 'ENOENT' 
  */
 function fakeAccess(
   setup: { links?: Record<string, string>; real?: Record<string, string>; fail?: Record<string, Error> } = {},
+  rules: PathRules = WIN32_PATHS,
 ): AccessFs & { calls: string[] } {
-  const key = (p: string) => p.toLowerCase().replace(/\//g, '\\');
+  const key = (p: string) => rules.key(p);
   const links = new Map(Object.entries(setup.links ?? {}).map(([p, t]) => [key(p), t]));
   const real = new Map(Object.entries(setup.real ?? {}).map(([p, t]) => [key(p), t]));
   const fail = new Map(Object.entries(setup.fail ?? {}).map(([p, e]) => [key(p), e]));
@@ -267,7 +279,7 @@ describe('resolveAllowedPath (ADR-141 check chain)', () => {
       kind: 'session',
       keys: () => {
         onKeys?.();
-        return Promise.resolve(new Set(listed.map((p) => p.toLowerCase())));
+        return Promise.resolve(new Set(listed.map((p) => WIN32_PATHS.key(p))));
       },
     },
   });
@@ -286,7 +298,7 @@ describe('resolveAllowedPath (ADR-141 check chain)', () => {
         resolveAllowedPath(
           input,
           policy([], () => (keysAsked += 1)),
-          { fs },
+          { fs, rules: WIN32_PATHS },
         ),
       );
       expect(payload(error)).toEqual({ code: 'PATH_REJECTED', params: { reason } });
@@ -300,6 +312,7 @@ describe('resolveAllowedPath (ADR-141 check chain)', () => {
     let resolved = 0;
     const options = {
       fs,
+      rules: WIN32_PATHS,
       resolveRoot: (root: string) => {
         resolved += 1;
         return Promise.resolve(root);
@@ -320,6 +333,7 @@ describe('resolveAllowedPath (ADR-141 check chain)', () => {
     const touchedRoots: string[] = [];
     const options = {
       fs,
+      rules: WIN32_PATHS,
       resolveRoot: (root: string) => {
         touchedRoots.push(root);
         return Promise.resolve(root);
@@ -335,7 +349,7 @@ describe('resolveAllowedPath (ADR-141 check chain)', () => {
 
   it('(2→5) below a root: link walk, realpath, then the root that contains the target names the access', async () => {
     const fs = fakeAccess();
-    const result = await resolveAllowedPath('D:\\shared\\docs\\a.md', policy(), { fs });
+    const result = await resolveAllowedPath('D:\\shared\\docs\\a.md', policy(), { fs, rules: WIN32_PATHS });
     expect(result).toEqual({ realPath: 'D:\\shared\\docs\\a.md', access: 'additional' });
     // Steps in order: lstat per segment, then realpath of the file; roots resolved afterwards.
     expect(fs.calls.slice(0, 4)).toEqual([
@@ -348,19 +362,27 @@ describe('resolveAllowedPath (ADR-141 check chain)', () => {
 
   it('compares case-insensitively and keeps the requested string out of the result', async () => {
     const fs = fakeAccess({ real: { 'c:\\WORK\\Project\\A.txt': 'C:\\work\\project\\A.txt' } });
-    const result = await resolveAllowedPath('c:\\WORK\\Project\\A.txt', policy(), { fs });
+    const result = await resolveAllowedPath('c:\\WORK\\Project\\A.txt', policy(), { fs, rules: WIN32_PATHS });
     expect(result).toEqual({ realPath: 'C:\\work\\project\\A.txt', access: 'cwd' });
   });
 
   it('a path listed in the index is allowed outside the roots (exact key)', async () => {
     const fs = fakeAccess();
-    const result = await resolveAllowedPath('E:\\notes\\plan.md', policy(['E:\\Notes\\Plan.md']), { fs });
+    const result = await resolveAllowedPath('E:\\notes\\plan.md', policy(['E:\\Notes\\Plan.md']), {
+      fs,
+      rules: WIN32_PATHS,
+    });
     expect(result).toEqual({ realPath: 'E:\\notes\\plan.md', access: 'session' });
     // Its folder is not listed: a sibling stays forbidden, without an fs call.
     const before = fs.calls.length;
     expect(
       payload(
-        await errorOf(resolveAllowedPath('E:\\notes\\other.md', policy(['E:\\notes\\plan.md']), { fs })),
+        await errorOf(
+          resolveAllowedPath('E:\\notes\\other.md', policy(['E:\\notes\\plan.md']), {
+            fs,
+            rules: WIN32_PATHS,
+          }),
+        ),
       )?.code,
     ).toBe('PATH_NOT_ALLOWED');
     expect(fs.calls.length).toBe(before);
@@ -368,7 +390,9 @@ describe('resolveAllowedPath (ADR-141 check chain)', () => {
 
   it('(3) a link to a share on the way: PATH_REJECTED link_target, realpath never called', async () => {
     const fs = fakeAccess({ links: { 'C:\\work\\project\\share': '\\\\evil\\s' } });
-    const error = await errorOf(resolveAllowedPath('C:\\work\\project\\share\\x.txt', policy(), { fs }));
+    const error = await errorOf(
+      resolveAllowedPath('C:\\work\\project\\share\\x.txt', policy(), { fs, rules: WIN32_PATHS }),
+    );
     expect(payload(error)).toEqual({ code: 'PATH_REJECTED', params: { reason: 'link_target' } });
     expect(fs.calls.some((call) => call.startsWith('realpath:'))).toBe(false);
     expect(fs.calls.some((call) => call.includes('\\\\evil'))).toBe(false);
@@ -377,7 +401,11 @@ describe('resolveAllowedPath (ADR-141 check chain)', () => {
   it('(4) an unsafe realpath result is rejected; a mapped drive keeps its walked path', async () => {
     const device = fakeAccess({ real: { 'C:\\work\\project\\a.txt': '\\\\?\\Volume{1}\\a.txt' } });
     expect(
-      payload(await errorOf(resolveAllowedPath('C:\\work\\project\\a.txt', policy(), { fs: device }))),
+      payload(
+        await errorOf(
+          resolveAllowedPath('C:\\work\\project\\a.txt', policy(), { fs: device, rules: WIN32_PATHS }),
+        ),
+      ),
     ).toEqual({
       code: 'PATH_REJECTED',
       params: { reason: 'device' },
@@ -387,7 +415,7 @@ describe('resolveAllowedPath (ADR-141 check chain)', () => {
       real: { 'Z:\\repo\\a.txt': '\\\\nas\\repo\\a.txt', 'Z:\\repo': '\\\\nas\\repo' },
     });
     const zPolicy: AccessPolicy<'cwd'> = { roots: [{ path: 'Z:\\repo', kind: 'cwd' }] };
-    expect(await resolveAllowedPath('Z:\\repo\\a.txt', zPolicy, { fs: mapped })).toEqual({
+    expect(await resolveAllowedPath('Z:\\repo\\a.txt', zPolicy, { fs: mapped, rules: WIN32_PATHS })).toEqual({
       realPath: 'Z:\\repo\\a.txt',
       access: 'cwd',
     });
@@ -399,14 +427,20 @@ describe('resolveAllowedPath (ADR-141 check chain)', () => {
       real: { 'C:\\work\\project\\escape\\key.txt': 'C:\\Users\\me\\secrets\\key.txt' },
     });
     expect(
-      payload(await errorOf(resolveAllowedPath('C:\\work\\project\\escape\\key.txt', policy(), { fs }))),
+      payload(
+        await errorOf(
+          resolveAllowedPath('C:\\work\\project\\escape\\key.txt', policy(), { fs, rules: WIN32_PATHS }),
+        ),
+      ),
     ).toEqual({
       code: 'PATH_NOT_ALLOWED',
       params: {},
     });
     // …unless the target itself is listed in the index.
     const listed = policy(['C:\\Users\\me\\secrets\\key.txt']);
-    expect(await resolveAllowedPath('C:\\work\\project\\escape\\key.txt', listed, { fs })).toEqual({
+    expect(
+      await resolveAllowedPath('C:\\work\\project\\escape\\key.txt', listed, { fs, rules: WIN32_PATHS }),
+    ).toEqual({
       realPath: 'C:\\Users\\me\\secrets\\key.txt',
       access: 'session',
     });
@@ -416,7 +450,9 @@ describe('resolveAllowedPath (ADR-141 check chain)', () => {
     const fs = fakeAccess({ real: { 'C:\\work\\project\\a.txt': 'E:\\real\\project\\a.txt' } });
     const resolveRoot = (root: string) =>
       Promise.resolve(root === 'C:\\work\\project' ? 'E:\\real\\project' : root);
-    expect(await resolveAllowedPath('C:\\work\\project\\a.txt', policy(), { fs, resolveRoot })).toEqual({
+    expect(
+      await resolveAllowedPath('C:\\work\\project\\a.txt', policy(), { fs, resolveRoot, rules: WIN32_PATHS }),
+    ).toEqual({
       realPath: 'E:\\real\\project\\a.txt',
       access: 'cwd',
     });
@@ -440,9 +476,11 @@ describe('resolveAllowedPath (ADR-141 check chain)', () => {
     [new FsTimeoutError('c:'), { code: 'FILE_NOT_READABLE', params: { reason: 'timeout' } }],
   ])('fs failure %s → contract error', async (failure, expected) => {
     const fs = fakeAccess({ fail: { 'C:\\work\\project\\a.txt': failure } });
-    expect(payload(await errorOf(resolveAllowedPath('C:\\work\\project\\a.txt', policy(), { fs })))).toEqual(
-      expected,
-    );
+    expect(
+      payload(
+        await errorOf(resolveAllowedPath('C:\\work\\project\\a.txt', policy(), { fs, rules: WIN32_PATHS })),
+      ),
+    ).toEqual(expected);
   });
 
   it('fileAccessError keeps CommandErrors and non-fs errors', () => {
@@ -458,10 +496,10 @@ describe('resolveAllowedPath (ADR-141 check chain)', () => {
 
   it('physicalRoot: null for unsafe or missing roots (never touched when unsafe)', async () => {
     const fs = fakeAccess({ fail: { 'C:\\gone': enoent() } });
-    expect(await physicalRoot('\\\\server\\share', fs)).toBeNull();
+    expect(await physicalRoot('\\\\server\\share', fs, WIN32_PATHS)).toBeNull();
     expect(fs.calls).toEqual([]);
-    expect(await physicalRoot('C:\\gone', fs)).toBeNull();
-    expect(await physicalPath('C:\\work', fs)).toBe('C:\\work');
+    expect(await physicalRoot('C:\\gone', fs, WIN32_PATHS)).toBeNull();
+    expect(await physicalPath('C:\\work', fs, WIN32_PATHS)).toBe('C:\\work');
   });
 });
 
@@ -509,5 +547,118 @@ describe('resolveAllowedPath on the real file system', () => {
       params: {},
     });
     expect(fsErrorCode(new Error('x'))).toBeNull();
+  });
+});
+
+describe('POSIX rules: links, comparisons and the check chain (WP-103)', () => {
+  const rejected = { code: 'PATH_REJECTED', params: { reason: 'link_target' } };
+
+  it.each([
+    ['/home/u/project', null],
+    ['/home/u/Project with spaces/ä', null],
+    ['relative/x', 'not_absolute'],
+    ['C:\\work', 'not_absolute'],
+    ['/proc/1/environ', 'pseudo_fs'],
+    ['/sys/kernel', 'pseudo_fs'],
+    ['/dev/sda', 'pseudo_fs'],
+    ['/home/u/../etc', 'dot_segment'],
+  ])('assertSafePath %s → %s', (input, reason) => {
+    let thrown: unknown = null;
+    try {
+      assertSafePath(input, POSIX_PATHS);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(payload(thrown)).toEqual(reason === null ? null : { code: 'PATH_REJECTED', params: { reason } });
+  });
+
+  it('resolveLinkTarget: relative against the link folder, absolute targets allowed when safe', () => {
+    expect(resolveLinkTarget('/home/u/a/link', '../b', POSIX_PATHS)).toBe('/home/u/b');
+    expect(resolveLinkTarget('/home/u/a/link', 'sub', POSIX_PATHS)).toBe('/home/u/a/sub');
+    expect(resolveLinkTarget('/home/u/a/link', '/mnt/data/x', POSIX_PATHS)).toBe('/mnt/data/x');
+    expect(resolveLinkTarget('/home/u/a/link', '/proc/self/root', POSIX_PATHS)).toBeNull();
+    expect(resolveLinkTarget('/home/u/a/link', '../../../dev/sda', POSIX_PATHS)).toBeNull();
+    expect(resolveLinkTarget('/home/u/a/link', '', POSIX_PATHS)).toBeNull();
+  });
+
+  it('the link walk goes segment by segment from / and continues where links lead', async () => {
+    const fs = fakeLinks(
+      { '/home/u/repo': '/srv/repos/r1', '/srv/repos/r1/src': '../shared/src' },
+      [],
+      POSIX_PATHS,
+    );
+    await expect(assertNoUnsafeLink('/home/u/repo/src/a.ts', fs, POSIX_PATHS)).resolves.toBeUndefined();
+    expect(fs.touched).not.toContain('/');
+    expect(fs.touched).toEqual(
+      expect.arrayContaining([
+        '/home',
+        '/home/u',
+        '/home/u/repo',
+        '/srv/repos/r1/src',
+        '/srv/repos/shared/src/a.ts',
+      ]),
+    );
+  });
+
+  it.each([
+    ['a link into /proc', { '/home/u/x': '/proc/1/root' }, '/home/u/x/etc'],
+    ['a relative link into /dev', { '/home/u/x': '../../dev/sda' }, '/home/u/x'],
+    ['a pseudo-fs target behind a safe link', { '/a': '/b', '/b': '/sys' }, '/a/x'],
+    ['a loop', { '/a': '/b', '/b': '/a' }, '/a'],
+  ])('rejects %s with link_target, never touching it', async (_name, links, input) => {
+    const fs = fakeLinks(links, [], POSIX_PATHS);
+    expect(payload(await errorOf(assertNoUnsafeLink(input, fs, POSIX_PATHS)))).toEqual(rejected);
+    expect(fs.touched.some((p) => /^\/(proc|sys|dev)(\/|$)/.test(p))).toBe(false);
+  });
+
+  it('case-sensitive: a different case is another folder, outside the root', async () => {
+    const policy: AccessPolicy<'cwd'> = { roots: [{ path: '/home/u/project', kind: 'cwd' }] };
+    const fs = fakeAccess({}, POSIX_PATHS);
+    expect(await resolveAllowedPath('/home/u/project/a.ts', policy, { fs, rules: POSIX_PATHS })).toEqual({
+      realPath: '/home/u/project/a.ts',
+      access: 'cwd',
+    });
+    const calls = fs.calls.length;
+    expect(
+      payload(await errorOf(resolveAllowedPath('/home/u/Project/a.ts', policy, { fs, rules: POSIX_PATHS }))),
+    ).toEqual({ code: 'PATH_NOT_ALLOWED', params: {} });
+    expect(fs.calls.length).toBe(calls);
+  });
+
+  it('a symlink inside the root that leads out of it: PATH_NOT_ALLOWED; one into /proc: link_target', async () => {
+    const policy: AccessPolicy<'cwd'> = { roots: [{ path: '/home/u/project', kind: 'cwd' }] };
+    const escape = fakeAccess(
+      {
+        links: { '/home/u/project/escape': '/home/u/.ssh' },
+        real: { '/home/u/project/escape/id': '/home/u/.ssh/id' },
+      },
+      POSIX_PATHS,
+    );
+    expect(
+      payload(
+        await errorOf(
+          resolveAllowedPath('/home/u/project/escape/id', policy, { fs: escape, rules: POSIX_PATHS }),
+        ),
+      ),
+    ).toEqual({ code: 'PATH_NOT_ALLOWED', params: {} });
+    const proc = fakeAccess({ links: { '/home/u/project/p': '/proc/self/root' } }, POSIX_PATHS);
+    expect(
+      payload(
+        await errorOf(
+          resolveAllowedPath('/home/u/project/p/etc/x', policy, { fs: proc, rules: POSIX_PATHS }),
+        ),
+      ),
+    ).toEqual(rejected);
+    expect(proc.calls.some((call) => call.includes('/proc'))).toBe(false);
+  });
+
+  it('checkCwd and physicalRoot refuse unsafe POSIX strings without touching them', async () => {
+    const fs = fakeAccess({}, POSIX_PATHS);
+    expect(payload(await errorOf(checkCwd('relative', fs, POSIX_PATHS)))).toEqual({
+      code: 'PATH_REJECTED',
+      params: { reason: 'not_absolute' },
+    });
+    expect(await physicalRoot('/proc/1', fs, POSIX_PATHS)).toBeNull();
+    expect(fs.calls).toEqual([]);
   });
 });

@@ -25,7 +25,7 @@ describe('test environment', () => {
   it('refuses the real data directory', () => {
     const env = { LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' };
     expect(() => {
-      assertNotRealHome('C:\\Users\\x\\AppData\\Local\\parallax', env);
+      assertNotRealHome('C:\\Users\\x\\AppData\\Local\\parallax', env, 'win32');
     }).toThrow(/real data directory/);
   });
 
@@ -36,7 +36,7 @@ describe('test environment', () => {
     'C:\\Users\\x\\AppData\\Local\\Temp\\..\\Parallax\\x',
   ])('refuses %s inside the real data directory (R0-23)', (home) => {
     expect(() => {
-      assertNotRealHome(home, { LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' });
+      assertNotRealHome(home, { LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' }, 'win32');
     }).toThrow(/real data directory/);
   });
 
@@ -46,50 +46,100 @@ describe('test environment', () => {
     'D:\\Parallax',
   ])('allows %s (not inside it)', (home) => {
     expect(() => {
-      assertNotRealHome(home, { LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' });
+      assertNotRealHome(home, { LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' }, 'win32');
     }).not.toThrow();
   });
 
   it('isPathInside compares case-insensitively with / and \\ alike', () => {
-    expect(isPathInside('C:/A/b/c', 'c:\\a\\B')).toBe(true);
-    expect(isPathInside('C:\\a\\bc', 'C:\\a\\b')).toBe(false);
-    expect(isPathInside('C:\\a\\b\\', 'C:\\a\\b')).toBe(true);
+    expect(isPathInside('C:/A/b/c', 'c:\\a\\B', 'win32')).toBe(true);
+    expect(isPathInside('C:\\a\\bc', 'C:\\a\\b', 'win32')).toBe(false);
+    expect(isPathInside('C:\\a\\b\\', 'C:\\a\\b', 'win32')).toBe(true);
     // Drive root and doubled separators (CR-09).
-    expect(isPathInside('D:\\x', 'D:\\')).toBe(true);
-    expect(isPathInside('d:/', 'D:\\')).toBe(true);
-    expect(isPathInside('D:\\', 'D:\\x')).toBe(false);
-    expect(isPathInside('C:\\a\\\\b\\c', 'C:\\a\\b')).toBe(true);
+    expect(isPathInside('D:\\x', 'D:\\', 'win32')).toBe(true);
+    expect(isPathInside('d:/', 'D:\\', 'win32')).toBe(true);
+    expect(isPathInside('D:\\', 'D:\\x', 'win32')).toBe(false);
+    expect(isPathInside('C:\\a\\\\b\\c', 'C:\\a\\b', 'win32')).toBe(true);
+  });
+
+  it('isPathInside on POSIX compares exactly (WP-103)', () => {
+    expect(isPathInside('/home/u/a/b', '/home/u/a', 'linux')).toBe(true);
+    expect(isPathInside('/home/u/a/', '/home/u/a', 'linux')).toBe(true);
+    expect(isPathInside('/home/u//a/b', '/home/u/a', 'linux')).toBe(true);
+    expect(isPathInside('/home/u/A/b', '/home/u/a', 'linux')).toBe(false);
+    expect(isPathInside('/home/u/ab', '/home/u/a', 'linux')).toBe(false);
+    expect(isPathInside('/x', '/', 'linux')).toBe(true);
   });
 
   it.each([
-    'C:\\Users\\x\\AppData\\Local\\Parallax',
-    'c:/users/X/appdata/local/parallax/',
-    'C:\\Users\\x\\AppData\\Local\\\\Parallax\\sub',
-    'C:\\Users\\x\\AppData\\Local\\Parallax-other',
-    'C:\\Users\\x\\AppData\\Local\\Temp\\parallax',
-    'D:\\Parallax',
-  ])('CR-09: the test guard judges %s like config.ts (one rule, @shared/paths)', (home) => {
-    const env = { LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' };
-    const guard = (): void => {
-      assertNotRealHome(home, env);
-    };
-    // config.ts refuses the FakeBackend on/inside the real data directory with the same comparison.
-    const config = (): void => {
-      loadConfig({ argv: ['--backend=fake', `--home=${home}`], env, cwd: 'C:\\repo' });
-    };
+    ['/home/u/.local/share/parallax', { HOME: '/home/u' }],
+    ['/home/u/.local/share/parallax/sub', { HOME: '/home/u' }],
+    ['/home/u/.local/share/tmp/../parallax/', { HOME: '/home/u' }],
+    ['/data/xdg/parallax', { HOME: '/home/u', XDG_DATA_HOME: '/data/xdg' }],
+    ['/data/xdg/parallax/logs', { HOME: '/home/u', XDG_DATA_HOME: '/data/xdg' }],
+  ])('POSIX: refuses %s inside the real data directory (WP-103)', (home, env) => {
+    expect(() => {
+      assertNotRealHome(home, env, 'linux');
+    }).toThrow(/real data directory/);
+  });
+
+  it.each([
+    ['/home/u/.local/share/Parallax', { HOME: '/home/u' }],
+    ['/home/u/.local/share/parallax-dev', { HOME: '/home/u' }],
+    ['/tmp/parallax-test-abc', { HOME: '/home/u' }],
+    // A set XDG_DATA_HOME moves the data directory: ~/.local/share/parallax is then a normal folder.
+    ['/home/u/.local/share/parallax', { HOME: '/home/u', XDG_DATA_HOME: '/data/xdg' }],
+  ])('POSIX: allows %s (not inside it)', (home, env) => {
+    expect(() => {
+      assertNotRealHome(home, env, 'linux');
+    }).not.toThrow();
+  });
+
+  /**
+   * CR-09: the guard and config.ts (which refuses the FakeBackend on/inside the real data directory)
+   * use the one rule set of @shared/paths – both verdicts agree, and both are the expected one.
+   */
+  function expectVerdict(
+    home: string,
+    env: NodeJS.ProcessEnv,
+    platform: NodeJS.Platform,
+    cwd: string,
+    refused: boolean,
+  ): void {
     let refusedByConfig = false;
     try {
-      config();
+      loadConfig({ argv: ['--backend=fake', `--home=${home}`, '--port=0'], env, cwd, platform });
     } catch (error) {
       refusedByConfig = error instanceof ConfigError && error.message.includes('real data directory');
     }
     let refusedByGuard = false;
     try {
-      guard();
+      assertNotRealHome(home, env, platform);
     } catch {
       refusedByGuard = true;
     }
-    expect(refusedByGuard).toBe(refusedByConfig);
+    expect({ guard: refusedByGuard, config: refusedByConfig }).toEqual({ guard: refused, config: refused });
+  }
+
+  it.each([
+    ['C:\\Users\\x\\AppData\\Local\\Parallax', true],
+    ['c:/users/X/appdata/local/parallax/', true],
+    ['C:\\Users\\x\\AppData\\Local\\\\Parallax\\sub', true],
+    ['C:\\Users\\x\\AppData\\Local\\Parallax-other', false],
+    ['C:\\Users\\x\\AppData\\Local\\Temp\\parallax', false],
+    ['D:\\Parallax', false],
+  ])('CR-09: the test guard judges %s like config.ts (one rule, @shared/paths)', (home, refused) => {
+    expectVerdict(home, { LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' }, 'win32', 'C:\\repo', refused);
+  });
+
+  it.each([
+    ['/home/u/.local/share/parallax', true],
+    ['/home/u/.local/share/parallax/sub', true],
+    ['/home/u/.local/share//parallax/', true],
+    ['/home/u/.local/share/Parallax', false],
+    ['/home/u/.local/share/parallax-other', false],
+    ['/tmp/parallax', false],
+  ])('CR-09 POSIX: the test guard judges %s like config.ts (WP-103)', (home, refused) => {
+    expectVerdict(home, { HOME: '/home/u' }, 'linux', '/repo', refused);
   });
 });
 

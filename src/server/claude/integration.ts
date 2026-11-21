@@ -9,11 +9,13 @@
  *   returns e-mail/org (parseAuthStatus drops them, F.17).
  * The resolution cache is per profile and keyed by what resolves the executable; a persistent
  * profile store (profileStore.ts) drops stale entries on every change (ADR-102).
+ * WP-103: `platform` (default `process.platform`) picks the env semantics, the path rules and the
+ * lookup of `claude` (POSIX: `~/.local/bin/claude`, then PATH; ELF only).
  */
 import { makeError, type ErrorPayload } from '@shared/errors';
 import type { EntryId, ProfileId } from '@shared/common';
 import type { ClaudeInstallStatus, Profile } from '@shared/model';
-import { windowsPathIssue } from '@shared/paths';
+import { pathFlavorOf, pathRules } from '@shared/paths';
 import { logger } from '../lib/logger';
 import { errnoCode, runFile, type RunFileFn } from '../lib/process';
 import { readPersistentEnvironment, type PersistentEnvironment } from '../lib/registry';
@@ -22,7 +24,7 @@ import { CommandError } from '../sync/ports';
 import { parseAuthStatus, UNKNOWN_AUTH, type AuthStatusView } from './authStatus';
 import { testedCliVersion } from './cliProfile';
 import { buildEnv, buildEnvReport, clientAppId, setEnvVar } from './env';
-import { parseProfileArgs } from './profileArgs';
+import { profileArgsParser } from './profileArgs';
 import { errorCount, profileIssues } from './profileIssues';
 import type { PersistentProfileStore } from './profileStore';
 import {
@@ -56,6 +58,10 @@ export interface ClaudeIntegrationDeps {
   fs?: FsProbe;
   /** `where claude` over the built env; default: in-process PATH search (searchPath). */
   where?: (name: string, env: Readonly<Record<string, string>>) => Promise<string[]>;
+  /** Env semantics, path rules and lookup of this platform (default `process.platform`, WP-103). */
+  platform?: NodeJS.Platform;
+  /** POSIX: the user folder of `~/.local/bin/claude` (default `os.homedir()`). */
+  home?: string;
   runFile?: RunFileFn;
   /** Minimum CLI version (SDK package.json#claudeCodeVersion); default: read from the installed SDK. */
   sdkClaudeCodeVersion?: string | null;
@@ -95,10 +101,11 @@ const resolutionKey = profileResolutionKey;
 function registerProfileSecrets(
   profile: Profile,
   env: Readonly<Record<string, string>>,
+  platform: NodeJS.Platform,
 ): Record<string, string> {
   const resolved: Record<string, string> = {};
   for (const name of Object.keys(profile.env)) {
-    const value = getEnvVar(env, name);
+    const value = getEnvVar(env, name, platform);
     if (value !== undefined) resolved[name] = value;
   }
   registerEnvSecrets(resolved);
@@ -125,13 +132,17 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
     });
     return persistentCache;
   };
+  const platform = deps.platform ?? process.platform;
+  const rules = pathRules(pathFlavorOf(platform));
   const where =
-    deps.where ?? ((name: string, env: Readonly<Record<string, string>>) => searchPath(name, env, fs));
+    deps.where ??
+    ((name: string, env: Readonly<Record<string, string>>) => searchPath(name, env, fs, platform));
   const run = deps.runFile ?? runFile;
   const now = deps.now ?? (() => new Date());
   const cacheMs = deps.resolveCacheMs ?? DEFAULT_RESOLVE_CACHE_MS;
   const clientApp = clientAppId(deps.appVersion);
   const testedVersion = deps.testedVersion === undefined ? testedCliVersion() : deps.testedVersion;
+  const parseArgs = profileArgsParser(rules);
   const cache = new Map<ProfileId, CacheEntry>();
   /** Keyed by profile id + resolutionKey: a changed profile never joins an older resolution. */
   const inFlight = new Map<string, Promise<ResolveClaudeResult>>();
@@ -168,6 +179,8 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
     const promise = resolveClaude(profile, {
       ...fs,
       where: (name) => where(name, env),
+      platform,
+      ...(deps.home === undefined ? {} : { home: deps.home }),
       runFile: run,
       env,
       ...(deps.versionTimeoutMs === undefined ? {} : { versionTimeoutMs: deps.versionTimeoutMs }),
@@ -207,6 +220,7 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
       env: baseEnv(),
       persistentEnv: (await persistentEnv()) ?? new Map<string, string>(),
       exists: () => true,
+      platform,
     });
     const count = errorCount(issues);
     if (count > 0) throw new CommandError(makeError('PROFILE_INVALID', { count }));
@@ -257,11 +271,12 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
       entryId: null,
       clientApp,
       persistent: await persistentEnv(),
+      platform,
     });
     const envIssue = report.issues[0];
     if (envIssue !== undefined) return { ...status, error: envIssue };
     // CLI stderr/stdout of the check may be logged: its secrets are known first (ADR-124).
-    registerProfileSecrets(profile, report.env);
+    registerProfileSecrets(profile, report.env, platform);
 
     const resolved = await resolveFresh(profile, report.env);
     if (!resolved.ok) return { ...status, state: 'not_found', error: resolved.error };
@@ -284,16 +299,17 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
     async launchSpecFor(profileId: ProfileId, entryId: EntryId): Promise<LaunchSpec> {
       const profile = requireProfile(profileId);
       await assertUsable(profile);
-      const args = parseProfileArgs(profile.args, profile.passRawArgs);
+      const args = parseArgs(profile.args, profile.passRawArgs);
       const env = buildEnv({
         base: baseEnv(),
         profile,
         entryId,
         clientApp,
         persistent: await persistentEnv(),
+        platform,
       });
       // ADR-124: before anything of this start can be logged (CLI stderr, spawn errors).
-      registerProfileSecrets(profile, env);
+      registerProfileSecrets(profile, env, platform);
       const resolved = await resolveCached(profile, env);
       if (!resolved.ok) throw new CommandError(resolved.error);
       logger.debug(
@@ -335,12 +351,12 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
 
     async consoleLaunchFor(req: ConsoleLaunchRequest): Promise<ConsoleLaunchSpec> {
       const profile = requireProfile(req.profileId);
-      const cwdIssue = windowsPathIssue(req.cwd);
+      const cwdIssue = rules.issue(req.cwd);
       if (cwdIssue !== null) {
         throw new CommandError(makeError('PATH_REJECTED', { reason: cwdIssue, field: 'cwd' }));
       }
       await assertUsable(profile);
-      const parsed = parseProfileArgs(profile.args, profile.passRawArgs);
+      const parsed = parseArgs(profile.args, profile.passRawArgs);
       const env = buildEnv({
         base: baseEnv(),
         profile,
@@ -348,13 +364,16 @@ export function createClaudeIntegration(deps: ClaudeIntegrationDeps): ClaudeInte
         clientApp,
         persistent: await persistentEnv(),
         target: 'terminal',
+        platform,
       });
       // Only what the profile sets, resolved as the console sees it (`${env:NAME}`), + the config
       // dir; its secrets are registered first (ADR-124).
-      const explicitEnv = registerProfileSecrets(profile, env);
+      const explicitEnv = registerProfileSecrets(profile, env, platform);
       const resolved = await resolveCached(profile, env);
       if (!resolved.ok) throw new CommandError(resolved.error);
-      if (profile.configDir !== null) setEnvVar(explicitEnv, 'CLAUDE_CONFIG_DIR', profile.configDir);
+      if (profile.configDir !== null) {
+        setEnvVar(explicitEnv, 'CLAUDE_CONFIG_DIR', profile.configDir, platform);
+      }
 
       // profile.args are C.12-checked; the CLI takes them as written (bypass flags included).
       const args = [...profile.args, '--resume', req.resumeSessionId];

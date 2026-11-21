@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -14,15 +14,30 @@ import {
   listProcesses,
   processInfo,
   processStartTime,
+  posixKillTargets,
   queryProcesses,
   runFile,
   spawnHidden,
   systemTool,
+  type PosixKillDeps,
 } from './process';
+import { processImageName, type ProcStat } from './procfs';
 import { loadNativeProcessApi, type NativeProcessApi, type NativeProcessEntry } from './processNative';
 
 const NODE = process.execPath;
 const windowsOnly = process.platform === 'win32' ? it : it.skip;
+/** Hosts with a process table and process trees (Windows: Toolhelp + taskkill, Linux: /proc + groups). */
+const nativeHost = process.platform === 'win32' || process.platform === 'linux' ? it : it.skip;
+/**
+ * Image name of a running node process: Windows `node.exe`; Linux its `comm`, which node itself renames
+ * (`node-MainThread`) – read from /proc, never derived from the executable.
+ */
+function nodeImageName(pid: number = process.pid): string {
+  if (process.platform === 'win32') return 'node.exe';
+  return readFileSync(`/proc/${pid === process.pid ? 'self' : String(pid)}/comm`, 'utf8').trim();
+}
+/** A path that does not exist, absolute after the rules of this host. */
+const MISSING_EXE = process.platform === 'win32' ? 'C:\\does\\not\\exist\\nope.exe' : '/does/not/exist/nope';
 
 /**
  * Real child processes need real time: a node start takes ~1 s in a full `pnpm test` and several
@@ -113,17 +128,54 @@ describe('assertSpawnableFile (only absolute .exe paths, no shell – R1-04)', (
     }).toThrow(TypeError);
   });
 
-  it('requires an absolute path on other platforms (tests only)', () => {
+  it('POSIX (WP-103): an absolute, safe path – any name, no .exe (checked by the POSIX rules)', () => {
     expect(() => {
       assertSpawnableFile('/usr/bin/node', 'linux');
     }).not.toThrow();
     expect(() => {
-      assertSpawnableFile('node', 'linux');
-    }).toThrow(TypeError);
+      assertSpawnableFile('/home/u/.local/bin/claude', 'linux');
+    }).not.toThrow();
+    for (const file of [
+      'node',
+      './node',
+      'bin/node',
+      'C:\\x\\node.exe',
+      '',
+      '/usr/bin/no\0de',
+      '/proc/self/exe',
+    ]) {
+      expect(() => {
+        assertSpawnableFile(file, 'linux');
+      }, file).toThrow(TypeError);
+    }
+  });
+
+  it.runIf(process.platform === 'linux')('POSIX: an existing file must be executable (X_OK)', async () => {
+    const dir = await makeTempHome('spawnable-');
+    try {
+      const plain = path.join(dir, 'plain');
+      const tool = path.join(dir, 'tool');
+      writeFileSync(plain, '#!/bin/sh\n', { mode: 0o644 });
+      writeFileSync(tool, '#!/bin/sh\n', { mode: 0o755 });
+      expect(() => {
+        assertSpawnableFile(plain);
+      }).toThrow(/not an executable file/);
+      expect(() => {
+        assertSpawnableFile(dir);
+      }).toThrow(/not an executable file/);
+      expect(() => {
+        assertSpawnableFile(tool);
+      }).not.toThrow();
+      // Missing: spawn reports ENOENT itself.
+      expect(() => {
+        assertSpawnableFile(path.join(dir, 'missing'));
+      }).not.toThrow();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('is enforced by runFile and spawnHidden for bare names', async () => {
-    if (process.platform !== 'win32') return;
     await expect(runFile('git', ['--version'], { timeoutMs: 5_000 })).rejects.toBeInstanceOf(TypeError);
     expect(() => spawnHidden('explorer.exe', [])).toThrow(TypeError);
   });
@@ -131,10 +183,23 @@ describe('assertSpawnableFile (only absolute .exe paths, no shell – R1-04)', (
 
 describe('systemTool / errnoCode', () => {
   it('builds System32 paths from SystemRoot', () => {
-    expect(systemTool('taskkill.exe', { SystemRoot: 'C:\\Windows' })).toBe(
+    expect(systemTool('taskkill.exe', { SystemRoot: 'C:\\Windows' }, 'win32')).toBe(
       'C:\\Windows\\System32\\taskkill.exe',
     );
-    expect(systemTool('reg.exe', {})).toBe('C:\\Windows\\System32\\reg.exe');
+    expect(systemTool('reg.exe', {}, 'win32')).toBe('C:\\Windows\\System32\\reg.exe');
+    // A Windows tool name stays a Windows path everywhere (spawning it off Windows is refused).
+    expect(systemTool('tar.exe', {}, 'linux')).toBe('C:\\Windows\\System32\\tar.exe');
+    expect(systemTool('WindowsPowerShell\\v1.0\\powershell.exe', {}, 'linux')).toBe(
+      'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    );
+    expect(() => {
+      assertSpawnableFile(systemTool('reg.exe', {}, 'linux'), 'linux');
+    }).toThrow(TypeError);
+  });
+
+  it.runIf(process.platform === 'linux')('POSIX: /usr/bin, then /bin (WP-103)', () => {
+    expect(systemTool('sh', {}, 'linux')).toMatch(/^\/(usr\/)?bin\/sh$/);
+    expect(() => systemTool('../sh', {}, 'linux')).toThrow(TypeError);
   });
 
   it('reads error codes', () => {
@@ -167,16 +232,22 @@ describe('runFile', { timeout: SPAWN_TEST_TIMEOUT_MS }, () => {
   });
 
   it('uses exactly the given env and cwd', async () => {
+    const windows = process.platform === 'win32';
     const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
+    const cwd = windows ? systemRoot : '/';
     const result = await runFile(
       NODE,
       [
         '-e',
         'process.stdout.write(JSON.stringify([process.env.ONLY_THIS ?? null, process.env.CLAUDECODE ?? null, process.cwd().toLowerCase()]))',
       ],
-      { timeoutMs: 20_000, env: { ONLY_THIS: 'yes', SystemRoot: systemRoot }, cwd: systemRoot },
+      {
+        timeoutMs: 20_000,
+        env: windows ? { ONLY_THIS: 'yes', SystemRoot: systemRoot } : { ONLY_THIS: 'yes' },
+        cwd,
+      },
     );
-    expect(JSON.parse(result.stdout)).toEqual(['yes', null, systemRoot.toLowerCase()]);
+    expect(JSON.parse(result.stdout)).toEqual(['yes', null, cwd.toLowerCase()]);
   });
 
   it('caps the output per stream and still drains the pipe', async () => {
@@ -191,13 +262,13 @@ describe('runFile', { timeout: SPAWN_TEST_TIMEOUT_MS }, () => {
   });
 
   it('rejects when the file cannot be started', async () => {
-    await expect(runFile('C:\\does\\not\\exist\\nope.exe', [], { timeoutMs: 5_000 })).rejects.toMatchObject({
+    await expect(runFile(MISSING_EXE, [], { timeoutMs: 5_000 })).rejects.toMatchObject({
       code: 'ENOENT',
     });
     await expect(runFile('C:\\x\\script.cmd', [], { timeoutMs: 5_000 })).rejects.toBeInstanceOf(TypeError);
   });
 
-  windowsOnly(
+  nativeHost(
     'kills the whole process tree on timeout (no surviving grandchild)',
     async () => {
       // The parent never exits, so the timeout always fires; it only has to leave the parent
@@ -213,12 +284,16 @@ describe('runFile', { timeout: SPAWN_TEST_TIMEOUT_MS }, () => {
   it('an already aborted signal starts nothing (V3-15)', async () => {
     const abort = new AbortController();
     abort.abort();
-    expect(
-      await runFile('C:\\does\\not\\exist\\nope.exe', [], { timeoutMs: 5_000, signal: abort.signal }),
-    ).toEqual({ exitCode: null, signal: null, stdout: '', stderr: '', timedOut: true });
+    expect(await runFile(MISSING_EXE, [], { timeoutMs: 5_000, signal: abort.signal })).toEqual({
+      exitCode: null,
+      signal: null,
+      stdout: '',
+      stderr: '',
+      timedOut: true,
+    });
   });
 
-  windowsOnly(
+  nativeHost(
     'an abort ends the whole process tree like the timeout (V3-15)',
     async () => {
       const dir = await makeTempHome('runfile-abort-');
@@ -281,8 +356,8 @@ describe('spawnHidden', { timeout: SPAWN_TEST_TIMEOUT_MS }, () => {
   });
 });
 
-describe('killProcessTree (taskkill /T /F)', () => {
-  windowsOnly(
+describe('killProcessTree (Windows taskkill /T /F, Linux process groups)', () => {
+  nativeHost(
     'ends a process and its grandchild',
     async () => {
       const child = spawnHidden(NODE, ['-e', PARENT_WITH_GRANDCHILD], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -324,15 +399,269 @@ describe('killProcessTree (taskkill /T /F)', () => {
   });
 });
 
+/** Starts `script` with node (detached on POSIX: its own group) and resolves its PID and first line. */
+async function startScript(script: string, args: string[] = []): Promise<{ pid: number; line: string }> {
+  const child = spawnHidden(NODE, ['-e', script, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const pid = child.pid;
+  if (pid === undefined) throw new Error('no pid');
+  started.add(pid);
+  let stdout = '';
+  child.stdout?.setEncoding('utf8');
+  child.stdout?.on('data', (chunk: string) => {
+    stdout += chunk;
+  });
+  if (!(await waitUntil(() => stdout.includes('\n'), PROCESS_DEADLINE_MS))) throw new Error('no output');
+  return { pid, line: stdout.split('\n')[0] ?? '' };
+}
+
+describe.runIf(process.platform === 'linux')(
+  'killProcessTree on Linux: groups, sessions, /proc (WP-103)',
+  () => {
+    it(
+      'also ends a grandchild that left the group and session with setsid (detached)',
+      async () => {
+        const script = [
+          "const { spawn } = require('node:child_process');",
+          "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', detached: true });",
+          "process.stdout.write('grandchild:' + child.pid + '\\n');",
+          'setInterval(() => {}, 1000);',
+        ].join('\n');
+        const parent = await startScript(script);
+        const grandchild = grandchildPid(parent.line);
+        const stat = readFileSync(`/proc/${String(grandchild)}/stat`, 'utf8');
+        // Own group and session (fields 5 and 6 after the comm).
+        const [, , pgid, sid] = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+        expect([Number(pgid), Number(sid)]).toEqual([grandchild, grandchild]);
+        await killProcessTree(parent.pid);
+        expect(
+          await waitUntil(
+            () => !isProcessAlive(parent.pid) && !isProcessAlive(grandchild),
+            PROCESS_DEADLINE_MS,
+          ),
+        ).toBe(true);
+      },
+      TREE_TEST_TIMEOUT_MS,
+    );
+
+    it(
+      'ends an orphan of the group whose parent already ended',
+      async () => {
+        const script = [
+          "const { spawn } = require('node:child_process');",
+          "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+          "process.stdout.write('grandchild:' + child.pid + '\\n');",
+          'setTimeout(() => process.exit(0), 200);',
+        ].join('\n');
+        const parent = await startScript(script);
+        const grandchild = grandchildPid(parent.line);
+        expect(await waitUntil(() => !isProcessAlive(parent.pid), PROCESS_DEADLINE_MS)).toBe(true);
+        expect(isProcessAlive(grandchild)).toBe(true);
+        await killProcessTree(parent.pid);
+        expect(await waitUntil(() => !isProcessAlive(grandchild), PROCESS_DEADLINE_MS)).toBe(true);
+      },
+      TREE_TEST_TIMEOUT_MS,
+    );
+
+    it(
+      'SIGTERM first: a process that handles it ends on its own before any SIGKILL',
+      async () => {
+        const dir = await makeTempHome('kill-term-');
+        const marker = path.join(dir, 'term');
+        const script = [
+          "process.on('SIGTERM', () => { require('node:fs').writeFileSync(process.argv[1], 'term'); process.exit(0); });",
+          "process.stdout.write('ready\\n');",
+          'setInterval(() => {}, 1000);',
+        ].join('\n');
+        try {
+          const child = await startScript(script, [marker]);
+          expect(child.line).toBe('ready');
+          await killProcessTree(child.pid, { graceMs: 15_000 });
+          expect(readFileSync(marker, 'utf8')).toBe('term');
+        } finally {
+          await rm(dir, { recursive: true, force: true });
+        }
+      },
+      TREE_TEST_TIMEOUT_MS,
+    );
+
+    it(
+      'SIGKILL after the grace period for a process that ignores SIGTERM',
+      async () => {
+        const child = await startScript(
+          "process.on('SIGTERM', () => {}); process.stdout.write('ready\\n'); setInterval(() => {}, 1000);",
+        );
+        await killProcessTree(child.pid, { graceMs: 300 });
+        expect(await waitUntil(() => !isProcessAlive(child.pid), PROCESS_DEADLINE_MS)).toBe(true);
+      },
+      TREE_TEST_TIMEOUT_MS,
+    );
+  },
+);
+
+describe('killProcessTree POSIX logic with a fake table (WP-103)', () => {
+  /** One `/proc` row; start ticks default to the PID (younger PIDs started later). */
+  const row = (pid: number, ppid: number, pgid: number, sid: number, startTicks = pid): ProcStat => ({
+    pid,
+    comm: `p${String(pid)}`,
+    state: 'S',
+    ppid,
+    pgid,
+    sid,
+    startTicks,
+  });
+  const sorted = (values: readonly number[]): number[] => [...values].sort((a, b) => a - b);
+  const pids = (rows: readonly ProcStat[]): number[] => sorted(rows.map((p) => p.pid));
+  const SERVER = 50;
+  /** The server (group 40, session 30 – e.g. started from a terminal) and a foreign process. */
+  const base = [
+    row(30, 1, 30, 30, 1),
+    row(40, 30, 40, 30, 2),
+    row(SERVER, 40, 40, 30, 3),
+    row(900, 1, 900, 900),
+  ];
+
+  interface Behaviour {
+    ignoresTerm?: Set<number>;
+    unkillable?: Set<number>;
+    /** Becomes a zombie instead of disappearing. */
+    zombie?: Set<number>;
+  }
+
+  function simulate(rows: ProcStat[], behaviour: Behaviour = {}, withTable = true) {
+    const live = new Map(rows.map((r) => [r.pid, { ...r }]));
+    const signals: string[] = [];
+    let clock = 0;
+    const end = (p: ProcStat, signal: NodeJS.Signals): void => {
+      if (behaviour.unkillable?.has(p.pid) === true) return;
+      if (signal === 'SIGTERM' && behaviour.ignoresTerm?.has(p.pid) === true) return;
+      if (behaviour.zombie?.has(p.pid) === true) live.set(p.pid, { ...p, state: 'Z' });
+      else live.delete(p.pid);
+    };
+    const esrch = (): Error => Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
+    const deps: PosixKillDeps = {
+      table: () => (withTable ? [...live.values()] : null),
+      stat: (pid) => live.get(pid) ?? null,
+      kill: (target, signal) => {
+        const hit =
+          target < 0
+            ? [...live.values()].filter((p) => p.pgid === -target)
+            : [live.get(target)].filter((p) => p !== undefined);
+        // Like the kernel: probing a zombie succeeds.
+        if (signal === 0) {
+          if (hit.length === 0) throw esrch();
+          return;
+        }
+        signals.push(`${String(target)}:${signal}`);
+        if (hit.length === 0) throw esrch();
+        for (const p of hit) end(p, signal);
+      },
+      sleep: (ms) => {
+        clock += ms;
+        return Promise.resolve();
+      },
+      now: () => clock,
+      ownPid: SERVER,
+    };
+    return { deps, signals, live, elapsed: () => clock };
+  }
+
+  it('the tree: descendants, setsid grandchildren, orphans of its groups and sessions – nothing else', () => {
+    const table = [
+      ...base,
+      row(100, SERVER, 100, 100), // claude, started detached: group and session leader
+      row(101, 100, 100, 100), // its child
+      row(102, 101, 102, 102), // a grandchild with setsid
+      row(103, 102, 102, 102), // below it
+      row(104, 1, 100, 100), // orphan in the group (parent ended)
+      row(105, 1, 105, 100), // orphan with its own group, still in the session
+      row(106, 1, 106, 106), // orphan with setsid whose parent ended: not findable – not ours
+      row(99, 100, 99, 99), // "child" older than its parent: a reused PID
+    ];
+    const targets = posixKillTargets(table, 100, SERVER);
+    expect(pids(targets.processes)).toEqual([100, 101, 102, 103, 104, 105]);
+    expect(sorted(targets.groups)).toEqual([100, 102, 105]);
+  });
+
+  it('never the server, its group or its session – a child in the server group is signalled alone', () => {
+    const table = [...base, row(100, SERVER, 40, 30), row(101, 100, 40, 30), row(102, 40, 40, 30)];
+    const targets = posixKillTargets(table, 100, SERVER);
+    expect(pids(targets.processes)).toEqual([100, 101]);
+    expect(targets.groups).toEqual([]);
+    expect(posixKillTargets(table, SERVER, SERVER).processes).toEqual([]);
+    // The server's parent: its other children, but never the server or the shared group.
+    const parent = posixKillTargets(table, 40, SERVER);
+    expect(pids(parent.processes)).toEqual([40, 102]);
+    expect(parent.groups).toEqual([]);
+  });
+
+  it('the group and session of an ended root are still its own (no PID names a living group twice)', () => {
+    const table = [...base, row(101, 1, 100, 100), row(102, 101, 102, 100)];
+    const targets = posixKillTargets(table, 100, SERVER);
+    expect(pids(targets.processes)).toEqual([101, 102]);
+    expect(sorted(targets.groups)).toEqual([100, 102]);
+  });
+
+  it('SIGTERM to every group (and to members outside them); no SIGKILL when they end', async () => {
+    const sim = simulate([
+      ...base,
+      row(100, SERVER, 100, 100),
+      row(101, 100, 100, 100),
+      row(102, 101, 102, 102),
+    ]);
+    await killProcessTree(100, { platform: 'linux', posix: sim.deps, graceMs: 2_000 });
+    expect(sim.signals.sort()).toEqual(['-100:SIGTERM', '-102:SIGTERM']);
+    expect(sorted([...sim.live.keys()])).toEqual([30, 40, SERVER, 900]);
+  });
+
+  it('a child in the server group gets its signal by PID – never the group', async () => {
+    const sim = simulate([...base, row(100, SERVER, 40, 30)]);
+    await killProcessTree(100, { platform: 'linux', posix: sim.deps });
+    expect(sim.signals).toEqual(['100:SIGTERM']);
+  });
+
+  it('SIGKILL after the grace period for what ignores SIGTERM', async () => {
+    const sim = simulate([...base, row(100, SERVER, 100, 100), row(101, 100, 100, 100)], {
+      ignoresTerm: new Set([101]),
+    });
+    await killProcessTree(100, { platform: 'linux', posix: sim.deps, graceMs: 2_000 });
+    expect(sim.signals).toEqual(['-100:SIGTERM', '-100:SIGKILL']);
+    expect(sim.elapsed()).toBeGreaterThanOrEqual(2_000);
+    expect(sim.live.has(101)).toBe(false);
+  });
+
+  it('a zombie counts as gone; an already ended process is no error', async () => {
+    const zombie = simulate([...base, row(100, SERVER, 100, 100)], { zombie: new Set([100]) });
+    await killProcessTree(100, { platform: 'linux', posix: zombie.deps });
+    expect(zombie.signals).toEqual(['-100:SIGTERM']);
+    const gone = simulate(base);
+    await killProcessTree(100, { platform: 'linux', posix: gone.deps });
+    expect(gone.signals).toEqual([]);
+  });
+
+  it('rejects when the process survives SIGKILL', async () => {
+    const sim = simulate([...base, row(100, SERVER, 100, 100)], { unkillable: new Set([100]) });
+    await expect(killProcessTree(100, { platform: 'linux', posix: sim.deps, graceMs: 100 })).rejects.toThrow(
+      /still runs after SIGKILL/,
+    );
+  });
+
+  it('without a process table: the process and the group it leads', async () => {
+    const sim = simulate([...base, row(100, SERVER, 100, 100), row(101, 100, 100, 100)], {}, false);
+    await killProcessTree(100, { platform: 'linux', posix: sim.deps });
+    expect(sim.signals).toEqual(['-100:SIGTERM', '100:SIGTERM']);
+    expect(sim.live.has(101)).toBe(false);
+  });
+});
+
 describe('processInfo / queryProcesses (orphan cleanup, C.8, R2-02)', () => {
-  windowsOnly(
+  nativeHost(
     'reports name, parent and start time of a running process',
     async () => {
       const info = await processInfo(process.pid);
       expect(info.kind).toBe('found');
       if (info.kind !== 'found') return;
       expect(info.info.pid).toBe(process.pid);
-      expect(info.info.name.toLowerCase()).toBe('node.exe');
+      expect(info.info.name.toLowerCase()).toBe(nodeImageName().toLowerCase());
       expect(info.info.parentPid).toBe(process.ppid);
       const startedAt = info.info.startedAt.getTime();
       expect(startedAt).toBeLessThanOrEqual(Date.now());
@@ -341,7 +670,7 @@ describe('processInfo / queryProcesses (orphan cleanup, C.8, R2-02)', () => {
     QUERY_TEST_TIMEOUT_MS,
   );
 
-  windowsOnly(
+  nativeHost(
     'answers missing for a finished process',
     async () => {
       const child = spawnHidden(NODE, ['-e', ''], { stdio: 'ignore' });
@@ -354,7 +683,7 @@ describe('processInfo / queryProcesses (orphan cleanup, C.8, R2-02)', () => {
     QUERY_TEST_TIMEOUT_MS,
   );
 
-  windowsOnly(
+  nativeHost(
     'one query for several pids and the children of a parent',
     async () => {
       const child = spawnHidden(NODE, ['-e', PARENT_WITH_GRANDCHILD], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -384,7 +713,7 @@ describe('processInfo / queryProcesses (orphan cleanup, C.8, R2-02)', () => {
     await expect(queryProcesses({ pids: [1.5] })).rejects.toBeInstanceOf(RangeError);
   });
 
-  windowsOnly(
+  nativeHost(
     'childProcesses lists the direct children with name and start time (WP-13 §6 Nr. 7)',
     async () => {
       const child = spawnHidden(NODE, ['-e', PARENT_WITH_GRANDCHILD], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -403,13 +732,16 @@ describe('processInfo / queryProcesses (orphan cleanup, C.8, R2-02)', () => {
       if (children.kind !== 'ok') return;
       const found = children.processes.find((c) => c.pid === grandchild);
       expect(found).toMatchObject({ pid: grandchild, parentPid: pid });
-      expect(found?.name.toLowerCase()).toBe('node.exe');
+      // Linux: right after the start the comm may still be the executable name (node renames its main thread).
+      const names = [nodeImageName(grandchild).toLowerCase()];
+      if (process.platform !== 'win32') names.push(processImageName(NODE).toLowerCase());
+      expect(names).toContain(found?.name.toLowerCase());
       expect(found?.startedAt.getTime()).toBeLessThanOrEqual(Date.now());
       // The grandchild starts no node.exe of its own (Windows may attach a conhost.exe).
       const grandchildren = await childProcesses(grandchild);
       expect(grandchildren.kind).toBe('ok');
       if (grandchildren.kind !== 'ok') return;
-      expect(grandchildren.processes.filter((c) => c.name.toLowerCase() === 'node.exe')).toEqual([]);
+      expect(grandchildren.processes.filter((c) => names.includes(c.name.toLowerCase()))).toEqual([]);
       expect(grandchildren.processes.every((c) => c.parentPid === grandchild)).toBe(true);
     },
     QUERY_TEST_TIMEOUT_MS,
@@ -455,12 +787,12 @@ describe('native process list (ADR-229, ADR-231: never PowerShell)', () => {
     expect(await processInfo(10, { native: broken, platform: 'win32' })).toMatchObject({ kind: 'unknown' });
   });
 
-  it('without node:ffi (native null) and off Windows every query is unknown – never "gone"', async () => {
+  it('without node:ffi (native null) and off Windows/Linux every query is unknown – never "gone"', async () => {
     const none = { native: null, platform: 'win32' as const };
     expect(await processInfo(10, none)).toMatchObject({ kind: 'unknown', reason: 'unsupported' });
     expect(await listProcesses(none)).toMatchObject({ kind: 'unknown', reason: 'unsupported' });
     expect(await childProcesses(10, none)).toMatchObject({ kind: 'unknown', reason: 'unsupported' });
-    expect(await queryProcesses({ pids: [10] }, { native, platform: 'linux' })).toMatchObject({
+    expect(await queryProcesses({ pids: [10] }, { native, platform: 'darwin' })).toMatchObject({
       kind: 'unknown',
       reason: 'unsupported',
     });
@@ -493,6 +825,28 @@ describe('native process list (ADR-229, ADR-231: never PowerShell)', () => {
     const started = api?.startedAt(process.pid)?.getTime() ?? 0;
     expect(Math.abs(started - (Date.now() - process.uptime() * 1000))).toBeLessThan(5_000);
     expect(api?.startedAt(0)).toBeNull();
+  });
+
+  it.runIf(process.platform === 'linux')(
+    'Linux: the real /proc table finds this process with parent, comm and start time (WP-103)',
+    () => {
+      const api = loadNativeProcessApi();
+      expect(api).not.toBeNull();
+      const me = api?.entries()?.find((entry) => entry.pid === process.pid);
+      expect(me?.parentPid).toBe(process.ppid);
+      expect(me?.name).toBe(nodeImageName());
+      // btime has whole seconds: up to 1 s early; the reading itself is deterministic.
+      const started = api?.startedAt(process.pid)?.getTime() ?? 0;
+      expect(Math.abs(started - (Date.now() - process.uptime() * 1000))).toBeLessThan(5_000);
+      expect(api?.startedAt(process.pid)?.getTime()).toBe(started);
+      expect(me?.startedAt?.getTime()).toBe(started);
+      expect(api?.startedAt(0)).toBeNull();
+    },
+  );
+
+  it('loadNativeProcessApi: /proc on Linux, nothing on other POSIX platforms', () => {
+    expect(loadNativeProcessApi('darwin')).toBeNull();
+    expect(loadNativeProcessApi('linux')).not.toBeNull();
   });
 });
 
@@ -529,7 +883,7 @@ describe('listProcesses / descendantsOf (heartbeat snapshot, WP22-06)', () => {
     expect(descendantsOf([p(1, 2, 0), p(2, 1, 0)], p(1, 2, 0)).map((x) => x.pid)).toEqual([2]);
   });
 
-  windowsOnly(
+  nativeHost(
     'the real listing finds this test process and the grandchild below a child',
     async () => {
       const child = spawnHidden(NODE, ['-e', PARENT_WITH_GRANDCHILD], { stdio: ['ignore', 'pipe', 'pipe'] });

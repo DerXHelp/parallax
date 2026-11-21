@@ -13,7 +13,8 @@
 import { isUtf8 } from 'node:buffer';
 import { LIMITS } from '@shared/common';
 import type { FileAccess, FileInfo, FileKind, TextEncoding } from '@shared/model';
-import { windowsPathExtension, windowsPathKey } from '@shared/paths';
+import type { PathRules } from '@shared/paths';
+import { HOST_PATH_RULES } from '../lib/paths';
 import { sniffFileMediaType } from '../lib/sniff';
 import { TEXT_SNIFF_BYTES, bomLength, decodeText, detectTextEncoding } from '../lib/textDecode';
 import type { FileFs } from './fileFs';
@@ -32,13 +33,18 @@ export interface FileClass {
 
 /**
  * Kind of a regular file from its first bytes (`head`), its size and its name (extension of the
- * requested path – the name the user sees).
+ * requested path – the name the user sees; `rules` of this host by default, WP-103).
  */
-export function classifyFile(head: Uint8Array, size: number, name: string): FileClass {
+export function classifyFile(
+  head: Uint8Array,
+  size: number,
+  name: string,
+  rules: PathRules = HOST_PATH_RULES,
+): FileClass {
   const sniffed = sniffFileMediaType(head);
   if (sniffed === 'application/pdf') return { kind: 'pdf', mediaType: sniffed, encoding: null };
   if (sniffed !== null) return { kind: 'image', mediaType: sniffed, encoding: null };
-  const extension = windowsPathExtension(name);
+  const extension = rules.extension(name);
   if (extension === 'svg') return { kind: 'image', mediaType: SVG_MEDIA_TYPE, encoding: null };
   const encoding = detectTextEncoding(head, head.length >= size);
   if (encoding === 'binary') return { kind: 'binary', mediaType: null, encoding: null };
@@ -131,6 +137,8 @@ export interface StatOptions {
    * and cuts the content itself and does not need the flag).
    */
   truncation?: TruncationCache | 'skip';
+  /** Path rules of the extension and the cache key (default `HOST_PATH_RULES`, WP-103). */
+  rules?: PathRules;
 }
 
 /** Does GET /api/file cut this text (see the file comment)? */
@@ -141,6 +149,7 @@ async function isTextTruncated(
   encoding: TextEncoding,
   head: Buffer,
   truncation: StatOptions['truncation'],
+  rules: PathRules,
 ): Promise<boolean> {
   const limit = LIMITS.fileTextBytes;
   const { bytes } = version;
@@ -150,7 +159,7 @@ async function isTextTruncated(
   const checked = encoding === 'utf-8' && bomLength(head, 'utf-8') === 0;
   const validBytes = !checked ? 0 : head.length >= bytes ? bytes : head.length - 3;
   if (utf8SizeBound(bytes, encoding, validBytes) <= limit) return false;
-  const key = JSON.stringify([windowsPathKey(file.realPath), bytes, version.mtimeMs, encoding]);
+  const key = JSON.stringify([rules.key(file.realPath), bytes, version.mtimeMs, encoding]);
   const known = truncation?.get(key);
   if (known !== undefined) return known;
   const cut = decodedUtf8Size(await fs.readHead(file.realPath, bytes), encoding) > limit;
@@ -164,6 +173,7 @@ export async function statAllowed(
   file: AllowedFile,
   options: StatOptions = {},
 ): Promise<FileInfo> {
+  const rules = options.rules ?? HOST_PATH_RULES;
   const info = await fs.stat(file.realPath);
   const base = { path: file.path, realPath: file.realPath, mtimeMs: info.mtimeMs, access: file.access };
   if (info.isDirectory()) {
@@ -182,7 +192,7 @@ export async function statAllowed(
   const cls: FileClass =
     head === null
       ? { kind: 'binary', mediaType: null, encoding: null }
-      : classifyFile(head, bytes, file.path);
+      : classifyFile(head, bytes, file.path, rules);
   const truncated =
     head !== null && cls.encoding !== null && isTextKind(cls.kind)
       ? await isTextTruncated(
@@ -192,6 +202,7 @@ export async function statAllowed(
           cls.encoding,
           head,
           options.truncation,
+          rules,
         )
       : false;
   return {

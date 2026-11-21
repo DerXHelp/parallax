@@ -7,15 +7,23 @@
  *
  * Processes of other users or protected ones cannot be opened: their start time is null (the caller
  * decides; lib/process.ts leaves them out or answers `unknown` for a PID it asked for).
+ *
+ * Linux (WP-103): the same interface over `/proc` (lib/procfs.ts); every entry carries its start time.
  */
 import { openLibrary, pointerValue, type FfiFunction } from './ffi';
+import { createProcfsReader, isEndedState, type ProcfsReader } from './procfs';
 
-/** One row of the Toolhelp snapshot. */
+/** One row of the Toolhelp snapshot (Linux: of `/proc`). */
 export interface NativeProcessEntry {
   pid: number;
   parentPid: number;
-  /** Image name, e.g. `claude.exe`. */
+  /** Image name, e.g. `claude.exe` (Linux: `comm`, at most 15 bytes – lib/procfs.ts). */
   name: string;
+  /**
+   * Start time read with the row (Linux: from the same file, no second lookup); absent = ask
+   * `startedAt(pid)`, null = not readable.
+   */
+  startedAt?: Date | null;
 }
 
 /** Seam of lib/process.ts (tests inject a fake). Never throws. */
@@ -50,8 +58,41 @@ function isValidHandle(handle: bigint): boolean {
   return handle !== 0n && handle !== INVALID_HANDLE && handle !== -1n;
 }
 
+/** The process table of `/proc` behind the same interface (Linux). */
+export function procfsProcessApi(reader: ProcfsReader = createProcfsReader()): NativeProcessApi {
+  return {
+    entries() {
+      const rows = reader.table();
+      if (rows === null) return null;
+      // A zombie has ended (only its exit status waits for the parent): not listed, like on Windows.
+      return rows
+        .filter((row) => !isEndedState(row.state))
+        .map((row) => ({
+          pid: row.pid,
+          parentPid: row.ppid,
+          name: row.comm,
+          startedAt: reader.startedAt(row),
+        }));
+    },
+    startedAt(pid) {
+      const row = reader.stat(pid);
+      return row === null || isEndedState(row.state) ? null : reader.startedAt(row);
+    },
+  };
+}
+
+/**
+ * The native process list of this platform: kernel32 through `node:ffi` on Windows x64 (null without
+ * `node:ffi`), `/proc` on Linux, null elsewhere.
+ */
+export function loadNativeProcessApi(platform: NodeJS.Platform = process.platform): NativeProcessApi | null {
+  if (platform === 'linux') return procfsProcessApi();
+  if (platform !== 'win32') return null;
+  return loadKernel32ProcessApi();
+}
+
 /** kernel32 through `node:ffi`; null off Windows x64 or without `node:ffi`. */
-export function loadNativeProcessApi(): NativeProcessApi | null {
+function loadKernel32ProcessApi(): NativeProcessApi | null {
   const k = openLibrary('kernel32.dll', {
     CreateToolhelp32Snapshot: { return: 'pointer', arguments: ['uint32', 'uint32'] },
     Process32FirstW: { return: 'int32', arguments: ['pointer', 'buffer'] },

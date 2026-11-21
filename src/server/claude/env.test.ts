@@ -27,6 +27,7 @@ function input(base: BuildEnvInput['base'], partial: Partial<BuildEnvInput> = {}
     entryId: SAMPLE_IDS.entry,
     clientApp: 'parallax/1.2.3',
     delimiter: ';',
+    platform: 'win32',
     ...partial,
   };
 }
@@ -207,7 +208,7 @@ describe('stripNodeModulesBin', () => {
 
 describe('resolveEnvRefs', () => {
   const machine: Record<string, string> = { USERPROFILE: 'C:\\Users\\u', Empty: '' };
-  const lookup = (name: string): string | undefined => getEnvVar(machine, name);
+  const lookup = (name: string): string | undefined => getEnvVar(machine, name, 'win32');
 
   it.each<[string, string, string[]]>([
     ['plain', 'plain', []],
@@ -227,11 +228,23 @@ describe('resolveEnvRefs', () => {
 describe('case-insensitive helpers', () => {
   it('get/set/delete treat Path and PATH as one variable', () => {
     const env: Record<string, string> = { Path: 'a', PATHEXT: '.EXE' };
-    expect(getEnvVar(env, 'PATH')).toBe('a');
-    setEnvVar(env, 'PATH', 'b');
+    expect(getEnvVar(env, 'PATH', 'win32')).toBe('a');
+    setEnvVar(env, 'PATH', 'b', 'win32');
     expect(env).toEqual({ PATH: 'b', PATHEXT: '.EXE' });
-    deleteEnvVar(env, 'path');
+    deleteEnvVar(env, 'path', 'win32');
     expect(env).toEqual({ PATHEXT: '.EXE' });
+  });
+
+  it('POSIX (WP-103): get/set/delete use the exact name – Path and PATH are two variables', () => {
+    const env: Record<string, string> = { Path: 'a', PATH: '/usr/bin' };
+    expect(getEnvVar(env, 'PATH', 'linux')).toBe('/usr/bin');
+    expect(getEnvVar(env, 'path', 'linux')).toBeUndefined();
+    setEnvVar(env, 'PATH', '/bin', 'linux');
+    expect(env).toEqual({ Path: 'a', PATH: '/bin' });
+    deleteEnvVar(env, 'path', 'linux');
+    expect(env).toEqual({ Path: 'a', PATH: '/bin' });
+    deleteEnvVar(env, 'Path', 'linux');
+    expect(env).toEqual({ PATH: '/bin' });
   });
 
   it('clientAppId uses the product id', () => {
@@ -351,7 +364,7 @@ describe('buildEnvReport (C.2)', () => {
     expect(Object.keys(env).filter((key) => /^claudecode$/i.test(key))).toEqual([]);
     // Entries that ARE a node_modules\.bin folder (pnpm/npm run state, what buildEnv drops); a tool
     // below one (CI: setup-pnpm\node_modules\.bin\global\…\node-gyp-bin) is an ordinary entry.
-    const entries = (getEnvVar(env, 'PATH') ?? '').split(';');
+    const entries = (getEnvVar(env, 'PATH', 'win32') ?? '').split(';');
     expect(entries.filter((entry) => /(?:^|[\\/])node_modules[\\/]\.bin[\\/]*$/i.test(entry))).toEqual([]);
   });
 
@@ -874,10 +887,91 @@ describe('buildEnv', () => {
     });
   });
 
-  it('uses the platform delimiter by default', () => {
+  it('uses the delimiter of the platform by default (`;` on Windows, `:` on POSIX)', () => {
     const { delimiter: _ignored, ...withoutDelimiter } = input({ PATH: 'C:\\a;D:\\r\\node_modules\\.bin' });
-    expect(buildEnv(withoutDelimiter).PATH).toBe(
-      process.platform === 'win32' ? 'C:\\a' : 'C:\\a;D:\\r\\node_modules\\.bin',
+    expect(buildEnv(withoutDelimiter).PATH).toBe('C:\\a');
+    expect(
+      buildEnv({ ...withoutDelimiter, platform: 'linux', base: { PATH: '/a:/r/node_modules/.bin:/b' } }).PATH,
+    ).toBe('/a:/b');
+  });
+});
+
+describe('POSIX hosts (WP-103)', () => {
+  const posix = (base: BuildEnvInput['base'], partial: Partial<BuildEnvInput> = {}): BuildEnvInput =>
+    input(base, { delimiter: ':', platform: 'linux', ...partial });
+
+  it('keeps every spelling of a name: http_proxy and HTTP_PROXY are two variables', () => {
+    const { env, removed } = buildEnvReport(
+      posix({ http_proxy: 'http://a', HTTP_PROXY: 'http://b', PATH: '/usr/bin', Path: 'x' }),
     );
+    expect(env).toMatchObject({
+      http_proxy: 'http://a',
+      HTTP_PROXY: 'http://b',
+      PATH: '/usr/bin',
+      Path: 'x',
+    });
+    expect(removed).toEqual([]);
+  });
+
+  it('only PATH is the search path (node_modules/.bin dropped there, not in Path)', () => {
+    const { env, pathEntriesRemoved } = buildEnvReport(
+      posix({ PATH: '/repo/node_modules/.bin:/usr/bin', Path: '/repo/node_modules/.bin' }),
+    );
+    expect(env.PATH).toBe('/usr/bin');
+    expect(env.Path).toBe('/repo/node_modules/.bin');
+    expect(pathEntriesRemoved).toBe(1);
+  });
+
+  it('removes the session, run-state and Parallax variables case-insensitively, like on Windows', () => {
+    const { env, removed } = buildEnvReport(
+      posix({
+        claudecode: '1',
+        CLAUDE_CODE_SESSION_ID: 's',
+        npm_lifecycle_event: 'dev',
+        npm_config_registry: 'https://registry.example',
+        parallax_home: '/tmp/x',
+        PARALLAX_PORT: '1',
+        PSExecutionPolicyPreference: 'Bypass',
+        HOME: '/home/u',
+      }),
+    );
+    expect(Object.keys(env).sort()).toEqual([
+      'CLAUDE_AGENT_SDK_CLIENT_APP',
+      'CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS',
+      'HOME',
+      'PARALLAX',
+      'PARALLAX_ENTRY_ID',
+    ]);
+    expect(removed).toContain('PSExecutionPolicyPreference');
+  });
+
+  it('merges the profile env and resolves ${env:NAME} by the exact name', () => {
+    const { env, issues } = buildEnvReport(
+      posix(
+        { HOME: '/home/u', home: 'lower', PATH: '/usr/bin' },
+        {
+          profile: {
+            env: { PATH: '/opt/bin:${env:PATH}', Path: 'kept', CFG: '${env:HOME}/cfg', X: '${env:Home}' },
+            configDir: null,
+          },
+        },
+      ),
+    );
+    expect(env).toMatchObject({ PATH: '/opt/bin:/usr/bin', Path: 'kept', CFG: '/home/u/cfg', home: 'lower' });
+    expect(env.X).toBeUndefined();
+    expect(issues).toEqual([{ code: 'PROFILE_ENV_REF_UNRESOLVED', params: { name: 'Home', key: 'X' } }]);
+  });
+
+  it('checks CLAUDE_CONFIG_DIR with the POSIX rules (B4)', () => {
+    expect(
+      buildEnvReport(posix({}, { profile: { env: {}, configDir: '/home/u/.claude-work' } })).set
+        .CLAUDE_CONFIG_DIR,
+    ).toBe('/home/u/.claude-work');
+    expect(buildEnvReport(posix({}, { profile: { env: {}, configDir: 'C:\\claude' } })).issues).toEqual([
+      { code: 'PATH_REJECTED', params: { reason: 'not_absolute', field: 'configDir' } },
+    ]);
+    expect(buildEnvReport(posix({}, { profile: { env: {}, configDir: '/proc/self' } })).issues).toEqual([
+      { code: 'PATH_REJECTED', params: { reason: 'pseudo_fs', field: 'configDir' } },
+    ]);
   });
 });

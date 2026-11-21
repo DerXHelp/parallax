@@ -11,6 +11,9 @@
  * descendant – Bash/PowerShell tools, MCP servers, their children) and the time of that snapshot
  * (`aliveAt`). Both fields have defaults (no version bump). After a hard abort the next start ends
  * only processes that still match a snapshot entry exactly (recovery.ts `cleanupOrphans`).
+ *
+ * Linux (WP-103): the same file; the start times come from `/proc` (lib/procfs.ts) and the image
+ * is kept for the log only – the orphan check recognizes a process by PID + start time there.
  */
 import path from 'node:path';
 import type { Logger } from 'pino';
@@ -27,7 +30,7 @@ export const MAX_RECORDED_CHILDREN = 200;
 export const processChildSchema = z.object({
   pid: z.number().int().positive(),
   image: z.string().min(1).max(260),
-  /** Exact CIM creation time (the orphan check compares it exactly). */
+  /** Exact creation time of the native process list (the orphan check compares it exactly). */
   startedAt: isoDateTimeSchema,
 });
 export type ProcessChild = z.infer<typeof processChildSchema>;
@@ -35,7 +38,7 @@ export type ProcessChild = z.infer<typeof processChildSchema>;
 export const processRecordSchema = z.object({
   entryId: entryIdSchema,
   pid: z.number().int().positive(),
-  /** Image name of the executable, e.g. `claude.exe` (compared case-insensitively). */
+  /** Image name of the executable, e.g. `claude.exe` (Windows: compared case-insensitively). */
   image: z.string().min(1).max(260),
   /** Spawn time as seen by the backend (the orphan check allows a tolerance). */
   startedAt: isoDateTimeSchema,

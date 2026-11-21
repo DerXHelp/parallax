@@ -1,5 +1,4 @@
 import { readFileSync, statSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -7,8 +6,9 @@ import { z } from 'zod';
 import { BUILD_ID } from '@shared/build';
 import { LOOPBACK_HOST, backendKindSchema, type BackendKind } from '@shared/http';
 import { DEFAULT_PORT, SETTINGS_SCHEMA_VERSION, settingsFileSchema, type Settings } from '@shared/model';
-import { isWindowsPathInside, windowsPathIssue, windowsPathsEqual } from '@shared/paths';
-import { PRODUCT_ID, PRODUCT_NAME } from '@shared/product';
+import { pathFlavorOf, pathRules, type PathRules } from '@shared/paths';
+import { PRODUCT_ID } from '@shared/product';
+import { defaultDataDir, defaultDataDirLabel } from './lib/dataDir';
 import { newUuid } from './lib/ids';
 import { logLevelSchema, type LogLevel } from './lib/logger';
 import { fsErrorCode } from './lib/paths';
@@ -33,10 +33,23 @@ import { SETTINGS_FILE } from './store/settings';
  *
  * The FakeBackend never runs on the real data directory or inside it (R3-02, ADR-061): fake
  * answers, fake session ids and fake PIDs would mix with the real entries – ConfigError.
+ *
+ * Platforms (WP-103): the real data directory comes from lib/dataDir.ts (Windows
+ * `%LOCALAPPDATA%\Parallax`, Linux `$XDG_DATA_HOME/parallax` or `~/.local/share/parallax`); paths are
+ * resolved and checked with the rules of the platform (`LoadConfigInput.platform`, default this
+ * process). Native toasts exist only on Windows so far.
  */
 
-/** Default data directory in dev mode, relative to the working directory (never %LOCALAPPDATA%). */
+/** Default data directory in dev mode, relative to the working directory (never the real data directory). */
 export const DEV_HOME_DIR = '.parallax-dev';
+
+/** `path.win32`/`path.posix` and the path rules of a platform. */
+function platformPaths(platform: NodeJS.Platform): { path: typeof path.posix; rules: PathRules } {
+  return {
+    path: platform === 'win32' ? path.win32 : path.posix,
+    rules: pathRules(pathFlavorOf(platform)),
+  };
+}
 
 /** From @shared/http (the health answer reports it, R3-02). */
 export { backendKindSchema, type BackendKind };
@@ -124,10 +137,16 @@ function nonEmpty(value: string | undefined): string | undefined {
   return value === undefined || value === '' ? undefined : value;
 }
 
-/** `%LOCALAPPDATA%\Parallax` (falls back to `<home>\AppData\Local\Parallax`). */
-export function defaultHome(env: NodeJS.ProcessEnv = process.env): string {
-  const base = nonEmpty(env.LOCALAPPDATA) ?? path.join(os.homedir(), 'AppData', 'Local');
-  return path.join(base, PRODUCT_NAME);
+/**
+ * The real data directory: Windows `%LOCALAPPDATA%\Parallax` (falls back to
+ * `<home>\AppData\Local\Parallax`), Linux `$XDG_DATA_HOME/parallax` or `~/.local/share/parallax`
+ * (lib/dataDir.ts).
+ */
+export function defaultHome(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return defaultDataDir(env, platform);
 }
 
 export interface LoadConfigInput {
@@ -138,6 +157,8 @@ export interface LoadConfigInput {
   cwd?: string;
   /** Text of a file (throws like `readFileSync`); seam for the settings file (default: real fs). */
   readFile?: (file: string) => string;
+  /** Test seam: path rules, data directory and toasts of this platform (default `process.platform`). */
+  platform?: NodeJS.Platform;
 }
 
 // ---- settings.json, read-only (ADR-111) ----
@@ -161,17 +182,20 @@ function readTextFile(file: string): string {
  * Reads `<home>/settings.json` WITHOUT writing or moving anything (the settings store of the
  * server owns the file; the launcher only peeks): missing → no settings, no hint; unreadable,
  * invalid or written by a newer Parallax version (`schemaVersion` > SETTINGS_SCHEMA_VERSION) →
- * no settings and a hint. Never throws. Under Vitest the real data directory is never read, also
- * not through a hand-made `env` (CLAUDE.md "Tests").
+ * no settings and a hint. Never throws. Under Vitest the real data directory of THIS machine is
+ * never read, also not through a hand-made `env` (CLAUDE.md "Tests"). `platform` joins the file
+ * name (test seam).
  */
 export function readSettingsFile(
   home: string,
   readFile: (file: string) => string = readTextFile,
+  platform: NodeJS.Platform = process.platform,
 ): SettingsPeek {
-  if (process.env.VITEST !== undefined && isWindowsPathInside(home, defaultHome(process.env))) {
+  const host = platformPaths(process.platform);
+  if (process.env.VITEST !== undefined && host.rules.isInside(home, defaultHome(process.env))) {
     return { settings: null, note: null };
   }
-  const file = path.join(home, SETTINGS_FILE);
+  const file = platformPaths(platform).path.join(home, SETTINGS_FILE);
   const ignored = (why: string): SettingsPeek => ({
     settings: null,
     note: `${file} ignored (${why}) - using the defaults for port and autostart`,
@@ -240,13 +264,15 @@ export function systemIntegrationAvailable(
     platform === 'win32' &&
     config.backend === 'sdk' &&
     !config.dev &&
-    windowsPathsEqual(config.home, defaultHome(env))
+    platformPaths(platform).rules.equal(config.home, defaultHome(env, platform))
   );
 }
 
 export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
   const env = input.env ?? process.env;
   const cwd = input.cwd ?? process.cwd();
+  const platform = input.platform ?? process.platform;
+  const { path: paths, rules } = platformPaths(platform);
   let values: Record<string, string | boolean | undefined>;
   try {
     ({ values } = parseArgs({
@@ -300,26 +326,25 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
       : parseOrThrow(logLevelSchema, logLevelRaw, 'log level');
 
   const homeRaw = flag('home') ?? nonEmpty(env.PARALLAX_HOME);
-  const realHome = defaultHome(env);
+  const realHome = defaultHome(env, platform);
   const home =
     homeRaw === undefined
       ? dev
-        ? path.resolve(cwd, DEV_HOME_DIR)
+        ? paths.resolve(cwd, DEV_HOME_DIR)
         : realHome
-      : path.resolve(cwd, parseOrThrow(homeSchema, homeRaw, 'home'));
-  if (process.platform === 'win32') {
-    const issue = windowsPathIssue(home);
-    if (issue !== null) throw new ConfigError(`invalid home (${issue}): ${home}`);
-  }
-  const isRealHome = windowsPathsEqual(home, realHome);
+      : paths.resolve(cwd, parseOrThrow(homeSchema, homeRaw, 'home'));
+  const homeIssue = rules.issue(home);
+  if (homeIssue !== null) throw new ConfigError(`invalid home (${homeIssue}): ${home}`);
+  const isRealHome = rules.equal(home, realHome);
   // Also no folder inside it (R0-23).
-  if (env.VITEST !== undefined && isWindowsPathInside(home, realHome)) {
+  if (env.VITEST !== undefined && rules.isInside(home, realHome)) {
     throw new ConfigError(`tests must not use the real data directory ${realHome}`);
   }
-  if (backend === 'fake' && isWindowsPathInside(home, realHome)) {
+  if (backend === 'fake' && rules.isInside(home, realHome)) {
     throw new ConfigError(
       `the FakeBackend never uses the real data directory ${realHome} - pass --home=<dir> or ` +
-        'PARALLAX_HOME (e.g. a folder in %TEMP%), or start without --backend=fake/PARALLAX_BACKEND=fake',
+        `PARALLAX_HOME (e.g. a folder in ${platform === 'win32' ? '%TEMP%' : '/tmp'}), or start without ` +
+        '--backend=fake/PARALLAX_BACKEND=fake',
     );
   }
 
@@ -330,7 +355,7 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
   if (portRaw !== undefined) {
     port = parseOrThrow(portSchema, portRaw, 'port');
   } else {
-    const peek = readSettingsFile(home, input.readFile);
+    const peek = readSettingsFile(home, input.readFile, platform);
     if (peek.note !== null) notes.push(peek.note);
     port = peek.settings?.port ?? DEFAULT_PORT;
   }
@@ -344,9 +369,9 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
   );
 
   const installRootRaw = flag('install-root');
-  const installRoot = installRootRaw === undefined ? null : path.resolve(cwd, installRootRaw);
-  if (installRoot !== null && process.platform === 'win32') {
-    const issue = windowsPathIssue(installRoot);
+  const installRoot = installRootRaw === undefined ? null : paths.resolve(cwd, installRootRaw);
+  if (installRoot !== null) {
+    const issue = rules.issue(installRoot);
     if (issue !== null) throw new ConfigError(`invalid install root (${issue}): ${installRoot}`);
   }
 
@@ -360,12 +385,17 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
         : 'log';
 
   const toastsRaw = flag('toasts') ?? nonEmpty(env.PARALLAX_TOASTS);
-  const toasts: ToastMode =
+  let toasts: ToastMode =
     toastsRaw !== undefined
       ? parseOrThrow(toastModeSchema, toastsRaw, 'toasts')
-      : process.platform === 'win32' && env.VITEST === undefined && env.NODE_ENV !== 'test'
+      : platform === 'win32' && env.VITEST === undefined && env.NODE_ENV !== 'test'
         ? 'native'
         : 'off';
+  // Native toasts are Windows toasts (lib/toast.ts); elsewhere the browser notifications stay.
+  if (toasts === 'native' && platform !== 'win32') {
+    notes.push('native toasts exist only on Windows - toasts are off');
+    toasts = 'off';
+  }
 
   return {
     dev,
@@ -375,7 +405,7 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
     port,
     host,
     home,
-    dataDirLabel: isRealHome ? `%LOCALAPPDATA%\\${PRODUCT_NAME}` : dev ? 'dev' : home,
+    dataDirLabel: isRealHome ? defaultDataDirLabel(env, platform) : dev ? 'dev' : home,
     logLevel,
     systemIntegration,
     installRoot,

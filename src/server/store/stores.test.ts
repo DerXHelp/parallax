@@ -110,7 +110,7 @@ describe('newer schemaVersion aborts the start (R1-06)', () => {
 describe('SettingsStore (settings.json)', () => {
   it('patches only the given fields and persists', async () => {
     const home = await makeTempHome('settings-');
-    const settings = await openSettingsStore({ home, debounceMs: 5 });
+    const settings = await openSettingsStore({ home, debounceMs: 5, platform: 'win32' });
     expect(settings.get()).toEqual(sampleSettings());
     expect(settings.update({ language: 'de' })).toEqual(sampleSettings({ language: 'de' }));
     expect(settings.update({ theme: undefined })).toEqual(sampleSettings({ language: 'de' }));

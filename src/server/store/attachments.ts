@@ -2,9 +2,9 @@ import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { blobIdSchema, type BlobId, type EntryId } from '@shared/common';
 import { makeError } from '@shared/errors';
-import { windowsPathExtension, windowsPathIssue } from '@shared/paths';
+import { windowsPathExtension, windowsPathIssue, type PathRules } from '@shared/paths';
 import { nodeFsOps, writeFileAtomic, type FsOps } from '../lib/fs';
-import { fsErrorCode } from '../lib/paths';
+import { fsErrorCode, HOST_PATH_RULES } from '../lib/paths';
 import { CommandError, type AttachmentFileStore, type BlobStore } from '../sync/ports';
 import { entryDir } from './decisions';
 
@@ -15,6 +15,10 @@ import { entryDir } from './decisions';
  * as an additionalDirectory of every start (C.11); the file service (WP-53) lists the folder as
  * `attached` and treats it as a root (ADR-141). Copies are idempotent (same size → nothing to do)
  * and atomic (`writeFileAtomic`).
+ *
+ * WP-103: the copy's name stays Windows-safe on every host (a subset of what POSIX allows, so a name
+ * survives a move between hosts); the target path is checked with the rules of this host
+ * (`AttachmentFileStoreOptions.rules`, default `HOST_PATH_RULES`).
  */
 
 export const ATTACHMENTS_DIR = 'attachments';
@@ -93,6 +97,8 @@ export interface AttachmentFileStoreOptions {
   fs?: FsOps;
   /** Size of an existing copy; null = missing (seam, default `fs.stat`). */
   sizeOf?: (file: string) => Promise<number | null>;
+  /** Path rules of the target check (default `HOST_PATH_RULES`, WP-103). */
+  rules?: PathRules;
 }
 
 async function fileSize(file: string): Promise<number | null> {
@@ -112,6 +118,7 @@ export function createAttachmentFileStore(
 ): AttachmentFileStore {
   const fs = options.fs ?? nodeFsOps;
   const sizeOf = options.sizeOf ?? fileSize;
+  const rules = options.rules ?? HOST_PATH_RULES;
 
   const dir = async (entryId: EntryId): Promise<string> => {
     const folder = attachmentsDir(home, entryId);
@@ -128,11 +135,11 @@ export function createAttachmentFileStore(
       const folder = path.join(attachmentsDir(home, entryId), blobId.slice(0, BLOB_PREFIX_CHARS));
       const safe = sanitizeAttachmentName(name);
       let target = safe === null ? null : path.join(folder, safe);
-      if (target === null || windowsPathIssue(target) !== null) {
+      if (target === null || rules.issue(target) !== null) {
         const fallback = `${blobId.slice(0, BLOB_PREFIX_CHARS)}.${fallbackExtension(safe, blob.ref.mediaType)}`;
         target = path.join(folder, fallback);
       }
-      const issue = windowsPathIssue(target);
+      const issue = rules.issue(target);
       if (issue !== null) throw new CommandError(makeError('PATH_REJECTED', { reason: issue }));
       // Idempotent: the same content under the same name was copied before.
       if ((await sizeOf(target)) === blob.data.byteLength) return target;

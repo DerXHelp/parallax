@@ -125,9 +125,13 @@ const open = (
 describe('createFileService – L15 spy test: rejected paths never reach the file system or a program', () => {
   it('UNC, device and paths outside the policy: no fs call, no program start (every command, HTTP)', async () => {
     const s = await setup();
-    const rejected = ['\\\\host\\share\\x', '//host/x', '\\\\?\\C:\\x'];
+    // The rules of the host (WP-103): on POSIX a Windows path is no absolute path, `//host/x` is `/host/x`.
+    const rejected =
+      process.platform === 'win32'
+        ? ['\\\\host\\share\\x', '//host/x', '\\\\?\\C:\\x']
+        : ['\\\\host\\share\\x', 'C:\\Windows\\win.ini', '/proc/self/environ', '/etc/../etc/hostname'];
     const outsidePolicy = [
-      'C:\\Windows\\win.ini',
+      process.platform === 'win32' ? 'C:\\Windows\\win.ini' : '//host/x',
       path.join(s.outside, 'secret.txt'),
       path.join(s.home, 'project-other', 'a.txt'),
     ];
@@ -418,9 +422,11 @@ describe('createFileService – files.session / files.project', () => {
     expect(await failure(s.run(project))).toEqual({ code: 'CWD_NOT_FOUND', params: {} });
     s.info.cwd = path.join(s.home, 'project', 'README.md');
     expect(await failure(s.run(project))).toEqual({ code: 'CWD_NOT_DIRECTORY', params: {} });
-    s.info.cwd = '\\\\server\\share\\repo';
+    const [unsafe, reason] =
+      process.platform === 'win32' ? ['\\\\server\\share\\repo', 'unc'] : ['/proc/self', 'pseudo_fs'];
+    s.info.cwd = unsafe;
     const before = s.fs.calls.length;
-    expect(await failure(s.run(project))).toEqual({ code: 'PATH_REJECTED', params: { reason: 'unc' } });
+    expect(await failure(s.run(project))).toEqual({ code: 'PATH_REJECTED', params: { reason } });
     expect(s.fs.calls.length).toBe(before);
     expect(s.gitRuns).toEqual([]);
   });

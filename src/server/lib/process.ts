@@ -10,19 +10,28 @@
  * The ONE exception from `windowsHide: true` (CLAUDE.md "Windows", ADR-144, proposal WP-50 §6):
  * `spawnGui`/`spawnExplorer` below start visible GUI programs after a user click (editor, Explorer,
  * default program) – absolute `.exe` only, block list, PE subsystem GUI, no shell, detached.
+ *
+ * POSIX (WP-103, WP-100 §5.2): absolute paths after the POSIX path rules, executable; every hidden
+ * child starts `detached` – its own process group and session – so `killProcessTree` ends it with
+ * its group: `SIGTERM` to the groups of the tree, after a grace `SIGKILL`; descendants that opened a
+ * group or session of their own (`setsid`) are found in `/proc` first (WP-101 §1.4). The process
+ * list comes from `/proc` (lib/procfs.ts). `spawnGui` has no PE check there (Linux has no GUI flag);
+ * it uses the POSIX block list.
  */
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import path from 'node:path';
 import { makeError } from '@shared/errors';
-import { EDITOR_BLOCKED_EXECUTABLES } from '@shared/model';
-import { windowsPathIssue } from '@shared/paths';
+import { EDITOR_BLOCKED_EXECUTABLES, editorExecutableIssue } from '@shared/model';
+import { POSIX_PATHS, windowsPathIssue } from '@shared/paths';
 import { TERMINAL_TOOL_SHELL_VARS, envRemovalReason } from '../claude/env';
 import { CommandError } from '../sync/ports';
-import { toError } from './async';
+import { sleep, toError } from './async';
+import { isSpawnableIfPresent, posixSystemTool } from './executables';
 import { readFileHead } from './fileRead';
 import { logger } from './logger';
 import { fsErrorCode } from './paths';
 import { PE_HEADER_BYTES, PE_SUBSYSTEM_WINDOWS_GUI, peSubsystem } from './pe';
+import { createProcfsReader, isEndedState, type ProcStat } from './procfs';
 import { loadNativeProcessApi, type NativeProcessApi } from './processNative';
 
 export interface RunFileOptions {
@@ -79,13 +88,21 @@ export function errnoCode(error: unknown): string | undefined {
  *   ADS path) ending in `.exe`. Bare names (`git`, `explorer.exe`) are refused – libuv would look
  *   in the child's cwd before the PATH unless `NoDefaultCurrentDirectoryInExePath` is set.
  *   `.cmd`/`.bat`/`.ps1`/`.com` are refused (they need a shell or are not what we resolved).
- * - Other platforms (tests only): an absolute path.
+ * - POSIX (WP-103): a path the POSIX rules accept (absolute, no `.`/`..`, no control character, not
+ *   below `/proc`, `/sys`, `/dev`); on this machine also no existing non-executable file (a folder,
+ *   a FIFO, a file without `x` bit). A missing file passes – the spawn reports ENOENT as on Windows.
+ *   Scripts with a shebang are fine: the kernel starts them without a shell.
  */
 export function assertSpawnableFile(file: string, platform: NodeJS.Platform = process.platform): void {
   if (file === '' || file.includes('\0')) throw new TypeError('spawn: empty or invalid executable');
   if (platform !== 'win32') {
-    if (!path.posix.isAbsolute(file))
-      throw new TypeError(`spawn: only absolute paths are started, got "${file}"`);
+    const issue = POSIX_PATHS.issue(file);
+    if (issue !== null)
+      throw new TypeError(`spawn: only absolute paths are started (${issue}), got "${file}"`);
+    // The file system is only asked on its own platform (tests check the POSIX rules on Windows too).
+    if (platform === process.platform && !isSpawnableIfPresent(file)) {
+      throw new TypeError(`spawn: not an executable file, got "${file}"`);
+    }
     return;
   }
   if (path.win32.extname(file).toLowerCase() !== '.exe') {
@@ -100,8 +117,24 @@ export function assertSpawnableFile(file: string, platform: NodeJS.Platform = pr
   }
 }
 
-/** Absolute path of a Windows system tool (System32), never resolved through PATH. */
-export function systemTool(name: string, env: NodeJS.ProcessEnv = process.env): string {
+/** A Windows tool name (`tar.exe`, `WindowsPowerShell\v1.0\powershell.exe`) – never a POSIX tool. */
+function isWindowsToolName(name: string): boolean {
+  return /\.exe$/i.test(name) || name.includes('\\');
+}
+
+/**
+ * Absolute path of a system tool, never resolved through PATH: Windows `%SystemRoot%\System32\<name>`;
+ * POSIX (WP-103) `/usr/bin/<name>` or `/bin/<name>`, whichever is executable (lib/executables.ts) –
+ * callers pass the POSIX name there (`tar`, not `tar.exe`). A Windows tool name keeps its System32
+ * path on every platform (as before WP-103): only Windows code paths ask for one (registry, toasts,
+ * taskkill), and off Windows `assertSpawnableFile` refuses it – an error, never a surprise program.
+ */
+export function systemTool(
+  name: string,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform !== 'win32' && !isWindowsToolName(name)) return posixSystemTool(name);
   const root = env.SystemRoot ?? env.SYSTEMROOT ?? env.windir ?? 'C:\\Windows';
   return path.win32.join(root, 'System32', name);
 }
@@ -113,9 +146,19 @@ export function explorerPath(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /**
+ * POSIX (WP-103): a hidden child leads its own process group (and session), so `killProcessTree`
+ * reaches everything it starts; an explicit `detached` of the caller wins. Windows: unchanged.
+ */
+function withProcessGroup(options: SpawnOptions): SpawnOptions {
+  if (process.platform === 'win32') return options;
+  return { ...options, detached: options.detached ?? true };
+}
+
+/**
  * spawn() with `shell: false` and `windowsHide: true` (cannot be overridden). A piped stderr is
  * always consumed (F.16); see `onStderr`. The caller must handle the child's `error` event
  * (spawn failures such as ENOENT arrive there) and should end trees with killProcessTree().
+ * POSIX: `detached` (own process group) unless the caller says otherwise.
  */
 export function spawnHidden(
   file: string,
@@ -124,7 +167,11 @@ export function spawnHidden(
 ): ChildProcess {
   assertSpawnableFile(file);
   const { onStderr, ...spawnOptions } = options;
-  const child = spawn(file, [...args], { ...spawnOptions, shell: false, windowsHide: true });
+  const child = spawn(file, [...args], {
+    ...withProcessGroup(spawnOptions),
+    shell: false,
+    windowsHide: true,
+  });
   const stderr = child.stderr;
   if (stderr !== null) {
     stderr.setEncoding('utf8');
@@ -159,7 +206,8 @@ function collector(max: number): { push(chunk: Buffer): void; text(): string } {
 /**
  * Runs `file args` to completion (like execFile, but never through a shell). Resolves for any exit
  * code; rejects only when the process cannot be started (ENOENT, EACCES, …). On timeout (or an
- * aborted `signal`) the whole process tree is killed (`taskkill /T /F`), so no grandchild survives.
+ * aborted `signal`) the whole process tree is killed (`killProcessTree`: Windows `taskkill /T /F`,
+ * POSIX the process groups of the tree), so no grandchild survives.
  */
 export function runFile(
   file: string,
@@ -176,13 +224,17 @@ export function runFile(
     let child: ChildProcess;
     try {
       assertSpawnableFile(file);
-      child = spawn(file, [...args], {
-        cwd: options.cwd,
-        env: options.env,
-        shell: false,
-        windowsHide: true,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+      child = spawn(
+        file,
+        [...args],
+        withProcessGroup({
+          cwd: options.cwd,
+          env: options.env,
+          shell: false,
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }),
+      );
     } catch (error) {
       reject(toError(error));
       return;
@@ -243,14 +295,20 @@ export function runFile(
   });
 }
 
-/** True if a process with this PID exists (EPERM = exists, but belongs to someone else). */
+/**
+ * True if a process with this PID exists (EPERM = exists, but belongs to someone else). Linux: a
+ * zombie (ended, not yet reaped – `kill(pid, 0)` still succeeds) counts as gone.
+ */
 export function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
-    return true;
   } catch (error) {
-    return errnoCode(error) === 'EPERM';
+    if (errnoCode(error) !== 'EPERM') return false;
   }
+  if (process.platform !== 'linux') return true;
+  // Unreadable (no /proc, or ended just now): `kill` said it exists.
+  const row = createProcfsReader().stat(pid);
+  return row === null || !isEndedState(row.state);
 }
 
 function assertPid(pid: number): void {
@@ -261,18 +319,47 @@ function assertPid(pid: number): void {
 /** taskkill exit code for "process not found". */
 const TASKKILL_NOT_FOUND = 128;
 
+/** POSIX: how long the tree has for `SIGTERM` before `SIGKILL` (claude flushes its transcript). */
+export const KILL_TREE_GRACE_MS = 2_000;
+/** POSIX: how long a `SIGKILL`ed process may take to disappear (a zombie counts as gone). */
+const KILL_TREE_REAP_MS = 2_000;
+const KILL_TREE_POLL_MS = 50;
+
+/** What the POSIX `killProcessTree` needs (seam: tests fake the table and record the signals). */
+export interface PosixKillDeps {
+  /** The process table (default `/proc`); null = unknown → only the process and the group it leads. */
+  table(): ProcStat[] | null;
+  /** One process now, for the liveness checks while waiting. */
+  stat(pid: number): ProcStat | null;
+  /** `process.kill`; a negative target is a process group. `0` only probes. May throw (ESRCH, EPERM). */
+  kill(target: number, signal: NodeJS.Signals | 0): void;
+  sleep(ms: number): Promise<void>;
+  now(): number;
+  /** The server's own PID (never signalled, nor its group or session). */
+  ownPid: number;
+}
+
+export interface KillTreeOptions {
+  /** Test seam (default `process.platform`). */
+  platform?: NodeJS.Platform;
+  /** POSIX: `SIGTERM` → at most this long → `SIGKILL` (default KILL_TREE_GRACE_MS). */
+  graceMs?: number;
+  /** POSIX test seam (default: `/proc` and `process.kill`). */
+  posix?: PosixKillDeps;
+}
+
 /**
- * Ends `pid` and all its descendants (`taskkill /PID <pid> /T /F`, C.8). A process that is already
- * gone is not an error. Rejects if the process still runs afterwards.
+ * Ends `pid` and all its descendants. A process that is already gone is not an error. Rejects if
+ * the process still runs afterwards.
+ * - Windows: `taskkill /PID <pid> /T /F` (C.8).
+ * - POSIX (WP-103): the tree from `/proc` (`posixKillTargets`), `SIGTERM` to its process groups and
+ *   to members outside them, at most `graceMs` for them to end, then `SIGKILL` to whatever is left.
+ *   Never the server itself, its group or its session.
  */
-export async function killProcessTree(pid: number): Promise<void> {
+export async function killProcessTree(pid: number, options: KillTreeOptions = {}): Promise<void> {
   assertPid(pid);
-  if (process.platform !== 'win32') {
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch (error) {
-      if (errnoCode(error) !== 'ESRCH') throw error;
-    }
+  if ((options.platform ?? process.platform) !== 'win32') {
+    await killPosixTree(pid, options.graceMs ?? KILL_TREE_GRACE_MS, options.posix ?? defaultPosixKillDeps());
     return;
   }
   const result = await runTaskkill(pid);
@@ -315,25 +402,179 @@ function runTaskkill(pid: number): Promise<RunFileResult> {
   });
 }
 
+// ---- POSIX process trees (WP-103) ----
+
+function defaultPosixKillDeps(): PosixKillDeps {
+  const reader = createProcfsReader();
+  return {
+    table: () => reader.table(),
+    stat: (pid) => reader.stat(pid),
+    kill: (target, signal) => {
+      process.kill(target, signal);
+    },
+    sleep,
+    now: Date.now,
+    ownPid: process.pid,
+  };
+}
+
+/** Process groups signalled as a whole, and every process of the tree. */
+export interface PosixKillTargets {
+  /** `kill(-pgid)`: groups the tree created (led by a member or by `root`), never the server's own. */
+  groups: number[];
+  /** Every process of the tree (liveness; signalled one by one unless its group is in `groups`). */
+  processes: ProcStat[];
+}
+
+/**
+ * The tree of `root` in a `/proc` table (pure): `root`, its descendants (by parent PID; a "child"
+ * that started before its parent is a reused PID) and every process in a group or session the tree
+ * created – also descendants that left with `setsid` and orphans whose parent already ended (WP-101
+ * §1.4). A group/session id is the PID of its leader and Linux hands out no PID that still names
+ * one, so the group and session `root` led are its own even after `root` ended. The server itself
+ * (`ownPid`), init and the server's own group and session never belong to a tree.
+ */
+export function posixKillTargets(table: readonly ProcStat[], root: number, ownPid: number): PosixKillTargets {
+  const self = table.find((row) => row.pid === ownPid);
+  const foreignGroup = (id: number): boolean => id <= 1 || id === ownPid || id === self?.pgid;
+  const foreignSession = (id: number): boolean => id <= 1 || id === ownPid || id === self?.sid;
+  const members = new Map<number, ProcStat>();
+  const groups = new Set<number>();
+  const sessions = new Set<number>();
+  if (!foreignGroup(root)) groups.add(root);
+  if (!foreignSession(root)) sessions.add(root);
+  const add = (row: ProcStat): boolean => {
+    if (row.pid <= 1 || row.pid === ownPid || members.has(row.pid)) return false;
+    members.set(row.pid, row);
+    if (row.pgid === row.pid && !foreignGroup(row.pid)) groups.add(row.pid);
+    if (row.sid === row.pid && !foreignSession(row.pid)) sessions.add(row.pid);
+    return true;
+  };
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const row of table) {
+      if (members.has(row.pid)) continue;
+      const parent = members.get(row.ppid);
+      const belongs =
+        row.pid === root ||
+        groups.has(row.pgid) ||
+        sessions.has(row.sid) ||
+        (parent !== undefined && row.startTicks >= parent.startTicks);
+      if (belongs && add(row)) changed = true;
+    }
+  }
+  const processes = [...members.values()];
+  return {
+    groups: [...groups].filter((group) => processes.some((p) => p.pgid === group)),
+    processes,
+  };
+}
+
+function trySignal(deps: PosixKillDeps, target: number, signal: NodeJS.Signals): void {
+  try {
+    deps.kill(target, signal);
+  } catch (error) {
+    // ESRCH: gone meanwhile; EPERM: not ours (the liveness check after SIGKILL decides).
+    logger.debug({ target, signal, code: errnoCode(error) }, 'killProcessTree: signal not delivered');
+  }
+}
+
+/** The processes of `watched` that still run after at most `ms` (same start time, not a zombie). */
+async function survivors(deps: PosixKillDeps, watched: readonly ProcStat[], ms: number): Promise<ProcStat[]> {
+  const deadline = deps.now() + ms;
+  for (;;) {
+    const alive = watched.filter((p) => {
+      const now = deps.stat(p.pid);
+      return now !== null && now.startTicks === p.startTicks && !isEndedState(now.state);
+    });
+    if (alive.length === 0 || deps.now() >= deadline) return alive;
+    await deps.sleep(KILL_TREE_POLL_MS);
+  }
+}
+
+async function killPosixTree(pid: number, graceMs: number, deps: PosixKillDeps): Promise<void> {
+  const table = deps.table();
+  if (table === null) {
+    await killPosixWithoutTable(pid, graceMs, deps);
+    return;
+  }
+  const { groups, processes } = posixKillTargets(table, pid, deps.ownPid);
+  if (processes.length === 0) return;
+  const grouped = new Set(groups);
+  // Each group of the targets as a whole, the others one by one.
+  const send = (signal: NodeJS.Signals, targets: readonly ProcStat[]): void => {
+    const hit = new Set(targets.map((p) => p.pgid));
+    for (const group of groups) if (hit.has(group)) trySignal(deps, -group, signal);
+    for (const p of targets) if (!grouped.has(p.pgid)) trySignal(deps, p.pid, signal);
+  };
+  send('SIGTERM', processes);
+  const left = await survivors(deps, processes, graceMs);
+  if (left.length === 0) return;
+  send('SIGKILL', left);
+  const stuck = await survivors(deps, left, KILL_TREE_REAP_MS);
+  if (stuck.some((p) => p.pid === pid)) {
+    throw new Error(`kill ${String(pid)} failed: the process still runs after SIGKILL`);
+  }
+}
+
+/**
+ * Without a process table (no `/proc`): the process and the group it leads (`spawnHidden` starts
+ * children detached). Not the group of our parent (it may be ours).
+ */
+async function killPosixWithoutTable(pid: number, graceMs: number, deps: PosixKillDeps): Promise<void> {
+  const alive = (): boolean => {
+    try {
+      deps.kill(pid, 0);
+      return true;
+    } catch (error) {
+      return errnoCode(error) === 'EPERM';
+    }
+  };
+  const send = (signal: NodeJS.Signals): void => {
+    if (pid !== process.ppid) trySignal(deps, -pid, signal);
+    trySignal(deps, pid, signal);
+  };
+  const waitEnd = async (ms: number): Promise<boolean> => {
+    const deadline = deps.now() + ms;
+    while (alive()) {
+      if (deps.now() >= deadline) return false;
+      await deps.sleep(KILL_TREE_POLL_MS);
+    }
+    return true;
+  };
+  if (!alive()) return;
+  send('SIGTERM');
+  if (await waitEnd(graceMs)) return;
+  send('SIGKILL');
+  if (!(await waitEnd(KILL_TREE_REAP_MS))) {
+    throw new Error(`kill ${String(pid)} failed: the process still runs after SIGKILL`);
+  }
+}
+
 // =====================================================================================
 // Process queries (orphan cleanup at server start, shutdown sweep) – R2-02
 // ADR-229, ADR-231: in this process through `node:ffi` (lib/processNative.ts) – never PowerShell.
 // Without `node:ffi` (switched off, the permission model, not Windows x64) every query is unknown.
+// Linux (WP-103): `/proc` (lib/procfs.ts), no `node:ffi` needed.
 // =====================================================================================
 
 /** Identity of a running process, for the orphan cleanup on the next start (B, C.8). */
 export interface ProcessInfo {
   pid: number;
-  /** Image name, e.g. `claude.exe`. */
+  /** Image name, e.g. `claude.exe` (Linux: `comm`, the started file's base name cut to 15 bytes). */
   name: string;
   parentPid: number | null;
-  /** Creation time (UTC). PID + name + start time identify a process; PIDs alone are reused. */
+  /**
+   * Creation time (UTC). PID + name + start time identify a process; PIDs alone are reused.
+   * Linux: the same value in every process, up to 1 s earlier than the real start (lib/procfs.ts).
+   */
   startedAt: Date;
 }
 
 /**
  * Why a query gave no answer: the native snapshot failed (`failed`), or there is no native process
- * list – not Windows, or no `node:ffi` (`unsupported`). NEVER the same as "the process is gone".
+ * list – neither Windows nor Linux, or no `node:ffi` on Windows (`unsupported`). NEVER the same as
+ * "the process is gone".
  */
 export type ProcessQueryFailure = 'failed' | 'unsupported';
 
@@ -369,13 +610,17 @@ function unknownResult(reason: ProcessQueryFailure, detail: string): ProcessQuer
 /**
  * Processes of the native snapshot that `wanted` accepts (null = all), with their start times.
  * A process whose start time cannot be read (another user's, a protected one) is left out – it is
- * never one of this user's session processes. Unknown off Windows and without `node:ffi`.
+ * never one of this user's session processes. Unknown off Windows and Linux and without `node:ffi`
+ * on Windows.
  */
 function nativeQuery(
   options: ProcessQueryOptions,
   wanted: ((entry: { pid: number; parentPid: number }) => boolean) | null,
 ): ProcessQueryResult {
-  if ((options.platform ?? process.platform) !== 'win32') return unknownResult('unsupported', 'not Windows');
+  const platform = options.platform ?? process.platform;
+  if (platform !== 'win32' && platform !== 'linux') {
+    return unknownResult('unsupported', 'no native process list on this platform');
+  }
   if (options.native === undefined && defaultNative === undefined) defaultNative = loadNativeProcessApi();
   const api = options.native === undefined ? defaultNative : options.native;
   if (api === null || api === undefined) {
@@ -386,7 +631,7 @@ function nativeQuery(
   const processes: ProcessInfo[] = [];
   for (const entry of entries) {
     if (entry.pid <= 0 || (wanted !== null && !wanted(entry))) continue;
-    const startedAt = api.startedAt(entry.pid);
+    const startedAt = entry.startedAt !== undefined ? entry.startedAt : api.startedAt(entry.pid);
     if (startedAt === null) continue;
     processes.push({ pid: entry.pid, name: entry.name, parentPid: entry.parentPid, startedAt });
   }
@@ -503,15 +748,22 @@ export async function childProcesses(
  * session go too, like for an interactive terminal (TERMINAL_TOOL_SHELL_VARS: an editor's terminal
  * would inherit `GIT_TERMINAL_PROMPT=0`, `NO_COLOR` …). Machine variables (`NPM_CONFIG_REGISTRY`,
  * `NODE_OPTIONS` …) stay: the program sees the user's normal environment.
+ * POSIX (WP-103): `CLAUDECODE` and the tool-shell names count only in their exact spelling (names
+ * are case-sensitive there); the removal rules of claude/env.ts match any spelling, which only
+ * removes more.
  */
-export function guiEnvironment(base: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  const fromClaudeSession = Object.keys(base).some((name) => name.toUpperCase() === 'CLAUDECODE');
+export function guiEnvironment(
+  base: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): Record<string, string> {
+  const spelling = (name: string): string => (platform === 'win32' ? name.toUpperCase() : name);
+  const fromClaudeSession = Object.keys(base).some((name) => spelling(name) === 'CLAUDECODE');
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(base)) {
     if (value === undefined) continue;
     const reason = envRemovalReason(name);
     if (reason === 'session' || reason === 'run_state') continue;
-    if (fromClaudeSession && TERMINAL_TOOL_SHELL_VARS.includes(name.toUpperCase())) continue;
+    if (fromClaudeSession && TERMINAL_TOOL_SHELL_VARS.includes(spelling(name))) continue;
     env[name] = value;
   }
   return env;
@@ -579,6 +831,10 @@ function startDetached(start: () => GuiChild): Promise<void> {
  *   would open a console window);
  * - `shell: false`, argument array, `windowsHide: false`, `detached: true`, `stdio: 'ignore'`,
  *   `unref()`; working folder `cwd`; environment `guiEnvironment()`.
+ * POSIX (WP-103, WP-100 §5.2): an absolute program after the POSIX rules, base name not on
+ * EDITOR_BLOCKED_POSIX_EXECUTABLES (`editorExecutableIssue`: shells, interpreters, wrappers, terminal
+ * emulators, openers like `xdg-open`), no PE check; `detached` (own session, `setsid`), stdio
+ * `ignore`. The callers (editor, file manager) come with WP-106.
  * Errors: OPEN_FAILED {reason: 'path' | 'blocked' | 'not_gui' | <errno code>}.
  */
 export async function spawnGui(
@@ -586,10 +842,27 @@ export async function spawnGui(
   args: readonly string[],
   options: SpawnGuiOptions,
 ): Promise<void> {
+  const platform = options.platform ?? process.platform;
   try {
-    assertSpawnableFile(file, options.platform);
+    assertSpawnableFile(file, platform);
   } catch {
     throw openFailed('path');
+  }
+  const spawnFn = options.spawn ?? defaultGuiSpawn;
+  if (platform !== 'win32') {
+    const issue = editorExecutableIssue(file, POSIX_PATHS);
+    if (issue === 'blocked') throw openFailed('blocked');
+    if (issue !== null) throw openFailed('path');
+    const posixOptions: SpawnOptions = {
+      cwd: options.cwd,
+      env: guiEnvironment(options.env, platform),
+      shell: false,
+      windowsHide: false,
+      detached: true,
+      stdio: 'ignore',
+    };
+    await startDetached(() => spawnFn(file, args, posixOptions));
+    return;
   }
   const base = path.win32.basename(file).toLowerCase();
   if ((EDITOR_BLOCKED_EXECUTABLES as readonly string[]).includes(base)) throw openFailed('blocked');
@@ -602,13 +875,12 @@ export async function spawnGui(
   if (peSubsystem(head) !== PE_SUBSYSTEM_WINDOWS_GUI) throw openFailed('not_gui');
   const spawnOptions: SpawnOptions = {
     cwd: options.cwd,
-    env: guiEnvironment(options.env),
+    env: guiEnvironment(options.env, platform),
     shell: false,
     windowsHide: false,
     detached: true,
     stdio: 'ignore',
   };
-  const spawnFn = options.spawn ?? defaultGuiSpawn;
   await startDetached(() => spawnFn(file, args, spawnOptions));
 }
 

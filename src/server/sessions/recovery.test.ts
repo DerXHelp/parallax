@@ -96,7 +96,14 @@ describe('cleanupOrphans (C.8, R2-02, R2-03)', () => {
     const killProcessTree = vi.fn((_pid: number) => Promise.resolve());
     const queryProcesses = vi.fn((_filter: ProcessFilter) => Promise.resolve(ok()));
     const log = { warn: vi.fn(), error: vi.fn() };
-    const d: OrphanDeps = { isProcessAlive: () => true, queryProcesses, killProcessTree, log, ...p };
+    const d: OrphanDeps = {
+      isProcessAlive: () => true,
+      queryProcesses,
+      killProcessTree,
+      log,
+      platform: 'win32',
+      ...p,
+    };
     return { d, killProcessTree, queryProcesses, log };
   }
 
@@ -284,6 +291,39 @@ describe('cleanupOrphans (C.8, R2-02, R2-03)', () => {
         killProcessTree: () => Promise.reject(new Error('access denied')),
       });
       expect(await Promise.all(cleanupOrphans([withChildren()], d))).toEqual(['failed']);
+    });
+
+    it('Linux (WP-103): PID + start time alone – a renamed process is still ended, another start never', async () => {
+      const linuxRecord = { ...withChildren(), image: 'claude' };
+      const queryProcesses = vi.fn((_filter: ProcessFilter) =>
+        Promise.resolve(
+          ok(
+            live(shell, { name: 'bash' }),
+            live(ping, { name: 'ping', startedAt: new Date('2026-10-15T12:00:05.457Z') }),
+          ),
+        ),
+      );
+      const { d, killProcessTree } = deps({
+        isProcessAlive: (pid) => pid !== 4242,
+        queryProcesses,
+        platform: 'linux',
+      });
+      expect(await Promise.all(cleanupOrphans([linuxRecord], d))).toEqual(['killed']);
+      expect(killProcessTree.mock.calls.map((c) => c[0])).toEqual([5001]);
+      // The root under another `comm` (node: `node-MainThread`) within ± 5 s is the recorded one.
+      const root = deps({
+        queryProcesses: () => Promise.resolve(ok(info({ name: 'node-MainThread', startedAt: at(1) }))),
+        platform: 'linux',
+      });
+      expect(await Promise.all(cleanupOrphans([{ ...record(), image: 'claude' }], root.d))).toEqual([
+        'killed',
+      ]);
+      const reused = deps({
+        queryProcesses: () => Promise.resolve(ok(info({ name: 'claude', startedAt: at(6) }))),
+        platform: 'linux',
+      });
+      expect(await Promise.all(cleanupOrphans([record()], reused.d))).toEqual(['not_ours']);
+      expect(reused.killProcessTree).not.toHaveBeenCalled();
     });
 
     it('splitOrphanRecords: a dead root with a live snapshot process still needs the query', () => {

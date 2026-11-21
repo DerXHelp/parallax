@@ -1,11 +1,13 @@
 import { existsSync, mkdtempSync, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { isWindowsPathInside, windowsPathKey } from '@shared/paths';
+import { pathFlavorOf, pathRules, type PathRules } from '@shared/paths';
+import { defaultDataDir } from '../../src/server/lib/dataDir';
 
 /**
  * Test isolation (CLAUDE.md "Tests", R0-23, WP22-07): tests never touch the real data directory
- * (%LOCALAPPDATA%\Parallax) or the home of a running server.
+ * (Windows %LOCALAPPDATA%\Parallax, Linux $XDG_DATA_HOME/parallax or ~/.local/share/parallax – the
+ * one definition in src/server/lib/dataDir.ts, WP-103) or the home of a running server.
  *
  * - `PARALLAX_HOME`: an inherited value is used ONLY if it is one of our own test homes – a
  *   `parallax-test-*` folder directly inside the OS temp directory (what the Vitest globalSetup of
@@ -18,6 +20,9 @@ import { isWindowsPathInside, windowsPathKey } from '@shared/paths';
  * - Inherited server control variables (`SERVER_CONTROL_VARS`: backend, dev mode, validation,
  *   toasts, log level, host, entry id of a calling Parallax session, the update switches) are
  *   removed, so a test run behaves the same inside and outside a Parallax session.
+ *
+ * Paths are compared with the rules of the platform (`platform`, default this process; tests of the
+ * guard pin one): case-insensitive with `/` and `\` alike on Windows, exact on POSIX.
  */
 
 /**
@@ -62,17 +67,22 @@ export const SERVER_CONTROL_VARS: readonly string[] = [
   'PARALLAX_TEST_REGISTRY',
 ];
 
-/**
- * Comparison key of a Windows path: resolved here, compared by the ONE rule of `@shared/paths`
- * (CR-09, CLAUDE.md "Windows": never duplicated) – the same verdict as `config.ts`.
- */
-function pathKey(value: string): string {
-  return windowsPathKey(path.win32.resolve(value));
+/** `path.win32`/`path.posix` and the ONE rule set of `@shared/paths` (CR-09: never duplicated). */
+function flavor(platform: NodeJS.Platform): { path: typeof path.posix; rules: PathRules } {
+  return { path: platform === 'win32' ? path.win32 : path.posix, rules: pathRules(pathFlavorOf(platform)) };
 }
 
-/** True if `child` is `parent` or lies inside it (case-insensitive, `/` and `\` alike – R0-23). */
-export function isPathInside(child: string, parent: string): boolean {
-  return isWindowsPathInside(path.win32.resolve(child), path.win32.resolve(parent));
+/**
+ * True if `child` is `parent` or lies inside it (resolved first; Windows case-insensitive with `/`
+ * and `\` alike – R0-23; POSIX exact).
+ */
+export function isPathInside(
+  child: string,
+  parent: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const { path: paths, rules } = flavor(platform);
+  return rules.isInside(paths.resolve(child), paths.resolve(parent));
 }
 
 /** A `parallax-test-*` folder directly inside the OS temp directory (and not the real home). */
@@ -80,19 +90,29 @@ export function isOwnTestHome(
   home: string,
   env: NodeJS.ProcessEnv = process.env,
   tmpdir: string = os.tmpdir(),
+  platform: NodeJS.Platform = process.platform,
 ): boolean {
-  if (home.trim() === '' || isRealHome(home, env)) return false;
-  const resolved = path.win32.resolve(home);
+  if (home.trim() === '' || isRealHome(home, env, platform)) return false;
+  const { path: paths, rules } = flavor(platform);
+  const resolved = paths.resolve(home);
   return (
-    pathKey(path.win32.dirname(resolved)) === pathKey(tmpdir) &&
-    path.win32.basename(resolved).toLowerCase().startsWith(TEST_HOME_PREFIX)
+    rules.equal(paths.dirname(resolved), paths.resolve(tmpdir)) &&
+    paths.basename(resolved).toLowerCase().startsWith(TEST_HOME_PREFIX)
   );
 }
 
-function isRealHome(home: string, env: NodeJS.ProcessEnv): boolean {
-  const localAppData = env.LOCALAPPDATA;
-  if (localAppData === undefined || localAppData === '') return false;
-  return isPathInside(home, path.win32.join(localAppData, 'Parallax'));
+/**
+ * The real data directory of `env` – or null on Windows without LOCALAPPDATA (as before WP-103:
+ * nothing to compare with). POSIX always has one (`HOME` or the account's home folder).
+ */
+function realHomeOf(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string | null {
+  if (platform === 'win32' && (env.LOCALAPPDATA === undefined || env.LOCALAPPDATA === '')) return null;
+  return defaultDataDir(env, platform);
+}
+
+function isRealHome(home: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): boolean {
+  const real = realHomeOf(env, platform);
+  return real !== null && isPathInside(home, real, platform);
 }
 
 export interface EnsureTestEnvOptions {
@@ -139,15 +159,17 @@ export function ensureTestEnv(
 
 /**
  * Throws when PARALLAX_HOME is the productive data directory or lies inside it (R0-23; compared
- * case-insensitively with `/` and `\` alike, as Windows does).
+ * with the rules of the platform: on Windows case-insensitively with `/` and `\` alike).
  */
-export function assertNotRealHome(home: string, env: NodeJS.ProcessEnv = process.env): void {
-  const localAppData = env.LOCALAPPDATA;
-  if (localAppData === undefined || localAppData === '') return;
-  const real = pathKey(path.win32.join(localAppData, 'Parallax'));
-  if (isRealHome(home, env)) {
+export function assertNotRealHome(
+  home: string,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  const real = realHomeOf(env, platform);
+  if (real !== null && isRealHome(home, env, platform)) {
     throw new Error(
-      `Tests must not use the real data directory ${real} (or a folder inside it). Set PARALLAX_HOME to a temp dir.`,
+      `Tests must not use the real data directory ${flavor(platform).rules.key(real)} (or a folder inside it). Set PARALLAX_HOME to a temp dir.`,
     );
   }
 }

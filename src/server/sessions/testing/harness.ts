@@ -17,6 +17,7 @@ import { z } from 'zod';
 import type { ClientId, EntryId, PromptPriority } from '@shared/common';
 import type { ErrorPayload } from '@shared/errors';
 import type { Decision, DecisionResponse, Profile, SessionSummary } from '@shared/model';
+import { pathFlavorOfShape, pathRules } from '@shared/paths';
 import {
   commandResultSchemas,
   commandSchema,
@@ -330,7 +331,8 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     checkCwd:
       options.checkCwd ??
       ((cwd) => {
-        assertSafePath(cwd);
+        // WP-103: the rules of the cwd's own shape – the harness cwds are Windows samples on every host.
+        assertSafePath(cwd, pathRules(pathFlavorOfShape(cwd)));
         return Promise.resolve();
       }),
     proc,

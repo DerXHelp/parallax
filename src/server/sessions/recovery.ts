@@ -64,6 +64,8 @@ export interface OrphanDeps {
     warn(obj: Record<string, unknown>, msg: string): void;
     error(obj: Record<string, unknown>, msg: string): void;
   };
+  /** Whose process names count (`sameImage`; default `process.platform`, WP-103). */
+  platform?: NodeJS.Platform;
 }
 
 /**
@@ -81,8 +83,14 @@ export function keepsOrphanRecord(result: OrphanResult): boolean {
   return result === 'unknown' || result === 'failed';
 }
 
-function sameImage(a: string, b: string): boolean {
-  return a.toLowerCase() === b.toLowerCase();
+/**
+ * Same image name (case-insensitive). Linux (WP-103): always true – `comm` is no identity there (a
+ * program renames its main thread, node e.g. to `node-MainThread`; the recorded root image is the
+ * base name of the started path, `comm` that of the file actually run). A process is recognized by
+ * PID + start time alone; the start time comes from the same `/proc` list for every process.
+ */
+function sameImage(a: string, b: string, platform: NodeJS.Platform): boolean {
+  return platform !== 'win32' || a.toLowerCase() === b.toLowerCase();
 }
 
 /** The PIDs of a record that the liveness pre-filter still sees (the root and its snapshot). */
@@ -105,15 +113,17 @@ export function splitOrphanRecords(
 }
 
 /** Exactly the process of the snapshot: same PID (looked up), image (case-insensitive) and start time. */
-function matchesExactly(info: ProcessInfo, child: ProcessChild): boolean {
-  return sameImage(info.name, child.image) && info.startedAt.getTime() === Date.parse(child.startedAt);
+function matchesExactly(info: ProcessInfo, child: ProcessChild, platform: NodeJS.Platform): boolean {
+  return (
+    sameImage(info.name, child.image, platform) && info.startedAt.getTime() === Date.parse(child.startedAt)
+  );
 }
 
 /** The recorded claude.exe: same image and start time (± 5 s, the spawn time is taken in-process). */
-function isRecordedRoot(info: ProcessInfo, record: ProcessRecord): boolean {
+function isRecordedRoot(info: ProcessInfo, record: ProcessRecord, platform: NodeJS.Platform): boolean {
   const sameStart =
     Math.abs(info.startedAt.getTime() - Date.parse(record.startedAt)) <= ORPHAN_START_TOLERANCE_MS;
-  return sameImage(info.name, record.image) && sameStart;
+  return sameImage(info.name, record.image, platform) && sameStart;
 }
 
 function safeQuery(deps: OrphanDeps, filter: ProcessFilter): Promise<ProcessQueryResult> {
@@ -195,6 +205,7 @@ async function checkRecord(
   deps: OrphanDeps,
 ): Promise<OrphanResult> {
   const context = { entryId: record.entryId, rootPid: record.pid };
+  const platform = deps.platform ?? process.platform;
   const inconclusive = (pid: number, lookup: Extract<ProcessLookup, { kind: 'unknown' }>): void => {
     deps.log.warn(
       { entryId: record.entryId, pid, reason: lookup.reason, detail: lookup.detail },
@@ -210,7 +221,7 @@ async function checkRecord(
   }
   let rootResult: 'gone' | 'not_ours' = 'gone';
   if (root.kind === 'found') {
-    if (isRecordedRoot(root.info, record)) {
+    if (isRecordedRoot(root.info, record, platform)) {
       const outcome = await kill(deps, view, record.pid, context, 'claude process tree');
       // CR-01: its `taskkill /T` ended the whole tree below it – the snapshot is not ended again
       // (its PIDs may already belong to new processes).
@@ -230,7 +241,7 @@ async function checkRecord(
       inconclusive(child.pid, lookup);
       return outcomes.includes('failed') ? 'failed' : 'unknown';
     }
-    if (lookup.kind !== 'found' || !matchesExactly(lookup.info, child)) continue;
+    if (lookup.kind !== 'found' || !matchesExactly(lookup.info, child, platform)) continue;
     outcomes.push(
       await kill(deps, view, child.pid, { ...context, image: child.image }, 'child process tree'),
     );
@@ -251,7 +262,8 @@ async function checkRecord(
  *    started after the last snapshot are unknown and stay too.
  * CR-01: every single kill follows a fresh look at that PID (after any kill, a new query). A
  * failed/slow query is `unknown` – nothing more is killed, the record stays for the next start
- * (R2-02). Resolves per record (same order as `records`); never rejects.
+ * (R2-02). Resolves per record (same order as `records`); never rejects. Linux (WP-103): the same
+ * with PID + start time alone (`sameImage`) and `killProcessTree` ending the process group.
  */
 export function cleanupOrphans(records: readonly ProcessRecord[], deps: OrphanDeps): Promise<OrphanResult>[] {
   if (records.length === 0) return [];

@@ -1,7 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { POSIX_PATHS } from '@shared/paths';
 import { sampleProfile } from '@shared/samples';
 import type { RunFileOptions, RunFileResult } from '../lib/process';
 import { createMemoryFs, nodeFsProbe, resolveCmdShim, searchPath } from '../lib/windows';
@@ -9,6 +10,8 @@ import {
   cliVersionStatus,
   compareVersions,
   findClaude,
+  isElfHeader,
+  nativeInstallerClaude,
   npmClaudeShimTarget,
   parseClaudeVersion,
   readClaudeVersion,
@@ -98,6 +101,7 @@ function deps(
   const fs = createMemoryFs(files);
   const result = {
     ...fs,
+    platform: 'win32' as const,
     whereCalls: 0,
     where: (name: string) => {
       result.whereCalls += 1;
@@ -319,47 +323,210 @@ describe('searchPath (in-process where)', () => {
       [LOCAL]: '',
     });
     const env = { Path: `${NPM};"C:\\Users\\u\\.local\\bin";${NPM}`, PATHEXT: '.COM;.EXE;.BAT;.CMD' };
-    expect(await searchPath('claude', env, fs)).toEqual([`${NPM}\\claude`, `${NPM}\\claude.cmd`, LOCAL]);
+    expect(await searchPath('claude', env, fs, 'win32')).toEqual([
+      `${NPM}\\claude`,
+      `${NPM}\\claude.cmd`,
+      LOCAL,
+    ]);
   });
 
   it('skips UNC, device and relative PATH entries without touching them (C.10)', async () => {
     const fs = createMemoryFs({ [LOCAL]: '' });
     const env = { PATH: '\\\\evil\\share;\\\\?\\C:\\x;relative\\bin;.;;C:\\Users\\u\\.local\\bin' };
-    expect(await searchPath('claude', env, fs)).toEqual([LOCAL]);
+    expect(await searchPath('claude', env, fs, 'win32')).toEqual([LOCAL]);
     expect(fs.touched.every((p) => p.startsWith('C:\\Users\\u\\.local\\bin\\'))).toBe(true);
   });
 
   it('uses the default PATHEXT and finds nothing without PATH', async () => {
     const fs = createMemoryFs({ 'C:\\a\\claude.exe': '' });
-    expect(await searchPath('claude', { PATH: 'C:\\a' }, fs)).toEqual(['C:\\a\\claude.exe']);
-    expect(await searchPath('claude', {}, fs)).toEqual([]);
+    expect(await searchPath('claude', { PATH: 'C:\\a' }, fs, 'win32')).toEqual(['C:\\a\\claude.exe']);
+    expect(await searchPath('claude', {}, fs, 'win32')).toEqual([]);
   });
 });
 
-describe('real file system (temp npm folder with the .cmd shim fixture)', () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), 'parallax-wp11-shim-'));
-  const npm = path.join(root, 'npm');
-  const target = path.join(npm, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');
-  mkdirSync(path.dirname(target), { recursive: true });
-  writeFileSync(path.join(npm, 'claude'), SH_SHIM);
-  writeFileSync(path.join(npm, 'claude.cmd'), CLAUDE_CMD_NATIVE);
-  writeFileSync(target, '');
+describe.runIf(process.platform === 'win32')(
+  'real file system (temp npm folder with the .cmd shim fixture)',
+  () => {
+    let root = '';
+    let npm = '';
+    let target = '';
+    beforeAll(() => {
+      root = mkdtempSync(path.join(os.tmpdir(), 'parallax-wp11-shim-'));
+      npm = path.join(root, 'npm');
+      target = path.join(npm, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');
+      mkdirSync(path.dirname(target), { recursive: true });
+      writeFileSync(path.join(npm, 'claude'), SH_SHIM);
+      writeFileSync(path.join(npm, 'claude.cmd'), CLAUDE_CMD_NATIVE);
+      writeFileSync(target, '');
+    });
+    afterAll(() => {
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    it('finds and resolves the shim with the guarded node fs', async () => {
+      const env = { PATH: npm, PATHEXT: '.EXE;.CMD' };
+      const hits = await searchPath('claude', env, nodeFsProbe);
+      expect(hits).toEqual([path.join(npm, 'claude'), path.join(npm, 'claude.cmd')]);
+      const found = await findClaude(AUTO, { ...nodeFsProbe, where: () => Promise.resolve(hits) });
+      expect(found.ok && found.path).toBe(target);
+    });
+
+    it('never stats unsafe paths', async () => {
+      expect(await nodeFsProbe.isFile('\\\\127.0.0.1\\c$\\x.exe')).toBe(false);
+      expect(await nodeFsProbe.readText('\\\\127.0.0.1\\c$\\x.cmd')).toBeNull();
+      expect(await nodeFsProbe.readText(npm)).toBeNull();
+    });
+  },
+);
+
+// ---- POSIX hosts (WP-103, B3) ----
+
+const ELF = '\x7fELF\x02\x01\x01';
+const NODE_SCRIPT = '#!/usr/bin/env node\nimport "./cli.js";\n';
+const HOME = '/home/u';
+const LOCAL_BIN = '/home/u/.local/bin/claude';
+const VERSIONED = '/home/u/.local/share/claude/versions/2.1.300';
+
+function posixDeps(
+  files: Record<string, string>,
+  hits: string[],
+  options: { links?: Record<string, string>; notExecutable?: string[] } = {},
+): FindClaudeDeps & { touched: string[]; whereCalls: number } {
+  const fs = createMemoryFs(files, { rules: POSIX_PATHS, ...options });
+  const result = {
+    ...fs,
+    platform: 'linux' as const,
+    home: HOME,
+    whereCalls: 0,
+    where: (name: string) => {
+      result.whereCalls += 1;
+      expect(name).toBe('claude');
+      return Promise.resolve(hits);
+    },
+  };
+  return result;
+}
+
+describe('findClaude on POSIX (WP-103, B3)', () => {
+  it('prefers ~/.local/bin/claude (native installer link) and returns the link, not its target', async () => {
+    const found = await findClaude(
+      AUTO,
+      posixDeps(
+        { [LOCAL_BIN]: ELF, [VERSIONED]: ELF, '/usr/bin/claude': ELF },
+        ['/usr/bin/claude', LOCAL_BIN],
+        {
+          links: { [LOCAL_BIN]: VERSIONED },
+        },
+      ),
+    );
+    expect(found).toEqual({
+      ok: true,
+      path: LOCAL_BIN,
+      source: 'native-installer',
+      candidates: [
+        { path: LOCAL_BIN, executable: LOCAL_BIN, source: 'native-installer', rejected: null },
+        { path: '/usr/bin/claude', executable: '/usr/bin/claude', source: 'path', rejected: null },
+        { path: LOCAL_BIN, executable: null, source: 'path', rejected: 'duplicate' },
+      ],
+    });
+  });
+
+  it('falls back to PATH when ~/.local/bin/claude is missing (no candidate for it)', async () => {
+    const found = await findClaude(
+      AUTO,
+      posixDeps({ '/opt/claude/bin/claude': ELF }, ['/opt/claude/bin/claude']),
+    );
+    expect(found).toMatchObject({ ok: true, path: '/opt/claude/bin/claude', source: 'path' });
+    expect(found.candidates).toHaveLength(1);
+  });
+
+  it('refuses the JS variant (cli.js through node) as not_native and names it in the error', async () => {
+    const npmBin = '/usr/local/bin/claude';
+    const cli = '/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js';
+    const found = await findClaude(
+      AUTO,
+      posixDeps({ [npmBin]: NODE_SCRIPT, [cli]: NODE_SCRIPT }, [npmBin], { links: { [npmBin]: cli } }),
+    );
+    expect(found).toEqual({
+      ok: false,
+      error: { code: 'CLAUDE_NOT_FOUND', params: { source: 'path', candidates: 1, reason: 'not_native' } },
+      candidates: [{ path: npmBin, executable: null, source: 'path', rejected: 'not_native' }],
+    });
+  });
+
+  it('no extension and no .exe needed; unsafe, missing and non-executable files are rejected', async () => {
+    const d = posixDeps(
+      { '/opt/a/claude': ELF, '/opt/b/claude': ELF, '/opt/c/claude': ELF, '/proc/1/exe': ELF },
+      ['/opt/a/claude', '/opt/b/claude', '/opt/c/claude', '/opt/missing/claude'],
+      { notExecutable: ['/opt/a/claude'], links: { '/opt/b/claude': '/proc/1/exe' } },
+    );
+    const found = await findClaude(AUTO, d);
+    expect(found.ok && found.path).toBe('/opt/c/claude');
+    expect(found.candidates.map((c) => c.rejected)).toEqual(['missing', 'unsafe_path', null, 'missing']);
+    expect(d.touched).not.toContain('/proc/1/exe');
+  });
+
+  it.each<[string, string]>([
+    ['/opt/missing/claude', 'missing'],
+    ['relative/claude', 'unsafe_path'],
+    ['C:\\tools\\claude.exe', 'unsafe_path'],
+    ['/opt/js/claude', 'not_native'],
+  ])('fixed profile path %s → %s, without falling back', async (configured, reason) => {
+    const d = posixDeps({ '/opt/js/claude': NODE_SCRIPT, [LOCAL_BIN]: ELF }, [LOCAL_BIN]);
+    expect(await findClaude({ executable: { kind: 'path', path: configured } }, d)).toMatchObject({
+      ok: false,
+      error: { code: 'CLAUDE_NOT_FOUND', params: { source: 'profile', reason } },
+    });
+    expect(d.whereCalls).toBe(0);
+  });
+
+  it('a fixed profile path to the native build is used as is', async () => {
+    const d = posixDeps({ '/opt/claude/claude': ELF }, []);
+    expect(await findClaude({ executable: { kind: 'path', path: '/opt/claude/claude' } }, d)).toMatchObject({
+      ok: true,
+      path: '/opt/claude/claude',
+      source: 'profile',
+    });
+  });
+
+  it('knows the native installer path and the ELF magic', () => {
+    expect(nativeInstallerClaude('/home/u')).toBe(LOCAL_BIN);
+    expect(isElfHeader(Buffer.from(ELF, 'latin1'))).toBe(true);
+    expect(isElfHeader(Buffer.from('#!/b', 'latin1'))).toBe(false);
+    expect(isElfHeader(Buffer.alloc(2))).toBe(false);
+  });
+});
+
+describe.runIf(process.platform === 'linux')('real file system on Linux (WP-103)', () => {
+  let root = '';
+  beforeAll(() => {
+    root = mkdtempSync(path.join(os.tmpdir(), 'parallax-wp103-claude-'));
+    const versions = path.join(root, '.local', 'share', 'claude', 'versions');
+    mkdirSync(versions, { recursive: true });
+    mkdirSync(path.join(root, '.local', 'bin'), { recursive: true });
+    mkdirSync(path.join(root, 'npm'), { recursive: true });
+    writeFileSync(path.join(versions, '2.1.300'), Buffer.from(ELF, 'latin1'));
+    chmodSync(path.join(versions, '2.1.300'), 0o755);
+    symlinkSync(path.join(versions, '2.1.300'), path.join(root, '.local', 'bin', 'claude'));
+    writeFileSync(path.join(root, 'npm', 'claude'), NODE_SCRIPT);
+    chmodSync(path.join(root, 'npm', 'claude'), 0o755);
+  });
   afterAll(() => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('finds and resolves the shim with the guarded node fs', async () => {
-    const env = { PATH: npm, PATHEXT: '.EXE;.CMD' };
-    const hits = await searchPath('claude', env, nodeFsProbe);
-    expect(hits).toEqual([path.join(npm, 'claude'), path.join(npm, 'claude.cmd')]);
-    const found = await findClaude(AUTO, { ...nodeFsProbe, where: () => Promise.resolve(hits) });
-    expect(found.ok && found.path).toBe(target);
-  });
-
-  it('never stats unsafe paths', async () => {
-    expect(await nodeFsProbe.isFile('\\\\127.0.0.1\\c$\\x.exe')).toBe(false);
-    expect(await nodeFsProbe.readText('\\\\127.0.0.1\\c$\\x.cmd')).toBeNull();
-    expect(await nodeFsProbe.readText(npm)).toBeNull();
+  it('finds the native link with the guarded node fs and refuses the JS script on PATH', async () => {
+    const env = { PATH: path.join(root, 'npm') };
+    const hits = await searchPath('claude', env, nodeFsProbe, 'linux');
+    expect(hits).toEqual([path.join(root, 'npm', 'claude')]);
+    const found = await findClaude(AUTO, {
+      ...nodeFsProbe,
+      platform: 'linux',
+      home: root,
+      where: () => Promise.resolve(hits),
+    });
+    expect(found.ok && found.path).toBe(path.join(root, '.local', 'bin', 'claude'));
+    expect(found.candidates.map((c) => c.rejected)).toEqual([null, 'not_native']);
   });
 });
 

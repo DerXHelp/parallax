@@ -9,8 +9,9 @@
  * fs call has the 3 s timeout of ADR-141 (`guardFileFs`). The physical paths of the roots are cached
  * per entry (60 s; a changed cwd/add-dir list drops them at once). Programs start only through the
  * `ProgramLauncher` seam (files/open.ts). Nothing of a file's content is ever logged.
+ * WP-103: every check, key and join follows the path rules of this host (`FileServiceDeps.rules`,
+ * default `HOST_PATH_RULES`; POSIX: case-sensitive, `/`).
  */
-import path from 'node:path';
 import type { Logger } from 'pino';
 import { LIMITS, type EntryId } from '@shared/common';
 import { makeError } from '@shared/errors';
@@ -22,7 +23,7 @@ import {
   type SessionFile,
   type Settings,
 } from '@shared/model';
-import { windowsPathKey } from '@shared/paths';
+import type { PathRules } from '@shared/paths';
 import type { CommandOf, CommandResult, HostCommand, HostCommandName, SessionOp } from '@shared/protocol';
 import { createFsCallGuard } from '../lib/fsTimeout';
 import { logger as rootLogger } from '../lib/logger';
@@ -31,6 +32,8 @@ import {
   assertSafePath,
   fileAccessError,
   fsErrorCode,
+  HOST_PATH_RULES,
+  pathModuleOf,
   physicalRoot,
   resolveAllowedPath,
   type AccessPolicy,
@@ -92,6 +95,8 @@ export interface FileServiceDeps {
   };
   now?: () => number;
   logger?: Logger;
+  /** Path rules of every check (default `HOST_PATH_RULES`, WP-103). */
+  rules?: PathRules;
 }
 
 interface RootCache {
@@ -111,6 +116,8 @@ function toIso(ms: number): string {
 export function createFileService(deps: FileServiceDeps): FileService {
   const log = (deps.logger ?? rootLogger).child({ module: 'files' });
   const now = deps.now ?? (() => Date.now());
+  const rules = deps.rules ?? HOST_PATH_RULES;
+  const join = pathModuleOf(rules).join;
   const fs = guardFileFs(deps.fs ?? nodeFileFs, createFsCallGuard({ timeoutMs: deps.fsTimeoutMs }));
   const launcher = deps.launcher ?? createRecordingOpener({ logger: deps.logger });
   const index = createSessionIndex({
@@ -121,9 +128,11 @@ export function createFileService(deps: FileServiceDeps): FileService {
     storeFs: deps.storeFs,
     warnings: deps.warnings,
     logger: deps.logger,
+    rules,
   });
   const projectFiles = createProjectFiles({
     fs,
+    rules,
     resolveGit: deps.git?.resolve ?? (() => resolveExecutable('git', process.env)),
     run: deps.git?.run ?? runFile,
     env: deps.git?.env,
@@ -153,7 +162,7 @@ export function createFileService(deps: FileServiceDeps): FileService {
     return async (root) => {
       const cached = current.physical.get(root);
       if (cached !== undefined) return cached;
-      const physical = await physicalRoot(root, fs);
+      const physical = await physicalRoot(root, fs, rules);
       if (physical !== null) current.physical.set(root, physical);
       return physical;
     };
@@ -173,6 +182,7 @@ export function createFileService(deps: FileServiceDeps): FileService {
     const allowed = await resolveAllowedPath(file, policyOf(entryId, entry), {
       fs,
       resolveRoot: rootResolver(entryId, entry),
+      rules,
     });
     return { path: file, realPath: allowed.realPath, access: allowed.access };
   };
@@ -186,7 +196,7 @@ export function createFileService(deps: FileServiceDeps): FileService {
   ): Promise<FileInfo> => {
     const allowed = await allow(entryId, entry, file);
     try {
-      return await statAllowed(fs, allowed, { truncation });
+      return await statAllowed(fs, allowed, { truncation, rules });
     } catch (error) {
       throw fileAccessError(error);
     }
@@ -219,7 +229,7 @@ export function createFileService(deps: FileServiceDeps): FileService {
     }
     for (const folder of folders) {
       if (folder.isSymbolicLink() || !folder.isDirectory()) continue;
-      const sub = path.win32.join(dir, folder.name);
+      const sub = join(dir, folder.name);
       let names;
       try {
         names = await fs.readdir(sub);
@@ -228,7 +238,7 @@ export function createFileService(deps: FileServiceDeps): FileService {
       }
       for (const name of names) {
         if (name.isSymbolicLink() || !name.isFile()) continue;
-        const file = path.win32.join(sub, name.name);
+        const file = join(sub, name.name);
         if (found.length >= LIMITS.sessionFilesMax) return found;
         let mtimeMs: number;
         try {
@@ -254,9 +264,9 @@ export function createFileService(deps: FileServiceDeps): FileService {
   const sessionFiles = async (entryId: EntryId): Promise<CommandResult<'files.session'>> => {
     requireEntry(entryId);
     const [indexed, attached] = await Promise.all([index.list(entryId), attachedFiles(entryId)]);
-    const byKey = new Map(indexed.map((file) => [windowsPathKey(file.path), file]));
+    const byKey = new Map(indexed.map((file) => [rules.key(file.path), file]));
     for (const file of attached) {
-      const key = windowsPathKey(file.path);
+      const key = rules.key(file.path);
       const known = byKey.get(key);
       if (known === undefined) {
         byKey.set(key, file);
@@ -277,9 +287,9 @@ export function createFileService(deps: FileServiceDeps): FileService {
 
   /** The cwd of `files.project`: safe, no unsafe link, an existing folder. */
   const checkProjectCwd = async (cwd: string): Promise<void> => {
-    assertSafePath(cwd);
+    assertSafePath(cwd, rules);
     try {
-      await assertNoUnsafeLink(cwd, fs);
+      await assertNoUnsafeLink(cwd, fs, rules);
       const info = await fs.stat(cwd);
       if (!info.isDirectory()) throw new CommandError(makeError('CWD_NOT_DIRECTORY'));
     } catch (error) {
@@ -313,7 +323,7 @@ export function createFileService(deps: FileServiceDeps): FileService {
     }
     if (
       target === 'default' &&
-      !(isDefaultProgramAllowed(cmd.path) && isDefaultProgramAllowed(allowed.realPath))
+      !(isDefaultProgramAllowed(cmd.path, rules) && isDefaultProgramAllowed(allowed.realPath, rules))
     ) {
       throw new CommandError(makeError('FILE_TYPE_BLOCKED'));
     }
@@ -357,7 +367,7 @@ export function createFileService(deps: FileServiceDeps): FileService {
       // The answer carries no `truncated`; reading the text for it would read the file twice.
       const info = await statFile(entryId, entry, file, 'skip');
       try {
-        return await openContent(fs, info);
+        return await openContent(fs, info, rules);
       } catch (error) {
         throw fileAccessError(error);
       }

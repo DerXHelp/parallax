@@ -15,7 +15,7 @@ import {
   uploadMediaTypeSchema,
 } from '@shared/http';
 import { remoteHostIdSchema } from '@shared/model';
-import { windowsBaseName } from '@shared/paths';
+import { pathFlavorOfShape, pathRules } from '@shared/paths';
 import { WS_CLOSE } from '@shared/protocol';
 import type { HostsService, UpstreamRequest, UpstreamResponse } from '../hosts/ports';
 import { closeReason } from '../hosts/windows';
@@ -551,7 +551,10 @@ export async function registerHostRoutes(
         if (response.status !== 200) return sendError(reply, await upstreamError(response, 'file'));
         return sendContent(request, reply, response, {
           headers: {
-            'content-disposition': inlineDisposition(windowsBaseName(query.data.path)),
+            // WP-103: the path is the other computer's – its own shape tells whose rules name it.
+            'content-disposition': inlineDisposition(
+              pathRules(pathFlavorOfShape(query.data.path)).baseName(query.data.path),
+            ),
             'cache-control': 'no-store',
           },
         });

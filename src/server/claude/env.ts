@@ -38,12 +38,18 @@
  *     `CLAUDE_AGENT_SDK_CLIENT_APP=parallax/<version>` and `CLAUDE_CONFIG_DIR` (profile.configDir).
  *     These two are the only `PARALLAX*` names a started `claude` ever sees (a profile env value
  *     with a `PARALLAX_*` name is set on purpose and kept).
+ *
+ * WP-103 (POSIX hosts, `BuildEnvInput.platform`): variable names are exact there (`http_proxy` and
+ * `HTTP_PROXY` are two variables, WP-101 §1.6) – step 1 keeps every spelling, `PATH` is only `PATH`,
+ * step 3 merges and `${env:NAME}` looks up by the exact name, and the PATH delimiter is `:`. The
+ * removal rules of step 2 (and the `CLAUDECODE` marker) still match case-insensitively on every
+ * platform: removing a variable too many is safe, leaking one is not (`npm_*` is lower case anyway).
+ * `CLAUDE_CONFIG_DIR` is checked with the path rules of the platform (B4).
  */
-import path from 'node:path';
 import type { EntryId } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import type { Profile } from '@shared/model';
-import { windowsPathIssue } from '@shared/paths';
+import { pathFlavorOf, pathRules } from '@shared/paths';
 import { PRODUCT_ID } from '@shared/product';
 import type { PersistentEnvironment } from '../lib/registry';
 import { getEnvVar } from '../lib/windows';
@@ -168,8 +174,13 @@ export interface BuildEnvInput {
   entryId: EntryId | null;
   /** CLAUDE_AGENT_SDK_CLIENT_APP, see clientAppId(). */
   clientApp: string;
-  /** PATH delimiter; defaults to the platform delimiter. */
+  /** PATH delimiter; defaults to the delimiter of `platform` (`;` on Windows, else `:`). */
   delimiter?: string;
+  /**
+   * Whose env semantics apply (default `process.platform`): Windows names are case-insensitive, POSIX
+   * names exact (WP-103). Also picks the path rules of `CLAUDE_CONFIG_DIR`.
+   */
+  platform?: NodeJS.Platform;
   /**
    * Persistent environment (HKCU/HKLM `Environment`, lib/registry.ts readPersistentEnvironment;
    * upper-cased names). Default null = no exception: every removable name is removed.
@@ -223,17 +234,38 @@ export function shouldRemoveEnvVar(name: string): boolean {
   return envRemovalReason(name) !== null;
 }
 
-/** Removes every spelling of `name`. */
-export function deleteEnvVar(env: Record<string, string>, name: string): void {
+/** PATH delimiter of a platform (`path.delimiter` of that platform). */
+export function envPathDelimiter(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' ? ';' : ':';
+}
+
+/** Removes every spelling of `name` (Windows); on POSIX exactly `name`. */
+export function deleteEnvVar(
+  env: Record<string, string>,
+  name: string,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  if (platform !== 'win32') {
+    Reflect.deleteProperty(env, name);
+    return;
+  }
   const upper = name.toUpperCase();
   for (const key of Object.keys(env)) {
     if (key.toUpperCase() === upper) Reflect.deleteProperty(env, key);
   }
 }
 
-/** Sets `name` and drops any other spelling of it, so the child sees exactly one value. */
-export function setEnvVar(env: Record<string, string>, name: string, value: string): void {
-  deleteEnvVar(env, name);
+/**
+ * Sets `name` and (Windows) drops any other spelling of it, so the child sees exactly one value. On
+ * POSIX another spelling is another variable and stays.
+ */
+export function setEnvVar(
+  env: Record<string, string>,
+  name: string,
+  value: string,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  deleteEnvVar(env, name, platform);
   env[name] = value;
 }
 
@@ -263,7 +295,9 @@ export function resolveEnvRefs(
 
 /** buildEnv without throwing: the environment plus what was removed/set and all issues. */
 export function buildEnvReport(input: BuildEnvInput): BuildEnvReport {
-  const delimiter = input.delimiter ?? path.delimiter;
+  const platform = input.platform ?? process.platform;
+  const windows = platform === 'win32';
+  const delimiter = input.delimiter ?? envPathDelimiter(platform);
   const env: Record<string, string> = {};
   const seen = new Set<string>();
   const removed: string[] = [];
@@ -273,19 +307,21 @@ export function buildEnvReport(input: BuildEnvInput): BuildEnvReport {
   let pathEntriesRemoved = 0;
   const persistent = input.persistent ?? null;
   // Tool-shell settings of a calling Claude session (R1-03; ADR-128 for the non-terminal targets).
-  const fromClaudeSession = getEnvVar(input.base, 'CLAUDECODE') !== undefined;
+  // The marker is matched case-insensitively on every platform, like the removal rules.
+  const fromClaudeSession = getEnvVar(input.base, 'CLAUDECODE', 'win32') !== undefined;
   const toolShell: ReadonlySet<string> = !fromClaudeSession
     ? NO_NAMES
     : input.target === 'terminal'
       ? TERMINAL_TOOL_SHELL
       : CLAUDE_SESSION_TOOL_SHELL;
 
-  // Steps 1 + 2: copy, one spelling per name, remove session and run-state variables.
+  // Steps 1 + 2: copy, one spelling per name (Windows), remove session and run-state variables.
   for (const [key, value] of Object.entries(input.base)) {
     if (value === undefined) continue;
     const upper = key.toUpperCase();
-    if (seen.has(upper)) continue;
-    seen.add(upper);
+    const nameKey = windows ? upper : key;
+    if (seen.has(nameKey)) continue;
+    seen.add(nameKey);
     const reason: EnvRemovalReason | null =
       envRemovalReason(key) ?? (toolShell.has(upper) ? 'tool_shell' : null);
     if (reason !== null) {
@@ -299,7 +335,7 @@ export function buildEnvReport(input: BuildEnvInput): BuildEnvReport {
       }
       continue;
     }
-    if (upper === 'PATH') {
+    if (windows ? upper === 'PATH' : key === 'PATH') {
       const stripped = stripNodeModulesBin(value, delimiter);
       pathEntriesRemoved += stripped.removed;
       env[key] = stripped.value;
@@ -308,10 +344,10 @@ export function buildEnvReport(input: BuildEnvInput): BuildEnvReport {
     env[key] = value;
   }
 
-  // Step 3: profile env, case-insensitive, with ${env:NAME} against the machine env.
+  // Step 3: profile env, case-insensitive on Windows, with ${env:NAME} against the machine env.
   const cleaned: Readonly<Record<string, string>> = { ...env };
   const lookup = (name: string): string | undefined =>
-    getEnvVar(cleaned, name) ?? getEnvVar(input.base, name);
+    getEnvVar(cleaned, name, platform) ?? getEnvVar(input.base, name, platform);
   for (const [key, raw] of Object.entries(input.profile.env)) {
     if (!ENV_NAME.test(key) || raw.includes('\0')) {
       issues.push(makeError('VALIDATION_FAILED', { path: 'profile.env', key }));
@@ -322,7 +358,7 @@ export function buildEnvReport(input: BuildEnvInput): BuildEnvReport {
       for (const name of missing) issues.push(makeError('PROFILE_ENV_REF_UNRESOLVED', { name, key }));
       continue;
     }
-    setEnvVar(env, key, value);
+    setEnvVar(env, key, value, platform);
   }
 
   // Step 4: Parallax variables last.
@@ -332,12 +368,12 @@ export function buildEnvReport(input: BuildEnvInput): BuildEnvReport {
   set.CLAUDE_AGENT_SDK_CLIENT_APP = input.clientApp;
   const configDir = input.profile.configDir;
   if (configDir !== null) {
-    const issue = windowsPathIssue(configDir);
+    const issue = pathRules(pathFlavorOf(platform)).issue(configDir);
     if (issue === null) set.CLAUDE_CONFIG_DIR = configDir;
     else issues.push(makeError('PATH_REJECTED', { reason: issue, field: 'configDir' }));
   }
-  if (input.entryId === null) deleteEnvVar(env, 'PARALLAX_ENTRY_ID');
-  for (const [key, value] of Object.entries(set)) setEnvVar(env, key, value);
+  if (input.entryId === null) deleteEnvVar(env, 'PARALLAX_ENTRY_ID', platform);
+  for (const [key, value] of Object.entries(set)) setEnvVar(env, key, value, platform);
 
   removed.sort((a, b) => a.localeCompare(b));
   keptPersistent.sort((a, b) => a.localeCompare(b));

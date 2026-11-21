@@ -342,9 +342,12 @@ describe('GET /api/file with the real file service', () => {
     });
     expect(outside.statusCode).toBe(403);
     expect(outside.json()).toEqual({ code: 'PATH_NOT_ALLOWED', params: {} });
-    const unc = await app.inject({ method: 'GET', url: fileUrl(ENTRY, '\\\\host\\share\\x.txt'), headers });
-    expect(unc.statusCode).toBe(400);
-    expect(unc.json()).toEqual({ code: 'PATH_REJECTED', params: { reason: 'unc' } });
+    // The rules of the host (WP-103): a share on Windows, a pseudo file system on POSIX.
+    const [unsafe, reason] =
+      process.platform === 'win32' ? ['\\\\host\\share\\x.txt', 'unc'] : ['/proc/self/environ', 'pseudo_fs'];
+    const rejected = await app.inject({ method: 'GET', url: fileUrl(ENTRY, unsafe), headers });
+    expect(rejected.statusCode).toBe(400);
+    expect(rejected.json()).toEqual({ code: 'PATH_REJECTED', params: { reason } });
     await service.flush();
   });
 
