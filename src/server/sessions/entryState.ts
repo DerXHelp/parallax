@@ -8,7 +8,7 @@
  */
 import { isDeepStrictEqual } from 'node:util';
 import type { Logger } from 'pino';
-import type { ConversationId, EntryId, JsonValue, ProfileId } from '@shared/common';
+import type { ClientId, ConversationId, EntryId, JsonValue, ProfileId } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   currentConversation,
@@ -22,6 +22,7 @@ import {
   type Entry,
   type Profile,
   type RateLimitInfo,
+  type ReviewComment,
   type RunningTasks,
   type SessionActivity,
   type SessionSummary,
@@ -31,6 +32,7 @@ import {
   type ToolDecisionRef,
   type TranscriptItem,
   type Truncation,
+  type WorktreeSetup,
 } from '@shared/model';
 import type { Command, HostCommandName, SessionOp } from '@shared/protocol';
 import { openDecisionCount, type StatusFacts } from '@shared/status';
@@ -39,7 +41,8 @@ import { buildTaskRows, isTaskSourceItem, summarizeRunningTasks, taskSourceItems
 import type { AgentBackend } from '../backend/types';
 import type { ClaudeIntegration, LaunchSpec } from '../claude/ports';
 import type { newId } from '../lib/ids';
-import type { ProcessFilter, ProcessQueryResult } from '../lib/process';
+import { guiEnvironment, type ProcessFilter, type ProcessQueryResult } from '../lib/process';
+import { getEnvVar } from '../lib/windows';
 import { isStreamingItem } from '../store/transcripts';
 import {
   CommandError,
@@ -48,6 +51,7 @@ import {
   type DecisionStore,
   type DraftStore,
   type RegistryStore,
+  type ReviewStore,
   type SessionPublisher,
   type SettingsStore,
   type StoreWarnings,
@@ -55,10 +59,12 @@ import {
 } from '../sync/ports';
 import type { ConsoleLauncher } from '../system/ports';
 import type { TerminalService } from '../terminal/ports';
+import type { PromptAttachments } from './attachments';
 import { createBroker, type Broker } from './broker';
 import type { CatalogStore } from './catalogStore';
 import type { CommandCatalogStore } from './commandCatalog';
 import { DetailTracker, type DetailContext, type DetailFields } from './detailTracker';
+import { watchGitHead, type GitHeadWatch } from './lib/gitBranch';
 import { createSerial, type Serial } from './lib/serial';
 import type { TimerHandle, Timers } from './lib/timers';
 import { applyToMirror, baseView, findToolCallIn, readMirrorItems } from './mirror';
@@ -188,16 +194,25 @@ export interface EngineStores {
    * it). Absent: drafts live in memory only (lost with the server run).
    */
   drafts?: DraftStore;
+  /**
+   * WP-111 (ADR-254): review comments per entry (`store/review.ts` `createReviewStore`, compose.ts wires
+   * it). Absent: comments live in memory only (lost with the server run).
+   */
+  review?: ReviewStore;
 }
 
 /**
  * The stores as the engine uses them: the in-memory fallbacks filled in, no file store = null; the
  * decision store knows which plan versions exist (CR3-09, planIndex.ts).
  */
-export type EngineCoreStores = Required<Omit<EngineStores, 'attachments' | 'decisions' | 'drafts'>> & {
+export type EngineCoreStores = Required<
+  Omit<EngineStores, 'attachments' | 'decisions' | 'drafts' | 'review'>
+> & {
   readonly attachments: AttachmentFileStore | null;
   readonly decisions: PlanIndexedDecisionStore;
   readonly drafts: DraftStore | null;
+  /** WP-111: missing = in memory only. */
+  readonly review?: ReviewStore;
 };
 
 export interface NormalizerFns {
@@ -244,8 +259,21 @@ export function settingsSleepPolicy(settings: () => Settings): SleepPolicy {
   };
 }
 
-/** 102e: what the engine needs of the terminal service ("Continue in terminal"). */
-export type EngineTerminal = Pick<TerminalService, 'openClaude' | 'claudeState' | 'remoteEpoch'>;
+/**
+ * 102e: what the engine needs of the terminal service ("Continue in terminal"); WP-111 (ADR-251): the
+ * setup/teardown commands of worktrees and closing the entry's terminals before its worktree goes
+ * (optional: engine tests pass fakes without them – no setup/teardown then).
+ */
+export type EngineTerminal = Pick<TerminalService, 'openClaude' | 'claudeState' | 'remoteEpoch'> &
+  Partial<Pick<TerminalService, 'runScript' | 'closeEntry'>>;
+
+/** WP-111: a start prompt that waits for the worktree's setup (ADR-251; runtime only, lost on a restart). */
+export interface HeldStart {
+  text: string;
+  attachments: PromptAttachments;
+  pastes: readonly string[];
+  clientId: ClientId;
+}
 
 export interface EngineCore {
   readonly backend: AgentBackend;
@@ -403,6 +431,18 @@ export class EntryState {
    * the server start (`restoreDraft`), changed only through `setDraft`.
    */
   draft: Draft | null = null;
+  /**
+   * WP-111 (ADR-254): the review comments (`detail.review`); null = not loaded yet (`reviewList`).
+   */
+  review: ReviewComment[] | null = null;
+  private reviewLoading: Promise<ReviewComment[]> | null = null;
+  /** WP-111 (ADR-250/251): creating the worktree / its setup (`summary.worktreeSetup`; runtime only). */
+  worktreeSetup: WorktreeSetup | null = null;
+  /** WP-111: the start prompt of `session.create` while the setup runs (or failed). */
+  heldStart: HeldStart | null = null;
+  /** WP-111: the HEAD watch of the entry's cwd (a branch switch shows at once). */
+  private headWatch: GitHeadWatch | null = null;
+  private headWatchStarting = false;
   /**
    * WP-77: highest draft `rev` of this server run – it keeps counting across a cleared draft, so a
    * window can tell an older state from a newer one (`nextDraftRev`).
@@ -903,7 +943,47 @@ export class EntryState {
       outputStyle: this.outputStyle,
       runningTasks: this.runningTasks,
       hasDraft: this.draft !== null,
+      worktreeSetup: this.worktreeSetup,
     });
+  }
+
+  /** WP-111: the worktree's creation/setup state (summary); null = none. */
+  setWorktreeSetup(next: WorktreeSetup | null): void {
+    if (isDeepStrictEqual(next, this.worktreeSetup)) return;
+    this.worktreeSetup = next;
+    this.touch(true);
+  }
+
+  // ---- review comments (WP-111, ADR-254) ----
+
+  /** The stored comments (loaded once; [] when unreadable). */
+  reviewList(): Promise<ReviewComment[]> {
+    if (this.review !== null) return Promise.resolve(this.review);
+    const store = this.core.stores.review;
+    if (store === undefined) {
+      this.review = [];
+      return Promise.resolve(this.review);
+    }
+    this.reviewLoading ??= store
+      .load(this.entry.id)
+      .catch((error: unknown) => {
+        this.core.log.warn({ err: error, entryId: this.entry.id }, 'review comments unreadable');
+        return [];
+      })
+      .then((loaded) => {
+        this.reviewLoading = null;
+        // A change during the load came first (it wins).
+        this.review ??= loaded;
+        return this.review;
+      });
+    return this.reviewLoading;
+  }
+
+  /** New list: saved (debounced) and published with `ops` (review.upsert/review.remove). */
+  setReview(next: ReviewComment[], ops: readonly SessionOp[]): void {
+    this.review = next;
+    this.core.stores.review?.save(this.entry.id, next);
+    this.emit(ops);
   }
 
   /** WP-64: next live Remote Control state – summary, and the idle sleep when the bridge came or went. */
@@ -940,7 +1020,7 @@ export class EntryState {
     const buffer: SessionOp[] = [];
     const promise = (async () => {
       try {
-        const [read, commands] = await Promise.all([
+        const [read, commands, review] = await Promise.all([
           readMirrorItems(this.entry, {
             transcripts: this.core.stores.transcripts,
             backend: this.core.backend,
@@ -957,12 +1037,14 @@ export class EntryState {
             this.core.log.debug({ err: error, entryId: this.entry.id }, 'command cache unreadable');
             return null;
           }),
+          // WP-111 (ADR-254): the review comments belong to the entry (every conversation).
+          this.reviewList(),
         ]);
         if (read.imported.length > 0) this.importHistory(read.imported);
         const seedItems = await this.detailSeedItems(read);
         // The base is built now (current broker, queue, conversations); ops published while
         // reading are applied on top – the view contains every op published so far (WP-10 Nr. 5).
-        const base = baseView({
+        const built = baseView({
           entry: this.entry,
           items: read.items,
           hasEarlier: read.hasEarlier,
@@ -974,6 +1056,7 @@ export class EntryState {
           availableOutputStyles: this.availableOutputStyles,
           draft: this.draft,
         });
+        const base: SessionViewState = { ...built, detail: { ...built.detail, review: [...review] } };
         // Phase 3: todos/planFile derived from the items (the base view carries them; no op).
         const { todos, planFile } = this.seedDetail(seedItems, buffer);
         const applied = applyToMirror(base, buffer);
@@ -1035,8 +1118,8 @@ export class EntryState {
       draft: this.draft,
     });
     this.detail.reset();
-    this.mirror = view;
-    return view;
+    this.mirror = { ...view, detail: { ...view.detail, review: [...(this.review ?? [])] } };
+    return this.mirror;
   }
 
   /** Cache eviction (B): without process and subscribers the mirror is dropped. */
@@ -1121,6 +1204,7 @@ export class EntryState {
     this.externalTimer = null;
     this.continueTimer?.cancel();
     this.continueTimer = null;
+    this.stopHeadWatch();
   }
 
   /** After idle (C.1): one getContextUsage('summary'), debounced, at most one at a time. */
@@ -1207,11 +1291,67 @@ export class EntryState {
       if (this.core.shuttingDown()) return;
       const branch = found === null ? null : found.slice(0, GIT_BRANCH_CHARS);
       this.patch((e) => (e.gitBranch === branch ? e : { ...e, gitBranch: branch }));
+      // WP-111: a repository → watch its HEAD while the entry is shown or runs.
+      if (found !== null) this.ensureHeadWatch(env);
+      else this.stopHeadWatch();
     } catch (error) {
       this.core.log.debug({ err: error, entryId: this.entry.id }, 'git branch lookup failed');
     } finally {
       this.gitBusy = false;
     }
+  }
+
+  /** WP-111: the HEAD watch is worth its handle – not removed or archived, and running or shown. */
+  private wantsHeadWatch(): boolean {
+    return (
+      !this.removed &&
+      !this.entry.archived &&
+      !this.core.shuttingDown() &&
+      (this.runtime !== null || this.viewedByVisibleClient || this.subscribers > 0)
+    );
+  }
+
+  /** WP-111: starts the HEAD watch of the cwd (once; the folder changed → a new one). */
+  private ensureHeadWatch(env: Record<string, string>): void {
+    if (!this.wantsHeadWatch()) {
+      this.stopHeadWatch();
+      return;
+    }
+    if (this.headWatch !== null || this.headWatchStarting) return;
+    this.headWatchStarting = true;
+    const cwd = this.entry.cwd;
+    void watchGitHead(cwd, env, () => {
+      if (!this.wantsHeadWatch() || this.entry.cwd !== cwd) {
+        this.stopHeadWatch();
+        return;
+      }
+      void this.refreshGitBranch();
+    })
+      .then((watch) => {
+        if (watch !== null && (this.headWatch !== null || !this.wantsHeadWatch() || this.entry.cwd !== cwd)) {
+          watch.close();
+          return;
+        }
+        this.headWatch = watch;
+      })
+      .finally(() => {
+        this.headWatchStarting = false;
+      });
+  }
+
+  stopHeadWatch(): void {
+    this.headWatch?.close();
+    this.headWatch = null;
+  }
+
+  /**
+   * WP-111: the environment of git calls for this entry – the PATH of the running process, else of the
+   * last launch, else of a fresh launch spec; without a PATH the server's (neutral) environment.
+   */
+  async gitEnv(): Promise<Record<string, string>> {
+    const env = this.runtime?.launch.env ?? this.lastEnv ?? (await this.launchEnv()) ?? {};
+    if (getEnvVar(env, 'PATH') !== undefined) return env;
+    return { ...guiEnvironment(), ...env };
   }
 
   /** Env of a fresh launch spec (dormant entry without an earlier launch); null if it fails. */

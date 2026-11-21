@@ -12,6 +12,9 @@
  *   - `cls`/`clear` → `ESC[2J ESC[H`
  *   - anything else → one "not recognized" line
  * - `\x03` (Ctrl+C) → `^C`, a new line and the prompt.
+ * - WP-111: a script run (`cmd.exe /d /s /c "<command>"` as `windowsCommandLine`, or `-c`/`-Command
+ *   <command>` in the arguments, `fakeScriptCommand`) shows no prompt: the parts of the command (split
+ *   at `&&`) run like typed lines, an unknown one ends it with exit code 1, the end with 0.
  * - `pid` is null; resizes and inputs are recorded for tests; `emit`/`exit` drive it from a test.
  */
 import path from 'node:path';
@@ -60,6 +63,23 @@ export function fakePrompt(executablePath: string, cwd: string): string {
   }
 }
 
+/**
+ * The command of a script run (WP-111, `TerminalService.runScript`), or null for an interactive shell:
+ * the text after `/c` of a verbatim Windows command line (outer quotes removed), else the argument
+ * after `-c`/`-Command`.
+ */
+export function fakeScriptCommand(
+  options: Pick<PtySpawnOptions, 'args' | 'windowsCommandLine'>,
+): string | null {
+  const line = options.windowsCommandLine;
+  if (line !== undefined) {
+    const match = /\s\/c\s+(.*)$/isu.exec(line);
+    if (match !== null) return (match[1] ?? '').replace(/^"(.*)"$/su, '$1');
+  }
+  const index = options.args.findIndex((arg) => arg === '-c' || arg === '-Command');
+  return index < 0 ? null : (options.args[index + 1] ?? null);
+}
+
 interface Flood {
   next: number;
   last: number;
@@ -80,33 +100,35 @@ function createFakePty(options: PtySpawnOptions): FakePtyProcess {
     if (text !== '') queue.push(Buffer.from(text, 'utf8'));
   };
 
-  const run = (input: string): void => {
+  /** Runs one line; false = the command is unknown. */
+  const run = (input: string): boolean => {
     const trimmed = input.trim();
-    if (trimmed === '') return;
+    if (trimmed === '') return true;
     const name = trimmed.split(/\s/u, 1)[0] ?? '';
     const arg = trimmed.slice(name.length).trim();
     switch (name.toLowerCase()) {
       case 'echo':
         out(`${arg}\r\n`);
-        return;
+        return true;
       case 'exit': {
         const parsed = Number.parseInt(arg, 10);
         code = Number.isSafeInteger(parsed) ? parsed : 0;
-        return;
+        return true;
       }
       case 'flood': {
         const count = Number.parseInt(arg, 10);
         if (Number.isSafeInteger(count) && count > 0) {
           queue.push({ next: 1, last: Math.min(count, FAKE_FLOOD_MAX_LINES) });
         }
-        return;
+        return true;
       }
       case 'cls':
       case 'clear':
         out('\x1b[2J\x1b[H');
-        return;
+        return true;
       default:
         out(`'${name}' is not recognized as an internal or external command.\r\n`);
+        return false;
     }
   };
 
@@ -153,7 +175,16 @@ function createFakePty(options: PtySpawnOptions): FakePtyProcess {
     if (lines.length > 0) queue.unshift(Buffer.from(lines.join(''), 'utf8'));
   };
 
-  out(prompt);
+  const script = fakeScriptCommand(options);
+  if (script === null) {
+    out(prompt);
+  } else {
+    for (const part of script.split('&&')) {
+      if (!run(part)) code = 1;
+      if (exited()) break;
+    }
+    code ??= 0;
+  }
 
   return {
     pid: null,
