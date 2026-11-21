@@ -5,7 +5,7 @@ Windows zu prüfen. Nie Teil eines Releases. Owner: Koordinator.
 
 | Datei | Inhalt |
 | --- | --- |
-| `run.sh` | Führt einen Befehl gegen den Arbeitsstand (versionierte und neue, nicht ignorierte Dateien) im Image aus: kopiert den Baum in den Container, `pnpm install --frozen-lockfile` mit dem Store im Volume `parallax-pnpm-store`, dann der Befehl. Grenzen `--cpus 2 --memory 6g` (änderbar) |
+| `run.sh` | Führt einen Befehl gegen den Arbeitsstand (versionierte und neue, nicht ignorierte Dateien) im Image aus: kopiert den Baum in den Container, `pnpm install --frozen-lockfile` mit dem Store im Volume `parallax-pnpm-store`, dann der Befehl. Grenzen `--cpus 2 --memory 6g` (änderbar). Läufe warten aufeinander (Sperrordner `parallax-linux-run.lock` im Temp-Ordner, gemeinsam für alle Worktrees und Agenten; ADR-154) |
 | `Dockerfile` | Stufe `common` (Ubuntu `UBUNTU`, Node `NODE_VERSION` mit SHA-256-Prüfung, pnpm `PNPM_VERSION`, Chrome per `CHROME=1`, Benutzer `ubuntu`), Stufe `systemd` (systemd als PID 1, nur für Spikes), Standard-Stufe `base` (als `ubuntu`) |
 
 ## Bauen

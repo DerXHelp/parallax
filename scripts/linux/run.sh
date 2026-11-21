@@ -6,7 +6,8 @@
 #   scripts/linux/run.sh [--image parallax-linux:24.04] [--cpus 2] [--memory 6g] -- <command...>
 #   scripts/linux/run.sh -- pnpm exec vitest run src/server/lib
 #
-# Resource rule (ADR-154): one heavy run at a time on the machine; targeted vitest runs are fine.
+# Resource rule (ADR-154): one heavy run at a time on the machine. Runs of this script wait for each other
+# (lock folder in the temp directory, shared by every worktree and agent; a holder that died is cleared).
 set -euo pipefail
 
 image="parallax-linux:24.04"
@@ -28,6 +29,25 @@ fi
 
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
+
+lock="${TMPDIR:-/tmp}/parallax-linux-run.lock"
+waited=0
+while ! mkdir "$lock" 2>/dev/null; do
+  holder="$(cat "$lock/pid" 2>/dev/null || true)"
+  if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+    rm -rf "$lock"
+    continue
+  fi
+  [ "$waited" -eq 0 ] && echo "waiting for another Linux run to finish (ADR-154)..." >&2
+  sleep 5
+  waited=$((waited + 5))
+  if [ "$waited" -ge 5400 ]; then
+    echo "gave up waiting for $lock" >&2
+    exit 3
+  fi
+done
+echo "$$" >"$lock/pid"
+trap 'rm -rf "$lock"' EXIT
 
 # The command as one shell-quoted string for `bash -lc` inside the container.
 quoted=""
