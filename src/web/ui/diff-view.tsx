@@ -3,7 +3,11 @@ import { cn } from '@web/lib/cn';
 import type { DiffRow, DiffRowKind } from '@web/lib/diff';
 import { Button } from './button';
 
-const ROW_CLASS: Readonly<Record<DiffRowKind, string>> = {
+/**
+ * Look of the diff rows, shared with other diff renderers (WP-113: the review diff of the tab
+ * "Changes" draws its own rows with comments, but the same colors and markers).
+ */
+export const DIFF_ROW_CLASS: Readonly<Record<DiffRowKind, string>> = {
   context: '',
   add: 'bg-success/12',
   remove: 'bg-destructive/12',
@@ -11,7 +15,8 @@ const ROW_CLASS: Readonly<Record<DiffRowKind, string>> = {
   note: 'text-muted-foreground italic',
 };
 
-const MARKER: Readonly<Record<DiffRowKind, string>> = {
+/** `+`/`−` per row kind (never color only). */
+export const DIFF_MARKER: Readonly<Record<DiffRowKind, string>> = {
   context: ' ',
   add: '+',
   remove: '−',
@@ -19,7 +24,7 @@ const MARKER: Readonly<Record<DiffRowKind, string>> = {
   note: '',
 };
 
-const MARKER_CLASS: Readonly<Record<DiffRowKind, string>> = {
+export const DIFF_MARKER_CLASS: Readonly<Record<DiffRowKind, string>> = {
   context: '',
   add: 'text-success',
   remove: 'text-destructive',
@@ -65,7 +70,7 @@ export const DiffView = memo(function DiffView({
         <table className="w-full border-collapse font-mono text-xs leading-5 [font-variant-ligatures:none]">
           <tbody>
             {visible.map((row, index) => (
-              <tr key={index} data-kind={row.kind} className={ROW_CLASS[row.kind]}>
+              <tr key={index} data-kind={row.kind} className={DIFF_ROW_CLASS[row.kind]}>
                 {row.kind === 'hunk' || row.kind === 'note' ? (
                   <td colSpan={showOldLines ? 4 : 3} className="px-2.5 whitespace-pre">
                     {row.text}
@@ -86,8 +91,8 @@ export const DiffView = memo(function DiffView({
                     >
                       {row.newLine}
                     </td>
-                    <td className={cn('w-px pr-1 pl-1.5 select-none', MARKER_CLASS[row.kind])}>
-                      {MARKER[row.kind]}
+                    <td className={cn('w-px pr-1 pl-1.5 select-none', DIFF_MARKER_CLASS[row.kind])}>
+                      {DIFF_MARKER[row.kind]}
                     </td>
                     <td className="pr-3 whitespace-pre">{row.text}</td>
                   </>
