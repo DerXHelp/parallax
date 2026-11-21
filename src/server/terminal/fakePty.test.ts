@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { FAKE_FLOOD_MAX_LINES, createFakePtyFactory, fakePrompt, type FakePtyProcess } from './fakePty';
+import {
+  FAKE_FLOOD_MAX_LINES,
+  createFakePtyFactory,
+  fakePrompt,
+  fakeScriptCommand,
+  type FakePtyProcess,
+} from './fakePty';
 
 const CWD = 'D:\\Projects\\demo';
 const CMD = 'C:\\Windows\\System32\\cmd.exe';
@@ -109,5 +115,26 @@ describe('createFakePtyFactory (WP-99)', () => {
     expect(pty.closed).toBe(true);
     expect(pty.read(10)).toBeNull();
     expect(pty.resize(10, 10)).toBe(false);
+  });
+});
+
+describe('fake script runs (WP-111)', () => {
+  it('reads the command of a verbatim cmd line or of -c / -Command', () => {
+    expect(
+      fakeScriptCommand({ args: [], windowsCommandLine: '"C:\\cmd.exe" /d /s /c "echo a && exit 2"' }),
+    ).toBe('echo a && exit 2');
+    expect(fakeScriptCommand({ args: ['-l', '-c', 'echo b'] })).toBe('echo b');
+    expect(fakeScriptCommand({ args: ['-NoLogo', '-Command', 'echo c'] })).toBe('echo c');
+    expect(fakeScriptCommand({ args: ['--login', '-i'] })).toBeNull();
+  });
+
+  it('runs the parts without a prompt and ends with the code', () => {
+    const factory = createFakePtyFactory();
+    const base = { executablePath: CMD, cwd: CWD, env: {}, cols: 80, rows: 24 };
+    const ok = factory.spawn({ ...base, args: ['-c', 'echo one && echo two'] });
+    expect(Buffer.from(ok.read(1000) ?? new Uint8Array()).toString('utf8')).toBe('one\r\ntwo\r\n');
+    expect(ok.exitCode()).toBe(0);
+    expect(factory.spawn({ ...base, args: ['-c', 'echo x && exit 4 && echo never'] }).exitCode()).toBe(4);
+    expect(factory.spawn({ ...base, args: ['-c', 'pnpm install'] }).exitCode()).toBe(1);
   });
 });

@@ -13,9 +13,48 @@ import {
   isGitDir,
   posixLoginArgs,
   resolveShellLaunch,
+  scriptLaunch,
   shellEnvironment,
   type GitLocatorDeps,
 } from './shells';
+
+describe('scriptLaunch (WP-111, ADR-251)', () => {
+  const env = { PATH: 'x' };
+  it('cmd: verbatim command line, quotes inside unchanged, lines joined with &&', () => {
+    const launch = { executablePath: 'C:\\Windows\\System32\\cmd.exe', args: [], env };
+    expect(scriptLaunch(launch, 'cmd', 'copy "a b.txt" c.txt\r\n\r\nnpm install', 'win32')).toEqual({
+      executablePath: launch.executablePath,
+      args: ['/d', '/s', '/c', 'copy "a b.txt" c.txt && npm install'],
+      env,
+      windowsCommandLine: '"C:\\Windows\\System32\\cmd.exe" /d /s /c "copy "a b.txt" c.txt && npm install"',
+    });
+  });
+
+  it('PowerShell -Command, Git Bash -c (as one argument)', () => {
+    const ps = { executablePath: 'C:\\ps\\powershell.exe', args: ['-NoLogo'], env };
+    expect(scriptLaunch(ps, 'powershell', 'npm i; echo "ok"', 'win32').args).toEqual([
+      '-NoLogo',
+      '-Command',
+      'npm i; echo "ok"',
+    ]);
+    const bash = { executablePath: 'C:\\Git\\bin\\bash.exe', args: ['--login', '-i'], env };
+    const result = scriptLaunch(bash, 'gitbash', 'pnpm i\nmake', 'win32');
+    expect(result.args).toEqual(['--login', '-c', 'pnpm i\nmake']);
+    expect(result.windowsCommandLine).toBeUndefined();
+  });
+
+  it('POSIX: login arguments, then -c (pwsh -Command)', () => {
+    expect(
+      scriptLaunch({ executablePath: '/bin/bash', args: ['-l'], env }, 'login', 'make', 'linux').args,
+    ).toEqual(['-l', '-c', 'make']);
+    expect(
+      scriptLaunch({ executablePath: '/usr/bin/fish', args: [], env }, 'fish', 'make', 'linux').args,
+    ).toEqual(['--login', '-c', 'make']);
+    expect(
+      scriptLaunch({ executablePath: '/usr/bin/pwsh', args: [], env }, 'pwsh', 'make', 'linux').args,
+    ).toEqual(['-Login', '-NoLogo', '-Command', 'make']);
+  });
+});
 
 const GIT = 'C:\\Program Files\\Git';
 const USER_GIT = 'C:\\Users\\jane\\AppData\\Local\\Programs\\Git';

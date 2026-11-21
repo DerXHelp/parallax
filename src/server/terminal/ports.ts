@@ -43,6 +43,12 @@ export interface PtySpawnOptions {
   env: Readonly<Record<string, string | undefined>>;
   cols: number;
   rows: number;
+  /**
+   * WP-111 (ADR-251, additive): Windows only – the complete command line exactly as given instead of
+   * one built from `args` (`cmd.exe /d /s /c "<command>"` must reach cmd unquoted by the CRT rules).
+   * POSIX ignores it.
+   */
+  windowsCommandLine?: string;
 }
 
 export interface PtyFactory {

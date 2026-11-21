@@ -342,3 +342,56 @@ export async function resolveShellLaunch(
       throw shellNotFound(kind);
   }
 }
+
+/** WP-111: what starts for a project command (`TerminalService.runScript`, ADR-251). */
+export interface ScriptLaunch extends ShellLaunch {
+  /** Windows `cmd`: the verbatim command line (`PtySpawnOptions.windowsCommandLine`). */
+  windowsCommandLine?: string;
+}
+
+/**
+ * The project command `command` run by the shell of `launch` (the embedded launch of `kind`) instead of
+ * an interactive session – the shell gets the text as ONE argument and ends with its exit code:
+ * - cmd: `"<cmd.exe>" /d /s /c "<command>"` verbatim (`/s` strips exactly the outer quotes, so quotes
+ *   inside reach cmd unchanged – the CRT quoting of `args` would turn them into `\"`); line breaks
+ *   become ` && ` (a failing line stops the rest).
+ * - PowerShell 5.1: `-NoLogo -Command <command>`; Git Bash: `bin\bash.exe --login -c <command>`
+ *   (`CHERE_INVOKING=1` keeps the folder).
+ * - POSIX: the login arguments of the shell, then `-c <command>` (pwsh: `-Command`).
+ */
+export function scriptLaunch(
+  launch: ShellLaunch,
+  kind: ShellKind,
+  command: string,
+  platform: NodeJS.Platform = process.platform,
+): ScriptLaunch {
+  const text = command.replace(/\r\n?/g, '\n');
+  if (platform !== 'win32') {
+    const login = posixLoginArgs(launch.executablePath);
+    const name = path.posix.basename(launch.executablePath);
+    const flag = name === 'pwsh' || name.startsWith('pwsh-') ? '-Command' : '-c';
+    return { ...launch, args: [...login, flag, text] };
+  }
+  switch (kind) {
+    case 'cmd': {
+      const joined = text
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line !== '')
+        .join(' && ');
+      const program = launch.executablePath.includes('"')
+        ? launch.executablePath
+        : `"${launch.executablePath}"`;
+      return {
+        ...launch,
+        args: ['/d', '/s', '/c', joined],
+        windowsCommandLine: `${program} /d /s /c "${joined}"`,
+      };
+    }
+    case 'powershell':
+      return { ...launch, args: ['-NoLogo', '-Command', text] };
+    default:
+      // gitbash (the Linux kinds never resolve on Windows).
+      return { ...launch, args: ['--login', '-c', text] };
+  }
+}

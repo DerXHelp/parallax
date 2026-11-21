@@ -37,7 +37,8 @@
  *  4. Set `PARALLAX=1`, `PARALLAX_ENTRY_ID`, `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1`,
  *     `CLAUDE_AGENT_SDK_CLIENT_APP=parallax/<version>` and `CLAUDE_CONFIG_DIR` (profile.configDir).
  *     These two are the only `PARALLAX*` names a started `claude` ever sees (a profile env value
- *     with a `PARALLAX_*` name is set on purpose and kept).
+ *     with a `PARALLAX_*` name is set on purpose and kept) – WP-111 (ADR-251) adds a third for a
+ *     session in a worktree with a port block: `PARALLAX_WORKTREE_PORT` (`worktreePort`).
  *
  * WP-103 (POSIX hosts, `BuildEnvInput.platform`): variable names are exact there (`http_proxy` and
  * `HTTP_PROXY` are two variables, WP-101 §1.6) – step 1 keeps every spelling, `PATH` is only `PATH`,
@@ -191,6 +192,19 @@ export interface BuildEnvInput {
    * (Phase 2). Decides which tool-shell settings of a calling Claude session are removed (step 2).
    */
   target?: 'sdk' | 'terminal';
+  /**
+   * WP-111 (ADR-251): first port of the entry's worktree port block → `PARALLAX_WORKTREE_PORT` (step 4);
+   * null/missing = not set.
+   */
+  worktreePort?: number | null;
+}
+
+/** WP-111 (ADR-251): the first port of a worktree's block of 10 (setup, teardown, terminals, claude). */
+export const WORKTREE_PORT_ENV = 'PARALLAX_WORKTREE_PORT';
+
+/** `{PARALLAX_WORKTREE_PORT: '<port>'}`, or `{}` without a port block. */
+export function worktreePortEnv(portBase: number | null | undefined): Record<string, string> {
+  return portBase === null || portBase === undefined ? {} : { [WORKTREE_PORT_ENV]: String(portBase) };
 }
 
 export interface BuildEnvReport {
@@ -366,6 +380,9 @@ export function buildEnvReport(input: BuildEnvInput): BuildEnvReport {
   if (input.entryId !== null) set.PARALLAX_ENTRY_ID = input.entryId;
   set.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS = '1';
   set.CLAUDE_AGENT_SDK_CLIENT_APP = input.clientApp;
+  if (input.worktreePort !== undefined && input.worktreePort !== null) {
+    set[WORKTREE_PORT_ENV] = String(input.worktreePort);
+  }
   const configDir = input.profile.configDir;
   if (configDir !== null) {
     const issue = pathRules(pathFlavorOf(platform)).issue(configDir);
