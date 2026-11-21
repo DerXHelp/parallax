@@ -115,6 +115,8 @@ export function remoteTerminalView(service: TerminalService, onOpen: () => void)
       };
       return wrapped;
     },
+    // Every terminal of the entry – never sent to the coupled computer: its socket lists through
+    // `connect` and sees only the terminals started through remote access (follow-up WP-109).
     list: (entryId) => service.list(entryId),
     openClaude: (entryId, launch, _origin, since) => service.openClaude(entryId, launch, 'remote', since),
     remoteEpoch: () => service.remoteEpoch(),
