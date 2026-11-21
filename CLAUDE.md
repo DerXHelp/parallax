@@ -74,7 +74,8 @@ die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale En
   - **L1, WP-103 (Plattformschicht Server):** `src/server/lib/**` (ohne `chrome.ts`, `toast.ts`), `src/server/config.ts`,
     `src/server/claude/**` (ohne `consoleCommand.ts`), `src/server/files/**` (ohne `editors.ts`, `open.ts`),
     `src/server/host/{fsCommands,login}.ts`, `src/server/http/**`, `src/server/store/{attachments,settings}.ts`,
-    `src/server/sessions/{recovery,processStore,commands}.ts`, `src/server/backend/spawn.ts`, `test/**`.
+    `src/server/sessions/{recovery,processStore,commands}.ts`, `src/server/backend/{spawn.ts,fake/**}`, `test/**`; Tests der
+    Integration in `src/server/sessions/*.integration.test.ts`.
   - **L1, WP-104 (Web):** `src/web/**` (Pfade je Host, `file-refs.ts`, Windows-Optionen nach `HostState.capabilities`
     ausblenden).
   - **L2, WP-105 (Terminal Linux):** `src/server/terminal/**`, `src/web/features/terminal/**`,
