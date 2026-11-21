@@ -304,6 +304,9 @@ export function TerminalTabs({ state, controller, defaultShell, shells, onOpen }
           atLimit={atLimit}
           max={state.limits.perEntry}
           onOpen={onOpen}
+          onFocusTerminal={() => {
+            controller.focusActive();
+          }}
         />
       </div>
       {items.map((item) => (

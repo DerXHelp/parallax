@@ -157,6 +157,11 @@ describe('TerminalPanel (WP-99b)', () => {
       expect(tab.getAttribute('aria-selected')).toBe('true');
     });
     expect(server.sentOfType('open').map((message) => message.shell)).toEqual(['powershell', 'cmd']);
+    // WP-109 (CI): the focus is in the new terminal, not back on "+".
+    await waitFor(() => {
+      expect(document.activeElement).toBe(activeView().querySelector('.xterm-helper-textarea'));
+    });
+    expect(document.activeElement).not.toBe(screen.getByRole('button', { name: 'New terminal' }));
   });
 
   it('shows the exit bar of an exited terminal: Restart opens the same shell again, Close removes it', async () => {

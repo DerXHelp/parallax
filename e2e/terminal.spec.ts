@@ -69,14 +69,21 @@ test('Alt+T opens a terminal; input, replay after a reload, a second terminal, e
   await expect(panelAgain.locator('[data-slot="terminal-tab"]')).toHaveCount(1);
   await expect(activeRows(again.pane)).toContainText('px-e2e-42');
 
-  // A second terminal from "+" (PowerShell, Linux bash).
+  // A second terminal from "+" (PowerShell, Linux bash). Under Linux both prompts are `$ `: wait for
+  // the new terminal itself (another id, running, its own prompt) before typing into it.
+  const active = panelAgain.locator('[data-slot="terminal-view"][data-active="true"]');
+  const firstId = (await active.getAttribute('data-terminal-id')) ?? '';
   await panelAgain.locator('[data-slot="terminal-add"]').click();
   await page.getByRole('menu').locator(`[data-choice="${SHELLS.second}"]`).click();
   await expect(panelAgain.locator('[data-slot="terminal-tab"]')).toHaveCount(2);
+  await expect(active).not.toHaveAttribute('data-terminal-id', firstId);
+  await expect(active).toHaveAttribute('data-state', 'running');
   await expect(activeRows(again.pane)).toContainText(SHELLS.secondPrompt);
+  await expect(activeRows(again.pane)).not.toContainText('px-e2e-42');
 
   // `exit 3` in it: the exit bar with the code.
-  await panelAgain.locator('[data-slot="terminal-view"][data-active="true"] .xterm-helper-textarea').focus();
+  await active.locator('.xterm-helper-textarea').focus();
+  await expect(active.locator('.xterm-helper-textarea')).toBeFocused();
   await typeLine(page, 'exit 3');
   const exitBar = panelAgain.locator('[data-slot="terminal-exit-bar"]');
   await expect(exitBar).toBeVisible();
