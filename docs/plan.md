@@ -865,17 +865,17 @@ aus sollen die Sessions der anderen gesteuert werden, in einer Oberfläche.
 **Backlog (Stand 21.11.2026, Nutzerentscheidung nach dem Vergleich mit ähnlichen Projekten):**
 - Erledigt aus dem früheren Backlog: Mehrere Rechner (WP-75…82), Releases und Update in der App (WP-83…89),
   `/btw` (WP-66), MCP-Panel (WP-67), Plan-Kommentare (WP-93), Remote Control (WP-64), eingebettetes Terminal (WP-99).
-- **Ausbau 1 – bauen** (Branch `feature/ausbau-1`):
+- **Ausbau 1 – bauen** (Branch `feature/ausbau-1`, Plan `docs/wp/WP-110.md`):
   - Session-Review: Gesamt-Diff einer Session, Zeilenkommentare gesammelt als eine Nachricht an Claude.
-  - Worktree je Session (optional), Aufräumen nur nach Prüfung auf uncommittete und ungepushte Arbeit.
+  - Worktree je Session (optional), Aufräumen nur nach Prüfung auf uncommittete und ungepushte Arbeit; dazu optional
+    je Projekt Setup-/Teardown-Befehl und Portbereich.
   - Volltextsuche über alle Sessions.
-  - Übersicht: Sessions anheften, nach Status filtern, Projekte stummschalten, „als ungelesen markieren“.
-  - Git-Panel: Commit, Branch, Push.
-  - Ruhezustand: ungenutzte Sessions beenden, beim Antworten fortsetzen; Anheften hält sie wach.
-  - Electron-Hülle (Tray, Setup-.exe).
-  - Erklärung angefragt, Entscheidung offen: Setup-/Teardown-Skripte und Portbereich je Worktree;
-    Elicitation-Dialoge (MCP-Server fragt nach Eingaben – heute lehnt das SDK sie ohne `onElicitation` ab).
-- **Später überlegen** (nächste Ausbaustufe): Agenten-Review mit Funden im Diff, Split-View, PR-/CI-Status je
+  - Übersicht: nach Status filtern, Projekte stummschalten, „als ungelesen markieren“; Angeheftete schlafen nicht
+    (Anheften und Ruhezustand gibt es schon).
+  - Git-Leiste: Status, Commit, Branch, Push.
+  - Elicitation: Eingabe-Anfragen von MCP-Servern als Karte (heute lehnt das SDK sie ohne `onElicitation` still ab).
+- **Später überlegen** (nächste Ausbaustufe): Electron-Hülle (Tray, eigenes Fenster, Setup.exe; Entwurf
+  `docs/wp/WP-110.md` Anhang A), Agenten-Review mit Funden im Diff, Split-View, PR-/CI-Status je
   Session, Session aus PR oder Issue starten, Profile und Updates eines anderen Rechners (WP-107), OpenCode
   (unten), Live-Abnahme Ubuntu und `pnpm cli-check` unter Linux (WP-109 §6), ESLint 10 und TypeScript 7.
 - **Kein Bedarf / gestrichen:** Rewind/Checkpoints, Fork, Per-Hunk-Diff-Freigabe, Liste berührter Dateien mit
