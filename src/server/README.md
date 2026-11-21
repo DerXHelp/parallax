@@ -29,8 +29,8 @@ Ownership: `docs/architecture.md` §2.1 (Phase 3: `CLAUDE.md` bzw. `docs/wp/WP-5
 | `hosts/` | Mehrere Rechner: Rechnerliste, Kopplung als Client, Vermittler, Wächter des steuernden Rechners; Port eingefroren | 79 |
 | `system/` | Phase 2: Windows-Integration – externe Konsole (+ Fake-Konsole), Autostart-Verknüpfung, Protokoll-Handler `parallax:`, `createSystemIntegration` (Port `system/ports.ts` eingefroren); WP-86: Einträge einer Installation (`start.mjs`, Startmenü, Marker) | 33, 86 |
 | `terminal/` | WP-97: „Shell im Ordner öffnen“ – cmd, PowerShell, Git Bash als Fenster im `cwd` (über die externe Konsole, neutrale Umgebung, Git-Suche; ADR-238); WP-99: eingebettetes Terminal | 97 |
-| `git/` | Ausbau 1: Git-Dienst – Host-Befehle `git.*`, `worktree.*` (ADR-252; Gerüst WP-110, Stub bis WP-111) | 111 |
-| `search/` | Ausbau 1: Volltextsuche – `search.query`, `transcript.loadAround` (ADR-255; Gerüst WP-110, Stub bis WP-112) | 112 |
+| `git/` | Ausbau 1: Git-Dienst – Host-Befehle `git.*`, `worktree.*` (ADR-252): absolutes git über `runner.ts` (gehärtet: keine Prompts, keine Filter des Repos bei Lesezugriffen), Status, Diffs, Commit, Branch, Push, Worktrees | 111 |
+| `search/` | Ausbau 1: Volltextsuche – `search.query` (Worker über die Transkripte, Abbruch einer überholten Suche), `transcript.loadAround` (ADR-255) | 112 |
 
 Regeln: nie aus `src/web` importieren; Logging nur über `lib/logger.ts`; jeder Spawn über
 `lib/process.ts` (`windowsHide: true`, ohne Shell, nur absolute `.exe`-Pfade – R1-04; einzige Ausnahme
