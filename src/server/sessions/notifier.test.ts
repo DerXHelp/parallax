@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { EntryId } from '@shared/common';
 import type { NotificationSettings } from '@shared/model';
-import { SAMPLE_TIME, sampleId, sampleNotificationSettings, sampleStatusFacts } from '@shared/samples';
+import { POSIX_PATHS, WIN32_PATHS } from '@shared/paths';
+import {
+  SAMPLE_TIME,
+  sampleEntry,
+  sampleId,
+  sampleNotificationSettings,
+  sampleStatusFacts,
+  sampleWorktreeEntry,
+} from '@shared/samples';
 import { DONE_NOTIFY_MIN_TURN_MS, type StatusFacts } from '@shared/status';
 import type { ClientPresence } from '../sync/ports';
 import {
@@ -9,11 +17,13 @@ import {
   chooseChannel,
   chooseChannelWithReason,
   decisionsCleared,
+  isProjectMuted,
   isViewedByVisibleClient,
   isWatchedByFocusedClient,
   observeFocus,
   planNotification,
   presenceSummary,
+  projectOf,
   relayTarget,
   routeChannel,
   routeNotification,
@@ -1036,5 +1046,75 @@ describe('routeNotification with the watcher (WP-81, ADR-211)', () => {
     };
     expect(routeChannel(plan)).toBe('relay');
     expect(routeChannel({ ...plan, clientId: cl1, delivery: 'in_app' })).toBe('relay_in_app');
+  });
+});
+
+describe('muted projects (WP-112, WP-110 §3.7)', () => {
+  const working = sampleStatusFacts({ runState: 'working' });
+  const permission = sampleStatusFacts({
+    runState: 'working',
+    decisions: { permission: 1, question: 0, plan: 0, elicitation: 0, oldestKind: 'permission', expired: 0 },
+  });
+  const away = [client(1, { focused: false, visible: false, viewing: null })];
+  const elsewhere = [client(1, { focused: true, visible: true, viewing: OTHER })];
+
+  it('a muted project gets nothing: no Web Notification, no in-app hint, no native toast, no watcher', () => {
+    for (const clients of [away, elsewhere, [], [relay()]]) {
+      for (const nativeAvailable of [true, false]) {
+        const r = routeNotification(
+          working,
+          permission,
+          NOW,
+          clients,
+          ENTRY,
+          nativeAvailable,
+          undefined,
+          history(clients),
+          true,
+        );
+        expect(r).toMatchObject({ kind: 'permission', planned: null, filter: 'muted' });
+        expect(r?.relay).toBeUndefined();
+        expect(
+          planNotification(
+            working,
+            permission,
+            NOW,
+            clients,
+            ENTRY,
+            nativeAvailable,
+            undefined,
+            history(clients),
+            true,
+          ),
+        ).toBeNull();
+      }
+    }
+  });
+
+  it('muted changes nothing when there is no event', () => {
+    expect(routeNotification(working, working, NOW, away, ENTRY, true, undefined, null, true)).toBeNull();
+  });
+
+  it('projectOf: the repository of a worktree, else the cwd', () => {
+    expect(projectOf(sampleEntry())).toBe('D:\\work\\sample');
+    expect(projectOf(sampleWorktreeEntry())).toBe('D:\\work\\sample');
+  });
+
+  it('Windows rules: case-insensitive, separators and a trailing backslash do not count', () => {
+    const entry = sampleEntry({ cwd: 'D:\\Work\\Sample' });
+    expect(isProjectMuted(entry, ['d:\\work\\sample'], WIN32_PATHS)).toBe(true);
+    expect(isProjectMuted(entry, ['D:/work/sample/'], WIN32_PATHS)).toBe(true);
+    expect(isProjectMuted(entry, ['D:\\work\\sample-2'], WIN32_PATHS)).toBe(false);
+    expect(isProjectMuted(entry, [], WIN32_PATHS)).toBe(false);
+    // A worktree session belongs to its repository's project.
+    expect(isProjectMuted(sampleWorktreeEntry(), ['D:\\WORK\\SAMPLE'], WIN32_PATHS)).toBe(true);
+  });
+
+  it('POSIX rules: exact case; doubled and trailing slashes do not count', () => {
+    const entry = sampleEntry({ cwd: '/home/user/work/sample' });
+    expect(isProjectMuted(entry, ['/home/user/work/sample/'], POSIX_PATHS)).toBe(true);
+    expect(isProjectMuted(entry, ['/home/user//work/sample'], POSIX_PATHS)).toBe(true);
+    expect(isProjectMuted(entry, ['/home/user/work/Sample'], POSIX_PATHS)).toBe(false);
+    expect(isProjectMuted(entry, ['/home/user/work'], POSIX_PATHS)).toBe(false);
   });
 });

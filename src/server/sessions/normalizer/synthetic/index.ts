@@ -6,6 +6,7 @@ import type { FixtureEvent } from '../../../backend/fixture';
 import { events as abortedStream } from './aborted-stream';
 import { events as autoModeDenied } from './auto-mode-denied';
 import { events as compactRetry } from './compact-retry';
+import { events as elicitation } from './elicitation';
 import { events as errors } from './errors';
 import { events as hooksNotices } from './hooks-notices';
 import { events as largeOutput } from './large-output';
@@ -21,6 +22,7 @@ export const SYNTHETIC_STREAMS: Readonly<Record<string, FixtureEvent[]>> = {
   'aborted-stream': abortedStream,
   'auto-mode-denied': autoModeDenied,
   'compact-retry': compactRetry,
+  elicitation,
   errors,
   'hooks-notices': hooksNotices,
   'large-output': largeOutput,

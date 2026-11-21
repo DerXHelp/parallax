@@ -7,6 +7,9 @@ import type { FixtureEvent } from '../fixture';
 import { events as abortDecision } from './abort-decision';
 import { events as crashAwaitingDecision } from './crash-awaiting-decision';
 import { events as crashMidTurn } from './crash-mid-turn';
+import { events as elicitationForm } from './elicitation-form';
+import { events as elicitationUnsupported } from './elicitation-unsupported';
+import { events as elicitationUrl } from './elicitation-url';
 import { events as idleCrash } from './idle-crash';
 import { events as parallelDecisions } from './parallel-decisions';
 import { events as queuedThenCrash } from './queued-then-crash';
@@ -17,6 +20,9 @@ export const FAKE_SCENARIOS: Readonly<Record<string, readonly FixtureEvent[]>> =
   'abort-decision': abortDecision,
   'crash-awaiting-decision': crashAwaitingDecision,
   'crash-mid-turn': crashMidTurn,
+  'elicitation-form': elicitationForm,
+  'elicitation-unsupported': elicitationUnsupported,
+  'elicitation-url': elicitationUrl,
   'idle-crash': idleCrash,
   'parallel-decisions': parallelDecisions,
   'queued-then-crash': queuedThenCrash,

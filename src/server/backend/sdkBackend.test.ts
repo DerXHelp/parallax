@@ -1,4 +1,4 @@
-import type { CanUseTool, Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, ElicitationRequest, Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -26,6 +26,7 @@ import {
 import type {
   AgentSession,
   BackendEvent,
+  ElicitationHandler,
   PermissionHandler,
   SideQuestionOptions,
   StartSessionRequest,
@@ -1958,5 +1959,75 @@ describe('SdkBackend – login and output styles (WP-70)', () => {
     await expect(login.authenticate()).resolves.toMatchObject({ ok: false, error: { code: 'LOGIN_UNAVAILABLE' } });
     await expect(login.waitForCompletion()).resolves.toMatchObject({ ok: false, error: { code: 'LOGIN_UNAVAILABLE' } });
     await login.close();
+  });
+});
+
+describe('SdkBackend – MCP elicitation (WP-112, ADR-256)', () => {
+  const form: ElicitationRequest = {
+    serverName: 'booking',
+    message: 'Details?',
+    requestedSchema: { type: 'object', properties: { name: { type: 'string' } } },
+  };
+
+  it('without a handler in the request the SDK gets no onElicitation (it declines on its own)', () => {
+    const h = harness();
+    h.backend.start(request());
+    expect(h.fq().options).not.toHaveProperty('onElicitation');
+  });
+
+  it('maps the request, passes the signal on and returns the answer as ElicitResult', async () => {
+    const handler = vi.fn<ElicitationHandler>(() =>
+      Promise.resolve({ action: 'accept', content: { name: 'Ada' } }),
+    );
+    const h = harness();
+    h.backend.start(request({ onElicitation: handler }));
+    const signal = new AbortController().signal;
+    const result = await h.fq().options.onElicitation?.(form, { signal, requestId: 'req-1' });
+    expect(result).toEqual({ action: 'accept', content: { name: 'Ada' } });
+    expect(handler).toHaveBeenCalledExactlyOnceWith(
+      {
+        serverName: 'booking',
+        message: 'Details?',
+        mode: 'form',
+        url: null,
+        elicitationId: null,
+        requestedSchema: { type: 'object', properties: { name: { type: 'string' } } },
+        title: null,
+        displayName: null,
+        description: null,
+        requestId: 'req-1',
+      },
+      signal,
+    );
+  });
+
+  it('a request it does not understand is declined without asking the handler', async () => {
+    const handler = vi.fn<ElicitationHandler>(() => Promise.resolve({ action: 'cancel', content: null }));
+    const h = harness();
+    h.backend.start(request({ onElicitation: handler }));
+    const unknownMode = { ...form, mode: 'oauth' } as unknown as ElicitationRequest;
+    await expect(
+      h.fq().options.onElicitation?.(unknownMode, { signal: new AbortController().signal, requestId: 'r' }),
+    ).resolves.toEqual({ action: 'decline' });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('a throwing handler → cancel + error{control}', async () => {
+    const handler = vi.fn<ElicitationHandler>(() => Promise.reject(new Error('broker exploded')));
+    const h = harness();
+    const session = h.backend.start(request({ onElicitation: handler }));
+    const rec = record(session);
+    await expect(
+      h.fq().options.onElicitation?.(form, { signal: new AbortController().signal, requestId: 'r' }),
+    ).resolves.toEqual({ action: 'cancel' });
+    await session.close();
+    await rec.done;
+    expect(rec.events.find((event) => event.type === 'error')).toEqual({
+      type: 'error',
+      where: 'control',
+      name: 'Error',
+      message: 'broker exploded',
+      at: NOW,
+    });
   });
 });

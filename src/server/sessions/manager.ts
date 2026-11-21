@@ -105,6 +105,7 @@ import { DISABLED_NATIVE_TOASTS, toastShowOptions, type NativeToasts } from './n
 import {
   EMPTY_FOCUS_HISTORY,
   decisionsCleared,
+  isProjectMuted,
   isViewedByVisibleClient,
   isWatchedByFocusedClient,
   observeFocus,
@@ -133,6 +134,7 @@ import { endSideQuestions } from './sideQuestions';
 import { reduceStatus as realReduceStatus } from './status/machine';
 import { mergeUsage } from './overview';
 import { cwdLabel } from './summary';
+import { reopenedSinceMark } from './unread';
 import { createUsagePoller } from './usagePoll';
 
 export type { SessionManagerOptions, SleepPolicy } from './entryState';
@@ -599,11 +601,13 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
    * ADR-105: a running process may fall asleep when `canSleep(facts)` holds and no focused + visible
    * window shows the entry (the user would face "Starting…"). The idle time counts from the moment
    * both hold (`sleepSince`); every change of facts, presence or settings re-plans.
+   * WP-112 (WP-110 §3.7): a pinned session never falls asleep (`session.setPinned` re-plans).
    */
   const sleepEligible = (s: EntryState, clients: readonly ClientPresence[]): boolean =>
     !shuttingDown &&
     s.runtime !== null &&
     s.phase === 'running' &&
+    !s.entry.pinned &&
     // ADR-121 (R4-02): a planned turn (ScheduleWakeup/CronCreate, /loop) dies with the process.
     !s.runtime.scheduled &&
     // WP-64 (ADR-105 extended): the Claude app could not reach a sleeping session.
@@ -764,6 +768,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         toasts.available(),
         settings.notifications,
         focusHistory,
+        // WP-112: a muted project gets no toast and no sound (status and counters stay).
+        isProjectMuted(s.entry, settings.notifications.mutedProjects),
       );
       // WP41-04: one line per notification – target, channel and why (never the title: prompt text).
       if (route !== null) {
@@ -1187,7 +1193,15 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       return s === undefined ? null : s.loadView();
     },
 
-    handleCommand: (cmd, ctx: CommandContext) => handleCommand(engine, cmd, ctx),
+    async handleCommand(cmd, ctx: CommandContext) {
+      const result = await handleCommand(engine, cmd, ctx);
+      if (cmd.name === 'session.setPinned') {
+        // WP-112: a pinned session never falls asleep – re-plan its idle sleep.
+        const s = states.get(cmd.entryId);
+        if (s !== undefined) planSleep(s, presence());
+      }
+      return result;
+    },
 
     onPresenceChanged(all: readonly ClientPresence[]) {
       focusHistory = observeFocus(focusHistory, all);
@@ -1196,7 +1210,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         // WP-65 (§1.2): the moment a session stops being visible is its `lastSeenAt`.
         if (s.viewedByVisibleClient && !visible && !shuttingDown) s.markSeen(now().toISOString());
         s.viewedByVisibleClient = visible;
-        if (visible && s.facts.unread) {
+        // WP-112: an unread mark ends only when a window opens the session anew (unread.ts).
+        if (reopenedSinceMark(s, all) && s.facts.unread) {
           s.reduce({ type: 'viewed' });
           clearNotifications(s.id);
         }

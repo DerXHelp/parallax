@@ -21,16 +21,36 @@ import {
 } from '../fixture';
 import { finalItems, replayLive, signalList } from '../../sessions/normalizer/testing/harness';
 import { SYNTHETIC_STREAMS } from '../../sessions/normalizer/synthetic';
-import type { BackendEvent, PermissionHandler, StartSessionRequest } from '../types';
+import type {
+  BackendEvent,
+  ElicitationAnswer,
+  ElicitationHandler,
+  ElicitationRequestInfo,
+  PermissionHandler,
+  StartSessionRequest,
+} from '../types';
 import { createFakeBackend, eventsScenario, sequentialIds, type FakeBackend } from '../fakeBackend';
 import { mapUuids } from './common';
+import { FAKE_ELICIT_URL_DONE } from './elicit';
+import {
+  ELICITATION_FORM_CONTENT,
+  ELICITATION_FORM_REQUEST_ID,
+  ELICITATION_FORM_SCHEMA,
+} from './elicitation-form';
+import { ELICITATION_URL, ELICITATION_URL_ID } from './elicitation-url';
 import { createFakeClaudeIntegration } from './integration';
 import { FAKE_SCENARIOS } from './synthetic';
 import { driveFixtureSession, recordedPrompts } from './testing';
 
 const launch = await createFakeClaudeIntegration().launchSpecFor('standard', SAMPLE_IDS.entry);
 
-function request(canUseTool: PermissionHandler): StartSessionRequest {
+/** WP-112: the default MCP elicitation answer (URL mode "Done"; the synthetic URL stream records it). */
+const acceptElicitation: ElicitationHandler = () => Promise.resolve({ action: 'accept', content: null });
+
+function request(
+  canUseTool: PermissionHandler,
+  onElicitation: ElicitationHandler = acceptElicitation,
+): StartSessionRequest {
   return {
     entryId: SAMPLE_IDS.entry,
     cwd: 'D:\\work\\fake',
@@ -41,6 +61,7 @@ function request(canUseTool: PermissionHandler): StartSessionRequest {
     effort: null,
     promptSuggestions: false,
     canUseTool,
+    onElicitation,
   };
 }
 
@@ -53,9 +74,13 @@ function scenario(name: string): readonly FixtureEvent[] {
   return ev;
 }
 
-async function play(ev: readonly FixtureEvent[], handler: PermissionHandler = allow) {
+async function play(
+  ev: readonly FixtureEvent[],
+  handler: PermissionHandler = allow,
+  onElicitation: ElicitationHandler = acceptElicitation,
+) {
   const backend: FakeBackend = createFakeBackend({ scenario: () => eventsScenario('s', ev) });
-  const agent = backend.start(request(handler));
+  const agent = backend.start(request(handler, onElicitation));
   const handle = backend.sessions[0];
   if (handle === undefined) throw new Error('no handle');
   const result = await driveFixtureSession(backend, agent, handle, recordedPrompts(ev, uuidGenerator()));
@@ -289,5 +314,132 @@ describe('WP-12 synthetic streams play through the FakeBackend unchanged', () =>
     const expected = ev.filter((e) => e.kind === 'message').map((e) => mapUuids(e.payload, map));
     expect(events.flatMap((e) => (e.type === 'message' ? [e.message] : []))).toEqual(expected);
     expect(handle.diagnostics).toEqual([]);
+  });
+});
+
+describe('elicitation scenarios – behaviour (WP-112, ADR-256)', () => {
+  it('elicitation-form: the handler gets the mapped request; the recorded accept with content matches', async () => {
+    const seen: ElicitationRequestInfo[] = [];
+    const { events, handle } = await play(scenario('elicitation-form'), allow, (req) => {
+      seen.push(req);
+      return Promise.resolve({ action: 'accept', content: { ...ELICITATION_FORM_CONTENT } });
+    });
+    expect(seen).toMatchObject([
+      {
+        serverName: 'booking',
+        mode: 'form',
+        requestId: ELICITATION_FORM_REQUEST_ID,
+        requestedSchema: ELICITATION_FORM_SCHEMA,
+      },
+    ]);
+    expect(exitOf(events)).toMatchObject({ code: 0, expected: true });
+    expect(handle.diagnostics).toEqual([]);
+  });
+
+  it('elicitation-form: another answer than the recorded one is a decision-mismatch', async () => {
+    const { handle } = await play(scenario('elicitation-form'), allow, () =>
+      Promise.resolve({ action: 'decline', content: null }),
+    );
+    expect(handle.diagnostics).toMatchObject([
+      { kind: 'decision-mismatch', message: 'action decline instead of accept' },
+    ]);
+  });
+
+  it('elicitation-unsupported: the recorded decline', async () => {
+    const { events, handle } = await play(scenario('elicitation-unsupported'), allow, () =>
+      Promise.resolve({ action: 'decline', content: null }),
+    );
+    expect(exitOf(events)).toMatchObject({ code: 0, expected: true });
+    expect(handle.diagnostics).toEqual([]);
+  });
+
+  it('elicitation-url: the request stays open while elicitation_complete streams; the join waits for the answer', async () => {
+    const ev = scenario('elicitation-url');
+    const seen: ElicitationRequestInfo[] = [];
+    let answer: (a: ElicitationAnswer) => void = () => undefined;
+    const backend = createFakeBackend({ scenario: () => eventsScenario('s', ev) });
+    const agent = backend.start(
+      request(allow, (req) => {
+        seen.push(req);
+        return new Promise<ElicitationAnswer>((resolve) => {
+          answer = resolve;
+        });
+      }),
+    );
+    const handle = backend.sessions[0];
+    if (handle === undefined) throw new Error('no handle');
+    const messages: unknown[] = [];
+    const consumed = (async () => {
+      for await (const event of agent.events) if (event.type === 'message') messages.push(event.message);
+    })();
+    const [prompt] = recordedPrompts(ev, uuidGenerator());
+    if (prompt === undefined) throw new Error('no prompt');
+    await backend.settle();
+    agent.send(prompt);
+    await backend.settle();
+    expect(handle.state).toBe('waiting-decision');
+    expect(seen).toMatchObject([{ mode: 'url', url: ELICITATION_URL, elicitationId: ELICITATION_URL_ID }]);
+    expect(messages).toContainEqual(
+      expect.objectContaining({ subtype: 'elicitation_complete', elicitation_id: ELICITATION_URL_ID }),
+    );
+    answer({ action: 'accept', content: null });
+    await backend.settle();
+    await agent.close();
+    await consumed;
+    expect(handle.diagnostics).toEqual([]);
+    expect(JSON.stringify(messages)).toContain('Your calendar is connected.');
+  });
+});
+
+describe('interactive elicitation keywords as fixture format v1 (WP-112)', () => {
+  it.each<[string, ElicitationAnswer | null, string]>([
+    [
+      'fake:elicit-form',
+      { action: 'accept', content: { ...ELICITATION_FORM_CONTENT } },
+      'Fake: accepted with',
+    ],
+    ['fake:elicit-unsupported', { action: 'decline', content: null }, 'Fake: declined.'],
+    ['fake:elicit-url', null, FAKE_ELICIT_URL_DONE],
+  ])('%s', async (keyword, reply, text) => {
+    const seen: ElicitationRequestInfo[] = [];
+    const backend = createFakeBackend({ ids: sequentialIds() });
+    const agent = backend.start(
+      request(allow, (req) => {
+        seen.push(req);
+        // URL mode: nobody answers – elicitation_complete (engine side) would close the card.
+        return reply === null ? new Promise<ElicitationAnswer>(() => undefined) : Promise.resolve(reply);
+      }),
+    );
+    const handle = backend.sessions[0];
+    if (handle === undefined) throw new Error('no handle');
+    const messages: unknown[] = [];
+    const consumed = (async () => {
+      for await (const event of agent.events) if (event.type === 'message') messages.push(event.message);
+    })();
+    agent.send({
+      uuid: '00000000-0000-4000-b000-000000000001',
+      content: [{ type: 'text', text: keyword }],
+      priority: 'next',
+    });
+    await backend.settle();
+    await agent.close();
+    await consumed;
+    expect(handle.diagnostics).toEqual([]);
+    expect(seen).toHaveLength(1);
+
+    const ev: FixtureEvent[] = messages.map((payload, i) => ({
+      seq: i + 1,
+      tMs: i * 10,
+      kind: 'message',
+      payload,
+    }));
+    for (const event of ev) expect(fixtureEventSchema.safeParse(event).success).toBe(true);
+    const r = replayLive({ events: ev });
+    for (const op of r.steps.flatMap((s) => s.ops)) expect(sessionOpSchema.parse(op)).toStrictEqual(op);
+    expect(r.normalizer.unknownCounts).toEqual({});
+    const signals = signalList(r);
+    expect(signals.filter((s) => s.type === 'turn_result')).toMatchObject([{ outcome: 'success' }]);
+    expect(signals.some((s) => s.type === 'elicitation_complete')).toBe(keyword === 'fake:elicit-url');
+    expect(JSON.stringify(messages)).toContain(text);
   });
 });
