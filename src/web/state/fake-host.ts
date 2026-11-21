@@ -1496,6 +1496,7 @@ export class FakeHost {
       case 'session.setFastMode':
       case 'session.switchConversation':
       case 'session.openExternal':
+      case 'session.openInTerminal':
       case 'session.reclaim':
       case 'session.consoleCommand':
       case 'session.continueAfterLimit':

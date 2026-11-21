@@ -156,6 +156,7 @@ export function createMemorySessionSource(options: { host?: HostState } = {}): M
       case 'session.refreshModels':
       case 'session.switchConversation':
       case 'session.openExternal':
+      case 'session.openInTerminal':
       case 'session.reclaim':
       case 'session.consoleCommand':
       case 'session.continueAfterLimit':

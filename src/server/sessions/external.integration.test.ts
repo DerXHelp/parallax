@@ -191,10 +191,16 @@ describe('session.openExternal (ADR-104)', () => {
       processStartedAt: SAMPLE_TIME,
       since: SAMPLE_TIME,
       conversationId: entry === undefined ? null : currentConversation(entry).id,
+      terminalId: null,
     });
     expect(entry?.lastRunState).toBe('external');
     expect(h.status(entryId).kind).toBe('external');
-    expect(h.summary(entryId).external).toEqual({ since: SAMPLE_TIME, pid: PID, running: true });
+    expect(h.summary(entryId).external).toEqual({
+      since: SAMPLE_TIME,
+      pid: PID,
+      running: true,
+      terminalId: null,
+    });
     expect(handoffs(h, entryId)).toEqual([
       { phase: 'external', importedItems: 0, order: expect.any(Number) as number },
     ]);
@@ -631,7 +637,12 @@ describe('server restart with an open handoff (ADR-104)', () => {
     const h = await restart(s);
     expect(h.stores.registry.get(entryId)?.external).toMatchObject({ pid: PID });
     expect(h.facts(entryId).runState).toBe('external');
-    expect(h.summary(entryId).external).toEqual({ since: SAMPLE_TIME, pid: PID, running: true });
+    expect(h.summary(entryId).external).toEqual({
+      since: SAMPLE_TIME,
+      pid: PID,
+      running: true,
+      terminalId: null,
+    });
     expect(h.manager.inspect(entryId)?.externalWatched).toBe(true);
     expect(s.launcher.opened).toHaveLength(1);
     s.h = h;

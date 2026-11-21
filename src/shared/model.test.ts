@@ -23,7 +23,10 @@ import {
   defaultShellFor,
   shellKindsFor,
   EDITOR_PRESET_ARGS,
+  DEFAULT_CONSOLE_SETTINGS,
+  consoleSettingsSchema,
   editorExecutableIssue,
+  editorPresetsFor,
   remoteEventSchema,
   remotePeerRecordSchema,
   remotePeerSchema,
@@ -649,12 +652,34 @@ describe('Phase 2 contracts (WP-30 §4.5)', () => {
     expect(REGISTRY_SCHEMA_VERSION).toBe(2);
   });
 
+  it('102e: a handoff names its terminal; older records and summaries have none', () => {
+    const { terminalId: _t, ...older } = sampleExternalHandoff();
+    expect(externalHandoffSchema.parse(older).terminalId).toBeNull();
+    const terminalId = `tm_${'b'.repeat(32)}`;
+    expectRoundTrip(externalHandoffSchema, sampleExternalHandoff({ terminalId }));
+    expect(externalHandoffSchema.safeParse(sampleExternalHandoff({ terminalId: 'tm_x' })).success).toBe(
+      false,
+    );
+    expect(
+      sessionSummarySchema.parse({
+        ...sampleSummary(),
+        external: { since: sampleTime(), pid: null, running: true },
+      }).external?.terminalId,
+    ).toBeNull();
+  });
+
+  it('102e: HostState.homeDir defaults to null', () => {
+    const { homeDir: _h, ...older } = sampleHostState();
+    expect(hostStateSchema.parse(older).homeDir).toBeNull();
+    expectRoundTrip(hostStateSchema, sampleHostState({ homeDir: '/home/demo' }));
+  });
+
   it('summary.external and the handoff item default sensibly', () => {
     const { external: _x, ...older } = sampleSummary();
     expect(sessionSummarySchema.parse(older).external).toBeNull();
     expectRoundTrip(
       sessionSummarySchema,
-      sampleSummary({ external: { since: sampleTime(), pid: 4242, running: false } }),
+      sampleSummary({ external: { since: sampleTime(), pid: 4242, running: false, terminalId: null } }),
     );
     const { importedItems: _n, ...handoff } = sampleSystemItems.handoff({ phase: 'external' });
     expect(transcriptItemSchema.parse(handoff)).toEqual(
@@ -698,6 +723,45 @@ describe('Phase 3 contracts (WP-50 §4.5)', () => {
     expect(settingsPatchSchema.parse({}).editor).toBeUndefined();
     expect(EDITOR_PRESET_ARGS.notepadpp).toContain('{file}');
     expect(EDITOR_PRESET_ARGS.vscode.some((arg) => arg.includes('{file}'))).toBe(true);
+  });
+
+  it('102e: editor presets per platform with argument templates', () => {
+    expect(editorPresetsFor('win32')).toEqual(['notepadpp', 'vscode', 'custom', 'system']);
+    expect(editorPresetsFor('posix')).toEqual([
+      'vscode',
+      'vscodium',
+      'zed',
+      'sublime',
+      'kate',
+      'gnome_text_editor',
+      'gedit',
+      'custom',
+      'system',
+    ]);
+    for (const [preset, args] of Object.entries(EDITOR_PRESET_ARGS)) {
+      expect(
+        args.some((arg) => arg.includes('{file}')),
+        preset,
+      ).toBe(true);
+    }
+    expect(issuesOf({ preset: 'kate', executable: null, args: [] })).toEqual([]);
+    expect(issuesOf({ preset: 'zed', executable: '/usr/bin/zed', args: [] })).toEqual([]);
+  });
+
+  it('102e: console.terminalEmulator – absolute and safe by its own shape, no block list', () => {
+    expect(
+      consoleSettingsSchema.parse({ defaultShell: 'cmd', gitBashWindow: 'mintty', gitDir: null }),
+    ).toEqual(DEFAULT_CONSOLE_SETTINGS);
+    const valid = (terminalEmulator: string | null) =>
+      consoleSettingsSchema.safeParse({ ...DEFAULT_CONSOLE_SETTINGS, terminalEmulator }).success;
+    expect(valid(null)).toBe(true);
+    expect(valid('/usr/bin/kitty')).toBe(true);
+    // Terminal emulators are what is meant here (unlike the editor's block list).
+    expect(valid('/usr/bin/xterm')).toBe(true);
+    expect(valid('C:\\Program Files\\WezTerm\\wezterm-gui.exe')).toBe(true);
+    expect(valid('kitty')).toBe(false);
+    expect(valid('')).toBe(false);
+    expect(valid('/usr/bin/../bin/kitty')).toBe(false);
   });
 
   it('editor: presets, overrides and a custom template', () => {

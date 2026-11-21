@@ -166,7 +166,7 @@ function rows(now: number): Row[] {
       status: facts({ runState: 'external' }),
       extra: {
         gitBranch: 'ops/terraform',
-        external: { since: iso(now - 25 * MINUTE), pid: 52_000, running: true },
+        external: { since: iso(now - 25 * MINUTE), pid: 52_000, running: true, terminalId: null },
       },
     },
     {
@@ -339,7 +339,7 @@ export function navigationCommands(cmd: Command, host: FakeHost): FakeAck | unde
     case 'session.openExternal':
       host.patchSummary(
         cmd.entryId,
-        { external: { since: host.now(), pid: 52_001, running: true } },
+        { external: { since: host.now(), pid: 52_001, running: true, terminalId: null } },
         { runState: 'external' },
       );
       return ok({ pid: 52_001 });

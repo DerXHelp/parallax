@@ -77,7 +77,8 @@ describe('the menu entry (WP-66)', () => {
     expect(first()).toMatchObject({ id: 'quickAsk', label: 'navigation.actions.quickAsk', disabled: false });
     expect(first(sampleSummary({ archived: true }))?.disabled).toBe(true);
     expect(
-      first(sampleSummary({ external: { since: sampleTime(1), pid: null, running: true } }))?.disabled,
+      first(sampleSummary({ external: { since: sampleTime(1), pid: null, running: true, terminalId: null } }))
+        ?.disabled,
     ).toBe(true);
   });
 });

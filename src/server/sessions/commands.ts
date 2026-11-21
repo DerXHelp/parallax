@@ -55,7 +55,7 @@ import {
   type EntryCommand,
   type EntryState,
 } from './entryState';
-import { consoleCommand, openExternal, returnFromExternal } from './external';
+import { consoleCommand, openExternal, openInTerminal, returnFromExternal } from './external';
 import { approveFreshContext } from './freshContext';
 import { catalogOrFallback, toModelCatalog } from './models';
 import { endRemoteBeforeClose, setRemoteControl } from './remoteControl';
@@ -375,6 +375,9 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
     // Phase 2 (WP-34): external console (ADR-104), continue after the rate limit (ADR-112).
     case 'session.openExternal':
       return openExternal(core, s, clientId);
+    // 102e: "Continue in terminal" – the same handoff into an embedded terminal.
+    case 'session.openInTerminal':
+      return openInTerminal(core, s, clientId);
     case 'session.reclaim':
       return returnFromExternal(core, s, 'command');
     case 'session.consoleCommand':

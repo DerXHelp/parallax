@@ -54,6 +54,7 @@ import {
   type TranscriptStore,
 } from '../sync/ports';
 import type { ConsoleLauncher } from '../system/ports';
+import type { TerminalService } from '../terminal/ports';
 import { createBroker, type Broker } from './broker';
 import type { CatalogStore } from './catalogStore';
 import type { CommandCatalogStore } from './commandCatalog';
@@ -243,11 +244,16 @@ export function settingsSleepPolicy(settings: () => Settings): SleepPolicy {
   };
 }
 
+/** 102e: what the engine needs of the terminal service ("Continue in terminal"). */
+export type EngineTerminal = Pick<TerminalService, 'openClaude' | 'claudeState'>;
+
 export interface EngineCore {
   readonly backend: AgentBackend;
   readonly claude: ClaudeIntegration;
   /** Phase 2 (ADR-104): the visible console of `session.openExternal`; null = not available. */
   readonly consoleLauncher: ConsoleLauncher | null;
+  /** 102e: the embedded terminal of `session.openInTerminal`; null = none (engine tests). */
+  readonly terminal: EngineTerminal | null;
   readonly stores: EngineCoreStores;
   readonly normalizer: NormalizerFns;
   readonly reduceStatus: ReduceStatus;

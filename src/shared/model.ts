@@ -28,6 +28,7 @@ import {
   profileIdSchema,
   promptPrioritySchema,
   ruleDestinationSchema,
+  terminalIdSchema,
   themeSchema,
 } from './common';
 import { errorCodeSchema, errorInfoSchema, errorPayloadSchema } from './errors';
@@ -423,15 +424,59 @@ export const portSettingSchema = z.number().int().min(1024).max(65535).nullable(
 
 // ---- Editor for "Open in editor" (Phase 3, ADR-144; WP-30 F1) ----
 
-export const EDITOR_PRESETS = ['notepadpp', 'vscode', 'custom', 'system'] as const;
+/**
+ * Editor presets. Windows: Notepad++, VS Code; Linux (102e, WP-100 §5.6): VS Code, VSCodium, Zed,
+ * Sublime Text, Kate, GNOME Text Editor, gedit – each found on `PATH` (`files/editors.ts`). `custom`
+ * and `system` (the default program) on both. Which ones a host offers: `editorPresetsFor`.
+ */
+export const EDITOR_PRESETS = [
+  'notepadpp',
+  'vscode',
+  'custom',
+  'system',
+  'vscodium',
+  'zed',
+  'sublime',
+  'kate',
+  'gnome_text_editor',
+  'gedit',
+] as const;
 export const editorPresetSchema = z.enum(EDITOR_PRESETS);
 export type EditorPreset = z.infer<typeof editorPresetSchema>;
+
+/** Presets with a detected program and fixed arguments (everything but `custom` and `system`). */
+export type EditorProgramPreset = Exclude<EditorPreset, 'custom' | 'system'>;
 
 /** Argument templates of the presets; placeholders {file} {line} {col} (a missing line/col is 1). */
 export const EDITOR_PRESET_ARGS = {
   notepadpp: ['-n{line}', '-c{col}', '{file}'],
   vscode: ['--goto', '{file}:{line}:{col}'],
-} as const satisfies Record<'notepadpp' | 'vscode', readonly string[]>;
+  vscodium: ['--goto', '{file}:{line}:{col}'],
+  zed: ['{file}:{line}:{col}'],
+  sublime: ['{file}:{line}:{col}'],
+  kate: ['--line', '{line}', '--column', '{col}', '{file}'],
+  // GNOME Text Editor documents no line argument: the file only.
+  gnome_text_editor: ['{file}'],
+  gedit: ['+{line}:{col}', '{file}'],
+} as const satisfies Record<EditorProgramPreset, readonly string[]>;
+
+const WINDOWS_EDITOR_PRESETS = ['notepadpp', 'vscode', 'custom', 'system'] as const;
+const POSIX_EDITOR_PRESETS = [
+  'vscode',
+  'vscodium',
+  'zed',
+  'sublime',
+  'kate',
+  'gnome_text_editor',
+  'gedit',
+  'custom',
+  'system',
+] as const;
+
+/** 102e: the presets a host of this path flavor offers, in display order. */
+export function editorPresetsFor(flavor: PathFlavor): readonly EditorPreset[] {
+  return flavor === 'win32' ? WINDOWS_EDITOR_PRESETS : POSIX_EDITOR_PRESETS;
+}
 
 /**
  * Never accepted as editor executable (base name, case-insensitive): shells, script hosts, LOLBins –
@@ -659,12 +704,26 @@ export const consoleSettingsSchema = z.object({
     .max(LIMITS.pathChars)
     .refine((value) => isSafeWindowsPath(value), 'path')
     .nullable(),
+  /**
+   * 102e: terminal emulator for the shell window and the external console on Linux (absolute path,
+   * e.g. `/usr/bin/kitty`); null = detected (`xdg-terminal-exec`, `x-terminal-emulator`, known ones).
+   * Checked by the rules of its own shape like the editor, but without the block list (terminal
+   * emulators are exactly what is meant); the host checks again with its rules. Windows ignores it.
+   */
+  terminalEmulator: z
+    .string()
+    .min(1)
+    .max(LIMITS.pathChars)
+    .refine((value) => pathRules(pathFlavorOfShape(value)).isSafe(value), 'path')
+    .nullable()
+    .default(null),
 });
 export type ConsoleSettings = z.infer<typeof consoleSettingsSchema>;
 export const DEFAULT_CONSOLE_SETTINGS = {
   defaultShell: 'cmd',
   gitBashWindow: 'mintty',
   gitDir: null,
+  terminalEmulator: null,
 } as const satisfies ConsoleSettings;
 
 // ---- Remote Control (WP-64) ----
@@ -1303,10 +1362,16 @@ export const hostStateSchema = z.object({
   /** WP-76: remote access of a sharing computer (role `share`); null otherwise. */
   remoteAccess: remoteAccessStateSchema.nullable().default(null),
   /**
-   * WP-99 (ADR-239): the embedded terminal works on this computer (ConPTY through `node:ffi`). The
-   * panel tab "Terminal" appears only for sessions of this computer and only when true.
+   * WP-99 (ADR-239): the embedded terminal works on this computer (ConPTY through `node:ffi` on
+   * Windows, a POSIX pty on Linux). The panel tab "Terminal" appears only when true – for sessions of
+   * this computer and, through the relay, of a paired one (ADR-244).
    */
   terminalAvailable: z.boolean().default(false),
+  /**
+   * 102e: home folder of the host's user (`os.homedir()`, only if safe by the host's path rules), so
+   * the web resolves `~/…` in the transcript outside the `cwd`; null = unknown (older hosts).
+   */
+  homeDir: z.string().min(1).max(LIMITS.pathChars).nullable().default(null),
 });
 export type HostState = z.infer<typeof hostStateSchema>;
 
@@ -1364,6 +1429,12 @@ export const externalHandoffSchema = z.object({
   since: isoDateTimeSchema,
   /** Conversation whose session id was resumed in the console. */
   conversationId: conversationIdSchema,
+  /**
+   * 102e "Continue in terminal" (`session.openInTerminal`): the embedded terminal running `claude`;
+   * null = a visible console (`session.openExternal`). Watched through the terminal service: an
+   * unknown terminal (closed, server restarted) counts as ended.
+   */
+  terminalId: terminalIdSchema.nullable().default(null),
 });
 export type ExternalHandoff = z.infer<typeof externalHandoffSchema>;
 
@@ -2287,13 +2358,14 @@ export const sessionSummarySchema = z.object({
   lastResultExcerpt: z.string().nullable(),
   /**
    * Phase 2 (ADR-104): external console; null = not handed off. `running: false` = the console
-   * ended, the return is pending.
+   * ended, the return is pending. 102e: `terminalId` = "Continue in terminal" (the panel shows it).
    */
   external: z
     .object({
       since: isoDateTimeSchema,
       pid: z.number().int().positive().nullable(),
       running: z.boolean(),
+      terminalId: terminalIdSchema.nullable().default(null),
     })
     .nullable()
     .default(null),

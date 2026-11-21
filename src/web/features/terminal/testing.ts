@@ -42,6 +42,7 @@ export function sampleTerminalInfo(p: Partial<TerminalInfo> = {}): TerminalInfo 
     state: 'running',
     exitCode: null,
     title: null,
+    command: 'shell',
     ...p,
   };
 }

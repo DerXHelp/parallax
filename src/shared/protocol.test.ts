@@ -92,6 +92,7 @@ const commands: Command[] = [
   // Phase 2 (WP-30 §4.6)
   { name: 'session.switchConversation', entryId, conversationId: SAMPLE_IDS.conversation },
   { name: 'session.openExternal', entryId },
+  { name: 'session.openInTerminal', entryId },
   { name: 'session.reclaim', entryId },
   { name: 'session.consoleCommand', entryId },
   { name: 'session.continueAfterLimit', entryId, enabled: true },
@@ -578,6 +579,11 @@ describe('command results', () => {
   it('Phase 2 results (WP-30 §4.6)', () => {
     expect(parseCommandResult('session.openExternal', { pid: 4242 })).toEqual({ pid: 4242 });
     expect(parseCommandResult('session.openExternal', { pid: null })).toEqual({ pid: null });
+    // 102e: "Continue in terminal" answers the new terminal.
+    const terminalId = `tm_${'a'.repeat(32)}`;
+    expect(parseCommandResult('session.openInTerminal', { terminalId })).toEqual({ terminalId });
+    expect(parseCommandResult('session.openInTerminal', { terminalId: 'tm_1' })).toBeNull();
+    expect(isRemoteAllowedCommand('session.openInTerminal')).toBe(true);
     expect(parseCommandResult('session.reclaim', { importedItems: -1 })).toBeNull();
     expect(
       parseCommandResult('session.consoleCommand', {

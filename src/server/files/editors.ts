@@ -148,7 +148,11 @@ export function createEditorFinder(options: { ttlMs?: number; now?: () => number
     refresh,
     async find(preset, deps) {
       const hit = hits.get(preset);
-      if (hit !== undefined && now() - hit.at < ttlMs && (await presetCandidate(hit.executable, preset, deps.fs)))
+      if (
+        hit !== undefined &&
+        now() - hit.at < ttlMs &&
+        (await presetCandidate(hit.executable, preset, deps.fs))
+      )
         return hit.executable;
       return refresh(preset, deps);
     },
@@ -171,6 +175,8 @@ export async function resolveEditorExecutable(
   if (editor.executable !== null && (await usableExecutable(editor.executable, deps.fs)))
     return editor.executable;
   if (editor.preset === 'custom') throw notFound();
+  // 102e: the Linux presets are found on `PATH` (WP-106); this lookup knows the Windows ones.
+  if (editor.preset !== 'notepadpp' && editor.preset !== 'vscode') throw notFound();
   const found = await find(editor.preset, deps);
   if (found === null) throw notFound();
   return found;
@@ -188,9 +194,9 @@ export function editorArguments(
   col: number | null,
 ): string[] {
   const template: readonly string[] =
-    editor.preset === 'notepadpp' || editor.preset === 'vscode'
-      ? EDITOR_PRESET_ARGS[editor.preset]
-      : editor.args;
+    editor.preset === 'custom' || editor.preset === 'system'
+      ? editor.args
+      : EDITOR_PRESET_ARGS[editor.preset];
   const lineText = String(line ?? 1);
   const colText = String(col ?? 1);
   return template.map((arg) =>

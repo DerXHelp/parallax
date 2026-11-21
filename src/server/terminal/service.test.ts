@@ -22,6 +22,7 @@ import { createFakePtyFactory, type FakePtyProcess } from './fakePty';
 import { POLL_ACTIVE_MS, POLL_IDLE_MS } from './poller';
 import type { PtyFactory, TerminalConnection, TerminalEntryInfo, TerminalSink } from './ports';
 import {
+  CLAUDE_TERMINAL_SIZE,
   EXIT_DRAIN_MAX_MS,
   KILL_FALLBACK_MS,
   TERMINAL_BACKPRESSURE,
@@ -207,6 +208,7 @@ describe('createTerminalService – connect and open (WP-99)', () => {
       state: 'running',
       exitCode: null,
       title: null,
+      command: 'shell',
     });
     expect(lastPty().options).toEqual({
       executablePath: EXE.powershell,
@@ -719,3 +721,109 @@ describe('createTerminalService – rename and move (WP-99, test by the user)', 
     expect(ids(a)).toEqual([first.terminalId, second.terminalId, third.terminalId]);
   });
 });
+
+describe('createTerminalService – openClaude (102e "Continue in terminal")', () => {
+  const CLAUDE = {
+    executablePath: 'C:\\Tools\\claude\\claude.exe',
+    args: ['--resume', 'session-1'],
+    env: { PATH: 'C:\\Windows', ANTHROPIC_API_KEY: 'sk-secret-value' },
+  };
+
+  it('starts claude as a terminal of the entry and pushes the list to its sockets', async () => {
+    const { service, connect, lastPty } = setup();
+    const client = connect();
+    const other = connect(OTHER);
+    const result = await service.openClaude(ENTRY, CLAUDE);
+    if (result.kind !== 'opened') throw new Error(result.error.code);
+    expect(lastPty().options).toEqual({ ...CLAUDE, cwd: CWD, ...CLAUDE_TERMINAL_SIZE });
+    expect(result.pid).toBe(lastPty().pid);
+    expect(client.sink.of('terminals').at(-1)?.items).toEqual([
+      {
+        terminalId: result.terminalId,
+        entryId: ENTRY,
+        shell: DEFAULT_CONSOLE_SETTINGS.defaultShell,
+        cwd: CWD,
+        createdAt: SAMPLE_TIME,
+        ...CLAUDE_TERMINAL_SIZE,
+        state: 'running',
+        exitCode: null,
+        title: null,
+        command: 'claude',
+      },
+    ]);
+    expect(client.sink.of('opened')).toEqual([]);
+    expect(other.sink.of('terminals')).toEqual([{ type: 'terminals', items: [] }]);
+    expect(service.claudeState(result.terminalId)).toBe('running');
+  });
+
+  it('reports ended once the process exited, the terminal closed or it is unknown', async () => {
+    const { service, connect, timers, lastPty } = setup();
+    const client = connect();
+    const result = await service.openClaude(ENTRY, CLAUDE);
+    if (result.kind !== 'opened') throw new Error(result.error.code);
+    lastPty().exit(0);
+    for (let i = 0; i < 10; i += 1) timers.advance(POLL_ACTIVE_MS);
+    expect(service.claudeState(result.terminalId)).toBe('ended');
+
+    const second = await service.openClaude(ENTRY, CLAUDE);
+    if (second.kind !== 'opened') throw new Error(second.error.code);
+    client.conn.handle({ type: 'close', terminalId: second.terminalId });
+    expect(service.claudeState(second.terminalId)).toBe('ended');
+    expect(service.claudeState(sampleTerminalIdOf(7))).toBe('ended');
+  });
+
+  it('applies the checks of open and never puts the launch into an error or the log', async () => {
+    const lines: string[] = [];
+    const logger = createLogger({
+      level: 'trace',
+      destination: { write: (line: string) => lines.push(line) },
+    });
+    expect(await setup({ pty: null, unavailableReason: 'ffi' }).service.openClaude(ENTRY, CLAUDE)).toEqual({
+      kind: 'failed',
+      error: makeError('TERMINAL_UNAVAILABLE', { reason: 'ffi' }),
+    });
+    const archived = setup();
+    archived.entries.set(ENTRY, { cwd: CWD, archived: true });
+    expect(await archived.service.openClaude(ENTRY, CLAUDE)).toEqual({
+      kind: 'failed',
+      error: makeError('SESSION_ARCHIVED'),
+    });
+    const cwdFailure = setup({
+      checkCwd: () => Promise.reject(new CommandError(makeError('CWD_NOT_FOUND'))),
+    });
+    expect(await cwdFailure.service.openClaude(ENTRY, CLAUDE)).toEqual({
+      kind: 'failed',
+      error: makeError('CWD_NOT_FOUND'),
+    });
+    const failing = setup({
+      logger,
+      pty: {
+        spawn: () => {
+          throw new Error(`cannot start ${CLAUDE.executablePath} with ${CLAUDE.env.ANTHROPIC_API_KEY}`);
+        },
+      },
+    });
+    const failed = await failing.service.openClaude(ENTRY, CLAUDE);
+    expect(failed).toEqual({
+      kind: 'failed',
+      error: makeError('TERMINAL_START_FAILED', { reason: 'spawn' }),
+    });
+    expect(JSON.stringify(failed)).not.toContain('sk-secret-value');
+    expect(lines.join('\n')).not.toContain('sk-secret-value');
+  });
+
+  it('counts against the limits of the entry', async () => {
+    const { service, connect, open } = setup();
+    const client = connect();
+    for (let i = 0; i < TERMINAL_LIMITS.perEntry; i += 1) await open(client, `r${String(i)}`);
+    expect(await service.openClaude(ENTRY, CLAUDE)).toEqual({
+      kind: 'failed',
+      error: makeError('TERMINAL_LIMIT_REACHED', { scope: 'entry', max: TERMINAL_LIMITS.perEntry }),
+    });
+  });
+});
+
+/** A well-formed terminal id nobody opened. */
+function sampleTerminalIdOf(n: number): string {
+  return `tm_${n.toString(16).padStart(32, '0')}`;
+}

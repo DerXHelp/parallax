@@ -45,7 +45,7 @@ import { CommandError, type ClientPresence, type HostCommandHandler } from '../.
 import type { ConsoleLauncher } from '../../system/ports';
 import { createMemoryCatalogStore, type MemoryCatalogStore } from '../catalogStore';
 import { createMemoryCommandCatalogStore, type MemoryCommandCatalogStore } from '../commandCatalog';
-import { NEVER_SLEEP, type ProcDeps, type SleepPolicy } from '../entryState';
+import { NEVER_SLEEP, type EngineTerminal, type ProcDeps, type SleepPolicy } from '../entryState';
 import { createManualTimers, type ManualTimers } from '../lib/timers';
 import {
   createSessionManager,
@@ -125,6 +125,8 @@ export interface EngineHarnessOptions {
   start?: boolean;
   /** Phase 2 (WP-34): the console of `session.openExternal` (default: none). */
   consoleLauncher?: ConsoleLauncher;
+  /** 102e: the terminal of `session.openInTerminal` (default: none). */
+  terminal?: EngineTerminal;
   /** Phase 2 (WP-34): `SystemIntegration.toastLaunchUri` (click target of native toasts). */
   toastLaunchUri?: (entryId: EntryId) => string | null;
   /** Phase 2 (WP-34): env (secrets) of every console spec of the fake integration. */
@@ -339,6 +341,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
       : { onShutdownRequested: options.onShutdownRequested }),
     ...(options.toasts === undefined ? {} : { toasts: options.toasts }),
     ...(options.consoleLauncher === undefined ? {} : { consoleLauncher: options.consoleLauncher }),
+    ...(options.terminal === undefined ? {} : { terminal: options.terminal }),
     ...(options.toastLaunchUri === undefined
       ? {}
       : { systemIntegration: { toastLaunchUri: options.toastLaunchUri } }),

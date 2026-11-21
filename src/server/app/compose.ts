@@ -41,6 +41,7 @@
  * → release the home lock → close the log → `exit(code)`.
  */
 import { existsSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { Logger } from 'pino';
@@ -87,6 +88,7 @@ import {
 import { settleWithin, toError } from '../lib/async';
 import type { HomeLock } from '../lib/homeLock';
 import { logger as rootLogger, type LoggingHandle } from '../lib/logger';
+import { HOST_PATH_RULES } from '../lib/paths';
 import { errnoCode, killProcessTree } from '../lib/process';
 import { openCatalogStore } from '../sessions/catalogStore';
 import { createCommandCatalogStore, type CommandCatalogStore } from '../sessions/commandCatalog';
@@ -395,6 +397,16 @@ export function observedPublisher(
       publisher.closeAll(code);
     },
   };
+}
+
+/** 102e: `HostState.homeDir` – the user's home folder if the host's path rules accept it, else null. */
+export function safeHomeDir(home: () => string = os.homedir): string | null {
+  try {
+    const dir = home();
+    return dir !== '' && HOST_PATH_RULES.isSafe(dir) ? dir : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -810,6 +822,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         port: () => listeningPort,
         systemIntegration: system.available,
         terminalAvailable: terminalService.available,
+        // 102e: `~/…` in the transcript (web); only a home folder the host's path rules accept.
+        homeDir: safeHomeDir(),
         app: () => updateService.app(),
         update: () => updateService.state(),
         // WP-76/78a: role, host list (WP-79) and remote access – `remoteAccess` never leaves for a
@@ -862,6 +876,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       },
       extraWarnings: () => system.warnings(),
       consoleLauncher,
+      // 102e: "Continue in terminal" (`session.openInTerminal`) starts claude in the embedded terminal.
+      terminal: terminalService,
       systemIntegration: system,
       // The engine acks `server.shutdown` first and calls this via setImmediate (WP-13b).
       onShutdownRequested: () => {

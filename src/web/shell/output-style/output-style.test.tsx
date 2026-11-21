@@ -153,7 +153,8 @@ describe('"Output style…" in the header menu (WP-70)', () => {
     expect(find()?.disabled).toBe(false);
     expect(find(sampleSummary({ archived: true }))?.disabled).toBe(true);
     expect(
-      find(sampleSummary({ external: { running: true, pid: 4711, since: SAMPLE_TIME } }))?.disabled,
+      find(sampleSummary({ external: { running: true, pid: 4711, since: SAMPLE_TIME, terminalId: null } }))
+        ?.disabled,
     ).toBe(true);
     expect(find(sampleSummary(), 'signIn')).toBeUndefined();
     const failed = sampleSummary({

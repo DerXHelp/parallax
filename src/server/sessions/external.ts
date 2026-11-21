@@ -19,13 +19,14 @@
  * It is never logged and never put into an op, an item or an error – a launcher failure reason is
  * scrubbed of every env value before it is logged or answered.
  */
-import type { ClientId, PermissionMode } from '@shared/common';
+import type { ClientId, PermissionMode, TerminalId } from '@shared/common';
 import { currentSessionId, type ExternalHandoff } from '@shared/model';
 import type { CommandResult, SessionOp } from '@shared/protocol';
 import { isSecretEnvKey } from '@shared/secrets';
 import { consoleCommandText } from '../claude/consoleCommand';
 import type { ConsoleLaunchRequest, ConsoleLaunchSpec, LaunchSpec } from '../claude/ports';
 import { redactText, REDACTED } from '../lib/logger';
+import { CommandError } from '../sync/ports';
 import type { ConsoleOpenResult, ConsoleProcess } from '../system/ports';
 import { cancelContinue } from './continuePlan';
 import {
@@ -74,8 +75,21 @@ export function scrubConsoleReason(reason: string, spec: ConsoleLaunchSpec | nul
   return (scrubbed === '' ? 'failed' : scrubbed).slice(0, CONSOLE_REASON_CHARS);
 }
 
-/** `ConsoleLauncher.state()` that never throws; no launcher → 'unknown' (never "ended", ADR-051). */
+/**
+ * `ConsoleLauncher.state()` that never throws; no launcher → 'unknown' (never "ended", ADR-051).
+ * 102e: a terminal handoff asks the terminal service – a terminal it does not know (closed, server
+ * restarted: the terminals end with the server) or no terminal service at all is 'ended'.
+ */
 export async function consoleState(core: EngineCore, ext: ExternalHandoff): Promise<ConsoleState> {
+  if (ext.terminalId !== null) {
+    if (core.terminal === null) return 'ended';
+    try {
+      return core.terminal.claudeState(ext.terminalId);
+    } catch (error) {
+      core.log.warn({ err: error, terminalId: ext.terminalId }, 'terminal state check failed');
+      return 'unknown';
+    }
+  }
   const launcher = core.consoleLauncher;
   if (launcher === null) return 'unknown';
   try {
@@ -113,26 +127,41 @@ function isoOrNull(date: Date | null): string | null {
 
 // ---- session.openExternal ----
 
+/** Where the console runs: the process (PID-reuse check) and, for "Continue in terminal", the terminal. */
+interface HandoffOpened {
+  process: ConsoleProcess;
+  terminalId: TerminalId | null;
+}
+
+/** The two kinds of handoff: a visible console window or a terminal of the entry (102e). */
+interface HandoffTarget {
+  readonly name: 'session.openExternal' | 'session.openInTerminal';
+  /** Checked before anything changes; throws CommandError (nothing available here). */
+  assertAvailable(): void;
+  /** Opens `claude --resume …`; throws CommandError (the entry stays dormant here). */
+  open(spec: ConsoleLaunchSpec): Promise<HandoffOpened>;
+}
+
 /**
- * WP-30 §4.12 `session.openExternal` (see the file comment). CR2-02: a scheduled "continue" and a
- * pending auto-retry are dropped only once the console runs – a failure before (profile, cwd,
- * console blocked) leaves them, so the entry still continues here at its time.
+ * WP-30 §4.12 `session.openExternal` (see the file comment) and 102e `session.openInTerminal`. CR2-02:
+ * a scheduled "continue" and a pending auto-retry are dropped only once the console runs – a failure
+ * before (profile, cwd, console blocked) leaves them, so the entry still continues here at its time.
  */
-export async function openExternal(
+async function handOff(
   core: EngineCore,
   s: EntryState,
   clientId: ClientId,
-): Promise<CommandResult<'session.openExternal'>> {
+  target: HandoffTarget,
+): Promise<HandoffOpened> {
   return s.lifecycle.run(async () => {
     core.assertRunning();
     // R4-01: a second click (or a second window) that waited for this lock while the first
     // handoff opened its console – never two consoles; archived meanwhile likewise.
-    assertEntryGate(s, 'session.openExternal');
+    assertEntryGate(s, target.name);
     const sessionId = currentSessionId(s.entry);
     if (sessionId === null) throw commandError('SESSION_NOT_STARTED', { entryId: s.id });
     assertWithoutWork(s);
-    const launcher = core.consoleLauncher;
-    if (launcher === null) throw commandError('EXTERNAL_CONSOLE_FAILED', { reason: 'unavailable' });
+    target.assertAvailable();
     // R4-09: a deleted folder or one replaced by a link (R1-17) fails like a start (CWD_*), before
     // the query is closed.
     await core.checkCwd(s.entry.cwd);
@@ -148,41 +177,106 @@ export async function openExternal(
     // Expired cards (A.10) are settled like by a resume – the console resumes the conversation.
     s.broker.closeExpired(clientId);
     const conversation = s.conversation();
-    let result: ConsoleOpenResult;
-    try {
-      result = await launcher.open(spec);
-    } catch (error) {
-      result = { kind: 'failed', reason: errorMessage(error) };
-    }
-    if (result.kind === 'failed') {
-      // The entry stays dormant here; a scheduled "continue" or auto-retry still applies (CR2-02).
-      const reason = scrubConsoleReason(result.reason, spec);
-      core.log.warn({ entryId: s.id, reason }, 'external console could not be opened');
-      throw commandError('EXTERNAL_CONSOLE_FAILED', { reason });
-    }
+    // A failure leaves the entry dormant here; a scheduled "continue" or auto-retry still applies.
+    const opened = await target.open(spec);
     // The console takes over: no scheduled "continue" and no auto-retry of this server.
     cancelContinue(s);
     s.cancelRetry();
     // The console runs now: record it even if a shutdown began meanwhile – the shutdown waits for
     // this lock (bounded, R4-03) before it flushes the stores; the next start checks the console.
-    const pid = positivePid(result.process.pid);
+    const pid = positivePid(opened.process.pid);
     const since = core.now().toISOString();
     s.patch((e) => ({
       ...e,
       external: {
         pid,
-        processStartedAt: isoOrNull(result.process.startedAt),
+        processStartedAt: isoOrNull(opened.process.startedAt),
         since,
         conversationId: conversation.id,
+        terminalId: opened.terminalId,
       },
     }));
     s.externalRunning = true;
     s.reduce({ type: 'external', active: true });
     s.addHandoffItem('external', 0);
-    core.log.info({ entryId: s.id, pid }, 'session handed off to an external console');
+    core.log.info(
+      { entryId: s.id, pid, terminalId: opened.terminalId },
+      opened.terminalId === null
+        ? 'session handed off to an external console'
+        : 'session handed off to an embedded terminal',
+    );
     watchExternal(core, s);
-    return { pid };
+    return { process: { ...opened.process, pid }, terminalId: opened.terminalId };
   });
+}
+
+/** `session.openExternal`: `claude --resume …` in a visible console window (ADR-104). */
+export async function openExternal(
+  core: EngineCore,
+  s: EntryState,
+  clientId: ClientId,
+): Promise<CommandResult<'session.openExternal'>> {
+  const unavailable = () => commandError('EXTERNAL_CONSOLE_FAILED', { reason: 'unavailable' });
+  const opened = await handOff(core, s, clientId, {
+    name: 'session.openExternal',
+    assertAvailable: () => {
+      if (core.consoleLauncher === null) throw unavailable();
+    },
+    open: async (spec) => {
+      const launcher = core.consoleLauncher;
+      if (launcher === null) throw unavailable();
+      let result: ConsoleOpenResult;
+      try {
+        result = await launcher.open(spec);
+      } catch (error) {
+        result = { kind: 'failed', reason: errorMessage(error) };
+      }
+      if (result.kind === 'failed') {
+        const reason = scrubConsoleReason(result.reason, spec);
+        core.log.warn({ entryId: s.id, reason }, 'external console could not be opened');
+        throw commandError('EXTERNAL_CONSOLE_FAILED', { reason });
+      }
+      return { process: result.process, terminalId: null };
+    },
+  });
+  return { pid: opened.process.pid };
+}
+
+/**
+ * 102e `session.openInTerminal`: the same handoff, but `claude --resume …` runs in a new embedded
+ * terminal of the entry (`TerminalService.openClaude`) – no desktop needed, reachable from a
+ * controlling computer through the terminal relay. Watched by its terminal; the PID is the pty's.
+ * Errors of the terminal (TERMINAL_UNAVAILABLE, TERMINAL_LIMIT_REACHED, TERMINAL_START_FAILED …) pass
+ * through; they never carry the spec (its env holds the profile's secrets).
+ */
+export async function openInTerminal(
+  core: EngineCore,
+  s: EntryState,
+  clientId: ClientId,
+): Promise<CommandResult<'session.openInTerminal'>> {
+  const unavailable = () => commandError('TERMINAL_UNAVAILABLE', { reason: 'platform' });
+  const opened = await handOff(core, s, clientId, {
+    name: 'session.openInTerminal',
+    assertAvailable: () => {
+      if (core.terminal === null) throw unavailable();
+    },
+    open: async (spec) => {
+      const terminal = core.terminal;
+      if (terminal === null) throw unavailable();
+      const result = await terminal.openClaude(s.id, {
+        executablePath: spec.executablePath,
+        args: spec.args,
+        env: spec.env,
+      });
+      if (result.kind === 'failed') {
+        core.log.warn({ entryId: s.id, code: result.error.code }, 'claude terminal could not be opened');
+        throw new CommandError(result.error);
+      }
+      return { process: { pid: result.pid, startedAt: null }, terminalId: result.terminalId };
+    },
+  });
+  if (opened.terminalId === null) throw unavailable();
+  return { terminalId: opened.terminalId };
 }
 
 // ---- watching ----
@@ -191,7 +285,11 @@ export async function openExternal(
 export function watchExternal(core: EngineCore, s: EntryState): void {
   s.externalTimer?.cancel();
   s.externalTimer = null;
-  if (core.shuttingDown() || s.entry.external === null || core.consoleLauncher === null) return;
+  const ext = s.entry.external;
+  if (core.shuttingDown() || ext === null) return;
+  // Without a console launcher a console's state stays unknown (nothing to poll); a terminal
+  // handoff is always watched (no terminal service → `ended`).
+  if (ext.terminalId === null && core.consoleLauncher === null) return;
   s.externalTimer = core.timers.setTimeout(() => {
     s.externalTimer = null;
     pollExternal(core, s).catch((error: unknown) => {

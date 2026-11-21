@@ -327,7 +327,7 @@ describe('Composer and the handoff to an external console (WP41-07)', () => {
         if (cmd.name !== 'session.sendPrompt') return undefined;
         // Another window handed the session off a moment earlier (R4-01: the server refuses).
         host.patchSummary(cmd.entryId, {
-          external: { since: sampleExternalHandoff().since, pid: 52_000, running: true },
+          external: { since: sampleExternalHandoff().since, pid: 52_000, running: true, terminalId: null },
         });
         return { ok: false, error: makeError('SESSION_EXTERNAL') };
       },

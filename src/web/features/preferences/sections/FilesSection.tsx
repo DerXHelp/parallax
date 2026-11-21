@@ -2,7 +2,7 @@ import { CircleCheckIcon, CircleXIcon, LoaderCircleIcon } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import {
   DEFAULT_PROGRAM_EXTENSIONS,
-  EDITOR_PRESETS,
+  editorPresetsFor,
   editorPresetSchema,
   type EditorPreset,
   type EditorSettings,
@@ -50,6 +50,12 @@ const EMPTY_PATHS: Readonly<Record<EditorPreset, string>> = {
   vscode: '',
   custom: '',
   system: '',
+  vscodium: '',
+  zed: '',
+  sublime: '',
+  kate: '',
+  gnome_text_editor: '',
+  gedit: '',
 };
 
 function formOfDraft(draft: EditorDraft): EditorForm {
@@ -286,7 +292,7 @@ export function FilesSection({
               }}
               className="grid gap-2.5"
             >
-              {EDITOR_PRESETS.map((preset) => {
+              {editorPresetsFor(rules.flavor).map((preset) => {
                 const itemId = `${fieldId}-${preset}`;
                 const detectId = `${itemId}-detect`;
                 const detects = preset === 'notepadpp' || preset === 'vscode';

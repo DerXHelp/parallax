@@ -295,6 +295,7 @@ export function sampleHostState(p: Partial<HostState> = {}): HostState {
     remoteHosts: [],
     remoteAccess: null,
     terminalAvailable: false,
+    homeDir: null,
     ...p,
   };
 }
@@ -548,6 +549,7 @@ export function sampleExternalHandoff(p: Partial<ExternalHandoff> = {}): Externa
     processStartedAt: sampleTime(120),
     since: sampleTime(120),
     conversationId: SAMPLE_IDS.conversation,
+    terminalId: null,
     ...p,
   };
 }

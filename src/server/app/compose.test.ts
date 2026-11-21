@@ -49,6 +49,7 @@ import {
   fileEntryLookup,
   observedPublisher,
   resumedSessionId,
+  safeHomeDir,
   terminalClosingPublisher,
   StartupError,
   startServer,
@@ -883,3 +884,17 @@ describe('startServer: Phase-3 wiring (WP-60)', () => {
 function ctx(): CommandContext {
   return { clientId: sampleId('cl', 1), cmdId: randomUUID() };
 }
+
+describe('safeHomeDir (102e)', () => {
+  it('passes a home folder the host accepts and drops unsafe or failing ones', () => {
+    const home = process.platform === 'win32' ? 'D:\\Home\\demo' : '/home/demo';
+    expect(safeHomeDir(() => home)).toBe(home);
+    expect(safeHomeDir(() => '')).toBeNull();
+    expect(safeHomeDir(() => 'relative')).toBeNull();
+    expect(
+      safeHomeDir(() => {
+        throw new Error('no home');
+      }),
+    ).toBeNull();
+  });
+});

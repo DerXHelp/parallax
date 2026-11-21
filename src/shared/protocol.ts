@@ -22,6 +22,7 @@ import {
   permissionModeSchema,
   profileIdSchema,
   promptPrioritySchema,
+  terminalIdSchema,
 } from './common';
 import { errorPayloadSchema, makeError, type ErrorPayload } from './errors';
 import {
@@ -396,6 +397,12 @@ export const commandSchema = z.discriminatedUnion('name', [
   }),
   /** Close the SDK query and run `claude --resume <id>` in a visible console (ADR-104). */
   z.object({ name: z.literal('session.openExternal'), entryId: entryIdSchema }),
+  /**
+   * 102e "Continue in terminal": like `session.openExternal`, but `claude --resume <id>` runs in a new
+   * embedded terminal of the entry (`TerminalInfo.command: 'claude'`) instead of a window – also for a
+   * server without a desktop and for a controlling computer (through the terminal relay, ADR-244).
+   */
+  z.object({ name: z.literal('session.openInTerminal'), entryId: entryIdSchema }),
   /** Take the session back from the external console (only after the console ended). */
   z.object({ name: z.literal('session.reclaim'), entryId: entryIdSchema }),
   /** PowerShell line for "copy console command"; changes nothing. */
@@ -836,6 +843,8 @@ export const REMOTE_ALLOWED_COMMANDS = [
   'session.refreshModels',
   'session.switchConversation',
   'session.reclaim',
+  // 102e: the terminal runs on the sharing computer and is reached through the relay (E3, ADR-244).
+  'session.openInTerminal',
   'session.continueAfterLimit',
   'fs.listDirectory',
   'session.stopTask',
@@ -958,6 +967,8 @@ export const commandResultSchemas = {
   'server.shutdown': z.object({ sessionsStopped: z.number().int().nonnegative() }),
   'session.switchConversation': z.object({}),
   'session.openExternal': z.object({ pid: z.number().int().positive().nullable() }),
+  /** 102e: the new terminal (the panel attaches to it). */
+  'session.openInTerminal': z.object({ terminalId: terminalIdSchema }),
   'session.reclaim': z.object({ importedItems: z.number().int().nonnegative() }),
   /** PowerShell line (cwd, explicit profile env, exe, args) and the Claude session id. */
   'session.consoleCommand': z.object({ command: z.string(), sessionId: claudeSessionIdSchema }),

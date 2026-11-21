@@ -113,7 +113,7 @@ function phase2Commands(cmd: Command, host: FakeHost): FakeAck | undefined {
     case 'session.openExternal':
       host.patchSummary(
         cmd.entryId,
-        { external: { since: now, pid: 52_000, running: true } },
+        { external: { since: now, pid: 52_000, running: true, terminalId: null } },
         { runState: 'external' },
       );
       host.pushOps(cmd.entryId, [
@@ -526,7 +526,12 @@ export const demos: PlaygroundDemo[] = [
                   DEMO_ENTRIES.idle,
                   {
                     archived: false,
-                    external: { since: new Date().toISOString(), pid: 52_000, running: true },
+                    external: {
+                      since: new Date().toISOString(),
+                      pid: 52_000,
+                      running: true,
+                      terminalId: null,
+                    },
                   },
                   { runState: 'external' },
                 );
@@ -536,7 +541,12 @@ export const demos: PlaygroundDemo[] = [
               label="Console ended"
               onClick={() => {
                 host.current?.host.patchSummary(DEMO_ENTRIES.idle, {
-                  external: { since: new Date().toISOString(), pid: 52_000, running: false },
+                  external: {
+                    since: new Date().toISOString(),
+                    pid: 52_000,
+                    running: false,
+                    terminalId: null,
+                  },
                 });
               }}
             />

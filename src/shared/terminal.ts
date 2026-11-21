@@ -1,8 +1,9 @@
 /**
  * Embedded terminal (WP-99, ADR-239): protocol v1 of the socket `API_PATHS.terminalWs`. One socket per
- * mounted terminal panel, bound to one entry by `hello`; a shell runs in a pseudo console on this
- * computer (ConPTY, `src/server/terminal`). Never for sessions of another computer: the route is not
- * in `HOST_API_PATHS`, the forwarder never passes it on.
+ * mounted terminal panel, bound to one entry by `hello`; a shell runs in a pseudo console on the
+ * session's computer (ConPTY on Windows, a POSIX pty on Linux; `src/server/terminal`). A controlling
+ * computer reaches the terminals of a paired one through the relay (102c, ADR-244, WP-76 §B.13):
+ * `HOST_API_PATHS.terminalWs` → `REMOTE_PATHS.terminalWs`, same protocol.
  *
  * - Client → server: JSON text frames (`terminalClientMessageSchema`). Keys travel as `input` text.
  * - Server → client: JSON text frames (`terminalServerMessageSchema`) and binary output frames
@@ -16,7 +17,7 @@
  *   code and offer "Restart".
  */
 import { z } from 'zod';
-import { entryIdSchema, isoDateTimeSchema } from './common';
+import { entryIdSchema, isoDateTimeSchema, terminalIdSchema, type TerminalId } from './common';
 import { errorPayloadSchema } from './errors';
 import { shellKindSchema } from './model';
 
@@ -57,9 +58,8 @@ export const TERMINAL_CLOSE_CODES = {
   overloaded: 1013,
 } as const;
 
-/** `tm_` + 32 hex (server-generated). */
-export const terminalIdSchema = z.string().regex(/^tm_[0-9a-f]{32}$/);
-export type TerminalId = z.infer<typeof terminalIdSchema>;
+/** `tm_` + 32 hex (server-generated); defined in `common` (102e), re-exported here. */
+export { terminalIdSchema, type TerminalId };
 
 const colsSchema = z.number().int().min(TERMINAL_LIMITS.colsMin).max(TERMINAL_LIMITS.colsMax);
 const rowsSchema = z.number().int().min(TERMINAL_LIMITS.rowsMin).max(TERMINAL_LIMITS.rowsMax);
@@ -81,6 +81,11 @@ export const TERMINAL_EXIT_REASONS = [
 export const terminalExitReasonSchema = z.enum(TERMINAL_EXIT_REASONS);
 export type TerminalExitReason = z.infer<typeof terminalExitReasonSchema>;
 
+/** 102e: what a terminal runs (`TerminalInfo.command`). */
+export const TERMINAL_COMMANDS = ['shell', 'claude'] as const;
+export const terminalCommandSchema = z.enum(TERMINAL_COMMANDS);
+export type TerminalCommand = z.infer<typeof terminalCommandSchema>;
+
 export const terminalInfoSchema = z.object({
   terminalId: terminalIdSchema,
   entryId: entryIdSchema,
@@ -95,6 +100,12 @@ export const terminalInfoSchema = z.object({
   exitCode: z.number().int().nullable(),
   /** Name chosen by the user (`rename`); null = the default name of the tab ("cmd 1"). */
   title: z.string().min(1).max(TERMINAL_LIMITS.titleMaxChars).nullable().default(null),
+  /**
+   * 102e: what runs – `shell` (opened from the panel; `shell` names it) or `claude` ("Continue in
+   * terminal", `session.openInTerminal`: `claude --resume …` without a shell; `shell` is then the host's
+   * default shell, used by "Restart"). Picks the default name of the tab.
+   */
+  command: terminalCommandSchema.default('shell'),
 });
 export type TerminalInfo = z.infer<typeof terminalInfoSchema>;
 

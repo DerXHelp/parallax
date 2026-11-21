@@ -78,6 +78,7 @@ import {
   EntryState,
   settingsSleepPolicy,
   type EngineCore,
+  type EngineTerminal,
   type EngineCoreStores,
   type EngineStores,
   type NormalizerFns,
@@ -212,6 +213,8 @@ export interface SessionManagerDeps {
     terminalAvailable?: boolean;
     /** WP-102: `HostState.capabilities` (desktop actions of this host). Absent → the Windows set. */
     capabilities?: HostCapabilities;
+    /** 102e: `HostState.homeDir` (already checked by the host's path rules). Absent → null. */
+    homeDir?: string | null;
     /** WP-87: `HostState.app` and `HostState.update` (the update service). Absent → null / default. */
     app?: () => AppInfo | null;
     update?: () => UpdateState;
@@ -235,6 +238,11 @@ export interface SessionManagerDeps {
    * earlier run stays `external` (its state is unknown, ADR-051).
    */
   consoleLauncher?: ConsoleLauncher;
+  /**
+   * 102e: the embedded terminal for `session.openInTerminal` (the composition's `TerminalService`).
+   * Absent → TERMINAL_UNAVAILABLE {reason:'platform'}; a terminal handoff of an earlier run returns.
+   */
+  terminal?: EngineTerminal;
   /** Phase 2 (ADR-109, WP-34): click target of native toasts (`toastLaunchUri`); absent → none. */
   systemIntegration?: Pick<SystemIntegration, 'toastLaunchUri'>;
   /** WP-70: the login state of a profile (`ProfileSummary.login`; host/login.ts); absent → idle. */
@@ -469,6 +477,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       port: deps.host.port?.() ?? null,
       systemIntegration: deps.host.systemIntegration ?? false,
       terminalAvailable: deps.host.terminalAvailable ?? false,
+      homeDir: deps.host.homeDir ?? null,
       // WP-64: the default profile's `remoteControlAtStartup`, once a process of it was ready.
       remoteControlDefault: remoteDefaults.get(defaultProfile.id) ?? null,
       app: deps.host.app?.() ?? null,
@@ -651,6 +660,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     backend: deps.backend,
     claude: deps.claude,
     consoleLauncher: deps.consoleLauncher ?? null,
+    terminal: deps.terminal ?? null,
     stores,
     normalizer: {
       createLiveNormalizer: deps.normalizer?.createLiveNormalizer ?? createLiveNormalizer,
