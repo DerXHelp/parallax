@@ -3,6 +3,8 @@ import { claudeSettingsOf, MODEL_PICKER_ROWS_MAX, modelPickerOf } from './claude
 
 const NO_ENV = {};
 
+const WINDOWS_HOST = process.platform === 'win32';
+
 describe('claudeSettingsOf (WP-73)', () => {
   it('reads remoteControlAtStartup, model and the user modelPicker', () => {
     const picker = {
@@ -25,12 +27,18 @@ describe('claudeSettingsOf (WP-73)', () => {
     });
   });
 
-  it('ANTHROPIC_MODEL: settings env before the launch env before settings model (case-insensitive)', () => {
+  it('ANTHROPIC_MODEL: settings env before the launch env before settings model (names as the host compares them)', () => {
     const answer = (env?: Record<string, unknown>) => ({ effective: { model: 'opusplan', env } });
-    expect(claudeSettingsOf(answer({ anthropic_model: 'haiku' }), { ANTHROPIC_MODEL: 'sonnet' })?.model).toBe(
+    expect(claudeSettingsOf(answer({ ANTHROPIC_MODEL: 'haiku' }), { ANTHROPIC_MODEL: 'sonnet' })?.model).toBe(
       'haiku',
     );
-    expect(claudeSettingsOf(answer(), { Anthropic_Model: 'sonnet' })?.model).toBe('sonnet');
+    // Windows compares variable names case-insensitively, Linux exactly (WP-103).
+    expect(claudeSettingsOf(answer({ anthropic_model: 'haiku' }), { ANTHROPIC_MODEL: 'sonnet' })?.model).toBe(
+      WINDOWS_HOST ? 'haiku' : 'sonnet',
+    );
+    expect(claudeSettingsOf(answer(), { Anthropic_Model: 'sonnet' })?.model).toBe(
+      WINDOWS_HOST ? 'sonnet' : 'opusplan',
+    );
     expect(claudeSettingsOf(answer({ ANTHROPIC_MODEL: 42 }), NO_ENV)?.model).toBe('opusplan');
     expect(claudeSettingsOf(answer(), { ANTHROPIC_MODEL: '  ' })?.model).toBe('opusplan');
   });

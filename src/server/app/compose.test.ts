@@ -385,7 +385,7 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
     const { manager } = server;
     expect(manager.hostState()).toMatchObject({ port: server.port, systemIntegration: false });
 
-    const saved = await manager.handleCommand({ name: 'profile.save', profile: sampleProfileInput() }, ctx());
+    const saved = await manager.handleCommand({ name: 'profile.save', profile: hostProfileInput() }, ctx());
     const profileId = (saved as { profileId: string }).profileId;
     expect(manager.hostState().profiles.map((p) => p.name)).toEqual(['Standard', 'Work']);
     // A new profile is checked in the background – it never stays "checking" (WP-40).
@@ -425,7 +425,7 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
     const home = await tempHome();
     const { server } = await start(home);
     const changed = vi.spyOn(server.manager, 'onProfileChanged');
-    await server.manager.handleCommand({ name: 'profile.save', profile: sampleProfileInput() }, ctx());
+    await server.manager.handleCommand({ name: 'profile.save', profile: hostProfileInput() }, ctx());
     expect(changed).toHaveBeenCalled();
   });
 
@@ -433,7 +433,7 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
     const home = await tempHome();
     const { server } = await start(home);
     const { manager } = server;
-    const input = sampleProfileInput({ env: {}, configDir: null });
+    const input = hostProfileInput({ env: {}, configDir: null });
     const saved = await manager.handleCommand({ name: 'profile.save', profile: input }, ctx());
     const profileId = (saved as { profileId: string }).profileId;
     const claude = () => manager.hostState().profiles.find((p) => p.id === profileId)?.claude;
@@ -639,7 +639,8 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
         sampleConversation({ id: sampleId('cv', 2) }),
       ],
     });
-    const profile = sampleProfile({ args: ['--add-dir', 'D:\\shared', '--add-dir', 'E:\\docs'] });
+    const dirs = WINDOWS_HOST ? ['D:\\shared', 'E:\\docs'] : ['/srv/shared', '/srv/docs'];
+    const profile = sampleProfile({ args: ['--add-dir', dirs[0] ?? '', '--add-dir', dirs[1] ?? ''] });
     const lookup = fileEntryLookup(
       { get: (id) => (id === entry.id ? entry : undefined) },
       { get: (id) => (id === profile.id ? profile : undefined) },
@@ -647,7 +648,7 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
     expect(entry.profileId).toBe(profile.id);
     expect(lookup.entry(entry.id)).toEqual({
       cwd: 'D:\\work\\Sample',
-      additionalDirectories: ['D:\\shared', 'E:\\docs'],
+      additionalDirectories: dirs,
       conversationIds: [sampleId('cv', 1), sampleId('cv', 2)],
     });
     expect(lookup.entry(sampleId('en', 999))).toBeNull();
@@ -880,6 +881,22 @@ describe('startServer: Phase-3 wiring (WP-60)', () => {
     expect(index.files.map((file) => file.path)).toContain(appPath);
   });
 });
+
+const WINDOWS_HOST = process.platform === 'win32';
+
+/** `sampleProfileInput` with folders this host's profile checks accept (WP-103: POSIX paths on Linux). */
+function hostProfileInput(
+  p: Parameters<typeof sampleProfileInput>[0] = {},
+): ReturnType<typeof sampleProfileInput> {
+  const base = sampleProfileInput(p);
+  if (WINDOWS_HOST) return base;
+  return {
+    ...base,
+    configDir: base.configDir === null ? null : '/home/demo/.claude-work',
+    args: ['--add-dir', '/srv/shared'],
+    ...p,
+  };
+}
 
 function ctx(): CommandContext {
   return { clientId: sampleId('cl', 1), cmdId: randomUUID() };
