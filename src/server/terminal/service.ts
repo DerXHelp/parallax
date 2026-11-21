@@ -9,7 +9,7 @@
  *   limits (`perEntry` counts running and exited terminals until closed, plus opens in flight;
  *   `total` → TERMINAL_LIMIT_REACHED {scope, max}), `checkCwd`, the launch (`resolveShellLaunch`
  *   in mode `embedded`; SHELL_NOT_FOUND passes through), `pty.spawn` (a throw → TERMINAL_START_FAILED
- *   {reason}: the failed ConPTY step and code or a generic word, never a path). Errors go to the
+ *   {reason}: the failed ConPTY or Linux pty step and code or a generic word, never a path). Errors go to the
  *   requesting socket only (`error {requestId}`); success answers `opened` and pushes `terminals`
  *   to every socket of the entry. The client attaches explicitly afterwards.
  * - `attach`: lowest free channel 0–255 on that socket (a re-attach keeps its channel), `attached`,
@@ -76,6 +76,7 @@ import {
   type GitLocatorDeps,
   type ShellLaunch,
 } from './shells';
+import { UnixPtyError } from './unixPty';
 
 /** Size of a terminal started by `openClaude` until a panel attaches with its own size (`attach` resizes). */
 export const CLAUDE_TERMINAL_SIZE = { cols: 120, rows: 30 } as const;
@@ -121,9 +122,11 @@ export interface TerminalServiceOptions extends TerminalServiceDeps {
   launch?: TerminalLaunch;
   /** Default `checkCwd` of `lib/paths.ts`. */
   checkCwd?: (cwd: string) => Promise<void>;
-  /** For the default launch: base environment (default `process.env`), Git lookup seams. */
+  /** For the default launch: base environment (default `process.env`), Git and POSIX lookup seams. */
   env?: NodeJS.ProcessEnv;
   fs?: FsProbe;
+  /** WP-105: platform of the default launch (default `process.platform`). */
+  platform?: NodeJS.Platform;
   regKeyQuery?: RegKeyQuery;
   /** Shared with `createShellCommands` to reuse one Git cache. */
   gitFinder?: GitFinder;
@@ -166,9 +169,11 @@ export function terminalTitle(raw: string | null): string | null {
   return title === '' ? null : title.slice(0, TERMINAL_LIMITS.titleMaxChars);
 }
 
-/** The failed step of a ConPTY start, or a generic word – never a path. */
+/** The failed step of a ConPTY or Linux pty start (WP-105), or a generic word – never a path. */
 export function startFailureReason(error: unknown): string {
-  if (error instanceof ConPtyError) return `${error.step} (${String(error.code)})`;
+  if (error instanceof ConPtyError || error instanceof UnixPtyError) {
+    return `${error.step} (${String(error.code)})`;
+  }
   return 'spawn';
 }
 
@@ -190,6 +195,8 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     ((kind, cwd, settings) =>
       resolveShellLaunch(kind, cwd, settings, 'embedded', {
         ...(options.env === undefined ? {} : { env: options.env }),
+        ...(options.fs === undefined ? {} : { fs: options.fs }),
+        ...(options.platform === undefined ? {} : { platform: options.platform }),
         gitDir: () => finder.find(settings.gitDir, locator()),
       }));
 

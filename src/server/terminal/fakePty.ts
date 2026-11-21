@@ -3,7 +3,7 @@
  * like a tiny shell. The composition wires it instead of `conpty.ts` when the FakeBackend runs.
  *
  * - Prompt by the program's base name: `cmd.exe` → `<cwd>>`, `powershell.exe` → `PS <cwd>> `,
- *   `bash.exe` → `$ `, anything else `> `.
+ *   `bash.exe` (and `bash`, `sh`, `zsh` of a Linux host) → `$ `, anything else `> `.
  * - Typed characters are echoed; Backspace/DEL removes the last one; escape sequences (arrow keys
  *   …) are ignored. Enter (`\r`) runs the line:
  *   - `echo X` → `X`
@@ -51,6 +51,9 @@ export function fakePrompt(executablePath: string, cwd: string): string {
     case 'powershell.exe':
       return `PS ${cwd}> `;
     case 'bash.exe':
+    case 'bash':
+    case 'sh':
+    case 'zsh':
       return '$ ';
     default:
       return '> ';

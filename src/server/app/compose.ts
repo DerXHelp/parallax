@@ -119,8 +119,8 @@ import { createConsoleLauncher } from '../system/console';
 import { createFakeConsoleLauncher, FAKE_CONSOLE_RUN_MS } from '../system/fakeConsole';
 import { createSystemIntegration } from '../system/index';
 import type { ConsoleLauncher, SystemIntegration } from '../system/ports';
-import { conPtyUnavailableReason, createConPtyFactory } from '../terminal/conpty';
 import { createFakePtyFactory } from '../terminal/fakePty';
+import { createPlatformPty } from '../terminal/platformPty';
 import type { TerminalService } from '../terminal/ports';
 import { createTerminalService } from '../terminal/service';
 import { createRecordingShellLauncher, createShellCommands } from '../terminal/shellCommands';
@@ -775,13 +775,13 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       ...loggerOption,
     });
     multiHost = roles;
-    // WP-99 (ADR-239): the embedded terminal – ConPTY through node:ffi (SDK backend) or an echo shell
-    // (FakeBackend: dev, E2E). One Git lookup for it and "Open shell in folder".
+    // WP-99 (ADR-239), WP-105: the embedded terminal – the pseudo console of this platform through
+    // node:ffi (ConPTY on Windows, /dev/ptmx on Linux; SDK backend) or an echo shell (FakeBackend: dev,
+    // E2E). One Git lookup for it and "Open shell in folder".
     const gitFinder = createGitFinder();
-    const pty = config.backend === 'fake' ? createFakePtyFactory() : createConPtyFactory();
+    const platformPty = config.backend === 'fake' ? { pty: createFakePtyFactory() } : createPlatformPty();
     const terminalService = createTerminalService({
-      pty,
-      ...(pty === null ? { unavailableReason: conPtyUnavailableReason() } : {}),
+      ...platformPty,
       entry: (entryId) => {
         const entry = stores.registry.get(entryId);
         return entry === undefined ? null : { cwd: entry.cwd, archived: entry.archived };

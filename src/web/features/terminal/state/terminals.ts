@@ -130,32 +130,43 @@ export function pickActive(
 }
 
 /**
- * Tab numbers per shell (cmd 1, cmd 2, PowerShell 1): a terminal keeps its number while it exists
- * (closing "cmd 1" does not rename "cmd 2"); a new one gets the lowest number its shell has free.
+ * What a tab is named after (WP-105): its shell, or `claude` for the terminal of "Continue in terminal"
+ * (`command: 'claude'`; its `shell` is only what "Restart" opens).
+ */
+export type TerminalKind = ShellKind | 'claude';
+
+export function terminalKind(item: Pick<TerminalInfo, 'command' | 'shell'>): TerminalKind {
+  return item.command === 'claude' ? 'claude' : item.shell;
+}
+
+/**
+ * Tab numbers per kind (cmd 1, cmd 2, PowerShell 1, claude 1): a terminal keeps its number while it
+ * exists (closing "cmd 1" does not rename "cmd 2"); a new one gets the lowest number its kind has free.
  */
 export function assignNumbers(
   previous: Readonly<Partial<Record<TerminalId, number>>>,
   items: readonly TerminalInfo[],
 ): Record<TerminalId, number> {
   const numbers: Record<TerminalId, number> = {};
-  const used = new Map<ShellKind, Set<number>>();
-  const usedBy = (shell: ShellKind): Set<number> => {
-    let set = used.get(shell);
+  const used = new Map<TerminalKind, Set<number>>();
+  const usedBy = (item: TerminalInfo): Set<number> => {
+    const kind = terminalKind(item);
+    let set = used.get(kind);
     if (set === undefined) {
       set = new Set();
-      used.set(shell, set);
+      used.set(kind, set);
     }
     return set;
   };
   for (const item of items) {
     const kept = previous[item.terminalId];
-    if (kept === undefined || usedBy(item.shell).has(kept)) continue;
+    if (kept === undefined || usedBy(item).has(kept)) continue;
     numbers[item.terminalId] = kept;
-    usedBy(item.shell).add(kept);
+    usedBy(item).add(kept);
   }
   for (const item of items) {
     if (numbers[item.terminalId] !== undefined) continue;
-    const taken = usedBy(item.shell);
+    const taken = usedBy(item);
     let number = 1;
     while (taken.has(number)) number++;
     numbers[item.terminalId] = number;

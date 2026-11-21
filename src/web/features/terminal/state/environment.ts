@@ -1,4 +1,5 @@
 import { createContext, useContext } from 'react';
+import type { HostId } from '@shared/common';
 import { copyText } from '@web/lib/clipboard';
 import { createXtermEngine, type EngineFactory, type TerminalFont } from '../lib/engine';
 import { loadTerminalFont, terminalFontReady } from '../lib/font';
@@ -11,7 +12,8 @@ import { browserTerminalSocketFactory, terminalSocketUrl, type TerminalSocketFac
 export interface TerminalEnvironment {
   createEngine: EngineFactory;
   createSocket: TerminalSocketFactory;
-  socketUrl(): string;
+  /** URL of the terminal socket of the session's computer (WP-105: another computer through the relay). */
+  socketUrl(hostId: HostId): string;
   copyText(text: string): Promise<boolean>;
   /** Text of the clipboard (menu "Paste"); null when the browser refuses. */
   readClipboard(): Promise<string | null>;
@@ -32,7 +34,7 @@ async function readClipboard(): Promise<string | null> {
 export const BROWSER_TERMINAL_ENVIRONMENT: TerminalEnvironment = {
   createEngine: createXtermEngine,
   createSocket: browserTerminalSocketFactory,
-  socketUrl: () => terminalSocketUrl(),
+  socketUrl: (hostId) => terminalSocketUrl(hostId),
   copyText,
   readClipboard,
   fontReady: (font) => terminalFontReady(font),

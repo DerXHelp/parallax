@@ -2,7 +2,7 @@ import { ChevronDownIcon, PanelRightOpenIcon, SettingsIcon, TerminalIcon } from 
 import { useRef } from 'react';
 import type { SessionSummary } from '@shared/model';
 import { useT } from '@web/i18n';
-import { effectiveShell, shellChoices } from '@web/lib/shells';
+import { effectiveShell } from '@web/lib/shells';
 import { useSessionPaths } from '@web/state/host-platform';
 import { useTerminalAvailable } from '@web/state/hosts';
 import { useSettings } from '@web/state/settings';
@@ -24,12 +24,13 @@ import {
   openShellIn,
   openTerminalPanel,
   SHELL_LABELS,
+  useSessionShells,
 } from './session-actions';
 
 /**
  * "Open shell in folder" in the session header (WP-97, ADR-238): a split button – the icon opens
- * the default shell of the settings (Alt+K), the chevron offers cmd, PowerShell and Git Bash plus
- * the console settings; WP-99: "Terminal in panel" (Alt+T) when this computer has a pseudo console.
+ * the default shell of the settings (Alt+K), the chevron offers cmd, PowerShell and Git Bash (WP-105:
+ * on Linux the shells that computer has) plus the console settings; WP-99: "Terminal in panel" (Alt+T) when this computer has a pseudo console.
  * Shown by the header only for a session of this computer
  * (`sessionAllows(sessionKey, 'session.openShell')`) and only in a wide header – in a narrow one
  * the "…" menu has the same submenu. Outside the `<header>` status line (ADR-042).
@@ -37,8 +38,9 @@ import {
 export function ConsoleButton({ sessionKey, summary }: { sessionKey: string; summary: SessionSummary }) {
   const t = useT();
   // WP-104: the shells of the session's computer; a setting it does not offer falls back to its default.
+  // WP-105: on Linux the installed ones (`shell.detect` of that computer).
   const flavor = useSessionPaths(sessionKey).flavor;
-  const choices = shellChoices(flavor);
+  const choices = useSessionShells(sessionKey);
   const preferred = effectiveShell(useSettings().console.defaultShell, flavor, choices);
   const keys = shortcutKeyLabels(OPEN_SHELL_KEYS, t).join('+');
   const terminalKeys = shortcutKeyLabels(OPEN_TERMINAL_KEYS, t).join('+');

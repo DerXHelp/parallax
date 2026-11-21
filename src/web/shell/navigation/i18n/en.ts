@@ -156,6 +156,8 @@ export const en = {
     choose: 'Choose shell',
     group: 'Shell in the project folder',
     settings: 'Console settings…',
+    /** WP-105: SHELL_NOT_FOUND of a Linux shell (`{shell}` = the shell's menu text). */
+    missing: '{shell} is not installed on this computer.',
   },
   /** WP-66: the popover of "Quick question…" (a side question, never part of the conversation). */
   quickAsk: {
@@ -225,6 +227,10 @@ export const en = {
     copied:
       'Console command copied. Secret values of the profile are not in it – the console asks for them. Do not use this session in Parallax while claude runs in the console – two writers would mix up the conversation.',
     copyFailed: 'The console command could not be copied to the clipboard.',
+    /** WP-105 (102e): `claude --resume` in the embedded terminal of the session's computer. */
+    continueInTerminal: 'Continue in terminal',
+    /** WP-105: claude runs in an embedded terminal – the panel at that terminal. */
+    showTerminal: 'Show terminal with claude',
   },
   switcher: {
     title: 'Switch session',
@@ -305,6 +311,11 @@ export const en = {
     externalTitle: 'Opened in an external console (since {time})',
     externalRunning: 'Quit claude there – Parallax then takes the session back automatically.',
     externalEnded: 'The console was closed – Parallax is taking the session back.',
+    /** 102e, WP-105: "Continue in terminal" – claude runs in the embedded terminal of the session's computer. */
+    terminalTitle: 'Running in the terminal (since {time})',
+    terminalRunning: 'Quit claude in the terminal – Parallax then takes the session back automatically.',
+    terminalEnded: 'claude in the terminal has ended – Parallax is taking the session back.',
+    showTerminal: 'Show terminal',
     reclaim: 'Take back',
     archivedTitle: 'Archived',
     archivedDescription: 'This session is read-only until you restore it.',
