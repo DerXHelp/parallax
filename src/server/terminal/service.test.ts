@@ -31,6 +31,7 @@ import {
   CLAUDE_TERMINAL_SIZE,
   EXIT_DRAIN_MAX_MS,
   KILL_FALLBACK_MS,
+  REMOTE_TERMINAL_LIMITS,
   TERMINAL_BACKPRESSURE,
   TERMINAL_FRAME_BYTES,
   createTerminalService,
@@ -897,6 +898,100 @@ describe('createTerminalService – closeRemote (WP-76 §B.13)', () => {
     // With the current epoch a remote start opens.
     slow = false;
     expect((await service.openClaude(ENTRY, launch, 'remote', service.remoteEpoch())).kind).toBe('opened');
+  });
+});
+
+describe('createTerminalService – remote sockets (follow-up of the security review WP-109)', () => {
+  it('a remote socket sees and works only with remote terminals; a local window sees all', async () => {
+    const { connect, open, lastPty, timers } = setup();
+    const local = connect();
+    const remote = connect(ENTRY, 'remote');
+    const mine = await open(local, 'l1');
+    const minePty = lastPty();
+    const theirs = await open(remote, 'r1');
+    const ids = (client: Client): string[] =>
+      client.sink
+        .of('terminals')
+        .at(-1)
+        ?.items.map((t) => t.terminalId) ?? [];
+    expect(ids(local)).toEqual([mine.terminalId, theirs.terminalId]);
+    expect(ids(remote)).toEqual([theirs.terminalId]);
+    // A late remote socket gets only the remote list.
+    const late = connect(ENTRY, 'remote');
+    expect(late.sink.of('terminals')[0]?.items.map((t) => t.terminalId)).toEqual([theirs.terminalId]);
+
+    // Every operation on the local terminal: TERMINAL_NOT_FOUND, nothing happens.
+    const notFound = makeError('TERMINAL_NOT_FOUND', { terminalId: mine.terminalId });
+    const terminalId = mine.terminalId;
+    remote.conn.handle({ type: 'attach', terminalId, cols: 80, rows: 24 });
+    remote.conn.handle({ type: 'input', terminalId, data: 'id\r' });
+    remote.conn.handle({ type: 'resize', terminalId, cols: 90, rows: 30 });
+    remote.conn.handle({ type: 'rename', terminalId, title: 'taken' });
+    remote.conn.handle({ type: 'move', terminalId, index: 1 });
+    remote.conn.handle({ type: 'close', terminalId });
+    expect(remote.sink.of('error').map((m) => m.error)).toEqual(Array.from({ length: 6 }, () => notFound));
+    expect(remote.sink.of('attached')).toEqual([]);
+    expect(minePty.writes).toEqual([]);
+    expect(minePty.resizes).toEqual([]);
+    expect(ids(local)).toEqual([mine.terminalId, theirs.terminalId]);
+    expect(local.sink.of('terminals').at(-1)?.items[0]?.title).toBeNull();
+
+    // The exit of the local shell reaches only local windows.
+    minePty.exit(0);
+    timers.advance(EXIT_DRAIN_MAX_MS + POLL_IDLE_MS);
+    expect(local.sink.of('exit').map((m) => m.terminalId)).toEqual([mine.terminalId]);
+    expect(remote.sink.of('exit')).toEqual([]);
+  });
+
+  it('a move from a remote socket counts in its own list; local terminals keep their places', async () => {
+    const { connect, open } = setup();
+    const local = connect();
+    const remote = connect(ENTRY, 'remote');
+    const a = await open(remote, 'r1');
+    const l = await open(local, 'l1');
+    const b = await open(remote, 'r2');
+    remote.conn.handle({ type: 'move', terminalId: b.terminalId, index: 0 });
+    expect(
+      local.sink
+        .of('terminals')
+        .at(-1)
+        ?.items.map((t) => t.terminalId),
+    ).toEqual([b.terminalId, l.terminalId, a.terminalId]);
+    expect(
+      remote.sink
+        .of('terminals')
+        .at(-1)
+        ?.items.map((t) => t.terminalId),
+    ).toEqual([b.terminalId, a.terminalId]);
+  });
+
+  it('remote terminals leave the computer one per entry and four in all', async () => {
+    const ids = Array.from({ length: 5 }, (_, i) => sampleId('en', 20 + i));
+    const { service, connect, entries, open, openError } = setup();
+    for (const id of ids) entries.set(id, { cwd: CWD, archived: false });
+    const remote = connect(ENTRY, 'remote');
+    expect(remote.sink.of('welcome')[0]?.limits).toEqual(REMOTE_TERMINAL_LIMITS);
+    for (let n = 0; n < REMOTE_TERMINAL_LIMITS.perEntry; n += 1) await open(remote, `r${String(n)}`);
+    expect(await openError(remote, 'over')).toEqual(
+      makeError('TERMINAL_LIMIT_REACHED', { scope: 'entry', max: REMOTE_TERMINAL_LIMITS.perEntry }),
+    );
+    // "Continue in terminal" from remote counts alike; the local window still gets its terminal.
+    const launch = { executablePath: EXE.bash, args: [], env: {} };
+    expect(await service.openClaude(ENTRY, launch, 'remote')).toMatchObject({ kind: 'failed' });
+    await open(connect(), 'local');
+
+    // In all: 12 remote terminals, then only local ones.
+    for (const [index, id] of ids.slice(0, 3).entries()) {
+      const client = connect(id, 'remote');
+      for (let n = 0; n < REMOTE_TERMINAL_LIMITS.perEntry; n += 1)
+        await open(client, `${String(index)}-${String(n)}`);
+    }
+    const last = ids[3];
+    if (last === undefined) throw new Error('missing entry');
+    expect(await openError(connect(last, 'remote'), 'total')).toEqual(
+      makeError('TERMINAL_LIMIT_REACHED', { scope: 'total', max: REMOTE_TERMINAL_LIMITS.total }),
+    );
+    await open(connect(last), 'local-total');
   });
 });
 

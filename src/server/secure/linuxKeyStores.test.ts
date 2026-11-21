@@ -3,7 +3,7 @@
  * `systemd-creds` runner, a fake Secret Service, a worker that never answers). Never the keyring or
  * the credentials of this computer.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createFileKeyStore } from './fileKeyStore';
 import { createMemoryKeyStore } from './memoryKeyStore';
 import { createPlatformKeyStore, linuxSchemeOrder } from './platformKeyStore';
@@ -174,6 +174,38 @@ describe('Secret Service (libsecret in a worker, §B.14)', () => {
     try {
       expect(await reason(worker.lookup('identity'))).toBe('timeout');
       expect(await reason(worker.probe())).toBe('timeout');
+    } finally {
+      worker.close();
+    }
+  });
+
+  it('a worker blocked in a native call: no second one until its thread ended (follow-up WP-109)', async () => {
+    const worker = createSecretServiceWorker({
+      timeoutMs: 200,
+      // `spawnSync` blocks the thread natively – like libsecret waiting for a password prompt;
+      // `terminate()` cannot interrupt it.
+      source: [
+        "const { parentPort } = require('node:worker_threads');",
+        "const { spawnSync } = require('node:child_process');",
+        'parentPort.on("message", (m) => {',
+        "  if (m.purpose === 'auth:slow') spawnSync(process.execPath, ['-e', 'setTimeout(() => {}, 1500)']);",
+        "  parentPort.postMessage({ id: m.id, ok: true, value: 'v' });",
+        '});',
+      ].join('\n'),
+    });
+    try {
+      expect(await reason(worker.lookup('auth:slow'))).toBe('timeout');
+      // At once, without a new worker waiting for the same prompt.
+      const started = Date.now();
+      expect(await reason(worker.lookup('auth:fast'))).toBe('timeout');
+      expect(Date.now() - started).toBeLessThan(150);
+      // Once the blocked thread ended, a new worker answers.
+      await vi.waitFor(
+        async () => {
+          expect(await worker.lookup('auth:fast')).toBe('v');
+        },
+        { timeout: 15_000, interval: 100 },
+      );
     } finally {
       worker.close();
     }

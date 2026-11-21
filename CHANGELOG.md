@@ -56,6 +56,10 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
   je Rechner aus (WP-104).
 - Ein gekoppelter Rechner kann keine Anmeldung im Browser des freigebenden Rechners mehr öffnen und dort weder Editor
   noch Konsole einstellen; ein Terminal-Start nach dem Aufheben der Kopplung wird abgelehnt (WP-109).
+- Ein gekoppelter Rechner sieht im Terminal nur die Terminals, die über die Kopplung gestartet wurden, und lässt dem
+  Rechner selbst immer ein Terminal je Session und vier insgesamt (WP-109).
+- Unter Linux hält ein hängender Netz- oder FUSE-Mount im Home-Ordner (etwa sshfs) nur die Dateien auf diesem Mount
+  auf, nicht alle anderen (WP-109).
 - In einem nicht maximierten Fenster schiebt das Seitenpanel das Transkript zur Seite, statt darüber zu liegen; nur in
   sehr schmalen Fenstern liegt es noch darüber (WP-99).
 - „Neue Session“ steht in der Seitenleiste vor dem Knopf für die Gruppierung (WP-99).

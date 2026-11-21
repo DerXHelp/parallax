@@ -43,8 +43,8 @@ const GROWTH_CHUNK_BYTES = 64 * 1024;
 export async function readWholeFile(file: string, max: number): Promise<Buffer | null> {
   assertSafePath(file);
   // Security review WP-109: a FIFO swapped in after the head was read must not block a libuv thread
-  // (POSIX: O_NONBLOCK + regular file only, like readHead).
-  const handle = await openRegularFile(file);
+  // (POSIX: O_NONBLOCK + regular file only, like readHead); the open file must be the checked one.
+  const handle = await openRegularFile(file, { physical: true });
   try {
     const { size } = await handle.stat();
     if (size > max) return null;
@@ -76,7 +76,8 @@ export async function readWholeFile(file: string, max: number): Promise<Buffer |
 export const nodeFileFs: FileFs = {
   ...nodeAccessFs,
   stat: (file) => stat(file),
-  readHead: (file, length) => readFileHead(file, length),
+  // Physical paths (`resolveAllowedPath`): Linux checks the open file is still the checked one.
+  readHead: (file, length) => readFileHead(file, length, { physical: true }),
   readWhole: (file, max) => readWholeFile(file, max),
   readdir: (dir) => readdir(dir, { withFileTypes: true }),
 };

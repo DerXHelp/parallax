@@ -161,6 +161,16 @@ interface Conn {
 type ClientMessage = Exclude<TerminalClientMessage, { type: 'hello' }>;
 type OpenMessage = Extract<ClientMessage, { type: 'open' }>;
 
+/**
+ * Follow-up of the security review WP-109 (WP-76 §B.13): terminals started through remote access stay
+ * below these limits, so the computer itself always keeps one terminal per entry and four in all.
+ * Local terminals count against the shared `TERMINAL_LIMITS` as before.
+ */
+export const REMOTE_TERMINAL_LIMITS = {
+  perEntry: TERMINAL_LIMITS.perEntry - 1,
+  total: TERMINAL_LIMITS.total - 4,
+} as const;
+
 /** A name from `rename`: control characters become spaces, trimmed; empty → null (the default name). */
 export function terminalTitle(raw: string | null): string | null {
   if (raw === null) return null;
@@ -203,9 +213,11 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
   /** Every terminal of this computer; insertion order = oldest first. */
   const terminals = new Map<TerminalId, Terminal>();
   const conns = new Set<Conn>();
-  /** Opens in flight (reserved against the limits). */
+  /** Opens in flight (reserved against the limits); the remote ones also on their own. */
   const pendingOpens = new Map<EntryId, number>();
   let pendingTotal = 0;
+  const pendingRemote = new Map<EntryId, number>();
+  let pendingRemoteTotal = 0;
   /** Security review WP-109: +1 per `closeRemote` (remote starts in flight compare it). */
   let remoteEpoch = 0;
   /** Bumped by `closeEntry`: an open in flight for an older epoch fails. */
@@ -252,18 +264,29 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
 
   const list = (entryId: EntryId): TerminalInfo[] => entryTerminals(entryId).map((t) => ({ ...t.info }));
 
+  /**
+   * Follow-up of the security review WP-109 (WP-76 §B.13): a socket through remote access sees and works
+   * only with terminals started through remote access (never the scrollback of a local shell); a local
+   * window sees all of them.
+   */
+  const visibleTo = (conn: Conn, origin: TerminalOrigin): boolean =>
+    conn.origin === 'local' || origin === 'remote';
+
+  /** The entry's terminals this socket may see, in list order. */
+  const connTerminals = (conn: Conn): Terminal[] =>
+    entryTerminals(conn.entryId).filter((t) => visibleTo(conn, t.origin));
+
   const pushList = (entryId: EntryId): void => {
-    const items = list(entryId);
-    for (const conn of entryConns(entryId)) send(conn, { type: 'terminals', items });
+    for (const conn of entryConns(entryId)) {
+      send(conn, { type: 'terminals', items: connTerminals(conn).map((t) => ({ ...t.info })) });
+    }
   };
 
-  const broadcastExit = (
-    entryId: EntryId,
-    terminalId: TerminalId,
-    exitCode: number | null,
-    reason: TerminalExitReason,
-  ): void => {
-    for (const conn of entryConns(entryId)) send(conn, { type: 'exit', terminalId, exitCode, reason });
+  const broadcastExit = (t: Terminal, exitCode: number | null, reason: TerminalExitReason): void => {
+    const { entryId, terminalId } = t.info;
+    for (const conn of entryConns(entryId)) {
+      if (visibleTo(conn, t.origin)) send(conn, { type: 'exit', terminalId, exitCode, reason });
+    }
   };
 
   const sendError = (
@@ -355,7 +378,7 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     for (const conn of t.attached.keys()) conn.channels.delete(terminalId);
     t.attached.clear();
     t.ring.clear();
-    broadcastExit(entryId, terminalId, exitCode, reason);
+    broadcastExit(t, exitCode, reason);
     log.info({ terminalId, entryId, reason }, 'terminal ended');
   };
 
@@ -369,7 +392,7 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     }
     t.ending = null;
     t.info = { ...t.info, state: 'exited', exitCode };
-    broadcastExit(t.info.entryId, t.info.terminalId, exitCode, 'exited');
+    broadcastExit(t, exitCode, 'exited');
     pushList(t.info.entryId);
     log.info({ terminalId: t.info.terminalId, exitCode }, 'terminal exited');
   };
@@ -469,8 +492,11 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
 
   // ---- requests ----
 
-  /** Checks 1–4 of `open` (available, entry, archived, limits); null = may start. */
-  const admission = (entryId: EntryId): ErrorPayload | null => {
+  /**
+   * Checks 1–4 of `open` (available, entry, archived, limits); null = may start. A remote start also
+   * stays below REMOTE_TERMINAL_LIMITS (the reserve of the computer itself).
+   */
+  const admission = (entryId: EntryId, origin: TerminalOrigin): ErrorPayload | null => {
     if (!canStart()) return unavailable();
     const entry = options.entry(entryId);
     if (entry === null) return makeError('ENTRY_NOT_FOUND');
@@ -482,6 +508,16 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     if (terminals.size + pendingTotal >= TERMINAL_LIMITS.total) {
       return makeError('TERMINAL_LIMIT_REACHED', { scope: 'total', max: TERMINAL_LIMITS.total });
     }
+    if (origin === 'local') return null;
+    const remote = [...terminals.values()].filter((t) => t.origin === 'remote');
+    const remoteOwn =
+      remote.filter((t) => t.info.entryId === entryId).length + (pendingRemote.get(entryId) ?? 0);
+    if (remoteOwn >= REMOTE_TERMINAL_LIMITS.perEntry) {
+      return makeError('TERMINAL_LIMIT_REACHED', { scope: 'entry', max: REMOTE_TERMINAL_LIMITS.perEntry });
+    }
+    if (remote.length + pendingRemoteTotal >= REMOTE_TERMINAL_LIMITS.total) {
+      return makeError('TERMINAL_LIMIT_REACHED', { scope: 'total', max: REMOTE_TERMINAL_LIMITS.total });
+    }
     return null;
   };
 
@@ -492,11 +528,18 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     return makeError('TERMINAL_START_FAILED', { reason });
   };
 
-  const reserve = (entryId: EntryId, delta: 1 | -1): void => {
-    const next = (pendingOpens.get(entryId) ?? 0) + delta;
-    if (next <= 0) pendingOpens.delete(entryId);
-    else pendingOpens.set(entryId, next);
+  const bump = (counts: Map<EntryId, number>, entryId: EntryId, delta: 1 | -1): void => {
+    const next = (counts.get(entryId) ?? 0) + delta;
+    if (next <= 0) counts.delete(entryId);
+    else counts.set(entryId, next);
+  };
+
+  const reserve = (entryId: EntryId, origin: TerminalOrigin, delta: 1 | -1): void => {
+    bump(pendingOpens, entryId, delta);
     pendingTotal += delta;
+    if (origin === 'local') return;
+    bump(pendingRemote, entryId, delta);
+    pendingRemoteTotal += delta;
   };
 
   /** Why an open in flight must not start any more (state changed during its awaits); null = go. */
@@ -542,12 +585,12 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     const remoteSince = plan.remoteSince ?? remoteEpoch;
     const revoked = (): boolean => plan.origin === 'remote' && remoteEpoch !== remoteSince;
     if (revoked()) return { kind: 'failed', error: makeError('HOST_REVOKED') };
-    const refused = admission(entryId);
+    const refused = admission(entryId, plan.origin);
     if (refused !== null) return { kind: 'failed', error: refused };
     // admission() saw the entry; a null here would be a race with removal (checked again below).
     const cwd = options.entry(entryId)?.cwd ?? '';
     const epoch = epochs.get(entryId)?.epoch ?? 0;
-    reserve(entryId, 1);
+    reserve(entryId, plan.origin, 1);
     try {
       try {
         await checkCwd(cwd);
@@ -616,7 +659,7 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
       );
       return { kind: 'opened', info, pid: pty.pid };
     } finally {
-      reserve(entryId, -1);
+      reserve(entryId, plan.origin, -1);
     }
   };
 
@@ -642,10 +685,13 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     poller.wake();
   };
 
-  /** The terminal if it belongs to the socket's entry; otherwise answers TERMINAL_NOT_FOUND. */
+  /**
+   * The terminal if it belongs to the socket's entry and the socket may see it (`visibleTo`); otherwise
+   * answers TERMINAL_NOT_FOUND (a remote socket learns nothing about local terminals).
+   */
   const own = (conn: Conn, terminalId: TerminalId): Terminal | null => {
     const t = terminals.get(terminalId);
-    if (t?.info.entryId === conn.entryId) return t;
+    if (t?.info.entryId === conn.entryId && visibleTo(conn, t.origin)) return t;
     sendError(conn, makeError('TERMINAL_NOT_FOUND', { terminalId }), { terminalId });
     return null;
   };
@@ -743,12 +789,16 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
       case 'move': {
         const t = own(conn, message.terminalId);
         if (t === null) return;
-        const order = entryTerminals(conn.entryId);
-        const from = order.indexOf(t);
-        const to = Math.min(message.index, order.length - 1);
+        // The index counts in the socket's own list; terminals it cannot see keep their places.
+        const visible = connTerminals(conn);
+        const from = visible.indexOf(t);
+        const to = Math.min(message.index, visible.length - 1);
         if (from === to) return;
-        order.splice(from, 1);
-        order.splice(to, 0, t);
+        visible.splice(from, 1);
+        visible.splice(to, 0, t);
+        const order = entryTerminals(conn.entryId).map((item) =>
+          visibleTo(conn, item.origin) ? (visible.shift() ?? item) : item,
+        );
         // The map's insertion order is the list order: re-insert the entry's terminals in the new order.
         for (const item of order) terminals.delete(item.info.terminalId);
         for (const item of order) terminals.set(item.info.terminalId, item);
@@ -772,9 +822,12 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
         protocol: TERMINAL_PROTOCOL_VERSION,
         available,
         error: available ? null : unavailable(),
-        limits: { perEntry: TERMINAL_LIMITS.perEntry, total: TERMINAL_LIMITS.total },
+        limits:
+          origin === 'remote'
+            ? { ...REMOTE_TERMINAL_LIMITS }
+            : { perEntry: TERMINAL_LIMITS.perEntry, total: TERMINAL_LIMITS.total },
       });
-      send(conn, { type: 'terminals', items: list(entryId) });
+      send(conn, { type: 'terminals', items: connTerminals(conn).map((t) => ({ ...t.info })) });
       return {
         handle: (message) => {
           handle(conn, message);

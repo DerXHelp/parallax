@@ -206,6 +206,13 @@ export function createSecretServiceWorker(options: SecretServiceWorkerOptions = 
   const source = options.source ?? SECRET_SERVICE_WORKER_SOURCE;
   const log = (options.logger ?? rootLogger).child({ module: 'keyStore.secretService' });
   let worker: Worker | null = null;
+  /**
+   * Follow-up of the security review WP-109: workers terminated after a timeout whose thread has not
+   * ended yet. `terminate()` cannot interrupt a libsecret call that waits for a password prompt; a new
+   * worker would wait for the same prompt – so none starts until the old thread is gone, and calls fail
+   * with `timeout` at once (no pile of blocked threads).
+   */
+  let stuck = 0;
   let nextId = 1;
   const pending = new Map<number, Pending>();
 
@@ -221,11 +228,25 @@ export function createSecretServiceWorker(options: SecretServiceWorkerOptions = 
     const current = worker;
     worker = null;
     failAll(reason);
-    if (current !== null) void current.terminate().catch(() => undefined);
+    if (current === null) return;
+    if (reason !== 'timeout') {
+      void current.terminate().catch(() => undefined);
+      return;
+    }
+    stuck += 1;
+    // Resolves once the thread really ended (after the blocking call returned).
+    void current
+      .terminate()
+      .catch(() => undefined)
+      .finally(() => {
+        stuck -= 1;
+        log.info('a keyring worker that did not answer has ended');
+      });
   };
 
   const ensure = (): Worker => {
     if (worker !== null) return worker;
+    if (stuck > 0) throw new KeyStoreError('timeout', 'the keyring has not answered an earlier call yet');
     const created = new Worker(source, {
       eval: true,
       workerData: { schemaName: SECRET_SCHEMA_NAME },
@@ -262,8 +283,8 @@ export function createSecretServiceWorker(options: SecretServiceWorkerOptions = 
       let target: Worker;
       try {
         target = ensure();
-      } catch {
-        reject(new KeyStoreError('unavailable'));
+      } catch (error) {
+        reject(error instanceof KeyStoreError ? error : new KeyStoreError('unavailable'));
         return;
       }
       const id = nextId++;
