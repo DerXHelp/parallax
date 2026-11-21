@@ -83,6 +83,9 @@ export const en = {
     needsYou: 'Needs you:',
     /** WP-80: screen-reader text of the draft symbol (`summary.hasDraft`). */
     draft: 'Unsent draft',
+    /** WP-115: screen-reader text of a worktree session's branch; its tooltip line. */
+    worktreeBranch: 'Worktree branch',
+    worktreeOf: 'Worktree of {repo}',
   },
   /** WP-71: what runs in a session – row counters (screen reader), its tooltip, the header button. */
   running: {
@@ -141,6 +144,9 @@ export const en = {
     openTerminal: 'Terminal in panel',
     /** WP-104: "Open folder" on a Linux computer (its file manager, not Explorer). */
     openFolderFileManager: 'Open folder in file manager',
+    /** WP-115: `session.setUnread`. */
+    markUnread: 'Mark as unread',
+    markRead: 'Mark as read',
   },
   /** WP-97: the shells of "Open shell in folder" and the header button. */
   shells: {
@@ -242,6 +248,8 @@ export const en = {
     empty: 'No matching session.',
     hint: 'Enter opens · Shift+Enter opens in a new window · Esc closes',
     waiting: 'Waiting for you',
+    /** WP-115: last option – opens the full-text search with the text. */
+    searchContents: 'Search in contents: “{text}”',
   },
   shortcuts: {
     quickSwitcher: 'Quick switcher: search and open a session',
@@ -344,5 +352,34 @@ export const en = {
   /** Actions of window hints (NotificationCenter, `ClientNotice.action`). */
   notices: {
     enableSounds: 'Enable sounds',
+  },
+  /** WP-115 (F6): the filter above the sidebar list (`SidebarFilter.tsx`). */
+  filter: {
+    label: 'Filter sessions',
+    text: 'Filter by title, folder or branch',
+    placeholder: 'Filter…',
+    clearText: 'Clear the filter text',
+    statusLabel: 'Show',
+    status: {
+      all: 'All',
+      waiting: 'Waiting',
+      working: 'Working',
+      unread: 'Unread',
+    },
+    /** A filter text inside a sentence. */
+    quoted: '“{text}”',
+    /** Between status and text of an active filter. */
+    separator: ' · ',
+    empty: 'No session matches the filter ({filter}).',
+    reset: 'Show all sessions',
+    /** The rail's button while a filter is active. */
+    railActive: 'Filter: {filter} – show all sessions',
+  },
+  /** WP-115 (F6): muted projects (context menu of a project header, `project-mute.ts`). */
+  mute: {
+    mute: 'Mute notifications',
+    unmute: 'Unmute notifications',
+    /** Screen-reader text of the bell symbol in the header. */
+    muted: 'Notifications muted',
   },
 };

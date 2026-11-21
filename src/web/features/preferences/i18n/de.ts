@@ -103,6 +103,7 @@ export const de: typeof en = {
     idleSleep: 'Untätige Sessions schlafen legen',
     idleSleepHint:
       'Beendet den Claude-Prozess einer Session, die so lange auf nichts gewartet hat; der nächste Prompt setzt sie fort. Eine Session, die ein Fenster im Vordergrund zeigt, schläft nie.',
+    idleSleepPinned: 'Angeheftete Sessions schlafen nicht ein.',
     idleMinutes: 'Untätig bis zum Schlafen',
     minutes: 'Minuten',
     promptSuggestions: 'Prompt-Vorschläge',

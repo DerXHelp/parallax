@@ -1,4 +1,11 @@
-import { ArchiveRestoreIcon, EllipsisIcon, GitBranchIcon, PencilLineIcon, PinIcon } from 'lucide-react';
+import {
+  ArchiveRestoreIcon,
+  EllipsisIcon,
+  GitBranchIcon,
+  GitForkIcon,
+  PencilLineIcon,
+  PinIcon,
+} from 'lucide-react';
 import {
   lazy,
   memo,
@@ -19,6 +26,7 @@ import { cn } from '@web/lib/cn';
 import type { ContextLevel } from '@web/lib/context-display';
 import { effectiveEffort } from '@web/lib/effort';
 import { shortModelName } from '@web/lib/model-name';
+import { sessionProjectPath } from '@web/lib/session-order';
 import { sessionTitle } from '@web/lib/session-title';
 import { cliVersionStatus, knownVersion } from '@web/lib/version';
 import type { SummaryEntry } from '@web/state/hooks';
@@ -144,6 +152,32 @@ const RowTasksDetail = lazy(loadRowTasksDetail);
 
 /** Counters above this show as "9+" – the row stays narrow. */
 const ROW_COUNTER_MAX = 9;
+
+/**
+ * Branch of the row's last line. WP-115 (ADR-250): a worktree session marks its branch with the
+ * worktree symbol (the group header names the main repository) – the live branch when known, else
+ * the worktree's own.
+ */
+function RowBranch({ summary }: { summary: SessionSummary }) {
+  const t = useT();
+  const branch = summary.gitBranch ?? summary.worktree?.branch ?? null;
+  if (branch === null) return null;
+  const worktree = summary.worktree !== null;
+  const Icon = worktree ? GitForkIcon : GitBranchIcon;
+  return (
+    <span
+      data-slot="row-branch"
+      data-worktree={worktree || undefined}
+      className="flex min-w-10 shrink-[2] items-center gap-0.5"
+    >
+      <Icon aria-hidden className="size-3 shrink-0" />
+      <span className="sr-only">
+        {t(worktree ? 'navigation.row.worktreeBranch' : 'navigation.row.branch')}
+      </span>
+      <span className="truncate">{branch}</span>
+    </span>
+  );
+}
 
 /**
  * WP-71: what runs, next to the title – agent symbol + number, terminal symbol + number, the rest;
@@ -374,15 +408,13 @@ export const SessionRow = memo(function SessionRow({
                   {/* Grouped: the group header names the folder. Path and branch shrink, the model stays;
                       in the path the folder before the project folder gives way first (WP41-02). */}
                   {showPath ? (
-                    <PathTail path={summary.cwd} data-slot="row-path" className="min-w-10 shrink" />
+                    <PathTail
+                      path={sessionProjectPath(summary)}
+                      data-slot="row-path"
+                      className="min-w-10 shrink"
+                    />
                   ) : null}
-                  {summary.gitBranch === null ? null : (
-                    <span data-slot="row-branch" className="flex min-w-10 shrink-[2] items-center gap-0.5">
-                      <GitBranchIcon aria-hidden className="size-3 shrink-0" />
-                      <span className="sr-only">{t('navigation.row.branch')}</span>
-                      <span className="truncate">{summary.gitBranch}</span>
-                    </span>
-                  )}
+                  <RowBranch summary={summary} />
                   {model === null ? null : (
                     <span data-slot="row-model" className="max-w-20 shrink-0 truncate">
                       <span className="sr-only">{t('navigation.row.model')}</span>
@@ -421,6 +453,11 @@ export const SessionRow = memo(function SessionRow({
                   </Suspense>
                 )}
                 <span className="text-muted-foreground font-mono break-all">{summary.cwd}</span>
+                {summary.worktree === null ? null : (
+                  <span data-slot="row-worktree-detail" className="text-muted-foreground break-all">
+                    {t('navigation.row.worktreeOf', { repo: summary.worktree.repoRoot })}
+                  </span>
+                )}
                 {summary.gitBranch === null ? null : (
                   <span className="text-muted-foreground">
                     {t('navigation.row.branch')}: {summary.gitBranch}
