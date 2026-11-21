@@ -356,13 +356,23 @@ const EVERY_REQUEST: { [K in ShellRequestKind]: ShellRequestOf<K> } = {
   // WP-110 (Ausbau 1): worktree cleanup before archiving (WP-114) and the full-text search (WP-115).
   'worktree.cleanup': { kind: 'worktree.cleanup', sessionKey: PLAYGROUND_SESSION_KEYS.main, then: 'archive' },
   'search.open': { kind: 'search.open', text: 'login' },
+  revealItem: {
+    kind: 'revealItem',
+    sessionKey: PLAYGROUND_SESSION_KEYS.main,
+    conversationId: null,
+    itemId: null,
+  },
 };
 
 /**
  * Kinds whose handler arrives with a later package: WP-110 scaffolding – `worktree.cleanup` (WP-114)
  * and `search.open` (WP-115).
  */
-const PENDING_REQUEST_KINDS: ReadonlySet<ShellRequestKind> = new Set(['worktree.cleanup', 'search.open']);
+const PENDING_REQUEST_KINDS: ReadonlySet<ShellRequestKind> = new Set([
+  'worktree.cleanup',
+  'search.open',
+  'revealItem',
+]);
 
 /** Slots whose feature arrives with a later package (WP-110 scaffolding: WP-113, WP-114, WP-115). */
 const PENDING_SLOTS: ReadonlySet<string> = new Set([

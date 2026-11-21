@@ -111,7 +111,8 @@ die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale En
     `src/web/features/worktrees/**` (neu), neu `src/web/features/preferences/sections/ProjectsSection.tsx`,
     `src/web/features/composer/**` (Sperre während des Setups, `composerText {asPaste}` als Paste-Chip).
   - **WP-115 (Web Suche, Übersicht):** `src/web/features/search/**` (neu), `src/web/shell/navigation/**`,
-    `src/web/lib/session-order.ts`, `src/web/features/preferences/sections/SessionsSection.tsx`.
+    `src/web/lib/session-order.ts`, `src/web/features/preferences/sections/SessionsSection.tsx`, in
+    `src/web/features/transcript/**` nur der Sprung zum Treffer (Anfrage `revealItem`).
   - **WP-116 (Web Elicitation):** `src/web/features/decisions/**`.
   - Wörterbücher `features/preferences/i18n/*`: WP-114 nur Unterbaum `projects` (neu, am Ende), WP-115 nur `sessions`.
 - Keine Datei wird von zwei Paketen bearbeitet; nichts in fremden Ordnern anlegen. `README.md` von

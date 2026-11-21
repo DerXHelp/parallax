@@ -95,7 +95,13 @@ export type ShellRequest =
    */
   | { kind: 'worktree.cleanup'; sessionKey: string; then: 'archive' | 'remove' }
   /** Full-text search (Ctrl+Shift+F, Ctrl+K "Search in contents: …"; slot `SearchDialog`, WP-115). */
-  | { kind: 'search.open'; text?: string };
+  | { kind: 'search.open'; text?: string }
+  /**
+   * A search hit (WP-115): the transcript of the (already selected) session loads the window around
+   * the item (`transcript.loadAround`), scrolls to it and marks it briefly. `itemId: null` = only the
+   * conversation (title, plan, summary hits).
+   */
+  | { kind: 'revealItem'; sessionKey: string; conversationId: string | null; itemId: string | null };
 
 export type ShellRequestKind = ShellRequest['kind'];
 export type ShellRequestOf<K extends ShellRequestKind> = Extract<ShellRequest, { kind: K }>;
