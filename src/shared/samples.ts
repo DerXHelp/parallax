@@ -420,6 +420,7 @@ export function sampleKeyFile(p: Partial<KeyFile> = {}): KeyFile {
     purpose: 'identity',
     algorithm: 'ml-dsa-87',
     protected: 'AQAAANCMnd8BFdERjHoAwE/Cl+s=',
+    scheme: 'dpapi',
     certificate: sampleCertificate(1),
     createdAt: sampleTime(),
     ...p,

@@ -103,6 +103,7 @@ export function createIdentityStore(options: IdentityStoreOptions): FileIdentity
       purpose: identity.purpose,
       algorithm: KEY_ALGORITHM,
       protected: sealed.toString('base64'),
+      scheme: keyStore.scheme ?? 'dpapi',
       certificate: identity.certificateDer.toString('base64'),
       createdAt: now().toISOString(),
     };

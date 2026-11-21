@@ -1163,12 +1163,24 @@ export type RemoteEventsFile = z.infer<typeof remoteEventsFileSchema>;
  * the PKCS#8 DER (base64); `certificate` = the own self-signed certificate (public).
  */
 export const KEY_FILE_SCHEMA_VERSION = 1;
+
+/**
+ * 102e (WP-76 §B.14): how `protected` is protected – DPAPI (Windows), Secret Service (Linux desktop,
+ * AES-256-GCM with a keyring key), `systemd-creds --user`, or a 0600 file (Linux without a desktop, only
+ * when switched on; `protected` then holds the key itself). A change of the scheme needs a new pairing.
+ */
+export const KEY_STORE_SCHEMES = ['dpapi', 'secret_service', 'systemd_creds', 'file'] as const;
+export const keyStoreSchemeSchema = z.enum(KEY_STORE_SCHEMES);
+export type KeyStoreScheme = z.infer<typeof keyStoreSchemeSchema>;
+
 export const keyPurposeSchema = z.string().regex(/^(?:identity|coupling:[a-z0-9][a-z0-9-]{0,31})$/u);
 export const keyFileSchema = z.object({
   schemaVersion: z.literal(KEY_FILE_SCHEMA_VERSION),
   purpose: keyPurposeSchema,
   algorithm: z.literal('ml-dsa-87'),
   protected: protectedSecretSchema,
+  /** 102e: the key store scheme that wrote `protected`; files from before Linux are DPAPI. */
+  scheme: keyStoreSchemeSchema.default('dpapi'),
   certificate: certificateDerSchema,
   createdAt: isoDateTimeSchema,
 });
