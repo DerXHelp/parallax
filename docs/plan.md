@@ -862,18 +862,28 @@ aus sollen die Sessions der anderen gesteuert werden, in einer Oberfläche.
 - Datenquellen: HTTP-Hooks, Statusline-POST und `claude agents --json`.
 - Aktion „In Parallax übernehmen“.
 
-**Backlog (später; Reihenfolge nach Bedarf):**
-- **Multi-Host:** die Sessions anderer Rechner im selben Netz von einem Rechner aus steuern, mit Profilen und Default-Profil pro Server. Ab Phase 1 vorbereitet; Plan vom 16.11.2026, überarbeitet 18.11.2026: `docs/wp/WP-75.md`.
-- **Releases:** öffentliches Repo bereinigen und lizenzieren, Versionen per Tag mit Changelog, Installation ohne git und Build, Update in der App. Plan vom 17.11.2026: `docs/wp/WP-83.md`.
-- Rewind/Checkpoints, Fork.
-- `/btw`-Seitenpanel, `!`-Bash-Modus.
-- MCP-Panel und Elicitation-Dialoge.
-- Plan editieren (Inline-Kommentare: WP-93).
-- Split-View, Prompt-Cache-Uhr, Per-Hunk-Diff-Freigabe.
-- Remote Control (experimentell).
-- **Bestehende Konsolen-Sessions importieren**, **Worktrees** (erst bewerten).
-- Suche über Sessions.
-- Electron-Hülle (Tray, Setup-.exe).
+**Backlog (Stand 21.11.2026, Nutzerentscheidung nach dem Vergleich mit ähnlichen Projekten):**
+- Erledigt aus dem früheren Backlog: Mehrere Rechner (WP-75…82), Releases und Update in der App (WP-83…89),
+  `/btw` (WP-66), MCP-Panel (WP-67), Plan-Kommentare (WP-93), Remote Control (WP-64), eingebettetes Terminal (WP-99).
+- **Ausbau 1 – bauen** (Branch `feature/ausbau-1`):
+  - Session-Review: Gesamt-Diff einer Session, Zeilenkommentare gesammelt als eine Nachricht an Claude.
+  - Worktree je Session (optional), Aufräumen nur nach Prüfung auf uncommittete und ungepushte Arbeit.
+  - Volltextsuche über alle Sessions.
+  - Übersicht: Sessions anheften, nach Status filtern, Projekte stummschalten, „als ungelesen markieren“.
+  - Git-Panel: Commit, Branch, Push.
+  - Ruhezustand: ungenutzte Sessions beenden, beim Antworten fortsetzen; Anheften hält sie wach.
+  - Electron-Hülle (Tray, Setup-.exe).
+  - Erklärung angefragt, Entscheidung offen: Setup-/Teardown-Skripte und Portbereich je Worktree;
+    Elicitation-Dialoge (MCP-Server fragt nach Eingaben – heute lehnt das SDK sie ohne `onElicitation` ab).
+- **Später überlegen** (nächste Ausbaustufe): Agenten-Review mit Funden im Diff, Split-View, PR-/CI-Status je
+  Session, Session aus PR oder Issue starten, Profile und Updates eines anderen Rechners (WP-107), OpenCode
+  (unten), Live-Abnahme Ubuntu und `pnpm cli-check` unter Linux (WP-109 §6), ESLint 10 und TypeScript 7.
+- **Kein Bedarf / gestrichen:** Rewind/Checkpoints, Fork, Per-Hunk-Diff-Freigabe, Liste berührter Dateien mit
+  Behalten/Zurücknehmen, Hinweis auf `cleanupPeriodDays`, Nutzungsprognose, Budget je Session, Prompt-Cache-Uhr,
+  Observer-Modus und Konsolen-Sessions importieren (Phase 5), Profilwechsel einer laufenden Session, `!`-Bash-Modus,
+  mobile Ansicht, Push aufs Handy, Arbeitsbereich-Wurzel je gekoppeltem Rechner, Steuer-API zwischen Sessions,
+  ältere Live-Checklisten (WP-41 §2.6, CHROME §4.6, WP61-01/03), Kanban, Sprache, Bots/Cloud-Relay, Best-of-N,
+  weitere Agent-CLIs.
 - **OpenCode als zweites Agent-Backend** (Ausblick, ganz hinten; Nutzer 11.11.2026): Anlass ist die Arbeit,
   wo voraussichtlich auf OpenCode umgestellt wird. Machbar, aber eine eigene Phase: Kern mehr-backend-fähig
   machen (Backend-Art am Profil, je Backend eigene Übersetzung und Entscheidungsregeln), OpenCode-Backend
