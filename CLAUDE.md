@@ -99,12 +99,13 @@ die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale En
 - **Ausbau 1 (WP-110…117, `docs/wp/WP-110.md` §6):** Koordinator `src/shared/**`, alle `ports.ts`,
   `backend/{types,fixture}.ts`, `src/web/shell/{requests,slots,placeholders}.ts(x)`, `src/server/{main.ts,app/**}`,
   `src/web/{App,main}.tsx`, `e2e/**`, Befehls-Stubs und Routing.
-  - **WP-111 (Server Git, Worktrees, Review):** `src/server/git/**` (neu), `src/server/sessions/{commands,entryState,
-    external}.ts`, `src/server/sessions/lib/gitBranch.ts`, `src/server/store/review.ts` (neu), `src/server/terminal/**`,
-    `src/server/claude/env.ts`.
-  - **WP-112 (Server Suche, Übersicht, Elicitation):** `src/server/search/**` (neu), `src/server/sessions/{manager,
-    notifier,broker,unread}.ts`, `src/server/store/transcripts.ts`, `src/server/backend/{sdkBackend,sdkOptions}.ts`,
-    `src/server/backend/fake/**`, `src/server/sessions/normalizer/**`.
+  - **WP-111 (Server Git, Worktrees, Review):** `src/server/git/**`, `src/server/sessions/{commands,entryState,
+    external,worktrees,review}.ts`, `src/server/sessions/lib/gitBranch.ts`, `src/server/store/review.ts` (neu),
+    `src/server/terminal/**`, `src/server/remote/peerTerminal.ts`, `src/server/claude/env.ts`.
+  - **WP-112 (Server Suche, Übersicht, Elicitation):** `src/server/search/**`, `src/server/sessions/{manager,
+    notifier,broker,unread}.ts`, `src/server/sessions/status/**`, `src/server/store/transcripts.ts`,
+    `src/server/lib/transcriptWindow.ts`, `src/server/backend/{sdkBackend,sdkOptions}.ts`, `src/server/backend/fake/**`,
+    `src/server/sessions/normalizer/**`.
   - **WP-113 (Web Änderungen):** `src/web/features/changes/**` (neu), `src/web/ui/diff-view.tsx`.
   - **WP-114 (Web Worktrees):** `src/web/shell/new-session/**`, `src/web/shell/{NewSessionDialog,NewSessionForm}.tsx`,
     `src/web/features/worktrees/**` (neu), neu `src/web/features/preferences/sections/ProjectsSection.tsx`.
