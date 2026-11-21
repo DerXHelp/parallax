@@ -255,6 +255,9 @@ export const en = {
         replaceConfirm: 'Pair a new computer',
         keep: 'Keep the pairing',
         failed: 'Pairing could not start.',
+        // WP-107 (WP-76 §B.13): the access is chosen here, before the code shows.
+        level: 'Access of the paired computer',
+        levelOnCard: 'Access',
       },
       peer: {
         heading: 'Paired computer',
@@ -287,6 +290,19 @@ export const en = {
         renewed: 'The key was renewed.',
         cancel: 'Cancel',
         failed: 'The action failed.',
+        // WP-107 (WP-76 §B.13)
+        level: 'Access',
+        raise: 'Allow managing…',
+        lower: 'Control only…',
+        raiseTitle: 'Let {name} manage this computer?',
+        raiseBody:
+          '{name} may then also change the settings, profiles (with their environment values), updates and the server of this computer. Its connections close once and reconnect with the new access.',
+        raiseConfirm: 'Allow managing',
+        lowerTitle: 'Let {name} only control this computer?',
+        lowerBody:
+          'Settings, profiles, updates and the server can then be changed only on this computer. The connections of {name} close once and reconnect.',
+        lowerConfirm: 'Control only',
+        levelChanged: 'The access was changed.',
       },
       listener: {
         heading: 'Port and address',
@@ -420,6 +436,14 @@ export const en = {
         doneUnreachable: '{name} was removed here. Remove the pairing on {name} yourself.',
       },
     },
+    /** WP-107 (WP-76 §B.13): what a paired computer may do on this one. */
+    levels: {
+      control: 'Control',
+      controlHint: 'Sessions, files and the terminal.',
+      manage: 'Manage',
+      manageHint:
+        'Also settings, profiles (with their environment values), updates, the server and this pairing. Only needed when this computer runs without a desktop of its own.',
+    },
   },
   /** Section "Files" (WP-58, ADR-144): the editor for "Open in editor". */
   files: {
@@ -537,5 +561,12 @@ export const en = {
     /** Notice when a sound was blocked by the browser's autoplay rule (once per window run). */
     locked:
       'Enable sounds: click anywhere in this window or press a key – browsers only play sounds after that.',
+  },
+  /** WP-107 (WP-76 §B.13): the settings of another computer this window may manage. */
+  manage: {
+    computer: 'Computer',
+    thisComputer: 'This computer',
+    managed: '{name} (managed)',
+    hint: 'Settings of {name}: every change is saved there. Profiles and updates of {name} are not shown here yet.',
   },
 };

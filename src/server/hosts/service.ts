@@ -14,6 +14,7 @@
  * active role (REMOTE_ROLE_CONFLICT otherwise). File changes run one after the other.
  */
 import type { Logger } from 'pino';
+import type { WebSocket } from 'ws';
 import { LIMITS, type HostId } from '@shared/common';
 import { makeError } from '@shared/errors';
 import { REMOTE_PATHS } from '@shared/http';
@@ -86,8 +87,18 @@ export interface HostsServiceOptions {
   agentOptions?: Pick<PinnedAgentOptions, 'connectTimeoutMs' | 'proofTimeoutMs'>;
 }
 
+/**
+ * WP-107 (E3, docs/wp/WP-76.md §B.13): the forwarder also opens the embedded terminal of the other
+ * computer (`REMOTE_PATHS.terminalWs` over the coupling's pinned agent, counted like a window).
+ */
+export interface TerminalForwarder extends HostForwarder {
+  /** Throws HostForwarderError like `connectWindow`. */
+  connectTerminal(hostId: HostId, signal?: AbortSignal): Promise<WebSocket>;
+}
+
 /** The port plus what the role service and compose use (`ManagedRoleSide`). */
 export interface Hosts extends HostsService {
+  readonly forwarder: TerminalForwarder;
   /** Reads `hosts.json` so that `couplings()` is right before activation; idempotent. */
   prepare(): Promise<void>;
   /** Deactivates (server shutdown, tests). */
@@ -565,10 +576,17 @@ export function createHostsService(options: HostsServiceOptions): Hosts {
     return link;
   };
 
-  const forwarder: HostForwarder = {
+  const forwarder: TerminalForwarder = {
     connectWindow(hostId, signal) {
       try {
         return linkFor(hostId).connectWindow(signal);
+      } catch (error) {
+        return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    },
+    connectTerminal(hostId, signal) {
+      try {
+        return linkFor(hostId).connectWindow(signal, REMOTE_PATHS.terminalWs);
       } catch (error) {
         return Promise.reject(error instanceof Error ? error : new Error(String(error)));
       }

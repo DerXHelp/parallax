@@ -36,6 +36,9 @@ import { connectionFailure, type ConnectionFailure } from './failures';
 import { HostForwarderError, type RelayEvents, type UpstreamRequest, type UpstreamResponse } from './ports';
 import { markWindowClosed } from './windows';
 
+/** The WebSocket paths of the other computer the forwarder opens (WP-107: also the terminal). */
+export type RemoteSocketPath = typeof REMOTE_PATHS.ws | typeof REMOTE_PATHS.terminalWs;
+
 export interface HostsTiming {
   /** Delays between attempts while a computer is unreachable (the last one repeats). */
   backoffMs: readonly number[];
@@ -376,8 +379,11 @@ export class HostLink {
 
   // ---- forwarder ----
 
-  /** Opens a window connection (open, version-checked by the other side). Throws HostForwarderError. */
-  connectWindow(signal?: AbortSignal): Promise<WebSocket> {
+  /**
+   * Opens a window connection (open, version-checked by the other side) – or, WP-107 (E3), a
+   * terminal connection (`REMOTE_PATHS.terminalWs`; counted like windows). Throws HostForwarderError.
+   */
+  connectWindow(signal?: AbortSignal, path: RemoteSocketPath = REMOTE_PATHS.ws): Promise<WebSocket> {
     const refusal = this.refusal();
     if (refusal !== null) return Promise.reject(new HostForwarderError(refusal));
     if (this.windows.size + this.pendingWindows >= this.deps.limits.windows) {
@@ -386,7 +392,7 @@ export class HostLink {
     }
     let ws: WebSocket;
     try {
-      ws = this.openSocket();
+      ws = this.openSocket(path);
     } catch (error) {
       return Promise.reject(new HostForwarderError(connectionFailure(error).error));
     }
@@ -814,12 +820,13 @@ export class HostLink {
     return hostTarget(this.record);
   }
 
-  private openSocket(): WebSocket {
+  private openSocket(path: RemoteSocketPath = REMOTE_PATHS.ws): WebSocket {
     const agent = this.agents?.ws ?? null;
     if (agent === null) throw new PinnedConnectionError('destroyed');
     const { host, port } = this.target();
     const urlHost = host.includes(':') ? `[${host}]` : host;
-    return new WebSocket(`wss://${urlHost}:${String(port)}${REMOTE_PATHS.ws}`, {
+    // Only the two fixed paths – never one from a request (§B.13).
+    return new WebSocket(`wss://${urlHost}:${String(port)}${path}`, {
       agent,
       ...REMOTE_WS_CLIENT_OPTIONS,
       headers: remoteVersionHeaders(this.deps.appVersion),

@@ -18,6 +18,7 @@ import type { IncomingHttpHeaders } from 'node:http';
 import type { TLSSocket } from 'node:tls';
 import type { Logger } from 'pino';
 import { makeError, type ErrorPayload } from '@shared/errors';
+import type { RemotePeerLevel } from '@shared/model';
 import { remotePairRequestSchema, type RemotePairResponse } from '@shared/http';
 import { PROTOCOL_VERSION } from '@shared/protocol';
 import type { ServerInstance } from '../config';
@@ -51,6 +52,8 @@ export interface PairingCommit {
   /** Plaintext kAuth – the commit protects/copies it; the responder zeroes it afterwards. */
   kAuth: Buffer;
   address: string;
+  /** WP-107 (§B.13): the level chosen on site when the window opened. */
+  level: RemotePeerLevel;
 }
 
 export interface PairingResponderDeps {
@@ -169,7 +172,8 @@ export class PairingResponder {
           }),
         );
       }
-      // 7.1 close the window; the code is used up
+      // 7.1 close the window; the code is used up (its level is read first – it travels with the window)
+      const level = window.levelFor(windowId) ?? 'control';
       if (!window.consume(windowId)) return refuse('pair_expired', makeError('PAIRING_EXPIRED'));
       this.deps.destroyPairingSockets(socket);
       // 7.2 kAuth
@@ -188,6 +192,7 @@ export class PairingResponder {
           pin: pinOfCertificate(certificateDer),
           kAuth,
           address,
+          level,
         });
       } catch (error) {
         this.log.error({ err: error }, 'pairing not stored');

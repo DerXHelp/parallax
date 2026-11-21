@@ -11,15 +11,23 @@
  * (applyUpdate.ts), started by the server with stdout as a pipe that carries only the handshake –
  * the server closes it right after. So in that mode nothing else is written to stdout (the pino
  * singleton is silenced) and a failing write to the closed pipe never crashes the process.
+ *
+ * WP-107: `--server` keeps this process in the foreground with the server (signals passed on, exit
+ * code = the server's), `service …` writes the systemd user unit with the command that started this
+ * launcher, `remote …` asks the running server of the data folder.
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { START_SCRIPT } from '../install/layout';
 import { logger } from '../lib/logger';
 import { createNodeApplyUpdateDeps, runApplyUpdate } from './applyUpdate';
 import { SERVER_BUNDLE } from './build';
-import { runLauncherCli } from './cli';
+import { runLauncherCli, type ServeOutcome, type ServeRequest } from './cli';
+import { findRunningServer, requestLauncherRemote } from './client';
 import { createNodeLauncherDeps, runLauncher } from './launcher';
-import { readReleaseInfo, ReleaseInfoError } from './release';
+import { PACKAGE_NODE_FLAGS, readReleaseInfo, ReleaseInfoError, type ReleaseInfo } from './release';
+import { startServerForeground, type ForegroundServer } from './serverProcess';
+import { installService, serviceStatus, uninstallService, type ServiceDeps } from './systemdService';
 
 // Like the server (main.ts): dist/launcher.js → `..`, src/server/launcher/main.ts → `../../..`.
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -54,6 +62,74 @@ function quietForHandshake(): void {
   process.stderr.on('error', ignore);
 }
 
+/**
+ * WP-107: the command that starts this launcher again (the systemd unit): the installation's
+ * start.mjs, the bundled launcher of a package, or tsx with this file in a checkout.
+ */
+function launcherCommand(release: ReleaseInfo | null, installRoot: string | null): string[] {
+  if (installRoot !== null) return [process.execPath, path.join(installRoot, START_SCRIPT)];
+  if (release !== null)
+    return [process.execPath, ...PACKAGE_NODE_FLAGS, path.join(repoRoot, 'dist', 'launcher.js')];
+  return [
+    process.execPath,
+    path.join(repoRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs'),
+    '--tsconfig',
+    path.join(repoRoot, 'src', 'server', 'tsconfig.json'),
+    path.join(repoRoot, 'src', 'server', 'launcher', 'main.ts'),
+  ];
+}
+
+const FORWARDED_SIGNALS: readonly NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+
+/** WP-107 `--server`: like a window start, but the server stays attached to this process. */
+async function serve(release: ReleaseInfo | null, request: ServeRequest): Promise<ServeOutcome> {
+  const { options } = request;
+  const running = await findRunningServer({ home: options.home });
+  if (running.kind === 'running') return { kind: 'existing', port: running.lock.port, pid: running.lock.pid };
+  // Set inside `startServer` (a holder: a closure assignment is invisible to the flow analysis).
+  const holder: { server: ForegroundServer | null } = { server: null };
+  const base = createNodeLauncherDeps({
+    repoRoot,
+    release,
+    workDir: options.installRoot ?? null,
+    home: options.home,
+    serverScript: path.join(repoRoot, SERVER_BUNDLE),
+    out,
+  });
+  const result = await runLauncher(options, {
+    ...base,
+    startServer: async (args) => {
+      const server = await startServerForeground({
+        nodePath: process.execPath,
+        serverScript: path.join(repoRoot, SERVER_BUNDLE),
+        nodeArgs: release === null ? [] : PACKAGE_NODE_FLAGS,
+        args,
+        home: options.home,
+        cwd: options.installRoot ?? repoRoot,
+        env: process.env,
+      });
+      holder.server = server;
+      return server;
+    },
+    // Its output is on this console already.
+    readServerOutput: () => Promise.resolve(''),
+  });
+  const started = holder.server;
+  if (result.mode === 'existing' || started === null) {
+    return { kind: 'existing', port: result.port, pid: result.pid };
+  }
+  const own: ForegroundServer = started;
+  request.onStarted(result);
+  const pass = (signal: NodeJS.Signals): void => {
+    own.signal(signal);
+  };
+  for (const signal of FORWARDED_SIGNALS) process.on(signal, pass);
+  const exit = await own.exited;
+  for (const signal of FORWARDED_SIGNALS) process.off(signal, pass);
+  // Ended by a signal we passed on: a regular stop.
+  return { kind: 'ended', code: exit.code ?? (exit.signal === null ? 1 : 0) };
+}
+
 // lib/* modules log through the pino singleton; the console belongs to the launcher's messages.
 logger.level = 'error';
 try {
@@ -79,6 +155,26 @@ try {
       return runApplyUpdate(
         request,
         createNodeApplyUpdateDeps({ own: { release, dir: repoRoot }, home: request.home, handshake }),
+      );
+    },
+    serve: (request) => serve(release, request),
+    remote: async (home, request) => {
+      const running = await findRunningServer({ home });
+      if (running.kind !== 'running') return { kind: 'not_running' };
+      return requestLauncherRemote(running.lock.port, running.lock.launcherToken, request);
+    },
+    service: (request) => {
+      const deps: ServiceDeps = { platform: process.platform, env: process.env, out };
+      if (request.action === 'uninstall') return uninstallService(deps);
+      if (request.action === 'status') return serviceStatus(deps);
+      return installService(
+        {
+          command: launcherCommand(release, request.installRoot),
+          serverArgs: request.serverArgs,
+          workDir: request.installRoot ?? repoRoot,
+          ...(process.env.PATH === undefined ? {} : { path: process.env.PATH }),
+        },
+        deps,
       );
     },
   });

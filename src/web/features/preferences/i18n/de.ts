@@ -249,6 +249,8 @@ export const de: typeof en = {
         replaceConfirm: 'Neuen Rechner koppeln',
         keep: 'Kopplung behalten',
         failed: 'Das Koppeln konnte nicht starten.',
+        level: 'Zugriff des gekoppelten Rechners',
+        levelOnCard: 'Zugriff',
       },
       peer: {
         heading: 'Gekoppelter Rechner',
@@ -283,6 +285,18 @@ export const de: typeof en = {
         renewed: 'Der Schlüssel wurde erneuert.',
         cancel: 'Abbrechen',
         failed: 'Die Aktion ist fehlgeschlagen.',
+        level: 'Zugriff',
+        raise: 'Verwalten erlauben…',
+        lower: 'Nur steuern…',
+        raiseTitle: '{name} diesen Rechner verwalten lassen?',
+        raiseBody:
+          '{name} darf dann auch Einstellungen, Profile (mit ihren Umgebungswerten), Updates und den Server dieses Rechners ändern. Seine Verbindungen werden einmal getrennt und verbinden sich mit dem neuen Zugriff neu.',
+        raiseConfirm: 'Verwalten erlauben',
+        lowerTitle: '{name} diesen Rechner nur steuern lassen?',
+        lowerBody:
+          'Einstellungen, Profile, Updates und der Server lassen sich dann nur an diesem Rechner ändern. Die Verbindungen von {name} werden einmal getrennt und verbinden sich neu.',
+        lowerConfirm: 'Nur steuern',
+        levelChanged: 'Der Zugriff wurde geändert.',
       },
       listener: {
         heading: 'Port und Adresse',
@@ -414,6 +428,13 @@ export const de: typeof en = {
         doneUnreachable: '{name} wurde hier entfernt. Hebe die Kopplung auf {name} selbst auf.',
       },
     },
+    levels: {
+      control: 'Steuern',
+      controlHint: 'Sessions, Dateien und das Terminal.',
+      manage: 'Verwalten',
+      manageHint:
+        'Dazu Einstellungen, Profile (mit ihren Umgebungswerten), Updates, der Server und diese Kopplung. Nur nötig, wenn dieser Rechner ohne eigenen Desktop läuft.',
+    },
   },
   files: {
     editor: 'Editor für „Im Editor öffnen“',
@@ -527,5 +548,11 @@ export const de: typeof en = {
     },
     locked:
       'Töne aktivieren: Klicke irgendwo in dieses Fenster oder drücke eine Taste – Browser spielen Töne erst danach ab.',
+  },
+  manage: {
+    computer: 'Rechner',
+    thisComputer: 'Dieser Rechner',
+    managed: '{name} (verwaltet)',
+    hint: 'Einstellungen von {name}: Jede Änderung wird dort gespeichert. Profile und Updates von {name} zeigt diese Ansicht noch nicht.',
   },
 };

@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { MultiHostConfig, RemoteAccessCheck, RemoteEvent } from '@shared/model';
+import type { MultiHostConfig, RemoteAccessCheck, RemoteEvent, RemotePeerLevel } from '@shared/model';
 import type { CommandOf, CommandResult } from '@shared/protocol';
 import { sendCommand } from '@web/state/hooks';
 
@@ -17,19 +17,22 @@ export type PairingWindow = CommandResult<'remoteAccess.pair'>;
 
 export interface MultiHostCommands {
   configure(change: MultiHostChange): Promise<MultiHostConfig>;
-  pair(): Promise<PairingWindow>;
+  /** WP-107 (§B.13): the level the computer that types the code gets (chosen here, never remotely). */
+  pair(level: RemotePeerLevel): Promise<PairingWindow>;
   cancelPairing(): Promise<void>;
   unpair(): Promise<void>;
   renewKey(): Promise<void>;
   check(): Promise<RemoteAccessCheck[]>;
   events(onlyRejected: boolean): Promise<RemoteEvent[]>;
   eventsSeen(): Promise<void>;
+  /** WP-107: changes the level of the coupling (locally either way; every connection of it ends). */
+  setPeerLevel(level: RemotePeerLevel): Promise<void>;
 }
 
 /** The real commands over the connection to this computer. */
 export const localMultiHostCommands: MultiHostCommands = {
   configure: async (change) => (await sendCommand(null, { name: 'multiHost.configure', ...change })).config,
-  pair: () => sendCommand(null, { name: 'remoteAccess.pair' }),
+  pair: (level) => sendCommand(null, { name: 'remoteAccess.pair', level }),
   cancelPairing: async () => {
     await sendCommand(null, { name: 'remoteAccess.cancelPairing' });
   },
@@ -44,6 +47,9 @@ export const localMultiHostCommands: MultiHostCommands = {
     (await sendCommand(null, { name: 'remoteAccess.events', onlyRejected })).events,
   eventsSeen: async () => {
     await sendCommand(null, { name: 'remoteAccess.eventsSeen' });
+  },
+  setPeerLevel: async (level) => {
+    await sendCommand(null, { name: 'remoteAccess.setPeerLevel', level });
   },
 };
 

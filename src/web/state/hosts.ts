@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { LOCAL_HOST_ID, parseSessionKey, type HostId } from '@shared/common';
-import type { HostColor, MultiHostRole, RemoteAccessState, RemoteHost } from '@shared/model';
+import type { HostColor, MultiHostRole, RemoteAccessState, RemoteHost, RemotePeerLevel } from '@shared/model';
 import { makeError } from '@shared/errors';
 import { isRemoteAllowedCommand, type Command, type CommandName, type CommandResult } from '@shared/protocol';
 import { ClientCommandError, getConnection } from './connection';
@@ -146,11 +146,45 @@ export function commandHost(hostId: HostId, cmd: { readonly name: CommandName })
 }
 
 /**
- * Whether a command can go to a computer: this computer takes every command, another one only
- * `REMOTE_ALLOWED_COMMANDS` (no editor, Explorer, console, sign-in, settings – WP-75 §4.4).
+ * WP-107 (WP-76 §B.13): what this window may do on another computer – `control` or `manage`. The
+ * other computer shows its own remote-access state (with the coupling and its level) only to a
+ * `manage` connection (the hub redacts it for `control`), so an unredacted `remoteAccess.peer.level`
+ * of `manage` is the level; anything else counts as `control` (fail closed – the other computer
+ * checks every command again at its moment). This computer: always everything.
  */
-export function canSendTo(hostId: HostId, name: CommandName): boolean {
-  return hostId === LOCAL_HOST_ID || isRemoteAllowedCommand(name);
+export function selectHostLevel(state: ClientState, hostId: HostId): RemotePeerLevel | 'local' {
+  if (hostId === LOCAL_HOST_ID) return 'local';
+  return state.hosts[hostId]?.hostState?.remoteAccess?.peer?.level === 'manage' ? 'manage' : 'control';
+}
+
+export function useHostLevel(hostId: HostId | null | undefined): RemotePeerLevel | 'local' {
+  return useStore(clientStore, (state) =>
+    hostId === null || hostId === undefined ? 'local' : selectHostLevel(state, hostId),
+  );
+}
+
+/** WP-107: the other computers this window may manage (settings, profiles, updates), in display order. */
+export function selectManagedHosts(state: ClientState): readonly RemoteHost[] {
+  return selectRemoteHosts(state).filter((host) => selectHostLevel(state, host.hostId) === 'manage');
+}
+
+export function useManagedHosts(): readonly RemoteHost[] {
+  return useStore(clientStore, useShallow(selectManagedHosts));
+}
+
+/**
+ * Whether a command can go to a computer: this computer takes every command, another one
+ * `REMOTE_ALLOWED_COMMANDS` and, at the level `manage` (WP-107), `REMOTE_MANAGE_COMMANDS` (never
+ * editor, Explorer, console or anything that would open on that computer's screen – WP-75 §4.4).
+ */
+export function canSendTo(
+  hostId: HostId,
+  name: CommandName,
+  state: ClientState = clientStore.getState(),
+): boolean {
+  if (hostId === LOCAL_HOST_ID) return true;
+  const level = selectHostLevel(state, hostId);
+  return isRemoteAllowedCommand(name, level === 'local' ? 'control' : level);
 }
 
 /** `canSendTo` for the computer of a session (menus hide what the session's computer refuses). */
@@ -160,14 +194,18 @@ export function sessionAllows(sessionKey: string, name: CommandName): boolean {
 }
 
 /**
- * WP-99 (ADR-239): the embedded terminal works for this session – a session of this computer whose
- * server reports `terminalAvailable`. Never for a session of another computer.
+ * WP-99 (ADR-239): the embedded terminal works for this session – its computer's server reports
+ * `terminalAvailable`. WP-107 (E3): also for a session of another computer whose window connection
+ * is open (the forwarder opens the terminal there); its own HostState says whether it has one.
  */
 export function selectTerminalAvailable(state: ClientState, sessionKey: string): boolean {
-  return (
-    parseSessionKey(sessionKey)?.hostId === LOCAL_HOST_ID &&
-    state.hosts[LOCAL_HOST_ID]?.hostState?.terminalAvailable === true
-  );
+  const hostId = parseSessionKey(sessionKey)?.hostId;
+  if (hostId === undefined) return false;
+  const record = state.hosts[hostId];
+  if (hostId !== LOCAL_HOST_ID && (record?.phase !== 'open' || selectRemoteHost(state, hostId) === null)) {
+    return false;
+  }
+  return record?.hostState?.terminalAvailable === true;
 }
 
 export function useTerminalAvailable(sessionKey: string): boolean {

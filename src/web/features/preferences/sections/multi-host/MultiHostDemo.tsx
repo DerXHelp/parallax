@@ -78,8 +78,8 @@ export function MultiHostDemo({ variant }: { variant: MultiHostVariant }) {
     const timers = new Set<ReturnType<typeof setTimeout>>();
     const commands: MultiHostCommands = {
       ...fake.commands,
-      pair: async () => {
-        const result = await fake.commands.pair();
+      pair: async (level) => {
+        const result = await fake.commands.pair(level);
         for (const timer of timers) clearTimeout(timer);
         timers.clear();
         timers.add(

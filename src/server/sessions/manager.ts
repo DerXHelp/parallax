@@ -554,10 +554,13 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         if (runtime?.pid !== pid || root === undefined || runtime.spawnedAt === null) continue;
         // Only the process this runtime spawned (image + start time, like the orphan check): a
         // fake PID of the FakeBackend or a PID reused since must never lend its tree to a record.
+        // WP-107 (like recovery.ts since WP-103b): on Linux only PID and start time count – `comm` is
+        // no identity there (node renames its main thread, the name is cut at 15 characters).
         const image = path.win32.basename(runtime.launch.executablePath).toLowerCase();
         const sameStart =
           Math.abs(root.startedAt.getTime() - runtime.spawnedAt.getTime()) <= ORPHAN_START_TOLERANCE_MS;
-        if (root.name.toLowerCase() !== image || !sameStart) continue;
+        const sameImage = deps.host.platform !== 'win32' || root.name.toLowerCase() === image;
+        if (!sameImage || !sameStart) continue;
         const children = descendantsOf(result.processes, root).map((p) => ({
           pid: p.pid,
           image: p.name,

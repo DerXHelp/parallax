@@ -5,7 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_HOST_ID } from '@shared/common';
 import { makeError } from '@shared/errors';
 import type { HostState, SettingsPatch } from '@shared/model';
-import { sampleHostState, sampleNotificationSettings, sampleSettings, sampleTime } from '@shared/samples';
+import {
+  SAMPLE_REMOTE_HOST_ID,
+  sampleHostState,
+  sampleNotificationSettings,
+  sampleRemoteAccessState,
+  sampleRemoteHost,
+  sampleRemotePeer,
+  sampleSettings,
+  sampleTime,
+} from '@shared/samples';
 import { EN_DICTIONARY, getDictionary, setLanguage, translate } from '@web/i18n';
 import { deDictionary } from '@web/i18n/dictionary.de';
 import { resetAudio } from '@web/notifications/sounds';
@@ -933,5 +942,87 @@ describe('preferences texts', () => {
     );
     expect(screen.getByRole('switch', { name: 'Ton: Fertig' })).toBeTruthy();
     expect(screen.getByRole('combobox', { name: 'Klang: Fehler' }).textContent).toContain('Warnton');
+  });
+});
+
+describe('WP-107: the settings of a managed computer (Verwalten-Ansicht, WP-76 §B.13)', () => {
+  /** This computer lists computer B; B shows its coupling (with this window's level) unredacted only at manage. */
+  async function connectManaged(level: 'control' | 'manage' | 'redacted') {
+    const local = await connect({
+      hostState: sampleHostState({
+        remoteHosts: [sampleRemoteHost()],
+        settings: sampleSettings({ port: 5000 }),
+      }),
+    });
+    const transport = createMemoryTransport();
+    const remote = new FakeHost({
+      transport,
+      hostState: sampleHostState({
+        settings: sampleSettings({ port: 6000 }),
+        remoteAccess:
+          level === 'redacted' ? null : sampleRemoteAccessState({ peer: sampleRemotePeer({ level }) }),
+      }),
+    });
+    const connection = createHostConnection({
+      hostId: SAMPLE_REMOTE_HOST_ID,
+      createTransport: () => transport,
+      reload: () => undefined,
+    });
+    registerConnection(connection);
+    connection.start();
+    const previous = cleanup;
+    cleanup = () => {
+      unregisterConnection(SAMPLE_REMOTE_HOST_ID);
+      remote.dispose();
+      previous?.();
+    };
+    await waitFor(() => {
+      expect(connection.status()).toBe('open');
+    });
+    return { local, remote };
+  }
+
+  it('at manage: choose the computer, its sections and settings; changes go to that computer only', async () => {
+    const { local, remote } = await connectManaged('manage');
+    const user = userEvent.setup();
+    renderPage('server');
+    const choice = await screen.findByRole('combobox', { name: 'Computer' });
+    expect(choice.textContent).toContain('This computer');
+    expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Port' }).value).toBe('5000');
+    choice.focus();
+    await user.keyboard('{Enter}');
+    const options = await screen.findAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual(['This computer', 'Computer B (managed)']);
+    await user.click(screen.getByRole('option', { name: 'Computer B (managed)' }));
+    // Only the stored settings of that computer (no window, notification, editor or console sections).
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Sessions', 'Server', 'About']);
+    expect(document.querySelector('[data-slot="settings-host-hint"]')?.textContent).toContain(
+      'Settings of Computer B',
+    );
+    const field = screen.getByRole('textbox', { name: 'Port' });
+    expect((field as HTMLInputElement).value).toBe('6000');
+    await user.clear(field);
+    await user.type(field, '7000{Enter}');
+    await waitFor(() => {
+      expect(patches(remote)).toEqual([{ port: 7000 }]);
+    });
+    expect(patches(local)).toEqual([]);
+
+    // A request for a section the other computer does not offer brings the page back to this one.
+    act(() => {
+      requestShell({ kind: 'settings', section: 'general' });
+    });
+    expect(screen.getByRole('combobox', { name: 'Computer' }).textContent).toContain('This computer');
+    expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('at control (or redacted): no computer choice – the page edits this computer only', async () => {
+    await connectManaged('control');
+    renderPage('server');
+    await waitFor(() => {
+      expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Port' }).value).toBe('5000');
+    });
+    expect(screen.queryByRole('combobox', { name: 'Computer' })).toBeNull();
+    expect(screen.getAllByRole('tab')).toHaveLength(10);
   });
 });

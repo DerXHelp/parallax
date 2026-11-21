@@ -114,6 +114,8 @@ export interface EngineHarnessOptions {
   /** HostState.port / systemIntegration (default: absent → null / false). */
   port?: () => number | null;
   systemIntegration?: boolean;
+  /** WP-107: `HostState.platform` of the engine (default `win32`, HARNESS_HOST). */
+  platform?: string;
   /** Start of the virtual clock (default SAMPLE_TIME); `timers.advance(ms)` moves it. */
   clockStart?: string;
   /** Hub-like validation of everything published (default true). */
@@ -323,6 +325,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
       ...HARNESS_HOST,
       ...(options.port === undefined ? {} : { port: options.port }),
       ...(options.systemIntegration === undefined ? {} : { systemIntegration: options.systemIntegration }),
+      ...(options.platform === undefined ? {} : { platform: options.platform }),
     },
     ...(options.hostCommands === undefined ? {} : { hostCommands: options.hostCommands }),
     ...(options.onSettingsChanged === undefined ? {} : { onSettingsChanged: options.onSettingsChanged }),

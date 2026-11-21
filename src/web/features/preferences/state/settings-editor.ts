@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { LOCAL_HOST_ID, type HostId } from '@shared/common';
 import type { ErrorPayload } from '@shared/errors';
 import { settingsSchema, type Settings, type SettingsPatch } from '@shared/model';
 import { errorPayloadOf } from '@web/state/connection';
@@ -17,6 +18,10 @@ import { updateSettings, useSettings } from '@web/state/settings';
  * R4W-16: the error stays until every refused field was saved successfully again or the user
  * dismisses it – a later success of another field does not hide it. A refusal that arrives after
  * the page was closed goes to the window's hint region instead (nothing is lost silently).
+ *
+ * WP-107 (WP-76 §B.13): `hostId` names the computer whose settings the page edits – this one or
+ * another one at the level "Manage" (its hub checks `settings.update` again). Pending changes
+ * belong to their computer: switching shows the other computer's stored settings at once.
  */
 
 export interface SettingsEditor {
@@ -41,9 +46,9 @@ function merge(current: Settings, patch: SettingsPatch): Settings | null {
   return parsed.success ? parsed.data : null;
 }
 
-export function useSettingsEditor(): SettingsEditor {
-  const stored = useSettings();
-  const [pending, setPending] = useState<{ settings: Settings; token: number } | null>(null);
+export function useSettingsEditor(hostId: HostId = LOCAL_HOST_ID): SettingsEditor {
+  const stored = useSettings(hostId);
+  const [pending, setPending] = useState<{ settings: Settings; token: number; hostId: HostId } | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
   const latest = useRef(0);
   const mounted = useRef(false);
@@ -53,44 +58,47 @@ export function useSettingsEditor(): SettingsEditor {
       mounted.current = false;
     };
   }, []);
-  const settings = pending?.settings ?? stored;
+  const settings = pending !== null && pending.hostId === hostId ? pending.settings : stored;
   // The newest settings for the next patch, also before React rendered the previous one.
   const current = useRef(settings);
   useLayoutEffect(() => {
     current.current = settings;
   }, [settings]);
 
-  const save = useCallback((patch: SettingsPatch) => {
-    const next = merge(current.current, patch);
-    if (next === null) return;
-    const fields = Object.keys(patch);
-    const token = ++latest.current;
-    current.current = next;
-    setPending({ settings: next, token });
-    const settle = () => {
-      setPending((state) => (state?.token === token ? null : state));
-    };
-    updateSettings(patch).then(
-      () => {
-        settle();
-        setFailure((state) => {
-          if (state === null) return null;
-          const left = state.fields.filter((field) => !fields.includes(field));
-          return left.length === 0 ? null : { ...state, fields: left };
-        });
-      },
-      (caught: unknown) => {
-        settle();
-        const error = errorPayloadOf(caught);
-        if (!mounted.current) {
-          // The page is gone: the window's hint region says it (the stored value already shows).
-          showTextNotice('settings.saveFailed', undefined, { tone: 'error', id: 'settings.saveFailed' });
-          return;
-        }
-        setFailure((state) => ({ error, fields: [...new Set([...(state?.fields ?? []), ...fields])] }));
-      },
-    );
-  }, []);
+  const save = useCallback(
+    (patch: SettingsPatch) => {
+      const next = merge(current.current, patch);
+      if (next === null) return;
+      const fields = Object.keys(patch);
+      const token = ++latest.current;
+      current.current = next;
+      setPending({ settings: next, token, hostId });
+      const settle = () => {
+        setPending((state) => (state?.token === token ? null : state));
+      };
+      updateSettings(patch, hostId).then(
+        () => {
+          settle();
+          setFailure((state) => {
+            if (state === null) return null;
+            const left = state.fields.filter((field) => !fields.includes(field));
+            return left.length === 0 ? null : { ...state, fields: left };
+          });
+        },
+        (caught: unknown) => {
+          settle();
+          const error = errorPayloadOf(caught);
+          if (!mounted.current) {
+            // The page is gone: the window's hint region says it (the stored value already shows).
+            showTextNotice('settings.saveFailed', undefined, { tone: 'error', id: 'settings.saveFailed' });
+            return;
+          }
+          setFailure((state) => ({ error, fields: [...new Set([...(state?.fields ?? []), ...fields])] }));
+        },
+      );
+    },
+    [hostId],
+  );
 
   const dismissError = useCallback(() => {
     setFailure(null);

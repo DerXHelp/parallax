@@ -22,11 +22,13 @@ import { API_PATHS, API_PREFIX, HOST_API_PATHS, allowedHosts, allowedOrigins } f
  * | auth-exchange | POST /api/auth                              | required ∈ allowed   | required same-origin           | code   |
  * | ws            | GET/HEAD /api/ws, /api/terminal/ws (WP-99)  | required ∈ allowed   | if present: same-origin (V1-01)| cookie |
  * | mutation      | every other route/method (default-deny)     | required ∈ allowed   | required same-origin           | cookie |
- * | launcher      | POST /api/launcher/code                     | must be absent       | absent or none                 | bearer |
+ * | launcher      | POST /api/launcher/code, /api/launcher/remote | must be absent     | absent or none                 | bearer |
  *
  * The forwarder routes of another computer (WP-79, `HOST_API_PATHS`) have the class of their local
  * counterpart: `/api/hosts/:hostId/blob/:blobId` blob, `/api/hosts/:hostId/file` file,
- * `/api/hosts/:hostId/ws` ws, `/api/hosts/:hostId/attachments` (POST) mutation.
+ * `/api/hosts/:hostId/ws` and (WP-107) `/api/hosts/:hostId/terminal/ws` ws,
+ * `/api/hosts/:hostId/attachments` (POST) mutation. WP-107: `parallax remote …` uses
+ * `/api/launcher/remote` (launcher, like the code).
  *
  * Checked before the table, for every request:
  * - `Host` ∈ `allowedHosts(port, dev)`, else 403 HOST_HEADER_REJECTED.
@@ -85,15 +87,19 @@ const ROUTE_CLASSES: ReadonlyMap<string, ReadonlyMap<string, RouteClass>> = new 
   [API_PATHS.changelog, forMethods(READ_METHODS, 'file')],
   [API_PATHS.notices, forMethods(READ_METHODS, 'file')],
   [API_PATHS.ws, forMethods(READ_METHODS, 'ws')],
-  // WP-99: the embedded terminal – this computer only, never in HOST_API_PATHS.
+  // WP-99: the embedded terminal of this computer.
   [API_PATHS.terminalWs, forMethods(READ_METHODS, 'ws')],
   // WP-79: the forwarder of another computer – the same class as the local route; the upload
   // (`HOST_API_PATHS.attachments`, POST) stays a `mutation` like `/api/attachments`.
   [HOST_API_PATHS.blob, forMethods(READ_METHODS, 'blob')],
   [HOST_API_PATHS.file, forMethods(READ_METHODS, 'file')],
   [HOST_API_PATHS.ws, forMethods(READ_METHODS, 'ws')],
+  // WP-107 (E3): the terminal of another computer over the forwarder – like the local terminal.
+  [HOST_API_PATHS.terminalWs, forMethods(READ_METHODS, 'ws')],
   [API_PATHS.auth, forMethods(['POST'], 'auth-exchange')],
   [API_PATHS.launcherCode, forMethods(['POST'], 'launcher')],
+  // WP-107: `parallax remote …` (status, Share, pairing code, level) – the launcher only.
+  [API_PATHS.launcherRemote, forMethods(['POST'], 'launcher')],
 ]);
 
 /** Canonical raw path of an API route (blob ids are hex, all other segments are plain words). */

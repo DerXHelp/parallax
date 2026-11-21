@@ -2,11 +2,12 @@
  * The checks of `remoteAccess.check` and of switching "Share" on (docs/wp/WP-75.md §4.2,
  * WP-76 §B.11): port, keys, key store, TLS (self-test), addresses – always in the order of
  * REMOTE_ACCESS_CHECK_IDS. `error` blocks the listener; `warning` is a hint only. Nothing here
- * starts a process (ADR-228: no firewall query – the user sets up the Windows Firewall).
+ * starts a process (ADR-228: no firewall query – the user sets up the Windows Firewall); the key store
+ * may (Linux: `systemd-creds`, WP-107).
  */
 import { createServer } from 'node:net';
 import { makeError, type ErrorPayload } from '@shared/errors';
-import { REMOTE_ACCESS_CHECK_IDS, type RemoteAccessCheck } from '@shared/model';
+import { REMOTE_ACCESS_CHECK_IDS, type KeyStoreScheme, type RemoteAccessCheck } from '@shared/model';
 import { fsErrorCode } from '../lib/paths';
 import { KeyStoreError, type Identity, type KeyStore } from '../secure/ports';
 import type { SelfTestFailure } from '../secure/selfTest';
@@ -56,6 +57,18 @@ function check(
   return { id, status, params };
 }
 
+/**
+ * `keystore` (§B.14): error without a usable store; the opt-in file (`--key-store=file`) is a warning
+ * (`params.scheme: 'file'` – a copy of the data folder holds the keys); the Linux schemes name
+ * themselves (`params.scheme`), DPAPI stays as before.
+ */
+export function keystoreCheck(available: boolean, scheme: KeyStoreScheme | undefined): RemoteAccessCheck {
+  if (!available) return check('keystore', 'error');
+  if (scheme === 'file') return check('keystore', 'warning', { scheme });
+  if (scheme === undefined || scheme === 'dpapi') return check('keystore', 'ok');
+  return check('keystore', 'ok', { scheme });
+}
+
 export async function runRemoteChecks(deps: RemoteCheckDeps): Promise<RemoteCheckResult> {
   const probe = deps.probe ?? probePort;
   const port = deps.ownListener ? Promise.resolve<PortProbe>('ok') : probe(deps.bindAddress, deps.port);
@@ -84,7 +97,7 @@ export async function runRemoteChecks(deps: RemoteCheckDeps): Promise<RemoteChec
         ? check('port', 'ok', { port: deps.port })
         : check('port', 'error', { port: deps.port, reason: portResult }),
     keys,
-    keystore: available ? check('keystore', 'ok') : check('keystore', 'error'),
+    keystore: keystoreCheck(available, deps.keyStore.scheme),
     tls:
       selfTestResult === null
         ? check('tls', 'ok')

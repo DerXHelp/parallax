@@ -46,6 +46,26 @@ describe('connection log (§3.7, ADR-225)', () => {
     });
   });
 
+  it('WP-107: merges only rows with the same detail; the detail is clean, short text', async () => {
+    const { log, advance } = await setup();
+    log.record({ kind: 'manage_command', address: '10.0.0.1', port: 1, detail: 'settings.update' });
+    advance(1_000);
+    log.record({ kind: 'manage_command', address: '10.0.0.1', port: 2, detail: 'settings.update' });
+    log.record({ kind: 'manage_command', address: '10.0.0.1', port: 3, detail: 'update.apply' });
+    log.record({
+      kind: 'level_changed',
+      address: 'local',
+      port: null,
+      detail: `control>manage\n${'x'.repeat(100)}`,
+    });
+    const rows = log.list(false);
+    expect(rows.map((row) => [row.kind, row.detail, row.count])).toEqual([
+      ['level_changed', `control>manage${'x'.repeat(50)}`, 1],
+      ['manage_command', 'update.apply', 1],
+      ['manage_command', 'settings.update', 2],
+    ]);
+  });
+
   it('marks rejected kinds, filters them and counts unseen rows until marked seen', async () => {
     const { log, advance } = await setup();
     log.record({ kind: 'pair_ok', address: '10.0.0.1', port: 1, claimedName: 'PC-A' });

@@ -17,7 +17,7 @@ import {
 import { remoteHostIdSchema } from '@shared/model';
 import { pathFlavorOfShape, pathRules } from '@shared/paths';
 import { WS_CLOSE } from '@shared/protocol';
-import type { HostsService, UpstreamRequest, UpstreamResponse } from '../hosts/ports';
+import type { HostForwarder, HostsService, UpstreamRequest, UpstreamResponse } from '../hosts/ports';
 import { closeReason } from '../hosts/windows';
 import { logger as rootLogger } from '../lib/logger';
 import { isPdf } from '../lib/sniff';
@@ -29,7 +29,14 @@ import {
   mediaTypeEssence,
 } from './content';
 import { replyError, sendError } from './reply';
-import { BRIDGE_LIMITS, bridgeWindow, forwardFailure, type BridgeLimits } from './hostSocket';
+import {
+  BRIDGE_LIMITS,
+  bridgeTerminal,
+  bridgeWindow,
+  forwardFailure,
+  type BridgeFlow,
+  type BridgeLimits,
+} from './hostSocket';
 
 /**
  * Forwarder routes of the controlling computer (docs/wp/WP-76.md §B.6 "Vermittler", WP-75 §4.3):
@@ -49,6 +56,10 @@ import { BRIDGE_LIMITS, bridgeWindow, forwardFailure, type BridgeLimits } from '
  *   its id; bodies are capped. Errors of the other side pass only from a per-route allowlist with
  *   short params, everything else is HOST_UNREACHABLE.
  * - WebSocket: one connection to the other computer per browser connection (hostSocket.ts).
+ * - Terminal (WP-107, E3): `HOST_API_PATHS.terminalWs` → `REMOTE_PATHS.terminalWs` of the same
+ *   coupling (forwarder `connectTerminal`), same guard as the window route; a computer the watcher
+ *   reports unreachable is refused at once (HOST_UNREACHABLE); the browser side is paced by pausing
+ *   (hostSocket.ts `bridgeTerminal`). Input and output are never parsed nor logged.
  */
 
 /** Served for a type outside FORWARDED_MEDIA_TYPES (with `Content-Disposition: attachment`). */
@@ -73,13 +84,20 @@ export function forwardedMediaType(header: string | undefined): string | null {
   return FORWARDED_MEDIA_TYPES.get(mediaTypeEssence(header)) ?? null;
 }
 
+/** WP-107: a forwarder that also opens the terminal of the other computer (hosts/service.ts). */
+interface TerminalCapableForwarder extends HostForwarder {
+  connectTerminal?(hostId: HostId, signal?: AbortSignal): Promise<WebSocket>;
+}
+
 export interface HostRoutesOptions {
-  hosts: Pick<HostsService, 'list' | 'forwarder'>;
+  hosts: Pick<HostsService, 'list'> & { readonly forwarder: TerminalCapableForwarder };
   /** The app's second line for the upgrade (Host, Origin, Sec-Fetch-Site, cookie; class `ws`). */
   authorizeUpgrade(request: FastifyRequest): ErrorPayload | null;
   logger?: Logger;
   /** Window bridge limits (tests). */
   bridge?: Partial<BridgeLimits>;
+  /** Terminal pacing (tests; default TERMINAL_BRIDGE_FLOW). */
+  terminalFlow?: BridgeFlow;
   /** Limits of forwarded content requests (tests). */
   forward?: Partial<ForwardLimits>;
 }
@@ -107,10 +125,12 @@ export const FORWARD_LIMITS: ForwardLimits = {
 };
 
 export interface HostRoutes {
-  /** Closes every forwarded window of the browser side (device signed out: AUTH_REVOKED). */
+  /** Closes every forwarded window and terminal of the browser side (device signed out: AUTH_REVOKED). */
   closeAll(code: number): void;
   /** Open forwarded windows (diagnostics and tests). */
   windowCount(): number;
+  /** WP-107: open forwarded terminal connections. */
+  terminalCount(): number;
 }
 
 /** Largest blob or file body passed on (the file service's binary limit is the largest content). */
@@ -296,6 +316,7 @@ export async function registerHostRoutes(
   const bridgeLimits: BridgeLimits = { ...BRIDGE_LIMITS, ...options.bridge };
   const forwardLimits: ForwardLimits = { ...FORWARD_LIMITS, ...options.forward };
   const sockets = new Set<WebSocket>();
+  const terminals = new Set<WebSocket>();
   /** Forwarded content requests per computer that have not finished their answer yet. */
   const inflight = new Map<HostId, number>();
 
@@ -498,6 +519,60 @@ export async function registerHostRoutes(
       },
     });
 
+    // ---- terminal connections (WP-107, E3) ----
+    scope.route<{ Params: { hostId: string } }>({
+      method: 'GET',
+      url: HOST_API_PATHS.terminalWs,
+      preValidation: (request, reply, done) => {
+        const error = options.authorizeUpgrade(request);
+        if (error !== null) {
+          replyError(reply, error);
+          return;
+        }
+        const hostId = knownHost(request.params.hostId);
+        if (hostId === null || hosts.forwarder.connectTerminal === undefined) {
+          replyError(reply, makeError('HOST_NOT_FOUND'));
+          return;
+        }
+        const host = hosts.list().find((item) => item.hostId === hostId);
+        if (host?.status === 'unreachable') {
+          replyError(
+            reply,
+            host.lastError?.code === 'HOST_UNREACHABLE'
+              ? host.lastError
+              : makeError('HOST_UNREACHABLE', { reason: 'unreachable' }),
+          );
+          return;
+        }
+        done();
+      },
+      handler: (_request, reply) =>
+        sendError(reply, makeError('INVALID_MESSAGE', { reason: 'upgrade_required' })),
+      wsHandler: (socket, request) => {
+        if (options.authorizeUpgrade(request) !== null) {
+          log.error('unauthorized WebSocket reached the terminal forwarder – terminated');
+          socket.terminate();
+          return;
+        }
+        const hostId = knownHost(request.params.hostId);
+        const open = hosts.forwarder.connectTerminal?.bind(hosts.forwarder);
+        if (hostId === null || open === undefined) {
+          socket.close(WS_CLOSE.HOST_REVOKED, closeReason(WS_CLOSE.HOST_REVOKED));
+          return;
+        }
+        terminals.add(socket);
+        socket.once('close', () => {
+          terminals.delete(socket);
+        });
+        bridgeTerminal(socket, {
+          connect: (signal) => open(hostId, signal),
+          limits: bridgeLimits,
+          ...(options.terminalFlow === undefined ? {} : { flow: options.terminalFlow }),
+          logger: log.child({ hostId, terminal: true }),
+        });
+      },
+    });
+
     // ---- blob ----
     scope.route<{ Params: { hostId: string; blobId: string } }>({
       method: ['GET', 'HEAD'],
@@ -619,8 +694,9 @@ export async function registerHostRoutes(
 
   return {
     closeAll(code) {
-      for (const socket of [...sockets]) socket.close(code, closeReason(code));
+      for (const socket of [...sockets, ...terminals]) socket.close(code, closeReason(code));
     },
     windowCount: () => sockets.size,
+    terminalCount: () => terminals.size,
   };
 }

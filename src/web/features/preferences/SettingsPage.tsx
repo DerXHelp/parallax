@@ -11,16 +11,20 @@ import {
   UsersIcon,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import type { HostState } from '@shared/model';
+import { useEffect, useId, useRef, useState } from 'react';
+import { LOCAL_HOST_ID, type HostId } from '@shared/common';
+import type { HostState, RemoteHost } from '@shared/model';
 import { useI18n, useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { SETTINGS_SECTIONS, useShellRequestHandler, type SettingsSection } from '@web/shell/requests';
 import { DEFAULT_FEATURE_SLOTS, useFeatureSlots, type SettingsPageSlotProps } from '@web/shell/slots';
 import { useHostState } from '@web/state/hooks';
+import { useManagedHosts } from '@web/state/hosts';
 import { Alert } from '@web/ui/alert';
 import { Button } from '@web/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@web/ui/dialog';
+import { Label } from '@web/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@web/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@web/ui/tabs';
 import { AboutSection } from './sections/AboutSection';
 import { ConsoleSection } from './sections/ConsoleSection';
@@ -35,6 +39,16 @@ import { useSettingsEditor, type SettingsEditor } from './state/settings-editor'
 /** The sections of the page: the shell's sections (`SETTINGS_SECTIONS`, requests can open them). */
 type PageSection = SettingsSection;
 const PAGE_SECTIONS: readonly PageSection[] = SETTINGS_SECTIONS;
+/**
+ * WP-107 (WP-76 §B.13): the sections for another computer at the level "Manage" – its stored
+ * settings without the ones of this window (language, theme, notifications) and of programs on its
+ * desktop (editor, console; never remotely). Profiles and updates follow with a host-aware slot.
+ */
+const REMOTE_SECTIONS: readonly PageSection[] = ['sessions', 'server', 'about'];
+
+function sectionsFor(hostId: HostId): readonly PageSection[] {
+  return hostId === LOCAL_HOST_ID ? PAGE_SECTIONS : REMOTE_SECTIONS;
+}
 
 const SECTION_ICONS: Readonly<Record<PageSection, LucideIcon>> = {
   general: SlidersHorizontalIcon,
@@ -117,6 +131,56 @@ function SectionContent({
 }
 
 /**
+ * WP-107: which computer the page edits – shown only when another computer may be managed
+ * (`useManagedHosts`, the level "Manage"). Display only: the other computer's hub checks again.
+ */
+function HostChoice({
+  hostId,
+  managed,
+  onChange,
+}: {
+  hostId: HostId;
+  managed: readonly RemoteHost[];
+  onChange: (hostId: HostId) => void;
+}) {
+  const t = useT();
+  const id = useId();
+  const other = managed.find((host) => host.hostId === hostId) ?? null;
+  return (
+    <div data-slot="settings-host" className="grid gap-1 border-b px-5 py-2.5">
+      <div className="flex flex-wrap items-center gap-3">
+        <Label htmlFor={id} className="text-xs">
+          {t('preferences.manage.computer')}
+        </Label>
+        <Select
+          value={hostId}
+          onValueChange={(value) => {
+            onChange(managed.some((host) => host.hostId === value) ? value : LOCAL_HOST_ID);
+          }}
+        >
+          <SelectTrigger id={id} data-action="settings-host" className="w-60 justify-between">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={LOCAL_HOST_ID}>{t('preferences.manage.thisComputer')}</SelectItem>
+            {managed.map((host) => (
+              <SelectItem key={host.hostId} value={host.hostId}>
+                {t('preferences.manage.managed', { name: host.name })}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      {other === null ? null : (
+        <p data-slot="settings-host-hint" className="text-muted-foreground text-2xs leading-relaxed">
+          {t('preferences.manage.hint', { name: other.name })}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
  * The settings page (WP-38, slot `SettingsPage`): a large dialog – modal is fine here, nothing
  * waits for the user; sessions keep running, Esc closes – with the sections on the left (vertical
  * tabs, arrow keys) and the chosen one on the right, starting at the requested section. Every
@@ -127,6 +191,10 @@ function SectionContent({
  * another section shows), so a draft survives switching sections; closing (Esc, X, click outside)
  * while the profile editor reports unsaved changes asks inline first; a `settings` request while
  * the page is open only switches the section – the page is never mounted anew.
+ *
+ * WP-107 (Verwalten-Ansicht): with a computer at the level "Manage" the page can edit that
+ * computer's settings instead (`settings.update` over its connection); a section it does not offer
+ * there brings the page back to this computer.
  */
 export function SettingsPage({ section, onClose }: SettingsPageSlotProps) {
   const { t, tError } = useI18n();
@@ -139,13 +207,21 @@ export function SettingsPage({ section, onClose }: SettingsPageSlotProps) {
   const askedFrom = useRef<HTMLElement | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const profilesPanelRef = useRef<HTMLDivElement>(null);
-  const editor = useSettingsEditor();
-  const hostState = useHostState();
+  const managed = useManagedHosts();
+  const [target, setTarget] = useState<HostId>(LOCAL_HOST_ID);
+  // A computer whose level went down (or that was removed) falls back to this one.
+  const hostId = managed.some((host) => host.hostId === target) ? target : LOCAL_HOST_ID;
+  const sections = sectionsFor(hostId);
+  const editor = useSettingsEditor(hostId);
+  const hostState = useHostState(hostId);
+  // The section shown: another computer offers only some of them.
+  const shown = sections.includes(current) ? current : (sections[0] ?? 'general');
   // Radix gives the focus back only to a DialogTrigger; the page is opened by a request (menu,
   // `/settings` …), so it returns the focus to where it was when the page opened.
   const [returnFocus] = useState(focusedElement);
 
   const showSection = (next: PageSection) => {
+    if (!sectionsFor(hostId).includes(next)) setTarget(LOCAL_HOST_ID);
     setCurrent(next);
     if (next === 'profiles') setProfilesKept(true);
   };
@@ -217,6 +293,7 @@ export function SettingsPage({ section, onClose }: SettingsPageSlotProps) {
           <DialogTitle className="text-base">{t('preferences.title')}</DialogTitle>
           <DialogDescription>{t('preferences.description')}</DialogDescription>
         </DialogHeader>
+        {managed.length === 0 ? null : <HostChoice hostId={hostId} managed={managed} onChange={setTarget} />}
         {confirmClose ? (
           <div className="border-b px-5 py-2.5">
             <Alert
@@ -267,7 +344,7 @@ export function SettingsPage({ section, onClose }: SettingsPageSlotProps) {
         )}
         <Tabs
           orientation="vertical"
-          value={current}
+          value={shown}
           onValueChange={(value) => {
             if (isSection(value)) showSection(value);
           }}
@@ -277,7 +354,7 @@ export function SettingsPage({ section, onClose }: SettingsPageSlotProps) {
             aria-label={t('preferences.sections.label')}
             className="bg-muted/30 h-auto w-48 shrink-0 flex-col items-stretch justify-start gap-0.5 overflow-y-auto border-r border-b-0 p-2"
           >
-            {PAGE_SECTIONS.map((value) => {
+            {sections.map((value) => {
               const Icon = SECTION_ICONS[value];
               const unsaved = value === 'profiles' && profilesDirty;
               return (
@@ -307,7 +384,7 @@ export function SettingsPage({ section, onClose }: SettingsPageSlotProps) {
                 key={value}
                 value={value}
                 ref={value === 'profiles' ? profilesPanelRef : undefined}
-                {...(kept ? { forceMount: true, hidden: current !== value } : {})}
+                {...(kept ? { forceMount: true, hidden: shown !== value } : {})}
                 // The sticky action bar of the profile editor ends at the panel's bottom edge (V3-06).
                 className={cn('min-h-0 overflow-y-auto px-6 pt-5', value === 'profiles' ? 'pb-0' : 'pb-5')}
               >

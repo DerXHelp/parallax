@@ -10,11 +10,36 @@
  *
  * Mutating operations (activate, deactivate, unpair, renew, check, pairing commit) run one after the
  * other.
+ *
+ * WP-107 (docs/wp/WP-76.md §B.13):
+ * - Level of the coupling: chosen on site with the pairing window (`remoteAccess.pair {level}` from a
+ *   local window or `parallax remote pair --level manage`), written into the peer on success.
+ *   `remoteAccess.setPeerLevel`: locally either way, over remote access only `manage` → `control`;
+ *   every change raises the generation and ends every peer socket (the windows reconnect with the new
+ *   level). Raising: a failed write keeps `control`. Lowering: a failed write unpairs (fail closed).
+ * - Connection log: `level_changed` (detail `control>manage`, the contract's form), `manage_command` (the command name),
+ *   `terminal_opened`.
+ * - Terminal through the relay (E3): `attachTerminal` (the composition hands the terminal service in
+ *   after it exists); upgrades on REMOTE_PATHS.terminalWs open terminals "through remote access".
+ *   Unpairing, a replaced coupling, a renewed key, a level change, "Share off" and a role change end
+ *   them (`TerminalService.closeRemote`); local terminals stay.
  */
 import type { Logger } from 'pino';
 import { makeError, type ErrorPayload } from '@shared/errors';
-import type { MultiHostConfig, MultiHostRole, RemoteAccessCheck, RemoteAccessState } from '@shared/model';
-import { WS_CLOSE, type HostCommand, type HostCommandName } from '@shared/protocol';
+import type {
+  MultiHostConfig,
+  MultiHostRole,
+  RemoteAccessCheck,
+  RemoteAccessState,
+  RemotePeerLevel,
+} from '@shared/model';
+import {
+  REMOTE_MANAGE_COMMANDS,
+  WS_CLOSE,
+  type CommandName,
+  type HostCommand,
+  type HostCommandName,
+} from '@shared/protocol';
 import type { ServerInstance } from '../config';
 import { toError } from '../lib/async';
 import { logger as rootLogger } from '../lib/logger';
@@ -23,10 +48,11 @@ import { KeyStoreError, type Identity, type KeyStore } from '../secure/ports';
 import { tlsSelfTest, type SelfTestFailure } from '../secure/selfTest';
 import { SECRET_BYTES } from '../secure/tlsProfile';
 import type { StoreWarningSink } from '../store/jsonStore';
-import { CommandError, type HostCommandHandler } from '../sync/ports';
+import { CommandError, type CommandContext, type HostCommandHandler } from '../sync/ports';
+import type { TerminalService } from '../terminal/ports';
 import { computerName, detectIpv4Addresses, listenerAddresses } from './addresses';
 import { runRemoteChecks, type PortProbe } from './checks';
-import { createRemoteEventLog, type FileRemoteEventLog } from './eventLog';
+import { createRemoteEventLog, type FileRemoteEventLog, type RemoteEventRecord } from './eventLog';
 import { GuardedHubSocket } from './hubSocket';
 import { REMOTE_LIMITS, type RemoteLimits } from './limits';
 import { RemoteListenError, RemoteListener, type RemoteSocketInfo } from './listener';
@@ -35,7 +61,8 @@ import { createPairingHttp } from './pairingHttp';
 import { PairingWindow, type PairingWindowCloseReason } from './pairingWindow';
 import { createPeerHttp, type PeerHttp, type RegisterRemoteContent } from './peerHttp';
 import { createPeerStore, type FilePeerStore } from './peerStore';
-import type { RemoteAccessService, RemoteEventInput, RemoteHubAttach } from './ports';
+import { createPeerTerminalBridge, type PeerTerminalBridge } from './peerTerminal';
+import type { RemoteAccessService, RemoteHubAttach } from './ports';
 
 /** Key store purpose of kAuth on the sharing computer (`remotePeerRecordSchema.authKey`). */
 export const PEER_AUTH_PURPOSE = 'auth:peer';
@@ -48,7 +75,20 @@ export const REMOTE_ACCESS_COMMANDS = [
   'remoteAccess.check',
   'remoteAccess.events',
   'remoteAccess.eventsSeen',
+  'remoteAccess.setPeerLevel',
 ] as const satisfies readonly HostCommandName[];
+
+const MANAGE_COMMANDS: ReadonlySet<string> = new Set(REMOTE_MANAGE_COMMANDS);
+
+/** `level_changed` detail (`control>manage`, remoteEventSchema). */
+export function levelChangeDetail(from: RemotePeerLevel, to: RemotePeerLevel): string {
+  return `${from}>${to}`;
+}
+
+/** The pairing code is only for a local window or the local command line (§B.2 no. 7). */
+function isLocal(ctx: CommandContext | undefined): boolean {
+  return (ctx?.access ?? 'local') === 'local';
+}
 
 export interface RemoteAccessServiceOptions {
   home: string;
@@ -71,6 +111,8 @@ export interface RemoteAccessServiceOptions {
   selfTest?: () => Promise<SelfTestFailure | null>;
   probePort?: (address: string, port: number) => Promise<PortProbe>;
   pairingWindowMs?: number;
+  /** WP-107: the terminal service (or later via `attachTerminal`). */
+  terminal?: TerminalService;
 }
 
 export interface RemoteAccess extends RemoteAccessService {
@@ -85,6 +127,13 @@ export interface RemoteAccess extends RemoteAccessService {
   close(): Promise<void>;
   /** Open sockets by class (diagnostics and tests; no addresses, no secrets). */
   connectionCounts(): { pairing: number; peer: number };
+  /**
+   * WP-107 (E3): the embedded terminal for the coupled computer – the composition calls it once the
+   * terminal service exists (until then a terminal upgrade is refused with 404).
+   */
+  attachTerminal(service: TerminalService): void;
+  /** Open terminal sockets of the coupled computer (diagnostics and tests). */
+  terminalConnections(): number;
 }
 
 interface PeerSecret {
@@ -129,6 +178,9 @@ export function createRemoteAccessService(options: RemoteAccessServiceOptions): 
   let peerCount = 0;
   let prepareError: unknown = null;
   let peerHttp: PeerHttp | null = null;
+  let terminalService: TerminalService | null = options.terminal ?? null;
+  let terminalBridge: Promise<PeerTerminalBridge> | null = null;
+  let bridgeReady: PeerTerminalBridge | null = null;
   let lastState = 'null';
   const listeners = new Set<() => void>();
 
@@ -154,9 +206,25 @@ export function createRemoteAccessService(options: RemoteAccessServiceOptions): 
     return run;
   };
 
-  const record = (event: RemoteEventInput): void => {
+  const record = (event: RemoteEventRecord): void => {
     if (active === null) return;
     eventLog.record(event, now());
+  };
+
+  /** Ends every terminal started through remote access (§B.13 lifecycle); local ones stay. */
+  const closeRemoteTerminals = (): void => {
+    try {
+      terminalService?.closeRemote();
+    } catch (failure) {
+      log.error({ err: failure }, 'remote terminals not closed');
+    }
+  };
+
+  /** The address the coupled computer was last seen at (log rows of its actions). */
+  const peerAddress = (socket: object | null): { address: string; port: number | null } => {
+    const info = socket === null ? undefined : listener.info(socket);
+    if (info !== undefined) return { address: info.address, port: info.port };
+    return { address: peerStore.get()?.lastAddress ?? 'unknown', port: null };
   };
 
   const wipeSecret = (): void => {
@@ -235,8 +303,8 @@ export function createRemoteAccessService(options: RemoteAccessServiceOptions): 
           pin: input.pin,
           certificate: input.certificateDer.toString('base64'),
           authKey: authKey.toString('base64'),
-          // WP-102: the level of the pairing window comes with WP-107; until then every coupling controls.
-          level: 'control',
+          // WP-107: the level chosen on site with the window (§B.13).
+          level: input.level,
           pairedAt: now().toISOString(),
           lastSeenAt: null,
           lastAddress: input.address,
@@ -250,6 +318,7 @@ export function createRemoteAccessService(options: RemoteAccessServiceOptions): 
       if (replacing !== null) {
         hub.closeRemote(WS_CLOSE.HOST_REVOKED);
         listener.destroyPeerSockets();
+        closeRemoteTerminals();
       }
       wipeSecret();
       secret = { pin: input.pin, authKey: Buffer.from(input.kAuth) };
@@ -322,9 +391,56 @@ export function createRemoteAccessService(options: RemoteAccessServiceOptions): 
           websockets = Math.max(0, websockets + delta);
           emitChange();
         },
+        level: () => peerStore.get()?.level ?? 'control',
+        onCommand: (socket, command) => {
+          onPeerCommand(socket, command);
+        },
+        onTerminal: (ws, current) => {
+          const service = terminalService;
+          if (service === null) return false;
+          terminalBridge ??= createPeerTerminalBridge({
+            service,
+            onOpen: () => {
+              record({
+                kind: 'terminal_opened',
+                ...peerAddress(null),
+                claimedName: peerStore.get()?.name ?? null,
+              });
+            },
+            ...(options.logger === undefined ? {} : { logger: options.logger }),
+          });
+          // The first `hello` may arrive before the bridge exists: hold the frames until it does.
+          ws.pause();
+          terminalBridge.then(
+            (bridge) => {
+              bridgeReady = bridge;
+              if (!current()) {
+                ws.terminate();
+                return;
+              }
+              bridge.handle(ws, current);
+              ws.resume();
+            },
+            (failure: unknown) => {
+              log.error({ err: failure }, 'terminal bridge not created');
+              ws.terminate();
+            },
+          );
+          return true;
+        },
       },
     });
     return peerHttp;
+  };
+
+  /** A window of the coupled computer runs `command` (connection log; name only, §B.13). */
+  const onPeerCommand = (socket: object, command: CommandName): void => {
+    const name = peerStore.get()?.name ?? null;
+    if (MANAGE_COMMANDS.has(command)) {
+      record({ kind: 'manage_command', ...peerAddress(socket), claimedName: name, detail: command });
+    } else if (command === 'session.openInTerminal') {
+      record({ kind: 'terminal_opened', ...peerAddress(socket), claimedName: name });
+    }
   };
 
   const loadSecret = async (): Promise<void> => {
@@ -347,6 +463,8 @@ export function createRemoteAccessService(options: RemoteAccessServiceOptions): 
     generation += 1;
     window.close('stopped');
     hub.closeRemote(WS_CLOSE.SERVER_SHUTDOWN);
+    // "Share off", a role change, a new listen address: no shell keeps running for the other side.
+    closeRemoteTerminals();
     await listener.stop();
     peerCount = 0;
   };
@@ -408,6 +526,7 @@ export function createRemoteAccessService(options: RemoteAccessServiceOptions): 
     generation += 1;
     hub.closeRemote(WS_CLOSE.HOST_REVOKED);
     listener.destroyPeerSockets(except ?? undefined);
+    closeRemoteTerminals();
     wipeSecret();
     peerLive = { appVersion: null, compatible: true };
     if (peer !== null) record({ kind: 'unpaired', address, port, claimedName: peer.name });
@@ -426,19 +545,62 @@ export function createRemoteAccessService(options: RemoteAccessServiceOptions): 
     emitChange();
   };
 
+  /**
+   * `remoteAccess.setPeerLevel` (§B.13): locally either way; over remote access only `manage` →
+   * `control`. A change raises the generation and ends every peer socket and remote terminal.
+   */
+  const setPeerLevel = (level: RemotePeerLevel, ctx: CommandContext | undefined): Promise<void> =>
+    serial(async () => {
+      const peer = peerStore.get();
+      if (peer === null) throw new CommandError(makeError('VALIDATION_FAILED', { reason: 'not_paired' }));
+      if (peer.level === level) return;
+      const local = isLocal(ctx);
+      if (!local && !(ctx?.access === 'manage' && peer.level === 'manage' && level === 'control')) {
+        throw new CommandError(makeError('REMOTE_NOT_ALLOWED', { command: 'remoteAccess.setPeerLevel' }));
+      }
+      const who = local ? { address: 'local', port: null } : peerAddress(null);
+      try {
+        await peerStore.set({ ...peer, level });
+      } catch (failure) {
+        log.error({ err: failure, from: peer.level, to: level }, 'coupling level not stored');
+        if (level === 'manage') {
+          // Raising failed: the coupling keeps `control` (the store changed nothing in memory).
+          throw new CommandError(makeError('REMOTE_ACCESS_FAILED', { reason: 'store' }));
+        }
+        // Lowering failed: fail closed – the coupling is revoked (§B.10 "Aufheben").
+        await unpairNow(null, who.address, who.port);
+        throw new CommandError(makeError('REMOTE_ACCESS_FAILED', { reason: 'store' }));
+      }
+      // The old level must not send another command: new generation, every connection ends.
+      generation += 1;
+      hub.closeRemote(WS_CLOSE.SERVER_RESTARTING);
+      listener.destroyPeerSockets();
+      closeRemoteTerminals();
+      record({
+        kind: 'level_changed',
+        ...who,
+        claimedName: peer.name,
+        detail: levelChangeDetail(peer.level, level),
+      });
+      log.info({ from: peer.level, to: level, by: local ? 'local' : 'remote' }, 'coupling level changed');
+      emitChange();
+    });
+
   const requireActive = (): MultiHostConfig => {
     if (active === null) throw new CommandError(makeError('REMOTE_ROLE_CONFLICT', { role: currentRole() }));
     return active;
   };
 
-  const handle = async (cmd: HostCommand): Promise<unknown> => {
+  const handle = async (cmd: HostCommand, ctx?: CommandContext): Promise<unknown> => {
     const config = requireActive();
     switch (cmd.name) {
       case 'remoteAccess.pair': {
+        // Second line behind the hub (REMOTE_DENIED_COMMANDS): the code goes only to a local window.
+        if (!isLocal(ctx)) throw new CommandError(makeError('REMOTE_NOT_ALLOWED', { command: cmd.name }));
         const bound = listener.address();
         if (bound === null)
           throw new CommandError(error ?? makeError('REMOTE_ACCESS_FAILED', { reason: 'listen' }));
-        const opened = window.open();
+        const opened = window.open(cmd.level ?? 'control');
         emitChange();
         return {
           code: opened.code,
@@ -449,7 +611,11 @@ export function createRemoteAccessService(options: RemoteAccessServiceOptions): 
         };
       }
       case 'remoteAccess.cancelPairing':
+        if (!isLocal(ctx)) throw new CommandError(makeError('REMOTE_NOT_ALLOWED', { command: cmd.name }));
         window.close('cancelled');
+        return {};
+      case 'remoteAccess.setPeerLevel':
+        await setPeerLevel(cmd.level, ctx);
         return {};
       case 'remoteAccess.unpair':
         await serial(() => unpairNow(null, 'local', null));
@@ -497,7 +663,7 @@ export function createRemoteAccessService(options: RemoteAccessServiceOptions): 
 
   const commands: HostCommandHandler = {
     names: REMOTE_ACCESS_COMMANDS,
-    handle: (cmd) => handle(cmd),
+    handle: (cmd, ctx) => handle(cmd, ctx),
   };
 
   eventLog.onChange(emitChange);
@@ -589,6 +755,10 @@ export function createRemoteAccessService(options: RemoteAccessServiceOptions): 
       };
     },
     connectionCounts: () => ({ pairing: listener.pairingCount(), peer: listener.peerCount() }),
+    attachTerminal(service) {
+      terminalService = service;
+    },
+    terminalConnections: () => bridgeReady?.connections() ?? 0,
     isCurrentConnection(socket) {
       if (socket instanceof GuardedHubSocket) return socket.isCurrent();
       return listener.isCurrentPeer(socket);
@@ -597,6 +767,10 @@ export function createRemoteAccessService(options: RemoteAccessServiceOptions): 
       await service.deactivate();
       await peerHttp?.close();
       peerHttp = null;
+      const bridge = terminalBridge;
+      terminalBridge = null;
+      bridgeReady = null;
+      await bridge?.then((created) => created.close()).catch(() => undefined);
       await eventLog.close();
     },
   };

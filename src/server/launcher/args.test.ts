@@ -5,10 +5,18 @@ import { loadConfig } from '../config';
 import { makeTempHome } from '../http/testServer';
 import { LAUNCHER_USAGE, parseLauncherArgs, portRequested, serverArgsFor } from './args';
 
+const WIN = process.platform === 'win32';
+/** WP-107: an absolute data folder / installation root by the rules of this computer. */
+const PX = WIN ? 'D:\\px' : '/srv/px';
+const APPS = WIN ? 'C:\\Apps\\Parallax' : '/opt/Parallax';
+const SPACED = WIN ? 'D:/px root' : '/srv/px root';
+
 describe('launcher command line', () => {
   it('separates the launcher flags from the server flags', () => {
     expect(parseLauncherArgs(['--print-url', '--port=5000', '--no-build', '--backend=fake'])).toEqual({
       printUrl: true,
+      server: false,
+      command: null,
       build: false,
       help: false,
       open: null,
@@ -20,6 +28,8 @@ describe('launcher command line', () => {
     });
     expect(parseLauncherArgs([])).toEqual({
       printUrl: false,
+      server: false,
+      command: null,
       build: true,
       help: false,
       open: null,
@@ -47,12 +57,12 @@ describe('launcher command line', () => {
     const fromEnv = loadConfig({ argv: [], env, cwd: 'C:\\repo' });
     expect(fromEnv.port).toBe(4800);
     const config = loadConfig({
-      argv: ['--port=5000', '--home=D:\\px', '--backend=fake'],
+      argv: ['--port=5000', `--home=${PX}`, '--backend=fake'],
       env,
       cwd: 'C:\\repo',
     });
     expect(serverArgsFor(config)).toEqual([
-      '--home=D:\\px',
+      `--home=${PX}`,
       '--port=5000',
       '--backend=fake',
       '--log-level=info',
@@ -64,7 +74,7 @@ describe('launcher command line', () => {
     // The server accepts exactly these flags (parseArgs strict) and resolves the same values – also
     // the validation mode of the launcher's environment (NODE_ENV=test of the E2E → throw, R3-05).
     expect(loadConfig({ argv: serverArgsFor(config), env: {}, cwd: 'C:\\elsewhere' })).toMatchObject({
-      home: 'D:\\px',
+      home: PX,
       port: 5000,
       backend: 'fake',
       validation: 'log',
@@ -132,6 +142,11 @@ describe('launcher command line', () => {
       '--apply-update',
       '--wait-pid',
       '--restore',
+      '--server',
+      '--key-store=file',
+      'service install|uninstall|status',
+      'remote status|enable|disable|pair',
+      '--level',
     ]) {
       expect(LAUNCHER_USAGE).toContain(flag);
     }
@@ -160,21 +175,33 @@ describe('launcher command line', () => {
 
 describe('launcher --install-root (WP-85, package mode)', () => {
   it('takes an absolute local folder as --install-root <dir> or --install-root=<dir>', () => {
-    expect(parseLauncherArgs(['--install-root', 'C:\\Apps\\Parallax', '--port=4800'])).toMatchObject({
-      installRoot: 'C:\\Apps\\Parallax',
+    expect(parseLauncherArgs(['--install-root', APPS, '--port=4800'])).toMatchObject({
+      installRoot: APPS,
       problem: null,
       serverArgv: ['--port=4800'],
     });
-    expect(parseLauncherArgs(['--install-root=D:/px root']).installRoot).toBe('D:/px root');
+    expect(parseLauncherArgs([`--install-root=${SPACED}`]).installRoot).toBe(SPACED);
   });
 
-  it.each([
-    ['--install-root'],
-    ['--install-root='],
-    ['--install-root=relative\\dir'],
-    ['--install-root=\\\\host\\share'],
-    ['--install-root=C:\\px\\..\\x'],
-  ])('refuses %s', (arg) => {
+  // WP-107: the rules of this computer (Linux refuses a Windows path, Windows a POSIX one).
+  it.each(
+    WIN
+      ? [
+          ['--install-root'],
+          ['--install-root='],
+          ['--install-root=relative\\dir'],
+          ['--install-root=\\\\host\\share'],
+          ['--install-root=C:\\px\\..\\x'],
+          ['--install-root=/opt/Parallax'],
+        ]
+      : [
+          ['--install-root'],
+          ['--install-root='],
+          ['--install-root=relative/dir'],
+          ['--install-root=/opt/../x'],
+          ['--install-root=C:\\Apps\\Parallax'],
+        ],
+  )('refuses %s', (arg) => {
     expect(parseLauncherArgs([arg]).problem).toMatch(/--install-root needs an absolute local folder/);
   });
 });
@@ -211,16 +238,16 @@ describe('launcher --open / --autostart (ADR-109, ADR-110)', () => {
 });
 
 describe('launcher --apply-update (WP-87b, the orchestrator of a version switch)', () => {
-  const ROOT = '--install-root=D:\\apps\\Parallax';
+  const ROOT = `--install-root=${APPS}`;
 
   it('takes the version, --wait-pid and --restore (both value forms); the rest goes to the server', () => {
     expect(
-      parseLauncherArgs([ROOT, '--apply-update=1.0.1', '--restore', '--wait-pid=4242', '--home=D:\\px']),
+      parseLauncherArgs([ROOT, '--apply-update=1.0.1', '--restore', '--wait-pid=4242', `--home=${PX}`]),
     ).toMatchObject({
-      installRoot: 'D:\\apps\\Parallax',
+      installRoot: APPS,
       applyUpdate: { version: '1.0.1', restore: true, waitPid: 4242 },
       problem: null,
-      serverArgv: ['--home=D:\\px'],
+      serverArgv: [`--home=${PX}`],
     });
     expect(parseLauncherArgs([ROOT, '--apply-update', '1.0.0-rc.4', '--wait-pid', '7']).applyUpdate).toEqual({
       version: '1.0.0-rc.4',
@@ -240,11 +267,105 @@ describe('launcher --apply-update (WP-87b, the orchestrator of a version switch)
     [[ROOT, '--apply-update=1.0.1', '--wait-pid=1', '--print-url'], /cannot be combined/],
     [[ROOT, '--apply-update=1.0.1', '--wait-pid=1', '--autostart'], /cannot be combined/],
     [[ROOT, '--apply-update=1.0.1', '--wait-pid=1', '--open', 'parallax://session/x'], /cannot be combined/],
+    [[ROOT, '--apply-update=1.0.1', '--wait-pid=1', '--server'], /cannot be combined/],
     [[ROOT, '--restore'], /belong to --apply-update/],
     [[ROOT, '--wait-pid=5'], /belong to --apply-update/],
   ])('refuses %j', (argv, problem) => {
     const args = parseLauncherArgs(argv);
     expect(args.problem).toMatch(problem);
     expect(args.applyUpdate).toBeNull();
+  });
+});
+
+describe('launcher --server and the subcommands (WP-107)', () => {
+  it('--server is a launcher flag; it combines with --print-url, not with --open or --autostart', () => {
+    expect(parseLauncherArgs(['--server', '--print-url', '--port=4800'])).toMatchObject({
+      server: true,
+      printUrl: true,
+      problem: null,
+      command: null,
+      serverArgv: ['--port=4800'],
+    });
+    expect(parseLauncherArgs(['--server', '--autostart']).problem).toMatch(/--server cannot be combined/);
+    expect(parseLauncherArgs(['--server', '--open', 'parallax://session/x']).problem).toMatch(
+      /--server cannot be combined/,
+    );
+  });
+
+  it('service install|uninstall|status with server flags after it', () => {
+    expect(parseLauncherArgs(['service', 'install', `--home=${PX}`, '--key-store=file'])).toMatchObject({
+      command: { kind: 'service', action: 'install' },
+      problem: null,
+      serverArgv: [`--home=${PX}`, '--key-store=file'],
+    });
+    expect(parseLauncherArgs(['--', 'service', 'status']).command).toEqual({
+      kind: 'service',
+      action: 'status',
+    });
+    expect(parseLauncherArgs(['service']).problem).toMatch(/service needs one of install, uninstall, status/);
+    expect(parseLauncherArgs(['service', 'restart']).problem).toMatch(/service needs one of/);
+    expect(parseLauncherArgs(['service', 'install', 'extra']).problem).toMatch(/unexpected argument "extra"/);
+    expect(parseLauncherArgs(['service', 'status', '--help']).help).toBe(true);
+  });
+
+  it('a subcommand after the --install-root of start.mjs', () => {
+    expect(parseLauncherArgs([`--install-root=${APPS}`, 'remote', 'status'])).toMatchObject({
+      installRoot: APPS,
+      command: { kind: 'remote', request: { action: 'status' } },
+      problem: null,
+      serverArgv: [],
+    });
+    expect(parseLauncherArgs(['--install-root', APPS, 'service', 'install']).command).toEqual({
+      kind: 'service',
+      action: 'install',
+    });
+    // Anywhere else it is no subcommand: the server would refuse the positional.
+    expect(parseLauncherArgs(['--port=4800', 'remote', 'status']).command).toBeNull();
+  });
+
+  it('remote: every action, pair with --level (default control), level with its value', () => {
+    for (const action of ['status', 'enable', 'disable', 'cancel', 'unpair'] as const) {
+      expect(parseLauncherArgs(['remote', action]).command).toEqual({ kind: 'remote', request: { action } });
+    }
+    expect(parseLauncherArgs(['remote', 'pair']).command).toEqual({
+      kind: 'remote',
+      request: { action: 'pair', level: 'control' },
+    });
+    expect(parseLauncherArgs(['remote', 'pair', '--level', 'manage', `--home=${PX}`])).toMatchObject({
+      command: { kind: 'remote', request: { action: 'pair', level: 'manage' } },
+      serverArgv: [`--home=${PX}`],
+    });
+    expect(parseLauncherArgs(['remote', 'pair', '--level=control']).command).toEqual({
+      kind: 'remote',
+      request: { action: 'pair', level: 'control' },
+    });
+    expect(parseLauncherArgs(['remote', 'level', 'manage']).command).toEqual({
+      kind: 'remote',
+      request: { action: 'level', level: 'manage' },
+    });
+  });
+
+  it.each([
+    [['remote'], /remote needs one of status, enable, disable, pair, cancel, unpair, level/],
+    [['remote', 'open'], /remote needs one of/],
+    [['remote', 'level'], /remote level needs control or manage/],
+    [['remote', 'level', 'admin'], /remote level needs control or manage/],
+    [['remote', 'pair', '--level'], /--level needs control or manage/],
+    [['remote', 'pair', '--level=root'], /--level needs control or manage/],
+  ])('refuses %j', (argv, problem) => {
+    const args = parseLauncherArgs(argv);
+    expect(args.problem).toMatch(problem);
+    expect(args.command).toBeNull();
+  });
+
+  it('--level belongs to pair only (elsewhere a server flag the server refuses)', () => {
+    expect(parseLauncherArgs(['remote', 'status', '--level=manage']).serverArgv).toEqual(['--level=manage']);
+  });
+
+  it('serverArgsFor passes --key-store=file on, never the default', () => {
+    const env = { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' };
+    const config = loadConfig({ argv: [`--home=${PX}`], env, cwd: 'C:\\repo' });
+    expect(serverArgsFor(config).some((arg) => arg.startsWith('--key-store'))).toBe(false);
+    expect(serverArgsFor({ ...config, keyStore: 'file' })).toContain('--key-store=file');
   });
 });
