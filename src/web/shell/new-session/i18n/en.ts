@@ -134,4 +134,29 @@ export const en = {
       invalidChar: 'A folder name cannot contain / or control characters.',
     },
   },
+  /** WP-114 (ADR-250): the optional worktree of a new session (only for a folder in a git repository). */
+  worktree: {
+    toggle: 'In its own worktree',
+    toggleHint:
+      'A folder and branch of its own in {repo} – changes stay apart from other sessions until you merge them.',
+    checking: 'Checking the Git repository…',
+    modeLabel: 'Where the session runs',
+    modes: {
+      new: 'New branch',
+      existing: 'Existing worktree',
+    },
+    branch: 'Branch name',
+    base: 'Based on',
+    basePlaceholder: 'Current branch',
+    baseHint: 'Branch, tag or commit the new branch starts from – empty: the current branch.',
+    baseInvalid: 'Not a valid branch, tag or commit name.',
+    folder: 'Folder: {folder}',
+    branchIssues: {
+      empty: 'Enter a name for the new branch.',
+      invalid: 'Not a valid branch name – no spaces and none of ~ ^ : ? * [ \\ or “..”.',
+    },
+    existing: 'Worktree',
+    existingItem: '{branch} – {folder}',
+    existingHint: 'Choose the worktree the session runs in.',
+  },
 };

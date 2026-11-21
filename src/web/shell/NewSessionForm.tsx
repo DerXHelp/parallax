@@ -2,7 +2,8 @@ import { FolderOpenIcon, FolderSearchIcon, PlusIcon } from 'lucide-react';
 import { useId, useMemo, useState } from 'react';
 import { LOCAL_HOST_ID, makeSessionKey, type HostId, type ProfileId } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
-import type { ProfileSummary } from '@shared/model';
+import type { ProfileSummary, ProjectSettingsMap } from '@shared/model';
+import type { Command } from '@shared/protocol';
 import { useI18n } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { shortPath } from '@web/lib/path-display';
@@ -22,9 +23,14 @@ import { LoginButton, needsSignIn } from './login/LoginButton';
 import { ProfileIssueText, profileErrors } from './new-session/profile-status';
 import { ProfileSelect } from './new-session/ProfileSelect';
 import { filterRecentProjects, recentProjects } from './new-session/recent-projects';
+import { useWorktreeChoice } from './new-session/use-worktree-choice';
+import { WorktreeFields } from './new-session/WorktreeFields';
+import { gitErrorDetail } from './new-session/worktree-lib';
 
 /** Frames to wait for the new session's pane before giving up on focusing its message field. */
 const FOCUS_FRAMES = 20;
+
+const NO_PROJECTS: ProjectSettingsMap = Object.freeze({});
 
 /**
  * Moves the focus into the message field of a session pane once it is rendered (after "Create
@@ -114,6 +120,10 @@ export function initialHost(hosts: HostLabels, prefill: HostId | undefined): Hos
  * WP-80 (WP-75 §4.4): with other computers the computer comes first (last used pre-selected);
  * folder browser, profiles, default profile and recent folders come from it; switching the computer
  * clears a folder that came from the other one; the session key carries the chosen computer.
+ * WP-114 (ADR-250): for a folder inside a git repository (`worktree.list`, only with
+ * `HostState.features.git`) the optional switch "In its own worktree" (default: the project's
+ * `worktreeDefault`) – a new branch or an existing worktree goes along as `session.create.worktree`;
+ * git refusals (BRANCH_EXISTS, WORKTREE_EXISTS, GIT_FAILED …) show in the form with git's detail.
  */
 export function NewSessionForm({
   initialCwd = '',
@@ -179,10 +189,22 @@ export function NewSessionForm({
   const profile = chosenProfile(profiles, choice, hostState?.defaultProfileId ?? null);
   const blocking = profile === null ? [] : profileErrors(profile);
   const cwdKey = rules.key(cwd.trim());
+  const typed = cwd.trim();
+  const worktree = useWorktreeChoice({
+    hostId,
+    cwd: typed,
+    enabled: hostState?.features.git === true && online && typed !== '' && rules.issue(typed) === null,
+    projects: hostState?.settings.projects ?? NO_PROJECTS,
+    rules,
+  });
+  const worktreeBlocks = worktree.waiting || worktree.request === null;
+  const errorDetail = error === null ? null : gitErrorDetail(error);
 
   const submit = async () => {
     const value = cwd.trim();
-    if (value === '' || pending || profile === null || blocking.length > 0) return;
+    const request = worktree.request;
+    if (value === '' || pending || profile === null || blocking.length > 0 || worktree.waiting) return;
+    if (request === null) return;
     const issue = rules.issue(value);
     if (issue !== null) {
       setError(makeError('PATH_REJECTED', { reason: issue }));
@@ -191,11 +213,13 @@ export function NewSessionForm({
     setPending(true);
     setError(null);
     try {
-      const result = await sendHostCommand(hostId, {
+      const command: Extract<Command, { name: 'session.create' }> = {
         name: 'session.create',
         cwd: value,
         profileId: profile.id,
-      });
+        ...(request === undefined ? {} : { worktree: request }),
+      };
+      const result = await sendHostCommand(hostId, command);
       const sessionKey = makeSessionKey(hostId, result.entryId);
       writeStorage('local', STORAGE_KEYS.newSessionHost, hostId === LOCAL_HOST_ID ? null : hostId);
       select(sessionKey);
@@ -329,6 +353,22 @@ export function NewSessionForm({
         </div>
       )}
 
+      <WorktreeFields
+        choice={worktree}
+        rules={rules}
+        disabled={pending}
+        invalidBranch={error?.code === 'BRANCH_EXISTS' || error?.code === 'WORKTREE_EXISTS'}
+        onEdit={() => {
+          setError(null);
+        }}
+      />
+      {worktree.waiting ? (
+        <p data-slot="worktree-checking" className="text-muted-foreground flex items-center gap-1.5 text-2xs">
+          <Spinner className="size-3" />
+          {t('newSession.worktree.checking')}
+        </p>
+      ) : null}
+
       <div className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
         <Label id={profileLabelId} htmlFor={profileId}>
           {t('newSession.profile.label')}
@@ -374,12 +414,28 @@ export function NewSessionForm({
         </div>
       </div>
 
-      {error === null ? null : <Alert tone="error">{tError(error)}</Alert>}
+      {error === null ? null : (
+        <Alert tone="error">
+          {tError(error)}
+          {errorDetail === null ? null : (
+            <span data-slot="error-detail" className="mt-0.5 block font-mono text-2xs break-all">
+              {errorDetail}
+            </span>
+          )}
+        </Alert>
+      )}
 
       <div className="flex justify-end">
         <Button
           type="submit"
-          disabled={pending || !online || cwd.trim() === '' || profile === null || blocking.length > 0}
+          disabled={
+            pending ||
+            !online ||
+            cwd.trim() === '' ||
+            profile === null ||
+            blocking.length > 0 ||
+            worktreeBlocks
+          }
         >
           {pending ? <Spinner label={t('newSession.creating')} /> : <PlusIcon aria-hidden />}
           {pending ? t('newSession.creating') : t('newSession.submit')}
