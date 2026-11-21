@@ -89,4 +89,11 @@ export const en = {
     retry: 'Try again',
     refresh: 'Refresh',
   },
+  /** WP-115: the jump to a search hit that is not part of the list (another conversation, too far back). */
+  reveal: {
+    label: 'Search hit',
+    otherConversation: 'Search hit from an earlier conversation',
+    notLoaded: 'Search hit further back in this conversation',
+    close: 'Close the search hit',
+  },
 };

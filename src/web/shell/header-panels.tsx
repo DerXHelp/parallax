@@ -1,4 +1,10 @@
-import { FolderTreeIcon, ListTodoIcon, ScrollTextIcon, type LucideIcon } from 'lucide-react';
+import {
+  FolderTreeIcon,
+  GitCompareArrowsIcon,
+  ListTodoIcon,
+  ScrollTextIcon,
+  type LucideIcon,
+} from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BackgroundTask, TranscriptItem } from '@shared/model';
 import type { SessionViewState } from '@shared/sync';
@@ -8,6 +14,7 @@ import { cn } from '@web/lib/cn';
 import { selectTaskSources } from '@web/lib/task-rows';
 import { toLayoutPx } from '@web/lib/zoom';
 import { useSessionSelector } from '@web/state/hooks';
+import { useSessionFeature } from '@web/state/hosts';
 import { getZoom, useZoom } from '@web/state/zoom';
 import { DropdownMenuCheckboxItem, DropdownMenuSeparator } from '@web/ui/dropdown-menu';
 import { IconButton } from '@web/ui/icon-button';
@@ -17,8 +24,9 @@ import { RunningCounts, useRunningWords } from './running-tasks';
 import { closeSidePanel, getSidePanelTab, openSidePanel, useSidePanelTab } from './side-panel/state';
 
 /**
- * Side panel buttons of the session header (WP-58): "Plan" (once the session has a plan), "Files"
- * and "Tasks" with a counter – WP-71: the running tasks by kind (agent symbol + number, terminal
+ * Side panel buttons of the session header (WP-58): "Plan" (once the session has a plan), WP-110
+ * "Changes" (host with the git service), "Files" and "Tasks" with a counter – WP-71: the running
+ * tasks by kind (agent symbol + number, terminal
  * symbol + number, the rest; highlighted, counted like the task panel through `@shared/tasks`,
  * CR3-02), else the open to-dos. A click
  * asks the side panel host (`sidePanel {tab}`); clicking the open tab again closes it. In a narrow
@@ -90,7 +98,7 @@ export function toggleSidePanel(sessionKey: string, tab: SidePanelTab): void {
 }
 
 interface PanelButton {
-  tab: Extract<SidePanelTab, 'plan' | 'files' | 'tasks'>;
+  tab: Extract<SidePanelTab, 'plan' | 'changes' | 'files' | 'tasks'>;
   icon: LucideIcon;
   label: string;
   /** Counter next to the icon (open to-dos), null = none. */
@@ -103,10 +111,18 @@ function usePanelButtons(sessionKey: string): PanelButton[] {
   const t = useT();
   const facts = useSidePanelFacts(sessionKey);
   const words = useRunningWords(facts);
+  const git = useSessionFeature(sessionKey, 'git');
   const plain = { count: null, running: null };
   const buttons: PanelButton[] = [];
   if (facts.plan)
     buttons.push({ tab: 'plan', icon: ScrollTextIcon, label: t('navigation.panels.plan'), ...plain });
+  if (git)
+    buttons.push({
+      tab: 'changes',
+      icon: GitCompareArrowsIcon,
+      label: t('navigation.panels.changes'),
+      ...plain,
+    });
   buttons.push({ tab: 'files', icon: FolderTreeIcon, label: t('navigation.panels.files'), ...plain });
   let tasks: Pick<PanelButton, 'label' | 'count' | 'running'>;
   if (runningTaskTotal(facts) > 0) {

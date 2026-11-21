@@ -21,6 +21,8 @@ import type {
   AgentSession,
   BackendEvent,
   ClaudeSettings,
+  ElicitationAnswer,
+  ElicitationRequestInfo,
   OutgoingPrompt,
   OutputStyles,
   PermissionRequest,
@@ -99,6 +101,18 @@ interface OpenDecision {
   release(result: PermissionResult | null): void;
 }
 
+/** WP-112: an open onElicitation request. */
+interface OpenElicitation {
+  requestId: string;
+  controller: AbortController;
+  release(answer: ElicitationAnswer | null): void;
+}
+
+/** What the fake CLI answers without an onElicitation handler (the SDK declines, too). */
+const NO_ELICITATION_HANDLER: ElicitationAnswer = { action: 'decline', content: null };
+/** A throwing elicitation handler: cancel, like the SdkBackend. */
+const ELICITATION_HANDLER_ERROR: ElicitationAnswer = { action: 'cancel', content: null };
+
 export interface FakeSessionDeps {
   n: number;
   req: StartSessionRequest;
@@ -169,6 +183,9 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
   /** Last result per toolUseId (null = aborted). */
   readonly lastResults = new Map<string, PermissionResult | null>();
   readonly openDecisions = new Map<string, OpenDecision>();
+  /** WP-112: last answer per elicitation requestId (null = aborted). */
+  readonly lastElicitations = new Map<string, ElicitationAnswer | null>();
+  readonly openElicitations = new Map<string, OpenElicitation>();
   /** Played `call` answers (last one per fn) and the first one of the scenario file. */
   readonly callAnswers = new Map<string, RecordedAnswer>();
   readonly firstCallAnswers = new Map<string, RecordedAnswer>();
@@ -650,6 +667,15 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
   abortDecision(toolUseId?: string): boolean {
     const open =
       toolUseId === undefined ? this.openDecisions.values().next().value : this.openDecisions.get(toolUseId);
+    const elicitation = toolUseId === undefined ? undefined : this.openElicitations.get(toolUseId);
+    if (open === undefined && elicitation !== undefined) {
+      // WP-112: the CLI withdraws an elicitation (its requestId).
+      this.openElicitations.delete(elicitation.requestId);
+      this.lastElicitations.set(elicitation.requestId, null);
+      elicitation.controller.abort();
+      elicitation.release(null);
+      return true;
+    }
     if (open === undefined) {
       log.warn(
         { entryId: this.entryId, toolUseId: toolUseId ?? null },
@@ -890,6 +916,47 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
     });
   }
 
+  /**
+   * WP-112: onElicitation → engine. Resolves with the engine's answer, null when the request was
+   * aborted (abortDecision / exit); without a handler `decline` (like the SDK), a throwing handler
+   * answers `cancel` (like the SdkBackend).
+   */
+  startElicitation(request: ElicitationRequestInfo, seq: number | null): Promise<ElicitationAnswer | null> {
+    const handler = this.deps.req.onElicitation;
+    if (handler === undefined) {
+      this.lastElicitations.set(request.requestId, NO_ELICITATION_HANDLER);
+      return Promise.resolve(NO_ELICITATION_HANDLER);
+    }
+    const controller = new AbortController();
+    const gate = Promise.withResolvers<ElicitationAnswer | null>();
+    const open: OpenElicitation = { requestId: request.requestId, controller, release: gate.resolve };
+    this.openElicitations.set(request.requestId, open);
+    let answer: Promise<ElicitationAnswer>;
+    try {
+      answer = handler(request, controller.signal);
+    } catch (error) {
+      answer = Promise.reject(toError(error));
+    }
+    answer.then(
+      (result) => {
+        gate.resolve(result);
+      },
+      (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.diagnostic('handler-error', seq, `onElicitation handler threw: ${message}`);
+        this.push({ type: 'error', where: 'control', name: 'Error', message, at: this.deps.now() });
+        gate.resolve(ELICITATION_HANDLER_ERROR);
+      },
+    );
+    return gate.promise.then((result) => {
+      if (this.openElicitations.get(request.requestId) === open) this.openElicitations.delete(request.requestId);
+      if (!this.lastElicitations.has(request.requestId) || result !== null) {
+        this.lastElicitations.set(request.requestId, result);
+      }
+      return result;
+    });
+  }
+
   queueControlAnswer(method: string, answer: RecordedAnswer): void {
     const list = this.controlAnswers.get(method) ?? [];
     list.push(answer);
@@ -912,8 +979,9 @@ export class FakeSession implements AgentSession, FakeSessionHandle {
     this.events.end();
     this.exited = true;
     this.currentState = 'exited';
-    const open = [...this.openDecisions.values()];
+    const open = [...this.openDecisions.values(), ...this.openElicitations.values()];
     this.openDecisions.clear();
+    this.openElicitations.clear();
     for (const decision of open) decision.release(null);
     // The engine cancels open decisions with `process_exit` when it sees the exit; the CLI's
     // signals abort only afterwards (one macrotask later), like a process that is gone.
@@ -1275,6 +1343,11 @@ class ScriptContext implements FakeScriptContext {
     const request = toPermissionRequest(toolName, input, options);
     const result = await this.session.blockOn('waiting-decision', this.session.startDecision(request, null));
     return result ?? CANCELLED_RESULT;
+  }
+
+  async elicit(request: ElicitationRequestInfo): Promise<ElicitationAnswer> {
+    const answer = await this.session.blockOn('waiting-decision', this.session.startElicitation(request, null));
+    return answer ?? ELICITATION_HANDLER_ERROR;
   }
 
   async play(events: readonly FixtureEvent[]): Promise<void> {

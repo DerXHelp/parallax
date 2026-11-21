@@ -41,6 +41,10 @@ export const EVENT_KINDS = [
   'exit',
   /** Process-tree observation around close(): `{phase, rootPid, processes | survivors | killed}`. */
   'process',
+  /** WP-110 (ADR-256): onElicitation callback invoked: `{request, signalAborted}` (request without `signal`). */
+  'elicitation',
+  /** WP-110: ElicitResult returned to the SDK: `{requestId, result}`. */
+  'elicitationResult',
 ] as const;
 
 export type EventKind = (typeof EVENT_KINDS)[number];
@@ -129,6 +133,32 @@ export const fixtureControlPayloadSchema = z.looseObject({
   result: z.unknown().optional(),
   error: z.unknown().optional(),
   ms: z.number().nonnegative(),
+});
+
+/** `elicitation`: the `ElicitationRequest` as the SDK passed it (WP-110). */
+export const fixtureElicitationPayloadSchema = z.looseObject({
+  request: z.looseObject({
+    serverName: z.string().min(1),
+    message: z.string(),
+    mode: z.enum(['form', 'url']).optional(),
+    url: z.string().optional(),
+    elicitationId: z.string().optional(),
+    requestedSchema: z.record(z.string(), z.unknown()).optional(),
+    title: z.string().optional(),
+    displayName: z.string().optional(),
+    description: z.string().optional(),
+  }),
+  requestId: z.string().min(1),
+  signalAborted: z.boolean(),
+});
+
+/** `elicitationResult`: the `ElicitResult` given in the original run (reference / assertion). */
+export const fixtureElicitationResultPayloadSchema = z.looseObject({
+  requestId: z.string().min(1),
+  result: z.looseObject({
+    action: z.enum(['accept', 'decline', 'cancel']),
+    content: z.record(z.string(), z.unknown()).optional(),
+  }),
 });
 
 /** `call`: read-only call and its answer. */

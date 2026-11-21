@@ -260,6 +260,35 @@ export const ERROR_CATALOG = {
   REMOTE_NOT_ALLOWED: { category: 'auth', http: 403, severity: 'warning', retryable: false },
   /** The draft exceeds LIMITS.draftChars / draftTotalChars. */
   DRAFT_TOO_LARGE: { category: 'validation', http: 413, severity: 'warning', retryable: false },
+  // Ausbau 1 (WP-110, docs/wp/WP-110.md §4; ADR-250 … 256). Params: `gitFailedParamsSchema` …
+  /** No usable `git` for the session (absolute `git` from the session's PATH, ADR-252). */
+  GIT_NOT_FOUND: { category: 'setup', http: 503, severity: 'warning', retryable: false },
+  /** The folder is not inside a git repository (`params.path`). */
+  NOT_A_GIT_REPO: { category: 'validation', http: 400, severity: 'warning', retryable: false },
+  /**
+   * A git call failed (`params.op` ∈ GIT_OPERATIONS; optional `params.exitCode`, `params.detail` = the
+   * first line of git's message, scrubbed, ≤ 300 chars). `op: 'teardown'` = the teardown command of the
+   * project ended with an exit code ≠ 0 (`worktree.remove` again with `skipTeardown`, ADR-251).
+   */
+  GIT_FAILED: { category: 'internal', http: 500, severity: 'error', retryable: true },
+  /** `git push` failed (`params.reason` ∈ GIT_PUSH_FAILED_REASONS; `auth` → "Push in terminal"). */
+  GIT_PUSH_FAILED: { category: 'internal', http: 502, severity: 'error', retryable: true },
+  /** The worktree folder exists already (`params.path`). */
+  WORKTREE_EXISTS: { category: 'conflict', http: 409, severity: 'warning', retryable: false },
+  /** The branch exists already (`params.branch`). */
+  BRANCH_EXISTS: { category: 'conflict', http: 409, severity: 'warning', retryable: false },
+  /**
+   * The worktree has open work (`params.dirtyFiles`, `params.unpushedCommits`) – removing it needs
+   * `force` (the cleanup dialog asks first, ADR-250).
+   */
+  WORKTREE_DIRTY: { category: 'conflict', http: 409, severity: 'warning', retryable: false },
+  /**
+   * The content search failed (`params.reason`: `superseded` = a newer `search.query` of the same
+   * window replaced it – the window ignores this one; `timeout`, `worker`, `failed`).
+   */
+  SEARCH_FAILED: { category: 'internal', http: 500, severity: 'warning', retryable: true },
+  /** An elicitation form the card cannot fill was accepted (`params.reason` = `unsupported` of the decision). */
+  ELICITATION_UNSUPPORTED: { category: 'validation', http: 400, severity: 'warning', retryable: false },
   // client-side only (never sent by a server)
   CONNECTION_LOST: { category: 'client', http: 0, severity: 'warning', retryable: true },
   COMMAND_TIMEOUT: { category: 'client', http: 0, severity: 'warning', retryable: true },
@@ -282,6 +311,51 @@ export const UPDATE_RESTART_FAILED_REASONS = [
   'store_too_new',
 ] as const;
 export type UpdateRestartFailedReason = (typeof UPDATE_RESTART_FAILED_REASONS)[number];
+
+/** WP-110: `GIT_FAILED.params.op` – which git step failed (the UI names it). */
+export const GIT_OPERATIONS = [
+  'status',
+  'diff',
+  'commit',
+  'branch_create',
+  'branch_switch',
+  'branch_delete',
+  'push',
+  'worktree_add',
+  'worktree_remove',
+  'worktree_list',
+  'setup',
+  'teardown',
+] as const;
+export type GitOperation = (typeof GIT_OPERATIONS)[number];
+
+/** WP-110: `GIT_PUSH_FAILED.params.reason`. */
+export const GIT_PUSH_FAILED_REASONS = ['auth', 'rejected', 'network', 'other'] as const;
+export type GitPushFailedReason = (typeof GIT_PUSH_FAILED_REASONS)[number];
+
+/** WP-110: `SEARCH_FAILED.params.reason`. */
+export const SEARCH_FAILED_REASONS = ['superseded', 'timeout', 'worker', 'failed'] as const;
+export type SearchFailedReason = (typeof SEARCH_FAILED_REASONS)[number];
+
+/** Params of the WP-110 codes (producers build them with these; the UI reads them tolerantly). */
+export const gitFailedParamsSchema = z.object({
+  op: z.enum(GIT_OPERATIONS),
+  exitCode: z.number().int().optional(),
+  detail: z.string().max(300).optional(),
+});
+export const gitPushFailedParamsSchema = z.object({
+  reason: z.enum(GIT_PUSH_FAILED_REASONS),
+  detail: z.string().max(300).optional(),
+});
+export const notAGitRepoParamsSchema = z.object({ path: z.string() });
+export const worktreeExistsParamsSchema = z.object({ path: z.string() });
+export const branchExistsParamsSchema = z.object({ branch: z.string() });
+export const worktreeDirtyParamsSchema = z.object({
+  dirtyFiles: z.number().int().nonnegative(),
+  unpushedCommits: z.number().int().nonnegative(),
+});
+export const searchFailedParamsSchema = z.object({ reason: z.enum(SEARCH_FAILED_REASONS) });
+export const elicitationUnsupportedParamsSchema = z.object({ reason: z.string().max(500) });
 
 /** All codes in catalog order. The only allowed type assertion of the contracts (type-tested). */
 export const ERROR_CODES = Object.keys(ERROR_CATALOG) as ErrorCode[];

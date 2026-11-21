@@ -30,12 +30,14 @@ import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   DEFAULT_MULTI_HOST_CONFIG,
   DEFAULT_UPDATE_STATE,
+  NO_HOST_FEATURES,
   WINDOWS_HOST_CAPABILITIES,
   currentConversation,
   isRemoteControlActive,
   type AppInfo,
   type Entry,
   type HostCapabilities,
+  type HostFeatures,
   type HostState,
   type HostWarning,
   type Profile,
@@ -103,6 +105,7 @@ import { DISABLED_NATIVE_TOASTS, toastShowOptions, type NativeToasts } from './n
 import {
   EMPTY_FOCUS_HISTORY,
   decisionsCleared,
+  isProjectMuted,
   isViewedByVisibleClient,
   isWatchedByFocusedClient,
   observeFocus,
@@ -131,6 +134,7 @@ import { endSideQuestions } from './sideQuestions';
 import { reduceStatus as realReduceStatus } from './status/machine';
 import { mergeUsage } from './overview';
 import { cwdLabel } from './summary';
+import { reopenedSinceMark } from './unread';
 import { createUsagePoller } from './usagePoll';
 
 export type { SessionManagerOptions, SleepPolicy } from './entryState';
@@ -215,6 +219,8 @@ export interface SessionManagerDeps {
     capabilities?: HostCapabilities;
     /** 102e: `HostState.homeDir` (already checked by the host's path rules). Absent → null. */
     homeDir?: string | null;
+    /** WP-110: `HostState.features` (Ausbau 1 routed on this host). Absent → none. */
+    features?: HostFeatures;
     /** WP-87: `HostState.app` and `HostState.update` (the update service). Absent → null / default. */
     app?: () => AppInfo | null;
     update?: () => UpdateState;
@@ -478,6 +484,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       systemIntegration: deps.host.systemIntegration ?? false,
       terminalAvailable: deps.host.terminalAvailable ?? false,
       homeDir: deps.host.homeDir ?? null,
+      features: deps.host.features ?? { ...NO_HOST_FEATURES },
       // WP-64: the default profile's `remoteControlAtStartup`, once a process of it was ready.
       remoteControlDefault: remoteDefaults.get(defaultProfile.id) ?? null,
       app: deps.host.app?.() ?? null,
@@ -594,11 +601,13 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
    * ADR-105: a running process may fall asleep when `canSleep(facts)` holds and no focused + visible
    * window shows the entry (the user would face "Starting…"). The idle time counts from the moment
    * both hold (`sleepSince`); every change of facts, presence or settings re-plans.
+   * WP-112 (WP-110 §3.7): a pinned session never falls asleep (`session.setPinned` re-plans).
    */
   const sleepEligible = (s: EntryState, clients: readonly ClientPresence[]): boolean =>
     !shuttingDown &&
     s.runtime !== null &&
     s.phase === 'running' &&
+    !s.entry.pinned &&
     // ADR-121 (R4-02): a planned turn (ScheduleWakeup/CronCreate, /loop) dies with the process.
     !s.runtime.scheduled &&
     // WP-64 (ADR-105 extended): the Claude app could not reach a sleeping session.
@@ -759,6 +768,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         toasts.available(),
         settings.notifications,
         focusHistory,
+        // WP-112: a muted project gets no toast and no sound (status and counters stay).
+        isProjectMuted(s.entry, settings.notifications.mutedProjects),
       );
       // WP41-04: one line per notification – target, channel and why (never the title: prompt text).
       if (route !== null) {
@@ -1182,7 +1193,15 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       return s === undefined ? null : s.loadView();
     },
 
-    handleCommand: (cmd, ctx: CommandContext) => handleCommand(engine, cmd, ctx),
+    async handleCommand(cmd, ctx: CommandContext) {
+      const result = await handleCommand(engine, cmd, ctx);
+      if (cmd.name === 'session.setPinned') {
+        // WP-112: a pinned session never falls asleep – re-plan its idle sleep.
+        const s = states.get(cmd.entryId);
+        if (s !== undefined) planSleep(s, presence());
+      }
+      return result;
+    },
 
     onPresenceChanged(all: readonly ClientPresence[]) {
       focusHistory = observeFocus(focusHistory, all);
@@ -1191,7 +1210,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         // WP-65 (§1.2): the moment a session stops being visible is its `lastSeenAt`.
         if (s.viewedByVisibleClient && !visible && !shuttingDown) s.markSeen(now().toISOString());
         s.viewedByVisibleClient = visible;
-        if (visible && s.facts.unread) {
+        // WP-112: an unread mark ends only when a window opens the session anew (unread.ts).
+        if (reopenedSinceMark(s, all) && s.facts.unread) {
           s.reduce({ type: 'viewed' });
           clearNotifications(s.id);
         }

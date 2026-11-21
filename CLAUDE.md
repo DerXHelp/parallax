@@ -96,6 +96,25 @@ die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale En
   - Gemeinsame Wörterbücher in L2 (`features/preferences/i18n/*`, `shell/navigation/i18n/*`): jedes Paket ändert nur
     die Unterbäume seiner Bereiche (WP-105 `console`, `shells`; WP-106 `files`; WP-107 `multiHost` und neue Schlüssel
     der Verwalten-Ansicht), neue Unterbäume am Ende. Merge-Konflikte löst der Koordinator.
+- **Ausbau 1 (WP-110…117, `docs/wp/WP-110.md` §6):** Koordinator `src/shared/**`, alle `ports.ts`,
+  `backend/{types,fixture}.ts`, `src/web/shell/{requests,slots,placeholders}.ts(x)`, `src/server/{main.ts,app/**}`,
+  `src/web/{App,main}.tsx`, `e2e/**`, Befehls-Stubs und Routing.
+  - **WP-111 (Server Git, Worktrees, Review):** `src/server/git/**`, `src/server/sessions/{commands,entryState,
+    external,worktrees,review}.ts`, `src/server/sessions/lib/gitBranch.ts`, `src/server/store/review.ts` (neu),
+    `src/server/terminal/**`, `src/server/remote/peerTerminal.ts`, `src/server/claude/env.ts`.
+  - **WP-112 (Server Suche, Übersicht, Elicitation):** `src/server/search/**`, `src/server/sessions/{manager,
+    notifier,broker,unread}.ts`, `src/server/sessions/status/**`, `src/server/store/transcripts.ts`,
+    `src/server/lib/transcriptWindow.ts`, `src/server/backend/{sdkBackend,sdkOptions}.ts`, `src/server/backend/fake/**`,
+    `src/server/sessions/normalizer/**`.
+  - **WP-113 (Web Änderungen):** `src/web/features/changes/**` (neu), `src/web/ui/diff-view.tsx`.
+  - **WP-114 (Web Worktrees):** `src/web/shell/new-session/**`, `src/web/shell/{NewSessionDialog,NewSessionForm}.tsx`,
+    `src/web/features/worktrees/**` (neu), neu `src/web/features/preferences/sections/ProjectsSection.tsx`,
+    `src/web/features/composer/**` (Sperre während des Setups, `composerText {asPaste}` als Paste-Chip).
+  - **WP-115 (Web Suche, Übersicht):** `src/web/features/search/**` (neu), `src/web/shell/navigation/**`,
+    `src/web/lib/session-order.ts`, `src/web/features/preferences/sections/SessionsSection.tsx`, in
+    `src/web/features/transcript/**` nur der Sprung zum Treffer (Anfrage `revealItem`).
+  - **WP-116 (Web Elicitation):** `src/web/features/decisions/**`.
+  - Wörterbücher `features/preferences/i18n/*`: WP-114 nur Unterbaum `projects` (neu, am Ende), WP-115 nur `sessions`.
 - Keine Datei wird von zwei Paketen bearbeitet; nichts in fremden Ordnern anlegen. `README.md` von
   Ordnern mit mehreren Ownern (`src/server`, `server/lib`, `server/sessions`, `server/backend`,
   `src/web`, `web/shell`, `web/features`, `web/ui`) pflegt der Koordinator.

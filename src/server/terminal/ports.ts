@@ -12,7 +12,7 @@
  */
 import type { EntryId } from '@shared/common';
 import type { ErrorPayload } from '@shared/errors';
-import type { ConsoleSettings } from '@shared/model';
+import type { ConsoleSettings, ShellKind } from '@shared/model';
 import type {
   TerminalClientMessage,
   TerminalId,
@@ -43,6 +43,12 @@ export interface PtySpawnOptions {
   env: Readonly<Record<string, string | undefined>>;
   cols: number;
   rows: number;
+  /**
+   * WP-111 (ADR-251, additive): Windows only – the complete command line exactly as given instead of
+   * one built from `args` (`cmd.exe /d /s /c "<command>"` must reach cmd unquoted by the CRT rules).
+   * POSIX ignores it.
+   */
+  windowsCommandLine?: string;
 }
 
 export interface PtyFactory {
@@ -113,6 +119,31 @@ export type TerminalClaudeOpenResult =
 /** `running` while the process of the terminal runs; exited, closed or unknown (server restarted) → `ended`. */
 export type TerminalClaudeState = 'running' | 'ended';
 
+/**
+ * WP-110 (ADR-251): a project's setup or teardown command, run visibly in a terminal tab of the entry –
+ * the one exception from "never through a shell": only text the user typed into the project settings,
+ * in the pseudo console, cancellable. The shell gets it as one argument (`cmd /d /s /c`, `powershell
+ * -Command`, `bash -lc`); `cwd` is the entry's (worktree) folder.
+ */
+export interface TerminalScriptSpec {
+  /** Tab title (e.g. "Setup"), at most `TERMINAL_LIMITS.titleMaxChars`. */
+  title: string;
+  shell: ShellKind;
+  /** The command text as typed (≤ `LIMITS.projectCommandChars`); never logged. */
+  command: string;
+  /** Added to the neutral environment (`PARALLAX_WORKTREE_PORT`, …). */
+  env: Readonly<Record<string, string>>;
+}
+
+export type TerminalScriptResult =
+  | {
+      kind: 'started';
+      terminalId: TerminalId;
+      /** Exit code once the command ended; null = killed or closed before (archive, shutdown). */
+      exit: Promise<number | null>;
+    }
+  | { kind: 'failed'; error: ErrorPayload };
+
 export interface TerminalService {
   /** True when shells can start here (`HostState.terminalAvailable`). */
   readonly available: boolean;
@@ -143,6 +174,17 @@ export interface TerminalService {
   remoteEpoch(): number;
   /** 102e: state of a terminal started by `openClaude` (the watch of the handoff). */
   claudeState(terminalId: TerminalId): TerminalClaudeState;
+  /**
+   * WP-110 (ADR-251): starts `spec` as a new terminal of the entry (`command: 'script'`, title
+   * `spec.title`) with the limits of `open` and pushes `terminals`; also for archived entries (teardown
+   * before deleting a worktree). The terminal stays listed after it ended ("Show output"). Never throws;
+   * errors like `openClaude`.
+   */
+  runScript(
+    entryId: EntryId,
+    spec: TerminalScriptSpec,
+    origin?: TerminalOrigin,
+  ): Promise<TerminalScriptResult>;
   /** Ends every terminal of the entry (`exit` with the reason) and forgets them. */
   closeEntry(entryId: EntryId, reason: TerminalEndReason): void;
   /**

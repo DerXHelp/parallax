@@ -185,6 +185,23 @@ export function UpdatesSettingsPlaceholder(_props: NoSlotProps) {
   return null;
 }
 
+// WP-110 (Ausbau 1): nothing until WP-113/114/115 fill the slots.
+export function ChangesPanelPlaceholder(_props: { sessionKey: string }) {
+  return null;
+}
+
+export function WorktreeCleanupPlaceholder(_props: NoSlotProps) {
+  return null;
+}
+
+export function WorktreeNoticePlaceholder(_props: { sessionKey: string }) {
+  return null;
+}
+
+export function SearchDialogPlaceholder(_props: NoSlotProps) {
+  return null;
+}
+
 /** Follows the DecisionCard rule (architecture §2.3e): nothing once the decision is resolved. */
 export function DecisionCardPlaceholder({
   sessionKey,

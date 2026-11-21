@@ -497,6 +497,8 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
       'profileChecks',
       'login',
       'files',
+      // WP-112: running search workers end before the stores close.
+      'search',
       'update',
       'stores',
       'lock',

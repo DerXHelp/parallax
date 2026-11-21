@@ -15,6 +15,8 @@ import {
   setEnvVar,
   shouldRemoveEnvVar,
   stripNodeModulesBin,
+  WORKTREE_PORT_ENV,
+  worktreePortEnv,
   type BuildEnvInput,
 } from './env';
 
@@ -973,5 +975,30 @@ describe('POSIX hosts (WP-103)', () => {
     expect(buildEnvReport(posix({}, { profile: { env: {}, configDir: '/proc/self' } })).issues).toEqual([
       { code: 'PATH_REJECTED', params: { reason: 'pseudo_fs', field: 'configDir' } },
     ]);
+  });
+});
+
+describe('WP-111: PARALLAX_WORKTREE_PORT (ADR-251)', () => {
+  it('is set in step 4 for a port block and replaces an inherited value', () => {
+    const env = buildEnv(input({ PATH: 'C:\\bin', parallax_worktree_port: '9' }, { worktreePort: 41010 }));
+    expect(getEnvVar(env, WORKTREE_PORT_ENV, 'win32')).toBe('41010');
+    expect(Object.keys(env).filter((k) => k.toUpperCase() === WORKTREE_PORT_ENV)).toEqual([
+      WORKTREE_PORT_ENV,
+    ]);
+  });
+
+  it('is never inherited without a port block (both platforms)', () => {
+    for (const platform of ['win32', 'linux'] as const) {
+      const env = buildEnv(
+        input({ PATH: '/bin', PARALLAX_WORKTREE_PORT: '41000' }, { platform, delimiter: ':' }),
+      );
+      expect(env[WORKTREE_PORT_ENV]).toBeUndefined();
+    }
+  });
+
+  it('worktreePortEnv', () => {
+    expect(worktreePortEnv(null)).toEqual({});
+    expect(worktreePortEnv(undefined)).toEqual({});
+    expect(worktreePortEnv(41000)).toEqual({ PARALLAX_WORKTREE_PORT: '41000' });
   });
 });

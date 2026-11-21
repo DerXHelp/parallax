@@ -56,6 +56,10 @@ export const DEMO_ENTRIES = {
   approved: sampleId('en', 0xac),
   approvedFresh: sampleId('en', 0xad),
   fresh: sampleId('en', 0xae),
+  // WP-116: MCP elicitations (form, url mode, outside the subset).
+  elicitForm: sampleId('en', 0xaf),
+  elicitUrl: sampleId('en', 0xb0),
+  elicitUnsupported: sampleId('en', 0xb1),
 } as const satisfies Record<string, EntryId>;
 
 export type DemoEntry = keyof typeof DEMO_ENTRIES;
@@ -162,6 +166,7 @@ function decisionCounts(decisions: readonly Decision[]): StatusFacts['decisions'
     permission: count('permission'),
     question: count('question'),
     plan: count('plan'),
+    elicitation: count('elicitation'),
     oldestKind: open[0]?.kind ?? null,
     expired: decisions.filter((decision) => decision.state === 'expired').length,
   };
@@ -174,7 +179,9 @@ function gatingToolCall(decision: Decision, order: number): TranscriptItem {
       ? decision.input
       : decision.kind === 'plan'
         ? { plan: decision.plan, planFilePath: decision.planFilePath }
-        : { questions: decision.questions.map((question) => ({ question: question.question })) };
+        : decision.kind === 'question'
+          ? { questions: decision.questions.map((question) => ({ question: question.question })) }
+          : { message: decision.message };
   return sampleItems.toolCall({
     id: `msg_demo_${decision.id}:0`,
     messageId: `msg_demo_${decision.id}`,
@@ -406,6 +413,30 @@ function expiredDecisions(entryId: EntryId): Decision[] {
   ];
 }
 
+/** The reason the server gives for a form outside the supported subset (WP-112, English). */
+export const DEMO_UNSUPPORTED_REASON = 'Field "labels" has type array, which is not supported.';
+
+function elicitationDecisions(entryId: EntryId, kind: 'form' | 'url' | 'unsupported'): Decision[] {
+  switch (kind) {
+    case 'form':
+      return [sampleDecisions.elicitationForm({ entryId, id: sampleId('dc', 0xaf1) })];
+    case 'url':
+      return [sampleDecisions.elicitationUrl({ entryId, id: sampleId('dc', 0xb01) })];
+    case 'unsupported':
+      return [
+        sampleDecisions.elicitationForm({
+          entryId,
+          id: sampleId('dc', 0xb11),
+          toolUseId: 'req_01SampleElicitation6',
+          title: 'Label the ticket',
+          message: 'Which labels should the ticket get?',
+          fields: [],
+          unsupported: DEMO_UNSUPPORTED_REASON,
+        }),
+      ];
+  }
+}
+
 function cautiousDecisions(entryId: EntryId): Decision[] {
   return [
     sampleDecisions.permission({
@@ -589,6 +620,27 @@ const SPECS: Readonly<Record<DemoEntry, DemoSessionSpec>> = {
       planFile: samplePlanFileRef({ path: DEMO_FRESH_PLAN_PATH, updatedAt: sampleTime(450) }),
     },
   },
+  elicitForm: {
+    title: 'File a ticket through MCP',
+    cwd: 'D:\\work\\parallax',
+    prompt: 'File a ticket for the flaky store test.',
+    status: { runState: 'working' },
+    decisions: (entryId) => elicitationDecisions(entryId, 'form'),
+  },
+  elicitUrl: {
+    title: 'Sign in to the MCP server',
+    cwd: 'D:\\work\\parallax',
+    prompt: 'Sync the open tickets.',
+    status: { runState: 'working' },
+    decisions: (entryId) => elicitationDecisions(entryId, 'url'),
+  },
+  elicitUnsupported: {
+    title: 'Label a ticket through MCP',
+    cwd: 'D:\\work\\parallax',
+    prompt: 'Label the new ticket.',
+    status: { runState: 'working' },
+    decisions: (entryId) => elicitationDecisions(entryId, 'unsupported'),
+  },
 };
 
 export interface DemoData {
@@ -616,6 +668,9 @@ export const DEMO_ENTRY_NAMES: readonly DemoEntry[] = [
   'approved',
   'approvedFresh',
   'fresh',
+  'elicitForm',
+  'elicitUrl',
+  'elicitUnsupported',
 ];
 
 export function demoData(entries: readonly DemoEntry[] = DEMO_ENTRY_NAMES): DemoData {
@@ -634,7 +689,10 @@ export function demoData(entries: readonly DemoEntry[] = DEMO_ENTRY_NAMES): Demo
         order: 1,
         text: { text: spec.prompt, truncated: null },
       }),
-      ...decisions.map((decision, i) => gatingToolCall(decision, 2 + i)),
+      // An elicitation has no tool call (WP-112).
+      ...decisions
+        .filter((decision) => decision.kind !== 'elicitation')
+        .map((decision, i) => gatingToolCall(decision, 2 + i)),
       ...(spec.extraItems ?? []),
     ];
     summaries.push(

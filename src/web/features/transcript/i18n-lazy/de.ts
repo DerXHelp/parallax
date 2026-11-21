@@ -69,4 +69,10 @@ export const de: typeof en = {
     retry: 'Erneut versuchen',
     refresh: 'Aktualisieren',
   },
+  reveal: {
+    label: 'Suchtreffer',
+    otherConversation: 'Suchtreffer aus einer früheren Konversation',
+    notLoaded: 'Suchtreffer weiter zurück in dieser Konversation',
+    close: 'Suchtreffer schließen',
+  },
 };

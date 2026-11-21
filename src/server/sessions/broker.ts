@@ -4,6 +4,12 @@
  * subagents in parallel), "first click wins" decided synchronously, the server-built
  * `PermissionResult`, persistence (open records with snapshot) and `expired` cards after a
  * restart. A server shutdown (`freeze`) never cancels: open records stay open → expired.
+ *
+ * WP-112 (ADR-256): MCP elicitations (`onElicitation`) are decisions of kind `elicitation` in the same
+ * queue – no tool call belongs to them (no `attachDecision`), the requester is always the main agent.
+ * Accept/decline/cancel answer the SDK with an `ElicitationAnswer`; every engine cancel (Stop,
+ * interrupt, process end, reset) and an aborted signal answer `cancel`; `completeElicitation`
+ * (system/elicitation_complete) closes an open URL request as answered.
  */
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type {
@@ -21,6 +27,8 @@ import type {
   DecisionOutcome,
   DecisionRecord,
   DecisionResponse,
+  ElicitationDecision,
+  ElicitationResponse,
   PlanAnnotation,
   PlanDecision,
   Requester,
@@ -30,7 +38,12 @@ import type {
 } from '@shared/model';
 import type { SessionOp } from '@shared/protocol';
 import type { DecisionCounts } from '@shared/status';
-import type { PermissionHandler, PermissionRequest } from '../backend/types';
+import type {
+  ElicitationAnswer,
+  ElicitationHandler,
+  PermissionHandler,
+  PermissionRequest,
+} from '../backend/types';
 import { logger } from '../lib/logger';
 import { CommandError, type DecisionStore } from '../sync/ports';
 import {
@@ -44,6 +57,11 @@ import {
   validateResponse,
   type CancelReason,
 } from './brokerRules';
+import {
+  checkElicitationContent,
+  ELICITATION_TOOL_NAME,
+  normalizeElicitation,
+} from './normalizer/elicitation';
 
 export type { CancelReason } from './brokerRules';
 
@@ -107,6 +125,13 @@ export type PlanRecord = DecisionRecord & { planVersion: number };
 export interface Broker {
   /** StartSessionRequest.canUseTool */
   readonly handler: PermissionHandler;
+  /** WP-112: StartSessionRequest.onElicitation – one `elicitation` decision per request. */
+  readonly elicitationHandler: ElicitationHandler;
+  /**
+   * WP-112: system/elicitation_complete – closes the open URL request of `serverName` with this
+   * `elicitationId` as answered (the SDK gets `accept`); false = none open.
+   */
+  completeElicitation(serverName: string, elicitationId: string): boolean;
   /** The checks of `respond` without any change (throws CommandError like respond). */
   check(decisionId: DecisionId, response: DecisionResponse): void;
   /** Synchronous check-and-set: first click wins. Throws CommandError. */
@@ -147,11 +172,60 @@ export interface Broker {
 
 type Status = 'open' | 'expired' | 'claimed' | 'resolved';
 
-interface Pending {
+interface PermissionPending {
+  kind: 'permission';
   /** Uncapped original input of the canUseTool request (updatedInput is built from it). */
   input: Record<string, unknown>;
   resolve(result: PermissionResult): void;
   detach(): void;
+}
+
+/** WP-112: a live onElicitation request. */
+interface ElicitationPending {
+  kind: 'elicitation';
+  serverName: string;
+  /** The uncapped id of the request (`elicitation_complete` correlates by it); null = none sent. */
+  elicitationId: string | null;
+  resolve(answer: ElicitationAnswer): void;
+  detach(): void;
+}
+
+type Pending = PermissionPending | ElicitationPending;
+
+/** What an elicitation gets when it ends without an answer of the user (cancel, abort, process end). */
+const ELICITATION_CANCELLED: ElicitationAnswer = { action: 'cancel', content: null };
+
+/**
+ * The checks of an elicitation answer (WP-112) and what goes to the SDK. Throws CommandError:
+ * ELICITATION_UNSUPPORTED (accept of a form the card cannot fill), DECISION_OPTION_UNAVAILABLE
+ * (content does not fit the fields).
+ */
+function elicitationReply(
+  decision: ElicitationDecision,
+  response: ElicitationResponse,
+): { answer: ElicitationAnswer; outcome: DecisionOutcome } {
+  switch (response.action) {
+    case 'decline':
+      return { answer: { action: 'decline', content: null }, outcome: { type: 'declined' } };
+    case 'cancel':
+      return { answer: { action: 'cancel', content: null }, outcome: { type: 'cancelled', reason: 'user' } };
+    case 'accept': {
+      if (decision.unsupported !== null) {
+        throw new CommandError(makeError('ELICITATION_UNSUPPORTED', { reason: decision.unsupported }));
+      }
+      if (decision.mode === 'url') {
+        if (response.content !== null && Object.keys(response.content).length > 0) {
+          throw new CommandError(
+            makeError('DECISION_OPTION_UNAVAILABLE', { path: 'content' }, 'url mode takes no content'),
+          );
+        }
+        return { answer: { action: 'accept', content: null }, outcome: { type: 'answered' } };
+      }
+      const checkedContent = checkElicitationContent(decision.fields, response.content);
+      if (!checkedContent.ok) throw new CommandError(checkedContent.error);
+      return { answer: { action: 'accept', content: checkedContent.content }, outcome: { type: 'answered' } };
+    }
+  }
 }
 
 interface Slot {
@@ -238,6 +312,7 @@ export function createBroker(deps: BrokerDeps): Broker {
       permission: 0,
       question: 0,
       plan: 0,
+      elicitation: 0,
       oldestKind: null,
       expired: countedOnly,
     };
@@ -256,25 +331,37 @@ export function createBroker(deps: BrokerDeps): Broker {
     deps.onCountsChanged(counts(), addedKind);
   };
 
-  /** Common end of every decision: answer the SDK, op, tool-call ref, record (not saved here). */
+  /**
+   * Common end of every decision: answer the SDK, op, tool-call ref, record (not saved here).
+   * An elicitation gets `answer`, else `cancel` whenever a permission `result` is given (WP-112).
+   */
   const finish = (
     slot: Slot,
     outcome: DecisionOutcome,
     byClientId: ClientId | null,
     result: PermissionResult | null,
+    answer: ElicitationAnswer | null = null,
   ): void => {
     slot.status = 'resolved';
     const pending = slot.pending;
     slot.pending = null;
     if (pending !== null) {
       pending.detach();
-      if (result !== null) pending.resolve(result);
+      if (pending.kind === 'permission') {
+        if (result !== null) pending.resolve(result);
+      } else {
+        const reply = answer ?? (result === null ? null : ELICITATION_CANCELLED);
+        if (reply !== null) pending.resolve(reply);
+      }
     }
     const at = deps.now().toISOString();
     // The outcome first (tool_call.decision via item.upsert), then the removal: a window that sees
     // the decision disappear already knows why ("allowed in another window", WP-20c). The other
     // order could reach the client in two animation frames – it showed "no longer open" instead.
-    deps.attachDecision(slot.record.toolUseId, refOf(slot.record, outcome));
+    // An elicitation has no tool call (WP-112).
+    if (slot.record.kind !== 'elicitation') {
+      deps.attachDecision(slot.record.toolUseId, refOf(slot.record, outcome));
+    }
     deps.emit([{ op: 'decision.resolved', decisionId: slot.record.id, outcome, byClientId, at }]);
     slot.record = {
       ...slot.record,
@@ -392,6 +479,7 @@ export function createBroker(deps: BrokerDeps): Broker {
       };
       signal.addEventListener('abort', onAbort, { once: true });
       slot.pending = {
+        kind: 'permission',
         input: req.input,
         resolve,
         detach: () => {
@@ -410,6 +498,67 @@ export function createBroker(deps: BrokerDeps): Broker {
     ]);
     deps.attachDecision(decision.toolUseId, refOf(slot.record, null));
     notifyCounts(decision.kind);
+    return promise;
+  };
+
+  /** WP-112 (ADR-256): one non-modal `elicitation` decision per onElicitation request. */
+  const elicitationHandler: ElicitationHandler = (req, signal) => {
+    if (signal.aborted) return Promise.resolve(ELICITATION_CANCELLED);
+    const decision: ElicitationDecision = {
+      id: deps.newDecisionId(),
+      entryId: deps.entryId,
+      conversationId: deps.conversationId(),
+      toolUseId: req.requestId,
+      toolName: ELICITATION_TOOL_NAME,
+      requester: { kind: 'main' },
+      createdAt: deps.now().toISOString(),
+      state: 'open',
+      kind: 'elicitation',
+      ...normalizeElicitation(req),
+    };
+    if (decision.unsupported !== null) {
+      log.info(
+        { entryId: deps.entryId, serverName: decision.serverName, reason: decision.unsupported },
+        'elicitation form not supported',
+      );
+    }
+    const slot: Slot = { decision, record: recordOf(decision), status: 'open', pending: null };
+    const promise = new Promise<ElicitationAnswer>((resolve) => {
+      const onAbort = (): void => {
+        if (slot.status !== 'open') return;
+        if (frozen) {
+          // Shutdown: stays open → expired after the restart, only release the SDK.
+          slot.pending = null;
+          resolve(ELICITATION_CANCELLED);
+          return;
+        }
+        finish(
+          slot,
+          deps.answeredElsewhere?.() === true
+            ? { type: 'answered_elsewhere' }
+            : { type: 'cancelled', reason: 'signal_aborted' },
+          null,
+          null,
+          ELICITATION_CANCELLED,
+        );
+        persist();
+        notifyCounts(null);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      slot.pending = {
+        kind: 'elicitation',
+        serverName: req.serverName,
+        elicitationId: req.elicitationId,
+        resolve,
+        detach: () => {
+          signal.removeEventListener('abort', onAbort);
+        },
+      };
+    });
+    slots.set(decision.id, slot);
+    persist();
+    deps.emit([{ op: 'decision.upsert', decision }]);
+    notifyCounts('elicitation');
     return promise;
   };
 
@@ -438,6 +587,9 @@ export function createBroker(deps: BrokerDeps): Broker {
     if (slot.status === 'open' && slot.pending === null) {
       throw new CommandError(makeError('DECISION_ALREADY_RESOLVED', { decisionId }));
     }
+    if (decision.kind === 'elicitation' && response.kind === 'elicitation') {
+      elicitationReply(decision, response.response);
+    }
     return { slot, decision };
   };
 
@@ -455,6 +607,25 @@ export function createBroker(deps: BrokerDeps): Broker {
 
   return {
     handler,
+    elicitationHandler,
+
+    completeElicitation(serverName, elicitationId) {
+      for (const slot of slots.values()) {
+        const pending = slot.pending;
+        if (
+          slot.status === 'open' &&
+          pending?.kind === 'elicitation' &&
+          pending.serverName === serverName &&
+          pending.elicitationId === elicitationId
+        ) {
+          finish(slot, { type: 'answered' }, null, null, { action: 'accept', content: null });
+          persist();
+          notifyCounts(null);
+          return true;
+        }
+      }
+      return false;
+    },
 
     check(decisionId, response) {
       checked(decisionId, response);
@@ -494,7 +665,8 @@ export function createBroker(deps: BrokerDeps): Broker {
       ) {
         // ADR-147: an open request gets deny + interrupt, an expired card is only closed.
         const wasOpen = slot.status === 'open';
-        const built = buildResult(decision, slot.pending?.input ?? {}, response);
+        const input = slot.pending?.kind === 'permission' ? slot.pending.input : {};
+        const built = buildResult(decision, input, response);
         if (built.outcome.type !== 'plan_approved') throw new Error('fresh context without plan_approved');
         finish(slot, built.outcome, byClientId, wasOpen ? built.result : null);
         persist();
@@ -517,6 +689,14 @@ export function createBroker(deps: BrokerDeps): Broker {
 
       const pending = slot.pending;
       if (pending === null) throw new CommandError(makeError('DECISION_ALREADY_RESOLVED', { decisionId }));
+      if (decision.kind === 'elicitation' && response.kind === 'elicitation') {
+        const reply = elicitationReply(decision, response.response);
+        finish(slot, reply.outcome, byClientId, null, reply.answer);
+        persist();
+        notifyCounts(null);
+        return { kind: 'resolved', outcome: reply.outcome };
+      }
+      if (pending.kind !== 'permission') throw new Error('elicitation request without elicitation decision');
       const built = buildResult(decision, pending.input, response);
       finish(slot, built.outcome, byClientId, built.result);
       persist();

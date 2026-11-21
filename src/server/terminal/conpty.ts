@@ -255,7 +255,7 @@ export function loadConPty(): ConPtyApi | null {
         const created = call(
           k.CreateProcessW,
           wide(options.executablePath),
-          wide(conPtyCommandLine(options.executablePath, options.args)),
+          wide(options.windowsCommandLine ?? conPtyCommandLine(options.executablePath, options.args)),
           null,
           null,
           0,

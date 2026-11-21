@@ -18,6 +18,7 @@ import { StatusIcon } from '@web/ui/status-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
 import { ConnectionIndicator } from './ConnectionIndicator';
 import { MultiHostIndicator } from './hosts/MultiHostIndicator';
+import { RailFilterIndicator } from './navigation/SidebarFilter';
 import { NEXT_WAITING_KEYS, useNextWaiting } from './navigation/use-next-waiting';
 import { useSidebarLayout } from './navigation/use-sidebar-layout';
 import { openNewSession } from './NewSessionDialog';
@@ -141,6 +142,8 @@ const SidebarRail = memo(function SidebarRail({
           </span>
         </IconButton>
       ) : null}
+      {/* WP-115: an active list filter is visible in the collapsed sidebar, too. */}
+      <RailFilterIndicator />
       {/* WP-87: the update hint as an icon (features/updates; the placeholder renders nothing). */}
       <SidebarUpdateNotice compact />
       <ul

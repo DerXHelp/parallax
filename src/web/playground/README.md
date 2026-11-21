@@ -22,7 +22,7 @@ Feature-Demos `#playground=transcript/<id>`. Theme und Sprache oben rechts. Mit 
 | `PlaygroundScenario.tsx` | `<PlaygroundScenario scenario="…">` (für Demos), `startScenario()` (Tests) |
 | `demos.tsx` | Demos von WP-14 (Shell-Szenarien, Status-Icons, Primitives); hängt die Navigations-Demos, die Phase-3-Shell-Demos (`src/web/shell/phase3-demos.tsx`, u. a. `shell-slot-quiet`; FIX-R5 F5, vorher über den Preferences-Playground) und die Showcase-Demos (WP-68) an |
 | `route.ts` | `#playground`-Parameter und `&bare` (`isBareHash`; klein, auch im Build importiert) |
-| `showcase/` | README-Screenshots (WP-68): erfundener Arbeitstag, Szenario `showcase`, Demos `showcase-overview`, `showcase-plan`, `showcase-files`; Details `showcase/README.md` |
+| `showcase/` | README-Screenshots (WP-68, WP-118): erfundener Arbeitstag, Szenario `showcase`, Demos `showcase-overview`, `showcase-plan`, `showcase-review`, `showcase-files`, `showcase-search`; Details `showcase/README.md` |
 
 **Feature-Demos (WP-15/16):** `src/web/features/<f>/playground.tsx` exportiert
 `demos: PlaygroundDemo[]` und optional `slots: Partial<FeatureSlots>` (dann zeigen die

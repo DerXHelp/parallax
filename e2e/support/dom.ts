@@ -46,5 +46,7 @@ declare global {
     __e2eShownAt?: number | null;
     // ---- wp64-remote-control.spec.ts (window.open recorder; WP-65: must stay empty) ----
     __e2eOpened?: string[];
+    // ---- ausbau1-search.spec.ts (texts of the transcript rows marked as a search hit, WP-117) ----
+    __e2eRevealed?: string[];
   }
 }

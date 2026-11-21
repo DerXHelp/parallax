@@ -8,7 +8,7 @@
  */
 import { isDeepStrictEqual } from 'node:util';
 import type { Logger } from 'pino';
-import type { ConversationId, EntryId, JsonValue, ProfileId } from '@shared/common';
+import type { ClientId, ConversationId, EntryId, JsonValue, ProfileId } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   currentConversation,
@@ -22,6 +22,7 @@ import {
   type Entry,
   type Profile,
   type RateLimitInfo,
+  type ReviewComment,
   type RunningTasks,
   type SessionActivity,
   type SessionSummary,
@@ -31,6 +32,7 @@ import {
   type ToolDecisionRef,
   type TranscriptItem,
   type Truncation,
+  type WorktreeSetup,
 } from '@shared/model';
 import type { Command, HostCommandName, SessionOp } from '@shared/protocol';
 import { openDecisionCount, type StatusFacts } from '@shared/status';
@@ -39,7 +41,8 @@ import { buildTaskRows, isTaskSourceItem, summarizeRunningTasks, taskSourceItems
 import type { AgentBackend } from '../backend/types';
 import type { ClaudeIntegration, LaunchSpec } from '../claude/ports';
 import type { newId } from '../lib/ids';
-import type { ProcessFilter, ProcessQueryResult } from '../lib/process';
+import { guiEnvironment, type ProcessFilter, type ProcessQueryResult } from '../lib/process';
+import { getEnvVar } from '../lib/windows';
 import { isStreamingItem } from '../store/transcripts';
 import {
   CommandError,
@@ -48,6 +51,7 @@ import {
   type DecisionStore,
   type DraftStore,
   type RegistryStore,
+  type ReviewStore,
   type SessionPublisher,
   type SettingsStore,
   type StoreWarnings,
@@ -55,10 +59,12 @@ import {
 } from '../sync/ports';
 import type { ConsoleLauncher } from '../system/ports';
 import type { TerminalService } from '../terminal/ports';
+import type { PromptAttachments } from './attachments';
 import { createBroker, type Broker } from './broker';
 import type { CatalogStore } from './catalogStore';
 import type { CommandCatalogStore } from './commandCatalog';
 import { DetailTracker, type DetailContext, type DetailFields } from './detailTracker';
+import { watchGitHead, type GitHeadWatch } from './lib/gitBranch';
 import { createSerial, type Serial } from './lib/serial';
 import type { TimerHandle, Timers } from './lib/timers';
 import { applyToMirror, baseView, findToolCallIn, readMirrorItems } from './mirror';
@@ -188,16 +194,25 @@ export interface EngineStores {
    * it). Absent: drafts live in memory only (lost with the server run).
    */
   drafts?: DraftStore;
+  /**
+   * WP-111 (ADR-254): review comments per entry (`store/review.ts` `createReviewStore`, compose.ts wires
+   * it). Absent: comments live in memory only (lost with the server run).
+   */
+  review?: ReviewStore;
 }
 
 /**
  * The stores as the engine uses them: the in-memory fallbacks filled in, no file store = null; the
  * decision store knows which plan versions exist (CR3-09, planIndex.ts).
  */
-export type EngineCoreStores = Required<Omit<EngineStores, 'attachments' | 'decisions' | 'drafts'>> & {
+export type EngineCoreStores = Required<
+  Omit<EngineStores, 'attachments' | 'decisions' | 'drafts' | 'review'>
+> & {
   readonly attachments: AttachmentFileStore | null;
   readonly decisions: PlanIndexedDecisionStore;
   readonly drafts: DraftStore | null;
+  /** WP-111: missing = in memory only. */
+  readonly review?: ReviewStore;
 };
 
 export interface NormalizerFns {
@@ -244,8 +259,21 @@ export function settingsSleepPolicy(settings: () => Settings): SleepPolicy {
   };
 }
 
-/** 102e: what the engine needs of the terminal service ("Continue in terminal"). */
-export type EngineTerminal = Pick<TerminalService, 'openClaude' | 'claudeState' | 'remoteEpoch'>;
+/**
+ * 102e: what the engine needs of the terminal service ("Continue in terminal"); WP-111 (ADR-251): the
+ * setup/teardown commands of worktrees and closing the entry's terminals before its worktree goes
+ * (optional: engine tests pass fakes without them – no setup/teardown then).
+ */
+export type EngineTerminal = Pick<TerminalService, 'openClaude' | 'claudeState' | 'remoteEpoch'> &
+  Partial<Pick<TerminalService, 'runScript' | 'closeEntry'>>;
+
+/** WP-111: a start prompt that waits for the worktree's setup (ADR-251; runtime only, lost on a restart). */
+export interface HeldStart {
+  text: string;
+  attachments: PromptAttachments;
+  pastes: readonly string[];
+  clientId: ClientId;
+}
 
 export interface EngineCore {
   readonly backend: AgentBackend;
@@ -335,7 +363,7 @@ export class EntryState {
   readonly lifecycle: Serial = createSerial();
   mirror: SessionViewState | null = null;
   loading: { buffer: SessionOp[]; promise: Promise<SessionViewState> } | null = null;
-  runtime: SessionRuntime | null = null;
+  private currentRuntime: SessionRuntime | null = null;
   phase: EntryPhase = 'dormant';
   /** Title of the own pending `/rename X` (its echo becomes `custom`, or `ai` - pendingRenameSource). */
   pendingRename: string | null = null;
@@ -367,9 +395,8 @@ export class EntryState {
    * running (R2-02): a start then shows `starting` while it waits.
    */
   orphanPending = false;
-  viewedByVisibleClient = false;
-  /** Hub subscribers (onSubscribersChanged). */
-  subscribers = 0;
+  private viewed = false;
+  private subscriberCount = 0;
   lastSdkMaxTokens: number | null = null;
   /** Env of the last launch (git lookups of a dormant entry need its PATH, R1-04). */
   lastEnv: Record<string, string> | null = null;
@@ -384,12 +411,7 @@ export class EntryState {
   continueTimer: TimerHandle | null = null;
   /** ADR-147: "implement with a fresh context" runs (every further decision.respond → SESSION_BUSY). */
   freshContextRunning = false;
-  /**
-   * WP-63: removed from Parallax (`session.remove`) – nothing is published or persisted any more
-   * (a late summary would put the entry back into the registry), every command answers
-   * ENTRY_NOT_FOUND.
-   */
-  removed = false;
+  private removedFlag = false;
   /** WP-64: live Remote Control state of the running process (off without one); see remoteControl.ts. */
   remote: RemoteState = REMOTE_OFF;
   /** WP-64: a new entry follows Claude's own `remoteControlAtStartup` (read after its first readiness). */
@@ -403,6 +425,18 @@ export class EntryState {
    * the server start (`restoreDraft`), changed only through `setDraft`.
    */
   draft: Draft | null = null;
+  /**
+   * WP-111 (ADR-254): the review comments (`detail.review`); null = not loaded yet (`reviewList`).
+   */
+  review: ReviewComment[] | null = null;
+  private reviewLoading: Promise<ReviewComment[]> | null = null;
+  /** WP-111 (ADR-250/251): creating the worktree / its setup (`summary.worktreeSetup`; runtime only). */
+  worktreeSetup: WorktreeSetup | null = null;
+  /** WP-111: the start prompt of `session.create` while the setup runs (or failed). */
+  heldStart: HeldStart | null = null;
+  /** WP-111: the HEAD watch of the entry's cwd (a branch switch shows at once). */
+  private headWatch: GitHeadWatch | null = null;
+  private headWatchStarting = false;
   /**
    * WP-77: highest draft `rev` of this server run – it keeps counting across a cleared draft, so a
    * window can tell an older state from a newer one (`nextDraftRev`).
@@ -466,6 +500,52 @@ export class EntryState {
 
   get id(): EntryId {
     return this.entry.id;
+  }
+
+  // CR2 (code review WP-117): the four facts `wantsHeadWatch` reads are accessors – the moment one of
+  // them makes the watch pointless (no process, not shown, archived, removed), it is released, so the
+  // limit GIT_HEAD_WATCH_MAX never fills up with entries nobody looks at.
+
+  get runtime(): SessionRuntime | null {
+    return this.currentRuntime;
+  }
+
+  set runtime(value: SessionRuntime | null) {
+    this.currentRuntime = value;
+    if (value === null) this.releaseUnwantedHeadWatch();
+  }
+
+  get viewedByVisibleClient(): boolean {
+    return this.viewed;
+  }
+
+  set viewedByVisibleClient(value: boolean) {
+    this.viewed = value;
+    if (!value) this.releaseUnwantedHeadWatch();
+  }
+
+  /** Hub subscribers (onSubscribersChanged). */
+  get subscribers(): number {
+    return this.subscriberCount;
+  }
+
+  set subscribers(value: number) {
+    this.subscriberCount = value;
+    if (value === 0) this.releaseUnwantedHeadWatch();
+  }
+
+  /**
+   * WP-63: removed from Parallax (`session.remove`) – nothing is published or persisted any more
+   * (a late summary would put the entry back into the registry), every command answers
+   * ENTRY_NOT_FOUND.
+   */
+  get removed(): boolean {
+    return this.removedFlag;
+  }
+
+  set removed(value: boolean) {
+    this.removedFlag = value;
+    if (value) this.releaseUnwantedHeadWatch();
   }
 
   conversation(): Conversation {
@@ -851,8 +931,11 @@ export class EntryState {
   patch(change: (entry: Entry) => Entry): void {
     const next = change(this.entry);
     if (next === this.entry) return;
+    const archived = next.archived && !this.entry.archived;
     this.entry = next;
     this.touch();
+    // CR2: an archived entry needs no HEAD watch.
+    if (archived) this.releaseUnwantedHeadWatch();
   }
 
   setLastError(error: ErrorPayload | null): void {
@@ -903,7 +986,47 @@ export class EntryState {
       outputStyle: this.outputStyle,
       runningTasks: this.runningTasks,
       hasDraft: this.draft !== null,
+      worktreeSetup: this.worktreeSetup,
     });
+  }
+
+  /** WP-111: the worktree's creation/setup state (summary); null = none. */
+  setWorktreeSetup(next: WorktreeSetup | null): void {
+    if (isDeepStrictEqual(next, this.worktreeSetup)) return;
+    this.worktreeSetup = next;
+    this.touch(true);
+  }
+
+  // ---- review comments (WP-111, ADR-254) ----
+
+  /** The stored comments (loaded once; [] when unreadable). */
+  reviewList(): Promise<ReviewComment[]> {
+    if (this.review !== null) return Promise.resolve(this.review);
+    const store = this.core.stores.review;
+    if (store === undefined) {
+      this.review = [];
+      return Promise.resolve(this.review);
+    }
+    this.reviewLoading ??= store
+      .load(this.entry.id)
+      .catch((error: unknown) => {
+        this.core.log.warn({ err: error, entryId: this.entry.id }, 'review comments unreadable');
+        return [];
+      })
+      .then((loaded) => {
+        this.reviewLoading = null;
+        // A change during the load came first (it wins).
+        this.review ??= loaded;
+        return this.review;
+      });
+    return this.reviewLoading;
+  }
+
+  /** New list: saved (debounced) and published with `ops` (review.upsert/review.remove). */
+  setReview(next: ReviewComment[], ops: readonly SessionOp[]): void {
+    this.review = next;
+    this.core.stores.review?.save(this.entry.id, next);
+    this.emit(ops);
   }
 
   /** WP-64: next live Remote Control state – summary, and the idle sleep when the bridge came or went. */
@@ -940,7 +1063,7 @@ export class EntryState {
     const buffer: SessionOp[] = [];
     const promise = (async () => {
       try {
-        const [read, commands] = await Promise.all([
+        const [read, commands, review] = await Promise.all([
           readMirrorItems(this.entry, {
             transcripts: this.core.stores.transcripts,
             backend: this.core.backend,
@@ -957,12 +1080,14 @@ export class EntryState {
             this.core.log.debug({ err: error, entryId: this.entry.id }, 'command cache unreadable');
             return null;
           }),
+          // WP-111 (ADR-254): the review comments belong to the entry (every conversation).
+          this.reviewList(),
         ]);
         if (read.imported.length > 0) this.importHistory(read.imported);
         const seedItems = await this.detailSeedItems(read);
         // The base is built now (current broker, queue, conversations); ops published while
         // reading are applied on top – the view contains every op published so far (WP-10 Nr. 5).
-        const base = baseView({
+        const built = baseView({
           entry: this.entry,
           items: read.items,
           hasEarlier: read.hasEarlier,
@@ -974,6 +1099,7 @@ export class EntryState {
           availableOutputStyles: this.availableOutputStyles,
           draft: this.draft,
         });
+        const base: SessionViewState = { ...built, detail: { ...built.detail, review: [...review] } };
         // Phase 3: todos/planFile derived from the items (the base view carries them; no op).
         const { todos, planFile } = this.seedDetail(seedItems, buffer);
         const applied = applyToMirror(base, buffer);
@@ -1035,8 +1161,8 @@ export class EntryState {
       draft: this.draft,
     });
     this.detail.reset();
-    this.mirror = view;
-    return view;
+    this.mirror = { ...view, detail: { ...view.detail, review: [...(this.review ?? [])] } };
+    return this.mirror;
   }
 
   /** Cache eviction (B): without process and subscribers the mirror is dropped. */
@@ -1121,6 +1247,7 @@ export class EntryState {
     this.externalTimer = null;
     this.continueTimer?.cancel();
     this.continueTimer = null;
+    this.stopHeadWatch();
   }
 
   /** After idle (C.1): one getContextUsage('summary'), debounced, at most one at a time. */
@@ -1207,11 +1334,79 @@ export class EntryState {
       if (this.core.shuttingDown()) return;
       const branch = found === null ? null : found.slice(0, GIT_BRANCH_CHARS);
       this.patch((e) => (e.gitBranch === branch ? e : { ...e, gitBranch: branch }));
+      // WP-111: a repository → watch its HEAD while the entry is shown or runs.
+      if (found !== null) this.ensureHeadWatch(env);
+      else this.stopHeadWatch();
     } catch (error) {
       this.core.log.debug({ err: error, entryId: this.entry.id }, 'git branch lookup failed');
     } finally {
       this.gitBusy = false;
     }
+  }
+
+  /** WP-111: the HEAD watch is worth its handle – not removed or archived, and running or shown. */
+  private wantsHeadWatch(): boolean {
+    return (
+      !this.removed &&
+      !this.entry.archived &&
+      !this.core.shuttingDown() &&
+      (this.runtime !== null || this.viewedByVisibleClient || this.subscribers > 0)
+    );
+  }
+
+  /** WP-111: starts the HEAD watch of the cwd (once; the folder changed → a new one). */
+  private ensureHeadWatch(env: Record<string, string>): void {
+    if (!this.wantsHeadWatch()) {
+      this.stopHeadWatch();
+      return;
+    }
+    if (this.headWatch !== null || this.headWatchStarting) return;
+    this.headWatchStarting = true;
+    const cwd = this.entry.cwd;
+    // Like `gitEnv`: without a PATH (a launch spec without one) the server's neutral environment.
+    const watchEnv = getEnvVar(env, 'PATH') !== undefined ? env : { ...guiEnvironment(), ...env };
+    void watchGitHead(cwd, watchEnv, () => {
+      if (!this.wantsHeadWatch() || this.entry.cwd !== cwd) {
+        this.stopHeadWatch();
+        return;
+      }
+      void this.refreshGitBranch();
+    })
+      .then((watch) => {
+        if (watch !== null && (this.headWatch !== null || !this.wantsHeadWatch() || this.entry.cwd !== cwd)) {
+          watch.close();
+          return;
+        }
+        this.headWatch = watch;
+      })
+      .finally(() => {
+        this.headWatchStarting = false;
+      });
+  }
+
+  stopHeadWatch(): void {
+    this.headWatch?.close();
+    this.headWatch = null;
+  }
+
+  /** CR2: stops the HEAD watch once it is no longer wanted (a starting one checks on its own). */
+  private releaseUnwantedHeadWatch(): void {
+    if (this.headWatch !== null && !this.wantsHeadWatch()) this.stopHeadWatch();
+  }
+
+  /** WP-111/CR2: a HEAD watch runs for this entry (tests). */
+  get watchingHead(): boolean {
+    return this.headWatch !== null;
+  }
+
+  /**
+   * WP-111: the environment of git calls for this entry – the PATH of the running process, else of the
+   * last launch, else of a fresh launch spec; without a PATH the server's (neutral) environment.
+   */
+  async gitEnv(): Promise<Record<string, string>> {
+    const env = this.runtime?.launch.env ?? this.lastEnv ?? (await this.launchEnv()) ?? {};
+    if (getEnvVar(env, 'PATH') !== undefined) return env;
+    return { ...guiEnvironment(), ...env };
   }
 
   /** Env of a fresh launch spec (dormant entry without an earlier launch); null if it fails. */
@@ -1296,6 +1491,8 @@ export const ARCHIVED_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryComm
   'session.subagentTranscript',
   // WP-77 (ADR-210): the draft belongs to Parallax, not to the Claude session.
   'session.setDraft',
+  // WP-110 (F6): the unread mark is Parallax's own.
+  'session.setUnread',
 ]);
 
 /** WP-30 §4.12: open in an external console – never a second writer on the Claude session. */
@@ -1313,6 +1510,8 @@ export const EXTERNAL_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryComm
   'session.subagentTranscript',
   // WP-77: the draft is Parallax's own (the console never sees it).
   'session.setDraft',
+  // WP-110 (F6): the unread mark is Parallax's own.
+  'session.setUnread',
 ]);
 
 /** The entry is handed off to an external console (recorded, or its status says so). */

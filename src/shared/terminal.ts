@@ -81,8 +81,11 @@ export const TERMINAL_EXIT_REASONS = [
 export const terminalExitReasonSchema = z.enum(TERMINAL_EXIT_REASONS);
 export type TerminalExitReason = z.infer<typeof terminalExitReasonSchema>;
 
-/** 102e: what a terminal runs (`TerminalInfo.command`). */
-export const TERMINAL_COMMANDS = ['shell', 'claude'] as const;
+/**
+ * 102e: what a terminal runs (`TerminalInfo.command`). WP-110 (ADR-251): `script` = a project's setup
+ * or teardown command in the chosen shell (`TerminalService.runScript`); its tab carries `title`.
+ */
+export const TERMINAL_COMMANDS = ['shell', 'claude', 'script'] as const;
 export const terminalCommandSchema = z.enum(TERMINAL_COMMANDS);
 export type TerminalCommand = z.infer<typeof terminalCommandSchema>;
 

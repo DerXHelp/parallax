@@ -7,6 +7,8 @@ import {
   FolderOpenIcon,
   LinkIcon,
   FolderPlusIcon,
+  MailDotIcon,
+  MailOpenIcon,
   MessageCircleQuestionIcon,
   MessageSquareTextIcon,
   HistoryIcon,
@@ -30,7 +32,7 @@ import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
 import { LOCAL_HOST_ID, parseSessionKey, type EntryId, type HostId, type TerminalId } from '@shared/common';
 import { makeError } from '@shared/errors';
-import { shellKindSchema, type SessionSummary, type ShellKind } from '@shared/model';
+import { liveWorktree, shellKindSchema, type SessionSummary, type ShellKind } from '@shared/model';
 import type { Command, CommandName } from '@shared/protocol';
 import { t as translateNow, useT, type TranslationKey } from '@web/i18n';
 import { copyText } from '@web/lib/clipboard';
@@ -40,7 +42,13 @@ import { openClaudeSessionUrl, openSessionWindow } from '@web/lib/windows';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand } from '@web/state/hooks';
 import { getSessionCapabilities, getSessionPaths, selectHostFlavor } from '@web/state/host-platform';
-import { canSendTo, selectTerminalAvailable, sendHostCommand, sessionAllows } from '@web/state/hosts';
+import {
+  canSendTo,
+  selectSessionFeature,
+  selectTerminalAvailable,
+  sendHostCommand,
+  sessionAllows,
+} from '@web/state/hosts';
 import { showErrorNotice, showTextNotice } from '@web/state/notices';
 import { selectSettings } from '@web/state/settings';
 import { clientStore } from '@web/state/store';
@@ -109,7 +117,9 @@ export type SessionActionId =
    * WP-105 (102e): "Continue in terminal" – `claude --resume` in the embedded terminal of the session's
    * computer; while it runs there (`summary.external.terminalId`) "Show terminal with claude".
    */
-  | 'openInTerminal';
+  | 'openInTerminal'
+  /** WP-115 (F6): "Mark as unread" / "Mark as read" (`session.setUnread`, host `features.overview`). */
+  | 'unread';
 
 export type SessionActionSlot = SessionActionId | 'separator';
 
@@ -139,7 +149,7 @@ export interface SessionSubAction {
 /**
  * Sidebar context menu and the "…" menu of a row (order of WP-35 §3; WP-58: + open folder; WP-63:
  * + remove; WP-64: + Remote Control; WP-65: + generate title again; WP-66: + quick question; WP-105:
- * + continue in terminal).
+ * + continue in terminal; WP-115: + mark as unread/read after "Pin").
  */
 export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
   'quickAsk',
@@ -147,6 +157,7 @@ export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
   'rename',
   'regenerateTitle',
   'pin',
+  'unread',
   'openWindow',
   'openFolder',
   'openShell',
@@ -169,7 +180,8 @@ export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
 
 /**
  * Header menu (WP-35 §8; WP-58: + open folder; WP-63: + remove; WP-64: + Remote Control; WP-65: + title;
- * WP-70: + output style, sign in; WP-105: + continue in terminal).
+ * WP-70: + output style, sign in; WP-105: + continue in terminal; WP-115: + mark as unread before
+ * "Put to sleep" – "come back to this later").
  */
 export const HEADER_ACTIONS: readonly SessionActionSlot[] = [
   'conversations',
@@ -191,6 +203,7 @@ export const HEADER_ACTIONS: readonly SessionActionSlot[] = [
   'openRemote',
   'copyRemoteLink',
   'separator',
+  'unread',
   'sleep',
   'archive',
   'remove',
@@ -527,6 +540,42 @@ export function continueInTerminal(sessionKey: string, entryId: EntryId): Promis
   );
 }
 
+/**
+ * "Archive" / "Restore" of the menus. WP-115 (ADR-250): archiving a worktree session first asks the
+ * cleanup dialog (shell request `worktree.cleanup`, WP-114) what happens to its worktree and branch –
+ * the dialog archives then; nobody takes the request → archived as before.
+ */
+export function archiveSession(sessionKey: string, summary: SessionSummary): void {
+  if (
+    !summary.archived &&
+    liveWorktree(summary.worktree) !== null &&
+    requestShell({ kind: 'worktree.cleanup', sessionKey, then: 'archive' })
+  ) {
+    return;
+  }
+  runSessionCommand(sessionKey, {
+    name: 'session.setArchived',
+    entryId: summary.entryId,
+    archived: !summary.archived,
+  });
+}
+
+/**
+ * "Remove from Parallax…" of the menus. WP-115: a worktree session goes through the cleanup dialog
+ * (`worktree.cleanup {then: 'remove'}`, WP-114), which removes the entry afterwards; nobody takes the
+ * request → the confirmation dialog of WP-63 as before. WP-117 (CR5): a removed worktree
+ * (`removedAt`) never asks again.
+ */
+export function requestRemove(sessionKey: string, summary: SessionSummary): void {
+  if (
+    liveWorktree(summary.worktree) !== null &&
+    requestShell({ kind: 'worktree.cleanup', sessionKey, then: 'remove' })
+  ) {
+    return;
+  }
+  requestRemoveSession(sessionKey);
+}
+
 /** True for a session of the local host (Explorer, new window: only there). */
 export function isLocalSession(sessionKey: string): boolean {
   return parseSessionKey(sessionKey)?.hostId === LOCAL_HOST_ID;
@@ -783,11 +832,7 @@ function build(
         icon: summary.archived ? ArchiveRestoreIcon : ArchiveIcon,
         disabled: external,
         run: () => {
-          runSessionCommand(sessionKey, {
-            name: 'session.setArchived',
-            entryId,
-            archived: !summary.archived,
-          });
+          archiveSession(sessionKey, summary);
         },
       };
     case 'conversations':
@@ -841,9 +886,24 @@ function build(
         icon: ListXIcon,
         disabled: false,
         run: () => {
-          requestRemoveSession(sessionKey);
+          requestRemove(sessionKey, summary);
         },
       };
+    case 'unread': {
+      // WP-115: only a computer that knows `session.setUnread`; archived and external sessions too.
+      if (!selectSessionFeature(clientStore.getState(), sessionKey, 'overview')) return null;
+      if (!sessionAllows(sessionKey, 'session.setUnread')) return null;
+      const unread = summary.status.unread;
+      return {
+        id,
+        label: unread ? 'navigation.actions.markRead' : 'navigation.actions.markUnread',
+        icon: unread ? MailOpenIcon : MailDotIcon,
+        disabled: false,
+        run: () => {
+          runSessionCommand(sessionKey, { name: 'session.setUnread', entryId, unread: !unread });
+        },
+      };
+    }
     case 'remoteControl': {
       // WP-64: the wish – a running session switches at once, a dormant one at its next start.
       const on = summary.remoteControl.wanted;

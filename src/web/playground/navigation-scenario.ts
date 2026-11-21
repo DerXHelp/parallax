@@ -62,7 +62,7 @@ function facts(p: Partial<StatusFacts>): StatusFacts {
 }
 
 function decisionCounts(p: Partial<StatusFacts['decisions']>): StatusFacts['decisions'] {
-  return { permission: 0, question: 0, plan: 0, oldestKind: null, expired: 0, ...p };
+  return { permission: 0, question: 0, plan: 0, elicitation: 0, oldestKind: null, expired: 0, ...p };
 }
 
 interface Row {
@@ -128,7 +128,10 @@ function rows(now: number): Row[] {
       title: 'Database migration plan',
       cwd: 'D:\\work\\db\\migrations',
       minutesAgo: 5,
-      status: facts({ runState: 'idle', decisions: decisionCounts({ plan: 1, oldestKind: 'plan' }) }),
+      status: facts({
+        runState: 'idle',
+        decisions: decisionCounts({ plan: 1, elicitation: 0, oldestKind: 'plan' }),
+      }),
       extra: {
         gitBranch: 'db/v7',
         model: 'internal-coder-xl',

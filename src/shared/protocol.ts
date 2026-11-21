@@ -22,6 +22,7 @@ import {
   permissionModeSchema,
   profileIdSchema,
   promptPrioritySchema,
+  reviewCommentIdSchema,
   terminalIdSchema,
 } from './common';
 import { errorPayloadSchema, makeError, type ErrorPayload } from './errors';
@@ -37,6 +38,12 @@ import {
   fileOpenTargetSchema,
   fileStatResultSchema,
   fsListingSchema,
+  gitDiffFileSchema,
+  gitDiffScopeSchema,
+  gitRefNameSchema,
+  gitShaSchema,
+  gitStatusSchema,
+  gitWorktreeSchema,
   hostAddressSchema,
   hostColorSchema,
   hostNameSchema,
@@ -57,6 +64,11 @@ import {
   remoteHostIdSchema,
   remotePeerLevelSchema,
   remotePortSchema,
+  reviewAnchorFields,
+  reviewCommentSchema,
+  reviewCommentsSchema,
+  isReviewRange,
+  searchHitSchema,
   REMOTE_PEER_LEVELS,
   type RemotePeerLevel,
   REMOTE_ACCESS_DEFAULT_PORT,
@@ -74,6 +86,7 @@ import {
   shellKindSchema,
   WINDOWS_SHELL_KINDS,
   transcriptItemSchema,
+  worktreeInspectionSchema,
 } from './model';
 import { NAME_MAX_CHARS } from './paths';
 import { notificationKindSchema } from './status';
@@ -89,8 +102,12 @@ import { notificationKindSchema } from './status';
  *   of the forwarder.
  * 6 (WP-95, ADR-236): the system events `attachments_missing` and `peer_message_hold`.
  * 7 (WP-102, Linux): shell kinds login/bash/zsh/fish/pwsh, `shell.detect` → `shells`, `HostState.capabilities`.
+ * 8 (WP-110, Ausbau 1): git.*, worktree.*, review.*, search.query, transcript.loadAround,
+ *   session.setUnread, the ops review.upsert/review.remove, the decision kind `elicitation`, the cancel
+ *   reason `user`, GIT_* / WORKTREE_* / BRANCH_EXISTS / SEARCH_FAILED / ELICITATION_UNSUPPORTED,
+ *   `HostState.features`.
  */
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 /** WP-70: longest pasted sign-in code (`profile.loginCode`; a link with code and state fits). */
 export const LOGIN_CODE_CHARS = 4000;
 /**
@@ -253,6 +270,16 @@ export const sessionOpSchema = z.discriminatedUnion('op', [
   }),
   /** Replaces exactly the given fields (no array merge, no defaults). */
   z.object({ op: z.literal('detail.patch'), patch: sessionDetailPatchSchema }),
+  /**
+   * WP-110 (ADR-254): new or changed review comments – replaced by id, new ones appended
+   * (`SessionDetail.review` keeps the order of creation).
+   */
+  z.object({ op: z.literal('review.upsert'), comments: reviewCommentsSchema.min(1) }),
+  /** WP-110: review comments deleted (unknown ids are ignored). */
+  z.object({
+    op: z.literal('review.remove'),
+    commentIds: z.array(reviewCommentIdSchema).min(1).max(LIMITS.reviewCommentsMax),
+  }),
 ]);
 export type SessionOp = z.infer<typeof sessionOpSchema>;
 export type SessionOpName = SessionOp['op'];
@@ -311,6 +338,13 @@ export const promptInputSchema = z
   .refine((p) => p.text.trim() !== '' || p.attachments.length > 0, { message: 'empty prompt' });
 export type PromptInput = z.infer<typeof promptInputSchema>;
 
+/** WP-110: `session.create.worktree`. */
+export const sessionWorktreeRequestSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('new'), branch: gitRefNameSchema, baseRef: gitRefNameSchema.optional() }),
+  z.object({ mode: z.literal('existing'), path: z.string().min(1).max(LIMITS.pathChars) }),
+]);
+export type SessionWorktreeRequest = z.infer<typeof sessionWorktreeRequestSchema>;
+
 export const commandSchema = z.discriminatedUnion('name', [
   z.object({
     name: z.literal('session.create'),
@@ -325,6 +359,13 @@ export const commandSchema = z.discriminatedUnion('name', [
     effort: effortLevelSchema.optional(),
     /** First prompt (starts the session). */
     prompt: promptInputSchema.optional(),
+    /**
+     * WP-110 (ADR-250): run the session in a worktree of the repository of `cwd` – `new`: create
+     * `<repo>/.claude/worktrees/<branch>` on a new branch from `baseRef` (missing = the current branch
+     * of the main worktree); `existing`: a worktree of `worktree.list`. NOT_A_GIT_REPO, WORKTREE_EXISTS,
+     * BRANCH_EXISTS, GIT_FAILED {op: 'worktree_add'}. Requires `HostState.features.git`.
+     */
+    worktree: sessionWorktreeRequestSchema.optional(),
   }),
   z.object({
     name: z.literal('session.sendPrompt'),
@@ -754,6 +795,128 @@ export const commandSchema = z.discriminatedUnion('name', [
   z.object({ name: z.literal('session.openShell'), entryId: entryIdSchema, shell: shellKindSchema }),
   /** Where Git for Windows is installed (settings "Console"); never cached. */
   z.object({ name: z.literal('shell.detect') }),
+  // ---- WP-110 (Ausbau 1): overview, git service, worktrees, review, search ----
+  /**
+   * F6: mark the entry unread (`true`, stays until the session is opened again – an open window does
+   * not clear it at once) or read (`false`). ENTRY_NOT_FOUND.
+   */
+  z.object({ name: z.literal('session.setUnread'), entryId: entryIdSchema, unread: z.boolean() }),
+  /**
+   * Git service (ADR-252) in the entry's `cwd`; host-routed (archived and external entries too). Every
+   * git command: ENTRY_NOT_FOUND, GIT_NOT_FOUND, NOT_A_GIT_REPO, GIT_FAILED {op}.
+   */
+  z.object({ name: z.literal('git.status'), entryId: entryIdSchema }),
+  /**
+   * The changed files of `scope` without patches (load them per file with `git.fileDiff`).
+   * `onlySessionFiles`: only files the session touched (`files.session`; the default without a worktree).
+   */
+  z.object({
+    name: z.literal('git.diff'),
+    entryId: entryIdSchema,
+    scope: gitDiffScopeSchema,
+    onlySessionFiles: z.boolean().default(false),
+  }),
+  /** The patch of one file (`path` relative to the repository root, `/`-separated). */
+  z.object({
+    name: z.literal('git.fileDiff'),
+    entryId: entryIdSchema,
+    scope: gitDiffScopeSchema,
+    path: z.string().min(1).max(LIMITS.pathChars),
+  }),
+  /** Commit everything (`paths` missing) or the given files; runs the repository's hooks. */
+  z.object({
+    name: z.literal('git.commit'),
+    entryId: entryIdSchema,
+    message: z.string().trim().min(1).max(LIMITS.gitCommitMessageChars),
+    paths: z.array(z.string().min(1).max(LIMITS.pathChars)).min(1).max(LIMITS.gitFilesMax).optional(),
+  }),
+  /** New branch at `HEAD`; `switch` = check it out. BRANCH_EXISTS {branch}. */
+  z.object({
+    name: z.literal('git.branchCreate'),
+    entryId: entryIdSchema,
+    /** The new branch (`name` is the command's discriminator). */
+    branch: gitRefNameSchema,
+    switch: z.boolean(),
+  }),
+  /** Only without conflicts (GIT_FAILED {op: 'branch_switch'} otherwise). */
+  z.object({ name: z.literal('git.branchSwitch'), entryId: entryIdSchema, branch: gitRefNameSchema }),
+  /** Without an upstream `-u origin <branch>`. GIT_PUSH_FAILED {reason}. */
+  z.object({ name: z.literal('git.push'), entryId: entryIdSchema }),
+  /** Worktrees of the repository of `cwd` ("New session" → existing worktree). */
+  z.object({ name: z.literal('worktree.list'), cwd: z.string().min(1).max(LIMITS.pathChars) }),
+  /** What deleting the entry's worktree would lose (cleanup dialog). VALIDATION_FAILED without worktree. */
+  z.object({ name: z.literal('worktree.inspect'), entryId: entryIdSchema }),
+  /**
+   * Delete the entry's worktree (after the project's teardown, ADR-251) and optionally its branch;
+   * `force` = also with uncommitted changes / unmerged branch (WORKTREE_DIRTY otherwise). A failed
+   * teardown → GIT_FAILED {op: 'teardown', exitCode}; `skipTeardown` = "Delete anyway". The entry keeps
+   * `worktree` = null afterwards. Not while the session runs (SESSION_BUSY).
+   */
+  z.object({
+    name: z.literal('worktree.remove'),
+    entryId: entryIdSchema,
+    deleteBranch: z.boolean(),
+    force: z.boolean(),
+    skipTeardown: z.boolean().default(false),
+  }),
+  /** Review comment on the session diff (ADR-254); the server makes id and time. Op `review.upsert`. */
+  z
+    .object({
+      name: z.literal('review.add'),
+      entryId: entryIdSchema,
+      ...reviewAnchorFields,
+      text: z.string().trim().min(1).max(LIMITS.reviewCommentChars),
+    })
+    .refine(isReviewRange, { message: 'endLine before line', path: ['endLine'] }),
+  /**
+   * Change text, anchor (after a re-anchor in the window) or state (`stale`, or back to `open`); only
+   * the given fields. VALIDATION_FAILED for an unknown comment.
+   */
+  z.object({
+    name: z.literal('review.update'),
+    entryId: entryIdSchema,
+    commentId: reviewCommentIdSchema,
+    text: z.string().trim().min(1).max(LIMITS.reviewCommentChars).optional(),
+    line: reviewAnchorFields.line.optional(),
+    endLine: reviewAnchorFields.endLine.optional(),
+    quote: reviewAnchorFields.quote.optional(),
+    state: z.enum(['open', 'stale']).optional(),
+  }),
+  /** Delete comments (unknown ids are ignored). Op `review.remove`. */
+  z.object({
+    name: z.literal('review.remove'),
+    entryId: entryIdSchema,
+    commentIds: z.array(reviewCommentIdSchema).min(1).max(LIMITS.reviewCommentsMax),
+  }),
+  /** The window put them into the composer ("Send to Claude") → state `sent`, `sentAt` now. */
+  z.object({
+    name: z.literal('review.markSent'),
+    entryId: entryIdSchema,
+    commentIds: z.array(reviewCommentIdSchema).min(1).max(LIMITS.reviewCommentsMax),
+  }),
+  /**
+   * Full-text search over this host's sessions (ADR-255): transcripts, titles, turn summaries, plans;
+   * case-insensitive, newest first, at most LIMITS.searchHitsMax. The answer is the ack result (no
+   * push); a newer `search.query` of the same window ends the older one with SEARCH_FAILED
+   * {reason: 'superseded'}.
+   */
+  z.object({
+    name: z.literal('search.query'),
+    text: z.string().trim().min(LIMITS.searchTextMin).max(LIMITS.searchTextMax),
+    includeArchived: z.boolean().default(true),
+    includeToolOutput: z.boolean().default(false),
+  }),
+  /**
+   * Items around one item of a conversation (jump to a search hit): the item and up to `around` items
+   * before and after it, by order (`TranscriptStore.readAround`). VALIDATION_FAILED for an unknown item.
+   */
+  z.object({
+    name: z.literal('transcript.loadAround'),
+    entryId: entryIdSchema,
+    conversationId: conversationIdSchema,
+    itemId: itemIdSchema,
+    around: z.number().int().min(0).max(LIMITS.loadAroundMax),
+  }),
 ]);
 export type Command = z.infer<typeof commandSchema>;
 export type CommandName = Command['name'];
@@ -807,6 +970,23 @@ export const HOST_COMMAND_NAMES = [
   'fs.createDirectory',
   'session.openShell',
   'shell.detect',
+  // WP-110: git service, worktrees and review (WP-111), search (WP-112) – no lifecycle gating.
+  'git.status',
+  'git.diff',
+  'git.fileDiff',
+  'git.commit',
+  'git.branchCreate',
+  'git.branchSwitch',
+  'git.push',
+  'worktree.list',
+  'worktree.inspect',
+  'worktree.remove',
+  'review.add',
+  'review.update',
+  'review.remove',
+  'review.markSent',
+  'search.query',
+  'transcript.loadAround',
 ] as const satisfies readonly CommandName[];
 export type HostCommandName = (typeof HOST_COMMAND_NAMES)[number];
 export type HostCommand = Extract<Command, { name: HostCommandName }>;
@@ -873,6 +1053,25 @@ export const REMOTE_ALLOWED_COMMANDS = [
   'fs.createDirectory',
   // WP-102 (E3): the shells of this computer, for the embedded terminal of a controlling computer.
   'shell.detect',
+  // WP-110: reading (status, diffs, worktrees, search) and changing (commit, branch, push, worktree
+  // removal, review, unread) – both need at least `control`, like controlling the session itself.
+  'session.setUnread',
+  'git.status',
+  'git.diff',
+  'git.fileDiff',
+  'git.commit',
+  'git.branchCreate',
+  'git.branchSwitch',
+  'git.push',
+  'worktree.list',
+  'worktree.inspect',
+  'worktree.remove',
+  'review.add',
+  'review.update',
+  'review.remove',
+  'review.markSent',
+  'search.query',
+  'transcript.loadAround',
 ] as const satisfies readonly CommandName[];
 
 /**
@@ -1071,6 +1270,36 @@ export const commandResultSchemas = {
   'shell.detect': z.object({
     gitDir: z.string().nullable(),
     shells: z.array(shellKindSchema).default([...WINDOWS_SHELL_KINDS]),
+  }),
+  'session.setUnread': z.object({}),
+  'git.status': z.object({ status: gitStatusSchema }),
+  /** `files` without patches; `base` = the commit the scope starts at (null = `HEAD`/index scopes). */
+  'git.diff': z.object({
+    root: z.string(),
+    base: gitShaSchema.nullable(),
+    files: z.array(gitDiffFileSchema),
+    truncated: z.boolean(),
+  }),
+  'git.fileDiff': z.object({ file: gitDiffFileSchema }),
+  'git.commit': z.object({ sha: gitShaSchema }),
+  'git.branchCreate': z.object({}),
+  'git.branchSwitch': z.object({}),
+  'git.push': z.object({}),
+  /** `repoRoot` null = `cwd` is in no repository (then `worktrees` is empty). */
+  'worktree.list': z.object({ repoRoot: z.string().nullable(), worktrees: z.array(gitWorktreeSchema) }),
+  'worktree.inspect': worktreeInspectionSchema,
+  'worktree.remove': z.object({}),
+  'review.add': z.object({ comment: reviewCommentSchema }),
+  'review.update': z.object({ comment: reviewCommentSchema }),
+  'review.remove': z.object({}),
+  'review.markSent': z.object({}),
+  /** Newest first; `truncated` = more than LIMITS.searchHitsMax hits. */
+  'search.query': z.object({ hits: z.array(searchHitSchema), truncated: z.boolean() }),
+  /** By order; `hasEarlier`/`hasLater` = more items before / after the returned ones. */
+  'transcript.loadAround': z.object({
+    items: z.array(transcriptItemSchema),
+    hasEarlier: z.boolean(),
+    hasLater: z.boolean(),
   }),
 } as const satisfies Record<CommandName, z.ZodType>;
 export type CommandResult<N extends CommandName> = z.infer<(typeof commandResultSchemas)[N]>;

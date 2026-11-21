@@ -147,4 +147,13 @@ export const errorsDe: Record<ErrorCode, string> = {
     'Der Windows-Schlüsselspeicher ist nicht verfügbar, daher lassen sich Schlüssel nicht sicher ablegen (braucht Node.js 26.9 oder neuer).',
   REMOTE_NOT_ALLOWED: 'Das geht nur am Rechner selbst.',
   DRAFT_TOO_LARGE: 'Der Entwurf ist zu groß zum Speichern.',
+  GIT_NOT_FOUND: 'Git wurde auf diesem Rechner nicht gefunden. Git installieren und Parallax neu starten.',
+  NOT_A_GIT_REPO: 'Der Ordner gehört zu keinem Git-Repository.',
+  GIT_FAILED: 'Der Git-Befehl ist fehlgeschlagen.',
+  GIT_PUSH_FAILED: 'Push fehlgeschlagen.',
+  WORKTREE_EXISTS: 'Ein Worktree mit diesem Namen existiert bereits.',
+  BRANCH_EXISTS: 'Ein Branch mit diesem Namen existiert bereits.',
+  WORKTREE_DIRTY: 'Der Worktree hat Änderungen, die noch nicht committet oder gepusht sind.',
+  SEARCH_FAILED: 'Die Suche konnte nicht abgeschlossen werden.',
+  ELICITATION_UNSUPPORTED: 'Dieses Eingabeformular wird nicht unterstützt.',
 };

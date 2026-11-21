@@ -30,6 +30,10 @@ export type ClientId = z.infer<typeof clientIdSchema>;
 export const terminalIdSchema = hex32('tm');
 export type TerminalId = z.infer<typeof terminalIdSchema>;
 
+/** WP-110 (ADR-254): one review comment of a session (`rc_` + 32 hex, made by the server). */
+export const reviewCommentIdSchema = hex32('rc');
+export type ReviewCommentId = z.infer<typeof reviewCommentIdSchema>;
+
 export const STANDARD_PROFILE_ID = 'standard' as const;
 
 /** Built-in profile `standard` or `pf_` + 32 hex. */
@@ -92,7 +96,8 @@ export type JsonValue = z.infer<typeof jsonValueSchema>;
 export const paramsSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]));
 export type Params = z.infer<typeof paramsSchema>;
 
-export const DECISION_KINDS = ['permission', 'question', 'plan'] as const;
+/** WP-110 (ADR-256): `elicitation` = an MCP server asks the user for input (form or URL). */
+export const DECISION_KINDS = ['permission', 'question', 'plan', 'elicitation'] as const;
 export const decisionKindSchema = z.enum(DECISION_KINDS);
 export type DecisionKind = z.infer<typeof decisionKindSchema>;
 
@@ -285,6 +290,46 @@ export const LIMITS = {
   remoteEventsMax: 500,
   /** Days a connection-log entry is kept. */
   remoteEventsDays: 30,
+  // ---- WP-110 (Ausbau 1, docs/wp/WP-110.md §4) ----
+  /** One review comment's text (`review.add`/`review.update`). */
+  reviewCommentChars: 8_000,
+  /** The quoted lines of one review comment (anchor for re-anchoring, ADR-254). */
+  reviewQuoteChars: 4_000,
+  /** Review comments of one session (open, sent and stale together). */
+  reviewCommentsMax: 200,
+  /** Branch names and refs in git commands (`git.branchCreate`, `session.create.worktree`). */
+  gitRefChars: 250,
+  /** A commit message (`git.commit`). */
+  gitCommitMessageChars: 10_000,
+  /** Files of one git status / diff list; more → `truncated` (ADR-252). */
+  gitFilesMax: 500,
+  /** Bytes of the patch of one file (`git.fileDiff`); more → `truncated` (ADR-252). */
+  gitPatchBytes: 1024 * 1024,
+  /** Worktrees of one `worktree.list` answer. */
+  worktreesMax: 200,
+  /** Setup/teardown command of a project (`settings.projects`, ADR-251). */
+  projectCommandChars: 4_000,
+  /** Projects with settings (`settings.projects`) and muted projects (`notifications.mutedProjects`). */
+  projectsMax: 200,
+  /** Search text (`search.query`), trimmed. */
+  searchTextMin: 2,
+  searchTextMax: 200,
+  /** Hits of one search; more → `truncated` (ADR-255). */
+  searchHitsMax: 200,
+  /** Snippet around one hit (chars). */
+  searchSnippetChars: 400,
+  /** Highlighted ranges in one snippet. */
+  searchRangesMax: 20,
+  /** Items before and after the hit for `transcript.loadAround`. */
+  loadAroundMax: 100,
+  /** Message of an elicitation (MCP server text, capped by the server). */
+  elicitationMessageChars: 10_000,
+  /** Fields of one elicitation form; more → `unsupported`. */
+  elicitationFieldsMax: 50,
+  /** Values of one enum field of an elicitation form. */
+  elicitationEnumMax: 100,
+  /** One string value of an elicitation answer (and a field's title/description/default). */
+  elicitationValueChars: 10_000,
 } as const;
 
 /**

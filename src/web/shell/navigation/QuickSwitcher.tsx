@@ -1,26 +1,56 @@
-import { GitBranchIcon, SearchIcon } from 'lucide-react';
+import { GitBranchIcon, SearchIcon, TextSearchIcon } from 'lucide-react';
 import { useCallback, useId, useMemo, useRef, useState } from 'react';
-import { LOCAL_HOST_ID } from '@shared/common';
+import { useStore } from 'zustand';
+import { LIMITS, LOCAL_HOST_ID } from '@shared/common';
 import type { ProfileSummary } from '@shared/model';
 import { useFormat, useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { fuzzyFilter, type FuzzyFilterOptions } from '@web/lib/fuzzy';
 import { pathTail } from '@web/lib/path-display';
 import { useReturnFocus } from '@web/lib/return-focus';
-import { flatSidebarOrder, waitingFirst, type OrderedSession } from '@web/lib/session-order';
+import {
+  flatSidebarOrder,
+  sessionProjectPath,
+  waitingFirst,
+  type OrderedSession,
+} from '@web/lib/session-order';
 import { sessionTitle } from '@web/lib/session-title';
 import { openSessionWindow } from '@web/lib/windows';
 import { useNow } from '@web/state/clock';
 import { useProfilesByHost, useSelectedSession, useSummaries, type SummaryEntry } from '@web/state/hooks';
+import { selectHostFeature } from '@web/state/hosts';
+import { clientStore, type ClientState } from '@web/state/store';
 import { CommandInput, CommandList, handleCommandKey, type CommandModifiers } from '@web/ui/command-list';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@web/ui/dialog';
+import { Kbd } from '@web/ui/kbd';
 import { StatusIcon } from '@web/ui/status-icon';
 import { focusSessionInput } from '../NewSessionForm';
+import { requestShell } from '../requests';
+import { shortcutKeyLabels } from '../shortcuts';
 import { PathTail } from './PathTail';
 import { PROFILE_BG } from './profile-colors';
 import { setArchiveView } from './sidebar-view';
 
 type Item = OrderedSession<SummaryEntry>;
+
+/** WP-115: the last option "Search in contents: …" (request `search.open`, WP-110 §3.6). */
+interface SearchContents {
+  search: string;
+}
+
+type SwitcherOption = Item | SearchContents;
+
+function isSearchOption(option: SwitcherOption): option is SearchContents {
+  return 'search' in option;
+}
+
+/** Shortcut of the full-text search (features/search registers it; shown in the option). */
+const SEARCH_KEYS = 'Mod+Shift+F';
+
+/** Some connected computer searches contents (`HostState.features.search`). */
+function selectAnySearch(state: ClientState): boolean {
+  return Object.keys(state.hosts).some((hostId) => selectHostFeature(state, hostId, 'search'));
+}
 
 function SwitcherItem({
   item,
@@ -51,8 +81,9 @@ function SwitcherItem({
         </span>
       </span>
       <span className="text-muted-foreground flex min-w-0 items-center gap-1.5 pl-5.5 text-2xs">
-        {/* WP41-02: the project folder stays whole, the folder before it shrinks. */}
-        <PathTail path={summary.cwd} data-slot="switcher-path" />
+        {/* WP41-02: the project folder stays whole, the folder before it shrinks (WP-115: the
+            main repository of a worktree session). */}
+        <PathTail path={sessionProjectPath(summary)} data-slot="switcher-path" />
         {summary.gitBranch === null ? null : (
           <span className="flex min-w-0 items-center gap-0.5">
             <GitBranchIcon aria-hidden className="size-3 shrink-0" />
@@ -71,6 +102,18 @@ function SwitcherItem({
   );
 }
 
+/** WP-115: the option "Search in contents: “…”" with the shortcut of the search. */
+function SearchContentsItem({ text }: { text: string }) {
+  const t = useT();
+  return (
+    <span data-slot="switcher-search" className="flex min-w-0 flex-1 items-center gap-2">
+      <TextSearchIcon aria-hidden className="text-muted-foreground size-3.5 shrink-0" />
+      <span className="min-w-0 flex-1 truncate">{t('navigation.switcher.searchContents', { text })}</span>
+      <Kbd className="shrink-0">{shortcutKeyLabels(SEARCH_KEYS, t).join('+')}</Kbd>
+    </span>
+  );
+}
+
 /**
  * Ranking with a query (V3-03): match quality first – scattered hits are dropped, the title wins
  * near ties over folder, branch and profile –, waiting sessions only on equal scores (the base
@@ -80,10 +123,13 @@ const SEARCH: FuzzyFilterOptions = { strict: true, keyPenalty: 1 };
 
 function QuickSwitcherContent({
   onClose,
+  onSearch,
   onCloseAutoFocus,
 }: {
   /** `sessionKey`: the session chosen for this window (its message field gets the focus). */
   onClose: (sessionKey?: string) => void;
+  /** WP-115: "Search in contents" was chosen – closes the switcher, then opens the search. */
+  onSearch: (text: string) => void;
   onCloseAutoFocus: (event: Event) => void;
 }) {
   const t = useT();
@@ -94,6 +140,7 @@ function QuickSwitcherContent({
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const listId = useId();
+  const canSearch = useStore(clientStore, selectAnySearch);
 
   const profileOf = (entry: SummaryEntry) => profiles.get(entry.hostId, entry.summary.profileId);
   const showProfile = profiles.size > 1;
@@ -106,17 +153,31 @@ function QuickSwitcherContent({
         query,
         ({ entry }) => [
           sessionTitle(entry.summary),
-          pathTail(entry.summary.cwd),
-          entry.summary.gitBranch ?? '',
+          pathTail(sessionProjectPath(entry.summary)),
+          entry.summary.gitBranch ?? entry.summary.worktree?.branch ?? '',
           profiles.get(entry.hostId, entry.summary.profileId)?.name ?? '',
         ],
         SEARCH,
       ),
     [base, query, profiles],
   );
-  const activeIndex = items.length === 0 ? -1 : Math.min(active, items.length - 1);
+  // WP-115: last option "Search in contents: …" once the text is long enough for `search.query`.
+  const searchText = query.trim();
+  const options = useMemo<SwitcherOption[]>(
+    () =>
+      canSearch && searchText.length >= LIMITS.searchTextMin
+        ? [...items, { search: searchText.slice(0, LIMITS.searchTextMax) }]
+        : items,
+    [canSearch, items, searchText],
+  );
+  const activeIndex = options.length === 0 ? -1 : Math.min(active, options.length - 1);
 
-  const choose = (item: Item, modifiers: CommandModifiers) => {
+  const choose = (option: SwitcherOption, modifiers: CommandModifiers) => {
+    if (isSearchOption(option)) {
+      onSearch(option.search);
+      return;
+    }
+    const item = option;
     if (modifiers.shiftKey && item.entry.hostId === LOCAL_HOST_ID) {
       openSessionWindow(item.entry.summary.entryId);
       onClose();
@@ -141,7 +202,7 @@ function QuickSwitcherContent({
         <CommandInput
           listId={listId}
           activeIndex={activeIndex}
-          count={items.length}
+          count={options.length}
           value={query}
           aria-label={t('navigation.switcher.title')}
           placeholder={t('navigation.switcher.placeholder')}
@@ -152,12 +213,12 @@ function QuickSwitcherContent({
           }}
           onKeyDown={(event) => {
             handleCommandKey(event, {
-              count: items.length,
+              count: options.length,
               activeIndex,
               onActiveIndexChange: setActive,
               onSelectActive: (modifiers) => {
-                const item = items[activeIndex];
-                if (item !== undefined) choose(item, modifiers);
+                const option = options[activeIndex];
+                if (option !== undefined) choose(option, modifiers);
               },
             });
           }}
@@ -166,16 +227,25 @@ function QuickSwitcherContent({
       <CommandList
         id={listId}
         label={t('navigation.switcher.list')}
-        items={items}
-        getKey={(item) => item.entry.sessionKey}
+        items={options}
+        getKey={(option) => (isSearchOption(option) ? 'search-contents' : option.entry.sessionKey)}
         activeIndex={activeIndex}
         onActiveIndexChange={setActive}
         onSelect={choose}
         empty={t('navigation.switcher.empty')}
         className="max-h-[min(22rem,55vh)] p-1"
-        renderItem={(item) => (
-          <SwitcherItem item={item} profile={profileOf(item.entry)} showProfile={showProfile} now={now} />
-        )}
+        renderItem={(option) =>
+          isSearchOption(option) ? (
+            <SearchContentsItem text={option.search} />
+          ) : (
+            <SwitcherItem
+              item={option}
+              profile={profileOf(option.entry)}
+              showProfile={showProfile}
+              now={now}
+            />
+          )
+        }
       />
       <p className="text-muted-foreground border-t px-3 py-1.5 text-2xs">{t('navigation.switcher.hint')}</p>
     </DialogContent>
@@ -187,7 +257,9 @@ function QuickSwitcherContent({
  * search over title, folder, branch and profile; waiting sessions first; Enter opens, Shift+Enter
  * opens in a new window, arrows move, Esc closes. Archived sessions are not listed. Focus (R4W-04,
  * V3-04): Enter puts it into the message field of the chosen session, Esc and Shift+Enter give it
- * back to where it was before Ctrl+K.
+ * back to where it was before Ctrl+K. WP-115: with at least two characters and a computer that
+ * searches contents, the last option "Search in contents: …" closes the switcher and opens the
+ * full-text search with the text (request `search.open`; nobody takes it → the focus goes back).
  */
 export function QuickSwitcher({
   open,
@@ -197,11 +269,19 @@ export function QuickSwitcher({
   onOpenChange: (open: boolean) => void;
 }) {
   const chosen = useRef<string | null>(null);
+  const searchText = useRef<string | null>(null);
   const returnFocus = useReturnFocus(open);
   const onCloseAutoFocus = useCallback(
     (event: Event) => {
       const sessionKey = chosen.current;
+      const search = searchText.current;
       chosen.current = null;
+      searchText.current = null;
+      if (search !== null && requestShell({ kind: 'search.open', text: search })) {
+        // The search dialog opens now and takes the focus (its own focus return on close).
+        event.preventDefault();
+        return;
+      }
       if (sessionKey === null) {
         returnFocus(event);
         return;
@@ -218,6 +298,10 @@ export function QuickSwitcher({
           onCloseAutoFocus={onCloseAutoFocus}
           onClose={(sessionKey) => {
             chosen.current = sessionKey ?? null;
+            onOpenChange(false);
+          }}
+          onSearch={(text) => {
+            searchText.current = text;
             onOpenChange(false);
           }}
         />

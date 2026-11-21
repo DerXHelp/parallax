@@ -27,6 +27,7 @@ import {
   permissionModeSchema,
   profileIdSchema,
   promptPrioritySchema,
+  reviewCommentIdSchema,
   ruleDestinationSchema,
   terminalIdSchema,
   themeSchema,
@@ -363,6 +364,16 @@ const notificationSettingsFields = {
   doneMinSeconds: z.number().int().min(0).max(600),
   /** HKCU protocol handler `parallax:` – a click on a native toast opens the session (A.9, opt-in). */
   openOnClick: z.boolean(),
+  /**
+   * WP-110 (F6): muted projects – no toasts and no sounds for their sessions (status, counters and
+   * in-app hints stay). A project is the sidebar group: `worktree?.repoRoot ?? cwd` of an entry, as an
+   * exact string. A patch replaces the whole `notifications` object – send the list (missing = []).
+   */
+  mutedProjects: z
+    .array(z.string().min(1).max(LIMITS.pathChars))
+    .max(LIMITS.projectsMax)
+    .readonly()
+    .default([]),
 };
 export const notificationSettingsPatchSchema = z.object(notificationSettingsFields);
 
@@ -373,6 +384,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS = {
   focusedElsewhere: 'in_app',
   doneMinSeconds: 20,
   openOnClick: false,
+  mutedProjects: [],
 } as const satisfies z.infer<typeof notificationSettingsPatchSchema>;
 
 /** Persisted form: every field with a default (a missing field loads without migration). */
@@ -394,6 +406,7 @@ export const notificationSettingsSchema = z.object({
     DEFAULT_NOTIFICATION_SETTINGS.doneMinSeconds,
   ),
   openOnClick: z.boolean().default(false),
+  mutedProjects: notificationSettingsFields.mutedProjects,
 });
 export type NotificationSettings = z.infer<typeof notificationSettingsSchema>;
 
@@ -842,6 +855,44 @@ export const DEFAULT_UPDATE_SETTINGS = { check: true, registry: null } as const 
   typeof updateSettingsSchema
 >;
 
+// ---- Projects (WP-110, F2/F3; ADR-250, ADR-251) ----
+
+/**
+ * Settings of one project (a git repository) on this host – optional: empty commands and both
+ * switches off change nothing. The commands come only from the user (never from the repository);
+ * they run visibly in a terminal tab of the session (ADR-251). Every field has a default, so a
+ * project written by an older build loads; send every field anyway (an entry is replaced whole).
+ */
+export const projectSettingsSchema = z.object({
+  /** Runs after a new worktree was created (`<shell> … <setup>`); '' = nothing. */
+  setup: z.string().max(LIMITS.projectCommandChars).default(''),
+  /** Runs before a worktree is deleted; '' = nothing. */
+  teardown: z.string().max(LIMITS.projectCommandChars).default(''),
+  /** Shell for both commands; null = `settings.console.defaultShell`. */
+  shell: shellKindSchema.nullable().default(null),
+  /** Give every new worktree a block of 10 ports (`PARALLAX_WORKTREE_PORT`, ADR-251). */
+  ports: z.boolean().default(false),
+  /** "In its own worktree" is preselected in "New session" for this project. */
+  worktreeDefault: z.boolean().default(false),
+});
+export type ProjectSettings = z.infer<typeof projectSettingsSchema>;
+export const DEFAULT_PROJECT_SETTINGS = {
+  setup: '',
+  teardown: '',
+  shell: null,
+  ports: false,
+  worktreeDefault: false,
+} as const satisfies ProjectSettings;
+
+/**
+ * Key = the repository root as the git service reports it (`GitStatus.root`, `worktree.list`
+ * `repoRoot`; the host's spelling), compared as an exact string – like `cwd` (never normalized).
+ */
+export const projectSettingsMapSchema = z
+  .record(z.string().min(1).max(LIMITS.pathChars), projectSettingsSchema)
+  .refine((projects) => Object.keys(projects).length <= LIMITS.projectsMax, 'too many projects');
+export type ProjectSettingsMap = z.infer<typeof projectSettingsMapSchema>;
+
 /** Fields without defaults: the base of the patch schema (a patch must never inject defaults). */
 const settingsFields = {
   language: languageSchema,
@@ -866,6 +917,8 @@ const settingsFields = {
   zoom: zoomSchema,
   /** WP-97: "Open shell in folder" – default shell, window of Git Bash, Git folder. */
   console: consoleSettingsSchema,
+  /** WP-110: settings per project (setup/teardown, ports, worktree default); a patch replaces the map. */
+  projects: projectSettingsMapSchema,
 };
 
 export const settingsSchema = z.object({
@@ -883,6 +936,7 @@ export const settingsSchema = z.object({
   updates: updateSettingsSchema.default(DEFAULT_UPDATE_SETTINGS),
   zoom: settingsFields.zoom.default(DEFAULT_ZOOM),
   console: consoleSettingsSchema.default(DEFAULT_CONSOLE_SETTINGS),
+  projects: projectSettingsMapSchema.default(() => ({})),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
@@ -1337,6 +1391,26 @@ export const WINDOWS_HOST_CAPABILITIES = {
   protocolHandler: true,
 } as const satisfies HostCapabilities;
 
+/**
+ * WP-110: features of "Ausbau 1" the host's server handles (its commands are routed). A controlling
+ * computer and the web show git, worktrees, review, search and the overview additions only for a
+ * host that names them – an older host (absent) gets none of the new commands.
+ */
+export const hostFeaturesSchema = z.object({
+  /** `git.*`, `worktree.*`, `review.*`, `session.create.worktree` (WP-111). */
+  git: z.boolean().default(false),
+  /** `search.query`, `transcript.loadAround` (WP-112). */
+  search: z.boolean().default(false),
+  /** `session.setUnread`, `notifications.mutedProjects`, elicitation decisions (WP-112). */
+  overview: z.boolean().default(false),
+});
+export type HostFeatures = z.infer<typeof hostFeaturesSchema>;
+export const NO_HOST_FEATURES = {
+  git: false,
+  search: false,
+  overview: false,
+} as const satisfies HostFeatures;
+
 export const hostStateSchema = z.object({
   /** package.json version. */
   serverVersion: z.string(),
@@ -1402,6 +1476,8 @@ export const hostStateSchema = z.object({
    * the web resolves `~/…` in the transcript outside the `cwd`; null = unknown (older hosts).
    */
   homeDir: z.string().min(1).max(LIMITS.pathChars).nullable().default(null),
+  /** WP-110: features of Ausbau 1 on this host (absent = an older host: none). */
+  features: hostFeaturesSchema.default(NO_HOST_FEATURES),
 });
 export type HostState = z.infer<typeof hostStateSchema>;
 
@@ -1487,6 +1563,66 @@ export type TurnSummary = z.infer<typeof turnSummarySchema>;
 export const titleSourceSchema = z.enum(['none', 'prompt', 'ai', 'custom']);
 export type TitleSource = z.infer<typeof titleSourceSchema>;
 
+// ---- Git basics and worktrees (WP-110; ADR-250, ADR-252, ADR-253) ----
+
+/** A full commit id (SHA-1, or SHA-256 in a sha256 repository), lower case. */
+export const gitShaSchema = z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/);
+export type GitSha = z.infer<typeof gitShaSchema>;
+
+/**
+ * A branch or ref name the git service may pass to git: a subset of `git check-ref-format` – no
+ * leading `-` (never an option), no whitespace or control characters, none of `~ ^ : ? * [ \`, no
+ * `..`, `@{` or `//`, no part starting with `.`, not ending in `/`, `.` or `.lock`. `origin/main`,
+ * tags and commit ids are valid ref names too.
+ */
+export function isValidGitRefName(name: string): boolean {
+  if (name.length === 0 || name.length > LIMITS.gitRefChars || name === '@') return false;
+  if (name.startsWith('-') || name.startsWith('/') || name.endsWith('/')) return false;
+  if (name.endsWith('.') || name.endsWith('.lock')) return false;
+  if (name.includes('..') || name.includes('@{') || name.includes('//')) return false;
+  for (const ch of name) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code <= 0x20 || code === 0x7f) return false;
+  }
+  if (/[~^:?*[\\]/.test(name)) return false;
+  return name.split('/').every((part) => !part.startsWith('.'));
+}
+
+export const gitRefNameSchema = z.string().refine(isValidGitRefName, { message: 'not a valid git ref name' });
+
+/**
+ * WP-110 (F2, ADR-250): the session runs in a git worktree of its own – `Entry.cwd` is `path`
+ * (exactly). The sidebar groups it under `repoRoot` (with the branch as label), not as a project of
+ * its own; `repoRoot` is also the key of `settings.projects`.
+ */
+export const worktreeRefSchema = z.object({
+  /** Root of the main worktree of the repository, as git reports it (exact string). */
+  repoRoot: z.string().min(1).max(LIMITS.pathChars),
+  /** The worktree folder (`<repoRoot>/.claude/worktrees/<name>` when Parallax created it). */
+  path: z.string().min(1).max(LIMITS.pathChars),
+  /** Its branch (short name). */
+  branch: gitRefNameSchema,
+  /** What it branched from, as given (e.g. `main`); the session diff starts at the merge base (ADR-253). */
+  baseRef: gitRefNameSchema,
+  /** Commit of `baseRef` when the worktree was created or picked. */
+  baseSha: gitShaSchema,
+  /** First port of its block of 10 (`PARALLAX_WORKTREE_PORT`, ADR-251); null = no port block. */
+  portBase: z.number().int().min(1024).max(65535).nullable(),
+  createdAt: isoDateTimeSchema,
+  /**
+   * WP-117 (code review CR5): when `worktree.remove` deleted the folder; null = it exists. The record
+   * stays so the session keeps its project (`repoRoot`: sidebar group, muted projects) – everything
+   * that needs the worktree itself (cleanup dialog, git commands, port block) takes `liveWorktree`.
+   */
+  removedAt: isoDateTimeSchema.nullable().default(null),
+});
+export type WorktreeRef = z.infer<typeof worktreeRefSchema>;
+
+/** WP-117 (CR5): the worktree of a session while its folder exists (not `removedAt`), else null. */
+export function liveWorktree(ref: WorktreeRef | null | undefined): WorktreeRef | null {
+  return ref?.removedAt === null ? ref : null;
+}
+
 export const entrySchema = z.object({
   id: entryIdSchema,
   createdAt: isoDateTimeSchema,
@@ -1547,6 +1683,14 @@ export const entrySchema = z.object({
    * while a window shows it; null = never left a window since this field exists.
    */
   lastSeenAt: isoDateTimeSchema.nullable().default(null),
+  /** WP-110 (ADR-250): the session's own worktree; null = runs in `cwd` as given. */
+  worktree: worktreeRefSchema.nullable().default(null),
+  /**
+   * WP-110 (ADR-253): `HEAD` of `cwd` when the session was created – base of the session diff without a
+   * worktree. null = no repository, or an entry older than this field (the git service then takes the
+   * current `HEAD` once and stores it).
+   */
+  baseSha: gitShaSchema.nullable().default(null),
 });
 export type Entry = z.infer<typeof entrySchema>;
 
@@ -1614,6 +1758,8 @@ export const CANCEL_REASONS = [
   'interrupted',
   'process_exit',
   'conversation_reset',
+  /** WP-110 (ADR-256): an elicitation the user cancelled (action `cancel`, unlike `decline`). */
+  'user',
 ] as const;
 
 /** What happened; in the decision.resolved op, tool_call.decision and decisions.json. */
@@ -2151,10 +2297,89 @@ export const planDecisionSchema = z.object({
 });
 export type PlanDecision = z.infer<typeof planDecisionSchema>;
 
+// ---- Elicitation (WP-110, F7, ADR-256): an MCP server asks the user for input ----
+
+export const ELICITATION_MODES = ['form', 'url'] as const;
+export const elicitationModeSchema = z.enum(ELICITATION_MODES);
+export type ElicitationMode = z.infer<typeof elicitationModeSchema>;
+
+/** The MCP form subset Parallax renders; `enum` = a string field with `enum` values. */
+export const ELICITATION_FIELD_TYPES = ['string', 'number', 'integer', 'boolean', 'enum'] as const;
+export const elicitationFieldTypeSchema = z.enum(ELICITATION_FIELD_TYPES);
+export type ElicitationFieldType = z.infer<typeof elicitationFieldTypeSchema>;
+
+export const ELICITATION_STRING_FORMATS = ['email', 'uri', 'date', 'date-time'] as const;
+export const elicitationStringFormatSchema = z.enum(ELICITATION_STRING_FORMATS);
+export type ElicitationStringFormat = z.infer<typeof elicitationStringFormatSchema>;
+
+/** A value of an answer field (string, number or boolean – the MCP form subset). */
+export const elicitationValueSchema = z.union([
+  z.string().max(LIMITS.elicitationValueChars),
+  z.number(),
+  z.boolean(),
+]);
+export type ElicitationValue = z.infer<typeof elicitationValueSchema>;
+
+/**
+ * One field of `requestedSchema.properties`, normalized by the server (unknown keywords dropped).
+ * Absent keywords are null (never undefined, R0-28).
+ */
+export const elicitationFieldSchema = z.object({
+  /** Property name – the key in the answer's `content`. */
+  key: z.string().min(1).max(200),
+  type: elicitationFieldTypeSchema,
+  title: z.string().max(500).nullable().default(null),
+  description: z.string().max(2000).nullable().default(null),
+  required: z.boolean().default(false),
+  /** `enum`: the allowed values. */
+  enumValues: z.array(z.string().max(500)).max(LIMITS.elicitationEnumMax).nullable().default(null),
+  /** `enum`: their labels, same length as `enumValues`; null = show the values. */
+  enumNames: z.array(z.string().max(500)).max(LIMITS.elicitationEnumMax).nullable().default(null),
+  /** `string`: format the web checks before sending. */
+  format: elicitationStringFormatSchema.nullable().default(null),
+  /** `number`/`integer`: bounds. */
+  minimum: z.number().nullable().default(null),
+  maximum: z.number().nullable().default(null),
+  /** `string`: length bounds. */
+  minLength: z.number().int().nonnegative().nullable().default(null),
+  maxLength: z.number().int().nonnegative().nullable().default(null),
+  default: elicitationValueSchema.nullable().default(null),
+});
+export type ElicitationField = z.infer<typeof elicitationFieldSchema>;
+
+/**
+ * `onElicitation` of the SDK (ADR-256): non-modal like a permission, counted as "waits for you".
+ * `toolUseId` = the SDK's request id, `toolName` = 'Elicitation' (no tool call belongs to it).
+ * `mode: 'url'`: open `url` in the browser, then "Done"; `elicitation_complete` resolves it.
+ * `unsupported` non-null: the form uses something outside the subset – the card offers only
+ * "Decline" and shows the reason.
+ */
+export const elicitationDecisionSchema = z.object({
+  ...decisionBase,
+  kind: z.literal('elicitation'),
+  /** MCP server that asks. */
+  serverName: z.string().min(1).max(200),
+  message: z.string().max(LIMITS.elicitationMessageChars),
+  mode: elicitationModeSchema,
+  /** `url` mode: the target (http/https only); null otherwise. */
+  url: httpUrlSchema.nullable().default(null),
+  /** `url` mode: correlates `elicitation_complete`; null = none sent. */
+  elicitationId: z.string().min(1).max(200).nullable().default(null),
+  title: z.string().max(500).nullable().default(null),
+  displayName: z.string().max(200).nullable().default(null),
+  description: z.string().max(2000).nullable().default(null),
+  /** `form` mode: the fields in schema order; [] for the url mode. */
+  fields: z.array(elicitationFieldSchema).max(LIMITS.elicitationFieldsMax).default([]),
+  /** Why the form cannot be shown (English, for display); null = supported. */
+  unsupported: z.string().max(500).nullable().default(null),
+});
+export type ElicitationDecision = z.infer<typeof elicitationDecisionSchema>;
+
 export const decisionSchema = z.discriminatedUnion('kind', [
   permissionDecisionSchema,
   questionDecisionSchema,
   planDecisionSchema,
+  elicitationDecisionSchema,
 ]);
 export type Decision = z.infer<typeof decisionSchema>;
 
@@ -2223,10 +2448,30 @@ export const planResponseSchema = z.discriminatedUnion('behavior', [
 ]);
 export type PlanResponse = z.infer<typeof planResponseSchema>;
 
+export const ELICITATION_ACTIONS = ['accept', 'decline', 'cancel'] as const;
+export const elicitationActionSchema = z.enum(ELICITATION_ACTIONS);
+export type ElicitationAction = z.infer<typeof elicitationActionSchema>;
+
+/**
+ * WP-110 (ADR-256): accept (form: with `content`; url: "Done") → outcome `answered`, decline →
+ * `declined`, cancel → `cancelled {reason: 'user'}`. The server checks `content` against the fields.
+ */
+export const elicitationResponseSchema = z.object({
+  action: elicitationActionSchema,
+  /** Form answers by field key; null for decline/cancel and the url mode. */
+  content: z
+    .record(z.string().min(1).max(200), elicitationValueSchema)
+    .refine((content) => Object.keys(content).length <= LIMITS.elicitationFieldsMax, 'too many fields')
+    .nullable()
+    .default(null),
+});
+export type ElicitationResponse = z.infer<typeof elicitationResponseSchema>;
+
 export const decisionResponseSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('permission'), response: permissionResponseSchema }),
   z.object({ kind: z.literal('question'), response: questionResponseSchema }),
   z.object({ kind: z.literal('plan'), response: planResponseSchema }),
+  z.object({ kind: z.literal('elicitation'), response: elicitationResponseSchema }),
 ]);
 export type DecisionResponse = z.infer<typeof decisionResponseSchema>;
 
@@ -2356,6 +2601,21 @@ export const runningTasksSchema = z.object({
 });
 export type RunningTasks = z.infer<typeof runningTasksSchema>;
 
+/**
+ * WP-110 (ADR-250, ADR-251): `creating` = `git worktree add` runs; `setup` = the project's setup
+ * command runs in the terminal tab `terminalId`; `failed` = it ended with `exitCode` (card "Setup
+ * failed" with "Start anyway" = `session.resume` and "Show output"). A start prompt waits meanwhile.
+ */
+export const WORKTREE_SETUP_STATES = ['creating', 'setup', 'failed'] as const;
+export const worktreeSetupSchema = z.object({
+  state: z.enum(WORKTREE_SETUP_STATES),
+  /** `failed`: exit code of the setup command; null = none (killed, or another state). */
+  exitCode: z.number().int().nullable(),
+  /** The terminal tab "Setup"; null = none (yet). */
+  terminalId: terminalIdSchema.nullable(),
+});
+export type WorktreeSetup = z.infer<typeof worktreeSetupSchema>;
+
 /** Facts, not a finished display: server and UI call deriveDisplayStatus(facts, now) (A.4). */
 export const sessionSummarySchema = z.object({
   entryId: entryIdSchema,
@@ -2419,6 +2679,12 @@ export const sessionSummarySchema = z.object({
   runningTasks: runningTasksSchema.nullable().default(null),
   /** WP-76/77: the entry has a synchronized draft (`SessionDetail.draft` not null) – sidebar hint. */
   hasDraft: z.boolean().default(false),
+  /** WP-110: `Entry.worktree` – the sidebar groups by `worktree?.repoRoot ?? cwd`, branch label. */
+  worktree: worktreeRefSchema.nullable().default(null),
+  /** WP-110: `Entry.baseSha`. */
+  baseSha: gitShaSchema.nullable().default(null),
+  /** WP-110 (runtime only): the worktree is being created / its setup runs or failed; null = nothing. */
+  worktreeSetup: worktreeSetupSchema.nullable().default(null),
 });
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 
@@ -2571,6 +2837,59 @@ export const draftFileSchema = z.object({
 });
 export type DraftFile = z.infer<typeof draftFileSchema>;
 
+// ---- Review comments (WP-110, F1, ADR-254) ----
+
+export const REVIEW_SIDES = ['old', 'new'] as const;
+export const reviewSideSchema = z.enum(REVIEW_SIDES);
+export type ReviewSide = z.infer<typeof reviewSideSchema>;
+
+/** open → sent ("Send to Claude"); open|sent → stale (the quote is no longer found in the diff). */
+export const REVIEW_STATES = ['open', 'sent', 'stale'] as const;
+export const reviewStateSchema = z.enum(REVIEW_STATES);
+export type ReviewState = z.infer<typeof reviewStateSchema>;
+
+/** Anchor of a comment in the session diff: file, side, line range and the quoted lines. */
+export const reviewAnchorFields = {
+  /** Relative to the repository root, `/`-separated (as git names it). */
+  path: z.string().min(1).max(LIMITS.pathChars),
+  side: reviewSideSchema,
+  /** First commented line on `side` (1-based). */
+  line: z.number().int().positive(),
+  /** Last commented line (≥ line). */
+  endLine: z.number().int().positive(),
+  /** The commented lines as they were – re-anchors the comment when the diff moves. */
+  quote: z.string().max(LIMITS.reviewQuoteChars),
+};
+
+/** `endLine` must not be before `line`. */
+export function isReviewRange(range: { line: number; endLine: number }): boolean {
+  return range.endLine >= range.line;
+}
+
+export const reviewCommentSchema = z
+  .object({
+    id: reviewCommentIdSchema,
+    ...reviewAnchorFields,
+    /** Markdown. */
+    text: z.string().min(1).max(LIMITS.reviewCommentChars),
+    state: reviewStateSchema,
+    createdAt: isoDateTimeSchema,
+    /** When it was last sent to Claude; null = never. */
+    sentAt: isoDateTimeSchema.nullable().default(null),
+  })
+  .refine(isReviewRange, { message: 'endLine before line', path: ['endLine'] });
+export type ReviewComment = z.infer<typeof reviewCommentSchema>;
+
+export const reviewCommentsSchema = z.array(reviewCommentSchema).max(LIMITS.reviewCommentsMax);
+
+/** `PARALLAX_HOME/entries/<entryId>/review.json` (WP-111). */
+export const REVIEW_SCHEMA_VERSION = 1;
+export const reviewFileSchema = z.object({
+  schemaVersion: z.literal(REVIEW_SCHEMA_VERSION),
+  comments: reviewCommentsSchema,
+});
+export type ReviewFile = z.infer<typeof reviewFileSchema>;
+
 /** Fields without top-level defaults: the base of the patch schema (a patch must never inject defaults). */
 const sessionDetailFields = {
   conversationId: conversationIdSchema,
@@ -2609,6 +2928,11 @@ export const sessionDetailSchema = z.object({
   latestPlanVersion: sessionDetailFields.latestPlanVersion.default(null),
   availableOutputStyles: sessionDetailFields.availableOutputStyles.default([]),
   draft: sessionDetailFields.draft.default(null),
+  /**
+   * WP-110 (ADR-254; writer: the review commands): the entry's review comments, oldest first. Changed
+   * only through the ops `review.upsert`/`review.remove` (never by `detail.patch`).
+   */
+  review: reviewCommentsSchema.default([]),
 });
 export type SessionDetail = z.infer<typeof sessionDetailSchema>;
 
@@ -3062,3 +3386,127 @@ export const subagentTranscriptPageSchema = z.object({
   running: z.boolean(),
 });
 export type SubagentTranscriptPage = z.infer<typeof subagentTranscriptPageSchema>;
+
+// =====================================================================================
+// 5.16 Git service, worktrees, search (WP-110; ADR-250 … ADR-255)
+// =====================================================================================
+
+/** `conflicted` = unmerged; `type_changed` = file ↔ link. */
+export const GIT_FILE_KINDS = [
+  'modified',
+  'added',
+  'deleted',
+  'renamed',
+  'copied',
+  'type_changed',
+  'untracked',
+  'conflicted',
+] as const;
+export const gitFileKindSchema = z.enum(GIT_FILE_KINDS);
+export type GitFileKind = z.infer<typeof gitFileKindSchema>;
+
+/** One changed file of `git status` (paths relative to the repository root, `/`-separated). */
+export const gitFileChangeSchema = z.object({
+  path: z.string().min(1).max(LIMITS.pathChars),
+  /** Renamed/copied: the old path; null otherwise. */
+  origPath: z.string().min(1).max(LIMITS.pathChars).nullable(),
+  kind: gitFileKindSchema,
+  /** Has changes in the index. */
+  staged: z.boolean(),
+  /** Has changes in the working tree (always true for untracked files). */
+  unstaged: z.boolean(),
+});
+export type GitFileChange = z.infer<typeof gitFileChangeSchema>;
+
+export const gitStatusSchema = z.object({
+  /** false: `cwd` is in no repository – every other field is empty. */
+  isRepo: z.boolean(),
+  /** Root of this worktree (`git rev-parse --show-toplevel`, host spelling); null = no repository. */
+  root: z.string().min(1).max(LIMITS.pathChars).nullable(),
+  /** Current branch; null = detached or no repository. */
+  branch: z.string().min(1).max(LIMITS.gitRefChars).nullable(),
+  detached: z.boolean(),
+  /** Commit of `HEAD`; null = no commit yet. */
+  head: gitShaSchema.nullable(),
+  /** Upstream (e.g. `origin/main`); null = none. */
+  upstream: z.string().min(1).max(LIMITS.gitRefChars).nullable(),
+  ahead: z.number().int().nonnegative(),
+  behind: z.number().int().nonnegative(),
+  files: z.array(gitFileChangeSchema).max(LIMITS.gitFilesMax),
+  /** More than LIMITS.gitFilesMax changed files. */
+  truncated: z.boolean(),
+});
+export type GitStatus = z.infer<typeof gitStatusSchema>;
+
+/**
+ * Scope of a diff: `session` = since the session's base (ADR-253: merge base with `worktree.baseRef`,
+ * else `Entry.baseSha`) up to the working tree including untracked files; `uncommitted` = `HEAD` to the
+ * working tree; `staged` = `HEAD` to the index.
+ */
+export const GIT_DIFF_SCOPES = ['session', 'uncommitted', 'staged'] as const;
+export const gitDiffScopeSchema = z.enum(GIT_DIFF_SCOPES);
+export type GitDiffScope = z.infer<typeof gitDiffScopeSchema>;
+
+/** One file of a diff. */
+export const gitDiffFileSchema = z.object({
+  path: z.string().min(1).max(LIMITS.pathChars),
+  origPath: z.string().min(1).max(LIMITS.pathChars).nullable(),
+  kind: gitFileKindSchema,
+  binary: z.boolean(),
+  additions: z.number().int().nonnegative(),
+  deletions: z.number().int().nonnegative(),
+  /**
+   * Unified diff of this file (hunks with their `@@` headers, no `diff --git` header); null = not
+   * loaded (the list of `git.diff`) or binary.
+   */
+  patch: z.string().nullable(),
+  /** The patch was cut at LIMITS.gitPatchBytes. */
+  truncated: z.boolean(),
+});
+export type GitDiffFile = z.infer<typeof gitDiffFileSchema>;
+
+/** One worktree of `git worktree list`. */
+export const gitWorktreeSchema = z.object({
+  path: z.string().min(1).max(LIMITS.pathChars),
+  /** null = detached. */
+  branch: z.string().min(1).max(LIMITS.gitRefChars).nullable(),
+  /** null = no commit yet. */
+  head: gitShaSchema.nullable(),
+  /** The main worktree (the repository root). */
+  main: z.boolean(),
+});
+export type GitWorktree = z.infer<typeof gitWorktreeSchema>;
+
+/** What deleting a session's worktree would lose (the cleanup dialog, ADR-250). */
+export const worktreeInspectionSchema = z.object({
+  /** Uncommitted changes (including untracked files). */
+  dirtyFiles: z.number().int().nonnegative(),
+  /** Commits on its branch that are in no remote branch and not in the base. */
+  unpushedCommits: z.number().int().nonnegative(),
+  /** The branch is contained in `baseRef` (deleting it with `-d` works). */
+  branchMerged: z.boolean(),
+});
+export type WorktreeInspection = z.infer<typeof worktreeInspectionSchema>;
+
+/** Where a search hit was found (ADR-255). */
+export const SEARCH_HIT_KINDS = ['prompt', 'answer', 'tool', 'title', 'plan', 'summary'] as const;
+export const searchHitKindSchema = z.enum(SEARCH_HIT_KINDS);
+export type SearchHitKind = z.infer<typeof searchHitKindSchema>;
+
+/** `[start, end)` of a match in `snippet` (UTF-16 code units). */
+export const searchRangeSchema = z.tuple([z.number().int().nonnegative(), z.number().int().nonnegative()]);
+
+export const searchHitSchema = z.object({
+  entryId: entryIdSchema,
+  /** null for the title and the turn summary. */
+  conversationId: conversationIdSchema.nullable(),
+  /** The transcript item (`transcript.loadAround` jumps there); null = no item (title, summary, plan). */
+  itemId: itemIdSchema.nullable(),
+  kind: searchHitKindSchema,
+  /** Text around the match (a single line). */
+  snippet: z.string().max(LIMITS.searchSnippetChars),
+  ranges: z.array(searchRangeSchema).max(LIMITS.searchRangesMax),
+  /** Time of the item (or the entry's last activity). */
+  at: isoDateTimeSchema,
+});
+export type SearchHit = z.infer<typeof searchHitSchema>;

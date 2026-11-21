@@ -75,6 +75,10 @@ function opLabel(op: SessionOp): string {
       return op.decisionId;
     case 'detail.patch':
       return 'detail';
+    case 'review.upsert':
+      return 'review';
+    case 'review.remove':
+      return op.commentIds.join(',');
     default:
       return assertNever(op);
   }
@@ -208,9 +212,17 @@ describe('contract types', () => {
       | 'decision.upsert'
       | 'decision.resolved'
       | 'detail.patch'
+      | 'review.upsert'
+      | 'review.remove'
     >();
     expectTypeOf<TranscriptItemKind>().toEqualTypeOf<
-      'user_message' | 'assistant_text' | 'thinking' | 'tool_call' | 'system' | 'turn_result' | 'side_question'
+      | 'user_message'
+      | 'assistant_text'
+      | 'thinking'
+      | 'tool_call'
+      | 'system'
+      | 'turn_result'
+      | 'side_question'
     >();
     expectTypeOf<Decision['kind']>().toEqualTypeOf<DecisionKind>();
     expectTypeOf<RuleDestination>().toEqualTypeOf<
@@ -226,8 +238,10 @@ describe('contract types', () => {
     expectTypeOf(errorTexts).toEqualTypeOf<Record<ErrorCode, string>>();
   });
 
-  it('detail patch has every detail field except entryId', () => {
-    expectTypeOf<keyof SessionDetailPatch>().toEqualTypeOf<Exclude<keyof SessionDetail, 'entryId'>>();
+  it('detail patch has every detail field except entryId and review (WP-110: only its own ops)', () => {
+    expectTypeOf<keyof SessionDetailPatch>().toEqualTypeOf<
+      Exclude<keyof SessionDetail, 'entryId' | 'review'>
+    >();
   });
 
   it('status and view state', () => {

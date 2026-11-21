@@ -1,12 +1,15 @@
 import type { Language } from '@shared/common';
+import { en as changesEn } from '@web/features/changes/i18n/en';
 import { en as composerEn } from '@web/features/composer/i18n/en';
 import { en as decisionsEn } from '@web/features/decisions/i18n/en';
 import { en as filesEn } from '@web/features/files/i18n/en';
 import { en as preferencesEn } from '@web/features/preferences/i18n/en';
 import { en as profilesEn } from '@web/features/profiles/i18n/en';
+import { en as searchEn } from '@web/features/search/i18n/en';
 import { en as tasksEn } from '@web/features/tasks/i18n/en';
 import { en as transcriptEn } from '@web/features/transcript/i18n/en';
 import { en as updatesEn } from '@web/features/updates/i18n/en';
+import { en as worktreesEn } from '@web/features/worktrees/i18n/en';
 import { en as hostsEn } from '@web/shell/hosts/i18n/en';
 import { en as navigationEn } from '@web/shell/navigation/i18n/en';
 import { en as newSessionEn } from '@web/shell/new-session/i18n/en';
@@ -28,7 +31,8 @@ import { errorsEn } from './errors.en';
  * WP-36), `profiles` (features/profiles, WP-36), `preferences` (features/preferences, WP-38).
  * Phase 3 (WP-50 §4.14 C): `files` (features/files, WP-54), `tasks` (features/tasks, WP-55),
  * `sidePanel` (shell/side-panel, WP-54). WP-87: `updates` (features/updates, WP-88a). WP-80: `hosts`
- * (shell/hosts – several computers). A new namespace is registered by the coordinator (or the
+ * (shell/hosts – several computers). WP-110 (Ausbau 1): `changes` (features/changes, WP-113),
+ * `worktrees` (features/worktrees, WP-114), `search` (features/search, WP-115). A new namespace is registered by the coordinator (or the
  * WP that owns this folder) – here AND in every `dictionary.<language>.ts`.
  */
 export const EN_DICTIONARY = {
@@ -47,6 +51,9 @@ export const EN_DICTIONARY = {
   sidePanel: sidePanelEn,
   updates: updatesEn,
   hosts: hostsEn,
+  changes: changesEn,
+  worktrees: worktreesEn,
+  search: searchEn,
 };
 
 /** Shape of every language's dictionary (English is the reference). */

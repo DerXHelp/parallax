@@ -1,8 +1,21 @@
-import type { CanUseTool, Options, SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  CanUseTool,
+  OnElicitation,
+  Options,
+  SpawnedProcess,
+  SpawnOptions,
+} from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it } from 'vitest';
 import { SAMPLE_IDS } from '@shared/samples';
 import type { LaunchSpec } from '../claude/ports';
-import { buildQueryOptions, flagSettingsAfterStart, optionIssues, SETTING_SOURCES } from './sdkOptions';
+import {
+  buildQueryOptions,
+  flagSettingsAfterStart,
+  optionIssues,
+  SETTING_SOURCES,
+  toElicitationRequest,
+  toElicitResult,
+} from './sdkOptions';
 import type { StartSessionRequest } from './types';
 
 const canUseTool: CanUseTool = () => Promise.resolve({ behavior: 'deny', message: 'test' });
@@ -429,5 +442,89 @@ describe('optionIssues', () => {
     expect(optionIssues(req)).toEqual(['invalid beta names are omitted: "Bad Beta", "", "x;y"']);
     const onlyInvalid = request({ launch: launch({ sdkOptions: { betas: ['NOPE'] } }) });
     expect('betas' in buildQueryOptions(onlyInvalid, hooks)).toBe(false);
+  });
+});
+
+describe('MCP elicitation (WP-112, ADR-256)', () => {
+  const onElicitation: OnElicitation = () => Promise.resolve({ action: 'decline' });
+  const engineHandler = () => Promise.resolve({ action: 'cancel' as const, content: null });
+
+  it('onElicitation only when the request carries a handler (else the SDK declines, as before)', () => {
+    expect(buildQueryOptions(request(), { ...hooks, onElicitation })).not.toHaveProperty('onElicitation');
+    expect(buildQueryOptions(request({ onElicitation: engineHandler }), hooks)).not.toHaveProperty(
+      'onElicitation',
+    );
+    const options = buildQueryOptions(request({ onElicitation: engineHandler }), { ...hooks, onElicitation });
+    expect(options.onElicitation).toBe(onElicitation);
+    expect(Object.keys(options).sort()).toEqual([...BASE_KEYS, 'onElicitation'].sort());
+  });
+
+  it('toElicitationRequest maps a form request; absent optional keys become null', () => {
+    expect(
+      toElicitationRequest(
+        {
+          serverName: 'booking',
+          message: 'Details?',
+          requestedSchema: { type: 'object', properties: {} },
+          title: 'Booking',
+        },
+        'req-1',
+      ),
+    ).toEqual({
+      serverName: 'booking',
+      message: 'Details?',
+      mode: 'form',
+      url: null,
+      elicitationId: null,
+      requestedSchema: { type: 'object', properties: {} },
+      title: 'Booking',
+      displayName: null,
+      description: null,
+      requestId: 'req-1',
+    });
+  });
+
+  it('toElicitationRequest maps a url request and tolerates broken optional keys', () => {
+    expect(
+      toElicitationRequest(
+        {
+          serverName: 'calendar',
+          message: 42,
+          mode: 'url',
+          url: 'https://auth.example/',
+          elicitationId: 'el-1',
+          requestedSchema: 'nope',
+          displayName: 7,
+          extra: true,
+        },
+        'req-2',
+      ),
+    ).toMatchObject({
+      serverName: 'calendar',
+      message: '',
+      mode: 'url',
+      url: 'https://auth.example/',
+      elicitationId: 'el-1',
+      requestedSchema: null,
+      displayName: null,
+    });
+  });
+
+  it.each<[string, unknown]>([
+    ['no server name', { message: 'x' }],
+    ['a mode of a newer SDK', { serverName: 's', message: 'x', mode: 'oauth' }],
+    ['not an object', 'request'],
+  ])('toElicitationRequest: %s → null (the backend declines)', (_label, raw) => {
+    expect(toElicitationRequest(raw, 'req-3')).toBeNull();
+  });
+
+  it('toElicitResult sends content only when there is some', () => {
+    expect(toElicitResult({ action: 'accept', content: { name: 'Ada', guests: 2 } })).toEqual({
+      action: 'accept',
+      content: { name: 'Ada', guests: 2 },
+    });
+    expect(toElicitResult({ action: 'accept', content: null })).toEqual({ action: 'accept' });
+    expect(toElicitResult({ action: 'decline', content: null })).toEqual({ action: 'decline' });
+    expect(toElicitResult({ action: 'cancel', content: null })).toEqual({ action: 'cancel' });
   });
 });

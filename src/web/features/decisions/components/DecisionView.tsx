@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import type { Decision } from '@shared/model';
+import { ElicitationCard } from './ElicitationCard';
 import { ExpiredCard } from './ExpiredCard';
 import { PermissionCard } from './PermissionCard';
 import { PlanCard } from './PlanCard';
@@ -29,5 +30,7 @@ export function DecisionView({
       return <QuestionCard sessionKey={sessionKey} decision={decision} headerExtra={headerExtra} />;
     case 'plan':
       return <PlanCard sessionKey={sessionKey} decision={decision} headerExtra={headerExtra} />;
+    case 'elicitation':
+      return <ElicitationCard sessionKey={sessionKey} decision={decision} headerExtra={headerExtra} />;
   }
 }

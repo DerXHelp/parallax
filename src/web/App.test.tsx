@@ -18,12 +18,15 @@ import { setAttachmentUploader } from './features/composer/lib/upload';
 import { DecisionBar } from './features/decisions/DecisionBar';
 import { DecisionCard } from './features/decisions/DecisionCard';
 import { PlanSidePanel } from './features/decisions/PlanSidePanel';
+import { CHANGES_SLOTS } from './features/changes';
 import { FILES_SLOTS } from './features/files';
 import { PREFERENCES_SLOTS, SettingsPage } from './features/preferences';
 import { ProfilesSettings } from './features/profiles';
 import { startProfilesDemo } from './features/profiles/lib/demo-host';
+import { SEARCH_SLOTS } from './features/search';
 import { TASKS_SLOTS } from './features/tasks';
 import { UPDATES_SLOTS } from './features/updates';
+import { WORKTREE_SLOTS } from './features/worktrees';
 import { TRANSCRIPT_SLOTS } from './features/transcript/slots';
 import { installResizeObserver } from './features/transcript/testing';
 import { setLanguage } from './i18n';
@@ -353,15 +356,35 @@ const EVERY_REQUEST: { [K in ShellRequestKind]: ShellRequestOf<K> } = {
   // WP-70: sign in a profile (dialog of the NavigationLayer); the output style of a project.
   login: { kind: 'login', profileId: STANDARD_PROFILE_ID },
   outputStyle: { kind: 'outputStyle', sessionKey: PLAYGROUND_SESSION_KEYS.main },
+  // WP-110 (Ausbau 1): worktree cleanup before archiving (WP-114) and the full-text search (WP-115).
+  'worktree.cleanup': { kind: 'worktree.cleanup', sessionKey: PLAYGROUND_SESSION_KEYS.main, then: 'archive' },
+  'search.open': { kind: 'search.open', text: 'login' },
+  revealItem: {
+    kind: 'revealItem',
+    sessionKey: PLAYGROUND_SESSION_KEYS.main,
+    conversationId: null,
+    itemId: null,
+  },
 };
 
-/** Kinds whose handler arrives with a later package – none since WP-60 (attachFiles: WP-57). */
-const PENDING_REQUEST_KINDS: ReadonlySet<ShellRequestKind> = new Set();
+/**
+ * Kinds nobody takes here: `worktree.cleanup` (WP-114) is taken only for a session with a worktree –
+ * the playground has none, so the menus go on without; `search.open` (WP-115) only when a host offers
+ * the search (`HostState.features.search`) – the playground's fake host does not.
+ */
+const PENDING_REQUEST_KINDS: ReadonlySet<ShellRequestKind> = new Set(['worktree.cleanup', 'search.open']);
+
+/** Slots whose feature arrives with a later package (WP-110 scaffolding: WP-113, WP-114, WP-115). */
+const PENDING_SLOTS: ReadonlySet<string> = new Set<string>();
 
 describe('wired feature slots (WP-20b, WP-40)', () => {
   it('APP_SLOTS wires every slot: the eager components of WP-16/57, every lazy slot behind a SlotBoundary (R4W-19, WP-58, WP-60)', () => {
     // Every slot of the shell has its real component – none is left on the placeholder.
-    expect(Object.keys(APP_SLOTS).sort()).toEqual(Object.keys(DEFAULT_FEATURE_SLOTS).sort());
+    expect(Object.keys(APP_SLOTS).sort()).toEqual(
+      Object.keys(DEFAULT_FEATURE_SLOTS)
+        .filter((key) => !PENDING_SLOTS.has(key))
+        .sort(),
+    );
     // Eager (no chunk of their own, so no boundary): the decision bar/card and the composer.
     expect(APP_SLOTS.DecisionBar).toBe(DecisionBar);
     expect(APP_SLOTS.DecisionCard).toBe(DecisionCard);
@@ -372,6 +395,9 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
       ...Object.keys(FILES_SLOTS),
       ...Object.keys(TASKS_SLOTS),
       ...Object.keys(UPDATES_SLOTS),
+      ...Object.keys(CHANGES_SLOTS),
+      ...Object.keys(WORKTREE_SLOTS),
+      ...Object.keys(SEARCH_SLOTS),
     ]) {
       expect(APP_SLOTS, key).toHaveProperty(key);
     }
@@ -394,6 +420,10 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
       ['UpdateNotice', UPDATES_SLOTS.UpdateNotice],
       ['UpdateBanner', UPDATES_SLOTS.UpdateBanner],
       ['UpdatesSettings', UPDATES_SLOTS.UpdatesSettings],
+      ['ChangesPanel', CHANGES_SLOTS.ChangesPanel],
+      ['WorktreeNotice', WORKTREE_SLOTS.WorktreeNotice],
+      ['WorktreeCleanup', WORKTREE_SLOTS.WorktreeCleanup],
+      ['SearchDialog', SEARCH_SLOTS.SearchDialog],
     ];
     for (const [key, own] of lazy) {
       expect(APP_SLOTS[key], key).toBeDefined();
@@ -559,6 +589,10 @@ describe('wired feature slots (WP-20b, WP-40)', () => {
         await user.clear(composer);
         continue;
       }
+      if (request.kind === 'revealItem') {
+        // WP-115: the transcript of the selected session takes the jump to a search hit (no dialog).
+        continue;
+      }
       if (request.kind === 'renameTitle') {
         // The inline title field of the header (no dialog); Esc cancels.
         const field = await waitFor(() => {
@@ -669,7 +703,7 @@ describe('session header (status only, ADR-041/042)', () => {
         {
           runState: 'idle',
           unread: false,
-          decisions: { permission: 0, question: 0, plan: 0, oldestKind: null, expired: 1 },
+          decisions: { permission: 0, question: 0, plan: 0, elicitation: 0, oldestKind: null, expired: 1 },
         },
       );
     });

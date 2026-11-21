@@ -15,6 +15,7 @@ function sameDecisions(a: StatusFacts['decisions'], b: StatusFacts['decisions'])
     a.permission === b.permission &&
     a.question === b.question &&
     a.plan === b.plan &&
+    a.elicitation === b.elicitation &&
     a.oldestKind === b.oldestKind &&
     a.expired === b.expired
   );
@@ -158,6 +159,10 @@ export const reduceStatus: ReduceStatus = (facts, event, now, ctx) => {
     case 'viewed':
       return apply(facts, { unread: false });
 
+    case 'mark_unread':
+      // WP-110 (F6): only the flag; the engine decides when "opened again" clears it ('viewed').
+      return apply(facts, { unread: event.unread });
+
     case 'external':
       if (event.active) return apply(facts, { runState: 'external', errorCode: null, ...NO_PROCESS });
       return facts.runState === 'external' ? apply(facts, { runState: 'sleeping' }) : facts;
@@ -178,9 +183,11 @@ export const reduceStatus: ReduceStatus = (facts, event, now, ctx) => {
     case 'task_summary':
     case 'turn_summary':
     case 'vcs_changed':
+    case 'elicitation_complete':
       // WP-64: Remote Control (bridge_state) is no run state – EntryState.remote, summary.remoteControl.
       // WP-65: live sentence and turn summary neither (EntryState.activity, Entry.turnSummary).
       // WP-95: a repository change only makes the engine re-read the git branch.
+      // WP-112: a finished URL elicitation closes its decision in the broker (counts follow from there).
       return facts;
   }
 };

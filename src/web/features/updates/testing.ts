@@ -40,7 +40,14 @@ export function restartSessions(): SessionSummary[] {
       title: 'Approve the migration',
       status: sampleStatusFacts({
         runState: 'working',
-        decisions: { permission: 1, question: 0, plan: 0, oldestKind: 'permission', expired: 0 },
+        decisions: {
+          permission: 1,
+          question: 0,
+          plan: 0,
+          elicitation: 0,
+          oldestKind: 'permission',
+          expired: 0,
+        },
       }),
     }),
     sampleSummary({

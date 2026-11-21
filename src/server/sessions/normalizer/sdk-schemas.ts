@@ -386,6 +386,16 @@ export const peerMessageHoldMessageSchema = z.looseObject({
 });
 export type SdkPeerMessageHold = z.infer<typeof peerMessageHoldMessageSchema>;
 
+/**
+ * WP-112 (ADR-256): SDKElicitationCompleteMessage – the MCP server finished a URL-mode elicitation
+ * (correlated by `elicitation_id`).
+ */
+export const elicitationCompleteMessageSchema = z.looseObject({
+  subtype: z.literal('elicitation_complete'),
+  mcp_server_name: str,
+  elicitation_id: str,
+});
+
 /** `outputFile` of an Agent/Task `tool_use_result` (AgentOutput async_launched/remote_launched). */
 export const agentOutputFileSchema = z.looseObject({ outputFile: opt(str) });
 

@@ -27,6 +27,10 @@ import {
   fileInfoSchema,
   fileStatResultSchema,
   fsListingSchema,
+  gitDiffFileSchema,
+  gitFileChangeSchema,
+  gitStatusSchema,
+  gitWorktreeSchema,
   hostRecordSchema,
   hostStateSchema,
   keyFileSchema,
@@ -40,6 +44,7 @@ import {
   profileIssueSchema,
   profileSchema,
   profileSummarySchema,
+  projectSettingsSchema,
   queuedPromptSchema,
   rateLimitInfoSchema,
   remoteAccessCheckSchema,
@@ -48,12 +53,16 @@ import {
   remoteHostSchema,
   remotePeerRecordSchema,
   remotePeerSchema,
+  reviewCommentSchema,
+  searchHitSchema,
   sessionDetailSchema,
   sessionFileSchema,
   sessionSummarySchema,
   settingsSchema,
   todoListSchema,
   transcriptItemSchema,
+  worktreeInspectionSchema,
+  worktreeRefSchema,
 } from './model';
 import {
   authStatusResponseSchema,
@@ -161,6 +170,56 @@ describe('sample factories satisfy their schemas', () => {
         }),
     ],
     ['detail with draft', sessionDetailSchema, () => samples.sampleDetail({ draft: samples.sampleDraft() })],
+    // WP-110 (Ausbau 1)
+    ['projectSettings', projectSettingsSchema, () => samples.sampleProjectSettings()],
+    [
+      'settings with a project and a muted project',
+      settingsSchema,
+      () =>
+        samples.sampleSettings({
+          projects: { 'D:\\work\\sample': samples.sampleProjectSettings() },
+          notifications: samples.sampleNotificationSettings({ mutedProjects: ['D:\\work\\other'] }),
+        }),
+    ],
+    [
+      'hostState with the features of Ausbau 1',
+      hostStateSchema,
+      () => samples.sampleHostState({ features: { git: true, search: true, overview: true } }),
+    ],
+    ['worktreeRef', worktreeRefSchema, () => samples.sampleWorktreeRef()],
+    ['worktree entry', entrySchema, () => samples.sampleWorktreeEntry()],
+    [
+      'summary of a worktree session during setup',
+      sessionSummarySchema,
+      () =>
+        samples.sampleSummary({
+          worktree: samples.sampleWorktreeRef(),
+          baseSha: samples.sampleSha(1),
+          worktreeSetup: { state: 'setup', exitCode: null, terminalId: null },
+        }),
+    ],
+    ['reviewComment', reviewCommentSchema, () => samples.sampleReviewComment()],
+    [
+      'detail with review comments',
+      sessionDetailSchema,
+      () =>
+        samples.sampleDetail({
+          review: [
+            samples.sampleReviewComment(),
+            samples.sampleReviewComment({
+              id: samples.sampleId('rc', 2),
+              state: 'sent',
+              sentAt: samples.sampleTime(90),
+            }),
+          ],
+        }),
+    ],
+    ['gitFileChange', gitFileChangeSchema, () => samples.sampleGitFileChange()],
+    ['gitStatus', gitStatusSchema, () => samples.sampleGitStatus()],
+    ['gitDiffFile', gitDiffFileSchema, () => samples.sampleGitDiffFile()],
+    ['gitWorktree', gitWorktreeSchema, () => samples.sampleGitWorktree()],
+    ['worktreeInspection', worktreeInspectionSchema, () => samples.sampleWorktreeInspection()],
+    ['searchHit', searchHitSchema, () => samples.sampleSearchHit()],
     ...Object.entries(samples.sampleItems).map(([name, f]): [string, z.ZodType, () => unknown] => [
       `item ${name}`,
       transcriptItemSchema,

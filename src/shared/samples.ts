@@ -19,6 +19,7 @@ import {
   DEFAULT_UPDATE_STATE,
   IDLE_PROFILE_LOGIN,
   KEY_FILE_SCHEMA_VERSION,
+  NO_HOST_FEATURES,
   WINDOWS_HOST_CAPABILITIES,
   defaultEditorSettings,
 } from './model';
@@ -34,11 +35,16 @@ import type {
   DecisionResponse,
   Draft,
   EditorSettings,
+  ElicitationDecision,
   Entry,
   ExternalHandoff,
   FileInfo,
   FileStatResult,
   FsListing,
+  GitDiffFile,
+  GitFileChange,
+  GitStatus,
+  GitWorktree,
   HostRecord,
   HostState,
   KeyFile,
@@ -54,6 +60,7 @@ import type {
   ProfileInput,
   ProfileIssue,
   ProfileSummary,
+  ProjectSettings,
   QueuedPrompt,
   QuestionDecision,
   RateLimitInfo,
@@ -63,6 +70,8 @@ import type {
   RemoteHost,
   RemotePeer,
   RemotePeerRecord,
+  ReviewComment,
+  SearchHit,
   SessionDetail,
   SessionFile,
   SessionSummary,
@@ -76,6 +85,8 @@ import type {
   ToolCallItem,
   TurnResultItem,
   UserMessageItem,
+  WorktreeInspection,
+  WorktreeRef,
 } from './model';
 import type {
   AuthStatusResponse,
@@ -98,7 +109,10 @@ import { INITIAL_STATUS_FACTS, type StatusFacts } from './status';
 // ---- Fixed ids and times ----
 
 /** Deterministic id `<prefix>_<n as 32 hex>` (e.g. `en_000…01`). */
-export function sampleId<P extends 'en' | 'cv' | 'dc' | 'cl' | 'pf'>(prefix: P, n = 1): `${P}_${string}` {
+export function sampleId<P extends 'en' | 'cv' | 'dc' | 'cl' | 'pf' | 'rc'>(
+  prefix: P,
+  n = 1,
+): `${P}_${string}` {
   return `${prefix}_${n.toString(16).padStart(32, '0')}`;
 }
 
@@ -132,7 +146,13 @@ export const SAMPLE_IDS = {
   messageId: 'msg_01SampleMessageId',
   toolUseId: 'toolu_01SampleToolUseId',
   blob: sampleBlobId(1),
+  reviewComment: sampleId('rc'),
 } as const;
+
+/** WP-110: deterministic 40-hex commit id. */
+export function sampleSha(n = 1): string {
+  return n.toString(16).padStart(40, '0');
+}
 
 // ---- Profiles, settings, host ----
 
@@ -228,6 +248,7 @@ export function sampleNotificationSettings(p: Partial<NotificationSettings> = {}
     focusedElsewhere: 'in_app',
     doneMinSeconds: DEFAULT_NOTIFICATION_SETTINGS.doneMinSeconds,
     openOnClick: false,
+    mutedProjects: [],
     ...p,
   };
 }
@@ -248,6 +269,19 @@ export function sampleSettings(p: Partial<Settings> = {}): Settings {
     updates: { ...DEFAULT_UPDATE_SETTINGS },
     zoom: 100,
     console: { ...DEFAULT_CONSOLE_SETTINGS },
+    projects: {},
+    ...p,
+  };
+}
+
+/** WP-110: settings of one project (setup and teardown commands, port block, worktree default). */
+export function sampleProjectSettings(p: Partial<ProjectSettings> = {}): ProjectSettings {
+  return {
+    setup: 'pnpm install --frozen-lockfile',
+    teardown: '',
+    shell: null,
+    ports: true,
+    worktreeDefault: false,
     ...p,
   };
 }
@@ -296,6 +330,7 @@ export function sampleHostState(p: Partial<HostState> = {}): HostState {
     remoteAccess: null,
     terminalAvailable: false,
     homeDir: null,
+    features: { ...NO_HOST_FEATURES },
     ...p,
   };
 }
@@ -539,8 +574,40 @@ export function sampleEntry(p: Partial<Entry> = {}): Entry {
     remoteControlWanted: false,
     turnSummary: null,
     lastSeenAt: null,
+    worktree: null,
+    baseSha: null,
     ...p,
   };
+}
+
+// ---- WP-110: worktrees (neutral names: repository `D:\work\sample`, branch `feature/login`) ----
+
+export function sampleWorktreeRef(p: Partial<WorktreeRef> = {}): WorktreeRef {
+  return {
+    repoRoot: 'D:\\work\\sample',
+    path: 'D:\\work\\sample\\.claude\\worktrees\\feature-login',
+    branch: 'feature/login',
+    baseRef: 'main',
+    baseSha: sampleSha(1),
+    portBase: 41000,
+    createdAt: sampleTime(),
+    removedAt: null,
+    ...p,
+  };
+}
+
+/** An entry that runs in its own worktree (`cwd` = the worktree folder). */
+export function sampleWorktreeEntry(p: Partial<Entry> = {}): Entry {
+  const worktree = sampleWorktreeRef();
+  return sampleEntry({
+    id: sampleId('en', 2),
+    cwd: worktree.path,
+    title: 'Login form',
+    gitBranch: worktree.branch,
+    worktree,
+    baseSha: worktree.baseSha,
+    ...p,
+  });
 }
 
 /** Phase 2: an entry open in an external console (Entry.external). */
@@ -627,6 +694,9 @@ export function sampleSummary(p: Partial<SessionSummary> = {}): SessionSummary {
     outputStyle: null,
     runningTasks: null,
     hasDraft: false,
+    worktree: null,
+    baseSha: null,
+    worktreeSetup: null,
     ...p,
   };
 }
@@ -1045,6 +1115,103 @@ export const sampleDecisions = {
     annotations: [],
     ...p,
   }),
+  /** WP-110: a form elicitation of an MCP server (all four field types of the subset). */
+  elicitationForm: (p: Partial<ElicitationDecision> = {}): ElicitationDecision => ({
+    ...decisionBase(4),
+    toolUseId: 'req_01SampleElicitation4',
+    toolName: 'Elicitation',
+    kind: 'elicitation',
+    serverName: 'sample-tracker',
+    message: 'Where should the ticket go?',
+    mode: 'form',
+    url: null,
+    elicitationId: null,
+    title: 'New ticket',
+    displayName: null,
+    description: null,
+    fields: [
+      {
+        key: 'project',
+        type: 'enum',
+        title: 'Project',
+        description: null,
+        required: true,
+        enumValues: ['web', 'server'],
+        enumNames: ['Web app', 'Server'],
+        format: null,
+        minimum: null,
+        maximum: null,
+        minLength: null,
+        maxLength: null,
+        default: 'web',
+      },
+      {
+        key: 'priority',
+        type: 'integer',
+        title: 'Priority',
+        description: '1 = highest',
+        required: false,
+        enumValues: null,
+        enumNames: null,
+        format: null,
+        minimum: 1,
+        maximum: 5,
+        minLength: null,
+        maxLength: null,
+        default: 3,
+      },
+      {
+        key: 'notify',
+        type: 'boolean',
+        title: 'Notify the team',
+        description: null,
+        required: false,
+        enumValues: null,
+        enumNames: null,
+        format: null,
+        minimum: null,
+        maximum: null,
+        minLength: null,
+        maxLength: null,
+        default: false,
+      },
+      {
+        key: 'contact',
+        type: 'string',
+        title: 'Contact',
+        description: null,
+        required: false,
+        enumValues: null,
+        enumNames: null,
+        format: 'email',
+        minimum: null,
+        maximum: null,
+        minLength: null,
+        maxLength: 200,
+        default: null,
+      },
+    ],
+    unsupported: null,
+    ...p,
+  }),
+  /** WP-110: an elicitation in url mode (open the link, then "Done"). */
+  elicitationUrl: (p: Partial<ElicitationDecision> = {}): ElicitationDecision => ({
+    ...decisionBase(5),
+    toolUseId: 'req_01SampleElicitation5',
+    toolName: 'Elicitation',
+    kind: 'elicitation',
+    serverName: 'sample-auth',
+    message: 'Sign in to continue.',
+    mode: 'url',
+    url: 'https://sign-in.example/device',
+    elicitationId: 'elicit-sample-5',
+    title: null,
+    displayName: 'Sample Auth',
+    description: null,
+    fields: [],
+    unsupported: null,
+    ...p,
+  }),
 };
 
 /** `decisions.json` record of a still open plan decision (keeps the decision for A.10, R0-07). */
@@ -1098,6 +1265,12 @@ export const sampleResponses = {
     kind: 'plan',
     response: { behavior: 'approve_fresh_context', mode: 'auto', editedPlan: null },
   },
+  elicitationAccept: {
+    kind: 'elicitation',
+    response: { action: 'accept', content: { project: 'server', priority: 2, notify: true } },
+  },
+  elicitationDecline: { kind: 'elicitation', response: { action: 'decline', content: null } },
+  elicitationCancel: { kind: 'elicitation', response: { action: 'cancel', content: null } },
 } satisfies Record<string, DecisionResponse>;
 
 type OutcomeOf<T extends DecisionOutcome['type']> = Extract<DecisionOutcome, { type: T }>;
@@ -1179,6 +1352,91 @@ export function sampleDetail(p: Partial<SessionDetail> = {}): SessionDetail {
     latestPlanVersion: null,
     availableOutputStyles: [],
     draft: null,
+    review: [],
+    ...p,
+  };
+}
+
+// ---- WP-110: review, git service, search ----
+
+export function sampleReviewComment(p: Partial<ReviewComment> = {}): ReviewComment {
+  return {
+    id: SAMPLE_IDS.reviewComment,
+    path: 'src/login.ts',
+    side: 'new',
+    line: 12,
+    endLine: 13,
+    quote: 'if (password.length > 0) {\n  submit();',
+    text: 'Check the length **before** trimming.',
+    state: 'open',
+    createdAt: sampleTime(30),
+    sentAt: null,
+    ...p,
+  };
+}
+
+export function sampleGitFileChange(p: Partial<GitFileChange> = {}): GitFileChange {
+  return { path: 'src/login.ts', origPath: null, kind: 'modified', staged: false, unstaged: true, ...p };
+}
+
+export function sampleGitStatus(p: Partial<GitStatus> = {}): GitStatus {
+  return {
+    isRepo: true,
+    root: 'D:\\work\\sample\\.claude\\worktrees\\feature-login',
+    branch: 'feature/login',
+    detached: false,
+    head: sampleSha(2),
+    upstream: 'origin/feature/login',
+    ahead: 1,
+    behind: 0,
+    files: [
+      sampleGitFileChange(),
+      sampleGitFileChange({ path: 'src/login.test.ts', kind: 'untracked' }),
+      sampleGitFileChange({
+        path: 'src/auth.ts',
+        origPath: 'src/session.ts',
+        kind: 'renamed',
+        staged: true,
+        unstaged: false,
+      }),
+    ],
+    truncated: false,
+    ...p,
+  };
+}
+
+export function sampleGitDiffFile(p: Partial<GitDiffFile> = {}): GitDiffFile {
+  return {
+    path: 'src/login.ts',
+    origPath: null,
+    kind: 'modified',
+    binary: false,
+    additions: 2,
+    deletions: 1,
+    patch:
+      '@@ -10,4 +10,5 @@\n export function login(password: string) {\n-  submit();\n+  if (password.length > 0) {\n+    submit();\n+  }\n }\n',
+    truncated: false,
+    ...p,
+  };
+}
+
+export function sampleGitWorktree(p: Partial<GitWorktree> = {}): GitWorktree {
+  return { path: 'D:\\work\\sample', branch: 'main', head: sampleSha(1), main: true, ...p };
+}
+
+export function sampleWorktreeInspection(p: Partial<WorktreeInspection> = {}): WorktreeInspection {
+  return { dirtyFiles: 2, unpushedCommits: 1, branchMerged: false, ...p };
+}
+
+export function sampleSearchHit(p: Partial<SearchHit> = {}): SearchHit {
+  return {
+    entryId: SAMPLE_IDS.entry,
+    conversationId: SAMPLE_IDS.conversation,
+    itemId: SAMPLE_IDS.messageUuid,
+    kind: 'prompt',
+    snippet: 'Please add a login form with a password check.',
+    ranges: [[13, 23]],
+    at: sampleTime(20),
     ...p,
   };
 }

@@ -196,6 +196,50 @@ const commands: Command[] = [
   { name: 'hosts.move', hostId: 'computer-b', index: 0 },
   { name: 'hosts.remove', hostId: 'computer-b' },
   { name: 'hosts.reconnect', hostId: 'computer-b' },
+  // WP-110
+  {
+    name: 'session.create',
+    cwd: 'D:\\work\\sample',
+    worktree: { mode: 'new', branch: 'feature/login', baseRef: 'main' },
+  },
+  {
+    name: 'session.create',
+    cwd: 'D:\\work\\sample',
+    worktree: { mode: 'existing', path: 'D:\\work\\sample\\.claude\\worktrees\\feature-login' },
+  },
+  { name: 'session.setUnread', entryId, unread: true },
+  { name: 'git.status', entryId },
+  { name: 'git.diff', entryId, scope: 'session', onlySessionFiles: true },
+  { name: 'git.fileDiff', entryId, scope: 'uncommitted', path: 'src/login.ts' },
+  { name: 'git.commit', entryId, message: 'Add the login form' },
+  { name: 'git.commit', entryId, message: 'Only the form', paths: ['src/login.ts'] },
+  { name: 'git.branchCreate', entryId, branch: 'feature/login-2', switch: true },
+  { name: 'git.branchSwitch', entryId, branch: 'main' },
+  { name: 'git.push', entryId },
+  { name: 'worktree.list', cwd: 'D:\\work\\sample' },
+  { name: 'worktree.inspect', entryId },
+  { name: 'worktree.remove', entryId, deleteBranch: true, force: false, skipTeardown: false },
+  {
+    name: 'review.add',
+    entryId,
+    path: 'src/login.ts',
+    side: 'new',
+    line: 12,
+    endLine: 13,
+    quote: 'submit();',
+    text: 'Why here?',
+  },
+  { name: 'review.update', entryId, commentId: SAMPLE_IDS.reviewComment, state: 'stale' },
+  { name: 'review.remove', entryId, commentIds: [SAMPLE_IDS.reviewComment] },
+  { name: 'review.markSent', entryId, commentIds: [SAMPLE_IDS.reviewComment] },
+  { name: 'search.query', text: 'login', includeArchived: true, includeToolOutput: false },
+  {
+    name: 'transcript.loadAround',
+    entryId,
+    conversationId: SAMPLE_IDS.conversation,
+    itemId: 'u1',
+    around: 20,
+  },
 ];
 
 const clientMessages: ClientMessage[] = [
@@ -809,6 +853,23 @@ describe('command results', () => {
     const fileCommands = ['file.stat', 'file.statMany', 'file.open', 'files.session', 'files.project'];
     // WP-97: carries an entryId but needs no lifecycle (a shell in the folder).
     fileCommands.push('session.openShell');
+    // WP-110: git service, worktrees, review and loading around a search hit (archived entries too).
+    fileCommands.push(
+      'git.status',
+      'git.diff',
+      'git.fileDiff',
+      'git.commit',
+      'git.branchCreate',
+      'git.branchSwitch',
+      'git.push',
+      'worktree.inspect',
+      'worktree.remove',
+      'review.add',
+      'review.update',
+      'review.remove',
+      'review.markSent',
+      'transcript.loadAround',
+    );
     expect([...withoutEntry, ...fileCommands].sort()).toEqual([...HOST_COMMAND_NAMES].sort());
     expect(isHostCommand({ name: 'fs.listDirectory', path: null, showHidden: false })).toBe(true);
     expect(isHostCommand({ name: 'fs.createDirectory', parent: 'D:\\work', folderName: 'x' })).toBe(true);
@@ -886,8 +947,8 @@ describe('command results', () => {
     expect(parseServerMessage(JSON.stringify(sampleHello({ access: 'manage' }))).ok).toBe(true);
   });
 
-  it('PROTOCOL_VERSION is 6 (WP-95)', () => {
-    expect(PROTOCOL_VERSION).toBe(7);
+  it('PROTOCOL_VERSION is 8 (WP-110)', () => {
+    expect(PROTOCOL_VERSION).toBe(8);
   });
 
   it('WP-76: multi-host commands are host commands; drafts are session commands; client kinds', () => {

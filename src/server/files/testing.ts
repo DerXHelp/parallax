@@ -5,6 +5,7 @@
  */
 import type { ConversationId, EntryId } from '@shared/common';
 import type { TranscriptItem } from '@shared/model';
+import { sliceAround } from '../lib/transcriptWindow';
 import type { TranscriptStore } from '../sync/ports';
 import { nodeFileFs, type FileDirEntry, type FileFs, type FileStats } from './fileFs';
 import type { FileEntryInfo, FileEntryLookup } from './ports';
@@ -29,6 +30,10 @@ export function fakeTranscripts(
       const earlier = of(conversationId).filter((item) => item.order < beforeOrder);
       const start = Math.max(0, earlier.length - limit);
       return Promise.resolve({ items: earlier.slice(start), hasEarlier: start > 0 });
+    },
+    readAround: (_entryId, conversationId, itemId, n) => {
+      reads.push(`around:${conversationId}`);
+      return Promise.resolve(sliceAround(of(conversationId), itemId, n));
     },
     flush: () => Promise.resolve(),
   };

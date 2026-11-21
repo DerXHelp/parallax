@@ -34,6 +34,7 @@ import { z } from 'zod';
 import { system as systemFrame, msg } from '../../sessions/normalizer/synthetic/build';
 import type { OutgoingPrompt } from '../types';
 import { cliNotices } from './cliNotices';
+import { elicitKeyword, isFakeElicitKeyword } from './elicit';
 import { TurnInterrupted, promptText } from './common';
 import {
   assistantErrorTurn,
@@ -491,6 +492,10 @@ async function handle(
   }
   if (isFakeClaudeSettingsKeyword(keyword)) {
     await claudeSettingsKeyword(ctx, c, turn, keyword, text);
+    return sessionId;
+  }
+  if (isFakeElicitKeyword(keyword)) {
+    await elicitKeyword(ctx, c, turn, keyword);
     return sessionId;
   }
   switch (keyword) {

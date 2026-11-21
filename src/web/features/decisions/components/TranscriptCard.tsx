@@ -17,6 +17,7 @@ const STATUS: Readonly<Record<Decision['kind'], DisplayStatusKind>> = {
   permission: 'needs-permission',
   question: 'needs-answer',
   plan: 'needs-review',
+  elicitation: 'needs-answer',
 };
 
 /** Plans longer than this are clamped until "Show full plan". */
@@ -74,6 +75,9 @@ function Body({ sessionKey, decision }: { sessionKey: string; decision: Decision
           ))}
         </ul>
       );
+    // WP-110: no tool call carries an elicitation; kept for completeness (WP-116).
+    case 'elicitation':
+      return <p className="text-muted-foreground text-xs break-words">{decision.message}</p>;
   }
 }
 
@@ -95,6 +99,10 @@ export function TranscriptCard({ sessionKey, decision }: { sessionKey: string; d
   } else if (decision.kind === 'permission') {
     heading =
       decision.title ?? t('decisions.permission.title', { tool: decision.displayName ?? decision.toolName });
+  } else if (decision.kind === 'elicitation') {
+    heading =
+      decision.title ??
+      t('decisions.elicitation.title', { server: decision.displayName ?? decision.serverName });
   } else {
     heading = t('decisions.question.title', { count: decision.questions.length });
   }

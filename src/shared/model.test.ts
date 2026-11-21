@@ -173,6 +173,8 @@ describe('defaults for old files (B "fehlende Felder ergänzen")', () => {
       remoteControlWanted: false,
       turnSummary: null,
       lastSeenAt: null,
+      worktree: null,
+      baseSha: null,
     } satisfies Entry);
   });
 
@@ -256,7 +258,10 @@ describe('defaults for old files (B "fehlende Felder ergänzen")', () => {
 
   it('the detail patch schema does not inject defaults and covers every detail field except entryId', () => {
     expect(sessionDetailPatchSchema.parse({ queue: [] })).toEqual({ queue: [] });
-    const detailKeys = Object.keys(sessionDetailSchema.shape).filter((k) => k !== 'entryId');
+    // WP-110: `review` changes only through the ops review.upsert/review.remove.
+    const detailKeys = Object.keys(sessionDetailSchema.shape).filter(
+      (k) => k !== 'entryId' && k !== 'review',
+    );
     expect(Object.keys(sessionDetailPatchSchema.shape).sort()).toEqual(detailKeys.sort());
   });
 

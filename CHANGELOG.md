@@ -43,15 +43,35 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
   erlaubt einem gekoppelten Rechner zusätzlich Einstellungen und Server dieses Rechners (WP-107).
 - Unter Linux liegen die Schlüssel von „Mehrere Rechner“ im Schlüsselbund, mit `systemd-creds` oder auf Wunsch in einer
   Datei, die nur der eigene Benutzer lesen darf (WP-107).
+- Der Tab „Änderungen“ im Seitenpanel zeigt, was eine Session seit ihrem Start im Repository geändert hat, oder alles,
+  was nicht committet bzw. vorgemerkt ist, mit Diff je Datei (WP-111, WP-113).
+- Zeilen im Tab „Änderungen“ lassen sich kommentieren; „An Claude senden“ legt alle offenen Kommentare als einen Block
+  ins Eingabefeld (WP-111, WP-113).
+- Die Git-Leiste im Tab „Änderungen“ committet alles oder ausgewählte Dateien, legt Branches an, wechselt sie und
+  pusht; fehlt Git eine Anmeldung, bietet sie „Im Terminal pushen“ an (WP-111, WP-113).
+- „Neue Session“ kann eine Session in einem eigenen Git-Worktree mit eigenem Branch starten; beim Archivieren oder
+  Entfernen fragt Parallax, ob Worktree und Branch bleiben (WP-111, WP-114).
+- Unter Einstellungen → Projekte lassen sich je Repository optional ein Setup- und ein Teardown-Befehl für Worktrees,
+  ein eigener Portbereich je Session (`PARALLAX_WORKTREE_PORT`) und „Neue Sessions im eigenen Worktree starten“
+  einstellen; das Setup läuft sichtbar in einem Terminal-Tab (WP-111, WP-114).
+- Strg+Umschalt+F durchsucht Prompts, Antworten, Titel, Fazits und Pläne aller Sessions, auch archivierter, und öffnet
+  die Session an der Fundstelle; Strg+K bietet „In Inhalten suchen“ an (WP-112, WP-115).
+- Ein Filter über der Seitenleiste zeigt nur Sessions mit passendem Titel, Ordner oder Branch bzw. nur wartende,
+  arbeitende oder ungelesene (WP-115).
+- Sessions lassen sich als ungelesen markieren, und Projekte lassen sich am Projektkopf stummschalten (WP-112, WP-115).
+- Fragt ein MCP-Server während einer Session nach Eingaben, zeigt Parallax ein Formular oder einen Link in der Leiste
+  über dem Eingabefeld, statt die Anfrage abzulehnen (WP-112, WP-116).
 
 ### Geändert
+- Angeheftete Sessions schlafen nicht mehr ein (WP-112).
+- Nach Projekt gruppiert stehen Sessions in einem eigenen Worktree unter ihrem Repository (WP-115).
 - Die Oberfläche ist standardmäßig 10 % größer: Zoom 100 % sieht aus wie bisher 110 %. Wer bisher mit 110 % gearbeitet
   hat, setzt den Zoom einmal mit Strg+0 zurück (WP-96).
 - Interne Hinweise von `claude`, die nur andere Programme betreffen, erscheinen nicht mehr als „Unknown event“ (WP-95).
 - Gibt Parallax einen Titel an Claude Code weiter, zeigt das Transkript eine ruhige Zeile „Titel an Claude Code
   übergeben“ statt einer Nachricht, die aussieht, als hättest du sie geschrieben (WP-95).
-- Rechner, die sich mit „Mehrere Rechner“ gegenseitig steuern, brauchen dafür beide diese Version (Protokollversion 7,
-  WP-95, WP-102).
+- Rechner, die sich mit „Mehrere Rechner“ gegenseitig steuern, brauchen dafür beide diese Version (Protokollversion 8,
+  WP-95, WP-102, WP-110).
 - Optionen, die ein Rechner nicht bietet (Konsolenfenster, Editor, Shell-Fenster, Benachrichtigungen), blendet Parallax
   je Rechner aus (WP-104).
 - Ein gekoppelter Rechner kann keine Anmeldung im Browser des freigebenden Rechners mehr öffnen und dort weder Editor

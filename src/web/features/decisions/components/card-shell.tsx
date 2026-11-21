@@ -111,6 +111,8 @@ export interface DecisionCardShellProps {
   title: ReactNode;
   /** Right side of the header (queue menu, context gauge). */
   headerExtra?: ReactNode;
+  /** Who asks, instead of the decision's requester (WP-116: an elicitation names its MCP server). */
+  requester?: ReactNode;
   children?: ReactNode;
   /** Answer buttons and menus. */
   actions: ReactNode;
@@ -125,6 +127,7 @@ export function DecisionCardShell({
   decision,
   title,
   headerExtra,
+  requester,
   children,
   actions,
   primary,
@@ -263,7 +266,7 @@ export function DecisionCardShell({
         <header className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 px-3 pt-2 pb-1">
           <Icon aria-hidden className={cn('size-3.5 shrink-0', STATUS_PRESENTATION[kind].tone)} />
           <span className="min-w-0 truncate font-semibold">{title}</span>
-          <RequesterLabel requester={decision.requester} />
+          {requester ?? <RequesterLabel requester={decision.requester} />}
           {decision.state === 'expired' ? (
             <Badge variant="warning">{t('decisions.expired.badge')}</Badge>
           ) : null}
@@ -299,6 +302,8 @@ const NEEDS_KIND = {
   permission: 'needs-permission',
   question: 'needs-answer',
   plan: 'needs-review',
+  // WP-110 (ADR-256): waits for input like a question (`deriveDisplayStatus`).
+  elicitation: 'needs-answer',
 } as const satisfies Record<DecisionKind, string>;
 
 export interface DecisionActionProps extends Omit<ButtonProps, 'onClick'> {

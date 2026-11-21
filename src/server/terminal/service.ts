@@ -32,6 +32,13 @@
  *   attached are not read any more (the pipe fills, conhost slows the shell down) until it is
  *   below `resumeBytes`; over `closeBytes`, or paused longer than `pauseMaxMs` → close 1013.
  * - `disconnect`: the socket's channels go away; the shells keep running.
+ * - WP-111 (ADR-251) `runScript`: a project's setup/teardown command as a terminal of the entry
+ *   (`command: 'script'`, the title of the spec) – the shell of the spec runs the text as one argument
+ *   (`scriptLaunch`), with the neutral environment plus `entryEnv` plus the spec's env; the checks of
+ *   `open`, but archived entries are allowed (teardown before deleting a worktree). `exit` resolves with
+ *   the exit code once the output drained, null when the terminal was closed before. The command text
+ *   is never logged. `entryEnv` also reaches every shell the entry's panel opens
+ *   (`PARALLAX_WORKTREE_PORT`).
  */
 import type { Logger } from 'pino';
 import type { EntryId } from '@shared/common';
@@ -49,6 +56,7 @@ import {
   type TerminalInfo,
   type TerminalServerMessage,
 } from '@shared/terminal';
+import { setEnvVar } from '../claude/env';
 import { newId } from '../lib/ids';
 import { logger as rootLogger } from '../lib/logger';
 import { checkCwd as defaultCheckCwd } from '../lib/paths';
@@ -66,6 +74,7 @@ import type {
   TerminalService,
   TerminalServiceDeps,
   TerminalOrigin,
+  TerminalScriptResult,
   TerminalSink,
 } from './ports';
 import { createByteRing, type ByteRing } from './ring';
@@ -73,7 +82,9 @@ import {
   createGitFinder,
   resolveShellLaunch,
   type GitFinder,
+  scriptLaunch,
   type GitLocatorDeps,
+  type ScriptLaunch,
   type ShellLaunch,
 } from './shells';
 import { UnixPtyError } from './unixPty';
@@ -130,6 +141,11 @@ export interface TerminalServiceOptions extends TerminalServiceDeps {
   regKeyQuery?: RegKeyQuery;
   /** Shared with `createShellCommands` to reuse one Git cache. */
   gitFinder?: GitFinder;
+  /**
+   * WP-111 (ADR-251): variables added to every shell and script of the entry (after the neutral
+   * environment) – `PARALLAX_WORKTREE_PORT` of a worktree with a port block. Missing = none.
+   */
+  entryEnv?: (entryId: EntryId) => Readonly<Record<string, string>>;
 }
 
 interface Terminal {
@@ -224,7 +240,30 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
   const epochs = new Map<EntryId, { epoch: number; reason: TerminalEndReason }>();
   /** Liveness watches after `close()` (awaited by `closeAll`). */
   const watches = new Set<Promise<void>>();
+  /** WP-111: `runScript` callers waiting for the exit code of their terminal. */
+  const exitWaiters = new Map<TerminalId, (code: number | null) => void>();
   let shuttingDown = false;
+  const platform = options.platform ?? process.platform;
+
+  const settleExit = (terminalId: TerminalId, code: number | null): void => {
+    const waiter = exitWaiters.get(terminalId);
+    if (waiter === undefined) return;
+    exitWaiters.delete(terminalId);
+    waiter(code);
+  };
+
+  /** The launch with the entry's variables (and `extra`) added to its environment. */
+  const withEntryEnv = <T extends ShellLaunch>(
+    entryId: EntryId,
+    launch: T,
+    extra: Readonly<Record<string, string>> = {},
+  ): T => {
+    const add = { ...(options.entryEnv?.(entryId) ?? {}), ...extra };
+    if (Object.keys(add).length === 0) return launch;
+    const env = { ...launch.env };
+    for (const [name, value] of Object.entries(add)) setEnvVar(env, name, value, platform);
+    return { ...launch, env };
+  };
 
   const unavailable = (): ErrorPayload =>
     makeError('TERMINAL_UNAVAILABLE', {
@@ -379,6 +418,7 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     t.attached.clear();
     t.ring.clear();
     broadcastExit(t, exitCode, reason);
+    settleExit(terminalId, null);
     log.info({ terminalId, entryId, reason }, 'terminal ended');
   };
 
@@ -393,6 +433,7 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     t.ending = null;
     t.info = { ...t.info, state: 'exited', exitCode };
     broadcastExit(t, exitCode, 'exited');
+    settleExit(t.info.terminalId, exitCode);
     pushList(t.info.entryId);
     log.info({ terminalId: t.info.terminalId, exitCode }, 'terminal exited');
   };
@@ -496,11 +537,15 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
    * Checks 1–4 of `open` (available, entry, archived, limits); null = may start. A remote start also
    * stays below REMOTE_TERMINAL_LIMITS (the reserve of the computer itself).
    */
-  const admission = (entryId: EntryId, origin: TerminalOrigin): ErrorPayload | null => {
+  const admission = (
+    entryId: EntryId,
+    origin: TerminalOrigin,
+    allowArchived = false,
+  ): ErrorPayload | null => {
     if (!canStart()) return unavailable();
     const entry = options.entry(entryId);
     if (entry === null) return makeError('ENTRY_NOT_FOUND');
-    if (entry.archived) return makeError('SESSION_ARCHIVED');
+    if (entry.archived && !allowArchived) return makeError('SESSION_ARCHIVED');
     const own = entryTerminals(entryId).length + (pendingOpens.get(entryId) ?? 0);
     if (own >= TERMINAL_LIMITS.perEntry) {
       return makeError('TERMINAL_LIMIT_REACHED', { scope: 'entry', max: TERMINAL_LIMITS.perEntry });
@@ -543,7 +588,7 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
   };
 
   /** Why an open in flight must not start any more (state changed during its awaits); null = go. */
-  const stillAllowed = (entryId: EntryId, epoch: number): ErrorPayload | null => {
+  const stillAllowed = (entryId: EntryId, epoch: number, allowArchived = false): ErrorPayload | null => {
     if (!canStart()) return unavailable();
     const ended = epochs.get(entryId);
     if (ended !== undefined && ended.epoch !== epoch) {
@@ -551,16 +596,20 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     }
     const entry = options.entry(entryId);
     if (entry === null) return makeError('ENTRY_NOT_FOUND');
-    if (entry.archived) return makeError('SESSION_ARCHIVED');
+    if (entry.archived && !allowArchived) return makeError('SESSION_ARCHIVED');
     return null;
   };
 
   /** What a start needs besides the entry: how to resolve the program, and the terminal's facts. */
   interface StartPlan {
     readonly entryId: EntryId;
-    readonly resolve: (cwd: string) => Promise<ShellLaunch>;
+    readonly resolve: (cwd: string) => Promise<ScriptLaunch>;
     readonly shell: ShellKind;
     readonly command: TerminalCommand;
+    /** WP-111: the tab title (`runScript`); default none. */
+    readonly title?: string | null;
+    /** WP-111: archived entries may start it (the teardown of `worktree.remove`). */
+    readonly allowArchived?: boolean;
     readonly origin: TerminalOrigin;
     readonly cols: number;
     readonly rows: number;
@@ -585,7 +634,7 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     const remoteSince = plan.remoteSince ?? remoteEpoch;
     const revoked = (): boolean => plan.origin === 'remote' && remoteEpoch !== remoteSince;
     if (revoked()) return { kind: 'failed', error: makeError('HOST_REVOKED') };
-    const refused = admission(entryId, plan.origin);
+    const refused = admission(entryId, plan.origin, plan.allowArchived);
     if (refused !== null) return { kind: 'failed', error: refused };
     // admission() saw the entry; a null here would be a race with removal (checked again below).
     const cwd = options.entry(entryId)?.cwd ?? '';
@@ -597,13 +646,13 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
       } catch (error) {
         return { kind: 'failed', error: checkFailure(error, 'cwd') };
       }
-      let launch: ShellLaunch;
+      let launch: ScriptLaunch;
       try {
         launch = await plan.resolve(cwd);
       } catch (error) {
         return { kind: 'failed', error: checkFailure(error, 'launch') };
       }
-      const late = stillAllowed(entryId, epoch);
+      const late = stillAllowed(entryId, epoch, plan.allowArchived);
       if (late !== null) return { kind: 'failed', error: late };
       if (revoked()) return { kind: 'failed', error: makeError('HOST_REVOKED') };
       if (!plan.wanted() || factory === null) return { kind: 'dropped' };
@@ -616,6 +665,9 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
           env: launch.env,
           cols: plan.cols,
           rows: plan.rows,
+          ...(launch.windowsCommandLine === undefined
+            ? {}
+            : { windowsCommandLine: launch.windowsCommandLine }),
         });
       } catch (error) {
         const reason = startFailureReason(error);
@@ -634,7 +686,7 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
         rows: plan.rows,
         state: 'running',
         exitCode: null,
-        title: null,
+        title: plan.title ?? null,
         command: plan.command,
       };
       terminals.set(info.terminalId, {
@@ -667,7 +719,8 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
   const openShell = async (conn: Conn, message: OpenMessage): Promise<void> => {
     const outcome = await startTerminal({
       entryId: conn.entryId,
-      resolve: (cwd) => launchShell(message.shell, cwd, options.settings()),
+      resolve: async (cwd) =>
+        withEntryEnv(conn.entryId, await launchShell(message.shell, cwd, options.settings())),
       shell: message.shell,
       command: 'shell',
       origin: conn.origin,
@@ -870,6 +923,47 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     claudeState(terminalId) {
       const t = terminals.get(terminalId);
       return t?.info.state === 'running' && t.ending === null ? 'running' : 'ended';
+    },
+    async runScript(entryId, spec, origin = 'local'): Promise<TerminalScriptResult> {
+      try {
+        const outcome = await startTerminal({
+          entryId,
+          resolve: async (cwd) =>
+            withEntryEnv(
+              entryId,
+              scriptLaunch(
+                await launchShell(spec.shell, cwd, options.settings()),
+                spec.shell,
+                spec.command,
+                platform,
+              ),
+              spec.env,
+            ),
+          shell: spec.shell,
+          command: 'script',
+          title: terminalTitle(spec.title),
+          origin,
+          ...CLAUDE_TERMINAL_SIZE,
+          wanted: () => true,
+          allowArchived: true,
+        });
+        if (outcome.kind === 'failed') return outcome;
+        if (outcome.kind === 'dropped') return { kind: 'failed', error: unavailable() };
+        const { terminalId } = outcome.info;
+        const exit = new Promise<number | null>((resolve) => {
+          const t = terminals.get(terminalId);
+          if (t === undefined) resolve(null);
+          else if (t.info.state === 'exited') resolve(t.info.exitCode);
+          else exitWaiters.set(terminalId, resolve);
+        });
+        pushList(entryId);
+        poller.wake();
+        return { kind: 'started', terminalId, exit };
+      } catch (error) {
+        // Never the command or the env in the log (only the entry).
+        log.error({ err: error, entryId }, 'script terminal open failed');
+        return { kind: 'failed', error: makeError('TERMINAL_START_FAILED', { reason: 'internal' }) };
+      }
     },
     remoteEpoch: () => remoteEpoch,
     closeRemote() {

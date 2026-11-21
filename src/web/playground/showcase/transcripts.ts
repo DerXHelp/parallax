@@ -1,6 +1,13 @@
 import type { TranscriptItem } from '@shared/model';
-import { PAYPAL_ADAPTER, REMINDER_SERVICE, SHOWCASE_FILE_PATHS, SHOWCASE_ROOTS } from './files';
+import {
+  PAYPAL_ADAPTER,
+  REMINDER_SERVICE,
+  SHOWCASE_FILE_PATHS,
+  SHOWCASE_FILTER_WORKTREE,
+  SHOWCASE_ROOTS,
+} from './files';
 import { PLAN_FILE, PLAN_V1, PLAN_V2 } from './plans';
+import { FILTER_FILES, FILTER_SENT_QUOTE, FILTER_SENT_TEXT } from './review';
 import { numbered, transcriptBuilder } from './transcript-builder';
 
 /**
@@ -16,6 +23,8 @@ export const HAIKU = 'claude-haiku-5-5';
 const shop = (path: string) => `${SHOWCASE_ROOTS.shop}\\${path}`;
 const api = (path: string) => `${SHOWCASE_ROOTS.api}\\${path}`;
 const infra = (path: string) => `${SHOWCASE_ROOTS.infra}\\${path}`;
+/** The product-filter session works in its own worktree (WP-118). */
+const filterTree = (path: string) => `${SHOWCASE_FILTER_WORKTREE}\\${path}`;
 
 /** Decision ids of the showcase (the decisions themselves are built in data.ts). */
 export const SHOWCASE_DECISION_IDS = {
@@ -213,42 +222,53 @@ function lighthouseTranscript(now: number): TranscriptItem[] {
   return b.items;
 }
 
-// ---- nordlicht-shop: product filter (done, unread) ----
+// ---- nordlicht-shop: product filter (done, in a worktree – the review shot) ----
+
+/** What "Send to Claude" put into the composer for the first review comment (changes.feedback). */
+const FILTER_REVIEW_PROMPT = [
+  'Danke, sieht gut aus. Ein Punkt aus dem Review:',
+  '',
+  'Review-Kommentar zu den Änderungen (1):',
+  '',
+  `1. ${FILTER_FILES.bar}:12`,
+  `   > ${FILTER_SENT_QUOTE}`,
+  `   ${FILTER_SENT_TEXT}`,
+].join('\n');
 
 function filterTranscript(now: number): TranscriptItem[] {
   const b = transcriptBuilder('filter', 0x683, now, SONNET);
   b.user(
     'Der Produktfilter soll Mehrfachauswahl bei Farbe und Größe können, die Auswahl muss in der URL stehen.',
-    2400,
+    7800,
   );
-  b.tool('Read', { file_path: shop('src\\app\\produkte\\FilterBar.tsx') }, 2390, {
+  b.tool('Read', { file_path: filterTree('src\\app\\produkte\\FilterBar.tsx') }, 7790, {
     output: numbered("'use client';"),
   });
-  b.tool('Read', { file_path: shop('src\\lib\\filters.ts') }, 2386, {
+  b.tool('Read', { file_path: filterTree('src\\lib\\filters.ts') }, 7786, {
     output: numbered('export type Filter = {'),
   });
   b.tool(
     'Edit',
     {
-      file_path: shop('src\\lib\\filters.ts'),
+      file_path: filterTree('src\\lib\\filters.ts'),
       old_string: 'color?: string;',
       new_string: 'colors: string[];',
     },
-    2200,
+    7600,
   );
   b.tool(
     'Edit',
     {
-      file_path: shop('src\\app\\produkte\\FilterBar.tsx'),
+      file_path: filterTree('src\\app\\produkte\\FilterBar.tsx'),
       old_string: 'onChange={setColor}',
-      new_string: 'onChange={toggleColor}',
+      new_string: "onToggle={(c) => toggle('colors', c)}",
     },
-    2100,
+    7500,
   );
   b.tool(
     'Bash',
     { command: 'pnpm vitest run src/lib/filters.test.ts', description: 'Filter-Tests ausführen' },
-    1900,
+    7300,
     {
       output:
         ' ✓ src/lib/filters.test.ts (14 tests) 38ms\n\n Test Files  1 passed (1)\n      Tests  14 passed (14)',
@@ -256,9 +276,50 @@ function filterTranscript(now: number): TranscriptItem[] {
   );
   b.text(
     'Farbe und Größe sind jetzt Mehrfachauswahl. Die Auswahl steht als `?farbe=blau,grau&groesse=m,l` in der URL, Zurück im Browser stellt den Filter wieder her. Alle 14 Filter-Tests sind grün.',
-    1860,
+    7260,
   );
-  b.turn(1855, { durationMs: 545_000, numTurns: 14, costUsdTotal: 0.61, costUsdTurn: 0.61 });
+  b.turn(7255, { durationMs: 545_000, numTurns: 14, costUsdTotal: 0.61, costUsdTurn: 0.61 });
+  b.user(FILTER_REVIEW_PROMPT, 1440);
+  b.tool('Read', { file_path: filterTree('src\\lib\\filters.test.ts') }, 1430, {
+    output: numbered("import { describe, expect, it } from 'vitest';"),
+  });
+  b.tool(
+    'Edit',
+    {
+      file_path: filterTree('src\\lib\\filters.test.ts'),
+      old_string: "    expect(parseFilter(params).colors).toEqual(['blau', 'grau']);\n  });\n});",
+      new_string: [
+        "    expect(parseFilter(params).colors).toEqual(['blau', 'grau']);",
+        '  });',
+        '',
+        "  it('liefert leere Listen ohne Parameter', () => {",
+        '    expect(parseFilter(new URLSearchParams()).colors).toEqual([]);',
+        '  });',
+        '',
+        "  it('ignoriert leere und doppelte Werte', () => {",
+        "    const params = new URLSearchParams('farbe=blau,,blau');",
+        "    expect(parseFilter(params).colors).toEqual(['blau']);",
+        '  });',
+        '});',
+      ].join('\n'),
+    },
+    1200,
+    { output: 'The file has been updated successfully.' },
+  );
+  b.tool(
+    'Bash',
+    { command: 'pnpm vitest run src/lib/filters.test.ts', description: 'Filter-Tests ausführen' },
+    780,
+    {
+      output:
+        ' ✓ src/lib/filters.test.ts (16 tests) 41ms\n\n Test Files  1 passed (1)\n      Tests  16 passed (16)',
+    },
+  );
+  b.text(
+    'Zwei Tests ergänzt: ohne Parameter und mit leeren Werten wie `?farbe=`. `parseFilter` wirft in beiden Fällen nicht, `readList` verwirft leere Einträge und Doppelte schon – am Code musste nichts geändert werden. Alle 16 Filter-Tests sind grün.',
+    735,
+  );
+  b.turn(720, { durationMs: 720_000, numTurns: 5, costUsdTotal: 0.83, costUsdTurn: 0.22 });
   return b.items;
 }
 
@@ -358,7 +419,7 @@ function flakyTranscript(now: number): TranscriptItem[] {
     },
   );
   b.text(
-    'Ursache: Die Fixture `frozen_departure` baut ein naives `datetime.now()`. Läuft die CI kurz vor Mitternacht UTC, liegt die Abfahrt in Berlin schon am nächsten Tag. Die Fixture nutzt jetzt `Europe/Berlin` – 50 von 50 Läufen grün.',
+    'Ursache: Die Fixture `frozen_departure` baut ein naives `datetime.now()` ohne Zeitzone. Läuft die CI kurz vor Mitternacht UTC, liegt die Abfahrt in Berlin schon am nächsten Tag. Die Fixture nutzt jetzt `Europe/Berlin` – 50 von 50 Läufen grün.',
     4880,
   );
   b.turn(4875, { durationMs: 520_000, numTurns: 9, costUsdTotal: 0.38, costUsdTurn: 0.38 });
@@ -414,7 +475,7 @@ const SETTINGS_PATCH = [
 function pushTranscript(now: number): TranscriptItem[] {
   const b = transcriptBuilder('push', 0x687, now, SONNET);
   b.user(
-    'Push-Benachrichtigungen für Termine: 24 Stunden und eine Stunde vorher erinnern, in den Einstellungen abschaltbar. Firebase ist schon eingerichtet.',
+    'Push-Benachrichtigungen für Termine in der Zeitzone des Vereins: 24 Stunden und eine Stunde vorher erinnern, in den Einstellungen abschaltbar. Firebase ist schon eingerichtet.',
     1080,
   );
   b.tool('Read', { file_path: SHOWCASE_FILE_PATHS.pubspec }, 1072, { output: numbered('name: vereinsapp') });

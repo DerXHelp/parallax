@@ -17,8 +17,17 @@
  * process, no auto-wake). WP-69: `session.subagentTranscript` (subagentTranscript.ts; reads the CLI's
  * agent transcript, no process needed). WP-70: `session.setOutputStyle` (outputStyle.ts; a dormant
  * entry starts without a turn). WP-77: `session.setDraft` (ADR-210; every entry state) – a sent
- * prompt clears the draft it was sent from.
+ * prompt clears the draft it was sent from. WP-110 (routing only): `session.setUnread` (unread.ts,
+ * WP-112) and `session.create` with `worktree` (worktrees.ts, WP-111). WP-111: the git service's
+ * commands `git.*`/`worktree.*` (worktrees.ts → git/commands.ts) and `review.*` (review.ts) are host
+ * commands the engine answers itself (they need its entries); `session.create` records the diff base
+ * (`Entry.baseSha` = HEAD, ADR-253) and creates a worktree (CR10: `git worktree add` and the files of
+ * the start prompt before the entry – a failure is the command's error; then asynchronously
+ * `.worktreeinclude` and the setup, state `worktreeSetup`, the start prompt waits for the setup); start
+ * commands answer SESSION_BUSY while it runs, "Start anyway" (`session.resume`/`sendPrompt` after a
+ * failed setup) releases the held prompt.
  */
+import { rm, rmdir } from 'node:fs/promises';
 import { LIMITS, type ClientId, type ProfileId } from '@shared/common';
 import { makeError } from '@shared/errors';
 import {
@@ -31,7 +40,7 @@ import {
   type SettingsPatch,
 } from '@shared/model';
 import type { PathRules } from '@shared/paths';
-import { HOST_PATH_RULES } from '../lib/paths';
+import { HOST_PATH_RULES, pathModuleOf } from '../lib/paths';
 import {
   isHostCommand,
   type Command,
@@ -40,6 +49,7 @@ import {
   type HostCommand,
   type SessionOp,
 } from '@shared/protocol';
+import { isGitCommand } from '../git/commands';
 import { CommandError, type CommandContext, type HostCommandHandler } from '../sync/ports';
 import { checkAttachments, checkPastes, materializeAttachments, type PromptAttachments } from './attachments';
 import { applyModelSettings, claudeModelOf, updateClaudeModel } from './claudeSettings';
@@ -65,7 +75,21 @@ import { mcpAction, readSessionInfo, reloadSession } from './sessionInfo';
 import { askSideQuestion, cancelSideQuestion, deleteSideQuestionThread } from './sideQuestions';
 import { readSubagentTranscript } from './subagentTranscript';
 import { capTitle, implementPlanPrompt, newConversation, titleFromPrompt } from './summary';
+import { handleReviewCommand, isReviewCommand } from './review';
 import { regenerateTitle } from './titles';
+import { setUnread } from './unread';
+import {
+  addSessionWorktree,
+  createSessionWorktree,
+  finishSessionWorktree,
+  handleGitCommand,
+  releaseHeldStart,
+  scriptOrigin,
+  sessionBaseSha,
+  setupBusy,
+  setupRunning,
+  type WorktreePlan,
+} from './worktrees';
 
 export interface CommandEngine {
   readonly core: EngineCore;
@@ -96,7 +120,7 @@ export async function handleCommand(
     engine.core.assertRunning();
     switch (cmd.name) {
       case 'session.create':
-        return await createSession(engine, cmd, ctx.clientId);
+        return await createSession(engine, cmd, ctx);
       case 'settings.update': {
         assertSettingsAccess(cmd.patch, ctx);
         assertHostSettings(cmd.patch);
@@ -120,6 +144,19 @@ export async function handleCommand(
     throw new CommandError(makeError('INTERNAL_ERROR', { command: cmd.name }));
   }
 }
+
+/** WP-111: commands that start the process – refused while the worktree is created or set up. */
+const SETUP_BLOCKED: ReadonlySet<EntryCommand['name']> = new Set<EntryCommand['name']>([
+  'session.sendPrompt',
+  'session.resume',
+  'session.regenerateTitle',
+  'session.askSideQuestion',
+  'session.setOutputStyle',
+  'session.openExternal',
+  'session.openInTerminal',
+  'session.switchConversation',
+  'decision.respond',
+]);
 
 function notImplemented(name: string): CommandError {
   return commandError('NOT_IMPLEMENTED', { command: name });
@@ -152,6 +189,9 @@ export function assertSettingsAccess(patch: SettingsPatch, ctx: CommandContext):
 
 /** ADR-101: the handler that lists the name; its CommandErrors pass through unchanged. */
 async function hostCommand(engine: CommandEngine, cmd: HostCommand, ctx: CommandContext): Promise<unknown> {
+  // WP-111: answered by the engine (entries, environments, review state).
+  if (isGitCommand(cmd)) return handleGitCommand(engine, cmd, ctx);
+  if (isReviewCommand(cmd)) return handleReviewCommand(engine, cmd);
   const handler = engine.hostCommands.find((h) => h.names.includes(cmd.name));
   if (handler === undefined) throw notImplemented(cmd.name);
   return handler.handle(cmd, ctx);
@@ -183,22 +223,60 @@ async function controlCall<T>(
 async function createSession(
   engine: CommandEngine,
   cmd: CommandOf<'session.create'>,
-  clientId: ClientId,
+  ctx: CommandContext,
 ): Promise<CommandResult<'session.create'>> {
   const core = engine.core;
+  const { clientId } = ctx;
   const profileId = cmd.profileId ?? core.claude.profiles.getDefault().id;
   const profile = core.profile(profileId);
   if (profile === undefined) throw commandError('PROFILE_NOT_FOUND', { profileId });
   await core.checkCwd(cmd.cwd);
   const permissionMode = cmd.permissionMode ?? profile.defaults.permissionMode;
   assertModeAllowed(core, profileId, permissionMode);
-  // ADR-103/146: pastes and attachments are checked before the entry exists (a bad one creates
-  // nothing); files are materialized once the entry exists.
-  const pastes = checkPastes(cmd.prompt?.text ?? '', cmd.prompt?.pastes ?? []);
-  const checked = await checkAttachments(core.stores.blobs, cmd.prompt?.attachments ?? [], {
-    files: core.stores.attachments !== null,
-  });
-  core.assertRunning();
+  const entryId = core.ids.newId('en');
+  // WP-111 (ADR-250): the worktree is checked and reserved before the entry – a refusal creates
+  // nothing; `git worktree add` and the setup run once the entry exists (finishSessionWorktree).
+  const plan: WorktreePlan | null =
+    cmd.worktree === undefined
+      ? null
+      : await createSessionWorktree(core, cmd.cwd, cmd.worktree, { profileId, entryId });
+  let pastes: readonly string[];
+  let checked: PromptAttachments;
+  let baseSha: string | null;
+  try {
+    // ADR-103/146: pastes and attachments are checked before the entry exists (a bad one creates
+    // nothing); files are materialized once the entry exists.
+    pastes = checkPastes(cmd.prompt?.text ?? '', cmd.prompt?.pastes ?? []);
+    checked = await checkAttachments(core.stores.blobs, cmd.prompt?.attachments ?? [], {
+      files: core.stores.attachments !== null,
+    });
+    // ADR-253: the session diff starts at HEAD of now (a worktree: its base).
+    baseSha = plan?.ref.baseSha ?? (await sessionBaseSha(core, cmd.cwd, profileId, entryId));
+    core.assertRunning();
+  } catch (error) {
+    plan?.release();
+    throw error;
+  }
+  const worktree = plan?.ref ?? null;
+  const prompt = cmd.prompt;
+  // CR10 (code review WP-117): a new worktree exists before its entry. The files of the start prompt
+  // first (cheap to drop again), then `git worktree add`; either failure is the error of this command
+  // and leaves no entry (and no entry whose folder is missing).
+  let held: PromptAttachments | null = null;
+  if (plan?.create === true) {
+    try {
+      if (prompt !== undefined)
+        held = await materializeAttachments(core.stores.attachments, entryId, checked);
+      await addSessionWorktree(core, plan);
+    } catch (error) {
+      plan.release();
+      if (held !== null && held.paths.length > 0) await discardAttachments(core, entryId);
+      core.log.warn({ err: error, entryId }, 'session.create: the worktree could not be prepared');
+      throw error instanceof CommandError
+        ? error
+        : new CommandError(makeError('INTERNAL_ERROR', {}, errorMessage(error)));
+    }
+  }
 
   const now = core.now().toISOString();
   // WP-64: `on`/`off` decide now; `follow_claude` starts from the last known default of this
@@ -210,10 +288,10 @@ async function createSession(
   const given = cmd.title?.trim() ?? '';
   const promptTitle = cmd.prompt === undefined ? null : titleFromPrompt(cmd.prompt.text);
   const entry: Entry = {
-    id: core.ids.newId('en'),
+    id: entryId,
     createdAt: now,
     profileId,
-    cwd: cmd.cwd,
+    cwd: worktree?.path ?? cmd.cwd,
     title: given !== '' ? capTitle(given) : (promptTitle ?? ''),
     titleSource: given !== '' ? 'custom' : promptTitle !== null ? 'prompt' : 'none',
     pinned: false,
@@ -240,10 +318,22 @@ async function createSession(
     remoteControlWanted,
     turnSummary: null,
     lastSeenAt: null,
+    worktree,
+    baseSha,
   };
   const s = engine.createEntry(entry, promptTitle);
+  // CR1: the entry carries the port block now (and git has branch and folder) – reservations end.
+  plan?.release();
   s.followClaudeDefault = newSessions === 'follow_claude';
-  const prompt = cmd.prompt;
+  if (plan?.create === true) {
+    // WP-111 (ADR-251): the worktree is finished (and set up) now; the first prompt waits for it.
+    s.setWorktreeSetup({ state: 'creating', exitCode: null, terminalId: null });
+    if (prompt !== undefined && held !== null) {
+      s.heldStart = { text: prompt.text, attachments: held, pastes, clientId };
+    }
+    void finishSessionWorktree(core, s, plan, scriptOrigin(ctx));
+    return { entryId: entry.id, messageUuid: null };
+  }
   if (prompt === undefined) return { entryId: entry.id, messageUuid: null };
   try {
     const messageUuid = await s.lifecycle.run(async () => {
@@ -257,6 +347,20 @@ async function createSession(
     // The entry exists; the start failure shows as status `error` in its summary.
     core.log.warn({ err: error, entryId: entry.id }, 'session.create: start failed');
     return { entryId: entry.id, messageUuid: null };
+  }
+}
+
+/** CR10: the copied files of a start prompt whose entry was never created (best effort). */
+async function discardAttachments(core: EngineCore, entryId: string): Promise<void> {
+  const store = core.stores.attachments;
+  if (store === null) return;
+  try {
+    const dir = await store.dir(entryId);
+    await rm(dir, { recursive: true, force: true });
+    // The entry's folder, if nothing else is in it.
+    await rmdir(pathModuleOf(HOST_PATH_RULES).dirname(dir)).catch(() => undefined);
+  } catch (error) {
+    core.log.debug({ err: error, entryId }, 'attachments of a failed session.create not removed');
   }
 }
 
@@ -288,8 +392,12 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, ctx: Comma
   // Checked again inside the lifecycle lock by every command that waits for it (R4-01).
   assertEntryGate(s, cmd.name);
   const core = engine.core;
+  // WP-111 (ADR-251): nothing starts in a worktree that is still created or set up.
+  if (SETUP_BLOCKED.has(cmd.name) && setupRunning(s)) throw setupBusy(s);
   switch (cmd.name) {
     case 'session.sendPrompt':
+      // "Start anyway" after a failed setup: the held prompt first.
+      if (s.worktreeSetup?.state === 'failed') await releaseHeldStart(core, s);
       return sendPrompt(core, s, cmd, clientId);
     case 'session.interrupt':
       return interrupt(core, s);
@@ -356,6 +464,8 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, ctx: Comma
       return {} satisfies CommandResult<'session.close'>;
     case 'session.resume':
       s.cancelRetry();
+      // WP-111: "Start anyway" after a failed setup (the held start prompt goes out with the start).
+      if (s.worktreeSetup?.state === 'failed') await releaseHeldStart(core, s);
       await s.lifecycle.run(async () => {
         assertEntryGate(s, cmd.name);
         if (s.runtime === null) await startRuntime(s, core, { byClientId: clientId });
@@ -478,6 +588,9 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, ctx: Comma
     // WP-77 (ADR-210): the synchronized composer draft – every entry state.
     case 'session.setDraft':
       return setDraft(core, s, cmd, clientId);
+    // WP-110 (F6): every entry state (the mark is Parallax's own).
+    case 'session.setUnread':
+      return setUnread(core, s, cmd);
   }
 }
 
@@ -569,6 +682,10 @@ async function removeSession(engine: CommandEngine, s: EntryState): Promise<Comm
     await endRemoteBeforeClose(core, s);
     await closeRuntime(s, core, 'remove');
     engine.removeEntry(s);
+  });
+  // WP-111 (ADR-254): the review comments go with the entry.
+  core.stores.review?.remove(s.id).catch((error: unknown) => {
+    core.log.warn({ err: error, entryId: s.id }, 'review comments of a removed entry could not be deleted');
   });
   return {};
 }

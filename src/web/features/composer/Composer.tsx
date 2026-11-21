@@ -4,6 +4,7 @@ import {
   CircleDotIcon,
   CornerDownRightIcon,
   FilePlusIcon,
+  GitBranchIcon,
   MessageCircleQuestionIcon,
   PaperclipIcon,
   ReplyIcon,
@@ -36,7 +37,7 @@ import {
   type PromptPriority,
 } from '@shared/common';
 import type { EntryId } from '@shared/common';
-import type { Decision, ModelOption, SlashCommandInfo } from '@shared/model';
+import type { Decision, ModelOption, SlashCommandInfo, WorktreeSetup } from '@shared/model';
 import type { RunState } from '@shared/status';
 import { useT, type t as translateFn } from '@web/i18n';
 import { cn } from '@web/lib/cn';
@@ -83,7 +84,14 @@ import {
   useSelectedDecisionId,
 } from '../decisions/state/bar-store';
 import { ContextGauge } from './ContextGauge';
-import { answerFromText, interruptSession, isSingleQuestion, sendPrompt, textLimit } from './lib/commands';
+import {
+  answerFromText,
+  interruptSession,
+  isSingleQuestion,
+  sendPrompt,
+  textLimit,
+  type ComposerDecision,
+} from './lib/commands';
 import {
   applyMention,
   indexPaths,
@@ -148,6 +156,8 @@ type TargetKind = 'permission' | 'question' | 'questions' | 'plan';
 const COUNTER_FROM = 0.8;
 
 const EMPTY_NAMES: readonly string[] = Object.freeze([]);
+/** Between a draft and text appended from outside (`composerText`): a new paragraph. */
+const PARAGRAPH = '\n\n';
 
 /*
  * R5W-01 (start-chunk budget): the @ list and the paste chips are chunks of their own; the composer
@@ -215,13 +225,22 @@ function isWorking(runState: RunState | null): boolean {
   return runState === 'working' || runState === 'starting';
 }
 
-function targetKind(decision: Decision): TargetKind {
+/** WP-110: the open decision the composer may answer (never an elicitation – that is a form). */
+function composerTarget(decision: Decision | null): ComposerDecision | null {
+  return decision !== null && decision.state === 'open' && decision.kind !== 'elicitation' ? decision : null;
+}
+
+function targetKind(decision: ComposerDecision): TargetKind {
   if (decision.kind === 'question') return isSingleQuestion(decision) ? 'question' : 'questions';
   return decision.kind;
 }
 
 /** Hint above the field: `target` = Enter answers it, `pending` = it is open, Enter sends a message. */
-function decisionHint(decision: Decision, variant: 'target' | 'pending', t: typeof translateFn): string {
+function decisionHint(
+  decision: ComposerDecision,
+  variant: 'target' | 'pending',
+  t: typeof translateFn,
+): string {
   const requester = requesterText(decision.requester, t);
   switch (decision.kind) {
     case 'permission':
@@ -281,7 +300,13 @@ function hasFiles(event: DragEvent): boolean {
  *   no @ list, large pastes stay text; paste tokens of the draft are replaced and attachments stay
  *   for the next message. `/btw <question>` asks right away. The card appears in the transcript.
  * - „Zurückholen“ of a waiting message (WP-66, shell request `composerText`): its text comes back
- *   into the field – appended to a draft as a new paragraph.
+ *   into the field – appended to a draft as a new paragraph. WP-114: `asPaste` (the review package of
+ *   the tab "Changes", ADR-254) puts it in as a paste chip instead (token appended like a paragraph;
+ *   side mode ends – the package is a message). Refused like a large paste (too many chips, draft too
+ *   large) it goes in as text with the same notice.
+ * - WP-114 (ADR-251): while the session's worktree is being created or its setup command runs
+ *   (`SessionSummary.worktreeSetup` `creating`/`setup`) nothing is sent – a hint says why; typing
+ *   stays possible. A failed setup does not block (sending = "Start anyway", the server allows it).
  * - Sending needs an open connection; failures restore the text (caret at its end, also in a field
  *   mounted later) and show a notice. While "Open in external console" is on its way (here or from
  *   a session menu, `shell/navigation/handoff.ts`) nothing is sent – the text stays (WP41-07).
@@ -373,7 +398,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const decisions = useDecisions(sessionKey);
   const selectedId = useSelectedDecisionId(sessionKey);
   const displayed = pickDisplayedDecision(decisions, selectedId);
-  const target = displayed?.state === 'open' ? displayed : null;
+  const target = composerTarget(displayed);
   const targetId = target?.id ?? null;
   // WP-93: the plan's annotations go along with the text and take their part of the feedback limit.
   const planOverhead = feedbackOverhead(usePlanFeedbackSection(target?.kind === 'plan' ? target : null), t);
@@ -416,6 +441,13 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   /** WP-66: the session whose field is in side mode (one question, then off again); null = none. */
   const [sideFor, setSideFor] = useState<string | null>(null);
   const sideMode = sideFor === sessionKey;
+  /** WP-114: the worktree is being created / its setup runs – the server answers SESSION_BUSY meanwhile. */
+  const setupState = useSummarySelector<WorktreeSetup['state'] | null>(
+    sessionKey,
+    (s) => s.worktreeSetup?.state ?? null,
+    null,
+  );
+  const setupRunning = setupState === 'creating' || setupState === 'setup';
   /** A turn runs: queue mode, "Send now", Stop. Not while only background tasks work (B18, ADR-159). */
   const working = isWorking(runState) && !(backgroundWork && turnEnded);
 
@@ -568,7 +600,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const limit = sideMode ? LIMITS.sideQuestionChars : textLimit(answerTarget, planOverhead);
   const tooLong = sendLength > limit;
   let canSend: boolean;
-  if (handoffPending) canSend = false;
+  if (handoffPending || setupRunning) canSend = false;
   else if (answerTarget !== null || sideMode) canSend = online && value !== '' && !tooLong;
   // `/plan text` sends the text with the images (R4W-26): it waits for them like a message.
   else if (commandDraft) canSend = online && !(sendsPrompt(draftAction) && attachmentsBlocked);
@@ -577,6 +609,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     pendingTarget !== null &&
     online &&
     !handoffPending &&
+    !setupRunning &&
     value !== '' &&
     sendLength <= textLimit(pendingTarget, planOverhead);
   const suggestion =
@@ -770,9 +803,41 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
       });
   };
 
+  /**
+   * WP-114: a text from outside (the review package, ADR-254) as a paste chip – whatever its size; its
+   * token goes at the end of the draft (a new paragraph). False = refused (the notice says why) or
+   * empty: the caller puts it in as text.
+   */
+  const appendAsPaste = (raw: string): boolean => {
+    const pasted = normalizePastedText(raw);
+    if (pasted.trim() === '') return false;
+    const current = getDraftInput(sessionKey);
+    const kept = getPastes(sessionKey);
+    const refusal = pasteRefusal(current, kept, pasted);
+    if (refusal !== null) {
+      showTextNotice(
+        refusal === 'count' ? 'composer.pastes.asTextCount' : 'composer.pastes.asTextSize',
+        refusal === 'count' ? { max: LIMITS.pastesMax } : undefined,
+        { sessionKey, id: `composer.paste.${sessionKey}` },
+      );
+      return false;
+    }
+    // The package is a message to Claude, not a side question.
+    if (sideMode) setSideFor(null);
+    const id = nextPasteId(kept);
+    const token = t('composer.pastes.token', { id: String(id), count: lineCount(pasted) });
+    const next = current.trim() === '' ? token : `${current.trimEnd()}${PARAGRAPH}${token}`;
+    changeText(next, next.length, [...activePastes(current, kept), { id, token, text: pasted }]);
+    return true;
+  };
+
   // WP-66 „Zurückholen“: the text of a withdrawn waiting message (transcript) comes back here.
   useShellRequestHandler('composerText', (request) => {
     if (request.sessionKey !== sessionKey) return false;
+    if (request.asPaste === true && appendAsPaste(request.text)) {
+      textareaRef.current?.focus();
+      return true;
+    }
     const current = getDraftInput(sessionKey);
     const next = current.trim() === '' ? request.text : `${current.trimEnd()}\n\n${request.text}`;
     changeText(next, next.length);
@@ -783,6 +848,8 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const submit = (via: Via) => {
     // WP41-07: the store, not the last render – an Enter right after the click is held as well.
     if (isHandoffPending(sessionKey)) return;
+    // WP-114: nothing goes out while the worktree is being prepared (the draft stays).
+    if (setupRunning) return;
     const message = getDraftInput(sessionKey).trim();
     let answer: Decision | null = null;
     if (via === 'primary' && target !== null && lockedId === target.id) answer = target;
@@ -1085,7 +1152,9 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const hintTarget = answerTarget ?? pendingTarget;
   // An answer (and a side question, WP-66) carries no images: the chips stay for the next message (R4W-26).
   const imagesWaitForMessage = (answerTarget !== null || sideMode) && attachments.length > 0;
+  const setupHintId = `${inputId}-worktree-setup`;
   const describedBy = [
+    setupRunning ? setupHintId : null,
     hintTarget === null ? null : hintId,
     imagesWaitForMessage ? imagesHintId : null,
     menuOpen || mentionOpen ? menuHintId : null,
@@ -1129,6 +1198,17 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
             <RateLimitBanner sessionKey={sessionKey} />
           </Suspense>
         </SlotBoundary>
+      ) : null}
+      {setupState === 'creating' || setupState === 'setup' ? (
+        <p
+          id={setupHintId}
+          data-slot="composer-worktree-setup"
+          data-state={setupState}
+          className="text-muted-foreground mb-1 flex items-start gap-1.5 text-2xs"
+        >
+          <GitBranchIcon aria-hidden className="mt-px size-3 shrink-0" />
+          {t(`composer.worktreeSetup.${setupState}`)}
+        </p>
       ) : null}
       {hintTarget === null ? null : (
         <p

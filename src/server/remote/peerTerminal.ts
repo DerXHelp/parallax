@@ -119,6 +119,8 @@ export function remoteTerminalView(service: TerminalService, onOpen: () => void)
     // `connect` and sees only the terminals started through remote access (follow-up WP-109).
     list: (entryId) => service.list(entryId),
     openClaude: (entryId, launch, _origin, since) => service.openClaude(entryId, launch, 'remote', since),
+    // WP-110: a setup/teardown started through remote access is a remote terminal too.
+    runScript: (entryId, spec) => service.runScript(entryId, spec, 'remote'),
     remoteEpoch: () => service.remoteEpoch(),
     claudeState: (terminalId) => service.claudeState(terminalId),
     closeEntry: (entryId, reason) => {

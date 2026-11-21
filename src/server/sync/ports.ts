@@ -31,6 +31,7 @@ import {
   type Entry,
   type HostState,
   type HostWarning,
+  type ReviewComment,
   type SessionSummary,
   type Settings,
   type SettingsPatch,
@@ -168,7 +169,24 @@ export interface TranscriptStore {
     beforeOrder: number,
     limit: number,
   ): Promise<{ items: TranscriptItem[]; hasEarlier: boolean }>;
+  /**
+   * WP-110 (jump to a search hit, `transcript.loadAround`): the item `itemId` and up to `n` items
+   * before and after it, by order; null = the item is not in this conversation.
+   */
+  readAround(
+    entryId: EntryId,
+    conversationId: ConversationId,
+    itemId: string,
+    n: number,
+  ): Promise<TranscriptWindow | null>;
   flush(): Promise<void>;
+}
+
+/** WP-110: a window of a conversation's items (`readAround`, helper `lib/transcriptWindow.ts`). */
+export interface TranscriptWindow {
+  items: TranscriptItem[];
+  hasEarlier: boolean;
+  hasLater: boolean;
 }
 
 export interface BlobStore {
@@ -228,6 +246,21 @@ export interface DraftStore {
   load(entryId: EntryId): Promise<Draft | null>;
   /** Debounced atomic write; null deletes the file. */
   save(entryId: EntryId, draft: Draft | null): void;
+  /** Entry removed: delete the file now. */
+  remove(entryId: EntryId): Promise<void>;
+  flush(): Promise<void>;
+}
+
+/**
+ * WP-110 (ADR-254): the review comments per entry, `<home>/entries/<entryId>/review.json`
+ * (`reviewFileSchema`). Implemented in `store/review.ts` (WP-111); the review commands publish every
+ * change as `review.upsert`/`review.remove` and save the whole list.
+ */
+export interface ReviewStore {
+  /** [] = none (also for a missing or quarantined file). */
+  load(entryId: EntryId): Promise<ReviewComment[]>;
+  /** Debounced atomic write of the whole list (≤ LIMITS.reviewCommentsMax); [] deletes the file. */
+  save(entryId: EntryId, comments: readonly ReviewComment[]): void;
   /** Entry removed: delete the file now. */
   remove(entryId: EntryId): Promise<void>;
   flush(): Promise<void>;

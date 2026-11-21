@@ -119,7 +119,7 @@ async function openSection(user: ReturnType<typeof userEvent.setup>, name: strin
 }
 
 describe('settings page (WP-38): dialog, sections, Esc', () => {
-  it('lists the ten sections on the left and starts at the first one', async () => {
+  it('lists the eleven sections on the left and starts at the first one', async () => {
     await connect();
     renderPage();
     const list = screen.getByRole('tablist', { name: 'Settings sections' });
@@ -134,6 +134,8 @@ describe('settings page (WP-38): dialog, sections, Esc', () => {
       'Files',
       // WP-97: "Console" after "Files".
       'Console',
+      // WP-110: "Projects" after "Console".
+      'Projects',
       'Profiles',
       'Server',
       // WP-78b: "Several computers" after "Server".
@@ -353,8 +355,8 @@ describe('Notifications', () => {
         name: 'While a Parallax window is in front and shows another session',
       }),
     ).toBeTruthy();
-    // Every patch carries the whole notifications object.
-    for (const patch of patches(host)) expect(Object.keys(patch.notifications ?? {})).toHaveLength(6);
+    // Every patch carries the whole notifications object (WP-110: with `mutedProjects`).
+    for (const patch of patches(host)) expect(Object.keys(patch.notifications ?? {})).toHaveLength(7);
   });
 
   it('keyboard steps on the volume are saved and played once, after the last key (R4W-17)', async () => {
@@ -994,8 +996,14 @@ describe('WP-107: the settings of a managed computer (Verwalten-Ansicht, WP-76 Â
     const options = await screen.findAllByRole('option');
     expect(options.map((option) => option.textContent)).toEqual(['This computer', 'Computer B (managed)']);
     await user.click(screen.getByRole('option', { name: 'Computer B (managed)' }));
-    // Only the stored settings of that computer (no window, notification, editor or console sections).
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Sessions', 'Server', 'About']);
+    // Only the stored settings of that computer (no window, notification, editor or console sections;
+    // WP-110: its projects).
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+      'Sessions',
+      'Projects',
+      'Server',
+      'About',
+    ]);
     expect(document.querySelector('[data-slot="settings-host-hint"]')?.textContent).toContain(
       'Settings of Computer B',
     );
@@ -1023,6 +1031,6 @@ describe('WP-107: the settings of a managed computer (Verwalten-Ansicht, WP-76 Â
       expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Port' }).value).toBe('5000');
     });
     expect(screen.queryByRole('combobox', { name: 'Computer' })).toBeNull();
-    expect(screen.getAllByRole('tab')).toHaveLength(10);
+    expect(screen.getAllByRole('tab')).toHaveLength(11);
   });
 });

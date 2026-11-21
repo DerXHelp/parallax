@@ -1,0 +1,163 @@
+{
+  "name": "elicitation",
+  "conversations": [
+    "cv_00000000000000000000000000000001"
+  ],
+  "timeline": [
+    "#3 system/session_state_changed: !session_id | !session_state:running",
+    "#4 command_lifecycle/started: upsert 00000000-0000-4000-9000-00000000012c user_message o1 | !prompt_lifecycle:started",
+    "#5 system/init: detail.patch {init} | !init",
+    "#7 system/elicitation_complete: !elicitation_complete",
+    "#8 system/elicitation_complete: detail.patch {unknownCounts}",
+    "#10 result/success: upsert 00000000-0000-4000-9000-000000000006 turn_result o2 success | !turn_result:success",
+    "#11 command_lifecycle/completed: !prompt_lifecycle:completed",
+    "#12 system/session_state_changed: !session_state:idle"
+  ],
+  "signals": [
+    {
+      "seq": 3,
+      "type": "session_id",
+      "sessionId": "5e550000-0000-4000-8000-000000000001"
+    },
+    {
+      "seq": 3,
+      "type": "session_state",
+      "state": "running"
+    },
+    {
+      "seq": 4,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-00000000012c",
+      "state": "started"
+    },
+    {
+      "seq": 5,
+      "type": "init",
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "cliVersion": "2.1.300",
+      "apiKeySource": "none",
+      "capabilities": [
+        "msg_lifecycle_v1"
+      ]
+    },
+    {
+      "seq": 7,
+      "type": "elicitation_complete",
+      "serverName": "calendar",
+      "elicitationId": "elicitation-synthetic-1"
+    },
+    {
+      "seq": 10,
+      "type": "turn_result",
+      "outcome": "success",
+      "durationMs": 1200,
+      "costUsdTotal": 0.001,
+      "error": null,
+      "resultExcerpt": "OK",
+      "userMessageUuids": [],
+      "synthetic": false,
+      "startupFailure": false
+    },
+    {
+      "seq": 11,
+      "type": "prompt_lifecycle",
+      "messageUuid": "00000000-0000-4000-9000-00000000012c",
+      "state": "completed"
+    },
+    {
+      "seq": 12,
+      "type": "session_state",
+      "state": "idle"
+    }
+  ],
+  "items": {
+    "cv_00000000000000000000000000000001": [
+      {
+        "id": "00000000-0000-4000-9000-00000000012c",
+        "order": 1,
+        "at": "2026-10-15T08:00:00.010Z",
+        "parentToolUseId": null,
+        "kind": "user_message",
+        "text": {
+          "text": "Connect my calendar",
+          "truncated": null
+        },
+        "attachments": [],
+        "origin": "human",
+        "originKind": null,
+        "slashCommand": null,
+        "priority": "next",
+        "source": "local"
+      },
+      {
+        "id": "00000000-0000-4000-9000-000000000006",
+        "order": 2,
+        "at": "2026-10-15T08:00:00.090Z",
+        "parentToolUseId": null,
+        "kind": "turn_result",
+        "outcome": "success",
+        "subtype": "success",
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 1200,
+        "durationApiMs": 1000,
+        "numTurns": 1,
+        "usage": {
+          "input": 2,
+          "output": 10,
+          "cacheRead": 20000,
+          "cacheCreation": 500
+        },
+        "costUsdTotal": 0.001,
+        "costUsdTurn": null,
+        "permissionDenials": 0,
+        "errors": [],
+        "userMessageUuids": [],
+        "synthetic": false
+      }
+    ]
+  },
+  "detail": {
+    "init": {
+      "sessionId": "5e550000-0000-4000-8000-000000000001",
+      "cwd": "D:\\work\\synthetic",
+      "model": "claude-haiku-5-5",
+      "permissionMode": "default",
+      "apiKeySource": "none",
+      "cliVersion": "2.1.300",
+      "tools": [
+        "Bash",
+        "Read",
+        "Write",
+        "Edit",
+        "Agent"
+      ],
+      "slashCommands": [
+        "clear",
+        "compact"
+      ],
+      "terminalSlashCommands": [],
+      "mcpServers": [],
+      "skills": [],
+      "agents": [
+        "general-purpose"
+      ],
+      "plugins": [],
+      "capabilities": [
+        "msg_lifecycle_v1"
+      ],
+      "outputStyle": "default",
+      "fastModeState": "off",
+      "effort": null
+    },
+    "unknownCounts": {
+      "invalid:system/elicitation_complete": 1
+    }
+  },
+  "unknownCounts": {
+    "invalid:system/elicitation_complete": 1
+  },
+  "ignoredCounts": {}
+}

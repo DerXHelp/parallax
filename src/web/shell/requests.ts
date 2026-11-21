@@ -13,7 +13,8 @@ import type { HostId, ProfileId } from '@shared/common';
 /**
  * Sections of the settings page (WP-38; `profiles` renders the `ProfilesSettings` slot of WP-36;
  * Phase 3: `files` = editor and file settings, WP-58; WP-87: `updates` renders the `UpdatesSettings`
- * slot of features/updates; WP-78b: `multiHost` = "Several computers").
+ * slot of features/updates; WP-78b: `multiHost` = "Several computers"; WP-110: `projects` = setup and
+ * teardown commands, port block and worktree default per repository, WP-114).
  */
 export const SETTINGS_SECTIONS = [
   'general',
@@ -22,6 +23,8 @@ export const SETTINGS_SECTIONS = [
   'files',
   // WP-97: "Open shell in folder" – default shell, Git Bash window, Git folder.
   'console',
+  // WP-110 (ADR-251): settings per project (features/preferences/sections/ProjectsSection.tsx).
+  'projects',
   'profiles',
   'server',
   'multiHost',
@@ -32,9 +35,11 @@ export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 /**
  * Tabs of the side panel of a session pane (Phase 3, ADR-150; host: shell/side-panel). WP-69:
- * `subagent` = the read-only transcript of one subagent (shown once one was opened).
+ * `subagent` = the read-only transcript of one subagent (shown once one was opened). WP-110:
+ * `changes` = diff, review comments and git bar of the session (slot `ChangesPanel`, WP-113; only for
+ * a host with `HostState.features.git`).
  */
-export const SIDE_PANEL_TABS = ['plan', 'file', 'files', 'tasks', 'subagent', 'terminal'] as const;
+export const SIDE_PANEL_TABS = ['plan', 'changes', 'file', 'files', 'tasks', 'subagent', 'terminal'] as const;
 export type SidePanelTab = (typeof SIDE_PANEL_TABS)[number];
 
 export type ShellRequest =
@@ -69,8 +74,9 @@ export type ShellRequest =
   /**
    * Text back into the composer of a session (a withdrawn queued message, „Zurückholen“): the
    * composer appends it to a draft (new paragraph) or fills the empty field, and takes the focus.
+   * WP-110 (Ausbau 1): `asPaste` = as a paste chip (the review package of the tab "Changes", ADR-254).
    */
-  | { kind: 'composerText'; sessionKey: string; text: string }
+  | { kind: 'composerText'; sessionKey: string; text: string; asPaste?: boolean }
   // ---- WP-70 ----
   /**
    * Sign in a profile from Parallax: the small sign-in dialog (NavigationLayer, lazy chunk). `hostId`:
@@ -80,7 +86,22 @@ export type ShellRequest =
    */
   | { kind: 'login'; profileId: ProfileId; hostId?: HostId; modal?: boolean }
   /** The output style of a session's project (header "…" menu; small dialog, lazy chunk). */
-  | { kind: 'outputStyle'; sessionKey: string };
+  | { kind: 'outputStyle'; sessionKey: string }
+  // ---- WP-110 (Ausbau 1) ----
+  /**
+   * Archive or remove a worktree session: the cleanup dialog (slot `WorktreeCleanup`, WP-114) asks
+   * what happens to the worktree and its branch (`worktree.inspect`), then archives (`then:
+   * 'archive'`) or removes the entry (`'remove'`). Nobody handles it → the caller goes on without.
+   */
+  | { kind: 'worktree.cleanup'; sessionKey: string; then: 'archive' | 'remove' }
+  /** Full-text search (Ctrl+Shift+F, Ctrl+K "Search in contents: …"; slot `SearchDialog`, WP-115). */
+  | { kind: 'search.open'; text?: string }
+  /**
+   * A search hit (WP-115): the transcript of the (already selected) session loads the window around
+   * the item (`transcript.loadAround`), scrolls to it and marks it briefly. `itemId: null` = only the
+   * conversation (title, plan, summary hits).
+   */
+  | { kind: 'revealItem'; sessionKey: string; conversationId: string | null; itemId: string | null };
 
 export type ShellRequestKind = ShellRequest['kind'];
 export type ShellRequestOf<K extends ShellRequestKind> = Extract<ShellRequest, { kind: K }>;

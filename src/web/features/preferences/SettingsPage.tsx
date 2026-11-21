@@ -1,6 +1,7 @@
 import {
   BellIcon,
   DownloadIcon,
+  FolderGit2Icon,
   FolderOpenIcon,
   InfoIcon,
   LayersIcon,
@@ -32,6 +33,7 @@ import { FilesSection } from './sections/FilesSection';
 import { GeneralSection } from './sections/GeneralSection';
 import { MultiHostSection } from './sections/MultiHostSection';
 import { NotificationsSection } from './sections/NotificationsSection';
+import { ProjectsSection } from './sections/ProjectsSection';
 import { ServerSection } from './sections/ServerSection';
 import { SessionsSection } from './sections/SessionsSection';
 import { useSettingsEditor, type SettingsEditor } from './state/settings-editor';
@@ -43,8 +45,9 @@ const PAGE_SECTIONS: readonly PageSection[] = SETTINGS_SECTIONS;
  * WP-107 (WP-76 §B.13): the sections for another computer at the level "Manage" – its stored
  * settings without the ones of this window (language, theme, notifications) and of programs on its
  * desktop (editor, console; never remotely). Profiles and updates follow with a host-aware slot.
+ * WP-110: `projects` – the settings per project are stored on that computer (setup runs there).
  */
-const REMOTE_SECTIONS: readonly PageSection[] = ['sessions', 'server', 'about'];
+const REMOTE_SECTIONS: readonly PageSection[] = ['sessions', 'projects', 'server', 'about'];
 
 function sectionsFor(hostId: HostId): readonly PageSection[] {
   return hostId === LOCAL_HOST_ID ? PAGE_SECTIONS : REMOTE_SECTIONS;
@@ -56,6 +59,7 @@ const SECTION_ICONS: Readonly<Record<PageSection, LucideIcon>> = {
   sessions: LayersIcon,
   files: FolderOpenIcon,
   console: TerminalIcon,
+  projects: FolderGit2Icon,
   profiles: UsersIcon,
   server: ServerIcon,
   multiHost: NetworkIcon,
@@ -117,6 +121,9 @@ function SectionContent({
     case 'console':
       // WP-97: "Open shell in folder" (settings.console, ADR-238).
       return <ConsoleSection editor={editor} hostState={hostState} />;
+    case 'projects':
+      // WP-110 (ADR-251): settings per project (settings.projects; WP-114).
+      return <ProjectsSection editor={editor} hostState={hostState} />;
     case 'profiles':
       return <ProfilesSection onDirtyChange={onProfilesDirtyChange} />;
     case 'server':

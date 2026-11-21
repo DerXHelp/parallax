@@ -3,13 +3,16 @@ import { Composer } from './features/composer/Composer';
 import { DecisionBar } from './features/decisions/DecisionBar';
 import { DecisionCard } from './features/decisions/DecisionCard';
 import { PlanSidePanel } from './features/decisions/PlanSidePanel';
+import { CHANGES_SLOTS } from './features/changes';
 import { FILES_SLOTS } from './features/files';
 import { defaultFileLinkLabel, PlainReference } from './features/files/components/PlainReference';
+import { SEARCH_SLOTS } from './features/search';
 import { TASKS_SLOTS } from './features/tasks';
 import { TERMINAL_SLOTS } from './features/terminal';
 import { Markdown } from './features/transcript/markdown/Markdown';
 import { SubagentPanelSlot, ToolInputPreviewSlot, TranscriptSlot } from './features/transcript/slots';
 import { UPDATES_SLOTS } from './features/updates';
+import { WORKTREE_SLOTS } from './features/worktrees';
 import { useT } from './i18n';
 import { AppShell } from './shell/AppShell';
 import { ShellEffects } from './shell/ShellEffects';
@@ -172,6 +175,13 @@ export const APP_SLOTS: Partial<FeatureSlots> = {
   UpdateNotice: bounded(UPDATES_SLOTS.UpdateNotice, (props) => props.compact, quietNothing),
   UpdateBanner: bounded(UPDATES_SLOTS.UpdateBanner, undefined, quietNothing),
   UpdatesSettings: bounded(UPDATES_SLOTS.UpdatesSettings),
+  // WP-113 (ADR-252…254): the side panel tab "Changes" – session review and git bar.
+  ChangesPanel: bounded(CHANGES_SLOTS.ChangesPanel, bySessionKey),
+  // WP-114 (ADR-250/251): setup notice below the pane banners, the cleanup dialog (request `worktree.cleanup`).
+  WorktreeNotice: bounded(WORKTREE_SLOTS.WorktreeNotice, bySessionKey, quietNothing),
+  WorktreeCleanup: bounded(WORKTREE_SLOTS.WorktreeCleanup, undefined, quietNothing),
+  // WP-115 (ADR-255): the full-text search (Ctrl+Shift+F, request `search.open`).
+  SearchDialog: bounded(SEARCH_SLOTS.SearchDialog, undefined, quietNothing),
 };
 
 /**

@@ -20,6 +20,7 @@ import { CommandError } from '../sync/ports';
 import { ConPtyError } from './conpty';
 import { createFakePtyFactory, type FakePtyProcess } from './fakePty';
 import { POLL_ACTIVE_MS, POLL_IDLE_MS } from './poller';
+import { NO_CWD_EXE_SEARCH, POSIX_STOP_ON_ERROR } from './shells';
 import type {
   PtyFactory,
   TerminalConnection,
@@ -999,3 +1000,85 @@ describe('createTerminalService – remote sockets (follow-up of the security re
 function sampleTerminalIdOf(n: number): string {
   return `tm_${n.toString(16).padStart(32, '0')}`;
 }
+
+describe('createTerminalService – runScript (WP-111, ADR-251)', () => {
+  const SPEC = {
+    title: 'Setup',
+    shell: 'cmd' as const,
+    command: 'echo ready',
+    env: { PARALLAX_WORKTREE_PORT: '41000' },
+  };
+
+  it('starts the command as a script terminal with title and env; exit resolves with the code', async () => {
+    const { service, connect, timers, lastPty } = setup({
+      platform: 'win32',
+      entryEnv: () => ({ EXTRA: '1' }),
+    });
+    const client = connect();
+    const result = await service.runScript(ENTRY, SPEC);
+    if (result.kind !== 'started') throw new Error(result.error.code);
+    const pty = lastPty();
+    expect(pty.options.windowsCommandLine).toBe(`"${EXE.cmd}" /d /s /c "echo ready"`);
+    expect(pty.options.env).toMatchObject({
+      PATH: 'C:\\Windows',
+      EXTRA: '1',
+      PARALLAX_WORKTREE_PORT: '41000',
+      // SR3 (security review WP-117): no program from the working folder by its bare name.
+      [NO_CWD_EXE_SEARCH]: '1',
+    });
+    const info = client.sink.of('terminals').at(-1)?.items[0];
+    expect(info).toMatchObject({
+      terminalId: result.terminalId,
+      command: 'script',
+      title: 'Setup',
+      state: 'running',
+    });
+    for (let i = 0; i < 20; i += 1) timers.advance(POLL_ACTIVE_MS);
+    expect(await result.exit).toBe(0);
+    expect(client.sink.of('terminals').at(-1)?.items[0]).toMatchObject({ state: 'exited', exitCode: 0 });
+  });
+
+  it('a failing command ends with its code; closing before the end resolves null', async () => {
+    const { service, timers } = setup({ platform: 'win32' });
+    const failing = await service.runScript(ENTRY, { ...SPEC, command: 'exit 3' });
+    if (failing.kind !== 'started') throw new Error(failing.error.code);
+    for (let i = 0; i < 20; i += 1) timers.advance(POLL_ACTIVE_MS);
+    expect(await failing.exit).toBe(3);
+
+    const closing = await service.runScript(ENTRY, {
+      ...SPEC,
+      shell: 'powershell',
+      command: 'Start-Sleep 99',
+    });
+    if (closing.kind !== 'started') throw new Error(closing.error.code);
+    service.closeEntry(ENTRY, 'removed');
+    expect(await closing.exit).toBeNull();
+  });
+
+  it('archived entries may run it (teardown); unknown entries and a missing pty fail', async () => {
+    const { service, entries, fake } = setup({ platform: 'linux' });
+    entries.set(ENTRY, { cwd: CWD, archived: true });
+    const result = await service.runScript(ENTRY, { ...SPEC, shell: 'bash' });
+    expect(result.kind).toBe('started');
+    // CR6 (code review WP-117): the first failing line ends the script.
+    expect(fake.spawned.at(-1)?.options.args).toEqual(['-l', '-c', `${POSIX_STOP_ON_ERROR}\necho ready`]);
+    expect(await service.runScript(sampleId('en', 9), SPEC)).toEqual({
+      kind: 'failed',
+      error: makeError('ENTRY_NOT_FOUND'),
+    });
+    expect(await setup({ pty: null, unavailableReason: 'ffi' }).service.runScript(ENTRY, SPEC)).toEqual({
+      kind: 'failed',
+      error: makeError('TERMINAL_UNAVAILABLE', { reason: 'ffi' }),
+    });
+  });
+
+  it('entryEnv reaches the shells the panel opens too', async () => {
+    const { connect, open, lastPty } = setup({
+      entryEnv: (id): Record<string, string> => (id === ENTRY ? { PARALLAX_WORKTREE_PORT: '41010' } : {}),
+    });
+    await open(connect());
+    expect(lastPty().options.env).toMatchObject({ PARALLAX_WORKTREE_PORT: '41010' });
+    await open(connect(OTHER), 'r2');
+    expect(lastPty().options.env.PARALLAX_WORKTREE_PORT).toBeUndefined();
+  });
+});

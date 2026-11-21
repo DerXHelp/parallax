@@ -34,6 +34,15 @@ const TranscriptSlot = memo(function TranscriptSlot({ sessionKey }: { sessionKey
   return <Transcript sessionKey={sessionKey} />;
 });
 
+/**
+ * WP-110 (Ausbau 1): the worktree notice of a session (setup running or failed, branch and base;
+ * slot `WorktreeNotice`, WP-114) below the pane banners. Placeholder: nothing.
+ */
+const WorktreeNoticeSlot = memo(function WorktreeNoticeSlot({ sessionKey }: { sessionKey: string }) {
+  const { WorktreeNotice } = useFeatureSlots();
+  return <WorktreeNotice sessionKey={sessionKey} />;
+});
+
 /** Phase 3 (ADR-149): the pinned task list directly above the composer. */
 const TaskStripSlot = memo(function TaskStripSlot({ sessionKey }: { sessionKey: string }) {
   const { TaskStrip } = useFeatureSlots();
@@ -145,6 +154,7 @@ export function SessionPane({ sessionKey }: { sessionKey: string }) {
       <SessionHeader sessionKey={sessionKey} />
       <HostBanner sessionKey={sessionKey} />
       <PaneBanners sessionKey={sessionKey} />
+      <WorktreeNoticeSlot sessionKey={sessionKey} />
       {meta.unavailable === null ? null : (
         <div className="p-3">
           <Alert tone="error" title={t('shell.session.unavailable')}>

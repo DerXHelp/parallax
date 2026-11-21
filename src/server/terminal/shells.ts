@@ -342,3 +342,111 @@ export async function resolveShellLaunch(
       throw shellNotFound(kind);
   }
 }
+
+/** WP-111: what starts for a project command (`TerminalService.runScript`, ADR-251). */
+export interface ScriptLaunch extends ShellLaunch {
+  /** Windows `cmd`: the verbatim command line (`PtySpawnOptions.windowsCommandLine`). */
+  windowsCommandLine?: string;
+}
+
+/** CR6: the first line of a project command for sh-like shells – stop at the first failing command. */
+export const POSIX_STOP_ON_ERROR = 'set -e';
+/** CR6: the first line of a project command for PowerShell – a failing cmdlet stops it. */
+export const POWERSHELL_STOP_ON_ERROR = "$ErrorActionPreference = 'Stop'";
+/**
+ * CR6: after every line of a PowerShell project command – a failing program (`$?` false) ends it with
+ * the program's exit code (1 when it has none). PowerShell itself would report only the last line.
+ */
+export const POWERSHELL_LINE_CHECK = 'if (-not $?) { if ($LASTEXITCODE) { exit $LASTEXITCODE }; exit 1 }';
+/** SR3: cmd looks for a program in the current folder first – never for a project command. */
+export const NO_CWD_EXE_SEARCH = 'NoDefaultCurrentDirectoryInExePath';
+
+/** The non-empty lines of a project command (CRLF/CR as LF, trimmed). */
+function scriptLines(text: string): string[] {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
+}
+
+/** `fish` and the PowerShells take no `set -e` (POSIX shells by base name). */
+function shellFamily(executable: string, platform: NodeJS.Platform): 'pwsh' | 'fish' | 'sh' {
+  const name = (platform === 'win32' ? path.win32 : path.posix).basename(executable).toLowerCase();
+  if (name === 'pwsh' || name.startsWith('pwsh-') || name === 'pwsh.exe') return 'pwsh';
+  if (name === 'fish') return 'fish';
+  return 'sh';
+}
+
+/** CR6: a PowerShell project command that stops at the first failing line (see the constants). */
+export function powerShellScript(text: string): string {
+  return [
+    POWERSHELL_STOP_ON_ERROR,
+    ...scriptLines(text).flatMap((line) => [line, POWERSHELL_LINE_CHECK]),
+  ].join('\n');
+}
+
+/**
+ * The project command `command` run by the shell of `launch` (the embedded launch of `kind`) instead of
+ * an interactive session – the shell gets the text as ONE argument and ends with its exit code. CR6
+ * (code review WP-117): every shell stops at the first failing line and ends with its exit code (a
+ * failed setup never counts as done):
+ * - cmd: `"<cmd.exe>" /d /s /c "<command>"` verbatim (`/s` strips exactly the outer quotes, so quotes
+ *   inside reach cmd unchanged – the CRT quoting of `args` would turn them into `\"`); line breaks
+ *   become ` && ` (a failing line stops the rest, its errorlevel is the exit code).
+ * - PowerShell 5.1 (and pwsh): `-NoLogo -Command <script>` – `$ErrorActionPreference = 'Stop'`, then
+ *   after every line `POWERSHELL_LINE_CHECK`. Each line must be a complete statement (like cmd).
+ * - Git Bash and POSIX sh-like shells: `-c "set -e\n<command>"` (the login profile runs before it,
+ *   unaffected); fish (no `set -e`): every line followed by `or exit $status`.
+ * - POSIX: the login arguments of the shell first.
+ * SR3 (security review WP-117): on Windows `NoDefaultCurrentDirectoryInExePath=1` – cmd never starts a
+ * program of the worktree by its bare name (`git`, `npm` …); `.\x.cmd` still works.
+ */
+export function scriptLaunch(
+  launch: ShellLaunch,
+  kind: ShellKind,
+  command: string,
+  platform: NodeJS.Platform = process.platform,
+): ScriptLaunch {
+  const text = command.replace(/\r\n?/g, '\n');
+  if (platform !== 'win32') {
+    const login = posixLoginArgs(launch.executablePath);
+    switch (shellFamily(launch.executablePath, platform)) {
+      case 'pwsh':
+        return { ...launch, args: [...login, '-Command', powerShellScript(text)] };
+      case 'fish':
+        return {
+          ...launch,
+          args: [
+            ...login,
+            '-c',
+            scriptLines(text)
+              .flatMap((line) => [line, 'or exit $status'])
+              .join('\n'),
+          ],
+        };
+      case 'sh':
+        return { ...launch, args: [...login, '-c', `${POSIX_STOP_ON_ERROR}\n${text}`] };
+    }
+  }
+  const env = { ...launch.env };
+  setEnvVar(env, NO_CWD_EXE_SEARCH, '1', platform);
+  switch (kind) {
+    case 'cmd': {
+      const joined = scriptLines(text).join(' && ');
+      const program = launch.executablePath.includes('"')
+        ? launch.executablePath
+        : `"${launch.executablePath}"`;
+      return {
+        ...launch,
+        env,
+        args: ['/d', '/s', '/c', joined],
+        windowsCommandLine: `${program} /d /s /c "${joined}"`,
+      };
+    }
+    case 'powershell':
+      return { ...launch, env, args: ['-NoLogo', '-Command', powerShellScript(text)] };
+    default:
+      // gitbash (the Linux kinds never resolve on Windows).
+      return { ...launch, env, args: ['--login', '-c', `${POSIX_STOP_ON_ERROR}\n${text}`] };
+  }
+}

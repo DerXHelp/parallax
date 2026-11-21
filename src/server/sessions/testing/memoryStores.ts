@@ -26,6 +26,7 @@ import {
   type TranscriptItem,
 } from '@shared/model';
 import { sleep } from '../../lib/async';
+import { sliceAround } from '../../lib/transcriptWindow';
 import { isStreamingItem } from '../../store/transcripts';
 import {
   CommandError,
@@ -236,6 +237,10 @@ function createTranscripts(
       const end = lowerBound(items, beforeOrder);
       const start = Math.max(0, end - Math.max(0, limit));
       return { items: items.slice(start, end), hasEarlier: start > 0 };
+    },
+    readAround: async (entryId, conversationId, itemId, n) => {
+      if (store.readDelayMs > 0) await sleep(store.readDelayMs);
+      return sliceAround(fold(entryId, conversationId), itemId, n);
     },
     flush: () => {
       flushes += 1;

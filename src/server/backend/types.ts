@@ -12,7 +12,15 @@ import type {
   PermissionUpdate,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { ErrorPayload } from '@shared/errors';
-import type { McpAction, ReloadTarget, SessionInfoSection, SessionInfoSectionName } from '@shared/model';
+import type {
+  ElicitationAction,
+  ElicitationMode,
+  ElicitationValue,
+  McpAction,
+  ReloadTarget,
+  SessionInfoSection,
+  SessionInfoSectionName,
+} from '@shared/model';
 import type { LaunchSpec } from '../claude/ports';
 
 /** canUseTool arguments, taken over tolerantly (F.3). */
@@ -41,6 +49,44 @@ export interface PermissionRequest {
 
 /** Resolves when the user decided; the signal aborts when the CLI cancels the request. */
 export type PermissionHandler = (req: PermissionRequest, signal: AbortSignal) => Promise<PermissionResult>;
+
+/**
+ * WP-110 (ADR-256): `onElicitation` arguments (`ElicitationRequest` of SDK 0.3.322), taken over
+ * tolerantly. `requestedSchema` stays raw – the engine normalizes it into `ElicitationField`s.
+ */
+export interface ElicitationRequestInfo {
+  serverName: string;
+  message: string;
+  /** Absent in the SDK = `form`. */
+  mode: ElicitationMode;
+  /** `url` mode: the target as sent (the engine accepts only http/https). */
+  url: string | null;
+  /** `url` mode: correlates the later `system/elicitation_complete` message. */
+  elicitationId: string | null;
+  /** JSON Schema of the form, raw; null = none sent. */
+  requestedSchema: Record<string, unknown> | null;
+  title: string | null;
+  displayName: string | null;
+  description: string | null;
+  /** The SDK's request id (`Decision.toolUseId`). */
+  requestId: string;
+}
+
+/** What goes back to the SDK (`ElicitResult`). */
+export interface ElicitationAnswer {
+  action: ElicitationAction;
+  /** Only with `accept` in form mode; null otherwise. */
+  content: Record<string, ElicitationValue> | null;
+}
+
+/**
+ * Resolves when the user answered; the signal aborts when the CLI cancels the request, the session is
+ * interrupted or the process ends (the broker then cancels the decision).
+ */
+export type ElicitationHandler = (
+  req: ElicitationRequestInfo,
+  signal: AbortSignal,
+) => Promise<ElicitationAnswer>;
 
 export type OutgoingContent =
   | { type: 'text'; text: string }
@@ -74,6 +120,8 @@ export interface StartSessionRequest {
   /** Phase 3 (ADR-146, C.11): attachment folder of the entry, appended to additionalDirectories. */
   attachmentsDir?: string | null;
   canUseTool: PermissionHandler;
+  /** WP-110 (ADR-256): MCP elicitations; absent = no handler (the SDK declines every request). */
+  onElicitation?: ElicitationHandler;
 }
 
 export type BackendEvent =
@@ -107,7 +155,8 @@ export interface RemoteControlRequest {
  * REMOTE_CONTROL_AUTH, REMOTE_CONTROL_POLICY_DISABLED, REMOTE_CONTROL_FAILED {reason, detail?}.
  * Disabling answers `info: null`.
  */
-export type RemoteControlResult = { ok: true; info: RemoteControlInfo | null } | { ok: false; error: ErrorPayload };
+export type RemoteControlResult =
+  { ok: true; info: RemoteControlInfo | null } | { ok: false; error: ErrorPayload };
 
 /**
  * WP-65: answer of `query.generateSessionTitle(description, { persist })` (SDK 0.3.322, internal).
@@ -115,7 +164,8 @@ export type RemoteControlResult = { ok: true; info: RemoteControlInfo | null } |
  * timed out; `title: null` = the CLI found no usable title. With `persist` the CLI writes an
  * `ai-title` into its transcript – and answers a title the session already has without a new one.
  */
-export type TitleResult = { ok: true; title: string | null } | { ok: false; reason: 'unavailable' | 'failed' };
+export type TitleResult =
+  { ok: true; title: string | null } | { ok: false; reason: 'unavailable' | 'failed' };
 
 /** WP-65: one plan window of the usage query; `utilization` as a FRACTION 0–1 (like rate_limit_event). */
 export interface UsageWindow {
@@ -291,8 +341,7 @@ export interface LoginRequest {
  * LOGIN_BLOCKED (managed settings), LOGIN_FAILED {reason}.
  */
 export type LoginStartResult =
-  | { ok: true; manualUrl: string; automaticUrl: string | null }
-  | { ok: false; error: ErrorPayload };
+  { ok: true; manualUrl: string; automaticUrl: string | null } | { ok: false; error: ErrorPayload };
 
 /**
  * WP-70: end of the flow (`claudeOAuthCallback` / `claudeOAuthWaitForCompletion`): only the plan

@@ -12,6 +12,7 @@ export const de: typeof en = {
     sessions: 'Sessions',
     files: 'Dateien',
     console: 'Konsole',
+    projects: 'Projekte',
     profiles: 'Profile',
     server: 'Server',
     multiHost: 'Mehrere Rechner',
@@ -102,6 +103,7 @@ export const de: typeof en = {
     idleSleep: 'Untätige Sessions schlafen legen',
     idleSleepHint:
       'Beendet den Claude-Prozess einer Session, die so lange auf nichts gewartet hat; der nächste Prompt setzt sie fort. Eine Session, die ein Fenster im Vordergrund zeigt, schläft nie.',
+    idleSleepPinned: 'Angeheftete Sessions schlafen nicht ein.',
     idleMinutes: 'Untätig bis zum Schlafen',
     minutes: 'Minuten',
     promptSuggestions: 'Prompt-Vorschläge',
@@ -559,5 +561,38 @@ export const de: typeof en = {
     thisComputer: 'Dieser Rechner',
     managed: '{name} (verwaltet)',
     hint: 'Einstellungen von {name}: Jede Änderung wird dort gespeichert. Profile und Updates von {name} zeigt diese Ansicht noch nicht.',
+  },
+  projects: {
+    unavailable:
+      'Einstellungen je Projekt brauchen den Git-Dienst eines neueren Parallax auf diesem Rechner.',
+    intro:
+      'Alles optional: Ohne Einstellungen legt Parallax von sich aus keinen Worktree an, startet keinen Befehl und belegt keine Ports. Ein Projekt ist ein Git-Repository; seine Einstellungen gelten für Sessions im eigenen Worktree („Neue Session“ → „In eigenem Worktree“).',
+    commandsNote:
+      'Die Befehle kommen nur von dir – nie aus dem Repository – und laufen sichtbar in einem Terminal-Tab der Session, wo du sie abbrechen kannst.',
+    portsNote:
+      'Portbereich: Jeder neue Worktree bekommt 10 freie Ports ab 41000. Der erste steht in der Variablen PARALLAX_WORKTREE_PORT – in Claude Code, in Setup und Teardown und in den Terminals der Session. Dein Projekt muss sie selbst nutzen, z. B. als Port seines Dev-Servers.',
+    list: 'Projekte',
+    scanning: 'Repositories deiner Sessions werden gesucht…',
+    empty: 'Noch keine Projekte. Ein Git-Repository erscheint hier, sobald eine Session darin läuft.',
+    badges: {
+      setup: 'Setup',
+      teardown: 'Teardown',
+      ports: 'Ports',
+      worktreeDefault: 'Worktree als Standard',
+    },
+    setup: 'Setup-Befehl',
+    setupHint:
+      'Läuft in einem neuen Worktree direkt nach dem Anlegen, z. B. Abhängigkeiten installieren. Eine erste Nachricht wartet darauf. Leer = nichts.',
+    setupPlaceholder: 'pnpm install --frozen-lockfile',
+    teardown: 'Teardown-Befehl',
+    teardownHint: 'Läuft im Worktree, bevor Parallax ihn löscht, z. B. Container stoppen. Leer = nichts.',
+    teardownPlaceholder: 'docker compose down',
+    shell: 'Shell für beide Befehle',
+    shellDefault: 'Wie „Konsole“ ({shell})',
+    ports: 'Portbereich je Worktree',
+    portsHint: 'Zehn freie Ports je Worktree; der erste in PARALLAX_WORKTREE_PORT.',
+    worktreeDefault: 'Neue Sessions im eigenen Worktree starten',
+    worktreeDefaultHint: '„In eigenem Worktree“ ist in „Neue Session“ für dieses Projekt eingeschaltet.',
+    reset: 'Einstellungen dieses Projekts entfernen',
   },
 };

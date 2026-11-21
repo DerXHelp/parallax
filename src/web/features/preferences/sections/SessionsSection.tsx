@@ -30,7 +30,12 @@ export function SessionsSection({ editor, hostState }: { editor: SettingsEditor;
       <SettingField
         name="idleSleep"
         label={t('preferences.sessions.idleSleep')}
-        description={t('preferences.sessions.idleSleepHint')}
+        description={
+          // WP-115: a computer with the overview additions keeps pinned sessions awake.
+          hostState?.features.overview === true
+            ? `${t('preferences.sessions.idleSleepHint')} ${t('preferences.sessions.idleSleepPinned')}`
+            : t('preferences.sessions.idleSleepHint')
+        }
         control={({ id, describedBy }) => (
           <Switch
             id={id}

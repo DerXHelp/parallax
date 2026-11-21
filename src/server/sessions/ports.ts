@@ -150,7 +150,12 @@ export type StatusSignal =
    * WP-95: system/vcs_state_changed (untyped) – a shell command changed the repository (commit,
    * push, merge, rebase …). Only a hint to look again: the engine re-reads the git branch.
    */
-  | { type: 'vcs_changed' };
+  | { type: 'vcs_changed' }
+  /**
+   * WP-112 (ADR-256): system/elicitation_complete – the MCP server reports that the URL-mode
+   * elicitation `elicitationId` finished; the engine closes the matching open request.
+   */
+  | { type: 'elicitation_complete'; serverName: string; elicitationId: string };
 
 /** WP-64: states of system/bridge_state seen in CLI 2.1.x ('unknown' = a newer CLI). */
 export type BridgeState = 'ready' | 'connected' | 'failed' | 'policy_disabled' | 'unknown';
@@ -209,6 +214,11 @@ export type StatusEvent =
   | { type: 'queue_changed'; count: number }
   /** Presence: session visible → unread=false. */
   | { type: 'viewed' }
+  /**
+   * WP-110 (F6, `session.setUnread`): the user marked the session unread (true) or read (false). An
+   * unread mark stays while the session is visible; it ends when the session is opened again.
+   */
+  | { type: 'mark_unread'; unread: boolean }
   | { type: 'external'; active: boolean }
   /** When loading from the registry. */
   | { type: 'server_restart'; hadOpenDecisions: boolean }

@@ -4,7 +4,7 @@
  * All functions are pure: inputs are never mutated (structural sharing is fine).
  */
 import type { ConversationId, EntryId } from './common';
-import type { Decision, SessionDetail, SessionDetailPatch, TranscriptItem } from './model';
+import type { Decision, ReviewComment, SessionDetail, SessionDetailPatch, TranscriptItem } from './model';
 import type { SeqOp, SessionOp, SessionSnapshot } from './protocol';
 
 export interface SessionViewState {
@@ -126,6 +126,17 @@ function patchDetail(detail: SessionDetail, patch: SessionDetailPatch): SessionD
   return mergeDefined<SessionDetail>(detail, patch);
 }
 
+/** WP-110: replace review comments by id, append new ones (order of creation). */
+function upsertReview(review: readonly ReviewComment[], comments: readonly ReviewComment[]): ReviewComment[] {
+  const next = [...review];
+  for (const comment of comments) {
+    const index = next.findIndex((c) => c.id === comment.id);
+    if (index >= 0) next[index] = comment;
+    else next.push(comment);
+  }
+  return next;
+}
+
 /** Applies one op. Pure, returns a new object (structural sharing ok); never throws on unknown ids. */
 export function applySessionOp(state: SessionViewState, op: SessionOp): SessionViewState {
   switch (op.op) {
@@ -165,6 +176,20 @@ export function applySessionOp(state: SessionViewState, op: SessionOp): SessionV
         : state;
     case 'detail.patch':
       return { ...state, detail: patchDetail(state.detail, op.patch) };
+    // WP-110 (ADR-254): review comments belong to the entry – conversation.reset keeps them.
+    case 'review.upsert':
+      return {
+        ...state,
+        detail: { ...state.detail, review: upsertReview(state.detail.review, op.comments) },
+      };
+    case 'review.remove': {
+      const removed = new Set<string>(op.commentIds);
+      if (!state.detail.review.some((c) => removed.has(c.id))) return state;
+      return {
+        ...state,
+        detail: { ...state.detail, review: state.detail.review.filter((c) => !removed.has(c.id)) },
+      };
+    }
   }
 }
 

@@ -1,10 +1,17 @@
+import { existsSync } from 'node:fs';
+import os from 'node:os';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONSOLE_SETTINGS, POSIX_SHELL_KINDS, type ConsoleSettings } from '@shared/model';
 import { POSIX_PATHS } from '@shared/paths';
+import { powerShellPath } from '../lib/powershell';
+import { runFile, systemTool } from '../lib/process';
 import type { RegView } from '../lib/registry';
 import { createMemoryFs } from '../lib/windows';
 import { CommandError } from '../sync/ports';
 import {
+  NO_CWD_EXE_SEARCH,
+  POWERSHELL_LINE_CHECK,
+  POWERSHELL_STOP_ON_ERROR,
   availablePosixShells,
   createGitFinder,
   findGitDir,
@@ -12,10 +19,117 @@ import {
   gitBashCdArgument,
   isGitDir,
   posixLoginArgs,
+  powerShellScript,
   resolveShellLaunch,
+  scriptLaunch,
   shellEnvironment,
   type GitLocatorDeps,
+  type ScriptLaunch,
 } from './shells';
+
+describe('scriptLaunch (WP-111, ADR-251)', () => {
+  const env = { PATH: 'x' };
+  /** SR3: every Windows project command runs without the program search in the current folder. */
+  const winEnv = { PATH: 'x', [NO_CWD_EXE_SEARCH]: '1' };
+  const check = POWERSHELL_LINE_CHECK;
+
+  it('cmd: verbatim command line, quotes inside unchanged, lines joined with && (stops at the first failure)', () => {
+    const launch = { executablePath: 'C:\\Windows\\System32\\cmd.exe', args: [], env };
+    expect(scriptLaunch(launch, 'cmd', 'copy "a b.txt" c.txt\r\n\r\nnpm install', 'win32')).toEqual({
+      executablePath: launch.executablePath,
+      args: ['/d', '/s', '/c', 'copy "a b.txt" c.txt && npm install'],
+      env: winEnv,
+      windowsCommandLine: '"C:\\Windows\\System32\\cmd.exe" /d /s /c "copy "a b.txt" c.txt && npm install"',
+    });
+    // The launch of the caller stays untouched.
+    expect(launch.env).toEqual({ PATH: 'x' });
+  });
+
+  it('CR6: PowerShell stops at the first failing line (Stop + a check after every line)', () => {
+    const ps = { executablePath: 'C:\\ps\\powershell.exe', args: ['-NoLogo'], env };
+    const result = scriptLaunch(ps, 'powershell', 'npm i; echo "ok"\r\n\r\n  npm test  ', 'win32');
+    expect(result.args).toEqual([
+      '-NoLogo',
+      '-Command',
+      [POWERSHELL_STOP_ON_ERROR, 'npm i; echo "ok"', check, 'npm test', check].join('\n'),
+    ]);
+    expect(result.env).toEqual(winEnv);
+    expect(powerShellScript('a')).toBe(`$ErrorActionPreference = 'Stop'\na\n${check}`);
+  });
+
+  it('CR6: Git Bash and POSIX sh-like shells get `set -e` after the login profile', () => {
+    const bash = { executablePath: 'C:\\Git\\bin\\bash.exe', args: ['--login', '-i'], env };
+    const result = scriptLaunch(bash, 'gitbash', 'pnpm i\nmake', 'win32');
+    expect(result.args).toEqual(['--login', '-c', 'set -e\npnpm i\nmake']);
+    expect(result.env).toEqual(winEnv);
+    expect(result.windowsCommandLine).toBeUndefined();
+  });
+
+  it('POSIX: login arguments, then -c (fish: `or exit $status` per line; pwsh -Command with checks)', () => {
+    expect(
+      scriptLaunch({ executablePath: '/bin/bash', args: ['-l'], env }, 'login', 'make\nmake test', 'linux'),
+    ).toEqual({ executablePath: '/bin/bash', args: ['-l', '-c', 'set -e\nmake\nmake test'], env });
+    expect(
+      scriptLaunch({ executablePath: '/usr/bin/zsh', args: [], env }, 'zsh', 'make', 'linux').args,
+    ).toEqual(['-l', '-c', 'set -e\nmake']);
+    expect(
+      scriptLaunch({ executablePath: '/usr/bin/fish', args: [], env }, 'fish', 'make\nmake test', 'linux')
+        .args,
+    ).toEqual(['--login', '-c', 'make\nor exit $status\nmake test\nor exit $status']);
+    expect(
+      scriptLaunch({ executablePath: '/usr/bin/pwsh', args: [], env }, 'pwsh', 'make', 'linux').args,
+    ).toEqual(['-Login', '-NoLogo', '-Command', `${POWERSHELL_STOP_ON_ERROR}\nmake\n${check}`]);
+  });
+
+  describe.runIf(process.platform === 'win32')(
+    'CR6: the real Windows shells end with the first failure',
+    () => {
+      const run = async (launch: ScriptLaunch) =>
+        runFile(launch.executablePath, launch.args, { env: launch.env, timeoutMs: 60_000, cwd: os.tmpdir() });
+
+      it('cmd', { timeout: 60_000 }, async () => {
+        const launch = scriptLaunch(
+          { executablePath: systemTool('cmd.exe'), args: [], env: shellEnvironment() },
+          'cmd',
+          'cmd /d /c exit 3\necho second',
+          'win32',
+        );
+        const result = await run(launch);
+        expect(result.exitCode).toBe(3);
+        expect(result.stdout).not.toContain('second');
+      });
+
+      it(
+        'PowerShell: a failing program (its exit code) and a failing cmdlet (1)',
+        { timeout: 60_000 },
+        async () => {
+          const shell = { executablePath: powerShellPath(), args: [], env: shellEnvironment() };
+          const program = await run(
+            scriptLaunch(shell, 'powershell', 'cmd /d /c exit 3\necho second', 'win32'),
+          );
+          expect(program.exitCode).toBe(3);
+          expect(program.stdout).not.toContain('second');
+          const cmdlet = await run(
+            scriptLaunch(shell, 'powershell', 'Get-Item -LiteralPath C:\\px-missing-x\necho second', 'win32'),
+          );
+          expect(cmdlet.exitCode).toBe(1);
+          expect(cmdlet.stdout).not.toContain('second');
+          const fine = await run(scriptLaunch(shell, 'powershell', 'cmd /d /c exit 0\necho second', 'win32'));
+          expect(fine.exitCode).toBe(0);
+          expect(fine.stdout).toContain('second');
+        },
+      );
+
+      const gitBash = 'C:\\Program Files\\Git\\bin\\bash.exe';
+      it.runIf(existsSync(gitBash))('Git Bash', { timeout: 60_000 }, async () => {
+        const shell = { executablePath: gitBash, args: [], env: shellEnvironment() };
+        const result = await run(scriptLaunch(shell, 'gitbash', 'false\necho second', 'win32'));
+        expect(result.exitCode).toBe(1);
+        expect(result.stdout).not.toContain('second');
+      });
+    },
+  );
+});
 
 const GIT = 'C:\\Program Files\\Git';
 const USER_GIT = 'C:\\Users\\jane\\AppData\\Local\\Programs\\Git';

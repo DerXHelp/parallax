@@ -487,6 +487,64 @@ export function expectDecision(
   return toEvents([['decision', { toolName, toolUseID: toolUseId, result: decision }]]);
 }
 
+// ---- Elicitation (WP-112, ADR-256) ----
+
+/** An ElicitResult as recorded (`elicitationResult` event). */
+export interface ElicitResultSpec {
+  action: 'accept' | 'decline' | 'cancel';
+  content?: Record<string, unknown>;
+}
+
+export interface ElicitationStepSpec {
+  serverName: string;
+  message: string;
+  mode?: 'form' | 'url';
+  url?: string;
+  elicitationId?: string;
+  requestedSchema?: Record<string, unknown>;
+  title?: string;
+  displayName?: string;
+  description?: string;
+  /** Default: a new uuid. */
+  requestId?: string;
+  /** Expected engine answer (`elicitationResult` event); null = none; default accept without content. */
+  result?: ElicitResultSpec | null;
+  /** Fake-only: do not block; the answer comes later (expectElicitation), e.g. after elicitation_complete. */
+  parallel?: boolean;
+}
+
+/** onElicitation (gate until the engine answers) and the expected answer. */
+export function elicitationStep(c: DslContext, spec: ElicitationStepSpec): FixtureEvent[] {
+  const requestId = spec.requestId ?? c.ids.uuid();
+  const { result, parallel, requestId: _requestId, ...request } = spec;
+  const steps: Step[] = [
+    [
+      'elicitation',
+      {
+        request,
+        requestId,
+        signalAborted: false,
+        ...(parallel === true ? { fake: { parallel: true } } : {}),
+      },
+    ],
+  ];
+  const expected = result === undefined ? { action: 'accept' } : result;
+  if (parallel !== true && expected !== null) steps.push(['elicitationResult', { requestId, result: expected }]);
+  return toEvents(steps, c.stepMs);
+}
+
+/** The expected answer of an earlier parallel elicitation (join point). */
+export function expectElicitation(_c: DslContext, requestId: string, result: ElicitResultSpec): FixtureEvent[] {
+  return toEvents([['elicitationResult', { requestId, result }]]);
+}
+
+/** system/elicitation_complete: the MCP server finished the URL request `elicitationId`. */
+export function elicitationComplete(c: DslContext, serverName: string, elicitationId: string): FixtureEvent[] {
+  return toEvents([
+    frame(c, system(0, 'elicitation_complete', { mcp_server_name: serverName, elicitation_id: elicitationId })),
+  ]);
+}
+
 export interface QuestionSpec {
   question: string;
   header?: string;

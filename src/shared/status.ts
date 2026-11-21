@@ -39,6 +39,8 @@ export const decisionCountsSchema = z.object({
   permission: z.number().int().nonnegative(),
   question: z.number().int().nonnegative(),
   plan: z.number().int().nonnegative(),
+  /** WP-110 (ADR-256): open input requests of MCP servers; absent (older producers) = 0. */
+  elicitation: z.number().int().nonnegative().default(0),
   /** Kind of the oldest open decision (A.6: the bar shows the oldest one). */
   oldestKind: decisionKindSchema.nullable(),
   /** A.10: read-only cards after a server restart. */
@@ -73,7 +75,14 @@ export type StatusFacts = z.infer<typeof statusFactsSchema>;
 
 export const INITIAL_STATUS_FACTS: StatusFacts = Object.freeze({
   runState: 'sleeping',
-  decisions: Object.freeze({ permission: 0, question: 0, plan: 0, oldestKind: null, expired: 0 }),
+  decisions: Object.freeze({
+    permission: 0,
+    question: 0,
+    plan: 0,
+    elicitation: 0,
+    oldestKind: null,
+    expired: 0,
+  }),
   unread: false,
   backgroundTasks: 0,
   queuedPrompts: 0,
@@ -140,16 +149,21 @@ const ATTENTION_KINDS: ReadonlySet<DisplayStatusKind> = new Set<DisplayStatusKin
   'needs-resume',
 ]);
 
+/**
+ * WP-110 (ADR-256): an elicitation waits for the user like a question – it shows as `needs-answer`
+ * ("Has a question") and notifies as `question`; the card itself says what the MCP server asks.
+ */
 const NEEDS_KIND: Readonly<Record<DecisionKind, DisplayStatusKind>> = {
   permission: 'needs-permission',
   question: 'needs-answer',
   plan: 'needs-review',
+  elicitation: 'needs-answer',
 };
 
 /** Open (not expired) decisions. */
 export function openDecisionCount(facts: StatusFacts): number {
   const d = facts.decisions;
-  return d.permission + d.question + d.plan;
+  return d.permission + d.question + d.plan + d.elicitation;
 }
 
 function isFuture(iso: string | null, now: Date): boolean {
@@ -162,6 +176,7 @@ function attentionKind(facts: StatusFacts): DecisionKind {
   if (d.oldestKind !== null) return d.oldestKind;
   if (d.permission > 0) return 'permission';
   if (d.question > 0) return 'question';
+  if (d.elicitation > 0) return 'elicitation';
   return 'plan';
 }
 
@@ -263,6 +278,7 @@ const DECISION_NOTIFICATION: Readonly<Record<DecisionKind, NotificationKind>> = 
   permission: 'permission',
   question: 'question',
   plan: 'plan',
+  elicitation: 'question',
 };
 
 /** R0-13: the kind whose open count rose (first in DECISION_KINDS order), or null. */

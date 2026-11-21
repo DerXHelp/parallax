@@ -145,6 +145,10 @@ const FEATURES = [
   'updates',
   // WP-99: the embedded terminal.
   'terminal',
+  // WP-110 (Ausbau 1): the tab "Changes", worktrees, the full-text search.
+  'changes',
+  'worktrees',
+  'search',
 ];
 /** Every feature except the given ones (a feature group may import its own members). */
 const otherFeatures = (/** @type {string[]} */ own) => FEATURES.filter((f) => !own.includes(f));

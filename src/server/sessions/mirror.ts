@@ -15,6 +15,7 @@ import {
   type Entry,
   type ModelOption,
   type QueuedPrompt,
+  type ReviewComment,
   type SessionDetail,
   type SlashCommandInfo,
   type ToolCallItem,
@@ -41,6 +42,8 @@ export function emptyDetail(o: {
   availableOutputStyles?: string[];
   /** WP-77 (ADR-210): the stored composer draft (null = none). */
   draft?: Draft | null;
+  /** WP-110 (ADR-254): the stored review comments ([] = none). */
+  review?: ReviewComment[];
 }): SessionDetail {
   return {
     entryId: o.entryId,
@@ -59,6 +62,7 @@ export function emptyDetail(o: {
     latestPlanVersion: o.latestPlanVersion ?? null,
     availableOutputStyles: o.availableOutputStyles ?? [],
     draft: o.draft ?? null,
+    review: o.review ?? [],
   };
 }
 

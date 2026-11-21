@@ -142,4 +142,13 @@ export const errorsEn: Record<ErrorCode, string> = {
     'The Windows key store is not available, so keys cannot be stored safely (needs Node.js 26.9 or newer).',
   REMOTE_NOT_ALLOWED: 'This is only possible on the computer itself.',
   DRAFT_TOO_LARGE: 'The draft is too large to be saved.',
+  GIT_NOT_FOUND: 'Git was not found on this computer. Install Git and restart Parallax.',
+  NOT_A_GIT_REPO: 'The folder is not part of a Git repository.',
+  GIT_FAILED: 'The Git command failed.',
+  GIT_PUSH_FAILED: 'Push failed.',
+  WORKTREE_EXISTS: 'A worktree with this name already exists.',
+  BRANCH_EXISTS: 'A branch with this name already exists.',
+  WORKTREE_DIRTY: 'The worktree has changes that are not committed or not pushed yet.',
+  SEARCH_FAILED: 'The search could not be completed.',
+  ELICITATION_UNSUPPORTED: 'This input form is not supported.',
 };

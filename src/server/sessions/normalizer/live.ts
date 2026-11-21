@@ -83,6 +83,7 @@ import {
   contentBlockDeltaEventSchema,
   contentBlockStartEventSchema,
   conversationResetMessageSchema,
+  elicitationCompleteMessageSchema,
   hookMessageSchema,
   informationalMessageSchema,
   initMessageSchema,
@@ -128,7 +129,6 @@ import {
 const IGNORED_TYPES: ReadonlySet<string> = new Set(['tool_use_summary', 'auth_status', 'active_goal']);
 const IGNORED_SYSTEM_SUBTYPES: ReadonlySet<string> = new Set([
   'files_persisted',
-  'elicitation_complete',
   'plugin_install',
   'mirror_error',
   'worker_shutting_down',
@@ -1604,6 +1604,20 @@ class LiveNormalizerImpl implements LiveNormalizer {
       case 'vcs_state_changed':
         out.signals.push({ type: 'vcs_changed' });
         return;
+      case 'elicitation_complete': {
+        // WP-112 (ADR-256): the engine closes the matching open URL-mode request.
+        const e = elicitationCompleteMessageSchema.safeParse(raw);
+        if (!e.success) {
+          invalid();
+          return;
+        }
+        out.signals.push({
+          type: 'elicitation_complete',
+          serverName: e.data.mcp_server_name,
+          elicitationId: e.data.elicitation_id,
+        });
+        return;
+      }
       default: {
         const bridge = normalizeBridgeMessage(subtype, raw);
         if (bridge !== null) {

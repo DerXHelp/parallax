@@ -20,6 +20,7 @@
 import type {
   CanUseTool,
   EffortLevel,
+  OnElicitation,
   Options,
   PermissionMode,
   Query,
@@ -47,6 +48,8 @@ import {
   buildQueryOptions,
   flagSettingsAfterStart,
   optionIssues,
+  toElicitationRequest,
+  toElicitResult,
   type StartFlagSettings,
 } from './sdkOptions';
 import { titleOf, usageLimitsOf } from './overview';
@@ -407,6 +410,7 @@ class SdkSession implements AgentSession {
     });
     const hooks = {
       canUseTool: this.canUseTool,
+      onElicitation: this.onElicitation,
       spawn: spawner,
       stderr: (text: string) => {
         this.onStderr(text);
@@ -951,6 +955,28 @@ class SdkSession implements AgentSession {
       this.log.error({ toolName, err: error }, 'permission handler failed; denying the request');
       this.emitError('control', error);
       return { behavior: 'deny', message: PERMISSION_FAILURE_MESSAGE };
+    }
+  };
+
+  /**
+   * WP-112 (ADR-256): toElicitationRequest → req.onElicitation(request, signal) → ElicitResult. A
+   * request it does not understand is declined (as the SDK does without handler); a throwing
+   * handler cancels it.
+   */
+  private readonly onElicitation: OnElicitation = async (request, options) => {
+    const handler = this.req.onElicitation;
+    if (handler === undefined) return { action: 'decline' };
+    try {
+      const info = toElicitationRequest(request, options.requestId);
+      if (info === null) {
+        this.log.warn({ requestId: options.requestId }, 'elicitation request not understood; declining it');
+        return { action: 'decline' };
+      }
+      return toElicitResult(await handler(info, options.signal));
+    } catch (error) {
+      this.log.error({ requestId: options.requestId, err: error }, 'elicitation handler failed; cancelling it');
+      this.emitError('control', error);
+      return { action: 'cancel' };
     }
   };
 }

@@ -305,7 +305,7 @@ describe('reduceStatus: server restart (A.10, R0-17)', () => {
       { type: 'server_restart', hadOpenDecisions: true },
       {
         type: 'decisions_changed',
-        decisions: { permission: 0, question: 0, plan: 0, oldestKind: null, expired: 1 },
+        decisions: { permission: 0, question: 0, plan: 0, elicitation: 0, oldestKind: null, expired: 1 },
       },
     ]);
     expect(deriveDisplayStatus(facts, NOW)).toMatchObject({
@@ -340,7 +340,7 @@ describe('reduceStatus: flags', () => {
       { type: 'queue_changed', count: 1 },
       {
         type: 'decisions_changed',
-        decisions: { permission: 1, question: 0, plan: 1, oldestKind: 'plan', expired: 0 },
+        decisions: { permission: 1, question: 0, plan: 1, elicitation: 0, oldestKind: 'plan', expired: 0 },
       },
     ]);
     expect(facts).toMatchObject({ compacting: true, retrying: true, backgroundTasks: 2, queuedPrompts: 1 });
@@ -348,6 +348,14 @@ describe('reduceStatus: flags', () => {
     expect(reduce(sampleStatusFacts({ runState: 'idle', unread: true }), [{ type: 'viewed' }]).unread).toBe(
       false,
     );
+    // WP-110 (F6): marked unread by the user, also while idle and visible; read again on demand.
+    expect(
+      reduce(sampleStatusFacts({ runState: 'idle' }), [{ type: 'mark_unread', unread: true }]).unread,
+    ).toBe(true);
+    expect(
+      reduce(sampleStatusFacts({ runState: 'idle', unread: true }), [{ type: 'mark_unread', unread: false }])
+        .unread,
+    ).toBe(false);
     // A.5: idle with background work is "background", never "done".
     expect(
       deriveDisplayStatus(reduce(idle, [{ type: 'background_tasks', count: 1 }, turn()]), NOW).kind,

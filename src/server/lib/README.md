@@ -35,6 +35,7 @@ angelegt hat.
 | `executables.ts` | WP-103 | POSIX-Programmsuche: `searchPosixPath` (`PATH` exakt, an `:` getrennt, nur absolute sichere Einträge, `X_OK`, `realpath` nach POSIX-Regeln; zurück kommt der PATH-Eintrag), `posixSystemTool` (`/usr/bin`, dann `/bin`), `isSpawnableIfPresent`, `isExecutableFileSync`, `isBareProgramName` |
 | `procfs.ts` | WP-103 | `/proc`-Parser und -Leser (stat, `btime`, cmdline, environ), `procfsProcessApi` hinter `NativeProcessApi` (Zombies nicht gelistet); Grundlage von `queryProcesses`, `killProcessTree` (Baum, Gruppen, Sitzungen) und `isProcessAlive` unter Linux |
 | `chrome.ts` | CHROME (ADR-136; ersetzt `edge.ts` aus WP-11/R1-08) | `findChrome({regQuery, fs, env})` (App Paths `chrome.exe` HKCU vor HKLM 64/32, dann Program Files, Program Files (x86), %LOCALAPPDATA% – je `Google\Chrome\Application\chrome.exe`; nur absolute, existierende `.exe`, nie PATH/cwd) – für Preflight und Launcher; `exeProductVersion(bytes)` / `readExeVersion(file)` (Produktversion aus der Versionsressource hinter `VS_VERSION_INFO`, ohne die `.exe` zu starten) für `pnpm preflight` |
+| `transcriptWindow.ts` | WP-110 | `sliceAround(items, itemId, n)` – höchstens `n` Items vor und nach einem Item plus `hasEarlier`/`hasLater` (`TranscriptStore.readAround`, `transcript.loadAround`, ADR-255); `null`, wenn das Item fehlt |
 
 Signaturen: `docs/architecture.md` §2.2. Die **Pfadregeln** selbst (UNC/Device/ADS, reservierte
 Namen, case-insensitiver Vergleich) stehen nur in `@shared/paths`; `paths.ts` ruft sie auf und

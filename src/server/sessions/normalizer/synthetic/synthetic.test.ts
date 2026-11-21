@@ -376,6 +376,18 @@ describe('synthetic behaviour', () => {
   });
 });
 
+describe('synthetic elicitation (WP-112)', () => {
+  it('elicitation_complete becomes a signal; one without elicitation_id is counted as invalid', () => {
+    const r = run('elicitation');
+    expect(signals(r, 'elicitation_complete')).toEqual([
+      { type: 'elicitation_complete', serverName: 'calendar', elicitationId: 'elicitation-synthetic-1' },
+    ]);
+    expect(r.normalizer.unknownCounts['invalid:system/elicitation_complete']).toBe(1);
+    expect(r.normalizer.ignoredCounts['system/elicitation_complete']).toBeUndefined();
+    expect(items(r).some((i) => i.kind === 'system')).toBe(false);
+  });
+});
+
 describe('synthetic remote control (WP-64)', () => {
   const REMOTE = '21526cdc-968c-4fb8-8b09-487aa2e4113f';
 

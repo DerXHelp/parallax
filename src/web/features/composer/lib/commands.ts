@@ -11,6 +11,12 @@ import { showErrorNotice } from '@web/state/notices';
  * or restores the text.
  */
 
+/**
+ * WP-110 (ADR-256): what the composer text can answer – an elicitation is a form and is answered only
+ * in its card.
+ */
+export type ComposerDecision = Exclude<Decision, { kind: 'elicitation' }>;
+
 /** A question decision the composer text answers directly (exactly one question, R2W-13). */
 export function isSingleQuestion(decision: Decision): boolean {
   return decision.kind === 'question' && decision.questions.length === 1;
@@ -35,7 +41,7 @@ export function textLimit(target: Decision | null, overhead = 0): number {
  * can never approve.
  */
 export function answerFromText(
-  decision: Decision,
+  decision: ComposerDecision,
   text: string,
   t: (key: TranslationKey, params?: TranslationParams) => string,
   annotations?: readonly PlanAnnotation[],
