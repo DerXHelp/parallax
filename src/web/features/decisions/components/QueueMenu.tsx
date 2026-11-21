@@ -13,6 +13,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@web/ui/dropdown-menu';
+import { elicitationServerText, elicitationTitle } from '../lib/elicitation';
 import { planTitle } from '../lib/plan';
 import { requesterText } from './RequesterLabel';
 
@@ -30,15 +31,17 @@ function decisionLabel(decision: Decision, t: ReturnType<typeof useT>): string {
       return title === null ? ready : `${ready} · ${title}`;
     }
     case 'elicitation':
-      return (
-        decision.title ??
-        t('decisions.elicitation.title', { server: decision.displayName ?? decision.serverName })
-      );
+      return elicitationTitle(decision, t);
   }
 }
 
 function decisionMeta(decision: Decision, t: ReturnType<typeof useT>): string {
-  return `${t(`decisions.kind.${decision.kind}`)} · ${requesterText(decision.requester, t)}`;
+  // WP-116: an elicitation is asked by its MCP server, not by an agent.
+  const asker =
+    decision.kind === 'elicitation'
+      ? elicitationServerText(decision, t)
+      : requesterText(decision.requester, t);
+  return `${t(`decisions.kind.${decision.kind}`)} · ${asker}`;
 }
 
 /**

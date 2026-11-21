@@ -17,8 +17,9 @@ export type RespondResult = { ok: true } | { ok: false; error: ErrorPayload };
 
 /**
  * Codes the server checks BEFORE it resolves a plan decision for a fresh context (WP-51
- * freshContext.ts): the card is still there to show them. Any other failure (a start error) comes
- * after the decision closed – the card is gone, the DecisionBar reports it as a notice.
+ * freshContext.ts) or an elicitation answer (WP-112 broker): the card is still there to show them.
+ * Any other failure (a start error) comes after the decision closed – the card is gone, the
+ * DecisionBar reports it as a notice.
  */
 const CHECKED_BEFORE_RESOLVING: ReadonlySet<ErrorCode> = new Set<ErrorCode>([
   'SESSION_BUSY',
@@ -28,6 +29,8 @@ const CHECKED_BEFORE_RESOLVING: ReadonlySet<ErrorCode> = new Set<ErrorCode>([
   'DECISION_EXPIRED',
   'DECISION_OPTION_UNAVAILABLE',
   'VALIDATION_FAILED',
+  // WP-116: the server checks an elicitation answer before it resolves the decision.
+  'ELICITATION_UNSUPPORTED',
 ]);
 
 export function failsBeforeResolving(code: ErrorCode): boolean {

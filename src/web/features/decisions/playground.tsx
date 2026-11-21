@@ -217,6 +217,59 @@ function withdraw(host: RefObject<DemoHost | null>, entry: keyof typeof DEMO_ENT
   running.host.syncDecisionCounts(entryId);
 }
 
+/** WP-116: the server finishes the url request (`elicitation_complete` → answered, no window). */
+function completeElicitation(host: RefObject<DemoHost | null>): void {
+  const running = host.current;
+  if (running === null) return;
+  const entryId = DEMO_ENTRIES.elicitUrl;
+  const decision = running.host
+    .view(entryId)
+    ?.decisions.find((candidate) => candidate.kind === 'elicitation');
+  if (decision === undefined) return;
+  running.host.pushOps(entryId, [
+    {
+      op: 'decision.resolved',
+      decisionId: decision.id,
+      outcome: { type: 'answered' },
+      byClientId: null,
+      at: new Date().toISOString(),
+    },
+  ]);
+  running.host.syncDecisionCounts(entryId);
+}
+
+/** WP-116: the next form answer is refused by the server at one field (`content.<key>`). */
+function ElicitationFormDemo() {
+  const failNext = (host: RefObject<DemoHost | null>, path: string) => {
+    host.current?.host.failNext('decision.respond', makeError('DECISION_OPTION_UNAVAILABLE', { path }));
+  };
+  return (
+    <DemoSession
+      entries={['elicitForm']}
+      show="elicitForm"
+      controls={(host) => (
+        <>
+          <DemoButton
+            label="Next answer: server refuses the contact"
+            onClick={() => {
+              failNext(host, 'content.contact');
+            }}
+          />
+          <DemoButton
+            label="Next answer: ELICITATION_UNSUPPORTED"
+            onClick={() => {
+              host.current?.host.failNext(
+                'decision.respond',
+                makeError('ELICITATION_UNSUPPORTED', { reason: 'Field "labels" has type array.' }),
+              );
+            }}
+          />
+        </>
+      )}
+    />
+  );
+}
+
 export const demos: PlaygroundDemo[] = [
   {
     id: 'permission',
@@ -347,6 +400,37 @@ export const demos: PlaygroundDemo[] = [
     description:
       'Pick "With fresh context" in the ▾ menu, choose the next failure, then implement: busy / mode errors show in the card, a start failure as a notice.',
     render: () => <FreshErrorsDemo />,
+  },
+  {
+    id: 'elicitation-form',
+    title: 'Elicitation – form of an MCP server (enum, integer, boolean, email)',
+    description:
+      'Send checks the fields first (errors at the field, focus on the first one); decline and cancel answer without content.',
+    render: () => <ElicitationFormDemo />,
+  },
+  {
+    id: 'elicitation-url',
+    title: 'Elicitation – url mode (open in browser, then Done)',
+    description: '"Server completes" simulates elicitation_complete: the card goes away with a notice.',
+    render: () => (
+      <DemoSession
+        entries={['elicitUrl']}
+        show="elicitUrl"
+        controls={(host) => (
+          <DemoButton
+            label="Server completes the request"
+            onClick={() => {
+              completeElicitation(host);
+            }}
+          />
+        )}
+      />
+    ),
+  },
+  {
+    id: 'elicitation-unsupported',
+    title: 'Elicitation – form outside the supported subset (decline only)',
+    render: () => <DemoSession entries={['elicitUnsupported']} show="elicitUnsupported" />,
   },
 ];
 
