@@ -28,6 +28,7 @@ import type { ConsoleLaunchRequest, ConsoleLaunchSpec, LaunchSpec } from '../cla
 import { redactText, REDACTED } from '../lib/logger';
 import { CommandError } from '../sync/ports';
 import type { ConsoleOpenResult, ConsoleProcess } from '../system/ports';
+import type { TerminalOrigin } from '../terminal/ports';
 import { cancelContinue } from './continuePlan';
 import {
   assertEntryGate,
@@ -253,6 +254,7 @@ export async function openInTerminal(
   core: EngineCore,
   s: EntryState,
   clientId: ClientId,
+  origin: TerminalOrigin = 'local',
 ): Promise<CommandResult<'session.openInTerminal'>> {
   const unavailable = () => commandError('TERMINAL_UNAVAILABLE', { reason: 'platform' });
   const opened = await handOff(core, s, clientId, {
@@ -263,11 +265,11 @@ export async function openInTerminal(
     open: async (spec) => {
       const terminal = core.terminal;
       if (terminal === null) throw unavailable();
-      const result = await terminal.openClaude(s.id, {
-        executablePath: spec.executablePath,
-        args: spec.args,
-        env: spec.env,
-      });
+      const result = await terminal.openClaude(
+        s.id,
+        { executablePath: spec.executablePath, args: spec.args, env: spec.env },
+        origin,
+      );
       if (result.kind === 'failed') {
         core.log.warn({ entryId: s.id, code: result.error.code }, 'claude terminal could not be opened');
         throw new CommandError(result.error);

@@ -111,7 +111,7 @@ export async function handleCommand(
       }
       default:
         if (isHostCommand(cmd)) return await hostCommand(engine, cmd, ctx);
-        return await entryCommand(engine, cmd, ctx.clientId);
+        return await entryCommand(engine, cmd, ctx);
     }
   } catch (error) {
     if (error instanceof CommandError) throw error;
@@ -266,7 +266,8 @@ async function materializeForNewEntry(
 
 // ---- commands of one entry ----
 
-async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: ClientId): Promise<unknown> {
+async function entryCommand(engine: CommandEngine, cmd: EntryCommand, ctx: CommandContext): Promise<unknown> {
+  const { clientId } = ctx;
   const s = engine.state(cmd.entryId);
   if (s === undefined) throw commandError('ENTRY_NOT_FOUND', { entryId: cmd.entryId });
   // Checked again inside the lifecycle lock by every command that waits for it (R4-01).
@@ -377,7 +378,7 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
       return openExternal(core, s, clientId);
     // 102e: "Continue in terminal" – the same handoff into an embedded terminal.
     case 'session.openInTerminal':
-      return openInTerminal(core, s, clientId);
+      return openInTerminal(core, s, clientId, (ctx.access ?? 'local') === 'local' ? 'local' : 'remote');
     case 'session.reclaim':
       return returnFromExternal(core, s, 'command');
     case 'session.consoleCommand':

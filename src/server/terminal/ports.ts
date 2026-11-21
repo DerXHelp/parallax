@@ -90,6 +90,13 @@ export interface TerminalConnection {
 export type TerminalEndReason = 'archived' | 'removed';
 
 /**
+ * WP-76 §B.13: where a terminal was started – from a window of this computer, or through remote access
+ * (a socket of the relay, or `session.openInTerminal` from a paired computer). Unpairing, a level change,
+ * "Share off" … end the remote ones (`closeRemote`); local ones stay.
+ */
+export type TerminalOrigin = 'local' | 'remote';
+
+/**
  * 102e "Continue in terminal": what starts in the terminal – the handoff's console spec
  * (`ConsoleLaunchSpec` of `claude/ports.ts`: absolute `claude`, `--resume <id>` …, the built env with
  * the profile's values). The env holds secrets: never logged, never in an error.
@@ -109,8 +116,11 @@ export type TerminalClaudeState = 'running' | 'ended';
 export interface TerminalService {
   /** True when shells can start here (`HostState.terminalAvailable`). */
   readonly available: boolean;
-  /** Binds a socket to an entry and sends `welcome` + `terminals`; an error for an unknown entry. */
-  connect(entryId: EntryId, sink: TerminalSink): TerminalConnection | ErrorPayload;
+  /**
+   * Binds a socket to an entry and sends `welcome` + `terminals`; an error for an unknown entry. `origin`
+   * (default `local`): terminals this socket opens remember it (WP-107: `remote` for the relay).
+   */
+  connect(entryId: EntryId, sink: TerminalSink, origin?: TerminalOrigin): TerminalConnection | ErrorPayload;
   /** The entry's terminals (oldest first). */
   list(entryId: EntryId): TerminalInfo[];
   /**
@@ -119,11 +129,21 @@ export interface TerminalService {
    * the entry's sockets. Never throws; errors: TERMINAL_UNAVAILABLE, TERMINAL_LIMIT_REACHED,
    * TERMINAL_START_FAILED {reason}, ENTRY_NOT_FOUND, SESSION_ARCHIVED, CWD_*.
    */
-  openClaude(entryId: EntryId, launch: TerminalClaudeLaunch): Promise<TerminalClaudeOpenResult>;
+  openClaude(
+    entryId: EntryId,
+    launch: TerminalClaudeLaunch,
+    origin?: TerminalOrigin,
+  ): Promise<TerminalClaudeOpenResult>;
   /** 102e: state of a terminal started by `openClaude` (the watch of the handoff). */
   claudeState(terminalId: TerminalId): TerminalClaudeState;
   /** Ends every terminal of the entry (`exit` with the reason) and forgets them. */
   closeEntry(entryId: EntryId, reason: TerminalEndReason): void;
+  /**
+   * WP-76 §B.13: ends every terminal started through remote access (`exit` reason `closed`, a new list
+   * for each entry concerned); terminals started on this computer stay. Sockets are not closed here (the
+   * relay closes its own).
+   */
+  closeRemote(): void;
   /** Ends every terminal (`exit` reason `shutdown`); resolves once all consoles are closed. */
   closeAll(): Promise<void>;
 }

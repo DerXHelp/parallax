@@ -65,6 +65,7 @@ import type {
   TerminalEndReason,
   TerminalService,
   TerminalServiceDeps,
+  TerminalOrigin,
   TerminalSink,
 } from './ports';
 import { createByteRing, type ByteRing } from './ring';
@@ -130,6 +131,8 @@ export interface TerminalServiceOptions extends TerminalServiceDeps {
 
 interface Terminal {
   info: TerminalInfo;
+  /** WP-76 §B.13: started through remote access → ended by `closeRemote`. */
+  readonly origin: TerminalOrigin;
   readonly pty: PtyProcess;
   readonly ring: ByteRing;
   /** Sockets receiving its output → their channel for it. */
@@ -142,6 +145,8 @@ interface Terminal {
 
 interface Conn {
   readonly entryId: EntryId;
+  /** Terminals opened from this socket get it (WP-107: `remote` for the relay). */
+  readonly origin: TerminalOrigin;
   readonly sink: TerminalSink;
   closed: boolean;
   /** Attached terminals → channel. */
@@ -504,6 +509,7 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     readonly resolve: (cwd: string) => Promise<ShellLaunch>;
     readonly shell: ShellKind;
     readonly command: TerminalCommand;
+    readonly origin: TerminalOrigin;
     readonly cols: number;
     readonly rows: number;
     /** False once nobody waits for the result any more (the socket closed): nothing starts, no error. */
@@ -574,6 +580,7 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
       };
       terminals.set(info.terminalId, {
         info,
+        origin: plan.origin,
         pty,
         ring: createByteRing(),
         attached: new Map(),
@@ -581,7 +588,14 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
         drained: false,
       });
       log.info(
-        { terminalId: info.terminalId, entryId, shell: info.shell, command: info.command, pid: pty.pid },
+        {
+          terminalId: info.terminalId,
+          entryId,
+          shell: info.shell,
+          command: info.command,
+          origin: plan.origin,
+          pid: pty.pid,
+        },
         'terminal opened',
       );
       return { kind: 'opened', info, pid: pty.pid };
@@ -597,6 +611,7 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
       resolve: (cwd) => launchShell(message.shell, cwd, options.settings()),
       shell: message.shell,
       command: 'shell',
+      origin: conn.origin,
       cols: message.cols,
       rows: message.rows,
       wanted: () => !conn.closed,
@@ -731,9 +746,9 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     get available() {
       return factory !== null;
     },
-    connect(entryId, sink): TerminalConnection | ErrorPayload {
+    connect(entryId, sink, origin = 'local'): TerminalConnection | ErrorPayload {
       if (options.entry(entryId) === null) return makeError('ENTRY_NOT_FOUND');
-      const conn: Conn = { entryId, sink, closed: false, channels: new Map(), pausedSince: null };
+      const conn: Conn = { entryId, origin, sink, closed: false, channels: new Map(), pausedSince: null };
       conns.add(conn);
       const available = canStart();
       send(conn, {
@@ -754,7 +769,7 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
       };
     },
     list,
-    async openClaude(entryId, launch): Promise<TerminalClaudeOpenResult> {
+    async openClaude(entryId, launch, origin = 'local'): Promise<TerminalClaudeOpenResult> {
       try {
         const outcome = await startTerminal({
           entryId,
@@ -767,6 +782,7 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
             }),
           shell: options.settings().defaultShell,
           command: 'claude',
+          origin,
           ...CLAUDE_TERMINAL_SIZE,
           wanted: () => true,
         });
@@ -784,6 +800,13 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     claudeState(terminalId) {
       const t = terminals.get(terminalId);
       return t?.info.state === 'running' && t.ending === null ? 'running' : 'ended';
+    },
+    closeRemote() {
+      const remote = [...terminals.values()].filter((t) => t.origin === 'remote');
+      const entries = new Set(remote.map((t) => t.info.entryId));
+      for (const t of remote) endTerminal(t, 'closed');
+      for (const entryId of entries) pushList(entryId);
+      if (remote.length > 0) log.info({ count: remote.length }, 'remote terminals closed');
     },
     closeEntry(entryId, reason) {
       epochs.set(entryId, { epoch: (epochs.get(entryId)?.epoch ?? 0) + 1, reason });

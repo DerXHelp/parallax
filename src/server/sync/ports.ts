@@ -39,6 +39,7 @@ import {
 import type {
   ClientKind,
   Command,
+  ConnectionAccess,
   HostCommand,
   HostCommandName,
   Notification,
@@ -64,6 +65,11 @@ export interface ClientPresence {
 export interface CommandContext {
   clientId: ClientId;
   cmdId: string;
+  /**
+   * 102e/WP-107: how the sending window is connected (`hello.access`): absent or `local` = a window of
+   * this computer, `control`/`manage` = a paired computer at that level (set by the hub at command time).
+   */
+  access?: ConnectionAccess;
 }
 
 /** Thrown by command handlers; the hub turns it into ack{ok:false}. */

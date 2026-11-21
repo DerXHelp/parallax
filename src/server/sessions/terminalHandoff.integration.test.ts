@@ -5,12 +5,18 @@
  * the terminal service (ended → the return imports the turns), `session.reclaim` while it runs, errors
  * of the terminal pass through, and a restart (the terminals end with the server) brings it back.
  */
+import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EntryId, TerminalId } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import { currentConversation } from '@shared/model';
-import { SAMPLE_TIME } from '@shared/samples';
-import type { TerminalClaudeLaunch, TerminalClaudeOpenResult, TerminalClaudeState } from '../terminal/ports';
+import { SAMPLE_TIME, sampleId } from '@shared/samples';
+import type {
+  TerminalClaudeLaunch,
+  TerminalClaudeOpenResult,
+  TerminalClaudeState,
+  TerminalOrigin,
+} from '../terminal/ports';
 import type { EngineTerminal } from './entryState';
 import { createEngineHarness, type EngineHarness, type EngineHarnessOptions } from './testing/harness';
 
@@ -28,7 +34,7 @@ afterEach(async () => {
 });
 
 interface TestTerminal extends EngineTerminal {
-  readonly opened: { entryId: EntryId; launch: TerminalClaudeLaunch }[];
+  readonly opened: { entryId: EntryId; launch: TerminalClaudeLaunch; origin: TerminalOrigin }[];
   setState(terminalId: TerminalId, state: TerminalClaudeState): void;
   failNext(error: ErrorPayload): void;
 }
@@ -39,7 +45,7 @@ function terminalIdOf(n: number): TerminalId {
 
 /** Hands out `tm_…1`, `tm_…2` …; unknown ids are `ended` (like the service after a restart). */
 function createTestTerminal(onOpen: (launch: TerminalClaudeLaunch) => void): TestTerminal {
-  const opened: { entryId: EntryId; launch: TerminalClaudeLaunch }[] = [];
+  const opened: { entryId: EntryId; launch: TerminalClaudeLaunch; origin: TerminalOrigin }[] = [];
   const states = new Map<TerminalId, TerminalClaudeState>();
   let next = 1;
   let failure: ErrorPayload | null = null;
@@ -51,8 +57,8 @@ function createTestTerminal(onOpen: (launch: TerminalClaudeLaunch) => void): Tes
     failNext(error) {
       failure = error;
     },
-    openClaude(entryId, launch): Promise<TerminalClaudeOpenResult> {
-      opened.push({ entryId, launch });
+    openClaude(entryId, launch, origin = 'local'): Promise<TerminalClaudeOpenResult> {
+      opened.push({ entryId, launch, origin });
       if (failure !== null) {
         const error = failure;
         failure = null;
@@ -112,6 +118,7 @@ describe('session.openInTerminal (102e)', () => {
     expect(h.session(entryId).state).toBe('exited');
     expect(terminal.opened).toHaveLength(1);
     expect(terminal.opened[0]?.entryId).toBe(entryId);
+    expect(terminal.opened[0]?.origin).toBe('local');
     expect(terminal.opened[0]?.launch.args).toEqual(['--resume', sessionId]);
     const entry = h.stores.registry.get(entryId);
     expect(entry?.external).toEqual({
@@ -199,5 +206,16 @@ describe('session.openInTerminal (102e)', () => {
     await next.waitFor(() => next.facts(entryId).runState === 'sleeping');
     await next.settle();
     expect(next.stores.registry.get(entryId)?.external).toBeNull();
+  });
+
+  it('a paired computer starts a remote terminal (WP-76 §B.13: unpairing ends it)', async () => {
+    const { h, terminal } = await setup();
+    const entryId = await idleEntry(h);
+    const result = await h.manager.handleCommand(
+      { name: 'session.openInTerminal', entryId },
+      { clientId: sampleId('cl', 7), cmdId: randomUUID(), access: 'control' },
+    );
+    expect(result).toEqual({ terminalId: terminalIdOf(1) });
+    expect(terminal.opened.map((o) => o.origin)).toEqual(['remote']);
   });
 });

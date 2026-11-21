@@ -20,7 +20,13 @@ import { CommandError } from '../sync/ports';
 import { ConPtyError } from './conpty';
 import { createFakePtyFactory, type FakePtyProcess } from './fakePty';
 import { POLL_ACTIVE_MS, POLL_IDLE_MS } from './poller';
-import type { PtyFactory, TerminalConnection, TerminalEntryInfo, TerminalSink } from './ports';
+import type {
+  PtyFactory,
+  TerminalConnection,
+  TerminalEntryInfo,
+  TerminalOrigin,
+  TerminalSink,
+} from './ports';
 import {
   CLAUDE_TERMINAL_SIZE,
   EXIT_DRAIN_MAX_MS,
@@ -122,9 +128,9 @@ function setup(overrides: Partial<TerminalServiceOptions> = {}) {
     ...overrides,
   });
 
-  const connect = (entryId: EntryId = ENTRY): Client => {
+  const connect = (entryId: EntryId = ENTRY, origin: TerminalOrigin = 'local'): Client => {
     const sink = recordingSink();
-    const conn = service.connect(entryId, sink);
+    const conn = service.connect(entryId, sink, origin);
     if ('code' in conn) throw new Error(conn.code);
     return { sink, conn };
   };
@@ -820,6 +826,40 @@ describe('createTerminalService – openClaude (102e "Continue in terminal")', (
       kind: 'failed',
       error: makeError('TERMINAL_LIMIT_REACHED', { scope: 'entry', max: TERMINAL_LIMITS.perEntry }),
     });
+  });
+});
+
+describe('createTerminalService – closeRemote (WP-76 §B.13)', () => {
+  it('ends the terminals started through remote access and keeps the local ones', async () => {
+    const { service, connect, open } = setup();
+    const local = connect();
+    const remote = connect(ENTRY, 'remote');
+    const elsewhere = connect(OTHER, 'remote');
+    const mine = await open(local, 'l1');
+    const theirs = await open(remote, 'r1');
+    const other = await open(elsewhere, 'r2');
+    const claude = await service.openClaude(ENTRY, { executablePath: EXE.bash, args: [], env: {} }, 'remote');
+    if (claude.kind !== 'opened') throw new Error(claude.error.code);
+    service.closeRemote();
+    expect(service.list(ENTRY).map((t) => t.terminalId)).toEqual([mine.terminalId]);
+    expect(service.list(OTHER)).toEqual([]);
+    // Every socket of the entry hears the end; the local window sees the remaining list.
+    expect(local.sink.of('exit').map((m) => [m.terminalId, m.reason])).toEqual([
+      [theirs.terminalId, 'closed'],
+      [claude.terminalId, 'closed'],
+    ]);
+    expect(
+      local.sink
+        .of('terminals')
+        .at(-1)
+        ?.items.map((t) => t.terminalId),
+    ).toEqual([mine.terminalId]);
+    expect(elsewhere.sink.of('exit').map((m) => m.terminalId)).toEqual([other.terminalId]);
+    expect(service.claudeState(claude.terminalId)).toBe('ended');
+    // Nothing remote left: a second call changes nothing.
+    const before = local.sink.messages.length;
+    service.closeRemote();
+    expect(local.sink.messages).toHaveLength(before);
   });
 });
 
