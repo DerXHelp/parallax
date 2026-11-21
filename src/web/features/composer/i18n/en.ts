@@ -204,6 +204,13 @@ export const en = {
       title: '/{command} only works in the terminal of Claude Code',
       description:
         'Parallax has no terminal view. Open the session in an external console and use the command there.',
+      /** WP-105: the embedded terminal of the session's computer can take the session (102e). */
+      descriptionTerminal: 'Continue the session in the terminal and use the command there.',
+      descriptionBoth:
+        'Continue the session in the terminal or in an external console and use the command there.',
+      /** WP-106: neither (e.g. a server without desktop and pseudo console). */
+      descriptionNone: 'Use the command in Claude Code directly on the computer of this session.',
+      continue: 'Continue in terminal',
       open: 'Open in external console',
       dismiss: 'Close hint',
     },

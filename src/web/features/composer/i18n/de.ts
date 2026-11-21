@@ -176,6 +176,11 @@ export const de: typeof en = {
       title: '/{command} funktioniert nur im Terminal von Claude Code',
       description:
         'Parallax hat keine Terminal-Ansicht. Öffne die Session in einer externen Konsole und nutze den Befehl dort.',
+      descriptionTerminal: 'Setze die Session im Terminal fort und nutze den Befehl dort.',
+      descriptionBoth:
+        'Setze die Session im Terminal oder in einer externen Konsole fort und nutze den Befehl dort.',
+      descriptionNone: 'Nutze den Befehl in Claude Code direkt auf dem Rechner dieser Session.',
+      continue: 'Im Terminal fortsetzen',
       open: 'In externer Konsole öffnen',
       dismiss: 'Hinweis schließen',
     },
