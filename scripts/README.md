@@ -14,8 +14,8 @@
 | `public-check.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/public-check.ts [--refs <bereich>]` | 84 | fertig (private Daten im öffentlichen Repo; Test `public-check/repo.test.ts` in `pnpm test`) |
 | `release-notes.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/release-notes.ts --check \| --extract <v> \| --check-tag <tag>` | 85 | fertig (`CHANGELOG.md`; Test `release/changelog.test.ts` in `pnpm test`) |
 | `release-pack.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/release-pack.ts --out <ordner> [--allow-dirty]` | 85 | fertig (Release-Paket nach `pnpm build`; schwer, Netz) |
-| `release/smoke.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/release/smoke.ts (--zip <zip> --latest <json> \| --dir <paket>) --work <ordner>` | 85 | fertig (CI-Job `smoke`; lokal nur von Hand) |
-| `release/sign.ts` | `node scripts/release/sign.ts sign <datei>… \| latest …` | 85 | fertig (nur CI-Job `sign`, reines `node`) |
+| `release/smoke.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/release/smoke.ts (--zip\|--archive <archiv> --latest <json> \| --dir <paket>) --work <ordner>` | 85, 108 | fertig (CI-Job `smoke` je Plattform; lokal nur von Hand) |
+| `release/sign.ts` | `node scripts/release/sign.ts sign <datei>… \| tarball <ordner> <tar.gz> \| latest …` | 85, 108 | fertig (nur CI-Job `sign`, reines `node`) |
 | `release-key.ts` | `pnpm exec tsx --tsconfig tsconfig.tools.json scripts/release-key.ts --out <datei>` | 85 | fertig (**nur der Nutzer**, einmal; Schlüssel nie in einer Claude-Session) |
 
 ## Releases (WP-85)
@@ -29,11 +29,17 @@ Ablauf und Gründe: `docs/wp/WP-83.md` §4–§7, Umsetzung `docs/wp/WP-85.md`, 
   Laufzeit-Nutzen entfernt (`release/files.ts`), `THIRD_PARTY_NOTICES.md` mit Lizenz-Allowlist (`release/notices.ts`),
   `release.json` mit SHA-256 jeder Datei, Schema-Hashes und `integrity` des SDK (`release/lockfile.ts`).
 - `release/sign.ts` signiert in der CI (`RELEASE_SIGNING_KEY`), zippt nicht selbst; `latest` schreibt `latest.json`
-  (mit `minNode` aus der `release.json` des Pakets, ADR-232).
-- `release/smoke.ts` prüft ein Zip bzw. ein Staging wie der spätere Installer und startet es mit FakeBackend.
+  (mit `minNode` aus der `release.json` des Pakets, ADR-232; oben das Windows-Zip, in `assets` jedes Asset).
+  `tarball` packt den signierten Ordner für Linux (WP-108): ustar mit pax für lange Namen, sortiert, uid/gid 0,
+  Ordner und die Shell-Skripte `install.sh`/`root/parallax` mit 0755, sonst 0644, Zeit = `createdAt` der
+  `release.json`, gzip – reproduzierbar, ohne Projektcode (der Job installiert nichts).
+- `release/smoke.ts` prüft ein Archiv bzw. ein Staging wie der spätere Installer und startet es mit FakeBackend;
+  unter Linux (`--archive <tar.gz>`) mit `HOME`/`XDG_*` im Arbeitsordner, Start über `<root>/parallax`, Deinstallation
+  über den Befehl `~/.local/bin/parallax`.
 - `release-key.ts` erzeugt den Signaturschlüssel im Terminal des Nutzers und setzt das Secret der Umgebung `release`.
-- Workflows: `.github/workflows/release.yml` (Tag `v*`: build → sign → smoke → publish), `audit.yml` (wöchentlich),
-  `.github/dependabot.yml`.
+- Workflows: `.github/workflows/release.yml` (Tag `v*`: build → sign → smoke je Plattform → publish), `ci.yml`
+  (WP-108: Ubuntu 24.04 auf dem Runner, 26.04 im Test-Image `scripts/linux/Dockerfile`, je check, build, E2E; dazu
+  `systemd-creds --user` in 26.04 mit systemd, nur gemeldet), `audit.yml` (wöchentlich), `.github/dependabot.yml`.
 
 ## `scripts/public-check.ts` (WP-84)
 
@@ -99,7 +105,9 @@ ist das Sicherheitscenter nicht lesbar (z. B. Windows Server), entfällt die Zei
 „Several computers“ (`src/server/remote/preflight.ts`, dieselben Bausteine wie die Prüfungen in der App):
 Rolle aus `multi-host.json` (nur gelesen, nie in Quarantäne), TLS-Selbsttest (ML-KEM, ML-DSA) und
 Windows-Schlüsselspeicher (DPAPI) – Fehler nur mit Rolle, sonst Warnung –, bei „Freigeben“ zusätzlich Port,
-Adressen und Firewall (nur lesen). Es entstehen keine Schlüssel und keine Dateien.
+Adressen und Firewall (nur lesen). Es entstehen keine Schlüssel und keine Dateien. Seit WP-108 auf beiden Plattformen
+das Archivprogramm der Updates (`tar.exe` bzw. `/usr/bin/tar`), unter Linux zusätzlich das OpenSSL dieses Node
+(„Mehrere Rechner“ braucht 3.5); den Linux-Schlüsselspeicher bringt der Server-Modus (WP-107).
 
 Der Recorder (`scripts/record/processes.ts`) startet PowerShell und `taskkill` nur noch über
 `runFile` mit absolutem System32-Pfad (R1-04/R1-16).

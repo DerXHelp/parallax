@@ -253,7 +253,8 @@ interface ProbeState {
 
 /**
  * Runs the probe. `trace` is filled while it runs (also when it throws). Always closes the CLI:
- * EOF + Query.close(), then `taskkill /T /F` when it did not exit within 10 s.
+ * EOF + Query.close(), then its process tree is ended (`killProcessTree`: `taskkill /T /F`, POSIX the
+ * process group) when it did not exit within 10 s.
  */
 export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promise<ProbeResult> {
   const started = Date.now();
@@ -463,7 +464,7 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
     q.close();
     const exitedInTime = await Promise.race([exited.then(() => true), sleep(10_000).then(() => false)]);
     if (!exitedInTime && state.pid !== null) {
-      log(`cli-check: probe process ${String(state.pid)} did not exit – taskkill /T /F`);
+      log(`cli-check: probe process ${String(state.pid)} did not exit – ending its process tree`);
       await killProcessTree(state.pid).catch(() => undefined);
     }
     await Promise.race([pump, sleep(5_000)]);
@@ -473,7 +474,7 @@ export async function runProbe(options: ProbeOptions, trace: ProbeTrace): Promis
 /**
  * WP-70: the output-style round trip in a second session of the scratch folder – no prompt (no model
  * request, no cost), `settingSources: ['local']` (`updateSettings` refuses sessions without the target
- * source), no MCP servers, no transcript. Always closed (EOF + Query.close(), taskkill after 10 s).
+ * source), no MCP servers, no transcript. Always closed (EOF + Query.close(), process tree ended after 10 s).
  */
 async function runOutputStyleSession(
   options: ProbeOptions,
@@ -541,7 +542,7 @@ async function runOutputStyleSession(
     q.close();
     const exitedInTime = await Promise.race([exited.then(() => true), sleep(10_000).then(() => false)]);
     if (!exitedInTime && proc.pid !== null) {
-      log(`cli-check: settings session ${String(proc.pid)} did not exit – taskkill /T /F`);
+      log(`cli-check: settings session ${String(proc.pid)} did not exit – ending its process tree`);
       await killProcessTree(proc.pid).catch(() => undefined);
     }
     await Promise.race([drain, sleep(5_000)]);

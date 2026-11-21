@@ -17,6 +17,8 @@
  * - **Apply / rollback:** checked here (status, version as shown, `acceptDataLoss`, the version
  *   folder's signed release.json), then the orchestrator of this version takes over (apply.ts);
  *   after its READY the status is `restarting` and `requestRestart` runs on the next macrotask.
+ * - **Platform** (WP-108): the check offers the asset of this host (`endpoints.target`), an upload
+ *   lands as `.zip` (Windows) or `.tar.gz` (Linux).
  */
 import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
@@ -45,7 +47,7 @@ import type { ReleaseInfo } from '../launcher/release';
 import { CommandError } from '../sync/ports';
 import { handOver, spawnOrchestrator, type SpawnOrchestrator } from './apply';
 import { availableNotes, installedNotes, readChangelogFile } from './changelog';
-import { updateEndpoints, type UpdateEndpoints } from './endpoints';
+import { archiveFormatOf, updateEndpoints, type UpdateEndpoints } from './endpoints';
 import { orchestratorCommand } from './handoff';
 import { checkFailedPayload, checkLatest, type LatestInfo } from './latest';
 import { consumeUpdateResult } from './marker';
@@ -76,7 +78,7 @@ export const CLOSE_WAIT_MS = 10_000;
 export interface UpdateServiceSeams {
   fetch?: typeof fetch;
   endpoints?: UpdateEndpoints;
-  /** tar.exe (zip.ts). */
+  /** tar (zip.ts `archiveTool`). */
   run?: RunFileFn;
   provideSdk?: (request: SdkRequest) => Promise<string>;
   lockRoot?: (root: string) => Promise<RootLock | null>;
@@ -602,7 +604,8 @@ export async function createUpdateService(
 
     uploadFile() {
       const found = needInstallation();
-      const name = `${UPLOAD_PREFIX}${folderStamp(now())}-${randomUUID().slice(0, 8)}.zip`;
+      const format = archiveFormatOf(endpoints.target ?? 'win');
+      const name = `${UPLOAD_PREFIX}${folderStamp(now())}-${randomUUID().slice(0, 8)}.${format}`;
       return path.join(found.root, DOWNLOADS_DIR, name);
     },
 

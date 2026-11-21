@@ -14,7 +14,13 @@
  * The listing format is bsdtar's `ls -l` style: `<mode> <links> <owner> <group> <size> <date
  * (three fields)> <name>`; names are escaped (no raw newline). A line that does not parse makes
  * the package invalid – the check fails closed.
+ *
+ * Linux (WP-108): the release archive is a tar.gz, listed and unpacked with `/usr/bin/tar` (GNU
+ * tar, `-z`, `--numeric-owner`; unpacked without owner and mode of the archive). GNU's listing:
+ * `<mode> <uid>/<gid> <size> <YYYY-MM-DD> <HH:MM> <name>` (`ListingStyle` `gnu`), names escaped as
+ * well. GNU tar refuses `..` and strips a leading `/` by itself.
  */
+import path from 'node:path';
 import { appVersionSchema } from '@shared/model';
 import { runFile, systemTool, type RunFileFn, type RunFileResult } from '../lib/process';
 
@@ -47,10 +53,29 @@ export interface ZipListing {
   bytes: number;
 }
 
-/** `<type><mode> <links> <owner> <group> <size> <rest>`; rest = date and name. */
-const LINE = /^([-a-zA-Z?])[-a-zA-Z?]{9}\+?\s+\d+\s+\S+\s+\S+\s+(\d+)\s+(.+)$/u;
-/** The usual date: three fields (`Nov 17 19:44`, `Nov 17  2025`), then one space and the name. */
-const DATE_AND_NAME = /^\S+\s+\S+\s+\S+ (.+)$/u;
+/** Output style of the archiver: bsdtar (Windows `tar.exe`) or GNU tar (Linux `/usr/bin/tar`). */
+export type ListingStyle = 'bsdtar' | 'gnu';
+
+interface StyleRules {
+  /** `<type><mode> … <size> <rest>`; rest = date and name. */
+  line: RegExp;
+  /** Date fields, then one space and the name. */
+  dateAndName: RegExp;
+}
+
+const STYLES: Readonly<Record<ListingStyle, StyleRules>> = {
+  // `<type><mode> <links> <owner> <group> <size> <rest>`; the usual date has three fields
+  // (`Nov 17 19:44`, `Nov 17  2025`).
+  bsdtar: {
+    line: /^([-a-zA-Z?])[-a-zA-Z?]{9}\+?\s+\d+\s+\S+\s+\S+\s+(\d+)\s+(.+)$/u,
+    dateAndName: /^\S+\s+\S+\s+\S+ (.+)$/u,
+  },
+  // `<type><mode> <uid>/<gid> <size> <rest>`; the date has two fields (`2026-11-21 10:00`).
+  gnu: {
+    line: /^([-a-zA-Z?])[-a-zA-Z?]{9}\+?\s+\S+\/\S+\s+(\d+)\s+(.+)$/u,
+    dateAndName: /^\S+\s+\S+ (.+)$/u,
+  },
+};
 const ROOT = /^parallax-(.+)$/u;
 const ROOT_MARK = ' parallax-';
 
@@ -59,10 +84,10 @@ const ROOT_MARK = ' parallax-';
  * contains it – this also covers a locale whose date has more or fewer fields), else after the
  * three date fields.
  */
-function nameOf(rest: string): string | undefined {
+function nameOf(rest: string, rules: StyleRules): string | undefined {
   const mark = rest.indexOf(ROOT_MARK);
   if (mark !== -1) return rest.slice(mark + 1);
-  return DATE_AND_NAME.exec(rest)?.[1];
+  return rules.dateAndName.exec(rest)?.[1];
 }
 
 /**
@@ -70,9 +95,15 @@ function nameOf(rest: string): string | undefined {
  * null = take it from the entries (Install from file) – it must be a release version. `names` = the
  * output of the plain `tar -t -f <zip>`: every name taken from a verbose line must be exactly the
  * name on the same line there (a name containing ` parallax-` cannot fake another root; security
- * review WP-89). Throws `ZipError`.
+ * review WP-89). `style` = the archiver that wrote the listing. Throws `ZipError`.
  */
-export function parseZipListing(stdout: string, version: string | null, names?: string): ZipListing {
+export function parseZipListing(
+  stdout: string,
+  version: string | null,
+  names?: string,
+  style: ListingStyle = 'bsdtar',
+): ZipListing {
+  const rules = STYLES[style];
   const lines = stdout.split(/\r?\n/u).filter((line) => line !== '');
   const plain = names?.split(/\r?\n/u).filter((line) => line !== '');
   if (plain !== undefined && plain.length !== lines.length) {
@@ -89,11 +120,11 @@ export function parseZipListing(stdout: string, version: string | null, names?: 
   let bytes = 0;
   let index = 0;
   for (const line of lines) {
-    const match = LINE.exec(line);
+    const match = rules.line.exec(line);
     const type = match?.[1];
     const size = match?.[2];
     const rest = match?.[3];
-    const name = rest === undefined ? undefined : nameOf(rest);
+    const name = rest === undefined ? undefined : nameOf(rest, rules);
     if (type === undefined || size === undefined || name === undefined) {
       throw new ZipError('zip', `unexpected listing line: ${line.slice(0, 200)}`);
     }
@@ -150,26 +181,62 @@ function failure(result: RunFileResult): string | null {
   return output === '' ? code : `${code}: ${output}`;
 }
 
+/** The archiver of a platform and its arguments (WP-108). */
+export interface ArchiveTool {
+  file: string;
+  style: ListingStyle;
+  /** Before `-f` when listing and unpacking. */
+  readArgs: readonly string[];
+  /** Additionally when listing verbosely. */
+  listArgs: readonly string[];
+  /** Additionally when unpacking. */
+  extractArgs: readonly string[];
+}
+
+/** `System32\tar.exe` (zip) on Windows; `/usr/bin/tar` with tar.gz elsewhere. */
+export function archiveTool(platform: NodeJS.Platform = process.platform): ArchiveTool {
+  if (platform === 'win32') {
+    return {
+      file: systemTool('tar.exe', process.env, platform),
+      style: 'bsdtar',
+      readArgs: [],
+      listArgs: [],
+      extractArgs: [],
+    };
+  }
+  return {
+    file: systemTool('tar', process.env, platform),
+    style: 'gnu',
+    readArgs: ['-z'],
+    listArgs: ['--numeric-owner'],
+    extractArgs: ['--no-same-owner', '--no-same-permissions'],
+  };
+}
+
 export interface ZipToolOptions {
   /** Default `runFile`. */
   run?: RunFileFn;
-  /** Ends tar.exe (whole tree) like a timeout, e.g. at the shutdown. */
+  /** Ends tar (whole tree) like a timeout, e.g. at the shutdown. */
   signal?: AbortSignal | undefined;
-  /** Working directory of tar.exe (never a version folder). */
+  /** Working directory of tar (never a version folder). */
   cwd: string;
+  /** Default `archiveTool()` of this platform. */
+  tool?: ArchiveTool;
 }
 
-/** Lists `zip` with tar.exe and checks the listing (`parseZipListing`). Throws `ZipError`. */
+/** Lists `zip` with tar and checks the listing (`parseZipListing`). Throws `ZipError`. */
 export async function listZip(
   zip: string,
   version: string | null,
   options: ZipToolOptions,
 ): Promise<ZipListing> {
   const run = options.run ?? runFile;
+  const tool = options.tool ?? archiveTool();
+  const name = path.basename(tool.file);
   const list = async (args: readonly string[]): Promise<string> => {
     let result: RunFileResult;
     try {
-      result = await run(systemTool('tar.exe'), [...args, '-f', zip], {
+      result = await run(tool.file, [...args, ...tool.readArgs, '-f', zip], {
         cwd: options.cwd,
         timeoutMs: ZIP_LIST_TIMEOUT_MS,
         maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
@@ -178,21 +245,21 @@ export async function listZip(
     } catch (error) {
       throw new ZipError(
         'zip',
-        `tar.exe could not be started: ${error instanceof Error ? error.message : 'error'}`,
+        `${name} could not be started: ${error instanceof Error ? error.message : 'error'}`,
       );
     }
     options.signal?.throwIfAborted();
     const problem = failure(result);
-    if (problem !== null) throw new ZipError('zip', `tar.exe could not list the zip: ${problem}`);
+    if (problem !== null) throw new ZipError('zip', `${name} could not list the archive: ${problem}`);
     if (Buffer.byteLength(result.stdout, 'utf8') >= LIST_MAX_OUTPUT_BYTES) {
       throw new ZipError('too_large', 'the listing of the zip is too long');
     }
     return result.stdout;
   };
   // Verbose for types and sizes, plain for the exact names (parseZipListing compares both).
-  const verbose = await list(['-t', '-v']);
+  const verbose = await list(['-t', '-v', ...tool.listArgs]);
   const names = await list(['-t']);
-  return parseZipListing(verbose, version, names);
+  return parseZipListing(verbose, version, names, tool.style);
 }
 
 /** Unpacks `zip` into the existing, empty folder `target` (≤ 5 min). Throws `ZipError`. */
@@ -202,9 +269,12 @@ export async function extractZip(
   options: Omit<ZipToolOptions, 'cwd'>,
 ): Promise<void> {
   const run = options.run ?? runFile;
+  const tool = options.tool ?? archiveTool();
+  const name = path.basename(tool.file);
   let result: RunFileResult;
   try {
-    result = await run(systemTool('tar.exe'), ['-x', '-f', zip, '-C', target], {
+    const args = ['-x', ...tool.readArgs, '-f', zip, '-C', target, ...tool.extractArgs];
+    result = await run(tool.file, args, {
       cwd: target,
       timeoutMs: ZIP_EXTRACT_TIMEOUT_MS,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -212,10 +282,10 @@ export async function extractZip(
   } catch (error) {
     throw new ZipError(
       'zip',
-      `tar.exe could not be started: ${error instanceof Error ? error.message : 'error'}`,
+      `${name} could not be started: ${error instanceof Error ? error.message : 'error'}`,
     );
   }
   options.signal?.throwIfAborted();
   const problem = failure(result);
-  if (problem !== null) throw new ZipError('zip', `tar.exe could not unpack the zip: ${problem}`);
+  if (problem !== null) throw new ZipError('zip', `${name} could not unpack the archive: ${problem}`);
 }

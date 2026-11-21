@@ -1,0 +1,100 @@
+# CI on Linux (WP-108, WP-100 E4/E8): the gate before a merge of a Linux change. Windows stays local with the
+# coordinator (pnpm check, build, e2e before every merge).
+#   ubuntu-24.04  - the hosted runner: install, check, build, E2E (Google Chrome is part of the image)
+#   ubuntu-26.04  - the same in the test image of the repo (scripts/linux/Dockerfile, UBUNTU=26.04, user ubuntu)
+#   systemd-creds - prepares the key store of the server mode (WP-101 §3): `systemd-creds --user` in a 26.04
+#                   container with systemd; reported only, it never fails the run (continue-on-error)
+# Actions are pinned by commit SHA (version as comment), updated only when older than 14 days.
+name: CI
+
+on:
+  push:
+    branches: [main, 'feature/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ubuntu-24:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm build
+      - run: pnpm e2e
+      - name: E2E results (only on failure; server log, WS frames, trace, screenshot per failed test)
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-results-ubuntu-24.04
+          path: test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  ubuntu-26:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test image (Ubuntu 26.04, official Node, Google Chrome)
+        run: docker build -t parallax-linux:26.04 --build-arg UBUNTU=26.04 scripts/linux
+      # Like scripts/linux/run.sh: the tracked files go into the container (no bind mount: other user id).
+      - name: Install, check, build, E2E
+        run: |
+          set -euo pipefail
+          git ls-files -z --cached | tar --null -T - -cf - \
+            | docker run --rm -i --init -e CI=1 parallax-linux:26.04 bash -lc '
+                set -euo pipefail
+                mkdir -p "$HOME/work" && cd "$HOME/work"
+                tar -xf -
+                pnpm install --frozen-lockfile
+                pnpm check
+                pnpm build
+                pnpm e2e'
+
+  systemd-creds:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/linux
+      - name: Image with systemd (Ubuntu 26.04)
+        run: docker build -t parallax-linux:26.04-systemd --target systemd --build-arg CHROME=0 --build-arg UBUNTU=26.04 scripts/linux
+      - name: systemd-creds --user for the user ubuntu
+        run: |
+          set -euo pipefail
+          docker run -d --name creds --privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            parallax-linux:26.04-systemd
+          trap 'docker rm -f creds >/dev/null' EXIT
+          docker exec creds systemctl is-system-running --wait || true
+          docker exec creds systemd-creds --version | head -1
+          docker exec -u ubuntu creds bash -c '
+            set -euo pipefail
+            printf "parallax-ci-secret" | systemd-creds --user encrypt --name=parallax-test - /tmp/test.cred
+            test "$(systemd-creds --user decrypt --name=parallax-test /tmp/test.cred -)" = "parallax-ci-secret"
+            echo "systemd-creds --user: encrypt and decrypt ok"'
+          echo "systemd-creds --user works on Ubuntu 26.04 (WP-101 §3)" >> "$GITHUB_STEP_SUMMARY"

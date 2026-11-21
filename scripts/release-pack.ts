@@ -4,7 +4,11 @@
  * installation `root/start.mjs` and `root/parallax.cmd` (WP-87: listed and signed, switching to the
  * version writes them), the flat server runtime in `node_modules` WITHOUT the Agent SDK, a shortened `package.json`,
  * `CHANGELOG.md`, `LICENSE`, `THIRD_PARTY_NOTICES.md` and the unsigned `release.json`. Signing and
- * zipping happen in a separate CI job (`scripts/release/sign.ts`).
+ * archiving happen in a separate CI job (`scripts/release/sign.ts`).
+ *
+ * One package for both platforms (WP-108): it also carries `install.sh`, `parallax.svg` and
+ * `root/parallax` for Linux; the sign job packs the signed folder twice – `parallax-<v>-win.zip`
+ * and `parallax-<v>-linux-x64.tar.gz` (sign.ts `tarball`). The pure-JS runtime is the same.
  *
  *   pnpm exec tsx --tsconfig tsconfig.tools.json scripts/release-pack.ts --out <folder> [--allow-dirty]
  *
@@ -15,7 +19,6 @@ import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promi
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { windowsPathIssue, isWindowsPathInside } from '@shared/paths';
 import { readBundleBuildId, readWebBundleBuildId, SERVER_BUNDLE } from '../src/server/launcher/build';
 import {
   AGENT_SDK_PACKAGE,
@@ -26,9 +29,17 @@ import {
   type ReleaseInfo,
 } from '../src/server/launcher/release';
 import { hashFiles, walkPackage } from '../src/server/launcher/packageFiles';
-import { ICON_FILE, INSTALL_CMD, INSTALLER_BUNDLE, LAUNCHER_BUNDLE } from '../src/server/install/layout';
+import {
+  ICON_FILE,
+  ICON_SVG,
+  INSTALL_CMD,
+  INSTALL_SH,
+  INSTALLER_BUNDLE,
+  LAUNCHER_BUNDLE,
+} from '../src/server/install/layout';
 import { packageRootFiles } from '../src/server/install/install';
-import { installCmd } from '../src/server/install/templates';
+import { installCmd, installSh } from '../src/server/install/templates';
+import { HOST_PATH_RULES } from '../src/server/lib/paths';
 import { runFile } from '../src/server/lib/process';
 import { resolveExecutable } from '../src/server/lib/windows';
 import { storeSchemaHashes } from '../src/server/store/schemas';
@@ -101,12 +112,20 @@ function childEnv(): Record<string, string> {
 
 /**
  * pnpm of the calling `pnpm exec` (npm_execpath): `pnpm.exe` directly, a `.cjs` entry through node;
- * otherwise the absolute `pnpm.exe` from the PATH (pnpm 12 ships a native executable).
+ * otherwise the absolute `pnpm.exe` from the PATH (pnpm 12 ships a native executable). Linux: an
+ * absolute npm_execpath without a script extension is the native `pnpm` itself.
  */
 async function pnpmCommand(): Promise<{ file: string; prefix: string[] }> {
   const execPath = process.env.npm_execpath ?? '';
   if (/\.exe$/iu.test(execPath)) return { file: execPath, prefix: [] };
   if (/\.[cm]?js$/iu.test(execPath)) return { file: process.execPath, prefix: [execPath] };
+  if (
+    process.platform !== 'win32' &&
+    path.posix.isAbsolute(execPath) &&
+    path.posix.extname(execPath) === ''
+  ) {
+    return { file: execPath, prefix: [] };
+  }
   const exe = await resolveExecutable('pnpm', process.env);
   if (exe === null) throw new PackError('pnpm not found: run release-pack through pnpm (pnpm exec tsx …)');
   return { file: exe, prefix: [] };
@@ -130,7 +149,7 @@ async function run(file: string, args: readonly string[], cwd: string): Promise<
 
 async function gitCommit(): Promise<string> {
   const git = await resolveExecutable('git', process.env);
-  if (git === null) throw new PackError('git.exe not found on the PATH');
+  if (git === null) throw new PackError('git not found on the PATH');
   return (await run(git, ['rev-parse', 'HEAD'], repoRoot)).trim();
 }
 
@@ -258,9 +277,9 @@ async function collectNotices(stage: string, version: string, sdkVersion: string
 async function main(argv: readonly string[]): Promise<void> {
   const args = parseArgs(argv);
   const outRoot = path.resolve(args.out);
-  if (windowsPathIssue(outRoot) !== null)
+  if (HOST_PATH_RULES.issue(outRoot) !== null)
     throw new PackError(`--out must be a plain local folder: ${outRoot}`);
-  if (isWindowsPathInside(outRoot, repoRoot) || outRoot.toLowerCase() === repoRoot.toLowerCase()) {
+  if (HOST_PATH_RULES.isInside(outRoot, repoRoot) || HOST_PATH_RULES.equal(outRoot, repoRoot)) {
     throw new PackError(
       '--out must be outside the repo (lint, tests and the public check would see the package)',
     );
@@ -342,7 +361,11 @@ async function main(argv: readonly string[]): Promise<void> {
   // WP-86: the installer file (Explorer double click) and the icon of the Start menu shortcut.
   await writeFile(path.join(stage, INSTALL_CMD), installCmd(minNode));
   await cp(path.join(repoRoot, 'src', 'server', 'install', ICON_FILE), path.join(stage, ICON_FILE));
-  // WP-87: start.mjs and parallax.cmd of this version (root/), written by the switch to it.
+  // WP-108: `sh install.sh` and the icon of the application menu entry (the web app's own icon).
+  await writeFile(path.join(stage, INSTALL_SH), installSh(minNode));
+  await cp(path.join(repoRoot, 'src', 'web', 'public', 'favicon.svg'), path.join(stage, ICON_SVG));
+  // WP-87: start.mjs, parallax.cmd and (WP-108) parallax of this version (root/), written by the
+  // switch to it.
   for (const [rel, content] of Object.entries(packageRootFiles(minNode))) {
     const target = path.join(stage, ...rel.split('/'));
     await mkdir(path.dirname(target), { recursive: true });

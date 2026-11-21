@@ -29,7 +29,7 @@ describe('buildSpikeEnv', () => {
   };
 
   it('removes session, run-state and credential variables and keeps the allowlist', () => {
-    const { env, removed } = buildSpikeEnv(base, { delimiter: ';' });
+    const { env, removed } = buildSpikeEnv(base, { delimiter: ';', platform: 'win32' });
     for (const key of [
       'CLAUDECODE',
       'CLAUDE_CODE_SESSION_ID',
@@ -58,15 +58,31 @@ describe('buildSpikeEnv', () => {
   });
 
   it('drops node_modules\\.bin from PATH case-insensitively and keeps one spelling', () => {
-    const { env, pathEntriesRemoved } = buildSpikeEnv(base, { delimiter: ';' });
+    const { env, pathEntriesRemoved } = buildSpikeEnv(base, { delimiter: ';', platform: 'win32' });
     expect(env.Path).toBe('C:\\tools;C:\\Windows');
     expect(env.PATH).toBeUndefined();
     expect(pathEntriesRemoved).toBe(1);
   });
 
+  it('Linux: names are exact, PATH uses ":" (WP-108)', () => {
+    const { env, pathEntriesRemoved } = buildSpikeEnv(
+      {
+        PATH: '/usr/bin:/work/repo/node_modules/.bin:/bin',
+        Path: 'other',
+        ANTHROPIC_API_KEY: 'test-api-key',
+      },
+      { platform: 'linux' },
+    );
+    expect(env.PATH).toBe('/usr/bin:/bin');
+    expect(pathEntriesRemoved).toBe(1);
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.PARALLAX_ENTRY_ID).toBe('spike');
+  });
+
   it('sets the Parallax variables last, replacing other spellings', () => {
     const { env, set } = buildSpikeEnv(base, {
       delimiter: ';',
+      platform: 'win32',
       entryId: 'e1',
       extra: { PARALLAX_HOME: 'T:\\home' },
     });

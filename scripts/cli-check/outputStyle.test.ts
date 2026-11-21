@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   loginMethodsPresent,
@@ -7,8 +8,8 @@ import {
   type ProbeFs,
 } from './outputStyle';
 
-const CWD = 'C:\\Temp\\cli-check-1';
-const FILE = 'C:\\Temp\\cli-check-1\\.claude\\settings.local.json';
+const CWD = process.platform === 'win32' ? 'C:\\Temp\\cli-check-1' : '/tmp/cli-check-1';
+const FILE = path.join(CWD, '.claude', 'settings.local.json');
 
 type MemoryFs = ProbeFs & { files: Map<string, string> };
 

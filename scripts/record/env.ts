@@ -26,6 +26,8 @@ export interface SpikeEnvOptions {
   extra?: Readonly<Record<string, string>>;
   /** PATH delimiter; defaults to the platform delimiter. */
   delimiter?: string;
+  /** Whose env semantics apply (default `process.platform`; WP-108: exact names on Linux). */
+  platform?: NodeJS.Platform;
 }
 
 export interface SpikeEnvResult {
@@ -53,6 +55,7 @@ export function buildSpikeEnv(base: NodeJS.ProcessEnv, options: SpikeEnvOptions 
     entryId: null,
     clientApp: options.clientApp ?? 'parallax/0.0.0-spike',
     ...(options.delimiter === undefined ? {} : { delimiter: options.delimiter }),
+    ...(options.platform === undefined ? {} : { platform: options.platform }),
   });
   const first = report.issues[0];
   if (first !== undefined) throw new Error(`buildEnv: ${first.code} ${JSON.stringify(first.params)}`);
@@ -62,7 +65,7 @@ export function buildSpikeEnv(base: NodeJS.ProcessEnv, options: SpikeEnvOptions 
     PARALLAX_ENTRY_ID: options.entryId ?? 'spike',
     ...options.extra,
   };
-  for (const [key, value] of Object.entries(set)) setEnvVar(report.env, key, value);
+  for (const [key, value] of Object.entries(set)) setEnvVar(report.env, key, value, options.platform);
 
   const removed = [...report.removed, ...spikeRemoved].sort((a, b) => a.localeCompare(b));
   return { env: report.env, removed, pathEntriesRemoved: report.pathEntriesRemoved, set };

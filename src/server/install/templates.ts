@@ -12,6 +12,10 @@
  *
  * The `.cmd` files use CRLF (cmd.exe misreads labels in LF files) and never pick up programs from
  * the current directory (`NoDefaultCurrentDirectoryInExePath`, like the checkout's parallax.cmd).
+ *
+ * Linux (WP-108): `parallax` in the root and `install.sh` at the package root are POSIX shell
+ * scripts (LF) with the same rules – node only from absolute PATH entries; the command
+ * `~/.local/bin/parallax` runs `<root>/parallax` (install/command.ts).
  */
 import { PACKAGE_NODE_FLAGS } from '../launcher/release';
 import { CURRENT_FILE, START_SCRIPT, VERSIONS_DIR } from './layout';
@@ -141,4 +145,132 @@ export function installCmd(minNode: string): string {
     'if not defined PARALLAX_NO_PAUSE pause',
     'exit /b %PARALLAX_EXIT%',
   ]);
+}
+
+// ---- Linux (WP-108): POSIX shell scripts (LF, `#!/bin/sh`, no bashisms) ----
+
+const sh = (lines: readonly string[]): string => `${lines.join('\n')}\n`;
+
+/**
+ * Sets `node` to the first executable `node` of the ABSOLUTE `PATH` entries – an empty or relative
+ * entry would search the current folder (the POSIX counterpart of NoDefaultCurrentDirectoryInExePath,
+ * like lib/executables.ts `searchPosixPath`). No globbing while splitting.
+ */
+const FIND_NODE: readonly string[] = [
+  '# node from the absolute PATH entries only: an empty or relative entry would search the current folder.',
+  'node=',
+  'set -f',
+  'IFS=:',
+  'for dir in ${PATH:-}; do',
+  '  case $dir in',
+  '    /*) if [ -f "$dir/node" ] && [ -x "$dir/node" ]; then node=$dir/node; break; fi ;;',
+  '  esac',
+  'done',
+  'unset IFS',
+  'set +f',
+];
+
+/** `X.Y.Z` → its three numbers (a malformed `minNode` never reaches a template: release.json checks it). */
+function versionParts(version: string): [number, number, number] {
+  const [major = 0, minor = 0, patch = 0] = version.split('.').map((part) => Number.parseInt(part, 10) || 0);
+  return [major, minor, patch];
+}
+
+/**
+ * Content of `<root>/parallax` (Linux): the POSIX counterpart of parallax.cmd – finds node on the
+ * PATH and runs `start.mjs` next to it (also when started through a symbolic link) with the network
+ * flags. `~/.local/bin/parallax` (install/command.ts) only runs this file, so an update brings its
+ * own start script (`root/parallax` of the package).
+ */
+export function startShell(minNode: string): string {
+  return sh([
+    '#!/bin/sh',
+    '# Parallax (WP-108): starts the installed version. Written by the installer, replaced by updates.',
+    '# Options: parallax --help. Uninstall: parallax --uninstall (the data stay).',
+    'set -u',
+    '# The folder of this script, also when it was started through a symbolic link.',
+    'self=$(readlink -f -- "$0" 2>/dev/null) || self=$0',
+    'root=$(dirname -- "$self")',
+    ...FIND_NODE,
+    'if [ -z "$node" ]; then',
+    `  echo "Parallax: Node.js was not found on the PATH - install Node.js ${minNode} or newer." >&2`,
+    '  exit 1',
+    'fi',
+    `exec "$node" ${NODE_FLAGS} "$root/${START_SCRIPT}" "$@"`,
+  ]);
+}
+
+/**
+ * Content of `install.sh` at the package root (Linux, `sh install.sh`): finds node, checks that it
+ * starts (the official build needs libatomic1) and is at least `minNode`, then runs
+ * `dist/install.js` – no Node flags, like install.cmd (install.js adds them itself and checks the
+ * rest, OpenSSL included).
+ */
+export function installSh(minNode: string): string {
+  const [major, minor, patch] = versionParts(minNode);
+  return sh([
+    '#!/bin/sh',
+    '# Installs or updates Parallax from this unpacked folder (WP-108, README "Ubuntu").',
+    '# Options: sh install.sh --help. The same without this file: node dist/install.js',
+    'set -u',
+    'here=$(cd -- "$(dirname -- "$0")" && pwd -P) || exit 1',
+    ...FIND_NODE,
+    'if [ -z "$node" ]; then',
+    `  echo "Parallax needs Node.js ${minNode} or newer (the official build from https://nodejs.org/) - node was not found on the PATH." >&2`,
+    '  exit 1',
+    'fi',
+    'version=$("$node" -p process.versions.node 2>/dev/null) || version=',
+    'case $version in',
+    '  [0-9]*.[0-9]*.[0-9]*) ;;',
+    '  *)',
+    '    echo "Parallax: $node does not start - a minimal Ubuntu needs libatomic1 (sudo apt install libatomic1)." >&2',
+    '    exit 1',
+    '    ;;',
+    'esac',
+    'major=${version%%.*}',
+    'rest=${version#*.}',
+    'minor=${rest%%.*}',
+    'patch=${rest#*.}',
+    'patch=${patch%%[!0-9]*}',
+    `if [ "$major" -lt ${String(major)} ] ||`,
+    `  { [ "$major" -eq ${String(major)} ] && [ "$minor" -lt ${String(minor)} ]; } ||`,
+    `  { [ "$major" -eq ${String(major)} ] && [ "$minor" -eq ${String(minor)} ] && [ "\${patch:-0}" -lt ${String(patch)} ]; }; then`,
+    `  echo "Parallax needs Node.js ${minNode} or newer, this is $version: https://nodejs.org/" >&2`,
+    '  exit 1',
+    'fi',
+    'exec "$node" "$here/dist/install.js" "$@"',
+  ]);
+}
+
+/** The marker line of the `parallax` command: which installation root it belongs to. */
+export const COMMAND_ROOT_MARKER = '# parallax-install-root: ';
+
+/** `text` as one single-quoted shell word (`'` → `'\''`). */
+export function shellQuote(text: string): string {
+  return `'${text.replaceAll("'", "'\\''")}'`;
+}
+
+/**
+ * Content of `~/.local/bin/parallax` (Linux, install/command.ts): runs `<root>/parallax`. Written by
+ * the installer for exactly this root (the marker line names it) and stable across updates – the
+ * version-specific part is `<root>/parallax`. `root` passed the POSIX path rules (no control
+ * character, so no line break).
+ */
+export function commandScript(root: string, startFile: string): string {
+  return sh([
+    '#!/bin/sh',
+    '# Parallax (WP-108): the command of the installation below, written by its installer and removed by',
+    '# "parallax --uninstall". Do not edit.',
+    `${COMMAND_ROOT_MARKER}${root}`,
+    `exec ${shellQuote(startFile)} "$@"`,
+  ]);
+}
+
+/** The root a `parallax` command names in its marker line, or null (not a command of an installer). */
+export function commandScriptRoot(text: string): string | null {
+  if (!text.startsWith('#!/bin/sh\n')) return null;
+  for (const line of text.split('\n')) {
+    if (line.startsWith(COMMAND_ROOT_MARKER)) return line.slice(COMMAND_ROOT_MARKER.length);
+  }
+  return null;
 }

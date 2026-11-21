@@ -3,11 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { makeTestKey, makeTestPackage } from '../install/testPackage';
-import { zipFolders } from './testRelease';
+import { archiveFolders, archivePath } from './testRelease';
 import {
   ZIP_MAX_ENTRIES,
   ZIP_MAX_UNPACKED_BYTES,
   ZipError,
+  archiveTool,
   extractZip,
   listZip,
   parseZipListing,
@@ -104,6 +105,41 @@ describe('parseZipListing', () => {
     expect(problem('tar.exe: Error opening archive\r\n')).toBe('zip');
   });
 
+  it('reads the GNU tar listing of a tar.gz (Linux, WP-108)', () => {
+    const gnuDir = (name: string): string => `drwxr-xr-x 0/0               0 2026-11-21 10:00 ${name}`;
+    const gnuFile = (name: string, size = 6): string =>
+      `-rw-r--r-- 1000/1000 ${String(size).padStart(9)} 2026-11-21 10:00 ${name}`;
+    const out = [gnuDir('parallax-1.2.3/'), gnuFile('parallax-1.2.3/a b.js', 12), ''].join('\n');
+    const names = 'parallax-1.2.3/\nparallax-1.2.3/a b.js\n';
+    expect(parseZipListing(out, '1.2.3', names, 'gnu')).toEqual({
+      rootDir: 'parallax-1.2.3',
+      version: '1.2.3',
+      entries: 2,
+      bytes: 12,
+    });
+    const link = 'lrwxrwxrwx 0/0 0 2026-11-21 10:00 parallax-1.2.3/l -> /etc/passwd';
+    const hard = 'hrw-r--r-- 0/0 0 2026-11-21 10:00 parallax-1.2.3/h link to parallax-1.2.3/a';
+    const device = 'crw-r--r-- 0/0 1,3 2026-11-21 10:00 parallax-1.2.3/null';
+    for (const line of [link, hard]) {
+      expect(() =>
+        parseZipListing(`${gnuDir('parallax-1.2.3/')}\n${line}\n`, '1.2.3', undefined, 'gnu'),
+      ).toThrow(expect.objectContaining({ reason: 'layout' }));
+    }
+    expect(() => parseZipListing(`${device}\n`, '1.2.3', undefined, 'gnu')).toThrow(
+      expect.objectContaining({ reason: 'zip' }),
+    );
+    expect(() => parseZipListing(gnuFile('other/a'), '1.2.3', undefined, 'gnu')).toThrow(
+      expect.objectContaining({ reason: 'layout' }),
+    );
+    // A bsdtar line is no GNU line (and the other way round): the check fails closed.
+    expect(() => parseZipListing(listing(dir('parallax-1.2.3/')), '1.2.3', undefined, 'gnu')).toThrow(
+      expect.objectContaining({ reason: 'zip' }),
+    );
+    expect(() => parseZipListing(`${gnuDir('parallax-1.2.3/')}\n`, '1.2.3')).toThrow(
+      expect.objectContaining({ reason: 'zip' }),
+    );
+  });
+
   it('a name with " parallax-" inside cannot fake the root: the plain listing must agree', () => {
     const tricky = 'x parallax-1.2.3/evil.js';
     const verbose = listing(dir('parallax-1.2.3/'), file(tricky));
@@ -120,12 +156,21 @@ describe('parseZipListing', () => {
   });
 });
 
-describe('listZip / extractZip (tar.exe)', () => {
-  it('lists and unpacks a package zip made like the release', async () => {
+describe('listZip / extractZip (tar of the platform)', () => {
+  it('picks bsdtar for the zip on Windows and GNU tar for the tar.gz elsewhere', () => {
+    expect(archiveTool('win32')).toMatchObject({ style: 'bsdtar', readArgs: [] });
+    expect(path.win32.basename(archiveTool('win32').file)).toBe('tar.exe');
+    const gnu = archiveTool('linux');
+    expect(['/usr/bin/tar', '/bin/tar']).toContain(gnu.file);
+    expect(gnu).toMatchObject({ style: 'gnu', readArgs: ['-z'] });
+    expect(gnu.extractArgs).toEqual(['--no-same-owner', '--no-same-permissions']);
+  });
+
+  it('lists and unpacks a package archive made like the release', async () => {
     const base = await temp();
     await makeTestPackage(path.join(base, 'src', 'parallax-2.0.0'), { version: '2.0.0', key: makeTestKey() });
-    const zip = path.join(base, 'parallax-2.0.0-win.zip');
-    await zipFolders(path.join(base, 'src'), ['parallax-2.0.0'], zip);
+    const zip = archivePath(base, '2.0.0');
+    await archiveFolders(path.join(base, 'src'), ['parallax-2.0.0'], zip);
     const found = await listZip(zip, '2.0.0', { cwd: base });
     expect(found.rootDir).toBe('parallax-2.0.0');
     expect(found.entries).toBeGreaterThan(5);
@@ -136,13 +181,13 @@ describe('listZip / extractZip (tar.exe)', () => {
     expect(await readdir(path.join(target, 'parallax-2.0.0'))).toContain('release.json');
   });
 
-  it('refuses a zip with a second root folder and a file that is no zip', async () => {
+  it('refuses an archive with a second root folder and a file that is no archive', async () => {
     const base = await temp();
     await makeTestPackage(path.join(base, 'src', 'parallax-2.0.0'), { version: '2.0.0', key: makeTestKey() });
     await mkdir(path.join(base, 'src', 'extra'));
     await writeFile(path.join(base, 'src', 'extra', 'x.txt'), 'x');
-    const zip = path.join(base, 'two.zip');
-    await zipFolders(path.join(base, 'src'), ['parallax-2.0.0', 'extra'], zip);
+    const zip = archivePath(base, 'two');
+    await archiveFolders(path.join(base, 'src'), ['parallax-2.0.0', 'extra'], zip);
     await expect(listZip(zip, '2.0.0', { cwd: base })).rejects.toMatchObject({ reason: 'layout' });
     const junk = path.join(base, 'junk.zip');
     await writeFile(junk, 'this is no zip');

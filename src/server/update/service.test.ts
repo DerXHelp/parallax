@@ -35,7 +35,13 @@ import {
   type UpdateServiceSeams,
 } from './service';
 import { UPDATE_STATE_FILE } from './stateFile';
-import { FakeReleaseServer, serveRelease, testUpdateEndpoints, zipFolders } from './testRelease';
+import {
+  FakeReleaseServer,
+  archiveFolders,
+  archivePath,
+  serveRelease,
+  testUpdateEndpoints,
+} from './testRelease';
 
 const temps: string[] = [];
 const services: UpdateService[] = [];
@@ -120,7 +126,7 @@ async function world(options: WorldOptions = {}) {
   const zip = async (version: string, patch: Partial<TestPackageOptions> = {}) => {
     const parent = path.join(base, 'build', String(builds++));
     await makeTestPackage(path.join(parent, `parallax-${version}`), { version, key, ...patch });
-    return zipFolders(parent, [`parallax-${version}`], path.join(parent, `parallax-${version}-win.zip`));
+    return archiveFolders(parent, [`parallax-${version}`], archivePath(parent, version));
   };
 
   const spawned: OrchestratorCommand[] = [];

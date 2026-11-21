@@ -1,10 +1,20 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { runFile } from '../lib/process';
-import { CURRENT_FILE, START_SCRIPT } from './layout';
-import { INSTALLER_FLAGS, installCmd, startCmd, startScript } from './templates';
+import { CURRENT_FILE, START_SCRIPT, START_SH } from './layout';
+import {
+  INSTALLER_FLAGS,
+  commandScript,
+  commandScriptRoot,
+  installCmd,
+  installSh,
+  shellQuote,
+  startCmd,
+  startScript,
+  startShell,
+} from './templates';
 
 const temps: string[] = [];
 afterEach(async () => {
@@ -109,5 +119,93 @@ describe('names shared with the system integration', () => {
     const layout = await import('./layout');
     expect(markers.INSTALL_START_SCRIPT).toBe(layout.START_SCRIPT);
     expect(markers.INSTALL_ICON).toBe(layout.ICON_FILE);
+  });
+});
+
+describe('POSIX shell scripts (Linux, WP-108)', () => {
+  it('use LF, /bin/sh, node from absolute PATH entries only and the right entry', () => {
+    for (const text of [startShell('26.9.0'), installSh('26.9.0')]) {
+      expect(text.startsWith('#!/bin/sh\n')).toBe(true);
+      expect(text).not.toContain('\r');
+      expect(text).toContain('/*) if [ -f "$dir/node" ] && [ -x "$dir/node" ]');
+      expect(text).toContain('Node.js 26.9.0');
+    }
+    expect(startShell('26.9.0')).toContain(
+      'exec "$node" --use-system-ca --use-env-proxy "$root/start.mjs" "$@"',
+    );
+    // Like install.cmd: no Node flags, install.js adds them after its version check.
+    expect(installSh('26.9.0')).toContain('exec "$node" "$here/dist/install.js" "$@"');
+    expect(installSh('26.9.0')).toContain('libatomic1');
+  });
+
+  it('the command names its root and runs the start script of that root', () => {
+    const dir = "/home/demo/it's here/parallax";
+    const text = commandScript(dir, `${dir}/parallax`);
+    expect(commandScriptRoot(text)).toBe(dir);
+    expect(text).toContain(`exec ${shellQuote(`${dir}/parallax`)} "$@"`);
+    expect(shellQuote("a'b")).toBe("'a'\\''b'");
+    expect(commandScriptRoot('#!/bin/sh\necho foreign\n')).toBeNull();
+    expect(commandScriptRoot(`#!/usr/bin/env bash\n# parallax-install-root: ${dir}\n`)).toBeNull();
+  });
+
+  const posix = it.runIf(process.platform !== 'win32');
+  const shell = '/bin/sh';
+  const nodePath = (): string => `${path.dirname(process.execPath)}:/usr/bin:/bin`;
+
+  posix(
+    'parallax runs start.mjs with the arguments, also through a link; without node it says so',
+    async () => {
+      const dir = await root();
+      await writeFile(path.join(dir, START_SH), startShell('20.0.0'), { mode: 0o755 });
+      const link = path.join(dir, 'link-to-parallax');
+      await symlink(path.join(dir, START_SH), link);
+      const result = await runFile(shell, [link, 'a b', '--autostart'], {
+        cwd: os.tmpdir(),
+        env: { PATH: `relative:${nodePath()}` },
+        timeoutMs: 20_000,
+      });
+      expect(result.stderr).toBe('');
+      expect(result.exitCode).toBe(0);
+      const ran = JSON.parse(await readFile(path.join(dir, 'ran.json'), 'utf8')) as { argv: string[] };
+      expect(ran.argv).toEqual([`--install-root=${dir}`, 'a b', '--autostart']);
+
+      const missing = await runFile(shell, [path.join(dir, START_SH)], {
+        cwd: os.tmpdir(),
+        env: { PATH: '/nonexistent' },
+        timeoutMs: 20_000,
+      });
+      expect(missing.exitCode).toBe(1);
+      expect(missing.stderr).toContain('Node.js 20.0.0 or newer');
+    },
+  );
+
+  posix('install.sh checks the Node version, then runs dist/install.js with the arguments', async () => {
+    const dir = await mkdtemp(path.join(process.env.PARALLAX_HOME ?? os.tmpdir(), 'wp108-install-sh-'));
+    temps.push(dir);
+    await mkdir(path.join(dir, 'dist'));
+    await writeFile(
+      path.join(dir, 'dist', 'install.js'),
+      [
+        "import { writeFileSync } from 'node:fs';",
+        `writeFileSync(${JSON.stringify(path.join(dir, 'ran.json'))}, JSON.stringify(process.argv.slice(2)));`,
+      ].join('\n'),
+    );
+    const run = async (minNode: string) => {
+      await writeFile(path.join(dir, 'install.sh'), installSh(minNode));
+      return runFile(shell, [path.join(dir, 'install.sh'), '--dir', '/opt/demo'], {
+        cwd: os.tmpdir(),
+        env: { PATH: nodePath() },
+        timeoutMs: 20_000,
+      });
+    };
+    const tooOld = await run('99.0.0');
+    expect(tooOld.exitCode).toBe(1);
+    expect(tooOld.stderr).toContain('Parallax needs Node.js 99.0.0 or newer');
+    const [major = '0', minor = '0'] = process.versions.node.split('.');
+    expect((await run(`${major}.${String(Number(minor) + 1)}.0`)).exitCode).toBe(1);
+    const ok = await run(`${major}.${minor}.0`);
+    expect(ok.stderr).toBe('');
+    expect(ok.exitCode).toBe(0);
+    expect(JSON.parse(await readFile(path.join(dir, 'ran.json'), 'utf8'))).toEqual(['--dir', '/opt/demo']);
   });
 });
