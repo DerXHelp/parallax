@@ -6,7 +6,14 @@ import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { EffortLevel, PermissionMode } from '@shared/common';
 import type { SessionInfoSectionName } from '@shared/model';
 import type { FixtureEvent } from '../fixture';
-import type { AgentBackend, OutgoingPrompt, RemoteControlInfo, StartSessionRequest } from '../types';
+import type {
+  AgentBackend,
+  ElicitationAnswer,
+  ElicitationRequestInfo,
+  OutgoingPrompt,
+  RemoteControlInfo,
+  StartSessionRequest,
+} from '../types';
 import type { FakeClaudeSettings, FakeClaudeSettingsOptions } from './claudeSettings';
 import type { FakeFiles } from './files';
 import type { FakeHistoryStore } from './history';
@@ -253,6 +260,11 @@ export interface FakeScriptContext {
     input: Record<string, unknown>,
     options: Record<string, unknown>,
   ): Promise<PermissionResult>;
+  /**
+   * WP-112: an MCP elicitation (onElicitation) – resolves with the engine's answer; `cancel` when
+   * the request was aborted (exit) and `decline` without a handler.
+   */
+  elicit(request: ElicitationRequestInfo): Promise<ElicitationAnswer>;
   /** Same player as the events mode (gates included); throws TurnInterrupted like emit. */
   play(events: readonly FixtureEvent[]): Promise<void>;
   /** Aborted by interrupt() or a prompt with priority 'now' during the turn. */

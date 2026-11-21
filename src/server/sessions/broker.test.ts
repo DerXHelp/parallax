@@ -7,7 +7,7 @@ import {
   type DecisionKind,
   type PermissionMode,
 } from '@shared/common';
-import type { DecisionRecord, ToolCallItem, ToolDecisionRef } from '@shared/model';
+import { decisionSchema, type DecisionRecord, type ToolCallItem, type ToolDecisionRef } from '@shared/model';
 import {
   SAMPLE_IDS,
   SAMPLE_TIME,
@@ -18,7 +18,7 @@ import {
   samplePlanAnnotation,
 } from '@shared/samples';
 import type { DecisionCounts } from '@shared/status';
-import type { PermissionRequest } from '../backend/types';
+import type { ElicitationRequestInfo, PermissionRequest } from '../backend/types';
 import { CommandError } from '../sync/ports';
 import { createBroker, type Broker } from './broker';
 import { BROKER_MESSAGES } from './brokerRules';
@@ -852,5 +852,260 @@ describe('broker – persistence, restore, expired, freeze', () => {
     expect(restarted.broker.restore(await restarted.stores.decisions.load(ENTRY))).toEqual({ hadOpen: true });
     expect(restarted.broker.expired()).toHaveLength(1);
     expect(restarted.broker.counts().expired).toBe(1);
+  });
+});
+
+// ---- WP-112 (ADR-256): elicitation decisions ----
+
+function elicitation(p: Partial<ElicitationRequestInfo> = {}): ElicitationRequestInfo {
+  return {
+    serverName: 'booking',
+    message: 'Please enter the details.',
+    mode: 'form',
+    url: null,
+    elicitationId: null,
+    requestedSchema: {
+      type: 'object',
+      properties: { name: { type: 'string' }, guests: { type: 'integer', minimum: 1 } },
+      required: ['name'],
+    },
+    title: null,
+    displayName: null,
+    description: null,
+    requestId: 'elicit-1',
+    ...p,
+  };
+}
+
+const urlElicitation = (p: Partial<ElicitationRequestInfo> = {}) =>
+  elicitation({
+    mode: 'url',
+    url: 'https://auth.example/authorize',
+    elicitationId: 'el-1',
+    requestedSchema: null,
+    ...p,
+  });
+
+const elicitResponse = (
+  action: 'accept' | 'decline' | 'cancel',
+  content: Record<string, string | number | boolean> | null = null,
+) => ({ kind: 'elicitation', response: { action, content } }) as const;
+
+function resolvedOutcomes(t: ReturnType<typeof setup>) {
+  return t.publisher.opsOf(ENTRY).flatMap((op) => (op.op === 'decision.resolved' ? [op.outcome] : []));
+}
+
+describe('broker – elicitation (WP-112)', () => {
+  it('creates an open elicitation decision: upsert, counts with the new kind, record, no tool-call ref', () => {
+    const t = setup();
+    void t.broker.elicitationHandler(elicitation(), new AbortController().signal);
+    const decision = t.broker.open()[0];
+    expect(decision).toMatchObject({
+      id: sampleId('dc', 1),
+      kind: 'elicitation',
+      toolUseId: 'elicit-1',
+      toolName: 'Elicitation',
+      requester: { kind: 'main' },
+      serverName: 'booking',
+      mode: 'form',
+      unsupported: null,
+    });
+    expect(decision?.kind === 'elicitation' ? decision.fields.map((f) => f.key) : []).toEqual([
+      'name',
+      'guests',
+    ]);
+    expect(decisionSchema.parse(decision)).toEqual(decision);
+    expect(t.publisher.opsOf(ENTRY)[0]).toMatchObject({
+      op: 'decision.upsert',
+      decision: { kind: 'elicitation' },
+    });
+    expect(t.attached).toEqual([]);
+    expect(t.countsLog.at(-1)).toEqual({
+      counts: { permission: 0, question: 0, plan: 0, elicitation: 1, oldestKind: 'elicitation', expired: 0 },
+      added: 'elicitation',
+    });
+    expect(t.stores.decisions.records(ENTRY)[0]?.decision).toEqual(decision);
+  });
+
+  it('accept with valid content → SDK accept with the checked content, outcome answered', async () => {
+    const t = setup();
+    const answer = t.broker.elicitationHandler(elicitation(), new AbortController().signal);
+    const id = sampleId('dc', 1);
+    expect(t.broker.respond(id, elicitResponse('accept', { name: 'Ada', guests: 2 }), CLIENT_1)).toEqual({
+      kind: 'resolved',
+      outcome: { type: 'answered' },
+    });
+    await expect(answer).resolves.toEqual({ action: 'accept', content: { name: 'Ada', guests: 2 } });
+    expect(t.publisher.opsOf(ENTRY).at(-1)).toMatchObject({
+      op: 'decision.resolved',
+      outcome: { type: 'answered' },
+      byClientId: CLIENT_1,
+    });
+    expect(t.attached).toEqual([]);
+    expect(t.broker.counts().elicitation).toBe(0);
+    expect(errorCode(() => t.broker.respond(id, elicitResponse('decline'), CLIENT_2))).toBe(
+      'DECISION_ALREADY_RESOLVED',
+    );
+  });
+
+  it('accept with content that does not fit → DECISION_OPTION_UNAVAILABLE, the decision stays open', () => {
+    const t = setup();
+    void t.broker.elicitationHandler(elicitation(), new AbortController().signal);
+    const id = sampleId('dc', 1);
+    expect(
+      errorCode(() => {
+        t.broker.check(id, elicitResponse('accept', { guests: 2 }));
+      }),
+    ).toBe('DECISION_OPTION_UNAVAILABLE');
+    expect(
+      errorCode(() => t.broker.respond(id, elicitResponse('accept', { name: 'Ada', guests: 0 }), null)),
+    ).toBe('DECISION_OPTION_UNAVAILABLE');
+    expect(t.broker.open()).toHaveLength(1);
+  });
+
+  it('decline → declined, cancel → cancelled {user}; content is never sent', async () => {
+    const t = setup();
+    const first = t.broker.elicitationHandler(elicitation({ requestId: 'a' }), new AbortController().signal);
+    const second = t.broker.elicitationHandler(elicitation({ requestId: 'b' }), new AbortController().signal);
+    t.broker.respond(sampleId('dc', 1), elicitResponse('decline', { name: 'x' }), CLIENT_1);
+    t.broker.respond(sampleId('dc', 2), elicitResponse('cancel'), CLIENT_1);
+    await expect(first).resolves.toEqual({ action: 'decline', content: null });
+    await expect(second).resolves.toEqual({ action: 'cancel', content: null });
+    expect(resolvedOutcomes(t)).toEqual([{ type: 'declined' }, { type: 'cancelled', reason: 'user' }]);
+  });
+
+  it('unsupported form: accept → ELICITATION_UNSUPPORTED with the reason, decline works', async () => {
+    const t = setup();
+    const answer = t.broker.elicitationHandler(
+      elicitation({ requestedSchema: { type: 'object', properties: { t: { type: 'array' } } } }),
+      new AbortController().signal,
+    );
+    const id = sampleId('dc', 1);
+    const decision = t.broker.open()[0];
+    expect(decision?.kind === 'elicitation' ? decision.unsupported : null).toMatch(/array/);
+    let thrown: unknown = null;
+    try {
+      t.broker.respond(id, elicitResponse('accept', {}), CLIENT_1);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(CommandError);
+    expect(thrown instanceof CommandError ? thrown.error : null).toMatchObject({
+      code: 'ELICITATION_UNSUPPORTED',
+      params: { reason: expect.stringMatching(/array/) as unknown },
+    });
+    t.broker.respond(id, elicitResponse('decline'), CLIENT_1);
+    await expect(answer).resolves.toEqual({ action: 'decline', content: null });
+  });
+
+  it('url mode: accept ("Done") without content; content is refused', async () => {
+    const t = setup();
+    const answer = t.broker.elicitationHandler(urlElicitation(), new AbortController().signal);
+    const id = sampleId('dc', 1);
+    expect(
+      errorCode(() => {
+        t.broker.check(id, elicitResponse('accept', { x: 1 }));
+      }),
+    ).toBe('DECISION_OPTION_UNAVAILABLE');
+    t.broker.respond(id, elicitResponse('accept'), CLIENT_1);
+    await expect(answer).resolves.toEqual({ action: 'accept', content: null });
+  });
+
+  it('elicitation_complete closes the open URL request of that server and id as answered', async () => {
+    const t = setup();
+    const answer = t.broker.elicitationHandler(urlElicitation(), new AbortController().signal);
+    expect(t.broker.completeElicitation('other-server', 'el-1')).toBe(false);
+    expect(t.broker.completeElicitation('booking', 'el-2')).toBe(false);
+    expect(t.broker.completeElicitation('booking', 'el-1')).toBe(true);
+    await expect(answer).resolves.toEqual({ action: 'accept', content: null });
+    expect(resolvedOutcomes(t)).toEqual([{ type: 'answered' }]);
+    expect(t.publisher.opsOf(ENTRY).at(-1)).toMatchObject({ byClientId: null });
+    expect(t.broker.completeElicitation('booking', 'el-1')).toBe(false);
+  });
+
+  it('an over-long elicitation id still correlates (the decision carries null)', async () => {
+    const t = setup();
+    const long = 'e'.repeat(300);
+    const answer = t.broker.elicitationHandler(
+      urlElicitation({ elicitationId: long }),
+      new AbortController().signal,
+    );
+    const decision = t.broker.open()[0];
+    expect(decision?.kind === 'elicitation' ? decision.elicitationId : 'x').toBeNull();
+    expect(t.broker.completeElicitation('booking', long)).toBe(true);
+    await expect(answer).resolves.toMatchObject({ action: 'accept' });
+  });
+
+  it.each<['interrupted' | 'process_exit' | 'conversation_reset', 'deny' | 'deny-interrupt']>([
+    ['interrupted', 'deny-interrupt'],
+    ['process_exit', 'deny'],
+    ['conversation_reset', 'deny'],
+  ])('engine cancel (%s) answers cancel, outcome cancelled with that reason', async (reason, mode) => {
+    const t = setup();
+    const answer = t.broker.elicitationHandler(elicitation(), new AbortController().signal);
+    const permission = t.broker.handler(request(), new AbortController().signal);
+    t.broker.cancel('all', reason, mode);
+    await expect(answer).resolves.toEqual({ action: 'cancel', content: null });
+    await expect(permission).resolves.toMatchObject({ behavior: 'deny' });
+    expect(resolvedOutcomes(t)).toEqual([
+      { type: 'cancelled', reason },
+      { type: 'cancelled', reason },
+    ]);
+  });
+
+  it('signal abort → cancel, outcome cancelled signal_aborted (answered_elsewhere with Remote Control)', async () => {
+    const t = setup();
+    const controller = new AbortController();
+    const answer = t.broker.elicitationHandler(elicitation(), controller.signal);
+    controller.abort();
+    await expect(answer).resolves.toEqual({ action: 'cancel', content: null });
+    expect(resolvedOutcomes(t)).toEqual([{ type: 'cancelled', reason: 'signal_aborted' }]);
+
+    const remote = setup({ answeredElsewhere: () => true });
+    const other = new AbortController();
+    void remote.broker.elicitationHandler(elicitation(), other.signal);
+    other.abort();
+    expect(resolvedOutcomes(remote)).toEqual([{ type: 'answered_elsewhere' }]);
+  });
+
+  it('an already aborted signal → cancel at once, no decision', async () => {
+    const t = setup();
+    const controller = new AbortController();
+    controller.abort();
+    await expect(t.broker.elicitationHandler(elicitation(), controller.signal)).resolves.toEqual({
+      action: 'cancel',
+      content: null,
+    });
+    expect(t.broker.open()).toEqual([]);
+    expect(t.publisher.opsOf(ENTRY)).toEqual([]);
+  });
+
+  it('a restored open elicitation is an expired card: answers get DECISION_EXPIRED', () => {
+    const first = setup();
+    void first.broker.elicitationHandler(elicitation(), new AbortController().signal);
+    first.broker.freeze();
+    const records = first.stores.decisions.records(ENTRY);
+    const t = setup();
+    expect(t.broker.restore(records)).toEqual({ hadOpen: true });
+    expect(t.broker.expired()[0]).toMatchObject({ kind: 'elicitation', state: 'expired' });
+    expect(errorCode(() => t.broker.respond(sampleId('dc', 1), elicitResponse('decline'), CLIENT_1))).toBe(
+      'DECISION_EXPIRED',
+    );
+  });
+
+  it('a permission response to an elicitation (and vice versa) → DECISION_OPTION_UNAVAILABLE', () => {
+    const t = setup();
+    void t.broker.elicitationHandler(elicitation(), new AbortController().signal);
+    void t.broker.handler(request(), new AbortController().signal);
+    expect(
+      errorCode(() => {
+        t.broker.check(sampleId('dc', 1), allowOnce);
+      }),
+    ).toBe('DECISION_OPTION_UNAVAILABLE');
+    expect(
+      errorCode(() => {
+        t.broker.check(sampleId('dc', 2), elicitResponse('decline'));
+      }),
+    ).toBe('DECISION_OPTION_UNAVAILABLE');
   });
 });

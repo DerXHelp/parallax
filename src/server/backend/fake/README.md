@@ -9,7 +9,7 @@ Design: `docs/wp/WP-13.md` §3.3, Ergebnis und Stolpersteine: `docs/wp/WP-13a.md
 |---|---|
 | `types.ts` | Szenario-, Handle-, Script-Kontext- und Diagnose-Typen (Re-Export über `fakeBackend.ts`); Phase 3: `FakeBackgroundTask`, `FakeTaskControl`, `filesRoot` |
 | `session.ts` | `FakeSession` (= `AgentSession` + `FakeSessionHandle`): Tore, UUID-Abbildung, Antworten, Exit; Phase 3: Hintergrund-Tasks des Script-Modus (`stopTask` mit den CLI-Fehlertexten, `idle` zurückgehalten solange ein Task läuft, Folge-Turn nach der Notification), Nachrichten beim geordneten Ende (`onClose`) |
-| `player.ts` | `EventPlayer` für Fixture-Format v1 (Abspielregeln §3.3), `compareDecision` |
+| `player.ts` | `EventPlayer` für Fixture-Format v1 (Abspielregeln §3.3), `compareDecision`; WP-112: `elicitation` ist ein Tor wie `canUseTool` (mit `fake.parallel` erst am `elicitationResult` zusammengeführt), `compareElicitation` (Abweichung → Diagnose `decision-mismatch`) |
 | `common.ts` | `SessionStopped`, `TurnInterrupted`, `TaskStopped`, `mapUuids`, Prompt-Helfer (echtes `setImmediate`/`nextMacrotask` jetzt aus `lib/async.ts`, R2-10) |
 | `dsl.ts` | Bausteine über WP-12 `synthetic/build.ts` (Turns, Blöcke, Entscheidungen, Subagents, Interrupt, `/clear`, `/rename`, Fehler, Crash); Phase 3: `inputChunks`, `subagentLaunch({runInBackground, outputFile})`, `taskProgress` (mit `activity` → `description` wie die CLI, WP61-07), `backgroundTasksChanged`, `subagentEnd({outputFile, status, usage})` |
 | `interactive.ts` | Dev-Szenario mit Schlüsselwörtern (`fake:bash` … `/clear`; `fake:permission-later` = dieselbe Bash-Freigabe nach etwa 3 s Text; Phase 2: `fake:image` = Read mit Bild-Ergebnis, `fake:ratelimit` mit Reset in 60 s; Prompt mit Bildern → „Fake: received N image(s)“; Phase 3 siehe unten) |
@@ -22,6 +22,7 @@ Design: `docs/wp/WP-13.md` §3.3, Ergebnis und Stolpersteine: `docs/wp/WP-13a.md
 | `sessionInfo.ts` | WP-67: `FakeSessionInfo` (Zustand je Session: Rohantworten aller sieben Reiter in CLI-Form, laufen durch denselben Parser wie das SdkBackend; ohne Kontodaten), MCP-Zustand `fake-docs` connected / `fake-search` failed / `fake-auth` needs-auth / `fake-off` disabled, `reloadSkills` ergänzt `fresh-skill` (`FAKE_FRESH_SKILL`), Export aus dem Fake-Verlauf mit CLI-Dateinamen; Hebel `FakeBackendOptions.sessionInfo` (`unavailable`, `actions`, `long`) und Schlüsselwörter (siehe unten) |
 | `claudeSettings.ts` | WP-73: `FakeClaudeSettings` (Claudes `model`/`modelPicker` je Backend, `FakeBackendOptions.claudeSettings`, `FakeBackend.claudeSettings`), `fakeModelList` (wie CLI 2.1.323: eingebaute Zeilen bzw. nur Default bei `replaceBuiltInOptions`, fehlende kuratierte Zeilen, Tail-Zeile des aktuellen Modells, `opusplan` → „Opus Plan“), `FAKE_MODEL_PICKER`, `FAKE_OPUSPLAN_ROW`; Start ohne `model` läuft auf dem Settings-Modell; Hebel `fake:claude-model <model\|none>`, `fake:model-picker [replace\|off]` |
 | `remote.ts` | WP-64 Remote Control: `fakeBridgeInfo` (`cse_fake<id>` ↔ `https://claude.ai/code/session_fake<id>`), `fakeEnableFailure`, `bridgeStateMessage`, `remotePromptTurn` (Turn eines Prompts aus der Claude-App: `command_lifecycle` mit fremder uuid, `init`, `user`-Replay mit `origin:{kind:'human'}`, Antwort); Hebel `fake:remote-prompt [text]`, `fake:remote-permission`, `fake:remote-fail`, `fake:remote-flaky` (siehe unten) |
+| `elicit.ts` | WP-112: `fake:elicit-form`, `fake:elicit-url`, `fake:elicit-unsupported` (siehe unten), `FAKE_ELICIT_COMPLETE_MS`, `FAKE_ELICIT_URL`, `elicitAnswerText` |
 | `workers.ts` | WP-71: `fake:workers` (zwei Hintergrund-Agenten + eine Hintergrund-Shell, Konstanten `FAKE_WORKERS_*`; siehe unten) |
 | `login.ts` | WP-70: `FakeLoginSession` (Port `LoginSession` + `FakeLoginHandle`): Links auf die harmlose Adresse `FAKE_LOGIN_HOST` (`https://login.parallax.invalid/oauth/authorize?code=true&state=fake-state-<pid>-<n>`, mit `automatic` zusätzlich ein Link mit `port=0`), jeder Code meldet „angemeldet“ (`subscriptionType` Standard `max`), außer `FAKE_LOGIN_REFUSED_CODE` (`LOGIN_FAILED code`) und `FAKE_LOGIN_EXPIRED_CODE` (`expired`); Test-Handle `complete()`/`fail()`/`close()`; Hebel `FakeBackendOptions.login` (`start: 'ok' \| 'unavailable' \| 'blocked'`, `automatic`, `subscriptionType`), Prozesse in `FakeBackend.logins` |
 | `outputStyle.ts` | WP-70: `FAKE_OUTPUT_STYLES` (`default`, `Proactive`, `Concise`, `Explanatory`, `Learning`), `FakeOutputStyles` (Stil je Projekt, Schlüssel `windowsPathKey(cwd)`, `writes` für Tests) – `readOutputStyles` (nur Script-Modus; Events-Modus `null`), `setOutputStyle` zeichnet das Control `updateSettings` auf, `init.output_style` jedes Turns zeigt den Stil; Hebel `FakeBackendOptions.outputStyleError` |
@@ -140,3 +141,19 @@ MCP: „Neu verbinden“ verbindet einen fehlgeschlagenen Server (`connected`), 
 | Eingabe | Ablauf |
 |---|---|
 | `fake:workers` | zwei Hintergrund-Agenten (`subagentLaunch` mit `runInBackground`, `general-purpose`, `task_progress` mit `summary`) und eine Hintergrund-Shell (`Bash` `pnpm dev`, `task_started` `local_bash` mit `is_backgrounded`, Ergebnis mit `backgroundTaskId`) gleichzeitig, eine volle `background_tasks_changed`-Liste (Agenten `local_agent`, Shell `local_bash`), Antwort `FAKE_WORKERS_STARTED`, Turn-Ende. Die Shell endet nach `FAKE_WORKERS_SHELL_MS` (6 s × `speed`), die Agenten nach `FAKE_WORKERS_AGENT_MS` (9 s / 12 s × `speed`, nicht durch `maxDelayMs` gekappt); jedes Ende sendet `task_updated` (Agenten), `task_notification` und die Liste der übrigen; das letzte spielt den Folge-Turn (`FAKE_WORKERS_DONE`), `idle` erst danach. `stopTask(taskId)` beendet jeden vorher (`stopped`) |
+
+## MCP-Elicitation (WP-112, ADR-256)
+
+`ScriptContext.elicit(request)` fragt `StartSessionRequest.onElicitation` (ohne Handler: `decline` wie das SDK;
+wirft der Handler: `cancel`); die Session steht dabei auf `waiting-decision`, Stop/Interrupt und Prozessende brechen
+die offene Anfrage ab (Signal, Antwort `cancel`). Synthetische Szenarien: `elicitation-form` (Server `booking`,
+Formular aus Text, Ganzzahl, Auswahl, Ja/Nein; aufgezeichnet `accept` mit `ELICITATION_FORM_CONTENT`),
+`elicitation-url` (Server `calendar`, `fake.parallel`, danach `system/elicitation_complete`; aufgezeichnet `accept`),
+`elicitation-unsupported` (Server `survey`, Mehrfachauswahl; aufgezeichnet `decline`). DSL: `elicitationStep`,
+`expectElicitation`, `elicitationComplete`.
+
+| Eingabe | Ablauf |
+|---|---|
+| `fake:elicit-form` | MCP-Werkzeug `mcp__fake-mcp__ask` fragt das Reservierungsformular ab; die Antwort nennt, was zurückkam („Fake: accepted with {…}.“, „Fake: declined.“, „Fake: cancelled.“) |
+| `fake:elicit-url` | `mcp__fake-mcp__connect` bittet, `FAKE_ELICIT_URL` zu öffnen (parallel, die Anfrage bleibt offen); nach `FAKE_ELICIT_COMPLETE_MS` (5 s × `speed`, ≤ `maxDelayMs`) `system/elicitation_complete` – die Engine schließt damit die Karte –, Antwort `FAKE_ELICIT_URL_DONE` |
+| `fake:elicit-unsupported` | Formular mit Mehrfachauswahl (außerhalb der Teilmenge): die Karte bietet nur „Ablehnen“; Antwort wie bei `fake:elicit-form` |

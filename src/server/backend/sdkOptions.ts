@@ -18,9 +18,15 @@
  *
  * Deliberately NOT set: enableFileCheckpointing, sessionId, forkSession, maxTurns, abortController
  * (close() goes through Query.close() + the spawn wrapper, C.8).
+ *
+ * WP-112 (ADR-256): `onElicitation` only when the request carries a handler (without one the SDK
+ * declines every MCP elicitation, as before); `toElicitationRequest`/`toElicitResult` map the SDK
+ * types tolerantly (zod) to the backend types and back.
  */
 import type {
   CanUseTool,
+  ElicitationResult,
+  OnElicitation,
   Options,
   SdkBeta,
   SdkPluginConfig,
@@ -28,13 +34,16 @@ import type {
   SpawnedProcess,
   SpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
 import { HOST_PATH_RULES } from '../lib/paths';
 import type { LaunchSpec } from '../claude/ports';
-import type { LoginRequest, StartSessionRequest } from './types';
+import type { ElicitationAnswer, ElicitationRequestInfo, LoginRequest, StartSessionRequest } from './types';
 
 export interface QueryOptionHooks {
   /** Wrapper around req.canUseTool (toPermissionRequest + error handling, sdkBackend.ts). */
   canUseTool: CanUseTool;
+  /** WP-112: wrapper around req.onElicitation (sdkBackend.ts); set only when the request has one. */
+  onElicitation?: OnElicitation;
   /** spawnClaudeCodeProcess wrapper (spawn.ts). */
   spawn: (options: SpawnOptions) => SpawnedProcess;
   /** Never called by the SDK with an own spawn (F.16); kept as a second path into the log. */
@@ -173,7 +182,56 @@ export function buildQueryOptions(req: StartSessionRequest, hooks: QueryOptionHo
   const settings = settingsOf(req);
   if (settings !== undefined) options.settings = settings;
   options.extraArgs = extraArgsOf(launch);
+  if (req.onElicitation !== undefined && hooks.onElicitation !== undefined) {
+    options.onElicitation = hooks.onElicitation;
+  }
   return options;
+}
+
+const optionalText = z.string().optional().catch(undefined);
+
+/** SDK 0.3.322 `ElicitationRequest`, tolerant: broken optional keys count as absent. */
+const elicitationRequestSchema = z.looseObject({
+  serverName: z.string(),
+  message: z.string().catch(''),
+  mode: z.string().optional(),
+  url: optionalText,
+  elicitationId: optionalText,
+  requestedSchema: z.record(z.string(), z.unknown()).optional().catch(undefined),
+  title: optionalText,
+  displayName: optionalText,
+  description: optionalText,
+});
+
+/**
+ * WP-112: the SDK's `ElicitationRequest` → `ElicitationRequestInfo`; null = not understood (no
+ * server name, or a mode of a newer SDK) – the backend then declines like the SDK without handler.
+ */
+export function toElicitationRequest(request: unknown, requestId: string): ElicitationRequestInfo | null {
+  const parsed = elicitationRequestSchema.safeParse(request);
+  if (!parsed.success) return null;
+  const r = parsed.data;
+  const mode = r.mode ?? 'form';
+  if (mode !== 'form' && mode !== 'url') return null;
+  return {
+    serverName: r.serverName,
+    message: r.message,
+    mode,
+    url: r.url ?? null,
+    elicitationId: r.elicitationId ?? null,
+    requestedSchema: r.requestedSchema ?? null,
+    title: r.title ?? null,
+    displayName: r.displayName ?? null,
+    description: r.description ?? null,
+    requestId,
+  };
+}
+
+/** WP-112: the engine's answer → the SDK's `ElicitResult` (`content` only with accept in form mode). */
+export function toElicitResult(answer: ElicitationAnswer): ElicitationResult {
+  return answer.content === null
+    ? { action: answer.action }
+    : { action: answer.action, content: answer.content };
 }
 
 /**

@@ -28,9 +28,14 @@
  * watcher gets `notify{delivery:'system'}` instead of the local toast (the window keeps its in-app
  * hint); its server shows the toast with its own filters. While the watcher is the target, the
  * native channel counts as available even if this computer cannot toast (the toast is shown there).
+ *
+ * WP-112 (WP-110 §3.7): a session of a muted project (`notifications.mutedProjects`, `isProjectMuted`)
+ * gets no notification at all – no toast, no Web Notification, no watcher toast and no in-app
+ * `notify` (the window rings on every `notify`); status, counters and the unread mark stay.
  */
 import type { ClientId, EntryId } from '@shared/common';
-import { DEFAULT_NOTIFICATION_SETTINGS, type NotificationSettings } from '@shared/model';
+import { DEFAULT_NOTIFICATION_SETTINGS, type Entry, type NotificationSettings } from '@shared/model';
+import type { PathRules } from '@shared/paths';
 import type { Notification } from '@shared/protocol';
 import {
   DONE_NOTIFY_MIN_TURN_MS,
@@ -39,6 +44,7 @@ import {
   type NotificationKind,
   type StatusFacts,
 } from '@shared/status';
+import { HOST_PATH_RULES } from '../lib/paths';
 import type { ClientPresence } from '../sync/ports';
 
 export interface NotificationChannel {
@@ -330,8 +336,30 @@ export interface PlannedNotification {
   relayClientId?: ClientId;
 }
 
-/** The settings filter that turned an OS notification into the in-app hint (or into nothing). */
-export type NotificationFilter = 'do_not_disturb' | 'toast_off';
+/**
+ * The settings filter that turned an OS notification into the in-app hint (or into nothing);
+ * `muted` (WP-112) = the session's project is muted – nothing is delivered.
+ */
+export type NotificationFilter = 'do_not_disturb' | 'toast_off' | 'muted';
+
+/** WP-112: the project of an entry – its sidebar group, `worktree?.repoRoot ?? cwd`. */
+export function projectOf(entry: Pick<Entry, 'cwd' | 'worktree'>): string {
+  return entry.worktree?.repoRoot ?? entry.cwd;
+}
+
+/**
+ * WP-112: the entry's project is in `notifications.mutedProjects` – compared with the path rules of
+ * this host (Windows case-insensitive, POSIX exact; trailing separators do not count).
+ */
+export function isProjectMuted(
+  entry: Pick<Entry, 'cwd' | 'worktree'>,
+  mutedProjects: readonly string[],
+  rules: PathRules = HOST_PATH_RULES,
+): boolean {
+  if (mutedProjects.length === 0) return false;
+  const project = projectOf(entry);
+  return mutedProjects.some((muted) => rules.equal(muted, project));
+}
 
 /** One notification event: what is delivered (null = nothing) and why (WP41-04). */
 export interface NotificationRoute {
@@ -360,6 +388,7 @@ export function routeNotification(
   nativeAvailable = false,
   notifications: NotificationSettings = DEFAULT_NOTIFICATION_SETTINGS,
   history: FocusHistory | null = null,
+  muted = false,
 ): NotificationRoute | null {
   const relay = history === null ? null : relayTarget(clients, history);
   const { channel, reason, tieBreak, minDoneTurnMs } = chooseChannelWithReason(
@@ -373,6 +402,8 @@ export function routeNotification(
   );
   const kind = notificationFor(prev, next, now, { minDoneTurnMs });
   if (kind === null) return null;
+  // WP-112: a muted project gets nothing (neither toast nor sound nor the watcher's toast).
+  if (muted) return { kind, planned: null, reason, tieBreak, filter: 'muted' };
   if (channel === null) return { kind, planned: null, reason, tieBreak, filter: null };
   const filter: NotificationFilter | null = notifications.doNotDisturb
     ? 'do_not_disturb'
@@ -423,10 +454,11 @@ export function planNotification(
   nativeAvailable = false,
   notifications: NotificationSettings = DEFAULT_NOTIFICATION_SETTINGS,
   history: FocusHistory | null = null,
+  muted = false,
 ): PlannedNotification | null {
   return (
-    routeNotification(prev, next, now, clients, entryId, nativeAvailable, notifications, history)?.planned ??
-    null
+    routeNotification(prev, next, now, clients, entryId, nativeAvailable, notifications, history, muted)
+      ?.planned ?? null
   );
 }
 

@@ -333,6 +333,10 @@ export class SessionRuntime {
         // WP-95: commit/push/merge/rebase in the session – the branch may have moved (one lookup at a time).
         void s.refreshGitBranch();
         return;
+      case 'elicitation_complete':
+        // WP-112: the MCP server finished a URL-mode elicitation – its card closes.
+        s.broker.completeElicitation(signal.serverName, signal.elicitationId);
+        return;
       case 'mcp_servers':
         this.core.setEngineWarning(
           `mcp:${s.id}`,
@@ -748,6 +752,8 @@ export async function startRuntime(
         fastMode: entry.fastMode,
         attachmentsDir,
         canUseTool: s.broker.handler,
+        // WP-112 (ADR-256): MCP elicitations become `elicitation` decisions.
+        onElicitation: s.broker.elicitationHandler,
       });
     } catch (error) {
       const payload = makeError('CLAUDE_SPAWN_FAILED', { reason: errorMessage(error).slice(0, 200) });

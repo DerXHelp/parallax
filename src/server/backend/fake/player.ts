@@ -4,6 +4,9 @@
  * `canUseTool` (until the engine answers; `payload.fake.parallel` → join at the `decision`),
  * `control interrupt` (until interrupt()), `exit` with `msSinceClose` (until close()). Delays are
  * `Δt × speed`, counted again from each gate.
+ *
+ * WP-112: `elicitation` is a gate like `canUseTool` (until the engine answers; `fake.parallel` →
+ * join at the `elicitationResult`, e.g. for a URL request that `elicitation_complete` closes).
  */
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
@@ -13,10 +16,14 @@ import {
   fixtureCanUseToolPayloadSchema,
   fixtureControlPayloadSchema,
   fixtureDecisionPayloadSchema,
+  fixtureElicitationPayloadSchema,
+  fixtureElicitationResultPayloadSchema,
   fixtureInputPayloadSchema,
   type FixtureEvent,
 } from '../fixture';
 import { toPermissionRequest } from '../permissionRequest';
+import { toElicitationRequest } from '../sdkOptions';
+import type { ElicitationAnswer } from '../types';
 import { SessionStopped, mapUuids, promptText, type RecordedAnswer } from './common';
 import type { FakeSession } from './session';
 
@@ -60,6 +67,16 @@ function canonical(value: unknown): string {
 }
 
 type RecordedResult = z.infer<typeof fixtureDecisionPayloadSchema>['result'];
+type RecordedElicitResult = z.infer<typeof fixtureElicitationResultPayloadSchema>['result'];
+
+/** WP-112: engine answer vs. recorded ElicitResult (action, content deep). null = equal. */
+export function compareElicitation(expected: RecordedElicitResult, actual: ElicitationAnswer): string | null {
+  if (expected.action !== actual.action) return `action ${actual.action} instead of ${expected.action}`;
+  if (expected.content !== undefined && canonical(expected.content) !== canonical(actual.content ?? {})) {
+    return 'content differs';
+  }
+  return null;
+}
 
 /**
  * Engine result vs. recording (§3.3 `decision`): behavior, message (deny), interrupt (deny),
@@ -110,6 +127,8 @@ export class EventPlayer {
   private readonly preReleased = new Map<number, PromiseWithResolvers<InterruptAnswer>>();
   /** Non-blocking canUseTool requests (`fake.parallel`), joined at their `decision`. */
   private readonly parallel = new Map<string, Promise<PermissionResult | null>>();
+  /** WP-112: non-blocking elicitations (`fake.parallel`), joined at their `elicitationResult`. */
+  private readonly parallelElicitations = new Map<string, Promise<ElicitationAnswer | null>>();
 
   constructor(
     private readonly session: FakeSession,
@@ -189,6 +208,12 @@ export class EventPlayer {
         const decision = fixtureDecisionPayloadSchema.safeParse(event.payload);
         return decision.success && this.parallel.has(decision.data.toolUseID);
       }
+      case 'elicitation':
+        return fakePayloadSchema.safeParse(event.payload).data?.fake?.parallel !== true;
+      case 'elicitationResult': {
+        const result = fixtureElicitationResultPayloadSchema.safeParse(event.payload);
+        return result.success && this.parallelElicitations.has(result.data.requestId);
+      }
       case 'exit':
         return exitPayloadSchema.safeParse(event.payload).data?.msSinceClose !== undefined;
       default:
@@ -259,9 +284,56 @@ export class EventPlayer {
       case 'exit':
         await this.exit(event);
         return;
+      case 'elicitation':
+        await this.elicitation(event);
+        return;
+      case 'elicitationResult':
+        await this.elicitationResult(event);
+        return;
       case 'mark':
       case 'process':
         return;
+    }
+  }
+
+  private async elicitation(event: FixtureEvent): Promise<void> {
+    const parsed = fixtureElicitationPayloadSchema.safeParse(event.payload);
+    const request = parsed.success ? toElicitationRequest(parsed.data.request, parsed.data.requestId) : null;
+    if (request === null) {
+      this.invalid(event, 'elicitation');
+      return;
+    }
+    const answered = this.session.startElicitation(request, event.seq);
+    if (fakePayloadSchema.safeParse(event.payload).data?.fake?.parallel === true) {
+      this.parallelElicitations.set(request.requestId, answered);
+      return;
+    }
+    await this.session.blockOn('waiting-decision', answered);
+  }
+
+  private async elicitationResult(event: FixtureEvent): Promise<void> {
+    const parsed = fixtureElicitationResultPayloadSchema.safeParse(event.payload);
+    if (!parsed.success) {
+      this.invalid(event, 'elicitationResult');
+      return;
+    }
+    const { requestId, result: expected } = parsed.data;
+    const pending = this.parallelElicitations.get(requestId);
+    if (pending !== undefined) {
+      this.parallelElicitations.delete(requestId);
+      await this.session.blockOn('waiting-decision', pending);
+    }
+    if (!this.session.lastElicitations.has(requestId)) {
+      this.session.diagnostic('decision-mismatch', event.seq, `no elicitation answer for ${requestId}`, {
+        expected,
+      });
+      return;
+    }
+    const actual = this.session.lastElicitations.get(requestId) ?? null;
+    if (actual === null) return; // aborted: the CLI no longer reads an answer
+    const mismatch = compareElicitation(expected, actual);
+    if (mismatch !== null) {
+      this.session.diagnostic('decision-mismatch', event.seq, mismatch, { expected, actual });
     }
   }
 
