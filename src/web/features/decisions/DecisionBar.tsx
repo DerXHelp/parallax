@@ -30,6 +30,8 @@ function announcement(decision: Decision | null, t: typeof translateFn): string 
       return t('decisions.bar.announce.question');
     case 'plan':
       return t('decisions.bar.announce.plan', { version: decision.version });
+    case 'elicitation':
+      return t('decisions.elicitation.announce', { server: decision.displayName ?? decision.serverName });
   }
 }
 

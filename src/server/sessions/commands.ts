@@ -17,7 +17,8 @@
  * process, no auto-wake). WP-69: `session.subagentTranscript` (subagentTranscript.ts; reads the CLI's
  * agent transcript, no process needed). WP-70: `session.setOutputStyle` (outputStyle.ts; a dormant
  * entry starts without a turn). WP-77: `session.setDraft` (ADR-210; every entry state) – a sent
- * prompt clears the draft it was sent from.
+ * prompt clears the draft it was sent from. WP-110 (routing only): `session.setUnread` (unread.ts,
+ * WP-112) and `session.create` with `worktree` (worktrees.ts, WP-111).
  */
 import { LIMITS, type ClientId, type ProfileId } from '@shared/common';
 import { makeError } from '@shared/errors';
@@ -66,6 +67,8 @@ import { askSideQuestion, cancelSideQuestion, deleteSideQuestionThread } from '.
 import { readSubagentTranscript } from './subagentTranscript';
 import { capTitle, implementPlanPrompt, newConversation, titleFromPrompt } from './summary';
 import { regenerateTitle } from './titles';
+import { setUnread } from './unread';
+import { createSessionWorktree } from './worktrees';
 
 export interface CommandEngine {
   readonly core: EngineCore;
@@ -192,6 +195,9 @@ async function createSession(
   await core.checkCwd(cmd.cwd);
   const permissionMode = cmd.permissionMode ?? profile.defaults.permissionMode;
   assertModeAllowed(core, profileId, permissionMode);
+  // WP-110 (ADR-250): the worktree exists before the entry – a failure creates nothing.
+  const worktree =
+    cmd.worktree === undefined ? null : await createSessionWorktree(core, cmd.cwd, cmd.worktree);
   // ADR-103/146: pastes and attachments are checked before the entry exists (a bad one creates
   // nothing); files are materialized once the entry exists.
   const pastes = checkPastes(cmd.prompt?.text ?? '', cmd.prompt?.pastes ?? []);
@@ -213,7 +219,7 @@ async function createSession(
     id: core.ids.newId('en'),
     createdAt: now,
     profileId,
-    cwd: cmd.cwd,
+    cwd: worktree?.path ?? cmd.cwd,
     title: given !== '' ? capTitle(given) : (promptTitle ?? ''),
     titleSource: given !== '' ? 'custom' : promptTitle !== null ? 'prompt' : 'none',
     pinned: false,
@@ -240,6 +246,8 @@ async function createSession(
     remoteControlWanted,
     turnSummary: null,
     lastSeenAt: null,
+    worktree,
+    baseSha: worktree?.baseSha ?? null,
   };
   const s = engine.createEntry(entry, promptTitle);
   s.followClaudeDefault = newSessions === 'follow_claude';
@@ -478,6 +486,9 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, ctx: Comma
     // WP-77 (ADR-210): the synchronized composer draft – every entry state.
     case 'session.setDraft':
       return setDraft(core, s, cmd, clientId);
+    // WP-110 (F6): every entry state (the mark is Parallax's own).
+    case 'session.setUnread':
+      return setUnread(core, s, cmd);
   }
 }
 

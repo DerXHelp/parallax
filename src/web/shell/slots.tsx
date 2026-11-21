@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, type ComponentType, type ReactNode } from 'react';
 import type { DecisionId, JsonValue } from '@shared/common';
 import {
+  ChangesPanelPlaceholder,
   ComposerPlaceholder,
   DecisionBarPlaceholder,
   DecisionCardPlaceholder,
@@ -10,6 +11,7 @@ import {
   MarkdownPlaceholder,
   PlanPanelPlaceholder,
   ProfilesSettingsPlaceholder,
+  SearchDialogPlaceholder,
   SettingsPagePlaceholder,
   SubagentPanelPlaceholder,
   TaskStripPlaceholder,
@@ -20,6 +22,8 @@ import {
   UpdateBannerPlaceholder,
   UpdateNoticePlaceholder,
   UpdatesSettingsPlaceholder,
+  WorktreeCleanupPlaceholder,
+  WorktreeNoticePlaceholder,
 } from './placeholders';
 import type { SettingsSection } from './requests';
 
@@ -97,6 +101,24 @@ export interface FeatureSlots {
   UpdateBanner: ComponentType<NoSlotProps>;
   /** Settings section `updates`. */
   UpdatesSettings: ComponentType<NoSlotProps>;
+  // WP-110 (Ausbau 1)
+  /**
+   * WP-113 (features/changes): tab "Änderungen" – diff of the session, review comments, git bar. The
+   * frame shows the tab only when the session's host has `HostState.features.git`.
+   */
+  ChangesPanel: ComponentType<{ sessionKey: string }>;
+  /**
+   * WP-114 (features/worktrees): the cleanup dialog of a worktree session; mounted once by the
+   * AppShell, opened by the request `worktree.cleanup`.
+   */
+  WorktreeCleanup: ComponentType<NoSlotProps>;
+  /**
+   * WP-114: the worktree's state above the task strip of a session (being created, setup running or
+   * failed with "Start anyway" / "Show output"); renders nothing otherwise.
+   */
+  WorktreeNotice: ComponentType<{ sessionKey: string }>;
+  /** WP-115 (features/search): the search dialog; mounted once by the AppShell, request `search.open`. */
+  SearchDialog: ComponentType<NoSlotProps>;
 }
 
 /** A slot without props. */
@@ -184,6 +206,10 @@ export const DEFAULT_FEATURE_SLOTS: FeatureSlots = {
   UpdateNotice: UpdateNoticePlaceholder,
   UpdateBanner: UpdateBannerPlaceholder,
   UpdatesSettings: UpdatesSettingsPlaceholder,
+  ChangesPanel: ChangesPanelPlaceholder,
+  WorktreeCleanup: WorktreeCleanupPlaceholder,
+  WorktreeNotice: WorktreeNoticePlaceholder,
+  SearchDialog: SearchDialogPlaceholder,
 };
 
 const FeatureSlotsContext = createContext<FeatureSlots>(DEFAULT_FEATURE_SLOTS);
@@ -221,6 +247,10 @@ export function FeatureSlotsProvider({
       UpdateNotice: slots.UpdateNotice ?? parent.UpdateNotice,
       UpdateBanner: slots.UpdateBanner ?? parent.UpdateBanner,
       UpdatesSettings: slots.UpdatesSettings ?? parent.UpdatesSettings,
+      ChangesPanel: slots.ChangesPanel ?? parent.ChangesPanel,
+      WorktreeCleanup: slots.WorktreeCleanup ?? parent.WorktreeCleanup,
+      WorktreeNotice: slots.WorktreeNotice ?? parent.WorktreeNotice,
+      SearchDialog: slots.SearchDialog ?? parent.SearchDialog,
     }),
     [parent, slots],
   );

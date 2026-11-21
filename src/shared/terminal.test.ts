@@ -24,7 +24,7 @@ describe('terminal contracts (102e)', () => {
   });
 
   it('TerminalInfo.command: shell by default, claude for "Continue in terminal"', () => {
-    expect(TERMINAL_COMMANDS).toEqual(['shell', 'claude']);
+    expect(TERMINAL_COMMANDS).toEqual(['shell', 'claude', 'script']);
     expect(terminalInfoSchema.parse(info).command).toBe('shell');
     expect(terminalInfoSchema.parse({ ...info, command: 'claude' }).command).toBe('claude');
     expect(terminalInfoSchema.safeParse({ ...info, command: 'vim' }).success).toBe(false);

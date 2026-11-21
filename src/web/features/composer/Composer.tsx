@@ -83,7 +83,14 @@ import {
   useSelectedDecisionId,
 } from '../decisions/state/bar-store';
 import { ContextGauge } from './ContextGauge';
-import { answerFromText, interruptSession, isSingleQuestion, sendPrompt, textLimit } from './lib/commands';
+import {
+  answerFromText,
+  interruptSession,
+  isSingleQuestion,
+  sendPrompt,
+  textLimit,
+  type ComposerDecision,
+} from './lib/commands';
 import {
   applyMention,
   indexPaths,
@@ -215,13 +222,22 @@ function isWorking(runState: RunState | null): boolean {
   return runState === 'working' || runState === 'starting';
 }
 
-function targetKind(decision: Decision): TargetKind {
+/** WP-110: the open decision the composer may answer (never an elicitation – that is a form). */
+function composerTarget(decision: Decision | null): ComposerDecision | null {
+  return decision !== null && decision.state === 'open' && decision.kind !== 'elicitation' ? decision : null;
+}
+
+function targetKind(decision: ComposerDecision): TargetKind {
   if (decision.kind === 'question') return isSingleQuestion(decision) ? 'question' : 'questions';
   return decision.kind;
 }
 
 /** Hint above the field: `target` = Enter answers it, `pending` = it is open, Enter sends a message. */
-function decisionHint(decision: Decision, variant: 'target' | 'pending', t: typeof translateFn): string {
+function decisionHint(
+  decision: ComposerDecision,
+  variant: 'target' | 'pending',
+  t: typeof translateFn,
+): string {
   const requester = requesterText(decision.requester, t);
   switch (decision.kind) {
     case 'permission':
@@ -373,7 +389,7 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const decisions = useDecisions(sessionKey);
   const selectedId = useSelectedDecisionId(sessionKey);
   const displayed = pickDisplayedDecision(decisions, selectedId);
-  const target = displayed?.state === 'open' ? displayed : null;
+  const target = composerTarget(displayed);
   const targetId = target?.id ?? null;
   // WP-93: the plan's annotations go along with the text and take their part of the feedback limit.
   const planOverhead = feedbackOverhead(usePlanFeedbackSection(target?.kind === 'plan' ? target : null), t);

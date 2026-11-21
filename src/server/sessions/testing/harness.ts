@@ -634,5 +634,11 @@ function intentOf(decision: Decision, r: RecordedResult): DecisionResponse {
       const editedPlan = typeof plan === 'string' && plan !== decision.plan ? plan : null;
       return { kind: 'plan', response: { behavior: 'approve', mode, editedPlan } };
     }
+    // WP-110: no recorded permission belongs to an elicitation – allow = accept without content.
+    case 'elicitation':
+      return {
+        kind: 'elicitation',
+        response: { action: r.behavior === 'allow' ? 'accept' : 'decline', content: null },
+      };
   }
 }

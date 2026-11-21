@@ -29,6 +29,11 @@ function decisionLabel(decision: Decision, t: ReturnType<typeof useT>): string {
       const title = planTitle(decision.plan);
       return title === null ? ready : `${ready} · ${title}`;
     }
+    case 'elicitation':
+      return (
+        decision.title ??
+        t('decisions.elicitation.title', { server: decision.displayName ?? decision.serverName })
+      );
   }
 }
 

@@ -9,6 +9,7 @@ import type { TranscriptItem } from '@shared/model';
 import { isTestRun } from '../config';
 import { logger as rootLogger, shouldLogRepeated } from '../lib/logger';
 import { fsErrorCode } from '../lib/paths';
+import { sliceAround } from '../lib/transcriptWindow';
 import { transcriptLogLineSchema, type TranscriptLogLine, type TranscriptStore } from '../sync/ports';
 import { entryDir } from './decisions';
 import { withFsRetry, type StoreWarningSink } from './jsonStore';
@@ -336,6 +337,8 @@ export function createTranscriptStore(options: TranscriptStoreOptions): FileTran
       const start = Math.max(0, end - Math.max(0, limit));
       return { items: items.slice(start, end), hasEarlier: start > 0 };
     },
+    readAround: async (entryId, conversationId, itemId, n) =>
+      sliceAround(await sortedItems(entryId, conversationId), itemId, n),
     flush: flushAll,
     stats: () => ({ ...stats }),
     close: flushAll,

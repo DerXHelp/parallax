@@ -353,15 +353,33 @@ const EVERY_REQUEST: { [K in ShellRequestKind]: ShellRequestOf<K> } = {
   // WP-70: sign in a profile (dialog of the NavigationLayer); the output style of a project.
   login: { kind: 'login', profileId: STANDARD_PROFILE_ID },
   outputStyle: { kind: 'outputStyle', sessionKey: PLAYGROUND_SESSION_KEYS.main },
+  // WP-110 (Ausbau 1): worktree cleanup before archiving (WP-114) and the full-text search (WP-115).
+  'worktree.cleanup': { kind: 'worktree.cleanup', sessionKey: PLAYGROUND_SESSION_KEYS.main, then: 'archive' },
+  'search.open': { kind: 'search.open', text: 'login' },
 };
 
-/** Kinds whose handler arrives with a later package – none since WP-60 (attachFiles: WP-57). */
-const PENDING_REQUEST_KINDS: ReadonlySet<ShellRequestKind> = new Set();
+/**
+ * Kinds whose handler arrives with a later package: WP-110 scaffolding – `worktree.cleanup` (WP-114)
+ * and `search.open` (WP-115).
+ */
+const PENDING_REQUEST_KINDS: ReadonlySet<ShellRequestKind> = new Set(['worktree.cleanup', 'search.open']);
+
+/** Slots whose feature arrives with a later package (WP-110 scaffolding: WP-113, WP-114, WP-115). */
+const PENDING_SLOTS: ReadonlySet<string> = new Set([
+  'ChangesPanel',
+  'WorktreeCleanup',
+  'WorktreeNotice',
+  'SearchDialog',
+]);
 
 describe('wired feature slots (WP-20b, WP-40)', () => {
   it('APP_SLOTS wires every slot: the eager components of WP-16/57, every lazy slot behind a SlotBoundary (R4W-19, WP-58, WP-60)', () => {
     // Every slot of the shell has its real component – none is left on the placeholder.
-    expect(Object.keys(APP_SLOTS).sort()).toEqual(Object.keys(DEFAULT_FEATURE_SLOTS).sort());
+    expect(Object.keys(APP_SLOTS).sort()).toEqual(
+      Object.keys(DEFAULT_FEATURE_SLOTS)
+        .filter((key) => !PENDING_SLOTS.has(key))
+        .sort(),
+    );
     // Eager (no chunk of their own, so no boundary): the decision bar/card and the composer.
     expect(APP_SLOTS.DecisionBar).toBe(DecisionBar);
     expect(APP_SLOTS.DecisionCard).toBe(DecisionCard);
@@ -669,7 +687,7 @@ describe('session header (status only, ADR-041/042)', () => {
         {
           runState: 'idle',
           unread: false,
-          decisions: { permission: 0, question: 0, plan: 0, oldestKind: null, expired: 1 },
+          decisions: { permission: 0, question: 0, plan: 0, elicitation: 0, oldestKind: null, expired: 1 },
         },
       );
     });

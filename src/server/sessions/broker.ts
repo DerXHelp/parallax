@@ -238,6 +238,7 @@ export function createBroker(deps: BrokerDeps): Broker {
       permission: 0,
       question: 0,
       plan: 0,
+      elicitation: 0,
       oldestKind: null,
       expired: countedOnly,
     };

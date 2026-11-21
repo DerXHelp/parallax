@@ -12,6 +12,7 @@ export const de: typeof en = {
     sessions: 'Sessions',
     files: 'Dateien',
     console: 'Konsole',
+    projects: 'Projekte',
     profiles: 'Profile',
     server: 'Server',
     multiHost: 'Mehrere Rechner',
@@ -559,5 +560,8 @@ export const de: typeof en = {
     thisComputer: 'Dieser Rechner',
     managed: '{name} (verwaltet)',
     hint: 'Einstellungen von {name}: Jede Änderung wird dort gespeichert. Profile und Updates von {name} zeigt diese Ansicht noch nicht.',
+  },
+  projects: {
+    unavailable: 'Einstellungen je Projekt gibt es in dieser Version noch nicht.',
   },
 };

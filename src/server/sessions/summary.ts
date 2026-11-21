@@ -17,6 +17,7 @@ import {
   type SessionActivity,
   type SessionSummary,
   type TitleSource,
+  type WorktreeSetup,
 } from '@shared/model';
 import type { StatusFacts } from '@shared/status';
 import type { BackendSessionInfo } from '../backend/types';
@@ -46,6 +47,8 @@ export function summaryOf(
     runningTasks?: RunningTasks | null;
     /** WP-77: the entry has a synchronized draft (sidebar hint). */
     hasDraft?: boolean;
+    /** WP-110: creating the worktree / its setup (runtime only). */
+    worktreeSetup?: WorktreeSetup | null;
   } = {},
 ): SessionSummary {
   const remote = o.remote ?? { state: 'off', sessionUrl: null, error: null };
@@ -95,6 +98,9 @@ export function summaryOf(
     outputStyle: o.outputStyle ?? null,
     runningTasks: o.runningTasks ?? null,
     hasDraft: o.hasDraft ?? false,
+    worktree: entry.worktree,
+    baseSha: entry.baseSha,
+    worktreeSetup: o.worktreeSetup ?? null,
   };
 }
 

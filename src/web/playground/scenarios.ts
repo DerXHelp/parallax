@@ -111,7 +111,7 @@ function facts(p: Partial<StatusFacts>): StatusFacts {
 }
 
 function decisionCounts(p: Partial<StatusFacts['decisions']>): StatusFacts['decisions'] {
-  return { permission: 0, question: 0, plan: 0, oldestKind: null, expired: 0, ...p };
+  return { permission: 0, question: 0, plan: 0, elicitation: 0, oldestKind: null, expired: 0, ...p };
 }
 
 function emptySnapshot(
@@ -160,7 +160,13 @@ function overviewRows(now: number): OverviewRow[] {
       minutesAgo: 2,
       status: facts({
         runState: 'working',
-        decisions: decisionCounts({ permission: 1, question: 1, plan: 1, oldestKind: 'permission' }),
+        decisions: decisionCounts({
+          permission: 1,
+          question: 1,
+          plan: 1,
+          elicitation: 0,
+          oldestKind: 'permission',
+        }),
       }),
     },
     {
@@ -178,7 +184,10 @@ function overviewRows(now: number): OverviewRow[] {
       title: 'Review the migration plan',
       cwd: 'D:\\work\\db\\migrations',
       minutesAgo: 6,
-      status: facts({ runState: 'idle', decisions: decisionCounts({ plan: 1, oldestKind: 'plan' }) }),
+      status: facts({
+        runState: 'idle',
+        decisions: decisionCounts({ plan: 1, elicitation: 0, oldestKind: 'plan' }),
+      }),
     },
     {
       n: 6,

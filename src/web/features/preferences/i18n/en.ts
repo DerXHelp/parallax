@@ -16,6 +16,8 @@ export const en = {
     files: 'Files',
     /** WP-97. */
     console: 'Console',
+    /** WP-110. */
+    projects: 'Projects',
     profiles: 'Profiles',
     server: 'Server',
     /** WP-78b. */
@@ -574,5 +576,9 @@ export const en = {
     thisComputer: 'This computer',
     managed: '{name} (managed)',
     hint: 'Settings of {name}: every change is saved there. Profiles and updates of {name} are not shown here yet.',
+  },
+  /** WP-110 (Ausbau 1): section "Projects" – setup, teardown, ports and worktree default per repository (WP-114). */
+  projects: {
+    unavailable: 'Settings per project are not available in this version.',
   },
 };

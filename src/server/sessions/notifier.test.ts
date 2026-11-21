@@ -164,11 +164,25 @@ describe('planNotification', () => {
   it('a new decision is reported with its kind (R0-13); cleared when the last one is gone', () => {
     const one = sampleStatusFacts({
       runState: 'working',
-      decisions: { permission: 1, question: 0, plan: 0, oldestKind: 'permission', expired: 0 },
+      decisions: {
+        permission: 1,
+        question: 0,
+        plan: 0,
+        elicitation: 0,
+        oldestKind: 'permission',
+        expired: 0,
+      },
     });
     const two = sampleStatusFacts({
       runState: 'working',
-      decisions: { permission: 1, question: 1, plan: 0, oldestKind: 'permission', expired: 0 },
+      decisions: {
+        permission: 1,
+        question: 1,
+        plan: 0,
+        elicitation: 0,
+        oldestKind: 'permission',
+        expired: 0,
+      },
     });
     const elsewhere = [client(1, { focused: true, visible: true, viewing: OTHER })];
     expect(planNotification(working, one, NOW, elsewhere, ENTRY)?.kind).toBe('permission');
@@ -190,7 +204,14 @@ describe('planNotification with settings.notifications (ADR-109)', () => {
       working,
       sampleStatusFacts({
         runState: 'working',
-        decisions: { permission: 1, question: 0, plan: 0, oldestKind: 'permission', expired: 0 },
+        decisions: {
+          permission: 1,
+          question: 0,
+          plan: 0,
+          elicitation: 0,
+          oldestKind: 'permission',
+          expired: 0,
+        },
       }),
     ],
     doneShort: [
@@ -619,7 +640,7 @@ describe('routeNotification (WP41-04)', () => {
   const working = sampleStatusFacts({ runState: 'working' });
   const permission = sampleStatusFacts({
     runState: 'working',
-    decisions: { permission: 1, question: 0, plan: 0, oldestKind: 'permission', expired: 0 },
+    decisions: { permission: 1, question: 0, plan: 0, elicitation: 0, oldestKind: 'permission', expired: 0 },
   });
   const shortDone = sampleStatusFacts({
     runState: 'idle',
@@ -916,7 +937,7 @@ describe('routeNotification with the watcher (WP-81, ADR-211)', () => {
   const working = sampleStatusFacts({ runState: 'working' });
   const permission = sampleStatusFacts({
     runState: 'working',
-    decisions: { permission: 1, question: 0, plan: 0, oldestKind: 'permission', expired: 0 },
+    decisions: { permission: 1, question: 0, plan: 0, elicitation: 0, oldestKind: 'permission', expired: 0 },
   });
   const cl1 = sampleId('cl', 1);
   const blockedRemote = remote(1, { focused: false, visible: false, viewing: null, web: false }, 5);

@@ -162,7 +162,7 @@ describe('broker – creating a decision', () => {
       },
     ]);
     expect(t.countsLog.at(-1)).toEqual({
-      counts: { permission: 1, question: 0, plan: 0, oldestKind: 'permission', expired: 0 },
+      counts: { permission: 1, question: 0, plan: 0, elicitation: 0, oldestKind: 'permission', expired: 0 },
       added: 'permission',
     });
     const [record] = t.stores.decisions.records(ENTRY);
@@ -253,6 +253,7 @@ describe('broker – creating a decision', () => {
       permission: 1,
       question: 1,
       plan: 0,
+      elicitation: 0,
       oldestKind: 'question',
       expired: 0,
     });
@@ -295,7 +296,7 @@ describe('broker – responding', () => {
     });
     expect(t.broker.open()).toEqual([]);
     expect(t.countsLog.at(-1)).toEqual({
-      counts: { permission: 0, question: 0, plan: 0, oldestKind: null, expired: 0 },
+      counts: { permission: 0, question: 0, plan: 0, elicitation: 0, oldestKind: null, expired: 0 },
       added: null,
     });
   });
@@ -429,6 +430,7 @@ describe('broker – responding', () => {
       permission: 1,
       question: 0,
       plan: 1,
+      elicitation: 0,
       oldestKind: 'permission',
       expired: 0,
     });
@@ -438,7 +440,12 @@ describe('broker – responding', () => {
       { kind: 'plan', response: { behavior: 'revise', feedback: 'more' } },
       null,
     );
-    expect(t.broker.counts()).toMatchObject({ permission: 1, plan: 0, oldestKind: 'permission' });
+    expect(t.broker.counts()).toMatchObject({
+      permission: 1,
+      plan: 0,
+      elicitation: 0,
+      oldestKind: 'permission',
+    });
     t.broker.respond(sampleId('dc', 1), allowOnce, null);
     await expect(Promise.all([a, b])).resolves.toMatchObject([
       { behavior: 'allow' },
@@ -699,7 +706,14 @@ describe('broker – persistence, restore, expired, freeze', () => {
     expect(t.broker.restore([withSnapshot, withoutSnapshot, resolved])).toEqual({ hadOpen: true });
     expect(t.broker.expired()).toEqual([{ ...plan, state: 'expired' }]);
     expect(t.broker.open()).toEqual([]);
-    expect(t.broker.counts()).toEqual({ permission: 0, question: 0, plan: 0, oldestKind: null, expired: 2 });
+    expect(t.broker.counts()).toEqual({
+      permission: 0,
+      question: 0,
+      plan: 0,
+      elicitation: 0,
+      oldestKind: null,
+      expired: 2,
+    });
     expect(t.publisher.opsOf(ENTRY)).toEqual([]);
     const saved = t.stores.decisions.records(ENTRY);
     expect(saved.find((r) => r.id === sampleId('dc', 11))?.outcome).toEqual({ type: 'expired' });

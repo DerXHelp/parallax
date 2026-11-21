@@ -209,6 +209,11 @@ export type StatusEvent =
   | { type: 'queue_changed'; count: number }
   /** Presence: session visible → unread=false. */
   | { type: 'viewed' }
+  /**
+   * WP-110 (F6, `session.setUnread`): the user marked the session unread (true) or read (false). An
+   * unread mark stays while the session is visible; it ends when the session is opened again.
+   */
+  | { type: 'mark_unread'; unread: boolean }
   | { type: 'external'; active: boolean }
   /** When loading from the registry. */
   | { type: 'server_restart'; hadOpenDecisions: boolean }

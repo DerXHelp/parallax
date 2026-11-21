@@ -24,6 +24,7 @@ export const de: typeof en = {
     permission: 'Freigabe',
     question: 'Frage',
     plan: 'Plan',
+    elicitation: 'Eingabe',
   },
   requester: {
     label: 'Gefragt von',
@@ -222,7 +223,12 @@ export const de: typeof en = {
       interrupted: 'Eine Anfrage ist entfallen, weil der Turn gestoppt wurde.',
       process_exit: 'Eine Anfrage ist entfallen, weil die Session beendet wurde.',
       conversation_reset: 'Eine Anfrage ist entfallen, weil die Unterhaltung zurückgesetzt wurde.',
+      user: 'Eine Anfrage wurde abgebrochen.',
     },
     gone: 'Eine Entscheidung ist nicht mehr offen.',
+  },
+  elicitation: {
+    title: 'Eingabe für {server}',
+    announce: '{server} bittet um eine Eingabe',
   },
 };

@@ -67,6 +67,7 @@ import {
 import { createRecordingOpener, createSystemLauncher } from '../files/open';
 import type { FileEntryLookup, FileService } from '../files/ports';
 import { createFileService } from '../files/service';
+import { createGitCommands } from '../git/commands';
 import { createFsCommands } from '../host/fsCommands';
 import { createLinkCommands, createRecordingLinkOpener, createSystemLinkOpener } from '../host/linkCommands';
 import { createLoginService, LOGIN_HOME_DIR, type LoginService } from '../host/login';
@@ -96,6 +97,8 @@ import { createCommandCatalogStore, type CommandCatalogStore } from '../sessions
 import { createSessionManager, SHUTDOWN_SWEEP_GRACE_MS, type SessionManager } from '../sessions/manager';
 import { createNativeToasts } from '../sessions/nativeToasts';
 import { openProcessStore } from '../sessions/processStore';
+import { createReviewCommands } from '../sessions/review';
+import { createSearchCommands } from '../search/commands';
 import { createAttachmentFileStore } from '../store/attachments';
 import { createBlobStore } from '../store/blobs';
 import { createDraftStore, type FileDraftStore } from '../store/drafts';
@@ -895,6 +898,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         terminalAvailable: terminalService.available,
         // 102e: `~/…` in the transcript (web); only a home folder the host's path rules accept.
         homeDir: safeHomeDir(),
+        // WP-110: the commands of Ausbau 1 are routed here (stubs until WP-111/112 fill them).
+        features: { git: true, search: true, overview: true },
         app: () => updateService.app(),
         update: () => updateService.state(),
         // WP-76/78a: role, host list (WP-79) and remote access – `remoteAccess` never leaves for a
@@ -938,6 +943,11 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
               ? createRecordingShellLauncher({ logger: options.logger })
               : (consoleLauncher ?? NO_CONSOLE_WINDOW),
         }),
+        // WP-110 (Ausbau 1): `git.*`, `worktree.*` (WP-111), `review.*` (WP-111), `search.query`,
+        // `transcript.loadAround` (WP-112) – stubs answer NOT_IMPLEMENTED until filled.
+        createGitCommands(),
+        createReviewCommands(),
+        createSearchCommands(),
       ],
       loginState: (profileId) => loginService.state(profileId),
       // Autostart and protocol handler follow every settings.update (ADR-110).

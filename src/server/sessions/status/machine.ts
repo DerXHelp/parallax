@@ -15,6 +15,7 @@ function sameDecisions(a: StatusFacts['decisions'], b: StatusFacts['decisions'])
     a.permission === b.permission &&
     a.question === b.question &&
     a.plan === b.plan &&
+    a.elicitation === b.elicitation &&
     a.oldestKind === b.oldestKind &&
     a.expired === b.expired
   );
@@ -157,6 +158,10 @@ export const reduceStatus: ReduceStatus = (facts, event, now, ctx) => {
 
     case 'viewed':
       return apply(facts, { unread: false });
+
+    case 'mark_unread':
+      // WP-110 (F6): only the flag; the engine decides when "opened again" clears it ('viewed').
+      return apply(facts, { unread: event.unread });
 
     case 'external':
       if (event.active) return apply(facts, { runState: 'external', errorCode: null, ...NO_PROCESS });

@@ -429,6 +429,11 @@ function outcomeFor(response: DecisionResponse): DecisionOutcome {
         edited: response.response.editedPlan !== null,
         freshContext: response.response.behavior === 'approve_fresh_context',
       };
+    // WP-110 (ADR-256): like the engine – accept → answered, decline → declined, cancel → cancelled.
+    case 'elicitation':
+      if (response.response.action === 'accept') return { type: 'answered' };
+      if (response.response.action === 'decline') return { type: 'declined' };
+      return { type: 'cancelled', reason: 'user' };
   }
 }
 
@@ -608,6 +613,7 @@ export class FakeHost {
           permission: countOf('permission'),
           question: countOf('question'),
           plan: countOf('plan'),
+          elicitation: countOf('elicitation'),
           oldestKind: open[0]?.kind ?? null,
           expired: view.decisions.filter((d) => d.state === 'expired').length,
         },
@@ -1508,6 +1514,23 @@ export class FakeHost {
       case 'profile.validate':
       case 'fs.listDirectory':
       case 'fs.createDirectory':
+      case 'session.setUnread': // WP-110 (Ausbau 1) from here on: no fake yet, tests use `onCommand`.
+      case 'git.status':
+      case 'git.diff':
+      case 'git.fileDiff':
+      case 'git.commit':
+      case 'git.branchCreate':
+      case 'git.branchSwitch':
+      case 'git.push':
+      case 'worktree.list':
+      case 'worktree.inspect':
+      case 'worktree.remove':
+      case 'review.add':
+      case 'review.update':
+      case 'review.remove':
+      case 'review.markSent':
+      case 'search.query':
+      case 'transcript.loadAround':
         return { ok: false, error: makeError('NOT_IMPLEMENTED', { name: cmd.name satisfies CommandName }) };
     }
   }

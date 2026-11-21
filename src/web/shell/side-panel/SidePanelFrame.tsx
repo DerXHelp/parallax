@@ -5,7 +5,7 @@ import { cn } from '@web/lib/cn';
 import { pathTail } from '@web/lib/path-display';
 import { toLayoutPx, toScreenPx, zoomFactor } from '@web/lib/zoom';
 import { useSessionPaths } from '@web/state/host-platform';
-import { useTerminalAvailable } from '@web/state/hosts';
+import { useSessionFeature, useTerminalAvailable } from '@web/state/hosts';
 import { useZoom } from '@web/state/zoom';
 import {
   DropdownMenu,
@@ -46,12 +46,15 @@ function isSidePanelTab(value: string): value is SidePanelTab {
 
 /** The content of one tab: the feature slots (placeholders render nothing). */
 const TabContent = memo(function TabContent({ sessionKey, tab }: { sessionKey: string; tab: SidePanelTab }) {
-  const { PlanPanel, FilePanel, FilesPanel, TasksPanel, SubagentPanel, TerminalPanel } = useFeatureSlots();
+  const { PlanPanel, ChangesPanel, FilePanel, FilesPanel, TasksPanel, SubagentPanel, TerminalPanel } =
+    useFeatureSlots();
   const file = useSidePanelFile(sessionKey);
   const subagent = useSidePanelSubagent(sessionKey);
   switch (tab) {
     case 'plan':
       return <PlanPanel sessionKey={sessionKey} />;
+    case 'changes':
+      return <ChangesPanel sessionKey={sessionKey} />;
     case 'file':
       // `revision` remounts the viewer when the same target is requested again (jump once more).
       return file === null ? null : (
@@ -188,7 +191,10 @@ export function SidePanelFrame({ sessionKey, tab, asideRef, onClose }: SidePanel
   const subagent = useSidePanelSubagent(sessionKey);
   const rules = useSessionPaths(sessionKey);
   const terminalAvailable = useTerminalAvailable(sessionKey);
+  const gitAvailable = useSessionFeature(sessionKey, 'git');
   const tabs = SIDE_PANEL_TABS.filter((candidate) => {
+    // WP-110: only for a host with the git service (Ausbau 1).
+    if (candidate === 'changes') return gitAvailable || tab === 'changes';
     if (candidate === 'file') return file !== null || tab === 'file';
     if (candidate === 'subagent') return subagent !== null || tab === 'subagent';
     // WP-99: only for sessions of this computer whose server has a pseudo console.

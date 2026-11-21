@@ -70,7 +70,7 @@ function iso(ms: number): string {
 }
 
 function decisionCounts(p: Partial<StatusFacts['decisions']>): StatusFacts['decisions'] {
-  return { permission: 0, question: 0, plan: 0, oldestKind: null, expired: 0, ...p };
+  return { permission: 0, question: 0, plan: 0, elicitation: 0, oldestKind: null, expired: 0, ...p };
 }
 
 function gauge(model: string, totalTokens: number, maxTokens: number, at: string): ContextGauge {
@@ -176,7 +176,10 @@ function rows(now: number): Row[] {
       modelSetting: 'opus',
       tokens: 38_900,
       maxTokens: 200_000,
-      status: { runState: 'working', decisions: decisionCounts({ plan: 1, oldestKind: 'plan' }) },
+      status: {
+        runState: 'working',
+        decisions: decisionCounts({ plan: 1, elicitation: 0, oldestKind: 'plan' }),
+      },
       extra: {
         gitBranch: 'feature/rate-limit',
         effort: 'high',

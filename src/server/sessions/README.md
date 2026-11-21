@@ -185,6 +185,9 @@ Broker `check`/`latestPlanVersion`/`latestPlanFilePath`/`planRecords`/`loadLastP
 | Datei | Exporte | Inhalt |
 | --- | --- | --- |
 | `outputStyle.ts` | `setOutputStyle` | `session.setOutputStyle {style}` → `{}`: im Prozess der Session (den schlafenden Eintrag startet der Aufrufer ohne Turn, wie bei `session.regenerateTitle`), nur Stile aus `availableOutputStyles` (sonst `VALIDATION_FAILED`), ohne Prozess `SESSION_NOT_RUNNING`; die Summary zeigt den Stil sofort, das nächste `system/init` bestätigt ihn. Stil und Liste liest die Engine bei `ready()` (`readOutputStyles`) und aus jedem `system/init` (`Summary.outputStyle`, Detail `availableOutputStyles`) (ADR-191) |
+| `worktrees.ts` | `createSessionWorktree` | WP-110 Gerüst, WP-111: Worktree einer neuen Session (`session.create.worktree`, ADR-250/251), vor dem Anlegen des Eintrags; bis WP-111 `NOT_IMPLEMENTED` |
+| `review.ts` | `createReviewCommands`, `REVIEW_COMMAND_NAMES` | WP-110 Gerüst, WP-111: Host-Befehle `review.*` (ADR-254), Ops `review.upsert`/`review.remove`; bis WP-111 `NOT_IMPLEMENTED` |
+| `unread.ts` | `setUnread` | WP-110 Gerüst, WP-112: `session.setUnread` über das Status-Ereignis `mark_unread`; bis WP-112 `NOT_IMPLEMENTED` |
 
 - `remoteControl.ts`: `retryRemoteAfterLogin` – nach erfolgreicher Anmeldung (`onProfileLoggedIn` des Managers,
   Dep `loginState`) verbinden Einträge des Profils mit gewünschtem Remote Control und Fehler `REMOTE_CONTROL_AUTH`

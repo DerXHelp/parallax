@@ -8,6 +8,7 @@ export const de: typeof en = {
   narrow: 'Normale Panelbreite',
   tab: {
     plan: 'Plan',
+    changes: 'Änderungen',
     file: 'Datei',
     files: 'Dateien',
     tasks: 'Aufgaben',

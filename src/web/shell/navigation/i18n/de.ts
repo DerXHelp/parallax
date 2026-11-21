@@ -31,6 +31,7 @@ export const de: typeof en = {
     label: 'Seitenpanel',
     plan: 'Plan',
     files: 'Dateien dieser Session',
+    changes: 'Änderungen',
     tasks: 'Aufgaben',
     tasksRunning: 'Aufgaben – es läuft: {list}',
     tasksOpen: { one: 'Aufgaben – {count} offene Aufgabe', other: 'Aufgaben – {count} offene Aufgaben' },

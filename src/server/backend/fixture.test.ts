@@ -11,6 +11,8 @@ import {
   fixtureCanUseToolPayloadSchema,
   fixtureControlPayloadSchema,
   fixtureDecisionPayloadSchema,
+  fixtureElicitationPayloadSchema,
+  fixtureElicitationResultPayloadSchema,
   fixtureInputPayloadSchema,
   fixtureMessagePayloadSchema,
   fixturesDir,
@@ -41,6 +43,8 @@ const views: Partial<Record<EventKind, z.ZodType>> = {
   input: fixtureInputPayloadSchema,
   control: fixtureControlPayloadSchema,
   call: fixtureCallPayloadSchema,
+  elicitation: fixtureElicitationPayloadSchema,
+  elicitationResult: fixtureElicitationResultPayloadSchema,
 };
 
 // Minimal tolerant views of the SDK messages needed for the item-id checks.

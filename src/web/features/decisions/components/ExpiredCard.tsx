@@ -34,6 +34,8 @@ function ExpiredSummary({ decision }: { decision: Decision }) {
           {planTitle(decision.plan) ?? t('decisions.plan.untitled')}
         </p>
       );
+    case 'elicitation':
+      return <p className="text-muted-foreground text-xs break-words">{decision.message}</p>;
   }
 }
 

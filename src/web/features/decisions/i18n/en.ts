@@ -33,6 +33,7 @@ export const en = {
     permission: 'Permission',
     question: 'Question',
     plan: 'Plan',
+    elicitation: 'Input',
   },
   requester: {
     label: 'Asked by',
@@ -234,7 +235,13 @@ export const en = {
       interrupted: 'A request ended because the turn was stopped.',
       process_exit: 'A request ended because the session stopped.',
       conversation_reset: 'A request ended because the conversation was reset.',
+      user: 'A request was cancelled.',
     } satisfies Record<CancelReason, string>,
     gone: 'A decision is no longer open.',
+  },
+  /** WP-110 (ADR-256): MCP elicitation – the card follows in WP-116. */
+  elicitation: {
+    title: 'Input for {server}',
+    announce: '{server} asks for input',
   },
 };

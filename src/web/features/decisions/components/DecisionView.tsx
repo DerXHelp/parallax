@@ -29,5 +29,9 @@ export function DecisionView({
       return <QuestionCard sessionKey={sessionKey} decision={decision} headerExtra={headerExtra} />;
     case 'plan':
       return <PlanCard sessionKey={sessionKey} decision={decision} headerExtra={headerExtra} />;
+    // WP-110 scaffolding: the elicitation card (form, url mode) follows in WP-116; no host creates
+    // elicitation decisions before WP-112.
+    case 'elicitation':
+      return null;
   }
 }

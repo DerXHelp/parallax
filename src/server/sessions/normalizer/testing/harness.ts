@@ -366,6 +366,10 @@ function opSummary(op: SessionOp): string {
       return `decision.resolved ${op.decisionId}`;
     case 'detail.patch':
       return `detail.patch {${Object.keys(op.patch).sort().join(',')}}`;
+    case 'review.upsert':
+      return `review.upsert ${op.comments.map((c) => c.id).join(',')}`;
+    case 'review.remove':
+      return `review.remove ${op.commentIds.join(',')}`;
   }
 }
 
@@ -574,6 +578,7 @@ export function replayStatus(
           permission: kinds.filter((k) => k === 'permission').length,
           question: kinds.filter((k) => k === 'question').length,
           plan: kinds.filter((k) => k === 'plan').length,
+          elicitation: kinds.filter((k) => k === 'elicitation').length,
           oldestKind: kinds[0] ?? null,
           expired: 0,
         },

@@ -10,6 +10,7 @@ export const en = {
   narrow: 'Normal panel width',
   tab: {
     plan: 'Plan',
+    changes: 'Changes',
     file: 'File',
     files: 'Files',
     tasks: 'Tasks',

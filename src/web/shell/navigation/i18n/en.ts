@@ -42,6 +42,8 @@ export const en = {
     label: 'Side panel',
     plan: 'Plan',
     files: 'Files of this session',
+    /** WP-110: diff, review comments and git bar (Ausbau 1). */
+    changes: 'Changes',
     tasks: 'Tasks',
     /** WP-71: `{list}` = `running.agents/shells/misc` joined ("2 agents and 1 shell"). */
     tasksRunning: 'Tasks – running: {list}',

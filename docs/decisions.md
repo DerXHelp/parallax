@@ -3103,3 +3103,100 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   den Orchestrator mitten im Wechsel. Ein fremder laufender Server hätte eine Neustart-Schleife ausgelöst.
 - **Folgen:** Die Ausgabe eines übernommenen Servers steht nicht im Journal, sondern im Ordner `logs` des Datenordners.
   Unter Windows ohne Dienstverwaltung bleibt es beim eigenen Server.
+
+## ADR-250 – Worktree je Session: optional, Ort wie Claude Code, Aufräumen mit Prüfung
+- **Datum/WP:** 21.11.2026, WP-110 §3.2 (Contracts v5), WP-111, WP-114.
+- **Entscheidung:** Eine Session kann in einem eigenen Git-Worktree laufen (`session.create.worktree`, `mode: 'new'`
+  mit Branch und Basis oder `mode: 'existing'` mit einem Pfad aus `worktree.list`). Standard aus; ohne Einrichtung
+  ändert sich nichts. Neue Worktrees liegen wie bei `claude --worktree` unter `<repoRoot>/.claude/worktrees/<name>`;
+  ist der Ordner nicht ignoriert, trägt Parallax ihn in `.git/info/exclude` ein. `.worktreeinclude` kopiert passende
+  ignorierte Dateien. Der Eintrag trägt `worktree {repoRoot, path, branch, baseRef, baseSha, portBase}` und
+  `cwd = worktree.path` (exakter String); die Seitenleiste gruppiert unter `repoRoot`. Archivieren oder Entfernen fragt
+  über die Shell-Anfrage `worktree.cleanup`: `worktree.inspect` meldet ungesicherte Dateien, nicht gepushte Commits und
+  ob der Branch gemergt ist; `worktree.remove {deleteBranch, force, skipTeardown}` räumt auf (`WORKTREE_DIRTY` ohne
+  `force`).
+- **Begründung:** Derselbe Ort wie bei Claude Code lässt „Im Terminal fortsetzen“ und Claudes eigene Werkzeuge
+  denselben Ordner sehen; `.git/info/exclude` ändert keine Datei im Repo. Ohne Prüfung ginge beim Aufräumen Arbeit
+  verloren.
+- **Folgen:** Alte Einträge haben `worktree: null`. `-w/--worktree` bleibt in den Profil-Argumenten gesperrt; Worktrees
+  legt nur Parallax an. `core.longpaths` wird nur gelesen.
+
+## ADR-251 – Setup und Teardown im sichtbaren Terminal, Portblock je Worktree
+- **Datum/WP:** 21.11.2026, WP-110 §3.3, WP-111, WP-114 (Ausnahme zu „nie über eine Shell“, Ergänzung zu ADR-083).
+- **Entscheidung:** Je Projekt (Schlüssel = Repo-Wurzel, `settings.projects`, Default `{}`) gibt es optional einen
+  Setup- und einen Teardown-Befehl, ihre Shell (`null` = Shell aus „Konsole“), einen Portblock und den Worktree-Standard
+  für „Neue Session“. Die Befehle laufen **sichtbar** in einem Terminal der Session (`TerminalService.runScript`, Shell
+  mit `cmd /d /s /c`, `powershell -Command` bzw. `bash -lc`), abbrechbar, mit Exit-Code. Ein Start-Prompt wartet auf
+  Exit 0 (`SessionSummary.worktreeSetup`). Mit Portblock bekommt jeder Worktree 10 Ports ab 41000 (Schritt 10, bis
+  49990); `PARALLAX_WORKTREE_PORT=<basis>` setzt `buildEnv` für `claude`, Setup, Teardown und die Terminals der Session.
+- **Begründung:** Der Befehl kommt nur vom Nutzer (nie aus dem Repo), ist im Pseudoterminal sichtbar und abbrechbar –
+  das Risiko einer Shell ist damit dasselbe wie im eingebetteten Terminal. Feste Blöcke verhindern Port-Kollisionen
+  paralleler Dev-Server.
+- **Folgen:** Leere Felder bedeuten: nichts passiert. Für einen anderen Rechner gelten seine Einstellungen (Abschnitt
+  „Projekte“ auch bei der Stufe „Verwalten“). Das Projekt muss die Variable selbst nutzen.
+
+## ADR-252 – Git-Dienst des Servers
+- **Datum/WP:** 21.11.2026, WP-110 §3.1, WP-111.
+- **Entscheidung:** Alle Git-Aufrufe laufen in `src/server/git/**` über `runFile` mit dem absoluten `git` aus
+  `resolveExecutable` (PATH der Session), Argument-Arrays, Pfade nach `--`, `GIT_TERMINAL_PROMPT=0`. Lesende Aufrufe
+  (`status`, `diff`, `log`, `rev-parse`, `worktree list`) mit `-c core.fsmonitor=false` und `GIT_OPTIONAL_LOCKS=0`;
+  schreibende (Commit) führen die Hooks des Repos aus wie im Terminal. Zeitgrenzen lesend 10 s, `worktree add` und
+  `push` 120 s; Grenzen aus `LIMITS` (`gitPatchBytes` je Datei, `gitFilesMax`). Die Befehle `git.*` und `worktree.*`
+  sind Host-Befehle (ohne Lebenszyklus-Sperre, auch für archivierte und externe Sessions lesbar); Fehler
+  `GIT_NOT_FOUND`, `NOT_A_GIT_REPO`, `GIT_FAILED {op}`, `GIT_PUSH_FAILED {reason}`, `BRANCH_EXISTS`,
+  `WORKTREE_EXISTS`. Scheitert Push an der Anmeldung (`reason: 'auth'`), bietet die UI „Im Terminal pushen“.
+- **Begründung:** `core.fsmonitor` aus der Konfiguration eines fremden Repos könnte beim bloßen Lesen ein Programm
+  starten; ein Prompt ohne Terminal würde hängen.
+- **Folgen:** Ob ein Rechner den Dienst hat, meldet `HostState.features.git`; ältere Gegenstellen (Default `false`)
+  bekommen die Befehle nicht angeboten.
+
+## ADR-253 – Basis des Session-Diffs
+- **Datum/WP:** 21.11.2026, WP-110 §3.4, WP-111, WP-113.
+- **Entscheidung:** `git.diff {scope: 'session'}` vergleicht den Arbeitsstand (inklusive ungetrackter Dateien) mit der
+  Basis der Session: bei einer Worktree-Session die Merge-Base mit `worktree.baseRef`, sonst `Entry.baseSha` (`HEAD`
+  beim Anlegen; alte Einträge ohne Wert: der aktuelle `HEAD`). Weitere Bereiche: `uncommitted` und `staged`
+  (`GIT_DIFF_SCOPES`). Ohne Worktree ist „nur Dateien dieser Session“ (`onlySessionFiles`, aus `files.json`) Standard.
+- **Begründung:** Ohne feste Basis würde jeder Commit der Session ihren Diff leeren; mehrere Sessions im selben Ordner
+  schreiben mit, daher der Filter.
+- **Folgen:** Die Antwort nennt die verwendete Basis (`base`), damit die UI sie anzeigen kann.
+
+## ADR-254 – Review-Kommentare: Server-Store, Sync über Ops, Senden als Paste-Chip
+- **Datum/WP:** 21.11.2026, WP-110 §3.4, WP-111, WP-113.
+- **Entscheidung:** Kommentare zu Diff-Zeilen speichert der Server je Eintrag (`entries/<id>/review.json`,
+  `ReviewStore`, `schemaVersion` 1, höchstens `LIMITS.reviewCommentsMax`). Sie stehen in `SessionDetail.review` und
+  ändern sich nur über die Ops `review.upsert` und `review.remove` (nicht über `detail.patch`). Befehle
+  `review.add` (Server vergibt die ID `rc_…`), `review.update` (Text, Anker, Zustand `open`/`stale`), `review.remove`,
+  `review.markSent`. Verankert über Pfad, Seite, Zeile(n) und Zitat; verschiebt sich der Diff, sucht `text-anchor` das
+  Zitat neu, sonst wird der Kommentar `stale` (bleibt sichtbar). „An Claude senden“ baut eine nummerierte Liste wie
+  `plan-feedback.ts` und legt sie als Paste-Chip in den Composer; danach `markSent`.
+- **Begründung:** Gespeichert auf dem Server sind die Kommentare in allen Fenstern und über „Mehrere Rechner“ gleich;
+  Ops statt Patch vermeiden, dass ein Fenster die ganze Liste überschreibt. Der Paste-Chip braucht keinen neuen
+  Contract und lässt den Nutzer ergänzen.
+- **Folgen:** Ein Gesprächswechsel (`conversation.reset`) behält die Kommentare.
+
+## ADR-255 – Volltextsuche ohne Index
+- **Datum/WP:** 21.11.2026, WP-110 §3.6, WP-112, WP-115.
+- **Entscheidung:** `search.query {text, includeArchived, includeToolOutput}` scannt in einem Worker-Thread die eigenen
+  Transkript-Logs, Titel, Turn-Fazits und Pläne dieses Rechners; Groß-/Kleinschreibung egal, höchstens
+  `LIMITS.searchHitsMax` Treffer, neueste zuerst, Ausschnitt mit Fundstellen. Die Antwort kommt im Ack (kein
+  Ergebnis-Push, kein `search.cancel`): eine neuere Anfrage desselben Fensters beendet die ältere mit
+  `SEARCH_FAILED {reason: 'superseded'}`. Ein Treffer lädt die Einträge um sich herum über `transcript.loadAround`
+  (`TranscriptStore.readAround`). Sessions anderer Rechner fragt das Fenster bei jedem verbundenen Rechner mit
+  `HostState.features.search`.
+- **Begründung:** Ein Index kostet Platz, Pflege und Migration; für die erwartete Menge reicht ein Scan mit Grenze und
+  Abbruch. Antwort im Ack hält das Protokoll klein.
+- **Folgen:** Bei sehr vielen Logs langsamer; ein Index bleibt ein späterer Schritt.
+
+## ADR-256 – Elicitation als Entscheidung
+- **Datum/WP:** 21.11.2026, WP-110 §3.8, WP-112, WP-116.
+- **Entscheidung:** Das SdkBackend setzt `onElicitation`; jede Anfrage wird eine Entscheidung der Art `elicitation`
+  (nicht-modal wie Freigaben, Status `needs-answer`, eigener Zähler `decisionCounts.elicitation`, Benachrichtigung wie
+  eine Frage). Formular-Modus: nur die MCP-Teilmenge (`string` mit `enum`/Format, `number`, `integer`, `boolean`,
+  Pflichtfelder, Titel, Beschreibung), geprüft mit zod; sonst `unsupported` und die Karte bietet nur „Ablehnen“
+  (`ELICITATION_UNSUPPORTED`). URL-Modus: nur http(s), geöffnet über den bestehenden Link-Weg. Antworten `accept`
+  (mit Inhalt), `decline`, `cancel` → Ausgang `answered`, `declined`, `cancelled {reason: 'user'}`. Stop bricht offene
+  Anfragen ab. Der Composer beantwortet nie eine Elicitation.
+- **Begründung:** Ohne `onElicitation` lehnt das SDK jede Anfrage still ab; eine eigene Art hält Freigaben und Fragen
+  unverändert.
+- **Folgen:** Bis WP-116 zeigt die Entscheidungsleiste für diese Art nichts; FakeBackend-Fixtures (`elicitation`,
+  `elicitationResult`) decken beide Modi ab.

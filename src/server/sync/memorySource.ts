@@ -214,6 +214,23 @@ export function createMemorySessionSource(options: { host?: HostState } = {}): M
       case 'hosts.move':
       case 'hosts.remove':
       case 'hosts.reconnect':
+      case 'session.setUnread': // WP-110 (Ausbau 1) from here on
+      case 'git.status':
+      case 'git.diff':
+      case 'git.fileDiff':
+      case 'git.commit':
+      case 'git.branchCreate':
+      case 'git.branchSwitch':
+      case 'git.push':
+      case 'worktree.list':
+      case 'worktree.inspect':
+      case 'worktree.remove':
+      case 'review.add':
+      case 'review.update':
+      case 'review.remove':
+      case 'review.markSent':
+      case 'search.query':
+      case 'transcript.loadAround':
         throw new CommandError(makeError('NOT_IMPLEMENTED', { command: cmd.name }));
     }
   }

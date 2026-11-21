@@ -66,6 +66,7 @@ import type {
   TerminalService,
   TerminalServiceDeps,
   TerminalOrigin,
+  TerminalScriptResult,
   TerminalSink,
 } from './ports';
 import { createByteRing, type ByteRing } from './ring';
@@ -871,6 +872,12 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
       const t = terminals.get(terminalId);
       return t?.info.state === 'running' && t.ending === null ? 'running' : 'ended';
     },
+    // WP-110 scaffolding (ADR-251): WP-111 starts setup/teardown commands here; until then refused.
+    runScript: (): Promise<TerminalScriptResult> =>
+      Promise.resolve({
+        kind: 'failed',
+        error: makeError('NOT_IMPLEMENTED', { command: 'terminal.runScript' }),
+      }),
     remoteEpoch: () => remoteEpoch,
     closeRemote() {
       remoteEpoch += 1;

@@ -30,12 +30,14 @@ import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   DEFAULT_MULTI_HOST_CONFIG,
   DEFAULT_UPDATE_STATE,
+  NO_HOST_FEATURES,
   WINDOWS_HOST_CAPABILITIES,
   currentConversation,
   isRemoteControlActive,
   type AppInfo,
   type Entry,
   type HostCapabilities,
+  type HostFeatures,
   type HostState,
   type HostWarning,
   type Profile,
@@ -215,6 +217,8 @@ export interface SessionManagerDeps {
     capabilities?: HostCapabilities;
     /** 102e: `HostState.homeDir` (already checked by the host's path rules). Absent → null. */
     homeDir?: string | null;
+    /** WP-110: `HostState.features` (Ausbau 1 routed on this host). Absent → none. */
+    features?: HostFeatures;
     /** WP-87: `HostState.app` and `HostState.update` (the update service). Absent → null / default. */
     app?: () => AppInfo | null;
     update?: () => UpdateState;
@@ -478,6 +482,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       systemIntegration: deps.host.systemIntegration ?? false,
       terminalAvailable: deps.host.terminalAvailable ?? false,
       homeDir: deps.host.homeDir ?? null,
+      features: deps.host.features ?? { ...NO_HOST_FEATURES },
       // WP-64: the default profile's `remoteControlAtStartup`, once a process of it was ready.
       remoteControlDefault: remoteDefaults.get(defaultProfile.id) ?? null,
       app: deps.host.app?.() ?? null,

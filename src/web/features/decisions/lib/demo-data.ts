@@ -162,6 +162,7 @@ function decisionCounts(decisions: readonly Decision[]): StatusFacts['decisions'
     permission: count('permission'),
     question: count('question'),
     plan: count('plan'),
+    elicitation: count('elicitation'),
     oldestKind: open[0]?.kind ?? null,
     expired: decisions.filter((decision) => decision.state === 'expired').length,
   };
@@ -174,7 +175,9 @@ function gatingToolCall(decision: Decision, order: number): TranscriptItem {
       ? decision.input
       : decision.kind === 'plan'
         ? { plan: decision.plan, planFilePath: decision.planFilePath }
-        : { questions: decision.questions.map((question) => ({ question: question.question })) };
+        : decision.kind === 'question'
+          ? { questions: decision.questions.map((question) => ({ question: question.question })) }
+          : { message: decision.message };
   return sampleItems.toolCall({
     id: `msg_demo_${decision.id}:0`,
     messageId: `msg_demo_${decision.id}`,

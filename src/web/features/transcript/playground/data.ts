@@ -656,7 +656,7 @@ function planSession(): DemoSession {
     summary: summaryOf(entryId, 'Plan cards', {
       status: sampleStatusFacts({
         runState: 'idle',
-        decisions: { permission: 1, question: 0, plan: 1, oldestKind: 'plan', expired: 1 },
+        decisions: { permission: 1, question: 0, plan: 1, elicitation: 0, oldestKind: 'plan', expired: 1 },
       }),
     }),
     snapshot: snapshotOf(entryId, items, { decisions: [decisionOpen, decisionExpired, permission] }),

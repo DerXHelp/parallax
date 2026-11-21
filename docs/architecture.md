@@ -891,6 +891,35 @@ Claudes eigene `model`- und `modelPicker`-Einstellungen gelten auch in Parallax 
 - **Test-Build:** nur `scripts/build-server.ts --update-test` setzt `__PARALLAX_UPDATE_TEST__` (lokale Endpunkte und
   Schlüssel aus der Umgebung); normale Bundles enthalten den Zweig nicht (`app/bundle.test.ts`).
 
+### 3.13 Ausbau 1: Git, Worktrees, Review, Suche, Elicitation (WP-110…117, ADR-250…256)
+
+Contracts v5 (`PROTOCOL_VERSION` 8, `docs/wp/WP-110.md` §4/§8). Ob ein Rechner die neuen Dienste hat, meldet
+`HostState.features {git, search, overview}` (Default `false` für ältere Gegenstellen); das Web fragt
+`useSessionFeature(sessionKey, feature)` (`state/hosts.ts`) und blendet danach aus.
+
+- **Git-Dienst** (`src/server/git/**`, WP-111, ADR-252): Host-Befehle `git.{status,diff,fileDiff,commit,branchCreate,
+  branchSwitch,push}` und `worktree.{list,inspect,remove}` (ohne Lebenszyklus-Sperre, in `compose.ts` als
+  `HostCommandHandler`). `git` nur absolut über `runFile`, Pfade nach `--`, `GIT_TERMINAL_PROMPT=0`; lesend
+  `-c core.fsmonitor=false` und `GIT_OPTIONAL_LOCKS=0`; Grenzen aus `LIMITS`. Der Session-Diff (`scope: 'session'`)
+  beginnt an der Merge-Base mit `worktree.baseRef` bzw. an `Entry.baseSha` (ADR-253).
+- **Worktrees** (`sessions/worktrees.ts`, WP-111/114, ADR-250/251): `session.create.worktree` legt vor dem Eintrag
+  einen Worktree an (`<repoRoot>/.claude/worktrees/<name>`) oder übernimmt einen vorhandenen; `Entry.cwd =
+  worktree.path`, `Entry.worktree`, `Entry.baseSha`. Setup/Teardown aus `settings.projects` laufen sichtbar über
+  `TerminalService.runScript` (Zustand in `SessionSummary.worktreeSetup`), Portblock `PARALLAX_WORKTREE_PORT` über
+  `buildEnv`. Archivieren/Entfernen fragt im Web über die Anfrage `worktree.cleanup` (Slot `WorktreeCleanup`).
+- **Review** (`sessions/review.ts`, `store/review.ts`, WP-111/113, ADR-254): Befehle `review.*` (Host-Befehle), Store
+  `ReviewStore` (`entries/<id>/review.json`), Sync nur über die Ops `review.upsert`/`review.remove` in
+  `SessionDetail.review`. Tab `changes` des Seitenpanels (Slot `ChangesPanel`, Kopfzeilen-Knopf „Änderungen“).
+- **Suche** (`src/server/search/**`, WP-112/115, ADR-255): `search.query` scannt in einem Worker die Logs dieses
+  Rechners, Antwort im Ack, eine neuere Anfrage desselben Fensters beendet die ältere (`SEARCH_FAILED {reason:
+  'superseded'}`); `transcript.loadAround` lädt um einen Treffer (`TranscriptStore.readAround`, `lib/transcriptWindow.ts`).
+  Web: Anfrage `search.open`, Slot `SearchDialog`.
+- **Übersicht** (WP-112/115): `session.setUnread` (Eintragsbefehl, Status-Ereignis `mark_unread`),
+  `notifications.mutedProjects` (der Notifier prüft selbst, kein Port), angeheftete Sessions schlafen nicht.
+- **Elicitation** (WP-112/116, ADR-256): `StartSessionRequest.onElicitation` → Broker → Entscheidung `elicitation`
+  (Status `needs-answer`, Zähler `decisionCounts.elicitation`, Benachrichtigung `question`), Antwort
+  `{action: 'accept' | 'decline' | 'cancel', content}`; Fixture-Ereignisse `elicitation`/`elicitationResult`.
+
 ## 4. Source of Truth (A.3)
 
 | Daten | maßgeblich | persistiert in | live über |
@@ -912,10 +941,11 @@ Claudes eigene `model`- und `modelPicker`-Einstellungen gelten auch in Parallax 
 ## 5. Sync-Protokoll (`src/shared/protocol.ts`)
 
 **Endpunkt** `GET /api/ws`; Auth per Geräte-Cookie und Origin/Host **im Upgrade**, `Sec-Fetch-Site`
-nur falls vorhanden (A.8, §5.1, V1-01). Ein JSON-Objekt pro Frame, Diskriminator `type`. `PROTOCOL_VERSION = 6`
+nur falls vorhanden (A.8, §5.1, V1-01). Ein JSON-Objekt pro Frame, Diskriminator `type`. `PROTOCOL_VERSION = 8`
 (Phase 2, ADR-100: neue Fehlercodes, System-Event `handoff`, neue Befehle → 2; Phase 3, ADR-140:
 zehn neue Fehlercodes und neun Befehle → 3; WP-87: Updates in der App → 4; WP-76: mehrere Rechner → 5;
-WP-95, ADR-236: System-Events `attachments_missing` und `peer_message_hold` → 6). Vor dem
+WP-95, ADR-236: System-Events `attachments_missing` und `peer_message_hold` → 6; WP-102b: neue Shells → 7;
+WP-110, Ausbau 1: Git, Worktrees, Review, Suche, Elicitation → 8). Vor dem
 Verbinden fragt der Client `GET /api/auth/status` (ein abgelehnter Upgrade ist im Browser nur Close
 1006).
 

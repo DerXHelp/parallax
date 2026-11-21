@@ -27,6 +27,12 @@ Koordinator):
   Seitenpanels, nur bei lokalen Sessions mit `terminalAvailable`), xterm.js und der lazy Namensraum
   `terminal/i18n` nur im Chunk `TerminalPanel.tsx`, eigener Socket `API_PATHS.terminalWs`.
 
+- WP-110 (Ausbau 1, Ownership CLAUDE.md und `docs/wp/WP-110.md` §6): neu `changes/` (WP-113: Diff, Review-Kommentare,
+  Git-Leiste; Slot `ChangesPanel`, Tab „Änderungen“), `worktrees/` (WP-114: Slots `WorktreeNotice`, `WorktreeCleanup`,
+  Anfrage `worktree.cleanup`) und `search/` (WP-115: Slot `SearchDialog`, Anfrage `search.open`); je Namensraum wie der
+  Ordner. `decisions/` zeigt Eingabe-Anfragen von MCP-Servern (Elicitation, WP-116), `preferences/` den Bereich
+  „Projekte“ (Platzhalter `sections/ProjectsSection.tsx`, WP-114).
+
 Aufbau eines Feature-Ordners (R0-03): `i18n/{en,de}.ts` (Namespace = Ordnername, Stubs von WP-14),
 `playground.tsx` (`export const demos: PlaygroundDemo[]`, per `import.meta.glob` gefunden),
 optional `components/`, `state/`, `lib/` für feature-eigene Teile. Features importieren einander

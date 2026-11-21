@@ -299,6 +299,8 @@ const NEEDS_KIND = {
   permission: 'needs-permission',
   question: 'needs-answer',
   plan: 'needs-review',
+  // WP-110 (ADR-256): waits for input like a question (`deriveDisplayStatus`).
+  elicitation: 'needs-answer',
 } as const satisfies Record<DecisionKind, string>;
 
 export interface DecisionActionProps extends Omit<ButtonProps, 'onClick'> {

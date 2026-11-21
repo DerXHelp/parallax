@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { conversationIdSchema, decisionIdSchema, entryIdSchema, profileIdSchema } from '@shared/common';
+import {
+  conversationIdSchema,
+  decisionIdSchema,
+  entryIdSchema,
+  profileIdSchema,
+  reviewCommentIdSchema,
+} from '@shared/common';
 import { authCodeSchema, launcherTokenSchema } from '@shared/http';
 import { newId, newToken, newUuid } from './ids';
 
@@ -9,6 +15,7 @@ describe('ids', () => {
     expect(conversationIdSchema.safeParse(newId('cv')).success).toBe(true);
     expect(decisionIdSchema.safeParse(newId('dc')).success).toBe(true);
     expect(profileIdSchema.safeParse(newId('pf')).success).toBe(true);
+    expect(reviewCommentIdSchema.safeParse(newId('rc')).success).toBe(true);
   });
 
   it('creates unique values', () => {

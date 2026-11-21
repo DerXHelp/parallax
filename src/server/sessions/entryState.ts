@@ -1296,6 +1296,8 @@ export const ARCHIVED_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryComm
   'session.subagentTranscript',
   // WP-77 (ADR-210): the draft belongs to Parallax, not to the Claude session.
   'session.setDraft',
+  // WP-110 (F6): the unread mark is Parallax's own.
+  'session.setUnread',
 ]);
 
 /** WP-30 §4.12: open in an external console – never a second writer on the Claude session. */
@@ -1313,6 +1315,8 @@ export const EXTERNAL_ALLOWED: ReadonlySet<EntryCommandName> = new Set<EntryComm
   'session.subagentTranscript',
   // WP-77: the draft is Parallax's own (the console never sees it).
   'session.setDraft',
+  // WP-110 (F6): the unread mark is Parallax's own.
+  'session.setUnread',
 ]);
 
 /** The entry is handed off to an external console (recorded, or its status says so). */

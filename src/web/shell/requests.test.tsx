@@ -49,14 +49,23 @@ describe('shell request channel (WP-30 §4.14 C)', () => {
     expect(seen).toEqual(['local:en_1']);
   });
 
-  it('settings sections include profiles (slot of WP-36), files (Phase 3) and console (WP-97) before profiles', () => {
+  it('settings sections include profiles (slot of WP-36), files (Phase 3), console (WP-97) and projects (WP-110) before profiles', () => {
     expect(SETTINGS_SECTIONS).toContain('profiles');
     expect(SETTINGS_SECTIONS.indexOf('files')).toBe(SETTINGS_SECTIONS.indexOf('console') - 1);
-    expect(SETTINGS_SECTIONS.indexOf('console')).toBe(SETTINGS_SECTIONS.indexOf('profiles') - 1);
+    expect(SETTINGS_SECTIONS.indexOf('console')).toBe(SETTINGS_SECTIONS.indexOf('projects') - 1);
+    expect(SETTINGS_SECTIONS.indexOf('projects')).toBe(SETTINGS_SECTIONS.indexOf('profiles') - 1);
   });
 
-  it('Phase 3 side panel requests pass between hosts by session key (WP-69: tab subagent)', () => {
-    expect([...SIDE_PANEL_TABS]).toEqual(['plan', 'file', 'files', 'tasks', 'subagent', 'terminal']);
+  it('Phase 3 side panel requests pass between hosts by session key (WP-69: tab subagent, WP-110: changes)', () => {
+    expect([...SIDE_PANEL_TABS]).toEqual([
+      'plan',
+      'changes',
+      'file',
+      'files',
+      'tasks',
+      'subagent',
+      'terminal',
+    ]);
     const remove = registerShellRequestHandler('sidePanel', (request) => request.sessionKey === 'local:en_1');
     expect(requestShell({ kind: 'sidePanel', sessionKey: 'local:en_1', tab: 'plan' })).toBe(true);
     expect(requestShell({ kind: 'sidePanel', sessionKey: 'local:en_2', tab: null })).toBe(false);

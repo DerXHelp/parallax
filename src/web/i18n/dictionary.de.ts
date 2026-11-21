@@ -1,11 +1,14 @@
+import { de as changesDe } from '@web/features/changes/i18n/de';
 import { de as composerDe } from '@web/features/composer/i18n/de';
 import { de as decisionsDe } from '@web/features/decisions/i18n/de';
 import { de as filesDe } from '@web/features/files/i18n/de';
 import { de as preferencesDe } from '@web/features/preferences/i18n/de';
 import { de as profilesDe } from '@web/features/profiles/i18n/de';
+import { de as searchDe } from '@web/features/search/i18n/de';
 import { de as tasksDe } from '@web/features/tasks/i18n/de';
 import { de as transcriptDe } from '@web/features/transcript/i18n/de';
 import { de as updatesDe } from '@web/features/updates/i18n/de';
+import { de as worktreesDe } from '@web/features/worktrees/i18n/de';
 import { de as hostsDe } from '@web/shell/hosts/i18n/de';
 import { de as navigationDe } from '@web/shell/navigation/i18n/de';
 import { de as newSessionDe } from '@web/shell/new-session/i18n/de';
@@ -36,4 +39,7 @@ export const deDictionary: Dictionary = {
   sidePanel: sidePanelDe,
   updates: updatesDe,
   hosts: hostsDe,
+  changes: changesDe,
+  worktrees: worktreesDe,
+  search: searchDe,
 };

@@ -2,7 +2,14 @@ import { useMemo } from 'react';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { LOCAL_HOST_ID, parseSessionKey, type HostId } from '@shared/common';
-import type { HostColor, MultiHostRole, RemoteAccessState, RemoteHost, RemotePeerLevel } from '@shared/model';
+import type {
+  HostColor,
+  HostFeatures,
+  MultiHostRole,
+  RemoteAccessState,
+  RemoteHost,
+  RemotePeerLevel,
+} from '@shared/model';
 import { makeError } from '@shared/errors';
 import { isRemoteAllowedCommand, type Command, type CommandName, type CommandResult } from '@shared/protocol';
 import { ClientCommandError, getConnection } from './connection';
@@ -210,6 +217,30 @@ export function selectTerminalAvailable(state: ClientState, sessionKey: string):
 
 export function useTerminalAvailable(sessionKey: string): boolean {
   return useStore(clientStore, (state) => selectTerminalAvailable(state, sessionKey));
+}
+
+/**
+ * WP-110: a feature of Ausbau 1 (`HostState.features`: git, search, overview) on this computer – an
+ * older host (absent) has none, another computer only while its window connection is open.
+ */
+export function selectHostFeature(state: ClientState, hostId: HostId, feature: keyof HostFeatures): boolean {
+  const record = state.hosts[hostId];
+  if (hostId !== LOCAL_HOST_ID && record?.phase !== 'open') return false;
+  return record?.hostState?.features[feature] === true;
+}
+
+/** WP-110: `selectHostFeature` for the computer of a session. */
+export function selectSessionFeature(
+  state: ClientState,
+  sessionKey: string,
+  feature: keyof HostFeatures,
+): boolean {
+  const hostId = parseSessionKey(sessionKey)?.hostId;
+  return hostId !== undefined && selectHostFeature(state, hostId, feature);
+}
+
+export function useSessionFeature(sessionKey: string, feature: keyof HostFeatures): boolean {
+  return useStore(clientStore, (state) => selectSessionFeature(state, sessionKey, feature));
 }
 
 /** Parallax version of this computer (hint "update Parallax on <name> to <version>"). */
