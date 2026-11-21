@@ -5,8 +5,11 @@
  * behaviour-based security software.
  *
  * - Null without `node:ffi` (an older Node than the minimum 26.9, `--no-experimental-ffi`, the
- *   permission model without `--allow-ffi`) or off Windows x64 – callers report "unknown" or "not
- *   available" (ADR-231: no PowerShell fallback).
+ *   permission model without `--allow-ffi`) or off Windows x64 and Linux x64 – callers report
+ *   "unknown" or "not available" (ADR-231: no PowerShell fallback).
+ * - Linux (WP-103, spike WP-101 §1.2): the C library through `openLibc` (pseudo terminal WP-105,
+ *   Secret Service WP-107). Off Windows a `.dll` name is never handed to `dlopen` (a Windows binding
+ *   asked for on Linux is simply unavailable, never a file found on the library path).
  * - Its one ExperimentalWarning at load is swallowed (only that warning).
  * - Only the few calls used are typed here; every function is checked at runtime.
  */
@@ -51,11 +54,16 @@ function warningType(rest: readonly unknown[]): unknown {
 
 let cached: FfiModule | null | undefined;
 
-/** `node:ffi` on Windows x64, else null (cached for the process). */
+/** Platforms with a tested `node:ffi` binding (WP-101 §1.2; arm64 only with WP-100 E4). */
+function ffiPlatform(): boolean {
+  return (process.platform === 'win32' || process.platform === 'linux') && process.arch === 'x64';
+}
+
+/** `node:ffi` on Windows x64 and Linux x64, else null (cached for the process). */
 export function loadFfi(): FfiModule | null {
   if (cached !== undefined) return cached;
   cached = null;
-  if (process.platform !== 'win32' || process.arch !== 'x64') return cached;
+  if (!ffiPlatform()) return cached;
   // eslint-disable-next-line @typescript-eslint/unbound-method -- put back unchanged below, called with `process`
   const original = process.emitWarning;
   process.emitWarning = (warning: string | Error, ...rest: unknown[]): void => {
@@ -82,6 +90,7 @@ export function openLibrary<K extends string>(
   path: string,
   definitions: Record<K, FfiSignature>,
 ): Record<K, FfiFunction> | null {
+  if (process.platform !== 'win32' && /\.dll$/i.test(path)) return null;
   const ffi = loadFfi();
   if (ffi === null) return null;
   let functions: Record<string, FfiFunction | undefined>;
@@ -97,6 +106,28 @@ export function openLibrary<K extends string>(
     out[name] = fn;
   }
   return out as Record<K, FfiFunction>;
+}
+
+/**
+ * Where the C library lies (Linux x64): the absolute Debian/Ubuntu paths first, then the soname
+ * (resolved by the dynamic loader through `ld.so.cache`).
+ */
+export const LIBC_CANDIDATES = [
+  '/lib/x86_64-linux-gnu/libc.so.6',
+  '/usr/lib/x86_64-linux-gnu/libc.so.6',
+  'libc.so.6',
+] as const;
+
+/** Functions of the C library (Linux only), or null like `openLibrary`. */
+export function openLibc<K extends string>(
+  definitions: Record<K, FfiSignature>,
+): Record<K, FfiFunction> | null {
+  if (process.platform !== 'linux') return null;
+  for (const candidate of LIBC_CANDIDATES) {
+    const functions = openLibrary(candidate, definitions);
+    if (functions !== null) return functions;
+  }
+  return null;
 }
 
 /** A pointer result as bigint (`node:ffi` returns pointers as bigint; null/undefined → 0n). */

@@ -1,37 +1,49 @@
 import { lstat, readlink, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { makeError } from '@shared/errors';
-import {
-  isWindowsPathInside,
-  pathFlavorOf,
-  pathRules,
-  windowsPathIssue,
-  windowsPathKey,
-  type PathRules,
-} from '@shared/paths';
+import { pathFlavorOf, pathRules, type PathRules } from '@shared/paths';
 import { CommandError } from '../sync/ports';
 import { FsTimeoutError } from './fsTimeout';
 
 /**
- * File system checks on top of the pure Windows path rules in `@shared/paths` (C.10, ADR-017).
- * The rules themselves (UNC, device, ADS, reserved names, …) live ONLY in `@shared/paths`.
- * Every function rejects unsafe strings before touching the file system (an `fs.stat` on a UNC
- * path would leak the NTLM hash) – and, since R1-17 (WP-33), also paths that run through a
- * junction or symlink whose target is unsafe (`assertNoUnsafeLink`). Phase 3 (WP-53, ADR-141):
- * `resolveAllowedPath` is THE access check of the file service (commands, GET /api/file, "open in").
+ * File system checks on top of the pure path rules in `@shared/paths` (C.10, ADR-017).
+ * The rules themselves (UNC, device, ADS, reserved names, POSIX pseudo file systems, …) live ONLY in
+ * `@shared/paths`. Every function rejects unsafe strings before touching the file system (an
+ * `fs.stat` on a UNC path would leak the NTLM hash) – and, since R1-17 (WP-33), also paths that run
+ * through a junction or symlink whose target is unsafe (`assertNoUnsafeLink`). Phase 3 (WP-53,
+ * ADR-141): `resolveAllowedPath` is THE access check of the file service (commands, GET /api/file,
+ * "open in").
+ *
+ * WP-103: every check takes the rule set as its last parameter, default `HOST_PATH_RULES` (Windows
+ * or POSIX by the platform of this server). Tests pin `WIN32_PATHS`/`POSIX_PATHS` to check either
+ * flavor on any machine. POSIX differs in three points: the comparison is case-sensitive, absolute
+ * link targets are ordinary (checked like any path, e.g. never into `/proc`), and only regular files
+ * are read (`notRegularFileRejected`; a FIFO or device would block the read).
  */
 
 /**
  * Path rules of this host (WP-102): Windows or POSIX by `process.platform`. Shared schemas accept
- * paths of either shape; the server checks them again with these rules (WP-103 moves the file system
- * checks below onto them).
+ * paths of either shape; the server checks them again with these rules.
  */
 export const HOST_PATH_RULES: PathRules = pathRules(pathFlavorOf(process.platform));
 
+/** `path.win32` or `path.posix` for a rule set (joining segments the way the flavor does). */
+function pathModuleOf(rules: PathRules): typeof path.posix {
+  return rules.flavor === 'win32' ? path.win32 : path.posix;
+}
+
 /** Throws `CommandError(PATH_REJECTED, {reason})` if `path` must not be touched. */
-export function assertSafePath(path: string): void {
-  const reason = windowsPathIssue(path);
+export function assertSafePath(path: string, rules: PathRules = HOST_PATH_RULES): void {
+  const reason = rules.issue(path);
   if (reason !== null) throw new CommandError(makeError('PATH_REJECTED', { reason }));
+}
+
+/** `params.reason` of a path that is no regular file where a file is read (POSIX: FIFO, socket, device). */
+export const NOT_REGULAR_FILE_REASON = 'not_regular';
+
+/** `PATH_REJECTED {reason: 'not_regular'}`: reading it could block the server (FIFO) or touch a device. */
+export function notRegularFileRejected(): CommandError {
+  return new CommandError(makeError('PATH_REJECTED', { reason: NOT_REGULAR_FILE_REASON }));
 }
 
 /** `code` of a Node fs error (`ENOENT`, `EPERM`, …), or null for anything else. */
@@ -66,14 +78,32 @@ export function linkTargetRejected(): CommandError {
 
 /**
  * Absolute target of the link `link` (as stored by `readlink`): a plain relative target is
- * resolved against the link's folder (pure string operation), everything else must already be an
- * absolute drive path. Null if the target must not be touched (`windowsPathIssue`: UNC, device,
- * `\foo`, `C:foo`, …).
+ * resolved against the link's folder (pure string operation), everything else must already be
+ * absolute. Null if the target must not be touched (`rules.issue`). Windows: UNC, device, `\foo`,
+ * `C:foo`, … are refused. POSIX: an absolute target is checked like any path (`/proc/…`, `/dev/…`
+ * and `..` segments are refused); a relative one is resolved lexically against the link's folder,
+ * which the walk has already made physical (R4-10).
  */
-export function resolveLinkTarget(link: string, target: string): string | null {
-  const plainRelative = target !== '' && !/^[\\/]/.test(target) && !/^[A-Za-z]:/.test(target);
-  const candidate = plainRelative ? path.win32.resolve(path.win32.dirname(link), target) : target;
-  return windowsPathIssue(candidate) === null ? candidate : null;
+export function resolveLinkTarget(
+  link: string,
+  target: string,
+  rules: PathRules = HOST_PATH_RULES,
+): string | null {
+  let candidate: string;
+  if (rules.flavor === 'win32') {
+    const plainRelative = target !== '' && !/^[\\/]/.test(target) && !/^[A-Za-z]:/.test(target);
+    candidate = plainRelative ? path.win32.resolve(path.win32.dirname(link), target) : target;
+  } else {
+    const plainRelative = target !== '' && !target.startsWith('/');
+    candidate = plainRelative ? path.posix.resolve(path.posix.dirname(link), target) : target;
+  }
+  return rules.issue(candidate) === null ? candidate : null;
+}
+
+/** Root (drive root `C:\` resp. `/`) and the segments below it of a checked absolute path. */
+function rootAndSegments(file: string, rules: PathRules): { root: string; segments: string[] } {
+  if (rules.flavor === 'win32') return { root: file.slice(0, 3), segments: file.slice(3).split(/[\\/]/) };
+  return { root: '/', segments: file.split('/') };
 }
 
 /**
@@ -82,12 +112,19 @@ export function resolveLinkTarget(link: string, target: string): string | null {
  * in its TARGET – a relative target further down (`..\..\z`) is resolved against the folder it
  * really lies in, like the file system does, not against the path as written.
  */
-async function checkLinks(file: string, fs: LinkFs, budget: { hops: number }): Promise<string | null> {
-  // Paths with `.`/`..` segments never get here (windowsPathIssue rejects them).
-  let current = file.slice(0, 3);
-  for (const segment of file.slice(3).split(/[\\/]/)) {
+async function checkLinks(
+  file: string,
+  fs: LinkFs,
+  budget: { hops: number },
+  rules: PathRules,
+): Promise<string | null> {
+  // Paths with `.`/`..` segments never get here (`rules.issue` rejects them).
+  const join = pathModuleOf(rules).join;
+  const { root, segments } = rootAndSegments(file, rules);
+  let current = root;
+  for (const segment of segments) {
     if (segment === '') continue;
-    current = path.win32.join(current, segment);
+    current = join(current, segment);
     let isLink: boolean;
     try {
       isLink = (await fs.lstat(current)).isSymbolicLink();
@@ -109,11 +146,11 @@ async function checkLinks(file: string, fs: LinkFs, budget: { hops: number }): P
       // A reparse point Node cannot read (e.g. a cloud placeholder or volume mount): fail closed.
       throw linkTargetRejected();
     }
-    const target = resolveLinkTarget(current, raw);
+    const target = resolveLinkTarget(current, raw, rules);
     if (target === null) throw linkTargetRejected();
     // The target's own segments may be links too – check them before anything goes through it;
     // the remaining segments continue in the target (R4-10).
-    const physical = await checkLinks(target, fs, budget);
+    const physical = await checkLinks(target, fs, budget, rules);
     if (physical === null) return null;
     current = physical;
   }
@@ -121,16 +158,21 @@ async function checkLinks(file: string, fs: LinkFs, budget: { hops: number }): P
 }
 
 /**
- * R1-17: `lstat` on every segment of `path` (the drive root excluded); for a junction/symlink its
- * target (`readlink`, resolved by `resolveLinkTarget`) must be a safe drive path and is checked
- * the same way, at most `MAX_LINK_HOPS` links. Otherwise `CommandError(PATH_REJECTED, {reason:
+ * R1-17: `lstat` on every segment of `path` (the root excluded); for a junction/symlink its
+ * target (`readlink`, resolved by `resolveLinkTarget`) must be a safe path and is checked the same
+ * way, at most `MAX_LINK_HOPS` links. Otherwise `CommandError(PATH_REJECTED, {reason:
  * 'link_target'})` – before any call follows the link (a symlink to `\\server\share` would leak
- * the NTLM hash, C.10). Unsafe strings throw `PATH_REJECTED {reason}` first; a missing segment
- * ends the check (the caller's access reports ENOENT); other fs errors are rethrown.
+ * the NTLM hash, C.10; a POSIX link into `/proc` reaches kernel files). Unsafe strings throw
+ * `PATH_REJECTED {reason}` first; a missing segment ends the check (the caller's access reports
+ * ENOENT); other fs errors are rethrown.
  */
-export async function assertNoUnsafeLink(file: string, fs: LinkFs = nodeLinkFs): Promise<void> {
-  assertSafePath(file);
-  await checkLinks(file, fs, { hops: MAX_LINK_HOPS });
+export async function assertNoUnsafeLink(
+  file: string,
+  fs: LinkFs = nodeLinkFs,
+  rules: PathRules = HOST_PATH_RULES,
+): Promise<void> {
+  assertSafePath(file, rules);
+  await checkLinks(file, fs, { hops: MAX_LINK_HOPS }, rules);
 }
 
 /**
@@ -138,11 +180,15 @@ export async function assertNoUnsafeLink(file: string, fs: LinkFs = nodeLinkFs):
  * (R1-17), exists, is a directory. The string is never normalized or resolved – callers store it
  * exactly as given (B).
  */
-export async function checkCwd(cwd: string, fs: LinkFs = nodeLinkFs): Promise<void> {
-  assertSafePath(cwd);
+export async function checkCwd(
+  cwd: string,
+  fs: LinkFs = nodeLinkFs,
+  rules: PathRules = HOST_PATH_RULES,
+): Promise<void> {
+  assertSafePath(cwd, rules);
   let isDirectory: boolean;
   try {
-    await assertNoUnsafeLink(cwd, fs);
+    await assertNoUnsafeLink(cwd, fs, rules);
     isDirectory = (await stat(cwd)).isDirectory();
   } catch (error) {
     const code = fsErrorCode(error);
@@ -171,15 +217,15 @@ export interface AccessRoot<K extends string> {
   kind: K;
 }
 
-/** A set of `windowsPathKey`s (only `has` is needed: a Map of the index works as well). */
+/** A set of path keys of the rule set in use (`rules.key`; only `has` is needed: a Map of the index works as well). */
 export type PathKeySet = Pick<ReadonlySet<string>, 'has'>;
 
 export interface AccessPolicy<K extends string> {
   /** In priority order (the first root that contains the target names the access). Unsafe strings are ignored, never touched. */
   roots: readonly AccessRoot<K>[];
   /**
-   * Single files allowed besides the roots (session file index, ADR-145): `windowsPathKey`s,
-   * loaded only when a path is not below a root.
+   * Single files allowed besides the roots (session file index, ADR-145): keys of the rule set in
+   * use (`rules.key`, e.g. `windowsPathKey` on Windows), loaded only when a path is not below a root.
    */
   listed?: { kind: K; keys: () => Promise<PathKeySet> };
 }
@@ -191,6 +237,8 @@ export interface AccessOptions {
    * (the file service: per entry, 60 s). Default: `physicalPath` on every call.
    */
   resolveRoot?: (root: string) => Promise<string | null>;
+  /** Path rules (default `HOST_PATH_RULES`). */
+  rules?: PathRules;
 }
 
 export interface AllowedPath<K extends string> {
@@ -228,31 +276,39 @@ export function fileAccessError(error: unknown): unknown {
  * Steps 3 and 4 of the check chain: `lstat`/`readlink` on every segment (an unsafe link target →
  * PATH_REJECTED {reason: 'link_target'}), then `realpath` and the string filter on the result.
  * A mapped network drive (ADR-119/141: a drive letter counts as local) makes realpath name its
- * share (`\\server\share\…`); the segment walk has proved that no link on the way leads there, so
- * the walked drive path stands. Any other unsafe result → PATH_REJECTED {reason}. fs failures are
- * mapped by `fileAccessError`.
+ * share (`\server\share\…`); the segment walk has proved that no link on the way leads there, so
+ * the walked drive path stands (Windows only: POSIX rules know no `unc`). Any other unsafe result →
+ * PATH_REJECTED {reason}. fs failures are mapped by `fileAccessError`.
  */
-export async function physicalPath(file: string, fs: AccessFs = nodeAccessFs): Promise<string> {
-  assertSafePath(file);
+export async function physicalPath(
+  file: string,
+  fs: AccessFs = nodeAccessFs,
+  rules: PathRules = HOST_PATH_RULES,
+): Promise<string> {
+  assertSafePath(file, rules);
   let walked: string | null;
   let resolved: string;
   try {
-    walked = await checkLinks(file, fs, { hops: MAX_LINK_HOPS });
+    walked = await checkLinks(file, fs, { hops: MAX_LINK_HOPS }, rules);
     resolved = await fs.realpath(file);
   } catch (error) {
     throw fileAccessError(error);
   }
-  const issue = windowsPathIssue(resolved);
+  const issue = rules.issue(resolved);
   if (issue === null) return resolved;
   if (issue === 'unc' && walked !== null) return walked;
   throw new CommandError(makeError('PATH_REJECTED', { reason: issue }));
 }
 
 /** `physicalPath` of a root, or null if the root is unsafe, missing or unreadable. */
-export async function physicalRoot(root: string, fs: AccessFs = nodeAccessFs): Promise<string | null> {
-  if (windowsPathIssue(root) !== null) return null;
+export async function physicalRoot(
+  root: string,
+  fs: AccessFs = nodeAccessFs,
+  rules: PathRules = HOST_PATH_RULES,
+): Promise<string | null> {
+  if (rules.issue(root) !== null) return null;
   try {
-    return await physicalPath(root, fs);
+    return await physicalPath(root, fs, rules);
   } catch {
     return null;
   }
@@ -261,7 +317,7 @@ export async function physicalRoot(root: string, fs: AccessFs = nodeAccessFs): P
 /**
  * THE access check for files (ADR-141; commands, GET /api/file and "open in" all call it), in
  * exactly this order:
- *  1. string filter (`windowsPathIssue`) → PATH_REJECTED {reason};
+ *  1. string filter (`rules.issue`) → PATH_REJECTED {reason};
  *  2. policy on the REQUESTED string: below a root (by key) or listed → otherwise PATH_NOT_ALLOWED
  *     before ANY file system call (no SMB attempt for a path from model text, L15);
  *  3. `lstat`/`readlink` per segment (unsafe link target → PATH_REJECTED {reason: 'link_target'});
@@ -269,35 +325,35 @@ export async function physicalRoot(root: string, fs: AccessFs = nodeAccessFs): P
  *  5. policy on the TARGET: inside a root's physical path, or the target itself is listed →
  *     otherwise PATH_NOT_ALLOWED (a link inside the project must not lead out of it).
  * fs failures: FILE_NOT_FOUND / FILE_NOT_READABLE (`fileAccessError`; timeouts come from the
- * caller's `fs`, see lib/fsTimeout.ts).
+ * caller's `fs`, see lib/fsTimeout.ts). Keys and "inside" follow the rule set (case-sensitive on
+ * POSIX). Whether the target is a regular file is the reader's business (`openRegularFile`,
+ * lib/fileRead.ts).
  */
 export async function resolveAllowedPath<K extends string>(
   file: string,
   policy: AccessPolicy<K>,
   options: AccessOptions = {},
 ): Promise<AllowedPath<K>> {
-  assertSafePath(file);
+  const rules = options.rules ?? HOST_PATH_RULES;
+  assertSafePath(file, rules);
   const fs = options.fs ?? nodeAccessFs;
-  const roots = policy.roots.filter((root) => windowsPathIssue(root.path) === null);
+  const roots = policy.roots.filter((root) => rules.issue(root.path) === null);
   let listedKeys: PathKeySet | null = null;
   const listed = async (): Promise<PathKeySet> => {
     listedKeys ??= policy.listed === undefined ? new Set<string>() : await policy.listed.keys();
     return listedKeys;
   };
   // Step 2: nothing below this line may run for a path the policy does not name.
-  if (
-    !roots.some((root) => isWindowsPathInside(file, root.path)) &&
-    !(await listed()).has(windowsPathKey(file))
-  ) {
+  if (!roots.some((root) => rules.isInside(file, root.path)) && !(await listed()).has(rules.key(file))) {
     throw pathNotAllowed();
   }
-  const realPath = await physicalPath(file, fs);
-  const resolveRoot = options.resolveRoot ?? ((root: string) => physicalRoot(root, fs));
+  const realPath = await physicalPath(file, fs, rules);
+  const resolveRoot = options.resolveRoot ?? ((root: string) => physicalRoot(root, fs, rules));
   for (const root of roots) {
     const physical = await resolveRoot(root.path);
-    if (physical !== null && isWindowsPathInside(realPath, physical)) return { realPath, access: root.kind };
+    if (physical !== null && rules.isInside(realPath, physical)) return { realPath, access: root.kind };
   }
-  if (policy.listed !== undefined && (await listed()).has(windowsPathKey(realPath))) {
+  if (policy.listed !== undefined && (await listed()).has(rules.key(realPath))) {
     return { realPath, access: policy.listed.kind };
   }
   throw pathNotAllowed();
